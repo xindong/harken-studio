@@ -28,7 +28,7 @@ enum class RuntimeCapabilityFeature : uint8_t
     SoundPlayback,
     FlatContainer,
     TrackProgram,
-    PieceProgram,
+    SegmentProgram,
     VariableDeclaration,
     TypedBinding,
     TypedEffect,

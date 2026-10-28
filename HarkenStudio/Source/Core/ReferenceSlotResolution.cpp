@@ -85,7 +85,7 @@ PlacementMaterialization materializePlacement(
 
     QUuid expectedTarget = subject->guid;
     if (subject->type == ProjectItem::Type::Track && subject->parent
-        && subject->parent->type == ProjectItem::Type::Piece) {
+        && subject->parent->type == ProjectItem::Type::Segment) {
         result.items.push_back(subject->parent);
         expectedTarget = subject->parent->guid;
     }
@@ -142,19 +142,19 @@ PlacementMaterialization materializePlacement(
         }
 
         result.items.push_back(track);
-        const ProjectItem* piece = track->parent
-            && track->parent->type == ProjectItem::Type::Piece
+        const ProjectItem* segment = track->parent
+            && track->parent->type == ProjectItem::Type::Segment
             ? track->parent : nullptr;
-        if (piece) result.items.push_back(piece);
+        if (segment) result.items.push_back(segment);
 
         if (index + 1 < occurrences.size()) {
-            if (!piece) {
+            if (!segment) {
                 result.valid = false;
                 result.error = QStringLiteral("Placement drill path is disconnected.");
                 result.items.clear();
                 return result;
             }
-            expectedTarget = piece->guid;
+            expectedTarget = segment->guid;
         }
     }
     return result;

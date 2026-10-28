@@ -34,7 +34,7 @@
 #include "../Components/VVariable.h"
 #include "../VariableConsumerSemantics.h"
 #include "../Components/VTrack.h"
-#include "../Components/VPiece.h"
+#include "../Components/VSegment.h"
 #include "../Timeline/TimelineEditing.h"
 #include "../AudioEngine.h"
 #include "../../Widgets/ProjectExplorer/ProjectExplorer.h"
@@ -1272,8 +1272,8 @@ bool claimsTimelineItemProperty(ProjectItem* item, const QString& propertyName)
 {
     return (propertyName == QStringLiteral("clips")
             && item->comp<VTrack>() != nullptr)
-        || (propertyName == QStringLiteral("pieceTime")
-            && item->comp<VPiece>() != nullptr);
+        || (propertyName == QStringLiteral("segmentTime")
+            && item->comp<VSegment>() != nullptr);
 }
 
 bool claimsEffectsItemProperty(ProjectItem* item, const QString& propertyName)
@@ -1728,16 +1728,16 @@ ActionResult handleTimelineItemProperty(ProjectManager* projectManager, ProjectI
     }
     if (!value.isObject())
         return {false, {}, "INVALID_ARGS",
-                "Property 'pieceTime' value must be a JSON object"};
-    const auto authoring = AuthoringPolicy::validatePieceTime(value.toObject());
+                "Property 'segmentTime' value must be a JSON object"};
+    const auto authoring = AuthoringPolicy::validateSegmentTime(value.toObject());
     if (!authoring)
         return {false, {}, "AUTHORING_RESTRICTED", authoring.message};
     QString error;
-    auto pieceTime = PieceTimeSpec::fromJson(value.toObject(), &error);
-    if (!pieceTime)
+    auto segmentTime = SegmentTimeSpec::fromJson(value.toObject(), &error);
+    if (!segmentTime)
         return {false, {}, "INVALID_ARGS", error};
-    return TimelineEditing::replacePieceTime(
-        projectManager, item, *pieceTime, originator, undoText);
+    return TimelineEditing::replaceSegmentTime(
+        projectManager, item, *segmentTime, originator, undoText);
 }
 
 ActionResult handleEffectsItemProperty(ProjectManager* projectManager, ProjectItem* item,

@@ -82,7 +82,7 @@ Project Settings > Publish > Additional Material 的 `Export Pack MetaData` 默�
 
 `schemaVersion` 与包体使用同一 Pack 合同版本来源，不再输出 `packFormatVersion`。`packStableId` 是十进制字符串，防止 64 位整数在 JSON 使用方丢失精度。`platform` 使用项目配置的平台名称；`language` 使用实际构建语言，无语言时为空字符串。
 
-`objects` 是平铺、按 GUID 去重并稳定排序的依赖对象清单，每项只含 `guid`、`name`、`type`、`path`。`type` 使用 Studio 对象类型，不对 Pack 添加类型字段；`path` 原样使用构建快照中的对象路径。清单依据本次包体中编译后的定义与引用收集，包括 Action、Sound、Container、Track、Piece、Layer、Variable、Attenuation。共享依赖可能由其他包承载，清单不表示每个对象的完整定义都驻留在当前包体中。Bus 仅从承载全局信息的 Init 包中导出，不加入各 Action 的清单。
+`objects` 是平铺、按 GUID 去重并稳定排序的依赖对象清单，每项只含 `guid`、`name`、`type`、`path`。`type` 使用 Studio 对象类型，不对 Pack 添加类型字段；`path` 原样使用构建快照中的对象路径。清单依据本次包体中编译后的定义与引用收集，包括 Action、Sound、Container、Track、Segment、Layer、Variable、Attenuation。共享依赖可能由其他包承载，清单不表示每个对象的完整定义都驻留在当前包体中。Bus 仅从承载全局信息的 Init 包中导出，不加入各 Action 的清单。
 
 清单只列 Studio 对象；总线编译器追加的内置设备输出根没有 Studio 对象身份，不列入清单。项目自身的主总线保留原有 GUID、名称和路径。
 

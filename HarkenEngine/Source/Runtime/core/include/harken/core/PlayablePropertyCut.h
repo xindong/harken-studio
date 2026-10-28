@@ -31,10 +31,10 @@ struct PlayableWorldViewV1 {
     std::uint32_t occurrenceCount = 0;
     const TrackScheduleProgramViewV1* trackSchedules = nullptr;
     std::uint32_t trackScheduleCount = 0;
-    const PieceScheduleProgramViewV1* pieceSchedules = nullptr;
-    std::uint32_t pieceScheduleCount = 0;
+    const SegmentScheduleProgramViewV1* segmentSchedules = nullptr;
+    std::uint32_t segmentScheduleCount = 0;
     std::uint32_t maxKnownScheduleLeaves = 16;
-    std::uint32_t maxTrackPieceScheduleDepth = 8;
+    std::uint32_t maxTrackSegmentScheduleDepth = 8;
     const ContainerProgramViewV3* containers = nullptr;
     std::uint32_t containerCount = 0;
     const TransitionProgramViewV1* transitions = nullptr;

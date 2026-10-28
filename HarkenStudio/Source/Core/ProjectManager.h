@@ -267,7 +267,7 @@ public:
                             const QString& bucketFolderHint = QString(),
                             QUndoCommand* undoParent = nullptr,
                             VariableKind variableKind = VariableKind::Smooth);
-    ProjectItem* createTrackWithClip(ProjectItem* piece, const QString& name, Clip clip);
+    ProjectItem* createTrackWithClip(ProjectItem* segment, const QString& name, Clip clip);
     ProjectItem* createAudioItem(ProjectItem* parent, const QString& name, const QString& relativePath, uint32_t sourceID);
     // Root-level counterpart of createAudioItem: does not push an undo command.
     ProjectItem* createRootAudioItem(const QString& name, const QString& relativePath, uint32_t sourceID);

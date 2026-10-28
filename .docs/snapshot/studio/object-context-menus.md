@@ -23,7 +23,7 @@ Action 名称复用规则核对：2026-10-16。Action 与 Variable 各自在全�
 | 顶级菜单入口定义 | 15 个，其中 Set Color... 暂时隐藏；实际显示数量随上下文变化，分隔线不计数 |
 | 顶级子菜单 | 4 个：Create / New Child、New Parent、New Action、Operation；Create 与 New Child 是同一入口的不同标题 |
 | 顶级直接命令 | 11 个定义：Duplicate、Rename、Delete、Cut、Copy、Paste、Paste Properties、Open Containing Folder、Open in New Tab、Open in New Window、Set Color...（暂时隐藏） |
-| 创建类型目录 | 10 类：Folder、Sound、Container、Track、Piece、Layer、Bus、Action、Variable、Attenuation；按位置筛选 |
+| 创建类型目录 | 10 类：Folder、Sound、Container、Track、Segment、Layer、Bus、Action、Variable、Attenuation；按位置筛选 |
 | Container 创建模式 | 4 个：Random、Sequence、Match、Blend |
 | New Action 动作目录 | 4 个：Play、Stop、Set Variable、Trigger Action |
 | Operation 命令目录 | 2 个：Expand All、Collapse All |
@@ -96,7 +96,7 @@ Set Color 尚未确定落地和发布，工程树与 Timeline 轨道菜单均隐
 | 7 | Cut | 存在既有剪贴板来源类型；纯 Bus / Folder 隐藏 | 全部归一化来源合格后记录工程内部剪贴板；此时不移动对象 |
 | 8 | Copy | 同 Cut | 全部归一化来源合格后记录工程内部剪贴板 |
 | 9 | Paste | Layers 区对象及非 Bus 分类根 | 唯一目标，剪贴板全部来源可放入；空剪贴板、不兼容、多目标或继承冲突时禁用 |
-| 10 | Paste Properties | 存在可作为剪贴板来源且具有 `VMixNode` 的目标；当前为 Sound、Container、Track、Piece、Layer | 剪贴板恰有一个有效同类型属性源，所有目标均兼容；分别应用到明确选中的对象 |
+| 10 | Paste Properties | 存在可作为剪贴板来源且具有 `VMixNode` 的目标；当前为 Sound、Container、Track、Segment、Layer | 剪贴板恰有一个有效同类型属性源，所有目标均兼容；分别应用到明确选中的对象 |
 | 11 | Open Containing Folder | 选区包含 Sound | 唯一 Sound，当前平台与预览语言选出的来源已注册且实际文件存在；多选或来源缺失时禁用 |
 | 12 | Open in New Tab | 存在非 Folder 对象 | 全部对象可打开；逐个打开绑定各自对象的独立 Inspector 标签页，保持本面板多选。混入 Folder 则禁用 |
 | 13 | Open in New Window | 存在非 Folder 对象 | 唯一可打开对象；打开浮动 Inspector，多选禁用 |
@@ -113,11 +113,11 @@ Copy / Cut / Duplicate 的来源资格复用 `isClipboardEligible()`，不支持
 
 | 位置或对象类型 | 候选类型，按显示顺序 |
 |---|---|
-| Layers 分类根及其 Folder | Folder、Sound、Container、Track、Piece、Layer |
-| Layer | Sound、Container、Track、Piece、Layer |
-| Container | Sound、Container、Track、Piece |
-| Track | Sound、Container、Piece |
-| Piece | Track |
+| Layers 分类根及其 Folder | Folder、Sound、Container、Track、Segment、Layer |
+| Layer | Sound、Container、Track、Segment、Layer |
+| Container | Sound、Container、Track、Segment |
+| Track | Sound、Container、Segment |
+| Segment | Track |
 | Busses 分类根、Bus | Bus；分类根创建时以 Master Bus 为父对象 |
 | Actions 分类根及其 Folder | Folder、Action |
 | Variables 分类根及其 Folder | Folder、Variable |
@@ -126,14 +126,14 @@ Copy / Cut / Duplicate 的来源资格复用 `isClipboardEligible()`，不支持
 
 Container 候选展开四种模式：Random、Sequence、Match、Blend。Random 与 Sequence 默认 Play Type = Single，可在 Inspector 改为 Queue，一次触发遍历完整一轮。Queue 不再是创建菜单中的独立 Mode。创建、所选模式及撤销重做保持一致。Folder 通过目录树组织各桶内的对象文件，不充当对象的业务父级。
 
-多选时候选取各目标可容纳类型的并集，但当前不提供向多个父对象批量创建子对象，整个入口禁用。例如 Sound + Piece 仍显示禁用的 New Child，其唯一相关候选是 Track。
+多选时候选取各目标可容纳类型的并集，但当前不提供向多个父对象批量创建子对象，整个入口禁用。例如 Sound + Segment 仍显示禁用的 New Child，其唯一相关候选是 Track。
 
 ### New Parent
 
 | 选中对象类型 | 相关父类型，按显示顺序 |
 |---|---|
-| Sound、Container、Piece | Container、Track、Layer |
-| Track | Container、Piece、Layer |
+| Sound、Container、Segment | Container、Track、Layer |
+| Track | Container、Segment、Layer |
 | Layer | Layer |
 | Bus | Bus |
 | Folder、Action、Variable、Attenuation | 无候选，隐藏入口 |
@@ -144,8 +144,8 @@ Container 候选展开四种模式：Random、Sequence、Match、Blend。Random 
 
 | 子项 | 目标类型 | 自动名称前缀 |
 |---|---|---|
-| Play | Sound、Container、Track、Piece | `Play_` |
-| Stop | Sound、Container、Track、Piece | `Stop_` |
+| Play | Sound、Container、Track、Segment | `Play_` |
+| Stop | Sound、Container、Track、Segment | `Stop_` |
 | Set Variable | Variable | `SetVariable_` |
 | Trigger Action | Action | `TriggerAction_` |
 

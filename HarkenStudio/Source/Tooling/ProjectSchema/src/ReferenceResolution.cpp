@@ -65,7 +65,7 @@ ReferenceResolutionContext::ReferenceResolutionContext(
         kinds_.emplace(c.id, obj.kind);
 
         // Invert the downward ownership edges into the child -> owner map. Every
-        // owner kind lists its structural children the same way; a Piece lists
+        // owner kind lists its structural children the same way; a Segment lists
         // its Tracks separately, so both are folded in here.
         switch (obj.kind) {
             case ContentKind::Layer:
@@ -83,8 +83,8 @@ ReferenceResolutionContext::ReferenceResolutionContext(
                     parent_.emplace(child, c.id);
                 }
                 break;
-            case ContentKind::Piece:
-                for (const StableId child : obj.piece.tracks) {
+            case ContentKind::Segment:
+                for (const StableId child : obj.segment.tracks) {
                     parent_.emplace(child, c.id);
                 }
                 break;
@@ -98,12 +98,12 @@ std::vector<StableId> ReferenceResolutionContext::PlacementChainForTrack(
     StableId trackId) const {
     std::vector<StableId> chain;
     chain.push_back(trackId);
-    // The one enclosing Piece, if the Track is owned by one. Deeper nesting is
+    // The one enclosing Segment, if the Track is owned by one. Deeper nesting is
     // occurrence expansion, deferred to the runtime arranging instance.
     const auto it = parent_.find(trackId);
     if (it != parent_.end()) {
         const auto kindIt = kinds_.find(it->second);
-        if (kindIt != kinds_.end() && kindIt->second == ContentKind::Piece) {
+        if (kindIt != kinds_.end() && kindIt->second == ContentKind::Segment) {
             chain.push_back(it->second);
         }
     }

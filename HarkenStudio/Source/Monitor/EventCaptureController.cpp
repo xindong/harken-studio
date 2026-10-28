@@ -34,7 +34,7 @@ QString playableDescription(const CapturedEvent& event, quint32 soundFinishKind)
     case kMonitorContentSound:
     case kMonitorContentContainer:
     case kMonitorContentTrack:
-    case kMonitorContentPiece:
+    case kMonitorContentSegment:
         break;
     default:
         return {};

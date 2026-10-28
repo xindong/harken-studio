@@ -224,8 +224,8 @@ private:
         void Refresh() noexcept;
     };
 
-    struct OwnedPieceSchedule {
-        harkenstudiobuild::PieceScheduleProgramViewV1 view{};
+    struct OwnedSegmentSchedule {
+        harkenstudiobuild::SegmentScheduleProgramViewV1 view{};
         std::vector<harkenstudiobuild::ScheduleTrackRefV1> trackRefs;
         std::vector<harkenstudiobuild::ScheduleMarkerV1> markers;
         void Refresh() noexcept;
@@ -254,8 +254,8 @@ private:
     std::vector<harkenstudiobuild::PlayableOccurrencePropertyViewV1> occurrenceViews_;
     std::vector<OwnedTrackSchedule> trackSchedules_;
     std::vector<harkenstudiobuild::TrackScheduleProgramViewV1> trackScheduleViews_;
-    std::vector<OwnedPieceSchedule> pieceSchedules_;
-    std::vector<harkenstudiobuild::PieceScheduleProgramViewV1> pieceScheduleViews_;
+    std::vector<OwnedSegmentSchedule> segmentSchedules_;
+    std::vector<harkenstudiobuild::SegmentScheduleProgramViewV1> segmentScheduleViews_;
     std::vector<OwnedContainer> containers_;
     std::vector<harkenstudiobuild::ContainerProgramViewV3> containerViews_;
     std::vector<OwnedTransition> transitions_;

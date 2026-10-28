@@ -30,7 +30,7 @@
 // Logic thread, single producer, no lock. Storage is sized once at Reset; the
 // steady path allocates nothing. Not implemented here (documented seams): variable
 // snapshot evaluation at the decision frame, occurrence-bound transactions, and
-// the prepare/armed resource state machine. The compiled PieceProgram that feeds
+// the prepare/armed resource state machine. The compiled SegmentProgram that feeds
 // PostPlay is produced by a later segment; here it is the narrow ProgramView.
 #ifndef HARKEN_CORE_TIMELINE_PLANNER_H
 #define HARKEN_CORE_TIMELINE_PLANNER_H
@@ -49,7 +49,7 @@
 
 namespace harken {
 
-// One event of a compiled program, positioned relative to the piece's entry. The
+// One event of a compiled program, positioned relative to the segment's entry. The
 // planner rebases it to an absolute frame at file time (entryAnchorFrame + offset,
 // clamped at zero for a weak-up that would precede the session start).
 struct EventTemplate {
@@ -91,7 +91,7 @@ inline std::uint64_t AnchoredFrame(std::uint64_t entryAnchor,
 }
 
 // The narrow view of a compiled program the planner files from. In the shipping
-// build the PieceProgram compiler produces this; here a test builds it by hand.
+// build the SegmentProgram compiler produces this; here a test builds it by hand.
 // Non-owning: the events array, and the view itself when a play is deferred, must
 // outlive the planner's use of them (the compiled program store owns them), just
 // as a ClockKernel borrows its tempo segments.
@@ -104,10 +104,10 @@ struct ProgramView {
     const EventTemplate* events = nullptr;
     std::size_t eventCount = 0;
     // For NextEquivalentBoundary resolution only. clock and markerIndex are the
-    // piece's own; boundaryType and boundaryFromPosition say which grid line to
-    // align to and from where (in the piece's native unit). Null clock/markerIndex
-    // means the piece offers no boundary grid.
-    PieceTimeType timeType = PieceTimeType::Musical;
+    // segment's own; boundaryType and boundaryFromPosition say which grid line to
+    // align to and from where (in the segment's native unit). Null clock/markerIndex
+    // means the segment offers no boundary grid.
+    SegmentTimeType timeType = SegmentTimeType::Musical;
     const ClockKernel* clock = nullptr;
     const MarkerIndex* markerIndex = nullptr;
     BoundaryType boundaryType = BoundaryType::Bar;

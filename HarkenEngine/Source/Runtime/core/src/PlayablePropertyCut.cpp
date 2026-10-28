@@ -131,13 +131,13 @@ TrackProgramHandleV1 FindTrackSchedule(
     return {};
 }
 
-PieceProgramHandleV1 FindPieceSchedule(
+SegmentProgramHandleV1 FindSegmentSchedule(
     const PlayableWorldViewV1& world,
     const PlayableRefV1& ref) noexcept {
-    for (std::uint32_t i = 0; i < world.pieceScheduleCount; ++i) {
-        const auto& row = world.pieceSchedules[i];
+    for (std::uint32_t i = 0; i < world.segmentScheduleCount; ++i) {
+        const auto& row = world.segmentSchedules[i];
         if (SameRef(row.rootDefinition, ref))
-            return {ProgramKindV1::Piece, ref.stableId, row.scheduleSemanticFingerprint,
+            return {ProgramKindV1::Segment, ref.stableId, row.scheduleSemanticFingerprint,
                     world.ProgramSource(), world.InitialClosureCapabilities(), &row};
     }
     return {};
@@ -224,11 +224,11 @@ TrackProgramHandleV1 FindTrackSchedule(
     return row != nullptr && SameRef(row->rootDefinition, ref) ? row : TrackProgramHandleV1{};
 }
 
-PieceProgramHandleV1 FindPieceSchedule(
+SegmentProgramHandleV1 FindSegmentSchedule(
     const PackPlaybackView& world, const PlayableRefV1& ref) noexcept {
     const auto row =
-        world.ResolvePiece(ref.stableId, 0);
-    return row != nullptr && SameRef(row->rootDefinition, ref) ? row : PieceProgramHandleV1{};
+        world.ResolveSegment(ref.stableId, 0);
+    return row != nullptr && SameRef(row->rootDefinition, ref) ? row : SegmentProgramHandleV1{};
 }
 
 const PlayableOccurrencePropertyViewV1* FindOccurrence(
@@ -473,24 +473,24 @@ ResolvedPlayablePropertyCutStorageV1::ResolveInto(
     std::uint32_t selectedIndex = 0;
     while (cursor.kind == PlayableKindV1::Container ||
            cursor.kind == PlayableKindV1::Track ||
-           cursor.kind == PlayableKindV1::Piece) {
-        if (cursor.kind == PlayableKindV1::Piece) {
-            const auto piece = FindPieceSchedule(world, cursor);
-            if (piece == nullptr || piece->trackRefCount == 0 ||
-                piece->trackRefs == nullptr) {
+           cursor.kind == PlayableKindV1::Segment) {
+        if (cursor.kind == PlayableKindV1::Segment) {
+            const auto segment = FindSegmentSchedule(world, cursor);
+            if (segment == nullptr || segment->trackRefCount == 0 ||
+                segment->trackRefs == nullptr) {
                 return ResolvedPlayablePropertyCutStatusV1::
                     UnknownPlayable;
             }
             const ScheduleTrackRefV1* selectedTrack = nullptr;
-            if (selectedTrackIds == nullptr && piece->trackRefCount == 1) {
-                selectedTrack = &piece->trackRefs[0];
+            if (selectedTrackIds == nullptr && segment->trackRefCount == 1) {
+                selectedTrack = &segment->trackRefs[0];
             } else if (selectedTrackIds != nullptr && selectedIndex < selectedChildCount) {
-                for (std::uint32_t i = 0; i < piece->trackRefCount; ++i) {
-                    if (piece->trackRefs[i].trackDefinition.stableId !=
+                for (std::uint32_t i = 0; i < segment->trackRefCount; ++i) {
+                    if (segment->trackRefs[i].trackDefinition.stableId !=
                         selectedTrackIds[selectedIndex]) continue;
                     if (selectedTrack != nullptr)
                         return ResolvedPlayablePropertyCutStatusV1::PathMismatch;
-                    selectedTrack = &piece->trackRefs[i];
+                    selectedTrack = &segment->trackRefs[i];
                 }
             }
             if (selectedTrack == nullptr)

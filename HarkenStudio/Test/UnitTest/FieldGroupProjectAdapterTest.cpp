@@ -41,21 +41,21 @@ FieldGroupProjectView projectView(ProjectData& project, const States& states)
 TEST(FieldGroupProjectAdapter, FileBindingEnumerationDoesNotCreateRootsOrReorderChildren)
 {
     ProjectData project = HarkenTest::projectWithPlatforms({"Windows", "Android", "macOS", "Linux", "iOS"});
-    auto piece = item(1, ProjectItem::Type::Piece);
+    auto segment = item(1, ProjectItem::Type::Segment);
     auto first = item(2, ProjectItem::Type::Track);
     auto second = item(3, ProjectItem::Type::Track);
-    own(piece, first);
-    own(piece, second);
-    project.layers = {{second, {}}, {first, {}}, {piece, {}}};
-    States states{{piece->guid, MakeRootFieldGroups({0, 100})},
+    own(segment, first);
+    own(segment, second);
+    project.layers = {{second, {}}, {first, {}}, {segment, {}}};
+    States states{{segment->guid, MakeRootFieldGroups({0, 100})},
                   {first->guid, {}}, {second->guid, {}}};
     const auto index = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(project);
     ASSERT_TRUE(index->valid);
-    EXPECT_EQ(index->parentDefinition.at(first.get()), piece.get());
-    EXPECT_EQ(index->parentDefinition.at(second.get()), piece.get());
-    ASSERT_EQ(index->children.at(piece.get()).size(), 2u);
-    EXPECT_EQ(index->children.at(piece.get())[0], first.get());
-    EXPECT_EQ(index->children.at(piece.get())[1], second.get());
+    EXPECT_EQ(index->parentDefinition.at(first.get()), segment.get());
+    EXPECT_EQ(index->parentDefinition.at(second.get()), segment.get());
+    ASSERT_EQ(index->children.at(segment.get()).size(), 2u);
+    EXPECT_EQ(index->children.at(segment.get())[0], first.get());
+    EXPECT_EQ(index->children.at(segment.get())[1], second.get());
     const auto view = projectView(project, states);
     ASSERT_TRUE(view.ok());
     EXPECT_EQ(view.definitions.size(), 3u);

@@ -2,7 +2,7 @@
 //
 // This is deliberately looser than the canonical model. An authoring layer — or
 // a malformed document, or a mistaken migration — can hand the front-end shapes
-// the frozen schema forbids: a Track carrying a time spec, a Piece owning a
+// the frozen schema forbids: a Track carrying a time spec, a Segment owning a
 // Sound, a marker smuggled in under the reserved id, an ownership edge that closes
 // a cycle. Making those expressible is the point: the front-end's contract is
 // that it turns a well-formed input into the canonical model and refuses an
@@ -10,7 +10,7 @@
 // cannot even express is a refusal it cannot test.
 //
 // So the fields here are a superset. A field that is legal on only one kind
-// (clips on a Track, a time spec on a Piece) is present on every node, and the
+// (clips on a Track, a time spec on a Segment) is present on every node, and the
 // parser rejects it where it does not belong. The canonical model in Model.h is
 // the narrow, per-kind shape that a successful parse produces.
 //
@@ -120,16 +120,16 @@ struct InputMarker {
     std::int64_t position = 0;
 };
 
-// A Piece's authored time spec. Carried as its own optional so a node that has
-// no business owning one (anything but a Piece) can still be handed one, and be
+// A Segment's authored time spec. Carried as its own optional so a node that has
+// no business owning one (anything but a Segment) can still be handed one, and be
 // refused for it.
-struct InputPieceTimeSpec {
-    PieceTimeKind kind = PieceTimeKind::Absolute;
+struct InputSegmentTimeSpec {
+    SegmentTimeKind kind = SegmentTimeKind::Absolute;
     std::vector<TempoMapEntry> tempoMap;
     std::vector<MeterMapEntry> meterMap;
 };
 
-// A Piece's authored start point.
+// A Segment's authored start point.
 struct InputStartPoint {
     StartPointKind kind = StartPointKind::Entry;
     MarkerId markerId = kReservedMarkerId;
@@ -150,7 +150,7 @@ struct InputStartPoint {
 //                        DAG.
 //   ownedChildren      - structural ownership edges, by child authoring GUID.
 //   clips              - placement ledger; legal only on a Track.
-//   timeSpec/startPoint/markers - time-side authoring; legal only on a Piece.
+//   timeSpec/startPoint/markers - time-side authoring; legal only on a Segment.
 struct InputNode : PlayablePropertyPayloadV1 {
     ContentKind kind = ContentKind::Sound;
     AuthoringGuid guid{};
@@ -168,7 +168,7 @@ struct InputNode : PlayablePropertyPayloadV1 {
 
     std::vector<InputClip> clips;
 
-    std::optional<InputPieceTimeSpec> timeSpec;
+    std::optional<InputSegmentTimeSpec> timeSpec;
     std::optional<InputStartPoint> startPoint;
     std::vector<InputMarker> markers;
 };

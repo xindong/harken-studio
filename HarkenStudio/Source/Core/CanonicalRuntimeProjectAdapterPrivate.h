@@ -16,7 +16,7 @@
 #include <vector>
 
 namespace harkenprojectschema {
-class PieceProgram;
+class SegmentProgram;
 }
 
 namespace HarkenEditor::Bridge {
@@ -97,9 +97,9 @@ CanonicalRuntimeProjectContextV1 canonicalRuntimeProjectContext(
     VNX::PlatformScope busPlatformScope,
     std::shared_ptr<const CanonicalRuntimeProjectSourceIndexV1> sourceIndex);
 
-const harkenprojectschema::PieceProgram* compiledPieceProgram(
+const harkenprojectschema::SegmentProgram* compiledSegmentProgram(
     const CompiledProjectSnapshot& snapshot);
-std::vector<harkenstudio::ObjectId> compiledPieceIds(
+std::vector<harkenstudio::ObjectId> compiledSegmentIds(
     const CompiledProjectSnapshot& snapshot);
 
 }

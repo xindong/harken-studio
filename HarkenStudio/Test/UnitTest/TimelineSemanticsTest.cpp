@@ -44,41 +44,41 @@ TimelineItemResolver resolverFor(const std::vector<std::shared_ptr<ProjectItem>>
 
 }
 
-TEST(TimelineSemantics, SharedNestedPieceInDagDoesNotLookLikeCycle)
+TEST(TimelineSemantics, SharedNestedSegmentInDagDoesNotLookLikeCycle)
 {
     auto sound = makeItem(ProjectItem::Type::Sound, QStringLiteral("Sound"));
-    auto shared = makeItem(ProjectItem::Type::Piece, QStringLiteral("Shared"));
+    auto shared = makeItem(ProjectItem::Type::Segment, QStringLiteral("Shared"));
     auto sharedTrack = makeItem(ProjectItem::Type::Track, QStringLiteral("SharedTrack"));
     sharedTrack->comp<VTrack>()->clips = makeLedger({clipTo(*sound, 0, 1)});
     shared->children = {sharedTrack};
 
-    auto root = makeItem(ProjectItem::Type::Piece, QStringLiteral("Root"));
+    auto root = makeItem(ProjectItem::Type::Segment, QStringLiteral("Root"));
     auto rootTrack = makeItem(ProjectItem::Type::Track, QStringLiteral("RootTrack"));
     rootTrack->comp<VTrack>()->clips = makeLedger({
         clipTo(*shared, 0, 1), clipTo(*shared, 2, 1)
     });
     root->children = {rootTrack};
 
-    const TimelineSemanticsResult result = TimelineSemantics::pieceNominalSpan(
+    const TimelineSemanticsResult result = TimelineSemantics::segmentNominalSpan(
         *root, resolverFor({sound, shared, sharedTrack, root, rootTrack}));
     EXPECT_TRUE(result) << result.validation.message.toStdString();
 }
 
-TEST(TimelineSemantics, DeepPieceReferenceGraphIsResolvedIteratively)
+TEST(TimelineSemantics, DeepSegmentReferenceGraphIsResolvedIteratively)
 {
     auto sound = makeItem(ProjectItem::Type::Sound, QStringLiteral("Sound"));
     std::vector<std::shared_ptr<ProjectItem>> items = {sound};
     constexpr int kDepth = 2048;
     for (int i = 0; i < kDepth; ++i) {
-        auto piece = makeItem(ProjectItem::Type::Piece, QStringLiteral("Piece"));
+        auto segment = makeItem(ProjectItem::Type::Segment, QStringLiteral("Segment"));
         auto track = makeItem(ProjectItem::Type::Track, QStringLiteral("Track"));
         const ProjectItem& target = i == 0 ? *sound : *items[items.size() - 2];
         track->comp<VTrack>()->clips = makeLedger({clipTo(target, 0, 1)});
-        piece->children = {track};
-        items.push_back(piece);
+        segment->children = {track};
+        items.push_back(segment);
         items.push_back(track);
     }
-    const TimelineSemanticsResult result = TimelineSemantics::pieceNominalSpan(
+    const TimelineSemanticsResult result = TimelineSemantics::segmentNominalSpan(
         *items[items.size() - 2], resolverFor(items));
     EXPECT_TRUE(result) << result.validation.message.toStdString();
 }

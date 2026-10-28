@@ -2184,17 +2184,17 @@ struct DirectCompositeTrackWorldImage {
     harken::PlayableRefV1 Root() const { return track.rootDefinition; }
 };
 
-struct DirectPieceWorldImage {
+struct DirectSegmentWorldImage {
     std::array<harken::PlayablePropertyProgramViewV1, 3> properties{};
     harken::PlayableOccurrencePropertyViewV1 occurrence{};
     harken::ScheduleClipPlacementV1 placement{};
     harken::TrackScheduleProgramViewV1 track{};
     harken::ScheduleTrackRefV1 trackRef{};
     harken::ScheduleMarkerV1 marker{};
-    harken::PieceScheduleProgramViewV1 piece{};
+    harken::SegmentScheduleProgramViewV1 segment{};
     harken::PlayableWorldViewV1 world{};
 
-    DirectPieceWorldImage(std::uint64_t soundRevision,
+    DirectSegmentWorldImage(std::uint64_t soundRevision,
                           harken::ScheduleTimeKindV1 timeKind,
                           std::int64_t placementStart,
                           std::int64_t markerPosition) {
@@ -2218,7 +2218,7 @@ struct DirectPieceWorldImage {
         properties[1].programSemanticFingerprint =
             harken::ComputePlayablePropertyFingerprintV1(properties[1]);
         properties[2].contentPropertyKind =
-            harken::playableproperties::ContentPropertyKindV1::Piece;
+            harken::playableproperties::ContentPropertyKindV1::Segment;
         properties[2].stableId = harkentest::ObjectId(8001);
         properties[2].authoredStableOrder = 2;
         properties[2].contentRevision = 9001;
@@ -2258,30 +2258,30 @@ struct DirectPieceWorldImage {
         marker.stableMarkerId = harkentest::ObjectId(10001);
         marker.markerId = 11;
         marker.position = markerPosition;
-        piece.rootDefinition.kind = harken::PlayableKindV1::Piece;
-        piece.rootDefinition.stableId = properties[2].stableId;
-        piece.rootDefinition.expectedProgramSemanticFingerprint =
+        segment.rootDefinition.kind = harken::PlayableKindV1::Segment;
+        segment.rootDefinition.stableId = properties[2].stableId;
+        segment.rootDefinition.expectedProgramSemanticFingerprint =
             properties[2].programSemanticFingerprint;
-        piece.rootDefinition.contentRevision = properties[2].contentRevision;
-        piece.rootDefinition.routeStableId = VN_BUS_MASTER;
-        piece.rootDefinition.compatibilityFingerprint = 3;
-        piece.timeKind = timeKind;
-        piece.startPointKind = 1;
-        piece.startMarkerId = marker.markerId;
-        piece.microsPerQuarter =
+        segment.rootDefinition.contentRevision = properties[2].contentRevision;
+        segment.rootDefinition.routeStableId = VN_BUS_MASTER;
+        segment.rootDefinition.compatibilityFingerprint = 3;
+        segment.timeKind = timeKind;
+        segment.startPointKind = 1;
+        segment.startMarkerId = marker.markerId;
+        segment.microsPerQuarter =
             timeKind == harken::ScheduleTimeKindV1::MusicalTicks
                 ? 500000
                 : 0;
-        piece.meterNumerator =
+        segment.meterNumerator =
             timeKind == harken::ScheduleTimeKindV1::MusicalTicks ? 4 : 0;
-        piece.meterDenominator =
+        segment.meterDenominator =
             timeKind == harken::ScheduleTimeKindV1::MusicalTicks ? 4 : 0;
-        piece.trackRefCount = 1;
-        piece.trackRefs = &trackRef;
-        piece.markerCount = 1;
-        piece.markers = &marker;
-        piece.scheduleSemanticFingerprint =
-            harken::ComputePieceScheduleFingerprintV1(piece);
+        segment.trackRefCount = 1;
+        segment.trackRefs = &trackRef;
+        segment.markerCount = 1;
+        segment.markers = &marker;
+        segment.scheduleSemanticFingerprint =
+            harken::ComputeSegmentScheduleFingerprintV1(segment);
 
         occurrence.parentKind =
             harken::playableproperties::ContentPropertyKindV1::Track;
@@ -2305,28 +2305,28 @@ struct DirectPieceWorldImage {
         world.occurrenceCount = 1;
         world.trackSchedules = &track;
         world.trackScheduleCount = 1;
-        world.pieceSchedules = &piece;
-        world.pieceScheduleCount = 1;
+        world.segmentSchedules = &segment;
+        world.segmentScheduleCount = 1;
     }
 
-    harken::PlayableRefV1 Root() const { return piece.rootDefinition; }
+    harken::PlayableRefV1 Root() const { return segment.rootDefinition; }
 };
 
-struct DirectCompositePieceWorldImage {
+struct DirectCompositeSegmentWorldImage {
     DirectCompositeTrackWorldImage schedule;
     std::array<harken::PlayablePropertyProgramViewV1, 4> properties{};
     harken::ScheduleTrackRefV1 trackRef{};
     harken::ScheduleMarkerV1 marker{};
-    harken::PieceScheduleProgramViewV1 piece{};
+    harken::SegmentScheduleProgramViewV1 segment{};
     harken::PlayableWorldViewV1 world{};
 
-    DirectCompositePieceWorldImage(std::uint64_t firstRevision,
+    DirectCompositeSegmentWorldImage(std::uint64_t firstRevision,
                                    std::uint64_t secondRevision)
         : schedule(firstRevision, secondRevision) {
         std::copy(schedule.properties.begin(), schedule.properties.end(),
                   properties.begin());
         properties[3].contentPropertyKind =
-            harken::playableproperties::ContentPropertyKindV1::Piece;
+            harken::playableproperties::ContentPropertyKindV1::Segment;
         properties[3].stableId = harkentest::ObjectId(8001);
         properties[3].authoredStableOrder = 3;
         properties[3].contentRevision = 9001;
@@ -2345,22 +2345,22 @@ struct DirectCompositePieceWorldImage {
         marker.stableMarkerId = harkentest::ObjectId(10001);
         marker.markerId = 11;
         marker.position = 0;
-        piece.rootDefinition.kind = harken::PlayableKindV1::Piece;
-        piece.rootDefinition.stableId = properties[3].stableId;
-        piece.rootDefinition.expectedProgramSemanticFingerprint =
+        segment.rootDefinition.kind = harken::PlayableKindV1::Segment;
+        segment.rootDefinition.stableId = properties[3].stableId;
+        segment.rootDefinition.expectedProgramSemanticFingerprint =
             properties[3].programSemanticFingerprint;
-        piece.rootDefinition.contentRevision = properties[3].contentRevision;
-        piece.rootDefinition.routeStableId = VN_BUS_MASTER;
-        piece.rootDefinition.compatibilityFingerprint = 4;
-        piece.timeKind = harken::ScheduleTimeKindV1::AbsoluteNanoseconds;
-        piece.startPointKind = 1;
-        piece.startMarkerId = marker.markerId;
-        piece.trackRefCount = 1;
-        piece.trackRefs = &trackRef;
-        piece.markerCount = 1;
-        piece.markers = &marker;
-        piece.scheduleSemanticFingerprint =
-            harken::ComputePieceScheduleFingerprintV1(piece);
+        segment.rootDefinition.contentRevision = properties[3].contentRevision;
+        segment.rootDefinition.routeStableId = VN_BUS_MASTER;
+        segment.rootDefinition.compatibilityFingerprint = 4;
+        segment.timeKind = harken::ScheduleTimeKindV1::AbsoluteNanoseconds;
+        segment.startPointKind = 1;
+        segment.startMarkerId = marker.markerId;
+        segment.trackRefCount = 1;
+        segment.trackRefs = &trackRef;
+        segment.markerCount = 1;
+        segment.markers = &marker;
+        segment.scheduleSemanticFingerprint =
+            harken::ComputeSegmentScheduleFingerprintV1(segment);
 
         world.generation = 7;
         world.identity.capabilityMask =
@@ -2372,11 +2372,11 @@ struct DirectCompositePieceWorldImage {
         world.occurrenceCount = schedule.occurrences.size();
         world.trackSchedules = &schedule.track;
         world.trackScheduleCount = 1;
-        world.pieceSchedules = &piece;
-        world.pieceScheduleCount = 1;
+        world.segmentSchedules = &segment;
+        world.segmentScheduleCount = 1;
     }
 
-    harken::PlayableRefV1 Root() const { return piece.rootDefinition; }
+    harken::PlayableRefV1 Root() const { return segment.rootDefinition; }
 };
 
 struct VariableControlCompositeTrackWorldImage {
@@ -2788,34 +2788,34 @@ struct VariableControlCompositeCapacityWorldImage
     }
 };
 
-struct VariableControlCompositePieceWorldImage
+struct VariableControlCompositeSegmentWorldImage
     : VariableControlCompositeTrackWorldImage {
-    std::array<harken::PlayablePropertyProgramViewV1, 5> pieceProperties{};
+    std::array<harken::PlayablePropertyProgramViewV1, 5> segmentProperties{};
     harken::ScheduleTrackRefV1 trackRef{};
     harken::ScheduleMarkerV1 marker{};
-    harken::PieceScheduleProgramViewV1 piece{};
+    harken::SegmentScheduleProgramViewV1 segment{};
 
-    VariableControlCompositePieceWorldImage(
+    VariableControlCompositeSegmentWorldImage(
         std::uint64_t firstRevision, std::uint64_t secondRevision,
         harken::WorldGeneration generation)
         : VariableControlCompositeTrackWorldImage(
               firstRevision, secondRevision, generation) {
         std::copy(properties.begin(), properties.begin() + 3,
-                  pieceProperties.begin());
-        pieceProperties[3].contentPropertyKind =
-            harken::playableproperties::ContentPropertyKindV1::Piece;
-        pieceProperties[3].stableId = harkentest::ObjectId(8001);
-        pieceProperties[3].authoredStableOrder = 3;
-        pieceProperties[3].contentRevision = 9001;
-        pieceProperties[3].routeStableId = VN_BUS_MASTER;
-        pieceProperties[3].compatibilityFingerprint = 4;
-        pieceProperties[3].payload = ResolvedPayload();
-        pieceProperties[3].programSemanticFingerprint =
-            harken::ComputePlayablePropertyFingerprintV1(pieceProperties[3]);
-        pieceProperties[4] = properties[3];
-        pieceProperties[4].authoredStableOrder = 4;
-        pieceProperties[4].programSemanticFingerprint =
-            harken::ComputePlayablePropertyFingerprintV1(pieceProperties[4]);
+                  segmentProperties.begin());
+        segmentProperties[3].contentPropertyKind =
+            harken::playableproperties::ContentPropertyKindV1::Segment;
+        segmentProperties[3].stableId = harkentest::ObjectId(8001);
+        segmentProperties[3].authoredStableOrder = 3;
+        segmentProperties[3].contentRevision = 9001;
+        segmentProperties[3].routeStableId = VN_BUS_MASTER;
+        segmentProperties[3].compatibilityFingerprint = 4;
+        segmentProperties[3].payload = ResolvedPayload();
+        segmentProperties[3].programSemanticFingerprint =
+            harken::ComputePlayablePropertyFingerprintV1(segmentProperties[3]);
+        segmentProperties[4] = properties[3];
+        segmentProperties[4].authoredStableOrder = 4;
+        segmentProperties[4].programSemanticFingerprint =
+            harken::ComputePlayablePropertyFingerprintV1(segmentProperties[4]);
 
         trackRef.trackDefinition = schedule.track.rootDefinition;
         trackRef.trackScheduleSemanticFingerprint =
@@ -2823,30 +2823,30 @@ struct VariableControlCompositePieceWorldImage
         marker.stableMarkerId = harkentest::ObjectId(10001);
         marker.markerId = 11;
         marker.position = 0;
-        piece.rootDefinition.kind = harken::PlayableKindV1::Piece;
-        piece.rootDefinition.stableId = pieceProperties[3].stableId;
-        piece.rootDefinition.expectedProgramSemanticFingerprint =
-            pieceProperties[3].programSemanticFingerprint;
-        piece.rootDefinition.contentRevision =
-            pieceProperties[3].contentRevision;
-        piece.rootDefinition.routeStableId = VN_BUS_MASTER;
-        piece.rootDefinition.compatibilityFingerprint = 4;
-        piece.timeKind = harken::ScheduleTimeKindV1::AbsoluteNanoseconds;
-        piece.startPointKind = 1;
-        piece.startMarkerId = marker.markerId;
-        piece.trackRefCount = 1;
-        piece.trackRefs = &trackRef;
-        piece.markerCount = 1;
-        piece.markers = &marker;
-        piece.scheduleSemanticFingerprint =
-            harken::ComputePieceScheduleFingerprintV1(piece);
+        segment.rootDefinition.kind = harken::PlayableKindV1::Segment;
+        segment.rootDefinition.stableId = segmentProperties[3].stableId;
+        segment.rootDefinition.expectedProgramSemanticFingerprint =
+            segmentProperties[3].programSemanticFingerprint;
+        segment.rootDefinition.contentRevision =
+            segmentProperties[3].contentRevision;
+        segment.rootDefinition.routeStableId = VN_BUS_MASTER;
+        segment.rootDefinition.compatibilityFingerprint = 4;
+        segment.timeKind = harken::ScheduleTimeKindV1::AbsoluteNanoseconds;
+        segment.startPointKind = 1;
+        segment.startMarkerId = marker.markerId;
+        segment.trackRefCount = 1;
+        segment.trackRefs = &trackRef;
+        segment.markerCount = 1;
+        segment.markers = &marker;
+        segment.scheduleSemanticFingerprint =
+            harken::ComputeSegmentScheduleFingerprintV1(segment);
 
-        children[1].playable = piece.rootDefinition;
+        children[1].playable = segment.rootDefinition;
         occurrences[1].childPlayable = children[1].playable;
         occurrences[1].occurrenceSemanticFingerprint =
             harken::ComputePlayableOccurrenceFingerprintV1(occurrences[1]);
         container.programSemanticFingerprint =
-            pieceProperties[4].programSemanticFingerprint;
+            segmentProperties[4].programSemanticFingerprint;
         for (std::uint32_t index = 0; index < 2; ++index) {
             occurrences[index].parentProgramSemanticFingerprint =
                 container.programSemanticFingerprint;
@@ -2854,10 +2854,10 @@ struct VariableControlCompositePieceWorldImage
                 harken::ComputePlayableOccurrenceFingerprintV1(
                     occurrences[index]);
         }
-        world.properties = pieceProperties.data();
-        world.propertyCount = pieceProperties.size();
-        world.pieceSchedules = &piece;
-        world.pieceScheduleCount = 1;
+        world.properties = segmentProperties.data();
+        world.propertyCount = segmentProperties.size();
+        world.segmentSchedules = &segment;
+        world.segmentScheduleCount = 1;
     }
 
     harken::PlayableRefV1 Root() const {
@@ -2865,35 +2865,35 @@ struct VariableControlCompositePieceWorldImage
         root.kind = harken::PlayableKindV1::Container;
         root.stableId = harkentest::ObjectId(kContainer);
         root.expectedProgramSemanticFingerprint =
-            pieceProperties[4].programSemanticFingerprint;
-        root.contentRevision = pieceProperties[4].contentRevision;
+            segmentProperties[4].programSemanticFingerprint;
+        root.contentRevision = segmentProperties[4].contentRevision;
         root.routeStableId = VN_BUS_MASTER;
         root.compatibilityFingerprint = 4;
         return root;
     }
 };
 
-struct NestedPieceWorldImage {
+struct NestedSegmentWorldImage {
     std::array<harken::PlayablePropertyProgramViewV1, 5> properties{};
     std::array<harken::PlayableOccurrencePropertyViewV1, 2> occurrences{};
     std::array<harken::ScheduleClipPlacementV1, 2> placements{};
     std::array<harken::TrackScheduleProgramViewV1, 2> tracks{};
     std::array<harken::ScheduleTrackRefV1, 2> trackRefs{};
     std::array<harken::ScheduleMarkerV1, 2> markers{};
-    std::array<harken::PieceScheduleProgramViewV1, 2> pieces{};
+    std::array<harken::SegmentScheduleProgramViewV1, 2> segments{};
     std::array<harken::ScheduleClipPlacementV1, 2> mixedOuterPlacements{};
     std::array<harken::PlayableOccurrencePropertyViewV1, 3>
         mixedOccurrences{};
     harken::PlayableWorldViewV1 world{};
 
-    explicit NestedPieceWorldImage(std::uint64_t soundRevision) {
+    explicit NestedSegmentWorldImage(std::uint64_t soundRevision) {
         const std::array<harken::playableproperties::ContentPropertyKindV1, 5>
             kinds = {
                 harken::playableproperties::ContentPropertyKindV1::Sound,
                 harken::playableproperties::ContentPropertyKindV1::Track,
-                harken::playableproperties::ContentPropertyKindV1::Piece,
+                harken::playableproperties::ContentPropertyKindV1::Segment,
                 harken::playableproperties::ContentPropertyKindV1::Track,
-                harken::playableproperties::ContentPropertyKindV1::Piece};
+                harken::playableproperties::ContentPropertyKindV1::Segment};
         const std::array<VnObjectId, 5> ids = {
             kSound, harkentest::ObjectId(3001), harkentest::ObjectId(8001), harkentest::ObjectId(3002), harkentest::ObjectId(8002)};
         for (std::uint32_t index = 0; index < properties.size(); ++index) {
@@ -2941,24 +2941,24 @@ struct NestedPieceWorldImage {
         markers[0].stableMarkerId = harkentest::ObjectId(10001);
         markers[0].markerId = 11;
         markers[0].position = 48;
-        pieces[0].rootDefinition =
-            makeRef(2, harken::PlayableKindV1::Piece);
-        pieces[0].timeKind = harken::ScheduleTimeKindV1::MusicalTicks;
-        pieces[0].startPointKind = 1;
-        pieces[0].startMarkerId = markers[0].markerId;
-        pieces[0].microsPerQuarter = 500000;
-        pieces[0].meterNumerator = 4;
-        pieces[0].meterDenominator = 4;
-        pieces[0].trackRefCount = 1;
-        pieces[0].trackRefs = &trackRefs[0];
-        pieces[0].markerCount = 1;
-        pieces[0].markers = &markers[0];
-        pieces[0].scheduleSemanticFingerprint =
-            harken::ComputePieceScheduleFingerprintV1(pieces[0]);
+        segments[0].rootDefinition =
+            makeRef(2, harken::PlayableKindV1::Segment);
+        segments[0].timeKind = harken::ScheduleTimeKindV1::MusicalTicks;
+        segments[0].startPointKind = 1;
+        segments[0].startMarkerId = markers[0].markerId;
+        segments[0].microsPerQuarter = 500000;
+        segments[0].meterNumerator = 4;
+        segments[0].meterDenominator = 4;
+        segments[0].trackRefCount = 1;
+        segments[0].trackRefs = &trackRefs[0];
+        segments[0].markerCount = 1;
+        segments[0].markers = &markers[0];
+        segments[0].scheduleSemanticFingerprint =
+            harken::ComputeSegmentScheduleFingerprintV1(segments[0]);
 
         placements[1].stablePlacementOrdinal = 0;
         placements[1].stableOccurrenceOrdinal = 8;
-        placements[1].content = pieces[0].rootDefinition;
+        placements[1].content = segments[0].rootDefinition;
         placements[1].authoredStart = INT64_C(100000000);
         placements[1].clipId = harkentest::ObjectId(5002);
         placements[1].clipGuidHigh = 6002;
@@ -2975,18 +2975,18 @@ struct NestedPieceWorldImage {
         markers[1].stableMarkerId = harkentest::ObjectId(10002);
         markers[1].markerId = 12;
         markers[1].position = INT64_C(50000000);
-        pieces[1].rootDefinition =
-            makeRef(4, harken::PlayableKindV1::Piece);
-        pieces[1].timeKind =
+        segments[1].rootDefinition =
+            makeRef(4, harken::PlayableKindV1::Segment);
+        segments[1].timeKind =
             harken::ScheduleTimeKindV1::AbsoluteNanoseconds;
-        pieces[1].startPointKind = 1;
-        pieces[1].startMarkerId = markers[1].markerId;
-        pieces[1].trackRefCount = 1;
-        pieces[1].trackRefs = &trackRefs[1];
-        pieces[1].markerCount = 1;
-        pieces[1].markers = &markers[1];
-        pieces[1].scheduleSemanticFingerprint =
-            harken::ComputePieceScheduleFingerprintV1(pieces[1]);
+        segments[1].startPointKind = 1;
+        segments[1].startMarkerId = markers[1].markerId;
+        segments[1].trackRefCount = 1;
+        segments[1].trackRefs = &trackRefs[1];
+        segments[1].markerCount = 1;
+        segments[1].markers = &markers[1];
+        segments[1].scheduleSemanticFingerprint =
+            harken::ComputeSegmentScheduleFingerprintV1(segments[1]);
 
         for (std::uint32_t index = 0; index < occurrences.size(); ++index) {
             occurrences[index].parentKind =
@@ -3014,15 +3014,15 @@ struct NestedPieceWorldImage {
         world.occurrenceCount = occurrences.size();
         world.trackSchedules = tracks.data();
         world.trackScheduleCount = tracks.size();
-        world.pieceSchedules = pieces.data();
-        world.pieceScheduleCount = pieces.size();
+        world.segmentSchedules = segments.data();
+        world.segmentScheduleCount = segments.size();
     }
 
     harken::PlayableRefV1 Root() const {
-        return pieces[1].rootDefinition;
+        return segments[1].rootDefinition;
     }
 
-    void AddValidSoundSiblingBeforeExpiredNestedPiece() {
+    void AddValidSoundSiblingBeforeExpiredNestedSegment() {
         mixedOuterPlacements[0].stablePlacementOrdinal = 0;
         mixedOuterPlacements[0].stableOccurrenceOrdinal = 9;
         mixedOuterPlacements[0].content = placements[0].content;
@@ -3040,8 +3040,8 @@ struct NestedPieceWorldImage {
             harken::ComputeTrackScheduleFingerprintV1(tracks[1]);
         trackRefs[1].trackScheduleSemanticFingerprint =
             tracks[1].scheduleSemanticFingerprint;
-        pieces[1].scheduleSemanticFingerprint =
-            harken::ComputePieceScheduleFingerprintV1(pieces[1]);
+        segments[1].scheduleSemanticFingerprint =
+            harken::ComputeSegmentScheduleFingerprintV1(segments[1]);
 
         mixedOccurrences[0] = occurrences[0];
         mixedOccurrences[1] = occurrences[1];
@@ -3584,34 +3584,34 @@ struct SequenceQueueCompositeTrackWorldImage {
     }
 };
 
-struct SequenceQueueCompositePieceWorldImage
+struct SequenceQueueCompositeSegmentWorldImage
     : SequenceQueueCompositeTrackWorldImage {
-    std::array<harken::PlayablePropertyProgramViewV1, 5> pieceProperties{};
+    std::array<harken::PlayablePropertyProgramViewV1, 5> segmentProperties{};
     harken::ScheduleTrackRefV1 trackRef{};
     harken::ScheduleMarkerV1 marker{};
-    harken::PieceScheduleProgramViewV1 piece{};
+    harken::SegmentScheduleProgramViewV1 segment{};
 
-    SequenceQueueCompositePieceWorldImage(
+    SequenceQueueCompositeSegmentWorldImage(
         std::uint64_t firstRevision, std::uint64_t secondRevision)
         : SequenceQueueCompositeTrackWorldImage(firstRevision,
                                                 secondRevision) {
         std::copy(schedule.properties.begin(), schedule.properties.end(),
-                  pieceProperties.begin());
-        pieceProperties[3].contentPropertyKind =
-            harken::playableproperties::ContentPropertyKindV1::Piece;
-        pieceProperties[3].stableId = harkentest::ObjectId(8001);
-        pieceProperties[3].authoredStableOrder = 3;
-        pieceProperties[3].contentRevision = 9001;
-        pieceProperties[3].routeStableId = VN_BUS_MASTER;
-        pieceProperties[3].compatibilityFingerprint = 4;
-        pieceProperties[3].payload = ResolvedPayload();
-        pieceProperties[3].programSemanticFingerprint =
-            harken::ComputePlayablePropertyFingerprintV1(pieceProperties[3]);
-        pieceProperties[4] = properties[3];
-        pieceProperties[4].authoredStableOrder = 4;
-        pieceProperties[4].compatibilityFingerprint = 5;
-        pieceProperties[4].programSemanticFingerprint =
-            harken::ComputePlayablePropertyFingerprintV1(pieceProperties[4]);
+                  segmentProperties.begin());
+        segmentProperties[3].contentPropertyKind =
+            harken::playableproperties::ContentPropertyKindV1::Segment;
+        segmentProperties[3].stableId = harkentest::ObjectId(8001);
+        segmentProperties[3].authoredStableOrder = 3;
+        segmentProperties[3].contentRevision = 9001;
+        segmentProperties[3].routeStableId = VN_BUS_MASTER;
+        segmentProperties[3].compatibilityFingerprint = 4;
+        segmentProperties[3].payload = ResolvedPayload();
+        segmentProperties[3].programSemanticFingerprint =
+            harken::ComputePlayablePropertyFingerprintV1(segmentProperties[3]);
+        segmentProperties[4] = properties[3];
+        segmentProperties[4].authoredStableOrder = 4;
+        segmentProperties[4].compatibilityFingerprint = 5;
+        segmentProperties[4].programSemanticFingerprint =
+            harken::ComputePlayablePropertyFingerprintV1(segmentProperties[4]);
 
         schedule.placements[1].authoredStart = 0;
         schedule.track.scheduleSemanticFingerprint =
@@ -3622,30 +3622,30 @@ struct SequenceQueueCompositePieceWorldImage
         marker.stableMarkerId = harkentest::ObjectId(10001);
         marker.markerId = 11;
         marker.position = 0;
-        piece.rootDefinition.kind = harken::PlayableKindV1::Piece;
-        piece.rootDefinition.stableId = pieceProperties[3].stableId;
-        piece.rootDefinition.expectedProgramSemanticFingerprint =
-            pieceProperties[3].programSemanticFingerprint;
-        piece.rootDefinition.contentRevision =
-            pieceProperties[3].contentRevision;
-        piece.rootDefinition.routeStableId = VN_BUS_MASTER;
-        piece.rootDefinition.compatibilityFingerprint = 4;
-        piece.timeKind = harken::ScheduleTimeKindV1::AbsoluteNanoseconds;
-        piece.startPointKind = 1;
-        piece.startMarkerId = marker.markerId;
-        piece.trackRefCount = 1;
-        piece.trackRefs = &trackRef;
-        piece.markerCount = 1;
-        piece.markers = &marker;
-        piece.scheduleSemanticFingerprint =
-            harken::ComputePieceScheduleFingerprintV1(piece);
+        segment.rootDefinition.kind = harken::PlayableKindV1::Segment;
+        segment.rootDefinition.stableId = segmentProperties[3].stableId;
+        segment.rootDefinition.expectedProgramSemanticFingerprint =
+            segmentProperties[3].programSemanticFingerprint;
+        segment.rootDefinition.contentRevision =
+            segmentProperties[3].contentRevision;
+        segment.rootDefinition.routeStableId = VN_BUS_MASTER;
+        segment.rootDefinition.compatibilityFingerprint = 4;
+        segment.timeKind = harken::ScheduleTimeKindV1::AbsoluteNanoseconds;
+        segment.startPointKind = 1;
+        segment.startMarkerId = marker.markerId;
+        segment.trackRefCount = 1;
+        segment.trackRefs = &trackRef;
+        segment.markerCount = 1;
+        segment.markers = &marker;
+        segment.scheduleSemanticFingerprint =
+            harken::ComputeSegmentScheduleFingerprintV1(segment);
 
-        children[0].playable = piece.rootDefinition;
+        children[0].playable = segment.rootDefinition;
         children[0].timingHint = harken::MakeScheduleReferenceTimingHint(
-            harken::PlayableKindV1::Piece, piece.rootDefinition.stableId,
-            piece.scheduleSemanticFingerprint);
+            harken::PlayableKindV1::Segment, segment.rootDefinition.stableId,
+            segment.scheduleSemanticFingerprint);
         container.programSemanticFingerprint =
-            pieceProperties[4].programSemanticFingerprint;
+            segmentProperties[4].programSemanticFingerprint;
         for (std::uint32_t index = 0; index < children.size(); ++index) {
             occurrences[index].parentProgramSemanticFingerprint =
                 container.programSemanticFingerprint;
@@ -3654,10 +3654,10 @@ struct SequenceQueueCompositePieceWorldImage
                 harken::ComputePlayableOccurrenceFingerprintV1(
                     occurrences[index]);
         }
-        world.properties = pieceProperties.data();
-        world.propertyCount = pieceProperties.size();
-        world.pieceSchedules = &piece;
-        world.pieceScheduleCount = 1;
+        world.properties = segmentProperties.data();
+        world.propertyCount = segmentProperties.size();
+        world.segmentSchedules = &segment;
+        world.segmentScheduleCount = 1;
     }
 
     harken::PlayableRefV1 Root() const {
@@ -3665,8 +3665,8 @@ struct SequenceQueueCompositePieceWorldImage
         root.kind = harken::PlayableKindV1::Container;
         root.stableId = harkentest::ObjectId(kContainer);
         root.expectedProgramSemanticFingerprint =
-            pieceProperties[4].programSemanticFingerprint;
-        root.contentRevision = pieceProperties[4].contentRevision;
+            segmentProperties[4].programSemanticFingerprint;
+        root.contentRevision = segmentProperties[4].contentRevision;
         root.routeStableId = VN_BUS_MASTER;
         root.compatibilityFingerprint = 5;
         return root;
@@ -14569,7 +14569,7 @@ TEST(PlayableStart,
     ASSERT_NE(nullptr, engine);
 
     const harken::PlayableInstanceHandle owner =
-        engine->playableInstances.Acquire(harken::PlayableKind::Piece, 0);
+        engine->playableInstances.Acquire(harken::PlayableKind::Segment, 0);
     ASSERT_NE(0u, owner);
     const std::uint64_t ownerScheduleEpoch =
         engine->playableInstances.Classify(owner).scheduleEpoch;
@@ -15258,9 +15258,9 @@ TEST(PlayableStart, DirectTrackUsesCanonicalScheduleAndSoundsFirstClick) {
     EXPECT_EQ(harken::PlayableKind::Track, instance.kind);
 }
 
-TEST(PlayableStart, TrackContainerClipAndPieceWrapperProducePcmAndNaturallyReclaim) {
+TEST(PlayableStart, TrackContainerClipAndSegmentWrapperProducePcmAndNaturallyReclaim) {
     for (unsigned scenario = 0; scenario < 5; ++scenario) {
-        const bool pieceRoot = scenario == 1;
+        const bool segmentRoot = scenario == 1;
         const bool occurrencePressure = scenario == 2 || scenario == 4;
         const bool wrapperRoot = scenario >= 3;
         const bool wrapperStop = scenario == 3;
@@ -15293,26 +15293,26 @@ TEST(PlayableStart, TrackContainerClipAndPieceWrapperProducePcmAndNaturallyRecla
             harken::ComputePlayableOccurrenceFingerprintV1(image.occurrence);
         std::array<harken::PlayableOccurrencePropertyViewV1, 3> occurrences{
             sequence.occurrences[0], image.occurrence, {}};
-        harken::PieceScheduleProgramViewV1 piece{};
+        harken::SegmentScheduleProgramViewV1 segment{};
         harken::ScheduleTrackRefV1 trackRef{};
-        if (pieceRoot) {
+        if (segmentRoot) {
             properties[3] = properties[2];
             properties[3].contentPropertyKind =
-                harken::playableproperties::ContentPropertyKindV1::Piece;
+                harken::playableproperties::ContentPropertyKindV1::Segment;
             properties[3].stableId = harkentest::ObjectId(8001);
             properties[3].authoredStableOrder = 3;
             properties[3].programSemanticFingerprint =
                 harken::ComputePlayablePropertyFingerprintV1(properties[3]);
-            piece.rootDefinition = image.track.rootDefinition;
-            piece.rootDefinition.kind = harken::PlayableKindV1::Piece;
-            piece.rootDefinition.stableId = properties[3].stableId;
-            piece.rootDefinition.expectedProgramSemanticFingerprint =
+            segment.rootDefinition = image.track.rootDefinition;
+            segment.rootDefinition.kind = harken::PlayableKindV1::Segment;
+            segment.rootDefinition.stableId = properties[3].stableId;
+            segment.rootDefinition.expectedProgramSemanticFingerprint =
                 properties[3].programSemanticFingerprint;
             trackRef.trackDefinition = image.track.rootDefinition;
             trackRef.trackScheduleSemanticFingerprint = image.track.scheduleSemanticFingerprint;
-            piece.trackRefCount = 1;
-            piece.trackRefs = &trackRef;
-            piece.scheduleSemanticFingerprint = harken::ComputePieceScheduleFingerprintV1(piece);
+            segment.trackRefCount = 1;
+            segment.trackRefs = &trackRef;
+            segment.scheduleSemanticFingerprint = harken::ComputeSegmentScheduleFingerprintV1(segment);
         }
         if (wrapperRoot) {
             properties[3] = sequence.properties[2];
@@ -15339,20 +15339,20 @@ TEST(PlayableStart, TrackContainerClipAndPieceWrapperProducePcmAndNaturallyRecla
         }
         auto install = sequence.world;
         install.playableProperties = properties.data();
-        install.playablePropertyCount = pieceRoot || wrapperRoot ? 4u : 3u;
+        install.playablePropertyCount = segmentRoot || wrapperRoot ? 4u : 3u;
         install.playableOccurrences = occurrences.data();
         install.playableOccurrenceCount = wrapperRoot ? 3u : 2u;
         install.containerCount = wrapperRoot ? 2u : 1u;
         install.trackSchedules = &image.track;
         install.trackScheduleCount = 1;
-        install.pieceSchedules = pieceRoot ? &piece : nullptr;
-        install.pieceScheduleCount = pieceRoot ? 1u : 0u;
+        install.segmentSchedules = segmentRoot ? &segment : nullptr;
+        install.segmentScheduleCount = segmentRoot ? 1u : 0u;
         install.identity.runtimeSemanticFingerprint =
             harken::ComputeCurrentWorldFingerprintV4(install);
         ASSERT_EQ(harken::WorldInstallStatus::Ok,
             harken::InstallContainerWorldV1(*engine, install).status);
         harken::PlayableStartRequest request{};
-        request.root = wrapperRoot ? sequence.Root() : pieceRoot ? piece.rootDefinition : image.Root();
+        request.root = wrapperRoot ? sequence.Root() : segmentRoot ? segment.rootDefinition : image.Root();
         const auto capture = wrapperStop ? harkentest::monitor::OpenIdentityEvents() : 0u;
         std::vector<harkentest::monitor::IdentityRecord> records;
         std::vector<harken::PlayableInstanceHandle> stoppedChildren;
@@ -15416,7 +15416,7 @@ TEST(PlayableStart, TrackContainerClipAndPieceWrapperProducePcmAndNaturallyRecla
         ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
         ASSERT_NE(0u, started.instance);
         EXPECT_EQ(wrapperRoot ? harken::PlayableKind::Container
-                              : pieceRoot ? harken::PlayableKind::Piece : harken::PlayableKind::Track,
+                              : segmentRoot ? harken::PlayableKind::Segment : harken::PlayableKind::Track,
             engine->playableInstances.Classify(started.instance).kind);
         bool audible = false;
         for (unsigned block = 0; block < 32 && !audible; ++block) {
@@ -15741,7 +15741,7 @@ TEST(PlayableStart, ActionSubFrameTrackPublishesZeroWorkLogicalCompletion) {
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
 
-TEST(PlayableStart, NestedZeroWorkPieceDoesNotDiscardValidSoundSibling) {
+TEST(PlayableStart, NestedZeroWorkSegmentDoesNotDiscardValidSoundSibling) {
     VnConfig config = harkentest::MakeNullConfig(2, 64, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -15750,9 +15750,9 @@ TEST(PlayableStart, NestedZeroWorkPieceDoesNotDiscardValidSoundSibling) {
     std::vector<float> samples(96000, 0.25f);
     const VnPCMDesc pcm = harkentest::MonoDesc(samples, 48000);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
-    NestedPieceWorldImage image(
+    NestedSegmentWorldImage image(
         engine->registry.Lookup(kSound).contentRevision);
-    image.AddValidSoundSiblingBeforeExpiredNestedPiece();
+    image.AddValidSoundSiblingBeforeExpiredNestedSegment();
 
     harken::PlayableStartRequest request{};
     request.root = image.Root();
@@ -15764,7 +15764,7 @@ TEST(PlayableStart, NestedZeroWorkPieceDoesNotDiscardValidSoundSibling) {
     EXPECT_EQ(1u, engine->voices.ActiveCount());
 }
 
-TEST(PlayableStart, NestedZeroWorkPieceCompletesAtInheritedClipBoundary) {
+TEST(PlayableStart, NestedZeroWorkSegmentCompletesAtInheritedClipBoundary) {
     VnConfig config = harkentest::MakeNullConfig(2, 64, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -15773,15 +15773,15 @@ TEST(PlayableStart, NestedZeroWorkPieceCompletesAtInheritedClipBoundary) {
     std::vector<float> samples(96000, 0.25f);
     const VnPCMDesc pcm = harkentest::MonoDesc(samples, 48000);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
-    NestedPieceWorldImage image(
+    NestedSegmentWorldImage image(
         engine->registry.Lookup(kSound).contentRevision);
     image.placements[1].authoredDuration = INT64_C(10000000);
     image.tracks[1].scheduleSemanticFingerprint =
         harken::ComputeTrackScheduleFingerprintV1(image.tracks[1]);
     image.trackRefs[1].trackScheduleSemanticFingerprint =
         image.tracks[1].scheduleSemanticFingerprint;
-    image.pieces[1].scheduleSemanticFingerprint =
-        harken::ComputePieceScheduleFingerprintV1(image.pieces[1]);
+    image.segments[1].scheduleSemanticFingerprint =
+        harken::ComputeSegmentScheduleFingerprintV1(image.segments[1]);
     const std::uint64_t expectedBase = std::max<std::uint64_t>(
         engine->timelinePool.PublishCutoffFrame(),
         std::max<std::uint64_t>(
@@ -16912,22 +16912,22 @@ TEST(PlayableStart, NestedClipsUseTheEarliestAuthoredDeadline) {
     std::vector<float> samples(8192, 0.25f);
     const VnPCMDesc pcm = harkentest::MonoDesc(samples, 48000);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
-    NestedPieceWorldImage image(
+    NestedSegmentWorldImage image(
         engine->registry.Lookup(kSound).contentRevision);
     image.placements[0].authoredDuration = 96;
     image.tracks[0].scheduleSemanticFingerprint =
         harken::ComputeTrackScheduleFingerprintV1(image.tracks[0]);
     image.trackRefs[0].trackScheduleSemanticFingerprint =
         image.tracks[0].scheduleSemanticFingerprint;
-    image.pieces[0].scheduleSemanticFingerprint =
-        harken::ComputePieceScheduleFingerprintV1(image.pieces[0]);
+    image.segments[0].scheduleSemanticFingerprint =
+        harken::ComputeSegmentScheduleFingerprintV1(image.segments[0]);
     image.placements[1].authoredDuration = INT64_C(60000000);
     image.tracks[1].scheduleSemanticFingerprint =
         harken::ComputeTrackScheduleFingerprintV1(image.tracks[1]);
     image.trackRefs[1].trackScheduleSemanticFingerprint =
         image.tracks[1].scheduleSemanticFingerprint;
-    image.pieces[1].scheduleSemanticFingerprint =
-        harken::ComputePieceScheduleFingerprintV1(image.pieces[1]);
+    image.segments[1].scheduleSemanticFingerprint =
+        harken::ComputeSegmentScheduleFingerprintV1(image.segments[1]);
 
     harken::PlayableStartRequest request{};
     request.root = image.Root();
@@ -17063,7 +17063,7 @@ TEST(PlayableStart, AbsoluteClipDeadlineOverflowRefusesAtomically) {
     EXPECT_EQ(arms, engine->timelineArms.LiveCount());
 }
 
-TEST(PlayableStart, DirectMusicalPieceSubtractsStartMarkerBeforeScheduling) {
+TEST(PlayableStart, DirectMusicalSegmentSubtractsStartMarkerBeforeScheduling) {
     VnConfig config = harkentest::MakeNullConfig(2, 64, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -17072,7 +17072,7 @@ TEST(PlayableStart, DirectMusicalPieceSubtractsStartMarkerBeforeScheduling) {
     std::vector<float> samples(512, 0.25f);
     const VnPCMDesc pcm = harkentest::MonoDesc(samples, 48000);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
-    DirectPieceWorldImage image(
+    DirectSegmentWorldImage image(
         engine->registry.Lookup(kSound).contentRevision,
         harken::ScheduleTimeKindV1::MusicalTicks, 960, 480);
     harken::PlayableStartRequest request{};
@@ -17093,7 +17093,7 @@ TEST(PlayableStart, DirectMusicalPieceSubtractsStartMarkerBeforeScheduling) {
         });
     ASSERT_NE(engine->playableServices.end(), row);
     EXPECT_EQ(expectedOffset, row->startFrame - expectedBase);
-    EXPECT_EQ(harken::PlayableKind::Piece,
+    EXPECT_EQ(harken::PlayableKind::Segment,
               engine->playableInstances.Classify(started.instance).kind);
     bool audible = false;
     for (std::uint32_t block = 0; block < 220; ++block) {
@@ -17108,7 +17108,7 @@ TEST(PlayableStart, DirectMusicalPieceSubtractsStartMarkerBeforeScheduling) {
     EXPECT_TRUE(audible);
 }
 
-TEST(PlayableStart, NestedPieceOwnsANewClockAndPreservesOuterOffset) {
+TEST(PlayableStart, NestedSegmentOwnsANewClockAndPreservesOuterOffset) {
     VnConfig config = harkentest::MakeNullConfig(2, 64, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -17117,7 +17117,7 @@ TEST(PlayableStart, NestedPieceOwnsANewClockAndPreservesOuterOffset) {
     std::vector<float> samples(512, 0.25f);
     const VnPCMDesc pcm = harkentest::MonoDesc(samples, 48000);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
-    NestedPieceWorldImage image(
+    NestedSegmentWorldImage image(
         engine->registry.Lookup(kSound).contentRevision);
     const std::array<std::uint32_t, 2> expectedPath = {8, 7};
     ASSERT_EQ(harken::ResolvedPlayablePropertyCutStatusV1::Ok,
@@ -17789,7 +17789,7 @@ TEST(PlayableStart, DirectTrackStartsEverySimultaneousLeaf) {
     EXPECT_EQ(instanceBaseline, engine->playableInstances.LiveCount());
 }
 
-TEST(PlayableStart, PieceTracksSharingOrdinalZeroInstallEachLeafGroupSnapshot) {
+TEST(PlayableStart, SegmentTracksSharingOrdinalZeroInstallEachLeafGroupSnapshot) {
     auto config = harkentest::MakeNullConfig(4, 64, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -17802,7 +17802,7 @@ TEST(PlayableStart, PieceTracksSharingOrdinalZeroInstallEachLeafGroupSnapshot) {
     const auto secondPcm = harkentest::MonoDesc(second, 48000);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &firstPcm));
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSecondSound, &secondPcm));
-    DirectCompositePieceWorldImage image(
+    DirectCompositeSegmentWorldImage image(
         engine->registry.Lookup(kSound).contentRevision,
         engine->registry.Lookup(kSecondSound).contentRevision);
     std::array<harken::PlayablePropertyProgramViewV1, 5> properties{};
@@ -17849,10 +17849,10 @@ TEST(PlayableStart, PieceTracksSharingOrdinalZeroInstallEachLeafGroupSnapshot) {
         trackRefs[index].trackScheduleSemanticFingerprint = tracks[index].scheduleSemanticFingerprint;
         trackRefs[index].stableTrackOrdinal = index;
     }
-    image.piece.rootDefinition.expectedProgramSemanticFingerprint = properties[4].programSemanticFingerprint;
-    image.piece.trackRefCount = 2;
-    image.piece.trackRefs = trackRefs.data();
-    image.piece.scheduleSemanticFingerprint = harken::ComputePieceScheduleFingerprintV1(image.piece);
+    image.segment.rootDefinition.expectedProgramSemanticFingerprint = properties[4].programSemanticFingerprint;
+    image.segment.trackRefCount = 2;
+    image.segment.trackRefs = trackRefs.data();
+    image.segment.scheduleSemanticFingerprint = harken::ComputeSegmentScheduleFingerprintV1(image.segment);
     image.world.properties = properties.data();
     image.world.propertyCount = properties.size();
     image.world.trackSchedules = tracks.data();
@@ -17896,7 +17896,7 @@ TEST(PlayableStart, PieceTracksSharingOrdinalZeroInstallEachLeafGroupSnapshot) {
     EXPECT_TRUE(observed[1]);
 }
 
-TEST(PlayableStart, DirectPieceStartsEverySimultaneousLeaf) {
+TEST(PlayableStart, DirectSegmentStartsEverySimultaneousLeaf) {
     VnConfig config = harkentest::MakeNullConfig(3, 64, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -17908,7 +17908,7 @@ TEST(PlayableStart, DirectPieceStartsEverySimultaneousLeaf) {
     const VnPCMDesc secondPcm = harkentest::MonoDesc(second, 48000);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &firstPcm));
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSecondSound, &secondPcm));
-    DirectCompositePieceWorldImage image(
+    DirectCompositeSegmentWorldImage image(
         engine->registry.Lookup(kSound).contentRevision,
         engine->registry.Lookup(kSecondSound).contentRevision);
     harken::PlayableStartRequest request{};
@@ -17921,7 +17921,7 @@ TEST(PlayableStart, DirectPieceStartsEverySimultaneousLeaf) {
     harken::PlayableRootMetadata metadata{};
     ASSERT_TRUE(engine->playableInstances.CaptureRootMetadata(
         started.instance, &metadata));
-    EXPECT_EQ(harken::PlayableKind::Piece, metadata.definitionKind);
+    EXPECT_EQ(harken::PlayableKind::Segment, metadata.definitionKind);
     EXPECT_EQ(image.Root().stableId, metadata.definitionStableId);
     EXPECT_EQ(image.Root().expectedProgramSemanticFingerprint,
               metadata.programSemanticFingerprint);
@@ -20011,7 +20011,7 @@ TEST(PlayableStart, QueueStaggeredCompositeSuccessorWaitsUntilAllStartsEnterWind
     EXPECT_EQ(occurrenceBaseline, engine->timelineOccurrences.OccupiedCount());
 }
 
-TEST(PlayableStart, QueueCompositePieceSuccessorStartsEveryLeafAtomically) {
+TEST(PlayableStart, QueueCompositeSegmentSuccessorStartsEveryLeafAtomically) {
     VnConfig config = harkentest::MakeNullConfig(4, 64, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -20023,7 +20023,7 @@ TEST(PlayableStart, QueueCompositePieceSuccessorStartsEveryLeafAtomically) {
     const VnPCMDesc secondPcm = harkentest::MonoDesc(second, 48000);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &firstPcm));
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSecondSound, &secondPcm));
-    SequenceQueueCompositePieceWorldImage image(
+    SequenceQueueCompositeSegmentWorldImage image(
         engine->registry.Lookup(kSound).contentRevision,
         engine->registry.Lookup(kSecondSound).contentRevision);
     std::swap(image.children[0], image.children[1]);
@@ -20082,7 +20082,7 @@ TEST(PlayableStart, QueueCompositePieceSuccessorStartsEveryLeafAtomically) {
     EXPECT_TRUE(leafStarted[1]);
 }
 
-TEST(PlayableStart, QueueTerminalCompositePiecePlaysEveryLeaf) {
+TEST(PlayableStart, QueueTerminalCompositeSegmentPlaysEveryLeaf) {
     VnConfig config = harkentest::MakeNullConfig(8, 64, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -20094,7 +20094,7 @@ TEST(PlayableStart, QueueTerminalCompositePiecePlaysEveryLeaf) {
     const VnPCMDesc secondPcm = harkentest::MonoDesc(second, 48000);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &firstPcm));
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSecondSound, &secondPcm));
-    SequenceQueueCompositePieceWorldImage image(
+    SequenceQueueCompositeSegmentWorldImage image(
         engine->registry.Lookup(kSound).contentRevision,
         engine->registry.Lookup(kSecondSound).contentRevision);
     image.container.childCount = 1;
@@ -20296,7 +20296,7 @@ TEST(PlayableStart,
 }
 
 TEST(PlayableStart,
-     QueueImmediateTransitionFadesEveryCompositePieceTargetLeaf) {
+     QueueImmediateTransitionFadesEveryCompositeSegmentTargetLeaf) {
     VnConfig config = harkentest::MakeNullConfig(4, 64, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -20308,7 +20308,7 @@ TEST(PlayableStart,
     const VnPCMDesc secondPcm = harkentest::MonoDesc(second, 48000);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &firstPcm));
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSecondSound, &secondPcm));
-    SequenceQueueCompositePieceWorldImage image(
+    SequenceQueueCompositeSegmentWorldImage image(
         engine->registry.Lookup(kSound).contentRevision,
         engine->registry.Lookup(kSecondSound).contentRevision);
     std::swap(image.children[0], image.children[1]);
@@ -20595,7 +20595,7 @@ TEST(PlayableStart,
 }
 
 TEST(PlayableStart,
-     QueueNaturalEndTransitionFadesEveryLiveCompositePieceSourceLeaf) {
+     QueueNaturalEndTransitionFadesEveryLiveCompositeSegmentSourceLeaf) {
     VnConfig config = harkentest::MakeNullConfig(8, 64, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -20607,7 +20607,7 @@ TEST(PlayableStart,
     const VnPCMDesc secondPcm = harkentest::MonoDesc(second, 48000);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &firstPcm));
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSecondSound, &secondPcm));
-    SequenceQueueCompositePieceWorldImage image(
+    SequenceQueueCompositeSegmentWorldImage image(
         engine->registry.Lookup(kSound).contentRevision,
         engine->registry.Lookup(kSecondSound).contentRevision);
     image.EnableNaturalEndSourceTransition(128);
@@ -21424,7 +21424,7 @@ TEST(PlayableStart,
 }
 
 TEST(PlayableStart,
-     VariableControlTransitionFadesEveryCompositePieceSourceLeaf) {
+     VariableControlTransitionFadesEveryCompositeSegmentSourceLeaf) {
     VnConfig config = harkentest::MakeNullConfig(5, 64, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -21444,7 +21444,7 @@ TEST(PlayableStart,
                   UINT64_C(0x56434D554C545049)).status);
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 7.0f));
     harkentest::AdvanceVariableWrite(engine);
-    VariableControlCompositePieceWorldImage image(
+    VariableControlCompositeSegmentWorldImage image(
         engine->registry.Lookup(kSound).contentRevision,
         engine->registry.Lookup(kSecondSound).contentRevision,
         engine->variables.CurrentWorldGeneration());
@@ -22135,7 +22135,7 @@ TEST(PlayableStart,
 }
 
 TEST(PlayableStart,
-     VariableControlCompositePieceRetriggerStartsAndExitReclaimsEveryLeaf) {
+     VariableControlCompositeSegmentRetriggerStartsAndExitReclaimsEveryLeaf) {
     VnConfig config = harkentest::MakeNullConfig(4, 64, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -22153,7 +22153,7 @@ TEST(PlayableStart,
               harkentest::InstallDefinitionsWorld(
                   engine, &variable, 1,
                   UINT64_C(0x56434D554C545045)).status);
-    VariableControlCompositePieceWorldImage image(
+    VariableControlCompositeSegmentWorldImage image(
         engine->registry.Lookup(kSound).contentRevision,
         engine->registry.Lookup(kSecondSound).contentRevision,
         engine->variables.CurrentWorldGeneration());
@@ -22196,7 +22196,7 @@ TEST(PlayableStart,
     }
     ASSERT_TRUE(entered);
     const std::size_t base = row->scheduleStorageBase;
-    const std::array<VnVoiceHandle, 2> pieceVoices = {
+    const std::array<VnVoiceHandle, 2> segmentVoices = {
         engine->ReadPlayableMember(base).render,
         engine->ReadPlayableMember(base + 1u).render};
 
@@ -22208,8 +22208,8 @@ TEST(PlayableStart,
         silent = !row->variableControlDiscreteRetargetPrepared &&
             row->variableControlDiscreteSilent &&
             row->variableControlDiscreteMemberCount == 0u &&
-            engine->voices.Resolve(pieceVoices[0]) == nullptr &&
-            engine->voices.Resolve(pieceVoices[1]) == nullptr;
+            engine->voices.Resolve(segmentVoices[0]) == nullptr &&
+            engine->voices.Resolve(segmentVoices[1]) == nullptr;
     }
     EXPECT_TRUE(silent);
     ASSERT_NO_FATAL_FAILURE(ExpectVariableControlNaturallyCompleted(*engine, started.instance));
@@ -23005,8 +23005,8 @@ TEST(PlayableStart, SequenceQueueLoopReturnsToFirstSoundWithoutPoolGrowth) {
 }
 
 TEST(PlayableStart, SequenceQueueLogicalChildrenRetireDuringRepeatedPlayback) {
-    for (const bool pieceChild : {false, true}) for (const auto cycles : {0u, 4u}) {
-        SCOPED_TRACE(pieceChild);
+    for (const bool segmentChild : {false, true}) for (const auto cycles : {0u, 4u}) {
+        SCOPED_TRACE(segmentChild);
         SCOPED_TRACE(cycles);
         harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -23016,7 +23016,7 @@ TEST(PlayableStart, SequenceQueueLogicalChildrenRetireDuringRepeatedPlayback) {
         const auto secondPcm = harkentest::MonoDesc(second, 48000);
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &firstPcm));
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSecondSound, &secondPcm));
-        SequenceQueueCompositePieceWorldImage image(engine->registry.Lookup(kSound).contentRevision,
+        SequenceQueueCompositeSegmentWorldImage image(engine->registry.Lookup(kSound).contentRevision,
             engine->registry.Lookup(kSecondSound).contentRevision);
         image.schedule.placements[0].authoredStart = INT64_C(10000000);
         image.schedule.placements[1].authoredStart = INT64_C(20000000);
@@ -23024,11 +23024,11 @@ TEST(PlayableStart, SequenceQueueLogicalChildrenRetireDuringRepeatedPlayback) {
         image.schedule.track.scheduleSemanticFingerprint =
             harken::ComputeTrackScheduleFingerprintV1(image.schedule.track);
         image.trackRef.trackScheduleSemanticFingerprint = image.schedule.track.scheduleSemanticFingerprint;
-        image.piece.scheduleSemanticFingerprint = harken::ComputePieceScheduleFingerprintV1(image.piece);
-        image.children[0].playable = pieceChild ? image.piece.rootDefinition : image.schedule.track.rootDefinition;
+        image.segment.scheduleSemanticFingerprint = harken::ComputeSegmentScheduleFingerprintV1(image.segment);
+        image.children[0].playable = segmentChild ? image.segment.rootDefinition : image.schedule.track.rootDefinition;
         image.children[0].timingHint = harken::MakeScheduleReferenceTimingHint(
             image.children[0].playable.kind, image.children[0].playable.stableId,
-            pieceChild ? image.piece.scheduleSemanticFingerprint : image.schedule.track.scheduleSemanticFingerprint);
+            segmentChild ? image.segment.scheduleSemanticFingerprint : image.schedule.track.scheduleSemanticFingerprint);
         image.children[0].authoredStableOrder = 1;
         image.children[1].authoredStableOrder = 0;
         image.occurrences[0].childPlayable = image.children[0].playable;

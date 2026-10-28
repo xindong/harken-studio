@@ -26,7 +26,7 @@ static_assert(static_cast<std::uint32_t>(
 static_assert(static_cast<std::uint32_t>(
                   harken::AuthoredCompletionClassV1::FiniteMediaCandidate) == 0);
 static_assert(static_cast<std::uint32_t>(
-                  harken::AuthoredCompletionClassV1::BoundedTrackPieceCandidate) == 1);
+                  harken::AuthoredCompletionClassV1::BoundedTrackSegmentCandidate) == 1);
 static_assert(static_cast<std::uint32_t>(
                   harken::AuthoredCompletionClassV1::SignalOnly) == 2);
 
@@ -991,7 +991,7 @@ TEST(CurrentWorldInstall, RawCanonicalVariableDefinitionsRejectNegativeZero) {
 
 }
 
-TEST(CurrentWorldInstall, TrackPlacementIsDeepOwnedAndPieceKeepsOnlyTrackReference) {
+TEST(CurrentWorldInstall, TrackPlacementIsDeepOwnedAndSegmentKeepsOnlyTrackReference) {
     harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
 
@@ -1013,7 +1013,7 @@ TEST(CurrentWorldInstall, TrackPlacementIsDeepOwnedAndPieceKeepsOnlyTrackReferen
     properties[1].programSemanticFingerprint =
         harken::ComputePlayablePropertyFingerprintV1(properties[1]);
     properties[2].contentPropertyKind =
-        harken::playableproperties::ContentPropertyKindV1::Piece;
+        harken::playableproperties::ContentPropertyKindV1::Segment;
     properties[2].stableId = harkentest::ObjectId(30);
     properties[2].authoredStableOrder = 2;
     properties[2].contentRevision = 103;
@@ -1059,19 +1059,19 @@ TEST(CurrentWorldInstall, TrackPlacementIsDeepOwnedAndPieceKeepsOnlyTrackReferen
     trackRef.trackDefinition = track.rootDefinition;
     trackRef.trackScheduleSemanticFingerprint =
         track.scheduleSemanticFingerprint;
-    harken::PieceScheduleProgramViewV1 piece{};
-    piece.rootDefinition.kind = harken::PlayableKindV1::Piece;
-    piece.rootDefinition.stableId = properties[2].stableId;
-    piece.rootDefinition.expectedProgramSemanticFingerprint =
+    harken::SegmentScheduleProgramViewV1 segment{};
+    segment.rootDefinition.kind = harken::PlayableKindV1::Segment;
+    segment.rootDefinition.stableId = properties[2].stableId;
+    segment.rootDefinition.expectedProgramSemanticFingerprint =
         properties[2].programSemanticFingerprint;
-    piece.rootDefinition.contentRevision = properties[2].contentRevision;
-    piece.trackRefCount = 1;
-    piece.trackRefs = &trackRef;
+    segment.rootDefinition.contentRevision = properties[2].contentRevision;
+    segment.trackRefCount = 1;
+    segment.trackRefs = &trackRef;
     harken::ScheduleMarkerV1 marker{harkentest::ObjectId(93), 1, 0, 250000000};
-    piece.markerCount = 1;
-    piece.markers = &marker;
-    piece.scheduleSemanticFingerprint =
-        harken::ComputePieceScheduleFingerprintV1(piece);
+    segment.markerCount = 1;
+    segment.markers = &marker;
+    segment.scheduleSemanticFingerprint =
+        harken::ComputeSegmentScheduleFingerprintV1(segment);
 
     harken::ContainerWorldInstallViewV1 world{};
     world.playableProperties = properties;
@@ -1080,8 +1080,8 @@ TEST(CurrentWorldInstall, TrackPlacementIsDeepOwnedAndPieceKeepsOnlyTrackReferen
     world.playableOccurrenceCount = 1;
     world.trackSchedules = &track;
     world.trackScheduleCount = 1;
-    world.pieceSchedules = &piece;
-    world.pieceScheduleCount = 1;
+    world.segmentSchedules = &segment;
+    world.segmentScheduleCount = 1;
     world.identity.capabilityMask = harken::kWorldCapabilityPlayableProperties;
     world.identity.runtimeSemanticFingerprint =
         harken::ComputeCurrentWorldFingerprintV4(world);
@@ -1099,10 +1099,10 @@ TEST(CurrentWorldInstall, TrackPlacementIsDeepOwnedAndPieceKeepsOnlyTrackReferen
         [](auto& capacity) { capacity.maxTrackSchedulePrograms = 0; },
         harken::WorldInstallStatus::Capacity);
     expectCapacityStatus(
-        [](auto& capacity) { capacity.maxPieceSchedulePrograms = 0; },
+        [](auto& capacity) { capacity.maxSegmentSchedulePrograms = 0; },
         harken::WorldInstallStatus::Capacity);
     expectCapacityStatus(
-        [](auto& capacity) { capacity.maxScheduleTrackRefsPerPiece = 0; },
+        [](auto& capacity) { capacity.maxScheduleTrackRefsPerSegment = 0; },
         harken::WorldInstallStatus::Capacity);
     expectCapacityStatus(
         [](auto& capacity) { capacity.maxScheduleTrackRefsTotal = 0; },
@@ -1114,13 +1114,13 @@ TEST(CurrentWorldInstall, TrackPlacementIsDeepOwnedAndPieceKeepsOnlyTrackReferen
         [](auto& capacity) { capacity.maxSchedulePlacementsTotal = 0; },
         harken::WorldInstallStatus::Capacity);
     expectCapacityStatus(
-        [](auto& capacity) { capacity.maxScheduleMarkersPerPiece = 0; },
+        [](auto& capacity) { capacity.maxScheduleMarkersPerSegment = 0; },
         harken::WorldInstallStatus::Capacity);
     expectCapacityStatus(
         [](auto& capacity) { capacity.maxScheduleMarkersTotal = 0; },
         harken::WorldInstallStatus::Capacity);
     expectCapacityStatus(
-        [](auto& capacity) { capacity.maxTrackPieceScheduleDepth = 1; },
+        [](auto& capacity) { capacity.maxTrackSegmentScheduleDepth = 1; },
         harken::WorldInstallStatus::Capacity);
 
     expectCapacityStatus(
@@ -1131,13 +1131,13 @@ TEST(CurrentWorldInstall, TrackPlacementIsDeepOwnedAndPieceKeepsOnlyTrackReferen
         harken::WorldInstallStatus::InvalidWorld);
     expectCapacityStatus(
         [](auto& capacity) {
-            capacity.maxPieceSchedulePrograms =
-                harken::kHardPieceScheduleProgramCapacity + 1;
+            capacity.maxSegmentSchedulePrograms =
+                harken::kHardSegmentScheduleProgramCapacity + 1;
         },
         harken::WorldInstallStatus::InvalidWorld);
     expectCapacityStatus(
         [](auto& capacity) {
-            capacity.maxScheduleTrackRefsPerPiece = 1025;
+            capacity.maxScheduleTrackRefsPerSegment = 1025;
         },
         harken::WorldInstallStatus::InvalidWorld);
     expectCapacityStatus(
@@ -1158,7 +1158,7 @@ TEST(CurrentWorldInstall, TrackPlacementIsDeepOwnedAndPieceKeepsOnlyTrackReferen
         },
         harken::WorldInstallStatus::InvalidWorld);
     expectCapacityStatus(
-        [](auto& capacity) { capacity.maxScheduleMarkersPerPiece = 65537; },
+        [](auto& capacity) { capacity.maxScheduleMarkersPerSegment = 65537; },
         harken::WorldInstallStatus::InvalidWorld);
     expectCapacityStatus(
         [](auto& capacity) {
@@ -1167,7 +1167,7 @@ TEST(CurrentWorldInstall, TrackPlacementIsDeepOwnedAndPieceKeepsOnlyTrackReferen
         },
         harken::WorldInstallStatus::InvalidWorld);
     expectCapacityStatus(
-        [](auto& capacity) { capacity.maxTrackPieceScheduleDepth = 65; },
+        [](auto& capacity) { capacity.maxTrackSegmentScheduleDepth = 65; },
         harken::WorldInstallStatus::InvalidWorld);
     world.identity.runtimeSemanticFingerprint =
         harken::ComputeCurrentWorldFingerprintV4(world);
@@ -1185,12 +1185,12 @@ TEST(CurrentWorldInstall, TrackPlacementIsDeepOwnedAndPieceKeepsOnlyTrackReferen
     trackRef.trackScheduleSemanticFingerprint = 0;
     const auto current = session.Engine()->variables.CurrentWorldInstallView();
     ASSERT_EQ(1u, current.trackScheduleCount);
-    ASSERT_EQ(1u, current.pieceScheduleCount);
+    ASSERT_EQ(1u, current.segmentScheduleCount);
     ASSERT_EQ(1u, current.trackSchedules[0].placementCount);
     EXPECT_EQ(500000000, current.trackSchedules[0].placements[0].authoredStart);
-    ASSERT_EQ(1u, current.pieceSchedules[0].trackRefCount);
+    ASSERT_EQ(1u, current.segmentSchedules[0].trackRefCount);
     EXPECT_EQ(track.scheduleSemanticFingerprint,
-              current.pieceSchedules[0]
+              current.segmentSchedules[0]
                   .trackRefs[0]
                   .trackScheduleSemanticFingerprint);
 
@@ -1214,8 +1214,8 @@ TEST(CurrentWorldInstall, TrackPlacementIsDeepOwnedAndPieceKeepsOnlyTrackReferen
         harken::ComputeTrackScheduleFingerprintV1(track);
     trackRef.trackScheduleSemanticFingerprint =
         track.scheduleSemanticFingerprint;
-    piece.scheduleSemanticFingerprint =
-        harken::ComputePieceScheduleFingerprintV1(piece);
+    segment.scheduleSemanticFingerprint =
+        harken::ComputeSegmentScheduleFingerprintV1(segment);
     world.playableOccurrences = occurrences;
     world.playableOccurrenceCount = 2;
     const auto expectRejectedWithoutMutation = [&](auto mutate, auto restore) {
@@ -1224,8 +1224,8 @@ TEST(CurrentWorldInstall, TrackPlacementIsDeepOwnedAndPieceKeepsOnlyTrackReferen
             harken::ComputeTrackScheduleFingerprintV1(track);
         trackRef.trackScheduleSemanticFingerprint =
             track.scheduleSemanticFingerprint;
-        piece.scheduleSemanticFingerprint =
-            harken::ComputePieceScheduleFingerprintV1(piece);
+        segment.scheduleSemanticFingerprint =
+            harken::ComputeSegmentScheduleFingerprintV1(segment);
         world.identity.runtimeSemanticFingerprint =
             harken::ComputeCurrentWorldFingerprintV4(world);
         const auto generation =
@@ -1275,8 +1275,8 @@ TEST(CurrentWorldInstall, TrackPlacementIsDeepOwnedAndPieceKeepsOnlyTrackReferen
         harken::ComputeTrackScheduleFingerprintV1(track);
     trackRef.trackScheduleSemanticFingerprint =
         track.scheduleSemanticFingerprint;
-    piece.scheduleSemanticFingerprint =
-        harken::ComputePieceScheduleFingerprintV1(piece);
+    segment.scheduleSemanticFingerprint =
+        harken::ComputeSegmentScheduleFingerprintV1(segment);
     world.identity.runtimeSemanticFingerprint =
         harken::ComputeCurrentWorldFingerprintV4(world);
     EXPECT_EQ(harken::WorldInstallStatus::Ok,
@@ -1290,18 +1290,18 @@ TEST(CurrentWorldInstall, TrackPlacementIsDeepOwnedAndPieceKeepsOnlyTrackReferen
     ownedProperties[3].contentRevision = 104;
     ownedProperties[3].programSemanticFingerprint =
         harken::ComputePlayablePropertyFingerprintV1(ownedProperties[3]);
-    harken::PieceScheduleProgramViewV1 pieces[2] = {piece, piece};
-    pieces[1].rootDefinition.stableId = ownedProperties[3].stableId;
-    pieces[1].rootDefinition.expectedProgramSemanticFingerprint =
+    harken::SegmentScheduleProgramViewV1 segments[2] = {segment, segment};
+    segments[1].rootDefinition.stableId = ownedProperties[3].stableId;
+    segments[1].rootDefinition.expectedProgramSemanticFingerprint =
         ownedProperties[3].programSemanticFingerprint;
-    pieces[1].rootDefinition.contentRevision =
+    segments[1].rootDefinition.contentRevision =
         ownedProperties[3].contentRevision;
-    pieces[1].scheduleSemanticFingerprint =
-        harken::ComputePieceScheduleFingerprintV1(pieces[1]);
+    segments[1].scheduleSemanticFingerprint =
+        harken::ComputeSegmentScheduleFingerprintV1(segments[1]);
     world.playableProperties = ownedProperties;
     world.playablePropertyCount = 4;
-    world.pieceSchedules = pieces;
-    world.pieceScheduleCount = 2;
+    world.segmentSchedules = segments;
+    world.segmentScheduleCount = 2;
     world.identity.runtimeSemanticFingerprint =
         harken::ComputeCurrentWorldFingerprintV4(world);
     const std::uint64_t generation =
@@ -1437,7 +1437,7 @@ TEST(CurrentWorldInstall, ScheduleCycleIsInvalidWithoutAContainerRoot) {
     properties[0].programSemanticFingerprint =
         harken::ComputePlayablePropertyFingerprintV1(properties[0]);
     properties[1].contentPropertyKind =
-        harken::playableproperties::ContentPropertyKindV1::Piece;
+        harken::playableproperties::ContentPropertyKindV1::Segment;
     properties[1].authoredStableOrder = 1;
     properties[1].stableId = harkentest::ObjectId(30);
     properties[1].contentRevision = 103;
@@ -1447,7 +1447,7 @@ TEST(CurrentWorldInstall, ScheduleCycleIsInvalidWithoutAContainerRoot) {
 
     harken::ScheduleClipPlacementV1 placement{};
     placement.stableOccurrenceOrdinal = 7;
-    placement.content.kind = harken::PlayableKindV1::Piece;
+    placement.content.kind = harken::PlayableKindV1::Segment;
     placement.content.stableId = properties[1].stableId;
     placement.content.expectedProgramSemanticFingerprint =
         properties[1].programSemanticFingerprint;
@@ -1480,16 +1480,16 @@ TEST(CurrentWorldInstall, ScheduleCycleIsInvalidWithoutAContainerRoot) {
     trackRef.trackDefinition = track.rootDefinition;
     trackRef.trackScheduleSemanticFingerprint =
         track.scheduleSemanticFingerprint;
-    harken::PieceScheduleProgramViewV1 piece{};
-    piece.rootDefinition.kind = harken::PlayableKindV1::Piece;
-    piece.rootDefinition.stableId = properties[1].stableId;
-    piece.rootDefinition.expectedProgramSemanticFingerprint =
+    harken::SegmentScheduleProgramViewV1 segment{};
+    segment.rootDefinition.kind = harken::PlayableKindV1::Segment;
+    segment.rootDefinition.stableId = properties[1].stableId;
+    segment.rootDefinition.expectedProgramSemanticFingerprint =
         properties[1].programSemanticFingerprint;
-    piece.rootDefinition.contentRevision = properties[1].contentRevision;
-    piece.trackRefCount = 1;
-    piece.trackRefs = &trackRef;
-    piece.scheduleSemanticFingerprint =
-        harken::ComputePieceScheduleFingerprintV1(piece);
+    segment.rootDefinition.contentRevision = properties[1].contentRevision;
+    segment.trackRefCount = 1;
+    segment.trackRefs = &trackRef;
+    segment.scheduleSemanticFingerprint =
+        harken::ComputeSegmentScheduleFingerprintV1(segment);
 
     harken::ContainerWorldInstallViewV1 world{};
     world.playableProperties = properties;
@@ -1498,8 +1498,8 @@ TEST(CurrentWorldInstall, ScheduleCycleIsInvalidWithoutAContainerRoot) {
     world.playableOccurrenceCount = 1;
     world.trackSchedules = &track;
     world.trackScheduleCount = 1;
-    world.pieceSchedules = &piece;
-    world.pieceScheduleCount = 1;
+    world.segmentSchedules = &segment;
+    world.segmentScheduleCount = 1;
     world.identity.capabilityMask = harken::kWorldCapabilityPlayableProperties;
     world.identity.runtimeSemanticFingerprint =
         harken::ComputeCurrentWorldFingerprintV4(world);
@@ -1508,34 +1508,34 @@ TEST(CurrentWorldInstall, ScheduleCycleIsInvalidWithoutAContainerRoot) {
               harken::ValidateCurrentWorldV1(world));
 }
 
-TEST(CurrentWorldInstall, PieceMarkerIdsAreUniqueBeyondCanonicalPairOrder) {
+TEST(CurrentWorldInstall, SegmentMarkerIdsAreUniqueBeyondCanonicalPairOrder) {
     harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
 
     harken::PlayablePropertyProgramViewV1 property{};
     property.contentPropertyKind =
-        harken::playableproperties::ContentPropertyKindV1::Piece;
+        harken::playableproperties::ContentPropertyKindV1::Segment;
     property.stableId = harkentest::ObjectId(30);
     property.contentRevision = 103;
     property.payload = ResolvedPayload();
     property.programSemanticFingerprint =
         harken::ComputePlayablePropertyFingerprintV1(property);
     harken::ScheduleMarkerV1 markers[2] = {{harkentest::ObjectId(41), 7, 0, 100}, {}};
-    harken::PieceScheduleProgramViewV1 piece{};
-    piece.rootDefinition.kind = harken::PlayableKindV1::Piece;
-    piece.rootDefinition.stableId = property.stableId;
-    piece.rootDefinition.expectedProgramSemanticFingerprint =
+    harken::SegmentScheduleProgramViewV1 segment{};
+    segment.rootDefinition.kind = harken::PlayableKindV1::Segment;
+    segment.rootDefinition.stableId = property.stableId;
+    segment.rootDefinition.expectedProgramSemanticFingerprint =
         property.programSemanticFingerprint;
-    piece.rootDefinition.contentRevision = property.contentRevision;
-    piece.markerCount = 1;
-    piece.markers = markers;
-    piece.scheduleSemanticFingerprint =
-        harken::ComputePieceScheduleFingerprintV1(piece);
+    segment.rootDefinition.contentRevision = property.contentRevision;
+    segment.markerCount = 1;
+    segment.markers = markers;
+    segment.scheduleSemanticFingerprint =
+        harken::ComputeSegmentScheduleFingerprintV1(segment);
     harken::ContainerWorldInstallViewV1 world{};
     world.playableProperties = &property;
     world.playablePropertyCount = 1;
-    world.pieceSchedules = &piece;
-    world.pieceScheduleCount = 1;
+    world.segmentSchedules = &segment;
+    world.segmentScheduleCount = 1;
     world.identity.capabilityMask = harken::kWorldCapabilityPlayableProperties;
     world.identity.runtimeSemanticFingerprint =
         harken::ComputeCurrentWorldFingerprintV4(world);
@@ -1545,9 +1545,9 @@ TEST(CurrentWorldInstall, PieceMarkerIdsAreUniqueBeyondCanonicalPairOrder) {
     const auto generation =
         session.Engine()->variables.CurrentWorldGeneration();
     const auto expectRejected = [&] {
-        piece.markerCount = 2;
-        piece.scheduleSemanticFingerprint =
-            harken::ComputePieceScheduleFingerprintV1(piece);
+        segment.markerCount = 2;
+        segment.scheduleSemanticFingerprint =
+            harken::ComputeSegmentScheduleFingerprintV1(segment);
         world.identity.runtimeSemanticFingerprint =
             harken::ComputeCurrentWorldFingerprintV4(world);
         EXPECT_EQ(harken::WorldInstallStatus::InvalidWorld,
@@ -1606,7 +1606,7 @@ TEST(CurrentWorldInstall, VintageTwoReplayKeepsBothQueueBitsUnavailable) {
         image.historicalChild.completion.source =
             harken::CompletionSourceV1::InlineTemplate;
         image.historicalChild.completion.payload.inlineTemplate.completionClass =
-            harken::AuthoredCompletionClassV1::BoundedTrackPieceCandidate;
+            harken::AuthoredCompletionClassV1::BoundedTrackSegmentCandidate;
         image.historicalChild.completion.payload.inlineTemplate.leafCount = 1;
         image.historicalChild.completion.payload.inlineTemplate.leaves =
             &image.historicalLeaf;

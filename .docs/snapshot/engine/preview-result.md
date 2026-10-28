@@ -54,6 +54,6 @@ Studio 压成引擎数字：`HarkenStudio/Source/Core/AuditionManager.cpp` `prev
 
 ## Playable kind 与 lifecycle（不是错误码）
 
-Kind：Sound `0`，Container `1`，Track `2`，Piece `3`。
+Kind：Sound `0`，Container `1`，Track `2`，Segment `3`。
 
 `PreviewAbi.h` 里的 `VN_PREVIEW_LIFECYCLE_*`、`VN_PREVIEW_REASON_*` 描述实例状态，不是起播失败码。

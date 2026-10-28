@@ -50,7 +50,7 @@ class TimelineEditorPanel final : public QWidget
     Q_OBJECT
 
 public:
-    enum class ViewKind { Empty, Track, Piece, Unsupported };
+    enum class ViewKind { Empty, Track, Segment, Unsupported };
 
     explicit TimelineEditorPanel(QWidget* parent = nullptr,
                                  ThemeManager* themeManager = nullptr);
@@ -69,7 +69,7 @@ public:
     QUuid currentItemGuid() const { return boundGuid_; }
     ProjectItem* boundItem() const { return boundItem_; }
     ViewKind viewKind() const { return viewKind_; }
-    bool hasTimeline() const { return viewKind_ == ViewKind::Track || viewKind_ == ViewKind::Piece; }
+    bool hasTimeline() const { return viewKind_ == ViewKind::Track || viewKind_ == ViewKind::Segment; }
     QString stateText() const;
     int laneCount() const { return static_cast<int>(lanes_.size()); }
     QUuid laneGuid(int index) const;
@@ -123,7 +123,7 @@ public:
     double viewportPositionAtCoordinate(int laneIndex, int64_t coordinate) const;
     int viewportPixelAtCoordinate(int laneIndex, int64_t coordinate) const;
     std::optional<int64_t> emergenceCoordinate(int laneIndex, int clipIndex) const;
-    PieceTimeSpec effectiveTimeSpec(int laneIndex) const;
+    SegmentTimeSpec effectiveTimeSpec(int laneIndex) const;
     TimelineDomain timelineDomain() const;
     int64_t tempoMicrosecondsPerQuarter() const;
     int meterNumerator() const;

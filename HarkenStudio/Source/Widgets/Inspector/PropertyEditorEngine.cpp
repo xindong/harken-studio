@@ -30,7 +30,7 @@
 #include "Core/Components/VSound.h"
 #include "Core/Components/VSpatial.h"
 #include "Core/Components/VTrack.h"
-#include "Core/Components/VPiece.h"
+#include "Core/Components/VSegment.h"
 #include "Core/Components/VVariable.h"
 #include "Core/ThemeManager.h"
 #include "Core/FontManager.h"
@@ -1415,7 +1415,7 @@ IComponent* PropertyEditorEngine::resolveComponentTyped(ProjectItem* item, Compo
         case ComponentType::Attenuation: return item->comp<VAttenuation>();
         case ComponentType::Spatial:     return item->comp<VSpatial>();
         case ComponentType::Track:       return item->comp<VTrack>();
-        case ComponentType::Piece:       return item->comp<VPiece>();
+        case ComponentType::Segment:       return item->comp<VSegment>();
         case ComponentType::Sound:       return item->comp<VSound>();
         default:                         return nullptr;
     }

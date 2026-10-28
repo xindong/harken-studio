@@ -609,9 +609,9 @@ TEST_F(EditorDockLayoutTest, UndoRedoRestoresObjectsWithoutRestoringActiveContex
 TEST_F(EditorDockLayoutTest, LocalTimelineSelectionPreservesNavigationUntilExplicitInspection)
 {
     auto& manager = VNX::ProjectManager::instance();
-    auto* piece = manager.createItem(nullptr, QStringLiteral("ClipPiece"), VNX::ProjectItem::Type::Piece);
-    ASSERT_NE(piece, nullptr);
-    auto* track = manager.createItem(piece, QStringLiteral("ClipTrack"), VNX::ProjectItem::Type::Track);
+    auto* segment = manager.createItem(nullptr, QStringLiteral("ClipSegment"), VNX::ProjectItem::Type::Segment);
+    ASSERT_NE(segment, nullptr);
+    auto* track = manager.createItem(segment, QStringLiteral("ClipTrack"), VNX::ProjectItem::Type::Track);
     ASSERT_NE(track, nullptr);
     auto* sound = manager.createItem(track, QStringLiteral("ClipTarget"), VNX::ProjectItem::Type::Sound);
     auto* active = manager.createItem(nullptr, QStringLiteral("ActiveOutsideTimeline"), VNX::ProjectItem::Type::Sound);

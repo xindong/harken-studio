@@ -162,7 +162,7 @@ TEST(ProjectSerialization, NestedTreeDeserializationRestoresParentLinks)
     auto birds = addChild(layer, "Birds", ProjectItem::Type::Container);
     addChild(*birds, "Chirp_A", ProjectItem::Type::Sound);
     auto seq   = addChild(*birds, "Seq", ProjectItem::Type::Track);
-    auto intro = addChild(*seq, "Intro", ProjectItem::Type::Piece);
+    auto intro = addChild(*seq, "Intro", ProjectItem::Type::Segment);
     auto tail  = addChild(*intro, "Tail", ProjectItem::Type::Track);
     addChild(*tail, "Tail_Hit", ProjectItem::Type::Sound);
 
@@ -277,7 +277,7 @@ TEST(ProjectSerialization, SavedContentTracksValuesAcrossObjectKindsAndSavePoint
     uint32_t objectId = 1;
     for (const auto type : {ProjectItem::Type::Layer, ProjectItem::Type::Sound,
                            ProjectItem::Type::Container, ProjectItem::Type::Track,
-                           ProjectItem::Type::Piece, ProjectItem::Type::Bus,
+                           ProjectItem::Type::Segment, ProjectItem::Type::Bus,
                            ProjectItem::Type::Action, ProjectItem::Type::Variable,
                            ProjectItem::Type::Attenuation}) {
         items.push_back(addSaveStateRoot(project, QStringLiteral("Object%1").arg(objectId),

@@ -49,7 +49,7 @@ struct FoldedProperties {
 // walking the same chain members while each stays free to order them.
 struct FoldChainComponents {
     StableId subject = kUnmintedStableId;
-    std::vector<StableId> placementChain;       // [Track, owning Piece], nearest first
+    std::vector<StableId> placementChain;       // [Track, owning Segment], nearest first
     std::vector<StableId> organizationalChain;  // structural owners, nearest first
 };
 

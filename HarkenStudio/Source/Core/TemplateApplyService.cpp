@@ -19,7 +19,7 @@
 #include "Components/VSound.h"
 #include "Components/VSpatial.h"
 #include "Components/VTrack.h"
-#include "Components/VPiece.h"
+#include "Components/VSegment.h"
 #include "Components/VVariable.h"
 
 #include <QJsonArray>
@@ -167,7 +167,7 @@ void remapTree(ProjectItem* item, const TemplateIdentityMap& identities)
             remapAttenuationReference(clip.playableProperties, identities);
             remapAttenuationReferences(clip.platformOverrides, identities);
         }
-    if (auto* timeline = item->comp<VPiece>())
+    if (auto* timeline = item->comp<VSegment>())
         for (auto& marker : timeline->markers.items) {
             marker.markerGuid = QUuid::createUuid();
         }
@@ -190,7 +190,7 @@ void remintSubentityStableIds(ProjectData& project, ProjectItem* item)
     if (auto* timeline = item->comp<VTrack>())
         for (auto& clip : timeline->clips.items)
             clip.clipGuid = QUuid::createUuid();
-    if (auto* timeline = item->comp<VPiece>())
+    if (auto* timeline = item->comp<VSegment>())
         for (auto& marker : timeline->markers.items)
             marker.markerGuid = QUuid::createUuid();
     for (auto& child : item->children)

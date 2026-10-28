@@ -12,9 +12,9 @@ add_library(harken_project_schema STATIC
     src/CompileTargetProfile.cpp
     src/RuntimeIdentityIndex.cpp
     src/FrontEnd.cpp
-    src/BuildPieceIR.cpp
+    src/BuildSegmentIR.cpp
     src/CapacityEstimate.cpp
-    src/BuildPieceProgram.cpp
+    src/BuildSegmentProgram.cpp
     src/PropertyFold.cpp
     src/ReferenceResolution.cpp
     src/SendResolution.cpp

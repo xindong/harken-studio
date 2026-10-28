@@ -9,7 +9,7 @@ namespace HarkenEditor::Bridge {
 
 static_assert(kEngineNoVariable == static_cast<EngineResult>(VN_NO_VARIABLE));
 static_assert(kEngineStaleHandle == static_cast<EngineResult>(VN_STALE_HANDLE));
-static_assert(kPreviewPlayablePiece == VN_PREVIEW_PLAYABLE_KIND_PIECE);
+static_assert(kPreviewPlayableSegment == VN_PREVIEW_PLAYABLE_KIND_SEGMENT);
 static_assert(kPreviewBackpressure == VN_PREVIEW_BACKPRESSURE);
 
 int32_t playPreviewPlayable(uint32_t kind, harkenstudio::ObjectId id,

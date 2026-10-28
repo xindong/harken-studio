@@ -23,7 +23,7 @@ constexpr VnObjectId kSound = harkentest::ObjectId(8101);
 constexpr VnObjectId kSecondSound = harkentest::ObjectId(8105);
 constexpr VnObjectId kContainer = harkentest::ObjectId(8102);
 constexpr VnObjectId kTrack = harkentest::ObjectId(8103);
-constexpr VnObjectId kPiece = harkentest::ObjectId(8104);
+constexpr VnObjectId kSegment = harkentest::ObjectId(8104);
 
 harken::PlayablePropertyPayloadViewV1 CanonicalPayload() {
     harken::PlayablePropertyPayloadViewV1 payload{};
@@ -185,7 +185,7 @@ struct PreviewScheduleWorldImage {
     harken::ScheduleClipPlacementV1 placement{};
     harken::TrackScheduleProgramViewV1 track{};
     harken::ScheduleTrackRefV1 trackRef{};
-    harken::PieceScheduleProgramViewV1 piece{};
+    harken::SegmentScheduleProgramViewV1 segment{};
     harken::ContainerWorldInstallViewV1 world{};
 
     explicit PreviewScheduleWorldImage(std::uint64_t soundRevision) {
@@ -193,9 +193,9 @@ struct PreviewScheduleWorldImage {
             kinds = {
                 harken::playableproperties::ContentPropertyKindV1::Sound,
                 harken::playableproperties::ContentPropertyKindV1::Track,
-                harken::playableproperties::ContentPropertyKindV1::Piece};
+                harken::playableproperties::ContentPropertyKindV1::Segment};
         const std::array<VnObjectId, 3> ids = {
-            kSound, kTrack, kPiece};
+            kSound, kTrack, kSegment};
         for (std::uint32_t index = 0; index < properties.size(); ++index) {
             properties[index].contentPropertyKind = kinds[index];
             properties[index].stableId = harkentest::ObjectId(ids[index]);
@@ -234,11 +234,11 @@ struct PreviewScheduleWorldImage {
         trackRef.trackDefinition = track.rootDefinition;
         trackRef.trackScheduleSemanticFingerprint =
             track.scheduleSemanticFingerprint;
-        piece.rootDefinition = makeRef(2, harken::PlayableKindV1::Piece);
-        piece.trackRefCount = 1;
-        piece.trackRefs = &trackRef;
-        piece.scheduleSemanticFingerprint =
-            harken::ComputePieceScheduleFingerprintV1(piece);
+        segment.rootDefinition = makeRef(2, harken::PlayableKindV1::Segment);
+        segment.trackRefCount = 1;
+        segment.trackRefs = &trackRef;
+        segment.scheduleSemanticFingerprint =
+            harken::ComputeSegmentScheduleFingerprintV1(segment);
         occurrence.parentKind =
             harken::playableproperties::ContentPropertyKindV1::Track;
         occurrence.parentStableId = track.rootDefinition.stableId;
@@ -256,8 +256,8 @@ struct PreviewScheduleWorldImage {
         world.playableOccurrenceCount = 1;
         world.trackSchedules = &track;
         world.trackScheduleCount = 1;
-        world.pieceSchedules = &piece;
-        world.pieceScheduleCount = 1;
+        world.segmentSchedules = &segment;
+        world.segmentScheduleCount = 1;
         world.identity.capabilityMask =
             harken::kWorldCapabilityPlayableProperties;
         world.identity.runtimeSemanticFingerprint =
@@ -602,7 +602,7 @@ void ExpectPublicSchedulePreviewAudible(std::uint32_t kind,
     image.track.placementCount = repeatSameClip ? 1u : placements.size();
     image.track.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(image.track);
     image.trackRef.trackScheduleSemanticFingerprint = image.track.scheduleSemanticFingerprint;
-    image.piece.scheduleSemanticFingerprint = harken::ComputePieceScheduleFingerprintV1(image.piece);
+    image.segment.scheduleSemanticFingerprint = harken::ComputeSegmentScheduleFingerprintV1(image.segment);
     image.world.playableOccurrences = occurrences.data();
     image.world.playableOccurrenceCount = image.track.placementCount;
     image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
@@ -661,7 +661,7 @@ TEST(PreviewAbi, LayoutAndPinnedVocabularyMatchTheTypedV2Contract) {
     EXPECT_EQ(VN_PREVIEW_PLAYABLE_KIND_SOUND, 0);
     EXPECT_EQ(VN_PREVIEW_PLAYABLE_KIND_CONTAINER, 1);
     EXPECT_EQ(VN_PREVIEW_PLAYABLE_KIND_TRACK, 2);
-    EXPECT_EQ(VN_PREVIEW_PLAYABLE_KIND_PIECE, 3);
+    EXPECT_EQ(VN_PREVIEW_PLAYABLE_KIND_SEGMENT, 3);
 }
 
 TEST(PreviewAbi, PlayClearsOutputOnEveryRefusal) {
@@ -927,14 +927,14 @@ TEST(PreviewAbi, AudibilityParkingPreservesPlayablePathsAndExcludesReturnedRawVo
     EXPECT_EQ(engine->voiceReturnedCount, 2u);
 }
 
-TEST(PreviewAbi, PlaybackPathsKeepTrackPlacementAndPieceIdentity) {
+TEST(PreviewAbi, PlaybackPathsKeepTrackPlacementAndSegmentIdentity) {
     PreviewSession fixture;
     auto* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
     PreviewScheduleWorldImage image(engine->registry.Lookup(kSound).contentRevision);
     ASSERT_EQ(harken::InstallContainerWorldV1(*engine, image.world).status,
               harken::WorldInstallStatus::Ok);
-    auto desc = Desc(VN_PREVIEW_PLAYABLE_KIND_PIECE, kPiece);
+    auto desc = Desc(VN_PREVIEW_PLAYABLE_KIND_SEGMENT, kSegment);
     VnPreviewPlayableHandle handle = 0;
     ASSERT_EQ(VnPreview_PlayPlayable(&desc, &handle), VN_PREVIEW_OK);
     ASSERT_TRUE(PumpUntilNonSilent(*engine));
@@ -943,7 +943,7 @@ TEST(PreviewAbi, PlaybackPathsKeepTrackPlacementAndPieceIdentity) {
     ASSERT_EQ(VnPreview_CapturePlaybackPaths(&path, 1, &required), VN_PREVIEW_OK);
     ASSERT_EQ(required, 1u);
     ASSERT_EQ(path.rowCount, 4u);
-    EXPECT_EQ(path.rows[0].stableId, kPiece);
+    EXPECT_EQ(path.rows[0].stableId, kSegment);
     EXPECT_EQ(path.rows[1].stableId, kTrack);
     EXPECT_EQ(path.rows[2].stableId, kTrack);
     EXPECT_EQ(path.rows[2].occurrenceOrdinal, 7u);
@@ -1099,7 +1099,7 @@ TEST(PreviewAbi, MissingScheduleIdentitiesRefuseBeforeRuntimeMutation) {
     const std::uint32_t freeInstances = engine->playableInstances.FreeCount();
     const std::uint64_t head = engine->commands.PublishedHead();
     for (const std::uint32_t kind : {VN_PREVIEW_PLAYABLE_KIND_TRACK,
-                                     VN_PREVIEW_PLAYABLE_KIND_PIECE}) {
+                                     VN_PREVIEW_PLAYABLE_KIND_SEGMENT}) {
         VnPreviewPlayPlayableDescV2 desc = Desc(kind, harkentest::ObjectId(44));
         VnPreviewPlayableHandle handle = 99;
         EXPECT_EQ(VnPreview_PlayPlayable(&desc, &handle),
@@ -1857,16 +1857,16 @@ TEST(PreviewAbi, SequenceRunsThroughThePublicPreviewAndProducesAudio) {
     ExpectPublicPreviewAudible(harken::ContainerModeV1::Sequence);
 }
 
-TEST(PreviewAbi, TrackAndPieceRunThroughPublicPreviewAndProduceAudio) {
+TEST(PreviewAbi, TrackAndSegmentRunThroughPublicPreviewAndProduceAudio) {
     ExpectPublicSchedulePreviewAudible(VN_PREVIEW_PLAYABLE_KIND_TRACK,
                                        kTrack);
-    ExpectPublicSchedulePreviewAudible(VN_PREVIEW_PLAYABLE_KIND_PIECE,
-                                       kPiece);
+    ExpectPublicSchedulePreviewAudible(VN_PREVIEW_PLAYABLE_KIND_SEGMENT,
+                                       kSegment);
 }
 
 TEST(PreviewAbi, RepeatedScheduleClipKeepsDistinctVoiceInstances) {
     ExpectPublicSchedulePreviewAudible(VN_PREVIEW_PLAYABLE_KIND_TRACK, kTrack, true);
-    ExpectPublicSchedulePreviewAudible(VN_PREVIEW_PLAYABLE_KIND_PIECE, kPiece, true);
+    ExpectPublicSchedulePreviewAudible(VN_PREVIEW_PLAYABLE_KIND_SEGMENT, kSegment, true);
 }
 
 TEST(PreviewAbi, VariableControlRunsThroughFirstPublicPreviewAndProducesAudio) {

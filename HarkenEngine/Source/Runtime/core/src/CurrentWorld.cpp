@@ -70,7 +70,7 @@ bool ExactFormat(const WorldFormatIdentityV1& value) noexcept {
 bool ValidKind(playableproperties::ContentPropertyKindV1 kind) noexcept {
     return static_cast<std::uint32_t>(kind) <=
            static_cast<std::uint32_t>(
-               playableproperties::ContentPropertyKindV1::Piece);
+               playableproperties::ContentPropertyKindV1::Segment);
 }
 
 bool ValidStructuralAncestorKind(
@@ -78,12 +78,12 @@ bool ValidStructuralAncestorKind(
     return kind == playableproperties::ContentPropertyKindV1::Layer ||
            kind == playableproperties::ContentPropertyKindV1::Container ||
            kind == playableproperties::ContentPropertyKindV1::Track ||
-           kind == playableproperties::ContentPropertyKindV1::Piece;
+           kind == playableproperties::ContentPropertyKindV1::Segment;
 }
 
 bool ValidPlayableKind(PlayableKindV1 kind) noexcept {
     return static_cast<std::uint32_t>(kind) <=
-           static_cast<std::uint32_t>(PlayableKindV1::Piece);
+           static_cast<std::uint32_t>(PlayableKindV1::Segment);
 }
 
 playableproperties::ContentPropertyKindV1 PropertyKind(PlayableKindV1 kind) {
@@ -596,7 +596,7 @@ bool ValidCompletion(const AuthoredCompletionTemplateV1& completion,
              AuthoredCompletionClassV1::FiniteMediaCandidate &&
          completion.leafCount != 1) ||
         (completion.completionClass ==
-             AuthoredCompletionClassV1::BoundedTrackPieceCandidate &&
+             AuthoredCompletionClassV1::BoundedTrackSegmentCandidate &&
          completion.leafCount == 0)) {
         return false;
     }
@@ -689,7 +689,7 @@ bool ValidChildTimingHintShape(const ContainerChildProgramViewV2& child,
                IsInactiveInlineSoundTimingHint(hint.payload.inlineSound);
     }
     if (child.playable.kind == PlayableKindV1::Track ||
-        child.playable.kind == PlayableKindV1::Piece) {
+        child.playable.kind == PlayableKindV1::Segment) {
         const auto& schedule = hint.payload.schedule;
         return hint.kind == ChildTimingHintKindV2::ScheduleReference &&
                schedule.reserved == 0 && schedule.kind == child.playable.kind &&
@@ -718,7 +718,7 @@ bool ValidChildCompletionShape(const ContainerChildProgramViewV1& child,
         return IsInactiveInlineCompletion(completion);
     }
     if (child.playable.kind == PlayableKindV1::Track ||
-        child.playable.kind == PlayableKindV1::Piece) {
+        child.playable.kind == PlayableKindV1::Segment) {
         const auto& schedule = completion.payload.schedule;
         return completion.source == CompletionSourceV1::ScheduleReference &&
                schedule.reserved == 0 && schedule.kind == child.playable.kind &&
@@ -734,7 +734,7 @@ bool ValidChildCompletionShape(const ContainerChildProgramViewV1& child,
     }
     return child.playable.kind == PlayableKindV1::Sound &&
            completion.payload.inlineTemplate.completionClass !=
-               AuthoredCompletionClassV1::BoundedTrackPieceCandidate;
+               AuthoredCompletionClassV1::BoundedTrackSegmentCandidate;
 }
 
 bool CanonicalInactiveHistoricalContainer(
@@ -1271,14 +1271,14 @@ bool AccumulateBoundedTransitionEndpointLeaves(
                *leafCount <= world.capacity.maxKnownScheduleLeaves;
     }
     const auto* schedule = std::lower_bound(
-        world.pieceSchedules,
-        world.pieceSchedules + world.pieceScheduleCount,
+        world.segmentSchedules,
+        world.segmentSchedules + world.segmentScheduleCount,
         endpoint.stableId,
-        [](const PieceScheduleProgramViewV1& candidate,
+        [](const SegmentScheduleProgramViewV1& candidate,
            VnObjectId stableId) {
             return candidate.rootDefinition.stableId < stableId;
         });
-    if (schedule == world.pieceSchedules + world.pieceScheduleCount ||
+    if (schedule == world.segmentSchedules + world.segmentScheduleCount ||
         !SameRef(schedule->rootDefinition, endpoint)) {
         return false;
     }
@@ -1314,7 +1314,7 @@ bool QueueTransitionEndpointSupported(const WorldView& world,
     } else {
         if ((container.mode != ContainerModeV1::SequenceQueue && container.mode != ContainerModeV1::RandomQueue) ||
             container.queueSplice != QueueSpliceV1::Butt ||
-            (child.playable.kind != PlayableKindV1::Track && child.playable.kind != PlayableKindV1::Piece) ||
+            (child.playable.kind != PlayableKindV1::Track && child.playable.kind != PlayableKindV1::Segment) ||
             container.transitionProgramIndex >= world.transitionCount ||
             !TransitionEndpointHasBoundedResolvedVoices(world, child.playable, true)) return false;
         const auto& transition = world.transitions[container.transitionProgramIndex];
@@ -1337,7 +1337,7 @@ bool VariableControlTransitionEndpointSupported(
     bool nativeSchedule = false;
     if constexpr (std::is_same_v<WorldView, ContainerWorldInstallViewV1>) {
         if (child.playable.kind == PlayableKindV1::Track ||
-            child.playable.kind == PlayableKindV1::Piece) {
+            child.playable.kind == PlayableKindV1::Segment) {
             for (std::uint32_t index = 0; index < container.discreteRowCount; ++index) {
                 nativeSchedule = nativeSchedule ||
                     container.discreteRows[index].childStableOrdinal == child.stableChildOrdinal;
@@ -1939,8 +1939,8 @@ void HashTrackSchedule(Fnv64& hash,
     }
 }
 
-void HashPieceSchedule(Fnv64& hash,
-                       const PieceScheduleProgramViewV1& row,
+void HashSegmentSchedule(Fnv64& hash,
+                       const SegmentScheduleProgramViewV1& row,
                        bool zeroFingerprint) noexcept {
     HashPlayableRef(hash, row.rootDefinition);
     hash.U64(zeroFingerprint ? 0 : row.scheduleSemanticFingerprint);
@@ -1976,15 +1976,15 @@ std::uint64_t ComputeTrackScheduleFingerprintV1(
     return hash.Finish();
 }
 
-std::uint64_t ComputePieceScheduleFingerprintV1(
-    const PieceScheduleProgramViewV1& row) noexcept {
+std::uint64_t ComputeSegmentScheduleFingerprintV1(
+    const SegmentScheduleProgramViewV1& row) noexcept {
     Fnv64 hash("HARKEN-PIECE-SCHEDULE-V1");
-    HashPieceSchedule(hash, row, true);
+    HashSegmentSchedule(hash, row, true);
     return hash.Finish();
 }
 
-void HashPieceTimeline(Fnv64& hash,
-                       const PieceScheduleProgramViewV1& row) noexcept {
+void HashSegmentTimeline(Fnv64& hash,
+                       const SegmentScheduleProgramViewV1& row) noexcept {
     hash.ObjectId(row.entryMarker.stableMarkerId);
     hash.I64(row.entryMarker.position);
     hash.I64(row.bounds.contentStart);
@@ -1993,22 +1993,22 @@ void HashPieceTimeline(Fnv64& hash,
     hash.I64(row.bounds.nominalEnd);
 }
 
-std::uint64_t ComputePieceScheduleFingerprintV2(
-    const PieceScheduleProgramViewV1& row) noexcept {
+std::uint64_t ComputeSegmentScheduleFingerprintV2(
+    const SegmentScheduleProgramViewV1& row) noexcept {
     Fnv64 hash("HARKEN-PIECE-SCHEDULE-V2");
-    HashPieceSchedule(hash, row, true);
-    HashPieceTimeline(hash, row);
+    HashSegmentSchedule(hash, row, true);
+    HashSegmentTimeline(hash, row);
     return hash.Finish();
 }
 
-std::uint64_t ComputePieceScheduleFingerprintV1(
-    const PieceScheduleProgramViewV1& row, std::uint32_t bodyVintage) noexcept {
+std::uint64_t ComputeSegmentScheduleFingerprintV1(
+    const SegmentScheduleProgramViewV1& row, std::uint32_t bodyVintage) noexcept {
     if (bodyVintage == kCurrentWorldBodyVintageV19)
-        return ComputePieceScheduleFingerprintV2(row);
-    return ComputePieceScheduleFingerprintV1(row);
+        return ComputeSegmentScheduleFingerprintV2(row);
+    return ComputeSegmentScheduleFingerprintV1(row);
 }
 
-bool ValidPieceTimeline(const PieceScheduleProgramViewV1& row,
+bool ValidSegmentTimeline(const SegmentScheduleProgramViewV1& row,
                         bool entryScheduling) noexcept {
     const auto& b = row.bounds;
     if (!entryScheduling) {
@@ -2392,8 +2392,8 @@ bool TryBuildCurrentWorldV3PrefixImpl(
                       kHardPlayableOccurrencePropertyCapacity) ||
         !countPointer(world.trackScheduleCount, world.trackSchedules,
                       kHardTrackScheduleProgramCapacity) ||
-        !countPointer(world.pieceScheduleCount, world.pieceSchedules,
-                      kHardPieceScheduleProgramCapacity) ||
+        !countPointer(world.segmentScheduleCount, world.segmentSchedules,
+                      kHardSegmentScheduleProgramCapacity) ||
         !countPointer(world.containerCount, world.containers,
                       kHardContainerProgramCapacity) ||
         !countPointer(world.transitionCount, world.transitions, 65536)) {
@@ -2414,7 +2414,7 @@ bool TryBuildCurrentWorldV3PrefixImpl(
     values.playablePropertyProgramCount = world.playablePropertyCount;
     values.playableOccurrencePropertyCount = world.playableOccurrenceCount;
     values.trackScheduleCount = world.trackScheduleCount;
-    values.pieceScheduleCount = world.pieceScheduleCount;
+    values.segmentScheduleCount = world.segmentScheduleCount;
     values.containerCount = world.containerCount;
     values.transitionProgramCount = world.transitionCount;
     values.maxContainerDepth = world.capacity.maxContainerDepth;
@@ -2432,18 +2432,18 @@ bool TryBuildCurrentWorldV3PrefixImpl(
     values.maxCurvePoints = world.capacity.maxCurvePoints;
     values.maxKnownScheduleLeaves = world.capacity.maxKnownScheduleLeaves;
     values.maxTrackSchedulePrograms = world.capacity.maxTrackSchedulePrograms;
-    values.maxPieceSchedulePrograms = world.capacity.maxPieceSchedulePrograms;
-    values.maxScheduleTrackRefsPerPiece =
-        world.capacity.maxScheduleTrackRefsPerPiece;
+    values.maxSegmentSchedulePrograms = world.capacity.maxSegmentSchedulePrograms;
+    values.maxScheduleTrackRefsPerSegment =
+        world.capacity.maxScheduleTrackRefsPerSegment;
     values.maxScheduleTrackRefsTotal = world.capacity.maxScheduleTrackRefsTotal;
     values.maxSchedulePlacementsPerTrack =
         world.capacity.maxSchedulePlacementsPerTrack;
     values.maxSchedulePlacementsTotal =
         world.capacity.maxSchedulePlacementsTotal;
-    values.maxScheduleMarkersPerPiece = world.capacity.maxScheduleMarkersPerPiece;
+    values.maxScheduleMarkersPerSegment = world.capacity.maxScheduleMarkersPerSegment;
     values.maxScheduleMarkersTotal = world.capacity.maxScheduleMarkersTotal;
-    values.maxTrackPieceScheduleDepth =
-        world.capacity.maxTrackPieceScheduleDepth;
+    values.maxTrackSegmentScheduleDepth =
+        world.capacity.maxTrackSegmentScheduleDepth;
     const auto add = [](std::uint32_t amount, std::uint32_t* total) {
         if (amount > UINT32_MAX - *total) return false;
         *total += amount;
@@ -2516,18 +2516,18 @@ bool TryBuildCurrentWorldV3PrefixImpl(
             return false;
         }
     }
-    for (std::uint32_t i = 0; i < world.pieceScheduleCount; ++i) {
-        if (world.pieceSchedules == nullptr ||
-            !countPointer(world.pieceSchedules[i].trackRefCount,
-                          world.pieceSchedules[i].trackRefs,
+    for (std::uint32_t i = 0; i < world.segmentScheduleCount; ++i) {
+        if (world.segmentSchedules == nullptr ||
+            !countPointer(world.segmentSchedules[i].trackRefCount,
+                          world.segmentSchedules[i].trackRefs,
                           kHardScheduleTrackRefCapacity) ||
-            !countPointer(world.pieceSchedules[i].markerCount,
-                          world.pieceSchedules[i].markers,
+            !countPointer(world.segmentSchedules[i].markerCount,
+                          world.segmentSchedules[i].markers,
                           kHardScheduleMarkerCapacity) ||
-            !addBounded(world.pieceSchedules[i].trackRefCount,
+            !addBounded(world.segmentSchedules[i].trackRefCount,
                         kHardScheduleTrackRefCapacity,
                         &values.scheduleTrackRefCount) ||
-            !addBounded(world.pieceSchedules[i].markerCount,
+            !addBounded(world.segmentSchedules[i].markerCount,
                         kHardScheduleMarkerCapacity,
                         &values.scheduleMarkerCount)) {
             return false;
@@ -2636,8 +2636,8 @@ std::uint64_t ComputeCurrentWorldFingerprintV3Impl(
     for (std::uint32_t i = 0; i < world.trackScheduleCount; ++i) {
         HashTrackSchedule(hash, world.trackSchedules[i], false);
     }
-    for (std::uint32_t i = 0; i < world.pieceScheduleCount; ++i) {
-        HashPieceSchedule(hash, world.pieceSchedules[i], false);
+    for (std::uint32_t i = 0; i < world.segmentScheduleCount; ++i) {
+        HashSegmentSchedule(hash, world.segmentSchedules[i], false);
     }
     for (std::uint32_t i = 0; i < world.containerCount; ++i) {
         HashContainer(hash, world.containers[i], true);
@@ -2728,8 +2728,8 @@ std::uint64_t ComputeCurrentWorldFingerprintV4(
     for (std::uint32_t i = 0; i < world.trackScheduleCount; ++i) {
         HashTrackSchedule(hash, world.trackSchedules[i], false);
     }
-    for (std::uint32_t i = 0; i < world.pieceScheduleCount; ++i) {
-        HashPieceSchedule(hash, world.pieceSchedules[i], false);
+    for (std::uint32_t i = 0; i < world.segmentScheduleCount; ++i) {
+        HashSegmentSchedule(hash, world.segmentSchedules[i], false);
     }
     for (std::uint32_t i = 0; i < world.containerCount; ++i) {
         HashContainer(hash, world.containers[i], true);
@@ -2804,8 +2804,8 @@ std::uint64_t ComputeCurrentWorldFingerprintV5(
     for (std::uint32_t i = 0; i < world.trackScheduleCount; ++i) {
         HashTrackSchedule(hash, world.trackSchedules[i], false);
     }
-    for (std::uint32_t i = 0; i < world.pieceScheduleCount; ++i) {
-        HashPieceSchedule(hash, world.pieceSchedules[i], false);
+    for (std::uint32_t i = 0; i < world.segmentScheduleCount; ++i) {
+        HashSegmentSchedule(hash, world.segmentSchedules[i], false);
     }
     for (std::uint32_t i = 0; i < world.containerCount; ++i) {
         HashContainerV9(hash, world.containers[i]);
@@ -2826,8 +2826,8 @@ std::uint64_t ComputeCurrentWorldFingerprintV6(
     Fnv64 hash("HARKEN-WORLD-V6");
     hash.U32(world.sourceBodyVintage);
     hash.U64(legacy);
-    for (std::uint32_t i = 0; i < world.pieceScheduleCount; ++i)
-        HashPieceTimeline(hash, world.pieceSchedules[i]);
+    for (std::uint32_t i = 0; i < world.segmentScheduleCount; ++i)
+        HashSegmentTimeline(hash, world.segmentSchedules[i]);
     return hash.Finish();
 }
 
@@ -2857,7 +2857,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
         !PointerMatches(world.playableOccurrenceCount,
                         world.playableOccurrences) ||
         !PointerMatches(world.trackScheduleCount, world.trackSchedules) ||
-        !PointerMatches(world.pieceScheduleCount, world.pieceSchedules) ||
+        !PointerMatches(world.segmentScheduleCount, world.segmentSchedules) ||
         !PointerMatches(world.containerCount, world.containers) ||
         !PointerMatches(world.transitionCount, world.transitions) ||
         !PointerMatches(world.actionCount, world.actions)) {
@@ -2865,17 +2865,17 @@ WorldInstallStatus ValidateCurrentWorldImpl(
     }
     if (world.capacity.maxTrackSchedulePrograms >
             kHardTrackScheduleProgramCapacity ||
-        world.capacity.maxPieceSchedulePrograms >
-            kHardPieceScheduleProgramCapacity ||
-        world.capacity.maxScheduleTrackRefsPerPiece > 1024 ||
+        world.capacity.maxSegmentSchedulePrograms >
+            kHardSegmentScheduleProgramCapacity ||
+        world.capacity.maxScheduleTrackRefsPerSegment > 1024 ||
         world.capacity.maxScheduleTrackRefsTotal >
             kHardScheduleTrackRefCapacity ||
         world.capacity.maxSchedulePlacementsPerTrack > 65536 ||
         world.capacity.maxSchedulePlacementsTotal >
             kHardSchedulePlacementCapacity ||
-        world.capacity.maxScheduleMarkersPerPiece > 65536 ||
+        world.capacity.maxScheduleMarkersPerSegment > 65536 ||
         world.capacity.maxScheduleMarkersTotal > kHardScheduleMarkerCapacity ||
-        world.capacity.maxTrackPieceScheduleDepth > 64) {
+        world.capacity.maxTrackSegmentScheduleDepth > 64) {
         return WorldInstallStatus::InvalidWorld;
     }
     if (world.variableCount > world.capacity.maxVariableDefinitions ||
@@ -2884,7 +2884,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
         world.playableOccurrenceCount >
             world.capacity.maxPlayableOccurrencePropertyRows ||
         world.trackScheduleCount > world.capacity.maxTrackSchedulePrograms ||
-        world.pieceScheduleCount > world.capacity.maxPieceSchedulePrograms ||
+        world.segmentScheduleCount > world.capacity.maxSegmentSchedulePrograms ||
         world.containerCount > world.capacity.maxContainerPrograms ||
         world.actionCount > world.capacity.maxActionDefinitions ||
         world.capacity.maxVariableDefinitions > kHardVariableDefinitionCapacity ||
@@ -2905,17 +2905,17 @@ WorldInstallStatus ValidateCurrentWorldImpl(
             kHardPlayablePropertyEffectEdgeCapacity ||
         world.capacity.maxTrackSchedulePrograms >
             kHardTrackScheduleProgramCapacity ||
-        world.capacity.maxPieceSchedulePrograms >
-            kHardPieceScheduleProgramCapacity ||
-        world.capacity.maxScheduleTrackRefsPerPiece > 1024 ||
+        world.capacity.maxSegmentSchedulePrograms >
+            kHardSegmentScheduleProgramCapacity ||
+        world.capacity.maxScheduleTrackRefsPerSegment > 1024 ||
         world.capacity.maxScheduleTrackRefsTotal >
             kHardScheduleTrackRefCapacity ||
         world.capacity.maxSchedulePlacementsPerTrack > 65536 ||
         world.capacity.maxSchedulePlacementsTotal >
             kHardSchedulePlacementCapacity ||
-        world.capacity.maxScheduleMarkersPerPiece > 65536 ||
+        world.capacity.maxScheduleMarkersPerSegment > 65536 ||
         world.capacity.maxScheduleMarkersTotal > kHardScheduleMarkerCapacity ||
-        world.capacity.maxTrackPieceScheduleDepth > 64 ||
+        world.capacity.maxTrackSegmentScheduleDepth > 64 ||
         world.capacity.maxContainerDepth > 64 ||
         world.capacity.maxChildrenPerContainer > kHardContainerChildCapacity ||
         world.capacity.maxAvoidLastN > kHardSelectionAvoidCapacity ||
@@ -3131,11 +3131,11 @@ WorldInstallStatus ValidateCurrentWorldImpl(
     std::uint64_t schedulePlacementTotal = 0;
     std::uint64_t scheduleTrackRefTotal = 0;
     std::uint64_t scheduleMarkerTotal = 0;
-    std::vector<VnObjectId> pieceOwnedTrackIds;
+    std::vector<VnObjectId> segmentOwnedTrackIds;
     std::vector<VnObjectId> scheduleClipIds;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> scheduleClipGuids;
     std::vector<VnObjectId> scheduleMarkerStableIds;
-    pieceOwnedTrackIds.reserve(world.pieceScheduleCount);
+    segmentOwnedTrackIds.reserve(world.segmentScheduleCount);
     for (std::uint32_t i = 0; i < world.trackScheduleCount; ++i) {
         const auto& row = world.trackSchedules[i];
         if (row.reserved != 0 ||
@@ -3270,24 +3270,24 @@ WorldInstallStatus ValidateCurrentWorldImpl(
             return WorldInstallStatus::Capacity;
         }
     }
-    for (std::uint32_t i = 0; i < world.pieceScheduleCount; ++i) {
-        const auto& row = world.pieceSchedules[i];
+    for (std::uint32_t i = 0; i < world.segmentScheduleCount; ++i) {
+        const auto& row = world.segmentSchedules[i];
         const auto timeKind = static_cast<std::uint32_t>(row.timeKind);
-        if (row.rootDefinition.kind != PlayableKindV1::Piece ||
+        if (row.rootDefinition.kind != PlayableKindV1::Segment ||
             !ValidPlayableRef(row.rootDefinition) || row.reserved != 0 ||
             row.scheduleSemanticFingerprint == 0 ||
             row.scheduleSemanticFingerprint !=
-                ComputePieceScheduleFingerprintV1(row, timingVintage) ||
+                ComputeSegmentScheduleFingerprintV1(row, timingVintage) ||
             timeKind >
                 static_cast<std::uint32_t>(ScheduleTimeKindV1::MusicalTicks) ||
             row.startPointKind > 1 ||
             !PointerMatches(row.trackRefCount, row.trackRefs) ||
             !PointerMatches(row.markerCount, row.markers) ||
-            (i != 0 && world.pieceSchedules[i - 1].rootDefinition.stableId >=
+            (i != 0 && world.segmentSchedules[i - 1].rootDefinition.stableId >=
                            row.rootDefinition.stableId)) {
             return WorldInstallStatus::InvalidWorld;
         }
-        if (!ValidPieceTimeline(row, entryScheduling) ||
+        if (!ValidSegmentTimeline(row, entryScheduling) ||
             (row.startPointKind == 0 && row.startMarkerId != 0) ||
             (row.startPointKind == 1 && row.startMarkerId == 0) ||
             (row.timeKind == ScheduleTimeKindV1::AbsoluteNanoseconds &&
@@ -3298,12 +3298,12 @@ WorldInstallStatus ValidateCurrentWorldImpl(
               row.meterDenominator == 0))) {
             return WorldInstallStatus::InvalidWorld;
         }
-        if (row.trackRefCount > world.capacity.maxScheduleTrackRefsPerPiece ||
-            row.markerCount > world.capacity.maxScheduleMarkersPerPiece) {
+        if (row.trackRefCount > world.capacity.maxScheduleTrackRefsPerSegment ||
+            row.markerCount > world.capacity.maxScheduleMarkersPerSegment) {
             return WorldInstallStatus::Capacity;
         }
         const auto* definition = FindProperty(
-            world, playableproperties::ContentPropertyKindV1::Piece,
+            world, playableproperties::ContentPropertyKindV1::Segment,
             row.rootDefinition.stableId);
         if (definition == nullptr ||
             definition->programSemanticFingerprint !=
@@ -3340,7 +3340,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                     ref.trackDefinition.stableId) {
                 if (IsPartitionLocal(scope)) {
                     completeContent = false;
-                    pieceOwnedTrackIds.push_back(
+                    segmentOwnedTrackIds.push_back(
                         ref.trackDefinition.stableId);
                     continue;
                 }
@@ -3351,7 +3351,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                     ref.trackScheduleSemanticFingerprint) {
                 return WorldInstallStatus::InvalidWorld;
             }
-            pieceOwnedTrackIds.push_back(ref.trackDefinition.stableId);
+            segmentOwnedTrackIds.push_back(ref.trackDefinition.stableId);
             if (entryScheduling) {
                 for (std::uint32_t p = 0; p < track->placementCount; ++p) {
                     const auto& placement = track->placements[p];
@@ -3403,10 +3403,10 @@ WorldInstallStatus ValidateCurrentWorldImpl(
             return WorldInstallStatus::Capacity;
         }
     }
-    std::sort(pieceOwnedTrackIds.begin(), pieceOwnedTrackIds.end());
-    if (std::adjacent_find(pieceOwnedTrackIds.begin(),
-                           pieceOwnedTrackIds.end()) !=
-        pieceOwnedTrackIds.end()) {
+    std::sort(segmentOwnedTrackIds.begin(), segmentOwnedTrackIds.end());
+    if (std::adjacent_find(segmentOwnedTrackIds.begin(),
+                           segmentOwnedTrackIds.end()) !=
+        segmentOwnedTrackIds.end()) {
         return WorldInstallStatus::InvalidWorld;
     }
     std::sort(scheduleClipIds.begin(), scheduleClipIds.end());
@@ -3424,14 +3424,14 @@ WorldInstallStatus ValidateCurrentWorldImpl(
     }
     const std::size_t trackNodeCount = world.trackScheduleCount;
     const std::size_t scheduleNodeCount =
-        trackNodeCount + world.pieceScheduleCount;
+        trackNodeCount + world.segmentScheduleCount;
     std::vector<std::uint8_t> scheduleVisit(scheduleNodeCount, 0);
     std::vector<std::uint32_t> scheduleHeight(scheduleNodeCount, 0);
     bool scheduleCycle = false;
     bool scheduleDepthExceeded = false;
     std::function<bool(std::size_t, std::uint32_t)> visitSchedule =
         [&](std::size_t node, std::uint32_t pathDepth) {
-            if (pathDepth > world.capacity.maxTrackPieceScheduleDepth) {
+            if (pathDepth > world.capacity.maxTrackSegmentScheduleDepth) {
                 scheduleDepthExceeded = true;
                 return false;
             }
@@ -3441,7 +3441,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
             }
             if (scheduleVisit[node] == 2) {
                 if (scheduleHeight[node] >
-                    world.capacity.maxTrackPieceScheduleDepth -
+                    world.capacity.maxTrackSegmentScheduleDepth -
                         (pathDepth - 1)) {
                     scheduleDepthExceeded = true;
                     return false;
@@ -3453,7 +3453,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
             const auto visitChild = [&](std::size_t child) {
                 if (!visitSchedule(child, pathDepth + 1)) return false;
                 height = std::max(height, 1u + scheduleHeight[child]);
-                if (height > world.capacity.maxTrackPieceScheduleDepth) {
+                if (height > world.capacity.maxTrackSegmentScheduleDepth) {
                     scheduleDepthExceeded = true;
                     return false;
                 }
@@ -3463,32 +3463,32 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                 const auto& track = world.trackSchedules[node];
                 for (std::uint32_t p = 0; p < track.placementCount; ++p) {
                     const auto& target = track.placements[p].content;
-                    if (target.kind != PlayableKindV1::Piece) continue;
-                    const auto* piece = std::lower_bound(
-                        world.pieceSchedules,
-                        world.pieceSchedules + world.pieceScheduleCount,
+                    if (target.kind != PlayableKindV1::Segment) continue;
+                    const auto* segment = std::lower_bound(
+                        world.segmentSchedules,
+                        world.segmentSchedules + world.segmentScheduleCount,
                         target.stableId,
-                        [](const PieceScheduleProgramViewV1& candidate,
+                        [](const SegmentScheduleProgramViewV1& candidate,
                            VnObjectId stableId) {
                             return candidate.rootDefinition.stableId < stableId;
                         });
-                    if (piece ==
-                            world.pieceSchedules + world.pieceScheduleCount ||
-                        piece->rootDefinition.stableId != target.stableId) {
+                    if (segment ==
+                            world.segmentSchedules + world.segmentScheduleCount ||
+                        segment->rootDefinition.stableId != target.stableId) {
                         if (IsPartitionLocal(scope)) continue;
                         return false;
                     }
                     if (!visitChild(trackNodeCount +
                                     static_cast<std::size_t>(
-                                        piece - world.pieceSchedules))) {
+                                        segment - world.segmentSchedules))) {
                         return false;
                     }
                 }
             } else {
-                const auto& piece = world.pieceSchedules[node - trackNodeCount];
-                for (std::uint32_t t = 0; t < piece.trackRefCount; ++t) {
+                const auto& segment = world.segmentSchedules[node - trackNodeCount];
+                for (std::uint32_t t = 0; t < segment.trackRefCount; ++t) {
                     const auto stableId =
-                        piece.trackRefs[t].trackDefinition.stableId;
+                        segment.trackRefs[t].trackDefinition.stableId;
                     const auto* track = std::lower_bound(
                         world.trackSchedules,
                         world.trackSchedules + world.trackScheduleCount,
@@ -3527,16 +3527,16 @@ WorldInstallStatus ValidateCurrentWorldImpl(
             return row.contentPropertyKind ==
                    playableproperties::ContentPropertyKindV1::Track;
         }));
-    const auto pieceDefinitionCount = static_cast<std::uint32_t>(std::count_if(
+    const auto segmentDefinitionCount = static_cast<std::uint32_t>(std::count_if(
         world.playableProperties,
         world.playableProperties + world.playablePropertyCount,
         [](const PlayablePropertyProgramViewV1& row) {
             return row.contentPropertyKind ==
-                   playableproperties::ContentPropertyKindV1::Piece;
+                   playableproperties::ContentPropertyKindV1::Segment;
         }));
     if (!replayVintageTwo &&
         (trackDefinitionCount != world.trackScheduleCount ||
-         pieceDefinitionCount != world.pieceScheduleCount)) {
+         segmentDefinitionCount != world.segmentScheduleCount)) {
         return WorldInstallStatus::InvalidWorld;
     }
 
@@ -3683,7 +3683,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
         for (std::uint32_t c = 0; c < row.childCount; ++c) {
             const auto& child = row.children[c];
             bool isSchedule = false;
-            TrackPieceScheduleKeyV1 key{};
+            TrackSegmentScheduleKeyV1 key{};
             if constexpr (std::is_same_v<WorldView, ContainerWorldInstallViewV1>) {
                 isSchedule = child.timingHint.kind ==
                              ChildTimingHintKindV2::ScheduleReference;
@@ -3721,15 +3721,15 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                 }
             } else {
                 const auto* schedule = std::lower_bound(
-                    world.pieceSchedules,
-                    world.pieceSchedules + world.pieceScheduleCount,
+                    world.segmentSchedules,
+                    world.segmentSchedules + world.segmentScheduleCount,
                     key.stableId,
-                    [](const PieceScheduleProgramViewV1& candidate,
+                    [](const SegmentScheduleProgramViewV1& candidate,
                        VnObjectId stableId) {
                         return candidate.rootDefinition.stableId < stableId;
                     });
                 if (schedule ==
-                        world.pieceSchedules + world.pieceScheduleCount ||
+                        world.segmentSchedules + world.segmentScheduleCount ||
                     schedule->rootDefinition.stableId != key.stableId) {
                     if (IsPartitionLocal(scope)) continue;
                     return WorldInstallStatus::InvalidWorld;
@@ -3920,7 +3920,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                 if (step.target.expectedProgramSemanticFingerprint == 0
                     || static_cast<std::uint32_t>(step.target.kind) >
                         static_cast<std::uint32_t>(
-                            ActionTargetKindV1::Piece) ||
+                            ActionTargetKindV1::Segment) ||
                     step.scope != ActionScopeV1::Global ||
                     step.valueBits != 0 || !validActionTime(step.delay) ||
                     !validActionTime(step.fade) ||
@@ -3980,7 +3980,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                         || static_cast<std::uint32_t>(
                             step.quantizeReference.kind) >
                         static_cast<std::uint32_t>(
-                            ActionTargetKindV1::Piece)) {
+                            ActionTargetKindV1::Segment)) {
                         return WorldInstallStatus::InvalidWorld;
                     }
                     const auto referenceKind =
@@ -4048,7 +4048,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                         static_cast<std::uint32_t>(
                             step.quantizeReference.kind) >
                             static_cast<std::uint32_t>(
-                                ActionTargetKindV1::Piece)) {
+                                ActionTargetKindV1::Segment)) {
                         return WorldInstallStatus::InvalidWorld;
                     }
                     const auto referenceKind =

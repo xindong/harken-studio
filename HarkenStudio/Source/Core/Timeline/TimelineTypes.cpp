@@ -1,7 +1,7 @@
 #include "TimelineTypes.h"
 
 #include "TimelineCoordinates.h"
-#include "../Components/VPiece.h"
+#include "../Components/VSegment.h"
 #include "../Components/VTrack.h"
 #include "../PlaybackReferenceValidation.h"
 #include "../ProjectTypes.h"
@@ -84,23 +84,23 @@ QString markerKindName(MarkerKind kind)
     return QString();
 }
 
-PieceTimeSpec PieceTimeSpec::musical(int64_t microsecondsPerQuarter,
+SegmentTimeSpec SegmentTimeSpec::musical(int64_t microsecondsPerQuarter,
                                      int32_t numerator,
                                      int32_t denominator)
 {
-    PieceTimeSpec spec;
+    SegmentTimeSpec spec;
     spec.domain = TimelineDomain::Musical;
     spec.tempoMap.push_back({0, microsecondsPerQuarter});
     spec.meterMap.push_back({0, numerator, denominator});
     return spec;
 }
 
-bool PieceTimeSpec::isDefault() const
+bool SegmentTimeSpec::isDefault() const
 {
     return domain == TimelineDomain::Absolute && tempoMap.empty() && meterMap.empty();
 }
 
-QJsonObject PieceTimeSpec::toJson() const
+QJsonObject SegmentTimeSpec::toJson() const
 {
     QJsonObject json;
     json[QStringLiteral("domain")] = timelineDomainName(domain);
@@ -127,10 +127,10 @@ QJsonObject PieceTimeSpec::toJson() const
     return json;
 }
 
-std::optional<PieceTimeSpec> PieceTimeSpec::fromJson(const QJsonObject& json,
+std::optional<SegmentTimeSpec> SegmentTimeSpec::fromJson(const QJsonObject& json,
                                                       QString* error)
 {
-    PieceTimeSpec spec;
+    SegmentTimeSpec spec;
     const QString domain = json.value(QStringLiteral("domain")).toString();
     if (domain == QStringLiteral("Absolute")) {
         if (json.contains(QStringLiteral("tempoMap"))
@@ -456,14 +456,14 @@ TimelineValidation MarkerLedger::validate() const
             if (entry)
                 return TimelineValidation::failure(
                     TimelineError::DuplicateMarkerKind,
-                    QStringLiteral("A Piece may contain only one Entry marker"),
+                    QStringLiteral("A Segment may contain only one Entry marker"),
                     static_cast<int>(i));
             entry = &marker;
         } else if (marker.kind == MarkerKind::Exit) {
             if (exit)
                 return TimelineValidation::failure(
                     TimelineError::DuplicateMarkerKind,
-                    QStringLiteral("A Piece may contain only one Exit marker"),
+                    QStringLiteral("A Segment may contain only one Exit marker"),
                     static_cast<int>(i));
             exit = &marker;
         }
@@ -544,26 +544,26 @@ bool VTrack::fromJson(const QJsonObject& json)
     return true;
 }
 
-QJsonObject VPiece::toJson() const
+QJsonObject VSegment::toJson() const
 {
     QJsonObject json;
-    if (!pieceTime.isDefault())
-        json[QStringLiteral("pieceTime")] = pieceTime.toJson();
+    if (!segmentTime.isDefault())
+        json[QStringLiteral("segmentTime")] = segmentTime.toJson();
     if (!markers.empty()) json[QStringLiteral("markers")] = markers.toJson();
     return json;
 }
 
-bool VPiece::fromJson(const QJsonObject& json)
+bool VSegment::fromJson(const QJsonObject& json)
 {
     for (auto it = json.begin(); it != json.end(); ++it)
-        if (it.key() != QStringLiteral("pieceTime")
+        if (it.key() != QStringLiteral("segmentTime")
             && it.key() != QStringLiteral("markers")) return false;
-    PieceTimeSpec parsedTime;
+    SegmentTimeSpec parsedTime;
     MarkerLedger parsedMarkers;
-    if (json.contains(QStringLiteral("pieceTime"))) {
-        if (!json.value(QStringLiteral("pieceTime")).isObject()) return false;
-        auto value = PieceTimeSpec::fromJson(
-            json.value(QStringLiteral("pieceTime")).toObject());
+    if (json.contains(QStringLiteral("segmentTime"))) {
+        if (!json.value(QStringLiteral("segmentTime")).isObject()) return false;
+        auto value = SegmentTimeSpec::fromJson(
+            json.value(QStringLiteral("segmentTime")).toObject());
         if (!value) return false;
         parsedTime = std::move(*value);
     }
@@ -573,7 +573,7 @@ bool VPiece::fromJson(const QJsonObject& json)
         if (!value) return false;
         parsedMarkers = std::move(*value);
     }
-    pieceTime = std::move(parsedTime);
+    segmentTime = std::move(parsedTime);
     markers = std::move(parsedMarkers);
     return true;
 }

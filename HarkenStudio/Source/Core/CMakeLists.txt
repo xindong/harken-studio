@@ -334,7 +334,7 @@ add_library(harken_editor_foundation STATIC
     Components/VVariable.h
     Components/VAction.h
     Components/VTrack.h
-    Components/VPiece.h
+    Components/VSegment.h
     # --- Core/ObjectLists ---
     ObjectLists/IObjectList.h
     ObjectLists/IObjectList.cpp

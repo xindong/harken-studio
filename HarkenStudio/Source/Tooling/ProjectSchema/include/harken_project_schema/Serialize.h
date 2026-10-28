@@ -17,8 +17,8 @@
 #include "harken_project_schema/CapacityEstimate.h"
 #include "harken_project_schema/EffectChainSelection.h"
 #include "harken_project_schema/FrontEnd.h"
-#include "harken_project_schema/PieceIR.h"
-#include "harken_project_schema/PieceProgram.h"
+#include "harken_project_schema/SegmentIR.h"
+#include "harken_project_schema/SegmentProgram.h"
 #include "harken_project_schema/ReferenceResolution.h"
 
 #include <string>
@@ -37,10 +37,10 @@ std::string RenderProject(const CanonicalProject& project);
 // Renders only the normalization facts. Precondition: the facts are present.
 std::string RenderNormalizedFacts(const NormalizedFacts& facts);
 
-// Renders the immutable IR: its folded Tracks, its Pieces, the required lineage
+// Renders the immutable IR: its folded Tracks, its Segments, the required lineage
 // table and the lineage fingerprint. Output-only and deterministic, for the same
 // fixture and determinism uses as the rest of this file.
-std::string RenderPieceIR(const PieceIR& ir);
+std::string RenderSegmentIR(const SegmentIR& ir);
 
 // Renders the active-capacity estimate: the per-scope peaks, the program bound,
 // and whether that bound is a lower bound because unknown-duration occurrences
@@ -49,7 +49,7 @@ std::string RenderCapacityEstimate(const CapacityEstimate& estimate);
 
 // Renders the assembled program: both fingerprints, the required capabilities,
 // then the IR and the estimate. Output-only and deterministic.
-std::string RenderPieceProgram(const PieceProgram& program);
+std::string RenderSegmentProgram(const SegmentProgram& program);
 
 // Renders the per-occurrence reference-slot resolution facts: one occurrence
 // block per clip, each slot's winner and its full candidate explain, in a fixed

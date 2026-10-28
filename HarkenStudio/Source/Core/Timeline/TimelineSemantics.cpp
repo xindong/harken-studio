@@ -2,7 +2,7 @@
 
 #include "TimelineCoordinates.h"
 #include "../Components/VAudio.h"
-#include "../Components/VPiece.h"
+#include "../Components/VSegment.h"
 #include "../Components/VSelection.h"
 #include "../Components/VTrack.h"
 #include "../ItemTypeCatalog.h"
@@ -66,12 +66,12 @@ TimelineValidation validateSpan(const TimelineSpan& span,
 
 TimelineValidation inspectTrack(const ProjectItem& track,
                                 const TimelineItemResolver& resolve,
-                                std::vector<const ProjectItem*>* pieceTargets)
+                                std::vector<const ProjectItem*>* segmentTargets)
 {
     if (track.type != ProjectItem::Type::Track)
         return TimelineValidation::failure(
             TimelineError::InvalidTargetType,
-            QStringLiteral("Piece children must be Track items"));
+            QStringLiteral("Segment children must be Track items"));
     const VTrack* timeline = track.comp<VTrack>();
     if (!timeline)
         return TimelineValidation::failure(
@@ -88,50 +88,50 @@ TimelineValidation inspectTrack(const ProjectItem& track,
         if (!ItemTypeCatalog::isTimelineClipTarget(target->type))
             return TimelineValidation::failure(
                 TimelineError::InvalidTargetType,
-                QStringLiteral("Clip target must be Sound, Container, or Piece"));
-        if (pieceTargets && target->type == ProjectItem::Type::Piece)
-            pieceTargets->push_back(target);
+                QStringLiteral("Clip target must be Sound, Container, or Segment"));
+        if (segmentTargets && target->type == ProjectItem::Type::Segment)
+            segmentTargets->push_back(target);
     }
     return TimelineValidation::success();
 }
 
-TimelineValidation inspectPiece(const ProjectItem& piece,
+TimelineValidation inspectSegment(const ProjectItem& segment,
                                 const TimelineItemResolver& resolve,
-                                std::vector<const ProjectItem*>* pieceTargets)
+                                std::vector<const ProjectItem*>* segmentTargets)
 {
-    if (piece.type != ProjectItem::Type::Piece)
+    if (segment.type != ProjectItem::Type::Segment)
         return TimelineValidation::failure(
             TimelineError::InvalidTargetType,
-            QStringLiteral("Piece semantics require a Piece item"));
-    const VPiece* timeline = piece.comp<VPiece>();
+            QStringLiteral("Segment semantics require a Segment item"));
+    const VSegment* timeline = segment.comp<VSegment>();
     if (!timeline)
         return TimelineValidation::failure(
             TimelineError::MissingTimeline,
-            QStringLiteral("Piece has no timeline component"));
+            QStringLiteral("Segment has no timeline component"));
     const TimelineValidation timeValidity = TimelineCoordinates::validate(
-        timeline->pieceTime);
+        timeline->segmentTime);
     if (!timeValidity) return timeValidity;
     const TimelineValidation markerValidity = timeline->markers.validate();
     if (!markerValidity) return markerValidity;
-    for (const auto& child : piece.children) {
+    for (const auto& child : segment.children) {
         if (!child)
             return TimelineValidation::failure(
                 TimelineError::InvalidTargetType,
-                QStringLiteral("Piece contains an invalid child"));
+                QStringLiteral("Segment contains an invalid child"));
         const TimelineValidation trackValidity = inspectTrack(
-            *child, resolve, pieceTargets);
+            *child, resolve, segmentTargets);
         if (!trackValidity) return trackValidity;
     }
     return TimelineValidation::success();
 }
 
-TimelineValidation validatePieceGraph(
+TimelineValidation validateSegmentGraph(
     const std::vector<const ProjectItem*>& roots,
     const TimelineItemResolver& resolve)
 {
     struct Frame
     {
-        const ProjectItem* piece = nullptr;
+        const ProjectItem* segment = nullptr;
         std::vector<const ProjectItem*> targets;
         size_t next = 0;
     };
@@ -145,10 +145,10 @@ TimelineValidation validatePieceGraph(
         if (rootState == 1)
             return TimelineValidation::failure(
                 TimelineError::Cycle,
-                QStringLiteral("Piece reference cycle detected"));
+                QStringLiteral("Segment reference cycle detected"));
         Frame frame;
-        frame.piece = root;
-        const TimelineValidation validity = inspectPiece(
+        frame.segment = root;
+        const TimelineValidation validity = inspectSegment(
             *root, resolve, &frame.targets);
         if (!validity) return validity;
         state.insert(root, 1);
@@ -156,7 +156,7 @@ TimelineValidation validatePieceGraph(
         while (!stack.empty()) {
             Frame& current = stack.back();
             if (current.next == current.targets.size()) {
-                state.insert(current.piece, 2);
+                state.insert(current.segment, 2);
                 stack.pop_back();
                 continue;
             }
@@ -165,11 +165,11 @@ TimelineValidation validatePieceGraph(
             if (targetState == 1)
                 return TimelineValidation::failure(
                     TimelineError::Cycle,
-                    QStringLiteral("Piece reference cycle detected"));
+                    QStringLiteral("Segment reference cycle detected"));
             if (targetState == 2) continue;
             Frame child;
-            child.piece = target;
-            const TimelineValidation validity = inspectPiece(
+            child.segment = target;
+            const TimelineValidation validity = inspectSegment(
                 *target, resolve, &child.targets);
             if (!validity) return validity;
             state.insert(target, 1);
@@ -181,15 +181,15 @@ TimelineValidation validatePieceGraph(
 
 TimelineSemanticsResult resolveTrack(const ProjectItem& track,
                                      const TimelineItemResolver& resolve,
-                                     const PieceTimeSpec& time)
+                                     const SegmentTimeSpec& time)
 {
-    std::vector<const ProjectItem*> pieceTargets;
+    std::vector<const ProjectItem*> segmentTargets;
     const TimelineValidation validity = inspectTrack(
-        track, resolve, &pieceTargets);
+        track, resolve, &segmentTargets);
     if (!validity)
         return TimelineSemanticsResult::unknown(validity.error, validity.message);
-    const TimelineValidation graphValidity = validatePieceGraph(
-        pieceTargets, resolve);
+    const TimelineValidation graphValidity = validateSegmentGraph(
+        segmentTargets, resolve);
     if (!graphValidity)
         return TimelineSemanticsResult::unknown(graphValidity.error,
                                                 graphValidity.message);
@@ -201,20 +201,20 @@ TimelineSemanticsResult resolveTrack(const ProjectItem& track,
     return result;
 }
 
-TimelineSemanticsResult resolvePiece(const ProjectItem& piece,
+TimelineSemanticsResult resolveSegment(const ProjectItem& segment,
                                      const TimelineItemResolver& resolve)
 {
-    const TimelineValidation graphValidity = validatePieceGraph({&piece}, resolve);
+    const TimelineValidation graphValidity = validateSegmentGraph({&segment}, resolve);
     if (!graphValidity)
         return TimelineSemanticsResult::unknown(graphValidity.error,
                                                 graphValidity.message);
-    const VPiece* timeline = piece.comp<VPiece>();
+    const VSegment* timeline = segment.comp<VSegment>();
     TimelineSpan content;
     bool hasContent = false;
-    for (const auto& child : piece.children) {
+    for (const auto& child : segment.children) {
         const VTrack* trackTimeline = child->comp<VTrack>();
         const TimelineSemanticsResult track = TimelineSemantics::contentBounds(
-            trackTimeline->clips, timeline->pieceTime);
+            trackTimeline->clips, timeline->segmentTime);
         if (!track) return track;
         if (trackTimeline->clips.empty()) continue;
         if (!hasContent) {
@@ -236,7 +236,7 @@ TimelineSemanticsResult resolvePiece(const ProjectItem& piece,
     const Marker* entry = timeline->markers.find(MarkerKind::Entry);
     const Marker* exit = timeline->markers.find(MarkerKind::Exit);
     TimelineSemanticsResult result;
-    result.time = timeline->pieceTime;
+    result.time = timeline->segmentTime;
     result.content = content;
     result.nominal = {
         entry ? entry->position : content.start,
@@ -275,7 +275,7 @@ TimelineSemanticsResult TimelineSemanticsResult::unknown(TimelineError error,
 namespace TimelineSemantics {
 
 TimelineSemanticsResult contentBounds(const ClipLedger& clips,
-                                      const PieceTimeSpec& time)
+                                      const SegmentTimeSpec& time)
 {
     const TimelineValidation timeValidity = TimelineCoordinates::validate(time);
     if (!timeValidity)
@@ -349,15 +349,15 @@ std::vector<TimelineSpan> overlapRegions(const ClipLedger& clips)
 
 TimelineSemanticsResult trackNominalSpan(const ProjectItem& track,
                                         const TimelineItemResolver& resolve,
-                                        const PieceTimeSpec& time)
+                                        const SegmentTimeSpec& time)
 {
     return resolveTrack(track, resolve, time);
 }
 
-TimelineSemanticsResult pieceNominalSpan(const ProjectItem& piece,
+TimelineSemanticsResult segmentNominalSpan(const ProjectItem& segment,
                                         const TimelineItemResolver& resolve)
 {
-    return resolvePiece(piece, resolve);
+    return resolveSegment(segment, resolve);
 }
 
 TimelineSemanticsResult nominalSpanOf(const ProjectItem& item,
@@ -366,8 +366,8 @@ TimelineSemanticsResult nominalSpanOf(const ProjectItem& item,
 {
     if (item.type == ProjectItem::Type::Track)
         return resolveTrack(item, resolve, {});
-    if (item.type == ProjectItem::Type::Piece)
-        return resolvePiece(item, resolve);
+    if (item.type == ProjectItem::Type::Segment)
+        return resolveSegment(item, resolve);
     if (item.type == ProjectItem::Type::Sound && naturalDuration) {
         const std::optional<int64_t> duration = naturalDuration(item);
         if (!duration)
@@ -541,9 +541,9 @@ QueuePreviewResult queuePreview(const ProjectItem& queue,
             result.items.push_back(std::move(item));
             continue;
         }
-        const VPiece* pieceTimeline = child->comp<VPiece>();
-        item.entryAnchor = pieceTimeline
-            && pieceTimeline->markers.find(MarkerKind::Entry) != nullptr;
+        const VSegment* segmentTimeline = child->comp<VSegment>();
+        item.entryAnchor = segmentTimeline
+            && segmentTimeline->markers.find(MarkerKind::Entry) != nullptr;
         cursor = spliceByMarker ? projectedNominalEnd : projectedContentEnd;
         result.items.push_back(std::move(item));
     }
@@ -561,7 +561,7 @@ QString formatConciseNumber(double value)
     return text;
 }
 
-QString formatReadableCoordinate(int64_t coordinate, const PieceTimeSpec& time)
+QString formatReadableCoordinate(int64_t coordinate, const SegmentTimeSpec& time)
 {
     if (time.domain == TimelineDomain::Musical) {
         const auto beats = TimelineCoordinates::ticksToBeats(coordinate);
@@ -607,7 +607,7 @@ QString formatQueueItemTooltip(const QString& name, const QueuePreviewItem& item
             lines << QObject::tr("Stop completes the loop body and advances the parent Queue");
         return lines.join(QLatin1Char('\n'));
     }
-    const PieceTimeSpec absolute;
+    const SegmentTimeSpec absolute;
     lines << QObject::tr("%1 anchor %2 s")
                  .arg(item.entryAnchor ? QObject::tr("entry")
                                        : QObject::tr("nominal-start fallback"),
@@ -633,17 +633,17 @@ QString formatQueueItemTooltip(const QString& name, const QueuePreviewItem& item
 
 bool hasMusicalClock(const ProjectItem& item)
 {
-    const VPiece* timeline = item.comp<VPiece>();
-    return timeline && timeline->pieceTime.domain == TimelineDomain::Musical;
+    const VSegment* timeline = item.comp<VSegment>();
+    return timeline && timeline->segmentTime.domain == TimelineDomain::Musical;
 }
 
 bool hasAnyMarker(const ProjectItem& item)
 {
-    const VPiece* timeline = item.comp<VPiece>();
+    const VSegment* timeline = item.comp<VSegment>();
     return timeline && !timeline->markers.empty();
 }
 
-int64_t coordinateUnitFor(const PieceTimeSpec& spec)
+int64_t coordinateUnitFor(const SegmentTimeSpec& spec)
 {
     if (spec.domain != TimelineDomain::Musical)
         return TimelineCoordinates::kNanosecondsPerSecond;
@@ -652,7 +652,7 @@ int64_t coordinateUnitFor(const PieceTimeSpec& spec)
     return (TimelineCoordinates::kPpq * 4) / denominator;
 }
 
-int64_t snapGridFor(const PieceTimeSpec& spec)
+int64_t snapGridFor(const SegmentTimeSpec& spec)
 {
     if (spec.domain == TimelineDomain::Musical)
         return std::max<int64_t>(1, coordinateUnitFor(spec));
@@ -661,7 +661,7 @@ int64_t snapGridFor(const PieceTimeSpec& spec)
 
 bool hasMarkerKind(const ProjectItem& item, MarkerKind kind)
 {
-    const VPiece* timeline = item.comp<VPiece>();
+    const VSegment* timeline = item.comp<VSegment>();
     return timeline && timeline->markers.find(kind) != nullptr;
 }
 
@@ -696,10 +696,10 @@ TimelineValidation validateProjectTimelineIdentities(
                 identities.insert(clip.clipGuid);
             }
         }
-        if (const VPiece* piece = item->comp<VPiece>()) {
-            const TimelineValidation validity = piece->markers.validate();
+        if (const VSegment* segment = item->comp<VSegment>()) {
+            const TimelineValidation validity = segment->markers.validate();
             if (!validity) return validity;
-            for (const Marker& marker : piece->markers.items) {
+            for (const Marker& marker : segment->markers.items) {
                 if (identities.contains(marker.markerGuid))
                     return TimelineValidation::failure(
                         TimelineError::DuplicateGuid,

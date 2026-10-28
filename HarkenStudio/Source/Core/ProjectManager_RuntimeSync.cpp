@@ -305,7 +305,7 @@ static constexpr RuntimePresenceEntry s_runtimePresence[] = {
     { ProjectItem::Type::Sound,       &syncSound,      RuntimeTeardown::RemoveObject },
     { ProjectItem::Type::Container,   nullptr,         RuntimeTeardown::None },
     { ProjectItem::Type::Track,       nullptr,         RuntimeTeardown::None },
-    { ProjectItem::Type::Piece,       nullptr,         RuntimeTeardown::None },
+    { ProjectItem::Type::Segment,       nullptr,         RuntimeTeardown::None },
     { ProjectItem::Type::Layer,       &syncLayer, RuntimeTeardown::RemoveObject },
     { ProjectItem::Type::Bus,         nullptr,         RuntimeTeardown::None },
     { ProjectItem::Type::Action,      nullptr,         RuntimeTeardown::RemoveActionName },

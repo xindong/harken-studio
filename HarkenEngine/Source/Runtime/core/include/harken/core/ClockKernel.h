@@ -9,7 +9,7 @@
 // a train wreck after an hour; the only way to be sure it never happens is to
 // never accumulate.
 //
-// Three coordinates, all relative to the piece's entry:
+// Three coordinates, all relative to the segment's entry:
 //   MusicalTick   signed int64 ticks, 960 per quarter note (PPQ).
 //   AbsoluteTime  signed int64 nanoseconds.
 //   SampleFrame   signed int64 sample frames.
@@ -19,7 +19,7 @@
 // engine's authoritative clock, MixFrame, is unsigned. Turning a SampleFrame into
 // a MixFrame -- adding the entry's anchor frame and clamping the result at zero --
 // is the consumer's step, not this kernel's: the kernel does not know where on
-// the global timeline a given piece was placed.
+// the global timeline a given segment was placed.
 //
 // Rounding is floor (toward negative infinity) in every direction, so the
 // mapping is a monotonic non-decreasing step function whose behaviour at zero and

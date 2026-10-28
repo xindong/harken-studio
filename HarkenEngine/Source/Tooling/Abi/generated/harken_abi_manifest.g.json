@@ -506,7 +506,7 @@
             "VN_ACTION_TARGET_ACTION": 4,
             "VN_ACTION_TARGET_BUS": 6,
             "VN_ACTION_TARGET_CONTAINER": 1,
-            "VN_ACTION_TARGET_PIECE": 3,
+            "VN_ACTION_TARGET_SEGMENT": 3,
             "VN_ACTION_TARGET_SOUND": 0,
             "VN_ACTION_TARGET_TRACK": 2,
             "VN_ACTION_TARGET_VARIABLE": 5
@@ -865,7 +865,7 @@
             "VN_MONITOR_CONTENT_ACTION": 5,
             "VN_MONITOR_CONTENT_CONTAINER": 2,
             "VN_MONITOR_CONTENT_MEDIA": 6,
-            "VN_MONITOR_CONTENT_PIECE": 4,
+            "VN_MONITOR_CONTENT_SEGMENT": 4,
             "VN_MONITOR_CONTENT_SOUND": 1,
             "VN_MONITOR_CONTENT_TRACK": 3,
             "VN_MONITOR_CONTENT_UNKNOWN": 0,
@@ -23490,11 +23490,11 @@
       "formatVersion": 7
     }
   },
-  "contractSha256": "7ff205d76230e2e6c46eec894a124812306bf27639f51aeb984cc1d6413fe7e7",
+  "contractSha256": "11b26ab252252729122c8faca1c549704df3e52c25cc7486b7f57d93538fc35e",
   "generatedFiles": {
     "HarkenEngine/Source/Tooling/Binding/generated/harken_binding_abi_pin.g.h": {
-      "sha256": "ad0b625341cf4ea3534bac5726168b1eda121edf7dcd69c51d6f14f93b23fa48",
-      "size": 321993
+      "sha256": "54b791b07d4c17254f19c6ac64d2a6205b64f111da1c819cef7822cb7b75f65d",
+      "size": 322001
     },
     "HarkenEngine/Tool/Remote/generated/harken_wire_desc_meta.h": {
       "sha256": "d02bee48f10bd551a2887f963fd26ee9e0ba21e66108f186d7e6af6941ee0567",
@@ -23513,8 +23513,8 @@
       "size": 236122
     },
     "HarkenEngine/Tool/Remote/harken_wire.py": {
-      "sha256": "64c9121d815888adb295536f9e258a6298b73519c550c028329127f09d4644d9",
-      "size": 250304
+      "sha256": "1465edb5566a65ae96edecf08bae10c67c3984fd6e9e3a15735990ef4c66dd2c",
+      "size": 250308
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs": {
       "sha256": "ce8ddcaf8e06dba4afb49d9acda5176018ee6f0e5837dc841e38213359718631",
@@ -23525,21 +23525,21 @@
       "size": 28789
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs": {
-      "sha256": "c9e3fe841173ce03da1b747866d51b7a3ebc473667c833230fc96cc465f32266",
-      "size": 51811
+      "sha256": "490ecc1ff8d0df5466795e9665599b98ffcfec2bd83ffe2db3dbada5ffcbd5ea",
+      "size": 51813
     }
   },
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1,
   "sectionSha256": {
-    "nativeAbiSha256": "e117650be859b770863c02e5af610874d12ea31f46bf03d265fadfa3528b6dac",
+    "nativeAbiSha256": "6d0c368c0e323b914e7013b4d1809ed83c340053250405e7a29dbbc303768933",
     "remoteWireSha256": "d99304d71d24436e14a34fd990b3ded5e6ddd7bca6c13dc2065a9709d53577d3",
     "traceFormatSha256": "a960db29fac1a574649b9fb538491e91851ad7f064ee4efbe607602355dea5a7"
   },
   "sourceFiles": {
     "HarkenEngine/Source/Runtime/api/include/harken/Harken.h": {
-      "sha256": "4ff5408020f9bd098c6679c2bf5744f88297686801450a1ee4e65b9f02d20517",
-      "size": 235992
+      "sha256": "7de528f606b8f1776ccdee4c8320fe801ddfaefb29552cbf5d228a5e96a7d958",
+      "size": 235996
     },
     "HarkenEngine/Source/Runtime/api/include/harken/ObjectId.h": {
       "sha256": "90b6f66ad515c5e411564f1e5981b65bec2e461fabbdee6c57aa86b26b9a300d",
@@ -23562,8 +23562,8 @@
       "size": 30774
     },
     "HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json": {
-      "sha256": "bed4c0c9f1290ca1be8341198978a56f5d490ebe62134a8b85e58e9493d71907",
-      "size": 249059
+      "sha256": "d02c8117ca42159fcdc34606540492d08531e9504015b07307e072212ed8cf75",
+      "size": 249063
     }
   }
 }

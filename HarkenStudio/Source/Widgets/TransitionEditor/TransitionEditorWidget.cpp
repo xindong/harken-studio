@@ -110,9 +110,9 @@ QString conciseNumber(double value)
     return text;
 }
 
-QString coordinateText(int64_t coordinate, const PieceTimeSpec& time)
+QString coordinateText(int64_t coordinate, const SegmentTimeSpec& time)
 {
-    if (!AuthoringPolicy::validatePieceTime(time))
+    if (!AuthoringPolicy::validateSegmentTime(time))
         return QObject::tr("Unsupported arrangement");
     const auto seconds = TimelineCoordinates::toSeconds(coordinate, time);
     return seconds ? QObject::tr("%1 s").arg(conciseNumber(*seconds))
@@ -1757,8 +1757,8 @@ QString TransitionEditorWidget::watchReadoutText() const
     QStringList names;
     for (const QUuid& guid : watchView_.path)
         names << endpointName(guid);
-    const ProjectItem* reference = watchView_.referencePiece
-        ? ProjectManager::instance().findItemByGuid(*watchView_.referencePiece) : nullptr;
+    const ProjectItem* reference = watchView_.referenceSegment
+        ? ProjectManager::instance().findItemByGuid(*watchView_.referenceSegment) : nullptr;
     if (reference && !AuthoringPolicy::validateTimeline(*reference, itemResolver()))
         return tr("[%1]  %2  (unsupported arrangement)")
             .arg(watchDirectionTag(watchView_.direction), names.join(QStringLiteral(" -> ")));
@@ -1779,8 +1779,8 @@ QString TransitionEditorWidget::watchReadoutTooltip() const
     if (!watchView_.hasSource || !watchView_.found())
         return watchView_.failureReason;
 
-    const ProjectItem* reference = watchView_.referencePiece
-        ? ProjectManager::instance().findItemByGuid(*watchView_.referencePiece) : nullptr;
+    const ProjectItem* reference = watchView_.referenceSegment
+        ? ProjectManager::instance().findItemByGuid(*watchView_.referenceSegment) : nullptr;
     if (reference) {
         const auto authoring = AuthoringPolicy::validateTimeline(*reference, itemResolver());
         if (!authoring) return authoring.message;

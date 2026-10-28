@@ -30,7 +30,7 @@ bool IsContentKindValid(ContentKind kind)
     case ContentKind::Sound:
     case ContentKind::Container:
     case ContentKind::Track:
-    case ContentKind::Piece:
+    case ContentKind::Segment:
         return true;
     }
     return false;

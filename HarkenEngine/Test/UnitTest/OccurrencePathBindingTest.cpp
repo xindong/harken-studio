@@ -72,10 +72,10 @@ TEST(OccurrencePath, NonFirstTrackBindingsAttachAndSiblingDoesNot) {
     const auto sound = Ref(harken::PlayableKindV1::Sound, 10, 110);
     const auto track0 = Ref(harken::PlayableKindV1::Track, 30, 130);
     const auto track1 = Ref(harken::PlayableKindV1::Track, 40, 140);
-    const auto piece = Ref(harken::PlayableKindV1::Piece, 50, 150);
+    const auto segment = Ref(harken::PlayableKindV1::Segment, 50, 150);
     std::array properties{
         Property(Kind::Sound, sound), Property(Kind::Track, track0),
-        Property(Kind::Track, track1), Property(Kind::Piece, piece)};
+        Property(Kind::Track, track1), Property(Kind::Segment, segment)};
     std::array<harken::ScheduleClipPlacementV1, 2> placements{};
     placements[0].content = sound;
     placements[0].stableOccurrenceOrdinal = 0;
@@ -112,10 +112,10 @@ TEST(OccurrencePath, NonFirstTrackBindingsAttachAndSiblingDoesNot) {
     trackRefs[1].trackDefinition = track1;
     trackRefs[1].trackScheduleSemanticFingerprint = 501;
     trackRefs[1].stableTrackOrdinal = 1;
-    harken::PieceScheduleProgramViewV1 pieceSchedule{};
-    pieceSchedule.rootDefinition = piece;
-    pieceSchedule.trackRefCount = 2;
-    pieceSchedule.trackRefs = trackRefs.data();
+    harken::SegmentScheduleProgramViewV1 segmentSchedule{};
+    segmentSchedule.rootDefinition = segment;
+    segmentSchedule.trackRefCount = 2;
+    segmentSchedule.trackRefs = trackRefs.data();
     harken::PlayableWorldViewV1 world{};
     world.generation = 1;
     world.identity.runtimeSemanticFingerprint = 1;
@@ -125,15 +125,15 @@ TEST(OccurrencePath, NonFirstTrackBindingsAttachAndSiblingDoesNot) {
     world.occurrenceCount = occurrences.size();
     world.trackSchedules = tracks.data();
     world.trackScheduleCount = tracks.size();
-    world.pieceSchedules = &pieceSchedule;
-    world.pieceScheduleCount = 1;
+    world.segmentSchedules = &segmentSchedule;
+    world.segmentScheduleCount = 1;
 
     harken::ResolvedPlayablePropertyCutStorageV1 storage;
     ASSERT_TRUE(storage.Reset({}));
     const std::uint32_t ordinal = 7;
     auto trackId = track1.stableId;
     ASSERT_EQ(harken::ResolvedPlayablePropertyCutStatusV1::Ok,
-              storage.Resolve(world, piece, &ordinal, 1, &trackId));
+              storage.Resolve(world, segment, &ordinal, 1, &trackId));
     const auto& cut = storage.View();
     EXPECT_EQ(sound.stableId, cut.leaf.stableId);
     bool sawTrack1Occurrence = false;

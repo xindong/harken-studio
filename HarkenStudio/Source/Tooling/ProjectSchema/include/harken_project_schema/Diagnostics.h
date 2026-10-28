@@ -30,22 +30,22 @@ namespace harkenprojectschema {
 enum class DiagnosticCode : std::uint32_t {
     // Stage 1 — parse: a field authored where its kind forbids it.
     ClipsOnNonTrack = 100,
-    TimeSpecOnNonPiece = 101,        // a time spec on anything but a Piece
-    StartPointOnNonPiece = 102,
-    MarkersOnNonPiece = 103,
-    PieceMissingTimeSpec = 104,
-    PieceMissingStartPoint = 105,
+    TimeSpecOnNonSegment = 101,        // a time spec on anything but a Segment
+    StartPointOnNonSegment = 102,
+    MarkersOnNonSegment = 103,
+    SegmentMissingTimeSpec = 104,
+    SegmentMissingStartPoint = 105,
     ReservedMarkerId = 106,             // a marker authored with the reserved id 0
     StartPointMarkerReserved = 107,     // a Marker start point naming the reserved id 0
     StartPointMarkerMissing = 108,      // a Marker start point whose marker is not in the table
-    MusicalMapEmpty = 109,           // a Musical piece with an empty tempo/meter map
-    NonMusicalMapPresent = 110,      // an Absolute piece carrying maps
+    MusicalMapEmpty = 109,           // a Musical segment with an empty tempo/meter map
+    NonMusicalMapPresent = 110,      // an Absolute segment carrying maps
     NullGuid = 111,                  // an object, clip or marker authored with the null GUID
     InvalidContentKind = 112,         // a content-kind ordinal outside the enum domain
-    InvalidPieceTimeKind = 113,       // a piece-time ordinal outside the enum domain
+    InvalidSegmentTimeKind = 113,       // a segment-time ordinal outside the enum domain
     InvalidStartPointKind = 114,      // a start-point ordinal outside the enum domain
     InvalidMarkerKind = 115,             // a marker-kind ordinal outside the enum domain
-    DuplicateMarkerId = 116,             // two markers in one Piece share a non-zero marker id
+    DuplicateMarkerId = 116,             // two markers in one Segment share a non-zero marker id
     EntryStartPointMarkerPresent = 117,  // an Entry start point carrying a marker id
     SendTargetBusUnset = 118,         // a send entry carrying the reserved bus id 0
     GraphNodeIdReserved = 119,        // an effect node carrying the reserved node id 0
@@ -85,7 +85,7 @@ enum class DiagnosticCode : std::uint32_t {
 
     // Stage 4 — time and marker normalization.
     MusicalMapNotSingletonAtZero = 500,  // a Musical map is not exactly one row at tick 0
-    MultipleExitMarkers = 501,              // a Piece declares more than one exit marker
+    MultipleExitMarkers = 501,              // a Segment declares more than one exit marker
     NegativeClipDuration = 502,
     ClipEndOverflow = 503,
 

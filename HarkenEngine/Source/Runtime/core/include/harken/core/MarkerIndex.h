@@ -1,19 +1,19 @@
-// The per-Piece marker index: the immutable table a planner reads to answer "where
+// The per-Segment marker index: the immutable table a planner reads to answer "where
 // is marker C" and "what is the next bar / beat / marker after here", with every answer
 // available both as a musical/absolute position and as the sample frame it maps
-// to under the Piece's own clock.
+// to under the Segment's own clock.
 //
-// Entry is a sentinel, not a row. Every Piece's entry marker is local position zero
-// -- tick 0 for a Musical Piece, nanosecond 0 for an Absolute one -- so it never
+// Entry is a sentinel, not a row. Every Segment's entry marker is local position zero
+// -- tick 0 for a Musical Segment, nanosecond 0 for an Absolute one -- so it never
 // needs storing. ByMarkerId(0) always reports absent. The table holds the custom and
 // exit markers, each named by a non-zero MarkerId (zero is the entry sentinel and is
-// refused as a stored id), and a Piece has at most one exit marker.
+// refused as a stored id), and a Segment has at most one exit marker.
 //
-// One clock, chosen once. A Musical Piece converts a tick position to a frame
-// through the tempo map (ClockKernel::TickToFrame); an Absolute Piece converts a
+// One clock, chosen once. A Musical Segment converts a tick position to a frame
+// through the tempo map (ClockKernel::TickToFrame); an Absolute Segment converts a
 // nanosecond position through the sample rate alone (ClockKernel::TimeToFrame).
 // The index is bound to one ClockKernel and one time type at Reset and does not
-// change either afterward, because a Piece's clock is fixed for the life of its
+// change either afterward, because a Segment's clock is fixed for the life of its
 // program.
 //
 // The grid is arithmetic under a constant, single-row meter: a bar is
@@ -42,13 +42,13 @@
 
 namespace harken {
 
-// A marker's stable identifier within its Piece. Zero is reserved for the entry
+// A marker's stable identifier within its Segment. Zero is reserved for the entry
 // sentinel and is never a stored marker.
 using MarkerId = VnObjectId;
 
 inline constexpr MarkerId kEntryMarkerId{};
 
-// PieceTimeType (Musical / Absolute) is shared with the same-position resolver;
+// SegmentTimeType (Musical / Absolute) is shared with the same-position resolver;
 // see harken/core/TimeCoordinates.h.
 
 // The two kinds of stored marker. Entry is not among them: it is the sentinel at
@@ -58,7 +58,7 @@ enum class MarkerKind : std::uint8_t {
     Exit = 2
 };
 
-// One stored marker: its id, kind, and entry-relative position in the Piece's native
+// One stored marker: its id, kind, and entry-relative position in the Segment's native
 // unit (tick for Musical, nanosecond for Absolute). Positions may be negative:
 // authored exit/custom markers are relative to entry and may precede it, so a
 // pre-entry (anacrusis-region) marker is carried through as given rather than
@@ -85,9 +85,9 @@ enum class BoundaryType : std::uint8_t {
 };
 
 // The next boundary after a queried position. hasCandidate is false when none
-// exists -- a Bar/Beat query on an Absolute Piece, a musical grid at the end of
+// exists -- a Bar/Beat query on an Absolute Segment, a musical grid at the end of
 // the representable axis, or a Marker query with no later marker. When true, position
-// is in the Piece's native unit and frame is its mapping.
+// is in the Segment's native unit and frame is its mapping.
 struct BoundaryCandidate {
     bool hasCandidate = false;
     std::int64_t position = 0;
@@ -107,7 +107,7 @@ class MarkerIndex {
 public:
     MarkerIndex() = default;
 
-    // Binds the index to a Piece's time type, clock and meter, and copies its markers
+    // Binds the index to a Segment's time type, clock and meter, and copies its markers
     // into storage sized for `capacity`. Returns false (leaving the index invalid)
     // when: the clock is null or invalid; capacity is zero or fewer than the marker
     // count; the time type or a marker kind is outside its declared enum; any marker
@@ -115,21 +115,21 @@ public:
     // is present; or (Musical only) the meter is non-positive or does not divide
     // to whole bar/beat ticks. Copies, so the caller's array need not outlive the
     // index; the clock is borrowed and must outlive it.
-    bool Reset(PieceTimeType timeType, const ClockKernel* clock,
+    bool Reset(SegmentTimeType timeType, const ClockKernel* clock,
                MeterSignature meter, const MarkerPoint* markers,
                std::size_t markerCount, std::size_t capacity);
 
     bool Valid() const { return valid_; }
-    PieceTimeType TimeType() const { return timeType_; }
+    SegmentTimeType TimeType() const { return timeType_; }
     std::size_t MarkerCount() const { return markerCount_; }
     std::size_t Capacity() const { return markers_.size(); }
 
-    // The Piece's native position converted to a frame under its clock. Musical
+    // The Segment's native position converted to a frame under its clock. Musical
     // positions floor through the tempo map; absolute positions through the
     // sample rate. On an invalid index this is frame 0.
     SampleFrame FrameOfPosition(std::int64_t position) const;
 
-    // Ticks per bar and per beat, or 0 for an Absolute Piece (which has no musical
+    // Ticks per bar and per beat, or 0 for an Absolute Segment (which has no musical
     // grid). Both are whole numbers by Reset's validation.
     std::int64_t BarTicks() const { return barTicks_; }
     std::int64_t BeatTicks() const { return beatTicks_; }
@@ -143,11 +143,11 @@ public:
     // earliest in the sorted order is returned.
     MarkerLookup ByPosition(std::int64_t position) const;
 
-    // The Piece's single exit marker, or {present=false} if it has none.
+    // The Segment's single exit marker, or {present=false} if it has none.
     MarkerLookup ExitMarker() const;
 
     // The next boundary strictly after fromPosition. For Bar/Beat this is the next
-    // representable grid line on a Musical Piece; an Absolute Piece has no grid,
+    // representable grid line on a Musical Segment; an Absolute Segment has no grid,
     // and the final representable musical line has no successor. For Marker it is the
     // next stored marker by position. When none exists, hasCandidate is false.
     BoundaryCandidate NextBoundary(std::int64_t fromPosition,
@@ -159,7 +159,7 @@ private:
     static bool NextGridLine(std::int64_t from, std::int64_t grid,
                              std::int64_t* next);
 
-    PieceTimeType timeType_ = PieceTimeType::Musical;
+    SegmentTimeType timeType_ = SegmentTimeType::Musical;
     const ClockKernel* clock_ = nullptr;
     std::int64_t barTicks_ = 0;
     std::int64_t beatTicks_ = 0;

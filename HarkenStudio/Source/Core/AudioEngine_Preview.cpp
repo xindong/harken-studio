@@ -18,7 +18,7 @@ AudioEngine::PreviewPlayableStartResult AudioEngine::playPreviewPlayable(
 {
     PreviewPlayableStartResult result;
     if (emitterHandle == 0 && !harkenstudio::IsNull(stableId)
-        && playableKind <= HarkenEditor::Bridge::kPreviewPlayablePiece) {
+        && playableKind <= HarkenEditor::Bridge::kPreviewPlayableSegment) {
         emitterHandle = ensurePreviewEmitter();
         if (emitterHandle == 0) {
             result.status = HarkenEditor::Bridge::kPreviewHostError;

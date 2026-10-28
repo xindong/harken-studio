@@ -136,7 +136,7 @@ public:
         return {view_.generation, view_.identity.runtimeSemanticFingerprint};
     }
     static constexpr bool kDirectNestedContainer = true;
-    std::uint32_t QueueResetScheduleDepth() const noexcept { return view_.maxTrackPieceScheduleDepth; }
+    std::uint32_t QueueResetScheduleDepth() const noexcept { return view_.maxTrackSegmentScheduleDepth; }
     const PlayablePropertyProgramViewV1* Property(const PlayableRefV1& ref) const noexcept {
         for (std::uint32_t i = 0; view_.properties != nullptr && i < view_.propertyCount; ++i)
             if (view_.properties[i].stableId == ref.stableId &&
@@ -160,10 +160,10 @@ public:
             if (SameRef(view_.trackSchedules[i].rootDefinition, ref)) return &view_.trackSchedules[i];
         return nullptr;
     }
-    const PieceScheduleProgramViewV1* Piece(const PlayableRefV1& ref) const noexcept {
-        if (view_.pieceSchedules == nullptr) return nullptr;
-        for (std::uint32_t i = 0; i < view_.pieceScheduleCount; ++i)
-            if (SameRef(view_.pieceSchedules[i].rootDefinition, ref)) return &view_.pieceSchedules[i];
+    const SegmentScheduleProgramViewV1* Segment(const PlayableRefV1& ref) const noexcept {
+        if (view_.segmentSchedules == nullptr) return nullptr;
+        for (std::uint32_t i = 0; i < view_.segmentScheduleCount; ++i)
+            if (SameRef(view_.segmentSchedules[i].rootDefinition, ref)) return &view_.segmentSchedules[i];
         return nullptr;
     }
 private:
@@ -183,7 +183,7 @@ public:
         using Kind = playableproperties::ContentPropertyKindV1;
         const auto kind = ref.kind == PlayableKindV1::Sound ? Kind::Sound
             : ref.kind == PlayableKindV1::Container ? Kind::Container
-            : ref.kind == PlayableKindV1::Track ? Kind::Track : Kind::Piece;
+            : ref.kind == PlayableKindV1::Track ? Kind::Track : Kind::Segment;
         return view_.ResolveProperty(kind, ref.stableId);
     }
     std::uint32_t BindingCount(VnObjectId object) const noexcept {
@@ -196,8 +196,8 @@ public:
         const auto item = view_.ResolveTrack(ref.stableId, 0);
         return item != nullptr && SameRef(item->rootDefinition, ref) ? item.programView : nullptr;
     }
-    const PieceScheduleProgramViewV1* Piece(const PlayableRefV1& ref) const noexcept {
-        const auto item = view_.ResolvePiece(ref.stableId, 0);
+    const SegmentScheduleProgramViewV1* Segment(const PlayableRefV1& ref) const noexcept {
+        const auto item = view_.ResolveSegment(ref.stableId, 0);
         return item != nullptr && SameRef(item->rootDefinition, ref) ? item.programView : nullptr;
     }
 private:
@@ -477,19 +477,19 @@ private:
                 if (track->placementCount != 0 && track->placements == nullptr) return Failure(Status::InvalidInput);
                 for (std::uint32_t i = 0; i < track->placementCount; ++i) {
                     const auto child = track->placements[i].content;
-                    if (child.kind != PlayableKindV1::Sound && child.kind != PlayableKindV1::Piece &&
+                    if (child.kind != PlayableKindV1::Sound && child.kind != PlayableKindV1::Segment &&
                         child.kind != PlayableKindV1::Container) return Failure(Status::UnsupportedKind);
                     result = EnqueueAudit(child);
                     if (!result) return result;
                 }
                 break;
             }
-            case PlayableKindV1::Piece: {
-                const auto* piece = content_.Piece(ref);
-                if (piece == nullptr) return Failure(Status::MissingContent);
-                if (piece->trackRefCount != 0 && piece->trackRefs == nullptr) return Failure(Status::InvalidInput);
-                for (std::uint32_t i = 0; i < piece->trackRefCount; ++i) {
-                    const auto& child = piece->trackRefs[i];
+            case PlayableKindV1::Segment: {
+                const auto* segment = content_.Segment(ref);
+                if (segment == nullptr) return Failure(Status::MissingContent);
+                if (segment->trackRefCount != 0 && segment->trackRefs == nullptr) return Failure(Status::InvalidInput);
+                for (std::uint32_t i = 0; i < segment->trackRefCount; ++i) {
+                    const auto& child = segment->trackRefs[i];
                     if (child.trackDefinition.kind != PlayableKindV1::Track) return Failure(Status::UnsupportedKind);
                     const auto* track = content_.Track(child.trackDefinition);
                     if (track == nullptr) return Failure(Status::MissingContent);
@@ -545,7 +545,7 @@ private:
         if (entry->result && entry->result.profile.voice.path != 0) {
             auto& voice = entry->result.profile.voice;
             if (ref.kind != PlayableKindV1::Sound)
-                voice.AddPathPrefix(ref.kind == PlayableKindV1::Piece ? 1u : 2u);
+                voice.AddPathPrefix(ref.kind == PlayableKindV1::Segment ? 1u : 2u);
             voice.bindings = static_cast<std::uint32_t>(std::min<std::uint64_t>(kMaxVoiceBindingInstanceSlots,
                 static_cast<std::uint64_t>(voice.bindings) + content_.BindingCount(ref.stableId)));
         }
@@ -574,7 +574,7 @@ private:
             }
             return result;
         }
-        if (ref.kind == PlayableKindV1::Track || ref.kind == PlayableKindV1::Piece) return Schedule(ref, budget);
+        if (ref.kind == PlayableKindV1::Track || ref.kind == PlayableKindV1::Segment) return Schedule(ref, budget);
         if (ref.kind != PlayableKindV1::Container) return Failure(Status::UnsupportedKind);
         const auto* program = content_.Container(ref);
         if (program == nullptr) return Failure(Status::MissingContent);
@@ -612,11 +612,11 @@ private:
         --budget.schedules;
         Result result{};
         result.flags = UnprunedSchedule;
-        if (ref.kind == PlayableKindV1::Piece) {
-            const auto* piece = content_.Piece(ref);
-            if (piece == nullptr) return Failure(Status::MissingContent);
-            for (std::uint32_t i = 0; i < piece->trackRefCount; ++i) {
-                result = Concurrent(result, Visit(piece->trackRefs[i].trackDefinition, Mode::StaticSchedule, budget), limits_);
+        if (ref.kind == PlayableKindV1::Segment) {
+            const auto* segment = content_.Segment(ref);
+            if (segment == nullptr) return Failure(Status::MissingContent);
+            for (std::uint32_t i = 0; i < segment->trackRefCount; ++i) {
+                result = Concurrent(result, Visit(segment->trackRefs[i].trackDefinition, Mode::StaticSchedule, budget), limits_);
                 if (!result) return result;
             }
             return result;
@@ -710,13 +710,13 @@ private:
         if (kind == PlayableKindV1::Sound &&
             (hint == ChildTimingHintKindV2::Unknown || hint == ChildTimingHintKindV2::InlineSound))
             return Visit(child.playable, Mode::StaticSchedule, fresh);
-        if ((kind == PlayableKindV1::Track || kind == PlayableKindV1::Piece) && hint == ChildTimingHintKindV2::ScheduleReference) {
+        if ((kind == PlayableKindV1::Track || kind == PlayableKindV1::Segment) && hint == ChildTimingHintKindV2::ScheduleReference) {
             const auto& key = child.timingHint.payload.schedule;
             if (key.kind != kind || key.stableId != child.playable.stableId) return Failure(Status::FingerprintMismatch);
             const auto* track = kind == PlayableKindV1::Track ? content_.Track(child.playable) : nullptr;
-            const auto* piece = kind == PlayableKindV1::Piece ? content_.Piece(child.playable) : nullptr;
-            if (track == nullptr && piece == nullptr) return Failure(Status::MissingContent);
-            const auto fingerprint = track != nullptr ? track->scheduleSemanticFingerprint : piece->scheduleSemanticFingerprint;
+            const auto* segment = kind == PlayableKindV1::Segment ? content_.Segment(child.playable) : nullptr;
+            if (track == nullptr && segment == nullptr) return Failure(Status::MissingContent);
+            const auto fingerprint = track != nullptr ? track->scheduleSemanticFingerprint : segment->scheduleSemanticFingerprint;
             if (key.scheduleSemanticFingerprint != fingerprint) return Failure(Status::FingerprintMismatch);
             return Visit(child.playable, Mode::StaticSchedule, fresh);
         }
@@ -725,7 +725,7 @@ private:
             else return Omitted(ExistingDirectRefusal);
         }
         if (kind != PlayableKindV1::Sound && kind != PlayableKindV1::Track &&
-            kind != PlayableKindV1::Piece && kind != PlayableKindV1::Container) return Failure(Status::UnsupportedKind);
+            kind != PlayableKindV1::Segment && kind != PlayableKindV1::Container) return Failure(Status::UnsupportedKind);
         return Omitted(ExistingDirectRefusal);
     }
 

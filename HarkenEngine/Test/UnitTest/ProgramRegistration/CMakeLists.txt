@@ -1,11 +1,11 @@
 # harken_program_registration: the compile/load-time step that resolves a compiled
-# PieceProgram to device-rate scheduled work the runtime files verbatim. A tooling
+# SegmentProgram to device-rate scheduled work the runtime files verbatim. A tooling
 # library because the resolution belongs to program registration, not to the audio
 # runtime; the runtime consumes the finished ProgramViews through the planner it
 # already has and re-derives none of the conversion.
 #
 # Links harken_core (for the clock, marker index and the planner's ProgramView type)
-# and harken_project_schema (for the PieceProgram it consumes) -- the same tooling
+# and harken_project_schema (for the SegmentProgram it consumes) -- the same tooling
 # -> runtime direction harken_remote already takes. harken_core links neither this
 # library nor the schema back, so the runtime/tooling isolation is preserved: the
 # dependency edge only ever points at the runtime, never out of it. Qt-free like

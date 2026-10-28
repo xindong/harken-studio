@@ -236,7 +236,7 @@ static_assert(static_cast<int>(VN_MONITOR_CONTENT_UNKNOWN) == 0, "binding enum d
 static_assert(static_cast<int>(VN_MONITOR_CONTENT_SOUND) == 1, "binding enum drift: VN_MONITOR_CONTENT_SOUND");
 static_assert(static_cast<int>(VN_MONITOR_CONTENT_CONTAINER) == 2, "binding enum drift: VN_MONITOR_CONTENT_CONTAINER");
 static_assert(static_cast<int>(VN_MONITOR_CONTENT_TRACK) == 3, "binding enum drift: VN_MONITOR_CONTENT_TRACK");
-static_assert(static_cast<int>(VN_MONITOR_CONTENT_PIECE) == 4, "binding enum drift: VN_MONITOR_CONTENT_PIECE");
+static_assert(static_cast<int>(VN_MONITOR_CONTENT_SEGMENT) == 4, "binding enum drift: VN_MONITOR_CONTENT_SEGMENT");
 static_assert(static_cast<int>(VN_MONITOR_CONTENT_ACTION) == 5, "binding enum drift: VN_MONITOR_CONTENT_ACTION");
 static_assert(static_cast<int>(VN_MONITOR_CONTENT_MEDIA) == 6, "binding enum drift: VN_MONITOR_CONTENT_MEDIA");
 static_assert(static_cast<int>(VN_MONITOR_CONTENT_VARIABLE) == 7, "binding enum drift: VN_MONITOR_CONTENT_VARIABLE");
@@ -429,7 +429,7 @@ static_assert(static_cast<int>(VN_ACTION_OPCODE_RESET) == 4, "binding enum drift
 static_assert(static_cast<int>(VN_ACTION_TARGET_SOUND) == 0, "binding enum drift: VN_ACTION_TARGET_SOUND");
 static_assert(static_cast<int>(VN_ACTION_TARGET_CONTAINER) == 1, "binding enum drift: VN_ACTION_TARGET_CONTAINER");
 static_assert(static_cast<int>(VN_ACTION_TARGET_TRACK) == 2, "binding enum drift: VN_ACTION_TARGET_TRACK");
-static_assert(static_cast<int>(VN_ACTION_TARGET_PIECE) == 3, "binding enum drift: VN_ACTION_TARGET_PIECE");
+static_assert(static_cast<int>(VN_ACTION_TARGET_SEGMENT) == 3, "binding enum drift: VN_ACTION_TARGET_SEGMENT");
 static_assert(static_cast<int>(VN_ACTION_TARGET_ACTION) == 4, "binding enum drift: VN_ACTION_TARGET_ACTION");
 static_assert(static_cast<int>(VN_ACTION_TARGET_VARIABLE) == 5, "binding enum drift: VN_ACTION_TARGET_VARIABLE");
 static_assert(static_cast<int>(VN_ACTION_TARGET_BUS) == 6, "binding enum drift: VN_ACTION_TARGET_BUS");

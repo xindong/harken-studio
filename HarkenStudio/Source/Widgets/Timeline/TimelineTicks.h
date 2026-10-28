@@ -28,10 +28,10 @@ struct TimelineTickSet
     int64_t minorStep = 0;
 };
 
-int64_t timelineCoordinateUnit(const PieceTimeSpec& spec);
-int64_t timelineSnapGrid(const PieceTimeSpec& spec);
+int64_t timelineCoordinateUnit(const SegmentTimeSpec& spec);
+int64_t timelineSnapGrid(const SegmentTimeSpec& spec);
 
-TimelineTickSet buildTimelineTicks(const PieceTimeSpec& spec,
+TimelineTickSet buildTimelineTicks(const SegmentTimeSpec& spec,
                                    int64_t viewOrigin,
                                    int viewOffset,
                                    double pixelsPerUnit,

@@ -1477,7 +1477,7 @@ TEST(TraceCodec, CurrentWorldVintageThreeKeepsZeroGridContainersCompatible) {
 }
 
 TEST(TraceCodec,
-     CurrentWorldRoundTripsTrackPieceAndScheduleReferenceExactly) {
+     CurrentWorldRoundTripsTrackSegmentAndScheduleReferenceExactly) {
     harken::PlayablePropertyProgramViewV1 properties[4]{};
     properties[0].contentPropertyKind =
         harken::playableproperties::ContentPropertyKindV1::Sound;
@@ -1515,7 +1515,7 @@ TEST(TraceCodec,
     properties[2].programSemanticFingerprint =
         harken::ComputePlayablePropertyFingerprintV1(properties[2]);
     properties[3].contentPropertyKind =
-        harken::playableproperties::ContentPropertyKindV1::Piece;
+        harken::playableproperties::ContentPropertyKindV1::Segment;
     properties[3].authoredStableOrder = 3;
     properties[3].stableId = harkentest::ObjectId(23);
     properties[3].contentRevision = 104;
@@ -1571,29 +1571,29 @@ TEST(TraceCodec,
     trackRef.trackScheduleSemanticFingerprint =
         track.scheduleSemanticFingerprint;
     harken::ScheduleMarkerV1 marker{harkentest::ObjectId(41), 7, 1, 5000000};
-    harken::PieceScheduleProgramViewV1 piece{};
-    piece.rootDefinition.kind = harken::PlayableKindV1::Piece;
-    piece.rootDefinition.stableId = properties[3].stableId;
-    piece.rootDefinition.expectedProgramSemanticFingerprint =
+    harken::SegmentScheduleProgramViewV1 segment{};
+    segment.rootDefinition.kind = harken::PlayableKindV1::Segment;
+    segment.rootDefinition.stableId = properties[3].stableId;
+    segment.rootDefinition.expectedProgramSemanticFingerprint =
         properties[3].programSemanticFingerprint;
-    piece.rootDefinition.contentRevision = properties[3].contentRevision;
-    piece.startPointKind = 1;
-    piece.startMarkerId = marker.markerId;
-    piece.trackRefCount = 1;
-    piece.trackRefs = &trackRef;
-    piece.markerCount = 1;
-    piece.markers = &marker;
-    piece.scheduleSemanticFingerprint =
-        harken::ComputePieceScheduleFingerprintV1(piece);
+    segment.rootDefinition.contentRevision = properties[3].contentRevision;
+    segment.startPointKind = 1;
+    segment.startMarkerId = marker.markerId;
+    segment.trackRefCount = 1;
+    segment.trackRefs = &trackRef;
+    segment.markerCount = 1;
+    segment.markers = &marker;
+    segment.scheduleSemanticFingerprint =
+        harken::ComputeSegmentScheduleFingerprintV1(segment);
 
     harken::ContainerChildProgramViewV2 child{};
-    child.playable = piece.rootDefinition;
+    child.playable = segment.rootDefinition;
     child.stableChildOrdinal = 8;
     child.authoredStableOrder = 9;
     child.orderWeight = 1;
     child.timingHint = harken::MakeScheduleReferenceTimingHint(
-        harken::PlayableKindV1::Piece, piece.rootDefinition.stableId,
-        piece.scheduleSemanticFingerprint);
+        harken::PlayableKindV1::Segment, segment.rootDefinition.stableId,
+        segment.scheduleSemanticFingerprint);
     harken::ContainerProgramViewV3 container{};
     container.containerStableId = properties[1].stableId;
     container.programSemanticFingerprint =
@@ -1609,8 +1609,8 @@ TEST(TraceCodec,
     world.playableOccurrenceCount = 1;
     world.trackSchedules = &track;
     world.trackScheduleCount = 1;
-    world.pieceSchedules = &piece;
-    world.pieceScheduleCount = 1;
+    world.segmentSchedules = &segment;
+    world.segmentScheduleCount = 1;
     world.containers = &container;
     world.containerCount = 1;
     world.identity.capabilityMask = harken::kWorldCapabilityPlayableProperties;
@@ -1627,20 +1627,20 @@ TEST(TraceCodec,
     const auto& roundTrip = *decoded.ProductionView();
     ASSERT_EQ(1u, roundTrip.trackScheduleCount);
     ASSERT_EQ(1u, roundTrip.trackSchedules[0].placementCount);
-    ASSERT_EQ(1u, roundTrip.pieceScheduleCount);
-    ASSERT_EQ(1u, roundTrip.pieceSchedules[0].trackRefCount);
-    ASSERT_EQ(1u, roundTrip.pieceSchedules[0].markerCount);
+    ASSERT_EQ(1u, roundTrip.segmentScheduleCount);
+    ASSERT_EQ(1u, roundTrip.segmentSchedules[0].trackRefCount);
+    ASSERT_EQ(1u, roundTrip.segmentSchedules[0].markerCount);
     ASSERT_EQ(1u, roundTrip.containerCount);
     EXPECT_EQ(placement.authoredStart,
               roundTrip.trackSchedules[0].placements[0].authoredStart);
     EXPECT_EQ(track.scheduleSemanticFingerprint,
               roundTrip.trackSchedules[0].scheduleSemanticFingerprint);
-    EXPECT_EQ(piece.scheduleSemanticFingerprint,
-              roundTrip.pieceSchedules[0].scheduleSemanticFingerprint);
-    EXPECT_EQ(marker.position, roundTrip.pieceSchedules[0].markers[0].position);
+    EXPECT_EQ(segment.scheduleSemanticFingerprint,
+              roundTrip.segmentSchedules[0].scheduleSemanticFingerprint);
+    EXPECT_EQ(marker.position, roundTrip.segmentSchedules[0].markers[0].position);
     EXPECT_EQ(harken::ChildTimingHintKindV2::ScheduleReference,
               roundTrip.containers[0].children[0].timingHint.kind);
-    EXPECT_EQ(piece.scheduleSemanticFingerprint,
+    EXPECT_EQ(segment.scheduleSemanticFingerprint,
               roundTrip.containers[0].children[0]
                   .timingHint.payload.schedule.scheduleSemanticFingerprint);
     std::vector<std::uint8_t> reencoded;
@@ -1775,7 +1775,7 @@ TEST(TraceCodec,
     EXPECT_EQ(nullptr, decoded.ProductionView());
 }
 
-TEST(TraceCodec, FrozenVintageTwoTrackAndPieceAreRejected) {
+TEST(TraceCodec, FrozenVintageTwoTrackAndSegmentAreRejected) {
     harken::PlayablePropertyProgramViewV1 properties[2]{};
     properties[0].contentPropertyKind =
         harken::playableproperties::ContentPropertyKindV1::Track;
@@ -1787,7 +1787,7 @@ TEST(TraceCodec, FrozenVintageTwoTrackAndPieceAreRejected) {
     properties[0].programSemanticFingerprint =
         harken::ComputePlayablePropertyFingerprintV1(properties[0]);
     properties[1].contentPropertyKind =
-        harken::playableproperties::ContentPropertyKindV1::Piece;
+        harken::playableproperties::ContentPropertyKindV1::Segment;
     properties[1].authoredStableOrder = 1;
     properties[1].stableId = harkentest::ObjectId(12);
     properties[1].contentRevision = 102;

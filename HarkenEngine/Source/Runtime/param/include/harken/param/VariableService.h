@@ -331,8 +331,8 @@ public:
     std::uint32_t TrackScheduleProgramCount() const noexcept {
         return static_cast<std::uint32_t>(trackSchedules_.size());
     }
-    std::uint32_t PieceScheduleProgramCount() const noexcept {
-        return static_cast<std::uint32_t>(pieceSchedules_.size());
+    std::uint32_t SegmentScheduleProgramCount() const noexcept {
+        return static_cast<std::uint32_t>(segmentSchedules_.size());
     }
     std::uint32_t TransitionProgramCount() const noexcept {
         return static_cast<std::uint32_t>(transitionPrograms_.size());
@@ -379,10 +379,10 @@ public:
             ? nullptr : trackScheduleViews_.data();
         view.trackScheduleCount =
             static_cast<std::uint32_t>(trackScheduleViews_.size());
-        view.pieceSchedules = pieceScheduleViews_.empty()
-            ? nullptr : pieceScheduleViews_.data();
-        view.pieceScheduleCount =
-            static_cast<std::uint32_t>(pieceScheduleViews_.size());
+        view.segmentSchedules = segmentScheduleViews_.empty()
+            ? nullptr : segmentScheduleViews_.data();
+        view.segmentScheduleCount =
+            static_cast<std::uint32_t>(segmentScheduleViews_.size());
         view.containers = containerProgramViews_.empty()
             ? nullptr : containerProgramViews_.data();
         view.containerCount =
@@ -419,14 +419,14 @@ public:
                                   : trackScheduleViews_.data();
         view.trackScheduleCount =
             static_cast<std::uint32_t>(trackScheduleViews_.size());
-        view.pieceSchedules = pieceScheduleViews_.empty()
+        view.segmentSchedules = segmentScheduleViews_.empty()
                                   ? nullptr
-                                  : pieceScheduleViews_.data();
-        view.pieceScheduleCount =
-            static_cast<std::uint32_t>(pieceScheduleViews_.size());
+                                  : segmentScheduleViews_.data();
+        view.segmentScheduleCount =
+            static_cast<std::uint32_t>(segmentScheduleViews_.size());
         view.maxKnownScheduleLeaves = capacity_.maxKnownScheduleLeaves;
-        view.maxTrackPieceScheduleDepth =
-            capacity_.maxTrackPieceScheduleDepth;
+        view.maxTrackSegmentScheduleDepth =
+            capacity_.maxTrackSegmentScheduleDepth;
         view.containers = containerProgramViews_.empty()
                               ? nullptr
                               : containerProgramViews_.data();
@@ -912,8 +912,8 @@ private:
         void Refresh() noexcept;
     };
 
-    struct OwnedPieceScheduleProgram {
-        PieceScheduleProgramViewV1 view{};
+    struct OwnedSegmentScheduleProgram {
+        SegmentScheduleProgramViewV1 view{};
         std::vector<ScheduleTrackRefV1> trackRefs;
         std::vector<ScheduleMarkerV1> markers;
 
@@ -985,8 +985,8 @@ public:
         std::vector<PlayableOccurrencePropertyViewV1> playableOccurrenceViews_;
         std::vector<OwnedTrackScheduleProgram> trackSchedules_;
         std::vector<TrackScheduleProgramViewV1> trackScheduleViews_;
-        std::vector<OwnedPieceScheduleProgram> pieceSchedules_;
-        std::vector<PieceScheduleProgramViewV1> pieceScheduleViews_;
+        std::vector<OwnedSegmentScheduleProgram> segmentSchedules_;
+        std::vector<SegmentScheduleProgramViewV1> segmentScheduleViews_;
         std::vector<OwnedContainerProgram> containerPrograms_;
         std::vector<ContainerProgramViewV3> containerProgramViews_;
         std::vector<OwnedTransitionProgram> transitionPrograms_;
@@ -1482,8 +1482,8 @@ private:
     std::vector<PlayableOccurrencePropertyViewV1> playableOccurrenceViews_;
     std::vector<OwnedTrackScheduleProgram> trackSchedules_;
     std::vector<TrackScheduleProgramViewV1> trackScheduleViews_;
-    std::vector<OwnedPieceScheduleProgram> pieceSchedules_;
-    std::vector<PieceScheduleProgramViewV1> pieceScheduleViews_;
+    std::vector<OwnedSegmentScheduleProgram> segmentSchedules_;
+    std::vector<SegmentScheduleProgramViewV1> segmentScheduleViews_;
     std::vector<OwnedContainerProgram> containerPrograms_;
     std::vector<ContainerProgramViewV3> containerProgramViews_;
     std::vector<OwnedTransitionProgram> transitionPrograms_;

@@ -2,7 +2,7 @@
 // a caller holds and the internal render-slot handle a voice occupies. This
 // file covers the ledger class in isolation (mint, both-way translation, reap,
 // generation advance, release, capacity degradation, the correlation-fill
-// predicate) and then the pieces only observable through the C API: public-
+// predicate) and then the segments only observable through the C API: public-
 // handle stale semantics after reuse, the voicePublicHandles correlation
 // array, audio-notification handle translation to public identity (proven under a
 // forced public/render divergence so it cannot pass by coincidence), the

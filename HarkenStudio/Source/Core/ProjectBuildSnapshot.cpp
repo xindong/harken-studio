@@ -8,7 +8,7 @@
 #include "Components/VAudio.h"
 #include "Components/VBus.h"
 #include "Components/VMixNode.h"
-#include "Components/VPiece.h"
+#include "Components/VSegment.h"
 #include "Components/VSelection.h"
 #include "Components/VSound.h"
 #include "Components/VSpatial.h"
@@ -68,7 +68,7 @@ std::shared_ptr<ProjectItem> copyItem(
     copyComponent<VAttenuation>(*source, *item);
     copyComponent<VSpatial>(*source, *item);
     copyComponent<VTrack>(*source, *item);
-    copyComponent<VPiece>(*source, *item);
+    copyComponent<VSegment>(*source, *item);
     copyComponent<VSound>(*source, *item);
     for (const auto& child : source->children)
         item->children.push_back(copyItem(child, copies));

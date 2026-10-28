@@ -5,7 +5,7 @@
 #include "TimelineTicks.h"
 #include "Core/AssetPipeline/AssetRegistry.h"
 #include "Core/AssetPipeline/AudioImportGate.h"
-#include "Core/Components/VPiece.h"
+#include "Core/Components/VSegment.h"
 #include "Core/ItemTypeCatalog.h"
 #include "Core/ItemTypeIcons.h"
 #include "Core/LanguageContextService.h"
@@ -166,7 +166,7 @@ QRect TimelineCanvas::laneRect(int laneIndex) const
 
 QRect TimelineCanvas::blankRect() const
 {
-    if (panel_->viewKind() != TimelineEditorPanel::ViewKind::Piece)
+    if (panel_->viewKind() != TimelineEditorPanel::ViewKind::Segment)
         return {};
     const int y = panel_->laneCount() > 0 ? laneRect(panel_->laneCount() - 1).bottom() + 1 : 0;
     return QRect(0, y, width(), std::max(0, height() - y));
@@ -713,7 +713,7 @@ void TimelineCanvas::mouseDoubleClickEvent(QMouseEvent* event)
         const QUuid guid = panel_->clipGuid(hit.laneIndex, hit.clipIndex);
         ProjectItem* target = ProjectManager::instance().findItemByGuid(
             panel_->clipTargetGuid(hit.laneIndex, hit.clipIndex));
-        if (target && target->type == ProjectItem::Type::Piece
+        if (target && target->type == ProjectItem::Type::Segment
             && ItemTypeCatalog::isUserFacingType(target->type)) {
             QTimer::singleShot(0, panel_, [panel = panel_, lane = hit.laneIndex, guid] {
                 panel->drillIntoClip(lane, guid);
@@ -1170,7 +1170,7 @@ bool TimelineCanvas::acceptDrop(const QMimeData* mime, const QPoint& point, bool
     const int dropX = panel_->viewportPixelAtCoordinate(coordinateLane, start);
     const bool blank = hit.blank
         || (hit.laneIndex < 0
-            && panel_->viewKind() == TimelineEditorPanel::ViewKind::Piece);
+            && panel_->viewKind() == TimelineEditorPanel::ViewKind::Segment);
 
     if (AudioImportGate::mimeHasAudio(mime)) {
         const QStringList files = AudioImportGate::extractAudioFiles(mime);
@@ -1181,7 +1181,7 @@ bool TimelineCanvas::acceptDrop(const QMimeData* mime, const QPoint& point, bool
             return false;
         }
         const QString blankAudioError =
-            tr("Piece blank does not import audio. Drop onto a Track lane.");
+            tr("Segment blank does not import audio. Drop onto a Track lane.");
         if (blank) {
             setDropFeedback(true, dropX, -1, blankAudioError, false);
             setCursor(Qt::ForbiddenCursor);
@@ -1250,7 +1250,7 @@ QMenu* TimelineCanvas::createClipMenu(int laneIndex, const QUuid& guid)
         panel_->clipTargetGuid(laneIndex, panel_->findClipIndex(laneIndex, guid)));
     auto* menu = new QMenu(this);
     QAction* enter = menu->addAction(tr("Enter Timeline"));
-    enter->setEnabled(target && target->type == ProjectItem::Type::Piece
+    enter->setEnabled(target && target->type == ProjectItem::Type::Segment
                       && ItemTypeCatalog::isUserFacingType(target->type));
     connect(enter, &QAction::triggered, this, [this, laneIndex, guid] {
         panel_->drillIntoClip(laneIndex, guid);
@@ -1382,7 +1382,7 @@ QMenu* TimelineCanvas::createLaneBlankMenu(int laneIndex, int64_t position)
             SelectorWindow::open(request, this);
         });
     }
-    if (panel_->viewKind() == TimelineEditorPanel::ViewKind::Piece
+    if (panel_->viewKind() == TimelineEditorPanel::ViewKind::Segment
         && ItemTypeCatalog::isUserFacingType(ProjectItem::Type::Track)) {
         menu->addSeparator();
         QAction* addTrack = menu->addAction(tr("Add Track"));

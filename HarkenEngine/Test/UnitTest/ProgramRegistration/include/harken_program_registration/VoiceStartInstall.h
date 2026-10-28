@@ -87,7 +87,7 @@ struct VoiceStartInstall {
     // What the voice plays, and whether there is a voice at all.
     //
     // startsAudibly is false for an occurrence that starts no voice: a clip
-    // targeting a Container or a Piece is a start-only placeholder whose content
+    // targeting a Container or a Segment is a start-only placeholder whose content
     // is expanded when that content is itself triggered, not here. For such an
     // occurrence soundId is zero and means nothing -- the absence is carried by
     // the flag, never by a reserved id value, so no consumer has to read zero as

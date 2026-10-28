@@ -1,7 +1,7 @@
 // The immutable Project v6 intermediate representation for the front-end's
-// output — the shape a later PieceProgram stage lowers to a device.
+// output — the shape a later SegmentProgram stage lowers to a device.
 //
-// It is derived, not authored: BuildPieceIR turns a validated CanonicalProject
+// It is derived, not authored: BuildSegmentIR turns a validated CanonicalProject
 // and its NormalizedFacts into this once, and nothing mutates it afterward. The
 // two frozen facts this stage commits to are that a Track is folded — it is
 // never an instantiable node, so no instance, bar or Bus entry is emitted for it
@@ -15,8 +15,8 @@
 // shape is not yet defined upstream), the audible programSemanticFingerprint,
 // and any prepare-requirement field. Inventing field names for those here would
 // pre-commit shapes this stage cannot justify.
-#ifndef HARKEN_PROJECT_SCHEMA_PIECE_IR_H
-#define HARKEN_PROJECT_SCHEMA_PIECE_IR_H
+#ifndef HARKEN_PROJECT_SCHEMA_SEGMENT_IR_H
+#define HARKEN_PROJECT_SCHEMA_SEGMENT_IR_H
 
 #include "harken_project_schema/EffectChain.h"
 #include "harken_project_schema/Model.h"
@@ -28,7 +28,7 @@
 namespace harkenprojectschema {
 
 namespace detail {
-struct PieceIRBuilder;
+struct SegmentIRBuilder;
 }
 
 // The compile-time half of the runtime OccurrenceKey. The full runtime key is
@@ -76,7 +76,7 @@ struct TemplateEvent {
 // handoff, and a plain clip has no independent source-in to seed one. Authored
 // fades are lowered by production registration without changing this structural
 // template. A Container or
-// Piece target emits no Stop: its end is its own program's or exit marker's to
+// Segment target emits no Stop: its end is its own program's or exit marker's to
 // decide. A Stop resolves the natural end against the occurrence's
 // durationFrames at resourceSampleRate; the executable quantity is frames, never
 // the nanosecond estimate, whose floor round-trip would lose frames.
@@ -102,7 +102,7 @@ struct IrOccurrence {
     SemanticOrderKey semanticOrderKey = 0;
 
     // Occurrence facts derived from the referenced resource. hasDuration is
-    // false for a Container or Piece target, whose end is decided by its own
+    // false for a Container or Segment target, whose end is decided by its own
     // program or exit marker rather than a natural length; such an occurrence
     // carries no duration and, later, gets no Stop.
     //
@@ -167,7 +167,7 @@ struct IrOccurrence {
 
 // A folded Track in the IR. A Track is never an instantiable node: it emits no
 // instance, bar or Bus entry, only its occurrence template sequence in
-// normalized order. BuildPieceIR has already written the folded numeric values
+// normalized order. BuildSegmentIR has already written the folded numeric values
 // into each occurrence; installing them when a voice starts happens later.
 // Structurally, a Track simply does not appear among instantiable objects, and
 // that absence is what this type encodes.
@@ -187,12 +187,12 @@ struct IrMarker {
     std::int64_t position = 0;
 };
 
-// A Piece in the IR: its constant-map time spec, its normalized start, its marker
+// A Segment in the IR: its constant-map time spec, its normalized start, its marker
 // table in canonical order, and the stable ids of the Tracks it owns.
-struct IrPiece {
-    StableId pieceId = kUnmintedStableId;
+struct IrSegment {
+    StableId segmentId = kUnmintedStableId;
     AuthoringGuid guid{};
-    PieceTimeSpec timeSpec;
+    SegmentTimeSpec timeSpec;
     StartPointKind startKind = StartPointKind::Entry;
     std::int64_t startCoordinate = 0;
     MarkerId startMarkerId = kReservedMarkerId;
@@ -202,12 +202,12 @@ struct IrPiece {
 
 // One row of the required runtime lineage table: the numeric path a Profiler
 // uses to place an occurrence on its lane without debug symbols. A Track
-// triggered inside a Piece carries the three-level path Piece -> Track -> Clip
-// (hasPiece true); a directly triggered Track carries the two-level path
-// Track -> Clip (hasPiece false, pieceId unused).
+// triggered inside a Segment carries the three-level path Segment -> Track -> Clip
+// (hasSegment true); a directly triggered Track carries the two-level path
+// Track -> Clip (hasSegment false, segmentId unused).
 struct LineageEntry {
-    bool hasPiece = false;
-    StableId pieceId = kUnmintedStableId;
+    bool hasSegment = false;
+    StableId segmentId = kUnmintedStableId;
     StableId trackId = kUnmintedStableId;
     StableId clipId = kUnmintedStableId;
     std::uint32_t occurrenceOrdinal = 0;
@@ -220,7 +220,7 @@ struct RuntimeLineageTable {
     std::vector<LineageEntry> entries;
 };
 
-// The immutable IR for this stage: every Track folded, every Piece, and the
+// The immutable IR for this stage: every Track folded, every Segment, and the
 // required lineage table with its own fingerprint.
 //
 // runtimeLineageFingerprint hashes the lineage table alone. It is kept separate
@@ -228,15 +228,15 @@ struct RuntimeLineageTable {
 // renumbers lineage must move this fingerprint without moving the semantic one.
 // This stage computes no semantic fingerprint and holds no field for one, by
 // design — that is a later stage's product.
-class PieceIR {
+class SegmentIR {
 public:
-    PieceIR(const PieceIR&) = default;
-    PieceIR(PieceIR&&) noexcept = default;
-    PieceIR& operator=(const PieceIR&) = default;
-    PieceIR& operator=(PieceIR&&) noexcept = default;
+    SegmentIR(const SegmentIR&) = default;
+    SegmentIR(SegmentIR&&) noexcept = default;
+    SegmentIR& operator=(const SegmentIR&) = default;
+    SegmentIR& operator=(SegmentIR&&) noexcept = default;
 
     const std::vector<IrTrack>& tracks() const { return tracks_; }
-    const std::vector<IrPiece>& pieces() const { return pieces_; }
+    const std::vector<IrSegment>& segments() const { return segments_; }
     const RuntimeLineageTable& lineage() const { return lineage_; }
     // The compiled chains this IR's occurrences reference, ascending by declaring
     // owner. Stored once per declaring object: every occurrence that selected the
@@ -249,19 +249,19 @@ public:
     }
 
 private:
-    PieceIR(std::vector<IrTrack> tracks, std::vector<IrPiece> pieces,
+    SegmentIR(std::vector<IrTrack> tracks, std::vector<IrSegment> segments,
             RuntimeLineageTable lineage,
             std::vector<CompiledEffectChain> effectChains,
             std::uint64_t runtimeLineageFingerprint)
-        : tracks_(std::move(tracks)), pieces_(std::move(pieces)),
+        : tracks_(std::move(tracks)), segments_(std::move(segments)),
           lineage_(std::move(lineage)),
           effectChains_(std::move(effectChains)),
           runtimeLineageFingerprint_(runtimeLineageFingerprint) {}
 
-    friend struct detail::PieceIRBuilder;
+    friend struct detail::SegmentIRBuilder;
 
     std::vector<IrTrack> tracks_;  // all Tracks, ascending by trackId
-    std::vector<IrPiece> pieces_;  // ascending by pieceId
+    std::vector<IrSegment> segments_;  // ascending by segmentId
     RuntimeLineageTable lineage_;
     std::vector<CompiledEffectChain> effectChains_;  // ascending by owner
     std::uint64_t runtimeLineageFingerprint_ = 0;
@@ -269,4 +269,4 @@ private:
 
 }  // namespace harkenprojectschema
 
-#endif  // HARKEN_PROJECT_SCHEMA_PIECE_IR_H
+#endif  // HARKEN_PROJECT_SCHEMA_SEGMENT_IR_H

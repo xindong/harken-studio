@@ -1,4 +1,4 @@
-#include "harken_project_schema/BuildPieceIR.h"
+#include "harken_project_schema/BuildSegmentIR.h"
 #include "harken_project_schema/PropertyFold.h"
 #include "harken_project_schema/detail/Fnv1a.h"
 
@@ -17,13 +17,13 @@ namespace harkenprojectschema {
 
 namespace detail {
 
-struct PieceIRBuilder {
-    static PieceIR Build(std::vector<IrTrack> tracks,
-                         std::vector<IrPiece> pieces,
+struct SegmentIRBuilder {
+    static SegmentIR Build(std::vector<IrTrack> tracks,
+                         std::vector<IrSegment> segments,
                          RuntimeLineageTable lineage,
                          std::vector<CompiledEffectChain> effectChains,
                          std::uint64_t fingerprint) {
-        return PieceIR(std::move(tracks), std::move(pieces),
+        return SegmentIR(std::move(tracks), std::move(segments),
                        std::move(lineage), std::move(effectChains),
                        fingerprint);
     }
@@ -51,8 +51,8 @@ void HashU64(std::uint64_t* state, std::uint64_t value) {
 std::uint64_t FingerprintLineage(const RuntimeLineageTable& lineage) {
     std::uint64_t state = detail::kFnv1a64OffsetBasis;
     for (const LineageEntry& e : lineage.entries) {
-        HashU64(&state, e.hasPiece ? 1u : 0u);
-        for (const auto id : {e.hasPiece ? e.pieceId : harkenstudio::ObjectId{}, e.trackId, e.clipId})
+        HashU64(&state, e.hasSegment ? 1u : 0u);
+        for (const auto id : {e.hasSegment ? e.segmentId : harkenstudio::ObjectId{}, e.trackId, e.clipId})
             for (const auto byte : harkenstudio::ObjectIdBytes(id))
                 detail::Fnv1a64HashByte(&state, byte);
         HashU64(&state, e.occurrenceOrdinal);
@@ -62,7 +62,7 @@ std::uint64_t FingerprintLineage(const RuntimeLineageTable& lineage) {
 
 struct BuildIndexes {
     std::map<StableId, const TrackNormalization*> trackFacts;
-    std::map<StableId, const PieceNormalization*> pieceFacts;
+    std::map<StableId, const SegmentNormalization*> segmentFacts;
     std::map<StableId, StableId> trackOwner;
 };
 
@@ -110,18 +110,18 @@ bool ClipOrderLess(const Clip& a, const Clip& b) {
 std::optional<BuildIndexes> ValidateBuildInputs(
     const CanonicalProject& project, const NormalizedFacts& facts) {
     std::map<StableId, const TrackDef*> modelTracks;
-    std::map<StableId, const PieceDef*> modelPieces;
+    std::map<StableId, const SegmentDef*> modelSegments;
     for (const ContentObject& obj : project.objects) {
         if (obj.kind == ContentKind::Track) {
             const StableId id = obj.track.chassis.id;
-            if (modelPieces.find(id) != modelPieces.end() ||
+            if (modelSegments.find(id) != modelSegments.end() ||
                 !modelTracks.emplace(id, &obj.track).second) {
                 return std::nullopt;
             }
-        } else if (obj.kind == ContentKind::Piece) {
-            const StableId id = obj.piece.chassis.id;
+        } else if (obj.kind == ContentKind::Segment) {
+            const StableId id = obj.segment.chassis.id;
             if (modelTracks.find(id) != modelTracks.end() ||
-                !modelPieces.emplace(id, &obj.piece).second) {
+                !modelSegments.emplace(id, &obj.segment).second) {
                 return std::nullopt;
             }
         }
@@ -133,13 +133,13 @@ std::optional<BuildIndexes> ValidateBuildInputs(
             return std::nullopt;
         }
     }
-    for (const PieceNormalization& piece : facts.pieces) {
-        if (!indexes.pieceFacts.emplace(piece.piece, &piece).second) {
+    for (const SegmentNormalization& segment : facts.segments) {
+        if (!indexes.segmentFacts.emplace(segment.segment, &segment).second) {
             return std::nullopt;
         }
     }
     if (indexes.trackFacts.size() != modelTracks.size() ||
-        indexes.pieceFacts.size() != modelPieces.size()) {
+        indexes.segmentFacts.size() != modelSegments.size()) {
         return std::nullopt;
     }
 
@@ -178,9 +178,9 @@ std::optional<BuildIndexes> ValidateBuildInputs(
         }
     }
 
-    for (const auto& [pieceId, pieceFacts] : indexes.pieceFacts) {
-        const auto modelIt = modelPieces.find(pieceId);
-        if (modelIt == modelPieces.end()) {
+    for (const auto& [segmentId, segmentFacts] : indexes.segmentFacts) {
+        const auto modelIt = modelSegments.find(segmentId);
+        if (modelIt == modelSegments.end()) {
             return std::nullopt;
         }
         std::set<StableId> modelMarkerIds;
@@ -196,7 +196,7 @@ std::optional<BuildIndexes> ValidateBuildInputs(
             }
         }
         std::set<StableId> factMarkerIds;
-        for (const StableId markerId : pieceFacts->markersByMarkerId) {
+        for (const StableId markerId : segmentFacts->markersByMarkerId) {
             if (!factMarkerIds.emplace(markerId).second) {
                 return std::nullopt;
             }
@@ -205,7 +205,7 @@ std::optional<BuildIndexes> ValidateBuildInputs(
             return std::nullopt;
         }
         const Marker* previousMarker = nullptr;
-        for (const StableId markerId : pieceFacts->markersByMarkerId) {
+        for (const StableId markerId : segmentFacts->markersByMarkerId) {
             const auto markerIt = modelMarkerByStableId.find(markerId);
             if (markerIt == modelMarkerByStableId.end() ||
                 (previousMarker != nullptr &&
@@ -214,31 +214,31 @@ std::optional<BuildIndexes> ValidateBuildInputs(
             }
             previousMarker = markerIt->second;
         }
-        const PieceDef& modelPiece = *modelIt->second;
-        if (pieceFacts->startKind != modelPiece.startPoint.kind ||
-            pieceFacts->startMarkerId != modelPiece.startPoint.markerId) {
+        const SegmentDef& modelSegment = *modelIt->second;
+        if (segmentFacts->startKind != modelSegment.startPoint.kind ||
+            segmentFacts->startMarkerId != modelSegment.startPoint.markerId) {
             return std::nullopt;
         }
         std::int64_t expectedStartCoordinate = 0;
-        if (modelPiece.startPoint.kind == StartPointKind::Marker) {
+        if (modelSegment.startPoint.kind == StartPointKind::Marker) {
             const auto startMarker =
-                modelMarkerByMarkerId.find(modelPiece.startPoint.markerId);
+                modelMarkerByMarkerId.find(modelSegment.startPoint.markerId);
             if (startMarker == modelMarkerByMarkerId.end()) {
                 return std::nullopt;
             }
             expectedStartCoordinate = startMarker->second->position;
-        } else if (modelPiece.startPoint.kind != StartPointKind::Entry) {
+        } else if (modelSegment.startPoint.kind != StartPointKind::Entry) {
             return std::nullopt;
         }
-        if (pieceFacts->startCoordinate != expectedStartCoordinate) {
+        if (segmentFacts->startCoordinate != expectedStartCoordinate) {
             return std::nullopt;
         }
     }
 
-    for (const auto& [pieceId, piece] : modelPieces) {
-        for (const StableId trackId : piece->tracks) {
+    for (const auto& [segmentId, segment] : modelSegments) {
+        for (const StableId trackId : segment->tracks) {
             if (modelTracks.find(trackId) == modelTracks.end() ||
-                !indexes.trackOwner.emplace(trackId, pieceId).second) {
+                !indexes.trackOwner.emplace(trackId, segmentId).second) {
                 return std::nullopt;
             }
         }
@@ -250,7 +250,7 @@ std::optional<BuildIndexes> ValidateBuildInputs(
 
 namespace {
 
-std::optional<PieceIR> BuildPieceIRImpl(
+std::optional<SegmentIR> BuildSegmentIRImpl(
     const CanonicalProject& project, const NormalizedFacts& facts,
     const ResourceTable& resources,
     const ReferenceResolutionFacts* resolution,
@@ -332,7 +332,7 @@ std::optional<PieceIR> BuildPieceIRImpl(
     }
 
     std::vector<IrTrack> tracks;
-    std::vector<IrPiece> pieces;
+    std::vector<IrSegment> segments;
     std::map<StableId, AuthoringGuid> objectGuidById;
     // The subject's own spatial group, looked up per occurrence. Spatial is a
     // subject property, not a chain contribution, so an occurrence carries the
@@ -350,7 +350,7 @@ std::optional<PieceIR> BuildPieceIRImpl(
     const PropertyFoldContext propertyFold(project);
     std::size_t canonicalOccurrenceCount = 0;
 
-    // Objects come in ascending stable-id order, so the IR's track and piece
+    // Objects come in ascending stable-id order, so the IR's track and segment
     // lists inherit that order without a further sort.
     for (const ContentObject& obj : project.objects) {
         if (obj.kind == ContentKind::Track) {
@@ -414,7 +414,7 @@ std::optional<PieceIR> BuildPieceIRImpl(
                     occ.durationNs = durationNs;
                     occ.seekable = resIt->second.seekable;
                 }
-                // A Container or Piece target keeps hasDuration false: its end is
+                // A Container or Segment target keeps hasDuration false: its end is
                 // decided by its own program or exit marker, not a natural length.
 
                 // The event template: Start always, Stop only for a target
@@ -520,26 +520,26 @@ std::optional<PieceIR> BuildPieceIRImpl(
                 ++canonicalOccurrenceCount;
             }
             tracks.push_back(std::move(irTrack));
-        } else if (obj.kind == ContentKind::Piece) {
-            const PieceDef& piece = obj.piece;
-            IrPiece irPiece;
-            irPiece.pieceId = piece.chassis.id;
-            irPiece.guid = piece.chassis.guid;
-            irPiece.timeSpec = piece.timeSpec;
-            irPiece.tracks = piece.tracks;
+        } else if (obj.kind == ContentKind::Segment) {
+            const SegmentDef& segment = obj.segment;
+            IrSegment irSegment;
+            irSegment.segmentId = segment.chassis.id;
+            irSegment.guid = segment.chassis.guid;
+            irSegment.timeSpec = segment.timeSpec;
+            irSegment.tracks = segment.tracks;
 
             std::map<StableId, const Marker*> markerById;
-            for (const Marker& marker : piece.markers) {
+            for (const Marker& marker : segment.markers) {
                 markerById.emplace(marker.id, &marker);
             }
-            const auto factsIt = indexes->pieceFacts.find(piece.chassis.id);
-            if (factsIt == indexes->pieceFacts.end()) {
+            const auto factsIt = indexes->segmentFacts.find(segment.chassis.id);
+            if (factsIt == indexes->segmentFacts.end()) {
                 return std::nullopt;
             }
-            const PieceNormalization& pn = *factsIt->second;
-            irPiece.startKind = pn.startKind;
-            irPiece.startCoordinate = pn.startCoordinate;
-            irPiece.startMarkerId = pn.startMarkerId;
+            const SegmentNormalization& pn = *factsIt->second;
+            irSegment.startKind = pn.startKind;
+            irSegment.startCoordinate = pn.startCoordinate;
+            irSegment.startMarkerId = pn.startMarkerId;
             for (const StableId markerStableId : pn.markersByMarkerId) {
                 const auto markerIt = markerById.find(markerStableId);
                 if (markerIt == markerById.end()) {
@@ -552,9 +552,9 @@ std::optional<PieceIR> BuildPieceIRImpl(
                 irMarker.markerId = marker.markerId;
                 irMarker.kind = marker.kind;
                 irMarker.position = marker.position;
-                irPiece.markers.push_back(irMarker);
+                irSegment.markers.push_back(irMarker);
             }
-            pieces.push_back(std::move(irPiece));
+            segments.push_back(std::move(irSegment));
         }
     }
 
@@ -565,17 +565,17 @@ std::optional<PieceIR> BuildPieceIRImpl(
         return std::nullopt;
     }
 
-    // Lineage: one entry per occurrence, tagged with the owning Piece when the
+    // Lineage: one entry per occurrence, tagged with the owning Segment when the
     // Track lives in one. Built from the IR tracks, so it inherits their order;
     // sorted afterward by the documented total key to be order-independent.
     RuntimeLineageTable lineage;
     for (const IrTrack& track : tracks) {
         const auto ownerIt = indexes->trackOwner.find(track.trackId);
-        const bool hasPiece = ownerIt != indexes->trackOwner.end();
+        const bool hasSegment = ownerIt != indexes->trackOwner.end();
         for (const IrOccurrence& occ : track.occurrences) {
             LineageEntry entry;
-            entry.hasPiece = hasPiece;
-            entry.pieceId = hasPiece ? ownerIt->second : kUnmintedStableId;
+            entry.hasSegment = hasSegment;
+            entry.segmentId = hasSegment ? ownerIt->second : kUnmintedStableId;
             entry.trackId = track.trackId;
             entry.clipId = occ.key.clipId;
             entry.occurrenceOrdinal = occ.key.occurrenceOrdinal;
@@ -598,27 +598,27 @@ std::optional<PieceIR> BuildPieceIRImpl(
     if (effectChains != nullptr) {
         irChains = effectChains->chains;
     }
-    return detail::PieceIRBuilder::Build(
-        std::move(tracks), std::move(pieces), std::move(lineage),
+    return detail::SegmentIRBuilder::Build(
+        std::move(tracks), std::move(segments), std::move(lineage),
         std::move(irChains), fingerprint);
 }
 
 }  // namespace
 
-std::optional<PieceIR> BuildPieceIR(
+std::optional<SegmentIR> BuildSegmentIR(
     const CanonicalProject& project, const NormalizedFacts& facts,
     const ResourceTable& resources,
     const ReferenceResolutionFacts& resolution,
     const SendResolutionFacts& sends,
     const EffectChainSelectionFacts& effectChains) {
-    return BuildPieceIRImpl(project, facts, resources, &resolution, &sends,
+    return BuildSegmentIRImpl(project, facts, resources, &resolution, &sends,
                             &effectChains);
 }
 
-std::optional<PieceIR> BuildPieceIRForStructureOnly(
+std::optional<SegmentIR> BuildSegmentIRForStructureOnly(
     const CanonicalProject& project, const NormalizedFacts& facts,
     const ResourceTable& resources) {
-    return BuildPieceIRImpl(project, facts, resources, nullptr, nullptr,
+    return BuildSegmentIRImpl(project, facts, resources, nullptr, nullptr,
                             nullptr);
 }
 
