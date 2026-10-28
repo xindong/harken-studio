@@ -1150,25 +1150,6 @@ void MainWindow::setupMenuBar()
     connect(viewsMenu, &QMenu::aboutToShow, this, [this, viewsMenu]() {
         viewsMenu->clear();
 
-        auto sortKey = [](const QString& objName) -> int {
-            static const QStringList editorKeys = {
-                "NodeGraph", "Inspector", "ExternalEditor", "GridEditor",
-                "Publisher"
-            };
-            for (const QString& k : editorKeys)
-                if (objName.contains(k, Qt::CaseSensitive)) return 0;
-            static const QStringList browserKeys = {
-                "Explorer", "Hierarchy"
-            };
-            for (const QString& k : browserKeys)
-                if (objName.contains(k, Qt::CaseSensitive)) return 1;
-            static const QStringList monitorKeys = monitorViewSortKeys();
-            for (const QString& k : monitorKeys)
-                if (objName.contains(k, Qt::CaseSensitive)) return 2;
-            if (objName.contains("Assistant", Qt::CaseSensitive)) return 3;
-            return 4;
-        };
-
         QSet<QString> editorPanelTypes;
         for (const QString& t : standaloneEditorTypes_.keys())
             editorPanelTypes.insert(t);
@@ -1179,9 +1160,11 @@ void MainWindow::setupMenuBar()
                 singletons.append(summary);
         }
         std::stable_sort(singletons.begin(), singletons.end(),
-            [&sortKey](const QVariantMap& a, const QVariantMap& b) {
-                return sortKey(a.value(QStringLiteral("name")).toString())
-                     < sortKey(b.value(QStringLiteral("name")).toString());
+            [this](const QVariantMap& a, const QVariantMap& b) {
+                return QString::compare(
+                    workspacePanelTitle(a.value(QStringLiteral("typeId")).toString()),
+                    workspacePanelTitle(b.value(QStringLiteral("typeId")).toString()),
+                    Qt::CaseInsensitive) < 0;
             });
 
         for (const QVariantMap& summary : singletons) {
