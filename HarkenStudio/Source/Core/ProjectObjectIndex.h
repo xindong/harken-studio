@@ -20,6 +20,7 @@ struct ProjectObjectLocation
     quint32 ownerObjectId = 0;
     QString name;
     BusinessKind businessKind = BusinessKind::None;
+    QString ownerIconId;
 };
 
 class ProjectObjectIndex

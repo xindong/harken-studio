@@ -1,6 +1,7 @@
 #include "Engine.h"
 #include <harken/Harken.h>
 #include "Widgets/Monitor/MonitorPanel.h"
+#include "Widgets/Selector/ObjectRefNavigation.h"
 #include "AssetPipeline/AssetRegistry.h"
 #include "Components/VSelection.h"
 #include "Core/AudioEngine.h"
@@ -11,12 +12,17 @@
 #include <gtest/gtest.h>
 
 #include <QApplication>
+#include <QClipboard>
 #include <QDataStream>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QItemSelectionModel>
+#include <QMouseEvent>
+#include <QPersistentModelIndex>
 #include <QScopeGuard>
+#include <QTableView>
 #include <QTemporaryDir>
 #include <QThread>
 
@@ -226,4 +232,99 @@ TEST(MonitorPanel, ConcurrentPreviewKeepsSelectedContentAndPlaybackIdentity)
         EXPECT_EQ(live->projectGuid, event.projectGuid);
         EXPECT_EQ(capture.matchingProjectObject(*live), capture.matchingProjectObject(event));
     }
+
+    capture.stop();
+    ASSERT_FALSE(liveVoices.empty());
+    const auto selectedSound = std::find_if(sounds.begin(), sounds.end(), [&](const auto* sound) {
+        return sound->runtimeId() == liveVoices.front().objectId();
+    });
+    ASSERT_NE(sounds.end(), selectedSound);
+    const auto objectId = (*selectedSound)->objectID;
+    const QString capturedName = (*selectedSound)->name;
+    ObjectRefNavigation navigation(&panel);
+    std::vector<uint32_t> located, opened;
+    QObject::connect(&navigation, &ObjectRefNavigation::locateRequested, &panel,
+        [&](RefDomain domain, uint32_t id) {
+            EXPECT_EQ(domain, RefDomain::ProjectObject);
+            located.push_back(id);
+        });
+    QObject::connect(&navigation, &ObjectRefNavigation::navigateRequested, &panel,
+        [&](RefDomain domain, uint32_t id) {
+            EXPECT_EQ(domain, RefDomain::ProjectObject);
+            opened.push_back(id);
+        });
+    panel.resize(1400, 600);
+    panel.show();
+    QApplication::processEvents();
+    auto* table = panel.table();
+    QPersistentModelIndex objectIndex;
+    for (int row = 0; row < table->model()->rowCount(); ++row) {
+        const auto index = table->model()->index(row, MonitorCatalogModel::Object);
+        if (index.data().toString() == capturedName) {
+            objectIndex = index;
+            break;
+        }
+    }
+    ASSERT_TRUE(objectIndex.isValid());
+    table->scrollTo(objectIndex);
+    QApplication::processEvents();
+    const auto sendMouse = [&](QEvent::Type type) {
+        const QPoint point = table->visualRect(objectIndex).center();
+        QMouseEvent event(type, QPointF(point), QPointF(table->viewport()->mapToGlobal(point)),
+                         Qt::LeftButton, type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton,
+                         Qt::NoModifier);
+        QApplication::sendEvent(table->viewport(), &event);
+    };
+    const auto click = [&] {
+        sendMouse(QEvent::MouseButtonPress);
+        sendMouse(QEvent::MouseButtonRelease);
+    };
+    const auto doubleClick = [&] {
+        click();
+        sendMouse(QEvent::MouseButtonDblClick);
+        sendMouse(QEvent::MouseButtonRelease);
+    };
+    click();
+    ASSERT_EQ(located.size(), 1u);
+    EXPECT_EQ(located.back(), objectId);
+    ASSERT_EQ(table->selectionModel()->selectedRows().size(), 1);
+    EXPECT_EQ(table->selectionModel()->selectedRows().front().row(), objectIndex.row());
+    panel.copySelected();
+    EXPECT_EQ(QApplication::clipboard()->text().split(QLatin1Char('\t')).value(MonitorCatalogModel::Object),
+              capturedName);
+    doubleClick();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    ASSERT_EQ(opened.size(), 1u);
+    EXPECT_EQ(opened.back(), objectId);
+
+    ASSERT_TRUE(projects.renameItem(*selectedSound, capturedName + QStringLiteral("_Renamed")));
+    capture.setProjectObjects(ProjectObjectIndex::fromProject(projects.currentProject()));
+    QApplication::processEvents();
+    EXPECT_EQ(objectIndex.data().toString(), capturedName);
+    panel.copySelected();
+    EXPECT_EQ(QApplication::clipboard()->text().split(QLatin1Char('\t')).value(MonitorCatalogModel::Object),
+              capturedName);
+
+    capture.setProjectObjects({});
+    const auto locatedBeforeMissing = located.size();
+    const auto openedBeforeMissing = opened.size();
+    doubleClick();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    EXPECT_EQ(located.size(), locatedBeforeMissing);
+    EXPECT_EQ(opened.size(), openedBeforeMissing);
+    EXPECT_EQ(objectIndex.data().toString(), capturedName);
+
+    capture.setProjectObjects(ProjectObjectIndex::fromProject(projects.currentProject()));
+    doubleClick();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    ASSERT_GT(located.size(), locatedBeforeMissing);
+    EXPECT_EQ(located.back(), objectId);
+    ASSERT_EQ(opened.size(), openedBeforeMissing + 1);
+    EXPECT_EQ(opened.back(), objectId);
+
+    doubleClick();
+    capture.setProjectObjects({});
+    const auto openedBeforeInvalidation = opened.size();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    EXPECT_EQ(opened.size(), openedBeforeInvalidation);
 }

@@ -3,6 +3,8 @@
 #include "Monitor/EventCaptureController.h"
 
 #include <QAbstractTableModel>
+#include <QHash>
+#include <QIcon>
 #include <QString>
 
 namespace VNX {
@@ -11,6 +13,7 @@ class MonitorCatalogModel final : public QAbstractTableModel
 {
 public:
     enum Column { Time, Level, Type, Description, RequestId, Object, ObjectId, GameObject, GameObjectId, ColumnCount };
+    enum Role { ProjectObjectIdRole = Qt::UserRole + 1 };
     explicit MonitorCatalogModel(Monitor::EventCaptureController* capture, QObject* parent = nullptr);
     int rowCount(const QModelIndex& parent = {}) const override;
     int columnCount(const QModelIndex& parent = {}) const override;
@@ -24,6 +27,7 @@ public:
 
 private:
     QPointer<Monitor::EventCaptureController> capture_;
+    mutable QHash<QString, QIcon> objectIcons_;
 };
 
 } // namespace VNX

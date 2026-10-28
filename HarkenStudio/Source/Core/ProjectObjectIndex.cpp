@@ -1,6 +1,7 @@
 #include "ProjectObjectIndex.h"
 
 #include "ProjectTypes.h"
+#include "ItemTypeIcons.h"
 #include "Components/VMixNode.h"
 #include "Components/VSegment.h"
 #include "Components/VTrack.h"
@@ -50,7 +51,8 @@ ProjectObjectIndex ProjectObjectIndex::fromProject(const ProjectData* project,
             default: break;
             }
         }
-        index.objects_.insert(id, {kind, owner.guid, owner.objectID, name, businessKind});
+        index.objects_.insert(id, {kind, owner.guid, owner.objectID, name, businessKind,
+                                  QString::fromLatin1(iconLogicalIdForItem(owner))});
     };
     std::function<void(const ProjectItem*)> collect = [&](const ProjectItem* item) {
         if (!item || visited.contains(item) || excluded.contains(item)) return;

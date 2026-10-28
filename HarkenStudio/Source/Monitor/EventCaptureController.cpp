@@ -678,10 +678,15 @@ void EventCaptureController::setProjectObjects(ProjectObjectIndex objects)
 
 quint32 EventCaptureController::matchingProjectObject(const CapturedEvent& event) const
 {
-    if (event.projectGuid.isNull() || event.projectGuid != projectObjects_.projectGuid() ||
-        event.objectGuid.isNull() || runtimeObjectId(event.objectGuid) != event.objectId()) return 0;
-    const auto* found = projectObjects_.find(event.objectId());
+    const auto* found = matchingProjectObjectLocation(event);
     return found ? found->ownerObjectId : 0;
+}
+
+const ProjectObjectLocation* EventCaptureController::matchingProjectObjectLocation(const CapturedEvent& event) const
+{
+    if (event.projectGuid.isNull() || event.projectGuid != projectObjects_.projectGuid() ||
+        event.objectGuid.isNull() || runtimeObjectId(event.objectGuid) != event.objectId()) return nullptr;
+    return projectObjects_.find(event.objectId());
 }
 
 }

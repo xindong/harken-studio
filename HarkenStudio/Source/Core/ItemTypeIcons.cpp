@@ -63,17 +63,20 @@ QIcon resolveItemIcon(const char* logicalId, const QColor& tint = {})
 
 }
 
-QIcon iconForItem(const ProjectItem& item)
+const char* iconLogicalIdForItem(const ProjectItem& item)
 {
     const char* logicalId = instanceIconLogicalId(item);
-    return logicalId ? resolveItemIcon(logicalId) : iconForItemType(item.type);
+    return logicalId ? logicalId : ItemTypeCatalog::iconSpecOf(item.type).logicalId;
+}
+
+QIcon iconForItem(const ProjectItem& item)
+{
+    return resolveItemIcon(iconLogicalIdForItem(item));
 }
 
 QIcon iconForItem(const ProjectItem& item, const QColor& tint)
 {
-    const char* logicalId = instanceIconLogicalId(item);
-    return logicalId ? resolveItemIcon(logicalId, tint)
-                     : iconForItemType(item.type, tint);
+    return resolveItemIcon(iconLogicalIdForItem(item), tint);
 }
 
 }

@@ -89,6 +89,7 @@ public:
     void pollLocal();
     void setProjectObjects(ProjectObjectIndex objects);
     quint32 matchingProjectObject(const CapturedEvent& event) const;
+    const ProjectObjectLocation* matchingProjectObjectLocation(const CapturedEvent& event) const;
 
 signals:
     void stateChanged();
