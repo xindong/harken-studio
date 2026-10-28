@@ -1,60 +1,16 @@
 #include "MultiSelectComboBox.h"
 
+#include "Core/QtControlSkin.h"
+
 #include <QKeyEvent>
 #include <QListView>
 #include <QMouseEvent>
 #include <QScopedValueRollback>
 #include <QStandardItemModel>
-#include <QStyledItemDelegate>
 #include <QStylePainter>
 #include <QWheelEvent>
 
 namespace VNX {
-
-namespace {
-
-class MultiSelectItemDelegate final : public QStyledItemDelegate
-{
-public:
-    using QStyledItemDelegate::QStyledItemDelegate;
-
-    void paint(QPainter* painter, const QStyleOptionViewItem& option,
-               const QModelIndex& index) const override
-    {
-        const auto menu = menuOption(option, index);
-        option.widget->style()->drawControl(QStyle::CE_MenuItem, &menu, painter);
-    }
-
-    QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override
-    {
-        const auto menu = menuOption(option, index);
-        const QSize contents = menu.fontMetrics.size(Qt::TextSingleLine | Qt::TextShowMnemonic,
-                                                     menu.text);
-        return option.widget->style()->sizeFromContents(QStyle::CT_MenuItem, &menu, contents);
-    }
-
-private:
-    QStyleOptionMenuItem menuOption(const QStyleOptionViewItem& option,
-                                    const QModelIndex& index) const
-    {
-        QStyleOptionViewItem item = option;
-        initStyleOption(&item, index);
-        QStyleOptionMenuItem menu;
-        menu.rect = item.rect;
-        menu.state = item.state;
-        menu.direction = item.direction;
-        menu.palette = item.palette;
-        menu.font = item.font;
-        menu.fontMetrics = item.fontMetrics;
-        menu.menuItemType = QStyleOptionMenuItem::Normal;
-        menu.checkType = QStyleOptionMenuItem::NonExclusive;
-        menu.checked = item.checkState == Qt::Checked;
-        menu.text = item.text.replace(QLatin1Char('&'), QStringLiteral("&&"));
-        return menu;
-    }
-};
-
-}
 
 MultiSelectComboBox::MultiSelectComboBox(QWidget* parent)
     : QComboBox(parent)
@@ -64,7 +20,8 @@ MultiSelectComboBox::MultiSelectComboBox(QWidget* parent)
     setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
     setPlaceholderText(tr("None"));
     setView(new QListView(this));
-    view()->setItemDelegate(new MultiSelectItemDelegate(view()));
+    setProperty("popupHasCheckableItems", true);
+    QtControlSkin::applyPopupStyle(this);
     view()->installEventFilter(this);
     view()->viewport()->installEventFilter(this);
     connect(items_, &QStandardItemModel::dataChanged,
