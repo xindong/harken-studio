@@ -737,7 +737,7 @@ TEST(PreviewAbi, EventSessionCapturesRealPreviewLifecycleWithoutControllingPlayb
     capture.consumerQueueBytes = 65536;
     VnMonitorSessionHandle session = 0;
     ASSERT_EQ(VN_OK, Vn_MonitorOpenEventSession(&capture, &session));
-    const auto identitySession = harkentest::monitor::OpenIdentityEvents();
+    const auto identitySession = harkentest::monitor::OpenActivityEvents();
     auto desc = Desc(VN_PREVIEW_PLAYABLE_KIND_CONTAINER, kContainer);
     VnPreviewPlayableHandle handle = 0;
     ASSERT_EQ(VN_PREVIEW_OK, VnPreview_PlayPlayable(&desc, &handle));
@@ -787,7 +787,44 @@ TEST(PreviewAbi, EventSessionCapturesRealPreviewLifecycleWithoutControllingPlayb
     EXPECT_TRUE(stopped);
     EXPECT_TRUE(started);
     EXPECT_TRUE(retired);
-    const auto rows = harkentest::monitor::ReadIdentityEvents(identitySession);
+    std::uint32_t typedOperations = 0;
+    const auto activity = harkentest::monitor::ReadActivityEvents(identitySession, &typedOperations);
+    EXPECT_EQ(0u, typedOperations);
+    std::vector<harkentest::monitor::IdentityRecord> rows;
+    for (const auto& row : activity) rows.push_back({row.header, row.fact.fact});
+    std::vector<harkentest::monitor::IdentityRecord> calls;
+    for (const auto& row : rows) {
+        if (harken::monitor::IsCallFactKind(row.fact.factKind)) calls.push_back(row);
+    }
+    ASSERT_EQ(6u, calls.size());
+    for (unsigned i = 0; i != 3; ++i) {
+        const auto& submitted = calls[i * 2];
+        const auto& returned = calls[i * 2 + 1];
+        EXPECT_EQ(VN_MONITOR_FACT_REQUEST_SUBMITTED, submitted.fact.factKind);
+        EXPECT_EQ(VN_MONITOR_FACT_REQUEST_RETURNED, returned.fact.factKind);
+        EXPECT_NE(0u, submitted.fact.request.sequence);
+        EXPECT_EQ(submitted.fact.request.sequence, returned.fact.request.sequence);
+        EXPECT_EQ(submitted.header.engineMonitorInstanceId, returned.header.engineMonitorInstanceId);
+        EXPECT_EQ(static_cast<unsigned>(harken::MonitorRequestOrigin::StudioPreview), returned.fact.request.origin);
+        EXPECT_EQ(i == 1 ? VN_MONITOR_OPERATION_STOP_PREVIEW : VN_MONITOR_OPERATION_PLAY_PREVIEW,
+            returned.fact.request.operation);
+        EXPECT_EQ(VN_PREVIEW_OK, returned.fact.result);
+        EXPECT_TRUE(harken::monitor::FactHas(returned.fact, VN_MONITOR_FACT_FIELD_TARGET_VALIDATED));
+        EXPECT_LE(submitted.fact.timestampNs, returned.fact.timestampNs);
+        EXPECT_LT(submitted.header.sourceSequence, returned.header.sourceSequence);
+        if (i == 1) {
+            EXPECT_EQ(VN_MONITOR_TARGET_PREVIEW_PLAYABLE, returned.fact.target.kind);
+            EXPECT_EQ(firstRoot | (UINT64_C(1) << 63), returned.fact.target.handle);
+        } else {
+            EXPECT_EQ(VN_MONITOR_TARGET_CONTENT, returned.fact.target.kind);
+            EXPECT_EQ(kContainer, returned.fact.target.objectId);
+            EXPECT_EQ(VN_MONITOR_CONTENT_CONTAINER, returned.fact.target.contentKind);
+            EXPECT_EQ(VN_MONITOR_CONTENT_CONTAINER, returned.fact.contentKind);
+            EXPECT_EQ(VN_MONITOR_SUBJECT_PLAYABLE, returned.fact.subjectNamespace);
+            EXPECT_EQ(i == 0 ? firstRoot : secondRoot, returned.header.instanceHandle);
+            EXPECT_EQ(returned.header.instanceHandle, returned.fact.root);
+        }
+    }
     std::uint64_t firstRequest = 0, secondRequest = 0;
     for (const auto& row : rows) {
         if (row.fact.factKind != VN_MONITOR_FACT_PLAYABLE_ACTIVE) continue;
@@ -797,8 +834,11 @@ TEST(PreviewAbi, EventSessionCapturesRealPreviewLifecycleWithoutControllingPlayb
     ASSERT_NE(0u, firstRequest);
     ASSERT_NE(0u, secondRequest);
     EXPECT_NE(firstRequest, secondRequest);
+    EXPECT_EQ(firstRequest, calls[1].fact.request.sequence);
+    EXPECT_EQ(secondRequest, calls[5].fact.request.sequence);
     bool soundStopped = false;
     for (const auto& row : rows) {
+        if (harken::monitor::IsCallFactKind(row.fact.factKind)) continue;
         if (row.fact.root != firstRoot && row.fact.root != secondRoot) continue;
         EXPECT_EQ(row.fact.root == firstRoot ? firstRequest : secondRequest,
             row.fact.playbackRequest.sequence);
@@ -808,12 +848,141 @@ TEST(PreviewAbi, EventSessionCapturesRealPreviewLifecycleWithoutControllingPlayb
         EXPECT_EQ(firstRoot, row.fact.root);
         EXPECT_TRUE(harken::monitor::FactHas(row.fact, VN_MONITOR_FACT_FIELD_TERMINAL_KIND));
         EXPECT_EQ(VN_MONITOR_TERMINAL_REQUESTED_STOP, row.fact.terminalKind);
+        EXPECT_EQ(calls[3].fact.request.sequence, row.fact.controlRequest.sequence);
+        EXPECT_EQ(VN_MONITOR_OPERATION_STOP_PREVIEW, row.fact.controlRequest.operation);
+        EXPECT_EQ(static_cast<unsigned>(harken::MonitorRequestOrigin::StudioPreview), row.fact.controlRequest.origin);
         EXPECT_EQ(VN_OK, row.fact.result);
     }
     EXPECT_TRUE(soundStopped);
     ASSERT_EQ(VN_OK, Vn_MonitorCloseSession(identitySession));
     ASSERT_EQ(VN_OK, Vn_MonitorCloseSession(session));
     EXPECT_TRUE(PumpUntilNonSilent(*engine));
+}
+
+TEST(PreviewAbi, RejectedRequestsKeepActualResultsWithoutInventingInstances) {
+    PreviewSession fixture;
+    auto* engine = fixture.session.Engine();
+    ASSERT_NE(nullptr, engine);
+    const auto session = harkentest::monitor::OpenActivityEvents();
+    const auto check = [&](VnPreviewResult result, unsigned operation, VnObjectId object = {},
+                           unsigned contentKind = 0, std::uint64_t targetHandle = 0) {
+        std::uint32_t operations = 0;
+        const auto rows = harkentest::monitor::ReadActivityEvents(session, &operations);
+        EXPECT_EQ(0u, operations);
+        ASSERT_EQ(2u, rows.size());
+        const auto& submitted = rows[0].fact.fact;
+        const auto& returned = rows[1].fact.fact;
+        EXPECT_EQ(VN_MONITOR_FACT_REQUEST_SUBMITTED, submitted.factKind);
+        EXPECT_EQ(VN_MONITOR_FACT_REQUEST_RETURNED, returned.factKind);
+        EXPECT_NE(0u, returned.request.sequence);
+        EXPECT_EQ(submitted.request.sequence, returned.request.sequence);
+        EXPECT_EQ(operation, returned.request.operation);
+        EXPECT_EQ(static_cast<unsigned>(harken::MonitorRequestOrigin::StudioPreview), returned.request.origin);
+        EXPECT_EQ(result, returned.result);
+        EXPECT_TRUE(harken::monitor::FactHas(returned, VN_MONITOR_FACT_FIELD_RESULT));
+        EXPECT_FALSE(harken::monitor::FactHas(returned, VN_MONITOR_FACT_FIELD_SUBJECT));
+        EXPECT_FALSE(harken::monitor::FactHas(returned, VN_MONITOR_FACT_FIELD_TARGET_VALIDATED));
+        EXPECT_EQ(object, returned.target.objectId);
+        EXPECT_EQ(contentKind, returned.target.contentKind);
+        EXPECT_EQ(targetHandle, returned.target.handle);
+        EXPECT_LT(rows[0].header.sourceSequence, rows[1].header.sourceSequence);
+        EXPECT_LE(submitted.timestampNs, returned.timestampNs);
+    };
+    auto desc = Desc(VN_PREVIEW_PLAYABLE_KIND_SOUND, kSound);
+    VnPreviewPlayableHandle handle = 99;
+    EXPECT_EQ(VN_PREVIEW_UNKNOWN_ID, VnPreview_PlayPlayable(&desc, &handle));
+    EXPECT_EQ(0u, handle);
+    check(VN_PREVIEW_UNKNOWN_ID, VN_MONITOR_OPERATION_PLAY_PREVIEW, kSound, VN_MONITOR_CONTENT_SOUND);
+    EXPECT_EQ(VN_PREVIEW_INVALID_ARG, VnPreview_PlayPlayable(nullptr, &handle));
+    check(VN_PREVIEW_INVALID_ARG, VN_MONITOR_OPERATION_PLAY_PREVIEW);
+    EXPECT_EQ(VN_PREVIEW_INVALID_ARG, VnPreview_PlayPlayable(&desc, nullptr));
+    check(VN_PREVIEW_INVALID_ARG, VN_MONITOR_OPERATION_PLAY_PREVIEW);
+    desc.structSize = 1;
+    EXPECT_EQ(VN_PREVIEW_STRUCT_SIZE_MISMATCH, VnPreview_PlayPlayable(&desc, &handle));
+    check(VN_PREVIEW_STRUCT_SIZE_MISMATCH, VN_MONITOR_OPERATION_PLAY_PREVIEW);
+    desc.structSize = sizeof(desc);
+    desc.flags = 1;
+    EXPECT_EQ(VN_PREVIEW_INVALID_ARG, VnPreview_PlayPlayable(&desc, &handle));
+    check(VN_PREVIEW_INVALID_ARG, VN_MONITOR_OPERATION_PLAY_PREVIEW, kSound, VN_MONITOR_CONTENT_SOUND);
+    desc.flags = 0;
+    desc.playableKind = UINT32_MAX;
+    EXPECT_EQ(VN_PREVIEW_INVALID_ARG, VnPreview_PlayPlayable(&desc, &handle));
+    check(VN_PREVIEW_INVALID_ARG, VN_MONITOR_OPERATION_PLAY_PREVIEW, kSound);
+    PreviewWorldImage image(engine->registry.Lookup(kSound).contentRevision);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, image.world).status);
+    for (unsigned kind = VN_PREVIEW_PLAYABLE_KIND_SOUND; kind <= VN_PREVIEW_PLAYABLE_KIND_SEGMENT; ++kind) {
+        desc = Desc(kind, harkentest::ObjectId(99999));
+        EXPECT_EQ(VN_PREVIEW_UNKNOWN_ID, VnPreview_PlayPlayable(&desc, &handle));
+        EXPECT_EQ(0u, handle);
+        check(VN_PREVIEW_UNKNOWN_ID, VN_MONITOR_OPERATION_PLAY_PREVIEW, desc.stableId, kind + 1);
+    }
+    desc = Desc(VN_PREVIEW_PLAYABLE_KIND_SOUND, kSound);
+    engine->currentWorldReplacementAdmissionClosed = true;
+    EXPECT_EQ(VN_PREVIEW_BACKPRESSURE, VnPreview_PlayPlayable(&desc, &handle));
+    engine->currentWorldReplacementAdmissionClosed = false;
+    check(VN_PREVIEW_BACKPRESSURE, VN_MONITOR_OPERATION_PLAY_PREVIEW, kSound, VN_MONITOR_CONTENT_SOUND);
+    for (auto invalid : {UINT64_C(0), UINT64_C(7), UINT64_C(1) << 63}) {
+        EXPECT_EQ(VN_PREVIEW_INVALID_ARG, VnPreview_StopPlayable(invalid, 0));
+        check(VN_PREVIEW_INVALID_ARG, VN_MONITOR_OPERATION_STOP_PREVIEW, {}, 0, invalid);
+    }
+    const auto stale = (UINT64_C(1) << 63) | 1;
+    EXPECT_EQ(VN_PREVIEW_STALE_HANDLE, VnPreview_StopPlayable(stale, 0));
+    check(VN_PREVIEW_STALE_HANDLE, VN_MONITOR_OPERATION_STOP_PREVIEW, {}, 0, stale);
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(session));
+}
+
+TEST(PreviewAbi, StopRequestsReportBackpressureRetryAndStaleHandleSeparately) {
+    PreviewSession fixture;
+    auto* engine = fixture.session.Engine();
+    PreviewWorldImage image(engine->registry.Lookup(kSound).contentRevision);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, image.world).status);
+    auto desc = Desc(VN_PREVIEW_PLAYABLE_KIND_SOUND, kSound);
+    VnPreviewPlayableHandle handle = 0;
+    ASSERT_EQ(VN_PREVIEW_OK, VnPreview_PlayPlayable(&desc, &handle));
+    ASSERT_TRUE(PumpUntilNonSilent(*engine));
+    const auto session = harkentest::monitor::OpenActivityEvents();
+    harken::CommandRecord filler{};
+    filler.opcode = harken::kOpcodeSetBusVolume;
+    while (!engine->commands.Full()) ASSERT_TRUE(engine->commands.TryPush(filler));
+    EXPECT_EQ(VN_PREVIEW_BACKPRESSURE, VnPreview_StopPlayable(handle, 0));
+    engine->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(VN_PREVIEW_OK, VnPreview_StopPlayable(handle, 0));
+    EXPECT_EQ(VN_PREVIEW_OK, VnPreview_StopPlayable(handle, 0));
+    for (unsigned block = 0; block != 16; ++block) {
+        engine->nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(VN_PREVIEW_STALE_HANDLE, VnPreview_StopPlayable(handle, 0));
+    const auto rows = harkentest::monitor::ReadActivityEvents(session);
+    const std::array expected{VN_PREVIEW_BACKPRESSURE, VN_PREVIEW_OK, VN_PREVIEW_OK, VN_PREVIEW_STALE_HANDLE};
+    unsigned submittedCount = 0, returnedCount = 0;
+    std::uint64_t submittedRequest = 0, acceptedStop = 0;
+    for (const auto& row : rows) {
+        const auto& fact = row.fact.fact;
+        if (fact.factKind == VN_MONITOR_FACT_REQUEST_SUBMITTED) {
+            ++submittedCount;
+            EXPECT_GT(fact.request.sequence, submittedRequest);
+            submittedRequest = fact.request.sequence;
+        } else if (fact.factKind == VN_MONITOR_FACT_REQUEST_RETURNED) {
+            ASSERT_LT(returnedCount, expected.size());
+            EXPECT_EQ(expected[returnedCount], fact.result);
+            EXPECT_EQ(submittedRequest, fact.request.sequence);
+            EXPECT_EQ(VN_MONITOR_OPERATION_STOP_PREVIEW, fact.request.operation);
+            EXPECT_EQ(VN_MONITOR_TARGET_PREVIEW_PLAYABLE, fact.target.kind);
+            EXPECT_EQ(handle, fact.target.handle);
+            EXPECT_EQ(fact.result == VN_PREVIEW_OK,
+                harken::monitor::FactHas(fact, VN_MONITOR_FACT_FIELD_TARGET_VALIDATED));
+            if (returnedCount == 1) acceptedStop = fact.request.sequence;
+            ++returnedCount;
+        } else if (fact.factKind == VN_MONITOR_FACT_PLAYABLE_RETIRED) {
+            EXPECT_NE(0u, acceptedStop);
+            EXPECT_EQ(acceptedStop, fact.controlRequest.sequence);
+        }
+    }
+    EXPECT_EQ(expected.size(), submittedCount);
+    EXPECT_EQ(expected.size(), returnedCount);
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(session));
 }
 
 TEST(PreviewAbi, AudibilityParkingPreservesPlayablePathsAndExcludesReturnedRawVoices) {
@@ -2124,6 +2293,8 @@ TEST(PreviewAbi,
 #else
 
 TEST(PreviewAbi, ClosedGateRefusesBeforeParsingOrRuntimeMutation) {
+    PreviewSession fixture;
+    const auto session = harkentest::monitor::OpenActivityEvents();
     EXPECT_EQ(VnPreview_CapturePlaybackPaths(nullptr, 0, nullptr),
               VN_PREVIEW_DEVELOPMENT_API_DISABLED);
     VnPreviewPlayableHandle handle = 99;
@@ -2140,6 +2311,21 @@ TEST(PreviewAbi, ClosedGateRefusesBeforeParsingOrRuntimeMutation) {
     EXPECT_EQ(VnPreview_QueryPlayable(7, &state),
               VN_PREVIEW_DEVELOPMENT_API_DISABLED);
     EXPECT_EQ(std::memcmp(&state, &before, sizeof(state)), 0);
+    const auto rows = harkentest::monitor::ReadActivityEvents(session);
+    ASSERT_EQ(4u, rows.size());
+    for (unsigned i = 0; i != 2; ++i) {
+        const auto& submitted = rows[i * 2].fact.fact;
+        const auto& returned = rows[i * 2 + 1].fact.fact;
+        EXPECT_EQ(VN_MONITOR_FACT_REQUEST_SUBMITTED, submitted.factKind);
+        EXPECT_EQ(VN_MONITOR_FACT_REQUEST_RETURNED, returned.factKind);
+        EXPECT_EQ(submitted.request.sequence, returned.request.sequence);
+        EXPECT_EQ(VN_PREVIEW_DEVELOPMENT_API_DISABLED, returned.result);
+        EXPECT_EQ(i == 0 ? VN_MONITOR_OPERATION_PLAY_PREVIEW : VN_MONITOR_OPERATION_STOP_PREVIEW,
+            returned.request.operation);
+        EXPECT_FALSE(harken::monitor::FactHas(returned, VN_MONITOR_FACT_FIELD_TARGET_VALIDATED));
+        EXPECT_FALSE(harken::monitor::FactHas(returned, VN_MONITOR_FACT_FIELD_SUBJECT));
+    }
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(session));
 }
 
 #endif
