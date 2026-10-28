@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -110,6 +111,18 @@ protected:
         return policy;
     }
 
+    void savePartial(const DownloadRequest& request, const QUrl& source,
+                     const QByteArray& payload, int prefixSize)
+    {
+        ASSERT_TRUE(writeFile(Downloader::partPath(request.targetPath), payload.left(prefixSize)));
+        ASSERT_TRUE(writeFile(Downloader::metaPath(request.targetPath), QJsonDocument(QJsonObject{
+            {QStringLiteral("url"), source.toString()},
+            {QStringLiteral("sha256"), request.expectedSha256.toLower()},
+            {QStringLiteral("lastModified"), QStringLiteral("Fri, 24 Jul 2026 08:00:00 GMT")},
+            {QStringLiteral("totalSize"), payload.size()}
+        }).toJson()));
+    }
+
     QTemporaryDir dir;
     RangeHttpServer server;
 };
@@ -130,7 +143,7 @@ TEST_F(DownloaderTest, FreshDownloadDeliversTargetAndRemovesPartFiles)
     ASSERT_TRUE(spinUntil([&]() { return capture.finishedCount == 1; }));
 
     EXPECT_TRUE(capture.result.ok) << capture.result.error.toStdString();
-    EXPECT_EQ(capture.result.source, QStringLiteral("GitHub"));
+    EXPECT_EQ(capture.result.source, QStringLiteral("OSS"));
     EXPECT_EQ(capture.result.attemptsUsed, 1);
     EXPECT_EQ(readAll(request.targetPath), payload);
     EXPECT_FALSE(QFile::exists(Downloader::partPath(request.targetPath)));
@@ -138,6 +151,360 @@ TEST_F(DownloaderTest, FreshDownloadDeliversTargetAndRemovesPartFiles)
     EXPECT_EQ(server.requestCount(), 1);
     EXPECT_TRUE(server.rangeHistory().value(0).isEmpty());
     EXPECT_FALSE(downloader.isActive());
+}
+
+TEST_F(DownloaderTest, FasterMirrorDeliversTheSameArtifact)
+{
+    const auto payload = patternedPayload(4 * 1024 * 1024);
+    server.setPayload(payload, QByteArrayLiteral("v1"));
+    RangeHttpServer mirror;
+    ASSERT_TRUE(mirror.listen());
+    mirror.setPayload(payload, QByteArrayLiteral("v1"));
+    RangeHttpServer::Script slow;
+    slow.chunkBytes = 64 * 1024;
+    slow.chunkIntervalMs = 100;
+    server.setDefaultScript(slow);
+    RangeHttpServer::Script fast;
+    fast.chunkBytes = 256 * 1024;
+    fast.chunkIntervalMs = 10;
+    mirror.setDefaultScript(fast);
+    auto request = makeRequest(payload.size());
+    request.fallbackUrls.append(mirror.packageUrl());
+    Downloader downloader;
+    ResultCapture capture(downloader);
+    QElapsedTimer elapsed;
+    elapsed.start();
+    ASSERT_TRUE(downloader.start(request));
+    ASSERT_TRUE(spinUntil([&]() { return capture.finishedCount == 1; }, 15000));
+    RecordProperty("elapsed_ms", int(elapsed.elapsed()));
+    RecordProperty("primary_bytes", int(server.bodyBytesSent()));
+    RecordProperty("mirror_bytes", int(mirror.bodyBytesSent()));
+    ASSERT_TRUE(capture.result.ok) << capture.result.error.toStdString();
+    EXPECT_EQ(readAll(request.targetPath), payload);
+    EXPECT_GE(mirror.bodyBytesSent(), payload.size());
+    EXPECT_LT(server.bodyBytesSent(), payload.size());
+}
+
+TEST_F(DownloaderTest, FasterPrimaryDeliversTheSameArtifact)
+{
+    const auto payload = patternedPayload(4 * 1024 * 1024);
+    server.setPayload(payload, QByteArrayLiteral("v1"));
+    RangeHttpServer mirror;
+    ASSERT_TRUE(mirror.listen());
+    mirror.setPayload(payload, QByteArrayLiteral("v1"));
+    RangeHttpServer::Script fast;
+    fast.chunkBytes = 256 * 1024;
+    fast.chunkIntervalMs = 10;
+    server.setDefaultScript(fast);
+    RangeHttpServer::Script slow;
+    slow.chunkBytes = 64 * 1024;
+    slow.chunkIntervalMs = 100;
+    mirror.setDefaultScript(slow);
+    auto request = makeRequest(payload.size());
+    request.fallbackUrls.append(mirror.packageUrl());
+    Downloader downloader;
+    ResultCapture capture(downloader);
+    QElapsedTimer elapsed;
+    elapsed.start();
+    ASSERT_TRUE(downloader.start(request));
+    ASSERT_TRUE(spinUntil([&]() { return capture.finishedCount == 1; }, 15000));
+    RecordProperty("elapsed_ms", int(elapsed.elapsed()));
+    RecordProperty("primary_bytes", int(server.bodyBytesSent()));
+    RecordProperty("mirror_bytes", int(mirror.bodyBytesSent()));
+    ASSERT_TRUE(capture.result.ok) << capture.result.error.toStdString();
+    EXPECT_EQ(readAll(request.targetPath), payload);
+    EXPECT_GE(server.bodyBytesSent(), payload.size());
+    EXPECT_LT(mirror.bodyBytesSent(), payload.size());
+}
+
+TEST_F(DownloaderTest, RestartRetainsTheOriginalMirrorAndBreakpoint)
+{
+    const auto payload = patternedPayload(1024 * 1024);
+    const int prefixSize = 768 * 1024;
+    server.setPayload(payload, QByteArrayLiteral("v1"));
+    RangeHttpServer mirror;
+    ASSERT_TRUE(mirror.listen());
+    mirror.setPayload(payload, QByteArrayLiteral("v1"));
+    auto request = makeRequest(payload.size());
+    request.expectedSha256 = QString::fromLatin1(QCryptographicHash::hash(payload, QCryptographicHash::Sha256).toHex());
+    request.fallbackUrls.append(mirror.packageUrl());
+    ASSERT_TRUE(writeFile(Downloader::partPath(request.targetPath), payload.left(prefixSize)));
+    ASSERT_TRUE(writeFile(Downloader::metaPath(request.targetPath), QJsonDocument(QJsonObject{
+        {QStringLiteral("url"), mirror.packageUrl().toString()},
+        {QStringLiteral("lastModified"), QStringLiteral("Fri, 24 Jul 2026 08:00:00 GMT")},
+        {QStringLiteral("totalSize"), payload.size()}
+    }).toJson()));
+    Downloader downloader;
+    ResultCapture capture(downloader);
+    ASSERT_TRUE(downloader.start(request));
+    ASSERT_TRUE(spinUntil([&]() { return capture.finishedCount == 1; }));
+    RecordProperty("primary_bytes", int(server.bodyBytesSent()));
+    RecordProperty("mirror_bytes", int(mirror.bodyBytesSent()));
+    ASSERT_TRUE(capture.result.ok) << capture.result.error.toStdString();
+    EXPECT_EQ(readAll(request.targetPath), payload);
+    EXPECT_EQ(server.requestCount(), 0);
+    EXPECT_EQ(mirror.bodyBytesSent(), payload.size() - prefixSize);
+}
+
+TEST_F(DownloaderTest, InterruptedMirrorRetriesWithoutUsingAnotherSource)
+{
+    const auto payload = patternedPayload(1024 * 1024);
+    RangeHttpServer mirror;
+    ASSERT_TRUE(mirror.listen());
+    mirror.setPayload(payload, QByteArrayLiteral("v1"));
+    auto request = makeRequest(payload.size());
+    request.expectedSha256 = QString::fromLatin1(QCryptographicHash::hash(payload, QCryptographicHash::Sha256).toHex());
+    request.fallbackUrls.append(mirror.packageUrl());
+    savePartial(request, mirror.packageUrl(), payload, 128 * 1024);
+    RangeHttpServer::Script interrupted;
+    interrupted.mode = RangeHttpServer::Script::Mode::AbortAfterPrefix;
+    interrupted.prefixBytes = 64 * 1024;
+    mirror.enqueue({});
+    mirror.enqueue(interrupted);
+    Downloader downloader;
+    downloader.setBackoffPolicy(fastBackoff());
+    ResultCapture capture(downloader);
+    ASSERT_TRUE(downloader.start(request));
+    ASSERT_TRUE(spinUntil([&]() { return capture.finishedCount == 1; }));
+    ASSERT_TRUE(capture.result.ok) << capture.result.error.toStdString();
+    EXPECT_EQ(readAll(request.targetPath), payload);
+    EXPECT_EQ(server.requestCount(), 0);
+    EXPECT_EQ(mirror.bodyBytesSent(), payload.size() - 128 * 1024);
+}
+
+TEST_F(DownloaderTest, ExhaustedSourceRestartsWithoutMixingArtifacts)
+{
+    const auto payload = patternedPayload(1024 * 1024);
+    const QByteArray stale(payload.size(), 'X');
+    server.setPayload(stale, QByteArrayLiteral("stale"));
+    RangeHttpServer mirror;
+    ASSERT_TRUE(mirror.listen());
+    mirror.setPayload(payload, QByteArrayLiteral("v1"));
+    auto request = makeRequest(payload.size());
+    request.maxAttempts = 2;
+    request.fallbackUrls.append(mirror.packageUrl());
+    savePartial(request, server.packageUrl(), stale, 128 * 1024);
+    RangeHttpServer::Script interrupted;
+    interrupted.mode = RangeHttpServer::Script::Mode::AbortAfterPrefix;
+    interrupted.prefixBytes = 64 * 1024;
+    server.setDefaultScript(interrupted);
+    Downloader downloader;
+    downloader.setBackoffPolicy(fastBackoff());
+    ResultCapture capture(downloader);
+    int restarted = 0;
+    QObject::connect(&downloader, &Downloader::sourceSelected, &downloader,
+                     [&](const QString&, bool restart) { restarted += restart; });
+    ASSERT_TRUE(downloader.start(request));
+    ASSERT_TRUE(spinUntil([&]() { return capture.finishedCount == 1; }));
+    ASSERT_TRUE(capture.result.ok) << capture.result.error.toStdString();
+    EXPECT_EQ(readAll(request.targetPath), payload);
+    EXPECT_EQ(restarted, 1);
+    EXPECT_TRUE(mirror.rangeHistory().first().isEmpty());
+    EXPECT_EQ(mirror.bodyBytesSent(), payload.size());
+}
+
+TEST_F(DownloaderTest, PersistedSourceRestartsFromZeroAfterItBecomesUnavailable)
+{
+    const auto payload = patternedPayload(1024 * 1024);
+    server.setPayload(payload, QByteArrayLiteral("v1"));
+    RangeHttpServer mirror;
+    ASSERT_TRUE(mirror.listen());
+    mirror.setPayload(payload, QByteArrayLiteral("v1"));
+    auto request = makeRequest(payload.size());
+    request.maxAttempts = 2;
+    request.fallbackUrls.append(mirror.packageUrl());
+    savePartial(request, mirror.packageUrl(), payload, 128 * 1024);
+    RangeHttpServer::Script unavailable;
+    unavailable.mode = RangeHttpServer::Script::Mode::Status;
+    unavailable.status = 503;
+    mirror.setDefaultScript(unavailable);
+    Downloader downloader;
+    downloader.setBackoffPolicy(fastBackoff());
+    ResultCapture capture(downloader);
+    ASSERT_TRUE(downloader.start(request));
+    ASSERT_TRUE(spinUntil([&]() { return capture.finishedCount == 1; }));
+    ASSERT_TRUE(capture.result.ok) << capture.result.error.toStdString();
+    EXPECT_EQ(readAll(request.targetPath), payload);
+    EXPECT_EQ(mirror.methodHistory(), QList<QByteArray>({"HEAD", "HEAD"}));
+    EXPECT_TRUE(server.rangeHistory().first().isEmpty());
+}
+
+TEST_F(DownloaderTest, CancellationDuringSelectionReleasesOwnershipAndStopsRequests)
+{
+    const auto payload = patternedPayload(1024 * 1024);
+    server.setPayload(payload, QByteArrayLiteral("v1"));
+    RangeHttpServer mirror;
+    ASSERT_TRUE(mirror.listen());
+    mirror.setPayload(payload, QByteArrayLiteral("v1"));
+    RangeHttpServer::Script delayed;
+    delayed.delayMs = 500;
+    server.setDefaultScript(delayed);
+    mirror.setDefaultScript(delayed);
+    auto request = makeRequest(payload.size());
+    request.fallbackUrls.append(mirror.packageUrl());
+    Downloader downloader;
+    ResultCapture capture(downloader);
+    ASSERT_TRUE(downloader.start(request));
+    ASSERT_TRUE(spinUntil([&]() { return server.requestCount() && mirror.requestCount(); }));
+    EXPECT_FALSE(VNH::DownloadLease::acquire(request.targetPath));
+    downloader.cancel();
+    ASSERT_TRUE(spinUntil([&]() { return capture.finishedCount == 1; }));
+    spinFor(550);
+    EXPECT_EQ(capture.finishedCount, 1);
+    EXPECT_FALSE(capture.result.ok);
+    EXPECT_TRUE(VNH::DownloadLease::acquire(request.targetPath));
+    EXPECT_FALSE(QFile::exists(request.targetPath));
+    EXPECT_FALSE(QFile::exists(Downloader::partPath(request.targetPath)));
+    EXPECT_EQ(server.requestCount(), 1);
+    EXPECT_EQ(mirror.requestCount(), 1);
+}
+
+TEST_F(DownloaderTest, CancellationCanBeFollowedByAnImmediateRestart)
+{
+    const auto payload = patternedPayload(100000);
+    server.setPayload(payload, QByteArrayLiteral("v1"));
+    const auto request = makeRequest(payload.size());
+    Downloader downloader;
+    ResultCapture capture(downloader);
+    bool firstSelection = true;
+    QObject::connect(&downloader, &Downloader::sourceSelected, &downloader,
+                     [&](const QString&, bool) {
+        if (firstSelection) {
+            firstSelection = false;
+            downloader.cancel();
+        }
+    });
+    QObject::connect(&downloader, &Downloader::finished, &downloader,
+                     [&](const DownloadResult&) {
+        if (capture.finishedCount == 1)
+            EXPECT_TRUE(downloader.start(request));
+    });
+    ASSERT_TRUE(downloader.start(request));
+    ASSERT_TRUE(spinUntil([&]() { return capture.finishedCount == 2; }));
+    EXPECT_TRUE(capture.result.ok) << capture.result.error.toStdString();
+    EXPECT_EQ(readAll(request.targetPath), payload);
+    EXPECT_EQ(server.requestCount(), 1);
+}
+
+TEST_F(DownloaderTest, ChangedExpectedContentCannotReuseAnOldBreakpoint)
+{
+    const auto payload = patternedPayload(100000);
+    server.setPayload(payload, QByteArrayLiteral("v1"));
+    auto request = makeRequest(payload.size());
+    request.expectedSha256 = QString(64, QLatin1Char('a'));
+    savePartial(request, request.url, QByteArray(payload.size(), 'X'), 50000);
+    request.expectedSha256 = QString::fromLatin1(QCryptographicHash::hash(payload, QCryptographicHash::Sha256).toHex());
+    Downloader downloader;
+    ResultCapture capture(downloader);
+    ASSERT_TRUE(downloader.start(request));
+    ASSERT_TRUE(spinUntil([&]() { return capture.finishedCount == 1; }));
+    ASSERT_TRUE(capture.result.ok);
+    EXPECT_EQ(readAll(request.targetPath), payload);
+    EXPECT_TRUE(server.rangeHistory().first().isEmpty());
+}
+
+TEST_F(DownloaderTest, InvalidRangeTotalsCannotBeAppendedToAPartialArtifact)
+{
+    const auto payload = patternedPayload(100000);
+    server.setPayload(payload, QByteArrayLiteral("v1"));
+    auto request = makeRequest(payload.size());
+    savePartial(request, request.url, payload, 20000);
+    RangeHttpServer::Script invalid;
+    invalid.contentRangeOverride = QByteArrayLiteral("bytes 20000-99999/100001");
+    server.enqueue({});
+    server.enqueue(invalid);
+    Downloader downloader;
+    downloader.setBackoffPolicy(fastBackoff());
+    ResultCapture capture(downloader);
+    ASSERT_TRUE(downloader.start(request));
+    ASSERT_TRUE(spinUntil([&]() { return capture.finishedCount == 1; }));
+    ASSERT_TRUE(capture.result.ok);
+    EXPECT_EQ(readAll(request.targetPath), payload);
+    EXPECT_TRUE(server.rangeHistory().last().isEmpty());
+}
+
+TEST_F(DownloaderTest, UnresponsiveCandidatesHaveABoundedSelectionWindow)
+{
+    RangeHttpServer mirror;
+    ASSERT_TRUE(mirror.listen());
+    RangeHttpServer::Script delayed;
+    delayed.delayMs = 10000;
+    server.setDefaultScript(delayed);
+    mirror.setDefaultScript(delayed);
+    auto request = makeRequest(1024 * 1024);
+    request.fallbackUrls.append(mirror.packageUrl());
+    Downloader downloader;
+    ResultCapture capture(downloader);
+    QObject::connect(&downloader, &Downloader::sourceSelected, &downloader,
+                     [&](const QString&, bool) { downloader.cancel(); });
+    ASSERT_TRUE(downloader.start(request));
+    ASSERT_TRUE(spinUntil([&]() { return capture.finishedCount == 1; }, 4500));
+    EXPECT_FALSE(capture.result.ok);
+    EXPECT_EQ(server.requestCount(), 1);
+    EXPECT_EQ(mirror.requestCount(), 1);
+    EXPECT_FALSE(QFile::exists(Downloader::partPath(request.targetPath)));
+}
+
+TEST_F(DownloaderTest, SelectionCannotAppendAProbeFromAServerIgnoringRanges)
+{
+    const auto payload = patternedPayload(2 * 1024 * 1024);
+    server.setPayload(payload, QByteArrayLiteral("v1"));
+    RangeHttpServer mirror;
+    ASSERT_TRUE(mirror.listen());
+    mirror.setPayload(payload, QByteArrayLiteral("v1"));
+    RangeHttpServer::Script ignoreRange;
+    ignoreRange.mode = RangeHttpServer::Script::Mode::IgnoreRange;
+    server.setDefaultScript(ignoreRange);
+    mirror.setDefaultScript(ignoreRange);
+    auto request = makeRequest(payload.size());
+    request.fallbackUrls.append(mirror.packageUrl());
+    Downloader downloader;
+    ResultCapture capture(downloader);
+    ASSERT_TRUE(downloader.start(request));
+    ASSERT_TRUE(spinUntil([&]() { return capture.finishedCount == 1; }));
+    ASSERT_TRUE(capture.result.ok);
+    EXPECT_EQ(readAll(request.targetPath), payload);
+}
+
+TEST_F(DownloaderTest, InterruptedDownloadCanBeResumedByANewDownloader)
+{
+    const auto payload = patternedPayload(2 * 1024 * 1024);
+    server.setPayload(payload, QByteArrayLiteral("v1"));
+    RangeHttpServer mirror;
+    ASSERT_TRUE(mirror.listen());
+    mirror.setPayload(payload, QByteArrayLiteral("v1"));
+    RangeHttpServer::Script delayed;
+    delayed.delayMs = 500;
+    server.setDefaultScript(delayed);
+    RangeHttpServer::Script paced;
+    paced.chunkBytes = 64 * 1024;
+    paced.chunkIntervalMs = 10;
+    mirror.setDefaultScript(paced);
+    auto request = makeRequest(payload.size());
+    request.expectedSha256 = QString::fromLatin1(QCryptographicHash::hash(payload, QCryptographicHash::Sha256).toHex());
+    request.fallbackUrls.append(mirror.packageUrl());
+    {
+        Downloader first;
+        ResultCapture capture(first);
+        QObject::connect(&first, &Downloader::progress, &first,
+                         [&](qint64 received, qint64) { if (received >= 128 * 1024) first.cancel(); });
+        ASSERT_TRUE(first.start(request));
+        ASSERT_TRUE(spinUntil([&]() { return capture.finishedCount == 1; }));
+        ASSERT_FALSE(capture.result.ok);
+    }
+    const auto saved = QFileInfo(Downloader::partPath(request.targetPath)).size();
+    ASSERT_GT(saved, 0);
+    ASSERT_LT(saved, payload.size());
+    const auto requests = server.requestCount();
+    const auto bytes = mirror.bodyBytesSent();
+    Downloader second;
+    ResultCapture capture(second);
+    ASSERT_TRUE(second.start(request));
+    ASSERT_TRUE(spinUntil([&]() { return capture.finishedCount == 1; }));
+    ASSERT_TRUE(capture.result.ok) << capture.result.error.toStdString();
+    EXPECT_EQ(readAll(request.targetPath), payload);
+    EXPECT_EQ(server.requestCount(), requests);
+    EXPECT_EQ(mirror.bodyBytesSent() - bytes, payload.size() - saved);
 }
 
 TEST_F(DownloaderTest, ArtifactOwnershipSurvivesDownloadUntilConsumerReleasesIt)
@@ -497,13 +864,12 @@ TEST_F(DownloaderTest, AvailabilityFailureSwitchesToFallbackSource)
 
     EXPECT_TRUE(capture.result.ok) << capture.result.error.toStdString();
     EXPECT_EQ(capture.result.source, QStringLiteral("OSS"));
-    EXPECT_EQ(capture.result.attemptsUsed, 2);
     EXPECT_EQ(server.requestCount(), 1);
-    EXPECT_EQ(fallback.requestCount(), 1);
+    EXPECT_GE(fallback.bodyBytesSent(), payload.size());
     EXPECT_EQ(readAll(request.targetPath), payload);
 }
 
-TEST_F(DownloaderTest, UnapprovedRedirectDoesNotUseFallback)
+TEST_F(DownloaderTest, UnapprovedRedirectCannotDeliverAnArtifact)
 {
     RangeHttpServer fallback;
     ASSERT_TRUE(fallback.listen());
@@ -525,7 +891,9 @@ TEST_F(DownloaderTest, UnapprovedRedirectDoesNotUseFallback)
     EXPECT_FALSE(capture.result.ok);
     EXPECT_TRUE(capture.result.error.contains(QStringLiteral("redirect")));
     EXPECT_EQ(server.requestCount(), 1);
-    EXPECT_EQ(fallback.requestCount(), 0);
+    EXPECT_LE(fallback.requestCount(), 1);
+    EXPECT_FALSE(QFile::exists(request.targetPath));
+    EXPECT_FALSE(QFile::exists(Downloader::partPath(request.targetPath)));
 }
 
 TEST_F(DownloaderTest, HeadAndGetRequestsAreAnonymous)

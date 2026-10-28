@@ -68,9 +68,9 @@ def msi_name(name: str, identity: str) -> str:
 
 
 def installer_ui(tables, license_rtf, privacy_rtf):
-    tables["Property"] += [("DefaultUIFont", "HubNormal")]
+    tables["Property"] += [("DefaultUIFont", "HubNormal"), ("HARKENLAUNCHHUB", "1")]
     tables["TextStyle"] = [("HubNormal", "Segoe UI", 9, 0, 0), ("HubTitle", "Segoe UI", 12, 0, 1)]
-    tables["CheckBox"] = [("LICENSEACCEPTED", "1")]
+    tables["CheckBox"] = [("LICENSEACCEPTED", "1"), ("HARKENLAUNCHHUB", "1")]
 
     def dialog(name, title, first, default, cancel, modal=True, width=420, height=320):
         tables["Dialog"].append((name, 50, 50, width, height, 3 if modal else 1,
@@ -137,8 +137,19 @@ def installer_ui(tables, license_rtf, privacy_rtf):
     control("ProgressDialog", "Progress", "ProgressBar", (18, 135, 384, 15))
     tables["EventMapping"] += [("ProgressDialog", "Status", "ActionText", "Text"),
                                ("ProgressDialog", "Progress", "SetProgress", "Progress")]
-    for name, title in [("SuccessDialog", "Setup completed"),
-                        ("FailureDialog", "Setup failed"), ("CancelledDialog", "Setup was cancelled")]:
+    launch_available = "NOT REMOVE AND NOT HARKENSELFUPDATE=1 AND NOT HARKENBRIDGE=1 AND UILevel=5"
+    dialog("SuccessDialog", "Setup completed", "Close", "Close", "Close")
+    control("SuccessDialog", "LaunchHub", "CheckBox", (18, 70, 384, 20),
+            "Launch Harken Hub when setup closes", "HARKENLAUNCHHUB", "Close", attributes=2)
+    tables["ControlCondition"] += [
+        ("SuccessDialog", "LaunchHub", "Show", launch_available),
+        ("SuccessDialog", "LaunchHub", "Hide", f"NOT ({launch_available})"),
+    ]
+    control("SuccessDialog", "Close", "PushButton", (330, 285, 72, 20), "Close", next="LaunchHub")
+    event("SuccessDialog", "Close", "DoAction", "HarkenLaunchHub",
+          f'HARKENLAUNCHHUB="1" AND ({launch_available})')
+    event("SuccessDialog", "Close", "EndDialog", "Return", order=2)
+    for name, title in [("FailureDialog", "Setup failed"), ("CancelledDialog", "Setup was cancelled")]:
         dialog(name, title, "Close", "Close", "Close")
         control(name, "Close", "PushButton", (330, 285, 72, 20), "Close", next="Close")
         event(name, "Close", "EndDialog", "Return")
@@ -227,6 +238,7 @@ def package_tables(files, input_dir, version, license_rtf, privacy_rtf):
     tables["AppSearch"] = [("HARKENPREVIOUSINSTALLDIR", "PreviousInstallFolder")]
     tables["RegLocator"] = [("PreviousInstallFolder", 2, registry_key, "InstallDir", 18)]
     tables["CustomAction"] = [
+        ("HarkenLaunchHub", 82, "HarkenHubExe", "--launch-after-setup"),
         ("HarkenPreserveInstallFolder", 51, "INSTALLFOLDER", "[HARKENPREVIOUSINSTALLDIR]"),
         ("HarkenHealthHandshake", 1058, "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenHub.exe" --await-health-handshake'),
         ("HarkenRestartHub", 1762, "INSTALLFOLDER", '"[INSTALLFOLDER]HarkenHub.exe"'),

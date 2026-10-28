@@ -128,6 +128,8 @@ ServerVersionsDialog::ServerVersionsDialog(
     layout->addLayout(buttonRow);
 
     connect(this, &QDialog::rejected, &downloader_, &Downloader::cancel);
+    connect(&downloader_, &Downloader::sourceSelected, this,
+            [this](const QString&, bool restarted) { downloadRestarted_ = restarted; });
     connect(&catalog_, &ServerVersionCatalog::finished, this,
             &ServerVersionsDialog::populate);
     connect(&downloader_, &Downloader::progress, this,
@@ -144,7 +146,13 @@ ServerVersionsDialog::ServerVersionsDialog(
                                  humanSize(totalBytes)));
                 } else {
                     progressBar_->setRange(0, 0);
+                    statusLabel_->setText(QCoreApplication::translate(
+                        "HarkenHub", "Downloading HarkenStudio %1...")
+                        .arg(rows_[static_cast<size_t>(activeRow_)].entry.version));
                 }
+                if (downloadRestarted_)
+                    statusLabel_->setText(statusLabel_->text() + QCoreApplication::translate(
+                        "HarkenHub", " (restarted after switching download source)"));
             });
     connect(&downloader_, &Downloader::finished, this,
             &ServerVersionsDialog::handleDownloadFinished);
@@ -316,6 +324,7 @@ void ServerVersionsDialog::startDownload()
     request.fallbackUrls = downloadUrls;
     request.targetPath = downloadTargetPath_;
     request.expectedSizeBytes = row.manifest.packageSize;
+    request.expectedSha256 = row.manifest.sha256Hex;
     request.lease = downloadLease_;
     QString error;
     if (!downloader_.start(request, &error)) {

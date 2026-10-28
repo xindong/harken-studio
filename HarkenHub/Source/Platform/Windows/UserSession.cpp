@@ -193,4 +193,74 @@ bool systemAnimationsEnabled()
     return true;
 }
 
+bool launchInDesktopUserSession(const QString& program)
+{
+    const std::wstring path = QDir::toNativeSeparators(program).toStdWString();
+    std::wstring arguments = L"\"" + path + L"\"";
+    const std::wstring directory =
+        QDir::toNativeSeparators(QFileInfo(program).absolutePath()).toStdWString();
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+        return false;
+    TOKEN_ELEVATION elevation{};
+    DWORD returned = 0;
+    const BOOL queried = GetTokenInformation(token, TokenElevation, &elevation,
+                                             sizeof(elevation), &returned);
+    CloseHandle(token);
+    if (!queried)
+        return false;
+
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    if (!elevation.TokenIsElevated) {
+        if (!CreateProcessW(path.c_str(), arguments.data(), nullptr, nullptr,
+                            FALSE, 0, nullptr, directory.c_str(), &startup, &process))
+            return false;
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+        return true;
+    }
+
+    const HWND shellWindow = GetShellWindow();
+    if (!shellWindow)
+        return false;
+    DWORD shellPid = 0;
+    GetWindowThreadProcessId(shellWindow, &shellPid);
+    const HANDLE shellProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, shellPid);
+    if (!shellProcess)
+        return false;
+    HANDLE shellToken = nullptr;
+    const BOOL opened = OpenProcessToken(shellProcess, TOKEN_DUPLICATE | TOKEN_QUERY, &shellToken);
+    CloseHandle(shellProcess);
+    if (!opened)
+        return false;
+    const BOOL shellQueried = GetTokenInformation(shellToken, TokenElevation, &elevation,
+                                                  sizeof(elevation), &returned);
+    HANDLE launchToken = nullptr;
+    const BOOL duplicated = shellQueried && !elevation.TokenIsElevated && DuplicateTokenEx(
+        shellToken, TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY |
+                        TOKEN_ADJUST_DEFAULT | TOKEN_ADJUST_SESSIONID,
+        nullptr, SecurityImpersonation, TokenPrimary, &launchToken);
+    CloseHandle(shellToken);
+    if (!duplicated)
+        return false;
+
+    void* environment = nullptr;
+    if (!CreateEnvironmentBlock(&environment, launchToken, FALSE)) {
+        CloseHandle(launchToken);
+        return false;
+    }
+    const BOOL launched = CreateProcessWithTokenW(
+        launchToken, 0, path.c_str(), arguments.data(), CREATE_UNICODE_ENVIRONMENT,
+        environment, directory.c_str(), &startup, &process);
+    DestroyEnvironmentBlock(environment);
+    CloseHandle(launchToken);
+    if (!launched)
+        return false;
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return true;
+}
+
 }

@@ -11,7 +11,7 @@
 | 编号 | 产品 | 行为 | 触发方式 | 接收方 |
 | --- | --- | --- | --- | --- |
 | DF-1 | Studio | AI 对话与工具结果请求 | 用户配置服务和 API key 后，发起对话或测试连接 | 用户配置的第三方／本地模型服务 |
-| DF-2 | Hub | 检查更新、下载清单与软件包 | 更新服务启动后定期检查，也可主动检查；安装下载由用户操作触发 | GitHub Releases，失败时按规则使用对象存储备用源 |
+| DF-2 | Hub | 检查更新、下载清单与软件包 | 更新服务启动后定期检查，也可主动检查；安装下载由用户操作触发 | GitHub Releases 与对象存储；新软件包下载前测速选源 |
 | DF-3 | Hub | 获取可安装版本列表、补取包清单 | 用户打开版本选择界面或导入需要补全清单的本地包 | 与 DF-2 相同的软件分发源 |
 | DF-4 | Studio / Hub | 打开官网、在线文档、代码仓库 | 用户点击 Studio 帮助菜单或 Hub 侧栏链接 | 由系统浏览器访问对应网站 |
 | DF-5 | Studio / Engine / SDK | Remote 发现、连接、运行控制与监控 | SDK 默认随音频启动本机通信，项目设置可关闭打包游戏通信；Studio / Engine / SDK 当前仅支持本机发现和连接，无局域网启用入口；采集单独启用 | 用户选择的同机游戏进程 |
@@ -56,7 +56,11 @@ AI 对话已经支持本机持久化，不能再写成“对话仅存内存”�
 - 清单首选 `https://github.com/xindong/harken-studio/releases/latest/download/<product>-manifest.json`，产品为 `hub` 或 `harken`。
 - 默认备用基址为 `https://venus-1459151234.cos.ap-shanghai.myqcloud.com/`，清单路径为 `release/<product>/manifest.json`。
 - 备用基址可由 `HARKEN_CONTENT_BASE_URL` 覆盖。旧 `HARKEN_SERVER_BASE_URL`、内网 IP 和 `/api/harken/client/...` 路由已不适用于当前代码。
-- 软件包地址来自已验证清单的 release tag／对象路径，优先 GitHub Release 资产，备用路径为 `release/<product>/<platform-architecture>/<version>/<build-directory>/<filename>`。构建目录使用 Hub 的 `run<number>.<commit>` 或 Studio 的 `run<number>-<commit>-<timestamp>`（重跑时为 `run<number>.<attempt>`）。Hub 文件名为 `HarkenHubSetup-<version>.exe/pkg`，Studio 为 `<version>-<channel>-<platform-architecture>.zip`；GitHub 资产使用相同文件名。当前客户端只接受此归档布局。
+- 软件包地址来自已验证清单的 release tag／对象路径，对象存储路径为 `release/<product>/<platform-architecture>/<version>/<build-directory>/<filename>`。构建目录使用 Hub 的 `run<number>.<commit>` 或 Studio 的 `run<number>-<commit>-<timestamp>`（重跑时为 `run<number>.<attempt>`）。Hub 文件名为 `HarkenHubSetup-<version>.exe/pkg`，Studio 为 `<version>-<channel>-<platform-architecture>.zip`；GitHub 资产使用相同文件名。当前客户端只接受此归档布局。
+
+Hub 自更新、Studio 自动更新与手动下载共用选源流程。没有可用断点且存在多个候选源时，并行请求各源目标包的起始片段，每源最多读取 1 MiB 响应正文，总测速窗口最多 2.5 秒；已有样本完成时，可在约 300 毫秒观察窗口后选源，所有请求提前结束则立即决策。测速包含连接、重定向和实际传输耗时，结果仅用于当前任务的来源排序，不上传测速结果。即使 GitHub 可用，测速也可能访问对象存储。服务器忽略 Range 时达到读取上限即取消请求，实际网络流量还可能包含已进入传输缓冲区的数据。
+
+断点保存稳定源 URL、目标包 SHA-256、Last-Modified 和总大小；恢复时先验证其与当前任务一致，然后只对原源进行 HEAD 检查和 Range 续传，不重新测速。网络错误与可重试 HTTP 错误先按原源重试，耗尽该源重试预算后换源；403／404 可直接换源。换源清除断点，从头下载并显示提示，不跨源拼接。旧格式断点未记录包哈希时，沿用稳定 URL、修改时间和大小检查，安装前仍校验完整包哈希。GitHub 临时重定向地址不作为持久化续传地址。清单获取仍沿用 GitHub 优先及现有验签、发布序列检查，不以测速决定下载哪个版本。
 
 以上是公开文件的托管与下载，没有接收用户工程、统计或诊断上报的业务接口。
 
@@ -66,7 +70,7 @@ Hub 和 Studio 更新下载失败后会清除内存中的清单缓存标记，�
 
 ### 实际发送的信息
 
-检查清单和下载使用 GET；断点续传可先使用 HEAD，并携带 `Range`。清单条件请求可携带内存中保存的 `If-None-Match`。请求没有上传工程或日志的请求体，源码未附加 Harken 登录凭据或设备令牌，版本比较在本机进行。
+检查清单和下载使用 GET；测速携带有界 `Range`，断点续传先使用 HEAD，再通过 `Range` 请求剩余内容。测速及包下载使用 `Accept-Encoding: identity`。清单条件请求可携带内存中保存的 `If-None-Match`。请求没有上传工程或日志的请求体，源码未附加 Harken 登录凭据或设备令牌，版本比较在本机进行。
 
 下载接收方仍能看到正常网络访问所需的来源 IP、请求路径和协议头。路径可能表明所下载的产品、平台／架构、版本；不能写成“对方只看得到 IP”或“请求不涉及任何版本信息”。GitHub 重定向还可能提供资产下载所需的查询参数，它们不是 Harken 生成的用户标识。
 
