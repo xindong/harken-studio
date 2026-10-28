@@ -124,6 +124,10 @@ bool WorkspaceWindowManager::materializeVisibleSingleton(const QString& typeId)
         return false;
 
     ads::CDockWidget* dock = registry_.singletonDock(typeId);
+    if (!isSingletonAvailable(typeId)) {
+        adapter_.hideDock(dock);
+        return false;
+    }
     if (!adapter_.isDockVisible(dock))
         return false;
 

@@ -9,7 +9,7 @@
 #include <QComboBox>
 #include <QDir>
 #include <QLabel>
-#include <QMessageBox>
+#include <QShowEvent>
 #include <QSignalBlocker>
 
 namespace VNX {
@@ -48,9 +48,11 @@ AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
     body->addStretch();
 
     connect(themeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &AppearancePage::dirtyChanged);
+            this, &AppearancePage::applyTheme);
     connect(languageCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &AppearancePage::dirtyChanged);
+            this, &AppearancePage::applyLanguage);
+    connect(themeManager_, &ThemeManager::themeChanged, this, &AppearancePage::load);
+    connect(&AppSettings::instance(), &AppSettings::languageChanged, this, &AppearancePage::load);
 }
 
 QString AppearancePage::pageId() const
@@ -67,12 +69,6 @@ void AppearancePage::populateLanguageCombo()
 {
     languageCombo_->addItem(tr("English"), QStringLiteral("en"));
     languageCombo_->addItem(tr("Chinese (Simplified)"), QStringLiteral("zh-CN"));
-}
-
-void AppearancePage::rememberBaseline()
-{
-    baselineThemeId_ = themeCombo_->currentData().toString();
-    baselineLanguage_ = languageCombo_->currentData().toString();
 }
 
 void AppearancePage::load()
@@ -110,8 +106,12 @@ void AppearancePage::load()
             index = 0;
         languageCombo_->setCurrentIndex(index);
     }
+}
 
-    rememberBaseline();
+void AppearancePage::showEvent(QShowEvent* event)
+{
+    SettingsPage::showEvent(event);
+    load();
 }
 
 bool AppearancePage::applyTheme()
@@ -136,9 +136,9 @@ bool AppearancePage::applyTheme()
                            .arg(themePackageErrorCodeName(diagnostic.code),
                                 diagnostic.message, location));
     }
-    QMessageBox::warning(
-        this, tr("Theme Selection Failed"),
-        tr("The selected theme could not be applied. The current theme was kept.\n\n%1")
+    load();
+    showError(
+        tr("The selected theme could not be applied. The current theme was kept.\n%1")
             .arg(details.join(QLatin1Char('\n'))));
     return false;
 }
@@ -149,39 +149,6 @@ void AppearancePage::applyLanguage()
     if (code.isEmpty() || code == AppSettings::instance().language())
         return;
     AppSettings::instance().setLanguage(code);
-}
-
-bool AppearancePage::apply()
-{
-    revertThemeId_ = themeManager_->currentThemeId();
-    revertLanguage_ = AppSettings::instance().language();
-    canRevert_ = false;
-
-    if (!applyTheme())
-        return false;
-    applyLanguage();
-    canRevert_ = true;
-    rememberBaseline();
-    emit dirtyChanged();
-    return true;
-}
-
-void AppearancePage::revert()
-{
-    if (!canRevert_)
-        return;
-
-    if (themeManager_->currentThemeId() != revertThemeId_)
-        themeManager_->selectTheme(revertThemeId_);
-    AppSettings::instance().setLanguage(revertLanguage_);
-    canRevert_ = false;
-    emit dirtyChanged();
-}
-
-bool AppearancePage::isDirty() const
-{
-    return themeCombo_->currentData().toString() != baselineThemeId_
-        || languageCombo_->currentData().toString() != baselineLanguage_;
 }
 
 }

@@ -610,6 +610,7 @@ signals:
     void busChanged(uint32_t busID, const QString& propertyName,
                     const QObject* originator = nullptr);
     void packBuildOutputDirChanged(QString newValue);
+    void projectPublishSettingsChanged();
     void packExportCurrentPlatformChanged(QString newValue);
     void packExportSelectedPlatformsChanged(QStringList newValue);
     void packGroupsChanged();

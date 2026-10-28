@@ -47,6 +47,39 @@ QVector<WorkspaceWindowDescriptor> defaultWorkspaceWindowDescriptors()
 {
     return {
         {
+            QStringLiteral("ProjectSettings"),
+            QStringLiteral("Project Settings"),
+            QStringLiteral("ProjectSettingsDock"),
+            WindowKind::Singleton,
+            {DefaultDockArea::Floating, QString(), false},
+            MaterializationPolicy::ShellEagerContentLazy,
+            ClosePolicy::Hide,
+            AvailabilityPolicy::ProjectOnly,
+            false
+        },
+        {
+            QStringLiteral("Preferences"),
+            QStringLiteral("Preferences"),
+            QStringLiteral("PreferencesDock"),
+            WindowKind::Singleton,
+            {DefaultDockArea::Floating, QString(), false},
+            MaterializationPolicy::ShellEagerContentLazy,
+            ClosePolicy::Hide,
+            AvailabilityPolicy::Always,
+            false
+        },
+        {
+            QStringLiteral("RemoteConnect"),
+            QStringLiteral("Remote Connect"),
+            QStringLiteral("RemoteConnectDock"),
+            WindowKind::Singleton,
+            {DefaultDockArea::Floating, QString(), false},
+            MaterializationPolicy::ShellEagerContentLazy,
+            ClosePolicy::Hide,
+            AvailabilityPolicy::Always,
+            false
+        },
+        {
             QStringLiteral("Blueprint"),
             QStringLiteral("Blueprint"),
             QStringLiteral("BlueprintDock"),
@@ -335,6 +368,9 @@ QStringList ipcKnownPanelObjectNames()
 {
     return {
         QStringLiteral("Explorer"),
+        QStringLiteral("ProjectSettingsPanel"),
+        QStringLiteral("PreferencesPanel"),
+        QStringLiteral("RemoteConnectPanel"),
         QStringLiteral("InspectorPanel"),
         QStringLiteral("BlueprintPanel"),
         QStringLiteral("ControlPanel"),

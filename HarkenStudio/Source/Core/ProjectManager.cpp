@@ -1953,25 +1953,30 @@ void ProjectManager::setPackBuildOutputDirInternal(const QString& value)
     if (!m_currentProject || m_currentProject->packBuildOutputDir == value) return;
     m_currentProject->packBuildOutputDir = value;
     emit packBuildOutputDirChanged(value);
+    emit projectPublishSettingsChanged();
 }
 
 void ProjectManager::setBuildProjectDataExportInternal(bool enabled)
 {
-    if (!m_currentProject) return;
+    if (!m_currentProject || m_currentProject->buildExportProjectData == enabled) return;
     m_currentProject->buildExportProjectData = enabled;
+    emit projectPublishSettingsChanged();
 }
 
 void ProjectManager::setBuildPackMetadataExportInternal(bool enabled)
 {
-    if (!m_currentProject) return;
+    if (!m_currentProject || m_currentProject->buildExportPackMetadata == enabled) return;
     m_currentProject->buildExportPackMetadata = enabled;
+    emit projectPublishSettingsChanged();
 }
 
 void ProjectManager::setBuildWaveformSettingsInternal(bool enabled, const QString& directory)
 {
-    if (!m_currentProject) return;
+    if (!m_currentProject || (m_currentProject->buildExportWaveforms == enabled
+        && m_currentProject->buildWaveformOutputDir == directory)) return;
     m_currentProject->buildExportWaveforms = enabled;
     m_currentProject->buildWaveformOutputDir = directory;
+    emit projectPublishSettingsChanged();
 }
 
 PackExportSelection ProjectManager::packExportSelection() const

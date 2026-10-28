@@ -1,16 +1,15 @@
+#include "Core/AI/AIAgentConfig.h"
 #include "Core/AppSettings.h"
 #include "Core/MemorySettingsStorage.h"
 #include "Core/ThemeManager.h"
-#include "Dialogs/Settings/PreferencesDialog.h"
+#include "Dialogs/Settings/PreferencesPanel.h"
 
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
-#include <QDialog>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QTemporaryDir>
-#include <QTimer>
 
 #include <gtest/gtest.h>
 
@@ -28,20 +27,6 @@ void ensureApp()
     static QApplication app(argc, argv);
 }
 
-void acceptNextModalDialog()
-{
-    QTimer::singleShot(0, [] {
-        QWidget* modal = QApplication::activeModalWidget();
-        if (!modal)
-        {
-            acceptNextModalDialog();
-            return;
-        }
-        if (auto* dialog = qobject_cast<QDialog*>(modal))
-            dialog->accept();
-    });
-}
-
 }
 
 namespace VNX {
@@ -52,59 +37,154 @@ protected:
     void SetUp() override
     {
         ensureApp();
+        ASSERT_TRUE(root_.isValid());
         AppSettings::instance().setStorage(std::make_unique<MemorySettingsStorage>());
+        AIAgentConfigStore::setStorageOverrideForTesting(std::make_shared<MemorySettingsStorage>());
+        originalConfig_.baseUrl = QStringLiteral("https://original.example/v1");
+        originalConfig_.model = QStringLiteral("original-model");
+        AIAgentConfigStore().save(originalConfig_);
+        theme_ = std::make_unique<ThemeManager>(root_.path(), std::make_unique<MemorySettingsStorage>());
     }
 
     void TearDown() override
     {
+        theme_.reset();
+        AIAgentConfigStore::setStorageOverrideForTesting(nullptr);
         AppSettings::instance().setStorage(SettingsStorageFactory::create(
             SettingsStorageFactory::StorageType::QSettings,
             QStringLiteral("HarkenSound"),
             QStringLiteral("HarkenStudio")));
     }
+
+    PreferencesPanel::SecretStoreAccess secretStore()
+    {
+        return {
+            [this](const QString&, const QString&) { return secret_; },
+            [this](const QString&, const QString&, const QString& value) {
+                if (failSecretWrite_) return false;
+                secret_ = value;
+                return true;
+            },
+            [this](const QString&, const QString&) {
+                if (failSecretWrite_) return false;
+                secret_.clear();
+                return true;
+            }
+        };
+    }
+
+    QTemporaryDir root_;
+    std::unique_ptr<ThemeManager> theme_;
+    AIAgentConfig originalConfig_;
+    QString secret_ = QStringLiteral("original-key");
+    bool failSecretWrite_ = false;
 };
 
-TEST_F(SettingsApplyContractTest, FailedApplyRollsBackEarlierPages)
+TEST_F(SettingsApplyContractTest, FailedConnectionCommitKeepsIndependentPreferences)
 {
-    QTemporaryDir root;
-    ASSERT_TRUE(root.isValid());
-    VNX::ThemeManager manager(
-        root.path(), std::make_unique<VNX::MemorySettingsStorage>());
-    VNX::PreferencesDialog::SecretStoreAccess failingStore;
-    failingStore.load = [](const QString&, const QString&) { return QString(); };
-    failingStore.store = [](const QString&, const QString&, const QString&) {
-        return false;
-    };
-    failingStore.erase = [](const QString&, const QString&) { return true; };
-
-    VNX::PreferencesDialog dialog(failingStore, manager);
-    dialog.show();
-    auto* apply = dialog.findChild<QPushButton*>(QStringLiteral("settingsApplyButton"));
-    auto* check = dialog.findChild<QCheckBox*>(QStringLiteral("developerModeCheck"));
-    auto* language = dialog.findChild<QComboBox*>(QStringLiteral("appearanceLanguageCombo"));
-    auto* keyEdit = dialog.findChild<QLineEdit*>(QStringLiteral("aiApiKeyEdit"));
-    ASSERT_NE(apply, nullptr);
-    ASSERT_NE(check, nullptr);
+    PreferencesPanel panel(secretStore(), *theme_);
+    auto* developer = panel.findChild<QCheckBox*>(QStringLiteral("developerModeCheck"));
+    auto* language = panel.findChild<QComboBox*>(QStringLiteral("appearanceLanguageCombo"));
+    auto* url = panel.findChild<QLineEdit*>(QStringLiteral("aiBaseUrlEdit"));
+    auto* key = panel.findChild<QLineEdit*>(QStringLiteral("aiApiKeyEdit"));
+    auto* save = panel.findChild<QPushButton*>(QStringLiteral("aiConnectionSaveButton"));
+    ASSERT_NE(developer, nullptr);
     ASSERT_NE(language, nullptr);
-    ASSERT_NE(keyEdit, nullptr);
+    ASSERT_NE(url, nullptr);
+    ASSERT_NE(key, nullptr);
+    ASSERT_NE(save, nullptr);
 
-    const bool storedDeveloper = VNX::AppSettings::instance().developerMode();
-    const QString storedLanguage = VNX::AppSettings::instance().language();
-    const bool nextDeveloper = !check->isChecked();
-    check->setChecked(nextDeveloper);
+    developer->setChecked(true);
+    language->setCurrentIndex(language->findData(QStringLiteral("zh-CN")));
+    url->setText(QStringLiteral("https://replacement.example/v1"));
+    key->setText(QStringLiteral("replacement-key"));
+    failSecretWrite_ = true;
+    ASSERT_TRUE(save->isEnabled());
+    save->click();
 
-    const int nextLanguage = language->currentIndex() == 0 ? 1 : 0;
-    language->setCurrentIndex(nextLanguage);
-    const QString pendingLanguage = language->currentData().toString();
-    ASSERT_NE(pendingLanguage, storedLanguage);
+    EXPECT_TRUE(AppSettings::instance().developerMode());
+    EXPECT_EQ(AppSettings::instance().language(), QStringLiteral("zh-CN"));
+    EXPECT_TRUE(AIAgentConfigStore().effectiveSnapshot() == originalConfig_);
+    EXPECT_EQ(secret_, QStringLiteral("original-key"));
+    EXPECT_TRUE(panel.findChild<AIAgentPage*>()->hasPendingChanges());
+}
 
-    keyEdit->setText(QStringLiteral("will-fail"));
+TEST_F(SettingsApplyContractTest, OpenPreferencesFollowExternalCommittedValues)
+{
+    PreferencesPanel panel(secretStore(), *theme_);
+    auto* developer = panel.findChild<QCheckBox*>(QStringLiteral("developerModeCheck"));
+    auto* language = panel.findChild<QComboBox*>(QStringLiteral("appearanceLanguageCombo"));
+    ASSERT_NE(developer, nullptr);
+    ASSERT_NE(language, nullptr);
 
-    acceptNextModalDialog();
-    apply->click();
+    AppSettings::instance().setDeveloperMode(true);
+    AppSettings::instance().setLanguage(QStringLiteral("zh-CN"));
+    EXPECT_TRUE(developer->isChecked());
+    EXPECT_EQ(language->currentData().toString(), QStringLiteral("zh-CN"));
 
-    EXPECT_EQ(VNX::AppSettings::instance().developerMode(), storedDeveloper);
-    EXPECT_EQ(VNX::AppSettings::instance().language(), storedLanguage);
+    AppSettings::instance().setDeveloperMode(false);
+    AppSettings::instance().setLanguage(QStringLiteral("en"));
+    EXPECT_FALSE(developer->isChecked());
+    EXPECT_EQ(language->currentData().toString(), QStringLiteral("en"));
+}
+
+TEST_F(SettingsApplyContractTest, DiscardPendingConnectionPreservesImmediatePermission)
+{
+    PreferencesPanel panel(secretStore(), *theme_);
+    auto* url = panel.findChild<QLineEdit*>(QStringLiteral("aiBaseUrlEdit"));
+    auto* key = panel.findChild<QLineEdit*>(QStringLiteral("aiApiKeyEdit"));
+    auto* permission = panel.findChild<QComboBox*>(QStringLiteral("aiPermissionModeCombo"));
+    auto* page = panel.findChild<AIAgentPage*>();
+    ASSERT_NE(url, nullptr);
+    ASSERT_NE(key, nullptr);
+    ASSERT_NE(permission, nullptr);
+    ASSERT_NE(page, nullptr);
+
+    url->setText(QStringLiteral("https://unsaved.example/v1"));
+    key->setText(QStringLiteral("unsaved-key"));
+    permission->setCurrentIndex(permission->findData(QStringLiteral("read_only")));
+    ASSERT_TRUE(page->hasPendingChanges());
+    panel.discardConnectionChanges();
+
+    auto expected = originalConfig_;
+    expected.permissionProfile = AIPermissionMode::ReadOnly;
+    EXPECT_TRUE(AIAgentConfigStore().effectiveSnapshot() == expected);
+    EXPECT_EQ(secret_, QStringLiteral("original-key"));
+    EXPECT_EQ(url->text(), originalConfig_.baseUrl);
+    EXPECT_EQ(key->text(), secret_);
+    EXPECT_FALSE(page->hasPendingChanges());
+}
+
+TEST_F(SettingsApplyContractTest, ConnectionCommitPreservesLatestIndependentSettings)
+{
+    PreferencesPanel panel(secretStore(), *theme_);
+    auto* url = panel.findChild<QLineEdit*>(QStringLiteral("aiBaseUrlEdit"));
+    auto* model = panel.findChild<QLineEdit*>(QStringLiteral("aiModelEdit"));
+    auto* key = panel.findChild<QLineEdit*>(QStringLiteral("aiApiKeyEdit"));
+    auto* save = panel.findChild<QPushButton*>(QStringLiteral("aiConnectionSaveButton"));
+    auto* permission = panel.findChild<QComboBox*>(QStringLiteral("aiPermissionModeCombo"));
+    ASSERT_NE(url, nullptr);
+    ASSERT_NE(model, nullptr);
+    ASSERT_NE(key, nullptr);
+    ASSERT_NE(save, nullptr);
+    ASSERT_NE(permission, nullptr);
+
+    url->setText(QStringLiteral("https://replacement.example/v1"));
+    model->setText(QStringLiteral("replacement-model"));
+    key->setText(QStringLiteral("replacement-key"));
+    auto expected = originalConfig_;
+    expected.permissionProfile = AIPermissionMode::ReadOnly;
+    expected.maxTokens = 2048;
+    AIAgentConfigStore().save(expected);
+    ASSERT_TRUE(save->isEnabled());
+    save->click();
+
+    expected.baseUrl = url->text();
+    expected.model = model->text();
+    EXPECT_TRUE(AIAgentConfigStore().effectiveSnapshot() == expected);
+    EXPECT_EQ(secret_, QStringLiteral("replacement-key"));
+    EXPECT_EQ(permission->currentData().toString(), QStringLiteral("read_only"));
+    EXPECT_FALSE(panel.findChild<AIAgentPage*>()->hasPendingChanges());
 }
 
 }

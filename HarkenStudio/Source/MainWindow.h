@@ -85,7 +85,6 @@ namespace VNX {
     struct ProjectData;
     class PlacementContext;
     class PlaybackControls;
-    class RemoteConnectDialog;
     namespace Monitor {
         class MonitorAdapter;
         class MonitorCaptureControlHost;
@@ -314,6 +313,9 @@ private:
     void registerWorkspacePanelWindows();
     void registerWorkspaceSingletonFactories();
     void ensureWorkspaceSingletonShells();
+    void showProjectSettings(const QString& pageId = QString());
+    void finishProjectSettingsEditing();
+    void refreshProjectSettingsAvailability();
     void refreshMonitorCaptureControlStrip();
     void refreshMonitorRecordingPanel();
     void closeMonitorSession();
@@ -465,7 +467,6 @@ private:
     QMenu* panelsSubMenu_ = nullptr;
     HarkenEditor::Bridge::RemoteConnection* remoteConnection_ = nullptr;
     Monitor::EventCaptureController* eventCaptureController_ = nullptr;
-    QPointer<RemoteConnectDialog> remoteConnectDialog_;
 
     MonitorPerformanceChartSource monitorPerformanceChartSource_;
     MonitorVoicesSource monitorVoicesSource_;

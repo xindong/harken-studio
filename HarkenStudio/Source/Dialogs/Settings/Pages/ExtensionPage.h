@@ -18,15 +18,9 @@ public:
     QString pageId() const override;
     QString categoryLabel() const override;
     void load() override;
-    bool apply() override;
-    bool isDirty() const override;
-    void revert() override;
 
 private:
     QCheckBox* developerModeCheck_ = nullptr;
-    bool baselineDeveloperMode_ = false;
-    bool revertDeveloperMode_ = false;
-    bool canRevert_ = false;
 };
 
 }

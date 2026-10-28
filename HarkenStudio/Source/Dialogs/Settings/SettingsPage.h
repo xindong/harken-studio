@@ -8,6 +8,8 @@
 
 namespace VNX {
 
+class ToastPresenter;
+
 class SettingsPage : public QWidget
 {
     Q_OBJECT
@@ -18,17 +20,14 @@ public:
     virtual QString pageId() const = 0;
     virtual QString categoryLabel() const = 0;
     virtual void load() = 0;
-    virtual bool apply() = 0;
-    virtual bool isDirty() const = 0;
-    virtual void revert();
-
-signals:
-    void dirtyChanged();
-
 protected:
+    void showError(const QString& message);
     QVBoxLayout* makePageBody();
     QWidget* makeSection(const QString& title);
     DialogFormLayout* makeForm();
+
+private:
+    ToastPresenter* feedback_ = nullptr;
 };
 
 }

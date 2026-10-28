@@ -67,6 +67,7 @@ struct WorkspaceWindowDescriptor
     MaterializationPolicy materialization = MaterializationPolicy::Eager;
     ClosePolicy closePolicy = ClosePolicy::Hide;
     AvailabilityPolicy availability = AvailabilityPolicy::Always;
+    bool showInViewMenu = true;
 };
 
 struct WorkspaceWindowInstanceSpec

@@ -110,7 +110,7 @@ add_executable(harken_editor_tests
     UnitTest/AIConversationStoreTest.cpp
     UnitTest/AIConversationSessionStoreTest.cpp
     UnitTest/AIMarkdownRendererTest.cpp
-    UnitTest/ProjectSettingsDialogTest.cpp
+    UnitTest/ProjectSettingsPanelTest.cpp
     UnitTest/SettingsApplyContractTest.cpp
     UnitTest/MainWindowSettingsMenuTest.cpp
     UnitTest/Support/QtFatalToStderr.cpp
