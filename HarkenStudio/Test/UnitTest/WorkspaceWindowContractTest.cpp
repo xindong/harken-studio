@@ -1,11 +1,21 @@
 #include "WorkspaceWindowTypes.h"
+#include "ActionManager.h"
+#include "MainWindow.h"
+#include "ProjectManager.h"
+#include "UndoCommands.h"
 #include "Widgets/Common/StatusTip.h"
+#include "Widgets/LogPanel/LogPanel.h"
+#include "Support/AITestSupport.h"
 
 #include <gtest/gtest.h>
 
 #include <QMainWindow>
+#include <QPushButton>
+#include <QScopeGuard>
 #include <QSet>
 #include <QStatusBar>
+
+#include <memory>
 
 using namespace VNX;
 
@@ -45,4 +55,47 @@ TEST(EditorWorkspaceWindowContract, FloatingPanelStatusStaysWithItsOwningWindow)
     showStatusTip(&secondPanel, QStringLiteral("Second panel feedback"));
     EXPECT_EQ(firstStatus->currentMessage(), QStringLiteral("First panel feedback"));
     EXPECT_EQ(secondStatus->currentMessage(), QStringLiteral("Second panel feedback"));
+}
+
+TEST(EditorWorkspaceWindowContract, DiagnosticDetailsDoNotChangeWorkspaceGeometry)
+{
+    ActionManager::instance().clearAllForTesting();
+    auto window = std::make_unique<MainWindow>();
+    auto cleanup = qScopeGuard([&] {
+        auto& manager = ProjectManager::instance();
+        manager.closeProject();
+        TestSupport::spinUntil([&] { return !manager.isClosing(); }, 3000);
+        QObject::disconnect(&UndoRedoManager::instance(), nullptr, window.get(), nullptr);
+        window.reset();
+        ActionManager::instance().setTransactionCallbacks({});
+        ActionManager::instance().clearAllForTesting();
+        UndoRedoManager::instance().clear();
+        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    });
+    window->resize(1000, 700);
+    window->show();
+    auto* button = window->findChild<QPushButton*>(QStringLiteral("statusLogButton"));
+    ASSERT_NE(button, nullptr);
+    button->click();
+    ASSERT_NE(LogPanel::globalModel(), nullptr);
+    QApplication::processEvents();
+
+    const QStringList messages{
+        QStringLiteral("Output unavailable\n") + QStringLiteral("D:/Audio/Generated/file.bytes\n").repeated(1000),
+        QStringLiteral("A diagnostic with a long name: ") + QString(20000, QLatin1Char('x')),
+        QStringLiteral("Permissions & locks\r\nDetails\r\n").repeated(1000)};
+    for (const auto& message : messages) {
+        LogPanel::logInfo(LogCategory::GUI, QStringLiteral("Ready"));
+        QApplication::processEvents();
+        const QRect workspace = window->centralWidget()->geometry();
+        const QRect status = window->statusBar()->geometry();
+        const QSize minimum = window->minimumSizeHint();
+
+        LogPanel::logError(LogCategory::GUI, message);
+        QApplication::processEvents();
+        EXPECT_EQ(window->centralWidget()->geometry(), workspace);
+        EXPECT_EQ(window->statusBar()->geometry(), status);
+        EXPECT_EQ(window->minimumSizeHint(), minimum);
+        EXPECT_EQ(LogPanel::globalModel()->entries().back().message, message);
+    }
 }
