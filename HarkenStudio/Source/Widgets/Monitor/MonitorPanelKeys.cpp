@@ -74,13 +74,4 @@ QStringList monitorPanelDockObjectNames()
     };
 }
 
-QStringList monitorViewSortKeys()
-{
-    return {
-        QStringLiteral("Monitor"),
-        QStringLiteral("Log"),
-        QStringLiteral("Information"),
-    };
-}
-
 } // namespace VNX
