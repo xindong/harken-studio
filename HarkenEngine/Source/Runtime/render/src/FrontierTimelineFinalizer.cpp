@@ -1439,6 +1439,24 @@ struct FrontierTimelineFinalizer::Impl {
             const auto status = voices.TimelineEntryVariableSourcesStatus(activation->Descriptor());
             if (status == VariableReadCutStatus::Failed) return status;
             waiting = waiting || status == VariableReadCutStatus::Waiting;
+            const auto& binding = *group.view.frontier;
+            if (!laneMode && binding.prerequisite.Valid()) {
+                const auto prerequisite = PageEntryPrerequisiteStatus(groupIndex, true);
+                if (prerequisite == VariableReadCutStatus::Failed) return prerequisite;
+                bool localParent = false;
+                for (std::uint32_t index = 0; index < groupCount; ++index) {
+                    if (index == groupIndex) continue;
+                    const auto& parent = *groups[index].view.frontier;
+                    if (parent.role != FrontierGroupRole::Coordinator || !SameFrameEntryChild(binding, parent)) continue;
+                    if (!(parent.operation.order < binding.operation.order)) return VariableReadCutStatus::Failed;
+                    // A same-frame parent can be ready before its receipt is applied.
+                    const auto parentStatus = GroupVariableStatus(index);
+                    if (parentStatus == VariableReadCutStatus::Failed) return parentStatus;
+                    waiting = waiting || parentStatus == VariableReadCutStatus::Waiting;
+                    localParent = true;
+                }
+                if (!localParent) waiting = waiting || prerequisite == VariableReadCutStatus::Waiting;
+            }
         } else {
             const auto* activation = decisions->ResolveFrontierActivation(group.view.frontier->entry.coordinator);
             FrontierActivationReceipt receipt{};

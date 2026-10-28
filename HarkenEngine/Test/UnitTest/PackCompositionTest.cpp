@@ -21953,11 +21953,7 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
         return;
     }
     const auto expectedCount = laterRefusal ? 1u : laterRetarget ? (laterWrapper ? 6u : 4u) :
-        laterControl ? (laterWrapper ? 5u : 3u) :
-        matrixCase && (outerMode == ContainerModeV1::RandomQueue ||
-                       outerMode == ContainerModeV1::SequenceQueue) &&
-            innerMode == ContainerModeV1::VariableControl
-        ? 2u : 4u * cycles;
+        laterControl ? (laterWrapper ? 5u : 3u) : 4u * cycles;
     const auto expectedStopCount = stopAfterOnsets != 0
         ? stopAfterOnsets
         : (parallelControl && !nestedParallelControl ? 2u : 3u);
