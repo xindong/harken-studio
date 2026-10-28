@@ -2,6 +2,8 @@
 
 最近核对：2026-10-20。本文记录已确认的方案、业务边界及实施状态，供后续表格开发长期借鉴。Inspector 字段细节见 [inspector-tables.md](inspector-tables.md)。
 
+2026-10-28 补充：Pack Structure 预览窗口及其专用包结构读取逻辑已移除，不再列入当前清单；下文实施记录中的数量与验证结果保留当时口径。
+
 ## 职责边界
 
 公共组件提供能力，业务决定如何组合，主题与皮肤负责外观。configTable、displayTable 是两种用途分类及默认模板，不是两套皮肤，也不通过类型强制创建 footer、刷新按钮或决定窗口空间分配。
@@ -80,7 +82,7 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 
 ## 全量清单
 
-普通功能表格按用途去重共 25 项：配置表 11 项、展示表 14 项。Sends 在六类对象中的使用展开后，共 30 个页面/对象类型展示位置；另列平台标签配置变体。不同对象实例、Binding 字段地址或同一对话框的打开位置不重复计数；Monitor 采用运行记录模型。
+普通功能表格按用途去重共 24 项：配置表 11 项、展示表 13 项。Sends 在六类对象中的使用展开后，共 29 个页面/对象类型展示位置；另列平台标签配置变体。不同对象实例、Binding 字段地址或同一对话框的打开位置不重复计数；Monitor 采用运行记录模型。
 
 | ID | 分类 | 位置 / 用途 | 当前入口 |
 |---|---|---|---|
@@ -94,15 +96,14 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 | C08 | config | External Editor / Binding | BindingFieldEditor |
 | C09 | config | Transition Editor / Rules | TransitionEditorWidget |
 | C10 | 标签配置（非表格） | Project Settings / General / Platform Configuration：左侧平台标签，右侧配置面板 | ProjectConfigPage / ProjectPlatformEditor |
-| C11 | 标签配置（非表格） | Project Settings / General / Language Configuration：左侧语言导航与增删，加号通过弹窗新增，右侧 Language 名称详情；无语言时保留右侧面板、内容留空，切换保留草稿，Apply 保存 | ProjectConfigPage |
+| C11 | 标签配置（非表格） | Project Settings / General / Language Configuration：左侧语言导航与增删，加号通过弹窗新增，右侧 Language 名称详情；无语言时保留右侧面板、内容留空，结束编辑即提交，无效输入恢复旧值；支持项目撤销并随项目保存 | ProjectConfigPage |
 | C12 | config | Project Platform / Resample Policies | ProjectPlatformEditor |
 | D01 | display | Bus Inspector / Inputs | ListFieldDrawer |
 | D02 | display | Bus Inspector / Receives | ListFieldDrawer |
 | D03 | display | Control / Variables | RehearsalTable |
 | D04 | display | Control / Variable Bindings | VariableBindingTable |
 | D05 | display | Publisher / Pack | PublisherPanel |
-| D06 | display | Pack Structure | PackStructureDialog |
-| D07 | display | Remote Connect / Targets | RemoteConnectDialog |
+| D07 | display | Remote Connect / Targets | RemoteConnectPanel |
 | D08 | display | Settings / Shortcuts | ShortcutsPage |
 | D09 | display | Settings / Layout | LayoutPage |
 | D10 | display | Monitor / Voices | MonitorVoicesPanel |
@@ -117,9 +118,9 @@ Inputs/Receives 是路由反向查询，不再适用“所有 Inspector 表都�
 
 Layout 的主入口位于 toolbar 最右侧，使用公共 `MenuComboBox` 显示当前布局名称，提供切换、保存当前、重置当前、重置所有和管理入口，菜单栏不再单列 Layout。切换保留各布局的工作状态；重置当前恢复当前预设，重置所有经确认后恢复当前工程内所有布局的已保存状态，均不删除预设。Default 的重置目标为内置默认状态。保存同名布局更新预设，另存名称后切换当前布局身份；管理页重命名会同步工作状态及当前名称，删除当前预设后恢复 Default 的工作状态。共享预设在其他工程中被删除或重命名后，重开原工程会恢复该工程的 Default 工作状态；旧缓存没有 Default 工作状态时恢复内置 Default。用户目录中的命名预设维持原格式；工程 `.cache/editor_layout.json` 保留原当前布局字段，并增加 `workingLayouts` 保存各布局的工作状态，空名称键表示 Default。旧缓存仍可读取，工作状态按工程隔离；这些本地界面缓存不属于 Editor/Pack schema，不需要合同升级或工程迁移。
 
-平台配置没有表头，进入时选中首个平台，选择左侧标签后直接编辑右侧名称、基础平台和转换配置，切换标签保留各平台草稿。平台标签及添加窗口的支持平台列表均通过 `TableWidget::createNavigationView(name)` 创建，使用公共 `footer()`、边框、尺寸与滚动管理，不由业务拼装列表、表脚和滚动条。导航保留当前激活项及 accent 标记，不适用普通表格初始无选择及空白、Esc 清选规则。两处列表按可用高度布局，纵向滚动槽常驻，仅内容溢出时显示滑块，横向不滚动。
+平台配置没有表头，进入时选中首个平台，选择左侧标签后直接编辑右侧名称、基础平台和转换配置，结束编辑即提交，无效输入恢复旧值。平台标签及添加窗口的支持平台列表均通过 `TableWidget::createNavigationView(name)` 创建，使用公共 `footer()`、边框、尺寸与滚动管理，不由业务拼装列表、表脚和滚动条。导航保留当前激活项及 accent 标记，不适用普通表格初始无选择及空白、Esc 清选规则。两处列表按可用高度布局，纵向滚动槽常驻，仅内容溢出时显示滑块，横向不滚动。
 
-左右区域通过零间距横向布局组成整体；右侧公共 `panel` 保留内边距并声明 `joinedEdge=left` 去掉左框，两侧边框均使用 `borderPrimary`，仅以左侧 TableWidget 的右框作为中间分隔线。表脚完整位于 TableWidget 外框内，继承公共控件的布局与样式。策略表仍按内容展开，由外层页面承担滚动。内嵌面板只保留 Reset，修改由项目设置的 Apply 统一提交；Reset 恢复所选基础平台的默认转换配置。左侧加号打开支持平台列表，可预览各平台默认配置后添加。新项目默认按 Windows、Android、macOS、iOS 顺序创建四个平台。
+左右区域通过零间距横向布局组成整体；右侧公共 `panel` 保留内边距并声明 `joinedEdge=left` 去掉左框，两侧边框均使用 `borderPrimary`，仅以左侧 TableWidget 的右框作为中间分隔线。表脚完整位于 TableWidget 外框内，继承公共控件的布局与样式。策略表仍按内容展开，由外层页面承担滚动。内嵌面板只保留 Reset，修改即时提交，支持项目撤销并随项目保存；Reset 恢复所选基础平台的默认转换配置。左侧加号打开支持平台列表，可预览各平台默认配置后添加。新项目默认按 Windows、Android、macOS、iOS 顺序创建四个平台。
 
 Pack 的 Init 独立显示且始终必选；General 包含不区分语言的 Action，工程中的每种语言各自形成分区，同时显示全部语言，不受 toolbar 当前语言筛选。每个 Action 按平台和语言独立出包，取消自定义合包、成员行、组名编辑及合包拖放。旧工程的合包平台选择迁移到成员 Action。语言变体由完整打包计划决定，即使取消所有平台也保留对应行。每行仅显示当前观察平台下一个包的文件、大小及构建状态，缺失值留空，不再聚合语言或显示横线；发布状态按清单中的 Action 归属核验。
 
@@ -290,7 +291,9 @@ auto* view = table->createCustomView(QStringLiteral("Packs"),
 
 公共分组不增加子条目的视觉缩进：Init、General 和语言分区中的直接条目，以及 Shortcuts 分类下的命令，仍从对应列的正常留白起排。真正的业务父子层级保留内容缩进，绘制、编辑器和点击命中使用同一内容区域；分隔线和选择背景不随内容缩进。未创建公共分组的普通树继续使用原生层级布局。
 
-Publisher 的 General 和语言分区使用实际父子关系，并按语言 ID 恢复折叠状态。Init 独立显示且始终包含在发布中，未变化时可复用；各分区同时启用勾选和折叠，聚合当前编辑平台上的可操作包状态。批量操作包含搜索过滤隐藏的包，沿用平台 targeting 命令写入本地缓存，不进入工程撤销栈；不改变导出平台选择。没有可操作包或编辑平台时，勾选框禁用，折叠仍可使用。
+Publisher 的 General 和语言分区使用实际父子关系，并按语言 ID 恢复折叠状态。各分区内按 Actions 当前内存目录树展示文件夹及 Action，只保留包含该分区 Action 的目录分支；未保存的目录创建、改名、移动、删除及撤销重做同步刷新，目录改名和移动保留会话内折叠状态，切换工程清空。分区、文件夹与 Action 的勾选框固定左侧对齐，右侧树形内容复用 Explorer 的层级步长、引导线、展开箭头和图标文字绘制：同级文件夹与 Action 使用相同尺寸的类型图标槽，图标到文字保持 4 px 间距，子级仅增加一个层级步长；尺寸跟随当前主题。搜索命中文件夹时显示其后代，命中 Action 时自动展开祖先，清空搜索恢复原折叠状态。Init 独立显示且始终包含在发布中，未变化时可复用；各分区和文件夹同时启用勾选和折叠，递归聚合当前编辑平台上的可操作包状态，平台差异或后代差异显示半选。批量操作覆盖全部后代 Action，包含折叠和搜索过滤隐藏的包，只修改点击时的编辑平台及所在分区语言，沿用平台 targeting 命令写入本地缓存，不进入工程撤销栈；不改变导出平台选择。连续勾选操作按提交顺序读取最新状态，目标或平台失效时中止该次操作，切换工程后不执行旧操作。没有可操作包或编辑平台时，勾选框禁用，折叠仍可使用。
+
+Publisher 的灰显跟随当前观察平台：被排除的 Action 名称和图标同时灰显，文件夹在所有后代 Action 均被排除时同样灰显，仍有后代包含时恢复正常。灰显只影响内容绘制，勾选框和展开箭头保持可操作。All 编辑模式的半选表达跨平台差异，与当前观察平台的灰显状态独立。
 
 Publisher 数据归属：Name 和语言分区由当前工程 Action 及其语言依赖派生。勾选与 Export Platforms 存于 `.cache/pack-export-selection.json`，Built、Size、Modified、File、Version 存于 `.cache/pack-artifacts.json`；产物缓存由成功发布更新，面板刷新不读取产物或 manifest。Built 表示最近成功发布的快照，外部删除或替换产物不会自动同步；Self Cleaning 的已知删除会同步清缓存。CRC32 列已移除。Result 与 Cost 共用会话内结果存储，GUI/IPC 导出按稳定身份更新，工程关闭后清空，不写入缓存或工程文件。两列按 Result、Cost 顺序固定在最右侧，Result 左侧以公共表格竖线分隔表头、数据行和空白区域，遇到整行分组时断开；两列通过公共列强调样式使用略有区别的表头颜色和整列背景（包括表体空白区域）；其他列可在前方移动，所有列仍可调整宽度，开发者列显隐不改变末尾顺序。Cost 为每包资源准备与写包耗时，不包含共享编译和发布阶段。清缓存后默认全选，产物列留空；Build 配置、平台与语言定义仍是工程数据。隐藏面板延后刷新，可见时合并更新，并用共享语言投影代替完整构建计划。
 

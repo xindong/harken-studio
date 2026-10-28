@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Core/BaseDialog.h"
+#include <QWidget>
 
 class QLabel;
 class QPushButton;
@@ -12,13 +12,14 @@ namespace VNX {
 
 class ProportionalTreeWidget;
 
-class RemoteConnectDialog final : public BaseDialog
+class RemoteConnectPanel final : public QWidget
 {
     Q_OBJECT
 
 public:
-    explicit RemoteConnectDialog(HarkenEditor::Bridge::RemoteConnection* connection,
+    explicit RemoteConnectPanel(HarkenEditor::Bridge::RemoteConnection* connection,
                                  QWidget* parent = nullptr);
+    QSize sizeHint() const override;
 
 private:
     void refreshTargets();

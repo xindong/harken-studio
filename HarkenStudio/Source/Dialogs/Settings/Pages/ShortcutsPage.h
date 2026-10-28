@@ -3,7 +3,6 @@
 
 #include "Dialogs/Settings/SettingsPage.h"
 
-#include <QHash>
 #include <QKeySequence>
 
 class QKeySequenceEdit;
@@ -26,12 +25,10 @@ public:
     QString pageId() const override;
     QString categoryLabel() const override;
     void load() override;
-    bool apply() override;
-    bool isDirty() const override;
-    void revert() override;
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
 
 private:
     void populateShortcutTree();
@@ -40,18 +37,14 @@ private:
     void beginShortcutCapture(QTreeWidgetItem* item);
     void cancelShortcutCapture();
     void commitShortcutCapture();
-    void stageShortcut(const QString& id, const QKeySequence& sequence);
+    void commitShortcut(const QString& id, const QKeySequence& sequence);
+    void refreshShortcutRows();
     void resetShortcutsToDefaults();
-    QKeySequence effectiveShortcut(const QString& id) const;
-    QString effectiveConflict(const QString& id, const QKeySequence& sequence) const;
 
     QLineEdit* shortcutSearchEdit_ = nullptr;
     ProportionalTreeWidget* shortcutTree_ = nullptr;
     QTreeWidgetItem* shortcutCaptureItem_ = nullptr;
     QKeySequenceEdit* shortcutCaptureEdit_ = nullptr;
-    QHash<QString, QKeySequence> pendingShortcuts_;
-    QHash<QString, QKeySequence> revertShortcuts_;
-    QHash<QString, QKeySequence> appliedShortcuts_;
 };
 
 }

@@ -197,17 +197,21 @@
     }
   },
   "panels": {
+    "ProjectSettings": {
+      "title": "Project Settings",
+      "body": "\u7f16\u8f91\u9879\u76ee\u5e73\u53f0\u3001\u8bed\u8a00\u548c\u53d1\u5e03\u9009\u9879\u3002\u5b8c\u6210\u7f16\u8f91\u540e\u7acb\u5373\u751f\u6548\uff0c\u652f\u6301\u64a4\u9500\uff0c\u5e76\u968f\u9879\u76ee\u4fdd\u5b58\u3002"
+    },
+    "Preferences": {
+      "title": "Preferences",
+      "body": "\u7f16\u8f91\u5916\u89c2\u3001\u5feb\u6377\u952e\u3001\u5e03\u5c40\u548c\u6269\u5c55\uff0c\u4fee\u6539\u7acb\u5373\u751f\u6548\u3002AI \u8fde\u63a5\u914d\u7f6e\u9700\u70b9\u51fb Save Connection\uff0c\u5173\u95ed\u9762\u677f\u4f1a\u4e22\u5f03\u672a\u4fdd\u5b58\u7684\u8fde\u63a5\u4fee\u6539\u3002"
+    },
+    "RemoteConnect": {
+      "title": "Remote Connect",
+      "body": "\u53d1\u73b0\u6b63\u5728\u8fd0\u884c\u7684\u5e94\u7528\u7a0b\u5e8f\u6216\u901a\u8fc7\u5730\u5740\u8fde\u63a5\u3002\u5173\u95ed\u9762\u677f\u4f1a\u4fdd\u7559\u5f53\u524d\u8fde\u63a5\u3002"
+    },
     "settings": {
       "title": "Settings",
-      "body": "Apply 保存修改并关闭窗口，Cancel 放弃修改。布局的重命名和删除立即保存。"
-    },
-    "settings.apply": {
-      "title": "Apply",
-      "body": "保存待应用的设置修改并关闭窗口。"
-    },
-    "settings.cancel": {
-      "title": "Cancel",
-      "body": "放弃尚未应用的设置修改并关闭窗口；布局的重命名和删除仍保留。"
+      "body": "\u7f16\u8f91\u5b8c\u6210\u540e\u8bbe\u7f6e\u7acb\u5373\u751f\u6548\u3002\u9879\u76ee\u4fee\u6539\u53ef\u4ee5\u64a4\u9500\uff0c\u5e76\u968f\u9879\u76ee\u4fdd\u5b58\u3002AI \u8fde\u63a5\u914d\u7f6e\u9700\u70b9\u51fb Save Connection\uff0c\u5173\u95ed Preferences \u4f1a\u4e22\u5f03\u672a\u4fdd\u5b58\u7684\u8fde\u63a5\u4fee\u6539\u3002"
     },
     "settings.appearance": {
       "title": "Appearance",
@@ -215,7 +219,7 @@
     },
     "settings.appearance.theme": {
       "title": "Theme",
-      "body": "选择编辑器外观，Apply 后生效。额外的主题安装在 %1。"
+      "body": "\u9009\u62e9\u7f16\u8f91\u5668\u5916\u89c2\uff0c\u6240\u9009\u4e3b\u9898\u7acb\u5373\u751f\u6548\u3002\u989d\u5916\u7684\u4e3b\u9898\u5b89\u88c5\u5728 %1\u3002"
     },
     "settings.appearance.language": {
       "title": "Information Language",
@@ -227,15 +231,15 @@
     },
     "settings.extension.developer": {
       "title": "Developer Mode",
-      "body": "在 Publisher 中显示 File、Version、CRC32 列和 Preview Pack Structure 命令。"
+      "body": "\u5728 Publisher \u4e2d\u663e\u793a File\u3001Version \u5217\u3002"
     },
     "settings.layout": {
       "title": "Layout",
-      "body": "重命名或删除已保存的布局，修改立即生效，Cancel 不会撤销。Default 不能重命名或删除。"
+      "body": "\u4fdd\u5b58\u3001\u91cd\u547d\u540d\u6216\u5220\u9664\u5e03\u5c40\uff0c\u4fee\u6539\u7acb\u5373\u751f\u6548\u3002Default \u4e0d\u80fd\u91cd\u547d\u540d\u6216\u5220\u9664\u3002"
     },
     "settings.shortcuts": {
       "title": "Shortcuts",
-      "body": "双击快捷键后按下新按键即可重新绑定，右键可清除或恢复默认。Apply 保存修改。"
+      "body": "\u53cc\u51fb\u5feb\u6377\u952e\u5e76\u5b8c\u6210\u5f55\u5165\u540e\u7acb\u5373\u751f\u6548\uff0c\u53f3\u952e\u53ef\u6e05\u9664\u6216\u6062\u590d\u9ed8\u8ba4\u3002\u6062\u590d\u5168\u90e8\u5feb\u6377\u952e\u9700\u8981\u786e\u8ba4\u3002"
     },
     "settings.ai_agent": {
       "title": "AI Agent",
@@ -243,7 +247,7 @@
     },
     "settings.ai_agent.credentials": {
       "title": "Credentials",
-      "body": "设置服务地址、模型、上下文 token 数和 API Key。已保存的密钥会在输入框中以掩码显示。点击 Apply 时，修改密钥会替换原值，清空输入框会从系统凭据库中删除密钥。"
+      "body": "\u8bbe\u7f6e\u670d\u52a1\u5730\u5740\u3001\u6a21\u578b\u3001\u4e0a\u4e0b\u6587 token \u6570\u548c API Key\uff0c\u7136\u540e\u70b9\u51fb Save Connection\u3002\u5173\u95ed Preferences \u4f1a\u4e22\u5f03\u672a\u4fdd\u5b58\u7684\u8fde\u63a5\u4fee\u6539\u3002\u4fdd\u5b58\u7a7a API Key \u4f1a\u4ece\u7cfb\u7edf\u51ed\u636e\u5e93\u4e2d\u5220\u9664\u5bc6\u94a5\u3002"
     },
     "settings.ai_agent.connection": {
       "title": "Test Connection",
@@ -259,7 +263,7 @@
     },
     "settings.config.platforms": {
       "title": "Platform Configuration",
-      "body": "\u9009\u62e9\u5de6\u4fa7\u5e73\u53f0\u6807\u7b7e\uff0c\u5728\u53f3\u4fa7\u7f16\u8f91\u540d\u79f0\u3001\u57fa\u7840\u5e73\u53f0\u548c\u6784\u5efa\u8bbe\u7f6e\u3002\u70b9\u51fb + \u6d4f\u89c8\u6240\u6709\u652f\u6301\u7684\u5e73\u53f0\uff0c\u5e76\u9884\u89c8\u9ed8\u8ba4\u914d\u7f6e\u540e\u6dfb\u52a0\u3002Reset \u6062\u590d\u6240\u9009\u57fa\u7840\u5e73\u53f0\u7684\u9ed8\u8ba4\u6784\u5efa\u8bbe\u7f6e\uff1bApply \u4fdd\u5b58\u5de5\u7a0b\u4fee\u6539\u3002\u5fc5\u987b\u4fdd\u7559\u81f3\u5c11\u4e00\u4e2a\u5e73\u53f0\u3002"
+      "body": "\u9009\u62e9\u5e73\u53f0\uff0c\u7f16\u8f91\u5176\u540d\u79f0\u3001\u57fa\u7840\u5e73\u53f0\u548c\u6784\u5efa\u8bbe\u7f6e\u3002\u5b8c\u6210\u7f16\u8f91\u540e\u7acb\u5373\u751f\u6548\uff0c\u53ef\u4ee5\u64a4\u9500\u3002\u70b9\u51fb + \u9884\u89c8\u5e76\u6dfb\u52a0\u652f\u6301\u7684\u5e73\u53f0\u3002Reset \u6062\u590d\u57fa\u7840\u5e73\u53f0\u7684\u9ed8\u8ba4\u503c\u3002\u5e73\u53f0\u4efb\u52a1\u6267\u884c\u671f\u95f4\u4e0d\u80fd\u7f16\u8f91\u5e73\u53f0\u3002\u5fc5\u987b\u4fdd\u7559\u81f3\u5c11\u4e00\u4e2a\u5e73\u53f0\u3002"
     },
     "settings.config.languages": {
       "title": "Language Configuration",

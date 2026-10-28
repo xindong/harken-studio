@@ -1,6 +1,8 @@
 #include "Monitor/MonitorCatalogModel.h"
 
 #include "Monitor/MonitorTypes.h"
+#include "Common/TableItemDelegate.h"
+#include "Core/ThemeManager.h"
 
 #include <QStringList>
 
@@ -131,6 +133,16 @@ MonitorCatalogModel::MonitorCatalogModel(Monitor::EventCaptureController* captur
     connect(capture, &Monitor::EventCaptureController::recordsRemoved, this, [this] { endRemoveRows(); });
     connect(capture, &Monitor::EventCaptureController::recordsUpdated, this,
         [this](int first, int last) { emit dataChanged(index(first, 0), index(last, ColumnCount - 1)); });
+    connect(capture, &Monitor::EventCaptureController::projectObjectsChanged, this, [this] {
+        if (rowCount() > 0)
+            emit dataChanged(index(0, Object), index(rowCount() - 1, Object),
+                             {ProjectObjectIdRole, TableCursorRole, Qt::DecorationRole});
+    });
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this] {
+        objectIcons_.clear();
+        if (rowCount() > 0)
+            emit dataChanged(index(0, Object), index(rowCount() - 1, Object), {Qt::DecorationRole});
+    });
     connect(capture, &QObject::destroyed, this, [this] { beginResetModel(); endResetModel(); });
 }
 
@@ -170,6 +182,19 @@ QVariant MonitorCatalogModel::data(const QModelIndex& index, int role) const
 {
     const auto* event = index.isValid() ? eventAt(index.row()) : nullptr;
     if (!event || !event->isDesignerEvent()) return {};
+    if (index.column() == Object) {
+        if (role == ProjectObjectIdRole) return capture_->matchingProjectObject(*event);
+        if (role == TableCursorRole)
+            return static_cast<int>(capture_->matchingProjectObject(*event) ? Qt::PointingHandCursor : Qt::ArrowCursor);
+        if (role == Qt::DecorationRole) {
+            const auto* object = capture_->matchingProjectObjectLocation(*event);
+            if (!object || !object->ownerObjectId) return {};
+            auto icon = objectIcons_.constFind(object->ownerIconId);
+            if (icon == objectIcons_.cend())
+                icon = objectIcons_.insert(object->ownerIconId, ThemeManager::instance().resolveIcon(object->ownerIconId).icon);
+            return *icon;
+        }
+    }
     if (role == Qt::ToolTipRole) return details(index.row());
     if (role != Qt::DisplayRole) return {};
     switch (index.column()) {

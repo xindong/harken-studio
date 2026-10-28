@@ -1,4 +1,5 @@
-#include "RemoteConnectDialog.h"
+#include "RemoteConnectPanel.h"
+#include "Core/BaseDialog.h"
 
 #include "Core/QtControlSkin.h"
 #include "Core/ThemeAssetCatalog.h"
@@ -28,14 +29,13 @@ enum TargetRole { InstanceRole = Qt::UserRole, AddressRole, PortRole, Compatible
 
 }
 
-RemoteConnectDialog::RemoteConnectDialog(HarkenEditor::Bridge::RemoteConnection* connection,
+RemoteConnectPanel::RemoteConnectPanel(HarkenEditor::Bridge::RemoteConnection* connection,
                                        QWidget* parent)
-    : BaseDialog(parent), connection_(connection)
+    : QWidget(parent), connection_(connection)
 {
-    setObjectName(QStringLiteral("remoteConnectDialog"));
+    setObjectName(QStringLiteral("RemoteConnectPanel"));
     setWindowTitle(tr("Remote Connect"));
-    setMinimumSize(680, 300);
-    resize(860, 380);
+    setMinimumSize(420, 240);
 
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(16, 16, 16, 16);
@@ -72,7 +72,6 @@ RemoteConnectDialog::RemoteConnectDialog(HarkenEditor::Bridge::RemoteConnection*
     connectionRow->addWidget(status_, 1);
     connect_ = new QPushButton(tr("Connect"), this);
     connect_->setObjectName(QStringLiteral("remoteConnect"));
-    connect_->setDefault(true);
     disconnect_ = new QPushButton(tr("Disconnect"), this);
     disconnect_->setObjectName(QStringLiteral("remoteDisconnect"));
     connectionRow->addWidget(connect_);
@@ -88,17 +87,17 @@ RemoteConnectDialog::RemoteConnectDialog(HarkenEditor::Bridge::RemoteConnection*
     root->addWidget(identity_);
 
     connect(refreshAction, &QAction::triggered, this, [this] { connection_->discover(); });
-    connect(manual_, &QToolButton::clicked, this, &RemoteConnectDialog::openManualConnection);
-    connect(targets_, &QTreeWidget::itemSelectionChanged, this, &RemoteConnectDialog::selectTarget);
+    connect(manual_, &QToolButton::clicked, this, &RemoteConnectPanel::openManualConnection);
+    connect(targets_, &QTreeWidget::itemSelectionChanged, this, &RemoteConnectPanel::selectTarget);
     connect(targets_, &QTreeWidget::itemActivated, this, [this] { connectSelectedTarget(); });
-    connect(connect_, &QPushButton::clicked, this, &RemoteConnectDialog::connectSelectedTarget);
+    connect(connect_, &QPushButton::clicked, this, &RemoteConnectPanel::connectSelectedTarget);
     connect(disconnect_, &QPushButton::clicked, connection_, &HarkenEditor::Bridge::RemoteConnection::disconnectTarget);
     connect(connection_, &HarkenEditor::Bridge::RemoteConnection::stateChanged, this, [this] {
         if (connection_->state() == HarkenEditor::Bridge::RemoteConnectionState::Connected)
             selectedTargetKey_ = connection_->target().instanceId;
         refreshTargets();
     });
-    connect(connection_, &HarkenEditor::Bridge::RemoteConnection::targetsChanged, this, &RemoteConnectDialog::refreshTargets);
+    connect(connection_, &HarkenEditor::Bridge::RemoteConnection::targetsChanged, this, &RemoteConnectPanel::refreshTargets);
     connect(connection_, &HarkenEditor::Bridge::RemoteConnection::discoveryFailed,
             this, [this](const QString& error) {
         status_->setText(error);
@@ -107,7 +106,12 @@ RemoteConnectDialog::RemoteConnectDialog(HarkenEditor::Bridge::RemoteConnection*
     refreshTargets();
 }
 
-void RemoteConnectDialog::refreshTargets()
+QSize RemoteConnectPanel::sizeHint() const
+{
+    return QSize(860, 380);
+}
+
+void RemoteConnectPanel::refreshTargets()
 {
     QSignalBlocker blocker(targets_);
     auto targets = connection_->discoveredTargets();
@@ -141,14 +145,14 @@ void RemoteConnectDialog::refreshTargets()
     refreshState();
 }
 
-void RemoteConnectDialog::selectTarget()
+void RemoteConnectPanel::selectTarget()
 {
     const auto* row = targets_->currentItem();
     selectedTargetKey_ = row && row->isSelected() ? row->data(0, InstanceRole).toString() : QString();
     refreshState();
 }
 
-void RemoteConnectDialog::connectSelectedTarget()
+void RemoteConnectPanel::connectSelectedTarget()
 {
     if (!connect_->isEnabled())
         return;
@@ -157,7 +161,7 @@ void RemoteConnectDialog::connectSelectedTarget()
                                static_cast<quint16>(row->data(0, PortRole).toUInt()));
 }
 
-void RemoteConnectDialog::openManualConnection()
+void RemoteConnectPanel::openManualConnection()
 {
     BaseDialog dialog(this);
     dialog.setObjectName(QStringLiteral("remoteManualConnectDialog"));
@@ -213,7 +217,7 @@ void RemoteConnectDialog::openManualConnection()
     connection_->connectTarget(address->text().trimmed(), static_cast<quint16>(port->value()));
 }
 
-void RemoteConnectDialog::refreshState()
+void RemoteConnectPanel::refreshState()
 {
     using HarkenEditor::Bridge::RemoteConnectionState;
     const auto state = connection_->state();

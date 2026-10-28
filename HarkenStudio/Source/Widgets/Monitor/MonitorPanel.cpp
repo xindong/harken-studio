@@ -1,10 +1,14 @@
 #include "Monitor/MonitorPanel.h"
 #include "Monitor/MonitorTypes.h"
 #include "Common/TableWidget.h"
+#include "Common/TableItemDelegate.h"
 #include "Common/ListFooter.h"
 #include "Common/ElidedLabel.h"
 #include "Core/ThemeManager.h"
 #include "Core/ThemeAssetCatalog.h"
+#include "Core/QtControlSkin.h"
+#include "Selector/ObjectRefNavigation.h"
+#include "Selector/RefDomainAdapter.h"
 
 #include <QApplication>
 #include <QAction>
@@ -14,6 +18,9 @@
 #include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QPersistentModelIndex>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QTableView>
@@ -26,6 +33,93 @@
 #include <algorithm>
 
 namespace VNX {
+
+namespace {
+
+class MonitorObjectDelegate final : public TableItemDelegate
+{
+public:
+    explicit MonitorObjectDelegate(QTableView* view)
+        : TableItemDelegate(view), view_(view)
+    {
+    }
+
+    bool editorEvent(QEvent* event, QAbstractItemModel* model, const QStyleOptionViewItem& option,
+                     const QModelIndex& index) override
+    {
+        if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick) {
+            const auto* mouse = static_cast<QMouseEvent*>(event);
+            const auto id = index.data(MonitorCatalogModel::ProjectObjectIdRole).toUInt();
+            if (mouse->button() == Qt::LeftButton && id && refDomainAdapter(RefDomain::ProjectObject).exists(id)) {
+                if (event->type() == QEvent::MouseButtonPress) {
+                    ObjectRefNavigation::locate(view_, RefDomain::ProjectObject, id);
+                } else {
+                    QMetaObject::invokeMethod(this, [this, reference = QPersistentModelIndex(index), id] {
+                        if (reference.isValid() && reference.data(MonitorCatalogModel::ProjectObjectIdRole).toUInt() == id
+                            && refDomainAdapter(RefDomain::ProjectObject).exists(id))
+                            ObjectRefNavigation::navigate(view_, RefDomain::ProjectObject, id);
+                    }, Qt::QueuedConnection);
+                }
+            }
+        }
+        return TableItemDelegate::editorEvent(event, model, option, index);
+    }
+
+protected:
+    void paintContents(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override
+    {
+        const auto id = index.data(MonitorCatalogModel::ProjectObjectIdRole).toUInt();
+        if (!id) {
+            TableItemDelegate::paintContents(painter, option, index);
+            return;
+        }
+        QStyleOptionViewItem background = option;
+        initStyleOption(&background, index);
+        const auto icon = background.icon;
+        background.icon = {};
+        background.features &= ~QStyleOptionViewItem::HasDecoration;
+        background.text.clear();
+        view_->style()->drawControl(QStyle::CE_ItemViewItem, &background, painter, view_);
+        const auto& theme = ThemeManager::instance();
+        const auto& metrics = theme.metrics();
+        const auto& colors = theme.colors();
+        QRect rect = option.rect.adjusted(metrics.table.cellPaddingX, metrics.table.cellPaddingY,
+                                         -metrics.table.cellPaddingX, -metrics.table.cellPaddingY);
+        if (rect.isEmpty()) return;
+        const int height = std::min(rect.height(), QtControlSkin(theme.snapshot()).fieldHeight());
+        rect.setTop(rect.top() + (rect.height() - height) / 2);
+        rect.setHeight(height);
+        const bool selected = option.state.testFlag(QStyle::State_Selected);
+        painter->save();
+        painter->setClipRect(option.rect, Qt::IntersectClip);
+        painter->fillRect(rect, selected ? colors.bgSelected : colors.bgPrimary);
+        painter->setPen(selected ? colors.accent : colors.borderPrimary);
+        painter->setBrush(Qt::NoBrush);
+        painter->drawRect(rect.adjusted(0, 0, -1, -1));
+        rect.adjust(1, 1, -1, -1);
+        const int padding = std::clamp(rect.width(), 0, 12);
+        const int left = std::min(5, padding);
+        rect.adjust(left, 0, -(padding - left), 0);
+        if (rect.width() >= metrics.objectIconExtent) {
+            const QRect iconRect(rect.x(), rect.y() + (rect.height() - metrics.objectIconExtent) / 2,
+                                 metrics.objectIconExtent, metrics.objectIconExtent);
+            icon.paint(painter, iconRect, Qt::AlignCenter, QIcon::Disabled);
+            rect.setLeft(iconRect.right() + 1 + 5);
+        }
+        if (!rect.isEmpty()) {
+            painter->setFont(option.font);
+            painter->setPen(colors.textSecondary);
+            painter->drawText(rect, Qt::AlignLeft | Qt::AlignVCenter,
+                              option.fontMetrics.elidedText(index.data().toString(), Qt::ElideRight, rect.width()));
+        }
+        painter->restore();
+    }
+
+private:
+    QTableView* view_;
+};
+
+}
 
 class MonitorCatalogFilter final : public QSortFilterProxyModel
 {
@@ -99,6 +193,7 @@ MonitorPanel::MonitorPanel(QWidget* parent)
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table_->setItemDelegateForColumn(MonitorCatalogModel::Object, new MonitorObjectDelegate(table_));
     root->addWidget(tableFrame_, 1);
 
     details_ = new QTextBrowser(this);

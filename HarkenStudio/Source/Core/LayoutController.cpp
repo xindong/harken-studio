@@ -391,6 +391,10 @@ void LayoutController::seedZoneHomeAreas()
 
 void LayoutController::applyDefaultLayout()
 {
+    for (const auto& type : {QStringLiteral("ProjectSettings"), QStringLiteral("Preferences"),
+                             QStringLiteral("RemoteConnect")})
+        if (auto* dock = dockForWindow(type))
+            dock->toggleView(false);
     if (singletonStateRestorer_)
         singletonStateRestorer_({});
     collapsedZones_.clear();
@@ -1007,6 +1011,7 @@ bool LayoutController::saveNamedLayout(const QString& name, QString* pathOut)
         return false;
     workingLayouts_.insert(trimmed, state);
     saveProjectLayout();
+    emit namedLayoutsChanged();
     return true;
 }
 
@@ -1121,6 +1126,7 @@ void LayoutController::onNamedLayoutRenamed(const QString& oldName, const QStrin
     if (currentLayoutName_ == oldName)
         setCurrentLayoutName(newName);
     saveProjectLayout();
+    emit namedLayoutsChanged();
 }
 
 void LayoutController::onNamedLayoutRemoved(const QString& name)
@@ -1130,6 +1136,7 @@ void LayoutController::onNamedLayoutRemoved(const QString& name)
         activateLayout({}, workingLayouts_.value(QString()).toObject());
     else
         saveProjectLayout();
+    emit namedLayoutsChanged();
 }
 
 void LayoutController::setCurrentLayoutName(const QString& name)

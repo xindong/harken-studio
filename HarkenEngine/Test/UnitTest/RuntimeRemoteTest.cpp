@@ -11,6 +11,8 @@
 #include "MonitorCaptureHubTestHooks.h"
 #include "MonitorCaptureHub.h"
 #include "MonitorIdentityCut.h"
+#include "Common/MonitorExecutionTestSupport.h"
+#include "harken_preview/PreviewAbi.h"
 #include "harken_remote/Protocol.h"
 #include "../../Source/Runtime/remote/src/RemoteRuntime.h"
 #include <gtest/gtest.h>
@@ -18,6 +20,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <functional>
 #include <thread>
@@ -287,6 +290,7 @@ struct ExecutionCapture {
     std::vector<Symbol> symbols;
     std::vector<IdentityRow> identities;
     std::vector<VnMonitorRecordHeader> facts;
+    std::vector<VnMonitorExecutionFactV2> factValues;
     EventCaptureStatusV2 final;
     bool drained = false;
 
@@ -351,9 +355,10 @@ struct ExecutionCapture {
                 break;
             }
             case VN_MONITOR_RECORD_EXECUTION_FACT: {
-                VnMonitorExecutionFactV1 value{};
+                VnMonitorExecutionFactV2 value{};
                 EXPECT_TRUE(DecodeExecutionFact(header, payload, header.payloadBytes, value));
                 facts.push_back(header);
+                factValues.push_back(value);
                 break;
             }
             case VN_MONITOR_RECORD_DROP_SUMMARY:
@@ -506,6 +511,113 @@ TEST(RuntimeRemote, ExecutionSocketPreservesFrozenMixedCutDeltasSymbolsAndSealed
     EXPECT_EQ(capture.facts.size(), sharedFacts);
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(local));
 }
+
+#if HARKEN_DEVELOPMENT_PREVIEW
+TEST(RuntimeRemote, PreviewRequestsReachExecutionSocketWithLocalIdentityAndResults) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    const auto config = RemoteConfig();
+    ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
+    Client client;
+    ASSERT_TRUE(client.Connect(Status().tcpPort));
+    Identity identity;
+    ASSERT_TRUE(client.Welcome(identity));
+    EventCaptureRequestV2 request;
+    request.executionFactVersion = 2;
+    request.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT;
+    request.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS;
+    request.consumerQueueBytes = 65536;
+    ASSERT_TRUE(client.Send(MakeFrame(Message::EventStartV2, 2, request)));
+    Frame frame;
+    ASSERT_TRUE(WaitUntil([&] { return client.Read(frame) && frame.requestId == 2; }));
+    EventCaptureStatusV2 started;
+    ASSERT_TRUE(DecodePayload(frame, started));
+    ASSERT_EQ(VN_OK, started.base.result);
+    EXPECT_EQ(2u, started.acceptedExecutionFactVersion);
+    EXPECT_EQ(VN_MONITOR_PERM_OBSERVE_EVENTS, started.acceptedPermissionMask);
+    ExecutionCapture capture;
+    capture.epoch = started.base.sessionEpoch;
+    const auto local = harkentest::monitor::OpenActivityEvents();
+    VnPreviewPlayPlayableDescV2 desc{};
+    desc.structSize = sizeof(desc);
+    desc.playableKind = VN_PREVIEW_PLAYABLE_KIND_SOUND;
+    desc.stableId = harkentest::ObjectId(99101);
+    VnPreviewPlayableHandle handle = 99;
+    EXPECT_EQ(VN_PREVIEW_UNKNOWN_ID, VnPreview_PlayPlayable(&desc, &handle));
+    EXPECT_EQ(0u, handle);
+    EXPECT_EQ(VN_PREVIEW_INVALID_ARG, VnPreview_StopPlayable(handle, 0));
+    const std::vector<float> samples(4096, 0.25f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(desc.stableId, &pcm));
+    harken::PlayablePropertyProgramViewV1 property{};
+    property.contentPropertyKind = harken::playableproperties::ContentPropertyKindV1::Sound;
+    property.stableId = desc.stableId;
+    property.contentRevision = engine.Engine()->registry.Lookup(desc.stableId).contentRevision;
+    property.routeStableId = VN_BUS_MASTER;
+    property.compatibilityFingerprint = 1;
+    property.payload.presentMask = harken::kResolvedSectionGroupPropertyMaskV1;
+    property.payload.values[3].bits = 1;
+    property.payload.values[6].objectId = VN_BUS_MASTER;
+    property.payload.values[11].bits = std::bit_cast<std::uint32_t>(1.0f);
+    property.payload.values[16].bits = std::bit_cast<std::uint32_t>(1.0f);
+    property.programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(property);
+    harken::ContainerWorldInstallViewV1 world{};
+    world.playableProperties = &property;
+    world.playablePropertyCount = 1;
+    world.identity.capabilityMask = harken::kWorldCapabilityPlayableProperties;
+    world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(world);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine.Engine(), world).status);
+    ASSERT_EQ(VN_PREVIEW_OK, VnPreview_PlayPlayable(&desc, &handle));
+    ASSERT_EQ(VN_PREVIEW_OK, VnPreview_StopPlayable(handle, 0));
+    const auto localRows = harkentest::monitor::ReadActivityEvents(local);
+    ASSERT_GE(localRows.size(), 8u);
+    Writer seal;
+    seal.U64(capture.epoch);
+    ASSERT_TRUE(client.Send({Message::EventSeal, 3, std::move(seal.bytes)}));
+    harken::monitor::StartDrainForTests();
+    ASSERT_TRUE(WaitUntil([&] {
+        while (client.Read(frame)) capture.Receive(frame);
+        return capture.drained;
+    }));
+    ASSERT_EQ(localRows.size(), capture.facts.size());
+    ASSERT_EQ(localRows.size(), capture.factValues.size());
+    for (std::size_t i = 0; i != localRows.size(); ++i) {
+        const auto& localRow = localRows[i];
+        const auto& remote = capture.factValues[i].fact;
+        EXPECT_EQ(localRow.header.engineMonitorInstanceId, capture.facts[i].engineMonitorInstanceId);
+        EXPECT_EQ(localRow.header.producerId, capture.facts[i].producerId);
+        EXPECT_EQ(localRow.header.sourceSequence, capture.facts[i].sourceSequence);
+        EXPECT_EQ(localRow.fact.fact.factKind, remote.factKind);
+        EXPECT_EQ(localRow.fact.fact.request.sequence, remote.request.sequence);
+        EXPECT_EQ(localRow.fact.fact.request.operation, remote.request.operation);
+        EXPECT_EQ(localRow.fact.fact.request.origin, remote.request.origin);
+        EXPECT_EQ(localRow.fact.fact.result, remote.result);
+        EXPECT_EQ(localRow.fact.fact.target.kind, remote.target.kind);
+        EXPECT_EQ(localRow.fact.fact.target.objectId, remote.target.objectId);
+        EXPECT_EQ(localRow.fact.fact.target.handle, remote.target.handle);
+        EXPECT_EQ(localRow.header.instanceHandle, capture.facts[i].instanceHandle);
+        EXPECT_EQ(localRow.fact.fact.root, remote.root);
+        EXPECT_EQ(localRow.fact.fact.playbackRequest.sequence, remote.playbackRequest.sequence);
+        EXPECT_EQ(localRow.fact.fact.controlRequest.sequence, remote.controlRequest.sequence);
+    }
+    EXPECT_EQ(VN_PREVIEW_UNKNOWN_ID, capture.factValues[1].fact.result);
+    EXPECT_EQ(VN_PREVIEW_INVALID_ARG, capture.factValues[3].fact.result);
+    unsigned submitted = 0, returned = 0;
+    for (const auto& value : capture.factValues) {
+        submitted += value.fact.factKind == VN_MONITOR_FACT_REQUEST_SUBMITTED;
+        if (value.fact.factKind != VN_MONITOR_FACT_REQUEST_RETURNED) continue;
+        if (returned >= 2) EXPECT_EQ(VN_PREVIEW_OK, value.fact.result);
+        ++returned;
+        EXPECT_EQ(static_cast<unsigned>(harken::MonitorRequestOrigin::StudioPreview), value.fact.request.origin);
+    }
+    EXPECT_EQ(4u, submitted);
+    EXPECT_EQ(4u, returned);
+    EXPECT_EQ(0u, capture.final.base.sourceDroppedRecords);
+    EXPECT_EQ(0u, capture.final.base.deliveryDroppedRecords);
+    EXPECT_EQ(0u, capture.final.base.transportDroppedRecords);
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(local));
+}
+#endif
 
 TEST(RuntimeRemote, ExecutionSocketNeverSendsSymbolsWithoutBothRequestAndPermission) {
     harkentest::EngineSession engine(harkentest::MakeNullConfig());

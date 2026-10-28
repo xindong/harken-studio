@@ -3,7 +3,7 @@
 #include "Core/ProjectBuildSnapshot.h"
 
 #include "MainWindow.h"
-#include "Dialogs/RemoteConnectDialog.h"
+#include "Dialogs/RemoteConnectPanel.h"
 #include "RuntimeBridge/RemoteConnection.h"
 #include "Monitor/EventCaptureController.h"
 #include <QWindow>
@@ -61,8 +61,8 @@
 #include "Core/ItemTypeCatalog.h"
 #include "Core/HubLauncher.h"
 #include "Dialogs/Settings/Pages/LayoutPage.h"
-#include "Dialogs/Settings/PreferencesDialog.h"
-#include "Dialogs/Settings/ProjectSettingsDialog.h"
+#include "Dialogs/Settings/PreferencesPanel.h"
+#include "Dialogs/Settings/ProjectSettingsPanel.h"
 #include "Dialogs/Settings/Pages/ProjectPublishPage.h"
 #include "Widgets/ProjectExplorer/ProjectExplorer.h"
 #include "Widgets/Hierarchy/Hierarchy.h"
@@ -1090,6 +1090,7 @@ void MainWindow::setupMenuBar()
             &MainWindow::onOpenProject);
     
     QAction* saveAction = fileMenu->addAction(tr("&Save Project"));
+    saveAction->setShortcutContext(Qt::ApplicationShortcut);
     ShortcutManager::instance().bindAction(Shortcuts::SaveProject, saveAction);
     connect(saveAction, &QAction::triggered, this, &MainWindow::onSaveProject);
     
@@ -1150,38 +1151,26 @@ void MainWindow::setupMenuBar()
     connect(viewsMenu, &QMenu::aboutToShow, this, [this, viewsMenu]() {
         viewsMenu->clear();
 
-        auto sortKey = [](const QString& objName) -> int {
-            static const QStringList editorKeys = {
-                "NodeGraph", "Inspector", "ExternalEditor", "GridEditor",
-                "Publisher"
-            };
-            for (const QString& k : editorKeys)
-                if (objName.contains(k, Qt::CaseSensitive)) return 0;
-            static const QStringList browserKeys = {
-                "Explorer", "Hierarchy"
-            };
-            for (const QString& k : browserKeys)
-                if (objName.contains(k, Qt::CaseSensitive)) return 1;
-            static const QStringList monitorKeys = monitorViewSortKeys();
-            for (const QString& k : monitorKeys)
-                if (objName.contains(k, Qt::CaseSensitive)) return 2;
-            if (objName.contains("Assistant", Qt::CaseSensitive)) return 3;
-            return 4;
-        };
-
         QSet<QString> editorPanelTypes;
         for (const QString& t : standaloneEditorTypes_.keys())
             editorPanelTypes.insert(t);
 
         QList<QVariantMap> singletons;
+        const auto listedInViewMenu = [this](const QString& typeId) {
+            const auto* descriptor = workspaceWindowManager_->catalog().find(typeId);
+            return descriptor && descriptor->showInViewMenu;
+        };
         for (const QVariantMap& summary : workspaceWindowSummaries()) {
-            if (summary.value(QStringLiteral("kind")).toString() == QLatin1String("singleton"))
+            if (summary.value(QStringLiteral("kind")).toString() == QLatin1String("singleton")
+                && listedInViewMenu(summary.value(QStringLiteral("typeId")).toString()))
                 singletons.append(summary);
         }
         std::stable_sort(singletons.begin(), singletons.end(),
-            [&sortKey](const QVariantMap& a, const QVariantMap& b) {
-                return sortKey(a.value(QStringLiteral("name")).toString())
-                     < sortKey(b.value(QStringLiteral("name")).toString());
+            [this](const QVariantMap& a, const QVariantMap& b) {
+                return QString::compare(
+                    workspacePanelTitle(a.value(QStringLiteral("typeId")).toString()),
+                    workspacePanelTitle(b.value(QStringLiteral("typeId")).toString()),
+                    Qt::CaseInsensitive) < 0;
             });
 
         for (const QVariantMap& summary : singletons) {
@@ -1201,6 +1190,8 @@ void MainWindow::setupMenuBar()
         struct Creatable { QString type; QString label; std::function<void()> create; };
         QList<Creatable> creatables;
         for (const QString& t : workspacePanelTypes()) {
+            if (!listedInViewMenu(t))
+                continue;
             const QString label = workspacePanelTitle(t);
             if (!label.isEmpty())
                 creatables.append({ t, label, [this, t]() { createWorkspacePanel(t); } });
@@ -1463,10 +1454,11 @@ void MainWindow::setupStatusBar()
 void MainWindow::setStatusMessage(const QString& message, LogEntry::Level level)
 {
     statusBar()->clearMessage();
-    QString buttonText = message;
+    const QString summary = message.section(QLatin1Char('\n'), 0, 0).simplified();
+    QString buttonText = summary;
     statusButton_->setText(buttonText.replace(QLatin1Char('&'), QStringLiteral("&&")));
-    statusButton_->setAccessibleName(message);
-    statusButton_->setToolTip(tr("%1\nOpen Log").arg(message));
+    statusButton_->setAccessibleName(summary);
+    statusButton_->setToolTip(tr("Open Log"));
     QtControlSkin::setSemanticProperty(statusButton_, "logLevel", LogEntry::levelToString(level));
 }
 
@@ -1489,12 +1481,7 @@ void MainWindow::setupCentralDocks()
 
 void MainWindow::showRemoteConnect()
 {
-    if (!remoteConnectDialog_)
-        remoteConnectDialog_ = new RemoteConnectDialog(remoteConnection_, this);
-    remoteConnectDialog_->show();
-    remoteConnectDialog_->raise();
-    remoteConnectDialog_->activateWindow();
-    remoteConnection_->discover();
+    workspaceWindowManager_->showSingleton(QStringLiteral("RemoteConnect"));
 }
 
 void MainWindow::setupDockWidgets()
@@ -1567,6 +1554,7 @@ void MainWindow::registerWorkspacePanelWindows()
         descriptor.closePolicy = ClosePolicy::Destroy;
         const WorkspaceWindowDescriptor* preset = workspaceWindowManager_->catalog().find(type);
         descriptor.availability = preset ? preset->availability : AvailabilityPolicy::Always;
+        descriptor.showInViewMenu = !preset || preset->showInViewMenu;
         workspaceWindowManager_->registerWindowDescriptor(std::move(descriptor));
 
         workspaceWindowManager_->registerMultiInstanceFactory(type, {
@@ -1622,6 +1610,63 @@ void MainWindow::registerWorkspaceSingletonFactories()
     if (!workspaceWindowManager_)
         return;
 
+    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("ProjectSettings"), {
+        []() -> QWidget* { return new ProjectSettingsPanel(); },
+        {},
+        {},
+        [](QWidget* content) {
+            return QVariantMap{{QStringLiteral("pageId"),
+                qobject_cast<ProjectSettingsPanel*>(content)->currentPageId()}};
+        },
+        [](QWidget* content, const QVariantMap& state) {
+            qobject_cast<ProjectSettingsPanel*>(content)->showPage(
+                state.value(QStringLiteral("pageId")).toString());
+        }
+    });
+    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("Preferences"), {
+        [this]() -> QWidget* {
+            return new PreferencesPanel(nullptr, [this](QWidget* parent) {
+                return layoutController_->saveCurrentLayout(parent);
+            });
+        },
+        {},
+        [this](QWidget* content) {
+            auto* panel = qobject_cast<PreferencesPanel*>(content);
+            connect(panel, &PreferencesPanel::layoutRenamed,
+                    layoutController_, &LayoutController::onNamedLayoutRenamed);
+            connect(panel, &PreferencesPanel::layoutDeleted,
+                    layoutController_, &LayoutController::onNamedLayoutRemoved);
+            connect(layoutController_, &LayoutController::namedLayoutsChanged,
+                    panel, &PreferencesPanel::refreshLayouts);
+            connect(panel, &PreferencesPanel::aiAgentConfigApplied, this, [this] {
+                if (aiService_)
+                    aiService_->abortCurrentTurn();
+            });
+            connect(workspaceWindowManager_->singletonDock(QStringLiteral("Preferences")),
+                    &ads::CDockWidget::viewToggled, panel, [panel](bool open) {
+                if (!open)
+                    panel->discardConnectionChanges();
+            });
+        },
+        [](QWidget* content) {
+            return QVariantMap{{QStringLiteral("pageId"),
+                qobject_cast<PreferencesPanel*>(content)->currentPageId()}};
+        },
+        [](QWidget* content, const QVariantMap& state) {
+            qobject_cast<PreferencesPanel*>(content)->showPage(
+                state.value(QStringLiteral("pageId")).toString());
+        }
+    });
+    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("RemoteConnect"), {
+        [this]() -> QWidget* { return new RemoteConnectPanel(remoteConnection_); },
+        [this](ads::CDockWidget* dock) {
+            connect(dock, &ads::CDockWidget::viewToggled, remoteConnection_, [this](bool open) {
+                if (open)
+                    remoteConnection_->discover();
+            });
+        }, {}
+    });
+
     WorkspaceWindowManager::SingletonFactory controlFactory;
     controlFactory.snapshotState = [](QWidget* content) {
         return qobject_cast<ControlPanel*>(content)->snapshotState();
@@ -1668,9 +1713,7 @@ void MainWindow::registerWorkspaceSingletonFactories()
             connect(panel, &PublisherPanel::exportRequested,
                     this, &MainWindow::generateProjectPacks);
             connect(panel, &PublisherPanel::publishSettingsRequested, this, [this] {
-                ProjectSettingsDialog dialog(this);
-                dialog.showPage(QString::fromLatin1(kSettingsPagePublish));
-                dialog.exec();
+                showProjectSettings(QString::fromLatin1(kSettingsPagePublish));
             });
             connect(panel, &PublisherPanel::revealActionRequested,
                     this, [this](uint32_t objectID) {
@@ -1855,8 +1898,24 @@ void MainWindow::ensureWorkspaceSingletonShells()
         QStringLiteral("Log"),
         QStringLiteral("Publisher"),
         QStringLiteral("Information"),
-        QStringLiteral("Monitor")
+        QStringLiteral("Monitor"),
+        QStringLiteral("ProjectSettings"),
+        QStringLiteral("Preferences"),
+        QStringLiteral("RemoteConnect")
     });
+    connect(&ProjectManager::instance(), &ProjectManager::projectOpened,
+            this, &MainWindow::refreshProjectSettingsAvailability);
+    connect(&ProjectManager::instance(), &ProjectManager::projectClosed,
+            this, &MainWindow::refreshProjectSettingsAvailability);
+    refreshProjectSettingsAvailability();
+    for (const auto& type : {QStringLiteral("ProjectSettings"), QStringLiteral("Preferences"),
+                             QStringLiteral("RemoteConnect")}) {
+        auto* floating = workspaceWindowManager_->singletonDock(type)->floatingDockContainer();
+        const QRect available = screen()->availableGeometry();
+        const QSize size = type == QLatin1String("RemoteConnect") ? QSize(860, 380) : QSize(800, 550);
+        floating->resize(size.boundedTo(available.size()));
+        floating->move(available.center() - floating->rect().center());
+    }
 }
 
 void MainWindow::refreshMonitorCaptureControlStrip()
@@ -2321,6 +2380,11 @@ void MainWindow::connectWorkspaceWindowSignals()
 
 void MainWindow::configureWorkspaceDockPolicies()
 {
+    for (const auto& type : {QStringLiteral("ProjectSettings"), QStringLiteral("Preferences"),
+                             QStringLiteral("RemoteConnect")})
+        layoutController_->setPlacementHint(
+            workspaceWindowManager_->singletonDock(type)->objectName(), PreferredOpenArea::RestoreSaved);
+
     const bool assistantAvailable = workspaceWindowManager_->isSingletonAvailable(QStringLiteral("Assistant"));
     assistantDock_->toggleViewAction()->setEnabled(assistantAvailable);
     assistantDock_->toggleViewAction()->setVisible(assistantAvailable);
@@ -3915,6 +3979,7 @@ void MainWindow::saveSettings()
 
 void MainWindow::loadProjectLayout()
 {
+    refreshProjectSettingsAvailability();
     layoutController_->loadProjectLayout();
     pushSelectionToStandaloneEditors(currentStandaloneEditorSelection(),
                                      StandaloneEditorPushReason::RestoreSync);
@@ -4012,6 +4077,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 
 bool MainWindow::maybeSave()
 {
+    finishProjectSettingsEditing();
     if (!projectModified_)
         return true;
     
@@ -4196,6 +4262,7 @@ void MainWindow::onOpenProjectViaHub()
 
 void MainWindow::onSaveProject()
 {
+    finishProjectSettingsEditing();
     if (currentProjectPath_.isEmpty())
     {
         onSaveProjectAs();
@@ -4218,6 +4285,7 @@ void MainWindow::onSaveProject()
 
 void MainWindow::onSaveProjectAs()
 {
+    finishProjectSettingsEditing();
     ProjectData* pmProject = ProjectManager::instance().currentProject();
     QString defaultName = pmProject ? pmProject->name : QStringLiteral("Untitled");
 
@@ -4352,6 +4420,7 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
                                       bool includeUnchecked,
                                       bool forceReexport, bool selfCleaning)
 {
+    finishProjectSettingsEditing();
     auto& progressStore = PackGenerationRecordStore::instance();
     if (progressStore.isExporting()) return;
     const auto projectLease = ProjectManager::instance().currentProjectLease();
@@ -4488,10 +4557,12 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
             }, Qt::QueuedConnection);
         };
         QString writeAccessError;
+        QString writeAccessSummary;
         if (!ProjectPackExporter::ValidatePackBuildWriteAccess(
-                snapshot->project, baseDir, genPlatforms, opts, &writeAccessError)) {
+                snapshot->project, baseDir, genPlatforms, opts, &writeAccessError, &writeAccessSummary)) {
             QMetaObject::invokeMethod(store,
-                [window, store, projectLease, runId, cancel, writeAccessError, platformActivity, outputLock] {
+                [window, store, projectLease, runId, cancel, writeAccessError, writeAccessSummary,
+                 platformActivity, outputLock] {
                 if (!store->isCurrentRun(runId)) return;
                 const bool canceled = cancel->load(std::memory_order_relaxed);
                 store->finishProgress(runId, canceled);
@@ -4500,7 +4571,8 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
                     LogPanel::logWarning(LogCategory::Pack, tr("Pack export canceled"));
                 } else {
                     LogPanel::logError(LogCategory::Pack, writeAccessError);
-                    QMessageBox::critical(window, tr("Export Readiness"), writeAccessError);
+                    QMessageBox::warning(window, tr("Export Readiness"),
+                        tr("%1\n\nSee the Log panel for affected paths and details.").arg(writeAccessSummary));
                 }
             }, Qt::QueuedConnection);
             return;
@@ -4683,28 +4755,37 @@ void MainWindow::onOpenPreferences()
 
 void MainWindow::onOpenPreferences(const QString& pageId)
 {
-    PreferencesDialog dialog(this, [this](QWidget* dialogParent) {
-        return layoutController_->saveCurrentLayout(dialogParent);
-    });
-    connect(&dialog, &PreferencesDialog::layoutRenamed,
-            layoutController_, &LayoutController::onNamedLayoutRenamed);
-    connect(&dialog, &PreferencesDialog::layoutDeleted,
-            layoutController_, &LayoutController::onNamedLayoutRemoved);
-    if (aiService_)
-    {
-        connect(&dialog, &PreferencesDialog::aiAgentConfigApplied, this, [this]() {
-            aiService_->abortCurrentTurn();
-        });
-    }
-    if (!pageId.isEmpty())
-        dialog.showPage(pageId);
-    dialog.exec();
+    const QString type = QStringLiteral("Preferences");
+    if (workspaceWindowManager_->showSingleton(type) && !pageId.isEmpty())
+        qobject_cast<PreferencesPanel*>(workspaceWindowManager_->singletonContent(type))->showPage(pageId);
 }
 
 void MainWindow::onOpenProjectSettings()
 {
-    ProjectSettingsDialog dialog(this);
-    dialog.exec();
+    showProjectSettings();
+}
+
+void MainWindow::showProjectSettings(const QString& pageId)
+{
+    const QString type = QStringLiteral("ProjectSettings");
+    if (workspaceWindowManager_->showSingleton(type) && !pageId.isEmpty())
+        qobject_cast<ProjectSettingsPanel*>(workspaceWindowManager_->singletonContent(type))->showPage(pageId);
+}
+
+void MainWindow::finishProjectSettingsEditing()
+{
+    if (auto* panel = qobject_cast<ProjectSettingsPanel*>(
+            workspaceSingletonContent(QStringLiteral("ProjectSettings"), false)))
+        panel->finishEditing();
+}
+
+void MainWindow::refreshProjectSettingsAvailability()
+{
+    auto* dock = workspaceWindowManager_->singletonDock(QStringLiteral("ProjectSettings"));
+    const bool available = ProjectManager::instance().isProjectOpen();
+    dock->toggleViewAction()->setEnabled(available);
+    if (!available)
+        dock->toggleView(false);
 }
 
 void MainWindow::onAbout()
