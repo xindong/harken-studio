@@ -1,0 +1,45 @@
+name: Hub 0.2.1 Upgrade Validation
+
+on:
+  push:
+    branches: ['codex/hub-021-upgrade-validation']
+    paths:
+      - '.github/workflows/hub-021-upgrade-validation.yml'
+      - '.scripts/tests/validate_hub_installer_lifecycle.py'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  lifecycle:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Download exact main release candidate and released baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh run download 40651891042 --name harken-hub-installer --dir .temp/lifecycle/package
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gh release download HarkenHubSetup-0.2.0 --pattern HarkenHubSetup-0.2.0.exe --dir .temp/lifecycle/baseline
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Validate real installer lifecycle
+        run: python .scripts/tests/validate_hub_installer_lifecycle.py --package-dir .temp/lifecycle/package --baseline .temp/lifecycle/baseline/HarkenHubSetup-0.2.0.exe --output .temp/lifecycle/results
+      - name: Retain lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hub-021-upgrade-${{ matrix.os }}
+          path: .temp/lifecycle/results
+          retention-days: 30
+          if-no-files-found: error
