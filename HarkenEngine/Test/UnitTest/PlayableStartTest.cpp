@@ -15595,6 +15595,9 @@ TEST(PlayableStart, TrackAndPieceQueueContinueAllLongOccurrencesAndReclaim) {
         ASSERT_GT(second.size(), engine->timelinePool.WindowEndFrame());
         std::uint32_t positiveSamples = 0;
         std::uint32_t negativeSamples = 0;
+        std::array<std::uint64_t, 5> onsets{};
+        std::size_t onsetCount = 0;
+        int lastAudibleSign = 0;
         for (std::uint32_t block = 0; block < 1300; ++block) {
             if (block % 4u == 0) ASSERT_EQ(VN_OK, Vn_Update());
             engine->nullBackend.Pump(1);
@@ -15602,6 +15605,12 @@ TEST(PlayableStart, TrackAndPieceQueueContinueAllLongOccurrencesAndReclaim) {
             for (std::uint32_t sample = 0; sample < 2u * engine->config.blockFrames; ++sample) {
                 positiveSamples += output[sample] > 0.0f;
                 negativeSamples += output[sample] < 0.0f;
+                const int sign = output[sample] > 0.0f ? 1 : output[sample] < 0.0f ? -1 : 0;
+                if (sign != 0 && sign != lastAudibleSign) {
+                    ASSERT_LT(onsetCount, onsets.size());
+                    onsets[onsetCount++] = std::uint64_t(block) * engine->config.blockFrames + sample / 2u;
+                    lastAudibleSign = sign;
+                }
             }
         }
         // A/B/A/B/A must finish every Source, not just briefly start B. A fade
@@ -15609,6 +15618,13 @@ TEST(PlayableStart, TrackAndPieceQueueContinueAllLongOccurrencesAndReclaim) {
         const auto fadeZeroSamples = fade ? 4u : 0u;
         EXPECT_EQ(first.size() * 6u - fadeZeroSamples, positiveSamples);
         EXPECT_EQ(second.size() * 4u - fadeZeroSamples, negativeSamples);
+        ASSERT_EQ(onsets.size(), onsetCount);
+        std::uint64_t expectedOnset = onsets[0];
+        for (std::size_t occurrence = 0; occurrence < onsets.size(); ++occurrence) {
+            const auto fadeOffset = fade && occurrence != 0 ? 1u : 0u;
+            EXPECT_EQ(expectedOnset + fadeOffset, onsets[occurrence]) << "occurrence=" << occurrence;
+            expectedOnset += occurrence % 2u == 0 ? first.size() : second.size();
+        }
         EXPECT_EQ(0u, engine->playableInstances.LiveCount());
         EXPECT_EQ(0u, engine->queueInstances.LiveCount());
         EXPECT_EQ(0u, engine->timelineArms.LiveCount());
@@ -15635,16 +15651,17 @@ struct LongQueueCompositionNode {
 TEST(PlayableStart, NestedVariableAndQueueSuccessorsCompleteLongSourcesAndReclaim) {
     // Wrappers run from the inner Queue outward. Each case crosses a distinct
     // native preparation or shared-entry ownership boundary.
-    const std::array<std::vector<std::string>, 8> cases{{
+    const std::array<std::vector<std::string>, 10> cases{{
         {"Match", "Track", "Match"}, {"Blend", "Track", "Blend"},
         {"QueueAfterLong"}, {"QueueAfterLong", "Track"},
         {"Match", "QueueAfterLong"}, {"Track", "Match", "QueueAfterLong"},
-        {"Track", "Match", "QueueAfterLong"}, {"Track", "Match", "QueueAfterLong"}
+        {"Track", "Match", "QueueAfterLong"}, {"Track", "Match", "QueueAfterLong"},
+        {"Match", "QueueAfterLong"}, {"Match", "QueueAfterLong"}
     }};
     for (std::size_t scenario = 0; scenario < cases.size(); ++scenario) {
         SCOPED_TRACE(scenario);
         const bool sourceWait = scenario >= 6;
-        const bool resumeWait = scenario == 7;
+        const bool resumeWait = sourceWait && scenario % 2u != 0;
         harkentest::EngineSession session(harkentest::MakeNullConfig(16, 256, 48000));
         ASSERT_EQ(VN_OK, session.InitResult());
         auto* engine = session.Engine();
@@ -15818,6 +15835,7 @@ TEST(PlayableStart, NestedVariableAndQueueSuccessorsCompleteLongSourcesAndReclai
         ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
         ASSERT_GT(first.size(), engine->timelinePool.WindowEndFrame());
         std::vector<std::size_t> runs;
+        std::vector<std::uint64_t> onsets;
         int previousSign = 0;
         bool sourceReleased = false;
         bool waitReceiptObserved = false;
@@ -15849,6 +15867,7 @@ TEST(PlayableStart, NestedVariableAndQueueSuccessorsCompleteLongSourcesAndReclai
                 started = harken::StartPlayable(*engine, request);
                 ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
                 runs.clear();
+                onsets.clear();
                 previousSign = 0;
             }
             if (block % 4 == 0 && !(waitEntry.Valid() && !sourceReleased)) ASSERT_EQ(VN_OK, Vn_Update());
@@ -15908,6 +15927,7 @@ TEST(PlayableStart, NestedVariableAndQueueSuccessorsCompleteLongSourcesAndReclai
                 if (sign != previousSign) {
                     EXPECT_EQ(runs.size() % 2u == 0u ? 1 : -1, sign);
                     runs.push_back(0);
+                    onsets.push_back(static_cast<std::uint64_t>(block) * engine->config.blockFrames + sample / 2u);
                     previousSign = sign;
                 }
                 ++runs.back();
@@ -15917,6 +15937,14 @@ TEST(PlayableStart, NestedVariableAndQueueSuccessorsCompleteLongSourcesAndReclai
         ASSERT_EQ(sourceWait && !resumeWait ? 2u : longPrefix ? 7u : 5u, runs.size());
         for (std::size_t index = 0; index < runs.size(); ++index)
             EXPECT_EQ(2u * (index % 2u == 0u ? first.size() : second.size()), runs[index]);
+        if (resumeWait) {
+            ASSERT_EQ(7u, onsets.size());
+            auto expectedOnset = onsets[2];
+            for (std::size_t index = 2; index < onsets.size(); ++index) {
+                EXPECT_EQ(expectedOnset, onsets[index]) << "occurrence=" << index;
+                expectedOnset += index % 2u == 0u ? first.size() : second.size();
+            }
+        }
         // Parent services observe child release on later Update calls.
         for (unsigned block = 0; block < 32; ++block) {
             ASSERT_EQ(VN_OK, Vn_Update());

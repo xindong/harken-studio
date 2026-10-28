@@ -24041,6 +24041,7 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
                     current.mixer.BlocksRendered() * current.config.blockFrames));
             };
     }
+    bool producerStallInjected = false;
     std::uint64_t injectedConsumerDebt = 0;
     for (std::uint32_t block = 0; block < sourceBlocks + 32u + injectedConsumerDebt &&
          (!initialSourceStarted || !successorActivated || (!deferred && !knownSuccessorStarted));
@@ -24263,7 +24264,22 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
                 engine->timelineArms.Observe(originalSuccessorArm, &successorStart) &&
                 successorStart.startedBlockSequence != 0;
         }
+        if (forceSourceDefer && initialSourceStarted && !producerStallInjected) {
+            ASSERT_FALSE(queueService->queueContinuationPrepared);
+            const auto completionFrame = queueService->QueuePayload().queueCompletionFrame;
+            ASSERT_GE(completionFrame, engine->timelinePool.WindowEndFrame());
+            const auto afterCompletion = completionFrame / config.blockFrames + 2u;
+            const auto beforeStall = engine->mixer.BlocksRendered();
+            ASSERT_GT(afterCompletion, beforeStall);
+            const auto stalledBlocks = afterCompletion - beforeStall;
+            ASSERT_LE(stalledBlocks, UINT32_MAX);
+            // Let audio finish the Source while the producer cannot prepare its successor.
+            storage.Pump(static_cast<std::uint32_t>(stalledBlocks));
+            producerStallInjected = true;
+            testing::Test::RecordProperty("retired_source_producer_stall_blocks", std::to_string(stalledBlocks));
+        }
     }
+    if (forceSourceDefer) EXPECT_TRUE(producerStallInjected);
     harken::QueueInstanceSnapshot activationDebug{};
     testing::Test::RecordProperty("initial_preanchor_frame",
         std::to_string(initialStartFrame));
