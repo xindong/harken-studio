@@ -1,10 +1,15 @@
 #include "Monitor/MonitorPanel.h"
 #include "Monitor/MonitorTypes.h"
 #include "Common/TableWidget.h"
+#include "Common/TableItemDelegate.h"
 #include "Common/ListFooter.h"
 #include "Common/ElidedLabel.h"
 #include "Core/ThemeManager.h"
 #include "Core/ThemeAssetCatalog.h"
+#include "Core/QtControlSkin.h"
+#include "Selector/ObjectRefWidget.h"
+#include "Selector/ObjectRefNavigation.h"
+#include "Selector/RefDomainAdapter.h"
 
 #include <QApplication>
 #include <QAction>
@@ -14,6 +19,9 @@
 #include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QPersistentModelIndex>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QTableView>
@@ -26,6 +34,71 @@
 #include <algorithm>
 
 namespace VNX {
+
+namespace {
+
+class MonitorObjectDelegate final : public TableItemDelegate
+{
+public:
+    explicit MonitorObjectDelegate(QTableView* view)
+        : TableItemDelegate(view), view_(view), reference_(new ObjectRefWidget(view->viewport()))
+    {
+        reference_->setReadOnly(true);
+        reference_->setCompact(true);
+        reference_->hide();
+    }
+
+    bool editorEvent(QEvent* event, QAbstractItemModel* model, const QStyleOptionViewItem& option,
+                     const QModelIndex& index) override
+    {
+        if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick) {
+            const auto* mouse = static_cast<QMouseEvent*>(event);
+            const auto id = index.data(MonitorCatalogModel::ProjectObjectIdRole).toUInt();
+            if (mouse->button() == Qt::LeftButton && id && refDomainAdapter(RefDomain::ProjectObject).exists(id)) {
+                if (event->type() == QEvent::MouseButtonPress) {
+                    ObjectRefNavigation::locate(view_, RefDomain::ProjectObject, id);
+                } else {
+                    QMetaObject::invokeMethod(this, [this, reference = QPersistentModelIndex(index), id] {
+                        if (reference.isValid() && reference.data(MonitorCatalogModel::ProjectObjectIdRole).toUInt() == id
+                            && refDomainAdapter(RefDomain::ProjectObject).exists(id))
+                            ObjectRefNavigation::navigate(view_, RefDomain::ProjectObject, id);
+                    }, Qt::QueuedConnection);
+                }
+            }
+        }
+        return TableItemDelegate::editorEvent(event, model, option, index);
+    }
+
+protected:
+    void paintContents(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override
+    {
+        const auto id = index.data(MonitorCatalogModel::ProjectObjectIdRole).toUInt();
+        if (!id || !refDomainAdapter(RefDomain::ProjectObject).exists(id)) {
+            TableItemDelegate::paintContents(painter, option, index);
+            return;
+        }
+        QStyleOptionViewItem background = option;
+        initStyleOption(&background, index);
+        background.text.clear();
+        view_->style()->drawControl(QStyle::CE_ItemViewItem, &background, painter, view_);
+        reference_->setDisplayNameOverride(index.data().toString());
+        reference_->setCurrentObjectID(id);
+        QtControlSkin::setSemanticProperty(reference_, "hovered", option.state.testFlag(QStyle::State_MouseOver));
+        QtControlSkin::setSemanticProperty(reference_, "selected", option.state.testFlag(QStyle::State_Selected));
+        updateEditorGeometry(reference_, option, index);
+        reference_->move(reference_->x(), option.rect.center().y() - reference_->height() / 2);
+        painter->save();
+        painter->setClipRect(option.rect, Qt::IntersectClip);
+        painter->drawPixmap(reference_->pos(), reference_->grab());
+        painter->restore();
+    }
+
+private:
+    QTableView* view_;
+    ObjectRefWidget* reference_;
+};
+
+}
 
 class MonitorCatalogFilter final : public QSortFilterProxyModel
 {
@@ -99,6 +172,7 @@ MonitorPanel::MonitorPanel(QWidget* parent)
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table_->setItemDelegateForColumn(MonitorCatalogModel::Object, new MonitorObjectDelegate(table_));
     root->addWidget(tableFrame_, 1);
 
     details_ = new QTextBrowser(this);
