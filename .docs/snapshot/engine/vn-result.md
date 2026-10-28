@@ -1,17 +1,5 @@
 # VnResult
 
-最近核对：2026-09-01。
-
-权威源：`HarkenEngine/Source/Runtime/api/include/harken/Harken.h`。
-数值钉扎：`HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json` `api.results.values`。
-Studio 透传：`HarkenStudio/Source/RuntimeBridge/PlaybackBridge.h`（`EngineResult` 是 `uint32_t`；日志通常打印有符号值）。
-
-`0` 是成功。负数分段：`-1xx` 参数，`-2xx` 身份，`-3xx` 容量/状态，`-4xx` 系统/设备/内容。非法输入不是未定义行为。
-
-本表不是第二份 ABI。缺码时 grep `Harken.h` 和 wire table。
-
-## 表
-
 | 值 | 名字 | 含义 |
 |---:|---|---|
 | 0 | `VN_OK` | 成功 |
@@ -23,11 +11,11 @@ Studio 透传：`HarkenStudio/Source/RuntimeBridge/PlaybackBridge.h`（`EngineRe
 | -221 | `VN_AUTHORITY_CONFLICT` | 同一 session 里 Pack 与 DirectWorld 互斥写入 |
 | -222 | `VN_PACK_STALE_REVISION` | 内容修订与句柄配对不一致 |
 | -300 | `VN_NO_VOICE` | voice 容量耗尽 |
-| -301 | `VN_BACKPRESSURE` | 瞬时拒绝，零部分提交；`Vn_Update` 或资源短缺解除后可重试。Studio Preview 日志可能在同步等待超时后合成此码，见 [README.md](README.md) |
+| -301 | `VN_BACKPRESSURE` | 瞬时拒绝，零部分提交；`Vn_Update` 或资源短缺解除后可重试。Studio Preview 日志可能在同步等待超时后合成此码，见 [Studio 日志](studio-logs.md) |
 | -302 | `VN_IN_USE` | 资源占用中 |
 | -303 | `VN_NOT_INITIALIZED` | Runtime 未初始化 |
 | -304 | `VN_ALREADY_INITIALIZED` | Runtime 已初始化 |
-| -305 | `VN_NO_BUS` | 总线表满或总线不存在（读返回它的调用） |
+| -305 | `VN_NO_BUS` | 总线表满或总线不存在 |
 | -306 | `VN_NO_VARIABLE` | 变量不存在 / 变量容量 |
 | -307 | `VN_NO_ATTENUATION` | 衰减配置不存在 / 容量 |
 | -308 | `VN_NO_PACK` | Pack 容量耗尽 |
@@ -67,14 +55,13 @@ Studio 透传：`HarkenStudio/Source/RuntimeBridge/PlaybackBridge.h`（`EngineRe
 | -416 | `VN_PACK_PROVIDER_FAILED` | Pack provider 失败 |
 | -417 | `VN_PACK_INIT_LIFECYCLE` | Pack 初始化生命周期拒绝 |
 
-`Harken.h` 未写注释的 `-32x` / `-41x` 只保留名字级含义。当作产品诊断前先读返回它的 API。
+表注：部分结果同时表示对象缺失或容量不足，具体含义取决于操作。
 
-## 无符号打印
+## 日志数值表示
 
-`EngineResult` 是 `uint32_t`。`-301` 无符号为 `4294966995`（`0xFFFFFED3`），`-200` 为 `4294967096`。Studio `auditionStartFailed` 当前按 `int32_t` 打日志，Log 面板看到的是有符号形式。
+| 有符号值 | 无符号值 | 十六进制 | 名称 |
+|---:|---:|---|---|
+| -301 | 4294966995 | `0xFFFFFED3` | `VN_BACKPRESSURE` |
+| -200 | 4294967096 | `0xFFFFFF38` | `VN_UNKNOWN_ID` |
 
-## 不是 VnResult 的相关枚举
-
-- `VnCurrentWorldLoadStatus`：DirectWorld 预览直装报告状态，也从 `0` 起用小正整数。游戏加载 `.pack`，不把这份信封当成第三套磁盘合同。
-- `VnPreviewResult`：见 [preview-result.md](preview-result.md)。
-- miniaudio `ma_result`：解释 Harken 日志时忽略。
+表注：`EngineResult` 使用 32 位无符号表示，Studio 日志按 32 位有符号值打印。同一位模式的两种十进制表示不构成不同结果码。
