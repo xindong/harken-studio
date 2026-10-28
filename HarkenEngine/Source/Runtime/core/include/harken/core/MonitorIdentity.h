@@ -31,6 +31,17 @@ struct MonitorContentIdentity {
     std::uint64_t contentRevision = 0;
 };
 
+// Captured from the selected executable occurrence and its leased media.
+struct MonitorPlayableProvenance {
+    VnObjectId rootPlayableId;
+    std::uint64_t rootProgramFingerprint;
+    std::uint64_t occurrenceFingerprint;
+    std::uint64_t mediaChecksum;
+    std::uint32_t childOrdinal;
+    std::uint32_t knownFlags;
+};
+static_assert(sizeof(MonitorPlayableProvenance) == 48);
+
 struct MonitorOccurrenceIdentity {
     std::uint64_t arrangingInstance = 0;
     VnObjectId clipId{};

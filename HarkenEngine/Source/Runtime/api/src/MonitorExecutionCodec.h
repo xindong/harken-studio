@@ -13,6 +13,9 @@ inline constexpr std::uint32_t kExecutionPayloadBytes = 432;
 inline constexpr std::uint32_t kExecutionRecordBytes = PackedRecordBytes(kExecutionPayloadBytes);
 inline constexpr std::uint32_t kActivityPayloadBytes = 496;
 inline constexpr std::uint32_t kActivityRecordBytes = PackedRecordBytes(kActivityPayloadBytes);
+inline constexpr std::uint32_t kPlayablePayloadBytes = 544;
+inline constexpr std::uint32_t kPlayableRecordBytes = PackedRecordBytes(kPlayablePayloadBytes);
+static_assert(sizeof(VnMonitorExecutionFactV3) == kPlayablePayloadBytes);
 static_assert(sizeof(MonitorExecutionFact) <= 384);
 static_assert(sizeof(VnMonitorExecutionFactV1) == kExecutionPayloadBytes);
 static_assert(sizeof(VnMonitorFactActivity) == 64);
@@ -115,7 +118,7 @@ inline bool ProjectFactFields(const MonitorExecutionFact& source, std::uint64_t 
     const bool call = source.BodyKind() == MonitorFactBody::Call;
     if (source.engine == 0 || source.sourceSequence == 0 || producer == 0 || stream == 0 ||
         source.kind == 0 || source.kind > VN_MONITOR_FACT_PLAYABLE_FINISHED ||
-        (source.flags & ~(kMonitorFactCallBody | kMonitorFactIdentityIncomplete | kMonitorFactControlIncomplete)) != 0 ||
+        (source.flags & ~(kMonitorFactCallBody | kMonitorFactPlayableBody | kMonitorFactIdentityIncomplete | kMonitorFactControlIncomplete)) != 0 ||
         (source.validity & ~SourceAllowedFields(source.BodyKind())) != 0 ||
         (call && !IsCallFactKind(source.kind)) ||
         (!call && (source.kind == VN_MONITOR_FACT_REQUEST_SUBMITTED || source.kind == VN_MONITOR_FACT_REQUEST_RETURNED)))
@@ -231,6 +234,20 @@ inline bool ProjectFactFields(const MonitorExecutionFact& source, std::uint64_t 
         copy(VN_MONITOR_FACT_FIELD_EXECUTE_FRAME, header.executeFrame, activity.executeFrame);
         for (unsigned field = VN_MONITOR_FACT_FIELD_ACTIVITY_STEP; field <= VN_MONITOR_FACT_FIELD_ACTION_OUTCOME; ++field)
             if (has(field)) SetFactField(fact, field);
+        return true;
+    }
+    if ((source.flags & kMonitorFactPlayableBody) != 0) {
+        if (call || source.subjectNamespace != VN_MONITOR_SUBJECT_PLAYABLE || IsActivityFactKind(source.kind)) return false;
+        for (unsigned field : {VN_MONITOR_FACT_FIELD_READ_CUT_KEY, VN_MONITOR_FACT_FIELD_READ_CUT_SEQUENCE,
+            VN_MONITOR_FACT_FIELD_TRANSPORT, VN_MONITOR_FACT_FIELD_GRAPH_FRAME, VN_MONITOR_FACT_FIELD_ARRANGING,
+            VN_MONITOR_FACT_FIELD_CLIP, VN_MONITOR_FACT_FIELD_LOOP, VN_MONITOR_FACT_FIELD_OCCURRENCE,
+            VN_MONITOR_FACT_FIELD_FRAME_OFFSET, VN_MONITOR_FACT_FIELD_FRAME_SPAN, VN_MONITOR_FACT_FIELD_READ_CUT_ORDINAL})
+            if (has(field)) return false;
+        const auto& playable = source.body.execution.playable;
+        copy(VN_MONITOR_FACT_FIELD_LOGIC_COMMIT, header.telemetry.logicCommitSequence, playable.logicCommit);
+        copy(VN_MONITOR_FACT_FIELD_EXECUTE_FRAME, header.executeFrame, playable.executeFrame);
+        copy(VN_MONITOR_FACT_FIELD_AUDIO_BLOCK, fact.audioBlock, playable.audioBlock);
+        copy(VN_MONITOR_FACT_FIELD_OWNER_EPOCH, fact.ownerEpoch, playable.ownerEpoch);
         return true;
     }
     const auto& position = call ? source.body.call.position : source.body.execution.position;
@@ -470,18 +487,67 @@ inline bool ProjectExecutionFact(const MonitorExecutionFact& source, std::uint64
     return true;
 }
 
+template<class Visitor, class Provenance>
+inline void VisitPlayablePayload(Visitor& visit, Provenance& value) noexcept {
+    visit(value.rootPlayableId); visit(value.rootProgramFingerprint); visit(value.occurrenceFingerprint);
+    visit(value.mediaChecksum); visit(value.childOrdinal); visit(value.knownFlags);
+}
+
+inline bool ValidateExecutionFact(const VnMonitorRecordHeader& header,
+    const VnMonitorExecutionFactV3& value) noexcept {
+    VnMonitorExecutionFactV2 prefix{value.fact, value.activity};
+    if (header.recordVersion < 3) return ValidateExecutionFact(header, prefix);
+    if (header.recordKind != VN_MONITOR_RECORD_EXECUTION_FACT || header.recordVersion != 3 ||
+        header.flags != VN_MONITOR_RECORD_FLAG_OPTIONAL || header.payloadBytes != kPlayablePayloadBytes ||
+        header.recordBytes != kPlayableRecordBytes || !ValidateFactFields(header, value.fact) ||
+        !ValidateActivityFields(prefix)) return false;
+    const auto& p = value.playable;
+    if (p.knownFlags == 0) return p.rootPlayableId == VnObjectId{} && p.rootProgramFingerprint == 0 &&
+        p.occurrenceFingerprint == 0 && p.mediaChecksum == 0 && p.childOrdinal == 0;
+    return p.knownFlags == VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN &&
+        value.fact.subjectNamespace == VN_MONITOR_SUBJECT_PLAYABLE && value.fact.contentKind == VN_MONITOR_CONTENT_SOUND &&
+        p.rootPlayableId != VnObjectId{} && p.rootProgramFingerprint != 0 && (p.childOrdinal == UINT32_MAX ? p.occurrenceFingerprint == 0 : p.occurrenceFingerprint != 0);
+}
+
+inline bool ProjectExecutionFact(const MonitorExecutionFact& source, std::uint64_t producer,
+    std::uint64_t stream, VnMonitorRecordHeader& header, VnMonitorExecutionFactV3& value) noexcept {
+    value = {};
+    VnMonitorExecutionFactV2 prefix{};
+    if (!ProjectExecutionFact(source, producer, stream, header, prefix)) return false;
+    value.fact = prefix.fact;
+    value.activity = prefix.activity;
+    header.recordVersion = 3;
+    header.recordBytes = kPlayableRecordBytes;
+    header.payloadBytes = kPlayablePayloadBytes;
+    if ((source.flags & kMonitorFactPlayableBody) != 0) {
+        const auto& p = source.body.execution.playable.provenance;
+        value.playable = {p.rootPlayableId, p.rootProgramFingerprint, p.occurrenceFingerprint,
+            p.mediaChecksum, p.childOrdinal, p.knownFlags};
+    }
+    return true;
+}
+
 inline std::uint32_t PackExecutionFact(std::uint8_t* out, std::uint32_t capacity,
-    const MonitorExecutionFact& source, std::uint64_t producer, std::uint64_t stream) noexcept {
-    const auto recordBytes = IsActivityFactKind(source.kind) ? kActivityRecordBytes : kExecutionRecordBytes;
+    const MonitorExecutionFact& source, std::uint64_t producer, std::uint64_t stream, std::uint32_t version = 2) noexcept {
+    const auto recordBytes = version == 3 ? kPlayableRecordBytes :
+        IsActivityFactKind(source.kind) ? kActivityRecordBytes : kExecutionRecordBytes;
     if (out == nullptr || capacity < recordBytes) return 0;
     VnMonitorRecordHeader header{};
-    VnMonitorExecutionFactV2 fact{};
-    if (!ProjectExecutionFact(source, producer, stream, header, fact) || !ValidateExecutionFact(header, fact)) return 0;
+    VnMonitorExecutionFactV3 fact{};
+    if (version == 3) {
+        if (!ProjectExecutionFact(source, producer, stream, header, fact) || !ValidateExecutionFact(header, fact)) return 0;
+    } else {
+        VnMonitorExecutionFactV2 prefix{};
+        if (!ProjectExecutionFact(source, producer, stream, header, prefix) || !ValidateExecutionFact(header, prefix)) return 0;
+        fact.fact = prefix.fact;
+        fact.activity = prefix.activity;
+    }
     std::memset(out, 0, recordBytes);
     PackHeader(out, header);
     ExecutionPayloadWriter writer{out + kPackedEnvelopeBytes};
     VisitExecutionPayload(writer, fact.fact);
-    if (header.recordVersion == 2) VisitActivityPayload(writer, fact.activity);
+    if (header.recordVersion >= 2) VisitActivityPayload(writer, fact.activity);
+    if (header.recordVersion == 3) VisitPlayablePayload(writer, fact.playable);
     return writer.offset == header.payloadBytes ? recordBytes : 0;
 }
 
@@ -508,6 +574,25 @@ inline bool DecodeExecutionFact(const VnMonitorRecordHeader& header, const std::
     VisitExecutionPayload(reader, value.fact);
     VisitActivityPayload(reader, value.activity);
     if (reader.offset != kActivityPayloadBytes || !ValidateExecutionFact(header, value)) return false;
+    out = value;
+    return true;
+}
+
+inline bool DecodeExecutionFact(const VnMonitorRecordHeader& header, const std::uint8_t* bytes,
+    std::uint64_t size, VnMonitorExecutionFactV3& out) noexcept {
+    if (header.recordVersion < 3) {
+        VnMonitorExecutionFactV2 prefix{};
+        if (!DecodeExecutionFact(header, bytes, size, prefix)) return false;
+        out = {prefix.fact, prefix.activity, {}};
+        return true;
+    }
+    if (bytes == nullptr || size != kPlayablePayloadBytes) return false;
+    VnMonitorExecutionFactV3 value{};
+    ExecutionPayloadReader reader{bytes};
+    VisitExecutionPayload(reader, value.fact);
+    VisitActivityPayload(reader, value.activity);
+    VisitPlayablePayload(reader, value.playable);
+    if (reader.offset != kPlayablePayloadBytes || !ValidateExecutionFact(header, value)) return false;
     out = value;
     return true;
 }

@@ -65,6 +65,7 @@ struct MonitorLifecycleFacts {
     VnObjectId stepTargetId{};
     std::uint32_t stepTargetKind = 0;
     MonitorOccurrenceIdentity occurrenceIdentity{};
+    MonitorPlayableProvenance playableProvenance{};
     VnObjectId contentObject{};
     std::uint64_t contentWorld = 0;
     std::uint8_t contentKind = 0;

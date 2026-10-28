@@ -112,7 +112,16 @@ namespace Harken
         public VnResult GetActionPreparationOrder(string[] names, string projectId, out ulong[] ids)
         {
             ids = Array.Empty<ulong>();
-            return VnResult.VN_PACK_INCOMPATIBLE;
+            if (names == null) return VnResult.VN_INVALID_ARG;
+            if (projectId != ProjectId) return VnResult.VN_GAMEPLAY_WRONG_PROJECT;
+            var found = new List<ulong>();
+            foreach (string name in names)
+            {
+                if (!TryFindAction(name, out GameplayAction action)) return VnResult.VN_UNKNOWN_ID;
+                if (!found.Contains(action.OwnerPackStableId)) found.Add(action.OwnerPackStableId);
+            }
+            ids = found.ToArray();
+            return VnResult.VN_OK;
         }
 
         public static VnResult Parse(string inventoryJson, string selectedJson, string language,

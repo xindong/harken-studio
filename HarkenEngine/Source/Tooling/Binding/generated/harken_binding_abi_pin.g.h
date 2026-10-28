@@ -756,6 +756,7 @@ static_assert(static_cast<std::uint64_t>(VN_MONITOR_HARD_RAW_AUDIO_BYTE_RATE) ==
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID) == 1ull, "binding define drift: VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID");
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES) == 316ull, "binding define drift: VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES");
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_STATE_ENTITY_SLOTS) == 16ull, "binding define drift: VN_MONITOR_STATE_ENTITY_SLOTS");
+static_assert(static_cast<std::uint64_t>(VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN) == 1ull, "binding define drift: VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN");
 
 // Mirrored struct sizes and field offsets (the values the C# ABI test
 // asserts its managed layout against).
@@ -2405,6 +2406,17 @@ static_assert(offsetof(VnMonitorFactActivity, variableTicket) == 56, "binding of
 static_assert(sizeof(VnMonitorExecutionFactV2) == 496, "binding size drift: VnMonitorExecutionFactV2");
 static_assert(offsetof(VnMonitorExecutionFactV2, fact) == 0, "binding offset drift: VnMonitorExecutionFactV2.fact");
 static_assert(offsetof(VnMonitorExecutionFactV2, activity) == 432, "binding offset drift: VnMonitorExecutionFactV2.activity");
+static_assert(sizeof(VnMonitorPlayableProvenance) == 48, "binding size drift: VnMonitorPlayableProvenance");
+static_assert(offsetof(VnMonitorPlayableProvenance, rootPlayableId) == 0, "binding offset drift: VnMonitorPlayableProvenance.rootPlayableId");
+static_assert(offsetof(VnMonitorPlayableProvenance, rootProgramFingerprint) == 16, "binding offset drift: VnMonitorPlayableProvenance.rootProgramFingerprint");
+static_assert(offsetof(VnMonitorPlayableProvenance, occurrenceFingerprint) == 24, "binding offset drift: VnMonitorPlayableProvenance.occurrenceFingerprint");
+static_assert(offsetof(VnMonitorPlayableProvenance, mediaChecksum) == 32, "binding offset drift: VnMonitorPlayableProvenance.mediaChecksum");
+static_assert(offsetof(VnMonitorPlayableProvenance, childOrdinal) == 40, "binding offset drift: VnMonitorPlayableProvenance.childOrdinal");
+static_assert(offsetof(VnMonitorPlayableProvenance, knownFlags) == 44, "binding offset drift: VnMonitorPlayableProvenance.knownFlags");
+static_assert(sizeof(VnMonitorExecutionFactV3) == 544, "binding size drift: VnMonitorExecutionFactV3");
+static_assert(offsetof(VnMonitorExecutionFactV3, fact) == 0, "binding offset drift: VnMonitorExecutionFactV3.fact");
+static_assert(offsetof(VnMonitorExecutionFactV3, activity) == 432, "binding offset drift: VnMonitorExecutionFactV3.activity");
+static_assert(offsetof(VnMonitorExecutionFactV3, playable) == 496, "binding offset drift: VnMonitorExecutionFactV3.playable");
 
 // C function-signature pins for the whole API. Taking the address of each
 // function into a pointer of the table-declared signature makes ANY

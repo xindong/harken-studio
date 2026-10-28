@@ -7332,6 +7332,58 @@ TABLE_JSON = r'''
           }
         ]
       ]
+    },
+    "VnMonitorPlayableProvenance": {
+      "fields": [
+        [
+          "rootPlayableId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "rootProgramFingerprint",
+          "u64"
+        ],
+        [
+          "occurrenceFingerprint",
+          "u64"
+        ],
+        [
+          "mediaChecksum",
+          "u64"
+        ],
+        [
+          "childOrdinal",
+          "u32"
+        ],
+        [
+          "knownFlags",
+          "u32"
+        ]
+      ]
+    },
+    "VnMonitorExecutionFactV3": {
+      "fields": [
+        [
+          "fact",
+          {
+            "struct": "VnMonitorExecutionFactV1"
+          }
+        ],
+        [
+          "activity",
+          {
+            "struct": "VnMonitorFactActivity"
+          }
+        ],
+        [
+          "playable",
+          {
+            "struct": "VnMonitorPlayableProvenance"
+          }
+        ]
+      ]
     }
   },
   "functions": [
@@ -11842,6 +11894,10 @@ TABLE_JSON = r'''
       "VN_MONITOR_STATE_ENTITY_SLOTS": {
         "type": "u32",
         "value": 16
+      },
+      "VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN": {
+        "type": "u32",
+        "value": 1
       }
     },
     "callbacks": {

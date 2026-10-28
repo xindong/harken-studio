@@ -1,6 +1,7 @@
 #include "MonitorIdentityCut.h"
 #include "MonitorExecutionCodec.h"
 #include "MonitorIdentityCodec.h"
+#include "MonitorLifecycleProjection.h"
 #include "monitor_fixture_decode.h"
 #include <gtest/gtest.h>
 #include <array>
@@ -674,4 +675,39 @@ TEST(MonitorHostSymbolState, SilentSeedAndImmutableCopyPreserveCaptureWindowsAnd
     EXPECT_EQ(VN_MONITOR_SYMBOL_TOMBSTONE, changes[9].value.factKind);
     EXPECT_EQ(15u, changes[9].value.registrationRevision);
 }
+TEST(MonitorExecutionCodec, PlayableProvenancePreservesTimingAndOldPositionAlternative) {
+    MonitorLifecycleFacts lifecycle{};
+    lifecycle.playableProvenance = {{4, 5}, 7, 9, 0, 2, VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN};
+    lifecycle.logicCommitSequence = 10; lifecycle.audioBlock = 11; lifecycle.executeFrame = 12; lifecycle.ownerEpoch = 13;
+    auto source = CaptureLifecycleFact(MonitorLifecyclePhase::PlayableStarted, 1, 0x100000001, 1,
+        2, {3, 4}, 0, 0, VN_MONITOR_CONTENT_SOUND, lifecycle, {});
+    source.sourceSequence = 1;
+    VnMonitorRecordHeader header{};
+    VnMonitorExecutionFactV3 value{};
+    ASSERT_TRUE(ProjectExecutionFact(source, 3, 4, header, value));
+    ASSERT_TRUE(ValidateExecutionFact(header, value));
+    EXPECT_EQ(10u, header.telemetry.logicCommitSequence); EXPECT_EQ(12u, header.executeFrame);
+    EXPECT_EQ(11u, value.fact.audioBlock); EXPECT_EQ(13u, value.fact.ownerEpoch);
+    EXPECT_EQ(9u, value.playable.occurrenceFingerprint);
+    EXPECT_EQ(0u, value.playable.mediaChecksum);
+    std::array<std::uint8_t, kPlayableRecordBytes> bytes{};
+    ASSERT_EQ(bytes.size(), PackExecutionFact(bytes.data(), bytes.size(), source, 3, 4, 3));
+    VnMonitorExecutionFactV3 decoded{};
+    ASSERT_TRUE(DecodeExecutionFact(header, bytes.data() + kPackedEnvelopeBytes, kPlayablePayloadBytes, decoded));
+    EXPECT_EQ(value.playable.rootPlayableId, decoded.playable.rootPlayableId);
+    VnMonitorExecutionFactV1 old{};
+    ASSERT_TRUE(ProjectExecutionFact(source, 3, 4, header, old));
+    ASSERT_TRUE(ValidateExecutionFact(header, old));
+    EXPECT_EQ(11u, old.audioBlock); EXPECT_EQ(13u, old.ownerEpoch);
+    lifecycle.occurrenceIdentity = {19, {20, 21}, 22, 23, true, true};
+    source = CaptureLifecycleFact(MonitorLifecyclePhase::PlayableStarted, 1, 0x100000001, 1,
+        2, {3, 4}, 0, 0, VN_MONITOR_CONTENT_SOUND, lifecycle, {});
+    source.sourceSequence = 1;
+    ASSERT_TRUE(ProjectExecutionFact(source, 3, 4, header, value));
+    ASSERT_TRUE(ValidateExecutionFact(header, value));
+    EXPECT_EQ(0u, value.playable.knownFlags);
+    EXPECT_EQ(19u, header.telemetry.arrangingInstance); EXPECT_EQ(22u, header.telemetry.loopIteration);
+    EXPECT_EQ(23u, header.telemetry.occurrenceOrdinal); EXPECT_EQ((VnObjectId{20, 21}), header.telemetry.clipId);
+}
+
 } // namespace

@@ -400,6 +400,8 @@ public:
         const PlayableRootMetadata& metadata) noexcept;
     bool SetPreparedContentIdentity(const PreparedPlayableInstance& prepared,
                                     const MonitorContentIdentity& identity) noexcept;
+    bool SetPreparedProvenance(const PreparedPlayableInstance& prepared,
+                                const MonitorPlayableProvenance& provenance) noexcept;
     bool CaptureContentIdentity(PlayableInstanceHandle handle,
                                 MonitorContentIdentity* out) const noexcept;
     bool CaptureEmitterOrigin(PlayableInstanceHandle handle,
@@ -591,6 +593,7 @@ private:
         std::uint64_t scheduleEpoch = 0;
         PlayableRootMetadata rootMetadata{};
         MonitorContentIdentity contentIdentity{};
+        MonitorPlayableProvenance playableProvenance{};
         MonitorContentIdentity monitorPreparedCandidateIdentity{};
         bool monitorPreparedCandidateObserved = false;
         bool monitorStartedObserved = false;

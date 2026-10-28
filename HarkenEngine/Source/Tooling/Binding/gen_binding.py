@@ -48,6 +48,7 @@ import argparse
 import copy
 import json
 import os
+import re
 import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -181,7 +182,8 @@ def emit_field(struct_name, fname, spec, layouts):
 def managed_projection(table, policy):
     rules = policy["managed_projection"]["excluded_prefixes"]
     projected = copy.deepcopy(table)
-    keep = lambda category, name: not name.startswith(tuple(rules[category]))
+    included = policy["managed_projection"].get("included_names", {})
+    keep = lambda category, name: name in included.get(category, []) or not name.startswith(tuple(rules[category]))
     projected["types"] = {name: value for name, value in table["types"].items() if keep("types", name)}
     projected["api"]["enums"] = {name: value for name, value in table["api"]["enums"].items() if keep("types", name)}
     projected["api"]["callbacks"] = {name: value for name, value in table["api"]["callbacks"].items() if keep("types", name)}
@@ -686,6 +688,56 @@ def emit_cpp_pin(table):
     return "\n".join(lines) + "\n"
 
 
+def emit_monitor_reader(table):
+    # Follow the native packed writer, whose envelope intentionally differs
+    # from C struct layout. Field types still come from the ABI table.
+    source = os.path.join(REPO_ROOT, "HarkenEngine", "Source", "Runtime", "api", "src", "MonitorRecordPack.h")
+    with open(source, encoding="utf-8") as stream:
+        writer = stream.read().split("inline void PackHeader(", 1)[1].split("inline void FillSyntheticHeader", 1)[0]
+    header = re.findall(r"Write(U32|U64|ObjectId)\(out \+ o, header\.([A-Za-z0-9_.]+)\);", writer)
+    sizes = {"U32": 4, "U64": 8, "ObjectId": 16}
+    if sum(sizes[kind] for kind, _ in header) != 316:
+        raise ValueError("Monitor envelope writer changed; review packed SDK decoder")
+    lines = [CS_HEADER, "using System;", "", "namespace Harken", "{", "    internal static class HarkenMonitorWire", "    {"]
+    lines += [
+        "        private static ulong Read(byte[] bytes, ref int at, int size, bool big = false)",
+        "        {",
+        "            ulong value = 0;",
+        "            for (int i = 0; i < size; ++i)",
+        "                if (big) value = (value << 8) | bytes[at++];",
+        "                else value |= (ulong)bytes[at++] << (i * 8);",
+        "            return value;",
+        "        }",
+        "        private static VnObjectId ObjectId(byte[] bytes, ref int at)",
+        "            => new VnObjectId(Read(bytes, ref at, 8, true), Read(bytes, ref at, 8, true));",
+        "        internal static VnMonitorRecordHeader Header(byte[] bytes, int at, int limit)",
+        "        {",
+        "            if (at < 0 || limit > bytes.Length || limit - at < 316) throw new FormatException(\"Truncated Monitor envelope.\");",
+        "            var value = new VnMonitorRecordHeader();"]
+    for kind, field in header:
+        expr = "ObjectId(bytes, ref at)" if kind == "ObjectId" else ("(uint)" if kind == "U32" else "") + "Read(bytes, ref at, %d)" % sizes[kind]
+        lines.append("            value.%s = %s;" % (field, expr))
+    lines += ["            return value;", "        }", "        internal static VnMonitorExecutionFactV3 Fact(byte[] bytes, int at, int limit)", "        {",
+        "            if (at < 0 || limit > bytes.Length || limit - at < 544) throw new FormatException(\"Truncated Monitor fact.\");",
+        "            var value = new VnMonitorExecutionFactV3();"]
+    def fields(name, prefix):
+        for field, spec in table["types"][name]["fields"]:
+            target = prefix + "." + field
+            if isinstance(spec, dict) and spec.get("struct") == "VnObjectId":
+                lines.append("            %s = ObjectId(bytes, ref at);" % target)
+            elif isinstance(spec, dict) and "struct" in spec:
+                fields(spec["struct"], target)
+            elif spec in ("u8", "u16", "u32", "u64", "i32"):
+                cast = {"u8": "(byte)", "u16": "(ushort)", "u32": "(uint)", "u64": "", "i32": "unchecked((int)"}[spec]
+                expr = cast + "Read(bytes, ref at, %d)" % ({"u8": 1, "u16": 2, "u32": 4, "i32": 4, "u64": 8}[spec]) + (")" if spec == "i32" else "")
+                lines.append("            %s = %s;" % (target, expr))
+            else:
+                raise ValueError("Unsupported packed Monitor field: %s" % target)
+    fields("VnMonitorExecutionFactV3", "value")
+    lines += ["            return value;", "        }", "    }", "}", ""]
+    return "\n".join(lines)
+
+
 def parse_args(argv):
     """Parse the command line, rejecting anything not understood.
 
@@ -719,6 +771,7 @@ def main():
         os.path.join(CS_GEN_DIR, "HarkenTypes.g.cs"): emit_types(managed, policy),
         os.path.join(CS_GEN_DIR, "HarkenNative.g.cs"): emit_native(managed, policy),
         os.path.join(CS_GEN_DIR, "HarkenAbi.g.cs"): emit_abi_cs(managed, policy),
+        os.path.join(CS_GEN_DIR, "HarkenMonitor.g.cs"): emit_monitor_reader(table),
         os.path.join(CPP_GEN_DIR, "harken_binding_abi_pin.g.h"): emit_cpp_pin(table),
     }
 

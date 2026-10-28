@@ -94,8 +94,11 @@ internal static class Program
         JsonElement excluded = policy.GetProperty("managed_projection").GetProperty("excluded_prefixes");
         void RequireNoExcluded(string category, IEnumerable<string> names)
         {
+            var admitted = policy.GetProperty("managed_projection").GetProperty("included_names");
+            string[] exact = admitted.TryGetProperty(category, out JsonElement included)
+                ? included.EnumerateArray().Select(item => item.GetString()).ToArray() : Array.Empty<string>();
             foreach (JsonElement prefix in excluded.GetProperty(category).EnumerateArray())
-                Require(!names.Any(name => name.StartsWith(prefix.GetString(), StringComparison.Ordinal)),
+                Require(!names.Any(name => name.StartsWith(prefix.GetString(), StringComparison.Ordinal) && !exact.Contains(name)),
                     "Excluded native contract in SDK: " + prefix.GetString());
         }
         RequireNoExcluded("types", sdk.GetTypes().Select(type => type.Name));

@@ -53,6 +53,8 @@ struct PackEntry {
     std::uint64_t loopStartFrame = 0;
     std::uint64_t loopEndFrame = 0;   // 0 = whole file when loopable
     std::uint64_t registrationCookie = 0;
+    std::uint64_t mediaChecksum = 0;
+    bool mediaChecksumKnown = false;
     PCMRegistry::PackReference registration;
 };
 
@@ -430,7 +432,7 @@ public:
         PackResourceRevisionToken* outToken) const noexcept;
     VnResult LookupExact(PackResourceRevisionToken resourceToken,
                          VnSoundId soundId, const PCMRegistry& registry,
-                         PCMView* out) const noexcept;
+                         PCMView* out, std::uint64_t* mediaChecksum = nullptr, bool* checksumKnown = nullptr) const noexcept;
     VnResult AcquireResourceClosure(
         const PackResourceRevisionToken* resourceTokens,
         std::size_t resourceTokenCount,
@@ -445,7 +447,7 @@ public:
     VnResult LookupExactClosure(PackResourceClosureToken closureToken,
                                 VnSoundId soundId,
                                 const PCMRegistry& registry,
-                                PCMView* out) const noexcept;
+                                PCMView* out, std::uint64_t* mediaChecksum = nullptr, bool* checksumKnown = nullptr) const noexcept;
     VnResult SetResourceClosureGenerationForTests(
         std::size_t rowIndex, std::uint32_t generation) noexcept;
     VnResult SetSlotGenerationForTests(

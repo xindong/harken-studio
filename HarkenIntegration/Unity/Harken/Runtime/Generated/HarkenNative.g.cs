@@ -365,6 +365,18 @@ namespace Harken
         [DllImport(LibraryName, EntryPoint = "Vn_RemoteGetStatus", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_RemoteGetStatus(ref VnRemoteStatus outStatus);
 
+        [DllImport(LibraryName, EntryPoint = "Vn_MonitorOpenEventSession", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_MonitorOpenEventSession(in VnMonitorSessionDesc desc, out ulong outHandle);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_MonitorGetEventSessionStatus", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_MonitorGetEventSessionStatus(ulong handle, ref VnMonitorEventSessionStatus outStatus);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_MonitorCloseSession", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_MonitorCloseSession(ulong handle);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_MonitorPoll", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_MonitorPoll(ulong handle, in VnMonitorPollDesc desc, ref VnMonitorPollResult outResult);
+
         [DllImport(LibraryName, EntryPoint = "Vn_SetValues", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_SetValues(in VnVariableBatchDescV1 desc, ref VnVariableTicketV1 outTicket);
 
@@ -400,6 +412,12 @@ namespace Harken
 
         [DllImport(LibraryName, EntryPoint = "Vn_CreateEmitterEx", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_CreateEmitterEx(in VnEmitterCreateDescV1 desc, out ulong outHandle);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_MonitorGetEventSessionStatus", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_MonitorGetEventSessionStatusV2(ulong handle, ref VnMonitorEventSessionStatusV2 outStatus);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_MonitorOpenEventSession", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_MonitorOpenEventSessionV2(in VnMonitorSessionDescV2 desc, out ulong outHandle);
 
         [DllImport(LibraryName, EntryPoint = "Vn_LoadPack", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_LoadPackV2(in VnPackLoadDesc desc, out ulong outHandle);

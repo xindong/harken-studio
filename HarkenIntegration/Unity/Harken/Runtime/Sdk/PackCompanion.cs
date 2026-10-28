@@ -197,8 +197,15 @@ namespace Harken
 
         internal static unsafe VnResult Inspect(byte[] bytes, byte[] init, PackCompanion names,
             out VnPackInspectReportV1 report)
+            => Inspect(bytes, init, names, out report, out _, out _, false);
+
+        internal static unsafe VnResult Inspect(byte[] bytes, byte[] init, PackCompanion names,
+            out VnPackInspectReportV1 report, out VnPackOccurrenceFactV1[] occurrences,
+            out VnPackMediaFactV1[] media, bool details = true)
         {
             report = default;
+            occurrences = Array.Empty<VnPackOccurrenceFactV1>();
+            media = Array.Empty<VnPackMediaFactV1>();
             if (bytes == null || names == null) return VnResult.VN_INVALID_ARG;
             try
             {
@@ -218,7 +225,29 @@ namespace Harken
                             (ulong)NameByteCount(names)
                     };
                     report.structSize = (uint)sizeof(VnPackInspectReportV1);
-                    return HarkenNative.Vn_InspectCanonicalPackV1(desc, ref report);
+                    VnResult result = HarkenNative.Vn_InspectCanonicalPackV1(desc, ref report);
+                    if (result != VnResult.VN_OK || !details) return result;
+                    var occurrenceRows = new VnPackOccurrenceFactV1[checked((int)report.occurrenceCount)];
+                    var mediaRows = new VnPackMediaFactV1[checked((int)report.mediaCount)];
+                    var variables = new VnPackVariableFactV1[checked((int)report.variableCount)];
+                    var labels = new VnPackLabelFactV1[checked((int)report.labelCount)];
+                    fixed (VnPackOccurrenceFactV1* occurrencePtr = occurrenceRows)
+                    fixed (VnPackMediaFactV1* mediaPtr = mediaRows)
+                    fixed (VnPackVariableFactV1* variablePtr = variables)
+                    fixed (VnPackLabelFactV1* labelPtr = labels)
+                    {
+                        desc.occurrenceCapacity = report.occurrenceCount;
+                        desc.mediaCapacity = report.mediaCount;
+                        desc.variableCapacity = report.variableCount;
+                        desc.labelCapacity = report.labelCount;
+                        desc.occurrences = (IntPtr)occurrencePtr;
+                        desc.media = (IntPtr)mediaPtr;
+                        desc.variables = (IntPtr)variablePtr;
+                        desc.labels = (IntPtr)labelPtr;
+                        result = HarkenNative.Vn_InspectCanonicalPackV1(desc, ref report);
+                    }
+                    if (result == VnResult.VN_OK) { occurrences = occurrenceRows; media = mediaRows; }
+                    return result;
                 }
             }
             catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }

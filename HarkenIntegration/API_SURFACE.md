@@ -65,7 +65,7 @@ requirement.
 | Voice SetSend/ClearSend | Both remain public and are classified as structural compatibility exceptions. They create/replace/remove a route, unlike `SetSendLevel`; their continued presence must not be described as a fully removed structural API surface. This classification records current SDK behavior, not a claim that production projects depend on these calls. |
 | Bus topology/solo/filter and Effect/Binding/raw media mutation | Internal in the Unity managed SDK. Complete native ABI support remains for Studio, Preview, Remote and tests; the C projection is unchanged. |
 | Remote communication | Preserve optional Player settings, status, retry and host lifecycle. The direct managed bridge is internal; public host methods and the Unity integration remain usable in Players. |
-| SDK Editor services | Catalog discovery, waveform browsing, preview preparation and symbol generation are temporarily suspended until they consume current-schema Pack companions. Public declarations remain, but catalog refresh, preview preparation and generator validation/generation return `VN_CAPABILITY_UNAVAILABLE`. The Action Inspector supports manual Action name and project ID configuration. |
+| SDK Editor services | Current companion catalog, existing selection/binding, independent preview and optional published VKD waveforms are supported in the Editor assembly. Native-derived duration does not require VKD. Legacy manifest readers and symbol generation remain suspended. |
 | Generated types | Supported public signature dependencies and their transitive fields, callback parameters, and semantic enum vocabulary (for example device mode and Action outcomes) remain public. Tool-only Unity DTOs, including Snapshot/Monitor types, are internal. Numeric field types do not justify hiding their enum vocabulary. |
 | Helpers and probes | Full P/Invoke, generation helpers, callback pointer fields, mutable catalog/thread probes and byte-provider counters are implementation details. Existing internal consumers remain wired through precise SDK assembly access. |
 
@@ -144,7 +144,7 @@ Use Python 3.12 and the pinned source-parser requirements:
 python -m pip install --only-binary=:all: -r HarkenEngine/Source/Tooling/Binding/surface-requirements.txt
 python HarkenEngine/Source/Tooling/Binding/sdk_surface.py
 python .scripts/tests/test_sdk_surface.py -v
-python .scripts/tests/test_managed_generation_policy.py -v
+python HarkenEngine/Test/UnitTest/test_managed_generation_policy.py -v
 ```
 
 The inventory mode reports observed declarations, source locations and line
@@ -162,7 +162,7 @@ one group. Compatibility groups require a retirement condition. Never change
 the wire table's `public`, opcode, or policy to express an SDK audience.
 
 The source check complements compilation. Run
-`.scripts/check_unity_sdk_boundary.py` separately to stage the
+`HarkenIntegration/Test/ExternalConsumer/check_boundary.py` separately to stage the
 SDK, compile a separate library and non-friend consumer, check every generated
 symbol and test inaccessible APIs independently. Its `--sdk-root` option accepts
 an assembled SDK package; see `HarkenIntegration/Test/ExternalConsumer/README.md` for

@@ -74,6 +74,173 @@ namespace Harken
         VN_GAMEPLAY_CONTRACT_MISMATCH = -1002,
     }
 
+    internal enum VnMonitorExecutionFactKind : uint
+    {
+        VN_MONITOR_FACT_UNKNOWN = 0,
+        VN_MONITOR_FACT_REQUEST_SUBMITTED = 1,
+        VN_MONITOR_FACT_REQUEST_RETURNED = 2,
+        VN_MONITOR_FACT_REQUEST_TERMINAL = 3,
+        VN_MONITOR_FACT_PLAYABLE_PREPARED = 4,
+        VN_MONITOR_FACT_PLAYABLE_ACTIVE = 5,
+        VN_MONITOR_FACT_PLAYABLE_LOGICAL_COMPLETE = 6,
+        VN_MONITOR_FACT_PLAYABLE_AUDIBLE_RETIRING = 7,
+        VN_MONITOR_FACT_PLAYABLE_RETIRED = 8,
+        VN_MONITOR_FACT_PLAYABLE_CANCELED = 9,
+        VN_MONITOR_FACT_ACTION_ACCEPTED = 10,
+        VN_MONITOR_FACT_ACTION_STOPPED = 11,
+        VN_MONITOR_FACT_ACTION_RESULT = 12,
+        VN_MONITOR_FACT_ACTION_REJECTED = 13,
+        VN_MONITOR_FACT_QUEUE_ADVANCED = 14,
+        VN_MONITOR_FACT_QUEUE_FAILED = 15,
+        VN_MONITOR_FACT_TRANSITION_STARTED = 16,
+        VN_MONITOR_FACT_TRANSITION_STOPPED = 17,
+        VN_MONITOR_FACT_TRANSITION_REJECTED = 18,
+        VN_MONITOR_FACT_VOICE_PENDING = 19,
+        VN_MONITOR_FACT_VOICE_LIVE = 20,
+        VN_MONITOR_FACT_VOICE_PARKED = 21,
+        VN_MONITOR_FACT_VOICE_ENDED = 22,
+        VN_MONITOR_FACT_SELECTION_COMMITTED = 23,
+        VN_MONITOR_FACT_EMITTER_CREATED = 24,
+        VN_MONITOR_FACT_EMITTER_DESTROYED = 25,
+        VN_MONITOR_FACT_EMITTER_BINDING_CHANGED = 26,
+        VN_MONITOR_FACT_HOST_REGISTERED = 27,
+        VN_MONITOR_FACT_HOST_UNREGISTERED = 28,
+        VN_MONITOR_FACT_IDENTITY_UPSERT = 29,
+        VN_MONITOR_FACT_IDENTITY_TOMBSTONE = 30,
+        VN_MONITOR_FACT_RENDER_STARTED = 31,
+        VN_MONITOR_FACT_SOURCE_ENDED = 32,
+        VN_MONITOR_FACT_RENDER_ACTIVATION_ENDED = 33,
+        VN_MONITOR_FACT_LOGICAL_VOICE_TERMINAL = 34,
+        VN_MONITOR_FACT_ACTION_TERMINAL = 35,
+        VN_MONITOR_FACT_WAITING = 36,
+        VN_MONITOR_FACT_SOURCE_APPLIED = 37,
+        VN_MONITOR_FACT_SEEK_APPLIED = 38,
+        VN_MONITOR_FACT_RESOURCE_RETIRED = 39,
+        VN_MONITOR_FACT_PLAYABLE_STARTED = 40,
+        VN_MONITOR_FACT_STEP_EXECUTED = 41,
+        VN_MONITOR_FACT_VARIABLE_RESULT = 42,
+        VN_MONITOR_FACT_PLAYABLE_FINISHED = 43,
+    }
+
+    internal enum VnMonitorExecutionField : uint
+    {
+        VN_MONITOR_FACT_FIELD_SUBJECT = 0,
+        VN_MONITOR_FACT_FIELD_PROJECT = 1,
+        VN_MONITOR_FACT_FIELD_CONTENT_OBJECT = 2,
+        VN_MONITOR_FACT_FIELD_CONTENT_WORLD = 3,
+        VN_MONITOR_FACT_FIELD_CONTENT_SEMANTIC = 4,
+        VN_MONITOR_FACT_FIELD_CONTENT_LINEAGE = 5,
+        VN_MONITOR_FACT_FIELD_CONTENT_REVISION = 6,
+        VN_MONITOR_FACT_FIELD_PLAYBACK_REQUEST = 7,
+        VN_MONITOR_FACT_FIELD_PLAYBACK_OPERATION = 8,
+        VN_MONITOR_FACT_FIELD_PLAYBACK_ORIGIN = 9,
+        VN_MONITOR_FACT_FIELD_CONTROL_REQUEST = 10,
+        VN_MONITOR_FACT_FIELD_CONTROL_OPERATION = 11,
+        VN_MONITOR_FACT_FIELD_CONTROL_ORIGIN = 12,
+        VN_MONITOR_FACT_FIELD_CONTROL_ACTION = 13,
+        VN_MONITOR_FACT_FIELD_CONTROL_PARENT = 14,
+        VN_MONITOR_FACT_FIELD_CONTROL_ORDINAL = 15,
+        VN_MONITOR_FACT_FIELD_SELECTION_REQUEST = 16,
+        VN_MONITOR_FACT_FIELD_SELECTION_OPERATION = 17,
+        VN_MONITOR_FACT_FIELD_SELECTION_ORIGIN = 18,
+        VN_MONITOR_FACT_FIELD_SELECTION_ACTION = 19,
+        VN_MONITOR_FACT_FIELD_SELECTION_PARENT = 20,
+        VN_MONITOR_FACT_FIELD_SELECTION_ORDINAL = 21,
+        VN_MONITOR_FACT_FIELD_PARENT_PLAYABLE = 22,
+        VN_MONITOR_FACT_FIELD_PARENT_ACTION = 23,
+        VN_MONITOR_FACT_FIELD_ROOT = 24,
+        VN_MONITOR_FACT_FIELD_RELATED_ACTION = 25,
+        VN_MONITOR_FACT_FIELD_SERVICE_LEAF = 26,
+        VN_MONITOR_FACT_FIELD_RESOURCE_OWNER = 27,
+        VN_MONITOR_FACT_FIELD_LOGICAL_VOICE = 28,
+        VN_MONITOR_FACT_FIELD_RENDER_ACTIVATION = 29,
+        VN_MONITOR_FACT_FIELD_ORIGIN_EMITTER = 30,
+        VN_MONITOR_FACT_FIELD_ORIGIN_KIND = 31,
+        VN_MONITOR_FACT_FIELD_HOST_KEY = 32,
+        VN_MONITOR_FACT_FIELD_HOST_REVISION = 33,
+        VN_MONITOR_FACT_FIELD_HOST_OWNERSHIP = 34,
+        VN_MONITOR_FACT_FIELD_CURRENT_STATE_EMITTER = 35,
+        VN_MONITOR_FACT_FIELD_CURRENT_SPATIAL_EMITTER = 36,
+        VN_MONITOR_FACT_FIELD_STATE_BINDING = 37,
+        VN_MONITOR_FACT_FIELD_SPATIAL_BINDING = 38,
+        VN_MONITOR_FACT_FIELD_LOGIC_COMMIT = 39,
+        VN_MONITOR_FACT_FIELD_READ_CUT_KEY = 40,
+        VN_MONITOR_FACT_FIELD_READ_CUT_SEQUENCE = 41,
+        VN_MONITOR_FACT_FIELD_READ_CUT_ORDINAL = 42,
+        VN_MONITOR_FACT_FIELD_EXECUTE_FRAME = 43,
+        VN_MONITOR_FACT_FIELD_GRAPH_FRAME = 44,
+        VN_MONITOR_FACT_FIELD_TRANSPORT = 45,
+        VN_MONITOR_FACT_FIELD_AUDIO_BLOCK = 46,
+        VN_MONITOR_FACT_FIELD_FRAME_OFFSET = 47,
+        VN_MONITOR_FACT_FIELD_FRAME_SPAN = 48,
+        VN_MONITOR_FACT_FIELD_ARRANGING = 49,
+        VN_MONITOR_FACT_FIELD_CLIP = 50,
+        VN_MONITOR_FACT_FIELD_LOOP = 51,
+        VN_MONITOR_FACT_FIELD_OCCURRENCE = 52,
+        VN_MONITOR_FACT_FIELD_OWNER_EPOCH = 53,
+        VN_MONITOR_FACT_FIELD_RESULT = 54,
+        VN_MONITOR_FACT_FIELD_REASON = 55,
+        VN_MONITOR_FACT_FIELD_TERMINAL_KIND = 56,
+        VN_MONITOR_FACT_FIELD_TIMESTAMP = 57,
+        VN_MONITOR_FACT_FIELD_REQUEST = 58,
+        VN_MONITOR_FACT_FIELD_REQUEST_OPERATION = 59,
+        VN_MONITOR_FACT_FIELD_REQUEST_ORIGIN = 60,
+        VN_MONITOR_FACT_FIELD_CAUSED_BY_REQUEST = 61,
+        VN_MONITOR_FACT_FIELD_CAUSED_BY_OPERATION = 62,
+        VN_MONITOR_FACT_FIELD_CAUSED_BY_ORIGIN = 63,
+        VN_MONITOR_FACT_FIELD_TARGET_HANDLE = 64,
+        VN_MONITOR_FACT_FIELD_TARGET_VALIDATED = 65,
+        VN_MONITOR_FACT_FIELD_TARGET_PROJECT = 66,
+        VN_MONITOR_FACT_FIELD_TARGET_OBJECT = 67,
+        VN_MONITOR_FACT_FIELD_TARGET_WORLD = 68,
+        VN_MONITOR_FACT_FIELD_TARGET_SEMANTIC = 69,
+        VN_MONITOR_FACT_FIELD_TARGET_REVISION = 70,
+        VN_MONITOR_FACT_FIELD_TARGET_KIND = 71,
+        VN_MONITOR_FACT_FIELD_TARGET_CONTENT_KIND = 72,
+        VN_MONITOR_FACT_FIELD_TARGET_SCOPE = 73,
+        VN_MONITOR_FACT_FIELD_ACTIVITY_STEP = 74,
+        VN_MONITOR_FACT_FIELD_ACTIVITY_VARIABLE = 75,
+        VN_MONITOR_FACT_FIELD_ACTION_OUTCOME = 76,
+    }
+
+    internal enum VnMonitorExecutionNamespace : uint
+    {
+        VN_MONITOR_SUBJECT_NONE = 0,
+        VN_MONITOR_SUBJECT_PLAYABLE = 1,
+        VN_MONITOR_SUBJECT_ACTION = 2,
+        VN_MONITOR_SUBJECT_LOGICAL_VOICE = 3,
+        VN_MONITOR_SUBJECT_RENDER_ACTIVATION = 4,
+        VN_MONITOR_SUBJECT_EMITTER = 5,
+        VN_MONITOR_SUBJECT_QUEUE = 6,
+        VN_MONITOR_SUBJECT_TRANSITION = 7,
+        VN_MONITOR_SUBJECT_HOST_SYMBOL = 8,
+    }
+
+    internal enum VnMonitorExecutionContentKind : uint
+    {
+        VN_MONITOR_CONTENT_UNKNOWN = 0,
+        VN_MONITOR_CONTENT_SOUND = 1,
+        VN_MONITOR_CONTENT_CONTAINER = 2,
+        VN_MONITOR_CONTENT_TRACK = 3,
+        VN_MONITOR_CONTENT_PIECE = 4,
+        VN_MONITOR_CONTENT_ACTION = 5,
+        VN_MONITOR_CONTENT_MEDIA = 6,
+        VN_MONITOR_CONTENT_VARIABLE = 7,
+    }
+
+    internal enum VnMonitorExecutionFlags : uint
+    {
+        VN_MONITOR_FACT_FLAG_IDENTITY_INCOMPLETE = 1,
+        VN_MONITOR_FACT_FLAG_CONTROL_INCOMPLETE = 2,
+    }
+
+    internal enum VnMonitorEventSessionState : uint
+    {
+        VN_MONITOR_EVENT_SESSION_LIVE = 0,
+        VN_MONITOR_EVENT_SESSION_SEALED = 1,
+        VN_MONITOR_EVENT_SESSION_DRAINED = 2,
+    }
+
     public enum VnDeviceMode : uint
     {
         VN_DEVICE_REAL = 0,
@@ -438,6 +605,58 @@ namespace Harken
         VN_PROPERTY_BINDING_PENDING = 4,
     }
 
+    internal enum VnMonitorStreamKind : uint
+    {
+        VN_MONITOR_STREAM_STATE = 1,
+        VN_MONITOR_STREAM_EVENT = 2,
+        VN_MONITOR_STREAM_TIME_SERIES = 4,
+        VN_MONITOR_STREAM_OPTIONAL_AUDIO = 8,
+    }
+
+    internal enum VnMonitorRecordKind : uint
+    {
+        VN_MONITOR_RECORD_UNKNOWN = 0,
+        VN_MONITOR_RECORD_STATE_CUT_BEGIN = 1,
+        VN_MONITOR_RECORD_STATE_UPSERT = 2,
+        VN_MONITOR_RECORD_STATE_TOMBSTONE = 3,
+        VN_MONITOR_RECORD_STATE_CUT_END = 4,
+        VN_MONITOR_RECORD_EVENT = 5,
+        VN_MONITOR_RECORD_TIME_SERIES = 6,
+        VN_MONITOR_RECORD_AUDIO_CHUNK = 7,
+        VN_MONITOR_RECORD_WAVEFORM_BUCKET = 8,
+        VN_MONITOR_RECORD_SCOPE_RESULT = 9,
+        VN_MONITOR_RECORD_SPECTRUM = 10,
+        VN_MONITOR_RECORD_METER = 11,
+        VN_MONITOR_RECORD_GAIN_REDUCTION = 12,
+        VN_MONITOR_RECORD_DROP_SUMMARY = 13,
+        VN_MONITOR_RECORD_STREAM_BASELINE = 14,
+        VN_MONITOR_RECORD_CAPTURE_PLAN_ACTIVATED = 15,
+        VN_MONITOR_RECORD_TAP_BINDING_CHANGED = 16,
+        VN_MONITOR_RECORD_PARTIAL_BUCKET_DISCARDED = 17,
+        VN_MONITOR_RECORD_AGGREGATE = 18,
+        VN_MONITOR_RECORD_MEASUREMENT_SEGMENT_RESET = 19,
+        VN_MONITOR_RECORD_CLOCK_ANCHOR = 20,
+        VN_MONITOR_RECORD_REGISTRY_REVISION = 21,
+        VN_MONITOR_RECORD_INVALID = 22,
+        VN_MONITOR_RECORD_EVENT_DETAIL = 23,
+        VN_MONITOR_RECORD_EXECUTION_FACT = 24,
+        VN_MONITOR_RECORD_IDENTITY_FACT = 25,
+        VN_MONITOR_RECORD_IDENTITY_CUT_BEGIN = 26,
+        VN_MONITOR_RECORD_IDENTITY_CUT_END = 27,
+        VN_MONITOR_RECORD_HOST_OBJECT_SYMBOL = 28,
+    }
+
+    internal enum VnMonitorPermissionMask : uint
+    {
+        VN_MONITOR_PERM_OBSERVE_STATE = 1,
+        VN_MONITOR_PERM_OBSERVE_EVENTS = 2,
+        VN_MONITOR_PERM_OBSERVE_MEASUREMENTS = 4,
+        VN_MONITOR_PERM_CAPTURE_CONTROL = 8,
+        VN_MONITOR_PERM_RECORD = 16,
+        VN_MONITOR_PERM_RAW_AUDIO = 32,
+        VN_MONITOR_PERM_SYMBOLS = 64,
+    }
+
     public enum VnRemoteFlags : uint
     {
         VN_REMOTE_DISCOVERY_ENABLED = 1,
@@ -483,6 +702,8 @@ namespace Harken
         public const uint VN_CANONICAL_PACK_SET_MEMBER_RESULT_RETAINED = 1u;
         public const uint VN_CANONICAL_PACK_SET_MEMBER_RESULT_ADDED = 2u;
         public const uint VN_CANONICAL_PACK_SET_MEMBER_RESULT_INIT = 4u;
+        internal const uint VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES = 316u;
+        internal const uint VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN = 1u;
     }
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -1638,6 +1859,228 @@ namespace Harken
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal struct VnMonitorTelemetryCorrelation
+    {
+    public uint structSize;
+    public uint reserved0;
+    public ulong arrangingInstance;
+    public VnObjectId clipId;
+    public uint loopIteration;
+    public uint occurrenceOrdinal;
+    public ulong logicCommitSequence;
+    public ulong executeFrame;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnMonitorRecordHeader
+    {
+    public uint structSize;
+    public uint recordKind;
+    public uint recordVersion;
+    public uint flags;
+    public uint streamKind;
+    public uint reserved0;
+    public ulong recordBytes;
+    public ulong streamId;
+    public ulong producerId;
+    public ulong sourceSequence;
+    public ulong deliverySequence;
+    public ulong engineMonitorInstanceId;
+    public ulong monitorSessionEpoch;
+    public ulong worldGeneration;
+    public ulong capturePlanGeneration;
+    public ulong renderPlanGeneration;
+    public ulong transportEpoch;
+    public ulong deviceEpoch;
+    public ulong clockAnchorGeneration;
+    public ulong measurementSegmentGeneration;
+    public ulong executeFrame;
+    public ulong graphFrame;
+    public ulong devicePresentationEstimate;
+    public uint deviceUncertaintyFrames;
+    public uint entityKind;
+    public ulong programSemanticFingerprint;
+    public ulong runtimeLineageFingerprint;
+    public ulong optionalSymbolFingerprint;
+    public VnObjectId stableId;
+    public ulong instanceHandle;
+    public ulong instanceGeneration;
+    public ulong actionInstanceHandle;
+    public ulong playableInstanceHandle;
+    public ulong parentActionInstanceHandle;
+    public ulong traceCorrelationId;
+    public uint reason;
+    public uint validityFlags;
+    public ulong payloadBytes;
+    public VnMonitorTelemetryCorrelation telemetry;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnMonitorFactRequest
+    {
+    public ulong sequence;
+    public uint operation;
+    public uint origin;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnMonitorFactCause
+    {
+    public ulong action;
+    public ulong parentPlayable;
+    public uint executionOrdinal;
+    public uint reserved0;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnMonitorFactTarget
+    {
+    public ulong handle;
+    public VnObjectId projectId;
+    public VnObjectId objectId;
+    public ulong worldGeneration;
+    public ulong programSemanticFingerprint;
+    public ulong contentRevision;
+    public uint kind;
+    public uint contentKind;
+    public uint scope;
+    public uint reserved0;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnMonitorExecutionFactV1
+    {
+    public uint structSize;
+    public ushort factKind;
+    public byte subjectNamespace;
+    public byte contentKind;
+    public ulong validityLo;
+    public ulong validityHi;
+    public ulong timestampNs;
+    public VnObjectId projectId;
+    public ulong contentRevision;
+    public uint factFlags;
+    public uint reserved0;
+    public VnMonitorFactRequest request;
+    public VnMonitorFactRequest playbackRequest;
+    public VnMonitorFactRequest causedByRequest;
+    public VnMonitorFactRequest controlRequest;
+    public VnMonitorFactRequest selectionRequest;
+    public VnMonitorFactCause control;
+    public VnMonitorFactCause selection;
+    public ulong root;
+    public ulong serviceLeaf;
+    public ulong resourceOwner;
+    public ulong logicalVoice;
+    public ulong renderActivation;
+    public ulong originEmitter;
+    public ulong hostSession;
+    public ulong hostLocalSequence;
+    public ulong originHostRevision;
+    public ulong currentStateEmitter;
+    public ulong currentSpatialEmitter;
+    public uint originKind;
+    public uint hostOwnership;
+    public uint stateBinding;
+    public uint spatialBinding;
+    public uint terminalKind;
+    public int result;
+    public ulong readCutKey;
+    public ulong readCutSequence;
+    public ulong audioBlock;
+    public ulong ownerEpoch;
+    public uint frameOffset;
+    public uint frameSpan;
+    public uint readCutOrdinalExclusive;
+    public uint reserved1;
+    public VnMonitorFactTarget target;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnMonitorSessionDescV2
+    {
+    public uint structSize;
+    public uint requestedStreamKindMask;
+    public uint requestRawAudio;
+    public uint requestSymbols;
+    public ulong consumerQueueBytes;
+    public uint requestedPermissionMask;
+    public uint reserved0;
+    public uint requestedExecutionFactVersion;
+    public uint reserved1;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct VnMonitorEventSessionStatusV2
+    {
+    public uint structSize;
+    public uint state;
+    public ulong monitorSessionEpoch;
+    public ulong startedTimestampNs;
+    public ulong stoppedTimestampNs;
+    public ulong sourceDroppedRecords;
+    public ulong deliveryDroppedRecords;
+    public uint acceptedExecutionFactVersion;
+    public uint baselineAvailability;
+    public fixed ulong supportedFactKinds[2];
+    public uint requestedPermissionMask;
+    public uint acceptedPermissionMask;
+    public uint deniedPermissionMask;
+    public uint unsupportedPermissionMask;
+    public uint acceptedStreamKindMask;
+    public uint symbolsDecision;
+    public uint symbolAvailability;
+    public uint reserved0;
+    public ulong identityUnavailableCount;
+    public ulong baselineStateCutId;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnMonitorSessionDesc
+    {
+    public uint structSize;
+    public uint requestedStreamKindMask;
+    public uint requestRawAudio;
+    public uint requestSymbols;
+    public ulong consumerQueueBytes;
+    public uint requestedPermissionMask;
+    public uint reserved0;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnMonitorPollDesc
+    {
+    public uint structSize;
+    public uint reserved0;
+    public IntPtr buffer;
+    public ulong bufferBytes;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnMonitorPollResult
+    {
+    public uint structSize;
+    public uint recordsWritten;
+    public ulong bytesWritten;
+    public ulong nextRecordBytes;
+    public ulong recordsRemaining;
+    public ulong firstDeliverySequence;
+    public ulong lastDeliverySequence;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnMonitorEventSessionStatus
+    {
+    public uint structSize;
+    public uint state;
+    public ulong monitorSessionEpoch;
+    public ulong startedTimestampNs;
+    public ulong stoppedTimestampNs;
+    public ulong sourceDroppedRecords;
+    public ulong deliveryDroppedRecords;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal struct VnVariableWriteV1
     {
     public VnObjectId variableId;
@@ -1731,6 +2174,42 @@ namespace Harken
     public uint structSize;
     public uint flags;
     public ulong reserved0;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnMonitorFactActivity
+    {
+    public uint actionOutcome;
+    public uint stepIndex;
+    public uint stepExecutionOrdinal;
+    public uint stepOpcode;
+    public uint reservedStep;
+    public uint stepTargetKind;
+    public uint variableValueBits;
+    public uint variableScope;
+    public uint variableOutcome;
+    public uint reserved0;
+    public VnObjectId stepTargetId;
+    public ulong variableTicket;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnMonitorPlayableProvenance
+    {
+    public VnObjectId rootPlayableId;
+    public ulong rootProgramFingerprint;
+    public ulong occurrenceFingerprint;
+    public ulong mediaChecksum;
+    public uint childOrdinal;
+    public uint knownFlags;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnMonitorExecutionFactV3
+    {
+    public VnMonitorExecutionFactV1 fact;
+    public VnMonitorFactActivity activity;
+    public VnMonitorPlayableProvenance playable;
     }
 
 }
