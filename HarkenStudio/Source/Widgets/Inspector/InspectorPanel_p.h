@@ -54,7 +54,7 @@ public:
         PageBus,
         PageContainer,
         PageTrack,
-        PagePiece,
+        PageSegment,
         PageVariable,
         PageCount
     };
@@ -77,7 +77,7 @@ public:
     void setupLayerPage();
     void setupContainerPage();
     void setupTrackPage();
-    void setupPiecePage();
+    void setupSegmentPage();
     void setupVariablePage();
     void setupBusPage();
     void wireAuthoringCommit(PropertyEditorEngine* engine);
@@ -114,9 +114,9 @@ public:
     InspectorCustomization trackCustomization_;
     ProjectItem* currentTrackItem_ = nullptr;
 
-    PropertyEditorEngine* pieceEngine_ = nullptr;
-    InspectorCustomization pieceCustomization_;
-    ProjectItem* currentPieceItem_ = nullptr;
+    PropertyEditorEngine* segmentEngine_ = nullptr;
+    InspectorCustomization segmentCustomization_;
+    ProjectItem* currentSegmentItem_ = nullptr;
 
     PropertyEditorEngine* variableEngine_ = nullptr;
     InspectorCustomization variableCustomization_;
@@ -138,7 +138,7 @@ public:
     {
         return origin == soundEngine_ || origin == layerEngine_
             || origin == containerEngine_ || origin == trackEngine_
-            || origin == pieceEngine_ || origin == variableEngine_
+            || origin == segmentEngine_ || origin == variableEngine_
             || origin == busEngine_
             || origin == actionEngine_ || origin == attenuationEngine_;
     }

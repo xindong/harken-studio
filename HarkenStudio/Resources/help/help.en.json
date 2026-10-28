@@ -11,14 +11,14 @@
     },
     "Container": {
       "title": "Container",
-      "body": "Selects or mixes child Sounds, Containers, Tracks, and Pieces using Random, Sequence, Match, or Blend mode. Nest Containers to combine selection rules."
+      "body": "Selects or mixes child Sounds, Containers, Tracks, and Segments using Random, Sequence, Match, or Blend mode. Nest Containers to combine selection rules."
     },
     "Track": {
       "title": "Track",
-      "body": "Places Sound, Container, or Piece clips on one timeline. Each clip starts at its scheduled time and plays using the child's settings; overlapping clips play together."
+      "body": "Places Sound, Container, or Segment clips on one timeline. Each clip starts at its scheduled time and plays using the child's settings; overlapping clips play together."
     },
-    "Piece": {
-      "title": "Piece",
+    "Segment": {
+      "title": "Segment",
       "body": "Aligns several Tracks on a shared timeline, with Entry, Exit, and Custom markers for playback timing. Editing uses absolute time; existing musical timelines are read-only."
     },
     "Layer": {

@@ -48,7 +48,7 @@ Variable 的写入目标由一次赋值选择，消费者的读取来源由其�
 
 | 消费位置 | 求值上下文 | Variable 读取规则 |
 | --- | --- | --- |
-| Sound、Container、Track、Piece 的播放消费者，包含 Match 选择、Blend 增益、Voice Binding | 该播放实例关联的 Emitter | 该 Emitter 的局部值优先，否则全局值；无 Emitter 时读取全局值 |
+| Sound、Container、Track、Segment 的播放消费者，包含 Match 选择、Blend 增益、Voice Binding | 该播放实例关联的 Emitter | 该 Emitter 的局部值优先，否则全局值；无 Emitter 时读取全局值 |
 | Layer Binding | 每个受其影响的后代播放实例的 Emitter | 该 Emitter 的局部值优先，否则全局值；无 Emitter 时读取全局值 |
 | Bus Binding | 无 Emitter 上下文 | 始终读取全局值 |
 
@@ -74,7 +74,7 @@ Match 与 Blend 的 **Variable Response** 是容器局部枚举：**At Start** �
 
 Blend 是 Container 的多选与混合模式，不是 Match 条件表的连续版本。`selection.selections` 统一保存四种选择策略的条目；Selection Editor 在 Blend 模式下显示混合表，每行（row）配置一个可选的 Variable，并为参与的每个 child 提供一条完整的自由曲线。横轴为 Variable 数值，纵轴为独立的 0–100% 线性增益；所有 child 的百分比不自动归一化，两个 100% 成员均以原始音量播放。同一行中的同一 child 只有一条曲线，多峰与多个静音区间通过曲线本身表达。行的 Variable 可以为空，此时仅禁用曲线坐标编辑区，Child 副表中的成员按 100% 参与默认混合；已有曲线保留，重新指定 Variable 后恢复使用。
 
-同一 child 可以进入不同 Variable 的混合行，仍共用一份播放，各行贡献相乘；两个 50% 得到 25%。未进入的行不影响该 child。移除某行中的成员只移除这一行的贡献，最后一处成员引用移除后才退出混合成员集合。混合行是统一 selections 的编辑视图，不是另一份成员名单。Track 专指 Piece/Track 对象体系中的轨道。Random/Sequence 的 Inspector 表、Match 条件矩阵与混合表仅因内容复杂度而采用不同编辑入口；模式切换保留条目中的重复播放项、条件和曲线。
+同一 child 可以进入不同 Variable 的混合行，仍共用一份播放，各行贡献相乘；两个 50% 得到 25%。未进入的行不影响该 child。移除某行中的成员只移除这一行的贡献，最后一处成员引用移除后才退出混合成员集合。混合行是统一 selections 的编辑视图，不是另一份成员名单。Track 专指 Segment/Track 对象体系中的轨道。Random/Sequence 的 Inspector 表、Match 条件矩阵与混合表仅因内容复杂度而采用不同编辑入口；模式切换保留条目中的重复播放项、条件和曲线。
 
 曲线首尾点界定有效区间，区间外的贡献为 0%；首尾点不固定在变量范围两端，可以直接编辑坐标。曲线容器标题只沿横轴拖动，所有点与手柄共同平移、百分比不变；调整区间通过首尾点完成，不另设容器边缘缩放。变量范围变更保留既有数值坐标。混合曲线仍使用公共点与贝塞尔手柄表示；Pack 编译以首尾点作为区间边界，将同一 child 的各行贡献放入同一个运行时连续成员，不改变引擎的 VariableControl / ContinuousGrid 术语。
 

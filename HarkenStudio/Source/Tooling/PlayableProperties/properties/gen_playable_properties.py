@@ -53,8 +53,8 @@ def load_table():
         raise TableError("contentKinds and fields must be lists")
     if [(row.get("ordinal"), row.get("name")) for row in kinds] != [
             (0, "Layer"), (1, "Sound"), (2, "Container"),
-            (3, "Track"), (4, "Piece")]:
-        raise TableError("ContentPropertyKindV1 must be Layer0..Piece4")
+            (3, "Track"), (4, "Segment")]:
+        raise TableError("ContentPropertyKindV1 must be Layer0..Segment4")
     if [row.get("id") for row in fields] != list(range(1, 13)) + [14, 16, 17]:
         raise TableError("property ids must be 1..12, 14, 16 and 17; ids 13 and 15 are retired")
     names = [row.get("name") for row in fields]
@@ -168,7 +168,7 @@ def emit_runtime(table, namespace="harken",
            "#define %s\n\n" % guard,
            "#include <cstdint>\n#include <iterator>\n\n",
            "namespace %s { namespace playableproperties {\n\n" % namespace,
-           "enum class ContentPropertyKindV1 : std::uint8_t { Layer = 0, Sound = 1, Container = 2, Track = 3, Piece = 4 };\n\n",
+           "enum class ContentPropertyKindV1 : std::uint8_t { Layer = 0, Sound = 1, Container = 2, Track = 3, Segment = 4 };\n\n",
            "enum class PlayablePropertyIdV1 : std::uint8_t {\n"]
     for row in table["fields"]:
         out.append("    %s = %d,\n" % (enum_name(row["name"]), row["id"]))

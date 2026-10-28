@@ -26,7 +26,7 @@ protected:
     ProjectItem* b3 = create("B3", T::Bus, master);
     ProjectItem* l3 = create("L3", T::Layer);
     ProjectItem* l1 = create("L1", T::Layer, l3);
-    ProjectItem* p1 = create("P1", T::Piece, l1);
+    ProjectItem* p1 = create("P1", T::Segment, l1);
     ProjectItem* t1 = create("T1", T::Track, p1);
     ProjectItem* s1 = create("S1", T::Sound, t1);
     ProjectItem* s2 = create("S2", T::Sound, t1);

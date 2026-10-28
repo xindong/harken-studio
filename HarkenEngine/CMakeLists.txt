@@ -443,7 +443,7 @@ add_subdirectory(Tool/Remote)
 
 # Development preview play surface (Source/Tooling): the C entry face a
 # Studio-side host uses to hear one registered program. A tooling library because
-# playing a piece directly is not a gameplay capability -- production content
+# playing a segment directly is not a gameplay capability -- production content
 # starts through the Action program surface -- and a separate target because which
 # targets link it is what keeps it out of shipped products. harken_core exports
 # nothing for it and knows nothing about it.

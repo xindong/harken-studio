@@ -92,7 +92,7 @@ struct PlayableInstanceDeadlineTestAccess {
         const PreparedPlayableInstance& original) noexcept {
         auto* row = table.FindPrepared(original);
         if (row == nullptr || row->kind != PlayableKind::Container) return false;
-        row->kind = PlayableKind::Piece;
+        row->kind = PlayableKind::Segment;
         return true;
     }
 };
@@ -1139,7 +1139,7 @@ void ExpectVariableControlTree(
         const auto selectedView = engine.playableInstances.Classify(selected);
         ASSERT_TRUE(selectedView.live);
         EXPECT_EQ(selectedView.kind == harken::PlayableKind::Track ||
-                      selectedView.kind == harken::PlayableKind::Piece
+                      selectedView.kind == harken::PlayableKind::Segment
                       ? selected
                       : row.rootInstance,
                   leafView.parent);
@@ -1179,7 +1179,7 @@ void ExpectVariableControlRetargetTree(
             row.VariableControlRetargetIncoming().leaves[index].handle);
         ASSERT_TRUE(leaf.live);
         if (incomingKind != harken::PlayableKind::Track &&
-            incomingKind != harken::PlayableKind::Piece) {
+            incomingKind != harken::PlayableKind::Segment) {
             EXPECT_EQ(row.VariableControlRetargetIncoming().leaves[index].handle,
                       row.VariablePayload().variableControlDiscreteRetargetIncomingChild);
         } else {
@@ -1189,7 +1189,7 @@ void ExpectVariableControlRetargetTree(
         EXPECT_EQ(row.VariableControlRetargetIncoming().leaves[index].epoch,
                   leaf.scheduleEpoch);
         EXPECT_EQ(incomingKind == harken::PlayableKind::Track ||
-                      incomingKind == harken::PlayableKind::Piece
+                      incomingKind == harken::PlayableKind::Segment
                       ? row.VariablePayload().variableControlDiscreteRetargetIncomingChild
                       : row.rootInstance,
                   leaf.parent);
@@ -1396,9 +1396,9 @@ struct CanonicalActionWorld {
     harken::AuthoredCompletionLeafV1 queueCompletionLeaves[2]{};
     harken::ScheduleClipPlacementV1 trackPlacements[2]{};
     harken::TrackScheduleProgramViewV1 track{};
-    harken::ScheduleTrackRefV1 pieceTrackRef{};
-    harken::ScheduleMarkerV1 pieceMarkers[2]{};
-    harken::PieceScheduleProgramViewV1 piece{};
+    harken::ScheduleTrackRefV1 segmentTrackRef{};
+    harken::ScheduleMarkerV1 segmentMarkers[2]{};
+    harken::SegmentScheduleProgramViewV1 segment{};
     harken::CurveV1 transitionCurves[2]{};
     harken::TransitionRuleViewV1 transitionRules[2]{};
     harken::TransitionProgramViewV1 transition{};
@@ -2713,11 +2713,11 @@ struct CanonicalActionWorld {
             harken::ComputeCurrentWorldFingerprintV4(world);
     }
 
-    void MakeFirstVariableControlChildCompositePiece() {
+    void MakeFirstVariableControlChildCompositeSegment() {
         MakeFirstVariableControlChildCompositeTrack();
         auto& property = properties[7];
         property.contentPropertyKind =
-            harken::playableproperties::ContentPropertyKindV1::Piece;
+            harken::playableproperties::ContentPropertyKindV1::Segment;
         property.stableId = harkentest::ObjectId(76);
         property.authoredStableOrder = 7;
         property.contentRevision = 1;
@@ -2726,32 +2726,32 @@ struct CanonicalActionWorld {
         property.payload = ResolvedPayload();
         property.programSemanticFingerprint =
             harken::ComputePlayablePropertyFingerprintV1(property);
-        pieceTrackRef.trackDefinition = track.rootDefinition;
-        pieceTrackRef.trackScheduleSemanticFingerprint =
+        segmentTrackRef.trackDefinition = track.rootDefinition;
+        segmentTrackRef.trackScheduleSemanticFingerprint =
             track.scheduleSemanticFingerprint;
-        pieceTrackRef.stableTrackOrdinal = 0;
-        piece.rootDefinition.kind = harken::PlayableKindV1::Piece;
-        piece.rootDefinition.stableId = property.stableId;
-        piece.rootDefinition.expectedProgramSemanticFingerprint =
+        segmentTrackRef.stableTrackOrdinal = 0;
+        segment.rootDefinition.kind = harken::PlayableKindV1::Segment;
+        segment.rootDefinition.stableId = property.stableId;
+        segment.rootDefinition.expectedProgramSemanticFingerprint =
             property.programSemanticFingerprint;
-        piece.rootDefinition.contentRevision = property.contentRevision;
-        piece.rootDefinition.routeStableId = property.routeStableId;
-        piece.rootDefinition.compatibilityFingerprint =
+        segment.rootDefinition.contentRevision = property.contentRevision;
+        segment.rootDefinition.routeStableId = property.routeStableId;
+        segment.rootDefinition.compatibilityFingerprint =
             property.compatibilityFingerprint;
-        piece.timeKind = harken::ScheduleTimeKindV1::AbsoluteNanoseconds;
-        piece.trackRefCount = 1;
-        piece.trackRefs = &pieceTrackRef;
-        piece.scheduleSemanticFingerprint =
-            harken::ComputePieceScheduleFingerprintV1(piece);
-        variableControlChildren[0].playable = piece.rootDefinition;
+        segment.timeKind = harken::ScheduleTimeKindV1::AbsoluteNanoseconds;
+        segment.trackRefCount = 1;
+        segment.trackRefs = &segmentTrackRef;
+        segment.scheduleSemanticFingerprint =
+            harken::ComputeSegmentScheduleFingerprintV1(segment);
+        variableControlChildren[0].playable = segment.rootDefinition;
         variableControlChildren[0].timingHint = {};
         occurrences[4].childPlayable =
             variableControlChildren[0].playable;
         occurrences[4].occurrenceSemanticFingerprint =
             harken::ComputePlayableOccurrenceFingerprintV1(occurrences[4]);
         world.playablePropertyCount = 8;
-        world.pieceSchedules = &piece;
-        world.pieceScheduleCount = 1;
+        world.segmentSchedules = &segment;
+        world.segmentScheduleCount = 1;
         world.identity.runtimeSemanticFingerprint =
             harken::ComputeCurrentWorldFingerprintV4(world);
     }
@@ -2901,7 +2901,7 @@ struct CanonicalActionWorld {
             return;
         }
         sequenceChild = child;
-        MakeFirstQueueChildCompositePiece();
+        MakeFirstQueueChildCompositeSegment();
         MakeImmediateSoundPlayAction();
         child = queueChildren[0];
         child.timingHint = {};
@@ -3086,8 +3086,8 @@ struct CanonicalActionWorld {
         case harken::ActionTargetKindV1::Track:
             MakeImmediateCompositeTrackPlayAction();
             break;
-        case harken::ActionTargetKindV1::Piece:
-            MakeImmediateCompositePiecePlayAction();
+        case harken::ActionTargetKindV1::Segment:
+            MakeImmediateCompositeSegmentPlayAction();
             break;
         default:
             return;
@@ -3163,7 +3163,7 @@ struct CanonicalActionWorld {
         harken::ActionIfSilentV1 ifSilent = harken::ActionIfSilentV1::Immediate,
         std::int64_t delayNanoseconds = 0,
         harken::ActionTargetKindV1 referenceKind =
-            harken::ActionTargetKindV1::Piece,
+            harken::ActionTargetKindV1::Segment,
         std::uint32_t actionIndex = 11, std::uint32_t stepIndex = 15,
         VnObjectId actionId = harkentest::ObjectId(52),
         bool explicitExitMarkerReference = false) {
@@ -3185,10 +3185,10 @@ struct CanonicalActionWorld {
             (timing != harken::ActionQuantizeTimingV1::ExitMarker ||
              explicitExitMarkerReference)) {
             step.quantizeReference.kind = referenceKind;
-            if (referenceKind == harken::ActionTargetKindV1::Piece) {
-                step.quantizeReference.stableId = piece.rootDefinition.stableId;
+            if (referenceKind == harken::ActionTargetKindV1::Segment) {
+                step.quantizeReference.stableId = segment.rootDefinition.stableId;
                 step.quantizeReference.expectedProgramSemanticFingerprint =
-                    piece.rootDefinition.expectedProgramSemanticFingerprint;
+                    segment.rootDefinition.expectedProgramSemanticFingerprint;
             } else {
                 step.quantizeReference.stableId = properties[0].stableId;
                 step.quantizeReference.expectedProgramSemanticFingerprint =
@@ -3248,13 +3248,13 @@ struct CanonicalActionWorld {
             harken::ComputeCurrentWorldFingerprintV4(world);
     }
 
-    void MakeImmediateCompositePiecePlayAction(bool exitMarker = false) {
-        MakeFirstQueueChildCompositePiece(exitMarker);
+    void MakeImmediateCompositeSegmentPlayAction(bool exitMarker = false) {
+        MakeFirstQueueChildCompositeSegment(exitMarker);
         MakeImmediateSoundPlayAction();
-        steps[11].target.kind = harken::ActionTargetKindV1::Piece;
-        steps[11].target.stableId = piece.rootDefinition.stableId;
+        steps[11].target.kind = harken::ActionTargetKindV1::Segment;
+        steps[11].target.stableId = segment.rootDefinition.stableId;
         steps[11].target.expectedProgramSemanticFingerprint =
-            piece.rootDefinition.expectedProgramSemanticFingerprint;
+            segment.rootDefinition.expectedProgramSemanticFingerprint;
         actions[9].programSemanticFingerprint =
             harken::ComputeActionProgramFingerprintV1(actions[9]);
         world.identity.runtimeSemanticFingerprint =
@@ -3266,7 +3266,7 @@ struct CanonicalActionWorld {
         harken::ActionIfSilentV1 ifSilent = harken::ActionIfSilentV1::Immediate,
         std::int64_t delayNanoseconds = 0,
         harken::ActionTargetKindV1 referenceKind =
-            harken::ActionTargetKindV1::Piece,
+            harken::ActionTargetKindV1::Segment,
         std::uint32_t actionIndex = 10, std::uint32_t stepIndex = 14,
         VnObjectId actionId = harkentest::ObjectId(51)) {
         auto& step = steps[stepIndex];
@@ -3283,10 +3283,10 @@ struct CanonicalActionWorld {
         step.ifSilent = ifSilent;
         if (timing != harken::ActionQuantizeTimingV1::Immediate) {
             step.quantizeReference.kind = referenceKind;
-            if (referenceKind == harken::ActionTargetKindV1::Piece) {
-                step.quantizeReference.stableId = piece.rootDefinition.stableId;
+            if (referenceKind == harken::ActionTargetKindV1::Segment) {
+                step.quantizeReference.stableId = segment.rootDefinition.stableId;
                 step.quantizeReference.expectedProgramSemanticFingerprint =
-                    piece.rootDefinition.expectedProgramSemanticFingerprint;
+                    segment.rootDefinition.expectedProgramSemanticFingerprint;
             } else {
                 step.quantizeReference.stableId = properties[0].stableId;
                 step.quantizeReference.expectedProgramSemanticFingerprint =
@@ -3455,12 +3455,12 @@ struct CanonicalActionWorld {
         MakeQueueChildCompositeTrack(1);
     }
 
-    void MakeQueueChildCompositePiece(std::uint32_t childIndex,
+    void MakeQueueChildCompositeSegment(std::uint32_t childIndex,
                                       bool exitMarker = false) {
         MakeQueueChildCompositeTrack(childIndex);
         auto& property = properties[6];
         property.contentPropertyKind =
-            harken::playableproperties::ContentPropertyKindV1::Piece;
+            harken::playableproperties::ContentPropertyKindV1::Segment;
         property.stableId = harkentest::ObjectId(76);
         property.authoredStableOrder = 6;
         property.contentRevision = 1;
@@ -3469,51 +3469,51 @@ struct CanonicalActionWorld {
         property.payload = ResolvedPayload();
         property.programSemanticFingerprint =
             harken::ComputePlayablePropertyFingerprintV1(property);
-        pieceTrackRef.trackDefinition = track.rootDefinition;
-        pieceTrackRef.trackScheduleSemanticFingerprint =
+        segmentTrackRef.trackDefinition = track.rootDefinition;
+        segmentTrackRef.trackScheduleSemanticFingerprint =
             track.scheduleSemanticFingerprint;
-        pieceTrackRef.stableTrackOrdinal = 0;
-        piece.rootDefinition.kind = harken::PlayableKindV1::Piece;
-        piece.rootDefinition.stableId = property.stableId;
-        piece.rootDefinition.expectedProgramSemanticFingerprint =
+        segmentTrackRef.stableTrackOrdinal = 0;
+        segment.rootDefinition.kind = harken::PlayableKindV1::Segment;
+        segment.rootDefinition.stableId = property.stableId;
+        segment.rootDefinition.expectedProgramSemanticFingerprint =
             property.programSemanticFingerprint;
-        piece.rootDefinition.contentRevision = property.contentRevision;
-        piece.rootDefinition.routeStableId = property.routeStableId;
-        piece.rootDefinition.compatibilityFingerprint =
+        segment.rootDefinition.contentRevision = property.contentRevision;
+        segment.rootDefinition.routeStableId = property.routeStableId;
+        segment.rootDefinition.compatibilityFingerprint =
             property.compatibilityFingerprint;
-        piece.timeKind = harken::ScheduleTimeKindV1::MusicalTicks;
-        piece.microsPerQuarter = 20000;
-        piece.meterNumerator = 4;
-        piece.meterDenominator = 4;
-        piece.startPointKind = 0;
-        piece.startMarkerId = 0;
-        pieceMarkers[0].stableMarkerId = harkentest::ObjectId(10001);
-        pieceMarkers[0].markerId = 11;
-        pieceMarkers[0].markerKind = exitMarker ? 1u : 0u;
-        pieceMarkers[0].position = 480;
-        pieceMarkers[1].stableMarkerId = harkentest::ObjectId(10002);
-        pieceMarkers[1].markerId = 12;
-        pieceMarkers[1].markerKind = 0;
-        pieceMarkers[1].position = 1920;
-        piece.markerCount = 2;
-        piece.markers = pieceMarkers;
-        piece.trackRefCount = 1;
-        piece.trackRefs = &pieceTrackRef;
-        piece.scheduleSemanticFingerprint =
-            harken::ComputePieceScheduleFingerprintV1(piece);
-        queueChildren[childIndex].playable = piece.rootDefinition;
+        segment.timeKind = harken::ScheduleTimeKindV1::MusicalTicks;
+        segment.microsPerQuarter = 20000;
+        segment.meterNumerator = 4;
+        segment.meterDenominator = 4;
+        segment.startPointKind = 0;
+        segment.startMarkerId = 0;
+        segmentMarkers[0].stableMarkerId = harkentest::ObjectId(10001);
+        segmentMarkers[0].markerId = 11;
+        segmentMarkers[0].markerKind = exitMarker ? 1u : 0u;
+        segmentMarkers[0].position = 480;
+        segmentMarkers[1].stableMarkerId = harkentest::ObjectId(10002);
+        segmentMarkers[1].markerId = 12;
+        segmentMarkers[1].markerKind = 0;
+        segmentMarkers[1].position = 1920;
+        segment.markerCount = 2;
+        segment.markers = segmentMarkers;
+        segment.trackRefCount = 1;
+        segment.trackRefs = &segmentTrackRef;
+        segment.scheduleSemanticFingerprint =
+            harken::ComputeSegmentScheduleFingerprintV1(segment);
+        queueChildren[childIndex].playable = segment.rootDefinition;
         queueChildren[childIndex].timingHint =
             harken::MakeScheduleReferenceTimingHint(
-                harken::PlayableKindV1::Piece, piece.rootDefinition.stableId,
-                piece.scheduleSemanticFingerprint);
+                harken::PlayableKindV1::Segment, segment.rootDefinition.stableId,
+                segment.scheduleSemanticFingerprint);
         occurrences[2 + childIndex].childPlayable =
             queueChildren[childIndex].playable;
         occurrences[2 + childIndex].occurrenceSemanticFingerprint =
             harken::ComputePlayableOccurrenceFingerprintV1(
                 occurrences[2 + childIndex]);
         world.playablePropertyCount = 7;
-        world.pieceSchedules = &piece;
-        world.pieceScheduleCount = 1;
+        world.segmentSchedules = &segment;
+        world.segmentScheduleCount = 1;
         std::sort(
             properties, properties + world.playablePropertyCount,
             [](const harken::PlayablePropertyProgramViewV1& a,
@@ -3536,12 +3536,12 @@ struct CanonicalActionWorld {
             harken::ComputeCurrentWorldFingerprintV4(world);
     }
 
-    void MakeFirstQueueChildCompositePiece(bool exitMarker = false) {
-        MakeQueueChildCompositePiece(0, exitMarker);
+    void MakeFirstQueueChildCompositeSegment(bool exitMarker = false) {
+        MakeQueueChildCompositeSegment(0, exitMarker);
     }
 
-    void MakeSecondQueueChildCompositePiece() {
-        MakeQueueChildCompositePiece(1);
+    void MakeSecondQueueChildCompositeSegment() {
+        MakeQueueChildCompositeSegment(1);
     }
 
     void MakeSecondSoundEffectFree() {
@@ -3607,7 +3607,7 @@ struct CanonicalActionWorld {
 
 enum class ActionScheduleCapacityRoot {
     Track,
-    Piece,
+    Segment,
 };
 
 enum class ActionScheduleCapacityTransitionRoot {
@@ -3619,7 +3619,7 @@ struct ActionScheduleCapacityWorld {
     static constexpr VnSoundId kSound = harkentest::ObjectId(170);
     static constexpr VnSoundId kTargetSound = harkentest::ObjectId(177);
     static constexpr VnObjectId kTrack = harkentest::ObjectId(171);
-    static constexpr VnObjectId kPiece = harkentest::ObjectId(172);
+    static constexpr VnObjectId kSegment = harkentest::ObjectId(172);
     static constexpr VnActionId kAction = harkentest::ObjectId(173);
     static constexpr VnObjectId kTargetTrack = harkentest::ObjectId(174);
     static constexpr VnObjectId kContainer = harkentest::ObjectId(175);
@@ -3631,7 +3631,7 @@ struct ActionScheduleCapacityWorld {
     std::vector<harken::ScheduleClipPlacementV1> placements;
     std::vector<harken::TrackScheduleProgramViewV1> tracks;
     std::vector<harken::ScheduleTrackRefV1> trackRefs;
-    std::vector<harken::PieceScheduleProgramViewV1> pieces;
+    std::vector<harken::SegmentScheduleProgramViewV1> segments;
     std::vector<harken::ContainerChildProgramViewV2> children;
     std::array<harken::AuthoredCompletionLeafV1, 1>
         queueCompletionLeaves{};
@@ -3656,7 +3656,7 @@ struct ActionScheduleCapacityWorld {
         placements.resize(leafCount);
         tracks.resize(1);
         trackRefs.resize(1);
-        pieces.resize(1);
+        segments.resize(1);
         steps.resize(1);
         actions.resize(1);
 
@@ -3683,17 +3683,17 @@ struct ActionScheduleCapacityWorld {
         trackProperty.programSemanticFingerprint =
             harken::ComputePlayablePropertyFingerprintV1(trackProperty);
 
-        auto& pieceProperty = properties[2];
-        pieceProperty.contentPropertyKind =
-            harken::playableproperties::ContentPropertyKindV1::Piece;
-        pieceProperty.stableId = harkentest::ObjectId(kPiece);
-        pieceProperty.authoredStableOrder = 2;
-        pieceProperty.contentRevision = 1;
-        pieceProperty.routeStableId = VN_BUS_MASTER;
-        pieceProperty.compatibilityFingerprint = 3;
-        pieceProperty.payload = ResolvedPayload();
-        pieceProperty.programSemanticFingerprint =
-            harken::ComputePlayablePropertyFingerprintV1(pieceProperty);
+        auto& segmentProperty = properties[2];
+        segmentProperty.contentPropertyKind =
+            harken::playableproperties::ContentPropertyKindV1::Segment;
+        segmentProperty.stableId = harkentest::ObjectId(kSegment);
+        segmentProperty.authoredStableOrder = 2;
+        segmentProperty.contentRevision = 1;
+        segmentProperty.routeStableId = VN_BUS_MASTER;
+        segmentProperty.compatibilityFingerprint = 3;
+        segmentProperty.payload = ResolvedPayload();
+        segmentProperty.programSemanticFingerprint =
+            harken::ComputePlayablePropertyFingerprintV1(segmentProperty);
 
         harken::PlayableRefV1 soundRef{};
         soundRef.kind = harken::PlayableKindV1::Sound;
@@ -3747,36 +3747,36 @@ struct ActionScheduleCapacityWorld {
         trackRef.trackScheduleSemanticFingerprint =
             track.scheduleSemanticFingerprint;
 
-        auto& piece = pieces[0];
-        piece.rootDefinition.kind = harken::PlayableKindV1::Piece;
-        piece.rootDefinition.stableId = pieceProperty.stableId;
-        piece.rootDefinition.expectedProgramSemanticFingerprint =
-            pieceProperty.programSemanticFingerprint;
-        piece.rootDefinition.contentRevision =
-            pieceProperty.contentRevision;
-        piece.rootDefinition.routeStableId = pieceProperty.routeStableId;
-        piece.rootDefinition.compatibilityFingerprint =
-            pieceProperty.compatibilityFingerprint;
-        piece.timeKind = harken::ScheduleTimeKindV1::AbsoluteNanoseconds;
-        piece.trackRefCount = 1;
-        piece.trackRefs = trackRefs.data();
-        piece.scheduleSemanticFingerprint =
-            harken::ComputePieceScheduleFingerprintV1(piece);
+        auto& segment = segments[0];
+        segment.rootDefinition.kind = harken::PlayableKindV1::Segment;
+        segment.rootDefinition.stableId = segmentProperty.stableId;
+        segment.rootDefinition.expectedProgramSemanticFingerprint =
+            segmentProperty.programSemanticFingerprint;
+        segment.rootDefinition.contentRevision =
+            segmentProperty.contentRevision;
+        segment.rootDefinition.routeStableId = segmentProperty.routeStableId;
+        segment.rootDefinition.compatibilityFingerprint =
+            segmentProperty.compatibilityFingerprint;
+        segment.timeKind = harken::ScheduleTimeKindV1::AbsoluteNanoseconds;
+        segment.trackRefCount = 1;
+        segment.trackRefs = trackRefs.data();
+        segment.scheduleSemanticFingerprint =
+            harken::ComputeSegmentScheduleFingerprintV1(segment);
 
         auto& step = steps[0];
         step.opcode = harken::ActionOpcodeV1::Play;
         step.target.kind =
             root == ActionScheduleCapacityRoot::Track
                 ? harken::ActionTargetKindV1::Track
-                : harken::ActionTargetKindV1::Piece;
+                : harken::ActionTargetKindV1::Segment;
         step.target.stableId =
             root == ActionScheduleCapacityRoot::Track
                 ? track.rootDefinition.stableId
-                : piece.rootDefinition.stableId;
+                : segment.rootDefinition.stableId;
         step.target.expectedProgramSemanticFingerprint =
             root == ActionScheduleCapacityRoot::Track
                 ? track.rootDefinition.expectedProgramSemanticFingerprint
-                : piece.rootDefinition.expectedProgramSemanticFingerprint;
+                : segment.rootDefinition.expectedProgramSemanticFingerprint;
         SetAbsoluteTime(&step.delay);
         SetAbsoluteTime(&step.fade);
         SetAbsoluteTime(&step.cooldown);
@@ -3798,8 +3798,8 @@ struct ActionScheduleCapacityWorld {
             static_cast<std::uint32_t>(occurrences.size());
         world.trackSchedules = tracks.data();
         world.trackScheduleCount = 1;
-        world.pieceSchedules = pieces.data();
-        world.pieceScheduleCount = 1;
+        world.segmentSchedules = segments.data();
+        world.segmentScheduleCount = 1;
         world.actions = actions.data();
         world.actionCount = 1;
         world.capacity.maxKnownScheduleLeaves = 64;
@@ -4464,7 +4464,7 @@ void ExpectScheduleCapacityActionCompletes(
     ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &play));
     EXPECT_EQ(root == ActionScheduleCapacityRoot::Track
                   ? VN_ACTION_TARGET_TRACK
-                  : VN_ACTION_TARGET_PIECE,
+                  : VN_ACTION_TARGET_SEGMENT,
               play.targetKind);
     EXPECT_NE(0u, play.producedPlayableInstance);
     EXPECT_EQ(leafCount, engine->voices.ActiveCount());
@@ -4614,7 +4614,7 @@ void ExpectDirectScheduleRootBuildsAndReclaims(
     const auto& definition =
         root == ActionScheduleCapacityRoot::Track
             ? image.tracks[0].rootDefinition
-            : image.pieces[0].rootDefinition;
+            : image.segments[0].rootDefinition;
     harken::PlayableStartResult started{};
     if (refuseAllocationFirst) {
         const auto commandHead = engine->commands.PublishedHead();
@@ -4698,7 +4698,7 @@ void ExpectDirectScheduleRootBuildsAndReclaims(
     ASSERT_TRUE(rootView.live);
     EXPECT_EQ(root == ActionScheduleCapacityRoot::Track
                   ? harken::PlayableKind::Track
-                  : harken::PlayableKind::Piece,
+                  : harken::PlayableKind::Segment,
               rootView.kind);
     EXPECT_EQ(0u, rootView.parent);
     ASSERT_NE(0u, rootView.firstChild);
@@ -4777,7 +4777,7 @@ void ExpectDirectScheduleRootPostFailureRollsBackSharedTransaction(
     const auto& definition =
         root == ActionScheduleCapacityRoot::Track
             ? image.tracks[0].rootDefinition
-            : image.pieces[0].rootDefinition;
+            : image.segments[0].rootDefinition;
 
     engine->forceDirectPlayablePostFailureForTest = true;
     const auto refused = harken::StartCurrentPlayableByIdentity(
@@ -4831,7 +4831,7 @@ void ExpectDirectScheduleRootRefuses65Leaves(
     const auto& definition =
         root == ActionScheduleCapacityRoot::Track
             ? image.tracks[0].rootDefinition
-            : image.pieces[0].rootDefinition;
+            : image.segments[0].rootDefinition;
     const auto started = harken::StartCurrentPlayableByIdentity(
         definition.kind, definition.stableId, 0);
     EXPECT_EQ(harken::PlayableStartStatus::Capacity, started.status);
@@ -7441,20 +7441,20 @@ TEST(ActionFiringApi, QuantizedPlayUsesStrictlyNextBeatAfterDelayedFrame) {
             .contentRevision,
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
-    image.MakeImmediateCompositePiecePlayAction();
+    image.MakeImmediateCompositeSegmentPlayAction();
     image.MakeQuantizedSoundPlayAction(harken::ActionQuantizeTimingV1::NextBeat);
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harken::InstallContainerWorldV1(*engine, image.world).status);
 
-    VnPostActionDesc pieceDesc = ValidPostDesc();
-    pieceDesc.actionId = image.actions[9].actionStableId;
-    VnActionFiringHandle pieceFiring = 0;
-    ASSERT_EQ(VN_OK, Vn_PostAction(&pieceDesc, &pieceFiring));
-    VnActionStepResult pieceStep{};
-    pieceStep.structSize = sizeof(pieceStep);
-    ASSERT_EQ(VN_OK, Vn_QueryActionStep(pieceFiring, 0, &pieceStep));
-    ASSERT_EQ(VN_ACTION_STEP_ACTIVE, pieceStep.state);
-    ASSERT_NE(0u, pieceStep.producedPlayableInstance);
+    VnPostActionDesc segmentDesc = ValidPostDesc();
+    segmentDesc.actionId = image.actions[9].actionStableId;
+    VnActionFiringHandle segmentFiring = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&segmentDesc, &segmentFiring));
+    VnActionStepResult segmentStep{};
+    segmentStep.structSize = sizeof(segmentStep);
+    ASSERT_EQ(VN_OK, Vn_QueryActionStep(segmentFiring, 0, &segmentStep));
+    ASSERT_EQ(VN_ACTION_STEP_ACTIVE, segmentStep.state);
+    ASSERT_NE(0u, segmentStep.producedPlayableInstance);
     const std::uint64_t entryFrame = engine->playableServices[0].startFrame;
     const std::uint64_t delayedFrame = entryFrame;
     const std::uint64_t expected =
@@ -7488,7 +7488,7 @@ TEST(ActionFiringApi, QuantizedPlayUsesStrictlyNextBeatAfterDelayedFrame) {
         EXPECT_NE(0u, step.producedPlayableInstance);
     }
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(firing));
-    EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(pieceFiring));
+    EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(segmentFiring));
 }
 
 TEST(ActionFiringApi, QuantizedPlayEqualBeatBoundaryAdvancesToTheNextBeat) {
@@ -7510,15 +7510,15 @@ TEST(ActionFiringApi, QuantizedPlayEqualBeatBoundaryAdvancesToTheNextBeat) {
             .contentRevision,
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
-    image.MakeImmediateCompositePiecePlayAction();
+    image.MakeImmediateCompositeSegmentPlayAction();
     image.MakeQuantizedSoundPlayAction(harken::ActionQuantizeTimingV1::NextBeat);
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harken::InstallContainerWorldV1(*engine, image.world).status);
 
-    VnPostActionDesc pieceDesc = ValidPostDesc();
-    pieceDesc.actionId = image.actions[9].actionStableId;
-    VnActionFiringHandle pieceFiring = 0;
-    ASSERT_EQ(VN_OK, Vn_PostAction(&pieceDesc, &pieceFiring));
+    VnPostActionDesc segmentDesc = ValidPostDesc();
+    segmentDesc.actionId = image.actions[9].actionStableId;
+    VnActionFiringHandle segmentFiring = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&segmentDesc, &segmentFiring));
     const std::uint64_t entryFrame = engine->playableServices[0].startFrame;
     const std::uint64_t expected = entryFrame + 960u;
 
@@ -7538,7 +7538,7 @@ TEST(ActionFiringApi, QuantizedPlayEqualBeatBoundaryAdvancesToTheNextBeat) {
         EXPECT_EQ(expected, engine->playableServices[1].startFrame);
     }
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(firing));
-    EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(pieceFiring));
+    EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(segmentFiring));
 }
 
 TEST(ActionFiringApi, QuantizedPlayUsesStrictlyNextBarAndMarker) {
@@ -7560,19 +7560,19 @@ TEST(ActionFiringApi, QuantizedPlayUsesStrictlyNextBarAndMarker) {
             .contentRevision,
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
-    image.MakeImmediateCompositePiecePlayAction();
+    image.MakeImmediateCompositeSegmentPlayAction();
     image.MakeQuantizedSoundPlayAction(harken::ActionQuantizeTimingV1::NextBar);
     image.MakeQuantizedSoundPlayAction(
         harken::ActionQuantizeTimingV1::NextMarker,
         harken::ActionIfSilentV1::Immediate, 0,
-        harken::ActionTargetKindV1::Piece, 11, 15, harkentest::ObjectId(52));
+        harken::ActionTargetKindV1::Segment, 11, 15, harkentest::ObjectId(52));
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harken::InstallContainerWorldV1(*engine, image.world).status);
 
-    VnPostActionDesc pieceDesc = ValidPostDesc();
-    pieceDesc.actionId = image.actions[9].actionStableId;
-    VnActionFiringHandle pieceFiring = 0;
-    ASSERT_EQ(VN_OK, Vn_PostAction(&pieceDesc, &pieceFiring));
+    VnPostActionDesc segmentDesc = ValidPostDesc();
+    segmentDesc.actionId = image.actions[9].actionStableId;
+    VnActionFiringHandle segmentFiring = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&segmentDesc, &segmentFiring));
     const std::uint64_t entryFrame = engine->playableServices[0].startFrame;
     VnPostActionDesc barDesc = ValidPostDesc();
     barDesc.actionId = image.actions[10].actionStableId;
@@ -7618,7 +7618,7 @@ TEST(ActionFiringApi, QuantizedPlayUsesStrictlyNextBarAndMarker) {
         EXPECT_EQ(expectedMarker, markerStart);
     }
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(markerFiring));
-    EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(pieceFiring));
+    EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(segmentFiring));
 }
 
 TEST(ActionFiringApi, QuantizedPlayWithoutReferenceFallsBackOrDrops) {
@@ -7743,7 +7743,7 @@ TEST(ActionFiringApi, QuantizedStopUsesStrictlyNextBeatAfterDelayedFrame) {
             .contentRevision,
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
-    image.MakeImmediateCompositePiecePlayAction();
+    image.MakeImmediateCompositeSegmentPlayAction();
     image.MakeQuantizedSoundPlayAction(
         harken::ActionQuantizeTimingV1::Immediate);
     image.MakeQuantizedSoundStopAction(
@@ -7751,10 +7751,10 @@ TEST(ActionFiringApi, QuantizedStopUsesStrictlyNextBeatAfterDelayedFrame) {
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harken::InstallContainerWorldV1(*engine, image.world).status);
 
-    VnPostActionDesc pieceDesc = ValidPostDesc();
-    pieceDesc.actionId = image.actions[9].actionStableId;
-    VnActionFiringHandle pieceFiring = 0;
-    ASSERT_EQ(VN_OK, Vn_PostAction(&pieceDesc, &pieceFiring));
+    VnPostActionDesc segmentDesc = ValidPostDesc();
+    segmentDesc.actionId = image.actions[9].actionStableId;
+    VnActionFiringHandle segmentFiring = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&segmentDesc, &segmentFiring));
     VnPostActionDesc playDesc = ValidPostDesc();
     playDesc.actionId = image.actions[10].actionStableId;
     VnActionFiringHandle playFiring = 0;
@@ -7797,7 +7797,7 @@ TEST(ActionFiringApi, QuantizedStopUsesStrictlyNextBeatAfterDelayedFrame) {
     }
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(stopFiring));
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(playFiring));
-    EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(pieceFiring));
+    EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(segmentFiring));
 }
 
 TEST(ActionFiringApi, QuantizedStopWithoutReferenceDrops) {
@@ -8014,9 +8014,9 @@ TEST(ActionFiringApi, DelayedStopPublicationWaitsForTransientArmReservation) {
     EXPECT_EQ(harken::ArmState::Published, state);
 }
 
-TEST(ActionFiringApi, PositiveDelayedImmediateStopCapturesTrackAndPieceRoots) {
+TEST(ActionFiringApi, PositiveDelayedImmediateStopCapturesTrackAndSegmentRoots) {
     for (const auto kind : {harken::ActionTargetKindV1::Track,
-                            harken::ActionTargetKindV1::Piece}) {
+                            harken::ActionTargetKindV1::Segment}) {
         SCOPED_TRACE(static_cast<std::uint32_t>(kind));
         (void)Vn_Term();
         harkentest::EngineSession session(
@@ -8054,7 +8054,7 @@ TEST(ActionFiringApi, PositiveDelayedImmediateStopCapturesTrackAndPieceRoots) {
         const auto definitionKind =
             kind == harken::ActionTargetKindV1::Track
                 ? harken::PlayableKindV1::Track
-                : harken::PlayableKindV1::Piece;
+                : harken::PlayableKindV1::Segment;
         const auto direct = harken::StartCurrentPlayableByIdentity(
             definitionKind, image.steps[11].target.stableId, 0);
         ASSERT_EQ(harken::PlayableStartStatus::Accepted, direct.status);
@@ -8318,7 +8318,7 @@ TEST(ActionFiringApi, DelayedStopLastControlArmRefusalLeavesCapturedRootUnchange
     CanonicalActionWorld image(engine->registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
                                engine->registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
     image.MakeDelayedSeparateSoundStopAction(DelayNanosecondsForTargetFrame(*engine, 3072));
-    image.MakeImmediateCompositePiecePlayAction();
+    image.MakeImmediateCompositeSegmentPlayAction();
     image.steps[10].target = image.steps[11].target;
     image.actions[8].programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(image.actions[8]);
     image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
@@ -11782,7 +11782,7 @@ TEST(ActionFiringApi, QuantizedStopFadeStartsBeforeTheBoundary) {
             .contentRevision,
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
-    image.MakeImmediateCompositePiecePlayAction();
+    image.MakeImmediateCompositeSegmentPlayAction();
     image.MakeQuantizedSoundPlayAction(
         harken::ActionQuantizeTimingV1::Immediate);
     image.MakeQuantizedSoundStopAction(
@@ -11795,10 +11795,10 @@ TEST(ActionFiringApi, QuantizedStopFadeStartsBeforeTheBoundary) {
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harken::InstallContainerWorldV1(*engine, image.world).status);
 
-    VnPostActionDesc pieceDesc = ValidPostDesc();
-    pieceDesc.actionId = image.actions[9].actionStableId;
-    VnActionFiringHandle pieceFiring = 0;
-    ASSERT_EQ(VN_OK, Vn_PostAction(&pieceDesc, &pieceFiring));
+    VnPostActionDesc segmentDesc = ValidPostDesc();
+    segmentDesc.actionId = image.actions[9].actionStableId;
+    VnActionFiringHandle segmentFiring = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&segmentDesc, &segmentFiring));
     VnPostActionDesc playDesc = ValidPostDesc();
     playDesc.actionId = image.actions[10].actionStableId;
     VnActionFiringHandle playFiring = 0;
@@ -11832,7 +11832,7 @@ TEST(ActionFiringApi, QuantizedStopFadeStartsBeforeTheBoundary) {
     }
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(stopFiring));
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(playFiring));
-    EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(pieceFiring));
+    EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(segmentFiring));
 }
 
 TEST(ActionFiringApi, NaturalEndStopUsesRemainingSourceDuration) {
@@ -12183,15 +12183,15 @@ TEST(ActionFiringApi, ExitMarkerStopSchedulesTheAuthoredMarker) {
             .contentRevision,
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
-    image.MakeImmediateCompositePiecePlayAction(true);
+    image.MakeImmediateCompositeSegmentPlayAction(true);
     image.MakeQuantizedSoundStopAction(
         harken::ActionQuantizeTimingV1::ExitMarker,
         harken::ActionIfSilentV1::Drop, 0,
-        harken::ActionTargetKindV1::Piece, 10, 14, harkentest::ObjectId(51));
-    image.steps[14].target.kind = harken::ActionTargetKindV1::Piece;
-    image.steps[14].target.stableId = image.piece.rootDefinition.stableId;
+        harken::ActionTargetKindV1::Segment, 10, 14, harkentest::ObjectId(51));
+    image.steps[14].target.kind = harken::ActionTargetKindV1::Segment;
+    image.steps[14].target.stableId = image.segment.rootDefinition.stableId;
     image.steps[14].target.expectedProgramSemanticFingerprint =
-        image.piece.rootDefinition.expectedProgramSemanticFingerprint;
+        image.segment.rootDefinition.expectedProgramSemanticFingerprint;
     image.actions[10].programSemanticFingerprint =
         harken::ComputeActionProgramFingerprintV1(image.actions[10]);
     image.world.identity.runtimeSemanticFingerprint =
@@ -12234,7 +12234,7 @@ TEST(ActionFiringApi, ExitMarkerStopSchedulesTheAuthoredMarker) {
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(playFiring));
 }
 
-TEST(ActionFiringApi, ReferencedExitMarkerStopUsesTheReferencePieceTimeline) {
+TEST(ActionFiringApi, ReferencedExitMarkerStopUsesTheReferenceSegmentTimeline) {
     (void)Vn_Term();
     harkentest::EngineSession session(
         harkentest::MakeNullConfig(8, 256, 48000));
@@ -12253,13 +12253,13 @@ TEST(ActionFiringApi, ReferencedExitMarkerStopUsesTheReferencePieceTimeline) {
             .contentRevision,
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
-    image.MakeImmediateCompositePiecePlayAction(true);
+    image.MakeImmediateCompositeSegmentPlayAction(true);
     image.MakeQuantizedSoundPlayAction(
         harken::ActionQuantizeTimingV1::Immediate);
     image.MakeQuantizedSoundStopAction(
         harken::ActionQuantizeTimingV1::ExitMarker,
         harken::ActionIfSilentV1::Drop, 5'000'000,
-        harken::ActionTargetKindV1::Piece, 11, 15,
+        harken::ActionTargetKindV1::Segment, 11, 15,
         harkentest::ObjectId(52), true);
     SetAbsoluteTime(&image.steps[15].fade, 5'000'000);
     image.actions[11].programSemanticFingerprint =
@@ -12367,19 +12367,19 @@ TEST(ActionFiringApi,
             .contentRevision,
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
-    image.MakeImmediateCompositePiecePlayAction(true);
-    image.pieceMarkers[0].position = static_cast<std::int64_t>(markerOffset);
-    image.piece.scheduleSemanticFingerprint =
-        harken::ComputePieceScheduleFingerprintV1(image.piece);
+    image.MakeImmediateCompositeSegmentPlayAction(true);
+    image.segmentMarkers[0].position = static_cast<std::int64_t>(markerOffset);
+    image.segment.scheduleSemanticFingerprint =
+        harken::ComputeSegmentScheduleFingerprintV1(image.segment);
     image.queueChildren[0].timingHint = harken::MakeScheduleReferenceTimingHint(
-        harken::PlayableKindV1::Piece, image.piece.rootDefinition.stableId,
-        image.piece.scheduleSemanticFingerprint);
+        harken::PlayableKindV1::Segment, image.segment.rootDefinition.stableId,
+        image.segment.scheduleSemanticFingerprint);
     image.MakeQuantizedSoundPlayAction(
         harken::ActionQuantizeTimingV1::Immediate);
     image.MakeQuantizedSoundStopAction(
         harken::ActionQuantizeTimingV1::ExitMarker,
         harken::ActionIfSilentV1::Drop, 0,
-        harken::ActionTargetKindV1::Piece, 11, 15,
+        harken::ActionTargetKindV1::Segment, 11, 15,
         harkentest::ObjectId(52), true);
     SetAbsoluteTime(&image.steps[15].fade, 10'000'000);
     image.actions[11].programSemanticFingerprint =
@@ -12390,7 +12390,7 @@ TEST(ActionFiringApi,
               harken::InstallContainerWorldV1(*engine, image.world).status);
 
     const auto reference = harken::StartCurrentPlayableByIdentity(
-        harken::PlayableKindV1::Piece, image.piece.rootDefinition.stableId, 0);
+        harken::PlayableKindV1::Segment, image.segment.rootDefinition.stableId, 0);
     ASSERT_EQ(harken::PlayableStartStatus::Accepted, reference.status);
     ASSERT_NE(0u, reference.instance);
     const auto referenceRow = std::find_if(
@@ -12487,13 +12487,13 @@ TEST(ActionFiringApi, ReferencedExitMarkerDropDoesNotCaptureWithoutLiveReference
             .contentRevision,
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
-    image.MakeImmediateCompositePiecePlayAction(true);
+    image.MakeImmediateCompositeSegmentPlayAction(true);
     image.MakeQuantizedSoundPlayAction(
         harken::ActionQuantizeTimingV1::Immediate);
     image.MakeQuantizedSoundStopAction(
         harken::ActionQuantizeTimingV1::ExitMarker,
         harken::ActionIfSilentV1::Drop, 0,
-        harken::ActionTargetKindV1::Piece, 11, 15,
+        harken::ActionTargetKindV1::Segment, 11, 15,
         harkentest::ObjectId(52), true);
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harken::InstallContainerWorldV1(*engine, image.world).status);
@@ -12547,14 +12547,14 @@ TEST(ActionFiringApi, ReferencedExitMarkerImmediateFallsBackToDelayedFrame) {
             .contentRevision,
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
-    image.MakeImmediateCompositePiecePlayAction(true);
+    image.MakeImmediateCompositeSegmentPlayAction(true);
     image.MakeQuantizedSoundPlayAction(
         harken::ActionQuantizeTimingV1::Immediate);
     image.MakeQuantizedSoundStopAction(
         harken::ActionQuantizeTimingV1::ExitMarker,
         harken::ActionIfSilentV1::Immediate,
         DelayNanosecondsForTargetFrame(*engine, fallbackFrame),
-        harken::ActionTargetKindV1::Piece, 11, 15,
+        harken::ActionTargetKindV1::Segment, 11, 15,
         harkentest::ObjectId(52), true);
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harken::InstallContainerWorldV1(*engine, image.world).status);
@@ -12600,14 +12600,14 @@ TEST(ActionFiringApi, ReferencedExitMarkerDropSuppressesWhenMarkerIsNotAfterDela
             .contentRevision,
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
-    image.MakeImmediateCompositePiecePlayAction(true);
+    image.MakeImmediateCompositeSegmentPlayAction(true);
     image.MakeQuantizedSoundPlayAction(
         harken::ActionQuantizeTimingV1::Immediate);
     image.MakeQuantizedSoundStopAction(
         harken::ActionQuantizeTimingV1::ExitMarker,
         harken::ActionIfSilentV1::Drop,
         DelayNanosecondsForTargetFrame(*engine, delayedFrame),
-        harken::ActionTargetKindV1::Piece, 11, 15,
+        harken::ActionTargetKindV1::Segment, 11, 15,
         harkentest::ObjectId(52), true);
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harken::InstallContainerWorldV1(*engine, image.world).status);
@@ -13867,7 +13867,7 @@ TEST(ActionFiringApi, ImmediateEntryAttemptPoolExhaustionIsCapacity) {
 }
 
 void ExpectImmediateSequenceQueueCompositeChildAfterLateFirstUpdate(
-    bool pieceChild) {
+    bool segmentChild) {
     (void)Vn_Term();
     constexpr std::uint32_t kBlockFrames = 64;
     harkentest::EngineSession session(
@@ -13889,8 +13889,8 @@ void ExpectImmediateSequenceQueueCompositeChildAfterLateFirstUpdate(
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
     image.MakeImmediateSequenceQueuePlayAction();
-    if (pieceChild) {
-        image.MakeFirstQueueChildCompositePiece();
+    if (segmentChild) {
+        image.MakeFirstQueueChildCompositeSegment();
     } else {
         image.MakeFirstQueueChildCompositeTrack();
     }
@@ -13996,7 +13996,7 @@ TEST(ActionFiringApi,
 }
 
 TEST(ActionFiringApi,
-     ImmediateSequenceQueueCompositePieceLateFirstUpdateUsesSafeAnchor) {
+     ImmediateSequenceQueueCompositeSegmentLateFirstUpdateUsesSafeAnchor) {
     ExpectImmediateSequenceQueueCompositeChildAfterLateFirstUpdate(true);
 }
 
@@ -17391,7 +17391,7 @@ TEST(ActionFiringApi,
     ASSERT_EQ(sameDue, actionRecord.intendedBoundaryFrame);
 
     const harken::PlayableInstanceHandle owner =
-        engine->playableInstances.Acquire(harken::PlayableKind::Piece, 0);
+        engine->playableInstances.Acquire(harken::PlayableKind::Segment, 0);
     ASSERT_NE(0u, owner);
     const std::uint64_t ownerEpoch =
         engine->playableInstances.Classify(owner).scheduleEpoch;
@@ -18453,7 +18453,7 @@ TEST(ActionFiringApi,
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
 
-static void CheckImmediateVariableControlAllZeroWorkSelection(bool piece) {
+static void CheckImmediateVariableControlAllZeroWorkSelection(bool segment) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(4, 64, 48000);
     harkentest::EngineSession session(config);
@@ -18475,7 +18475,7 @@ static void CheckImmediateVariableControlAllZeroWorkSelection(bool piece) {
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
     image.MakeImmediateVariableControlPlayAction();
-    if (piece) image.MakeFirstVariableControlChildCompositePiece();
+    if (segment) image.MakeFirstVariableControlChildCompositeSegment();
     else image.MakeFirstVariableControlChildCompositeTrack();
     for (std::uint32_t index = 0; index < 2; ++index) {
         image.trackPlacements[index].authoredStart =
@@ -18484,9 +18484,9 @@ static void CheckImmediateVariableControlAllZeroWorkSelection(bool piece) {
     }
     image.track.scheduleSemanticFingerprint =
         harken::ComputeTrackScheduleFingerprintV1(image.track);
-    if (piece) {
-        image.pieceTrackRef.trackScheduleSemanticFingerprint = image.track.scheduleSemanticFingerprint;
-        image.piece.scheduleSemanticFingerprint = harken::ComputePieceScheduleFingerprintV1(image.piece);
+    if (segment) {
+        image.segmentTrackRef.trackScheduleSemanticFingerprint = image.track.scheduleSemanticFingerprint;
+        image.segment.scheduleSemanticFingerprint = harken::ComputeSegmentScheduleFingerprintV1(image.segment);
     }
     image.world.identity.runtimeSemanticFingerprint =
         harken::ComputeCurrentWorldFingerprintV4(image.world);
@@ -18544,7 +18544,7 @@ TEST(ActionFiringApi, ImmediateVariableControlPlayAcceptsAllZeroWorkTrackSelecti
     CheckImmediateVariableControlAllZeroWorkSelection(false);
 }
 
-TEST(ActionFiringApi, ImmediateVariableControlPlayAcceptsAllZeroWorkPieceSelection) {
+TEST(ActionFiringApi, ImmediateVariableControlPlayAcceptsAllZeroWorkSegmentSelection) {
     CheckImmediateVariableControlAllZeroWorkSelection(true);
 }
 
@@ -19871,7 +19871,7 @@ TEST(ActionFiringApi,
     EXPECT_EQ(0u, engine->actionFirings.LiveCount());
 }
 
-void ExpectImmediateVariableControlCompositePlayCompletes(bool pieceChild) {
+void ExpectImmediateVariableControlCompositePlayCompletes(bool segmentChild) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(8, 64, 48000);
     harkentest::EngineSession session(config);
@@ -19892,8 +19892,8 @@ void ExpectImmediateVariableControlCompositePlayCompletes(bool pieceChild) {
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
     image.MakeImmediateVariableControlPlayAction();
-    if (pieceChild) {
-        image.MakeFirstVariableControlChildCompositePiece();
+    if (segmentChild) {
+        image.MakeFirstVariableControlChildCompositeSegment();
     } else {
         image.MakeFirstVariableControlChildCompositeTrack();
     }
@@ -20339,7 +20339,7 @@ TEST(ActionFiringApi,
 }
 
 TEST(ActionFiringApi,
-     ImmediateVariableControlCompositePiecePlayCompletesAfterEveryLeafRetires) {
+     ImmediateVariableControlCompositeSegmentPlayCompletesAfterEveryLeafRetires) {
     ExpectImmediateVariableControlCompositePlayCompletes(true);
 }
 
@@ -20845,7 +20845,7 @@ TEST(ActionFiringApi, NestedQueueAttemptReusesCompositeAsSingleAfterRejectedAdmi
 }
 
 void ExpectDeferredNestedQueueCompositeSuccessor(
-    bool pieceChild, bool refuseSecondLeaf, bool singleLeaf = false,
+    bool segmentChild, bool refuseSecondLeaf, bool singleLeaf = false,
     bool appendSound = false, bool logicalTrack = false, std::uint32_t resetCount = 0,
     std::uint32_t containerDepth = 0, bool sourceFade = false) {
     (void)Vn_Term();
@@ -20867,14 +20867,14 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
     composite.MakeImmediateNestedQueueVariableControlPlayAction();
     if (sourceFade) composite.EnableNaturalEndQueueTransition(64, 128);
     auto finalSound = composite.queueChildren[1];
-    if (pieceChild) donor.MakeSecondQueueChildCompositePiece();
+    if (segmentChild) donor.MakeSecondQueueChildCompositeSegment();
     else donor.MakeSecondQueueChildCompositeTrack();
     if (singleLeaf) {
         donor.track.placementCount = 1;
-        if (resetCount != 0) donor.trackPlacements[0].authoredStart = pieceChild ? 1 : 1000000;
+        if (resetCount != 0) donor.trackPlacements[0].authoredStart = segmentChild ? 1 : 1000000;
     }
     if (logicalTrack) {
-        ASSERT_FALSE(pieceChild);
+        ASSERT_FALSE(segmentChild);
         for (std::uint32_t index = 0;
              index < donor.track.placementCount; ++index) {
             donor.trackPlacements[index].authoredStart =
@@ -20888,11 +20888,11 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
         composite.world.playableOccurrences + composite.world.playableOccurrenceCount);
     for (auto& property : donor.properties) {
         const bool track = property.contentPropertyKind == harken::playableproperties::ContentPropertyKindV1::Track;
-        const bool piece = property.contentPropertyKind == harken::playableproperties::ContentPropertyKindV1::Piece;
-        if (!track && !piece) continue;
+        const bool segment = property.contentPropertyKind == harken::playableproperties::ContentPropertyKindV1::Segment;
+        if (!track && !segment) continue;
         property.authoredStableOrder = static_cast<std::uint32_t>(properties.size());
         property.programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(property);
-        (track ? donor.track.rootDefinition : donor.piece.rootDefinition).expectedProgramSemanticFingerprint =
+        (track ? donor.track.rootDefinition : donor.segment.rootDefinition).expectedProgramSemanticFingerprint =
             property.programSemanticFingerprint;
         properties.push_back(property);
         for (std::uint32_t index = 0; index < donor.world.playableOccurrenceCount; ++index) {
@@ -20906,15 +20906,15 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
         }
     }
     donor.track.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(donor.track);
-    if (pieceChild) {
-        donor.pieceTrackRef.trackDefinition = donor.track.rootDefinition;
-        donor.pieceTrackRef.trackScheduleSemanticFingerprint = donor.track.scheduleSemanticFingerprint;
-        donor.piece.scheduleSemanticFingerprint = harken::ComputePieceScheduleFingerprintV1(donor.piece);
+    if (segmentChild) {
+        donor.segmentTrackRef.trackDefinition = donor.track.rootDefinition;
+        donor.segmentTrackRef.trackScheduleSemanticFingerprint = donor.track.scheduleSemanticFingerprint;
+        donor.segment.scheduleSemanticFingerprint = harken::ComputeSegmentScheduleFingerprintV1(donor.segment);
     }
-    composite.queueChildren[1].playable = pieceChild ? donor.piece.rootDefinition : donor.track.rootDefinition;
+    composite.queueChildren[1].playable = segmentChild ? donor.segment.rootDefinition : donor.track.rootDefinition;
     composite.queueChildren[1].timingHint = harken::MakeScheduleReferenceTimingHint(
         composite.queueChildren[1].playable.kind, composite.queueChildren[1].playable.stableId,
-        pieceChild ? donor.piece.scheduleSemanticFingerprint : donor.track.scheduleSemanticFingerprint);
+        segmentChild ? donor.segment.scheduleSemanticFingerprint : donor.track.scheduleSemanticFingerprint);
     auto nestedTarget = composite.child;
     auto nestedContainer = composite.child;
     if (containerDepth != 0) {
@@ -20977,8 +20977,8 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
     composite.world.playableOccurrenceCount = static_cast<std::uint32_t>(occurrences.size());
     composite.world.trackSchedules = &donor.track;
     composite.world.trackScheduleCount = 1;
-    composite.world.pieceSchedules = pieceChild ? &donor.piece : nullptr;
-    composite.world.pieceScheduleCount = pieceChild ? 1u : 0u;
+    composite.world.segmentSchedules = segmentChild ? &donor.segment : nullptr;
+    composite.world.segmentScheduleCount = segmentChild ? 1u : 0u;
     composite.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(composite.world);
     ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, composite.world).status);
     VnEmitterHandle emitter = 0;
@@ -21204,25 +21204,25 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
 TEST(ActionFiringApi, DeferredNestedQueueCompositeTrackSuccessor) {
     ExpectDeferredNestedQueueCompositeSuccessor(false, false);
 }
-TEST(ActionFiringApi, DeferredNestedQueueCompositePieceSuccessor) {
+TEST(ActionFiringApi, DeferredNestedQueueCompositeSegmentSuccessor) {
     ExpectDeferredNestedQueueCompositeSuccessor(true, false);
 }
 TEST(ActionFiringApi, DeferredNestedQueueCompositeTrackRefusesSecondLeafAndRetries) {
     ExpectDeferredNestedQueueCompositeSuccessor(false, true);
 }
-TEST(ActionFiringApi, DeferredNestedQueueCompositePieceRefusesSecondLeafAndRetries) {
+TEST(ActionFiringApi, DeferredNestedQueueCompositeSegmentRefusesSecondLeafAndRetries) {
     ExpectDeferredNestedQueueCompositeSuccessor(true, true);
 }
 TEST(ActionFiringApi, DeferredNestedQueueSingleLeafTrackSuccessor) {
     ExpectDeferredNestedQueueCompositeSuccessor(false, false, true);
 }
-TEST(ActionFiringApi, DeferredNestedQueueSingleLeafPieceSuccessor) {
+TEST(ActionFiringApi, DeferredNestedQueueSingleLeafSegmentSuccessor) {
     ExpectDeferredNestedQueueCompositeSuccessor(true, false, true);
 }
 TEST(ActionFiringApi, DeferredNestedQueueTrackThenSoundKeepsCurrentMembers) {
     ExpectDeferredNestedQueueCompositeSuccessor(false, false, false, true);
 }
-TEST(ActionFiringApi, DeferredNestedQueuePieceThenSoundKeepsCurrentMembers) {
+TEST(ActionFiringApi, DeferredNestedQueueSegmentThenSoundKeepsCurrentMembers) {
     ExpectDeferredNestedQueueCompositeSuccessor(true, false, false, true);
 }
 TEST(ActionFiringApi,
@@ -21235,9 +21235,9 @@ TEST(ActionFiringApi, NestedQueuePageResetReplacesPrivateTreeAndRetainsOldReader
     ExpectDeferredNestedQueueCompositeSuccessor(false, false, false, true, false, 1);
 }
 
-TEST(ActionFiringApi, NestedQueuePageResetPreservesSingleLeafTrackAndPiece) {
-    for (bool piece : {false, true})
-        ExpectDeferredNestedQueueCompositeSuccessor(piece, false, true, false, false, 1);
+TEST(ActionFiringApi, NestedQueuePageResetPreservesSingleLeafTrackAndSegment) {
+    for (bool segment : {false, true})
+        ExpectDeferredNestedQueueCompositeSuccessor(segment, false, true, false, false, 1);
 }
 
 TEST(ActionFiringApi, NestedQueuePageResetKeepsLogicalSuccessorIdentity) {
@@ -21246,15 +21246,15 @@ TEST(ActionFiringApi, NestedQueuePageResetKeepsLogicalSuccessorIdentity) {
 
 TEST(ActionFiringApi, NestedQueuePageResetPreservesOrdinaryContainerPath) {
     ExpectDeferredNestedQueueCompositeSuccessor(false, false, false, true, false, 0, 2);
-    for (bool piece : {false, true})
-        ExpectDeferredNestedQueueCompositeSuccessor(piece, false, false, true, false, 1, piece ? 2u : 1u);
+    for (bool segment : {false, true})
+        ExpectDeferredNestedQueueCompositeSuccessor(segment, false, false, true, false, 1, segment ? 2u : 1u);
     ExpectDeferredNestedQueueCompositeSuccessor(false, false, true, false, false, 1, 2);
     ExpectDeferredNestedQueueCompositeSuccessor(false, false, false, true, true, 1, 2);
 }
 
-TEST(ActionFiringApi, NestedQueueFadesPromotedTrackAndPieceSources) {
-    for (bool piece : {false, true})
-        ExpectDeferredNestedQueueCompositeSuccessor(piece, false, false, true, false, 0, 0, true);
+TEST(ActionFiringApi, NestedQueueFadesPromotedTrackAndSegmentSources) {
+    for (bool segment : {false, true})
+        ExpectDeferredNestedQueueCompositeSuccessor(segment, false, false, true, false, 0, 0, true);
 }
 
 void ExpectImmediateNestedQueueActionBatch(NestedQueueBatchCase testCase, bool observeOriginalTree = false) {
@@ -30132,7 +30132,7 @@ void ExpectSetValueMixedVcGroupCapacityBeforeCommit(bool refuseSecondGroup,
     harken::PreparedTransactionBatch neighborBatch;
     if (failurePoint == 7) {
         ASSERT_EQ(0u, engine->mixer.BlocksRendered());
-        ASSERT_TRUE(engine->playableInstances.PrepareAcquire(harken::PlayableKind::Piece, 0, &neighborOwner));
+        ASSERT_TRUE(engine->playableInstances.PrepareAcquire(harken::PlayableKind::Segment, 0, &neighborOwner));
         harken::ScheduledEventInput neighborEvent{};
         neighborEvent.executeFrame = pageFrame;
         harken::TransactionRequest neighborRequest{};
@@ -31828,7 +31828,7 @@ TEST(ActionFiringApi,
 }
 
 void ExpectImmediateVariableControlTransitionCompletesForCompositeTarget(
-    bool pieceTarget) {
+    bool segmentTarget) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(6, 64, 48000);
     harkentest::EngineSession session(config);
@@ -31850,8 +31850,8 @@ void ExpectImmediateVariableControlTransitionCompletesForCompositeTarget(
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
     image.MakeImmediateVariableControlPlayThenSetValueAction();
-    if (pieceTarget) {
-        image.MakeFirstVariableControlChildCompositePiece();
+    if (segmentTarget) {
+        image.MakeFirstVariableControlChildCompositeSegment();
     } else {
         image.MakeFirstVariableControlChildCompositeTrack();
     }
@@ -31934,7 +31934,7 @@ void ExpectImmediateVariableControlTransitionCompletesForCompositeTarget(
     ASSERT_TRUE(row->VariablePayload().variableControlDiscreteRetargetTransition.Valid());
     ExpectVariableControlRetargetTree(
         *engine, *row,
-        pieceTarget ? harken::PlayableKind::Piece : harken::PlayableKind::Track,
+        segmentTarget ? harken::PlayableKind::Segment : harken::PlayableKind::Track,
         2u);
     EXPECT_EQ(transitionsBefore + 1u,
               engine->transitionInstances.LiveCount());
@@ -32026,13 +32026,13 @@ TEST(ActionFiringApi,
 }
 
 TEST(ActionFiringApi,
-     ImmediateVariableControlTransitionStartsEveryCompositePieceTargetLeafAndCompletesAfterBothRetire) {
+     ImmediateVariableControlTransitionStartsEveryCompositeSegmentTargetLeafAndCompletesAfterBothRetire) {
     ExpectImmediateVariableControlTransitionCompletesForCompositeTarget(
         true);
 }
 
 void ExpectImmediateVariableControlTransitionCompletesForCompositeSource(
-    bool pieceSource) {
+    bool segmentSource) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(6, 64, 48000);
     harkentest::EngineSession session(config);
@@ -32054,8 +32054,8 @@ void ExpectImmediateVariableControlTransitionCompletesForCompositeSource(
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
     image.MakeImmediateVariableControlPlayThenSetValueAction();
-    if (pieceSource) {
-        image.MakeFirstVariableControlChildCompositePiece();
+    if (segmentSource) {
+        image.MakeFirstVariableControlChildCompositeSegment();
     } else {
         image.MakeFirstVariableControlChildCompositeTrack();
     }
@@ -32236,13 +32236,13 @@ TEST(ActionFiringApi,
 }
 
 TEST(ActionFiringApi,
-     ImmediateVariableControlTransitionFadesEveryCompositePieceSourceLeafAndCompletesAfterTargetRetires) {
+     ImmediateVariableControlTransitionFadesEveryCompositeSegmentSourceLeafAndCompletesAfterTargetRetires) {
     ExpectImmediateVariableControlTransitionCompletesForCompositeSource(
         true);
 }
 
 void ExpectNaturalEndVariableControlTransitionUsesLatestCompositeSourceLeaf(
-    bool pieceSource) {
+    bool segmentSource) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(6, 64, 48000);
     harkentest::EngineSession session(config);
@@ -32264,8 +32264,8 @@ void ExpectNaturalEndVariableControlTransitionUsesLatestCompositeSourceLeaf(
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
     image.MakeImmediateVariableControlPlayThenSetValueAction();
-    if (pieceSource) {
-        image.MakeFirstVariableControlChildCompositePiece();
+    if (segmentSource) {
+        image.MakeFirstVariableControlChildCompositeSegment();
     } else {
         image.MakeFirstVariableControlChildCompositeTrack();
     }
@@ -32503,7 +32503,7 @@ TEST(ActionFiringApi,
 }
 
 TEST(ActionFiringApi,
-     ImmediateVariableControlNaturalEndTransitionUsesLatestCompositePieceSourceLeafAndCompletesAfterTargetRetires) {
+     ImmediateVariableControlNaturalEndTransitionUsesLatestCompositeSegmentSourceLeafAndCompletesAfterTargetRetires) {
     ExpectNaturalEndVariableControlTransitionUsesLatestCompositeSourceLeaf(
         true);
 }
@@ -34517,7 +34517,7 @@ void ExpectEmitterStopsPlayable(int kind) {
         image.RelinkFirstSound();
         image.MakeImmediateSoundPlayAction();
     } else if (kind == 1) image.MakeImmediateCompositeTrackPlayAction();
-    else if (kind == 2) image.MakeImmediateCompositePiecePlayAction();
+    else if (kind == 2) image.MakeImmediateCompositeSegmentPlayAction();
     else if (kind == 3) image.MakeImmediateSequenceQueuePlayAction();
     else image.MakeImmediateVariableControlPlayAction();
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
@@ -34567,7 +34567,7 @@ void ExpectEmitterStopsPlayable(int kind) {
 
 TEST(ActionFiringApi, EmitterStopReclaimsLoopingSound) { ExpectEmitterStopsPlayable(0); }
 TEST(ActionFiringApi, EmitterStopReclaimsTrack) { ExpectEmitterStopsPlayable(1); }
-TEST(ActionFiringApi, EmitterStopReclaimsPiece) { ExpectEmitterStopsPlayable(2); }
+TEST(ActionFiringApi, EmitterStopReclaimsSegment) { ExpectEmitterStopsPlayable(2); }
 TEST(ActionFiringApi, EmitterStopReclaimsQueueWithoutRestartingSuccessor) { ExpectEmitterStopsPlayable(3); }
 TEST(ActionFiringApi, EmitterStopReclaimsVariableControl) { ExpectEmitterStopsPlayable(4); }
 
@@ -35543,7 +35543,7 @@ TEST(ActionFiringApi, AuthoredStopMatchesAllPlayableRootDefinitionKinds) {
         {harken::ActionTargetKindV1::Container,
          harken::PlayableKind::Container, 1},
         {harken::ActionTargetKindV1::Track, harken::PlayableKind::Track, 2},
-        {harken::ActionTargetKindV1::Piece, harken::PlayableKind::Piece, 2},
+        {harken::ActionTargetKindV1::Segment, harken::PlayableKind::Segment, 2},
     };
 
     for (const KindCase& test : cases) {
@@ -37268,7 +37268,7 @@ TEST(ActionFiringApi,
         harken::PlayableTerminalKind::NaturalCompletion));
 }
 
-TEST(ActionFiringApi, ImmediatePiecePlayCompletesAfterEveryLeafRetires) {
+TEST(ActionFiringApi, ImmediateSegmentPlayCompletesAfterEveryLeafRetires) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(8, 64, 48000);
     harkentest::EngineSession session(config);
@@ -37288,7 +37288,7 @@ TEST(ActionFiringApi, ImmediatePiecePlayCompletesAfterEveryLeafRetires) {
             .contentRevision,
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
-    image.MakeImmediateCompositePiecePlayAction();
+    image.MakeImmediateCompositeSegmentPlayAction();
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harken::InstallContainerWorldV1(*engine, image.world).status);
 
@@ -37310,7 +37310,7 @@ TEST(ActionFiringApi, ImmediatePiecePlayCompletesAfterEveryLeafRetires) {
     play.structSize = sizeof(play);
     ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &play));
     EXPECT_EQ(VN_ACTION_STEP_ACTIVE, play.state);
-    EXPECT_EQ(VN_ACTION_TARGET_PIECE, play.targetKind);
+    EXPECT_EQ(VN_ACTION_TARGET_SEGMENT, play.targetKind);
     EXPECT_NE(0u, play.producedPlayableInstance);
     unsigned rootCandidates = 0;
     for (const auto& record : preparedRecords) {
@@ -41573,9 +41573,9 @@ TEST(ActionFiringApi, DirectContainerToTrackBuildsAndReclaimsSharedTree) {
                                         harken::PlayableKind::Track);
 }
 
-TEST(ActionFiringApi, DirectContainerToPieceBuildsAndReclaimsSharedTree) {
-    ExpectDirectContainerCompositeChild(harken::PlayableKindV1::Piece,
-                                        harken::PlayableKind::Piece);
+TEST(ActionFiringApi, DirectContainerToSegmentBuildsAndReclaimsSharedTree) {
+    ExpectDirectContainerCompositeChild(harken::PlayableKindV1::Segment,
+                                        harken::PlayableKind::Segment);
 }
 
 TEST(ActionFiringApi,
@@ -41738,7 +41738,7 @@ std::string CaptureImmediateQueueContinuationState(harken::Engine& engine,
     return message.GetString();
 }
 
-void ExpectImmediateSequenceQueueCompositeChildCompletes(bool pieceChild) {
+void ExpectImmediateSequenceQueueCompositeChildCompletes(bool segmentChild) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(8, 64, 48000);
     harkentest::EngineSession session(config);
@@ -41759,8 +41759,8 @@ void ExpectImmediateSequenceQueueCompositeChildCompletes(bool pieceChild) {
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
     image.MakeImmediateSequenceQueuePlayAction();
-    if (pieceChild) {
-        image.MakeFirstQueueChildCompositePiece();
+    if (segmentChild) {
+        image.MakeFirstQueueChildCompositeSegment();
     } else {
         image.MakeFirstQueueChildCompositeTrack();
     }
@@ -41794,7 +41794,7 @@ void ExpectImmediateSequenceQueueCompositeChildCompletes(bool pieceChild) {
     const auto compositeInstance =
         engine->playableInstances.Classify(rootInstance.firstChild);
     ASSERT_TRUE(compositeInstance.live);
-    EXPECT_EQ(pieceChild ? harken::PlayableKind::Piece
+    EXPECT_EQ(segmentChild ? harken::PlayableKind::Segment
                          : harken::PlayableKind::Track,
               compositeInstance.kind);
     EXPECT_EQ(play.producedPlayableInstance, compositeInstance.parent);
@@ -42362,7 +42362,7 @@ TEST(ActionFiringApi,
 }
 
 TEST(ActionFiringApi,
-     ImmediateSequenceQueuePlayCompletesAfterEveryCompositePieceLeafRetires) {
+     ImmediateSequenceQueuePlayCompletesAfterEveryCompositeSegmentLeafRetires) {
     ExpectImmediateSequenceQueueCompositeChildCompletes(true);
 }
 
@@ -43353,7 +43353,7 @@ TEST(ActionFiringApi, DirectStaggeredCurrentSecondPublicationRefusalRetainsFourG
     CheckDirectStaggeredCurrentPublicationRefusal(1u, true);
 }
 
-void ExpectImmediateSequenceQueueCompositeSuccessorCompletes(bool pieceChild,
+void ExpectImmediateSequenceQueueCompositeSuccessorCompletes(bool segmentChild,
                                                             std::uint32_t laterLeafFrames = 0u,
                                                             bool retainSinglePredecessor = false) {
     (void)Vn_Term();
@@ -43377,8 +43377,8 @@ void ExpectImmediateSequenceQueueCompositeSuccessorCompletes(bool pieceChild,
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
     image.MakeImmediateSequenceQueuePlayAction();
-    if (pieceChild) {
-        image.MakeSecondQueueChildCompositePiece();
+    if (segmentChild) {
+        image.MakeSecondQueueChildCompositeSegment();
     } else {
         image.MakeSecondQueueChildCompositeTrack();
     }
@@ -43387,19 +43387,19 @@ void ExpectImmediateSequenceQueueCompositeSuccessorCompletes(bool pieceChild,
         image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
     }
     if (laterLeafFrames != 0u) {
-        image.trackPlacements[1].authoredStart = pieceChild
+        image.trackPlacements[1].authoredStart = segmentChild
             ? laterLeafFrames
             : (laterLeafFrames * INT64_C(1000000000) + 47999) / 48000;
         image.track.scheduleSemanticFingerprint =
             harken::ComputeTrackScheduleFingerprintV1(image.track);
         auto kind = harken::PlayableKindV1::Track;
         auto fingerprint = image.track.scheduleSemanticFingerprint;
-        if (pieceChild) {
-            image.pieceTrackRef.trackScheduleSemanticFingerprint = fingerprint;
-            image.piece.scheduleSemanticFingerprint =
-                harken::ComputePieceScheduleFingerprintV1(image.piece);
-            kind = harken::PlayableKindV1::Piece;
-            fingerprint = image.piece.scheduleSemanticFingerprint;
+        if (segmentChild) {
+            image.segmentTrackRef.trackScheduleSemanticFingerprint = fingerprint;
+            image.segment.scheduleSemanticFingerprint =
+                harken::ComputeSegmentScheduleFingerprintV1(image.segment);
+            kind = harken::PlayableKindV1::Segment;
+            fingerprint = image.segment.scheduleSemanticFingerprint;
         }
         image.queueChildren[1].timingHint = harken::MakeScheduleReferenceTimingHint(
             kind, image.queueChildren[1].playable.stableId, fingerprint);
@@ -43575,7 +43575,7 @@ TEST(ActionFiringApi, RepeatedMixedQueueKeepsOldSingleFactsUntilProgramReaderRet
 }
 
 TEST(ActionFiringApi,
-     ImmediateSequenceQueueCompositePieceSuccessorCompletesAfterEveryLeaf) {
+     ImmediateSequenceQueueCompositeSegmentSuccessorCompletesAfterEveryLeaf) {
     ExpectImmediateSequenceQueueCompositeSuccessorCompletes(true);
 }
 
@@ -43585,7 +43585,7 @@ TEST(ActionFiringApi,
 }
 
 TEST(ActionFiringApi,
-     ImmediateSequenceQueueCompositePieceSuccessorCompletesWithLaterBucketLeaf) {
+     ImmediateSequenceQueueCompositeSegmentSuccessorCompletesWithLaterBucketLeaf) {
     ExpectImmediateSequenceQueueCompositeSuccessorCompletes(true, 64u);
 }
 
@@ -46556,12 +46556,12 @@ static void CheckOrderedSelectedLeafFirstPcm(bool nested, bool sameAction,
     }
 }
 
-void CheckNestedPieceEmitterBatchesAndSiblingPlayback(bool packEntry) {
+void CheckNestedSegmentEmitterBatchesAndSiblingPlayback(bool packEntry) {
     constexpr std::uint32_t block = 64;
     constexpr std::uint32_t rate = 48000;
     constexpr float firstAmplitude = 0.125f;
     constexpr float secondAmplitude = 0.03125f;
-    constexpr float pieceAmplitude = firstAmplitude + secondAmplitude;
+    constexpr float segmentAmplitude = firstAmplitude + secondAmplitude;
     harkentest::EngineSession session(harkentest::MakeNullConfig(12, block, rate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -46581,7 +46581,7 @@ void CheckNestedPieceEmitterBatchesAndSiblingPlayback(bool packEntry) {
     }
     CanonicalActionWorld image(firstRevision, secondRevision);
     image.MakeImmediateVariableControlPlayAction();
-    image.MakeFirstVariableControlChildCompositePiece();
+    image.MakeFirstVariableControlChildCompositeSegment();
     image.containers[3].discreteTiming = 1;
     image.containers[3].evaluationPeriodFrames = block;
     image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
@@ -46657,7 +46657,7 @@ void CheckNestedPieceEmitterBatchesAndSiblingPlayback(bool packEntry) {
         content.AddMedia(CanonicalActionWorld::kFirstSound, first);
         content.AddMedia(CanonicalActionWorld::kSecondSound, second);
         const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) /
-            "nested-piece-emitter-batches";
+            "nested-segment-emitter-batches";
         ASSERT_TRUE(harkentest::WriteBytes(directory / "Init.pack",
             harkentest::BuildMasterOnlyInitBytes()));
         ASSERT_TRUE(harkentest::WriteBytes(directory / "Content.pack", content.Build()));
@@ -46745,7 +46745,7 @@ void CheckNestedPieceEmitterBatchesAndSiblingPlayback(bool packEntry) {
         }
         ASSERT_EQ(VN_OK, Vn_Update());
     };
-    const auto expectBranch = [&](VnActionFiringHandle firing, VnEmitterHandle emitter, bool piece,
+    const auto expectBranch = [&](VnActionFiringHandle firing, VnEmitterHandle emitter, bool segment,
                                   std::vector<VnVoiceHandle>* renders) {
         VnActionStepResult play{};
         play.structSize = sizeof(play);
@@ -46756,15 +46756,15 @@ void CheckNestedPieceEmitterBatchesAndSiblingPlayback(bool packEntry) {
         ASSERT_NE(engine.playableServices.end(), row);
         ASSERT_TRUE(row->InvocationValid());
         EXPECT_EQ(emitter, row->Invocation().invocationEmitter);
-        ASSERT_EQ(piece ? 2u : 1u, row->variableControlDiscreteMemberCount);
+        ASSERT_EQ(segment ? 2u : 1u, row->variableControlDiscreteMemberCount);
         ASSERT_EQ(1u, row->variableControlChildCount);
         const auto selected = row->variableControlChildInstances[0];
         const auto selectedView = engine.playableInstances.Classify(selected);
         ASSERT_TRUE(selectedView.live);
-        EXPECT_EQ(piece ? harken::PlayableKind::Piece : harken::PlayableKind::Sound, selectedView.kind);
+        EXPECT_EQ(segment ? harken::PlayableKind::Segment : harken::PlayableKind::Sound, selectedView.kind);
         harken::MonitorContentIdentity selectedContent{};
         ASSERT_TRUE(engine.playableInstances.CaptureContentIdentity(selected, &selectedContent));
-        EXPECT_EQ(piece ? image.piece.rootDefinition.stableId : CanonicalActionWorld::kSecondSound,
+        EXPECT_EQ(segment ? image.segment.rootDefinition.stableId : CanonicalActionWorld::kSecondSound,
             selectedContent.stableId);
         std::vector<VnSoundId> actual;
         if (renders != nullptr) renders->clear();
@@ -46786,7 +46786,7 @@ void CheckNestedPieceEmitterBatchesAndSiblingPlayback(bool packEntry) {
             if (renders != nullptr) renders->push_back(member.render);
         }
         std::sort(actual.begin(), actual.end());
-        auto expected = piece ? std::vector<VnSoundId>{CanonicalActionWorld::kFirstSound,
+        auto expected = segment ? std::vector<VnSoundId>{CanonicalActionWorld::kFirstSound,
             CanonicalActionWorld::kSecondSound} : std::vector<VnSoundId>{CanonicalActionWorld::kSecondSound};
         std::sort(expected.begin(), expected.end());
         EXPECT_EQ(expected, actual);
@@ -46806,7 +46806,7 @@ void CheckNestedPieceEmitterBatchesAndSiblingPlayback(bool packEntry) {
     }
     const float gain12 = std::pow(10.0f, -12.0f / 20.0f);
     const float gainMid = 0.5f * (1.0f + gain12);
-    ASSERT_NO_FATAL_FAILURE(settleAndCheckPcm(pieceAmplitude + secondAmplitude * gain12));
+    ASSERT_NO_FATAL_FAILURE(settleAndCheckPcm(segmentAmplitude + secondAmplitude * gain12));
     for (const auto& ticket : localTickets) ASSERT_NO_FATAL_FAILURE(expectApplied(ticket));
     ASSERT_NO_FATAL_FAILURE(expectBranch(firings[0], emitters[0], true, nullptr));
     ASSERT_NO_FATAL_FAILURE(expectBranch(firings[1], emitters[1], false, nullptr));
@@ -46815,7 +46815,7 @@ void CheckNestedPieceEmitterBatchesAndSiblingPlayback(bool packEntry) {
     VnVariableTicketV1 refused{};
     EXPECT_EQ(VN_INVALID_ARG, writePair(0, 1, 2, &refused));
     EXPECT_EQ(0u, refused.sequence);
-    ASSERT_NO_FATAL_FAILURE(settleAndCheckPcm(pieceAmplitude + secondAmplitude * gain12));
+    ASSERT_NO_FATAL_FAILURE(settleAndCheckPcm(segmentAmplitude + secondAmplitude * gain12));
     for (std::size_t index = 0; index < emitters.size(); ++index) {
         ASSERT_NO_FATAL_FAILURE(expectValue(emitters[index], selector, index == 0 ? 3.0f : 1.0f, true));
         ASSERT_NO_FATAL_FAILURE(expectValue(emitters[index], gain, static_cast<float>(index), true));
@@ -46826,7 +46826,7 @@ void CheckNestedPieceEmitterBatchesAndSiblingPlayback(bool packEntry) {
     // Both values equal the current global values, but both local overrides must still disappear.
     VnVariableTicketV1 global{};
     ASSERT_EQ(VN_OK, writePair(0, 3, 0, &global));
-    ASSERT_NO_FATAL_FAILURE(settleAndCheckPcm(2.0f * pieceAmplitude));
+    ASSERT_NO_FATAL_FAILURE(settleAndCheckPcm(2.0f * segmentAmplitude));
     ASSERT_NO_FATAL_FAILURE(expectApplied(global));
     for (std::size_t index = 0; index < emitters.size(); ++index) {
         ASSERT_NO_FATAL_FAILURE(expectValue(emitters[index], selector, 3, false));
@@ -46871,12 +46871,12 @@ void CheckNestedPieceEmitterBatchesAndSiblingPlayback(bool packEntry) {
             EXPECT_GT(voice->resampler.SourceFrame(), original.sourceFrame);
         }
     };
-    ASSERT_NO_FATAL_FAILURE(refuseUnloadAndCheckPcm(2.0f * pieceAmplitude));
+    ASSERT_NO_FATAL_FAILURE(refuseUnloadAndCheckPcm(2.0f * segmentAmplitude));
     std::vector<VnVoiceHandle> siblingBefore, siblingAfter;
     ASSERT_NO_FATAL_FAILURE(expectBranch(firings[1], emitters[1], true, &siblingBefore));
     VnVariableTicketV1 isolated{};
     ASSERT_EQ(VN_OK, writePair(emitters[0], 1, 0.5f, &isolated));
-    const float isolatedPcm = pieceAmplitude + secondAmplitude * gainMid;
+    const float isolatedPcm = segmentAmplitude + secondAmplitude * gainMid;
     ASSERT_NO_FATAL_FAILURE(settleAndCheckPcm(isolatedPcm));
     ASSERT_NO_FATAL_FAILURE(expectApplied(isolated));
     ASSERT_NO_FATAL_FAILURE(expectBranch(firings[0], emitters[0], false, nullptr));
@@ -46887,9 +46887,9 @@ void CheckNestedPieceEmitterBatchesAndSiblingPlayback(bool packEntry) {
 
     const auto oldFiring = firings[0];
     ASSERT_EQ(VN_OK, Vn_StopActionFiring(oldFiring, 0));
-    ASSERT_NO_FATAL_FAILURE(settleAndCheckPcm(pieceAmplitude));
+    ASSERT_NO_FATAL_FAILURE(settleAndCheckPcm(segmentAmplitude));
     ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(oldFiring));
-    ASSERT_NO_FATAL_FAILURE(refuseUnloadAndCheckPcm(pieceAmplitude));
+    ASSERT_NO_FATAL_FAILURE(refuseUnloadAndCheckPcm(segmentAmplitude));
     post.emitter = emitters[0];
     ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firings[0]));
     EXPECT_NE(oldFiring, firings[0]);
@@ -46920,12 +46920,12 @@ void CheckNestedPieceEmitterBatchesAndSiblingPlayback(bool packEntry) {
     }
 }
 
-TEST(ActionFiringApi, NestedPieceEmitterBatchesClearOnlyWrittenOverridesAndKeepSiblingPlayback) {
-    CheckNestedPieceEmitterBatchesAndSiblingPlayback(false);
+TEST(ActionFiringApi, NestedSegmentEmitterBatchesClearOnlyWrittenOverridesAndKeepSiblingPlayback) {
+    CheckNestedSegmentEmitterBatchesAndSiblingPlayback(false);
 }
 
-TEST(ActionFiringApi, NestedPieceEmitterBatchesKeepPackPinnedUntilBothEmittersStop) {
-    CheckNestedPieceEmitterBatchesAndSiblingPlayback(true);
+TEST(ActionFiringApi, NestedSegmentEmitterBatchesKeepPackPinnedUntilBothEmittersStop) {
+    CheckNestedSegmentEmitterBatchesAndSiblingPlayback(true);
 }
 
 TEST(ActionFiringApi, OrderedSequenceSelectedLeafKeepsOwnFirstPcm) {
@@ -49278,9 +49278,9 @@ TEST(ActionFiringApi, PendingVariableControlReselectsWholeTreeAtActualPlacement)
 }
 
 enum class PendingVariableSelectionShape {
-    SoundToSilent, SilentToSound, TrackToSound, PieceToSound, MixedToSilentDiscrete,
-    TrackWithLogicalTailToSound, PieceWithLogicalTailToSound,
-    LogicalTrackToSound, LogicalPieceToSound, SoundToTrack, SoundToPiece
+    SoundToSilent, SilentToSound, TrackToSound, SegmentToSound, MixedToSilentDiscrete,
+    TrackWithLogicalTailToSound, SegmentWithLogicalTailToSound,
+    LogicalTrackToSound, LogicalSegmentToSound, SoundToTrack, SoundToSegment
 };
 enum class PendingVariableTreeLoan { None, SecondLeaf, Top };
 enum class PendingVariableNewTreeVariant {
@@ -49296,7 +49296,7 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     const bool newComposite = shape == PendingVariableSelectionShape::SoundToTrack ||
-        shape == PendingVariableSelectionShape::SoundToPiece;
+        shape == PendingVariableSelectionShape::SoundToSegment;
     const bool newLogicalOnly = newComposite && newVariant == PendingVariableNewTreeVariant::LogicalOnly;
     const bool newLogicalTail = newComposite && newVariant == PendingVariableNewTreeVariant::LogicalTail;
     const bool newBounded = newComposite && newVariant == PendingVariableNewTreeVariant::Bounded;
@@ -49311,15 +49311,15 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
     constexpr std::uint64_t newSecondOffset = 480u;
     const std::uint32_t newLeafCount = newLogicalOnly ? 0u : newLogicalTail ? 1u : 2u;
     const bool logicalOnly = shape == PendingVariableSelectionShape::LogicalTrackToSound ||
-        shape == PendingVariableSelectionShape::LogicalPieceToSound;
+        shape == PendingVariableSelectionShape::LogicalSegmentToSound;
     const bool logicalTail = shape == PendingVariableSelectionShape::TrackWithLogicalTailToSound ||
-        shape == PendingVariableSelectionShape::PieceWithLogicalTailToSound || logicalOnly;
+        shape == PendingVariableSelectionShape::SegmentWithLogicalTailToSound || logicalOnly;
     const bool track = shape == PendingVariableSelectionShape::TrackToSound ||
         shape == PendingVariableSelectionShape::TrackWithLogicalTailToSound ||
         shape == PendingVariableSelectionShape::LogicalTrackToSound;
-    const bool piece = shape == PendingVariableSelectionShape::PieceToSound ||
-        shape == PendingVariableSelectionShape::PieceWithLogicalTailToSound ||
-        shape == PendingVariableSelectionShape::LogicalPieceToSound;
+    const bool segment = shape == PendingVariableSelectionShape::SegmentToSound ||
+        shape == PendingVariableSelectionShape::SegmentWithLogicalTailToSound ||
+        shape == PendingVariableSelectionShape::LogicalSegmentToSound;
     const std::vector<float> first(newZeroToPositive ? 4096u : newPartialRetarget ? newBoundaryRetarget ? 1088u : 1024u : newComposite ? 256u : 2048u,
         newComposite ? -0.25f : 0.5f),
         second(newRetarget && !newLateRetarget ? 2048u : logicalTail || newComposite ? 256u : 2048u, -0.125f);
@@ -49338,10 +49338,10 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
     if (shape == PendingVariableSelectionShape::MixedToSilentDiscrete)
         image.MakeImmediateMixedVariableControlPlayAction();
     if (shape == PendingVariableSelectionShape::SilentToSound) image.variables[3].defaultValue = 2.0f;
-    if (piece) image.MakeFirstVariableControlChildCompositePiece();
+    if (segment) image.MakeFirstVariableControlChildCompositeSegment();
     else if (track) image.MakeFirstVariableControlChildCompositeTrack();
     if (newComposite) {
-        if (shape == PendingVariableSelectionShape::SoundToPiece) image.MakeFirstVariableControlChildCompositePiece();
+        if (shape == PendingVariableSelectionShape::SoundToSegment) image.MakeFirstVariableControlChildCompositeSegment();
         else image.MakeFirstVariableControlChildCompositeTrack();
         image.variableControlChildren[1].playable = image.variableControlChildren[0].playable;
         image.variableControlChildren[1].timingHint = {};
@@ -49363,9 +49363,9 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
             image.trackPlacements[1].authoredDuration = INT64_C(4000000);
         }
         image.track.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(image.track);
-        if (shape == PendingVariableSelectionShape::SoundToPiece) {
-            image.pieceTrackRef.trackScheduleSemanticFingerprint = image.track.scheduleSemanticFingerprint;
-            image.piece.scheduleSemanticFingerprint = harken::ComputePieceScheduleFingerprintV1(image.piece);
+        if (shape == PendingVariableSelectionShape::SoundToSegment) {
+            image.segmentTrackRef.trackScheduleSemanticFingerprint = image.track.scheduleSemanticFingerprint;
+            image.segment.scheduleSemanticFingerprint = harken::ComputeSegmentScheduleFingerprintV1(image.segment);
         }
         if (newContinuous) {
             for (std::uint32_t index = 0; index < 2; ++index) {
@@ -49402,9 +49402,9 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
         image.trackPlacements[1].authoredStart = INT64_C(1000000000);
         image.trackPlacements[1].authoredDuration = 1;
         image.track.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(image.track);
-        if (piece) {
-            image.pieceTrackRef.trackScheduleSemanticFingerprint = image.track.scheduleSemanticFingerprint;
-            image.piece.scheduleSemanticFingerprint = harken::ComputePieceScheduleFingerprintV1(image.piece);
+        if (segment) {
+            image.segmentTrackRef.trackScheduleSemanticFingerprint = image.track.scheduleSemanticFingerprint;
+            image.segment.scheduleSemanticFingerprint = harken::ComputeSegmentScheduleFingerprintV1(image.segment);
         }
     }
     const auto sourceFrame = delayedActionSource ? engine.timelinePool.WindowEndFrame() + 2u * block : 6u * block;
@@ -49465,7 +49465,7 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
         EXPECT_FALSE(candidates.empty());
         if (shape == PendingVariableSelectionShape::SoundToSilent ||
             shape == PendingVariableSelectionShape::SoundToTrack ||
-            shape == PendingVariableSelectionShape::SoundToPiece) {
+            shape == PendingVariableSelectionShape::SoundToSegment) {
             EXPECT_TRUE(std::any_of(candidates.begin(), candidates.end(), [](const auto& record) {
                 return record.header.stableId == CanonicalActionWorld::kFirstSound;
             }));
@@ -49481,7 +49481,7 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
     const auto service = row->identity;
     ASSERT_EQ(harken::EnginePlayableStartPhase::PendingImmediateEntry, row->phase);
     ASSERT_EQ(newContinuous ? 3u : shape == PendingVariableSelectionShape::SilentToSound || logicalOnly ? 0u : logicalTail ? 1u :
-        track || piece || shape == PendingVariableSelectionShape::MixedToSilentDiscrete ? 2u : 1u,
+        track || segment || shape == PendingVariableSelectionShape::MixedToSilentDiscrete ? 2u : 1u,
         row->scheduleLeafCount);
     const auto oldLogicalCompletion = row->zeroWorkCompletionFrame;
     if (logicalTail) {
@@ -49496,13 +49496,13 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
     if (foreignLoanTarget != PendingVariableTreeLoan::None) {
         ASSERT_TRUE(!logicalTail || logicalOnly);
         ASSERT_TRUE(!logicalOnly || foreignLoanTarget == PendingVariableTreeLoan::Top);
-        ASSERT_TRUE(track || piece);
+        ASSERT_TRUE(track || segment);
         const auto held = foreignLoanTarget == PendingVariableTreeLoan::Top ? oldTop : oldLeaves[1];
         auto* baselineLoan = harken::Engine::ResolveOriginalPlayableBaseline(&engine, engine.playableInstances, held);
         ASSERT_NE(nullptr, baselineLoan);
         ASSERT_TRUE(baselineLoan->Borrow(&foreignTreeLoan));
     }
-    if (track || piece) {
+    if (track || segment) {
         const auto savedTopEpoch = row->variableControlChildEpochs[0];
         ++row->variableControlChildEpochs[0];
         EXPECT_FALSE(engine.MatchesPendingVariableGroupTopology(originalGroup, *row));
@@ -49659,7 +49659,7 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
                 ASSERT_EQ(newLeafCount + (newContinuous ? 1u : 0u), row->scheduleLeafCount);
                 const auto topIndex = newContinuous ? 1u : 0u;
                 const auto expectedKind = shape == PendingVariableSelectionShape::SoundToTrack
-                    ? harken::PlayableKind::Track : harken::PlayableKind::Piece;
+                    ? harken::PlayableKind::Track : harken::PlayableKind::Segment;
                 EXPECT_EQ(expectedKind, row->variableControlChildKinds[topIndex]);
                 const auto top = row->variableControlChildInstances[topIndex];
                 const auto topView = engine.playableInstances.Classify(top);
@@ -49978,16 +49978,16 @@ TEST(ActionFiringApi, PendingVariableControlActualPlacementChangesCompositeTrack
     CheckPendingVariableSelectionShape(PendingVariableSelectionShape::TrackToSound);
 }
 
-TEST(ActionFiringApi, PendingVariableControlActualPlacementChangesCompositePieceToSound) {
-    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::PieceToSound);
+TEST(ActionFiringApi, PendingVariableControlActualPlacementChangesCompositeSegmentToSound) {
+    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SegmentToSound);
 }
 
 TEST(ActionFiringApi, PendingVariableControlActualPlacementChangesSoundToCompositeTrack) {
     CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToTrack);
 }
 
-TEST(ActionFiringApi, PendingVariableControlActualPlacementChangesSoundToCompositePiece) {
-    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToPiece);
+TEST(ActionFiringApi, PendingVariableControlActualPlacementChangesSoundToCompositeSegment) {
+    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToSegment);
 }
 
 TEST(ActionFiringApi, PendingVariableControlNewLogicalTrackCompletesWithoutPhysicalLeaves) {
@@ -49995,8 +49995,8 @@ TEST(ActionFiringApi, PendingVariableControlNewLogicalTrackCompletesWithoutPhysi
         PendingVariableTreeLoan::None, false, PendingVariableNewTreeVariant::LogicalOnly);
 }
 
-TEST(ActionFiringApi, PendingVariableControlNewLogicalPieceCompletesWithoutPhysicalLeaves) {
-    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToPiece, false,
+TEST(ActionFiringApi, PendingVariableControlNewLogicalSegmentCompletesWithoutPhysicalLeaves) {
+    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToSegment, false,
         PendingVariableTreeLoan::None, false, PendingVariableNewTreeVariant::LogicalOnly);
 }
 
@@ -50005,8 +50005,8 @@ TEST(ActionFiringApi, PendingVariableControlNewTrackRetainsLogicalTailCompletion
         PendingVariableTreeLoan::None, false, PendingVariableNewTreeVariant::LogicalTail);
 }
 
-TEST(ActionFiringApi, PendingVariableControlNewPieceRetainsLogicalTailCompletion) {
-    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToPiece, false,
+TEST(ActionFiringApi, PendingVariableControlNewSegmentRetainsLogicalTailCompletion) {
+    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToSegment, false,
         PendingVariableTreeLoan::None, false, PendingVariableNewTreeVariant::LogicalTail);
 }
 
@@ -50015,8 +50015,8 @@ TEST(ActionFiringApi, PendingVariableControlNewTrackPreservesBoundedClipDuration
         PendingVariableTreeLoan::None, false, PendingVariableNewTreeVariant::Bounded);
 }
 
-TEST(ActionFiringApi, PendingVariableControlNewPiecePreservesBoundedClipDurations) {
-    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToPiece, false,
+TEST(ActionFiringApi, PendingVariableControlNewSegmentPreservesBoundedClipDurations) {
+    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToSegment, false,
         PendingVariableTreeLoan::None, false, PendingVariableNewTreeVariant::Bounded);
 }
 
@@ -50025,8 +50025,8 @@ TEST(ActionFiringApi, PendingVariableControlNewContinuousTrackSharesOneTopWeight
         PendingVariableTreeLoan::None, false, PendingVariableNewTreeVariant::Continuous);
 }
 
-TEST(ActionFiringApi, PendingVariableControlNewContinuousPieceSharesOneTopWeight) {
-    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToPiece, false,
+TEST(ActionFiringApi, PendingVariableControlNewContinuousSegmentSharesOneTopWeight) {
+    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToSegment, false,
         PendingVariableTreeLoan::None, false, PendingVariableNewTreeVariant::Continuous);
 }
 
@@ -50035,8 +50035,8 @@ TEST(ActionFiringApi, PendingVariableControlNewContinuousTrackUpdatesPlayingLeaf
         PendingVariableTreeLoan::None, false, PendingVariableNewTreeVariant::ContinuousRetarget);
 }
 
-TEST(ActionFiringApi, PendingVariableControlNewContinuousPieceUpdatesPlayingLeafWeightAfterFirstPcm) {
-    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToPiece, false,
+TEST(ActionFiringApi, PendingVariableControlNewContinuousSegmentUpdatesPlayingLeafWeightAfterFirstPcm) {
+    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToSegment, false,
         PendingVariableTreeLoan::None, false, PendingVariableNewTreeVariant::ContinuousRetarget);
 }
 
@@ -50045,8 +50045,8 @@ TEST(ActionFiringApi, PendingVariableControlNewContinuousTrackLateWeightUpdatePr
         PendingVariableTreeLoan::None, false, PendingVariableNewTreeVariant::ContinuousLateRetarget);
 }
 
-TEST(ActionFiringApi, PendingVariableControlNewContinuousPieceLateWeightUpdatePreservesNaturalCompletion) {
-    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToPiece, false,
+TEST(ActionFiringApi, PendingVariableControlNewContinuousSegmentLateWeightUpdatePreservesNaturalCompletion) {
+    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToSegment, false,
         PendingVariableTreeLoan::None, false, PendingVariableNewTreeVariant::ContinuousLateRetarget);
 }
 
@@ -50055,8 +50055,8 @@ TEST(ActionFiringApi, PendingVariableControlNewContinuousTrackRetriesLiveMemberA
         PendingVariableTreeLoan::None, false, PendingVariableNewTreeVariant::ContinuousPartialRetarget);
 }
 
-TEST(ActionFiringApi, PendingVariableControlNewContinuousPieceRetriesLiveMemberAfterNaturalEnd) {
-    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToPiece, false,
+TEST(ActionFiringApi, PendingVariableControlNewContinuousSegmentRetriesLiveMemberAfterNaturalEnd) {
+    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToSegment, false,
         PendingVariableTreeLoan::None, false, PendingVariableNewTreeVariant::ContinuousPartialRetarget);
 }
 
@@ -50065,8 +50065,8 @@ TEST(ActionFiringApi, PendingVariableControlNewContinuousTrackNaturalEndAtContro
         PendingVariableTreeLoan::None, false, PendingVariableNewTreeVariant::ContinuousBoundaryRetarget);
 }
 
-TEST(ActionFiringApi, PendingVariableControlNewContinuousPieceNaturalEndAtControlFrameRetriesLiveMember) {
-    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToPiece, false,
+TEST(ActionFiringApi, PendingVariableControlNewContinuousSegmentNaturalEndAtControlFrameRetriesLiveMember) {
+    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToSegment, false,
         PendingVariableTreeLoan::None, false, PendingVariableNewTreeVariant::ContinuousBoundaryRetarget);
 }
 
@@ -50075,8 +50075,8 @@ TEST(ActionFiringApi, PendingVariableControlNewContinuousTrackZeroWeightMemberBe
         PendingVariableTreeLoan::None, false, PendingVariableNewTreeVariant::ContinuousZeroToPositive);
 }
 
-TEST(ActionFiringApi, PendingVariableControlNewContinuousPieceZeroWeightMemberBecomesAudible) {
-    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToPiece, false,
+TEST(ActionFiringApi, PendingVariableControlNewContinuousSegmentZeroWeightMemberBecomesAudible) {
+    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToSegment, false,
         PendingVariableTreeLoan::None, false, PendingVariableNewTreeVariant::ContinuousZeroToPositive);
 }
 
@@ -50085,8 +50085,8 @@ TEST(ActionFiringApi, PendingVariableControlNewCompositeTrackStopBeforeFirstPcmR
         PendingVariableTreeLoan::None, false, PendingVariableNewTreeVariant::Physical, true);
 }
 
-TEST(ActionFiringApi, PendingVariableControlNewCompositePieceStopBeforeFirstPcmReclaims) {
-    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToPiece, false,
+TEST(ActionFiringApi, PendingVariableControlNewCompositeSegmentStopBeforeFirstPcmReclaims) {
+    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SoundToSegment, false,
         PendingVariableTreeLoan::None, false, PendingVariableNewTreeVariant::Physical, true);
 }
 
@@ -50094,16 +50094,16 @@ TEST(ActionFiringApi, PendingVariableControlTrackReplacementDropsOldLogicalTailA
     CheckPendingVariableSelectionShape(PendingVariableSelectionShape::TrackWithLogicalTailToSound);
 }
 
-TEST(ActionFiringApi, PendingVariableControlPieceReplacementDropsOldLogicalTailAndCompletesNaturally) {
-    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::PieceWithLogicalTailToSound);
+TEST(ActionFiringApi, PendingVariableControlSegmentReplacementDropsOldLogicalTailAndCompletesNaturally) {
+    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SegmentWithLogicalTailToSound);
 }
 
 TEST(ActionFiringApi, PendingVariableControlLogicalTrackSelectsSoundAndCompletesBeforeOldMarker) {
     CheckPendingVariableSelectionShape(PendingVariableSelectionShape::LogicalTrackToSound);
 }
 
-TEST(ActionFiringApi, PendingVariableControlLogicalPieceSelectsSoundAndCompletesBeforeOldMarker) {
-    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::LogicalPieceToSound);
+TEST(ActionFiringApi, PendingVariableControlLogicalSegmentSelectsSoundAndCompletesBeforeOldMarker) {
+    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::LogicalSegmentToSound);
 }
 
 TEST(ActionFiringApi, PendingVariableControlLogicalTrackReplacementWaitsForForeignTopBeforeSound) {
@@ -50111,8 +50111,8 @@ TEST(ActionFiringApi, PendingVariableControlLogicalTrackReplacementWaitsForForei
         PendingVariableTreeLoan::Top);
 }
 
-TEST(ActionFiringApi, PendingVariableControlLogicalPieceReplacementWaitsForForeignTopBeforeSound) {
-    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::LogicalPieceToSound, false,
+TEST(ActionFiringApi, PendingVariableControlLogicalSegmentReplacementWaitsForForeignTopBeforeSound) {
+    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::LogicalSegmentToSound, false,
         PendingVariableTreeLoan::Top);
 }
 
@@ -50121,8 +50121,8 @@ TEST(ActionFiringApi, PendingVariableControlLogicalTrackStopWaitsForForeignTopWi
         PendingVariableTreeLoan::Top, true);
 }
 
-TEST(ActionFiringApi, PendingVariableControlLogicalPieceStopWaitsForForeignTopWithoutSound) {
-    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::LogicalPieceToSound, false,
+TEST(ActionFiringApi, PendingVariableControlLogicalSegmentStopWaitsForForeignTopWithoutSound) {
+    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::LogicalSegmentToSound, false,
         PendingVariableTreeLoan::Top, true);
 }
 
@@ -50131,8 +50131,8 @@ TEST(ActionFiringApi, PendingVariableControlTrackReplacementWaitsForForeignLeafA
         PendingVariableTreeLoan::SecondLeaf);
 }
 
-TEST(ActionFiringApi, PendingVariableControlPieceReplacementWaitsForForeignTopAfterLeavesRetire) {
-    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::PieceToSound, false,
+TEST(ActionFiringApi, PendingVariableControlSegmentReplacementWaitsForForeignTopAfterLeavesRetire) {
+    CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SegmentToSound, false,
         PendingVariableTreeLoan::Top);
 }
 
@@ -50144,7 +50144,7 @@ TEST(ActionFiringApi, PendingVariableControlLateMaterializedActionSelectsFirstPc
     CheckPendingVariableSelectionShape(PendingVariableSelectionShape::SilentToSound, true);
 }
 
-enum class PendingSelectedContainerCase { OneShot, Loop, LogicalTrack, LogicalPiece, StopBeforeOutput, PrivateCancel };
+enum class PendingSelectedContainerCase { OneShot, Loop, LogicalTrack, LogicalSegment, StopBeforeOutput, PrivateCancel };
 
 enum class PendingMultiPlaySequenceCase { Complete, CancelPrivate, RefusePublication, StopHead, StopOther };
 
@@ -53892,18 +53892,18 @@ static void CheckPendingVariableSelectedContainerAtPlacement(bool sequence, bool
         engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
     image.MakeImmediateVariableControlPlayAction();
     const bool logical = testCase == PendingSelectedContainerCase::LogicalTrack ||
-        testCase == PendingSelectedContainerCase::LogicalPiece;
+        testCase == PendingSelectedContainerCase::LogicalSegment;
     const bool privateCancel = testCase == PendingSelectedContainerCase::PrivateCancel;
     const bool stopped = testCase == PendingSelectedContainerCase::StopBeforeOutput || privateCancel;
     const auto loopCount = testCase == PendingSelectedContainerCase::Loop ? 2u : 1u;
     if (logical) {
         if (testCase == PendingSelectedContainerCase::LogicalTrack) image.MakeFirstVariableControlChildCompositeTrack();
-        else image.MakeFirstVariableControlChildCompositePiece();
+        else image.MakeFirstVariableControlChildCompositeSegment();
         for (auto& placement : image.trackPlacements) placement.authoredDuration = 1;
         image.track.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(image.track);
-        if (testCase == PendingSelectedContainerCase::LogicalPiece) {
-            image.pieceTrackRef.trackScheduleSemanticFingerprint = image.track.scheduleSemanticFingerprint;
-            image.piece.scheduleSemanticFingerprint = harken::ComputePieceScheduleFingerprintV1(image.piece);
+        if (testCase == PendingSelectedContainerCase::LogicalSegment) {
+            image.segmentTrackRef.trackScheduleSemanticFingerprint = image.track.scheduleSemanticFingerprint;
+            image.segment.scheduleSemanticFingerprint = harken::ComputeSegmentScheduleFingerprintV1(image.segment);
         }
     }
     if (loopCount != 1) {
@@ -54163,12 +54163,12 @@ TEST(ActionFiringApi, PendingVariableControlNewSequenceLogicalTrackCompletesWith
     CheckPendingVariableSelectedContainerAtPlacement(true, false, PendingSelectedContainerCase::LogicalTrack);
 }
 
-TEST(ActionFiringApi, PendingVariableControlNewRandomLogicalPieceCompletesWithoutSound) {
-    CheckPendingVariableSelectedContainerAtPlacement(false, false, PendingSelectedContainerCase::LogicalPiece);
+TEST(ActionFiringApi, PendingVariableControlNewRandomLogicalSegmentCompletesWithoutSound) {
+    CheckPendingVariableSelectedContainerAtPlacement(false, false, PendingSelectedContainerCase::LogicalSegment);
 }
 
-TEST(ActionFiringApi, PendingVariableControlNewSequenceLogicalPieceCompletesWithoutSound) {
-    CheckPendingVariableSelectedContainerAtPlacement(true, false, PendingSelectedContainerCase::LogicalPiece);
+TEST(ActionFiringApi, PendingVariableControlNewSequenceLogicalSegmentCompletesWithoutSound) {
+    CheckPendingVariableSelectedContainerAtPlacement(true, false, PendingSelectedContainerCase::LogicalSegment);
 }
 
 TEST(ActionFiringApi, PendingVariableControlNewRandomStopBeforeOutputReclaims) {
@@ -54982,7 +54982,7 @@ TEST(ActionFiringApi, PendingVariableGroupZeroNativeQueueCancelsRetriesAndReturn
             ? producer.row->selectionCount : 0;
         limits.seedPrefixCount = producer.storage.initialSelection.BoundFor(producer.storage.generation)
             ? producer.storage.initialSelection.prefixCount : 0;
-        limits.currentScheduleDepth = limits.directFutureScheduleDepth = world.maxTrackPieceScheduleDepth;
+        limits.currentScheduleDepth = limits.directFutureScheduleDepth = world.maxTrackSegmentScheduleDepth;
         const harken::native_backing::WorldContent content(world);
         std::vector<harken::native_backing::MemoEntry> entries(512);
         harken::native_backing::MemoWorkspace memo(entries.data(), entries.size());
@@ -55386,7 +55386,7 @@ TEST(ActionFiringApi, PendingVariableGroupRegisteredAllSilentEntryCancelsAndRetu
     CheckPendingVariableZeroCohort({0, 0}, false);
 }
 
-static void CheckRegisteredInitialCompositeCohort(bool piece, bool reselect,
+static void CheckRegisteredInitialCompositeCohort(bool segment, bool reselect,
     std::uint32_t trackLeaves = 2, bool stopMember = false,
     unsigned stoppedMember = 0, bool stopDuringAdmission = false, bool asymmetric = false) {
     constexpr std::uint32_t block = 64;
@@ -55407,7 +55407,7 @@ static void CheckRegisteredInitialCompositeCohort(bool piece, bool reselect,
     CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
         engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
     image.MakeImmediateMixedVariableControlPlayAction();
-    if (piece) image.MakeFirstVariableControlChildCompositePiece();
+    if (segment) image.MakeFirstVariableControlChildCompositeSegment();
     else image.MakeFirstVariableControlChildCompositeTrack();
     std::vector<harken::ScheduleClipPlacementV1> placements(trackLeaves);
     std::vector<harken::PlayableOccurrencePropertyViewV1> occurrences(
@@ -55432,9 +55432,9 @@ static void CheckRegisteredInitialCompositeCohort(bool piece, bool reselect,
     image.world.playableOccurrenceCount = static_cast<std::uint32_t>(occurrences.size());
     image.world.playableOccurrences = occurrences.data();
     image.track.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(image.track);
-    if (piece) {
-        image.pieceTrackRef.trackScheduleSemanticFingerprint = image.track.scheduleSemanticFingerprint;
-        image.piece.scheduleSemanticFingerprint = harken::ComputePieceScheduleFingerprintV1(image.piece);
+    if (segment) {
+        image.segmentTrackRef.trackScheduleSemanticFingerprint = image.track.scheduleSemanticFingerprint;
+        image.segment.scheduleSemanticFingerprint = harken::ComputeSegmentScheduleFingerprintV1(image.segment);
     }
     image.variableControlContinuousCell.lower = image.variableControlContinuousCell.upper = 3.0f;
     image.steps[12] = image.steps[11];
@@ -55528,7 +55528,7 @@ static void CheckRegisteredInitialCompositeCohort(bool piece, bool reselect,
         const auto top = engine.playableInstances.Classify(row->variableControlChildInstances[0]);
         EXPECT_TRUE(top.live);
         EXPECT_EQ(asymmetric && index == 1u ? harken::PlayableKind::Sound :
-            piece ? harken::PlayableKind::Piece : harken::PlayableKind::Track, top.kind);
+            segment ? harken::PlayableKind::Segment : harken::PlayableKind::Track, top.kind);
         EXPECT_EQ(row->ownerInstance, top.parent);
     }
     const auto attempt = std::find_if(engine.immediateEntryAttempts.data(),
@@ -55892,7 +55892,7 @@ TEST(ActionFiringApi, PendingVariableGroupInitialCompositeTrackReselectsBothPlay
     CheckRegisteredInitialCompositeCohort(false, true);
 }
 
-TEST(ActionFiringApi, PendingVariableGroupInitialCompositePieceReselectsBothPlays) {
+TEST(ActionFiringApi, PendingVariableGroupInitialCompositeSegmentReselectsBothPlays) {
     CheckRegisteredInitialCompositeCohort(true, true);
 }
 
@@ -55900,7 +55900,7 @@ TEST(ActionFiringApi, PendingVariableGroupInitialCompositeTrackPreservesAuthored
     CheckRegisteredInitialCompositeCohort(false, false);
 }
 
-TEST(ActionFiringApi, PendingVariableGroupInitialCompositePiecePreservesAuthoredOffset) {
+TEST(ActionFiringApi, PendingVariableGroupInitialCompositeSegmentPreservesAuthoredOffset) {
     CheckRegisteredInitialCompositeCohort(true, false);
 }
 
@@ -55908,7 +55908,7 @@ TEST(ActionFiringApi, PendingVariableGroupInitialCompositeNineTrackLeavesPreserv
     CheckRegisteredInitialCompositeCohort(false, false, 9);
 }
 
-TEST(ActionFiringApi, PendingVariableGroupInitialCompositeNinePieceLeavesPreserveEveryStart) {
+TEST(ActionFiringApi, PendingVariableGroupInitialCompositeNineSegmentLeavesPreserveEveryStart) {
     CheckRegisteredInitialCompositeCohort(true, false, 9);
 }
 
@@ -55916,7 +55916,7 @@ TEST(ActionFiringApi, PendingVariableGroupInitialCompositeNineTrackLeavesReselec
     CheckRegisteredInitialCompositeCohort(false, true, 9);
 }
 
-TEST(ActionFiringApi, PendingVariableGroupInitialCompositeNinePieceLeavesReselectBothPlays) {
+TEST(ActionFiringApi, PendingVariableGroupInitialCompositeNineSegmentLeavesReselectBothPlays) {
     CheckRegisteredInitialCompositeCohort(true, true, 9);
 }
 
@@ -55924,7 +55924,7 @@ TEST(ActionFiringApi, PendingVariableGroupInitialCompositeNineTrackLeavesStopHea
     CheckRegisteredInitialCompositeCohort(false, false, 9, true);
 }
 
-TEST(ActionFiringApi, PendingVariableGroupInitialCompositeNinePieceLeavesStopHeadPreservesOther) {
+TEST(ActionFiringApi, PendingVariableGroupInitialCompositeNineSegmentLeavesStopHeadPreservesOther) {
     CheckRegisteredInitialCompositeCohort(true, false, 9, true);
 }
 
@@ -55932,7 +55932,7 @@ TEST(ActionFiringApi, PendingVariableGroupInitialCompositeNineTrackLeavesStopNon
     CheckRegisteredInitialCompositeCohort(false, false, 9, true, 1);
 }
 
-TEST(ActionFiringApi, PendingVariableGroupInitialCompositeNinePieceLeavesStopNonHeadPreservesOther) {
+TEST(ActionFiringApi, PendingVariableGroupInitialCompositeNineSegmentLeavesStopNonHeadPreservesOther) {
     CheckRegisteredInitialCompositeCohort(true, false, 9, true, 1);
 }
 
@@ -55944,11 +55944,11 @@ TEST(ActionFiringApi, PendingVariableGroupInitialCompositeNineTrackLeavesStopNon
     CheckRegisteredInitialCompositeCohort(false, false, 9, true, 1, true);
 }
 
-TEST(ActionFiringApi, PendingVariableGroupInitialCompositeNinePieceLeavesStopHeadDuringAdmissionPreservesOther) {
+TEST(ActionFiringApi, PendingVariableGroupInitialCompositeNineSegmentLeavesStopHeadDuringAdmissionPreservesOther) {
     CheckRegisteredInitialCompositeCohort(true, false, 9, true, 0, true);
 }
 
-TEST(ActionFiringApi, PendingVariableGroupInitialCompositeNinePieceLeavesStopNonHeadDuringAdmissionPreservesOther) {
+TEST(ActionFiringApi, PendingVariableGroupInitialCompositeNineSegmentLeavesStopNonHeadDuringAdmissionPreservesOther) {
     CheckRegisteredInitialCompositeCohort(true, false, 9, true, 1, true);
 }
 
@@ -55956,7 +55956,7 @@ TEST(ActionFiringApi, PendingVariableGroupInitialAsymmetricTrackAndSoundPreserve
     CheckRegisteredInitialCompositeCohort(false, false, 9, false, 0, false, true);
 }
 
-TEST(ActionFiringApi, PendingVariableGroupInitialAsymmetricPieceAndSoundPreserveEveryStart) {
+TEST(ActionFiringApi, PendingVariableGroupInitialAsymmetricSegmentAndSoundPreserveEveryStart) {
     CheckRegisteredInitialCompositeCohort(true, false, 9, false, 0, false, true);
 }
 
@@ -55964,7 +55964,7 @@ TEST(ActionFiringApi, PendingVariableGroupInitialAsymmetricTrackAndSoundReselect
     CheckRegisteredInitialCompositeCohort(false, true, 9, false, 0, false, true);
 }
 
-TEST(ActionFiringApi, PendingVariableGroupInitialAsymmetricPieceAndSoundReselectBothPlays) {
+TEST(ActionFiringApi, PendingVariableGroupInitialAsymmetricSegmentAndSoundReselectBothPlays) {
     CheckRegisteredInitialCompositeCohort(true, true, 9, false, 0, false, true);
 }
 
@@ -56352,10 +56352,10 @@ static void CheckRegisteredPendingVariableCohort(bool stopWithLaneLoan, bool pre
         engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
     image.MakeImmediateMixedVariableControlPlayAction();
     ASSERT_TRUE(initialComposite == harken::PlayableKindV1::Sound ||
-        initialComposite == harken::PlayableKindV1::Track || initialComposite == harken::PlayableKindV1::Piece);
+        initialComposite == harken::PlayableKindV1::Track || initialComposite == harken::PlayableKindV1::Segment);
     ASSERT_TRUE(initialComposite == harken::PlayableKindV1::Sound || (realVoicePressure && compositeTargetLeaves == 0));
     if (initialComposite == harken::PlayableKindV1::Track) image.MakeFirstVariableControlChildCompositeTrack();
-    if (initialComposite == harken::PlayableKindV1::Piece) image.MakeFirstVariableControlChildCompositePiece();
+    if (initialComposite == harken::PlayableKindV1::Segment) image.MakeFirstVariableControlChildCompositeSegment();
     ASSERT_LE(compositeTargetLeaves, 2u);
     ASSERT_TRUE(!prepareOnly || compositeTargetLeaves <= 1u);
     const auto replacementVoiceCount = compositeTargetLeaves != 0 ? 1u + compositeTargetLeaves : 2u;
@@ -57802,9 +57802,9 @@ TEST(ActionFiringApi, PendingVariableGroupInitialTrackRealVoicePressureWithdraws
         UINT32_MAX, false, 0, false, true, 0, harken::PlayableKindV1::Track);
 }
 
-TEST(ActionFiringApi, PendingVariableGroupInitialPieceRealVoicePressureWithdrawsWholeCohortAndRecovers) {
+TEST(ActionFiringApi, PendingVariableGroupInitialSegmentRealVoicePressureWithdrawsWholeCohortAndRecovers) {
     CheckRegisteredPendingVariableCohort(false, false, false, false, 0, false, false, 0,
-        UINT32_MAX, false, 0, false, true, 0, harken::PlayableKindV1::Piece);
+        UINT32_MAX, false, 0, false, true, 0, harken::PlayableKindV1::Segment);
 }
 
 TEST(ActionFiringApi, PendingVariableGroupReplacementSecondSourceCommitFailureRollsBackFirstSource) {
@@ -60595,7 +60595,7 @@ TEST(ActionFiringApi,
 }
 
 TEST(ActionFiringApi,
-     CrossProgramQueueResetPreparesEveryCompositePieceLeaf) {
+     CrossProgramQueueResetPreparesEveryCompositeSegmentLeaf) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(8, 64, 48000);
     harkentest::EngineSession session(config);
@@ -60614,7 +60614,7 @@ TEST(ActionFiringApi,
             .contentRevision,
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
-    image.MakeFirstQueueChildCompositePiece();
+    image.MakeFirstQueueChildCompositeSegment();
     image.containers[2].queueCycle = harken::QueueCycleV1::Loop;
     image.containers[2].resumePosition = 1;
     image.world.identity.runtimeSemanticFingerprint =
@@ -62601,23 +62601,23 @@ TEST(ActionFiringApi, ScheduleCapacityTrackActionAcceptsOneAnd64Leaves) {
 
 TEST(ActionFiringApi, ScheduleAllocationFailureRefusesAtomicallyAndCanRetry) {
     for (const auto root : {ActionScheduleCapacityRoot::Track,
-                            ActionScheduleCapacityRoot::Piece}) {
+                            ActionScheduleCapacityRoot::Segment}) {
         ExpectScheduleCapacityActionCompletes(root, 2, true);
     }
 }
 
 TEST(ActionFiringApi, DirectScheduleAllocationFailureRefusesAtomicallyAndCanRetry) {
     for (const auto root : {ActionScheduleCapacityRoot::Track,
-                            ActionScheduleCapacityRoot::Piece}) {
+                            ActionScheduleCapacityRoot::Segment}) {
         ExpectDirectScheduleRootBuildsAndReclaims(root, true);
     }
 }
 
-TEST(ActionFiringApi, ScheduleCapacityPieceActionAcceptsOneAnd64Leaves) {
+TEST(ActionFiringApi, ScheduleCapacitySegmentActionAcceptsOneAnd64Leaves) {
     for (const std::uint32_t leafCount : {1u, 64u}) {
         SCOPED_TRACE(leafCount);
         ExpectScheduleCapacityActionCompletes(
-            ActionScheduleCapacityRoot::Piece, leafCount);
+            ActionScheduleCapacityRoot::Segment, leafCount);
     }
 }
 
@@ -62637,8 +62637,8 @@ static void ExpectCapturedScheduleReinstallAndRetirement(
     image.tracks[0].scheduleSemanticFingerprint =
         harken::ComputeTrackScheduleFingerprintV1(image.tracks[0]);
     image.trackRefs[0].trackScheduleSemanticFingerprint = image.tracks[0].scheduleSemanticFingerprint;
-    image.pieces[0].scheduleSemanticFingerprint =
-        harken::ComputePieceScheduleFingerprintV1(image.pieces[0]);
+    image.segments[0].scheduleSemanticFingerprint =
+        harken::ComputeSegmentScheduleFingerprintV1(image.segments[0]);
     image.variables.push_back(harkentest::MakeVariableDefinition(
         ActionScheduleCapacityWorld::kVariable, harken::VariableKindV1::Smooth, 0, 1, 0));
     image.world.variables = image.variables.data();
@@ -62793,57 +62793,57 @@ TEST(ActionFiringApi, CapturedTrackReinstallRetainsFrozenMembersUntilRealReaderR
     }
 }
 
-TEST(ActionFiringApi, CapturedPieceReinstallRetainsFrozenMembersUntilRealReaderReturns) {
+TEST(ActionFiringApi, CapturedSegmentReinstallRetainsFrozenMembersUntilRealReaderReturns) {
     for (const auto leaves : {1u, 2u}) {
         SCOPED_TRACE(leaves);
-        ASSERT_NO_FATAL_FAILURE(ExpectCapturedScheduleReinstallAndRetirement(ActionScheduleCapacityRoot::Piece, leaves));
+        ASSERT_NO_FATAL_FAILURE(ExpectCapturedScheduleReinstallAndRetirement(ActionScheduleCapacityRoot::Segment, leaves));
     }
 }
 
 TEST(ActionFiringApi,
-     ScheduleCapacityTrackAndPieceActionsRefuse65LeavesAtomically) {
+     ScheduleCapacityTrackAndSegmentActionsRefuse65LeavesAtomically) {
     for (const ActionScheduleCapacityRoot root :
          {ActionScheduleCapacityRoot::Track,
-          ActionScheduleCapacityRoot::Piece}) {
+          ActionScheduleCapacityRoot::Segment}) {
         SCOPED_TRACE(root == ActionScheduleCapacityRoot::Track
                          ? "Track"
-                         : "Piece");
+                         : "Segment");
         ExpectScheduleCapacityActionRefuses65Leaves(root);
     }
 }
 
 TEST(ActionFiringApi,
-     DirectRootTrackAndPieceBuildParentEdgesAndFullyReclaim) {
+     DirectRootTrackAndSegmentBuildParentEdgesAndFullyReclaim) {
     for (const ActionScheduleCapacityRoot root :
          {ActionScheduleCapacityRoot::Track,
-          ActionScheduleCapacityRoot::Piece}) {
+          ActionScheduleCapacityRoot::Segment}) {
         SCOPED_TRACE(root == ActionScheduleCapacityRoot::Track
                          ? "Track"
-                         : "Piece");
+                         : "Segment");
         ExpectDirectScheduleRootBuildsAndReclaims(root);
     }
 }
 
 TEST(ActionFiringApi,
-     DirectRootTrackAndPieceReturnCapacityFor65LeavesAtomically) {
+     DirectRootTrackAndSegmentReturnCapacityFor65LeavesAtomically) {
     for (const ActionScheduleCapacityRoot root :
          {ActionScheduleCapacityRoot::Track,
-          ActionScheduleCapacityRoot::Piece}) {
+          ActionScheduleCapacityRoot::Segment}) {
         SCOPED_TRACE(root == ActionScheduleCapacityRoot::Track
                          ? "Track"
-                         : "Piece");
+                         : "Segment");
         ExpectDirectScheduleRootRefuses65Leaves(root);
     }
 }
 
 TEST(ActionFiringApi,
-     DirectRootTrackAndPiecePostFailureRollsBackSharedTransaction) {
+     DirectRootTrackAndSegmentPostFailureRollsBackSharedTransaction) {
     for (const ActionScheduleCapacityRoot root :
          {ActionScheduleCapacityRoot::Track,
-          ActionScheduleCapacityRoot::Piece}) {
+          ActionScheduleCapacityRoot::Segment}) {
         SCOPED_TRACE(root == ActionScheduleCapacityRoot::Track
                          ? "Track"
-                         : "Piece");
+                         : "Segment");
         ExpectDirectScheduleRootPostFailureRollsBackSharedTransaction(root);
     }
 }
@@ -74105,7 +74105,7 @@ void CheckDefaultActionContent(int kind, bool delayed) {
     case 4: image.MakeImmediateSequenceQueuePlayAction(); break;
     case 5: image.MakeImmediateVariableControlPlayAction(); break;
     case 6: image.MakeImmediateDirectContainerCompositePlayAction(harken::PlayableKindV1::Track); break;
-    case 7: image.MakeImmediateDirectContainerCompositePlayAction(harken::PlayableKindV1::Piece); break;
+    case 7: image.MakeImmediateDirectContainerCompositePlayAction(harken::PlayableKindV1::Segment); break;
     }
     for (auto& container : image.containers) container.memoryScope = harken::MemoryScopeV1::Emitter;
     if (delayed) image.DelayCurrentSinglePlayAction(10000000);
@@ -74144,7 +74144,7 @@ TEST(ActionDefaultContext, RandomQueueSoundsWithoutPublicEmitter) { CheckDefault
 TEST(ActionDefaultContext, SequenceQueueSoundsWithoutPublicEmitter) { CheckDefaultActionContent(4, false); }
 TEST(ActionDefaultContext, VariableControlSoundsWithoutPublicEmitter) { CheckDefaultActionContent(5, false); }
 TEST(ActionDefaultContext, TrackInheritsDefault) { CheckDefaultActionContent(6, false); }
-TEST(ActionDefaultContext, PieceInheritsDefault) { CheckDefaultActionContent(7, false); }
+TEST(ActionDefaultContext, SegmentInheritsDefault) { CheckDefaultActionContent(7, false); }
 TEST(ActionDefaultContext, DelayedRandomRetainsDefault) { CheckDefaultActionContent(0, true); }
 TEST(ActionDefaultContext, DelayedQueueRetainsDefault) { CheckDefaultActionContent(3, true); }
 

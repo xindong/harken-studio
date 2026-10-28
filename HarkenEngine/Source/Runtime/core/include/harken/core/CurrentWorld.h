@@ -56,7 +56,7 @@ inline constexpr std::uint32_t kPlayablePropertyChildRowCapacity = 4096;
 inline constexpr std::uint32_t kPlayablePropertyEffectParamCapacity = 16384;
 inline constexpr std::uint32_t kPlayablePropertyEffectEdgeCapacity = 8192;
 inline constexpr std::uint32_t kTrackScheduleProgramCapacity = 1024;
-inline constexpr std::uint32_t kPieceScheduleProgramCapacity = 1024;
+inline constexpr std::uint32_t kSegmentScheduleProgramCapacity = 1024;
 inline constexpr std::uint32_t kScheduleTrackRefCapacity = 4096;
 inline constexpr std::uint32_t kSchedulePlacementCapacity = 4096;
 inline constexpr std::uint32_t kScheduleMarkerCapacity = 4096;
@@ -70,7 +70,7 @@ inline constexpr std::uint32_t kHardPlayablePropertyChildRowCapacity = 1048576;
 inline constexpr std::uint32_t kHardPlayablePropertyEffectParamCapacity = 4194304;
 inline constexpr std::uint32_t kHardPlayablePropertyEffectEdgeCapacity = 2097152;
 inline constexpr std::uint32_t kHardTrackScheduleProgramCapacity = 1048576;
-inline constexpr std::uint32_t kHardPieceScheduleProgramCapacity = 1048576;
+inline constexpr std::uint32_t kHardSegmentScheduleProgramCapacity = 1048576;
 inline constexpr std::uint32_t kHardScheduleTrackRefCapacity = 1048576;
 inline constexpr std::uint32_t kHardSchedulePlacementCapacity = 1048576;
 inline constexpr std::uint32_t kHardScheduleMarkerCapacity = 1048576;
@@ -85,7 +85,7 @@ enum class PlayableKindV1 : std::uint32_t {
     Sound = 0,
     Container = 1,
     Track = 2,
-    Piece = 3,
+    Segment = 3,
 };
 
 struct PlayableRefV1 {
@@ -265,7 +265,7 @@ enum class QueueStopPolicyV1 : std::uint32_t {
 };
 enum class AuthoredCompletionClassV1 : std::uint32_t {
     FiniteMediaCandidate = 0,
-    BoundedTrackPieceCandidate = 1,
+    BoundedTrackSegmentCandidate = 1,
     SignalOnly = 2,
 };
 enum class AuthoredTimeDomainV1 : std::uint32_t {
@@ -293,7 +293,7 @@ enum class ActionTargetKindV1 : std::uint32_t {
     Sound = 0,
     Container = 1,
     Track = 2,
-    Piece = 3,
+    Segment = 3,
     Action = 4,
     Variable = 5,
     Bus = 6,
@@ -507,14 +507,14 @@ struct ScheduleEntryMarkerV1 {
     std::int64_t position = 0;
 };
 
-struct PieceTimelineBoundsV1 {
+struct SegmentTimelineBoundsV1 {
     std::int64_t contentStart = 0;
     std::int64_t contentEnd = 0;
     std::int64_t nominalStart = 0;
     std::int64_t nominalEnd = 0;
 };
 
-struct PieceScheduleProgramViewV1 {
+struct SegmentScheduleProgramViewV1 {
     PlayableRefV1 rootDefinition{};
     std::uint64_t scheduleSemanticFingerprint = 0;
     ScheduleTimeKindV1 timeKind = ScheduleTimeKindV1::AbsoluteNanoseconds;
@@ -529,7 +529,7 @@ struct PieceScheduleProgramViewV1 {
     const ScheduleTrackRefV1* trackRefs = nullptr;
     const ScheduleMarkerV1* markers = nullptr;
     ScheduleEntryMarkerV1 entryMarker{};
-    PieceTimelineBoundsV1 bounds{};
+    SegmentTimelineBoundsV1 bounds{};
 };
 
 enum class CompletionSourceV1 : std::uint32_t {
@@ -537,7 +537,7 @@ enum class CompletionSourceV1 : std::uint32_t {
     ScheduleReference = 1,
 };
 
-struct TrackPieceScheduleKeyV1 {
+struct TrackSegmentScheduleKeyV1 {
     PlayableKindV1 kind = PlayableKindV1::Track;
     std::uint32_t reserved = 0;
     VnObjectId stableId{};
@@ -546,7 +546,7 @@ struct TrackPieceScheduleKeyV1 {
 
 union CompletionPayloadV1 {
     AuthoredCompletionTemplateV1 inlineTemplate;
-    TrackPieceScheduleKeyV1 schedule;
+    TrackSegmentScheduleKeyV1 schedule;
 
     constexpr CompletionPayloadV1() : inlineTemplate{} {}
 };
@@ -575,7 +575,7 @@ struct InlineSoundTimingHintV2 {
 
 union ChildTimingHintPayloadV2 {
     InlineSoundTimingHintV2 inlineSound;
-    TrackPieceScheduleKeyV1 schedule;
+    TrackSegmentScheduleKeyV1 schedule;
 
     constexpr ChildTimingHintPayloadV2() : inlineSound{} {}
 };
@@ -591,7 +591,7 @@ inline ChildTimingHintV2 MakeScheduleReferenceTimingHint(
     std::uint64_t scheduleSemanticFingerprint) noexcept {
     ChildTimingHintV2 hint{};
     hint.kind = ChildTimingHintKindV2::ScheduleReference;
-    hint.payload.schedule = TrackPieceScheduleKeyV1{
+    hint.payload.schedule = TrackSegmentScheduleKeyV1{
         kind, 0, stableId, scheduleSemanticFingerprint};
     return hint;
 }
@@ -788,14 +788,14 @@ struct WorldCapacitySummaryV1 {
     std::uint32_t maxCurvePoints = 8;
     std::uint32_t maxKnownScheduleLeaves = 16;
     std::uint32_t maxTrackSchedulePrograms = kTrackScheduleProgramCapacity;
-    std::uint32_t maxPieceSchedulePrograms = kPieceScheduleProgramCapacity;
-    std::uint32_t maxScheduleTrackRefsPerPiece = 64;
+    std::uint32_t maxSegmentSchedulePrograms = kSegmentScheduleProgramCapacity;
+    std::uint32_t maxScheduleTrackRefsPerSegment = 64;
     std::uint32_t maxScheduleTrackRefsTotal = kScheduleTrackRefCapacity;
     std::uint32_t maxSchedulePlacementsPerTrack = kSchedulePlacementCapacity;
     std::uint32_t maxSchedulePlacementsTotal = kSchedulePlacementCapacity;
-    std::uint32_t maxScheduleMarkersPerPiece = 256;
+    std::uint32_t maxScheduleMarkersPerSegment = 256;
     std::uint32_t maxScheduleMarkersTotal = kScheduleMarkerCapacity;
-    std::uint32_t maxTrackPieceScheduleDepth = 8;
+    std::uint32_t maxTrackSegmentScheduleDepth = 8;
     std::uint32_t maxActionDefinitions = 64;
     std::uint32_t maxActionStepsPerDefinition = kMaxActionSteps;
     std::uint32_t maxActionStepsTotal = 4096;
@@ -829,14 +829,14 @@ void VisitWorldCapacitySummaryV1(Values& values, Visitor& visitor) {
     visitor.U32(values.maxCurvePoints);
     visitor.U32(values.maxKnownScheduleLeaves);
     visitor.U32(values.maxTrackSchedulePrograms);
-    visitor.U32(values.maxPieceSchedulePrograms);
-    visitor.U32(values.maxScheduleTrackRefsPerPiece);
+    visitor.U32(values.maxSegmentSchedulePrograms);
+    visitor.U32(values.maxScheduleTrackRefsPerSegment);
     visitor.U32(values.maxScheduleTrackRefsTotal);
     visitor.U32(values.maxSchedulePlacementsPerTrack);
     visitor.U32(values.maxSchedulePlacementsTotal);
-    visitor.U32(values.maxScheduleMarkersPerPiece);
+    visitor.U32(values.maxScheduleMarkersPerSegment);
     visitor.U32(values.maxScheduleMarkersTotal);
-    visitor.U32(values.maxTrackPieceScheduleDepth);
+    visitor.U32(values.maxTrackSegmentScheduleDepth);
     visitor.U32(values.maxActionDefinitions);
     visitor.U32(values.maxActionStepsPerDefinition);
     visitor.U32(values.maxActionStepsTotal);
@@ -854,8 +854,8 @@ struct ContainerWorldInstallViewV1 {
     std::uint32_t playableOccurrenceCount = 0;
     const TrackScheduleProgramViewV1* trackSchedules = nullptr;
     std::uint32_t trackScheduleCount = 0;
-    const PieceScheduleProgramViewV1* pieceSchedules = nullptr;
-    std::uint32_t pieceScheduleCount = 0;
+    const SegmentScheduleProgramViewV1* segmentSchedules = nullptr;
+    std::uint32_t segmentScheduleCount = 0;
     const ContainerProgramViewV3* containers = nullptr;
     std::uint32_t containerCount = 0;
     const TransitionProgramViewV1* transitions = nullptr;
@@ -876,8 +876,8 @@ struct HistoricalContainerWorldViewV1 {
     std::uint32_t playableOccurrenceCount = 0;
     const TrackScheduleProgramViewV1* trackSchedules = nullptr;
     std::uint32_t trackScheduleCount = 0;
-    const PieceScheduleProgramViewV1* pieceSchedules = nullptr;
-    std::uint32_t pieceScheduleCount = 0;
+    const SegmentScheduleProgramViewV1* segmentSchedules = nullptr;
+    std::uint32_t segmentScheduleCount = 0;
     const ContainerProgramViewV2* containers = nullptr;
     std::uint32_t containerCount = 0;
     const TransitionProgramViewV1* transitions = nullptr;
@@ -913,7 +913,7 @@ struct CurrentWorldV3PrefixValues {
     std::uint32_t playablePropertyEffectParamCount = 0;
     std::uint32_t playablePropertyEffectEdgeCount = 0;
     std::uint32_t trackScheduleCount = 0;
-    std::uint32_t pieceScheduleCount = 0;
+    std::uint32_t segmentScheduleCount = 0;
     std::uint32_t scheduleTrackRefCount = 0;
     std::uint32_t schedulePlacementCount = 0;
     std::uint32_t scheduleMarkerCount = 0;
@@ -934,14 +934,14 @@ struct CurrentWorldV3PrefixValues {
     std::uint32_t maxCurvePoints = 0;
     std::uint32_t maxKnownScheduleLeaves = 0;
     std::uint32_t maxTrackSchedulePrograms = 0;
-    std::uint32_t maxPieceSchedulePrograms = 0;
-    std::uint32_t maxScheduleTrackRefsPerPiece = 0;
+    std::uint32_t maxSegmentSchedulePrograms = 0;
+    std::uint32_t maxScheduleTrackRefsPerSegment = 0;
     std::uint32_t maxScheduleTrackRefsTotal = 0;
     std::uint32_t maxSchedulePlacementsPerTrack = 0;
     std::uint32_t maxSchedulePlacementsTotal = 0;
-    std::uint32_t maxScheduleMarkersPerPiece = 0;
+    std::uint32_t maxScheduleMarkersPerSegment = 0;
     std::uint32_t maxScheduleMarkersTotal = 0;
-    std::uint32_t maxTrackPieceScheduleDepth = 0;
+    std::uint32_t maxTrackSegmentScheduleDepth = 0;
 };
 
 template <class Values, class Visitor>
@@ -965,7 +965,7 @@ void VisitCurrentWorldV3Prefix(Values& values, Visitor& visitor) {
     visitor.U32(values.playablePropertyEffectParamCount);
     visitor.U32(values.playablePropertyEffectEdgeCount);
     visitor.U32(values.trackScheduleCount);
-    visitor.U32(values.pieceScheduleCount);
+    visitor.U32(values.segmentScheduleCount);
     visitor.U32(values.scheduleTrackRefCount);
     visitor.U32(values.schedulePlacementCount);
     visitor.U32(values.scheduleMarkerCount);
@@ -986,14 +986,14 @@ void VisitCurrentWorldV3Prefix(Values& values, Visitor& visitor) {
     visitor.U32(values.maxCurvePoints);
     visitor.U32(values.maxKnownScheduleLeaves);
     visitor.U32(values.maxTrackSchedulePrograms);
-    visitor.U32(values.maxPieceSchedulePrograms);
-    visitor.U32(values.maxScheduleTrackRefsPerPiece);
+    visitor.U32(values.maxSegmentSchedulePrograms);
+    visitor.U32(values.maxScheduleTrackRefsPerSegment);
     visitor.U32(values.maxScheduleTrackRefsTotal);
     visitor.U32(values.maxSchedulePlacementsPerTrack);
     visitor.U32(values.maxSchedulePlacementsTotal);
-    visitor.U32(values.maxScheduleMarkersPerPiece);
+    visitor.U32(values.maxScheduleMarkersPerSegment);
     visitor.U32(values.maxScheduleMarkersTotal);
-    visitor.U32(values.maxTrackPieceScheduleDepth);
+    visitor.U32(values.maxTrackSegmentScheduleDepth);
 }
 
 bool TryBuildCurrentWorldV3Prefix(
@@ -1028,12 +1028,12 @@ std::uint64_t ComputePlayableOccurrenceFingerprintV1(
     const PlayableOccurrencePropertyViewV1& row) noexcept;
 std::uint64_t ComputeTrackScheduleFingerprintV1(
     const TrackScheduleProgramViewV1& row) noexcept;
-std::uint64_t ComputePieceScheduleFingerprintV1(
-    const PieceScheduleProgramViewV1& row) noexcept;
-std::uint64_t ComputePieceScheduleFingerprintV2(
-    const PieceScheduleProgramViewV1& row) noexcept;
-std::uint64_t ComputePieceScheduleFingerprintV1(
-    const PieceScheduleProgramViewV1& row, std::uint32_t bodyVintage) noexcept;
+std::uint64_t ComputeSegmentScheduleFingerprintV1(
+    const SegmentScheduleProgramViewV1& row) noexcept;
+std::uint64_t ComputeSegmentScheduleFingerprintV2(
+    const SegmentScheduleProgramViewV1& row) noexcept;
+std::uint64_t ComputeSegmentScheduleFingerprintV1(
+    const SegmentScheduleProgramViewV1& row, std::uint32_t bodyVintage) noexcept;
 std::uint64_t ComputeCurrentWorldFingerprintV2(
     const HistoricalContainerWorldViewV1& world) noexcept;
 std::uint64_t ComputeCurrentWorldFingerprintV3(

@@ -34,7 +34,7 @@
 #include "Widgets/Inspector/BusInspectorSchema.h"
 #include "Widgets/Inspector/ContainerInspectorSchema.h"
 #include "Widgets/Inspector/LayerInspectorSchema.h"
-#include "Widgets/Inspector/PieceInspectorSchema.h"
+#include "Widgets/Inspector/SegmentInspectorSchema.h"
 #include "Widgets/Inspector/TrackInspectorSchema.h"
 #include "Widgets/Inspector/VariableInspectorSchema.h"
 #include "Core/ComponentCatalog.h"
@@ -120,8 +120,8 @@ QJsonObject InspectorPanel::getInspectorSchema(const QString& schemaId) const
             schema = &containerInspectorSchema();   component = ComponentType::Audio;       break;
         case ProjectItem::Type::Track:
             schema = &trackInspectorSchema();       component = ComponentType::Audio;       break;
-        case ProjectItem::Type::Piece:
-            schema = &pieceInspectorSchema();       component = ComponentType::Audio;       break;
+        case ProjectItem::Type::Segment:
+            schema = &segmentInspectorSchema();       component = ComponentType::Audio;       break;
         case ProjectItem::Type::Layer:
             schema = &layerInspectorSchema();       component = ComponentType::MixNode;     break;
         case ProjectItem::Type::Bus:

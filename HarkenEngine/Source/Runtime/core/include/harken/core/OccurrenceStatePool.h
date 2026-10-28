@@ -51,7 +51,7 @@ struct PreparedCompositeLeafIssuerLimitTestAccess;
 }
 
 // Identity of one occurrence in authored terms. The arranging instance is the
-// Track's host: the Piece instance for a Track inside a Piece, the Track
+// Track's host: the Segment instance for a Track inside a Segment, the Track
 // instance when the Track was triggered directly. Both depths use this one
 // shape, so neither is a special case.
 struct OccurrenceKey {

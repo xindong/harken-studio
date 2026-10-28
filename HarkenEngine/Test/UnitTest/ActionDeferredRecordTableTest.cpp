@@ -39,7 +39,7 @@ harken::ActionDeferredRecord MakePublicationRecord() {
     auto record = MakeRecord();
     record.step.opcode = harken::ActionOpcodeV1::Stop;
     record.step.authoredEventIndex = 23;
-    record.step.target = {harken::ActionTargetKindV1::Piece, 0, harkentest::ObjectId(51), 52};
+    record.step.target = {harken::ActionTargetKindV1::Segment, 0, harkentest::ObjectId(51), 52};
     record.step.delay = {harken::AuthoredTimeDomainV1::AbsoluteNanoseconds, 1000000, 1};
     record.step.fade = {harken::AuthoredTimeDomainV1::MusicalTicks, 480, 1};
     record.step.quantizeReference = {harken::ActionTargetKindV1::Track, 0, harkentest::ObjectId(53), 54};
@@ -732,7 +732,7 @@ TEST(ActionDeferredRecordTable,
     ASSERT_TRUE(table.Reset(1));
     harken::DeferredIntentPool pool(2, 2);
     harken::PlayableInstanceTable instances(1);
-    const auto owner = instances.Acquire(harken::PlayableKind::Piece, 0);
+    const auto owner = instances.Acquire(harken::PlayableKind::Segment, 0);
     ASSERT_NE(0u, owner);
     harken::DeferredIntent playable{};
     playable.ownerDomain = harken::DeferredIntentOwnerDomain::Playable;

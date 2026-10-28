@@ -100,7 +100,7 @@ void appendStaticIssue(RuntimeCapabilityAssessment& assessment,
 bool operationSupports(T type, O operation)
 {
     const bool playable = type == T::Sound || type == T::Container
-        || type == T::Track || type == T::Piece;
+        || type == T::Track || type == T::Segment;
     switch (operation) {
     case O::ActionRegistration: return type == T::Action;
     case O::CompiledPreview:
@@ -122,7 +122,7 @@ B backendFor(O operation, T type)
     if (!operationSupports(type, operation)) return B::None;
     if (operation == O::PackBuild) return B::Pack;
     if (type == T::Sound || type == T::Container || type == T::Track
-        || type == T::Piece || type == T::Layer || type == T::Action
+        || type == T::Segment || type == T::Layer || type == T::Action
         || type == T::Variable || type == T::Bus)
         return B::CurrentWorld;
     return B::Native;
@@ -383,7 +383,7 @@ RuntimeCapabilityEntry evaluate(const ProjectItem& item,
     }
     const bool currentWorldFeature = feature == F::ContentClosure
         || feature == F::SoundPlayback || feature == F::FlatContainer
-        || feature == F::TrackProgram || feature == F::PieceProgram
+        || feature == F::TrackProgram || feature == F::SegmentProgram
         || feature == F::VariableDeclaration || feature == F::TypedEffect
         || feature == F::Transition || feature == F::ContinuousGrid
         || feature == F::MultiAxisGrid || feature == F::QueueMemory
@@ -399,9 +399,9 @@ RuntimeCapabilityEntry evaluate(const ProjectItem& item,
                       QStringLiteral("No runtime capability row exists"));
     }
     if ((feature == F::TrackProgram && item.type != T::Track)
-        || (feature == F::PieceProgram && item.type != T::Piece))
+        || (feature == F::SegmentProgram && item.type != T::Segment))
         return refuse(S::InvalidAuthoring,
-                      QStringLiteral("Schedule capability requires its matching Track or Piece type"));
+                      QStringLiteral("Schedule capability requires its matching Track or Segment type"));
     if ((feature == F::FlatContainer || feature == F::Transition
          || feature == F::ContinuousGrid || feature == F::MultiAxisGrid
          || feature == F::QueueMemory || feature == F::ShuffleMemory
@@ -435,7 +435,7 @@ RuntimeCapabilityEntry evaluate(const ProjectItem& item,
                           ? S::UnavailableEngineContract : S::InvalidAuthoring,
                       diagnostic);
     const bool playable = item.type == T::Sound || item.type == T::Container
-        || item.type == T::Track || item.type == T::Piece || item.type == T::Layer;
+        || item.type == T::Track || item.type == T::Segment || item.type == T::Layer;
     if (playable && std::none_of(request->project.nodes.begin(), request->project.nodes.end(),
             [&](const auto& node) { return node.guid == item.runtimeId(); }))
         return refuse(S::InvalidAuthoring,
@@ -490,7 +490,7 @@ RuntimeCapabilityEntry evaluate(const ProjectItem& item,
                           .arg(static_cast<uint32_t>(compiled.status))
                           .arg(objectIdString(compiled.relatedStableId)));
     if (compiled.world->View().trackScheduleCount != 0
-        || compiled.world->View().pieceScheduleCount != 0)
+        || compiled.world->View().segmentScheduleCount != 0)
         result.diagnostic = scheduleAdmissionDiagnostic();
     return result;
 }
@@ -551,7 +551,7 @@ RuntimeCapabilityAssessment assess(const ProjectItem& item,
         if (assessment.state == S::Ready) add(F::FlatContainer);
         break;
     case T::Track: add(F::TrackProgram); break;
-    case T::Piece: add(F::PieceProgram); break;
+    case T::Segment: add(F::SegmentProgram); break;
     case T::Variable: add(F::VariableDeclaration); break;
     case T::Sound:
     case T::Layer:
@@ -589,7 +589,7 @@ QString featureName(RuntimeCapabilityFeature feature)
     case F::SoundPlayback: return QStringLiteral("soundPlayback");
     case F::FlatContainer: return QStringLiteral("flatContainer");
     case F::TrackProgram: return QStringLiteral("trackProgram");
-    case F::PieceProgram: return QStringLiteral("pieceProgram");
+    case F::SegmentProgram: return QStringLiteral("segmentProgram");
     case F::VariableDeclaration: return QStringLiteral("variableDeclaration");
     case F::TypedBinding: return QStringLiteral("typedBinding");
     case F::TypedEffect: return QStringLiteral("typedEffect");
@@ -662,7 +662,7 @@ const std::vector<RuntimeCapabilityEntry>& entries()
                                   O::ProjectInputCompile, O::CompiledPreview,
                                   O::AuditionPlay, O::Delete}) {
             for (const T type : {T::Sound, T::Layer, T::Container, T::Track,
-                                 T::Piece, T::Variable, T::Action, T::Bus, T::Attenuation}) {
+                                 T::Segment, T::Variable, T::Action, T::Bus, T::Attenuation}) {
                 const bool supported = operationSupports(type, operation);
                 add(type, operation, F::ContentClosure,
                     supported ? S::Ready : S::UnavailableEngineContract,
@@ -672,7 +672,7 @@ const std::vector<RuntimeCapabilityEntry>& entries()
                 if (!supported) continue;
                 if (type == T::Track) add(type, operation, F::TrackProgram, S::Ready,
                     operation == O::Delete ? QString() : scheduleAdmissionDiagnostic());
-                if (type == T::Piece) add(type, operation, F::PieceProgram, S::Ready,
+                if (type == T::Segment) add(type, operation, F::SegmentProgram, S::Ready,
                     operation == O::Delete ? QString() : scheduleAdmissionDiagnostic());
                 if (operation == O::Delete) continue;
                 if (type == T::Sound || type == T::Layer) add(type, operation, F::SoundPlayback);
@@ -690,7 +690,7 @@ const std::vector<RuntimeCapabilityEntry>& entries()
                         add(type, operation, feature, S::Ready,
                             QStringLiteral("Current World validates the Action target, Marker timing and reference"));
                 if (type == T::Sound || type == T::Layer || type == T::Container
-                    || type == T::Track || type == T::Piece || type == T::Bus) {
+                    || type == T::Track || type == T::Segment || type == T::Bus) {
                     add(type, operation, F::TypedEffect, S::Ready,
                         QStringLiteral("Effect types and parameters must satisfy the selected compile target"));
                     add(type, operation, F::TypedBinding,
@@ -699,12 +699,12 @@ const std::vector<RuntimeCapabilityEntry>& entries()
                             ? QStringLiteral("Current World input does not carry typed bindings; sync and Pack use the binding bridge")
                             : QStringLiteral("Binding targets, Variables and curves require supported runtime lowering"));
                 }
-                if (type == T::Piece) add(type, operation, F::NestedPlaceholder);
+                if (type == T::Segment) add(type, operation, F::NestedPlaceholder);
                 if (type == T::Track) {
                     add(type, operation, F::ClipAuthoredDuration, S::Ready,
                         QStringLiteral("Clips schedule their start and use authored duration as the playback boundary"));
                     add(type, operation, F::ClipTargetTrack, S::UnavailableEngineContract,
-                        QStringLiteral("Track clips accept Sound, Container and Piece targets"));
+                        QStringLiteral("Track clips accept Sound, Container and Segment targets"));
                 }
             }
         }

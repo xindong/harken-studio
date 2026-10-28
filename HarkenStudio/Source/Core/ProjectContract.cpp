@@ -106,13 +106,15 @@ QString documentTypeForFolder(const QString& folder)
     return {};
 }
 
-QString packDomain(const QJsonObject& object)
+QString packDomain(const QJsonObject& object, int schemaVersion)
 {
     const QString type = object.value(QStringLiteral("type")).toString();
     if (type.compare(QStringLiteral("Sound"), Qt::CaseInsensitive) == 0
         || type.compare(QStringLiteral("Container"), Qt::CaseInsensitive) == 0
         || type.compare(QStringLiteral("Track"), Qt::CaseInsensitive) == 0
-        || type.compare(QStringLiteral("Piece"), Qt::CaseInsensitive) == 0
+        || type.compare(QStringLiteral("Segment"), Qt::CaseInsensitive) == 0
+        || (schemaVersion < kCurrentProjectSchemaVersion
+            && type.compare(QStringLiteral("Piece"), Qt::CaseInsensitive) == 0)
         || type.compare(QStringLiteral("Layer"), Qt::CaseInsensitive) == 0)
         return QStringLiteral("pack.layer");
     if (type.compare(QStringLiteral("Bus"), Qt::CaseInsensitive) == 0)
@@ -322,7 +324,9 @@ QStringList ProjectContractRegistry::validateTree(
         const QJsonObject components = object.value(QStringLiteral("components"))
                                             .toObject();
         for (auto it = components.constBegin(); it != components.constEnd(); ++it) {
-            if (!ComponentCatalog::parseComponentName(it.key()).has_value())
+            if (!ComponentCatalog::parseComponentName(it.key()).has_value()
+                && !(schemaVersion < kCurrentProjectSchemaVersion
+                     && it.key() == QLatin1String("piecetimeline")))
                 errors.append(QStringLiteral("Unknown component %1 in %2")
                                   .arg(it.key(), path));
             else if (!it.value().isObject())
@@ -358,7 +362,7 @@ QStringList ProjectContractRegistry::validateTree(
         if (object.contains(QStringLiteral("components")))
             validateComponents(object, path);
         registerIdentity(object, path, QStringLiteral("Layer item"));
-        const QString nodeDomain = packDomain(object);
+        const QString nodeDomain = packDomain(object, schemaVersion);
         if (nodeDomain != QStringLiteral("pack.layer"))
             errors.append(QStringLiteral("Layer item type is invalid in %1").arg(path));
         nodes.append({QStringLiteral("pack.layer"), path, object, layerRoot});
@@ -414,7 +418,7 @@ QStringList ProjectContractRegistry::validateTree(
             const QString contentGuid = QUuid::fromString(
                 pack.value(QStringLiteral("guid")).toString())
                                             .toString(QUuid::WithoutBraces);
-            const QString domain = packDomain(pack);
+            const QString domain = packDomain(pack, schemaVersion);
             if (domain.isEmpty()) {
                 errors.append(QStringLiteral("Pack type is unknown in %1")
                                   .arg(fileInfo.fileName()));
@@ -672,7 +676,8 @@ QStringList ProjectContractRegistry::validateTree(
                             types.append(QStringLiteral("Bus"));
                         else if (kind == QLatin1String("item"))
                             types = {QStringLiteral("Sound"), QStringLiteral("Container"),
-                                     QStringLiteral("Track"), QStringLiteral("Piece"),
+                                     QStringLiteral("Track"), schemaVersion < kCurrentProjectSchemaVersion
+                                         ? QStringLiteral("Piece") : QStringLiteral("Segment"),
                                      QStringLiteral("Layer")};
                         validateReference(located.value, located.path, types);
                         continue;

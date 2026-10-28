@@ -2,7 +2,7 @@
 
 #include "ProjectTypes.h"
 #include "Components/VMixNode.h"
-#include "Components/VPiece.h"
+#include "Components/VSegment.h"
 #include "Components/VTrack.h"
 
 #include <QSet>
@@ -46,7 +46,7 @@ ProjectObjectIndex ProjectObjectIndex::fromProject(const ProjectData* project,
             case ProjectItem::Type::Sound:
             case ProjectItem::Type::Container:
             case ProjectItem::Type::Track:
-            case ProjectItem::Type::Piece: businessKind = ProjectObjectLocation::BusinessKind::Playable; break;
+            case ProjectItem::Type::Segment: businessKind = ProjectObjectLocation::BusinessKind::Playable; break;
             default: break;
             }
         }
@@ -83,7 +83,7 @@ ProjectObjectIndex ProjectObjectIndex::fromProject(const ProjectData* project,
                     (target ? target->name : clip.targetGuid.toString(QUuid::WithoutBraces)));
             }
         }
-        if (const auto* timeline = item->comp<VPiece>()) {
+        if (const auto* timeline = item->comp<VSegment>()) {
             for (const auto& marker : timeline->markers.items)
                 add(marker.runtimeId(), *item, ProjectObjectLocation::Kind::Marker,
                     item->name + QStringLiteral(" / ") + marker.name);

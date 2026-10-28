@@ -3060,8 +3060,8 @@ void BlueprintCanvasWidget::paintTransitionWatch_(QPainter* painter)
             painter->drawPath(edge->path());
         }
 
-        if (transitionWatch_.referencePiece) {
-            if (NodeItem* refNode = resolveNode(*transitionWatch_.referencePiece)) {
+        if (transitionWatch_.referenceSegment) {
+            if (NodeItem* refNode = resolveNode(*transitionWatch_.referenceSegment)) {
                 const QRectF r = refNode->sceneBoundingRect();
                 const QFont chipFont = FontManager::instance().getFont(
                     FontRole::Caption, 9, QFont::Bold);

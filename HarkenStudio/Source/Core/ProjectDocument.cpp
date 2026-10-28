@@ -201,7 +201,8 @@ bool ProjectDocument::parse(const QJsonObject& document,
     parsed.header = header;
     parsed.content = document.value(QStringLiteral("content")).toObject();
     if (parsed.schemaVersion == ProjectSchema::kProjectSchemaVersion
-        && !validateFieldGroupAuthoring(parsed.content, error)) return false;
+        && (!normalizeContent(&parsed.content, error)
+            || !validateFieldGroupAuthoring(parsed.content, error))) return false;
     if (data) *data = std::move(parsed);
     return true;
 }
@@ -210,6 +211,45 @@ bool ProjectDocument::validateFieldGroupAuthoring(const QJsonObject& content,
                                                    QString* error)
 {
     return validateAuthoringNode(content, error);
+}
+
+bool ProjectDocument::normalizeContent(QJsonObject* content, QString* error)
+{
+    const auto moveField = [error](QJsonObject& object, const QString& from,
+                                   const QString& to) {
+        if (!object.contains(from)) return true;
+        if (object.contains(to)) {
+            if (error) *error = QStringLiteral("Conflicting fields: %1 and %2").arg(from, to);
+            return false;
+        }
+        object.insert(to, object.take(from));
+        return true;
+    };
+    if (content->value(QStringLiteral("type")) == QJsonValue(QStringLiteral("Piece")))
+        content->insert(QStringLiteral("type"), QStringLiteral("Segment"));
+    if (content->value(QStringLiteral("components")).isObject()) {
+        auto components = content->value(QStringLiteral("components")).toObject();
+        if (!moveField(components, QStringLiteral("piecetimeline"),
+                        QStringLiteral("segmenttimeline"))) return false;
+        if (components.value(QStringLiteral("segmenttimeline")).isObject()) {
+            auto timeline = components.value(QStringLiteral("segmenttimeline")).toObject();
+            if (!moveField(timeline, QStringLiteral("pieceTime"),
+                            QStringLiteral("segmentTime"))) return false;
+            components.insert(QStringLiteral("segmenttimeline"), timeline);
+        }
+        content->insert(QStringLiteral("components"), components);
+    }
+    if (content->value(QStringLiteral("children")).isArray()) {
+        auto children = content->value(QStringLiteral("children")).toArray();
+        for (qsizetype index = 0; index < children.size(); ++index) {
+            if (!children[index].isObject()) continue;
+            auto child = children[index].toObject();
+            if (!normalizeContent(&child, error)) return false;
+            children[index] = child;
+        }
+        content->insert(QStringLiteral("children"), children);
+    }
+    return true;
 }
 
 }

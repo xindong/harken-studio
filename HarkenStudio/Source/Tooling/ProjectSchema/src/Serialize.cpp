@@ -39,17 +39,17 @@ const char* KindName(ContentKind kind) {
             return "container";
         case ContentKind::Track:
             return "track";
-        case ContentKind::Piece:
-            return "piece";
+        case ContentKind::Segment:
+            return "segment";
     }
     return "?";
 }
 
-const char* TimeKindName(PieceTimeKind kind) {
+const char* TimeKindName(SegmentTimeKind kind) {
     switch (kind) {
-        case PieceTimeKind::Absolute:
+        case SegmentTimeKind::Absolute:
             return "absolute";
-        case PieceTimeKind::Musical:
+        case SegmentTimeKind::Musical:
             return "musical";
     }
     return "?";
@@ -164,19 +164,19 @@ void AppendClip(std::string* s, const Clip& clip) {
           " order=" + U(clip.semanticOrderKey) + "\n";
 }
 
-void AppendPieceTime(std::string* s, const PieceDef& piece) {
-    *s += "  time kind=" + std::string(TimeKindName(piece.timeSpec.kind)) + "\n";
-    for (const TempoMapEntry& t : piece.timeSpec.tempoMap) {
+void AppendSegmentTime(std::string* s, const SegmentDef& segment) {
+    *s += "  time kind=" + std::string(TimeKindName(segment.timeSpec.kind)) + "\n";
+    for (const TempoMapEntry& t : segment.timeSpec.tempoMap) {
         *s += "  tempo tick=" + I(t.tick) + " uspq=" + I(t.microsPerQuarter) +
               "\n";
     }
-    for (const MeterMapEntry& m : piece.timeSpec.meterMap) {
+    for (const MeterMapEntry& m : segment.timeSpec.meterMap) {
         *s += "  meter tick=" + I(m.tick) + " " + U(m.numerator) + "/" +
               U(m.denominator) + "\n";
     }
-    *s += "  start kind=" + std::string(StartKindName(piece.startPoint.kind)) +
-          " markerId=" + U(piece.startPoint.markerId) + "\n";
-    for (const Marker& marker : piece.markers) {
+    *s += "  start kind=" + std::string(StartKindName(segment.startPoint.kind)) +
+          " markerId=" + U(segment.startPoint.markerId) + "\n";
+    for (const Marker& marker : segment.markers) {
         *s += "  marker " + U(marker.id) + " guid=" + Guid(marker.guid) +
               " markerId=" + U(marker.markerId) + " kind=" + MarkerKindName(marker.kind) +
               " pos=" + I(marker.position) + "\n";
@@ -189,16 +189,16 @@ const char* DiagnosticCodeName(DiagnosticCode code) {
     switch (code) {
         case DiagnosticCode::ClipsOnNonTrack:
             return "ClipsOnNonTrack";
-        case DiagnosticCode::TimeSpecOnNonPiece:
-            return "TimeSpecOnNonPiece";
-        case DiagnosticCode::StartPointOnNonPiece:
-            return "StartPointOnNonPiece";
-        case DiagnosticCode::MarkersOnNonPiece:
-            return "MarkersOnNonPiece";
-        case DiagnosticCode::PieceMissingTimeSpec:
-            return "PieceMissingTimeSpec";
-        case DiagnosticCode::PieceMissingStartPoint:
-            return "PieceMissingStartPoint";
+        case DiagnosticCode::TimeSpecOnNonSegment:
+            return "TimeSpecOnNonSegment";
+        case DiagnosticCode::StartPointOnNonSegment:
+            return "StartPointOnNonSegment";
+        case DiagnosticCode::MarkersOnNonSegment:
+            return "MarkersOnNonSegment";
+        case DiagnosticCode::SegmentMissingTimeSpec:
+            return "SegmentMissingTimeSpec";
+        case DiagnosticCode::SegmentMissingStartPoint:
+            return "SegmentMissingStartPoint";
         case DiagnosticCode::ReservedMarkerId:
             return "ReservedMarkerId";
         case DiagnosticCode::StartPointMarkerReserved:
@@ -213,8 +213,8 @@ const char* DiagnosticCodeName(DiagnosticCode code) {
             return "NullGuid";
         case DiagnosticCode::InvalidContentKind:
             return "InvalidContentKind";
-        case DiagnosticCode::InvalidPieceTimeKind:
-            return "InvalidPieceTimeKind";
+        case DiagnosticCode::InvalidSegmentTimeKind:
+            return "InvalidSegmentTimeKind";
         case DiagnosticCode::InvalidStartPointKind:
             return "InvalidStartPointKind";
         case DiagnosticCode::InvalidMarkerKind:
@@ -332,9 +332,9 @@ std::string RenderProject(const CanonicalProject& project) {
                     AppendClip(&s, clip);
                 }
                 break;
-            case ContentKind::Piece:
-                AppendOwned(&s, obj.piece.tracks, "tracks");
-                AppendPieceTime(&s, obj.piece);
+            case ContentKind::Segment:
+                AppendOwned(&s, obj.segment.tracks, "tracks");
+                AppendSegmentTime(&s, obj.segment);
                 break;
         }
     }
@@ -503,8 +503,8 @@ std::string RenderEffectChainSelection(
 
 std::string RenderNormalizedFacts(const NormalizedFacts& facts) {
     std::string s = "facts\n";
-    for (const PieceNormalization& p : facts.pieces) {
-        s += "piece " + U(p.piece) +
+    for (const SegmentNormalization& p : facts.segments) {
+        s += "segment " + U(p.segment) +
              " start=" + std::string(StartKindName(p.startKind)) +
              " coord=" + I(p.startCoordinate) + " markerId=" + U(p.startMarkerId) +
              " markers:";
@@ -523,7 +523,7 @@ std::string RenderNormalizedFacts(const NormalizedFacts& facts) {
     return s;
 }
 
-std::string RenderPieceIR(const PieceIR& ir) {
+std::string RenderSegmentIR(const SegmentIR& ir) {
     std::string s = "ir\n";
     for (const IrTrack& t : ir.tracks()) {
         s += "track " + U(t.trackId) + " occ:";
@@ -587,8 +587,8 @@ std::string RenderPieceIR(const PieceIR& ir) {
         }
         s += "\n";
     }
-    for (const IrPiece& p : ir.pieces()) {
-        s += "piece " + U(p.pieceId) +
+    for (const IrSegment& p : ir.segments()) {
+        s += "segment " + U(p.segmentId) +
              " time=" + std::string(TimeKindName(p.timeSpec.kind)) +
              " start=" + std::string(StartKindName(p.startKind)) +
              " coord=" + I(p.startCoordinate) + " markerId=" + U(p.startMarkerId) +
@@ -615,8 +615,8 @@ std::string RenderPieceIR(const PieceIR& ir) {
     for (const LineageEntry& e : ir.lineage().entries) {
         s += "  track=" + U(e.trackId) + " clip=" + U(e.clipId) +
              " ord=" + U(e.occurrenceOrdinal);
-        if (e.hasPiece) {
-            s += " piece=" + U(e.pieceId);
+        if (e.hasSegment) {
+            s += " segment=" + U(e.segmentId);
         }
         s += "\n";
     }
@@ -630,7 +630,7 @@ std::string RenderCapacityEstimate(const CapacityEstimate& estimate) {
                     " unknown=" + U(estimate.unknownDurationOccurrences) + "\n";
     for (const ScopeCapacity& scope : estimate.scopes) {
         s += "scope " + U(scope.scopeId) +
-             " piece=" + U(scope.isPiece ? 1 : 0) +
+             " segment=" + U(scope.isSegment ? 1 : 0) +
              " peak=" + U(scope.peakActiveOccurrences) +
              " unknown=" + U(scope.unknownDurationOccurrences) + "\n";
     }
@@ -647,15 +647,15 @@ const char* CapabilityName(ProgramCapability capability) {
             return "naturalLengthPlayback";
         case ProgramCapability::ContainerPlacement:
             return "containerPlacement";
-        case ProgramCapability::NestedPiecePlacement:
-            return "nestedPiecePlacement";
+        case ProgramCapability::NestedSegmentPlacement:
+            return "nestedSegmentPlacement";
         case ProgramCapability::VoiceEffectChain:
             return "voiceEffectChain";
     }
     return "?";
 }
 
-std::string RenderPieceProgram(const PieceProgram& program) {
+std::string RenderSegmentProgram(const SegmentProgram& program) {
     std::string s = "program semanticFingerprint=" +
                     U(program.programSemanticFingerprint()) +
                     " lineageFingerprint=" +
@@ -668,7 +668,7 @@ std::string RenderPieceProgram(const PieceProgram& program) {
         }
     }
     s += "\n";
-    s += RenderPieceIR(program.ir());
+    s += RenderSegmentIR(program.ir());
     s += RenderCapacityEstimate(program.capacityEstimate());
     return s;
 }

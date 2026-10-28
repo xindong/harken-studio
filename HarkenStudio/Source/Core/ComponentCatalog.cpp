@@ -17,7 +17,7 @@ constexpr ComponentFacts kComponentFacts[] = {
     { ComponentType::Attenuation,  "attenuation" },
     { ComponentType::Spatial,      "spatial" },
     { ComponentType::Track,        "tracktimeline" },
-    { ComponentType::Piece,        "piecetimeline" },
+    { ComponentType::Segment,        "segmenttimeline" },
     { ComponentType::Sound,        "sound" },
 };
 
@@ -54,7 +54,7 @@ const std::array<ComponentType, 11>& allComponentTypes()
         ComponentType::MixNode, ComponentType::Audio, ComponentType::Selection,
         ComponentType::Bus, ComponentType::Action, ComponentType::Variable,
         ComponentType::Attenuation, ComponentType::Spatial, ComponentType::Track,
-        ComponentType::Piece, ComponentType::Sound,
+        ComponentType::Segment, ComponentType::Sound,
     };
     return types;
 }

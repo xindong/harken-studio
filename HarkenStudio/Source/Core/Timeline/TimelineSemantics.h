@@ -18,7 +18,7 @@ struct TimelineSpan
 struct TimelineSemanticsResult
 {
     TimelineValidation validation;
-    PieceTimeSpec time;
+    SegmentTimeSpec time;
     TimelineSpan content;
     TimelineSpan nominal;
     int64_t pickup = 0;
@@ -68,12 +68,12 @@ using TimelineNaturalDurationResolver =
 namespace TimelineSemantics {
 
 TimelineSemanticsResult contentBounds(const ClipLedger& clips,
-                                      const PieceTimeSpec& time = {});
+                                      const SegmentTimeSpec& time = {});
 std::vector<TimelineSpan> overlapRegions(const ClipLedger& clips);
 TimelineSemanticsResult trackNominalSpan(const ProjectItem& track,
                                         const TimelineItemResolver& resolve,
-                                        const PieceTimeSpec& time = {});
-TimelineSemanticsResult pieceNominalSpan(const ProjectItem& piece,
+                                        const SegmentTimeSpec& time = {});
+TimelineSemanticsResult segmentNominalSpan(const ProjectItem& segment,
                                         const TimelineItemResolver& resolve);
 TimelineSemanticsResult nominalSpanOf(const ProjectItem& item,
                                      const TimelineItemResolver& resolve,
@@ -83,7 +83,7 @@ QueuePreviewResult queuePreview(const ProjectItem& queue,
                                 bool spliceByMarker,
                                 const TimelineNaturalDurationResolver& naturalDuration = {});
 QString formatConciseNumber(double value);
-QString formatReadableCoordinate(int64_t coordinate, const PieceTimeSpec& time);
+QString formatReadableCoordinate(int64_t coordinate, const SegmentTimeSpec& time);
 QString formatNominalSummary(const TimelineSemanticsResult& semantics);
 QString formatQueueLoopBadge(const QueuePreviewItem& item);
 QString formatQueueItemTooltip(const QString& name, const QueuePreviewItem& item);
@@ -93,8 +93,8 @@ TimelineValidation validateProjectTimelineIdentities(
 bool hasMusicalClock(const ProjectItem& item);
 bool hasAnyMarker(const ProjectItem& item);
 bool hasMarkerKind(const ProjectItem& item, MarkerKind kind);
-int64_t coordinateUnitFor(const PieceTimeSpec& spec);
-int64_t snapGridFor(const PieceTimeSpec& spec);
+int64_t coordinateUnitFor(const SegmentTimeSpec& spec);
+int64_t snapGridFor(const SegmentTimeSpec& spec);
 
 }
 }

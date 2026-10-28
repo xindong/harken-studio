@@ -126,7 +126,7 @@ CoordinateResult CoordinateResult::failure(TimelineError error,
 
 namespace TimelineCoordinates {
 
-TimelineValidation validate(const PieceTimeSpec& spec)
+TimelineValidation validate(const SegmentTimeSpec& spec)
 {
     if (spec.domain == TimelineDomain::Absolute) {
         if (!spec.tempoMap.empty() || !spec.meterMap.empty())
@@ -169,7 +169,7 @@ TimelineValidation validate(const PieceTimeSpec& spec)
     return TimelineValidation::success();
 }
 
-CoordinateResult ticksToNanoseconds(int64_t ticks, const PieceTimeSpec& spec)
+CoordinateResult ticksToNanoseconds(int64_t ticks, const SegmentTimeSpec& spec)
 {
     const TimelineValidation validity = validate(spec);
     if (!validity) return CoordinateResult::failure(validity.error, validity.message);
@@ -183,7 +183,7 @@ CoordinateResult ticksToNanoseconds(int64_t ticks, const PieceTimeSpec& spec)
                                static_cast<uint64_t>(kPpq));
 }
 
-CoordinateResult nanosecondsToTicks(int64_t nanoseconds, const PieceTimeSpec& spec)
+CoordinateResult nanosecondsToTicks(int64_t nanoseconds, const SegmentTimeSpec& spec)
 {
     const TimelineValidation validity = validate(spec);
     if (!validity) return CoordinateResult::failure(validity.error, validity.message);
@@ -197,7 +197,7 @@ CoordinateResult nanosecondsToTicks(int64_t nanoseconds, const PieceTimeSpec& sp
                                nanosecondsPerQuarter);
 }
 
-CoordinateResult toNanoseconds(int64_t coordinate, const PieceTimeSpec& spec)
+CoordinateResult toNanoseconds(int64_t coordinate, const SegmentTimeSpec& spec)
 {
     const TimelineValidation validity = validate(spec);
     if (!validity) return CoordinateResult::failure(validity.error, validity.message);
@@ -206,7 +206,7 @@ CoordinateResult toNanoseconds(int64_t coordinate, const PieceTimeSpec& spec)
     return ticksToNanoseconds(coordinate, spec);
 }
 
-CoordinateResult fromNanoseconds(int64_t nanoseconds, const PieceTimeSpec& spec)
+CoordinateResult fromNanoseconds(int64_t nanoseconds, const SegmentTimeSpec& spec)
 {
     const TimelineValidation validity = validate(spec);
     if (!validity) return CoordinateResult::failure(validity.error, validity.message);
@@ -225,7 +225,7 @@ CoordinateResult beatsToTicks(double beats)
     return roundScaledDouble(beats, kPpq, QStringLiteral("Beats"));
 }
 
-std::optional<double> toSeconds(int64_t coordinate, const PieceTimeSpec& spec)
+std::optional<double> toSeconds(int64_t coordinate, const SegmentTimeSpec& spec)
 {
     const CoordinateResult nanoseconds = toNanoseconds(coordinate, spec);
     if (!nanoseconds) return std::nullopt;
@@ -233,7 +233,7 @@ std::optional<double> toSeconds(int64_t coordinate, const PieceTimeSpec& spec)
         / static_cast<double>(kNanosecondsPerSecond);
 }
 
-CoordinateResult fromSeconds(double seconds, const PieceTimeSpec& spec)
+CoordinateResult fromSeconds(double seconds, const SegmentTimeSpec& spec)
 {
     const CoordinateResult nanoseconds = roundScaledDouble(
         seconds, kNanosecondsPerSecond, QStringLiteral("Seconds"));
@@ -251,7 +251,7 @@ CoordinateResult snap(int64_t coordinate, TimelineDomain domain)
                 domain == TimelineDomain::Musical ? kPpq : kNanosecondsPerSecond);
 }
 
-CoordinateResult snap(int64_t coordinate, const PieceTimeSpec& spec)
+CoordinateResult snap(int64_t coordinate, const SegmentTimeSpec& spec)
 {
     const TimelineValidation validity = validate(spec);
     if (!validity) return CoordinateResult::failure(validity.error, validity.message);
@@ -289,8 +289,8 @@ CoordinateResult snap(int64_t coordinate, int64_t gridSize)
 }
 
 CoordinateResult convert(int64_t coordinate,
-                         const PieceTimeSpec& source,
-                         const PieceTimeSpec& destination)
+                         const SegmentTimeSpec& source,
+                         const SegmentTimeSpec& destination)
 {
     const TimelineValidation sourceValidity = validate(source);
     if (!sourceValidity)

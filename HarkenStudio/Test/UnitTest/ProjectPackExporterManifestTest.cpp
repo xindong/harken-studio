@@ -11,7 +11,7 @@
 #include "Components/VAudio.h"
 #include "Components/VBus.h"
 #include "Components/VMixNode.h"
-#include "Components/VPiece.h"
+#include "Components/VSegment.h"
 #include "Components/VSelection.h"
 #include "Components/VTrack.h"
 #include "Components/VVariable.h"
@@ -875,7 +875,7 @@ TEST(EditorProjectPackExporterManifest, StopContainerAndQuantizeReferenceDoNotOw
 TEST(EditorProjectPackExporterManifest, StopTimelineTargetsDoNotPublishSchedulesOrMedia)
 {
     qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
-    for (const auto type : {VNX::ProjectItem::Type::Track, VNX::ProjectItem::Type::Piece}) {
+    for (const auto type : {VNX::ProjectItem::Type::Track, VNX::ProjectItem::Type::Segment}) {
         for (bool withProvider : {false, true}) {
             SCOPED_TRACE(static_cast<int>(type));
             SCOPED_TRACE(withProvider);
@@ -894,7 +894,7 @@ TEST(EditorProjectPackExporterManifest, StopTimelineTargetsDoNotPublishSchedules
             auto target = makeItem(QStringLiteral("Timeline"), type, 40);
             addChild(project.layers.front().rootItem, target);
             auto track = target;
-            if (type == VNX::ProjectItem::Type::Piece) {
+            if (type == VNX::ProjectItem::Type::Segment) {
                 track = makeItem(QStringLiteral("Track"), VNX::ProjectItem::Type::Track, 41);
                 addChild(target, track);
             }
@@ -921,7 +921,7 @@ TEST(EditorProjectPackExporterManifest, StopTimelineTargetsDoNotPublishSchedules
             EXPECT_TRUE(image.media.empty());
             EXPECT_EQ(body.ProductionView()->playablePropertyCount, 0u);
             EXPECT_EQ(body.ProductionView()->trackScheduleCount, 0u);
-            EXPECT_EQ(body.ProductionView()->pieceScheduleCount, 0u);
+            EXPECT_EQ(body.ProductionView()->segmentScheduleCount, 0u);
             harkentest::EngineSession session(harkentest::MakeNullConfig(8, 256, 48000));
             ASSERT_EQ(VN_OK, session.InitResult());
             ASSERT_NO_FATAL_FAILURE(activateExportedNames(dir.path(), withProvider
@@ -2331,8 +2331,8 @@ TEST(EditorProjectPackExporterManifest,
          harken::playableproperties::ContentPropertyKindV1::Container},
         {VNX::ProjectItem::Type::Track,
          harken::playableproperties::ContentPropertyKindV1::Track},
-        {VNX::ProjectItem::Type::Piece,
-         harken::playableproperties::ContentPropertyKindV1::Piece},
+        {VNX::ProjectItem::Type::Segment,
+         harken::playableproperties::ContentPropertyKindV1::Segment},
     }};
 
     std::vector<LoopSpec> specs;
@@ -2380,9 +2380,9 @@ TEST(EditorProjectPackExporterManifest,
                 *target, childSound->guid));
         } else {
             std::shared_ptr<VNX::ProjectItem> track = target;
-            if (spec.content.type == VNX::ProjectItem::Type::Piece) {
+            if (spec.content.type == VNX::ProjectItem::Type::Segment) {
                 track = makeItem(
-                    QStringLiteral("PieceTrack_%1").arg(spec.objectId),
+                    QStringLiteral("SegmentTrack_%1").arg(spec.objectId),
                     VNX::ProjectItem::Type::Track, nextAuxObjectId++);
                 addChild(target, track);
             }
@@ -4593,16 +4593,16 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationCombinesScheduleAndEff
     auto retained = makeItem(QStringLiteral("Alternatives"), VNX::ProjectItem::Type::Container, 1000);
     addChild(project.layers.front().rootItem, retained);
     std::uint32_t nextObjectId = 2000;
-    const auto appendPiece = [&](const std::shared_ptr<VNX::ProjectItem>& parent, std::uint32_t source) {
-        auto piece = makeItem(QStringLiteral("Piece%1").arg(nextObjectId),
-            VNX::ProjectItem::Type::Piece, nextObjectId++);
-        addChild(parent, piece);
+    const auto appendSegment = [&](const std::shared_ptr<VNX::ProjectItem>& parent, std::uint32_t source) {
+        auto segment = makeItem(QStringLiteral("Segment%1").arg(nextObjectId),
+            VNX::ProjectItem::Type::Segment, nextObjectId++);
+        addChild(parent, segment);
         for (unsigned i = 0; i < 4; ++i) {
-            piece->comp<VNX::VPiece>()->markers.items.push_back({QUuid::createUuid(),
+            segment->comp<VNX::VSegment>()->markers.items.push_back({QUuid::createUuid(),
                 VNX::MarkerKind::Custom, QStringLiteral("Marker%1").arg(i), 100 + i * 100});
             auto track = makeItem(QStringLiteral("Track%1").arg(nextObjectId),
                 VNX::ProjectItem::Type::Track, nextObjectId++);
-            addChild(piece, track);
+            addChild(segment, track);
             auto sound = makeItem(QStringLiteral("Sound%1").arg(nextObjectId),
                 VNX::ProjectItem::Type::Sound, nextObjectId++);
             HarkenTest::setSharedSoundSource(*sound, source);
@@ -4622,11 +4622,11 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationCombinesScheduleAndEff
             }
             EXPECT_TRUE(track->comp<VNX::VMixNode>()->effects.replace(std::move(effects)));
         }
-        return piece;
+        return segment;
     };
-    for (std::uint32_t i = 0; i < harken::kPieceScheduleProgramCapacity; ++i) {
-        const auto piece = appendPiece(retained, privateSource);
-        ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::addContainerChildOccurrence(*retained, piece->guid));
+    for (std::uint32_t i = 0; i < harken::kSegmentScheduleProgramCapacity; ++i) {
+        const auto segment = appendSegment(retained, privateSource);
+        ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::addContainerChildOccurrence(*retained, segment->guid));
     }
     project.nextObjectID = nextObjectId;
     VNX::ProjectPackExporter exporter;
@@ -4647,14 +4647,14 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationCombinesScheduleAndEff
     harken::CurrentWorldBodyImage oldInitBody;
     ASSERT_NO_FATAL_FAILURE(readCanonicalWorld(output.filePath(QStringLiteral("Init.bytes")),
         oldInitBytes, oldInitImage, oldInitBody));
-    ASSERT_EQ(harken::kPieceScheduleProgramCapacity, oldWorld.pieceScheduleCount);
+    ASSERT_EQ(harken::kSegmentScheduleProgramCapacity, oldWorld.segmentScheduleCount);
     const auto counts = [](const harken::ContainerWorldInstallViewV1& world) {
-        std::array<std::uint64_t, 8> totals{world.trackScheduleCount, world.pieceScheduleCount};
+        std::array<std::uint64_t, 8> totals{world.trackScheduleCount, world.segmentScheduleCount};
         for (std::uint32_t i = 0; i < world.trackScheduleCount; ++i)
             totals[3] += world.trackSchedules[i].placementCount;
-        for (std::uint32_t i = 0; i < world.pieceScheduleCount; ++i) {
-            totals[2] += world.pieceSchedules[i].trackRefCount;
-            totals[4] += world.pieceSchedules[i].markerCount;
+        for (std::uint32_t i = 0; i < world.segmentScheduleCount; ++i) {
+            totals[2] += world.segmentSchedules[i].trackRefCount;
+            totals[4] += world.segmentSchedules[i].markerCount;
         }
         const auto effects = [&](const harken::PlayablePropertyPayloadViewV1& payload) {
             totals[5] += payload.effectNodeCount;
@@ -4674,7 +4674,7 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationCombinesScheduleAndEff
     };
     const auto capacities = [](const harken::WorldCapacitySummaryV1& capacity) {
         return std::array<std::uint64_t, 8>{capacity.maxTrackSchedulePrograms,
-            capacity.maxPieceSchedulePrograms, capacity.maxScheduleTrackRefsTotal,
+            capacity.maxSegmentSchedulePrograms, capacity.maxScheduleTrackRefsTotal,
             capacity.maxSchedulePlacementsTotal, capacity.maxScheduleMarkersTotal,
             capacity.maxPlayablePropertyEffectNodesTotal,
             capacity.maxPlayablePropertyEffectParamsTotal,
@@ -4683,7 +4683,7 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationCombinesScheduleAndEff
     const auto oldCounts = counts(oldWorld);
     auto& actions = project.actions.front().rootItem->children;
     actions.front()->comp<VNX::VAction>()->steps.front().type = VNX::VActionStep::Type::Stop;
-    retained->children.front()->comp<VNX::VPiece>()->markers.items.front().position = 50;
+    retained->children.front()->comp<VNX::VSegment>()->markers.items.front().position = 50;
     auto* draftTrack = retained->children.front()->children.front().get();
     draftTrack->comp<VNX::VTrack>()->clips.items.front().duration = 2000000;
     ASSERT_TRUE(draftTrack->comp<VNX::VMixNode>()->effects.replace({}));
@@ -4693,8 +4693,8 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationCombinesScheduleAndEff
     auto addedContainer = makeItem(QStringLiteral("AddedAlternatives"),
         VNX::ProjectItem::Type::Container, nextObjectId++);
     addChild(project.layers.front().rootItem, addedContainer);
-    const auto addedPiece = appendPiece(addedContainer, shared);
-    ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::addContainerChildOccurrence(*addedContainer, addedPiece->guid));
+    const auto addedSegment = appendSegment(addedContainer, shared);
+    ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::addContainerChildOccurrence(*addedContainer, addedSegment->guid));
     auto added = makeItem(QStringLiteral("Added"), VNX::ProjectItem::Type::Action, nextObjectId++);
     VNX::VActionStep play;
     play.type = VNX::VActionStep::Type::Play;
@@ -4718,7 +4718,7 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationCombinesScheduleAndEff
     EXPECT_EQ(oldCounts, counts(retainedWorld));
     ASSERT_EQ(oldWorld.playablePropertyCount, retainedWorld.playablePropertyCount);
     ASSERT_EQ(oldWorld.trackScheduleCount, retainedWorld.trackScheduleCount);
-    ASSERT_EQ(oldWorld.pieceScheduleCount, retainedWorld.pieceScheduleCount);
+    ASSERT_EQ(oldWorld.segmentScheduleCount, retainedWorld.segmentScheduleCount);
     ASSERT_EQ(oldWorld.containerCount, retainedWorld.containerCount);
     ASSERT_EQ(1u, addedBody.ProductionView()->containerCount);
     for (std::uint32_t i = 0; i < oldWorld.playablePropertyCount; ++i) {
@@ -4736,9 +4736,9 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationCombinesScheduleAndEff
     for (std::uint32_t i = 0; i < oldWorld.trackScheduleCount; ++i)
         EXPECT_EQ(oldWorld.trackSchedules[i].scheduleSemanticFingerprint,
                   retainedWorld.trackSchedules[i].scheduleSemanticFingerprint);
-    for (std::uint32_t i = 0; i < oldWorld.pieceScheduleCount; ++i)
-        EXPECT_EQ(oldWorld.pieceSchedules[i].scheduleSemanticFingerprint,
-                  retainedWorld.pieceSchedules[i].scheduleSemanticFingerprint);
+    for (std::uint32_t i = 0; i < oldWorld.segmentScheduleCount; ++i)
+        EXPECT_EQ(oldWorld.segmentSchedules[i].scheduleSemanticFingerprint,
+                  retainedWorld.segmentSchedules[i].scheduleSemanticFingerprint);
     EXPECT_EQ(oldWorld.actions[0].programSemanticFingerprint,
               retainedWorld.actions[0].programSemanticFingerprint);
     const auto addedCounts = counts(*addedBody.ProductionView());
@@ -4750,7 +4750,7 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationCombinesScheduleAndEff
     }
     auto expected = oldWorld.capacity;
     expected.maxTrackSchedulePrograms = retainedWorld.capacity.maxTrackSchedulePrograms;
-    expected.maxPieceSchedulePrograms = retainedWorld.capacity.maxPieceSchedulePrograms;
+    expected.maxSegmentSchedulePrograms = retainedWorld.capacity.maxSegmentSchedulePrograms;
     expected.maxScheduleTrackRefsTotal = retainedWorld.capacity.maxScheduleTrackRefsTotal;
     expected.maxSchedulePlacementsTotal = retainedWorld.capacity.maxSchedulePlacementsTotal;
     expected.maxScheduleMarkersTotal = retainedWorld.capacity.maxScheduleMarkersTotal;

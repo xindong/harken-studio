@@ -64,7 +64,7 @@ struct ReferenceSlotSource {
     bool (*slotValue)(void* ctx, harkenstudio::ObjectId objectId, ReferenceSlot slot,
                       harkenstudio::ObjectId* outValue) = nullptr;
 
-    // Ancestors in the placement chain — the Track or Piece an object is
+    // Ancestors in the placement chain — the Track or Segment an object is
     // arranged on. False means the index is past the end of the chain.
     bool (*placementAncestor)(void* ctx, harkenstudio::ObjectId subjectId,
                               std::uint32_t index,

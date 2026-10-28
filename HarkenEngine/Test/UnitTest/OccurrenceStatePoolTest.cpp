@@ -85,18 +85,18 @@ TEST(OccurrenceStatePool, AcquiredOccurrenceCarriesItsKeyAndAStamp)
 {
     PlayableInstanceTable instances(2);
     OccurrenceStatePool pool(4);
-    const PlayableInstanceHandle piece =
-        instances.Acquire(PlayableKind::Piece, 0);
-    ASSERT_NE(piece, 0u);
+    const PlayableInstanceHandle segment =
+        instances.Acquire(PlayableKind::Segment, 0);
+    ASSERT_NE(segment, 0u);
 
     OccurrenceToken token;
-    ASSERT_TRUE(pool.Acquire(KeyFor(piece, harkentest::ObjectId(77)), &token));
+    ASSERT_TRUE(pool.Acquire(KeyFor(segment, harkentest::ObjectId(77)), &token));
     EXPECT_NE(token.generation, 0u);
     EXPECT_EQ(pool.StageOf(token), OccurrenceStage::Preparing);
 
     const OccurrenceKey* key = pool.KeyOf(token);
     ASSERT_NE(key, nullptr);
-    EXPECT_EQ(key->arrangingInstance, piece);
+    EXPECT_EQ(key->arrangingInstance, segment);
     EXPECT_EQ(key->clipId, harkentest::ObjectId(77u));
     EXPECT_NE(pool.ScheduleEpochOf(token), 0u);
 }
@@ -105,11 +105,11 @@ TEST(OccurrenceStatePool, CompletionProgressIsInlineAndResolvedByExactToken)
 {
     PlayableInstanceTable instances(1);
     OccurrenceStatePool pool(1);
-    const PlayableInstanceHandle piece =
-        instances.Acquire(PlayableKind::Piece, 0);
-    ASSERT_NE(piece, 0u);
+    const PlayableInstanceHandle segment =
+        instances.Acquire(PlayableKind::Segment, 0);
+    ASSERT_NE(segment, 0u);
     OccurrenceToken token{};
-    ASSERT_TRUE(pool.Acquire(KeyFor(piece, harkentest::ObjectId(81)), &token));
+    ASSERT_TRUE(pool.Acquire(KeyFor(segment, harkentest::ObjectId(81)), &token));
     ASSERT_TRUE(pool.BindCompletionProgress(token, 17, 23));
 
     harken::CompletionProgressRow* row = pool.CompletionProgressOf(token);
@@ -134,30 +134,30 @@ TEST(OccurrenceStatePool, CompletionProgressIsInlineAndResolvedByExactToken)
 }
 
 // Both lineage depths use the same key shape, so a directly triggered Track and
-// a Track inside a Piece are not two code paths. The property under test is
+// a Track inside a Segment are not two code paths. The property under test is
 // that occurrences of the two hosts do not collide even when the clip id and
 // ordinal match exactly.
 TEST(OccurrenceStatePool, KeepsBothLineageDepthsApartUnderIdenticalClipIds)
 {
     PlayableInstanceTable instances(4);
     OccurrenceStatePool pool(4);
-    const PlayableInstanceHandle piece =
-        instances.Acquire(PlayableKind::Piece, 0);
+    const PlayableInstanceHandle segment =
+        instances.Acquire(PlayableKind::Segment, 0);
     const PlayableInstanceHandle track =
         instances.Acquire(PlayableKind::Track, 0);
-    ASSERT_NE(piece, 0u);
+    ASSERT_NE(segment, 0u);
     ASSERT_NE(track, 0u);
 
-    OccurrenceToken inPiece;
+    OccurrenceToken inSegment;
     OccurrenceToken direct;
-    ASSERT_TRUE(pool.Acquire(KeyFor(piece, harkentest::ObjectId(5)), &inPiece));
+    ASSERT_TRUE(pool.Acquire(KeyFor(segment, harkentest::ObjectId(5)), &inSegment));
     ASSERT_TRUE(pool.Acquire(KeyFor(track, harkentest::ObjectId(5)), &direct));
 
-    EXPECT_NE(inPiece.slot, direct.slot);
-    EXPECT_EQ(pool.KeyOf(inPiece)->arrangingInstance, piece);
+    EXPECT_NE(inSegment.slot, direct.slot);
+    EXPECT_EQ(pool.KeyOf(inSegment)->arrangingInstance, segment);
     EXPECT_EQ(pool.KeyOf(direct)->arrangingInstance, track);
     // Cancelling one host's occurrence must not disturb the other's.
-    EXPECT_NE(pool.BumpScheduleEpoch(inPiece), 0u);
+    EXPECT_NE(pool.BumpScheduleEpoch(inSegment), 0u);
     EXPECT_TRUE(pool.ValidateTransaction(
         direct, pool.ScheduleEpochOf(direct),
         instances.Classify(track).scheduleEpoch, instances));
@@ -170,12 +170,12 @@ TEST(OccurrenceStatePool, FenceWaitingRecordStillOwnsItsSlot)
 {
     PlayableInstanceTable instances(2);
     OccurrenceStatePool pool(1);
-    const PlayableInstanceHandle piece =
-        instances.Acquire(PlayableKind::Piece, 0);
-    ASSERT_NE(piece, 0u);
+    const PlayableInstanceHandle segment =
+        instances.Acquire(PlayableKind::Segment, 0);
+    ASSERT_NE(segment, 0u);
 
     OccurrenceToken token;
-    ASSERT_TRUE(pool.Acquire(KeyFor(piece, harkentest::ObjectId(1)), &token));
+    ASSERT_TRUE(pool.Acquire(KeyFor(segment, harkentest::ObjectId(1)), &token));
     RunToFence(pool, token);
 
     EXPECT_EQ(pool.StageOf(token), OccurrenceStage::AwaitingEventFence);
@@ -183,12 +183,12 @@ TEST(OccurrenceStatePool, FenceWaitingRecordStillOwnsItsSlot)
     EXPECT_EQ(pool.OccupiedCount(), 1u);
 
     OccurrenceToken refused;
-    EXPECT_FALSE(pool.Acquire(KeyFor(piece, harkentest::ObjectId(2)), &refused));
+    EXPECT_FALSE(pool.Acquire(KeyFor(segment, harkentest::ObjectId(2)), &refused));
 
     ASSERT_TRUE(pool.ReleaseAfterFence(token));
     EXPECT_EQ(pool.AwaitingFenceCount(), 0u);
     EXPECT_EQ(pool.OccupiedCount(), 0u);
-    EXPECT_TRUE(pool.Acquire(KeyFor(piece, harkentest::ObjectId(2)), &refused));
+    EXPECT_TRUE(pool.Acquire(KeyFor(segment, harkentest::ObjectId(2)), &refused));
 }
 
 // Releasing before the fence would reuse a slot whose events have not been
@@ -197,10 +197,10 @@ TEST(OccurrenceStatePool, RefusesReleaseBeforeTheFenceStage)
 {
     PlayableInstanceTable instances(2);
     OccurrenceStatePool pool(2);
-    const PlayableInstanceHandle piece =
-        instances.Acquire(PlayableKind::Piece, 0);
+    const PlayableInstanceHandle segment =
+        instances.Acquire(PlayableKind::Segment, 0);
     OccurrenceToken token;
-    ASSERT_TRUE(pool.Acquire(KeyFor(piece, harkentest::ObjectId(1)), &token));
+    ASSERT_TRUE(pool.Acquire(KeyFor(segment, harkentest::ObjectId(1)), &token));
 
     EXPECT_FALSE(pool.ReleaseAfterFence(token));
     ASSERT_TRUE(pool.Advance(token, OccurrenceStage::Active));
@@ -215,10 +215,10 @@ TEST(OccurrenceStatePool, RefusesStageMovesThatAreNotStrictlyForward)
 {
     PlayableInstanceTable instances(2);
     OccurrenceStatePool pool(2);
-    const PlayableInstanceHandle piece =
-        instances.Acquire(PlayableKind::Piece, 0);
+    const PlayableInstanceHandle segment =
+        instances.Acquire(PlayableKind::Segment, 0);
     OccurrenceToken token;
-    ASSERT_TRUE(pool.Acquire(KeyFor(piece, harkentest::ObjectId(1)), &token));
+    ASSERT_TRUE(pool.Acquire(KeyFor(segment, harkentest::ObjectId(1)), &token));
 
     ASSERT_TRUE(pool.Advance(token, OccurrenceStage::LogicalDone));
     EXPECT_FALSE(pool.Advance(token, OccurrenceStage::Active));
@@ -232,10 +232,10 @@ TEST(OccurrenceStatePool, TokenGoesStaleWhenTheSlotIsReleasedAndReused)
 {
     PlayableInstanceTable instances(2);
     OccurrenceStatePool pool(1);
-    const PlayableInstanceHandle piece =
-        instances.Acquire(PlayableKind::Piece, 0);
+    const PlayableInstanceHandle segment =
+        instances.Acquire(PlayableKind::Segment, 0);
     OccurrenceToken first;
-    ASSERT_TRUE(pool.Acquire(KeyFor(piece, harkentest::ObjectId(1)), &first));
+    ASSERT_TRUE(pool.Acquire(KeyFor(segment, harkentest::ObjectId(1)), &first));
     RunToFence(pool, first);
     ASSERT_TRUE(pool.ReleaseAfterFence(first));
 
@@ -243,7 +243,7 @@ TEST(OccurrenceStatePool, TokenGoesStaleWhenTheSlotIsReleasedAndReused)
     EXPECT_EQ(pool.KeyOf(first), nullptr);
 
     OccurrenceToken second;
-    ASSERT_TRUE(pool.Acquire(KeyFor(piece, harkentest::ObjectId(2)), &second));
+    ASSERT_TRUE(pool.Acquire(KeyFor(segment, harkentest::ObjectId(2)), &second));
     EXPECT_EQ(second.slot, first.slot);
     EXPECT_NE(second.generation, first.generation);
     // The reused slot answers only to the new token.
@@ -260,21 +260,21 @@ TEST(OccurrenceStatePool, RefusesATransactionWhoseArrangingInstanceWasCancelled)
 {
     PlayableInstanceTable instances(2);
     OccurrenceStatePool pool(2);
-    const PlayableInstanceHandle piece =
-        instances.Acquire(PlayableKind::Piece, 0);
-    ASSERT_NE(piece, 0u);
+    const PlayableInstanceHandle segment =
+        instances.Acquire(PlayableKind::Segment, 0);
+    ASSERT_NE(segment, 0u);
     OccurrenceToken token;
-    ASSERT_TRUE(pool.Acquire(KeyFor(piece, harkentest::ObjectId(1)), &token));
+    ASSERT_TRUE(pool.Acquire(KeyFor(segment, harkentest::ObjectId(1)), &token));
 
     const std::uint64_t occurrenceStamp = pool.ScheduleEpochOf(token);
     const std::uint64_t instanceStamp =
-        instances.Classify(piece).scheduleEpoch;
+        instances.Classify(segment).scheduleEpoch;
     ASSERT_TRUE(pool.ValidateTransaction(token, occurrenceStamp, instanceStamp,
                                          instances));
 
     // Cancel the whole host. The occurrence was not touched, so its own stamp
     // still matches.
-    ASSERT_NE(instances.BumpScheduleEpoch(piece), 0u);
+    ASSERT_NE(instances.BumpScheduleEpoch(segment), 0u);
     EXPECT_EQ(pool.ScheduleEpochOf(token), occurrenceStamp);
     EXPECT_FALSE(pool.ValidateTransaction(token, occurrenceStamp, instanceStamp,
                                           instances));
@@ -286,17 +286,17 @@ TEST(OccurrenceStatePool, RefusesATransactionWhoseOccurrenceWasCancelled)
 {
     PlayableInstanceTable instances(2);
     OccurrenceStatePool pool(2);
-    const PlayableInstanceHandle piece =
-        instances.Acquire(PlayableKind::Piece, 0);
+    const PlayableInstanceHandle segment =
+        instances.Acquire(PlayableKind::Segment, 0);
     OccurrenceToken token;
-    ASSERT_TRUE(pool.Acquire(KeyFor(piece, harkentest::ObjectId(1)), &token));
+    ASSERT_TRUE(pool.Acquire(KeyFor(segment, harkentest::ObjectId(1)), &token));
 
     const std::uint64_t occurrenceStamp = pool.ScheduleEpochOf(token);
     const std::uint64_t instanceStamp =
-        instances.Classify(piece).scheduleEpoch;
+        instances.Classify(segment).scheduleEpoch;
 
     ASSERT_NE(pool.BumpScheduleEpoch(token), 0u);
-    EXPECT_EQ(instances.Classify(piece).scheduleEpoch, instanceStamp);
+    EXPECT_EQ(instances.Classify(segment).scheduleEpoch, instanceStamp);
     EXPECT_FALSE(pool.ValidateTransaction(token, occurrenceStamp, instanceStamp,
                                           instances));
     // Still valid under the occurrence's new stamp, so the cancel was scoped to
@@ -311,17 +311,17 @@ TEST(OccurrenceStatePool, RefusesATransactionWhoseArrangingInstanceRetired)
 {
     PlayableInstanceTable instances(2);
     OccurrenceStatePool pool(2);
-    const PlayableInstanceHandle piece =
-        instances.Acquire(PlayableKind::Piece, 0);
+    const PlayableInstanceHandle segment =
+        instances.Acquire(PlayableKind::Segment, 0);
     OccurrenceToken token;
-    ASSERT_TRUE(pool.Acquire(KeyFor(piece, harkentest::ObjectId(1)), &token));
+    ASSERT_TRUE(pool.Acquire(KeyFor(segment, harkentest::ObjectId(1)), &token));
     const std::uint64_t occurrenceStamp = pool.ScheduleEpochOf(token);
     const std::uint64_t instanceStamp =
-        instances.Classify(piece).scheduleEpoch;
+        instances.Classify(segment).scheduleEpoch;
 
-    instances.AdvanceLifecycle(piece, PlayableLifecycle::LogicalComplete);
-    instances.AdvanceLifecycle(piece, PlayableLifecycle::AudibleRetiring);
-    instances.AdvanceLifecycle(piece, PlayableLifecycle::Retired);
+    instances.AdvanceLifecycle(segment, PlayableLifecycle::LogicalComplete);
+    instances.AdvanceLifecycle(segment, PlayableLifecycle::AudibleRetiring);
+    instances.AdvanceLifecycle(segment, PlayableLifecycle::Retired);
 
     EXPECT_FALSE(pool.ValidateTransaction(token, occurrenceStamp, instanceStamp,
                                           instances));
@@ -333,16 +333,16 @@ TEST(OccurrenceStatePool,
     const std::uint32_t maximum =
         (std::numeric_limits<std::uint32_t>::max)();
     PlayableInstanceTable instances(1);
-    const PlayableInstanceHandle piece =
-        instances.Acquire(PlayableKind::Piece, 0);
-    ASSERT_NE(piece, 0u);
+    const PlayableInstanceHandle segment =
+        instances.Acquire(PlayableKind::Segment, 0);
+    ASSERT_NE(segment, 0u);
 
     OccurrenceStatePool pool(1);
     harken::detail::OccurrenceStatePoolTestAccess::SeedGeneration(
         pool, 0, maximum - 1);
 
     OccurrenceToken penultimate;
-    ASSERT_TRUE(pool.Acquire(KeyFor(piece, harkentest::ObjectId(1)), &penultimate));
+    ASSERT_TRUE(pool.Acquire(KeyFor(segment, harkentest::ObjectId(1)), &penultimate));
     EXPECT_EQ(penultimate.generation, maximum - 1);
     RunToFence(pool, penultimate);
     ASSERT_TRUE(pool.ReleaseAfterFence(penultimate));
@@ -351,7 +351,7 @@ TEST(OccurrenceStatePool,
     EXPECT_EQ(pool.FreeCount(), 1u);
     EXPECT_EQ(pool.QuarantinedCount(), 0u);
     OccurrenceToken maximumToken;
-    ASSERT_TRUE(pool.Acquire(KeyFor(piece, harkentest::ObjectId(2)), &maximumToken));
+    ASSERT_TRUE(pool.Acquire(KeyFor(segment, harkentest::ObjectId(2)), &maximumToken));
     EXPECT_EQ(maximumToken.generation, maximum);
     EXPECT_EQ(pool.StageOf(penultimate), OccurrenceStage::Free);
     RunToFence(pool, maximumToken);
@@ -362,7 +362,7 @@ TEST(OccurrenceStatePool,
     EXPECT_EQ(pool.FreeCount(), 0u);
     EXPECT_EQ(pool.QuarantinedCount(), 1u);
     OccurrenceToken refused;
-    EXPECT_FALSE(pool.Acquire(KeyFor(piece, harkentest::ObjectId(3)), &refused));
+    EXPECT_FALSE(pool.Acquire(KeyFor(segment, harkentest::ObjectId(3)), &refused));
     EXPECT_EQ(pool.StageOf(maximumToken), OccurrenceStage::Free);
     EXPECT_EQ(pool.StageOf(
                   harken::detail::OccurrenceStatePoolTestAccess::Token(0, 1)),
@@ -377,11 +377,11 @@ TEST(OccurrenceStatePool, OriginalPrepareStorageSurvivesRealCommitAndEndsOnlyAft
     static_assert(!std::is_copy_assignable_v<Pin>);
     static_assert(std::is_nothrow_move_constructible_v<Pin>);
     PlayableInstanceTable instances(1);
-    const auto piece = instances.Acquire(PlayableKind::Piece, 0);
+    const auto segment = instances.Acquire(PlayableKind::Segment, 0);
     OccurrenceStatePool pool(1);
     OccurrenceToken token{};
     Pin own;
-    ASSERT_TRUE(pool.PrepareAcquire(KeyFor(piece, harkentest::ObjectId(101)), &token, &own));
+    ASSERT_TRUE(pool.PrepareAcquire(KeyFor(segment, harkentest::ObjectId(101)), &token, &own));
     ASSERT_TRUE(pool.IsOriginalStoragePinFor(own, token));
     EXPECT_EQ(0u, pool.HighWater());
     EXPECT_FALSE(own.NativeEnded());
@@ -424,17 +424,17 @@ TEST(OccurrenceStatePool, OriginalPrepareStorageSurvivesRealCommitAndEndsOnlyAft
     EXPECT_EQ(1u, pool.RetainedStorageCount());
     OccurrenceKey captured{};
     ASSERT_TRUE(foreign.CaptureOriginalKey(&captured));
-    EXPECT_EQ(piece, captured.arrangingInstance);
+    EXPECT_EQ(segment, captured.arrangingInstance);
     EXPECT_EQ(harkentest::ObjectId(101), captured.clipId);
     OccurrenceToken refused{37, 41};
-    EXPECT_FALSE(pool.Acquire(KeyFor(piece, harkentest::ObjectId(102)), &refused));
+    EXPECT_FALSE(pool.Acquire(KeyFor(segment, harkentest::ObjectId(102)), &refused));
     EXPECT_EQ(37u, refused.slot);
     EXPECT_EQ(41u, refused.generation);
     foreign.Release();
     EXPECT_EQ(0u, pool.RetainedStorageCount());
     EXPECT_EQ(1u, pool.FreeCount());
     OccurrenceToken next{};
-    ASSERT_TRUE(pool.PrepareAcquire(KeyFor(piece, harkentest::ObjectId(102)), &next));
+    ASSERT_TRUE(pool.PrepareAcquire(KeyFor(segment, harkentest::ObjectId(102)), &next));
     EXPECT_EQ(token.slot, next.slot);
     EXPECT_GT(next.generation, token.generation);
     ASSERT_TRUE(pool.CancelPreparedAcquire(next));
@@ -443,11 +443,11 @@ TEST(OccurrenceStatePool, OriginalPrepareStorageSurvivesRealCommitAndEndsOnlyAft
 TEST(OccurrenceStatePool, OriginalPrepareStorageCancelConsumesOnlyItsActualBaseline)
 {
     PlayableInstanceTable instances(1);
-    const auto piece = instances.Acquire(PlayableKind::Piece, 0);
+    const auto segment = instances.Acquire(PlayableKind::Segment, 0);
     OccurrenceStatePool pool(1);
     OccurrenceToken token{};
     OccurrenceStatePool::OriginalStoragePin own;
-    ASSERT_TRUE(pool.PrepareAcquire(KeyFor(piece, harkentest::ObjectId(201)), &token, &own));
+    ASSERT_TRUE(pool.PrepareAcquire(KeyFor(segment, harkentest::ObjectId(201)), &token, &own));
     OccurrenceStatePool::OriginalStoragePin foreign;
     ASSERT_TRUE(own.Borrow(&foreign));
     const auto epoch = pool.ScheduleEpochOf(token);
@@ -473,7 +473,7 @@ TEST(OccurrenceStatePool, OriginalPrepareStorageCancelConsumesOnlyItsActualBasel
     EXPECT_EQ(1u, pool.FreeCount());
     OccurrenceToken next{};
     OccurrenceStatePool::OriginalStoragePin nextOwn;
-    ASSERT_TRUE(pool.PrepareAcquire(KeyFor(piece, harkentest::ObjectId(202)), &next, &nextOwn));
+    ASSERT_TRUE(pool.PrepareAcquire(KeyFor(segment, harkentest::ObjectId(202)), &next, &nextOwn));
     // Native cancellation preserves the slot generation; the native epoch is new.
     EXPECT_EQ(token.slot, next.slot);
     EXPECT_EQ(token.generation, next.generation);
@@ -486,12 +486,12 @@ TEST(OccurrenceStatePool, OriginalPrepareStorageCancelConsumesOnlyItsActualBasel
 TEST(OccurrenceStatePool, OriginalPrepareStorageReceiverMoveAndDestructionKeepActualEpisodesSeparate)
 {
     PlayableInstanceTable instances(1);
-    const auto piece = instances.Acquire(PlayableKind::Piece, 0);
+    const auto segment = instances.Acquire(PlayableKind::Segment, 0);
     OccurrenceStatePool left(1), right(1);
     OccurrenceToken first{}, second{};
     OccurrenceStatePool::OriginalStoragePin leftOwn, rightOwn;
-    ASSERT_TRUE(left.PrepareAcquire(KeyFor(piece, harkentest::ObjectId(301)), &first, &leftOwn));
-    ASSERT_TRUE(right.PrepareAcquire(KeyFor(piece, harkentest::ObjectId(302)), &second, &rightOwn));
+    ASSERT_TRUE(left.PrepareAcquire(KeyFor(segment, harkentest::ObjectId(301)), &first, &leftOwn));
+    ASSERT_TRUE(right.PrepareAcquire(KeyFor(segment, harkentest::ObjectId(302)), &second, &rightOwn));
     ASSERT_EQ(first.slot, second.slot);
     ASSERT_EQ(first.generation, second.generation);
     ASSERT_EQ(left.ScheduleEpochOf(first), right.ScheduleEpochOf(second));
@@ -499,7 +499,7 @@ TEST(OccurrenceStatePool, OriginalPrepareStorageReceiverMoveAndDestructionKeepAc
     EXPECT_FALSE(left.IsOriginalStoragePinFor(rightOwn, first));
     EXPECT_FALSE(left.CancelPreparedAcquire(first, nullptr, &rightOwn));
     OccurrenceToken unchanged{13, 17};
-    EXPECT_FALSE(left.PrepareAcquire(KeyFor(piece, harkentest::ObjectId(303)), &unchanged, &rightOwn));
+    EXPECT_FALSE(left.PrepareAcquire(KeyFor(segment, harkentest::ObjectId(303)), &unchanged, &rightOwn));
     EXPECT_EQ(13u, unchanged.slot);
     EXPECT_EQ(17u, unchanged.generation);
     EXPECT_EQ(1u, left.OccupiedCount());
@@ -532,13 +532,13 @@ TEST(OccurrenceStatePool, OriginalPrepareStorageMaximumGenerationAndActualEpochN
 {
     using Access = harken::detail::OccurrenceStatePoolTestAccess;
     PlayableInstanceTable instances(1);
-    const auto piece = instances.Acquire(PlayableKind::Piece, 0);
+    const auto segment = instances.Acquire(PlayableKind::Segment, 0);
     {
         OccurrenceStatePool pool(1);
         Access::SeedGeneration(pool, 0, UINT32_MAX);
         OccurrenceToken token{};
         OccurrenceStatePool::OriginalStoragePin own, foreign;
-        ASSERT_TRUE(pool.PrepareAcquire(KeyFor(piece, harkentest::ObjectId(401)), &token, &own));
+        ASSERT_TRUE(pool.PrepareAcquire(KeyFor(segment, harkentest::ObjectId(401)), &token, &own));
         ASSERT_TRUE(own.Borrow(&foreign));
         ASSERT_TRUE(pool.CommitPreparedAcquire(token));
         RunToFence(pool, token);
@@ -552,7 +552,7 @@ TEST(OccurrenceStatePool, OriginalPrepareStorageMaximumGenerationAndActualEpochN
         EXPECT_EQ(0u, pool.RetainedStorageCount());
         OccurrenceToken unchanged{11, 19};
         OccurrenceStatePool::OriginalStoragePin refused;
-        EXPECT_FALSE(pool.PrepareAcquire(KeyFor(piece, harkentest::ObjectId(402)), &unchanged, &refused));
+        EXPECT_FALSE(pool.PrepareAcquire(KeyFor(segment, harkentest::ObjectId(402)), &unchanged, &refused));
         EXPECT_EQ(11u, unchanged.slot);
         EXPECT_EQ(19u, unchanged.generation);
         EXPECT_FALSE(refused.Valid());
@@ -562,7 +562,7 @@ TEST(OccurrenceStatePool, OriginalPrepareStorageMaximumGenerationAndActualEpochN
         Access::SeedScheduleEpoch(pool, UINT64_MAX);
         OccurrenceToken last{};
         OccurrenceStatePool::OriginalStoragePin own, foreign;
-        ASSERT_TRUE(pool.PrepareAcquire(KeyFor(piece, harkentest::ObjectId(403)), &last, &own));
+        ASSERT_TRUE(pool.PrepareAcquire(KeyFor(segment, harkentest::ObjectId(403)), &last, &own));
         ASSERT_TRUE(own.Borrow(&foreign));
         EXPECT_EQ(UINT64_MAX, pool.ScheduleEpochOf(last));
         EXPECT_TRUE(pool.ScheduleEpochExhausted());
@@ -574,7 +574,7 @@ TEST(OccurrenceStatePool, OriginalPrepareStorageMaximumGenerationAndActualEpochN
         EXPECT_EQ(1u, pool.FreeCount());
         OccurrenceToken unchanged{23, 29};
         OccurrenceStatePool::OriginalStoragePin refused;
-        EXPECT_FALSE(pool.PrepareAcquire(KeyFor(piece, harkentest::ObjectId(404)), &unchanged, &refused));
+        EXPECT_FALSE(pool.PrepareAcquire(KeyFor(segment, harkentest::ObjectId(404)), &unchanged, &refused));
         EXPECT_EQ(23u, unchanged.slot);
         EXPECT_EQ(29u, unchanged.generation);
         EXPECT_FALSE(refused.Valid());
@@ -586,11 +586,11 @@ TEST(OccurrenceStatePool, OriginalPrepareStorageMaximumGenerationAndActualEpochN
 TEST(OccurrenceStatePool, OriginalPrepareStorageBorrowOverflowAndEarlyReturnNeverEndTheNativeOwner)
 {
     PlayableInstanceTable instances(1);
-    const auto piece = instances.Acquire(PlayableKind::Piece, 0);
+    const auto segment = instances.Acquire(PlayableKind::Segment, 0);
     OccurrenceStatePool pool(1);
     OccurrenceToken token{};
     OccurrenceStatePool::OriginalStoragePin own, foreign;
-    ASSERT_TRUE(pool.PrepareAcquire(KeyFor(piece, harkentest::ObjectId(501)), &token, &own));
+    ASSERT_TRUE(pool.PrepareAcquire(KeyFor(segment, harkentest::ObjectId(501)), &token, &own));
     harken::detail::OccurrenceStatePoolTestAccess::SeedStoragePinCount(pool, token, UINT32_MAX);
     EXPECT_FALSE(own.Borrow(&foreign));
     EXPECT_TRUE(own.Valid());

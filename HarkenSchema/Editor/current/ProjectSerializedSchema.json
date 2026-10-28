@@ -451,8 +451,8 @@
         "mixnode": {
           "$ref": "#/$defs/mixNodeComponent"
         },
-        "piecetimeline": {
-          "$ref": "#/$defs/pieceTimelineComponent"
+        "segmenttimeline": {
+          "$ref": "#/$defs/segmentTimelineComponent"
         },
         "selection": {
           "$ref": "#/$defs/selectionComponent"
@@ -539,8 +539,8 @@
         "mixnode": {
           "$ref": "#/$defs/definitionMixNodeComponent"
         },
-        "piecetimeline": {
-          "$ref": "#/$defs/pieceTimelineComponent"
+        "segmenttimeline": {
+          "$ref": "#/$defs/segmentTimelineComponent"
         },
         "selection": {
           "$ref": "#/$defs/selectionComponent"
@@ -712,7 +712,7 @@
             "Sound",
             "Container",
             "Track",
-            "Piece",
+            "Segment",
             "Layer"
           ]
         }
@@ -849,7 +849,7 @@
       ],
       "type": "object"
     },
-    "pieceTime": {
+    "segmentTime": {
       "additionalProperties": false,
       "properties": {
         "domain": {
@@ -906,7 +906,7 @@
       ],
       "type": "object"
     },
-    "pieceTimelineComponent": {
+    "segmentTimelineComponent": {
       "additionalProperties": false,
       "properties": {
         "markers": {
@@ -915,8 +915,8 @@
           },
           "type": "array"
         },
-        "pieceTime": {
-          "$ref": "#/$defs/pieceTime"
+        "segmentTime": {
+          "$ref": "#/$defs/segmentTime"
         }
       },
       "type": "object"
@@ -3204,7 +3204,7 @@
             "Sound",
             "Container",
             "Track",
-            "Piece"
+            "Segment"
           ]
         },
         {
@@ -3223,7 +3223,7 @@
             "Sound",
             "Container",
             "Track",
-            "Piece"
+            "Segment"
           ]
         },
         {
@@ -3238,7 +3238,7 @@
           "targetTypes": [
             "Sound",
             "Container",
-            "Piece"
+            "Segment"
           ]
         },
         {
@@ -3300,7 +3300,7 @@
               "Sound",
               "Container",
               "Track",
-              "Piece"
+              "Segment"
             ],
             "Post Action": [
               "Action"
@@ -3315,7 +3315,7 @@
               "Sound",
               "Container",
               "Track",
-              "Piece"
+              "Segment"
             ]
           }
         },
@@ -3331,7 +3331,7 @@
             "Sound",
             "Container",
             "Track",
-            "Piece"
+            "Segment"
           ]
         }
       ],

@@ -1,18 +1,18 @@
 // Program registration: the compile/load-time step that turns a compiled
-// PieceProgram into device-rate scheduled work the runtime files verbatim.
+// SegmentProgram into device-rate scheduled work the runtime files verbatim.
 //
-// A PieceProgram carries authored positions in a piece's own domain -- musical
-// ticks under a tempo map for a Musical piece, nanoseconds for an Absolute one --
+// A SegmentProgram carries authored positions in a segment's own domain -- musical
+// ticks under a tempo map for a Musical segment, nanoseconds for an Absolute one --
 // and natural-end lengths as frame counts at each resource's own sample rate.
 // None of that is a mix-frame yet. Registration is where a device sample rate and
 // a session placement enter: every authored position is resolved to an absolute
-// execute frame through the piece's ClockKernel, and every natural-end length is
+// execute frame through the segment's ClockKernel, and every natural-end length is
 // rescaled from its resource rate to the device rate by exact integer division
 // (never through a nanosecond intermediate, which would floor twice and drift).
 //
 // This is a tooling responsibility, not a runtime one. The library links
 // harken_core (for the clock, marker index and the planner's ProgramView) and
-// harken_project_schema (for the PieceProgram it consumes), the same tooling ->
+// harken_project_schema (for the SegmentProgram it consumes), the same tooling ->
 // runtime direction harken_remote already takes; harken_core links neither back.
 // The runtime consumes the finished result -- a set of ProgramViews whose events
 // are already absolute-frame offsets -- through the planner it already has, and
@@ -20,7 +20,7 @@
 // walking the ancestor chain itself.
 //
 // The result owns everything a ProgramView borrows: the event arrays, and the
-// per-piece ClockKernel and MarkerIndex a view points at for boundary realignment.
+// per-segment ClockKernel and MarkerIndex a view points at for boundary realignment.
 // Because a deferred play makes the planner retain a ProgramView by pointer, a
 // ResolvedProgram is fixed in memory once built (non-copyable, non-movable) and
 // handed out by unique_ptr; every pointer it hands the planner stays valid for its
@@ -41,7 +41,7 @@
 
 #include "harken_program_registration/VoiceStartInstall.h"
 
-#include "harken_project_schema/PieceProgram.h"
+#include "harken_project_schema/SegmentProgram.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -56,12 +56,12 @@ namespace harkenprogramreg {
 // The lineage of one resolved occurrence, carried so a consumer can attribute a
 // scheduled transaction back to the authored clip it came from. Plain integers on
 // the runtime side: the compile-time OccurrenceKey half (clipId, occurrenceOrdinal)
-// plus the owning track and piece. The runtime OccurrenceKey's other half
+// plus the owning track and segment. The runtime OccurrenceKey's other half
 // (arranging instance, loop iteration) is a runtime value and is not part of the
 // compiled program.
 struct OccurrenceLineage {
-    bool hasPiece = false;
-    VnObjectId pieceId{};
+    bool hasSegment = false;
+    VnObjectId segmentId{};
     VnObjectId trackId{};
     VnObjectId clipId{};
     std::uint32_t occurrenceOrdinal = 0;
@@ -107,16 +107,16 @@ struct EffectTypeAvailability {
 
 // What the session supplies at registration time; none of it lives in the
 // compiled program. deviceSampleRateHz is the rate every position resolves to.
-// entryAnchorFrame is the absolute mix frame the target piece's entry (tick 0 /
-// nanosecond 0) lands on -- a piece placed later on the timeline moves this, the
-// event offsets are unchanged. rootPieceId names the single piece whose owned
+// entryAnchorFrame is the absolute mix frame the target segment's entry (tick 0 /
+// nanosecond 0) lands on -- a segment placed later on the timeline moves this, the
+// event offsets are unchanged. rootSegmentId names the single segment whose owned
 // tracks are registered; a clip inside one of those tracks that points at a
-// container or a nested piece becomes a start-only placeholder and is not expanded
+// container or a nested segment becomes a start-only placeholder and is not expanded
 // here (that expansion happens when the nested content is itself triggered).
 struct RegistrationParams {
     std::int64_t deviceSampleRateHz = 0;
     std::uint64_t entryAnchorFrame = 0;
-    VnObjectId rootPieceId{};
+    VnObjectId rootSegmentId{};
     harken::PlayableInstanceHandle ownerInstance = 0;
     std::uint64_t ownerInstanceScheduleEpoch = 0;
 
@@ -135,7 +135,7 @@ struct RegistrationParams {
     // Maps a subject's schema id to the engine sound id the session registered
     // for it. Every occurrence whose content target is a Sound resolves its sound
     // here, so an unregistered subject is a named registration refusal instead of
-    // a refused play later; an occurrence targeting a Container or a Piece starts
+    // a refused play later; an occurrence targeting a Container or a Segment starts
     // no voice, needs no sound, and is not looked up. Registration consumes this
     // map and never builds it -- the session that registered the resident PCM or
     // the stream is the only party that knows the engine id.
@@ -172,11 +172,11 @@ struct RegistrationParams {
 // caller attributes a failure without guessing.
 enum class RegistrationRefusal : std::uint32_t {
     None = 0,
-    InvalidProgram = 1,       // the PieceProgram embeds no usable IR
+    InvalidProgram = 1,       // the SegmentProgram embeds no usable IR
     InvalidDeviceRate = 2,    // device rate outside the clock's accepted domain
-    RootPieceNotFound = 3,    // rootPieceId names no piece in the program
-    ClockResetFailed = 4,     // a piece's tempo map is outside the clock's domain
-    MarkerIndexResetFailed = 5,  // a piece's meter or markers are inconsistent
+    RootSegmentNotFound = 3,    // rootSegmentId names no segment in the program
+    ClockResetFailed = 4,     // a segment's tempo map is outside the clock's domain
+    MarkerIndexResetFailed = 5,  // a segment's meter or markers are inconsistent
     TransactionEventsEmpty = 6, // an occurrence resolved to no events
     SendCountExceedsResolvedSlots = 7, // more merged sends than the session's resolved slots
     BusIdUnmapped = 8,        // a resolved bus or send target has no engine bus id
@@ -229,7 +229,7 @@ struct ResolvedOccurrence {
     harken::TimelineSemanticTarget timelineTarget{};
     std::uint64_t entryAnchorFrame = 0;
     harken::TransactionId transactionId = 0;
-    harken::PieceTimeType timeType = harken::PieceTimeType::Absolute;
+    harken::SegmentTimeType timeType = harken::SegmentTimeType::Absolute;
     // Index into the ResolvedProgram's clock table; the ProgramView's clock and
     // marker index are taken from there. kNoClock when the occurrence carries no
     // boundary grid.
@@ -300,13 +300,13 @@ public:
     }
 
 private:
-    friend RegistrationResult RegisterPieceProgram(
-        const harkenprojectschema::PieceProgram& program,
+    friend RegistrationResult RegisterSegmentProgram(
+        const harkenprojectschema::SegmentProgram& program,
         const RegistrationParams& params, harken::LogicCommitCoordinator& commit);
 
-    // Per-piece conversion context a ProgramView borrows. Held in a deque so its
+    // Per-segment conversion context a ProgramView borrows. Held in a deque so its
     // address, and the address of the tempo segments the ClockKernel borrows, are
-    // stable as more pieces are appended.
+    // stable as more segments are appended.
     struct ClockContext {
         std::vector<harken::TempoSegment> segments;
         harken::ClockKernel kernel;
@@ -350,13 +350,13 @@ struct RegistrationResult {
     std::vector<RegistrationNote> notes;
 };
 
-// Resolves the named root piece of a compiled program to device-rate scheduled
+// Resolves the named root segment of a compiled program to device-rate scheduled
 // work. Issues one commit sequence from the coordinator and stamps it into every
 // event. Deterministic: the same program, params and coordinator state always
 // produce bit-identical frames on any toolchain (pure integer conversion, no
 // floating point).
-RegistrationResult RegisterPieceProgram(
-    const harkenprojectschema::PieceProgram& program,
+RegistrationResult RegisterSegmentProgram(
+    const harkenprojectschema::SegmentProgram& program,
     const RegistrationParams& params, harken::LogicCommitCoordinator& commit);
 
 // Exact floor(frameCount * toRateHz / fromRateHz) for a natural-end length crossing

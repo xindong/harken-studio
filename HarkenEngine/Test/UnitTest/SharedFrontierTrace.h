@@ -389,7 +389,7 @@ struct FrontierTrace {
                 const bool bound = leaf.live && leaf.kind == harken::PlayableKind::Sound && parent.live;
                 (void)engine.containerPlayback.Capture(leaf.parent, &playback);
                 auto parentStableId = playback.containerStableId;
-                if (bound && (parent.kind == harken::PlayableKind::Track || parent.kind == harken::PlayableKind::Piece)) {
+                if (bound && (parent.kind == harken::PlayableKind::Track || parent.kind == harken::PlayableKind::Segment)) {
                     harken::MonitorContentIdentity identity{};
                     if (engine.playableInstances.CaptureContentIdentity(leaf.parent, &identity))
                         parentStableId = identity.stableId;

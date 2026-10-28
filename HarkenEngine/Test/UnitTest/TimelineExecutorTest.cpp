@@ -2263,7 +2263,7 @@ TEST(TimelineExecutor, DeferredBudgetDoesNotResetWithinSameQuantum) {
     ASSERT_NE(engine, nullptr);
 
     const harken::PlayableInstanceHandle owner =
-        engine->playableInstances.Acquire(harken::PlayableKind::Piece, 0);
+        engine->playableInstances.Acquire(harken::PlayableKind::Segment, 0);
     const std::uint64_t ownerEpoch =
         engine->playableInstances.Classify(owner).scheduleEpoch;
     const std::uint64_t dueFrame = engine->timelinePool.WindowEndFrame();
@@ -2309,7 +2309,7 @@ TEST(TimelineExecutor, TransientRefusalStopsItsDueClass) {
     ASSERT_NE(engine, nullptr);
 
     const harken::PlayableInstanceHandle owner =
-        engine->playableInstances.Acquire(harken::PlayableKind::Piece, 0);
+        engine->playableInstances.Acquire(harken::PlayableKind::Segment, 0);
     const std::uint64_t ownerEpoch =
         engine->playableInstances.Classify(owner).scheduleEpoch;
     std::vector<harken::EventTemplate> events(258);

@@ -1,11 +1,11 @@
 #include "UnitTest/StudioObjectIdTestSupport.h"
 #include "UnitTest/ProjectSchemaFixtures.h"
 
-#include "harken_project_schema/BuildPieceIR.h"
-#include "harken_project_schema/BuildPieceProgram.h"
+#include "harken_project_schema/BuildSegmentIR.h"
+#include "harken_project_schema/BuildSegmentProgram.h"
 #include "harken_project_schema/FrontEnd.h"
 #include "harken_project_schema/Model.h"
-#include "harken_project_schema/PieceIR.h"
+#include "harken_project_schema/SegmentIR.h"
 #include "harken_project_schema/ResourceInput.h"
 #include "harken_project_schema/SendResolution.h"
 #include "harken_project_schema/Serialize.h"
@@ -57,7 +57,7 @@ ProjectInput TwoOccurrenceSendWorld() {
     return in;
 }
 
-std::optional<PieceIR> BuildRoutingIr(const ProjectInput& input) {
+std::optional<SegmentIR> BuildRoutingIr(const ProjectInput& input) {
     const FrontEndResult front = CompileFrontEnd(input);
     EXPECT_TRUE(front.ok()) << RenderDiagnostics(front.diagnostics);
     if (!front.ok() || !front.project.has_value() ||
@@ -67,7 +67,7 @@ std::optional<PieceIR> BuildRoutingIr(const ProjectInput& input) {
     }
     ResourceTable resources;
     resources.emplace(harkentest::StudioObjectId(3), StereoResource());
-    return BuildPieceIR(*front.project, *front.facts, resources,
+    return BuildSegmentIR(*front.project, *front.facts, resources,
                         *front.resolution, *front.sends, *front.effectChains);
 }
 
@@ -79,8 +79,8 @@ TEST(ProjectSchemaSendResolution, WideOutputBusIdentityReachesProgram) {
     ProjectInput highInput = SendWorld();
     highInput.nodes[1].mainOutputBusRef = harkentest::StudioObjectId(kHighBus);
 
-    const std::optional<PieceIR> lowIr = BuildRoutingIr(lowInput);
-    const std::optional<PieceIR> highIr = BuildRoutingIr(highInput);
+    const std::optional<SegmentIR> lowIr = BuildRoutingIr(lowInput);
+    const std::optional<SegmentIR> highIr = BuildRoutingIr(highInput);
     ASSERT_TRUE(lowIr.has_value());
     ASSERT_TRUE(highIr.has_value());
     ASSERT_EQ(lowIr->tracks().size(), 1u);
@@ -91,8 +91,8 @@ TEST(ProjectSchemaSendResolution, WideOutputBusIdentityReachesProgram) {
               kLowBus);
     EXPECT_EQ(highIr->tracks().front().occurrences.front().resolvedOutputBus,
               kHighBus);
-    const std::optional<PieceProgram> lowProgram = BuildPieceProgram(*lowIr);
-    const std::optional<PieceProgram> highProgram = BuildPieceProgram(*highIr);
+    const std::optional<SegmentProgram> lowProgram = BuildSegmentProgram(*lowIr);
+    const std::optional<SegmentProgram> highProgram = BuildSegmentProgram(*highIr);
     ASSERT_TRUE(lowProgram.has_value());
     ASSERT_TRUE(highProgram.has_value());
     EXPECT_NE(lowProgram->programSemanticFingerprint(),
@@ -129,7 +129,7 @@ TEST(ProjectSchemaSendResolution, ReferenceFactsMustMatchOccurrencesExactly) {
     invalid.push_back(wrongOrdinal);
 
     for (const ReferenceResolutionFacts& facts : invalid) {
-        EXPECT_FALSE(BuildPieceIR(*front.project, *front.facts, resources,
+        EXPECT_FALSE(BuildSegmentIR(*front.project, *front.facts, resources,
                                   facts, *front.sends, *front.effectChains)
                          .has_value());
     }
@@ -165,7 +165,7 @@ TEST(ProjectSchemaSendResolution, SendFactsMustMatchOccurrencesExactly) {
     invalid.push_back(wrongOrdinal);
 
     for (const SendResolutionFacts& facts : invalid) {
-        EXPECT_FALSE(BuildPieceIR(*front.project, *front.facts, resources,
+        EXPECT_FALSE(BuildSegmentIR(*front.project, *front.facts, resources,
                                   *front.resolution, facts,
                                   *front.effectChains)
                          .has_value());

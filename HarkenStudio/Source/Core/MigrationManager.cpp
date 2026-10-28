@@ -87,6 +87,11 @@ MigrationManager::MigrationManager()
                 QJsonObject header = document.value(QStringLiteral("harkenDocument")).toObject();
                 header.insert(QStringLiteral("schemaVersion"), targetSchema);
                 document.insert(QStringLiteral("harkenDocument"), header);
+                if (targetSchema == CURRENT_PROJECT_SCHEMA_VERSION) {
+                    auto content = document.value(QStringLiteral("content")).toObject();
+                    if (!ProjectDocument::normalizeContent(&content, error)) return false;
+                    document.insert(QStringLiteral("content"), content);
+                }
                 if (!workspace.writeObject(relative, document, error))
                     return false;
             }

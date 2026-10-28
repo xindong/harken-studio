@@ -54,13 +54,13 @@ struct PlayableInstancePreparationTestAccess {
         auto* entry = table.FindPrepared(cap);
         const auto original = *entry;
         switch (field) {
-        case 0: entry->kind = PlayableKind::Piece; break;
+        case 0: entry->kind = PlayableKind::Segment; break;
         case 1: ++entry->parent; break;
         case 2: ++entry->scheduleEpoch; break;
         case 3: entry->lifecycle = entry->lifecycle == PlayableLifecycle::Free
             ? PlayableLifecycle::Retired : PlayableLifecycle::Free; break;
         case 4: ++entry->rootMetadata.projectId.low; break;
-        case 5: entry->rootMetadata.definitionKind = PlayableKind::Piece; break;
+        case 5: entry->rootMetadata.definitionKind = PlayableKind::Segment; break;
         case 6: ++entry->rootMetadata.definitionStableId.low; break;
         case 7: ++entry->rootMetadata.programSemanticFingerprint; break;
         case 8: ++entry->rootMetadata.invocationEmitter; break;
@@ -439,17 +439,17 @@ TEST(PlayableInstanceTable, PendingStartedObservationsFollowActualRollbackAndRec
 TEST(PlayableInstanceTable, AcquiredInstanceReportsItsKindAndParent)
 {
     PlayableInstanceTable table(4);
-    const PlayableInstanceHandle piece =
-        table.Acquire(PlayableKind::Piece, 0);
-    ASSERT_NE(piece, 0u);
+    const PlayableInstanceHandle segment =
+        table.Acquire(PlayableKind::Segment, 0);
+    ASSERT_NE(segment, 0u);
     const PlayableInstanceHandle track =
-        table.Acquire(PlayableKind::Track, piece);
+        table.Acquire(PlayableKind::Track, segment);
     ASSERT_NE(track, 0u);
 
     const auto view = table.Classify(track);
     EXPECT_TRUE(view.live);
     EXPECT_EQ(view.kind, PlayableKind::Track);
-    EXPECT_EQ(view.parent, piece);
+    EXPECT_EQ(view.parent, segment);
     EXPECT_EQ(view.lifecycle, PlayableLifecycle::Active);
     // A live instance always carries a stamp, so an unstamped record can never
     // be mistaken for a current one.
@@ -1043,7 +1043,7 @@ TEST(PlayableTreeExecutor, OriginalFutureLifetimeDoesNotAcquireHeldArrangingPare
     ASSERT_TRUE(table.PrepareAcquire(harken::PlayableKind::Container, 0, &arranging));
     harken::PlayableTreeExecutor parent(1), future(1);
     ASSERT_TRUE(parent.AdoptPreparedInstance(table, &arranging));
-    ASSERT_TRUE(table.PrepareAcquire(harken::PlayableKind::Piece, arranging.Handle(), &successor));
+    ASSERT_TRUE(table.PrepareAcquire(harken::PlayableKind::Segment, arranging.Handle(), &successor));
     ASSERT_TRUE(future.AdoptPreparedInstance(table, &successor));
     ASSERT_TRUE(parent.ProveInstanceCommits(&table, &arranging));
     ASSERT_TRUE(parent.ProveParentLinks(table, &arranging));
@@ -2890,7 +2890,7 @@ TEST(PlayableInstanceTable, RetirementBothEndsIdentityAndFreesTheSlot)
 TEST(PlayableInstanceTable, RefusesLifecycleMovesThatAreNotStrictlyForward)
 {
     PlayableInstanceTable table(2);
-    const PlayableInstanceHandle handle = table.Acquire(PlayableKind::Piece, 0);
+    const PlayableInstanceHandle handle = table.Acquire(PlayableKind::Segment, 0);
     ASSERT_NE(handle, 0u);
 
     EXPECT_TRUE(
@@ -2913,7 +2913,7 @@ TEST(PlayableInstanceTable, RefusesLifecycleMovesThatAreNotStrictlyForward)
 TEST(PlayableInstanceTable, RefusesToParentOntoAStaleInstance)
 {
     PlayableInstanceTable table(4);
-    const PlayableInstanceHandle parent = table.Acquire(PlayableKind::Piece, 0);
+    const PlayableInstanceHandle parent = table.Acquire(PlayableKind::Segment, 0);
     ASSERT_NE(parent, 0u);
     RetireFully(table, parent);
 

@@ -8,7 +8,7 @@
 
 #include "Components/VMixNode.h"
 #include "Components/VTrack.h"
-#include "Components/VPiece.h"
+#include "Components/VSegment.h"
 
 #include <QByteArray>
 #include <QDir>
@@ -441,7 +441,7 @@ bool validateProjectObjectIdentities(const ProjectData& project, QString* error)
         if (const auto* timeline = item->comp<VTrack>())
             for (const auto& clip : timeline->clips.items)
                 if (!claim(clip.clipGuid)) return false;
-        if (const auto* timeline = item->comp<VPiece>())
+        if (const auto* timeline = item->comp<VSegment>())
             for (const auto& marker : timeline->markers.items)
                 if (!claim(marker.markerGuid)) return false;
         for (const auto& child : item->children)

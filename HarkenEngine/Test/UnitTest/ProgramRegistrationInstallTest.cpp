@@ -22,8 +22,8 @@
 #include "harken_program_registration/EffectDescriptorWriter.h"
 #include "harken_program_registration/ProgramRegistration.h"
 #include "harken_program_registration/VoiceStartInstall.h"
-#include "harken_project_schema/BuildPieceIR.h"
-#include "harken_project_schema/BuildPieceProgram.h"
+#include "harken_project_schema/BuildSegmentIR.h"
+#include "harken_project_schema/BuildSegmentProgram.h"
 #include "harken_project_schema/FixedSlotLowerer.h"
 #include "harken_project_schema/FrontEnd.h"
 #include "harken_project_schema/ResourceInput.h"
@@ -46,13 +46,13 @@
 
 namespace {
 
-using harkenprojectschema::BuildPieceIR;
-using harkenprojectschema::BuildPieceProgram;
+using harkenprojectschema::BuildSegmentIR;
+using harkenprojectschema::BuildSegmentProgram;
 using harkenprojectschema::CompileFrontEnd;
 using harkenprojectschema::ContentKind;
 using harkenprojectschema::FrontEndResult;
-using harkenprojectschema::PieceIR;
-using harkenprojectschema::PieceProgram;
+using harkenprojectschema::SegmentIR;
+using harkenprojectschema::SegmentProgram;
 using harkenprojectschema::ProjectInput;
 using harkenprojectschema::ResourceInput;
 using harkenprojectschema::ResourceTable;
@@ -65,16 +65,16 @@ namespace fx = harkenprojectschema::fixtures;
 constexpr VnObjectId kSubjectId = harkentest::ObjectId(3);
 constexpr VnSoundId kSound = harkentest::ObjectId(1);
 
-// Sound 3 under Piece 1 -> Track 2 (clip 100). Callers set the Sound's sends,
+// Sound 3 under Segment 1 -> Track 2 (clip 100). Callers set the Sound's sends,
 // bus ref, gain and pitch before compiling. Resource facts are provided for the
 // Sound so the IR builds.
 ProjectInput InstallWorld() {
     ProjectInput in;
-    harkenprojectschema::InputNode piece = fx::Node(ContentKind::Piece, 1);
-    piece.guid = harkentest::StudioObjectId(1);
-    piece.ownedChildren = {fx::G(2)};
-    piece.timeSpec = fx::AbsoluteTime();
-    piece.startPoint = fx::EntryStart();
+    harkenprojectschema::InputNode segment = fx::Node(ContentKind::Segment, 1);
+    segment.guid = harkentest::StudioObjectId(1);
+    segment.ownedChildren = {fx::G(2)};
+    segment.timeSpec = fx::AbsoluteTime();
+    segment.startPoint = fx::EntryStart();
 
     harkenprojectschema::InputNode track = fx::Node(ContentKind::Track, 2);
     track.guid = harkentest::StudioObjectId(2);
@@ -86,18 +86,18 @@ ProjectInput InstallWorld() {
     harkenprojectschema::InputNode sound = fx::Node(ContentKind::Sound, 3);
     sound.guid = harkentest::StudioObjectId(3);
 
-    in.nodes = {piece, track, sound};
+    in.nodes = {segment, track, sound};
     in.roots = {fx::G(1)};
     return in;
 }
 
 ProjectInput AncestorSpatialWorld() {
     ProjectInput in;
-    harkenprojectschema::InputNode piece = fx::Node(ContentKind::Piece, 1);
-    piece.guid = harkentest::StudioObjectId(1);
-    piece.ownedChildren = {fx::G(2)};
-    piece.timeSpec = fx::AbsoluteTime();
-    piece.startPoint = fx::EntryStart();
+    harkenprojectschema::InputNode segment = fx::Node(ContentKind::Segment, 1);
+    segment.guid = harkentest::StudioObjectId(1);
+    segment.ownedChildren = {fx::G(2)};
+    segment.timeSpec = fx::AbsoluteTime();
+    segment.startPoint = fx::EntryStart();
 
     harkenprojectschema::InputNode track = fx::Node(ContentKind::Track, 2);
     track.guid = harkentest::StudioObjectId(2);
@@ -114,7 +114,7 @@ ProjectInput AncestorSpatialWorld() {
     harkenprojectschema::InputNode sound = fx::Node(ContentKind::Sound, 3);
     sound.guid = harkentest::StudioObjectId(3);
 
-    in.nodes = {piece, track, container, sound};
+    in.nodes = {segment, track, container, sound};
     in.roots = {fx::G(4)};
     return in;
 }
@@ -137,42 +137,42 @@ ResourceTable Resources(const harkenprojectschema::CanonicalProject& project) {
 
 // Compiles with the routing facts threaded, so the occurrence carries its merged
 // sends and resolved output bus.
-std::optional<PieceProgram> CompileWithRouting(const ProjectInput& in) {
+std::optional<SegmentProgram> CompileWithRouting(const ProjectInput& in) {
     const FrontEndResult front = CompileFrontEnd(in);
     if (!front.ok() || !front.project.has_value() || !front.facts.has_value() ||
         !front.resolution.has_value() || !front.sends.has_value() ||
         !front.effectChains.has_value()) {
         return std::nullopt;
     }
-    const std::optional<PieceIR> ir =
-        BuildPieceIR(*front.project, *front.facts, Resources(*front.project),
+    const std::optional<SegmentIR> ir =
+        BuildSegmentIR(*front.project, *front.facts, Resources(*front.project),
                      *front.resolution, *front.sends, *front.effectChains);
     if (!ir.has_value()) {
         return std::nullopt;
     }
-    return BuildPieceProgram(*ir);
+    return BuildSegmentProgram(*ir);
 }
 
 harkenprogramreg::RegistrationResult Register(
-    const PieceProgram& program, const harkenprogramreg::RegistrationParams& base,
+    const SegmentProgram& program, const harkenprogramreg::RegistrationParams& base,
     harken::LogicCommitCoordinator& commit,
     harken::PlayableInstanceTable& instances) {
     harkenprogramreg::RegistrationParams params = base;
     const harken::PlayableInstanceHandle owner =
-        instances.Acquire(harken::PlayableKind::Piece, 0);
+        instances.Acquire(harken::PlayableKind::Segment, 0);
     // The session's sound registration, unless the caller already supplied one.
     params.soundIdMap.emplace(kSubjectId, kSound);
     params.deviceSampleRateHz = 48000;
-    params.rootPieceId = harkentest::ObjectId(1);
+    params.rootSegmentId = harkentest::ObjectId(1);
     params.ownerInstance = owner;
     params.ownerInstanceScheduleEpoch = instances.Classify(owner).scheduleEpoch;
-    return harkenprogramreg::RegisterPieceProgram(program, params, commit);
+    return harkenprogramreg::RegisterSegmentProgram(program, params, commit);
 }
 
 void ExpectSameLineage(const harkenprogramreg::OccurrenceLineage& actual,
                        const harkenprogramreg::OccurrenceLineage& expected) {
-    EXPECT_EQ(actual.hasPiece, expected.hasPiece);
-    EXPECT_EQ(actual.pieceId, expected.pieceId);
+    EXPECT_EQ(actual.hasSegment, expected.hasSegment);
+    EXPECT_EQ(actual.segmentId, expected.segmentId);
     EXPECT_EQ(actual.trackId, expected.trackId);
     EXPECT_EQ(actual.clipId, expected.clipId);
     EXPECT_EQ(actual.occurrenceOrdinal, expected.occurrenceOrdinal);
@@ -185,7 +185,7 @@ TEST(ProgramRegistrationInstall, ProductionProjectionOwnsSemanticPayloadAndFades
     ProjectInput input = InstallWorld();
     input.nodes[1].clips[0].fades.inLength = 100000;
     input.nodes[1].clips[0].fades.outLength = 100000;
-    const std::optional<PieceProgram> program = CompileWithRouting(input);
+    const std::optional<SegmentProgram> program = CompileWithRouting(input);
     ASSERT_TRUE(program.has_value());
 
     harkenprogramreg::RegistrationParams params;
@@ -246,7 +246,7 @@ TEST(ProgramRegistrationInstall, ProductionProjectionOwnsSemanticPayloadAndFades
 
 TEST(ProgramRegistrationInstall, NonphysicalTimelineCandidatesAcquireNothing) {
     ProjectInput input = InstallWorld();
-    const std::optional<PieceProgram> program = CompileWithRouting(input);
+    const std::optional<SegmentProgram> program = CompileWithRouting(input);
     ASSERT_TRUE(program.has_value());
     harkenprogramreg::RegistrationParams params;
     params.resolvedVoiceSendSlots = 2;
@@ -294,7 +294,7 @@ TEST(ProgramRegistrationInstall, InstallCarriesFoldedAndMappedRouting) {
     in.nodes[2].sends = {harkenprojectschema::Send{harkentest::StudioObjectId(7), 0.5f}};
     in.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(20);   // resolves as the subject's override
 
-    const std::optional<PieceProgram> program = CompileWithRouting(in);
+    const std::optional<SegmentProgram> program = CompileWithRouting(in);
     ASSERT_TRUE(program.has_value());
 
     harken::PlayableInstanceTable instances(4);
@@ -326,8 +326,8 @@ TEST(ProgramRegistrationInstall, WideSchemaBusIdsMapIndependently) {
     lowInput.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(kLowSchemaBus);
     ProjectInput highInput = InstallWorld();
     highInput.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(kHighSchemaBus);
-    const std::optional<PieceProgram> lowProgram = CompileWithRouting(lowInput);
-    const std::optional<PieceProgram> highProgram = CompileWithRouting(highInput);
+    const std::optional<SegmentProgram> lowProgram = CompileWithRouting(lowInput);
+    const std::optional<SegmentProgram> highProgram = CompileWithRouting(highInput);
     ASSERT_TRUE(lowProgram.has_value());
     ASSERT_TRUE(highProgram.has_value());
 
@@ -351,7 +351,7 @@ TEST(ProgramRegistrationInstall, SendCountAtResolvedSlotsAccepted) {
     in.nodes[2].sends = {harkenprojectschema::Send{harkentest::StudioObjectId(7), 0.5f},
                          harkenprojectschema::Send{harkentest::StudioObjectId(8), 0.25f}};
     in.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(20);
-    const std::optional<PieceProgram> program = CompileWithRouting(in);
+    const std::optional<SegmentProgram> program = CompileWithRouting(in);
     ASSERT_TRUE(program.has_value());
 
     harken::PlayableInstanceTable instances(4);
@@ -369,7 +369,7 @@ TEST(ProgramRegistrationInstall, SendCountOverResolvedSlotsRefused) {
     in.nodes[2].sends = {harkenprojectschema::Send{harkentest::StudioObjectId(7), 0.5f},
                          harkenprojectschema::Send{harkentest::StudioObjectId(8), 0.25f}};
     in.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(20);
-    const std::optional<PieceProgram> program = CompileWithRouting(in);
+    const std::optional<SegmentProgram> program = CompileWithRouting(in);
     ASSERT_TRUE(program.has_value());
 
     harken::PlayableInstanceTable instances(4);
@@ -392,7 +392,7 @@ TEST(ProgramRegistrationInstall, SoundSubjectResolvesToItsMappedEngineId) {
     for (const VnSoundId engineSound : {harkentest::ObjectId(1), harkentest::ObjectId(4242)}) {
         ProjectInput in = InstallWorld();
         in.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(20);
-        const std::optional<PieceProgram> program = CompileWithRouting(in);
+        const std::optional<SegmentProgram> program = CompileWithRouting(in);
         ASSERT_TRUE(program.has_value());
 
         harken::PlayableInstanceTable instances(4);
@@ -421,7 +421,7 @@ TEST(ProgramRegistrationInstall, SoundSubjectResolvesToItsMappedEngineId) {
 TEST(ProgramRegistrationInstall, UnmappedSoundSubjectRefused) {
     ProjectInput in = InstallWorld();
     in.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(20);
-    const std::optional<PieceProgram> program = CompileWithRouting(in);
+    const std::optional<SegmentProgram> program = CompileWithRouting(in);
     ASSERT_TRUE(program.has_value());
 
     harken::PlayableInstanceTable instances(4);
@@ -430,8 +430,8 @@ TEST(ProgramRegistrationInstall, UnmappedSoundSubjectRefused) {
     // session's sound map for every other case in this file.
     harkenprogramreg::RegistrationParams params;
     params.deviceSampleRateHz = 48000;
-    params.rootPieceId = harkentest::ObjectId(1);
-    params.ownerInstance = instances.Acquire(harken::PlayableKind::Piece, 0);
+    params.rootSegmentId = harkentest::ObjectId(1);
+    params.ownerInstance = instances.Acquire(harken::PlayableKind::Segment, 0);
     params.ownerInstanceScheduleEpoch =
         instances.Classify(params.ownerInstance).scheduleEpoch;
     params.resolvedVoiceSendSlots = 4;
@@ -442,7 +442,7 @@ TEST(ProgramRegistrationInstall, UnmappedSoundSubjectRefused) {
     const harken::LogicCommitSequence currentBefore = commit.Current();
     const std::uint64_t issuedBefore = commit.IssuedCount();
     const harkenprogramreg::RegistrationResult refused =
-        harkenprogramreg::RegisterPieceProgram(*program, params, commit);
+        harkenprogramreg::RegisterSegmentProgram(*program, params, commit);
     EXPECT_FALSE(refused.ok);
     EXPECT_EQ(refused.refusal,
               harkenprogramreg::RegistrationRefusal::SoundTargetUnmapped);
@@ -454,7 +454,7 @@ TEST(ProgramRegistrationInstall, UnmappedSoundSubjectRefused) {
 
     params.soundIdMap = {{kSubjectId, kSound}};
     const harkenprogramreg::RegistrationResult accepted =
-        harkenprogramreg::RegisterPieceProgram(*program, params, commit);
+        harkenprogramreg::RegisterSegmentProgram(*program, params, commit);
     ASSERT_TRUE(accepted.ok) << static_cast<int>(accepted.refusal);
     ASSERT_NE(accepted.program, nullptr);
     EXPECT_EQ(accepted.program->CommitSequence(), currentBefore + 1u);
@@ -466,7 +466,7 @@ TEST(ProgramRegistrationInstall, UnmappedBusRefused) {
     ProjectInput in = InstallWorld();
     in.nodes[2].sends = {harkenprojectschema::Send{harkentest::StudioObjectId(7), 0.5f}};
     in.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(20);
-    const std::optional<PieceProgram> program = CompileWithRouting(in);
+    const std::optional<SegmentProgram> program = CompileWithRouting(in);
     ASSERT_TRUE(program.has_value());
 
     harken::PlayableInstanceTable instances(4);
@@ -484,7 +484,7 @@ TEST(ProgramRegistrationInstall, UnmappedBusRefused) {
 TEST(ProgramRegistrationInstall, UnmappedResolvedOutputBusRefused) {
     ProjectInput in = InstallWorld();
     in.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(20);
-    const std::optional<PieceProgram> program = CompileWithRouting(in);
+    const std::optional<SegmentProgram> program = CompileWithRouting(in);
     ASSERT_TRUE(program.has_value());
 
     harken::PlayableInstanceTable instances(4);
@@ -501,7 +501,7 @@ TEST(ProgramRegistrationInstall, UnmappedResolvedOutputBusRefused) {
 
 TEST(ProgramRegistrationInstall, UnresolvedBusTakesCallerDefaultWithTrace) {
     ProjectInput in = InstallWorld();  // no mainOutputBusRef: bus is unresolved
-    const std::optional<PieceProgram> program = CompileWithRouting(in);
+    const std::optional<SegmentProgram> program = CompileWithRouting(in);
     ASSERT_TRUE(program.has_value());
 
     harken::PlayableInstanceTable instances(4);
@@ -521,7 +521,7 @@ TEST(ProgramRegistrationInstall, UnresolvedBusTakesCallerDefaultWithTrace) {
 
 TEST(ProgramRegistrationInstall, UnresolvedBusNoDefaultStaysUnresolved) {
     ProjectInput in = InstallWorld();  // unresolved bus, no default supplied
-    const std::optional<PieceProgram> program = CompileWithRouting(in);
+    const std::optional<SegmentProgram> program = CompileWithRouting(in);
     ASSERT_TRUE(program.has_value());
 
     harken::PlayableInstanceTable instances(4);
@@ -607,11 +607,11 @@ TEST(ProgramRegistrationInstall, FullCompileRegistrationAndPlayPathProducesAudio
     ASSERT_TRUE(front.resolution.has_value());
     ASSERT_TRUE(front.sends.has_value());
     ASSERT_TRUE(front.effectChains.has_value());
-    const std::optional<PieceIR> ir =
-        BuildPieceIR(*front.project, *front.facts, Resources(*front.project),
+    const std::optional<SegmentIR> ir =
+        BuildSegmentIR(*front.project, *front.facts, Resources(*front.project),
                      *front.resolution, *front.sends, *front.effectChains);
     ASSERT_TRUE(ir.has_value());
-    const std::optional<PieceProgram> program = BuildPieceProgram(*ir);
+    const std::optional<SegmentProgram> program = BuildSegmentProgram(*ir);
     ASSERT_TRUE(program.has_value());
 
     harken::PlayableInstanceTable instances(4);
@@ -848,7 +848,7 @@ TEST(ProgramRegistrationInstall, SendAddsSignalOnTargetBus) {
 
 TEST(ProgramRegistrationInstall,
      AncestorSpatialScalarsDoNotPolluteOccurrence) {
-    const std::optional<PieceProgram> baseline =
+    const std::optional<SegmentProgram> baseline =
         CompileWithRouting(AncestorSpatialWorld());
     ASSERT_TRUE(baseline.has_value());
 
@@ -860,7 +860,7 @@ TEST(ProgramRegistrationInstall,
         spatial.is3DEnabled = true;
         spatial.attenuationDistanceScaling = static_cast<float>(i + 2);
     }
-    const std::optional<PieceProgram> mutated = CompileWithRouting(poisoned);
+    const std::optional<SegmentProgram> mutated = CompileWithRouting(poisoned);
     ASSERT_TRUE(mutated.has_value());
 
     ASSERT_EQ(mutated->ir().tracks().size(), 1u);
@@ -885,10 +885,10 @@ TEST(ProgramRegistrationInstall, SpatialAndAttenuationRenderBitsAreFrozen) {
     in.nodes[2].spatial.attenuationDistanceScaling = 2.0f;
     in.nodes[2].spatial.attenuationRef = harkentest::StudioObjectId(50);
     in.nodes[2].presence.Set(harkenplayableproperties::PlayablePropertyIdV1::SpatialAttenuationRef);
-    const std::optional<PieceProgram> program = CompileWithRouting(in);
+    const std::optional<SegmentProgram> program = CompileWithRouting(in);
     ASSERT_TRUE(program.has_value());
 
-    EXPECT_NE(harkenprojectschema::RenderPieceIR(program->ir()).find(
+    EXPECT_NE(harkenprojectschema::RenderSegmentIR(program->ir()).find(
                   "/spatial3204448256,1048576000,1,1073741824/atten" +
                   harken::ObjectIdString(harkentest::ObjectId(50))),
               std::string::npos);
@@ -903,7 +903,7 @@ TEST(ProgramRegistrationInstall, InstallCarriesSpatialAndResolvedAttenuation) {
     in.nodes[2].spatial.attenuationDistanceScaling = 3.0f;
     in.nodes[2].spatial.attenuationRef = harkentest::StudioObjectId(50);   // resolves as the subject override
     in.nodes[2].presence.Set(harkenplayableproperties::PlayablePropertyIdV1::SpatialAttenuationRef);
-    const std::optional<PieceProgram> program = CompileWithRouting(in);
+    const std::optional<SegmentProgram> program = CompileWithRouting(in);
     ASSERT_TRUE(program.has_value());
 
     harken::PlayableInstanceTable instances(4);
@@ -929,7 +929,7 @@ TEST(ProgramRegistrationInstall, InstallCarriesSpatialAndResolvedAttenuation) {
 TEST(ProgramRegistrationInstall, UnresolvedAttenuationEmitsNote) {
     ProjectInput in = InstallWorld();
     in.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(20);
-    const std::optional<PieceProgram> program = CompileWithRouting(in);
+    const std::optional<SegmentProgram> program = CompileWithRouting(in);
     ASSERT_TRUE(program.has_value());
 
     harken::PlayableInstanceTable instances(4);
@@ -944,8 +944,8 @@ TEST(ProgramRegistrationInstall, UnresolvedAttenuationEmitsNote) {
     EXPECT_EQ(result.notes[0].code,
               harkenprogramreg::RegistrationNoteCode::
                   AttenuationUnresolvedNoBinding);
-    EXPECT_TRUE(result.notes[0].lineage.hasPiece);
-    EXPECT_EQ(result.notes[0].lineage.pieceId, harkentest::ObjectId(1u));
+    EXPECT_TRUE(result.notes[0].lineage.hasSegment);
+    EXPECT_EQ(result.notes[0].lineage.segmentId, harkentest::ObjectId(1u));
     EXPECT_EQ(result.notes[0].lineage.trackId, harkentest::ObjectId(2u));
     EXPECT_EQ(result.notes[0].lineage.clipId, harkentest::ObjectId(100u));
     EXPECT_EQ(result.notes[0].lineage.occurrenceOrdinal, 0u);
@@ -957,7 +957,7 @@ TEST(ProgramRegistrationInstall, AttenuationTargetUnmappedRefused) {
     in.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(20);
     in.nodes[2].spatial.attenuationRef = harkentest::StudioObjectId(50);
     in.nodes[2].presence.Set(harkenplayableproperties::PlayablePropertyIdV1::SpatialAttenuationRef);
-    const std::optional<PieceProgram> program = CompileWithRouting(in);
+    const std::optional<SegmentProgram> program = CompileWithRouting(in);
     ASSERT_TRUE(program.has_value());
 
     harken::PlayableInstanceTable instances(4);
@@ -1052,7 +1052,7 @@ TEST(ProgramRegistrationInstall, CompiledDefinitionAttenuationReachesLiveVoice) 
     in.nodes[2].presence.Set(harkenplayableproperties::PlayablePropertyIdV1::SpatialAttenuationRef);
     in.nodes.push_back(layer);
     in.roots = {fx::G(4)};
-    const std::optional<PieceProgram> program = CompileWithRouting(in);
+    const std::optional<SegmentProgram> program = CompileWithRouting(in);
     ASSERT_TRUE(program.has_value());
 
     harken::PlayableInstanceTable instances(4);
@@ -1252,7 +1252,7 @@ TEST(ProgramRegistrationInstall, ChainOfTheEngineFirstEffectTypeSurvives) {
                   "the engine's first effect type is the zero id space this "
                   "checks a schema sentinel does not claim");
 
-    const std::optional<PieceProgram> program =
+    const std::optional<SegmentProgram> program =
         CompileWithRouting(ChainInstallWorld(ChainOfType(1, kFeedbackDelay)));
     ASSERT_TRUE(program.has_value())
         << "an authored chain of the engine's first effect type was refused "
@@ -1275,7 +1275,7 @@ TEST(ProgramRegistrationInstall, ChainOfTheEngineFirstEffectTypeSurvives) {
 }
 
 TEST(ProgramRegistrationInstall, AdmittedChainLowersOntoAscendingSlots) {
-    const std::optional<PieceProgram> program =
+    const std::optional<SegmentProgram> program =
         CompileWithRouting(ChainInstallWorld(ChainOfType(2, 5)));
     ASSERT_TRUE(program.has_value());
 
@@ -1301,7 +1301,7 @@ TEST(ProgramRegistrationInstall, AdmittedChainLowersOntoAscendingSlots) {
 TEST(ProgramRegistrationInstall, ZeroParameterTypeInstallsHeaderOnly) {
     harkenprojectschema::SignalGraph graph = ChainOfType(1, 5);
     graph.nodes[0].params.clear();
-    const std::optional<PieceProgram> program =
+    const std::optional<SegmentProgram> program =
         CompileWithRouting(ChainInstallWorld(graph));
     ASSERT_TRUE(program.has_value());
 
@@ -1327,7 +1327,7 @@ TEST(ProgramRegistrationInstall, ZeroParameterTypeInstallsHeaderOnly) {
 }
 
 TEST(ProgramRegistrationInstall, ParameterZeroRequiresOneRegisteredParameter) {
-    const std::optional<PieceProgram> program =
+    const std::optional<SegmentProgram> program =
         CompileWithRouting(ChainInstallWorld(ChainOfType(1, 5)));
     ASSERT_TRUE(program.has_value());
 
@@ -1366,7 +1366,7 @@ TEST(ProgramRegistrationInstall, FixedSlotGateRejectsNineNodeCompile) {
 }
 
 TEST(ProgramRegistrationInstall, EightNodeChainCompilesAndRegisters) {
-    const std::optional<PieceProgram> program =
+    const std::optional<SegmentProgram> program =
         CompileWithRouting(ChainInstallWorld(ChainOfType(8, 5)));
     ASSERT_TRUE(program.has_value());
 
@@ -1391,7 +1391,7 @@ TEST(ProgramRegistrationInstall, EightNodeChainCompilesAndRegisters) {
 TEST(ProgramRegistrationInstall, ChainLongerThanResolvedSlotsIsRefused) {
     // Three entries fit the layout ceiling the compiler enforces but not this
     // session's resolved budget of two.
-    const std::optional<PieceProgram> program =
+    const std::optional<SegmentProgram> program =
         CompileWithRouting(ChainInstallWorld(ChainOfType(3, 5)));
     ASSERT_TRUE(program.has_value());
 
@@ -1408,7 +1408,7 @@ TEST(ProgramRegistrationInstall, ChainLongerThanResolvedSlotsIsRefused) {
 }
 
 TEST(ProgramRegistrationInstall, UnregisteredEffectTypeIsRefused) {
-    const std::optional<PieceProgram> program =
+    const std::optional<SegmentProgram> program =
         CompileWithRouting(ChainInstallWorld(ChainOfType(1, 77)));
     ASSERT_TRUE(program.has_value());
 
@@ -1422,7 +1422,7 @@ TEST(ProgramRegistrationInstall, UnregisteredEffectTypeIsRefused) {
 }
 
 TEST(ProgramRegistrationInstall, BusOnlyEffectTypeCannotHostAVoiceChain) {
-    const std::optional<PieceProgram> program =
+    const std::optional<SegmentProgram> program =
         CompileWithRouting(ChainInstallWorld(ChainOfType(1, 5)));
     ASSERT_TRUE(program.has_value());
 
@@ -1441,7 +1441,7 @@ TEST(ProgramRegistrationInstall, ParameterIdPastTheTypesCountIsRefused) {
     // Parameter id 2 addresses the third index of a type that exposes one.
     harkenprojectschema::SignalGraph graph = ChainOfType(1, 5);
     graph.nodes[0].params = {harkenprojectschema::EffectParam{2, 0u}};
-    const std::optional<PieceProgram> program =
+    const std::optional<SegmentProgram> program =
         CompileWithRouting(ChainInstallWorld(graph));
     ASSERT_TRUE(program.has_value());
 
@@ -1461,7 +1461,7 @@ TEST(ProgramRegistrationInstall, ParameterIdPastTheTypesCountIsRefused) {
 // sparse payload is refused rather than completed by guesswork.
 TEST(ProgramRegistrationInstall, SparseParameterSetIsRefused) {
     // The type exposes two parameters; the entry authors only index 0.
-    const std::optional<PieceProgram> program =
+    const std::optional<SegmentProgram> program =
         CompileWithRouting(ChainInstallWorld(ChainOfType(1, 5)));
     ASSERT_TRUE(program.has_value());
 
@@ -1501,11 +1501,11 @@ TEST(ProgramRegistrationInstall,
     effectChains.chains[0].paramBlocks[0].params.push_back(
         effectChains.chains[0].paramBlocks[0].params[0]);
 
-    const std::optional<PieceIR> ir = BuildPieceIR(
+    const std::optional<SegmentIR> ir = BuildSegmentIR(
         *front.project, *front.facts, Resources(*front.project),
         *front.resolution, *front.sends, effectChains);
     ASSERT_TRUE(ir.has_value());
-    const std::optional<PieceProgram> program = BuildPieceProgram(*ir);
+    const std::optional<SegmentProgram> program = BuildSegmentProgram(*ir);
     ASSERT_TRUE(program.has_value());
 
     harken::PlayableInstanceTable instances(4);
@@ -1529,7 +1529,7 @@ TEST(ProgramRegistrationInstall, ParameterValueOutsideItsRangeIsRefused) {
     harkenprojectschema::SignalGraph graph = ChainOfType(1, 5);
     // 2.0f, outside the synthetic type's [0, 1].
     graph.nodes[0].params = {harkenprojectschema::EffectParam{0, 0x40000000u}};
-    const std::optional<PieceProgram> program =
+    const std::optional<SegmentProgram> program =
         CompileWithRouting(ChainInstallWorld(graph));
     ASSERT_TRUE(program.has_value());
 
@@ -1548,7 +1548,7 @@ TEST(ProgramRegistrationInstall, NaNParameterValueIsRefused) {
     harkenprojectschema::SignalGraph graph = ChainOfType(1, 5);
     graph.nodes[0].params = {
         harkenprojectschema::EffectParam{0, 0x7fc00000u}};
-    const std::optional<PieceProgram> program =
+    const std::optional<SegmentProgram> program =
         CompileWithRouting(ChainInstallWorld(graph));
     ASSERT_TRUE(program.has_value());
 
@@ -1568,7 +1568,7 @@ TEST(ProgramRegistrationInstall, NaNParameterValueIsRefused) {
 // or a layout vintage this build does not know, refuses the type instead of writing
 // bytes the engine would read as some other struct.
 TEST(ProgramRegistrationInstall, DescriptorSizeMismatchRefusesTheType) {
-    const std::optional<PieceProgram> program =
+    const std::optional<SegmentProgram> program =
         CompileWithRouting(ChainInstallWorld(ChainOfType(1, 5)));
     ASSERT_TRUE(program.has_value());
 
@@ -1589,7 +1589,7 @@ TEST(ProgramRegistrationInstall, DescriptorSizeMismatchRefusesTheType) {
 }
 
 TEST(ProgramRegistrationInstall, UnknownDescriptorVintageRefusesTheType) {
-    const std::optional<PieceProgram> program =
+    const std::optional<SegmentProgram> program =
         CompileWithRouting(ChainInstallWorld(ChainOfType(1, 5)));
     ASSERT_TRUE(program.has_value());
 
@@ -1618,7 +1618,7 @@ TEST(ProgramRegistrationInstall,
         graph.nodes[0].params.push_back(
             harkenprojectschema::EffectParam{paramId, 0u});
     }
-    const std::optional<PieceProgram> program =
+    const std::optional<SegmentProgram> program =
         CompileWithRouting(ChainInstallWorld(graph));
     ASSERT_TRUE(program.has_value());
 
@@ -1642,7 +1642,7 @@ TEST(ProgramRegistrationInstall,
 }
 
 TEST(ProgramRegistrationInstall, ChainNeedingMoreInstancesThanThePoolIsRefused) {
-    const std::optional<PieceProgram> program =
+    const std::optional<SegmentProgram> program =
         CompileWithRouting(ChainInstallWorld(ChainOfType(3, 5)));
     ASSERT_TRUE(program.has_value());
 
@@ -1658,7 +1658,7 @@ TEST(ProgramRegistrationInstall, ChainNeedingMoreInstancesThanThePoolIsRefused) 
 }
 
 TEST(ProgramRegistrationInstall, SelectedEmptyChainInstallsNothingAndNotes) {
-    const std::optional<PieceProgram> program = CompileWithRouting(
+    const std::optional<SegmentProgram> program = CompileWithRouting(
         ChainInstallWorld(harkenprojectschema::SignalGraph{}));
     ASSERT_TRUE(program.has_value());
 
@@ -1706,7 +1706,7 @@ TEST(ProgramRegistrationInstall, EveryNoteCarriesItsOccurrenceLineage) {
     in.nodes.push_back(secondSound);
     in.nodes[1].ownedChildren.push_back(fx::G(4));
 
-    const std::optional<PieceProgram> program = CompileWithRouting(in);
+    const std::optional<SegmentProgram> program = CompileWithRouting(in);
     ASSERT_TRUE(program.has_value());
 
     harken::PlayableInstanceTable instances(4);
@@ -1735,7 +1735,7 @@ TEST(ProgramRegistrationInstall, EveryNoteCarriesItsOccurrenceLineage) {
 }
 
 TEST(ProgramRegistrationInstall, NoSelectedChainInstallsNothingAndDoesNotNote) {
-    const std::optional<PieceProgram> program =
+    const std::optional<SegmentProgram> program =
         CompileWithRouting(InstallWorld());
     ASSERT_TRUE(program.has_value());
 
@@ -1845,7 +1845,7 @@ TEST(ProgramRegistrationInstall, ARefusedChainStepAbandonsTheInstall) {
 // and outStopDeferred stays false. Nothing is ever audible.
 TEST(ProgramRegistrationInstall, TimelineInstallBatchCeilingRefusesBeforeOwnership) {
     ProjectInput input = InstallWorld();
-    const std::optional<PieceProgram> program = CompileWithRouting(input);
+    const std::optional<SegmentProgram> program = CompileWithRouting(input);
     ASSERT_TRUE(program.has_value());
     harkenprogramreg::RegistrationParams params;
     params.resolvedVoiceSendSlots = 2;

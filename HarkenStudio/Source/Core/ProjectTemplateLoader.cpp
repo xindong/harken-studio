@@ -37,7 +37,7 @@ bool isTemplateContentType(ProjectItem::Type type)
     return type == ProjectItem::Type::Sound
         || type == ProjectItem::Type::Container
         || type == ProjectItem::Type::Track
-        || type == ProjectItem::Type::Piece
+        || type == ProjectItem::Type::Segment
         || type == ProjectItem::Type::Layer;
 }
 

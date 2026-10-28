@@ -5,6 +5,6 @@
 
 namespace VNX {
 
-const PropertySchema& pieceInspectorSchema();
+const PropertySchema& segmentInspectorSchema();
 
 }

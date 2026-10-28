@@ -2,7 +2,7 @@
 
 #include "TimelineCoordinates.h"
 #include "../AuthoringPolicy.h"
-#include "../Components/VPiece.h"
+#include "../Components/VSegment.h"
 #include "../Components/VSelection.h"
 #include "../Components/VMixNode.h"
 #include "../Components/VTrack.h"
@@ -87,7 +87,7 @@ TimelineValidation validateEntityIdentities(ProjectData* project,
                 if (const TimelineValidation validity = insert(clip.clipGuid); !validity)
                     return validity;
         }
-        if (const auto* timeline = item->comp<VPiece>()) {
+        if (const auto* timeline = item->comp<VSegment>()) {
             const MarkerLedger& ledger = item == replacedOwner && replacementMarkers
                 ? *replacementMarkers : timeline->markers;
             for (const Marker& marker : ledger.items)
@@ -112,17 +112,17 @@ void applyClips(const QUuid& trackGuid,
     emit manager.itemPropertyChanged(track, QStringLiteral("clips"), originator);
 }
 
-void applyMarkers(const QUuid& pieceGuid,
+void applyMarkers(const QUuid& segmentGuid,
                const MarkerLedger& markers,
                const QObject* originator = nullptr)
 {
     auto& manager = ProjectManager::instance();
-    ProjectItem* piece = manager.findItemByGuid(pieceGuid);
-    auto* timeline = piece ? piece->comp<VPiece>() : nullptr;
+    ProjectItem* segment = manager.findItemByGuid(segmentGuid);
+    auto* timeline = segment ? segment->comp<VSegment>() : nullptr;
     if (!timeline) return;
     timeline->markers = markers;
-    piece->markDirty();
-    emit manager.itemPropertyChanged(piece, QStringLiteral("markers"), originator);
+    segment->markDirty();
+    emit manager.itemPropertyChanged(segment, QStringLiteral("markers"), originator);
 }
 
 int clipMergeId(const QUuid& clipGuid)
@@ -131,35 +131,35 @@ int clipMergeId(const QUuid& clipGuid)
     return static_cast<int>(value == 0 ? 1 : value);
 }
 
-struct PieceTimeSnapshot
+struct SegmentTimeSnapshot
 {
-    PieceTimeSpec pieceTime;
+    SegmentTimeSpec segmentTime;
     MarkerLedger markers;
     QHash<QUuid, ClipLedger> tracks;
 };
 
-PieceTimeSnapshot capturePieceTime(ProjectItem* piece)
+SegmentTimeSnapshot captureSegmentTime(ProjectItem* segment)
 {
-    PieceTimeSnapshot snapshot;
-    const auto* timeline = piece->comp<VPiece>();
-    snapshot.pieceTime = timeline->pieceTime;
+    SegmentTimeSnapshot snapshot;
+    const auto* timeline = segment->comp<VSegment>();
+    snapshot.segmentTime = timeline->segmentTime;
     snapshot.markers = timeline->markers;
-    for (const auto& child : piece->children)
+    for (const auto& child : segment->children)
         if (const auto* track = child->comp<VTrack>())
             snapshot.tracks.insert(child->guid, track->clips);
     return snapshot;
 }
 
-bool pieceReaches(ProjectManager* projectManager,
-                  const ProjectItem* piece,
+bool segmentReaches(ProjectManager* projectManager,
+                  const ProjectItem* segment,
                   const ProjectItem* target,
                   const ProjectItem* replacedTrack,
                   const ClipLedger& replacement)
 {
-    if (!piece || !target || piece->type != ProjectItem::Type::Piece)
+    if (!segment || !target || segment->type != ProjectItem::Type::Segment)
         return false;
     QSet<QUuid> visited;
-    std::vector<const ProjectItem*> stack{piece};
+    std::vector<const ProjectItem*> stack{segment};
     while (!stack.empty()) {
         const ProjectItem* current = stack.back();
         stack.pop_back();
@@ -178,7 +178,7 @@ bool pieceReaches(ProjectManager* projectManager,
                 ? replacement : timeline->clips;
             for (const Clip& clip : clips.items) {
                 const ProjectItem* referenced = projectManager->findItemByGuid(clip.targetGuid);
-                if (referenced && referenced->type == ProjectItem::Type::Piece)
+                if (referenced && referenced->type == ProjectItem::Type::Segment)
                     stack.push_back(referenced);
             }
         }
@@ -186,21 +186,21 @@ bool pieceReaches(ProjectManager* projectManager,
     return false;
 }
 
-void applyPieceTime(const QUuid& pieceGuid,
-                    const PieceTimeSnapshot& snapshot,
+void applySegmentTime(const QUuid& segmentGuid,
+                    const SegmentTimeSnapshot& snapshot,
                     bool coordinatesChanged,
                     const QObject* originator = nullptr)
 {
     auto& manager = ProjectManager::instance();
-    ProjectItem* piece = manager.findItemByGuid(pieceGuid);
-    auto* timeline = piece ? piece->comp<VPiece>() : nullptr;
+    ProjectItem* segment = manager.findItemByGuid(segmentGuid);
+    auto* timeline = segment ? segment->comp<VSegment>() : nullptr;
     if (!timeline) return;
-    timeline->pieceTime = snapshot.pieceTime;
+    timeline->segmentTime = snapshot.segmentTime;
     timeline->markers = snapshot.markers;
-    piece->markDirty();
-    emit manager.itemPropertyChanged(piece, QStringLiteral("pieceTime"), originator);
+    segment->markDirty();
+    emit manager.itemPropertyChanged(segment, QStringLiteral("segmentTime"), originator);
     if (coordinatesChanged)
-        emit manager.itemPropertyChanged(piece, QStringLiteral("markers"), originator);
+        emit manager.itemPropertyChanged(segment, QStringLiteral("markers"), originator);
     if (coordinatesChanged)
         for (auto it = snapshot.tracks.cbegin(); it != snapshot.tracks.cend(); ++it)
             applyClips(it.key(), it.value(), originator);
@@ -208,17 +208,17 @@ void applyPieceTime(const QUuid& pieceGuid,
 
 }
 
-PieceTimeSpec timeSpecForTrackParent(const ProjectItem* parent)
+SegmentTimeSpec timeSpecForTrackParent(const ProjectItem* parent)
 {
-    if (parent && parent->type == ProjectItem::Type::Piece)
-        if (const auto* timeline = parent->comp<VPiece>())
-            return timeline->pieceTime;
+    if (parent && parent->type == ProjectItem::Type::Segment)
+        if (const auto* timeline = parent->comp<VSegment>())
+            return timeline->segmentTime;
     return {};
 }
 
 std::optional<ClipLedger> convertClipLedger(const ClipLedger& source,
-                                            const PieceTimeSpec& sourceTime,
-                                            const PieceTimeSpec& destinationTime,
+                                            const SegmentTimeSpec& sourceTime,
+                                            const SegmentTimeSpec& destinationTime,
                                             QString* error)
 {
     const TimelineValidation sourceValidity = source.validateStructure();
@@ -272,18 +272,18 @@ TimelineValidation validateClipPlacement(ProjectManager* projectManager,
         });
     if (!targets)
         return targets;
-    ProjectItem* hostPiece = track->parent && track->parent->type == ProjectItem::Type::Piece
+    ProjectItem* hostSegment = track->parent && track->parent->type == ProjectItem::Type::Segment
         ? track->parent : nullptr;
-    if (!hostPiece)
+    if (!hostSegment)
         return TimelineValidation::success();
     for (const Clip& clip : clips.items) {
         ProjectItem* target = projectManager->findItemByGuid(clip.targetGuid);
-        if (!target || target->type != ProjectItem::Type::Piece)
+        if (!target || target->type != ProjectItem::Type::Segment)
             continue;
-        if (pieceReaches(projectManager, target, hostPiece, track, clips))
+        if (segmentReaches(projectManager, target, hostSegment, track, clips))
             return TimelineValidation::failure(
                 TimelineError::Cycle,
-                QStringLiteral("Clip placement would create a Piece reference cycle"));
+                QStringLiteral("Clip placement would create a Segment reference cycle"));
     }
     return TimelineValidation::success();
 }
@@ -513,20 +513,20 @@ ActionResult moveClipAcrossTracks(ProjectManager* projectManager,
 }
 
 ActionResult replaceMarkers(ProjectManager* projectManager,
-                         ProjectItem* piece,
+                         ProjectItem* segment,
                          const MarkerLedger& markers,
                          const QObject* originator,
                          const QString& undoText)
 {
-    auto* timeline = piece ? piece->comp<VPiece>() : nullptr;
+    auto* timeline = segment ? segment->comp<VSegment>() : nullptr;
     if (!projectManager || !timeline)
         return failure(QStringLiteral("INVALID_TIMELINE_OWNER"),
-                       QStringLiteral("markers requires a Piece timeline"));
+                       QStringLiteral("markers requires a Segment timeline"));
     ProjectData* project = projectManager ? projectManager->currentProject() : nullptr;
     if (!project)
         return failure(QStringLiteral("NO_PROJECT_OPEN"),
                        QStringLiteral("No project is currently open"));
-    const auto authoring = AuthoringPolicy::validateTimeline(*piece,
+    const auto authoring = AuthoringPolicy::validateTimeline(*segment,
         [projectManager](const QUuid& guid) { return projectManager->findItemByGuid(guid); });
     if (!authoring)
         return failure(QStringLiteral("AUTHORING_RESTRICTED"), authoring.message);
@@ -534,7 +534,7 @@ ActionResult replaceMarkers(ProjectManager* projectManager,
     if (!validity)
         return failure(QStringLiteral("INVALID_ARGS"), validity.message);
     const TimelineValidation identities = validateEntityIdentities(
-        project, piece, nullptr, &markers);
+        project, segment, nullptr, &markers);
     if (!identities)
         return failure(QStringLiteral("INVALID_ARGS"), identities.message);
 
@@ -542,41 +542,41 @@ ActionResult replaceMarkers(ProjectManager* projectManager,
     const MarkerLedger oldMarkers = timeline->markers;
     ActionResult result;
     result.success = true;
-    result.data = propertyResult(piece, QStringLiteral("markers"), normalized.toJson());
+    result.data = propertyResult(segment, QStringLiteral("markers"), normalized.toJson());
     if (oldMarkers == normalized) return result;
-    const QUuid pieceGuid = piece->guid;
-    applyMarkers(pieceGuid, normalized, originator);
-    result.undoFn = [pieceGuid, oldMarkers] { applyMarkers(pieceGuid, oldMarkers); };
-    result.redoFn = [pieceGuid, normalized] { applyMarkers(pieceGuid, normalized); };
+    const QUuid segmentGuid = segment->guid;
+    applyMarkers(segmentGuid, normalized, originator);
+    result.undoFn = [segmentGuid, oldMarkers] { applyMarkers(segmentGuid, oldMarkers); };
+    result.redoFn = [segmentGuid, normalized] { applyMarkers(segmentGuid, normalized); };
     result.undoText = undoText.isEmpty() ? QStringLiteral("Set markers") : undoText;
     return result;
 }
 
 ActionResult addMarker(ProjectManager* projectManager,
-                    ProjectItem* piece,
+                    ProjectItem* segment,
                     Marker marker,
                     const QObject* originator)
 {
-    auto* timeline = piece ? piece->comp<VPiece>() : nullptr;
+    auto* timeline = segment ? segment->comp<VSegment>() : nullptr;
     if (!timeline)
         return failure(QStringLiteral("INVALID_TIMELINE_OWNER"),
-                       QStringLiteral("Marker creation requires a Piece timeline"));
+                       QStringLiteral("Marker creation requires a Segment timeline"));
     if (marker.markerGuid.isNull()) marker.markerGuid = QUuid::createUuid();
     MarkerLedger markers = timeline->markers;
     markers.items.push_back(std::move(marker));
-    return replaceMarkers(projectManager, piece, markers, originator,
+    return replaceMarkers(projectManager, segment, markers, originator,
                        QStringLiteral("Add marker"));
 }
 
 ActionResult updateMarker(ProjectManager* projectManager,
-                       ProjectItem* piece,
+                       ProjectItem* segment,
                        const Marker& marker,
                        const QObject* originator)
 {
-    auto* timeline = piece ? piece->comp<VPiece>() : nullptr;
+    auto* timeline = segment ? segment->comp<VSegment>() : nullptr;
     if (!timeline)
         return failure(QStringLiteral("INVALID_TIMELINE_OWNER"),
-                       QStringLiteral("Marker update requires a Piece timeline"));
+                       QStringLiteral("Marker update requires a Segment timeline"));
     MarkerLedger markers = timeline->markers;
     const auto it = std::find_if(markers.items.begin(), markers.items.end(),
                                  [&marker](const Marker& current) {
@@ -586,19 +586,19 @@ ActionResult updateMarker(ProjectManager* projectManager,
         return failure(QStringLiteral("MARKER_NOT_FOUND"),
                        QStringLiteral("Marker does not exist"));
     *it = marker;
-    return replaceMarkers(projectManager, piece, markers, originator,
+    return replaceMarkers(projectManager, segment, markers, originator,
                        QStringLiteral("Edit marker"));
 }
 
 ActionResult removeMarker(ProjectManager* projectManager,
-                       ProjectItem* piece,
+                       ProjectItem* segment,
                        const QUuid& markerGuid,
                        const QObject* originator)
 {
-    auto* timeline = piece ? piece->comp<VPiece>() : nullptr;
+    auto* timeline = segment ? segment->comp<VSegment>() : nullptr;
     if (!timeline)
         return failure(QStringLiteral("INVALID_TIMELINE_OWNER"),
-                       QStringLiteral("Marker deletion requires a Piece timeline"));
+                       QStringLiteral("Marker deletion requires a Segment timeline"));
     MarkerLedger markers = timeline->markers;
     const auto it = std::find_if(markers.items.begin(), markers.items.end(),
                                  [&markerGuid](const Marker& marker) {
@@ -608,38 +608,38 @@ ActionResult removeMarker(ProjectManager* projectManager,
         return failure(QStringLiteral("MARKER_NOT_FOUND"),
                        QStringLiteral("Marker does not exist"));
     markers.items.erase(it);
-    return replaceMarkers(projectManager, piece, markers, originator,
+    return replaceMarkers(projectManager, segment, markers, originator,
                        QStringLiteral("Delete marker"));
 }
 
-ActionResult replacePieceTime(ProjectManager* projectManager,
-                              ProjectItem* piece,
-                              const PieceTimeSpec& pieceTime,
+ActionResult replaceSegmentTime(ProjectManager* projectManager,
+                              ProjectItem* segment,
+                              const SegmentTimeSpec& segmentTime,
                               const QObject* originator,
                               const QString& undoText)
 {
-    auto* timeline = piece ? piece->comp<VPiece>() : nullptr;
+    auto* timeline = segment ? segment->comp<VSegment>() : nullptr;
     if (!projectManager || !timeline)
         return failure(QStringLiteral("INVALID_TIMELINE_OWNER"),
-                       QStringLiteral("pieceTime requires a Piece timeline"));
-    const PieceTimeSpec* previousTime = &timeline->pieceTime;
-    for (const PieceTimeSpec* time : {previousTime, &pieceTime}) {
-        const auto authoring = AuthoringPolicy::validatePieceTime(*time);
+                       QStringLiteral("segmentTime requires a Segment timeline"));
+    const SegmentTimeSpec* previousTime = &timeline->segmentTime;
+    for (const SegmentTimeSpec* time : {previousTime, &segmentTime}) {
+        const auto authoring = AuthoringPolicy::validateSegmentTime(*time);
         if (!authoring)
             return failure(QStringLiteral("AUTHORING_RESTRICTED"), authoring.message);
     }
-    const TimelineValidation validity = TimelineCoordinates::validate(pieceTime);
+    const TimelineValidation validity = TimelineCoordinates::validate(segmentTime);
     if (!validity)
         return failure(QStringLiteral("INVALID_ARGS"), validity.message);
 
-    const PieceTimeSnapshot oldSnapshot = capturePieceTime(piece);
-    PieceTimeSnapshot newSnapshot = oldSnapshot;
-    newSnapshot.pieceTime = pieceTime;
-    const bool coordinatesChanged = oldSnapshot.pieceTime.domain != pieceTime.domain;
+    const SegmentTimeSnapshot oldSnapshot = captureSegmentTime(segment);
+    SegmentTimeSnapshot newSnapshot = oldSnapshot;
+    newSnapshot.segmentTime = segmentTime;
+    const bool coordinatesChanged = oldSnapshot.segmentTime.domain != segmentTime.domain;
     if (coordinatesChanged) {
         for (Marker& marker : newSnapshot.markers.items) {
             const CoordinateResult converted = TimelineCoordinates::convert(
-                marker.position, oldSnapshot.pieceTime, pieceTime);
+                marker.position, oldSnapshot.segmentTime, segmentTime);
             if (!converted)
                 return failure(QStringLiteral("INVALID_ARGS"), converted.validation.message);
             marker.position = converted.value;
@@ -647,7 +647,7 @@ ActionResult replacePieceTime(ProjectManager* projectManager,
         for (auto it = newSnapshot.tracks.begin(); it != newSnapshot.tracks.end(); ++it) {
             QString error;
             auto converted = convertClipLedger(
-                it.value(), oldSnapshot.pieceTime, pieceTime, &error);
+                it.value(), oldSnapshot.segmentTime, segmentTime, &error);
             if (!converted)
                 return failure(QStringLiteral("INVALID_ARGS"), error);
             it.value() = std::move(*converted);
@@ -659,18 +659,18 @@ ActionResult replacePieceTime(ProjectManager* projectManager,
 
     ActionResult result;
     result.success = true;
-    result.data = propertyResult(piece, QStringLiteral("pieceTime"), pieceTime.toJson());
-    if (oldSnapshot.pieceTime == pieceTime) return result;
-    const QUuid pieceGuid = piece->guid;
-    applyPieceTime(pieceGuid, newSnapshot, coordinatesChanged, originator);
-    result.undoFn = [pieceGuid, oldSnapshot, coordinatesChanged] {
-        applyPieceTime(pieceGuid, oldSnapshot, coordinatesChanged);
+    result.data = propertyResult(segment, QStringLiteral("segmentTime"), segmentTime.toJson());
+    if (oldSnapshot.segmentTime == segmentTime) return result;
+    const QUuid segmentGuid = segment->guid;
+    applySegmentTime(segmentGuid, newSnapshot, coordinatesChanged, originator);
+    result.undoFn = [segmentGuid, oldSnapshot, coordinatesChanged] {
+        applySegmentTime(segmentGuid, oldSnapshot, coordinatesChanged);
     };
-    result.redoFn = [pieceGuid, newSnapshot, coordinatesChanged] {
-        applyPieceTime(pieceGuid, newSnapshot, coordinatesChanged);
+    result.redoFn = [segmentGuid, newSnapshot, coordinatesChanged] {
+        applySegmentTime(segmentGuid, newSnapshot, coordinatesChanged);
     };
     result.undoText = undoText.isEmpty()
-        ? QStringLiteral("Set piece time") : undoText;
+        ? QStringLiteral("Set segment time") : undoText;
     return result;
 }
 

@@ -41,13 +41,13 @@ using TransportEpoch = std::uint64_t;
 // The reserved invalid transport epoch. Consumers reject a record carrying it.
 inline constexpr TransportEpoch kInvalidTransportEpoch = 0;
 
-// Whether a Piece measures positions in musical ticks (converted to frames
+// Whether a Segment measures positions in musical ticks (converted to frames
 // through a tempo map) or absolute nanoseconds (converted through the sample rate
 // alone). Shared by every structure that has to treat the two domains
 // differently -- the marker index that maps positions to frames, and the
 // same-position resolver that keeps a musical handoff in ticks but falls back to
 // nanoseconds the moment either side is absolute.
-enum class PieceTimeType : std::uint8_t {
+enum class SegmentTimeType : std::uint8_t {
     Musical = 0,
     Absolute = 1
 };

@@ -35,7 +35,7 @@ inline QJsonObject projectDocument(const QString& type,
         const QString itemType = content.value(QStringLiteral("type")).toString();
         const bool hasFieldGroups = itemType == QStringLiteral("Sound")
             || itemType == QStringLiteral("Container") || itemType == QStringLiteral("Layer")
-            || itemType == QStringLiteral("Track") || itemType == QStringLiteral("Piece");
+            || itemType == QStringLiteral("Track") || itemType == QStringLiteral("Segment");
         if (hasFieldGroups && !authoredContent.contains(QStringLiteral("fieldGroups"))) {
             const QJsonObject inherit{{QStringLiteral("inherit"), true}};
             authoredContent.insert(QStringLiteral("fieldGroups"), QJsonObject{

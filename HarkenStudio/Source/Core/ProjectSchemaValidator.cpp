@@ -1,4 +1,6 @@
 #include "ProjectSchemaValidator.h"
+#include "ProjectDocument.h"
+#include "ProjectFormatVersion.h"
 
 #include "ProjectSchemaValidator.generated.h"
 
@@ -19,8 +21,20 @@ QStringList ProjectSchemaValidator::validateProjectDocument(
     const QString& relativePath)
 {
     QStringList errors;
+    QJsonValue input = document;
+    if (version == kCurrentProjectSchemaVersion && document.isObject()) {
+        auto object = document.toObject();
+        if (object.value(QStringLiteral("content")).isObject()) {
+            auto content = object.value(QStringLiteral("content")).toObject();
+            QString error;
+            if (!ProjectDocument::normalizeContent(&content, &error))
+                return {relativePath + QStringLiteral(": ") + error};
+            object.insert(QStringLiteral("content"), content);
+            input = object;
+        }
+    }
     GeneratedSchemaRegistry::validateProjectDocument(
-        version, documentType, document, relativePath, errors);
+        version, documentType, input, relativePath, errors);
     return errors;
 }
 

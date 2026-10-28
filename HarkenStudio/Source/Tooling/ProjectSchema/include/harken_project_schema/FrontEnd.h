@@ -12,7 +12,7 @@
 //                               placement graph; illegal or dangling edges,
 //                               multiple owners, and ownership cycles are
 //                               refused here.
-//   stage 4  time and marker     - the frozen time rules a Musical Piece must obey
+//   stage 4  time and marker     - the frozen time rules a Musical Segment must obey
 //            normalization      (exactly one tempo and one meter row, each at
 //                               tick 0) and the single-exit-marker rule are
 //                               enforced here, and the deterministic order and

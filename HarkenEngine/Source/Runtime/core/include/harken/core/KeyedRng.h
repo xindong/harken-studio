@@ -1,6 +1,6 @@
-// The key that seeds a piece's randomness, and its hash.
+// The key that seeds a segment's randomness, and its hash.
 //
-// Selection randomness is keyed by what the choice belongs to -- the piece
+// Selection randomness is keyed by what the choice belongs to -- the segment
 // instance's seed, the clip, the loop iteration and the occurrence ordinal -- not
 // by the order the planner happens to reach the choices in. Two planners that
 // serve the same choices in different orders, or one planner run twice, must draw
@@ -18,7 +18,7 @@ namespace harken {
 // Identifies one keyed random draw. Every field is authored/lineage data, so the
 // same choice keys the same way on every run and every machine.
 struct KeyedRngInput {
-    std::uint64_t pieceInstanceSeed = 0;
+    std::uint64_t segmentInstanceSeed = 0;
     VnObjectId clipId{};
     std::uint32_t loopIteration = 0;
     std::uint32_t occurrenceOrdinal = 0;
@@ -35,7 +35,7 @@ inline std::uint64_t HashKeyedRng(const KeyedRngInput& key) {
         z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
         return z ^ (z >> 31);
     };
-    std::uint64_t h = mix(key.pieceInstanceSeed + 0x1000000000000001ull);
+    std::uint64_t h = mix(key.segmentInstanceSeed + 0x1000000000000001ull);
     h = mix(h ^ key.clipId.high);
     h = mix(h ^ key.clipId.low);
     const std::uint64_t occurrence =

@@ -17,7 +17,7 @@ harkenprojectschema::ContentKind definitionKind(ProjectItem::Type type)
     case ProjectItem::Type::Sound: return Kind::Sound;
     case ProjectItem::Type::Container: return Kind::Container;
     case ProjectItem::Type::Track: return Kind::Track;
-    case ProjectItem::Type::Piece: return Kind::Piece;
+    case ProjectItem::Type::Segment: return Kind::Segment;
     default: return static_cast<Kind>(UINT32_MAX);
     }
 }

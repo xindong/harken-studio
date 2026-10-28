@@ -206,14 +206,14 @@ PostResult TimelinePlanner::ResolveBoundary(
     if (program.clock == nullptr || program.markerIndex == nullptr) {
         return applyMissing(); // no grid to resolve against
     }
-    // Express the frontier in the piece's own entry-relative position, find the
+    // Express the frontier in the segment's own entry-relative position, find the
     // next grid line strictly after it, then place the play's entry on that
     // boundary's absolute frame.
     const std::int64_t entryRelFrontier =
         static_cast<std::int64_t>(publicationFrontier) -
         static_cast<std::int64_t>(program.entryAnchorFrame);
     const std::int64_t nativePos =
-        (program.timeType == PieceTimeType::Musical)
+        (program.timeType == SegmentTimeType::Musical)
             ? program.clock->FrameToTick(SampleFrame{entryRelFrontier}).value
             : program.clock->FrameToTime(SampleFrame{entryRelFrontier}).value;
     const BoundaryCandidate boundary =

@@ -17,7 +17,7 @@ struct ProjectData;
 
 namespace harkenprojectschema {
 struct CompileTargetProfileV1;
-class PieceProgram;
+class SegmentProgram;
 class RuntimeIdentityIndexV1;
 }
 
@@ -89,7 +89,7 @@ private:
         uint64_t projectGeneration);
     friend const void* compiledProjectSnapshotImpl(
         const CompiledProjectSnapshot& snapshot);
-    friend const harkenprojectschema::PieceProgram* compiledPieceProgram(
+    friend const harkenprojectschema::SegmentProgram* compiledSegmentProgram(
         const CompiledProjectSnapshot& snapshot);
 };
 

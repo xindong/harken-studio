@@ -376,7 +376,7 @@ bool isStructuralParentType(ProjectItemType type) noexcept
     return type == ProjectItemType::Layer
         || type == ProjectItemType::Container
         || type == ProjectItemType::Track
-        || type == ProjectItemType::Piece;
+        || type == ProjectItemType::Segment;
 }
 
 void appendStructuralParents(std::optional<PlayablePropertySourceV1>* source,
@@ -442,7 +442,7 @@ bool PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(ProjectItemType typ
         || type == ProjectItemType::Sound
         || type == ProjectItemType::Container
         || type == ProjectItemType::Track
-        || type == ProjectItemType::Piece;
+        || type == ProjectItemType::Segment;
 }
 
 std::span<const PlayablePropertyAuthoringV1::Field>
@@ -920,15 +920,15 @@ PlayablePropertyAuthoringV1::resolveSource(
     const auto& occurrences = placement->occurrences();
     if (occurrences.empty()) return std::nullopt;
     ProjectItem* outerTrack = resolveItem(occurrences.back().trackGuid);
-    ProjectItem* outerPiece = outerTrack ? outerTrack->parent : nullptr;
-    if (!outerTrack || !outerPiece || outerPiece->type != ProjectItemType::Piece)
+    ProjectItem* outerSegment = outerTrack ? outerTrack->parent : nullptr;
+    if (!outerTrack || !outerSegment || outerSegment->type != ProjectItemType::Segment)
         return std::nullopt;
     if (!inherits) return localSource();
 
     std::optional<PlayablePropertySourceV1> source;
-    appendStructuralParents(&source, *outerPiece, propertyId, scope);
+    appendStructuralParents(&source, *outerSegment, propertyId, scope);
     appendDefinitionSource(
-        &source, *outerPiece, propertyId,
+        &source, *outerSegment, propertyId,
         PlayablePropertySourceV1::Kind::Placement,
         scope);
     for (auto it = occurrences.rbegin(); it != occurrences.rend(); ++it) {

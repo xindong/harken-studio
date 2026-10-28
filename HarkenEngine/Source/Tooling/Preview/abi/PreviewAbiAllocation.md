@@ -12,7 +12,7 @@ runtime export, SDK, and ordinary Remote surfaces. Status values are append-only
 | `VnPreview_QueryPlayable` | Reads the fixed logic-owned lifecycle state of a root. |
 | `VnPreview_CapturePlaybackPaths` | Reads the paths of currently rendering playable-owned voices, including Action and preview starts. |
 
-The removed Piece/Advance surface has no compatibility aliases. Preview time
+The removed Segment/Advance surface has no compatibility aliases. Preview time
 advances only through normal Runtime update and audio processing.
 
 ## Status space

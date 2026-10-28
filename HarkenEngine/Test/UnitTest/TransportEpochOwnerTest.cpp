@@ -131,7 +131,7 @@ TEST(TransportEpochOwner, RaiseRefusesAtWrapWithHardFailure) {
 TEST(TransportEpochOwner, RaiseInvalidatesOldTransactionsOnTheStalePath) {
     PlayableInstanceTable instances(8);
     OccurrenceStatePool occ(8);
-    const PlayableInstanceHandle owner = instances.Acquire(PlayableKind::Piece, 0);
+    const PlayableInstanceHandle owner = instances.Acquire(PlayableKind::Segment, 0);
     const std::uint64_t ownerEpoch = instances.Classify(owner).scheduleEpoch;
 
     TransportEpochOwner epoch;
@@ -153,7 +153,7 @@ TEST(TransportEpochOwner, RaiseInvalidatesOldTransactionsOnTheStalePath) {
 TEST(TransportEpochOwner, RebuildSequenceReopensUnderNewEpoch) {
     PlayableInstanceTable instances(8);
     OccurrenceStatePool occ(8);
-    const PlayableInstanceHandle owner = instances.Acquire(PlayableKind::Piece, 0);
+    const PlayableInstanceHandle owner = instances.Acquire(PlayableKind::Segment, 0);
     const std::uint64_t ownerEpoch = instances.Classify(owner).scheduleEpoch;
 
     TransportEpochOwner epoch;

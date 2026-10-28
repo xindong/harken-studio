@@ -10,8 +10,8 @@ using T = ProjectItem::Type;
 
 constexpr T kSoundParents[]       = { T::Layer, T::Container, T::Track };
 constexpr T kContainerParents[]   = { T::Layer, T::Container, T::Track };
-constexpr T kTrackParents[]       = { T::Layer, T::Container, T::Piece };
-constexpr T kPieceParents[]       = { T::Layer, T::Container, T::Track };
+constexpr T kTrackParents[]       = { T::Layer, T::Container, T::Segment };
+constexpr T kSegmentParents[]       = { T::Layer, T::Container, T::Track };
 constexpr T kLayerParents[]       = { T::Layer };
 constexpr T kBusParents[]         = { T::Bus };
 
@@ -38,10 +38,10 @@ constexpr TypeFacts kTypeFacts[] = {
       kTrackParents, 3,
       true,  true,  true,  true,  true,  true,  true,  true  },
 
-    { T::Piece,       "Piece",       "Piece",
-      { "projectItem.piece" },
+    { T::Segment,       "Segment",       "Segment",
+      { "projectItem.segment" },
       Bucket::Layers,       true,  NameNamespace::AudioNode,
-      kPieceParents, 3,
+      kSegmentParents, 3,
       false, true,  true,  true,  true,  true,  true,  true  },
 
     { T::Layer,       "Layer",       "Layer",
@@ -103,7 +103,7 @@ const TypeFacts* factsOrNull(ProjectItem::Type type)
 const std::array<ProjectItem::Type, 9>& allTypes()
 {
     static const std::array<ProjectItem::Type, 9> types = {
-        T::Sound, T::Container, T::Track, T::Piece,
+        T::Sound, T::Container, T::Track, T::Segment,
         T::Layer, T::Bus, T::Action, T::Variable, T::Attenuation,
     };
     return types;
@@ -212,7 +212,7 @@ bool isContentObject(ProjectItem::Type type)
 
 bool isTimelineClipTarget(ProjectItem::Type type)
 {
-    return type == T::Sound || type == T::Container || type == T::Piece;
+    return type == T::Sound || type == T::Container || type == T::Segment;
 }
 
 bool hasMixingCapability(ProjectItem::Type type)
@@ -321,7 +321,7 @@ const std::vector<CreationSpec>& creationSpecs()
           CreateParentPolicy::DefaultForType, T::None, true,  false, false },
         { T::Container,   "New_Container",
           CreateParentPolicy::DefaultForType, T::None, true,  false, false },
-        { T::Piece,       "New_Piece",
+        { T::Segment,       "New_Segment",
           CreateParentPolicy::DefaultForType, T::None, true,  false, false },
         { T::Track,       "New_Track",
           CreateParentPolicy::DefaultForType, T::None, true,  false, false },

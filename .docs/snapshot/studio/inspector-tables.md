@@ -8,7 +8,7 @@
 
 ## 范围与清单
 
-范围为 Sound、Container、Layer、Track、Piece、Bus、Action、Attenuation、Variable 九类对象的 Inspector 主面板。External Editor、Timeline、Grid 等独立编辑面不计入。
+范围为 Sound、Container、Layer、Track、Segment、Bus、Action、Attenuation、Variable 九类对象的 Inspector 主面板。External Editor、Timeline、Grid 等独立编辑面不计入。
 
 共 **8 类表格、13 处对象展示位置**。位置按 `Category > Section` 表示，category 在界面中呈现为 tab；列名采用界面文本。
 
@@ -19,11 +19,11 @@
 | Action | Steps | `steps` | `Basic > Step` | # / Type / Target / Delay / 无标题展开列 | `VAction.steps` |
 | Attenuation | Dimensions | `dimensions` | `Basic > Dimension` | # / Property / Curve | `VAttenuation.dimensions` |
 | Variable | Labels | `labels` | `Basic > Label` | # / Name | `VVariable.labels` |
-| Sound、Container、Layer、Track、Piece、Bus | Sends | `sends` | `Route > Send` | # / Target / Volume | 五类可继承对象：`ProjectItem.fieldGroups.send`；Bus：`VMixNode.sends` |
+| Sound、Container、Layer、Track、Segment、Bus | Sends | `sends` | `Route > Send` | # / Target / Volume | 五类可继承对象：`ProjectItem.fieldGroups.send`；Bus：`VMixNode.sends` |
 | Bus | Inputs | `inputs` | `Route > Input` | Source / Volume | `ProjectManager::collectMainInputs()`，主输出路由的反向查询 |
 | Bus | Receives | `receives` | `Route > Receive` | Source / Volume | `ProjectManager::collectIncomingSends()`，Send 路由的反向查询 |
 
-按对象计数：Sound 2、Container 1、Layer 1、Track 2、Piece 1、Bus 3、Action 1、Attenuation 1、Variable 1。
+按对象计数：Sound 2、Container 1、Layer 1、Track 2、Segment 1、Bus 3、Action 1、Attenuation 1、Variable 1。
 
 Container 的 Selections 表统一位于独立的 Selection Editor，Inspector 保留 Mode、Play Type 和对应行为字段。Inputs、Receives 是只读派生表。Sends、Inputs、Receives 的 Volume 均以 dB 显示。
 
@@ -62,7 +62,7 @@ Inputs、Receives 明确声明为展示表，不含 `#`、配置行移动或增�
 
 工作区当前语言与平台均在本机按项目 ID 保存，关闭项目保留记录，重新打开恢复有效选择。语言无记录或原选择已移除时使用项目首个语言，旧的全局语言记录不再参与恢复。
 
-`VSound`、`VSelection`、`VTrack`、`VPiece`、`VAttenuation` 等类型是挂载在 `ProjectItem` 上的业务组件。表格字段的存储、派生方式和编辑行为由业务模型决定，section 只组织其 Inspector 展示。
+`VSound`、`VSelection`、`VTrack`、`VSegment`、`VAttenuation` 等类型是挂载在 `ProjectItem` 上的业务组件。表格字段的存储、派生方式和编辑行为由业务模型决定，section 只组织其 Inspector 展示。
 
 Container 的四种模式共享唯一的 `selections` 数据，并统一在 Selection Editor 编辑。Random/Sequence 使用简单条目表，支持重复 Child、增删和排序；Weight 列仅在 Random 显示，Single + Draw 时为频率权重，Shuffle 或 Queue 时为顺序权重。Match 使用条件矩阵，Blend 使用混合曲线表。所有视图读写当前平台 selections，切换模式保留已有数据。双击 Container 或在 Inspector 切换模式会打开或复用 Selection Editor，固定窗口及嵌套 Container 的返回路径沿用同一规则。
 

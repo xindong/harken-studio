@@ -51,7 +51,7 @@ namespace harken {
 // Matching only an object id is not enough -- two winners can share an id yet
 // differ in generation, resolved media, loop shape, route or envelope -- so the
 // key carries all of it and AreReuseCompatible compares the whole thing. All
-// positions/durations are entry-relative and in the owning Piece's native unit
+// positions/durations are entry-relative and in the owning Segment's native unit
 // (tick for Musical, nanosecond for Absolute).
 struct CompatibilityKey {
     std::uint64_t stableIdentity = 0;   // resolved content identity, not a raw id
@@ -104,8 +104,8 @@ struct SamePositionOutcome {
 // clocks are borrowed for the call only.
 SamePositionOutcome ResolveSamePosition(
     const CompatibilityKey& source, const CompatibilityKey& target,
-    PieceTimeType sourceType, const ClockKernel& sourceClock,
-    PieceTimeType targetType, const ClockKernel& targetClock,
+    SegmentTimeType sourceType, const ClockKernel& sourceClock,
+    SegmentTimeType targetType, const ClockKernel& targetClock,
     std::int64_t sourceNominalPosition);
 
 } // namespace harken

@@ -24,7 +24,7 @@ add_library(harken_editor_inspector STATIC
     InspectorPanel_Container.cpp
     InspectorPanel_Layer.cpp
     InspectorPanel_Misc.cpp
-    InspectorPanel_Piece.cpp
+    InspectorPanel_Segment.cpp
     InspectorPanel_Sound.cpp
     InspectorPanel_Track.cpp
     InspectorPanel_Variable.cpp
@@ -64,8 +64,8 @@ add_library(harken_editor_inspector STATIC
     ContainerInspectorSchema.h
     TrackInspectorSchema.cpp
     TrackInspectorSchema.h
-    PieceInspectorSchema.cpp
-    PieceInspectorSchema.h
+    SegmentInspectorSchema.cpp
+    SegmentInspectorSchema.h
     VariableInspectorSchema.cpp
     VariableInspectorSchema.h
     ProjectItemInspectorRows.h

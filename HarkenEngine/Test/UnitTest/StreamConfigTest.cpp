@@ -17,7 +17,7 @@ namespace {
 using harkentest::EngineSession;
 using harkentest::MakeNullConfig;
 
-// The stream fields were appended in one piece, so the previous vintage
+// The stream fields were appended in one segment, so the previous vintage
 // ends exactly where the first of them begins.
 const std::uint32_t kPreStreamVintageSize =
     static_cast<std::uint32_t>(offsetof(VnConfig, streamRingFrames));

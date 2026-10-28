@@ -11,7 +11,7 @@
 #include "Core/Components/VAudio.h"
 #include "Core/Components/VMixNode.h"
 #include "Core/BindingSemantics.h"
-#include "Core/Components/VPiece.h"
+#include "Core/Components/VSegment.h"
 #include "Core/Components/VSound.h"
 #include "Core/Components/VTrack.h"
 #include "Core/ItemTypeCatalog.h"
@@ -111,7 +111,7 @@ void clearLayout(QLayout* layout)
     }
 }
 
-int64_t coordinateUnit(const PieceTimeSpec& spec)
+int64_t coordinateUnit(const SegmentTimeSpec& spec)
 {
     return timelineCoordinateUnit(spec);
 }
@@ -161,8 +161,8 @@ std::optional<int64_t> sourceSpan(const ProjectItem* item, QSet<QUuid>& visiting
             }
             end = std::max(end, clip.start + *duration);
         }
-    } else if (const auto* piece = item->comp<VPiece>();
-               piece && AuthoringPolicy::validatePieceTime(piece->pieceTime)) {
+    } else if (const auto* segment = item->comp<VSegment>();
+               segment && AuthoringPolicy::validateSegmentTime(segment->segmentTime)) {
         for (const auto& track : item->children) {
             const auto duration = sourceSpan(track.get(), visiting);
             if (!duration) {
@@ -420,14 +420,14 @@ TimelineEditorPanel::~TimelineEditorPanel()
 
 bool TimelineEditorPanel::acceptsItem(const ProjectItem* item)
 {
-    return item && (item->type == ProjectItem::Type::Piece || item->type == ProjectItem::Type::Track)
+    return item && (item->type == ProjectItem::Type::Segment || item->type == ProjectItem::Type::Track)
         && ItemTypeCatalog::isUserFacingType(item->type);
 }
 
 ProjectItem* TimelineEditorPanel::timelineOwner(ProjectItem* item)
 {
     if (item && item->type == ProjectItem::Type::Track
-        && item->parent && item->parent->type == ProjectItem::Type::Piece)
+        && item->parent && item->parent->type == ProjectItem::Type::Segment)
         item = item->parent;
     return acceptsItem(item) ? item : nullptr;
 }
@@ -453,7 +453,7 @@ int TimelineEditorPanel::laneHeaderWidth() const
 
 int TimelineEditorPanel::laneHeaderResizeWidth() const
 {
-    return viewKind_ == ViewKind::Piece ? 2 : 0;
+    return viewKind_ == ViewKind::Segment ? 2 : 0;
 }
 
 QRect TimelineEditorPanel::laneRect(int index) const
@@ -475,7 +475,7 @@ int TimelineEditorPanel::laneHeight(int index) const
 
 void TimelineEditorPanel::setLaneHeight(int index, int height)
 {
-    if (viewKind_ != ViewKind::Piece || index < 0 || index >= laneCount())
+    if (viewKind_ != ViewKind::Segment || index < 0 || index >= laneCount())
         return;
     const auto guid = laneGuid(index);
     if (laneHeights_.value(guid) == height)
@@ -601,7 +601,7 @@ void TimelineEditorPanel::applyThemeMetrics()
 void TimelineEditorPanel::applyPresentation()
 {
     layout()->setContentsMargins(8, 8, 8, 8);
-    laneHeaderResizeBar_->setVisible(viewKind_ == ViewKind::Piece);
+    laneHeaderResizeBar_->setVisible(viewKind_ == ViewKind::Segment);
     verticalTools_->setVisible(viewKind_ == ViewKind::Track);
     scrollCorner_->setVisible(viewKind_ == ViewKind::Track);
     scrollArea_->setVerticalScrollBarPolicy(viewKind_ == ViewKind::Track
@@ -1288,7 +1288,7 @@ void TimelineEditorPanel::restoreState(const QVariantMap& state)
     refreshBreadcrumbs();
 }
 
-PieceTimeSpec TimelineEditorPanel::effectiveTimeSpec(int laneIndex) const
+SegmentTimeSpec TimelineEditorPanel::effectiveTimeSpec(int laneIndex) const
 {
     ProjectItem* track = laneItem(laneIndex);
     return TimelineEditing::timeSpecForTrackParent(track ? track->parent : boundItem_);
@@ -1296,7 +1296,7 @@ PieceTimeSpec TimelineEditorPanel::effectiveTimeSpec(int laneIndex) const
 
 QString TimelineEditorPanel::formatCoordinate(int laneIndex, int64_t coordinate) const
 {
-    if (viewKind_ == ViewKind::Unsupported || !AuthoringPolicy::validatePieceTime(effectiveTimeSpec(laneIndex)))
+    if (viewKind_ == ViewKind::Unsupported || !AuthoringPolicy::validateSegmentTime(effectiveTimeSpec(laneIndex)))
         return tr("Unsupported arrangement");
     return QStringLiteral("%1 s").arg(formatTimeNanoseconds(coordinate, 0,
         axisReadoutDecimalsForStep(timeTicks().majorStep)));
@@ -1339,7 +1339,7 @@ std::optional<int64_t> TimelineEditorPanel::emergenceCoordinate(
         clipTargetGuid(laneIndex, clipIndex));
     const auto* sound = target ? target->comp<VSound>() : nullptr;
     if (!sound || sound->scheduleOffsetSec <= 0.0) return std::nullopt;
-    const PieceTimeSpec spec = effectiveTimeSpec(laneIndex);
+    const SegmentTimeSpec spec = effectiveTimeSpec(laneIndex);
     const CoordinateResult offset = TimelineCoordinates::fromSeconds(
         sound->scheduleOffsetSec, spec);
     if (!offset) return std::nullopt;
@@ -1356,55 +1356,55 @@ TimelineDomain TimelineEditorPanel::timelineDomain() const
 
 int64_t TimelineEditorPanel::tempoMicrosecondsPerQuarter() const
 {
-    const auto* timeline = boundItem_ ? boundItem_->comp<VPiece>() : nullptr;
-    return timeline && !timeline->pieceTime.tempoMap.empty()
-        ? timeline->pieceTime.tempoMap.front().microsecondsPerQuarter : 0;
+    const auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
+    return timeline && !timeline->segmentTime.tempoMap.empty()
+        ? timeline->segmentTime.tempoMap.front().microsecondsPerQuarter : 0;
 }
 
 int TimelineEditorPanel::meterNumerator() const
 {
-    const auto* timeline = boundItem_ ? boundItem_->comp<VPiece>() : nullptr;
-    return timeline && !timeline->pieceTime.meterMap.empty()
-        ? timeline->pieceTime.meterMap.front().numerator : 0;
+    const auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
+    return timeline && !timeline->segmentTime.meterMap.empty()
+        ? timeline->segmentTime.meterMap.front().numerator : 0;
 }
 
 int TimelineEditorPanel::meterDenominator() const
 {
-    const auto* timeline = boundItem_ ? boundItem_->comp<VPiece>() : nullptr;
-    return timeline && !timeline->pieceTime.meterMap.empty()
-        ? timeline->pieceTime.meterMap.front().denominator : 0;
+    const auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
+    return timeline && !timeline->segmentTime.meterMap.empty()
+        ? timeline->segmentTime.meterMap.front().denominator : 0;
 }
 
 int TimelineEditorPanel::markerCount() const
 {
-    const auto* timeline = boundItem_ ? boundItem_->comp<VPiece>() : nullptr;
+    const auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
     return timeline ? static_cast<int>(timeline->markers.items.size()) : 0;
 }
 
 QUuid TimelineEditorPanel::markerGuid(int index) const
 {
-    const auto* timeline = boundItem_ ? boundItem_->comp<VPiece>() : nullptr;
+    const auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
     return timeline && index >= 0 && index < static_cast<int>(timeline->markers.items.size())
         ? timeline->markers.items[index].markerGuid : QUuid{};
 }
 
 MarkerKind TimelineEditorPanel::markerKind(int index) const
 {
-    const auto* timeline = boundItem_ ? boundItem_->comp<VPiece>() : nullptr;
+    const auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
     return timeline && index >= 0 && index < static_cast<int>(timeline->markers.items.size())
         ? timeline->markers.items[index].kind : MarkerKind::Custom;
 }
 
 QString TimelineEditorPanel::markerName(int index) const
 {
-    const auto* timeline = boundItem_ ? boundItem_->comp<VPiece>() : nullptr;
+    const auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
     return timeline && index >= 0 && index < static_cast<int>(timeline->markers.items.size())
         ? timeline->markers.items[index].name : QString{};
 }
 
 int64_t TimelineEditorPanel::markerPosition(int index) const
 {
-    const auto* timeline = boundItem_ ? boundItem_->comp<VPiece>() : nullptr;
+    const auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
     return timeline && index >= 0 && index < static_cast<int>(timeline->markers.items.size())
         ? timeline->markers.items[index].position : 0;
 }
@@ -1424,7 +1424,7 @@ void TimelineEditorPanel::setSelectedMarker(const QUuid& guid)
 
 bool TimelineEditorPanel::hasMarkerKind(MarkerKind kind) const
 {
-    const auto* timeline = boundItem_ ? boundItem_->comp<VPiece>() : nullptr;
+    const auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
     if (!timeline)
         return false;
     return std::any_of(timeline->markers.items.begin(), timeline->markers.items.end(),
@@ -1452,12 +1452,12 @@ TimelineSemanticsResult TimelineEditorPanel::timelineSemantics() const
         display->compOrCreate<VTrack>()->clips = track.comp<VTrack>()->clips;
         return display;
     };
-    if (bound->type == ProjectItem::Type::Piece) {
-        ProjectItem display(bound->name, ProjectItem::Type::Piece);
+    if (bound->type == ProjectItem::Type::Segment) {
+        ProjectItem display(bound->name, ProjectItem::Type::Segment);
         display.guid = bound->guid;
-        auto* timeline = display.compOrCreate<VPiece>();
-        const auto* original = bound->comp<VPiece>();
-        timeline->pieceTime = original->pieceTime;
+        auto* timeline = display.compOrCreate<VSegment>();
+        const auto* original = bound->comp<VSegment>();
+        timeline->segmentTime = original->segmentTime;
         timeline->markers = original->markers;
         for (const auto& child : bound->children) {
             if (!child || child->type != ProjectItem::Type::Track)
@@ -1466,17 +1466,17 @@ TimelineSemanticsResult TimelineEditorPanel::timelineSemantics() const
             track->parent = &display;
             display.children.push_back(std::move(track));
         }
-        return TimelineSemantics::pieceNominalSpan(display, resolver);
+        return TimelineSemantics::segmentNominalSpan(display, resolver);
     }
     if (bound->type == ProjectItem::Type::Track) {
-        PieceTimeSpec time;
-        if (const auto* piece = bound->parent ? bound->parent->comp<VPiece>() : nullptr)
-            time = piece->pieceTime;
+        SegmentTimeSpec time;
+        if (const auto* segment = bound->parent ? bound->parent->comp<VSegment>() : nullptr)
+            time = segment->segmentTime;
         return TimelineSemantics::trackNominalSpan(*displayTrack(*bound), resolver, time);
     }
     return TimelineSemanticsResult::unknown(
         TimelineError::InvalidTargetType,
-        QStringLiteral("Nominal span is defined only for Track and Piece"));
+        QStringLiteral("Nominal span is defined only for Track and Segment"));
 }
 
 QString TimelineEditorPanel::nominalSummary() const
@@ -1500,7 +1500,7 @@ int64_t TimelineEditorPanel::snapCoordinate(int laneIndex, int64_t coordinate,
     bool disableSnap, bool* ok, const QSet<QUuid>& excludedClips) const
 {
     if (viewKind_ == ViewKind::Unsupported
-        || !AuthoringPolicy::validatePieceTime(effectiveTimeSpec(laneIndex))) {
+        || !AuthoringPolicy::validateSegmentTime(effectiveTimeSpec(laneIndex))) {
         if (ok) *ok = false;
         return coordinate;
     }
@@ -1556,7 +1556,7 @@ int64_t TimelineEditorPanel::viewOriginCoordinate() const
     if (earliest >= 0)
         return 0;
     ProjectItem* track = laneItem(0);
-    const PieceTimeSpec spec = TimelineEditing::timeSpecForTrackParent(
+    const SegmentTimeSpec spec = TimelineEditing::timeSpecForTrackParent(
         track ? track->parent : boundItem_);
     const int64_t remainder = earliest % coordinateUnit(spec);
     const int64_t offset = remainder < 0 ? coordinateUnit(spec) + remainder : 0;
@@ -1745,48 +1745,48 @@ bool TimelineEditorPanel::deleteClip(int laneIndex, const QUuid& guid)
 
 bool TimelineEditorPanel::setTimelineDomain(TimelineDomain domain)
 {
-    auto* timeline = boundItem_ ? boundItem_->comp<VPiece>() : nullptr;
+    auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
     if (!timeline) {
-        rejectInteraction(tr("Clock editing requires a Piece."));
+        rejectInteraction(tr("Clock editing requires a Segment."));
         return false;
     }
-    PieceTimeSpec spec = domain == TimelineDomain::Musical
-        ? (timeline->pieceTime.domain == TimelineDomain::Musical
-               ? timeline->pieceTime : PieceTimeSpec::musical())
-        : PieceTimeSpec{};
-    return commitTimelineAction(TimelineEditing::replacePieceTime(
-        &ProjectManager::instance(), boundItem_, spec, this, tr("Change Piece clock")));
+    SegmentTimeSpec spec = domain == TimelineDomain::Musical
+        ? (timeline->segmentTime.domain == TimelineDomain::Musical
+               ? timeline->segmentTime : SegmentTimeSpec::musical())
+        : SegmentTimeSpec{};
+    return commitTimelineAction(TimelineEditing::replaceSegmentTime(
+        &ProjectManager::instance(), boundItem_, spec, this, tr("Change Segment clock")));
 }
 
 bool TimelineEditorPanel::setTempoMicrosecondsPerQuarter(int64_t microsecondsPerQuarter)
 {
-    auto* timeline = boundItem_ ? boundItem_->comp<VPiece>() : nullptr;
+    auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
     if (!timeline) {
-        rejectInteraction(tr("Time settings require a Piece."));
+        rejectInteraction(tr("Time settings require a Segment."));
         return false;
     }
-    PieceTimeSpec spec = timeline->pieceTime;
+    SegmentTimeSpec spec = timeline->segmentTime;
     spec.tempoMap = {{0, microsecondsPerQuarter}};
-    return commitTimelineAction(TimelineEditing::replacePieceTime(
-        &ProjectManager::instance(), boundItem_, spec, this, tr("Change Piece tempo")));
+    return commitTimelineAction(TimelineEditing::replaceSegmentTime(
+        &ProjectManager::instance(), boundItem_, spec, this, tr("Change Segment tempo")));
 }
 
 bool TimelineEditorPanel::setMeter(int numerator, int denominator)
 {
-    auto* timeline = boundItem_ ? boundItem_->comp<VPiece>() : nullptr;
+    auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
     if (!timeline) {
-        rejectInteraction(tr("Time settings require a Piece."));
+        rejectInteraction(tr("Time settings require a Segment."));
         return false;
     }
-    PieceTimeSpec spec = timeline->pieceTime;
+    SegmentTimeSpec spec = timeline->segmentTime;
     spec.meterMap = {{0, numerator, denominator}};
-    return commitTimelineAction(TimelineEditing::replacePieceTime(
-        &ProjectManager::instance(), boundItem_, spec, this, tr("Change Piece meter")));
+    return commitTimelineAction(TimelineEditing::replaceSegmentTime(
+        &ProjectManager::instance(), boundItem_, spec, this, tr("Change Segment meter")));
 }
 
 void TimelineEditorPanel::addTrack()
 {
-    if (viewKind_ != ViewKind::Piece) return;
+    if (viewKind_ != ViewKind::Segment) return;
     auto* track = ProjectManager::instance().createItem(
         boundItem_, QStringLiteral("Track"), ProjectItem::Type::Track);
     if (!track) return;
@@ -1799,8 +1799,8 @@ void TimelineEditorPanel::addTrack()
 
 bool TimelineEditorPanel::addMarker(MarkerKind kind, int64_t position, const QString& name)
 {
-    if (!boundItem_ || boundItem_->type != ProjectItem::Type::Piece) {
-        rejectInteraction(tr("Marker creation requires a Piece."));
+    if (!boundItem_ || boundItem_->type != ProjectItem::Type::Segment) {
+        rejectInteraction(tr("Marker creation requires a Segment."));
         return false;
     }
     Marker marker{QUuid::createUuid(), kind, kind == MarkerKind::Custom ? name : QString{}, position};
@@ -1814,7 +1814,7 @@ bool TimelineEditorPanel::addMarker(MarkerKind kind, int64_t position, const QSt
 
 bool TimelineEditorPanel::moveMarker(const QUuid& guid, int64_t position, bool disableSnap)
 {
-    auto* timeline = boundItem_ ? boundItem_->comp<VPiece>() : nullptr;
+    auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
     if (!timeline || guid.isNull()) {
         rejectInteraction(tr("The Marker is unavailable."));
         return false;
@@ -1828,7 +1828,7 @@ bool TimelineEditorPanel::moveMarker(const QUuid& guid, int64_t position, bool d
     bool snapped = false;
     position = snapCoordinate(-1, position, disableSnap, &snapped);
     if (!snapped) {
-        rejectInteraction(tr("The Marker position cannot be represented in this Piece."));
+        rejectInteraction(tr("The Marker position cannot be represented in this Segment."));
         return false;
     }
     Marker marker = *it;
@@ -1839,7 +1839,7 @@ bool TimelineEditorPanel::moveMarker(const QUuid& guid, int64_t position, bool d
 
 bool TimelineEditorPanel::renameMarker(const QUuid& guid, const QString& name)
 {
-    auto* timeline = boundItem_ ? boundItem_->comp<VPiece>() : nullptr;
+    auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
     if (!timeline || guid.isNull()) {
         rejectInteraction(tr("The Marker is unavailable."));
         return false;
@@ -1858,7 +1858,7 @@ bool TimelineEditorPanel::renameMarker(const QUuid& guid, const QString& name)
 
 bool TimelineEditorPanel::deleteMarker(const QUuid& guid)
 {
-    if (!boundItem_ || boundItem_->type != ProjectItem::Type::Piece || guid.isNull()) {
+    if (!boundItem_ || boundItem_->type != ProjectItem::Type::Segment || guid.isNull()) {
         rejectInteraction(tr("The Marker is unavailable."));
         return false;
     }
@@ -1873,8 +1873,8 @@ bool TimelineEditorPanel::drillIntoClip(int laneIndex, const QUuid& guid)
     ProjectItem* target = clipIndex >= 0
         ? ProjectManager::instance().findItemByGuid(clipTargetGuid(laneIndex, clipIndex))
         : nullptr;
-    if (!ownerTrack || !target || target->type != ProjectItem::Type::Piece) {
-        rejectInteraction(tr("Only Piece Clips can be opened in Timeline."));
+    if (!ownerTrack || !target || target->type != ProjectItem::Type::Segment) {
+        rejectInteraction(tr("Only Segment Clips can be opened in Timeline."));
         return false;
     }
     auto viewport = snapshotState();
@@ -2011,7 +2011,7 @@ bool TimelineEditorPanel::selectLane(const QUuid& guid, bool publish)
 
 bool TimelineEditorPanel::reorderLane(int from, int to)
 {
-    if (viewKind_ != ViewKind::Piece || from < 0 || to < 0
+    if (viewKind_ != ViewKind::Segment || from < 0 || to < 0
         || from >= laneCount() || to >= laneCount() || from == to) return false;
     auto order = boundItem_->children;
     const auto moving = std::find_if(order.begin(), order.end(), [this, from](const auto& child) {
@@ -2048,7 +2048,7 @@ bool TimelineEditorPanel::revealClip(const QUuid& guid)
     canvas_->setSelectedClip(lane, guid);
     panHorizontally(viewportPositionAtCoordinate(lane, clipStart(lane, clip))
                     - timelineViewportWidth() * 0.25);
-    if (viewKind_ == ViewKind::Piece && scrollArea_) {
+    if (viewKind_ == ViewKind::Segment && scrollArea_) {
         const auto row = laneRect(lane);
         scrollArea_->ensureVisible(0, row.center().y(), 0, row.height() / 2);
     }
@@ -2175,7 +2175,7 @@ void TimelineEditorPanel::setStatusMessage(const QString& text, bool error)
 void TimelineEditorPanel::refreshStatusBar()
 {
     const bool active = hasTimeline();
-    addTrackButton_->setVisible(viewKind_ == ViewKind::Piece);
+    addTrackButton_->setVisible(viewKind_ == ViewKind::Segment);
     zoomOutButton_->setEnabled(active && zoomPercent() > 100.0);
     zoomInButton_->setEnabled(active && zoomPercent() < maximumZoomPercent());
 }
@@ -2533,19 +2533,19 @@ void TimelineEditorPanel::rebuild()
         return;
     }
 
-    if (boundItem_->type == ProjectItem::Type::Piece) {
+    if (boundItem_->type == ProjectItem::Type::Segment) {
         for (const auto& child : boundItem_->children) {
             if (child && child->type == ProjectItem::Type::Track)
                 lanes_.push_back({child->guid, child->objectID, child->name,
                                   hasExternalReferences(child.get())});
         }
-        viewKind_ = ViewKind::Piece;
+        viewKind_ = ViewKind::Segment;
         rebuildTimelinePage();
         return;
     }
 
     showState(ViewKind::Unsupported,
-              tr("%1 cannot be edited in Timeline. Select a Piece or Track.")
+              tr("%1 cannot be edited in Timeline. Select a Segment or Track.")
                   .arg(boundItem_->name));
 }
 
@@ -2559,7 +2559,7 @@ void TimelineEditorPanel::rebuildTimelinePage()
     qDeleteAll(laneResizeBars_);
     laneResizeBars_.clear();
     headerColumn_->rebuildRows();
-    if (viewKind_ == ViewKind::Piece) {
+    if (viewKind_ == ViewKind::Segment) {
         for (int lane = 0; lane < laneCount(); ++lane) {
             auto* bar = new QFrame(laneHost_);
             bar->setObjectName(QStringLiteral("timelineLaneResizeBar"));

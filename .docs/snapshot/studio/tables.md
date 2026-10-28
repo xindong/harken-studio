@@ -88,7 +88,7 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 | C04 | config | Action Inspector / Steps | StepsSectionProvider |
 | C05 | config | Attenuation Inspector / Dimensions | DimensionsSectionProvider |
 | C06 | config | Variable Inspector / Labels | ListFieldDrawer |
-| C07 | config | Sound、Container、Layer、Track、Piece、Bus / Sends | ListFieldDrawer |
+| C07 | config | Sound、Container、Layer、Track、Segment、Bus / Sends | ListFieldDrawer |
 | C08 | config | External Editor / Binding | BindingFieldEditor |
 | C09 | config | Transition Editor / Rules | TransitionEditorWidget |
 | C10 | 标签配置（非表格） | Project Settings / General / Platform Configuration：左侧平台标签，右侧配置面板 | ProjectConfigPage / ProjectPlatformEditor |

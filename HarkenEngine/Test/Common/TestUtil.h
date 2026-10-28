@@ -39,8 +39,8 @@ inline harken::HistoricalContainerWorldViewV1 AsHistoricalPrefix(
     dst.playableOccurrenceCount = src.playableOccurrenceCount;
     dst.trackSchedules = src.trackSchedules;
     dst.trackScheduleCount = src.trackScheduleCount;
-    dst.pieceSchedules = src.pieceSchedules;
-    dst.pieceScheduleCount = src.pieceScheduleCount;
+    dst.segmentSchedules = src.segmentSchedules;
+    dst.segmentScheduleCount = src.segmentScheduleCount;
     dst.containers = nullptr;
     dst.containerCount = 0;
     dst.transitions = src.transitions;

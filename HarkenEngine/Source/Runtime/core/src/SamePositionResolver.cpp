@@ -35,8 +35,8 @@ bool AreReuseCompatible(const CompatibilityKey& a, const CompatibilityKey& b) {
 
 SamePositionOutcome ResolveSamePosition(
     const CompatibilityKey& source, const CompatibilityKey& target,
-    PieceTimeType sourceType, const ClockKernel& sourceClock,
-    PieceTimeType targetType, const ClockKernel& targetClock,
+    SegmentTimeType sourceType, const ClockKernel& sourceClock,
+    SegmentTimeType targetType, const ClockKernel& targetClock,
     std::int64_t sourceNominalPosition) {
     SamePositionOutcome out;
 
@@ -73,8 +73,8 @@ SamePositionOutcome ResolveSamePosition(
     // tempo map. Otherwise the shared unit is entry-relative nanoseconds, and a
     // musical side is expressed in nanoseconds through its clock first.
     const bool commonIsTicks =
-        (sourceType == PieceTimeType::Musical &&
-         targetType == PieceTimeType::Musical);
+        (sourceType == SegmentTimeType::Musical &&
+         targetType == SegmentTimeType::Musical);
 
     std::int64_t sourcePos = 0;
     std::int64_t targetDuration = 0;
@@ -83,11 +83,11 @@ SamePositionOutcome ResolveSamePosition(
         targetDuration = target.nominalDuration;
     } else {
         sourcePos =
-            (sourceType == PieceTimeType::Musical)
+            (sourceType == SegmentTimeType::Musical)
                 ? sourceClock.TickToTime(MusicalTick{sourceNominalPosition}).value
                 : sourceNominalPosition;
         targetDuration =
-            (targetType == PieceTimeType::Musical)
+            (targetType == SegmentTimeType::Musical)
                 ? targetClock.TickToTime(MusicalTick{target.nominalDuration}).value
                 : target.nominalDuration;
         // Guard the fold divisor against zero. A valid clock keeps frames-per-tick

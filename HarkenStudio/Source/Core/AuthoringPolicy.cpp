@@ -2,7 +2,7 @@
 
 #include "ActionStepUtils.h"
 #include "Components/VAction.h"
-#include "Components/VPiece.h"
+#include "Components/VSegment.h"
 #include "Components/VSelection.h"
 #include "Components/VTrack.h"
 #include "ProjectTypes.h"
@@ -27,8 +27,8 @@ TimelineValidation validateDependencies(const ProjectItem& item,
         pending.pop_back();
         if (!current || visited.contains(current)) continue;
         visited.insert(current);
-        if (const auto* piece = current->comp<VPiece>()) {
-            const auto validity = validatePieceTime(piece->pieceTime);
+        if (const auto* segment = current->comp<VSegment>()) {
+            const auto validity = validateSegmentTime(segment->segmentTime);
             if (!validity) return validity;
         }
         if (const auto* track = current->comp<VTrack>()) {
@@ -36,9 +36,9 @@ TimelineValidation validateDependencies(const ProjectItem& item,
                 ? destinationParent : current->parent;
             const ProjectItem* sourceParent = current->parent;
             for (const ProjectItem* context : {sourceParent, parent}) {
-                const auto* piece = context ? context->comp<VPiece>() : nullptr;
-                if (piece) {
-                    const auto validity = validatePieceTime(piece->pieceTime);
+                const auto* segment = context ? context->comp<VSegment>() : nullptr;
+                if (segment) {
+                    const auto validity = validateSegmentTime(segment->segmentTime);
                     if (!validity) return validity;
                 }
             }
@@ -137,7 +137,7 @@ TransitionTableDef defaultTransitionTable()
     return {{defaultTransitionRule()}};
 }
 
-TimelineValidation validatePieceTime(const PieceTimeSpec& time)
+TimelineValidation validateSegmentTime(const SegmentTimeSpec& time)
 {
     if (time.domain != TimelineDomain::Absolute
         || !time.tempoMap.empty() || !time.meterMap.empty())
@@ -146,7 +146,7 @@ TimelineValidation validatePieceTime(const PieceTimeSpec& time)
     return TimelineValidation::success();
 }
 
-TimelineValidation validatePieceTime(const QJsonObject& time)
+TimelineValidation validateSegmentTime(const QJsonObject& time)
 {
     if (time.value(QStringLiteral("domain")).toString() == QStringLiteral("Musical")
         || !time.value(QStringLiteral("tempoMap")).toArray().isEmpty()
@@ -166,8 +166,8 @@ TimelineValidation validateTemplate(const QJsonObject& templateData)
         const QJsonObject item = pending.back();
         pending.pop_back();
         const auto components = item.value(QStringLiteral("components")).toObject();
-        const auto piece = components.value(QStringLiteral("piecetimeline")).toObject();
-        const auto time = validatePieceTime(piece.value(QStringLiteral("pieceTime")).toObject());
+        const auto segment = components.value(QStringLiteral("segmenttimeline")).toObject();
+        const auto time = validateSegmentTime(segment.value(QStringLiteral("segmentTime")).toObject());
         if (!time) return time;
         const auto selection = components.value(QStringLiteral("selection")).toObject();
         if (item.value(QStringLiteral("type")).toString() == QStringLiteral("Container")
@@ -202,7 +202,7 @@ TimelineValidation validateNewSubtree(const ProjectItem& item,
 {
     if (destinationParent
         && (destinationParent->type == ProjectItem::Type::Track
-            || destinationParent->type == ProjectItem::Type::Piece)) {
+            || destinationParent->type == ProjectItem::Type::Segment)) {
         const auto context = validateTimeline(*destinationParent, resolve, resolveObject);
         if (!context) return context;
     }

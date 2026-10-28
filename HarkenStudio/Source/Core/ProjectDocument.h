@@ -34,6 +34,7 @@ public:
                       QString* error = nullptr);
     static bool validateFieldGroupAuthoring(const QJsonObject& content,
                                               QString* error = nullptr);
+    static bool normalizeContent(QJsonObject* content, QString* error = nullptr);
 };
 
 }

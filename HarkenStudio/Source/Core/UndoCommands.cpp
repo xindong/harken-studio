@@ -953,8 +953,8 @@ void MoveItemCommand::prepareTrackTimeline(ProjectItem* targetParent)
 {
     const auto* timeline = item_ ? item_->comp<VTrack>() : nullptr;
     if (!timeline) return;
-    const PieceTimeSpec sourceTime = TimelineEditing::timeSpecForTrackParent(oldParent_);
-    const PieceTimeSpec destinationTime =
+    const SegmentTimeSpec sourceTime = TimelineEditing::timeSpecForTrackParent(oldParent_);
+    const SegmentTimeSpec destinationTime =
         TimelineEditing::timeSpecForTrackParent(targetParent);
     if (sourceTime == destinationTime) return;
     oldTrackClips_ = timeline->clips;
@@ -1420,7 +1420,7 @@ SequenceReorderCommand::SequenceReorderCommand(
     const std::vector<std::shared_ptr<ProjectItem>>& oldOrder,
     const std::vector<std::shared_ptr<ProjectItem>>& newOrder,
     QUndoCommand* parent)
-    : QUndoCommand(item && item->type == ProjectItem::Type::Piece
+    : QUndoCommand(item && item->type == ProjectItem::Type::Segment
         ? QObject::tr("Reorder Tracks") : QObject::tr("Reorder Sequence Playlist"), parent)
     , item_(item)
     , oldOrder_(oldOrder)

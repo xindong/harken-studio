@@ -29,7 +29,7 @@ constexpr VnSoundId kSoundA{0x76656e7573686f73, 9801};
 constexpr VnSoundId kSoundB{0x76656e7573686f73, 9802};
 constexpr VnObjectId kContainer{0x76656e7573686f73, 9803};
 constexpr VnObjectId kTrack{0x76656e7573686f73, 9804};
-constexpr VnObjectId kPiece{0x76656e7573686f73, 9805};
+constexpr VnObjectId kSegment{0x76656e7573686f73, 9805};
 constexpr VnVariableId kDiscreteVariable{0x76656e7573686f73, 9811};
 constexpr VnVariableId kContinuousVariable{0x76656e7573686f73, 9812};
 constexpr float kSilenceFloor = 1.0e-4f;
@@ -45,7 +45,7 @@ enum class PreviewMode {
     VariableDual,
     VariableTransition,
     Track,
-    Piece,
+    Segment,
 };
 
 struct Options {
@@ -103,8 +103,8 @@ bool ParseOptions(int argc, char** argv, Options* out) {
                 out->mode = PreviewMode::VariableTransition;
             } else if (mode == "track") {
                 out->mode = PreviewMode::Track;
-            } else if (mode == "piece") {
-                out->mode = PreviewMode::Piece;
+            } else if (mode == "segment") {
+                out->mode = PreviewMode::Segment;
             } else {
                 return false;
             }
@@ -172,7 +172,7 @@ struct PreviewWorld {
     harken::ScheduleClipPlacementV1 placement{};
     harken::TrackScheduleProgramViewV1 track{};
     harken::ScheduleTrackRefV1 trackRef{};
-    harken::PieceScheduleProgramViewV1 piece{};
+    harken::SegmentScheduleProgramViewV1 segment{};
     std::array<harken::CurveV1, 2> transitionCurves{};
     harken::TransitionRuleViewV1 transitionRule{};
     harken::TransitionProgramViewV1 transition{};
@@ -223,23 +223,23 @@ struct PreviewWorld {
         trackProperty.programSemanticFingerprint =
             harken::ComputePlayablePropertyFingerprintV1(trackProperty);
 
-        auto& pieceProperty = properties[4];
-        pieceProperty.contentPropertyKind =
-            harken::playableproperties::ContentPropertyKindV1::Piece;
-        pieceProperty.authoredStableOrder = 4;
-        pieceProperty.stableId = kPiece;
-        pieceProperty.contentRevision = 1;
-        pieceProperty.routeStableId = VN_BUS_MASTER;
-        pieceProperty.compatibilityFingerprint = 5;
-        pieceProperty.payload = ResolvedPayload();
-        pieceProperty.programSemanticFingerprint =
-            harken::ComputePlayablePropertyFingerprintV1(pieceProperty);
+        auto& segmentProperty = properties[4];
+        segmentProperty.contentPropertyKind =
+            harken::playableproperties::ContentPropertyKindV1::Segment;
+        segmentProperty.authoredStableOrder = 4;
+        segmentProperty.stableId = kSegment;
+        segmentProperty.contentRevision = 1;
+        segmentProperty.routeStableId = VN_BUS_MASTER;
+        segmentProperty.compatibilityFingerprint = 5;
+        segmentProperty.payload = ResolvedPayload();
+        segmentProperty.programSemanticFingerprint =
+            harken::ComputePlayablePropertyFingerprintV1(segmentProperty);
 
         const bool randomQueue = mode == PreviewMode::RandomQueue;
         const bool sequenceQueue = mode == PreviewMode::SequenceQueue;
         const bool queueMode = randomQueue || sequenceQueue;
         const bool scheduleMode =
-            mode == PreviewMode::Track || mode == PreviewMode::Piece;
+            mode == PreviewMode::Track || mode == PreviewMode::Segment;
         const std::uint32_t childCount =
             mode == PreviewMode::VariableDual ? 4u : 2u;
 
@@ -363,19 +363,19 @@ struct PreviewWorld {
         trackRef.trackDefinition = track.rootDefinition;
         trackRef.trackScheduleSemanticFingerprint =
             track.scheduleSemanticFingerprint;
-        piece.rootDefinition.kind = harken::PlayableKindV1::Piece;
-        piece.rootDefinition.stableId = kPiece;
-        piece.rootDefinition.expectedProgramSemanticFingerprint =
-            pieceProperty.programSemanticFingerprint;
-        piece.rootDefinition.contentRevision = pieceProperty.contentRevision;
-        piece.rootDefinition.routeStableId = pieceProperty.routeStableId;
-        piece.rootDefinition.compatibilityFingerprint =
-            pieceProperty.compatibilityFingerprint;
-        piece.timeKind = harken::ScheduleTimeKindV1::AbsoluteNanoseconds;
-        piece.trackRefCount = 1;
-        piece.trackRefs = &trackRef;
-        piece.scheduleSemanticFingerprint =
-            harken::ComputePieceScheduleFingerprintV1(piece);
+        segment.rootDefinition.kind = harken::PlayableKindV1::Segment;
+        segment.rootDefinition.stableId = kSegment;
+        segment.rootDefinition.expectedProgramSemanticFingerprint =
+            segmentProperty.programSemanticFingerprint;
+        segment.rootDefinition.contentRevision = segmentProperty.contentRevision;
+        segment.rootDefinition.routeStableId = segmentProperty.routeStableId;
+        segment.rootDefinition.compatibilityFingerprint =
+            segmentProperty.compatibilityFingerprint;
+        segment.timeKind = harken::ScheduleTimeKindV1::AbsoluteNanoseconds;
+        segment.trackRefCount = 1;
+        segment.trackRefs = &trackRef;
+        segment.scheduleSemanticFingerprint =
+            harken::ComputeSegmentScheduleFingerprintV1(segment);
 
         container.containerStableId = kContainer;
         container.programSemanticFingerprint =
@@ -433,8 +433,8 @@ struct PreviewWorld {
             install.playableOccurrenceCount = 1;
             install.trackSchedules = &track;
             install.trackScheduleCount = 1;
-            install.pieceSchedules = &piece;
-            install.pieceScheduleCount = 1;
+            install.segmentSchedules = &segment;
+            install.segmentScheduleCount = 1;
         } else {
             install.playableProperties = properties.data();
             install.playablePropertyCount = variableMode
@@ -443,8 +443,8 @@ struct PreviewWorld {
             install.playableOccurrenceCount = variableMode ? childCount : 3u;
             install.trackSchedules = variableMode ? nullptr : &track;
             install.trackScheduleCount = variableMode ? 0u : 1u;
-            install.pieceSchedules = variableMode ? nullptr : &piece;
-            install.pieceScheduleCount = variableMode ? 0u : 1u;
+            install.segmentSchedules = variableMode ? nullptr : &segment;
+            install.segmentScheduleCount = variableMode ? 0u : 1u;
             install.containers = &container;
             install.containerCount = 1;
         }
@@ -543,8 +543,8 @@ const char* ModeName(PreviewMode mode) {
             return "Variable Transition";
         case PreviewMode::Track:
             return "Track";
-        case PreviewMode::Piece:
-            return "Piece";
+        case PreviewMode::Segment:
+            return "Segment";
     }
     return "Unknown";
 }
@@ -557,7 +557,7 @@ void PrintPreviewPlayUsage() {
                  "the normal Runtime path.\n"
                  "  --mode random|rotation|sequence|random-queue|"
                  "sequence-queue|variable-discrete|variable-continuous|"
-                 "variable-dual|variable-transition|track|piece\n"
+                 "variable-dual|variable-transition|track|segment\n"
                  "  --null\n"
                  "  --seconds N\n"
                  "  --repeats N\n"
@@ -661,12 +661,12 @@ int RunPreviewPlay(int argc, char** argv) {
     desc.structSize = sizeof(desc);
     desc.playableKind = options.mode == PreviewMode::Track
         ? VN_PREVIEW_PLAYABLE_KIND_TRACK
-        : options.mode == PreviewMode::Piece
-              ? VN_PREVIEW_PLAYABLE_KIND_PIECE
+        : options.mode == PreviewMode::Segment
+              ? VN_PREVIEW_PLAYABLE_KIND_SEGMENT
               : VN_PREVIEW_PLAYABLE_KIND_CONTAINER;
     desc.stableId = options.mode == PreviewMode::Track
         ? kTrack
-        : options.mode == PreviewMode::Piece ? kPiece : kContainer;
+        : options.mode == PreviewMode::Segment ? kSegment : kContainer;
     VnEmitterHandle emitter = 0;
     if ((options.mode == PreviewMode::RandomQueue ||
          options.mode == PreviewMode::SequenceQueue) &&

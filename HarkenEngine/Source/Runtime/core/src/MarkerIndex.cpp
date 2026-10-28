@@ -21,10 +21,10 @@ std::int64_t FloorDiv(std::int64_t a, std::int64_t b) {
 
 } // namespace
 
-bool MarkerIndex::Reset(PieceTimeType timeType, const ClockKernel* clock,
+bool MarkerIndex::Reset(SegmentTimeType timeType, const ClockKernel* clock,
                      MeterSignature meter, const MarkerPoint* markers,
                      std::size_t markerCount, std::size_t capacity) {
-    timeType_ = PieceTimeType::Musical;
+    timeType_ = SegmentTimeType::Musical;
     clock_ = nullptr;
     barTicks_ = 0;
     beatTicks_ = 0;
@@ -32,8 +32,8 @@ bool MarkerIndex::Reset(PieceTimeType timeType, const ClockKernel* clock,
     valid_ = false;
     markers_.clear();
 
-    if (timeType != PieceTimeType::Musical &&
-        timeType != PieceTimeType::Absolute) {
+    if (timeType != SegmentTimeType::Musical &&
+        timeType != SegmentTimeType::Absolute) {
         return false;
     }
     if (clock == nullptr || !clock->Valid()) {
@@ -58,7 +58,7 @@ bool MarkerIndex::Reset(PieceTimeType timeType, const ClockKernel* clock,
         if (markers[i].kind == MarkerKind::Exit) {
             ++exitCount;
             if (exitCount > 1) {
-                return false; // at most one exit marker per Piece
+                return false; // at most one exit marker per Segment
             }
         }
         for (std::size_t j = 0; j < i; ++j) {
@@ -68,7 +68,7 @@ bool MarkerIndex::Reset(PieceTimeType timeType, const ClockKernel* clock,
         }
     }
 
-    if (timeType == PieceTimeType::Musical) {
+    if (timeType == SegmentTimeType::Musical) {
         if (meter.numerator <= 0 || meter.denominator <= 0) {
             return false;
         }
@@ -107,7 +107,7 @@ SampleFrame MarkerIndex::FrameOfPosition(std::int64_t position) const {
     if (!valid_) {
         return SampleFrame{0};
     }
-    if (timeType_ == PieceTimeType::Musical) {
+    if (timeType_ == SegmentTimeType::Musical) {
         return clock_->TickToFrame(MusicalTick{position});
     }
     return clock_->TimeToFrame(AbsoluteTime{position});
@@ -189,8 +189,8 @@ BoundaryCandidate MarkerIndex::NextBoundary(std::int64_t fromPosition,
     switch (type) {
         case BoundaryType::Bar:
         case BoundaryType::Beat: {
-            if (timeType_ != PieceTimeType::Musical) {
-                return result; // an Absolute Piece has no musical grid
+            if (timeType_ != SegmentTimeType::Musical) {
+                return result; // an Absolute Segment has no musical grid
             }
             const std::int64_t grid =
                 (type == BoundaryType::Bar) ? barTicks_ : beatTicks_;

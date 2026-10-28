@@ -14,7 +14,7 @@ constexpr bool kGateOpen = HARKEN_DEVELOPMENT_PREVIEW != 0;
 constexpr std::uint64_t kPreviewHandleTag = std::uint64_t{1} << 63;
 
 bool ValidKind(std::uint32_t kind) noexcept {
-    return kind <= VN_PREVIEW_PLAYABLE_KIND_PIECE;
+    return kind <= VN_PREVIEW_PLAYABLE_KIND_SEGMENT;
 }
 
 harken::PlayableKindV1 ToKind(std::uint32_t kind) noexcept {

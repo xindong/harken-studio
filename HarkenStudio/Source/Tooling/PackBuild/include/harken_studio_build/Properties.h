@@ -11,7 +11,7 @@
 
 namespace harkenstudiobuild { namespace playableproperties {
 
-enum class ContentPropertyKindV1 : std::uint8_t { Layer = 0, Sound = 1, Container = 2, Track = 3, Piece = 4 };
+enum class ContentPropertyKindV1 : std::uint8_t { Layer = 0, Sound = 1, Container = 2, Track = 3, Segment = 4 };
 
 enum class PlayablePropertyIdV1 : std::uint8_t {
     Volume = 1,

@@ -184,7 +184,7 @@ void OwningCurrentWorldV1::OwnedTrackSchedule::Refresh() noexcept {
     view.placements = placements.empty() ? nullptr : placements.data();
 }
 
-void OwningCurrentWorldV1::OwnedPieceSchedule::Refresh() noexcept {
+void OwningCurrentWorldV1::OwnedSegmentSchedule::Refresh() noexcept {
     view.trackRefCount = static_cast<std::uint32_t>(trackRefs.size());
     view.trackRefs = trackRefs.empty() ? nullptr : trackRefs.data();
     view.markerCount = static_cast<std::uint32_t>(markers.size());
@@ -224,11 +224,11 @@ void OwningCurrentWorldV1::Refresh() noexcept {
         row.Refresh();
         trackScheduleViews_.push_back(row.view);
     }
-    pieceScheduleViews_.clear();
-    pieceScheduleViews_.reserve(pieceSchedules_.size());
-    for (auto& row : pieceSchedules_) {
+    segmentScheduleViews_.clear();
+    segmentScheduleViews_.reserve(segmentSchedules_.size());
+    for (auto& row : segmentSchedules_) {
         row.Refresh();
-        pieceScheduleViews_.push_back(row.view);
+        segmentScheduleViews_.push_back(row.view);
     }
     containerViews_.clear();
     containerViews_.reserve(containers_.size());
@@ -261,10 +261,10 @@ void OwningCurrentWorldV1::Refresh() noexcept {
         trackScheduleViews_.empty() ? nullptr : trackScheduleViews_.data();
     view_.trackScheduleCount =
         static_cast<std::uint32_t>(trackSchedules_.size());
-    view_.pieceSchedules =
-        pieceScheduleViews_.empty() ? nullptr : pieceScheduleViews_.data();
-    view_.pieceScheduleCount =
-        static_cast<std::uint32_t>(pieceSchedules_.size());
+    view_.segmentSchedules =
+        segmentScheduleViews_.empty() ? nullptr : segmentScheduleViews_.data();
+    view_.segmentScheduleCount =
+        static_cast<std::uint32_t>(segmentSchedules_.size());
     view_.containers =
         containerViews_.empty() ? nullptr : containerViews_.data();
     view_.containerCount = static_cast<std::uint32_t>(containers_.size());
@@ -335,7 +335,7 @@ CompileResultV1 CompileCurrentWorldV1(
             numericKind < static_cast<std::uint32_t>(
                               harkenplayableproperties::ContentPropertyKindV1::Sound) ||
             numericKind > static_cast<std::uint32_t>(
-                              harkenplayableproperties::ContentPropertyKindV1::Piece) ||
+                              harkenplayableproperties::ContentPropertyKindV1::Segment) ||
             object == nullptr ||
             static_cast<std::uint32_t>(object->kind) != numericKind ||
             !materializationKeys.emplace(numericKind, row.stableId).second) {
@@ -358,8 +358,8 @@ CompileResultV1 CompileCurrentWorldV1(
             case harkenprojectschema::ContentKind::Track:
                 children = object.track.ownedChildren;
                 break;
-            case harkenprojectschema::ContentKind::Piece:
-                children = object.piece.tracks;
+            case harkenprojectschema::ContentKind::Segment:
+                children = object.segment.tracks;
                 break;
             case harkenprojectschema::ContentKind::Sound:
                 break;
@@ -806,40 +806,40 @@ CompileResultV1 CompileCurrentWorldV1(
     };
 
     for (const auto& object : project.objects) {
-        if (object.kind != harkenprojectschema::ContentKind::Piece) continue;
+        if (object.kind != harkenprojectschema::ContentKind::Segment) continue;
         const auto* root = propertyFor(object.kind, object.chassis().id);
-        if (root == nullptr || object.piece.tracks.size() > UINT32_MAX ||
-            object.piece.markers.size() > UINT32_MAX) {
+        if (root == nullptr || object.segment.tracks.size() > UINT32_MAX ||
+            object.segment.markers.size() > UINT32_MAX) {
             result.status = CompileStatusV1::InvalidProject;
             result.relatedStableId = object.chassis().id;
             return result;
         }
-        OwningCurrentWorldV1::OwnedPieceSchedule row{};
+        OwningCurrentWorldV1::OwnedSegmentSchedule row{};
         row.view.rootDefinition = MakeRef(*root);
         row.view.startPointKind =
-            static_cast<std::uint32_t>(object.piece.startPoint.kind);
-        row.view.startMarkerId = object.piece.startPoint.markerId;
-        if (object.piece.timeSpec.kind ==
-            harkenprojectschema::PieceTimeKind::Absolute) {
+            static_cast<std::uint32_t>(object.segment.startPoint.kind);
+        row.view.startMarkerId = object.segment.startPoint.markerId;
+        if (object.segment.timeSpec.kind ==
+            harkenprojectschema::SegmentTimeKind::Absolute) {
             row.view.timeKind = harkenstudiobuild::ScheduleTimeKindV1::AbsoluteNanoseconds;
         } else {
-            if (object.piece.timeSpec.tempoMap.size() != 1 ||
-                object.piece.timeSpec.meterMap.size() != 1 ||
-                object.piece.timeSpec.tempoMap[0].tick != 0 ||
-                object.piece.timeSpec.meterMap[0].tick != 0) {
+            if (object.segment.timeSpec.tempoMap.size() != 1 ||
+                object.segment.timeSpec.meterMap.size() != 1 ||
+                object.segment.timeSpec.tempoMap[0].tick != 0 ||
+                object.segment.timeSpec.meterMap[0].tick != 0) {
                 result.status = CompileStatusV1::InvalidProject;
                 result.relatedStableId = object.chassis().id;
                 return result;
             }
             row.view.timeKind = harkenstudiobuild::ScheduleTimeKindV1::MusicalTicks;
             row.view.microsPerQuarter =
-                object.piece.timeSpec.tempoMap[0].microsPerQuarter;
+                object.segment.timeSpec.tempoMap[0].microsPerQuarter;
             row.view.meterNumerator =
-                object.piece.timeSpec.meterMap[0].numerator;
+                object.segment.timeSpec.meterMap[0].numerator;
             row.view.meterDenominator =
-                object.piece.timeSpec.meterMap[0].denominator;
+                object.segment.timeSpec.meterMap[0].denominator;
         }
-        auto trackIds = object.piece.tracks;
+        auto trackIds = object.segment.tracks;
         std::sort(trackIds.begin(), trackIds.end());
         row.trackRefs.reserve(trackIds.size());
         for (std::size_t i = 0; i < trackIds.size(); ++i) {
@@ -853,7 +853,7 @@ CompileResultV1 CompileCurrentWorldV1(
                 track->rootDefinition, track->scheduleSemanticFingerprint,
                 static_cast<std::uint32_t>(i), 0});
         }
-        auto markers = object.piece.markers;
+        auto markers = object.segment.markers;
         std::sort(markers.begin(), markers.end(), [](const auto& a, const auto& b) {
             return std::pair(a.markerId, a.id) < std::pair(b.markerId, b.id);
         });
@@ -865,10 +865,10 @@ CompileResultV1 CompileCurrentWorldV1(
         }
         row.Refresh();
         row.view.scheduleSemanticFingerprint =
-            harkenstudiobuild::ComputePieceScheduleFingerprintV1(row.view);
-        world->pieceSchedules_.push_back(std::move(row));
+            harkenstudiobuild::ComputeSegmentScheduleFingerprintV1(row.view);
+        world->segmentSchedules_.push_back(std::move(row));
     }
-    std::sort(world->pieceSchedules_.begin(), world->pieceSchedules_.end(),
+    std::sort(world->segmentSchedules_.begin(), world->segmentSchedules_.end(),
               [](const auto& a, const auto& b) {
                   return a.view.rootDefinition.stableId <
                          b.view.rootDefinition.stableId;
@@ -1055,7 +1055,7 @@ CompileResultV1 CompileCurrentWorldV1(
             }
             if (queue &&
                 (compiled.playable.kind == harkenstudiobuild::PlayableKindV1::Track ||
-                 compiled.playable.kind == harkenstudiobuild::PlayableKindV1::Piece)) {
+                 compiled.playable.kind == harkenstudiobuild::PlayableKindV1::Segment)) {
                 std::uint64_t scheduleFingerprint = 0;
                 if (compiled.playable.kind == harkenstudiobuild::PlayableKindV1::Track) {
                     const auto* schedule =
@@ -1068,13 +1068,13 @@ CompileResultV1 CompileCurrentWorldV1(
                     scheduleFingerprint = schedule->scheduleSemanticFingerprint;
                 } else {
                     const auto schedule = std::lower_bound(
-                        world->pieceSchedules_.begin(),
-                        world->pieceSchedules_.end(), compiled.playable.stableId,
+                        world->segmentSchedules_.begin(),
+                        world->segmentSchedules_.end(), compiled.playable.stableId,
                         [](const auto& candidate, harkenstudio::ObjectId stableId) {
                             return candidate.view.rootDefinition.stableId <
                                    stableId;
                         });
-                    if (schedule == world->pieceSchedules_.end() ||
+                    if (schedule == world->segmentSchedules_.end() ||
                         schedule->view.rootDefinition.stableId !=
                             compiled.playable.stableId) {
                         result.status = CompileStatusV1::InvalidProject;
@@ -1177,7 +1177,7 @@ CompileResultV1 CompileCurrentWorldV1(
         const auto resolveRef = [&](harkenstudiobuild::PlayableRefV1* ref) {
             if (ref == nullptr || ref->reserved != 0 || ref->stableId == harkenstudio::ObjectId{} ||
                 static_cast<std::uint32_t>(ref->kind) >
-                    static_cast<std::uint32_t>(harkenstudiobuild::PlayableKindV1::Piece)) {
+                    static_cast<std::uint32_t>(harkenstudiobuild::PlayableKindV1::Segment)) {
                 return false;
             }
             const auto kind = static_cast<harkenprojectschema::ContentKind>(
@@ -1302,7 +1302,7 @@ CompileResultV1 CompileCurrentWorldV1(
             if ((source.opcode == harkenstudiobuild::ActionOpcodeV1::Play ||
                  source.opcode == harkenstudiobuild::ActionOpcodeV1::Stop) &&
                 static_cast<std::uint32_t>(source.target.kind) <=
-                    static_cast<std::uint32_t>(harkenstudiobuild::ActionTargetKindV1::Piece)) {
+                    static_cast<std::uint32_t>(harkenstudiobuild::ActionTargetKindV1::Segment)) {
                 const auto contentKind =
                     static_cast<harkenprojectschema::ContentKind>(
                         static_cast<std::uint32_t>(source.target.kind) + 1u);
@@ -1333,7 +1333,7 @@ CompileResultV1 CompileCurrentWorldV1(
                             static_cast<std::uint32_t>(
                                 source.quantizeReference.kind) >
                                 static_cast<std::uint32_t>(
-                                    harkenstudiobuild::ActionTargetKindV1::Piece)) {
+                                    harkenstudiobuild::ActionTargetKindV1::Segment)) {
                             result.status =
                                 CompileStatusV1::InvalidActionAuthoring;
                             result.relatedStableId = authored.actionStableId;
@@ -1397,7 +1397,7 @@ CompileResultV1 CompileCurrentWorldV1(
                             if (static_cast<std::uint32_t>(
                                     source.quantizeReference.kind) >
                                 static_cast<std::uint32_t>(
-                                    harkenstudiobuild::ActionTargetKindV1::Piece)) {
+                                    harkenstudiobuild::ActionTargetKindV1::Segment)) {
                                 result.status =
                                     CompileStatusV1::InvalidActionAuthoring;
                                 result.relatedStableId = authored.actionStableId;
@@ -1469,7 +1469,7 @@ CompileResultV1 CompileCurrentWorldV1(
                         static_cast<std::uint32_t>(
                             source.quantizeReference.kind) >
                             static_cast<std::uint32_t>(
-                                harkenstudiobuild::ActionTargetKindV1::Piece)) {
+                                harkenstudiobuild::ActionTargetKindV1::Segment)) {
                         result.status = CompileStatusV1::InvalidActionAuthoring;
                         result.relatedStableId = authored.actionStableId;
                         return result;
