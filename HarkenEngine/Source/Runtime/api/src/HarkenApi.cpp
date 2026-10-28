@@ -13446,6 +13446,86 @@ struct QueueSignalEntryPublication {
     harken::ArmGroupSnapshot arms{};
 };
 
+harken::EnginePlayableServiceRow* ResolveQueueSignalReceiptOwner(harken::Engine& engine,
+    const harken::FrontierEntryReceiptRef& receipt) noexcept {
+    if (!receipt.Valid()) return nullptr;
+    const auto& owner = receipt.owner;
+    const auto* entry = engine.ResolvePlayableService({owner.serviceSlot, owner.serviceGeneration},
+        owner.child, owner.childEpoch);
+    auto* parent = entry == nullptr ? nullptr : engine.ResolvePlayableService(entry->parentService);
+    if (parent == nullptr || !parent->queueMode || !parent->InvocationValid() ||
+        !(parent->frontierEntry == receipt) || !parent->frontierAcceptedSignal.Valid() ||
+        parent->scheduleTerminalChild == nullptr ||
+        !harken::Engine::SameSelectionServiceReference(parent->scheduleTerminalChild->service,
+            PlayableServiceReference(*entry)) ||
+        !harken::Engine::SameSelectionServiceReference(parent->frontierChildService,
+            parent->scheduleTerminalChild->service) ||
+        owner.parent != parent->ownerInstance || owner.parentEpoch != parent->ownerEpoch ||
+        !IsPlayableServiceDescendant(engine, *entry, *parent)) return nullptr;
+    return parent;
+}
+
+bool ValidateSharedQueueEntrySide(harken::Engine& engine,
+    const harken::FrontierActivationDescriptor& descriptor,
+    const harken::Plan03PageGroupView& primary, const harken::Plan03PageGroupView& group) noexcept {
+    if (group.frontier == nullptr) return false;
+    const auto& binding = *group.frontier;
+    const auto& owner = binding.operation.owner;
+    const auto* service = engine.ResolvePlayableService({owner.serviceSlot, owner.serviceGeneration},
+        owner.child, owner.childEpoch);
+    const auto& entryOwner = descriptor.entry.owner;
+    const auto* entry = engine.ResolvePlayableService({entryOwner.serviceSlot, entryOwner.serviceGeneration},
+        entryOwner.child, entryOwner.childEpoch);
+    harken::DecisionCommittedSnapshot decision{};
+    harken::ArmGroupSnapshot arms{};
+    if (!binding.Valid() || binding.role != harken::FrontierGroupRole::EntryMember ||
+        binding.queueSignal.Valid() || binding.queueConditional.Valid() || binding.transition.Valid() ||
+        binding.queueInitial.Valid() == binding.variableSide.Valid() ||
+        !(binding.entry == descriptor.entry) || !(binding.primary == descriptor.primary) ||
+        !(binding.operation.group == group.identity) || binding.operation.kind != harken::FrontierOperationKind::Entry ||
+        binding.operation.world != descriptor.worldGeneration ||
+        binding.operation.transport != descriptor.primary.transportEpoch ||
+        binding.operation.order.executeFrame != descriptor.order.executeFrame ||
+        binding.operation.order.logicCommitSequence != descriptor.order.logicCommitSequence ||
+        !(descriptor.order < binding.operation.order) || service == nullptr || entry == nullptr ||
+        !service->InvocationValid() || !engine.playablePartitions.Published(service->partition, service->identity) ||
+        (service != entry && !IsPlayableServiceDescendant(engine, *service, *entry)) ||
+        !(service->frontierLifetimeEntry == descriptor.entry) || !service->frontierLifetimePin.Valid() ||
+        service->frontierLifetimePin.Owner() != &engine.decisions ||
+        !SameCanonicalDecision(service->frontierLifetimePin.Token(), descriptor.entry.coordinator) ||
+        owner.invocation != entryOwner.invocation || owner.invocationEpoch != entryOwner.invocationEpoch ||
+        group.identity.backing != harken::Plan03GroupBacking::Page || group.identity.sliceIndex != 0 ||
+        group.lease != primary.lease || group.sourceControlCount != 0 ||
+        (group.memberCount != 0 && group.members == nullptr) ||
+        !engine.decisions.CaptureCommitted(group.identity.decision, &decision) ||
+        decision.commit != harken::DecisionCommitState::Committed ||
+        decision.audioState != harken::AudioGroupState::Pending || decision.consumedSlices != 0 ||
+        decision.world != descriptor.worldGeneration || decision.transport != descriptor.primary.transportEpoch ||
+        !engine.armGroups.Capture(decision.armGroup, &arms) ||
+        !SameCanonicalDecision(arms.parent, group.identity.decision) ||
+        arms.memberCount != group.memberCount || arms.tombstonedCount != 0) return false;
+    if (binding.queueInitial.Valid()) {
+        const auto& initial = binding.queueInitial;
+        harken::QueueInstanceSnapshot queue{};
+        return service->queueMode && initial.slot == service->queueInstance.slot &&
+            initial.generation == service->queueInstance.generation &&
+            engine.queueInstances.Capture(service->queueInstance, &queue) && queue.rootInstance == service->ownerInstance &&
+            queue.world == descriptor.worldGeneration && queue.initialActivationSequence == 0 &&
+            queue.failurePhase == harken::QueueFailurePhase::Healthy &&
+            initial.version == queue.logicMirror.version && initial.programSemanticFingerprint == queue.programSemanticFingerprint &&
+            engine.decisions.HasExclusiveParticipant(group.identity.decision,
+                {harken::DecisionParticipantKind::QueueInstance, initial.slot, initial.generation});
+    }
+    const auto& side = binding.variableSide;
+    harken::VariableControlActivationProof proof{};
+    return side.slot == service->variableControlInstance.slot && side.generation == service->variableControlInstance.generation &&
+        engine.variableControlInstances.ProveActivation(service->variableControlInstance, group.identity.decision, &proof) &&
+        static_cast<std::uint8_t>(proof.side) == side.side && proof.sideGeneration == side.sideGeneration &&
+        proof.bank.slot == side.bankSlot && proof.bank.generation == side.bankGeneration &&
+        engine.decisions.HasExclusiveParticipant(group.identity.decision,
+            {harken::DecisionParticipantKind::Variable, side.slot, side.generation});
+}
+
 bool CaptureQueueSignalEntryPublication(harken::Engine& engine,
     harken::EnginePlayableServiceRow& row, QueueSignalEntryPublication* out) noexcept {
     if (out == nullptr || !row.queueMode || !row.InvocationValid() ||
@@ -13495,12 +13575,18 @@ bool CaptureQueueSignalEntryPublication(harken::Engine& engine,
     const auto groupCount = engine.timelinePool.CaptureLivePlan03Groups(groups.data(), groups.size());
     if (groupCount > groups.size()) return false;
     QueueSignalEntryPublication captured{};
+    std::uint32_t entryMemberCount = 0;
     for (std::size_t index = 0; index < groupCount; ++index) {
         const auto& group = groups[index];
         if (group.frontier == nullptr || group.frontier->role != harken::FrontierGroupRole::EntryMember ||
             !(group.frontier->entry == descriptor.entry)) continue;
         const auto& binding = *group.frontier;
         const auto& signal = binding.queueSignal;
+        ++entryMemberCount;
+        if (!signal.Valid()) {
+            if (!ValidateSharedQueueEntrySide(engine, descriptor, primary, group)) return false;
+            continue;
+        }
         if (captured.activation != nullptr || !binding.Valid() || !signal.Valid() ||
             binding.variableSide.Valid() || binding.queueInitial.Valid() || binding.queueConditional.Valid() ||
             binding.transition.Valid() || !(binding.primary == descriptor.primary) ||
@@ -13537,6 +13623,7 @@ bool CaptureQueueSignalEntryPublication(harken::Engine& engine,
     }
     if (captured.activation == nullptr) return false;
     std::uint32_t signalDeclarations = 0;
+    std::uint32_t memberDeclarations = 0;
     for (std::uint32_t index = 0; index < coordinator.participantCount; ++index) {
         harken::DecisionParticipantRef participant{};
         if (!engine.decisions.CaptureCommittedParticipant(row.frontierEntry.coordinator, index, &participant) ||
@@ -13547,8 +13634,17 @@ bool CaptureQueueSignalEntryPublication(harken::Engine& engine,
                 (previous.slot == participant.slot && previous.generation == participant.generation)) return false;
         }
         const harken::DecisionToken token{participant.slot, participant.generation};
-        if (SameCanonicalDecision(token, captured.group.identity.decision)) {
-            ++signalDeclarations;
+        std::uint32_t memberMatches = 0;
+        for (std::size_t member = 0; member < groupCount; ++member) {
+            const auto& group = groups[member];
+            memberMatches += group.frontier != nullptr &&
+                group.frontier->role == harken::FrontierGroupRole::EntryMember &&
+                group.frontier->entry == descriptor.entry && SameCanonicalDecision(token, group.identity.decision);
+        }
+        if (memberMatches > 1u) return false;
+        if (memberMatches == 1u) {
+            ++memberDeclarations;
+            signalDeclarations += SameCanonicalDecision(token, captured.group.identity.decision);
             continue;
         }
         const auto* nativeActivation = engine.decisions.ResolveFrontierActivation(token);
@@ -13611,7 +13707,7 @@ bool CaptureQueueSignalEntryPublication(harken::Engine& engine,
             !SameCanonicalDecision(dependency.coordinatorPin.Token(), descriptor.entry.coordinator) ||
             !MatchesNativeEntryDependency(engine, dependency, *native)) return false;
     }
-    if (signalDeclarations != 1u) return false;
+    if (signalDeclarations != 1u || memberDeclarations != entryMemberCount) return false;
     *out = captured;
     return true;
 }
@@ -13630,12 +13726,13 @@ bool CaptureNativeQueueInitialPublication(harken::Engine& engine,
     const auto& owner = descriptor.entry.owner;
     const auto* native = engine.ResolvePlayableService({owner.serviceSlot, owner.serviceGeneration},
         owner.child, owner.childEpoch);
+    auto* signalOwner = ResolveQueueSignalReceiptOwner(engine, descriptor.entry);
     harken::DecisionCommittedSnapshot coordinator{};
     harken::Plan03PageGroupView primary{};
     harken::QueueInstanceSnapshot queue{};
     if (!descriptor.Valid() || !(descriptor.entry == row.frontierLifetimeEntry) || native == nullptr ||
-        !(native->frontierEntry == descriptor.entry) || native->nativeEntryDependency == nullptr ||
-        !native->nativeEntryDependency->entryBound ||
+        (signalOwner == nullptr && (!(native->frontierEntry == descriptor.entry) ||
+         native->nativeEntryDependency == nullptr || !native->nativeEntryDependency->entryBound)) ||
         !engine.playablePartitions.Published(row.partition, row.identity) ||
         !engine.playablePartitions.Published(native->partition, native->identity) ||
         (native != &row && !IsPlayableServiceDescendant(engine, row, *native)) ||
@@ -13663,27 +13760,32 @@ bool CaptureNativeQueueInitialPublication(harken::Engine& engine,
         !(primary.frontier->initialVariables == descriptor.initialVariables) ||
         primary.memberCount != 0 || primary.sourceControlCount != 0 || primary.lease == nullptr ||
         primary.lease->Capture().state != harken::AudioSliceState::Ready) return false;
-    const auto& dependency = *native->nativeEntryDependency;
-    const auto* original = engine.decisions.ResolveFrontierActivation(dependency.entry.coordinator);
-    harken::Plan03PageGroupView signal{};
-    if (!MatchesNativeEntryDependency(engine, dependency, *native) ||
-        dependency.coordinatorPin.Owner() != &engine.decisions ||
-        !SameCanonicalDecision(dependency.coordinatorPin.Token(), dependency.entry.coordinator) ||
-        !(primary.frontier->prerequisite == dependency.entry) ||
-        !(primary.frontier->prerequisiteMember == dependency.member) ||
-        original == nullptr || !(original->Descriptor().entry == dependency.entry) ||
-        !(original->Descriptor().primary == dependency.primary) ||
-        !(original->Descriptor().order < descriptor.order)) return false;
-    if (dependency.appliedSignal != nullptr) {
-        if (!engine.decisions.ProveAppliedSignalPrerequisite(*dependency.appliedSignal,
-                *primary.frontier, engine.mixer.BlocksRendered())) return false;
-    } else if (primary.frontier->appliedPrerequisite != nullptr ||
-        !engine.timelinePool.ResolvePlan03GroupSliceProducer(dependency.member, &signal) ||
-        signal.frontier == nullptr || !signal.frontier->Valid() || !signal.frontier->queueSignal.Valid() ||
-        signal.frontier->role != harken::FrontierGroupRole::EntryMember ||
-        !(signal.frontier->entry == dependency.entry) || !(signal.frontier->primary == dependency.primary) ||
-        !(signal.frontier->operation.group == dependency.member) ||
-        !(signal.frontier->operation.order < descriptor.order)) return false;
+    if (signalOwner != nullptr) {
+        QueueSignalEntryPublication signal{};
+        if (!CaptureQueueSignalEntryPublication(engine, *signalOwner, &signal) || signal.activation != activation) return false;
+    } else {
+        const auto& dependency = *native->nativeEntryDependency;
+        const auto* original = engine.decisions.ResolveFrontierActivation(dependency.entry.coordinator);
+        harken::Plan03PageGroupView signal{};
+        if (!MatchesNativeEntryDependency(engine, dependency, *native) ||
+            dependency.coordinatorPin.Owner() != &engine.decisions ||
+            !SameCanonicalDecision(dependency.coordinatorPin.Token(), dependency.entry.coordinator) ||
+            !(primary.frontier->prerequisite == dependency.entry) ||
+            !(primary.frontier->prerequisiteMember == dependency.member) ||
+            original == nullptr || !(original->Descriptor().entry == dependency.entry) ||
+            !(original->Descriptor().primary == dependency.primary) ||
+            !(original->Descriptor().order < descriptor.order)) return false;
+        if (dependency.appliedSignal != nullptr) {
+            if (!engine.decisions.ProveAppliedSignalPrerequisite(*dependency.appliedSignal,
+                    *primary.frontier, engine.mixer.BlocksRendered())) return false;
+        } else if (primary.frontier->appliedPrerequisite != nullptr ||
+            !engine.timelinePool.ResolvePlan03GroupSliceProducer(dependency.member, &signal) ||
+            signal.frontier == nullptr || !signal.frontier->Valid() || !signal.frontier->queueSignal.Valid() ||
+            signal.frontier->role != harken::FrontierGroupRole::EntryMember ||
+            !(signal.frontier->entry == dependency.entry) || !(signal.frontier->primary == dependency.primary) ||
+            !(signal.frontier->operation.group == dependency.member) ||
+            !(signal.frontier->operation.order < descriptor.order)) return false;
+    }
     QueueSignalEntryPublication captured{};
     auto& groups = engine.timelineGroupCaptureScratch;
     const auto groupCount = engine.timelinePool.CaptureLivePlan03Groups(groups.data(), groups.size());
@@ -13865,7 +13967,8 @@ void ServiceNativeQueueInitialArms(harken::Engine& engine,
     const auto& owner = activation->Descriptor().entry.owner;
     const auto* native = engine.ResolvePlayableService({owner.serviceSlot, owner.serviceGeneration},
         owner.child, owner.childEpoch);
-    if (native == nullptr || native->nativeEntryDependency == nullptr || !native->nativeEntryDependency->entryBound) return;
+    if (native == nullptr || ((native->nativeEntryDependency == nullptr || !native->nativeEntryDependency->entryBound) &&
+        ResolveQueueSignalReceiptOwner(engine, activation->Descriptor().entry) == nullptr)) return;
     QueueSignalEntryPublication entry{};
     if (!CaptureNativeQueueInitialPublication(engine, row, &entry)) {
         (void)activation->Cancel(row.frontierLifetimeEntry, harken::AudioSliceInvalidateReason::Cancel);
@@ -13947,6 +14050,7 @@ engine.runtimeRecreateRequired = true;
         if (belongs && !CompleteDeferredPlayableCancellation(
                 engine, *borrower, completedAudioSequence)) return false;
     }
+    const bool ownsInitialSides = row.variableControlIndependentFrontier || row.frontierAcceptedSignal.Valid();
     if (row.frontierAcceptedSignal.Valid()) {
         const auto outcome = receipt.outcome == harken::FrontierReceiptOutcome::Applied
             ? harken::QueueSignalOutcomeV1::Applied : harken::QueueSignalOutcomeV1::DefinitivelyNotApplied;
@@ -13973,7 +14077,7 @@ engine.runtimeRecreateRequired = true;
             row.pendingFutureCount = 0;
         }
     }
-    if (row.variableControlIndependentFrontier) {
+    if (ownsInitialSides) {
         if (receipt.outcome == harken::FrontierReceiptOutcome::Applied) {
             for (auto& service : engine.playableServices) {
                 if ((!service.variableControlIndependentFrontier && !service.hasZeroWorkCompletion) || service.scheduleLeafCount != 0 ||
@@ -14000,7 +14104,8 @@ engine.runtimeRecreateRequired = true;
             }
         }
         if (!ReleaseInitialFrontierBindings(engine, row.frontierEntry, completedAudioSequence)) return false;
-        if (receipt.outcome == harken::FrontierReceiptOutcome::DefinitivelyNotApplied &&
+        if (row.variableControlIndependentFrontier &&
+            receipt.outcome == harken::FrontierReceiptOutcome::DefinitivelyNotApplied &&
             !cancellationRequested) {
             row.phase = harken::EnginePlayableStartPhase::Cancelling;
             row.controlLifecycle = harken::PlayableControlLifecycle::FailingSourceActive;
@@ -14009,7 +14114,7 @@ engine.runtimeRecreateRequired = true;
                 : harken::PlayableControlReason::StartRefused;
         }
     }
-    if (!row.variableControlIndependentFrontier &&
+    if (!ownsInitialSides &&
         !ReleaseInitialFrontierBindings(engine, row.frontierEntry,
             completedAudioSequence)) return false;
     if (!row.frontierArmPin.Release(completedAudioSequence)) return false;
@@ -31244,6 +31349,7 @@ InitialFrontierPrepareStatus PrepareInitialVariableControlFrontier(harken::Engin
     auto& row = *scratch.row;
     auto& storage = scratch.storage;
     auto& privateBatch = scratch.privateInitialVcPageCohort;
+    const bool variableControl = scratch.variableControl || scratch.variableControlCommitted;
     auto* signal = scratch.initialQueueSignalAdmission.get();
     auto* signalParent = signal != nullptr ? engine.ResolvePlayableService(signal->service) : nullptr;
     const auto findQueue = [&](const harken::EngineInitialFrontierSide& side) noexcept {
@@ -31335,7 +31441,7 @@ InitialFrontierPrepareStatus PrepareInitialVariableControlFrontier(harken::Engin
             addSide(service, service.variableControlContinuousDecision, service.variableControlContinuousArmGroup);
     };
     if ((signal != nullptr && !addSide(*signalParent, signal->decision, signal->armGroup)) ||
-        (scratch.variableControl && !addControl(row))) return InitialFrontierPrepareStatus::Failed;
+        (variableControl && !addControl(row))) return InitialFrontierPrepareStatus::Failed;
     for (std::uint32_t index = 0; index < scratch.variableControlNestedVariableControlCount; ++index) {
         auto* service = engine.ResolvePlayableService(scratch.variableControlNestedServices[index]);
         if (service == nullptr || !addControl(*service)) return InitialFrontierPrepareStatus::Failed;
@@ -31493,13 +31599,14 @@ InitialFrontierPrepareStatus PrepareInitialVariableControlFrontier(harken::Engin
         ++sourceCount;
         return true;
     };
-    const auto bases = StorageBasesForRow(engine, row);
-    const auto addLeaves = [&](std::uint32_t offset, std::uint32_t count) {
+    const auto addLeaves = [&](const harken::EnginePlayableServiceRow& service,
+        std::uint32_t offset, std::uint32_t count) {
+        const auto bases = StorageBasesForRow(engine, service);
         for (std::uint32_t index = 0; index < count; ++index) {
             const auto slot = bases.member + offset + index;
             const auto reference = engine.ReadPlayableMemberReference(slot);
             bool nativeScheduleMember = false;
-            if (!ResolveVariableScheduleMember(engine, row, reference, &nativeScheduleMember)) return false;
+            if (!ResolveVariableScheduleMember(engine, service, reference, &nativeScheduleMember)) return false;
             const auto* program = ResolveInitialMemberProgram(engine, slot);
             std::size_t physical = 0;
             if (!engine.ResolvePlayableMemberSlot(slot, &physical)) return false;
@@ -31525,10 +31632,15 @@ InitialFrontierPrepareStatus PrepareInitialVariableControlFrontier(harken::Engin
         }
         return true;
     };
-    if (signal != nullptr || !scratch.variableControl) {
+    if (signal != nullptr || !variableControl) {
         const bool ready = VisitInitialScheduleAttempts(engine, scratch, [&](auto& attempt) noexcept {
             if (attempt.row == nullptr) return false;
             auto& native = *attempt.row;
+            if (attempt.variableControl || attempt.variableControlCommitted) {
+                return native.variableControlInstance.Valid() && native.variableControlIndependentFrontier &&
+                    addLeaves(native, 0, native.variableControlDiscreteMemberCount) &&
+                    addLeaves(native, native.variableControlContinuousMemberOffset, native.variableControlContinuousMemberCount);
+            }
             for (std::uint32_t index = 0; index < attempt.voiceStartCount; ++index) {
                 harken::TimelineArmObservation arm{};
                 const auto token = attempt.voiceStarts[index].arm;
@@ -31551,8 +31663,8 @@ InitialFrontierPrepareStatus PrepareInitialVariableControlFrontier(harken::Engin
             return true;
         });
         if (!ready) return InitialFrontierPrepareStatus::Failed;
-    } else if (!addLeaves(0, row.variableControlDiscreteMemberCount) ||
-        !addLeaves(row.variableControlContinuousMemberOffset, row.variableControlContinuousMemberCount)) {
+    } else if (!addLeaves(row, 0, row.variableControlDiscreteMemberCount) ||
+        !addLeaves(row, row.variableControlContinuousMemberOffset, row.variableControlContinuousMemberCount)) {
         return InitialFrontierPrepareStatus::Failed;
     }
     std::uint32_t expectedSources = 0;
@@ -51971,6 +52083,10 @@ bool InitialVariableCohortMayPublishPending(harken::Engine& engine,
         !(primary.frontier->operation.order == descriptor.order) ||
         primary.memberCount != 0 || primary.sourceControlCount != 0 ||
         primary.lease == nullptr || primary.lease->Capture().state != harken::AudioSliceState::Ready) return false;
+    if (auto* signalOwner = ResolveQueueSignalReceiptOwner(engine, entry)) {
+        QueueSignalEntryPublication signal{};
+        return CaptureQueueSignalEntryPublication(engine, *signalOwner, &signal) && signal.activation == activation;
+    }
     auto& participants = engine.initialQueueCoordinatorParticipantsScratch;
     std::uint32_t participantCount = 0;
     if (!engine.decisions.CopyCommittedParticipants(entry.coordinator, participants.data(),
