@@ -330,6 +330,10 @@
           "type": "u32",
           "value": 128
         },
+        "VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN": {
+          "type": "u32",
+          "value": 1
+        },
         "VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES": {
           "type": "u32",
           "value": 316
@@ -506,7 +510,7 @@
             "VN_ACTION_TARGET_ACTION": 4,
             "VN_ACTION_TARGET_BUS": 6,
             "VN_ACTION_TARGET_CONTAINER": 1,
-            "VN_ACTION_TARGET_PIECE": 3,
+            "VN_ACTION_TARGET_SEGMENT": 3,
             "VN_ACTION_TARGET_SOUND": 0,
             "VN_ACTION_TARGET_TRACK": 2,
             "VN_ACTION_TARGET_VARIABLE": 5
@@ -865,7 +869,7 @@
             "VN_MONITOR_CONTENT_ACTION": 5,
             "VN_MONITOR_CONTENT_CONTAINER": 2,
             "VN_MONITOR_CONTENT_MEDIA": 6,
-            "VN_MONITOR_CONTENT_PIECE": 4,
+            "VN_MONITOR_CONTENT_SEGMENT": 4,
             "VN_MONITOR_CONTENT_SOUND": 1,
             "VN_MONITOR_CONTENT_TRACK": 3,
             "VN_MONITOR_CONTENT_UNKNOWN": 0,
@@ -10888,6 +10892,42 @@
           ],
           "size": 496
         },
+        "VnMonitorExecutionFactV3": {
+          "alignment": 8,
+          "fields": [
+            {
+              "alignment": 8,
+              "name": "fact",
+              "offset": 0,
+              "shape": {
+                "kind": "struct",
+                "type": "VnMonitorExecutionFactV1"
+              },
+              "size": 432
+            },
+            {
+              "alignment": 8,
+              "name": "activity",
+              "offset": 432,
+              "shape": {
+                "kind": "struct",
+                "type": "VnMonitorFactActivity"
+              },
+              "size": 64
+            },
+            {
+              "alignment": 8,
+              "name": "playable",
+              "offset": 496,
+              "shape": {
+                "kind": "struct",
+                "type": "VnMonitorPlayableProvenance"
+              },
+              "size": 48
+            }
+          ],
+          "size": 544
+        },
         "VnMonitorFactActivity": {
           "alignment": 8,
           "fields": [
@@ -12353,6 +12393,72 @@
             }
           ],
           "size": 64
+        },
+        "VnMonitorPlayableProvenance": {
+          "alignment": 8,
+          "fields": [
+            {
+              "alignment": 8,
+              "name": "rootPlayableId",
+              "offset": 0,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 8,
+              "name": "rootProgramFingerprint",
+              "offset": 16,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "occurrenceFingerprint",
+              "offset": 24,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "mediaChecksum",
+              "offset": 32,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 4,
+              "name": "childOrdinal",
+              "offset": 40,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "knownFlags",
+              "offset": 44,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            }
+          ],
+          "size": 48
         },
         "VnMonitorPollDesc": {
           "alignment": 8,
@@ -23490,11 +23596,11 @@
       "formatVersion": 7
     }
   },
-  "contractSha256": "7ff205d76230e2e6c46eec894a124812306bf27639f51aeb984cc1d6413fe7e7",
+  "contractSha256": "304d74000229200751fd2672f1617b82459243f5828d39008d95107c43972ec5",
   "generatedFiles": {
     "HarkenEngine/Source/Tooling/Binding/generated/harken_binding_abi_pin.g.h": {
-      "sha256": "ad0b625341cf4ea3534bac5726168b1eda121edf7dcd69c51d6f14f93b23fa48",
-      "size": 321993
+      "sha256": "f81ae314cd8cdc4b0525fe7aede4cb7ee98687140bbaa76751ab6c2d85988536",
+      "size": 323615
     },
     "HarkenEngine/Tool/Remote/generated/harken_wire_desc_meta.h": {
       "sha256": "d02bee48f10bd551a2887f963fd26ee9e0ba21e66108f186d7e6af6941ee0567",
@@ -23509,37 +23615,37 @@
       "size": 5406
     },
     "HarkenEngine/Tool/Remote/generated/harken_wire_layout_asserts.h": {
-      "sha256": "82da16b860e847e24591814f85ed3251fa70bbe2a9eafcca06de6f3be82dbeb7",
-      "size": 236122
+      "sha256": "cfbad2f42893250cf849cdc18ebd7da17f7cd318580a3ae42cf592801cbf6100",
+      "size": 237774
     },
     "HarkenEngine/Tool/Remote/harken_wire.py": {
-      "sha256": "64c9121d815888adb295536f9e258a6298b73519c550c028329127f09d4644d9",
-      "size": 250304
+      "sha256": "8b44b6f595e1b519c8596a667836b043c77aaa0f89853266fe00da56f434b9fc",
+      "size": 251327
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs": {
-      "sha256": "ce8ddcaf8e06dba4afb49d9acda5176018ee6f0e5837dc841e38213359718631",
-      "size": 105266
+      "sha256": "8d1fc46e6408bc4780815e09f4a8af760868ef46e0a40b44992f332fe61b3d61",
+      "size": 130547
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenNative.g.cs": {
-      "sha256": "269ebc95db665dc1ccd52bf19500cac5f8d9cc1602738e9fee2f696f536d845d",
-      "size": 28789
+      "sha256": "97b97b7203d3255d7bb68dd27b97cbeae121359779b88ce3e81664028f78f136",
+      "size": 30219
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs": {
-      "sha256": "c9e3fe841173ce03da1b747866d51b7a3ebc473667c833230fc96cc465f32266",
-      "size": 51811
+      "sha256": "86f7ef4aadd403f49f0535dc71b45feb88e67558f290b68a33fae470d3898ce5",
+      "size": 68876
     }
   },
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1,
   "sectionSha256": {
-    "nativeAbiSha256": "e117650be859b770863c02e5af610874d12ea31f46bf03d265fadfa3528b6dac",
+    "nativeAbiSha256": "99b91fffecfcd99a3d923ba987c16dce2c1177c3ae74e034af685f11ee8f0490",
     "remoteWireSha256": "d99304d71d24436e14a34fd990b3ded5e6ddd7bca6c13dc2065a9709d53577d3",
     "traceFormatSha256": "a960db29fac1a574649b9fb538491e91851ad7f064ee4efbe607602355dea5a7"
   },
   "sourceFiles": {
     "HarkenEngine/Source/Runtime/api/include/harken/Harken.h": {
-      "sha256": "4ff5408020f9bd098c6679c2bf5744f88297686801450a1ee4e65b9f02d20517",
-      "size": 235992
+      "sha256": "19a330b1dfecfcf96dffb7539b1a9ab7968c2ce36c7c06d42dec7c482520c5ca",
+      "size": 241715
     },
     "HarkenEngine/Source/Runtime/api/include/harken/ObjectId.h": {
       "sha256": "90b6f66ad515c5e411564f1e5981b65bec2e461fabbdee6c57aa86b26b9a300d",
@@ -23554,16 +23660,16 @@
       "size": 56134
     },
     "HarkenEngine/Source/Tooling/Binding/gen_binding.py": {
-      "sha256": "2515378c328446758fa54617419d39a08ef6dae7379dd2884f4f458fa3b0ee74",
-      "size": 35308
+      "sha256": "ebf4844fa5fa4492c554556a0f635453391e626dbe30fdbb88598f1896c05bcd",
+      "size": 39776
     },
     "HarkenEngine/Source/Tooling/Remote/wire/gen_wire.py": {
       "sha256": "f156dad54894eaa0977a721f237d333593e121f98a1d2053d5e245b5e7f104f8",
       "size": 30774
     },
     "HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json": {
-      "sha256": "bed4c0c9f1290ca1be8341198978a56f5d490ebe62134a8b85e58e9493d71907",
-      "size": 249059
+      "sha256": "5af21892187ae1769cea9e70b949ebefd16bea03e62cf0bd47fcce579b626607",
+      "size": 262083
     }
   }
 }

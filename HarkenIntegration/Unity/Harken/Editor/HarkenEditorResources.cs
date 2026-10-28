@@ -45,7 +45,8 @@ namespace Harken.Unity.Editor
             if (string.IsNullOrWhiteSpace(reference) || reference.StartsWith("/", StringComparison.Ordinal) ||
                 reference.IndexOf('\\') >= 0 || reference.IndexOf(':') >= 0) throw new IOException("Invalid waveform reference.");
             string directory = Path.GetDirectoryName(jsonPath)?.Replace('\\', '/') ?? "";
-            return Normalize(PlatformPath + "/" + directory + "/" + reference);
+            return Normalize((PlatformPath.Length == 0 ? "" : PlatformPath + "/") +
+                (directory.Length == 0 ? "" : directory + "/") + reference);
         }
         internal byte[] Read(string path, int limit)
         {

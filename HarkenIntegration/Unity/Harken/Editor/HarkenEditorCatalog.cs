@@ -142,6 +142,7 @@ namespace Harken.Unity.Editor
             snapshot = next;
             sourceIdentity = identity;
             if (!keepExecution) PreparedPacks = new HarkenPreparedPacks(next);
+            else PreparedPacks.Snapshot.RefreshOrigin(next);
             DirectoryPath = directory;
             ResetWaveforms(resources);
             ++Revision;

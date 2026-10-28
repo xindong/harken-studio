@@ -74,7 +74,7 @@ namespace Harken
                 next.Publication = new GameplayPublication(default, source.Language, packs.ToArray(),
                     next.Init.Facts.projectId.ToString(), next.Init.Facts.packStableId,
                     next.Init.Facts.contentRevision, 0, actions.ToArray(), Array.Empty<RetiredGameplayAction>());
-                next.Source = PackSource.FromSnapshot(source.Language, next.Read, source.Validate);
+                next.Source = PackSource.FromSnapshot(source.Language, next.Read, input => next.origin.Validate(input));
                 snapshot = next;
                 diagnostic = string.Empty;
                 return VnResult.VN_OK;
@@ -100,6 +100,9 @@ namespace Harken
                 return new CompanionCapture(VnResult.VN_PACK_STALE_REVISION);
             return new CompanionCapture(VnResult.VN_OK, input);
         }
+
+        // Existing sessions retain this snapshot and consult the refreshed equivalent reader.
+        internal void RefreshOrigin(PackCatalogSnapshot equivalent) => origin = equivalent.origin;
 
         internal bool SameExecution(PackCatalogSnapshot other)
         {

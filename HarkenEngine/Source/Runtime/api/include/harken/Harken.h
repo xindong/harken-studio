@@ -4264,7 +4264,7 @@ typedef struct VnMonitorExecutionFactV2 {
     VnMonitorFactActivity activity;
 } VnMonitorExecutionFactV2;
 
-enum { VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN = 1 };
+#define VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN 1
 
 /* Exact V2 prefix. Known provenance identifies a resolved single-source occurrence. */
 typedef struct VnMonitorPlayableProvenance {
