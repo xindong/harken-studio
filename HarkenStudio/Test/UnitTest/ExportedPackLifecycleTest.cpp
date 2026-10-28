@@ -5432,8 +5432,7 @@ TEST_F(ExportedPackLifecycle, Att03MissingInitProfileRejectsDespiteAmbientRegist
         const VnObjectId directId = matchingAmbient ? referencedId : unrelatedId;
         ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(directId, &directProfile));
         const auto directGeneration = engine->spatial.CurrentProfileGeneration(directId);
-        const auto* directBefore = engine->spatial.FindProfile(directId);
-        ASSERT_NE(nullptr, directBefore);
+        ASSERT_NE(nullptr, engine->spatial.FindProfile(directId));
         const auto beforePublication = att05Publication(engine);
         const auto beforeLoaded = engine->packs.LoadedCount();
         const auto beforeProfiles = engine->spatial.ProfileCount();
@@ -5472,7 +5471,8 @@ TEST_F(ExportedPackLifecycle, Att03MissingInitProfileRejectsDespiteAmbientRegist
         EXPECT_EQ(directGeneration, engine->spatial.CurrentProfileGeneration(directId));
         const auto* directAfter = engine->spatial.FindProfile(directId);
         ASSERT_NE(nullptr, directAfter);
-        EXPECT_EQ(directBefore, directAfter);
+        EXPECT_EQ(directId, directAfter->id);
+        EXPECT_FLOAT_EQ(directProfile.minDistance, directAfter->minDistance);
         EXPECT_FLOAT_EQ(directProfile.maxDistance, directAfter->maxDistance);
         EXPECT_EQ(contentHash, fileSha256(contentPath));
 
@@ -5487,7 +5487,11 @@ TEST_F(ExportedPackLifecycle, Att03MissingInitProfileRejectsDespiteAmbientRegist
             retry.rows.data(), accepted, 0, 0));
         ASSERT_NO_FATAL_FAILURE(acceptExportedPackActivation(&retry, accepted, &loaded));
         EXPECT_EQ(directGeneration, engine->spatial.CurrentProfileGeneration(unrelatedId));
-        EXPECT_EQ(directBefore, engine->spatial.FindProfile(unrelatedId));
+        const auto* directAfterRetry = engine->spatial.FindProfile(unrelatedId);
+        ASSERT_NE(nullptr, directAfterRetry);
+        EXPECT_EQ(unrelatedId, directAfterRetry->id);
+        EXPECT_FLOAT_EQ(directProfile.minDistance, directAfterRetry->minDistance);
+        EXPECT_FLOAT_EQ(directProfile.maxDistance, directAfterRetry->maxDistance);
         VnActionFiringHandle firing = 0;
         ASSERT_NO_FATAL_FAILURE(att05PostSpatial(&firing));
         harkentest::Capture capture;
@@ -5525,8 +5529,7 @@ TEST_F(ExportedPackLifecycle, Att05UnloadRetiresOwnedResourcesAndPreservesUnrela
     ASSERT_NE(harken::kInvalidBusIndex, directBusSlot);
     const auto directBusGeneration = engine->buses.GenerationAt(directBusSlot);
     const auto directProfileGeneration = engine->spatial.CurrentProfileGeneration(unrelatedProfile);
-    const auto* directProfileBefore = engine->spatial.FindProfile(unrelatedProfile);
-    ASSERT_NE(nullptr, directProfileBefore);
+    ASSERT_NE(nullptr, engine->spatial.FindProfile(unrelatedProfile));
     const auto before = att05Publication(engine);
     const auto beforeBusCount = engine->buses.ActiveBusCount();
     const auto beforeProfileCount = engine->spatial.ProfileCount();
@@ -5576,8 +5579,11 @@ TEST_F(ExportedPackLifecycle, Att05UnloadRetiresOwnedResourcesAndPreservesUnrela
     EXPECT_EQ(0u, engine->busOwnerCookies[directBusSlot]);
     EXPECT_EQ(directProfileGeneration,
               engine->spatial.CurrentProfileGeneration(unrelatedProfile));
-    EXPECT_EQ(directProfileBefore, engine->spatial.FindProfile(unrelatedProfile));
-    EXPECT_FLOAT_EQ(directProfile.maxDistance, directProfileBefore->maxDistance);
+    const auto* directProfileAfter = engine->spatial.FindProfile(unrelatedProfile);
+    ASSERT_NE(nullptr, directProfileAfter);
+    EXPECT_EQ(unrelatedProfile, directProfileAfter->id);
+    EXPECT_FLOAT_EQ(directProfile.minDistance, directProfileAfter->minDistance);
+    EXPECT_FLOAT_EQ(directProfile.maxDistance, directProfileAfter->maxDistance);
     RecordProperty("loaded_before", beforeLoaded);
     RecordProperty("loaded_after", engine->packs.LoadedCount());
     RecordProperty("retiring_during_old_firing", std::to_string(duringRetiring));

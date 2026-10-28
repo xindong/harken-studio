@@ -1,6 +1,6 @@
 # HarkenStudio 打包元数据导出
 
-核对日期：2026-10-26。
+核对日期：2026-10-28。
 
 Project Settings > Publish 的 `Publish Directory` 与 `Waveform File Directory` 均以工程目录为相对路径基准；可转为相对路径时保存相对路径，跨盘符等无法相对化的情况保留绝对路径。留空时分别使用 `BuildPacks` 与 `BuildPacks/Waveforms`。`Publish Directory` 仅调整界面名称，沿用 `packBuildOutputDir` 字段，不改变 Schema。
 
@@ -43,11 +43,11 @@ BuildPacks/
 
 `basePlatform` 使用 `Windows`、`macOS`、`Linux`、`Android`、`iOS`。平台不导出编码、重采样、质量等处理参数；语言保留项目配置的名称，不转换为语言 GUID 或 ISO 代码，也不输出默认语言。
 
-项目身份直接铺在顶层，不使用 `project` 子对象。`Project.json` 随同现有 Pack 合同定义和验证，不建立独立的 Schema 版本线；`schemaVersion` 与 `.bytes` 文件头版本统一取自 `HarkenSchema/Pack/manifest.json` 的最新发布代。Studio 写入端与引擎读取端共同使用该来源，当前为 `3`，版本升代由正式发布流程决定。
+项目身份直接铺在顶层，不使用 `project` 子对象。`Project.json` 随同现有 Pack 合同定义和验证，不建立独立的 Schema 版本线；`schemaVersion` 与 `.bytes` 文件头版本统一取自 `HarkenSchema/Pack/manifest.json` 的最新发布代。Studio 写入端与引擎读取端共同使用该来源，当前为 `4`，版本升代由正式发布流程决定。
 
 Studio 软件版本、Editor 当前合同版本和 Pack 当前合同版本统一由 `cmake/BuildInfo.cmake` 读取各自权威文件，并通过已有 `harken_buildinfo` 构建目标提供。两个合同版本使用编译定义注入，Pack 格式头不依赖包含时间戳的构建信息头。当前合同版本的读取不需要 Python；Studio 的合同内容、历史支持列表和校验器仍由现有 Schema 工具生成。
 
-Pack 跨代必须重新打包，不提供迁移或升级。统一版本前生成的二进制版本 `4` 要求重新导出。现用的 36 字节纯音频布局与 44 字节容器布局均保留，版本都取自同一合同；读取端先检查版本，再按文件头长度选择对应解析器，未知版本或布局直接拒绝。
+Pack 跨代必须重新打包，不提供迁移或升级。统一合同前的旧二进制版本号不代表兼容当前 Pack Schema 4，旧格式仍要求重新导出。读取端校验当前合同版本和布局，未知版本或布局直接拒绝。
 
 本次只导出部分平台或 Action 时，`platforms` 与 `languages` 仍表达构建快照中的完整项目配置，不表示本次选择或输出目录中已有文件的清单。元数据只在整次请求成功后更新；失败或取消时保留上次成功发布的项目信息。
 
@@ -61,7 +61,7 @@ Project Settings > Publish > Additional Material 的 `Export Pack MetaData` 默�
 
 ```json
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "name": "Play_Footstep",
   "guid": "371e86db-0e67-4e50-bbd4-cf4e236d8d9a",
   "metadata": {
@@ -89,3 +89,11 @@ Project Settings > Publish > Additional Material 的 `Export Pack MetaData` 默�
 同组的 `Export Wave Buffer` 会将波形数据写入 `Waveform File Directory` 下按内容 SHA-256 命名的 `<hash>.vkd` 文件，并在包的同名 JSON 中写入 `waveforms` 索引。索引中的 `file` 优先使用相对于伴随 JSON 的路径，无法相对化时使用绝对路径。同时开启元数据输出时，Sound 条目的 `guid` 对应既有 `waveforms[].soundGuid`，进而关联 VKD 文件及裁剪范围。仅开启元数据不会生成波形；开关不改变 `.bytes` 内容或原有名称映射。
 
 关闭后，本次重新构建的伴随文件移除 `metadata`。增量打包保留未选中包的原伴随文件；失败或取消保留之前成功发布的文件。元数据随包体通过既有发布事务提交，校验覆盖统一版本、包身份、语言、依赖清单去重与完整性。
+
+## Studio 0.9.2 升级兼容性（2026-10-28）
+
+相较已发布 Studio 0.9.1，Editor Schema 9 与 Pack Schema 4 均未变化，合同快照哈希仍为 `819064e8512dc2cabb5d66b0a8bf716fa19d182daf8aa0c84443cc36b7eb5bad`。0.9.1 工程可直接打开、保存，既有 Pack 可继续由 0.9.2 随附的运行库读取，无需仅因升级 Studio 而重新打包。
+
+0.9.2 导出端统一计算发布集合的容量，并协调定义顺序。仅更新选中包时，容量增长可能重写未选中包的容量信息，同时保留其已发布内容和媒体；相关输出只读时会阻止发布。向游戏工程交付时应同步本次发布所有变化的 Pack、清单及依赖，不能假设只有手动选中的包发生变化。
+
+实际 `saga2_audio` 工程原始保存版本为 Studio 0.8.1 / Editor Schema 8。隔离副本已验证 0.9.1 迁移后由 0.9.2 打开保存，以及 0.9.2 直接迁移；0.9.1 → 0.9.2 打开保存时，406 份创作文件的内容保持不变（排除正常保存更新的工程修改时间）。0.9.1 对该副本全量导出遇到 Current World 容量错误，0.9.2 已成功导出 Windows、iOS、Android、macOS 四套 Pack，包含 110 个 Action。无修改重复导出时，888 个产物的 SHA-256 与大小全部一致。0.9.1 单 Action 导出的旧 Pack 也已通过新运行库及 Unity 生命周期验证。这里的四平台导出验证不代表四平台运行或设备验收。
