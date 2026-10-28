@@ -250,10 +250,7 @@ private:
         QMenu menu(this);
         for (const auto& entry : EditorUtils::actionStepCatalog()) {
             const VActionStep::Type type = entry.type;
-            QAction* act = menu.addAction(
-                ThemeManager::instance().resolveIcon(
-                    QString::fromLatin1(typeIconId(type))).icon,
-                entry.name);
+            QAction* act = menu.addAction(entry.name);
             QObject::connect(act, &QAction::triggered, this, [this, type]() {
                 VActionStep step;
                 step.type = type;

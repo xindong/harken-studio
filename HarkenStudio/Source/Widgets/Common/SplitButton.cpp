@@ -4,17 +4,17 @@
 #include "Core/ThemeManager.h"
 
 #include <QAction>
+#include <QAbstractItemView>
+#include <QComboBox>
 #include <QEvent>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QItemSelectionModel>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPushButton>
-#include <QScreen>
+#include <QStandardItemModel>
 #include <QToolButton>
-#include <QVBoxLayout>
-
-#include <algorithm>
 
 namespace VNX {
 
@@ -23,7 +23,7 @@ SplitButton::SplitButton(QWidget* parent)
     , primaryButton_(new QPushButton(this))
     , dropdownButton_(new QToolButton(this))
     , divider_(new QFrame(this))
-    , popup_(new QWidget(this, Qt::Popup | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint))
+    , popupCombo_(new QComboBox(this))
 {
     setAttribute(Qt::WA_StyledBackground);
     setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
@@ -36,6 +36,7 @@ SplitButton::SplitButton(QWidget* parent)
     primaryButton_->installEventFilter(this);
 
     dropdownButton_->setProperty("splitButtonPart", QStringLiteral("dropdown"));
+    dropdownButton_->setProperty("flatIconButton", true);
     dropdownButton_->setArrowType(Qt::DownArrow);
     dropdownButton_->setFocusPolicy(Qt::StrongFocus);
     dropdownButton_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
@@ -55,12 +56,18 @@ SplitButton::SplitButton(QWidget* parent)
     row->addWidget(divider_, 0, Qt::AlignVCenter);
     row->addWidget(dropdownButton_);
 
-    popup_->setObjectName(QStringLiteral("splitButtonPopup"));
-    auto* popupLayout = new QVBoxLayout(popup_);
-    popupLayout->setContentsMargins(0, 0, 0, 0);
-    popupLayout->setSpacing(2);
-    popupLayout->setSizeConstraint(QLayout::SetNoConstraint);
-    popup_->installEventFilter(this);
+    QtControlSkin::setPopupIconColumn(this, PopupIconColumn::Automatic);
+    popupCombo_->setObjectName(QStringLiteral("splitButtonPopup"));
+    popupCombo_->setProperty("popupHasCheckableItems", false);
+    popupCombo_->setFocusProxy(dropdownButton_);
+    popupCombo_->hide();
+    popupCombo_->view()->installEventFilter(this);
+    popupCombo_->view()->viewport()->installEventFilter(this);
+    popupCombo_->view()->window()->installEventFilter(this);
+    connect(popupCombo_, &QComboBox::activated, this, [this](int index) {
+        auto* action = popupActions_.value(index);
+        if (action && action->isEnabled() && action->isVisible()) action->trigger();
+    });
     connect(dropdownButton_, &QToolButton::clicked, this, &SplitButton::showPopup);
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
             this, &SplitButton::updateMetrics);
@@ -72,31 +79,43 @@ bool SplitButton::event(QEvent* event)
 {
     const bool handled = QWidget::event(event);
     if (event->type() == QEvent::LayoutRequest) updateMetrics();
-    else if (event->type() == QEvent::Resize && popup_->isVisible()) positionPopup();
-    else if (event->type() == QEvent::Hide) popup_->hide();
+    else if (event->type() == QEvent::Resize || event->type() == QEvent::Hide)
+        popupCombo_->hidePopup();
     return handled;
 }
 
 bool SplitButton::eventFilter(QObject* watched, QEvent* event)
 {
-    if (watched == popup_ && event->type() == QEvent::MouseButtonPress) {
+    auto* view = popupCombo_->view();
+    auto* popup = view->window();
+    if (watched == view || watched == view->viewport() || watched == popup) {
+        if (event->type() == QEvent::Leave) {
+            view->selectionModel()->clear();
+        } else if (event->type() == QEvent::MouseMove) {
+            const auto* mouse = static_cast<QMouseEvent*>(event);
+            const QPoint position = view->viewport()->mapFromGlobal(mouse->globalPosition().toPoint());
+            const auto index = view->indexAt(position);
+            if (!view->viewport()->rect().contains(position) || !index.isValid()
+                || !index.flags().testFlag(Qt::ItemIsEnabled)) {
+                view->selectionModel()->clear();
+                return true;
+            }
+        }
+    }
+    if (watched == popup && event->type() == QEvent::MouseButtonPress) {
         const auto* mouse = static_cast<QMouseEvent*>(event);
-        if (!popup_->rect().contains(mouse->position().toPoint())) {
+        if (!popup->rect().contains(mouse->position().toPoint())) {
             const bool overDropdown = dropdownButton_->rect().contains(
                 dropdownButton_->mapFromGlobal(mouse->globalPosition().toPoint()));
-            popup_->setAttribute(Qt::WA_NoMouseReplay, overDropdown);
-            popup_->hide();
+            popup->setAttribute(Qt::WA_NoMouseReplay, overDropdown);
+            popupCombo_->hidePopup();
             return true;
         }
     }
-    if (event->type() == QEvent::KeyPress) {
+    if ((watched == primaryButton_ || watched == dropdownButton_)
+        && event->type() == QEvent::KeyPress) {
         auto* key = static_cast<QKeyEvent*>(event);
-        const bool inPopup = watched == popup_ || watched->parent() == popup_;
-        if (inPopup && key->key() == Qt::Key_Escape) {
-            popup_->hide();
-            return true;
-        }
-        const bool openPopup = !inPopup && key->key() == Qt::Key_Down
+        const bool openPopup = key->key() == Qt::Key_Down
             && (key->modifiers() == Qt::NoModifier || key->modifiers() == Qt::AltModifier);
         const bool activate = (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter
             || (watched == dropdownButton_ && key->key() == Qt::Key_Space))
@@ -120,6 +139,10 @@ bool SplitButton::eventFilter(QObject* watched, QEvent* event)
             updateMetrics();
         else if (event->type() == QEvent::EnabledChange)
             updateDropdownAvailability();
+    } else if (watched == dropdownButton_
+               && (event->type() == QEvent::Hide
+                   || (event->type() == QEvent::EnabledChange && !dropdownButton_->isEnabled()))) {
+        popupCombo_->hidePopup();
     }
     return QWidget::eventFilter(watched, event);
 }
@@ -127,55 +150,47 @@ bool SplitButton::eventFilter(QObject* watched, QEvent* event)
 void SplitButton::actionEvent(QActionEvent* event)
 {
     QWidget::actionEvent(event);
-    auto* action = event->action();
-    if (event->type() == QEvent::ActionRemoved) {
-        delete actionButtons_.take(action);
-    } else {
-        auto* button = actionButtons_.value(action);
-        if (!button) {
-            button = new QPushButton(popup_);
-            button->setProperty("splitButtonPart", QStringLiteral("action"));
-            button->setAutoDefault(false);
-            button->setCursor(Qt::PointingHandCursor);
-            button->installEventFilter(this);
-            static_cast<QVBoxLayout*>(popup_->layout())->insertWidget(
-                actions().indexOf(action), button);
-            actionButtons_.insert(action, button);
-            connect(button, &QPushButton::clicked, this, [this, action] {
-                popup_->hide();
-                action->trigger();
-            });
+    auto* current = popupActions_.value(popupCombo_->view()->currentIndex().row());
+    popupCombo_->clear();
+    popupActions_.clear();
+    auto* model = static_cast<QStandardItemModel*>(popupCombo_->model());
+    bool hasCheckableItems = false;
+    for (auto* action : actions()) {
+        if (!action->isVisible() || action->isSeparator()) continue;
+        popupCombo_->addItem(action->icon(), action->text());
+        auto* item = model->item(popupActions_.size());
+        item->setEnabled(action->isEnabled());
+        item->setToolTip(action->toolTip());
+        item->setTextAlignment(Qt::AlignCenter);
+        if (action->isCheckable()) {
+            item->setData(action->isChecked() ? Qt::Checked : Qt::Unchecked, Qt::CheckStateRole);
+            hasCheckableItems = true;
         }
-        button->setText(action->text());
-        button->setIcon(action->icon());
-        button->setToolTip(action->toolTip());
-        button->setEnabled(action->isEnabled());
-        button->setVisible(action->isVisible() && !action->isSeparator());
-        button->setFixedHeight(height());
+        popupActions_.append(action);
     }
+    popupCombo_->setProperty("popupHasCheckableItems", hasCheckableItems);
+    popupCombo_->setCurrentIndex(popupActions_.indexOf(current));
+    if (!current) popupCombo_->view()->selectionModel()->clear();
     updateDropdownAvailability();
 }
 
 void SplitButton::changeEvent(QEvent* event)
 {
     QWidget::changeEvent(event);
-    if (event->type() == QEvent::EnabledChange && !isEnabled()) popup_->hide();
+    if (event->type() == QEvent::EnabledChange && !isEnabled()) popupCombo_->hidePopup();
 }
 
 void SplitButton::updateDropdownAvailability()
 {
-    const auto alternatives = actions();
-    const bool available = std::any_of(alternatives.cbegin(), alternatives.cend(),
-        [](const QAction* action) { return action->isVisible() && !action->isSeparator(); });
+    const bool available = !popupActions_.isEmpty();
     if (!available) {
-        popup_->hide();
+        popupCombo_->hidePopup();
         if (dropdownButton_->hasFocus()) primaryButton_->setFocus(Qt::OtherFocusReason);
     }
     dropdownButton_->setEnabled(available);
     if (primaryButton_->isEnabled() || !available) setFocusProxy(primaryButton_);
     else setFocusProxy(dropdownButton_);
     updateGeometry();
-    if (popup_->isVisible()) positionPopup();
 }
 
 void SplitButton::updateMetrics()
@@ -186,40 +201,21 @@ void SplitButton::updateMetrics()
     setFixedHeight(height);
     dropdownButton_->setFixedWidth(height);
     divider_->setFixedHeight(primaryButton_->fontMetrics().height());
-    for (auto* button : actionButtons_) button->setFixedHeight(height);
-    if (popup_->isVisible()) positionPopup();
 }
 
 void SplitButton::showPopup()
 {
     if (!dropdownButton_->isVisible() || !dropdownButton_->isEnabled()) return;
-    if (popup_->isVisible()) {
-        popup_->hide();
+    if (popupCombo_->view()->isVisible()) {
+        popupCombo_->hidePopup();
         return;
     }
-    popup_->ensurePolished();
-    positionPopup();
-    popup_->show();
-    for (auto* action : actions()) {
-        auto* button = actionButtons_.value(action);
-        if (button->isVisible() && button->isEnabled()) {
-            button->setFocus(Qt::PopupFocusReason);
-            break;
-        }
-    }
-}
-
-void SplitButton::positionPopup()
-{
-    popup_->setFixedSize(width(), popup_->sizeHint().height());
-    const QRect available = screen()->availableGeometry();
-    const QPoint origin = mapToGlobal(QPoint());
-    QPoint position(origin.x(), origin.y() + height() + 2);
-    if (position.y() + popup_->height() > available.bottom() + 1)
-        position.setY(origin.y() - popup_->height() - 2);
-    position.setX(qBound(available.left(), position.x(),
-                        qMax(available.left(), available.right() - popup_->width() + 1)));
-    popup_->move(position);
+    popupCombo_->ensurePolished();
+    popupCombo_->setFixedSize(size());
+    popupCombo_->view()->window()->setFixedWidth(width());
+    popupCombo_->setCurrentIndex(-1);
+    popupCombo_->showPopup();
+    popupCombo_->view()->selectionModel()->clear();
 }
 
 }

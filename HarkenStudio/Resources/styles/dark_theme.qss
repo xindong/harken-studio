@@ -184,9 +184,9 @@ QWidget[surfaceRole="popup"] {
 QMenu {
     -qt-style-features: background-color;
     background-color: @bgTertiary@;
-    border: 1px solid @borderPrimary@;
+    border: 1px solid @borderSecondary@;
     border-radius: 0px;
-    padding: 6px 0;
+    padding: @popupPaddingY@px 0;
 }
 
 QMenu::item {
@@ -506,9 +506,7 @@ VNX--SplitButton {
     background-color: @bgHover@;
 }
 
-QPushButton[splitButtonPart="primary"],
-QPushButton[splitButtonPart="action"],
-QToolButton[splitButtonPart="dropdown"] {
+QPushButton[splitButtonPart="primary"] {
     background-color: @bgHover@;
     border: none;
     border-radius: 0;
@@ -516,18 +514,14 @@ QToolButton[splitButtonPart="dropdown"] {
 }
 
 QToolButton[splitButtonPart="dropdown"] {
-    padding: 0;
+    border-radius: 0;
 }
 
-QPushButton[splitButtonPart="primary"]:hover:enabled,
-QPushButton[splitButtonPart="action"]:hover:enabled,
-QToolButton[splitButtonPart="dropdown"]:hover:enabled {
+QPushButton[splitButtonPart="primary"]:hover:enabled {
     background-color: @bgTertiary@;
 }
 
-QPushButton[splitButtonPart="primary"]:pressed:enabled,
-QPushButton[splitButtonPart="action"]:pressed:enabled,
-QToolButton[splitButtonPart="dropdown"]:pressed:enabled {
+QPushButton[splitButtonPart="primary"]:pressed:enabled {
     background-color: @accent@;
     color: @accentText@;
 }
@@ -546,9 +540,7 @@ QPushButton[splitButtonPart="primary"][primaryAction="true"]:pressed:enabled {
 }
 
 VNX--SplitButton:disabled,
-QPushButton[splitButtonPart="primary"]:disabled,
-QPushButton[splitButtonPart="action"]:disabled,
-QToolButton[splitButtonPart="dropdown"]:disabled {
+QPushButton[splitButtonPart="primary"]:disabled {
     background-color: @bgSecondary@;
     color: @textDisabled@;
 }
@@ -750,14 +742,13 @@ QComboBox QAbstractItemView {
     background-color: @bgTertiary@;
     border: 1px solid @borderSecondary@;
     outline: none;
-    padding: 4px 0;
+    padding: @popupPaddingY@px 0;
     color: @textPrimary@;
     selection-background-color: @accent@;
     selection-color: @accentText@;
 }
 
 QComboBox QAbstractItemView::item {
-    padding: 4px 8px;
     border: none;
     border-left: none;
 }

@@ -11,11 +11,16 @@
 
 class QWidget;
 class QPainter;
+class QComboBox;
+class QFontMetrics;
+class QStyleOptionMenuItem;
 class QStyleOptionToolButton;
 
 namespace VNX {
 
 class ThemeAssetResolver;
+
+enum class PopupIconColumn { Reserved, Automatic };
 
 class QtControlSkin
 {
@@ -35,6 +40,14 @@ public:
     QMargins fieldTextMargins() const;
     QIcon toolBarIcon(const QStyleOptionToolButton& option, qreal devicePixelRatio) const;
     static QIcon iconButtonIcon(const QIcon& icon);
+    static void setPopupIconColumn(QWidget* widget, PopupIconColumn mode);
+    static void setPopupCurrentItemChecked(QComboBox* combo, bool checked);
+    static void applyPopupStyle(QComboBox* combo);
+    static int popupRowHeight(const QFontMetrics& fontMetrics);
+    QSize popupItemSize(const QStyleOptionMenuItem& item, const QSize& contentsSize,
+                        const QWidget* widget) const;
+    void paintPopupItem(QPainter& painter, const QStyleOptionMenuItem& item,
+                        const QWidget* widget, Qt::Alignment alignment = Qt::AlignLeft) const;
     static void setSemanticProperty(QWidget* widget, const char* name,
                                     const QVariant& value);
     static void paintFieldFrame(QPainter& painter, const QWidget* widget);
