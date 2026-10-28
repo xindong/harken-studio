@@ -6642,6 +6642,7 @@ bool CommitInitialPlayableAttempt(
 void CommitImmediateActionPlays(
     void* opaque, std::uint32_t count,
     harken::LogicCommitSequence sequence) noexcept;
+bool PrepareDeferredInitialScheduleProducers(ImmediateActionPlan& plan) noexcept;
 bool ReserveImmediateActionCommandHead(void* opaque, std::uint32_t count) noexcept;
 void ReleaseImmediateActionCommandHead(void* opaque, std::uint32_t count) noexcept;
 void CommitImmediateActionCommandHead(void* opaque, std::uint32_t count,
@@ -80819,13 +80820,9 @@ harken::LogicCommitSequence ActionPlanCommitSequence(
                : currentSequence + 1u;
 }
 
-bool BindInitialActionSelectionContext(ImmediateActionPlan& plan,
-    const harken::EngineActionStepPlanRow& planned, harken::EngineActionPlayScratch& scratch,
-    const harken::PlayableRefV1& root, harken::WorldGeneration world,
-    std::uint64_t fingerprint) noexcept {
-    if (plan.engine == nullptr || scratch.storage.generation == 0 ||
-        scratch.storage.initialSelection.attemptGeneration != 0 || planned.firingIndex >= plan.firingCount)
-        return false;
+harken::LogicCommitSequence ResolveInitialActionPreparationSequence(ImmediateActionPlan& plan,
+    const harken::EngineActionStepPlanRow& planned, VnObjectId targetStableId) noexcept {
+    if (plan.engine == nullptr || planned.firingIndex >= plan.firingCount) return 0;
     auto& engine = *plan.engine;
     harken::LogicCommitSequence ticket = 0;
     if (engine.logicCommits.IsOriginalPreparedIssueFor(plan.originalSingleIssue)) {
@@ -80849,13 +80846,24 @@ bool BindInitialActionSelectionContext(ImmediateActionPlan& plan,
             record.intendedBoundaryFrame != planned.deferredFrame ||
             record.callerSeed != plan.callerSeed || record.rootActionStableId != plan.rootActionStableId ||
             record.rootActionProgramSemanticFingerprint != plan.rootActionProgramSemanticFingerprint ||
-            record.step.opcode != harken::ActionOpcodeV1::Play || record.step.target.stableId != root.stableId ||
+            record.step.opcode != harken::ActionOpcodeV1::Play || record.step.target.stableId != targetStableId ||
             !engine.actionFirings.Capture(record.firing, &firing) ||
             firing.state != harken::ActionFiringState::Active ||
             firing.cancellationEpoch != record.ownerCancellationEpoch || !harken::ActionDeferredOwnerCurrent(engine, record) ||
-            firing.acceptedLogicSequence != plan.materializationSequence) return false;
+            firing.acceptedLogicSequence != plan.materializationSequence) return 0;
         ticket = firing.acceptedLogicSequence;
     }
+    return ticket;
+}
+
+bool BindInitialActionSelectionContext(ImmediateActionPlan& plan,
+    const harken::EngineActionStepPlanRow& planned, harken::EngineActionPlayScratch& scratch,
+    const harken::PlayableRefV1& root, harken::WorldGeneration world,
+    std::uint64_t fingerprint) noexcept {
+    if (plan.engine == nullptr || scratch.storage.generation == 0 ||
+        scratch.storage.initialSelection.attemptGeneration != 0 || planned.firingIndex >= plan.firingCount)
+        return false;
+    const auto ticket = ResolveInitialActionPreparationSequence(plan, planned, root.stableId);
     std::uint32_t eventBegin = 0;
     if (ticket == 0 || world == 0 || fingerprint == 0 ||
         !harken::EngineActionPlayStorage::InitialSelectionContext::EventBegin(planned.executionOrdinal, &eventBegin))
@@ -88762,6 +88770,8 @@ struct ContainerPreparationContext {
     std::uint64_t callerSeed = 0;
     std::uint64_t admittedImmediateFrame = 0;
     harken::LogicCommitSequence materializationSequence = 0;
+    harken::LogicCommitSequence preparedDeferredSequence = 0;
+    VnObjectId preparedDeferredRoot{};
     VnActionFiringHandle actionFiring = 0;
     VnActionFiringHandle rootHandle = 0;
     VnActionFiringHandle deferredParentFiring = 0;
@@ -88867,6 +88877,11 @@ ContainerPreparationContext MakeActionContainerPreparationContext(
     context.initialSoundSequenceQueueRoute = plan.initialSoundSequenceQueueRoute;
     context.materializationSequence = plan.materializationSequence;
     context.materializingDeferred = plan.materializingDeferred;
+    if (plan.materializingDeferred && planned.step != nullptr) {
+        context.preparedDeferredSequence = ResolveInitialActionPreparationSequence(
+            plan, planned, planned.step->target.stableId);
+        context.preparedDeferredRoot = planned.step->target.stableId;
+    }
     context.multiVariableControlImmediateLane = plan.multiVariableControlImmediateLane;
     context.multiVariableControlPendingSelection = plan.multiVariableControlPendingSelection;
     context.nativeFixedSelection = plan.nativeFixedSelection;
@@ -89044,6 +89059,23 @@ struct ScheduleContainerPreparationOperations {
             parent->ownerInstance == context.parentInstance &&
             parent->ownerEpoch == context.parentEpoch ? parent : nullptr;
     }
+    harken::LogicCommitSequence PreparationSequence() const noexcept {
+        if (engine.logicCommits.IsOriginalPreparedIssueFor(context.originalSingleIssue))
+            return context.originalSingleIssue.Sequence();
+        if (engine.actionFirings.IsPreparedChildActive(context.deferredChildIdentity))
+            return context.deferredChildIdentity.Sequence();
+        // This stack-local context inherits the Action boundary's validated deferred claim.
+        auto* parent = Parent();
+        if (!context.materializingDeferred || context.preparedDeferredSequence == 0 ||
+            context.preparedDeferredSequence != context.materializationSequence ||
+            context.preparedDeferredRoot != context.propertyRoot.stableId ||
+            context.actionFiring == 0 || parent == nullptr ||
+            parent->Invocation().actionFiring != context.actionFiring ||
+            parent->Invocation().actionExecutionOrdinal != context.entry.executionOrdinal ||
+            parent->Invocation().invocationEmitter != context.emitter) return 0;
+        return context.preparedDeferredSequence;
+    }
+
     bool Refuse() noexcept { context.result = VN_CAPABILITY_UNAVAILABLE; return false; }
     bool AllowMode(harken::ContainerModeV1 mode) noexcept {
         const bool queue = mode == harken::ContainerModeV1::SequenceQueue ||
@@ -89136,11 +89168,7 @@ struct ScheduleContainerPreparationOperations {
             context.selectionEventBegin > UINT32_MAX - harken::kSelectionPathNodeCapacity ||
             context.propertyRoot.stableId == VnObjectId{} || world == 0 || fingerprint == 0)
             return false;
-        harken::LogicCommitSequence ticket = 0;
-        if (engine.logicCommits.IsOriginalPreparedIssueFor(context.originalSingleIssue))
-            ticket = context.originalSingleIssue.Sequence();
-        else if (engine.actionFirings.IsPreparedChildActive(context.deferredChildIdentity))
-            ticket = context.deferredChildIdentity.Sequence();
+        const auto ticket = PreparationSequence();
         if (ticket == 0 || ticket != CommitSequence(engine.logicCommits.Current())) return false;
         auto& selection = scratch.storage.initialSelection;
         selection.identity = {world, fingerprint, context.propertyRoot.stableId,
@@ -89189,9 +89217,9 @@ struct ScheduleContainerPreparationOperations {
                     activeScratch->storage.generation};
             }
         }
+        const auto ticket = PreparationSequence();
         return HasPreparationAuthority(activeScratch) && context.originalReadFrame.has_value() &&
-            (engine.logicCommits.IsOriginalPreparedIssueFor(context.originalSingleIssue) ||
-             engine.actionFirings.IsPreparedChildActive(context.deferredChildIdentity));
+            ticket != 0 && ticket == CommitSequence(engine.logicCommits.Current());
     }
     bool EarlierWrites(const harken::ContainerProgramViewV3&,
         const SharedVariableControlDecisionPlan&) const noexcept { return false; }
@@ -97157,6 +97185,11 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
         }
         break;
     }
+    if (plan->materializingDeferred && !PrepareDeferredInitialScheduleProducers(*plan)) {
+        ReleaseImmediateActionPlays(plan, count);
+        plan->result = VN_BACKPRESSURE;
+        return false;
+    }
     plan->result = VN_OK;
     return true;
 }
@@ -98386,14 +98419,14 @@ bool HasPreparedPendingVariableGroupVoiceProofs(harken::Engine& engine,
     return true;
 }
 
-bool PrepareOriginalInitialAttemptProducer(harken::Engine& engine,
-    harken::EngineActionPlayScratch& attempt,
-    harken::LogicCommitCoordinator::PreparedIssue& actualIssue,
+bool PrepareInitialAttemptProducer(harken::Engine& engine,
+    harken::EngineActionPlayScratch& attempt, harken::LogicCommitSequence sequence,
+    harken::LogicCommitCoordinator::PreparedIssue* actualIssue,
     harken::EngineImmediateEntryAttempt* cohortAttempt) noexcept {
     auto* scratch = &attempt;
-    if (scratch->row == nullptr || !scratch->prepared ||
-        !engine.logicCommits.IsOriginalPreparedIssueFor(actualIssue)) return false;
-    const auto sequence = actualIssue.Sequence();
+    if (scratch->row == nullptr || !scratch->prepared || sequence == 0 ||
+        (actualIssue != nullptr && (!engine.logicCommits.IsOriginalPreparedIssueFor(*actualIssue) ||
+            actualIssue->Sequence() != sequence))) return false;
     bool hasOriginalLedger = false;
     for (std::uint32_t i = 0; i < scratch->voiceStartCount; ++i)
         hasOriginalLedger = hasOriginalLedger || engine.HasOriginalQueueLedgerCommit(scratch->voiceStarts[i]);
@@ -98503,11 +98536,11 @@ bool PrepareOriginalInitialAttemptProducer(harken::Engine& engine,
         auto* originalAttempt = cohortAttempt;
         if (originalAttempt != nullptr && engine.OriginalInitialC0FactoryRequested(*originalAttempt) &&
             scratch->initialOriginalConditional != nullptr) {
-            if (i != 0 || scratch->voiceStartCount != 1 || issuedCurrent == nullptr ||
+            if (i != 0 || scratch->voiceStartCount != 1 || issuedCurrent == nullptr || actualIssue == nullptr ||
                 !engine.PrepareOriginalInitialSingleQueueOriginFromFactoryOutputs(*originalAttempt, *scratch,
                     voice, *issuedCurrent, *links, *actual,
                     scratch->voiceStarts.Owners()[i].armCommitProof, scratch->voiceStarts.Owners()[i].voiceCommitProof,
-                    engine.preparedVoiceCommandBatchProof, actualIssue, *ticketProof)) return false;
+                    engine.preparedVoiceCommandBatchProof, *actualIssue, *ticketProof)) return false;
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE) && !defined(HARKEN_RT_QUALIFICATION)
             if (engine.originalInitialC0PreparedHookForTest != nullptr)
                 engine.originalInitialC0PreparedHookForTest(engine, *originalAttempt,
@@ -98516,6 +98549,33 @@ bool PrepareOriginalInitialAttemptProducer(harken::Engine& engine,
         }
     }
     if (!scratch->playableTreeExecutor.Validate()) return false;
+    return true;
+}
+
+bool PrepareOriginalInitialAttemptProducer(harken::Engine& engine,
+    harken::EngineActionPlayScratch& attempt,
+    harken::LogicCommitCoordinator::PreparedIssue& actualIssue,
+    harken::EngineImmediateEntryAttempt* cohortAttempt) noexcept {
+    return engine.logicCommits.IsOriginalPreparedIssueFor(actualIssue) &&
+        PrepareInitialAttemptProducer(engine, attempt, actualIssue.Sequence(), &actualIssue, cohortAttempt);
+}
+
+bool PrepareDeferredInitialScheduleProducers(ImmediateActionPlan& plan) noexcept {
+    if (plan.engine == nullptr || !plan.materializingDeferred || plan.materializationSequence == 0) return false;
+    auto& engine = *plan.engine;
+    for (std::uint32_t play = 0; play < plan.preparedPlayCount; ++play) {
+        auto* root = FindImmediateActionPlay(plan, play);
+        if (root == nullptr || root->row == nullptr) return false;
+        if (root->storage.scheduleChildren == nullptr) continue;
+        if (root->plannedStepIndex >= plan.stepCount) return false;
+        const auto& planned = engine.actionStepPlanScratch[root->plannedStepIndex];
+        const auto sequence = ResolveInitialActionPreparationSequence(plan, planned, root->row->root.stableId);
+        if (sequence == 0 || sequence != plan.materializationSequence ||
+            !PrepareInitialScheduleOwners(engine, *root, sequence) ||
+            !VisitInitialScheduleAttempts(engine, *root, [&](auto& child) noexcept {
+                return PrepareInitialAttemptProducer(engine, child, sequence, nullptr, nullptr);
+            }) || !PrepareScheduleChildGraphProofs(engine, *root)) return false;
+    }
     return true;
 }
 
