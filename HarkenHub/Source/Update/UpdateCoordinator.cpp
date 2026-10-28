@@ -44,6 +44,18 @@ UpdateCoordinator::UpdateCoordinator(QObject* parent)
             });
     connect(&downloader_, &Downloader::finished, this,
             &UpdateCoordinator::handleDownloadFinished);
+    connect(&downloader_, &Downloader::sourceSelected, this,
+            [this](const QString&, bool restarted) {
+        auto record = UpdateStateStore::load(kProduct);
+        if (record.state != QStringLiteral("Downloading") ||
+            record.buildId != activeManifest_.buildId)
+            return;
+        const auto expected = record;
+        record.downloadRestarted = restarted;
+        record.downloadedBytes = -1;
+        progressPersistTimer_.invalidate();
+        persist(record, QDateTime::currentDateTimeUtc(), expected);
+    });
     connect(&downloader_, &Downloader::progress, this,
             [this](qint64 receivedBytes, qint64 totalBytes) {
                 if (progressPersistTimer_.isValid() &&
@@ -356,10 +368,13 @@ void UpdateCoordinator::beginDownload(const ReleaseManifest& manifest,
     request.fallbackUrls = downloadUrls;
     request.targetPath = targetPath;
     request.expectedSizeBytes = manifest.packageSize;
+    request.expectedSha256 = manifest.sha256Hex;
     request.lease = std::move(lease);
     activeManifest_ = manifest;
     UpdateStateRecord record = expected;
     record.state = QStringLiteral("Downloading");
+    record.downloadRestarted = false;
+    record.downloadedBytes = -1;
     record.downloadPath = targetPath;
     if (!persist(record, QDateTime::currentDateTimeUtc(), expected))
         return;

@@ -71,6 +71,18 @@ HubSelfUpdate::HubSelfUpdate(QObject* parent)
             });
     connect(&downloader_, &Downloader::finished, this,
             &HubSelfUpdate::handleDownloadFinished);
+    connect(&downloader_, &Downloader::sourceSelected, this,
+            [this](const QString&, bool restarted) {
+        auto record = UpdateStateStore::load(kProduct);
+        if (record.state != QStringLiteral("Downloading") ||
+            record.buildId != activeManifest_.buildId)
+            return;
+        const auto expected = record;
+        record.downloadRestarted = restarted;
+        record.downloadedBytes = -1;
+        progressPersistTimer_.invalidate();
+        persist(record, QDateTime::currentDateTimeUtc(), expected);
+    });
     connect(&downloader_, &Downloader::progress, this,
             [this](qint64 receivedBytes, qint64 totalBytes) {
                 if (progressPersistTimer_.isValid() &&
@@ -311,6 +323,7 @@ void HubSelfUpdate::handleCheckResult(const UpdateCheckResult& result,
     request.fallbackUrls = downloadUrls;
     request.targetPath = targetPath;
     request.expectedSizeBytes = manifest.packageSize;
+    request.expectedSha256 = manifest.sha256Hex;
     request.lease = lease;
     activeDownloadLease_ = lease;
     activeManifest_ = manifest;

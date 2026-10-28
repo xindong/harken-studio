@@ -60,6 +60,7 @@ private:
     QString manifestPath_;
     QString downloadTargetPath_;
     int activeRow_ = -1;
+    bool downloadRestarted_ = false;
 };
 
 }

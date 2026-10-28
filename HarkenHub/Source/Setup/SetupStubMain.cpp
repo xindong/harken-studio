@@ -104,64 +104,6 @@ int failStaging(UINT message, bool quiet, HANDLE stagingGuard,
     return fail(message, quiet);
 }
 
-void launchInstalledHub()
-{
-    wchar_t installDir[MAX_PATH + 1]{};
-    DWORD valueSize = sizeof(installDir) - sizeof(wchar_t);
-    if (RegGetValueW(HKEY_LOCAL_MACHINE, L"Software\\HarkenSound\\HarkenHub",
-                     L"InstallDir", RRF_RT_REG_SZ, nullptr, installDir,
-                     &valueSize) != ERROR_SUCCESS ||
-        installDir[0] == L'\0')
-        return;
-
-    std::wstring directory(installDir);
-    while (!directory.empty() &&
-           (directory.back() == L'\\' || directory.back() == L'/'))
-        directory.pop_back();
-    if (directory.empty())
-        return;
-    const std::wstring hubPath = directory + L"\\HarkenHub.exe";
-    std::wstring arguments = L"\"" + hubPath + L"\"";
-
-    HWND shellWindow = GetShellWindow();
-    if (!shellWindow)
-        return;
-    DWORD shellPid = 0;
-    GetWindowThreadProcessId(shellWindow, &shellPid);
-    if (!shellPid)
-        return;
-    HANDLE shellProcess =
-        OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, shellPid);
-    if (!shellProcess)
-        return;
-    HANDLE shellToken = nullptr;
-    if (!OpenProcessToken(shellProcess, TOKEN_DUPLICATE, &shellToken)) {
-        CloseHandle(shellProcess);
-        return;
-    }
-    HANDLE launchToken = nullptr;
-    const BOOL duplicated = DuplicateTokenEx(
-        shellToken,
-        TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY |
-            TOKEN_ADJUST_DEFAULT | TOKEN_ADJUST_SESSIONID,
-        nullptr, SecurityImpersonation, TokenPrimary, &launchToken);
-    CloseHandle(shellToken);
-    CloseHandle(shellProcess);
-    if (!duplicated)
-        return;
-
-    STARTUPINFOW startup{};
-    startup.cb = sizeof(startup);
-    PROCESS_INFORMATION process{};
-    if (CreateProcessWithTokenW(launchToken, 0, hubPath.c_str(),
-                                arguments.data(), 0, nullptr,
-                                directory.c_str(), &startup, &process)) {
-        CloseHandle(process.hThread);
-        CloseHandle(process.hProcess);
-    }
-    CloseHandle(launchToken);
-}
-
 }
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR rawCommandLine, int)
@@ -295,7 +237,5 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR rawCommandLine, int)
     CloseHandle(stagingGuard);
     DeleteFileW(msiPath.c_str());
     RemoveDirectoryW(stagingDir.c_str());
-    if (!quiet && exitCode == ERROR_SUCCESS)
-        launchInstalledHub();
     return static_cast<int>(exitCode);
 }

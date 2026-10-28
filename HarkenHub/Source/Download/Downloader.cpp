@@ -1,4 +1,6 @@
 #include "Download/Downloader.h"
+#include "Download/ContentRange.h"
+#include "Platform/AtomicFile.h"
 
 #include "Update/ServerEndpoints.h"
 
@@ -20,26 +22,36 @@ namespace {
 
 constexpr qint64 kDiskReserveBytes = 64ll * 1024 * 1024;
 
-qint64 contentRangeStart(const QByteArray& header)
-{
-    if (!header.startsWith("bytes "))
-        return -1;
-    const QByteArray range = header.mid(6).trimmed();
-    const qsizetype dash = range.indexOf('-');
-    if (dash <= 0)
-        return -1;
-    bool parsed = false;
-    const qint64 start = range.left(dash).toLongLong(&parsed);
-    return parsed ? start : -1;
-}
-
 }
 
 Downloader::Downloader(QObject* parent)
     : QObject(parent)
 {
     retryTimer_.setSingleShot(true);
+    selectionTimer_.setSingleShot(true);
+    connect(&selectionTimer_, &QTimer::timeout, this, &Downloader::selectSource);
     connect(&retryTimer_, &QTimer::timeout, this, &Downloader::beginAttempt);
+    connect(&probe_, &SourceProbe::finished, this,
+            [this](const QList<QUrl>& sources, const QString& error) {
+        if (!error.isEmpty()) {
+            failPermanently(error);
+            return;
+        }
+        sources_ = sources;
+        const auto operation = operationId_;
+        emit sourceSelected(currentSourceName(), false);
+        if (active_ && operation == operationId_)
+            beginAttempt();
+    });
+}
+
+Downloader::~Downloader()
+{
+    probe_.cancel();
+    if (reply_) {
+        disconnect(reply_, nullptr, this, nullptr);
+        reply_->abort();
+    }
 }
 
 void Downloader::setBackoffPolicy(const BackoffPolicy& policy)
@@ -84,8 +96,15 @@ bool Downloader::start(const DownloadRequest& request, QString* error)
     if (!lease)
         return false;
     request_ = request;
+    const auto operation = ++operationId_;
     request_.lease = std::move(lease);
+    sources_ = {request.url};
+    for (const auto& source : request.fallbackUrls) {
+        if (!sources_.contains(source))
+            sources_.append(source);
+    }
     attemptsStarted_ = 0;
+    sourceAttempts_ = 0;
     sourceIndex_ = 0;
     resultHttpStatus_ = 0;
     cancelRequested_ = false;
@@ -93,8 +112,9 @@ bool Downloader::start(const DownloadRequest& request, QString* error)
 
     const QDir targetDir = QFileInfo(request_.targetPath).dir();
     if (!targetDir.mkpath(QStringLiteral("."))) {
-        QTimer::singleShot(0, this, [this]() {
-            failPermanently(QStringLiteral("Cannot create the download directory"));
+        QTimer::singleShot(0, this, [this, operation]() {
+            if (active_ && operation == operationId_)
+                failPermanently(QStringLiteral("Cannot create the download directory"));
         });
         return true;
     }
@@ -107,14 +127,29 @@ bool Downloader::start(const DownloadRequest& request, QString* error)
             : 0;
     if (storage.isValid() &&
         storage.bytesAvailable() < remaining + kDiskReserveBytes) {
-        QTimer::singleShot(0, this, [this]() {
-            failPermanently(QStringLiteral("Insufficient disk space for the download"));
+        QTimer::singleShot(0, this, [this, operation]() {
+            if (active_ && operation == operationId_)
+                failPermanently(QStringLiteral("Insufficient disk space for the download"));
         });
         return true;
     }
 
-    beginAttempt();
+    selectionTimer_.start(0);
     return true;
+}
+
+void Downloader::selectSource()
+{
+    if (!active_)
+        return;
+    if (restoreSource() || sources_.size() == 1) {
+        const auto operation = operationId_;
+        emit sourceSelected(currentSourceName(), false);
+        if (active_ && operation == operationId_)
+            beginAttempt();
+        return;
+    }
+    probe_.start(sources_, request_.expectedSizeBytes);
 }
 
 void Downloader::cancel()
@@ -122,14 +157,14 @@ void Downloader::cancel()
     if (!active_)
         return;
     cancelRequested_ = true;
+    selectionTimer_.stop();
+    probe_.cancel();
     if (reply_) {
         reply_->abort();
         return;
     }
-    if (retryTimer_.isActive()) {
-        retryTimer_.stop();
-        failPermanently(QStringLiteral("Download canceled"));
-    }
+    retryTimer_.stop();
+    failPermanently(QStringLiteral("Download canceled"));
 }
 
 void Downloader::beginAttempt()
@@ -140,11 +175,15 @@ void Downloader::beginAttempt()
     }
 
     ++attemptsStarted_;
+    ++sourceAttempts_;
     headerHandled_ = false;
     responseUsable_ = false;
     restartRequested_ = false;
     writeFailed_ = false;
     httpStatus_ = 0;
+    resumeOffset_ = 0;
+    metaLastModified_.clear();
+    metaTotalSize_ = -1;
     redirectCount_ = 0;
     requestUrl_ = currentUrl();
     qInfo().noquote() << QStringLiteral("Update package request source:")
@@ -169,6 +208,7 @@ void Downloader::beginAttempt()
 void Downloader::startHead()
 {
     QNetworkRequest netRequest(requestUrl_);
+    netRequest.setRawHeader("Accept-Encoding", "identity");
     netRequest.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                             QNetworkRequest::ManualRedirectPolicy);
     netRequest.setTransferTimeout(std::max(request_.transferTimeoutMs, 1));
@@ -211,8 +251,7 @@ void Downloader::handleHeadFinished()
     if (networkError != QNetworkReply::NoError || status != 200) {
         if (status >= 400) {
             const QString error = QStringLiteral("HTTP status %1").arg(status);
-            if ((status == 403 || status == 404 || status == 408 ||
-                 status == 429 || status >= 500) &&
+            if ((status == 403 || status == 404) &&
                 switchToFallback(error))
                 return;
             if (status >= 500 || status == 408 || status == 429)
@@ -221,8 +260,7 @@ void Downloader::handleHeadFinished()
                 failPermanently(error);
             return;
         }
-        if (!switchToFallback(networkErrorText))
-            retryOrFail(networkErrorText);
+        retryOrFail(networkErrorText);
         return;
     }
 
@@ -253,6 +291,7 @@ void Downloader::startGet(bool resume)
     resumeOffset_ = resume ? file_.size() : 0;
 
     QNetworkRequest netRequest(requestUrl_);
+    netRequest.setRawHeader("Accept-Encoding", "identity");
     netRequest.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                             QNetworkRequest::ManualRedirectPolicy);
     netRequest.setTransferTimeout(std::max(request_.transferTimeoutMs, 1));
@@ -279,9 +318,9 @@ void Downloader::handleResponseHeader()
         reply_->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
     if (httpStatus_ == 206) {
-        const qint64 start =
-            contentRangeStart(reply_->rawHeader(QByteArrayLiteral("Content-Range")));
-        if (start != resumeOffset_) {
+        const auto range = ContentRange::parse(reply_->rawHeader("Content-Range"));
+        if (!range || range->start != resumeOffset_ ||
+            range->total != metaTotalSize_ || range->end != range->total - 1) {
             restartRequested_ = true;
             reply_->abort();
             return;
@@ -393,8 +432,7 @@ void Downloader::handleReplyFinished()
 
     if (status >= 400) {
         const QString error = QStringLiteral("HTTP status %1").arg(status);
-        if ((status == 403 || status == 404 || status == 408 ||
-             status == 429 || status >= 500) && switchToFallback(error))
+        if ((status == 403 || status == 404) && switchToFallback(error))
             return;
         if (status >= 500 || status == 408 || status == 429)
             retryOrFail(error);
@@ -403,8 +441,7 @@ void Downloader::handleReplyFinished()
         return;
     }
 
-    if (!switchToFallback(networkErrorText))
-        retryOrFail(networkErrorText);
+    retryOrFail(networkErrorText);
 }
 
 void Downloader::finishSuccess()
@@ -472,25 +509,34 @@ void Downloader::failPermanently(const QString& error)
 
 void Downloader::retryOrFail(const QString& error)
 {
-    if (attemptsStarted_ >= request_.maxAttempts) {
+    if (sourceAttempts_ >= request_.maxAttempts) {
+        if (switchToFallback(error))
+            return;
         failPermanently(error);
         return;
     }
-    retryTimer_.start(backoff_.sampleDelayMs(attemptsStarted_ - 1));
+    retryTimer_.start(backoff_.sampleDelayMs(sourceAttempts_ - 1));
 }
 
 bool Downloader::switchToFallback(const QString& error)
 {
-    if (sourceIndex_ >= request_.fallbackUrls.size() ||
-        attemptsStarted_ >= request_.maxAttempts)
+    if (sourceIndex_ + 1 >= sources_.size())
         return false;
     const QString previousSource = currentSourceName();
     ++sourceIndex_;
+    sourceAttempts_ = 0;
     qWarning().noquote()
         << QStringLiteral("Update package source fallback:") << previousSource
         << QStringLiteral("->") << currentSourceName()
-        << QStringLiteral("reason:") << error;
+        << QStringLiteral("restarting from the beginning; reason:") << error;
     discardPartialFiles();
+    const auto operation = operationId_;
+    emit sourceSelected(currentSourceName(), true);
+    if (!active_ || operation != operationId_)
+        return true;
+    emit progress(0, request_.expectedSizeBytes);
+    if (!active_ || operation != operationId_)
+        return true;
     retryTimer_.start(0);
     return true;
 }
@@ -498,8 +544,7 @@ bool Downloader::switchToFallback(const QString& error)
 bool Downloader::followRedirect(const QUrl& redirect, bool headRequest)
 {
     const QUrl resolved = requestUrl_.resolved(redirect);
-    if (sourceIndex_ != 0 ||
-        !ServerEndpoints::isApprovedGithubRedirect(request_.url) ||
+    if (!ServerEndpoints::isApprovedGithubRedirect(currentUrl()) ||
         ++redirectCount_ > 5 ||
         !ServerEndpoints::isApprovedGithubRedirect(resolved))
         return false;
@@ -513,15 +558,13 @@ bool Downloader::followRedirect(const QUrl& redirect, bool headRequest)
 
 QString Downloader::currentSourceName() const
 {
-    return sourceIndex_ == 0 ? QStringLiteral("GitHub")
-                             : QStringLiteral("OSS");
+    return ServerEndpoints::isApprovedGithubRedirect(currentUrl())
+        ? QStringLiteral("GitHub") : QStringLiteral("OSS");
 }
 
 QUrl Downloader::currentUrl() const
 {
-    return sourceIndex_ == 0
-               ? request_.url
-               : request_.fallbackUrls.value(sourceIndex_ - 1);
+    return sources_.value(sourceIndex_);
 }
 
 void Downloader::discardPartialFiles()
@@ -541,26 +584,49 @@ bool Downloader::readMeta(QByteArray* lastModified, qint64* totalSize) const
     const QJsonObject object = doc.object();
     if (object[QStringLiteral("url")].toString() != currentUrl().toString())
         return false;
+    if (object.contains(QStringLiteral("sha256")) &&
+        object[QStringLiteral("sha256")].toString() != request_.expectedSha256.toLower())
+        return false;
     const QByteArray modifiedValue =
         object[QStringLiteral("lastModified")].toString().toUtf8();
     const qint64 sizeValue =
         object[QStringLiteral("totalSize")].toInteger(-1);
-    if (modifiedValue.isEmpty() || sizeValue <= 0)
+    if (modifiedValue.isEmpty() || sizeValue <= 0 ||
+        (request_.expectedSizeBytes >= 0 && sizeValue != request_.expectedSizeBytes))
         return false;
     *lastModified = modifiedValue;
     *totalSize = sizeValue;
     return true;
 }
 
+bool Downloader::restoreSource()
+{
+    QFile meta(metaPath(request_.targetPath));
+    if (!meta.open(QIODevice::ReadOnly))
+        return false;
+    const auto object = QJsonDocument::fromJson(meta.readAll()).object();
+    const QUrl saved(object[QStringLiteral("url")].toString());
+    const int index = sources_.indexOf(saved);
+    if (index < 0)
+        return false;
+    sourceIndex_ = index;
+    QByteArray modified;
+    qint64 total = -1;
+    const auto size = QFileInfo(partPath(request_.targetPath)).size();
+    const bool usable = readMeta(&modified, &total) && size > 0 && size < total;
+    sourceIndex_ = 0;
+    if (usable)
+        sources_.move(index, 0);
+    return usable;
+}
+
 void Downloader::writeMeta(const QByteArray& lastModified,
                            qint64 totalSize) const
 {
-    QFile meta(metaPath(request_.targetPath));
-    if (!meta.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        return;
-    meta.write(QJsonDocument(
+    writeAtomicFile(metaPath(request_.targetPath), QJsonDocument(
                    QJsonObject{
                        {QStringLiteral("url"), currentUrl().toString()},
+                       {QStringLiteral("sha256"), request_.expectedSha256.toLower()},
                        {QStringLiteral("lastModified"),
                         QString::fromUtf8(lastModified)},
                        {QStringLiteral("totalSize"), totalSize},

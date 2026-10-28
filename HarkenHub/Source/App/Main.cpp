@@ -63,6 +63,7 @@
 #include <utility>
 
 #ifdef Q_OS_WIN
+#include "Platform/UserSession.h"
 #include "Platform/Windows/ShellIcons.h"
 #include "Platform/Windows/UserSessionReady.h"
 #include <QThreadPool>
@@ -410,6 +411,12 @@ void confirmConsentReady(const QStringList& arguments)
 
 int main(int argc, char* argv[])
 {
+#ifdef Q_OS_WIN
+    if (argc == 2 && qstrcmp(argv[1], "--launch-after-setup") == 0) {
+        QCoreApplication app(argc, argv);
+        return VNH::launchInDesktopUserSession(QCoreApplication::applicationFilePath()) ? 0 : 1;
+    }
+#endif
     QString logRole = QStringLiteral("gui");
     for (int i = 1; i < argc; ++i) {
         if (qstrcmp(argv[i], "--background") == 0) {
