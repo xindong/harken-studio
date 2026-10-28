@@ -1053,6 +1053,8 @@ void CurveCanvas::beginAxisBoundEdit(CurveAxisBound bound, const QRectF& labelRe
     const double initialValue = spin->value();
     const QString title = xBound ? tr("X Max") : (upper ? tr("Y Max") : tr("Y Min"));
     form->addRow(title, spin);
+    QtControlSkin::setSemanticProperty(form->labelForField(spin), "textRole",
+                                      QStringLiteral("formLabel"));
     connect(dialog, &QDialog::accepted, this, [this, spin, initial, initialValue, xBound, upper] {
         valueEditor_.clear();
         if (spin->value() == initialValue)
@@ -1703,6 +1705,8 @@ void CurveCanvas::beginPointCoordinateEdit(int index)
     form->addRow(QStringLiteral("Y"), ySpin);
 
     for (auto* spin : {xSpin, ySpin}) {
+        QtControlSkin::setSemanticProperty(form->labelForField(spin), "textRole",
+                                          QStringLiteral("formLabel"));
         spin->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         spin->setFont(FontManager::instance().getFont(FontRole::Mono));
         connect(&FontManager::instance(), &FontManager::fontChanged, spin, [spin] {

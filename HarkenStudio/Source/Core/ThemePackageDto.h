@@ -27,8 +27,8 @@ enum class ThemeArrayInheritancePolicy
 
 struct ThemePackageContract
 {
-    static constexpr int minimumSchemaVersion = 1;
-    static constexpr int maximumSchemaVersion = 5;
+    static constexpr int minimumSchemaVersion = 6;
+    static constexpr int maximumSchemaVersion = 6;
     static constexpr ThemeUnknownFieldPolicy unknownFieldPolicy =
         ThemeUnknownFieldPolicy::Reject;
     static constexpr ThemeDeprecatedFieldPolicy deprecatedFieldPolicy =

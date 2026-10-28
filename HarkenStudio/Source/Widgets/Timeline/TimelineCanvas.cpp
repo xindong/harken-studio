@@ -1299,7 +1299,9 @@ void TimelineCanvas::editClipStart(int laneIndex, const QUuid& guid)
     auto* layout = new QHBoxLayout(dialog);
     layout->setContentsMargins(8, 6, 8, 6);
     layout->setSpacing(8);
-    layout->addWidget(new QLabel(tr("Start"), dialog));
+    auto* label = new QLabel(tr("Start"), dialog);
+    label->setProperty("textRole", QStringLiteral("formLabel"));
+    layout->addWidget(label);
     auto* spin = new DecimalSpinBox(dialog);
     spin->setObjectName(QStringLiteral("timelineClipStartInput"));
     spin->setKeyboardTracking(false);

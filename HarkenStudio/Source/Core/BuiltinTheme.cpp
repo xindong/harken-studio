@@ -1,4 +1,5 @@
 #include "BuiltinTheme.h"
+#include "ThemeColorResolver.h"
 
 #include <QFont>
 
@@ -31,7 +32,6 @@ ThemeSnapshot createBuiltinDarkTheme()
 
     colors.borderPrimary = QColor("#313848");
     colors.borderSecondary = QColor("#3D4554");
-    colors.borderAccent = colors.accent;
     colors.viewBorder = QColor("#272E3C");
     colors.dropHighlight = QColor(0x30, 0x90, 0xFF, 0x60);
     colors.dropAccent = QColor(0x00, 0xF0, 0xFF, 0xC0);
@@ -52,13 +52,9 @@ ThemeSnapshot createBuiltinDarkTheme()
     colors.busBackgroundActive = QColor(0, 240, 255, 25);
 
     colors.sliderTrack = QColor("#2A3140");
-    colors.sliderFill = QColor("#00F0FF");
-    colors.knobArc = QColor("#00F0FF");
-    colors.knobFace = QColor("#222836");
     colors.knobIndicator = QColor("#FFFFFF");
 
     colors.panelBackground = QColor("#10151F");
-    colors.panelBorder = QColor("#313848");
     colors.sectionSeparator = QColor("#2A3140");
     colors.headerBackground = QColor("#1B2130");
 
@@ -67,14 +63,9 @@ ThemeSnapshot createBuiltinDarkTheme()
     colors.auditionStopActive = QColor("#F44336");
 
     colors.shellMenuText = QColor("#C0C0C0");
-    colors.shellMenuHover = colors.bgHover;
     colors.shellMenuHoverText = QColor("#FFFFFF");
-    colors.shellMenuPressed = colors.accent;
-    colors.shellMenuPressedText = colors.accentText;
     colors.shellButtonText = QColor("#AAB0BA");
-    colors.shellButtonHover = colors.bgHover;
     colors.shellButtonHoverText = QColor("#FFFFFF");
-    colors.shellButtonPressed = colors.bgTertiary;
     colors.shellCloseHover = QColor("#E81123");
     colors.shellClosePressed = QColor("#F1707A");
 
@@ -202,23 +193,14 @@ ThemeSnapshot createBuiltinDarkTheme()
 
     auto& palette = theme.qtPalette;
     palette.window = QColor(0x0B, 0x0E, 0x14);
-    palette.windowText = QColor(0xE0, 0xE0, 0xE0);
     palette.base = QColor(0x08, 0x0A, 0x0F);
     palette.alternateBase = QColor(0x10, 0x14, 0x1C);
     palette.toolTipBase = QColor(0x15, 0x19, 0x22);
-    palette.toolTipText = QColor(0xE0, 0xE0, 0xE0);
-    palette.text = QColor(0xE0, 0xE0, 0xE0);
     palette.button = QColor(0x25, 0x2A, 0x35);
-    palette.buttonText = QColor(0xE0, 0xE0, 0xE0);
     palette.brightText = QColor(0xFF, 0xFF, 0xFF);
-    palette.link = QColor(0x00, 0xF0, 0xFF);
-    palette.highlight = QColor(0x00, 0xF0, 0xFF);
-    palette.highlightedText = QColor(0x00, 0x00, 0x00);
     palette.light = QColor(0xE0, 0xE0, 0xE0);
     palette.dark = QColor(0x88, 0x88, 0x88);
     palette.mid = QColor(0x2A, 0x2E, 0x35);
-    palette.disabledText = QColor(0x55, 0x55, 0x55);
-    palette.disabledButtonText = QColor(0x55, 0x55, 0x55);
     palette.disabledHighlight = QColor(0x3C, 0x3C, 0x3C);
 
     auto& qtAds = theme.thirdParty.qtAds;
@@ -306,10 +288,7 @@ ThemeSnapshot createBuiltinDarkTheme()
     domains.meter.layout.dropFill = QColor(0x00, 0xC8, 0xFF, 30);
 
     auto& meterInteractionColors = domains.meter.interaction.colors;
-    meterInteractionColors.crosshair = QColor(0xE0, 0xE0, 0xE0, 0x59);
     meterInteractionColors.accentGuide = QColor(0xFF, 0x88, 0x00);
-    meterInteractionColors.readoutBackground = QColor(0x0D, 0x11, 0x1A, 0xDD);
-    meterInteractionColors.readoutText = QColor(0xE0, 0xE0, 0xE0, 0xE5);
 
     auto& meterInteractionMetrics = domains.meter.interaction.metrics;
     meterInteractionMetrics.crosshairLineWidth = 1.0;
@@ -323,8 +302,6 @@ ThemeSnapshot createBuiltinDarkTheme()
     meterInteractionMetrics.radius = 4.0;
 
     auto& peakColors = domains.meter.peakMeter.colors;
-    peakColors.canvasBackground = colors.bgPrimary;
-    peakColors.trackBackground = colors.bgPrimary;
     peakColors.gradientError = colors.error;
     peakColors.gradientWarning = domains.meter.yellow;
     peakColors.gradientYellow = domains.meter.yellow;
@@ -332,11 +309,8 @@ ThemeSnapshot createBuiltinDarkTheme()
     peakColors.rmsOverlay = QColor(0xFF, 0xFF, 0xFF, 0x3C);
     peakColors.holdHalo = QColor(0xE0, 0xE0, 0xE0, 0x19);
     peakColors.holdLine = QColor(0xE0, 0xE0, 0xE0, 0xEA);
-    peakColors.grid = colors.viewBorder;
-    peakColors.tickText = colors.textSecondary;
     peakColors.clipBackground = colors.error;
     peakColors.clipText = QColor(0xFF, 0xFF, 0xFF);
-    peakColors.label = QColor(0xE0, 0xE0, 0xE0, 0xCC);
 
     auto& peakMetrics = domains.meter.peakMeter.metrics;
     peakMetrics.outerInsetLeft = 4;
@@ -367,12 +341,7 @@ ThemeSnapshot createBuiltinDarkTheme()
     peakMetrics.labelHeight = 14;
 
     auto& loudnessColors = domains.meter.loudnessMeter.colors;
-    loudnessColors.canvasBackground = colors.panelBackground;
-    loudnessColors.trackBackground = colors.trackBackground;
     loudnessColors.targetLine = QColor(0xFF, 0xAA, 0x00, 0xA0);
-    loudnessColors.targetText = colors.textSecondary;
-    loudnessColors.labelText = QColor(0xE0, 0xE0, 0xE0, 0xCC);
-    loudnessColors.valueText = QColor(0xE0, 0xE0, 0xE0, 0xCC);
 
     auto& loudnessMetrics = domains.meter.loudnessMeter.metrics;
     loudnessMetrics.outerInsetLeft = 4;
@@ -399,22 +368,12 @@ ThemeSnapshot createBuiltinDarkTheme()
     loudnessMetrics.valueLabelHeight = 24.0;
 
     auto& vuColors = domains.meter.vuMeter.colors;
-    vuColors.canvasBackground = colors.panelBackground;
-    vuColors.titleText = colors.textPrimary;
-    vuColors.trackBackground = colors.trackBackground;
-    vuColors.analogArc = colors.borderPrimary;
-    vuColors.analogNegativeTick = colors.textSecondary;
     vuColors.analogPositiveTick = QColor(0xF4, 0x43, 0x36, 0xB2);
     vuColors.analogOverloadArc = QColor(0xF4, 0x43, 0x36, 0x66);
     vuColors.analogNeedleGlow = QColor(0x00, 0xF0, 0xFF, 0x26);
     vuColors.analogNeedle = QColor(0xE0, 0xE0, 0xE0, 0xE5);
     vuColors.analogPivot = colors.accent;
-    vuColors.analogValueText = colors.textMuted;
-    vuColors.analogLabelText = colors.textPrimary;
     vuColors.barWarning = colors.warning;
-    vuColors.barGrid = colors.borderPrimary;
-    vuColors.barLabelText = colors.textPrimary;
-    vuColors.barValueText = colors.textMuted;
 
     auto& vuMetrics = domains.meter.vuMeter.metrics;
     vuMetrics.outerInsetLeft = 4;
@@ -472,7 +431,6 @@ ThemeSnapshot createBuiltinDarkTheme()
     vuMetrics.barValueLabelHeight = 12;
 
     auto& spectrumColors = domains.meter.spectrumMeter.colors;
-    spectrumColors.canvasBackground = colors.bgPrimary;
     spectrumColors.fillTop = colors.accent;
     spectrumColors.fillTop.setAlpha(160);
     spectrumColors.fillUpperMiddle = colors.info;
@@ -491,9 +449,6 @@ ThemeSnapshot createBuiltinDarkTheme()
     spectrumColors.lineHighlight.setAlpha(220);
     spectrumColors.peakLine = QColor(0xFF, 0xFF, 0xFF);
     spectrumColors.peakLine.setAlpha(128);
-    spectrumColors.horizontalGrid = colors.viewBorder;
-    spectrumColors.verticalGrid = colors.viewBorder;
-    spectrumColors.axisText = colors.textSecondary;
 
     auto& spectrumMetrics = domains.meter.spectrumMeter.metrics;
     spectrumMetrics.plotInsetLeft = 30;
@@ -521,11 +476,7 @@ ThemeSnapshot createBuiltinDarkTheme()
     spectrumMetrics.frequencyLabelHeight = 14.0;
 
     auto& spectrogramColors = domains.meter.spectrogramMeter.colors;
-    spectrogramColors.canvasBackground = colors.bgPrimary;
     spectrogramColors.emptyHistory = colors.bgPrimary;
-    spectrogramColors.grid = colors.viewBorder;
-    spectrogramColors.axisText = colors.textSecondary;
-    spectrogramColors.timeText = colors.textSecondary;
 
     auto& spectrogramMetrics = domains.meter.spectrogramMeter.metrics;
     spectrogramMetrics.plotInsetLeft = 30;
@@ -540,14 +491,8 @@ ThemeSnapshot createBuiltinDarkTheme()
     spectrogramMetrics.timeLabelTopOffset = 2.0;
     spectrogramMetrics.timeLabelHeight = 16.0;
 
-    domains.feedback.success = colors.success;
-    domains.feedback.warning = colors.warning;
-    domains.feedback.error = colors.error;
-    domains.feedback.info = colors.info;
-    domains.feedback.neutral = colors.textMuted;
     domains.feedback.overlayBackground = QColor(0x10, 0x18, 0x28, 0xF0);
     domains.feedback.overlayErrorBackground = QColor(0x28, 0x10, 0x10, 0xF0);
-    domains.feedback.overlayHighlight = QColor(0x00, 0xF0, 0xFF);
 
     domains.waveform.line = QColor(0x00, 0xE6, 0x76);
     domains.waveform.fill = QColor(0x00, 0xE6, 0x76, 0x40);
@@ -556,13 +501,6 @@ ThemeSnapshot createBuiltinDarkTheme()
     domains.waveform.regionMarker = QColor(0xFF, 0xD6, 0x00);
     domains.waveform.trimHandle = QColor(0x3E, 0x8E, 0xF7);
     domains.waveform.loopHandle = QColor(0x4A, 0xBD, 0x80);
-    domains.waveform.previewGradientTop = QColor(0x64, 0xB4, 0xFF);
-    domains.waveform.previewGradientMid = QColor(0x3C, 0x8C, 0xDC);
-    domains.waveform.previewPlayhead = QColor(0xFF, 0x64, 0x64);
-    domains.waveform.previewLoopFill = QColor(0x50, 0x78, 0xC8, 0x32);
-    domains.waveform.previewLoopBorder = QColor(0x50, 0x78, 0xC8);
-    domains.waveform.previewPeakClip = QColor(0xFF, 0x50, 0x50);
-    domains.waveform.previewPeakSafe = QColor(0xA0, 0xC8, 0xA0);
     domains.waveform.staticMode.quiet = QColor(60, 140, 255, 180);
     domains.waveform.staticMode.peak = QColor(60, 255, 255, 180);
     domains.waveform.staticMode.accentQuietAlpha = 100;
@@ -586,9 +524,6 @@ ThemeSnapshot createBuiltinDarkTheme()
     domains.waveform.rawPeaks.centerLine = QColor(60, 60, 60, 100);
     domains.waveform.rawPeaks.cornerRadius = 2.0;
     domains.waveform.rawPeaks.centerLineWidth = 0.5;
-    domains.waveform.dbScale.grid = colors.viewBorder;
-    domains.waveform.dbScale.grid.setAlpha(100);
-    domains.waveform.dbScale.label = colors.textSecondary;
     domains.waveform.dbScale.gridWidth = 1.0;
     domains.waveform.dbScale.labelPointSize = 8;
     domains.waveform.dbScale.amplitudeScale = 0.9;
@@ -597,13 +532,6 @@ ThemeSnapshot createBuiltinDarkTheme()
     domains.waveform.amplitudeScale = 0.9;
 
     auto& curveColors = domains.curve.colors;
-    curveColors.canvasBackground = colors.panelBackground;
-    curveColors.canvasBorder = colors.viewBorder;
-    curveColors.plotBackground = colors.bgPrimary;
-    curveColors.grid = colors.viewBorder;
-    curveColors.grid.setAlpha(100);
-    curveColors.plotBorder = colors.borderPrimary;
-    curveColors.axisText = colors.textSecondary;
     curveColors.attenuationVolume = colors.accent;
     curveColors.attenuationPitch = QColor(0x4A, 0x9D, 0xE0);
     curveColors.parameterBinding = colors.accent;
@@ -611,21 +539,8 @@ ThemeSnapshot createBuiltinDarkTheme()
     curveColors.ghost = QColor(0xFF, 0xFF, 0xFF, 90);
     curveColors.lassoBorder = QColor(0xFF, 0xFF, 0xFF, 150);
     curveColors.lassoFill = QColor(0xFF, 0xFF, 0xFF, 28);
-    curveColors.handleLine = colors.textSecondary;
-    curveColors.handleLine.setAlpha(110);
-    curveColors.handleBorder = colors.textSecondary;
-    curveColors.handleActiveBorder = colors.accent;
-    curveColors.handleFill = colors.bgPrimary;
-    curveColors.handleActiveFill = colors.accent;
-    curveColors.pointBorder = colors.accent;
-    curveColors.pointSelectedBorder = colors.textPrimary;
-    curveColors.pointSelectedFill = colors.accent;
     curveColors.crosshair = QColor(0xC8, 0xD2, 0xDC, 153);
-    curveColors.crosshairContrast = colors.bgPrimary;
-    curveColors.crosshairContrast.setAlpha(153);
     curveColors.playhead = QColor(0xC8, 0xD2, 0xDC, 90);
-    curveColors.readoutBackground = colors.bgSecondary;
-    curveColors.readoutText = colors.textPrimary;
 
     auto& curveMetrics = domains.curve.metrics;
     curveMetrics.linearGraphLeftInset = 40;
@@ -680,27 +595,6 @@ ThemeSnapshot createBuiltinDarkTheme()
     curveMetrics.readoutBelowOffset = 9.0;
     curveMetrics.readoutRadius = 2.0;
 
-    domains.nodeGraph.sound = QColor(0x0E, 0x9C, 0x92);
-    domains.nodeGraph.audioLayer = QColor(0x6D, 0x5B, 0xD0);
-    domains.nodeGraph.bus = QColor(0x2F, 0x9E, 0x44);
-    domains.nodeGraph.receiveBus = QColor(0x2B, 0x8A, 0x3E);
-    domains.nodeGraph.attenuation = QColor(0xE8, 0x59, 0x0C);
-    domains.nodeGraph.action = QColor(0x19, 0x71, 0xC2);
-    domains.nodeGraph.fallback = QColor(0x4A, 0x50, 0x58);
-
-    domains.nodeGraphHeader.sound = QColor(0x1B, 0x55, 0x56);
-    domains.nodeGraphHeader.audioLayer = QColor(0x41, 0x3B, 0x6E);
-    domains.nodeGraphHeader.bus = QColor(0x29, 0x56, 0x36);
-    domains.nodeGraphHeader.receiveBus = QColor(0x27, 0x4E, 0x34);
-    domains.nodeGraphHeader.attenuation = QColor(0x73, 0x3B, 0x20);
-    domains.nodeGraphHeader.action = QColor(0x20, 0x44, 0x69);
-    domains.nodeGraphHeader.fallback = QColor(0x33, 0x37, 0x3E);
-
-    domains.nodeGraphRole.source = QColor(0, 240, 255);
-    domains.nodeGraphRole.parent = QColor(155, 110, 255);
-    domains.nodeGraphRole.bus = QColor(61, 186, 110);
-    domains.nodeGraphRole.receiveBus = QColor(42, 157, 92);
-
     domains.pinDomain.audio = QColor(0x00, 0xF0, 0xFF);
     domains.pinDomain.control = QColor(0x9B, 0x6E, 0xFF);
     domains.pinDomain.value = QColor(0xFF, 0xB8, 0x00);
@@ -708,15 +602,10 @@ ThemeSnapshot createBuiltinDarkTheme()
     domains.pinDomain.targetOk = QColor(0x3D, 0xBA, 0x6E);
     domains.pinDomain.targetBad = QColor(0xDC, 0x3C, 0x3C);
 
-    domains.nodeGraphNode.bodyNormal = colors.bgTertiary;
-    domains.nodeGraphNode.bodySelected = colors.bgHover;
     domains.nodeGraphNode.borderNormal = QColor(0x10, 0x11, 0x14);
     domains.nodeGraphNode.borderHoverMix = QColor(0xFF, 0xFF, 0xFF);
     domains.nodeGraphNode.dropTarget = QColor(0x3D, 0xBA, 0x6E);
     domains.nodeGraphNode.shadow = QColor(0x00, 0x00, 0x00, 0x3C);
-    domains.nodeGraphNode.titleText = QColor(0xFF, 0xFF, 0xFF);
-    domains.nodeGraphNode.contentLabel = QColor(0xAE, 0xB3, 0xBD);
-    domains.nodeGraphNode.contentValue = QColor(0xE8, 0xE9, 0xEC);
     domains.nodeGraphNode.sandboxBadgeBg = QColor(0xDC, 0x3C, 0x3C, 0xC8);
     domains.nodeGraphNode.sandboxBadgeText = QColor(0xFF, 0xFF, 0xFF);
     domains.nodeGraphNode.badgeOverride = QColor(0xFF, 0x98, 0x00);
@@ -729,7 +618,6 @@ ThemeSnapshot createBuiltinDarkTheme()
     domains.blueprint.canvasBackground = QColor(0x0B, 0x0E, 0x14);
     domains.blueprint.gridDot = QColor(0x33, 0x3C, 0x4D);
     domains.blueprint.edgeLabelBg = QColor(0x0B, 0x0E, 0x14, 0xE6);
-    domains.blueprint.edgeLabelText = QColor(0xAE, 0xB3, 0xBD);
     domains.blueprint.placementChain = QColor(0x00, 0xF0, 0xFF);
     domains.blueprint.organizationChain = QColor(0x9B, 0x6E, 0xFF);
     domains.blueprint.containment = QColor(0x64, 0x64, 0x64);
@@ -844,6 +732,7 @@ ThemeSnapshot createBuiltinDarkTheme()
     domains.spatial.layerWidth = QColor(46, 204, 113);
     domains.spatial.layerReverb = QColor(241, 196, 15);
 
+    resolveThemeColors(theme);
     return theme;
 }
 

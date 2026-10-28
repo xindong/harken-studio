@@ -74,7 +74,9 @@ void Hierarchy::setupPanelChrome()
                               static_cast<int>(bucket));
     }
     connect(filterCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &Hierarchy::onFilterChanged);
-    filterLayout->addWidget(new QLabel(tr("Filter:")));
+    auto* filterLabel = new QLabel(tr("Filter:"));
+    filterLabel->setProperty("textRole", QStringLiteral("formLabel"));
+    filterLayout->addWidget(filterLabel);
     filterLayout->addWidget(filterCombo_, 1);
 
     layout->addWidget(filterBar_);
