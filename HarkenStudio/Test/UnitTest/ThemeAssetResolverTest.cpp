@@ -39,7 +39,7 @@ bool writePackage(const QString& themesRoot,
 {
     const QString packageRoot = QDir(themesRoot).filePath(directoryName);
     const QByteArray manifest = QByteArray("{")
-        + "\"schemaVersion\":1,\"id\":\"" + id.toUtf8()
+        + "\"schemaVersion\":6,\"id\":\"" + id.toUtf8()
         + "\",\"displayName\":\"Test " + id.toUtf8()
         + "\",\"version\":\"1.0.0\""
         + ",\"compatibility\":{\"harkenVersion\":\">=0.1.0 <1.0.0\","

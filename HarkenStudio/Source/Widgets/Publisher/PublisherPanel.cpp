@@ -432,7 +432,7 @@ QWidget* PublisherPanel::createToolbar()
 
     auto* platformLabel = new QLabel(tr("Export Platforms:"));
     platformLabel->setObjectName("packPlatformLabel");
-    platformLabel->setProperty("textRole", QStringLiteral("muted"));
+    platformLabel->setProperty("textRole", QStringLiteral("formLabel"));
     row->addWidget(platformLabel);
 
     platformCombo_ = new MultiSelectComboBox();

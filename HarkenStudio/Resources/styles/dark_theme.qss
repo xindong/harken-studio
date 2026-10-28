@@ -351,8 +351,9 @@ QLineEdit[fieldRole="segmentInline"]:focus {
     padding: 0px;
     min-height: 0px;
     max-height: 16777215px;
-    color: @textSecondary@;
+    color: @textPrimary@;
 }
+QLineEdit[fieldRole="segmentInline"]:disabled { color: @textDisabled@; }
 
 /* --- Flat Icon Buttons (opt-in via flatIconButton property) -------------- */
 
@@ -590,7 +591,7 @@ QLineEdit, QPlainTextEdit, QTextEdit {
     border: 1px solid @borderSecondary@;
     border-radius: 0px;
     padding: @fieldTextPaddingY@px @fieldTextPaddingX@px;
-    color: @brightText@;
+    color: @textPrimary@;
 }
 
 QLineEdit {
@@ -1342,7 +1343,7 @@ QGroupBox::title {
 QLabel#blueprintConnectHint {
     color: @textPrimary@;
     background-color: @panelBackground@;
-    border: 1px solid @panelBorder@;
+    border: 1px solid @borderPrimary@;
     border-radius: @radiusSmall@px;
     padding: @spacingXSmall@px @spacingSmall@px;
 }
@@ -1464,19 +1465,6 @@ QLabel[settingsRole="subtitle"] {
 *[settingsRole="hint"] {
     color: @textMuted@;
     font-size: @captionPointSize@pt;
-}
-
-QLabel[dialogRole="label"] {
-    color: @textSecondary@;
-    background: transparent;
-}
-
-VNX--SettingsPage QLabel[dialogRole="label"]:enabled {
-    color: @textPrimary@;
-}
-
-VNX--SettingsPage QLabel[dialogRole="label"]:disabled {
-    color: @textDisabled@;
 }
 
 QPushButton:disabled {
@@ -1764,7 +1752,11 @@ QToolButton[listFootBtn="true"] {
 QToolButton[listFootBtn="true"][tableCompactAction="true"] { padding: 0px; }
 QToolButton[listFootBtn="true"][tableCompactAction="false"]:hover { background-color: @bgHover@; color: @accent@; }
 QToolButton[listFootBtn="true"]:disabled { color: @textDisabled@; }
-QLabel[roValue="true"] { color: @textSecondary@; background: transparent; }
+QLabel[roValue="true"] { color: @textPrimary@; background: transparent; }
+QLabel[textRole]:disabled,
+QLabel[nodeContentRole="label"]:disabled,
+QLabel[nodeContentRole="value"]:disabled,
+QLabel[roValue="true"]:disabled { color: @textDisabled@; }
 QWidget[fieldRole="preview"],
 VNX--ObjectRefWidget {
     background-color: @bgSecondary@;
@@ -1798,9 +1790,9 @@ VNX--ObjectRefWidget[selected="true"] {
 VNX--ObjectRefWidget[dropActive="true"] { border-color: @accent@; }
 VNX--ObjectRefWidget QLabel { background: transparent; border: none; }
 VNX--ObjectRefWidget QLabel#refName { color: @textPrimary@; }
-VNX--ObjectRefWidget QLabel#refName[inherited="true"],
-VNX--ObjectRefWidget QLabel#refName[dimmed="true"] { color: @textSecondary@; }
+VNX--ObjectRefWidget QLabel#refName[inherited="true"] { color: @textSecondary@; }
 VNX--ObjectRefWidget QLabel#refName[inputInvalid="true"] { color: @error@; }
+VNX--ObjectRefWidget QLabel#refName:disabled { color: @textDisabled@; }
 
 QLineEdit[inputInvalid="true"]:enabled,
 QPlainTextEdit[inputInvalid="true"]:enabled,
@@ -1960,7 +1952,7 @@ QLabel#meterClipIndicator[clipping="true"] {
 
 QWidget#MeterSubPanelTitleBar {
     background: @bgPrimary@;
-    border-bottom: 1px solid @borderAccent@;
+    border-bottom: 1px solid @accent@;
 }
 QLabel#meterSubPanelDragHandle { color: @textSecondary@; font-size: @bodyPointSize@pt; }
 QComboBox#meterTypeCombo {
@@ -1984,7 +1976,7 @@ QToolButton#meterSubPanelCloseBtn:hover { background: @errorOpaque@; border-radi
 
 QWidget#MeterSettingsPopup {
     background: @bgPrimary@;
-    border: 1px solid @borderAccent@;
+    border: 1px solid @accent@;
     border-radius: @radiusSmall@px;
 }
 QWidget#MeterSettingsPopup QLabel { color: @textSecondary@; font-size: @captionPointSize@pt; padding: 0 4px; }
@@ -2177,7 +2169,7 @@ QDialog QLabel {
 
 #titleBarMin:pressed,
 #titleBarMax:pressed {
-    background-color: @shellButtonPressed@;
+    background-color: @bgTertiary@;
 }
 
 #titleBarClose:hover:enabled {
@@ -2206,11 +2198,11 @@ QDialog QLabel {
 }
 
 #titleBarMenuBar::item:selected {
-    background-color: @shellMenuHover@;
+    background-color: @bgHover@;
     color: @shellMenuHoverText@;
 }
 
 #titleBarMenuBar::item:pressed {
-    background-color: @shellMenuPressed@;
-    color: @shellMenuPressedText@;
+    background-color: @accent@;
+    color: @accentText@;
 }

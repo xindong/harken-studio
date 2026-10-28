@@ -45,7 +45,7 @@ bool writeDenseMetricsPackage(const QString& themesRoot, const QString& id)
 {
     const QString root = QDir(themesRoot).filePath(id);
     const QByteArray manifest = QByteArray("{")
-        + "\"schemaVersion\":1,\"id\":\"" + id.toUtf8()
+        + "\"schemaVersion\":6,\"id\":\"" + id.toUtf8()
         + "\",\"displayName\":\"" + id.toUtf8()
         + "\",\"version\":\"1.0.0\",\"baseThemeId\":\""
         + VNX::builtinThemeId().toUtf8() + "\""

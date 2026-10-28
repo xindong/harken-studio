@@ -46,6 +46,8 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 
 ## 共同外观与样式可替换性
 
+字段文字、共享颜色来源与主题配置的收束边界见 [Studio 颜色职责与收束清单](colors.md)。
+
 主题数据以 `ThemeSnapshot` 为统一来源。`QtControlSkin` 将快照中的颜色、字体尺寸、间距和资源填入应用级 QSS，由 `ThemeManager` 在启动和主题切换时发布。`dark_theme.qss` 虽保留历史文件名，实际是标准 Qt 控件的集中皮肤模板，仍服务不同主题；它不是待删除的业务局部样式，也不承担完整主题运行时。领域 Renderer、Parameter Presenter 和组件 Recipe 分别负责其他绘制与呈现能力。
 
 `TableWidget` 负责公共表格结构、布局和交互，读取主题度量并声明供皮肤匹配的语义。`QTableView`、`QTreeWidget` 等是其内部原生表体，负责模型数据、单元格、选择及编辑。普通业务通过 `createModelView` 提供模型，或通过 `createItemView` 提供表头和初始列宽比例，由公共层一次完成创建与接入；特殊视图通过 `createCustomView` 工厂接入。原公开 `setView` 已移除，不能再把“业务先创建，再记得适配”作为普通开发流程。Qt 本身仍允许直接创建原生视图，本轮没有引入禁止绕过的代码门禁。导航树及二维 Grid 等专用编辑面按下文边界处理。

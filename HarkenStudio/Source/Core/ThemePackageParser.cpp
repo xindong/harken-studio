@@ -604,17 +604,6 @@ ThemePackageParseResult<ThemeManifestDto> parseThemeManifest(
             result.diagnostics))
         return result;
 
-    if (dto.schemaVersion < 2 && dto.entries.presenters)
-        return failed<ThemeManifestDto>(
-            ThemePackageErrorCode::InvalidValue, file,
-            QStringLiteral("$.entries.presenters"),
-            QStringLiteral("Presenter entries require schema version 2."));
-    if (dto.schemaVersion < 3 && dto.entries.recipes)
-        return failed<ThemeManifestDto>(
-            ThemePackageErrorCode::InvalidValue, file,
-            QStringLiteral("$.entries.recipes"),
-            QStringLiteral("Recipe entries require schema version 3."));
-
     QJsonObject visuals;
     if (!readRequiredObject(entries, QStringLiteral("visuals"), file,
                             QStringLiteral("$.entries"), visuals,
@@ -682,22 +671,6 @@ ThemePackageParseResult<ThemeManifestDto> parseThemeManifest(
             QStringLiteral("$.entries.visuals"), dto.entries.visuals.feedback,
             result.diagnostics))
         return result;
-
-    const bool hasLegacyDomainVisuals = dto.entries.visuals.nodeGraph
-        || dto.entries.visuals.blueprint || dto.entries.visuals.timeline
-        || dto.entries.visuals.music || dto.entries.visuals.log
-        || dto.entries.visuals.ai || dto.entries.visuals.scene3d
-        || dto.entries.visuals.spatial || dto.entries.visuals.feedback;
-    if (dto.schemaVersion < 4 && hasLegacyDomainVisuals)
-        return failed<ThemeManifestDto>(
-            ThemePackageErrorCode::InvalidValue, file,
-            QStringLiteral("$.entries.visuals"),
-            QStringLiteral("Domain visual entries require schema version 4."));
-    if (dto.schemaVersion < 5 && dto.entries.visuals.monitor)
-        return failed<ThemeManifestDto>(
-            ThemePackageErrorCode::InvalidValue, file,
-            QStringLiteral("$.entries.visuals.monitor"),
-            QStringLiteral("Monitor visual entries require schema version 5."));
 
     result.value = std::move(dto);
     return result;

@@ -1122,7 +1122,9 @@ void TimelineEditorPanel::editCursorValue()
     auto* layout = new QHBoxLayout(dialog);
     layout->setContentsMargins(8, 6, 8, 6);
     layout->setSpacing(8);
-    layout->addWidget(new QLabel(tr("Cursor"), dialog));
+    auto* label = new QLabel(tr("Cursor"), dialog);
+    label->setProperty("textRole", QStringLiteral("formLabel"));
+    layout->addWidget(label);
     auto* spin = new DecimalSpinBox(dialog);
     spin->setObjectName(QStringLiteral("timelineCursorValueInput"));
     spin->setKeyboardTracking(false);

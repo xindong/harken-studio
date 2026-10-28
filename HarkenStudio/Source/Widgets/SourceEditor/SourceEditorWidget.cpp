@@ -90,9 +90,8 @@ std::pair<QLabel*, QLabel*> addMetadataValue(QWidget* parent, const QString& tit
                                              const QString& objectName)
 {
     auto* titleLabel = new QLabel(title, parent);
-    titleLabel->setProperty("textRole", QStringLiteral("muted"));
+    titleLabel->setProperty("textRole", QStringLiteral("formLabel"));
     titleLabel->setProperty("textScale", QStringLiteral("caption"));
-    titleLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 
     auto* valueLabel = new QLabel(parent);
     valueLabel->setObjectName(objectName);
@@ -108,7 +107,7 @@ QLabel* addRangeValue(QGridLayout* layout, QWidget* parent, int column,
                       std::vector<QLabel*>* titles)
 {
     auto* titleLabel = new QLabel(title, parent);
-    titleLabel->setProperty("textRole", QStringLiteral("muted"));
+    titleLabel->setProperty("textRole", QStringLiteral("formLabel"));
     titleLabel->setProperty("textScale", QStringLiteral("caption"));
     titleLabel->setAlignment(Qt::AlignCenter);
     layout->addWidget(titleLabel, 0, column);
@@ -116,11 +115,11 @@ QLabel* addRangeValue(QGridLayout* layout, QWidget* parent, int column,
 
     auto* valueLabel = new QLabel(parent);
     valueLabel->setObjectName(objectName);
+    valueLabel->setProperty("textRole", QStringLiteral("primary"));
     valueLabel->setAlignment(Qt::AlignCenter);
     valueLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     valueLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     layout->addWidget(valueLabel, 1, column);
-    layout->setColumnStretch(column, 1);
     return valueLabel;
 }
 
@@ -739,6 +738,7 @@ void SourceEditorWidget::updateResponsiveLayouts(int availableWidth)
     const int rangeColumns = availableWidth >= 540 ? 4 : 2;
     if (rangeValues_->property("columnCount").toInt() != rangeColumns) {
         for (int index = 0; index < static_cast<int>(rangeValueLabels_.size()); ++index) {
+            rangeValuesLayout_->setColumnStretch(index, index < rangeColumns ? 1 : 0);
             QLabel* title = rangeTitleLabels_[index];
             rangeValuesLayout_->removeWidget(title);
             rangeValuesLayout_->removeWidget(rangeValueLabels_[index]);

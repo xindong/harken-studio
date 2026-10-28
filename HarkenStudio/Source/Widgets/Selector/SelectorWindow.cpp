@@ -269,6 +269,7 @@ SelectorWindow::SelectorWindow()
     auto* creationLayout = new QVBoxLayout(creationForm_);
     creationLayout->setContentsMargins(0, 0, 0, 0);
     auto* nameLabel = new QLabel(tr("Name"), creationForm_);
+    nameLabel->setProperty("textRole", QStringLiteral("formLabel"));
     nameEdit_ = new QLineEdit(creationForm_);
     nameEdit_->setObjectName(QStringLiteral("selectorCreationName"));
     nameEdit_->setAccessibleName(nameLabel->text());
