@@ -1,6 +1,5 @@
 
 #include "PublisherPanel.h"
-#include "PackStructureDialog.h"
 #include "RuntimeBridge/PackagingBridge.h"
 #include "../../Core/ActionManager.h"
 #include "../../Core/AppSettings.h"
@@ -1285,12 +1284,6 @@ void PublisherPanel::onPackTreeContextMenu(const QPoint& pos)
         QAction* show = menu.addAction(tr("Show Pack in Explorer"), this,
             [this, packPath]() { showFileInExplorer(packPath); });
         show->setEnabled(!packPath.isEmpty());
-        if (AppSettings::instance().developerMode()) {
-            QAction* preview = menu.addAction(tr("Preview Pack Structure..."), this, [this, packPath]() {
-                (new PackStructureDialog(packPath, this))->show();
-            });
-            preview->setEnabled(!packPath.isEmpty() && QFileInfo::exists(packPath));
-        }
     }
 
     menu.exec(packTree_->viewport()->mapToGlobal(pos));
