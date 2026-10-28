@@ -2879,6 +2879,7 @@ void VoicePool::CommitSeek(
     assert(slot != nullptr);
     assert(IsAudioRenderingState(slot->state.load(std::memory_order_relaxed)));
     VoiceRenderContext& render = slot->render;
+    const ResampleQuality quality = render.resampler.quality;
     if (stream != nullptr) {
         assert(render.streamRing != nullptr);
         StreamRing* oldRing = render.streamRing;
@@ -2892,7 +2893,7 @@ void VoicePool::CommitSeek(
             rings[ch] = m_ringStorage[ch][slotIndex].data();
         }
         render.resampler.Reset(rings, render.pcm.channelCount,
-                               ResampleQuality::Linear, currentRatio, m_tables,
+                               quality, currentRatio, m_tables,
                                render.resampler.Profile(), m_multirateTables,
                                render.resampler.professional);
         if (rampRemaining != 0 && targetRatio != currentRatio) {
@@ -2930,7 +2931,7 @@ void VoicePool::CommitSeek(
         rings[ch] = m_ringStorage[ch][slotIndex].data();
     }
     render.resampler.Reset(rings, render.pcm.channelCount,
-                           ResampleQuality::Hermite, currentRatio, m_tables,
+                           quality, currentRatio, m_tables,
                            render.resampler.Profile(), m_multirateTables,
                            render.resampler.professional);
     if (rampRemaining != 0 && targetRatio != currentRatio) {
