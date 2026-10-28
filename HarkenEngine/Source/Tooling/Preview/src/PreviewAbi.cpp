@@ -1,6 +1,7 @@
 #include "harken_preview/PreviewAbi.h"
 
 #include "HarkenApiInternal.h"
+#include "MonitorRequestObservation.h"
 
 #include <cstdint>
 
@@ -19,6 +20,16 @@ bool ValidKind(std::uint32_t kind) noexcept {
 
 harken::PlayableKindV1 ToKind(std::uint32_t kind) noexcept {
     return static_cast<harken::PlayableKindV1>(kind);
+}
+
+unsigned MonitorContentKind(std::uint32_t kind) noexcept {
+    switch (kind) {
+        case VN_PREVIEW_PLAYABLE_KIND_SOUND: return VN_MONITOR_CONTENT_SOUND;
+        case VN_PREVIEW_PLAYABLE_KIND_CONTAINER: return VN_MONITOR_CONTENT_CONTAINER;
+        case VN_PREVIEW_PLAYABLE_KIND_TRACK: return VN_MONITOR_CONTENT_TRACK;
+        case VN_PREVIEW_PLAYABLE_KIND_PIECE: return VN_MONITOR_CONTENT_PIECE;
+        default: return VN_MONITOR_CONTENT_UNKNOWN;
+    }
 }
 
 VnPreviewPlayableHandle ToPreviewHandle(
@@ -145,6 +156,10 @@ VnPreviewResult VnPreview_CapturePlaybackPaths(
 VnPreviewResult VnPreview_PlayPlayable(
     const VnPreviewPlayPlayableDescV2* desc,
     VnPreviewPlayableHandle* outHandle) {
+    const auto request = harken::detail::BeginMonitorRequest(
+        harken::MonitorRequestOrigin::StudioPreview,
+        VN_MONITOR_OPERATION_PLAY_PREVIEW);
+    harken::monitor::RequestObservation observation(request);
     if (outHandle != nullptr) {
         *outHandle = 0;
     }
@@ -152,32 +167,31 @@ VnPreviewResult VnPreview_PlayPlayable(
         harken::RecordPreviewPlayPlayable(
             false, 0, 0, {}, 0, 0, 0,
             VN_PREVIEW_DEVELOPMENT_API_DISABLED, 0, 0);
-        return VN_PREVIEW_DEVELOPMENT_API_DISABLED;
+        return observation.Returned(VN_PREVIEW_DEVELOPMENT_API_DISABLED);
     }
     if (desc == nullptr || outHandle == nullptr) {
         harken::RecordPreviewPlayPlayable(
             false, desc == nullptr ? 0 : desc->structSize, 0, {}, 0, 0, 0,
             VN_PREVIEW_INVALID_ARG, 0, 0);
-        return VN_PREVIEW_INVALID_ARG;
+        return observation.Returned(VN_PREVIEW_INVALID_ARG);
     }
     if (desc->structSize != sizeof(VnPreviewPlayPlayableDescV2)) {
         harken::RecordPreviewPlayPlayable(
             false, desc->structSize, 0, {}, 0, 0, 0,
             VN_PREVIEW_STRUCT_SIZE_MISMATCH, 0, 0);
-        return VN_PREVIEW_STRUCT_SIZE_MISMATCH;
+        return observation.Returned(VN_PREVIEW_STRUCT_SIZE_MISMATCH);
     }
+    observation.TargetContent(desc->stableId, MonitorContentKind(desc->playableKind));
+    observation.Submitted();
     if (!ValidKind(desc->playableKind) || desc->stableId == VnObjectId{} ||
         desc->flags != 0 || desc->reserved0 != 0) {
         harken::RecordPreviewPlayPlayable(
             true, desc->structSize, desc->playableKind, desc->stableId,
             desc->emitterHandle, desc->flags, desc->reserved0,
             VN_PREVIEW_INVALID_ARG, 0, 0);
-        return VN_PREVIEW_INVALID_ARG;
+        return observation.Returned(VN_PREVIEW_INVALID_ARG);
     }
     try {
-        const auto request = harken::detail::BeginMonitorRequest(
-            harken::MonitorRequestOrigin::StudioPreview,
-            VN_MONITOR_OPERATION_PLAY_PREVIEW);
         const harken::PlayableStartResult result =
             harken::StartCurrentPlayableByIdentity(
                 ToKind(desc->playableKind), desc->stableId,
@@ -185,19 +199,22 @@ VnPreviewResult VnPreview_PlayPlayable(
         const VnPreviewResult mapped = MapStart(result.status);
         if (mapped == VN_PREVIEW_OK) {
             *outHandle = ToPreviewHandle(result.instance);
+            observation.TargetValidated();
+            harken::detail::CaptureMonitorAcceptedRequest(
+                observation, VN_MONITOR_SUBJECT_PLAYABLE, result.instance);
         }
         harken::RecordPreviewPlayPlayable(
             true, desc->structSize, desc->playableKind, desc->stableId,
             desc->emitterHandle, desc->flags, desc->reserved0, mapped,
             mapped == VN_PREVIEW_OK ? desc->playableKind : 0,
             mapped == VN_PREVIEW_OK ? *outHandle : 0);
-        return mapped;
+        return observation.Returned(mapped);
     } catch (...) {
         harken::RecordPreviewPlayPlayable(
             true, desc->structSize, desc->playableKind, desc->stableId,
             desc->emitterHandle, desc->flags, desc->reserved0,
             VN_PREVIEW_HOST_ERROR, 0, 0);
-        return VN_PREVIEW_HOST_ERROR;
+        return observation.Returned(VN_PREVIEW_HOST_ERROR);
     }
 }
 
@@ -248,26 +265,33 @@ VnPreviewResult VnPreview_ResetPlayable(
 
 VnPreviewResult VnPreview_StopPlayable(VnPreviewPlayableHandle handle,
                                        uint32_t fadeMs) {
+    const harken::MonitorControlCause cause{harken::detail::BeginMonitorRequest(
+        harken::MonitorRequestOrigin::StudioPreview,
+        VN_MONITOR_OPERATION_STOP_PREVIEW)};
+    harken::monitor::RequestObservation observation(cause.request);
+    observation.TargetHandle(VN_MONITOR_TARGET_PREVIEW_PLAYABLE, handle);
+    observation.Submitted();
     if (!kGateOpen) {
         harken::RecordPreviewStopPlayable(
             handle, fadeMs, VN_PREVIEW_DEVELOPMENT_API_DISABLED);
-        return VN_PREVIEW_DEVELOPMENT_API_DISABLED;
+        return observation.Returned(VN_PREVIEW_DEVELOPMENT_API_DISABLED);
     }
     harken::PlayableInstanceHandle internal = 0;
     if (!ToInternalHandle(handle, &internal)) {
         harken::RecordPreviewStopPlayable(
             handle, fadeMs, VN_PREVIEW_INVALID_ARG);
-        return VN_PREVIEW_INVALID_ARG;
+        return observation.Returned(VN_PREVIEW_INVALID_ARG);
     }
     try {
         const VnPreviewResult mapped =
-            MapControl(harken::StopCurrentPlayable(internal, fadeMs));
+            MapControl(harken::StopCurrentPlayable(internal, fadeMs, cause));
         harken::RecordPreviewStopPlayable(handle, fadeMs, mapped);
-        return mapped;
+        if (mapped == VN_PREVIEW_OK) observation.TargetValidated();
+        return observation.Returned(mapped);
     } catch (...) {
         harken::RecordPreviewStopPlayable(
             handle, fadeMs, VN_PREVIEW_HOST_ERROR);
-        return VN_PREVIEW_HOST_ERROR;
+        return observation.Returned(VN_PREVIEW_HOST_ERROR);
     }
 }
 
