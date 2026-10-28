@@ -46,3 +46,11 @@ GitHub 集成包工作流为 `.github/workflows/integration-artifact.yml`，质�
 Studio Windows 与 macOS 包均使用 HarkenIntegration 主目录，并通过 `.scripts/release/integration_layout.py` 从同一来源生成 HarkenSDK/Unity/Harken 旧 Hub 兼容副本，拒绝链接、缺失或内容不一致。包内 Unity 标识、程序集、GUID 和工程安装路径不随外层命名变化。冻结包内文档中的旧工作流名称属于历史说明，以此处现行入口为准。
 
 Unity 集成包升至 0.3.6：对照已发布 HarkenStudio-0.9.0 所带 0.3.5，主干已更新 Unity 测试、集成清单及原生运行库；此次版本递增用于标识这些实际内容变化，并非由目录更名引起。Hub 与 Studio 待发布版本分别为 0.1.71、0.9.1。
+
+## Studio 0.9.2 发布准备（2026-10-28）
+
+Unity Integration 升至 0.3.7。相较 Studio 0.9.1 随附的 0.3.6，本次随包原生运行库包含 Queue、嵌套播放和运行时性能修正；公开 C ABI 与生成的 Unity 绑定未变。游戏侧需要更新集成包才能获得这些运行时修正，单独升级 Studio 不会替换 Unity 工程中的原生库。
+
+Editor Schema 仍为 9，Pack Schema 仍为 4，与已发布 Studio 0.9.1 的合同快照一致。因此 0.9.1 工程不需要 Schema 迁移，其既有 Pack 不因本次软件升级而强制重打；使用旧 Schema 的工程仍按既有升级流程迁移。新导出的 Pack 应同步本次发布中所有变化的文件，部分发布的容量调整说明见 [Pack 导出](../studio/pack-output.md#studio-092-升级兼容性2026-10-28)。
+
+本次在 Windows、Unity 6000.5.2f1 验证：EditMode 95 项通过、36 项既有跳过，PlayMode 157 项通过；实际工程副本的 0.9.1 旧 Pack 与 0.9.2 新 Pack 分别完成 1 个、110 个 Action 的准备、提交、停止与释放流程。Windows 生产原生库通过托管 ABI、回调、零 GC、外部消费者及旧 Pack 读取验证。Unity 测试使用独立测试桥接库，部署布局检查使用生产原生库。此次未进行 macOS、Linux、Android、iOS 运行或设备验收，完整多平台集成包仍由发布工作流组装并校验。

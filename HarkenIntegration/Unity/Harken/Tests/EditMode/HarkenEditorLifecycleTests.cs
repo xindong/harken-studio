@@ -219,10 +219,11 @@ namespace Harken.Unity.Tests
             SetString(action, "projectId", savedProject);
             AssertNoSerializedCache(action);
             Assert.That(EditorSceneManager.SaveScene(SceneManager.GetActiveScene(), scenePath), Is.True);
-            int previousInstance = action.GetInstanceID();
+            HarkenAction previousInstance = action;
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
-            Assert.That(Find<HarkenAction>().GetInstanceID(), Is.Not.EqualTo(previousInstance));
+            Assert.That(previousInstance == null, Is.True);
+            Assert.That(Find<HarkenAction>(), Is.Not.SameAs(previousInstance));
             Assert.That(Find<HarkenAction>().ActionName, Is.EqualTo(savedName));
             Assert.That(Find<HarkenAction>().ProjectId, Is.EqualTo(savedProject));
             yield return new EnterPlayMode();
