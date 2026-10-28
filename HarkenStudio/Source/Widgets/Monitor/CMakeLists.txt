@@ -81,6 +81,7 @@ target_link_libraries(harken_editor_monitor PUBLIC
     harken_editor_foundation
     harken_editor_time_series
     harken_editor_monitor_data
+    harken_editor_selector
 )
 
 if(MSVC)

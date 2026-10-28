@@ -144,6 +144,14 @@ void ObjectRefWidget::setSupplementalToolTip(const QString& text)
     refreshToolTip();
 }
 
+void ObjectRefWidget::setDisplayNameOverride(std::optional<QString> name)
+{
+    if (displayNameOverride_ == name)
+        return;
+    displayNameOverride_ = std::move(name);
+    refreshDisplay();
+}
+
 void ObjectRefWidget::setFilterType(ProjectItem::Type type)
 {
     if (filterType_ == type)
@@ -322,7 +330,9 @@ void ObjectRefWidget::refreshDisplay()
     refreshMetrics();
     const IRefDomainAdapter& adapter = refDomainAdapter(domain_);
     hasItem_ = adapter.exists(objectID_);
-    if (hasItem_)
+    if (displayNameOverride_)
+        nameLabel_->setText(*displayNameOverride_);
+    else if (hasItem_)
         nameLabel_->setText(adapter.displayName(objectID_));
     else if (mixedValue_)
         nameLabel_->setText(tr("Mixed"));
