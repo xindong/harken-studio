@@ -6,8 +6,8 @@ Current Action JSON may include optional `waveforms` rows:
 {"soundGuid":"<Sound GUID>","file":"../Waveforms/<sha256>.vkd","trimStartFrame":0,"trimEndFrame":44100}
 ```
 
-SDK playback and duration do not require this data. `metadata` and ProjectData
-are not prerequisites. Legacy standalone waveform publications remain rejected.
+Runtime playback and Editor duration queries do not require this data. `metadata`
+and ProjectData are not prerequisites. Legacy standalone waveform publications remain rejected.
 
 ## Paths and copying
 

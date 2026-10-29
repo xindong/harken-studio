@@ -215,10 +215,10 @@ class ReleaseEvidenceTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "license evidence is missing"):
                 evidence.resolve_components(self.model, "hub")
 
-    def test_runtime_and_sdk_evidence_does_not_require_desktop_legal_materials(self):
+    def test_runtime_and_integration_evidence_does_not_require_desktop_legal_materials(self):
         with mock.patch.object(evidence.collect_legal_texts, "THIRD_PARTY_FILES", {}), \
                 mock.patch.object(evidence.collect_legal_texts, "LEGAL_SOURCE_DIRS", {}):
-            for product in ("runtime", "sdk"):
+            for product in ("runtime", "integration"):
                 with self.subTest(product=product):
                     entries, _ = evidence.resolve_components(self.model, product)
                     self.assertEqual(entries[0]["evidence"], ["ThirdParty/example/LICENSE"])
@@ -638,12 +638,12 @@ class ReleaseEvidenceTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             evidence.build_model(self.build, "hub", "Release")
 
-    def test_sdk_cannot_mix_runtime_commits(self):
+    def test_integration_cannot_mix_runtime_commits(self):
         evidence.write_json(self.root / "runtime/runtime-build.json", {"identity": {**self.identity, "gitCommit": "0" * 40}})
         with self.assertRaises(ValueError):
             evidence.read_runtime_receipts(self.root / "runtime", self.head)
 
-    def test_sdk_requires_each_runtime_channel_to_match(self):
+    def test_integration_requires_each_runtime_channel_to_match(self):
         channels = ("dev", "nightly", "beta", "stable")
         for channel in channels:
             first = {"identity": {**self.identity, "channel": channel},
@@ -706,7 +706,7 @@ class ReleaseEvidenceTest(unittest.TestCase):
         for item in record["notices"]:
             self.assertEqual(item["sha256"], evidence.sha256(output.parent / item["path"]))
 
-    def test_sdk_payload_version_must_match_the_source_checkout(self):
+    def test_integration_payload_version_must_match_the_source_checkout(self):
         for root, version in ((self.repo / "HarkenIntegration", "2.3.4"), (self.payload / "HarkenIntegration", "2.3.5")):
             plugin = root / "Unity/Harken"
             plugin.mkdir(parents=True)
@@ -718,19 +718,19 @@ class ReleaseEvidenceTest(unittest.TestCase):
             "sourceState": {"configuredDirty": False, "checkoutDirty": False}})
         with mock.patch.object(evidence.collect_legal_texts, "REPO_ROOT", self.repo):
             with self.assertRaisesRegex(ValueError, "Integration Package version differs from the source checkout"):
-                evidence.prepare_sdk(self.payload, self.root / "runtime", self.output)
+                evidence.prepare_integration(self.payload, self.root / "runtime", self.output)
 
-    def test_sdk_retains_dirty_runtime_receipts_and_notices(self):
-        sdk_source = self.repo / "HarkenIntegration"
-        sdk = self.payload / "HarkenIntegration"
-        for root in (sdk_source, sdk):
+    def test_integration_retains_dirty_runtime_receipts_and_notices(self):
+        integration_source = self.repo / "HarkenIntegration"
+        integration = self.payload / "HarkenIntegration"
+        for root in (integration_source, integration):
             root.mkdir(parents=True)
             plugin = root / "Unity/Harken"
             plugin.mkdir(parents=True)
             (plugin / "LICENSE.md").write_text("license\n", encoding="utf-8")
             (plugin / "NOTICE.md").write_text("notice\n", encoding="utf-8")
             evidence.write_json(plugin / "package.json", {"version": "2.3.4"})
-        binaries = [sdk / "Unity/Harken/Runtime/Plugins/Windows/HarkenCore.dll"]
+        binaries = [integration / "Unity/Harken/Runtime/Plugins/Windows/HarkenCore.dll"]
         for binary in binaries:
             binary.parent.mkdir(parents=True)
             shutil.copyfile(self.payload / "app.exe", binary)
@@ -754,10 +754,10 @@ class ReleaseEvidenceTest(unittest.TestCase):
             "sourceState": {"configuredDirty": True, "checkoutDirty": False}})
         with mock.patch.object(evidence.collect_legal_texts, "REPO_ROOT", self.repo), \
                 mock.patch.object(evidence, "sha256", wraps=evidence.sha256) as digest, \
-                mock.patch.object(evidence.collect_legal_texts, "verify_sdk",
-                                  wraps=evidence.collect_legal_texts.verify_sdk) as verify_sdk:
-            directory = evidence.prepare_sdk(self.payload, self.root / "runtime", self.output, "stable")
-        verify_sdk.assert_called_once_with(sdk)
+                mock.patch.object(evidence.collect_legal_texts, "verify_integration",
+                                  wraps=evidence.collect_legal_texts.verify_integration) as verify_integration:
+            directory = evidence.prepare_integration(self.payload, self.root / "runtime", self.output, "stable")
+        verify_integration.assert_called_once_with(integration)
         for binary in binaries:
             self.assertEqual(sum(call.args[0] == binary for call in digest.call_args_list), 1)
         sums = dict(line.split("  ", 1)[::-1] for line in (self.payload / "SHA256SUMS.txt").read_text().splitlines())
@@ -774,11 +774,11 @@ class ReleaseEvidenceTest(unittest.TestCase):
         self.assertNotIn("sources", package_receipt)
         self.assertFalse((self.repo / ".temp").exists())
         self.assertEqual(len(evidence.read_runtime_receipts(self.payload, commit, "stable")), 2)
-        self.assertEqual(list((sdk / "BuildEvidence").rglob("*.txt")), [])
-        self.assertEqual(len(list(sdk.rglob(notice.name))), 1)
+        self.assertEqual(list((integration / "BuildEvidence").rglob("*.txt")), [])
+        self.assertEqual(len(list(integration.rglob(notice.name))), 1)
         for record in package_receipt["payload"]:
             self.assertEqual(record["sha256"], evidence.sha256(self.payload / record["path"]))
-        plugin_notice = sdk / "Unity/Harken/Legal" / notice.name
+        plugin_notice = integration / "Unity/Harken/Legal" / notice.name
         self.assertEqual(plugin_notice.read_bytes(), notice.read_bytes())
         plugin_notice.unlink()
         with self.assertRaises(ValueError):
@@ -788,7 +788,7 @@ class ReleaseEvidenceTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             evidence.read_runtime_receipts(self.payload, commit, "stable")
 
-    def test_sdk_directory_can_include_its_own_evidence_without_an_extra_zip(self):
+    def test_integration_directory_can_include_its_own_evidence_without_an_extra_zip(self):
         with evidence.package_output(self.payload) as staging:
             directory = evidence.prepare("hub", self.payload, self.build, staging, "1.0.0", "test-build",
                                          model=self.model)

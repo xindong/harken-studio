@@ -10,7 +10,7 @@ harken_host pack-play --root /path/to/Windows --action-name Play_Head --seconds 
 The directory contains `Init.bytes`, `Init.json`, `Play_Head.bytes`, and
 `Play_Head.json`. The Action pack already contains its nested Action dependencies.
 The Host reads only these pairs and uses their authored IDs; it does not require
-a manifest or scan the directory. Use the SDK and packs from the same release.
+a manifest or scan the directory. Use the Host, native runtime and packs from the same release.
 
 Both JSON files require top-level numeric `schemaVersion` equal to the compiled
 Pack schema version. Missing, mistyped, fractional or unsupported versions fail with `VN_BAD_PACK`; re-export these

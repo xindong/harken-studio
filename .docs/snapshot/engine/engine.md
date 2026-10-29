@@ -38,7 +38,7 @@
 | 一致快照与阶段抽头 | 音频侧无等待发布，读者承担读取成本，块内自洽；抽头只观测 | 三槽固定快照与阶段抽头 | 一致 |
 | trace 录制与回放 | — | 支持全 API 调用录制与确定性回放；历史 CurrentWorld 仅用于有限诊断，不支持旧 V5–V7 内嵌 Binding / Curve | 未记载 |
 | 内部宿主管道 | 工具通道在逻辑线程安全点执行，合同同源生成 | Windows 命名管道连接 Python 客户端，可独立驱动引擎、验证 Pack 热替换、读取快照和回放 trace；不进入游戏运行库 | 一致 |
-| Studio / 游戏远程连接 | Studio 观测与控制运行中的引擎 | TCP 仅绑定 `127.0.0.1`，以 UDP 发现；Engine、Studio、SDK 仅支持同机连接；本地试听使用进程内 API | 已实现 |
+| Studio / 游戏远程连接 | Studio 观测与控制运行中的引擎 | TCP 仅绑定 `127.0.0.1`，以 UDP 发现；Engine、Studio、Unity Integration 仅支持同机连接；本地试听使用进程内 API | 已实现 |
 | Monitor 事件 | 播放、执行和变量结果分别表达 | schema 2 保留 V1 播放事实，新增 Action 终态、Step 触发与 Variable 实际设置结果；沿用原始 Request ID | 已实现 |
 | Monitor 对象与终态 | 事件归属明确，不推导未发生的事件 | 类型为 Action、Step、Playable、Variable、Game Object；Step 仅在实际触发时报告一次；Action 完成等待相关播放与子 Action；Variable 接纳与应用分别判定 | 已实现 |
 | Monitor 覆盖边界 | 记录实际业务事实 | Game Object 注册 / 注销对应 Emitter 创建 / 销毁；Host 名称绑定与采集基线不补造事件；Pack 加载 / 卸载暂不展示；停止操作只展示受影响对象的结果 | 已实现 |

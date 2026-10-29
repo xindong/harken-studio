@@ -455,7 +455,7 @@
       "audience": "gameplay",
       "disposition": "supported",
       "rationale": "Preserve the previously delivered stable per-Voice parameter, spatial and stop contract.",
-      "consumer_contract": "Voice.cs and .scripts/check_unity_sdk_contract.py VOICE_WRAPPER_CONTRACT; no replacement-equivalence claim.",
+      "consumer_contract": "Voice.cs and .scripts/check_unity_integration_contract.py VOICE_WRAPPER_CONTRACT; no replacement-equivalence claim.",
       "entries": [
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Sdk/Voice.cs/Harken.Voice::public VnResult SetDistanceScale ( float scale )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Sdk/Voice.cs/Harken.Voice::public VnResult SetFilter ( uint filterKind , float cutoffHz , float q , uint enable01 , uint rampMs )",

@@ -38,7 +38,7 @@ jobs:
     steps:
       # clean:false — the self-hosted workspace is persistent, and the default
       # clean runs `git clean -ffdx`, whose -x deletes the gitignored
-      # build-sdk-runtime-clang/ tree. Without this every run is a cold build and
+      # build-integration-runtime-clang/ tree. Without this every run is a cold build and
       # self-hosting buys nothing but the core count.
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -48,9 +48,9 @@ jobs:
 
       - name: Check Integration source contracts before compilation
         run: |
-          python .scripts/check_sdk_version.py
-          python .scripts/check_unity_sdk_contract.py
-          python .scripts/tests/test_check_unity_sdk_contract.py -v
+          python .scripts/check_integration_version.py
+          python .scripts/check_unity_integration_contract.py
+          python .scripts/tests/test_check_unity_integration_contract.py -v
           python HarkenEngine/Source/Tooling/Binding/gen_binding.py --check
 
       - name: Setup MSVC environment
@@ -60,7 +60,7 @@ jobs:
 
       - name: Configure Core libraries and Pack tests (windows-release)
         run: >-
-          cmake --fresh --preset windows-release -B build-sdk-runtime-clang
+          cmake --fresh --preset windows-release -B build-integration-runtime-clang
           -DHARKEN_BUILD_CORE=ON
           -DHARKEN_BUILD_SHARED=ON
           -DHARKEN_BUILD_TOOLS=ON
@@ -71,12 +71,12 @@ jobs:
       # .env sets so three concurrent jobs share the machine instead of each
       # claiming all of it.
       - name: Build Core shared library and Pack tests
-        run: cmake --build build-sdk-runtime-clang --config Release --target harken_core_shared harken_pack_schema_tests
+        run: cmake --build build-integration-runtime-clang --config Release --target harken_core_shared harken_pack_schema_tests
 
       - name: Run Pack native fixture check
         timeout-minutes: 3
         run: >-
-          ctest --test-dir build-sdk-runtime-clang/HarkenEngine/Test -C Release
+          ctest --test-dir build-integration-runtime-clang/HarkenEngine/Test -C Release
           --no-tests=error --output-on-failure --timeout 120
           -R '^PackSchema[.]PackFoundationQualification[.]CatalogMayExceedResidentWindow$'
 
@@ -88,7 +88,7 @@ jobs:
       - name: Run contract gates against native library (Pack bootstrap and zero-GC hot path)
         timeout-minutes: 5
         env:
-          HARKEN_NATIVE_DIR: ${{ github.workspace }}/build-sdk-runtime-clang/bin/Release
+          HARKEN_NATIVE_DIR: ${{ github.workspace }}/build-integration-runtime-clang/bin/Release
         run: >-
           dotnet run --project HarkenIntegration/Test/ContractTest --configuration Release --
           --require-native --pack-root .temp/f3-catalog-resident-window
@@ -118,13 +118,13 @@ jobs:
           fetch-depth: 0
 
       - name: Check Integration version identity
-        run: python3 .scripts/check_sdk_version.py
+        run: python3 .scripts/check_integration_version.py
 
       - name: Check Unity Integration source contract
-        run: python3 .scripts/check_unity_sdk_contract.py
+        run: python3 .scripts/check_unity_integration_contract.py
 
       - name: Test Unity Integration source contract
-        run: python3 .scripts/tests/test_check_unity_sdk_contract.py -v
+        run: python3 .scripts/tests/test_check_unity_integration_contract.py -v
 
       - name: Check generated binding drift
         run: python3 HarkenEngine/Source/Tooling/Binding/gen_binding.py --check
@@ -134,7 +134,7 @@ jobs:
 
       - name: Configure Core libraries and Pack tests (macos-release, ${{ matrix.arch }})
         run: >-
-          cmake --fresh --preset macos-release -B build-sdk-runtime-clang
+          cmake --fresh --preset macos-release -B build-integration-runtime-clang
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
           -DHARKEN_BUILD_CORE=ON
           -DHARKEN_BUILD_SHARED=ON
@@ -142,12 +142,12 @@ jobs:
           -DHARKEN_BUILD_RUNTIME_UNIT_TESTS=ON
 
       - name: Build Core shared library and Pack tests
-        run: cmake --build build-sdk-runtime-clang --config Release --target harken_core_shared harken_pack_schema_tests
+        run: cmake --build build-integration-runtime-clang --config Release --target harken_core_shared harken_pack_schema_tests
 
       - name: Run Pack native fixture check
         timeout-minutes: 3
         run: >-
-          ctest --test-dir build-sdk-runtime-clang/HarkenEngine/Test -C Release
+          ctest --test-dir build-integration-runtime-clang/HarkenEngine/Test -C Release
           --no-tests=error --output-on-failure --timeout 120
           -R '^PackSchema[.]PackFoundationQualification[.]CatalogMayExceedResidentWindow$'
 
@@ -159,7 +159,7 @@ jobs:
       - name: Run contract gates against native library (Pack bootstrap and zero-GC hot path)
         timeout-minutes: 5
         env:
-          HARKEN_NATIVE_DIR: ${{ github.workspace }}/build-sdk-runtime-clang/bin/Release
+          HARKEN_NATIVE_DIR: ${{ github.workspace }}/build-integration-runtime-clang/bin/Release
         run: >-
           dotnet run --project HarkenIntegration/Test/ContractTest --configuration Release --
           --require-native --pack-root .temp/f3-catalog-resident-window

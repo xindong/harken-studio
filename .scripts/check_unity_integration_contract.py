@@ -5,11 +5,11 @@ import json
 import re
 from pathlib import Path
 
-from check_sdk_version import version
+from check_integration_version import version
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
-DEFAULT_SDK = REPOSITORY / "HarkenIntegration" / "Unity" / "Harken"
+DEFAULT_INTEGRATION = REPOSITORY / "HarkenIntegration" / "Unity" / "Harken"
 FORBIDDEN_UNITY_ROOT_SUFFIXES = {".cpp", ".h", ".uplugin"}
 NATIVE_SUFFIXES = {".a", ".dll", ".dylib", ".lib", ".so"}
 NATIVE_PLUGIN_PATHS = {
@@ -176,17 +176,17 @@ def csharp_code_only(source: str) -> str:
 
 
 def verify_layout(
-    sdk: Path, require_binaries: bool, errors: list[str]
+    integration: Path, require_binaries: bool, errors: list[str]
 ) -> None:
     for forbidden in ("Unreal",):
-        if (sdk / forbidden).exists():
+        if (integration / forbidden).exists():
             errors.append(f"HarkenIntegration must not contain {forbidden}")
 
     native_files = set()
-    for path in sdk.rglob("*"):
+    for path in integration.rglob("*"):
         if not path.is_file():
             continue
-        relative = path.relative_to(sdk).as_posix()
+        relative = path.relative_to(integration).as_posix()
         suffix = path.suffix.lower()
         if suffix in FORBIDDEN_UNITY_ROOT_SUFFIXES:
             errors.append(f"Non-Unity source remains in Harken Integration Package: {relative}")
@@ -225,7 +225,7 @@ def verify_layout(
         if extra:
             errors.append(f"Unexpected native plugin binaries: {sorted(extra)}")
         for relative in sorted(NATIVE_PLUGIN_PATHS & native_files):
-            if (sdk / relative).stat().st_size == 0:
+            if (integration / relative).stat().st_size == 0:
                 errors.append(f"Native plugin binary is empty: {relative}")
     elif native_files:
         errors.append(
@@ -234,10 +234,10 @@ def verify_layout(
         )
 
 
-def verify_manifests(sdk: Path, errors: list[str]) -> None:
-    package = json.loads((sdk / "package.json").read_text(encoding="utf-8"))
-    integration = json.loads(
-        (sdk / "harken-integration.json").read_text(encoding="utf-8")
+def verify_manifests(integration: Path, errors: list[str]) -> None:
+    package = json.loads((integration / "package.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (integration / "harken-integration.json").read_text(encoding="utf-8")
     )
     if package.get("name") != "com.harken.core":
         errors.append("package.json name must be com.harken.core")
@@ -247,14 +247,14 @@ def verify_manifests(sdk: Path, errors: list[str]) -> None:
     if "samples" in package:
         errors.append("package.json must not declare repository-owned Samples")
 
-    for relative in integration.get("required_files", []):
-        path = sdk / relative
+    for relative in manifest.get("required_files", []):
+        path = integration / relative
         if not path.is_file() or path.stat().st_size == 0:
             errors.append(f"Integration required file is missing: {relative}")
 
     alternatives = {
         alternative
-        for plugin in integration.get("native_plugins", [])
+        for plugin in manifest.get("native_plugins", [])
         for alternative in plugin.get("alternatives", [])
     }
     if alternatives != NATIVE_PLUGIN_PATHS:
@@ -263,14 +263,14 @@ def verify_manifests(sdk: Path, errors: list[str]) -> None:
             f"layout: missing={sorted(NATIVE_PLUGIN_PATHS - alternatives)}, "
             f"extra={sorted(alternatives - NATIVE_PLUGIN_PATHS)}"
         )
-    source = integration.get("native_binary_source", {})
+    source = manifest.get("native_binary_source", {})
     if source != NATIVE_SOURCE_CONTRACT:
         errors.append("harken-integration.json native binary source is invalid")
 
 
-def verify_sample_scripts(sdk: Path, errors: list[str]) -> None:
+def verify_sample_scripts(integration: Path, errors: list[str]) -> None:
     definitions: dict[str, list[Path]] = {}
-    for meta in sdk.rglob("*.cs.meta"):
+    for meta in integration.rglob("*.cs.meta"):
         if not meta.with_suffix("").is_file():
             continue
         match = re.search(r"^guid: ([0-9a-f]{32})$", meta.read_text(encoding="utf-8"), re.MULTILINE)
@@ -279,7 +279,7 @@ def verify_sample_scripts(sdk: Path, errors: list[str]) -> None:
 
     # Unity serializes MonoScript references as one flow-mapping line in scene/prefab YAML.
     reference = re.compile(r"^\s*m_Script: \{[^\n}]*\bguid: ([0-9a-f]{32})\b[^\n}]*\}", re.MULTILINE)
-    for asset in (sdk / "Samples~").rglob("*"):
+    for asset in (integration / "Samples~").rglob("*"):
         if asset.suffix not in {".unity", ".prefab"}:
             continue
         for guid in set(reference.findall(asset.read_text(encoding="utf-8"))):
@@ -287,12 +287,12 @@ def verify_sample_scripts(sdk: Path, errors: list[str]) -> None:
             if len(matches) != 1:
                 errors.append(
                     f"Sample script GUID must resolve to exactly one Integration Package source: "
-                    f"{asset.relative_to(sdk).as_posix()}: {guid} has {len(matches)} definitions"
+                    f"{asset.relative_to(integration).as_posix()}: {guid} has {len(matches)} definitions"
                 )
 
 
-def verify_voice_wrappers(sdk: Path, errors: list[str]) -> None:
-    source = (sdk / "Runtime/Sdk/Voice.cs").read_text(encoding="utf-8")
+def verify_voice_wrappers(integration: Path, errors: list[str]) -> None:
+    source = (integration / "Runtime/Sdk/Voice.cs").read_text(encoding="utf-8")
     try:
         code = csharp_code_only(source)
     except ValueError as error:
@@ -311,20 +311,20 @@ def verify_voice_wrappers(sdk: Path, errors: list[str]) -> None:
             )
 
 
-def verify(sdk: Path, require_binaries: bool) -> None:
+def verify(integration: Path, require_binaries: bool) -> None:
     errors: list[str] = []
-    candidates = [sdk, sdk / "Unity" / "Harken", sdk / "Harken"]
-    sdk = next(
+    candidates = [integration, integration / "Unity" / "Harken", integration / "Harken"]
+    integration = next(
         (candidate for candidate in candidates
          if (candidate / "package.json").is_file()),
-        sdk,
+        integration,
     )
-    if not sdk.is_dir():
-        raise SystemExit(f"Unity Integration Package root does not exist: {sdk}")
-    verify_layout(sdk, require_binaries, errors)
-    verify_manifests(sdk, errors)
-    verify_sample_scripts(sdk, errors)
-    verify_voice_wrappers(sdk, errors)
+    if not integration.is_dir():
+        raise SystemExit(f"Unity Integration Package root does not exist: {integration}")
+    verify_layout(integration, require_binaries, errors)
+    verify_manifests(integration, errors)
+    verify_sample_scripts(integration, errors)
+    verify_voice_wrappers(integration, errors)
     if errors:
         raise SystemExit("\n".join(errors))
     content = "source-only" if not require_binaries else "assembled"
@@ -336,10 +336,10 @@ def verify(sdk: Path, require_binaries: bool) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--integration-root", "--sdk-root", dest="sdk_root", type=Path, default=DEFAULT_SDK)
+    parser.add_argument("--integration-root", "--sdk-root", dest="integration_root", type=Path, default=DEFAULT_INTEGRATION)
     parser.add_argument("--require-binaries", action="store_true")
     arguments = parser.parse_args()
-    verify(arguments.sdk_root.resolve(), arguments.require_binaries)
+    verify(arguments.integration_root.resolve(), arguments.require_binaries)
     return 0
 
 

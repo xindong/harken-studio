@@ -1,4 +1,4 @@
-# Unity SDK fixture inputs
+# Unity integration fixture inputs
 
 These fixtures are real Studio exports used by current runtime tests. Each
 selected platform contains `Init.bytes + Init.json` and same-name Action pairs.
@@ -23,7 +23,7 @@ callback and lifecycle tests consume companion inputs.
 
 ## Prepare an isolated Unity project
 
-Use a dedicated Unity project with the current SDK package, the matching native
+Use a dedicated Unity project with the current Unity Integration Package, the matching native
 library and test assemblies enabled. Enable the built-in
 `com.unity.modules.assetbundle` package for the AssetBundle case.
 Copy `HarkenIntegration/Test/ExternalConsumer/Unity`
@@ -36,7 +36,7 @@ python HarkenIntegration/Test/UnityFixture/prepare.py --project <Unity-project> 
 
 The script synchronizes repository fixture files under
 `Assets/StreamingAssets/Audio` and removes obsolete files within those fixture
-directories. It does not install the SDK or replace native plugins.
+directories. It does not install the Integration Package or replace native plugins.
 
 Run `Harken.Unity.Tests.HarkenUnityFixtureAssets.Prepare` through Unity's
 `-executeMethod` to create current TextAsset resources and the AssetBundle.
@@ -46,7 +46,7 @@ include both JSON and bytes; use `CaptureCompanion` to create runtime sources.
 Run EditMode and PlayMode, including `ExternalConsumerTests`. Tests using
 `HARKEN_SDK_TEST_NULL_PUMP` require the dedicated native test bridge and the same
 define enabled for Standalone. The bridge is test-only and must not ship in the
-SDK. Editor results do not establish Android, IL2CPP or audible device behavior.
+Integration Package. Editor results do not establish Android, IL2CPP or audible device behavior.
 
 ### Production Windows Player checks
 

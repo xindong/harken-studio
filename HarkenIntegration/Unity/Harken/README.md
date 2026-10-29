@@ -1,8 +1,12 @@
-# Harken Core Unity SDK
+# Harken Unity Integration Package
 
 `com.harken.core` is the Unity package for the Harken Core game-audio runtime.
 The package root contains Unity content only. The `version` field in this
-package's `package.json` is the sole source of the SDK product version.
+package's `package.json` is the sole source of the Integration Package version.
+The package combines a managed SDK (C# bindings and gameplay/host APIs) with
+Unity runtime components, Editor tools and native runtime libraries. In this
+manual, SDK refers to the managed API layer; Integration Package refers to the
+complete Unity deliverable.
 
 Editor catalog binding, preview, waveform browsing and symbol generation are
 temporarily unavailable while they are adapted to current-schema Pack companions.
@@ -14,8 +18,8 @@ remain available. See the entry points below and the
 
 ## API reference manual
 
-The manual describes the public APIs in this SDK, including their parameters,
-resource ownership, lifecycle and failure behavior.
+The manual describes the public SDK APIs and Unity components, including their
+parameters, resource ownership, lifecycle and failure behavior.
 
 - [Startup, Actions, Emitters and listeners](Documentation~/UnityApiReference.md)
 - [Variables and Labels](Documentation~/VariableApiReference.md)
@@ -98,40 +102,52 @@ matrix transition; initial starts and park returns snap to the current image.
 
 ## Install
 
-Use **Hub > Engine Integrations**. Select the SDK source directory and an
-installation location inside the Unity project. The default is
+Use **Hub > Engine Integrations**. Select the Integration Package source
+directory and an installation location inside the Unity project. The default is
 `Packages/com.harken.core`; a regular `Assets` subdirectory such as
-`Assets/ThirdParty/HarkenSDK` is also supported. Editor-only folders, Resources,
-StreamingAssets, hidden folders, linked directories and external destinations
-are not supported. Older SDK sources without custom-location support remain
-limited to `Packages/com.harken.core` and `Assets/HarkenSDK`.
+`Assets/ThirdParty/HarkenIntegration` is also supported. Editor-only folders,
+Resources, StreamingAssets, hidden folders, linked directories and external
+destinations are not supported. Older Integration Package sources without
+custom-location support remain limited to `Packages/com.harken.core` and
+`Assets/HarkenSDK`.
 
-Hub checks for existing SDKs and package references before installation or
-updates. A single existing installation determines the location; conflicting
-copies or unidentifiable SDK remnants must be resolved first. Use **Migrate...**
-beside the installed location to move the current SDK without unlinking projects.
+`Assets/HarkenSDK` remains a supported installation convention. Old `HarkenSDK`
+source layouts and `HARKEN_UNITY_SDK_PATH` are legacy aliases; use
+`HarkenIntegration` and `HARKEN_UNITY_INTEGRATION_PATH` for new source locations.
+The package identity, assembly names and asset GUIDs remain unchanged. Legacy
+backup names (`SDK`, `SDK.meta`, `ReintegrationSDK`) and persisted `sdk_*` fields
+remain unchanged for compatibility and describe the Integration Package.
+
+Hub checks for existing Integration Packages and package references before
+installation or updates. A single existing installation determines the location;
+conflicting copies or unidentifiable Integration Package remnants must be resolved
+first. Use **Migrate...** beside the installed location to move the current
+Integration Package without unlinking projects.
 Migration preserves modified files, additional files, hidden records, empty
-directories and all `.meta` files, including the SDK directory's own metadata.
-It does not reinstall files from the SDK source or reset ownership hashes.
+directories and all `.meta` files, including the Integration Package directory's
+own metadata. It does not reinstall files from the Integration Package source or
+reset ownership hashes.
 Close Unity first and select an empty destination without existing `.meta` data.
 Hub verifies a complete backup outside the Unity project before moving anything.
-Conflicting package references and unsupported SDK locations block migration.
-Project code that hard-codes old paths must be updated separately.
+Conflicting package references and unsupported Integration Package locations block
+migration. Project code that hard-codes old paths must be updated separately.
 
-SDK discovery also inspects local packages referenced under other names. Paths
-containing the entire Unity project are rejected. Each discovery shares a limit
+Integration Package discovery also inspects local packages referenced under other
+names. Paths containing the entire Unity project are rejected. Each discovery shares a limit
 of 100,000 inspection steps, 64 directory levels, 1 MiB per JSON file and 16 MiB
 of JSON in total, and checks a two-second deadline between filesystem operations.
 Repeated or overlapping package references reuse visited directories. If a limit
-is reached, Hub blocks SDK changes until the package references or scanned content
-are corrected; incomplete discovery is never treated as a safe installation.
-Malformed unrelated package or assembly identity files do not block SDK changes,
-but malformed project UPM manifests and recognizable SDK remnants still do.
-If no SDK has been identified at `Packages/com.harken.core` or
+is reached, Hub blocks Integration Package changes until the package references
+or scanned content are corrected; incomplete discovery is never treated as a safe installation.
+Malformed unrelated package or assembly identity files do not block Integration
+Package changes, but malformed project UPM manifests and recognizable Integration
+Package remnants still do.
+If no Integration Package has been identified at `Packages/com.harken.core` or
 `Assets/HarkenSDK`, an existing `package.json` there must be
-readable and identify a package. An SDK identified by its ownership record can
-still be repaired at its existing location after confirming file changes.
-An empty directory or a valid unrelated package at those paths is not treated as an SDK.
+readable and identify a package. An Integration Package identified by its
+ownership record can still be repaired at its existing location after confirming
+file changes. An empty directory or a valid unrelated package at those paths is
+not treated as an Integration Package.
 
 An interrupted migration blocks installation and removal until **Recover...**
 restores the previous location. Its record is stored at
@@ -145,24 +161,24 @@ Unrelated nonempty directories are not overwritten;
 move any project files preserved by an uninstall before reusing that directory.
 
 Each game project's last verified relative location is stored in Hub's local
-`engine-targets.db`. The installed SDK retains its version, managed file list
-and hashes in `.harken-integration-state.json` at its actual root. Hub can
-rediscover a moved SDK when this record is valid. If Hub's database is lost,
-add the game project again; the Harken project association must be selected
-again separately. Restore a missing or invalid SDK ownership record from a
-backup before updating or using managed removal.
+`engine-targets.db`. The installed Integration Package retains its version,
+managed file list and hashes in `.harken-integration-state.json` at its actual
+root. Hub can rediscover a moved Integration Package when this record is valid.
+If Hub's database is lost, add the game project again; the Harken project association must be selected
+again separately. Restore a missing or invalid Integration Package ownership
+record from a backup before updating or using managed removal.
 
 For source development, add this repository package to `Packages/manifest.json`:
 
 ```json
-"com.harken.core": "file:../path/to/harken-studio/HarkenSDK/Unity/Harken"
+"com.harken.core": "file:../path/to/harken-studio/HarkenIntegration/Unity/Harken"
 ```
 
-The same `HarkenSDK/Unity/Harken` source is used for package and Assets installs.
+The same `HarkenIntegration/Unity/Harken` source is used for package and Assets installs.
 Copy the package contents directly into the selected root. The Editor hook
-locates the installed SDK by its script GUID and package identity, then configures
-its native plugins after imports, moves and deletions.
-Runtime Pack and audio data stay outside the SDK. Filesystem auto-start uses the directory selected under Project Settings > Harken > Project in the Editor and desktop Player. Select the exported platform directory containing `Init.bytes` and `Init.json`, or select its parent and set the exact Platform Name. The project team's build/deployment pipeline is responsible for including the Packs; the SDK does not copy them or choose a different directory.
+locates the installed Integration Package by its script GUID and package
+identity, then configures its native plugins after imports, moves and deletions.
+Runtime Pack and audio data stay outside the Integration Package. Filesystem auto-start uses the directory selected under Project Settings > Harken > Project in the Editor and desktop Player. Select the exported platform directory containing `Init.bytes` and `Init.json`, or select its parent and set the exact Platform Name. The project team's build/deployment pipeline is responsible for including the Packs; the Unity integration does not copy them or choose a different directory.
 
 For the default filesystem loader, relative paths start at the Unity project root in the Editor. In a desktop Player, they start at the parent of `Application.dataPath` (the executable directory on Windows). For example, `GameContent/GeneratedPacks` resolves to that same relative layout under either root. Editor auto-start through Project Settings requires a directory inside the Unity project; a desktop Player can use an external absolute directory as configured. Unity's `Assets/StreamingAssets/...` paths map to the actual `Application.streamingAssetsPath/...` in the Player, so moving the installed game does not retain the Editor path. Missing directories fail startup without searching another location.
 
@@ -178,12 +194,12 @@ or call `StartRuntimeAsync` explicitly. See the
 [companion source reference](Documentation~/PackApiReference.md).
 
 The repository deliberately does not track generated native binaries. Studio
-builds and SDK release artifacts inject binaries produced by the
+builds and Integration Package release artifacts inject binaries produced by the
 `harken_core_shared` target. `Runtime/Plugins/README.md` documents the exact
 platform and CPU layout. Only reviewed Unity identity and importer metadata is
 kept beside assets that need stable GUIDs (Scenes, Prefabs, referenced
 scripts/asmdefs, Samples, Tests, and native plugin importer settings).
-Documentation and package identity files do not need `.meta` files. The SDK
+Documentation and package identity files do not need `.meta` files. The Unity
 Editor hook narrows each native-plugin importer to its actual platform and CPU.
 
 ## Variable writes
@@ -252,8 +268,8 @@ instead of silently taking over global engine state.
 For overlapping global one-shots, call
 `runtime.PlayAction(actionName, projectId, out firing)`. Optional preload or
 `Session.PrepareActions` moves cold I/O before a timing-sensitive trigger.
-The optional `callerSeed` overload preserves a caller-selected seed. The SDK
-owns these firings and releases each after natural completion; the returned
+The optional `callerSeed` overload preserves a caller-selected seed.
+`HarkenAudioSystem` owns these firings and releases each after natural completion; the returned
 handle can be queried or stopped, but must not be released by the caller.
 Managed slot capacity refusal is `VN_NO_ACTION` before any provider call. Native
 Post refusal releases the newly acquired resource scope; failed cleanup retains
@@ -275,8 +291,8 @@ warm managed allocation. Component Play also reuses its released plan.
 Before startup, `ConfigureLifecycleBeforeStartup(true, true)` opts into pausing
 and muting Unity audio while the prepared Runtime owns the session, and shutdown
 when its component or GameObject is disabled. Both options default to false.
-The SDK restores the captured Unity pause and volume values only after the
-session ends. `RuntimeEnded` reports the final state, operation, and result after
+The Unity integration restores the captured Unity pause and volume values only
+after the session ends. `RuntimeEnded` reports the final state, operation, and result after
 ownership is cleared; runtime failure retains its original cause. Failed native
 termination retains ownership and does not send an ended event. A completion
 listener may explicitly start another session on an active, enabled host.
@@ -338,8 +354,8 @@ their metadata. No separate legacy manifest is required for companion playback.
 
 Legacy Pack manifests, indexes, `.pack` path resolution and `.pack.bytes`
 wrappers are unsupported. Re-export old Packs with the current Studio and update
-the SDK/native libraries together. Unity imports the exact `.bytes` and `.json`
-files as TextAssets. The default Init path is `Init.bytes`; explicitly configured
+the Integration Package and native libraries together. Unity imports the exact
+`.bytes` and `.json` files as TextAssets. The default Init path is `Init.bytes`; explicitly configured
 paths must match it. Studio project migration is unaffected.
 
 ## Unity Editor and prepared bytes
@@ -378,7 +394,8 @@ can be changed, for example to `Assets/Audio/Resources/HarkenProjectSettings.ass
 keep the `Resources/HarkenProjectSettings.asset` resource path and a single copy.
 The Editor reuses the existing resource at its current location. Commit this asset
 and its `.meta` with the game project. Unity includes it as a Resources asset in the
-Player; it is independent of scene and prefab settings and survives SDK updates.
+Player; it is independent of scene and prefab settings and survives Integration
+Package updates.
 Without a settings asset, communication and discovery use their enabled defaults.
 Conflicting resources with the same settings name fail build validation.
 
@@ -431,20 +448,20 @@ to the listener.
 
 ## Managed Spatial Playback
 
-`HarkenAudioSystem.CreateSpatialSource(transform, out source)` creates an
-SDK-owned source for one live object instance. Repeated creation for the same
-live Transform returns the same source, preserving emitter-local identity.
+`HarkenAudioSystem.CreateSpatialSource(transform, out source)` creates a
+source owned by `HarkenAudioSystem` for one live object instance. Repeated creation
+for the same live Transform returns the same source, preserving emitter-local identity.
 Pass that source to `PlayAction(name, projectId, source, out firing)`; overlapping
 firings keep their own resource ownership. The original source-free overloads
 remain available. Native authored 3D and attenuation settings determine the
 sound; supplying a source does not force 2D content into 3D.
 
-Call `source.EndFollow()` before recycling or resetting that object. The SDK
-freezes its last pose and retains its emitter until the existing firings have
+Call `source.EndFollow()` before recycling or resetting that object. The Unity
+integration freezes its last pose and retains its emitter until the existing firings have
 ended. Create a new source when the visual object is reused. An ended source
 cannot start another Action. Ending follow is not a Stop command: loops still
 require explicit firing Stop or runtime shutdown. Native handles and resource
-release remain owned by the SDK. Sources cannot cross runtime sessions.
+release remain owned by `HarkenAudioSystem`. Sources cannot cross runtime sessions.
 
 Edit Mode spatial preview is temporarily unavailable: both parent and scope
 `Prepare` calls return `VN_CAPABILITY_UNAVAILABLE`. Runtime spatial playback
@@ -468,14 +485,15 @@ firing, retains the required content, queries completion, and calls `Release`
 after `VN_ACTION_FIRING_TERMINAL_RETAINED`. An accepted `Stop` is asynchronous;
 `Release` returns `VN_IN_USE` while the firing is still active. Retain ownership
 when cleanup fails. This differs from firings returned by `HarkenAudioSystem`,
-`HarkenAction` or Editor preview, whose release remains SDK-owned.
+`HarkenAction` or Editor preview, whose release remains owned by the component
+or preview scope.
 
 `ActionFiring.Seek(positionMs, mode, out ticket)` forwards a source-time seek.
 On `VN_OK`, retain the `ActionSeekTicket` and `Query` it: `ACCEPTED` is pending,
 `APPLIED` or `CANCELLED` is terminal. `Release` refuses a pending ticket with
 `VN_IN_USE`; release the terminal ticket explicitly, including when the firing
-itself is SDK-owned. No automatic retry or release is added. Relative seek is
-supported for resident sources; V1 streamed seek is absolute and non-looping.
+itself is owned by a component or preview scope. No automatic retry or release is
+added. Relative seek is supported for resident sources; V1 streamed seek is absolute and non-looping.
 A firing tree containing any deferred Action step returns
 `VN_CAPABILITY_UNAVAILABLE` without partially seeking other targets. V1 requires
 already-started, active Sound targets; Container/Queue/nested-service targets

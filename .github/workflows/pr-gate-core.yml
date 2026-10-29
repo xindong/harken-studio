@@ -1,7 +1,7 @@
 name: PR Gate Core
 
 # Engine-core gate: compiles harken_core everywhere it ships and runs the
-# runtime test suite on Windows. Path-scoped — studio, hub, and SDK changes
+# runtime test suite on Windows. Path-scoped — studio, hub, and Integration changes
 # do not trigger it; they have their own gates. Note these path-filtered
 # gates must NOT be listed as required status checks (a skipped workflow
 # never reports and would block the merge forever).

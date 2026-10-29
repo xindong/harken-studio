@@ -80,7 +80,7 @@ class BuildStudioPackageTest(unittest.TestCase):
                                .relative_to(self.input_dir).as_posix()
                                for name in ("LICENSE.md", "NOTICE.md"))
 
-    def make_input(self, with_binary=True, sdk_version="0.2.0"):
+    def make_input(self, with_binary=True, integration_version="0.2.0"):
         (self.input_dir / "data").mkdir(parents=True)
         if with_binary:
             (self.input_dir / "HarkenStudio.exe").write_bytes(b"stub-binary")
@@ -89,7 +89,7 @@ class BuildStudioPackageTest(unittest.TestCase):
         unity = self.input_dir / "HarkenIntegration" / "Unity" / "Harken"
         unity.mkdir(parents=True)
         (unity / "package.json").write_text(
-            json.dumps({"name": "com.harken.core", "version": sdk_version}),
+            json.dumps({"name": "com.harken.core", "version": integration_version}),
             encoding="utf-8",
         )
         self.publish_legal(self.input_dir, self.input_dir / "Legal")
@@ -220,7 +220,7 @@ class BuildStudioPackageTest(unittest.TestCase):
                 self.assertFalse(self.output_dir.exists())
                 path.write_bytes(content)
 
-    def test_invalid_sdk_versions_are_rejected(self):
+    def test_invalid_integration_versions_are_rejected(self):
         self.make_input()
         plugin = self.input_dir / "HarkenIntegration/Unity" / "Harken" / "package.json"
         for identity in (
@@ -236,7 +236,7 @@ class BuildStudioPackageTest(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     self.run_build()
 
-    def test_missing_unity_sdk_is_rejected(self):
+    def test_missing_unity_integration_is_rejected(self):
         self.make_input()
         (self.input_dir / "HarkenIntegration/Unity" / "Harken" / "package.json").unlink()
         with self.assertRaises(SystemExit):
@@ -277,7 +277,7 @@ class BuildStudioPackageTest(unittest.TestCase):
             layout.stage(source, self.input_dir)
         layout.verify(self.input_dir)
 
-    def test_macos_sdk_component_paths_are_recorded(self):
+    def test_macos_integration_component_paths_are_recorded(self):
         app = self.input_dir / "HarkenStudio.app" / "Contents" / "MacOS"
         app.mkdir(parents=True)
         (app / "HarkenStudio").write_bytes(b"stub-binary")

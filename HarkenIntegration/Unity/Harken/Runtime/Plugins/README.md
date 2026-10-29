@@ -8,7 +8,7 @@ when the assembled package is imported.
 The repository source package does not check generated binaries into Git. The
 Harken distribution pipeline should assemble every runtime listed for the current
 editor host in `harken-integration.json` before shipping Harken Studio. Integration
-blocks only when the current editor runtime or core SDK content is missing. Other
+blocks only when the current editor runtime or required Integration Package content is missing. Other
 missing Unity targets are reported with guidance while available platforms continue
 to integrate; when bundled, every declared runtime is validated and installed.
 
@@ -37,13 +37,13 @@ Runtime/Plugins/
 
 ## Per-platform import settings
 
-The SDK editor importer locates its installation using the GUID in
+The Unity integration editor importer locates its installation using the GUID in
 `Editor/HarkenPluginImporterSetup.cs.meta` and verifies the package identity.
 It configures the libraries below `Runtime/Plugins` in UPM installations and
-custom Assets locations, including `Assets/Audio/SDK`. Keep the SDK directory
+custom Assets locations, including `Assets/Audio/HarkenIntegration`. Keep the Integration Package directory
 structure and its `.meta` files when importing or moving it. Importing or moving
-SDK assets schedules a configuration check; correct settings are left unchanged.
-Moving a native library outside the SDK stops this automatic configuration.
+Integration Package assets schedules a configuration check; correct settings are left unchanged.
+Moving a native library outside the Integration Package stops this automatic configuration.
 Restart Unity after moving a loaded native library.
 
 The distribution directory can be copied into Assets, embedded under Packages,
@@ -67,7 +67,7 @@ Select each binary in the Unity Project window and set:
 
 Set exactly one enabled library per (platform, CPU) so Unity does not report a
 "multiple plugins with the same name" conflict. The `x86_64` desktop library is
-what the standalone dotnet ABI / zero-GC harness under `HarkenSDK/Test/ContractTest` loads
+what the standalone dotnet ABI / zero-GC harness under `HarkenIntegration/Test/ContractTest` loads
 as well (see that project's README).
 
 ## Building the native library
@@ -86,7 +86,7 @@ options default OFF. Shared-library builds enable `HARKEN_BUILD_CORE` and
 `HARKEN_BUILD_SHARED`; iOS enables only `HARKEN_BUILD_CORE` and builds the static
 `harken_core` target.
 
-`.github/workflows/sdk-artifact.yml` assembles these libraries with the Unity
-SDK sources and validates the package layout. SDK contract tests belong
-to `.github/workflows/pr-gate-sdk.yml`, including the Windows native binding
-test. The artifact workflows do not run the SDK in Unity.
+`.github/workflows/integration-artifact.yml` assembles these libraries with the Unity
+Integration Package sources and validates the package layout. Integration contract tests belong
+to `.github/workflows/pr-gate-integration.yml`, including the Windows native binding
+test. The artifact workflows do not run the Integration Package in Unity.
