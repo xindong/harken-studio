@@ -33535,6 +33535,203 @@ TEST(ActionFiringApi, ResidentSeekTargetsOnlyTheSelectedConcurrentFiring) {
     EXPECT_EQ(VN_OK, Vn_ReleaseActionSeek(ticket));
 }
 
+TEST(ActionFiringApi, ResidentZeroSeekPreservesFiniteLoopOutputDuration) {
+    const auto run = [](bool seekEnabled, std::uint32_t mode,
+                        std::vector<float>& blocks) {
+        harkentest::EngineSession session(harkentest::MakeNullConfig(1, 64, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        std::vector<float> samples(4096, 0.2f);
+        std::fill(samples.begin(), samples.begin() + 192, 0.1f);
+        const auto pcm = harkentest::MonoDesc(samples, 48000);
+        ASSERT_EQ(VN_OK, engine.registry.RegisterPCM(
+            CanonicalActionWorld::kFirstSound, &pcm, nullptr,
+            harken::PcmLoopRegion{0, 192}));
+        CanonicalActionWorld image(engine.registry.Lookup(
+            CanonicalActionWorld::kFirstSound).contentRevision);
+        image.properties[0].payload.presentMask |= UINT64_C(0x8);
+        image.properties[0].payload.values[3].bits = 4;
+        image.RelinkFirstSound();
+        image.MakeImmediateSoundPlayAction();
+        ASSERT_EQ(harken::WorldInstallStatus::Ok,
+            harken::InstallContainerWorldV1(engine, image.world).status);
+        auto post = ValidPostDesc();
+        post.actionId = image.actions[9].actionStableId;
+        VnActionFiringHandle firing = 0;
+        ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+        VnVoiceHandle voice = 0;
+        for (unsigned attempt = 0; attempt < 8 && voice == 0; ++attempt) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            engine.nullBackend.Pump(1);
+            for (const auto& row : engine.playableServices) {
+                if (row.phase == harken::EnginePlayableStartPhase::Started &&
+                    row.InvocationValid() && row.Invocation().actionFiring == firing)
+                    voice = row.renderHandle;
+            }
+        }
+        ASSERT_NE(0u, voice);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        const auto* before = engine.voices.Resolve(voice);
+        ASSERT_NE(nullptr, before);
+        const auto audible = before->resampler.SourceFrame() - harken::kResampleHistoryPad;
+        ASSERT_LT(audible, 192u);
+        VnActionSeekTicket ticket = 0;
+        if (seekEnabled) {
+            VnActionSeekDescV1 seek{};
+            seek.structSize = sizeof(seek);
+            seek.firing = firing;
+            seek.mode = mode;
+            seek.positionMs = mode == VN_ACTION_SEEK_RELATIVE
+                ? 0.0 : static_cast<double>(audible) * 1000.0 / 48000.0;
+            ASSERT_EQ(VN_OK, Vn_SeekActionFiring(&seek, &ticket));
+        }
+        for (unsigned block = 0; block < 100 && engine.voices.IsAlive(voice); ++block) {
+            const auto sequence = engine.mixer.BlocksRendered();
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(sequence + 1u, engine.mixer.BlocksRendered());
+            blocks.push_back(engine.nullBackend.LastBlock()[
+                (engine.nullBackend.BlockFrames() - 1u) * engine.nullBackend.Channels()]);
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        EXPECT_FALSE(engine.voices.IsAlive(voice));
+        if (seekEnabled) {
+            VnActionSeekInfoV1 info{};
+            info.structSize = sizeof(info);
+            ASSERT_EQ(VN_OK, Vn_QueryActionSeek(ticket, &info));
+            EXPECT_EQ(VN_ACTION_SEEK_APPLIED, info.state);
+            EXPECT_EQ(audible, info.minimumAppliedSourceFrame);
+            EXPECT_EQ(VN_OK, Vn_ReleaseActionSeek(ticket));
+        }
+        for (unsigned block = 0; block < 8; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            engine.nullBackend.Pump(1);
+        }
+        EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+        EXPECT_EQ(0u, engine.registry.Lookup(CanonicalActionWorld::kFirstSound).useCount->load());
+    };
+    std::vector<float> reference;
+    ASSERT_NO_FATAL_FAILURE(run(false, VN_ACTION_SEEK_RELATIVE, reference));
+    for (auto mode : {VN_ACTION_SEEK_RELATIVE, VN_ACTION_SEEK_ABSOLUTE}) {
+        SCOPED_TRACE(mode);
+        std::vector<float> sought;
+        ASSERT_NO_FATAL_FAILURE(run(true, mode, sought));
+        EXPECT_EQ(reference.size(), sought.size());
+        for (std::size_t i = 1; i < std::min(reference.size(), sought.size()); ++i)
+            EXPECT_NEAR(reference[i], sought[i], 0.005f) << "block " << i;
+    }
+}
+
+TEST(ActionFiringApi, SeekCannotReviveSourceAfterUnservicedEndDuringEffectTail) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig(2, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto samples = harkentest::MakeDC(256, 0.1f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+    const auto siblingSamples = harkentest::MakeDC(1024, 0.2f);
+    const auto siblingPcm = harkentest::MonoDesc(siblingSamples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &siblingPcm));
+    CanonicalActionWorld image(engine.registry.Lookup(
+        CanonicalActionWorld::kFirstSound).contentRevision,
+        engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision, true);
+    image.MakeImmediateSoundPlayAction();
+    image.steps[12] = image.steps[11];
+    image.steps[12].authoredEventIndex = 1;
+    image.steps[11].target.stableId = CanonicalActionWorld::kSecondSound;
+    image.steps[11].target.expectedProgramSemanticFingerprint =
+        image.properties[1].programSemanticFingerprint;
+    image.actions[9].stepCount = 2;
+    image.actions[9].expandedStepOccurrenceCount = 2;
+    image.actions[9].programSemanticFingerprint =
+        harken::ComputeActionProgramFingerprintV1(image.actions[9]);
+    image.world.identity.runtimeSemanticFingerprint =
+        harken::ComputeCurrentWorldFingerprintV4(image.world);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harken::InstallContainerWorldV1(engine, image.world).status);
+    auto post = ValidPostDesc();
+    post.actionId = image.actions[9].actionStableId;
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+    VnVoiceHandle voice = 0;
+    VnVoiceHandle sibling = 0;
+    harken::TimelineArmToken sourceArm{};
+    for (unsigned attempt = 0; attempt < 8 && (voice == 0 || sibling == 0); ++attempt) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.nullBackend.Pump(1);
+        for (const auto& row : engine.playableServices) {
+            if (row.phase == harken::EnginePlayableStartPhase::Started &&
+                row.InvocationValid() && row.Invocation().actionFiring == firing) {
+                if (row.leaf.stableId == CanonicalActionWorld::kFirstSound) {
+                    voice = row.renderHandle;
+                    sourceArm = row.arm;
+                } else if (row.leaf.stableId == CanonicalActionWorld::kSecondSound)
+                    sibling = row.renderHandle;
+            }
+        }
+    }
+    ASSERT_NE(0u, voice);
+    ASSERT_NE(0u, sibling);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    for (unsigned block = 0; block < 16; ++block) {
+        const auto* render = engine.voices.Resolve(voice);
+        ASSERT_NE(nullptr, render);
+        if (render->phase == harken::SourcePhase::Draining) break;
+        engine.nullBackend.Pump(1);
+    }
+    const auto* ended = engine.voices.Resolve(voice);
+    ASSERT_NE(nullptr, ended);
+    ASSERT_EQ(harken::SourcePhase::Draining, ended->phase);
+    harken::TimelineArmObservation completed{};
+    ASSERT_TRUE(engine.timelineArms.Observe(sourceArm, &completed));
+    ASSERT_NE(0u, completed.logicalCompletionSequence);
+    ASSERT_LE(completed.logicalCompletionSequence, engine.mixer.BlocksRendered());
+    const auto* siblingBefore = engine.voices.Resolve(sibling);
+    ASSERT_NE(nullptr, siblingBefore);
+    ASSERT_EQ(harken::SourcePhase::Active, siblingBefore->phase);
+    const auto siblingConsumed = siblingBefore->resampler.SourceFrame();
+    VnActionSeekDescV1 seek{};
+    seek.structSize = sizeof(seek);
+    seek.firing = firing;
+    seek.mode = VN_ACTION_SEEK_ABSOLUTE;
+    VnActionSeekTicket ticket = 0;
+    ASSERT_EQ(VN_OK, Vn_SeekActionFiring(&seek, &ticket));
+    const auto blockBefore = engine.mixer.BlocksRendered();
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(blockBefore + 1u, engine.mixer.BlocksRendered());
+    VnActionSeekInfoV1 info{};
+    info.structSize = sizeof(info);
+    ASSERT_EQ(VN_OK, Vn_QueryActionSeek(ticket, &info));
+    EXPECT_EQ(VN_ACTION_SEEK_CANCELLED, info.state);
+    EXPECT_EQ(VN_STALE_HANDLE, info.result);
+    EXPECT_EQ(0u, info.appliedCount);
+    EXPECT_EQ(2u, info.cancelledCount);
+    const auto* after = engine.voices.Resolve(voice);
+    ASSERT_NE(nullptr, after);
+    EXPECT_NE(harken::SourcePhase::Active, after->phase);
+    harken::TimelineArmObservation completedAfter{};
+    ASSERT_TRUE(engine.timelineArms.Observe(sourceArm, &completedAfter));
+    EXPECT_EQ(completed.logicalCompletionSequence, completedAfter.logicalCompletionSequence);
+    const auto* siblingAfter = engine.voices.Resolve(sibling);
+    ASSERT_NE(nullptr, siblingAfter);
+    EXPECT_EQ(siblingConsumed + 64u, siblingAfter->resampler.SourceFrame());
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionSeek(ticket));
+    engine.nullBackend.Pump(32);
+    for (unsigned block = 0; block < 8; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.nullBackend.Pump(1);
+    }
+    EXPECT_EQ(0u, engine.voices.ActiveCount());
+    EXPECT_EQ(0u, engine.effectBank.DelayInUse());
+    VnActionFiringInfo firingInfo{};
+    firingInfo.structSize = sizeof(firingInfo);
+    ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &firingInfo));
+    EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, firingInfo.state);
+    EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, firingInfo.outcome);
+    EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, firingInfo.terminalReason);
+    EXPECT_EQ(0u, firingInfo.livePlayableCount);
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+}
+
 TEST(ActionFiringApi,
      ResidentLoopSeekIntoOutroFinishesFinalTraversalAndPreservesOtherFiring) {
     const auto run = [](std::uint32_t mode, std::uint32_t loopCount) {
