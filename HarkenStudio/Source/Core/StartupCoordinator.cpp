@@ -345,12 +345,14 @@ void StartupCoordinator::finish()
     loading_.setPhase(StartupPhase::ShowingEditor);
     connect(mainWindow_.get(), &MainWindow::startupPresentationFinished,
             this, [this](bool shown) {
+        if (!terminal_ && !shown)
+            cancelProjectOpen();
+    });
+    mainWindow_->prepareWindowForStartup(loading_.screen());
+    mainWindow_->show();
+    QTimer::singleShot(0, this, [this]() {
         if (terminal_)
             return;
-        if (!shown) {
-            cancelProjectOpen();
-            return;
-        }
         terminal_ = true;
         ProjectInstance::setActivationWindow(mainWindow_.get());
         loading_.setPhase(StartupPhase::Ready);
@@ -362,8 +364,6 @@ void StartupCoordinator::finish()
             hubClient_->reportStage(QStringLiteral("ready"));
         }
     });
-    mainWindow_->prepareWindowForStartup(loading_.screen());
-    mainWindow_->show();
 }
 
 void StartupCoordinator::cancelProjectOpen()
