@@ -336,7 +336,7 @@ void SourceEditorWaveformView::paintEvent(QPaintEvent*)
             }
             const int playheadX = playheadPosition();
             if (playheadX >= 0) {
-                painter.setPen(QPen(theme->ui.colors.success, 1));
+                painter.setPen(QPen(theme->domains.waveform.previewPlayhead, 1));
                 painter.drawLine(playheadX, waveformRect.top(),
                                  playheadX, waveformRect.bottom());
             }

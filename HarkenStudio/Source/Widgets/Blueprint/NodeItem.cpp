@@ -732,6 +732,36 @@ static QColor blendColors(const QColor& base, const QColor& tint, float ratio)
         base.blue()  + int((tint.blue()  - base.blue())  * ratio));
 }
 
+static QColor roleAccentColor(NodeRole role)
+{
+    const auto theme = ThemeManager::instance().snapshot();
+    const auto& rc = theme->domains.nodeGraphRole;
+    switch (role) {
+    case NodeRole::Source:   return rc.source;
+    case NodeRole::Self:     return rc.source;
+    case NodeRole::Parent:   return rc.parent;
+    case NodeRole::Bus:        return rc.bus;
+    case NodeRole::ReceiveBus: return rc.receiveBus;
+    }
+    return rc.source;
+}
+
+static QColor headerColor(const std::optional<ProjectItem::Type>& type, NodeRole role)
+{
+    const auto theme = ThemeManager::instance().snapshot();
+    const auto& hc = theme->domains.nodeGraphHeader;
+    if (!type.has_value()) return hc.fallback;
+    switch (*type) {
+    case ProjectItem::Type::Sound:       return hc.sound;
+    case ProjectItem::Type::Layer:       return hc.audioLayer;
+    case ProjectItem::Type::Bus:         return (role == NodeRole::ReceiveBus)
+                                             ? hc.receiveBus : hc.bus;
+    case ProjectItem::Type::Attenuation: return hc.attenuation;
+    case ProjectItem::Type::Action:      return hc.action;
+    default:                             return hc.fallback;
+    }
+}
+
 void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget)
 {
     Q_UNUSED(widget)
@@ -785,7 +815,7 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
     painter->setPen(borderPen);
     painter->drawRect(QRectF(0, 0, width_, height_));
 
-    painter->setBrush(theme->ui.colors.headerBackground);
+    painter->setBrush(headerColor(itemType_, role_));
     painter->setPen(Qt::NoPen);
     painter->drawRect(QRectF(1, 1, width_ - 2, kHeaderHeight));
     if (playbackActive_) {
@@ -997,11 +1027,19 @@ void NodeItem::paintWaveform(QPainter* painter, const QRectF& rect) const
     painter->setPen(Qt::NoPen);
     painter->setBrush(ngnWf.waveformBg);
     painter->drawRoundedRect(rect, 2, 2);
-    QColor waveColor = ngnWf.blueprintWaveform;
-    if (!blueprintWaveformMode_)
-        waveColor.setAlpha(isSelected() ? 255 : 140);
+    auto pickColor = [&]() -> QColor {
+        if (blueprintWaveformMode_) {
+            return theme->domains.nodeGraphNode.blueprintWaveform;
+        }
+        const QColor accent = roleAccentColor(role_);
+        QColor waveColor = accent;
+        if (!isSelected())
+            waveColor.setAlpha(140);
+        return waveColor;
+    };
 
     if (waveformPeakData_ && waveformPeakData_->isValid()) {
+        const QColor waveColor = pickColor();
         QRect intRect(static_cast<int>(rect.x()), static_cast<int>(rect.y()),
                       static_cast<int>(rect.width()), static_cast<int>(rect.height()));
         WaveformRenderOptions options{WaveColorMode::Static, WaveChannelSource::Mono, waveColor};
@@ -1024,7 +1062,7 @@ void NodeItem::paintWaveform(QPainter* painter, const QRectF& rect) const
 
     WaveformRenderer::renderRawPeaks(
         *painter, rect, waveformPeaks_.data(), numPeaks,
-        theme->domains.waveform, waveColor);
+        theme->domains.waveform, pickColor());
 }
 
 QVariant NodeItem::itemChange(GraphicsItemChange change, const QVariant& value)

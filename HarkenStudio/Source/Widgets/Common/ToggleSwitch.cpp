@@ -58,7 +58,7 @@ void ToggleSwitch::applyTheme()
 {
     if (label_) {
         QtControlSkin::setSemanticProperty(label_, "textRole",
-                                          QStringLiteral("formLabel"));
+                                          QStringLiteral("secondary"));
     }
 }
 

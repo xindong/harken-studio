@@ -478,6 +478,7 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@bgHover@"), color(colors().bgHover));
     replace(QStringLiteral("@bgSelected@"), color(colors().bgSelected));
     replace(QStringLiteral("@panelBackground@"), color(colors().panelBackground));
+    replace(QStringLiteral("@panelBorder@"), color(colors().panelBorder));
     replace(QStringLiteral("@dropHighlight@"), color(colors().dropHighlight));
     replace(QStringLiteral("@borderPrimary@"), color(colors().borderPrimary));
     replace(QStringLiteral("@borderSecondary@"), color(colors().borderSecondary));
@@ -500,9 +501,13 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@auditionBg@"), color(colors().auditionBg));
     replace(QStringLiteral("@auditionPlayOverlay@"), rgba(colors().auditionPlayActive, 40));
     replace(QStringLiteral("@shellMenuText@"), color(colors().shellMenuText));
+    replace(QStringLiteral("@shellMenuHover@"), color(colors().shellMenuHover));
     replace(QStringLiteral("@shellMenuHoverText@"), color(colors().shellMenuHoverText));
+    replace(QStringLiteral("@shellMenuPressed@"), color(colors().shellMenuPressed));
+    replace(QStringLiteral("@shellMenuPressedText@"), color(colors().shellMenuPressedText));
     replace(QStringLiteral("@shellButtonText@"), color(colors().shellButtonText));
     replace(QStringLiteral("@shellButtonHoverText@"), color(colors().shellButtonHoverText));
+    replace(QStringLiteral("@shellButtonPressed@"), color(colors().shellButtonPressed));
     replace(QStringLiteral("@shellCloseHover@"), color(colors().shellCloseHover));
     replace(QStringLiteral("@shellClosePressed@"), color(colors().shellClosePressed));
     replace(QStringLiteral("@success@"), color(colors().success));
@@ -511,6 +516,7 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@info@"), color(colors().info));
     replace(QStringLiteral("@sectionSeparator@"), color(colors().sectionSeparator));
     replace(QStringLiteral("@headerBackground@"), color(colors().headerBackground));
+    replace(QStringLiteral("@borderAccent@"), color(colors().borderAccent));
     replace(QStringLiteral("@accentSoft@"), rgba(colors().accent, 38));
     replace(QStringLiteral("@toolbarRemoteActive@"), color(colors().warning.lighter(125)));
     replace(QStringLiteral("@toolbarRemoteHover@"), color(colors().warning.lighter(145)));

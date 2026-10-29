@@ -2,7 +2,6 @@
 
 #include "harken_buildinfo.h"
 #include "BuiltinTheme.h"
-#include "ThemeColorResolver.h"
 #include "FontManager.h"
 #include "QtAdsThemeAdapter.h"
 #include "QtControlSkin.h"
@@ -56,27 +55,17 @@ ThemeManager::ThemeManager(QString userThemesRoot,
     assetResolver_.registerSnapshot(snapshot_, {}, {});
     refreshThemes();
 
-    committedCandidate_.snapshot = snapshot_;
-    committedCandidate_.manifest.id = currentThemeId_;
-    ThemeAppearance restored = persistedAppearance();
-    if (restored.themeId != builtinThemeId() || !restored.colors.isEmpty())
+    const QString restoredId = persistedThemeId();
+    if (!restoredId.isEmpty() && restoredId != builtinThemeId())
     {
-        auto loaded = customizedCandidate(restored);
-        if (!loaded.ok() && restored.themeId != builtinThemeId())
+        ThemeManagerOperationResult restored = loadAndPublish(
+            restoredId, false, true);
+        if (!restored.ok())
         {
-            lastDiagnostics_ = loaded.diagnostics;
-            restored.themeId = builtinThemeId();
-            loaded = customizedCandidate(restored);
+            lastDiagnostics_ = restored.diagnostics;
+            QList<ThemePackageDiagnostic> ignored;
+            persistThemeId(builtinThemeId(), ignored);
         }
-        if (loaded.ok())
-        {
-            currentThemeId_ = restored.themeId;
-            customizations_ = restored.colors;
-            committedCandidate_ = *loaded.candidate;
-            publishCandidate(committedCandidate_, false);
-        }
-        else
-            lastDiagnostics_ = loaded.diagnostics;
     }
     applyApplicationTheme();
 }
@@ -100,142 +89,28 @@ ThemeManagerOperationResult ThemeManager::reloadTheme()
     return loadAndPublish(currentThemeId_, false, true);
 }
 
-ThemePackageLoadResult ThemeManager::loadBaseTheme(const QString& themeId) const
-{
-    return loadThemePackageCandidate(userThemesRoot_, themeId, loadOptions_);
-}
-
-bool ThemeManager::checkPublicationThread(ThemeManagerOperationResult& result) const
-{
-    if (QThread::currentThread() == thread())
-        return true;
-    result.diagnostics.append(ThemePackageDiagnostic{
-        ThemePackageErrorCode::RuntimeThreadViolation,
-        QStringLiteral("ThemeManager"), QStringLiteral("$"),
-        QStringLiteral("Theme publication must run on the manager thread.")});
-    return false;
-}
-
-ThemePackageLoadResult ThemeManager::customizedCandidate(
-    const ThemeAppearance& appearance, bool reusePreviewBase)
-{
-    ThemePackageLoadResult result;
-    for (auto theme = appearance.colors.cbegin(); theme != appearance.colors.cend(); ++theme)
-    {
-        for (auto color = theme->cbegin(); color != theme->cend(); ++color)
-        {
-            const bool known = findThemeColorRole(color.key()) != nullptr;
-            if (known && color->isValid())
-                continue;
-            result.diagnostics.append(ThemePackageDiagnostic{
-                known ? ThemePackageErrorCode::InvalidValue
-                      : ThemePackageErrorCode::UnknownSemanticKey,
-                QStringLiteral("settings"),
-                QStringLiteral("Appearance.Colors.%1.%2").arg(theme.key(), color.key()),
-                known ? QStringLiteral("The custom color is invalid.")
-                      : QStringLiteral("This color role cannot be customized.")});
-        }
-    }
-    if (!result.diagnostics.isEmpty())
-        return result;
-
-    if (reusePreviewBase && previewBaseCandidate_
-        && previewBaseCandidate_->manifest.id == appearance.themeId)
-        result.candidate = previewBaseCandidate_;
-    else
-    {
-        result = loadBaseTheme(appearance.themeId);
-        if (reusePreviewBase && result.ok())
-            previewBaseCandidate_ = result.candidate;
-    }
-    if (!result.ok())
-        return result;
-    const auto overrides = appearance.colors.value(appearance.themeId);
-    if (overrides.isEmpty())
-        return result;
-    ThemeSnapshot customized = *result.candidate->snapshot;
-    for (auto color = overrides.cbegin(); color != overrides.cend(); ++color)
-        findThemeColorRole(color.key())->write(customized, color.value());
-    resolveThemeColors(customized);
-    result.candidate->snapshot = std::make_shared<const ThemeSnapshot>(std::move(customized));
-    return result;
-}
-
-ThemeManagerOperationResult ThemeManager::previewAppearance(const ThemeAppearance& appearance)
-{
-    return updateAppearance(appearance, false);
-}
-
-ThemeManagerOperationResult ThemeManager::applyAppearance(const ThemeAppearance& appearance)
-{
-    return updateAppearance(appearance, true);
-}
-
-ThemeManagerOperationResult ThemeManager::updateAppearance(
-    const ThemeAppearance& appearance, bool persist)
-{
-    ThemeManagerOperationResult result;
-    if (!checkPublicationThread(result))
-        return result;
-    if (persist && appearance == this->appearance())
-    {
-        cancelAppearancePreview();
-        lastDiagnostics_.clear();
-        return result;
-    }
-    auto loaded = customizedCandidate(appearance, !persist);
-    if (!loaded.ok())
-    {
-        result.diagnostics = loaded.diagnostics;
-        lastDiagnostics_ = result.diagnostics;
-        return result;
-    }
-    if (persist && !persistAppearance(appearance, result.diagnostics))
-    {
-        lastDiagnostics_ = result.diagnostics;
-        return result;
-    }
-    if (persist)
-    {
-        currentThemeId_ = appearance.themeId;
-        customizations_ = appearance.colors;
-        committedCandidate_ = *loaded.candidate;
-        previewBaseCandidate_.reset();
-    }
-    previewActive_ = !persist;
-    publishCandidate(*loaded.candidate, true);
-    result.published = true;
-    lastDiagnostics_.clear();
-    return result;
-}
-
-void ThemeManager::cancelAppearancePreview()
-{
-    if (!previewActive_ || QThread::currentThread() != thread())
-        return;
-    previewActive_ = false;
-    previewBaseCandidate_.reset();
-    publishCandidate(committedCandidate_, true);
-    lastDiagnostics_.clear();
-}
-
 ThemeManagerOperationResult ThemeManager::loadAndPublish(
     const QString& themeId,
     bool persistSelection,
     bool allowCurrentTheme)
 {
     ThemeManagerOperationResult result;
-    if (!checkPublicationThread(result))
+    if (QThread::currentThread() != thread())
+    {
+        result.diagnostics.append(ThemePackageDiagnostic{
+            ThemePackageErrorCode::RuntimeThreadViolation,
+            QStringLiteral("ThemeManager"), QStringLiteral("$"),
+            QStringLiteral("Theme publication must run on the manager thread.")});
         return result;
+    }
     if (!allowCurrentTheme && themeId == currentThemeId_)
     {
-        cancelAppearancePreview();
         lastDiagnostics_.clear();
         return result;
     }
 
-    const ThemeAppearance desired{themeId, customizations_};
-    ThemePackageLoadResult loaded = customizedCandidate(desired);
+    ThemePackageLoadResult loaded = loadThemePackageCandidate(
+        userThemesRoot_, themeId, loadOptions_);
     if (!loaded.ok())
     {
         result.diagnostics = std::move(loaded.diagnostics);
@@ -243,16 +118,13 @@ ThemeManagerOperationResult ThemeManager::loadAndPublish(
         return result;
     }
     if (persistSelection
-        && !persistAppearance(desired, result.diagnostics))
+        && !persistThemeId(themeId, result.diagnostics))
     {
         lastDiagnostics_ = result.diagnostics;
         return result;
     }
 
     currentThemeId_ = themeId;
-    committedCandidate_ = *loaded.candidate;
-    previewActive_ = false;
-    previewBaseCandidate_.reset();
     publishCandidate(*loaded.candidate, true);
     result.published = true;
     lastDiagnostics_.clear();
@@ -297,53 +169,33 @@ void ThemeManager::applyApplicationTheme()
     fontManager.applyTheme(snapshot_);
 }
 
-bool ThemeManager::persistAppearance(
-    const ThemeAppearance& appearance,
+bool ThemeManager::persistThemeId(
+    const QString& themeId,
     QList<ThemePackageDiagnostic>& diagnostics)
 {
     if (!storage_ || !storage_->isWritable())
     {
         diagnostics.append(ThemePackageDiagnostic{
             ThemePackageErrorCode::PersistenceUnavailable,
-            QStringLiteral("settings"), QStringLiteral("Appearance"),
-            QStringLiteral("Appearance settings storage is not writable.")});
+            QStringLiteral("settings"), QStringLiteral("Appearance.ThemeId"),
+            QStringLiteral("Theme selection storage is not writable.")});
         return false;
     }
     storage_->beginGroup(QStringLiteral("Appearance"));
-    storage_->setValue(QStringLiteral("ThemeId"), appearance.themeId);
-    QVariantMap customizations;
-    for (auto theme = appearance.colors.cbegin(); theme != appearance.colors.cend(); ++theme)
-    {
-        QVariantMap overrides;
-        for (auto color = theme->cbegin(); color != theme->cend(); ++color)
-            overrides.insert(color.key(), color->name(QColor::HexArgb));
-        if (!overrides.isEmpty())
-            customizations.insert(theme.key(), overrides);
-    }
-    storage_->setValue(QStringLiteral("Colors"), customizations);
+    storage_->setValue(QStringLiteral("ThemeId"), themeId);
     storage_->endGroup();
     storage_->sync();
     return true;
 }
 
-ThemeAppearance ThemeManager::persistedAppearance() const
+QString ThemeManager::persistedThemeId() const
 {
-    ThemeAppearance appearance{builtinThemeId(), {}};
     if (!storage_)
-        return appearance;
+        return {};
     storage_->beginGroup(QStringLiteral("Appearance"));
     const QString id = storage_->value(QStringLiteral("ThemeId")).toString();
-    if (!id.isEmpty())
-        appearance.themeId = id;
-    const QVariantMap customizations = storage_->value(QStringLiteral("Colors")).toMap();
-    for (auto theme = customizations.cbegin(); theme != customizations.cend(); ++theme)
-    {
-        const QVariantMap overrides = theme->toMap();
-        for (auto color = overrides.cbegin(); color != overrides.cend(); ++color)
-            appearance.colors[theme.key()].insert(color.key(), QColor(color->toString()));
-    }
     storage_->endGroup();
-    return appearance;
+    return id;
 }
 
 void ThemeManager::paintBindAffordance(QPainter& p, const QRect& rect, BindGlyph,

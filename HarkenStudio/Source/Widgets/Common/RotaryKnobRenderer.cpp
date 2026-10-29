@@ -18,9 +18,9 @@ void RotaryKnobRenderer::render(QPainter& painter,
     const double position = std::clamp(frame.position, 0.0, 1.0);
     const QColor disabled = style.colors.textDisabled;
     const QColor arcTrack = frame.enabled ? style.colors.borderPrimary : disabled;
-    const QColor arcValue = frame.enabled ? style.colors.accent : disabled;
+    const QColor arcValue = frame.enabled ? style.colors.knobArc : disabled;
     const QColor indicator = frame.enabled ? style.colors.knobIndicator : disabled;
-    const QColor face = frame.enabled ? style.colors.bgTertiary
+    const QColor face = frame.enabled ? style.colors.knobFace
                                       : style.colors.bgSecondary;
 
     painter.save();

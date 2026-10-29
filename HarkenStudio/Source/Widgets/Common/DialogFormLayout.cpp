@@ -26,7 +26,7 @@ void DialogFormLayout::addRow(QLabel* label, QWidget* field)
     label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     label->setWordWrap(true);
     label->setBuddy(field);
-    QtControlSkin::setSemanticProperty(label, "textRole", QStringLiteral("formLabel"));
+    QtControlSkin::setSemanticProperty(label, "dialogRole", QStringLiteral("label"));
     auto policy = field->sizePolicy();
     policy.setHorizontalPolicy(QSizePolicy::Expanding);
     field->setSizePolicy(policy);

@@ -414,6 +414,7 @@ void ObjectRefWidget::refreshStyle()
                          || (required_ && !inherited_))));
     QtControlSkin::setSemanticProperty(this, "inputInvalid", invalid);
     QtControlSkin::setSemanticProperty(this, "dimmed", dim);
+    QtControlSkin::setSemanticProperty(nameLabel_, "dimmed", dim);
     QtControlSkin::setSemanticProperty(nameLabel_, "inherited", inherited_);
     QtControlSkin::setSemanticProperty(nameLabel_, "inputInvalid", invalid);
 }

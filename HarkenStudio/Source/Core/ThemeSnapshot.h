@@ -37,6 +37,7 @@ struct ThemeColors
 
     QColor borderPrimary;
     QColor borderSecondary;
+    QColor borderAccent;
     QColor viewBorder;
     QColor dropHighlight;
     QColor dropAccent;
@@ -57,9 +58,13 @@ struct ThemeColors
     QColor busBackgroundActive;
 
     QColor sliderTrack;
+    QColor sliderFill;
+    QColor knobArc;
+    QColor knobFace;
     QColor knobIndicator;
 
     QColor panelBackground;
+    QColor panelBorder;
     QColor sectionSeparator;
     QColor headerBackground;
 
@@ -68,9 +73,14 @@ struct ThemeColors
     QColor auditionStopActive;
 
     QColor shellMenuText;
+    QColor shellMenuHover;
     QColor shellMenuHoverText;
+    QColor shellMenuPressed;
+    QColor shellMenuPressedText;
     QColor shellButtonText;
+    QColor shellButtonHover;
     QColor shellButtonHoverText;
+    QColor shellButtonPressed;
     QColor shellCloseHover;
     QColor shellClosePressed;
 
@@ -337,6 +347,14 @@ struct WaveformStyle
     QColor regionMarker;
     QColor trimHandle;
     QColor loopHandle;
+
+    QColor previewGradientTop;
+    QColor previewGradientMid;
+    QColor previewPlayhead;
+    QColor previewLoopFill;
+    QColor previewLoopBorder;
+    QColor previewPeakClip;
+    QColor previewPeakSafe;
 
     struct StaticMode {
         QColor quiet;
@@ -794,9 +812,32 @@ struct DomainColors
     WaveformStyle waveform;
     CurveStyle curve;
 
-    struct Startup {
-        std::array<QColor, 4> wavePalette;
-    } startup;
+    struct NodeGraph {
+        QColor sound;
+        QColor audioLayer;
+        QColor bus;
+        QColor receiveBus;
+        QColor attenuation;
+        QColor action;
+        QColor fallback;
+    } nodeGraph;
+
+    struct NodeGraphHeader {
+        QColor sound;
+        QColor audioLayer;
+        QColor bus;
+        QColor receiveBus;
+        QColor attenuation;
+        QColor action;
+        QColor fallback;
+    } nodeGraphHeader;
+
+    struct NodeGraphRole {
+        QColor source;
+        QColor parent;
+        QColor bus;
+        QColor receiveBus;
+    } nodeGraphRole;
 
     struct PinDomain {
         QColor audio;

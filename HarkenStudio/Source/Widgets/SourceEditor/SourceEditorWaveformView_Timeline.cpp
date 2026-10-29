@@ -574,9 +574,7 @@ void SourceEditorWaveformView::editHandleValue(Handle handle)
     auto* layout = new QHBoxLayout(dialog);
     layout->setContentsMargins(8, 6, 8, 6);
     layout->setSpacing(8);
-    auto* label = new QLabel(handle == Handle::TrimStart ? tr("Trim In") : tr("Trim Out"), dialog);
-    label->setProperty("textRole", QStringLiteral("formLabel"));
-    layout->addWidget(label);
+    layout->addWidget(new QLabel(handle == Handle::TrimStart ? tr("Trim In") : tr("Trim Out"), dialog));
     auto* spin = new DecimalSpinBox(dialog);
     spin->setObjectName(QStringLiteral("sourceTrimValueInput"));
     spin->setKeyboardTracking(false);

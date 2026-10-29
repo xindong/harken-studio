@@ -68,8 +68,6 @@ struct ThemePackageDiscoveryResult
 
 QString builtinThemeId();
 
-bool applyThemeColor(ThemeSnapshot& theme, const QString& key, const QColor& color);
-
 ThemePackageDiscoveryResult discoverThemePackages(
     const QString& themesRoot,
     const ThemePackageLoadOptions& options = {});
