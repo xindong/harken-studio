@@ -26,6 +26,13 @@ namespace harken {
 
 namespace {
 
+template <typename Rows>
+auto FindVariableDefinition(Rows& definitions, VnVariableId id) noexcept {
+    const auto found = std::lower_bound(definitions.begin(), definitions.end(), id,
+        [](const auto& row, VnVariableId key) { return row.definition.variableId < key; });
+    return found != definitions.end() && found->definition.variableId == id ? &*found : nullptr;
+}
+
 class VariableProjectionGuard {
 public:
     explicit VariableProjectionGuard(Engine& engine) noexcept : engine_(engine) {
@@ -976,22 +983,12 @@ const VariableDefinitionV1* VariableServiceV1::Definition(
 
 VariableServiceV1::DefinitionRow* VariableServiceV1::FindDefinition(
     VnVariableId id) noexcept {
-    for (DefinitionRow& row : definitions_) {
-        if (row.definition.variableId == id) {
-            return &row;
-        }
-    }
-    return nullptr;
+    return FindVariableDefinition(definitions_, id);
 }
 
 const VariableServiceV1::DefinitionRow* VariableServiceV1::FindDefinition(
     VnVariableId id) const noexcept {
-    for (const DefinitionRow& row : definitions_) {
-        if (row.definition.variableId == id) {
-            return &row;
-        }
-    }
-    return nullptr;
+    return FindVariableDefinition(definitions_, id);
 }
 
 bool VariableServiceV1::ScopeEqual(const VariableScopeKey& a,
@@ -3665,10 +3662,9 @@ VariableServiceV1::OverrideRow VariableServiceV1::MigrateOverride(
     OverrideRow value, const std::vector<DefinitionRow>& nextDefinitions,
     bool changesWorld) const noexcept {
     if (!value.used) return value;
-    const auto next = std::find_if(nextDefinitions.begin(), nextDefinitions.end(),
-        [&](const DefinitionRow& row) { return row.definition.variableId == value.variableId; });
+    const auto* next = FindVariableDefinition(nextDefinitions, value.variableId);
     const auto* prior = FindDefinition(value.variableId);
-    if (next == nextDefinitions.end() || prior == nullptr ||
+    if (next == nullptr || prior == nullptr ||
         !SameDefinition(*prior, *next) || (changesWorld && value.currentBankOrdinal == 0))
         return {};
     if (changesWorld) {
