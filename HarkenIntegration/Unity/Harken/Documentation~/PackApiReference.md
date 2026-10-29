@@ -14,8 +14,8 @@ Optional `metadata` and `waveforms` are not playback dependencies.
 Select a platform directory explicitly, or select its direct child by exact
 platform name. There is no platform index, legacy manifest, `.pack` path
 resolution, or `.pack.bytes` wrapper fallback. Re-export old Packs with the
-current Studio and update the SDK/native libraries together. Pack migration is
-unsupported; Studio project migration remains a separate authoring workflow.
+current Studio and update the Integration Package and native libraries together.
+Pack migration is unsupported; Studio project migration remains a separate authoring workflow.
 
 `PackManifest` has been removed. `GameplayPublication` and `HarkenPreparedPacks`
 remain only as signature dependencies for suspended Editor APIs. Their capture,

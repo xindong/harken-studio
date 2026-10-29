@@ -112,20 +112,20 @@ class CollectLegalTextsTest(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     self.module.verify("hub", output)
 
-    def test_standalone_sdk_requires_license_and_notice(self):
-        sdk = self.root / "HarkenSDK"
-        destination = sdk / "Unity/Harken"
+    def test_standalone_integration_requires_license_and_notice(self):
+        integration = self.root / "HarkenSDK"
+        destination = integration / "Unity/Harken"
         destination.mkdir(parents=True)
         for name in ("LICENSE.md", "NOTICE.md"):
             shutil.copyfile(REPO_ROOT / "HarkenIntegration/Unity/Harken" / name, destination / name)
-        self.module.verify_sdk(sdk)
+        self.module.verify_integration(integration)
         for name in ("LICENSE.md", "NOTICE.md"):
             with self.subTest(name=name):
                 path = destination / name
                 content = path.read_bytes()
                 path.unlink()
                 with self.assertRaises(SystemExit):
-                    self.module.verify_sdk(sdk)
+                    self.module.verify_integration(integration)
                 path.write_bytes(content)
 
     def test_staged_text_accepts_platform_line_endings(self):

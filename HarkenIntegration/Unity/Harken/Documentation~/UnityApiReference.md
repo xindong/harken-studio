@@ -29,8 +29,8 @@ The companion chapters cover [Variables and Labels](VariableApiReference.md),
    and `Init.json`, or its parent with an exact **Platform Name**. Keep every
    `.bytes`/`.json` pair together. For a built desktop Player, include the selected
    export in the Player exports list and deploy it through the project's
-   build/content pipeline. The SDK does not copy it. Android uses an explicit
-   companion source as described below.
+   build/content pipeline. The Unity integration does not copy it. Android uses
+   an explicit companion source as described below.
 2. Add one `HarkenAudioSystem` to the scene. **Auto Start** is enabled by
    default; in the Editor and desktop Player, its `Awake` reads the directory
    from Project Settings. Add a
@@ -88,7 +88,7 @@ again for an explicit retry after fixing the cause.
 | Entry point | Resource and handle ownership | Content behavior |
 | --- | --- | --- |
 | `HarkenAction.Play()` | Component owns the firing, Pack scope, and cleanup. Its `Firing` is for observation and stopping; do not release it. | Prepares the Action's declared Pack closure before posting. |
-| `HarkenAudioSystem.PlayAction(...)` | SDK owns the returned firing and releases it after completion. Caller may query or stop, but must not release it. | Synchronously prepares the closure. Preload for a latency-sensitive trigger. |
+| `HarkenAudioSystem.PlayAction(...)` | `HarkenAudioSystem` owns the returned firing and releases it after completion. Caller may query or stop, but must not release it. | Synchronously prepares the closure. Preload for a latency-sensitive trigger. |
 | `Actions.Post(...)` | Caller owns the returned `ActionFiring`; stop/query/release it and manage any prepared Pack scope. | No loading or automatic preparation. |
 | `HarkenEmitter` | Component owns one native emitter and follows its Transform. Do not destroy its `Handle` yourself. | No Action content loading. |
 | `Emitter.Create(...)` | Caller owns the native emitter handle and destroys it after its users finish. | No Action content loading. |
@@ -142,7 +142,7 @@ for `IsPreparationComplete` does not retry failed requests.
 | **GeneratedPacks directory** | The single directory selection used by Auto Start. Editor and Player resolve it according to the rules below. There is no implicit `StreamingAssets/Audio/GeneratedPacks` fallback. |
 | **Platform Name** | Select a direct child of the configured root, or match the selected platform directory's basename. The legacy Platform Id control is hidden; when an ID was saved, use **Clear legacy platform selection** on this page before companion directory startup. |
 | **Language / Init Pack** | Select the publication language and its matching Init Pack. |
-| **Max Simultaneous Playbacks** | Limits SDK-managed `PlayAction` slots as well as native firing capacity. An exhausted managed slot refuses with `VN_NO_ACTION`. |
+| **Max Simultaneous Playbacks** | Limits the `PlayAction` slots managed by `HarkenAudioSystem` as well as native firing capacity. An exhausted managed slot refuses with `VN_NO_ACTION`. |
 
 In the Editor, relative paths start at the Unity project root and the selected
 directory must be inside that project. Desktop Players resolve relative paths
@@ -151,7 +151,7 @@ directories. `Assets/StreamingAssets/...` maps explicitly to
 `Application.streamingAssetsPath/...`. Android packaged companions use the
 explicit streaming source instead of the suspended directory Auto Start path.
 The project team deploys Packs to the configured
-location. The SDK installation folder does not determine the Pack location.
+location. The Integration Package installation folder does not determine the Pack location.
 The old serialized `packRoot` value does not select Auto Start content.
 
 Project settings are stored in
@@ -341,7 +341,7 @@ public sealed class OneShotPlayer : MonoBehaviour
         VnResult result = audioSystem.PlayAction(actionName, projectId,
                                                  out ActionFiring firing);
         if (result != VnResult.VN_OK) Debug.LogWarning(result, this);
-        // The SDK owns firing. Keep it only if this caller needs Query or Stop.
+        // HarkenAudioSystem owns firing. Keep it only if this caller needs Query or Stop.
     }
 }
 ```
@@ -448,7 +448,7 @@ destroy and recreate it when pooling assigns a new object identity.
 | --- | --- |
 | `Emitter Handle { get; }`, `bool IsCreated { get; }` | Live native handle and creation state. An unavailable handle is `default`. |
 | `VnResult LastResult { get; }` | Last component operation, including transform publication. |
-| `VnResult Create()` | Create/register after a live session exists. Pose publication happens at the shared frame boundary or immediately before an SDK Post. Repeated creation of this component's current emitter returns `VN_OK`; no session returns `VN_NOT_INITIALIZED`. |
+| `VnResult Create()` | Create/register after a live session exists. Pose publication happens at the shared frame boundary or immediately before the Unity integration posts an Action. Repeated creation of this component's current emitter returns `VN_OK`; no session returns `VN_NOT_INITIALIZED`. |
 | `VnResult Stop()` | Stop the emitter's current playback using `stopFadeMs`; no created emitter returns `VN_OK`. |
 | `VnResult SetDistanceScale(float scale)` | Set a positive finite range multiplier on this enabled component's current identity. An unavailable/obsolete identity returns `VN_STALE_HANDLE`; an active spatial publication returns `VN_IN_USE`. Destroy/recreate resets the multiplier to 1. |
 | `VnResult DestroyEmitter()` | Stop, then destroy the owned emitter. Check the result; failed cleanup retains ownership. |
@@ -540,8 +540,8 @@ overwritten by an older publication or cleanup result.
 Distance high-pass filtering comes from the attenuation profile in published
 content. A disabled curve or a value of 0 Hz contributes no high-pass filtering.
 Game code consumes that content through the existing playback APIs; profile
-descriptors and curve construction remain internal tooling types. Use the SDK,
-native library and published content from a matching delivery. The managed ABI
+descriptors and curve construction remain internal tooling types. Use the
+Integration Package, native library and published content from a matching delivery. The managed ABI
 layout check does not detect native high-pass support. An older native library
 rejects the new attenuation descriptor with `VN_INVALID_ARG`, including when
 its high-pass curve is disabled; the SDK does not shorten it or discard the curve.

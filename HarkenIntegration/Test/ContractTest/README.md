@@ -1,7 +1,7 @@
 # Managed and native SDK contracts
 
-The .NET 9 runner compiles the shipped generated and hand-written SDK sources
-with C# 9 and no NuGet dependencies. It checks ABI layout, coordinate conversion,
+The .NET 9 runner compiles the generated and hand-written managed SDK sources
+shipped in the Unity Integration Package with C# 9 and no NuGet dependencies. It checks ABI layout, coordinate conversion,
 Variable symbol rules, bootstrap capacity recommendations, byte providers,
 zero-allocation calls, Remote communication and companion lifecycle behavior.
 

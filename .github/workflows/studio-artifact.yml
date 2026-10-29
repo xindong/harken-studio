@@ -141,7 +141,7 @@ jobs:
           set -euo pipefail
           rm -rf build/bin/Release/HarkenIntegration build/bin/Release/HarkenSDK
           python .scripts/release/integration_layout.py --source .temp/integration-bundle/HarkenIntegration --destination build/bin/Release
-          python .scripts/check_sdk_version.py
+          python .scripts/check_integration_version.py
           find build/bin/Release/HarkenIntegration -type f -print
 
       - name: Stage legal attribution texts
@@ -437,26 +437,26 @@ jobs:
               status=1
             fi
           done
-          sdk_plugins="$bundle/Contents/MacOS/HarkenIntegration/Unity/Harken/Runtime/Plugins"
+          integration_plugins="$bundle/Contents/MacOS/HarkenIntegration/Unity/Harken/Runtime/Plugins"
           for runtime in \
-            "$sdk_plugins/x86_64/HarkenCore.dll" \
-            "$sdk_plugins/x86_64/libHarkenCore.so" \
-            "$sdk_plugins/macOS/libHarkenCore.dylib" \
-            "$sdk_plugins/iOS/libHarkenCore.a" \
-            "$sdk_plugins/Android/arm64-v8a/libHarkenCore.so"; do
+            "$integration_plugins/x86_64/HarkenCore.dll" \
+            "$integration_plugins/x86_64/libHarkenCore.so" \
+            "$integration_plugins/macOS/libHarkenCore.dylib" \
+            "$integration_plugins/iOS/libHarkenCore.a" \
+            "$integration_plugins/Android/arm64-v8a/libHarkenCore.so"; do
             if [ ! -s "$runtime" ]; then
               echo "::error::missing or empty Unity runtime: $runtime"
               status=1
             fi
           done
-          sdk_dylib="$sdk_plugins/macOS/libHarkenCore.dylib"
-          if [ -f "$sdk_dylib" ]; then
-            sdk_archs=$(lipo -archs "$sdk_dylib")
-            echo "Bundled Unity macOS runtime architectures: $sdk_archs"
+          integration_dylib="$integration_plugins/macOS/libHarkenCore.dylib"
+          if [ -f "$integration_dylib" ]; then
+            integration_archs=$(lipo -archs "$integration_dylib")
+            echo "Bundled Unity macOS runtime architectures: $integration_archs"
             for want in arm64 x86_64; do
-              case " $sdk_archs " in
+              case " $integration_archs " in
                 *" $want "*) ;;
-                *) echo "::error file=$sdk_dylib::missing $want slice, got: $sdk_archs"; status=1 ;;
+                *) echo "::error file=$integration_dylib::missing $want slice, got: $integration_archs"; status=1 ;;
               esac
             done
           fi

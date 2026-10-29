@@ -45,7 +45,7 @@ jobs:
           fetch-depth: 0
 
       - name: Verify Integration version identity
-        run: python3 .scripts/check_sdk_version.py
+        run: python3 .scripts/check_integration_version.py
 
       - name: Download release Runtime libraries
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -90,11 +90,11 @@ jobs:
           import json
           from pathlib import Path
 
-          sdk = Path('.temp/package/HarkenIntegration/Unity/Harken')
-          manifest = json.loads((sdk / 'harken-integration.json').read_text(encoding='utf-8'))
+          integration = Path('.temp/package/HarkenIntegration/Unity/Harken')
+          manifest = json.loads((integration / 'harken-integration.json').read_text(encoding='utf-8'))
           missing = []
           for relative in manifest.get('required_files', []):
-              path = sdk / relative
+              path = integration / relative
               if not path.exists() or (path.is_file() and path.stat().st_size == 0):
                   missing.append(relative)
           if missing:
@@ -102,7 +102,7 @@ jobs:
           print(f"Verified {len(manifest.get('required_files', []))} shared Unity Integration files")
           PY
 
-          python3 .scripts/check_unity_sdk_contract.py \
+          python3 .scripts/check_unity_integration_contract.py \
             --integration-root .temp/package/HarkenIntegration/Unity/Harken \
             --require-binaries
 

@@ -42,7 +42,7 @@ trim duration. `ExactSeconds` is null for unknown/range results.
 
 For SAGA2 editor caches, key by source, Action and catalog revision; clear
 cached automatic duration after refresh failure, unknown/range or Action change.
-Preserve user-authored values under the game's existing edit rules. An SDK
+Preserve user-authored values under the game's existing edit rules. An Editor API
 unknown result does not imply every timeline supports manual length input.
 
 ## Independent Editor playback
@@ -63,8 +63,8 @@ Check each result before using outputs. Preview defaults to the real device and
 works outside Play Mode. Multiple scopes share the engine owner and hold their
 own preparations/firings. Dispose scopes; do not separately dispose `Session`.
 Stop, natural retirement, shutdown, assembly reload and Play Mode transitions
-release the SDK-owned work. A source replacement needs controlled shutdown and
-explicit preparation. Display-only refresh preserves execution/session leases
+release the work owned by the preview scopes. A source replacement needs
+controlled shutdown and explicit preparation. Display-only refresh preserves execution/session leases
 while invalidating old playing-waveform associations.
 
 `GetPlayingWaveform` uses the actual Native started/retired stream, correlated
@@ -72,8 +72,8 @@ with the firing, project, root, selected ordinal, occurrence fingerprint and
 leased media checksum. Direct Sound and one-layer Random Sound are supported.
 Loss, incomplete identity, unsupported paths or ambiguous/multiple voices return
 unavailable; the first Random candidate is never a playback substitute. Native
-Monitor V3 access is generated and internal to the SDK; V1/V2 consumers retain
-their existing ABI and default negotiation.
+Monitor V3 access is generated and internal to the managed API layer; V1/V2
+consumers retain their existing ABI and default negotiation.
 
 ## Optional waveform resources
 
