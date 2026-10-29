@@ -1,4 +1,5 @@
 #include "harken/render/Voice.h"
+#include "harken/render/EffectChain.h"
 #include "harken/render/VoiceTimelineEligibility.h"
 
 #include "MonitorCaptureHub.h"
@@ -1068,49 +1069,12 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
     }
 
     // --- insert-effect chain ---
-    // Ascending slots. Empty slots (process == nullptr) are skipped at zero
-    // cost — bit-identical to a passthrough. A slot that is fully active
-    // (mix 0, not crossfading) processes in place; a bypassed or crossfading
-    // slot keeps the dry input, processes to wet, then blends
-    // dry * mix + wet * (1 - mix), with mix ramping linearly across this one
-    // block on a toggle so the transition never clicks.
+    // Ascending slots share the bus chain's one-block bypass crossfade.
     if (produced > 0) {
-        const float span = static_cast<float>(produced);
         for (std::uint32_t s = 0; s < ctx.fxSlotCount; ++s) {
-            InsertEffect& fx = ctx.fxSlots[s];
-            if (fx.process == nullptr) {
-                continue;
-            }
-            const bool steadyActive =
-                !ctx.fxBypassRamping[s] && ctx.fxBypassMix[s] == 0.0f;
-            if (steadyActive) {
-                fx.process(fx.state, scratch, channels, offset, produced);
-                continue;
-            }
-            const float startMix = ctx.fxBypassMix[s];
-            const float endMix = ctx.fxBypassRamping[s] ? ctx.fxBypassTarget[s]
-                                                        : ctx.fxBypassMix[s];
-            for (std::uint32_t ch = 0; ch < channels; ++ch) {
-                std::memcpy(dry[ch], scratch[ch] + offset,
-                            static_cast<std::size_t>(produced) * sizeof(float));
-            }
-            fx.process(fx.state, scratch, channels, offset, produced);
-            for (std::uint32_t ch = 0; ch < channels; ++ch) {
-                float* wet = scratch[ch] + offset;
-                const float* d = dry[ch];
-                for (std::uint32_t i = 0; i < produced; ++i) {
-                    const float mix =
-                        startMix + (endMix - startMix) *
-                                       (static_cast<float>(i) + 1.0f) / span;
-                    wet[i] = d[i] * mix + wet[i] * (1.0f - mix);
-                }
-            }
-            if (ctx.fxBypassRamping[s]) {
-                // The one-block crossfade completed on a block that produced
-                // frames; settle at the target and disarm.
-                ctx.fxBypassMix[s] = endMix;
-                ctx.fxBypassRamping[s] = false;
-            }
+            ProcessChainSlot(ctx.fxSlots[s], ctx.fxBypassRamping[s],
+                             ctx.fxBypassMix[s], ctx.fxBypassTarget[s],
+                             scratch, dry, channels, offset, produced);
         }
     }
 
