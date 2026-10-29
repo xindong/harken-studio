@@ -83,7 +83,7 @@ namespace Harken.Unity
         {
             config = default;
             if (source == null) return VnResult.VN_INVALID_ARG;
-            if (!MatchesConfiguredInit("Init.bytes")) return VnResult.VN_PACK_STALE_REVISION;
+            // The explicit source selects Init; initPack only configures directory startup.
             if (startupPackStableIds != null && startupPackStableIds.Length != 0) return VnResult.VN_INVALID_ARG;
             if (!string.IsNullOrEmpty(language) && language != source.Language) return VnResult.VN_PACK_STALE_REVISION;
             return CreateStartupConfig(out config);
