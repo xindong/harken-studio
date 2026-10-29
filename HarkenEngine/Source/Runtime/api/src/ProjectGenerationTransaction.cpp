@@ -1,6 +1,7 @@
 #include "ProjectGenerationTransaction.h"
 
 #include "Engine.h"
+#include "BusBindingSourceStamp.h"
 #include "MonitorCaptureHub.h"
 #include "TraceRecorder.h"
 #include "HarkenApiInternal.h"
@@ -1186,40 +1187,6 @@ void PreparedProjectGenerationV1::Reset() noexcept {
     ClearFields();
 }
 
-std::uint64_t PreviewBusBindingSourceStamp(const Engine& engine) noexcept {
-    std::uint64_t hash = busfingerprint::kOffsetBasis;
-    const auto u64 = [&](std::uint64_t value) {
-        busfingerprint::AppendU64([&](std::uint8_t byte) {
-            hash = busfingerprint::Step(hash, byte);
-        }, value);
-    };
-    engine.bindings.ForEachBusAttachment([&](const auto& attachment, const auto& definition) {
-        float input = 0.0f;
-        const bool hasValue = !attachment.meterFrozen &&
-            engine.params.ScopedVariableValue(nullptr, 0, definition.variableId, &input);
-        u64(attachment.bindingId.high);
-        u64(attachment.bindingId.low);
-        u64(attachment.objectId.high);
-        u64(attachment.objectId.low);
-        u64(attachment.busIndex);
-        u64(attachment.ownerCookie);
-        u64(attachment.lastHadValue);
-        u64(busfingerprint::CanonicalFloatBits(attachment.lastContribution));
-        u64(definition.variableId.high);
-        u64(definition.variableId.low);
-        u64(definition.targetId);
-        u64(definition.revision);
-        u64(definition.pendingInstall);
-        u64(definition.transitionMs);
-        u64(hasValue);
-        if (hasValue) {
-            u64(busfingerprint::CanonicalFloatBits(input));
-            u64(busfingerprint::CanonicalFloatBits(definition.Evaluate(input)));
-        }
-    });
-    return busfingerprint::Finalize(hash);
-}
-
 bool ProjectPreviewVolumeBindings(Engine& engine, const SlotPlanV1& slotPlan,
     const VariableServiceV1::PreparedWorldProjectionV1& world,
     const std::vector<float>& authoredMixDb,
@@ -1494,7 +1461,7 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
              !engine.PrepareQueueSelectionStorage(view.compiledWorld)))
             imageStatus = WorldInstallStatus::Capacity;
         if (imageStatus == WorldInstallStatus::Ok && volumeOnly) {
-            bindingSourceStamp = PreviewBusBindingSourceStamp(engine);
+            bindingSourceStamp = ComputeBusBindingSourceStamp(engine.bindings, engine.params);
             sourceMixDb.resize(slotPlan.busCount);
             sourceOutputDb.resize(slotPlan.busCount);
             for (std::uint32_t slot = 0; slot < slotPlan.busCount; ++slot) {
@@ -1617,7 +1584,7 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
     };
     const auto volumeSourceReady = [&]() noexcept {
         if (prepared.publicationVintage_ != 3 && prepared.publicationVintage_ != 4) return true;
-        if (prepared.bindingSourceStamp_ != PreviewBusBindingSourceStamp(engine) ||
+        if (prepared.bindingSourceStamp_ != ComputeBusBindingSourceStamp(engine.bindings, engine.params) ||
             prepared.sourceMixDb_.size() != prepared.slotPlan_.busCount ||
             prepared.sourceOutputDb_.size() != prepared.slotPlan_.busCount ||
             prepared.projectedVolumeApply_.size() != prepared.slotPlan_.busCount)

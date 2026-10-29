@@ -1,6 +1,7 @@
 #include <harken/Harken.h>
 
 #include "Engine.h"
+#include "BusBindingSourceStamp.h"
 #include "EngineNativeBackingEnvelope.h"
 #include "RealDeviceInitStage.h"
 #include "ActionAdmission.h"
@@ -122645,44 +122646,10 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
     return VN_OK;
 }
 
-std::uint64_t CanonicalBusBindingSourceStamp(const Engine& engine) noexcept {
-    std::uint64_t hash = busfingerprint::kOffsetBasis;
-    const auto u64 = [&](std::uint64_t value) {
-        busfingerprint::AppendU64([&](std::uint8_t byte) {
-            hash = busfingerprint::Step(hash, byte);
-        }, value);
-    };
-    engine.bindings.ForEachBusAttachment([&](const auto& attachment, const auto& definition) {
-        float input = 0.0f;
-        const bool hasValue = !attachment.meterFrozen &&
-            engine.params.ScopedVariableValue(nullptr, 0, definition.variableId, &input);
-        u64(attachment.bindingId.high);
-        u64(attachment.bindingId.low);
-        u64(attachment.objectId.high);
-        u64(attachment.objectId.low);
-        u64(attachment.busIndex);
-        u64(attachment.ownerCookie);
-        u64(attachment.lastHadValue);
-        u64(busfingerprint::CanonicalFloatBits(attachment.lastContribution));
-        u64(definition.variableId.high);
-        u64(definition.variableId.low);
-        u64(definition.targetId);
-        u64(definition.revision);
-        u64(definition.pendingInstall);
-        u64(definition.transitionMs);
-        u64(hasValue);
-        if (hasValue) {
-            u64(busfingerprint::CanonicalFloatBits(input));
-            u64(busfingerprint::CanonicalFloatBits(definition.Evaluate(input)));
-        }
-    });
-    return busfingerprint::Finalize(hash);
-}
-
 VnResult ProjectCanonicalVolumeBindingsV2(Engine& engine,
                                           PreparedCanonicalPackSetV1& prepared) {
     if (!prepared.volumeOnly) return VN_OK;
-    prepared.bindingSourceStamp = CanonicalBusBindingSourceStamp(engine);
+    prepared.bindingSourceStamp = ComputeBusBindingSourceStamp(engine.bindings, engine.params);
     prepared.sourceMixDb.resize(prepared.slotPlan.busCount);
     prepared.sourceOutputDb.resize(prepared.slotPlan.busCount);
     for (std::uint32_t slot = 0; slot < prepared.slotPlan.busCount; ++slot) {
@@ -122777,7 +122744,7 @@ bool CanCommitCanonicalVolumesV2(const Engine& engine,
     if (!prepared.volumeOnly) return true;
     if (!SlotPlanMatchesLive(engine, prepared.slotPlan) ||
         !ValidateTopologyPlanVolumesV1(engine.topologyPlans.View(prepared.planIndex)) ||
-        prepared.bindingSourceStamp != CanonicalBusBindingSourceStamp(engine) ||
+        prepared.bindingSourceStamp != ComputeBusBindingSourceStamp(engine.bindings, engine.params) ||
         prepared.sourceMixDb.size() != prepared.slotPlan.busCount ||
         prepared.sourceOutputDb.size() != prepared.slotPlan.busCount ||
         prepared.projectedVolumeApply.size() != prepared.slotPlan.busCount)

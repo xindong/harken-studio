@@ -1337,150 +1337,23 @@ std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
                                command.payload.stop.parkRequestSequence);
             break;
         case kOpcodeSetBusVolume:
-            m_buses.ApplyVolume(command.payload.setBusVolume.busIndex,
-                                command.payload.setBusVolume.volumeDb,
-                                command.payload.setBusVolume.rampMs,
-                                command.payload.setBusVolume.busGeneration,
-                                command.payload.setBusVolume.outputOnly != 0);
-            break;
         case kOpcodeSetVoiceVolume:
-            if (command.flags == kCommandFlagVariableWeightSegment) {
-                WeightSegmentV1 segment{};
-                segment.startFrame =
-                    command.payload.setVoiceVariableWeight.startFrame;
-                segment.endFrame =
-                    command.payload.setVoiceVariableWeight.endFrame;
-                segment.startWeight =
-                    command.payload.setVoiceVariableWeight.startWeight;
-                segment.endWeight =
-                    command.payload.setVoiceVariableWeight.endWeight;
-                segment.segmentGeneration = command.payload.
-                    setVoiceVariableWeight.segmentGeneration;
-                segment.decision = {
-                    command.payload.setVoiceVariableWeight.decisionSlot,
-                    command.payload.setVoiceVariableWeight.
-                        decisionGeneration};
-                segment.bank = {
-                    command.payload.setVoiceVariableWeight.bankSlot,
-                    command.payload.setVoiceVariableWeight.bankGeneration};
-                (void)m_voices.ApplyVariableWeightSegment(
-                    command.payload.setVoiceVariableWeight.handle,
-                    segment);
-            } else if (command.flags == 0) {
-                m_voices.ApplySetVolume(
-                    command.payload.setVoiceVolume.handle,
-                    command.payload.setVoiceVolume.volumeDb,
-                    command.payload.setVoiceVolume.rampMs,
-                    command.payload.setVoiceVolume.outputOnly != 0);
-            }
-            break;
         case kOpcodeSetVoicePitch:
-            m_voices.ApplySetPitch(command.payload.setVoicePitch.handle,
-                                   command.payload.setVoicePitch.ratio,
-                                   command.payload.setVoicePitch.rampMs);
-            break;
         case kOpcodeSetVoiceFilter:
-            m_voices.ApplySetFilter(
-                command.payload.setVoiceFilter.handle,
-                command.payload.setVoiceFilter.filterKind,
-                command.payload.setVoiceFilter.enable != 0,
-                command.payload.setVoiceFilter.cutoffHz,
-                command.payload.setVoiceFilter.q,
-                RestoreBiquadCoeffs(command.payload.setVoiceFilter.coeffs),
-                command.payload.setVoiceFilter.tailFrames,
-                command.payload.setVoiceFilter.transitionFrames);
-            break;
         case kOpcodeSetVoicePosition:
-            m_voices.ApplySetPosition(
-                command.payload.setVoicePosition.handle,
-                command.payload.setVoicePosition.x,
-                command.payload.setVoicePosition.y,
-                command.payload.setVoicePosition.z);
-            break;
         case kOpcodeSetVoicePan:
-            m_voices.ApplySetPan(command.payload.setVoicePan.handle,
-                                 command.payload.setVoicePan.pan,
-                                 command.payload.setVoicePan.gain0,
-                                 command.payload.setVoicePan.gain1,
-                                 command.payload.setVoicePan.channel0,
-                                 command.payload.setVoicePan.channel1,
-                                 command.payload.setVoicePan.pan2d);
-            if (command.payload.setVoicePan.hasWidth != 0) {
-                m_voices.ApplySetWidth(command.payload.setVoicePan.handle,
-                                       command.payload.setVoicePan.width);
-            }
-            break;
         case kOpcodeSetVoiceSpatialScalar:
-            if (command.payload.setVoiceSpatialScalar.kind ==
-                kSpatialScalarKindWidth) {
-                m_voices.ApplySetWidth(
-                    command.payload.setVoiceSpatialScalar.handle,
-                    command.payload.setVoiceSpatialScalar.value);
-            } else if (command.payload.setVoiceSpatialScalar.kind ==
-                       kSpatialScalarKindSpatializationMix) {
-                m_voices.ApplySetSpatializationMix(
-                    command.payload.setVoiceSpatialScalar.handle,
-                    command.payload.setVoiceSpatialScalar.value);
-            }
-            break;
         case kOpcodeSetVoiceLowShelf:
-            m_voices.ApplySetShelf(
-                command.payload.setVoiceShelf.handle,
-                command.payload.setVoiceShelf.shelfKind,
-                command.payload.setVoiceShelf.enable != 0,
-                command.payload.setVoiceShelf.frequencyHz,
-                command.payload.setVoiceShelf.q,
-                command.payload.setVoiceShelf.gainDb,
-                RestoreBiquadCoeffs(command.payload.setVoiceShelf.coeffs),
-                command.payload.setVoiceShelf.tailFrames,
-                command.payload.setVoiceShelf.transitionFrames);
-            break;
         case kOpcodeSetVoiceEffectBypass:
-            m_voices.ApplySetVoiceEffectBypass(
-                command.payload.setVoiceEffectBypass.handle,
-                command.payload.setVoiceEffectBypass.slot,
-                command.payload.setVoiceEffectBypass.bypass,
-                command.payload.setVoiceEffectBypass.action,
-                command.payload.setVoiceEffectBypass.expectedEffectType);
-            break;
         case kOpcodeSetVoiceEffect:
-            m_voices.ApplySetVoiceEffect(
-                command.payload.setVoiceEffect.handle,
-                command.payload.setVoiceEffect.slot,
-                command.payload.setVoiceEffect.effectType,
-                command.payload.setVoiceEffect.poolIndex,
-                command.payload.setVoiceEffect.poolGeneration);
-            break;
         case kOpcodeClearVoiceEffect:
-            m_voices.ApplyClearVoiceEffect(
-                command.payload.clearVoiceEffect.handle,
-                command.payload.clearVoiceEffect.slot);
-            break;
         case kOpcodeSetVoiceEffectParam:
-            if (command.flags == kCommandFlagPreparedCompressor) {
-                const auto& payload =
-                    command.payload.setCompressorEffectParam;
-                if (payload.effectType == VN_EFFECT_COMPRESSOR) {
-                    m_voices.ApplySetVoiceCompressorParameters(
-                        static_cast<VnVoiceHandle>(payload.host),
-                        payload.slot, payload.effectType,
-                        RestoreCompressorParameters(payload),
-                        payload.transitionFrames);
-                }
-            } else if (command.flags == 0 &&
-                       command.payload.setVoiceEffectParam.effectType !=
-                           VN_EFFECT_COMPRESSOR) {
-                m_voices.ApplySetVoiceEffectParam(
-                    command.payload.setVoiceEffectParam.handle,
-                    command.payload.setVoiceEffectParam.slot,
-                    command.payload.setVoiceEffectParam.paramIndex,
-                    command.payload.setVoiceEffectParam.value,
-                    command.payload.setVoiceEffectParam.effectType,
-                    RestoreBiquadCoeffs(
-                        command.payload.setVoiceEffectParam.coeffs),
-                    command.payload.setVoiceEffectParam.tailFrames,
-                    command.payload.setVoiceEffectParam.transitionFrames);
-            }
+        case kOpcodeSetVoiceSend:
+        case kOpcodeClearVoiceSend:
+        case kOpcodeSetVoiceSendLevel:
+        case kOpcodeSetBusEffectParam:
+        case kOpcodeSetBusFilter:
+            ApplyCommandRecord(command, blockIndex);
             break;
         case kOpcodeSetBusTopologyPlan:
             m_buses.ApplyTopologyPlan(
@@ -1528,26 +1401,6 @@ std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
                 command.payload.setBusSendLevel.fromGeneration,
                 command.payload.setBusSendLevel.toGeneration);
             break;
-        case kOpcodeSetVoiceSend:
-            m_voices.ApplySetVoiceSend(
-                command.payload.setVoiceSend.handle,
-                command.payload.setVoiceSend.sendSlot,
-                command.payload.setVoiceSend.targetBusIndex,
-                command.payload.setVoiceSend.levelDb,
-                command.payload.setVoiceSend.targetBusGeneration);
-            break;
-        case kOpcodeClearVoiceSend:
-            m_voices.ApplyClearVoiceSend(
-                command.payload.clearVoiceSend.handle,
-                command.payload.clearVoiceSend.sendSlot);
-            break;
-        case kOpcodeSetVoiceSendLevel:
-            m_voices.ApplySetVoiceSendLevel(
-                command.payload.setVoiceSendLevel.handle,
-                command.payload.setVoiceSendLevel.sendSlot,
-                command.payload.setVoiceSendLevel.levelDb,
-                command.payload.setVoiceSendLevel.rampMs);
-            break;
         case kOpcodeSetBusEffect:
             m_buses.ApplySetBusEffect(command.payload.setBusEffect.busIndex,
                                       command.payload.setBusEffect.slot,
@@ -1577,34 +1430,6 @@ std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
             m_dynamicRoutes.InstallPlan(
                 command.payload.clearBusEffect.dynamicRoutePlanIndex);
             break;
-        case kOpcodeSetBusEffectParam:
-            if (command.flags == kCommandFlagPreparedCompressor) {
-                const auto& payload =
-                    command.payload.setCompressorEffectParam;
-                const BusSlotRef busRef = BusSlotRef::FromPacked(payload.host);
-                if (payload.effectType == VN_EFFECT_COMPRESSOR &&
-                    busRef.Valid()) {
-                    m_buses.ApplySetBusCompressorParameters(
-                        busRef.index, payload.slot, payload.effectType,
-                        RestoreCompressorParameters(payload),
-                        payload.transitionFrames, busRef.generation);
-                }
-            } else if (command.flags == 0 &&
-                       command.payload.setBusEffectParam.effectType !=
-                           VN_EFFECT_COMPRESSOR) {
-                m_buses.ApplySetBusEffectParam(
-                    command.payload.setBusEffectParam.busIndex,
-                    command.payload.setBusEffectParam.slot,
-                    command.payload.setBusEffectParam.paramIndex,
-                    command.payload.setBusEffectParam.value,
-                    command.payload.setBusEffectParam.effectType,
-                    RestoreBiquadCoeffs(
-                        command.payload.setBusEffectParam.coeffs),
-                    command.payload.setBusEffectParam.tailFrames,
-                    command.payload.setBusEffectParam.transitionFrames,
-                    command.payload.setBusEffectParam.busGeneration);
-            }
-            break;
         case kOpcodeSetBusEffectBypass:
             m_buses.ApplySetBusEffectBypass(
                 command.payload.setBusEffectBypass.busIndex,
@@ -1619,19 +1444,6 @@ std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
                 command.payload.setBusFaderPoint.busIndex,
                 command.payload.setBusFaderPoint.faderAfterSlot,
                 command.payload.setBusFaderPoint.busGeneration);
-            break;
-        case kOpcodeSetBusFilter:
-            m_buses.ApplySetBusFilter(
-                command.payload.setBusFilter.busIndex,
-                command.payload.setBusFilter.filterKind,
-                command.payload.setBusFilter.enable != 0,
-                command.payload.setBusFilter.cutoffHz,
-                command.payload.setBusFilter.q,
-                RestoreBiquadCoeffs(command.payload.setBusFilter.coeffs),
-                command.payload.setBusFilter.tailFrames,
-                command.payload.setBusFilter.transitionFrames,
-                command.payload.setBusFilter.outputOnly != 0,
-                command.payload.setBusFilter.busGeneration);
             break;
         default:
             // Unknown opcodes cannot be produced by this API vintage;

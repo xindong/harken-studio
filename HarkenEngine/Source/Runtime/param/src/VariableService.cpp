@@ -500,225 +500,8 @@ WorldInstallResult VariableServiceV1::InstallImpl(
     }
     drainState_ = WorldDrainState::Idle;
 
-    std::vector<DefinitionRow> next;
-    next.reserve(install.variableCount);
-    for (std::uint32_t i = 0; i < install.variableCount; ++i) {
-        DefinitionRow row{};
-        row.definition = install.variables[i];
-        row.definition.impact = StaticImpactSummary{};
-        row.writers = 3;
-        row.executionFingerprint = 0;
-        row.currentGlobal = row.definition.defaultValue;
-        row.scheduledGlobal = row.definition.defaultValue;
-        const DefinitionRow* prior = FindDefinition(row.definition.variableId);
-        if (prior != nullptr && SameDefinition(*prior, row)) {
-            row.currentGlobal = prior->currentGlobal;
-            row.scheduledGlobal = prior->currentGlobal;
-            row.currentBankOrdinal = prior->currentBankOrdinal;
-            row.scheduledBankOrdinal = prior->currentBankOrdinal;
-        }
-        next.push_back(row);
-    }
-
-    const auto copyPayload = [](const PlayablePropertyPayloadViewV1& source,
-                                OwnedPayload& destination) {
-        destination.view = source;
-        if (source.sendCount != 0) {
-            destination.sends.assign(source.sends,
-                                     source.sends + source.sendCount);
-        }
-        if (source.effectNodeCount != 0) {
-            destination.effectNodes.assign(
-                source.effectNodes, source.effectNodes + source.effectNodeCount);
-        }
-        destination.effectParams.resize(source.effectNodeCount);
-        for (std::uint32_t i = 0; i < source.effectNodeCount; ++i) {
-            if (source.effectNodes[i].paramCount != 0) {
-                destination.effectParams[i].assign(
-                    source.effectNodes[i].params,
-                    source.effectNodes[i].params +
-                        source.effectNodes[i].paramCount);
-            }
-        }
-        if (source.effectEdgeCount != 0) {
-            destination.effectEdges.assign(
-                source.effectEdges,
-                source.effectEdges + source.effectEdgeCount);
-        }
-        destination.Refresh();
-    };
-
-    std::vector<OwnedPropertyProgram> nextProperties;
-    nextProperties.resize(install.playablePropertyCount);
-    for (std::uint32_t i = 0; i < install.playablePropertyCount; ++i) {
-        auto& destination = nextProperties[i];
-        const auto& source = install.playableProperties[i];
-        destination.view = source;
-        if (source.organizationLayerAncestorCount != 0) {
-            destination.layerAncestors.assign(
-                source.organizationLayerAncestors,
-                source.organizationLayerAncestors +
-                    source.organizationLayerAncestorCount);
-        }
-        if (source.structuralAncestorCount != 0) {
-            destination.structuralAncestors.assign(
-                source.structuralAncestors,
-                source.structuralAncestors + source.structuralAncestorCount);
-            destination.structuralPayloads.resize(source.structuralAncestorCount);
-            for (std::uint32_t a = 0; a < source.structuralAncestorCount; ++a)
-                copyPayload(source.structuralAncestors[a].payload,
-                            destination.structuralPayloads[a]);
-        }
-        copyPayload(source.payload, destination.payload);
-        destination.Refresh();
-    }
-
-    std::vector<OwnedOccurrenceProgram> nextOccurrences;
-    nextOccurrences.resize(install.playableOccurrenceCount);
-    for (std::uint32_t i = 0; i < install.playableOccurrenceCount; ++i) {
-        auto& destination = nextOccurrences[i];
-        destination.view = install.playableOccurrences[i];
-        copyPayload(install.playableOccurrences[i].payload,
-                    destination.payload);
-        destination.Refresh();
-    }
-
-    std::vector<OwnedTrackScheduleProgram> nextTrackSchedules;
-    nextTrackSchedules.resize(install.trackScheduleCount);
-    for (std::uint32_t i = 0; i < install.trackScheduleCount; ++i) {
-        auto& destination = nextTrackSchedules[i];
-        const auto& source = install.trackSchedules[i];
-        destination.view = source;
-        if (source.placementCount != 0) {
-            destination.placements.assign(
-                source.placements, source.placements + source.placementCount);
-        }
-        destination.Refresh();
-    }
-
-    std::vector<OwnedSegmentScheduleProgram> nextSegmentSchedules;
-    nextSegmentSchedules.resize(install.segmentScheduleCount);
-    for (std::uint32_t i = 0; i < install.segmentScheduleCount; ++i) {
-        auto& destination = nextSegmentSchedules[i];
-        const auto& source = install.segmentSchedules[i];
-        destination.view = source;
-        if (source.trackRefCount != 0) {
-            destination.trackRefs.assign(
-                source.trackRefs, source.trackRefs + source.trackRefCount);
-        }
-        if (source.markerCount != 0) {
-            destination.markers.assign(source.markers,
-                                    source.markers + source.markerCount);
-        }
-        destination.Refresh();
-    }
-
-    std::vector<OwnedContainerProgram> nextContainers;
-    nextContainers.resize(install.containerCount);
-    for (std::uint32_t i = 0; i < install.containerCount; ++i) {
-        auto& destination = nextContainers[i];
-        const auto& source = install.containers[i];
-        destination.view = source;
-        if (source.childCount != 0) {
-            destination.children.assign(source.children,
-                                        source.children + source.childCount);
-        }
-
-        if (source.curveCount != 0) {
-            destination.curves.assign(source.curves,
-                                      source.curves + source.curveCount);
-        }
-        if (source.discreteAxisCount != 0) {
-            destination.discreteAxes.assign(
-                source.discreteAxes,
-                source.discreteAxes + source.discreteAxisCount);
-        }
-        destination.discreteRows.resize(source.discreteRowCount);
-        destination.discreteCells.resize(source.discreteRowCount);
-        for (std::uint32_t row = 0; row < source.discreteRowCount; ++row) {
-            destination.discreteRows[row] = source.discreteRows[row];
-            if (source.discreteRows[row].cellCount != 0) {
-                destination.discreteCells[row].assign(
-                    source.discreteRows[row].cells,
-                    source.discreteRows[row].cells +
-                        source.discreteRows[row].cellCount);
-            }
-        }
-        if (source.continuousAxisCount != 0) {
-            destination.continuousAxes.assign(
-                source.continuousAxes,
-                source.continuousAxes + source.continuousAxisCount);
-        }
-        destination.continuousRows.resize(source.continuousRowCount);
-        destination.continuousCells.resize(source.continuousRowCount);
-        for (std::uint32_t row = 0; row < source.continuousRowCount; ++row) {
-            destination.continuousRows[row] = source.continuousRows[row];
-            if (source.continuousRows[row].cellCount != 0) {
-                destination.continuousCells[row].assign(
-                    source.continuousRows[row].cells,
-                    source.continuousRows[row].cells +
-                        source.continuousRows[row].cellCount);
-            }
-        }
-        destination.Refresh();
-    }
-
-    std::vector<OwnedTransitionProgram> nextTransitions;
-    nextTransitions.resize(install.transitionCount);
-    for (std::uint32_t i = 0; i < install.transitionCount; ++i) {
-        auto& destination = nextTransitions[i];
-        const auto& source = install.transitions[i];
-        destination.view = source;
-        if (source.downwardPathStepCount != 0) {
-            destination.downwardPathSteps.assign(
-                source.downwardPathSteps,
-                source.downwardPathSteps + source.downwardPathStepCount);
-        }
-        if (source.ruleCount != 0) {
-            destination.rules.assign(source.rules,
-                                     source.rules + source.ruleCount);
-        }
-        destination.Refresh();
-    }
-
-    std::vector<OwnedActionProgram> nextActions;
-    nextActions.resize(install.actionCount);
-    for (std::uint32_t i = 0; i < install.actionCount; ++i) {
-        auto& destination = nextActions[i];
-        const auto& source = install.actions[i];
-        destination.view = source;
-        if (source.stepCount != 0) {
-            destination.steps.assign(source.steps,
-                                     source.steps + source.stepCount);
-        }
-        destination.Refresh();
-    }
-
-    detail::LogicAllocCheckpoint(detail::LogicAllocSite::CurrentWorldViews);
-    std::vector<decltype(DefinitionRow{}.definition)> nextDefinitionViews;
-    nextDefinitionViews.reserve(next.size());
-    for (auto& row : next) nextDefinitionViews.push_back(row.definition);
-    std::vector<decltype(OwnedPropertyProgram{}.view)> nextPlayablePropertyViews;
-    nextPlayablePropertyViews.reserve(nextProperties.size());
-    for (auto& row : nextProperties) nextPlayablePropertyViews.push_back(row.view);
-    std::vector<decltype(OwnedOccurrenceProgram{}.view)> nextPlayableOccurrenceViews;
-    nextPlayableOccurrenceViews.reserve(nextOccurrences.size());
-    for (auto& row : nextOccurrences) nextPlayableOccurrenceViews.push_back(row.view);
-    std::vector<decltype(OwnedTrackScheduleProgram{}.view)> nextTrackScheduleViews;
-    nextTrackScheduleViews.reserve(nextTrackSchedules.size());
-    for (auto& row : nextTrackSchedules) nextTrackScheduleViews.push_back(row.view);
-    std::vector<decltype(OwnedSegmentScheduleProgram{}.view)> nextSegmentScheduleViews;
-    nextSegmentScheduleViews.reserve(nextSegmentSchedules.size());
-    for (auto& row : nextSegmentSchedules) nextSegmentScheduleViews.push_back(row.view);
-    std::vector<decltype(OwnedContainerProgram{}.view)> nextContainerProgramViews;
-    nextContainerProgramViews.reserve(nextContainers.size());
-    for (auto& row : nextContainers) nextContainerProgramViews.push_back(row.view);
-    std::vector<decltype(OwnedTransitionProgram{}.view)> nextTransitionProgramViews;
-    nextTransitionProgramViews.reserve(nextTransitions.size());
-    for (auto& row : nextTransitions) nextTransitionProgramViews.push_back(row.view);
-    std::vector<decltype(OwnedActionProgram{}.view)> nextActionProgramViews;
-    nextActionProgramViews.reserve(nextActions.size());
-    for (auto& row : nextActions) nextActionProgramViews.push_back(row.view);
+    PreparedCurrentWorldImageV1 next;
+    BuildCurrentWorldImageV1(install, next);
 
     for (WriteRow& row : history_) {
         if (row.used && row.state != RowState::Terminal &&
@@ -733,11 +516,12 @@ WorldInstallResult VariableServiceV1::InstallImpl(
                 continue;
             }
             const auto nextDef = std::find_if(
-                next.begin(), next.end(), [&](const DefinitionRow& row) {
+                next.definitions_.begin(), next.definitions_.end(),
+                [&](const DefinitionRow& row) {
                     return row.definition.variableId == override.variableId;
                 });
             const DefinitionRow* prior = FindDefinition(override.variableId);
-            if (nextDef == next.end() || prior == nullptr ||
+            if (nextDef == next.definitions_.end() || prior == nullptr ||
                 !SameDefinition(*prior, *nextDef)) {
                 override = OverrideRow{};
             } else {
@@ -749,30 +533,7 @@ WorldInstallResult VariableServiceV1::InstallImpl(
 
     sdkCatalogFingerprint_ = 0;
     labelCatalog_.clear();
-    definitions_.swap(next);
-    definitionViews_.swap(nextDefinitionViews);
-    playableProperties_.swap(nextProperties);
-    playablePropertyViews_.swap(nextPlayablePropertyViews);
-    playableOccurrences_.swap(nextOccurrences);
-    playableOccurrenceViews_.swap(nextPlayableOccurrenceViews);
-    trackSchedules_.swap(nextTrackSchedules);
-    trackScheduleViews_.swap(nextTrackScheduleViews);
-    segmentSchedules_.swap(nextSegmentSchedules);
-    segmentScheduleViews_.swap(nextSegmentScheduleViews);
-    containerPrograms_.swap(nextContainers);
-    containerProgramViews_.swap(nextContainerProgramViews);
-    transitionPrograms_.swap(nextTransitions);
-    transitionProgramViews_.swap(nextTransitionProgramViews);
-    actionPrograms_.swap(nextActions);
-    actionProgramViews_.swap(nextActionProgramViews);
-    identity_ = install.identity;
-    sourceBodyVintage_ = install.sourceBodyVintage;
-    capacity_ = install.capacity;
-    ++worldGeneration_;
-    globalBankVersionGeneration_ = 1;
-    std::fill(emitterBankVersionGenerations_.begin(),
-              emitterBankVersionGenerations_.end(), 1u);
-    hasWorld_ = true;
+    CommitPreparedCurrentWorldImageV1(next);
     result.status = WorldInstallStatus::Ok;
     result.resultGeneration = worldGeneration_;
     return result;
@@ -782,9 +543,6 @@ WorldInstallStatus VariableServiceV1::PrepareCurrentWorldImageV1(
     const ContainerWorldInstallViewV1& installInput,
     PreparedCurrentWorldImageV1& out) {
     out.Clear();
-    out.source_ = this;
-    out.sourceWorld_ = worldGeneration_;
-    out.sourceBankOrdinal_ = nextBankOrdinal_;
     const WorldInstallStatus worldStatus = ValidateCurrentWorldV1(installInput);
     if (worldStatus != WorldInstallStatus::Ok) {
         return worldStatus;
@@ -807,10 +565,25 @@ WorldInstallStatus VariableServiceV1::PrepareCurrentWorldImageV1(
         }
     }
     if (SemanticIdentical(install)) {
+        out.source_ = this;
+        out.sourceWorld_ = worldGeneration_;
+        out.sourceBankOrdinal_ = nextBankOrdinal_;
         out.valid_ = true;
         out.idempotent_ = true;
         return WorldInstallStatus::Ok;
     }
+
+    BuildCurrentWorldImageV1(install, out);
+    return WorldInstallStatus::Ok;
+}
+
+void VariableServiceV1::BuildCurrentWorldImageV1(
+    const ContainerWorldInstallViewV1& install,
+    PreparedCurrentWorldImageV1& out) {
+    out.Clear();
+    out.source_ = this;
+    out.sourceWorld_ = worldGeneration_;
+    out.sourceBankOrdinal_ = nextBankOrdinal_;
 
     std::vector<DefinitionRow> next;
     next.reserve(install.variableCount);
@@ -999,6 +772,7 @@ WorldInstallStatus VariableServiceV1::PrepareCurrentWorldImageV1(
         destination.Refresh();
     }
 
+    detail::LogicAllocCheckpoint(detail::LogicAllocSite::CurrentWorldViews);
     out.definitions_ = std::move(next);
     out.definitionViews_.reserve(out.definitions_.size());
     for (const DefinitionRow& row : out.definitions_) {
@@ -1051,7 +825,6 @@ WorldInstallStatus VariableServiceV1::PrepareCurrentWorldImageV1(
     out.capacity_ = install.capacity;
     out.valid_ = true;
     out.idempotent_ = false;
-    return WorldInstallStatus::Ok;
 }
 
 bool VariableServiceV1::CanCommitPreparedCurrentWorldImageV1(
