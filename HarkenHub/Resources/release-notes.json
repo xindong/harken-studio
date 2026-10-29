@@ -7,6 +7,18 @@
   },
   "releases": [
     {
+      "version": "0.2.2",
+      "date": "2026-10-29",
+      "pullRequests": [175],
+      "contributors": ["liuxin2-sys"],
+      "changes": [
+        {
+          "category": "added",
+          "text": "Open Studio changelogs from the version menu or Get from Server in the Hub interface language, and copy changelog links from the server list."
+        }
+      ]
+    },
+    {
       "version": "0.2.1",
       "date": "2026-10-28",
       "pullRequests": [152, 157],
