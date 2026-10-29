@@ -86834,6 +86834,50 @@ ContainerPreparationContext MakeActionContainerPreparationContext(
     return context;
 }
 
+void BindScheduleChildPreparation(ContainerPreparationContext& context,
+    const harken::EnginePlayableServiceRow& parent,
+    harken::EngineScheduleAggregateChild& record) noexcept {
+    context.root = record.content;
+    context.parentInstance = parent.ownerInstance;
+    context.parentEpoch = parent.ownerEpoch;
+    context.parentService = PlayableServiceReference(parent);
+    context.parentChildOrdinal = record.stableLeafOrdinal;
+    context.propertyRoot = record.properties.propertyRoot;
+    context.prefixOrdinals = record.properties.ordinals;
+    context.prefixTrackIds = record.properties.trackIds;
+    context.typedPrefix = record.properties.typedPrefix;
+    context.scheduleChild = &record;
+    context.directRoot = false;
+}
+
+ContainerPreparationContext MakeScheduleContinuationPreparationContext(
+    harken::Engine& engine, const harken::PlayableWorldViewV1& world,
+    const harken::LogicCommitCoordinator::PreparedIssue& issue,
+    const harken::ActionFiringTable::PreparedChildIdentity& childIdentity,
+    VnResult& result, bool& queueCapacity,
+    const harken::EnginePlayableServiceRow& parent,
+    harken::EngineScheduleAggregateChild& record, std::uint64_t startFrame) noexcept {
+    ContainerPreparationContext context{issue, childIdentity, result, queueCapacity};
+    context.engine = &engine;
+    context.world = world;
+    BindScheduleChildPreparation(context, parent, record);
+    context.startFrame = startFrame;
+    context.originalReadFrame = startFrame;
+    context.materializationSequence = issue.Sequence();
+    context.playCount = 1;
+    context.allowImmediateLane = false;
+    const auto& invocation = parent.Invocation();
+    context.playbackRequest = invocation.playbackRequest;
+    context.emitterOrigin = invocation.emitterOrigin;
+    context.emitter = invocation.invocationEmitter;
+    context.actionFiring = invocation.actionFiring;
+    context.rootHandle = context.actionFiring;
+    context.entry.executionOrdinal = context.actionFiring != 0 ? invocation.actionExecutionOrdinal : 0u;
+    context.callerSeed = invocation.scheduleCallerSeed;
+    context.prepareMixedTerminal = PrepareContainerMixedScheduleTerminal;
+    return context;
+}
+
 // These operations retain the real Action factory/rollback capabilities. They
 // do not manufacture an Action to admit an internal child. A child adapter
 // must supply equivalent proofs and true-parent root preparation separately.
@@ -86841,6 +86885,13 @@ struct ActionContainerPreparationOperations {
     ImmediateActionPlan& plan;
     std::uint32_t stepIndex;
     ContainerPreparationContext& context;
+    bool AllowsSingleImmediateEntry() const noexcept {
+        return context.allowImmediateLane && context.playCount == 1u && context.stopCount == 0 &&
+            context.variableWriteCount == 0 && context.deferredCount == 0 &&
+            context.selectionResetCount == 0 && context.queueResetCount == 0 &&
+            context.queueReplacementCount == 0 && context.entry.deferredFrame == 0 &&
+            !context.materializingDeferred;
+    }
     bool Release(harken::EngineActionPlayScratch* scratch) noexcept {
         return ReleaseImmediateActionPlay(*plan.engine, scratch, &plan);
     }
@@ -86946,6 +86997,8 @@ struct ScheduleContainerPreparationOperations {
     harken::Engine& engine;
     std::array<harken::SelectionPathNodeV1, harken::kSelectionPathNodeCapacity> selectionPath{};
     harken::EngineActionPlayScratch* activeScratch = nullptr;
+
+    bool AllowsSingleImmediateEntry() const noexcept { return false; }
 
     bool DirectRootAllowed(const harken::EngineActionPlayScratch* scratch) const noexcept {
         return context.directRoot && context.parentInstance == 0 && context.parentEpoch == 0 &&
@@ -87515,17 +87568,7 @@ ContainerMixedTerminalResult PrepareContainerMixedScheduleTerminal(ContainerPrep
         return ContainerMixedTerminalResult::Prepared;
     }
     auto childContext = context;
-    childContext.root = selected.terminal;
-    childContext.parentInstance = terminalParent->ownerInstance;
-    childContext.parentEpoch = terminalParent->ownerEpoch;
-    childContext.parentService = PlayableServiceReference(*terminalParent);
-    childContext.parentChildOrdinal = record.stableLeafOrdinal;
-    childContext.propertyRoot = record.properties.propertyRoot;
-    childContext.prefixOrdinals = record.properties.ordinals;
-    childContext.prefixTrackIds = record.properties.trackIds;
-    childContext.typedPrefix = record.properties.typedPrefix;
-    childContext.scheduleChild = &record;
-    childContext.directRoot = false;
+    BindScheduleChildPreparation(childContext, *terminalParent, record);
     childContext.selectionEventBegin = UINT32_MAX;
     if (!PrepareScheduleChildAttempt(context, scratch, childContext, record)) return ContainerMixedTerminalResult::Failed;
     auto* child = engine.ResolvePlayableService(record.service);
@@ -88325,15 +88368,10 @@ bool PrepareContainerCompositeQueueChild(
     const bool initialQueue =
         program.mode == harken::ContainerModeV1::RandomQueue ||
         program.mode == harken::ContainerModeV1::SequenceQueue;
-    const bool pendingImmediateEntry = context.allowImmediateLane && !markerOnly &&
+    const bool pendingImmediateEntry = operations.AllowsSingleImmediateEntry() && !markerOnly &&
         (!hasContinuation || initialQueue) &&
         (program.mode == harken::ContainerModeV1::Random ||
          program.mode == harken::ContainerModeV1::Sequence || initialQueue) &&
-        context.playCount == 1u && context.stopCount == 0 &&
-        context.variableWriteCount == 0 && context.deferredCount == 0 &&
-        context.selectionResetCount == 0 && context.queueResetCount == 0 &&
-        context.queueReplacementCount == 0 && planned.deferredFrame == 0 &&
-        !context.materializingDeferred &&
         PendingImmediateOffsetsFit(engine, materialized);
     const harken::PlayableStartStatus preflight = markerOnly
         ? harken::PlayableStartStatus::Accepted
@@ -89198,10 +89236,7 @@ bool PrepareContainerExecution(
         context.result = VN_REVISION_CONFLICT;
         return false;
     }
-    if (context.allowImmediateLane && !context.nativeFixedSelection && !context.materializingDeferred && planned.deferredFrame == 0 &&
-        context.playCount == 1 && context.stopCount == 0 && context.variableWriteCount == 0 &&
-        context.deferredCount == 0 && context.selectionResetCount == 0 && context.queueResetCount == 0 &&
-        context.queueReplacementCount == 0 &&
+    if (operations.AllowsSingleImmediateEntry() && !context.nativeFixedSelection &&
         (rootProgram->mode == harken::ContainerModeV1::Random ||
          rootProgram->mode == harken::ContainerModeV1::Sequence)) {
         harken::SelectionMemoryKeyV1 key{};
@@ -90805,17 +90840,9 @@ bool PrepareVariableScheduleBranches(ContainerPreparationContext& context,
             properties.trackIds.push_back({});
             properties.typedPrefix.push_back(MakeContainerSelectionPathNode(program.containerStableId, ordinals[top]));
             ContainerPreparationContext childContext = context;
-            childContext.root = selected->playable;
-            childContext.parentInstance = row->ownerInstance;
-            childContext.parentEpoch = row->ownerEpoch;
-            childContext.parentService = PlayableServiceReference(*row);
-            childContext.parentChildOrdinal = ordinals[top];
+            BindScheduleChildPreparation(childContext, *row, record);
             childContext.preparedScheduleRoot = &root;
             childContext.preparedScheduleRootOwnedFlag = &scratch.storage.variableControlScheduleOwned[top];
-            childContext.propertyRoot = properties.propertyRoot;
-            childContext.prefixOrdinals = properties.ordinals;
-            childContext.prefixTrackIds = properties.trackIds;
-            childContext.typedPrefix = properties.typedPrefix;
             childContext.startFrame = startFrame;
             childContext.endFrame = endFrame;
             childContext.originalReadFrame = originalOrder.frame;
@@ -90829,7 +90856,6 @@ bool PrepareVariableScheduleBranches(ContainerPreparationContext& context,
                 childContext.initialAdmissionMemberCursor = discreteSide
                     ? &row->variableControlInitialDiscreteMemberCount : &row->variableControlInitialContinuousMemberCount;
             }
-            childContext.directRoot = false;
             if (!PrepareScheduleChildAttempt(context, scratch, childContext, record) ||
                 scratch.storage.variableControlScheduleOwned[top] != 1) return false;
         }
@@ -91661,17 +91687,9 @@ bool PrepareMixedScheduleExecution(ContainerPreparationContext& context,
     }
     for (auto& record : aggregate.children) {
         ContainerPreparationContext childContext = context;
-        childContext.root = record.content;
-        childContext.parentInstance = row->ownerInstance;
-        childContext.parentEpoch = row->ownerEpoch;
-        childContext.parentService = PlayableServiceReference(*row);
-        childContext.parentChildOrdinal = record.stableLeafOrdinal;
+        BindScheduleChildPreparation(childContext, *row, record);
         childContext.preparedScheduleRoot = nullptr;
         childContext.preparedScheduleRootOwnedFlag = nullptr;
-        childContext.propertyRoot = record.properties.propertyRoot;
-        childContext.prefixOrdinals = record.properties.ordinals;
-        childContext.prefixTrackIds = record.properties.trackIds;
-        childContext.typedPrefix = record.properties.typedPrefix;
         if (!ResolveScheduleAggregateChildFrames(record, context.startFrame,
                 &childContext.startFrame, &childContext.endFrame)) return false;
         childContext.endFrame = std::min(childContext.endFrame, context.endFrame);
@@ -91825,39 +91843,15 @@ PendingScheduleEntryStatus PreparePendingScheduleVariableEntry(harken::Engine& e
     harken::ActionFiringTable::PreparedChildIdentity noChild;
     VnResult failure = VN_OK;
     bool queueCapacity = false;
-    ContainerPreparationContext context{issue, noChild, failure, queueCapacity};
-    context.engine = &engine;
-    context.world = world;
-    context.root = record.content;
-    context.parentInstance = parent.ownerInstance;
-    context.parentEpoch = parent.ownerEpoch;
-    context.parentService = PlayableServiceReference(parent);
-    context.parentChildOrdinal = record.stableLeafOrdinal;
-    context.scheduleChild = &record;
-    context.propertyRoot = record.properties.propertyRoot;
-    context.prefixOrdinals = record.properties.ordinals;
-    context.prefixTrackIds = record.properties.trackIds;
-    context.typedPrefix = record.properties.typedPrefix;
+    auto context = MakeScheduleContinuationPreparationContext(
+        engine, world, issue, noChild, failure, queueCapacity, parent, record, start);
     context.privateScheduleOwner = scratch;
     context.initialNativeForestOwner = scratch->initialNativeForestOwner;
     if (scratch->nativeEntryForestRoot) context.initialForestReadCutOwner = &scratch->storage;
-    context.startFrame = start;
     context.endFrame = end;
-    context.originalReadFrame = start;
-    context.materializationSequence = issue.Sequence();
-    context.playCount = 1;
-    context.allowImmediateLane = false;
-    context.playbackRequest = parent.Invocation().playbackRequest;
-    context.emitterOrigin = parent.Invocation().emitterOrigin;
-    context.emitter = parent.Invocation().invocationEmitter;
-    context.actionFiring = parent.Invocation().actionFiring;
-    context.rootHandle = context.actionFiring;
-    context.entry.executionOrdinal = context.actionFiring != 0 ? parent.Invocation().actionExecutionOrdinal : 0u;
-    context.callerSeed = parent.Invocation().scheduleCallerSeed;
     context.selectionEventBegin = 0x80000000u;
     std::uint32_t selectionCursor = context.selectionEventBegin + harken::kSelectionPathNodeCapacity;
     context.initialSelectionEventCursor = &selectionCursor;
-    context.prepareMixedTerminal = PrepareContainerMixedScheduleTerminal;
     if (!PrepareScheduleContainerExecution(context, *scratch) || scratch->row == nullptr ||
         (!scratch->variableControl && scratch->initialQueueEntryAdmissions.empty()) ||
         !PrepareScheduleContainerQueueResources(context, *scratch))
@@ -92010,37 +92004,13 @@ bool PrepareNativeVariableScheduleRetarget(harken::Engine& engine,
     harken::ActionFiringTable::PreparedChildIdentity noChild;
     VnResult failure = VN_OK;
     bool queueCapacity = false;
-    ContainerPreparationContext context{native.issue, noChild, failure, queueCapacity};
-    context.engine = &engine;
-    context.world = world;
-    context.root = desired.playable;
-    context.parentInstance = parent.ownerInstance;
-    context.parentEpoch = parent.ownerEpoch;
-    context.parentService = PlayableServiceReference(parent);
-    context.parentChildOrdinal = ordinal;
-    context.scheduleChild = &record;
+    auto context = MakeScheduleContinuationPreparationContext(
+        engine, world, native.issue, noChild, failure, queueCapacity, parent, record, startFrame);
     context.privateScheduleOwner = &scratch;
-    context.propertyRoot = record.properties.propertyRoot;
-    context.prefixOrdinals = record.properties.ordinals;
-    context.prefixTrackIds = record.properties.trackIds;
-    context.typedPrefix = record.properties.typedPrefix;
     context.initialForestReadCutOwner = &scratch.storage;
     context.initialAdmissionGroup = harken::ParentAudioGroupRef{decision};
     auto memberCursor = firstMember;
     context.initialAdmissionMemberCursor = &memberCursor;
-    context.startFrame = startFrame;
-    context.originalReadFrame = startFrame;
-    context.materializationSequence = native.issue.Sequence();
-    context.playCount = 1;
-    context.allowImmediateLane = false;
-    context.playbackRequest = parent.Invocation().playbackRequest;
-    context.emitterOrigin = parent.Invocation().emitterOrigin;
-    context.emitter = parent.Invocation().invocationEmitter;
-    context.actionFiring = parent.Invocation().actionFiring;
-    context.rootHandle = context.actionFiring;
-    context.entry.executionOrdinal = context.actionFiring != 0 ? parent.Invocation().actionExecutionOrdinal : 0u;
-    context.callerSeed = parent.Invocation().scheduleCallerSeed;
-    context.prepareMixedTerminal = PrepareContainerMixedScheduleTerminal;
     std::uint64_t duration = UINT64_MAX;
     const auto clip = LimitInheritedNaturalClipDuration(engine, &parent, parent.ownerInstance, startFrame, &duration);
     if (clip == harken::NaturalClipStartStatus::Invalid || clip == harken::NaturalClipStartStatus::Ended) return false;
@@ -92345,19 +92315,8 @@ QueueContinuationPrepareStatus PrepareQueueScheduleSuccessor(
     harken::ActionFiringTable::PreparedChildIdentity noChild;
     VnResult failure = VN_OK;
     bool queueCapacity = false;
-    ContainerPreparationContext context{issue, noChild, failure, queueCapacity};
-    context.engine = &engine;
-    context.world = world;
-    context.root = child.playable;
-    context.parentInstance = parent.ownerInstance;
-    context.parentEpoch = parent.ownerEpoch;
-    context.parentService = PlayableServiceReference(parent);
-    context.parentChildOrdinal = next.currentChildOrdinal;
-    context.scheduleChild = &record;
-    context.propertyRoot = record.properties.propertyRoot;
-    context.prefixOrdinals = record.properties.ordinals;
-    context.prefixTrackIds = record.properties.trackIds;
-    context.typedPrefix = record.properties.typedPrefix;
+    auto context = MakeScheduleContinuationPreparationContext(
+        engine, world, issue, noChild, failure, queueCapacity, parent, record, startFrame);
     context.scheduleTargetFade = targetFade;
     context.initialForestReadCutOwner = &scratch.storage;
     context.queueSignalEntryOwner = scratch.queueSignalEntryOwner;
@@ -92380,20 +92339,6 @@ QueueContinuationPrepareStatus PrepareQueueScheduleSuccessor(
             &scratch.frontierSignal) != harken::QueueSignalStatusV1::Ok) return Status::Deferred;
     context.initialAdmissionGroup = {signal.decision};
     context.initialAdmissionMemberCursor = &signal.memberCount;
-    context.startFrame = startFrame;
-    context.originalReadFrame = startFrame;
-    context.materializationSequence = ticket;
-    context.playCount = 1;
-    context.allowImmediateLane = false;
-    context.playbackRequest = parent.Invocation().playbackRequest;
-    context.emitterOrigin = parent.Invocation().emitterOrigin;
-    context.emitter = parent.Invocation().invocationEmitter;
-    context.actionFiring = parent.Invocation().actionFiring;
-    context.rootHandle = context.actionFiring;
-    context.entry.executionOrdinal = context.actionFiring != 0
-        ? parent.Invocation().actionExecutionOrdinal : 0u;
-    context.callerSeed = parent.Invocation().scheduleCallerSeed;
-    context.prepareMixedTerminal = PrepareContainerMixedScheduleTerminal;
     std::uint64_t duration = UINT64_MAX;
     const auto clip = LimitInheritedNaturalClipDuration(engine, &parent, parent.ownerInstance,
         startFrame, &duration);
@@ -92616,13 +92561,8 @@ bool PrepareStaticScheduleExecution(
         context.result = VN_CAPABILITY_UNAVAILABLE;
         return false;
     }
-    const bool pendingImmediateEntry = context.allowImmediateLane && !markerOnly &&
+    const bool pendingImmediateEntry = operations.AllowsSingleImmediateEntry() && !markerOnly &&
         !materialized.hasZeroWorkCompletion &&
-        context.playCount == 1u && context.stopCount == 0 &&
-        context.variableWriteCount == 0 && context.deferredCount == 0 &&
-        context.selectionResetCount == 0 && context.queueResetCount == 0 &&
-        context.queueReplacementCount == 0 && planned.deferredFrame == 0 &&
-        !context.materializingDeferred &&
         PendingImmediateOffsetsFit(engine, materialized);
     const harken::PlayableStartStatus preflight = markerOnly
         ? harken::PlayableStartStatus::Accepted
