@@ -369,6 +369,57 @@ TEST(Pack, FindEntryBySoundStopsServingReRegisteredId) {
     EXPECT_EQ(VN_OK, Vn_UnregisterPCM(harkentest::ObjectId(42)));
 }
 
+TEST(Pack, LaterPackOwnsLoopMetadataAfterEarlierRegistrationIsRemoved) {
+    EngineSession session(MakeNullConfig(2, 64));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto sound = harkentest::ObjectId(42);
+    PackEntrySpec old = MakeSineEntry(sound, 2048);
+    old.loopable = true;
+    old.loopStart = 8;
+    old.loopEnd = 128;
+    PackEntrySpec current = old;
+    current.loopStart = 256;
+    current.loopEnd = 1024;
+    const auto oldPath = TempPath("pack_stale_metadata_owner.pack");
+    const auto currentPath = TempPath("pack_current_metadata_owner.pack");
+    WriteFileBytes(oldPath, BuildPackBytes({old}));
+    WriteFileBytes(currentPath, BuildPackBytes({current}));
+    VnPackHandle first = 0, second = 0;
+    ASSERT_EQ(VN_OK, LoadPack(oldPath, &first));
+    ASSERT_EQ(VN_OK, Vn_UnregisterPCM(sound));
+    ASSERT_EQ(VN_OK, LoadPack(currentPath, &second));
+    const auto cookie = engine.registry.CookieOf(sound);
+    const auto* entry = engine.packs.FindEntryBySound(sound, engine.registry);
+    EXPECT_NE(nullptr, entry);
+    if (entry != nullptr) {
+        EXPECT_EQ(cookie, entry->registrationCookie);
+        EXPECT_EQ(current.loopStart, entry->loopStartFrame);
+        EXPECT_EQ(current.loopEnd, entry->loopEndFrame);
+    }
+    auto play = MakePlayDesc(sound);
+    play.loopCount = 2;
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    const auto block = engine.mixer.BlocksRendered();
+    engine.nullBackend.Pump(1);
+    ASSERT_GT(engine.mixer.BlocksRendered(), block);
+    const auto* render = engine.voices.Resolve(harkentest::RenderHandle(&engine, voice));
+    ASSERT_NE(nullptr, render);
+    EXPECT_EQ(current.loopStart, render->loopStartFrame);
+    EXPECT_EQ(current.loopEnd, render->loopEndFrame);
+    ASSERT_EQ(VN_OK, Vn_UnloadPack(first));
+    EXPECT_EQ(cookie, engine.registry.CookieOf(sound));
+    EXPECT_EQ(VN_IN_USE, Vn_UnloadPack(second));
+    ASSERT_EQ(VN_OK, Vn_Stop(voice, 0));
+    engine.nullBackend.Pump(2);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_EQ(VN_OK, Vn_UnloadPack(second));
+    EXPECT_EQ(0u, engine.packs.LoadedCount());
+    EXPECT_EQ(0u, engine.registry.Count());
+    EXPECT_EQ(0u, engine.voices.ActiveCount());
+}
+
 TEST(Pack, StalePackHandleBenignAndCounted) {
     EngineSession session(MakeNullConfig(0, kBlockFrames));
     ASSERT_EQ(VN_OK, session.InitResult());

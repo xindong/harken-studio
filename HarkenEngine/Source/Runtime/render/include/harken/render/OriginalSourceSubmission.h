@@ -713,7 +713,7 @@ public:
             row->unpublishedVoiceDispositionComplete_ = true;
             return true;
         }
-        const auto result = voices_.TryDisposeOriginalTimelineVoice(row->voice_);
+        const auto result = voices_.TryDisposeOriginalTimelineVoiceFromLogic(row->voice_);
         row->unpublishedVoiceDispositionComplete_ = result == VoicePool::OriginalVoiceDisposal::Released ||
             result == VoicePool::OriginalVoiceDisposal::AlreadyReleased;
         return row->unpublishedVoiceDispositionComplete_;
@@ -897,7 +897,7 @@ public:
             row.rowProof_.Release();
             if (row.voice_.Valid() && !voices_.OriginalVoiceReleased(row.voice_)) {
                 if (!voices_.CancelPreparedVoice(row.voice_.RenderHandle()))
-                    (void)voices_.TryDisposeOriginalTimelineVoice(row.voice_);
+                    (void)voices_.TryDisposeOriginalTimelineVoiceFromLogic(row.voice_);
             }
             for (std::uint32_t effect = 0; effect < row.incomingCount_; ++effect) {
                 if (row.incomingDone_[effect]) continue;
