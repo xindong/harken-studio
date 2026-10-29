@@ -1,4 +1,5 @@
 #include "UnitTest/CanonicalPackSetActivate.h"
+#include "AllocationProbe.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 #include "Common/VariableOutcomeCapture.h"
@@ -4244,6 +4245,69 @@ TEST(PackCompositionContract, FailedReplacePublishKeepsPriorMedia) {
               session.Engine()->registry.CookieOf(kSoundId));
 }
 
+TEST(PackComposition, PreparedMutationUnwindReturnsRetirementCapacity) {
+    for (const bool unload : {false, true}) {
+        SCOPED_TRACE(unload);
+        PCMRegistry registry;
+        PackTable packs(1, 1);
+        PackTable::PreparedLoadToken load;
+        ASSERT_EQ(VN_OK, packs.PrepareLoad(&load));
+        PackTable::AlignedBuffer bytes;
+        std::vector<PackEntry> entries;
+        std::vector<PackTocEntry> media;
+        VnPackHandle handle = 0;
+        ASSERT_EQ(VN_OK, packs.LoadPrepared(&load, bytes, std::move(entries),
+                                            media, registry, &handle));
+        for (unsigned attempt = 0; attempt < 3; ++attempt) {
+            try {
+                PackTable::PreparedMutation mutation;
+                ASSERT_EQ(VN_OK, unload
+                    ? packs.PrepareUnloadMutation(handle, registry, &mutation)
+                    : packs.PrepareRevisionMutation(handle, bytes, entries,
+                                                      media, registry, &mutation));
+                if (attempt == 0) throw std::bad_alloc{};
+            } catch (const std::bad_alloc&) {
+            }
+            EXPECT_EQ(1u, packs.LoadedCount());
+        }
+    }
+}
+
+TEST(PackComposition, PreparedMutationMovesKeepOneReservationOwner) {
+    PCMRegistry registry;
+    PackTable packs(2, 2);
+    VnPackHandle handles[2]{};
+    for (auto& handle : handles) {
+        PackTable::PreparedLoadToken load;
+        ASSERT_EQ(VN_OK, packs.PrepareLoad(&load));
+        PackTable::AlignedBuffer bytes;
+        std::vector<PackEntry> entries;
+        std::vector<PackTocEntry> media;
+        ASSERT_EQ(VN_OK, packs.LoadPrepared(&load, bytes, std::move(entries),
+                                            media, registry, &handle));
+    }
+    PackTable::PreparedMutation destination;
+    ASSERT_EQ(VN_OK, packs.PrepareUnloadMutation(handles[1], registry, &destination));
+    {
+        PackTable::PreparedMutation source;
+        ASSERT_EQ(VN_OK, packs.PrepareUnloadMutation(handles[0], registry, &source));
+        PackTable::PreparedMutation moved(std::move(source));
+        EXPECT_FALSE(source.IsPrepared());
+        destination = std::move(moved);
+        EXPECT_FALSE(moved.IsPrepared());
+    }
+    PackTable::PreparedMutation retry;
+    ASSERT_EQ(VN_OK, packs.PrepareUnloadMutation(handles[1], registry, &retry));
+    packs.CancelPreparedMutation(&retry);
+    PackTable::RetiredReplace predecessor;
+    packs.CommitPreparedMutation(&destination, registry, &predecessor);
+    EXPECT_FALSE(destination.IsPrepared());
+    EXPECT_EQ(1u, packs.LoadedCount());
+    ASSERT_EQ(VN_OK, packs.PrepareUnloadMutation(handles[1], registry, &retry));
+    packs.CancelPreparedMutation(&retry);
+    packs.ParkRetiredReplace(handles[0], std::move(predecessor), false);
+}
+
 TEST(PackComposition, UnloadPrepareRefusesSlotGenerationWrap) {
     PCMRegistry registry;
     PackTable packs(1);
@@ -5091,6 +5155,51 @@ TEST(PackCompositionContract, ProviderFailurePublishesNothing) {
     EXPECT_EQ(PackAuthorityMode::Unspecified,
               session.Engine()->packComposition.Authority());
     EXPECT_EQ(nullptr, session.Engine()->packComposition.Published());
+}
+
+TEST(PackCompositionContract, ProviderSpanReleasedAfterAllocationException) {
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    struct Provider {
+        std::vector<std::uint8_t> bytes = BuildInitWithoutCatalog();
+        unsigned released = 0;
+        bool fail = true;
+    } provider;
+    VnPackLoadDesc desc{};
+    desc.structSize = sizeof(desc);
+    desc.flags = VN_PACK_LOAD_FLAG_PROVIDER;
+    desc.providerUserData = &provider;
+    desc.provide = +[](void* data, std::uint64_t, const char*, std::uint32_t,
+                       std::uint64_t, VnPackByteSpan* span) -> VnResult {
+        auto& p = *static_cast<Provider*>(data);
+        *span = {};
+        span->structSize = sizeof(*span);
+        span->bytes = p.bytes.data();
+        span->byteCount = p.bytes.size();
+        if (p.fail) {
+            allocation_probe::count = 0;
+            allocation_probe::failAt = 1;
+            allocation_probe::enabled = true;
+        }
+        return VN_OK;
+    };
+    desc.release = +[](void* data, std::uint64_t, VnPackByteSpan) {
+        ++static_cast<Provider*>(data)->released;
+    };
+    VnPackHandle handle = 0;
+    const auto failed = Vn_LoadPack(reinterpret_cast<const VnPackDesc*>(&desc), &handle);
+    allocation_probe::enabled = false;
+    const bool faultConsumed = allocation_probe::failAt == 0;
+    allocation_probe::failAt = 0;
+    EXPECT_TRUE(faultConsumed);
+    EXPECT_EQ(VN_DEVICE_ERROR, failed);
+    EXPECT_EQ(1u, provider.released);
+    EXPECT_EQ(0u, handle);
+    EXPECT_EQ(nullptr, session.Engine()->packComposition.Published());
+    provider.fail = false;
+    EXPECT_EQ(VN_PACK_INIT_LIFECYCLE,
+              Vn_LoadPack(reinterpret_cast<const VnPackDesc*>(&desc), &handle));
+    EXPECT_EQ(2u, provider.released);
 }
 
 TEST(PackComposition, InjectedComposeFaultsKeepPriorGeneration) {
