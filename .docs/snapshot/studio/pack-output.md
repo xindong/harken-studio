@@ -42,7 +42,7 @@ GUI、IPC 与 Harkenizer 共用 HarkenizerCore，覆盖工程构建计划、媒�
 | 资源故障 | 超时或异常退出终止该 worker，失败仍归入当前平台；后续平台按原调度规则处理 |
 | 产物与发布 | 包格式、媒体算法、条目顺序、伴随文件、取消检查和平台事务沿用原规则 |
 
-表注：本轮内核拆分及 packc 退役已通过 Windows 集成构建、包体逐字节对照、故障恢复和独立部署验证；详细证据与 macOS、remote 验收限制见 [打包优化报告](pack-build-optimization.md)。
+表注：本轮内核拆分及 packc 退役已通过 Windows 集成构建、包体逐字节对照、故障恢复和独立部署验证。
 
 ```text
 Harkenizer list-targets <project.hsp> --json
