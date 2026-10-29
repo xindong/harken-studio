@@ -8,6 +8,7 @@
 #include <Qt>
 #include <QHash>
 #include <QPointer>
+#include <QRect>
 #include <QStringList>
 #include <cstdint>
 #include <functional>
@@ -56,7 +57,8 @@ class SelectorWindow : public BaseDialog
     Q_OBJECT
 
 public:
-    static SelectorWindow* open(const SelectorRequest& request, QWidget* anchor = nullptr);
+    static SelectorWindow* open(const SelectorRequest& request, QWidget* anchor = nullptr,
+                                std::optional<QRect> globalAnchorRect = std::nullopt);
     static void dismiss(QWidget* anchor = nullptr);
     static void refresh(QWidget* anchor = nullptr);
 
@@ -64,9 +66,11 @@ public:
 
 protected:
     bool event(QEvent* e) override;
+    void showEvent(QShowEvent* event) override;
 
 private:
     SelectorWindow();
+    void positionAtAnchor();
     void applyRequest(const SelectorRequest& request);
     void rebuildTree(bool preserveState = false);
     void refreshSwitches();
@@ -78,6 +82,7 @@ private:
 
     SelectorRequest request_;
     QPointer<QWidget> anchor_;
+    QRect globalAnchorRect_;
     QMetaObject::Connection anchorDestroyed_;
     bool refreshPending_ = false;
     uint32_t lastNotifiedID_ = 0;
