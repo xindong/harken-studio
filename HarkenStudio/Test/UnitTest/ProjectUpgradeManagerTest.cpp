@@ -1,4 +1,5 @@
 #include "Core/ProjectUpgradeManager.h"
+#include "Core/FileWatcher.h"
 #include "Core/ProjectTransaction.h"
 #include "Core/ProjectSaveSnapshot.h"
 #include "Core/FieldGroupJson.h"
@@ -154,8 +155,15 @@ TEST(ProjectUpgradeManager, RepeatedAnalysisObservesExternalDocumentChanges)
 TEST(ProjectSaveSnapshot, DocumentBytesMatchTextFilesAndRejectDirectoryCollisions)
 {
     QTemporaryDir directory;
+    QTemporaryDir preparedDirectory;
     ASSERT_TRUE(directory.isValid());
+    ASSERT_TRUE(preparedDirectory.isValid());
     ASSERT_TRUE(QDir(directory.path()).mkpath(QStringLiteral("Layers")));
+    ASSERT_TRUE(QDir(preparedDirectory.path()).mkpath(QStringLiteral("Layers/Occupied.vp")));
+    writeJson(preparedDirectory.filePath(QStringLiteral("Layers/Existing.vp")),
+              QJsonObject{{QStringLiteral("preserved"), true}});
+    VNX::ProjectSaveSnapshot prepared(preparedDirectory.path());
+    prepared.prepareDirectoryLayout();
     const QJsonObject document{
         {QStringLiteral("name"), QString::fromUtf8("\xc3\xa9\xe6\x96\x87")},
         {QStringLiteral("text"), QStringLiteral("first\r\nsecond\nthird")},
@@ -190,6 +198,10 @@ TEST(ProjectSaveSnapshot, DocumentBytesMatchTextFilesAndRejectDirectoryCollision
         ASSERT_TRUE(target.addDocument(file.fileName(), input));
         EXPECT_EQ(target.files().value(relative), disk);
         EXPECT_EQ(target.documents().value(relative), QJsonDocument::fromJson(disk).object());
+        EXPECT_EQ(prepared.prepareDocument(preparedDirectory.filePath(relative), input),
+                  VNX::ProjectSaveSnapshot::WriteResult::Stored);
+        EXPECT_EQ(prepared.files().value(relative), disk);
+        EXPECT_EQ(prepared.documents().value(relative), QJsonDocument::fromJson(disk).object());
     };
     VNX::ProjectSaveSnapshot snapshot(directory.path());
     verifyDocument(snapshot, QStringLiteral("Layers/Main.vp"), document);
@@ -234,6 +246,93 @@ TEST(ProjectSaveSnapshot, DocumentBytesMatchTextFilesAndRejectDirectoryCollision
         directory.filePath(QStringLiteral("Layers/Occupied.vp")), document));
     EXPECT_TRUE(QFileInfo(directory.filePath(QStringLiteral("Layers/Occupied.vp"))).isDir());
     EXPECT_FALSE(snapshot.documents().contains(QStringLiteral("Layers/Occupied.vp")));
+    EXPECT_EQ(prepared.prepareDocument(
+        preparedDirectory.filePath(QStringLiteral("Layers/Occupied.vp")), document),
+        VNX::ProjectSaveSnapshot::WriteResult::Physical);
+    EXPECT_EQ(prepared.prepareDocument(
+        preparedDirectory.filePath(QStringLiteral("Layers/Existing.vp")), document),
+        VNX::ProjectSaveSnapshot::WriteResult::Physical);
+    EXPECT_EQ(prepared.prepareDocument(
+        preparedDirectory.filePath(QStringLiteral("Missing/New.vp")), document),
+        VNX::ProjectSaveSnapshot::WriteResult::Failed);
+
+    const QString generatedPath = QStringLiteral("Layers/Generated.vp");
+    const QString generatedFile = directory.filePath(generatedPath);
+    QString type = QStringLiteral("project.layer");
+    QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QString projectId = HarkenTest::kProjectId;
+    QJsonObject header{{QStringLiteral("external"), QJsonObject{{QStringLiteral("revision"), 1}}}};
+    QJsonObject content = HarkenTest::projectDocument(type, id, projectId, {
+        {QStringLiteral("type"), QStringLiteral("Layer")},
+        {QStringLiteral("name"), QStringLiteral("Generated")},
+        {QStringLiteral("guid"), id},
+        {QStringLiteral("children"), QJsonArray{}},
+        {QStringLiteral("extensions"), document},
+    }).value(QStringLiteral("content")).toObject();
+    const auto verifyCreated = [&](VNX::ProjectSaveSnapshot& target,
+                                   const QJsonObject& authored, bool valid) {
+        const auto expected = VNX::ProjectDocument::create(type, id, projectId, authored, header);
+        const auto actual = target.createDocument(generatedFile, type, id, projectId, authored, header);
+        EXPECT_EQ(actual.isEmpty(), !valid);
+        EXPECT_EQ(actual, expected);
+        EXPECT_EQ(QJsonDocument(actual).toJson(QJsonDocument::Indented),
+                  QJsonDocument(expected).toJson(QJsonDocument::Indented));
+        if (valid) verifyDocument(target, generatedPath, actual);
+    };
+    VNX::ProjectSaveSnapshot generated(directory.path());
+    verifyCreated(generated, content, true);
+    for (const QJsonValue& number : numbers) {
+        content.insert(QStringLiteral("extensions"), QJsonObject{{QStringLiteral("value"), number}});
+        for (int repeat = 0; repeat < 2; ++repeat) {
+            VNX::ProjectSaveSnapshot current(directory.path(), &generated);
+            verifyCreated(current, content, true);
+            current.clearPrevious();
+            generated = std::move(current);
+        }
+    }
+    const auto verifyGeneration = [&] {
+        VNX::ProjectSaveSnapshot current(directory.path(), &generated);
+        verifyCreated(current, content, true);
+        current.clearPrevious();
+        generated = std::move(current);
+    };
+    header.insert(QStringLiteral("external"), QJsonObject{{QStringLiteral("revision"), 2}});
+    verifyGeneration();
+    header.remove(QStringLiteral("external"));
+    verifyGeneration();
+    id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    verifyGeneration();
+    projectId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    verifyGeneration();
+    type = QStringLiteral("project.bus");
+    verifyGeneration();
+
+    for (const auto& changes : QList<QJsonObject>{
+             {{QStringLiteral("fieldGroups"), QJsonObject{}}},
+             {{QStringLiteral("fieldGroups"), false}},
+             {{QStringLiteral("sectionGroups"), QJsonObject{}}},
+             {{QStringLiteral("outputBusOverride"), true}},
+             {{QStringLiteral("childOccurrences"), QJsonArray{}}},
+             {{QStringLiteral("children"), QJsonArray{1}}},
+             {{QStringLiteral("type"), QStringLiteral("Action")}},
+             {{QStringLiteral("components"), QJsonObject{
+                 {QStringLiteral("mixnode"), QJsonObject{{QStringLiteral("outputBusId"), 1}}}}}},
+         }) {
+        QJsonObject invalid = content;
+        for (auto change = changes.constBegin(); change != changes.constEnd(); ++change)
+            invalid.insert(change.key(), change.value());
+        VNX::ProjectSaveSnapshot current(directory.path(), &generated);
+        verifyCreated(current, invalid, false);
+        verifyCreated(current, content, true);
+
+        VNX::ProjectSaveSnapshot unvalidated(directory.path());
+        ASSERT_TRUE(unvalidated.addDocument(generatedFile, {
+            {QStringLiteral("harkenDocument"), VNX::ProjectDocument::createHeader(type, id, projectId, header)},
+            {QStringLiteral("content"), invalid},
+        }));
+        VNX::ProjectSaveSnapshot replay(directory.path(), &unvalidated);
+        verifyCreated(replay, invalid, false);
+    }
 }
 
 TEST(ProjectContract, SnapshotAndDiskValidationRemainEquivalentAcrossChanges)
@@ -759,7 +858,11 @@ TEST(ProjectTransaction, SnapshotReplacementFreezesDocumentsAndPreservesRecovery
         const QString addedPath = QStringLiteral("Layers/Added.vp");
         const QString deletedPath = QStringLiteral("Layers/Deleted.vp");
         const QString auxiliaryPath = QStringLiteral("Layers/Auxiliary.bin");
+        const QString middleChangedPath = QStringLiteral("Layers/Retained_063_changed.vp");
+        const QString middleDeletedPath = QStringLiteral("Layers/Retained_127_deleted.vp");
         writeJson(directory.filePath(deletedPath), deleted);
+        writeJson(directory.filePath(middleChangedPath), projectBefore);
+        writeJson(directory.filePath(middleDeletedPath), deleted);
         writeJson(directory.filePath(auxiliaryPath), auxiliary);
         writeJson(staging.filePath(auxiliaryPath), auxiliary);
         writeJson(staging.filePath(QFileInfo(projectPath).fileName()), changed);
@@ -768,10 +871,11 @@ TEST(ProjectTransaction, SnapshotReplacementFreezesDocumentsAndPreservesRecovery
         VNX::ProjectSaveSnapshot snapshot(staging.path());
         ASSERT_TRUE(snapshot.addDocument(staging.filePath(mainPath), changed));
         ASSERT_TRUE(snapshot.addDocument(staging.filePath(addedPath), added));
+        ASSERT_TRUE(snapshot.addDocument(staging.filePath(middleChangedPath), changed));
         QStringList writeSet{QFileInfo(projectPath).fileName(), mainPath, addedPath,
-                             deletedPath, auxiliaryPath};
+                             deletedPath, auxiliaryPath, middleChangedPath, middleDeletedPath};
         QStringList retainedPaths;
-        for (int index = 0; index < 128; ++index) {
+        for (int index = 0; index < 192; ++index) {
             const QString relative = QStringLiteral("Layers/Retained_%1.vp")
                 .arg(index, 3, 10, QLatin1Char('0'));
             ASSERT_TRUE(snapshot.addDocument(staging.filePath(relative),
@@ -820,7 +924,9 @@ TEST(ProjectTransaction, SnapshotReplacementFreezesDocumentsAndPreservesRecovery
         EXPECT_EQ(readJson(directory.filePath(mainPath)), changed);
         EXPECT_EQ(readJson(directory.filePath(addedPath)), added);
         EXPECT_EQ(readJson(directory.filePath(auxiliaryPath)), auxiliary);
+        EXPECT_EQ(readJson(directory.filePath(middleChangedPath)), changed);
         EXPECT_FALSE(QFileInfo::exists(directory.filePath(deletedPath)));
+        EXPECT_FALSE(QFileInfo::exists(directory.filePath(middleDeletedPath)));
         EXPECT_TRUE(QDir(directory.filePath(QStringLiteral("Layers/New/Empty"))).exists());
         EXPECT_FALSE(QDir(directory.filePath(QStringLiteral("Layers/Old"))).exists());
         if (commit)
@@ -830,11 +936,16 @@ TEST(ProjectTransaction, SnapshotReplacementFreezesDocumentsAndPreservesRecovery
         EXPECT_EQ(readJson(projectPath), commit ? changed : projectBefore);
         EXPECT_EQ(readJson(directory.filePath(mainPath)), commit ? changed : mainBefore);
         EXPECT_EQ(readJson(directory.filePath(auxiliaryPath)), auxiliary);
+        EXPECT_EQ(readJson(directory.filePath(middleChangedPath)), commit ? changed : projectBefore);
         EXPECT_EQ(QFileInfo::exists(directory.filePath(addedPath)), commit);
         EXPECT_EQ(QDir(directory.filePath(QStringLiteral("Layers/New/Empty"))).exists(), commit);
         EXPECT_EQ(QDir(directory.filePath(QStringLiteral("Layers/Old/Empty"))).exists(), !commit);
-        if (!commit)
+        if (!commit) {
             EXPECT_EQ(readJson(directory.filePath(deletedPath)), deleted);
+            EXPECT_EQ(readJson(directory.filePath(middleDeletedPath)), deleted);
+        } else {
+            EXPECT_FALSE(QFileInfo::exists(directory.filePath(middleDeletedPath)));
+        }
         for (const QString& relative : retainedPaths) {
             QFile file(directory.filePath(relative));
             ASSERT_TRUE(file.open(QIODevice::ReadOnly));
@@ -926,18 +1037,24 @@ TEST(ProjectTransaction, FileAndDirectoryReplacementsRecoverTheirOriginalKinds)
     writeJson(directory.filePath(QStringLiteral("Layers/Directory/child.bin")), originalChild);
     writeJson(staging.filePath(QStringLiteral("Layers/File/new.bin")), QJsonObject{{QStringLiteral("new"), true}});
     writeJson(staging.filePath(QStringLiteral("Layers/Directory")), QJsonObject{{QStringLiteral("newFile"), true}});
+    VNX::FileWatcher watcher;
+    watcher.startWatching(directory.path());
+    const auto resumeWatcher = qScopeGuard([&] { watcher.endProjectWrite(); });
     QString error;
     {
         auto transaction = VNX::ProjectTransaction::begin(projectPath,
             {QStringLiteral("Layers/File"), QStringLiteral("Layers/File/new.bin"),
              QStringLiteral("Layers/Directory"), QStringLiteral("Layers/Directory/child.bin")}, &error);
         ASSERT_NE(transaction, nullptr) << error.toStdString();
+        ASSERT_TRUE(watcher.beginProjectWrite(transaction->changedPaths()));
         ASSERT_TRUE(transaction->replaceFromDirectory(staging.path(),
             QStringList{QStringLiteral("Layers")}, &error)) << error.toStdString();
         EXPECT_TRUE(QFileInfo(directory.filePath(QStringLiteral("Layers/Directory"))).isFile());
         EXPECT_TRUE(QFileInfo(directory.filePath(QStringLiteral("Layers/File"))).isDir());
     }
     ASSERT_TRUE(VNX::ProjectTransaction::recover(projectPath, &error)) << error.toStdString();
+    watcher.endProjectWrite();
+    EXPECT_TRUE(watcher.isWatching());
     EXPECT_EQ(readJson(directory.filePath(QStringLiteral("Layers/File"))), originalFile);
     EXPECT_EQ(readJson(directory.filePath(QStringLiteral("Layers/Directory/child.bin"))), originalChild);
 }

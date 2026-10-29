@@ -63,6 +63,7 @@ public:
     const QByteArray& backupFingerprint() const { return backupFingerprint_; }
     const QByteArray& committedFingerprint() const { return committedFingerprint_; }
     const QStringList& writeSet() const { return writeSet_; }
+    QStringList changedPaths() const;
 
     bool replaceFromDirectory(const QString& stagedDirectory,
                               QString* error = nullptr,

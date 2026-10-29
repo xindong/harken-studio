@@ -7,6 +7,8 @@
 #include <QDirIterator>
 #include <QFileInfo>
 #include <QDebug>
+#include <QCoreApplication>
+#include <QEvent>
 #include <utility>
 
 namespace VNX {
@@ -54,6 +56,8 @@ void FileWatcher::stopWatching()
 {
     const bool wasWatching = watching_;
 
+    projectWriteActive_ = false;
+    restartAfterWriteRoot_.clear();
     debounceTimer_.stop();
     suppressTimer_.stop();
     suppressed_ = false;
@@ -70,6 +74,53 @@ void FileWatcher::stopWatching()
     watching_ = false;
 
     if (wasWatching) qDebug() << "[FileWatcher] Stopped watching";
+}
+
+bool FileWatcher::beginProjectWrite(const QStringList& changedPaths)
+{
+    if (!watching_ || projectWriteActive_) return false;
+#ifdef Q_OS_WIN
+    projectWriteActive_ = true;
+    debounceTimer_.stop();
+    suppressTimer_.stop();
+    suppressed_ = false;
+    pendingModified_.clear();
+    pendingWUModified_.clear();
+    sourceSnapshot_.clear();
+    projectSnapshot_.clear();
+    QSet<QString> changed;
+    for (const auto& path : changedPaths)
+        changed.insert(QDir::cleanPath(QDir::fromNativeSeparators(path)).toCaseFolded());
+    QStringList removed;
+    for (const auto& path : watcher_.files() + watcher_.directories())
+        if (changed.contains(QDir::cleanPath(QDir::fromNativeSeparators(path)).toCaseFolded()))
+            removed.append(path);
+    if (removed.isEmpty() || watcher_.removePaths(removed).isEmpty()) return true;
+#else
+    Q_UNUSED(changedPaths)
+#endif
+    const QString root = projectRoot_;
+    stopWatching();
+    restartAfterWriteRoot_ = root;
+    projectWriteActive_ = true;
+    return true;
+}
+
+void FileWatcher::endProjectWrite()
+{
+    if (!projectWriteActive_) return;
+    if (!restartAfterWriteRoot_.isEmpty()) {
+        const QString root = std::exchange(restartAfterWriteRoot_, QString{});
+        startWatching(root);
+        return;
+    }
+    for (QObject* receiver : watcher_.findChildren<QObject*>())
+        QCoreApplication::sendPostedEvents(receiver, QEvent::MetaCall);
+    QCoreApplication::sendPostedEvents(&watcher_, QEvent::MetaCall);
+    sourceSnapshot_ = scanSourceEntries();
+    projectSnapshot_ = scanProjectEntries();
+    projectWriteActive_ = false;
+    refreshWatches();
 }
 
 void FileWatcher::setDebounceInterval(int ms)
@@ -94,13 +145,13 @@ void FileWatcher::suppressSelfWrites(int durationMs)
 
 void FileWatcher::onDirectoryChanged(const QString&)
 {
-    if (!watching_) return;
+    if (!watching_ || projectWriteActive_) return;
     debounceTimer_.start(debounceMs_);
 }
 
 void FileWatcher::onFileChanged(const QString& path)
 {
-    if (!watching_) return;
+    if (!watching_ || projectWriteActive_) return;
 
     if (sourceSnapshot_.contains(path)) {
         pendingModified_.insert(path);
@@ -116,7 +167,7 @@ void FileWatcher::onFileChanged(const QString& path)
 
 void FileWatcher::refreshSources()
 {
-    if (!watching_) return;
+    if (!watching_ || projectWriteActive_) return;
     const auto sources = scanSourceEntries();
     QStringList added;
     QStringList removed;
@@ -142,7 +193,7 @@ void FileWatcher::refreshSources()
 
 void FileWatcher::flushPendingChanges()
 {
-    if (!watching_) return;
+    if (!watching_ || projectWriteActive_) return;
     if (!suppressed_) {
         const auto current = scanProjectEntries();
         for (auto it = current.cbegin(); it != current.cend(); ++it)
@@ -184,6 +235,7 @@ QMap<QString, QPair<qint64, QDateTime>> FileWatcher::scanProjectEntries() const
 
 void FileWatcher::refreshWatches()
 {
+    if (projectWriteActive_) return;
     QSet<QString> watched;
     for (const auto& path : watcher_.directories()) watched.insert(path);
     for (const auto& path : watcher_.files()) watched.insert(path);
@@ -198,8 +250,10 @@ void FileWatcher::refreshWatches()
             removed.append(path);
     }
     if (!removed.isEmpty()) watcher_.removePaths(removed);
+    QStringList added;
     for (const auto& path : desired)
-        if (!watched.contains(path)) watcher_.addPath(path);
+        if (!watched.contains(path)) added.append(path);
+    if (!added.isEmpty()) watcher_.addPaths(added);
 }
 
 QMap<QString, QPair<qint64, QDateTime>> FileWatcher::scanSourceEntries() const

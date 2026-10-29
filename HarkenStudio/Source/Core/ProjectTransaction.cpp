@@ -35,6 +35,7 @@ namespace VNX {
 namespace {
 
 constexpr int kTransactionVersion = 2;
+constexpr qsizetype kParallelVerificationMinimum = 64;
 
 bool validJournal(const QJsonObject& journal, QString* error);
 
@@ -126,7 +127,11 @@ QByteArray fileHash(const QString& path, QString* error = nullptr)
         return {};
     }
     QCryptographicHash hash(QCryptographicHash::Sha256);
-    if (!hash.addData(&file)) {
+    char buffer[16 * 1024];
+    qint64 length;
+    while ((length = file.read(buffer, sizeof(buffer))) > 0)
+        hash.addData(QByteArrayView(buffer, length));
+    if (!file.atEnd()) {
         if (error) *error = fileOperationError(QStringLiteral("Cannot read file for verification"), file);
         return {};
     }
@@ -746,7 +751,7 @@ QThreadPool* transactionVerificationPool()
 {
     static const auto pool = [] {
         auto result = std::make_unique<QThreadPool>();
-        result->setMaxThreadCount(std::clamp(QThread::idealThreadCount(), 1, 4));
+        result->setMaxThreadCount(std::clamp(QThread::idealThreadCount(), 1, 8));
         result->setExpiryTimeout(-1);
         return result;
     }();
@@ -993,8 +998,9 @@ std::unique_ptr<ProjectTransaction> ProjectTransaction::beginImpl(
 #endif
             transaction->stagedFiles_.insert(key, std::move(staged));
         }
-        const int threads = std::clamp(QThread::idealThreadCount(), 1, 4);
-        if (!transaction->stagedFiles_.isEmpty() && normalized.size() >= 64 && threads > 1)
+        const int threads = std::clamp(QThread::idealThreadCount(), 1, 8);
+        if (!transaction->stagedFiles_.isEmpty()
+            && normalized.size() >= kParallelVerificationMinimum && threads > 1)
             transaction->verificationPool_ = transactionVerificationPool();
     }
     transaction->projectDirectory_ = projectDirectory;
@@ -1150,6 +1156,16 @@ ProjectTransaction::~ProjectTransaction()
 {
     if (lock_ && lock_->isLocked())
         lock_->unlock();
+}
+
+QStringList ProjectTransaction::changedPaths() const
+{
+    QStringList paths;
+    const QDir root(projectDirectory_);
+    for (const QString& relative : writeSet_)
+        if (!retainedFiles_.contains(retainedFileKey(relative)))
+            paths.append(root.filePath(relative));
+    return paths;
 }
 
 bool ProjectTransaction::replaceFromDirectory(const QString& stagedDirectory,
@@ -1360,20 +1376,49 @@ bool ProjectTransaction::replaceFromDirectory(const QString& stagedDirectory,
     journal.insert(QStringLiteral("entries"), entries);
     if (!writeJson(transactionPath_, journal, error))
         return false;
-    for (const QJsonValue& value : entries) {
-        const QJsonObject entry = value.toObject();
+    const auto requiresDetach = [](const QJsonObject& entry) {
+        return entry.value(QStringLiteral("existed")).toBool()
+            && (entry.value(QStringLiteral("operation")) != QStringLiteral("write")
+                || entry.contains(QStringLiteral("oldPath")));
+    };
+    QList<FileReadResult> detachReads;
+    qsizetype detachReadBegin = 0;
+    qsizetype detachReadEnd = 0;
+    for (qsizetype index = 0; index < entries.size(); ++index) {
+        if (verificationPool_ && !progress && index >= detachReadEnd) {
+            detachReads.clear();
+            detachReadBegin = index;
+            detachReadEnd = index;
+            while (detachReadEnd < entries.size()
+                   && !requiresDetach(entries.at(detachReadEnd).toObject()))
+                ++detachReadEnd;
+            if (detachReadEnd - detachReadBegin >= kParallelVerificationMinimum) {
+                QList<FileReadRequest> requests;
+                requests.reserve(detachReadEnd - detachReadBegin);
+                for (qsizetype read = detachReadBegin; read < detachReadEnd; ++read) {
+                    const QJsonObject entry = entries.at(read).toObject();
+                    requests.append(FileReadRequest{QDir(projectDirectory_).filePath(
+                        entry.value(QStringLiteral("path")).toString()), entry, FileReadMode::OldState});
+                }
+                detachReads = readTransactionFiles(verificationPool_, requests);
+            }
+        }
+        const QJsonObject entry = entries.at(index).toObject();
         const QString target = QDir(projectDirectory_).filePath(
             entry.value(QStringLiteral("path")).toString());
         QString verificationError;
-        if (!currentMatchesOldState(target, entry, &verificationError)) {
+        const bool matches = detachReads.isEmpty()
+            ? currentMatchesOldState(target, entry, &verificationError)
+            : detachReads.at(index - detachReadBegin).matches;
+        if (!detachReads.isEmpty())
+            verificationError = detachReads.at(index - detachReadBegin).error;
+        if (!matches) {
             if (error) *error = verificationError.isEmpty()
                 ? QStringLiteral("Project changed before transaction write: %1").arg(target)
                 : verificationError;
             return false;
         }
-        if (!entry.value(QStringLiteral("existed")).toBool()
-            || (entry.value(QStringLiteral("operation")) == QStringLiteral("write")
-                && !entry.contains(QStringLiteral("oldPath"))))
+        if (!requiresDetach(entry))
             continue;
         const QByteArray oldHash = QByteArray::fromHex(
             entry.value(QStringLiteral("oldHash")).toString().toLatin1());
@@ -1383,12 +1428,37 @@ bool ProjectTransaction::replaceFromDirectory(const QString& stagedDirectory,
     }
     if (!reconcileDirectories(projectDirectory_, directories, false, error))
         return false;
+    QList<FileReadResult> installedReads;
+    qsizetype installedReadBegin = 0;
+    qsizetype installedReadEnd = 0;
     for (qsizetype index = 0; index < entries.size(); ++index) {
+        if (verificationPool_ && !progress && index >= installedReadEnd) {
+            installedReads.clear();
+            installedReadBegin = index;
+            installedReadEnd = index;
+            while (installedReadEnd < entries.size()
+                   && retainedFiles_.contains(retainedFileKey(entries.at(installedReadEnd)
+                       .toObject().value(QStringLiteral("path")).toString())))
+                ++installedReadEnd;
+            if (installedReadEnd - installedReadBegin >= kParallelVerificationMinimum) {
+                QList<FileReadRequest> requests;
+                requests.reserve(installedReadEnd - installedReadBegin);
+                for (qsizetype read = installedReadBegin; read < installedReadEnd; ++read) {
+                    const QJsonObject entry = entries.at(read).toObject();
+                    requests.append(FileReadRequest{QDir(projectDirectory_).filePath(
+                        entry.value(QStringLiteral("path")).toString()), entry, FileReadMode::PlannedState});
+                }
+                installedReads = readTransactionFiles(verificationPool_, requests);
+            }
+        }
         QJsonObject entry = entries.at(index).toObject();
         const QString relative = entry.value(QStringLiteral("path")).toString();
         const QString target = QDir(projectDirectory_).filePath(relative);
         if (entry.value(QStringLiteral("operation")) == QStringLiteral("write")
-            && !currentMatchesPlannedState(target, entry)) {
+            && !(installedReads.isEmpty() ? currentMatchesPlannedState(target, entry)
+                : installedReads.at(index - installedReadBegin).matches)) {
+            installedReads.clear();
+            installedReadEnd = index + 1;
             const bool replaceExisting = entry.value(QStringLiteral("existed")).toBool()
                 && !entry.contains(QStringLiteral("oldPath"))
                 && currentMatchesOldState(target, entry);

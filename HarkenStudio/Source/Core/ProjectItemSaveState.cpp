@@ -6,9 +6,8 @@
 namespace VNX {
 namespace {
 
-QJsonObject authoringState(const ProjectItem& item, const ProjectSerializer& serializer)
+QJsonObject authoringState(const ProjectItem& item, QJsonObject state)
 {
-    auto state = serializer.projectItemToJson(item, false);
     if (state.isEmpty()) return {};
     state.remove(QStringLiteral("expanded"));
     state.remove(QStringLiteral("objectPath"));
@@ -26,9 +25,18 @@ bool ProjectItemSaveState::markSaved(const ProjectData& project)
 {
     ProjectSerializer serializer;
     if (!serializer.prepareReferenceWrite(project)) return false;
+    return markSaved(project, serializer, {});
+}
+
+bool ProjectItemSaveState::markSaved(
+    const ProjectData& project, const ProjectSerializer& serializer,
+    const QHash<QUuid, QJsonObject>& serializedItems)
+{
     QHash<QUuid, QJsonObject> next;
     const auto visit = [&](const auto& self, const ProjectItem& item) -> bool {
-        auto state = authoringState(item, serializer);
+        const auto serialized = serializedItems.constFind(item.guid);
+        auto state = authoringState(item, serialized == serializedItems.cend()
+            ? serializer.projectItemToJson(item, false) : *serialized);
         if (state.isEmpty()) return false;
         next.insert(item.guid, std::move(state));
         for (const auto& child : item.children)
@@ -77,7 +85,7 @@ QList<ProjectItem*> ProjectItemSaveState::refresh(
         visit(visit, *binding->rootItem);
     bool complete = true;
     for (auto* item : scoped && pending.isEmpty() ? candidates : items) {
-        const auto state = authoringState(*item, serializer);
+        const auto state = authoringState(*item, serializer.projectItemToJson(*item, false));
         if (!state.isEmpty()) {
             const auto saved = saved_.constFind(item->guid);
             const bool dirty = saved == saved_.cend() || *saved != state;
