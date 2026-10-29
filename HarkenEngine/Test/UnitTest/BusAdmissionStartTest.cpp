@@ -3012,3 +3012,246 @@ TEST(BusAdmissionStart, ProjectGenerationGrowthProjectsVariable257) {
     ASSERT_TRUE(e.params.ScopedVariableValue(nullptr, 0, definitions.back().variableId, &value));
     EXPECT_FLOAT_EQ(7, value);
 }
+
+harken::ProjectGenerationInstallViewV1 VariableReplacementView(
+    const harken::VariableDefinitionV1* definitions, std::uint32_t count) {
+    harken::ProjectGenerationInstallViewV1 view{};
+    view.token = {11, 2, 3, 4};
+    view.ownerId = 77;
+    view.ownerRevision = 1;
+    view.compiledWorld.variables = definitions;
+    view.compiledWorld.variableCount = count;
+    view.compiledWorld.identity.capabilityMask = count != 0
+        ? harken::kWorldCapabilityVariableDefinitions : 0;
+    view.compiledWorld.identity.runtimeSemanticFingerprint =
+        harken::ComputeCurrentWorldFingerprintV4(view.compiledWorld);
+    return view;
+}
+
+TEST(BusAdmissionStart, PairedWorldReplacementMigratesEmitterValuesByDefinition) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& e = *session.Engine();
+    std::array<harken::VariableDefinitionV1, 3> definitions{};
+    for (std::uint32_t i = 0; i < definitions.size(); ++i)
+        definitions[i] = harkentest::MakeVariableDefinition(harkentest::ObjectId(7 + i),
+            harken::VariableKindV1::Smooth, -1, 1, 0);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harkentest::InstallDefinitionsWorld(&e, definitions.data(), definitions.size()).status);
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    for (const auto& definition : definitions) {
+        ASSERT_EQ(VN_OK, Vn_SetEmitterValue(emitter, definition.variableId, 0.75f));
+        ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(&e));
+    }
+    for (unsigned i = 0; i < 8; ++i) {
+        e.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    const auto priorWorld = e.variables.CurrentWorldGeneration();
+    auto next = std::array{definitions[0], definitions[2]};
+    next[0].rangeMin = -0.1f;
+    next[0].rangeMax = 0.1f;
+    const auto view = VariableReplacementView(next.data(), next.size());
+    const auto expectOld = [&] {
+        EXPECT_EQ(priorWorld, e.variables.CurrentWorldGeneration());
+        for (const auto& definition : definitions) {
+            float value = 0;
+            EXPECT_TRUE(e.variables.CurrentValue(emitter, definition.variableId, &value));
+            EXPECT_FLOAT_EQ(0.75f, value);
+            EXPECT_TRUE(e.emitters.LocalValue(emitter, definition.variableId, &value));
+            EXPECT_FLOAT_EQ(0.75f, value);
+        }
+    };
+    harken::PreparedProjectGenerationV1 cancelled;
+    ASSERT_EQ(harken::ProjectGenerationPrepareStatusV1::Ok,
+        harken::PrepareProjectGenerationV1(e, view, cancelled).status);
+    expectOld();
+    harken::CancelPreparedProjectGenerationV1(e, std::move(cancelled));
+    expectOld();
+    harken::PreparedProjectGenerationV1 prepared;
+    ASSERT_EQ(harken::ProjectGenerationPrepareStatusV1::Ok,
+        harken::PrepareProjectGenerationV1(e, view, prepared).status);
+    harken::detail::ArmLogicAllocFaultForTests(1,
+        harken::detail::LogicAllocSite::ProjectEmitterProjection);
+    const auto refused = harken::CommitPreparedProjectGenerationV1(e, prepared);
+    harken::detail::DisarmLogicAllocFaultForTests();
+    EXPECT_EQ(harken::ProjectGenerationCommitStatusV1::Backpressure, refused.status);
+    expectOld();
+    ASSERT_EQ(harken::ProjectGenerationCommitStatusV1::Ok,
+        harken::CommitPreparedProjectGenerationV1(e, prepared).status);
+    EXPECT_EQ(priorWorld + 1, e.variables.CurrentWorldGeneration());
+    float value = 0;
+    EXPECT_FALSE(e.variables.CurrentValue(emitter, definitions[1].variableId, &value));
+    EXPECT_FALSE(e.emitters.LocalValue(emitter, definitions[1].variableId, &value));
+    for (std::size_t i = 0; i < next.size(); ++i) {
+        VnVariableQueryDescV1 query{};
+        query.structSize = sizeof(query);
+        query.variableId = next[i].variableId;
+        query.emitter = emitter;
+        VnVariableQueryResultV1 out{};
+        out.structSize = sizeof(out);
+        ASSERT_EQ(VN_OK, Vn_QueryVariable(&query, &out));
+        EXPECT_FLOAT_EQ(i == 0 ? 0 : 0.75f, out.currentValue);
+        EXPECT_EQ(i == 0 ? 0u : 1u, out.hasEmitterOverride);
+        EXPECT_FLOAT_EQ(next[i].rangeMax, out.rangeMax);
+        EXPECT_EQ(i != 0, e.emitters.LocalValue(emitter, next[i].variableId, &value));
+        ASSERT_TRUE(e.params.ScopedVariableValue(&e.emitters, emitter, next[i].variableId, &value));
+        EXPECT_FLOAT_EQ(out.currentValue, value);
+    }
+}
+
+TEST(BusAdmissionStart, PairedWorldReplacementTerminatesUnprojectedWritesOnce) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& e = *session.Engine();
+    auto definition = harkentest::MakeVariableDefinition(harkentest::ObjectId(7),
+        harken::VariableKindV1::Smooth, -1, 1, 0);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harkentest::InstallDefinitionsWorld(&e, &definition, 1).status);
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    ASSERT_EQ(VN_OK, Vn_SetValue(definition.variableId, 0.25f));
+    ASSERT_EQ(VN_OK, Vn_SetEmitterValue(emitter, definition.variableId, 0.75f));
+    ASSERT_EQ(2u, e.variables.PendingCount());
+    const auto priorWorld = e.variables.CurrentWorldGeneration();
+    definition.defaultValue = -0.25f;
+    const auto view = VariableReplacementView(&definition, 1);
+    harken::PreparedProjectGenerationV1 prepared;
+    ASSERT_EQ(harken::ProjectGenerationPrepareStatusV1::Ok,
+        harken::PrepareProjectGenerationV1(e, view, prepared).status);
+    EXPECT_EQ(2u, e.variables.PendingCount());
+    ASSERT_EQ(harken::ProjectGenerationCommitStatusV1::Ok,
+        harken::CommitPreparedProjectGenerationV1(e, prepared).status);
+    EXPECT_EQ(0u, e.variables.PendingCount());
+    EXPECT_FALSE(e.variables.HasBlockingWrite(definition.variableId));
+    EXPECT_EQ(2u, e.variables.TerminationCount());
+    unsigned seen = 0;
+    harken::VariableOutcomeRecord outcome{};
+    while (e.variables.PopOutcome(&outcome)) {
+        EXPECT_EQ(harken::VariableOutcomeKind::WorldReplacement, outcome.outcome);
+        EXPECT_EQ(priorWorld, outcome.world);
+        ++seen;
+    }
+    EXPECT_EQ(2u, seen);
+    for (unsigned i = 0; i < 4; ++i) {
+        e.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    float value = 0;
+    ASSERT_TRUE(e.variables.CurrentValue(emitter, definition.variableId, &value));
+    EXPECT_FLOAT_EQ(-0.25f, value);
+    EXPECT_FALSE(e.variables.PopOutcome(&outcome));
+    ASSERT_EQ(VN_OK, Vn_SetEmitterValue(emitter, definition.variableId, 0.5f));
+    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(&e));
+    ASSERT_TRUE(e.variables.CurrentValue(emitter, definition.variableId, &value));
+    EXPECT_FLOAT_EQ(0.5f, value);
+}
+
+TEST(BusAdmissionStart, PairedWorldReplacementDoesNotRestoreRecycledEmitterOverrides) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& e = *session.Engine();
+    auto definition = harkentest::MakeVariableDefinition(harkentest::ObjectId(7),
+        harken::VariableKindV1::Smooth, -1, 1, 0);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harkentest::InstallDefinitionsWorld(&e, &definition, 1).status);
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    ASSERT_EQ(VN_OK, Vn_SetEmitterValue(emitter, definition.variableId, 0.75f));
+    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(&e));
+    for (unsigned i = 0; i < 8; ++i) {
+        e.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    definition.defaultValue = -0.25f;
+    harken::PreparedProjectGenerationV1 prepared;
+    ASSERT_EQ(harken::ProjectGenerationPrepareStatusV1::Ok,
+        harken::PrepareProjectGenerationV1(e, VariableReplacementView(&definition, 1), prepared).status);
+    ASSERT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+    VnEmitterHandle replacement = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&replacement));
+    EXPECT_EQ(static_cast<std::uint32_t>(emitter), static_cast<std::uint32_t>(replacement));
+    EXPECT_NE(emitter, replacement);
+    ASSERT_EQ(harken::ProjectGenerationCommitStatusV1::Ok,
+        harken::CommitPreparedProjectGenerationV1(e, prepared).status);
+    float value = 0;
+    EXPECT_FALSE(e.emitters.LocalValue(replacement, definition.variableId, &value));
+    ASSERT_TRUE(e.variables.CurrentValue(replacement, definition.variableId, &value));
+    EXPECT_FLOAT_EQ(-0.25f, value);
+}
+
+TEST(BusAdmissionStart, WorldReplacementRefusesReservedWritesBeforeAndAfterPrepare) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& e = *session.Engine();
+    auto definition = harkentest::MakeVariableDefinition(harkentest::ObjectId(7),
+        harken::VariableKindV1::Smooth, -1, 1, 0);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harkentest::InstallDefinitionsWorld(&e, &definition, 1).status);
+    const auto priorWorld = e.variables.CurrentWorldGeneration();
+    definition.defaultValue = -0.25f;
+    const auto view = VariableReplacementView(&definition, 1);
+    const auto observation = harken::ObserveVariableCallAt(priorWorld,
+        e.variables.CurrentTransportEpoch(), e.config.blockFrames, 0, 0);
+    harken::PreparedVariableWriteToken write;
+    ASSERT_EQ(VN_OK, e.variables.PrepareGlobalWrite(
+        definition.variableId, 0.75f, observation, 0, &write).result);
+    harken::PreparedProjectGenerationV1 refused;
+    EXPECT_EQ(harken::ProjectGenerationPrepareStatusV1::Backpressure,
+        harken::PrepareProjectGenerationV1(e, view, refused).status);
+    harken::CancelPreparedProjectGenerationV1(e, std::move(refused));
+    EXPECT_EQ(priorWorld, e.variables.CurrentWorldGeneration());
+    EXPECT_EQ(harken::WorldInstallStatus::Backpressure,
+        harken::InstallContainerWorldV1(e, view.compiledWorld).status);
+    EXPECT_EQ(priorWorld, e.variables.CurrentWorldGeneration());
+    e.variables.CancelPreparedWrite(&write);
+    harken::PreparedProjectGenerationV1 prepared;
+    ASSERT_EQ(harken::ProjectGenerationPrepareStatusV1::Ok,
+        harken::PrepareProjectGenerationV1(e, view, prepared).status);
+    ASSERT_EQ(VN_OK, e.variables.PrepareGlobalWrite(
+        definition.variableId, 0.75f, observation, 0, &write).result);
+    EXPECT_NE(harken::ProjectGenerationCommitStatusV1::Ok,
+        harken::CommitPreparedProjectGenerationV1(e, prepared).status);
+    EXPECT_EQ(priorWorld, e.variables.CurrentWorldGeneration());
+    e.variables.CancelPreparedWrite(&write);
+    ASSERT_EQ(harken::ProjectGenerationCommitStatusV1::Ok,
+        harken::CommitPreparedProjectGenerationV1(e, prepared).status);
+    EXPECT_EQ(priorWorld + 1, e.variables.CurrentWorldGeneration());
+}
+
+TEST(BusAdmissionStart, PairedIdempotentWorldPreservesPendingWritesAndEmitterValues) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& e = *session.Engine();
+    auto definition = harkentest::MakeVariableDefinition(harkentest::ObjectId(7),
+        harken::VariableKindV1::Smooth, -1, 1, 0);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harkentest::InstallDefinitionsWorld(&e, &definition, 1).status);
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    ASSERT_EQ(VN_OK, Vn_SetEmitterValue(emitter, definition.variableId, 0.75f));
+    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(&e));
+    for (unsigned i = 0; i < 8; ++i) {
+        e.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    const auto priorWorld = e.variables.CurrentWorldGeneration();
+    ASSERT_EQ(VN_OK, Vn_SetEmitterValue(emitter, definition.variableId, 0.5f));
+    harken::PreparedProjectGenerationV1 prepared;
+    ASSERT_EQ(harken::ProjectGenerationPrepareStatusV1::Ok,
+        harken::PrepareProjectGenerationV1(e, VariableReplacementView(&definition, 1), prepared).status);
+    ASSERT_EQ(harken::ProjectGenerationCommitStatusV1::Ok,
+        harken::CommitPreparedProjectGenerationV1(e, prepared).status);
+    EXPECT_EQ(priorWorld, e.variables.CurrentWorldGeneration());
+    EXPECT_EQ(1u, e.variables.PendingCount());
+    EXPECT_EQ(0u, e.variables.TerminationCount());
+    float value = 0;
+    ASSERT_TRUE(e.variables.CurrentValue(emitter, definition.variableId, &value));
+    EXPECT_FLOAT_EQ(0.75f, value);
+    ASSERT_TRUE(e.emitters.LocalValue(emitter, definition.variableId, &value));
+    EXPECT_FLOAT_EQ(0.75f, value);
+    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(&e));
+    ASSERT_TRUE(e.variables.CurrentValue(emitter, definition.variableId, &value));
+    EXPECT_FLOAT_EQ(0.5f, value);
+}

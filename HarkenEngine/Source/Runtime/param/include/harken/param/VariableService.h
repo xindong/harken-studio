@@ -1454,6 +1454,9 @@ private:
     bool SemanticIdentical(const ContainerWorldInstallViewV1& install) const;
     void BuildCurrentWorldImageV1(const ContainerWorldInstallViewV1& install,
                                  PreparedCurrentWorldImageV1& out);
+    bool CanReplaceCurrentWorld() const noexcept;
+    OverrideRow MigrateOverride(OverrideRow value,
+        const std::vector<DefinitionRow>& nextDefinitions, bool changesWorld) const noexcept;
     WorldInstallResult InstallImpl(const ContainerWorldInstallViewV1& install,
                                    std::uint32_t replayVintage,
                                    bool replacementAdmitted);
