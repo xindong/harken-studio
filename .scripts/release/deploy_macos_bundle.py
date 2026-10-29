@@ -26,34 +26,48 @@ def deploy(build_dir: Path, bundle: Path, tool: Path, configuration: str) -> Non
     frameworks = bundle / "Contents/Frameworks"
     frameworks.mkdir(parents=True, exist_ok=True)
     libraries = []
+    executables = []
     names = set()
     for artifact in model["artifacts"]:
-        if artifact["type"] != "SHARED_LIBRARY" or not artifact["name"].endswith(".dylib"):
+        if (artifact["target"] == "harkenizer" and artifact["type"] == "EXECUTABLE"
+                and artifact["name"] == "Harkenizer"):
+            destination = bundle / "Contents/MacOS/Harkenizer"
+            records = executables
+        elif artifact["type"] == "SHARED_LIBRARY" and artifact["name"].endswith(".dylib"):
+            destination = frameworks / artifact["name"]
+            records = libraries
+        else:
             continue
         if artifact["name"] in names:
-            raise ValueError("macOS deployment has duplicate library names")
+            raise ValueError("macOS deployment has duplicate binary names")
         names.add(artifact["name"])
         source = build_dir / artifact["path"]
-        destination = frameworks / artifact["name"]
         if destination.is_symlink() or not source.resolve().is_relative_to(build_dir):
-            raise ValueError("macOS deployment library escapes its build directory")
-        shutil.copyfile(source, destination)
+            raise ValueError("macOS deployment binary escapes its build directory")
+        if records is executables:
+            shutil.copy2(source, destination)
+        else:
+            shutil.copyfile(source, destination)
         if evidence.sha256(destination) != artifact["sha256"]:
             raise ValueError("macOS deployment source changed while staging")
-        libraries.append({"sourceArtifact": artifact,
-                          "path": destination.relative_to(bundle.parent).as_posix()})
+        records.append({"sourceArtifact": artifact,
+                        "path": destination.relative_to(bundle.parent).as_posix()})
+    if len(executables) != 1:
+        raise ValueError("macOS deployment requires the built Harkenizer executable")
     deployment_tool = {"name": tool.name, "sha256": evidence.sha256(tool)}
-    subprocess.run([str(tool), str(bundle), "-always-overwrite"], check=True)
-    for record in libraries:
+    subprocess.run([str(tool), str(bundle), "-always-overwrite",
+                    f"-executable={bundle / 'Contents/MacOS/Harkenizer'}"], check=True)
+    for record in libraries + executables:
         artifact = record["sourceArtifact"]
         destination = bundle.parent / record["path"]
         if (evidence.sha256(build_dir / artifact["path"]) != artifact["sha256"]
                 or destination.is_symlink() or not destination.is_file()):
-            raise ValueError("macOS deployment library changed outside the bundle")
+            raise ValueError("macOS deployment binary changed outside the bundle")
         record["sha256"] = evidence.sha256(destination)
     evidence.write_json(receipt, {"schemaVersion": 1, "product": "studio",
                                 "configuration": configuration, "identity": model["identity"],
-                                "tool": deployment_tool, "libraries": libraries})
+                                "tool": deployment_tool, "libraries": libraries,
+                                "executables": executables})
 
 
 def main() -> None:

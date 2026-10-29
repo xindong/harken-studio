@@ -69,7 +69,7 @@ COMPONENT_INPUTS = (
     {"id": "heroicons", "notice": "Heroicons", "products": ["hub"],
      "url": "https://github.com/tailwindlabs/heroicons", "legalFiles": ["Heroicons-LICENSE.txt"]},
 )
-ROOT_TARGETS = {"studio": ("harken_editor", "harken_packc"), "hub": ("harken_hub",),
+ROOT_TARGETS = {"studio": ("harken_editor", "harken_packc", "harkenizer"), "hub": ("harken_hub",),
                 "runtime": ("harken_core_shared",)}
 
 
@@ -388,6 +388,14 @@ def read_macos_deployment(build_dir: Path, product: str, configuration: str, mod
                 or record["path"] in seen):
             raise ValueError("macOS deployment source does not match a CMake target artifact")
         seen.add(record["path"])
+    for record in report.get("executables", []):
+        source = record["sourceArtifact"]
+        if (source not in model["artifacts"] or source["type"] != "EXECUTABLE"
+                or source["target"] != "harkenizer" or source["name"] != "Harkenizer"
+                or record["path"] != "HarkenStudio.app/Contents/MacOS/Harkenizer"
+                or record["path"] in seen):
+            raise ValueError("macOS deployment source does not match a CMake target artifact")
+        seen.add(record["path"])
     return report
 
 
@@ -395,7 +403,8 @@ def verify_payload_binaries(payload: Path, model: dict, qt_root: Path | None,
                             integration_hashes: set[str], payload_records: list[dict] | None = None,
                             deployment: dict | None = None) -> list[dict]:
     artifact_hashes = {entry["sha256"] for entry in model["artifacts"]}
-    deployed = {entry["path"]: entry for entry in (deployment or {}).get("libraries", [])}
+    deployed = {entry["path"]: entry for key in ("libraries", "executables")
+                for entry in (deployment or {}).get(key, [])}
     qt_files = {}
     if qt_root:
         for directory in ("bin", "lib", "plugins"):

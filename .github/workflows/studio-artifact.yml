@@ -158,7 +158,7 @@ jobs:
         run: |
           set -euo pipefail
           status=0
-          for required in HarkenStudio.exe packc.exe qt.conf HarkenIntegration HarkenIntegration/Unity/Harken Legal/NOTICE.txt; do
+          for required in HarkenStudio.exe Harkenizer.exe packc.exe qt.conf HarkenIntegration HarkenIntegration/Unity/Harken Legal/NOTICE.txt; do
             if [ ! -e "build/bin/Release/$required" ]; then
               echo "::error::missing deployed content: build/bin/Release/$required"
               status=1
@@ -175,6 +175,9 @@ jobs:
               status=1
             fi
           done
+          if [ "$status" -eq 0 ]; then
+            build/bin/Release/Harkenizer.exe --help
+          fi
           exit $status
 
       - name: Upload Windows studio artifact
@@ -416,6 +419,19 @@ jobs:
             echo "::error file=$binary::expected ${{ matrix.arch }}, found: $archs"
             status=1
           fi
+          executor="$bundle/Contents/MacOS/Harkenizer"
+          if [ ! -x "$executor" ]; then
+            echo "::error::missing or non-executable Harkenizer: $executor"
+            status=1
+          else
+            archs=$(lipo -archs "$executor")
+            echo "Harkenizer architectures: $archs"
+            if [ "$archs" != "${{ matrix.arch }}" ]; then
+              echo "::error file=$executor::expected ${{ matrix.arch }}, found: $archs"
+              status=1
+            fi
+            "$executor" --help
+          fi
           build_id=$(sed -n 's/.*BuildId[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
             build/generated/harken_buildinfo/harken_buildinfo.h)
           expected_platform="macos-${{ matrix.slug }}"
@@ -424,6 +440,7 @@ jobs:
             status=1
           fi
           for required in \
+            "$bundle/Contents/MacOS/Harkenizer" \
             "$bundle/Contents/MacOS/packc" \
             "$bundle/Contents/MacOS/HarkenIntegration" \
             "$bundle/Contents/MacOS/HarkenIntegration/Unity/Harken" \
