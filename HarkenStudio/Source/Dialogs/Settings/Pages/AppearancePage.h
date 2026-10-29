@@ -9,11 +9,9 @@ class QColorDialog;
 class QComboBox;
 class QHideEvent;
 class QLabel;
-class QLineEdit;
 class QListWidget;
 class QPushButton;
 class QShowEvent;
-class QTreeWidgetItem;
 
 namespace VNX {
 
@@ -54,9 +52,7 @@ private:
     ThemeAppearance appearanceWithColor(const QString& key, const QColor& color) const;
     bool setColor(const QString& key, const QColor& color);
     void editSelectedColor();
-    bool finishHexEdit();
     void resetSelectedColor();
-    void resetColorGroup();
     void resetColors();
     void cancelPreview();
     void showError(const QList<ThemePackageDiagnostic>& diagnostics);
@@ -68,21 +64,14 @@ private:
     SearchField* colorSearch_ = nullptr;
     ProportionalTreeWidget* colorTree_ = nullptr;
     QLabel* colorDescription_ = nullptr;
-    QLabel* colorSummary_ = nullptr;
     QLabel* errorLabel_ = nullptr;
-    QLineEdit* colorHex_ = nullptr;
-    QPushButton* colorEdit_ = nullptr;
     QPushButton* colorReset_ = nullptr;
-    QPushButton* colorGroupReset_ = nullptr;
     QPushButton* colorsReset_ = nullptr;
     QPointer<QColorDialog> colorDialog_;
 
     ThemeSnapshotPtr baseTheme_;
     QMap<QString, ThemeSnapshotPtr> presetThemes_;
     ThemeAppearance appearance_;
-    QString hexRoleKey_;
-    QString filterGroup_;
-    QString filterQuery_;
     bool updatingAppearance_ = false;
     bool previewActive_ = false;
 };
