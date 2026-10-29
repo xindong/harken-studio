@@ -18926,6 +18926,165 @@ TEST(ActionFiringApi,
     EXPECT_EQ(0u, engine->actionFirings.LiveCount());
 }
 
+enum class AuthoredVariableStopCase { Started, SameAction, BeforeUpdate, Fade, RefusedThenRetry };
+
+static void ExpectAuthoredVariableControlStopReclaims(
+    bool mixed, AuthoredVariableStopCase testCase = AuthoredVariableStopCase::Started) {
+    const bool sameAction = testCase == AuthoredVariableStopCase::SameAction;
+    const bool beforeUpdate = testCase == AuthoredVariableStopCase::BeforeUpdate;
+    const bool fade = testCase == AuthoredVariableStopCase::Fade;
+    (void)Vn_Term();
+    harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    std::vector<float> samples(65536, 0.25f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &pcm));
+    CanonicalActionWorld image(
+        engine->registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
+        engine->registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
+    if (mixed) image.MakeImmediateMixedVariableControlPlayAction();
+    else image.MakeImmediateContinuousOnlyVariableControlPlayAction();
+    image.steps[12] = image.steps[11];
+    image.steps[12].opcode = harken::ActionOpcodeV1::Stop;
+    image.steps[12].authoredEventIndex = sameAction ? 1 : 0;
+    SetAbsoluteTime(&image.steps[12].fade, fade ? 10'000'000 : 0);
+    image.actions[10] = {};
+    image.actions[10].actionStableId = harkentest::ObjectId(51);
+    image.actions[10].steps = &image.steps[12];
+    image.actions[10].stepCount = 1;
+    image.actions[10].expandedStepOccurrenceCount = 1;
+    image.actions[10].expandedFiringCount = 1;
+    if (sameAction) {
+        image.actions[9].stepCount = 2;
+        image.actions[9].expandedStepOccurrenceCount = 2;
+    }
+    image.actions[9].programSemanticFingerprint =
+        harken::ComputeActionProgramFingerprintV1(image.actions[9]);
+    image.actions[10].programSemanticFingerprint =
+        harken::ComputeActionProgramFingerprintV1(image.actions[10]);
+    image.world.actions = &image.actions[9];
+    image.world.actionCount = sameAction ? 1 : 2;
+    image.world.identity.runtimeSemanticFingerprint =
+        harken::ComputeCurrentWorldFingerprintV4(image.world);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+              harken::InstallContainerWorldV1(*engine, image.world).status);
+    const auto baseline = CaptureActionReclaimableOwners(*engine);
+    const auto sourcesBefore = engine->sourceTerminals.OccupiedCount();
+    for (unsigned cycle = 0; cycle < 2; ++cycle) {
+        SCOPED_TRACE(cycle);
+        auto desc = ValidPostDesc();
+        desc.actionId = image.actions[9].actionStableId;
+        VnActionFiringHandle play = 0;
+        ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &play));
+        VnActionFiringHandle stop = play;
+        VnActionFiringHandle repeat = 0;
+        if (!sameAction) {
+            for (unsigned block = 0; block < (beforeUpdate ? 0u : 24u); ++block) {
+                ASSERT_EQ(VN_OK, Vn_Update());
+                engine->nullBackend.Pump(1);
+            }
+            if (!beforeUpdate) {
+                ASSERT_GT(engine->nullBackend.LastBlock()[0], 0.01f);
+                ASSERT_EQ(mixed ? 2u : 1u, engine->voices.ActiveCount());
+            }
+            desc.actionId = image.actions[10].actionStableId;
+            if (testCase == AuthoredVariableStopCase::RefusedThenRetry) {
+                harken::CommandRecord filler{};
+                filler.opcode = harken::kOpcodeStop;
+                filler.payload.stop.handle = 1;
+                while (engine->commands.FreeSlots() != 0) ASSERT_TRUE(engine->commands.TryPush(filler));
+                const auto before = CaptureActionReclaimableOwners(*engine);
+                ASSERT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &stop));
+                EXPECT_EQ(0u, stop);
+                EXPECT_EQ(before, CaptureActionReclaimableOwners(*engine));
+                engine->nullBackend.Pump(1);
+                EXPECT_GT(engine->nullBackend.LastBlock()[0], 0.01f);
+                ASSERT_EQ(VN_OK, Vn_Update());
+            }
+            ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &stop));
+            if (!beforeUpdate) {
+                // Immediate Stop must affect the next audio block, without
+                // waiting for the scheduling publication lead.
+                engine->nullBackend.Pump(1);
+                const auto* block = engine->nullBackend.LastBlock();
+                if (fade) {
+                    EXPECT_GT(block[0], block[63]);
+                    EXPECT_GT(block[63], 0.01f);
+                } else {
+                    EXPECT_NEAR(0.0f, block[0], 1.0e-6f);
+                    EXPECT_NEAR(0.0f, block[63], 1.0e-6f);
+                }
+                ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &repeat));
+                VnActionStepResult repeated{};
+                repeated.structSize = sizeof(repeated);
+                ASSERT_EQ(VN_OK, Vn_QueryActionStep(repeat, 0, &repeated));
+                EXPECT_EQ(VN_ACTION_STEP_NO_OP, repeated.state);
+                if (fade) {
+                    // 10 ms at 48 kHz ends within eight 64-frame blocks;
+                    // a repeated Stop must not restart or extend that fade.
+                    engine->nullBackend.Pump(7);
+                    EXPECT_NEAR(0.0f, engine->nullBackend.LastBlock()[63], 1.0e-6f);
+                }
+            }
+        }
+        for (unsigned block = 0; block < 96; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            engine->nullBackend.Pump(1);
+        }
+        ASSERT_EQ(VN_OK, Vn_Update());
+        EXPECT_FALSE(engine->runtimeRecreateRequired);
+        EXPECT_EQ(0u, engine->voices.ActiveCount());
+        EXPECT_NEAR(0.0f, engine->nullBackend.LastBlock()[0], 1.0e-6f);
+        VnActionFiringInfo info{};
+        info.structSize = sizeof(info);
+        ASSERT_EQ(VN_OK, Vn_QueryActionFiring(play, &info));
+        EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
+        ASSERT_EQ(VN_OK, Vn_QueryActionFiring(stop, &info));
+        EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
+        VnActionStepResult stopped{};
+        stopped.structSize = sizeof(stopped);
+        ASSERT_EQ(VN_OK, Vn_QueryActionStep(stop, sameAction ? 1 : 0, &stopped));
+        EXPECT_EQ(VN_ACTION_STEP_SUCCEEDED, stopped.state);
+        EXPECT_EQ(0u, stopped.remainingPlayableCount);
+        ASSERT_FALSE(::testing::Test::HasFailure());
+        ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(play));
+        if (!sameAction) ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(stop));
+        if (repeat != 0) ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(repeat));
+        for (unsigned block = 0; block < 32; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            engine->nullBackend.Pump(1);
+        }
+        EXPECT_EQ(baseline, CaptureActionReclaimableOwners(*engine));
+        EXPECT_EQ(sourcesBefore, engine->sourceTerminals.OccupiedCount());
+    }
+}
+
+TEST(ActionFiringApi, AuthoredStopContinuousVariableControlStopsAndReclaims) {
+    ExpectAuthoredVariableControlStopReclaims(false);
+}
+
+TEST(ActionFiringApi, AuthoredStopMixedVariableControlStopsAndReclaims) {
+    ExpectAuthoredVariableControlStopReclaims(true);
+}
+
+TEST(ActionFiringApi, AuthoredStopContinuousVariableControlEarlierPreparedPlay) {
+    ExpectAuthoredVariableControlStopReclaims(false, AuthoredVariableStopCase::SameAction);
+}
+
+TEST(ActionFiringApi, AuthoredStopContinuousVariableControlBeforeFirstUpdate) {
+    ExpectAuthoredVariableControlStopReclaims(false, AuthoredVariableStopCase::BeforeUpdate);
+}
+
+TEST(ActionFiringApi, AuthoredStopContinuousVariableControlImmediateFadeAndRepeat) {
+    ExpectAuthoredVariableControlStopReclaims(false, AuthoredVariableStopCase::Fade);
+}
+
+TEST(ActionFiringApi, AuthoredStopMixedVariableControlRefusalRollsBackAndCanRetry) {
+    ExpectAuthoredVariableControlStopReclaims(true, AuthoredVariableStopCase::RefusedThenRetry);
+}
+
 TEST(ActionFiringApi,
      ImmediateContinuousOwnedRampStartsAtReanchoredFirstSample) {
     (void)Vn_Term();
