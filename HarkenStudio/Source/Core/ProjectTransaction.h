@@ -1,15 +1,19 @@
 #pragma once
 
 #include <QByteArray>
+#include <QFileDevice>
 #include <QHash>
 #include <QLockFile>
 #include <QString>
 #include <QStringList>
+#include <QThreadPool>
 
 #include <functional>
 #include <memory>
 
 namespace VNX {
+
+class ProjectSaveSnapshot;
 
 using ProjectTransactionProgressCallback = std::function<void(
     int, int, qint64, qint64)>;
@@ -34,6 +38,12 @@ public:
         const QString& projectFilePath,
         const QStringList& writeSet,
         const QString& stagedDirectory,
+        QString* error = nullptr);
+    static std::unique_ptr<ProjectTransaction> beginReplacement(
+        const QString& projectFilePath,
+        const QStringList& writeSet,
+        const QString& stagedDirectory,
+        const ProjectSaveSnapshot& snapshot,
         QString* error = nullptr);
     static bool recover(const QString& projectFilePath,
                         QString* error = nullptr,
@@ -73,17 +83,26 @@ private:
         const QStringList& writeSet,
         const QString& recoveryRoot,
         const QString& stagedDirectory,
+        const ProjectSaveSnapshot* snapshot,
         QString* error,
         ProjectTransactionProgressCallback progress);
+
+    struct StagedFile {
+        QByteArray bytes;
+        QByteArray hash;
+        QFileDevice::Permissions permissions;
+    };
 
     QString projectDirectory_;
     QString backupDirectory_;
     QString transactionPath_;
     QStringList writeSet_;
+    QHash<QString, StagedFile> stagedFiles_;
     QHash<QString, QByteArray> retainedFiles_;
     QByteArray backupFingerprint_;
     QByteArray committedFingerprint_;
     std::unique_ptr<QLockFile> lock_;
+    QThreadPool* verificationPool_ = nullptr;
     bool active_ = false;
 };
 

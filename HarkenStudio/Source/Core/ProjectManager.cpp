@@ -34,6 +34,7 @@
 #include "ProjectContract.h"
 #include "ProjectDataPolicy.h"
 #include "ProjectDocument.h"
+#include "ProjectSaveSnapshot.h"
 #include "ProjectTransaction.h"
 #include "ProjectUpgradeMessages.h"
 #include "NameValidator.h"
@@ -127,14 +128,19 @@ bool copyDirectoryTree(const QString& sourcePath, const QString& destinationPath
     return true;
 }
 
-enum class ProjectWriteMode { Atomic, Staged };
-
-bool writePackFile(const QString& filePath, const QByteArray& bytes, ProjectWriteMode mode)
+bool writePackFile(const QString& filePath, const QJsonObject& document,
+                   ProjectSaveSnapshot* snapshot)
 {
+    if (snapshot) {
+        const auto result = snapshot->prepareDocument(filePath, document);
+        if (result != ProjectSaveSnapshot::WriteResult::Physical)
+            return result == ProjectSaveSnapshot::WriteResult::Stored;
+    }
+    const QByteArray bytes = QJsonDocument(document).toJson(QJsonDocument::Indented);
     constexpr int kMaxAttempts = 3;
     constexpr int kRetryDelayMs = 50;
     for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
-        if (mode == ProjectWriteMode::Staged) {
+        if (snapshot) {
             QFile output(filePath);
             if (output.open(QIODevice::WriteOnly | QIODevice::Text)
                 && output.write(bytes) == bytes.size() && output.flush())
@@ -353,7 +359,7 @@ bool loadActions(const QString& projectRoot, ProjectData& project,
 
 bool saveOneAction(const QString& targetDirPath, const QString& projectId,
                   const ProjectItem& ev,
-                  ProjectSerializer& serializer, ProjectWriteMode mode)
+                  ProjectSerializer& serializer, ProjectSaveSnapshot* snapshot)
 {
     if (ev.type != ProjectItem::Type::Action) {
         qWarning() << "[ActionLoader] saveOneAction called on non-Action:" << ev.name;
@@ -378,8 +384,7 @@ bool saveOneAction(const QString& targetDirPath, const QString& projectId,
         QStringLiteral("project.action"),
         ev.guid.toString(QUuid::WithoutBraces), projectId, content,
         ev.documentHeader);
-    const QByteArray bytes = QJsonDocument(document).toJson(QJsonDocument::Indented);
-    if (!writePackFile(filePath, bytes, mode)) {
+    if (!writePackFile(filePath, document, snapshot)) {
         qWarning() << "[ActionLoader] Short write to:" << filePath;
         return false;
     }
@@ -391,7 +396,7 @@ bool saveActionsBucket(const QString& projectRoot, const QString& projectId,
                        std::vector<ProjectFileBinding>& bucket,
 
                        ProjectSerializer& serializer,
-                       ProjectWriteMode mode = ProjectWriteMode::Atomic)
+                       ProjectSaveSnapshot* snapshot = nullptr)
 {
     QDir eventsDir(actionsRootDir(projectRoot));
     const QString eventsRootAbs = eventsDir.absolutePath();
@@ -407,7 +412,7 @@ bool saveActionsBucket(const QString& projectRoot, const QString& projectId,
             QDir(targetDirPath).filePath(NameValidator::objectFileName(ev.name, ev.guid));
         writtenAbsPaths.insert(BucketFolderStore::pathComparisonKey(fullPath));
 
-        if (saveOneAction(targetDirPath, projectId, ev, serializer, mode)) {
+        if (saveOneAction(targetDirPath, projectId, ev, serializer, snapshot)) {
             project.setObjectFileLocation(&ev, project.objectFolder(&ev), fullPath);
             ++savedCount;
         } else {
@@ -641,7 +646,7 @@ bool saveOneS3File(const QString& targetDirPath,
                    const QString& projectId,
                    const SingleObjHierarchySpec& spec,
                    const ProjectItem& top,
-                   ProjectSerializer& serializer, ProjectWriteMode mode)
+                   ProjectSerializer& serializer, ProjectSaveSnapshot* snapshot)
 {
     if (top.type != spec.topType) {
         qWarning() << "[S3Saver] type mismatch in" << spec.folderName << ":"
@@ -665,8 +670,7 @@ bool saveOneS3File(const QString& targetDirPath,
     const QJsonObject document = ProjectDocument::create(
         s3DocumentType(spec), top.guid.toString(QUuid::WithoutBraces),
         projectId, content, top.documentHeader);
-    const QByteArray bytes = QJsonDocument(document).toJson(QJsonDocument::Indented);
-    if (!writePackFile(filePath, bytes, mode)) {
+    if (!writePackFile(filePath, document, snapshot)) {
         qWarning() << "[S3Saver] short write:" << filePath;
         return false;
     }
@@ -680,7 +684,7 @@ bool saveS3HierarchyBucket(const QString& projectRoot,
                            std::vector<ProjectFileBinding>& bucket,
 
                            ProjectSerializer& serializer,
-                           ProjectWriteMode mode = ProjectWriteMode::Atomic)
+                           ProjectSaveSnapshot* snapshot = nullptr)
 {
     QDir hierDir(s3RootDir(projectRoot, spec));
     const QString hierRootAbs = hierDir.absolutePath();
@@ -696,7 +700,7 @@ bool saveS3HierarchyBucket(const QString& projectRoot,
             QDir(targetDirPath).filePath(NameValidator::objectFileName(top.name, top.guid));
         writtenAbsPaths.insert(BucketFolderStore::pathComparisonKey(fullPath));
 
-        if (saveOneS3File(targetDirPath, projectId, spec, top, serializer, mode)) {
+        if (saveOneS3File(targetDirPath, projectId, spec, top, serializer, snapshot)) {
             project.setObjectFileLocation(&top, project.objectFolder(&top), fullPath);
             ++savedCount;
         } else {
@@ -781,7 +785,7 @@ QString busPackFileName(const ProjectItem& busItem)
 bool saveOneBusPack(const QString& projectRoot,
                    const QString& projectId,
                    const ProjectItem& busItem,
-                   ProjectSerializer& serializer, ProjectWriteMode mode)
+                   ProjectSerializer& serializer, ProjectSaveSnapshot* snapshot)
 {
     QDir dir(busFolderAbs(projectRoot));
     if (!dir.exists() && !QDir().mkpath(dir.absolutePath())) {
@@ -802,8 +806,7 @@ bool saveOneBusPack(const QString& projectRoot,
         QStringLiteral("project.bus"),
         busItem.guid.toString(QUuid::WithoutBraces), projectId, content,
         busItem.documentHeader);
-    const QByteArray bytes = QJsonDocument(document).toJson(QJsonDocument::Indented);
-    if (!writePackFile(filePath, bytes, mode)) {
+    if (!writePackFile(filePath, document, snapshot)) {
         qWarning() << "[BussesPack] Short write to:" << filePath;
         return false;
     }
@@ -814,7 +817,7 @@ bool saveBussesPacksImpl(const QString& projectRoot,
                               ProjectData& project,
                               ProjectSerializer& serializer,
                               QString* errOut,
-                              ProjectWriteMode mode = ProjectWriteMode::Atomic)
+                              ProjectSaveSnapshot* snapshot = nullptr)
 {
     QDir dir(busFolderAbs(projectRoot));
     if (!dir.exists() && !QDir().mkpath(dir.absolutePath())) {
@@ -834,7 +837,7 @@ bool saveBussesPacksImpl(const QString& projectRoot,
         if (node->type == ProjectItem::Type::Bus) {
             const QString fileName = busPackFileName(*node);
             writtenNames.insert(fileName);
-            if (saveOneBusPack(projectRoot, project.projectId, *node, serializer, mode)) {
+            if (saveOneBusPack(projectRoot, project.projectId, *node, serializer, snapshot)) {
                 project.setObjectFileLocation(node, nullptr, dir.filePath(fileName));
                 ++wrote;
             } else {
@@ -1112,7 +1115,7 @@ bool saveOneLayerPack(const QString& directory,
                           const ProjectItem& layer,
                           const QUuid& parentGuid,
                           int order,
-                          ProjectSerializer& serializer, ProjectWriteMode mode)
+                          ProjectSerializer& serializer, ProjectSaveSnapshot* snapshot)
 {
     if (!isLayersBucketRootType(layer.type)) {
         qWarning() << "[LayersPack] saveOneLayerPack called on type not in"
@@ -1148,8 +1151,7 @@ bool saveOneLayerPack(const QString& directory,
         QStringLiteral("project.layer"),
         layer.guid.toString(QUuid::WithoutBraces), projectId, data,
         layer.documentHeader);
-    const QByteArray bytes = QJsonDocument(document).toJson(QJsonDocument::Indented);
-    if (!writePackFile(filePath, bytes, mode)) {
+    if (!writePackFile(filePath, document, snapshot)) {
         qWarning() << "[LayersPack] Short write to:" << filePath;
         return false;
     }
@@ -1163,7 +1165,7 @@ void saveLayerRecursive(const QString& bucketDirectory,
                              const QUuid& parentGuid,
                              int order,
                              ProjectSerializer& serializer,
-                             ProjectWriteMode mode,
+                             ProjectSaveSnapshot* snapshot,
                              QSet<QString>& writtenAbsPaths,
                              int& wroteCount,
                              bool& allOk)
@@ -1174,7 +1176,7 @@ void saveLayerRecursive(const QString& bucketDirectory,
     const QString filePath = QDir(directory).filePath(layerPackFileName(node));
     writtenAbsPaths.insert(BucketFolderStore::pathComparisonKey(
         filePath));
-    if (saveOneLayerPack(directory, projectId, node, parentGuid, order, serializer, mode)) {
+    if (saveOneLayerPack(directory, projectId, node, parentGuid, order, serializer, snapshot)) {
         project.setObjectFileLocation(&node, project.objectFolder(&node), filePath);
         ++wroteCount;
     } else {
@@ -1185,7 +1187,7 @@ void saveLayerRecursive(const QString& bucketDirectory,
         const auto& child = node.children[i];
         if (!child) continue;
         saveLayerRecursive(bucketDirectory, projectId, project, *child, node.guid, static_cast<int>(i),
-                                serializer, mode, writtenAbsPaths, wroteCount, allOk);
+                                serializer, snapshot, writtenAbsPaths, wroteCount, allOk);
     }
 }
 
@@ -1196,7 +1198,7 @@ bool saveLayersBucket(const QString& projectRoot,
 
                               ProjectSerializer& serializer,
                               QString* errOut,
-                              ProjectWriteMode mode = ProjectWriteMode::Atomic)
+                              ProjectSaveSnapshot* snapshot = nullptr)
 {
     QDir dir(layersFolderAbs(projectRoot));
     if (!dir.exists() && !QDir().mkpath(dir.absolutePath())) {
@@ -1214,7 +1216,7 @@ bool saveLayersBucket(const QString& projectRoot,
         if (!layer || !isLayersBucketRootType(layer->type)) continue;
         if (layer->parentRef.kind != ParentRef::Kind::Root) continue;
         saveLayerRecursive(dir.absolutePath(), projectId, project, *layer, QUuid{}, rootOrder++, serializer,
-                                mode, writtenAbsPaths, wrote, allOk);
+                                snapshot, writtenAbsPaths, wrote, allOk);
     }
 
     QDirIterator existing(dir.absolutePath(), QStringList() << QStringLiteral("*.vp"),
@@ -2874,6 +2876,8 @@ bool ProjectManager::commitPreparedProject(PreparedProject&& prepared)
         prepared.releaseUpgradeRecovery();
     }
     m_currentProject = std::move(prepared.project);
+    m_saveContractContext.clear();
+    m_savedSnapshot.reset();
     m_projectInstance = std::move(prepared.instance);
     m_folderSaveState = std::move(prepared.folderSaveState);
     m_itemSaveState = std::move(itemSaveState);
@@ -3071,6 +3075,7 @@ bool ProjectManager::saveProject()
     }
     const QDir projectRoot(QFileInfo(m_currentProject->projectPath).absolutePath());
     const QDir stagedRoot(stagedDirectory.path());
+    ProjectSaveSnapshot snapshot(stagedRoot.path(), m_savedSnapshot.get());
     const QString projectFileName = QFileInfo(m_currentProject->projectPath).fileName();
     const QString stagedProjectPath = stagedRoot.filePath(projectFileName);
     ProjectData stagedProject = *m_currentProject;
@@ -3096,18 +3101,18 @@ bool ProjectManager::saveProject()
     const auto cancelPreparedSave = qScopeGuard([&] { m_serializer.cancelProjectSave(); });
 
     bool hierarchySaveOk = saveActionsBucket(stagedRoot.path(), stagedProject.projectId,
-        stagedProject, stagedProject.actions, m_serializer, ProjectWriteMode::Staged);
+        stagedProject, stagedProject.actions, m_serializer, &snapshot);
     for (const auto& spec : s3Specs()) {
         auto* bucket = stagedProject.getBucketForFolder(spec.folderName);
         if (bucket && !saveS3HierarchyBucket(stagedRoot.path(), stagedProject.projectId,
-                stagedProject, spec, *bucket, m_serializer, ProjectWriteMode::Staged))
+                stagedProject, spec, *bucket, m_serializer, &snapshot))
             hierarchySaveOk = false;
     }
     if (!saveLayersBucket(stagedRoot.path(), stagedProject.projectId, stagedProject,
-                          stagedProject.layers, m_serializer, &saveError, ProjectWriteMode::Staged))
+                          stagedProject.layers, m_serializer, &saveError, &snapshot))
         hierarchySaveOk = false;
     if (!saveBussesPacksImpl(stagedRoot.path(), stagedProject, m_serializer, &saveError,
-                            ProjectWriteMode::Staged))
+                            &snapshot))
         hierarchySaveOk = false;
     if (!AssetRegistry::instance().saveToFile(
             stagedRoot.filePath(registryDirectory + QStringLiteral("/assets.json"))))
@@ -3127,8 +3132,9 @@ bool ProjectManager::saveProject()
     const QStringList validationErrors =
         (!committedDocument.isObject() || parseError.error != QJsonParseError::NoError)
             ? QStringList{QStringLiteral("Prepared project file is invalid JSON")}
-            : ProjectContractRegistry::instance().validateTree(
-                stagedRoot.path(), committedDocument.object(), true);
+            : ProjectContractRegistry::instance().validateSnapshot(
+                stagedRoot.path(), committedDocument.object(), true,
+                snapshot.documents(), &m_saveContractContext);
     if (!validationErrors.isEmpty()) {
         emit errorOccurred(validationErrors.first());
         return false;
@@ -3160,8 +3166,10 @@ bool ProjectManager::saveProject()
             }
         }
     }
+    for (auto file = snapshot.files().cbegin(); file != snapshot.files().cend(); ++file)
+        writePaths.insert(BucketFolderStore::pathComparisonKey(file.key()), file.key());
     auto projectTransaction = ProjectTransaction::beginReplacement(
-        m_currentProject->projectPath, writePaths.values(), stagedRoot.path(), &saveError);
+        m_currentProject->projectPath, writePaths.values(), stagedRoot.path(), snapshot, &saveError);
     if (!projectTransaction) {
         emit errorOccurred(saveError);
         return false;
@@ -3231,6 +3239,8 @@ bool ProjectManager::saveProject()
     SourceFileSystem::commitChanges();
     m_folderSaveState->markSaved(*m_currentProject);
     m_itemSaveState = std::move(itemSaveState);
+    snapshot.clearPrevious();
+    m_savedSnapshot = std::make_unique<ProjectSaveSnapshot>(std::move(snapshot));
     UndoRedoManager::instance().setClean();
 
     emit projectSaved();
@@ -3290,6 +3300,8 @@ bool ProjectManager::closeProject()
         m_closing = true;
         m_runtimePrepared = false;
         m_itemSaveState.reset();
+        m_saveContractContext.clear();
+        m_savedSnapshot.reset();
         UndoRedoManager::instance().clear();
         m_folderSaveState.reset();
         AssetRegistry::instance().clear();
