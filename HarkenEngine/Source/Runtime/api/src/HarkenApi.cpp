@@ -84359,14 +84359,16 @@ public:
         if (&engine != engine_ || scratch == nullptr || scratch->row == nullptr ||
             selected != nullptr || preparation || !row.InvocationValid()) return false;
         packQueue = scratch->packLeaseOwned || scratch->packLeaseBorrowed;
+        const bool useCurrent = row.Invocation().actionFiring != 0 ||
+            row.queueWorldUsesCurrentAuthority;
         world =
             packQueue ? harken::PlayableWorldViewV1{}
-                      : row.queueWorldUsesCurrentAuthority ? engine.variables.CurrentPlayableWorld() : row.QueueWorld();
+                      : useCurrent ? engine.variables.CurrentPlayableWorld() : row.QueueWorld();
         queueWorldGeneration =
             packQueue ? scratch->packLease.compositeGeneration : world.generation;
         const auto authority = packQueue
             ? harken::PlayableExecutionAuthority::Pack(scratch->packPlaybackView)
-            : row.queueWorldUsesCurrentAuthority ? harken::PlayableExecutionAuthority::Current(world)
+            : useCurrent ? harken::PlayableExecutionAuthority::Current(world)
                 : harken::PlayableExecutionAuthority::Frozen(world);
 
         next = initialNext;
@@ -86631,6 +86633,19 @@ struct ContainerPreparationContext {
     bool containerBatchCompatible = true, soundBatchCompatible = true;
     bool mixedSoundBatchCompatible = true;
 };
+
+void RecordDirectTraversalFailure(ContainerPreparationContext& context,
+    const ContainerTraversalStep& traversal) noexcept {
+    if (context.directFailure == nullptr) return;
+    *context.directFailure = traversal.status == ContainerTraversalStatus::UnknownProgram ||
+            traversal.status == ContainerTraversalStatus::ChildResolutionFailed
+        ? harken::PlayableStartStatus::UnknownPlayable
+        : traversal.status == ContainerTraversalStatus::SelectionFailed &&
+            traversal.selectionStatus == harken::SelectionMemoryStatusV1::Capacity
+        ? harken::PlayableStartStatus::Capacity
+        : traversal.status == ContainerTraversalStatus::UnsupportedMode
+        ? harken::PlayableStartStatus::CapabilityUnavailable : harken::PlayableStartStatus::InvalidInput;
+}
 
 bool AdmitDirectQueueFrontier(ContainerPreparationContext& context,
     harken::EngineActionPlayScratch& scratch, const SharedInitialFrontier& frontier) noexcept {
@@ -89656,6 +89671,7 @@ engine.runtimeRecreateRequired = true;
             };
             const auto handleNestedTraversalFailure =
                 [&](const ContainerTraversalStep& traversal) noexcept {
+                RecordDirectTraversalFailure(context, traversal);
                 failNestedTraversal(
                     traversal.status ==
                             ContainerTraversalStatus::SelectionFailed
@@ -90243,16 +90259,7 @@ engine.runtimeRecreateRequired = true;
                                               UnsupportedMode
                                     ? VN_CAPABILITY_UNAVAILABLE
                                     : VN_BAD_CURRENT_WORLD;
-        if (context.directFailure != nullptr) {
-            *context.directFailure = traversal.status == ContainerTraversalStatus::UnknownProgram ||
-                    traversal.status == ContainerTraversalStatus::ChildResolutionFailed
-                ? harken::PlayableStartStatus::UnknownPlayable
-                : traversal.status == ContainerTraversalStatus::SelectionFailed &&
-                    traversal.selectionStatus == harken::SelectionMemoryStatusV1::Capacity
-                ? harken::PlayableStartStatus::Capacity
-                : traversal.status == ContainerTraversalStatus::UnsupportedMode
-                ? harken::PlayableStartStatus::CapabilityUnavailable : harken::PlayableStartStatus::InvalidInput;
-        }
+        RecordDirectTraversalFailure(context, traversal);
         rollbackPrepared();
     };
     const auto handleSelection =
