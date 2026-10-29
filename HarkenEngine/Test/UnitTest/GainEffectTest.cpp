@@ -73,6 +73,37 @@ const VnEffectTypeStats* FindRow(const VnSnapshot& snap, VnEffectType type) {
     return nullptr;
 }
 
+TEST(GainEffect, BypassKeepsFiniteDrySignalWhenWetGainOverflows) {
+    for (const bool busEffect : {false, true}) {
+        SCOPED_TRACE(busEffect ? "bus" : "voice");
+        auto config = GainConfig(1);
+        config.fxSlotsPerBus = 1;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        const auto source = harkentest::MakeDC(
+            6 * kBlock, std::numeric_limits<float>::max() / 8.0f);
+        const auto voice = PlayMono(session, harkentest::ObjectId(1), source);
+        const auto gain = GainDesc(24.0f);
+        ASSERT_EQ(VN_OK, busEffect
+            ? Vn_SetBusEffect(VN_BUS_MASTER, 0, VN_EFFECT_GAIN, AsBase(&gain))
+            : Vn_SetVoiceEffect(voice, 0, VN_EFFECT_GAIN, AsBase(&gain)));
+        ASSERT_EQ(VN_OK, busEffect
+            ? Vn_SetBusEffectBypass(VN_BUS_MASTER, 0, 1)
+            : Vn_SetVoiceEffectBypass(voice, 0, 1));
+        Capture output;
+        harkentest::PumpAndCapture(session.Engine(), 3, output);
+        ASSERT_EQ(3u * kBlock, output.left.size());
+        // The dry endpoint includes the final sample of the transition.
+        // Final-output saturation is expected; a zero result means NaN leaked
+        // out of a wet signal whose weight was already zero.
+        for (std::size_t frame = kBlock - 1; frame < output.left.size(); ++frame) {
+            ASSERT_EQ(1.0f, output.left[frame]) << "frame " << frame;
+            ASSERT_EQ(1.0f, output.right[frame]) << "frame " << frame;
+        }
+        EXPECT_EQ(0u, harken::memguard::HitCount());
+    }
+}
+
 VnSnapshot TakeSnapshot() {
     VnSnapshot snap{};
     snap.structSize = sizeof(VnSnapshot);
