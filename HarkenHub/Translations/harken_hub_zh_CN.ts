@@ -159,6 +159,10 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message>
+        <source>Open Studio changelogs from the version menu or Get from Server in the Hub interface language, and copy changelog links from the server list.</source>
+        <translation>&#x53EF;&#x5728;&#x7248;&#x672C;&#x83DC;&#x5355;&#x6216;&#x201C;&#x4ECE;&#x670D;&#x52A1;&#x5668;&#x83B7;&#x53D6;&#x201D;&#x7A97;&#x53E3;&#x67E5;&#x770B;&#x5BF9;&#x5E94;&#x8BED;&#x8A00;&#x7684; Studio &#x66F4;&#x65B0;&#x65E5;&#x5FD7;&#xFF0C;&#x5E76;&#x652F;&#x6301;&#x4ECE;&#x670D;&#x52A1;&#x5668;&#x5217;&#x8868;&#x590D;&#x5236;&#x7F51;&#x9875;&#x94FE;&#x63A5;&#x3002;</translation>
+    </message>
     <message><source>Choose whether to launch Harken Hub when the Windows installer closes, with the option checked by default.</source><translation>Windows 安装完成后，可选择是否在关闭安装器时启动 Harken Hub，默认勾选。</translation></message>
     <message><source>Automatically compare GitHub and OSS download speeds before new Hub updates or Studio downloads, and prefer the faster source.</source><translation>开始新的 Hub 更新或 Studio 下载前，自动比较 GitHub 与 OSS 的下载速度，优先选择较快的下载源。</translation></message>
     <message><source>Resume interrupted downloads from the original source, including after restarting Hub. If that source remains unavailable, switch sources and restart the download with a visible notice.</source><translation>下载中断或重启 Hub 后，优先从原下载源续传；原源持续不可用时切换下载源，从头下载并显示提示。</translation></message>
@@ -569,6 +573,26 @@ Continue?</source>
 </context>
 <context>
     <name>HarkenHub</name>
+    <message>
+        <source>Web links do not apply to local builds.</source>
+        <translation>&#x672C;&#x5730;&#x6784;&#x5EFA;&#x4E0D;&#x6D89;&#x53CA;&#x7F51;&#x9875;&#x94FE;&#x63A5;</translation>
+    </message>
+    <message>
+        <source>View Changelog</source>
+        <translation>&#x67E5;&#x770B;&#x66F4;&#x65B0;&#x65E5;&#x5FD7;</translation>
+    </message>
+    <message>
+        <source>Click to view details</source>
+        <translation>&#x70B9;&#x51FB;&#x67E5;&#x770B;&#x8BE6;&#x60C5;</translation>
+    </message>
+    <message>
+        <source>Copy Link</source>
+        <translation>&#x590D;&#x5236;&#x94FE;&#x63A5;</translation>
+    </message>
+    <message>
+        <source>No valid web link was found.</source>
+        <translation>&#x672A;&#x83B7;&#x53D6;&#x5230;&#x6709;&#x6548;&#x7F51;&#x9875;&#x94FE;&#x63A5;</translation>
+    </message>
     <message><source> (restarted after switching download source)</source><translation>（已切换下载源，从头重新下载）</translation></message>
     <message><source>Unity Integration Package</source><translation>Unity 集成包</translation></message>
     <message><source>UE Integration Package</source><translation>UE 集成包</translation></message>
