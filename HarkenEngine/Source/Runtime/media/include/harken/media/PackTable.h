@@ -127,10 +127,11 @@ public:
     class PreparedMutation {
     public:
         PreparedMutation() = default;
+        ~PreparedMutation() noexcept;
         PreparedMutation(const PreparedMutation&) = delete;
         PreparedMutation& operator=(const PreparedMutation&) = delete;
-        PreparedMutation(PreparedMutation&&) noexcept = default;
-        PreparedMutation& operator=(PreparedMutation&&) noexcept = default;
+        PreparedMutation(PreparedMutation&& other) noexcept;
+        PreparedMutation& operator=(PreparedMutation&& other) noexcept;
 
         bool IsPrepared() const noexcept { return m_owner != nullptr; }
         bool IsUnload() const noexcept { return m_unload; }
