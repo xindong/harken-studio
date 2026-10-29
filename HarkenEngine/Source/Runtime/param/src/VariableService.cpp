@@ -26,6 +26,13 @@ namespace harken {
 
 namespace {
 
+template <typename Rows>
+auto FindVariableDefinition(Rows& definitions, VnVariableId id) noexcept {
+    const auto found = std::lower_bound(definitions.begin(), definitions.end(), id,
+        [](const auto& row, VnVariableId key) { return row.definition.variableId < key; });
+    return found != definitions.end() && found->definition.variableId == id ? &*found : nullptr;
+}
+
 class VariableProjectionGuard {
 public:
     explicit VariableProjectionGuard(Engine& engine) noexcept : engine_(engine) {
@@ -483,18 +490,9 @@ WorldInstallResult VariableServiceV1::InstallImpl(
         result.status = WorldInstallStatus::GenerationExhausted;
         return result;
     }
-    bool outstanding = slices_.HasUnreclaimedWorldRows(worldGeneration_);
-    for (WriteRow& row : history_) {
-        if (!row.used) {
-            continue;
-        }
-        if (row.state == RowState::Pending && !row.slice.Valid()) continue;
-        if (row.state != RowState::Terminal) {
-            outstanding = true;
-        }
-    }
-    if (outstanding) {
-        drainState_ = WorldDrainState::DrainingCurrent;
+    if (!CanReplaceCurrentWorld()) {
+        // A private reservation can be cancelled without draining published work.
+        if (preparedRows_ == 0) drainState_ = WorldDrainState::DrainingCurrent;
         result.status = WorldInstallStatus::Backpressure;
         return result;
     }
@@ -502,34 +500,6 @@ WorldInstallResult VariableServiceV1::InstallImpl(
 
     PreparedCurrentWorldImageV1 next;
     BuildCurrentWorldImageV1(install, next);
-
-    for (WriteRow& row : history_) {
-        if (row.used && row.state != RowState::Terminal &&
-            row.world == worldGeneration_) {
-            FinalizeRow(row, VariableOutcomeKind::WorldReplacement, {}, 0);
-        }
-    }
-    for (EmitterBank& bank : emitterBanks_) {
-        for (OverrideRow& override : bank.overrides) {
-            if (!override.used || override.currentBankOrdinal == 0) {
-                override = OverrideRow{};
-                continue;
-            }
-            const auto nextDef = std::find_if(
-                next.definitions_.begin(), next.definitions_.end(),
-                [&](const DefinitionRow& row) {
-                    return row.definition.variableId == override.variableId;
-                });
-            const DefinitionRow* prior = FindDefinition(override.variableId);
-            if (nextDef == next.definitions_.end() || prior == nullptr ||
-                !SameDefinition(*prior, *nextDef)) {
-                override = OverrideRow{};
-            } else {
-                override.scheduledValue = override.currentValue;
-                override.scheduledBankOrdinal = override.currentBankOrdinal;
-            }
-        }
-    }
 
     sdkCatalogFingerprint_ = 0;
     labelCatalog_.clear();
@@ -573,6 +543,7 @@ WorldInstallStatus VariableServiceV1::PrepareCurrentWorldImageV1(
         return WorldInstallStatus::Ok;
     }
 
+    if (!CanReplaceCurrentWorld()) return WorldInstallStatus::Backpressure;
     BuildCurrentWorldImageV1(install, out);
     return WorldInstallStatus::Ok;
 }
@@ -829,10 +800,19 @@ void VariableServiceV1::BuildCurrentWorldImageV1(
 
 bool VariableServiceV1::CanCommitPreparedCurrentWorldImageV1(
     const PreparedCurrentWorldImageV1& prepared) const noexcept {
-    return prepared.valid_ && prepared.source_ == this &&
-        prepared.sourceWorld_ == worldGeneration_ &&
-        prepared.sourceBankOrdinal_ == nextBankOrdinal_ &&
-        (prepared.idempotent_ || worldGeneration_ != UINT64_MAX);
+    if (!prepared.valid_ || prepared.source_ != this ||
+        prepared.sourceWorld_ != worldGeneration_ ||
+        prepared.sourceBankOrdinal_ != nextBankOrdinal_) return false;
+    if (prepared.idempotent_) return true;
+    if (worldGeneration_ == UINT64_MAX || !CanReplaceCurrentWorld()) return false;
+    // A write accepted before prepare can finish without advancing the issue ordinal.
+    for (const auto& next : prepared.definitions_) {
+        const auto* current = FindDefinition(next.definition.variableId);
+        if (current != nullptr && SameDefinition(*current, next) &&
+            (current->currentGlobal != next.currentGlobal ||
+             current->currentBankOrdinal != next.currentBankOrdinal)) return false;
+    }
+    return true;
 }
 
 ContainerWorldInstallViewV1 VariableServiceV1::PreparedWorldInstallViewV1(
@@ -894,7 +874,9 @@ bool VariableServiceV1::PrepareWorldProjectionV1(
         batch.handle = (static_cast<std::uint64_t>(bank.generation) << 32) | i;
         batch.emitterLive = emitters.IsLive(batch.handle);
         if (!batch.emitterLive) continue;
-        for (const auto& value : bank.overrides) {
+        for (const auto& current : bank.overrides) {
+            const auto value = image.idempotent_ ? current
+                : MigrateOverride(current, definitions, true);
             if (value.used && value.currentBankOrdinal != 0) {
                 batch.values.push_back({value.variableId, value.currentValue});
             }
@@ -962,6 +944,17 @@ WorldGeneration VariableServiceV1::CommitPreparedCurrentWorldImageV1(
         prepared.Clear();
         return worldGeneration_;
     }
+    assert(CanReplaceCurrentWorld());
+    for (WriteRow& row : history_) {
+        if (row.used && row.state != RowState::Terminal &&
+            row.world == worldGeneration_) {
+            FinalizeRow(row, VariableOutcomeKind::WorldReplacement, {}, 0);
+        }
+    }
+    for (EmitterBank& bank : emitterBanks_) {
+        for (OverrideRow& value : bank.overrides)
+            value = MigrateOverride(value, prepared.definitions_, true);
+    }
     definitions_.swap(prepared.definitions_);
     definitionViews_.swap(prepared.definitionViews_);
     playableProperties_.swap(prepared.playableProperties_);
@@ -998,22 +991,12 @@ const VariableDefinitionV1* VariableServiceV1::Definition(
 
 VariableServiceV1::DefinitionRow* VariableServiceV1::FindDefinition(
     VnVariableId id) noexcept {
-    for (DefinitionRow& row : definitions_) {
-        if (row.definition.variableId == id) {
-            return &row;
-        }
-    }
-    return nullptr;
+    return FindVariableDefinition(definitions_, id);
 }
 
 const VariableServiceV1::DefinitionRow* VariableServiceV1::FindDefinition(
     VnVariableId id) const noexcept {
-    for (const DefinitionRow& row : definitions_) {
-        if (row.definition.variableId == id) {
-            return &row;
-        }
-    }
-    return nullptr;
+    return FindVariableDefinition(definitions_, id);
 }
 
 bool VariableServiceV1::ScopeEqual(const VariableScopeKey& a,
@@ -3673,6 +3656,33 @@ bool VariableServiceV1::CanTerminateForWorldReplacement(
         !row.slice.Valid() && row.state == RowState::Pending;
 }
 
+bool VariableServiceV1::CanReplaceCurrentWorld() const noexcept {
+    if (preparedRows_ != 0 || slices_.HasUnreclaimedWorldRows(worldGeneration_))
+        return false;
+    for (const WriteRow& row : history_) {
+        if (row.used && row.state != RowState::Terminal &&
+            !CanTerminateForWorldReplacement(row)) return false;
+    }
+    return true;
+}
+
+VariableServiceV1::OverrideRow VariableServiceV1::MigrateOverride(
+    OverrideRow value, const std::vector<DefinitionRow>& nextDefinitions,
+    bool changesWorld) const noexcept {
+    if (!value.used) return value;
+    const auto* next = FindVariableDefinition(nextDefinitions, value.variableId);
+    const auto* prior = FindDefinition(value.variableId);
+    if (next == nullptr || prior == nullptr ||
+        !SameDefinition(*prior, *next) || (changesWorld && value.currentBankOrdinal == 0))
+        return {};
+    if (changesWorld) {
+        value.scheduledValue = value.currentValue;
+        value.scheduledBankOrdinal = value.currentBankOrdinal;
+        value.pendingSetCount = 0;
+    }
+    return value;
+}
+
 VnResult VariableServiceV1::PreparePackDefinitions(
     const VariableDefinitionV1* definitions, std::uint32_t count,
     PreparedPackDefinitions* out) const {
@@ -3719,14 +3729,12 @@ VnResult VariableServiceV1::PreparePackDefinitions(
         if (worldGeneration_ == UINT64_MAX) {
             return VN_RUNTIME_RECREATE_REQUIRED;
         }
-        if (AdmissionClosed() || preparedRows_ != 0 ||
-            slices_.HasUnreclaimedWorldRows(worldGeneration_)) {
+        if (AdmissionClosed() || !CanReplaceCurrentWorld()) {
             return VN_BACKPRESSURE;
         }
         for (std::uint32_t slot = 0; slot < history_.size(); ++slot) {
             const WriteRow& row = history_[slot];
             if (!row.used || row.state == RowState::Terminal) continue;
-            if (!CanTerminateForWorldReplacement(row)) return VN_BACKPRESSURE;
             detail::CheckedGrow(prepared.terminations_, prepared.terminations_.size() + 1,
                                 detail::LogicAllocSite::PackVariablePublication);
             prepared.terminations_.push_back({slot, row.ticket});
@@ -3799,24 +3807,7 @@ VnResult VariableServiceV1::PreparePackDefinitions(
     prepared.emitterBanks_ = emitterBanks_;
     for (EmitterBank& bank : prepared.emitterBanks_) {
         for (OverrideRow& override : bank.overrides) {
-            if (!override.used) {
-                continue;
-            }
-            const auto nextDef = std::find_if(
-                prepared.definitions_.begin(), prepared.definitions_.end(),
-                [&](const DefinitionRow& row) {
-                    return row.definition.variableId == override.variableId;
-                });
-            const DefinitionRow* prior = FindDefinition(override.variableId);
-            if (nextDef == prepared.definitions_.end() || prior == nullptr ||
-                !SameDefinition(*prior, *nextDef) ||
-                (changesWorld && override.currentBankOrdinal == 0)) {
-                override = OverrideRow{};
-            } else if (changesWorld) {
-                override.scheduledValue = override.currentValue;
-                override.scheduledBankOrdinal = override.currentBankOrdinal;
-                override.pendingSetCount = 0;
-            }
+            override = MigrateOverride(override, prepared.definitions_, changesWorld);
         }
     }
 
