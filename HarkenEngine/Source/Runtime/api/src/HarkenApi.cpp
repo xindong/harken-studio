@@ -6764,6 +6764,35 @@ std::uint32_t ToneSectionRampMs(const harken::Engine& engine,
     return result;
 }
 
+struct PreparedFilterSection {
+    bool enabled = false;
+    float cutoffHz = 0.0f;
+    harken::BiquadCoeffs coeffs{};
+};
+
+bool PrepareFilterSection(float sampleRate, std::uint32_t filterKind,
+                          float cutoffHz, float q, bool requestedEnable,
+                          PreparedFilterSection& out) {
+    out = {};
+    const bool lowpass = filterKind == harken::kFilterKindLowpass;
+    // Lowpass at or above Nyquist and highpass at or below zero bypass exactly.
+    out.enabled = requestedEnable &&
+                  (lowpass ? cutoffHz < 0.5f * sampleRate : cutoffHz > 0.0f);
+    if (!out.enabled) {
+        return true;
+    }
+    const float maxCutoff = 0.499f * sampleRate;
+    if (!(cutoffHz >= 1.0f)) {
+        cutoffHz = 1.0f;
+    } else if (cutoffHz > maxCutoff) {
+        cutoffHz = maxCutoff;
+    }
+    out.cutoffHz = cutoffHz;
+    out.coeffs = lowpass ? harken::MakeLowpass(sampleRate, cutoffHz, q)
+                        : harken::MakeHighpass(sampleRate, cutoffHz, q);
+    return harken::IsBiquadStable(out.coeffs);
+}
+
 // Translates one resolved combine-domain value into its wire command. The
 // audio thread receives only final values: dB for the gain stage, a
 // playback ratio for the resampler, or filter metadata with prepared
@@ -6812,98 +6841,36 @@ bool MakeParamCommand(const harken::Engine& engine,
         command.payload.setVoicePitch.rampMs = commit.rampMs;
         break;
     case harken::kTargetVoiceLowpassCutoff:
-    case harken::kTargetVoiceLowpassQ: {
-        // A cutoff at or above Nyquist cannot shape the band the engine
-        // renders — it reads as "fully open" and the section bypasses
-        // exactly (this also realizes the no-contribution sentinel).
-        const float nyquist =
-            0.5f *
-            static_cast<float>(engine.config.mixRate.SampleRate());
-        const float resolvedCutoff = engine.params.ResolvedValue(
-            commit.handle, harken::kTargetVoiceLowpassCutoff);
-        const float q = engine.params.ResolvedValue(
-            commit.handle, harken::kTargetVoiceLowpassQ);
-        const bool enable = resolvedCutoff < nyquist;
-        command.opcode = harken::kOpcodeSetVoiceFilter;
-        command.payload.setVoiceFilter.handle = commit.handle;
-        command.payload.setVoiceFilter.filterKind =
-            harken::kFilterKindLowpass;
-        command.payload.setVoiceFilter.cutoffHz = 0.0f;
-        command.payload.setVoiceFilter.q = q;
-        command.payload.setVoiceFilter.enable = enable ? 1u : 0u;
-        harken::BiquadCoeffs coeffs;
-        std::uint32_t tailFrames = 0;
-        if (enable) {
-            const float maxCutoff =
-                0.499f *
-                static_cast<float>(engine.config.mixRate.SampleRate());
-            float cutoff = resolvedCutoff;
-            if (!(cutoff >= 1.0f)) {
-                cutoff = 1.0f;
-            } else if (cutoff > maxCutoff) {
-                cutoff = maxCutoff;
-            }
-            coeffs = harken::MakeLowpass(
-                static_cast<float>(engine.config.mixRate.SampleRate()), cutoff,
-                q);
-            command.payload.setVoiceFilter.cutoffHz = cutoff;
-            if (!harken::IsBiquadStable(coeffs)) {
-                return false;
-            }
-            tailFrames = harken::EstimateBiquadTailFrames(coeffs);
-        }
-        command.payload.setVoiceFilter.coeffs =
-            harken::PrepareBiquadCoeffs(coeffs);
-        command.payload.setVoiceFilter.tailFrames = tailFrames;
-        const std::uint64_t transitionFrames =
-            static_cast<std::uint64_t>(toneRampMs) *
-            engine.config.mixRate.SampleRate() / 1000u;
-        command.payload.setVoiceFilter.transitionFrames =
-            transitionFrames >
-                    (std::numeric_limits<std::uint32_t>::max)()
-                ? (std::numeric_limits<std::uint32_t>::max)()
-                : static_cast<std::uint32_t>(transitionFrames);
-        break;
-    }
+    case harken::kTargetVoiceLowpassQ:
     case harken::kTargetVoiceHighpassCutoff:
     case harken::kTargetVoiceHighpassQ: {
-        // A highpass at 0 Hz (or below) passes everything: exact bypass.
+        const bool lowpass =
+            commit.targetId == harken::kTargetVoiceLowpassCutoff ||
+            commit.targetId == harken::kTargetVoiceLowpassQ;
+        const std::uint32_t filterKind =
+            lowpass ? harken::kFilterKindLowpass : harken::kFilterKindHighpass;
         const float resolvedCutoff = engine.params.ResolvedValue(
-            commit.handle, harken::kTargetVoiceHighpassCutoff);
+            commit.handle, lowpass ? harken::kTargetVoiceLowpassCutoff
+                                   : harken::kTargetVoiceHighpassCutoff);
         const float q = engine.params.ResolvedValue(
-            commit.handle, harken::kTargetVoiceHighpassQ);
-        const bool enable = resolvedCutoff > 0.0f;
+            commit.handle, lowpass ? harken::kTargetVoiceLowpassQ
+                                   : harken::kTargetVoiceHighpassQ);
+        PreparedFilterSection prepared;
+        if (!PrepareFilterSection(
+                static_cast<float>(engine.config.mixRate.SampleRate()),
+                filterKind, resolvedCutoff, q, true, prepared)) {
+            return false;
+        }
         command.opcode = harken::kOpcodeSetVoiceFilter;
         command.payload.setVoiceFilter.handle = commit.handle;
-        command.payload.setVoiceFilter.filterKind =
-            harken::kFilterKindHighpass;
-        command.payload.setVoiceFilter.cutoffHz = 0.0f;
+        command.payload.setVoiceFilter.filterKind = filterKind;
+        command.payload.setVoiceFilter.cutoffHz = prepared.cutoffHz;
         command.payload.setVoiceFilter.q = q;
-        command.payload.setVoiceFilter.enable = enable ? 1u : 0u;
-        harken::BiquadCoeffs coeffs;
-        std::uint32_t tailFrames = 0;
-        if (enable) {
-            const float maxCutoff =
-                0.499f *
-                static_cast<float>(engine.config.mixRate.SampleRate());
-            float cutoff = resolvedCutoff;
-            if (!(cutoff >= 1.0f)) {
-                cutoff = 1.0f;
-            } else if (cutoff > maxCutoff) {
-                cutoff = maxCutoff;
-            }
-            coeffs = harken::MakeHighpass(
-                static_cast<float>(engine.config.mixRate.SampleRate()), cutoff,
-                q);
-            command.payload.setVoiceFilter.cutoffHz = cutoff;
-            if (!harken::IsBiquadStable(coeffs)) {
-                return false;
-            }
-            tailFrames = harken::EstimateBiquadTailFrames(coeffs);
-        }
+        command.payload.setVoiceFilter.enable = prepared.enabled ? 1u : 0u;
         command.payload.setVoiceFilter.coeffs =
-            harken::PrepareBiquadCoeffs(coeffs);
-        command.payload.setVoiceFilter.tailFrames = tailFrames;
+            harken::PrepareBiquadCoeffs(prepared.coeffs);
+        command.payload.setVoiceFilter.tailFrames = prepared.enabled
+            ? harken::EstimateBiquadTailFrames(prepared.coeffs) : 0;
         const std::uint64_t transitionFrames =
             static_cast<std::uint64_t>(toneRampMs) *
             engine.config.mixRate.SampleRate() / 1000u;
@@ -105077,7 +105044,7 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
         if (row->structSize != topology->sendStructSize ||
             row->reserved0 != 0 || row->fromBusId == VnObjectId{} ||
             row->toBusId == VnObjectId{} || row->fromBusId == row->toBusId ||
-            !std::isfinite(row->levelDb)) {
+            !harken::TryVolumeGainFromDb(row->levelDb)) {
             return refuse(VN_INVALID_ARG, kTopologyRefusalValidation,
                           row->fromBusId, row->toBusId);
         }
@@ -106454,7 +106421,7 @@ VnResult Vn_ConnectBusSend(VnBusId fromBus, VnBusId toBus, float levelDb) {
         .ObjectId(fromBus)
         .ObjectId(toBus)
         .F32(levelDb);
-    if (!std::isfinite(levelDb)) {
+    if (!harken::TryVolumeGainFromDb(levelDb)) {
         return VN_INVALID_ARG;
     }
     const std::uint32_t from = engine->buses.FindIndex(fromBus);
@@ -106592,7 +106559,7 @@ VnResult Vn_SetBusSendLevel(VnBusId fromBus, VnBusId toBus, float levelDb,
         .ObjectId(toBus)
         .F32(levelDb)
         .U32(rampMs);
-    if (!std::isfinite(levelDb)) {
+    if (!harken::TryVolumeGainFromDb(levelDb)) {
         return VN_INVALID_ARG;
     }
     const std::uint32_t from = engine->buses.FindIndex(fromBus);
@@ -106668,7 +106635,8 @@ VnResult Vn_SetVoiceSend(VnVoiceHandle handle, uint32_t sendSlot, VnBusId toBus,
         .U32(sendSlot)
         .ObjectId(toBus)
         .F32(levelDb);
-    if (sendSlot >= engine->config.voiceSendSlots || !std::isfinite(levelDb)) {
+    if (sendSlot >= engine->config.voiceSendSlots ||
+        !harken::TryVolumeGainFromDb(levelDb)) {
         return VN_INVALID_ARG;
     }
     const std::uint32_t to = engine->buses.FindIndex(toBus);
@@ -106792,7 +106760,8 @@ VnResult Vn_SetVoiceSendLevel(VnVoiceHandle handle, uint32_t sendSlot,
         .U32(sendSlot)
         .F32(levelDb)
         .U32(rampMs);
-    if (sendSlot >= engine->config.voiceSendSlots || !std::isfinite(levelDb)) {
+    if (sendSlot >= engine->config.voiceSendSlots ||
+        !harken::TryVolumeGainFromDb(levelDb)) {
         return VN_INVALID_ARG;
     }
     const harken::VoiceLedger::Resolved resolved = engine->ledger.Classify(handle);
@@ -107957,30 +107926,11 @@ bool FillBusFilterCommand(const harken::Engine& engine, std::uint32_t busIndex,
     if (out == nullptr) {
         return false;
     }
-    const bool lowpass = filterKind == harken::kFilterKindLowpass;
-    const float sampleRate =
-        static_cast<float>(engine.config.mixRate.SampleRate());
-    const float nyquist = 0.5f * sampleRate;
-    bool enable = enable01 != 0;
-    float cutoff = cutoffHz;
-    harken::BiquadCoeffs coeffs{};
-    std::uint32_t tailFrames = 0;
-    if (enable) {
-        enable = lowpass ? cutoff < nyquist : cutoff > 0.0f;
-    }
-    if (enable) {
-        const float maxCutoff = 0.499f * sampleRate;
-        if (!(cutoff >= 1.0f)) {
-            cutoff = 1.0f;
-        } else if (cutoff > maxCutoff) {
-            cutoff = maxCutoff;
-        }
-        coeffs = lowpass ? harken::MakeLowpass(sampleRate, cutoff, q)
-                         : harken::MakeHighpass(sampleRate, cutoff, q);
-        if (!harken::IsBiquadStable(coeffs)) {
-            return false;
-        }
-        tailFrames = harken::EstimateBiquadTailFrames(coeffs);
+    PreparedFilterSection prepared;
+    if (!PrepareFilterSection(
+            static_cast<float>(engine.config.mixRate.SampleRate()), filterKind,
+            cutoffHz, q, enable01 != 0, prepared)) {
+        return false;
     }
     const std::uint64_t transitionFrames =
         static_cast<std::uint64_t>(rampMs) *
@@ -107991,12 +107941,13 @@ bool FillBusFilterCommand(const harken::Engine& engine, std::uint32_t busIndex,
     command.payload.setBusFilter.busGeneration =
         engine.buses.GenerationAt(busIndex);
     command.payload.setBusFilter.filterKind = filterKind;
-    command.payload.setBusFilter.enable = enable ? 1u : 0u;
-    command.payload.setBusFilter.cutoffHz = enable ? cutoff : 0.0f;
+    command.payload.setBusFilter.enable = prepared.enabled ? 1u : 0u;
+    command.payload.setBusFilter.cutoffHz = prepared.cutoffHz;
     command.payload.setBusFilter.q = q;
     command.payload.setBusFilter.outputOnly = outputOnly;
-    command.payload.setBusFilter.coeffs = harken::PrepareBiquadCoeffs(coeffs);
-    command.payload.setBusFilter.tailFrames = tailFrames;
+    command.payload.setBusFilter.coeffs = harken::PrepareBiquadCoeffs(prepared.coeffs);
+    command.payload.setBusFilter.tailFrames = prepared.enabled
+        ? harken::EstimateBiquadTailFrames(prepared.coeffs) : 0;
     command.payload.setBusFilter.transitionFrames =
         transitionFrames > (std::numeric_limits<std::uint32_t>::max)()
             ? (std::numeric_limits<std::uint32_t>::max)()
@@ -108423,26 +108374,10 @@ VnResult Vn_SetVoiceVolume(VnVoiceHandle handle, float volumeDb,
 bool VoiceFilterSectionStable(const harken::Engine& engine,
                               std::uint32_t filterKind, float cutoffHz,
                               float q) {
-    const float sampleRate =
-        static_cast<float>(engine.config.mixRate.SampleRate());
-    const float nyquist = 0.5f * sampleRate;
-    const bool lowpass = filterKind == harken::kFilterKindLowpass;
-    const bool enable =
-        lowpass ? cutoffHz < nyquist : cutoffHz > 0.0f;
-    if (!enable) {
-        return true;
-    }
-    const float maxCutoff = 0.499f * sampleRate;
-    float cutoff = cutoffHz;
-    if (!(cutoff >= 1.0f)) {
-        cutoff = 1.0f;
-    } else if (cutoff > maxCutoff) {
-        cutoff = maxCutoff;
-    }
-    const harken::BiquadCoeffs coeffs =
-        lowpass ? harken::MakeLowpass(sampleRate, cutoff, q)
-                : harken::MakeHighpass(sampleRate, cutoff, q);
-    return harken::IsBiquadStable(coeffs);
+    PreparedFilterSection prepared;
+    return PrepareFilterSection(
+        static_cast<float>(engine.config.mixRate.SampleRate()), filterKind,
+        cutoffHz, q, true, prepared);
 }
 
 VnResult Vn_SetVoiceFilter(VnVoiceHandle handle, uint32_t filterKind,
