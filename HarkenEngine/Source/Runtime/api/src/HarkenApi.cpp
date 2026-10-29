@@ -95445,6 +95445,34 @@ bool AuthoredStopOwnsCompletionBinding(
     return false;
 }
 
+// Freeze execution identities, not the current selection's storage layout. This
+// includes continuous, retiring and future sources, and earlier private Play steps.
+template <class Visitor>
+bool VisitAuthoredStopInstallations(
+    ImmediateActionPlan& plan, harken::EnginePlayableServiceRow& row,
+    std::uint32_t stepIndex, Visitor&& visit) noexcept {
+    auto& engine = *plan.engine;
+    for (const auto& installation : engine.timelineVoiceInstallIdentities) {
+        if (installation.rootInstance != row.rootInstance || installation.renderHandle == 0 ||
+            engine.voices.ReleaseObserved(installation.releaseObserver)) continue;
+        harken::CompletionMutationBinding binding{};
+        if (!CaptureAuthoredStopInstallationBinding(plan, row, stepIndex, installation.renderHandle, &binding))
+            return false;
+        bool owned = AuthoredStopOwnsCompletionBinding(engine, row, installation.renderHandle, binding);
+        for (std::uint32_t index = 0; !owned && index < plan.queueReplacementCount; ++index) {
+            const auto& replacement = engine.actionQueueReplacementScratch[index];
+            if (!replacement.prepared || replacement.row != &row) continue;
+            for (std::uint32_t voice = 0; voice < replacement.successorLeafCount; ++voice) {
+                owned = owned || (replacement.successorStarts[voice].renderHandle == installation.renderHandle &&
+                    harken::SameCompletionMutationBinding(binding,
+                        {replacement.successorLeafOccurrences[voice], replacement.successorLeafCompletions[voice].owner}));
+            }
+        }
+        if (!owned || !visit(installation)) return false;
+    }
+    return true;
+}
+
 bool PrepareScheduledActionStop(
     ImmediateActionPlan& plan, harken::EnginePlayableServiceRow& row,
     std::uint32_t stepIndex, std::uint64_t fadeStart, std::uint64_t silence) noexcept {
@@ -95498,31 +95526,16 @@ bool PrepareScheduledActionStop(
         !PrepareAuthoredStopOperation(engine, publicRoot, firing,
             planned.executionOrdinal, fadeStart, silence, scratch.authoredStop,
             scratch.controlCause, originalPlainSource, nativeReplacement)) return false;
-    for (const auto& installation : engine.timelineVoiceInstallIdentities) {
-        if (installation.rootInstance != row.rootInstance || installation.renderHandle == 0 ||
-            engine.voices.ReleaseObserved(installation.releaseObserver)) continue;
-        harken::CompletionMutationBinding binding{};
-        if (!CaptureAuthoredStopInstallationBinding(plan, row, stepIndex, installation.renderHandle, &binding)) {
-            return false;
-        }
-        bool owned = AuthoredStopOwnsCompletionBinding(engine, row, installation.renderHandle, binding);
-        for (std::uint32_t index = 0; !owned && index < plan.queueReplacementCount; ++index) {
-            const auto& replacement = engine.actionQueueReplacementScratch[index];
-            if (!replacement.prepared || replacement.row != &row) continue;
-            for (std::uint32_t voice = 0; voice < replacement.successorLeafCount; ++voice) {
-                owned = owned || (replacement.successorStarts[voice].renderHandle == installation.renderHandle &&
-                    harken::SameCompletionMutationBinding(binding,
-                        {replacement.successorLeafOccurrences[voice], replacement.successorLeafCompletions[voice].owner}));
-            }
-        }
-        if (!owned || plan.playCommandCount >= engine.actionPlayCommandScratch.size() ||
+    if (!VisitAuthoredStopInstallations(plan, row, stepIndex, [&](const auto& installation) {
+        if (plan.playCommandCount >= engine.actionPlayCommandScratch.size() ||
             !PrepareAuthoredStopResource(engine, scratch.authoredStop, &installation, {},
                 &engine.actionPlayCommandScratch[plan.playCommandCount], originalPlainSource,
                 nativeReplacement != nullptr && installation.renderHandle == nativeReplacement->successorStarts[0].renderHandle
                     ? nativeReplacement : nullptr)) return false;
         ++plan.playCommandCount;
         ++scratch.commandCount;
-    }
+        return true;
+    })) return false;
     const auto captureDecision = [&](harken::DecisionToken decision) {
         return PrepareAuthoredStopDecision(engine, scratch.authoredStop, decision);
     };
@@ -95704,8 +95717,6 @@ bool PrepareImmediateActionStop(
             return false;
         }
 
-        const bool captureOrdinaryRenders =
-            !scheduleControl && IsOrdinaryContainerStart(row);
         if (!CancelTransferredQueueArrivals(engine, row, true)) {
             plan.result = VN_BACKPRESSURE;
             (void)ReleaseImmediateActionStops(plan);
@@ -95720,149 +95731,24 @@ bool PrepareImmediateActionStop(
             continue;
         }
         const std::uint32_t commandBase = plan.playCommandCount;
-        std::uint32_t commandCount = 0;
-        if (captureOrdinaryRenders) {
-            // Freeze the complete render set before reserving the Action batch.
-            const auto captureStop = [&](VnVoiceHandle handle) {
-                if (handle == 0 || engine.voices.Resolve(handle) == nullptr) {
-                    return true;
-                }
-                for (std::uint32_t index = commandBase;
-                     index < plan.playCommandCount; ++index) {
-                    if (engine.actionPlayCommandScratch[index]
-                            .payload.stop.handle == handle) {
-                        return true;
-                    }
-                }
-                harken::CompletionMutationBinding binding{};
-                bool bindingCaptured =
-                    engine.ledger.CaptureCompletionMutationForRender(
-                        handle, &binding);
-                if (!bindingCaptured && row.actionPrepared) {
-                    // Earlier Play steps still own private, unbound ledger slots.
-                    for (std::uint32_t playIndex = 0;
-                         !bindingCaptured && playIndex < plan.playCount;
-                         ++playIndex) {
-                        const auto* attempt = FindImmediateActionPlay(plan, playIndex);
-                        if (attempt == nullptr) continue;
-                        const auto& play = *attempt;
-                        if (!play.prepared || play.row != &row ||
-                            play.instance.Handle() != row.rootInstance ||
-                            play.plannedStepIndex >= plannedStepIndex ||
-                            engine.actionStepPlanScratch[play.plannedStepIndex]
-                                    .executionOrdinal >= planned.executionOrdinal) {
-                            continue;
-                        }
-                        for (std::uint32_t voiceIndex = 0;
-                             !bindingCaptured && voiceIndex < play.voiceStartCount;
-                             ++voiceIndex) {
-                            const auto& voice = play.voiceStarts[voiceIndex];
-                            harken::TimelineArmObservation arm{};
-                            if (!voice.prepared || !voice.voiceOwnershipHeld ||
-                                !voice.ledgerOwnershipHeld || !voice.armOwnershipHeld ||
-                                voice.renderHandle != handle ||
-                                voice.arm.renderSlot != static_cast<std::uint32_t>(handle) ||
-                                voice.arm.renderGeneration != static_cast<std::uint32_t>(handle >> 32) ||
-                                !engine.timelineArms.Observe(voice.arm, &arm) ||
-                                arm.state != harken::ArmState::Prepared) {
-                                continue;
-                            }
-                            bindingCaptured =
-                                engine.ledger.CaptureCompletionMutationForSlot(
-                                    voice.ledgerSlot, &binding);
-                        }
-                    }
-                }
-                if (!bindingCaptured ||
-                    (!OrdinaryOwnsCompletionBinding(engine, row, handle,
-                                                   binding) &&
-                     CompletionMutationBindingBlocks(engine, binding))) {
-                    plan.result = VN_BACKPRESSURE;
-                    return false;
-                }
-                if (plan.playCommandCount >=
-                    engine.actionPlayCommandScratch.size()) {
-                    plan.result = VN_BACKPRESSURE;
-                    return false;
-                }
+        const bool captured = VisitAuthoredStopInstallations(
+            plan, row, plannedStepIndex, [&](const auto& installation) {
+                if (plan.playCommandCount >= engine.actionPlayCommandScratch.size()) return false;
                 harken::CommandRecord stop{};
                 stop.opcode = harken::kOpcodeStop;
-                stop.payload.stop.handle = handle;
+                stop.payload.stop.handle = installation.renderHandle;
                 stop.payload.stop.fadeMs = 0;
                 stop.payload.stop.fadeFrames = effectiveFade;
                 engine.actionPlayCommandScratch[plan.playCommandCount++] = stop;
-                ++commandCount;
                 return true;
-            };
-            bool captured = true;
-            if (row.scheduleLeafCount != 0) {
-                const std::size_t base = row.scheduleStorageBase;
-                if (base + row.scheduleLeafCount >
-                    engine.playableStorage.memberCount) {
-                    plan.result = VN_DEVICE_ERROR;
-                    captured = false;
-                } else {
-                    for (std::uint32_t index = 0;
-                         captured && index < row.scheduleLeafCount; ++index) {
-                        captured = captureStop(
-                            engine.ReadLogicalPlayableMember(base + index).render);
-                    }
-                }
-            } else {
-                captured = captureStop(row.renderHandle);
-            }
-            for (const auto& source : engine.ordinaryRetiringSources) {
-                if (!captured) break;
-                if (!source.committed || source.root != row.rootInstance) {
-                    continue;
-                }
-                auto resource = source.firstLeafResource;
-                for (std::uint32_t index = 0;
-                     captured && index < source.leafCount; ++index) {
-                    if (resource >= engine.ordinaryRetiringLeaves.size()) {
-                        plan.result = VN_DEVICE_ERROR;
-                        captured = false;
-                        break;
-                    }
-                    const auto& leaf = engine.ordinaryRetiringLeaves[resource];
-                    captured = captureStop(leaf.render);
-                    resource = leaf.nextResource;
-                }
-            }
-            if (!captured) {
-                plan.playCommandCount = commandBase;
-                (void)ReleaseImmediateActionStops(plan);
-                return false;
-            }
-        } else if (row.scheduleLeafCount != 0) {
-            const std::size_t base = row.scheduleStorageBase;
-            if (base + row.scheduleLeafCount >
-                engine.playableStorage.memberCount) {
-                plan.result = VN_DEVICE_ERROR;
-                (void)ReleaseImmediateActionStops(plan);
-                return false;
-            }
-            for (std::uint32_t index = 0;
-                 index < row.scheduleLeafCount; ++index) {
-                const VnVoiceHandle handle =
-                    engine.ReadLogicalPlayableMember(base + index).render;
-                if (handle != 0 && engine.voices.Resolve(handle) != nullptr) {
-                    ++commandCount;
-                }
-            }
-        } else if (row.renderHandle != 0 &&
-                   engine.voices.IsAlive(row.renderHandle)) {
-            commandCount = 1;
-        }
-        if (plan.stopCaptureCount >= engine.actionStopScratch.size() ||
-            (!captureOrdinaryRenders &&
-             commandCount > engine.actionPlayCommandScratch.size() -
-                                plan.playCommandCount)) {
+            });
+        if (!captured || plan.stopCaptureCount >= engine.actionStopScratch.size()) {
             plan.result = VN_BACKPRESSURE;
             plan.playCommandCount = commandBase;
             (void)ReleaseImmediateActionStops(plan);
             return false;
         }
+        const std::uint32_t commandCount = plan.playCommandCount - commandBase;
 
         auto& scratch =
             engine.actionStopScratch[plan.stopCaptureCount];
@@ -95886,31 +95772,6 @@ bool PrepareImmediateActionStop(
         scratch.silenceFrame = silence;
         scratch.treeObserver = !row.parentService.Valid();
         scratch.prepared = true;
-        if (!captureOrdinaryRenders) {
-            const auto appendStop = [&](VnVoiceHandle handle) {
-                harken::CommandRecord stop{};
-                stop.opcode = harken::kOpcodeStop;
-                stop.payload.stop.handle = handle;
-                stop.payload.stop.fadeMs = 0;
-                stop.payload.stop.fadeFrames = effectiveFade;
-                engine.actionPlayCommandScratch[plan.playCommandCount++] =
-                    stop;
-            };
-            if (row.scheduleLeafCount != 0) {
-                const std::size_t base = row.scheduleStorageBase;
-                for (std::uint32_t index = 0;
-                     index < row.scheduleLeafCount; ++index) {
-                    const VnVoiceHandle handle =
-                        engine.ReadLogicalPlayableMember(base + index).render;
-                    if (handle != 0 &&
-                        engine.voices.Resolve(handle) != nullptr) {
-                        appendStop(handle);
-                    }
-                }
-            } else if (commandCount != 0) {
-                appendStop(row.renderHandle);
-            }
-        }
         ++plan.stopCaptureCount;
     }
 
@@ -99545,27 +99406,17 @@ engine.runtimeRecreateRequired = true;
         row.controlLifecycle = harken::PlayableControlLifecycle::Cancelling;
         row.phase = harken::EnginePlayableStartPhase::Cancelling;
         row.pendingFutureCount = 0;
-        if (row.scheduleLeafCount != 0) {
-            const auto base = row.scheduleStorageBase;
-            if (base + row.scheduleLeafCount >
-                engine.playableStorage.memberCount) {
-                ok = false;
-            } else {
-                for (std::uint32_t leafIndex = 0;
-                     leafIndex < row.scheduleLeafCount; ++leafIndex) {
-                    (void)AbortTimelineArm(
-                        engine,
-                        engine.ReadLogicalPlayableMember(base + leafIndex).arm);
-                }
-            }
-        } else {
-            (void)AbortTimelineArm(engine, row.arm);
-        }
+        if (scratch.commandCount == 0) (void)AbortTimelineArm(engine, row.arm);
         for (std::uint32_t commandIndex = 0;
              commandIndex < scratch.commandCount; ++commandIndex) {
             const harken::CommandRecord& stop =
                 engine.actionPlayCommandScratch[
                     scratch.commandBase + commandIndex];
+            // The frozen render handle includes its generation; do not enumerate
+            // selection slots again after committing the cancellation epoch.
+            harken::EngineTimelineVoiceInstallIdentity installation{};
+            if (engine.CaptureTimelineVoiceInstallIdentity(stop.payload.stop.handle, &installation))
+                (void)AbortTimelineArm(engine, installation.startArm);
             MarkObservedPlayableVoiceTerminating(engine, stop.payload.stop.handle, scratch.controlCause);
         }
         scratch.prepared = false;
