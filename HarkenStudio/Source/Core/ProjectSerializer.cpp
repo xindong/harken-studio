@@ -1846,46 +1846,9 @@ bool ProjectSerializer::audioPackItemFromJson(
 
 QJsonObject ProjectSerializer::audioBranchToJson(const ProjectItem& node) const
 {
-    QJsonObject json;
-    if (!writeFieldGroups(node, json)) return {};
-    if (!node.extensions.isEmpty())
-        json[QStringLiteral("extensions")] = node.extensions;
-    json["name"]       = node.name;
-    json["type"]       = ItemTypeCatalog::canonicalName(node.type);
-    json["expanded"]   = node.expanded;
-    json["guid"]       = node.guid.toString(QUuid::WithoutBraces);
-    json["objectPath"] = node.objectPath;
-    json["parentRef"] = persistentParentReference(node);
-    if (json.value(QStringLiteral("parentRef")).toObject().isEmpty()) return {};
-    if (!node.notes.isEmpty()) json["notes"] = node.notes;
-    if (node.color != 0)       json["color"] = static_cast<qint64>(node.color);
-
-    if (!PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(node.type))
-        json["outputBusOverride"] = node.outputBusOverride;
-
-    if (node.canvasPos.x() != 0.0 || node.canvasPos.y() != 0.0)
-    {
-        QJsonObject pos;
-        pos["x"] = node.canvasPos.x();
-        pos["y"] = node.canvasPos.y();
-        json["canvasPos"] = pos;
-    }
-
-    QJsonObject compsObj;
-    node.components.forEach([&](const IComponent& c) {
-        QJsonObject cj = c.toJson();
-        if (!cj.isEmpty()) compsObj[componentTypeName(c.getType())] = cj;
-    });
-    stripPlayableDefinitionComponentAuthority(node.type, compsObj);
-    if (!encodeComponentReferences(&compsObj)) return {};
-    if (!compsObj.isEmpty()) json["components"] = compsObj;
-
-    if (PlayablePropertyAuthoringV1::isDefinitionType(node.type)) {
-        QJsonObject properties = PlayablePropertyAuthoringV1::definitionToJson(node);
-        if (!encodePlayableReferences(&properties, node.type == ProjectItem::Type::Bus)) return {};
-        json[QLatin1String(harkenplayableproperties::studio::kEnvelopeJsonKeyV1)] =
-            properties;
-    }
+    auto json = projectItemToJson(node, false);
+    if (json.isEmpty()) return {};
+    json.remove(QLatin1String(kNameBindingRevision));
 
     QJsonArray children;
     for (const auto& child : node.children)

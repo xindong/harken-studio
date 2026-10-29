@@ -22,9 +22,11 @@ public:
 
     void startWatching(const QString& projectRoot);
     void stopWatching();
-    bool isWatching() const { return watching_; }
+    bool isWatching() const { return watching_ && !projectWriteActive_; }
     QStringList sourceFiles() const;
     void refreshSources();
+    bool beginProjectWrite(const QStringList& changedPaths);
+    void endProjectWrite();
 
     void setDebounceInterval(int ms);
     int debounceInterval() const { return debounceMs_; }
@@ -55,6 +57,8 @@ private:
     QString projectRoot_;
     bool watching_ = false;
     bool suppressed_ = false;
+    bool projectWriteActive_ = false;
+    QString restartAfterWriteRoot_;
     int debounceMs_ = 500;
 
     QMap<QString, QPair<qint64, QDateTime>> sourceSnapshot_;
