@@ -387,6 +387,137 @@ TEST(ProjectTransaction, ManagedDirectoriesRecoverEmptyFoldersAndFileContents)
     EXPECT_FALSE(QDir(directory.filePath(QStringLiteral("Layers/New"))).exists());
 }
 
+TEST(ProjectTransaction, MixedReplacementRecoversChangedAddedDeletedAndUnchangedFiles)
+{
+    QTemporaryDir directory;
+    QTemporaryDir staging;
+    const QString projectPath = createBaselineProject(directory);
+    const QJsonObject projectBefore = readJson(projectPath);
+    const QJsonObject retained{{QStringLiteral("retained"), true}};
+    const QJsonObject deleted{{QStringLiteral("deleted"), true}};
+    const QString retainedPath = directory.filePath(QStringLiteral("Layers/Retained.bin"));
+    const QString deletedPath = directory.filePath(QStringLiteral("Layers/Deleted.bin"));
+    const QString addedPath = directory.filePath(QStringLiteral("Layers/Added.bin"));
+    writeJson(retainedPath, retained);
+    writeJson(deletedPath, deleted);
+    writeJson(staging.filePath(QFileInfo(projectPath).fileName()),
+              QJsonObject{{QStringLiteral("changed"), true}});
+    writeJson(staging.filePath(QStringLiteral("Layers/Retained.bin")), retained);
+    writeJson(staging.filePath(QStringLiteral("Layers/Added.bin")),
+              QJsonObject{{QStringLiteral("added"), true}});
+    const QStringList writeSet{QFileInfo(projectPath).fileName(),
+        QStringLiteral("Layers/Added.bin"), QStringLiteral("Layers/Deleted.bin"),
+        QStringLiteral("Layers/Retained.bin")};
+    QString error;
+    {
+        auto transaction = VNX::ProjectTransaction::beginReplacement(
+            projectPath, writeSet, staging.path(), &error);
+        ASSERT_NE(transaction, nullptr) << error.toStdString();
+        EXPECT_THROW(transaction->replaceFromDirectory(staging.path(),
+            QStringList{QStringLiteral("Layers")}, &error,
+            [&](int completed, int, qint64, qint64) {
+                if (completed == 2)
+                    throw std::runtime_error("Interrupted replacement");
+            }), std::runtime_error);
+        EXPECT_EQ(readJson(retainedPath), retained);
+    }
+    ASSERT_TRUE(VNX::ProjectTransaction::recover(projectPath, &error)) << error.toStdString();
+    EXPECT_EQ(readJson(projectPath), projectBefore);
+    EXPECT_EQ(readJson(retainedPath), retained);
+    EXPECT_EQ(readJson(deletedPath), deleted);
+    EXPECT_FALSE(QFileInfo::exists(addedPath));
+    EXPECT_FALSE(VNX::ProjectTransaction::recoveryRequired(projectPath));
+}
+
+TEST(ProjectTransaction, UnchangedReplacementFilesStillRejectExternalChanges)
+{
+    for (const int phase : {0, 1, 2, 3}) {
+        SCOPED_TRACE(phase);
+        QTemporaryDir directory;
+        QTemporaryDir staging;
+        const QString projectPath = createBaselineProject(directory);
+        const QJsonObject projectBefore = readJson(projectPath);
+        const QJsonObject projectAfter{{QStringLiteral("changed"), true}};
+        const QJsonObject retained{{QStringLiteral("retained"), true}};
+        const QJsonObject external{{QStringLiteral("external"), true}};
+        const QString retainedPath = directory.filePath(QStringLiteral("Layers/Retained.bin"));
+        writeJson(retainedPath, retained);
+        writeJson(staging.filePath(QFileInfo(projectPath).fileName()), projectAfter);
+        writeJson(staging.filePath(QStringLiteral("Layers/Retained.bin")), retained);
+        QString error;
+        auto transaction = VNX::ProjectTransaction::beginReplacement(projectPath,
+            {QFileInfo(projectPath).fileName(), QStringLiteral("Layers/Retained.bin")},
+            staging.path(), &error);
+        ASSERT_NE(transaction, nullptr) << error.toStdString();
+        const bool replaced = phase == 1 || phase == 2;
+        if (replaced)
+            ASSERT_TRUE(transaction->replaceFromDirectory(staging.path(), &error))
+                << error.toStdString();
+        writeJson(retainedPath, external);
+        if (phase == 0) {
+            EXPECT_FALSE(transaction->replaceFromDirectory(staging.path(), &error));
+        } else if (phase == 1 || phase == 3) {
+            EXPECT_FALSE(transaction->commit(false, &error));
+        } else {
+            transaction.reset();
+            EXPECT_FALSE(VNX::ProjectTransaction::recover(projectPath, &error));
+        }
+        EXPECT_EQ(readJson(retainedPath), external);
+        EXPECT_EQ(readJson(projectPath), replaced ? projectAfter : projectBefore);
+        transaction.reset();
+        EXPECT_TRUE(VNX::ProjectTransaction::recoveryRequired(projectPath));
+        writeJson(retainedPath, retained);
+        ASSERT_TRUE(VNX::ProjectTransaction::recover(projectPath, &error)) << error.toStdString();
+        EXPECT_EQ(readJson(projectPath), projectBefore);
+        EXPECT_EQ(readJson(retainedPath), retained);
+    }
+}
+
+TEST(ProjectTransaction, UnchangedReplacementCanCommitWithoutInstallation)
+{
+    QTemporaryDir directory;
+    QTemporaryDir staging;
+    const QString projectPath = createBaselineProject(directory);
+    const QJsonObject original = readJson(projectPath);
+    writeJson(staging.filePath(QFileInfo(projectPath).fileName()), original);
+    QString error;
+    auto transaction = VNX::ProjectTransaction::beginReplacement(projectPath,
+        {QFileInfo(projectPath).fileName()}, staging.path(), &error);
+    ASSERT_NE(transaction, nullptr) << error.toStdString();
+    ASSERT_TRUE(transaction->commit(false, &error)) << error.toStdString();
+    EXPECT_EQ(readJson(projectPath), original);
+    EXPECT_FALSE(VNX::ProjectTransaction::recoveryRequired(projectPath));
+}
+
+TEST(ProjectTransaction, ChangedStagingCannotRetargetAnUnchangedReplacement)
+{
+    for (const bool alreadyReplaced : {false, true}) {
+        SCOPED_TRACE(alreadyReplaced);
+        QTemporaryDir directory;
+        QTemporaryDir staging;
+        const QString projectPath = createBaselineProject(directory);
+        const QJsonObject projectBefore = readJson(projectPath);
+        const QJsonObject retained{{QStringLiteral("retained"), true}};
+        const QString retainedPath = directory.filePath(QStringLiteral("Layers/Retained.bin"));
+        const QString stagedPath = staging.filePath(QStringLiteral("Layers/Retained.bin"));
+        writeJson(retainedPath, retained);
+        writeJson(stagedPath, retained);
+        QString error;
+        auto transaction = VNX::ProjectTransaction::beginReplacement(projectPath,
+            {QStringLiteral("Layers/Retained.bin")}, staging.path(), &error);
+        ASSERT_NE(transaction, nullptr) << error.toStdString();
+        if (alreadyReplaced)
+            ASSERT_TRUE(transaction->replaceFromDirectory(staging.path(), &error))
+                << error.toStdString();
+        writeJson(stagedPath, QJsonObject{{QStringLiteral("retargeted"), true}});
+        EXPECT_FALSE(transaction->replaceFromDirectory(staging.path(), &error));
+        EXPECT_EQ(readJson(retainedPath), retained);
+        EXPECT_EQ(readJson(projectPath), projectBefore);
+        ASSERT_TRUE(transaction->rollback(&error)) << error.toStdString();
+        EXPECT_EQ(readJson(retainedPath), retained);
+    }
+}
+
 TEST(ProjectTransaction, FileAndDirectoryReplacementsRecoverTheirOriginalKinds)
 {
     QTemporaryDir directory;
@@ -601,6 +732,62 @@ TEST(ProjectTransaction, CaseOnlyFileAndFolderChangesPreserveSpellingAcrossRecov
     EXPECT_TRUE(QDir(directory.filePath(QStringLiteral("Layers"))).entryList().contains(QStringLiteral("Upper")));
     EXPECT_TRUE(QDir(directory.filePath(QStringLiteral("Layers/Upper"))).entryList().contains(QStringLiteral("File.bin")));
     EXPECT_EQ(readJson(directory.filePath(QStringLiteral("Layers/Upper/File.bin"))), contents);
+}
+
+TEST(ProjectTransaction, IdenticalReplacementKeepsCaseOnlyRenameAndRecovery)
+{
+    QTemporaryDir directory;
+    QTemporaryDir staging;
+    const QString projectPath = createBaselineProject(directory);
+    const QJsonObject contents{{QStringLiteral("unchanged"), true}};
+    const QString original = directory.filePath(QStringLiteral("Layers/Upper/File.bin"));
+    writeJson(original, contents);
+    if (!QFileInfo::exists(directory.filePath(QStringLiteral("Layers/upper/file.bin"))))
+        GTEST_SKIP() << "Requires a case-insensitive filesystem";
+    writeJson(staging.filePath(QStringLiteral("Layers/upper/file.bin")), contents);
+    QString error;
+    {
+        auto transaction = VNX::ProjectTransaction::beginReplacement(projectPath,
+            {QStringLiteral("Layers/upper/file.bin")}, staging.path(), &error);
+        ASSERT_NE(transaction, nullptr) << error.toStdString();
+        ASSERT_TRUE(transaction->replaceFromDirectory(staging.path(),
+            QStringList{QStringLiteral("Layers")}, &error)) << error.toStdString();
+        EXPECT_TRUE(QDir(directory.filePath(QStringLiteral("Layers"))).entryList().contains(QStringLiteral("upper")));
+        EXPECT_TRUE(QDir(directory.filePath(QStringLiteral("Layers/upper"))).entryList().contains(QStringLiteral("file.bin")));
+        EXPECT_EQ(readJson(directory.filePath(QStringLiteral("Layers/upper/file.bin"))), contents);
+    }
+    ASSERT_TRUE(VNX::ProjectTransaction::recover(projectPath, &error)) << error.toStdString();
+    EXPECT_TRUE(QDir(directory.filePath(QStringLiteral("Layers"))).entryList().contains(QStringLiteral("Upper")));
+    EXPECT_TRUE(QDir(directory.filePath(QStringLiteral("Layers/Upper"))).entryList().contains(QStringLiteral("File.bin")));
+    EXPECT_EQ(readJson(original), contents);
+}
+
+TEST(ProjectTransaction, RootSpellingChangeCannotRetargetAnUnchangedReplacement)
+{
+    QTemporaryDir directory;
+    QTemporaryDir staging;
+    const QString projectPath = createBaselineProject(directory);
+    const QJsonObject retained{{QStringLiteral("retained"), true}};
+    const QString original = directory.filePath(QStringLiteral("Layers/Retained.bin"));
+    const QString staged = staging.filePath(QStringLiteral("Layers/Retained.bin"));
+    writeJson(original, retained);
+    if (!QFileInfo::exists(directory.filePath(QStringLiteral("layers/Retained.bin"))))
+        GTEST_SKIP() << "Requires a case-insensitive filesystem";
+    writeJson(staged, retained);
+    QString error;
+    auto transaction = VNX::ProjectTransaction::beginReplacement(projectPath,
+        {QStringLiteral("Layers/Retained.bin")}, staging.path(), &error);
+    ASSERT_NE(transaction, nullptr) << error.toStdString();
+    QDir projectRoot(directory.path());
+    ASSERT_TRUE(projectRoot.rename(QStringLiteral("Layers"), QStringLiteral("LayersTemporary")));
+    ASSERT_TRUE(projectRoot.rename(QStringLiteral("LayersTemporary"), QStringLiteral("layers")));
+    writeJson(staged, QJsonObject{{QStringLiteral("retargeted"), true}});
+    EXPECT_FALSE(transaction->replaceFromDirectory(staging.path(),
+        QStringList{QStringLiteral("Layers")}, &error));
+    EXPECT_EQ(readJson(original), retained);
+    ASSERT_TRUE(transaction->rollback(&error)) << error.toStdString();
+    EXPECT_EQ(readJson(original), retained);
+    EXPECT_FALSE(VNX::ProjectTransaction::recoveryRequired(projectPath));
 }
 #endif
 
