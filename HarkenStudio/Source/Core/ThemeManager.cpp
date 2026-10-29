@@ -45,6 +45,7 @@ ThemeManager::ThemeManager(QString userThemesRoot,
     , userThemesRoot_(std::move(userThemesRoot))
     , storage_(std::move(storage))
     , currentThemeId_(builtinThemeId())
+    , currentPaletteId_(defaultPaletteId(currentThemeId_))
 {
     loadOptions_.harkenVersion = QString::fromUtf8(
         Harken::BuildInfo::Version.data(),
@@ -59,24 +60,28 @@ ThemeManager::ThemeManager(QString userThemesRoot,
     committedCandidate_.snapshot = snapshot_;
     committedCandidate_.manifest.id = currentThemeId_;
     ThemeAppearance restored = persistedAppearance();
-    if (restored.themeId != builtinThemeId() || !restored.colors.isEmpty())
+    auto loaded = customizedCandidate(restored);
+    if (!loaded.ok())
     {
-        auto loaded = customizedCandidate(restored);
-        if (!loaded.ok() && restored.themeId != builtinThemeId())
+        lastDiagnostics_ = loaded.diagnostics;
+        if (!loaded.candidate && restored.themeId != builtinThemeId())
         {
-            lastDiagnostics_ = loaded.diagnostics;
             restored.themeId = builtinThemeId();
             loaded = customizedCandidate(restored);
         }
-        if (loaded.ok())
+        if (!loaded.ok() && restored.paletteId != defaultPaletteId(restored.themeId))
         {
-            currentThemeId_ = restored.themeId;
-            customizations_ = restored.colors;
-            committedCandidate_ = *loaded.candidate;
-            publishCandidate(committedCandidate_, false);
+            restored.paletteId = defaultPaletteId(restored.themeId);
+            loaded = customizedCandidate(restored);
         }
-        else
-            lastDiagnostics_ = loaded.diagnostics;
+    }
+    if (loaded.ok())
+    {
+        currentThemeId_ = restored.themeId;
+        currentPaletteId_ = restored.paletteId;
+        customizations_ = restored.colors;
+        committedCandidate_ = *loaded.candidate;
+        publishCandidate(committedCandidate_, false);
     }
     applyApplicationTheme();
 }
@@ -92,17 +97,74 @@ ThemePackageDiscoveryResult ThemeManager::refreshThemes()
 
 ThemeManagerOperationResult ThemeManager::selectTheme(const QString& themeId)
 {
-    return loadAndPublish(themeId, true, false);
+    auto desired = appearance();
+    desired.themeId = themeId;
+    return updateAppearance(desired, true);
 }
 
 ThemeManagerOperationResult ThemeManager::reloadTheme()
 {
-    return loadAndPublish(currentThemeId_, false, true);
+    ThemeManagerOperationResult result;
+    if (!checkPublicationThread(result))
+        return result;
+    auto loaded = customizedCandidate(appearance());
+    if (!loaded.ok())
+    {
+        result.diagnostics = std::move(loaded.diagnostics);
+        lastDiagnostics_ = result.diagnostics;
+        return result;
+    }
+    committedCandidate_ = *loaded.candidate;
+    previewActive_ = false;
+    previewBaseCandidate_.reset();
+    previewBasePalette_.reset();
+    publishCandidate(committedCandidate_, true);
+    result.published = true;
+    lastDiagnostics_.clear();
+    return result;
 }
 
 ThemePackageLoadResult ThemeManager::loadBaseTheme(const QString& themeId) const
 {
     return loadThemePackageCandidate(userThemesRoot_, themeId, loadOptions_);
+}
+
+QList<ColorPaletteDescriptor> ThemeManager::availablePalettes() const
+{
+    QList<ColorPaletteDescriptor> palettes;
+    for (const auto& theme : themes_)
+        palettes.append({defaultPaletteId(theme.id), theme.displayName});
+    const auto amber = createBuiltinAmberPalette();
+    palettes.append({amber.id, amber.displayName});
+    return palettes;
+}
+
+ColorPaletteLoadResult ThemeManager::loadPalette(const QString& paletteId) const
+{
+    ColorPaletteLoadResult result;
+    if (paletteId == builtinAmberPaletteId())
+    {
+        result.palette = createBuiltinAmberPalette();
+        return result;
+    }
+    const QString prefix = QStringLiteral("theme:");
+    if (!paletteId.startsWith(prefix) || paletteId.size() == prefix.size())
+    {
+        result.diagnostics.append({ThemePackageErrorCode::InvalidValue,
+            QStringLiteral("settings"), QStringLiteral("Appearance.PaletteId"),
+            QStringLiteral("The selected color palette is unknown.")});
+        return result;
+    }
+    const QString themeId = paletteId.mid(prefix.size());
+    const auto loaded = loadBaseTheme(themeId);
+    if (!loaded.ok())
+    {
+        result.diagnostics = loaded.diagnostics;
+        return result;
+    }
+    result.palette = colorPaletteFromTheme(themeId, loaded.candidate->manifest.displayName,
+                                          *loaded.candidate->snapshot);
+    return result;
 }
 
 bool ThemeManager::checkPublicationThread(ThemeManagerOperationResult& result) const
@@ -120,9 +182,9 @@ ThemePackageLoadResult ThemeManager::customizedCandidate(
     const ThemeAppearance& appearance, bool reusePreviewBase)
 {
     ThemePackageLoadResult result;
-    for (auto theme = appearance.colors.cbegin(); theme != appearance.colors.cend(); ++theme)
+    for (auto palette = appearance.colors.cbegin(); palette != appearance.colors.cend(); ++palette)
     {
-        for (auto color = theme->cbegin(); color != theme->cend(); ++color)
+        for (auto color = palette->cbegin(); color != palette->cend(); ++color)
         {
             const bool known = findThemeColorRole(color.key()) != nullptr;
             if (known && color->isValid())
@@ -131,7 +193,7 @@ ThemePackageLoadResult ThemeManager::customizedCandidate(
                 known ? ThemePackageErrorCode::InvalidValue
                       : ThemePackageErrorCode::UnknownSemanticKey,
                 QStringLiteral("settings"),
-                QStringLiteral("Appearance.Colors.%1.%2").arg(theme.key(), color.key()),
+                QStringLiteral("Appearance.PaletteColors.%1.%2").arg(palette.key(), color.key()),
                 known ? QStringLiteral("The custom color is invalid.")
                       : QStringLiteral("This color role cannot be customized.")});
         }
@@ -143,17 +205,33 @@ ThemePackageLoadResult ThemeManager::customizedCandidate(
         && previewBaseCandidate_->manifest.id == appearance.themeId)
         result.candidate = previewBaseCandidate_;
     else
-    {
         result = loadBaseTheme(appearance.themeId);
-        if (reusePreviewBase && result.ok())
-            previewBaseCandidate_ = result.candidate;
-    }
     if (!result.ok())
         return result;
-    const auto overrides = appearance.colors.value(appearance.themeId);
-    if (overrides.isEmpty())
+
+    ColorPaletteLoadResult palette;
+    if (reusePreviewBase && previewBasePalette_
+        && previewBasePalette_->id == appearance.paletteId)
+        palette.palette = previewBasePalette_;
+    else if (appearance.paletteId == defaultPaletteId(appearance.themeId))
+        palette.palette = colorPaletteFromTheme(appearance.themeId,
+            result.candidate->manifest.displayName, *result.candidate->snapshot);
+    else
+        palette = loadPalette(appearance.paletteId);
+    if (!palette.ok())
+    {
+        result.diagnostics = palette.diagnostics;
         return result;
+    }
+    if (reusePreviewBase)
+    {
+        previewBaseCandidate_ = result.candidate;
+        previewBasePalette_ = palette.palette;
+    }
+
     ThemeSnapshot customized = *result.candidate->snapshot;
+    applyColorPalette(customized, *palette.palette);
+    const auto overrides = appearance.colors.value(appearance.paletteId);
     for (auto color = overrides.cbegin(); color != overrides.cend(); ++color)
         findThemeColorRole(color.key())->write(customized, color.value());
     resolveThemeColors(customized);
@@ -177,30 +255,35 @@ ThemeManagerOperationResult ThemeManager::updateAppearance(
     ThemeManagerOperationResult result;
     if (!checkPublicationThread(result))
         return result;
-    if (persist && appearance == this->appearance())
+    auto desired = appearance;
+    if (desired.themeId != currentThemeId_ || desired.paletteId.isEmpty())
+        desired.paletteId = defaultPaletteId(desired.themeId);
+    if (persist && desired == this->appearance())
     {
         cancelAppearancePreview();
         lastDiagnostics_.clear();
         return result;
     }
-    auto loaded = customizedCandidate(appearance, !persist);
+    auto loaded = customizedCandidate(desired, !persist);
     if (!loaded.ok())
     {
         result.diagnostics = loaded.diagnostics;
         lastDiagnostics_ = result.diagnostics;
         return result;
     }
-    if (persist && !persistAppearance(appearance, result.diagnostics))
+    if (persist && !persistAppearance(desired, result.diagnostics))
     {
         lastDiagnostics_ = result.diagnostics;
         return result;
     }
     if (persist)
     {
-        currentThemeId_ = appearance.themeId;
-        customizations_ = appearance.colors;
+        currentThemeId_ = desired.themeId;
+        currentPaletteId_ = desired.paletteId;
+        customizations_ = desired.colors;
         committedCandidate_ = *loaded.candidate;
         previewBaseCandidate_.reset();
+        previewBasePalette_.reset();
     }
     previewActive_ = !persist;
     publishCandidate(*loaded.candidate, true);
@@ -215,48 +298,9 @@ void ThemeManager::cancelAppearancePreview()
         return;
     previewActive_ = false;
     previewBaseCandidate_.reset();
+    previewBasePalette_.reset();
     publishCandidate(committedCandidate_, true);
     lastDiagnostics_.clear();
-}
-
-ThemeManagerOperationResult ThemeManager::loadAndPublish(
-    const QString& themeId,
-    bool persistSelection,
-    bool allowCurrentTheme)
-{
-    ThemeManagerOperationResult result;
-    if (!checkPublicationThread(result))
-        return result;
-    if (!allowCurrentTheme && themeId == currentThemeId_)
-    {
-        cancelAppearancePreview();
-        lastDiagnostics_.clear();
-        return result;
-    }
-
-    const ThemeAppearance desired{themeId, customizations_};
-    ThemePackageLoadResult loaded = customizedCandidate(desired);
-    if (!loaded.ok())
-    {
-        result.diagnostics = std::move(loaded.diagnostics);
-        lastDiagnostics_ = result.diagnostics;
-        return result;
-    }
-    if (persistSelection
-        && !persistAppearance(desired, result.diagnostics))
-    {
-        lastDiagnostics_ = result.diagnostics;
-        return result;
-    }
-
-    currentThemeId_ = themeId;
-    committedCandidate_ = *loaded.candidate;
-    previewActive_ = false;
-    previewBaseCandidate_.reset();
-    publishCandidate(*loaded.candidate, true);
-    result.published = true;
-    lastDiagnostics_.clear();
-    return result;
 }
 
 void ThemeManager::publishCandidate(const ThemePackageCandidate& candidate,
@@ -311,16 +355,18 @@ bool ThemeManager::persistAppearance(
     }
     storage_->beginGroup(QStringLiteral("Appearance"));
     storage_->setValue(QStringLiteral("ThemeId"), appearance.themeId);
+    storage_->setValue(QStringLiteral("PaletteId"), appearance.paletteId);
     QVariantMap customizations;
-    for (auto theme = appearance.colors.cbegin(); theme != appearance.colors.cend(); ++theme)
+    for (auto palette = appearance.colors.cbegin(); palette != appearance.colors.cend(); ++palette)
     {
         QVariantMap overrides;
-        for (auto color = theme->cbegin(); color != theme->cend(); ++color)
+        for (auto color = palette->cbegin(); color != palette->cend(); ++color)
             overrides.insert(color.key(), color->name(QColor::HexArgb));
         if (!overrides.isEmpty())
-            customizations.insert(theme.key(), overrides);
+            customizations.insert(palette.key(), overrides);
     }
-    storage_->setValue(QStringLiteral("Colors"), customizations);
+    storage_->setValue(QStringLiteral("PaletteColors"), customizations);
+    storage_->remove(QStringLiteral("Colors"));
     storage_->endGroup();
     storage_->sync();
     return true;
@@ -328,19 +374,34 @@ bool ThemeManager::persistAppearance(
 
 ThemeAppearance ThemeManager::persistedAppearance() const
 {
-    ThemeAppearance appearance{builtinThemeId(), {}};
+    ThemeAppearance appearance{builtinThemeId(), defaultPaletteId(builtinThemeId()), {}};
     if (!storage_)
         return appearance;
     storage_->beginGroup(QStringLiteral("Appearance"));
     const QString id = storage_->value(QStringLiteral("ThemeId")).toString();
     if (!id.isEmpty())
         appearance.themeId = id;
-    const QVariantMap customizations = storage_->value(QStringLiteral("Colors")).toMap();
-    for (auto theme = customizations.cbegin(); theme != customizations.cend(); ++theme)
+    const bool legacy = !storage_->contains(QStringLiteral("PaletteColors"));
+    const QString legacyAmberId = QStringLiteral("harken.builtin.amber");
+    appearance.paletteId = storage_->value(QStringLiteral("PaletteId")).toString();
+    if (legacy && appearance.themeId == legacyAmberId)
     {
-        const QVariantMap overrides = theme->toMap();
+        appearance.themeId = builtinThemeId();
+        appearance.paletteId = builtinAmberPaletteId();
+    }
+    if (appearance.paletteId.isEmpty())
+        appearance.paletteId = defaultPaletteId(appearance.themeId);
+    const QVariantMap customizations = storage_->value(
+        legacy ? QStringLiteral("Colors") : QStringLiteral("PaletteColors")).toMap();
+    for (auto palette = customizations.cbegin(); palette != customizations.cend(); ++palette)
+    {
+        QString paletteId = palette.key();
+        if (legacy)
+            paletteId = paletteId == legacyAmberId
+                ? builtinAmberPaletteId() : defaultPaletteId(paletteId);
+        const QVariantMap overrides = palette->toMap();
         for (auto color = overrides.cbegin(); color != overrides.cend(); ++color)
-            appearance.colors[theme.key()].insert(color.key(), QColor(color->toString()));
+            appearance.colors[paletteId].insert(color.key(), QColor(color->toString()));
     }
     storage_->endGroup();
     return appearance;

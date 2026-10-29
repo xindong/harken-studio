@@ -8,6 +8,8 @@
 add_library(harken_editor_dialogs STATIC
     AboutDialog.cpp
     AboutDialog.h
+    ColorEditorDialog.cpp
+    ColorEditorDialog.h
     RemoteConnectPanel.cpp
     RemoteConnectPanel.h
     NewProjectDialog.cpp

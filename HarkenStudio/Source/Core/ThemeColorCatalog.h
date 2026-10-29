@@ -10,7 +10,7 @@
 namespace VNX {
 
 using ThemeColorOverrides = QMap<QString, QColor>;
-using ThemeColorCustomizations = QMap<QString, ThemeColorOverrides>;
+using ColorPaletteCustomizations = QMap<QString, ThemeColorOverrides>;
 
 struct ThemeColorRole
 {

@@ -1,19 +1,27 @@
 #include "Core/AI/AIAgentConfig.h"
 #include "Core/AppSettings.h"
+#include "Core/ColorPalette.h"
 #include "Core/MemorySettingsStorage.h"
 #include "Core/ThemeManager.h"
+#include "Dialogs/ColorEditorDialog.h"
 #include "Dialogs/Settings/PreferencesPanel.h"
 #include "Dialogs/Settings/Pages/AppearancePage.h"
+#include "Widgets/Common/LinearSliderPresenter.h"
+#include "Widgets/Common/ParameterBinding.h"
 
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
-#include <QColorDialog>
+#include <QDir>
+#include <QDoubleSpinBox>
 #include <QEvent>
+#include <QFile>
 #include <QLabel>
 #include <QLineEdit>
-#include <QListWidget>
 #include <QPushButton>
+#include <QSet>
+#include <QSlider>
+#include <QSpinBox>
 #include <QTemporaryDir>
 #include <QTreeWidget>
 
@@ -34,24 +42,21 @@ void ensureApp()
 }
 
 
-QString alternateBuiltinId(const VNX::ThemeManager& manager)
+bool selectTheme(QComboBox& themes, const QString& id)
 {
-    for (const auto& theme : manager.availableThemes())
-        if (theme.builtin && theme.id != manager.currentThemeId())
-            return theme.id;
-    return {};
+    const int index = themes.findData(id);
+    if (index < 0) return false;
+    themes.setCurrentIndex(index);
+    return true;
 }
 
-bool selectPreset(QListWidget& presets, const QString& id)
+bool applyColorPreset(QComboBox& presets, const QString& id)
 {
-    for (int i = 0; i < presets.count(); ++i) {
-        auto* item = presets.item(i);
-        if (item->data(Qt::UserRole).toString() == id) {
-            presets.setCurrentItem(item);
-            return true;
-        }
-    }
-    return false;
+    const int index = presets.findData(id);
+    if (index < 0) return false;
+    presets.setCurrentIndex(index);
+    presets.activated(index);
+    return true;
 }
 
 bool selectColor(QTreeWidget& colors, const QString& key)
@@ -66,11 +71,11 @@ bool selectColor(QTreeWidget& colors, const QString& key)
     return false;
 }
 
-QColorDialog* openColorEditor(QWidget& page, QTreeWidget& colors)
+VNX::ColorEditorDialog* openColorEditor(QWidget& page, QTreeWidget& colors)
 {
     if (!colors.currentItem()) return nullptr;
     colors.itemDoubleClicked(colors.currentItem(), 1);
-    return page.findChild<QColorDialog*>(QStringLiteral("appearanceColorDialog"));
+    return page.findChild<VNX::ColorEditorDialog*>(QStringLiteral("appearanceColorDialog"));
 }
 
 bool finishColorEdit(QWidget& page, QTreeWidget& colors, const QColor& color)
@@ -317,77 +322,174 @@ TEST_F(SettingsApplyContractTest, ConnectionCommitPreservesLatestIndependentSett
     EXPECT_FALSE(panel.findChild<AIAgentPage*>()->hasPendingChanges());
 }
 
-TEST_F(SettingsApplyContractTest, AppearanceEditsPersistAcrossPresetSwitchesAndReset)
+TEST_F(SettingsApplyContractTest, ThemesSharePaletteEditsAndSelectTheirDefaultOnSwitch)
 {
+    const QString firstId = QStringLiteral("theme.custom");
+    const QDir package(root_.filePath(firstId));
+    ASSERT_TRUE(package.mkpath(QStringLiteral("visuals")));
+    const QMap<QString, QByteArray> files{
+        {QStringLiteral("manifest.json"), R"json({
+            "schemaVersion":6,"id":"theme.custom","displayName":"Custom Theme","version":"1.0.0",
+            "compatibility":{"harkenVersion":">=0.1.0 <1.0.0","capabilities":["curve-v1","meter-v1","waveform-v1"]},
+            "entries":{"tokens":"tokens.json","visuals":{"curve":"visuals/curve.json","meter":"visuals/meter.json","waveform":"visuals/waveform.json"},"assetMap":"assets.json"}
+        })json"},
+        {QStringLiteral("tokens.json"), R"json({
+            "colors":{"text.primary":"#ff203040"},
+            "metrics":{"table.rowHeight":49},
+            "fonts":{"body":{"pointSize":15}}
+        })json"},
+        {QStringLiteral("visuals/curve.json"), R"json({"colors":{}})json"},
+        {QStringLiteral("visuals/meter.json"), R"json({"colors":{}})json"},
+        {QStringLiteral("visuals/waveform.json"), R"json({
+            "colors":{"waveform.selectionHighlight":"#a0556677"},
+            "metrics":{"waveform.colorMap.offset0":0.22,"waveform.multiBand.alpha":0.35}
+        })json"},
+        {QStringLiteral("assets.json"), R"json({"assets":{}})json"}
+    };
+    for (auto entry = files.cbegin(); entry != files.cend(); ++entry) {
+        QFile file(package.filePath(entry.key()));
+        ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+        ASSERT_EQ(file.write(entry.value()), entry.value().size());
+    }
+
     PreferencesPanel panel(secretStore(), *theme_);
-    auto* presets = panel.findChild<QListWidget*>(QStringLiteral("appearanceThemePresets"));
+    auto* themes = panel.findChild<QComboBox*>(QStringLiteral("appearanceThemeCombo"));
+    auto* presets = panel.findChild<QComboBox*>(QStringLiteral("appearanceColorPresets"));
     auto* colors = panel.findChild<QTreeWidget*>(QStringLiteral("appearanceColorTree"));
     auto* reset = panel.findChild<QPushButton*>(QStringLiteral("appearanceColorReset"));
     auto* resetAll = panel.findChild<QPushButton*>(QStringLiteral("appearanceColorsReset"));
+    ASSERT_NE(themes, nullptr);
     ASSERT_NE(presets, nullptr);
     ASSERT_NE(colors, nullptr);
     ASSERT_NE(reset, nullptr);
     ASSERT_NE(resetAll, nullptr);
-
-    const QString firstId = theme_->currentThemeId();
-    const QString secondId = alternateBuiltinId(*theme_);
-    ASSERT_FALSE(secondId.isEmpty());
+    const QString builtinId = builtinThemeId();
+    const QString customPaletteId = defaultPaletteId(firstId);
+    const QString amberId = builtinAmberPaletteId();
     const QString primary = QStringLiteral("text.primary");
     const QString secondary = QStringLiteral("text.secondary");
     const QColor firstColor(18, 52, 86, 128);
     const QColor secondColor(135, 114, 89, 192);
+    const auto builtin = theme_->snapshot();
+    QSet<QString> paletteIds;
+    for (int i = 0; i < presets->count(); ++i)
+        paletteIds.insert(presets->itemData(i).toString());
+    EXPECT_TRUE(paletteIds.contains(amberId));
+    EXPECT_TRUE(paletteIds.contains(customPaletteId));
+    EXPECT_TRUE(paletteIds.contains(defaultPaletteId(builtinId)));
+    ASSERT_TRUE(selectTheme(*themes, firstId));
+    ASSERT_EQ(theme_->currentThemeId(), firstId);
+    EXPECT_EQ(theme_->currentPaletteId(), customPaletteId);
     const auto defaults = theme_->snapshot();
+    EXPECT_FLOAT_EQ(defaults->domains.waveform.colorMapMode.offset[0], 0.22f);
+    EXPECT_FLOAT_EQ(defaults->domains.waveform.multiBandMode.alpha, 0.35f);
     const auto before = storedValues(*themeStorage_);
+    const auto palette = theme_->loadPalette(amberId);
+    ASSERT_TRUE(palette.ok());
+    ASSERT_NE(defaults->domains.waveform.selectionHighlight,
+              palette.palette->snapshot->domains.waveform.selectionHighlight);
+    ASSERT_TRUE(applyColorPreset(*presets, amberId));
+    EXPECT_EQ(theme_->currentThemeId(), firstId);
+    EXPECT_EQ(themes->currentData().toString(), firstId);
+    EXPECT_EQ(theme_->currentPaletteId(), amberId);
+    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, palette.palette->colors.value(primary));
+    EXPECT_EQ(theme_->snapshot()->domains.waveform.selectionHighlight,
+              palette.palette->snapshot->domains.waveform.selectionHighlight);
+    EXPECT_EQ(theme_->snapshot()->domains.waveform.colorMapMode.offset,
+              palette.palette->snapshot->domains.waveform.colorMapMode.offset);
+    EXPECT_FLOAT_EQ(theme_->snapshot()->domains.waveform.multiBandMode.alpha,
+                    palette.palette->snapshot->domains.waveform.multiBandMode.alpha);
+    EXPECT_EQ(theme_->snapshot()->ui.metrics.table.rowHeight, 49);
+    EXPECT_EQ(theme_->snapshot()->ui.typography.body.pointSize, 15);
 
     ASSERT_TRUE(selectColor(*colors, primary));
     ASSERT_TRUE(finishColorEdit(panel, *colors, firstColor));
-    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, firstColor);
-    EXPECT_EQ(theme_->appearance().colors.value(firstId).value(primary), firstColor);
-    EXPECT_NE(storedValues(*themeStorage_), before);
     ASSERT_TRUE(selectColor(*colors, secondary));
     ASSERT_TRUE(finishColorEdit(panel, *colors, secondColor));
-    ASSERT_TRUE(selectPreset(*presets, secondId));
-    EXPECT_EQ(theme_->appearance().themeId, secondId);
-    ASSERT_TRUE(selectColor(*colors, primary));
-    ASSERT_TRUE(finishColorEdit(panel, *colors, secondColor));
+    EXPECT_EQ(theme_->appearance().colors.value(amberId).value(primary), firstColor);
+    EXPECT_EQ(theme_->appearance().colors.value(amberId).value(secondary), secondColor);
+    EXPECT_NE(storedValues(*themeStorage_), before);
+    ASSERT_TRUE(selectTheme(*themes, builtinId));
+    EXPECT_EQ(theme_->currentPaletteId(), defaultPaletteId(builtinId));
+    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, builtin->ui.colors.textPrimary);
+    QSet<QString> switchedPaletteIds;
+    for (int i = 0; i < presets->count(); ++i)
+        switchedPaletteIds.insert(presets->itemData(i).toString());
+    EXPECT_EQ(switchedPaletteIds, paletteIds);
+    ASSERT_TRUE(applyColorPreset(*presets, amberId));
+    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, firstColor);
+    EXPECT_EQ(theme_->snapshot()->ui.colors.textSecondary, secondColor);
+    EXPECT_EQ(theme_->snapshot()->ui.metrics.table.rowHeight, builtin->ui.metrics.table.rowHeight);
+    EXPECT_EQ(theme_->snapshot()->ui.typography.body.pointSize, builtin->ui.typography.body.pointSize);
 
-    ASSERT_TRUE(selectPreset(*presets, firstId));
-    EXPECT_EQ(QColor(colors->currentItem()->text(1)), firstColor);
+    ASSERT_TRUE(selectTheme(*themes, firstId));
+    EXPECT_EQ(theme_->currentPaletteId(), customPaletteId);
+    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, defaults->ui.colors.textPrimary);
+    EXPECT_EQ(theme_->snapshot()->domains.waveform.selectionHighlight,
+              defaults->domains.waveform.selectionHighlight);
+    EXPECT_EQ(theme_->snapshot()->domains.waveform.colorMapMode.offset,
+              defaults->domains.waveform.colorMapMode.offset);
+    EXPECT_FLOAT_EQ(theme_->snapshot()->domains.waveform.multiBandMode.alpha,
+                    defaults->domains.waveform.multiBandMode.alpha);
+    ASSERT_TRUE(applyColorPreset(*presets, amberId));
+    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, firstColor);
+    EXPECT_EQ(theme_->snapshot()->ui.colors.textSecondary, secondColor);
+    EXPECT_EQ(theme_->snapshot()->ui.metrics.table.rowHeight, 49);
+    EXPECT_EQ(theme_->snapshot()->ui.typography.body.pointSize, 15);
+    ASSERT_TRUE(selectColor(*colors, primary));
     ASSERT_TRUE(reset->isEnabled());
     reset->click();
-    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, defaults->ui.colors.textPrimary);
-    EXPECT_FALSE(theme_->appearance().colors.value(firstId).contains(primary));
-    EXPECT_EQ(theme_->appearance().colors.value(firstId).value(secondary), secondColor);
+    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, palette.palette->colors.value(primary));
+    EXPECT_FALSE(theme_->appearance().colors.value(amberId).contains(primary));
+    EXPECT_EQ(theme_->appearance().colors.value(amberId).value(secondary), secondColor);
     ASSERT_TRUE(resetAll->isEnabled());
     resetAll->click();
-    EXPECT_FALSE(theme_->appearance().colors.contains(firstId));
-    EXPECT_EQ(theme_->snapshot()->ui.colors.textSecondary, defaults->ui.colors.textSecondary);
-    EXPECT_EQ(theme_->appearance().colors.value(secondId).value(primary), secondColor);
+    EXPECT_FALSE(theme_->appearance().colors.contains(amberId));
+    EXPECT_EQ(theme_->snapshot()->ui.colors.textSecondary, palette.palette->colors.value(secondary));
+    EXPECT_EQ(theme_->currentThemeId(), firstId);
+    EXPECT_EQ(theme_->currentPaletteId(), amberId);
 
-    ASSERT_TRUE(selectPreset(*presets, secondId));
-    EXPECT_EQ(QColor(colors->currentItem()->text(1)), secondColor);
+    ASSERT_TRUE(selectTheme(*themes, builtinId));
+    ASSERT_TRUE(applyColorPreset(*presets, customPaletteId));
+    EXPECT_EQ(theme_->currentThemeId(), builtinId);
+    EXPECT_EQ(theme_->snapshot()->domains.waveform.selectionHighlight,
+              defaults->domains.waveform.selectionHighlight);
+    EXPECT_EQ(theme_->snapshot()->domains.waveform.colorMapMode.offset,
+              defaults->domains.waveform.colorMapMode.offset);
+    EXPECT_FLOAT_EQ(theme_->snapshot()->domains.waveform.multiBandMode.alpha,
+                    defaults->domains.waveform.multiBandMode.alpha);
+    EXPECT_EQ(theme_->snapshot()->ui.metrics.table.rowHeight, builtin->ui.metrics.table.rowHeight);
     ThemeManager restored(root_.path(), std::make_unique<MemorySettingsStorage>(*themeStorage_));
     EXPECT_EQ(restored.appearance(), theme_->appearance());
-    EXPECT_EQ(restored.snapshot()->ui.colors.textPrimary, secondColor);
+    EXPECT_EQ(restored.currentThemeId(), builtinId);
+    EXPECT_EQ(restored.currentPaletteId(), customPaletteId);
+    EXPECT_EQ(restored.snapshot()->domains.waveform.selectionHighlight,
+              defaults->domains.waveform.selectionHighlight);
+    ASSERT_TRUE(restored.selectTheme(firstId).ok());
+    EXPECT_EQ(restored.currentPaletteId(), customPaletteId);
+    EXPECT_EQ(restored.snapshot()->ui.metrics.table.rowHeight, 49);
+    EXPECT_EQ(restored.snapshot()->ui.typography.body.pointSize, 15);
 }
 
-TEST_F(SettingsApplyContractTest, AppearanceFollowsExternalCommittedThemeAndColors)
+TEST_F(SettingsApplyContractTest, AppearanceFollowsExternalCommittedPaletteAndColors)
 {
     PreferencesPanel panel(secretStore(), *theme_);
-    auto* presets = panel.findChild<QListWidget*>(QStringLiteral("appearanceThemePresets"));
+    auto* themes = panel.findChild<QComboBox*>(QStringLiteral("appearanceThemeCombo"));
+    auto* presets = panel.findChild<QComboBox*>(QStringLiteral("appearanceColorPresets"));
     auto* colors = panel.findChild<QTreeWidget*>(QStringLiteral("appearanceColorTree"));
+    ASSERT_NE(themes, nullptr);
     ASSERT_NE(presets, nullptr);
     ASSERT_NE(colors, nullptr);
     ASSERT_TRUE(selectColor(*colors, QStringLiteral("text.primary")));
 
     auto appearance = theme_->appearance();
-    appearance.themeId = alternateBuiltinId(*theme_);
+    appearance.paletteId = builtinAmberPaletteId();
     const QColor externalColor(63, 95, 127, 160);
-    appearance.colors[appearance.themeId].insert(QStringLiteral("text.primary"), externalColor);
+    appearance.colors[appearance.paletteId].insert(QStringLiteral("text.primary"), externalColor);
     ASSERT_TRUE(theme_->applyAppearance(appearance).ok());
 
-    ASSERT_NE(presets->currentItem(), nullptr);
-    EXPECT_EQ(presets->currentItem()->data(Qt::UserRole).toString(), appearance.themeId);
+    EXPECT_EQ(themes->currentData().toString(), appearance.themeId);
+    EXPECT_EQ(presets->currentData().toString(), appearance.paletteId);
     EXPECT_EQ(QColor(colors->currentItem()->text(1)), externalColor);
 }
 
@@ -410,6 +512,67 @@ TEST_F(SettingsApplyContractTest, ColorPickerPreviewRequiresAcceptance)
         EXPECT_EQ(theme_->appearance(), committed);
         EXPECT_EQ(storedValues(*themeStorage_), before);
 
+        auto* hue = picker->findChild<QSpinBox*>(QStringLiteral("colorHue"));
+        auto* saturation = picker->findChild<QSpinBox*>(QStringLiteral("colorSaturation"));
+        auto* value = picker->findChild<QSpinBox*>(QStringLiteral("colorValue"));
+        auto* red = picker->findChild<QSpinBox*>(QStringLiteral("colorRed"));
+        auto* green = picker->findChild<QSpinBox*>(QStringLiteral("colorGreen"));
+        auto* blue = picker->findChild<QSpinBox*>(QStringLiteral("colorBlue"));
+        auto* alphaControl = picker->findChild<LinearSliderPresenter*>(QStringLiteral("colorAlphaControl"));
+        auto* alphaBinding = picker->findChild<ParameterBinding*>(QStringLiteral("colorAlphaBinding"));
+        for (auto* field : {hue, saturation, value, red, green, blue})
+            ASSERT_NE(field, nullptr);
+        ASSERT_NE(alphaControl, nullptr);
+        ASSERT_NE(alphaBinding, nullptr);
+        auto* alpha = alphaControl->valueEditor();
+        auto* alphaSlider = alphaControl->slider();
+        ASSERT_NE(alpha, nullptr);
+        ASSERT_NE(alphaSlider, nullptr);
+
+        alpha->setValue(91);
+        EXPECT_EQ(picker->currentColor(), QColor(27, 81, 143, 91));
+        EXPECT_EQ(alphaSlider->value(), 91);
+        alphaSlider->setValue(64);
+        EXPECT_EQ(alpha->value(), 64);
+        EXPECT_EQ(picker->currentColor(), QColor(27, 81, 143, 64));
+
+        alphaSlider->setSliderDown(true);
+        alphaSlider->setValue(120);
+        EXPECT_TRUE(alphaBinding->isEditing());
+        EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, QColor(27, 81, 143, 120));
+        alphaSlider->setValue(160);
+        EXPECT_TRUE(alphaBinding->isEditing());
+        EXPECT_EQ(picker->currentColor(), QColor(27, 81, 143, 160));
+        alphaBinding->cancelEdit();
+        alphaSlider->setSliderDown(false);
+        EXPECT_EQ(alpha->value(), 64);
+        EXPECT_EQ(picker->currentColor(), QColor(27, 81, 143, 64));
+        EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, picker->currentColor());
+        EXPECT_EQ(storedValues(*themeStorage_), before);
+
+        red->setValue(255);
+        green->setValue(0);
+        blue->setValue(0);
+        EXPECT_EQ(hue->value(), 0);
+        EXPECT_EQ(saturation->value(), 100);
+        EXPECT_EQ(value->value(), 100);
+        saturation->setValue(0);
+        hue->setValue(240);
+        EXPECT_EQ(picker->currentColor(), QColor(255, 255, 255, 64));
+        saturation->setValue(100);
+        EXPECT_EQ(picker->currentColor(), QColor(0, 0, 255, 64));
+        EXPECT_EQ(red->value(), 0);
+        EXPECT_EQ(green->value(), 0);
+        EXPECT_EQ(blue->value(), 255);
+        value->setValue(0);
+        hue->setValue(120);
+        EXPECT_EQ(picker->currentColor(), QColor(0, 0, 0, 64));
+        value->setValue(100);
+        EXPECT_EQ(picker->currentColor(), QColor(0, 255, 0, 64));
+        EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, picker->currentColor());
+        EXPECT_EQ(theme_->appearance(), committed);
+        EXPECT_EQ(storedValues(*themeStorage_), before);
+
         picker->reject();
         EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, original->ui.colors.textPrimary);
         EXPECT_EQ(theme_->appearance(), committed);
@@ -421,7 +584,7 @@ TEST_F(SettingsApplyContractTest, ColorPickerPreviewRequiresAcceptance)
         picker->setCurrentColor(previewColor);
         picker->accept();
         EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, previewColor);
-        EXPECT_EQ(theme_->appearance().colors.value(committed.themeId)
+        EXPECT_EQ(theme_->appearance().colors.value(committed.paletteId)
                       .value(QStringLiteral("text.primary")), previewColor);
         EXPECT_NE(storedValues(*themeStorage_), before);
     }

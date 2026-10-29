@@ -1,3 +1,4 @@
+#include "Core/ColorPalette.h"
 #include "Core/MemorySettingsStorage.h"
 #include "Core/QSettingsStorage.h"
 #include "Core/ThemeColorCatalog.h"
@@ -142,10 +143,11 @@ TEST(ThemeManager, PreviewCancellationKeepsCommittedStateWithoutReloadingFiles)
 
     auto draft = committed;
     draft.themeId = VNX::builtinThemeId();
+    draft.paletteId = VNX::defaultPaletteId(draft.themeId);
     const QColor accent(QStringLiteral("#ffbc1234"));
     const QColor text(QStringLiteral("#ffc2d3e4"));
-    draft.colors[draft.themeId].insert(QStringLiteral("accent.primary"), accent);
-    draft.colors[draft.themeId].insert(QStringLiteral("text.secondary"), text);
+    draft.colors[draft.paletteId].insert(QStringLiteral("accent.primary"), accent);
+    draft.colors[draft.paletteId].insert(QStringLiteral("text.secondary"), text);
     ASSERT_TRUE(manager.previewAppearance(draft).ok());
     const auto preview = manager.snapshot();
     EXPECT_EQ(manager.appearance(), committed);
@@ -190,8 +192,8 @@ TEST(ThemeManager, ContinuousPreviewRetainsBaseWithoutAccumulatingOverrides)
     const auto original = manager.snapshot();
     const auto settings = storedValues(*stored);
     auto draft = committed;
-    draft.colors[packageId].insert(accentKey, QColor(QStringLiteral("#80abcdef")));
-    draft.colors[packageId].insert(textKey, QColor(QStringLiteral("#ffdefabc")));
+    draft.colors[VNX::defaultPaletteId(packageId)].insert(accentKey, QColor(QStringLiteral("#80abcdef")));
+    draft.colors[VNX::defaultPaletteId(packageId)].insert(textKey, QColor(QStringLiteral("#ffdefabc")));
     ASSERT_TRUE(manager.previewAppearance(draft).ok());
     const auto firstPreview = manager.snapshot();
 
@@ -200,7 +202,7 @@ TEST(ThemeManager, ContinuousPreviewRetainsBaseWithoutAccumulatingOverrides)
                              QStringLiteral("#ff778899")));
     ASSERT_TRUE(QFile::remove(QDir(root.path()).filePath(
         QStringLiteral("preview/manifest.json"))));
-    draft.colors.remove(packageId);
+    draft.colors.remove(VNX::defaultPaletteId(packageId));
     ASSERT_TRUE(manager.previewAppearance(draft).ok());
     EXPECT_EQ(manager.snapshot()->ui.colors.accent, original->ui.colors.accent);
     EXPECT_EQ(manager.snapshot()->ui.colors.textSecondary, original->ui.colors.textSecondary);
@@ -221,11 +223,13 @@ TEST(ThemeManager, ContinuousPreviewRetainsBaseWithoutAccumulatingOverrides)
               QColor(QStringLiteral("#ff778899")));
 
     draft.themeId = VNX::builtinThemeId();
+    draft.paletteId = VNX::defaultPaletteId(draft.themeId);
     ASSERT_TRUE(manager.previewAppearance(draft).ok());
     ASSERT_TRUE(writePackage(root.path(), QStringLiteral("preview"), packageId,
                              QStringLiteral("#ff778899"),
                              QStringLiteral("#ff112233")));
     draft.themeId = packageId;
+    draft.paletteId = VNX::defaultPaletteId(packageId);
     ASSERT_TRUE(manager.previewAppearance(draft).ok());
     EXPECT_EQ(manager.snapshot()->ui.colors.accent, QColor(QStringLiteral("#ff778899")));
     manager.cancelAppearancePreview();
@@ -245,7 +249,7 @@ TEST(ThemeManager, CommitAndReloadStartNewPreviewSessions)
     ASSERT_TRUE(manager.selectTheme(packageId).ok());
     auto draft = manager.appearance();
     const QColor text(QStringLiteral("#ffabcdef"));
-    draft.colors[packageId].insert(QStringLiteral("text.primary"), text);
+    draft.colors[VNX::defaultPaletteId(packageId)].insert(QStringLiteral("text.primary"), text);
     ASSERT_TRUE(manager.previewAppearance(draft).ok());
 
     ASSERT_TRUE(writePackage(root.path(), QStringLiteral("preview"), packageId,
@@ -278,63 +282,82 @@ TEST(ThemeManager, CommitAndReloadStartNewPreviewSessions)
     EXPECT_EQ(manager.snapshot()->ui.colors.textPrimary, text);
 }
 
-TEST(ThemeManager, PersistsOverridesPerThemeAndResetsToCurrentPackageDefaults)
+TEST(ThemeManager, MigratesLegacyColorsIntoSharedPalettesAndPersistsSelection)
 {
     QTemporaryDir root;
     ASSERT_TRUE(root.isValid());
     const QString packageId = QStringLiteral("theme.custom");
+    const QString packagePaletteId = VNX::defaultPaletteId(packageId);
+    const QString builtinPaletteId = VNX::defaultPaletteId(VNX::builtinThemeId());
+    const QString amberPaletteId = VNX::builtinAmberPaletteId();
     const QString storagePath = QDir(root.path()).filePath(QStringLiteral("settings.ini"));
+    const QString key = QStringLiteral("accent.primary");
     ASSERT_TRUE(writePackage(root.path(), QStringLiteral("custom"), packageId,
                              QStringLiteral("#ff112233"),
                              QStringLiteral("#ff334455")));
     const QColor packageOverride(QStringLiteral("#f1234567"));
     const QColor builtinOverride(QStringLiteral("#ff765432"));
+    const QColor amberOverride(QStringLiteral("#ff987654"));
     {
-        VNX::ThemeManager manager(root.path(),
-            std::make_unique<VNX::QSettingsStorage>(storagePath));
-        auto draft = manager.appearance();
-        draft.themeId = packageId;
-        draft.colors[packageId].insert(QStringLiteral("accent.primary"), packageOverride);
-        draft.colors[VNX::builtinThemeId()].insert(
-            QStringLiteral("accent.primary"), builtinOverride);
-        ASSERT_TRUE(manager.applyAppearance(draft).ok());
+        VNX::QSettingsStorage storage(storagePath);
+        storage.setValue(QStringLiteral("Appearance/ThemeId"), QStringLiteral("harken.builtin.amber"));
+        storage.setValue(QStringLiteral("Appearance/Colors"), QVariantMap{
+            {packageId, QVariantMap{{key, packageOverride.name(QColor::HexArgb)}}},
+            {VNX::builtinThemeId(), QVariantMap{{key, builtinOverride.name(QColor::HexArgb)}}},
+            {QStringLiteral("harken.builtin.amber"), QVariantMap{{key, amberOverride.name(QColor::HexArgb)}}}
+        });
+        storage.sync();
     }
     {
-        VNX::ThemeManager manager(root.path(),
-            std::make_unique<VNX::QSettingsStorage>(storagePath));
-        EXPECT_EQ(manager.currentThemeId(), packageId);
+        VNX::ThemeManager manager(root.path(), std::make_unique<VNX::QSettingsStorage>(storagePath));
+        EXPECT_EQ(manager.currentThemeId(), VNX::builtinThemeId());
+        EXPECT_EQ(manager.currentPaletteId(), amberPaletteId);
+        EXPECT_EQ(manager.snapshot()->ui.colors.accent, amberOverride);
+        EXPECT_EQ(manager.appearance().colors.value(packagePaletteId).value(key), packageOverride);
+        EXPECT_EQ(manager.appearance().colors.value(builtinPaletteId).value(key), builtinOverride);
+
+        ASSERT_TRUE(manager.selectTheme(packageId).ok());
+        EXPECT_EQ(manager.currentPaletteId(), packagePaletteId);
         EXPECT_EQ(manager.snapshot()->ui.colors.accent, packageOverride);
-        const auto base = manager.loadBaseTheme(packageId);
-        ASSERT_TRUE(base.ok());
-        EXPECT_EQ(base.candidate->snapshot->ui.colors.accent,
-                  QColor(QStringLiteral("#ff112233")));
+        auto shared = manager.appearance();
+        shared.paletteId = amberPaletteId;
+        ASSERT_TRUE(manager.applyAppearance(shared).ok());
+        EXPECT_EQ(manager.currentThemeId(), packageId);
+        EXPECT_EQ(manager.snapshot()->ui.colors.accent, amberOverride);
+        ASSERT_TRUE(manager.reloadTheme().ok());
+        EXPECT_EQ(manager.currentPaletteId(), amberPaletteId);
+        EXPECT_EQ(manager.snapshot()->ui.colors.accent, amberOverride);
+
         ASSERT_TRUE(manager.selectTheme(VNX::builtinThemeId()).ok());
+        EXPECT_EQ(manager.currentPaletteId(), builtinPaletteId);
         EXPECT_EQ(manager.snapshot()->ui.colors.accent, builtinOverride);
         ASSERT_TRUE(manager.selectTheme(packageId).ok());
+        EXPECT_EQ(manager.currentPaletteId(), packagePaletteId);
         EXPECT_EQ(manager.snapshot()->ui.colors.accent, packageOverride);
-
         ASSERT_TRUE(writePackage(root.path(), QStringLiteral("custom"), packageId,
                                  QStringLiteral("#ff445566"),
                                  QStringLiteral("#ff556677")));
         ASSERT_TRUE(manager.reloadTheme().ok());
         EXPECT_EQ(manager.snapshot()->ui.colors.accent, packageOverride);
         auto reset = manager.appearance();
-        reset.colors.remove(packageId);
+        reset.colors.remove(packagePaletteId);
         ASSERT_TRUE(manager.applyAppearance(reset).ok());
-        EXPECT_EQ(manager.snapshot()->ui.colors.accent,
-                  QColor(QStringLiteral("#ff445566")));
+        EXPECT_EQ(manager.snapshot()->ui.colors.accent, QColor(QStringLiteral("#ff445566")));
+        EXPECT_EQ(manager.appearance().colors.value(amberPaletteId).value(key), amberOverride);
+        reset.paletteId = amberPaletteId;
+        ASSERT_TRUE(manager.applyAppearance(reset).ok());
     }
-    VNX::ThemeManager restored(root.path(),
-        std::make_unique<VNX::QSettingsStorage>(storagePath));
+    VNX::ThemeManager restored(root.path(), std::make_unique<VNX::QSettingsStorage>(storagePath));
     EXPECT_EQ(restored.currentThemeId(), packageId);
-    EXPECT_EQ(restored.snapshot()->ui.colors.accent,
-              QColor(QStringLiteral("#ff445566")));
-    EXPECT_FALSE(restored.appearance().colors.contains(packageId));
+    EXPECT_EQ(restored.currentPaletteId(), amberPaletteId);
+    EXPECT_EQ(restored.snapshot()->ui.colors.accent, amberOverride);
+    EXPECT_FALSE(restored.appearance().colors.contains(packagePaletteId));
     ASSERT_TRUE(restored.selectTheme(VNX::builtinThemeId()).ok());
+    EXPECT_EQ(restored.currentPaletteId(), builtinPaletteId);
     EXPECT_EQ(restored.snapshot()->ui.colors.accent, builtinOverride);
 }
 
-TEST(ThemeManager, MissingThemePreservesCustomizationsUntilPackageReturns)
+TEST(ThemeManager, MissingThemePreservesSharedPalettesUntilPackageReturns)
 {
     QTemporaryDir root;
     ASSERT_TRUE(root.isValid());
@@ -347,9 +370,9 @@ TEST(ThemeManager, MissingThemePreservesCustomizationsUntilPackageReturns)
                              QStringLiteral("#ff334455")));
     const QColor packageOverride(QStringLiteral("#ff345678"));
     const QColor builtinOverride(QStringLiteral("#ff876543"));
-    VNX::ThemeColorCustomizations expected;
-    expected[packageId].insert(QStringLiteral("accent.primary"), packageOverride);
-    expected[VNX::builtinThemeId()].insert(
+    VNX::ColorPaletteCustomizations expected;
+    expected[VNX::defaultPaletteId(packageId)].insert(QStringLiteral("accent.primary"), packageOverride);
+    expected[VNX::defaultPaletteId(VNX::builtinThemeId())].insert(
         QStringLiteral("accent.primary"), builtinOverride);
     {
         VNX::ThemeManager manager(root.path(),
@@ -381,30 +404,36 @@ TEST(ThemeManager, MissingThemePreservesCustomizationsUntilPackageReturns)
     EXPECT_EQ(restored.appearance().colors, expected);
 }
 
-TEST(ThemeManager, BuiltinPresetsKeepIndependentOverridesAcrossPreviewResetAndRestart)
+TEST(ThemeManager, GlobalPalettesKeepIndependentEditsAcrossPreviewResetAndRestart)
 {
     QTemporaryDir root;
     ASSERT_TRUE(root.isValid());
     const QString storagePath = QDir(root.path()).filePath(QStringLiteral("settings.ini"));
-    const QString defaultId = VNX::builtinThemeId();
-    QString alternateId;
-    for (const auto& theme : VNX::discoverThemePackages(root.path()).themes) {
-        if (theme.builtin && theme.id != defaultId) {
-            alternateId = theme.id;
-            break;
-        }
-    }
-    ASSERT_FALSE(alternateId.isEmpty());
+    const QString themeId = VNX::builtinThemeId();
+    const QString defaultId = VNX::defaultPaletteId(themeId);
+    const QString alternateId = VNX::builtinAmberPaletteId();
     const QColor defaultOverride(QStringLiteral("#80123456"));
     const QColor alternateOverride(QStringLiteral("#90765432"));
     const QString key = QStringLiteral("accent.primary");
-    VNX::ThemeColorCustomizations overrides;
+    VNX::ColorPaletteCustomizations overrides;
     overrides[defaultId].insert(key, defaultOverride);
     overrides[alternateId].insert(key, alternateOverride);
     {
         auto storage = std::make_unique<VNX::QSettingsStorage>(storagePath);
         auto* stored = storage.get();
         VNX::ThemeManager manager(root.path(), std::move(storage));
+        ASSERT_EQ(manager.availableThemes().size(), 1);
+        QSet<QString> paletteIds;
+        for (const auto& palette : manager.availablePalettes()) {
+            EXPECT_FALSE(paletteIds.contains(palette.id));
+            paletteIds.insert(palette.id);
+            const auto loaded = manager.loadPalette(palette.id);
+            ASSERT_TRUE(loaded.ok());
+            for (const auto& role : VNX::themeColorRoles())
+                EXPECT_TRUE(loaded.palette->colors.value(QString::fromLatin1(role.key)).isValid());
+        }
+        EXPECT_TRUE(paletteIds.contains(defaultId));
+        EXPECT_TRUE(paletteIds.contains(alternateId));
         auto committed = manager.appearance();
         committed.colors = overrides;
         ASSERT_TRUE(manager.applyAppearance(committed).ok());
@@ -413,44 +442,46 @@ TEST(ThemeManager, BuiltinPresetsKeepIndependentOverridesAcrossPreviewResetAndRe
         EXPECT_EQ(original->ui.colors.accent, defaultOverride);
 
         auto preview = committed;
-        preview.themeId = alternateId;
+        preview.paletteId = alternateId;
         ASSERT_TRUE(manager.previewAppearance(preview).ok());
         const auto previewed = manager.snapshot();
         EXPECT_EQ(previewed->ui.colors.accent, alternateOverride);
         EXPECT_EQ(manager.appearance(), committed);
         EXPECT_EQ(storedValues(*stored), settings);
         manager.cancelAppearancePreview();
-        EXPECT_EQ(manager.currentThemeId(), defaultId);
+        EXPECT_EQ(manager.currentThemeId(), themeId);
+        EXPECT_EQ(manager.currentPaletteId(), defaultId);
         EXPECT_EQ(manager.snapshot()->ui.colors.accent, defaultOverride);
         EXPECT_EQ(previewed->ui.colors.accent, alternateOverride);
         ASSERT_TRUE(manager.applyAppearance(preview).ok());
     }
     {
-        VNX::ThemeManager manager(root.path(),
-            std::make_unique<VNX::QSettingsStorage>(storagePath));
-        EXPECT_EQ(manager.currentThemeId(), alternateId);
+        VNX::ThemeManager manager(root.path(), std::make_unique<VNX::QSettingsStorage>(storagePath));
+        EXPECT_EQ(manager.currentThemeId(), themeId);
+        EXPECT_EQ(manager.currentPaletteId(), alternateId);
         EXPECT_EQ(manager.snapshot()->ui.colors.accent, alternateOverride);
         EXPECT_EQ(manager.appearance().colors, overrides);
-        const auto base = manager.loadBaseTheme(alternateId);
+        const auto base = manager.loadPalette(alternateId);
         ASSERT_TRUE(base.ok());
         auto reset = manager.appearance();
         reset.colors.remove(alternateId);
         ASSERT_TRUE(manager.applyAppearance(reset).ok());
         for (const auto& role : VNX::themeColorRoles()) {
             SCOPED_TRACE(role.key);
-            EXPECT_EQ(role.read(*manager.snapshot()), role.read(*base.candidate->snapshot));
+            EXPECT_EQ(role.read(*manager.snapshot()), base.palette->colors.value(QString::fromLatin1(role.key)));
         }
         EXPECT_EQ(manager.appearance().colors.value(defaultId), overrides.value(defaultId));
     }
-    VNX::ThemeManager restored(root.path(),
-        std::make_unique<VNX::QSettingsStorage>(storagePath));
-    EXPECT_EQ(restored.currentThemeId(), alternateId);
+    VNX::ThemeManager restored(root.path(), std::make_unique<VNX::QSettingsStorage>(storagePath));
+    EXPECT_EQ(restored.currentThemeId(), themeId);
+    EXPECT_EQ(restored.currentPaletteId(), alternateId);
     EXPECT_FALSE(restored.appearance().colors.contains(alternateId));
-    const auto alternateBase = restored.loadBaseTheme(alternateId);
+    const auto alternateBase = restored.loadPalette(alternateId);
     ASSERT_TRUE(alternateBase.ok());
-    EXPECT_EQ(restored.snapshot()->ui.colors.accent,
-              alternateBase.candidate->snapshot->ui.colors.accent);
-    ASSERT_TRUE(restored.selectTheme(defaultId).ok());
+    EXPECT_EQ(restored.snapshot()->ui.colors.accent, alternateBase.palette->colors.value(key));
+    auto selectDefault = restored.appearance();
+    selectDefault.paletteId = defaultId;
+    ASSERT_TRUE(restored.applyAppearance(selectDefault).ok());
     EXPECT_EQ(restored.snapshot()->ui.colors.accent, defaultOverride);
 }
 
@@ -467,16 +498,19 @@ TEST(ThemeManager, InvalidCustomizationsDoNotChangePublishedOrPersistedState)
 
     QList<VNX::ThemeAppearance> invalid;
     auto unknown = committed;
-    unknown.colors[unknown.themeId].insert(
+    unknown.colors[unknown.paletteId].insert(
         QStringLiteral("unknown.color"), QColor(QStringLiteral("#123456")));
     invalid.append(unknown);
     auto invalidColor = committed;
-    invalidColor.colors[invalidColor.themeId].insert(
+    invalidColor.colors[invalidColor.paletteId].insert(
         QStringLiteral("accent.primary"), QColor());
     invalid.append(invalidColor);
     auto missingTheme = committed;
     missingTheme.themeId = QStringLiteral("theme.missing");
     invalid.append(missingTheme);
+    auto missingPalette = committed;
+    missingPalette.paletteId = QStringLiteral("palette.missing");
+    invalid.append(missingPalette);
     auto invalidInactive = committed;
     invalidInactive.colors[QStringLiteral("theme.inactive")].insert(
         QStringLiteral("unknown.color"), QColor(QStringLiteral("#123456")));
@@ -502,7 +536,7 @@ TEST(ThemeManager, UnwritableCommitPreservesPreviewAndCommittedSettings)
     const auto committed = manager.appearance();
     const auto original = manager.snapshot();
     auto draft = committed;
-    draft.colors[draft.themeId].insert(
+    draft.colors[draft.paletteId].insert(
         QStringLiteral("accent.primary"), QColor(QStringLiteral("#ff123456")));
     ASSERT_TRUE(manager.previewAppearance(draft).ok());
     const auto preview = manager.snapshot();
@@ -529,7 +563,7 @@ TEST(ThemeManager, RejectsAppearanceChangesFromAnotherThread)
     const auto committed = manager.appearance();
     const auto original = manager.snapshot();
     auto draft = committed;
-    draft.colors[draft.themeId].insert(
+    draft.colors[draft.paletteId].insert(
         QStringLiteral("accent.primary"), QColor(QStringLiteral("#ff123456")));
     VNX::ThemeManagerOperationResult preview;
     VNX::ThemeManagerOperationResult applied;

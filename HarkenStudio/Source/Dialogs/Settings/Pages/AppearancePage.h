@@ -5,16 +5,15 @@
 
 #include <QPointer>
 
-class QColorDialog;
 class QComboBox;
 class QHideEvent;
 class QLabel;
-class QListWidget;
 class QPushButton;
 class QShowEvent;
 
 namespace VNX {
 
+class ColorEditorDialog;
 class ProportionalTreeWidget;
 class SearchField;
 struct ThemeColorRole;
@@ -39,11 +38,12 @@ protected:
 
 private:
     void selectTheme();
+    void selectColorPreset();
     void applyLanguage();
     void refreshLanguage();
     bool commitAppearance(const ThemeAppearance& appearance);
     void refreshPresets();
-    bool loadBaseTheme();
+    bool loadBasePalette();
     void refreshColors();
     void filterColors();
     void refreshSelectedColor();
@@ -58,7 +58,8 @@ private:
     void showError(const QList<ThemePackageDiagnostic>& diagnostics);
 
     ThemeManager* themeManager_ = nullptr;
-    QListWidget* themePresets_ = nullptr;
+    QComboBox* themeCombo_ = nullptr;
+    QComboBox* colorPresets_ = nullptr;
     QComboBox* languageCombo_ = nullptr;
     QComboBox* colorGroup_ = nullptr;
     SearchField* colorSearch_ = nullptr;
@@ -67,10 +68,10 @@ private:
     QLabel* errorLabel_ = nullptr;
     QPushButton* colorReset_ = nullptr;
     QPushButton* colorsReset_ = nullptr;
-    QPointer<QColorDialog> colorDialog_;
+    QPointer<ColorEditorDialog> colorDialog_;
 
-    ThemeSnapshotPtr baseTheme_;
-    QMap<QString, ThemeSnapshotPtr> presetThemes_;
+    std::optional<ColorPalette> basePalette_;
+    QMap<QString, ColorPalette> palettes_;
     ThemeAppearance appearance_;
     bool updatingAppearance_ = false;
     bool previewActive_ = false;

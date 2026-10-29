@@ -1,6 +1,7 @@
 
 #pragma once
 
+#include "ColorPalette.h"
 #include "ISettingsStorage.h"
 #include "ThemeAssetResolver.h"
 #include "ThemeColorCatalog.h"
@@ -30,7 +31,8 @@ struct ThemeManagerOperationResult
 struct ThemeAppearance
 {
     QString themeId;
-    ThemeColorCustomizations colors;
+    QString paletteId;
+    ColorPaletteCustomizations colors;
 
     bool operator==(const ThemeAppearance&) const = default;
 };
@@ -52,8 +54,10 @@ public:
 
     ThemeSnapshotPtr snapshot() const { return snapshot_; }
     QString currentThemeId() const { return currentThemeId_; }
+    QString currentPaletteId() const { return currentPaletteId_; }
     QString userThemesRoot() const { return userThemesRoot_; }
     const QList<ThemePackageDescriptor>& availableThemes() const { return themes_; }
+    QList<ColorPaletteDescriptor> availablePalettes() const;
     const QList<ThemePackageDiagnostic>& lastDiagnostics() const
     {
         return lastDiagnostics_;
@@ -83,8 +87,9 @@ public:
     ThemePackageDiscoveryResult refreshThemes();
     ThemeManagerOperationResult selectTheme(const QString& themeId);
     ThemeManagerOperationResult reloadTheme();
-    ThemeAppearance appearance() const { return {currentThemeId_, customizations_}; }
+    ThemeAppearance appearance() const { return {currentThemeId_, currentPaletteId_, customizations_}; }
     ThemePackageLoadResult loadBaseTheme(const QString& themeId) const;
+    ColorPaletteLoadResult loadPalette(const QString& paletteId) const;
     ThemeManagerOperationResult previewAppearance(const ThemeAppearance& appearance);
     ThemeManagerOperationResult applyAppearance(const ThemeAppearance& appearance);
     void cancelAppearancePreview();
@@ -123,9 +128,6 @@ signals:
 private:
     explicit ThemeManager(QObject* parent = nullptr);
 
-    ThemeManagerOperationResult loadAndPublish(const QString& themeId,
-                                               bool persistSelection,
-                                               bool allowCurrentTheme);
     void publishCandidate(const ThemePackageCandidate& candidate, bool notify);
     ThemeManagerOperationResult updateAppearance(const ThemeAppearance& appearance,
                                                   bool persist);
@@ -143,9 +145,11 @@ private:
     ThemeAssetResolver assetResolver_;
     ThemeSnapshotPtr snapshot_;
     QString currentThemeId_;
-    ThemeColorCustomizations customizations_;
+    QString currentPaletteId_;
+    ColorPaletteCustomizations customizations_;
     ThemePackageCandidate committedCandidate_;
     std::optional<ThemePackageCandidate> previewBaseCandidate_;
+    std::optional<ColorPalette> previewBasePalette_;
     bool previewActive_ = false;
     QList<ThemePackageDescriptor> themes_;
     QList<ThemePackageDiagnostic> lastDiagnostics_;

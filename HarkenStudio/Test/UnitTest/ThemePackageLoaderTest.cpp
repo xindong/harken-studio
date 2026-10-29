@@ -1,3 +1,4 @@
+#include "Core/ColorPalette.h"
 #include "Core/ThemeColorCatalog.h"
 #include "Core/ThemePackageLoader.h"
 
@@ -69,14 +70,14 @@ bool writeColorPackage(const QString& themesRoot,
 
 }
 
-TEST(ThemePackageLoader, BuiltinPresetsLoadWithoutExternalPackages)
+TEST(ThemePackageLoader, BuiltinThemeLoadsWithoutExternalPackages)
 {
     QTemporaryDir root;
     ASSERT_TRUE(root.isValid());
     const QString missingRoot = QDir(root.path()).filePath(QStringLiteral("missing"));
     const auto discovered = VNX::discoverThemePackages(missingRoot);
     ASSERT_TRUE(discovered.diagnostics.isEmpty());
-    ASSERT_FALSE(discovered.themes.isEmpty());
+    ASSERT_EQ(discovered.themes.size(), 1);
     QSet<QString> ids;
     for (const auto& preset : discovered.themes) {
         SCOPED_TRACE(preset.id.toStdString());
@@ -99,7 +100,7 @@ TEST(ThemePackageLoader, BuiltinPresetsLoadWithoutExternalPackages)
     EXPECT_FALSE(QDir(missingRoot).exists());
 }
 
-TEST(ThemePackageLoader, BuiltinPresetIdsCannotBeReplacedByExternalPackages)
+TEST(ThemePackageLoader, BuiltinThemeIdentityCannotBeReplacedByExternalPackages)
 {
     QTemporaryDir root;
     ASSERT_TRUE(root.isValid());
@@ -133,36 +134,16 @@ TEST(ThemePackageLoader, BuiltinPresetIdsCannotBeReplacedByExternalPackages)
     }
 }
 
-TEST(ThemePackageLoader, ExternalPackagesCanInheritAlternateBuiltinPresets)
+TEST(ThemePackageLoader, ColorPalettesCannotReplaceThemeInheritance)
 {
     QTemporaryDir root;
     ASSERT_TRUE(root.isValid());
-    const auto builtins = VNX::discoverThemePackages(root.path());
-    bool inheritedAlternate = false;
-    const QColor accent(QStringLiteral("#80123456"));
-    for (const auto& preset : builtins.themes) {
-        if (!preset.builtin || preset.id == VNX::builtinThemeId())
-            continue;
-        SCOPED_TRACE(preset.id.toStdString());
-        inheritedAlternate = true;
-        const QString childId = QStringLiteral("theme.child");
-        ASSERT_TRUE(writeColorPackage(root.path(), childId, preset.id, {
-            {QStringLiteral("accent.primary"), accent.name(QColor::HexArgb)}}));
-        const auto base = VNX::loadThemePackageCandidate(root.path(), preset.id);
-        const auto child = VNX::loadThemePackageCandidate(root.path(), childId);
-        ASSERT_TRUE(base.ok());
-        ASSERT_TRUE(child.ok());
-        EXPECT_EQ(child.candidate->inheritanceOrder, (QStringList{preset.id, childId}));
-        for (const auto& role : VNX::themeColorRoles()) {
-            SCOPED_TRACE(role.key);
-            EXPECT_EQ(role.read(*child.candidate->snapshot),
-                      QLatin1String(role.key) == QLatin1String("accent.primary")
-                          ? accent : role.read(*base.candidate->snapshot));
-        }
-        EXPECT_EQ(child.candidate->snapshot->qtPalette.highlight, accent);
-        EXPECT_EQ(child.candidate->snapshot->domains.curve.colors.handleActiveFill, accent);
-    }
-    EXPECT_TRUE(inheritedAlternate);
+    const QString paletteId = VNX::builtinAmberPaletteId();
+    const QString childId = QStringLiteral("theme.child");
+    EXPECT_FALSE(VNX::loadThemePackageCandidate(root.path(), paletteId).ok());
+    ASSERT_TRUE(writeColorPackage(root.path(), childId, paletteId, {
+        {QStringLiteral("accent.primary"), QStringLiteral("#80123456")}}));
+    EXPECT_FALSE(VNX::loadThemePackageCandidate(root.path(), childId).ok());
 }
 
 TEST(ThemePackageLoader, ResolvesSharedColorsAfterInheritanceWithoutMutatingSnapshots)
