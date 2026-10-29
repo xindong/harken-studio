@@ -1,16 +1,8 @@
 // Shared insert-effect chain processing: one occupied chain slot rendered in
 // place over planar channel data, with the one-block bypass crossfade. This is
 // the single definition of the slot-level click-free crossfade discipline, so
-// every chain host (bus chains here; the voice cascade keeps its own equivalent
-// inline copy today) applies the same wet/dry blend. The effect protocol
+// voice and bus chains apply the same wet/dry blend. The effect protocol
 // (InsertEffect) is context-free, so this helper knows nothing about its host.
-//
-// Cross-reference: the voice cascade (VoiceCascade.cpp) intentionally keeps a
-// byte-identical inline copy of this per-slot blend rather than calling here,
-// so its frozen render path stays undisturbed. The two must stay in lockstep: a
-// future editor changing the crossfade discipline updates both, or migrates the
-// voice cascade onto this helper deliberately (with the voice suite as the
-// bit-identity gate).
 #ifndef HARKEN_RENDER_EFFECT_CHAIN_H
 #define HARKEN_RENDER_EFFECT_CHAIN_H
 
