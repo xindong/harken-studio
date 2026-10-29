@@ -1421,9 +1421,14 @@ QWidget#embeddedEditorTitleBar QLabel { background: transparent; color: @textSec
    Settings dialog semantic roles
    ========================================================================== */
 
+QWidget#settingsSearchBar {
+    border-bottom: 1px solid @borderPrimary@;
+}
+
 #settingsCategoryList {
     background-color: @bgSecondary@;
     border: none;
+    border-right: 1px solid @borderPrimary@;
     outline: none;
 }
 

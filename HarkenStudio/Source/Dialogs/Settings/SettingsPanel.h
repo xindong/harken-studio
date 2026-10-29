@@ -8,7 +8,11 @@
 #include <QStackedWidget>
 #include <QString>
 
+class QLabel;
+
 namespace VNX {
+
+class SearchField;
 
 class SettingsPanel : public QWidget
 {
@@ -27,9 +31,12 @@ protected:
 
 private:
     void onCategoryChanged(int index);
+    void applySearchFilter(const QString& text);
 
+    SearchField* searchField_ = nullptr;
     QListWidget* categoryList_ = nullptr;
     QStackedWidget* contentStack_ = nullptr;
+    QLabel* emptyState_ = nullptr;
     QList<SettingsPage*> pages_;
 };
 
