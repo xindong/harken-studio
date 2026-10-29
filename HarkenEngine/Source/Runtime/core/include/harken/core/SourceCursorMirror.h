@@ -1,6 +1,7 @@
 // Source-timeline mirror: the audio thread publishes, once per block, each
 // configured voice slot's render generation, source cursor, and remaining loop
-// passes so the logic thread has coherent authority for audibility parking.
+// passes and consumed resident-source progress. Logic uses the same coherent
+// publication for audibility parking and source-timed controls.
 // One row per configured voice slot — deliberately NOT the public snapshot's
 // voices[] array
 // (capped at 64) — because parking must work at any pool size.
@@ -13,6 +14,8 @@
 // touch no heap, take no locks, and never wait.
 #ifndef HARKEN_CORE_SOURCE_CURSOR_MIRROR_H
 #define HARKEN_CORE_SOURCE_CURSOR_MIRROR_H
+
+#include "harken/core/ResamplerAdvance.h"
 
 #include <atomic>
 #include <cstdint>
@@ -29,9 +32,18 @@ public:
         std::uint32_t renderGeneration = 0;     // generation occupying this slot
         std::uint32_t loopPassesRemaining = 0;  // 0 for infinite or inactive
         bool active = false;                    // rendered in this slot this block
+        bool exactTimingValid = false;
+        bool awaitingStart = false;
+        ResamplerAdvanceState progress{};
     };
     static_assert(std::is_trivially_copyable_v<Row>,
                   "cursor rows must remain plain copyable payload");
+
+    struct Publication {
+        std::uint64_t blockIndex = 0;
+        std::uint64_t outputFrame = 0;
+        std::uint64_t consumedCommands = 0;
+    };
 
     // slotCount = configured voice-pool size (maxVoices). All three slots hold
     // that many rows, allocated once here.
@@ -56,9 +68,10 @@ public:
     }
 
     // Publishes the filled half stamped with the block index it describes.
-    void EndWrite(std::uint64_t blockIndex) {
+    void EndWrite(std::uint64_t blockIndex, std::uint64_t outputFrame = 0,
+                  std::uint64_t consumedCommands = 0) {
         Slot& slot = m_slots[m_writeIndex];
-        slot.blockIndex = blockIndex;
+        slot.publication = {blockIndex, outputFrame, consumedCommands};
         m_published.store(m_writeIndex, std::memory_order_seq_cst);
         m_lastPublished = m_writeIndex;
     }
@@ -66,6 +79,20 @@ public:
     // Reader side (logic thread). The confirmed pin protects the rows and block
     // index as one publication. On collision, both caller outputs stay intact.
     bool Capture(Row* out, std::uint64_t* outBlockIndex) const {
+        Publication publication{};
+        if (!CaptureRange(0, m_slotCount, out, &publication)) return false;
+        *outBlockIndex = publication.blockIndex;
+        return true;
+    }
+
+    bool CaptureRow(std::uint32_t index, Row* out, Publication* publication) const {
+        return index < m_slotCount && out != nullptr && publication != nullptr &&
+            CaptureRange(index, 1, out, publication);
+    }
+
+private:
+    bool CaptureRange(std::uint32_t first, std::uint32_t count,
+                      Row* out, Publication* publication) const {
         for (int attempt = 0; attempt < kCaptureAttempts; ++attempt) {
             const std::uint32_t candidate =
                 m_published.load(std::memory_order_seq_cst);
@@ -75,12 +102,12 @@ public:
                 continue;
             }
             const Slot& slot = m_slots[candidate];
-            for (std::uint32_t i = 0; i < m_slotCount; ++i) {
-                out[i] = slot.rows[i];
+            for (std::uint32_t i = 0; i < count; ++i) {
+                out[i] = slot.rows[first + i];
             }
-            const std::uint64_t blockIndex = slot.blockIndex;
+            const Publication captured = slot.publication;
             m_pin.store(kNoPin, std::memory_order_release);
-            *outBlockIndex = blockIndex;
+            *publication = captured;
             return true;
         }
         m_pin.store(kNoPin, std::memory_order_release);
@@ -100,7 +127,7 @@ private:
 
     struct Slot {
         std::vector<Row> rows;
-        std::uint64_t blockIndex = 0;
+        Publication publication{};
     };
 
     std::uint32_t m_slotCount;
