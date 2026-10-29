@@ -828,6 +828,9 @@ public:
     // This is physical disposal, not Core/Frontier/command-body retirement.
     OriginalVoiceDisposal TryDisposeOriginalTimelineVoice(
         const OriginalVoiceOwner& owner) noexcept;
+    // Logic-side withdrawal uses the same slot arbitration and recycles locally.
+    OriginalVoiceDisposal TryDisposeOriginalTimelineVoiceFromLogic(
+        const OriginalVoiceOwner& owner) noexcept;
     bool OriginalVoiceReleased(const OriginalVoiceOwner& owner) const noexcept;
     bool CancelOriginalPreparedVoice(const OriginalVoiceOwner& owner) noexcept;
     bool MatchesOriginalPreparedVoice(const OriginalVoiceOwner& original,
@@ -871,7 +874,9 @@ public:
         return m_invalidVolumeApplies;
     }
     std::uint64_t NoVoiceCount() const { return m_noVoiceRefusals; }
-    std::uint64_t CompletedCount() const { return m_completed; }
+    std::uint64_t CompletedCount() const {
+        return m_completed.load(std::memory_order_relaxed);
+    }
     std::uint32_t HighWaterVoices() const { return m_highWater; }
     // STARVED notifications emitted (cooldown-aligned, not per starved block).
     // Audio-thread-owned; published to the logic side via the snapshot.
@@ -1133,7 +1138,12 @@ private:
     void ReleaseStreamParkToken(StreamParkTokenRef ref,
                                 StreamParkTokenState expected);
     void ResetStreamParkCaptureBudget();
-    void ReleaseSlot(Slot& slot);
+    enum class ReleaseThread : std::uint8_t { Logic, Audio };
+    bool CancelTimelineBindingImpl(std::uint32_t renderSlot,
+        std::uint32_t renderGeneration, ReleaseThread thread) noexcept;
+    OriginalVoiceDisposal TryDisposeOriginalTimelineVoiceImpl(
+        const OriginalVoiceOwner& owner, ReleaseThread thread) noexcept;
+    void ReleaseSlot(Slot& slot, ReleaseThread thread);
     void PublishSourceTerminal(Slot& slot, std::uint64_t blockIndex) noexcept;
     void PublishPlaybackEnd(Slot& slot, std::uint64_t blockIndex) noexcept;
     bool StageCompletionProgress(Slot& slot,
@@ -1218,7 +1228,7 @@ private:
     std::uint64_t m_staleHandleHits = 0;
     std::uint64_t m_invalidVolumeApplies = 0;
     std::uint64_t m_noVoiceRefusals = 0;
-    std::uint64_t m_completed = 0;
+    std::atomic<std::uint64_t> m_completed{0};
     std::uint64_t m_voiceStarved = 0; // audio-thread-owned notification count
     std::uint32_t m_highWater = 0;
     static constexpr std::uint32_t kStreamParkCaptureBudgetBytes =

@@ -1218,6 +1218,11 @@ void VoicePool::ApplyProvenLaneTimelineReservation(
 
 bool VoicePool::CancelTimelineBinding(
     std::uint32_t renderSlot, std::uint32_t renderGeneration) noexcept {
+    return CancelTimelineBindingImpl(renderSlot, renderGeneration, ReleaseThread::Logic);
+}
+
+bool VoicePool::CancelTimelineBindingImpl(std::uint32_t renderSlot,
+    std::uint32_t renderGeneration, ReleaseThread thread) noexcept {
     if (renderSlot >= m_slots.size()) {
         return false;
     }
@@ -1236,7 +1241,7 @@ bool VoicePool::CancelTimelineBinding(
             slot.state.store(SlotState::Claimed, std::memory_order_release);
             return false;
         }
-        ReleaseSlot(slot);
+        ReleaseSlot(slot, thread);
         return true;
     }
     if (state == SlotState::Rendering) {
@@ -1250,7 +1255,7 @@ bool VoicePool::CancelTimelineBinding(
             slot.state.store(SlotState::Rendering, std::memory_order_release);
             return false;
         }
-        ReleaseSlot(slot);
+        ReleaseSlot(slot, thread);
         return true;
     }
     return state == SlotState::Free;
@@ -1267,11 +1272,11 @@ bool VoicePool::CancelTimelineBindingFromAudio(
         auto expected = SlotState::TimelineCallbackHeld;
         if (!slot.state.compare_exchange_strong(expected, SlotState::ReleaseHeld,
             std::memory_order_acq_rel, std::memory_order_acquire)) return false;
-        ReleaseSlot(slot);
+        ReleaseSlot(slot, ReleaseThread::Audio);
         return true;
     }
     if (slot.state.load(std::memory_order_acquire) != SlotState::OriginalCallbackHeld)
-        return CancelTimelineBinding(renderSlot, renderGeneration);
+        return CancelTimelineBindingImpl(renderSlot, renderGeneration, ReleaseThread::Audio);
     // This native callback owns the installed body and its pre-existing actor.
     // Logic callers retain the generic refusal; no callback loan returns here.
     const auto& lease = m_originalCallbackStorage[renderSlot];
@@ -1291,7 +1296,7 @@ bool VoicePool::CancelTimelineBindingFromAudio(
     auto expected = SlotState::OriginalCallbackHeld;
     if (!slot.state.compare_exchange_strong(expected, SlotState::ReleaseHeld,
         std::memory_order_acq_rel, std::memory_order_acquire)) return false;
-    ReleaseSlot(slot);
+    ReleaseSlot(slot, ReleaseThread::Audio);
     return true;
 }
 
@@ -1743,7 +1748,7 @@ void VoicePool::SourceCommandInstallProof::Release() noexcept {
         slot_->state.load(std::memory_order_acquire) == SlotState::CommandInstallHeld);
     // Only an untouched pre-Pop proof may roll back. An interrupted installed
     // source is physically disposed by this actual exclusive owner.
-    if (begun_) pool_->ReleaseSlot(*slot_);
+    if (begun_) pool_->ReleaseSlot(*slot_, ReleaseThread::Audio);
     else slot_->state.store(SlotState::Claimed, std::memory_order_release);
     slot_ = nullptr;
     pool_ = nullptr;
@@ -1865,7 +1870,7 @@ bool VoicePool::AbortClaimedVoice(VnVoiceHandle handle) noexcept {
         slot->state.store(SlotState::Claimed, std::memory_order_release);
         return false;
     }
-    ReleaseSlot(*slot);
+    ReleaseSlot(*slot, ReleaseThread::Logic);
     return true;
 }
 
@@ -2491,6 +2496,16 @@ bool VoicePool::IssueOriginalVoiceOwner(const PreparedCommitProof& preparation,
 
 VoicePool::OriginalVoiceDisposal VoicePool::TryDisposeOriginalTimelineVoice(
     const OriginalVoiceOwner& owner) noexcept {
+    return TryDisposeOriginalTimelineVoiceImpl(owner, ReleaseThread::Audio);
+}
+
+VoicePool::OriginalVoiceDisposal VoicePool::TryDisposeOriginalTimelineVoiceFromLogic(
+    const OriginalVoiceOwner& owner) noexcept {
+    return TryDisposeOriginalTimelineVoiceImpl(owner, ReleaseThread::Logic);
+}
+
+VoicePool::OriginalVoiceDisposal VoicePool::TryDisposeOriginalTimelineVoiceImpl(
+    const OriginalVoiceOwner& owner, ReleaseThread thread) noexcept {
     using Result = OriginalVoiceDisposal;
     const auto index = static_cast<std::uint32_t>(owner.handle_);
     if (owner.pool_ != this || !owner.Valid() || owner.releaseTarget_ == 0 ||
@@ -2514,7 +2529,7 @@ VoicePool::OriginalVoiceDisposal VoicePool::TryDisposeOriginalTimelineVoice(
         slot.state.store(state, std::memory_order_release);
         return released >= owner.releaseTarget_ ? Result::AlreadyReleased : Result::Refused;
     }
-    ReleaseSlot(slot);
+    ReleaseSlot(slot, thread);
     return Result::Released;
 }
 
@@ -2792,6 +2807,9 @@ VnResult VoicePool::CanApplySeek(
         return VN_STALE_HANDLE;
     }
     const VoiceRenderContext& render = slot->render;
+    if (render.phase != SourcePhase::Active) {
+        return VN_STALE_HANDLE;
+    }
     if (render.completionProgress != nullptr) {
         return VN_CAPABILITY_UNAVAILABLE;
     }
@@ -2920,6 +2938,24 @@ void VoicePool::CommitSeek(
         return;
     }
     assert(render.streamRing == nullptr);
+
+    // Reset discards prefetched wraps. Preserve the passes still owed at the
+    // consumed position, using the same source-time mapping as relative Seek.
+    const std::uint64_t localSourceFrame = render.resampler.SourceFrame();
+    const std::uint64_t audibleAdvance = localSourceFrame > kResampleHistoryPad
+        ? localSourceFrame - kResampleHistoryPad : 0;
+    std::uint64_t audibleSourceFrame = 0;
+    std::uint32_t audibleLoopsRemaining = 0;
+    MapLoopedSourceFrame(render.sourceActivationStartFrame,
+        render.sourceActivationLoopsRemaining, audibleAdvance,
+        render.pcm.frames, render.loopStartFrame, render.loopEndFrame,
+        &audibleSourceFrame, &audibleLoopsRemaining);
+    if (audibleLoopsRemaining > render.loopPassesRemaining) {
+        const auto discardedPasses = audibleLoopsRemaining - render.loopPassesRemaining;
+        assert(render.completedLoopPasses >= discardedPasses);
+        render.completedLoopPasses -= discardedPasses;
+    }
+    render.loopPassesRemaining = audibleLoopsRemaining;
 
     const double currentRatio = render.resampler.CurrentRatio();
     const double targetRatio = render.resampler.TargetRatio();
@@ -3056,7 +3092,7 @@ void VoicePool::ApplyStop(VnVoiceHandle handle, std::uint32_t fadeMs,
                 (void)m_timelineArms->Tombstone(token, blockIndex);
             }
         }
-        ReleaseSlot(*slot);
+        ReleaseSlot(*slot, ReleaseThread::Audio);
         notifications.Push(
             MakeVoiceNotification(VN_NOTIFY_VOICE_ENDED, handle, blockIndex));
         return;
@@ -4473,7 +4509,7 @@ void VoicePool::QuarantineSlot(std::uint32_t slotIndex, Slot& slot,
     }
     slot.generation.store(next, std::memory_order_relaxed);
     slot.state.store(SlotState::Quarantined, std::memory_order_release);
-    ++m_completed;
+    m_completed.fetch_add(1, std::memory_order_relaxed);
     // The host is told the voice ended, because from its side it did. Counting
     // it as completed keeps that count and the notification stream agreeing.
     notifications.Push(MakeVoiceNotification(VN_NOTIFY_VOICE_ENDED, handle,
@@ -4606,7 +4642,7 @@ void VoicePool::HandleVoiceLifecycle(std::uint32_t slotIndex, Slot& slot,
         const VnVoiceHandle handle = MakeHandle(
             slotIndex, slot.generation.load(std::memory_order_relaxed));
         NoteMonitorVoiceRetired(slot.render.dynamicSourceIdentity);
-        ReleaseSlot(slot);
+        ReleaseSlot(slot, ReleaseThread::Audio);
         notifications.Push(MakeVoiceNotification(
             fadedOut ? VN_NOTIFY_VOICE_STOPPED_BY_FADE : VN_NOTIFY_VOICE_ENDED,
             handle, blockIndex));
@@ -4734,7 +4770,7 @@ void VoicePool::FinishStreamPark(std::uint32_t slotIndex, Slot* slot,
         }
         m_dynamicRoutes.InvalidateVoiceTap(
             slot->render.dynamicSourceIdentity);
-        ReleaseSlot(*slot);
+        ReleaseSlot(*slot, ReleaseThread::Audio);
     }
     if (mailbox.outcome.token.IsValid()) {
         StreamParkTokenSlot* token = ResolveStreamParkToken(
@@ -4991,7 +5027,7 @@ void VoicePool::NoteMonitorVoiceRetired(VnVoiceHandle publicHandle) noexcept {
         VN_MONITOR_TAP_VOICE_POST_CHAIN, publicHandle, publicGeneration);
 }
 
-void VoicePool::ReleaseSlot(Slot& slot) {
+void VoicePool::ReleaseSlot(Slot& slot, ReleaseThread thread) {
     ClearFirstOutput(slot);
     const bool nativeFinished = FinishNativeVariableStart(slot, false);
     assert(nativeFinished);
@@ -5030,7 +5066,13 @@ void VoicePool::ReleaseSlot(Slot& slot) {
     // empty here, so only live installs are retired.
     for (std::uint32_t s = 0; s < slot.render.fxSlotCount; ++s) {
         if (slot.render.fxSlotEffectRef[s].type != kEffectTypeNone) {
-            m_effectBank.RetireQueue().TryPush(slot.render.fxSlotEffectRef[s]);
+            if (thread == ReleaseThread::Audio) {
+                m_effectBank.RetireQueue().TryPush(slot.render.fxSlotEffectRef[s]);
+            } else {
+                // ReleaseHeld excludes readers of this slot. Logic must not
+                // become a second producer of the audio retirement ring.
+                m_effectBank.Recycle(slot.render.fxSlotEffectRef[s]);
+            }
             slot.render.fxSlotEffectRef[s] = EffectInstanceRef{};
         }
     }
@@ -5051,7 +5093,7 @@ void VoicePool::ReleaseSlot(Slot& slot) {
     slot.generation.store(next, std::memory_order_relaxed);
     CompleteOriginalSourceBodyDisposition(slot);
     slot.state.store(SlotState::Free, std::memory_order_release);
-    ++m_completed;
+    m_completed.fetch_add(1, std::memory_order_relaxed);
 }
 
 } // namespace harken

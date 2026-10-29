@@ -927,7 +927,7 @@ const PackEntry* PackTable::FindEntryBySound(
             // still the pack's own: after the caller re-registers the id
             // with other content, pack loop facts would be lies about it.
             if (registry.CookieOf(soundId) != entry.registrationCookie) {
-                return nullptr;
+                continue;
             }
             return &entry;
         }
