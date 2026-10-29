@@ -272,7 +272,8 @@ QString ProjectInstance::identityForProject(const QString& projectFile)
     return canonical;
 }
 
-ProjectInstance::Acquisition ProjectInstance::acquire(const QString& projectFile)
+ProjectInstance::Acquisition ProjectInstance::acquire(const QString& projectFile,
+                                                     ActivationPolicy activation)
 {
     if (!QCoreApplication::instance() ||
         QThread::currentThread() != QCoreApplication::instance()->thread())
@@ -303,13 +304,15 @@ ProjectInstance::Acquisition ProjectInstance::acquire(const QString& projectFile
         const DWORD state = WaitForSingleObject(instance->native_->mutex, 0);
         if (state == WAIT_OBJECT_0 || state == WAIT_ABANDONED) {
             instance->native_->ownsMutex = true;
-            if (!instance->native_->listen(name, instance.get()))
+            if (activation == ActivationPolicy::Allow && !instance->native_->listen(name, instance.get()))
                 return {Status::Failed, {}, QStringLiteral("Could not start the project activation channel.")};
             registry.insert(identity, instance);
             return {Status::Acquired, instance, {}};
         }
         if (state == WAIT_FAILED)
             return {Status::Failed, {}, QStringLiteral("Could not inspect the project activation guard.")};
+        if (activation == ActivationPolicy::Deny)
+            return {Status::Failed, {}, QStringLiteral("The project is in use by another process.")};
         if (forwardActivation(name, deadline))
             return {Status::Forwarded, {}, {}};
         if (!deadline.hasExpired())
@@ -325,6 +328,11 @@ ProjectInstance::Acquisition ProjectInstance::acquire(const QString& projectFile
         instance->native_->port = CFMessagePortCreateLocal(
             kCFAllocatorDefault, portName, NativeData::receive, &context, nullptr);
         if (instance->native_->port) {
+            if (activation == ActivationPolicy::Deny) {
+                CFRelease(portName);
+                registry.insert(identity, instance);
+                return {Status::Acquired, instance, {}};
+            }
             instance->native_->source = CFMessagePortCreateRunLoopSource(
                 kCFAllocatorDefault, instance->native_->port, 0);
             if (!instance->native_->source) {
@@ -336,6 +344,10 @@ ProjectInstance::Acquisition ProjectInstance::acquire(const QString& projectFile
             CFRelease(portName);
             registry.insert(identity, instance);
             return {Status::Acquired, instance, {}};
+        }
+        if (activation == ActivationPolicy::Deny) {
+            CFRelease(portName);
+            return {Status::Failed, {}, QStringLiteral("The project is in use by another process.")};
         }
         if (CFMessagePortRef remote = CFMessagePortCreateRemote(kCFAllocatorDefault, portName)) {
             CFDataRef reply = nullptr;

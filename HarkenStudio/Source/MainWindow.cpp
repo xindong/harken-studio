@@ -21,6 +21,7 @@
 #include "Core/ShortcutManager.h"
 #include "Core/UndoCommands.h"
 #include "Core/ProjectPackExporter.h"
+#include "Core/ProjectPackBuildService.h"
 #include "Core/PackArtifactCache.h"
 #include "Core/PackGenerationRecord.h"
 #include "Core/ProjectPlatformActivity.h"
@@ -4530,16 +4531,12 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
         struct ExportGate {
             ~ExportGate() { ProjectPackExporter::endBackgroundExport(); }
         } gate;
-        bool canceled = false;
         int failedCount = 0;
         int builtCount = 0;
         int skippedCount = 0;
         int omittedCount = 0;
         int warningCount = 0;
         int removedCount = 0;
-        QStringList succeededPlatforms;
-        QVector<PackArtifactMetadata> publishedArtifacts;
-        ProjectPackExporter exporter;
         ProjectPackExporter::ExportOptions opts;
         opts.snapshot = snapshot;
         opts.selection = exportSelection;
@@ -4556,47 +4553,26 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
                     store->updateProgress(runId, progress);
             }, Qt::QueuedConnection);
         };
-        QString writeAccessError;
-        QString writeAccessSummary;
-        if (!ProjectPackExporter::ValidatePackBuildWriteAccess(
-                snapshot->project, baseDir, genPlatforms, opts, &writeAccessError, &writeAccessSummary)) {
-            QMetaObject::invokeMethod(store,
-                [window, store, projectLease, runId, cancel, writeAccessError, writeAccessSummary,
-                 platformActivity, outputLock] {
-                if (!store->isCurrentRun(runId)) return;
-                const bool canceled = cancel->load(std::memory_order_relaxed);
-                store->finishProgress(runId, canceled);
-                if (!window || ProjectManager::instance().currentProject() != projectLease.get()) return;
-                if (canceled) {
-                    LogPanel::logWarning(LogCategory::Pack, tr("Pack export canceled"));
-                } else {
-                    LogPanel::logError(LogCategory::Pack, writeAccessError);
-                    QMessageBox::warning(window, tr("Export Readiness"),
-                        tr("%1\n\nSee the Log panel for affected paths and details.").arg(writeAccessSummary));
-                }
+        ProjectPackBuildService::Request buildRequest;
+        buildRequest.outputRoot = baseDir;
+        buildRequest.platforms = genPlatforms;
+        buildRequest.options = opts;
+        buildRequest.outputLock = outputLock;
+        buildRequest.finalizationCancelCheck = [cancel, platformChanged] {
+            return cancel->load(std::memory_order_relaxed) || platformChanged->load(std::memory_order_relaxed);
+        };
+        buildRequest.preflightFinished = [store, runId] {
+            QMetaObject::invokeMethod(store, [store, runId] {
+                store->finishPreflight(runId);
             }, Qt::QueuedConnection);
-            return;
-        }
-        QMetaObject::invokeMethod(store, [store, runId] {
-            store->finishPreflight(runId);
-        }, Qt::QueuedConnection);
-        opts.selfCleaning = false;
-        for (const QString& platform : genPlatforms) {
-            if (cancel->load(std::memory_order_relaxed)) {
-                canceled = true;
-                break;
-            }
-            const auto& definition = *ProjectPlatformSemantics::find(
-                snapshot->project.platforms, QUuid(platform));
-            const QString platformDir = ProjectPackExporter::platformOutputDir(baseDir, definition);
-            opts.platform = platform;
-            std::vector<ProjectPackExporter::PackBuildRecord> records;
-            const auto result = exporter.ExportAllPacks(snapshot->project, platformDir, opts, &records);
-            if (result.success) {
-                succeededPlatforms.append(platform);
-                publishedArtifacts.append(result.artifacts);
-                removedCount += result.removedPackCount;
-            }
+        };
+        buildRequest.platformFinished = [&](const ProjectPackBuildService::PlatformResult& completed) {
+            const auto& platform = completed.platform;
+            const auto& definition = completed.definition;
+            const auto& platformDir = completed.outputDir;
+            const auto& records = completed.records;
+            const auto& result = completed.result;
+            if (result.success) removedCount += result.removedPackCount;
             for (const auto& rec : records) {
                 if (rec.omitted)
                     ++omittedCount;
@@ -4649,41 +4625,53 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
                             .arg(result.builtPackCount + result.skippedPackCount)
                             .arg(QDir::toNativeSeparators(platformDir)));
             }, Qt::QueuedConnection);
-            canceled = result.canceled || cancel->load(std::memory_order_relaxed);
-            if (canceled) break;
+        };
+        const auto build = ProjectPackBuildService::run(buildRequest);
+        if (!build.preflightSucceeded) {
+            const QString writeAccessError = build.preflightError;
+            const QString writeAccessSummary = build.preflightSummary;
+            QMetaObject::invokeMethod(store,
+                [window, store, projectLease, runId, cancel, writeAccessError, writeAccessSummary,
+                 platformActivity, outputLock] {
+                if (!store->isCurrentRun(runId)) return;
+                const bool canceled = cancel->load(std::memory_order_relaxed);
+                store->finishProgress(runId, canceled);
+                if (!window || ProjectManager::instance().currentProject() != projectLease.get()) return;
+                if (canceled) {
+                    LogPanel::logWarning(LogCategory::Pack, tr("Pack export canceled"));
+                } else {
+                    LogPanel::logError(LogCategory::Pack, writeAccessError);
+                    QMessageBox::warning(window, tr("Export Readiness"),
+                        tr("%1\n\nSee the Log panel for affected paths and details.").arg(writeAccessSummary));
+                }
+            }, Qt::QueuedConnection);
+            return;
         }
-        canceled = canceled || cancel->load(std::memory_order_relaxed);
+        const bool canceled = build.canceled;
+        const auto& succeededPlatforms = build.succeededPlatforms;
         QString publicationError;
         QStringList publicationWarnings;
         bool cleanedOutput = false;
-        const auto publicationCanceled = [cancel, platformChanged] {
-            return cancel->load(std::memory_order_relaxed) || platformChanged->load(std::memory_order_relaxed);
-        };
-        if (!canceled) {
-            if (succeededPlatforms.size() == genPlatforms.size()) {
-                const bool cleanOutput = selfCleaning && packPaths.isEmpty();
-                const auto publication = ProjectPackExporter::FinalizePackExport(
-                    baseDir, snapshot->project, genPlatforms, cleanOutput, publishedArtifacts, publicationCanceled);
-                publicationWarnings = publication.warnings;
-                warningCount += publicationWarnings.size();
-                canceled = publication.canceled && cancel->load(std::memory_order_relaxed);
-                if (publication.success) {
-                    removedCount += publication.removedPackCount;
-                    cleanedOutput = cleanOutput;
-                } else if (!canceled) {
-                    ++failedCount;
-                    publicationError = publication.canceled
-                        ? tr("Pack platforms changed during the build; output finalization stopped") : publication.error;
-                }
-            } else if (!ProjectPackExporter::FinalizePackOutputs(baseDir, snapshot->project.platforms,
-                           genPlatforms, succeededPlatforms, &publicationError, publishedArtifacts, publicationCanceled)) {
-                canceled = cancel->load(std::memory_order_relaxed);
-                if (canceled) publicationError.clear();
-                else {
-                    ++failedCount;
-                    if (platformChanged->load(std::memory_order_relaxed))
-                        publicationError = tr("Pack platforms changed during the build; output finalization stopped");
-                }
+        if (build.finalization == ProjectPackBuildService::Finalization::Complete) {
+            const auto& publication = build.finalizationResult;
+            publicationWarnings = publication.warnings;
+            warningCount += publicationWarnings.size();
+            if (publication.success) {
+                removedCount += publication.removedPackCount;
+                cleanedOutput = selfCleaning && packPaths.isEmpty();
+            } else if (!canceled) {
+                ++failedCount;
+                publicationError = publication.canceled
+                    ? tr("Pack platforms changed during the build; output finalization stopped") : publication.error;
+            }
+        } else if (build.finalization == ProjectPackBuildService::Finalization::Partial
+                   && !build.finalizationResult.success) {
+            publicationError = build.finalizationResult.error;
+            if (canceled) publicationError.clear();
+            else {
+                ++failedCount;
+                if (platformChanged->load(std::memory_order_relaxed))
+                    publicationError = tr("Pack platforms changed during the build; output finalization stopped");
             }
         }
         QMetaObject::invokeMethod(store,

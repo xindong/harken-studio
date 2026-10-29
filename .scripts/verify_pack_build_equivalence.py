@@ -21,6 +21,10 @@ REGRESSIONS = ":".join((
     "AudioFormatDecodeTest.*",
     "AuthoredPackLifecycle.ExportIsDeterministic",
     "ExportedPackReadOnlyLifecycle.*",
+    "ProjectInstanceTest.*",
+    "ProjectUpgradeManager.*",
+    "ProjectTransaction.*",
+    "PackGenerationRecord.*",
 ))
 
 
@@ -131,6 +135,9 @@ def main() -> int:
     for binary in binaries:
         if not binary.is_file():
             parser.error(f"Required executable does not exist: {binary}")
+    harkenizer = executable.parent / ("Harkenizer" + suffix)
+    if harkenizer.is_file():
+        binaries.append(harkenizer)
     for name in ("HarkenStudioRuntimeTest.dll", "libHarkenStudioRuntimeTest.so", "libHarkenStudioRuntimeTest.dylib"):
         runtime = executable.parent / name
         if runtime.is_file():

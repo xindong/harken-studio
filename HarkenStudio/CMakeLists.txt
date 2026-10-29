@@ -472,6 +472,18 @@ endif()
 
 target_link_libraries(harken_editor PRIVATE harken_editor_lib)
 
+add_executable(harkenizer Source/Tooling/Harkenizer/Main.cpp resources.qrc)
+set_target_properties(harkenizer PROPERTIES OUTPUT_NAME "Harkenizer" AUTORCC ON)
+target_link_libraries(harkenizer PRIVATE harken_editor_lib)
+harken_attach_version_resource(harkenizer "Harkenizer" "Harkenizer.exe")
+if(TARGET harken_packc)
+    add_dependencies(harkenizer harken_packc)
+endif()
+add_dependencies(harken_editor harkenizer)
+if(WIN32)
+    target_link_libraries(harkenizer PRIVATE opengl32 ole32 shell32)
+endif()
+
 if(NOT Python3_Interpreter_FOUND)
     message(FATAL_ERROR "Python 3 is required to publish the Studio Schema snapshot")
 endif()
@@ -485,8 +497,17 @@ add_custom_command(TARGET harken_editor POST_BUILD
     COMMENT "Publishing the Studio Schema build snapshot"
 )
 
+add_custom_command(TARGET harkenizer POST_BUILD
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_SOURCE_DIR}/.scripts/schema_archive.py"
+        --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
+        --check-generated "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
+        --publish "$<TARGET_FILE_DIR:harkenizer>/schema"
+)
+
 if(_harken_macos_agl_framework_missing)
     harken_remove_missing_agl_framework(harken_editor)
+    harken_remove_missing_agl_framework(harkenizer)
 endif()
 
 if(WIN32)
@@ -499,6 +520,19 @@ if(WIN32)
     find_program(WINDEPLOYQT_EXE windeployqt
         HINTS ${Qt6_DIR}/../../../bin
         REQUIRED)
+
+    add_custom_command(TARGET harkenizer POST_BUILD
+        COMMAND ${WINDEPLOYQT_EXE}
+            $<$<CONFIG:Debug>:--debug>
+            $<$<NOT:$<CONFIG:Debug>>:--release>
+            --no-translations
+            --no-compiler-runtime
+            --no-system-d3d-compiler
+            --no-system-dxc-compiler
+            --no-opengl-sw
+            --no-quick-import
+            $<TARGET_FILE:harkenizer>
+    )
 
     add_custom_command(TARGET harken_editor POST_BUILD
         COMMAND ${WINDEPLOYQT_EXE}
@@ -559,6 +593,9 @@ if(APPLE)
     add_custom_command(TARGET harken_editor POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory
             "$<TARGET_BUNDLE_DIR:harken_editor>/Contents/PlugIns/platforms"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:harkenizer>"
+            "$<TARGET_FILE_DIR:harken_editor>/$<TARGET_FILE_NAME:harkenizer>"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:Qt6::QOffscreenIntegrationPlugin>"
             "$<TARGET_BUNDLE_DIR:harken_editor>/Contents/PlugIns/platforms/"

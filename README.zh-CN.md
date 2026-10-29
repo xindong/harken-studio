@@ -156,6 +156,19 @@ cmake --preset macos-dev    # Ninja + Apple Clang → build-nc/(单一日常通�
     cmake --build build-nc --config RelWithDebInfo [--target <harken_core|harken_editor|harken_hub>]
     ```
 
+## 不启动 Studio 打包
+
+构建 `harken_editor` 时也会生成项目构建命令 **Harkenizer**。它与 Studio 的运行库、`packc` 和 `schema` 目录一起使用。Windows 下运行 `Harkenizer.exe`；macOS 应用包内的路径为 `HarkenStudio.app/Contents/MacOS/Harkenizer`。
+
+```text
+Harkenizer list-targets path/to/project.hsp --json
+Harkenizer generate-packs path/to/project.hsp --all --platform-id <UUID> --self-clean off
+```
+
+先在 Studio 中关闭该工程。Harkenizer 读取已保存的工程，需要恢复或升级时会报错。重复指定 `--platform-id` 可选择多个平台；`--output <directory>` 覆盖工程输出位置，相对路径以工程目录为基准；`--force` 沿用 Force Re-export 行为。`--self-clean on` 在成功发布后执行与 Studio 相同的 Self-cleaning，删除输出目录中不属于本次完整导出的文件。
+
+首版命令按照工程的语言和元数据设置，为指定平台导出全部包，顺序输出构建过程。退出码为：成功 0、失败 1、命令用法错误 2、取消 130。`packc` 仍是共用构建流程调用的资源编译器。
+
 ## 项目结构
 
 ```

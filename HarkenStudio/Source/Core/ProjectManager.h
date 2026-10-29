@@ -197,7 +197,8 @@ public:
                                           ProjectUpgradeProgressCallback upgradeProgress = {},
                                           ProjectUpgradeApprovalCallback upgradeApproval = {},
                                           std::function<bool()> cancelled = {},
-                                          ProjectContractReadContext* context = nullptr);
+                                          ProjectContractReadContext* context = nullptr,
+                                          ProjectSerializer::LoadMode mode = ProjectSerializer::LoadMode::RecoverTransactions);
     static PreparedProject prepareProject(const ProjectConfig& config,
                                           std::function<bool()> cancelled = {});
     bool commitPreparedProject(PreparedProject&& prepared);

@@ -2623,7 +2623,8 @@ PreparedProject ProjectManager::prepareProject(const QString& filePath,
                                                ProjectUpgradeProgressCallback upgradeProgress,
                                                ProjectUpgradeApprovalCallback upgradeApproval,
                                                std::function<bool()> cancelled,
-                                               ProjectContractReadContext* context)
+                                               ProjectContractReadContext* context,
+                                               ProjectSerializer::LoadMode mode)
 {
     if (cancelled && cancelled())
         return {};
@@ -2632,7 +2633,7 @@ PreparedProject ProjectManager::prepareProject(const QString& filePath,
     ProjectSerializer serializer;
     if (!serializer.loadProject(filePath, *prepared.project, allowUpgrade,
                                 std::move(upgradeProgress),
-                                std::move(upgradeApproval), context)) {
+                                std::move(upgradeApproval), context, mode)) {
         prepared.error = serializer.lastError();
         prepared.project.reset();
         return prepared;
@@ -2651,11 +2652,13 @@ PreparedProject ProjectManager::prepareProject(const QString& filePath,
         return {};
 
     prepared.index = std::make_unique<ProjectIndex>();
-    prepared.index->loadFromCache(projectRoot);
-    const auto scanResult = prepared.index->scanProjectRoot(projectRoot);
-    if (scanResult != ProjectIndex::ScanResult::Ok) {
-        qWarning() << "[ProjectManager] ProjectIndex scan returned non-Ok:"
-                   << static_cast<int>(scanResult);
+    if (mode == ProjectSerializer::LoadMode::RecoverTransactions) {
+        prepared.index->loadFromCache(projectRoot);
+        const auto scanResult = prepared.index->scanProjectRoot(projectRoot);
+        if (scanResult != ProjectIndex::ScanResult::Ok) {
+            qWarning() << "[ProjectManager] ProjectIndex scan returned non-Ok:"
+                       << static_cast<int>(scanResult);
+        }
     }
     if (cancelled && cancelled())
         return {};
@@ -2787,7 +2790,8 @@ PreparedProject ProjectManager::prepareProject(const QString& filePath,
         return {};
     prepared.integrityScanner = std::make_unique<IntegrityScanner>();
     IntegrityScanner::Report cached;
-    const bool hasCached = prepared.integrityScanner->loadFromCache(projectRoot, cached);
+    const bool hasCached = mode == ProjectSerializer::LoadMode::RecoverTransactions
+        && prepared.integrityScanner->loadFromCache(projectRoot, cached);
     const QByteArray indexHash = prepared.index->contentHash();
     if (!prepared.rebuildAssetRegistry && hasCached
         && !indexHash.isEmpty() && cached.indexHash == indexHash) {

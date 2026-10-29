@@ -232,6 +232,10 @@ if(TARGET harken_exported_pack_qualification)
     add_dependencies(harken_editor_tests harken_exported_pack_qualification)
 endif()
 
+target_compile_definitions(harken_editor_tests PRIVATE
+    HARKENIZER_PATH="$<TARGET_FILE:harkenizer>")
+add_dependencies(harken_editor_tests harkenizer)
+
 add_executable(harken_pack_studio_qualification
     Benchmark/PackFoundationStudioQualification.cpp
 )

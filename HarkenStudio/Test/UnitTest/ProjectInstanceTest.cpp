@@ -29,11 +29,13 @@ class InstanceProcess
 public:
     ~InstanceProcess() { stop(); }
 
-    void start(const QString& path, bool unresponsive = false)
+    void start(const QString& path, bool unresponsive = false, bool denyActivation = false)
     {
         QStringList arguments{path};
         if (unresponsive)
             arguments.append(QStringLiteral("--unresponsive"));
+        if (denyActivation)
+            arguments.append(QStringLiteral("--deny-activation"));
         process.start(QString::fromUtf8(HARKEN_PROJECT_INSTANCE_PROCESS_PATH), arguments);
     }
 
@@ -170,6 +172,34 @@ TEST_F(ProjectInstanceTest, UnresponsiveOwnerDoesNotAllowAnotherOwner)
 
     InstanceProcess recovered;
     recovered.start(path);
+    ASSERT_TRUE(waitUntil([&]() { return recovered.hasStatus(); }));
+    EXPECT_EQ(recovered.status(), QByteArray("acquired"));
+}
+
+TEST_F(ProjectInstanceTest, NonActivatingOwnersShareTheSameExclusiveLifetime)
+{
+    ASSERT_TRUE(directory.isValid());
+    const QString path = project(QStringLiteral("project.hsp"));
+    InstanceProcess owner;
+    owner.start(path);
+    ASSERT_TRUE(waitUntil([&]() { return owner.hasStatus(); }));
+    ASSERT_EQ(owner.status(), QByteArray("acquired"));
+    const auto denied = VNX::ProjectInstance::acquire(path, VNX::ProjectInstance::ActivationPolicy::Deny);
+    EXPECT_EQ(denied.status, VNX::ProjectInstance::Status::Failed);
+    EXPECT_FALSE(denied.instance);
+    owner.hasStatus();
+    EXPECT_FALSE(owner.output.contains("activated"));
+    owner.stop();
+
+    auto headless = VNX::ProjectInstance::acquire(path, VNX::ProjectInstance::ActivationPolicy::Deny);
+    ASSERT_EQ(headless.status, VNX::ProjectInstance::Status::Acquired) << headless.error.toStdString();
+    InstanceProcess contender;
+    contender.start(path, false, true);
+    ASSERT_TRUE(waitUntil([&]() { return contender.hasStatus(); }));
+    EXPECT_TRUE(contender.status().startsWith("failed:"));
+    headless.instance.reset();
+    InstanceProcess recovered;
+    recovered.start(path, false, true);
     ASSERT_TRUE(waitUntil([&]() { return recovered.hasStatus(); }));
     EXPECT_EQ(recovered.status(), QByteArray("acquired"));
 }

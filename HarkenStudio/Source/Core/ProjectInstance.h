@@ -15,6 +15,7 @@ class ProjectInstance : public QObject
 
 public:
     enum class Status { Acquired, Forwarded, Failed };
+    enum class ActivationPolicy { Allow, Deny };
 
     struct Acquisition {
         Status status = Status::Failed;
@@ -24,7 +25,8 @@ public:
 
     ~ProjectInstance() override;
 
-    static Acquisition acquire(const QString& projectFile);
+    static Acquisition acquire(const QString& projectFile,
+                               ActivationPolicy activation = ActivationPolicy::Allow);
     static QString identityForProject(const QString& projectFile);
     static void setActivationWindow(QWidget* window);
     static void activateWindow();

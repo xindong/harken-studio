@@ -125,6 +125,8 @@ add_library(harken_editor_foundation STATIC
     IntegrityScanner.cpp
     IntegrityScanner.h
     ProjectPackExporter.cpp
+    ProjectPackBuildService.cpp
+    ProjectPackBuildService.h
     PackOutputIndex.cpp
     ProjectPackExporter.h
     RuntimeContentBundleBuilder.cpp

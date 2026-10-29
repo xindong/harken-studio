@@ -19,6 +19,8 @@
 #include "CanonicalPackSetExport.h"
 #include "PlayablePropertyAuthoringV1.h"
 #include "ProjectPackExporter.h"
+#include "ProjectPackBuildService.h"
+#include "ProjectBuildSnapshot.h"
 #include "ProjectSchemaGenerated.h"
 #include "NameValidator.h"
 #include "ProjectTypes.h"
@@ -5598,6 +5600,97 @@ TEST(EditorProjectPackExporterManifest, CanceledFinalizationKeepsPublishedFiles)
     EXPECT_FALSE(QFileInfo::exists(root.filePath(QStringLiteral(".harken-pack-publishing"))));
     EXPECT_TRUE(root.entryList({QStringLiteral(".harken-pack-next-*")},
         QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden).isEmpty());
+}
+
+TEST(EditorProjectPackExporterManifest, ProjectBuildCancellationPreservesCommittedPlatformsAndRootPublication)
+{
+    PackWriteAccessProject context;
+    ASSERT_NO_FATAL_FAILURE(context.setup());
+    context.project.buildExportProjectData = true;
+    const auto initial = context.exporter.ExportAllPacks(context.project, {}, context.options);
+    ASSERT_TRUE(initial.success) << initial.error.toStdString();
+    const QDir root(context.root);
+    const QByteArray previousProject = readFileBytes(root.filePath(QStringLiteral("Project.json")));
+    ASSERT_FALSE(previousProject.isEmpty());
+    const QByteArray previousContent = readFileBytes(context.live.filePath(QStringLiteral("One.bytes")));
+    ASSERT_FALSE(previousContent.isEmpty());
+    const QString sentinel = root.filePath(QStringLiteral("obsolete.bin"));
+    ASSERT_NO_FATAL_FAILURE(writeFileBytes(sentinel, QByteArray("keep until all platforms finish")));
+    context.project.name += QStringLiteral(" changed");
+    context.project.actions.front().rootItem->children.front()->comp<VNX::VAction>()->steps.front().delay = 0.1f;
+    QString error;
+    const auto snapshot = VNX::ProjectBuildSnapshot::capture(context.project, &error);
+    ASSERT_TRUE(snapshot) << error.toStdString();
+    bool canceled = false;
+    QMap<QString, QByteArray> committed;
+    VNX::ProjectPackBuildService::Request request;
+    request.outputRoot = context.root;
+    request.platforms = {context.platform, HarkenTest::platformIdString("Android")};
+    request.options.snapshot = snapshot;
+    request.options.selfCleaning = true;
+    request.options.cancelCheck = [&] { return canceled; };
+    request.platformFinished = [&](const VNX::ProjectPackBuildService::PlatformResult& completed) {
+        EXPECT_EQ(completed.platform, context.platform);
+        EXPECT_TRUE(completed.result.success) << completed.result.error.toStdString();
+        for (const auto& name : publicationFiles(completed.outputDir))
+            committed.insert(name, readFileBytes(QDir(completed.outputDir).filePath(name)));
+        QString lockError;
+        EXPECT_FALSE(VNX::ProjectPackExporter::LockPackOutputRoot(context.root, &lockError));
+        canceled = true;
+    };
+    const auto result = VNX::ProjectPackBuildService::run(request);
+    ASSERT_TRUE(result.preflightSucceeded) << result.preflightError.toStdString();
+    EXPECT_TRUE(result.canceled);
+    ASSERT_FALSE(committed.isEmpty());
+    EXPECT_NE(readFileBytes(context.live.filePath(QStringLiteral("One.bytes"))), previousContent);
+    for (auto file = committed.cbegin(); file != committed.cend(); ++file)
+        EXPECT_EQ(readFileBytes(context.live.filePath(file.key())), file.value());
+    EXPECT_FALSE(QFileInfo::exists(root.filePath(QStringLiteral("Android/Init.bytes"))));
+    EXPECT_FALSE(QFileInfo::exists(root.filePath(QStringLiteral("Android/One.bytes"))));
+    EXPECT_EQ(readFileBytes(root.filePath(QStringLiteral("Project.json"))), previousProject);
+    EXPECT_EQ(readFileBytes(sentinel), QByteArray("keep until all platforms finish"));
+    const auto released = VNX::ProjectPackExporter::LockPackOutputRoot(context.root, &error);
+    EXPECT_TRUE(released) << error.toStdString();
+}
+
+TEST(EditorProjectPackExporterManifest, ProjectBuildLockAndPreflightFailuresPreserveOutputs)
+{
+    PackWriteAccessProject context;
+    ASSERT_NO_FATAL_FAILURE(context.setup());
+    const QDir root(context.root);
+    const QString sentinel = root.filePath(QStringLiteral("Project.json"));
+    const QString recoveryMarker = context.live.filePath(QStringLiteral(".harken-pack-publishing"));
+    ASSERT_NO_FATAL_FAILURE(writeFileBytes(sentinel, QByteArray("previous project publication")));
+    ASSERT_NO_FATAL_FAILURE(writeFileBytes(recoveryMarker, QByteArray("incomplete transaction")));
+    QString error;
+    const auto snapshot = VNX::ProjectBuildSnapshot::capture(context.project, &error);
+    ASSERT_TRUE(snapshot) << error.toStdString();
+    auto lock = VNX::ProjectPackExporter::LockPackOutputRoot(context.root, &error);
+    ASSERT_TRUE(lock) << error.toStdString();
+    bool platformStarted = false;
+    VNX::ProjectPackBuildService::Request request;
+    request.outputRoot = context.root;
+    request.platforms = {context.platform};
+    request.options.snapshot = snapshot;
+    request.options.progressCallback = [&](const VNX::PackGenerationProgress&) { platformStarted = true; };
+    const auto competing = VNX::ProjectPackBuildService::run(request);
+    EXPECT_FALSE(competing.outputLocked);
+    EXPECT_FALSE(competing.preflightSucceeded);
+    EXPECT_FALSE(platformStarted);
+    EXPECT_EQ(readFileBytes(sentinel), QByteArray("previous project publication"));
+    EXPECT_EQ(readFileBytes(recoveryMarker), QByteArray("incomplete transaction"));
+    request.outputLock = lock;
+    const auto rejected = VNX::ProjectPackBuildService::run(request);
+    EXPECT_TRUE(rejected.outputLocked);
+    EXPECT_FALSE(rejected.preflightSucceeded);
+    EXPECT_FALSE(platformStarted);
+    EXPECT_TRUE(rejected.preflightError.startsWith(QStringLiteral("Cannot recover interrupted pack publish:")))
+        << rejected.preflightError.toStdString();
+    EXPECT_TRUE(lock->isLocked());
+    EXPECT_FALSE(VNX::ProjectPackExporter::LockPackOutputRoot(context.root, &error));
+    EXPECT_FALSE(QFileInfo::exists(context.live.filePath(QStringLiteral("Init.bytes"))));
+    EXPECT_EQ(readFileBytes(sentinel), QByteArray("previous project publication"));
+    EXPECT_EQ(readFileBytes(recoveryMarker), QByteArray("incomplete transaction"));
 }
 
 TEST(EditorProjectPackExporterManifest, RecoveryPrecedesPreflightForRootAndPartialExports)

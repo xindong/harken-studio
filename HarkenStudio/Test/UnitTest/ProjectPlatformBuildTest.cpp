@@ -23,10 +23,13 @@
 #include <gtest/gtest.h>
 #include <QApplication>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QMap>
+#include <QProcess>
 #include <QTemporaryDir>
 #include <QScopeGuard>
 
@@ -48,6 +51,40 @@ QByteArray bytes(const QString& path)
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) return {};
     return file.readAll();
+}
+
+QMap<QString, QByteArray> directoryContents(const QString& root, const QStringList& filters = {})
+{
+    QMap<QString, QByteArray> result;
+    QDirIterator files(root, filters, QDir::Files | QDir::Hidden, QDirIterator::Subdirectories);
+    while (files.hasNext()) {
+        const QString path = files.next();
+        const QString relative = QDir(root).relativeFilePath(path);
+        if (!relative.startsWith(QStringLiteral(".cache/")))
+            result.insert(relative, bytes(path));
+    }
+    return result;
+}
+
+struct HarkenizerResult
+{
+    bool finished = false;
+    int exitCode = -1;
+    QByteArray output;
+    QByteArray error;
+};
+
+HarkenizerResult runHarkenizer(const QStringList& arguments)
+{
+    QProcess process;
+    process.start(QString::fromUtf8(HARKENIZER_PATH), arguments);
+    const bool finished = process.waitForStarted(10000) && process.waitForFinished(60000);
+    if (!finished) {
+        process.kill();
+        process.waitForFinished(1000);
+    }
+    return {finished && process.exitStatus() == QProcess::NormalExit, process.exitCode(),
+        process.readAllStandardOutput(), process.readAllStandardError()};
 }
 
 QVector<harken::PackTocEntry> mediaEntries(const QString& path)
@@ -318,6 +355,96 @@ TEST_F(ProjectPlatformBuild, CapturedProjectBuildsAfterTheActiveProjectCloses)
     ASSERT_NE(record, records.end());
     EXPECT_FALSE(mediaEntries(record->outputPath).empty());
     QCoreApplication::processEvents();
+}
+
+TEST_F(ProjectPlatformBuild, IndependentBuildMatchesSavedProjectPublication)
+{
+    project().buildExportProjectData = true;
+    project().buildExportPackMetadata = true;
+    ASSERT_TRUE(manager().saveProject());
+    const auto snapshot = ProjectBuildSnapshot::capture(project());
+    ASSERT_TRUE(snapshot);
+    const QString projectPath = project().projectPath;
+    const QString projectRoot = QFileInfo(projectPath).absolutePath();
+    const QString referenceRoot = directory.filePath("Reference");
+    const QString consoleRoot = directory.filePath("Console");
+    const QStringList platforms{Platforms::idString(low), Platforms::idString(high)};
+    QVector<PackArtifactMetadata> artifacts;
+    ProjectPackExporter exporter;
+    for (const auto& id : platforms) {
+        ProjectPackExporter::ExportOptions options;
+        options.platform = id;
+        options.snapshot = snapshot;
+        const auto* definition = Platforms::find(snapshot->project.platforms, QUuid(id));
+        ASSERT_NE(definition, nullptr);
+        const auto result = exporter.ExportAllPacks(snapshot->project,
+            ProjectPackExporter::platformOutputDir(referenceRoot, *definition), options);
+        ASSERT_TRUE(result.success) << result.error.toStdString();
+        artifacts.append(result.artifacts);
+    }
+    const auto finalization = ProjectPackExporter::FinalizePackExport(
+        referenceRoot, snapshot->project, platforms, false, artifacts);
+    ASSERT_TRUE(finalization.success) << finalization.error.toStdString();
+    const auto reference = directoryContents(referenceRoot, {"*.bytes", "*.json"});
+    ASSERT_GE(reference.size(), 9);
+    ASSERT_TRUE(reference.contains(QStringLiteral("Project.json")));
+    ASSERT_TRUE(manager().closeProject());
+    const auto saved = directoryContents(projectRoot);
+
+    const auto targets = runHarkenizer({"list-targets", projectPath, "--json"});
+    ASSERT_TRUE(targets.finished) << targets.error.toStdString();
+    ASSERT_EQ(targets.exitCode, 0) << targets.error.toStdString();
+    QJsonParseError parseError;
+    const auto targetDocument = QJsonDocument::fromJson(targets.output, &parseError);
+    ASSERT_EQ(parseError.error, QJsonParseError::NoError) << targets.output.toStdString();
+    ASSERT_TRUE(targetDocument.isObject());
+    EXPECT_TRUE(targets.output.contains(platforms.front().toUtf8()));
+    EXPECT_TRUE(targets.output.contains(platforms.back().toUtf8()));
+    EXPECT_EQ(directoryContents(projectRoot), saved);
+
+    QStringList arguments{"generate-packs", projectPath, "--all", "--self-clean", "off",
+        "--platform-id", platforms.front(), "--platform-id", platforms.back(), "--output", consoleRoot};
+    for (const bool force : {false, false, true}) {
+        auto current = arguments;
+        if (force) current.append("--force");
+        const auto result = runHarkenizer(current);
+        ASSERT_TRUE(result.finished) << result.error.toStdString();
+        ASSERT_EQ(result.exitCode, 0) << result.error.toStdString() << result.output.toStdString();
+        EXPECT_EQ(directoryContents(consoleRoot, {"*.bytes", "*.json"}), reference);
+        EXPECT_EQ(directoryContents(projectRoot), saved);
+    }
+}
+
+TEST_F(ProjectPlatformBuild, IndependentBuildRejectsUnavailableInputsWithoutChangingPublication)
+{
+    ASSERT_TRUE(manager().saveProject());
+    const QString projectPath = project().projectPath;
+    const QString projectRoot = QFileInfo(projectPath).absolutePath();
+    const QString outputRoot = directory.filePath("ConsoleRejected");
+    const QStringList arguments{"generate-packs", projectPath, "--all", "--self-clean", "off",
+        "--platform-id", Platforms::idString(low), "--output", outputRoot};
+    const auto saved = directoryContents(projectRoot);
+    const auto occupied = runHarkenizer(arguments);
+    ASSERT_TRUE(occupied.finished) << occupied.error.toStdString();
+    EXPECT_EQ(occupied.exitCode, 1) << occupied.output.toStdString();
+    EXPECT_FALSE(QFileInfo::exists(outputRoot));
+    EXPECT_EQ(directoryContents(projectRoot), saved);
+    ASSERT_TRUE(manager().closeProject());
+
+    const auto incomplete = runHarkenizer({"generate-packs", projectPath});
+    ASSERT_TRUE(incomplete.finished) << incomplete.error.toStdString();
+    EXPECT_EQ(incomplete.exitCode, 2);
+    EXPECT_FALSE(QFileInfo::exists(outputRoot));
+
+    QString error;
+    const auto lock = ProjectPackExporter::LockPackOutputRoot(outputRoot, &error);
+    ASSERT_TRUE(lock) << error.toStdString();
+    const auto original = directoryContents(outputRoot);
+    const auto competing = runHarkenizer(arguments);
+    ASSERT_TRUE(competing.finished) << competing.error.toStdString();
+    EXPECT_EQ(competing.exitCode, 1) << competing.output.toStdString();
+    EXPECT_EQ(directoryContents(outputRoot), original);
+    EXPECT_EQ(directoryContents(projectRoot), saved);
 }
 
 TEST_F(ProjectPlatformBuild, SnapshotClonesComponentsLedgersAndParentAliases)

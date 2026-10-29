@@ -169,6 +169,7 @@ Harkenizer generate-packs <project.hsp> --all --platform-id <UUID> [--platform-i
 | 0 | 已从干净 main 的 `19ea2c61` 创建工作分支；基线由当前源码正式构建 | 103/103 回归通过；另起进程再次捕获的 22 个文件逐字节一致 |
 | 1 初版 | 旧包读取复用及 PCM 转移；后者因预览内存范围问题撤回 | 103/103 回归通过；22 个文件与基线逐字节一致，无缺失或额外文件 |
 | 2 | 保留旧包读取复用；增加构建内衍生结果复用；公开 prepare 恢复原实现 | 编辑器及测试构建成功；105/105 回归通过，22 个文件与基线逐字节一致；48 组有效输入和 7 类失败验证缓存透明性 |
+| A/B | GUI、IPC 和 Harkenizer 共用完整构建服务；新增只读工程准备和不激活窗口的工程占用检查 | Windows 编辑器、CLI、测试均构建成功；134/134 回归通过；22 个基线文件逐字节一致；实际保存工程的双平台首次/再次/强制 CLI 导出与原流程全部包体和 JSON 一致 |
 
 22 个文件包含 11 个 `.bytes` 与 11 个伴随 `.json`，其中黄金 Init/Action 对在两个输出目录各生成一次；另外覆盖六种容器样本。该数量不代表 22 个不同包。基线回归耗时 90.890 秒、阶段 1 初版 90.350 秒，仅作为运行记录，不足以证明性能提升。
 
@@ -184,6 +185,8 @@ python .scripts/verify_pack_build_equivalence.py `
 
 脚本保存二进制身份、测试日志、逐文件 SHA256 和字节比较报告，并拒绝空产物、缺失伴随文件及基线/输出目录重叠。已有报告位于 `.temp/pack-build-optimization/baseline-head/report.json`、`baseline-head-repeat/report.json`、`stage-1/report.json` 和 `stage-2/report.json`。
 
+A/B 阶段扩展了实例互斥、工程加载/事务恢复回归，结果见 `stage-ab/report.json`。另验证工程占用和输出锁冲突时拒绝构建；只读准备不创建索引缓存，不恢复未完成工程事务、不升级工程。独立入口使用 QCoreApplication，不创建 MainWindow 或音频运行会话；首版仍随 Studio 的 Qt 及运行库部署。本机验证范围为 Windows；macOS 部署链同时接入但未在本机执行，工程实例锁沿用项目现有 Windows/macOS 支持范围。
+
 
 ## 局部性能测量
 
@@ -197,3 +200,16 @@ python .scripts/verify_pack_build_equivalence.py `
 两轮 140 次调用的完整媒体元数据与 WAV SHA256 全部一致。首次请求仍走原计算路径；已有 WAV 加空元数据缓存的时间与原路径接近。缺少 WAV 时受写盘波动影响，不能宣称冷转换提速。上述是 materialize 局部收益，不代表完整项目导出收益；完整源哈希校验保留。
 
 实验源码、独立编译命令、二进制身份与原始测量保存在 `.temp/pack-build-optimization/derivative-benchmark/`，其中 `stage2/results/measurements.json` 与 `stage2-repeat/results/measurements.json` 是两轮结果。临时实验没有修改正式构建目标或业务代码。
+
+## 完整导出性能测量
+
+使用同一 30 秒双声道音源，组合 1 或 8 个 Action，以及原速或裁剪/重采样两种处理方式。每组 3 轮交替启用/关闭构建内元数据缓存，每次重新捕获快照；计时包括快照捕获和完整单平台 ExportAllPacks。冷导出从无衍生文件和无输出开始，随后在同目录再次导出；系统文件缓存不清空。共 48 次完整导出，528 个产物实例全部逐字节一致，构建/跳过/媒体命中统计也一致。
+
+| 工作负载 | 冷导出：原路径 → 复用 | 再次导出：原路径 → 复用 |
+|---|---|---|
+| 1 Action，原速 | 1694.9 → 1606.3 ms | 1203.4 → 1344.3 ms |
+| 1 Action，裁剪及重采样 | 1798.9 → 1666.7 ms | 1219.1 → 1185.2 ms |
+| 8 Action，原速 | 8060.2 → 8375.4 ms | 9048.7 → 8374.1 ms |
+| 8 Action，裁剪及重采样 | 8725.7 → 7745.3 ms | 8589.5 → 8127.9 ms |
+
+重复重采样负载的中位耗时降低约 11% / 5%，但无重复请求的控制组也有明显双向波动。该实验不能支持“所有工程固定提速某个百分比”或“任何负载都无耗时回退”的结论。能够确认的是重复转换被消除且产物不变，完整流程仍有大量哈希、packc、中间文件和最终编译成本。原始结果及临时实验源码位于 `.temp/pack-build-optimization/export-benchmark/`，测量文件为 `stage2/results/measurements.json`。
