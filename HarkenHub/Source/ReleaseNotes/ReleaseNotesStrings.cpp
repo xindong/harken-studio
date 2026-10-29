@@ -1,6 +1,7 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Open Studio changelogs from the version menu or Get from Server in the Hub interface language, and copy changelog links from the server list."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Choose whether to launch Harken Hub when the Windows installer closes, with the option checked by default."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Automatically compare GitHub and OSS download speeds before new Hub updates or Studio downloads, and prefer the faster source."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Resume interrupted downloads from the original source, including after restarting Hub. If that source remains unavailable, switch sources and restart the download with a visible notice."),

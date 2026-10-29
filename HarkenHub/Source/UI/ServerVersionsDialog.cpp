@@ -3,15 +3,19 @@
 
 #include "Localization/HubLocalization.h"
 #include "Platform/PlatformPaths.h"
+#include "ReleaseNotes/StudioReleaseNotes.h"
 #include "UI/BoundedHeaderView.h"
 #include "Update/ServerEndpoints.h"
 
+#include <QApplication>
+#include <QClipboard>
 #include <QDateTime>
 #include <QDir>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLocale>
+#include <QMenu>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -59,11 +63,13 @@ QString releasedDate(const QString& createdAt)
 ServerVersionsDialog::ServerVersionsDialog(
     const QByteArray& manifestPublicKey,
     const QSet<QString>& installedBuildIds,
-    const QSet<QString>& installedVersions, QWidget* parent)
+    const QSet<QString>& installedVersions,
+    StudioReleaseNotes* releaseNotes, QWidget* parent)
     : QDialog(parent)
     , manifestPublicKey_(manifestPublicKey)
     , installedBuildIds_(installedBuildIds)
     , installedVersions_(installedVersions)
+    , releaseNotes_(releaseNotes)
 {
     setWindowTitle(QCoreApplication::translate("HarkenHub", "Get from Server"));
     setModal(true);
@@ -132,6 +138,8 @@ ServerVersionsDialog::ServerVersionsDialog(
             [this](const QString&, bool restarted) { downloadRestarted_ = restarted; });
     connect(&catalog_, &ServerVersionCatalog::finished, this,
             &ServerVersionsDialog::populate);
+    connect(releaseNotes_, &StudioReleaseNotes::finished, this,
+            &ServerVersionsDialog::updateReleaseNotes);
     connect(&downloader_, &Downloader::progress, this,
             [this](qint64 receivedBytes, qint64 totalBytes) {
                 if (totalBytes > 0) {
@@ -214,10 +222,29 @@ void ServerVersionsDialog::populate(const ServerVersionList& result)
         table_->setItem(index, kColumnSize,
                         new QTableWidgetItem(humanSize(row.entry.fileSize)));
 
-        auto* changelogItem = new QTableWidgetItem(
-            row.entry.changelog.simplified());
-        changelogItem->setToolTip(row.entry.changelog);
-        table_->setItem(index, kColumnChangelog, changelogItem);
+        auto* notesLink = new QLabel(table_);
+        notesLink->setMargin(12);
+        notesLink->setOpenExternalLinks(true);
+        notesLink->setTextInteractionFlags(Qt::LinksAccessibleByMouse |
+                                          Qt::LinksAccessibleByKeyboard);
+        notesLink->setStyleSheet(QStringLiteral(
+            "QLabel { background: transparent; } "
+            "QLabel:disabled { color: #6B7488; }"));
+        notesLink->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(notesLink, &QWidget::customContextMenuRequested, this,
+                [this, notesLink, version = row.entry.version](const QPoint& pos) {
+                    const QUrl url = releaseNotes_->url(version);
+                    if (url.isEmpty())
+                        return;
+                    QMenu menu(notesLink);
+                    QAction* copy = menu.addAction(
+                        QCoreApplication::translate("HarkenHub", "Copy Link"));
+                    if (menu.exec(notesLink->mapToGlobal(pos)) == copy)
+                        QApplication::clipboard()->setText(
+                            url.toString(QUrl::FullyEncoded));
+                });
+        table_->setCellWidget(index, kColumnChangelog, notesLink);
+        releaseNotes_->fetch(row.entry.version);
         table_->setItem(index, kColumnAction, new QTableWidgetItem());
 
         auto* holder = new QWidget(table_);
@@ -247,11 +274,28 @@ void ServerVersionsDialog::populate(const ServerVersionList& result)
         }
         table_->setCellWidget(index, kColumnAction, holder);
     }
+    updateReleaseNotes();
 
     statusLabel_->setText(
         rows_.empty()
             ? QCoreApplication::translate("HarkenHub", "The server has no versions for this platform.")
             : QCoreApplication::translate("HarkenHub", "%1 versions available").arg(rows_.size()));
+}
+
+void ServerVersionsDialog::updateReleaseNotes()
+{
+    const QString text = QCoreApplication::translate("HarkenHub", "Click to view details");
+    for (int index = 0; index < static_cast<int>(rows_.size()); ++index) {
+        auto* link = qobject_cast<QLabel*>(table_->cellWidget(index, kColumnChangelog));
+        const QUrl url = releaseNotes_->url(rows_[static_cast<size_t>(index)].entry.version);
+        link->setEnabled(!url.isEmpty());
+        link->setText(url.isEmpty() ? text : QStringLiteral(
+            "<a href=\"%1\" style=\"color: #00F0FF;\">%2</a>")
+                .arg(url.toString(QUrl::FullyEncoded).toHtmlEscaped(), text.toHtmlEscaped()));
+        link->setToolTip(url.isEmpty()
+            ? QCoreApplication::translate("HarkenHub", "No valid web link was found.")
+            : url.toDisplayString());
+    }
 }
 
 void ServerVersionsDialog::setBusy(bool busy)
