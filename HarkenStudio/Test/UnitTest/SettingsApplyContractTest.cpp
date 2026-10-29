@@ -3,10 +3,12 @@
 #include "Core/MemorySettingsStorage.h"
 #include "Core/ThemeManager.h"
 #include "Dialogs/Settings/PreferencesPanel.h"
+#include "Dialogs/Settings/Pages/AppearancePage.h"
 
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QTemporaryDir>
