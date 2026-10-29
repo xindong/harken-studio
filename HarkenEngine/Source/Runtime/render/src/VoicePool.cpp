@@ -2774,6 +2774,7 @@ void VoicePool::FillSourceCursors(SourceCursorMirror::Row* rows,
         std::min(count, static_cast<std::uint32_t>(m_slots.size()));
     for (std::uint32_t i = 0; i < n; ++i) {
         const Slot& slot = m_slots[i];
+        rows[i] = {};
         if (IsAudioRenderingState(slot.state.load(std::memory_order_acquire))) {
             rows[i].sourceFrame = slot.render.srcCursor;
             rows[i].renderGeneration =
@@ -2781,18 +2782,33 @@ void VoicePool::FillSourceCursors(SourceCursorMirror::Row* rows,
             rows[i].loopPassesRemaining =
                 slot.render.loopPassesRemaining;
             rows[i].active = true;
-        } else {
-            rows[i].sourceFrame = 0;
-            rows[i].renderGeneration = 0;
-            rows[i].loopPassesRemaining = 0;
-            rows[i].active = false;
+            const auto& render = slot.render;
+            if (render.streamRing == nullptr && render.pcm.Valid() &&
+                render.resampler.Profile() == ResampleProfile::LegacyCompatibility) {
+                rows[i].awaitingStart = render.timelineGated;
+                auto& progress = rows[i].progress;
+                progress.sourcePhase = {render.resampler.phaseHigh, render.resampler.phaseLow};
+                progress.currentRatio = render.resampler.CurrentRatio();
+                progress.targetRatio = render.resampler.TargetRatio();
+                progress.rampStep = render.resampler.RampStep();
+                progress.rampRemaining = render.resampler.RampFramesRemaining();
+                progress.pcmFrameCount = render.pcm.frames;
+                progress.loopStartFrame = render.loopStartFrame;
+                progress.loopEndFrame = render.loopEndFrame;
+                progress.sourceStartFrame = render.sourceActivationStartFrame;
+                const auto consumed = render.resampler.SourceFrame();
+                SetResamplerConsumedPosition(&progress, render.sourceActivationStartFrame,
+                    render.sourceActivationLoopsRemaining,
+                    consumed > kResampleHistoryPad ? consumed - kResampleHistoryPad : 0);
+                progress.loopInfinite = render.loopInfinite;
+                progress.hasExitMarker = render.hasExitMarker;
+                progress.exitMarkerSourceFrame = render.exitMarkerSourceFrame;
+                rows[i].exactTimingValid = true;
+            }
         }
     }
     for (std::uint32_t i = n; i < count; ++i) {
-        rows[i].sourceFrame = 0;
-        rows[i].renderGeneration = 0;
-        rows[i].loopPassesRemaining = 0;
-        rows[i].active = false;
+        rows[i] = {};
     }
 }
 

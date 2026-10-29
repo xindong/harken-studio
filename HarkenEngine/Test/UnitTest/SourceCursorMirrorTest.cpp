@@ -32,6 +32,9 @@ void FillCursorRows(harken::SourceCursorMirror::Row* rows,
                          generation ^
                          (0x589965CC75374CC3ull * (row + 1))) %
                      1000u);
+        rows[row].exactTimingValid = true;
+        rows[row].progress.sourceIntegerFrame = generation + row;
+        rows[row].progress.pcmFrameCount = generation * 7u + row;
         rows[row].active =
             (MixCursorGeneration(generation ^
                                  (0xE7037ED1A0B428DBull * (row + 1))) &
@@ -74,6 +77,8 @@ TEST(SourceCursorMirror, DefaultInactiveRowHasNoAuthority) {
     EXPECT_EQ(0u, row.renderGeneration);
     EXPECT_EQ(0u, row.loopPassesRemaining);
     EXPECT_FALSE(row.active);
+    EXPECT_FALSE(row.exactTimingValid);
+    EXPECT_EQ(0u, row.progress.pcmFrameCount);
 }
 
 TEST(SourceCursorMirror, ConsistencyCheckerRejectsCorruption) {
@@ -100,7 +105,7 @@ TEST(SourceCursorMirror, ConcurrentPublicationNeverTearsBatch) {
     constexpr std::uint64_t kPublications = 200000;
     harken::SourceCursorMirror mirror(kRows);
     FillCursorRows(mirror.BeginWrite(), kRows, 1);
-    mirror.EndWrite(1);
+    mirror.EndWrite(1, 64, 3);
 
     std::atomic<bool> start{false};
     std::atomic<bool> producerDone{false};
@@ -111,7 +116,7 @@ TEST(SourceCursorMirror, ConcurrentPublicationNeverTearsBatch) {
         for (std::uint64_t generation = 2;
              generation <= kPublications + 1; ++generation) {
             FillCursorRows(mirror.BeginWrite(), kRows, generation);
-            mirror.EndWrite(generation);
+            mirror.EndWrite(generation, generation * 64u, generation * 3u);
         }
         producerDone.store(true, std::memory_order_release);
     });
@@ -126,6 +131,19 @@ TEST(SourceCursorMirror, ConcurrentPublicationNeverTearsBatch) {
             if (!AreCursorRowsConsistent(rows, blockIndex)) {
                 ++tears;
             }
+        }
+        const auto index = static_cast<std::uint32_t>(captured % kRows);
+        harken::SourceCursorMirror::Row single{};
+        harken::SourceCursorMirror::Publication publication{};
+        if (mirror.CaptureRow(index, &single, &publication)) {
+            const auto generation = publication.blockIndex;
+            if (publication.outputFrame != generation * 64u ||
+                publication.consumedCommands != generation * 3u ||
+                !single.exactTimingValid ||
+                single.progress.sourceIntegerFrame != generation + index ||
+                single.progress.pcmFrameCount != generation * 7u + index ||
+                single.renderGeneration != static_cast<std::uint32_t>(MixCursorGeneration(
+                    generation ^ (0x8EBC6AF09C88C6E3ull * (index + 1))))) ++tears;
         }
     };
 
