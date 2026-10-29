@@ -593,7 +593,7 @@ private:
             self->rebuildRows();
             self->notify();
         };
-        SelectorWindow::open(req, this);
+        SelectorWindow::open(req, this, QRect(addBtn_->mapToGlobal(QPoint()), addBtn_->size()));
     }
 
     void notify()
