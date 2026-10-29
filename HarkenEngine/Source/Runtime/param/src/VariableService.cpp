@@ -800,11 +800,19 @@ void VariableServiceV1::BuildCurrentWorldImageV1(
 
 bool VariableServiceV1::CanCommitPreparedCurrentWorldImageV1(
     const PreparedCurrentWorldImageV1& prepared) const noexcept {
-    return prepared.valid_ && prepared.source_ == this &&
-        prepared.sourceWorld_ == worldGeneration_ &&
-        prepared.sourceBankOrdinal_ == nextBankOrdinal_ &&
-        (prepared.idempotent_ ||
-         (worldGeneration_ != UINT64_MAX && CanReplaceCurrentWorld()));
+    if (!prepared.valid_ || prepared.source_ != this ||
+        prepared.sourceWorld_ != worldGeneration_ ||
+        prepared.sourceBankOrdinal_ != nextBankOrdinal_) return false;
+    if (prepared.idempotent_) return true;
+    if (worldGeneration_ == UINT64_MAX || !CanReplaceCurrentWorld()) return false;
+    // A write accepted before prepare can finish without advancing the issue ordinal.
+    for (const auto& next : prepared.definitions_) {
+        const auto* current = FindDefinition(next.definition.variableId);
+        if (current != nullptr && SameDefinition(*current, next) &&
+            (current->currentGlobal != next.currentGlobal ||
+             current->currentBankOrdinal != next.currentBankOrdinal)) return false;
+    }
+    return true;
 }
 
 ContainerWorldInstallViewV1 VariableServiceV1::PreparedWorldInstallViewV1(
