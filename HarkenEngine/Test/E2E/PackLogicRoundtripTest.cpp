@@ -15,6 +15,7 @@
 // replace: music must keep rendering across the activation tick with
 // only the expected level change (no dropout block).
 #include "Common/ObjectIdTestSupport.h"
+#include "Common/ResourceCompilerTestUtil.h"
 #include "Common/TestUtil.h"
 
 #include "harken/param/ParamTargets.h"
@@ -29,9 +30,6 @@
 #include <string>
 #include <vector>
 
-#ifndef HARKEN_PACKC_PATH
-#error "HARKEN_PACKC_PATH must point at the packc executable"
-#endif
 #ifndef HARKEN_TEMP_DIR
 #error "HARKEN_TEMP_DIR must point at the repository's .temp directory"
 #endif
@@ -80,20 +78,6 @@ bool ReadFileBytes(const std::string& path,
     return true;
 }
 
-int RunPackc(const std::vector<std::string>& args) {
-    std::string exe = HARKEN_PACKC_PATH;
-    for (char& c : exe) {
-        if (c == '/') {
-            c = '\\';
-        }
-    }
-    std::string command = "\"\"" + exe + "\"";
-    for (const std::string& arg : args) {
-        command += " \"" + arg + "\"";
-    }
-    command += "\"";
-    return std::system(command.c_str());
-}
 
 // Minimal IEEE float32 RIFF/WAVE writer: the pack build must carry the
 // exact floats the direct build registers, so the wav travels samples
@@ -164,7 +148,7 @@ void WriteWavF32(const std::string& path,
             return false;
         }
     }
-    return RunPackc({manifestPath}) == 0;
+    return harkentest::CompileResources({manifestPath}) == 0;
 }
 
 VnResult LoadPack(const std::string& path, VnPackHandle* outHandle) {
@@ -415,7 +399,7 @@ TEST(PackLogicRoundtrip, ManifestAttenuationBezierMatchesDirectApiGoldens) {
     }
     manifest += "]}\n";
     WriteTextFile(manifestPath, manifest);
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
 
     for (std::size_t group = 0; group < std::size(goldens); ++group) {
         for (std::size_t sample = 0; sample < std::size(distances);

@@ -31,7 +31,18 @@
 
 ## 独立构建入口
 
-GUI、IPC 与 Harkenizer 共用项目构建服务，覆盖预检、所选平台发布、根目录 Project.json 和自清理。packc 保持中间资源编译职责，不直接读取 `.hsp`。
+GUI、IPC 与 Harkenizer 共用 HarkenizerCore，覆盖工程构建计划、媒体准备、资源编译调度、共享逻辑编译、包体装配、校验、所选平台发布、根目录 Project.json 和自清理。内核为内部静态库，不新增 DLL；独立 packc 程序退出，原资源编译算法由 Harkenizer 私有 worker 承接。
+
+| 构建边界 | 当前分工 |
+|---|---|
+| GUI 输入 | 当前编辑器与媒体快照，包含未保存编辑；不为调用独立工具而隐式保存 |
+| IPC 输入 | 保留当前请求语义、选择范围、进度和结果接口 |
+| 命令行输入 | 完整读取已保存工程，不创建编辑器窗口或音频运行会话 |
+| 资源编译 | 私有 worker 在同次构建中顺序处理请求并复用进程，逐请求保留 300000 毫秒超时 |
+| 资源故障 | 超时或异常退出终止该 worker，失败仍归入当前平台；后续平台按原调度规则处理 |
+| 产物与发布 | 包格式、媒体算法、条目顺序、伴随文件、取消检查和平台事务沿用原规则 |
+
+表注：本轮内核拆分及 packc 退役已通过 Windows 集成构建、包体逐字节对照、故障恢复和独立部署验证；详细证据与 macOS、remote 验收限制见 [打包优化报告](pack-build-optimization.md)。
 
 ```text
 Harkenizer list-targets <project.hsp> --json
@@ -47,7 +58,7 @@ Harkenizer generate-packs <project.hsp> --all --platform-id <UUID> [--platform-i
 | 目标发现 | JSON 提供 projectId、平台 id/name/basePlatform、语言、Action stableId/name |
 | 返回值 | 成功 0；失败 1；用法错误 2；取消 130 |
 | 取消边界 | Ctrl+C 请求现有取消流程；已提交平台保留，未完成整次发布不执行根目录最终收尾和自清理 |
-| 部署 | 随 Studio 的运行库、packc 和 schema 交付；Windows 为 Harkenizer.exe，macOS 位于应用包 Contents/MacOS/Harkenizer |
+| 部署 | 随 Studio 的运行库和 schema 交付；Windows 为 Harkenizer.exe，macOS 位于应用包 Contents/MacOS/Harkenizer；无需独立 packc 或新增内核 DLL |
 
 ## 项目信息字段
 

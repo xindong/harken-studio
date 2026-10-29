@@ -128,6 +128,10 @@ namespace ActionClosureSemantics {
 ActionClosurePlan build(const ProjectData& project,
                         harkenstudio::ObjectId actionStableId,
                         const BuildVariant& variant = {});
+ActionClosurePlan buildForContext(const ProjectData& project,
+                                  harkenstudio::ObjectId actionStableId,
+                                  const BuildVariant& variant,
+                                  const RuntimeCapabilityContext& context);
 ActionClosurePlan contentReferences(const ProjectData& project,
                                     harkenstudio::ObjectId actionStableId);
 QString edgeReasonName(ActionClosureEdgeReason reason);

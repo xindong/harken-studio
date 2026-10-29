@@ -1,16 +1,13 @@
 #include "ProjectInstance.h"
 
-#include <QApplication>
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDeadlineTimer>
 #include <QDir>
 #include <QFileInfo>
 #include <QHash>
-#include <QPointer>
 #include <QThread>
 #include <QTimer>
-#include <QWidget>
-#include <QWindow>
 
 #ifdef Q_OS_WIN
 #include <QJsonDocument>
@@ -37,29 +34,8 @@ QHash<QString, std::weak_ptr<ProjectInstance>>& instances()
     return value;
 }
 
-QPointer<QWidget> activationWindow;
+void (*activationHandler)() = nullptr;
 bool pendingActivation = false;
-
-void focusWindow()
-{
-    QWidget* window = activationWindow;
-    if (window && window->isMinimized())
-        window->setWindowState(window->windowState() & ~Qt::WindowMinimized);
-    if (QWidget* modal = QApplication::activeModalWidget())
-        window = modal;
-    if (!window)
-        return;
-    if (window->isMinimized())
-        window->setWindowState(window->windowState() & ~Qt::WindowMinimized);
-    window->show();
-    window->raise();
-    window->activateWindow();
-    if (QWindow* handle = window->windowHandle())
-        handle->requestActivate();
-#ifdef Q_OS_WIN
-    SetForegroundWindow(reinterpret_cast<HWND>(window->winId()));
-#endif
-}
 
 QString currentUserIdentity()
 {
@@ -374,19 +350,20 @@ ProjectInstance::Acquisition ProjectInstance::acquire(const QString& projectFile
     return {Status::Failed, {}, QStringLiteral("The project is already opening in another Studio instance, but that instance did not respond to activation. Try again after it finishes opening.")};
 }
 
-void ProjectInstance::setActivationWindow(QWidget* window)
+void ProjectInstance::setActivationHandler(void (*handler)(), bool windowAvailable)
 {
-    activationWindow = window;
-    if (window && pendingActivation) {
+    activationHandler = handler;
+    if (windowAvailable && pendingActivation) {
         pendingActivation = false;
-        focusWindow();
+        activationHandler();
     }
 }
 
 void ProjectInstance::activateWindow()
 {
     pendingActivation = true;
-    focusWindow();
+    if (activationHandler)
+        activationHandler();
 }
 
 void ProjectInstance::receiveActivation()

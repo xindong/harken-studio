@@ -92,6 +92,7 @@ struct Builder
 {
     const ProjectData& project;
     BuildVariant variant;
+    RuntimeCapabilityContext capabilityContext;
     bool contentReferencesOnly;
     Index index;
     std::shared_ptr<const FieldGroupEffectiveSnapshot> effectiveGroups;
@@ -106,8 +107,9 @@ struct Builder
     std::set<std::tuple<RuntimeCapabilityFeature, harkenstudio::ObjectId, QString>> capabilityKeys;
 
     Builder(const ProjectData& projectValue, BuildVariant variantValue,
-            bool contentReferencesOnlyValue = false)
+            RuntimeCapabilityContext context, bool contentReferencesOnlyValue = false)
         : project(projectValue), variant(std::move(variantValue)),
+          capabilityContext(std::move(context)),
           contentReferencesOnly(contentReferencesOnlyValue), index(buildIndex(projectValue)),
           targetLookup(EditorUtils::makeProjectTargetLookup(projectValue))
     {
@@ -162,8 +164,9 @@ struct Builder
         QString reason;
         const auto object = index.stable.find(objectId);
         if (object != index.stable.end()) {
-            const auto assessment = RuntimeCapabilityMatrix::evaluate(
-                *object->second, project, RuntimeCapabilityOperation::PackBuild, feature, variant);
+            const auto assessment = RuntimeCapabilityMatrix::evaluateForContext(
+                *object->second, project, RuntimeCapabilityOperation::PackBuild, feature, variant,
+                capabilityContext);
             state = assessment.state;
             reason = assessment.diagnostic;
         }
@@ -780,16 +783,17 @@ QString diagnosticCodeName(ActionClosureDiagnosticCode code)
     return {};
 }
 
-ActionClosurePlan build(const ProjectData& project, harkenstudio::ObjectId actionStableId,
-                        const BuildVariant& variant)
+ActionClosurePlan buildForContext(const ProjectData& project, harkenstudio::ObjectId actionStableId,
+                                  const BuildVariant& variant,
+                                  const RuntimeCapabilityContext& context)
 {
-    return Builder(project, variant).build(actionStableId);
+    return Builder(project, variant, context).build(actionStableId);
 }
 
 ActionClosurePlan contentReferences(const ProjectData& project,
                                     harkenstudio::ObjectId actionStableId)
 {
-    return Builder(project, {}, true).build(actionStableId);
+    return Builder(project, {}, {}, true).build(actionStableId);
 }
 
 }

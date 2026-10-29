@@ -15,6 +15,7 @@
 // host tool code (baseline-regression precedent), and float32 wav keeps
 // the synth floats exact through the decode chain.
 #include "Common/ObjectIdTestSupport.h"
+#include "Common/ResourceCompilerTestUtil.h"
 #include "Common/TestUtil.h"
 #include "UnitTest/JsonTestUtil.h"
 
@@ -35,9 +36,6 @@
 #include <string>
 #include <vector>
 
-#ifndef HARKEN_PACKC_PATH
-#error "HARKEN_PACKC_PATH must point at the packc executable"
-#endif
 #ifndef HARKEN_TEMP_DIR
 #error "HARKEN_TEMP_DIR must point at the repository's .temp directory"
 #endif
@@ -87,24 +85,6 @@ void WriteFileBytes(const std::string& path,
     ASSERT_TRUE(out.good()) << "cannot write " << path;
 }
 
-// Runs packc with the given argument list and returns the process exit
-// code. Paths from the build system arrive with forward slashes;
-// cmd.exe wants backslashes for the program itself, and the doubled
-// outer quotes survive cmd's quote-stripping rule for the /C payload.
-int RunPackc(const std::vector<std::string>& args) {
-    std::string exe = HARKEN_PACKC_PATH;
-    for (char& c : exe) {
-        if (c == '/') {
-            c = '\\';
-        }
-    }
-    std::string command = "\"\"" + exe + "\"";
-    for (const std::string& arg : args) {
-        command += " \"" + arg + "\"";
-    }
-    command += "\"";
-    return std::system(command.c_str());
-}
 
 // Minimal IEEE float32 (format tag 3) RIFF/WAVE writer: 18-byte fmt chunk
 // (cbSize 0) plus the fact chunk the float format prescribes. Samples are
@@ -342,7 +322,7 @@ TEST(PackcPipeline, ManifestV2BuildsAndReports) {
     std::filesystem::remove(packPath + ".cache.json");
     std::filesystem::remove(packPath + ".report.json");
 
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
 
     std::vector<BuiltEntryFacts> facts;
     std::uint64_t fileBytes = 0;
@@ -412,8 +392,8 @@ TEST(PackcPipeline, EmptyContentV2IsDeterministicHeaderOnly) {
         "{\"manifestVersion\":3,\"output\":\"" + secondPath +
             "\",\"packKind\":\"content\",\"options\":{"
             "\"cache\":false}}");
-    ASSERT_EQ(0, RunPackc({firstManifest}));
-    ASSERT_EQ(0, RunPackc({secondManifest}));
+    ASSERT_EQ(0, harkentest::CompileResources({firstManifest}));
+    ASSERT_EQ(0, harkentest::CompileResources({secondManifest}));
 
     std::vector<std::uint8_t> first;
     std::vector<std::uint8_t> second;
@@ -443,7 +423,7 @@ TEST(PackcPipeline, EmptyResidentV2Refuses) {
             "\",\"packKind\":\"resident\",\"options\":{"
             "\"cache\":false}}");
     std::filesystem::remove(packPath);
-    EXPECT_NE(0, RunPackc({manifestPath}));
+    EXPECT_NE(0, harkentest::CompileResources({manifestPath}));
     EXPECT_FALSE(std::filesystem::exists(packPath));
 }
 
@@ -480,7 +460,7 @@ TEST(PackcPipeline, DownmixPolicyIsExactAndPreservesFormatFacts) {
              V2EntryJson(monoPath, 1103, false, 0, 0, "mono"),
              V2EntryJson(antiPath, 1104, false, 0, 0, "mono")},
             "{ \"cache\": false }"));
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
 
     std::vector<BuiltEntryFacts> facts;
     std::uint64_t fileBytes = 0;
@@ -572,7 +552,7 @@ TEST(PackcPipeline, DownmixRefusesMultichannelWithoutFallbackOutput) {
             "{ \"cache\": false }"));
     std::filesystem::remove(packPath);
 
-    EXPECT_NE(0, RunPackc({manifestPath}));
+    EXPECT_NE(0, harkentest::CompileResources({manifestPath}));
     EXPECT_FALSE(std::filesystem::exists(packPath))
         << "a refused transform must not fall back to multichannel";
     JsonValue report;
@@ -601,7 +581,7 @@ TEST(PackcPipeline, PreserveEntryRefusesMultichannelSource) {
             "{ \"cache\": false }"));
     std::filesystem::remove(packPath);
 
-    EXPECT_NE(0, RunPackc({manifestPath}));
+    EXPECT_NE(0, harkentest::CompileResources({manifestPath}));
     EXPECT_FALSE(std::filesystem::exists(packPath))
         << "a preserve entry must keep the mono/stereo decode bound";
     JsonValue report;
@@ -631,7 +611,7 @@ TEST(PackcPipeline, ManifestV2RoundTrips) {
                                                         400, "mono")}));
 
     ASSERT_EQ(0,
-              RunPackc({manifestPath, "--emit-manifest", emittedPath}));
+              harkentest::CompileResources({manifestPath, "--emit-manifest", emittedPath}));
     std::vector<std::uint8_t> firstBuild;
     ASSERT_TRUE(ReadFileBytes(packPath, &firstBuild));
 
@@ -648,7 +628,7 @@ TEST(PackcPipeline, ManifestV2RoundTrips) {
     EXPECT_EQ(400u, MemberU64(entries.items[0], "loopEndFrame"));
     EXPECT_EQ("mono", MemberString(entries.items[0], "downmix"));
 
-    ASSERT_EQ(0, RunPackc({emittedPath, "--no-cache",
+    ASSERT_EQ(0, harkentest::CompileResources({emittedPath, "--no-cache",
                            "--emit-manifest", emittedAgainPath}));
     std::vector<std::uint8_t> rebuild;
     ASSERT_TRUE(ReadFileBytes(packPath, &rebuild));
@@ -708,7 +688,7 @@ TEST(PackcPipeline,
         "}\n");
 
     ASSERT_EQ(0,
-              RunPackc({manifestPath, "--emit-manifest", emittedPath}));
+              harkentest::CompileResources({manifestPath, "--emit-manifest", emittedPath}));
     std::vector<std::uint8_t> firstBuild;
     ASSERT_TRUE(ReadFileBytes(packPath, &firstBuild));
     ASSERT_FALSE(firstBuild.empty());
@@ -797,7 +777,7 @@ TEST(PackcPipeline,
                   bindings.items[i].text);
     }
 
-    ASSERT_EQ(0, RunPackc({emittedPath, "--no-cache",
+    ASSERT_EQ(0, harkentest::CompileResources({emittedPath, "--no-cache",
                            "--emit-manifest", emittedAgainPath}));
     std::vector<std::uint8_t> rebuild;
     ASSERT_TRUE(ReadFileBytes(packPath, &rebuild));
@@ -840,7 +820,7 @@ TEST(PackcPipeline, BezierManifestHandlesLengthMatrix) {
                 "\"scope\": \"voice\", \"target\": 0, \"curve\": " +
                 cases[i] + " } ] }");
         std::filesystem::remove(packPath);
-        const int result = RunPackc({manifestPath});
+        const int result = harkentest::CompileResources({manifestPath});
         if (accepted[i]) {
             EXPECT_EQ(0, result) << "matrix case " << i;
             EXPECT_TRUE(std::filesystem::exists(packPath))
@@ -884,8 +864,8 @@ TEST(PackcPipeline, EffectParamBindingScopesRoundTripCanonically) {
             "\"handles\": [[0.0,-6.0,1.0,0.0]] } } ], "
             "\"attachments\": [ { \"binding\": \"3da91a64-b947-4560-0000-00000000206f\", "
             "\"scope\": \"busEffectParam\", \"object\": \"00000000-0000-0000-0000-000000000001\" } ] }");
-    ASSERT_EQ(0, RunPackc({manifestPath, "--emit-manifest", emittedPath}));
-    ASSERT_EQ(0, RunPackc({emittedPath, "--no-cache",
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath, "--emit-manifest", emittedPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({emittedPath, "--no-cache",
                            "--emit-manifest", emittedAgainPath}));
 
     JsonValue emitted;
@@ -924,9 +904,9 @@ TEST(PackcPipeline, BindingTransitionRangeAdmissionPreservesExistingOutput) {
             "\"target\": 0, \"transitionMs\": " + std::to_string(ms) +
             ", \"curve\": { \"points\": [[0.0,0.0]] } }] }");
         if (ms == 60000) {
-            EXPECT_EQ(0, RunPackc({manifestPath}));
+            EXPECT_EQ(0, harkentest::CompileResources({manifestPath}));
         } else {
-            EXPECT_NE(0, RunPackc({manifestPath}));
+            EXPECT_NE(0, harkentest::CompileResources({manifestPath}));
             std::ifstream input(packPath, std::ios::binary);
             const std::string bytes((std::istreambuf_iterator<char>(input)), {});
             EXPECT_EQ("existing-pack", bytes);
@@ -946,7 +926,7 @@ TEST(PackcPipeline, EffectParamBindingManifestRefusalMatrix) {
                 "\", \"packKind\": \"content\", "
                 "\"options\": { \"cache\": false }, " + section + " }");
         std::filesystem::remove(packPath);
-        EXPECT_NE(0, RunPackc({manifestPath})) << name;
+        EXPECT_NE(0, harkentest::CompileResources({manifestPath})) << name;
         EXPECT_FALSE(std::filesystem::exists(packPath)) << name;
     };
     const auto binding = [](std::uint32_t target,
@@ -990,7 +970,7 @@ TEST(PackcPipeline, BezierManifestChecksInjectedAuthoredDomains) {
                 "\", \"packKind\": \"" + packKind +
                 "\", \"options\": { \"cache\": false }, " + section + " }");
         std::filesystem::remove(packPath);
-        EXPECT_NE(0, RunPackc({manifestPath})) << name;
+        EXPECT_NE(0, harkentest::CompileResources({manifestPath})) << name;
         EXPECT_FALSE(std::filesystem::exists(packPath)) << name;
     };
     expectRefused(
@@ -1052,8 +1032,8 @@ TEST(PackcPipeline, BezierManifestEmitterIsSymmetric) {
             "\"scope\": \"bus\", \"target\": 0, \"curve\": { "
             "\"points\": [[0.0,0.0],[1.0,1.0]], "
             "\"handles\": [[0.0,0.0,1.0,1.0]] } } ] }");
-    ASSERT_EQ(0, RunPackc({manifestPath, "--emit-manifest", emittedPath}));
-    ASSERT_EQ(0, RunPackc({emittedPath, "--no-cache",
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath, "--emit-manifest", emittedPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({emittedPath, "--no-cache",
                            "--emit-manifest", emittedAgainPath}));
     std::string first;
     std::string second;
@@ -1085,7 +1065,7 @@ TEST(PackcPipeline, InvalidPreviousOutputInvalidatesCacheWhole) {
             "\"entries\": [ " + V2EntryJson(wavPath, 8801) + " ] }");
     std::filesystem::remove(packPath);
     std::filesystem::remove(packPath + ".cache.json");
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::vector<std::uint8_t> cleanBytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &cleanBytes));
 
@@ -1097,7 +1077,7 @@ TEST(PackcPipeline, InvalidPreviousOutputInvalidatesCacheWhole) {
     const std::size_t directoryOffset =
         static_cast<std::size_t>(header.directoryOffset);
 
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::vector<std::uint8_t> rebuiltBytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &rebuiltBytes));
     EXPECT_EQ(expectedBytes, rebuiltBytes);
@@ -1132,7 +1112,7 @@ TEST(PackcPipeline, InvalidPreviousOutputInvalidatesCacheWhole) {
                                harken::kPackV2DirectoryEntryBytes));
         }
         WriteFileBytes(packPath, invalidBytes);
-        ASSERT_EQ(0, RunPackc({manifestPath}));
+        ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
         ASSERT_TRUE(ReadFileBytes(packPath, &rebuiltBytes));
         EXPECT_EQ(expectedBytes, rebuiltBytes);
 
@@ -1195,7 +1175,7 @@ TEST(PackcPipeline, IncrementalRebuildOnlyTouchedEntry) {
     };
 
     // Clean build: everything decodes.
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::vector<std::uint8_t> cleanBytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &cleanBytes));
     std::uint64_t hits = 0;
@@ -1206,7 +1186,7 @@ TEST(PackcPipeline, IncrementalRebuildOnlyTouchedEntry) {
     EXPECT_EQ(3u, misses);
 
     // Untouched rebuild: every entry hits and the bytes do not move.
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::vector<std::uint8_t> rebuildBytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &rebuildBytes));
     EXPECT_EQ(cleanBytes, rebuildBytes);
@@ -1221,7 +1201,7 @@ TEST(PackcPipeline, IncrementalRebuildOnlyTouchedEntry) {
     // Touch exactly one source: only that entry rebuilds...
     WriteWavF32(wavB, harkentest::MakeSine(850, 310.0, kRate, 0.4f), 1,
                 kRate);
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::vector<std::uint8_t> touchedBytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &touchedBytes));
     readHitFlags(&hits, &misses, &skipped);
@@ -1244,7 +1224,7 @@ TEST(PackcPipeline, IncrementalRebuildOnlyTouchedEntry) {
                                   V2EntryJson(wavB, 202),
                                   V2EntryJson(wavC, 203)},
                                  "{ \"cache\": false }"));
-    ASSERT_EQ(0, RunPackc({refManifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({refManifestPath}));
     std::vector<std::uint8_t> referenceBytes;
     ASSERT_TRUE(ReadFileBytes(refPackPath, &referenceBytes));
     EXPECT_EQ(referenceBytes, touchedBytes)
@@ -1295,14 +1275,14 @@ TEST(PackcPipeline, CacheIdentityIncludesDownmixPolicyAndAlgorithmVersion) {
     };
 
     writeManifest(false);
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     expectCacheCounts(0, 1);
     EXPECT_EQ(2u, readOnlyFacts().channels);
 
     // Same path, source bytes, and stable id, but a different policy:
     // the stereo blob must not poison the mono variant.
     writeManifest(true);
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     expectCacheCounts(0, 1);
     const BuiltEntryFacts monoFacts = readOnlyFacts();
     EXPECT_EQ(1u, monoFacts.channels);
@@ -1310,7 +1290,7 @@ TEST(PackcPipeline, CacheIdentityIncludesDownmixPolicyAndAlgorithmVersion) {
               monoFacts.planar);
 
     // The matching mono identity now hits.
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     expectCacheCounts(1, 0);
 
     // A coherent cache record with another algorithm version must miss
@@ -1325,7 +1305,7 @@ TEST(PackcPipeline, CacheIdentityIncludesDownmixPolicyAndAlgorithmVersion) {
     RestampCacheIntegrity(&cacheText);
     WriteTextFile(cachePath, cacheText);
 
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     expectCacheCounts(0, 1);
     const BuiltEntryFacts rebuiltMono = readOnlyFacts();
     EXPECT_EQ(1u, rebuiltMono.channels);
@@ -1351,7 +1331,7 @@ TEST(PackcPipeline, SameSizeContentChangeInvalidatesCacheEntry) {
     std::filesystem::remove(packPath);
     std::filesystem::remove(packPath + ".cache.json");
 
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::vector<std::uint8_t> firstBytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &firstBytes));
 
@@ -1359,7 +1339,7 @@ TEST(PackcPipeline, SameSizeContentChangeInvalidatesCacheEntry) {
     // frequency -> different samples.
     WriteWavF32(wavPath, harkentest::MakeSine(700, 320.0, kRate, 0.5f), 1,
                 kRate);
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::vector<std::uint8_t> rebuiltBytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &rebuiltBytes));
 
@@ -1378,7 +1358,7 @@ TEST(PackcPipeline, SameSizeContentChangeInvalidatesCacheEntry) {
     WriteTextFile(refManifestPath,
                   V2ManifestJson(refPackPath, {V2EntryJson(wavPath, 601)},
                                  "{ \"cache\": false }"));
-    ASSERT_EQ(0, RunPackc({refManifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({refManifestPath}));
     std::vector<std::uint8_t> referenceBytes;
     ASSERT_TRUE(ReadFileBytes(refPackPath, &referenceBytes));
     EXPECT_EQ(referenceBytes, rebuiltBytes)
@@ -1405,7 +1385,7 @@ TEST(PackcPipeline, CorruptedCacheDegradesToCleanBuild) {
                                             V2EntryJson(wavB, 212)}));
     std::filesystem::remove(packPath);
     std::filesystem::remove(cachePath);
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::vector<std::uint8_t> cleanBytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &cleanBytes));
     ASSERT_TRUE(std::filesystem::exists(cachePath));
@@ -1417,7 +1397,7 @@ TEST(PackcPipeline, CorruptedCacheDegradesToCleanBuild) {
     };
     for (const std::string& corruption : corruptions) {
         WriteTextFile(cachePath, corruption);
-        ASSERT_EQ(0, RunPackc({manifestPath})) << corruption;
+        ASSERT_EQ(0, harkentest::CompileResources({manifestPath})) << corruption;
         std::vector<std::uint8_t> rebuiltBytes;
         ASSERT_TRUE(ReadFileBytes(packPath, &rebuiltBytes));
         EXPECT_EQ(cleanBytes, rebuiltBytes) << corruption;
@@ -1436,9 +1416,9 @@ TEST(PackcPipeline, CorruptedCacheDegradesToCleanBuild) {
 
     // A valid cache whose previous output vanished also degrades clean:
     // there is nothing to lift blobs from, so everything decodes.
-    ASSERT_EQ(0, RunPackc({manifestPath})); // repopulate a good cache
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath})); // repopulate a good cache
     std::filesystem::remove(packPath);
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::vector<std::uint8_t> recreatedBytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &recreatedBytes));
     EXPECT_EQ(cleanBytes, recreatedBytes);
@@ -1474,7 +1454,7 @@ TEST(PackcPipeline, CacheCrossWiredRecordDegradesPerEntry) {
                                             V2EntryJson(wavY, 222)}));
     std::filesystem::remove(packPath);
     std::filesystem::remove(cachePath);
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::vector<std::uint8_t> cleanBytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &cleanBytes));
     std::vector<BuiltEntryFacts> facts;
@@ -1507,7 +1487,7 @@ TEST(PackcPipeline, CacheCrossWiredRecordDegradesPerEntry) {
     RestampCacheIntegrity(&cacheText);
     WriteTextFile(cachePath, cacheText);
 
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::vector<std::uint8_t> rebuiltBytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &rebuiltBytes));
     EXPECT_EQ(cleanBytes, rebuiltBytes)
@@ -1551,7 +1531,7 @@ TEST(PackcPipeline, CacheIntegrityGuardsCorruptedText) {
                                             V2EntryJson(wavB, 232)}));
     std::filesystem::remove(packPath);
     std::filesystem::remove(cachePath);
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::vector<std::uint8_t> cleanBytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &cleanBytes));
 
@@ -1563,7 +1543,7 @@ TEST(PackcPipeline, CacheIntegrityGuardsCorruptedText) {
     cacheText[digitPos] = cacheText[digitPos] == '0' ? '1' : '0';
     WriteTextFile(cachePath, cacheText);
 
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::vector<std::uint8_t> rebuiltBytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &rebuiltBytes));
     EXPECT_EQ(cleanBytes, rebuiltBytes);
@@ -1589,7 +1569,7 @@ TEST(PackcPipeline, MalformedManifestAloneStillWritesReport) {
         TempPath("pipeline_malformed_manifest.json");
     WriteTextFile(manifestPath, "{ \"sounds\": [");
     std::filesystem::remove(manifestPath + ".report.json");
-    EXPECT_NE(0, RunPackc({manifestPath}));
+    EXPECT_NE(0, harkentest::CompileResources({manifestPath}));
     JsonValue report;
     ParseJsonFile(manifestPath + ".report.json", &report);
     RequireReportSkeleton(report, "refused");
@@ -1603,7 +1583,7 @@ TEST(PackcPipeline, MalformedManifestAloneStillWritesReport) {
         TempPath("pipeline_no_such_manifest.json");
     std::filesystem::remove(missingPath);
     std::filesystem::remove(missingPath + ".report.json");
-    EXPECT_NE(0, RunPackc({missingPath}));
+    EXPECT_NE(0, harkentest::CompileResources({missingPath}));
     JsonValue missingReport;
     ParseJsonFile(missingPath + ".report.json", &missingReport);
     RequireReportSkeleton(missingReport, "refused");
@@ -1654,7 +1634,7 @@ TEST(PackcPipeline, ReportFlagsSeededDefects) {
                   V2ManifestJson(packB, {V2EntryJson(otherPath, 301)}));
 
     // Warnings never fail a build.
-    ASSERT_EQ(0, RunPackc({manifestA, manifestB, "--report",
+    ASSERT_EQ(0, harkentest::CompileResources({manifestA, manifestB, "--report",
                            TempPath("pipeline_defect.report.json")}));
     ASSERT_TRUE(std::filesystem::exists(packA));
     ASSERT_TRUE(std::filesystem::exists(packB));
@@ -1722,7 +1702,7 @@ TEST(PackcPipeline, RefusedBuildStillWritesReport) {
                                TempPath("pipeline_refuse_missing.wav"),
                                401)}));
         std::filesystem::remove(packPath + ".report.json");
-        EXPECT_NE(0, RunPackc({manifestPath}));
+        EXPECT_NE(0, harkentest::CompileResources({manifestPath}));
         JsonValue report;
         ParseJsonFile(packPath + ".report.json", &report);
         RequireReportSkeleton(report, "refused");
@@ -1768,7 +1748,7 @@ TEST(PackcPipeline, RefusedBuildStillWritesReport) {
             TempPath("pipeline_refuse_parse_manifest.json");
         WriteTextFile(manifestPath, refusal.manifest);
         std::filesystem::remove(manifestPath + ".report.json");
-        EXPECT_NE(0, RunPackc({manifestPath})) << refusal.name;
+        EXPECT_NE(0, harkentest::CompileResources({manifestPath})) << refusal.name;
         JsonValue report;
         ParseJsonFile(manifestPath + ".report.json", &report);
         RequireReportSkeleton(report, "refused");
@@ -1790,18 +1770,18 @@ TEST(PackcPipeline, RetiredManifestAndOutputPositionalAreRejected) {
                   "{ \"sounds\": [ { \"path\": \"" + wavPath +
                       "\", \"id\": \"3da91a64-b947-4560-0000-000000000259\" } ] }\n");
     std::filesystem::remove(packPath);
-    EXPECT_NE(0, RunPackc({manifestPath, packPath}));
+    EXPECT_NE(0, harkentest::CompileResources({manifestPath, packPath}));
     EXPECT_FALSE(std::filesystem::exists(packPath));
     JsonValue report;
     ParseJsonFile(manifestPath + ".report.json", &report);
     RequireReportSkeleton(report, "refused");
-    EXPECT_NE(0, RunPackc({manifestPath}));
+    EXPECT_NE(0, harkentest::CompileResources({manifestPath}));
     const std::string v2ManifestPath =
         TempPath("pipeline_v1_shape_v2_manifest.json");
     WriteTextFile(v2ManifestPath,
                   V2ManifestJson(packPath,
                                  {V2EntryJson(wavPath, 602)}));
-    EXPECT_NE(0, RunPackc({v2ManifestPath,
+    EXPECT_NE(0, harkentest::CompileResources({v2ManifestPath,
                            TempPath("pipeline_v1_other.pack")}));
 }
 
@@ -1825,13 +1805,13 @@ TEST(PackcPipeline, MissingUuidCannotBeRecoveredFromMediaCache) {
     std::filesystem::remove(packPath);
     std::filesystem::remove(cachePath);
 
-    ASSERT_EQ(0, RunPackc({manifestPath, "--cache-path",
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath, "--cache-path",
                            cachePath}));
     std::vector<std::uint8_t> firstBytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &firstBytes));
     EXPECT_TRUE(std::filesystem::exists(cachePath));
 
-    ASSERT_EQ(0, RunPackc({manifestPath, "--cache-path",
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath, "--cache-path",
                            cachePath}));
     std::vector<std::uint8_t> secondBytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &secondBytes));
@@ -1851,7 +1831,7 @@ TEST(PackcPipeline, MissingUuidCannotBeRecoveredFromMediaCache) {
     std::string missing = valid;
     ReplaceOnce(&missing, ", \"id\": " + harkentest::JsonObjectId(harkentest::ObjectId(703)), "");
     WriteTextFile(manifestPath, missing);
-    EXPECT_NE(0, RunPackc({manifestPath, "--cache-path", cachePath}));
+    EXPECT_NE(0, harkentest::CompileResources({manifestPath, "--cache-path", cachePath}));
     std::vector<std::uint8_t> afterRefusal;
     ASSERT_TRUE(ReadFileBytes(packPath, &afterRefusal));
     EXPECT_EQ(firstBytes, afterRefusal);
@@ -1873,7 +1853,7 @@ TEST(PackcPipeline, ManifestRelativePathsResolveAgainstManifestDir) {
     const std::string packPath = TempPath("pipeline_rel_out.pack");
     std::filesystem::remove(packPath);
 
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::vector<BuiltEntryFacts> facts;
     std::uint64_t fileBytes = 0;
     std::uint64_t tocChecksum = 0;
@@ -1907,7 +1887,7 @@ TEST(PackcPipeline, VoiceRecipeUsesRealKindElevenPackPath) {
         "    \"bindings\": []\n"
         "  }]\n"
         "}\n");
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::vector<std::uint8_t> bytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
     harken::PackV2Header header;
@@ -1968,7 +1948,7 @@ TEST(PackcPipeline, VoiceRecipeAlwaysWritesPlaybackVintage) {
             "    \"bindings\": []\n"
             "  }]\n"
             "}\n");
-        ASSERT_EQ(0, RunPackc({manifestPath}));
+        ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
         std::vector<std::uint8_t> bytes;
         ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
         harken::PackV2Header header;
@@ -2065,7 +2045,7 @@ TEST(PackcPipeline, VoiceRecipePlaybackWritesCurrentVintage) {
         "    \"bindings\": []\n"
         "  }]\n"
         "}\n");
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::vector<std::uint8_t> bytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
     harken::PackV2Header header;
@@ -2115,7 +2095,7 @@ TEST(PackcPipeline, VoiceRecipePlaybackUnknownKeyRefuses) {
         "\"playback\": {\"loopCount\": 2, \"loops\": 2}, "
         "\"effects\": [], \"bindings\": []}]\n"
         "}\n");
-    EXPECT_NE(0, RunPackc({manifestPath}));
+    EXPECT_NE(0, harkentest::CompileResources({manifestPath}));
     EXPECT_FALSE(std::filesystem::exists(packPath));
 }
 
@@ -2139,7 +2119,7 @@ TEST(PackcPipeline, AttenuationAlwaysWritesCurrentVintage) {
             "\"airAbsorptionFarHz\": 20000.0" + extraFields + "\n"
             "  }]\n"
             "}\n");
-        ASSERT_EQ(0, RunPackc({manifestPath}));
+        ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
         std::vector<std::uint8_t> bytes;
         ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
         harken::PackV2Header header;
@@ -2186,7 +2166,7 @@ TEST(PackcPipeline, VoiceRecipeMalformedPayloadRefusesAtAuthoring) {
         "\"descriptorVintage\": 2, \"parameters\": [-120.0]}], "
         "\"bindings\": []}]\n"
         "}\n");
-    EXPECT_NE(0, RunPackc({manifestPath}));
+    EXPECT_NE(0, harkentest::CompileResources({manifestPath}));
     EXPECT_FALSE(std::filesystem::exists(packPath));
 }
 
@@ -2208,7 +2188,7 @@ TEST(PackcPipeline, VoiceRecipeUnknownTypeDiagnosticRefuses) {
         "\"descriptorVintage\": 2, \"parameters\": []}], "
         "\"bindings\": []}]\n"
         "}\n");
-    EXPECT_NE(0, RunPackc({manifestPath}));
+    EXPECT_NE(0, harkentest::CompileResources({manifestPath}));
     EXPECT_FALSE(std::filesystem::exists(packPath));
 
     JsonValue report;
@@ -2239,7 +2219,7 @@ TEST(PackcPipeline, BusEffectAndDynamicRouteUseKindsTwelveAndThirteen) {
         "\"effectSlot\": 2, \"routeSlot\": 0, \"sourceBus\": \"3da91a64-b947-4560-0000-000000001006\", "
         "\"tap\": \"postEffects\", \"levelDb\": -3.0}]\n"
         "}\n");
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
 
     std::vector<std::uint8_t> bytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
@@ -2298,7 +2278,7 @@ TEST(PackcPipeline, BusMixFieldsUseFullUuidPayload) {
         "\"outputBusVolume\": -3.5, \"makeUpGain\": 2.0}, "
         "{\"id\": \"3da91a64-b947-4560-0000-0000000013ee\", \"parent\": \"00000000-0000-0000-0000-000000000001\"}]\n"
         "}\n");
-    ASSERT_EQ(0, RunPackc({manifestPath, "--emit-manifest", emittedPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath, "--emit-manifest", emittedPath}));
 
     std::vector<std::uint8_t> bytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
@@ -2364,7 +2344,7 @@ TEST(PackcPipeline, NonFiniteBusMixSumRefusesWithoutWritingPack) {
         "  \"buses\": [{\"id\": \"3da91a64-b947-4560-0000-000000001451\", \"parent\": \"00000000-0000-0000-0000-000000000001\", \"volume\": 3e38, "
         "\"outputBusVolume\": 3e38, \"makeUpGain\": 3e38}]\n"
         "}\n");
-    EXPECT_NE(0, RunPackc({manifestPath}));
+    EXPECT_NE(0, harkentest::CompileResources({manifestPath}));
     EXPECT_FALSE(std::filesystem::exists(packPath));
 }
 

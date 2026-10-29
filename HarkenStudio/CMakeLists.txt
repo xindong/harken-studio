@@ -168,11 +168,7 @@ set(HARKEN_EDITOR_LIB_SOURCES
     Source/Core/HubLauncher.h
     Source/Core/StartupCoordinator.cpp
     Source/Core/StartupCoordinator.h
-    Source/Core/ProjectInstance.cpp
-    Source/Core/ProjectInstance.h
     Source/Core/ProjectFormatVersion.h
-    Source/Core/ProjectPreflight/ProjectPreflight.cpp
-    Source/Core/ProjectPreflight/ProjectPreflight.h
     Source/Core/ProjectOpenProtocol.cpp
     Source/Core/ProjectOpenProtocol.h
     Source/Core/ProjectOpenApproval.cpp
@@ -221,7 +217,6 @@ set(HARKEN_EDITOR_LIB_SOURCES
     Source/Core/IPC/IPCHandlers_Project.cpp
     Source/Core/IPC/IPCHandlers_Spatial.cpp
     Source/Core/IPC/IPCHandlers_System.cpp
-    Source/Core/ProjectSerializer.cpp
     Source/Core/AssetPipeline/ImportAssetsCommand.cpp
     Source/Core/AssetPipeline/ImportSoundSourcesCommand.cpp
     Source/Core/TemplateApplyService.cpp
@@ -279,7 +274,9 @@ endif()
 # Runtime bridge -- the only sanctioned editor target that may talk to the
 # engine. Must precede Source/Core: harken_editor_foundation links it; all
 # editor runtime access goes through it.
+include(Source/Tooling/Harkenizer/CompilerClient.cmake)
 add_subdirectory(Source/RuntimeBridge)
+add_subdirectory(Source/Tooling/Harkenizer/Core)
 add_subdirectory(Source/Monitor)
 add_subdirectory(Source/Core)
 # S1a Blueprint — leaf lib (depends on Foundation only).
@@ -472,13 +469,12 @@ endif()
 
 target_link_libraries(harken_editor PRIVATE harken_editor_lib)
 
-add_executable(harkenizer Source/Tooling/Harkenizer/Main.cpp resources.qrc)
-set_target_properties(harkenizer PROPERTIES OUTPUT_NAME "Harkenizer" AUTORCC ON)
-target_link_libraries(harkenizer PRIVATE harken_editor_lib)
+add_executable(harkenizer
+    Source/Tooling/Harkenizer/Main.cpp
+    Source/Tooling/Harkenizer/ResourceWorker.cpp)
+set_target_properties(harkenizer PROPERTIES OUTPUT_NAME "Harkenizer")
+target_link_libraries(harkenizer PRIVATE harkenizer_core harkenizer_resource_compiler)
 harken_attach_version_resource(harkenizer "Harkenizer" "Harkenizer.exe")
-if(TARGET harken_packc)
-    add_dependencies(harkenizer harken_packc)
-endif()
 add_dependencies(harken_editor harkenizer)
 if(WIN32)
     target_link_libraries(harkenizer PRIVATE opengl32 ole32 shell32)
@@ -579,16 +575,6 @@ if(APPLE)
     find_program(MACDEPLOYQT_EXE macdeployqt
         HINTS ${Qt6_DIR}/../../../bin
         REQUIRED)
-
-    if(TARGET harken_packc)
-        add_dependencies(harken_editor harken_packc)
-        add_custom_command(TARGET harken_editor POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "$<TARGET_FILE:harken_packc>"
-                "$<TARGET_FILE_DIR:harken_editor>/$<TARGET_FILE_NAME:harken_packc>"
-            COMMENT "Bundling harken_packc beside Harken Studio"
-        )
-    endif()
 
     add_custom_command(TARGET harken_editor POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory

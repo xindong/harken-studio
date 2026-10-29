@@ -179,12 +179,11 @@ target_include_directories(harken_editor_tests PRIVATE
 )
 target_compile_definitions(harken_editor_tests PRIVATE
     HARKEN_TEMP_DIR="${PROJECT_SOURCE_DIR}/.temp"
-    HARKEN_PACKC_PATH="$<TARGET_FILE:harken_packc>"
     HARKEN_HOST_PATH="$<TARGET_FILE:harken_host>"
     HARKEN_STUDIO_SOURCE_DIR="${CMAKE_SOURCE_DIR}/HarkenStudio"
     HARKEN_MONITOR_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/HarkenEngine/Test/UnitTest/monitor"
     HARKEN_MONITOR_EDITOR_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/Monitor/fixtures")
-add_dependencies(harken_editor_tests harken_packc harken_host)
+add_dependencies(harken_editor_tests harken_host)
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 add_executable(harken_project_instance_process
     UnitTest/ProjectInstanceProcess.cpp
@@ -203,6 +202,17 @@ endif()
 target_compile_definitions(harken_editor_tests PRIVATE
     HARKEN_PROJECT_INSTANCE_PROCESS_PATH="$<TARGET_FILE:harken_project_instance_process>")
 add_dependencies(harken_editor_tests harken_project_instance_process)
+add_executable(harken_resource_compiler_process UnitTest/ResourceCompilerProcess.cpp)
+target_link_libraries(harken_resource_compiler_process PRIVATE harkenizer_compiler_client Qt6::Core)
+target_link_libraries(harken_editor_tests PRIVATE harkenizer_compiler_client)
+target_compile_definitions(harken_editor_tests PRIVATE
+    HARKEN_RESOURCE_COMPILER_PROCESS_PATH="$<TARGET_FILE:harken_resource_compiler_process>")
+add_dependencies(harken_editor_tests harken_resource_compiler_process)
+if(WIN32)
+    add_custom_command(TARGET harken_resource_compiler_process POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:Qt6::Core>" "$<TARGET_FILE_DIR:harken_resource_compiler_process>")
+endif()
 if(TARGET harken_core_shared)
     find_package(Qt6 REQUIRED COMPONENTS Core Network)
     add_executable(harken_remote_test_game UnitTest/RemoteGame.cpp)

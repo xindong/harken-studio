@@ -19,6 +19,10 @@ Wwise 将媒体转换缓存与 SoundBank 增量分开；重建 Bank 不必清除
 - 同一集成的 `API/Editor/WwiseWindows/AkWwiseProjectInfo.cs`
 - `C:/Users/XINDONG/Desktop/Wwise_GUI_2026/WwiseUI/DynamicProgressSoundBanksDlg/AddResultRow.c`
 
+2026-10-30 对执行模型追加只读核查：Wwise 2024.1.9 的 `Authoring/x64/Release/bin/Wwise.exe` 直接导入 `SoundBanksManagement.dll` 的 `SoundBankEngine::GenerateSoundBanks` 与 `GenerateSoundBanksWaapi`；`WaapiMgr.dll` 导入同库的普通、WAAPI 和命令行生成入口。隐藏运行 `WwiseConsole.exe generate-soundbank --help`（不加载工程、退出码 0）时，实际观察到进程加载 `Wwiselib.dll`、`WaapiMgr.dll` 和 `SoundBanksManagement.dll`。因此 GUI 与 Console 共用内部生成库已有直接证据；未观察实际 GUI 生成时的完整进程链，不能断言所有 GUI 路径都绝不启动 Console。
+
+Unity Picker 的生成按钮位于 `API/Editor/WwiseWindows/AkWwisePicker.cs`，调用 `AkUtilities.GenerateSoundbanks()` 后启动 Console。这与 Picker 浏览内容时使用工程文件或 WAAPI 是不同操作。
+
 ### Harken 改造前的职责
 
 Studio 创建工程及媒体快照、解析依赖、准备音源，通过 packc 编译中间资源，再在 Studio 内编译 CurrentWorld、切分定义、组装最终包、校验和发布。packc 是资源编译工具，尚不是读取完整工程的项目级执行器。
@@ -37,7 +41,7 @@ flowchart TD
     I -->|否| K[保留原有失败恢复与结果规则]
 ```
 
-现有 `packc manifest.json` 接受资源清单，输出位置由清单指定；当前 manifestVersion 为 3，最终包 Schema 为 4。它独立运行时只完成上图中的资源编译步骤。Studio 还负责最终包的逻辑定义、依赖、一致性及发布，因而目前不能仅用 packc 对 `.hsp` 完成整次导出。
+改造前的 `packc manifest.json` 接受资源清单，输出位置由清单指定；manifestVersion 为 3，最终包 Schema 为 4。它独立运行时只完成上图中的资源编译步骤。Studio 还负责最终包的逻辑定义、依赖、一致性及发布，因而当时不能仅用 packc 对 `.hsp` 完成整次导出。
 
 | 现有结构 | 影响 | 实现入口 |
 |---|---|---|
@@ -70,6 +74,7 @@ flowchart TD
 | 2 | 在显式构建生命周期内复用已成功计算的衍生媒体结果 | 保留源校验；跨包复用、删除缓存、改变音源和设置均等价 | 正确性、局部及完整导出测量完成，结果见下文 |
 | 3 | 继续收敛重复计划和构建数据准备 | 每项单独证明依赖与错误顺序不变，再逐阶段验证 | 当前候选均需更完整的失效或执行边界设计 |
 | 4 | 完整构建服务、独立执行入口及准确进度展示 | 具体命令、输入语义、状态经用户审定；每步回归与字节对照 | A/B/C 已完成并通过 Windows 验证；macOS 待对应环境验证 |
+| 5 | HarkenizerCore 独立模块、packc 退役及私有资源 worker | 独立目标构建；包体逐字节一致；未保存状态、取消、超时、异常退出及平台事务边界保持 | 已完成并通过本机 Windows 验证；macOS 待对应环境验证 |
 
 阶段 1 先选择不依赖新缓存身份、不重新推导媒体参数的变更。持久提前缓存、跳过完整 CurrentWorld 编译、改变子进程模型及并行调度均涉及更多失效或执行顺序条件，不能直接作为等价变更落地。
 
@@ -79,9 +84,66 @@ flowchart TD
 
 ## 架构边界
 
-Studio 的内存工程快照与 Harkenizer 读取的磁盘工程进入同一项目构建服务，复用依赖计划、媒体转换、逻辑编译、装配及发布。packc 保持该流程中的资源编译职责。Integration 的离线浏览和与 Studio 的实时连接分别保留其数据来源，本轮未改动集成入口。
+Studio 的内存工程快照与 Harkenizer 读取的磁盘工程进入同一项目构建服务，复用依赖计划、媒体转换、逻辑编译、装配及发布。A/B/C 阶段保留了 packc；随后审定的阶段 5 将构建职责收敛到 HarkenizerCore，并以 Harkenizer 私有 worker 承接资源编译。Integration 的离线浏览和与 Studio 的实时连接分别保留其数据来源，本轮未改动集成入口。
 
 独立 Console 的名称、命令、默认构建范围、未保存工程语义，以及进度界面的新状态属于对外能力设计，已按下文方案获得用户审定。受控并行仍需另行证明取消、失败传播、资源上限和确定性输出等价。
+
+### packc 退役：职责归属与执行模型
+
+状态：已完成实现及本机 Windows 验证。用户在 A/B/C 完成后明确要求让 packc 退役，并审定采用内部静态库 HarkenizerCore，构建目标为 `harkenizer_core`，不新增 DLL。此决定取代首版保留 `packc manifest.json` 独立接口的迁移安排。
+
+构建职责归属 Harkenizer 构建子系统：资源转换与编码、CurrentWorld 编译、定义分配及包体装配、验证、平台发布和根目录收尾只有一套实现。Harkenizer 命令行负责磁盘工程与命令参数适配；Studio 负责当前编辑状态及导出选择的快照、进度显示和用户交互。原资源编译实现移入该子系统，独立 packc executable、构建目标及发布依赖退出。
+
+“职责归入 Harkenizer”与“所有调用必须经过 Harkenizer.exe 进程”是两个不同决策。Wwise 的证据支持 GUI 和 Console 接入同一内部生成库；不能以 Wwise 只有一个公开 Console 为由推导其 GUI 必须启动 Console。共享内核也应拥有独立模块边界，不能继续让命令行工具反向依赖整套编辑器实现来代替架构整理。
+
+实施分工与必须保持的边界如下：
+
+| 模块／入口 | 实现职责与保持条件 |
+|---|---|
+| HarkenizerCore | 内部静态库；拥有项目构建服务、快照、计划、转换、编译、装配、校验与发布；Studio 和 Harkenizer 直接链接同一实现 |
+| GUI／IPC 适配 | GUI 继续捕获未保存编辑、组件和媒体注册表状态；IPC 继续使用既有请求语义、选择及进度接口；不隐式保存，也不把当前内存工程替换为磁盘版本 |
+| 磁盘工程读取 | 从 ProjectManager 抽出 ProjectLoader；保留完整文档加载、身份与引用验证、诊断顺序、取消检查及升级回退；CLI 使用既有只读模式，继续拒绝占用、待恢复或待升级工程 |
+| 编辑器状态 | 平台、语言及当前工程的默认值由编辑器适配层传入；内核使用显式上下文，保留现有 GUI 默认行为 |
+| 私有资源 worker | 同一 Harkenizer executable 的内部模式；同次构建顺序提交资源编译请求并复用进程，不改变媒体编译算法或引入并行 |
+| 超时与异常退出 | 每次资源编译仍有 300000 毫秒超时；发生故障时结束该 worker，错误仍归入当前平台；后续平台按原规则继续并可启动新的 worker |
+| 取消与事务 | 继续使用原有取消检查点；已经提交的平台保留，当前平台仍按原规则提交或回滚，根目录收尾和自清理仅在既有条件满足时执行 |
+| 部署与身份 | 移除 packc 交付依赖，保留 Harkenizer 可执行检查及 macOS 部署来源记录；资源编译身份由编译静态库内容派生，并在 worker 握手时校验；安装包构建拒绝 Studio 程序旁残留的 packc／harken_packc 执行器，不删除文件，避免增量部署目录夹带旧工具 |
+| Host 与验收工具 | Host 默认直接调用资源编译静态库，无额外可执行文件依赖；显式 `--packc` 仅保留开发者已有外部工具路径的兼容语义，不作为默认或交付依赖；remote 验收脚本改用 `--harkenizer` 调用私有 worker，不新增公共命令 |
+
+```mermaid
+flowchart TD
+    A[GUI 当前工程与媒体快照] --> C[HarkenizerCore 内部静态库]
+    B[IPC 现有请求与选择] --> C
+    D[Harkenizer 已保存工程命令] --> E[完整只读工程加载]
+    E --> C
+    C --> F[依赖计划与媒体准备]
+    F --> G[Harkenizer 私有资源 worker]
+    G --> H[共享逻辑编译与包体装配]
+    H --> I[校验与平台发布事务]
+    I --> J[根目录收尾与最终结果]
+```
+
+本轮已完成验证的证据保存在 `.temp/pack-build-optimization/packc-retirement/`：
+
+| 验证 | 结果与证据 |
+|---|---|
+| 集成构建与目标边界 | `build-4.log` 对应统一构建退出码 0；`link-closure.json` 确认 `harkenizer_core` 为静态库、CLI 目标闭包不含编辑器目标、packc 目标不存在 |
+| 运行时回归 | `runtime-tests.json` 记录 300/300 通过，失败和错误均为 0 |
+| 打包回归与最终包体 | `verified/report.json` 记录 136/136 回归通过；22 个最终 `.bytes` 与伴随 `.json` 和原始基线逐字节一致，无缺失、额外或变化文件 |
+| 内核与编辑器适配 | `editor-core-tests.json` 记录 64/64 通过，覆盖工程加载、序列化、引用及上下文适配；其中 3 项 worker 回归覆盖复用、拒绝、崩溃、缩短超时、错误响应、身份不匹配、重启及退出清理 |
+| 预览回归 | `preview-tests.json` 记录 18/18 通过，覆盖现有预览、播放及 seek；本轮 C++ 回归共 518/518 通过 |
+| 资源编译等价 | `resource-comparison-2/report.json` 记录两轮独立 worker，各复用同一进程完成 8 个阶段；冷编译、缓存命中、源变化、损坏缓存、拒绝请求、拒绝后恢复、另一份清单及输出缺失均与旧 packc 的原始产物字节及日志一致，两个 worker 均正常退出 |
+| 真实 CLI 取消 | `console-cancel/verification.json` 记录实际 Ctrl+C 已送达，退出码 130；首个平台已提交且匹配完整新版构建，第二平台与根 Project.json 保持旧版，自清理跳过 |
+| 脚本回归 | 编译数据库、资格工具及发布证据 139/139；Schema 发布范围 54/54；安装包构建 31/31，共 224/224 通过；工作流 YAML 解析通过 |
+| Windows 独立部署 | `standalone-deployment.json`：目录仅含 Harkenizer、既有 HarkenStudioRuntime、QtCore、QtNetwork 和 schema，PATH 限为 System32；无 Studio、packc 或 QtWidgets，帮助、目标枚举及双平台冷／再次／强制构建全部成功，9 个发布文件与完整构建逐字节相同；`studio-self-test.json` 记录 Studio 自检通过 |
+| Host 流式场景 | `host-m2.log`：默认直接调用新资源编译库完成流式资源生成和 8 秒 null 场景，自检通过 |
+| remote 验收 | `remote-acceptance.log` 确认两代资源包编译、握手及首包经 wire 加载成功；后续被客户端既有 `unknown wire kind objectid` 错误阻断，未完成整条验收 |
+
+remote 阻断已与原始基线 `19ea2c61` 核对：`remote_client.py`、生成的 `harken_wire.py` 和 `harken_wire_table.json` 内容均未变化（忽略换行形式）。直接执行基线客户端的 `encode_command("Vn_SetBusVolume", 1, -3.0, 100)` 即复现相同错误；基线验收脚本也使用该调用。错误发生在客户端编码阶段，未发送该命令，与本轮资源编译迁移无关。本轮不修改 wire 实现，也不将后续 bus 操作、snapshot、热替换及 trace 路径记录为通过。
+
+本机旧构建目录内的 packc executable 与调试文件已移入临时证据目录 `retired-output/`，记录原路径及 SHA256，默认产物目录不再残留该执行器。资源报告的历史 `tool: packc` 字段及内部兼容标识保留，以维持原始报告合同；它们不代表仍交付另一个 Console。资源编译身份切换可能使旧资源缓存首次重建，最终发布字节仍相同。
+
+macOS 实机部署需要对应环境，不能以本机结果代替。本轮没有执行远程发布。
 
 ## Console 与 Publisher 审定方案
 
@@ -89,7 +151,7 @@ Studio 的内存工程快照与 Harkenizer 读取的磁盘工程进入同一项�
 
 ### A. 先共用完整项目构建流程
 
-从 GUI 和 IPC 的现有调度中抽取完整构建服务：工程快照 → 输出锁与预检 → 所选平台构建 → 平台事务提交 → 根目录 Finalize。GUI 继续传入内存快照，保留现有未保存编辑的处理方式；IPC 继续使用当前请求语义。服务依然调用现有 Exporter 和 packc，先不改变子进程数量、超时或编译算法。
+从 GUI 和 IPC 的现有调度中抽取完整构建服务：工程快照 → 输出锁与预检 → 所选平台构建 → 平台事务提交 → 根目录 Finalize。GUI 继续传入内存快照，保留现有未保存编辑的处理方式；IPC 继续使用当前请求语义。该阶段服务仍调用原 Exporter 和 packc，先不改变子进程数量、超时或编译算法。
 
 不能直接把单平台 `ExportAllPacks` 当作完整项目入口，否则会遗漏最终 Project.json、自清理及多平台收尾。也不能只调用 `ProjectSerializer::loadProject` 读取工程：真实工程扩展名是 `.hsp`，完整内容还包括 Bus、Action、S3、Layer 等关联文档及身份、引用、资产验证。应从 `ProjectManager::prepareProject` 抽取磁盘读取与验证部分，避免进入会启动音频运行会话的 `commitPreparedProject`。
 
@@ -99,7 +161,7 @@ Studio 的内存工程快照与 Harkenizer 读取的磁盘工程进入同一项�
 
 ### B. 独立入口的首版合同
 
-名称确定为 `Harkenizer`，保留现有 `packc manifest.json` 资源编译接口。首版提供：
+名称确定为 `Harkenizer`。A/B 阶段曾保留 `packc manifest.json` 资源编译接口，该迁移安排由阶段 5 的退役决定取代；项目命令合同继续保留：
 
 ```text
 Harkenizer list-targets <project.hsp> --json
@@ -172,6 +234,7 @@ Harkenizer generate-packs <project.hsp> --all --platform-id <UUID> [--platform-i
 | A/B | GUI、IPC 和 Harkenizer 共用完整构建服务；新增只读工程准备和不激活窗口的工程占用检查 | Windows 编辑器、CLI、测试均构建成功；134/134 回归通过；22 个基线文件逐字节一致；实际保存工程的双平台首次/再次/强制 CLI 导出与原流程全部包体和 JSON 一致 |
 | C | 增加全局阶段、单包 Prepared／Ready to publish 和具名 CLI 日志；既有业务回调、取消检查及 Cost 口径不变 | 136/136 回归通过；22 个基线文件逐字节一致；9 张宽窄面板截图核验状态与布局；最终 CLI 真实 Ctrl+C 验证通过 |
 | 发布接入 | Windows 必需 CLI；macOS 增加 helper 依赖部署与来源回执；安装包校验 CLI 可启动 | 86/86 Python 回归通过，工作流 YAML 解析通过；未执行真实发布及 macOS 实机部署 |
+| 5 | HarkenizerCore 静态库、完整磁盘加载、编辑器上下文适配、私有资源 worker 及 packc 退役 | 统一构建成功；518/518 C++ 与 224/224 Python 回归通过；22 个基线文件逐字节一致；两轮各 8 阶段资源编译产物及日志与旧 packc 相同；真实 Ctrl+C、worker 故障恢复及 Windows 独立部署通过；remote 完整验收受既有客户端编码问题阻断，macOS 未实测 |
 
 22 个文件包含 11 个 `.bytes` 与 11 个伴随 `.json`，其中黄金 Init/Action 对在两个输出目录各生成一次；另外覆盖六种容器样本。该数量不代表 22 个不同包。基线回归耗时 90.890 秒、阶段 1 初版 90.350 秒，仅作为运行记录，不足以证明性能提升。
 
@@ -210,6 +273,18 @@ Harkenizer 发布接入要求 Windows/macOS 包中存在可运行的独立入口
 两轮 140 次调用的完整媒体元数据与 WAV SHA256 全部一致。首次请求仍走原计算路径；已有 WAV 加空元数据缓存的时间与原路径接近。缺少 WAV 时受写盘波动影响，不能宣称冷转换提速。上述是 materialize 局部收益，不代表完整项目导出收益；完整源哈希校验保留。
 
 实验源码、独立编译命令、二进制身份与原始测量保存在 `.temp/pack-build-optimization/derivative-benchmark/`，其中 `stage2/results/measurements.json` 与 `stage2-repeat/results/measurements.json` 是两轮结果。临时实验没有修改正式构建目标或业务代码。
+
+## 资源 worker 复用性能测量
+
+阶段 5 使用固定 4096 帧、48 kHz 双声道 WAV，每份清单包含原声道与 mono downmix 两条资源，关闭编译缓存。每批 16 次请求，三种执行方式正反交替测量 7 轮；计时覆盖进程启动、握手、编译、字节核对和正常退出。操作系统文件及程序页面缓存已热，测量期间没有并行编译或其他重型测试。
+
+| 执行方式 | 16 次请求批次中位耗时 | 摊销单次耗时 |
+|---|---|---|
+| 原 packc，每次启动进程 | 504.2 ms | 31.51 ms |
+| Harkenizer，同批复用一个 worker | 179.3 ms | 11.21 ms |
+| Harkenizer，每次重新启动 worker，控制组 | 716.1 ms | 44.76 ms |
+
+复用 worker 在此小输入夹具降低约 64.4% 的资源编译段耗时，336 次请求的包体与报告字节均一致。控制组也表明仅将工具名称改为 Harkenizer、仍逐包启动进程会增加成本，收益来自同批复用。该测量不包含工程加载、衍生媒体或最终发布，不能外推整项目提速，也不能保证单请求和所有缓存命中场景都更快。证据为 `packc-retirement/resource-benchmark/report.json`；对应 Harkenizer SHA256 为 `4a691772b281f8fc10f221e978ffb7128a43ef0b0e17f5ea4f225d7bf349dc61`。
 
 ## 完整导出性能测量
 

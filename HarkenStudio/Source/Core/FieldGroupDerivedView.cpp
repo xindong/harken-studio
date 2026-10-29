@@ -1,6 +1,6 @@
 #include "FieldGroupDerivedView.h"
 
-#include "CanonicalRuntimeProjectAdapterPrivate.h"
+#include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "FieldGroupProjectAdapter.h"
 #include "Components/VMixNode.h"
 #include "Components/VSpatial.h"

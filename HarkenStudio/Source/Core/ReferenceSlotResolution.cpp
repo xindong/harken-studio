@@ -5,8 +5,6 @@
 #include "Components/VTrack.h"
 #include "ItemTypeCatalog.h"
 #include "PlayablePropertyAuthoringV1.h"
-#include "PlatformContextService.h"
-#include "ProjectManager.h"
 
 #include <QSet>
 
@@ -239,22 +237,6 @@ void applySource(const ResolutionScope& scope, const FieldGroupSource& source,
     result.via = viaText(result.source, result.owner);
 }
 
-std::shared_ptr<const FieldGroupEffectiveSnapshot> currentSnapshot(const ProjectItem* item)
-{
-    const auto* project = ProjectManager::instance().currentProject();
-    if (!item || !project
-        || !PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type))
-        return {};
-    return std::make_shared<FieldGroupEffectiveSnapshot>(
-        buildFieldGroupEffectiveSnapshot(*project,
-            toFieldGroupScope(currentWorldPlatformScope(PlatformContextService::instance().context()))));
-}
-
-}
-
-ResolutionScope buildResolutionScope(const ProjectItem* item)
-{
-    return buildResolutionScope(item, currentSnapshot(item));
 }
 
 ResolutionScope buildResolutionScope(
@@ -275,12 +257,13 @@ ResolutionScope buildResolutionScope(const ProjectData& project, const ProjectIt
 
 ResolutionScope buildResolutionScope(const ProjectItem* item,
                                      const PlacementContext& placement,
-                                     const PlacementItemResolver& resolveItem)
+                                     const PlacementItemResolver& resolveItem,
+                                     std::shared_ptr<const FieldGroupEffectiveSnapshot> effectiveGroups)
 {
     const PlacementMaterialization materialized = materializePlacement(
         item, placement, resolveItem);
     auto scope = makeScope(item, &materialized);
-    scope.effectiveGroups = currentSnapshot(item);
+    scope.effectiveGroups = std::move(effectiveGroups);
     return scope;
 }
 
@@ -333,11 +316,6 @@ const ProjectItem* resolveOutputBusSlotOwner(const ResolutionScope& scope)
     return resolveOutputBusSlot(scope).owner;
 }
 
-const ProjectItem* resolveOutputBusSlotOwner(const ProjectItem* item)
-{
-    return resolveOutputBusSlotOwner(buildResolutionScope(item));
-}
-
 uint32_t resolveEffectiveOutputBusId(const ResolutionScope& scope)
 {
     const auto resolved = resolveOutputBusSlot(scope);
@@ -345,11 +323,6 @@ uint32_t resolveEffectiveOutputBusId(const ResolutionScope& scope)
     if (resolved.target) return resolved.target->objectID;
     const ProjectItem* owner = resolved.owner;
     return owner ? owner->comp<VMixNode>()->outputBusId : kMasterBusID;
-}
-
-uint32_t resolveEffectiveOutputBusId(const ProjectItem* item)
-{
-    return resolveEffectiveOutputBusId(buildResolutionScope(item));
 }
 
 AttenuationSlot resolveEffectiveAttenuation(const ResolutionScope& scope)
@@ -381,11 +354,6 @@ AttenuationSlot resolveEffectiveAttenuation(const ResolutionScope& scope)
     return slot;
 }
 
-AttenuationSlot resolveEffectiveAttenuation(const ProjectItem* item)
-{
-    return resolveEffectiveAttenuation(buildResolutionScope(item));
-}
-
 SendSlot resolveEffectiveSends(const ResolutionScope& scope)
 {
     SendSlot result;
@@ -407,11 +375,6 @@ SendSlot resolveEffectiveSends(const ResolutionScope& scope)
     return result;
 }
 
-SendSlot resolveEffectiveSends(const ProjectItem* item)
-{
-    return resolveEffectiveSends(buildResolutionScope(item));
-}
-
 std::vector<ResolvedParameterBinding> resolveParameterBindings(
     const ResolutionScope& scope, const BindingAddress& address)
 {
@@ -429,12 +392,6 @@ std::vector<ResolvedParameterBinding> resolveParameterBindings(
                 {candidate.item, binding, candidate.source, candidate.via});
     }
     return resolved;
-}
-
-std::vector<ResolvedParameterBinding> resolveParameterBindings(
-    const ProjectItem* item, const BindingAddress& address)
-{
-    return resolveParameterBindings(buildResolutionScope(item), address);
 }
 
 }

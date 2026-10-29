@@ -8,7 +8,7 @@
 #include "../AssetPipeline/PathUtils.h"
 #include "../ProjectLanguageSemantics.h"
 #include "../NameValidator.h"
-#include "../ProjectPackExporter.h"
+#include "Tooling/Harkenizer/Core/ProjectPackExporter.h"
 #include "../PlayablePropertyAuthoringV1.h"
 #include "../FieldGroups.h"
 #include "../LanguageContextService.h"
@@ -60,7 +60,6 @@ namespace VNX {
 ProjectItem* findItemByPath(ProjectItem* root, const QString& path);
 ProjectItem* findItemByPathInProject(ProjectData* project, const QString& path);
 ProjectItem* findItemByObjectIDInProject(ProjectData* project, uint32_t objectID);
-ProjectItem* findItemByAuthoringHandleInProject(ProjectData* project, uint32_t authoringHandle);
 uint32_t itemShortID(const ProjectItem* item);
 ProjectItem* resolveItemByPathOrObjectID(ProjectData* project,
                                          const QString& path,

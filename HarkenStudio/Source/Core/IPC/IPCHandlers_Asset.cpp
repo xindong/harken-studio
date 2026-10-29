@@ -1,6 +1,6 @@
 #include "../PropertyEditSession.h"
-#include "../ProjectBuildSnapshot.h"
-#include "../ProjectPackBuildService.h"
+#include "Tooling/Harkenizer/Core/ProjectBuildSnapshot.h"
+#include "Tooling/Harkenizer/Core/ProjectPackBuildService.h"
 #include "IPCServerInternal.h"
 #include "AudioEngine.h"
 #include "AssetPipeline/PathUtils.h"

@@ -3,6 +3,8 @@
 
 #include <harken/Harken.h>
 
+#include "ResourceCompilerTestUtil.h"
+
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -12,9 +14,6 @@
 
 #include <process.h>
 
-#ifndef HARKEN_PACKC_PATH
-#error "HARKEN_PACKC_PATH must point at the packc executable"
-#endif
 #ifndef HARKEN_TEMP_DIR
 #error "HARKEN_TEMP_DIR must point at the repository's .temp directory"
 #endif
@@ -129,15 +128,7 @@ inline RecipePackArtifact BuildRecipePack(
             return artifact;
         }
     }
-    std::string exe = HARKEN_PACKC_PATH;
-    for (char& c : exe) {
-        if (c == '/') {
-            c = '\\';
-        }
-    }
-    const std::string command =
-        "\"\"" + exe + "\" \"" + manifest + "\"\"";
-    artifact.built = std::system(command.c_str()) == 0;
+    artifact.built = harkentest::CompileResources({manifest}) == 0;
     return artifact;
 }
 
@@ -204,15 +195,7 @@ inline RecipePackArtifact BuildToneRecipePack(
             return artifact;
         }
     }
-    std::string exe = HARKEN_PACKC_PATH;
-    for (char& c : exe) {
-        if (c == '/') {
-            c = '\\';
-        }
-    }
-    const std::string command =
-        "\"\"" + exe + "\" \"" + manifest + "\"\"";
-    artifact.built = std::system(command.c_str()) == 0;
+    artifact.built = harkentest::CompileResources({manifest}) == 0;
     return artifact;
 }
 

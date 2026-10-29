@@ -769,7 +769,7 @@ TransitionWatchResult resolveWatchReference(
 
     if (placement) {
         const auto scope = ReferenceSlotResolution::buildResolutionScope(
-            &container, *placement, resolve);
+            &container, *placement, resolve, {});
         result.placementContextValid = scope.placementContextValid;
         if (!scope.placementContextValid)
             result.failureReason = scope.placementContextError;

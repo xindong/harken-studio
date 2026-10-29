@@ -676,7 +676,7 @@ PlayablePropertyAuthoringV1::placementLocator(
 {
     if (!resolveItem || placement.empty()) return definitionLocator(subject);
     const auto scope = ReferenceSlotResolution::buildResolutionScope(
-        &subject, placement, resolveItem);
+        &subject, placement, resolveItem, {});
     if (!scope.placementContextValid) return std::nullopt;
     const PlacementOccurrence& occurrence = placement.occurrences().front();
     if (occurrence.targetGuid != subject.guid) return std::nullopt;
@@ -915,7 +915,7 @@ PlayablePropertyAuthoringV1::resolveSource(
         return std::nullopt;
 
     const auto resolution = ReferenceSlotResolution::buildResolutionScope(
-        &subject, *placement, resolveItem);
+        &subject, *placement, resolveItem, {});
     if (!resolution.placementContextValid) return std::nullopt;
     const auto& occurrences = placement->occurrences();
     if (occurrences.empty()) return std::nullopt;

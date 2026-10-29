@@ -51,6 +51,10 @@ ResolutionScope buildResolutionScope(const ProjectData& project, const ProjectIt
 ResolutionScope buildResolutionScope(const ProjectItem* item,
                                      const PlacementContext& placement,
                                      const PlacementItemResolver& resolveItem);
+ResolutionScope buildResolutionScope(const ProjectItem* item,
+                                     const PlacementContext& placement,
+                                     const PlacementItemResolver& resolveItem,
+                                     std::shared_ptr<const FieldGroupEffectiveSnapshot> effectiveGroups);
 ResolutionScope buildResolutionScope(const ProjectData& project, const ProjectItem* item,
                                      const PlacementContext& placement,
                                      const PlacementItemResolver& resolveItem,

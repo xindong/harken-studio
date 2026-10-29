@@ -39,6 +39,7 @@ private:
 
     ProjectInstance();
     void receiveActivation();
+    static void setActivationHandler(void (*handler)(), bool windowAvailable);
 
     std::unique_ptr<NativeData> native_;
 };

@@ -54,6 +54,7 @@ target_link_libraries(harken_runtime_bridge PRIVATE
     harken_bus_compiler
     harken_studio_runtime_api
     harken_studio_media_decode
+    harkenizer_compiler_client
     harken_remote_protocol
     vorbisfile
 )

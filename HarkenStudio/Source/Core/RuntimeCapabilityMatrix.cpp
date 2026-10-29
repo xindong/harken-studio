@@ -5,8 +5,7 @@
 #include "Components/VSelection.h"
 #include "EffectChainSemantics.h"
 #include "ItemTypeCatalog.h"
-#include "CurrentWorldProjectAdapter.h"
-#include "PlatformContextService.h"
+#include "Tooling/Harkenizer/Core/CurrentWorldProjectAdapter.h"
 #include "BindingRuntimeLowering.h"
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
 
@@ -288,11 +287,12 @@ std::optional<O> parseOperation(const QString& value)
 }
 
 
-RuntimeCapabilityEntry evaluate(const ProjectItem& item,
+RuntimeCapabilityEntry evaluateForContext(const ProjectItem& item,
                                 const ProjectData& project,
                                 RuntimeCapabilityOperation operation,
                                 RuntimeCapabilityFeature feature,
-                                std::optional<BuildVariant> variant)
+                                std::optional<BuildVariant> variant,
+                                   const RuntimeCapabilityContext& context)
 {
     RuntimeCapabilityEntry result{item.type, operation, feature, S::Ready, {}};
     const auto refuse = [&](S state, const QString& diagnostic) {
@@ -413,7 +413,7 @@ RuntimeCapabilityEntry evaluate(const ProjectItem& item,
         const auto bindings = bindingCapability(item, project, operation);
         if (bindings.state != S::Ready) return refuse(bindings.state, bindings.diagnostic);
     }
-    PlatformScope scope = currentWorldPlatformScope(PlatformContextService::instance().context());
+    PlatformScope scope = context.platform;
     CurrentWorldBuildOptions options;
     if (item.type == T::Action) options.actionRoot = &item;
     else options.definitionRoot = &item;
@@ -428,8 +428,8 @@ RuntimeCapabilityEntry evaluate(const ProjectItem& item,
     }
     QString diagnostic;
     CurrentWorldBuildStatus status = CurrentWorldBuildStatus::InvalidAuthoring;
-    auto request = buildCurrentWorldSyncRequest(
-        const_cast<ProjectData&>(project), scope, &diagnostic, &status, &options);
+    auto request = buildCurrentWorldSyncRequestForContext(
+        const_cast<ProjectData&>(project), scope, &diagnostic, &status, &options, 0, context.language);
     if (!request)
         return refuse(status == CurrentWorldBuildStatus::CapabilityUnavailable
                           ? S::UnavailableEngineContract : S::InvalidAuthoring,
@@ -495,24 +495,11 @@ RuntimeCapabilityEntry evaluate(const ProjectItem& item,
     return result;
 }
 
-RuntimeCapabilityEntry evaluate(const ProjectItem& item,
-                                const ProjectData& project,
-                                const QString& operation,
-                                RuntimeCapabilityFeature feature)
-{
-    auto parsed = parseOperation(operation);
-    if (!parsed && operation == QStringLiteral("execute"))
-        parsed = item.type == T::Action ? O::ActionRegistration : O::AuditionPlay;
-    if (!parsed)
-        return {item.type, O::LiveSync, feature, S::InvalidAuthoring,
-                QStringLiteral("Unknown runtime capability operation")};
-    return evaluate(item, project, *parsed, feature);
-}
-
-RuntimeCapabilityAssessment assess(const ProjectItem& item,
+RuntimeCapabilityAssessment assessForContext(const ProjectItem& item,
                                    const ProjectData& project,
                                    RuntimeCapabilityOperation operation,
-                                   std::optional<BuildVariant> variant)
+                                   std::optional<BuildVariant> variant,
+                                   const RuntimeCapabilityContext& context)
 {
     RuntimeCapabilityAssessment assessment;
     assessment.operation = operation;
@@ -522,7 +509,7 @@ RuntimeCapabilityAssessment assess(const ProjectItem& item,
     assessment.state = S::Ready;
 
     const auto add = [&](F feature) {
-        const auto evaluated = evaluate(item, project, operation, feature, assessment.variant);
+        const auto evaluated = evaluateForContext(item, project, operation, feature, assessment.variant, context);
         if (evaluated.state == S::Ready) {
             if (!evaluated.diagnostic.isEmpty()
                 && std::none_of(assessment.issues.begin(), assessment.issues.end(),
@@ -562,10 +549,11 @@ RuntimeCapabilityAssessment assess(const ProjectItem& item,
     return assessment;
 }
 
-RuntimeCapabilityAssessment assess(const ProjectData& project,
+RuntimeCapabilityAssessment assessForContext(const ProjectData& project,
                                    harkenstudio::ObjectId rootStableId,
                                    RuntimeCapabilityOperation operation,
-                                   std::optional<BuildVariant> variant)
+                                   std::optional<BuildVariant> variant,
+                                   const RuntimeCapabilityContext& context)
 {
     RuntimeCapabilityAssessment result;
     result.operation = operation;
@@ -579,7 +567,7 @@ RuntimeCapabilityAssessment assess(const ProjectData& project,
                                  {rootStableId, {}, {}, -1, QStringLiteral("rootStableId"), {}}});
         return result;
     }
-    return assess(*item, project, operation, std::move(result.variant));
+    return assessForContext(*item, project, operation, std::move(result.variant), context);
 }
 
 QString featureName(RuntimeCapabilityFeature feature)

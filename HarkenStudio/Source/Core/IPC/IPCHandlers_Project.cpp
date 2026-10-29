@@ -1,7 +1,7 @@
 #include "IPCServerInternal.h"
 #include "ComponentCatalog.h"
 #include "ItemTypeCatalog.h"
-#include "../PackBuildPlan.h"
+#include "Tooling/Harkenizer/Core/PackBuildPlan.h"
 #include "../PackGenerationRecord.h"
 #include "../ProjectLanguageSemantics.h"
 #include "../ProjectUpgradeManager.h"
@@ -518,41 +518,6 @@ ProjectFileBinding* findBindingByFolder(ProjectData* project, const QString& fol
     return nullptr;
 }
 
-
-ProjectItem* findItemByObjectID(ProjectItem* root, uint32_t objectID)
-{
-    if (!root) return nullptr;
-    if (root->objectID == objectID) return root;
-
-    for (const auto& child : root->children)
-    {
-        if (ProjectItem* found = findItemByObjectID(child.get(), objectID))
-        {
-            return found;
-        }
-    }
-    return nullptr;
-}
-
-ProjectItem* findItemByAuthoringHandle(ProjectItem* root, uint32_t authoringHandle)
-{
-    return findItemByObjectID(root, authoringHandle);
-}
-
-ProjectItem* findItemByAuthoringHandleInProject(ProjectData* project, uint32_t authoringHandle)
-{
-    if (!project || authoringHandle == 0) return nullptr;
-
-    for (const auto* binding : project->allFileBindings())
-    {
-        if (!binding || !binding->rootItem) continue;
-        if (ProjectItem* found = findItemByAuthoringHandle(binding->rootItem.get(), authoringHandle))
-        {
-            return found;
-        }
-    }
-    return nullptr;
-}
 
 uint32_t itemShortID(const ProjectItem* item)
 {

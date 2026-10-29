@@ -10,7 +10,7 @@
 // resolves the same rows.
 #include <harken/Harken.h>
 
-#include "PackcManifest.h"
+#include "Manifest.h"
 #include "harken/media/generated/harken_pack_effect_schema.g.h"
 #include "harken/render/BuiltinEffects.h"
 #include "harken/render/generated/harken_effect_registry.g.h"

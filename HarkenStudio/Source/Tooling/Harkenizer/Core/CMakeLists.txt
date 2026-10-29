@@ -1,0 +1,221 @@
+set(HARKENIZER_SHARED_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
+
+add_library(harkenizer_core STATIC
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ActionClosureSemantics.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ActionStepEditing.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ActionStepUtils.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/AssetConverter.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/AssetRegistry.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/AudioFormatCatalog.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/MediaBuildSnapshot.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/PathUtils.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/PlatformProfile.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/WaveformCache.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/BindingContract.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/BindingRuntimeLowering.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/BindingSemantics.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/BucketFolderStore.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/BusRouteGraph.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/CompileTargetProfileCatalog.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ComponentCatalog.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VAttenuation.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VSelection.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VSound.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ContainerBehaviorSemantics.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/CurveSemantics.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/EffectChainSemantics.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FieldGroupDerivedView.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FieldGroupEditing.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FieldGroupJson.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FieldGroupProjectAdapter.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FieldGroups.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FolderSaveState.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/GridSemantics.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/IntegrityScanner.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ItemTypeCatalog.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/MigrationManager.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/MixingSemantics.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/NameValidator.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/PackArtifactCache.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/PackGenerationRecord.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/PlacementContext.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/PlayablePropertyAuthoringV1.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/PlaybackReferenceValidation.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectContract.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectDataPolicy.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectDocument.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectIndex.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectInstance.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectIssue.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectItemComponents.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectLanguageSemantics.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectLocator.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectMigration.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectPlatform.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectPlatformActivity.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectPreflight/ProjectPreflight.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectSchemaValidator.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectSerializer.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectTransaction.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectTypes.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectUpgradeManager.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectUpgradeMessages.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectVolume.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ReferenceSlotResolution.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/RuntimeCapabilityMatrix.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/RuntimeU64Json.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/SchemaArchive.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/SoundSourceEditing.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/SoundSourceSemantics.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Timeline/TimelineCoordinates.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Timeline/TimelineSemantics.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Timeline/TimelineTypes.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/TransitionSemantics.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/VariableConsumerSemantics.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/VariableSemantics.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/AssetAnalysis.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/AttenuationQueries.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/CanonicalPackSetExport.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/CanonicalRuntimeProjectAdapter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/CurrentWorldArtifactWriter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/CurrentWorldProjectAdapter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/PackBuildPlan.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/PackExportSelection.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/PackOutputIndex.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ProjectBuildSnapshot.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ProjectLoader.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ProjectPackBuildService.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ProjectPackExporter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/SoundSourceDerivative.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ActionClosureSemantics.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ActionStepEditing.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ActionStepUtils.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/AssetConverter.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/AssetImporter.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/AssetRegistry.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/AudioFormatCatalog.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/MediaBuildSnapshot.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/PathUtils.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/PlatformProfile.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/WaveformCache.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/BindingContract.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/BindingRuntimeLowering.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/BindingSemantics.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/BucketFolderStore.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/BusRouteGraph.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/CompileTargetProfileCatalog.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ComponentCatalog.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VAttenuation.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VSelection.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VSound.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ContainerBehaviorSemantics.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/CurveSemantics.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/EffectChainSemantics.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FieldGroupDerivedView.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FieldGroupEditing.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FieldGroupJson.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FieldGroupProjectAdapter.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FieldGroups.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FolderSaveState.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/GridSemantics.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/IntegrityScanner.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ItemTypeCatalog.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/MigrationManager.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/MixingSemantics.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/NameValidator.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/PackArtifactCache.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/PackGenerationRecord.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/PlacementContext.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/PlayablePropertyAuthoringV1.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/PlaybackReferenceValidation.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectContract.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectDataPolicy.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectDocument.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectIndex.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectInstance.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectIssue.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectLanguageSemantics.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectLocator.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectMigration.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectPlatform.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectPlatformActivity.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectPreflight/ProjectPreflight.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectSchemaValidator.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectSerializer.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectTransaction.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectTypes.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectUpgradeManager.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectUpgradeMessages.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectVolume.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ReferenceSlotResolution.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/RuntimeCapabilityMatrix.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/RuntimeU64Json.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/SchemaArchive.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/SoundSourceEditing.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/SoundSourceSemantics.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Timeline/TimelineCoordinates.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Timeline/TimelineSemantics.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Timeline/TimelineTypes.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/TransitionSemantics.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/VariableConsumerSemantics.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/VariableSemantics.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/CanonicalPackSetExport.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/CanonicalRuntimeProjectAdapter.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/CurrentWorldArtifactWriter.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/CurrentWorldProjectAdapter.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/PackBuildPlan.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/PackExportSelection.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/ProjectBuildSnapshot.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/ProjectLoader.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/ProjectPackBuildService.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/ProjectPackExporter.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/SoundSourceDerivative.h
+    ${HARKEN_SCHEMA_GENERATED_PROJECT_HEADER}
+    ${HARKEN_SCHEMA_GENERATED_BUILD_HEADER}
+    ${HARKEN_SCHEMA_GENERATED_VALIDATOR_SOURCE}
+    ${HARKEN_SCHEMA_GENERATED_VALIDATOR_HEADER}
+)
+
+add_dependencies(harkenizer_core harken_schema_codegen)
+set_target_properties(harkenizer_core PROPERTIES
+    AUTOMOC ON
+    AUTOGEN_BUILD_DIR "${CMAKE_BINARY_DIR}/_autogen/harkenizer_core"
+)
+
+target_include_directories(harkenizer_core PUBLIC
+    ${HARKENIZER_SHARED_SOURCE_DIR}
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Utils
+    ${HARKEN_SCHEMA_GENERATED_DIR}
+    ${HARKEN_SCHEMA_GENERATED_CORE_DIR}
+)
+target_include_directories(harkenizer_core PRIVATE
+    ${HARKENIZER_SHARED_SOURCE_DIR}/../ThirdParty
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Tooling/Common
+)
+target_link_libraries(harkenizer_core PUBLIC
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Network
+    Qt6::Concurrent
+    harken_integration_tooling
+    harken_runtime_bridge
+    harken_current_world_compiler
+    harken_buildinfo
+    vorbis
+    vorbisenc
+    ogg
+    r8brain
+)
+
+if(WIN32)
+    target_link_libraries(harkenizer_core PUBLIC user32 advapi32)
+elseif(APPLE)
+    find_library(HARKENIZER_COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
+    target_link_libraries(harkenizer_core PUBLIC ${HARKENIZER_COREFOUNDATION_FRAMEWORK})
+endif()
+
+if(MSVC)
+    target_compile_options(harkenizer_core PRIVATE /W4 /wd4100 /wd4189 /utf-8)
+    target_compile_definitions(harkenizer_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()

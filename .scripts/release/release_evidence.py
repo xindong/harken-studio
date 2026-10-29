@@ -69,7 +69,7 @@ COMPONENT_INPUTS = (
     {"id": "heroicons", "notice": "Heroicons", "products": ["hub"],
      "url": "https://github.com/tailwindlabs/heroicons", "legalFiles": ["Heroicons-LICENSE.txt"]},
 )
-ROOT_TARGETS = {"studio": ("harken_editor", "harken_packc", "harkenizer"), "hub": ("harken_hub",),
+ROOT_TARGETS = {"studio": ("harken_editor", "harkenizer"), "hub": ("harken_hub",),
                 "runtime": ("harken_core_shared",)}
 
 

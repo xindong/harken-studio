@@ -143,15 +143,7 @@ harkentest::RecipePackArtifact BuildSpatialRecipePack(
             return artifact;
         }
     }
-    std::string exe = HARKEN_PACKC_PATH;
-    for (char& c : exe) {
-        if (c == '/') {
-            c = '\\';
-        }
-    }
-    const std::string command =
-        "\"\"" + exe + "\" \"" + manifest + "\"\"";
-    artifact.built = std::system(command.c_str()) == 0;
+    artifact.built = harkentest::CompileResources({manifest}) == 0;
     return artifact;
 }
 

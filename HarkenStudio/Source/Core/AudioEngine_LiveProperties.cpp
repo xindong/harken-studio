@@ -1,8 +1,8 @@
 #include "AudioEngine.h"
 
 #include "AttenuationStore.h"
-#include "CurrentWorldProjectAdapter.h"
-#include "CanonicalRuntimeProjectAdapterPrivate.h"
+#include "Tooling/Harkenizer/Core/CurrentWorldProjectAdapter.h"
+#include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "FieldGroupProjectAdapter.h"
 #include "PlatformContextService.h"
 #include "ProjectManager.h"

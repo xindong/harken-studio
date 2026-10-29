@@ -1862,9 +1862,10 @@ def main() -> int:
             raise QualificationError(f"Executable was not found: {executable}")
     if not args.null_only and (capture_exe is None or not capture_exe.is_file()):
         raise QualificationError("--capture-exe is required for WASAPI qualification")
-    packc_candidates = (studio_exe.parent / "packc.exe", studio_exe.parent / "harken_packc.exe")
-    if not any(candidate.is_file() for candidate in packc_candidates):
-        raise QualificationError(f"packc is not bundled beside Studio: {studio_exe.parent}")
+    suffix = ".exe" if studio_exe.suffix.lower() == ".exe" else ""
+    harkenizer = studio_exe.parent / ("Harkenizer" + suffix)
+    if not harkenizer.is_file():
+        raise QualificationError(f"Harkenizer is not bundled beside Studio: {studio_exe.parent}")
     if port_is_open():
         raise QualificationError(
             f"Studio IPC port {PORT} is already in use; do not share a qualification session"
@@ -1898,6 +1899,7 @@ def main() -> int:
         "started_at_ns": time.time_ns(),
         "binaries": {
             "studio": {"path": str(studio_exe), "sha256": sha256(studio_exe)},
+            "harkenizer": {"path": str(harkenizer), "sha256": sha256(harkenizer)},
             "host": {"path": str(host_exe), "sha256": sha256(host_exe)},
             "capture": (
                 {"path": str(capture_exe), "sha256": sha256(capture_exe)}

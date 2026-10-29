@@ -21,9 +21,10 @@
 #include "VariableRehearsal.h"
 #include "ItemTypeCatalog.h"
 #include "ProjectTypes.h"
-#include "PackExportSelection.h"
+#include "Tooling/Harkenizer/Core/PackExportSelection.h"
 #include "Components/VBus.h"
 #include "ProjectSerializer.h"
+#include "Tooling/Harkenizer/Core/ProjectLoader.h"
 #include "FileWatcher.h"
 #include "StartupProgress.h"
 
@@ -46,7 +47,6 @@ class ProjectItemSaveState;
 class IntegrityScanner;
 class PlacementContext;
 class VMixNode;
-struct PreparedProject;
 
 class ActionManager;
 class AudioEngine;
@@ -63,33 +63,6 @@ class PropertyEditSession;
 struct ActionResult;
 struct FieldGroupDefinitionSnapshot;
 struct FieldGroupEffectiveSnapshot;
-
-struct PreparedProject
-{
-    PreparedProject();
-    PreparedProject(PreparedProject&& other) noexcept;
-    PreparedProject& operator=(PreparedProject&& other) noexcept;
-    PreparedProject(const PreparedProject&) = delete;
-    PreparedProject& operator=(const PreparedProject&) = delete;
-    ~PreparedProject();
-
-    void releaseUpgradeRecovery() { upgradePending = false; }
-    void rollbackUpgrade();
-
-    std::shared_ptr<ProjectInstance> instance;
-    std::unique_ptr<ProjectData> project;
-    std::unique_ptr<FolderSaveState> folderSaveState;
-    std::unique_ptr<ProjectIndex> index;
-    std::unique_ptr<IntegrityScanner> integrityScanner;
-    IntegrityScanner::Report integrityReport;
-    QList<AssetInfo> assets;
-    QStringList diagnostics;
-    QString error;
-    bool rebuildAssetRegistry = false;
-    int audioLoadFailures = 0;
-    ProjectUpgradeResult upgrade;
-    bool upgradePending = false;
-};
 
 class ProjectManager : public QObject
 {

@@ -12,6 +12,7 @@
 // with a full checksum audit of the produced image, the manifest
 // chunkFrames key, and the stream-specific manifest refusals.
 #include "Common/ObjectIdTestSupport.h"
+#include "Common/ResourceCompilerTestUtil.h"
 #include "Common/TestUtil.h"
 #include "UnitTest/JsonTestUtil.h"
 
@@ -29,9 +30,6 @@
 #include <string>
 #include <vector>
 
-#ifndef HARKEN_PACKC_PATH
-#error "HARKEN_PACKC_PATH must point at the packc executable"
-#endif
 #ifndef HARKEN_TEMP_DIR
 #error "HARKEN_TEMP_DIR must point at the repository's .temp directory"
 #endif
@@ -73,24 +71,11 @@ bool ReadFileBytes(const std::string& path,
     return true;
 }
 
-// Runs packc and returns the process exit code; `stream` selects the
-// container mode via the tool's --stream flag. Paths from the build
-// system arrive with forward slashes; cmd.exe wants backslashes for the
-// program itself, and the doubled outer quotes survive cmd's
-// quote-stripping rule for the /C payload.
-int RunPackc(const std::string& manifestPath, bool stream) {
-    std::string exe = HARKEN_PACKC_PATH;
-    for (char& c : exe) {
-        if (c == '/') {
-            c = '\\';
-        }
-    }
-    std::string command = "\"\"" + exe + "\"";
+int CompileContainer(const std::string& manifestPath, bool stream) {
     if (stream) {
-        command += " --stream";
+        return harkentest::CompileResources({manifestPath, "--stream"});
     }
-    command += " \"" + manifestPath + "\"\"";
-    return std::system(command.c_str());
+    return harkentest::CompileResources({manifestPath});
 }
 
 std::string ManifestPrefix(const std::string& outputPath) {
@@ -254,7 +239,7 @@ void BuildContainer(const SourceSpec& source, std::string* outPath) {
     const std::string manifestPath =
         TempPath(source.baseName + "_manifest.json");
     WriteTextFile(manifestPath, manifest);
-    ASSERT_EQ(0, RunPackc(manifestPath, true));
+    ASSERT_EQ(0, CompileContainer(manifestPath, true));
 }
 
 TEST(StreamRoundtrip, StreamPlaybackBitIdenticalToResident) {
@@ -449,9 +434,9 @@ TEST(StreamRoundtrip, OutputIsByteStableAndInternallyConsistent) {
     const std::string outA = TempPath("sd_stable_a.stream");
     const std::string outB = TempPath("sd_stable_b.stream");
     WriteTextFile(manifestPath, ManifestPrefix(outA) + manifest);
-    ASSERT_EQ(0, RunPackc(manifestPath, true));
+    ASSERT_EQ(0, CompileContainer(manifestPath, true));
     WriteTextFile(manifestPath, ManifestPrefix(outB) + manifest);
-    ASSERT_EQ(0, RunPackc(manifestPath, true));
+    ASSERT_EQ(0, CompileContainer(manifestPath, true));
 
     std::vector<std::uint8_t> bytes;
     std::vector<std::uint8_t> bytesB;
@@ -545,7 +530,7 @@ TEST(StreamRoundtrip, StereoDownmixWritesExactMonoAndReportsIt) {
         TempPath("sd_downmix_manifest.json");
     const std::string outPath = TempPath("sd_downmix.stream");
     WriteTextFile(manifestPath, ManifestPrefix(outPath) + manifest);
-    ASSERT_EQ(0, RunPackc(manifestPath, true));
+    ASSERT_EQ(0, CompileContainer(manifestPath, true));
 
     std::vector<std::uint8_t> bytes;
     ASSERT_TRUE(ReadFileBytes(outPath, &bytes));
@@ -594,7 +579,7 @@ TEST(StreamRoundtrip, ChunkFramesKeyHonored) {
             TempPath("sd_chunkkey_manifest.json");
         const std::string outPath = TempPath("sd_chunkkey.stream");
         WriteTextFile(manifestPath, ManifestPrefix(outPath) + manifest);
-        ASSERT_EQ(0, RunPackc(manifestPath, true));
+        ASSERT_EQ(0, CompileContainer(manifestPath, true));
         std::vector<std::uint8_t> bytes;
         ASSERT_TRUE(ReadFileBytes(outPath, &bytes));
         harken::StreamHeader header;
@@ -614,7 +599,7 @@ TEST(StreamRoundtrip, ChunkFramesKeyHonored) {
             TempPath("sd_chunkzero_manifest.json");
         const std::string outPath = TempPath("sd_chunkzero.stream");
         WriteTextFile(manifestPath, ManifestPrefix(outPath) + manifest);
-        ASSERT_EQ(0, RunPackc(manifestPath, true));
+        ASSERT_EQ(0, CompileContainer(manifestPath, true));
         std::vector<std::uint8_t> bytes;
         ASSERT_TRUE(ReadFileBytes(outPath, &bytes));
         harken::StreamHeader header;
@@ -633,7 +618,7 @@ TEST(StreamRoundtrip, ChunkFramesKeyHonored) {
             TempPath("sd_chunkmax_manifest.json");
         const std::string outPath = TempPath("sd_chunkmax.stream");
         WriteTextFile(manifestPath, ManifestPrefix(outPath) + manifest);
-        ASSERT_EQ(0, RunPackc(manifestPath, true));
+        ASSERT_EQ(0, CompileContainer(manifestPath, true));
         std::vector<std::uint8_t> bytes;
         ASSERT_TRUE(ReadFileBytes(outPath, &bytes));
         harken::StreamHeader header;
@@ -674,7 +659,7 @@ TEST(StreamRoundtrip, StreamManifestRefusals) {
         const std::string manifestPath =
             TempPath("sd_refuse_manifest.json");
         WriteTextFile(manifestPath, ManifestPrefix(outPath) + refusal.manifest);
-        EXPECT_NE(0, RunPackc(manifestPath, true))
+        EXPECT_NE(0, CompileContainer(manifestPath, true))
             << refusal.name;
     }
 
@@ -692,7 +677,7 @@ TEST(StreamRoundtrip, StreamManifestRefusals) {
         TempPath("sd_refuse_3ch_manifest.json");
     WriteTextFile(threeChannelManifestPath, ManifestPrefix(outPath) + threeChannelManifest);
     std::filesystem::remove(outPath);
-    EXPECT_NE(0, RunPackc(threeChannelManifestPath, true));
+    EXPECT_NE(0, CompileContainer(threeChannelManifestPath, true));
     EXPECT_FALSE(std::filesystem::exists(outPath))
         << "a refused stream transform must not fall back to 3 channels";
 
@@ -704,7 +689,7 @@ TEST(StreamRoundtrip, StreamManifestRefusals) {
     const std::string packManifestPath =
         TempPath("sd_refuse_pack_manifest.json");
     WriteTextFile(packManifestPath, ManifestPrefix(TempPath("sd_refuse_out.pack")) + packManifest);
-    EXPECT_NE(0, RunPackc(packManifestPath, false));
+    EXPECT_NE(0, CompileContainer(packManifestPath, false));
 }
 
 } // namespace

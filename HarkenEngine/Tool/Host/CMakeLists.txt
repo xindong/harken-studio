@@ -17,7 +17,7 @@ add_executable(harken_host
 )
 harken_attach_version_resource(harken_host "Harken Host" "harken_host.exe")
 target_link_libraries(harken_host PRIVATE harken_core harken_remote harken_buildinfo
-                      harken_preview)
+                      harken_preview harkenizer_resource_compiler)
 # The demo scenes' per-voice-tap silence verdicts branch on the stage-tap
 # gating macro and must agree with the library about whether measurement
 # is live (the master-bus verdicts need no gate — the bus output scan is

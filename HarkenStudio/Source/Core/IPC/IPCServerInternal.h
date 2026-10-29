@@ -12,7 +12,7 @@
 #include <QPointer>
 #include <QCoreApplication>
 #include <QDir>
-#include "ProjectPackExporter.h"
+#include "Tooling/Harkenizer/Core/ProjectPackExporter.h"
 #include "UndoCommands.h"
 #include "../../MainWindow.h"
 #include "AuditionManager.h"
@@ -89,10 +89,7 @@ ProjectItem* findItemByPathInProject(ProjectData* project, const QString& path);
 ProjectItem* findItemByPath(ProjectItem* root, const QString& path);
 ProjectItem* findItemByNameRecursive(ProjectItem* item, const QString& name);
 ProjectFileBinding* findBindingByFolder(ProjectData* project, const QString& folder);
-ProjectItem* findItemByObjectID(ProjectItem* root, uint32_t objectID);
 ProjectItem* findItemByObjectIDInProject(ProjectData* project, uint32_t objectID);
-ProjectItem* findItemByAuthoringHandle(ProjectItem* root, uint32_t authoringHandle);
-ProjectItem* findItemByAuthoringHandleInProject(ProjectData* project, uint32_t authoringHandle);
 uint32_t itemShortID(const ProjectItem* item);
 ProjectItem* findItemByShortID(ProjectItem* root, uint32_t shortID);
 ProjectItem* findItemByShortIDInProject(ProjectData* project, uint32_t shortID);

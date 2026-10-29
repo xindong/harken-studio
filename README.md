@@ -158,7 +158,7 @@ Single daily channel:
 
 ## Build Packs Without Opening Studio
 
-The `harken_editor` target also builds **Harkenizer**, the project build command. Keep it beside Studio's runtime libraries, `packc`, and the `schema` directory. On Windows, run `Harkenizer.exe`; in a macOS app bundle, use `HarkenStudio.app/Contents/MacOS/Harkenizer`.
+The `harken_editor` target also builds **Harkenizer**, the project build command. Keep it beside Studio's runtime libraries and the `schema` directory. On Windows, run `Harkenizer.exe`; in a macOS app bundle, use `HarkenStudio.app/Contents/MacOS/Harkenizer`.
 
 ```text
 Harkenizer list-targets path/to/project.hsp --json
@@ -167,7 +167,9 @@ Harkenizer generate-packs path/to/project.hsp --all --platform-id <UUID> --self-
 
 Close the project in Studio first. Harkenizer reads the saved project and reports projects requiring recovery or an upgrade. Repeat `--platform-id` for multiple platforms. `--output <directory>` overrides the project output directory; relative paths resolve against the project directory. `--force` uses the existing Force Re-export behavior. `--self-clean on` applies Studio's Self-cleaning behavior after successful publication, removing files outside the completed export from the output directory.
 
-The initial command builds all packs for the specified platforms using the project's language and metadata settings. It emits ordered build messages and returns 0 on success, 1 on failure, 2 for invalid command usage, or 130 on cancellation. `packc` remains the resource compiler used by the shared build process.
+The command builds all packs for the specified platforms using the project's language and metadata settings. It emits ordered build messages and returns 0 on success, 1 on failure, 2 for invalid command usage, or 130 on cancellation.
+
+Studio and Harkenizer share **HarkenizerCore**, an internal static library built as `harkenizer_core`; it adds no DLL. GUI builds use the current editor snapshot, including unsaved edits, IPC keeps its existing request semantics, and the command reads the saved project. Resource compilation runs in a private Harkenizer worker process reused during a build, with a 300000 ms timeout per compilation request and process fault isolation. The standalone `packc` executable and build target are retired.
 
 ## Project Layout
 

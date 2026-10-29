@@ -12,6 +12,7 @@
 // golden precedent): tests never include host code, and float32 wav keeps
 // the whole chain lossless so exact equality is the honest expectation.
 #include "Common/ObjectIdTestSupport.h"
+#include "Common/ResourceCompilerTestUtil.h"
 #include "Common/TestUtil.h"
 
 #include <cstdint>
@@ -20,9 +21,6 @@
 #include <string>
 #include <vector>
 
-#ifndef HARKEN_PACKC_PATH
-#error "HARKEN_PACKC_PATH must point at the packc executable"
-#endif
 #ifndef HARKEN_TEMP_DIR
 #error "HARKEN_TEMP_DIR must point at the repository's .temp directory"
 #endif
@@ -50,15 +48,8 @@ void WriteTextFile(const std::string& path, const std::string& text) {
     ASSERT_TRUE(out.good()) << "cannot write " << path;
 }
 
-int RunPackc(const std::string& manifestPath) {
-    std::string exe = HARKEN_PACKC_PATH;
-    for (char& c : exe) {
-        if (c == '/') {
-            c = '\\';
-        }
-    }
-    const std::string command = "\"\"" + exe + "\" \"" + manifestPath + "\"\"";
-    return std::system(command.c_str());
+int CompilePack(const std::string& manifestPath) {
+    return harkentest::CompileResources({manifestPath});
 }
 
 // Minimal IEEE float32 (format tag 3) mono/stereo RIFF writer (round-trip
@@ -158,7 +149,7 @@ std::string BuildSubRegionPack(const std::vector<float>& source,
     const std::string manifestPath =
         TempPath("loopseam_" + tag + "_manifest.json");
     WriteTextFile(manifestPath, manifest);
-    EXPECT_EQ(0, RunPackc(manifestPath));
+    EXPECT_EQ(0, CompilePack(manifestPath));
     return packPath;
 }
 

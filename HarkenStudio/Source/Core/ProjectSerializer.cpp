@@ -6,7 +6,6 @@
 #include "PlayablePropertyAuthoringV1.h"
 #include "PlaybackReferenceValidation.h"
 #include "ActionStepUtils.h"
-#include "ProjectPackExporter.h"
 #include "ProjectPreflight/ProjectPreflight.h"
 #include "ItemTypeCatalog.h"
 #include "MigrationManager.h"
@@ -31,7 +30,6 @@
 #include "Components/VSelection.h"
 #include "Components/VSound.h"
 #include "Components/VAttenuation.h"
-#include "Widgets/ProjectExplorer/ProjectExplorer.h"
 
 #include <QFile>
 #include <QJsonDocument>

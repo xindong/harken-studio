@@ -16,6 +16,7 @@
 // code (baseline-regression precedent), and the host's writer is 16-bit
 // PCM, whose quantization would break exactness anyway.
 #include "Common/ObjectIdTestSupport.h"
+#include "Common/ResourceCompilerTestUtil.h"
 #include "Common/StreamBuilder.h"
 #include "Common/TestUtil.h"
 
@@ -31,9 +32,6 @@
 #include <string>
 #include <vector>
 
-#ifndef HARKEN_PACKC_PATH
-#error "HARKEN_PACKC_PATH must point at the packc executable"
-#endif
 #ifndef HARKEN_TEMP_DIR
 #error "HARKEN_TEMP_DIR must point at the repository's .temp directory"
 #endif
@@ -71,19 +69,8 @@ bool ReadFileBytes(const std::string& path,
     return true;
 }
 
-// Runs packc on the given manifest/output pair and returns the process
-// exit code. Paths from the build system arrive with forward slashes;
-// cmd.exe wants backslashes for the program itself, and the doubled outer
-// quotes survive cmd's quote-stripping rule for the /C payload.
-int RunPackc(const std::string& manifestPath) {
-    std::string exe = HARKEN_PACKC_PATH;
-    for (char& c : exe) {
-        if (c == '/') {
-            c = '\\';
-        }
-    }
-    const std::string command = "\"\"" + exe + "\" \"" + manifestPath + "\"\"";
-    return std::system(command.c_str());
+int CompilePack(const std::string& manifestPath) {
+    return harkentest::CompileResources({manifestPath});
 }
 
 std::string ManifestPrefix(const std::string& outputPath) {
@@ -232,7 +219,7 @@ TEST(PackRoundtrip, PackPlaybackBitIdenticalToIndividual) {
     manifest += "  ]\n}\n";
     const std::string manifestPath = TempPath("roundtrip_manifest.json");
     WriteTextFile(manifestPath, manifest);
-    ASSERT_EQ(0, RunPackc(manifestPath));
+    ASSERT_EQ(0, CompilePack(manifestPath));
 
     // Side 1: every entry rendered from the loaded pack.
     std::vector<Capture> fromPack(sources.size());
@@ -315,9 +302,9 @@ TEST(PackRoundtrip, PackcOutputIsByteStable) {
     const std::string outA = TempPath("stable_a.pack");
     const std::string outB = TempPath("stable_b.pack");
     WriteTextFile(manifestPath, ManifestPrefix(outA) + entries);
-    ASSERT_EQ(0, RunPackc(manifestPath));
+    ASSERT_EQ(0, CompilePack(manifestPath));
     WriteTextFile(manifestPath, ManifestPrefix(outB) + entries);
-    ASSERT_EQ(0, RunPackc(manifestPath));
+    ASSERT_EQ(0, CompilePack(manifestPath));
 
     std::vector<std::uint8_t> bytesA;
     std::vector<std::uint8_t> bytesB;
@@ -346,7 +333,7 @@ TEST(PackRoundtrip, ExplicitIdentityPreservesFormatFacts) {
         "] }\n";
     const std::string manifestPath = TempPath("hashfacts_manifest.json");
     WriteTextFile(manifestPath, manifest);
-    ASSERT_EQ(0, RunPackc(manifestPath));
+    ASSERT_EQ(0, CompilePack(manifestPath));
 
     std::vector<std::uint8_t> bytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
@@ -385,7 +372,7 @@ TEST(PackRoundtrip, FullUuidSeparatesObjectsWithIdenticalMedia) {
     const std::string manifestPath =
         TempPath("hashlayout_manifest.json");
     WriteTextFile(manifestPath, manifest);
-    ASSERT_EQ(0, RunPackc(manifestPath));
+    ASSERT_EQ(0, CompilePack(manifestPath));
 
     std::vector<std::uint8_t> bytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
@@ -451,11 +438,11 @@ TEST(PackRoundtrip, PackcRefusesMalformedInput) {
         const std::string manifestPath =
             TempPath("refuse_manifest.json");
         WriteTextFile(manifestPath, refusal.manifest);
-        EXPECT_NE(0, RunPackc(manifestPath)) << refusal.name;
+        EXPECT_NE(0, CompilePack(manifestPath)) << refusal.name;
     }
 
     // A missing manifest and missing arguments refuse too.
-    EXPECT_NE(0, RunPackc(TempPath("refuse_no_such_manifest.json")));
+    EXPECT_NE(0, CompilePack(TempPath("refuse_no_such_manifest.json")));
 }
 
 
@@ -488,7 +475,7 @@ TEST(PackRoundtrip, LoadRefusedWhenEntryShadowsStream) {
         "\", \"id\": \"3da91a64-b947-4560-0000-000000001fa5\" }\n" + "  ]\n}\n";
     const std::string manifestPath = TempPath("shadow_stream_manifest.json");
     WriteTextFile(manifestPath, manifest);
-    ASSERT_EQ(0, RunPackc(manifestPath));
+    ASSERT_EQ(0, CompilePack(manifestPath));
 
     EngineSession session(MakeNullConfig(0, kBlockFrames, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());

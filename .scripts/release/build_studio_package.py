@@ -203,6 +203,9 @@ def build_package(args: argparse.Namespace) -> dict:
         raise SystemExit(f"error: input directory not found: {input_dir}")
 
     binary = studio_binary(input_dir)
+    for path in binary.parent.iterdir():
+        if path.name.casefold() in {"packc", "packc.exe", "harken_packc", "harken_packc.exe"}:
+            raise SystemExit(f"error: deployed Studio contains a retired packc executable: {path}")
     harkenizer = binary.with_name("Harkenizer.exe" if binary.suffix == ".exe" else "Harkenizer")
     if harkenizer.is_symlink() or not harkenizer.is_file() or harkenizer.stat().st_size == 0:
         raise SystemExit(f"error: deployed Harkenizer binary is missing or empty: {harkenizer}")

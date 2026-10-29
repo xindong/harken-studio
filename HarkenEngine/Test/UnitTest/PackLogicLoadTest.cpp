@@ -32,6 +32,7 @@
 // swapped at the next Vn_Update). Every refusal asserts zero observable
 // mutation.
 #include "Common/ObjectIdTestSupport.h"
+#include "Common/ResourceCompilerTestUtil.h"
 #include "UnitTest/CanonicalPackSetActivate.h"
 #include "Common/RecipePackTestUtil.h"
 #include "Common/TestUtil.h"
@@ -63,9 +64,6 @@
 #include <string>
 #include <vector>
 
-#ifndef HARKEN_PACKC_PATH
-#error "HARKEN_PACKC_PATH must point at the packc executable"
-#endif
 #ifndef HARKEN_TEMP_DIR
 #error "HARKEN_TEMP_DIR must point at the repository's .temp directory"
 #endif
@@ -120,22 +118,6 @@ bool ReadFileText(const std::string& path, std::string* out) {
     return true;
 }
 
-// Runs packc with the given argument list and returns the process exit
-// code (the pipeline test's quoting rules for cmd.exe).
-int RunPackc(const std::vector<std::string>& args) {
-    std::string exe = HARKEN_PACKC_PATH;
-    for (char& c : exe) {
-        if (c == '/') {
-            c = '\\';
-        }
-    }
-    std::string command = "\"\"" + exe + "\"";
-    for (const std::string& arg : args) {
-        command += " \"" + arg + "\"";
-    }
-    command += "\"";
-    return std::system(command.c_str());
-}
 
 // Minimal IEEE float32 RIFF/WAVE writer (the pipeline test's shape):
 // samples travel verbatim, so the pack blob carries the exact floats
@@ -207,7 +189,7 @@ void WriteWavF32(const std::string& path,
             return false;
         }
     }
-    return RunPackc({manifestPath}) == 0;
+    return harkentest::CompileResources({manifestPath}) == 0;
 }
 
 harkentest::RecipePackArtifact BuildDelayAndToneRecipePack(
@@ -2799,7 +2781,7 @@ TEST(PackLogicLoad, CompilerRefusesResidentSectionInContentManifest) {
     std::filesystem::remove(packPath + ".report.json");
     std::filesystem::remove(manifestPath + ".report.json");
 
-    EXPECT_NE(0, RunPackc({manifestPath}));
+    EXPECT_NE(0, harkentest::CompileResources({manifestPath}));
     EXPECT_FALSE(std::filesystem::exists(packPath));
 
     // A refused build still emits its report (the v1 refusal contract,
@@ -2841,7 +2823,7 @@ TEST(PackLogicLoad, CompilerRefusesRetiredActionsSection) {
       { "type": "play", "playable": "3da91a64-b947-4560-0000-0000000003d5", "bus": "00000000-0000-0000-0000-000000000001" } ] } ])")));
     std::filesystem::remove(packPath);
 
-    EXPECT_NE(0, RunPackc({manifestPath}));
+    EXPECT_NE(0, harkentest::CompileResources({manifestPath}));
     EXPECT_FALSE(std::filesystem::exists(packPath));
 }
 
@@ -2881,7 +2863,7 @@ TEST(PackLogicLoad, CompilerOutputByteIdenticalAcrossRuns) {
     std::filesystem::remove(reportPath);
 
     // Build #1: clean decode; the report appears and the cache seeds.
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::string first;
     ASSERT_TRUE(ReadFileText(packPath, &first));
     ASSERT_FALSE(first.empty());
@@ -2890,7 +2872,7 @@ TEST(PackLogicLoad, CompilerOutputByteIdenticalAcrossRuns) {
 
     // Build #2: nothing touched, so every entry may serve from the
     // cache — and the output must still be byte-identical.
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::string second;
     ASSERT_TRUE(ReadFileText(packPath, &second));
     EXPECT_TRUE(std::filesystem::exists(reportPath));
@@ -2899,7 +2881,7 @@ TEST(PackLogicLoad, CompilerOutputByteIdenticalAcrossRuns) {
     // Build #3: only the cache file removed — a full re-decode of the
     // unchanged sources must land on the same bytes again.
     ASSERT_TRUE(std::filesystem::remove(cachePath));
-    ASSERT_EQ(0, RunPackc({manifestPath}));
+    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::string third;
     ASSERT_TRUE(ReadFileText(packPath, &third));
     EXPECT_TRUE(std::filesystem::exists(reportPath));

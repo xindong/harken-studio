@@ -323,6 +323,34 @@ class BuildStudioPackageTest(unittest.TestCase):
                 self.assertFalse(self.output_dir.exists())
         self.harkenizer_smoke_test.assert_not_called()
 
+    def test_retired_executor_prevents_package_creation_without_removing_files(self):
+        for platform, binary_name in (
+            ("windows", "HarkenStudio.exe"),
+            ("macos", "HarkenStudio.app/Contents/MacOS/HarkenStudio"),
+        ):
+            self.input_dir = self.root / platform
+            binary = self.input_dir / binary_name
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b"stub-binary")
+            for name in ("packc", "packc.exe", "harken_packc", "harken_packc.exe", "PACKC.EXE"):
+                with self.subTest(platform=platform, name=name):
+                    retired = binary.with_name(name)
+                    retired.write_bytes(b"retired-executor")
+                    with self.assertRaisesRegex(SystemExit, "retired packc executable"):
+                        self.run_build()
+                    self.assertEqual(retired.read_bytes(), b"retired-executor")
+                    self.assertFalse(self.output_dir.exists())
+                    retired.unlink()
+        self.harkenizer_smoke_test.assert_not_called()
+        self.evidence.prepare.assert_not_called()
+
+    def test_retired_name_outside_binary_directory_remains_payload(self):
+        self.make_input()
+        (self.input_dir / "data" / "packc.exe").write_bytes(b"unrelated-data")
+        summary = self.run_build()
+        with zipfile.ZipFile(summary["package"]) as archive:
+            self.assertEqual(archive.read("data/packc.exe"), b"unrelated-data")
+
     def test_executor_startup_failures_prevent_package_creation(self):
         self.make_input()
         self.harkenizer_smoke_test.side_effect = self.run_harkenizer_smoke_test

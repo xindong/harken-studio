@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ProjectTypes.h"
+#include "PlatformContext.h"
 #include "RuntimeCapabilityTypes.h"
 
 #include <QJsonObject>
@@ -124,7 +125,30 @@ struct RuntimeCapabilityEntry
     QJsonObject toJson() const;
 };
 
+struct RuntimeCapabilityContext
+{
+    PlatformScope platform;
+    QString language;
+};
+
 namespace RuntimeCapabilityMatrix {
+
+RuntimeCapabilityEntry evaluateForContext(const ProjectItem& item,
+                                          const ProjectData& project,
+                                          RuntimeCapabilityOperation operation,
+                                          RuntimeCapabilityFeature feature,
+                                          std::optional<BuildVariant> variant,
+                                          const RuntimeCapabilityContext& context);
+RuntimeCapabilityAssessment assessForContext(const ProjectItem& item,
+                                             const ProjectData& project,
+                                             RuntimeCapabilityOperation operation,
+                                             std::optional<BuildVariant> variant,
+                                             const RuntimeCapabilityContext& context);
+RuntimeCapabilityAssessment assessForContext(const ProjectData& project,
+                                             harkenstudio::ObjectId rootStableId,
+                                             RuntimeCapabilityOperation operation,
+                                             std::optional<BuildVariant> variant,
+                                             const RuntimeCapabilityContext& context);
 
 RuntimeCapabilityEntry evaluate(const ProjectItem& item,
                                 const ProjectData& project,

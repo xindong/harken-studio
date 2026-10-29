@@ -1,6 +1,6 @@
 #include "UnitTest/StudioObjectIdTestSupport.h"
-#include "CanonicalRuntimeProjectAdapter.h"
-#include "CanonicalRuntimeProjectAdapterPrivate.h"
+#include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapter.h"
+#include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "FieldGroupProjectAdapter.h"
 #include "Core/ProjectTypes.h"
 

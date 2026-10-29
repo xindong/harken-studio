@@ -1,12 +1,13 @@
 #include "Core/AssetPipeline/AssetRegistry.h"
 #include "Core/AssetPipeline/PathUtils.h"
-#include "Core/ProjectBuildSnapshot.h"
+#include "Tooling/Harkenizer/Core/ProjectBuildSnapshot.h"
 #include "Core/ProjectInstance.h"
 #include "Core/ProjectLanguageSemantics.h"
 #include "Core/ProjectLocator.h"
-#include "Core/ProjectManager.h"
-#include "Core/ProjectPackBuildService.h"
+#include "Tooling/Harkenizer/Core/ProjectLoader.h"
+#include "Tooling/Harkenizer/Core/ProjectPackBuildService.h"
 #include "Core/SchemaArchive.h"
+#include "ResourceWorker.h"
 
 #include <QCommandLineParser>
 #include <QCoreApplication>
@@ -17,6 +18,7 @@
 #include <QTextStream>
 
 #include <csignal>
+#include <cstring>
 
 namespace {
 
@@ -91,6 +93,8 @@ QJsonObject listTargets(const VNX::ProjectData& project)
 
 int main(int argc, char* argv[])
 {
+    if (argc == 2 && std::strcmp(argv[1], "--resource-worker") == 0)
+        return Harkenizer::runResourceWorker();
     QCoreApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("Harkenizer"));
     app.setOrganizationName(QStringLiteral("HarkenSound"));
@@ -149,7 +153,7 @@ int main(int argc, char* argv[])
     if (instance.status != VNX::ProjectInstance::Status::Acquired) return error(instance.error);
     QString schemaError;
     if (!VNX::SchemaArchive::instance().verifyBuildSnapshot(&schemaError)) return error(schemaError);
-    auto prepared = VNX::ProjectManager::prepareProject(location.projectFilePath, false, {}, {}, canceled,
+    auto prepared = VNX::ProjectLoader::prepareProject(location.projectFilePath, false, {}, {}, canceled,
         nullptr, VNX::ProjectSerializer::LoadMode::ReadOnly);
     if (canceled()) return error(QStringLiteral("Canceled."), 130);
     if (!prepared.project) return error(prepared.error);

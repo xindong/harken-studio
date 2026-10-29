@@ -1,6 +1,6 @@
 #include "Core/PropertyEditSession.h"
 #include "Monitor/MonitorTypes.h"
-#include "Core/ProjectBuildSnapshot.h"
+#include "Tooling/Harkenizer/Core/ProjectBuildSnapshot.h"
 
 #include "MainWindow.h"
 #include "Dialogs/RemoteConnectPanel.h"
@@ -10,7 +10,7 @@
 #include <QLocale>
 #include "Core/AudioEngine.h"
 #include "Core/RuntimeSyncCoordinator.h"
-#include "Core/CurrentWorldProjectAdapter.h"
+#include "Tooling/Harkenizer/Core/CurrentWorldProjectAdapter.h"
 #include "Core/ProjectSerializer.h"
 #include "Core/ProjectManager.h"
 #include "Core/ProjectInstance.h"
@@ -20,8 +20,8 @@
 #include "Core/ProjectUpgradeMessages.h"
 #include "Core/ShortcutManager.h"
 #include "Core/UndoCommands.h"
-#include "Core/ProjectPackExporter.h"
-#include "Core/ProjectPackBuildService.h"
+#include "Tooling/Harkenizer/Core/ProjectPackExporter.h"
+#include "Tooling/Harkenizer/Core/ProjectPackBuildService.h"
 #include "Core/PackArtifactCache.h"
 #include "Core/PackGenerationRecord.h"
 #include "Core/ProjectPlatformActivity.h"

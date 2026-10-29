@@ -1,5 +1,5 @@
 #include "Core/AssetPipeline/AssetConverter.h"
-#include "Core/SoundSourceDerivative.h"
+#include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
 #include "Core/SoundSourceSemantics.h"
 
 #include <QDateTime>
