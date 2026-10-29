@@ -3,7 +3,7 @@
 
 #include "Localization/HubLocalization.h"
 #include "Platform/PlatformPaths.h"
-#include "ReleaseNotes/StudioReleaseNotes.h"
+#include "ReleaseNotes/VersionReleaseNotes.h"
 #include "UI/BoundedHeaderView.h"
 #include "Update/ServerEndpoints.h"
 
@@ -64,7 +64,7 @@ ServerVersionsDialog::ServerVersionsDialog(
     const QByteArray& manifestPublicKey,
     const QSet<QString>& installedBuildIds,
     const QSet<QString>& installedVersions,
-    StudioReleaseNotes* releaseNotes, QWidget* parent)
+    VersionReleaseNotes* releaseNotes, QWidget* parent)
     : QDialog(parent)
     , manifestPublicKey_(manifestPublicKey)
     , installedBuildIds_(installedBuildIds)
@@ -73,7 +73,7 @@ ServerVersionsDialog::ServerVersionsDialog(
 {
     setWindowTitle(QCoreApplication::translate("HarkenHub", "Get from Server"));
     setModal(true);
-    configureDialog(this, QSize(720, 460), QSize(480, 300));
+    configureDialog(this, QSize(860, 480), QSize(480, 300));
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(20, 18, 20, 18);
@@ -107,11 +107,16 @@ ServerVersionsDialog::ServerVersionsDialog(
     table_->setColumnWidth(kColumnSize, 90);
     table_->setColumnWidth(kColumnAction, 130);
     table_->verticalHeader()->hide();
-    table_->verticalHeader()->setDefaultSectionSize(52);
+    table_->verticalHeader()->setDefaultSectionSize(68);
     table_->setSelectionMode(QAbstractItemView::NoSelection);
     table_->setFocusPolicy(Qt::NoFocus);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->setShowGrid(false);
+    connect(tableHeader, &QHeaderView::sectionResized, this,
+            [this](int column, int, int) {
+                if (column == kColumnChangelog)
+                    resizeReleaseNotesRows();
+            }, Qt::QueuedConnection);
     layout->addWidget(table_, 1);
 
     statusLabel_ = new DialogTextView(this);
@@ -138,7 +143,7 @@ ServerVersionsDialog::ServerVersionsDialog(
             [this](const QString&, bool restarted) { downloadRestarted_ = restarted; });
     connect(&catalog_, &ServerVersionCatalog::finished, this,
             &ServerVersionsDialog::populate);
-    connect(releaseNotes_, &StudioReleaseNotes::finished, this,
+    connect(releaseNotes_, &VersionReleaseNotes::finished, this,
             &ServerVersionsDialog::updateReleaseNotes);
     connect(&downloader_, &Downloader::progress, this,
             [this](qint64 receivedBytes, qint64 totalBytes) {
@@ -207,7 +212,7 @@ void ServerVersionsDialog::populate(const ServerVersionList& result)
 
     table_->setRowCount(static_cast<int>(rows_.size()));
     for (int index = 0; index < static_cast<int>(rows_.size()); ++index) {
-        const DisplayRow& row = rows_[static_cast<size_t>(index)];
+        DisplayRow& row = rows_[static_cast<size_t>(index)];
 
         auto* versionItem = new QTableWidgetItem(
             QCoreApplication::translate("HarkenHub", "HarkenStudio %1").arg(row.entry.version));
@@ -222,28 +227,39 @@ void ServerVersionsDialog::populate(const ServerVersionList& result)
         table_->setItem(index, kColumnSize,
                         new QTableWidgetItem(humanSize(row.entry.fileSize)));
 
-        auto* notesLink = new QLabel(table_);
-        notesLink->setMargin(12);
-        notesLink->setOpenExternalLinks(true);
-        notesLink->setTextInteractionFlags(Qt::LinksAccessibleByMouse |
-                                          Qt::LinksAccessibleByKeyboard);
-        notesLink->setStyleSheet(QStringLiteral(
-            "QLabel { background: transparent; } "
-            "QLabel:disabled { color: #6B7488; }"));
-        notesLink->setContextMenuPolicy(Qt::CustomContextMenu);
-        connect(notesLink, &QWidget::customContextMenuRequested, this,
-                [this, notesLink, version = row.entry.version](const QPoint& pos) {
-                    const QUrl url = releaseNotes_->url(version);
-                    if (url.isEmpty())
-                        return;
-                    QMenu menu(notesLink);
-                    QAction* copy = menu.addAction(
-                        QCoreApplication::translate("HarkenHub", "Copy Link"));
-                    if (menu.exec(notesLink->mapToGlobal(pos)) == copy)
-                        QApplication::clipboard()->setText(
-                            url.toString(QUrl::FullyEncoded));
-                });
-        table_->setCellWidget(index, kColumnChangelog, notesLink);
+        auto* notesCell = new QWidget(table_);
+        notesCell->setStyleSheet(QStringLiteral("background: transparent;"));
+        auto* notesLayout = new QVBoxLayout(notesCell);
+        notesLayout->setContentsMargins(12, 8, 12, 8);
+        notesLayout->setSpacing(6);
+        const auto addNotesLink = [&](VersionReleaseNotes::Product product) {
+            auto* link = new QLabel(notesCell);
+            link->setWordWrap(true);
+            link->setOpenExternalLinks(true);
+            link->setTextInteractionFlags(Qt::LinksAccessibleByMouse |
+                                           Qt::LinksAccessibleByKeyboard);
+            link->setStyleSheet(QStringLiteral(
+                "QLabel { background: transparent; } "
+                "QLabel:disabled { color: #6B7488; }"));
+            link->setContextMenuPolicy(Qt::CustomContextMenu);
+            connect(link, &QWidget::customContextMenuRequested, this,
+                    [this, link, version = row.entry.version, product](const QPoint& pos) {
+                        const QUrl url = releaseNotes_->url(version, product);
+                        if (url.isEmpty())
+                            return;
+                        QMenu menu(link);
+                        QAction* copy = menu.addAction(
+                            QCoreApplication::translate("HarkenHub", "Copy Link"));
+                        if (menu.exec(link->mapToGlobal(pos)) == copy)
+                            QApplication::clipboard()->setText(
+                                url.toString(QUrl::FullyEncoded));
+                    });
+            notesLayout->addWidget(link);
+            return link;
+        };
+        row.studioNotes = addNotesLink(VersionReleaseNotes::Product::Studio);
+        row.unityNotes = addNotesLink(VersionReleaseNotes::Product::UnityIntegration);
+        table_->setCellWidget(index, kColumnChangelog, notesCell);
         releaseNotes_->fetch(row.entry.version);
         table_->setItem(index, kColumnAction, new QTableWidgetItem());
 
@@ -284,10 +300,9 @@ void ServerVersionsDialog::populate(const ServerVersionList& result)
 
 void ServerVersionsDialog::updateReleaseNotes()
 {
-    const QString text = QCoreApplication::translate("HarkenHub", "Click to view details");
-    for (int index = 0; index < static_cast<int>(rows_.size()); ++index) {
-        auto* link = qobject_cast<QLabel*>(table_->cellWidget(index, kColumnChangelog));
-        const QUrl url = releaseNotes_->url(rows_[static_cast<size_t>(index)].entry.version);
+    const auto updateLink = [this](QLabel* link, const QString& version,
+                                   VersionReleaseNotes::Product product, const QString& text) {
+        const QUrl url = releaseNotes_->url(version, product);
         link->setEnabled(!url.isEmpty());
         link->setText(url.isEmpty() ? text : QStringLiteral(
             "<a href=\"%1\" style=\"color: #00F0FF;\">%2</a>")
@@ -295,6 +310,36 @@ void ServerVersionsDialog::updateReleaseNotes()
         link->setToolTip(url.isEmpty()
             ? QCoreApplication::translate("HarkenHub", "No valid web link was found.")
             : url.toDisplayString());
+    };
+    for (const DisplayRow& row : rows_) {
+        updateLink(row.studioNotes, row.entry.version, VersionReleaseNotes::Product::Studio,
+                   QCoreApplication::translate("HarkenHub", "Click to view details: Studio"));
+        updateLink(row.unityNotes, row.entry.version, VersionReleaseNotes::Product::UnityIntegration,
+                   QCoreApplication::translate("HarkenHub", "Click to view details: Unity Integration Package"));
+    }
+    QMetaObject::invokeMethod(this, &ServerVersionsDialog::resizeReleaseNotesRows,
+                              Qt::QueuedConnection);
+}
+
+void ServerVersionsDialog::resizeReleaseNotesRows()
+{
+    for (int index = 0; index < static_cast<int>(rows_.size()); ++index) {
+        const DisplayRow& row = rows_[static_cast<size_t>(index)];
+        if (!row.studioNotes || !row.unityNotes)
+            continue;
+        QWidget* cell = row.studioNotes->parentWidget();
+        QLayout* layout = cell->layout();
+        layout->activate();
+        const QMargins margins = layout->contentsMargins();
+        row.studioNotes->setMinimumHeight(0);
+        row.unityNotes->setMinimumHeight(0);
+        const int studioHeight = row.studioNotes->heightForWidth(row.studioNotes->width());
+        const int unityHeight = row.unityNotes->heightForWidth(row.unityNotes->width());
+        row.studioNotes->setMinimumHeight(studioHeight);
+        row.unityNotes->setMinimumHeight(unityHeight);
+        const int height = studioHeight + unityHeight + layout->spacing() +
+                           margins.top() + margins.bottom() + table_->rowHeight(index) - cell->height();
+        table_->setRowHeight(index, qMax(table_->verticalHeader()->defaultSectionSize(), height));
     }
 }
 

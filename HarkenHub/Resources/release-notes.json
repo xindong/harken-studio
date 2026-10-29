@@ -9,12 +9,21 @@
     {
       "version": "0.2.2",
       "date": "2026-10-29",
-      "pullRequests": [175],
-      "contributors": ["liuxin2-sys"],
+      "pullRequests": [
+        175,
+        182
+      ],
+      "contributors": [
+        "liuxin2-sys"
+      ],
       "changes": [
         {
           "category": "added",
-          "text": "Open Studio changelogs from the version menu or Get from Server in the Hub interface language, and copy changelog links from the server list."
+          "text": "View separate Studio and Unity Integration Package changelogs from the version menu or server list, and copy either link from the server list."
+        },
+        {
+          "category": "improved",
+          "text": "Restore changelog links using the updated documentation manifest."
         }
       ]
     },

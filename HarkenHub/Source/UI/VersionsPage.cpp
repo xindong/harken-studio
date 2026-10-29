@@ -11,7 +11,7 @@
 #include "Platform/PlatformPaths.h"
 #include "Platform/ProcessScan.h"
 #include "Projects/ProjectStore.h"
-#include "ReleaseNotes/StudioReleaseNotes.h"
+#include "ReleaseNotes/VersionReleaseNotes.h"
 #include "Security/TrustAnchors.h"
 #include "Transactions/HandoffArea.h"
 #include "Transactions/InstallExecutor.h"
@@ -168,7 +168,7 @@ VersionsPage::VersionsPage(ProjectStore* store, QWidget* parent)
     });
 
     catalog_ = new ServerVersionCatalog(this);
-    releaseNotes_ = new StudioReleaseNotes(this);
+    releaseNotes_ = new VersionReleaseNotes(this);
     connect(catalog_, &ServerVersionCatalog::finished, this,
             &VersionsPage::onCatalogFinished);
 
@@ -1543,34 +1543,40 @@ void VersionsPage::showRowMenu(const InstalledVersion& version,
     menu.setAttribute(Qt::WA_TranslucentBackground);
 
     menu.setToolTipsVisible(true);
-    QAction* viewNotes = menu.addAction(
-        QCoreApplication::translate("HarkenHub", "View Changelog"));
-    if (version.isLocalBuild()) {
-        viewNotes->setEnabled(false);
-        viewNotes->setToolTip(QCoreApplication::translate(
-            "HarkenHub", "Web links do not apply to local builds."));
-    } else {
+    const auto addNotesAction = [&](VersionReleaseNotes::Product product, const QString& text) {
+        QAction* viewNotes = menu.addAction(text);
+        if (version.isLocalBuild()) {
+            viewNotes->setEnabled(false);
+            viewNotes->setToolTip(QCoreApplication::translate(
+                "HarkenHub", "Web links do not apply to local builds."));
+            return;
+        }
         const QString semanticVersion = version.semanticVersion;
-        const auto updateNotesAction = [this, viewNotes, semanticVersion]() {
-            const QUrl url = releaseNotes_->url(semanticVersion);
+        const auto updateNotesAction = [this, viewNotes, semanticVersion, product]() {
+            const QUrl url = releaseNotes_->url(semanticVersion, product);
             viewNotes->setEnabled(!url.isEmpty());
             viewNotes->setToolTip(url.isEmpty()
                 ? QCoreApplication::translate("HarkenHub", "No valid web link was found.")
                 : url.toDisplayString());
         };
         updateNotesAction();
-        connect(releaseNotes_, &StudioReleaseNotes::finished, &menu,
+        connect(releaseNotes_, &VersionReleaseNotes::finished, &menu,
                 [semanticVersion, updateNotesAction](const QString& fetchedVersion) {
                     if (fetchedVersion == semanticVersion)
                         updateNotesAction();
                 });
-        connect(viewNotes, &QAction::triggered, &menu, [this, semanticVersion]() {
-            const QUrl url = releaseNotes_->url(semanticVersion);
+        connect(viewNotes, &QAction::triggered, &menu, [this, semanticVersion, product]() {
+            const QUrl url = releaseNotes_->url(semanticVersion, product);
             if (!url.isEmpty())
                 QDesktopServices::openUrl(url);
         });
-        releaseNotes_->fetch(semanticVersion);
-    }
+    };
+    addNotesAction(VersionReleaseNotes::Product::Studio,
+                   QCoreApplication::translate("HarkenHub", "View Changelog: Studio"));
+    addNotesAction(VersionReleaseNotes::Product::UnityIntegration,
+                   QCoreApplication::translate("HarkenHub", "View Changelog: Unity Integration Package"));
+    if (!version.isLocalBuild())
+        releaseNotes_->fetch(version.semanticVersion);
 
     QAction* openFolder = menu.addAction(QCoreApplication::translate("HarkenHub", "Open Folder"));
     openFolder->setEnabled(!version.installPath.isEmpty());

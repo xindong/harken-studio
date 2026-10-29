@@ -86,7 +86,7 @@ Hub 和 Studio 更新下载失败后会清除内存中的清单缓存标记，�
 
 请求使用无上传请求体的 GET，遵循与 DF-2 一致的来源切换、受限重定向与签名验证。返回结果用于界面展示或匹配本地包，包下载继续走同一下载器。
 
-`HarkenHub/Source/ReleaseNotes/StudioReleaseNotes.cpp` 在已安装版本列表刷新、用户打开版本菜单或服务器版本列表时，按正式 Studio 版本请求对象存储的 `document/harken-studio/<version>/manifest.json`，默认基址及 `HARKEN_CONTENT_BASE_URL` 覆盖规则沿用 DF-2。本地构建不触发此请求。请求是无上传请求体的 GET，不附带工程、安装路径、账号或设备标识，不自动跟随重定向；清单只用于提取更新日志页面链接，不参与软件安装或包校验。中英文链接仅缓存在当前 Hub 版本页对象的内存中，不写入本机文件；缺失、无效或请求失败时禁用入口。
+`HarkenHub/Source/ReleaseNotes/VersionReleaseNotes.cpp` 在已安装版本列表刷新、用户打开版本菜单或服务器版本列表时，按正式 Studio 版本请求对象存储的 `document/<version>/manifest.json`，默认基址及 `HARKEN_CONTENT_BASE_URL` 覆盖规则沿用 DF-2。本地构建不触发此请求。请求是无上传请求体的 GET，不附带工程、安装路径、账号或设备标识，不自动跟随重定向；清单按 `studioReleaseNotesPageId` 和 `unityIntegrationReleaseNotesPageId` 分别提取 Studio、Unity 集成包的更新日志页面链接，不参与软件安装或包校验。中英文链接仅缓存在当前 Hub 版本页对象的内存中，不写入本机文件；缺失、无效或请求失败时禁用入口。
 
 ## DF-4：系统浏览器访问
 
@@ -94,7 +94,7 @@ Hub 和 Studio 更新下载失败后会清除内存中的清单缓存标记，�
 
 `HarkenHub/Source/UI/HubWindow.cpp` 的侧栏链接打开 `https://harken.xd.com` 和 `https://github.com/xindong/harken-studio`，同样由用户点击后交给系统浏览器，不附带工程、安装事务或诊断数据。
 
-Hub 的版本菜单及服务器版本列表在用户点击“查看更新日志”或“点击查看详情”后，通过系统浏览器打开 DF-3 文档清单中匹配页面的相对路径，固定拼接到 `https://harkenstudio.xd.com/`。页面语言跟随 Hub 界面语言；右键“复制链接”只向本机剪贴板写入完整 URL，不发起网页请求。
+Hub 的版本菜单及服务器版本列表在用户点击 Studio 或 Unity 集成包对应的“查看更新日志”或“点击查看详情”后，通过系统浏览器打开 DF-3 文档清单中匹配页面的相对路径，固定拼接到 `https://harkenstudio.xd.com/`。页面语言跟随 Hub 界面语言；右键“复制链接”只向本机剪贴板写入完整 URL，不发起网页请求。
 
 其余工程目录、安装目录、日志目录等打开操作使用 `QUrl::fromLocalFile`，属于本机文件浏览。
 

@@ -92,7 +92,7 @@ set(HARKEN_HUB_SOURCES
     Source/Localization/ProjectOpenTranslations.cpp
     Source/ReleaseNotes/ReleaseNotesCatalog.cpp
     Source/ReleaseNotes/ReleaseNotesStrings.cpp
-    Source/ReleaseNotes/StudioReleaseNotes.cpp
+    Source/ReleaseNotes/VersionReleaseNotes.cpp
     Source/Settings/HubSettings.cpp
     Source/Templates/ProjectTemplateCatalog.cpp
     Source/UI/ButtonPulseAnimator.cpp
