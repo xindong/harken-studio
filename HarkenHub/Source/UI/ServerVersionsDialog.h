@@ -16,7 +16,7 @@ class QTableWidget;
 namespace VNH {
 
 class DialogTextView;
-class StudioReleaseNotes;
+class VersionReleaseNotes;
 
 class ServerVersionsDialog : public QDialog
 {
@@ -26,7 +26,7 @@ public:
     ServerVersionsDialog(const QByteArray& manifestPublicKey,
                          const QSet<QString>& installedBuildIds,
                          const QSet<QString>& installedVersions,
-                         StudioReleaseNotes* releaseNotes,
+                         VersionReleaseNotes* releaseNotes,
                          QWidget* parent = nullptr);
 
     QString packagePath() const { return packagePath_; }
@@ -40,10 +40,13 @@ private:
         ReleaseManifest manifest;
         bool installable = false;
         bool installed = false;
+        QLabel* studioNotes = nullptr;
+        QLabel* unityNotes = nullptr;
     };
 
     void populate(const ServerVersionList& result);
     void updateReleaseNotes();
+    void resizeReleaseNotesRows();
     void beginInstall(int rowIndex);
     void startDownload();
     void handleDownloadFinished(const DownloadResult& result);
@@ -53,7 +56,7 @@ private:
     QSet<QString> installedBuildIds_;
     QSet<QString> installedVersions_;
     ServerVersionCatalog catalog_;
-    StudioReleaseNotes* releaseNotes_ = nullptr;
+    VersionReleaseNotes* releaseNotes_ = nullptr;
     Downloader downloader_;
     std::shared_ptr<DownloadLease> downloadLease_;
     std::vector<DisplayRow> rows_;

@@ -1,4 +1,4 @@
-#include "ReleaseNotes/StudioReleaseNotes.h"
+#include "ReleaseNotes/VersionReleaseNotes.h"
 
 #include "Localization/HubLocalization.h"
 #include "Update/ServerEndpoints.h"
@@ -16,19 +16,12 @@ namespace {
 
 constexpr qint64 kResponseMaxBytes = 4ll * 1024 * 1024;
 
-QHash<QString, QUrl> parseLinks(const QByteArray& data, const QString& version)
+QHash<QString, QUrl> pageLinks(const QJsonArray& pages, const QString& pageId)
 {
-    const QJsonObject root = QJsonDocument::fromJson(data).object();
-    const QString pageId = root.value(QStringLiteral("releaseNotesPageId"))
-                               .toString().trimmed();
-    if (root.value(QStringLiteral("schemaVersion")).toInt() != 1 ||
-        root.value(QStringLiteral("product")).toString() != QStringLiteral("harken-studio") ||
-        root.value(QStringLiteral("version")).toString() != version ||
-        pageId.isEmpty())
+    if (pageId.isEmpty())
         return {};
 
     QHash<QString, QUrl> links;
-    const QJsonArray pages = root.value(QStringLiteral("pages")).toArray();
     for (const QJsonValue& value : pages) {
         const QJsonObject page = value.toObject();
         if (page.value(QStringLiteral("id")).toString() != pageId)
@@ -49,14 +42,37 @@ QHash<QString, QUrl> parseLinks(const QByteArray& data, const QString& version)
     return links;
 }
 
+QHash<VersionReleaseNotes::Product, QHash<QString, QUrl>> parseLinks(
+    const QByteArray& data, const QString& version)
+{
+    const QJsonObject root = QJsonDocument::fromJson(data).object();
+    if (root.value(QStringLiteral("schemaVersion")).toInt() != 2 ||
+        root.value(QStringLiteral("id")).toString() !=
+            QStringLiteral("harken-studio-%1").arg(version) ||
+        root.value(QStringLiteral("version")).toString() != version)
+        return {};
+
+    QHash<VersionReleaseNotes::Product, QHash<QString, QUrl>> links;
+    const QJsonArray pages = root.value(QStringLiteral("pages")).toArray();
+    const auto addLinks = [&](VersionReleaseNotes::Product product, const QString& field) {
+        const auto localized = pageLinks(pages, root.value(field).toString().trimmed());
+        if (!localized.isEmpty())
+            links.insert(product, localized);
+    };
+    addLinks(VersionReleaseNotes::Product::Studio, QStringLiteral("studioReleaseNotesPageId"));
+    addLinks(VersionReleaseNotes::Product::UnityIntegration,
+             QStringLiteral("unityIntegrationReleaseNotesPageId"));
+    return links;
 }
 
-StudioReleaseNotes::StudioReleaseNotes(QObject* parent)
+}
+
+VersionReleaseNotes::VersionReleaseNotes(QObject* parent)
     : QObject(parent)
 {
 }
 
-void StudioReleaseNotes::fetch(const QString& version)
+void VersionReleaseNotes::fetch(const QString& version)
 {
     static const QRegularExpression versionPattern(
         QRegularExpression::anchoredPattern(
@@ -67,7 +83,7 @@ void StudioReleaseNotes::fetch(const QString& version)
 
     const QUrl manifestUrl = ServerEndpoints::downloadUrl(
         ServerEndpoints::resolvedBaseUrl(),
-        QStringLiteral("document/harken-studio/%1/manifest.json").arg(version));
+        QStringLiteral("document/%1/manifest.json").arg(version));
     QNetworkRequest request(manifestUrl);
     request.setTransferTimeout(15000);
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
@@ -93,13 +109,13 @@ void StudioReleaseNotes::fetch(const QString& version)
     });
 }
 
-QUrl StudioReleaseNotes::url(const QString& version) const
+QUrl VersionReleaseNotes::url(const QString& version, Product product) const
 {
     const QString locale = HubLocalization::effectiveLanguage() ==
                                    HubLocalization::simplifiedChinesePreference()
                                ? QStringLiteral("zh")
                                : QStringLiteral("en");
-    return links_.value(version).value(locale);
+    return links_.value(version).value(product).value(locale);
 }
 
 }

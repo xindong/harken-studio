@@ -21,7 +21,7 @@ namespace VNH {
 
 class ProjectStore;
 class ButtonPulseAnimator;
-class StudioReleaseNotes;
+class VersionReleaseNotes;
 
 class VersionsPage : public QWidget
 {
@@ -124,7 +124,7 @@ private:
     QTimer* versionHighlightTimer_ = nullptr;
     ButtonPulseAnimator* serverUpdatePulse_ = nullptr;
     ServerVersionCatalog* catalog_ = nullptr;
-    StudioReleaseNotes* releaseNotes_ = nullptr;
+    VersionReleaseNotes* releaseNotes_ = nullptr;
     void* elevatedProcessHandle_ = nullptr;
     ElevatedMode elevatedMode_ = ElevatedMode::None;
     bool preparing_ = false;

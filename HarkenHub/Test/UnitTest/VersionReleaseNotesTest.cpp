@@ -1,4 +1,4 @@
-#include "ReleaseNotes/StudioReleaseNotes.h"
+#include "ReleaseNotes/VersionReleaseNotes.h"
 #include "Settings/HubSettings.h"
 #include "Support/RangeHttpServer.h"
 
@@ -14,9 +14,9 @@ namespace {
 
 using HarkenHubTest::RangeHttpServer;
 using VNH::HubSettings;
-using VNH::StudioReleaseNotes;
+using VNH::VersionReleaseNotes;
 
-class StudioReleaseNotesTest : public ::testing::Test
+class VersionReleaseNotesTest : public ::testing::TestWithParam<VersionReleaseNotes::Product>
 {
 protected:
     void SetUp() override
@@ -41,6 +41,12 @@ protected:
             qputenv("HARKEN_HUB_USER_ROOT", previousRoot_);
     }
 
+    QString productPath() const
+    {
+        return GetParam() == VersionReleaseNotes::Product::Studio
+            ? QStringLiteral("studio") : QStringLiteral("unity");
+    }
+
     void setDocument(const QJsonObject& document)
     {
         server_.setPayload(QJsonDocument(document).toJson(), QByteArrayLiteral("notes"));
@@ -52,24 +58,26 @@ protected:
     RangeHttpServer server_;
     const QString version_ = QStringLiteral("1.2.3");
     const QJsonObject document_ = QJsonDocument::fromJson(R"({
-        "schemaVersion": 1, "product": "harken-studio", "version": "1.2.3",
-        "releaseNotesPageId": "release",
+        "schemaVersion": 2, "id": "harken-studio-1.2.3", "version": "1.2.3",
+        "studioReleaseNotesPageId": "studio",
+        "unityIntegrationReleaseNotesPageId": "unity",
         "pages": [
             {"id": "other", "locale": "en", "path": "document/other.html"},
-            {"id": "release", "locale": "en", "path": "document/harken-studio/1.2.3/en/notes.html"},
-            {"id": "release", "locale": "zh", "path": "document/harken-studio/1.2.3/zh/\u53d1\u5e03\u65e5\u5fd7.html"}
+            {"id": "studio", "locale": "en", "path": "document/1.2.3/en/studio/notes.html"},
+            {"id": "studio", "locale": "zh", "path": "document/1.2.3/zh/studio/\u53d1\u5e03\u65e5\u5fd7.html"},
+            {"id": "unity", "locale": "en", "path": "document/1.2.3/en/unity/notes.html"},
+            {"id": "unity", "locale": "zh", "path": "document/1.2.3/zh/unity/\u53d1\u5e03\u65e5\u5fd7.html"}
         ]
     })").object();
 };
 
-TEST_F(StudioReleaseNotesTest, RejectsUnboundOrMalformedDocuments)
+TEST_P(VersionReleaseNotesTest, RejectsUnboundOrMalformedDocuments)
 {
     QList<QByteArray> responses{QByteArrayLiteral("not JSON"), QByteArrayLiteral("[]")};
     const QJsonObject invalidValues{
-        {QStringLiteral("schemaVersion"), 2},
-        {QStringLiteral("product"), QStringLiteral("another-product")},
+        {QStringLiteral("schemaVersion"), 1},
+        {QStringLiteral("id"), QStringLiteral("harken-studio-9.9.9")},
         {QStringLiteral("version"), QStringLiteral("9.9.9")},
-        {QStringLiteral("releaseNotesPageId"), QStringLiteral("missing-page")},
         {QStringLiteral("pages"), QJsonObject()}};
     for (auto it = invalidValues.begin(); it != invalidValues.end(); ++it) {
         QJsonObject modified = document_;
@@ -81,15 +89,15 @@ TEST_F(StudioReleaseNotesTest, RejectsUnboundOrMalformedDocuments)
     for (const QByteArray& response : responses) {
         SCOPED_TRACE(response.toStdString());
         server_.setPayload(response, QByteArrayLiteral("invalid"));
-        StudioReleaseNotes notes;
-        QSignalSpy finished(&notes, &StudioReleaseNotes::finished);
+        VersionReleaseNotes notes;
+        QSignalSpy finished(&notes, &VersionReleaseNotes::finished);
         notes.fetch(version_);
         ASSERT_TRUE(finished.wait(3000));
-        EXPECT_TRUE(notes.url(version_).isEmpty());
+        EXPECT_TRUE(notes.url(version_, GetParam()).isEmpty());
     }
 }
 
-TEST_F(StudioReleaseNotesTest, UntrustedPathsCannotRedirectOrTraverse)
+TEST_P(VersionReleaseNotesTest, UntrustedPathsCannotRedirectOrTraverse)
 {
     const QStringList paths{
         QString(), QStringLiteral("https://other.example/notes"),
@@ -103,61 +111,66 @@ TEST_F(StudioReleaseNotesTest, UntrustedPathsCannotRedirectOrTraverse)
         SCOPED_TRACE(path.toStdString());
         QJsonObject modified = document_;
         modified[QStringLiteral("pages")] = QJsonArray{QJsonObject{
-            {QStringLiteral("id"), QStringLiteral("release")},
+            {QStringLiteral("id"), productPath()},
             {QStringLiteral("locale"), QStringLiteral("en")},
             {QStringLiteral("path"), path}}};
         setDocument(modified);
-        StudioReleaseNotes notes;
-        QSignalSpy finished(&notes, &StudioReleaseNotes::finished);
+        VersionReleaseNotes notes;
+        QSignalSpy finished(&notes, &VersionReleaseNotes::finished);
         notes.fetch(version_);
         ASSERT_TRUE(finished.wait(3000));
-        EXPECT_TRUE(notes.url(version_).isEmpty());
+        EXPECT_TRUE(notes.url(version_, GetParam()).isEmpty());
     }
 }
 
-TEST_F(StudioReleaseNotesTest, SharedRequestsPreserveLocalizedTargets)
+TEST_P(VersionReleaseNotesTest, SharedRequestsPreserveLocalizedTargets)
 {
-    StudioReleaseNotes notes;
-    QSignalSpy finished(&notes, &StudioReleaseNotes::finished);
+    VersionReleaseNotes notes;
+    QSignalSpy finished(&notes, &VersionReleaseNotes::finished);
     notes.fetch(version_);
     notes.fetch(version_);
     ASSERT_TRUE(finished.wait(3000));
     EXPECT_EQ(server_.requestCount(), 1);
-    EXPECT_EQ(notes.url(version_), QUrl(QStringLiteral(
-        "https://harkenstudio.xd.com/document/harken-studio/1.2.3/en/notes.html")));
+    EXPECT_EQ(notes.url(version_, GetParam()), QUrl(QStringLiteral(
+        "https://harkenstudio.xd.com/document/1.2.3/en/%1/notes.html").arg(productPath())));
     ASSERT_TRUE(HubSettings::setLanguagePreference(QStringLiteral("zh_CN")));
     const QUrl chinese(QStringLiteral(
-        "https://harkenstudio.xd.com/document/harken-studio/1.2.3/zh/\u53d1\u5e03\u65e5\u5fd7.html"));
-    EXPECT_EQ(notes.url(version_), chinese);
-    EXPECT_EQ(QUrl::fromEncoded(notes.url(version_).toEncoded()), chinese);
+        "https://harkenstudio.xd.com/document/1.2.3/zh/%1/\u53d1\u5e03\u65e5\u5fd7.html").arg(productPath()));
+    EXPECT_EQ(notes.url(version_, GetParam()), chinese);
+    EXPECT_EQ(QUrl::fromEncoded(notes.url(version_, GetParam()).toEncoded()), chinese);
     notes.fetch(version_);
     EXPECT_FALSE(finished.wait(50));
     EXPECT_EQ(server_.requestCount(), 1);
 }
 
-TEST_F(StudioReleaseNotesTest, MissingLocaleDoesNotSelectAnotherLanguage)
+TEST_P(VersionReleaseNotesTest, MissingLocaleDoesNotSelectAnotherLanguage)
 {
     QJsonObject modified = document_;
     QJsonArray pages = modified.value(QStringLiteral("pages")).toArray();
-    pages.removeLast();
+    for (qsizetype i = pages.size() - 1; i >= 0; --i) {
+        const QJsonObject page = pages[i].toObject();
+        if (page.value(QStringLiteral("id")).toString() == productPath() &&
+            page.value(QStringLiteral("locale")).toString() == QStringLiteral("zh"))
+            pages.removeAt(i);
+    }
     modified[QStringLiteral("pages")] = pages;
     setDocument(modified);
-    StudioReleaseNotes notes;
-    QSignalSpy finished(&notes, &StudioReleaseNotes::finished);
+    VersionReleaseNotes notes;
+    QSignalSpy finished(&notes, &VersionReleaseNotes::finished);
     notes.fetch(version_);
     ASSERT_TRUE(finished.wait(3000));
-    const QUrl english = notes.url(version_);
+    const QUrl english = notes.url(version_, GetParam());
     ASSERT_FALSE(english.isEmpty());
     ASSERT_TRUE(HubSettings::setLanguagePreference(QStringLiteral("zh_CN")));
-    EXPECT_TRUE(notes.url(version_).isEmpty());
+    EXPECT_TRUE(notes.url(version_, GetParam()).isEmpty());
     ASSERT_TRUE(HubSettings::setLanguagePreference(QStringLiteral("en")));
-    EXPECT_EQ(notes.url(version_), english);
+    EXPECT_EQ(notes.url(version_, GetParam()), english);
 }
 
-TEST_F(StudioReleaseNotesTest, FailedResponsesCanRecoverWithoutPublishingInvalidLinks)
+TEST_P(VersionReleaseNotesTest, FailedResponsesCanRecoverWithoutPublishingInvalidLinks)
 {
-    StudioReleaseNotes notes;
-    QSignalSpy finished(&notes, &StudioReleaseNotes::finished);
+    VersionReleaseNotes notes;
+    QSignalSpy finished(&notes, &VersionReleaseNotes::finished);
     for (const int status : {404, 503, 200}) {
         RangeHttpServer::Script failure;
         failure.mode = RangeHttpServer::Script::Mode::Status;
@@ -166,15 +179,15 @@ TEST_F(StudioReleaseNotesTest, FailedResponsesCanRecoverWithoutPublishingInvalid
         server_.enqueue(failure);
         notes.fetch(version_);
         ASSERT_TRUE(finished.wait(3000));
-        EXPECT_TRUE(notes.url(version_).isEmpty());
+        EXPECT_TRUE(notes.url(version_, GetParam()).isEmpty());
     }
     notes.fetch(version_);
     ASSERT_TRUE(finished.wait(3000));
-    EXPECT_FALSE(notes.url(version_).isEmpty());
+    EXPECT_FALSE(notes.url(version_, GetParam()).isEmpty());
     EXPECT_EQ(server_.requestCount(), 4);
 }
 
-TEST_F(StudioReleaseNotesTest, RedirectsCannotSendRequestsToAnotherServer)
+TEST_P(VersionReleaseNotesTest, RedirectsCannotSendRequestsToAnotherServer)
 {
     RangeHttpServer destination;
     ASSERT_TRUE(destination.listen());
@@ -182,23 +195,46 @@ TEST_F(StudioReleaseNotesTest, RedirectsCannotSendRequestsToAnotherServer)
     redirect.mode = RangeHttpServer::Script::Mode::Redirect;
     redirect.redirectLocation = destination.packageUrl().toEncoded();
     server_.enqueue(redirect);
-    StudioReleaseNotes notes;
-    QSignalSpy finished(&notes, &StudioReleaseNotes::finished);
+    VersionReleaseNotes notes;
+    QSignalSpy finished(&notes, &VersionReleaseNotes::finished);
     notes.fetch(version_);
     ASSERT_TRUE(finished.wait(3000));
-    EXPECT_TRUE(notes.url(version_).isEmpty());
+    EXPECT_TRUE(notes.url(version_, GetParam()).isEmpty());
     EXPECT_EQ(destination.requestCount(), 0);
 }
 
-TEST_F(StudioReleaseNotesTest, OversizedResponsesCannotPublishLinks)
+TEST_P(VersionReleaseNotesTest, OversizedResponsesCannotPublishLinks)
 {
     server_.setPayload(QByteArray(8 * 1024 * 1024, ' ') + QJsonDocument(document_).toJson(),
                        QByteArrayLiteral("oversized"));
-    StudioReleaseNotes notes;
-    QSignalSpy finished(&notes, &StudioReleaseNotes::finished);
+    VersionReleaseNotes notes;
+    QSignalSpy finished(&notes, &VersionReleaseNotes::finished);
     notes.fetch(version_);
     ASSERT_TRUE(finished.wait(3000));
-    EXPECT_TRUE(notes.url(version_).isEmpty());
+    EXPECT_TRUE(notes.url(version_, GetParam()).isEmpty());
 }
+
+TEST_P(VersionReleaseNotesTest, MissingTargetDoesNotDisableOrBorrowAnotherProduct)
+{
+    const auto otherProduct = GetParam() == VersionReleaseNotes::Product::Studio
+        ? VersionReleaseNotes::Product::UnityIntegration : VersionReleaseNotes::Product::Studio;
+    const QString field = GetParam() == VersionReleaseNotes::Product::Studio
+        ? QStringLiteral("studioReleaseNotesPageId") : QStringLiteral("unityIntegrationReleaseNotesPageId");
+    for (const QJsonValue invalid : {QJsonValue(), QJsonValue(42), QJsonValue(QStringLiteral("missing"))}) {
+        QJsonObject modified = document_;
+        modified[field] = invalid;
+        setDocument(modified);
+        VersionReleaseNotes notes;
+        QSignalSpy finished(&notes, &VersionReleaseNotes::finished);
+        notes.fetch(version_);
+        ASSERT_TRUE(finished.wait(3000));
+        EXPECT_TRUE(notes.url(version_, GetParam()).isEmpty());
+        EXPECT_FALSE(notes.url(version_, otherProduct).isEmpty());
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(Products, VersionReleaseNotesTest,
+    ::testing::Values(VersionReleaseNotes::Product::Studio,
+                      VersionReleaseNotes::Product::UnityIntegration));
 
 }

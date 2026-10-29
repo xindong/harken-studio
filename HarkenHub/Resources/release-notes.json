@@ -7,6 +7,24 @@
   },
   "releases": [
     {
+      "version": "0.2.3",
+      "date": "2026-10-29",
+      "pullRequests": [],
+      "contributors": [
+        "liuxin2-sys"
+      ],
+      "changes": [
+        {
+          "category": "added",
+          "text": "View separate Studio and Unity Integration Package changelogs from the version menu or server list, and copy either link from the server list."
+        },
+        {
+          "category": "improved",
+          "text": "Restore changelog links using the updated documentation manifest."
+        }
+      ]
+    },
+    {
       "version": "0.2.2",
       "date": "2026-10-29",
       "pullRequests": [175],

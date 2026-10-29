@@ -63,7 +63,7 @@ add_executable(harken_hub_tests
     UnitTest/ProjectIntegrationExecutorTest.cpp
     UnitTest/ProjectTemplateCatalogTest.cpp
     UnitTest/ReleaseNotesCatalogTest.cpp
-    UnitTest/StudioReleaseNotesTest.cpp
+    UnitTest/VersionReleaseNotesTest.cpp
     UnitTest/SingleInstanceGuardTest.cpp
     UnitTest/VersionScannerTest.cpp
     UnitTest/VersionsPageWatchTest.cpp

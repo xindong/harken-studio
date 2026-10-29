@@ -160,6 +160,14 @@
 <context>
     <name>HubReleaseNotes</name>
     <message>
+        <source>View separate Studio and Unity Integration Package changelogs from the version menu or server list, and copy either link from the server list.</source>
+        <translation>&#x53EF;&#x4ECE;&#x7248;&#x672C;&#x83DC;&#x5355;&#x6216;&#x670D;&#x52A1;&#x5668;&#x5217;&#x8868;&#x5206;&#x522B;&#x67E5;&#x770B; Studio&#x3001;Unity &#x96C6;&#x6210;&#x5305;&#x7684;&#x66F4;&#x65B0;&#x65E5;&#x5FD7;&#xFF0C;&#x5E76;&#x4ECE;&#x670D;&#x52A1;&#x5668;&#x5217;&#x8868;&#x590D;&#x5236;&#x5BF9;&#x5E94;&#x7F51;&#x9875;&#x94FE;&#x63A5;&#x3002;</translation>
+    </message>
+    <message>
+        <source>Restore changelog links using the updated documentation manifest.</source>
+        <translation>&#x9002;&#x914D;&#x65B0;&#x7248;&#x6587;&#x6863;&#x6E05;&#x5355;&#xFF0C;&#x6062;&#x590D;&#x66F4;&#x65B0;&#x65E5;&#x5FD7;&#x7F51;&#x9875;&#x94FE;&#x63A5;&#x3002;</translation>
+    </message>
+    <message>
         <source>Open Studio changelogs from the version menu or Get from Server in the Hub interface language, and copy changelog links from the server list.</source>
         <translation>&#x53EF;&#x5728;&#x7248;&#x672C;&#x83DC;&#x5355;&#x6216;&#x201C;&#x4ECE;&#x670D;&#x52A1;&#x5668;&#x83B7;&#x53D6;&#x201D;&#x7A97;&#x53E3;&#x67E5;&#x770B;&#x5BF9;&#x5E94;&#x8BED;&#x8A00;&#x7684; Studio &#x66F4;&#x65B0;&#x65E5;&#x5FD7;&#xFF0C;&#x5E76;&#x652F;&#x6301;&#x4ECE;&#x670D;&#x52A1;&#x5668;&#x5217;&#x8868;&#x590D;&#x5236;&#x7F51;&#x9875;&#x94FE;&#x63A5;&#x3002;</translation>
     </message>
@@ -578,12 +586,20 @@ Continue?</source>
         <translation>&#x672C;&#x5730;&#x6784;&#x5EFA;&#x4E0D;&#x6D89;&#x53CA;&#x7F51;&#x9875;&#x94FE;&#x63A5;</translation>
     </message>
     <message>
-        <source>View Changelog</source>
-        <translation>&#x67E5;&#x770B;&#x66F4;&#x65B0;&#x65E5;&#x5FD7;</translation>
+        <source>View Changelog: Studio</source>
+        <translation>&#x67E5;&#x770B;&#x66F4;&#x65B0;&#x65E5;&#x5FD7;&#xFF1A;Studio</translation>
     </message>
     <message>
-        <source>Click to view details</source>
-        <translation>&#x70B9;&#x51FB;&#x67E5;&#x770B;&#x8BE6;&#x60C5;</translation>
+        <source>View Changelog: Unity Integration Package</source>
+        <translation>&#x67E5;&#x770B;&#x66F4;&#x65B0;&#x65E5;&#x5FD7;&#xFF1A;Unity&#x96C6;&#x6210;&#x5305;</translation>
+    </message>
+    <message>
+        <source>Click to view details: Studio</source>
+        <translation>&#x70B9;&#x51FB;&#x67E5;&#x770B;&#x8BE6;&#x60C5;&#xFF1A;Studio</translation>
+    </message>
+    <message>
+        <source>Click to view details: Unity Integration Package</source>
+        <translation>&#x70B9;&#x51FB;&#x67E5;&#x770B;&#x8BE6;&#x60C5;&#xFF1A;Unity&#x96C6;&#x6210;&#x5305;</translation>
     </message>
     <message>
         <source>Copy Link</source>
