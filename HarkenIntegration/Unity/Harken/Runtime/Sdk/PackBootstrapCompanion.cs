@@ -8,6 +8,7 @@ namespace Harken
 {
     public sealed partial class PackBootstrapSession
     {
+        internal IReadOnlyDictionary<ulong, string> companionLocators;
         private PackSource companionSource;
         private SharedPack[] companionOwners = Array.Empty<SharedPack>();
         private VnCanonicalPackSetMemberV2[] companionKeepMembers = Array.Empty<VnCanonicalPackSetMemberV2>();
@@ -295,7 +296,25 @@ namespace Harken
             VnResult allowed = CompanionMutationAllowed();
             if (allowed != VnResult.VN_OK) return allowed;
             if (!packs.TryGetValue(id, out SharedPack owner))
-                return VnResult.VN_CAPABILITY_UNAVAILABLE;
+            {
+                if (companionLocators == null || !companionLocators.TryGetValue(id, out string name))
+                    return VnResult.VN_CAPABILITY_UNAVAILABLE;
+                try
+                {
+                    // Reserve bookkeeping before acquiring a reference; no allocation follows publication.
+                    var next = new Dictionary<(ulong, ulong), RawCompanionLease>(rawCompanionLeases.Count + 1);
+                    foreach (var row in rawCompanionLeases) next.Add(row.Key, row.Value);
+                    var acquired = new SharedPack[1];
+                    VnResult result = AcquireCompanions(new[] { name }, acquired, false, id);
+                    if (result != VnResult.VN_OK) return result;
+                    owner = acquired[0];
+                    next.Add((id, owner.Handle.Handle), new RawCompanionLease(owner, 1));
+                    rawCompanionLeases = next;
+                    pack = owner.Handle;
+                    return VnResult.VN_OK;
+                }
+                catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
+            }
             if (!owner.Handle.IsValid)
             {
                 try
@@ -391,7 +410,8 @@ namespace Harken
         }
 
         internal static VnResult StartCaptured(PackSource source, CompanionInput init, ref VnConfig config,
-            out PackBootstrapSession session, CancellationToken cancellation = default)
+            out PackBootstrapSession session, CancellationToken cancellation = default,
+            ulong[] startupIds = null, IReadOnlyDictionary<ulong, string> locators = null)
         {
             session = null;
             try
@@ -401,8 +421,9 @@ namespace Harken
                 if (result != VnResult.VN_OK) return result;
                 result = ApplyRecommendations(ref config, inspection, 0);
                 if (result != VnResult.VN_OK) return result;
-                var candidate = new PackBootstrapSession(default, Array.Empty<ulong>(), inspection,
+                var candidate = new PackBootstrapSession(default, startupIds ?? Array.Empty<ulong>(), inspection,
                     source.Root, source.Language, initBytes: init.Bytes);
+                candidate.companionLocators = locators;
                 candidate.BindCompanionSource(source, init.Facts.projectId.ToString());
                 var members = new[] { new CompanionMember(init.Facts.packStableId,
                     VnConstants.VN_CANONICAL_PACK_SET_MEMBER_INIT, default, VnConstants.VN_PACK_MEMBER_CONTENT, init.Bytes, init.Names) };

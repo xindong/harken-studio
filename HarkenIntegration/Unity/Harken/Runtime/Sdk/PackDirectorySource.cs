@@ -9,6 +9,7 @@ namespace Harken
     internal sealed class CompanionInput
     {
         internal byte[] Bytes;
+        internal byte[] Json;
         internal PackCompanion Names;
         internal VnPackInspectReportV1 Facts;
         internal ulong SourceRevision;
@@ -58,7 +59,7 @@ namespace Harken
                 result = CompanionNative.Inspect(bytes, init, names, out VnPackInspectReportV1 facts);
                 if (result != VnResult.VN_OK) return result;
                 names.ProjectId = facts.projectId;
-                input = new CompanionInput { Bytes = bytes, Names = names, Facts = facts };
+                input = new CompanionInput { Bytes = bytes, Json = json, Names = names, Facts = facts };
                 return VnResult.VN_OK;
             }
             catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }

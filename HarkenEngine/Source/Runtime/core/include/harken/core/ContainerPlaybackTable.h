@@ -564,6 +564,14 @@ public:
                table.SetPreparedRootMetadata(*externalInstance_, metadata);
     }
 
+    bool SetPreparedProvenance(PlayableInstanceTable& table,
+        PlayableInstanceHandle handle, const MonitorPlayableProvenance& provenance) noexcept {
+        if (step_.CommitProofsRequired()) return false;
+        const auto* token = externalInstance_ != nullptr && externalInstance_->Handle() == handle
+            ? externalInstance_ : step_.FindPreparedInstanceToken(handle);
+        return token != nullptr && table.SetPreparedProvenance(*token, provenance);
+    }
+
     bool SetPreparedContentIdentity(PlayableInstanceTable& table,
         PlayableInstanceHandle handle, const MonitorContentIdentity& identity) noexcept {
         if (step_.CommitProofsRequired()) return false;

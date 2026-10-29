@@ -146,6 +146,19 @@ inline MonitorExecutionFact CaptureEntityFact(unsigned kind, unsigned subject,
     }
     if (source.controlObservationIncomplete) fact.flags |= kMonitorFactControlIncomplete;
     if (source.identityObservationIncomplete) fact.flags |= kMonitorFactIdentityIncomplete;
+    // Preserve every old position field. Complex arranging occurrences keep
+    // the position branch and explicitly have no single-source provenance.
+    if (subject == VN_MONITOR_SUBJECT_PLAYABLE && source.playableProvenance.knownFlags != 0 &&
+        source.arrangingInstance == 0 && !source.occurrenceIdentity.valid && !IsActivityFactKind(kind)) {
+        const auto position = body.position;
+        body.playable = {};
+        body.playable.logicCommit = position.logicCommit;
+        body.playable.executeFrame = position.frame;
+        body.playable.audioBlock = position.audioBlock;
+        body.playable.ownerEpoch = position.detail.ownerEpoch;
+        body.playable.provenance = source.playableProvenance;
+        fact.flags |= kMonitorFactPlayableBody;
+    }
     return fact;
 }
 

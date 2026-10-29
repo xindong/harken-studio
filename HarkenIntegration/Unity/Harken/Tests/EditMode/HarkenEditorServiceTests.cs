@@ -23,7 +23,7 @@ namespace Harken.Unity.Tests
         }
 
         [Test]
-        public void UnavailableCatalogRejectsAllSourcesWithoutReadingOrPublishingCandidates()
+        public void InvalidCatalogInputsClearPublishedResultsAndLegacyReadersStayRejected()
         {
             var catalog = new HarkenEditorCatalog();
             var source = ScriptableObject.CreateInstance<HarkenPackSource>();
@@ -31,23 +31,23 @@ namespace Harken.Unity.Tests
             int reads = 0;
             try
             {
-                Assert.That(catalog.Refresh("missing-publication"), Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                Assert.That(catalog.Refresh("missing-publication"), Is.Not.EqualTo(VnResult.VN_OK));
                 Assert.That(catalog.RefreshPlatform("missing-publication", null, null, "Windows"),
-                    Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
-                Assert.That(catalog.Refresh(source), Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
-                Assert.That(catalog.Refresh(source, null, companion), Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                    Is.Not.EqualTo(VnResult.VN_OK));
+                Assert.That(catalog.Refresh(source), Is.Not.EqualTo(VnResult.VN_OK));
+                Assert.That(catalog.Refresh(source, null, companion), Is.Not.EqualTo(VnResult.VN_OK));
                 Assert.That(catalog.Refresh("publication.json", path => { ++reads; throw new IOException(path); }),
-                    Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                    Is.Not.EqualTo(VnResult.VN_OK));
                 Assert.That(reads, Is.Zero);
                 Assert.That(catalog.Publication, Is.Null);
                 Assert.That(catalog.PreparedPacks, Is.Null);
                 Assert.That(catalog.DirectoryPath, Is.Null);
-                Assert.That(catalog.GetPreparationOrder("Play", out ulong[] ids, out _), Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                Assert.That(catalog.GetPreparationOrder("Play", out ulong[] ids, out _), Is.Not.EqualTo(VnResult.VN_OK));
                 Assert.That(ids, Is.Empty);
-                Assert.That(catalog.GetActionPreview("Play", out var preview, out _), Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                Assert.That(catalog.GetActionPreview("Play", out var preview, out _), Is.Not.EqualTo(VnResult.VN_OK));
                 Assert.That(preview, Is.Null);
                 Assert.That(catalog.GetWaveform("Play", out var samples, out var duration, out _),
-                    Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                    Is.Not.EqualTo(VnResult.VN_OK));
                 Assert.That(samples, Is.Empty);
                 Assert.That(duration, Is.Null);
             }
@@ -56,7 +56,7 @@ namespace Harken.Unity.Tests
 
         [TestCase(false)]
         [TestCase(true)]
-        public void UnavailablePreviewCannotAcquireOrTerminateNativeOwnership(bool externalEngine)
+        public void InvalidPreviewInputsCannotAcquireOrTerminateNativeOwnership(bool externalEngine)
         {
             VnConfig config = HarkenEngine.DefaultConfig();
             config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
@@ -68,11 +68,11 @@ namespace Harken.Unity.Tests
                 using (var scope = preview.CreateScope())
                 {
                     Assert.That(preview.Prepare("missing-publication", null, Array.Empty<ulong>(), true),
-                        Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
-                    Assert.That(preview.Prepare(source, Array.Empty<ulong>(), true), Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                        Is.Not.EqualTo(VnResult.VN_OK));
+                    Assert.That(preview.Prepare(source, Array.Empty<ulong>(), true), Is.Not.EqualTo(VnResult.VN_OK));
                     Assert.That(preview.Prepare((HarkenPreparedPacks)null, Array.Empty<ulong>(), true),
-                        Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
-                    Assert.That(scope.Prepare(null, new[] { "Play" }), Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                        Is.Not.EqualTo(VnResult.VN_OK));
+                    Assert.That(scope.Prepare(null, new[] { "Play" }), Is.Not.EqualTo(VnResult.VN_OK));
                     Assert.That(preview.IsPrepared, Is.False);
                     Assert.That(preview.Session, Is.Null);
                     Assert.That(scope.IsPrepared, Is.False);
@@ -316,6 +316,37 @@ namespace Harken.Unity.Tests
                 Assert.That(action.ActionName, Is.EqualTo("Play_U4_A"));
             }
             finally { Object.DestroyImmediate(owner); }
+        }
+
+        [Test]
+        public void CompanionCatalogRefreshUsesReplacementAssetsInTheSameOwner()
+        {
+            using (var first = new AssetFixture())
+            using (var replacement = new AssetFixture())
+            {
+                var source = first.CreateSource();
+                var next = replacement.CreateSource();
+                PackBootstrapSession session = null;
+                try
+                {
+                    var catalog = new HarkenEditorCatalog();
+                    Assert.That(catalog.Refresh(source, null, first.InitJson), Is.EqualTo(VnResult.VN_OK));
+                    var prepared = catalog.PreparedPacks;
+                    var config = HarkenEngine.DefaultConfig();
+                    config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
+                    Assert.That(prepared.Start(Array.Empty<ulong>(), ref config, out session), Is.EqualTo(VnResult.VN_OK));
+                    Set(source, "initPack", Get<TextAsset>(next, "initPack"));
+                    Set(source, "content", Get<HarkenPackSource.ContentAsset[]>(next, "content"));
+                    Assert.That(catalog.Refresh(source, null, replacement.InitJson), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(catalog.PreparedPacks, Is.SameAs(prepared));
+                    first.DeleteAssets();
+                    Assert.That(session.PrepareActions(new[] { "Play_U4_A" }, session.ProjectId, out var action), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(action.Release(), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(session.Shutdown(), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(prepared.Start(Array.Empty<ulong>(), ref config, out session), Is.EqualTo(VnResult.VN_OK));
+                }
+                finally { session?.Dispose(); Object.DestroyImmediate(source); Object.DestroyImmediate(next); }
+            }
         }
 
         [Test]

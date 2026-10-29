@@ -21,7 +21,7 @@ namespace Harken.Unity.Editor
         private void OnEnable()
         {
             // Temporarily avoid automatic manifest capture until publication tooling supports current Pack companions.
-            if (!HarkenEditorPublicationSupport.IsAvailable) return;
+            if (!HarkenEditorPublicationSupport.CompanionAvailable) return;
             var action = (HarkenAction)target;
             var runtime = serializedObject.FindProperty("runtime").objectReferenceValue as HarkenAudioSystem;
             if (runtime != null)
@@ -51,12 +51,12 @@ namespace Harken.Unity.Editor
             serializedObject.Update();
             DrawPropertiesExcluding(serializedObject, "m_Script", "actionName", "projectId");
             EditorGUILayout.PropertyField(serializedObject.FindProperty("actionName"));
-            using (new EditorGUI.DisabledScope(HarkenEditorPublicationSupport.IsAvailable))
+            using (new EditorGUI.DisabledScope(HarkenEditorPublicationSupport.CompanionAvailable))
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("projectId"));
             serializedObject.ApplyModifiedProperties();
 
             // Keep manual runtime configuration available while catalog binding and Editor preview are suspended.
-            if (!HarkenEditorPublicationSupport.IsAvailable)
+            if (!HarkenEditorPublicationSupport.CompanionAvailable)
             {
                 EditorGUILayout.HelpBox(HarkenEditorPublicationSupport.Diagnostic, MessageType.Info);
                 return;
@@ -65,7 +65,7 @@ namespace Harken.Unity.Editor
             EditorGUILayout.Space();
             EditorGUI.BeginChangeCheck();
             source = (HarkenPackSource)EditorGUILayout.ObjectField("Pack source", source, typeof(HarkenPackSource), false);
-            companion = (TextAsset)EditorGUILayout.ObjectField("Waveform companion", companion, typeof(TextAsset), false);
+            companion = (TextAsset)EditorGUILayout.ObjectField("Init JSON", companion, typeof(TextAsset), false);
             if (source == null) directory = EditorGUILayout.TextField("Publication directory", directory);
             language = EditorGUILayout.TextField("Language", language);
             if (EditorGUI.EndChangeCheck()) Refresh(true);

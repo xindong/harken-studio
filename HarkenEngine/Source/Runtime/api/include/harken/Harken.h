@@ -4264,6 +4264,24 @@ typedef struct VnMonitorExecutionFactV2 {
     VnMonitorFactActivity activity;
 } VnMonitorExecutionFactV2;
 
+#define VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN 1
+
+/* Exact V2 prefix. Known provenance identifies a resolved single-source occurrence. */
+typedef struct VnMonitorPlayableProvenance {
+    VnObjectId rootPlayableId;
+    uint64_t rootProgramFingerprint;
+    uint64_t occurrenceFingerprint;
+    uint64_t mediaChecksum;
+    uint32_t childOrdinal;
+    uint32_t knownFlags;
+} VnMonitorPlayableProvenance;
+
+typedef struct VnMonitorExecutionFactV3 {
+    VnMonitorExecutionFactV1 fact;
+    VnMonitorFactActivity activity;
+    VnMonitorPlayableProvenance playable;
+} VnMonitorExecutionFactV3;
+
 /* STATE identity revision is independent of native ReadCut and EVENT sequences. */
 typedef struct VnMonitorIdentityFactV1 {
     uint32_t structSize;

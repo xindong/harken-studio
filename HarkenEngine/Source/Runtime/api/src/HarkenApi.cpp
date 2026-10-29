@@ -89829,6 +89829,52 @@ bool PrepareContainerSingleLeaf(
         }
     }
 
+    // Bind display provenance to the exact leased media, never the current registry by ID.
+    if (voiceLease != nullptr && voiceLease->leaseToken != 0 && !voice.facts->streamed &&
+        (scratch->packLeaseOwned || scratch->packLeaseBorrowed) && selectionCount <= 1 &&
+        cut.root.kind == root.kind && cut.root.stableId == root.stableId &&
+        cut.root.expectedProgramSemanticFingerprint == root.expectedProgramSemanticFingerprint) {
+        harken::MonitorPlayableProvenance provenance{};
+        provenance.rootPlayableId = root.stableId;
+        provenance.rootProgramFingerprint = root.expectedProgramSemanticFingerprint;
+        provenance.childOrdinal = UINT32_MAX;
+        const harken::ResolvedPlayablePathRowV1* occurrence = nullptr;
+        std::uint32_t occurrenceCount = 0;
+        for (std::uint32_t i = 0; i < cut.pathCount; ++i) {
+            if (cut.path[i].rowKind == harken::ResolvedPlayablePathRowKindV1::Occurrence) {
+                occurrence = &cut.path[i];
+                ++occurrenceCount;
+            }
+        }
+        bool supported = instanceKind == harken::PlayableKind::Sound && selectionCount == 0 &&
+            occurrenceCount == 0 && cut.leaf.kind == harken::PlayableKindV1::Sound;
+        auto instance = scratch->instance.Handle();
+        if (instanceKind == harken::PlayableKind::Container && selectionCount == 1) {
+            const auto program = scratch->packPlaybackView.ResolveContainer(root.stableId, root.expectedProgramSemanticFingerprint);
+            supported = program != nullptr && program->mode == harken::ContainerModeV1::Random &&
+                occurrenceCount == 1 && occurrence != nullptr &&
+                occurrence->contentPropertyKind == harken::playableproperties::ContentPropertyKindV1::Container &&
+                occurrence->stableId == root.stableId &&
+                occurrence->stableOccurrenceOrdinal == selectedOrdinals[0] &&
+                cut.leaf.kind == harken::PlayableKindV1::Sound;
+            if (supported) {
+                provenance.childOrdinal = selectedOrdinals[0];
+                provenance.occurrenceFingerprint = occurrence->programSemanticFingerprint;
+                instance = scratch->playableTreeExecutor.PreparedInstanceHandle(0);
+            }
+        }
+        harken::PCMView media{};
+        bool checksumKnown = false;
+        if (supported && engine.packs.LookupExactClosure(voiceLease->resourceClosureToken,
+                cut.leaf.stableId, engine.registry, &media, &provenance.mediaChecksum, &checksumKnown) == VN_OK &&
+            checksumKnown && media.contentRevision == voice.facts->capturedMedia.contentRevision &&
+            media.frames == voice.facts->capturedMedia.frames && media.sampleRate == voice.facts->capturedMedia.sampleRate &&
+            media.channelCount == voice.facts->capturedMedia.channelCount) {
+            provenance.knownFlags = VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN;
+            (void)scratch->playableTreeExecutor.SetPreparedProvenance(engine.playableInstances, instance, provenance);
+        }
+    }
+
     const std::uint64_t startFrame =
         context.startFrame;
     const bool hasRelativeSoundMember = context.hasRelativeSoundMember;

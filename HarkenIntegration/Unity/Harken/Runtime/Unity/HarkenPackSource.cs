@@ -22,6 +22,23 @@ namespace Harken.Unity
 
         private void OnEnable() => mainThread = Thread.CurrentThread.ManagedThreadId;
 
+        internal IEnumerable<string> CandidateNames(string selectedLanguage)
+        {
+            foreach (ContentAsset item in content ?? Array.Empty<ContentAsset>())
+            {
+                string path = item.relativePath;
+                if (string.IsNullOrEmpty(path)) continue;
+                int slash = path.LastIndexOf('/');
+                if (slash >= 0 && path.Substring(0, slash) != (selectedLanguage ?? language)) continue;
+                string file = path.Substring(slash + 1);
+                if (file.EndsWith(".json", StringComparison.Ordinal) || file.EndsWith(".bytes", StringComparison.Ordinal))
+                {
+                    string name = file.Substring(0, file.LastIndexOf('.'));
+                    if (name != "Init" && PackCompanion.IsName(name)) yield return name;
+                }
+            }
+        }
+
         /// <summary>Captures immutable TextAsset references for a companion source; content bytes remain on demand.</summary>
         public VnResult CaptureCompanion(TextAsset initJson, out PackSource source, out string error,
             string selectedLanguage = null)
@@ -70,7 +87,10 @@ namespace Harken.Unity
     {
         internal const string Diagnostic = "Legacy Pack manifests are unsupported. Re-export with the current Studio and use CaptureCompanion or PackSource.";
         private HarkenPreparedPacks() { }
-        public GameplayPublication Publication => null;
+        internal HarkenPreparedPacks(PackCatalogSnapshot snapshot) { Snapshot = snapshot; }
+        internal PackCatalogSnapshot Snapshot { get; }
+        internal uint PresentationRevision { get; set; }
+        public GameplayPublication Publication => Snapshot?.Publication;
         public string SelectedManifestPath => null;
 
         public static VnResult Capture(string manifestPath, Func<string, byte[]> readBytes,
@@ -97,7 +117,16 @@ namespace Harken.Unity
         public VnResult Start(ulong[] startupIds, ref VnConfig config, out PackBootstrapSession session)
         {
             session = null;
-            return VnResult.VN_PACK_INCOMPATIBLE;
+            if (Snapshot == null) return VnResult.VN_PACK_INCOMPATIBLE;
+            if (startupIds == null) return VnResult.VN_INVALID_ARG;
+            var unique = new HashSet<ulong>();
+            foreach (ulong id in startupIds)
+                if (!Snapshot.Names.ContainsKey(id) || !unique.Add(id)) return VnResult.VN_UNKNOWN_ID;
+            VnResult result = Snapshot.Source.Capture(null, default, null, out CompanionInput init);
+            if (result != VnResult.VN_OK) return result;
+            result = PackBootstrap.StartCaptured(Snapshot.Source, init, ref config, out session,
+                startupIds: startupIds, locators: Snapshot.Names);
+            return result == VnResult.VN_OK ? session.PrepareStartupPacks() : result;
         }
     }
 }

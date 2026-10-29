@@ -1618,6 +1618,10 @@ TEST(MonitorObserve, EventSessionV2RejectsBadVintagesAndPreservesLegacyConstrain
     EXPECT_EQ(VN_INVALID_ARG, open());
     desc.reserved1 = 0;
     desc.requestedExecutionFactVersion = 3;
+    ASSERT_EQ(VN_OK, open());
+    ASSERT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
+    handle = 123;
+    desc.requestedExecutionFactVersion = 4;
     EXPECT_EQ(VN_MONITOR_UNSUPPORTED, open());
     EXPECT_EQ(123u, handle);
     desc.requestedExecutionFactVersion = 0;

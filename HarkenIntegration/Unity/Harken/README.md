@@ -344,35 +344,24 @@ paths must match it. Studio project migration is unaffected.
 
 ## Unity Editor and prepared bytes
 
-The Action Inspector keeps runtime, emitter, **Action Name**, **Project Id**,
-play-on-enable and stop settings available. Enter the exact authored Action name
-and the intended audio project's GUID manually. A running companion session
-exposes its validated identity as `Session.ProjectId`. Automatic name lists,
-project binding, preview and waveform controls are hidden. Direct catalog refresh,
-preview preparation and symbol generation return `VN_CAPABILITY_UNAVAILABLE`.
-
-Plugin importers and Project Settings remain available. Keep each script and
-assembly definition's `.meta` file when moving assets.
+The existing Action Inspector selection, binding and independent preview consume
+current Init/Action companion pairs. `HarkenEditorCatalog.Refresh` supports a
+platform directory, PackSource reader or paired TextAssets. `GetDuration` reports
+Native exact/bounded/unknown execution time independently of optional VKD data.
+`GetSourceWaveforms` collects parent-Pack media; `Scope.GetPlayingWaveform` follows
+the actual direct Sound/single-layer Random selection. Resource copying preserves
+published relative paths. See the [Editor API reference](Documentation~/EditorApiReference.md)
+and [VKD resource contract](Documentation~/EditorWaveformFormat.md).
 
 `HarkenPackSource.CaptureCompanion(initJson, out source, out error, language)`
-captures the configured Init/content TextAsset references on the Unity main
-thread. Pass the resulting `PackSource` to the Runtime startup APIs. The old inventory and selected-manifest fields have been removed.
-`HarkenPreparedPacks` declarations remain for suspended Editor signatures and
-reject capture with `VN_PACK_INCOMPATIBLE`. Do not decode Pack bytes as text.
-Preload with `Session.PrepareActions` when synchronous cold I/O would be too late
-for a gameplay trigger, or use the asynchronous preparation/playback APIs.
+captures TextAsset references on the main thread. The resulting PackSource also
+works with Runtime startup and preparation. Do not decode binary bytes as text.
+Catalog preparation uses the existing session/Pack owners and validates recaptured
+execution identity. Keep all script/assembly `.meta` files when moving assets.
 
-`Samples~/PlayableDemo` is temporarily unavailable. Importing it does not install
-Packs, its installation/rebuild menus are hidden, and an imported scene displays
-an unavailable message instead of starting its legacy publication. See the
-[sample restoration requirements](Samples~/PlayableDemo/README.md).
-
-Maintainers must adapt catalog binding, preview, waveform and symbol generation
-to the current companion contract before restoring their capability gate. These
-workflows must not require a separate legacy manifest or a fixed schema number.
-Restore Android directory auto-start only after its packaged reader uses the
-same current companion contract. The explicit streaming source is already
-available and does not use that suspended extraction path.
+Legacy manifest readers, symbol generation and `Samples~/PlayableDemo` legacy
+installation remain unavailable. Android directory auto-start still requires its
+own packaged-reader integration; explicit streaming sources remain supported.
 
 ## Remote communication
 

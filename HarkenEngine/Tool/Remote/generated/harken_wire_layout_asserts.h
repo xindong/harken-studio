@@ -3445,6 +3445,30 @@ static_assert(offsetof(VnMonitorExecutionFactV2, fact) == 0,
 static_assert(offsetof(VnMonitorExecutionFactV2, activity) == 432,
               "wire table offset drift: VnMonitorExecutionFactV2.activity");
 
+static_assert(sizeof(VnMonitorPlayableProvenance) == 48,
+              "wire table size drift: VnMonitorPlayableProvenance");
+static_assert(offsetof(VnMonitorPlayableProvenance, rootPlayableId) == 0,
+              "wire table offset drift: VnMonitorPlayableProvenance.rootPlayableId");
+static_assert(offsetof(VnMonitorPlayableProvenance, rootProgramFingerprint) == 16,
+              "wire table offset drift: VnMonitorPlayableProvenance.rootProgramFingerprint");
+static_assert(offsetof(VnMonitorPlayableProvenance, occurrenceFingerprint) == 24,
+              "wire table offset drift: VnMonitorPlayableProvenance.occurrenceFingerprint");
+static_assert(offsetof(VnMonitorPlayableProvenance, mediaChecksum) == 32,
+              "wire table offset drift: VnMonitorPlayableProvenance.mediaChecksum");
+static_assert(offsetof(VnMonitorPlayableProvenance, childOrdinal) == 40,
+              "wire table offset drift: VnMonitorPlayableProvenance.childOrdinal");
+static_assert(offsetof(VnMonitorPlayableProvenance, knownFlags) == 44,
+              "wire table offset drift: VnMonitorPlayableProvenance.knownFlags");
+
+static_assert(sizeof(VnMonitorExecutionFactV3) == 544,
+              "wire table size drift: VnMonitorExecutionFactV3");
+static_assert(offsetof(VnMonitorExecutionFactV3, fact) == 0,
+              "wire table offset drift: VnMonitorExecutionFactV3.fact");
+static_assert(offsetof(VnMonitorExecutionFactV3, activity) == 432,
+              "wire table offset drift: VnMonitorExecutionFactV3.activity");
+static_assert(offsetof(VnMonitorExecutionFactV3, playable) == 496,
+              "wire table offset drift: VnMonitorExecutionFactV3.playable");
+
 } // namespace harkenremote
 
 #endif // HARKEN_REMOTE_WIRE_LAYOUT_ASSERTS_H
