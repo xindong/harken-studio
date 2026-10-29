@@ -1361,7 +1361,7 @@ QMenu* TimelineCanvas::createLaneBlankMenu(int laneIndex, int64_t position)
     if (track) {
         QAction* add = menu->addAction(tr("Add Clip..."));
         add->setObjectName(QStringLiteral("timelineAddClip"));
-        connect(add, &QAction::triggered, this, [this, laneIndex, position] {
+        connect(add, &QAction::triggered, this, [this, menu, laneIndex, position] {
             const QPointer<TimelineCanvas> self(this);
             const QUuid owner = panel_->currentItemGuid();
             const QUuid trackGuid = panel_->laneGuid(laneIndex);
@@ -1381,7 +1381,7 @@ QMenu* TimelineCanvas::createLaneBlankMenu(int laneIndex, int64_t position)
                 self->panel_->placeItem(ProjectManager::instance().findItemByObjectID(id),
                                        laneIndex, position);
             };
-            SelectorWindow::open(request, this);
+            SelectorWindow::open(request, this, QRect(menu->pos(), QSize(1, 1)));
         });
     }
     if (panel_->viewKind() == TimelineEditorPanel::ViewKind::Segment

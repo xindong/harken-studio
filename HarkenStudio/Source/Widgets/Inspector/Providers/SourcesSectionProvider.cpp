@@ -369,7 +369,7 @@ private:
                 return;
             self->appendExisting(id, language);
         };
-        SelectorWindow::open(req, this)->move(anchor->mapToGlobal(QPoint(0, anchor->height())));
+        SelectorWindow::open(req, this, QRect(anchor->mapToGlobal(QPoint()), anchor->size()));
     }
 
     void importFiles(QString language)

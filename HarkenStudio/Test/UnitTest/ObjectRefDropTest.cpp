@@ -8,6 +8,7 @@
 
 #include <QApplication>
 #include <QMouseEvent>
+#include <QScreen>
 #include <QTemporaryDir>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -106,6 +107,54 @@ TEST_F(ObjectRefDropTest, CancellingAnOldWidgetDoesNotCloseAnotherWidgetsPicker)
     EXPECT_EQ(firstChanges, 0);
     EXPECT_EQ(secondChanges, 1);
     EXPECT_EQ(second.currentObjectID(), masterBus_->objectID);
+}
+
+TEST_F(ObjectRefDropTest, SharedPickerStaysOnScreenWithoutChangingItsOwner)
+{
+    SelectorRequest request;
+    request.currentObjectID = masterBus_->objectID;
+    for (auto* screen : QApplication::screens()) {
+        SCOPED_TRACE(screen->name().toStdString());
+        const QRect available = screen->availableGeometry();
+        QWidget anchor;
+        anchor.setScreen(screen);
+        anchor.resize(24, 24);
+        const QRect positions(available.topLeft(), available.size() - anchor.size() + QSize(1, 1));
+        for (const QPoint& position : {positions.topLeft(), positions.topRight(),
+                                       positions.bottomLeft(), positions.bottomRight()}) {
+            SCOPED_TRACE(::testing::Message() << position.x() << ", " << position.y());
+            anchor.move(position);
+            auto* selector = SelectorWindow::open(request, &anchor);
+            QApplication::processEvents();
+            ASSERT_TRUE(selector->isVisible());
+            EXPECT_EQ(selector->screen(), screen);
+            EXPECT_TRUE(available.contains(selector->frameGeometry()));
+            SelectorWindow::dismiss(&anchor);
+        }
+
+        QWidget largeOwner;
+        largeOwner.setScreen(screen);
+        largeOwner.setGeometry(QRect(available.topLeft(), available.size() * 4));
+        const QRect clickRect(available.center(), QSize(1, 1));
+        auto* selector = SelectorWindow::open(request, &largeOwner, clickRect);
+        QApplication::processEvents();
+        ASSERT_TRUE(selector->isVisible());
+        EXPECT_EQ(selector->screen(), screen);
+        EXPECT_TRUE(available.contains(selector->frameGeometry()));
+        SelectorWindow::dismiss(&anchor);
+        EXPECT_TRUE(selector->isVisible());
+
+        const QSize originalSize = selector->size();
+        selector->resize(available.size() * 2);
+        selector = SelectorWindow::open(request, &largeOwner, clickRect);
+        QApplication::processEvents();
+        ASSERT_TRUE(selector->isVisible());
+        EXPECT_EQ(selector->screen(), screen);
+        EXPECT_TRUE(available.contains(selector->frameGeometry()));
+        SelectorWindow::dismiss(&largeOwner);
+        EXPECT_FALSE(selector->isVisible());
+        selector->resize(originalSize);
+    }
 }
 
 TEST_F(ObjectRefDropTest, DeferredNavigationDoesNotOpenAReplacedOrDestroyedReference)
