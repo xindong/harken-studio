@@ -13,6 +13,7 @@
 #include "Widgets/Shared/TreeExpansionWidget.h"
 
 #include <QApplication>
+#include <QCursor>
 #include <QEvent>
 #include <QHeaderView>
 #include <QKeyEvent>
@@ -22,6 +23,7 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QScrollBar>
+#include <QScreen>
 #include <QSet>
 #include <QSignalBlocker>
 #include <QScopedValueRollback>
@@ -33,6 +35,7 @@
 #include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <functional>
 
 namespace VNX {
@@ -176,7 +179,8 @@ QTreeWidgetItem* findSelectableRow(QTreeWidget* tree, uint32_t objectID)
 
 SelectorWindow* SelectorWindow::s_instance = nullptr;
 
-SelectorWindow* SelectorWindow::open(const SelectorRequest& request, QWidget* anchor)
+SelectorWindow* SelectorWindow::open(const SelectorRequest& request, QWidget* anchor,
+                                    std::optional<QRect> globalAnchorRect)
 {
     if (!s_instance)
         s_instance = new SelectorWindow();
@@ -187,8 +191,17 @@ SelectorWindow* SelectorWindow::open(const SelectorRequest& request, QWidget* an
         s_instance->anchorDestroyed_ = connect(anchor, &QObject::destroyed, s_instance,
                                                [] { dismiss(); });
     s_instance->applyRequest(request);
-    if (anchor)
-        s_instance->move(anchor->mapToGlobal(QPoint(0, anchor->height())));
+    s_instance->globalAnchorRect_ = globalAnchorRect.value_or(anchor
+        ? QRect(anchor->mapToGlobal(QPoint()), anchor->size())
+        : QRect(QCursor::pos(), QSize(1, 1)));
+    QScreen* screen = QApplication::screenAt(s_instance->globalAnchorRect_.center());
+    if (!screen)
+        screen = anchor ? anchor->screen() : s_instance->screen();
+    s_instance->setScreen(screen);
+    if (s_instance->isVisible())
+        s_instance->positionAtAnchor();
+    else
+        s_instance->move(screen->availableGeometry().topLeft());
     s_instance->show();
     s_instance->raise();
     s_instance->activateWindow();
@@ -199,6 +212,29 @@ SelectorWindow* SelectorWindow::open(const SelectorRequest& request, QWidget* an
         s_instance->searchBox_->setFocus();
     }
     return s_instance;
+}
+
+void SelectorWindow::showEvent(QShowEvent* event)
+{
+    BaseDialog::showEvent(event);
+    positionAtAnchor();
+}
+
+void SelectorWindow::positionAtAnchor()
+{
+    layout()->activate();
+    const QRect available = screen()->availableGeometry();
+    const QSize frameExtra = frameGeometry().size() - size();
+    resize(size().boundedTo(available.size() - frameExtra));
+    const QSize frameSize = frameGeometry().size();
+    QPoint position(globalAnchorRect_.left(), globalAnchorRect_.bottom() + 1);
+    if (position.y() + frameSize.height() > available.bottom() + 1)
+        position.setY(globalAnchorRect_.top() - frameSize.height());
+    position.setX(std::clamp(position.x(), available.left(),
+        std::max(available.left(), available.right() - frameSize.width() + 1)));
+    position.setY(std::clamp(position.y(), available.top(),
+        std::max(available.top(), available.bottom() - frameSize.height() + 1)));
+    move(position);
 }
 
 void SelectorWindow::dismiss(QWidget* anchor)
