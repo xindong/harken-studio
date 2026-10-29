@@ -14,6 +14,7 @@
 #include "Components/VSpatial.h"
 #include "Components/VTrack.h"
 #include "Components/VVariable.h"
+#include "SoundSourceDerivative.h"
 
 #include <QFileInfo>
 #include <QDir>
@@ -97,6 +98,7 @@ std::shared_ptr<const ProjectBuildSnapshot> ProjectBuildSnapshot::capture(
 {
     if (!ProjectPlatformSemantics::validatePlatforms(source.platforms, error)) return {};
     auto snapshot = std::make_shared<ProjectBuildSnapshot>();
+    snapshot->derivativeCache = std::make_shared<SoundSourceDerivative::MaterializationCache>();
     snapshot->project = source;
     QHash<const ProjectItem*, std::shared_ptr<ProjectItem>> copies;
     snapshot->project.root = copyItem(source.root, copies);

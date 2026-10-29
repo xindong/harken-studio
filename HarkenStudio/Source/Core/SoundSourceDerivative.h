@@ -3,6 +3,9 @@
 #include "Components/VSound.h"
 #include "ProjectPlatform.h"
 
+#include <QByteArray>
+#include <QHash>
+#include <QMutex>
 #include <QString>
 #include <cstdint>
 #include <optional>
@@ -43,6 +46,17 @@ struct MaterializedArtifact
     bool cacheHit = false;
 };
 
+class MaterializationCache
+{
+public:
+    std::optional<MaterializedArtifact> find(const QByteArray& request);
+    void insert(const QByteArray& request, const MaterializedArtifact& artifact);
+
+private:
+    QMutex mutex_;
+    QHash<QByteArray, MaterializedArtifact> artifacts_;
+};
+
 struct PreparedMedia
 {
     std::vector<float> samples;
@@ -67,6 +81,7 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
                                                 ProjectPlatformId platform,
                                                 const QString& outputDir,
                                                 const ConversionSettings& settings,
-                                                QString* error = nullptr);
+                                                QString* error = nullptr,
+                                                MaterializationCache* cache = nullptr);
 
 }

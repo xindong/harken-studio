@@ -5,8 +5,11 @@
 #include "RuntimeBridge/PackagingBridge.h"
 
 #include <QCryptographicHash>
+#include <QDataStream>
 #include <QDir>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QMutexLocker>
 
 #include <algorithm>
 #include <cmath>
@@ -27,6 +30,20 @@ QString inputFingerprint(const QString& path)
     return AssetImporter::computeContentHash(path);
 }
 
+}
+
+std::optional<MaterializedArtifact> MaterializationCache::find(const QByteArray& request)
+{
+    QMutexLocker lock(&mutex_);
+    const auto found = artifacts_.constFind(request);
+    if (found == artifacts_.cend()) return std::nullopt;
+    return *found;
+}
+
+void MaterializationCache::insert(const QByteArray& request, const MaterializedArtifact& artifact)
+{
+    QMutexLocker lock(&mutex_);
+    artifacts_.insert(request, artifact);
 }
 
 std::optional<FrameRange> mapFrameRange(const SoundSourceDef& source,
@@ -137,13 +154,43 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
                                                 ProjectPlatformId platform,
                                                 const QString& outputDir,
                                                 const ConversionSettings& settings,
-                                                QString* error)
+                                                QString* error,
+                                                MaterializationCache* cache)
 {
     if (platform.isNull()) {
         fail(error, QStringLiteral("Platform ID is required for derivative media"));
         return std::nullopt;
     }
     const QString inputRevision = inputFingerprint(inputPath);
+    QByteArray request;
+    if (cache && !inputRevision.isEmpty()) {
+        QDataStream stream(&request, QIODevice::WriteOnly);
+        stream.setFloatingPointPrecision(QDataStream::DoublePrecision);
+        stream << QFileInfo(inputPath).absoluteFilePath() << inputRevision
+               << static_cast<quint32>(source.sourceId)
+               << static_cast<quint64>(source.trimStartFrame)
+               << source.trimEndFrame.has_value();
+        if (source.trimEndFrame)
+            stream << static_cast<quint64>(*source.trimEndFrame);
+        stream << source.loopRegion.has_value();
+        if (source.loopRegion)
+            stream << static_cast<quint64>(source.loopRegion->startFrame)
+                   << static_cast<quint64>(source.loopRegion->endFrame);
+        stream << scheduleOffsetSec << platform
+               << QJsonDocument(settings.toJson()).toJson(QJsonDocument::Compact);
+        auto cached = cache->find(request);
+        if (cached) {
+            cached->path = QDir(outputDir).filePath(cached->cacheKey + QStringLiteral(".wav"));
+            if (QFileInfo::exists(cached->path)) {
+                if (inputFingerprint(inputPath) != inputRevision) {
+                    fail(error, QStringLiteral("Source file changed during derivative conversion"));
+                    return std::nullopt;
+                }
+                cached->cacheHit = true;
+                return cached;
+            }
+        }
+    }
     const auto media = prepare(inputPath, source, scheduleOffsetSec,
                                 settings, error);
     if (!media)
@@ -165,10 +212,12 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
         fail(error, QStringLiteral("failed to write derivative media"));
         return std::nullopt;
     }
-    return MaterializedArtifact{path, id, media->sampleRate, media->channels,
-                                media->loopStartFrame,
-                                media->loopEndFrame,
-                                media->loopEndFrame != 0, cacheHit};
+    MaterializedArtifact artifact{path, id, media->sampleRate, media->channels,
+                                  media->loopStartFrame,
+                                  media->loopEndFrame,
+                                  media->loopEndFrame != 0, cacheHit};
+    if (cache) cache->insert(request, artifact);
+    return artifact;
 }
 
 }

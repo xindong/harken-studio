@@ -143,13 +143,10 @@ bool readAll(const QString& path, QByteArray* bytes, QString* error)
     return true;
 }
 
-bool collectEntries(const QString& path,
+bool collectEntries(const QByteArray& bytes, const QString& path,
                     std::vector<Bridge::PackBuildSession::CanonicalPackEntry>* entries,
-                    QString* error, bool resourcesOnly = false, bool publicationMetadataOnly = false)
+                    QString* error, bool resourcesOnly, bool publicationMetadataOnly)
 {
-    QByteArray bytes;
-    if (!readAll(path, &bytes, error))
-        return false;
     if (bytes.size() < static_cast<int>(harkenstudiobuild::kPackV2HeaderBytes)) {
         if (error)
             *error = QStringLiteral("Pack '%1' is too small").arg(path);
@@ -229,6 +226,15 @@ bool collectEntries(const QString& path,
         entries->push_back(std::move(entry));
     }
     return true;
+}
+
+bool collectEntries(const QString& path,
+                    std::vector<Bridge::PackBuildSession::CanonicalPackEntry>* entries,
+                    QString* error, bool resourcesOnly = false, bool publicationMetadataOnly = false)
+{
+    QByteArray bytes;
+    return readAll(path, &bytes, error)
+        && collectEntries(bytes, path, entries, error, resourcesOnly, publicationMetadataOnly);
 }
 
 QString entriesFingerprint(const std::vector<Bridge::PackBuildSession::CanonicalPackEntry>& entries,
@@ -2082,7 +2088,7 @@ bool readPreviousPack(const QDir& output, PackMeta* pack, QByteArray* bytes,
         && harkenstudiobuild::ParsePackCanonicalImage(
             reinterpret_cast<const std::uint8_t*>(bytes->constData()), bytes->size(), &image) == harkenstudiobuild::kPackOk
         && image.packStableId == pack->packStableId && image.packKind == pack->packKind
-        && collectEntries(output.filePath(path), &pack->previousEntries, &error,
+        && collectEntries(*bytes, output.filePath(path), &pack->previousEntries, &error,
                           false, publicationMetadataOnly)
         && body->Decode(image.partitionBody.data(), image.partitionBody.size(),
             harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage);

@@ -1527,7 +1527,8 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
             const auto authoredSource = SoundSourceSemantics::authoredView(*source, &conversion->asset);
             auto artifact = SoundSourceDerivative::materialize(
                 conversion->asset.absolutePath, authoredSource,
-                sound->scheduleOffsetSec, platform, derivativeDir, conversion->settings, &derivativeError);
+                sound->scheduleOffsetSec, platform, derivativeDir, conversion->settings,
+                &derivativeError, options.snapshot->derivativeCache.get());
             if (canceled()) return false;
             if (!conversion->sourceMatches()) {
                 if (errorOut) *errorOut = QStringLiteral("Source file changed during Sound conversion");
@@ -1538,7 +1539,8 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
             if (!artifact) {
                 artifact = SoundSourceDerivative::materialize(
                     conversion->asset.absolutePath, authoredSource,
-                    sound->scheduleOffsetSec, platform, derivativeDir, ConversionSettings{}, &derivativeError);
+                    sound->scheduleOffsetSec, platform, derivativeDir, ConversionSettings{},
+                    &derivativeError, options.snapshot->derivativeCache.get());
                 if (canceled()) return false;
                 fallback = artifact.has_value();
             }
