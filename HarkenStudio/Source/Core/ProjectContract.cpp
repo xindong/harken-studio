@@ -1,7 +1,9 @@
 #include "ProjectContract.h"
+#include "BucketFolderStore.h"
 #include "ProjectPlatform.h"
 #include "ComponentCatalog.h"
 #include "ProjectDocument.h"
+#include "ProjectDataPolicy.h"
 #include "ProjectSchemaRules.h"
 #include "ProjectSchemaValidator.h"
 
@@ -128,6 +130,13 @@ QString packDomain(const QJsonObject& object)
 
 }
 
+void ProjectContractReadContext::clear()
+{
+    parsed_.clear();
+    validated_.clear();
+    decoded_.clear();
+}
+
 bool ProjectContractRegistry::readJsonObject(
     const QString& path, QJsonObject* object, QString* error,
     ProjectContractReadContext* context)
@@ -180,6 +189,30 @@ QStringList ProjectContractRegistry::validateDocument(
     if (context)
         context->validated_.insert(relativePath, {schemaVersion, documentType, document, errors});
     return errors;
+}
+
+bool ProjectContractRegistry::decodeDocument(
+    const QJsonObject& document, const QString& documentType,
+    const QString& relativePath, ProjectDocumentData* data, QString* error,
+    ProjectContractReadContext* context)
+{
+    if (context) {
+        const auto previous = context->decoded_.constFind(relativePath);
+        if (previous != context->decoded_.cend()
+            && previous->documentType == documentType && previous->object == document) {
+            if (data) *data = previous->data;
+            if (error) *error = previous->error;
+            return previous->ok;
+        }
+    }
+    ProjectDocumentData parsed;
+    QString detail;
+    const bool ok = ProjectDocument::parse(document, documentType, &parsed, &detail);
+    if (data) *data = parsed;
+    if (error) *error = detail;
+    if (context)
+        context->decoded_.insert(relativePath, {documentType, document, parsed, detail, ok});
+    return ok;
 }
 
 ProjectContractRegistry& ProjectContractRegistry::instance()
@@ -269,6 +302,24 @@ QStringList ProjectContractRegistry::validateTree(
     const QHash<QString, QJsonObject>& overrides,
     ProjectContractReadContext* context) const
 {
+    return validateTreeImpl(projectDirectory, projectRootDocument, requireCurrentSchema,
+                            overrides, context, false);
+}
+
+QStringList ProjectContractRegistry::validateSnapshot(
+    const QString& projectDirectory, const QJsonObject& projectRootDocument,
+    bool requireCurrentSchema, const QHash<QString, QJsonObject>& documents,
+    ProjectContractReadContext* context) const
+{
+    return validateTreeImpl(projectDirectory, projectRootDocument, requireCurrentSchema,
+                            documents, context, true);
+}
+
+QStringList ProjectContractRegistry::validateTreeImpl(
+    const QString& projectDirectory, const QJsonObject& projectRootDocument,
+    bool requireCurrentSchema, const QHash<QString, QJsonObject>& overrides,
+    ProjectContractReadContext* context, bool includeVirtualDocuments) const
+{
     QStringList errors;
     const QDir directory(projectDirectory);
     const QStringList projectFiles = directory.entryList(
@@ -278,11 +329,13 @@ QStringList ProjectContractRegistry::validateTree(
         : projectFiles.first();
     ProjectDocumentData rootDocument;
     QString rootDocumentError;
-    if (!ProjectDocument::parse(projectRootDocument, QStringLiteral("project.root"),
-                                &rootDocument, &rootDocumentError)) {
+    if (!decodeDocument(projectRootDocument, QStringLiteral("project.root"),
+                         rootRelativePath, &rootDocument, &rootDocumentError, context)) {
         errors.append(rootDocumentError);
+        if (includeVirtualDocuments && context) context->clear();
         return errors;
     }
+    QSet<QString> validatedPaths{rootRelativePath};
     const int schemaVersion = rootDocument.schemaVersion;
     const QJsonObject projectRoot = rootDocument.content;
     errors.append(validateDocument(
@@ -378,18 +431,63 @@ QStringList ProjectContractRegistry::validateTree(
 
     if (QFileInfo(projectDirectory).isSymLink())
         errors.append(QStringLiteral("Project root cannot be a symbolic link"));
+    QHash<QString, QStringList> virtualPaths;
+    QHash<QString, QString> virtualPathKeys;
+    if (includeVirtualDocuments) {
+        for (auto entry = overrides.cbegin(); entry != overrides.cend(); ++entry) {
+            const QString path = entry.key();
+            if (!ProjectDataPolicy::isSafeRelativePath(path)
+                || ProjectDataPolicy::normalizeRelativePath(path) != path) {
+                errors.append(QStringLiteral("Invalid project document path: %1").arg(path));
+                continue;
+            }
+            if (QFileInfo(path).suffix().compare(QStringLiteral("vp"), Qt::CaseInsensitive) != 0)
+                continue;
+            const QString folder = path.section(QLatin1Char('/'), 0, 0);
+            if (domainForFolder(folder).isEmpty()) {
+                errors.append(QStringLiteral("Pack file is outside a managed domain: %1").arg(path));
+                continue;
+            }
+            for (const QString& managed : managedPackDirectories())
+                if (folder.compare(managed, Qt::CaseInsensitive) == 0)
+                    virtualPaths[managed].append(path);
+            const QString key = BucketFolderStore::pathComparisonKey(path);
+            if (virtualPathKeys.contains(key))
+                errors.append(QStringLiteral("Duplicate project document path: %1").arg(path));
+            virtualPathKeys.insert(key, path);
+        }
+    }
     for (const QString& folder : managedPackDirectories()) {
         const QDir packDirectory(directory.filePath(folder));
-        if (!packDirectory.exists())
+        if (!packDirectory.exists() && virtualPaths.value(folder).isEmpty())
             continue;
+        QStringList paths;
         QDirIterator files(packDirectory.absolutePath(),
                            {QStringLiteral("*.vp")},
                            QDir::Files | QDir::Readable,
                            QDirIterator::Subdirectories);
         while (files.hasNext()) {
             const QFileInfo fileInfo(files.next());
-            const QString path = QDir::fromNativeSeparators(
-                directory.relativeFilePath(fileInfo.absoluteFilePath()));
+            paths.append(QDir::fromNativeSeparators(
+                directory.relativeFilePath(fileInfo.absoluteFilePath())));
+        }
+        if (includeVirtualDocuments) {
+            QSet<QString> physicalPaths;
+            for (QString& path : paths) {
+                const QString key = BucketFolderStore::pathComparisonKey(path);
+                physicalPaths.insert(key);
+                const auto replacement = virtualPathKeys.constFind(key);
+                if (replacement != virtualPathKeys.cend()) path = replacement.value();
+            }
+            QStringList additional;
+            for (const QString& path : virtualPaths.value(folder))
+                if (!physicalPaths.contains(BucketFolderStore::pathComparisonKey(path)))
+                    additional.append(path);
+            additional.sort();
+            paths.append(additional);
+        }
+        for (const QString& path : paths) {
+            const QFileInfo fileInfo(directory.filePath(path));
             QJsonObject packDocument;
             QString readError;
             if (overrides.contains(path)) {
@@ -400,12 +498,13 @@ QStringList ProjectContractRegistry::validateTree(
                 continue;
             }
             const QString documentType = documentTypeForFolder(folder);
+            validatedPaths.insert(path);
             errors.append(validateDocument(
                 schemaVersion, documentType, packDocument, path, context));
             ProjectDocumentData document;
             QString documentError;
-            if (!ProjectDocument::parse(packDocument, documentType,
-                                        &document, &documentError)) {
+            if (!decodeDocument(packDocument, documentType, path,
+                                 &document, &documentError, context)) {
                 errors.append(QStringLiteral("%1: %2").arg(path, documentError));
                 continue;
             }
@@ -816,6 +915,11 @@ QStringList ProjectContractRegistry::validateTree(
     if (schemaVersion == ProjectSchema::kProjectSchemaVersion)
         errors.append(ProjectPlatformSemantics::validateDocuments(projectRoot, platformDocuments));
 
+    if (includeVirtualDocuments && context) {
+        context->parsed_.clear();
+        context->validated_.removeIf([&](const auto& entry) { return !validatedPaths.contains(entry.key()); });
+        context->decoded_.removeIf([&](const auto& entry) { return !validatedPaths.contains(entry.key()); });
+    }
     return errors;
 }
 

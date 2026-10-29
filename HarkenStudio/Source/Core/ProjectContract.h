@@ -2,6 +2,7 @@
 
 #include "ProjectIssue.h"
 #include "ProjectFormatVersion.h"
+#include "ProjectDocument.h"
 
 #include <QByteArray>
 #include <QHash>
@@ -24,6 +25,9 @@ struct ProjectContractProbe
 
 class ProjectContractReadContext
 {
+public:
+    void clear();
+
 private:
     friend class ProjectContractRegistry;
     struct ParsedDocument
@@ -38,8 +42,17 @@ private:
         QJsonObject object;
         QStringList errors;
     };
+    struct DecodedDocument
+    {
+        QString documentType;
+        QJsonObject object;
+        ProjectDocumentData data;
+        QString error;
+        bool ok = false;
+    };
     QHash<QString, ParsedDocument> parsed_;
     QHash<QString, ValidatedDocument> validated_;
+    QHash<QString, DecodedDocument> decoded_;
 };
 
 class ProjectContractRegistry
@@ -54,6 +67,11 @@ public:
                              bool requireCurrentSchema,
                              const QHash<QString, QJsonObject>& overrides = {},
                              ProjectContractReadContext* context = nullptr) const;
+    QStringList validateSnapshot(const QString& projectDirectory,
+                                 const QJsonObject& projectRoot,
+                                 bool requireCurrentSchema,
+                                 const QHash<QString, QJsonObject>& documents,
+                                 ProjectContractReadContext* context = nullptr) const;
 
 private:
     ProjectContractRegistry() = default;
@@ -63,6 +81,15 @@ private:
                                         const QJsonObject& document,
                                         const QString& relativePath,
                                         ProjectContractReadContext* context);
+    static bool decodeDocument(const QJsonObject& document, const QString& documentType,
+                                const QString& relativePath, ProjectDocumentData* data,
+                                QString* error, ProjectContractReadContext* context);
+    QStringList validateTreeImpl(const QString& projectDirectory,
+                                 const QJsonObject& projectRoot,
+                                 bool requireCurrentSchema,
+                                 const QHash<QString, QJsonObject>& overrides,
+                                 ProjectContractReadContext* context,
+                                 bool includeVirtualDocuments) const;
 };
 
 }
