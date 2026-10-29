@@ -128,6 +128,62 @@ TEST_F(SettingsApplyContractTest, OpenPreferencesFollowExternalCommittedValues)
     EXPECT_EQ(language->currentData().toString(), QStringLiteral("en"));
 }
 
+TEST_F(SettingsApplyContractTest, SearchNavigationPreservesDraftsAndCommittedSettings)
+{
+    PreferencesPanel panel(secretStore(), *theme_);
+    auto* search = panel.findChild<QLineEdit*>(QStringLiteral("settingsSearchField"));
+    auto* empty = panel.findChild<QLabel*>(QStringLiteral("settingsSearchEmptyState"));
+    auto* developer = panel.findChild<QCheckBox*>(QStringLiteral("developerModeCheck"));
+    auto* url = panel.findChild<QLineEdit*>(QStringLiteral("aiBaseUrlEdit"));
+    auto* key = panel.findChild<QLineEdit*>(QStringLiteral("aiApiKeyEdit"));
+    auto* status = panel.findChild<QLabel*>(QStringLiteral("aiConnectionTestLabel"));
+    auto* page = panel.findChild<AIAgentPage*>();
+    auto* appearance = panel.findChild<AppearancePage*>();
+    ASSERT_NE(search, nullptr);
+    ASSERT_NE(empty, nullptr);
+    ASSERT_NE(developer, nullptr);
+    ASSERT_NE(url, nullptr);
+    ASSERT_NE(key, nullptr);
+    ASSERT_NE(status, nullptr);
+    ASSERT_NE(page, nullptr);
+    ASSERT_NE(appearance, nullptr);
+
+    panel.show();
+    ASSERT_TRUE(panel.showPage(page->pageId()));
+    QCoreApplication::processEvents();
+    const QString draftUrl = QStringLiteral("https://draft-search-value.example/v1");
+    const QString draftKey = QStringLiteral("draft-search-secret-token");
+    developer->setChecked(true);
+    url->setText(draftUrl);
+    key->setText(draftKey);
+    ASSERT_TRUE(page->hasPendingChanges());
+
+    search->setText(appearance->categoryLabel());
+    EXPECT_EQ(panel.currentPageId(), appearance->pageId());
+    EXPECT_TRUE(appearance->isVisible());
+    for (const QString& query : {draftUrl, draftKey, secret_}) {
+        search->setText(query);
+        EXPECT_TRUE(empty->isVisible());
+    }
+    search->clear();
+    EXPECT_FALSE(empty->isVisible());
+    search->setText(appearance->categoryLabel());
+    ASSERT_TRUE(panel.showPage(page->pageId()));
+
+    EXPECT_EQ(panel.currentPageId(), page->pageId());
+    EXPECT_TRUE(page->isVisible());
+    EXPECT_TRUE(url->isVisible());
+    EXPECT_TRUE(key->isVisible());
+    EXPECT_TRUE(status->isHidden());
+    EXPECT_EQ(url->text(), draftUrl);
+    EXPECT_EQ(key->text(), draftKey);
+    EXPECT_TRUE(page->hasPendingChanges());
+    EXPECT_TRUE(AIAgentConfigStore().effectiveSnapshot() == originalConfig_);
+    EXPECT_EQ(secret_, QStringLiteral("original-key"));
+    EXPECT_TRUE(AppSettings::instance().developerMode());
+    EXPECT_TRUE(developer->isChecked());
+}
+
 TEST_F(SettingsApplyContractTest, DiscardPendingConnectionPreservesImmediatePermission)
 {
     PreferencesPanel panel(secretStore(), *theme_);

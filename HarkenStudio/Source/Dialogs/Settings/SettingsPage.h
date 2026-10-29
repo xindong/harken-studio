@@ -3,6 +3,7 @@
 
 #include "Widgets/Common/DialogFormLayout.h"
 
+#include <QList>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -20,6 +21,7 @@ public:
     virtual QString pageId() const = 0;
     virtual QString categoryLabel() const = 0;
     virtual void load() = 0;
+    bool applySearchFilter(const QString& query);
 protected:
     void showError(const QString& message);
     QVBoxLayout* makePageBody();
@@ -28,6 +30,7 @@ protected:
 
 private:
     ToastPresenter* feedback_ = nullptr;
+    QList<QWidget*> sections_;
 };
 
 }

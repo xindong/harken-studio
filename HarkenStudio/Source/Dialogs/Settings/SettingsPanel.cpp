@@ -2,8 +2,11 @@
 #include "Dialogs/Settings/SettingsPanel.h"
 
 #include "Core/ContextInfo.h"
+#include "Widgets/Common/SearchField.h"
 
 #include <QHBoxLayout>
+#include <QLabel>
+#include <QSignalBlocker>
 #include <QVBoxLayout>
 
 namespace VNX {
@@ -17,6 +20,19 @@ SettingsPanel::SettingsPanel(QWidget* parent)
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
+
+    auto* searchContainer = new QWidget(this);
+    searchContainer->setObjectName(QStringLiteral("settingsSearchBar"));
+    searchContainer->setAttribute(Qt::WA_StyledBackground, true);
+    auto* searchLayout = new QHBoxLayout(searchContainer);
+    searchLayout->setContentsMargins(8, 8, 8, 9);
+    searchField_ = new SearchField(searchContainer);
+    searchField_->setObjectName(QStringLiteral("settingsSearchField"));
+    searchField_->setPlaceholderText(tr("Search settings..."));
+    searchField_->setAccessibleName(tr("Search settings"));
+    connect(searchField_, &QLineEdit::textChanged, this, &SettingsPanel::applySearchFilter);
+    searchLayout->addWidget(searchField_);
+    mainLayout->addWidget(searchContainer);
 
     auto* contentLayout = new QHBoxLayout();
     contentLayout->setContentsMargins(0, 0, 0, 0);
@@ -32,6 +48,14 @@ SettingsPanel::SettingsPanel(QWidget* parent)
     contentStack_ = new QStackedWidget();
     contentStack_->setObjectName(QStringLiteral("settingsContentStack"));
     contentLayout->addWidget(contentStack_, 1);
+
+    emptyState_ = new QLabel(tr("No matching settings."), this);
+    emptyState_->setObjectName(QStringLiteral("settingsSearchEmptyState"));
+    emptyState_->setProperty("textRole", QStringLiteral("muted"));
+    emptyState_->setAlignment(Qt::AlignCenter);
+    emptyState_->setWordWrap(true);
+    emptyState_->hide();
+    contentLayout->addWidget(emptyState_, 1);
 
     mainLayout->addLayout(contentLayout, 1);
 }
@@ -58,6 +82,7 @@ bool SettingsPanel::showPage(const QString& pageId)
     {
         if (pages_.at(i)->pageId() == pageId)
         {
+            searchField_->clear();
             categoryList_->setCurrentRow(i);
             return true;
         }
@@ -67,10 +92,36 @@ bool SettingsPanel::showPage(const QString& pageId)
 
 void SettingsPanel::onCategoryChanged(int index)
 {
-    contentStack_->setCurrentIndex(index);
     if (index >= 0 && index < pages_.size())
+    {
+        contentStack_->setCurrentIndex(index);
         ContextInfo::tag(categoryList_, ContextTopic::forPanel(
             QStringLiteral("settings.") + pages_.at(index)->pageId()));
+    }
+    else
+        ContextInfo::tag(categoryList_, ContextTopic::forPanel(QStringLiteral("settings")));
+}
+
+void SettingsPanel::applySearchFilter(const QString& text)
+{
+    int current = contentStack_->currentIndex();
+    int firstMatch = -1;
+    {
+        const QSignalBlocker blocker(categoryList_);
+        for (int i = 0; i < pages_.size(); ++i)
+        {
+            const bool matches = pages_.at(i)->applySearchFilter(text);
+            categoryList_->item(i)->setHidden(!matches);
+            if (matches && firstMatch < 0)
+                firstMatch = i;
+        }
+        if (current < 0 || categoryList_->item(current)->isHidden())
+            current = firstMatch;
+        categoryList_->setCurrentRow(current);
+    }
+    onCategoryChanged(current);
+    contentStack_->setVisible(current >= 0);
+    emptyState_->setVisible(current < 0);
 }
 
 QString SettingsPanel::currentPageId() const

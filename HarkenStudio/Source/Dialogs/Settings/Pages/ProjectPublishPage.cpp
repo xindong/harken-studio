@@ -24,6 +24,7 @@ ProjectPublishPage::ProjectPublishPage(QWidget* parent)
 {
     auto* body = makePageBody();
 
+    auto* outputGroup = makeSection(QString());
     auto* form = makeForm();
     auto* dirLabel = new QLabel(tr("Publish Directory:"));
 
@@ -43,7 +44,8 @@ ProjectPublishPage::ProjectPublishPage(QWidget* parent)
     const auto outputTopic = ContextTopic::forPanel(QStringLiteral("settings.publish.output"));
     ContextInfo::tag(dirLabel, outputTopic);
     ContextInfo::tag(rowWidget, outputTopic);
-    body->addLayout(form);
+    static_cast<QVBoxLayout*>(outputGroup->layout())->addLayout(form);
+    body->addWidget(outputGroup);
 
     auto* materialGroup = makeSection(tr("Additional Material"));
     ContextInfo::tag(materialGroup,
