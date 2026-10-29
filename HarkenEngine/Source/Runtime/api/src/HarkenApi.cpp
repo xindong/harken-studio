@@ -6631,7 +6631,7 @@ bool PublishCommittedScheduleChildLinks(harken::Engine&, harken::EngineActionPla
 bool PrepareOriginalSingleNonVariableOwners(harken::Engine&, harken::EngineActionPlayScratch&, harken::LogicCommitSequence) noexcept;
 bool PrepareOriginalInitialAttemptProducer(harken::Engine&, harken::EngineActionPlayScratch&,
     harken::LogicCommitCoordinator::PreparedIssue&, harken::EngineImmediateEntryAttempt*) noexcept;
-harken::PlayableStartResult PrepareDirectMixedSchedule(harken::Engine&, const harken::PlayableWorldViewV1&,
+harken::PlayableStartResult PrepareDirectPlayableStart(harken::Engine&, const harken::PlayableWorldViewV1&,
     const harken::PlayableStartRequest&, std::uint64_t) noexcept;
 
 bool CommitInitialPlayableAttempt(
@@ -17947,7 +17947,7 @@ bool PrepareImmediateActionQueueInstance(
     harken::PlayableInstanceHandle ownerInstance,
     std::uint64_t ownerScheduleEpoch,
     std::uint64_t worldGeneration,
-    std::uint64_t emitter) noexcept;
+    std::uint64_t emitter, bool signalOnlyNoOverlap, bool prepareTerminalOccurrence) noexcept;
 
 template <typename WorldView>
 bool PrepareVariableControlNestedSelection(
@@ -18798,12 +18798,9 @@ struct SharedInitialFrontier {
     bool signalOnlyNoOverlap = false;
 };
 
-// Direct entry used to keep two of these on the call stack. Each set is tens
-// of kilobytes, and U2 admission made PrepareDirectPlayableExecution overflow
-// the default Windows stack on composite queue transitions. The engine is a
-// singleton, so one static pair is enough for the logic thread.
-SharedInitialFrontier g_directQueueFrontier;
-SharedInitialFrontier g_directTerminalFrontier;
+// These materialization sets are too large for the default Windows stack.
+// The singleton engine uses them only on its logic thread.
+SharedInitialFrontier g_directMaterialization;
 SharedInitialFrontier g_actionQueueFrontier;
 SharedInitialFrontier g_actionNestedQueueFrontier;
 SharedInitialFrontier g_actionTerminalFrontier;
@@ -27765,60 +27762,6 @@ harken::PlayableStartResult CommitVariableControlInitialStart(
     PublishMonitorInitialSelections(engine, *scratch, !scratch->continuationExecution);
     result.instance = PublicPlayableInstance(*scratch->row);
     result.ticket = sequence;
-    return result;
-}
-
-harken::PlayableStartResult StartVariableControlInitial(
-    harken::Engine& engine, const harken::PlayableWorldViewV1& world,
-    const harken::PlayableStartRequest& request,
-    const harken::ContainerProgramViewV3& program,
-    const harken::DiscreteGridSelection* discrete,
-    const harken::ContinuousGridWeight* continuous, std::uint32_t continuousCount,
-    harken::BankVersionToken bank, harken::EnginePlayableServiceRow& row,
-    harken::LogicCommitSequence provisionalTicket,
-    std::uint64_t admittedStartFrame,
-    harken::EngineActionPlayScratch* scratchStorage = nullptr) noexcept {
-    harken::PlayableRootMetadata metadata{};
-    metadata.projectId = world.identity.projectId;
-    metadata.definitionKind = harken::PlayableKind::Container;
-    metadata.definitionStableId = request.root.stableId;
-    metadata.programSemanticFingerprint = request.root.expectedProgramSemanticFingerprint;
-    metadata.worldGeneration = world.generation;
-    metadata.invocationEmitter = request.emitter;
-    auto* scratch = scratchStorage != nullptr ? scratchStorage : AcquireFrontierAttempt(engine);
-    if (scratch == nullptr) {
-        harken::PlayableStartResult result{};
-        result.status = harken::PlayableStartStatus::Backpressure;
-        return result;
-    }
-    if (scratch->variableControlNested) metadata = scratch->variableControlOuterRootMetadata;
-    const harken::ActionObjectRefV1 originalTarget{
-        harken::ActionTargetKindV1::Container, 0, request.root.stableId,
-        request.root.expectedProgramSemanticFingerprint};
-    if (!engine.RecordOriginalWorldNoPackPreparation(*scratch, originalTarget, world)) {
-        if (!ResetImmediateActionPlayScratch(engine, scratch))
-            scratch->storage.phase = harken::EngineFrontierAttemptPhase::CancelPending;
-        harken::PlayableStartResult result{};
-        result.status = harken::PlayableStartStatus::InvalidInput;
-        return result;
-    }
-    auto result = PrepareVariableControlInitial(engine, world, request, program, discrete,
-        continuous, continuousCount, bank, row, provisionalTicket, metadata, scratch,
-        admittedStartFrame);
-    if (result.status != harken::PlayableStartStatus::Accepted) {
-        if (scratch->storage.phase == harken::EngineFrontierAttemptPhase::Preparing) {
-            if (scratch->variableControl) (void)CancelPreparedVariableControlInitial(engine, scratch);
-            else if (!ResetImmediateActionPlayScratch(engine, scratch))
-                scratch->storage.phase = harken::EngineFrontierAttemptPhase::CancelPending;
-        }
-        return result;
-    }
-    result = CommitVariableControlInitialStart(engine, scratch, provisionalTicket, false);
-    if (result.status == harken::PlayableStartStatus::Accepted &&
-        !TransferFrontierAttempt(engine, *scratch)) {
-engine.runtimeRecreateRequired = true;
-        result.status = harken::PlayableStartStatus::RuntimeRecreateRequired;
-    }
     return result;
 }
 
@@ -75576,2160 +75519,7 @@ PlayableStartResult PrepareDirectPlayableExecution(
         result.status = PlayableStartStatus::Capacity;
         return result;
     }
-    if (request.root.kind != PlayableKindV1::Container) {
-        return PrepareDirectMixedSchedule(engine, world, request, admittedFrame);
-    }
-    const LogicCommitSequence issuedBefore = engine.logicCommits.Current();
-    if (issuedBefore == UINT64_MAX) {
-engine.runtimeRecreateRequired = true;
-        result.status = PlayableStartStatus::RuntimeRecreateRequired;
-        return result;
-    }
-    const LogicCommitSequence provisionalTicket = issuedBefore + 1u;
-    std::array<SelectionDeltaRefV1, kSelectionPathNodeCapacity> deltas{};
-    std::array<std::uint32_t, kSelectionPathNodeCapacity> selections{};
-    std::array<VnObjectId, kSelectionPathNodeCapacity> selectedTrackIds{};
-    std::array<SelectionPathNodeV1, kSelectionPathNodeCapacity> path{};
-    std::array<PlayableKind, kSelectionPathNodeCapacity> selectedKinds{};
-    std::array<VnObjectId, kSelectionPathNodeCapacity> selectedStableIds{};
-    std::array<std::uint64_t, kSelectionPathNodeCapacity>
-        selectedProgramFingerprints{};
-    std::uint32_t selectionCount = 0;
-    std::uint32_t selectedKindCount = 0;
-    std::uint32_t selectionDeltaCount = 0;
-    const ContainerProgramViewV3* queueProgram = nullptr;
-    const ContainerProgramViewV3* queueParentProgram = nullptr;
-    QueueCheckpointKey queueParentCheckpointKey{};
-    EffectiveQueueState queueParentInitialState{};
-    EffectiveQueueState queueParentResetInitialState{};
-    RandomQueueSeedContext queueParentRandomSeed{};
-    bool queueParentRandomSeedValid = false;
-    EffectiveQueueState queueInitialState{};
-    EffectiveQueueState queueResetInitialState{};
-    EffectiveQueueState queueInitialSuccessor{};
-    QueueSequenceStepStatus queueInitialStep =
-        QueueSequenceStepStatus::Invalid;
-    RandomQueueSeedContext queueRandomSeed{};
-    bool queueRandomSeedValid = false;
-    QueueCheckpointKey queueCheckpointKey{};
-    bool queueInitialHasContinuation = false;
-    bool queueInitialSignalOnlyNoOverlap = false;
-    bool queueInitialHasSuccessor = false;
-    SharedInitialFrontier& queueInitialFrontier = g_directQueueFrontier;
-    std::memset(&queueInitialFrontier, 0, sizeof(queueInitialFrontier));
-    queueInitialFrontier.status =
-        SharedInitialFrontierStatus::CapabilityUnavailable;
-    std::unique_ptr<MaterializedScheduleSet> directCompositeScheduleStorage;
-    std::unique_ptr<std::array<PreparedScheduleLeafStart,
-                                harken::kMaxKnownScheduleLeaves>>
-        directCompositePreparedStorage;
-    MaterializedScheduleSet* directCompositeSchedule = nullptr;
-    std::array<PreparedScheduleLeafStart,
-               harken::kMaxKnownScheduleLeaves>* directCompositePrepared =
-        nullptr;
-    bool directCompositeScheduleActive = false;
-    bool ordinaryLifecycleOwned = false;
-    std::uint64_t rootScheduleEndOffset = UINT64_MAX;
-    std::uint64_t rootScheduleStartOffset = 0;
-    std::uint64_t rootZeroWorkCompletionOffset = 0;
-    bool rootHasZeroWorkCompletion = false;
-    bool markerOnlySchedule = false;
-    PlayableRefV1 current = resolved.root;
-    std::uint32_t incomingOccurrenceOrdinal = 0;
-    const ContainerChildProgramViewV2* terminalAuthoredChild = nullptr;
-    EngineActionPlayScratch* directAttempt = nullptr;
-    const auto rollbackSelections = [&]() {
-        if (directAttempt != nullptr) return;
-        while (selectionDeltaCount != 0) {
-            --selectionDeltaCount;
-            (void)engine.selectionMemory.CancelDelta(
-                deltas[selectionDeltaCount]);
-        }
-    };
-    bool directTraversalTerminal = false;
-    const auto makeTraversalRequest =
-        [&](ContainerTraversalRequest* requestOut) noexcept {
-        if (requestOut == nullptr ||
-            selectionCount >= kSelectionPathNodeCapacity) {
-            rollbackSelections();
-            result.status = PlayableStartStatus::Capacity;
-            return false;
-        }
-        *requestOut = {
-            world.generation,
-            world.identity.runtimeSemanticFingerprint,
-            request.root.stableId, request.emitter,
-            request.callerSeed, provisionalTicket,
-            selectionCount,
-            selectionCount == 0 ? nullptr : path.data(),
-            incomingOccurrenceOrdinal, provisionalTicket,
-            selectionCount, 0, 0,
-            ContainerTraversalOwnership::DirectDelta,
-            &deltas[selectionDeltaCount], nullptr};
-        return true;
-    };
-    const auto handleTraversalFailure =
-        [&](const ContainerTraversalStep& traversal) noexcept {
-        rollbackSelections();
-        result.status =
-            traversal.status == ContainerTraversalStatus::UnknownProgram ||
-                    traversal.status ==
-                        ContainerTraversalStatus::ChildResolutionFailed
-                ? PlayableStartStatus::UnknownPlayable
-                : traversal.status ==
-                          ContainerTraversalStatus::SelectionFailed &&
-                      traversal.selectionStatus ==
-                          SelectionMemoryStatusV1::Capacity
-                    ? PlayableStartStatus::Capacity
-                    : traversal.status ==
-                              ContainerTraversalStatus::UnsupportedMode
-                        ? PlayableStartStatus::CapabilityUnavailable
-                        : PlayableStartStatus::InvalidInput;
-    };
-    const auto handleQueue =
-        [&](const ContainerTraversalStep& traversal) noexcept {
-            const ContainerProgramViewV3* program = traversal.program;
-            current = traversal.canonicalParent;
-            const bool enteringNestedQueue =
-                queueProgram != nullptr && queueParentProgram == nullptr;
-            if (enteringNestedQueue) {
-                queueParentProgram = queueProgram;
-                queueParentCheckpointKey = queueCheckpointKey;
-                queueParentInitialState = queueInitialState;
-                queueParentResetInitialState = queueResetInitialState;
-                queueParentRandomSeed = queueRandomSeed;
-                queueParentRandomSeedValid = queueRandomSeedValid;
-            }
-            const std::uint32_t prefixCount = selectionCount;
-            const SharedInitialFrontierRequest frontierRequest{
-                {world.generation, world.identity.runtimeSemanticFingerprint,
-                 request.root.stableId, request.emitter, request.callerSeed,
-                 provisionalTicket},
-                prefixCount == 0 ? nullptr : selections.data(), prefixCount,
-                engine.config.mixRate.SampleRate(),
-                world.maxKnownScheduleLeaves,
-                world.maxTrackPieceScheduleDepth};
-            const SharedInitialFrontierStatus frontierStatus =
-                PrepareSharedInitialFrontier(
-                    engine, world, traversal.canonicalParent, program,
-                    nullptr, frontierRequest, &queueInitialFrontier);
-            if (queueInitialFrontier.dynamicSchedule) {
-                rollbackSelections();
-                result = PrepareDirectMixedSchedule(engine, world, request, admittedFrame);
-                directTraversalTerminal = true;
-                return ContainerTraversalDirective::Stop;
-            }
-            const bool markerOnlyFrontier =
-                frontierStatus == SharedInitialFrontierStatus::ZeroWork &&
-                queueInitialFrontier.schedule.leafCount == 0 &&
-                queueInitialFrontier.schedule.hasZeroWorkCompletion;
-            if ((frontierStatus != SharedInitialFrontierStatus::Ok &&
-                 !markerOnlyFrontier) ||
-                queueInitialFrontier.authoredChild == nullptr) {
-                rollbackSelections();
-                if (frontierStatus == SharedInitialFrontierStatus::
-                                          RuntimeRecreateRequired) {
-                    result.status =
-                        PlayableStartStatus::RuntimeRecreateRequired;
-engine.runtimeRecreateRequired = true;
-                } else {
-                    result.status =
-                        frontierStatus == SharedInitialFrontierStatus::Capacity
-                            ? PlayableStartStatus::Capacity
-                            : frontierStatus ==
-                                      SharedInitialFrontierStatus::
-                                          EmitterRequired
-                                  ? PlayableStartStatus::InvalidInput
-                                  : PlayableStartStatus::
-                                        CapabilityUnavailable;
-                }
-                return ContainerTraversalDirective::Fail;
-            }
-            queueProgram = program;
-            queueCheckpointKey = queueInitialFrontier.queue.checkpointKey;
-            queueRandomSeed = queueInitialFrontier.queue.randomSeed;
-            queueRandomSeedValid = queueInitialFrontier.queue.randomQueue;
-            queueInitialState = queueInitialFrontier.queue.frontier.initial;
-            queueResetInitialState =
-                queueInitialFrontier.queue.frontier.resetInitial;
-            queueInitialSuccessor = queueInitialFrontier.queue.frontier.next;
-            const ContainerChildProgramViewV2* selected =
-                queueInitialFrontier.authoredChild;
-            queueInitialStep = queueInitialFrontier.queue.frontier.status;
-            queueInitialSignalOnlyNoOverlap =
-                queueInitialFrontier.signalOnlyNoOverlap;
-            path[prefixCount] = MakeContainerSelectionPathNode(
-                program->containerStableId, selected->stableChildOrdinal);
-            std::copy_n(queueInitialFrontier.selectedOrdinals.begin(),
-                        queueInitialFrontier.selectionCount,
-                        selections.begin());
-            selectionCount = queueInitialFrontier.selectionCount;
-            if (selected->playable.kind == PlayableKindV1::Container ||
-                selected->playable.kind == PlayableKindV1::Track ||
-                selected->playable.kind == PlayableKindV1::Piece ||
-                selected->playable.kind == PlayableKindV1::Sound) {
-                if (selectedKindCount >= selectedKinds.size()) {
-                    rollbackSelections();
-                    result.status = PlayableStartStatus::Capacity;
-                    return ContainerTraversalDirective::Fail;
-                }
-                selectedKinds[selectedKindCount] =
-                    selected->playable.kind == PlayableKindV1::Container
-                        ? PlayableKind::Container
-                        : selected->playable.kind == PlayableKindV1::Track
-                              ? PlayableKind::Track
-                              : selected->playable.kind == PlayableKindV1::Piece
-                                    ? PlayableKind::Piece
-                                    : PlayableKind::Sound;
-                selectedStableIds[selectedKindCount] =
-                    selected->playable.stableId;
-                selectedProgramFingerprints[selectedKindCount] =
-                    selected->playable.expectedProgramSemanticFingerprint;
-                ++selectedKindCount;
-            }
-            terminalAuthoredChild = selected;
-            current = queueInitialFrontier.current;
-            incomingOccurrenceOrdinal = selected->stableChildOrdinal;
-            if (markerOnlyFrontier) {
-                markerOnlySchedule = true;
-                rootHasZeroWorkCompletion = true;
-                rootZeroWorkCompletionOffset =
-                    queueInitialFrontier.schedule.
-                        zeroWorkCompletionOffsetFrames;
-            }
-            if (queueInitialFrontier.hasSchedule &&
-                queueInitialFrontier.schedule.leafCount != 0) {
-                rootHasZeroWorkCompletion =
-                    queueInitialFrontier.schedule.hasZeroWorkCompletion;
-                rootZeroWorkCompletionOffset =
-                    queueInitialFrontier.schedule.
-                        zeroWorkCompletionOffsetFrames;
-                const MaterializedScheduleLeaf& leaf =
-                    queueInitialFrontier.schedule.leaves[0];
-                if (leaf.selectionCount > selections.size()) {
-                    rollbackSelections();
-                    result.status = PlayableStartStatus::Capacity;
-                    return ContainerTraversalDirective::Fail;
-                }
-                rootScheduleStartOffset = leaf.startOffsetFrames;
-                rootScheduleEndOffset = leaf.endOffsetFrames;
-                std::copy_n(leaf.selectedOrdinals.begin(),
-                            leaf.selectionCount, selections.begin());
-                std::copy_n(leaf.pathTrackIds.begin(),
-                            leaf.selectionCount, selectedTrackIds.begin());
-                selectionCount = leaf.selectionCount;
-                incomingOccurrenceOrdinal =
-                    leaf.selectedOrdinals[leaf.selectionCount - 1u];
-                current = leaf.leaf;
-                if (selectedKindCount >= selectedKinds.size()) {
-                    rollbackSelections();
-                    result.status = PlayableStartStatus::Capacity;
-                    return ContainerTraversalDirective::Fail;
-                }
-                selectedKinds[selectedKindCount] = PlayableKind::Sound;
-                selectedStableIds[selectedKindCount] = leaf.leaf.stableId;
-                selectedProgramFingerprints[selectedKindCount] =
-                    leaf.leaf.expectedProgramSemanticFingerprint;
-                ++selectedKindCount;
-            }
-            return ContainerTraversalDirective::Advance;
-        };
-    const auto stopDirectTraversal = [&]() noexcept {
-        directTraversalTerminal = true;
-        return ContainerTraversalDirective::Stop;
-    };
-    const auto handleVariableControl =
-        [&](const ContainerTraversalStep& traversal) noexcept {
-            const ContainerProgramViewV3* program = traversal.program;
-            current = traversal.canonicalParent;
-            if (world.generation !=
-                engine.variables.CurrentWorldGeneration()) {
-                rollbackSelections();
-                result.status = PlayableStartStatus::CapabilityUnavailable;
-                return stopDirectTraversal();
-            }
-            SharedVariableControlDecisionPlan decision{};
-            if (CollectSharedVariableControlInputs(*program, &decision) !=
-                GridEvaluationStatus::Ok) {
-                rollbackSelections();
-                result.status = PlayableStartStatus::CapabilityUnavailable;
-                return stopDirectTraversal();
-            }
-            std::array<float, 64> values{};
-            if (engine.variables.HasPendingBankWrite(
-                    request.emitter, decision.uniqueVariableIds.data(),
-                    decision.uniqueVariableCount)) {
-                rollbackSelections();
-                result.status = PlayableStartStatus::Backpressure;
-                return stopDirectTraversal();
-            }
-            BankVersionToken bank{};
-            if (!engine.variables.CaptureCurrentBank(
-                    request.emitter, decision.variableIds.data(),
-                    decision.variableCount, values.data(), &bank)) {
-                rollbackSelections();
-                result.status = PlayableStartStatus::Backpressure;
-                return stopDirectTraversal();
-            }
-            const GridEvaluationStatus evaluation =
-                PrepareSharedVariableControlDecision(
-                    engine, world, *program, values.data(),
-                    decision.variableCount, &decision);
-            if (evaluation != GridEvaluationStatus::Ok) {
-                rollbackSelections();
-                result.status = evaluation == GridEvaluationStatus::Capacity
-                    ? PlayableStartStatus::Capacity
-                    : PlayableStartStatus::InvalidInput;
-                return stopDirectTraversal();
-            }
-            const DiscreteGridSelection* selectedPtr = nullptr;
-            if (decision.discreteMatched) selectedPtr = &decision.discrete;
-            if (VariableControlHasDynamicScheduleChildren(engine, world, *program)) {
-                rollbackSelections();
-                result = PrepareDirectMixedSchedule(engine, world, request, admittedFrame);
-                return stopDirectTraversal();
-            }
-            if (selectionCount == 0) {
-                result = StartVariableControlInitial(
-                    engine, world, request, *program, selectedPtr,
-                    decision.weights.data(), decision.weightCount, bank,
-                    *targetRow,
-                    provisionalTicket, admittedFrame);
-                return stopDirectTraversal();
-            }
-            auto* nestedScratch = AcquireFrontierAttempt(engine);
-            if (nestedScratch == nullptr ||
-                !PrepareNestedVariableControlOuterTree(
-                    engine, world, request, path.data(), selectionCount,
-                    nestedScratch)) {
-                if (nestedScratch != nullptr &&
-                    !ResetImmediateActionPlayScratch(engine, nestedScratch)) {
-                    nestedScratch->storage.phase = harken::EngineFrontierAttemptPhase::CancelPending;
-                }
-                rollbackSelections();
-                result.status = PlayableStartStatus::Capacity;
-                return stopDirectTraversal();
-            }
-            nestedScratch->variableControl = true;
-            nestedScratch->row = targetRow;
-            harken::PlayableStartRequest nestedRequest = request;
-            nestedRequest.root = current;
-            result = StartVariableControlInitial(
-                engine, world, nestedRequest, *program, selectedPtr,
-                decision.weights.data(), decision.weightCount, bank,
-                *targetRow,
-                provisionalTicket, admittedFrame, nestedScratch);
-            if (result.status != harken::PlayableStartStatus::Accepted) {
-                if (nestedScratch->variableControl) {
-                    (void)CancelPreparedVariableControlInitial(
-                        engine, nestedScratch);
-                }
-                rollbackSelections();
-                return stopDirectTraversal();
-            }
-            targetRow->selectionCount = selectionCount;
-            targetRow->selectionDeltaCount = selectionDeltaCount;
-            for (std::uint32_t index = 0; index < selectionCount; ++index) {
-                targetRow->selectionDeltas[index] = deltas[index];
-                targetRow->selectedChildOrdinals[index] = selections[index];
-                targetRow->containerInstances[index] =
-                    index == 0
-                        ? targetRow->Invocation().variableControlOuterRootInstance
-                        : nestedScratch->variableControlOuterPathChildren[
-                              index - 1u].Handle();
-            }
-            targetRow->containerInstanceCount = selectionCount;
-            targetRow->selectionCommitted = false;
-            return stopDirectTraversal();
-        };
-    const auto handleSelection =
-        [&](const ContainerTraversalStep& traversal) noexcept {
-        ++selectionDeltaCount;
-        if (queueProgram == nullptr) ordinaryLifecycleOwned = true;
-        selections[selectionCount] = traversal.selectedChildOrdinal;
-        path[selectionCount] = traversal.pathNode;
-        ++selectionCount;
-        const ContainerChildProgramViewV2* child = traversal.child;
-        const PlayableRefV1 canonicalChild = traversal.canonicalChild;
-        if (selectedKindCount >= selectedKinds.size()) {
-            rollbackSelections();
-            result.status = PlayableStartStatus::Capacity;
-            return ContainerTraversalDirective::Fail;
-        }
-        selectedKinds[selectedKindCount++] =
-            child->playable.kind == PlayableKindV1::Container
-                ? PlayableKind::Container
-                : child->playable.kind == PlayableKindV1::Track
-                      ? PlayableKind::Track
-                      : child->playable.kind == PlayableKindV1::Piece
-                            ? PlayableKind::Piece
-                            : PlayableKind::Sound;
-        selectedStableIds[selectedKindCount - 1u] = canonicalChild.stableId;
-        selectedProgramFingerprints[selectedKindCount - 1u] =
-            canonicalChild.expectedProgramSemanticFingerprint;
-        terminalAuthoredChild = traversal.child;
-        current = canonicalChild;
-        incomingOccurrenceOrdinal = traversal.selectedChildOrdinal;
-        return ContainerTraversalDirective::Advance;
-    };
-    if (!DriveSharedContainerTraversal(
-            engine, authority, world, &current, makeTraversalRequest,
-            handleTraversalFailure, handleSelection, handleQueue,
-            handleVariableControl)) {
-        return result;
-    }
-    if (directTraversalTerminal) return result;
-    if (current.kind == PlayableKindV1::Track ||
-        current.kind == PlayableKindV1::Piece) {
-        SharedInitialFrontier& terminalFrontier = g_directTerminalFrontier;
-        std::memset(&terminalFrontier, 0, sizeof(terminalFrontier));
-        terminalFrontier.status =
-            SharedInitialFrontierStatus::CapabilityUnavailable;
-        const SharedInitialFrontierRequest frontierRequest{
-            {}, selections.data(), selectionCount,
-            engine.config.mixRate.SampleRate(),
-            engine.config.maxKnownScheduleLeaves,
-            harken::WorldCapacitySummaryV1{}.maxTrackPieceScheduleDepth};
-        const auto frontierStatus = PrepareSharedInitialFrontier(
-            engine, world, current, nullptr, terminalAuthoredChild,
-            frontierRequest,
-            &terminalFrontier);
-        if (terminalFrontier.dynamicSchedule) {
-            rollbackSelections();
-            return PrepareDirectMixedSchedule(engine, world, request, admittedFrame);
-        }
-        const auto& materialized = terminalFrontier.schedule;
-        if (frontierStatus == SharedInitialFrontierStatus::ZeroWork &&
-            materialized.hasZeroWorkCompletion &&
-            selectionCount == 0 &&
-            (request.root.kind == PlayableKindV1::Track ||
-             request.root.kind == PlayableKindV1::Piece)) {
-            const PlayableKind rootKind =
-                request.root.kind == PlayableKindV1::Track
-                    ? PlayableKind::Track
-                    : PlayableKind::Piece;
-            PreparedPlayableInstance prepared{};
-            if (!engine.playableInstances.PrepareAcquire(
-                    rootKind, 0, &prepared, request.playbackRequest, request.emitterOrigin)) {
-                result.status = PlayableStartStatus::Capacity;
-                return result;
-            }
-            PlayableRootMetadata metadata{};
-            metadata.projectId = world.identity.projectId;
-            metadata.definitionKind = rootKind;
-            metadata.definitionStableId = request.root.stableId;
-            metadata.programSemanticFingerprint =
-                request.root.expectedProgramSemanticFingerprint;
-            metadata.worldGeneration = world.generation;
-            metadata.invocationEmitter = request.emitter;
-            if (!engine.playableInstances.SetPreparedRootMetadata(
-                    prepared, metadata)) {
-                (void)engine.playableInstances.CancelPrepared(&prepared);
-                result.status = PlayableStartStatus::Capacity;
-                return result;
-            }
-            ObservePreparedContent(engine, prepared, MonitorContentFor(world, current));
-            const std::uint64_t cutoff =
-                engine.timelinePool.PublishCutoffFrame();
-            const std::uint64_t observed = engine.mixer.BlocksRendered();
-            const std::uint64_t observedFrame =
-                observed > UINT64_MAX / engine.config.blockFrames
-                    ? UINT64_MAX
-                    : observed * engine.config.blockFrames;
-            const std::uint64_t leadQuanta = std::max<std::uint64_t>(
-                1u, engine.timelinePool.PublishLeadQuanta());
-            const std::uint64_t leadFrames =
-                leadQuanta > UINT64_MAX / engine.config.blockFrames
-                    ? UINT64_MAX
-                    : leadQuanta * engine.config.blockFrames;
-            const std::uint64_t futureFrame =
-                observedFrame > UINT64_MAX - leadFrames
-                    ? UINT64_MAX
-                    : observedFrame + leadFrames;
-            const std::uint64_t baseStartFrame =
-                std::max(cutoff, futureFrame);
-            const std::uint64_t zeroWorkOffset =
-                materialized.hasZeroWorkCompletion
-                    ? materialized.zeroWorkCompletionOffsetFrames
-                    : 0;
-            if (zeroWorkOffset > UINT64_MAX - baseStartFrame) {
-                (void)engine.playableInstances.CancelPrepared(&prepared);
-                result.status = PlayableStartStatus::CapabilityUnavailable;
-                return result;
-            }
-            EnginePlayableServiceRow& row = *targetRow;
-            if (!PreparePlayableServiceRow(
-                    engine, row, prepared.Handle(),
-                    prepared.ScheduleEpoch())) {
-                (void)engine.playableInstances.CancelPrepared(&prepared);
-                result.status = PlayableStartStatus::Capacity;
-                return result;
-            }
-            LogicCommitSequence ticket = 0;
-            if (engine.logicCommits.TryIssue(&ticket) !=
-                    LogicCommitCoordinator::IssueStatus::Issued ||
-                ticket != provisionalTicket) {
-                if (ResetPlayableStartRow(engine, row) !=
-                    PlayableStartResetResult::Released)
-                    engine.runtimeRecreateRequired = true;
-                (void)engine.playableInstances.CancelPrepared(&prepared);
-                engine.runtimeRecreateRequired = true;
-                result.status = PlayableStartStatus::RuntimeRecreateRequired;
-                return result;
-            }
-            row.rootInstance = prepared.Handle();
-            row.activeLeafInstance = prepared.Handle();
-            row.ticket = ticket;
-            row.Invocation().scheduleCallerSeed = request.callerSeed;
-            row.Invocation().playbackRequest = request.playbackRequest;
-            row.Invocation().emitterOrigin = request.emitterOrigin;
-            row.Invocation().invocationEmitter = request.emitter;
-            row.Invocation().worldGeneration = world.generation;
-            row.Invocation().projectId = world.identity.projectId;
-            row.root = request.root;
-            row.leaf = request.root;
-            row.containerLoopAuthorityKind = worldUsesCurrentAuthority
-                ? PlayableExecutionAuthorityKind::CurrentWorld
-                : PlayableExecutionAuthorityKind::FrozenWorld;
-            row.ContainerLoopWorld() =
-                worldUsesCurrentAuthority ? PlayableWorldViewV1{} : world;
-            row.startFrame = baseStartFrame + zeroWorkOffset;
-            row.zeroWorkMarker = true;
-            row.pendingFutureCount = 1;
-            if (!engine.playableInstances.CommitPrepared(&prepared) ||
-                !CommitPreparedServiceOwner(&engine, &row)) {
-                engine.runtimeRecreateRequired = true;
-                result.status = PlayableStartStatus::RuntimeRecreateRequired;
-                return result;
-            }
-            PublishPlayableServiceOwnership(engine, &row);
-            if (engine.runtimeRecreateRequired) {
-                result.status = PlayableStartStatus::RuntimeRecreateRequired;
-                return result;
-            }
-            row.actionPrepared = false;
-            row.phase = EnginePlayableStartPhase::Filed;
-            result.status = PlayableStartStatus::Accepted;
-            result.instance = row.rootInstance;
-            result.ticket = ticket;
-            return result;
-        }
-        const bool nestedMarkerOnly =
-            frontierStatus == SharedInitialFrontierStatus::ZeroWork &&
-            materialized.leafCount == 0 &&
-            materialized.hasZeroWorkCompletion &&
-            selectionCount != 0 &&
-            request.root.kind == PlayableKindV1::Container;
-        if (nestedMarkerOnly) {
-            markerOnlySchedule = true;
-            rootHasZeroWorkCompletion = true;
-            rootZeroWorkCompletionOffset =
-                materialized.zeroWorkCompletionOffsetFrames;
-        } else if (frontierStatus != SharedInitialFrontierStatus::Ok ||
-            materialized.leafCount == 0u ||
-            materialized.leaves[0].selectionCount == 0u) {
-            rollbackSelections();
-            result.status = frontierStatus ==
-                                    SharedInitialFrontierStatus::Capacity
-                                ? PlayableStartStatus::Capacity
-                                : PlayableStartStatus::CapabilityUnavailable;
-            return result;
-        }
-        if (!markerOnlySchedule) {
-            const MaterializedScheduleLeaf& leaf = materialized.leaves[0];
-            rootHasZeroWorkCompletion = materialized.hasZeroWorkCompletion;
-            rootZeroWorkCompletionOffset =
-                materialized.zeroWorkCompletionOffsetFrames;
-            if (selectedKindCount >= selectedKinds.size()) {
-                rollbackSelections();
-                result.status = PlayableStartStatus::Capacity;
-                return result;
-            }
-            if (materialized.leafCount > 1u) {
-                directCompositeScheduleStorage.reset(
-                    new (std::nothrow) MaterializedScheduleSet(materialized));
-                directCompositePreparedStorage = AllocatePreparedScheduleLeaves(engine);
-                if (directCompositeScheduleStorage == nullptr ||
-                    directCompositePreparedStorage == nullptr) {
-                    rollbackSelections();
-                    result.status = PlayableStartStatus::Capacity;
-                    return result;
-                }
-                directCompositeSchedule = directCompositeScheduleStorage.get();
-                directCompositePrepared = directCompositePreparedStorage.get();
-                directCompositeScheduleActive = true;
-            }
-            rootScheduleStartOffset = leaf.startOffsetFrames;
-            rootScheduleEndOffset = leaf.endOffsetFrames;
-            selectionCount = leaf.selectionCount;
-            std::copy_n(leaf.selectedOrdinals.begin(), selectionCount,
-                        selections.begin());
-            std::copy_n(leaf.pathTrackIds.begin(), selectionCount,
-                        selectedTrackIds.begin());
-            incomingOccurrenceOrdinal =
-                leaf.selectedOrdinals[leaf.selectionCount - 1u];
-            current = leaf.leaf;
-            if (!directCompositeScheduleActive) {
-                selectedKinds[selectedKindCount++] = PlayableKind::Sound;
-            }
-        }
-    }
-    if (!markerOnlySchedule && current.kind != PlayableKindV1::Sound) {
-        rollbackSelections();
-        result.status = PlayableStartStatus::CapabilityUnavailable;
-        return result;
-    }
-    const ResolvedPlayablePropertyCutViewV1* cut = nullptr;
-    if (!markerOnlySchedule) {
-        const ResolvedPlayablePropertyCutStatusV1 cutStatus =
-            engine.playablePropertyCutScratch.Resolve(
-                world, request.root, selections.data(), selectionCount,
-                selectedTrackIds.data());
-        if (cutStatus != ResolvedPlayablePropertyCutStatusV1::Ok) {
-            rollbackSelections();
-            result.status = cutStatus == ResolvedPlayablePropertyCutStatusV1::Capacity
-                                ? PlayableStartStatus::Capacity
-                                : cutStatus == ResolvedPlayablePropertyCutStatusV1::UnsupportedPlayable
-                                      ? PlayableStartStatus::CapabilityUnavailable
-                                      : PlayableStartStatus::InvalidInput;
-            return result;
-        }
-        cut = &engine.playablePropertyCutScratch.View();
-    }
-    const PlayableRefV1 terminalLeaf =
-        markerOnlySchedule ? current : cut->leaf;
-    TimelineVoiceInstallDesc voice{};
-    if (!markerOnlySchedule) {
-        const auto voiceStatus =
-            BuildTimelineVoiceInstallFromCut(engine, *cut, &voice, nullptr);
-        if (voiceStatus != PlayableStartStatus::Accepted) {
-            rollbackSelections();
-            result.status = voiceStatus;
-            return result;
-        }
-    }
-    const PCMView media = markerOnlySchedule
-        ? PCMView{}
-        : engine.registry.Lookup(voice.soundId);
-    if (rootScheduleEndOffset != UINT64_MAX) {
-        if (rootScheduleEndOffset <= rootScheduleStartOffset) {
-            rollbackSelections();
-            result.status = PlayableStartStatus::CapabilityUnavailable;
-            return result;
-        }
-        voice.authoredDurationFrames =
-            rootScheduleEndOffset - rootScheduleStartOffset;
-    }
-    if (directCompositeScheduleActive) {
-        for (std::uint32_t index = 0;
-             index < directCompositeSchedule->leafCount; ++index) {
-            const auto status = BuildScheduleLeafStart(
-                engine, world, request.root,
-                directCompositeSchedule->leaves[index],
-                &(*directCompositePrepared)[index]);
-            if (status != PlayableStartStatus::Accepted) {
-                rollbackSelections();
-                result.status = status;
-                return result;
-            }
-        }
-    }
-    if (!markerOnlySchedule && queueProgram != nullptr &&
-        (queueInitialFrontier.authoredChild == nullptr ||
-         queueInitialFrontier.authoredChild->playable.kind != PlayableKindV1::Sound)) {
-        const LegacyTimelineVoiceInstallProjection projection(voice);
-        std::uint64_t duration = 0;
-        if (projection.Status() != VN_OK || ResolveKnownCompletionDuration(
-                CompletionFactsForVoice(engine, projection.Input(), media), &duration) !=
-                CompletionPredictability::KnownFinite) {
-            rollbackSelections();
-            result.status = PlayableStartStatus::CapabilityUnavailable;
-            return result;
-        }
-    }
-    const std::uint64_t cutoff = engine.timelinePool.PublishCutoffFrame();
-    const std::uint64_t observedFrame =
-        engine.mixer.BlocksRendered() >
-                UINT64_MAX / engine.config.blockFrames
-            ? UINT64_MAX
-            : engine.mixer.BlocksRendered() * engine.config.blockFrames;
-    const std::uint64_t leadQuanta =
-        std::max<std::uint64_t>(1u,
-                                engine.timelinePool.PublishLeadQuanta());
-    const std::uint64_t leadFrames =
-        leadQuanta > UINT64_MAX / engine.config.blockFrames
-            ? UINT64_MAX
-            : leadQuanta * engine.config.blockFrames;
-    const std::uint64_t futureFrame =
-        observedFrame > UINT64_MAX - leadFrames
-            ? UINT64_MAX
-            : observedFrame + leadFrames;
-    std::uint64_t startFrame = std::max(cutoff, futureFrame);
-    if (rootScheduleStartOffset > UINT64_MAX - startFrame ||
-        (rootScheduleEndOffset != UINT64_MAX &&
-         rootScheduleEndOffset > UINT64_MAX - startFrame) ||
-        (rootHasZeroWorkCompletion &&
-         rootZeroWorkCompletionOffset > UINT64_MAX - startFrame)) {
-        rollbackSelections();
-        result.status = PlayableStartStatus::CapabilityUnavailable;
-        return result;
-    }
-    std::uint64_t scheduledStartFrame = markerOnlySchedule
-        ? startFrame + rootZeroWorkCompletionOffset
-        : startFrame + rootScheduleStartOffset;
-    std::unique_ptr<PreparedScheduleLeafStart[]> queuePreparedLeaves;
-    if (!markerOnlySchedule && directCompositeScheduleActive) {
-        result.status = PreflightScheduleLeafStarts(
-            engine, directCompositePrepared->data(),
-            directCompositeSchedule->leafCount, startFrame);
-        if (result.status != PlayableStartStatus::Accepted) {
-            rollbackSelections();
-            return result;
-        }
-    }
-    if (!markerOnlySchedule && queueInitialFrontier.schedule.leafCount > 1) {
-        if (queueInitialFrontier.schedule.leafCount >
-            harken::kMaxKnownScheduleLeaves) {
-            rollbackSelections();
-            result.status = PlayableStartStatus::Capacity;
-            return result;
-        }
-        queuePreparedLeaves = AllocatePreparedScheduleLeafBuffer(engine, queueInitialFrontier.schedule.leafCount);
-        if (!queuePreparedLeaves) {
-            rollbackSelections();
-            result.status = PlayableStartStatus::Backpressure;
-            return result;
-        }
-        for (std::uint32_t index = 0;
-             index < queueInitialFrontier.schedule.leafCount; ++index) {
-            MaterializedScheduleLeaf rooted =
-                queueInitialFrontier.schedule.leaves[index];
-            result.status = BuildScheduleLeafStart(
-                engine, world, request.root, rooted,
-                &queuePreparedLeaves[index]);
-            if (result.status != PlayableStartStatus::Accepted) {
-                rollbackSelections();
-                return result;
-            }
-        }
-        result.status = PreflightScheduleLeafStarts(
-            engine, queuePreparedLeaves.get(),
-            queueInitialFrontier.schedule.leafCount, startFrame);
-        if (result.status != PlayableStartStatus::Accepted) {
-            rollbackSelections();
-            return result;
-        }
-    } else if (!markerOnlySchedule) {
-        const VnResult physicalAdmission =
-            PreflightTimelineVoiceStart(engine, voice);
-        if (physicalAdmission != VN_OK) {
-            rollbackSelections();
-            result.status = physicalAdmission == VN_NO_VOICE
-                                ? PlayableStartStatus::Capacity
-                                : physicalAdmission == VN_BACKPRESSURE
-                                      ? PlayableStartStatus::Backpressure
-                                      : PlayableStartStatus::InvalidInput;
-            return result;
-        }
-        if (scheduledStartFrame < engine.timelinePool.WindowEndFrame()) {
-            if (engine.timelinePool.PreflightSingleEvent(
-                    scheduledStartFrame, cutoff) != ReserveRefusal::None) {
-                CatchUpTimelineWindow(
-                    engine, std::max(scheduledStartFrame, cutoff), targetRow);
-            }
-            if (engine.timelinePool.PreflightSingleEvent(
-                    scheduledStartFrame, cutoff) != ReserveRefusal::None) {
-                rollbackSelections();
-                result.status = PlayableStartStatus::Backpressure;
-                return result;
-            }
-        } else {
-            // A future clip uses the deferred pool, without advancing unrelated live services.
-            const auto occupied = engine.timelineDeferred.Count() + engine.timelineDeferred.PreparedCount();
-            if (occupied >= engine.timelineDeferred.Capacity()) {
-                rollbackSelections();
-                result.status = PlayableStartStatus::Backpressure;
-                return result;
-            }
-        }
-    }
-    if (queueProgram != nullptr) {
-        // queueNextState and queueStep were produced by the shared frontier
-        // resolver while the queue was selected; do not re-scan the authored
-        // program here after entry-specific preparation has progressed.
-        const EffectiveQueueState& initialSuccessor = queueInitialSuccessor;
-        const QueueSequenceStepStatus initialStep = queueInitialStep;
-        if (initialStep == QueueSequenceStepStatus::Invalid) {
-            rollbackSelections();
-            result.status = PlayableStartStatus::RuntimeRecreateRequired;
-engine.runtimeRecreateRequired = true;
-            return result;
-        }
-        queueInitialHasSuccessor =
-            initialStep == QueueSequenceStepStatus::Successor;
-        queueInitialHasContinuation =
-            !queueInitialSignalOnlyNoOverlap && queueInitialHasSuccessor;
-        if (queueInitialSignalOnlyNoOverlap && queueInitialHasSuccessor &&
-            (queueProgram->queueSplice != QueueSpliceV1::Butt ||
-             queueProgram->transitionProgramIndex != UINT32_MAX)) {
-            rollbackSelections();
-            result.status = PlayableStartStatus::CapabilityUnavailable;
-            return result;
-        }
-        if (queueInitialHasContinuation &&
-            queueInitialFrontier.schedule.leafCount > 1 &&
-            engine.compositeCompletionOwners.FreeCount() == 0) {
-            rollbackSelections();
-            result.status = PlayableStartStatus::Capacity;
-            return result;
-        }
-        if (queueInitialHasContinuation &&
-            queueInitialFrontier.schedule.leafCount <= 1) {
-            const std::uint64_t consumerNowQuantum =
-                engine.mixer.BlocksRendered();
-            const std::uint32_t periodFrames =
-                engine.config.mixRate.SampleRate() / 50u;
-            const std::uint32_t periodQuanta =
-                periodFrames == 0
-                    ? 0u
-                    : (periodFrames + engine.config.blockFrames - 1u) /
-                          engine.config.blockFrames;
-            const std::uint64_t mixAheadQuanta = std::max<std::uint64_t>(
-                leadQuanta, static_cast<std::uint64_t>(periodQuanta) + 1u);
-            if (mixAheadQuanta > UINT64_MAX - 2u ||
-                consumerNowQuantum > UINT64_MAX - (mixAheadQuanta + 2u)) {
-                rollbackSelections();
-                result.status = PlayableStartStatus::Backpressure;
-                return result;
-            }
-            const std::uint64_t publishableQuantum =
-                consumerNowQuantum + mixAheadQuanta + 2u;
-            if (publishableQuantum >
-                UINT64_MAX / engine.config.blockFrames) {
-                rollbackSelections();
-                result.status = PlayableStartStatus::Backpressure;
-                return result;
-            }
-            startFrame = std::max(
-                cutoff, publishableQuantum * engine.config.blockFrames);
-            if (rootScheduleStartOffset > UINT64_MAX - startFrame ||
-                (rootScheduleEndOffset != UINT64_MAX &&
-                 rootScheduleEndOffset > UINT64_MAX - startFrame) ||
-                (rootHasZeroWorkCompletion &&
-                 rootZeroWorkCompletionOffset > UINT64_MAX - startFrame)) {
-                rollbackSelections();
-                result.status = PlayableStartStatus::CapabilityUnavailable;
-                return result;
-            }
-            scheduledStartFrame = markerOnlySchedule
-                ? startFrame + rootZeroWorkCompletionOffset
-                : startFrame + rootScheduleStartOffset;
-            if (!markerOnlySchedule && engine.timelinePool.PreflightSingleEvent(
-                    scheduledStartFrame, cutoff) != ReserveRefusal::None) {
-                rollbackSelections();
-                result.status = PlayableStartStatus::Backpressure;
-                return result;
-            }
-        }
-    }
-    const PlayableKind rootKind =
-        request.root.kind == PlayableKindV1::Sound
-            ? PlayableKind::Sound
-            : request.root.kind == PlayableKindV1::Container
-                  ? PlayableKind::Container
-                  : request.root.kind == PlayableKindV1::Track
-                        ? PlayableKind::Track
-                        : PlayableKind::Piece;
-    directAttempt = AcquireFrontierAttempt(engine);
-    if (directAttempt == nullptr) {
-        rollbackSelections();
-        result.status = PlayableStartStatus::Backpressure;
-        return result;
-    }
-    auto& directScratch = *directAttempt;
-    directScratch.directExecution = true;
-    directScratch.directExposureOwnerContext = {&engine, &directScratch};
-    UnpublishedFrontierAttemptScope attemptScope{engine, directScratch};
-    const ActionObjectRefV1 originalTarget{
-        request.root.kind == PlayableKindV1::Container ? ActionTargetKindV1::Container
-        : request.root.kind == PlayableKindV1::Track ? ActionTargetKindV1::Track
-        : request.root.kind == PlayableKindV1::Piece ? ActionTargetKindV1::Piece
-        : ActionTargetKindV1::Sound,
-        0, request.root.stableId, request.root.expectedProgramSemanticFingerprint};
-    if (!engine.RecordOriginalWorldNoPackPreparation(directScratch, originalTarget, world)) {
-        rollbackSelections();
-        result.status = PlayableStartStatus::InvalidInput;
-        return result;
-    }
-    const auto& directNativeSchedule = directCompositeScheduleActive
-        ? *directCompositeSchedule : queueInitialFrontier.schedule;
-    const auto directNativeCount = markerOnlySchedule
-        ? 0u : std::max(1u, directNativeSchedule.leafCount);
-    if (!engine.PrepareNativeVoiceSide(directScratch, false, directNativeCount)) {
-        rollbackSelections();
-        result.status = PlayableStartStatus::Backpressure;
-        return result;
-    }
-    auto& directQueueOwnerContext = directScratch.queueInstanceOwnerContext;
-    auto& directQueueParentOwnerContext = directScratch.queueParentInstanceOwnerContext;
-    auto& directOccurrenceOwnerContext = directScratch.queueCurrentOccurrenceOwnerContext;
-    auto& directOccurrencePrepared = directScratch.queueCurrentOccurrencePrepared;
-    auto& directLeafOccurrenceOwnerContexts = directScratch.queueCurrentLeafOccurrenceOwnerContexts;
-    auto& directLeafOccurrencesPrepared = directScratch.queueCurrentLeafOccurrencesPrepared;
-    auto& directCompositeOwnerContext = directScratch.queueCurrentCompositeOwnerContext;
-    auto& directCompositeOwnerPrepared = directScratch.queueCurrentCompositeOwnerPrepared;
-    auto& directQueueDecisionPrepared = directScratch.queueDecision;
-    auto& directQueueDecisionOwnerContext = directScratch.queueDecisionOwnerContext;
-    auto& directQueuePreparedDummy = directScratch.queueInstance;
-    auto& directQueueParentPreparedDummy = directScratch.queueParentInstance;
-    auto directVoiceOwnerContexts = directScratch.voiceStarts.Owners();
-    auto& directVoiceStarts = directScratch.voiceStarts;
-    auto& directCommandReservation = directScratch.directCommandReservation;
-    std::uint32_t directCommandCount = 0;
-    auto& directCommandsReserved = directScratch.directCommandsReserved;
-    std::array<ScheduledEventInput, kMaxKnownScheduleLeaves>
-        directTransactionEvents{};
-    std::array<TransactionRequest, kMaxKnownScheduleLeaves>
-        directTransactionRequests{};
-    auto& directTransactionBatch = directScratch.queueTransactions;
-    std::array<PreparedDeferredPost, kMaxKnownScheduleLeaves>
-        directDeferredPosts{};
-    std::uint32_t directDeferredPostCount = 0;
-    auto& directAuthorityOwnerContext = directScratch.authorityOwnerContext;
-    auto& treeStep = directScratch.playableTreeExecutor;
-    directScratch.directSelectionOwnerCount = selectionDeltaCount;
-    for (std::uint32_t index = 0; index < selectionDeltaCount; ++index)
-        directScratch.directSelectionOwnerContexts[index] = {&engine.selectionMemory, deltas[index]};
-    directAuthorityOwnerContext.engine = &engine;
-    directAuthorityOwnerContext.worldGeneration = world.generation;
-    directAuthorityOwnerContext.frozen = !worldUsesCurrentAuthority;
-    if (!treeStep.AdoptPreparedOwnerToken(&directAuthorityOwnerContext,
-            ValidatePreparedAuthorityOwner, CommitPreparedAuthorityOwner,
-            CancelPreparedAuthorityOwner)) {
-        result.status = PlayableStartStatus::Backpressure;
-        return result;
-    }
-    for (std::uint32_t index = 0; index < selectionDeltaCount; ++index) {
-        if (!RegisterFrontierPreparedOwner(directScratch,
-                &directScratch.directSelectionOwnerContexts[index],
-                ValidatePreparedDirectSelectionOwner, CommitPreparedDirectSelectionOwner,
-                CancelPreparedDirectSelectionOwner)) {
-            result.status = PlayableStartStatus::Backpressure;
-            return result;
-        }
-    }
-    if (!RegisterFrontierPreparedOwner(directScratch, &directScratch.directExposureOwnerContext,
-            ValidatePreparedDirectExposureOwner, CommitPreparedDirectExposureOwner,
-            CancelPreparedDirectExposureOwner)) {
-        result.status = PlayableStartStatus::Backpressure;
-        return result;
-    }
-    if (directNativeCount > 1u) {
-        for (std::uint32_t index = 0; index < directNativeCount; ++index) {
-            auto& source = (directCompositeScheduleActive
-                ? directCompositePrepared->data() : queuePreparedLeaves.get())[index];
-            source.voice.target.programSemanticFingerprint = queueProgram != nullptr
-                ? queueProgram->programSemanticFingerprint : request.root.expectedProgramSemanticFingerprint;
-            source.voice.target.subjectId = source.leaf.stableId;
-            source.voice.target.occurrenceOrdinal = source.occurrenceOrdinal;
-            EngineActionPlayScratch::NativeVoiceSide::CapturedInput* captured = nullptr;
-            result.status = PrepareNativeVoiceCapture(engine, directScratch, false,
-                index, source.voice, &captured);
-            if (result.status != PlayableStartStatus::Accepted) return result;
-        }
-        directScratch.frontierProgramBank = ReserveQueueProgramBank(engine,
-            {directNativeCount, directNativeCount});
-        if (directScratch.frontierProgramBank == nullptr) {
-            result.status = PlayableStartStatus::Backpressure;
-            return result;
-        }
-    }
-    if (!treeStep.PrepareInstance(engine.playableInstances, rootKind, 0, request.playbackRequest, request.emitterOrigin)) {
-        rollbackSelections();
-        result.status = PlayableStartStatus::Capacity;
-        return result;
-    }
-    const PlayableInstanceHandle instance =
-        treeStep.PreparedInstanceHandle(0);
-    ObservePreparedContent(engine, treeStep, instance, MonitorContentFor(world, resolved.root));
-    const std::uint32_t treeInstanceCapacity =
-        kSelectionPathNodeCapacity + 1u +
-        (directCompositeScheduleActive
-             ? directCompositeSchedule->leafCount
-             : queueInitialFrontier.schedule.leafCount > 1u ? queueInitialFrontier.schedule.leafCount : 0u);
-    std::unique_ptr<PlayableInstanceHandle[]> treeInstances(
-        new (std::nothrow) PlayableInstanceHandle[treeInstanceCapacity]);
-    if (treeInstances == nullptr) {
-        rollbackSelections();
-        result.status = PlayableStartStatus::Capacity;
-        return result;
-    }
-    treeInstances[0] = instance;
-    std::uint32_t treeInstanceCount = 1;
-    PlayableInstanceHandle activeLeafInstance = instance;
-    std::uint32_t pathContainerCount = 0;
-    PlayableKind pathLastChildKind = PlayableKind::Sound;
-    if (selectionCount != 0 && resolved.root.kind == PlayableKindV1::Container &&
-        !PrepareSharedPlayableFrontier(
-            engine, treeStep, authority, world, resolved.root,
-            selections.data(), selectionCount, instance,
-            treeStep.PreparedInstanceEpoch(0),
-            [&](VnObjectId stableId) noexcept {
-                return ReadPlayableLoopCount(world, stableId);
-            },
-            &pathContainerCount, &pathLastChildKind)) {
-        rollbackSelections();
-        result.status = PlayableStartStatus::UnknownPlayable;
-        return result;
-    }
-    if (pathContainerCount == 0 &&
-        resolved.root.kind == PlayableKindV1::Container) {
-        const ContainerProgramViewV3* rootProgram = nullptr;
-        PlayableRefV1 canonicalRoot{};
-        (void)ResolveSharedContainerProgram(
-            authority, world, resolved.root, &rootProgram, &canonicalRoot);
-        if (rootProgram == nullptr ||
-            !treeStep.PrepareContainer(
-                engine.playableInstances, engine.containerPlayback, instance,
-                treeStep.PreparedInstanceEpoch(0), resolved.root.stableId,
-                resolved.root.expectedProgramSemanticFingerprint,
-                static_cast<std::uint8_t>(rootProgram->mode),
-                ReadPlayableLoopCount(world, resolved.root.stableId))) {
-            rollbackSelections();
-            result.status = PlayableStartStatus::Capacity;
-            return result;
-        }
-    }
-    const bool soundInstancePrepared =
-        rootKind == PlayableKind::Sound ||
-        (pathContainerCount != 0 &&
-         pathLastChildKind == PlayableKind::Sound);
-    if (!directCompositeScheduleActive && queueInitialFrontier.schedule.leafCount <= 1u && !soundInstancePrepared &&
-        current.kind == PlayableKindV1::Sound) {
-        const auto parent = treeStep.PreparedInstanceHandle(
-            treeStep.InstanceReservationCount() - 1u);
-        if (!treeStep.PrepareInstance(engine.playableInstances,
-                                      PlayableKind::Sound, parent)) {
-            rollbackSelections();
-            result.status = PlayableStartStatus::Capacity;
-            return result;
-        }
-    }
-    if (!directCompositeScheduleActive && queueInitialFrontier.schedule.leafCount <= 1u &&
-        current.kind == PlayableKindV1::Sound) {
-        ObservePreparedContent(engine, treeStep,
-            treeStep.PreparedInstanceHandle(treeStep.InstanceReservationCount() - 1u),
-            MonitorContentFor(world, current));
-    }
-    for (std::uint32_t index = 1;
-         index < treeStep.InstanceReservationCount(); ++index) {
-        treeInstances[treeInstanceCount++] =
-            treeStep.PreparedInstanceHandle(index);
-        activeLeafInstance = treeInstances[treeInstanceCount - 1u];
-    }
-    if (directCompositeScheduleActive || queueInitialFrontier.schedule.leafCount > 1u) {
-        const auto leafCount = directCompositeScheduleActive
-            ? directCompositeSchedule->leafCount : queueInitialFrontier.schedule.leafCount;
-        const PlayableInstanceHandle compositeParent = activeLeafInstance;
-        for (std::uint32_t index = 0;
-             index < leafCount; ++index) {
-            if (!treeStep.PrepareInstance(engine.playableInstances,
-                                          PlayableKind::Sound,
-                                          compositeParent)) {
-                rollbackSelections();
-                result.status = PlayableStartStatus::Capacity;
-                return result;
-            }
-            const PlayableInstanceHandle child =
-                treeStep.PreparedInstanceHandle(
-                    treeStep.InstanceReservationCount() - 1u);
-            if (index == 0) {
-                activeLeafInstance = child;
-            }
-            treeInstances[treeInstanceCount++] = child;
-            const auto& selected = directCompositeScheduleActive
-                ? directCompositeSchedule->leaves[index].leaf : queueInitialFrontier.schedule.leaves[index].leaf;
-            ObservePreparedContent(engine, treeStep, child, MonitorContentFor(world, selected));
-        }
-    }
-    PlayableRootMetadata rootMetadata{};
-    rootMetadata.projectId = world.identity.projectId;
-    rootMetadata.definitionKind = rootKind;
-    rootMetadata.definitionStableId = request.root.stableId;
-    rootMetadata.programSemanticFingerprint =
-        request.root.expectedProgramSemanticFingerprint;
-    rootMetadata.worldGeneration = world.generation;
-    rootMetadata.invocationEmitter = request.emitter;
-    if (treeStep.PreparedInstanceToken(0) == nullptr ||
-        !engine.playableInstances.SetPreparedRootMetadata(
-            *treeStep.PreparedInstanceToken(0), rootMetadata)) {
-        rollbackSelections();
-        result.status = PlayableStartStatus::Capacity;
-        return result;
-    }
-    if (!treeStep.Validate()) {
-        rollbackSelections();
-        result.status = PlayableStartStatus::Capacity;
-        return result;
-    }
-    StableStoragePreparation directRelationBacking;
-    if (directNativeCount > 1u &&
-        !engine.PrepareMemberRelationWrite(directNativeCount, &directRelationBacking)) {
-        rollbackSelections();
-        result.status = PlayableStartStatus::Backpressure;
-        return result;
-    }
-    LogicCommitSequence ticket = 0;
-    if (engine.logicCommits.TryIssue(&ticket) !=
-            LogicCommitCoordinator::IssueStatus::Issued ||
-        ticket != provisionalTicket) {
-        rollbackSelections();
-engine.runtimeRecreateRequired = true;
-        result.status = PlayableStartStatus::RuntimeRecreateRequired;
-        return result;
-    }
-    EnginePlayableServiceRow& row = *targetRow;
-    if (!PreparePlayableServiceRow(engine, row, instance,
-                                  treeStep.PreparedInstanceEpoch(0), nullptr,
-                                  nullptr, &directScratch.storage)) {
-        rollbackSelections();
-        result.status = PlayableStartStatus::Capacity;
-        return result;
-    }
-    directAuthorityOwnerContext.service = &row;
-    directScratch.row = &row;
-    if (queueParentProgram != nullptr) {
-        row.QueuePayload().queueParentContainerStableId =
-            queueParentProgram->containerStableId;
-        row.QueuePayload().queueParentProgramSemanticFingerprint =
-            queueParentProgram->programSemanticFingerprint;
-        row.QueueParentCheckpointKey() = queueParentCheckpointKey;
-        row.QueueParentInitialState() = queueParentInitialState;
-        row.QueueParentResetInitialState() = queueParentResetInitialState;
-        row.QueueParentRandomSeed() = queueParentRandomSeed;
-        row.queueParentRandomSeedValid = queueParentRandomSeedValid;
-        row.queueParentResumePosition = queueParentProgram->resumePosition != 0;
-    }
-    row.rootInstance = instance;
-    row.activeLeafInstance = activeLeafInstance;
-    row.Invocation().scheduleCallerSeed = request.callerSeed;
-    row.Invocation().playbackRequest = request.playbackRequest;
-    row.Invocation().emitterOrigin = request.emitterOrigin;
-    row.Invocation().invocationEmitter = request.emitter;
-    row.ticket = ticket;
-    row.Invocation().worldGeneration = world.generation;
-    row.Invocation().projectId = world.identity.projectId;
-    row.root = request.root;
-    row.leaf = terminalLeaf;
-    row.selectionCount = selectionCount;
-    row.selectionDeltaCount = selectionDeltaCount;
-    std::copy_n(deltas.begin(), selectionDeltaCount,
-                row.selectionDeltas.begin());
-    std::copy_n(selections.begin(), selectionCount,
-                row.selectedChildOrdinals.begin());
-    std::copy_n(path.begin(), selectionCount, row.selectionPath.begin());
-    row.containerLoopAuthorityKind = worldUsesCurrentAuthority
-        ? PlayableExecutionAuthorityKind::CurrentWorld
-        : PlayableExecutionAuthorityKind::FrozenWorld;
-    row.ContainerLoopWorld() =
-        worldUsesCurrentAuthority ? PlayableWorldViewV1{} : world;
-    row.ordinaryLifecycleOwned = ordinaryLifecycleOwned;
-    row.containerInstances[0] = instance;
-    row.containerInstanceCount = 1;
-    for (std::uint32_t index = 0; index < selectedKindCount; ++index) {
-        if (selectedKinds[index] == PlayableKind::Container &&
-            index + 1u < row.containerInstances.size()) {
-            row.containerInstances[index + 1u] = treeInstances[index + 1u];
-            row.containerInstanceCount = index + 2u;
-        }
-    }
-    row.startFrame = scheduledStartFrame;
-    row.hasZeroWorkCompletion = rootHasZeroWorkCompletion;
-    row.zeroWorkCompletionFrame = rootHasZeroWorkCompletion
-        ? startFrame + rootZeroWorkCompletionOffset
-        : 0;
-    row.runtimeProgram.generation = activeLeafInstance;
-    row.schedule.ownerInstance = activeLeafInstance;
-    for (std::uint32_t index = 0;
-         index < treeStep.InstanceReservationCount(); ++index) {
-        if (treeStep.PreparedInstanceHandle(index) == activeLeafInstance) {
-            row.schedule.ownerInstanceScheduleEpoch =
-                treeStep.PreparedInstanceEpoch(index);
-            break;
-        }
-    }
-    row.schedule.transactionId = ticket;
-    row.schedule.entryAnchorFrame = row.startFrame;
-    row.schedule.runtimeProgram = {activeLeafInstance, &row.runtimeProgram};
-    row.pendingFutureCount = 1;
-    if (!markerOnlySchedule) {
-        row.payload.kind = TimelineEventKind::Start;
-        row.payload.target.programSemanticFingerprint =
-            request.root.expectedProgramSemanticFingerprint;
-        row.payload.target.subjectId = terminalLeaf.stableId;
-        row.payload.target.occurrenceOrdinal = incomingOccurrenceOrdinal;
-        voice.target = row.payload.target;
-        row.runtimeProgram.payloads = &row.payload;
-        row.runtimeProgram.payloadCount = 1;
-        row.event.logicCommitSequence = ticket;
-        row.event.eventIndex = 0;
-        row.event.transactionOrdinal = 0;
-        row.event.subeventPhase = 20;
-        row.event.payload = 0;
-        row.schedule.events = &row.event;
-        row.schedule.eventCount = 1;
-    }
-    PlayableProgramKey completionProgram{};
-    const OccurrenceToken* progressOccurrence = nullptr;
-    const PlayableProgramKey* completionProgramPtr = nullptr;
-    EnginePlayableServiceRow* directChildService = nullptr;
-    const bool initialFrontierServices = !markerOnlySchedule &&
-        pathContainerCount > 1u && !directCompositeScheduleActive &&
-        queueInitialFrontier.schedule.leafCount <= 1u && selectedKinds[selectedKindCount - 1u] == PlayableKind::Sound;
-    if (initialFrontierServices) {
-        if (!PrepareInitialFrontierPathServices(engine, directScratch, row, authority, world,
-                world.identity.runtimeSemanticFingerprint, request.callerSeed, ticket, scheduledStartFrame)) {
-            result.status = PlayableStartStatus::Backpressure;
-            return result;
-        }
-        directChildService = engine.ResolvePlayableService(directScratch.frontierResourceService);
-        queueInitialHasContinuation = false;
-    }
-    std::uint64_t queueDecisionEpoch = 0;
-    const auto reserveDirectQueueDecision = [&]() noexcept {
-        DecisionReserveRequest decisionRequest{};
-        decisionRequest.world = world.generation;
-        decisionRequest.transport = engine.timelinePool.Epoch();
-        decisionRequest.expectedContinuationGeneration =
-            queueDecisionEpoch;
-        decisionRequest.sliceCount = 1;
-        if (!engine.PrepareOriginalQueueDecisionReservation(
-                decisionRequest, &directQueueDecisionPrepared)) {
-            result.status = PlayableStartStatus::Capacity;
-            return false;
-        }
-        row.QueueFiling().queueDecision = directQueueDecisionPrepared.Token();
-        row.QueuePayload().queueTicket = ticket;
-        directQueueDecisionOwnerContext = {
-            &engine.decisions, &directQueueDecisionPrepared,
-            &row.QueueFiling().queueDecision, &row.QueuePayload().queueTicket};
-        if (!RegisterFrontierPreparedOwner(directScratch,
-                &directQueueDecisionOwnerContext,
-                ValidatePreparedDecisionOwner,
-                CommitPreparedDecisionOwner,
-                CancelPreparedDecisionOwner)) {
-            result.status = PlayableStartStatus::RuntimeRecreateRequired;
-engine.runtimeRecreateRequired = true;
-            return false;
-        }
-        return true;
-    };
-    if (queueProgram != nullptr && !initialFrontierServices) {
-        std::uint32_t queueOwnerIndex = 0;
-        std::uint32_t queueParentOwnerIndex = 0;
-        if (queueParentProgram != nullptr) {
-            bool queueOwnerFound = false;
-            bool queueParentOwnerFound = false;
-            for (std::uint32_t index = row.containerInstanceCount;
-                 index-- > 0;) {
-                const auto& pathNode = row.selectionPath[index];
-                if (!queueOwnerFound &&
-                    pathNode.objectId == queueProgram->containerStableId) {
-                    queueOwnerIndex = index;
-                    queueOwnerFound = true;
-                }
-                if (!queueParentOwnerFound &&
-                    index < queueOwnerIndex &&
-                    pathNode.objectId ==
-                        queueParentProgram->containerStableId) {
-                    queueParentOwnerIndex = index;
-                    queueParentOwnerFound = true;
-                }
-            }
-            if (!queueOwnerFound || !queueParentOwnerFound) {
-                result.status = PlayableStartStatus::RuntimeRecreateRequired;
-engine.runtimeRecreateRequired = true;
-                return result;
-            }
-        }
-        const PlayableInstanceHandle queueOwnerInstance =
-            row.containerInstances[queueOwnerIndex];
-        const PlayableInstanceHandle queueParentOwnerInstance =
-            row.containerInstances[queueParentOwnerIndex];
-        if (queueOwnerInstance == 0 || queueParentOwnerInstance == 0) {
-            result.status = PlayableStartStatus::RuntimeRecreateRequired;
-engine.runtimeRecreateRequired = true;
-            return result;
-        }
-        if (queueParentProgram != nullptr) {
-            QueueInstanceCreateRequest parentCreate{};
-            parentCreate.projectId = world.identity.projectId;
-            parentCreate.world = world.generation;
-            parentCreate.rootInstance = queueParentOwnerInstance;
-            parentCreate.containerStableId = queueParentProgram->containerStableId;
-            parentCreate.programSemanticFingerprint =
-                queueParentProgram->programSemanticFingerprint;
-            parentCreate.childCount = queueParentProgram->childCount;
-            parentCreate.cycle = queueParentProgram->queueCycle;
-            parentCreate.resumePosition = queueParentProgram->resumePosition != 0;
-            parentCreate.resetEpoch = row.QueueParentCheckpointKey().resetEpoch;
-            parentCreate.emitterSlot = row.QueueParentCheckpointKey().emitterSlot;
-            parentCreate.emitterGeneration =
-                row.QueueParentCheckpointKey().emitterGeneration;
-            if (row.QueueParentInitialState().version != 0 &&
-                row.QueueParentInitialState().currentChildOrdinal != 0 &&
-                row.QueueParentInitialState().cursor <
-                    queueParentProgram->childCount &&
-                row.QueueParentResetInitialState().version != 0) {
-                parentCreate.initial = row.QueueParentInitialState();
-                parentCreate.resetInitial = row.QueueParentResetInitialState();
-            } else {
-                parentCreate.initial.version = 1;
-                parentCreate.initial.cursor =
-                    queueParentProgram->initialSequenceCursor;
-                parentCreate.initial.currentChildOrdinal = selections[0];
-                parentCreate.initial.selectionOrdinal = 1;
-                parentCreate.resetInitial = parentCreate.initial;
-            }
-            if (!engine.PrepareOriginalQueueAcquire(
-                    parentCreate, &directQueueParentPreparedDummy)) {
-                result.status = PlayableStartStatus::Capacity;
-                return result;
-            }
-            row.queueParentInstance =
-                directQueueParentPreparedDummy.Token();
-            directQueueParentOwnerContext = {
-                &engine.queueInstances,
-                &directQueueParentPreparedDummy,
-                &row.queueParentInstance,
-                nullptr,
-                false};
-            directQueueParentOwnerContext.engine = &engine;
-            if (!RegisterFrontierPreparedOwner(directScratch,
-                    &directQueueParentOwnerContext,
-                    ValidatePreparedQueueInstanceOwner,
-                    CommitPreparedQueueInstanceOwner,
-                    CancelPreparedQueueInstanceOwner)) {
-                result.status = PlayableStartStatus::RuntimeRecreateRequired;
-engine.runtimeRecreateRequired = true;
-                return result;
-            }
-        }
-        QueueInstanceCreateRequest queueCreate{};
-        queueCreate.projectId = world.identity.projectId;
-        queueCreate.world = world.generation;
-        queueCreate.rootInstance = queueOwnerInstance;
-        queueCreate.containerStableId = queueProgram->containerStableId;
-        queueCreate.programSemanticFingerprint =
-            queueProgram->programSemanticFingerprint;
-        queueCreate.childCount = queueProgram->childCount;
-        queueCreate.cycle = queueProgram->queueCycle;
-        queueCreate.resumePosition = queueProgram->resumePosition != 0;
-        queueCreate.resetEpoch = queueCheckpointKey.resetEpoch;
-        queueCreate.emitterSlot = queueCheckpointKey.emitterSlot;
-        queueCreate.emitterGeneration =
-            queueCheckpointKey.emitterGeneration;
-        queueCreate.initial = queueInitialState;
-        queueCreate.resetInitial = queueResetInitialState;
-        if (!engine.PreparePlayableMemberDirectory(row) || !engine.PrepareOriginalQueueAcquire(
-                queueCreate, &directQueuePreparedDummy)) {
-            result.status = PlayableStartStatus::Capacity;
-            return result;
-        }
-        row.queueInstance = directQueuePreparedDummy.Token();
-        directQueueOwnerContext = {
-            &engine.queueInstances,
-            &directQueuePreparedDummy,
-            &row.queueInstance,
-            nullptr,
-            false};
-        directQueueOwnerContext.engine = &engine;
-        directQueueOwnerContext.service = &row;
-        directAuthorityOwnerContext.service = nullptr;
-        if (!RegisterFrontierPreparedOwner(directScratch,
-                &directQueueOwnerContext,
-                ValidatePreparedQueueInstanceOwner,
-                CommitPreparedQueueInstanceOwner,
-                CancelPreparedQueueInstanceOwner)) {
-            result.status = PlayableStartStatus::RuntimeRecreateRequired;
-engine.runtimeRecreateRequired = true;
-            return result;
-        }
-        queueDecisionEpoch = treeStep.PreparedInstanceEpoch(queueOwnerIndex);
-        if (queueInitialHasContinuation &&
-            (markerOnlySchedule || queueInitialFrontier.schedule.leafCount > 1u) &&
-            !reserveDirectQueueDecision()) {
-            return result;
-        }
-        OccurrenceKey occurrenceKey{};
-        occurrenceKey.arrangingInstance = queueOwnerInstance;
-        occurrenceKey.clipId = terminalLeaf.stableId;
-        occurrenceKey.occurrenceOrdinal = incomingOccurrenceOrdinal;
-        if (!engine.PrepareOriginalOccurrence(
-                occurrenceKey, &row.QueuePayload().queueCurrentOccurrence)) {
-            result.status = PlayableStartStatus::Capacity;
-            return result;
-        }
-        directOccurrencePrepared = true;
-        directScratch.queueCurrentOccurrence = row.QueuePayload().queueCurrentOccurrence;
-        directOccurrenceOwnerContext = {
-            &engine.timelineOccurrences, &row.QueuePayload().queueCurrentOccurrence,
-            &directOccurrencePrepared};
-        if (!RegisterFrontierPreparedOwner(directScratch,
-                &directOccurrenceOwnerContext,
-                ValidatePreparedOccurrenceOwner,
-                CommitPreparedOccurrenceOwner,
-                CancelPreparedOccurrenceOwner)) {
-            result.status = PlayableStartStatus::RuntimeRecreateRequired;
-engine.runtimeRecreateRequired = true;
-            return result;
-        }
-        row.queueMode = true;
-        row.schedule.ownerInstance = row.ownerInstance;
-        row.schedule.ownerInstanceScheduleEpoch = row.ownerEpoch;
-        row.queueWorldUsesCurrentAuthority = worldUsesCurrentAuthority;
-        row.queueResumePosition = queueProgram->resumePosition != 0;
-        row.QueueWorld() = worldUsesCurrentAuthority
-            ? PlayableWorldViewV1{}
-            : world;
-        row.QueuePayload().queueContainerStableId = queueProgram->containerStableId;
-        row.QueuePayload().queueProgramSemanticFingerprint =
-            queueProgram->programSemanticFingerprint;
-        row.QueueCheckpointKey() = queueCheckpointKey;
-        row.QueueRandomSeed() = queueRandomSeed;
-        row.queueRandomSeedValid = queueRandomSeedValid;
-        row.queueSignalOnlyNoOverlap =
-            queueInitialSignalOnlyNoOverlap;
-        if (markerOnlySchedule) {
-            row.QueuePayload().queueCurrentScheduleLeafCount = 0;
-            row.scheduleLeafCount = 0;
-            row.QueuePayload().queueCompletionFrame = row.zeroWorkCompletionFrame;
-        }
-        if (queueInitialHasContinuation) {
-            completionProgram.kind = terminalLeaf.kind;
-            completionProgram.stableId = terminalLeaf.stableId;
-            completionProgram.world = world.generation;
-            completionProgram.runtimeSemanticFingerprint =
-                terminalLeaf.expectedProgramSemanticFingerprint;
-            progressOccurrence = &row.QueuePayload().queueCurrentOccurrence;
-            completionProgramPtr = &completionProgram;
-        } else if (!queueInitialHasSuccessor) {
-            row.queueNaturalEnd = true;
-            row.queueNestedParentPending = row.queueParentInstance.Valid();
-        }
-    }
-    if (!markerOnlySchedule && !initialFrontierServices &&
-        directChildService == nullptr && queueProgram != nullptr &&
-        queueInitialSignalOnlyNoOverlap &&
-        queueParentProgram == nullptr && pathContainerCount > 1u &&
-        !directCompositeScheduleActive && queueInitialFrontier.schedule.leafCount <= 1u) {
-        std::uint32_t queueDepth = 0;
-        while (queueDepth < row.selectionCount &&
-               row.selectionPath[queueDepth].objectId != queueProgram->containerStableId) ++queueDepth;
-        if (queueDepth + 1u < pathContainerCount) {
-            const auto childProgram = std::find_if(world.containers, world.containers + world.containerCount,
-                [&](const auto& candidate) {
-                    return candidate.containerStableId == row.selectionPath[queueDepth + 1u].objectId;
-                });
-            if (childProgram == world.containers + world.containerCount ||
-                (directChildService = PrepareFrontierOrdinaryService(engine, directScratch, row,
-                    treeStep.PreparedInstanceHandle(queueDepth + 1u),
-                    treeStep.PreparedInstanceEpoch(queueDepth + 1u), *childProgram)) == nullptr) {
-                result.status = PlayableStartStatus::Backpressure;
-                return result;
-            }
-        }
-    }
-    const auto rollbackDirectStart = [&]() noexcept {
-        while (directDeferredPostCount != 0) {
-            --directDeferredPostCount;
-            if (directDeferredPosts[directDeferredPostCount].Valid() &&
-                !engine.timelinePlanner.AbandonPreparedDeferredPlay(
-                    &directDeferredPosts[directDeferredPostCount])) {
-                engine.runtimeRecreateRequired = true;
-            }
-        }
-        if (!CancelDirectFrontierAttempt(engine, directScratch))
-            engine.runtimeRecreateRequired = true;
-    };
-    TimelineVoiceInstallResult installed{};
-    bool installFailed = false;
-    auto& directVoiceStartCount = directScratch.voiceStartCount;
-    const auto clearDirectVoiceStarts = [&]() noexcept {
-        for (auto& start : directVoiceStarts) {
-            start = {};
-        }
-        directVoiceStartCount = 0;
-    };
-    clearDirectVoiceStarts();
-    const bool deferDirectStartBinding = !markerOnlySchedule &&
-        (request.root.kind == PlayableKindV1::Sound || request.root.kind == PlayableKindV1::Track ||
-         request.root.kind == PlayableKindV1::Piece);
-    row.pendingDirectStartBinding = deferDirectStartBinding;
-    row.pendingDirectEntryFrame = deferDirectStartBinding ? startFrame : 0;
-        const MaterializedScheduleSet& initialSchedule =
-        directCompositeScheduleActive ? *directCompositeSchedule
-                                      : queueInitialFrontier.schedule;
-    if (markerOnlySchedule) {
-        installed.status = VN_OK;
-    } else if (initialSchedule.leafCount > 1) {
-        const PlayableStorageBases bases = StorageBasesForRow(engine, row);
-        const std::size_t memberBase = bases.member;
-        const std::size_t endpointBase = bases.endpoint;
-        const std::size_t pairedBase = bases.paired;
-        if (memberBase > UINT32_MAX ||
-            memberBase + initialSchedule.leafCount >
-                engine.playableStorage.memberCount ||
-            pairedBase + initialSchedule.leafCount >
-                engine.playableStorage.pairedCount ||
-            directScratch.frontierProgramBank == nullptr) {
-            installFailed = true;
-        } else {
-            const auto relationUse = directRelationBacking.Use();
-            row.QueuePayload().queueCurrentProgramBank = std::exchange(directScratch.frontierProgramBank, nullptr);
-            row.QueuePayload().queueCurrentPrograms = {0, initialSchedule.leafCount};
-            auto* const currentBank = row.QueuePayload().queueCurrentProgramBank;
-            auto* const payloads = currentBank->payloads.data();
-            auto* const events = currentBank->events.data();
-            auto* const runtimes = currentBank->runtimes.data();
-            auto* const schedules = currentBank->schedules.data();
-            row.QueuePayload().queueCurrentScheduleBase =
-                static_cast<std::uint32_t>(memberBase);
-            row.QueuePayload().queueCurrentScheduleLeafCount = initialSchedule.leafCount;
-            row.scheduleStorageBase =
-                static_cast<std::uint32_t>(memberBase);
-            row.scheduleLeafCount = initialSchedule.leafCount;
-            row.pendingFutureCount = initialSchedule.leafCount;
-            row.startFrame = startFrame +
-                (directCompositeScheduleActive
-                     ? (*directCompositePrepared)[0].startOffsetFrames
-                     : queuePreparedLeaves[0].startOffsetFrames);
-            row.runtimeProgram.payloads = payloads;
-            row.runtimeProgram.payloadCount =
-                initialSchedule.leafCount;
-            row.schedule.entryAnchorFrame = row.startFrame;
-            row.schedule.events = events;
-            row.schedule.eventCount = initialSchedule.leafCount;
-            row.schedule.armToken = {};
-            std::array<KnownScheduleLeafV1, 64> knownLeaves{};
-            std::uint32_t installedCount = 0;
-            for (; installedCount < initialSchedule.leafCount;
-                 ++installedCount) {
-                const std::size_t memberSlot = memberBase + installedCount;
-                const auto leafIndex = treeStep.InstanceReservationCount() -
-                    initialSchedule.leafCount + installedCount;
-                const auto leafInstance = treeStep.PreparedInstanceHandle(leafIndex);
-                const auto leafEpoch = treeStep.PreparedInstanceEpoch(leafIndex);
-                std::size_t physicalSlot = 0;
-                if (!PreparePlayableMemberStorage(engine, row, memberSlot,
-                        leafInstance, leafEpoch, &physicalSlot) || physicalSlot != memberSlot) {
-                    installFailed = true;
-                    break;
-                }
-                const std::size_t endpointSlot =
-                    endpointBase + installedCount;
-                const std::size_t pairedSlot = pairedBase + installedCount;
-                PreparedScheduleLeafStart& source =
-                    (directCompositeScheduleActive
-                         ? directCompositePrepared->data()
-                         : queuePreparedLeaves.get())[installedCount];
-                OccurrenceToken* leafOccurrence = nullptr;
-                PlayableProgramKey program{};
-                if (queueInitialHasContinuation) {
-                    OccurrenceKey key{};
-                    key.arrangingInstance = instance;
-                    key.clipId = source.leaf.stableId;
-                    key.occurrenceOrdinal = source.occurrenceOrdinal;
-                    if (!engine.PrepareOriginalOccurrence(
-                            key,
-                            &engine.MutablePlayableMember(memberSlot).occurrence)) {
-                        installFailed = true;
-                        break;
-                    }
-                    directLeafOccurrencesPrepared[installedCount] = true;
-                    directScratch.queueCurrentLeafOccurrenceCount = installedCount + 1u;
-                    auto& occurrenceOwnerContext =
-                        directLeafOccurrenceOwnerContexts[installedCount];
-                    occurrenceOwnerContext = {
-                        &engine.timelineOccurrences,
-                        &engine.MutablePlayableMember(memberSlot).occurrence,
-                        &directLeafOccurrencesPrepared[installedCount]};
-                    if (!RegisterFrontierPreparedOwner(directScratch,
-                            &occurrenceOwnerContext,
-                            ValidatePreparedOccurrenceOwner,
-                            CommitPreparedOccurrenceOwner,
-                            CancelPreparedOccurrenceOwner)) {
-                        installFailed = true;
-                        break;
-                    }
-                    leafOccurrence =
-                        &engine.MutablePlayableMember(memberSlot).occurrence;
-                    program.kind = PlayableKindV1::Sound;
-                    program.stableId = source.leaf.stableId;
-                    program.world = world.generation;
-                    program.runtimeSemanticFingerprint =
-                        source.leaf.expectedProgramSemanticFingerprint;
-                }
-                const std::uint64_t leafStart =
-                    startFrame + source.startOffsetFrames;
-                auto* const captured = &directScratch.voiceStarts.Captures()[installedCount];
-                const TimelineVoiceInstallResult leafInstalled =
-                    InstallTimelineVoiceStart(
-                        engine, captured->voice.Input(), leafInstance, leafStart,
-                        instance, row.rootInstance, leafOccurrence,
-                        queueInitialHasContinuation ? &program : nullptr,
-                        ParentAudioGroupRef{}, UINT16_MAX, nullptr,
-                        &directVoiceStarts[installedCount], nullptr, nullptr, nullptr,
-                        deferDirectStartBinding);
-                if (leafInstalled.status != VN_OK) {
-                    installFailed = true;
-                    break;
-                }
-                ++directVoiceStartCount;
-                auto& voiceOwnerContext = directVoiceOwnerContexts[installedCount];
-                voiceOwnerContext.engine = &engine;
-                voiceOwnerContext.token =
-                    &directVoiceStarts[installedCount];
-                voiceOwnerContext.committed = false;
-                if (!RegisterFrontierPreparedOwner(directScratch,
-                        &voiceOwnerContext,
-                        ValidatePreparedTimelineVoiceOwner,
-                        CommitPreparedTimelineVoiceOwner,
-                        CancelPreparedTimelineVoiceOwner)) {
-                    installFailed = true;
-                    break;
-                }
-                if (queueInitialHasContinuation &&
-                    leafInstalled.completionPredictability !=
-                        CompletionPredictability::KnownFinite) {
-                    installFailed = true;
-                    break;
-                }
-                captured->Stage(engine.MutablePlayableMember(memberSlot).voice);
-                engine.MutablePlayableMember(memberSlot).leaf = source.leaf;
-                engine.MutablePlayableMember(memberSlot).arm =
-                    leafInstalled.armToken;
-                engine.MutablePlayableMember(memberSlot).render =
-                    leafInstalled.renderHandle;
-                engine.MutablePlayableMember(memberSlot).release =
-                    leafInstalled.releaseObserver;
-                engine.SetPlayableMemberSource(engine.MutablePlayableMember(memberSlot), leafInstalled.sourceTerminal);
-                engine.MutablePlayableMember(memberSlot).monitorSelection = leafInstalled.monitorSelection;
-                engine.RefreshPlayableMemberOnset(memberSlot);
-                engine.MutablePlayableMember(memberSlot).startFrame = leafStart;
-                engine.MutablePlayableMember(memberSlot).postSourceTailFrames =
-                    leafInstalled.postSourceTailFrames;
-                engine.MutablePlayableMember(memberSlot).nativeCompletion =
-                    leafInstalled.completionPredicate;
-                TimelineEventPayload& payload = payloads[installedCount];
-                payload = {};
-                payload.kind = TimelineEventKind::Start;
-                payload.target = source.voice.target;
-                EventTemplate& event = events[installedCount];
-                event = {};
-                event.frameOffsetFromEntry = static_cast<std::int64_t>(
-                    leafStart - row.startFrame);
-                event.logicCommitSequence = ticket;
-                event.eventIndex = installedCount;
-                event.transactionOrdinal = installedCount;
-                event.subeventPhase = 20;
-                event.payload = 0;
-                event.armToken = leafInstalled.armToken;
-                TimelineProgramView& runtime = runtimes[installedCount];
-                runtime = {};
-                runtime.generation = instance;
-                runtime.payloads = &payload;
-                runtime.payloadCount = 1;
-                ProgramView& schedule = schedules[installedCount];
-                schedule = {};
-                schedule.ownerInstance = instance;
-                schedule.ownerInstanceScheduleEpoch =
-                    treeStep.PreparedInstanceEpoch(0);
-                schedule.transactionId = ticket;
-                schedule.entryAnchorFrame = row.startFrame;
-                schedule.events = &event;
-                schedule.eventCount = 1;
-                schedule.runtimeProgram = {instance, &runtime};
-                schedule.armToken = leafInstalled.armToken;
-                if (currentBank != nullptr &&
-                    (RetainQueueProgramMemberAt(engine, *currentBank,
-                        currentBank->programCount, row, memberSlot) == nullptr ||
-                     FreezeQueueProgram(engine, *currentBank, schedule) == nullptr)) {
-                    installFailed = true;
-                    break;
-                }
-                if (queueInitialHasContinuation) {
-                    KnownScheduleLeafV1& known = knownLeaves[installedCount];
-                    known.stableLeafOrdinal =
-                        initialSchedule.leaves[installedCount].
-                            stableLeafOrdinal;
-                    known.authoredOffset.domain =
-                        AuthoredTimeDomainV1::SourceFrames;
-                    known.authoredOffset.numerator =
-                        static_cast<std::int64_t>(
-                            source.startOffsetFrames);
-                    known.authoredOffset.denominator = 1;
-                    known.occurrence = engine.ReadPlayableMember(memberSlot).occurrence;
-                    known.renderGeneration =
-                        static_cast<std::uint32_t>(
-                            leafInstalled.renderHandle >> 32);
-                    known.absoluteLeafStartFrame = leafStart;
-                    known.predicate = leafInstalled.completionPredicate;
-                }
-                if (installedCount == 0) installed = leafInstalled;
-            }
-            if (!installFailed && currentBank != nullptr &&
-                !FreezeQueueAggregate(*currentBank, row.schedule, 0, initialSchedule.leafCount))
-                installFailed = true;
-            if (!installFailed && queueInitialHasContinuation) {
-                CompositeCompletionOwnerToken composite{};
-                if (engine.PrepareOriginalCompositeCompletion(
-                        row.QueuePayload().queueCurrentOccurrence, 1,
-                        knownLeaves.data(),
-                        initialSchedule.leafCount,
-                        engine.timelineOccurrences,
-                        &composite, &directScratch.queueCurrentOriginalComposite) !=
-                    CompositeCompletionAcquireStatus::Ok) {
-                    installFailed = true;
-                } else {
-                    row.QueuePayload().queueCurrentCompositeOwner = composite;
-                    directScratch.queueCurrentCompositeOwner = composite;
-                    directCompositeOwnerPrepared = true;
-                    directCompositeOwnerContext = {
-                        &engine.compositeCompletionOwners,
-                        &row.QueuePayload().queueCurrentCompositeOwner,
-                        &engine.timelineOccurrences,
-                        &directCompositeOwnerPrepared,
-                        false};
-                    if (!RegisterFrontierPreparedOwner(directScratch,
-                            &directCompositeOwnerContext,
-                            ValidatePreparedCompositeOwner,
-                            CommitPreparedCompositeOwner,
-                            CancelPreparedCompositeOwner)) {
-                        installFailed = true;
-                    }
-                    row.QueuePayload().queueCompletionFrame = 0;
-                    for (std::uint32_t index = 0;
-                         !installFailed &&
-                         index < initialSchedule.leafCount; ++index) {
-                        const std::size_t memberSlot = memberBase + index;
-                        const std::size_t pairedSlot = pairedBase + index;
-                        KnownScheduleLeafV1 bound{};
-                        if (!engine.compositeCompletionOwners.CapturePreparedLeaf(
-                                composite, index, &bound) ||
-                            !engine.BindOriginalCompositeLedgerPreparation(directVoiceStarts[index],
-                                directScratch.queueCurrentOriginalComposite, index)) {
-                            installFailed = true;
-                            break;
-                        }
-                        engine.MutablePlayableMember(memberSlot).nativeCompletion =
-                            bound.predicate;
-                        ++directScratch.queueCompletionMutationCount;
-                        row.QueuePayload().queueCompletionFrame = std::max(
-                            row.QueuePayload().queueCompletionFrame,
-                            bound.predicate.absoluteLogicalCompleteFrame);
-                    }
-                    if (!installFailed && !engine.PrepareOriginalCompositeLeafCompletionCommits(directScratch.queueCurrentOriginalComposite))
-                        installFailed = true;
-                    if (!installFailed && row.hasZeroWorkCompletion) {
-                        row.QueuePayload().queueCompletionFrame = std::max(
-                            row.QueuePayload().queueCompletionFrame,
-                            row.zeroWorkCompletionFrame);
-                    }
-                }
-            }
-            row.leaf = engine.ReadPlayableMember(memberBase).leaf;
-            row.arm = engine.ReadPlayableMember(memberBase).arm;
-            row.renderHandle =
-                engine.ReadPlayableMember(memberBase).render;
-            row.releaseObserver = engine.ReadPlayableMember(memberBase).release;
-        }
-    } else {
-        installFailed = CaptureTimelineVoiceInstall(voice, &row.capturedVoice) != PlayableStartStatus::Accepted;
-        if (!installFailed) {
-            row.usesCapturedVoice = true;
-            installed = InstallTimelineVoiceStart(
-                engine, row.capturedVoice.Input(), row.runtimeProgram.generation,
-                row.startFrame, row.rootInstance, row.rootInstance, progressOccurrence,
-                completionProgramPtr, ParentAudioGroupRef{}, UINT16_MAX, nullptr,
-                &directVoiceStarts[0], nullptr, directChildService != nullptr ? directChildService
-                    : row.ordinaryLifecycleOwned || row.queueMode ? &row : nullptr,
-                nullptr, deferDirectStartBinding);
-        }
-        installFailed = installed.status != VN_OK;
-        if (!installFailed) {
-            directVoiceStartCount = 1;
-            auto& voiceOwnerContext = directVoiceOwnerContexts[0];
-            voiceOwnerContext.engine = &engine;
-            voiceOwnerContext.token = &directVoiceStarts[0];
-            voiceOwnerContext.committed = false;
-            if (!RegisterFrontierPreparedOwner(directScratch,
-                    &voiceOwnerContext,
-                    ValidatePreparedTimelineVoiceOwner,
-                    CommitPreparedTimelineVoiceOwner,
-                    CancelPreparedTimelineVoiceOwner)) {
-                installFailed = true;
-            }
-            row.arm = installed.armToken;
-            row.renderHandle = installed.renderHandle;
-            row.releaseObserver = installed.releaseObserver;
-            row.schedule.armToken = installed.armToken;
-            auto& resourceService = directChildService != nullptr ? *directChildService : row;
-            if (resourceService.ordinaryLifecycleOwned && !resourceService.queueMode &&
-                !FreezeInitialOrdinaryProgram(engine, row, resourceService,
-                    installed, activeLeafInstance, treeStep.PreparedInstanceEpoch(treeInstanceCount - 1u))) {
-                rollbackDirectStart();
-                result.status = PlayableStartStatus::Backpressure;
-                return result;
-            }
-        }
-    }
-    if (row.queueMode && !installFailed) {
-        row.QueuePayload().queueCurrentTailFrames = installed.postSourceTailFrames;
-    }
-    if (!installFailed && !markerOnlySchedule && row.queueMode &&
-        queueInitialHasContinuation && !row.QueuePayload().queueCurrentCompositeOwner.Valid()) {
-        if (installed.completionPredictability == CompletionPredictability::SignalOnly &&
-            queueInitialFrontier.authoredChild != nullptr &&
-            queueInitialFrontier.authoredChild->playable.kind == PlayableKindV1::Sound &&
-            queueProgram->queueSplice == QueueSpliceV1::Butt &&
-            queueProgram->transitionProgramIndex == UINT32_MAX) {
-            queueInitialHasContinuation = false;
-            row.queueSignalOnlyNoOverlap = true;
-        } else if (installed.completionPredictability != CompletionPredictability::KnownFinite) {
-            rollbackDirectStart();
-            result.status = PlayableStartStatus::CapabilityUnavailable;
-            return result;
-        } else if (!reserveDirectQueueDecision()) {
-            rollbackDirectStart();
-            return result;
-        }
-    }
-    if (!installFailed) {
-        for (std::uint32_t index = 0;
-             index < directScratch.frontierQueueCount; ++index) {
-            auto& queue = directScratch.storage.frontierQueues[index];
-            if (queue.hasSuccessor &&
-                !PrepareGenericQueueCurrent(
-                    engine, directScratch, queue, true)) {
-                installFailed = true;
-                break;
-            }
-        }
-    }
-    if (!installFailed) {
-        for (std::uint32_t index = 0; index < directVoiceStartCount;
-             ++index) {
-            const std::uint32_t count =
-                directVoiceStarts[index].commandCount;
-            if (count > UINT32_MAX - directCommandCount) {
-                installFailed = true;
-                break;
-            }
-            directCommandCount += count;
-        }
-        if (!installFailed && markerOnlySchedule) {
-            directCommandsReserved = true;
-        } else if (!installFailed &&
-            (directCommandCount == 0 ||
-             !ReserveVoiceCommandTransport(engine, directCommandCount,
-                 &directCommandReservation,
-                 directVoiceStartCount == 1u ? &directVoiceStarts[0] : nullptr))) {
-            installFailed = true;
-        } else if (!installFailed) {
-            directCommandsReserved = true;
-        }
-    }
-    std::uint32_t directTransactionCount = 0;
-    if (!installFailed && !FreezeInitialQueuePrograms(engine, row)) {
-        rollbackDirectStart();
-        result.status = PlayableStartStatus::Backpressure;
-        return result;
-    }
-    if (!installFailed && !markerOnlySchedule && !deferDirectStartBinding) {
-        const std::uint32_t scheduleCount = row.QueuePayload().queueCurrentScheduleLeafCount > 1u
-            ? row.QueuePayload().queueCurrentScheduleLeafCount
-            : 1u;
-        if (scheduleCount == 0u ||
-            scheduleCount > directTransactionRequests.size()) {
-            installFailed = true;
-        }
-        for (std::uint32_t index = 0;
-             !installFailed && index < scheduleCount; ++index) {
-            const auto* program = row.QueuePayload().queueCurrentProgramBank != nullptr
-                ? ResolveQueueCurrentProgram(row, index)
-                : row.QueuePayload().queueCurrentScheduleLeafCount > 1u
-                    ? nullptr
-                    : &row.schedule;
-            if (program == nullptr) {
-                installFailed = true;
-                break;
-            }
-            const ProgramView& schedule = *program;
-            if (schedule.events == nullptr || schedule.eventCount != 1u ||
-                schedule.events[0].frameOffsetFromEntry < 0) {
-                installFailed = true;
-                break;
-            }
-            const std::uint64_t offset = static_cast<std::uint64_t>(
-                schedule.events[0].frameOffsetFromEntry);
-            if (offset > UINT64_MAX - schedule.entryAnchorFrame) {
-                installFailed = true;
-                break;
-            }
-            const EventTemplate& source = schedule.events[0];
-            if (schedule.entryAnchorFrame + offset >=
-                engine.timelinePool.WindowEndFrame()) {
-                PostInput post{};
-                post.currentFrame = admittedFrame;
-                post.transportEpoch = engine.timelinePool.Epoch();
-                post.logicCommitSequence = ticket;
-                const PostResult prepared =
-                    engine.timelinePlanner.PrepareDeferredPlay(
-                        schedule, post,
-                        &directDeferredPosts[directDeferredPostCount]);
-                if (prepared.status != PostStatus::Deferred) {
-                    installFailed = true;
-                    break;
-                }
-                ++directDeferredPostCount;
-                continue;
-            }
-            ScheduledEventInput& event =
-                directTransactionEvents[directTransactionCount];
-            event.executeFrame = schedule.entryAnchorFrame + offset;
-            event.logicCommitSequence = source.logicCommitSequence;
-            event.executionOrdinal = source.executionOrdinal;
-            event.eventIndex = source.eventIndex;
-            event.transactionOrdinal = source.transactionOrdinal;
-            event.subeventPhase = source.subeventPhase;
-            event.payload = source.payload;
-            event.authoredFadeOutCandidate =
-                source.authoredFadeOutCandidate;
-            event.armToken = source.armToken;
-            TransactionRequest& transaction =
-                directTransactionRequests[directTransactionCount];
-            transaction.transactionId = schedule.transactionId;
-            transaction.transportEpoch = engine.timelinePool.Epoch();
-            transaction.ownerInstanceHandle = schedule.ownerInstance;
-            transaction.ownerInstanceScheduleEpoch =
-                schedule.ownerInstanceScheduleEpoch;
-            transaction.occurrence = schedule.occurrence;
-            transaction.program = schedule.runtimeProgram;
-            transaction.armToken = schedule.armToken;
-            transaction.events = &event;
-            transaction.eventCount = 1u;
-            ++directTransactionCount;
-        }
-        if (!installFailed && directTransactionCount != 0 &&
-            engine.timelinePool.PrepareTransactionBatch(
-                directTransactionRequests.data(), directTransactionCount,
-                engine.timelinePool.PublishCutoffFrame(),
-                &directTransactionBatch) != ReserveRefusal::None) {
-            rollbackDirectStart();
-            result.status = PlayableStartStatus::Backpressure;
-            return result;
-        }
-    }
-    ++row.prepareCount;
-    if (installFailed) {
-        rollbackDirectStart();
-engine.runtimeRecreateRequired = true;
-        result.status = PlayableStartStatus::RuntimeRecreateRequired;
-        return result;
-    }
-    std::uint32_t commandOffset = 0;
-    for (std::uint32_t index = 0; index < directVoiceStartCount; ++index) {
-        const auto& prepared = directVoiceStarts[index];
-        if (commandOffset > engine.playLedBatchScratch.size() ||
-            prepared.commandCount >
-                engine.playLedBatchScratch.size() - commandOffset) {
-            rollbackDirectStart();
-engine.runtimeRecreateRequired = true;
-            result.status = PlayableStartStatus::RuntimeRecreateRequired;
-            return result;
-        }
-        std::copy_n(prepared.commands.begin(), prepared.commandCount,
-                    engine.playLedBatchScratch.begin() + commandOffset);
-        commandOffset += prepared.commandCount;
-    }
-    if (!markerOnlySchedule && !PrepareVoiceCommandBatch(engine, &directCommandReservation,
-            {engine.playLedBatchScratch.data(), directCommandCount})) {
-        rollbackDirectStart();
-        result.status = PlayableStartStatus::Backpressure;
-        return result;
-    }
-    directScratch.frontierOwnerLedgerComplete = true;
-    if (treeStep.OwnerTokenCount() > 3u || !treeStep.Commit(ticket)) {
-        rollbackDirectStart();
-engine.runtimeRecreateRequired = true;
-        result.status = PlayableStartStatus::RuntimeRecreateRequired;
-        return result;
-    }
-    // The playable table assigns the authoritative schedule epoch at commit.
-    // Prepared epochs are only validation inputs and must not be published to
-    // the timeline pool as the live owner identity.
-    const PlayableInstanceView committedScheduleOwner =
-        engine.playableInstances.Classify(row.schedule.ownerInstance);
-    if (!committedScheduleOwner.live ||
-        committedScheduleOwner.scheduleEpoch == 0) {
-        rollbackDirectStart();
-engine.runtimeRecreateRequired = true;
-        result.status = PlayableStartStatus::RuntimeRecreateRequired;
-        return result;
-    }
-    row.schedule.ownerInstanceScheduleEpoch =
-        committedScheduleOwner.scheduleEpoch;
-    if (!directCommandsReserved) {
-        rollbackDirectStart();
-engine.runtimeRecreateRequired = true;
-        result.status = PlayableStartStatus::RuntimeRecreateRequired;
-        return result;
-    }
-    for (std::uint32_t index = 0; index + 1u < treeInstanceCount; ++index) {
-        const bool isContainer =
-            index == 0
-                ? rootKind == PlayableKind::Container
-                : selectedKinds[index - 1u] == PlayableKind::Container;
-        if (!isContainer) continue;
-        if (!PlayableTreeExecutor::ServiceActiveChild(
-                engine.playableInstances, engine.containerPlayback,
-                treeInstances[index], treeInstances[index + 1u])) {
-            rollbackDirectStart();
-engine.runtimeRecreateRequired = true;
-            result.status = PlayableStartStatus::RuntimeRecreateRequired;
-            return result;
-        }
-    }
-    const bool knownFiniteQueueFirstChild =
-        !markerOnlySchedule && row.queueMode && queueInitialHasContinuation &&
-        !row.QueuePayload().queueCurrentCompositeOwner.Valid();
-    if (engine.forceDirectPlayablePostFailureForTest) {
-        engine.forceDirectPlayablePostFailureForTest = false;
-        rollbackDirectStart();
-engine.runtimeRecreateRequired = true;
-        result.status = PlayableStartStatus::RuntimeRecreateRequired;
-        return result;
-    }
-    if (knownFiniteQueueFirstChild) {
-        const CompletionOwnerRef owner = CompletionOwnerRef::Single(
-            row.QueueFiling().queueDecision,
-            installed.completionPredicate.playbackFactsRevision);
-        KnownCompletionPredicateV1 bound{};
-        const VoiceLedger::RenderOwner renderOwner =
-            engine.ledger.OwnerForRender(installed.renderHandle);
-        const bool ownerPinned =
-            engine.timelineOccurrences.TryPinCompletionOwner(
-                row.QueuePayload().queueCurrentOccurrence, owner);
-        const bool boundOk =
-            ownerPinned &&
-            installed.completionPredictability ==
-                CompletionPredictability::KnownFinite &&
-            BindKnownCompletionPredicate(
-                installed.completionPredicate, completionProgram, owner,
-                &bound);
-        const bool mutationBound =
-            boundOk && renderOwner.live &&
-            engine.ledger.BindCompletionMutation(
-                renderOwner.ledgerSlot,
-                {row.QueuePayload().queueCurrentOccurrence, owner});
-        if (!mutationBound) {
-            if (ownerPinned) {
-                (void)engine.timelineOccurrences.
-                    RollbackCompletionOwnerPinExact(
-                        row.QueuePayload().queueCurrentOccurrence, owner);
-            }
-            if (renderOwner.live) {
-                (void)engine.ledger.ClearCompletionMutationExact(
-                    renderOwner.ledgerSlot,
-                    {row.QueuePayload().queueCurrentOccurrence, owner});
-            }
-            rollbackDirectStart();
-engine.runtimeRecreateRequired = true;
-            result.status = PlayableStartStatus::RuntimeRecreateRequired;
-            return result;
-        }
-        row.QueuePayload().queueCurrentCompletion = bound;
-        row.QueuePayload().queueCompletionFrame = row.hasZeroWorkCompletion
-            ? std::max(bound.absoluteLogicalCompleteFrame,
-                       row.zeroWorkCompletionFrame)
-            : bound.absoluteLogicalCompleteFrame;
-        directScratch.queueCurrentOwner = owner;
-        directScratch.queueCompletionOwnerPinned = true;
-        directScratch.queueCompletionMutationCount = 1;
-    }
-    if (directTransactionCount != 0 &&
-        !engine.timelinePool.CommitPreparedTransactionBatch(
-            &directTransactionBatch, ticket, true)) {
-        rollbackDirectStart();
-engine.runtimeRecreateRequired = true;
-        result.status = PlayableStartStatus::RuntimeRecreateRequired;
-        return result;
-    }
-    for (std::uint32_t index = 0; index < directDeferredPostCount; ++index) {
-        if (!engine.timelinePlanner.CommitPreparedDeferredPlay(
-                &directDeferredPosts[index])) {
-            rollbackDirectStart();
-            engine.runtimeRecreateRequired = true;
-            result.status = PlayableStartStatus::RuntimeRecreateRequired;
-            return result;
-        }
-    }
-    directDeferredPostCount = 0;
-    if (!deferDirectStartBinding) PublishInitialQueuePrograms(row);
-    // Keep the command reservation unpublished until every tree, timeline,
-    // and completion-owner validation above has succeeded.  Any failure
-    // before this point can still cancel the reservation without leaving
-    // visible command records behind.
-    directScratch.storage.phase = EngineFrontierAttemptPhase::Published;
-    if (!markerOnlySchedule) {
-        PublishVoiceCommandBatch(engine, &directCommandReservation,
-            {engine.playLedBatchScratch.data(), directCommandCount});
-    }
-    directCommandsReserved = false;
-    if (directTransactionCount != 0 &&
-        !engine.timelinePool.ReleasePreparedTransactionPublication(
-            &directTransactionBatch)) {
-engine.runtimeRecreateRequired = true;
-        result.status = PlayableStartStatus::RuntimeRecreateRequired;
-        return result;
-    }
-    PublishMonitorInitialSelections(engine, directScratch);
-    if (row.queueMode && queueInitialHasContinuation) {
-        const QueueContinuationPrepareStatus prepared =
-            PrepareQueueContinuation(engine, world, *queueProgram, row);
-        if (prepared == QueueContinuationPrepareStatus::Failed) {
-            (void)engine.queueInstances.FailContainerBeforeConditional(
-                row.queueInstance,
-                QueueFailureReason::TargetPreparationFailed,
-                row.startFrame);
-            row.controlLifecycle =
-                PlayableControlLifecycle::FailingSourceActive;
-            row.controlReason = PlayableControlReason::StartRefused;
-        } else if (prepared == QueueContinuationPrepareStatus::Deferred) {
-            row.queueSignalOnlyNoOverlap = true;
-        } else if (prepared == QueueContinuationPrepareStatus::NaturalEnd) {
-            row.queueNaturalEnd = true;
-        }
-    }
-    row.actionPrepared = false;
-    row.phase = markerOnlySchedule
-        ? EnginePlayableStartPhase::Started
-        : EnginePlayableStartPhase::AwaitingArmAck;
-    if (markerOnlySchedule) {
-        row.controlLifecycle = PlayableControlLifecycle::Active;
-    }
-    if (directChildService != nullptr && !initialFrontierServices) TransferFrontierLeafResource(engine, row, *directChildService);
-    if (!TransferFrontierAttempt(engine, directScratch)) {
-engine.runtimeRecreateRequired = true;
-        result.status = PlayableStartStatus::RuntimeRecreateRequired;
-        return result;
-    }
-    engine.AcceptSourceCommandPublications();
-    result.status = PlayableStartStatus::Accepted;
-    result.instance = instance;
-    result.ticket = ticket;
-    return result;
+    return PrepareDirectPlayableStart(engine, world, request, admittedFrame);
 }
 
 enum class PlayableCancellationIntent : std::uint8_t {
@@ -84232,7 +82022,7 @@ bool PrepareImmediateActionQueueInstance(
     harken::PlayableInstanceHandle ownerInstance,
     std::uint64_t ownerScheduleEpoch,
     std::uint64_t worldGeneration,
-    std::uint64_t emitter) noexcept {
+    std::uint64_t emitter, bool signalOnlyNoOverlap, bool prepareTerminalOccurrence) noexcept {
     if (scratch == nullptr || ownerInstance == 0 ||
         ownerScheduleEpoch == 0 || !engine.PreparePlayableMemberDirectory(row)) {
         return false;
@@ -84272,7 +82062,9 @@ bool PrepareImmediateActionQueueInstance(
         return false;
     }
     row.queueMode = true;
-    row.queueWorldUsesCurrentAuthority = !packQueue;
+    row.queueWorldUsesCurrentAuthority = !packQueue &&
+        row.containerLoopAuthorityKind != harken::PlayableExecutionAuthorityKind::FrozenWorld;
+    if (!packQueue && !row.queueWorldUsesCurrentAuthority) row.QueueWorld() = row.ContainerLoopWorld();
     row.queueResumePosition = program.resumePosition != 0;
     row.QueuePayload().queueContainerStableId = program.containerStableId;
     row.QueuePayload().queueProgramSemanticFingerprint = program.programSemanticFingerprint;
@@ -84280,10 +82072,11 @@ bool PrepareImmediateActionQueueInstance(
     row.QueueCheckpointKey() = checkpoint;
     row.queueNaturalEnd = !hasContinuation;
     scratch->queueProgram = &program;
-    scratch->queueHasContinuation = hasContinuation;
-    if (!hasContinuation) return true;
+    scratch->queueHasContinuation = hasContinuation && !signalOnlyNoOverlap;
+    row.queueSignalOnlyNoOverlap = signalOnlyNoOverlap;
+    if (!hasContinuation && !prepareTerminalOccurrence) return true;
 
-    if (selectedPlayable.kind != harken::PlayableKindV1::Sound) {
+    if (hasContinuation && selectedPlayable.kind != harken::PlayableKindV1::Sound && !signalOnlyNoOverlap) {
         harken::DecisionReserveRequest decision{};
         decision.world = worldGeneration;
         decision.transport = engine.timelinePool.Epoch();
@@ -84313,6 +82106,8 @@ struct QueueRootPreparationContext {
     VnEmitterHandle emitter;
     VnActionFiringHandle rootHandle;
     std::uint64_t admittedImmediateFrame;
+    bool signalOnlyNoOverlap = false;
+    bool directRoot = false;
 };
 
 template <typename Release>
@@ -84349,6 +82144,11 @@ bool PrepareContainerQueueRoot(
     }
     harken::Engine& engine = *context.engine;
     harken::EnginePlayableServiceRow& row = *scratch->row;
+    if (context.signalOnlyNoOverlap && hasContinuation &&
+        (program.queueSplice != harken::QueueSpliceV1::Butt || program.transitionProgramIndex != UINT32_MAX)) {
+        context.result = VN_CAPABILITY_UNAVAILABLE;
+        return false;
+    }
     if (row.pendingImmediateEntry)
         engine.SetPlayableServiceCohortRoot(row, context.rootHandle);
     // A terminal direct child has no successor timing cohort. A retained
@@ -84369,12 +82169,12 @@ bool PrepareContainerQueueRoot(
     const bool packQueue = scratch->packLeaseOwned || scratch->packLeaseBorrowed;
     const std::uint64_t queueWorldGeneration =
         packQueue ? scratch->packLease.compositeGeneration
-                  : engine.variables.CurrentPlayableWorld().generation;
+                  : row.Invocation().worldGeneration;
     if (!PrepareImmediateActionQueueInstance(
             engine, scratch, row, program, initial, resetInitial,
             hasContinuation, currentChildOrdinal, selectedPlayable,
             ownerInstance, ownerEpoch,
-            queueWorldGeneration, context.emitter)) {
+            queueWorldGeneration, context.emitter, context.signalOnlyNoOverlap, context.directRoot)) {
         context.result = VN_NO_VOICE;
         return false;
     }
@@ -84406,6 +82206,12 @@ bool PrepareContainerQueueRoot(
     }
 
     if (!hasContinuation) return true;
+    if (context.signalOnlyNoOverlap) {
+        row.queueTimingPending = false;
+        if (scratch->voiceStartCount != 0)
+            row.QueuePayload().queueCurrentTailFrames = scratch->voiceStarts[0].postSourceTailFrames;
+        return true;
+    }
 
     if (compositeChild) {
         return true;
@@ -86555,12 +84361,13 @@ public:
         packQueue = scratch->packLeaseOwned || scratch->packLeaseBorrowed;
         world =
             packQueue ? harken::PlayableWorldViewV1{}
-                      : engine.variables.CurrentPlayableWorld();
+                      : row.queueWorldUsesCurrentAuthority ? engine.variables.CurrentPlayableWorld() : row.QueueWorld();
         queueWorldGeneration =
             packQueue ? scratch->packLease.compositeGeneration : world.generation;
         const auto authority = packQueue
             ? harken::PlayableExecutionAuthority::Pack(scratch->packPlaybackView)
-            : harken::PlayableExecutionAuthority::Current(world);
+            : row.queueWorldUsesCurrentAuthority ? harken::PlayableExecutionAuthority::Current(world)
+                : harken::PlayableExecutionAuthority::Frozen(world);
 
         next = initialNext;
         if (!projection.Resolve(world, packQueue ? &scratch->packPlaybackView : nullptr,
@@ -88335,7 +86142,8 @@ bool PrepareContainerQueueCompositeTree(
     harken::EngineActionPlayScratch* scratch,
     const harken::PlayableRefV1& root,
     const std::uint32_t* selectedOrdinals, std::uint32_t selectionCount,
-    const MaterializedScheduleSet& materialized) noexcept {
+    const MaterializedScheduleSet& materialized,
+    harken::PlayableExecutionAuthorityKind worldAuthority = harken::PlayableExecutionAuthorityKind::CurrentWorld) noexcept {
     if (scratch == nullptr ||
         selectedOrdinals == nullptr || selectionCount == 0 ||
         selectionCount >= harken::kSelectionPathNodeCapacity) {
@@ -88360,7 +86168,8 @@ bool PrepareContainerQueueCompositeTree(
     auto finalKind = harken::PlayableKind::Container;
     const auto authority = (scratch->packLeaseOwned || scratch->packLeaseBorrowed)
         ? harken::PlayableExecutionAuthority::Pack(scratch->packPlaybackView)
-        : harken::PlayableExecutionAuthority::Current(world);
+        : worldAuthority == harken::PlayableExecutionAuthorityKind::FrozenWorld
+            ? harken::PlayableExecutionAuthority::Frozen(world) : harken::PlayableExecutionAuthority::Current(world);
     const bool frontierPrepared = (scratch->packLeaseOwned || scratch->packLeaseBorrowed)
         ? PrepareSharedPlayableFrontier(
               engine, scratch->playableTreeExecutor, authority,
@@ -88780,7 +86589,13 @@ struct ContainerPreparationContext {
     harken::ParentAudioGroupRef initialAdmissionGroup{};
     std::uint32_t* initialAdmissionMemberCursor = nullptr;
     bool directRoot = false;
+    bool directQueueSignalOnlyNoOverlap = false;
     bool allowImmediateLane = true;
+    harken::PlayableExecutionAuthority WorldAuthority() const noexcept {
+        return worldAuthority == harken::PlayableExecutionAuthorityKind::FrozenWorld
+            ? harken::PlayableExecutionAuthority::Frozen(world)
+            : harken::PlayableExecutionAuthority::Current(world);
+    }
     std::uint64_t ReadFrame(std::uint64_t originalFallback) const noexcept {
         // Action roots choose their existing immediate or fixed read frame.
         // Only native descendants and direct schedule roots inherit a cut.
@@ -88816,6 +86631,47 @@ struct ContainerPreparationContext {
     bool containerBatchCompatible = true, soundBatchCompatible = true;
     bool mixedSoundBatchCompatible = true;
 };
+
+bool AdmitDirectQueueFrontier(ContainerPreparationContext& context,
+    harken::EngineActionPlayScratch& scratch, const SharedInitialFrontier& frontier) noexcept {
+    if (!context.directRoot || frontier.dynamicSchedule) return true;
+    context.directQueueSignalOnlyNoOverlap = frontier.signalOnlyNoOverlap;
+    auto& engine = *context.engine;
+    auto frame = context.admittedImmediateFrame;
+    if (!frontier.signalOnlyNoOverlap && frontier.schedule.leafCount <= 1u &&
+        frontier.queue.frontier.status == harken::QueueSequenceStepStatus::Successor) {
+        const auto block = static_cast<std::uint64_t>(engine.config.blockFrames);
+        const auto period = static_cast<std::uint64_t>(engine.config.mixRate.SampleRate() / 50u);
+        const auto lead = std::max<std::uint64_t>(std::max(1u, engine.timelinePool.PublishLeadQuanta()),
+            (period + block - 1u) / block + 1u) + 2u;
+        const auto observed = engine.mixer.BlocksRendered();
+        if (observed > UINT64_MAX - lead || observed + lead > UINT64_MAX / block) {
+            context.result = VN_BACKPRESSURE;
+            return false;
+        }
+        frame = std::max(frame, (observed + lead) * block);
+    }
+    context.startFrame = frame;
+    context.originalReadFrame = frame;
+    scratch.storage.initialSelection.executeFrame = frame;
+    return true;
+}
+
+bool CheckDirectVariableControlInputs(ContainerPreparationContext& context,
+    const SharedVariableControlDecisionPlan& decision) noexcept {
+    if (!context.directRoot) return true;
+    auto& engine = *context.engine;
+    if (context.world.generation != engine.variables.CurrentWorldGeneration()) {
+        context.result = VN_CAPABILITY_UNAVAILABLE;
+        return false;
+    }
+    if (engine.variables.HasPendingBankWrite(context.emitter,
+            decision.uniqueVariableIds.data(), decision.uniqueVariableCount)) {
+        context.result = VN_BACKPRESSURE;
+        return false;
+    }
+    return true;
+}
 
 bool BeginInitialQueueEntryDomain(ContainerPreparationContext& context,
     harken::EngineActionPlayScratch& scratch) noexcept {
@@ -89001,6 +86857,13 @@ struct ActionContainerPreparationOperations {
     }
     bool AllowMode(harken::ContainerModeV1) const noexcept { return true; }
     bool DecorateTraversal(ContainerTraversalRequest&) noexcept { return true; }
+    std::uint32_t SelectionCount(const harken::EngineActionPlayScratch& scratch) const noexcept {
+        return scratch.selectionPlayCount;
+    }
+    bool AcceptSelection(harken::EngineActionPlayScratch& scratch) const noexcept {
+        ++scratch.selectionPlayCount;
+        return true;
+    }
     bool EarlierWrites(const harken::ContainerProgramViewV3& program,
         const SharedVariableControlDecisionPlan& selected) const noexcept {
         return EarlierVariableWritesUseInitialVcLane(plan, stepIndex, program, selected);
@@ -89228,7 +87091,31 @@ struct ScheduleContainerPreparationOperations {
             std::copy_n(request.path, request.pathCount, selectionPath.begin() + prefix);
         request.pathCount += static_cast<std::uint32_t>(prefix);
         request.path = selectionPath.data();
+        if (context.directRoot) {
+            if (activeScratch == nullptr || activeScratch->directSelectionOwnerCount >=
+                    activeScratch->directSelectionOwnerContexts.size()) return false;
+            auto& owner = activeScratch->directSelectionOwnerContexts[activeScratch->directSelectionOwnerCount];
+            owner.table = &engine.selectionMemory;
+            request.ownership = ContainerTraversalOwnership::DirectDelta;
+            request.delta = &owner.delta;
+            request.prepared = nullptr;
+            request.materializedOrdinal = nullptr;
+            request.eventIndex = request.pathCount;
+            request.executeFrame = 0;
+        }
         return true;
+    }
+    std::uint32_t SelectionCount(const harken::EngineActionPlayScratch& scratch) const noexcept {
+        return context.directRoot ? scratch.directSelectionOwnerCount : scratch.selectionPlayCount;
+    }
+    bool AcceptSelection(harken::EngineActionPlayScratch& scratch) noexcept {
+        if (!context.directRoot) {
+            ++scratch.selectionPlayCount;
+            return true;
+        }
+        auto& owner = scratch.directSelectionOwnerContexts[scratch.directSelectionOwnerCount++];
+        return RegisterFrontierPreparedOwner(scratch, &owner, ValidatePreparedDirectSelectionOwner,
+            CommitPreparedDirectSelectionOwner, CancelPreparedDirectSelectionOwner);
     }
     bool PrepareVariables() noexcept {
         if (activeScratch != nullptr && context.initialNativeForestOwner.Valid()) {
@@ -89259,7 +87146,8 @@ struct ScheduleContainerPreparationOperations {
 
     template <typename... Args> bool CallPrepareImmediateActionQueueRoot(Args&&... args) noexcept {
         QueueRootPreparationContext root{&engine, context.result, context.emitter,
-            context.rootHandle, context.startFrame};
+            context.rootHandle, context.startFrame,
+            context.directRoot && context.directQueueSignalOnlyNoOverlap, context.directRoot};
         return HasPreparationAuthority(activeScratch) && PrepareContainerQueueRoot(root,
             [&](harken::EngineActionPlayScratch* scratch) noexcept { return Release(scratch); },
             std::forward<Args>(args)...);
@@ -89276,6 +87164,8 @@ struct ScheduleContainerPreparationOperations {
         const harken::EffectiveQueueState& next, harken::EnginePlayableServiceRow* queue = nullptr,
         PreparedImmediateQueueSuccessorSelection* selection = nullptr) noexcept {
         if (scratch == nullptr || !HasPreparationAuthority(scratch)) return Refuse();
+        // Ordinary Direct admission accepts the current Source before trying its successor.
+        if (context.directRoot && !scratch->variableControl) return true;
         ScheduleQueuePreparation schedule{&engine, scratch, Parent(), context.rootHandle,
             context.startFrame, &context.result, &context.queueProgramCapacityRefused, context.privateScheduleOwner};
         QueuePreparationEntry entry(schedule);
@@ -89324,7 +87214,7 @@ struct ScheduleContainerPreparationOperations {
             [&](harken::PlayableKind kind, const harken::MonitorRequestContext& request,
                 const harken::MonitorEmitterOrigin& origin, harken::EngineActionPlayScratch& owned) noexcept {
                 return PrepareRoot(kind, request, origin, owned);
-            }, scratch, root, ordinals, count, materialized);
+            }, scratch, root, ordinals, count, materialized, context.worldAuthority);
     }
     bool CallPromoteInitialVariableControlQueuesToLane(harken::EngineActionPlayScratch& scratch,
         VnActionFiringHandle) noexcept {
@@ -89365,7 +87255,9 @@ struct ScheduleContainerPreparationOperations {
         return PrepareVariableControlInitialImpl(engine, world, nullptr, request, program,
             discrete, continuous, count, bank, row, ticket, metadata, scratch, startFrame,
             nullptr, nullptr, 0, false, cut, order, nullptr, nullptr,
-            DirectRootAllowed(scratch) ? nullptr : &schedule, &context, context.privateScheduleOwner);
+            DirectRootAllowed(scratch) ? nullptr : &schedule,
+            context.directRoot && !VariableControlHasDynamicScheduleChildren(engine, world, program) ? nullptr : &context,
+            context.privateScheduleOwner);
     }
     harken::PlayableStartResult PrepareVariableInitial(harken::Engine& targetEngine,
         const harken::PackPlaybackView& world,
@@ -89442,7 +87334,7 @@ ContainerMixedTerminalResult PrepareContainerMixedScheduleTerminal(ContainerPrep
         return ContainerMixedTerminalResult::Failed;
     const bool pack = scratch.packLeaseOwned || scratch.packLeaseBorrowed;
     const auto authority = pack ? harken::PlayableExecutionAuthority::Pack(scratch.packPlaybackView)
-        : harken::PlayableExecutionAuthority::Current(context.world);
+        : context.WorldAuthority();
     const auto ticket = context.materializationSequence != 0 ? context.materializationSequence
         : context.originalSingleIssue.Sequence();
     if (ticket == 0 || (!engine.logicCommits.IsOriginalPreparedIssueFor(context.originalSingleIssue) &&
@@ -89485,7 +87377,7 @@ ContainerMixedTerminalResult PrepareContainerMixedScheduleTerminal(ContainerPrep
     rootService->ticket = ticket;
     rootService->startFrame = context.startFrame;
     rootService->containerLoopAuthorityKind = pack ? harken::PlayableExecutionAuthorityKind::Pack
-        : harken::PlayableExecutionAuthorityKind::CurrentWorld;
+        : context.worldAuthority;
     rootService->ContainerLoopWorld() = pack ? harken::PlayableWorldViewV1{} : context.world;
     auto& invocation = rootService->Invocation();
     invocation.scheduleCallerSeed = context.callerSeed;
@@ -89693,14 +87585,16 @@ bool PrepareContainerSingleLeaf(
     std::uint32_t selectionCount,
     harken::PlayableKind instanceKind,
     bool enablePendingImmediate = false,
-    bool retainOriginalQueueCurrentSource = false) noexcept {
+    bool retainOriginalQueueCurrentSource = false,
+    bool reusePreparedTree = false) noexcept {
     if (scratch == nullptr || context.engine == nullptr) {
         return false;
     }
+    const bool directQueueSource = context.directRoot && retainOriginalQueueCurrentSource;
     retainOriginalQueueCurrentSource = retainOriginalQueueCurrentSource && context.allowImmediateLane;
     const bool scheduleTargetFade = context.scheduleTargetFade != nullptr;
     const bool directScheduleLeaf = context.directRoot &&
-        (instanceKind == harken::PlayableKind::Track || instanceKind == harken::PlayableKind::Piece);
+        (instanceKind == harken::PlayableKind::Track || instanceKind == harken::PlayableKind::Piece || reusePreparedTree);
     harken::Engine& engine = *context.engine;
     const auto& planned = context.entry;
     harken::PlayableWorldViewV1 world{};
@@ -89768,7 +87662,8 @@ bool PrepareContainerSingleLeaf(
 
     auto* row = engine.PrepareFreePlayableService(instanceKind != harken::PlayableKind::Sound || scheduleTargetFade);
     if (row == nullptr ||
-        !operations.PrepareRoot(instanceKind, context.playbackRequest, context.emitterOrigin, *scratch)) {
+        (reusePreparedTree ? !scratch->instance.Valid() :
+            !operations.PrepareRoot(instanceKind, context.playbackRequest, context.emitterOrigin, *scratch))) {
         (void)operations.ReleaseLease(scratch);
         context.result = VN_NO_VOICE;
         return false;
@@ -89797,7 +87692,7 @@ bool PrepareContainerSingleLeaf(
         (scratch->packLeaseOwned || scratch->packLeaseBorrowed) ? MonitorContentFor(scratch->packPlaybackView, root)
                                 : MonitorContentFor(world, root));
 
-    if (directScheduleLeaf) {
+    if (directScheduleLeaf && !reusePreparedTree) {
         if (!scratch->playableTreeExecutor.PrepareInstance(engine.playableInstances,
                 harken::PlayableKind::Sound, scratch->instance.Handle())) {
             (void)scratch->playableTreeExecutor.Cancel(engine.playableInstances);
@@ -89824,7 +87719,7 @@ bool PrepareContainerSingleLeaf(
     // Materialize every authored Container edge in the executor transaction.
     // Schedule ownership remains on the public root; these instances and rows
     // provide the runtime parent topology used by lifecycle service.
-    if (instanceKind == harken::PlayableKind::Container &&
+    if (!reusePreparedTree && instanceKind == harken::PlayableKind::Container &&
         selectionCount != 0 && cut.leaf.kind == harken::PlayableKindV1::Sound) {
         const auto loopLimitFor = [&](VnObjectId stableId) noexcept {
             return (scratch->packLeaseOwned || scratch->packLeaseBorrowed)
@@ -89842,7 +87737,7 @@ bool PrepareContainerSingleLeaf(
                   scratch->instance.ScheduleEpoch(), loopLimitFor)
             : PrepareSharedPlayableFrontier(
                   engine, scratch->playableTreeExecutor,
-                  harken::PlayableExecutionAuthority::Current(world), world,
+                  context.WorldAuthority(), world,
                   root, selectedOrdinals, selectionCount,
                   scratch->instance.Handle(), scratch->instance.ScheduleEpoch(),
                   loopLimitFor);
@@ -89996,13 +87891,18 @@ bool PrepareContainerSingleLeaf(
         (scratch->packLeaseOwned || scratch->packLeaseBorrowed) ? scratch->packLease.compositeGeneration
                                 : world.generation;
     row->root = root;
+    if (instanceKind == harken::PlayableKind::Container) {
+        row->containerLoopAuthorityKind = (scratch->packLeaseOwned || scratch->packLeaseBorrowed)
+            ? harken::PlayableExecutionAuthorityKind::Pack : context.worldAuthority;
+        row->ContainerLoopWorld() = world;
+    }
     row->leaf = cut.leaf;
     if (instanceKind == harken::PlayableKind::Sound && (context.directRoot || context.parentService.Valid()))
         row->activeLeafInstance = row->rootInstance;
     row->usesCapturedVoice = true;
     row->capturedVoice = std::move(capturedVoice);
     row->startFrame = startFrame;
-    row->pendingDirectStartBinding = context.directRoot && (instanceKind == harken::PlayableKind::Sound || directScheduleLeaf);
+    row->pendingDirectStartBinding = context.directRoot && instanceKind != harken::PlayableKind::Container;
     row->pendingDirectEntryFrame = row->pendingDirectStartBinding ? startFrame : 0;
     row->pendingImmediateEntry = pendingImmediateEntry;
     SetPendingImmediateEntryWork(engine, *row, pendingImmediateEntry);
@@ -90017,7 +87917,7 @@ bool PrepareContainerSingleLeaf(
     if (scratch->initialForestPublication && instanceKind == harken::PlayableKind::Container) {
         const auto authority = (scratch->packLeaseOwned || scratch->packLeaseBorrowed)
             ? harken::PlayableExecutionAuthority::Pack(scratch->packPlaybackView)
-            : harken::PlayableExecutionAuthority::Current(world);
+            : context.WorldAuthority();
         const harken::ContainerProgramViewV3* nativeProgram = nullptr;
         const bool resolved = (scratch->packLeaseOwned || scratch->packLeaseBorrowed)
             ? ResolveSharedContainerProgram(authority, scratch->packPlaybackView, root, &nativeProgram)
@@ -90035,7 +87935,7 @@ bool PrepareContainerSingleLeaf(
     if (instanceKind == harken::PlayableKind::Container && selectionCount > 1u) {
         const auto authority = (scratch->packLeaseOwned || scratch->packLeaseBorrowed)
             ? harken::PlayableExecutionAuthority::Pack(scratch->packPlaybackView)
-            : harken::PlayableExecutionAuthority::Current(world);
+            : context.WorldAuthority();
         const harken::ContainerProgramViewV3* rootProgram = nullptr;
         const harken::ContainerChildProgramViewV2* firstChild = nullptr;
         const bool resolved = (scratch->packLeaseOwned || scratch->packLeaseBorrowed)
@@ -90062,7 +87962,7 @@ bool PrepareContainerSingleLeaf(
                 row->containerInstanceCount = selectionCount;
                 row->activeLeafInstance = scratch->playableTreeExecutor.PreparedInstanceHandle(selectionCount - 1u);
                 row->containerLoopAuthorityKind = (scratch->packLeaseOwned || scratch->packLeaseBorrowed)
-                    ? harken::PlayableExecutionAuthorityKind::Pack : harken::PlayableExecutionAuthorityKind::CurrentWorld;
+                    ? harken::PlayableExecutionAuthorityKind::Pack : context.worldAuthority;
                 auto cursor = root;
                 for (std::uint32_t index = 0; index < selectionCount; ++index) {
                     const harken::ContainerProgramViewV3* program = nullptr;
@@ -90129,10 +88029,11 @@ bool PrepareContainerSingleLeaf(
         row->schedule.runtimeProgram = {row->runtimeProgram.generation, &row->runtimeProgram};
     }
     if (directScheduleLeaf) {
-        row->activeLeafInstance = scratch->playableTreeExecutor.PreparedInstanceHandle(0);
+        const auto leafIndex = scratch->playableTreeExecutor.InstanceReservationCount() - 1u;
+        row->activeLeafInstance = scratch->playableTreeExecutor.PreparedInstanceHandle(leafIndex);
         row->runtimeProgram.generation = row->activeLeafInstance;
         row->schedule.ownerInstance = row->activeLeafInstance;
-        row->schedule.ownerInstanceScheduleEpoch = scratch->playableTreeExecutor.PreparedInstanceEpoch(0);
+        row->schedule.ownerInstanceScheduleEpoch = scratch->playableTreeExecutor.PreparedInstanceEpoch(leafIndex);
         row->schedule.runtimeProgram = {row->activeLeafInstance, &row->runtimeProgram};
     }
     if (frontierChild != nullptr) {
@@ -90163,7 +88064,7 @@ bool PrepareContainerSingleLeaf(
         return false;
     }
     const bool ordinarySingle = instanceKind == harken::PlayableKind::Container &&
-        !retainOriginalQueueCurrentSource && (frontierChild == nullptr || !frontierChild->queueMode);
+        !directQueueSource && !retainOriginalQueueCurrentSource && (frontierChild == nullptr || !frontierChild->queueMode);
     bool variableAncestor = false;
     if (context.parentService.Valid() &&
         !ResolveScheduleVariableAncestor(engine, *row, &variableAncestor)) {
@@ -90173,8 +88074,8 @@ bool PrepareContainerSingleLeaf(
     }
     const bool variableSound = variableAncestor && instanceKind == harken::PlayableKind::Sound;
     auto* const resourceService = frontierChild != nullptr ? frontierChild
-        : ordinarySingle || retainOriginalQueueCurrentSource || variableSound || scheduleTargetFade ? row : nullptr;
-    auto* const memberService = frontierChild != nullptr ? frontierChild : variableSound ? row : nullptr;
+        : ordinarySingle || directQueueSource || retainOriginalQueueCurrentSource || variableSound || scheduleTargetFade ? row : nullptr;
+    auto* const memberService = frontierChild != nullptr && !context.directRoot ? frontierChild : variableSound ? row : nullptr;
     harken::CapturedTimelineVoiceInstall memberVoice;
     if (memberService != nullptr) memberVoice = row->capturedVoice.Share();
     const auto memberLeaf = variableSound ? scratch->instance.Handle() : row->activeLeafInstance;
@@ -90270,7 +88171,8 @@ bool PrepareContainerSingleLeaf(
     }
     if ((ordinarySingle || scheduleTargetFade) && !FreezeInitialOrdinaryProgram(engine, *row, *resourceService, installed,
             row->activeLeafInstance, instanceKind == harken::PlayableKind::Sound ? scratch->instance.ScheduleEpoch()
-                : scratch->playableTreeExecutor.PreparedInstanceEpoch(selectionCount - 1u), context.scheduleTargetFade)) {
+                : scratch->playableTreeExecutor.PreparedInstanceEpoch(reusePreparedTree ?
+                    scratch->playableTreeExecutor.InstanceReservationCount() - 1u : selectionCount - 1u), context.scheduleTargetFade)) {
         (void)operations.Release(scratch);
         context.result = VN_BACKPRESSURE;
         return false;
@@ -90318,7 +88220,52 @@ bool PrepareContainerCompositeQueueChild(
     const bool packQueue = (scratch->packLeaseOwned || scratch->packLeaseBorrowed);
     const harken::PlayableWorldViewV1 world =
         packQueue ? harken::PlayableWorldViewV1{}
-                  : engine.variables.CurrentPlayableWorld();
+                  : context.world;
+    if (context.directRoot && !context.directQueueSignalOnlyNoOverlap && hasContinuation && materialized.leafCount > 1u &&
+        engine.compositeCompletionOwners.FreeCount() == 0) {
+        context.result = VN_NO_VOICE;
+        return false;
+    }
+    if (context.directRoot && materialized.leafCount == 1u) {
+        const auto& leaf = materialized.leaves[0];
+        const auto baseFrame = context.startFrame;
+        if (leaf.startOffsetFrames > UINT64_MAX - baseFrame ||
+            (leaf.endOffsetFrames != UINT64_MAX && leaf.endOffsetFrames > UINT64_MAX - baseFrame) ||
+            (materialized.hasZeroWorkCompletion && materialized.zeroWorkCompletionOffsetFrames > UINT64_MAX - baseFrame)) {
+            context.result = VN_CAPABILITY_UNAVAILABLE;
+            return false;
+        }
+        if (!reusePreparedTree && !operations.CallPrepareImmediateActionNestedQueueCompositeTree(
+                scratch, root, &selected.stableChildOrdinal, 1u, materialized)) return false;
+        context.startFrame = baseFrame + leaf.startOffsetFrames;
+        if (context.startFrame >= engine.timelinePool.WindowEndFrame() &&
+            engine.timelineDeferred.Count() + engine.timelineDeferred.PreparedCount() >= engine.timelineDeferred.Capacity()) {
+            context.result = VN_BACKPRESSURE;
+            return false;
+        }
+        context.endFrame = leaf.endOffsetFrames == UINT64_MAX ? UINT64_MAX : baseFrame + leaf.endOffsetFrames;
+        const auto prefixOrdinals = context.prefixOrdinals;
+        const auto prefixTrackIds = context.prefixTrackIds;
+        context.prefixOrdinals = {leaf.selectedOrdinals.data(), leaf.selectionCount};
+        context.prefixTrackIds = {leaf.pathTrackIds.data(), leaf.selectionCount};
+        const bool prepared = PrepareContainerSingleLeaf(context, operations, scratch, root,
+            nullptr, 0, harken::PlayableKind::Container, false, ownQueueLifecycle, true);
+        context.prefixOrdinals = prefixOrdinals;
+        context.prefixTrackIds = prefixTrackIds;
+        if (!prepared) return false;
+        auto& row = *scratch->row;
+        row.selectionCount = 1;
+        row.selectedChildOrdinals[0] = selected.stableChildOrdinal;
+        row.hasZeroWorkCompletion = materialized.hasZeroWorkCompletion;
+        row.zeroWorkCompletionFrame = materialized.hasZeroWorkCompletion
+            ? baseFrame + materialized.zeroWorkCompletionOffsetFrames : 0;
+        if (ownQueueLifecycle && !operations.CallPrepareImmediateActionQueueRoot(scratch, program,
+                initial, resetInitial, hasContinuation, selected.stableChildOrdinal, leaf.leaf,
+                queueOwner, queueOwnerEpoch)) return false;
+        row.QueueRandomSeed() = randomSeed;
+        row.queueRandomSeedValid = randomQueue;
+        return true;
+    }
     auto leavesStorage = AllocatePreparedScheduleLeaves(engine);
     if (!leavesStorage) {
         if (packQueue) {
@@ -90343,6 +88290,7 @@ bool PrepareContainerCompositeQueueChild(
             if (packQueue) {
                 (void)operations.ReleaseLease(scratch);
             }
+            if (context.directFailure != nullptr) *context.directFailure = status;
             context.result = MapImmediateActionPlayStatus(status);
             return false;
         }
@@ -90378,6 +88326,7 @@ bool PrepareContainerCompositeQueueChild(
               engine, leaves.data(), materialized.leafCount,
               baseStartFrame, 0, pendingImmediateEntry);
     if (preflight != harken::PlayableStartStatus::Accepted) {
+        if (context.directFailure != nullptr) *context.directFailure = preflight;
         context.result = MapImmediateActionPlayStatus(preflight);
         return false;
     }
@@ -90515,10 +88464,15 @@ bool PrepareContainerCompositeQueueChild(
         ? scratch->packLease.compositeGeneration
         : world.generation;
     row->root = root;
+    row->containerLoopAuthorityKind = packQueue ? harken::PlayableExecutionAuthorityKind::Pack : context.worldAuthority;
+    row->ContainerLoopWorld() = world;
     row->selectionCount = 1;
     row->selectedChildOrdinals[0] = selected.stableChildOrdinal;
     row->scheduleStorageBase = static_cast<std::uint32_t>(memberBase);
     row->scheduleLeafCount = materialized.leafCount;
+    if (context.directRoot && markerOnly && scratch->playableTreeExecutor.InstanceReservationCount() != 0)
+        row->activeLeafInstance = scratch->playableTreeExecutor.PreparedInstanceHandle(
+            scratch->playableTreeExecutor.InstanceReservationCount() - 1u);
     row->QueuePayload().queueCurrentScheduleBase =
         static_cast<std::uint32_t>(memberBase);
     row->QueuePayload().queueCurrentScheduleLeafCount = materialized.leafCount;
@@ -90559,6 +88513,7 @@ bool PrepareContainerCompositeQueueChild(
     }
     row->QueueRandomSeed() = randomSeed;
     row->queueRandomSeedValid = randomQueue;
+    hasContinuation = hasContinuation && !row->queueSignalOnlyNoOverlap;
 
     std::uint32_t currentEventCount = materialized.leafCount;
     if (context.scheduleTargetFade != nullptr) {
@@ -90710,7 +88665,8 @@ bool PrepareContainerCompositeQueueChild(
             ? harken::ParentAudioGroupRef{}
             : harken::ParentAudioGroupRef{row->initialQueueEntryDecision};
         ScopedActionVariableReadCut initialVariables{engine.variables};
-        const bool captureVariables = (row->pendingImmediateEntry || context.originalReadFrame.has_value()) &&
+        const bool captureVariables = !context.directRoot &&
+            (row->pendingImmediateEntry || context.originalReadFrame.has_value()) &&
             !scratch->queueFutureExecution && (!reusePreparedTree || context.originalReadFrame.has_value()) &&
             source.voice.bindingCount != 0 &&
             (context.originalSingleIssue.Valid() || context.deferredChildIdentity.HasPreparation());
@@ -90749,6 +88705,7 @@ bool PrepareContainerCompositeQueueChild(
         const auto captureStatus = PrepareNativeVoiceCapture(engine, *scratch, false,
             index, source.voice, &captured);
         if (captureStatus != harken::PlayableStartStatus::Accepted) {
+            if (context.directFailure != nullptr) *context.directFailure = captureStatus;
             context.result = MapImmediateActionPlayStatus(captureStatus);
             (void)operations.Release(scratch);
             return false;
@@ -91025,6 +88982,7 @@ bool PrepareContainerNestedVariableControl(
         harken::GridEvaluationStatus::Ok) {
         return fail(VN_CAPABILITY_UNAVAILABLE);
     }
+    if (!CheckDirectVariableControlInputs(context, decision)) return fail(context.result);
     if (!operations.PrepareVariables()) {
         return fail(context.result);
     }
@@ -91041,8 +88999,10 @@ bool PrepareContainerNestedVariableControl(
                             : context.admittedImmediateFrame;
     const bool materializedVariables = context.materializingDeferred &&
         context.materializationSequence != 0 && planned.deferredFrame != 0;
-    const bool captureInitialVariables = context.originalSingleIssue.Valid() ||
-        context.deferredChildIdentity.HasPreparation() || materializedVariables;
+    const bool directInitialVariables = context.directRoot &&
+        !VariableControlHasDynamicScheduleChildren(engine, world, program);
+    const bool captureInitialVariables = !directInitialVariables && (context.originalSingleIssue.Valid() ||
+        context.deferredChildIdentity.HasPreparation() || materializedVariables);
     ScopedActionVariableReadCut initialVariables{engine.variables};
     if (captureInitialVariables) {
         const bool captured = materializedVariables
@@ -91056,7 +89016,10 @@ bool PrepareContainerNestedVariableControl(
         if (!captured) return fail(VN_BACKPRESSURE);
     }
     harken::BankVersionToken bank{};
-    if (captureInitialVariables) {
+    if (directInitialVariables) {
+        if (!engine.variables.CaptureCurrentBank(context.emitter, decision.variableIds.data(),
+                decision.variableCount, values.data(), &bank)) return fail(VN_BACKPRESSURE);
+    } else if (captureInitialVariables) {
         if (!engine.variables.CaptureCurrentBank(context.emitter, nullptr, 0, nullptr, &bank))
             return fail(VN_BACKPRESSURE);
         const auto reader = engine.variables.ReadCutReader(initialVariables.ref);
@@ -91122,6 +89085,7 @@ bool PrepareContainerNestedVariableControl(
             harken::VariablePlaybackOrder{context.ReadFrame(overlayFrame), overlaySequence, planned.executionOrdinal});
     }
     if (prepared.status != harken::PlayableStartStatus::Accepted) {
+        if (context.directFailure != nullptr) *context.directFailure = prepared.status;
         return fail(MapImmediateActionPlayStatus(prepared.status));
     }
 
@@ -91157,7 +89121,7 @@ bool PrepareContainerExecution(
     const auto& planned = context.entry;
     const auto containerLoopAuthorityKind = (scratch->packLeaseOwned || scratch->packLeaseBorrowed)
         ? harken::PlayableExecutionAuthorityKind::Pack
-        : harken::PlayableExecutionAuthorityKind::CurrentWorld;
+        : context.worldAuthority;
     harken::PlayableWorldViewV1 world{};
     if (!(scratch->packLeaseOwned || scratch->packLeaseBorrowed)) {
         world = context.world;
@@ -91176,7 +89140,7 @@ bool PrepareContainerExecution(
                 canonicalParent, canonicalChild);
         }
         return ResolveSharedContainerStep(
-            harken::PlayableExecutionAuthority::Current(world), world, parent,
+            context.WorldAuthority(), world, parent,
             ordinal, program, child, canonicalParent, canonicalChild);
     };
     const auto resolveSharedProgramChild =
@@ -91187,13 +89151,13 @@ bool PrepareContainerExecution(
         const auto authority = (scratch->packLeaseOwned || scratch->packLeaseBorrowed)
             ? harken::PlayableExecutionAuthority::Pack(
                   scratch->packPlaybackView)
-            : harken::PlayableExecutionAuthority::Current(world);
+            : context.WorldAuthority();
         return ResolveSharedContainerChild(
             authority, program, ordinal, child, canonicalChild);
     };
     const auto authority = (scratch->packLeaseOwned || scratch->packLeaseBorrowed)
         ? harken::PlayableExecutionAuthority::Pack(scratch->packPlaybackView)
-        : harken::PlayableExecutionAuthority::Current(world);
+        : context.WorldAuthority();
     harken::PlayableRefV1 root = context.root;
     const harken::ContainerProgramViewV3* rootProgram = nullptr;
     const bool rootProgramResolved = (scratch->packLeaseOwned || scratch->packLeaseBorrowed)
@@ -91307,6 +89271,7 @@ bool PrepareContainerExecution(
             harken::GridEvaluationStatus::Ok) {
             return failVariableControl(VN_CAPABILITY_UNAVAILABLE);
         }
+        if (!CheckDirectVariableControlInputs(context, decision)) return failVariableControl(context.result);
         if (!operations.PrepareVariables()) {
             if ((scratch->packLeaseOwned || scratch->packLeaseBorrowed)) {
                 (void)operations.ReleaseLease(scratch);
@@ -91324,13 +89289,14 @@ bool PrepareContainerExecution(
         const bool nativeScheduleBranches = (scratch->packLeaseOwned || scratch->packLeaseBorrowed)
             ? VariableControlHasDynamicScheduleChildren(engine, scratch->packPlaybackView, *rootProgram)
             : VariableControlHasDynamicScheduleChildren(engine, world, *rootProgram);
+        const bool directInitialVariables = context.directRoot && !nativeScheduleBranches;
         const bool registeredLaneVariables = !nativeScheduleBranches && planned.deferredFrame == 0 &&
             (context.multiVariableControlImmediateLane ||
              context.initialVcUsesImmediateLane);
         bool pendingRegisteredVariables = registeredLaneVariables;
         const bool materializedVariables = context.materializingDeferred &&
             context.materializationSequence != 0 && planned.deferredFrame != 0;
-        bool captureInitialVariables = (planned.deferredFrame != 0 || registeredLaneVariables) &&
+        bool captureInitialVariables = !directInitialVariables && (planned.deferredFrame != 0 || registeredLaneVariables) &&
             (context.originalSingleIssue.Valid() || context.deferredChildIdentity.HasPreparation() || materializedVariables);
         if (captureInitialVariables) {
             const bool captured = materializedVariables
@@ -91345,7 +89311,10 @@ bool PrepareContainerExecution(
             if (!captured) return failVariableControl(VN_BACKPRESSURE);
         }
         harken::BankVersionToken bank{};
-        if (captureInitialVariables) {
+        if (directInitialVariables) {
+            if (!engine.variables.CaptureCurrentBank(context.emitter, decision.variableIds.data(),
+                    decision.variableCount, values.data(), &bank)) return failVariableControl(VN_BACKPRESSURE);
+        } else if (captureInitialVariables) {
             if (!engine.variables.CaptureCurrentBank(context.emitter, nullptr, 0, nullptr, &bank))
                 return failVariableControl(VN_BACKPRESSURE);
             const auto reader = engine.variables.ReadCutReader(initialVariables.ref);
@@ -91414,7 +89383,7 @@ bool PrepareContainerExecution(
                         FindQueueChild(*rootProgram, decision.weights[weight].childStableOrdinal));
             }
         }
-        if (!immediateLane && !captureInitialVariables &&
+        if (!directInitialVariables && !immediateLane && !captureInitialVariables &&
             (context.originalSingleIssue.Valid() || context.deferredChildIdentity.HasPreparation())) {
             // Fixed starts share the actual admitted read cut with their leaf bindings.
             overlayFrame = context.startFrame;
@@ -91506,6 +89475,7 @@ bool PrepareContainerExecution(
             if ((scratch->packLeaseOwned || scratch->packLeaseBorrowed)) {
                 (void)operations.ReleaseLease(scratch);
             }
+            if (context.directFailure != nullptr) *context.directFailure = prepared.status;
             context.result = MapImmediateActionPlayStatus(prepared.status);
             return false;
         }
@@ -91607,6 +89577,7 @@ engine.runtimeRecreateRequired = true;
             }
             return false;
         }
+        if (!AdmitDirectQueueFrontier(context, *scratch, queueFrontier)) return false;
         const bool randomQueue = queueFrontier.queue.randomQueue;
         const auto& randomSeed = queueFrontier.queue.randomSeed;
         const auto& initial = queueFrontier.queue.frontier.initial;
@@ -91661,7 +89632,7 @@ engine.runtimeRecreateRequired = true;
                 [&](ContainerTraversalRequest* requestOut) noexcept {
                 if (requestOut == nullptr ||
                     nestedCount >= nestedOrdinals.size() ||
-                    scratch->selectionPlayCount >=
+                    operations.SelectionCount(*scratch) >=
                         scratch->selectionPlays.size()) {
                     context.result = VN_BACKPRESSURE;
                     (void)operations.Release(scratch);
@@ -91676,12 +89647,11 @@ engine.runtimeRecreateRequired = true;
                     nestedCount, nestedPath.data(),
                     nestedOccurrenceOrdinal,
                     scratch->storage.initialSelection.identity.ticket,
-                    scratch->storage.initialSelection.identity.eventBegin + scratch->selectionPlayCount,
+                    scratch->storage.initialSelection.identity.eventBegin + operations.SelectionCount(*scratch),
                     scratch->storage.initialSelection.executeFrame, 0,
                     ContainerTraversalOwnership::PreparedToken, nullptr,
-                    &scratch->selectionPlays[
-                        scratch->selectionPlayCount], scratch->storage.initialSelection.preparation,
-                    &scratch->storage.initialSelection.materializedOrdinals[scratch->selectionPlayCount]};
+                    &scratch->selectionPlays[operations.SelectionCount(*scratch)], scratch->storage.initialSelection.preparation,
+                    &scratch->storage.initialSelection.materializedOrdinals[operations.SelectionCount(*scratch)]};
                 return operations.DecorateTraversal(*requestOut);
             };
             const auto handleNestedTraversalFailure =
@@ -91697,7 +89667,10 @@ engine.runtimeRecreateRequired = true;
             };
             const auto handleNestedSelection =
                 [&](const ContainerTraversalStep& traversal) noexcept {
-                ++scratch->selectionPlayCount;
+                if (!operations.AcceptSelection(*scratch)) {
+                    failNestedTraversal(VN_BACKPRESSURE);
+                    return ContainerTraversalDirective::Fail;
+                }
                 nestedOrdinals[nestedCount] =
                     traversal.selectedChildOrdinal;
                 nestedPath[nestedCount] = traversal.pathNode;
@@ -91778,6 +89751,10 @@ engine.runtimeRecreateRequired = true;
                     } else {
                         failNestedTraversal(VN_CAPABILITY_UNAVAILABLE);
                     }
+                    return ContainerTraversalDirective::Fail;
+                }
+                if (!AdmitDirectQueueFrontier(context, *scratch, nestedQueueFrontier)) {
+                    (void)operations.Release(scratch);
                     return ContainerTraversalDirective::Fail;
                 }
                 nestedQueueProgram = traversal.program;
@@ -92208,7 +90185,7 @@ engine.runtimeRecreateRequired = true;
     const harken::ContainerProgramViewV3* terminalParentProgram = nullptr;
     const harken::ContainerChildProgramViewV2* terminalAuthoredChild = nullptr;
     const auto rollbackPrepared = [&]() noexcept {
-        if (scratch->selectionPlayCount != 0 || (scratch->packLeaseOwned || scratch->packLeaseBorrowed) ||
+        if (operations.SelectionCount(*scratch) != 0 || (scratch->packLeaseOwned || scratch->packLeaseBorrowed) ||
             scratch->prepared) {
             (void)operations.Release(scratch);
         }
@@ -92218,7 +90195,7 @@ engine.runtimeRecreateRequired = true;
         [&](ContainerTraversalRequest* requestOut) noexcept {
         if (requestOut == nullptr ||
             selectionCount >= harken::kSelectionPathNodeCapacity ||
-            scratch->selectionPlayCount >= scratch->selectionPlays.size()) {
+            operations.SelectionCount(*scratch) >= scratch->selectionPlays.size()) {
             context.result = VN_BACKPRESSURE;
             rollbackPrepared();
             return false;
@@ -92229,11 +90206,11 @@ engine.runtimeRecreateRequired = true;
             selectionCount,
             selectionCount == 0 ? nullptr : path.data(),
             incomingOccurrenceOrdinal, provisionalSequence,
-            scratch->storage.initialSelection.identity.eventBegin + scratch->selectionPlayCount,
+            scratch->storage.initialSelection.identity.eventBegin + operations.SelectionCount(*scratch),
             scratch->storage.initialSelection.executeFrame, 0,
             ContainerTraversalOwnership::PreparedToken, nullptr,
-            &scratch->selectionPlays[scratch->selectionPlayCount], scratch->storage.initialSelection.preparation,
-            &scratch->storage.initialSelection.materializedOrdinals[scratch->selectionPlayCount]};
+            &scratch->selectionPlays[operations.SelectionCount(*scratch)], scratch->storage.initialSelection.preparation,
+            &scratch->storage.initialSelection.materializedOrdinals[operations.SelectionCount(*scratch)]};
         return operations.DecorateTraversal(*requestOut);
     };
     const auto handleTraversalFailure =
@@ -92266,6 +90243,16 @@ engine.runtimeRecreateRequired = true;
                                               UnsupportedMode
                                     ? VN_CAPABILITY_UNAVAILABLE
                                     : VN_BAD_CURRENT_WORLD;
+        if (context.directFailure != nullptr) {
+            *context.directFailure = traversal.status == ContainerTraversalStatus::UnknownProgram ||
+                    traversal.status == ContainerTraversalStatus::ChildResolutionFailed
+                ? harken::PlayableStartStatus::UnknownPlayable
+                : traversal.status == ContainerTraversalStatus::SelectionFailed &&
+                    traversal.selectionStatus == harken::SelectionMemoryStatusV1::Capacity
+                ? harken::PlayableStartStatus::Capacity
+                : traversal.status == ContainerTraversalStatus::UnsupportedMode
+                ? harken::PlayableStartStatus::CapabilityUnavailable : harken::PlayableStartStatus::InvalidInput;
+        }
         rollbackPrepared();
     };
     const auto handleSelection =
@@ -92277,7 +90264,11 @@ engine.runtimeRecreateRequired = true;
                 engine.selectionMemory.PreparedPlaySeedProbe(
                     scratch->selectionPlays[scratch->selectionPlayCount]);
         }
-        ++scratch->selectionPlayCount;
+        if (!operations.AcceptSelection(*scratch)) {
+            context.result = VN_BACKPRESSURE;
+            rollbackPrepared();
+            return ContainerTraversalDirective::Fail;
+        }
         selectedOrdinals[selectionCount] = traversal.selectedChildOrdinal;
         path[selectionCount] = traversal.pathNode;
         ++selectionCount;
@@ -92389,6 +90380,10 @@ engine.runtimeRecreateRequired = true;
                                       RuntimeRecreateRequired) {
 engine.runtimeRecreateRequired = true;
             }
+            rollbackPrepared();
+            return ContainerTraversalDirective::Fail;
+        }
+        if (!AdmitDirectQueueFrontier(context, *scratch, nestedQueueFrontier)) {
             rollbackPrepared();
             return ContainerTraversalDirective::Fail;
         }
@@ -92724,6 +90719,14 @@ engine.runtimeRecreateRequired = true;
 bool PrepareScheduleContainerQueueResources(ContainerPreparationContext& context,
     harken::EngineActionPlayScratch& scratch) noexcept {
     if (context.engine == nullptr) return false;
+    if (context.directRoot && !scratch.variableControl) {
+        for (std::uint32_t index = 0; index < scratch.frontierQueueCount; ++index) {
+            auto& queue = scratch.storage.frontierQueues[index];
+            if (queue.hasSuccessor && !PrepareGenericQueueCurrent(*context.engine, scratch, queue, true))
+                return false;
+        }
+        return true;
+    }
     auto* parent = context.engine->ResolvePlayableService(context.parentService);
     ScheduleContainerPreparationOperations operations{context, *context.engine};
     operations.activeScratch = &scratch;
@@ -92731,6 +90734,8 @@ bool PrepareScheduleContainerQueueResources(ContainerPreparationContext& context
     ScheduleQueuePreparation schedule{context.engine, &scratch, parent, context.rootHandle,
         context.startFrame, &context.result, &context.queueProgramCapacityRefused, context.privateScheduleOwner};
     QueuePreparationEntry entry(schedule);
+    if (scratch.frontierQueueCount != 0 && !RegisterCurrentFrontierVoiceOwners(*context.engine, scratch))
+        return false;
     return PrepareQueueFuturesCore(entry, scratch);
 }
 
@@ -93377,6 +91382,7 @@ bool PrepareScheduleChildAttempt(ContainerPreparationContext& parentContext,
     auto* parentService = engine.ResolvePlayableService(context.parentService);
     if (parentService == nullptr || parentService->ownerInstance != context.parentInstance ||
         parentService->ownerEpoch != context.parentEpoch || record.service.Valid()) return false;
+    context.directRoot = false;
     if (parent.storage.scheduleChildren == nullptr && !ReserveScheduleAttemptChildren(parent, 1u)) {
         context.result = VN_BACKPRESSURE;
         return false;
@@ -94898,7 +92904,7 @@ bool PrepareStaticScheduleExecution(
     return true;
 }
 
-harken::PlayableStartResult PrepareDirectMixedSchedule(
+harken::PlayableStartResult PrepareDirectPlayableStart(
     harken::Engine& engine, const harken::PlayableWorldViewV1& world,
     const harken::PlayableStartRequest& request, std::uint64_t admittedFrame) noexcept {
     using Status = harken::PlayableStartStatus;
@@ -94970,11 +92976,11 @@ harken::PlayableStartResult PrepareDirectMixedSchedule(
     context.startFrame = std::max({admittedFrame, engine.timelinePool.PublishCutoffFrame(),
         (observed + lead) * engine.config.blockFrames});
     context.originalReadFrame = context.startFrame;
+    context.admittedImmediateFrame = context.startFrame;
     std::uint32_t selectionEventCursor = 0x80000000u;
     context.selectionEventBegin = 0;
     if (request.root.kind == harken::PlayableKindV1::Container) {
-        context.selectionEventBegin = selectionEventCursor;
-        selectionEventCursor += harken::kSelectionPathNodeCapacity;
+        context.selectionEventBegin = 0;
         context.initialSelectionEventCursor = &selectionEventCursor;
     }
     bool prepared = false;
@@ -94987,7 +92993,7 @@ harken::PlayableStartResult PrepareDirectMixedSchedule(
         prepared = PrepareContainerSingleLeaf(context, operations, scratch, request.root,
             nullptr, 0, harken::PlayableKind::Sound);
     } else {
-        auto& materialization = g_directQueueFrontier;
+        auto& materialization = g_directMaterialization;
         std::memset(&materialization, 0, sizeof(materialization));
         const SharedInitialFrontierRequest frontierRequest{
             {}, nullptr, 0, engine.config.mixRate.SampleRate(),
@@ -95040,6 +93046,9 @@ harken::PlayableStartResult PrepareDirectMixedSchedule(
         }
     }
     if (!prepared || scratch->row == nullptr) return fail(failure == VN_OK ? VN_BACKPRESSURE : failure);
+    scratch->row->selectionDeltaCount = scratch->directSelectionOwnerCount;
+    for (std::uint32_t index = 0; index < scratch->directSelectionOwnerCount; ++index)
+        scratch->row->selectionDeltas[index] = scratch->directSelectionOwnerContexts[index].delta;
     if (!VisitInitialScheduleAttempts(engine, *scratch, [&](auto& child) noexcept {
             return child.row != nullptr && FreezeInitialQueuePrograms(engine, *child.row);
         })) return fail(VN_BACKPRESSURE);
@@ -95060,7 +93069,8 @@ harken::PlayableStartResult PrepareDirectMixedSchedule(
                 harken::ReserveRefusal::None) || occupied > capacity || future > capacity - occupied ||
         !AtomicBatchFitsCapacities(engine, commandCount)) return fail(VN_BACKPRESSURE);
     if (commandCount != 0) {
-        if (!ReserveVoiceCommandTransport(engine, commandCount, &scratch->directCommandReservation))
+        if (!ReserveVoiceCommandTransport(engine, commandCount, &scratch->directCommandReservation,
+                scratch->voiceStartCount == 1u ? &scratch->voiceStarts[0] : nullptr))
             return fail(VN_BACKPRESSURE);
         scratch->directCommandsReserved = true;
         if (!PrepareVoiceCommandBatch(engine, &scratch->directCommandReservation,
@@ -95071,10 +93081,6 @@ harken::PlayableStartResult PrepareDirectMixedSchedule(
             return PrepareOriginalInitialAttemptProducer(engine, child, issue, nullptr);
         }) || !PrepareScheduleChildGraphProofs(engine, *scratch) ||
         !scratch->playableTreeExecutor.Validate()) return fail(VN_BACKPRESSURE);
-    if (engine.forceDirectPlayablePostFailureForTest) {
-        engine.forceDirectPlayablePostFailureForTest = false;
-        return fail(VN_DEVICE_ERROR, true);
-    }
     const auto root = PublicPlayableInstance(*scratch->row);
     const auto ticket = issue.Sequence();
     auto consumed = engine.logicCommits.ConsumePreparedIssue(std::move(issue));
@@ -95094,6 +93100,20 @@ harken::PlayableStartResult PrepareDirectMixedSchedule(
         scratch->directCommandsReserved = false;
     }
     PublishInitialScheduleMonitorSelections(engine, *scratch);
+    if (scratch->row->queueMode && scratch->queueHasContinuation && scratch->queueProgram != nullptr) {
+        auto& row = *scratch->row;
+        const auto successor = PrepareQueueContinuation(engine, world, *scratch->queueProgram, row);
+        if (successor == QueueContinuationPrepareStatus::Failed) {
+            (void)engine.queueInstances.FailContainerBeforeConditional(row.queueInstance,
+                harken::QueueFailureReason::TargetPreparationFailed, row.startFrame);
+            row.controlLifecycle = harken::PlayableControlLifecycle::FailingSourceActive;
+            row.controlReason = harken::PlayableControlReason::StartRefused;
+        } else if (successor == QueueContinuationPrepareStatus::Deferred) {
+            row.queueSignalOnlyNoOverlap = true;
+        } else if (successor == QueueContinuationPrepareStatus::NaturalEnd) {
+            row.queueNaturalEnd = true;
+        }
+    }
     if (!TransferFrontierAttempt(engine, *scratch)) {
         engine.runtimeRecreateRequired = true;
         result.status = Status::RuntimeRecreateRequired;
@@ -99069,6 +97089,10 @@ bool CommitInitialPlayableAttempt(
         ++row.pendingFutureCount;
         scratch.queueSuccessorCompletionOwnerPinned = false;
         scratch.queueSuccessorCompletionMutationCount = 0;
+      }
+      if (scratch.directExecution && engine.forceDirectPlayablePostFailureForTest) {
+          engine.forceDirectPlayablePostFailureForTest = false;
+          return false;
       }
       row.ticket = sequence;
       if (row.pendingImmediateEntry) {
