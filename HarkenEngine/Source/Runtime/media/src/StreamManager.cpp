@@ -1138,8 +1138,27 @@ bool StreamManager::RunChunkJob(const ChunkJob& job,
     if (file.file.gcount() != static_cast<std::streamsize>(job.chunkBytes)) {
         return false;
     }
-    return Fnv1a64(staging.data(), static_cast<std::size_t>(job.chunkBytes)) ==
-           file.chunkChecksums[job.chunkIndex];
+    if (Fnv1a64(staging.data(), static_cast<std::size_t>(job.chunkBytes)) !=
+        file.chunkChecksums[job.chunkIndex]) {
+        return false;
+    }
+    // A valid checksum does not make NaN/Infinity safe for persistent DSP.
+    // Check every real sample before publishing any of this chunk; unused
+    // final-chunk padding is checksummed above but is never sent to the ring.
+    const std::uint32_t validFrames = StreamChunkValidFrames(
+        job.chunkIndex, job.chunkFrames, file.toc.frameCount);
+    for (std::uint32_t ch = 0; ch < job.channels; ++ch) {
+        const float* samples = staging.data() +
+                               static_cast<std::size_t>(ch) * job.chunkFrames;
+        for (std::uint32_t frame = 0; frame < validFrames; ++frame) {
+            std::uint32_t bits = 0;
+            std::memcpy(&bits, samples + frame, sizeof(bits));
+            if ((bits & 0x7f800000u) == 0x7f800000u) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 void StreamManager::ServeOneSlot(StreamSlot& slot) {
@@ -1185,7 +1204,7 @@ void StreamManager::ServeOneSlot(StreamSlot& slot) {
         if (slot.stagedChunk != seek.chunkIndex) {
             // Stage and verify the whole chunk before any of it becomes
             // eligible for the ring: frames the audio thread can see have
-            // always passed their checksum.
+            // always passed their checksum and finite-sample validation.
             const ChunkJob job{&file, seek.chunkIndex, chunkFrames, channels,
                                chunkBytes};
             if (!RunChunkJob(job, slot.staging)) {

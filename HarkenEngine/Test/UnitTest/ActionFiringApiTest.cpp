@@ -33114,6 +33114,112 @@ TEST(ActionFiringContract, ResidentSeekAppliesAtBlockBoundaryAndRendersTargetFra
     EXPECT_EQ(0u, ticket);
 }
 
+TEST(ActionFiringContract, SeekPreservesResamplingOfNonUnityPitch) {
+    for (const bool streamed : {false, true}) {
+        SCOPED_TRACE(streamed);
+        VnConfig config = harkentest::MakeNullConfig(1, 64, 48000);
+        config.maxStreams = 2;
+        config.streamRingFrames = 4096;
+        config.prebufferMs = 1;
+        harkentest::EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        std::vector<float> samples(32768);
+        for (std::size_t i = 0; i < samples.size(); ++i) {
+            samples[i] = i % 4 < 2 ? 0.25f : -0.25f;
+        }
+        std::uint64_t revision = 0;
+        if (streamed) {
+            const auto path = WriteActionStream(
+                "action_stream_seek_resampling.stream",
+                CanonicalActionWorld::kFirstSound, samples);
+            ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(
+                CanonicalActionWorld::kFirstSound, path.c_str()));
+            harken::StreamManager::StreamFacts facts{};
+            ASSERT_TRUE(engine->streams.FindFile(
+                CanonicalActionWorld::kFirstSound, &facts));
+            revision = facts.contentRevision;
+        } else {
+            const auto pcm = harkentest::MonoDesc(samples, 48000);
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(
+                CanonicalActionWorld::kFirstSound, &pcm));
+            revision = engine->registry.Lookup(
+                CanonicalActionWorld::kFirstSound).contentRevision;
+        }
+        CanonicalActionWorld image(revision);
+        image.properties[0].payload.presentMask |= UINT64_C(1) << 1;
+        image.properties[0].payload.values[1].bits =
+            std::bit_cast<std::uint32_t>(1200.0f);
+        if (streamed) {
+            image.properties[0].payload.presentMask |= UINT64_C(1) << 4;
+            image.properties[0].payload.values[4].bits = 1;
+        }
+        image.RelinkFirstSound();
+        image.MakeImmediateSoundPlayAction();
+        ASSERT_EQ(harken::WorldInstallStatus::Ok,
+                  harken::InstallContainerWorldV1(*engine, image.world).status);
+        auto post = ValidPostDesc();
+        post.actionId = image.actions[9].actionStableId;
+        VnActionFiringHandle firing = 0;
+        ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+        for (std::uint32_t i = 0; i < 8; ++i) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            engine->streams.SyncServe();
+            engine->nullBackend.Pump(1);
+        }
+        const auto service = std::find_if(
+            engine->playableServices.begin(), engine->playableServices.end(),
+            [&](const harken::EnginePlayableServiceRow& row) {
+                return row.phase == harken::EnginePlayableStartPhase::Started &&
+                       row.InvocationValid() &&
+                       row.Invocation().actionFiring == firing;
+            });
+        ASSERT_NE(engine->playableServices.end(), service);
+        const auto* render = engine->voices.Resolve(service->renderHandle);
+        ASSERT_NE(nullptr, render);
+        const auto quality = render->resampler.quality;
+        const auto profile = render->resampler.Profile();
+        ASSERT_DOUBLE_EQ(2.0, render->resampler.CurrentRatio());
+        const auto sampleCount = engine->nullBackend.BlockFrames() *
+                                 engine->nullBackend.Channels();
+        const auto* output = engine->nullBackend.LastBlock();
+        const std::vector<float> before(output, output + sampleCount);
+        for (const float sample : before) {
+            ASSERT_NEAR(0.25f, std::abs(sample), 1e-6f);
+        }
+
+        VnActionSeekDescV1 seek{};
+        seek.structSize = sizeof(seek);
+        seek.firing = firing;
+        seek.mode = VN_ACTION_SEEK_ABSOLUTE;
+        seek.positionMs = 4096.0 * 1000.0 / 48000.0;
+        VnActionSeekTicket ticket = 0;
+        ASSERT_EQ(VN_OK, Vn_SeekActionFiring(&seek, &ticket));
+        engine->nullBackend.Pump(1);
+        VnActionSeekInfoV1 info{};
+        info.structSize = sizeof(info);
+        ASSERT_EQ(VN_OK, Vn_QueryActionSeek(ticket, &info));
+        ASSERT_EQ(VN_ACTION_SEEK_APPLIED, info.state);
+        EXPECT_EQ(4096u, info.minimumAppliedSourceFrame);
+        EXPECT_EQ(4096u, info.maximumAppliedSourceFrame);
+        EXPECT_EQ(quality, render->resampler.quality);
+        EXPECT_EQ(profile, render->resampler.Profile());
+        EXPECT_DOUBLE_EQ(2.0, render->resampler.CurrentRatio());
+        for (std::uint32_t i = 0; i < 4; ++i) {
+            engine->streams.SyncServe();
+            engine->nullBackend.Pump(1);
+        }
+        output = engine->nullBackend.LastBlock();
+        // Both positions have identical periodic source phase; after reset
+        // history settles, seeking must not change the waveform or amplitude.
+        for (std::uint32_t i = 0; i < sampleCount; ++i) {
+            EXPECT_NEAR(before[i], output[i], 1e-6f) << i;
+        }
+        EXPECT_EQ(VN_OK, Vn_ReleaseActionSeek(ticket));
+        EXPECT_EQ(0u, harken::memguard::HitCount());
+    }
+}
+
 TEST(ActionFiringApi, ResidentSeekTargetsOnlyTheSelectedConcurrentFiring) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(2, 64, 48000);

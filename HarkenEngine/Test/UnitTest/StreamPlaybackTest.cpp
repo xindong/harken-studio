@@ -18,6 +18,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -573,6 +575,101 @@ TEST(StreamPlayback, CorruptChunkEndsVoiceAfterVerifiedMaterial) {
     // The engine remains healthy for further pumping.
     engine->nullBackend.Pump(2);
     EXPECT_EQ(0u, harken::memguard::HitCount());
+}
+
+TEST(StreamPlayback, ChecksummedNonFiniteSamplesNeverReachBusFilters) {
+    constexpr std::uint32_t kFrames = 1033;
+    for (const float invalid : {std::numeric_limits<float>::quiet_NaN(),
+                                std::numeric_limits<float>::infinity(),
+                                -std::numeric_limits<float>::infinity()}) {
+        // Cover an initial chunk, the final partial chunk, and unused padding
+        // in the second channel plane. Padding is checksummed but never played.
+        for (const std::uint32_t frame : {64u, kFrames - 1u, kFrames}) {
+            SCOPED_TRACE(invalid);
+            SCOPED_TRACE(frame);
+            const bool padding = frame == kFrames;
+            NotificationLog log;
+            EngineSession session(MakeStreamConfig(&log, 2, 4096, 1, 1));
+            ASSERT_EQ(VN_OK, session.InitResult());
+            auto* engine = session.Engine();
+            ASSERT_EQ(VN_OK, Vn_SetBusFilter(
+                VN_BUS_MASTER, 0, 4000.0f, 0.707f, 1, 0));
+
+            StreamSpec spec;
+            spec.soundId = harkentest::ObjectId(7201);
+            spec.channelCount = 2;
+            spec.chunkFrames = 256;
+            auto bytes = BuildStreamBytes(spec,
+                std::vector<float>(kFrames * spec.channelCount, 0.25f));
+            const auto toc = harken::ParseStreamTocEntry(
+                bytes.data() + harken::kStreamHeaderBytes);
+            const auto chunkBytes = harken::StreamChunkBytes(
+                spec.chunkFrames, spec.channelCount);
+            const auto chunkIndex = frame / spec.chunkFrames;
+            auto* chunk = bytes.data() + harken::StreamChunkFileOffset(
+                toc.payloadOffset, chunkIndex, chunkBytes);
+            std::memcpy(chunk + (spec.chunkFrames + frame % spec.chunkFrames) *
+                                   sizeof(float),
+                        &invalid, sizeof(invalid));
+            harken::StoreLE64(bytes.data() + toc.chunkChecksumOffset +
+                                 chunkIndex * harken::kStreamChunkChecksumBytes,
+                             harken::Fnv1a64(chunk, chunkBytes));
+            harken::StreamHeader header;
+            ASSERT_TRUE(harken::ParseStreamHeader(bytes.data(), &header));
+            header.tocChecksum = harken::Fnv1a64(
+                bytes.data() + toc.chunkChecksumOffset,
+                toc.chunkCount * harken::kStreamChunkChecksumBytes,
+                harken::Fnv1a64(bytes.data() + harken::kStreamHeaderBytes,
+                               harken::kStreamTocEntryBytes));
+            harken::SerializeStreamHeader(header, bytes.data());
+            const auto path = TempPath("stream_nonfinite_checksummed.stream");
+            WriteFileBytes(path, bytes);
+            ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(spec.soundId, path.c_str()));
+            const auto play = MakePlayDesc(spec.soundId);
+            VnVoiceHandle voice = 0;
+            ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+            engine->streams.SyncServe();
+            const auto* ring = engine->streams.RingOf(0);
+            ASSERT_NE(nullptr, ring);
+            EXPECT_EQ(padding ? harken::StreamTerminalReason::NaturalEnd
+                              : harken::StreamTerminalReason::IntegrityAbort,
+                      ring->TerminalReason());
+            EXPECT_EQ(padding ? kFrames : chunkIndex * spec.chunkFrames,
+                      ring->ReadAvailable());
+
+            Capture verified;
+            harkentest::PumpAndCapture(engine, 12, verified);
+            if (frame >= spec.chunkFrames) {
+                HARKENTEST_ASSERT_NON_SILENT(verified.left);
+                HARKENTEST_ASSERT_NON_SILENT(verified.right);
+            }
+            ASSERT_EQ(VN_OK, Vn_Update());
+            EXPECT_EQ(nullptr, engine->voices.Resolve(
+                harkentest::RenderHandle(engine, voice)));
+            const auto ended = log.OfType(VN_NOTIFY_VOICE_ENDED);
+            ASSERT_EQ(1u, ended.size());
+            EXPECT_EQ(voice, ended[0].voiceHandle);
+            EXPECT_TRUE(log.OfType(VN_NOTIFY_VOICE_STARVED).empty());
+            engine->streams.SyncServe();
+            EXPECT_EQ(1u, engine->streams.FreeSlotCount());
+
+            // The same persistent bus filter must still render healthy audio.
+            const std::vector<float> healthy(4096, 0.25f);
+            const auto pcm = harkentest::MonoDesc(healthy, kRate);
+            const auto healthyId = harkentest::ObjectId(7202);
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(healthyId, &pcm));
+            const auto next = MakePlayDesc(healthyId);
+            ASSERT_EQ(VN_OK, harkentest::PlayRaw(&next, &voice));
+            engine->nullBackend.Pump(8);
+            Capture resumed;
+            harkentest::PumpAndCapture(engine, 1, resumed);
+            for (std::size_t i = 0; i < resumed.left.size(); ++i) {
+                ASSERT_NEAR(0.25f, resumed.left[i], 1e-5f) << i;
+                ASSERT_NEAR(0.25f, resumed.right[i], 1e-5f) << i;
+            }
+            EXPECT_EQ(0u, harken::memguard::HitCount());
+        }
+    }
 }
 
 TEST(StreamPlayback, CorruptOutroChunkIsReachedOnlyOnFinalLoopPass) {
