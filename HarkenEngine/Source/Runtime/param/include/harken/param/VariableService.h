@@ -1452,6 +1452,8 @@ private:
     void CommitSliceTargets(Engine& engine, WriteRow& row) noexcept;
     void CommitAppliedBank(const WriteRow& row);
     bool SemanticIdentical(const ContainerWorldInstallViewV1& install) const;
+    void BuildCurrentWorldImageV1(const ContainerWorldInstallViewV1& install,
+                                 PreparedCurrentWorldImageV1& out);
     WorldInstallResult InstallImpl(const ContainerWorldInstallViewV1& install,
                                    std::uint32_t replayVintage,
                                    bool replacementAdmitted);

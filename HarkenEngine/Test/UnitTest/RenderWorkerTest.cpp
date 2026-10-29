@@ -141,6 +141,11 @@ void RenderScene(std::uint32_t workerCount, std::uint32_t mixLayout,
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
+    // PCM equality needs completed quanta, independent of host scheduler jitter.
+    // Keep a bounded test budget; deadline deferral has dedicated coverage.
+    harken::detail::VoicePoolReleaseTestAccess::SetWorkerDeadline(
+        engine->voices, harken::CpuClockTicksPerSecond());
+
     // A send target bus, so a couple of voices exercise the scatter path.
     ASSERT_EQ(VN_OK, Vn_CreateBus(kSendBus, VN_BUS_MASTER));
 

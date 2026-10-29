@@ -7,10 +7,9 @@
 #define HARKEN_CORE_SNAPSHOT_BUFFER_H
 
 #include <harken/Harken.h>
+#include <harken/core/PinnedSnapshot3.h>
 
-#include <atomic>
 #include <cstdint>
-#include <cstring>
 #include <type_traits>
 
 namespace harken {
@@ -135,60 +134,12 @@ static_assert(std::is_trivially_copyable_v<SnapshotPayload>,
 
 class SnapshotBuffer {
 public:
-    // Writer side (audio thread). Three slots guarantee one candidate that is
-    // neither the last publication nor the single reader's current pin.
-    SnapshotPayload& BeginWrite() {
-        const std::uint32_t pin = m_pin.load(std::memory_order_seq_cst);
-        m_writeIndex = (m_lastPublished + 1u) % kSlotCount;
-        if (m_writeIndex == pin) {
-            m_writeIndex = (m_writeIndex + 1u) % kSlotCount;
-        }
-        return m_slots[m_writeIndex];
-    }
-
-    void EndWrite() {
-        m_published.store(m_writeIndex, std::memory_order_seq_cst);
-        m_lastPublished = m_writeIndex;
-    }
-
-    // Reader side (logic thread). A confirmed pin gives exclusive read
-    // ownership of the candidate until the copy completes. A failed bounded
-    // capture leaves the caller's previous snapshot untouched.
-    bool Capture(SnapshotPayload& out) const {
-        for (int attempt = 0; attempt < kCaptureAttempts; ++attempt) {
-            const std::uint32_t candidate =
-                m_published.load(std::memory_order_seq_cst);
-            m_pin.store(candidate, std::memory_order_seq_cst);
-            if (m_published.load(std::memory_order_seq_cst) != candidate) {
-                m_pin.store(kNoPin, std::memory_order_release);
-                continue;
-            }
-            SnapshotPayload scratch;
-            std::memcpy(&scratch, &m_slots[candidate], sizeof scratch);
-            m_pin.store(kNoPin, std::memory_order_release);
-            out = scratch;
-            return true;
-        }
-        m_pin.store(kNoPin, std::memory_order_release);
-        return false;
-    }
+    SnapshotPayload& BeginWrite() { return m_snapshot.BeginWrite(); }
+    void EndWrite() { m_snapshot.EndWrite(); }
+    bool Capture(SnapshotPayload& out) const { return m_snapshot.Capture(out); }
 
 private:
-    static constexpr int kCaptureAttempts = 4;
-    static constexpr std::uint32_t kSlotCount = 3;
-    static constexpr std::uint32_t kNoPin = kSlotCount;
-    static_assert(std::atomic<std::uint32_t>::is_always_lock_free,
-                  "control words must be lock-free on the audio thread");
-    static_assert(kSlotCount == 3,
-                  "single-reader ownership requires three slots");
-    static_assert(kNoPin == kSlotCount,
-                  "the no-pin value must immediately follow the slots");
-
-    SnapshotPayload m_slots[kSlotCount] = {};
-    std::atomic<std::uint32_t> m_published{0};
-    mutable std::atomic<std::uint32_t> m_pin{kNoPin};
-    std::uint32_t m_lastPublished = 0; // writer-owned
-    std::uint32_t m_writeIndex = 1;    // writer-owned selected slot
+    PinnedSnapshot3<SnapshotPayload> m_snapshot;
 };
 
 } // namespace harken
