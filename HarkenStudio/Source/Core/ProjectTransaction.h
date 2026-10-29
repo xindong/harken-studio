@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QByteArray>
+#include <QHash>
 #include <QLockFile>
 #include <QString>
 #include <QStringList>
@@ -29,6 +30,11 @@ public:
         const QString& recoveryRoot,
         QString* error = nullptr,
         ProjectTransactionProgressCallback progress = {});
+    static std::unique_ptr<ProjectTransaction> beginReplacement(
+        const QString& projectFilePath,
+        const QStringList& writeSet,
+        const QString& stagedDirectory,
+        QString* error = nullptr);
     static bool recover(const QString& projectFilePath,
                         QString* error = nullptr,
                         ProjectTransactionProgressCallback progress = {});
@@ -62,11 +68,19 @@ public:
 
 private:
     ProjectTransaction() = default;
+    static std::unique_ptr<ProjectTransaction> beginImpl(
+        const QString& projectFilePath,
+        const QStringList& writeSet,
+        const QString& recoveryRoot,
+        const QString& stagedDirectory,
+        QString* error,
+        ProjectTransactionProgressCallback progress);
 
     QString projectDirectory_;
     QString backupDirectory_;
     QString transactionPath_;
     QStringList writeSet_;
+    QHash<QString, QByteArray> retainedFiles_;
     QByteArray backupFingerprint_;
     QByteArray committedFingerprint_;
     std::unique_ptr<QLockFile> lock_;
