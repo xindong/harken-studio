@@ -29,17 +29,22 @@ InspectorTabContainer::InspectorTabContainer(QWidget* parent)
 
     stack_ = new QStackedWidget(this);
 
+    content_ = new QWidget(this);
+    content_->setObjectName(QStringLiteral("inspectorTabContent"));
+    content_->setAttribute(Qt::WA_StyledBackground, true);
+    content_->setProperty("sideBar", false);
+
     rootLayout_ = new QBoxLayout(QBoxLayout::TopToBottom, this);
     rootLayout_->setContentsMargins(0, 0, 0, 0);
     rootLayout_->setSpacing(0);
     rootLayout_->addWidget(bar_);
     const int pageMargin =
         ThemeManager::instance().metrics().inspector.pageMargin;
-    auto* stackMargin = new QVBoxLayout();
+    auto* stackMargin = new QVBoxLayout(content_);
     stackMargin->setContentsMargins(pageMargin, pageMargin,
                                     pageMargin, pageMargin);
     stackMargin->addWidget(stack_);
-    rootLayout_->addLayout(stackMargin, 1);
+    rootLayout_->addWidget(content_, 1);
 }
 
 void InspectorTabContainer::addTab(QWidget* contentWidget,
@@ -135,6 +140,7 @@ void InspectorTabContainer::applyOrientation(bool sideBar)
     barLayout_->setDirection(sideBar ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
     barLayout_->setContentsMargins(0, 0, sideBar ? 1 : 0, sideBar ? 0 : 1);
     QtControlSkin::setSemanticProperty(bar_, "sideBar", sideBar);
+    QtControlSkin::setSemanticProperty(content_, "sideBar", sideBar);
     for (auto* b : buttons_->buttons())
     {
         QtControlSkin::setSemanticProperty(b, "sideBar", sideBar);

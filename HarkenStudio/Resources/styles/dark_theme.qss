@@ -1882,6 +1882,9 @@ QWidget#inspectorTabBar QToolButton[sideBar="true"]:checked {
     border-top: none;
     border-left-color: @accent@;
 }
+QWidget#inspectorTabContent[sideBar="true"] {
+    border-top: 1px solid @borderPrimary@;
+}
 QScrollArea[inspectorTabPage="true"] { border: 1px solid @viewBorder@; }
 QLabel[bindingUnit="dB"],
 QLabel[bindingUnit="cent"] { color: @textMuted@; }

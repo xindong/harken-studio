@@ -34,6 +34,7 @@ private:
     QWidget*        bar_ = nullptr;
     QBoxLayout*     barLayout_ = nullptr;
     QButtonGroup*   buttons_ = nullptr;
+    QWidget*        content_ = nullptr;
     QStackedWidget* stack_ = nullptr;
     bool            sideBar_ = false;
 };
