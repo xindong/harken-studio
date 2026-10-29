@@ -5627,6 +5627,50 @@ TEST(PlayableStart, QueueSequenceBranchesRefusedInitialVoiceReleasesServiceReser
     ExpectQueueSequenceBranchesComplete(1, false, true);
 }
 
+TEST(PlayableStart, QueueNestedSelectionRefusalsKeepTypedStatusAndDoNotCommit) {
+    for (const bool capacity : {false, true}) {
+        SCOPED_TRACE(capacity);
+        harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        const std::vector<float> samples(256, 0.25f);
+        const auto pcm = harkentest::MonoDesc(samples, 48000);
+        std::array<std::uint64_t, 4> revisions{};
+        for (std::uint32_t index = 0; index < revisions.size(); ++index) {
+            const auto sound = harkentest::ObjectId(2300u + index);
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+            revisions[index] = engine.registry.Lookup(sound).contentRevision;
+        }
+        QueueSequenceBranchesWorldImage image(revisions, 1);
+        ASSERT_EQ(harken::WorldInstallStatus::Ok,
+            harken::InstallContainerWorldV1(engine, image.world).status);
+        if (capacity) {
+            engine.selectionMemory.SetCommitPageLimitForTests(0);
+        } else {
+            const auto world = engine.variables.CurrentPlayableWorld();
+            auto* children = const_cast<harken::ContainerChildProgramViewV2*>(world.containers[0].children);
+            ++children[0].playable.contentRevision;
+        }
+        const auto ticket = engine.logicCommits.Current();
+        const auto commands = engine.commands.PublishedHead();
+        const auto freeInstances = engine.playableInstances.FreeCount();
+        harken::PlayableStartRequest request{};
+        request.root = image.Ref(6);
+        const auto refused = harken::StartPlayable(engine, request);
+        engine.selectionMemory.SetCommitPageLimitForTests(SIZE_MAX);
+        EXPECT_EQ(capacity ? harken::PlayableStartStatus::Capacity : harken::PlayableStartStatus::UnknownPlayable,
+            refused.status);
+        EXPECT_EQ(0u, refused.instance);
+        EXPECT_EQ(0u, refused.ticket);
+        EXPECT_EQ(ticket, engine.logicCommits.Current());
+        EXPECT_EQ(commands, engine.commands.PublishedHead());
+        EXPECT_EQ(freeInstances, engine.playableInstances.FreeCount());
+        EXPECT_EQ(0u, engine.queueInstances.LiveCount());
+        EXPECT_EQ(0u, engine.voices.ActiveCount());
+        EXPECT_FALSE(engine.runtimeRecreateRequired);
+    }
+}
+
 TEST(PlayableStart, SequenceQueueNestedQueueChildOwnsBothQueueLifecycles) {
     VnConfig config = harkentest::MakeNullConfig(6, 64, 48000);
     harkentest::EngineSession session(config);
