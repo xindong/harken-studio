@@ -3255,3 +3255,44 @@ TEST(BusAdmissionStart, PairedIdempotentWorldPreservesPendingWritesAndEmitterVal
     ASSERT_TRUE(e.variables.CurrentValue(emitter, definition.variableId, &value));
     EXPECT_FLOAT_EQ(0.5f, value);
 }
+
+TEST(BusAdmissionStart, PairedWorldReplacementRejectsGlobalAppliedAfterPrepare) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& e = *session.Engine();
+    std::array<harken::VariableDefinitionV1, 2> definitions{};
+    for (std::uint32_t i = 0; i < definitions.size(); ++i)
+        definitions[i] = harkentest::MakeVariableDefinition(harkentest::ObjectId(7 + i),
+            harken::VariableKindV1::Smooth, -1, 1, 0);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harkentest::InstallDefinitionsWorld(&e, definitions.data(), definitions.size()).status);
+    const auto priorWorld = e.variables.CurrentWorldGeneration();
+    ASSERT_EQ(VN_OK, Vn_SetValue(definitions[0].variableId, 0.75f));
+    definitions[1].defaultValue = -0.25f;
+    const auto view = VariableReplacementView(definitions.data(), definitions.size());
+    harken::PreparedProjectGenerationV1 stale;
+    ASSERT_EQ(harken::ProjectGenerationPrepareStatusV1::Ok,
+        harken::PrepareProjectGenerationV1(e, view, stale).status);
+    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(&e));
+    for (unsigned i = 0; i < 8; ++i) {
+        e.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(harken::ProjectGenerationCommitStatusV1::InvalidPrepared,
+        harken::CommitPreparedProjectGenerationV1(e, stale).status);
+    EXPECT_EQ(priorWorld, e.variables.CurrentWorldGeneration());
+    float value = 0;
+    ASSERT_TRUE(e.variables.CurrentValue(definitions[0].variableId, &value));
+    EXPECT_FLOAT_EQ(0.75f, value);
+    harken::CancelPreparedProjectGenerationV1(e, std::move(stale));
+    harken::PreparedProjectGenerationV1 retry;
+    ASSERT_EQ(harken::ProjectGenerationPrepareStatusV1::Ok,
+        harken::PrepareProjectGenerationV1(e, view, retry).status);
+    ASSERT_EQ(harken::ProjectGenerationCommitStatusV1::Ok,
+        harken::CommitPreparedProjectGenerationV1(e, retry).status);
+    EXPECT_EQ(priorWorld + 1, e.variables.CurrentWorldGeneration());
+    ASSERT_TRUE(e.variables.CurrentValue(definitions[0].variableId, &value));
+    EXPECT_FLOAT_EQ(0.75f, value);
+    ASSERT_TRUE(e.params.ScopedVariableValue(nullptr, 0, definitions[0].variableId, &value));
+    EXPECT_FLOAT_EQ(0.75f, value);
+}
