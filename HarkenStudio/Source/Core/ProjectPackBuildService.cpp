@@ -33,6 +33,8 @@ Result run(const Request& request)
     const auto canceled = [&] {
         return request.options.cancelCheck && request.options.cancelCheck();
     };
+    if (request.options.observationCallback)
+        request.options.observationCallback({{}, {}, {}, PackBuildObservationStage::Preflight});
     result.preflightSucceeded = ProjectPackExporter::ValidatePackBuildWriteAccess(
         project, request.outputRoot, request.platforms, request.options,
         &result.preflightError, &result.preflightSummary);
@@ -80,6 +82,8 @@ Result run(const Request& request)
     if (result.canceled) return result;
     const auto& finalizationCanceled = request.finalizationCancelCheck
         ? request.finalizationCancelCheck : request.options.cancelCheck;
+    if (request.options.observationCallback)
+        request.options.observationCallback({{}, {}, {}, PackBuildObservationStage::Finalizing});
     if (result.allPlatformsSucceeded) {
         result.finalization = Finalization::Complete;
         result.finalizationResult = ProjectPackExporter::FinalizePackExport(

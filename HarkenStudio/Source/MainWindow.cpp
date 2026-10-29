@@ -4553,6 +4553,12 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
                     store->updateProgress(runId, progress);
             }, Qt::QueuedConnection);
         };
+        opts.observationCallback = [store, projectLease, runId](const PackBuildObservation& observation) {
+            QMetaObject::invokeMethod(store, [store, projectLease, runId, observation] {
+                if (ProjectManager::instance().currentProject() == projectLease.get())
+                    store->updateObservation(runId, observation);
+            }, Qt::QueuedConnection);
+        };
         ProjectPackBuildService::Request buildRequest;
         buildRequest.outputRoot = baseDir;
         buildRequest.platforms = genPlatforms;

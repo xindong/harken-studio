@@ -74,6 +74,8 @@ void PackGenerationRecordStore::clear()
     cancel_.reset();
     records_.clear();
     progress_.clear();
+    globalObservation_.reset();
+    emit globalObservationChanged();
     emit changed();
     if (exporting) emit exportActivityChanged(false);
 }
@@ -134,7 +136,11 @@ void PackGenerationRecordStore::updateProgress(quint64 runId, const PackGenerati
                 return;
             next.percent = std::max(next.percent, existing->progress.percent);
         }
-        *existing = {next, runId};
+        if (newRun || (next.stage != PackGenerationStage::Compiling
+                       && next.stage != PackGenerationStage::Publishing))
+            existing->observation.reset();
+        existing->progress = next;
+        existing->runId = runId;
     }
     if (newRun && next.stage == PackGenerationStage::Queued) {
         records_.erase(std::remove_if(records_.begin(), records_.end(), [&](const auto& record) {
@@ -145,12 +151,50 @@ void PackGenerationRecordStore::updateProgress(quint64 runId, const PackGenerati
     emit progressChanged(next.platform, next.language, next.unitKey);
 }
 
+void PackGenerationRecordStore::updateObservation(quint64 runId, const PackBuildObservation& observation)
+{
+    if (!isCurrentRun(runId)) return;
+    if (observation.unitKey.isEmpty()) {
+        switch (observation.stage) {
+        case PackBuildObservationStage::Preflight:
+        case PackBuildObservationStage::PreparingMedia:
+        case PackBuildObservationStage::CompilingProject:
+        case PackBuildObservationStage::WritingPacks:
+        case PackBuildObservationStage::Publishing:
+        case PackBuildObservationStage::Finalizing:
+            globalObservation_ = observation;
+            emit globalObservationChanged();
+            break;
+        default:
+            break;
+        }
+        return;
+    }
+    if (observation.stage != PackBuildObservationStage::Prepared
+        && observation.stage != PackBuildObservationStage::ReadyToPublish)
+        return;
+    const auto existing = std::find_if(progress_.begin(), progress_.end(), [&](const auto& entry) {
+        return entry.runId == runId && entry.progress.platform == observation.platform
+            && entry.progress.language == observation.language
+            && entry.progress.unitKey == observation.unitKey;
+    });
+    if (existing == progress_.end()
+        || existing->progress.stage == PackGenerationStage::Complete
+        || existing->progress.stage == PackGenerationStage::Skipped
+        || existing->progress.stage == PackGenerationStage::Failed
+        || existing->progress.stage == PackGenerationStage::Canceled)
+        return;
+    existing->observation = observation;
+    emit progressChanged(observation.platform, observation.language, observation.unitKey);
+}
+
 void PackGenerationRecordStore::finishProgress(quint64 runId, bool canceled)
 {
     if (!isCurrentRun(runId)) return;
     finishPreflight(runId);
     QVector<PackGenerationProgress> unfinished;
     for (auto& entry : progress_) {
+        if (entry.runId == runId) entry.observation.reset();
         if (entry.runId != runId
             || entry.progress.stage == PackGenerationStage::Complete
             || entry.progress.stage == PackGenerationStage::Skipped
@@ -162,6 +206,8 @@ void PackGenerationRecordStore::finishProgress(quint64 runId, bool canceled)
     }
     activeRunId_ = 0;
     cancel_.reset();
+    globalObservation_.reset();
+    emit globalObservationChanged();
     for (const auto& progress : unfinished)
         emit progressChanged(progress.platform, progress.language, progress.unitKey);
     emit exportActivityChanged(false);
@@ -175,6 +221,21 @@ const PackGenerationProgress* PackGenerationRecordStore::findProgress(
             && entry.progress.unitKey == unitKey;
     });
     return found == progress_.cend() ? nullptr : &found->progress;
+}
+
+const PackBuildObservation* PackGenerationRecordStore::globalObservation() const
+{
+    return globalObservation_ ? &*globalObservation_ : nullptr;
+}
+
+const PackBuildObservation* PackGenerationRecordStore::findObservation(
+    const QString& platform, const QString& language, const QString& unitKey) const
+{
+    const auto found = std::find_if(progress_.cbegin(), progress_.cend(), [&](const auto& entry) {
+        return entry.runId == activeRunId_ && entry.progress.platform == platform
+            && entry.progress.language == language && entry.progress.unitKey == unitKey;
+    });
+    return found == progress_.cend() || !found->observation ? nullptr : &*found->observation;
 }
 
 bool PackGenerationRecordStore::isExporting() const

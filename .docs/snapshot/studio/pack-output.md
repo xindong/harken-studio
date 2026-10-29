@@ -29,6 +29,26 @@
 
 表注：Self-cleaning 包含取消、删除或改名的平台目录，以及任意后缀文件和 Unity .meta。右键单包导出不自动导出依赖包，也不检查混合新旧包的共享内容兼容性。
 
+## 独立构建入口
+
+GUI、IPC 与 Harkenizer 共用项目构建服务，覆盖预检、所选平台发布、根目录 Project.json 和自清理。packc 保持中间资源编译职责，不直接读取 `.hsp`。
+
+```text
+Harkenizer list-targets <project.hsp> --json
+Harkenizer generate-packs <project.hsp> --all --platform-id <UUID> [--platform-id <UUID> ...] --self-clean <on|off> [--output <directory>] [--force]
+```
+
+| 合同 | 当前规则 |
+|---|---|
+| 工程读取 | 只读完整已保存工程；无需启动 Studio；不保存、升级或恢复工程事务 |
+| 工程占用 | Studio 已打开同一工程时拒绝执行，不激活 Studio 窗口 |
+| 构建范围 | 显式指定全部包、平台 UUID 及自清理开关；沿用工程语言、元数据与波形设置 |
+| 输出目录 | 默认使用工程配置；覆盖参数中的相对路径以工程目录为基准 |
+| 目标发现 | JSON 提供 projectId、平台 id/name/basePlatform、语言、Action stableId/name |
+| 返回值 | 成功 0；失败 1；用法错误 2；取消 130 |
+| 取消边界 | Ctrl+C 请求现有取消流程；已提交平台保留，未完成整次发布不执行根目录最终收尾和自清理 |
+| 部署 | 随 Studio 的运行库、packc 和 schema 交付；Windows 为 Harkenizer.exe，macOS 位于应用包 Contents/MacOS/Harkenizer |
+
 ## 项目信息字段
 
 | 字段 | 类型 | 含义 |
@@ -96,8 +116,10 @@
 | 包勾选、Export Platforms | 项目本地缓存 | 不进入工程撤销栈；包勾选不改变导出平台选择 |
 | Built、Size、Modified、File、Version | 项目本地产物缓存 | 最近成功发布的快照；外部删除或替换不自动同步，Self Cleaning 已知删除同步清理 |
 | Result、Cost | 当前工程会话 | GUI 与 IPC 共用；工程关闭后清空，不写缓存或工程文件 |
-| Cost 统计口径 | 每包资源准备与写包 | 不包含共享编译和发布耗时 |
-| 行进度 | 当前工程会话 | 按主 Toolbar 当前观察平台和语言显示；成功发布到 100%，失败或取消冻结 |
+| Cost 统计口径 | 每包资源准备与写包 | 不包含共享编译和发布耗时，表头与单元格提示说明口径 |
+| 全局阶段 | 当前构建任务 | 表格上方显示检查输出、媒体准备、共享编译、写包、验证发布或根目录收尾，以及实际构建平台；任务结束后隐藏 |
+| 行进度 | 当前工程会话 | 按主 Toolbar 当前观察平台和语言显示；只有实际 Preparing／Writing 显示活动进度，成功发布到 100%，失败或取消冻结 |
+| 等待状态 | 本轮参与行 | Queued、Prepared、Ready to publish 为普通状态文字；准备或写入暂存完成不代表已发布成功 |
 | 新一轮发布 | 本轮参与行 | 清零进度及旧 Result／Cost；未参与行保留 |
 | 清缓存 | 本地选择及产物 | 包默认全选，产物列留空；Build 配置、平台及语言仍为工程数据 |
 

@@ -67,6 +67,7 @@ namespace ProjectPackExporterInternal {
         // ExportResult::canceled set.
         std::function<bool()> cancelCheck;
         std::function<void(const PackGenerationProgress&)> progressCallback;
+        std::function<void(const PackBuildObservation&)> observationCallback;
     };
 
 }

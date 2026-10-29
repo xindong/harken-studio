@@ -19,7 +19,7 @@ Wwise 将媒体转换缓存与 SoundBank 增量分开；重建 Bank 不必清除
 - 同一集成的 `API/Editor/WwiseWindows/AkWwiseProjectInfo.cs`
 - `C:/Users/XINDONG/Desktop/Wwise_GUI_2026/WwiseUI/DynamicProgressSoundBanksDlg/AddResultRow.c`
 
-### Harken 当前职责
+### Harken 改造前的职责
 
 Studio 创建工程及媒体快照、解析依赖、准备音源，通过 packc 编译中间资源，再在 Studio 内编译 CurrentWorld、切分定义、组装最终包、校验和发布。packc 是资源编译工具，尚不是读取完整工程的项目级执行器。
 
@@ -57,7 +57,7 @@ flowchart TD
 1. 保持包格式、Schema、稳定 ID、条目顺序、浮点运算顺序、媒体编码、循环和裁剪语义；不接受仅语义相同但字节不同的结果。
 2. 保持输出范围、平台和语言选择、Init 复用、部分导出、Force Re-export、Self-cleaning、伴随 JSON 和可选波形的原有含义。
 3. 保持错误、警告、回退、源文件构建中变化检测、取消边界、锁和事务恢复。不能以时间戳检查替代现有内容校验来获得速度。
-4. 内部优化保持 GUI 和 IPC 的输入语义、状态、计时口径及外部接口。用户允许提交独立 Console 与进度展示方案审定；审定前不实施这些对外变化，不改变强制保存规则。
+4. 内部优化保持 GUI 和 IPC 的输入语义、计时口径及外部接口。独立 Harkenizer 与进度展示按下文已审定方案实施，不改变强制保存规则。
 5. 不修改用户工程、音源或现有发布产物；资格验证使用独立临时工程及输出。
 6. 对不确定的等价性先给出具体风险与方案，由用户决策，不将行为改变伪装成内部优化。
 
@@ -67,9 +67,9 @@ flowchart TD
 |---|---|---|---|
 | 0 | 建分支、记录方案、构建基线、捕获固定身份产物 | 现有黄金测试和相关回归；保留原始文件及 SHA256 | 已通过 |
 | 1 | 复用同次读取的旧包字节 | 基线与新产物逐字节比较；完整导出与发布回归 | 最终范围已随阶段 2 通过 |
-| 2 | 在显式构建生命周期内复用已成功计算的衍生媒体结果 | 保留源校验；跨包复用、删除缓存、改变音源和设置均等价 | 正确性及局部性能验证通过，完整导出测量中 |
+| 2 | 在显式构建生命周期内复用已成功计算的衍生媒体结果 | 保留源校验；跨包复用、删除缓存、改变音源和设置均等价 | 正确性、局部及完整导出测量完成，结果见下文 |
 | 3 | 继续收敛重复计划和构建数据准备 | 每项单独证明依赖与错误顺序不变，再逐阶段验证 | 当前候选均需更完整的失效或执行边界设计 |
-| 4 | 完整构建服务、独立执行入口及准确进度展示 | 提交具体命令、输入语义、状态与验证方案供用户审定 | 方案已获批，分步实施 |
+| 4 | 完整构建服务、独立执行入口及准确进度展示 | 具体命令、输入语义、状态经用户审定；每步回归与字节对照 | A/B/C 已完成并通过 Windows 验证；macOS 待对应环境验证 |
 
 阶段 1 先选择不依赖新缓存身份、不重新推导媒体参数的变更。持久提前缓存、跳过完整 CurrentWorld 编译、改变子进程模型及并行调度均涉及更多失效或执行顺序条件，不能直接作为等价变更落地。
 
@@ -77,15 +77,15 @@ flowchart TD
 
 阶段 2 的缓存生命周期绑定 `ProjectBuildSnapshot`，只记录成功产物的元数据，不保留 PCM。请求身份包含 sourceId、绝对输入路径、完整源内容哈希、原始裁剪和循环边界、双精度偏移、平台 ID 以及完整转换设置 JSON。命中前后仍计算完整源哈希，且要求当前输出目录存在对应 WAV；缺失时走原转换流程。缓存不持久化，不改变磁盘缓存文件名、媒体计算和失败回退。
 
-## 后续架构方向
+## 架构边界
 
-Studio 的内存工程快照与独立执行器读取的磁盘工程可以进入同一项目构建内核，统一依赖计划、媒体转换、逻辑编译、装配、发布及诊断。现有 packc 的资源编译能力可以成为其中的模块。Integration 的离线浏览和与 Studio 的实时连接分别保留其数据来源。
+Studio 的内存工程快照与 Harkenizer 读取的磁盘工程进入同一项目构建服务，复用依赖计划、媒体转换、逻辑编译、装配及发布。packc 保持该流程中的资源编译职责。Integration 的离线浏览和与 Studio 的实时连接分别保留其数据来源，本轮未改动集成入口。
 
-独立 Console 的名称、命令、默认构建范围、未保存工程语义，以及进度界面的新状态属于对外能力设计；本轮没有把这些建议视为已确定的新产品行为。受控并行也必须以取消、失败传播、资源上限和确定性输出的等价验证为前提。
+独立 Console 的名称、命令、默认构建范围、未保存工程语义，以及进度界面的新状态属于对外能力设计，已按下文方案获得用户审定。受控并行仍需另行证明取消、失败传播、资源上限和确定性输出等价。
 
 ## Console 与 Publisher 审定方案
 
-状态：用户于 2026-10-30 审定 A→B→C 方案，独立执行器明确命名为 Harkenizer，开始分阶段实施。“能独立运行”“实际提速”“展示准确”是三项不同的验收目标。Console 避免为离线构建启动编辑器、预览会话及界面；打包内部耗时能降低多少，必须另外测量。进度展示不作为性能优化成绩。
+状态：用户于 2026-10-30 审定 A→B→C 方案，独立执行器明确命名为 Harkenizer。三个阶段均已实施并完成本机 Windows 验证。“能独立运行”“实际提速”“展示准确”是三项不同的验收目标。Console 避免为离线构建启动编辑器、预览会话及界面；打包内部耗时能降低多少，必须另外测量。进度展示不作为性能优化成绩。
 
 ### A. 先共用完整项目构建流程
 
@@ -116,10 +116,10 @@ Harkenizer generate-packs <project.hsp> --all --platform-id <UUID> [--platform-i
 | 部分导出 | 首版不新增命令行选择规则；现有 GUI/IPC 的部分导出、分组及语言选择保持原样。后续沿用稳定身份与既有分组规则扩展 |
 | 目标发现 | `list-targets --json` 输出工程平台 ID/名称、语言和 Action 稳定身份，供脚本解析；不执行打包 |
 | 日志 | 顺序输出全局阶段、当前包和最终结果；stdout 提供构建记录，stderr 提供诊断；首版不承诺机器读取自由文本 |
-| 返回值 | 建议成功为 0，失败为 1，命令用法错误为 2，取消为 130；Ctrl+C 转成现有取消请求，保留事务回退 |
+| 返回值 | 成功为 0，失败为 1，命令用法错误为 2，取消为 130；Ctrl+C 转成现有取消请求，保留事务回退 |
 | Integration | 首版交付独立可调用入口，保留现有浏览和实时连接方式；切换现有按钮或添加离线生成按钮另行明确界面语义 |
 
-上述命令、退出码及工程占用策略随方案获批；名称按用户决定为 Harkenizer。交付门槛是 Studio 未运行时完成项目构建，同一份已保存工程经 GUI/Console 生成的包体和伴随文件逐字节一致，并覆盖占用、取消、失败恢复、多平台最终收尾及运行时加载。再以相同环境比较启动到完成的总耗时和纯构建耗时。
+上述命令、退出码及工程占用策略随方案获批；名称按用户决定为 Harkenizer。交付门槛是 Studio 未运行时完成项目构建，同一份已保存工程经原构建流程与 Harkenizer 生成的包体和伴随文件逐字节一致，并覆盖占用、取消、失败恢复、多平台最终收尾及运行时加载。启动到完成的 GUI/CLI 耗时尚未作同条件对比，不宣称独立入口本身缩短了包编译时间。
 
 ### C. Publisher 准确呈现实际步骤
 
@@ -170,6 +170,8 @@ Harkenizer generate-packs <project.hsp> --all --platform-id <UUID> [--platform-i
 | 1 初版 | 旧包读取复用及 PCM 转移；后者因预览内存范围问题撤回 | 103/103 回归通过；22 个文件与基线逐字节一致，无缺失或额外文件 |
 | 2 | 保留旧包读取复用；增加构建内衍生结果复用；公开 prepare 恢复原实现 | 编辑器及测试构建成功；105/105 回归通过，22 个文件与基线逐字节一致；48 组有效输入和 7 类失败验证缓存透明性 |
 | A/B | GUI、IPC 和 Harkenizer 共用完整构建服务；新增只读工程准备和不激活窗口的工程占用检查 | Windows 编辑器、CLI、测试均构建成功；134/134 回归通过；22 个基线文件逐字节一致；实际保存工程的双平台首次/再次/强制 CLI 导出与原流程全部包体和 JSON 一致 |
+| C | 增加全局阶段、单包 Prepared／Ready to publish 和具名 CLI 日志；既有业务回调、取消检查及 Cost 口径不变 | 136/136 回归通过；22 个基线文件逐字节一致；9 张宽窄面板截图核验状态与布局；最终 CLI 真实 Ctrl+C 验证通过 |
+| 发布接入 | Windows 必需 CLI；macOS 增加 helper 依赖部署与来源回执；安装包校验 CLI 可启动 | 86/86 Python 回归通过，工作流 YAML 解析通过；未执行真实发布及 macOS 实机部署 |
 
 22 个文件包含 11 个 `.bytes` 与 11 个伴随 `.json`，其中黄金 Init/Action 对在两个输出目录各生成一次；另外覆盖六种容器样本。该数量不代表 22 个不同包。基线回归耗时 90.890 秒、阶段 1 初版 90.350 秒，仅作为运行记录，不足以证明性能提升。
 
@@ -178,14 +180,22 @@ Harkenizer generate-packs <project.hsp> --all --platform-id <UUID> [--platform-i
 ```powershell
 python .scripts/verify_pack_build_equivalence.py `
   --editor-tests build-nc/bin/RelWithDebInfo/harken_editor_tests.exe `
-  --output .temp/pack-build-optimization/stage-2 `
+  --output .temp/pack-build-optimization/verification-new `
   --reference .temp/pack-build-optimization/baseline-head `
   --regressions
 ```
 
-脚本保存二进制身份、测试日志、逐文件 SHA256 和字节比较报告，并拒绝空产物、缺失伴随文件及基线/输出目录重叠。已有报告位于 `.temp/pack-build-optimization/baseline-head/report.json`、`baseline-head-repeat/report.json`、`stage-1/report.json` 和 `stage-2/report.json`。
+脚本保存二进制身份、测试日志、逐文件 SHA256 和字节比较报告，并拒绝空产物、缺失伴随文件及基线/输出目录重叠。已有报告位于 `.temp/pack-build-optimization/` 下的 `baseline-head/report.json`、`baseline-head-repeat/report.json`、`stage-1/report.json`、`stage-2/report.json`、`stage-ab/report.json` 和 `stage-c/report.json`。
 
 A/B 阶段扩展了实例互斥、工程加载/事务恢复回归，结果见 `stage-ab/report.json`。另验证工程占用和输出锁冲突时拒绝构建；只读准备不创建索引缓存，不恢复未完成工程事务、不升级工程。独立入口使用 QCoreApplication，不创建 MainWindow 或音频运行会话；首版仍随 Studio 的 Qt 及运行库部署。本机验证范围为 Windows；macOS 部署链同时接入但未在本机执行，工程实例锁沿用项目现有 Windows/macOS 支持范围。
+
+真实 Ctrl+C 验证使用独立临时工程和隐藏 Windows 控制台，在首个平台提交后发送 `GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0)`。Harkenizer 正常返回 130；已提交平台与完整新版本构建逐字节一致，第二平台及根 Project.json 保持旧版，自清理哨兵文件保留，没有残留发布事务标记。证据为 `console-cancel/ab-verification/verification.json` 及同目录日志；该验证没有将强杀进程当作取消成功。
+
+C 完成后对最终 CLI 复验同一取消边界，证据为 `console-cancel/c-verification/after-first-platform/verification.json`。展示观察事件独立于原有业务进度，GUI 与 IPC 仍按工程及 runId 过滤事件；过期、未追踪及终态行不接受新的等待状态。现有测试文件补充了任务结束、取消、清空及旧轮事件的生命周期回归。
+
+Publisher 临时界面夹具截图位于 `publisher-progress/stage-c/captures/`。宽版与 620 像素面板均无新增阶段行重叠；Prepared／Ready to publish 无活动填充，Writing 只有实际当前包活跃，结束后全局阶段行隐藏。Result 列沿用既有宽度和省略策略，完整等待状态可从 tooltip 查看。该夹具仅验证展示，包体和发布语义由上述实际导出回归验证。
+
+Harkenizer 发布接入要求 Windows/macOS 包中存在可运行的独立入口。macOS 将其作为额外可执行文件交给 macdeployqt，并在部署回执中记录构建来源与部署后哈希。安装包构建拒绝缺失、空文件或不能执行 `--help` 的入口。相关 Python 测试 86/86 通过；尚未进行真实发布或 macOS 实机部署，CI 已加入对应文件、架构和启动检查。
 
 
 ## 局部性能测量

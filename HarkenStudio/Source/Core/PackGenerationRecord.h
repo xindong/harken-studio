@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include "ProjectPlatform.h"
 
 namespace VNX {
@@ -30,6 +31,28 @@ struct PackGenerationProgress
     QString unitKey;
     int percent = 0;
     PackGenerationStage stage = PackGenerationStage::Queued;
+};
+
+enum class PackBuildObservationStage {
+    Preflight,
+    PreparingMedia,
+    CompilingProject,
+    WritingPacks,
+    Publishing,
+    Finalizing,
+    Preparing,
+    Prepared,
+    Writing,
+    ReadyToPublish
+};
+
+struct PackBuildObservation
+{
+    QString platform;
+    QString language;
+    QString unitKey;
+    PackBuildObservationStage stage = PackBuildObservationStage::Preflight;
+    QString packName;
 };
 
 struct PackGenerationRecord
@@ -73,9 +96,13 @@ public:
     void finishPreflight(quint64 runId);
     bool isPreflighting() const { return preflighting_; }
     void updateProgress(quint64 runId, const PackGenerationProgress& progress);
+    void updateObservation(quint64 runId, const PackBuildObservation& observation);
     void finishProgress(quint64 runId, bool canceled);
     const PackGenerationProgress* findProgress(const QString& platform, const QString& language,
                                                const QString& unitKey) const;
+    const PackBuildObservation* globalObservation() const;
+    const PackBuildObservation* findObservation(const QString& platform, const QString& language,
+                                              const QString& unitKey) const;
     bool isExporting() const;
     bool isCurrentRun(quint64 runId) const;
     void cancelExport();
@@ -85,16 +112,19 @@ signals:
     void progressChanged(const QString& platform, const QString& language, const QString& unitKey);
     void exportActivityChanged(bool exporting);
     void preflightActivityChanged(bool active);
+    void globalObservationChanged();
 
 private:
     struct ProgressEntry {
         PackGenerationProgress progress;
         quint64 runId = 0;
+        std::optional<PackBuildObservation> observation;
     };
 
     PackGenerationRecordStore() = default;
     QVector<PackGenerationRecord> records_;
     QVector<ProgressEntry> progress_;
+    std::optional<PackBuildObservation> globalObservation_;
     quint64 nextRunId_ = 0;
     quint64 activeRunId_ = 0;
     bool preflighting_ = false;

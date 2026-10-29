@@ -413,6 +413,12 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
                 PackGenerationRecordStore::instance().updateProgress(runId, progress);
             }, Qt::QueuedConnection);
         };
+        exportOpts.observationCallback = [this, pmGuard, project, runId](const PackBuildObservation& observation) {
+            QMetaObject::invokeMethod(this, [pmGuard, project, runId, observation]() {
+                if (!pmGuard || pmGuard->currentProject() != project.get()) return;
+                PackGenerationRecordStore::instance().updateObservation(runId, observation);
+            }, Qt::QueuedConnection);
+        };
         exportOpts.debugStrings = true;
         ProjectPackBuildService::Request buildRequest;
         buildRequest.outputRoot = outputPath;

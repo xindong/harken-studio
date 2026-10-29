@@ -3112,6 +3112,15 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         request.options.progressCallback({request.options.platform, pack.language,
             pack.unitKey, percent, stage});
     };
+    const auto observeStage = [&](PackBuildObservationStage stage) {
+        if (request.options.observationCallback)
+            request.options.observationCallback({request.options.platform, {}, {}, stage});
+    };
+    const auto observeUnit = [&](const PackMeta& pack, PackBuildObservationStage stage) {
+        if (request.options.observationCallback && !pack.retained)
+            request.options.observationCallback({request.options.platform, pack.language,
+                pack.unitKey, stage, pack.name});
+    };
 
     auto prepareUnit = [&](PackMeta& meta) -> ProjectPackExporter::ExportResult {
         const QString path = QDir(stagingDir).filePath(meta.fileName);
@@ -3248,9 +3257,11 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         unit.mediaCount = static_cast<int>(meta.ownedResources);
         return unit;
     };
+    observeStage(PackBuildObservationStage::PreparingMedia);
     for (PackMeta& pack : packs) {
         reportProgress(pack, 5, PackGenerationStage::Preparing);
         if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
+        observeUnit(pack, PackBuildObservationStage::Preparing);
         QElapsedTimer timer;
         timer.start();
         pack.mediaResult = prepareUnit(pack);
@@ -3262,11 +3273,13 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             recordUnit(pack, pack.mediaResult);
             return fail(pack.mediaResult.error);
         }
+        observeUnit(pack, PackBuildObservationStage::Prepared);
     }
 
     for (const auto& pack : packs)
         reportProgress(pack, 40, PackGenerationStage::Compiling);
     if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
+    observeStage(PackBuildObservationStage::CompilingProject);
     QString compileError;
     std::set<harkenstudio::ObjectId> requiredDefinitions;
     for (const auto& variant : request.plan->variants)
@@ -3927,9 +3940,11 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         return unit;
     };
 
+    observeStage(PackBuildObservationStage::WritingPacks);
     for (PackMeta& pack : packs) {
         reportProgress(pack, 60, PackGenerationStage::Writing);
         if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
+        observeUnit(pack, PackBuildObservationStage::Writing);
         QElapsedTimer timer;
         timer.start();
         auto unit = writeUnit(pack);
@@ -3938,6 +3953,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         if (!unit.success)
             return fail(unit.error);
         if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
+        observeUnit(pack, PackBuildObservationStage::ReadyToPublish);
         result.warnings += unit.warnings;
         if (!pack.retained || pack.packKind == harkenstudiobuild::kPackKindInit) {
             result.fileSize += unit.fileSize;
@@ -3953,6 +3969,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
 
     for (const auto& pack : packs)
         reportProgress(pack, 85, PackGenerationStage::Publishing);
+    observeStage(PackBuildObservationStage::Publishing);
     std::vector<PackMeta*> allPacks;
     QStringList companionNames;
     QHash<uint32_t, QString> exportedWaveformSources;

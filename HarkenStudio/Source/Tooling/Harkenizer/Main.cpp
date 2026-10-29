@@ -38,20 +38,29 @@ int error(const QString& message, int code = 1)
     return code;
 }
 
-QString progressMessage(const VNX::PackGenerationProgress& progress)
+QString progressMessage(const VNX::PackBuildObservation& observation, const VNX::ProjectData& project)
 {
-    const QString prefix = QStringLiteral("[%1] ").arg(progress.platform);
-    const QString unit = progress.language.isEmpty() ? progress.unitKey
-        : progress.language + QLatin1Char('/') + progress.unitKey;
-    switch (progress.stage) {
-    case VNX::PackGenerationStage::Preparing:
+    const auto* platform = VNX::ProjectPlatformSemantics::find(project.platforms, QUuid(observation.platform));
+    const QString prefix = platform ? QStringLiteral("[%1] ").arg(platform->name) : QString();
+    const QString unit = observation.language.isEmpty() ? observation.packName
+        : observation.language + QLatin1Char('/') + observation.packName;
+    switch (observation.stage) {
+    case VNX::PackBuildObservationStage::Preflight:
+        return QStringLiteral("Checking outputs");
+    case VNX::PackBuildObservationStage::PreparingMedia:
+        return prefix + QStringLiteral("Preparing media");
+    case VNX::PackBuildObservationStage::Preparing:
         return prefix + QStringLiteral("Preparing media: ") + unit;
-    case VNX::PackGenerationStage::Compiling:
+    case VNX::PackBuildObservationStage::CompilingProject:
         return prefix + QStringLiteral("Compiling project");
-    case VNX::PackGenerationStage::Writing:
+    case VNX::PackBuildObservationStage::WritingPacks:
+        return prefix + QStringLiteral("Writing packs");
+    case VNX::PackBuildObservationStage::Writing:
         return prefix + QStringLiteral("Writing pack: ") + unit;
-    case VNX::PackGenerationStage::Publishing:
+    case VNX::PackBuildObservationStage::Publishing:
         return prefix + QStringLiteral("Validating and publishing");
+    case VNX::PackBuildObservationStage::Finalizing:
+        return QStringLiteral("Finalizing outputs");
     default:
         return {};
     }
@@ -191,13 +200,12 @@ int main(int argc, char* argv[])
         QTextStream(stderr) << issue.message << Qt::endl;
     if (readiness.errorCount > 0) return 1;
     QString lastProgress;
-    request.options.progressCallback = [&lastProgress](const VNX::PackGenerationProgress& progress) {
-        const auto message = progressMessage(progress);
+    request.options.observationCallback = [&lastProgress, &project](const VNX::PackBuildObservation& observation) {
+        const auto message = progressMessage(observation, project);
         if (message.isEmpty() || message == lastProgress) return;
         lastProgress = message;
         QTextStream(stdout) << message << Qt::endl;
     };
-    request.preflightFinished = [] { QTextStream(stdout) << "Building packs" << Qt::endl; };
     request.platformFinished = [](const VNX::ProjectPackBuildService::PlatformResult& platform) {
         for (const auto& warning : platform.result.warnings) QTextStream(stderr) << warning << Qt::endl;
         if (!platform.result.success) QTextStream(stderr) << platform.result.error << Qt::endl;
@@ -207,7 +215,6 @@ int main(int argc, char* argv[])
                 << Qt::endl;
         }
     };
-    QTextStream(stdout) << "Checking outputs" << Qt::endl;
     const auto result = VNX::ProjectPackBuildService::run(request);
     for (const auto& warning : result.finalizationResult.warnings) QTextStream(stderr) << warning << Qt::endl;
     if (result.canceled || canceled()) return error(QStringLiteral("Canceled."), 130);
