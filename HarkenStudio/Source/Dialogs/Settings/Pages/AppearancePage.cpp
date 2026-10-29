@@ -2,7 +2,6 @@
 
 #include "Core/AppSettings.h"
 #include "Core/ContextInfo.h"
-#include "Core/QtControlSkin.h"
 #include "Core/ThemeColorCatalog.h"
 #include "Widgets/Common/ProportionalTreeWidget.h"
 #include "Widgets/Common/SearchField.h"
@@ -19,7 +18,6 @@
 #include <QListWidget>
 #include <QPainter>
 #include <QPushButton>
-#include <QRegularExpressionValidator>
 #include <QScopedValueRollback>
 #include <QShowEvent>
 #include <QSignalBlocker>
@@ -141,11 +139,7 @@ AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
     colorSearch_ = new SearchField(colors);
     colorSearch_->setObjectName(QStringLiteral("appearanceColorSearch"));
     colorSearch_->setPlaceholderText(tr("Search colors and uses..."));
-    colorGroupReset_ = new QPushButton(tr("Reset Category"), colors);
-    colorGroupReset_->setObjectName(QStringLiteral("appearanceColorGroupReset"));
-    colorGroupReset_->setToolTip(tr("Restore every color in the selected category, including colors hidden by search."));
     filters->addWidget(colorGroup_);
-    filters->addWidget(colorGroupReset_);
     filters->addWidget(colorSearch_, 1);
     colorsLayout->addLayout(filters);
 
@@ -168,9 +162,6 @@ AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
     }
     colorsLayout->addWidget(table);
 
-    colorSummary_ = new QLabel(colors);
-    colorSummary_->setObjectName(QStringLiteral("appearanceColorSummary"));
-    colorSummary_->setProperty("textRole", QStringLiteral("muted"));
     colorDescription_ = new QLabel(colors);
     colorDescription_->setObjectName(QStringLiteral("appearanceColorDescription"));
     colorDescription_->setProperty("textRole", QStringLiteral("secondary"));
@@ -179,36 +170,16 @@ AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
     colorsLayout->addWidget(colorDescription_);
 
     auto* actions = new QHBoxLayout();
-    colorHex_ = new QLineEdit(colors);
-    colorHex_->setObjectName(QStringLiteral("appearanceColorHex"));
-    colorHex_->setAccessibleName(tr("Color value"));
-    colorHex_->setMaxLength(9);
-    colorHex_->setMaximumWidth(125);
-    colorHex_->setPlaceholderText(QStringLiteral("#RRGGBB"));
-    colorHex_->setToolTip(tr("Use #RRGGBB or #AARRGGBB. Alpha comes first."));
-    colorHex_->setValidator(new QRegularExpressionValidator(
-        QRegularExpression(QStringLiteral("#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?")), colorHex_));
-    colorEdit_ = new QPushButton(tr("Edit Color..."), colors);
-    colorEdit_->setObjectName(QStringLiteral("appearanceColorEdit"));
     colorReset_ = new QPushButton(tr("Reset Selected"), colors);
     colorReset_->setObjectName(QStringLiteral("appearanceColorReset"));
     colorsReset_ = new QPushButton(tr("Reset All"), colors);
     colorsReset_->setObjectName(QStringLiteral("appearanceColorsReset"));
     colorsReset_->setToolTip(tr("Restore all colors of the selected preset to its defaults."));
-    actions->addWidget(colorHex_);
-    actions->addWidget(colorEdit_);
-    actions->addWidget(colorReset_);
     actions->addStretch();
+    actions->addWidget(colorReset_);
     actions->addWidget(colorsReset_);
     colorsLayout->addLayout(actions);
 
-    auto* savedLabel = new QLabel(tr("Changes are saved automatically."), colors);
-    savedLabel->setProperty("textRole", QStringLiteral("secondary"));
-    auto* summaryRow = new QHBoxLayout();
-    summaryRow->addWidget(savedLabel);
-    summaryRow->addStretch();
-    summaryRow->addWidget(colorSummary_);
-    colorsLayout->addLayout(summaryRow);
     colors->setToolTip(tr("Custom colors are saved separately for each preset. Completed edits are saved immediately."));
     errorLabel_ = new QLabel(colors);
     errorLabel_->setObjectName(QStringLiteral("appearanceColorError"));
@@ -226,26 +197,12 @@ AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
     connect(colorGroup_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &AppearancePage::filterColors);
     connect(colorSearch_, &QLineEdit::textChanged, this, &AppearancePage::filterColors);
-    connect(colorTree_, &QTreeWidget::currentItemChanged, this,
-            [this](QTreeWidgetItem*, QTreeWidgetItem* previous) {
-        if (!finishHexEdit()) {
-            const QSignalBlocker blocker(colorTree_);
-            colorTree_->setCurrentItem(previous);
-            if (!colorHex_->isModified()) refreshSelectedColor();
-            return;
-        }
-        refreshSelectedColor();
-    });
+    connect(colorTree_, &QTreeWidget::currentItemChanged,
+            this, &AppearancePage::refreshSelectedColor);
     connect(colorTree_, &QTreeWidget::itemDoubleClicked, this,
             [this](QTreeWidgetItem*, int) { editSelectedColor(); });
-    connect(colorEdit_, &QPushButton::clicked, this, &AppearancePage::editSelectedColor);
     connect(colorReset_, &QPushButton::clicked, this, &AppearancePage::resetSelectedColor);
-    connect(colorGroupReset_, &QPushButton::clicked, this, &AppearancePage::resetColorGroup);
     connect(colorsReset_, &QPushButton::clicked, this, &AppearancePage::resetColors);
-    connect(colorHex_, &QLineEdit::textEdited, this, [this] {
-        QtControlSkin::setSemanticProperty(colorHex_, "inputInvalid", !colorHex_->hasAcceptableInput());
-    });
-    connect(colorHex_, &QLineEdit::editingFinished, this, &AppearancePage::finishHexEdit);
     connect(themeManager_, &ThemeManager::themeChanged, this, [this] {
         if (updatingAppearance_) return;
         if (colorDialog_) colorDialog_->reject();
@@ -274,7 +231,6 @@ QString AppearancePage::categoryLabel() const
 void AppearancePage::load()
 {
     if (updatingAppearance_ || colorDialog_) return;
-    colorHex_->setModified(false);
     themeManager_->refreshThemes();
     appearance_ = themeManager_->appearance();
     {
@@ -334,15 +290,6 @@ void AppearancePage::selectTheme()
 {
     if (!themePresets_->currentItem()) return;
     const QString themeId = themePresets_->currentItem()->data(Qt::UserRole).toString();
-    if (!finishHexEdit()) {
-        const QSignalBlocker blocker(themePresets_);
-        for (int i = 0; i < themePresets_->count(); ++i) {
-            auto* item = themePresets_->item(i);
-            if (item->data(Qt::UserRole).toString() == appearance_.themeId)
-                themePresets_->setCurrentItem(item);
-        }
-        return;
-    }
     auto next = themeManager_->appearance();
     next.themeId = themeId;
     commitAppearance(next);
@@ -426,45 +373,22 @@ void AppearancePage::refreshColors()
 
 void AppearancePage::filterColors()
 {
-    if (!finishHexEdit()) {
-        const QSignalBlocker groupBlocker(colorGroup_);
-        const QSignalBlocker searchBlocker(colorSearch_);
-        colorGroup_->setCurrentIndex(colorGroup_->findData(filterGroup_));
-        colorSearch_->setText(filterQuery_);
-        return;
-    }
     const QString group = colorGroup_->currentData().toString();
     const QString query = colorSearch_->text().trimmed();
-    filterGroup_ = group;
-    filterQuery_ = colorSearch_->text();
-    int visible = 0;
-    bool customGroup = false;
-    const auto overrides = appearance_.colors.value(appearance_.themeId);
     QTreeWidgetItem* first = nullptr;
     for (int i = 0; i < colorTree_->topLevelItemCount(); ++i) {
         auto* item = colorTree_->topLevelItem(i);
         const auto* role = findThemeColorRole(item->data(0, Qt::UserRole).toString());
-        if (!group.isEmpty() && group == QLatin1String(role->group)
-            && overrides.contains(QString::fromLatin1(role->key)))
-            customGroup = true;
         const QString searchable = roleText(role->label) + QLatin1Char(' ')
             + roleText(role->group) + QLatin1Char(' ') + roleText(role->description)
             + QLatin1Char(' ') + QString::fromLatin1(role->key);
         const bool matches = (group.isEmpty() || group == QLatin1String(role->group))
             && searchable.contains(query, Qt::CaseInsensitive);
         item->setHidden(!matches);
-        if (matches) {
-            ++visible;
-            if (!first) first = item;
-        }
+        if (matches && !first) first = item;
     }
     if (!colorTree_->currentItem() || colorTree_->currentItem()->isHidden())
         colorTree_->setCurrentItem(first);
-    const QString presetName = themePresets_->currentItem()
-        ? themePresets_->currentItem()->data(Qt::UserRole + 1).toString() : appearance_.themeId;
-    colorSummary_->setText(tr("%1 · %2 shown · %3 customized")
-        .arg(presetName).arg(visible).arg(appearance_.colors.value(appearance_.themeId).size()));
-    colorGroupReset_->setEnabled(baseTheme_ && customGroup);
     refreshSelectedColor();
 }
 
@@ -478,16 +402,9 @@ const ThemeColorRole* AppearancePage::selectedRole() const
 void AppearancePage::refreshSelectedColor()
 {
     const auto* role = selectedRole();
-    hexRoleKey_ = role ? QString::fromLatin1(role->key) : QString();
-    colorEdit_->setEnabled(role != nullptr);
-    colorHex_->setEnabled(role != nullptr);
     colorReset_->setEnabled(role && appearance_.colors.value(appearance_.themeId).contains(QString::fromLatin1(role->key)));
     colorDescription_->setText(role ? roleText(role->description)
         : baseTheme_ ? tr("No matching colors.") : tr("Theme colors are unavailable."));
-    const QSignalBlocker blocker(colorHex_);
-    colorHex_->setText(role ? colorText(effectiveColor(*role)) : QString());
-    colorHex_->setModified(false);
-    QtControlSkin::setSemanticProperty(colorHex_, "inputInvalid", false);
 }
 
 ThemeAppearance AppearancePage::appearanceWithColor(const QString& key, const QColor& color) const
@@ -509,13 +426,12 @@ ThemeAppearance AppearancePage::appearanceWithColor(const QString& key, const QC
 bool AppearancePage::setColor(const QString& key, const QColor& color)
 {
     if (!findThemeColorRole(key) || !baseTheme_ || !color.isValid()) return false;
-    colorHex_->setModified(false);
     return commitAppearance(appearanceWithColor(key, color));
 }
 
 void AppearancePage::editSelectedColor()
 {
-    if (colorDialog_ || !finishHexEdit()) return;
+    if (colorDialog_) return;
     const auto* role = selectedRole();
     if (!role) return;
     const QString key = QString::fromLatin1(role->key);
@@ -550,48 +466,16 @@ void AppearancePage::editSelectedColor()
     dialog->open();
 }
 
-bool AppearancePage::finishHexEdit()
-{
-    if (!colorHex_->isModified()) return true;
-    const auto* role = findThemeColorRole(hexRoleKey_);
-    if (!role) return true;
-    if (!colorHex_->hasAcceptableInput()) {
-        QtControlSkin::setSemanticProperty(colorHex_, "inputInvalid", true);
-        errorLabel_->setText(tr("Enter a color as #RRGGBB or #AARRGGBB."));
-        errorLabel_->show();
-        colorHex_->setFocus();
-        return false;
-    }
-    colorHex_->setModified(false);
-    return setColor(QString::fromLatin1(role->key), QColor(colorHex_->text()));
-}
-
 void AppearancePage::resetSelectedColor()
 {
     if (const auto* role = selectedRole())
         setColor(QString::fromLatin1(role->key), role->read(*baseTheme_));
 }
 
-void AppearancePage::resetColorGroup()
-{
-    const QString group = colorGroup_->currentData().toString();
-    if (group.isEmpty()) return;
-    auto next = themeManager_->appearance();
-    auto overrides = next.colors.find(next.themeId);
-    if (overrides == next.colors.end()) return;
-    for (const auto& role : themeColorRoles())
-        if (group == QLatin1String(role.group))
-            overrides->remove(QString::fromLatin1(role.key));
-    if (overrides->isEmpty()) next.colors.erase(overrides);
-    colorHex_->setModified(false);
-    commitAppearance(next);
-}
-
 void AppearancePage::resetColors()
 {
     auto next = themeManager_->appearance();
     next.colors.remove(next.themeId);
-    colorHex_->setModified(false);
     commitAppearance(next);
 }
 

@@ -66,11 +66,21 @@ bool selectColor(QTreeWidget& colors, const QString& key)
     return false;
 }
 
-bool finishColorEdit(QLineEdit& edit, const QColor& color)
+QColorDialog* openColorEditor(QWidget& page, QTreeWidget& colors)
 {
-    edit.setText(color.name(QColor::HexArgb));
-    edit.setModified(true);
-    return QMetaObject::invokeMethod(&edit, "editingFinished", Qt::DirectConnection);
+    if (!colors.currentItem()) return nullptr;
+    colors.itemDoubleClicked(colors.currentItem(), 1);
+    return page.findChild<QColorDialog*>(QStringLiteral("appearanceColorDialog"));
+}
+
+bool finishColorEdit(QWidget& page, QTreeWidget& colors, const QColor& color)
+{
+    auto* picker = openColorEditor(page, colors);
+    if (!picker) return false;
+    picker->setCurrentColor(color);
+    picker->accept();
+    QCoreApplication::sendPostedEvents(picker, QEvent::DeferredDelete);
+    return true;
 }
 
 QVariantMap storedValues(const VNX::ISettingsStorage& storage)
@@ -312,12 +322,10 @@ TEST_F(SettingsApplyContractTest, AppearanceEditsPersistAcrossPresetSwitchesAndR
     PreferencesPanel panel(secretStore(), *theme_);
     auto* presets = panel.findChild<QListWidget*>(QStringLiteral("appearanceThemePresets"));
     auto* colors = panel.findChild<QTreeWidget*>(QStringLiteral("appearanceColorTree"));
-    auto* hex = panel.findChild<QLineEdit*>(QStringLiteral("appearanceColorHex"));
     auto* reset = panel.findChild<QPushButton*>(QStringLiteral("appearanceColorReset"));
     auto* resetAll = panel.findChild<QPushButton*>(QStringLiteral("appearanceColorsReset"));
     ASSERT_NE(presets, nullptr);
     ASSERT_NE(colors, nullptr);
-    ASSERT_NE(hex, nullptr);
     ASSERT_NE(reset, nullptr);
     ASSERT_NE(resetAll, nullptr);
 
@@ -332,19 +340,19 @@ TEST_F(SettingsApplyContractTest, AppearanceEditsPersistAcrossPresetSwitchesAndR
     const auto before = storedValues(*themeStorage_);
 
     ASSERT_TRUE(selectColor(*colors, primary));
-    ASSERT_TRUE(finishColorEdit(*hex, firstColor));
+    ASSERT_TRUE(finishColorEdit(panel, *colors, firstColor));
     EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, firstColor);
     EXPECT_EQ(theme_->appearance().colors.value(firstId).value(primary), firstColor);
     EXPECT_NE(storedValues(*themeStorage_), before);
     ASSERT_TRUE(selectColor(*colors, secondary));
-    ASSERT_TRUE(finishColorEdit(*hex, secondColor));
+    ASSERT_TRUE(finishColorEdit(panel, *colors, secondColor));
     ASSERT_TRUE(selectPreset(*presets, secondId));
     EXPECT_EQ(theme_->appearance().themeId, secondId);
     ASSERT_TRUE(selectColor(*colors, primary));
-    ASSERT_TRUE(finishColorEdit(*hex, secondColor));
+    ASSERT_TRUE(finishColorEdit(panel, *colors, secondColor));
 
     ASSERT_TRUE(selectPreset(*presets, firstId));
-    EXPECT_EQ(QColor(hex->text()), firstColor);
+    EXPECT_EQ(QColor(colors->currentItem()->text(1)), firstColor);
     ASSERT_TRUE(reset->isEnabled());
     reset->click();
     EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, defaults->ui.colors.textPrimary);
@@ -357,7 +365,7 @@ TEST_F(SettingsApplyContractTest, AppearanceEditsPersistAcrossPresetSwitchesAndR
     EXPECT_EQ(theme_->appearance().colors.value(secondId).value(primary), secondColor);
 
     ASSERT_TRUE(selectPreset(*presets, secondId));
-    EXPECT_EQ(QColor(hex->text()), secondColor);
+    EXPECT_EQ(QColor(colors->currentItem()->text(1)), secondColor);
     ThemeManager restored(root_.path(), std::make_unique<MemorySettingsStorage>(*themeStorage_));
     EXPECT_EQ(restored.appearance(), theme_->appearance());
     EXPECT_EQ(restored.snapshot()->ui.colors.textPrimary, secondColor);
@@ -368,10 +376,8 @@ TEST_F(SettingsApplyContractTest, AppearanceFollowsExternalCommittedThemeAndColo
     PreferencesPanel panel(secretStore(), *theme_);
     auto* presets = panel.findChild<QListWidget*>(QStringLiteral("appearanceThemePresets"));
     auto* colors = panel.findChild<QTreeWidget*>(QStringLiteral("appearanceColorTree"));
-    auto* hex = panel.findChild<QLineEdit*>(QStringLiteral("appearanceColorHex"));
     ASSERT_NE(presets, nullptr);
     ASSERT_NE(colors, nullptr);
-    ASSERT_NE(hex, nullptr);
     ASSERT_TRUE(selectColor(*colors, QStringLiteral("text.primary")));
 
     auto appearance = theme_->appearance();
@@ -382,8 +388,7 @@ TEST_F(SettingsApplyContractTest, AppearanceFollowsExternalCommittedThemeAndColo
 
     ASSERT_NE(presets->currentItem(), nullptr);
     EXPECT_EQ(presets->currentItem()->data(Qt::UserRole).toString(), appearance.themeId);
-    EXPECT_EQ(QColor(hex->text()), externalColor);
-    EXPECT_FALSE(hex->isModified());
+    EXPECT_EQ(QColor(colors->currentItem()->text(1)), externalColor);
 }
 
 TEST_F(SettingsApplyContractTest, ColorPickerPreviewRequiresAcceptance)
@@ -396,12 +401,9 @@ TEST_F(SettingsApplyContractTest, ColorPickerPreviewRequiresAcceptance)
         AppearancePage page(*theme_);
         page.load();
         auto* colors = page.findChild<QTreeWidget*>(QStringLiteral("appearanceColorTree"));
-        auto* edit = page.findChild<QPushButton*>(QStringLiteral("appearanceColorEdit"));
         ASSERT_NE(colors, nullptr);
-        ASSERT_NE(edit, nullptr);
         ASSERT_TRUE(selectColor(*colors, QStringLiteral("text.primary")));
-        edit->click();
-        auto* picker = page.findChild<QColorDialog*>(QStringLiteral("appearanceColorDialog"));
+        auto* picker = openColorEditor(page, *colors);
         ASSERT_NE(picker, nullptr);
         picker->setCurrentColor(previewColor);
         EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, previewColor);
@@ -414,8 +416,7 @@ TEST_F(SettingsApplyContractTest, ColorPickerPreviewRequiresAcceptance)
         EXPECT_EQ(storedValues(*themeStorage_), before);
         QCoreApplication::sendPostedEvents(picker, QEvent::DeferredDelete);
 
-        edit->click();
-        picker = page.findChild<QColorDialog*>(QStringLiteral("appearanceColorDialog"));
+        picker = openColorEditor(page, *colors);
         ASSERT_NE(picker, nullptr);
         picker->setCurrentColor(previewColor);
         picker->accept();
@@ -443,16 +444,11 @@ TEST_F(SettingsApplyContractTest, FailedPickerCommitAndPageDestructionRestoreCom
         AppearancePage page(manager);
         page.load();
         auto* colors = page.findChild<QTreeWidget*>(QStringLiteral("appearanceColorTree"));
-        auto* edit = page.findChild<QPushButton*>(QStringLiteral("appearanceColorEdit"));
-        auto* hex = page.findChild<QLineEdit*>(QStringLiteral("appearanceColorHex"));
         auto* error = page.findChild<QLabel*>(QStringLiteral("appearanceColorError"));
         ASSERT_NE(colors, nullptr);
-        ASSERT_NE(edit, nullptr);
-        ASSERT_NE(hex, nullptr);
         ASSERT_NE(error, nullptr);
         ASSERT_TRUE(selectColor(*colors, QStringLiteral("text.primary")));
-        edit->click();
-        auto* picker = page.findChild<QColorDialog*>(QStringLiteral("appearanceColorDialog"));
+        auto* picker = openColorEditor(page, *colors);
         ASSERT_NE(picker, nullptr);
         picker->setCurrentColor(previewColor);
         ASSERT_EQ(manager.snapshot()->ui.colors.textPrimary, previewColor);
@@ -461,13 +457,12 @@ TEST_F(SettingsApplyContractTest, FailedPickerCommitAndPageDestructionRestoreCom
 
         EXPECT_EQ(manager.appearance(), committed);
         EXPECT_EQ(manager.snapshot()->ui.colors.textPrimary, original->ui.colors.textPrimary);
-        EXPECT_EQ(QColor(hex->text()), original->ui.colors.textPrimary);
+        EXPECT_EQ(QColor(colors->currentItem()->text(1)), original->ui.colors.textPrimary);
         EXPECT_EQ(storedValues(*stored), before);
         EXPECT_FALSE(error->text().isEmpty());
         QCoreApplication::sendPostedEvents(picker, QEvent::DeferredDelete);
 
-        edit->click();
-        picker = page.findChild<QColorDialog*>(QStringLiteral("appearanceColorDialog"));
+        picker = openColorEditor(page, *colors);
         ASSERT_NE(picker, nullptr);
         picker->setCurrentColor(previewColor);
         ASSERT_EQ(manager.snapshot()->ui.colors.textPrimary, previewColor);
