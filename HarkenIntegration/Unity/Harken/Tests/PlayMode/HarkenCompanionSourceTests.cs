@@ -30,6 +30,109 @@ namespace Harken.Unity.Tests
             => target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).SetValue(target, value);
 
         [UnityTest]
+        public IEnumerator ExplicitSourceStartsWithLegacyProjectAndComponentInitPaths()
+        {
+            foreach (bool fromProjectSettings in new[] { true, false })
+            {
+                using (var fixture = new Fixture("Init.pack", fromProjectSettings))
+                {
+                    var reads = new List<string>();
+                    Assert.That(fixture.Runtime.StartRuntime(PackSource.FromReader(path =>
+                    {
+                        reads.Add(path);
+                        return Read(path);
+                    })), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(reads, Is.EqualTo(new[] { "Init.bytes", "Init.json" }));
+                    AssertReadyFromExplicitSource(fixture);
+                }
+                yield return null;
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator ExplicitAsyncSourceStartsWithLegacyProjectAndComponentInitPaths()
+        {
+            foreach (bool fromProjectSettings in new[] { true, false })
+            {
+                using (var fixture = new Fixture("Init.pack", fromProjectSettings))
+                {
+                    var reads = new List<string>();
+                    var init = new TaskCompletionSource<byte[]>();
+                    var start = fixture.Runtime.StartRuntimeAsync(PackSource.FromAsyncReader((path, token) =>
+                    {
+                        reads.Add(path);
+                        return path == "Init.bytes" ? init.Task : Task.FromResult(Read(path));
+                    }));
+                    Assert.That(start.IsCompleted, Is.False);
+                    Assert.That(fixture.Runtime.IsReady, Is.False);
+                    init.SetResult(Read("Init.bytes"));
+                    yield return Until(start);
+                    Assert.That(start.GetAwaiter().GetResult(), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(reads, Is.EqualTo(new[] { "Init.bytes", "Init.json" }));
+                    AssertReadyFromExplicitSource(fixture);
+                }
+                yield return null;
+            }
+        }
+
+        private static void AssertReadyFromExplicitSource(Fixture fixture)
+        {
+            Assert.That(fixture.Runtime.IsReady, Is.True);
+            Assert.That(fixture.Runtime.Session.IsActive, Is.True);
+            Assert.That(fixture.Runtime.Session.InitPack.IsValid, Is.True);
+            Assert.That(new PackDirectorySource(Root, string.Empty).Capture(null, default, null,
+                out CompanionInput inspected), Is.EqualTo(VnResult.VN_OK));
+            Assert.That(fixture.Runtime.Session.ProjectId, Is.EqualTo(inspected.Names.ProjectId.ToString()));
+            Assert.That(typeof(HarkenAudioSystem).GetField("initPack", BindingFlags.Instance | BindingFlags.NonPublic)
+                .GetValue(fixture.Runtime), Is.EqualTo("Init.pack"));
+        }
+
+        [UnityTest]
+        public IEnumerator LegacyInitSettingDoesNotBypassExplicitSourceValidation()
+        {
+            foreach (bool asynchronous in new[] { false, true })
+            foreach (string invalid in new[] { "pair", "Init.bytes", "Init.json", "corrupt-bytes", "corrupt-json" })
+            {
+                using (var fixture = new Fixture("Init.pack", true))
+                {
+                    byte[] ReadInvalid(string path)
+                    {
+                        if (invalid == "pair" || path == invalid) return null;
+                        if (invalid == "corrupt-bytes" && path == "Init.bytes") return new byte[] { 0 };
+                        if (invalid == "corrupt-json" && path == "Init.json") return Encoding.UTF8.GetBytes("{");
+                        return Read(path);
+                    }
+                    VnResult expected = invalid == "pair" ? VnResult.VN_CONTENT_NOT_LOADED : VnResult.VN_BAD_PACK;
+                    LogAssert.Expect(LogType.Error, "Harken operation failed: PackBootstrap.Start: " + expected);
+                    var source = asynchronous ? PackSource.FromAsyncReader(async (path, token) =>
+                    {
+                        await Task.Yield();
+                        return ReadInvalid(path);
+                    }) : PackSource.FromReader(ReadInvalid);
+                    var start = asynchronous ? fixture.Runtime.StartRuntimeAsync(source)
+                        : Task.FromResult(fixture.Runtime.StartRuntime(source));
+                    yield return Until(start);
+                    Assert.That(start.GetAwaiter().GetResult(), Is.EqualTo(expected), invalid);
+                    Assert.That(fixture.Runtime.Session, Is.Null);
+                    Assert.That(fixture.Runtime.IsReady, Is.False);
+                }
+                yield return null;
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator DirectoryStartupStillRequiresItsConfiguredInitPath()
+        {
+            using (var fixture = new Fixture("Init.pack"))
+            {
+                LogAssert.Expect(LogType.Error, "Harken operation failed: PackBootstrap.Start: VN_PACK_STALE_REVISION");
+                Assert.That(fixture.Runtime.StartRuntime(Root), Is.EqualTo(VnResult.VN_PACK_STALE_REVISION));
+                Assert.That(fixture.Runtime.Session, Is.Null);
+            }
+            yield return null;
+        }
+
+        [UnityTest]
         public IEnumerator SerializedPackPreloadDoesNotBlockCompanionReadinessOrExplicitLeases()
         {
             using (var fixture = new Fixture())
@@ -115,7 +218,7 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator UnsupportedVersionsRefuseStartupAndRefreshWithoutLosingPlayback()
         {
-            using (var fixture = new Fixture())
+            using (var fixture = new Fixture("Init.pack", true))
             {
                 string invalid = "Init.json";
                 var source = PackSource.FromAsyncReader(async (path, token) =>
@@ -319,13 +422,19 @@ namespace Harken.Unity.Tests
             internal readonly GameObject Owner = new GameObject("Companion source Runtime");
             internal readonly HarkenAudioSystem Runtime;
             private readonly HarkenProjectSettingsLease settings = HarkenProjectSettingsLease.Acquire();
-            internal Fixture()
+            internal Fixture(string initPath = "Init.bytes", bool fromProjectSettings = false)
             {
                 Owner.SetActive(false);
                 Runtime = Owner.AddComponent<HarkenAudioSystem>();
                 Set(Runtime, "autoInitialize", false);
                 Set(Runtime, "persistAcrossScenes", false);
-                Assert.That(Runtime.ConfigureBeforeStartup("Unused", "Init.bytes", Array.Empty<ulong>(), true, false), Is.EqualTo(VnResult.VN_OK));
+                if (fromProjectSettings)
+                {
+                    settings.Settings.SetInitPack(initPath);
+                    Set(Runtime, "nullDevice", true);
+                }
+                else
+                    Assert.That(Runtime.ConfigureBeforeStartup("Unused", initPath, Array.Empty<ulong>(), true, false), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(Runtime.ConfigurePlatformBeforeStartup(null), Is.EqualTo(VnResult.VN_OK));
                 Owner.SetActive(true);
             }
