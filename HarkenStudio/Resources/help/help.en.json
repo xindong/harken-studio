@@ -283,7 +283,7 @@
     },
     "settings.publish.project_information": {
       "title": "Export Project Information",
-      "body": "Write Project.json in Publish Directory, alongside the platform folders. It contains project information for SDK consumers and is optional for runtime pack loading."
+      "body": "Write Project.json in Publish Directory, alongside the platform folders. It contains optional project information for external tools and is not required to load runtime packs."
     },
     "settings.publish.pack_metadata": {
       "title": "Export Pack MetaData",

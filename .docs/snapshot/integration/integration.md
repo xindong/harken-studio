@@ -1,5 +1,7 @@
 # HarkenIntegration 现状快照
 
+本分册描述 Unity 宿主集成；SDK/API 绑定指其中的开发接口与原生投影，不代表完整集成包的职责。
+
 ## 能力与边界
 
 | 能力域 | 预期 | 现状 | 状态 |
@@ -34,7 +36,9 @@
 | 产品范围 | 仅维护 Unity Integration，Unreal SDK 已移除 |
 | 产品版本 | Unity Integration 为 0.3.7，以 Unity 包清单为唯一版本维护源；独立制品与源码清单一致，Studio 随附版本以实际清单为准 |
 | 制品名称 | 内部制品为 `harken-integration-bundle`，独立下载为 `HarkenIntegrationBundle` |
-| Studio 随附布局 | 主目录为 `HarkenIntegration`，同时提供 `HarkenSDK/Unity/Harken` 实体兼容副本；两份内容逐文件校验一致 |
+| 发布与门禁 | 集成包由 `Integration Artifact` 工作流组装交付，`PR Gate Integration` 执行质量门禁 |
+| 发布证据 | 新证据使用 `product=integration`，SBOM 组件名与核验记录产品名一致；既有证据保留原身份，不重写或迁移 |
+| Studio 随附布局 | 主目录为 `HarkenIntegration`，同时提供 `HarkenSDK/Unity/Harken` 实体副本供旧 Hub 发现与安装集成包；两份内容逐文件校验一致 |
 | Unity 身份 | 外层分发命名不改变 Unity 包标识、程序集、GUID 或工程安装位置 |
 | 运行库升级 | 游戏工程需更新集成包才能获得原生运行库修正，单独升级 Studio 不会替换游戏工程运行库 |
 | Schema 兼容 | Studio 0.9.2 的 Editor Schema 为 9、Pack Schema 为 4，与 0.9.1 一致；0.9.1 工程无需迁移，既有 Pack 不因升级而强制重打 |

@@ -41,11 +41,11 @@ Restore `HarkenPlayableDemoController.IsAvailable`, installation and rebuild
 entry points only after all of these conditions hold:
 
 1. The exported sample uses the current schema's paired Pack files, without a
-   separate legacy manifest or fixed SDK schema number.
+   separate legacy manifest or fixed schema number defined by the integration.
 2. The builder obtains project and Variable identities from current supported
    data, binds the exact Action names, and prepares Actions through the current
    runtime path instead of an inventory-derived startup ID list.
-3. Installation, scene startup and all six Actions work with the matching SDK
+3. Installation, scene startup and all six Actions work with the matching Integration Package
    and native library, including the `Demo_Choice` controls.
 4. Scene/prefab identity checks and an actual listening check pass. Record the
    Unity version, output device, each audible Action, and both Variable values.

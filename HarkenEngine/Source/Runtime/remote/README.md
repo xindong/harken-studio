@@ -30,7 +30,7 @@ port conflict, and retry. Explicitly stop an existing service before changing
 its configuration. The Unity integration performs this startup
 automatically. Its Harken project settings page exposes `Enable Communication
 in Builds`, enabled by default. It controls packaged games; Editor sessions
-remain enabled. SDK retries honor that policy and report communication errors
+remain enabled. Unity integration retries honor that policy and report communication errors
 separately from audio initialization. Raw C ABI users own the lifecycle explicitly.
 
 | Setting | Default | Meaning |

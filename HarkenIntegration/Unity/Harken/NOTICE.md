@@ -1,7 +1,7 @@
-Harken SDK and Runtime
+Harken Unity Integration Package and Runtime
 Copyright 2026 XD.
 
-The Harken SDK and Runtime are provided under the Apache License 2.0.
+The Harken Unity Integration Package and Runtime are provided under the Apache License 2.0.
 See LICENSE.md for the license. Preserve applicable notices when redistributing.
 
 This Runtime includes miniaudio 0.11.22 for audio device output and decoding,

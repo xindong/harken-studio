@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import check_sdk_version
+import check_integration_version
 import schema_archive
 import studio_schema_release_audit
 from release import collect_legal_texts, integration_layout, release_evidence
@@ -161,7 +161,7 @@ def collect_payload(input_dir: Path) -> list[Path]:
     return files
 
 
-def sdk_components(input_dir: Path) -> list[dict]:
+def integration_components(input_dir: Path) -> list[dict]:
     layouts = [
         (
             input_dir / "HarkenIntegration" / "Unity" / "Harken" / "package.json",
@@ -177,7 +177,7 @@ def sdk_components(input_dir: Path) -> list[dict]:
         raise SystemExit("error: expected one complete Unity Integration Package layout")
     unity_path, unity_root = matches[0]
     try:
-        version = check_sdk_version.version(unity_path)
+        version = check_integration_version.version(unity_path)
     except (OSError, ValueError) as error:
         raise SystemExit(f"error: invalid Unity Integration Package identity: {error}") from error
     return [{
@@ -195,7 +195,7 @@ def build_package(args: argparse.Namespace) -> dict:
     binary = studio_binary(input_dir)
     legal_dir = input_dir / "Legal" if binary.suffix == ".exe" else binary.parent.parent / "Resources" / "Legal"
     collect_legal_texts.verify("studio", legal_dir)
-    collect_legal_texts.verify_sdk(binary.parent / "HarkenIntegration")
+    collect_legal_texts.verify_integration(binary.parent / "HarkenIntegration")
     try:
         integration_layout.verify(binary.parent)
     except (ValueError, OSError) as error:
@@ -231,7 +231,7 @@ def build_package(args: argparse.Namespace) -> dict:
         "channel": args.channel,
         "createdAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "releaseSequence": args.release_sequence,
-        "components": sdk_components(input_dir),
+        "components": integration_components(input_dir),
         "files": file_records,
     }
     capabilities = {

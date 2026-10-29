@@ -7,12 +7,12 @@ python HarkenIntegration/Test/ExternalConsumer/check_boundary.py
 python HarkenIntegration/Test/ExternalConsumer/check_boundary.py --native-dir <production-runtime-directory> --publication HarkenIntegration/Test/UnityFixture/Data/U4Original
 ```
 
-The runner stages the selected SDK, builds `Harken.Core.dll`, and compiles an
+The runner stages the selected Unity Integration Package, builds `Harken.Core.dll`, and compiles an
 unrelated `Harken.ExternalConsumer` assembly referencing only that DLL. It has no
 friend grant and no SDK source compile items. A reflection check covers all
 generated types/constants; each forbidden access is compiled independently and
 must fail with the matching access diagnostic. `--sdk-root` selects an assembled
-SDK package instead of the repository source. Every invocation keeps its own
+Unity Integration Package instead of the repository source. Every invocation keeps its own
 logs and result manifest under `.temp` or a new `--work-dir`.
 
 Direct builds of either fixture project also keep restore, intermediate and
@@ -33,7 +33,7 @@ For real Unity compilation and callback/AOT coverage, copy `Unity/` to the
 dedicated fixture project's `Assets/ExternalConsumer` directory. Keep the
 `Harken.ExternalUnityConsumer` assembly name unchanged and outside SDK friend
 lists. Prepare the project with the existing `../UnityFixture/README.md` process,
-the current SDK, and the dedicated **test-only** native bridge. Enable
+the current Integration Package, and the dedicated **test-only** native bridge. Enable
 `HARKEN_SDK_TEST_NULL_PUMP` for Standalone and run the external test alongside
 `Harken.Unity.PlayModeTests` in PlayMode and a Standalone Windows IL2CPP Player.
 Also run `Harken.Unity.EditModeTests`. PlayableDemo remains suspended and is not a runtime validation input.
@@ -43,6 +43,7 @@ Action, advances null audio until the same firing is terminal, and releases it.
 It queues a fresh native notification, forces GC, pumps the public Update path,
 and verifies delivery, host state and calling thread. The private P/Invokes in
 that test only drive the existing native test bridge; they do not grant access
-to SDK internals. Never distribute the bridge DLL or test define as an SDK runtime.
+to SDK internals. Never distribute the bridge DLL or test define with a production
+Integration Package.
 Unity Player tests complement the production-library host run; neither replaces
 actual device/game/listening acceptance when a change requires it.
