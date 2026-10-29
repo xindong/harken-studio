@@ -67,7 +67,13 @@ inline void ProcessChainSlot(InsertEffect& fx, bool& bypassRamping,
             const float mix =
                 startMix +
                 (endMix - startMix) * (static_cast<float>(i) + 1.0f) / span;
-            wet[i] = d[i] * mix + wet[i] * (1.0f - mix);
+            // A zero-weight non-finite lane must not contaminate the selected
+            // endpoint. The effect still ran above to advance its state.
+            if (mix == 1.0f) {
+                wet[i] = d[i];
+            } else if (mix != 0.0f) {
+                wet[i] = d[i] * mix + wet[i] * (1.0f - mix);
+            }
         }
     }
     if (bypassRamping) {

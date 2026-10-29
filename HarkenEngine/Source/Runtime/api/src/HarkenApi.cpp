@@ -72591,6 +72591,33 @@ bool CurrentPcmGenerationTouchesGuardedVoice(
     return blocked;
 }
 
+bool PackProviderHasConsumer(harken::Engine& engine, VnPackHandle handle) {
+    const VnPackHandle consumer = engine.logicPacks.ConsumerOf(handle);
+    if (consumer == 0) {
+        return false;
+    }
+    harken::LogRecord log{};
+    log.level = VN_LOG_WARN;
+    log.code = harken::kLogCodePackProviderInUse;
+    log.arg0 = handle;
+    log.arg1 = consumer;
+    engine.logicLogRing.Push(log);
+    return true;
+}
+
+bool PackReplacementRemovesMedia(
+    const harken::Engine& engine, VnPackHandle handle,
+    const std::vector<harken::PackTocEntry>& successor) {
+    const auto* original = engine.packs.Entries(handle);
+    return original != nullptr && std::any_of(original->begin(), original->end(),
+        [&](const harken::PackEntry& entry) {
+            return std::none_of(successor.begin(), successor.end(),
+                [&](const harken::PackTocEntry& media) {
+                    return media.soundId == entry.soundId;
+                });
+        });
+}
+
 bool PackCurrentMediaTouchesGuardedVoice(harken::Engine& engine,
                                          VnPackHandle handle) {
     const std::vector<harken::PackEntry>* entries =
@@ -102651,8 +102678,8 @@ static VnResult UnloadPackWithFlags(VnPackHandle handle,
         /* Logic-bearing packs unload through the section-19 path. Resident
          * packs unwind only when their capability set is reversible and no
          * foreign references or loaded consumers remain; content packs unwind
-         * symmetrically. Handles with no logic record, including v1 packs and
-         * stale handles, keep the v1 path verbatim. */
+         * symmetrically. Compact media providers share the consumer gate
+         * before their synchronous media-only unload. */
         if (engine->packComposition.Authority() ==
                 harken::PackAuthorityMode::Pack &&
             engine->packComposition.Published() != nullptr) {
@@ -102685,6 +102712,10 @@ static VnResult UnloadPackWithFlags(VnPackHandle handle,
         }
         if (engine->logicPacks.RecordFor(handle) != nullptr) {
             return harken::UnloadPackV2(*engine, handle);
+        }
+        if (engine->packs.Entries(handle) != nullptr &&
+            PackProviderHasConsumer(*engine, handle)) {
+            return VN_IN_USE;
         }
         if (engine->packs.Entries(handle) != nullptr &&
             PackCurrentMediaTouchesGuardedVoice(*engine, handle)) {
@@ -112533,6 +112564,11 @@ VnResult Vn_ReplacePack(VnPackHandle handle, const VnPackDesc* desc) {
             return NoteHotReload(*engine, valid,
                                  harken::kHotReloadClassPack, handle);
         }
+        if (PackReplacementRemovesMedia(*engine, handle, prepared.Media()) &&
+            PackProviderHasConsumer(*engine, handle)) {
+            return NoteHotReload(*engine, VN_IN_USE,
+                                 harken::kHotReloadClassPack, handle);
+        }
         if (PackCurrentMediaTouchesGuardedVoice(*engine, handle)) {
             engine->commands.NoteBackpressure();
             return NoteHotReload(*engine, VN_BACKPRESSURE,
@@ -113925,14 +113961,7 @@ VnResult UnloadReversibleResident(Engine& engine,
         return VN_IN_USE;
     }
 
-    const VnPackHandle consumer = engine.logicPacks.ConsumerOf(handle);
-    if (consumer != 0) {
-        LogRecord log{};
-        log.level = VN_LOG_WARN;
-        log.code = kLogCodePackProviderInUse;
-        log.arg0 = handle;
-        log.arg1 = consumer;
-        engine.logicLogRing.Push(log);
+    if (PackProviderHasConsumer(engine, handle)) {
         return VN_IN_USE;
     }
     VnResult result = engine.packs.CanUnload(handle, engine.registry);
@@ -114489,14 +114518,7 @@ VnResult UnloadPackV2(Engine& engine, VnPackHandle handle) {
     if (record->packKind == kPackKindResident) {
         return UnloadReversibleResident(engine, *record);
     }
-    const VnPackHandle consumer = engine.logicPacks.ConsumerOf(handle);
-    if (consumer != 0) {
-        LogRecord log{};
-        log.level = VN_LOG_WARN;
-        log.code = kLogCodePackProviderInUse;
-        log.arg0 = handle;
-        log.arg1 = consumer;
-        engine.logicLogRing.Push(log);
+    if (PackProviderHasConsumer(engine, handle)) {
         return VN_IN_USE;
     }
 
@@ -114739,38 +114761,10 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
     // have resolved through refuses while a consumer exists. Per-entry
     // consumer edges are not recorded, so the gate is conservative — it
     // never orphans, it only over-refuses.
-    bool removesReferenceable = !revision.removeBindingDefs.empty();
-    if (!removesReferenceable) {
-        const std::vector<PackEntry>* oldMedia =
-            engine.packs.Entries(revision.handle);
-        if (oldMedia != nullptr) {
-            for (const PackEntry& entry : *oldMedia) {
-                bool present = false;
-                for (const PackTocEntry& media : image.media) {
-                    if (media.soundId == entry.soundId) {
-                        present = true;
-                        break;
-                    }
-                }
-                if (!present) {
-                    removesReferenceable = true;
-                    break;
-                }
-            }
-        }
-    }
-    if (removesReferenceable) {
-        const VnPackHandle consumer =
-            engine.logicPacks.ConsumerOf(revision.handle);
-        if (consumer != 0) {
-            LogRecord log{};
-            log.level = VN_LOG_WARN;
-            log.code = kLogCodePackProviderInUse;
-            log.arg0 = revision.handle;
-            log.arg1 = consumer;
-            engine.logicLogRing.Push(log);
-            return VN_IN_USE;
-        }
+    const bool removesReferenceable = !revision.removeBindingDefs.empty() ||
+        PackReplacementRemovesMedia(engine, revision.handle, image.media);
+    if (removesReferenceable && PackProviderHasConsumer(engine, revision.handle)) {
+        return VN_IN_USE;
     }
 
     // Media: the v1 replace gates (retiring bound, foreign ownership).

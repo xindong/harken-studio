@@ -49,6 +49,9 @@ public:
     class PackReference {
     public:
         bool Valid() const noexcept { return entry_ != nullptr; }
+        bool OwnsSamples() const noexcept {
+            return entry_ != nullptr && !entry_->ownedSamples.empty();
+        }
         PCMView View() const noexcept { return entry_ != nullptr ? entry_->view : PCMView{}; }
         std::uint64_t Cookie() const noexcept { return entry_ != nullptr ? entry_->cookie : 0; }
 
@@ -203,6 +206,11 @@ public:
     // Cookie of the registration currently holding the id, or 0 when the
     // id is unregistered (cookies start at 1, so 0 never matches).
     std::uint64_t CookieOf(VnSoundId soundId) const;
+
+    // Capture the exact current registration without allocating. A Pack keeps
+    // this reference to track readers of its backing after an independent replace.
+    PackReference ReferenceOf(VnSoundId soundId,
+                              std::uint64_t expectedCookie) const noexcept;
 
     std::size_t Count() const { return m_entries.size(); }
 

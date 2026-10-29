@@ -448,6 +448,16 @@ bool PCMRegistry::HasRetired(VnSoundId soundId) const {
     return false;
 }
 
+PCMRegistry::PackReference PCMRegistry::ReferenceOf(
+    VnSoundId soundId, std::uint64_t expectedCookie) const noexcept {
+    PackReference result;
+    const auto it = m_entries.find(soundId);
+    if (it != m_entries.end() && it->second->cookie == expectedCookie) {
+        result.entry_ = it->second;
+    }
+    return result;
+}
+
 std::uint64_t PCMRegistry::CookieOf(VnSoundId soundId) const {
     auto it = m_entries.find(soundId);
     return it != m_entries.end() ? it->second->cookie : 0;

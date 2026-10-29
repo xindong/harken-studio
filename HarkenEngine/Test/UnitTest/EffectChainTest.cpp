@@ -8,10 +8,12 @@
 // the counting/structural facts.
 #include "Common/ObjectIdTestSupport.h"
 #include "harken/render/Voice.h"
+#include "harken/render/EffectChain.h"
 
 #include "Common/TestUtil.h"
 
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace {
@@ -96,6 +98,34 @@ void MultiplyProcess(void* state, float* const* channels,
         for (std::uint32_t i = 0; i < frames; ++i) {
             p[i] *= m;
         }
+    }
+}
+
+TEST(EffectChain, BypassEndpointPreservesDryRangeAndRunsEffectState) {
+    const float infinity = std::numeric_limits<float>::infinity();
+    for (const bool ramping : {false, true}) {
+        SCOPED_TRACE(ramping);
+        float signal[] = {7.0f, 0.25f, -0.5f, 9.0f};
+        float dry[2]{};
+        float* planes[] = {signal};
+        float* scratch[] = {dry};
+        std::uint64_t calls = 0, frames = 0;
+        AddProbe probe{infinity, &calls, &frames};
+        harken::InsertEffect effect{};
+        effect.process = AddProbeProcess;
+        effect.state = &probe;
+        bool transitioning = ramping;
+        float mix = ramping ? 0.0f : 1.0f;
+        harken::ProcessChainSlot(effect, transitioning, mix, 1.0f,
+                                 planes, scratch, 1, 1, 2);
+        EXPECT_EQ(1u, calls);
+        EXPECT_EQ(2u, frames);
+        EXPECT_EQ(7.0f, signal[0]);
+        EXPECT_EQ(9.0f, signal[3]);
+        if (!ramping) EXPECT_EQ(0.25f, signal[1]);
+        EXPECT_EQ(-0.5f, signal[2]);
+        EXPECT_EQ(1.0f, mix);
+        EXPECT_FALSE(transitioning);
     }
 }
 

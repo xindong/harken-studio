@@ -93,6 +93,7 @@ public:
     public:
         bool IsPrepared() const noexcept { return m_owner != nullptr; }
         VnPackHandle Handle() const noexcept { return m_handle; }
+        const std::vector<PackTocEntry>& Media() const noexcept { return m_parsed; }
 
     private:
         friend class PackTable;
@@ -291,9 +292,11 @@ public:
     // Returns the entry only while its registration cookie still matches
     // the registry's current one — metadata is never served for an id the
     // caller has since re-registered with other content. nullptr
-    // otherwise.
+    // otherwise. When requested, outOwner receives that same match's pack
+    // handle, or zero when no loaded pack owns the current registration.
     const PackEntry* FindEntryBySound(VnSoundId soundId,
-                                           const PCMRegistry& registry) const;
+                                      const PCMRegistry& registry,
+                                      VnPackHandle* outOwner = nullptr) const;
 
     std::uint32_t LoadedCount() const;
     std::uint64_t StaleHandleCount() const { return m_staleHandleHits; }
@@ -499,6 +502,10 @@ private:
 
         bool Drained() const {
             for (const PackEntry& entry : packEntries) {
+                // Shared COPY readers do not depend on this Pack's old bytes.
+                if (entry.registration.OwnsSamples()) {
+                    continue;
+                }
                 const PCMView view = entry.registration.View();
                 if (view.useCount != nullptr &&
                     view.useCount->load(std::memory_order_acquire) != 0) {
@@ -539,7 +546,7 @@ private:
         PCMRegistry::PreparedPackMutation* out);
     VnResult PrepareRetiringRow(
         VnPackHandle handle, std::size_t predecessorEntryCount,
-        std::size_t successorEntryCount, bool preservePackEntries,
+        std::size_t successorEntryCount,
         RetiredReplace* outReservation,
         RetiringGeneration** outRow) noexcept;
     RetiringGeneration* RetiringRowFor(
