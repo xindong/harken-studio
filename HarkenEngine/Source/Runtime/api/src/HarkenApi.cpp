@@ -111992,29 +111992,24 @@ VnResult Vn_SeekActionFiring(const VnActionSeekDescV1* desc,
             const long double framesExact =
                 static_cast<long double>(desc->positionMs) *
                 static_cast<long double>(sourceSampleRate) / 1000.0L;
-            if (!std::isfinite(framesExact)) return VN_INVALID_ARG;
-            std::int64_t frameValue = 0;
+            const long double roundedMagnitude =
+                std::floor(std::fabs(framesExact) + 0.5L);
+            // INT64_MAX can round to 2^63 in floating point; use the exact bound.
+            if (!std::isfinite(roundedMagnitude) ||
+                roundedMagnitude >= std::ldexp(1.0L, 63)) {
+                return VN_INVALID_ARG;
+            }
             if (desc->mode == VN_ACTION_SEEK_ABSOLUTE) {
                 const long double durationMs =
                     static_cast<long double>(sourceFrameCount) * 1000.0L /
                     static_cast<long double>(sourceSampleRate);
-                if (static_cast<long double>(desc->positionMs) > durationMs ||
-                    framesExact >
-                        static_cast<long double>((std::numeric_limits<std::int64_t>::max)())) {
+                if (static_cast<long double>(desc->positionMs) > durationMs) {
                     return VN_INVALID_ARG;
                 }
-                frameValue = static_cast<std::int64_t>(
-                    std::floor(framesExact + 0.5L));
-            } else {
-                const long double magnitude = std::fabs(framesExact);
-                if (magnitude >
-                    static_cast<long double>((std::numeric_limits<std::int64_t>::max)())) {
-                    return VN_INVALID_ARG;
-                }
-                const auto rounded = static_cast<std::int64_t>(
-                    std::floor(magnitude + 0.5L));
-                frameValue = desc->positionMs < 0.0 ? -rounded : rounded;
             }
+            const auto rounded = static_cast<std::int64_t>(roundedMagnitude);
+            const std::int64_t frameValue =
+                desc->positionMs < 0.0 ? -rounded : rounded;
 
             harken::CommandRecord& command =
                 engine->actionSeekCommandScratch[targetCount];

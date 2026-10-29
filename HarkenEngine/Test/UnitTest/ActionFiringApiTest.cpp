@@ -33273,6 +33273,60 @@ TEST(ActionFiringContract, ResidentSeekAppliesAtBlockBoundaryAndRendersTargetFra
     EXPECT_EQ(0u, ticket);
 }
 
+TEST(ActionFiringContract, RelativeSeekFrameOverflowRefusesWithoutTicket) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig(1, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    const auto samples = harkentest::MakeDC(4096, 0.25f);
+    // 64 source frames per millisecond makes the signed boundary exact.
+    const auto pcm = harkentest::MonoDesc(samples, 64000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+    CanonicalActionWorld image(engine->registry.Lookup(
+        CanonicalActionWorld::kFirstSound).contentRevision);
+    image.MakeImmediateSoundPlayAction();
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+              harken::InstallContainerWorldV1(*engine, image.world).status);
+    auto post = ValidPostDesc();
+    post.actionId = image.actions[9].actionStableId;
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+    bool started = false;
+    for (unsigned block = 0; block < 16 && !started; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+        started = std::any_of(engine->playableServices.begin(),
+            engine->playableServices.end(), [&](const auto& row) {
+                return row.phase == harken::EnginePlayableStartPhase::Started &&
+                    row.InvocationValid() && row.Invocation().actionFiring == firing;
+            });
+    }
+    ASSERT_TRUE(started);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    VnActionSeekDescV1 seek{};
+    seek.structSize = sizeof(seek);
+    seek.firing = firing;
+    seek.mode = VN_ACTION_SEEK_RELATIVE;
+    for (const double sign : {-1.0, 1.0}) {
+        seek.positionMs = sign * std::ldexp(1.0, 57);
+        VnActionSeekTicket ticket = 0;
+        EXPECT_EQ(VN_INVALID_ARG, Vn_SeekActionFiring(&seek, &ticket));
+        EXPECT_EQ(0u, ticket);
+        if (ticket != 0) {
+            engine->nullBackend.Pump(1);
+            (void)Vn_ReleaseActionSeek(ticket);
+        }
+    }
+    seek.positionMs = 1.0;
+    VnActionSeekTicket ticket = 0;
+    ASSERT_EQ(VN_OK, Vn_SeekActionFiring(&seek, &ticket));
+    engine->nullBackend.Pump(1);
+    VnActionSeekInfoV1 info{};
+    info.structSize = sizeof(info);
+    ASSERT_EQ(VN_OK, Vn_QueryActionSeek(ticket, &info));
+    EXPECT_EQ(VN_ACTION_SEEK_APPLIED, info.state);
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionSeek(ticket));
+}
+
 TEST(ActionFiringContract, SeekPreservesResamplingOfNonUnityPitch) {
     for (const bool streamed : {false, true}) {
         SCOPED_TRACE(streamed);
