@@ -4,6 +4,7 @@
 #include "harken/core/CurrentWorldCodec.h"
 #include "harken/core/EngineConfig.h"
 #include "harken/core/detail/CurrentWorldValidation.h"
+#include "harken/dsp/GainRamp.h"
 #include "harken/media/generated/harken_pack_effect_schema.g.h"
 
 #include <algorithm>
@@ -354,12 +355,9 @@ VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
                 entry.relationOrdinal != sendOrdinal) {
                 return VN_BAD_PACK;
             }
-            // Live connect/level verbs refuse non-finite levels; the
-            // pack path applies levels through the adjacency + snap
-            // command without a live-verb gate, so the image is where a
-            // checksum-correct NaN/Inf must die (pack validation is
-            // stricter than live, never looser).
-            if (!std::isfinite(send.levelDb)) {
+            // Pack levels bypass the live setters, so reject non-finite dB
+            // and linear conversion overflow before publishing the image.
+            if (!TryVolumeGainFromDb(send.levelDb)) {
                 return VN_BAD_PACK;
             }
             ++sendOrdinal;
@@ -1010,7 +1008,7 @@ VnResult ParseBusDefinitionSnapshotPayload(const std::uint8_t* payload,
                 entry + header.sendOffset +
                     static_cast<std::size_t>(i) * kPackBusDefinitionSendRowBytes,
                 &row) ||
-            !std::isfinite(row.levelDb)) {
+            !TryVolumeGainFromDb(row.levelDb)) {
             return VN_BAD_PACK;
         }
         sends.push_back(row);
@@ -1851,7 +1849,8 @@ VnResult ParsePackCanonicalImage(const std::uint8_t* bytes,
         case kPackEntryKindBusSend: {
             PackBusSendEntry send;
             if (!ParsePackV2BusSend(payload, entry.size, &send) ||
-                entry.relationOrdinal != sendOrdinal || !std::isfinite(send.levelDb)) {
+                entry.relationOrdinal != sendOrdinal ||
+                !TryVolumeGainFromDb(send.levelDb)) {
                 return VN_BAD_PACK;
             }
             ++sendOrdinal;

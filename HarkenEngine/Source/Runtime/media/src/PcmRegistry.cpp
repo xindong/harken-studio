@@ -143,35 +143,8 @@ VnResult PCMRegistry::RegisterPCM(VnSoundId soundId, const VnPCMDesc* desc,
         return VN_IN_USE;
     }
 
-    const std::size_t totalFloats =
-        static_cast<std::size_t>(desc->frames) * desc->channels;
-
-    // Every fallible step — the sample copy and the map insertion — runs
-    // before the map is touched, staged in a local that is destroyed
-    // harmlessly on throw. try_emplace below is the single commit point:
-    // once it returns successfully nothing past it can fail, so a
-    // registration is either fully visible or leaves no trace.
-    std::vector<float> stagedSamples;
-    if (desc->policy == VN_PCM_POLICY_COPY) {
-        if (PcmRegisterFaultForTests() == PcmRegisterFault::SampleBacking) {
-            throw std::bad_alloc{};
-        }
-        stagedSamples.resize(totalFloats);
-        if (desc->layout == VN_PCM_LAYOUT_INTERLEAVED) {
-            std::memcpy(stagedSamples.data(), desc->samplesInterleaved,
-                        totalFloats * sizeof(float));
-        } else {
-            // Planes are concatenated; each keeps stride 1.
-            for (std::uint32_t ch = 0; ch < desc->channels; ++ch) {
-                std::memcpy(stagedSamples.data() +
-                                static_cast<std::size_t>(ch) * desc->frames,
-                            desc->samplesPlanar[ch],
-                            static_cast<std::size_t>(desc->frames) *
-                                sizeof(float));
-            }
-        }
-    }
-
+    // Complete the fallible sample copy before committing the registry entry.
+    std::vector<float> stagedSamples = StageSamples(*desc);
     return CommitPCM(soundId, desc, std::move(stagedSamples),
                      contentRevision, outCookie, loop);
 }
