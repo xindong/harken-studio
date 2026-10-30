@@ -7069,9 +7069,6 @@ public:
         selectionConfig.maxChildren = kHardContainerChildCapacity;
         selectionConfig.maxAvoidLastN = kHardSelectionAvoidCapacity;
         selectionConfig.maxEmitters = resolved.maxEmitters + 1u;
-        selectionConfig.maxGlobalRows = resolved.maxSelectionRowsGlobal;
-        selectionConfig.maxEmitterRowsPerEmitter =
-            resolved.maxSelectionRowsPerEmitter;
         selectionConfig.maxPendingDeltasTotal =
             resolved.maxPendingSelectionDeltasTotal;
         selectionConfig.maxPendingGlobalPerRow =

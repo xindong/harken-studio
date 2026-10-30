@@ -39,14 +39,6 @@ SelectionMemoryStatusV1 MapStatus(SelectionStatusV1 status) noexcept {
 
 }
 
-std::uint64_t SelectionMemoryTableV1::EmitterStorageBytes(
-    const SelectionMemoryConfigV1& config) noexcept {
-    const std::uint64_t rowBytes = sizeof(Row) +
-        (static_cast<std::uint64_t>(config.maxAvoidLastN) + config.maxChildren) *
-            sizeof(std::uint32_t);
-    return config.maxEmitterRowsPerEmitter * rowBytes;
-}
-
 bool SelectionMemoryTableV1::Reset(
     const SelectionMemoryConfigV1& config) noexcept {
     if (!CanGrow() || backing_ != nullptr || tableLifetime_ == UINT64_MAX || config.maxChildren == 0 ||
@@ -55,23 +47,17 @@ bool SelectionMemoryTableV1::Reset(
         config.maxPathNodes > kSelectionPathNodeCapacity) {
         return false;
     }
-    const std::uint64_t emitterRows =
-        static_cast<std::uint64_t>(config.maxEmitters) *
-        config.maxEmitterRowsPerEmitter;
-    const std::uint64_t rowCapacity64 =
-        static_cast<std::uint64_t>(config.maxGlobalRows) + emitterRows;
-    if (rowCapacity64 > UINT32_MAX) return false;
     try {
-        StableRowStorage<Row> rows;
+        GrowingRowStorage<Row> rows;
         StableRowStorage<DeltaRow> deltas;
         StableRowStorage<BatchRow> batches;
-        if (!rows.Reserve(static_cast<std::uint32_t>(rowCapacity64)) ||
-            !deltas.Reserve(config.maxPendingDeltasTotal) ||
+        if (!deltas.Reserve(config.maxPendingDeltasTotal) ||
             !batches.Reserve(config.maxPendingDeltasTotal)) return false;
         std::vector<std::uint8_t> replacementAffectedRows;
         std::vector<BatchDependencyEdge> replacementBatchEdges;
         std::vector<std::uint8_t> replacementBatchReachable;
         std::vector<std::uint32_t> pendingCommitHeads;
+        std::vector<std::uint32_t> rowBuckets;
         std::vector<SelectionChildV1> childScratch;
         std::vector<std::uint32_t> remainingScratch;
         MemoryState pendingScratch[2];
@@ -83,6 +69,7 @@ bool SelectionMemoryTableV1::Reset(
         replacementBatchEdges_.swap(replacementBatchEdges);
         replacementBatchReachable_.swap(replacementBatchReachable);
         pendingCommitHeads_.swap(pendingCommitHeads);
+        rowBuckets_.swap(rowBuckets);
         for (std::uint32_t index = 0; index < 2; ++index) {
             std::swap(pendingScratch_[index], pendingScratch[index]);
             std::swap(replacementScratch_[index], replacementScratch[index]);
@@ -99,6 +86,11 @@ bool SelectionMemoryTableV1::Reset(
     occupiedRowCount_ = 0;
     pendingCount_ = 0;
     quarantinedDeltaCount_ = 0;
+    storageFailure_ = {};
+    indexedRows_ = 0;
+    freeRowHead_ = retirementHead_ = UINT32_MAX;
+    retirementCutoff_ = 0;
+    failColumnGrowth_ = false;
     return true;
 }
 
@@ -127,10 +119,98 @@ bool SelectionMemoryTableV1::ValidKey(
 
 std::uint32_t SelectionMemoryTableV1::FindRow(
     const SelectionMemoryKeyV1& key) const noexcept {
-    for (std::uint32_t i = 0; i < rows_.size(); ++i) {
-        if (rows_[i].used && SameKey(rows_[i].key, key)) return i;
-    }
+    if (rowBuckets_.empty()) return UINT32_MAX;
+    for (auto slot = rowBuckets_[HashKey(key) & (rowBuckets_.size() - 1u)];
+         slot != UINT32_MAX; slot = rows_[slot].hashNext)
+        if (SameKey(rows_[slot].key, key)) return slot;
     return UINT32_MAX;
+}
+
+std::uint64_t SelectionMemoryTableV1::HashKey(const SelectionMemoryKeyV1& key) noexcept {
+    const auto mix = [](std::uint64_t value) noexcept {
+        value = (value ^ (value >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
+        value = (value ^ (value >> 27)) * UINT64_C(0x94d049bb133111eb);
+        return value ^ (value >> 31);
+    };
+    auto hash = mix(key.world);
+    hash = mix(hash ^ key.containerStableId.high);
+    hash = mix(hash ^ key.containerStableId.low);
+    hash = mix(hash ^ key.programSemanticFingerprint);
+    hash = mix(hash ^ static_cast<std::uint64_t>(key.memoryScope));
+    return mix(hash ^ (static_cast<std::uint64_t>(key.emitterSlot) << 32) ^ key.emitterGeneration);
+}
+
+bool SelectionMemoryTableV1::PrepareRowLookup(std::uint32_t count) noexcept {
+    if (count <= rowBuckets_.size()) return true;
+    // A load factor at most one is derived from prepared rows, not a history quota.
+    const auto bucketCount = std::bit_ceil(static_cast<std::uint64_t>(count));
+    if (bucketCount > SIZE_MAX / sizeof(std::uint32_t))
+        return NoteStorageFailure(SelectionStorageFailureKind::IndexRange, bucketCount,
+            SelectionStorageResource::RowIndex);
+    std::vector<std::uint32_t> candidate;
+    if (!PrepareColumn(candidate, static_cast<std::size_t>(bucketCount),
+            SelectionStorageResource::RowIndex, true)) return false;
+    std::fill(candidate.begin(), candidate.end(), UINT32_MAX);
+    // All allocation precedes changing links in the existing row authority.
+    for (auto head : rowBuckets_) {
+        while (head != UINT32_MAX) {
+            auto& row = rows_[head];
+            const auto next = row.hashNext;
+            auto& bucket = candidate[HashKey(row.key) & (candidate.size() - 1u)];
+            row.hashNext = bucket;
+            bucket = head;
+            head = next;
+        }
+    }
+    rowBuckets_.swap(candidate);
+    return true;
+}
+
+void SelectionMemoryTableV1::IndexConstructedRows() noexcept {
+    // Backing failures may retain private segments, but only this prefix is public.
+    while (indexedRows_ < rows_.size()) {
+        const auto slot = indexedRows_++;
+        auto& row = rows_[slot];
+        row.freeNext = freeRowHead_;
+        if (freeRowHead_ != UINT32_MAX) rows_[freeRowHead_].freePrevious = slot;
+        freeRowHead_ = slot;
+    }
+}
+
+void SelectionMemoryTableV1::AddRetirementCandidate(std::uint32_t slot) noexcept {
+    auto& row = rows_[slot];
+    if (row.retirementCandidate || row.key.world >= retirementCutoff_) return;
+    row.retirementCandidate = true;
+    row.retirementNext = retirementHead_;
+    row.retirementPrevious = UINT32_MAX;
+    if (retirementHead_ != UINT32_MAX) rows_[retirementHead_].retirementPrevious = slot;
+    retirementHead_ = slot;
+}
+
+void SelectionMemoryTableV1::RemoveRetirementCandidate(std::uint32_t slot) noexcept {
+    auto& row = rows_[slot];
+    if (!row.retirementCandidate) return;
+    if (row.retirementPrevious == UINT32_MAX) retirementHead_ = row.retirementNext;
+    else rows_[row.retirementPrevious].retirementNext = row.retirementNext;
+    if (row.retirementNext != UINT32_MAX)
+        rows_[row.retirementNext].retirementPrevious = row.retirementPrevious;
+    row.retirementPrevious = row.retirementNext = UINT32_MAX;
+    row.retirementCandidate = false;
+}
+
+void SelectionMemoryTableV1::PublishRow(std::uint32_t slot) noexcept {
+    auto& row = rows_[slot];
+    assert(!row.used && !rowBuckets_.empty());
+    if (row.freePrevious == UINT32_MAX) freeRowHead_ = row.freeNext;
+    else rows_[row.freePrevious].freeNext = row.freeNext;
+    if (row.freeNext != UINT32_MAX) rows_[row.freeNext].freePrevious = row.freePrevious;
+    row.freePrevious = row.freeNext = UINT32_MAX;
+    auto& bucket = rowBuckets_[HashKey(row.key) & (rowBuckets_.size() - 1u)];
+    row.hashNext = bucket;
+    bucket = slot;
+    row.used = true;
+    ++occupiedRowCount_;
+    AddRetirementCandidate(slot);
 }
 
 SelectionMemoryTableV1::BackingPreparation&
@@ -165,19 +245,23 @@ void SelectionMemoryTableV1::BackingPreparation::Release() noexcept {
     rows_.Release();
 }
 
-namespace {
 template<class T>
-bool ReserveSelectionColumn(std::vector<T>& column, std::size_t count, bool canGrow) noexcept {
-    if (count <= column.capacity()) return true;
-    if (!canGrow) return false;
-    try { column.reserve(count); return true; } catch (...) { return false; }
-}
-template<class T>
-bool ResizeSelectionColumn(std::vector<T>& column, std::size_t count, bool canGrow) noexcept {
-    if (count <= column.size()) return true;
-    if (!canGrow) return false;
-    try { column.resize(count); return true; } catch (...) { return false; }
-}
+bool SelectionMemoryTableV1::PrepareColumn(std::vector<T>& column, std::size_t count,
+    SelectionStorageResource resource, bool resize) noexcept {
+    if (count <= (resize ? column.size() : column.capacity())) return true;
+    if (!CanGrow())
+        return NoteStorageFailure(SelectionStorageFailureKind::PreparedBacking, count, resource);
+    if (failColumnGrowth_ && failedColumnResource_ == resource) {
+        failColumnGrowth_ = false;
+        return NoteStorageFailure(SelectionStorageFailureKind::Allocation, count, resource);
+    }
+    try {
+        if (resize) column.resize(count);
+        else column.reserve(count);
+        return true;
+    } catch (...) {
+        return NoteStorageFailure(SelectionStorageFailureKind::Allocation, count, resource);
+    }
 }
 
 SelectionMemoryTableV1::BackingShape
@@ -210,12 +294,12 @@ bool SelectionMemoryTableV1::DeltaFits(const DeltaRow& delta, BackingShape shape
 }
 
 bool SelectionMemoryTableV1::PrepareState(MemoryState& state, BackingShape shape) noexcept {
-    return ReserveSelectionColumn(state.recent, shape.recent, CanGrow()) &&
-        ReserveSelectionColumn(state.permutation, shape.permutation, CanGrow());
+    return PrepareColumn(state.recent, shape.recent, SelectionStorageResource::HistoryState) &&
+        PrepareColumn(state.permutation, shape.permutation, SelectionStorageResource::HistoryState);
 }
 
 bool SelectionMemoryTableV1::PrepareDelta(DeltaRow& delta, BackingShape shape, bool rollback) noexcept {
-    if (!ReserveSelectionColumn(delta.path, shape.path, CanGrow())) return false;
+    if (!PrepareColumn(delta.path, shape.path, SelectionStorageResource::DeltaPath)) return false;
     delta.request.path = delta.path.empty() ? nullptr : delta.path.data();
     return PrepareState(delta.overlay, shape) && (!rollback || PrepareState(delta.rollback, shape));
 }
@@ -223,21 +307,22 @@ bool SelectionMemoryTableV1::PrepareDelta(DeltaRow& delta, BackingShape shape, b
 bool SelectionMemoryTableV1::PrepareSharedScratch(BackingShape shape) noexcept {
     for (auto& state : pendingScratch_) if (!PrepareState(state, shape)) return false;
     for (auto& state : replacementScratch_) if (!PrepareState(state, shape)) return false;
-    return ReserveSelectionColumn(childScratch_, shape.children, CanGrow()) &&
-        ResizeSelectionColumn(remainingScratch_, shape.permutation, CanGrow());
+    return PrepareColumn(childScratch_, shape.children, SelectionStorageResource::SharedScratch) &&
+        PrepareColumn(remainingScratch_, shape.permutation, SelectionStorageResource::SharedScratch, true);
 }
 
 bool SelectionMemoryTableV1::PrepareRowIndices(std::uint32_t count) noexcept {
-    return ResizeSelectionColumn(replacementAffectedRows_, count, CanGrow()) &&
-        ResizeSelectionColumn(pendingCommitHeads_, count, CanGrow());
+    return PrepareRowLookup(count) &&
+        PrepareColumn(replacementAffectedRows_, count, SelectionStorageResource::RowIndex, true) &&
+        PrepareColumn(pendingCommitHeads_, count, SelectionStorageResource::RowIndex, true);
 }
 
 bool SelectionMemoryTableV1::PrepareDeltaIndices(std::uint32_t count) noexcept {
-    return ResizeSelectionColumn(replacementBatchEdges_, count, CanGrow());
+    return PrepareColumn(replacementBatchEdges_, count, SelectionStorageResource::DeltaIndex, true);
 }
 
 bool SelectionMemoryTableV1::PrepareBatchIndices(std::uint32_t count) noexcept {
-    return ResizeSelectionColumn(replacementBatchReachable_, count, CanGrow());
+    return PrepareColumn(replacementBatchReachable_, count, SelectionStorageResource::BatchIndex, true);
 }
 
 bool SelectionMemoryTableV1::ProtectBacking(std::uint32_t excludedRow,
@@ -247,7 +332,9 @@ bool SelectionMemoryTableV1::ProtectBacking(std::uint32_t excludedRow,
     std::uint64_t heldRows = 0, heldDeltas = 0;
     for (auto* hold = backing_; hold != nullptr; hold = hold->next_) {
         shape.Include(hold->demand_.shape);
-        heldRows += std::min<std::uint64_t>(rows_.Capacity() - heldRows, hold->demand_.rows);
+        if (hold->demand_.rows > UINT32_MAX - heldRows)
+            return NoteStorageFailure(SelectionStorageFailureKind::IndexRange, heldRows + hold->demand_.rows);
+        heldRows += hold->demand_.rows;
         heldDeltas += std::min<std::uint64_t>(deltas_.Capacity() - heldDeltas, hold->demand_.deltas);
     }
     if (!PrepareSharedScratch(shape)) return false;
@@ -286,17 +373,40 @@ bool SelectionMemoryTableV1::ProtectBacking(std::uint32_t excludedRow,
 }
 
 bool SelectionMemoryTableV1::PrepareBacking(BackingDemand demand, BackingPreparation* out) noexcept {
-    if (!CanGrow() || out == nullptr || out->Valid() || demand.rows > rows_.Capacity() ||
-        demand.deltas > deltas_.Capacity() || demand.batches > batches_.Capacity() ||
+    if (out == nullptr || out->Valid() ||
         demand.shape.recent > config_.maxAvoidLastN || demand.shape.children > config_.maxChildren ||
         demand.shape.permutation > config_.maxChildren || demand.shape.path > config_.maxPathNodes) return false;
+    if (!CanGrow())
+        return NoteStorageFailure(SelectionStorageFailureKind::PreparedBacking, demand.rows);
+    if (demand.deltas > deltas_.Capacity())
+        return NoteStorageFailure(SelectionStorageFailureKind::InFlightCapacity, demand.deltas,
+            SelectionStorageResource::Deltas);
+    if (demand.batches > batches_.Capacity())
+        return NoteStorageFailure(SelectionStorageFailureKind::InFlightCapacity, demand.batches,
+            SelectionStorageResource::Batches);
     BackingPreparation candidate;
+    const auto requiredRows = static_cast<std::uint64_t>(occupiedRowCount_) + rows_.HeldRows() + demand.rows;
+    if (requiredRows > UINT32_MAX)
+        return NoteStorageFailure(SelectionStorageFailureKind::IndexRange, requiredRows);
+    bool dependenciesReady = true;
     if (!rows_.PrepareBacking(demand.rows, occupiedRowCount_, &candidate.rows_,
-            [this](auto count) noexcept { return PrepareRowIndices(count); }) ||
-        !deltas_.PrepareBacking(demand.deltas, deltas_.Capacity() - FreeDeltaCount(), &candidate.deltas_,
-            [this](auto count) noexcept { return PrepareDeltaIndices(count); }) ||
-        !batches_.PrepareBacking(demand.batches, batches_.Capacity() - FreePendingBatchCount(), &candidate.batches_,
-            [this](auto count) noexcept { return PrepareBatchIndices(count); })) return false;
+            [&](auto count) noexcept { return dependenciesReady = PrepareRowIndices(count); })) {
+        if (!dependenciesReady) return false;
+        return NoteStorageFailure(SelectionStorageFailureKind::Allocation, requiredRows);
+    }
+    IndexConstructedRows();
+    if (!deltas_.PrepareBacking(demand.deltas, deltas_.Capacity() - FreeDeltaCount(), &candidate.deltas_,
+            [&](auto count) noexcept { return dependenciesReady = PrepareDeltaIndices(count); })) {
+        if (!dependenciesReady) return false;
+        return NoteStorageFailure(SelectionStorageFailureKind::Allocation, demand.deltas,
+            SelectionStorageResource::Deltas);
+    }
+    if (!batches_.PrepareBacking(demand.batches, batches_.Capacity() - FreePendingBatchCount(), &candidate.batches_,
+            [&](auto count) noexcept { return dependenciesReady = PrepareBatchIndices(count); })) {
+        if (!dependenciesReady) return false;
+        return NoteStorageFailure(SelectionStorageFailureKind::Allocation, demand.batches,
+            SelectionStorageResource::Batches);
+    }
     candidate.owner_ = this;
     candidate.demand_ = demand;
     candidate.next_ = backing_;
@@ -316,38 +426,65 @@ bool SelectionMemoryTableV1::PrepareOperation(std::uint32_t rowIndex, std::uint3
 }
 
 std::uint32_t SelectionMemoryTableV1::FindFreeRow(const SelectionMemoryKeyV1& key, BackingShape shape) noexcept {
-    std::uint32_t scopedCount = 0;
-    for (const Row& row : rows_) {
-        if (!row.used) continue;
-        scopedCount += key.memoryScope == MemoryScopeV1::Global
-            ? row.key.memoryScope == MemoryScopeV1::Global
-            : row.key.memoryScope == MemoryScopeV1::Emitter && row.key.emitterSlot == key.emitterSlot;
+    (void)key;
+    const auto required = static_cast<std::uint64_t>(occupiedRowCount_) + 1u +
+        (rows_.PreparedUseActive() ? 0u : rows_.HeldRows());
+    if (required > UINT32_MAX) {
+        NoteStorageFailure(SelectionStorageFailureKind::IndexRange, required);
+        return UINT32_MAX;
     }
-    const auto limit = key.memoryScope == MemoryScopeV1::Global
-        ? config_.maxGlobalRows : config_.maxEmitterRowsPerEmitter;
-    if (scopedCount >= limit || occupiedRowCount_ == rows_.Capacity() ||
-        !rows_.ConstructThrough(occupiedRowCount_ + 1u,
-            [this](auto count) noexcept { return PrepareRowIndices(count); })) return UINT32_MAX;
-    for (std::uint32_t slot = 0; slot < rows_.size(); ++slot)
-        if (!rows_[slot].used && (CanGrow() || StateFits(rows_[slot].state, shape))) return slot;
+    bool dependenciesReady = true;
+    if (!rows_.ConstructThrough(occupiedRowCount_ + 1u,
+            [&](auto count) noexcept { return dependenciesReady = PrepareRowIndices(count); })) {
+        if (!dependenciesReady) return UINT32_MAX;
+        NoteStorageFailure(CanGrow() ? SelectionStorageFailureKind::Allocation :
+            SelectionStorageFailureKind::PreparedBacking, required);
+        return UINT32_MAX;
+    }
+    IndexConstructedRows();
+    for (auto slot = freeRowHead_; slot != UINT32_MAX; slot = rows_[slot].freeNext)
+        if (CanGrow() || StateFits(rows_[slot].state, shape)) return slot;
+    NoteStorageFailure(SelectionStorageFailureKind::PreparedBacking, required);
     return UINT32_MAX;
 }
 
 std::uint32_t SelectionMemoryTableV1::FindFreeDelta(BackingShape shape, bool rollback) noexcept {
     const auto available = FreeDeltaCount();
-    if (available == 0 || !deltas_.ConstructThrough(deltas_.Capacity() - available + 1u,
-            [this](auto count) noexcept { return PrepareDeltaIndices(count); })) return UINT32_MAX;
+    if (available == 0) {
+        NoteStorageFailure(SelectionStorageFailureKind::InFlightCapacity, 1, SelectionStorageResource::Deltas);
+        return UINT32_MAX;
+    }
+    bool dependenciesReady = true;
+    if (!deltas_.ConstructThrough(deltas_.Capacity() - available + 1u,
+            [&](auto count) noexcept { return dependenciesReady = PrepareDeltaIndices(count); })) {
+        if (dependenciesReady) NoteStorageFailure(CanGrow() ? SelectionStorageFailureKind::Allocation :
+            SelectionStorageFailureKind::PreparedBacking, deltas_.Capacity() - available + 1u,
+            SelectionStorageResource::Deltas);
+        return UINT32_MAX;
+    }
     for (std::uint32_t slot = 0; slot < deltas_.size(); ++slot)
         if (ReusableDelta(deltas_[slot]) && (CanGrow() || DeltaFits(deltas_[slot], shape, rollback))) return slot;
+    NoteStorageFailure(SelectionStorageFailureKind::PreparedBacking, 1, SelectionStorageResource::Deltas);
     return UINT32_MAX;
 }
 
 std::uint32_t SelectionMemoryTableV1::FindFreeBatch() noexcept {
     const auto available = FreePendingBatchCount();
-    if (available == 0 || !batches_.ConstructThrough(batches_.Capacity() - available + 1u,
-            [this](auto count) noexcept { return PrepareBatchIndices(count); })) return UINT32_MAX;
+    if (available == 0) {
+        NoteStorageFailure(SelectionStorageFailureKind::InFlightCapacity, 1, SelectionStorageResource::Batches);
+        return UINT32_MAX;
+    }
+    bool dependenciesReady = true;
+    if (!batches_.ConstructThrough(batches_.Capacity() - available + 1u,
+            [&](auto count) noexcept { return dependenciesReady = PrepareBatchIndices(count); })) {
+        if (dependenciesReady) NoteStorageFailure(CanGrow() ? SelectionStorageFailureKind::Allocation :
+            SelectionStorageFailureKind::PreparedBacking, batches_.Capacity() - available + 1u,
+            SelectionStorageResource::Batches);
+        return UINT32_MAX;
+    }
     for (std::uint32_t slot = 0; slot < batches_.size(); ++slot)
         if (!batches_[slot].used && !batches_[slot].quarantined) return slot;
+    NoteStorageFailure(SelectionStorageFailureKind::PreparedBacking, 1, SelectionStorageResource::Batches);
     return UINT32_MAX;
 }
 
@@ -356,6 +493,7 @@ std::size_t SelectionMemoryTableV1::StorageBytes() const noexcept {
         return (state.recent.capacity() + state.permutation.capacity()) * sizeof(std::uint32_t);
     };
     std::size_t bytes = sizeof(*this) + rows_.RequestedBytes() + deltas_.RequestedBytes() + batches_.RequestedBytes() +
+        rowBuckets_.capacity() * sizeof(std::uint32_t) +
         replacementAffectedRows_.capacity() + replacementBatchEdges_.capacity() * sizeof(BatchDependencyEdge) +
         replacementBatchReachable_.capacity() + pendingCommitHeads_.capacity() * sizeof(std::uint32_t) +
         childScratch_.capacity() * sizeof(SelectionChildV1) + remainingScratch_.capacity() * sizeof(std::uint32_t);
@@ -891,7 +1029,17 @@ bool SelectionMemoryTableV1::DropScheduledThrough(
 
 void SelectionMemoryTableV1::ApplyDue(std::uint64_t now) noexcept {
     if (occupiedRowCount_ == 0) return;
-    for (std::uint32_t rowIndex = 0; rowIndex < rows_.size(); ++rowIndex) {
+    std::uint32_t count = 0;
+    for (std::uint32_t slot = 0; slot < deltas_.size(); ++slot) {
+        const auto& delta = deltas_[slot];
+        if (delta.row < rows_.size() && rows_[delta.row].used && rows_[delta.row].scheduledHead == slot)
+            pendingCommitHeads_[count++] = delta.row;
+    }
+    // The scratch is prepared per row and not used by journal computation.
+    // Snapshot first to preserve row order and process a changing head only once.
+    std::sort(pendingCommitHeads_.begin(), pendingCommitHeads_.begin() + count);
+    for (std::uint32_t entry = 0; entry < count; ++entry) {
+        const auto rowIndex = pendingCommitHeads_[entry];
         Row& row = rows_[rowIndex];
         if (!row.used) {
             continue;
@@ -962,7 +1110,7 @@ SelectionAppendResultV1 SelectionMemoryTableV1::AppendPlay(
     std::uint32_t rowIndex = FindRow(request.key);
     const bool newRow = rowIndex == UINT32_MAX;
     if (newRow) rowIndex = FindFreeRow(request.key, ShapeFor(request));
-    const std::uint32_t deltaIndex = FindFreeDelta(ShapeFor(request), false);
+    const std::uint32_t deltaIndex = rowIndex == UINT32_MAX ? UINT32_MAX : FindFreeDelta(ShapeFor(request), false);
     if (rowIndex == UINT32_MAX || deltaIndex == UINT32_MAX) {
         result.status = SelectionMemoryStatusV1::Capacity;
         return result;
@@ -1035,8 +1183,6 @@ SelectionAppendResultV1 SelectionMemoryTableV1::AppendPlay(
         return result;
     }
     if (newRow) {
-        row.used = true;
-        ++occupiedRowCount_;
         row.committed = false;
         row.counted = true;
         row.key = preparedRow.key;
@@ -1047,6 +1193,7 @@ SelectionAppendResultV1 SelectionMemoryTableV1::AppendPlay(
         row.avoidLastN = preparedRow.avoidLastN;
         row.selectionChildCount = preparedRow.selectionChildCount;
         InitializeState(row, row.state);
+        PublishRow(rowIndex);
         ++rowCount_;
     }
     delta.used = true;
@@ -1161,7 +1308,8 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PreparePlayImpl(
                 reset.ticket == request.ticket && reset.eventIndex == request.eventIndex)
                 return SelectionMemoryStatusV1::InvalidInput;
     }
-    const std::uint32_t deltaIndex = FindFreeDelta(ShapeFor(request), !nativePendingPreparation);
+    const std::uint32_t deltaIndex = rowIndex == UINT32_MAX ? UINT32_MAX :
+        FindFreeDelta(ShapeFor(request), !nativePendingPreparation);
     if (rowIndex == UINT32_MAX || deltaIndex == UINT32_MAX) {
         return SelectionMemoryStatusV1::Capacity;
     }
@@ -1244,8 +1392,7 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PreparePlayImpl(
     }
 
     if (newRow) {
-        row.used = true;
-        ++occupiedRowCount_;
+        PublishRow(rowIndex);
         row.committed = false;
         row.counted = false;
     }
@@ -1750,7 +1897,7 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PrepareReplacementPlay(
     auto rowIndex = FindRow(request.key);
     const bool newRow = rowIndex == UINT32_MAX;
     if (newRow) rowIndex = FindFreeRow(request.key, ShapeFor(request));
-    const auto deltaIndex = FindFreeDelta(ShapeFor(request), false);
+    const auto deltaIndex = rowIndex == UINT32_MAX ? UINT32_MAX : FindFreeDelta(ShapeFor(request), false);
     if (rowIndex == UINT32_MAX || deltaIndex == UINT32_MAX) return SelectionMemoryStatusV1::Capacity;
     auto& row = rows_[rowIndex];
     if (!ReplacementRowCompatible(rowIndex)) return SelectionMemoryStatusV1::NotHead;
@@ -1789,8 +1936,7 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PrepareReplacementPlay(
         return status;
     }
     if (!row.used) {
-        row.used = true;
-        ++occupiedRowCount_;
+        PublishRow(rowIndex);
     }
     ++row.candidateCount;
     delta.replacementCandidate = true;
@@ -2816,6 +2962,18 @@ void SelectionMemoryTableV1::ReleaseRow(std::uint32_t rowIndex) noexcept {
     for (std::uint32_t index = 0; index < deltas_.size(); ++index)
         if (deltas_[index].row == rowIndex && (deltas_[index].used || deltas_[index].prepared))
             RecycleDelta(index);
+    auto* link = &rowBuckets_[HashKey(row.key) & (rowBuckets_.size() - 1u)];
+    while (*link != rowIndex) {
+        assert(*link != UINT32_MAX);
+        link = &rows_[*link].hashNext;
+    }
+    *link = row.hashNext;
+    row.hashNext = UINT32_MAX;
+    RemoveRetirementCandidate(rowIndex);
+    row.freePrevious = UINT32_MAX;
+    row.freeNext = freeRowHead_;
+    if (freeRowHead_ != UINT32_MAX) rows_[freeRowHead_].freePrevious = rowIndex;
+    freeRowHead_ = rowIndex;
     row.used = false;
     --occupiedRowCount_;
     row.committed = false;
@@ -3155,7 +3313,15 @@ void SelectionMemoryTableV1::RetireUnusedWorldsBefore(WorldGeneration current,
     bool (*hasReaders)(const void*, WorldGeneration) noexcept,
     const void* context) noexcept {
     if (current == 0 || hasReaders == nullptr || occupiedRowCount_ == 0) return;
-    for (std::uint32_t i = 0; i < rows_.size(); ++i) {
+    if (current != retirementCutoff_) {
+        while (retirementHead_ != UINT32_MAX) RemoveRetirementCandidate(retirementHead_);
+        retirementCutoff_ = current;
+        for (std::uint32_t i = 0; i < rows_.size(); ++i)
+            if (rows_[i].used) AddRetirementCandidate(i);
+    }
+    for (auto candidate = retirementHead_; candidate != UINT32_MAX;) {
+        const auto i = candidate;
+        candidate = rows_[i].retirementNext;
         const auto& row = rows_[i];
         if (!row.used || row.key.world >= current || row.pendingCount != 0 ||
             row.preparedCount != 0 || row.scheduledCount != 0 || row.candidateCount != 0 ||
@@ -3168,6 +3334,7 @@ void SelectionMemoryTableV1::RetireUnusedWorldsBefore(WorldGeneration current,
         if (std::any_of(deltas_.begin(), deltas_.end(), [i](const auto& delta) {
                 return delta.row == i && (delta.used || delta.prepared);
             })) continue;
+        // All owners were excluded above, so this release cannot recursively cancel a batch.
         ReleaseRow(i);
     }
 }
