@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 import runpy
 import shutil
 import subprocess
@@ -156,7 +157,8 @@ class SchemaArchiveTest(unittest.TestCase):
             published_bytes = published.read_bytes()
             current_path = root / "Editor" / "current" / "ProjectSerializedSchema.json"
             current = read_json(current_path)
-            current["x-harken-documentTypes"][0]["schema"]["properties"]["harkenDocument"]["properties"]["savedStudioVersion"]["minLength"] = 2
+            project = next(item for item in current["x-harken-documentTypes"] if item["type"] == "project.root")
+            project["schema"]["properties"]["harkenDocument"]["properties"]["savedStudioVersion"]["minLength"] = 2
             write_json(current_path, current)
             after = MODULE["build_bundle"](root)
             self.assertEqual(after["manifest"]["trees"], before["manifest"]["trees"])
@@ -373,8 +375,18 @@ class SchemaArchiveTest(unittest.TestCase):
                 header = document["properties"]["harkenDocument"]
                 self.assertFalse(document["additionalProperties"])
                 self.assertTrue(header["additionalProperties"])
-                self.assertIn("savedStudioVersion", header["required"])
-                self.assertEqual(header["properties"]["savedStudioVersion"], {"minLength": 1, "type": "string"})
+                if source["projectSchemaVersion"] != EDITOR_VERSION or item["type"] == "project.root":
+                    self.assertIn("savedStudioVersion", header["required"])
+                    self.assertEqual(header["properties"]["savedStudioVersion"], {"minLength": 1, "type": "string"})
+                else:
+                    self.assertNotIn("savedStudioVersion", header["required"])
+                    self.assertNotIn("savedStudioVersion", header["properties"])
+                    for name in ("savedStudioVersion", "packSchemaVersion"):
+                        self.assertIsNone(re.search(header["propertyNames"]["pattern"], name))
+                    self.assertIsNotNone(re.search(header["propertyNames"]["pattern"], "customMetadata"))
+                if source["projectSchemaVersion"] == EDITOR_VERSION and item["type"] == "project.root":
+                    self.assertIn("packSchemaVersion", header["required"])
+                    self.assertEqual(header["properties"]["packSchemaVersion"], {"minimum": 1, "type": "integer"})
                 content = document["properties"]["content"]
                 if "$ref" in content:
                     content = source["$defs"][content["$ref"][len("#/$defs/"):]]

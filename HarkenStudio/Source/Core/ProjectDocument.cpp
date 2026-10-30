@@ -133,9 +133,15 @@ QJsonObject ProjectDocument::createHeader(const QString& type,
                   ProjectSchema::kProjectSchemaVersion);
     header.insert(QStringLiteral("propertyModel"),
                   QString::fromLatin1(ProjectSchema::kProjectPropertyModel));
-    header.insert(QStringLiteral("savedStudioVersion"), QString::fromUtf8(
-        Harken::BuildInfo::Version.data(),
-        static_cast<int>(Harken::BuildInfo::Version.size())));
+    if (type == QStringLiteral("project.root")) {
+        header.insert(QStringLiteral("savedStudioVersion"), QString::fromUtf8(
+            Harken::BuildInfo::Version.data(),
+            static_cast<int>(Harken::BuildInfo::Version.size())));
+        header.insert(QStringLiteral("packSchemaVersion"), HARKEN_PACK_SCHEMA_VERSION);
+    } else {
+        header.remove(QStringLiteral("savedStudioVersion"));
+        header.remove(QStringLiteral("packSchemaVersion"));
+    }
     return header;
 }
 
@@ -192,11 +198,25 @@ bool ProjectDocument::parse(const QJsonObject& document,
         && header.value(QStringLiteral("propertyModel"))
             != QJsonValue(QString::fromLatin1(ProjectSchema::kProjectPropertyModel)))
         return fail(QStringLiteral("Unsupported project property model; recreate this project in Studio"));
-    parsed.savedStudioVersion =
-        header.value(QStringLiteral("savedStudioVersion")).toString();
-    if (parsed.schemaVersion >= ProjectSchema::kProjectSchemaVersions[0]
-        && parsed.savedStudioVersion.isEmpty()) {
-        return fail(QStringLiteral("Project document header is malformed"));
+    const bool projectRoot = parsed.type == QStringLiteral("project.root");
+    if (projectRoot || parsed.schemaVersion < ProjectSchema::kProjectSchemaVersion) {
+        parsed.savedStudioVersion =
+            header.value(QStringLiteral("savedStudioVersion")).toString();
+        if (parsed.schemaVersion >= ProjectSchema::kProjectSchemaVersions[0]
+            && parsed.savedStudioVersion.isEmpty())
+            return fail(QStringLiteral("Project document header is malformed"));
+    }
+    if (parsed.schemaVersion == ProjectSchema::kProjectSchemaVersion) {
+        if (projectRoot) {
+            const auto packVersion = header.value(QStringLiteral("packSchemaVersion"));
+            if (!packVersion.isDouble() || !std::isfinite(packVersion.toDouble())
+                || packVersion.toInt() <= 0 || packVersion.toDouble() != packVersion.toInt())
+                return fail(QStringLiteral("Project Pack Schema version is invalid"));
+            parsed.packSchemaVersion = packVersion.toInt();
+        } else if (header.contains(QStringLiteral("savedStudioVersion"))
+                   || header.contains(QStringLiteral("packSchemaVersion"))) {
+            return fail(QStringLiteral("Object document header contains project version metadata"));
+        }
     }
     parsed.header = header;
     parsed.content = document.value(QStringLiteral("content")).toObject();

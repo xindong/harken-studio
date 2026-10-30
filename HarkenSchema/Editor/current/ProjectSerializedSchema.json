@@ -2654,10 +2654,6 @@
                 "const": "fieldGroupsV1",
                 "type": "string"
               },
-              "savedStudioVersion": {
-                "minLength": 1,
-                "type": "string"
-              },
               "schemaVersion": {
                 "type": "integer"
               },
@@ -2671,10 +2667,12 @@
               "id",
               "projectId",
               "schemaVersion",
-              "savedStudioVersion",
               "propertyModel"
             ],
-            "type": "object"
+            "type": "object",
+            "propertyNames": {
+              "pattern": "^(?!(savedStudioVersion|packSchemaVersion)$)"
+            }
           }
         },
         "required": [
@@ -2712,10 +2710,6 @@
                 "const": "fieldGroupsV1",
                 "type": "string"
               },
-              "savedStudioVersion": {
-                "minLength": 1,
-                "type": "string"
-              },
               "schemaVersion": {
                 "type": "integer"
               },
@@ -2729,10 +2723,12 @@
               "id",
               "projectId",
               "schemaVersion",
-              "savedStudioVersion",
               "propertyModel"
             ],
-            "type": "object"
+            "type": "object",
+            "propertyNames": {
+              "pattern": "^(?!(savedStudioVersion|packSchemaVersion)$)"
+            }
           }
         },
         "required": [
@@ -2807,10 +2803,6 @@
                 "const": "fieldGroupsV1",
                 "type": "string"
               },
-              "savedStudioVersion": {
-                "minLength": 1,
-                "type": "string"
-              },
               "schemaVersion": {
                 "type": "integer"
               },
@@ -2824,10 +2816,12 @@
               "id",
               "projectId",
               "schemaVersion",
-              "savedStudioVersion",
               "propertyModel"
             ],
-            "type": "object"
+            "type": "object",
+            "propertyNames": {
+              "pattern": "^(?!(savedStudioVersion|packSchemaVersion)$)"
+            }
           }
         },
         "required": [
@@ -2865,10 +2859,6 @@
                 "const": "fieldGroupsV1",
                 "type": "string"
               },
-              "savedStudioVersion": {
-                "minLength": 1,
-                "type": "string"
-              },
               "schemaVersion": {
                 "type": "integer"
               },
@@ -2882,10 +2872,12 @@
               "id",
               "projectId",
               "schemaVersion",
-              "savedStudioVersion",
               "propertyModel"
             ],
-            "type": "object"
+            "type": "object",
+            "propertyNames": {
+              "pattern": "^(?!(savedStudioVersion|packSchemaVersion)$)"
+            }
           }
         },
         "required": [
@@ -3010,6 +3002,10 @@
               "type": {
                 "const": "project.root",
                 "type": "string"
+              },
+              "packSchemaVersion": {
+                "minimum": 1,
+                "type": "integer"
               }
             },
             "required": [
@@ -3018,7 +3014,8 @@
               "projectId",
               "schemaVersion",
               "savedStudioVersion",
-              "propertyModel"
+              "propertyModel",
+              "packSchemaVersion"
             ],
             "type": "object"
           }
@@ -3058,10 +3055,6 @@
                 "const": "fieldGroupsV1",
                 "type": "string"
               },
-              "savedStudioVersion": {
-                "minLength": 1,
-                "type": "string"
-              },
               "schemaVersion": {
                 "type": "integer"
               },
@@ -3075,10 +3068,12 @@
               "id",
               "projectId",
               "schemaVersion",
-              "savedStudioVersion",
               "propertyModel"
             ],
-            "type": "object"
+            "type": "object",
+            "propertyNames": {
+              "pattern": "^(?!(savedStudioVersion|packSchemaVersion)$)"
+            }
           }
         },
         "required": [

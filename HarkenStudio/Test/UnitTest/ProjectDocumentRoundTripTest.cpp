@@ -318,6 +318,10 @@ TEST_F(ProjectDocumentRoundTripTest, SupportedDocumentVersionsPreserveContentThr
             auto document = it.value();
             auto header = HarkenTest::projectHeader(document);
             header.insert(QStringLiteral("schemaVersion"), version);
+            if (version < ProjectSchema::kProjectSchemaVersion) {
+                header.insert(QStringLiteral("savedStudioVersion"), QStringLiteral("1.0.0"));
+                header.remove(QStringLiteral("packSchemaVersion"));
+            }
             document.insert(QStringLiteral("harkenDocument"), header);
             auto content = HarkenTest::projectContent(document);
             if (version == 7 && header.value(QStringLiteral("type")) == QStringLiteral("project.root")) {
@@ -392,7 +396,7 @@ TEST_F(ProjectDocumentRoundTripTest, SupportedDocumentVersionsPreserveContentThr
     }
 }
 
-TEST_F(ProjectDocumentRoundTripTest, UnchangedSavePreservesDocumentBytesAndModificationTimes)
+TEST_F(ProjectDocumentRoundTripTest, UnchangedDocumentsPreserveBytesAndModificationTimesAcrossSaves)
 {
     auto& manager = ProjectManager::instance();
     auto& undo = UndoRedoManager::instance();
@@ -428,6 +432,26 @@ TEST_F(ProjectDocumentRoundTripTest, UnchangedSavePreservesDocumentBytesAndModif
     undo.clearHistory();
     ASSERT_TRUE(manager.saveProject());
     for (auto it = committed.cbegin(); it != committed.cend(); ++it) {
+        EXPECT_EQ(readFile(it.key()), it.value()) << it.key().toStdString();
+        EXPECT_EQ(QFileInfo(it.key()).lastModified(), modificationTimes.value(it.key()))
+            << it.key().toStdString();
+    }
+
+    ASSERT_TRUE(manager.closeProject());
+    document = readObject(projectPath_);
+    const auto currentHeader = HarkenTest::projectHeader(document);
+    auto previousHeader = currentHeader;
+    previousHeader.insert(QStringLiteral("savedStudioVersion"), QStringLiteral("0.0.0"));
+    previousHeader.insert(QStringLiteral("packSchemaVersion"), HARKEN_PACK_SCHEMA_VERSION + 1);
+    document.insert(QStringLiteral("harkenDocument"), previousHeader);
+    writeObject(projectPath_, document);
+    ASSERT_TRUE(manager.loadProject(projectPath_));
+    undo.clearHistory();
+    EXPECT_EQ(HarkenTest::projectHeader(readObject(projectPath_)), previousHeader);
+    ASSERT_TRUE(manager.saveProject());
+    EXPECT_EQ(HarkenTest::projectHeader(readObject(projectPath_)), currentHeader);
+    for (auto it = committed.cbegin(); it != committed.cend(); ++it) {
+        if (it.key() == projectPath_) continue;
         EXPECT_EQ(readFile(it.key()), it.value()) << it.key().toStdString();
         EXPECT_EQ(QFileInfo(it.key()).lastModified(), modificationTimes.value(it.key()))
             << it.key().toStdString();

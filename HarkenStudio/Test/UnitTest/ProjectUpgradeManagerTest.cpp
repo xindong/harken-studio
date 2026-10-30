@@ -433,6 +433,29 @@ TEST(ProjectContract, SnapshotDiskAndIncrementalValidationRemainEquivalentAcross
     documents.insert(mainPath, main);
     compare(true);
 
+    for (const auto* key : {"savedStudioVersion", "packSchemaVersion"}) {
+        changed = main;
+        header = HarkenTest::projectHeader(changed);
+        header.insert(QLatin1String(key), HarkenTest::projectHeader(root).value(QLatin1String(key)));
+        changed.insert(QStringLiteral("harkenDocument"), header);
+        documents.insert(mainPath, changed);
+        compare(false);
+    }
+    documents.insert(mainPath, main);
+    for (const auto& value : {QJsonValue(QJsonValue::Undefined), QJsonValue(0), QJsonValue(-1),
+                             QJsonValue(1.5), QJsonValue(true), QJsonValue(QStringLiteral("4"))}) {
+        header = HarkenTest::projectHeader(originalRoot);
+        header.insert(QStringLiteral("packSchemaVersion"), value);
+        root.insert(QStringLiteral("harkenDocument"), header);
+        compare(false);
+    }
+    header = HarkenTest::projectHeader(originalRoot);
+    header.insert(QStringLiteral("packSchemaVersion"), HARKEN_PACK_SCHEMA_VERSION + 1);
+    root.insert(QStringLiteral("harkenDocument"), header);
+    compare(true);
+    root = originalRoot;
+    compare(true);
+
     const QString parentId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QJsonObject parent = main;
     header = HarkenTest::projectHeader(parent);
