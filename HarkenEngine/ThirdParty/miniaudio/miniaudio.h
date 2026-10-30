@@ -38318,6 +38318,7 @@ static ma_result ma_device_init_streams__aaudio(ma_device* pDevice, const ma_dev
     if (pConfig->deviceType == ma_device_type_playback || pConfig->deviceType == ma_device_type_duplex) {
         result = ma_device_init_by_type__aaudio(pDevice, pConfig, ma_device_type_playback, pDescriptorPlayback, (ma_AAudioStream**)&pDevice->aaudio.pStreamPlayback);
         if (result != MA_SUCCESS) {
+            ma_close_streams__aaudio(pDevice);
             return result;
         }
     }
@@ -38338,6 +38339,7 @@ static ma_result ma_device_init__aaudio(ma_device* pDevice, const ma_device_conf
 
     result = ma_mutex_init(&pDevice->aaudio.rerouteLock);
     if (result != MA_SUCCESS) {
+        ma_close_streams__aaudio(pDevice);
         return result;
     }
 
@@ -42099,6 +42101,8 @@ MA_API ma_device_config ma_device_config_init(ma_device_type deviceType)
     return config;
 }
 
+static void ma_device_uninit_resources(ma_device* pDevice);
+
 MA_API ma_result ma_device_init(ma_context* pContext, const ma_device_config* pConfig, ma_device* pDevice)
 {
     ma_result result;
@@ -42263,6 +42267,7 @@ MA_API ma_result ma_device_init(ma_context* pContext, const ma_device_config* pC
 
     result = pContext->callbacks.onDeviceInit(pDevice, pConfig, &descriptorPlayback, &descriptorCapture);
     if (result != MA_SUCCESS) {
+        ma_event_uninit(&pDevice->stopEvent);
         ma_event_uninit(&pDevice->startEvent);
         ma_event_uninit(&pDevice->wakeupEvent);
         ma_mutex_uninit(&pDevice->startStopLock);
@@ -42276,7 +42281,7 @@ MA_API ma_result ma_device_init(ma_context* pContext, const ma_device_config* pC
     */
     if (pConfig->deviceType == ma_device_type_capture || pConfig->deviceType == ma_device_type_duplex || pConfig->deviceType == ma_device_type_loopback) {
         if (!ma_device_descriptor_is_valid(&descriptorCapture)) {
-            ma_device_uninit(pDevice);
+            ma_device_uninit_resources(pDevice);
             return MA_INVALID_ARGS;
         }
 
@@ -42294,7 +42299,7 @@ MA_API ma_result ma_device_init(ma_context* pContext, const ma_device_config* pC
 
     if (pConfig->deviceType == ma_device_type_playback || pConfig->deviceType == ma_device_type_duplex) {
         if (!ma_device_descriptor_is_valid(&descriptorPlayback)) {
-            ma_device_uninit(pDevice);
+            ma_device_uninit_resources(pDevice);
             return MA_INVALID_ARGS;
         }
 
@@ -42353,7 +42358,7 @@ MA_API ma_result ma_device_init(ma_context* pContext, const ma_device_config* pC
 
     result = ma_device_post_init(pDevice, pConfig->deviceType, &descriptorPlayback, &descriptorCapture);
     if (result != MA_SUCCESS) {
-        ma_device_uninit(pDevice);
+        ma_device_uninit_resources(pDevice);
         return result;
     }
 
@@ -42382,7 +42387,7 @@ MA_API ma_result ma_device_init(ma_context* pContext, const ma_device_config* pC
 
             pDevice->capture.pIntermediaryBuffer = ma_malloc((size_t)intermediaryBufferSizeInBytes, &pContext->allocationCallbacks);
             if (pDevice->capture.pIntermediaryBuffer == NULL) {
-                ma_device_uninit(pDevice);
+                ma_device_uninit_resources(pDevice);
                 return MA_OUT_OF_MEMORY;
             }
 
@@ -42408,7 +42413,7 @@ MA_API ma_result ma_device_init(ma_context* pContext, const ma_device_config* pC
 
             pDevice->playback.pIntermediaryBuffer = ma_malloc((size_t)intermediaryBufferSizeInBytes, &pContext->allocationCallbacks);
             if (pDevice->playback.pIntermediaryBuffer == NULL) {
-                ma_device_uninit(pDevice);
+                ma_device_uninit_resources(pDevice);
                 return MA_OUT_OF_MEMORY;
             }
 
@@ -42426,7 +42431,7 @@ MA_API ma_result ma_device_init(ma_context* pContext, const ma_device_config* pC
         /* The worker thread. */
         result = ma_thread_create(&pDevice->thread, pContext->threadPriority, pContext->threadStackSize, ma_worker_thread, pDevice, &pContext->allocationCallbacks);
         if (result != MA_SUCCESS) {
-            ma_device_uninit(pDevice);
+            ma_device_uninit_resources(pDevice);
             return result;
         }
 
@@ -42442,7 +42447,7 @@ MA_API ma_result ma_device_init(ma_context* pContext, const ma_device_config* pC
             if (pConfig->deviceType == ma_device_type_duplex) {
                 result = ma_duplex_rb_init(pDevice->capture.format, pDevice->capture.channels, pDevice->sampleRate, pDevice->capture.internalSampleRate, pDevice->capture.internalPeriodSizeInFrames, &pDevice->pContext->allocationCallbacks, &pDevice->duplexRB);
                 if (result != MA_SUCCESS) {
-                    ma_device_uninit(pDevice);
+                    ma_device_uninit_resources(pDevice);
                     return result;
                 }
             }
@@ -42630,6 +42635,12 @@ MA_API void ma_device_uninit(ma_device* pDevice)
         ma_thread_wait(&pDevice->thread);
     }
 
+    ma_device_uninit_resources(pDevice);
+}
+
+/* The backend and common synchronization objects exist; a worker need not. */
+static void ma_device_uninit_resources(ma_device* pDevice)
+{
     if (pDevice->pContext->callbacks.onDeviceUninit != NULL) {
         pDevice->pContext->callbacks.onDeviceUninit(pDevice);
     }

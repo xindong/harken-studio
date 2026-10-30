@@ -827,6 +827,83 @@ TEST(CascadeProtocol, StarvedFadeNearUint32LimitCompletesWithoutWrap) {
     EXPECT_EQ(harness.ctx.fadeTotalFrames, harness.ctx.fadeDoneFrames);
 }
 
+TEST(CascadeProtocol, StarvedTailControlsSurviveUntilSourceRecovers) {
+    const auto dc = harkentest::MakeDC(1024, 1.0f);
+    for (const unsigned control : {0u, 1u, 2u}) {
+        for (const unsigned available : {0u, 32u}) {
+            SCOPED_TRACE(::testing::Message() << control << '/' << available);
+            CascadeHarness harness(dc, 1.0, ResampleQuality::Linear);
+            std::vector<float> storage(1024, 1.0f);
+            float* planes[harken::kMaxChannels] = {storage.data()};
+            harken::StreamRing stream;
+            stream.Wire(planes, 1024);
+            stream.ResetForUse(1);
+            stream.PublishWrite(available);
+            auto& ctx = harness.ctx;
+            ctx.streamRing = &stream;
+            ctx.streamGateOpen = true;
+            ctx.timelineEvents.eventCount = 1;
+            auto& event = ctx.timelineEvents.events[0];
+            event = harken::VoiceTimelineEvent{control == 0
+                ? harken::TimelineEventKind::Envelope : harken::TimelineEventKind::VariableWeight};
+            event.offset = 64;
+            if (control == 0) {
+                event.frame = 64;
+                event.endFrame = 512;
+                event.envelopeDirection = harken::TimelineEnvelopeDirection::FadeOut;
+            } else {
+                event.Weight().variableWeight = {64, 512, 1.0f, 0.0f, 1, {3, 5}, {7, 11}};
+                if (control == 2) {
+                    event.Weight().variableWeightOwner = {101, 7, 1};
+                    auto initial = event.Weight().variableWeight;
+                    initial.segmentGeneration = 1;
+                    event.Weight().variableWeight.segmentGeneration = 2;
+                    initial.endWeight = 1.0f;
+                    ASSERT_TRUE(ctx.ApplyVariableWeightControl(event.Weight().variableWeightOwner, initial));
+                }
+            }
+            const auto first = harness.RenderBlock();
+            ASSERT_EQ(SourcePhase::Active, first.phase);
+            ASSERT_LT(first.framesProduced, 64u);
+            for (unsigned frame = 0; frame < first.framesProduced; ++frame)
+                EXPECT_FLOAT_EQ(1.0f, harness.masterL[frame]);
+            ctx.timelineEvents.eventCount = 0;
+            ctx.timelineEvents.quantumIndex = 1;
+            stream.PublishWrite(512);
+            ASSERT_EQ(kBlock, harness.RenderBlock().framesProduced);
+            EXPECT_NEAR(1.0f - (256.0f - 64.0f) / 447.0f, harness.masterL[0], 1e-6f);
+        }
+    }
+}
+
+TEST(CascadeProtocol, StarvedTailStopKeepsItsExactFadeClock) {
+    const auto dc = harkentest::MakeDC(1024, 1.0f);
+    for (const unsigned available : {0u, 32u}) {
+        CascadeHarness harness(dc, 1.0, ResampleQuality::Linear);
+        std::vector<float> storage(1024, 1.0f);
+        float* planes[harken::kMaxChannels] = {storage.data()};
+        harken::StreamRing stream;
+        stream.Wire(planes, 1024);
+        stream.ResetForUse(1);
+        stream.PublishWrite(available);
+        auto& ctx = harness.ctx;
+        ctx.engineSampleRate = 48000;
+        ctx.streamRing = &stream;
+        ctx.streamGateOpen = true;
+        ctx.timelineEvents.eventCount = 1;
+        auto& event = ctx.timelineEvents.events[0];
+        event = harken::VoiceTimelineEvent{harken::TimelineEventKind::Stop};
+        event.offset = 200;
+        ASSERT_EQ(SourcePhase::Active, harness.RenderBlock().phase);
+        EXPECT_EQ(56u, ctx.fadeDoneFrames);
+        EXPECT_EQ(0u, ctx.fadeStartOffsetInBlock);
+        ctx.timelineEvents.eventCount = 0;
+        ctx.timelineEvents.quantumIndex = 1;
+        ASSERT_EQ(SourcePhase::Done, harness.RenderBlock().phase);
+        EXPECT_EQ(184u, ctx.stagedPlaybackEndOffset);
+    }
+}
+
 TEST(CascadeProtocol, HighRatioImmediateStopReleasesViaEscapeValve) {
     NotificationLog log;
     harkentest::EngineSession session(ConfigWithLog(&log));

@@ -21,6 +21,15 @@ namespace harken {
 
 namespace {
 
+PcmLoopRegion CanonicalPcmLoop(const PackTocEntry& media) noexcept {
+    if ((media.flags & kPackFlagLoopable) == 0) return {};
+    // Pack permits EOF as zero; non-default PCM regions require an explicit end.
+    // Preserve the default {0, 0} representation and its existing revision.
+    return {media.loopStartFrame,
+            media.loopStartFrame != 0 && media.loopEndFrame == 0
+                ? media.frameCount : media.loopEndFrame};
+}
+
 VnPackHandle MakePackHandle(std::uint32_t slot,
                                  std::uint32_t generation) {
     return (static_cast<std::uint64_t>(generation) << 32) | slot;
@@ -1275,6 +1284,7 @@ VnResult PackTable::PrepareCanonicalSet(
         std::size_t sourceIndex = 0;
         for (auto& [id, source] : mediaUnion) {
             const auto& media = *source.media;
+            const auto loop = CanonicalPcmLoop(media);
             const auto cookie = registry.CookieOf(id);
             if (cookie != 0) {
                 const PackEntry* old = FindEntryBySound(id, registry);
@@ -1286,8 +1296,8 @@ VnResult PackTable::PrepareCanonicalSet(
                 bool equal = view.sampleRate == media.sampleRate &&
                     view.channelCount == media.channelCount && view.frames == media.frameCount &&
                     view.stride == 1 &&
-                    view.loop.startFrame == ((media.flags & kPackFlagLoopable) != 0 ? media.loopStartFrame : 0) &&
-                    view.loop.endFrame == ((media.flags & kPackFlagLoopable) != 0 ? media.loopEndFrame : 0) &&
+                    view.loop.startFrame == loop.startFrame &&
+                    view.loop.endFrame == loop.endFrame &&
                     old->flags == media.flags &&
                     old->loopStartFrame == media.loopStartFrame &&
                     old->loopEndFrame == media.loopEndFrame;
@@ -1311,8 +1321,7 @@ VnResult PackTable::PrepareCanonicalSet(
             }
             PCMRegistry::PackReferenceRegistration registration{};
             registration.soundId = id;
-            registration.loop = (media.flags & kPackFlagLoopable) != 0
-                ? PcmLoopRegion{media.loopStartFrame, media.loopEndFrame} : PcmLoopRegion{};
+            registration.loop = loop;
             registration.desc.structSize = sizeof(VnPCMDesc);
             registration.desc.sampleRate = media.sampleRate;
             registration.desc.channels = media.channelCount;
@@ -1484,9 +1493,7 @@ VnResult PackTable::PrepareCanonicalMedia(
     const Slot* predecessor = SlotFor(replacing);
     for (std::size_t i = 0; i < parsedMedia.size(); ++i) {
         const PackTocEntry& media = parsedMedia[i];
-        const PcmLoopRegion loop = (media.flags & kPackFlagLoopable) != 0
-            ? PcmLoopRegion{media.loopStartFrame, media.loopEndFrame}
-            : PcmLoopRegion{};
+        const PcmLoopRegion loop = CanonicalPcmLoop(media);
         const float* blob = reinterpret_cast<const float*>(bytes.get() + media.blobOffset);
         const std::uint64_t cookie = registry.CookieOf(media.soundId);
         if (cookie != 0) {

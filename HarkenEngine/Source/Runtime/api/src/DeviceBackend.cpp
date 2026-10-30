@@ -741,28 +741,10 @@ VnResult DeviceBackend::Prepare(
     deviceConfig.aaudio.contentType = ma_aaudio_content_type_music;
 #endif
 
-    auto abandonFailedDevice = [&]() {
-        // miniaudio zeros the device at the start of ma_device_init, then
-        // creates wakeup/start/stop events before onDeviceInit. A failed
-        // onDeviceInit already uninits startEvent, wakeupEvent, and
-        // startStopLock. stopEvent is the leftover CreateEvent handle on
-        // Windows. Close only that handle, and only on Win32: POSIX
-        // ma_event_uninit destroys cond/mutex even when stopEvent was
-        // never created (ma_device_init returned before that init).
-        // Do not CloseHandle already-uninited objects, and do not
-        // ma_device_uninit (state is still uninitialized). deviceReady is
-        // still false.
-#if defined(_WIN32)
-        ma_event_uninit(&impl->device.stopEvent);
-#endif
-    };
     ma_result deviceInit =
         ma_device_init(&impl->context, &deviceConfig, &impl->device);
     PlaybackOpenPlan openPlan = AfterDefaultPlaybackAttempt(
         static_cast<int>(deviceInit));
-    if (openPlan.abandonFailedDevice) {
-        abandonFailedDevice();
-    }
     if (openPlan.defaultFailed) {
         ma_device_info* playbackInfos = nullptr;
         ma_uint32 playbackCount = 0;
@@ -788,9 +770,6 @@ VnResult DeviceBackend::Prepare(
             openPlan = AfterEnumeratedPlaybackAttempt(
                 openPlan, static_cast<int>(i), static_cast<int>(deviceInit),
                 static_cast<int>(playbackCount));
-            if (openPlan.abandonFailedDevice) {
-                abandonFailedDevice();
-            }
             if (openPlan.openedEnumeratedIndex == static_cast<int>(i)) {
                 std::fprintf(
                     stderr,

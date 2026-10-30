@@ -1233,6 +1233,23 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
             envelope.active = false;
         }
     }
+    // Timeline controls follow the output clock even while a live stream is
+    // dry. Adopt the silent suffix only after scaling the produced prefix so a
+    // later envelope cannot replace the envelope used by earlier samples.
+    if (phase == SourcePhase::Active && produced < target) {
+        for (std::uint32_t eventIndex = 0;
+             eventIndex < timelineSpan.eventCount; ++eventIndex) {
+            const auto& event = timelineSpan.events[eventIndex];
+            if (event.offset > offset && event.offset >= offset + produced &&
+                event.offset < blockFrames &&
+                TimelineEventPrecedesRootStop(ctx, eventIndex, blockFrames) &&
+                (event.Kind() == TimelineEventKind::Envelope ||
+                 event.Kind() == TimelineEventKind::VariableWeight ||
+                 event.Kind() == TimelineEventKind::Stop)) {
+                ApplyTimelineControlEvent(ctx, event, blockFrames);
+            }
+        }
+    }
     const VoiceRenderContext::TimelineEnvelopeState& stopFadeOut =
         ctx.timelineEnvelopes[1];
     const std::uint64_t timelineStopFrame =
@@ -1266,6 +1283,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
         ctx.fadeDoneFrames = std::max(ctx.fadeDoneFrames,
             static_cast<std::uint32_t>(std::min<std::uint64_t>(elapsed, ctx.fadeTotalFrames)));
     }
+    const std::uint32_t fadeStartOffset = ctx.fadeStartOffsetInBlock;
     if (ctx.fading && produced > 0) {
         const std::uint32_t fadeBegin =
             std::min(ctx.fadeStartOffsetInBlock, produced);
@@ -1289,7 +1307,6 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
             phase = SourcePhase::Done;
             stopCutoff = offset + produced;
         }
-        ctx.fadeStartOffsetInBlock = 0;
     }
 
     // Fading out silence still advances the fade clock. When the source starves
@@ -1304,13 +1321,16 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
     // actually rendered — and the fadedOut criterion in VoicePool observes the
     // completed clock unchanged.
     if (ctx.fading && produced < target && phase == SourcePhase::Active) {
+        const std::uint32_t silentFadeBegin =
+            std::max(produced, std::min(fadeStartOffset, target));
         const std::uint32_t left = ctx.fadeTotalFrames - ctx.fadeDoneFrames;
-        ctx.fadeDoneFrames += std::min(target - produced, left);
+        ctx.fadeDoneFrames += std::min(target - silentFadeBegin, left);
         if (ctx.fadeDoneFrames >= ctx.fadeTotalFrames) {
             phase = SourcePhase::Done;
-            stopCutoff = offset + produced + left;
+            stopCutoff = offset + silentFadeBegin + left;
         }
     }
+    ctx.fadeStartOffsetInBlock = 0;
 
     if (ctx.timelineStopPending && authoredStopCovered) {
         stopCutoff = ctx.timelineStopOffset;

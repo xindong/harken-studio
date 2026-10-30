@@ -15,8 +15,16 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdlib>
 #include <thread>
 #include <vector>
+
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -957,6 +965,148 @@ TEST(RealBackendLifecycle, TermCleansSuspendedAndRetryFailedStates) {
     EXPECT_EQ(nullptr, harken::detail::ActiveEngine());
     EXPECT_EQ(3u, deviceState.createCount);
     EXPECT_EQ(3u, deviceState.destroyCount);
+}
+
+} // namespace
+
+namespace {
+struct MiniaudioInitFailureState {
+    std::atomic<std::size_t> liveAllocations{0};
+    unsigned admitted = 0;
+    unsigned released = 0;
+    unsigned allocationAttempt = 0;
+    unsigned failAt = 0;
+    bool armed = false;
+    bool rejectBackend = false;
+    void* backendResource = nullptr;
+#if defined(_WIN32)
+    std::array<ma_event, 3> events{};
+#endif
+};
+
+bool RefuseMiniaudioAllocation(MiniaudioInitFailureState& state) {
+    return state.armed && ++state.allocationAttempt == state.failAt;
+}
+void* CountMiniaudioMalloc(size_t size, void* user) {
+    auto& state = *static_cast<MiniaudioInitFailureState*>(user);
+    if (RefuseMiniaudioAllocation(state)) return nullptr;
+    void* result = std::malloc(size != 0 ? size : 1);
+    if (result != nullptr) state.liveAllocations.fetch_add(1);
+    return result;
+}
+void* CountMiniaudioRealloc(void* old, size_t size, void* user) {
+    auto& state = *static_cast<MiniaudioInitFailureState*>(user);
+    if (RefuseMiniaudioAllocation(state)) return nullptr;
+    const bool wasNull = old == nullptr;
+    void* result = std::realloc(old, size != 0 ? size : 1);
+    if (result != nullptr && wasNull) state.liveAllocations.fetch_add(1);
+    return result;
+}
+void CountMiniaudioFree(void* memory, void* user) {
+    if (memory == nullptr) return;
+    auto& state = *static_cast<MiniaudioInitFailureState*>(user);
+    state.liveAllocations.fetch_sub(1);
+    std::free(memory);
+}
+ma_result InitFailureContext(ma_context*, const ma_context_config*,
+                             ma_backend_callbacks*) {
+    return MA_SUCCESS;
+}
+ma_result InitFailureDevice(ma_device* device, const ma_device_config*,
+                            ma_device_descriptor* playback,
+                            ma_device_descriptor*) {
+    auto& state = *static_cast<MiniaudioInitFailureState*>(device->pUserData);
+#if defined(_WIN32)
+    state.events = {device->stopEvent, device->startEvent, device->wakeupEvent};
+#endif
+    if (state.rejectBackend) return MA_ACCESS_DENIED;
+    state.backendResource = ma_malloc(32, &device->pContext->allocationCallbacks);
+    if (state.backendResource == nullptr) return MA_OUT_OF_MEMORY;
+    ++state.admitted;
+    playback->format = ma_format_f32;
+    playback->channels = 2;
+    playback->sampleRate = 48000;
+    playback->periodSizeInFrames = 256;
+    playback->periodCount = 2;
+    ma_channel_map_init_standard(ma_standard_channel_map_default,
+                                playback->channelMap, MA_MAX_CHANNELS, 2);
+    state.armed = true;
+    return MA_SUCCESS;
+}
+ma_result UninitFailureDevice(ma_device* device) {
+    auto& state = *static_cast<MiniaudioInitFailureState*>(device->pUserData);
+    ma_free(state.backendResource, &device->pContext->allocationCallbacks);
+    state.backendResource = nullptr;
+    ++state.released;
+    return MA_SUCCESS;
+}
+ma_result InitFailureWrite(ma_device*, const void*, ma_uint32 frames,
+                           ma_uint32* written) {
+    *written = frames;
+    return MA_SUCCESS;
+}
+ma_result InitFailureStartStop(ma_device*) { return MA_SUCCESS; }
+
+TEST(MiniaudioInitRollback, AllocationFailuresReleaseResourcesAndRemainRetryable) {
+    for (bool synchronous : {false, true}) {
+        MiniaudioInitFailureState state;
+        ma_context context{};
+        ma_context_config contextConfig = ma_context_config_init();
+        contextConfig.allocationCallbacks = {
+            &state, &CountMiniaudioMalloc, &CountMiniaudioRealloc,
+            &CountMiniaudioFree};
+        contextConfig.custom.onContextInit = &InitFailureContext;
+        contextConfig.custom.onDeviceInit = &InitFailureDevice;
+        contextConfig.custom.onDeviceUninit = &UninitFailureDevice;
+        contextConfig.custom.onDeviceStart = &InitFailureStartStop;
+        contextConfig.custom.onDeviceStop = &InitFailureStartStop;
+        if (synchronous) contextConfig.custom.onDeviceWrite = &InitFailureWrite;
+        const ma_backend backend = ma_backend_custom;
+        ASSERT_EQ(MA_SUCCESS, ma_context_init(&backend, 1, &contextConfig, &context));
+        const auto baseline = state.liveAllocations.load();
+        unsigned failures = 0;
+        unsigned successes = 0;
+        for (unsigned round = 0; round < 4; ++round) {
+            for (unsigned failAt = 0; failAt <= 8; ++failAt) {
+                SCOPED_TRACE(::testing::Message() << synchronous << '/' << round << '/' << failAt);
+                ma_device device{};
+                ma_device_config config = ma_device_config_init(ma_device_type_playback);
+                config.playback.format = ma_format_f32;
+                config.playback.channels = 2;
+                config.sampleRate = 44100;
+                config.periodSizeInFrames = 256;
+                config.periods = 2;
+                config.pUserData = &state;
+                config.dataCallback = &MiniaudioSilenceCallback;
+                state.armed = false;
+                state.failAt = failAt;
+                state.rejectBackend = failAt == 0;
+                state.allocationAttempt = 0;
+                const ma_result result = ma_device_init(&context, &config, &device);
+                state.armed = false;
+                if (result == MA_SUCCESS) {
+                    ++successes;
+                    ma_device_uninit(&device);
+                } else {
+                    ++failures;
+                    EXPECT_EQ(state.rejectBackend ? MA_ACCESS_DENIED : MA_OUT_OF_MEMORY, result);
+                }
+                EXPECT_EQ(state.admitted, state.released);
+                EXPECT_EQ(baseline, state.liveAllocations.load());
+#if defined(_WIN32)
+                for (const auto event : state.events) {
+                    DWORD flags = 0;
+                    EXPECT_FALSE(GetHandleInformation(static_cast<HANDLE>(event), &flags));
+                }
+#endif
+            }
+        }
+        EXPECT_GT(failures, 0u);
+        EXPECT_GT(successes, 0u);
+        EXPECT_EQ(baseline, state.liveAllocations.load());
+        (void)ma_context_uninit(&context);
+        EXPECT_EQ(0u, state.liveAllocations.load());
+    }
 }
 
 } // namespace
