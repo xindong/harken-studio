@@ -4209,7 +4209,7 @@ bool MainWindow::createProjectFromConfig(
 
     projectExplorer_->newProject(pmProject ? pmProject->name : config.name);
 
-    UndoRedoManager::instance().clear();
+    UndoRedoManager::instance().clearHistory();
 
     setProjectModified(false);
     updateWindowTitle();
@@ -5198,7 +5198,7 @@ void MainWindow::syncWindowToOpenedProject(const QString& path)
     if (ProjectData* project = ProjectManager::instance().currentProject())
         projectExplorer_->newProject(project->name);
 
-    UndoRedoManager::instance().clear();
+    UndoRedoManager::instance().clearHistory();
 
     setProjectModified(false);
     updateWindowTitle();
@@ -5219,7 +5219,7 @@ void MainWindow::finishPreparedProject(
     currentProjectPath_ = project ? project->projectPath : path;
     projectExplorer_->newProject(project ? project->name
                                          : QFileInfo(path).completeBaseName());
-    UndoRedoManager::instance().clear();
+    UndoRedoManager::instance().clearHistory();
     setProjectModified(false);
     updateWindowTitle();
     addRecentProject(currentProjectPath_);

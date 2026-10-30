@@ -117,4 +117,51 @@ TEST_F(AdvancedActionResultTest, AuthoringWriteScopeSurvivesReplayAndKeepsUnknow
     check(false);
 }
 
+TEST_F(AdvancedActionResultTest, AuthoringWriteScopeComposesAcrossMergingAndNestedMacros)
+{
+    auto& undo = VNX::UndoRedoManager::instance();
+    const QUuid first = QUuid::createUuid();
+    const QUuid second = QUuid::createUuid();
+    const QSet<QUuid> combined{first, second};
+    QObject observer;
+    std::optional<QSet<QUuid>> observed;
+    QObject::connect(&undo, &VNX::UndoRedoManager::indexChanged, &observer, [&] {
+        const auto* current = undo.currentAuthoringWriteSet();
+        observed = current ? std::optional<QSet<QUuid>>(*current) : std::nullopt;
+    });
+    const auto push = [&](const QUuid& guid, int mergeId = 0) {
+        undo.push(new VNX::RuntimeActionCommand(
+            QStringLiteral("Tracked write"), [] {}, [] {}, mergeId, nullptr, {}, QSet<QUuid>{guid}));
+    };
+    push(first, 17);
+    push(second, 17);
+    EXPECT_EQ(undo.undoStack()->count(), 1);
+    ASSERT_TRUE(undo.undo());
+    ASSERT_TRUE(observed);
+    EXPECT_EQ(*observed, combined);
+    ASSERT_TRUE(undo.redo());
+    ASSERT_TRUE(observed);
+    EXPECT_EQ(*observed, combined);
+
+    undo.beginMacro(QStringLiteral("Outer"));
+    push(first);
+    undo.beginMacro(QStringLiteral("Inner"));
+    push(second);
+    undo.endMacro();
+    undo.endMacro();
+    ASSERT_TRUE(observed);
+    EXPECT_EQ(*observed, combined);
+    ASSERT_TRUE(undo.undo());
+    ASSERT_TRUE(observed);
+    EXPECT_EQ(*observed, combined);
+    ASSERT_TRUE(undo.redo());
+    ASSERT_TRUE(observed);
+    EXPECT_EQ(*observed, combined);
+    EXPECT_EQ(undo.currentAuthoringWriteSet(), nullptr);
+    undo.clearHistory();
+    ASSERT_TRUE(observed);
+    EXPECT_TRUE(observed->isEmpty());
+    EXPECT_EQ(undo.currentAuthoringWriteSet(), nullptr);
+}
+
 }

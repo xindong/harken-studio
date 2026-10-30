@@ -293,6 +293,11 @@ ProjectSerializer::ProjectSerializer(QObject* parent)
 
 ProjectSerializer::~ProjectSerializer() = default;
 
+void ProjectSerializer::recordLoadedDocument(const QString& path, const QByteArray& bytes)
+{
+    loadedDocuments_.insert(QDir::cleanPath(QFileInfo(path).absoluteFilePath()), bytes);
+}
+
 bool ProjectSerializer::registerWriteItem(const ProjectItem& item,
                                           const QUuid& documentId)
 {
@@ -1135,48 +1140,17 @@ bool ProjectSerializer::saveProject(const QString& filePath, const ProjectData& 
     return saveProject(filePath, copy);
 }
 
-bool ProjectSerializer::prepareProjectSave(const QString& filePath,
-                                            ProjectData& project,
-                                            const QString& stagingFilePath)
+QJsonObject ProjectSerializer::projectDocument(const QString& filePath,
+                                              const ProjectData& project)
 {
     if (!PathUtils::isValidPackBuildOutputDir(project.packBuildOutputDir, filePath)) {
-        lastError_ = tr("Pack output must use a valid directory path. ")
-            + PathUtils::packBuildOutputLocationError();
-        emit errorOccurred(lastError_);
-        return false;
+        lastError_ = PathUtils::packBuildOutputLocationError();
+        return {};
     }
     if (!PathUtils::isValidWaveformBuildOutputDir(project.buildWaveformOutputDir, filePath)) {
         lastError_ = tr("Waveform output must use a valid directory outside the project root and object directories.");
-        emit errorOccurred(lastError_);
-        return false;
+        return {};
     }
-    if (!validatePlaybackReferences(project, &lastError_)) {
-        emit errorOccurred(lastError_);
-        return false;
-    }
-    const auto groupValidation = validateFieldGroupProject(project);
-    if (!groupValidation.ok()) {
-        lastError_ = groupValidation.diagnostics.front().message;
-        emit errorOccurred(lastError_);
-        return false;
-    }
-    if (project.projectId.isEmpty())
-        project.projectId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    if (QUuid::fromString(project.projectId).isNull()) {
-        lastError_ = QStringLiteral("Project identity is invalid");
-        emit errorOccurred(lastError_);
-        return false;
-    }
-    if (!ProjectPlatformSemantics::validateProject(project, &lastError_)) {
-        emit errorOccurred(lastError_);
-        return false;
-    }
-    if (!prepareReferenceWrite(project)) {
-        emit errorOccurred(lastError_);
-        return false;
-    }
-    emit progressChanged(0, tr("Preparing project data..."));
-
     QJsonObject root;
     
     QJsonObject metadata;
@@ -1215,7 +1189,7 @@ bool ProjectSerializer::prepareProjectSave(const QString& filePath,
     if (!AssetRegistry::sourceAssetsFromJson(sourceAssets, validatedSources)) {
         lastError_ = QStringLiteral("Invalid source asset references");
         emit errorOccurred(lastError_);
-        return false;
+        return {};
     }
     root[QStringLiteral("sourceAssets")] = sourceAssets;
 
@@ -1279,7 +1253,55 @@ bool ProjectSerializer::prepareProjectSave(const QString& filePath,
         root[QLatin1String(kActionPublishedNameHistory)] = history;
     }
 
-    emit progressChanged(60, tr("Writing file..."));
+    return ProjectDocument::create(
+        QStringLiteral("project.root"), project.projectId, project.projectId, root,
+        project.documentHeader);
+}
+
+bool ProjectSerializer::prepareProjectSave(const QString& filePath,
+                                            ProjectData& project,
+                                            const QString& stagingFilePath)
+{
+    if (!PathUtils::isValidPackBuildOutputDir(project.packBuildOutputDir, filePath)) {
+        lastError_ = tr("Pack output must use a valid directory path. ")
+            + PathUtils::packBuildOutputLocationError();
+        emit errorOccurred(lastError_);
+        return false;
+    }
+    if (!PathUtils::isValidWaveformBuildOutputDir(project.buildWaveformOutputDir, filePath)) {
+        lastError_ = tr("Waveform output must use a valid directory outside the project root and object directories.");
+        emit errorOccurred(lastError_);
+        return false;
+    }
+    if (!validatePlaybackReferences(project, &lastError_)) {
+        emit errorOccurred(lastError_);
+        return false;
+    }
+    const auto groupValidation = validateFieldGroupProject(project);
+    if (!groupValidation.ok()) {
+        lastError_ = groupValidation.diagnostics.front().message;
+        emit errorOccurred(lastError_);
+        return false;
+    }
+    if (project.projectId.isEmpty())
+        project.projectId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    if (QUuid::fromString(project.projectId).isNull()) {
+        lastError_ = QStringLiteral("Project identity is invalid");
+        emit errorOccurred(lastError_);
+        return false;
+    }
+    if (!ProjectPlatformSemantics::validateProject(project, &lastError_)) {
+        emit errorOccurred(lastError_);
+        return false;
+    }
+    if (!prepareReferenceWrite(project)) {
+        emit errorOccurred(lastError_);
+        return false;
+    }
+    emit progressChanged(0, tr("Preparing project data..."));
+
+    const QJsonObject document = projectDocument(filePath, project);
+    if (document.isEmpty()) return false;
 
     cancelProjectSave();
     const QString outputFilePath = stagingFilePath.isEmpty() ? filePath : stagingFilePath;
@@ -1293,9 +1315,6 @@ bool ProjectSerializer::prepareProjectSave(const QString& filePath,
         return false;
     }
 
-    const QJsonObject document = ProjectDocument::create(
-        QStringLiteral("project.root"), project.projectId, project.projectId, root,
-        project.documentHeader);
     QJsonDocument doc(document);
     const QByteArray bytes = doc.toJson(QJsonDocument::Indented);
     if (pendingProjectSave_->write(bytes) != bytes.size()) {
@@ -1373,6 +1392,7 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
     ProjectData project = destinationProject;
     warnings_.clear();
     lastError_.clear();
+    loadedDocuments_.clear();
     upgradeResult_ = {};
     emit progressChanged(0, tr("Reading project file..."));
 
@@ -1482,7 +1502,7 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
     }
 
     QFile file(resolvedProjectFilePath);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+    if (!file.open(QIODevice::ReadOnly))
     {
         lastError_ = tr("Cannot open file for reading: %1").arg(file.errorString());
         emit errorOccurred(ProjectUpgradeMessages::userMessage(lastError_, true));
@@ -1631,6 +1651,7 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
 
     project.nextObjectID = nextTransientObjectId_;
 
+    recordLoadedDocument(resolvedProjectFilePath, data);
     destinationProject = std::move(project);
     emit progressChanged(100, tr("Project loaded successfully"));
     return true;
@@ -1818,6 +1839,41 @@ bool ProjectSerializer::projectItemFromJson(const QJsonObject& json, ProjectItem
     return true;
 }
 
+
+QJsonObject ProjectSerializer::itemDocument(const ProjectItem& item,
+                                           const QString& projectId, int order) const
+{
+    QJsonObject content;
+    QString type;
+    switch (ItemTypeCatalog::bucketOf(item.type)) {
+    case ItemTypeCatalog::Bucket::Layers:
+        content = audioItemToJson(item);
+        type = QStringLiteral("project.layer");
+        if (!content.isEmpty()) content.insert(QStringLiteral("order"), order);
+        break;
+    case ItemTypeCatalog::Bucket::Actions:
+        content = actionPackToJson(item);
+        type = QStringLiteral("project.action");
+        break;
+    case ItemTypeCatalog::Bucket::Attenuations:
+        content = attenuationPackToJson(item);
+        type = QStringLiteral("project.attenuation");
+        break;
+    case ItemTypeCatalog::Bucket::Variables:
+        content = variablePackToJson(item);
+        type = QStringLiteral("project.variable");
+        break;
+    case ItemTypeCatalog::Bucket::Busses:
+        content = busPackToJson(item);
+        type = QStringLiteral("project.bus");
+        break;
+    default:
+        return {};
+    }
+    if (content.isEmpty()) return {};
+    return ProjectDocument::create(type, item.guid.toString(QUuid::WithoutBraces),
+                                   projectId, content, item.documentHeader);
+}
 
 QJsonObject ProjectSerializer::audioItemToJson(const ProjectItem& layer) const
 {

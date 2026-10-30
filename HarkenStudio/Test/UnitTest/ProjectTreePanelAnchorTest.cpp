@@ -139,8 +139,8 @@ TEST_F(ProjectTreePanelAnchorTest, RefreshedPresentationMatchesFreshRowsAcrossAu
     ASSERT_NE(selection, nullptr);
     PresentationProbeExplorer explorer;
     auto& theme = ThemeManager::instance();
-    const auto committedAppearance = theme.appearance();
-    const auto cancelPreview = qScopeGuard([&] { theme.cancelAppearancePreview(); });
+    const auto committedTheme = theme.currentThemeId();
+    const auto restoreTheme = qScopeGuard([&] { theme.selectTheme(committedTheme); });
 
     const auto verify = [&](const char* stage) {
         SCOPED_TRACE(stage);
@@ -183,14 +183,10 @@ TEST_F(ProjectTreePanelAnchorTest, RefreshedPresentationMatchesFreshRowsAcrossAu
     explorer.onItemPropertyChanged(container, QStringLiteral("playType"));
     verify("queue");
 
-    auto preview = committedAppearance;
-    preview.themeId = builtinThemeId();
-    preview.colors[preview.themeId].insert(QStringLiteral("accent.primary"), QColor(201, 47, 129));
-    preview.colors[preview.themeId].insert(QStringLiteral("text.primary"), QColor(41, 192, 156));
-    ASSERT_TRUE(theme.previewAppearance(preview).ok());
-    verify("theme preview");
-    EXPECT_EQ(theme.appearance(), committedAppearance);
-    theme.cancelAppearancePreview();
+    ASSERT_TRUE(theme.selectTheme(builtinThemeId()).ok());
+    ASSERT_TRUE(theme.reloadTheme().ok());
+    verify("theme reloaded");
+    ASSERT_TRUE(theme.selectTheme(committedTheme).ok());
     verify("theme restored");
 
     ASSERT_TRUE(pm.saveProject());

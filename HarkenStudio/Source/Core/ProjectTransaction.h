@@ -3,6 +3,9 @@
 #include <QByteArray>
 #include <QFileDevice>
 #include <QHash>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QList>
 #include <QLockFile>
 #include <QString>
 #include <QStringList>
@@ -21,6 +24,39 @@ using ProjectTransactionProgressCallback = std::function<void(
 class ProjectTransaction
 {
 public:
+    struct FileWrite {
+        QString path;
+        QByteArray bytes;
+        QFileDevice::Permissions permissions{};
+    };
+    struct FileRename {
+        QString source;
+        QString target;
+    };
+    struct DirectoryChange {
+        QString path;
+        bool present = true;
+    };
+    struct ReadDependency {
+        QString path;
+        QByteArray hash;
+        bool exists = true;
+    };
+    struct DeltaPlan {
+        QList<FileWrite> writes;
+        QStringList deletes;
+        QList<FileRename> renames;
+        QList<DirectoryChange> directories;
+        QList<ReadDependency> readSet;
+    };
+
+    static std::unique_ptr<ProjectTransaction> beginDelta(
+        const QString& projectFilePath,
+        const DeltaPlan& plan,
+        QString* error = nullptr);
+    static bool verifyReadSet(const QString& projectFilePath,
+                              const QList<ReadDependency>& readSet,
+                              QString* error = nullptr);
     static std::unique_ptr<ProjectTransaction> begin(
         const QString& projectFilePath,
         QString* error = nullptr);
@@ -65,6 +101,8 @@ public:
     const QStringList& writeSet() const { return writeSet_; }
     QStringList changedPaths() const;
 
+    bool applyDelta(QString* error = nullptr,
+                    ProjectTransactionProgressCallback progress = {});
     bool replaceFromDirectory(const QString& stagedDirectory,
                               QString* error = nullptr,
                               ProjectTransactionProgressCallback progress = {});
@@ -86,7 +124,11 @@ private:
         const QString& stagedDirectory,
         const ProjectSaveSnapshot* snapshot,
         QString* error,
-        ProjectTransactionProgressCallback progress);
+        ProjectTransactionProgressCallback progress,
+        const DeltaPlan* delta = nullptr);
+    bool install(QJsonObject journal, const QString& stagedDirectory,
+                 QString* error, ProjectTransactionProgressCallback progress);
+    bool verifyReadSet(QString* error) const;
 
     struct StagedFile {
         QByteArray bytes;
@@ -100,11 +142,16 @@ private:
     QStringList writeSet_;
     QHash<QString, StagedFile> stagedFiles_;
     QHash<QString, QByteArray> retainedFiles_;
+    QHash<QString, QString> renamedSources_;
+    QList<ReadDependency> readSet_;
+    QJsonArray deltaDirectories_;
     QByteArray backupFingerprint_;
     QByteArray committedFingerprint_;
     std::unique_ptr<QLockFile> lock_;
     QThreadPool* verificationPool_ = nullptr;
     bool active_ = false;
+    bool delta_ = false;
+    bool parallelFileOperations_ = false;
 };
 
 }

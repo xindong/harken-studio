@@ -172,6 +172,7 @@ add_library(harken_editor_foundation STATIC
     ProjectTypes.cpp
     ProjectItemSaveState.cpp
     ProjectItemSaveState.h
+    ProjectSavePlan.h
     ProjectPlatform.cpp
     ProjectBuildSnapshot.cpp
     ProjectBuildSnapshot.h

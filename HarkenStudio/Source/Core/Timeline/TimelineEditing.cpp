@@ -342,6 +342,7 @@ ActionResult replaceClips(ProjectManager* projectManager,
     result.undoFn = [trackGuid, oldClips] { applyClips(trackGuid, oldClips); };
     result.redoFn = [trackGuid, normalized] { applyClips(trackGuid, normalized); };
     result.undoText = undoText.isEmpty() ? QStringLiteral("Set clips") : undoText;
+    result.authoringWriteSet = QSet<QUuid>{trackGuid};
     return result;
 }
 
@@ -509,6 +510,7 @@ ActionResult moveClipAcrossTracks(ProjectManager* projectManager,
     };
     result.undoText = QStringLiteral("Move clip across tracks");
     result.mergeId = clipMergeId(clipGuid);
+    result.authoringWriteSet = QSet<QUuid>{sourceGuid, destinationGuid};
     return result;
 }
 
@@ -549,6 +551,7 @@ ActionResult replaceMarkers(ProjectManager* projectManager,
     result.undoFn = [pieceGuid, oldMarkers] { applyMarkers(pieceGuid, oldMarkers); };
     result.redoFn = [pieceGuid, normalized] { applyMarkers(pieceGuid, normalized); };
     result.undoText = undoText.isEmpty() ? QStringLiteral("Set markers") : undoText;
+    result.authoringWriteSet = QSet<QUuid>{pieceGuid};
     return result;
 }
 
@@ -671,6 +674,10 @@ ActionResult replacePieceTime(ProjectManager* projectManager,
     };
     result.undoText = undoText.isEmpty()
         ? QStringLiteral("Set piece time") : undoText;
+    result.authoringWriteSet = QSet<QUuid>{pieceGuid};
+    if (coordinatesChanged)
+        for (auto it = newSnapshot.tracks.cbegin(); it != newSnapshot.tracks.cend(); ++it)
+            result.authoringWriteSet->insert(it.key());
     return result;
 }
 
@@ -710,6 +717,7 @@ ActionResult setSpliceByMarker(ProjectManager* projectManager,
     };
     result.undoText = undoText.isEmpty()
         ? QStringLiteral("Set splice by marker") : undoText;
+    result.authoringWriteSet = QSet<QUuid>{containerGuid};
     return result;
 }
 

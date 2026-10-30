@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <typeinfo>
 
 #include <QDebug>
 #include <QScopedValueRollback>
@@ -26,9 +27,19 @@ namespace VNX {
 namespace {
 std::optional<QSet<QUuid>> authoringWriteSet(const QUndoCommand* command)
 {
+    if (!command) return std::nullopt;
     const auto* action = dynamic_cast<const RuntimeActionCommand*>(command);
     const auto* writes = action ? action->authoringWriteSet() : nullptr;
-    return writes ? std::optional<QSet<QUuid>>(*writes) : std::nullopt;
+    if (action && !writes) return std::nullopt;
+    if (!action && (typeid(*command) != typeid(QUndoCommand) || command->childCount() == 0))
+        return std::nullopt;
+    QSet<QUuid> combined = writes ? *writes : QSet<QUuid>{};
+    for (int i = 0; i < command->childCount(); ++i) {
+        const auto childWrites = authoringWriteSet(command->child(i));
+        if (!childWrites) return std::nullopt;
+        combined |= *childWrites;
+    }
+    return combined;
 }
 
 bool canReplayCommand(const QUndoCommand* command)
@@ -186,24 +197,54 @@ void UndoRedoManager::push(QUndoCommand* command)
         delete command;
         return;
     }
+    if (!macroWriteSets_.empty()) {
+        auto& macroWrites = macroWriteSets_.back();
+        if (macroWrites && writes)
+            *macroWrites |= *writes;
+        else
+            macroWrites.reset();
+    }
     undoStack_.push(command);
 }
 
 void UndoRedoManager::beginMacro(const QString& text)
 {
     const QScopedValueRollback<const QSet<QUuid>*> scope(authoringWriteSet_, nullptr);
+    macroWriteSets_.emplace_back(QSet<QUuid>{});
     undoStack_.beginMacro(text);
 }
 
 void UndoRedoManager::endMacro()
 {
-    const QScopedValueRollback<const QSet<QUuid>*> scope(authoringWriteSet_, nullptr);
+    std::optional<QSet<QUuid>> writes;
+    if (!macroWriteSets_.empty()) {
+        writes = std::move(macroWriteSets_.back());
+        macroWriteSets_.pop_back();
+        if (!macroWriteSets_.empty()) {
+            auto& parentWrites = macroWriteSets_.back();
+            if (parentWrites && writes)
+                *parentWrites |= *writes;
+            else
+                parentWrites.reset();
+        }
+    }
+    const QScopedValueRollback<const QSet<QUuid>*> scope(
+        authoringWriteSet_, writes ? &*writes : nullptr);
     undoStack_.endMacro();
 }
 
 void UndoRedoManager::clear()
 {
     const QScopedValueRollback<const QSet<QUuid>*> scope(authoringWriteSet_, nullptr);
+    macroWriteSets_.clear();
+    undoStack_.clear();
+}
+
+void UndoRedoManager::clearHistory()
+{
+    const QSet<QUuid> writes;
+    const QScopedValueRollback<const QSet<QUuid>*> scope(authoringWriteSet_, &writes);
+    macroWriteSets_.clear();
     undoStack_.clear();
 }
 

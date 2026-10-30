@@ -504,6 +504,7 @@ ActionResult handleStepsItemProperty(ProjectManager* projectManager, ProjectItem
     r.undoFn = [objID, oldSteps]() { applyStepsList(objID, oldSteps); };
     r.redoFn = [objID, newSteps]() { applyStepsList(objID, newSteps); };
     r.undoText = QObject::tr("Edit Steps");
+    r.authoringWriteSet = QSet<QUuid>{item->guid};
     return r;
 }
 
@@ -693,11 +694,7 @@ ActionResult handlePlayableItemProperty(ProjectManager* projectManager,
     };
     result.undoFn = [restoreAll, snapshots]() { restoreAll(snapshots, true); };
     result.redoFn = [restoreAll, snapshots]() { restoreAll(snapshots, false); };
-    using Property = harkenplayableproperties::PlayablePropertyIdV1;
-    if (field->id == static_cast<uint8_t>(Property::Volume)
-        || field->id == static_cast<uint8_t>(Property::Pitch)
-        || field->id == static_cast<uint8_t>(Property::LoopCount))
-        result.authoringWriteSet = QSet<QUuid>{item->guid};
+    result.authoringWriteSet = QSet<QUuid>{item->guid};
     result.undoText = operation == QLatin1String("set_override")
         ? QObject::tr("Set Property Override")
         : QObject::tr("Clear Property Override");
@@ -841,6 +838,7 @@ ActionResult handleAudioItemProperty(ProjectManager* projectManager, ProjectItem
         r.undoText = QString("Set %1").arg(propertyName);
     }
 
+    r.authoringWriteSet = QSet<QUuid>{item->guid};
     return r;
 }
 
@@ -975,6 +973,7 @@ ActionResult handleSoundItemProperty(ProjectManager* projectManager, ProjectItem
         applySoundAuthoringState(objectID, newState, propertyName);
     };
     result.undoText = QStringLiteral("Set %1").arg(propertyName);
+    result.authoringWriteSet = QSet<QUuid>{item->guid};
     return result;
 }
 
@@ -1049,6 +1048,7 @@ ActionResult handleNotesItemProperty(ProjectManager* projectManager, ProjectItem
     r.undoFn = [applyFn, objID, oldNotes]() { applyFn(objID, oldNotes); };
     r.redoFn = [applyFn, objID, newNotes]() { applyFn(objID, newNotes); };
     r.undoText = QObject::tr("Edit Notes");
+    r.authoringWriteSet = QSet<QUuid>{item->guid};
     return r;
 }
 
@@ -1254,6 +1254,7 @@ ActionResult handleVariableItemProperty(ProjectManager* projectManager, ProjectI
         applyVariableDeclaration(objID, newState, changedFields);
     };
     r.undoText = QString("Set %1").arg(propertyName);
+    r.authoringWriteSet = QSet<QUuid>{item->guid};
     return r;
 }
 
@@ -1462,6 +1463,7 @@ ActionResult handleSelectionTransitionsProperty(
     const QString undoText = args.value(QStringLiteral("undo_text")).toString();
     result.undoText = undoText.isEmpty()
         ? QStringLiteral("Set transitions") : undoText;
+    result.authoringWriteSet = QSet<QUuid>{item->guid};
     return result;
 }
 
@@ -1517,6 +1519,7 @@ ActionResult handleSelectionBehaviorProperty(ProjectManager* projectManager,
         applySelectionBehavior(objectID, newBehavior);
     };
     result.undoText = QStringLiteral("Set behavior");
+    result.authoringWriteSet = QSet<QUuid>{item->guid};
     return result;
 }
 
@@ -1628,6 +1631,9 @@ ActionResult handleSelectionsProperty(ProjectManager* manager, ProjectItem* item
     result.undoFn = [apply, before, oldLabels] { apply(before, oldLabels, nullptr); };
     result.redoFn = [apply, after, newLabels] { apply(after, newLabels, nullptr); };
     result.undoText = args.value(QStringLiteral("undo_text")).toString(QStringLiteral("Edit Selections"));
+    result.authoringWriteSet = QSet<QUuid>{item->guid};
+    for (auto it = newLabels.cbegin(); it != newLabels.cend(); ++it)
+        result.authoringWriteSet->insert(it.key());
     return result;
 }
 
@@ -1706,6 +1712,7 @@ ActionResult handleSelectionItemProperty(ProjectManager* projectManager, Project
     r.undoFn = [applyFn, objID, previous]() { applyFn(objID, previous); };
     r.redoFn = [applyFn, objID, candidate]() { applyFn(objID, candidate); };
     r.undoText = QString("Set %1").arg(propertyName);
+    r.authoringWriteSet = QSet<QUuid>{item->guid};
     return r;
 }
 
@@ -1778,6 +1785,7 @@ ActionResult handleEffectsItemProperty(ProjectManager* projectManager, ProjectIt
     result.undoFn = [apply, oldValue]() { apply(oldValue); };
     result.redoFn = [apply, newValue]() { apply(newValue); };
     result.undoText = QStringLiteral("Set effects");
+    result.authoringWriteSet = QSet<QUuid>{item->guid};
     return result;
 }
 

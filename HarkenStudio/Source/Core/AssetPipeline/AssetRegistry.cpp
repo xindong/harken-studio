@@ -538,13 +538,14 @@ QString AssetRegistry::assetsFilePath() const
     return QDir(PathUtils::getAssetRegistryCacheDir(projectRoot_)).absoluteFilePath("assets.json");
 }
 
-bool AssetRegistry::saveToFile(const QString& path)
+QJsonObject AssetRegistry::toJson() const
 {
     QMutexLocker lock(&mutex_);
-    QString filePath = path.isEmpty() ? assetsFilePath() : path;
-    if (!PathUtils::ensureDirectory(QFileInfo(filePath).absolutePath()))
-        return false;
+    return toJsonLocked();
+}
 
+QJsonObject AssetRegistry::toJsonLocked() const
+{
     QJsonObject root;
     root["version"] = kFormatVersion;
 
@@ -554,8 +555,17 @@ bool AssetRegistry::saveToFile(const QString& path)
         assetsObj[QString::number(it.key())] = info.toJson();
     }
     root["assets"] = assetsObj;
+    return root;
+}
 
-    const QByteArray bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
+bool AssetRegistry::saveToFile(const QString& path)
+{
+    QMutexLocker lock(&mutex_);
+    QString filePath = path.isEmpty() ? assetsFilePath() : path;
+    if (!PathUtils::ensureDirectory(QFileInfo(filePath).absolutePath()))
+        return false;
+
+    const QByteArray bytes = QJsonDocument(toJsonLocked()).toJson(QJsonDocument::Indented);
     const char* failedOperation = nullptr;
     QString errorMessage;
     QFileDevice::FileError errorCode = QFileDevice::NoError;

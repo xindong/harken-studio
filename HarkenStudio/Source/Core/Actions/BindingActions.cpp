@@ -125,6 +125,7 @@ ActionResult snapshotResult(ProjectItem* item, const BindingLedger& oldLedger,
     result.redoFn = [apply, newValue]() { apply(newValue); };
     result.undoText = undoText;
     result.mergeId = 0;
+    result.authoringWriteSet = QSet<QUuid>{item->guid};
     return result;
 }
 
