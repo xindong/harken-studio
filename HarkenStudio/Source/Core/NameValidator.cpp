@@ -110,8 +110,9 @@ QString NameValidator::objectFileName(const QString& name, const QUuid& guid)
 {
     if (guid.isNull()) return {};
     QString clean = name.normalized(QString::NormalizationForm_C);
-    clean.replace(QRegularExpression(QStringLiteral("[<>:\"/\\\\|?*\\x{0000}-\\x{001f}]")),
-                  QStringLiteral("_"));
+    static const QRegularExpression invalidCharacters(
+        QStringLiteral("[<>:\"/\\\\|?*\\x{0000}-\\x{001f}]"));
+    clean.replace(invalidCharacters, QStringLiteral("_"));
     while (!clean.isEmpty() && (clean.endsWith(QLatin1Char('.')) || clean.back().isSpace()))
         clean.chop(1);
     while (clean.toUtf8().size() > 200) {
