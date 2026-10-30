@@ -713,7 +713,7 @@ TEST(EditorProjectPackExporterManifest, SharedPlanningPreservesVariantCapabiliti
     for (int pass = 0; pass < 2; ++pass) {
         const auto sharedPlan = VNX::PackBuildPlanning::build(project, platforms, {}, true, {},
             cached, build->closures.get());
-        EXPECT_EQ(directPlan.toJson(), sharedPlan.toJson());
+        EXPECT_EQ(directPlan.toJson(project), sharedPlan.toJson(project));
     }
     std::vector<const VNX::ProjectItem*> items;
     for (const auto* binding : project.allFileBindings()) {
@@ -765,7 +765,7 @@ TEST(EditorProjectPackExporterManifest, SharedPlanningPreservesVariantCapabiliti
     ASSERT_FALSE(invalidDirect.ready());
     const auto invalidShared = VNX::PackBuildPlanning::build(project, platforms, {}, true, {},
         invalidContext, invalidBuild->closures.get());
-    EXPECT_EQ(invalidDirect.toJson(), invalidShared.toJson());
+    EXPECT_EQ(invalidDirect.toJson(project), invalidShared.toJson(project));
 }
 
 TEST(EditorProjectPackExporterManifest, StopOnlyPublishesNoTargetMediaOrDefinitions)
