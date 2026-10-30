@@ -467,7 +467,11 @@ def verify_edit(before: dict[str, tuple[Path, dict[str, Any]]],
 
     for identity, document in expected.items():
         saved = after[identity][1]
-        document["harkenDocument"]["savedStudioVersion"] = report["version"]
+        header = document["harkenDocument"]
+        if "savedStudioVersion" in header:
+            header["savedStudioVersion"] = report["version"]
+        if header["type"] == "project.root" and "packSchemaVersion" in header:
+            header["packSchemaVersion"] = report["packSchemaVersion"]
         content = document["content"]
         if "objectPath" in content:
             if original_documents[identity]["content"]["objectPath"] != object_path(identity, original_documents, set()):
