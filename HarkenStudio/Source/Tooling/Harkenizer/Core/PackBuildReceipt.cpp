@@ -65,6 +65,7 @@ QJsonObject requestIdentity(const ProjectPackExporter::ExportOptions& options)
         {QStringLiteral("debugStrings"), options.debugStrings},
         {QStringLiteral("selfCleaning"), options.selfCleaning},
         {QStringLiteral("updateSelectedOnly"), options.updateSelectedOnly},
+        {QStringLiteral("includeUnchecked"), options.includeUnchecked},
         {QStringLiteral("waveformOutputDirectory"), options.waveformOutputDir},
         {QStringLiteral("platformSelection"), QJsonArray::fromStringList(options.selection.selectedPlatformIds)},
         {QStringLiteral("actionSelection"), actions},

@@ -82,6 +82,7 @@ TEST(SoundSourceSemanticsTest, DerivativeCachePreservesMediaAcrossInputChanges)
     const QString snapshotDir = directory.filePath(QStringLiteral("snapshot"));
     const auto platform = QUuid::createUuid();
     SoundSourceDerivative::MaterializationCache cache;
+    SoundSourceDerivative::MaterializationCache snapshotCache;
     const auto expectEquivalent = [](const auto& reference, const auto& candidate) {
         EXPECT_EQ(candidate.cacheKey, reference.cacheKey);
         EXPECT_EQ(candidate.sampleRate, reference.sampleRate);
@@ -90,11 +91,8 @@ TEST(SoundSourceSemanticsTest, DerivativeCachePreservesMediaAcrossInputChanges)
         EXPECT_EQ(candidate.loopEndFrame, reference.loopEndFrame);
         EXPECT_EQ(candidate.loopable, reference.loopable);
         EXPECT_EQ(candidate.contentHash, reference.contentHash);
-        QFile expected(reference.path);
-        QFile actual(candidate.path);
-        ASSERT_TRUE(expected.open(QIODevice::ReadOnly));
-        ASSERT_TRUE(actual.open(QIODevice::ReadOnly));
-        EXPECT_EQ(actual.readAll(), expected.readAll());
+        ASSERT_TRUE(candidate.samples && reference.samples);
+        EXPECT_EQ(*candidate.samples, *reference.samples);
     };
     for (const uint16_t channels : {1, 2}) {
         qint64 sourceSize = 0;
@@ -149,7 +147,7 @@ TEST(SoundSourceSemanticsTest, DerivativeCachePreservesMediaAcrossInputChanges)
                     ASSERT_TRUE(reference) << error.toStdString();
                     const auto fromSnapshot = SoundSourceDerivative::materialize(
                         captured->inputPath, definition, offset, platform, snapshotDir,
-                        settings, &error, &cache, captured.get());
+                        settings, &error, &snapshotCache, captured.get());
                     ASSERT_TRUE(fromSnapshot) << error.toStdString();
                     ASSERT_NO_FATAL_FAILURE(expectEquivalent(*reference, *fromSnapshot));
                     const auto first = SoundSourceDerivative::materialize(
@@ -171,11 +169,17 @@ TEST(SoundSourceSemanticsTest, DerivativeCachePreservesMediaAcrossInputChanges)
                     const auto relocated = SoundSourceDerivative::materialize(
                         inputPath, definition, offset, platform, referenceDir, settings, &error, &cache);
                     ASSERT_TRUE(relocated) << error.toStdString();
-                    EXPECT_EQ(relocated->path, reference->path);
                     ASSERT_NO_FATAL_FAILURE(expectEquivalent(*reference, *relocated));
                     ASSERT_TRUE(QFile::remove(warm->path));
-                    const auto regenerated = SoundSourceDerivative::materialize(
+                    const auto retained = SoundSourceDerivative::materialize(
                         inputPath, definition, offset, platform, cachedDir, settings, &error, &cache);
+                    ASSERT_TRUE(retained) << error.toStdString();
+                    EXPECT_TRUE(retained->cacheHit);
+                    ASSERT_NO_FATAL_FAILURE(expectEquivalent(*reference, *retained));
+                    SoundSourceDerivative::MaterializationCache missingCache;
+                    const auto regenerated = SoundSourceDerivative::materialize(
+                        inputPath, definition, offset, platform, QFileInfo(warm->path).absolutePath(),
+                        settings, &error, &missingCache);
                     ASSERT_TRUE(regenerated) << error.toStdString();
                     EXPECT_FALSE(regenerated->cacheHit);
                     ASSERT_NO_FATAL_FAILURE(expectEquivalent(*reference, *regenerated));
@@ -364,7 +368,10 @@ TEST(SoundSourceSemanticsTest, DerivativeCacheRecoversCorruptArtifactsAndPreserv
     ASSERT_EQ(corrupted.write(QByteArray(1, last.front() ^ 1)), 1);
     ASSERT_TRUE(corrupted.setFileTime(expectedTime, QFileDevice::FileModificationTime));
     corrupted.close();
-    EXPECT_FALSE(cache.verifyUnchanged(&error));
+    const auto retained = SoundSourceDerivative::materialize(
+        inputPath, definition, 0.0, platform, outputDir, {}, &error, &cache);
+    ASSERT_TRUE(retained) << error.toStdString();
+    EXPECT_EQ(*retained->samples, *initial->samples);
     SoundSourceDerivative::MaterializationCache recoveryCache;
     const auto restored = SoundSourceDerivative::materialize(
         inputPath, definition, 0.0, platform, outputDir, {}, &error, &recoveryCache);
@@ -372,7 +379,6 @@ TEST(SoundSourceSemanticsTest, DerivativeCacheRecoversCorruptArtifactsAndPreserv
     EXPECT_FALSE(restored->cacheHit);
     EXPECT_EQ(restored->contentHash, expectedHash);
     EXPECT_EQ(AssetImporter::computeContentHash(restored->path), expectedHash);
-    EXPECT_TRUE(recoveryCache.verifyUnchanged(&error));
     const auto receipts = QDir(outputDir).entryList({QStringLiteral("*.json")}, QDir::Files);
     ASSERT_EQ(receipts.size(), 1);
     QFile receipt(QDir(outputDir).filePath(receipts.front()));
@@ -400,13 +406,23 @@ TEST(SoundSourceSemanticsTest, DerivativeCacheRecoversCorruptArtifactsAndPreserv
             inputPath, definition, 0.0, platform, outputDir, {}, &error, &cache);
         ASSERT_TRUE(media) << error.toStdString();
         HarkenEditor::Bridge::PackMediaDesc desc;
-        desc.sourcePath = media->path;
+        desc.interleavedSamples = media->samples;
+        desc.sampleRate = media->sampleRate;
+        desc.channels = media->channels;
         desc.format = HarkenEditor::Bridge::PackMediaFormat::PcmFloat;
         desc.loopable = media->loopable;
         desc.loopStartFrame = media->loopStartFrame;
         desc.loopEndFrame = media->loopEndFrame;
         uint64_t reference = 0;
         ASSERT_TRUE(HarkenEditor::Bridge::computePackMediaContentRevision(desc, &reference));
+        const auto referencePath = directory.filePath(QStringLiteral("reference.wav"));
+        ASSERT_TRUE(AssetConverter::writeFloatWav(referencePath, *media->samples,
+            media->channels, media->sampleRate));
+        desc.interleavedSamples.reset();
+        desc.sourcePath = referencePath;
+        uint64_t fileRevision = 0;
+        ASSERT_TRUE(HarkenEditor::Bridge::computePackMediaContentRevision(desc, &fileRevision));
+        EXPECT_EQ(fileRevision, reference);
         const auto revision = cache.contentRevision(*media);
         ASSERT_TRUE(revision);
         EXPECT_EQ(*revision, reference);

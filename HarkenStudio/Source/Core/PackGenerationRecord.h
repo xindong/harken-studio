@@ -113,6 +113,8 @@ signals:
     void exportActivityChanged(bool exporting);
     void preflightActivityChanged(bool active);
     void globalObservationChanged();
+    void observationChanged(const VNX::PackBuildObservation& observation);
+    void exportCancellationRequested();
 
 private:
     struct ProgressEntry {

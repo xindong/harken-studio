@@ -1,4 +1,5 @@
 #include "IPCServerInternal.h"
+#include "PackGenerationRecord.h"
 #include <QApplication>
 #include <QPlainTextEdit>
 #include <QDateTime>
@@ -491,6 +492,7 @@ QJsonObject IPCServer::handleClickWidget(const QJsonObject& args)
 
     QPointer<QWidget> safeTarget = target;
     QMetaObject::invokeMethod(mainWindow_, [safeTarget, button, doubleClick]() {
+        if (PackGenerationRecordStore::instance().isExporting()) return;
         if (!safeTarget)
             return;
         QWidget* w = safeTarget.data();
@@ -555,10 +557,14 @@ QJsonObject IPCServer::handleKeyPress(const QJsonObject& args)
     }
 
     if (key == Qt::Key_Space && modifiers == Qt::NoModifier) {
-        QMetaObject::invokeMethod(mainWindow_, "onPlayPressed", Qt::QueuedConnection);
+        QMetaObject::invokeMethod(mainWindow_, [window = mainWindow_] {
+            if (!PackGenerationRecordStore::instance().isExporting())
+                QMetaObject::invokeMethod(window, "onPlayPressed", Qt::DirectConnection);
+        }, Qt::QueuedConnection);
     } else {
         QPointer<QWidget> safeTarget = target;
         QMetaObject::invokeMethod(mainWindow_, [safeTarget, key, modifiers, text]() {
+            if (PackGenerationRecordStore::instance().isExporting()) return;
             if (!safeTarget)
                 return;
             QWidget* w = safeTarget.data();
@@ -601,6 +607,7 @@ QJsonObject IPCServer::handleSetWidgetValue(const QJsonObject& args)
     QString typeName = QString::fromLatin1(target->metaObject()->className());
 
     QMetaObject::invokeMethod(mainWindow_, [safeTarget, val]() {
+        if (PackGenerationRecordStore::instance().isExporting()) return;
         if (!safeTarget)
             return;
         QWidget* w = safeTarget.data();
@@ -742,8 +749,10 @@ QJsonObject IPCServer::handleTriggerMenuAction(const QJsonObject& args)
             pos = sa->viewport()->rect().center();
         else
             pos = cw->rect().center();
-        QMetaObject::invokeMethod(cw, "customContextMenuRequested", Qt::QueuedConnection,
-                                  Q_ARG(QPoint, pos));
+        QMetaObject::invokeMethod(cw, [cw, pos] {
+            if (!PackGenerationRecordStore::instance().isExporting())
+                emit cw->customContextMenuRequested(pos);
+        }, Qt::QueuedConnection);
         QJsonObject result;
         result["emitted_context"] = cn;
         result["pos_x"] = pos.x();
@@ -795,6 +804,7 @@ QJsonObject IPCServer::handleTriggerMenuAction(const QJsonObject& args)
     QPointer<QMenu> safeMenu = menu;
     QPointer<QAction> safeAction = target;
     QMetaObject::invokeMethod(mainWindow_, [safeMenu, safeAction, isPopup]() {
+        if (PackGenerationRecordStore::instance().isExporting()) return;
         if (!safeAction) return;
         if (isPopup && safeMenu) {
             safeMenu->setActiveAction(safeAction.data());

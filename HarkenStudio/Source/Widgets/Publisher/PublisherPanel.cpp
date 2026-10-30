@@ -333,14 +333,10 @@ PublisherPanel::PublisherPanel(QWidget* parent)
 
     connect(&PackGenerationRecordStore::instance(), &PackGenerationRecordStore::changed,
             this, &PublisherPanel::requestPackTableRefresh);
-    connect(&PackGenerationRecordStore::instance(), &PackGenerationRecordStore::progressChanged,
-            this, &PublisherPanel::updatePackProgress);
-    connect(&PackGenerationRecordStore::instance(), &PackGenerationRecordStore::globalObservationChanged,
-            this, &PublisherPanel::updateBuildStage);
     connect(&PackGenerationRecordStore::instance(), &PackGenerationRecordStore::exportActivityChanged,
-            this, [this](bool) {
-        cancelRequested_ = false;
+            this, [this](bool exporting) {
         updateExportButton();
+        if (!exporting) requestPackTableRefresh();
     });
     connect(&PackArtifactCache::instance(), &PackArtifactCache::changed,
             this, &PublisherPanel::requestPackTableRefresh);
@@ -399,7 +395,6 @@ PublisherPanel::PublisherPanel(QWidget* parent)
     connect(&pm, &ProjectManager::projectOpened, this, [this](ProjectData* project) {
         openedProject_ = project;
         static_cast<TableWidget*>(packTree_->parentWidget())->clearSelection();
-        packRows_.clear();
         packTree_->clear();
         nameFilterActive_ = false;
         populatePlatformControls();
@@ -408,7 +403,6 @@ PublisherPanel::PublisherPanel(QWidget* parent)
     connect(&pm, &ProjectManager::projectClosed, this, [this]() {
         openedProject_ = nullptr;
         static_cast<TableWidget*>(packTree_->parentWidget())->clearSelection();
-        packRows_.clear();
         packTree_->clear();
         nameFilterActive_ = false;
         searchEdit_->clear();
@@ -438,7 +432,6 @@ PublisherPanel::PublisherPanel(QWidget* parent)
     });
 
     populatePlatformControls();
-    updateBuildStage();
     requestPackTableRefresh();
 }
 
@@ -469,14 +462,6 @@ void PublisherPanel::setupUI()
             this, &PublisherPanel::applyNameFilter);
     contentLayout->addWidget(searchEdit_);
 
-    buildStageLabel_ = new QLabel();
-    buildStageLabel_->setObjectName("packBuildStageLabel");
-    buildStageLabel_->setTextFormat(Qt::PlainText);
-    buildStageLabel_->setProperty("textRole", QStringLiteral("muted"));
-    buildStageLabel_->setWordWrap(true);
-    buildStageLabel_->setVisible(false);
-    contentLayout->addWidget(buildStageLabel_);
-
     auto* table = new TableWidget(TableOptions::display(), content);
     packTree_ = table->createCustomView(QStringLiteral("packTree"),
         [](QWidget* parent, ThemeManager* themeManager) {
@@ -490,7 +475,6 @@ void PublisherPanel::setupUI()
     packTree_->setPinnedTrailingColumns({kColResult, kColCost});
     packTree_->setAccentedColumns({kColResult, kColCost});
     packTree_->setColumnSeparatorBefore(kColResult);
-    packTree_->setRowProgressEndColumn(kColResult);
     packTree_->setSelectionMode(QAbstractItemView::NoSelection);
     packTree_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     packTree_->setHierarchyIndentation(0);
@@ -607,49 +591,13 @@ void PublisherPanel::refreshPackList()
 void PublisherPanel::requestPackTableRefresh()
 {
     packTableDirty_ = true;
-    if (!isVisible() || packTableRefreshQueued_) return;
+    if (!isVisible() || packTableRefreshQueued_ || PackGenerationRecordStore::instance().isExporting()) return;
     packTableRefreshQueued_ = true;
     QTimer::singleShot(0, this, [this] {
         packTableRefreshQueued_ = false;
-        if (isVisible() && packTableDirty_) populateProjectPackTable();
+        if (isVisible() && packTableDirty_ && !PackGenerationRecordStore::instance().isExporting())
+            populateProjectPackTable();
     });
-}
-
-void PublisherPanel::updatePackProgress(const QString& platform, const QString& language,
-                                        const QString& unitKey)
-{
-    if (!openedProject_ || openedProject_ != ProjectManager::instance().currentProject()) return;
-    const auto scope = currentWorldPlatformScope(PlatformContextService::instance().context());
-    if (!scope || ProjectPlatformSemantics::idString(*scope) != platform) return;
-    auto* item = packRows_.value(qMakePair(unitKey, language));
-    if (!item) return;
-    const QScopedValueRollback guard(packTreeUpdating_, true);
-    applyGenerationState(item, platform, language, unitKey);
-    const QRect row = packTree_->visualItemRect(item);
-    if (!row.isEmpty())
-        packTree_->viewport()->update(QRect(0, row.top(), packTree_->viewport()->width(), row.height()));
-}
-
-void PublisherPanel::updateBuildStage()
-{
-    const auto* observation = PackGenerationRecordStore::instance().globalObservation();
-    buildStageLabel_->setVisible(observation != nullptr);
-    if (!observation) {
-        buildStageLabel_->clear();
-        return;
-    }
-    QString stage;
-    switch (observation->stage) {
-    case PackBuildObservationStage::Preflight: stage = tr("Checking outputs"); break;
-    case PackBuildObservationStage::PreparingMedia: stage = tr("Preparing media"); break;
-    case PackBuildObservationStage::CompilingProject: stage = tr("Compiling project"); break;
-    case PackBuildObservationStage::WritingPacks: stage = tr("Writing packs"); break;
-    case PackBuildObservationStage::Publishing: stage = tr("Validating and publishing"); break;
-    case PackBuildObservationStage::Finalizing: stage = tr("Finalizing outputs"); break;
-    default: break;
-    }
-    buildStageLabel_->setText(observation->platform.isEmpty() ? stage
-        : tr("%1: %2").arg(platformName(observation->platform), stage));
 }
 
 void PublisherPanel::applyGenerationState(QTreeWidgetItem* item, const QString& platform,
@@ -663,8 +611,6 @@ void PublisherPanel::applyGenerationState(QTreeWidgetItem* item, const QString& 
         tr("Media preparation and pack writing time; excludes shared compilation and publication."));
     item->setToolTip(kColResult, {});
     item->setData(kColResult, TableTextRole, static_cast<int>(TableTextState::Normal));
-    item->setData(kColName, TableRowProgressRole, {});
-    item->setData(kColName, TableRowProgressStateRole, {});
     if (record) {
         item->setText(kColResult, record->status.isEmpty()
             ? (record->success ? tr("Built") : tr("Failed")) : record->status);
@@ -677,61 +623,19 @@ void PublisherPanel::applyGenerationState(QTreeWidgetItem* item, const QString& 
         item->setToolTip(kColResult, details.join(QLatin1Char('\n')));
         if (record->elapsedMs >= 0) item->setText(kColCost, tr("%1 ms").arg(record->elapsedMs));
     }
-    if (const auto* progress = store.findProgress(platform, language, unitKey)) {
-        QString stage;
-        auto state = TableRowProgressState::Active;
-        bool waiting = false;
-        switch (progress->stage) {
-        case PackGenerationStage::Queued: stage = tr("Queued"); waiting = true; break;
-        case PackGenerationStage::Preparing: stage = tr("Preparing"); break;
-        case PackGenerationStage::Compiling: stage = tr("Prepared"); waiting = true; break;
-        case PackGenerationStage::Writing: stage = tr("Writing"); break;
-        case PackGenerationStage::Publishing: stage = tr("Ready to publish"); waiting = true; break;
-        case PackGenerationStage::Complete:
-            stage = tr("Completed");
-            state = TableRowProgressState::Complete;
-            break;
-        case PackGenerationStage::Failed:
-            stage = tr("Failed");
-            state = TableRowProgressState::Failed;
-            break;
-        case PackGenerationStage::Canceled:
-            stage = tr("Canceled");
-            state = TableRowProgressState::Canceled;
-            break;
-        case PackGenerationStage::Skipped:
-            item->setText(kColResult, tr("Skipped"));
-            item->setData(kColResult, TableTextRole, static_cast<int>(
-                item->data(kColName, TableTextRole).toInt() == static_cast<int>(TableTextState::Disabled)
-                    ? TableTextState::Disabled : TableTextState::Warning));
-            return;
-        }
-        if (const auto* observation = store.findObservation(platform, language, unitKey)) {
-            stage = observation->stage == PackBuildObservationStage::Prepared
-                ? tr("Prepared") : tr("Ready to publish");
-            waiting = true;
-        }
-        const int percent = state == TableRowProgressState::Complete
-            ? 100 : std::clamp(progress->percent, 0, 100);
-        if (!waiting) {
-            item->setData(kColName, TableRowProgressRole, percent);
-            item->setData(kColName, TableRowProgressStateRole, static_cast<int>(state));
-        }
-        if (waiting) {
-            item->setText(kColResult, stage);
-            item->setText(kColCost, {});
-            item->setToolTip(kColResult, stage);
-            item->setData(kColResult, TableTextRole, static_cast<int>(TableTextState::Muted));
-        } else if (state == TableRowProgressState::Active) {
-            item->setText(kColResult, stage);
-            item->setText(kColCost, {});
-            item->setToolTip(kColResult, tr("%1 (%2%)").arg(stage).arg(percent));
-            item->setData(kColResult, TableTextRole, static_cast<int>(TableTextState::Custom));
-        } else if (!record || state == TableRowProgressState::Canceled) {
-            item->setText(kColResult, stage);
-            item->setData(kColResult, TableTextRole, static_cast<int>(state == TableRowProgressState::Complete
-                ? TableTextState::Success : state == TableRowProgressState::Failed
-                    ? TableTextState::Error : TableTextState::Muted));
+    if (!record) {
+        if (const auto* progress = store.findProgress(platform, language, unitKey)) {
+            QString status;
+            auto state = TableTextState::Muted;
+            switch (progress->stage) {
+            case PackGenerationStage::Complete: status = tr("Completed"); state = TableTextState::Success; break;
+            case PackGenerationStage::Failed: status = tr("Failed"); state = TableTextState::Error; break;
+            case PackGenerationStage::Canceled: status = tr("Canceled"); break;
+            case PackGenerationStage::Skipped: status = tr("Skipped"); state = TableTextState::Warning; break;
+            default: break;
+            }
+            item->setText(kColResult, status);
+            item->setData(kColResult, TableTextRole, static_cast<int>(state));
         }
     }
     if (item->data(kColName, TableTextRole).toInt() == static_cast<int>(TableTextState::Disabled))
@@ -883,7 +787,6 @@ void PublisherPanel::populateProjectPackTable()
     }
 
     packTreeUpdating_ = true;
-    packRows_.clear();
     packTree_->clear();
 
     auto& pm = ProjectManager::instance();
@@ -940,7 +843,6 @@ void PublisherPanel::populateProjectPackTable()
     init->setData(0, kNodeKindRole, static_cast<int>(NodeKind::SystemPack));
     init->setFlags(Qt::ItemIsEnabled);
     init->setToolTip(kColName, tr("Buses, sends and attenuations."));
-    packRows_.insert(qMakePair(QStringLiteral("Init"), QString()), init);
     applyCached(init, {}, QStringLiteral("Init"), QStringLiteral("Init"));
 
     QHash<QString, QTreeWidgetItem*> sections;
@@ -1014,7 +916,6 @@ void PublisherPanel::populateProjectPackTable()
             item->setData(0, kStableIdRole, QVariant::fromValue(unit.stableId));
             item->setData(0, kObjectIdRole, unit.objectID);
             item->setData(0, kLanguageRole, language);
-            packRows_.insert(qMakePair(QStringLiteral("a:") + objectIdString(unit.stableId), language), item);
             Qt::ItemFlags flags = Qt::ItemIsEnabled;
             if (matrixEditable) flags |= Qt::ItemIsUserCheckable;
             item->setFlags(flags);
@@ -1098,12 +999,6 @@ void PublisherPanel::addGenerationResult(const PackGenerationResult& result)
 
 void PublisherPanel::onExportClicked()
 {
-    if (PackGenerationRecordStore::instance().isExporting()) {
-        cancelRequested_ = true;
-        PackGenerationRecordStore::instance().cancelExport();
-        updateExportButton();
-        return;
-    }
     requestExport({}, false, forceReexportBox_->isChecked(), selfCleaningBox_->isChecked());
 }
 
@@ -1132,10 +1027,7 @@ void PublisherPanel::updateExportButton()
         && !exporting
         && !ProjectPlatformActivity::instance().isBusy());
     if (exporting) {
-        exportBtn_->setEnabled(true);
-        exportBtn_->primaryButton()->setText(cancelRequested_ ? tr("Canceling...") : tr("Cancel export"));
-        exportBtn_->primaryButton()->setToolTip(tr("Cancel the current export."));
-        exportBtn_->primaryButton()->setEnabled(!cancelRequested_);
+        exportBtn_->setEnabled(false);
         exportAllAction_->setEnabled(false);
         exportAllAction_->setVisible(false);
         exportBtn_->dropdownButton()->setEnabled(false);
@@ -1246,6 +1138,7 @@ void PublisherPanel::toggleUnitPlatforms(const QList<QTreeWidgetItem*>& items, b
     if (targets.isEmpty()) return;
 
     QTimer::singleShot(0, this, [this, targets, project, editPlatforms, include] {
+        if (PackGenerationRecordStore::instance().isExporting()) return;
         if (ProjectManager::instance().currentProject() != project.get()) return;
         const QStringList allPlatforms = effectivePlatforms(project.get());
         const auto validActions = ProjectPackExporter::CollectActionStableIds(*project);

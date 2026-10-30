@@ -5976,8 +5976,8 @@ TEST(EditorProjectPackExporterManifest, ProjectBuildReusePreservesDiagnosticsAft
     const auto captured = VNX::ProjectBuildSnapshot::capture(reloaded, &error);
     ASSERT_TRUE(captured) << error.toStdString();
     auto nextSnapshot = std::make_shared<VNX::ProjectBuildSnapshot>(*captured);
-    nextSnapshot->project.audioSources.clear();
-    nextSnapshot->project.sourceAssets.clear();
+    reloaded.audioSources.clear();
+    reloaded.sourceAssets.clear();
     for (auto& asset : nextSnapshot->media.assets) {
         asset.metadata = {};
         asset.contentHash.clear();

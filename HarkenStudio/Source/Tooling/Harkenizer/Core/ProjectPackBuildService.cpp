@@ -3,9 +3,7 @@
 #include "Tooling/Harkenizer/Core/ProjectBuildSnapshot.h"
 #include "Tooling/Harkenizer/Core/CanonicalPackSetExport.h"
 #include "Tooling/Harkenizer/Core/PackBuildReceipt.h"
-#include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
 #include "Tooling/Harkenizer/BuildIdentity.h"
-#include "Tooling/Harkenizer/ResourceCompilerClient.h"
 #include "AssetPipeline/BuildSourceInputs.h"
 #include "AssetPipeline/PathUtils.h"
 
@@ -92,8 +90,6 @@ Result run(const Request& request)
     }
     if (request.preflightFinished) request.preflightFinished();
     ProjectPackExporter exporter;
-    if (!options.resourceCompiler)
-        options.resourceCompiler = std::make_shared<Harkenizer::ResourceCompilerClient>();
     options.selfCleaning = false;
     QMap<QString, QVector<PackArtifactMetadata>> artifactsByPlatform;
     QMap<QString, PackPublicationProof> publications;
@@ -146,10 +142,8 @@ Result run(const Request& request)
     if (request.artifactOrder == ArtifactOrder::PlatformId)
         for (const auto& artifacts : artifactsByPlatform) result.artifacts.append(artifacts);
     if (result.canceled) return result;
-    if ((options.snapshot->media.sourceInputs
-            && !options.snapshot->media.sourceInputs->verifyUnchanged(&result.preflightError, canceled))
-        || (options.snapshot->derivativeCache
-            && !options.snapshot->derivativeCache->verifyUnchanged(&result.preflightError, canceled))) {
+    if (options.snapshot->media.sourceInputs
+        && !options.snapshot->media.sourceInputs->verifyUnchanged(&result.preflightError, canceled)) {
         result.allPlatformsSucceeded = false;
         result.canceled = canceled();
         result.finalization = Finalization::Complete;

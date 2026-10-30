@@ -3,6 +3,7 @@
 #include "IPCBinaryMixerLevels.h"
 #include "IPCBinaryVoiceSnapshot.h"
 #include "ActionManager.h"
+#include "PackGenerationRecord.h"
 #include <QFileInfo>
 #include <QSet>
 #include <QThread>
@@ -376,6 +377,18 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
 
     if (!isJsonCommandAvailableInCurrentState(cmd))
         return withRequestId(commandUnavailableInCurrentStateResponse(cmd));
+
+    if (PackGenerationRecordStore::instance().isExporting()
+        && !isReadOnlyCommand(cmd)
+        && cmd != QLatin1String("cancel_pack_build")
+        && cmd != QLatin1String("batch")
+        && cmd != QLatin1String("query")
+        && cmd != QLatin1String("find_widget")
+        && cmd != QLatin1String("grab_widget")
+        && cmd != QLatin1String("validate_pack")) {
+        return withRequestId(errorResponse("PACK_BUILD_IN_PROGRESS",
+            "The project is read-only while packs are being exported. Wait for completion or cancel_pack_build."));
+    }
 
     if (projectManager_ && projectManager_->isClosing()
         && cmd != QLatin1String("get_app_state")

@@ -8,7 +8,7 @@
 #include <QMutex>
 #include <QString>
 #include <cstdint>
-#include <functional>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -52,6 +52,7 @@ struct MaterializedArtifact
     bool loopable = false;
     bool cacheHit = false;
     QString contentHash;
+    std::shared_ptr<const std::vector<float>> samples;
 };
 
 class MaterializationCache
@@ -60,13 +61,12 @@ public:
     std::optional<MaterializedArtifact> find(const QByteArray& request);
     void insert(const QByteArray& request, const MaterializedArtifact& artifact);
     std::optional<uint64_t> contentRevision(const MaterializedArtifact& artifact);
-    bool verifyUnchanged(QString* error = nullptr, const std::function<bool()>& canceled = {});
+    void clear();
 
 private:
     QMutex mutex_;
     QHash<QByteArray, MaterializedArtifact> artifacts_;
     QHash<QByteArray, uint64_t> contentRevisions_;
-    QHash<QString, QString> consumedArtifacts_;
 };
 
 struct PreparedMedia

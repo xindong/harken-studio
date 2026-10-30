@@ -11,7 +11,6 @@
 #include <QDataStream>
 #include <QDir>
 #include <QFile>
-#include <QFileInfo>
 #include <QJsonDocument>
 #include <QMutexLocker>
 
@@ -22,7 +21,7 @@
 namespace VNX::SoundSourceDerivative {
 namespace {
 
-constexpr char kDerivativeCacheNamespace[] = "harken.sound-source-derivative/v3";
+constexpr char kDerivativeCacheNamespace[] = "harken.sound-source-derivative/v4";
 
 void fail(QString* error, const QString& message)
 {
@@ -47,18 +46,26 @@ bool isDigest(const QString& value)
     });
 }
 
-bool artifactValid(const MaterializedArtifact& artifact)
+bool loadArtifact(MaterializedArtifact& artifact)
 {
     if (!isDigest(artifact.cacheKey) || !isDigest(artifact.contentHash)
-        || inputFingerprint(artifact.path) != artifact.contentHash) return false;
-    const auto info = HarkenEditor::Bridge::audioFileInfo(artifact.path);
-    return info.valid && info.frameCount > 0
-        && info.sampleRate == artifact.sampleRate && info.channels == artifact.channels
-        && artifact.loopable == (artifact.loopEndFrame != 0)
-        && (artifact.loopable
-            ? artifact.loopStartFrame < artifact.loopEndFrame
-                && artifact.loopEndFrame <= static_cast<uint64_t>(info.frameCount)
-            : artifact.loopStartFrame == 0);
+        || artifact.sampleRate == 0 || artifact.channels == 0 || artifact.channels > 8)
+        return false;
+    QFile file(artifact.path);
+    if (!file.open(QIODevice::ReadOnly)) return false;
+    const qint64 bytes = file.size();
+    if (bytes <= 0 || bytes % (artifact.channels * sizeof(float)) != 0) return false;
+    const uint64_t frames = bytes / (artifact.channels * sizeof(float));
+    if (artifact.loopable != (artifact.loopEndFrame != 0)
+        || (artifact.loopable
+            ? artifact.loopStartFrame >= artifact.loopEndFrame || artifact.loopEndFrame > frames
+            : artifact.loopStartFrame != 0)) return false;
+    auto samples = std::make_shared<std::vector<float>>(bytes / sizeof(float));
+    if (file.read(reinterpret_cast<char*>(samples->data()), bytes) != bytes
+        || digest(QByteArray::fromRawData(reinterpret_cast<const char*>(samples->data()), bytes))
+            != artifact.contentHash) return false;
+    artifact.samples = std::move(samples);
+    return true;
 }
 
 QString receiptPath(const QString& outputDir, const QByteArray& request)
@@ -78,16 +85,19 @@ std::optional<MaterializedArtifact> loadReceipt(const QString& outputDir, const 
     MaterializedArtifact artifact;
     artifact.cacheKey = body.value(QStringLiteral("key")).toString();
     if (!isDigest(artifact.cacheKey)) return std::nullopt;
-    artifact.path = QDir(outputDir).filePath(artifact.cacheKey + QStringLiteral(".wav"));
+    artifact.path = QDir(outputDir).filePath(artifact.cacheKey + QStringLiteral(".pcm"));
     artifact.contentHash = body.value(QStringLiteral("content")).toString();
-    artifact.sampleRate = body.value(QStringLiteral("sampleRate")).toInt();
-    artifact.channels = body.value(QStringLiteral("channels")).toInt();
+    const int sampleRate = body.value(QStringLiteral("sampleRate")).toInt();
+    const int channels = body.value(QStringLiteral("channels")).toInt();
+    if (sampleRate <= 0 || channels < 1 || channels > 8) return std::nullopt;
+    artifact.sampleRate = static_cast<uint32_t>(sampleRate);
+    artifact.channels = static_cast<uint16_t>(channels);
     bool startValid = false;
     bool endValid = false;
     artifact.loopStartFrame = body.value(QStringLiteral("loopStart")).toString().toULongLong(&startValid);
     artifact.loopEndFrame = body.value(QStringLiteral("loopEnd")).toString().toULongLong(&endValid);
     artifact.loopable = body.value(QStringLiteral("loopable")).toBool();
-    if (!startValid || !endValid || !artifactValid(artifact)) return std::nullopt;
+    if (!startValid || !endValid || !loadArtifact(artifact)) return std::nullopt;
     artifact.cacheHit = true;
     return artifact;
 }
@@ -126,23 +136,13 @@ void MaterializationCache::insert(const QByteArray& request, const MaterializedA
 {
     QMutexLocker lock(&mutex_);
     artifacts_.insert(request, artifact);
-    consumedArtifacts_.insert(artifact.path, artifact.contentHash);
 }
 
-bool MaterializationCache::verifyUnchanged(QString* error, const std::function<bool()>& canceled)
+void MaterializationCache::clear()
 {
     QMutexLocker lock(&mutex_);
-    for (auto it = consumedArtifacts_.cbegin(); it != consumedArtifacts_.cend(); ++it) {
-        if (canceled && canceled()) {
-            fail(error, QStringLiteral("Export canceled"));
-            return false;
-        }
-        if (inputFingerprint(it.key()) != it.value()) {
-            fail(error, QStringLiteral("Derivative media changed during the build: %1").arg(it.key()));
-            return false;
-        }
-    }
-    return true;
+    artifacts_.clear();
+    contentRevisions_.clear();
 }
 
 std::optional<uint64_t> MaterializationCache::contentRevision(const MaterializedArtifact& artifact)
@@ -157,7 +157,9 @@ std::optional<uint64_t> MaterializationCache::contentRevision(const Materialized
     const auto found = contentRevisions_.constFind(identity);
     if (found != contentRevisions_.cend()) return *found;
     HarkenEditor::Bridge::PackMediaDesc media;
-    media.sourcePath = artifact.path;
+    media.interleavedSamples = artifact.samples;
+    media.sampleRate = artifact.sampleRate;
+    media.channels = artifact.channels;
     media.format = HarkenEditor::Bridge::PackMediaFormat::PcmFloat;
     media.loopable = artifact.loopable;
     media.loopStartFrame = artifact.loopStartFrame;
@@ -292,7 +294,7 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
         QDataStream stream(&request, QIODevice::WriteOnly);
         stream.setVersion(QDataStream::Qt_6_0);
         stream.setFloatingPointPrecision(QDataStream::DoublePrecision);
-        stream << QStringLiteral("harken.sound-source-materialization/v1")
+        stream << QStringLiteral("harken.sound-source-materialization/v2")
                << QString::fromLatin1(Harkenizer::projectBuildIdentity()) << inputRevision
                << static_cast<quint32>(source.sourceId)
                << static_cast<quint64>(source.trimStartFrame)
@@ -306,15 +308,6 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
         stream << scheduleOffsetSec << platform
                << QJsonDocument(settings.toJson()).toJson(QJsonDocument::Compact);
         auto cached = cache ? cache->find(request) : std::nullopt;
-        if (cached) {
-            const auto expectedPath = QDir(outputDir).filePath(cached->cacheKey + QStringLiteral(".wav"));
-            if (cached->path == expectedPath) {
-                if (!QFileInfo::exists(cached->path)) cached.reset();
-            } else {
-                cached->path = expectedPath;
-                if (!artifactValid(*cached)) cached.reset();
-            }
-        }
         if (!cached) cached = loadReceipt(outputDir, request);
         if (cached) {
             if (!input && inputFingerprint(inputPath) != inputRevision) {
@@ -326,7 +319,7 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
             return cached;
         }
     }
-    const auto media = prepare(inputPath, source, scheduleOffsetSec,
+    auto media = prepare(inputPath, source, scheduleOffsetSec,
                                 settings, error);
     if (!media)
         return std::nullopt;
@@ -341,10 +334,14 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
                       digest(QJsonDocument(settings.toJson()).toJson(QJsonDocument::Compact)),
                       QString::fromLatin1(Harkenizer::projectBuildIdentity())};
     const QString id = cacheKey(key);
-    const QString path = QDir(outputDir).filePath(id + QStringLiteral(".wav"));
-    QString contentHash;
-    const bool written = AssetConverter::writeFloatWavCache(path, media->samples,
-        media->channels, media->sampleRate, &contentHash);
+    const QString path = QDir(outputDir).filePath(id + QStringLiteral(".pcm"));
+    const auto samples = std::make_shared<const std::vector<float>>(std::move(media->samples));
+    const auto bytes = QByteArray::fromRawData(reinterpret_cast<const char*>(samples->data()),
+        static_cast<qsizetype>(samples->size() * sizeof(float)));
+    const QString contentHash = digest(bytes);
+    const bool written = writeCacheArtifact(path, [&](QIODevice& file) {
+        return file.write(bytes) == bytes.size();
+    });
     if (!written) {
         fail(error, QStringLiteral("failed to write derivative media"));
         return std::nullopt;
@@ -352,11 +349,7 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
     MaterializedArtifact artifact{path, id, media->sampleRate, media->channels,
                                   media->loopStartFrame,
                                   media->loopEndFrame,
-                                  media->loopEndFrame != 0, false, contentHash};
-    if (artifact.contentHash.isEmpty()) {
-        fail(error, QStringLiteral("Cannot verify derivative media"));
-        return std::nullopt;
-    }
+                                  media->loopEndFrame != 0, false, contentHash, samples};
     saveReceipt(outputDir, request, artifact);
     if (cache) cache->insert(request, artifact);
     return artifact;

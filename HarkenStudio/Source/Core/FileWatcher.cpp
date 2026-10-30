@@ -47,6 +47,7 @@ FileWatcher::FileWatcher(QObject* parent)
     suppressTimer_.setSingleShot(true);
     connect(&suppressTimer_, &QTimer::timeout, this, [this]() {
         suppressed_ = false;
+        if (changesDeferred_) return;
         pendingWUModified_.clear();
         if (!watching_) return;
         projectSnapshot_ = scanProjectEntries();
@@ -80,6 +81,7 @@ void FileWatcher::stopWatching()
     const bool wasWatching = watching_;
 
     projectWriteActive_ = false;
+    changesDeferred_ = false;
     debounceTimer_.stop();
     suppressTimer_.stop();
     suppressed_ = false;
@@ -205,6 +207,14 @@ void FileWatcher::setDebounceInterval(int ms)
     debounceMs_ = qMax(50, ms);
 }
 
+void FileWatcher::deferChanges(bool deferred)
+{
+    if (changesDeferred_ == deferred) return;
+    changesDeferred_ = deferred;
+    if (deferred) debounceTimer_.stop();
+    else if (watching_) debounceTimer_.start(0);
+}
+
 QStringList FileWatcher::sourceFiles() const
 {
     QStringList files;
@@ -223,7 +233,7 @@ void FileWatcher::suppressSelfWrites(int durationMs)
 
 void FileWatcher::onDirectoryChanged(const QString&)
 {
-    if (!watching_ || projectWriteActive_) return;
+    if (!watching_ || projectWriteActive_ || changesDeferred_) return;
     debounceTimer_.start(debounceMs_);
 }
 
@@ -238,7 +248,7 @@ void FileWatcher::onFileChanged(const QString& path)
         pendingWUModified_.insert(path);
     }
 
-    if (projectWriteActive_) return;
+    if (projectWriteActive_ || changesDeferred_) return;
 
     if (QFileInfo::exists(path) && !watcher_.files().contains(path))
         watcher_.addPath(path);
@@ -262,7 +272,7 @@ bool FileWatcher::matchesSelfWrite(const QString& path)
 
 void FileWatcher::refreshSources()
 {
-    if (!watching_ || projectWriteActive_) return;
+    if (!watching_ || projectWriteActive_ || changesDeferred_) return;
     const auto sources = scanSourceEntries();
     QStringList added;
     QStringList removed;
@@ -288,7 +298,7 @@ void FileWatcher::refreshSources()
 
 void FileWatcher::flushPendingChanges()
 {
-    if (!watching_ || projectWriteActive_) return;
+    if (!watching_ || projectWriteActive_ || changesDeferred_) return;
     if (!suppressed_) {
         const auto current = scanProjectEntries();
         for (auto it = current.cbegin(); it != current.cend(); ++it)

@@ -11,7 +11,9 @@ class MaterializationCache;
 
 struct ProjectBuildSnapshot
 {
-    ProjectData project;
+    explicit ProjectBuildSnapshot(const ProjectData& source) : project(source) {}
+
+    const ProjectData& project;
     MediaBuildSnapshot media;
     std::shared_ptr<SoundSourceDerivative::MaterializationCache> derivativeCache;
 

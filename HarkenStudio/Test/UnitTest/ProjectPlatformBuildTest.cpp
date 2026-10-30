@@ -460,10 +460,11 @@ TEST_F(ProjectPlatformBuild, CancelIsScopedToTheRequestedInstance)
     EXPECT_TRUE(AssetRegistry::instance().getAsset(source.sourceID)->platformCaches.contains(high));
 }
 
-TEST_F(ProjectPlatformBuild, CapturedProjectBuildsAfterTheActiveProjectCloses)
+TEST_F(ProjectPlatformBuild, LeasedProjectBuildsAfterTheActiveProjectCloses)
 {
     ASSERT_TRUE(manager().saveProject());
-    const auto snapshot = ProjectBuildSnapshot::capture(project());
+    const auto projectLease = manager().currentProjectLease();
+    const auto snapshot = ProjectBuildSnapshot::capture(*projectLease);
     ASSERT_TRUE(snapshot);
     const auto oldActionId = action->objectID;
     ASSERT_TRUE(manager().closeProject());
@@ -574,55 +575,51 @@ TEST_F(ProjectPlatformBuild, IndependentBuildRejectsUnavailableInputsWithoutChan
     EXPECT_EQ(directoryContents(projectRoot), saved);
 }
 
-TEST_F(ProjectPlatformBuild, SnapshotClonesComponentsLedgersAndParentAliases)
+TEST_F(ProjectPlatformBuild, BuildingPreservesAuthoredComponentsAndParentAliases)
 {
     auto* track = manager().createItem(layer, "Track", ProjectItem::Type::Track);
-    auto* container = manager().createItem(layer, "Container", ProjectItem::Type::Container);
     ASSERT_NE(track, nullptr);
+    auto* container = manager().createItem(track, "Container", ProjectItem::Type::Container);
     ASSERT_NE(container, nullptr);
+    auto* child = manager().createItem(container, "Child", ProjectItem::Type::Sound);
+    ASSERT_NE(child, nullptr);
+    child->comp<VSound>()->sources = sound->comp<VSound>()->sources;
     PlatformOverrideLedgerV1 ledger;
     ASSERT_TRUE(ledger.ensure(low)->properties.setValue(
         harkenplayableproperties::PlayablePropertyIdV1::Volume, -6.0f));
     sound->platformOverrides = ledger;
-    EXPECT_TRUE(container->comp<VNX::VSelection>()->selections.shared.setOccurrenceRows({{sound->guid, 0, 50}}));
+    EXPECT_TRUE(container->comp<VNX::VSelection>()->selections.shared.setOccurrenceRows({{child->guid, 0, 50}}));
     container->comp<VNX::VSelection>()->selections.shared.occurrenceOrdinalHighWater = 1;
     container->comp<VNX::VSelection>()->selections.editTable(low).entries.front().occurrences.front().weight = 25;
     const auto selectionsJson = container->comp<VNX::VSelection>()->selections.toJson();
     Clip clip;
     clip.clipGuid = QUuid::createUuid();
-    clip.targetGuid = sound->guid;
+    clip.targetGuid = container->guid;
     clip.duration = 4800;
     clip.platformOverrides = ledger;
     track->comp<VTrack>()->clips.items.push_back(clip);
+    const auto trackJson = track->comp<VTrack>()->toJson();
+    const auto soundJson = sound->comp<VSound>()->toJson();
     const auto snapshot = ProjectBuildSnapshot::capture(project());
     ASSERT_TRUE(snapshot);
-    const ProjectItem* copiedLayer = nullptr;
-    for (const auto* binding : snapshot->project.allFileBindings())
-        if (binding->rootItem && binding->rootItem->guid == layer->guid) copiedLayer = binding->rootItem.get();
-    ASSERT_NE(copiedLayer, nullptr);
-    EXPECT_NE(copiedLayer, layer);
-    const auto findCopy = [&](const ProjectItem* original) -> const ProjectItem* {
-        for (const auto& child : copiedLayer->children)
-            if (child->guid == original->guid) return child.get();
-        return nullptr;
-    };
-    const auto* copiedSound = findCopy(sound);
-    const auto* copiedTrack = findCopy(track);
-    const auto* copiedContainer = findCopy(container);
-    ASSERT_TRUE(copiedSound && copiedTrack && copiedContainer);
-    EXPECT_EQ(copiedSound->parent, copiedLayer);
-    EXPECT_EQ(copiedSound->comp<VSound>()->hostItem(), copiedSound);
-    EXPECT_EQ(copiedSound->comp<VMixNode>()->hostItem(), copiedSound);
-    const auto trackJson = copiedTrack->comp<VTrack>()->toJson();
-    const auto soundJson = copiedSound->comp<VSound>()->toJson();
-    sound->platformOverrides.rows.clear();
-    sound->comp<VSound>()->sources.plain.entries.clear();
-    container->comp<VNX::VSelection>()->selections.shared.entries.clear();
-    track->comp<VTrack>()->clips.items.clear();
-    EXPECT_EQ(copiedSound->platformOverrides, ledger);
-    EXPECT_EQ(copiedSound->comp<VSound>()->toJson(), soundJson);
-    EXPECT_EQ(copiedTrack->comp<VTrack>()->toJson(), trackJson);
-    EXPECT_EQ(copiedContainer->comp<VNX::VSelection>()->selections.toJson(), selectionsJson);
+    ProjectPackExporter exporter;
+    ProjectPackExporter::ExportOptions options;
+    options.platform = Platforms::idString(low);
+    options.snapshot = snapshot;
+    const auto result = exporter.ExportAllPacks(project(), directory.filePath("ReadOnly"), options);
+    ASSERT_TRUE(result.success) << result.error.toStdString();
+    for (const auto* item : {sound, track, container, child}) {
+        const auto* parent = item == child ? container : item == container ? track : layer;
+        EXPECT_EQ(item->parent, parent);
+        EXPECT_TRUE(std::any_of(parent->children.begin(), parent->children.end(),
+            [item](const auto& child) { return child.get() == item; }));
+    }
+    EXPECT_EQ(sound->comp<VSound>()->hostItem(), sound);
+    EXPECT_EQ(sound->comp<VMixNode>()->hostItem(), sound);
+    EXPECT_EQ(sound->platformOverrides, ledger);
+    EXPECT_EQ(sound->comp<VSound>()->toJson(), soundJson);
+    EXPECT_EQ(track->comp<VTrack>()->toJson(), trackJson);
+    EXPECT_EQ(container->comp<VNX::VSelection>()->selections.toJson(), selectionsJson);
 }
 
 TEST_F(ProjectPlatformBuild, DeliveryRejectsCorruptPackHeaders)

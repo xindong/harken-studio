@@ -167,10 +167,6 @@ int main(int argc, char* argv[])
         if (!VNX::ProjectPlatformSemantics::find(project.platforms, QUuid(platform)))
             return error(QStringLiteral("Unknown project platform UUID: %1").arg(platform));
     }
-    for (auto& group : project.packGroups) {
-        group.allPlatforms = true;
-        group.platformIds.clear();
-    }
     const QString projectRoot = QFileInfo(project.projectPath).absolutePath();
     auto& assets = VNX::AssetRegistry::instance();
     assets.replaceSnapshot(projectRoot, prepared.assets);
@@ -191,6 +187,7 @@ int main(int argc, char* argv[])
     request.outputRoot = outputRoot;
     request.platforms = platforms;
     request.options.snapshot = snapshot;
+    request.options.includeUnchecked = true;
     request.options.selection.selectedPlatformIds = platforms;
     request.options.selection.currentPlatformId = platforms.front();
     request.options.forceReexport = parser.isSet(QStringLiteral("force"));

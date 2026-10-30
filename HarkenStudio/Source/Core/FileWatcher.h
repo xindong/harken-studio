@@ -28,6 +28,7 @@ public:
     bool isWatching() const { return watching_ && !projectWriteActive_; }
     QStringList sourceFiles() const;
     void refreshSources();
+    void deferChanges(bool deferred);
     bool beginProjectWrite(const QString& projectRoot, const QStringList& changedPaths);
     void endProjectWrite(const QHash<QString, QByteArray>& expectedInstalledHashes = {});
 
@@ -69,6 +70,7 @@ private:
     bool watching_ = false;
     bool suppressed_ = false;
     bool projectWriteActive_ = false;
+    bool changesDeferred_ = false;
     int debounceMs_ = 500;
 
     QMap<QString, QPair<qint64, QDateTime>> sourceSnapshot_;

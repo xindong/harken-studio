@@ -1,6 +1,5 @@
 
 #include "Tooling/Harkenizer/Core/ProjectPackExporter.h"
-#include "Tooling/Harkenizer/ResourceCompilerClient.h"
 #include "Tooling/Harkenizer/Core/ProjectBuildSnapshot.h"
 #include "PlaybackReferenceValidation.h"
 #include "Tooling/Harkenizer/Core/CanonicalPackSetExport.h"
@@ -61,7 +60,8 @@ namespace Bridge = HarkenEditor::Bridge;
 
 static bool buildPackResources(Bridge::PackBuildSession& builder, const QString& outputPath,
                                const ProjectPackExporter::ExportOptions& options,
-                               ProjectPackExporter::ExportResult& result)
+                               ProjectPackExporter::ExportResult& result,
+                               std::vector<Bridge::PackBuildSession::CanonicalPackEntry>* resourceEntries = nullptr)
 {
     if (options.resourceReuse) {
         result.resourceFingerprint = builder.inputFingerprint();
@@ -72,14 +72,17 @@ static bool buildPackResources(Bridge::PackBuildSession& builder, const QString&
         result.reusedResources = !options.forceReexport && !options.resourceReuse->path.isEmpty()
             && result.resourceFingerprint == options.resourceReuse->fingerprint;
     }
-    if (!result.reusedResources && !builder.buildToFile(outputPath)) {
-        result.error = builder.lastError();
-        return false;
+    if (!result.reusedResources) {
+        const bool built = resourceEntries ? builder.buildEntries(resourceEntries) : builder.buildToFile(outputPath);
+        if (!built) {
+            result.error = builder.lastError();
+            return false;
+        }
     }
     result.warnings += builder.warnings();
     result.success = true;
     result.outputPath = result.reusedResources ? options.resourceReuse->path : outputPath;
-    result.fileSize = QFileInfo(result.outputPath).size();
+    result.fileSize = resourceEntries && !result.reusedResources ? 0 : QFileInfo(result.outputPath).size();
     return true;
 }
 
@@ -401,7 +404,7 @@ std::shared_ptr<const PackBuildPlan> ProjectPackExporter::createBuildPlan(
     const ProjectData& project, const ExportOptions& options)
 {
     const PackBuildPlanKey key{options.platform, options.language.trimmed(), options.selection,
-        options.updateSelectedOnly, options.onlyUnits, options.onlyPackPaths, options.onlyActionStableIds};
+        options.updateSelectedOnly || options.includeUnchecked, options.onlyUnits, options.onlyPackPaths, options.onlyActionStableIds};
     RuntimeCapabilityContext context;
     if (options.buildContext) {
         context.buildSession = options.buildContext->capabilities;
@@ -413,7 +416,7 @@ std::shared_ptr<const PackBuildPlan> ProjectPackExporter::createBuildPlan(
         languages.append(options.language.trimmed());
 
     PackBuildPlan buildPlan = PackBuildPlanning::build(project, {options.platform}, languages,
-        options.updateSelectedOnly, options.selection, context,
+        options.updateSelectedOnly || options.includeUnchecked, options.selection, context,
         options.buildContext ? options.buildContext->closures.get() : nullptr);
     using VariantKey = std::pair<harkenstudio::ObjectId, QString>;
     std::set<VariantKey> selectedVariants;
@@ -518,8 +521,6 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
     const QString packExt = Bridge::packArtifactExtension();
 
     ExportOptions effectiveOpts = options;
-    if (!effectiveOpts.resourceCompiler)
-        effectiveOpts.resourceCompiler = std::make_shared<Harkenizer::ResourceCompilerClient>();
     const std::vector<const ProjectItem*> allActions = collectAllActionItems(project);
     std::unordered_map<harkenstudio::ObjectId, const ProjectItem*> actionsByStableId;
     for (const ProjectItem* evt : allActions)
@@ -725,7 +726,8 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
 ProjectPackExporter::ExportResult
 ProjectPackExporter::ExportInitPack(const ProjectData& project,
                                      const QString& outputPath,
-                                     const ExportOptions& options)
+                                     const ExportOptions& options,
+                                     std::vector<Bridge::PackBuildSession::CanonicalPackEntry>* resourceEntries)
 {
     if (PathUtils::isProtectedPackOutputPath(outputPath, project.projectPath)) {
         ExportResult failure;
@@ -742,7 +744,7 @@ ProjectPackExporter::ExportInitPack(const ProjectData& project,
             prepared.buildContext = createBuildContext(prepared.snapshot->project);
             prepared.buildPlan.reset();
         }
-        return ExportInitPack(prepared.snapshot->project, outputPath, prepared);
+        return ExportInitPack(prepared.snapshot->project, outputPath, prepared, resourceEntries);
     }
 
     const auto platformActivity = ProjectPlatformActivity::acquire();
@@ -759,7 +761,7 @@ ProjectPackExporter::ExportInitPack(const ProjectData& project,
         return result;
     }
 
-    Bridge::PackBuildSession builder(options.resourceCompiler);
+    Bridge::PackBuildSession builder;
     builder.setInitPack(true);
 
     emit progressChanged(10, "Collecting bus hierarchy...");
@@ -771,7 +773,7 @@ ProjectPackExporter::ExportInitPack(const ProjectData& project,
 
     emit progressChanged(90, "Writing Init pack...");
 
-    if (!buildPackResources(builder, outputPath, options, result)) return result;
+    if (!buildPackResources(builder, outputPath, options, result, resourceEntries)) return result;
 
     emit progressChanged(100, "Init pack exported.");
     return result;
@@ -784,7 +786,8 @@ ProjectPackExporter::ExportActionPack(const ProjectData& project,
                                       const QString& outputPath,
                                       const ExportOptions& options,
                                       const std::set<uint32_t>* sharedMediaIds,
-                                      const std::set<uint32_t>* sharedObjectIds)
+                                      const std::set<uint32_t>* sharedObjectIds,
+                                      std::vector<Bridge::PackBuildSession::CanonicalPackEntry>* resourceEntries)
 {
     if (PathUtils::isProtectedPackOutputPath(outputPath, project.projectPath)) {
         ExportResult failure;
@@ -801,7 +804,7 @@ ProjectPackExporter::ExportActionPack(const ProjectData& project,
             prepared.buildContext = createBuildContext(prepared.snapshot->project);
             prepared.buildPlan.reset();
         }
-        return ExportActionPack(prepared.snapshot->project, actionName, outputPath, prepared, sharedMediaIds, sharedObjectIds);
+        return ExportActionPack(prepared.snapshot->project, actionName, outputPath, prepared, sharedMediaIds, sharedObjectIds, resourceEntries);
     }
 
     const auto platformActivity = ProjectPlatformActivity::acquire();
@@ -851,7 +854,7 @@ ProjectPackExporter::ExportActionPack(const ProjectData& project,
 
     emit progressChanged(10, QStringLiteral("Collecting Action dependencies..."));
     result = exportSingleActionPack(project, *matches.front(), outputPath, options,
-                                    sharedMediaIds, sharedObjectIds);
+                                    sharedMediaIds, sharedObjectIds, resourceEntries);
     if (result.success)
         emit progressChanged(100, QStringLiteral("Action pack exported."));
     return result;
@@ -865,7 +868,8 @@ ProjectPackExporter::exportSingleActionPack(
     const QString& outputPath,
     const ExportOptions& options,
     const std::set<uint32_t>* sharedMediaIds,
-    const std::set<uint32_t>* sharedObjectIds)
+    const std::set<uint32_t>* sharedObjectIds,
+    std::vector<Bridge::PackBuildSession::CanonicalPackEntry>* resourceEntries)
 {
     ExportResult result;
     const auto effectiveGroups = options.buildContext
@@ -876,7 +880,7 @@ ProjectPackExporter::exportSingleActionPack(
         result.error = effectiveGroups->diagnostics.front().message;
         return result;
     }
-    Bridge::PackBuildSession builder(options.resourceCompiler);
+    Bridge::PackBuildSession builder;
 
     const ObjectIndex globalIndex = buildProjectObjectIndex(project);
     const QString language = options.language.trimmed();
@@ -888,7 +892,7 @@ ProjectPackExporter::exportSingleActionPack(
         if (options.buildContext) context.buildSession = options.buildContext->capabilities;
         localPlan = PackBuildPlanning::buildForAction(
             project, action.runtimeId(), {options.platform}, languages,
-            QFileInfo(outputPath).completeBaseName(), options.updateSelectedOnly, options.selection, context,
+            QFileInfo(outputPath).completeBaseName(), options.updateSelectedOnly || options.includeUnchecked, options.selection, context,
             options.buildContext ? options.buildContext->closures.get() : nullptr);
         buildPlan = &*localPlan;
     }
@@ -990,7 +994,7 @@ ProjectPackExporter::exportSingleActionPack(
         }
     }
 
-    if (!buildPackResources(builder, outputPath, options, result))
+    if (!buildPackResources(builder, outputPath, options, result, resourceEntries))
     {
         result.error = QStringLiteral("Action pack export failed for '%1': %2")
                            .arg(action.name, result.error);
@@ -1038,7 +1042,7 @@ ProjectPackExporter::ExportSharedPack(const ProjectData& project,
         result.error = effectiveGroups.diagnostics.front().message;
         return result;
     }
-    Bridge::PackBuildSession builder(options.resourceCompiler);
+    Bridge::PackBuildSession builder;
 
     std::set<uint32_t> visitedObjects;
     std::set<uint32_t> requiredMedia = sharedMedia;
@@ -1562,7 +1566,10 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
             Bridge::PackMediaDesc desc;
             desc.sourceId = media.soundStableId;
             desc.authoringSourceId = source->sourceId;
-            desc.sourcePath = artifact->path;
+            desc.sourcePath = conversion->asset.absolutePath;
+            desc.interleavedSamples = artifact->samples;
+            desc.sampleRate = artifact->sampleRate;
+            desc.channels = artifact->channels;
             desc.loopable = artifact->loopable;
             desc.loopStartFrame = artifact->loopStartFrame;
             desc.loopEndFrame = artifact->loopEndFrame;

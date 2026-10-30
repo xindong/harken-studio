@@ -154,6 +154,7 @@ void PackGenerationRecordStore::updateProgress(quint64 runId, const PackGenerati
 void PackGenerationRecordStore::updateObservation(quint64 runId, const PackBuildObservation& observation)
 {
     if (!isCurrentRun(runId)) return;
+    emit observationChanged(observation);
     if (observation.unitKey.isEmpty()) {
         switch (observation.stage) {
         case PackBuildObservationStage::Preflight:
@@ -250,7 +251,8 @@ bool PackGenerationRecordStore::isCurrentRun(quint64 runId) const
 
 void PackGenerationRecordStore::cancelExport()
 {
-    if (cancel_) cancel_->store(true, std::memory_order_relaxed);
+    if (cancel_ && !cancel_->exchange(true, std::memory_order_relaxed))
+        emit exportCancellationRequested();
 }
 
 }

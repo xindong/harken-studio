@@ -366,14 +366,6 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
     if (runId == 0)
         return errorResponse("PACK_BUILD_IN_PROGRESS",
                              "A pack build is already running. Poll get_pack_build_status.");
-    const auto platformChanged = std::make_shared<std::atomic_bool>(false);
-    const auto platformObserver = std::shared_ptr<QObject>(new QObject,
-        [](QObject* observer) { observer->deleteLater(); });
-    connect(projectManager_, &ProjectManager::targetPlatformsChanged, platformObserver.get(),
-        [platformChanged, snapshot, project, platforms] {
-            platformChanged->store(!ProjectPackExporter::ValidatePackBuildPlatforms(
-                snapshot->project.platforms, project->platforms, platforms), std::memory_order_relaxed);
-        });
     packBuildProject_ = project;
     packBuildInProgress_ = true;
     packBuildProgress_ = 0;
@@ -386,8 +378,7 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
     const auto platformActivity = ProjectPlatformActivity::acquire();
     QThread* buildThread = QThread::create(
         [this, pmGuard, project, snapshot, outputPath, platforms, actionName,
-         actionStableId, language, exportSelection, cancel, runId, platformActivity, outputLock,
-         platformChanged, platformObserver]() {
+         actionStableId, language, exportSelection, cancel, runId, platformActivity, outputLock]() {
         struct ExportGate {
             ~ExportGate() { ProjectPackExporter::endBackgroundExport(); }
         } gate;
@@ -427,9 +418,6 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
         buildRequest.outputLock = outputLock;
         buildRequest.stopOnCanceledPlatform = false;
         buildRequest.artifactOrder = ProjectPackBuildService::ArtifactOrder::PlatformId;
-        buildRequest.finalizationCancelCheck = [cancel, platformChanged] {
-            return cancel->load(std::memory_order_relaxed) || platformChanged->load(std::memory_order_relaxed);
-        };
         buildRequest.preflightFinished = [this, runId] {
             QMetaObject::invokeMethod(this, [this, runId] {
                 auto& store = PackGenerationRecordStore::instance();
@@ -526,7 +514,6 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
         const bool preflightSucceeded = build.preflightSucceeded;
         bool allSuccess = build.allPlatformsSucceeded;
         if (!preflightSucceeded) firstError = build.preflightError;
-        const auto& succeededPlatforms = build.succeededPlatforms;
         bool canceled = build.canceled;
         QString publicationError;
         QStringList publicationWarnings;
@@ -535,12 +522,9 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
             if (build.finalization == ProjectPackBuildService::Finalization::Complete) {
                 const auto& publication = build.finalizationResult;
                 publicationWarnings = publication.warnings;
-                publicationError = publication.canceled && !canceled
-                    ? QStringLiteral("Pack platforms changed during the build; output finalization stopped") : publication.error;
+                publicationError = publication.error;
             } else {
                 publicationError = build.finalizationResult.error;
-                if (!finalized && platformChanged->load(std::memory_order_relaxed))
-                    publicationError = QStringLiteral("Pack platforms changed during the build; output finalization stopped");
             }
             if (!finalized && !canceled) {
                 allSuccess = false;
@@ -549,8 +533,8 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
         }
         packBuildCompletion_ = [this, platformResults, generationRecords, unitProgress, publishedArtifacts,
                                          allSuccess, firstError, pmGuard, preflightSucceeded,
-                                          canceled, runId, project, snapshot, platformActivity,
-                                          succeededPlatforms, outputLock, actionStableId, platformObserver,
+                                          canceled, runId, project, platformActivity,
+                                          outputLock, actionStableId,
                                           publicationWarnings]() mutable {
             if (!pmGuard || !pmGuard->currentProject()
                 || pmGuard->currentProject() != project.get()
@@ -562,13 +546,6 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
                 packBuildResult_ = QJsonObject();
                 packBuildCancel_.reset();
                 return;
-            }
-            QString publicationError;
-            const bool finalized = !preflightSucceeded || ProjectPackExporter::ValidatePackBuildPlatforms(snapshot->project.platforms,
-                project->platforms, succeededPlatforms, &publicationError);
-            if (!finalized) {
-                allSuccess = false;
-                firstError = publicationError;
             }
             for (auto it = publishedArtifacts.cbegin(); it != publishedArtifacts.cend(); ++it)
                 PackArtifactCache::instance().publish(it.key(), it.value(), !harkenstudio::IsNull(actionStableId));
@@ -660,13 +637,12 @@ QJsonObject IPCServer::handleCancelPackBuild(const QJsonObject& args)
 {
     Q_UNUSED(args);
     
-    if (!packBuildInProgress_)
+    if (!PackGenerationRecordStore::instance().isExporting())
     {
         return successResponse(QJsonObject{{"success", true}, {"note", "No build in progress"}});
     }
     
-    if (packBuildCancel_)
-        packBuildCancel_->store(true, std::memory_order_relaxed);
+    PackGenerationRecordStore::instance().cancelExport();
     packBuildMessage_ = "Canceling pack build...";
     
     return successResponse(QJsonObject{{"success", true}});

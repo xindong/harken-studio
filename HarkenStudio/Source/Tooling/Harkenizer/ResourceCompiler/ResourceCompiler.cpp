@@ -18,6 +18,7 @@
 #include <iterator>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -141,34 +142,36 @@ std::string CacheIdentityKey(const std::string& sourcePath,
 // Wide decode is opted into only for downmix entries, whose policy check
 // below owns the >2-channel refusal; a preserve entry keeps LoadWav's
 // mono/stereo bound so the build fails loudly at decode.
-bool DecodeToPlanar(PackEntry* entry, Diag* diag, Result* result) {
-    harkenstudiojson::LoadedWav wav;
-    if (!harkenstudiojson::LoadWav(entry->path, &wav,
-                            !entry->downmix.empty(), result->diagnosticLog)) {
-        return Fail(diag, "cannot open or decode '%s'",
-                    entry->path.c_str());
+bool PreparePlanar(PackEntry* entry, const float* samples, std::size_t sampleCount,
+                   std::uint16_t channels, std::uint32_t sampleRate, Diag* diag) {
+    if (!samples || sampleCount == 0 || channels == 0 || sampleRate == 0
+        || sampleCount % channels != 0) {
+        return Fail(diag, "invalid prepared audio for '%s'", entry->path.c_str());
     }
-    entry->sampleRate = wav.sampleRate;
-    entry->sourceChannelCount =
-        static_cast<std::uint16_t>(wav.channels);
-    entry->frameCount = wav.frames;
-    const std::size_t frames = static_cast<std::size_t>(wav.frames);
-    if (!entry->downmix.empty() && wav.channels > 2) {
+    if (entry->downmix.empty() && channels != 1 && channels != 2) {
+        return Fail(diag, "'%s' has %u channels; only mono and stereo are supported",
+                    entry->path.c_str(), channels);
+    }
+    entry->sampleRate = sampleRate;
+    entry->sourceChannelCount = channels;
+    entry->frameCount = sampleCount / channels;
+    const std::size_t frames = sampleCount / channels;
+    if (!entry->downmix.empty() && channels > 2) {
         return Fail(diag,
                     "cannot downmix '%s' to mono: source has %u "
                     "channels; only mono or stereo is supported",
-                    entry->path.c_str(), wav.channels);
+                    entry->path.c_str(), channels);
     }
 
-    if (!entry->downmix.empty() && wav.channels == 2) {
+    if (!entry->downmix.empty() && channels == 2) {
         entry->channelCount = 1;
         entry->downmixed = true;
         entry->planar.resize(frames);
         float sourcePeak = 0.0f;
         float peak = 0.0f;
         for (std::size_t n = 0; n < frames; ++n) {
-            const float left = wav.samples[n * 2];
-            const float right = wav.samples[n * 2 + 1];
+            const float left = samples[n * 2];
+            const float right = samples[n * 2 + 1];
             sourcePeak = std::max(
                 sourcePeak,
                 std::max(std::fabs(left), std::fabs(right)));
@@ -187,14 +190,14 @@ bool DecodeToPlanar(PackEntry* entry, Diag* diag, Result* result) {
         return true;
     }
 
-    entry->channelCount = static_cast<std::uint16_t>(wav.channels);
-    entry->planar.resize(wav.samples.size());
+    entry->channelCount = static_cast<std::uint16_t>(channels);
+    entry->planar.resize(sampleCount);
     float peak = 0.0f;
-    for (std::uint32_t ch = 0; ch < wav.channels; ++ch) {
+    for (std::uint32_t ch = 0; ch < channels; ++ch) {
         float* plane = entry->planar.data() +
                        static_cast<std::size_t>(ch) * frames;
         for (std::size_t n = 0; n < frames; ++n) {
-            const float sample = wav.samples[n * wav.channels + ch];
+            const float sample = samples[n * channels + ch];
             plane[n] = sample;
             const float magnitude = std::fabs(sample);
             if (magnitude > peak) {
@@ -204,6 +207,17 @@ bool DecodeToPlanar(PackEntry* entry, Diag* diag, Result* result) {
     }
     entry->peakAbs = peak;
     return true;
+}
+
+bool DecodeToPlanar(PackEntry* entry, Diag* diag, Result* result) {
+    harkenstudiojson::LoadedWav wav;
+    if (!harkenstudiojson::LoadWav(entry->path, &wav,
+                            !entry->downmix.empty(), result->diagnosticLog)) {
+        return Fail(diag, "cannot open or decode '%s'",
+                    entry->path.c_str());
+    }
+    return PreparePlanar(entry, wav.samples.data(), wav.samples.size(),
+                         static_cast<std::uint16_t>(wav.channels), wav.sampleRate, diag);
 }
 
 bool ValidateLoopPoints(const PackEntry& entry, std::size_t entryIndex,
@@ -357,21 +371,21 @@ harkenstudiobuild::BindingCurve ToBindingCurve(const ManifestCurve& curve) {
 // zero-initialized so every alignment gap stays zeroed, and nothing
 // time- or machine-derived enters the bytes: identical manifest and
 // sources produce a byte-identical container.
-bool BuildPackBytesV2(const Manifest& manifest,
-                      const std::vector<PackEntry>& entries,
-                      std::vector<std::uint8_t>* out, Diag* diag) {
-    struct Placement {
-        std::uint32_t kind = 0;
-        harkenstudio::ObjectId id{};
-        std::size_t index = 0; // position within its manifest section
-        std::uint64_t offset = 0;
-        std::uint64_t size = 0;
-    };
-    std::vector<Placement> placements;
+struct EntryPlacement {
+    std::uint32_t kind = 0;
+    harkenstudio::ObjectId id{};
+    std::size_t index = 0; // position within its manifest section
+    std::uint64_t offset = 0;
+    std::uint64_t size = 0;
+};
+
+std::vector<EntryPlacement> BuildEntryPlacements(
+    const Manifest& manifest, const std::vector<PackEntry>& entries) {
+    std::vector<EntryPlacement> placements;
     const auto place = [&placements](std::uint32_t kind,
                                      harkenstudio::ObjectId id, std::size_t index,
                                      std::uint64_t size) {
-        Placement placement;
+        EntryPlacement placement;
         placement.kind = kind;
         placement.id = id;
         placement.index = index;
@@ -430,13 +444,291 @@ bool BuildPackBytesV2(const Manifest& manifest,
               harkenstudiobuild::kPackV2EffectDynamicRoutePayloadBytes);
     }
 
+    return placements;
+}
+
+bool SerializeEntryPayload(const Manifest& manifest,
+                           const std::vector<PackEntry>& entries,
+                           const EntryPlacement& placement, std::uint64_t blobOffset,
+                           const std::uint8_t* blob, std::uint8_t* dst, Diag* diag) {
+    switch (placement.kind) {
+    case harkenstudiobuild::kPackEntryKindMedia: {
+        const PackEntry& entry = entries[placement.index];
+        const std::uint64_t blobBytes =
+            static_cast<std::uint64_t>(entry.planar.size()) *
+            sizeof(float);
+        harkenstudiobuild::PackTocEntry toc;
+        toc.soundId = entry.soundId;
+        toc.sampleRate = entry.sampleRate;
+        toc.channelCount = entry.channelCount;
+        toc.sampleFormat = harkenstudiobuild::kPackSampleFormatF32Planar;
+        toc.frameCount = entry.frameCount;
+        toc.blobOffset = blobOffset;
+        toc.blobBytes = blobBytes;
+        toc.blobChecksum = harkenstudiobuild::Fnv1a64(
+            blob,
+            static_cast<std::size_t>(blobBytes));
+        toc.flags = entry.loopable ? harkenstudiobuild::kPackFlagLoopable : 0;
+        toc.loopStartFrame =
+            entry.loopable ? entry.loopStartFrame : 0;
+        toc.loopEndFrame = entry.loopable ? entry.loopEndFrame : 0;
+        harkenstudiobuild::SerializePackTocEntry(toc, dst);
+        break;
+    }
+    case harkenstudiobuild::kPackEntryKindBus: {
+        const ManifestBus& bus = manifest.buses[placement.index];
+        harkenstudiobuild::PackBusEntry wire;
+        wire.busId = bus.id;
+        wire.parentBusId = bus.parent;
+        wire.volume = bus.volume;
+        wire.outputBusVolume = bus.outputBusVolume;
+        wire.makeUpGain = bus.makeUpGain;
+        harkenstudiobuild::SerializePackV6Bus(wire, dst);
+        break;
+    }
+    case harkenstudiobuild::kPackEntryKindBusSend: {
+        const ManifestBusSend& send =
+            manifest.busSends[placement.index];
+        harkenstudiobuild::PackBusSendEntry wire;
+        wire.fromBusId = send.from;
+        wire.toBusId = send.to;
+        wire.levelDb = send.levelDb;
+        harkenstudiobuild::SerializePackV2BusSend(wire, dst);
+        break;
+    }
+    case harkenstudiobuild::kPackEntryKindAttenuation: {
+        const ManifestAttenuation& attenuation =
+            manifest.attenuations[placement.index];
+        harkenstudiobuild::AttenuationDefinition desc{};
+
+        desc.rolloff = attenuation.rolloff;
+        desc.minDistance = attenuation.minDistance;
+        desc.maxDistance = attenuation.maxDistance;
+        desc.airAbsorptionNearHz = attenuation.airAbsorptionNearHz;
+        desc.airAbsorptionFarHz = attenuation.airAbsorptionFarHz;
+        desc.proximityRadius = attenuation.proximityRadius;
+        desc.proximityMaxBoostDb = attenuation.proximityMaxBoostDb;
+        desc.proximityFrequency = attenuation.proximityFrequency;
+        desc.coneEnabled = attenuation.coneEnabled ? 1u : 0u;
+        desc.coneInnerDeg = attenuation.coneInnerDeg;
+        desc.coneOuterDeg = attenuation.coneOuterDeg;
+        desc.coneOuterGainDb = attenuation.coneOuterGainDb;
+        desc.coneOuterLowpassHz = attenuation.coneOuterLowpassHz;
+        desc.volumeCurve = ToAttenuationCurve(
+            attenuation.volumeCurve, attenuation.hasVolumeCurve);
+        desc.lowpassCurve = ToAttenuationCurve(
+            attenuation.lowpassCurve, attenuation.hasLowpassCurve);
+        desc.widthCurve = ToAttenuationCurve(
+            attenuation.widthCurve, attenuation.hasWidthCurve);
+        harkenstudiobuild::SerializePackV3Attenuation(desc, dst);
+        break;
+    }
+    case harkenstudiobuild::kPackEntryKindBindingDefinition: {
+        const ManifestBinding& binding =
+            manifest.bindings[placement.index];
+        harkenstudiobuild::BindingDefinition desc{};
+
+        desc.variableId = binding.variable;
+        desc.targetScopeKind = binding.scope;
+        desc.targetId = binding.target;
+        desc.transitionMs = binding.transitionMs;
+        desc.curve = ToBindingCurve(binding.curve);
+        harkenstudiobuild::SerializePackV2BindingDefinition(binding.id, desc,
+                                                dst);
+        break;
+    }
+    case harkenstudiobuild::kPackEntryKindBindingAttachment: {
+        const ManifestAttachment& attachment =
+            manifest.attachments[placement.index];
+        harkenstudiobuild::PackBindingAttachmentEntry wire;
+        wire.bindingId = attachment.binding;
+        wire.scopeKind = attachment.scope;
+        wire.objectId = attachment.object;
+        harkenstudiobuild::SerializePackV2BindingAttachment(wire, dst);
+        break;
+    }
+    case harkenstudiobuild::kPackEntryKindContainer: {
+        const ManifestContainer& container =
+            manifest.containers[placement.index];
+        harkenstudiobuild::PackContainerEntryHeader header;
+        header.containerId = container.id;
+        header.selectionOrder = container.order;
+        header.avoidRepeatWindow = container.avoidRepeatWindow;
+        header.selectionVariableId = container.selectionVariable;
+        header.defaultIndex = container.defaultIndex;
+        header.childCount = static_cast<std::uint32_t>(
+            container.children.size());
+        harkenstudiobuild::SerializePackV2ContainerHeader(header, dst);
+        for (std::size_t c = 0; c < container.children.size();
+             ++c) {
+            const ManifestContainerChild& child =
+                container.children[c];
+            harkenstudiobuild::PackContainerChildV2 wire{};
+            wire.playableId = child.playable;
+            wire.weight = child.weight;
+            wire.matchValue = child.matchValue;
+            wire.delayMs = child.delayMs;
+            wire.delayJitterMs = child.delayJitterMs;
+            harkenstudiobuild::SerializePackV2ContainerChild(
+                wire,
+                dst + harkenstudiobuild::kPackV2ContainerHeaderBytes +
+                    c * harkenstudiobuild::kPackV2ContainerChildBytes);
+        }
+        break;
+    }
+    case harkenstudiobuild::kPackEntryKindVoiceRecipe: {
+        const ManifestVoiceRecipe& recipe =
+            manifest.voiceRecipes[placement.index];
+        harkenstudiobuild::PackVoiceRecipeEntryHeader header;
+        header.playableId = recipe.playable;
+        header.installCount =
+            static_cast<std::uint32_t>(recipe.effects.size());
+        header.bindingCount =
+            static_cast<std::uint32_t>(recipe.bindings.size());
+        harkenstudiobuild::SerializePackV2VoiceRecipeHeader(header, dst);
+        std::uint64_t cursor = harkenstudiobuild::kPackV2VoiceRecipeHeaderBytes;
+        harkenstudiobuild::PackVoiceRecipeTone tone;
+        if (recipe.tone.present) {
+            tone.present = 1u;
+            tone.sectionEnableMask =
+                (recipe.tone.lowpassEnabled
+                     ? harkenstudiobuild::kPackVoiceToneLowpassEnabled
+                     : 0u) |
+                (recipe.tone.highpassEnabled
+                     ? harkenstudiobuild::kPackVoiceToneHighpassEnabled
+                     : 0u) |
+                (recipe.tone.lowShelfEnabled
+                     ? harkenstudiobuild::kPackVoiceToneLowShelfEnabled
+                     : 0u) |
+                (recipe.tone.highShelfEnabled
+                     ? harkenstudiobuild::kPackVoiceToneHighShelfEnabled
+                     : 0u);
+            tone.lowpassFrequencyHz = recipe.tone.lowpassFrequencyHz;
+            tone.lowpassQ = recipe.tone.lowpassQ;
+            tone.highpassFrequencyHz = recipe.tone.highpassFrequencyHz;
+            tone.highpassQ = recipe.tone.highpassQ;
+            tone.lowShelfFrequencyHz = recipe.tone.lowShelfFrequencyHz;
+            tone.lowShelfQ = recipe.tone.lowShelfQ;
+            tone.lowShelfGainDb = recipe.tone.lowShelfGainDb;
+            tone.highShelfFrequencyHz =
+                recipe.tone.highShelfFrequencyHz;
+            tone.highShelfQ = recipe.tone.highShelfQ;
+            tone.highShelfGainDb = recipe.tone.highShelfGainDb;
+        }
+        harkenstudiobuild::SerializePackV3VoiceRecipeTone(tone, dst + cursor);
+        cursor += harkenstudiobuild::kPackV3VoiceRecipeToneBytes;
+        harkenstudiobuild::PackVoiceRecipeSpatial spatial;
+        if (recipe.spatial.present) {
+            spatial.attenuationId = recipe.spatial.attenuation;
+            spatial.distanceScale = recipe.spatial.distanceScale;
+        } else {
+            spatial.distanceScale = 0.0f;
+        }
+        harkenstudiobuild::SerializePackV4VoiceRecipeSpatial(spatial, dst + cursor);
+        cursor += harkenstudiobuild::kPackV4VoiceRecipeSpatialBytes;
+        harkenstudiobuild::PackVoiceRecipePlayback playback;
+        if (recipe.playback.present) {
+            playback.present = 1u;
+            playback.loopCount = recipe.playback.loopCount;
+        }
+        harkenstudiobuild::SerializePackV5VoiceRecipePlayback(playback,
+                                                  dst + cursor);
+        cursor += harkenstudiobuild::kPackV5VoiceRecipePlaybackBytes;
+        for (const ManifestVoiceRecipeEffect& effect : recipe.effects) {
+            harkenstudiobuild::PackVoiceRecipeInstall install;
+            install.effectId = effect.effectId;
+            install.slot = effect.slot;
+            install.effectType = effect.type;
+            install.descriptorVintage = effect.descriptorVintage;
+            install.bypass = effect.bypass ? 1u : 0u;
+            install.paramCount =
+                static_cast<std::uint32_t>(effect.parameters.size());
+            for (std::uint32_t p = 0; p < install.paramCount; ++p) {
+                install.params[p] = effect.parameters[p];
+            }
+            harkenstudiobuild::SerializePackV2VoiceRecipeInstall(
+                install, dst + cursor);
+            cursor += harkenstudiobuild::kPackV2VoiceRecipeInstallBytes;
+        }
+        for (harkenstudio::ObjectId binding : recipe.bindings) {
+            harkenstudiobuild::SerializePackV2VoiceRecipeBinding(binding,
+                                                     dst + cursor);
+            cursor += harkenstudiobuild::kPackV2VoiceRecipeBindingBytes;
+        }
+        break;
+    }
+    case harkenstudiobuild::kPackEntryKindBusEffect: {
+        const ManifestBusEffect& effect =
+            manifest.busEffects[placement.index];
+        harkenstudiobuild::PackBusEffectEntry wire;
+        wire.effectId = effect.effectId;
+        wire.busId = effect.bus;
+        wire.slot = effect.slot;
+        wire.effectType = effect.type;
+        wire.descriptorVintage = effect.descriptorVintage;
+        wire.bypass = effect.bypass ? 1u : 0u;
+        wire.faderPointGuard = effect.faderPointGuard;
+        wire.paramCount =
+            static_cast<std::uint32_t>(effect.parameters.size());
+        wire.paramBytes = wire.paramCount * sizeof(float);
+        for (std::uint32_t p = 0; p < wire.paramCount; ++p) {
+            wire.params[p] = effect.parameters[p];
+        }
+        harkenstudiobuild::SerializePackV2BusEffect(wire, dst);
+        break;
+    }
+    case harkenstudiobuild::kPackEntryKindEffectDynamicRoute: {
+        const ManifestDynamicRoute& route =
+            manifest.dynamicRoutes[placement.index];
+        harkenstudiobuild::PackEffectDynamicRouteEntry wire;
+        wire.targetBusId = route.targetBus;
+        wire.effectSlot = route.effectSlot;
+        wire.routeSlot = route.routeSlot;
+        wire.expectedEffectType = route.expectedEffectType;
+        wire.signalForm = route.signalForm;
+        wire.sourceKind = route.sourceKind;
+        wire.tap = route.tap;
+        wire.sourceId = route.sourceBus;
+        wire.levelDb = route.levelDb;
+        harkenstudiobuild::SerializePackV2EffectDynamicRoute(wire, dst);
+        break;
+    }
+    default:
+        return Fail(diag, "unsupported v2 entry kind %u",
+                    placement.kind);
+    }
+    return true;
+}
+
+std::uint32_t EntryVintage(std::uint32_t kind) {
+    const bool dynamicDeploymentEntry =
+        kind == harkenstudiobuild::kPackEntryKindBusEffect ||
+        kind == harkenstudiobuild::kPackEntryKindEffectDynamicRoute;
+    if (dynamicDeploymentEntry) {
+        return harkenstudiobuild::kPackV2DynamicSchemaVintage;
+    } else if (kind == harkenstudiobuild::kPackEntryKindBus) {
+        return harkenstudiobuild::kPackV2BusMixSchemaVintage;
+    } else if (kind == harkenstudiobuild::kPackEntryKindVoiceRecipe) {
+        return harkenstudiobuild::kPackV2PlaybackRecipeSchemaVintage;
+    } else if (kind == harkenstudiobuild::kPackEntryKindAttenuation) {
+        return harkenstudiobuild::kPackV2AuthoredToneSchemaVintage;
+    } else {
+        return harkenstudiobuild::kPackV2SchemaVintage;
+    }
+}
+
+bool BuildPackBytesV2(const Manifest& manifest,
+                      const std::vector<PackEntry>& entries,
+                      std::vector<std::uint8_t>* out, Diag* diag) {
+    auto placements = BuildEntryPlacements(manifest, entries);
+
     const std::uint32_t entryCount =
         static_cast<std::uint32_t>(placements.size());
     const std::uint64_t directoryBytes =
         static_cast<std::uint64_t>(entryCount) *
         harkenstudiobuild::kPackV2DirectoryEntryBytes;
     std::uint64_t cursor = harkenstudiobuild::kPackV2HeaderBytes + directoryBytes;
-    for (Placement& placement : placements) {
+    for (EntryPlacement& placement : placements) {
         placement.offset =
             AlignUpTo(cursor, harkenstudiobuild::kPackV2PayloadAlign);
         cursor = placement.offset + placement.size;
@@ -463,276 +755,21 @@ bool BuildPackBytesV2(const Manifest& manifest,
                     entries[i].planar.size() * sizeof(float));
     }
 
-    for (const Placement& placement : placements) {
-        std::uint8_t* dst = out->data() + placement.offset;
-        switch (placement.kind) {
-        case harkenstudiobuild::kPackEntryKindMedia: {
-            const PackEntry& entry = entries[placement.index];
-            const std::uint64_t blobBytes =
-                static_cast<std::uint64_t>(entry.planar.size()) *
-                sizeof(float);
-            harkenstudiobuild::PackTocEntry toc;
-            toc.soundId = entry.soundId;
-            toc.sampleRate = entry.sampleRate;
-            toc.channelCount = entry.channelCount;
-            toc.sampleFormat = harkenstudiobuild::kPackSampleFormatF32Planar;
-            toc.frameCount = entry.frameCount;
-            toc.blobOffset = blobOffsets[placement.index];
-            toc.blobBytes = blobBytes;
-            toc.blobChecksum = harkenstudiobuild::Fnv1a64(
-                out->data() + blobOffsets[placement.index],
-                static_cast<std::size_t>(blobBytes));
-            toc.flags = entry.loopable ? harkenstudiobuild::kPackFlagLoopable : 0;
-            toc.loopStartFrame =
-                entry.loopable ? entry.loopStartFrame : 0;
-            toc.loopEndFrame = entry.loopable ? entry.loopEndFrame : 0;
-            harkenstudiobuild::SerializePackTocEntry(toc, dst);
-            break;
-        }
-        case harkenstudiobuild::kPackEntryKindBus: {
-            const ManifestBus& bus = manifest.buses[placement.index];
-            harkenstudiobuild::PackBusEntry wire;
-            wire.busId = bus.id;
-            wire.parentBusId = bus.parent;
-            wire.volume = bus.volume;
-            wire.outputBusVolume = bus.outputBusVolume;
-            wire.makeUpGain = bus.makeUpGain;
-            harkenstudiobuild::SerializePackV6Bus(wire, dst);
-            break;
-        }
-        case harkenstudiobuild::kPackEntryKindBusSend: {
-            const ManifestBusSend& send =
-                manifest.busSends[placement.index];
-            harkenstudiobuild::PackBusSendEntry wire;
-            wire.fromBusId = send.from;
-            wire.toBusId = send.to;
-            wire.levelDb = send.levelDb;
-            harkenstudiobuild::SerializePackV2BusSend(wire, dst);
-            break;
-        }
-        case harkenstudiobuild::kPackEntryKindAttenuation: {
-            const ManifestAttenuation& attenuation =
-                manifest.attenuations[placement.index];
-            harkenstudiobuild::AttenuationDefinition desc{};
-
-            desc.rolloff = attenuation.rolloff;
-            desc.minDistance = attenuation.minDistance;
-            desc.maxDistance = attenuation.maxDistance;
-            desc.airAbsorptionNearHz = attenuation.airAbsorptionNearHz;
-            desc.airAbsorptionFarHz = attenuation.airAbsorptionFarHz;
-            desc.proximityRadius = attenuation.proximityRadius;
-            desc.proximityMaxBoostDb = attenuation.proximityMaxBoostDb;
-            desc.proximityFrequency = attenuation.proximityFrequency;
-            desc.coneEnabled = attenuation.coneEnabled ? 1u : 0u;
-            desc.coneInnerDeg = attenuation.coneInnerDeg;
-            desc.coneOuterDeg = attenuation.coneOuterDeg;
-            desc.coneOuterGainDb = attenuation.coneOuterGainDb;
-            desc.coneOuterLowpassHz = attenuation.coneOuterLowpassHz;
-            desc.volumeCurve = ToAttenuationCurve(
-                attenuation.volumeCurve, attenuation.hasVolumeCurve);
-            desc.lowpassCurve = ToAttenuationCurve(
-                attenuation.lowpassCurve, attenuation.hasLowpassCurve);
-            desc.widthCurve = ToAttenuationCurve(
-                attenuation.widthCurve, attenuation.hasWidthCurve);
-            harkenstudiobuild::SerializePackV3Attenuation(desc, dst);
-            break;
-        }
-        case harkenstudiobuild::kPackEntryKindBindingDefinition: {
-            const ManifestBinding& binding =
-                manifest.bindings[placement.index];
-            harkenstudiobuild::BindingDefinition desc{};
-
-            desc.variableId = binding.variable;
-            desc.targetScopeKind = binding.scope;
-            desc.targetId = binding.target;
-            desc.transitionMs = binding.transitionMs;
-            desc.curve = ToBindingCurve(binding.curve);
-            harkenstudiobuild::SerializePackV2BindingDefinition(binding.id, desc,
-                                                    dst);
-            break;
-        }
-        case harkenstudiobuild::kPackEntryKindBindingAttachment: {
-            const ManifestAttachment& attachment =
-                manifest.attachments[placement.index];
-            harkenstudiobuild::PackBindingAttachmentEntry wire;
-            wire.bindingId = attachment.binding;
-            wire.scopeKind = attachment.scope;
-            wire.objectId = attachment.object;
-            harkenstudiobuild::SerializePackV2BindingAttachment(wire, dst);
-            break;
-        }
-        case harkenstudiobuild::kPackEntryKindContainer: {
-            const ManifestContainer& container =
-                manifest.containers[placement.index];
-            harkenstudiobuild::PackContainerEntryHeader header;
-            header.containerId = container.id;
-            header.selectionOrder = container.order;
-            header.avoidRepeatWindow = container.avoidRepeatWindow;
-            header.selectionVariableId = container.selectionVariable;
-            header.defaultIndex = container.defaultIndex;
-            header.childCount = static_cast<std::uint32_t>(
-                container.children.size());
-            harkenstudiobuild::SerializePackV2ContainerHeader(header, dst);
-            for (std::size_t c = 0; c < container.children.size();
-                 ++c) {
-                const ManifestContainerChild& child =
-                    container.children[c];
-                harkenstudiobuild::PackContainerChildV2 wire{};
-                wire.playableId = child.playable;
-                wire.weight = child.weight;
-                wire.matchValue = child.matchValue;
-                wire.delayMs = child.delayMs;
-                wire.delayJitterMs = child.delayJitterMs;
-                harkenstudiobuild::SerializePackV2ContainerChild(
-                    wire,
-                    dst + harkenstudiobuild::kPackV2ContainerHeaderBytes +
-                        c * harkenstudiobuild::kPackV2ContainerChildBytes);
-            }
-            break;
-        }
-        case harkenstudiobuild::kPackEntryKindVoiceRecipe: {
-            const ManifestVoiceRecipe& recipe =
-                manifest.voiceRecipes[placement.index];
-            harkenstudiobuild::PackVoiceRecipeEntryHeader header;
-            header.playableId = recipe.playable;
-            header.installCount =
-                static_cast<std::uint32_t>(recipe.effects.size());
-            header.bindingCount =
-                static_cast<std::uint32_t>(recipe.bindings.size());
-            harkenstudiobuild::SerializePackV2VoiceRecipeHeader(header, dst);
-            std::uint64_t cursor = harkenstudiobuild::kPackV2VoiceRecipeHeaderBytes;
-            harkenstudiobuild::PackVoiceRecipeTone tone;
-            if (recipe.tone.present) {
-                tone.present = 1u;
-                tone.sectionEnableMask =
-                    (recipe.tone.lowpassEnabled
-                         ? harkenstudiobuild::kPackVoiceToneLowpassEnabled
-                         : 0u) |
-                    (recipe.tone.highpassEnabled
-                         ? harkenstudiobuild::kPackVoiceToneHighpassEnabled
-                         : 0u) |
-                    (recipe.tone.lowShelfEnabled
-                         ? harkenstudiobuild::kPackVoiceToneLowShelfEnabled
-                         : 0u) |
-                    (recipe.tone.highShelfEnabled
-                         ? harkenstudiobuild::kPackVoiceToneHighShelfEnabled
-                         : 0u);
-                tone.lowpassFrequencyHz = recipe.tone.lowpassFrequencyHz;
-                tone.lowpassQ = recipe.tone.lowpassQ;
-                tone.highpassFrequencyHz = recipe.tone.highpassFrequencyHz;
-                tone.highpassQ = recipe.tone.highpassQ;
-                tone.lowShelfFrequencyHz = recipe.tone.lowShelfFrequencyHz;
-                tone.lowShelfQ = recipe.tone.lowShelfQ;
-                tone.lowShelfGainDb = recipe.tone.lowShelfGainDb;
-                tone.highShelfFrequencyHz =
-                    recipe.tone.highShelfFrequencyHz;
-                tone.highShelfQ = recipe.tone.highShelfQ;
-                tone.highShelfGainDb = recipe.tone.highShelfGainDb;
-            }
-            harkenstudiobuild::SerializePackV3VoiceRecipeTone(tone, dst + cursor);
-            cursor += harkenstudiobuild::kPackV3VoiceRecipeToneBytes;
-            harkenstudiobuild::PackVoiceRecipeSpatial spatial;
-            if (recipe.spatial.present) {
-                spatial.attenuationId = recipe.spatial.attenuation;
-                spatial.distanceScale = recipe.spatial.distanceScale;
-            } else {
-                spatial.distanceScale = 0.0f;
-            }
-            harkenstudiobuild::SerializePackV4VoiceRecipeSpatial(spatial, dst + cursor);
-            cursor += harkenstudiobuild::kPackV4VoiceRecipeSpatialBytes;
-            harkenstudiobuild::PackVoiceRecipePlayback playback;
-            if (recipe.playback.present) {
-                playback.present = 1u;
-                playback.loopCount = recipe.playback.loopCount;
-            }
-            harkenstudiobuild::SerializePackV5VoiceRecipePlayback(playback,
-                                                      dst + cursor);
-            cursor += harkenstudiobuild::kPackV5VoiceRecipePlaybackBytes;
-            for (const ManifestVoiceRecipeEffect& effect : recipe.effects) {
-                harkenstudiobuild::PackVoiceRecipeInstall install;
-                install.effectId = effect.effectId;
-                install.slot = effect.slot;
-                install.effectType = effect.type;
-                install.descriptorVintage = effect.descriptorVintage;
-                install.bypass = effect.bypass ? 1u : 0u;
-                install.paramCount =
-                    static_cast<std::uint32_t>(effect.parameters.size());
-                for (std::uint32_t p = 0; p < install.paramCount; ++p) {
-                    install.params[p] = effect.parameters[p];
-                }
-                harkenstudiobuild::SerializePackV2VoiceRecipeInstall(
-                    install, dst + cursor);
-                cursor += harkenstudiobuild::kPackV2VoiceRecipeInstallBytes;
-            }
-            for (harkenstudio::ObjectId binding : recipe.bindings) {
-                harkenstudiobuild::SerializePackV2VoiceRecipeBinding(binding,
-                                                         dst + cursor);
-                cursor += harkenstudiobuild::kPackV2VoiceRecipeBindingBytes;
-            }
-            break;
-        }
-        case harkenstudiobuild::kPackEntryKindBusEffect: {
-            const ManifestBusEffect& effect =
-                manifest.busEffects[placement.index];
-            harkenstudiobuild::PackBusEffectEntry wire;
-            wire.effectId = effect.effectId;
-            wire.busId = effect.bus;
-            wire.slot = effect.slot;
-            wire.effectType = effect.type;
-            wire.descriptorVintage = effect.descriptorVintage;
-            wire.bypass = effect.bypass ? 1u : 0u;
-            wire.faderPointGuard = effect.faderPointGuard;
-            wire.paramCount =
-                static_cast<std::uint32_t>(effect.parameters.size());
-            wire.paramBytes = wire.paramCount * sizeof(float);
-            for (std::uint32_t p = 0; p < wire.paramCount; ++p) {
-                wire.params[p] = effect.parameters[p];
-            }
-            harkenstudiobuild::SerializePackV2BusEffect(wire, dst);
-            break;
-        }
-        case harkenstudiobuild::kPackEntryKindEffectDynamicRoute: {
-            const ManifestDynamicRoute& route =
-                manifest.dynamicRoutes[placement.index];
-            harkenstudiobuild::PackEffectDynamicRouteEntry wire;
-            wire.targetBusId = route.targetBus;
-            wire.effectSlot = route.effectSlot;
-            wire.routeSlot = route.routeSlot;
-            wire.expectedEffectType = route.expectedEffectType;
-            wire.signalForm = route.signalForm;
-            wire.sourceKind = route.sourceKind;
-            wire.tap = route.tap;
-            wire.sourceId = route.sourceBus;
-            wire.levelDb = route.levelDb;
-            harkenstudiobuild::SerializePackV2EffectDynamicRoute(wire, dst);
-            break;
-        }
-        default:
-            return Fail(diag, "unsupported v2 entry kind %u",
-                        placement.kind);
-        }
+    for (const EntryPlacement& placement : placements) {
+        const auto blobOffset = placement.kind == harkenstudiobuild::kPackEntryKindMedia
+            ? blobOffsets[placement.index] : 0;
+        if (!SerializeEntryPayload(manifest, entries, placement, blobOffset,
+                                   out->data() + blobOffset,
+                                   out->data() + placement.offset, diag)) return false;
     }
 
     std::vector<std::uint8_t> directoryImage(
         static_cast<std::size_t>(directoryBytes), 0);
     for (std::size_t i = 0; i < placements.size(); ++i) {
-        const Placement& placement = placements[i];
+        const EntryPlacement& placement = placements[i];
         harkenstudiobuild::PackV2DirectoryEntry entry;
         entry.kind = placement.kind;
-        const bool dynamicDeploymentEntry =
-            placement.kind == harkenstudiobuild::kPackEntryKindBusEffect ||
-            placement.kind == harkenstudiobuild::kPackEntryKindEffectDynamicRoute;
-        if (dynamicDeploymentEntry) {
-            entry.vintage = harkenstudiobuild::kPackV2DynamicSchemaVintage;
-        } else if (placement.kind == harkenstudiobuild::kPackEntryKindBus) {
-            entry.vintage = harkenstudiobuild::kPackV2BusMixSchemaVintage;
-        } else if (placement.kind == harkenstudiobuild::kPackEntryKindVoiceRecipe) {
-            entry.vintage = harkenstudiobuild::kPackV2PlaybackRecipeSchemaVintage;
-        } else if (placement.kind == harkenstudiobuild::kPackEntryKindAttenuation) {
-            entry.vintage = harkenstudiobuild::kPackV2AuthoredToneSchemaVintage;
-        } else {
-            entry.vintage = harkenstudiobuild::kPackV2SchemaVintage;
-        }
+        entry.vintage = EntryVintage(placement.kind);
         entry.id = placement.id;
         entry.relationOrdinal = harkenstudio::IsNull(placement.id) ? placement.index : 0;
         entry.offset = placement.offset;
@@ -1382,6 +1419,103 @@ Result FinishWithReport(const Report& report, const std::string& reportPath,
     return result;
 }
 
+}
+
+bool compileEntries(const std::string& logicSections, bool resident,
+                    const std::vector<MediaInput>& media,
+                    std::vector<CompiledEntry>* entries, std::string* error) {
+    using namespace harkenstudiojson::packc;
+    entries->clear();
+    Diag diag;
+    const auto refuse = [&]() {
+        if (error) *error = diag.message;
+        return false;
+    };
+    harkenstudiojson::JsonValue root;
+    if (!harkenstudiojson::ParseJson(logicSections, &root, &diag.message))
+        return refuse();
+    if (root.kind != harkenstudiojson::JsonValue::Kind::Object) {
+        Fail(&diag, "resource description must be an object");
+        return refuse();
+    }
+    Manifest manifest;
+    manifest.packKind = resident ? "resident" : "content";
+    if (!ParseLogicSection(root, "buses", ParseBusesSection, &manifest, &diag)
+        || !ParseLogicSection(root, "busSends", ParseBusSendsSection, &manifest, &diag)
+        || !ParseLogicSection(root, "busEffects", ParseBusEffectsSection, &manifest, &diag)
+        || !ParseLogicSection(root, "dynamicRoutes", ParseDynamicRoutesSection, &manifest, &diag)
+        || !ParseLogicSection(root, "attenuations", ParseAttenuationsSection, &manifest, &diag)
+        || !ParseLogicSection(root, "bindings", ParseBindingsSection, &manifest, &diag)
+        || !ParseLogicSection(root, "voiceRecipes", ParseVoiceRecipesSection, &manifest, &diag)
+        || !ParseLogicSection(root, "attachments", ParseAttachmentsSection, &manifest, &diag)
+        || !ParseLogicSection(root, "containers", ParseContainersSection, &manifest, &diag))
+        return refuse();
+
+    std::vector<PackEntry> prepared;
+    prepared.reserve(media.size());
+    std::vector<CompiledEntry> compiled;
+    compiled.reserve(media.size());
+    std::unordered_set<harkenstudio::ObjectId> identities;
+    for (std::size_t i = 0; i < media.size(); ++i) {
+        const auto& input = media[i];
+        if (harkenstudio::IsNull(input.id) || !identities.insert(input.id).second) {
+            Fail(&diag, "media[%zu] has a missing or duplicate identity", i);
+            return refuse();
+        }
+        ManifestEntry source;
+        source.soundId = input.id;
+        source.explicitId = true;
+        source.path = input.sourcePath;
+        source.resolvedPath = input.sourcePath;
+        source.codec = "pcm-f32";
+        source.downmix = input.downmixToMono ? "mono" : "";
+        source.loopable = input.loopable;
+        source.loopStartFrame = input.loopStartFrame;
+        source.loopEndFrame = input.loopEndFrame;
+        PackEntry entry = MakePackEntry(source);
+        if (!PreparePlanar(&entry, input.interleavedSamples, input.sampleCount,
+                           input.channels, input.sampleRate, &diag)
+            || !ValidateLoopPoints(entry, i, &diag)) return refuse();
+        manifest.entries.push_back(std::move(source));
+        prepared.push_back(std::move(entry));
+
+        EntryPlacement placement;
+        placement.kind = harkenstudiobuild::kPackEntryKindMedia;
+        placement.id = input.id;
+        placement.index = i;
+        placement.size = harkenstudiobuild::kPackV2MediaPayloadBytes;
+        CompiledEntry resource;
+        resource.kind = placement.kind;
+        resource.vintage = EntryVintage(placement.kind);
+        resource.id = placement.id;
+        auto& samples = prepared.back().planar;
+        const auto blobBytes = samples.size() * sizeof(float);
+        resource.payload.resize(static_cast<std::size_t>(placement.size) + blobBytes);
+        auto* blob = resource.payload.data() + placement.size;
+        std::memcpy(blob, samples.data(), blobBytes);
+        if (!SerializeEntryPayload(manifest, prepared, placement, 0, blob,
+                                   resource.payload.data(), &diag)) return refuse();
+        compiled.push_back(std::move(resource));
+        std::vector<float>().swap(samples);
+    }
+    if (!ValidateLogicSections(manifest, &diag)) return refuse();
+
+    const auto placements = BuildEntryPlacements(manifest, prepared);
+    compiled.reserve(placements.size());
+    for (const auto& placement : placements) {
+        if (placement.kind == harkenstudiobuild::kPackEntryKindMedia) continue;
+        CompiledEntry entry;
+        entry.kind = placement.kind;
+        entry.vintage = EntryVintage(placement.kind);
+        entry.id = placement.id;
+        entry.relationOrdinal = harkenstudio::IsNull(placement.id) ? placement.index : 0;
+        entry.payload.resize(static_cast<std::size_t>(placement.size));
+        if (!SerializeEntryPayload(manifest, prepared, placement, 0, nullptr,
+                                   entry.payload.data(), &diag)) return refuse();
+        compiled.push_back(std::move(entry));
+    }
+    *entries = std::move(compiled);
+    return true;
 }
 
 Result compile(const Request& request) {

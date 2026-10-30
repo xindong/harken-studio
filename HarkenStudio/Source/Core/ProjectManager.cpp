@@ -826,6 +826,8 @@ ProjectManager& ProjectManager::instance()
 ProjectManager::ProjectManager(QObject* parent)
     : QObject(parent)
 {
+    connect(&PackGenerationRecordStore::instance(), &PackGenerationRecordStore::exportActivityChanged,
+            &m_fileWatcher, &FileWatcher::deferChanges);
     connect(&m_fileWatcher, &FileWatcher::filesAdded, this, &ProjectManager::externalFilesAdded);
     connect(&m_fileWatcher, &FileWatcher::filesRemoved, this, &ProjectManager::externalFilesRemoved);
     connect(&m_fileWatcher, &FileWatcher::filesModified, this, &ProjectManager::externalFilesModified);
@@ -1468,6 +1470,7 @@ bool ProjectManager::validateMoveConstraints(const ProjectItem* item, const Proj
 
 bool ProjectManager::createProject(const ProjectConfig& config)
 {
+    if (PackGenerationRecordStore::instance().isExporting()) return false;
     QString platformError;
     if (!ProjectPlatformSemantics::validatePlatforms(config.platforms, &platformError)) {
         emit errorOccurred(platformError);
@@ -1817,6 +1820,10 @@ PreparedProject ProjectManager::prepareProject(const QString& filePath,
 bool ProjectManager::commitPreparedProject(PreparedProject&& prepared)
 {
     Q_ASSERT(QThread::currentThread() == thread());
+    if (PackGenerationRecordStore::instance().isExporting()) {
+        prepared.error = QStringLiteral("The project cannot change while packs are being exported.");
+        return false;
+    }
     if (!prepared.project || !prepared.folderSaveState)
         return false;
 
@@ -1933,6 +1940,11 @@ bool ProjectManager::loadProject(const QString& filePath, bool allowUpgrade,
         error->clear();
     if (forwarded)
         *forwarded = false;
+    if (PackGenerationRecordStore::instance().isExporting()) {
+        if (error)
+            *error = QStringLiteral("The project cannot change while packs are being exported.");
+        return false;
+    }
     auto acquisition = ProjectInstance::acquire(filePath);
     if (acquisition.status != ProjectInstance::Status::Acquired) {
         if (forwarded)
@@ -2141,6 +2153,7 @@ std::unique_ptr<ProjectSaveBaseline> ProjectManager::captureSaveBaseline(
 
 bool ProjectManager::saveProject()
 {
+    if (PackGenerationRecordStore::instance().isExporting()) return false;
     if (!m_currentProject || !m_itemSaveState) return false;
     QString saveError;
     const auto fail = [&](const QString& error) {
@@ -2428,6 +2441,7 @@ bool ProjectManager::saveProject()
 
 bool ProjectManager::closeProject()
 {
+    if (PackGenerationRecordStore::instance().isExporting()) return false;
     if (m_currentProject)
     {
         PropertyEditSession::finishAllActive(false);

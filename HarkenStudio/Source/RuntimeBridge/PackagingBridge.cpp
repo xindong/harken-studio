@@ -2,6 +2,7 @@
 #include "ProjectSyncBridge.h"
 #include "Utils/AudioFileReader.h"
 #include "Tooling/Harkenizer/ResourceCompilerClient.h"
+#include "Tooling/Harkenizer/ResourceCompiler/ResourceCompiler.h"
 #include <harken_studio_build/BindingTransition.h>
 #include <harken_studio_build/BindingTargets.h>
 
@@ -24,7 +25,6 @@
 #include <QJsonObject>
 #include <QMutex>
 #include <QMutexLocker>
-#include <QTemporaryDir>
 
 #include <algorithm>
 #include <array>
@@ -642,16 +642,20 @@ bool computePackMediaContentRevision(const PackMediaDesc& media, uint64_t* revis
 {
     if (!revision || media.downmixToMono || !media.data.empty()
         || media.format != PackMediaFormat::PcmFloat) return false;
-    std::vector<float> interleaved;
-    int channels = 0, sampleRate = 0;
-    if (!decodeAudioFileInterleaved(media.sourcePath, interleaved, channels, sampleRate)
-        || channels <= 0 || sampleRate <= 0 || interleaved.empty()
-        || interleaved.size() % static_cast<std::size_t>(channels) != 0) return false;
+    std::vector<float> decoded;
+    const std::vector<float>* interleaved = media.interleavedSamples.get();
+    int channels = media.channels, sampleRate = static_cast<int>(media.sampleRate);
+    if (!interleaved) {
+        if (!decodeAudioFileInterleaved(media.sourcePath, decoded, channels, sampleRate)) return false;
+        interleaved = &decoded;
+    }
+    if (channels <= 0 || sampleRate <= 0 || interleaved->empty()
+        || interleaved->size() % static_cast<std::size_t>(channels) != 0) return false;
     std::vector<const float*> planes(static_cast<std::size_t>(channels));
-    for (int c = 0; c < channels; ++c) planes[c] = interleaved.data() + c;
+    for (int c = 0; c < channels; ++c) planes[c] = interleaved->data() + c;
     return harkenstudiobuild::ComputeMediaPcmContentRevisionV1(
         static_cast<uint32_t>(sampleRate), static_cast<uint32_t>(channels),
-        interleaved.size() / static_cast<std::size_t>(channels), planes.data(),
+        interleaved->size() / static_cast<std::size_t>(channels), planes.data(),
         static_cast<uint32_t>(channels), revision,
         media.loopable ? media.loopStartFrame : 0, media.loopable ? media.loopEndFrame : 0);
 }
@@ -770,18 +774,6 @@ bool isPackCodecCodebookSection(uint32_t) { return false; }
 
 struct PackBuildSession::Impl
 {
-    std::shared_ptr<Harkenizer::ResourceCompilerClient> compiler;
-    struct MediaEntry
-    {
-        harkenstudio::ObjectId id{};
-        uint32_t authoringSourceId = 0;
-        QString path;
-        bool downmixToMono = false;
-        bool loopable = false;
-        uint64_t loopStartFrame = 0;
-        uint64_t loopEndFrame = 0;
-    };
-
     struct MetadataEntry
     {
         harkenstudio::ObjectId ownerObjectId = {};
@@ -793,7 +785,8 @@ struct PackBuildSession::Impl
     QString lastError;
     QStringList warnings;
     QStringList pendingWarnings;
-    std::vector<MediaEntry> media;
+    std::vector<PackMediaDesc> media;
+    std::unordered_set<harkenstudio::ObjectId> mediaIds;
     std::vector<PackBus> buses;
     std::vector<PackBusSend> busSends;
     std::vector<PackAttenuation> attenuations;
@@ -1091,7 +1084,7 @@ struct PackBuildSession::Impl
         return result;
     }
 
-    QJsonObject manifest(const QString& outputPath)
+    QJsonObject description()
     {
         const bool resident = initPack;
         if (resident && !media.empty())
@@ -1121,67 +1114,14 @@ struct PackBuildSession::Impl
             lastError = QStringLiteral("Resident pack has no logic entries; add at least one bus");
             return {};
         }
-        QJsonArray entries;
-        if (!resident)
-        {
-            std::unordered_set<harkenstudio::ObjectId> seenMedia;
-            for (const MediaEntry& entry : media)
-            {
-                if (harkenstudio::IsNull(entry.id) || entry.path.isEmpty() ||
-                    !seenMedia.insert(entry.id).second)
-                    continue;
-                QJsonObject value{
-                    {QStringLiteral("path"), QFileInfo(entry.path).absoluteFilePath()},
-                    {QStringLiteral("id"), VNX::objectIdString(entry.id)},
-                    {QStringLiteral("codec"), QStringLiteral("pcm-f32")}};
-                if (entry.loopable)
-                {
-                    value.insert(QStringLiteral("loopStartFrame"), static_cast<qint64>(entry.loopStartFrame));
-                    value.insert(QStringLiteral("loopEndFrame"), static_cast<qint64>(entry.loopEndFrame));
-                }
-                if (entry.downmixToMono)
-                    value.insert(QStringLiteral("downmix"), QStringLiteral("mono"));
-                entries.append(value);
-            }
-        }
-        if (!entries.isEmpty())
-            root.insert(QStringLiteral("entries"), entries);
-        root.insert(QStringLiteral("manifestVersion"), 3);
-        root.insert(QStringLiteral("output"), QFileInfo(outputPath).absoluteFilePath());
-        root.insert(QStringLiteral("packKind"), resident ? QStringLiteral("resident")
-                                                        : QStringLiteral("content"));
-        root.insert(QStringLiteral("options"), QJsonObject{
-            {QStringLiteral("cache"), true},
-            {QStringLiteral("reportPath"),
-             QFileInfo(outputPath + QStringLiteral(".report.json")).absoluteFilePath()}});
         return root;
     }
 
-    bool writeManifest(const QString& manifestPath, const QString& outputPath)
-    {
-        const auto root = manifest(outputPath);
-        if (!lastError.isEmpty()) return false;
-        QDir().mkpath(QFileInfo(manifestPath).absolutePath());
-        QFile file(manifestPath);
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
-        {
-            lastError = QStringLiteral("Cannot write resource manifest: %1").arg(manifestPath);
-            return false;
-        }
-        const QByteArray data = QJsonDocument(root).toJson();
-        if (file.write(data) != data.size())
-        {
-            lastError = QStringLiteral("Cannot finish resource manifest: %1").arg(manifestPath);
-            return false;
-        }
-        return true;
-    }
 };
 
-PackBuildSession::PackBuildSession(std::shared_ptr<Harkenizer::ResourceCompilerClient> compiler)
+PackBuildSession::PackBuildSession()
     : impl_(new Impl)
 {
-    impl_->compiler = compiler ? std::move(compiler) : std::make_shared<Harkenizer::ResourceCompilerClient>();
 }
 
 PackBuildSession::~PackBuildSession() = default;
@@ -1249,17 +1189,8 @@ void PackBuildSession::addWarning(const QString& warning)
 
 void PackBuildSession::addMedia(const PackMediaDesc& media)
 {
-    if (harkenstudio::IsNull(media.sourceId))
-        return;
-    Impl::MediaEntry entry;
-    entry.id = media.sourceId;
-    entry.authoringSourceId = media.authoringSourceId;
-    entry.path = media.sourcePath;
-    entry.downmixToMono = media.downmixToMono;
-    entry.loopable = media.loopable;
-    entry.loopStartFrame = media.loopStartFrame;
-    entry.loopEndFrame = media.loopEndFrame;
-    impl_->media.push_back(std::move(entry));
+    if (!harkenstudio::IsNull(media.sourceId)
+        && impl_->mediaIds.insert(media.sourceId).second) impl_->media.push_back(media);
 }
 
 namespace {
@@ -1452,85 +1383,118 @@ bool PackBuildSession::wrapCanonicalPackFile(
     return writeCanonicalPackFile(outputPath, packKind, entries, error);
 }
 
-bool PackBuildSession::buildToFile(const QString& outputPath)
+bool PackBuildSession::buildEntries(std::vector<CanonicalPackEntry>* entries)
 {
     impl_->lastError.clear();
     impl_->warnings = impl_->pendingWarnings;
-    if (impl_->compiler->identity(&impl_->lastError).isEmpty()) return false;
-
-    QDir().mkpath(QFileInfo(outputPath).absolutePath());
-    QTemporaryDir workDir(QDir(QFileInfo(outputPath).absolutePath())
-                              .filePath(QStringLiteral(".harkenizer_XXXXXX")));
-    if (!workDir.isValid())
-    {
-        impl_->lastError = QStringLiteral("Cannot create resource compilation directory near %1")
-                               .arg(outputPath);
+    const auto description = impl_->description();
+    if (!impl_->lastError.isEmpty()) return false;
+    std::vector<harkenizer::resourcecompiler::MediaInput> media;
+    std::vector<std::vector<float>> decoded;
+    if (!impl_->initPack) {
+        media.reserve(impl_->media.size());
+        decoded.reserve(impl_->media.size());
+        for (const auto& source : impl_->media) {
+            harkenizer::resourcecompiler::MediaInput input;
+            input.id = source.sourceId;
+            input.sourcePath = source.sourcePath.toStdString();
+            input.sampleRate = source.sampleRate;
+            input.channels = source.channels;
+            input.downmixToMono = source.downmixToMono;
+            input.loopable = source.loopable;
+            input.loopStartFrame = source.loopStartFrame;
+            input.loopEndFrame = source.loopEndFrame;
+            if (source.interleavedSamples) {
+                input.interleavedSamples = source.interleavedSamples->data();
+                input.sampleCount = source.interleavedSamples->size();
+            } else {
+                auto& samples = decoded.emplace_back();
+                int channels = 0, sampleRate = 0;
+                if (!decodeAudioFileInterleaved(source.sourcePath, samples, channels, sampleRate)) {
+                    impl_->lastError = QStringLiteral("Cannot decode build input: %1").arg(source.sourcePath);
+                    return false;
+                }
+                input.interleavedSamples = samples.data();
+                input.sampleCount = samples.size();
+                input.sampleRate = static_cast<uint32_t>(sampleRate);
+                input.channels = static_cast<uint16_t>(channels);
+            }
+            media.push_back(std::move(input));
+        }
+    }
+    std::vector<harkenizer::resourcecompiler::CompiledEntry> compiled;
+    std::string error;
+    if (!harkenizer::resourcecompiler::compileEntries(
+            QJsonDocument(description).toJson(QJsonDocument::Compact).toStdString(),
+            impl_->initPack, media, &compiled, &error)) {
+        impl_->lastError = QString::fromStdString(error);
         return false;
     }
-
-    const QString manifestPath = QDir(workDir.path()).filePath(QStringLiteral("manifest.json"));
-    if (!impl_->writeManifest(manifestPath, outputPath))
-        return false;
-
-    const auto compiled = impl_->compiler->compile(manifestPath, outputPath);
-    if (compiled.status != Harkenizer::ResourceCompilerClient::Status::Succeeded)
-    {
-        if (compiled.status != Harkenizer::ResourceCompilerClient::Status::Refused
-            && compiled.status != Harkenizer::ResourceCompilerClient::Status::Crashed) {
-            impl_->lastError = compiled.error;
-            return false;
-        }
-        QString reportText;
-        QFile report(outputPath + QStringLiteral(".report.json"));
-        if (report.open(QIODevice::ReadOnly | QIODevice::Text))
-            reportText = QString::fromUtf8(report.readAll()).trimmed();
-        QString processText = compiled.diagnosticLog.trimmed();
-        if (!compiled.outputLog.trimmed().isEmpty()) {
-            if (!processText.isEmpty()) processText += QLatin1Char('\n');
-            processText += compiled.outputLog.trimmed();
-        }
-        impl_->lastError = !reportText.isEmpty() ? reportText
-            : !processText.isEmpty() ? processText : compiled.error;
-        return false;
-    }
-
-    if (!QFileInfo::exists(outputPath))
-    {
-        impl_->lastError = QStringLiteral("Harkenizer did not create output: %1").arg(outputPath);
-        return false;
+    entries->clear();
+    entries->reserve(compiled.size());
+    for (auto& source : compiled) {
+        CanonicalPackEntry entry;
+        entry.kind = source.kind;
+        entry.vintage = source.vintage;
+        entry.id = source.id;
+        entry.relationOrdinal = source.relationOrdinal;
+        entry.payload = std::move(source.payload);
+        entries->push_back(std::move(entry));
     }
     return true;
+}
+
+bool PackBuildSession::buildToFile(const QString& outputPath)
+{
+    std::vector<CanonicalPackEntry> entries;
+    if (!buildEntries(&entries)) return false;
+    const auto kind = impl_->initPack ? harkenstudiobuild::kPackKindResident
+                                     : harkenstudiobuild::kPackKindContent;
+    return writeCanonicalPackFile(outputPath, static_cast<CanonicalPackKind>(kind),
+                                  entries, &impl_->lastError);
 }
 
 QString PackBuildSession::inputFingerprint()
 {
     impl_->lastError.clear();
     impl_->warnings = impl_->pendingWarnings;
-    auto manifest = impl_->manifest(QString());
+    const auto description = impl_->description();
     if (!impl_->lastError.isEmpty()) return {};
-    manifest.remove(QStringLiteral("output"));
-    manifest.remove(QStringLiteral("options"));
     QCryptographicHash hash(QCryptographicHash::Sha256);
-    hash.addData(QJsonDocument(manifest).toJson(QJsonDocument::Compact));
-    const auto addFile = [&](const QString& path) {
-        QFile file(path);
-        if (!file.open(QIODevice::ReadOnly)) {
-            impl_->lastError = QStringLiteral("Cannot fingerprint build input: %1").arg(path);
-            return false;
+    hash.addData(QJsonDocument(description).toJson(QJsonDocument::Compact));
+    hash.addData(impl_->initPack ? "resident" : "content");
+    hash.addData(Harkenizer::resourceCompilerIdentity());
+    if (!impl_->initPack) {
+        for (const auto& source : impl_->media) {
+            const QJsonObject identity{
+                {QStringLiteral("id"), VNX::objectIdString(source.sourceId)},
+                {QStringLiteral("sampleRate"), static_cast<qint64>(source.sampleRate)},
+                {QStringLiteral("channels"), source.channels},
+                {QStringLiteral("downmixToMono"), source.downmixToMono},
+                {QStringLiteral("loopable"), source.loopable},
+                {QStringLiteral("loopStartFrame"), static_cast<qint64>(source.loopStartFrame)},
+                {QStringLiteral("loopEndFrame"), static_cast<qint64>(source.loopEndFrame)}};
+            hash.addData(QJsonDocument(identity).toJson(QJsonDocument::Compact));
+            if (source.interleavedSamples) {
+                const auto byteCount = source.interleavedSamples->size() * sizeof(float);
+                hash.addData(QByteArray::number(byteCount) + '\0');
+                hash.addData(QByteArrayView(
+                    reinterpret_cast<const char*>(source.interleavedSamples->data()),
+                    static_cast<qsizetype>(byteCount)));
+            } else {
+                QFile file(source.sourcePath);
+                if (!file.open(QIODevice::ReadOnly)) {
+                    impl_->lastError = QStringLiteral("Cannot fingerprint build input: %1").arg(source.sourcePath);
+                    return {};
+                }
+                hash.addData(QByteArray::number(file.size()) + '\0');
+                if (!hash.addData(&file)) {
+                    impl_->lastError = QStringLiteral("Cannot read build input: %1").arg(source.sourcePath);
+                    return {};
+                }
+            }
         }
-        hash.addData(QByteArray::number(file.size()) + '\0');
-        if (!hash.addData(&file)) {
-            impl_->lastError = QStringLiteral("Cannot read build input: %1").arg(path);
-            return false;
-        }
-        return true;
-    };
-    const auto compilerIdentity = impl_->compiler->identity(&impl_->lastError);
-    if (compilerIdentity.isEmpty()) return {};
-    hash.addData(compilerIdentity);
-    if (!impl_->initPack)
-        for (const auto& entry : impl_->media)
-            if (!addFile(entry.path)) return {};
+    }
     return QString::fromLatin1(hash.result().toHex());
 }
 
