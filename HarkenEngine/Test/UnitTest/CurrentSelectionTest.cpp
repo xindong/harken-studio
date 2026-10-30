@@ -4027,6 +4027,137 @@ TEST(CurrentSelectionMemory, GrowthFailurePreservesHistoryAndReportsActualStorag
     EXPECT_EQ(Kind::IndexRange, table.ConsumeStorageFailure().kind);
 }
 
+TEST(CurrentSelectionMemory, ColumnGrowthFailureReportsResourceAndLeavesAdmissionRetryable) {
+    using Status = harken::SelectionMemoryStatusV1;
+    using Resource = harken::SelectionStorageResource;
+    using Kind = harken::SelectionStorageFailureKind;
+    using Table = harken::SelectionMemoryTableV1;
+    for (const auto resource : {Resource::RowIndex, Resource::DeltaIndex, Resource::BatchIndex,
+                               Resource::HistoryState, Resource::DeltaPath, Resource::SharedScratch}) {
+        SCOPED_TRACE(static_cast<unsigned>(resource));
+        Table table;
+        ASSERT_TRUE(table.Reset(MemoryConfig()));
+        MemoryProgram program;
+        const auto first = table.AppendPlay(MemoryRequest(program, 1));
+        ASSERT_EQ(Status::Ok, first.status);
+        ASSERT_EQ(Status::Ok, table.CommitHead(first.delta));
+        table.FailNextColumnGrowthForTests(resource);
+        Table::BackingPreparation backing;
+        const Table::BackingDemand demand{4, 4, 1, {2, 3, 2, 3}};
+        EXPECT_FALSE(table.PrepareBacking(demand, &backing));
+        EXPECT_FALSE(backing.Valid());
+        const auto failure = table.ConsumeStorageFailure();
+        EXPECT_EQ(Kind::Allocation, failure.kind);
+        EXPECT_EQ(resource, failure.resource);
+        EXPECT_GT(failure.requestedCount, 0u);
+        EXPECT_EQ(1u, table.RowCount());
+        EXPECT_EQ(1u, table.Snapshot(MemoryKey()).selectionOrdinal);
+        EXPECT_EQ(MemoryConfig().maxPendingDeltasTotal, table.FreeDeltaCount());
+        ASSERT_TRUE(table.PrepareBacking(demand, &backing));
+        auto key = MemoryKey(harken::MemoryScopeV1::Emitter, 2);
+        const auto bytes = table.StorageBytes();
+        {
+            auto use = backing.Use();
+            harken::memguard::AudioThreadScope audio;
+            const auto replay = table.AppendPlay(MemoryRequest(program, 2, key));
+            ASSERT_EQ(Status::Ok, replay.status);
+            ASSERT_EQ(Status::Ok, table.CommitHead(replay.delta));
+        }
+        EXPECT_EQ(bytes, table.StorageBytes());
+        EXPECT_EQ(1u, table.Snapshot(key).selectionOrdinal);
+        EXPECT_EQ(1u, table.Snapshot(MemoryKey()).selectionOrdinal);
+    }
+}
+
+TEST(CurrentSelectionMemory, BackingFailureDistinguishesStorageFromInFlightCapacity) {
+    using Resource = harken::SelectionStorageResource;
+    using Kind = harken::SelectionStorageFailureKind;
+    using Table = harken::SelectionMemoryTableV1;
+    for (const auto resource : {Resource::Deltas, Resource::Batches}) {
+        Table table;
+        ASSERT_TRUE(table.Reset(MemoryConfig()));
+        Table::BackingPreparation backing;
+        table.SetCommitPageLimitForTests(0);
+        const bool deltas = resource == Resource::Deltas;
+        EXPECT_FALSE(table.PrepareBacking({0, deltas ? 1u : 0u, deltas ? 0u : 1u, {}}, &backing));
+        auto failure = table.ConsumeStorageFailure();
+        EXPECT_EQ(Kind::Allocation, failure.kind);
+        EXPECT_EQ(resource, failure.resource);
+        EXPECT_FALSE(table.PrepareBacking({0, deltas ? 9u : 0u, deltas ? 0u : 9u, {}}, &backing));
+        failure = table.ConsumeStorageFailure();
+        EXPECT_EQ(Kind::InFlightCapacity, failure.kind);
+        EXPECT_EQ(resource, failure.resource);
+        table.SetCommitPageLimitForTests(SIZE_MAX);
+        EXPECT_TRUE(table.PrepareBacking({0, deltas ? 1u : 0u, deltas ? 0u : 1u, {}}, &backing));
+        EXPECT_EQ(Kind::None, table.ConsumeStorageFailure().kind);
+    }
+}
+
+TEST(CurrentSelectionMemory, SparseScheduledHistoriesAndRetirementCandidatesSurviveReuse) {
+    using Status = harken::SelectionMemoryStatusV1;
+    harken::SelectionMemoryTableV1 table;
+    ASSERT_TRUE(table.Reset(MemoryConfig()));
+    MemoryProgram program(harken::ContainerModeV1::Sequence);
+    constexpr std::uint32_t count = 257;
+    const auto keyFor = [&](std::uint32_t i) {
+        auto key = MemoryKey();
+        key.containerStableId = harkentest::ObjectId(100u + i);
+        return key;
+    };
+    for (std::uint32_t i = 0; i < count; ++i) {
+        program.program.containerStableId = keyFor(i).containerStableId;
+        const auto play = table.AppendPlay(MemoryRequest(program, i + 1u, keyFor(i)));
+        ASSERT_EQ(Status::Ok, play.status);
+        ASSERT_EQ(Status::Ok, table.CommitHead(play.delta));
+    }
+    for (const auto i : {0u, count - 1u}) {
+        harken::PreparedSelectionResetV1 reset;
+        ASSERT_EQ(Status::Ok, table.PrepareReset(keyFor(i), 1000, 0, &reset, 100));
+        ASSERT_EQ(Status::Ok, table.CommitPreparedReset(&reset, 1000));
+    }
+    table.ApplyDue(99);
+    EXPECT_EQ(0u, table.Snapshot(keyFor(0)).resetEpoch);
+    table.ApplyDue(100);
+    table.ApplyDue(100);
+    for (std::uint32_t i = 0; i < count; ++i)
+        EXPECT_EQ(i == 0 || i == count - 1u ? 1u : 0u, table.Snapshot(keyFor(i)).resetEpoch);
+
+    bool reader = true;
+    const auto hasReaders = [](const void* context, harken::WorldGeneration) noexcept {
+        return *static_cast<const bool*>(context);
+    };
+    table.RetireUnusedWorldsBefore(4, hasReaders, &reader);
+    EXPECT_EQ(count, table.RowCount());
+    table.RetireEmitter(0, 1);
+    EXPECT_EQ(0u, table.RowCount());
+    const auto reserved = table.RowReservedBytes();
+    const auto committed = table.RowCommittedBytes();
+    // A late old-world row must enter the retained cutoff's candidate set.
+    program.program.containerStableId = keyFor(0).containerStableId;
+    const auto late = table.AppendPlay(MemoryRequest(program, 1001, keyFor(0)));
+    ASSERT_EQ(Status::Ok, late.status);
+    ASSERT_EQ(Status::Ok, table.CommitHead(late.delta));
+    table.RetireUnusedWorldsBefore(4, hasReaders, &reader);
+    EXPECT_TRUE(table.Snapshot(keyFor(0)).found);
+    reader = false;
+    table.RetireUnusedWorldsBefore(4, hasReaders, &reader);
+    EXPECT_FALSE(table.Snapshot(keyFor(0)).found);
+    for (unsigned pass = 0; pass < 3; ++pass) {
+        for (std::uint32_t i = 0; i < count; ++i) {
+            program.program.containerStableId = keyFor(i).containerStableId;
+            const auto play = table.AppendPlay(MemoryRequest(program, 2000 + i, keyFor(i)));
+            ASSERT_EQ(Status::Ok, play.status);
+            ASSERT_EQ(Status::Ok, table.CommitHead(play.delta));
+        }
+        for (std::uint32_t i = 0; i < count; ++i)
+            EXPECT_EQ(1u, table.Snapshot(keyFor(i)).selectionOrdinal);
+        EXPECT_EQ(reserved, table.RowReservedBytes());
+        EXPECT_EQ(committed, table.RowCommittedBytes());
+        table.RetireUnusedWorldsBefore(4, hasReaders, &reader);
+        EXPECT_EQ(0u, table.RowCount());
+    }
+}
+
 TEST(GrowingRowStorage, StableRowsAndPreparedHoldsSurviveSegmentGrowth) {
     harken::GrowingRowStorage<std::uint64_t> storage;
     ASSERT_TRUE(storage.ConstructThrough(1));

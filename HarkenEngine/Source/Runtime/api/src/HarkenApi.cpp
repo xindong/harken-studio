@@ -70216,15 +70216,32 @@ void FormatLogRecord(const harken::LogRecord& record, char* out,
     else
         std::memcpy(reloadText, objectText.data(), objectText.size());
     switch (record.code) {
-    case harken::kLogCodeSelectionStorageRefused:
+    case harken::kLogCodeSelectionStorageRefused: {
+        const auto kind = static_cast<harken::SelectionStorageFailureKind>(record.arg0 & 0xffu);
+        const auto resource = static_cast<harken::SelectionStorageResource>((record.arg0 >> 8) & 0xffu);
+        const char* resourceName = "unknown";
+        switch (resource) {
+        case harken::SelectionStorageResource::Rows: resourceName = "history rows"; break;
+        case harken::SelectionStorageResource::Deltas: resourceName = "in-flight deltas"; break;
+        case harken::SelectionStorageResource::Batches: resourceName = "in-flight batches"; break;
+        case harken::SelectionStorageResource::RowIndex: resourceName = "row index"; break;
+        case harken::SelectionStorageResource::DeltaIndex: resourceName = "delta index"; break;
+        case harken::SelectionStorageResource::BatchIndex: resourceName = "batch index"; break;
+        case harken::SelectionStorageResource::HistoryState: resourceName = "history state"; break;
+        case harken::SelectionStorageResource::DeltaPath: resourceName = "delta path"; break;
+        case harken::SelectionStorageResource::SharedScratch: resourceName = "shared scratch"; break;
+        }
         std::snprintf(out, capacity,
-                      "selection history storage refused: %s, requested rows %llu",
-                      record.arg0 == static_cast<std::uint64_t>(harken::SelectionStorageFailureKind::Allocation)
+                      "selection storage refused: %s, %s, requested count %llu", resourceName,
+                      kind == harken::SelectionStorageFailureKind::Allocation
                           ? "allocation failed"
-                          : record.arg0 == static_cast<std::uint64_t>(harken::SelectionStorageFailureKind::PreparedBacking)
-                              ? "prepared backing unavailable" : "row index range exhausted",
+                          : kind == harken::SelectionStorageFailureKind::PreparedBacking
+                              ? "prepared backing unavailable"
+                              : kind == harken::SelectionStorageFailureKind::InFlightCapacity
+                                  ? "in-flight capacity exhausted" : "index range exhausted",
                       static_cast<unsigned long long>(record.arg1));
         break;
+    }
     case harken::kLogCodeArenaOverflow:
         std::snprintf(out, capacity,
                       "render arena overflow: %llu bytes requested, block "
@@ -101591,8 +101608,9 @@ VnResult Vn_Update(void) {
         harken::LogRecord record{};
         record.level = VN_LOG_ERROR;
         record.code = harken::kLogCodeSelectionStorageRefused;
-        record.arg0 = static_cast<std::uint64_t>(selectionStorageFailure.kind);
-        record.arg1 = selectionStorageFailure.requestedRows;
+        record.arg0 = static_cast<std::uint64_t>(selectionStorageFailure.kind) |
+            (static_cast<std::uint64_t>(selectionStorageFailure.resource) << 8);
+        record.arg1 = selectionStorageFailure.requestedCount;
         engine->logicLogRing.Push(record);
     }
     engine->queueInstances.ApplyDue(dueFrame);
