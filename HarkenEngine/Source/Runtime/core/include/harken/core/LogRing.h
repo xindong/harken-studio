@@ -165,6 +165,9 @@ inline constexpr std::uint32_t kLogCodeRenderBatchDeferred = 30;
 // threshold). Short blocks retain their own bound; the warning never raises it.
 inline constexpr std::uint32_t kLogCodeRenderDeadlineBelowJitterFloor = 31;
 inline constexpr std::uint32_t kLogCodePackContentConflict = 32;
+// Selection backing was unavailable (logic thread). arg0 packs failure kind
+// in the low byte and resource in the next byte; arg1 is the requested count.
+inline constexpr std::uint32_t kLogCodeSelectionStorageRefused = 33;
 
 // Binding pools named by kLogCodeBindingPoolExhausted's arg0. Log
 // vocabulary only, never wire or ABI state.

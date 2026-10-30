@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "harken/core/StableRowStorage.h"
+#include "harken/core/GrowingRowStorage.h"
 
 #include <algorithm>
 #include <array>
@@ -77,8 +78,6 @@ struct SequenceSelectionV1 {
 
 struct SelectionMemoryConfigV1 {
     std::uint32_t maxEmitters = 128;
-    std::uint32_t maxGlobalRows = 256;
-    std::uint32_t maxEmitterRowsPerEmitter = 16;
     std::uint32_t maxPendingDeltasTotal = 512;
     std::uint32_t maxPendingGlobalPerRow = 512;
     std::uint32_t maxPendingEmitterPerRow = 16;
@@ -142,6 +141,21 @@ enum class SelectionMemoryStatusV1 : std::uint8_t {
     NotHead = 4,
     SequenceComplete = 5,
     RuntimeRecreateRequired = 6,
+};
+
+enum class SelectionStorageFailureKind : std::uint8_t {
+    None, Allocation, PreparedBacking, IndexRange, InFlightCapacity,
+};
+
+enum class SelectionStorageResource : std::uint8_t {
+    Rows, Deltas, Batches, RowIndex, DeltaIndex, BatchIndex, HistoryState,
+    DeltaPath, SharedScratch,
+};
+
+struct SelectionStorageFailure {
+    SelectionStorageFailureKind kind = SelectionStorageFailureKind::None;
+    std::uint64_t requestedCount = 0;
+    SelectionStorageResource resource = SelectionStorageResource::Rows;
 };
 
 struct SelectionAppendResultV1 {
@@ -410,6 +424,11 @@ public:
     };
     bool PrepareBacking(BackingDemand demand, BackingPreparation* out) noexcept;
     std::uint32_t RowCapacity() const noexcept { return rows_.Capacity(); }
+    std::size_t RowReservedBytes() const noexcept { return rows_.ReservedBytes(); }
+    std::size_t RowCommittedBytes() const noexcept { return rows_.CommittedBytes(); }
+    SelectionStorageFailure ConsumeStorageFailure() noexcept {
+        return std::exchange(storageFailure_, {});
+    }
     std::uint32_t DeltaCapacity() const noexcept { return deltas_.Capacity(); }
     std::uint32_t BatchCapacity() const noexcept { return batches_.Capacity(); }
     std::size_t StorageBytes() const noexcept;
@@ -419,7 +438,6 @@ public:
         batches_.SetCommitPageLimitForTests(pages);
     }
     bool Reset(const SelectionMemoryConfigV1& config) noexcept;
-    static std::uint64_t EmitterStorageBytes(const SelectionMemoryConfigV1& config) noexcept;
     SelectionAppendResultV1 AppendPlay(
         const SelectionPlayRequestV1& request) noexcept;
     SelectionAppendResultV1 AppendReset(
@@ -538,6 +556,10 @@ public:
     bool SetDeltaGenerationForTests(std::uint32_t slot,
                                     std::uint32_t generation) noexcept;
     void ApplyDue(std::uint64_t now) noexcept;
+    void FailNextColumnGrowthForTests(SelectionStorageResource resource) noexcept {
+        failColumnGrowth_ = true;
+        failedColumnResource_ = resource;
+    }
 
 private:
     struct MemoryState {
@@ -590,6 +612,12 @@ private:
         std::uint32_t scheduledTail = UINT32_MAX;
         std::uint32_t scheduledCount = 0;
         std::uint32_t candidateCount = 0;
+        std::uint32_t hashNext = UINT32_MAX;
+        std::uint32_t freePrevious = UINT32_MAX;
+        std::uint32_t freeNext = UINT32_MAX;
+        std::uint32_t retirementPrevious = UINT32_MAX;
+        std::uint32_t retirementNext = UINT32_MAX;
+        bool retirementCandidate = false;
     };
 
     struct DeltaRow {
@@ -676,6 +704,12 @@ private:
                         const SelectionMemoryKeyV1& b) noexcept;
     bool ValidKey(const SelectionMemoryKeyV1& key) const noexcept;
     std::uint32_t FindRow(const SelectionMemoryKeyV1& key) const noexcept;
+    static std::uint64_t HashKey(const SelectionMemoryKeyV1& key) noexcept;
+    bool PrepareRowLookup(std::uint32_t count) noexcept;
+    void IndexConstructedRows() noexcept;
+    void PublishRow(std::uint32_t row) noexcept;
+    void AddRetirementCandidate(std::uint32_t row) noexcept;
+    void RemoveRetirementCandidate(std::uint32_t row) noexcept;
     std::uint32_t FindFreeRow(const SelectionMemoryKeyV1& key, BackingShape shape) noexcept;
     std::uint32_t FindFreeDelta(BackingShape shape, bool rollback = false) noexcept;
     std::uint32_t FindFreeBatch() noexcept;
@@ -688,6 +722,13 @@ private:
     bool PrepareDelta(DeltaRow& delta, BackingShape shape, bool rollback) noexcept;
     bool PrepareSharedScratch(BackingShape shape) noexcept;
     bool PrepareRowIndices(std::uint32_t count) noexcept;
+    bool NoteStorageFailure(SelectionStorageFailureKind kind, std::uint64_t requested,
+        SelectionStorageResource resource = SelectionStorageResource::Rows) noexcept {
+        storageFailure_ = {kind, requested, resource};
+        return false;
+    }
+    template<class T> bool PrepareColumn(std::vector<T>& column, std::size_t count,
+        SelectionStorageResource resource, bool resize = false) noexcept;
     bool PrepareDeltaIndices(std::uint32_t count) noexcept;
     bool PrepareBatchIndices(std::uint32_t count) noexcept;
     bool ProtectBacking(std::uint32_t excludedRow = UINT32_MAX,
@@ -747,7 +788,12 @@ private:
     DeltaRow* ResolveDelta(SelectionDeltaRefV1 ref) noexcept;
 
     SelectionMemoryConfigV1 config_{};
-    StableRowStorage<Row> rows_;
+    GrowingRowStorage<Row> rows_;
+    std::vector<std::uint32_t> rowBuckets_;
+    std::uint32_t indexedRows_ = 0;
+    std::uint32_t freeRowHead_ = UINT32_MAX;
+    std::uint32_t retirementHead_ = UINT32_MAX;
+    WorldGeneration retirementCutoff_ = 0;
     StableRowStorage<DeltaRow> deltas_;
     StableRowStorage<BatchRow> batches_;
     BackingPreparation* backing_ = nullptr;
@@ -766,6 +812,9 @@ private:
     std::uint32_t quarantinedDeltaCount_ = 0;
     std::uint64_t tableLifetime_ = 0;
     std::uint64_t mutationEpoch_ = 1;
+    SelectionStorageFailure storageFailure_{};
+    bool failColumnGrowth_ = false;
+    SelectionStorageResource failedColumnResource_ = SelectionStorageResource::Rows;
 };
 
 std::size_t SelectionSeedByteCountV1(

@@ -58838,8 +58838,6 @@ struct NativeSelectionOwnershipFixture {
     bool Reset(std::uint32_t pendingPerRow = 8) {
         harken::SelectionMemoryConfigV1 config{};
         config.maxEmitters = 2;
-        config.maxGlobalRows = 2;
-        config.maxEmitterRowsPerEmitter = 1;
         config.maxPendingDeltasTotal = 8;
         config.maxPendingGlobalPerRow = pendingPerRow;
         return table.Reset(config);

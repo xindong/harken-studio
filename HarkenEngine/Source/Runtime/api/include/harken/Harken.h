@@ -243,8 +243,9 @@ typedef struct VnConfig {
     uint32_t maxActions;            /* Action registry capacity; 0 = 256 */
     uint32_t maxContainers;         /* container-asset registry capacity; 0 = 64 */
     uint32_t maxContainerChildren;  /* global container-child pool; 0 = 1024 */
-    uint32_t containerCursorCapacity; /* per (container, emitter) selection-state
-                                       * entries; 0 = 256 */
+    uint32_t containerCursorCapacity; /* retained legacy value (0 = 256), validated
+                                      * and traced; current selection histories
+                                      * grow on demand, without this quota */
     uint32_t pendingActionCapacity; /* current struct: required-zero legacy
                                      * tombstone; legacy prefix vintages:
                                      * delayed-Step queue depth; 0 = 256 */
