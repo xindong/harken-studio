@@ -206,7 +206,6 @@ QJsonObject IPCServer::handleGetNodeGraph(const QJsonObject& args)
     {
         if (auto* bp = mainWindow_->blueprintCanvas())
         {
-            Q_UNUSED(bp);
             auto* project = projectManager_ ? projectManager_->currentProject() : nullptr;
             if (project)
             {
@@ -220,8 +219,10 @@ QJsonObject IPCServer::handleGetNodeGraph(const QJsonObject& args)
                         obj["id"]    = static_cast<qint64>(c->objectID);
                         obj["title"] = c->name;
                         obj["kind"]  = QStringLiteral("project_item");
-                        obj["x"]     = c->canvasPos.x();
-                        obj["y"]     = c->canvasPos.y();
+                        if (const auto position = bp->nodePosition(c->objectID)) {
+                            obj["x"] = position->x();
+                            obj["y"] = position->y();
+                        }
                         const auto* mc = c->comp<VMixNode>();
                         obj["output_bus_id"]    = static_cast<qint64>(mc ? mc->outputBusId : 0);
                         obj["output_bus_override"] = c->isOutputBusOverride();

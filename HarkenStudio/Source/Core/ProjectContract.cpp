@@ -184,17 +184,6 @@ QList<LocatedValue> locatedValues(const QJsonObject& root,
     return values;
 }
 
-QJsonObject rootSemanticProjection(const QJsonObject& document)
-{
-    QJsonObject result = document;
-    QJsonObject content = result.value(QStringLiteral("content")).toObject();
-    QJsonObject metadata = content.value(QStringLiteral("metadata")).toObject();
-    metadata.remove(QStringLiteral("modifiedDate"));
-    content.insert(QStringLiteral("metadata"), metadata);
-    result.insert(QStringLiteral("content"), content);
-    return result;
-}
-
 QJsonArray documentSemanticProjection(const QJsonObject& document, int schemaVersion,
                                       QList<ProjectSchemaReferenceRule>* referenceRules = nullptr)
 {
@@ -583,8 +572,7 @@ QStringList ProjectContractRegistry::validateIncrementalSnapshot(
     }
     bool reuseGlobalValidation = removedPaths.isEmpty()
         && baseline.requireCurrentSchema_ == requireCurrentSchema
-        && rootSemanticProjection(projectRootDocument)
-            == rootSemanticProjection(baseline.rootDocument_);
+        && projectRootDocument == baseline.rootDocument_;
     for (auto document = changedDocuments.cbegin(); document != changedDocuments.cend(); ++document) {
         validatePath(document.key());
         if (!reuseGlobalValidation) continue;

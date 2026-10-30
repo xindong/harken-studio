@@ -48,7 +48,7 @@ struct PackBuildPlan
     QJsonObject groupMetadata;
 
     bool ready() const;
-    QJsonObject toJson() const;
+    QJsonObject toJson(const ProjectData& project) const;
 };
 
 struct PackBuildPlanKey

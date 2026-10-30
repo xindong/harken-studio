@@ -2,7 +2,6 @@
 #pragma once
 
 #include <QUndoCommand>
-#include <QPointF>
 #include <QString>
 
 #include <cstdint>
@@ -132,25 +131,6 @@ private:
 
     float sendLevel_ = 0.0f;
     bool  hadSend_   = false;
-
-    bool firstRedo_ = true;
-};
-
-class BlueprintNodePositionCommand : public QUndoCommand
-{
-public:
-    BlueprintNodePositionCommand(uint32_t itemId,
-                                 const QPointF& oldPos,
-                                 const QPointF& newPos,
-                                 QUndoCommand* parent = nullptr);
-
-    void undo() override;
-    void redo() override;
-
-private:
-    uint32_t itemId_ = 0;
-    QPointF  oldPos_;
-    QPointF  newPos_;
 
     bool firstRedo_ = true;
 };

@@ -197,7 +197,7 @@ struct Builder
                                const std::vector<harkenstudio::ObjectId>& path) const
     {
         return {item.runtimeId(), item.objectID, item.guid, item.type,
-                item.name, item.objectPath, path};
+                item.name, path};
     }
 
     const ProjectItem* byObject(uint32_t objectId, harkenstudio::ObjectId actionId,
@@ -705,7 +705,6 @@ QJsonObject ActionClosureMember::toJson() const
             {QStringLiteral("guid"), guid.toString(QUuid::WithoutBraces)},
             {QStringLiteral("type"), itemTypeName(type)},
             {QStringLiteral("name"), name},
-            {QStringLiteral("objectPath"), objectPath},
             {QStringLiteral("referencePath"), pathJson(referencePath)}};
 }
 
@@ -756,8 +755,20 @@ bool ActionClosurePlan::ready() const
     });
 }
 
-QJsonObject ActionClosurePlan::toJson() const
+QJsonObject ActionClosurePlan::toJson(const ProjectData& project) const
 {
+    const auto index = buildIndex(project);
+    const auto members = [&index](const std::vector<ActionClosureMember>& source) {
+        QJsonArray result;
+        for (const auto& member : source) {
+            auto value = member.toJson();
+            const auto found = index.guid.find(member.guid);
+            if (found != index.guid.end())
+                value.insert(QStringLiteral("objectPath"), found->second->objectPath());
+            result.append(value);
+        }
+        return result;
+    };
     const auto values = [](const auto& source) {
         QJsonArray result;
         for (const auto& value : source)
@@ -768,10 +779,10 @@ QJsonObject ActionClosurePlan::toJson() const
                 {QStringLiteral("platform_id"), variant.platform},
                 {QStringLiteral("language"), variant.language}}},
             {QStringLiteral("rootActionStableId"), objectIdString(rootActionStableId)},
-            {QStringLiteral("actions"), values(actions)},
-            {QStringLiteral("objects"), values(objects)},
+            {QStringLiteral("actions"), members(actions)},
+            {QStringLiteral("objects"), members(objects)},
             {QStringLiteral("media"), values(media)},
-            {QStringLiteral("controlObjects"), values(controlObjects)},
+            {QStringLiteral("controlObjects"), members(controlObjects)},
             {QStringLiteral("controlMedia"), values(controlMedia)},
             {QStringLiteral("edges"), values(edges)},
             {QStringLiteral("diagnostics"), values(diagnostics)},

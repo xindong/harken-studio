@@ -135,7 +135,7 @@ QJsonObject IPCServer::handleGetActionPackPlan(const QJsonObject& args)
     for (const auto& variant : plan.variants) {
         if (variant.actionStableId != stableId)
             continue;
-        QJsonObject value = variant.closure.toJson();
+        QJsonObject value = variant.closure.toJson(*project);
         value.insert(QStringLiteral("platform_id"), variant.variant.platform);
         value.insert(QStringLiteral("platform_name"), variant.platformDefinition.name);
         value.insert(QStringLiteral("base_platform"), ProjectPlatformSemantics::basePlatformName(variant.platformDefinition.basePlatform));
@@ -214,7 +214,6 @@ QJsonObject IPCServer::handleCreateProject(const QJsonObject& args)
         config.sampleRate = args.value("sample_rate").toInt(48000);
         config.author = args.value("author").toString();
         config.description = args.value("description").toString();
-        config.enableLFE = args.value("enable_lfe").toBool(true);
 
         const QString cc = args.value("channel_config").toString().toLower();
         if (cc == QStringLiteral("mono"))
@@ -417,18 +416,13 @@ QJsonObject IPCServer::handleGetProjectInfo(const QJsonObject& args)
         {"project_open", true},
         {"name", project->name},
         {"path", project->projectPath},
-        {"version", project->version},
         {"author", project->author},
         {"description", project->description},
         {"packs", packs},
         {"actions", actions},
-        {"audio_folder", project->audioFolder},
-        {"pack_folder", project->packFolder},
         {"platforms", platformsArr},
         {"sample_rate", project->sampleRate},
-        {"channel_config", static_cast<int>(project->channelConfig)},
-        {"enable_lfe", project->enableLFE},
-        {"project_template_id", project->projectTemplateId}
+        {"channel_config", static_cast<int>(project->channelConfig)}
     });
 }
 
@@ -852,7 +846,6 @@ QJsonObject IPCServer::handleGetItemInfo(const QJsonObject& args)
         {"asset_path", item->type == ProjectItem::Type::Sound
                            ? item->sourcePath
                            : item->parent ? QString{} : project->itemFolderPath(item)},
-        {"expanded", item->expanded},
         {"object_id", static_cast<qint64>(itemShortID(item))},
         {"authoring_handle", static_cast<qint64>(item->objectID)},
         {"source_id", static_cast<qint64>(item->sourceID)},

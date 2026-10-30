@@ -88,7 +88,6 @@ ProjectItem* createItem(ProjectData& project, const AttenuationSnapshot& def)
     item->attachDefaultComponents();
     item->guid = def.guid;
     item->objectID = project.generateObjectID();
-    item->objectPath = name;
     item->parent = nullptr;
     if (!item->comp<VAttenuation>()->fromJson(def.toJson()))
         return nullptr;
@@ -278,7 +277,6 @@ VAttenuation* AttenuationStore::upsertJson(ProjectData* project, const QString& 
         if (item->name != def.name)
         {
             item->name = def.name;
-            item->objectPath = def.name;
             item->markDirty();
         }
         item->markDirty();
@@ -425,7 +423,7 @@ QJsonArray AttenuationStore::referencesJson(
         refs.append(QJsonObject{
             {"object_id", static_cast<qint64>(item->objectID)},
             {"name", item->name},
-            {"object_path", item->objectPath},
+            {"object_path", item->objectPath()},
             {"binding", reference.binding},
             {"attenuation", reference.attenuationName},
             {"attenuation_guid", guidString(reference.attenuationGuid)}
@@ -465,7 +463,6 @@ bool AttenuationStore::rename(ProjectData* project,
     {
         const QString previous = item->name;
         item->name = displayName;
-        item->objectPath = displayName;
         item->markDirty();
         if (projectManager)
             emit projectManager->itemRenamed(item, previous);

@@ -837,11 +837,7 @@ ProjectManager::ProjectManager(QObject* parent)
         if (!PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type))
             refreshGroups();
     });
-    connect(this, &ProjectManager::itemCreated, this, &ProjectManager::recordCreatedNameHistory);
     connect(this, &ProjectManager::itemMoved, this, refreshGroups);
-    connect(this, &ProjectManager::itemDeleted, this, [this](ProjectItem* item) {
-        recordDeletedNameHistory(item);
-    });
     initializeRuntimeSync();
     connect(this, &ProjectManager::itemPropertyPreviewed, this, [this](ProjectItem* item) {
         if (m_itemSaveState && item) m_itemSaveState->recordPreview(item->guid);
@@ -996,7 +992,7 @@ QString ProjectManager::nameConflictMessage(const QString& name,
                           "%4 must all have different names.")
                .arg(name,
                     ItemTypeCatalog::displayName(conflict.type),
-                    conflict.objectPath,
+                    conflict.objectPath(),
                     ItemTypeCatalog::nameNamespaceDisplayName(namespaceForType(type)));
 }
 
@@ -1470,22 +1466,6 @@ bool ProjectManager::validateMoveConstraints(const ProjectItem* item, const Proj
     return validateStructuralPlacement(item->type, newParent, reason, item);
 }
 
-static QString computeObjectPath(const ProjectItem* parent, const QString& name)
-{
-    if (!parent)
-        return QStringLiteral("\\") + name;
-    return parent->objectPath + QStringLiteral("\\") + name;
-}
-
-static void recomputeObjectPathRecursive(ProjectItem* item)
-{
-    if (!item) return;
-    item->objectPath = computeObjectPath(item->parent, item->name);
-    for (auto& child : item->children) {
-        recomputeObjectPathRecursive(child.get());
-    }
-}
-
 bool ProjectManager::createProject(const ProjectConfig& config)
 {
     QString platformError;
@@ -1560,16 +1540,11 @@ bool ProjectManager::createMainProjectFile(const ProjectConfig& config, const QS
     project.name = config.name;
     project.author = config.author;
     project.description = config.description;
-    project.createdDate = QDateTime::currentDateTime().toString(Qt::ISODate);
-    project.audioFolder = kLayers;
-    project.packFolder = "Packs";
     project.projectPath = QDir(projectRoot).filePath(config.name + ".hsp");
 
     project.platforms = config.platforms;
     project.sampleRate        = config.sampleRate;
     project.channelConfig     = config.channelConfig;
-    project.enableLFE         = config.enableLFE;
-    project.projectTemplateId = config.templateId;
 
     m_projectIndex = std::make_unique<VNX::ProjectIndex>();
     if (!m_projectIndex->loadFromCache(projectRoot)) {
@@ -1790,16 +1765,11 @@ PreparedProject ProjectManager::prepareProject(const ProjectConfig& config,
     project.name = config.name;
     project.author = config.author;
     project.description = config.description;
-    project.createdDate = QDateTime::currentDateTime().toString(Qt::ISODate);
-    project.audioFolder = kLayers;
-    project.packFolder = QStringLiteral("Packs");
     project.projectPath = root.filePath(config.name + QStringLiteral(".hsp"));
     project.projectId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     project.platforms = config.platforms;
     project.sampleRate = config.sampleRate;
     project.channelConfig = config.channelConfig;
-    project.enableLFE = config.enableLFE;
-    project.projectTemplateId = config.templateId;
     ensureDefaultMasterBus(project);
 
     if (!config.templateId.isEmpty() && !config.templateData.isEmpty()) {
@@ -2326,23 +2296,8 @@ bool ProjectManager::saveProject()
     for (const auto& path : m_externalSavePaths)
         if (full && !completeFiles.contains(path) && path != projectFileName && path != registryPath
             && QFileInfo(projectRoot.filePath(path)).isFile()) plan.removed.insert(path);
-    bool unchangedProject = false;
-    if (baseline && plan.files.isEmpty() && plan.removed.isEmpty()
-        && plan.directories == baseline->directories
-        && !m_externalSavePaths.contains(projectFileName)) {
-        const auto& savedRoot = baseline->validation.projectRoot();
-        auto document = plan.projectDocument;
-        auto content = document.value(QStringLiteral("content")).toObject();
-        auto metadata = content.value(QStringLiteral("metadata")).toObject();
-        metadata.insert(QStringLiteral("modifiedDate"),
-            savedRoot.value(QStringLiteral("content")).toObject()
-                .value(QStringLiteral("metadata")).toObject().value(QStringLiteral("modifiedDate")));
-        content.insert(QStringLiteral("metadata"), metadata);
-        document.insert(QStringLiteral("content"), content);
-        unchangedProject = document == savedRoot;
-        if (unchangedProject) plan.projectDocument = savedRoot;
-    }
-    if (!unchangedProject)
+    if (!baseline || plan.projectDocument != baseline->validation.projectRoot()
+        || m_externalSavePaths.contains(projectFileName))
         plan.addFile(projectFileName, ProjectSavePlan::encode(plan.projectDocument), baseline,
                      m_externalSavePaths.contains(projectFileName));
 
@@ -2611,43 +2566,6 @@ auto guardFieldGroupIdentities(const std::shared_ptr<ProjectData>& project,
             project->nextObjectID = nextObject;
         }
     });
-}
-
-void appendPublishedNameHistory(ProjectData* project,
-                                      const ProjectItem& item,
-                                      const QString& event,
-                                      const QString& priorName = {})
-{
-    if (!project || item.type != ProjectItem::Type::Action) return;
-    ActionPublishedNameHistoryRow row;
-    row.name = item.name;
-    row.objectGuid = item.guid;
-    row.nameBindingRevision = item.nameBindingRevision;
-    row.event = event;
-    row.priorName = priorName;
-    project->actionPublishedNameHistory.push_back(std::move(row));
-}
-
-void recordNamedObjectCreated(ProjectData* project, ProjectItem& item)
-{
-    if (!project || item.type != ProjectItem::Type::Action) return;
-    item.nameBindingRevision = 1;
-    appendPublishedNameHistory(project, item, QStringLiteral("created"));
-}
-
-void recordNamedObjectRenamed(ProjectData* project, ProjectItem& item, const QString& fromName)
-{
-    if (item.type != ProjectItem::Type::Action || fromName == item.name) return;
-    if (item.nameBindingRevision < std::numeric_limits<uint64_t>::max())
-        ++item.nameBindingRevision;
-    appendPublishedNameHistory(
-        project, item, QStringLiteral("renamed_from"), fromName);
-}
-
-void recordNamedObjectDeleted(ProjectData* project, ProjectItem& item)
-{
-    if (!project || item.type != ProjectItem::Type::Action) return;
-    appendPublishedNameHistory(project, item, QStringLiteral("deleted"));
 }
 
 }
@@ -2962,7 +2880,6 @@ ProjectItem* ProjectManager::createItemImpl(ProjectItem* parent, const QString& 
         identityGuard.dismiss();
         m_currentProject->setObjectFileLocation(newItem.get(), parentFolder, {});
         newItem->markDirty();
-        newItem->objectPath = computeObjectPath(nullptr, newItem->name);
         emit itemCreated(newItem.get());
         auto* command = new CreateProjectItemCommand(nullptr, newItem, undoParent);
         if (!undoParent)
@@ -2975,7 +2892,6 @@ ProjectItem* ProjectManager::createItemImpl(ProjectItem* parent, const QString& 
     }
     m_currentProject->setObjectFileLocation(newItem.get(), m_currentProject->objectFolder(parent), {});
     identityGuard.dismiss();
-    newItem->objectPath = computeObjectPath(parent, newItem->name);
     emit itemCreated(newItem.get());
 
     auto* command = new CreateProjectItemCommand(parent, newItem, undoParent);
@@ -3036,7 +2952,6 @@ ProjectItem* ProjectManager::createAudioItem(ProjectItem* parent, const QString&
     }
     m_currentProject->setObjectFileLocation(newItem.get(), m_currentProject->objectFolder(parent), {});
     identityGuard.dismiss();
-    newItem->objectPath = computeObjectPath(parent, newItem->name);
 
     QString ownerName = QStringLiteral("NULL");
     if (m_currentProject) {
@@ -3110,7 +3025,6 @@ ProjectItem* ProjectManager::createRootAudioItem(const QString& name,
 
     identityGuard.dismiss();
     m_currentProject->setObjectFileLocation(newItem.get(), nullptr, {});
-    newItem->objectPath = computeObjectPath(nullptr, newItem->name);
     emit itemCreated(newItem.get());
     return newItem.get();
 }
@@ -3122,8 +3036,6 @@ void ProjectManager::applyRenameSideEffects(ProjectItem* item,
     if (!item) return;
 
     auto& self = ProjectManager::instance();
-
-    recomputeObjectPathRecursive(item);
 
     // Extension point ④: buses rename inside the engine BusTree; other runtime-
     // bearing types re-register under the new name.
@@ -3213,25 +3125,6 @@ void ProjectManager::applyRenameSideEffects(ProjectItem* item,
             AttenuationStore::notifyReferencesChanged(
                 project, item->guid, &self, {QStringLiteral("attenuationRef")});
     }
-
-    if (fromName != toName)
-        recordNamedObjectRenamed(self.currentProject(), *item, fromName);
-}
-
-void ProjectManager::recordCreatedNameHistory(ProjectItem* item)
-{
-    if (!m_currentProject || !item ||
-        item->type != ProjectItem::Type::Action) return;
-    const auto& history = m_currentProject->actionPublishedNameHistory;
-    if (std::none_of(history.begin(), history.end(),
-        [&](const auto& row) { return row.objectGuid == item->guid; }))
-        recordNamedObjectCreated(m_currentProject.get(), *item);
-}
-
-void ProjectManager::recordDeletedNameHistory(ProjectItem* item)
-{
-    if (!item || !m_currentProject) return;
-    recordNamedObjectDeleted(m_currentProject.get(), *item);
 }
 
 bool ProjectManager::renameItem(ProjectItem* item, const QString& newName, QString* error)
@@ -4284,9 +4177,6 @@ std::shared_ptr<ProjectItem> ProjectManager::cloneSubtreeDetached(
         node->guid     = QUuid::createUuid();
         guidMap.insert(oldGuid, node->guid);
         node->objectID = m_currentProject->generateObjectID();
-        if (node->type == ProjectItem::Type::Action || node->type == ProjectItem::Type::Variable)
-            node->nameBindingRevision = 1;
-        node->objectPath.clear();
         const size_t count = std::min(source->children.size(), node->children.size());
         for (size_t i = 0; i < count; ++i)
             remint(source->children[i].get(), node->children[i].get());
@@ -4541,8 +4431,6 @@ std::vector<ProjectItem*> ProjectManager::pasteClipboard(ProjectItem* target)
         }
         identityGuard.dismiss();
 
-        recomputeObjectPathRecursive(clone.get());
-
         if (!pasteMacroStarted) {
             UndoRedoManager::instance().beginMacro(tr("Paste"));
             pasteMacroStarted = true;
@@ -4606,7 +4494,6 @@ std::vector<ProjectItem*> ProjectManager::pasteClipboardAtBucketRoot(const QStri
 
         identityGuard.dismiss();
         clone->markDirty();
-        recomputeObjectPathRecursive(clone.get());
 
         if (!pasteMacroStarted) {
             UndoRedoManager::instance().beginMacro(tr("Paste"));
@@ -4782,8 +4669,6 @@ ProjectItem* ProjectManager::duplicateItem(ProjectItem* src)
             return nullptr;
         identityGuard.dismiss();
 
-        recomputeObjectPathRecursive(clone.get());
-
         emit itemCreated(clone.get());
         UndoRedoManager::instance().push(new CreateProjectItemCommand(parent, clone));
         requestResync(clone.get());
@@ -4815,7 +4700,6 @@ ProjectItem* ProjectManager::duplicateItem(ProjectItem* src)
 
     identityGuard.dismiss();
     clone->markDirty();
-    recomputeObjectPathRecursive(clone.get());
 
     emit itemCreated(clone.get());
     UndoRedoManager::instance().push(new CreateProjectItemCommand(nullptr, clone));
@@ -5646,7 +5530,6 @@ bool ProjectManager::moveItemInternal(
         rollback();
         return false;
     }
-    recomputeObjectPathRecursive(itemRef.get());
 
     oldParent->markDirty();
     newParent->markDirty();

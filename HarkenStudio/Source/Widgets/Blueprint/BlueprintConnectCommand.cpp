@@ -426,32 +426,4 @@ void BlueprintSendDisconnectCommand::undo()
         fromBusId_, targetBusId_, sendLevel_);
 }
 
-BlueprintNodePositionCommand::BlueprintNodePositionCommand(uint32_t itemId,
-                                                           const QPointF& oldPos,
-                                                           const QPointF& newPos,
-                                                           QUndoCommand* parent)
-    : QUndoCommand(QObject::tr("Blueprint Move Node"), parent)
-    , itemId_(itemId)
-    , oldPos_(oldPos)
-    , newPos_(newPos)
-{
-}
-
-void BlueprintNodePositionCommand::redo()
-{
-    auto* item = findItem(itemId_);
-    if (!item) return;
-    if (firstRedo_) firstRedo_ = false;
-    item->canvasPos = newPos_;
-    emitChanged(item, QStringLiteral("canvasPos"));
-}
-
-void BlueprintNodePositionCommand::undo()
-{
-    auto* item = findItem(itemId_);
-    if (!item) return;
-    item->canvasPos = oldPos_;
-    emitChanged(item, QStringLiteral("canvasPos"));
-}
-
 }

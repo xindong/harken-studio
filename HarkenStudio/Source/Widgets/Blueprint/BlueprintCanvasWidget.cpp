@@ -202,6 +202,12 @@ QString pathPositionKey(const QString& projectId, CanvasFlowDirection direction,
         + QString::fromLatin1(QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex());
 }
 
+QString chainPositionKey(const ProjectData& project, const ProjectItem& item)
+{
+    return QStringLiteral("Blueprint/SignalChainLayout/Nodes/%1/%2")
+        .arg(project.projectId, item.guid.toString(QUuid::WithoutBraces));
+}
+
 QByteArray pathEdgeIdentity(const SignalPathGraph& graph, size_t index)
 {
     const auto& edge = graph.edges[index];
@@ -670,6 +676,7 @@ void BlueprintCanvasWidget::materializeFromSource_()
     const bool labelWidthChanged = nodeContentLabelWidth_ != labelWidth;
     nodeContentLabelWidth_ = labelWidth;
     int globalIndex = 0;
+    const QSettings settings;
     for (auto const& d : nodes) {
         NodeItem* item = nullptr;
         if (reusePathScene && d.occurrenceIndex) {
@@ -713,9 +720,6 @@ void BlueprintCanvasWidget::materializeFromSource_()
                     pathSource_->graph().nodes[*d.occurrenceIndex].key.objectGuid));
         }
 
-        // A user-dragged card persists its scene position in canvasPos (an
-        // editor-only project field, never read by the runtime); honour it as an
-        // override, otherwise fall back to the auto-arranged column position.
         const bool isRealNode = (d.id != 0);
         ProjectItem* owner = nullptr;
         if (isRealNode && !d.occurrenceIndex) {
@@ -725,9 +729,11 @@ void BlueprintCanvasWidget::materializeFromSource_()
         }
 
         QPointF pos = d.hasPosition ? d.position : defaultLayoutPos(globalIndex);
-        if (owner != nullptr &&
-            (owner->canvasPos.x() != 0.0 || owner->canvasPos.y() != 0.0)) {
-            pos = owner->canvasPos;
+        QString positionKey;
+        if (owner && project) {
+            positionKey = chainPositionKey(*project, *owner);
+            const auto stored = settings.value(positionKey);
+            if (stored.canConvert<QPointF>()) pos = stored.toPointF();
         }
         if (created) {
             scene_->addItem(item);
@@ -756,12 +762,10 @@ void BlueprintCanvasWidget::materializeFromSource_()
                         if (chainRefreshPending_) scheduleChainRefresh_();
                     });
             }
-            const uint32_t nid = d.id;
-            if (!d.occurrenceIndex) item->setDragCompleteCallback(
-                [nid](const QPointF& oldPos, const QPointF& newPos) {
+            if (!positionKey.isEmpty()) item->setDragCompleteCallback(
+                [this, positionKey](const QPointF& oldPos, const QPointF& newPos) {
                     if (oldPos == newPos) return;
-                    UndoRedoManager::instance().push(
-                        new BlueprintNodePositionCommand(nid, oldPos, newPos));
+                    commitLayoutPositions_({{positionKey, newPos}}, tr("Move Blueprint Node"));
                 });
         } else {
             // Nodes without a backing object stay inert.
@@ -1140,7 +1144,6 @@ void BlueprintCanvasWidget::onItemPropertyChanged(ProjectItem* item,
         QStringLiteral("spatialAttenuationRef"),
         QStringLiteral("attenuationRef"),
         QStringLiteral("clips"),
-        QStringLiteral("canvasPos"),
         QStringLiteral("pasteProperties"),
         QStringLiteral("mode"),
         QStringLiteral("playType"),
@@ -1411,7 +1414,7 @@ void BlueprintCanvasWidget::dropEvent(QDropEvent* event)
     if (!created.isEmpty()) {
         rebuildFromProject();
         if (targetContainerID == 0) {
-            PathPositions positions;
+            LayoutPositions positions;
             auto position = gridSnapEnabled_ ? snapped : scenePos;
             const bool vertical = flowDir_ == CanvasFlowDirection::TB || flowDir_ == CanvasFlowDirection::BT;
             const auto& nodes = pathSource_->graph().nodes;
@@ -1425,7 +1428,7 @@ void BlueprintCanvasWidget::dropEvent(QDropEvent* event)
                 position += vertical ? QPointF(size.width() + kGridSpacing * 2.0, 0.0)
                     : QPointF(0.0, size.height() + kGridSpacing * 2.0);
             }
-            applyPathPositions_(positions);
+            applyLayoutPositions_(positions);
         }
         setSelectedProjectItems(created);
         onSceneSelectionChanged();
@@ -1817,7 +1820,7 @@ void BlueprintCanvasWidget::showCreatedItem_(ProjectItem* item, std::optional<QP
     if (!node || !node->isVisible()) return;
     selectedPathKeys_ = {found->key};
     selectedPathEdgeKeys_.clear();
-    if (position) applyPathPositions_({{pathPositionKeys_[index], *position}});
+    if (position) applyLayoutPositions_({{pathPositionKeys_[index], *position}});
     {
         const QSignalBlocker blocker(scene_);
         scene_->clearSelection();
@@ -1845,38 +1848,32 @@ void BlueprintCanvasWidget::showCreatedItem_(ProjectItem* item, std::optional<QP
 void BlueprintCanvasWidget::resetNodeLayout()
 {
     if (activeSource_ == pathSource_.get()) {
-        PathPositions positions;
+        LayoutPositions positions;
         QSettings settings;
         for (const auto& key : pathPositionKeys_) {
             if (settings.contains(key)) positions.emplace_back(key, QVariant{});
         }
         for (const auto& key : gainPositionKeys_)
             if (!key.isEmpty() && settings.contains(key)) positions.emplace_back(key, QVariant());
-        commitPathPositions_(positions, tr("Reset Blueprint Layout"));
+        commitLayoutPositions_(positions, tr("Reset Blueprint Layout"));
         return;
     }
     auto& pm = ProjectManager::instance();
     auto* project = pm.currentProject();
     if (project == nullptr) return;
-    std::vector<std::pair<uint32_t, QPointF>> toReset;
+    LayoutPositions positions;
+    QSettings settings;
     for (auto const& kv : nodeMap_) {
         if (kv.second == nullptr || kv.first.id == 0) continue;
         ProjectItem* owner = (kv.first.kind == NodeKind::ProjectItem)
                                  ? canvasFindItem(project, kv.first.id)
                                  : pm.findBusItem(kv.first.id);
-        if (owner != nullptr &&
-            (owner->canvasPos.x() != 0.0 || owner->canvasPos.y() != 0.0)) {
-            toReset.emplace_back(kv.first.id, owner->canvasPos);
+        if (owner) {
+            const auto key = chainPositionKey(*project, *owner);
+            if (settings.contains(key)) positions.emplace_back(key, QVariant{});
         }
     }
-    if (toReset.empty()) return;
-    auto& undo = UndoRedoManager::instance();
-    undo.beginMacro(QStringLiteral("Reset Blueprint Layout"));
-    for (auto const& entry : toReset) {
-        undo.push(new BlueprintNodePositionCommand(
-            entry.first, entry.second, QPointF(0.0, 0.0)));
-    }
-    undo.endMacro();
+    commitLayoutPositions_(positions, tr("Reset Blueprint Layout"));
 }
 
 void BlueprintCanvasWidget::zoomToFit()
@@ -2416,7 +2413,7 @@ void BlueprintCanvasWidget::mouseReleaseEvent(QMouseEvent* event)
         }
         nodeDragOrigin_ = nullptr;
         nodeDragSources_.clear();
-        PathPositions positions;
+        LayoutPositions positions;
         const double cell = gridSpacing();
         for (size_t index = 0; index < pathDragStartPositions_.size(); ++index) {
             const auto pos = signalPathNode(index)->pos();
@@ -2445,7 +2442,7 @@ void BlueprintCanvasWidget::mouseReleaseEvent(QMouseEvent* event)
         }
         pathDragStartPositions_.clear();
         gainDragStartPositions_.clear();
-        commitPathPositions_(positions, tr("Move Blueprint Nodes"));
+        commitLayoutPositions_(positions, tr("Move Blueprint Nodes"));
         if (pathRefreshPending_) {
             queuePathRefresh_(pathContentOnlyRefresh_);
         }
@@ -2479,29 +2476,30 @@ void BlueprintCanvasWidget::layoutPathNodes_()
     pathNodeLayoutSizes_ = std::move(sizes);
 }
 
-void BlueprintCanvasWidget::applyPathPositions_(const PathPositions& positions)
+void BlueprintCanvasWidget::applyLayoutPositions_(const LayoutPositions& positions)
 {
     QSettings settings;
     for (const auto& [key, position] : positions) {
         if (position.isValid()) settings.setValue(key, position);
         else settings.remove(key);
     }
-    layoutPathNodes_();
+    if (activeSource_ == pathSource_.get()) layoutPathNodes_();
+    else scheduleChainRefresh_();
 }
 
-void BlueprintCanvasWidget::commitPathPositions_(const PathPositions& positions, const QString& description)
+void BlueprintCanvasWidget::commitLayoutPositions_(const LayoutPositions& positions, const QString& description)
 {
     if (positions.empty()) return;
     QSettings settings;
-    PathPositions previous;
+    LayoutPositions previous;
     for (const auto& [key, position] : positions)
         previous.emplace_back(key, settings.value(key));
-    applyPathPositions_(positions);
+    applyLayoutPositions_(positions);
     const QPointer<BlueprintCanvasWidget> canvas(this);
     UndoRedoManager::instance().push(new RuntimeActionCommand(description,
-        [canvas, previous]() { if (canvas) canvas->applyPathPositions_(previous); },
-        [canvas, positions]() { if (canvas) canvas->applyPathPositions_(positions); },
-        0, nullptr, [canvas]() { return !canvas.isNull(); }));
+        [canvas, previous]() { if (canvas) canvas->applyLayoutPositions_(previous); },
+        [canvas, positions]() { if (canvas) canvas->applyLayoutPositions_(positions); },
+        0, nullptr, [canvas]() { return !canvas.isNull(); }, QSet<QUuid>{}));
 }
 
 bool BlueprintCanvasWidget::evaluateConnect_(NodePin* source, NodePin* target,
@@ -3677,6 +3675,13 @@ NodeItem* BlueprintCanvasWidget::signalPathNode(size_t occurrenceIndex) const
     const NodeKind kind = node.type == ProjectItemType::Bus ? NodeKind::Bus : NodeKind::ProjectItem;
     const auto found = nodeMap_.find({kind, node.objectID, occurrenceIndex});
     return found == nodeMap_.end() ? nullptr : found->second;
+}
+
+std::optional<QPointF> BlueprintCanvasWidget::nodePosition(uint32_t objectId) const
+{
+    for (const auto& [key, node] : nodeMap_)
+        if (key.id == objectId && node && node->isVisible()) return node->pos();
+    return std::nullopt;
 }
 
 void BlueprintCanvasWidget::setTransitionWatch(const TransitionSemantics::TransitionWatchView& view)

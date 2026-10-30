@@ -4189,7 +4189,6 @@ bool MainWindow::createProjectFromConfig(
         {"author",           config.author},
         {"description",      config.description},
         {"channel_config",   channelConfigKey(config.channelConfig)},
-        {"enable_lfe",       config.enableLFE},
         {"platforms", platforms},
         {"template_id",      config.templateId},
         {"template_data",    config.templateData},

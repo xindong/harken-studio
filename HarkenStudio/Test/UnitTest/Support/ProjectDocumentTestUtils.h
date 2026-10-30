@@ -30,8 +30,6 @@ inline QJsonObject projectDocument(const QString& type,
     };
     QJsonObject authoredContent = content;
     if (schemaVersion >= VNX::ProjectSchema::kProjectSchemaVersion) {
-        header.insert(QStringLiteral("propertyModel"),
-                      QLatin1String(VNX::ProjectSchema::kProjectPropertyModel));
         const QString itemType = content.value(QStringLiteral("type")).toString();
         const bool hasFieldGroups = itemType == QStringLiteral("Sound")
             || itemType == QStringLiteral("Container") || itemType == QStringLiteral("Layer")
@@ -53,13 +51,15 @@ inline QJsonObject projectDocument(const QString& type,
             });
         }
     }
-    if (schemaVersion >= 2
-        && (schemaVersion < VNX::ProjectSchema::kProjectSchemaVersion
-            || type == QStringLiteral("project.root")))
+    if (schemaVersion >= 2 && schemaVersion < VNX::ProjectSchema::kProjectSchemaVersion) {
         header.insert(QStringLiteral("savedStudioVersion"), QStringLiteral("1.0.0"));
+        header.insert(QStringLiteral("propertyModel"), QStringLiteral("fieldGroupsV1"));
+    }
     if (schemaVersion >= VNX::ProjectSchema::kProjectSchemaVersion
-        && type == QStringLiteral("project.root"))
+        && type == QStringLiteral("project.root")) {
+        header.insert(QStringLiteral("studioVersion"), QStringLiteral("1.0.0"));
         header.insert(QStringLiteral("packSchemaVersion"), HARKEN_PACK_SCHEMA_VERSION);
+    }
     return {
         {QStringLiteral("harkenDocument"), header},
         {QStringLiteral("content"), authoredContent},
@@ -72,6 +72,10 @@ inline QJsonObject projectRoot(const QJsonObject& content,
                                const QString& projectId = kProjectId)
 {
     QJsonObject configured = content;
+    if (schemaVersion < VNX::ProjectSchema::kProjectSchemaVersion)
+        configured.insert(QStringLiteral("paths"), QJsonObject{
+            {QStringLiteral("audioFolder"), QStringLiteral("Layers")},
+        });
     if (schemaVersion == VNX::ProjectSchema::kProjectSchemaVersion
         && content.value(QStringLiteral("metadata")).isObject()) {
         auto metadata = content.value(QStringLiteral("metadata")).toObject();
@@ -116,18 +120,21 @@ inline bool writeRootBusForProject(const QString& projectPath, int schemaVersion
 
     const QString rootBusId =
         QStringLiteral("99999999-9999-4999-8999-999999999999");
+    QJsonObject content{
+        {QStringLiteral("type"), QStringLiteral("Bus")},
+        {QStringLiteral("guid"), rootBusId},
+        {QStringLiteral("name"), QStringLiteral("Master Audio Bus")},
+        {QStringLiteral("parentRef"), QJsonObject{
+            {QStringLiteral("kind"), QStringLiteral("root")},
+        }},
+    };
+    if (schemaVersion < VNX::ProjectSchema::kProjectSchemaVersion)
+        content.insert(QStringLiteral("componentData"), QJsonObject{});
+    else
+        content.insert(QStringLiteral("components"), QJsonObject{
+            {QStringLiteral("bus"), QJsonObject{}}});
     const QJsonObject bus = projectDocument(
-        QStringLiteral("project.bus"), rootBusId, projectId,
-        QJsonObject{
-            {QStringLiteral("type"), QStringLiteral("Bus")},
-            {QStringLiteral("guid"), rootBusId},
-            {QStringLiteral("name"), QStringLiteral("Master Audio Bus")},
-            {QStringLiteral("parentRef"), QJsonObject{
-                {QStringLiteral("kind"), QStringLiteral("root")},
-            }},
-            {QStringLiteral("componentData"), QJsonObject{}},
-        },
-        schemaVersion);
+        QStringLiteral("project.bus"), rootBusId, projectId, content, schemaVersion);
     QDir projectDirectory(QFileInfo(projectPath).absolutePath());
     if (!projectDirectory.mkpath(QStringLiteral("Busses")))
         return false;

@@ -63,9 +63,6 @@ QString createBaselineProject(const QTemporaryDir& directory)
                   {QStringLiteral("metadata"), QJsonObject{
                       {QStringLiteral("name"), QStringLiteral("Baseline")},
                   }},
-                  {QStringLiteral("paths"), QJsonObject{
-                      {QStringLiteral("audioFolder"), QStringLiteral("Layers")},
-                  }},
                   {QStringLiteral("extensions"), QJsonObject{
                       {QStringLiteral("test"), QJsonObject{
                           {QStringLiteral("payload"), QStringLiteral("must-survive")},
@@ -400,7 +397,7 @@ TEST(ProjectContract, SnapshotDiskAndIncrementalValidationRemainEquivalentAcross
 
     QJsonObject changed = main;
     QJsonObject content = HarkenTest::projectContent(changed);
-    content.insert(QStringLiteral("expanded"), true);
+    content.insert(QStringLiteral("notes"), QStringLiteral("Updated author notes"));
     changed.insert(QStringLiteral("content"), content);
     documents.insert(mainPath, changed);
     compare(true);
@@ -434,10 +431,10 @@ TEST(ProjectContract, SnapshotDiskAndIncrementalValidationRemainEquivalentAcross
     documents.insert(mainPath, main);
     compare(true);
 
-    for (const auto* key : {"savedStudioVersion", "packSchemaVersion"}) {
+    for (const auto* key : {"studioVersion", "savedStudioVersion", "packSchemaVersion", "propertyModel"}) {
         changed = main;
         header = HarkenTest::projectHeader(changed);
-        header.insert(QLatin1String(key), HarkenTest::projectHeader(root).value(QLatin1String(key)));
+        header.insert(QLatin1String(key), QStringLiteral("unexpected"));
         changed.insert(QStringLiteral("harkenDocument"), header);
         documents.insert(mainPath, changed);
         compare(false);
@@ -518,7 +515,7 @@ TEST(ProjectContract, IncrementalDependenciesFollowReferencesWithoutPullingInUnr
         QFileInfo(projectPath).fileName()).isEmpty());
     ASSERT_TRUE(baseline.isValid());
     content = HarkenTest::projectContent(main);
-    content.insert(QStringLiteral("expanded"), true);
+    content.insert(QStringLiteral("notes"), QStringLiteral("Updated author notes"));
     main.insert(QStringLiteral("content"), content);
     VNX::ProjectContractValidationBaseline candidate;
     VNX::ProjectContractValidationDetails details;

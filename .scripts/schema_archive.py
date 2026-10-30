@@ -568,17 +568,6 @@ def file_entries(files: dict[str, bytes]) -> list[dict[str, Any]]:
 
 
 def generated_project_header(source: dict[str, Any], versions: list[int]) -> bytes:
-    models = {
-        document["schema"]["properties"]["harkenDocument"]["properties"]
-        .get("propertyModel", {}).get("const")
-        for document in source["x-harken-documentTypes"]
-    }
-    if models != {None} and (len(models) != 1 or not isinstance(next(iter(models)), str)):
-        raise ValueError("project document propertyModel literals must match")
-    property_model = [] if models == {None} else [
-        "inline constexpr char kProjectPropertyModel[] = "
-        + json.dumps(next(iter(models))) + ";"
-    ]
     lines = [
         "#pragma once",
         "",
@@ -587,7 +576,6 @@ def generated_project_header(source: dict[str, Any], versions: list[int]) -> byt
         "inline constexpr int kProjectSchemaVersion = HARKEN_PROJECT_SCHEMA_VERSION;",
         "inline constexpr int kProjectSchemaVersions[] = {"
         + ", ".join(str(version) for version in versions) + "};",
-        *property_model,
         "",
         "}",
         "",

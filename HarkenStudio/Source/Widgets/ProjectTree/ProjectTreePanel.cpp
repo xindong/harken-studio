@@ -130,7 +130,10 @@ ProjectTreePanel::ProjectTreePanel(PanelId settingsPanelId, QWidget* parent)
 {
 }
 
-ProjectTreePanel::~ProjectTreePanel() = default;
+ProjectTreePanel::~ProjectTreePanel()
+{
+    saveItemExpansion();
+}
 
 void ProjectTreePanel::initPanel()
 {
@@ -676,7 +679,7 @@ void ProjectTreePanel::populateCreatedSubtree(ProjectItem* item, QTreeWidgetItem
                 QTreeWidgetItem* childTree = createTreeItem(child.get());
                 nodeTree->addChild(childTree);
                 addToItemMap(childTree, child.get());
-                childTree->setExpanded(itemExpansion_.value(child->guid, child->expanded));
+                childTree->setExpanded(itemExpansion_.value(child->guid, false));
                 buildChildren(child.get(), childTree);
             }
         };
@@ -953,6 +956,15 @@ void ProjectTreePanel::setFolderExpanded(PhysicalFolder* folder, bool expanded)
     saveFolderExpansion();
 }
 
+void ProjectTreePanel::saveItemExpansion() const
+{
+    if (itemExpansionSettingsKey_.isEmpty()) return;
+    QSettings settings;
+    settings.beginGroup(itemExpansionSettingsKey_);
+    for (auto it = itemMap_.cbegin(); it != itemMap_.cend(); ++it)
+        settings.setValue(it.value()->guid.toString(QUuid::WithoutBraces), it.key()->isExpanded());
+}
+
 void ProjectTreePanel::updateFolderExpansionPaths()
 {
     const auto* project = ProjectManager::instance().currentProject();
@@ -1025,18 +1037,27 @@ void ProjectTreePanel::onFolderDeleted(PhysicalFolder* folder)
 
 void ProjectTreePanel::onProjectOpened(ProjectData* project)
 {
+    clear();
+    itemExpansion_.clear();
     folderExpansionSettingsKey_ = QStringLiteral("ProjectTree/Folders/%1/%2/collapsed")
         .arg(project->projectId, QString::fromLatin1(PanelRegistry::key(settingsPanelId_)));
-    const QSettings settings;
+    itemExpansionSettingsKey_ = QStringLiteral("ProjectTree/Items/%1/%2")
+        .arg(project->projectId, QString::fromLatin1(PanelRegistry::key(settingsPanelId_)));
+    QSettings settings;
     const QStringList paths = settings.value(folderExpansionSettingsKey_).toStringList();
     collapsedFolderPaths_ = QSet<QString>(paths.begin(), paths.end());
+    settings.beginGroup(itemExpansionSettingsKey_);
+    for (const auto& guid : settings.childKeys())
+        itemExpansion_.insert(QUuid::fromString(guid), settings.value(guid).toBool());
     rebuildTree();
 }
 
 void ProjectTreePanel::onProjectClosed()
 {
+    saveItemExpansion();
     clear();
     folderExpansionSettingsKey_.clear();
+    itemExpansionSettingsKey_.clear();
     collapsedFolderPaths_.clear();
     itemExpansion_.clear();
 }
@@ -1068,7 +1089,7 @@ void ProjectTreePanel::rebuildTree()
             QTreeWidgetItem* childTreeItem = createTreeItem(child.get());
             treeItem->addChild(childTreeItem);
             addToItemMap(childTreeItem, child.get());
-            childTreeItem->setExpanded(itemExpansion_.value(child->guid, child->expanded));
+            childTreeItem->setExpanded(itemExpansion_.value(child->guid, false));
 
             addChildren(child.get(), childTreeItem);
         }
@@ -1870,22 +1891,14 @@ void ProjectTreePanel::onItemExpanded(QTreeWidgetItem* item)
 {
     if (PhysicalFolder* folder = folderMap_.value(item)) setFolderExpanded(folder, true);
     if (ProjectItem* projItem = itemMap_.value(item, nullptr))
-    {
-        projItem->expanded = true;
-        emit ProjectManager::instance().itemPropertyChanged(projItem, QStringLiteral("expanded"));
         itemExpansion_.insert(projItem->guid, true);
-    }
 }
 
 void ProjectTreePanel::onItemCollapsed(QTreeWidgetItem* item)
 {
     if (PhysicalFolder* folder = folderMap_.value(item)) setFolderExpanded(folder, false);
     if (ProjectItem* projItem = itemMap_.value(item, nullptr))
-    {
-        projItem->expanded = false;
-        emit ProjectManager::instance().itemPropertyChanged(projItem, QStringLiteral("expanded"));
         itemExpansion_.insert(projItem->guid, false);
-    }
 }
 
 void ProjectTreePanel::onSearchTextChanged(const QString& )

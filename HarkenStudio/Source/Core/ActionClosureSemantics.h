@@ -54,7 +54,6 @@ struct ActionClosureMember
     QUuid guid;
     ProjectItem::Type type = ProjectItem::Type::None;
     QString name;
-    QString objectPath;
     std::vector<harkenstudio::ObjectId> referencePath;
 
     QJsonObject toJson() const;
@@ -120,7 +119,7 @@ struct ActionClosurePlan
     std::vector<ActionClosureCapabilityRequirement> capabilities;
 
     bool ready() const;
-    QJsonObject toJson() const;
+    QJsonObject toJson(const ProjectData& project) const;
 };
 
 class ActionClosureBuildContext

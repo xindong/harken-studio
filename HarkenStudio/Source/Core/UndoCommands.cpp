@@ -66,15 +66,6 @@ ProjectFileBinding* findBindingByRootGuid(ProjectData* proj, const QString& guid
     return nullptr;
 }
 
-void recomputeObjectPathSubtree(ProjectItem* item)
-{
-    if (!item) return;
-    const QString prefix = item->parent ? item->parent->objectPath : QString();
-    item->objectPath = prefix + QStringLiteral("\\") + item->name;
-    for (auto& child : item->children) {
-        recomputeObjectPathSubtree(child.get());
-    }
-}
 }
 
 
@@ -103,7 +94,8 @@ UndoRedoManager::UndoRedoManager()
     connect(&undoStack_, &QUndoStack::indexChanged, this, &UndoRedoManager::refreshReplayAvailability);
     connect(&ProjectPlatformActivity::instance(), &ProjectPlatformActivity::busyChanged,
             this, &UndoRedoManager::refreshReplayAvailability);
-    connect(&undoStack_, &QUndoStack::cleanChanged, this, &UndoRedoManager::cleanChanged);
+    connect(&undoStack_, &QUndoStack::cleanChanged, this, &UndoRedoManager::refreshCleanState);
+    connect(&undoStack_, &QUndoStack::indexChanged, this, &UndoRedoManager::refreshCleanState);
     connect(&undoStack_, &QUndoStack::indexChanged, this, &UndoRedoManager::indexChanged);
 }
 
@@ -146,6 +138,26 @@ bool UndoRedoManager::canUndo() const
 bool UndoRedoManager::canRedo() const
 {
     return undoStack_.canRedo() && canReplayCommand(undoStack_.command(undoStack_.index()));
+}
+
+bool UndoRedoManager::isClean() const
+{
+    const int saved = undoStack_.cleanIndex();
+    if (saved < 0) return false;
+    const int current = undoStack_.index();
+    for (int index = std::min(saved, current); index < std::max(saved, current); ++index) {
+        const auto writes = authoringWriteSet(undoStack_.command(index));
+        if (!writes || !writes->isEmpty()) return false;
+    }
+    return true;
+}
+
+void UndoRedoManager::refreshCleanState()
+{
+    const bool clean = isClean();
+    if (clean_ == clean) return;
+    clean_ = clean;
+    emit cleanChanged(clean);
 }
 
 bool UndoRedoManager::undo()
@@ -204,11 +216,13 @@ void UndoRedoManager::push(QUndoCommand* command)
         else
             macroWrites.reset();
     }
+    if (macroWriteSets_.empty() && isClean()) undoStack_.setClean();
     undoStack_.push(command);
 }
 
 void UndoRedoManager::beginMacro(const QString& text)
 {
+    if (macroWriteSets_.empty() && isClean()) undoStack_.setClean();
     const QScopedValueRollback<const QSet<QUuid>*> scope(authoringWriteSet_, nullptr);
     macroWriteSets_.emplace_back(QSet<QUuid>{});
     undoStack_.beginMacro(text);
@@ -425,7 +439,6 @@ DeleteProjectItemCommand::DeleteProjectItemCommand(
     itemType_ = item->type;
     sourceID_ = item->sourceID;
     objectID_ = item->objectID;
-    expanded_ = item->expanded;
 
     if (parent_) {
         for (size_t i = 0; i < parent_->children.size(); ++i) {
@@ -1067,7 +1080,6 @@ bool MoveItemCommand::undoHierarchy()
             if (ProjectData* project = ProjectManager::instance().currentProject())
                 ProjectManager::restoreReferencesFromLog(playbackRefLog_, project);
             applySelections(oldParent_, oldParentSelections_);
-            recomputeObjectPathSubtree(item_);
 
             return true;
         } else {
@@ -1120,7 +1132,6 @@ bool MoveItemCommand::undoHierarchy()
         redoPlaybackRefLog_ = ProjectManager::cleanupIllegalPlaybackReferences(project);
         applySelections(newParent_, newParentSelections_);
         applyTrackTimeline(oldTrackClips_);
-        recomputeObjectPathSubtree(item_);
 
         return true;
     }
@@ -1241,7 +1252,6 @@ bool MoveItemCommand::redoHierarchy()
         applyTrackTimeline(newTrackClips_);
         playbackRefLog_ = ProjectManager::cleanupIllegalPlaybackReferences(project);
         finishSelectionMove();
-        recomputeObjectPathSubtree(item_);
 
         return true;
     }
@@ -1278,7 +1288,6 @@ bool MoveItemCommand::redoHierarchy()
         ProjectManager::restoreReferencesFromLog(redoPlaybackRefLog_, project);
         finishSelectionMove();
         applyTrackTimeline(newTrackClips_);
-        recomputeObjectPathSubtree(item_);
 
         return true;
     }

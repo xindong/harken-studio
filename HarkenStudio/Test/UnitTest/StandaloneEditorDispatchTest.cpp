@@ -29,11 +29,17 @@
 
 #include <QApplication>
 #include <QEventLoop>
+#include <QDateTime>
+#include <QDirIterator>
+#include <QFile>
+#include <QFileInfo>
 #include <QGraphicsScene>
+#include <QGraphicsSceneMouseEvent>
 #include <QAbstractSocket>
 #include <QJsonDocument>
 #include <QKeyEvent>
 #include <QScopeGuard>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QTableWidget>
 #include <QTcpSocket>
@@ -219,6 +225,112 @@ TEST_F(EditorDockLayoutTest, ColorRefreshPreservesBlueprintEditorsAndStructureRe
     QApplication::sendEvent(blueprint->viewport(), &styleChange);
     drainEvents();
     for (const auto& editor : editors) EXPECT_TRUE(editor.isNull());
+}
+
+TEST_F(EditorDockLayoutTest, LocalBlueprintLayoutPreservesProjectSavePointsAcrossUndoAndReopen)
+{
+    auto& manager = VNX::ProjectManager::instance();
+    auto& undo = VNX::UndoRedoManager::instance();
+    auto* sound = manager.createItem(nullptr, QStringLiteral("LayoutNode"), VNX::ProjectItem::Type::Sound);
+    ASSERT_NE(sound, nullptr);
+    const auto guid = sound->guid;
+    const auto id = sound->objectID;
+    ASSERT_TRUE(manager.saveProject());
+    undo.clearHistory();
+    const QString projectPath = manager.currentProject()->projectPath;
+    const QString projectId = manager.currentProject()->projectId;
+    const auto gridSnap = QSettings().value(QStringLiteral("Blueprint/GridSnapEnabled"));
+    const auto cleanup = qScopeGuard([&] {
+        QSettings settings;
+        settings.remove(QStringLiteral("Blueprint/SignalChainLayout/Nodes/") + projectId);
+        if (gridSnap.isValid()) settings.setValue(QStringLiteral("Blueprint/GridSnapEnabled"), gridSnap);
+        else settings.remove(QStringLiteral("Blueprint/GridSnapEnabled"));
+    });
+    const auto documents = [&] {
+        QMap<QString, QPair<QByteArray, QDateTime>> result;
+        QDirIterator files(QFileInfo(projectPath).absolutePath(),
+                           {QStringLiteral("*.hsp"), QStringLiteral("*.vp")},
+                           QDir::Files, QDirIterator::Subdirectories);
+        while (files.hasNext()) {
+            QFile file(files.next());
+            EXPECT_TRUE(file.open(QIODevice::ReadOnly));
+            result.insert(file.fileName(), {file.readAll(), QFileInfo(file).lastModified()});
+        }
+        return result;
+    };
+    const auto saved = documents();
+    auto canvas = std::make_unique<VNX::BlueprintCanvasWidget>();
+    canvas->setGridSnapEnabled(false);
+    canvas->useSignalChain(sound);
+    VNX::NodeItem* node = nullptr;
+    for (auto* item : canvas->scene()->items()) {
+        auto* candidate = dynamic_cast<VNX::NodeItem*>(item);
+        if (candidate && candidate->objectID() == id) node = candidate;
+    }
+    ASSERT_NE(node, nullptr);
+    const auto original = node->pos();
+    const auto moved = original + QPointF(96, 64);
+    QGraphicsSceneMouseEvent press(QEvent::GraphicsSceneMousePress);
+    press.setButton(Qt::LeftButton);
+    press.setButtons(Qt::LeftButton);
+    canvas->scene()->sendEvent(node, &press);
+    node->setPos(moved);
+    QGraphicsSceneMouseEvent release(QEvent::GraphicsSceneMouseRelease);
+    release.setButton(Qt::LeftButton);
+    canvas->scene()->sendEvent(node, &release);
+    drainEvents();
+    EXPECT_EQ(canvas->nodePosition(id), moved);
+    EXPECT_TRUE(undo.isClean());
+    EXPECT_FALSE(sound->isDirtyObject());
+    ASSERT_TRUE(undo.undo());
+    drainEvents();
+    EXPECT_EQ(canvas->nodePosition(id), original);
+    EXPECT_TRUE(undo.isClean());
+    ASSERT_TRUE(undo.redo());
+    drainEvents();
+    EXPECT_EQ(canvas->nodePosition(id), moved);
+    EXPECT_TRUE(undo.isClean());
+
+    ASSERT_TRUE(manager.renameItem(sound, QStringLiteral("RenamedNode")));
+    EXPECT_FALSE(undo.isClean());
+    EXPECT_TRUE(sound->isDirtyObject());
+    canvas->resetNodeLayout();
+    drainEvents();
+    EXPECT_EQ(canvas->nodePosition(id), original);
+    EXPECT_FALSE(undo.isClean());
+    ASSERT_TRUE(undo.undo());
+    drainEvents();
+    EXPECT_EQ(canvas->nodePosition(id), moved);
+    EXPECT_FALSE(undo.isClean());
+    ASSERT_TRUE(undo.undo());
+    drainEvents();
+    EXPECT_TRUE(undo.isClean());
+    EXPECT_FALSE(sound->isDirtyObject());
+    canvas->resetNodeLayout();
+    drainEvents();
+    EXPECT_EQ(canvas->nodePosition(id), original);
+    EXPECT_TRUE(undo.isClean());
+    ASSERT_TRUE(undo.undo());
+    drainEvents();
+    EXPECT_EQ(canvas->nodePosition(id), moved);
+    EXPECT_TRUE(undo.isClean());
+    ASSERT_TRUE(manager.saveProject());
+    EXPECT_EQ(documents(), saved);
+
+    undo.clearHistory();
+    canvas = std::make_unique<VNX::BlueprintCanvasWidget>();
+    canvas->useSignalChain(sound);
+    EXPECT_EQ(canvas->nodePosition(id), moved);
+    ASSERT_TRUE(manager.closeProject());
+    ASSERT_TRUE(manager.loadProject(projectPath));
+    ASSERT_TRUE(VNX::TestSupport::spinUntil([&] { return manager.findItemByGuid(guid) != nullptr; }));
+    sound = manager.findItemByGuid(guid);
+    ASSERT_NE(sound, nullptr);
+    canvas->useSignalChain(sound);
+    EXPECT_EQ(canvas->nodePosition(sound->objectID), moved);
+    EXPECT_TRUE(undo.isClean());
+    ASSERT_TRUE(manager.saveProject());
+    EXPECT_EQ(documents(), saved);
 }
 
 TEST_F(EditorDockLayoutTest, AuditionTargetInvalidatesWithDeletedSubtreesAndProjectClosure)

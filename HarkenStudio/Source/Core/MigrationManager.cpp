@@ -209,20 +209,4 @@ bool MigrationManager::migrateProject(const ProjectMigrationPlan& plan,
                              std::move(progress), validator);
 }
 
-void MigrationManager::backfillItemGuidAndPath(ProjectItem* item, ProjectItem* parent)
-{
-    if (!item) return;
-
-    if (item->guid.isNull()) {
-        item->guid = QUuid::createUuid();
-    }
-    if (item->objectPath.isEmpty()) {
-        const QString parentPath = parent ? parent->objectPath : QString();
-        item->objectPath = parentPath + QStringLiteral("\\") + item->name;
-    }
-    for (auto& child : item->children) {
-        backfillItemGuidAndPath(child.get(), item);
-    }
-}
-
 }

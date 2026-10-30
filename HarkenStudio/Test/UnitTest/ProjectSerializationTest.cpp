@@ -314,18 +314,11 @@ TEST_P(ProjectSerializationSavedState, SavedContentTracksValuesAcrossObjectKinds
     VNX::ProjectItemSaveState saved;
     ASSERT_TRUE(markSaved(saved, project));
     EXPECT_TRUE(saved.refresh(project).isEmpty());
-    for (const auto& item : items) {
-        item->expanded = true;
-        item->objectPath = QStringLiteral("Changed/Derived/Path");
-        ++item->nameBindingRevision;
-    }
-    EXPECT_TRUE(saved.refresh(project).isEmpty());
 
     for (const auto& item : items) {
         item->notes = QStringLiteral("Authoring change");
         item->extensions = {{QStringLiteral("external"), QJsonArray{1, 2, 3}}};
         item->color = 0x123456;
-        item->canvasPos = QPointF(25.0, -10.0);
     }
     saved.refresh(project);
     for (const auto& item : items) EXPECT_TRUE(item->isDirtyObject());
@@ -334,7 +327,6 @@ TEST_P(ProjectSerializationSavedState, SavedContentTracksValuesAcrossObjectKinds
         item->notes.clear();
         item->extensions = {};
         item->color = 0;
-        item->canvasPos = {};
     }
     saved.refresh(project);
     for (const auto& item : items) EXPECT_FALSE(item->isDirtyObject());
@@ -578,19 +570,19 @@ TEST_P(ProjectSerializationSavedState, ScopedSavedContentMatchesFullComparisonAc
     compare();
     other->name = QStringLiteral("Other");
     compare(false);
-    layer->canvasPos = QPointF(10, 20);
+    layer->color = 0x123456;
     compare(false);
-    layer->canvasPos = {};
+    layer->color = 0;
     compare();
     const auto otherGuid = other->guid;
     other->guid = sound->guid;
-    layer->canvasPos = QPointF(20, 30);
+    layer->color = 0x654321;
     compare(false);
     other->guid = otherGuid;
     compare();
 }
 
-TEST_P(ProjectSerializationSavedState, TrackedChangesPreservePersistenceAndAuthoringSavePoints)
+TEST_P(ProjectSerializationSavedState, TrackedChangesPreserveIndependentSavePoints)
 {
     ProjectData project = HarkenTest::projectWithPlatforms();
     const auto sound = addSaveStateRoot(project, QStringLiteral("Tone"), ProjectItem::Type::Sound, 1);
@@ -599,16 +591,13 @@ TEST_P(ProjectSerializationSavedState, TrackedChangesPreservePersistenceAndAutho
     ASSERT_TRUE(markSaved(saved, project));
     EXPECT_FALSE(saved.requiresFullSave());
     const auto initialRevision = saved.revision();
-    sound->expanded = !sound->expanded;
-    const auto actionRevision = action->nameBindingRevision;
-    ++action->nameBindingRevision;
-    saved.recordChange(sound.get());
+    action->notes = QStringLiteral("Unsaved action edit");
     saved.recordChange(action.get());
     EXPECT_GT(saved.revision(), initialRevision);
-    EXPECT_TRUE(saved.refreshPending(project).isEmpty());
+    EXPECT_FALSE(saved.refreshPending(project).isEmpty());
     EXPECT_FALSE(sound->dirtyBit);
-    EXPECT_FALSE(action->dirtyBit);
-    EXPECT_EQ(saved.candidates(), (QSet<QUuid>{sound->guid, action->guid}));
+    EXPECT_TRUE(action->dirtyBit);
+    EXPECT_EQ(saved.candidates(), (QSet<QUuid>{action->guid}));
 
     sound->notes = QStringLiteral("Saved content");
     saved.recordChange(sound.get());
@@ -628,7 +617,7 @@ TEST_P(ProjectSerializationSavedState, TrackedChangesPreservePersistenceAndAutho
     saved.recordChange(sound.get());
     saved.refreshPending(project);
     EXPECT_FALSE(sound->dirtyBit);
-    action->nameBindingRevision = actionRevision;
+    action->notes.clear();
     saved.recordChange(action.get());
     saved.refreshPending(project);
     EXPECT_TRUE(saved.candidates().isEmpty());

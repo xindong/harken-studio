@@ -1867,7 +1867,7 @@ void registerProjectActions(ActionManager& mgr,
         def.displayName = "Create Project";
         def.category = "project";
         def.undoable = false;
-        def.paramSchema = QJsonObject{{"name", "string"}, {"location", "string"}, {"sample_rate", "int"}, {"author", "string"}, {"description", "string"}, {"enable_lfe", "bool"}, {"channel_config", "string"}, {"platforms", "array"}, {"template_id", "string"}, {"template_data", "object"}};
+        def.paramSchema = QJsonObject{{"name", "string"}, {"location", "string"}, {"sample_rate", "int"}, {"author", "string"}, {"description", "string"}, {"channel_config", "string"}, {"platforms", "array"}, {"template_id", "string"}, {"template_data", "object"}};
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager)
                 return {false, {}, "PROJECT_MANAGER_NOT_AVAILABLE",
@@ -1883,7 +1883,6 @@ void registerProjectActions(ActionManager& mgr,
             config.sampleRate  = args.value("sample_rate").toInt(48000);
             config.author      = args.value("author").toString();
             config.description = args.value("description").toString();
-            config.enableLFE   = args.value("enable_lfe").toBool(true);
 
             const QString cc = args.value("channel_config").toString().toLower();
             if      (cc == QStringLiteral("mono"))           config.channelConfig = AudioChannelConfig::Mono;

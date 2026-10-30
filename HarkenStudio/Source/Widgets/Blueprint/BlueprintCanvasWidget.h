@@ -86,6 +86,7 @@ public:
     SignalChainSource* activeSignalChainSource() const;
     SignalPathSource* activeSignalPathSource() const;
     NodeItem* signalPathNode(size_t occurrenceIndex) const;
+    std::optional<QPointF> nodePosition(uint32_t objectId) const;
     ConnectionPath* signalPathEdge(size_t edgeIndex) const;
     NodeItem* signalPathGainNode(size_t edgeIndex) const;
     ConnectionPath* signalPathGainOutputEdge(size_t edgeIndex) const;
@@ -255,10 +256,10 @@ private:
     std::map<QUuid, CollapseReveal> collapseReveals_;
     std::unordered_map<uint32_t, Qt::CheckState> inputVisibility_;
 
-    using PathPositions = std::vector<std::pair<QString, QVariant>>;
+    using LayoutPositions = std::vector<std::pair<QString, QVariant>>;
     void layoutPathNodes_();
-    void applyPathPositions_(const PathPositions& positions);
-    void commitPathPositions_(const PathPositions& positions, const QString& description);
+    void applyLayoutPositions_(const LayoutPositions& positions);
+    void commitLayoutPositions_(const LayoutPositions& positions, const QString& description);
     void scheduleChainRefresh_();
     void schedulePathRefresh_();
     void queuePathContentRefresh_(ProjectItem* item, const QString& propertyName);

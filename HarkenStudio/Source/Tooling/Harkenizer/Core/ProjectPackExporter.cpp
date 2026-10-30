@@ -83,15 +83,6 @@ static bool buildPackResources(Bridge::PackBuildSession& builder, const QString&
     return true;
 }
 
-static void collectObjectMetadataRecursive(const ProjectItem* item,
-                                            Bridge::PackBuildSession& builder,
-                                            ProjectPlatformId platform,
-                                            const QString& language);
-static void collectAllObjectMetadata(const ProjectData& project,
-                                      Bridge::PackBuildSession& builder,
-                                      ProjectPlatformId platform,
-                                      const QString& language);
-
 static ProjectPlatformId exportPlatformOf(const ProjectPackExporter::ExportOptions& options)
 {
     return QUuid::fromString(options.platform);
@@ -957,9 +948,6 @@ ProjectPackExporter::exportSingleActionPack(
             requiredMedia.erase(sharedId);
     result.objectCount = static_cast<int>(visitedObjects.size());
 
-    collectAllObjectMetadata(project, builder, exportPlatformOf(variantOptions),
-                             exportLanguageOf(variantOptions));
-
     QSet<uint32_t> actionFilter;
     for (const auto& member : closure.actions)
         actionFilter.insert(member.objectId);
@@ -1203,41 +1191,6 @@ ProjectPackExporter::computeSharedOwnership(const ProjectData& project,
         if (kv.second > 1)
             ownership.objectIds.insert(kv.first);
     return ownership;
-}
-
-
-static void collectObjectMetadataRecursive(const ProjectItem* item,
-                                            Bridge::PackBuildSession& builder,
-                                            ProjectPlatformId platform,
-                                            const QString& language)
-{
-    if (!item) return;
-
-    if (item->objectID != 0 && !item->guid.isNull())
-    {
-        const QByteArray rfc = item->guid.toRfc4122();
-        if (rfc.size() == 16)
-        {
-            builder.addObjectMetadata(stableIdForItem(item, platform, language), rfc,
-                                      item->objectPath);
-        }
-    }
-
-    for (const auto& child : item->children)
-        collectObjectMetadataRecursive(child.get(), builder, platform, language);
-}
-
-static void collectAllObjectMetadata(const ProjectData& project,
-                                      Bridge::PackBuildSession& builder,
-                                      ProjectPlatformId platform,
-                                      const QString& language)
-{
-    for (const auto* binding : project.allFileBindings())
-    {
-        if (!binding || !binding->rootItem) continue;
-        const auto* wu = binding;
-        collectObjectMetadataRecursive(wu->rootItem.get(), builder, platform, language);
-    }
 }
 
 
