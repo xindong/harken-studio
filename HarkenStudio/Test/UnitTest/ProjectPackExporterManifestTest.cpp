@@ -21,7 +21,9 @@
 #include "Tooling/Harkenizer/Core/ProjectPackExporter.h"
 #include "Tooling/Harkenizer/Core/ProjectPackBuildService.h"
 #include "Tooling/Harkenizer/Core/ProjectBuildSnapshot.h"
+#include "ProjectSerializer.h"
 #include "ProjectSchemaGenerated.h"
+#include "ItemTypeCatalog.h"
 #include "NameValidator.h"
 #include "ProjectTypes.h"
 #include "FieldGroupProjectAdapter.h"
@@ -685,6 +687,86 @@ void renamePublicationToLegacy(const QDir& dir, bool wrapped,
 }
 
 } // namespace
+
+TEST(EditorProjectPackExporterManifest, SharedPlanningPreservesVariantCapabilitiesAndDiagnostics)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    VNX::AssetRegistry::instance().clear();
+    const auto clearAssets = qScopeGuard([] { VNX::AssetRegistry::instance().clear(); });
+    VNX::AssetRegistry::instance().setProjectRoot(dir.path());
+    const auto sharedSource = registerToneAsset(dir.path(), QStringLiteral("shared.wav"), 1.0f);
+    const auto soloSource = registerToneAsset(dir.path(), QStringLiteral("solo.wav"), 0.5f);
+    auto project = HarkenTest::projectWithPlatforms({"Windows", "Android"});
+    ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), sharedSource, soloSource,
+        {{QStringLiteral("Common"), 21, kSharedSoundObjectId},
+         {QStringLiteral("Localized"), 22, kSoloSoundObjectId},
+         {QStringLiteral("CommonAgain"), 23, kSharedSoundObjectId}}));
+    ASSERT_NO_FATAL_FAILURE(localizeSoloSound(project, soloSource));
+    const auto build = VNX::ProjectPackExporter::createBuildContext(project);
+    VNX::RuntimeCapabilityContext cached;
+    cached.buildSession = build->capabilities;
+    const auto platforms = project.platformIds();
+    const auto directPlan = VNX::PackBuildPlanning::build(project, platforms, {}, true);
+    ASSERT_TRUE(std::any_of(directPlan.variants.begin(), directPlan.variants.end(),
+        [](const auto& variant) { return variant.capability.permitted(); }));
+    for (int pass = 0; pass < 2; ++pass) {
+        const auto sharedPlan = VNX::PackBuildPlanning::build(project, platforms, {}, true, {},
+            cached, build->closures.get());
+        EXPECT_EQ(directPlan.toJson(), sharedPlan.toJson());
+    }
+    std::vector<const VNX::ProjectItem*> items;
+    for (const auto* binding : project.allFileBindings()) {
+        const auto collect = [&](const auto& self, const VNX::ProjectItem* item) -> void {
+            items.push_back(item);
+            for (const auto& child : item->children) self(self, child.get());
+        };
+        if (binding && binding->rootItem) collect(collect, binding->rootItem.get());
+    }
+    for (const auto& platform : platforms) {
+        for (const auto& language : project.projectLanguages) {
+            const VNX::BuildVariant variant{platform, language};
+            for (const auto* item : items) {
+                for (const auto& entry : VNX::RuntimeCapabilityMatrix::entries()) {
+                    if (entry.objectType != item->type) continue;
+                    const auto direct = VNX::RuntimeCapabilityMatrix::evaluateForContext(
+                        *item, project, entry.operation, entry.feature, variant, {});
+                    const auto shared = VNX::RuntimeCapabilityMatrix::evaluateForContext(
+                        *item, project, entry.operation, entry.feature, variant, cached);
+                    EXPECT_EQ(direct.toJson(), shared.toJson())
+                        << item->name.toStdString() << " " << platform.toStdString()
+                        << " " << language.toStdString()
+                        << " " << VNX::RuntimeCapabilityMatrix::featureName(entry.feature).toStdString();
+                }
+            }
+        }
+    }
+    const auto& localized = *project.layers.front().rootItem->children.at(1);
+    for (const auto& platform : platforms) {
+        for (const auto& language : project.projectLanguages) {
+            VNX::RuntimeCapabilityContext direct{QUuid::fromString(platform), language};
+            auto shared = direct;
+            shared.buildSession = build->capabilities;
+            for (const auto& variant : {std::optional<VNX::BuildVariant>{},
+                    std::optional<VNX::BuildVariant>{VNX::BuildVariant{}}}) {
+                const auto expected = VNX::RuntimeCapabilityMatrix::assessForContext(
+                    localized, project, VNX::RuntimeCapabilityOperation::PackBuild, variant, direct);
+                const auto actual = VNX::RuntimeCapabilityMatrix::assessForContext(
+                    localized, project, VNX::RuntimeCapabilityOperation::PackBuild, variant, shared);
+                EXPECT_EQ(expected.toJson(), actual.toJson());
+            }
+        }
+    }
+    project.actions.front().rootItem->children.back()->comp<VNX::VAction>()->steps.front().targetObjectID = 999;
+    const auto invalidBuild = VNX::ProjectPackExporter::createBuildContext(project);
+    VNX::RuntimeCapabilityContext invalidContext;
+    invalidContext.buildSession = invalidBuild->capabilities;
+    const auto invalidDirect = VNX::PackBuildPlanning::build(project, platforms, {}, true);
+    ASSERT_FALSE(invalidDirect.ready());
+    const auto invalidShared = VNX::PackBuildPlanning::build(project, platforms, {}, true, {},
+        invalidContext, invalidBuild->closures.get());
+    EXPECT_EQ(invalidDirect.toJson(), invalidShared.toJson());
+}
 
 TEST(EditorProjectPackExporterManifest, StopOnlyPublishesNoTargetMediaOrDefinitions)
 {
@@ -5691,6 +5773,325 @@ TEST(EditorProjectPackExporterManifest, ProjectBuildLockAndPreflightFailuresPres
     EXPECT_FALSE(QFileInfo::exists(context.live.filePath(QStringLiteral("Init.bytes"))));
     EXPECT_EQ(readFileBytes(sentinel), QByteArray("previous project publication"));
     EXPECT_EQ(readFileBytes(recoveryMarker), QByteArray("incomplete transaction"));
+    const QDir protectedRoot(context.directory.path());
+    const QString protectedFile = protectedRoot.filePath(QStringLiteral("project-data.txt"));
+    const QString protectedMarker = protectedRoot.filePath(QStringLiteral(".harken-pack-publishing"));
+    const QString previous = QStringLiteral(".harken-pack-previous-protected");
+    ASSERT_NO_FATAL_FAILURE(writeFileBytes(protectedFile, QByteArray("project data")));
+    ASSERT_NO_FATAL_FAILURE(writeFileBytes(protectedRoot.filePath(previous + QStringLiteral("/project-data.txt")),
+        QByteArray("unrelated previous data")));
+    const QJsonObject transaction{{"version", 1}, {"previous", previous},
+        {"next", QStringLiteral(".harken-pack-next-protected")},
+        {"previousFiles", QJsonArray{QStringLiteral("project-data.txt")}},
+        {"nextFiles", QJsonArray{QStringLiteral("project-data.txt")}}};
+    const auto protectedTransaction = QJsonDocument(transaction).toJson();
+    ASSERT_NO_FATAL_FAILURE(writeFileBytes(protectedMarker, protectedTransaction));
+    request.outputRoot = protectedRoot.path();
+    request.outputLock.reset();
+    const auto protectedResult = VNX::ProjectPackBuildService::run(request);
+    EXPECT_FALSE(protectedResult.outputLocked);
+    EXPECT_EQ(protectedResult.preflightError, VNX::PathUtils::packBuildOutputLocationError());
+    EXPECT_EQ(readFileBytes(protectedFile), QByteArray("project data"));
+    EXPECT_EQ(readFileBytes(protectedMarker), protectedTransaction);
+}
+
+TEST(EditorProjectPackExporterManifest, ProjectBuildCleanupPreservesActiveLocksAcrossPlatforms)
+{
+    PackWriteAccessProject context;
+    ASSERT_NO_FATAL_FAILURE(context.setup());
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        SCOPED_TRACE(attempt);
+        if (attempt == 1) context.project.platforms.front().name = QStringLiteral("windows");
+        const QString obsolete = QDir(context.root).filePath(QStringLiteral("obsolete.bin"));
+        ASSERT_NO_FATAL_FAILURE(writeFileBytes(obsolete, QByteArray("remove during cleanup")));
+        QString error;
+        VNX::ProjectPackBuildService::Request request;
+        request.outputRoot = context.root;
+        request.platforms = HarkenTest::platformIdStrings({"Windows", "Android"});
+        request.options.selfCleaning = true;
+        request.options.snapshot = VNX::ProjectBuildSnapshot::capture(context.project, &error);
+        ASSERT_TRUE(request.options.snapshot) << error.toStdString();
+        std::vector<std::shared_ptr<QLockFile>> heldLocks;
+        request.platformFinished = [&](const VNX::ProjectPackBuildService::PlatformResult& built) {
+            ASSERT_TRUE(built.result.success) << built.result.error.toStdString();
+            ASSERT_TRUE(built.result.publication);
+            auto lock = built.result.publication->outputLock.lock();
+            ASSERT_TRUE(lock);
+            heldLocks.push_back(std::move(lock));
+        };
+        const auto built = VNX::ProjectPackBuildService::run(request);
+        ASSERT_TRUE(built.allPlatformsSucceeded) << built.preflightError.toStdString();
+        ASSERT_TRUE(built.finalizationResult.success) << built.finalizationResult.error.toStdString();
+        ASSERT_EQ(heldLocks.size(), request.platforms.size());
+        EXPECT_FALSE(QFileInfo::exists(obsolete));
+        for (const auto& platform : built.platforms) {
+            const QDir output(platform.outputDir);
+            EXPECT_TRUE(QDir(context.root).entryList(QDir::Dirs | QDir::NoDotAndDotDot)
+                .contains(platform.definition.name));
+            const QString lockPath = output.filePath(QStringLiteral(".harken-pack-platform.lock"));
+            EXPECT_TRUE(QFileInfo::exists(output.filePath(QStringLiteral("Init.bytes"))));
+            EXPECT_TRUE(QFileInfo::exists(output.filePath(QStringLiteral("One.bytes"))));
+            EXPECT_TRUE(QFileInfo::exists(lockPath));
+            QLockFile competing(lockPath);
+            competing.setStaleLockTime(0);
+            EXPECT_FALSE(competing.tryLock());
+        }
+    }
+}
+
+TEST(EditorProjectPackExporterManifest, ProjectBuildIncrementalResultsMatchForcedBuildAfterInputAndOutputChanges)
+{
+    PackWriteAccessProject context;
+    ASSERT_NO_FATAL_FAILURE(context.setup());
+    const auto build = [&](bool force) {
+        QString error;
+        VNX::ProjectPackBuildService::Request request;
+        request.outputRoot = context.root;
+        request.platforms = {context.platform};
+        request.options.snapshot = VNX::ProjectBuildSnapshot::capture(context.project, &error);
+        EXPECT_TRUE(request.options.snapshot) << error.toStdString();
+        request.options.forceReexport = force;
+        return VNX::ProjectPackBuildService::run(request);
+    };
+    const auto initial = build(false);
+    ASSERT_TRUE(initial.allPlatformsSucceeded) << initial.preflightError.toStdString();
+    ASSERT_TRUE(initial.finalizationResult.success) << initial.finalizationResult.error.toStdString();
+    QByteArray previousContent = readFileBytes(context.live.filePath(QStringLiteral("One.bytes")));
+    const QString sourcePath = QDir(VNX::PathUtils::getAudioSourcesDir(context.directory.path()))
+        .filePath(QStringLiteral("tone.wav"));
+    const std::vector<std::function<void()>> changes{
+        [&] {
+            context.project.actions.front().rootItem->children.front()
+                ->comp<VNX::VAction>()->steps.front().delay = 0.125f;
+        },
+        [&] {
+            const auto modified = QFileInfo(sourcePath).lastModified();
+            auto bytes = readFileBytes(sourcePath);
+            ASSERT_GE(bytes.size(), static_cast<qsizetype>(sizeof(float)));
+            const float sample = 0.75f;
+            std::memcpy(bytes.data() + bytes.size() - sizeof(sample), &sample, sizeof(sample));
+            ASSERT_NO_FATAL_FAILURE(writeFileBytes(sourcePath, bytes));
+            QFile file(sourcePath);
+            ASSERT_TRUE(file.open(QIODevice::ReadWrite));
+            ASSERT_TRUE(file.setFileTime(modified, QFileDevice::FileModificationTime));
+            EXPECT_EQ(QFileInfo(sourcePath).size(), bytes.size());
+            EXPECT_EQ(QFileInfo(sourcePath).lastModified(), modified);
+        },
+        [&] {
+            const QString path = context.live.filePath(QStringLiteral("One.bytes"));
+            const auto modified = QFileInfo(path).lastModified();
+            auto bytes = readFileBytes(path);
+            ASSERT_FALSE(bytes.isEmpty());
+            bytes[bytes.size() - 1] = static_cast<char>(bytes.back() ^ 0x40);
+            ASSERT_NO_FATAL_FAILURE(writeFileBytes(path, bytes));
+            QFile file(path);
+            ASSERT_TRUE(file.open(QIODevice::ReadWrite));
+            ASSERT_TRUE(file.setFileTime(modified, QFileDevice::FileModificationTime));
+        },
+        [&] {
+            ASSERT_TRUE(QFile::remove(context.live.filePath(QStringLiteral("One.json"))));
+        },
+        [&] {
+            context.project.buildExportPackMetadata = true;
+        }};
+    for (size_t index = 0; index < changes.size(); ++index) {
+        SCOPED_TRACE(index);
+        ASSERT_NO_FATAL_FAILURE(changes[index]());
+        const auto incremental = build(false);
+        ASSERT_TRUE(incremental.allPlatformsSucceeded) << incremental.preflightError.toStdString();
+        ASSERT_TRUE(incremental.finalizationResult.success) << incremental.finalizationResult.error.toStdString();
+        ASSERT_EQ(incremental.platforms.size(), 1u);
+        const auto content = readFileBytes(context.live.filePath(QStringLiteral("One.bytes")));
+        if (index < 2) EXPECT_NE(content, previousContent);
+        previousContent = content;
+        QMap<QString, QByteArray> expected;
+        for (const auto& path : publicationFiles(context.live.path()))
+            expected.insert(path, readFileBytes(context.live.filePath(path)));
+        const auto forced = build(true);
+        ASSERT_TRUE(forced.allPlatformsSucceeded) << forced.preflightError.toStdString();
+        ASSERT_TRUE(forced.finalizationResult.success) << forced.finalizationResult.error.toStdString();
+        ASSERT_EQ(forced.platforms.size(), 1u);
+        EXPECT_EQ(incremental.platforms.front().result.warnings, forced.platforms.front().result.warnings);
+        EXPECT_EQ(publicationFiles(context.live.path()), expected.keys());
+        for (auto it = expected.cbegin(); it != expected.cend(); ++it)
+            EXPECT_EQ(readFileBytes(context.live.filePath(it.key())), it.value()) << it.key().toStdString();
+    }
+}
+
+TEST(EditorProjectPackExporterManifest, ProjectBuildReusePreservesDiagnosticsAfterReload)
+{
+    PackWriteAccessProject context;
+    ASSERT_NO_FATAL_FAILURE(context.setup());
+    auto actions = std::move(context.project.actions.front().rootItem->children);
+    actions.push_back(makeItem(QStringLiteral("Empty"), VNX::ProjectItem::Type::Action, 55));
+    context.project.actions.clear();
+    for (auto& action : actions) {
+        action->parent = nullptr;
+        VNX::ProjectFileBinding binding;
+        binding.rootItem = std::move(action);
+        binding.parentFolder = QLatin1String(VNX::ItemTypeCatalog::kActionsFolderName);
+        context.project.actions.push_back(std::move(binding));
+    }
+    const auto build = [&](const std::shared_ptr<const VNX::ProjectBuildSnapshot>& snapshot,
+                           bool* compiled) {
+        VNX::ProjectPackBuildService::Request request;
+        request.outputRoot = context.root;
+        request.platforms = {context.platform};
+        request.options.snapshot = snapshot;
+        request.options.observationCallback = [compiled](const VNX::PackBuildObservation& observation) {
+            if (observation.stage == VNX::PackBuildObservationStage::CompilingProject) *compiled = true;
+        };
+        return VNX::ProjectPackBuildService::run(request);
+    };
+    QString error;
+    const auto firstSnapshot = VNX::ProjectBuildSnapshot::capture(context.project, &error);
+    ASSERT_TRUE(firstSnapshot) << error.toStdString();
+    bool compiled = false;
+    const auto initial = build(firstSnapshot, &compiled);
+    ASSERT_TRUE(initial.allPlatformsSucceeded) << initial.preflightError.toStdString();
+    ASSERT_TRUE(initial.finalizationResult.success) << initial.finalizationResult.error.toStdString();
+    ASSERT_EQ(initial.platforms.size(), 1u);
+    ASSERT_TRUE(compiled);
+    ASSERT_FALSE(initial.platforms.front().result.warnings.isEmpty());
+    QMap<QString, QByteArray> expected;
+    for (const auto& path : publicationFiles(context.live.path()))
+        expected.insert(path, readFileBytes(context.live.filePath(path)));
+    VNX::ProjectSerializer writer;
+    ASSERT_TRUE(writer.prepareReferenceWrite(context.project)) << writer.lastError().toStdString();
+    QJsonArray roots;
+    for (const auto* binding : context.project.allFileBindings()) {
+        const auto serialized = writer.projectItemToJson(*binding->rootItem);
+        ASSERT_FALSE(serialized.isEmpty()) << writer.lastError().toStdString();
+        roots.append(serialized);
+    }
+    VNX::ProjectSerializer reader;
+    ASSERT_TRUE(reader.prepareStandaloneReferenceRead(roots)) << reader.lastError().toStdString();
+    auto reloaded = context.project;
+    size_t index = 0;
+    for (auto* binding : reloaded.allFileBindings()) {
+        binding->rootItem = std::make_shared<VNX::ProjectItem>();
+        ASSERT_TRUE(reader.projectItemFromJson(roots.at(static_cast<qsizetype>(index++)).toObject(),
+            *binding->rootItem)) << reader.lastError().toStdString();
+        binding->rootItem->expanded = !binding->rootItem->expanded;
+        binding->rootItem->canvasPos = QPointF(100.0, 200.0);
+    }
+    ASSERT_NE(reloaded.actions.front().rootItem->objectID,
+        context.project.actions.front().rootItem->objectID);
+    const auto captured = VNX::ProjectBuildSnapshot::capture(reloaded, &error);
+    ASSERT_TRUE(captured) << error.toStdString();
+    auto nextSnapshot = std::make_shared<VNX::ProjectBuildSnapshot>(*captured);
+    nextSnapshot->project.audioSources.clear();
+    nextSnapshot->project.sourceAssets.clear();
+    for (auto& asset : nextSnapshot->media.assets) {
+        asset.metadata = {};
+        asset.contentHash.clear();
+        asset.ownerObjectGuid.clear();
+        asset.isOrphaned = !asset.isOrphaned;
+    }
+    compiled = false;
+    const auto reused = build(nextSnapshot, &compiled);
+    ASSERT_TRUE(reused.allPlatformsSucceeded) << reused.preflightError.toStdString();
+    ASSERT_TRUE(reused.finalizationResult.success) << reused.finalizationResult.error.toStdString();
+    ASSERT_EQ(reused.platforms.size(), 1u);
+    EXPECT_FALSE(compiled);
+    EXPECT_EQ(reused.platforms.front().result.warnings, initial.platforms.front().result.warnings);
+    ASSERT_EQ(reused.platforms.front().records.size(), initial.platforms.front().records.size());
+    for (const auto& record : reused.platforms.front().records) {
+        const auto prior = std::find_if(initial.platforms.front().records.begin(),
+            initial.platforms.front().records.end(), [&](const auto& candidate) {
+                return candidate.unitKey == record.unitKey && candidate.language == record.language;
+            });
+        ASSERT_NE(prior, initial.platforms.front().records.end());
+        EXPECT_EQ(record.warnings, prior->warnings);
+        EXPECT_EQ(record.omitted, prior->omitted);
+        EXPECT_TRUE(record.success);
+        if (record.source == VNX::ProjectPackExporter::PackBuildRecord::Source::Action) {
+            const auto action = std::find_if(reloaded.actions.begin(),
+                reloaded.actions.end(), [&](const auto& binding) {
+                    return binding.rootItem->name == record.packName;
+                });
+            ASSERT_NE(action, reloaded.actions.end());
+            EXPECT_EQ(record.objectID, action->rootItem->objectID);
+        }
+    }
+    for (auto it = expected.cbegin(); it != expected.cend(); ++it)
+        EXPECT_EQ(readFileBytes(context.live.filePath(it.key())), it.value()) << it.key().toStdString();
+}
+
+TEST(EditorProjectPackExporterManifest, ProjectBuildReuseOnlyDependsOnSelectedPlatformSources)
+{
+    PackWriteAccessProject context;
+    ASSERT_NO_FATAL_FAILURE(context.setup());
+    const auto androidSource = registerToneAsset(context.directory.path(), "android.wav", 0.4f);
+    auto& sources = context.project.layers.front().rootItem->children.front()
+        ->comp<VNX::VSound>()->sources.plain;
+    VNX::SoundSourceDef android;
+    android.entryId = QUuid::createUuid();
+    android.sourceId = androidSource;
+    sources.entries.push_back(android);
+    sources.platforms[HarkenTest::platformIdString("Android")].active = android.entryId;
+    const auto build = [&](const QStringList& platforms, bool* compiled) {
+        QString error;
+        VNX::ProjectPackBuildService::Request request;
+        request.outputRoot = context.root;
+        request.platforms = platforms;
+        request.options.snapshot = VNX::ProjectBuildSnapshot::capture(context.project, &error);
+        EXPECT_TRUE(request.options.snapshot) << error.toStdString();
+        request.options.observationCallback = [compiled](const VNX::PackBuildObservation& observation) {
+            if (observation.stage == VNX::PackBuildObservationStage::CompilingProject) *compiled = true;
+        };
+        return VNX::ProjectPackBuildService::run(request);
+    };
+    bool compiled = false;
+    const auto initial = build(HarkenTest::platformIdStrings({"Windows", "Android"}), &compiled);
+    ASSERT_TRUE(initial.allPlatformsSucceeded) << initial.preflightError.toStdString();
+    ASSERT_TRUE(initial.finalizationResult.success) << initial.finalizationResult.error.toStdString();
+    const auto windowsBytes = readFileBytes(context.live.filePath(QStringLiteral("One.bytes")));
+    ASSERT_TRUE(QFile::remove(QDir(VNX::PathUtils::getAudioSourcesDir(context.directory.path()))
+        .filePath(QStringLiteral("android.wav"))));
+    compiled = false;
+    const auto reused = build({context.platform}, &compiled);
+    ASSERT_TRUE(reused.allPlatformsSucceeded) << reused.preflightError.toStdString();
+    ASSERT_TRUE(reused.finalizationResult.success) << reused.finalizationResult.error.toStdString();
+    EXPECT_FALSE(compiled);
+    EXPECT_EQ(readFileBytes(context.live.filePath(QStringLiteral("One.bytes"))), windowsBytes);
+}
+
+TEST(EditorProjectPackExporterManifest, PublicationValidationKeepsDependencyAndLockLifetimeBoundaries)
+{
+    PackWriteAccessProject context;
+    ASSERT_NO_FATAL_FAILURE(context.setup());
+    QString error;
+    VNX::ProjectPackBuildService::Request request;
+    request.outputRoot = context.root;
+    request.platforms = {context.platform};
+    request.options.snapshot = VNX::ProjectBuildSnapshot::capture(context.project, &error);
+    ASSERT_TRUE(request.options.snapshot) << error.toStdString();
+    request.platformFinished = [&](const VNX::ProjectPackBuildService::PlatformResult& built) {
+        ASSERT_TRUE(built.result.success) << built.result.error.toStdString();
+        ASSERT_TRUE(built.result.publication);
+        const QMap<QString, VNX::PackPublicationProof> publications{
+            {context.platform, *built.result.publication}};
+        EXPECT_TRUE(VNX::ProjectPackExporter::ValidatePackOutputs(context.root,
+            {built.definition}, &error, built.result.artifacts, {}, publications)) << error.toStdString();
+        auto incomplete = built.result.artifacts;
+        incomplete.removeIf([](const auto& artifact) { return artifact.unitKey == QStringLiteral("Init"); });
+        ASSERT_FALSE(incomplete.isEmpty());
+        EXPECT_FALSE(VNX::ProjectPackExporter::ValidatePackOutputs(context.root,
+            {built.definition}, &error, incomplete, {}, publications));
+    };
+    const auto built = VNX::ProjectPackBuildService::run(request);
+    ASSERT_TRUE(built.allPlatformsSucceeded) << built.preflightError.toStdString();
+    ASSERT_TRUE(built.finalizationResult.success) << built.finalizationResult.error.toStdString();
+    ASSERT_EQ(built.platforms.size(), 1u);
+    ASSERT_TRUE(built.platforms.front().result.publication);
+    const QMap<QString, VNX::PackPublicationProof> publications{
+        {context.platform, *built.platforms.front().result.publication}};
+    const QString path = context.live.filePath(QStringLiteral("One.bytes"));
+    const auto valid = readFileBytes(path);
+    ASSERT_NO_FATAL_FAILURE(writeFileBytes(path, valid.chopped(1)));
+    EXPECT_FALSE(VNX::ProjectPackExporter::ValidatePackOutputs(context.root,
+        {built.platforms.front().definition}, &error, built.artifacts, {}, publications));
 }
 
 TEST(EditorProjectPackExporterManifest, RecoveryPrecedesPreflightForRootAndPartialExports)

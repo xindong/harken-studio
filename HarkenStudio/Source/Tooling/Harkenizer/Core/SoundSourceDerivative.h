@@ -8,8 +8,13 @@
 #include <QMutex>
 #include <QString>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <vector>
+
+namespace VNX {
+class BuildSourceInput;
+}
 
 namespace VNX::SoundSourceDerivative {
 
@@ -30,6 +35,8 @@ struct DerivativeKey
     double scheduleOffsetSec = 0.0;
     uint32_t processingHash = 0;
     uint16_t sourceChannels = 0;
+    QString processingFingerprint;
+    QString compilerIdentity;
 
     bool operator==(const DerivativeKey&) const = default;
 };
@@ -44,6 +51,7 @@ struct MaterializedArtifact
     uint64_t loopEndFrame = 0;
     bool loopable = false;
     bool cacheHit = false;
+    QString contentHash;
 };
 
 class MaterializationCache
@@ -51,10 +59,14 @@ class MaterializationCache
 public:
     std::optional<MaterializedArtifact> find(const QByteArray& request);
     void insert(const QByteArray& request, const MaterializedArtifact& artifact);
+    std::optional<uint64_t> contentRevision(const MaterializedArtifact& artifact);
+    bool verifyUnchanged(QString* error = nullptr, const std::function<bool()>& canceled = {});
 
 private:
     QMutex mutex_;
     QHash<QByteArray, MaterializedArtifact> artifacts_;
+    QHash<QByteArray, uint64_t> contentRevisions_;
+    QHash<QString, QString> consumedArtifacts_;
 };
 
 struct PreparedMedia
@@ -82,6 +94,7 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
                                                 const QString& outputDir,
                                                 const ConversionSettings& settings,
                                                 QString* error = nullptr,
-                                                MaterializationCache* cache = nullptr);
+                                                MaterializationCache* cache = nullptr,
+                                                const BuildSourceInput* input = nullptr);
 
 }

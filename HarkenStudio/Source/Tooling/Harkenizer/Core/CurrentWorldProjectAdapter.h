@@ -14,6 +14,7 @@
 
 namespace HarkenEditor::Bridge {
 struct CanonicalRuntimeProjectSourceIndexV1;
+struct CanonicalRuntimeProjectContextV1;
 struct CurrentWorldScalarUpdate;
 }
 
@@ -48,6 +49,7 @@ struct CurrentWorldBuildOptions
     const ProjectItem* actionRoot = nullptr;
     const ProjectItem* definitionRoot = nullptr;
     std::shared_ptr<const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1> sourceIndex;
+    std::shared_ptr<const HarkenEditor::Bridge::CanonicalRuntimeProjectContextV1> canonicalContext;
     const FieldGroupEffectiveSnapshot* fieldGroups = nullptr;
 };
 

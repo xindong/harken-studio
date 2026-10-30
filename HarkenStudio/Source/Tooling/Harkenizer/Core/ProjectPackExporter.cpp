@@ -43,7 +43,6 @@
 #include <QScopeGuard>
 #include <QSet>
 #include <QDataStream>
-#include <QElapsedTimer>
 
 #include <algorithm>
 #include <limits>
@@ -402,15 +401,29 @@ static bool actionRequested(const ProjectData& project,
     return true;
 }
 
-PackBuildPlan ProjectPackExporter::createBuildPlan(
+std::shared_ptr<PackBuildContext> ProjectPackExporter::createBuildContext(const ProjectData& project)
+{
+    return std::make_shared<PackBuildContext>(project);
+}
+
+std::shared_ptr<const PackBuildPlan> ProjectPackExporter::createBuildPlan(
     const ProjectData& project, const ExportOptions& options)
 {
+    const PackBuildPlanKey key{options.platform, options.language.trimmed(), options.selection,
+        options.updateSelectedOnly, options.onlyUnits, options.onlyPackPaths, options.onlyActionStableIds};
+    RuntimeCapabilityContext context;
+    if (options.buildContext) {
+        context.buildSession = options.buildContext->capabilities;
+        for (const auto& cached : options.buildContext->plans)
+            if (cached.first == key) return cached.second;
+    }
     QStringList languages;
     if (!options.language.trimmed().isEmpty())
         languages.append(options.language.trimmed());
 
     PackBuildPlan buildPlan = PackBuildPlanning::build(project, {options.platform}, languages,
-                                                       options.updateSelectedOnly, options.selection);
+        options.updateSelectedOnly, options.selection, context,
+        options.buildContext ? options.buildContext->closures.get() : nullptr);
     using VariantKey = std::pair<harkenstudio::ObjectId, QString>;
     std::set<VariantKey> selectedVariants;
     for (const auto& variant : buildPlan.variants) {
@@ -427,7 +440,10 @@ PackBuildPlan ProjectPackExporter::createBuildPlan(
         [&](const auto& unit) {
             return !selectedVariants.count({unit.actionStableIds.front(), unit.variant.language});
         }), buildPlan.units.end());
-    return buildPlan;
+    auto prepared = std::make_shared<const PackBuildPlan>(std::move(buildPlan));
+    if (options.buildContext)
+        options.buildContext->plans.emplace_back(key, prepared);
+    return prepared;
 }
 
 ProjectPackExporter::ExportResult
@@ -443,11 +459,16 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
         failure.error = PathUtils::packBuildOutputLocationError();
         return failure;
     }
-    if (!options.snapshot || &project != &options.snapshot->project || outputDir.isEmpty()) {
+    if (!options.snapshot || &project != &options.snapshot->project || !options.buildContext
+        || options.buildContext->project != &project || outputDir.isEmpty()) {
         ExportOptions prepared = options;
         ExportResult failure;
         if (!prepared.snapshot) prepared.snapshot = ProjectBuildSnapshot::capture(project, &failure.error);
         if (!prepared.snapshot) return failure;
+        if (!prepared.buildContext || prepared.buildContext->project != &prepared.snapshot->project) {
+            prepared.buildContext = createBuildContext(prepared.snapshot->project);
+            prepared.buildPlan.reset();
+        }
         if (outputDir.isEmpty()) {
             const auto& captured = prepared.snapshot->project;
             if (!isSupportedExportPlatform(captured, prepared.platform, &failure.error)) return failure;
@@ -513,7 +534,8 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
     for (const ProjectItem* evt : allActions)
         actionsByStableId.emplace(actionIdentity(evt), evt);
 
-    PackBuildPlan buildPlan = createBuildPlan(project, effectiveOpts);
+    effectiveOpts.buildPlan = createBuildPlan(project, effectiveOpts);
+    const PackBuildPlan& buildPlan = *effectiveOpts.buildPlan;
     std::map<std::pair<QString, QString>, PackGenerationProgress> unitProgress;
     if (options.progressCallback) {
         effectiveOpts.progressCallback = [&](const PackGenerationProgress& progress) {
@@ -719,11 +741,16 @@ ProjectPackExporter::ExportInitPack(const ProjectData& project,
         failure.error = PathUtils::packBuildOutputLocationError();
         return failure;
     }
-    if (!options.snapshot || &project != &options.snapshot->project) {
+    if (!options.snapshot || &project != &options.snapshot->project || !options.buildContext
+        || options.buildContext->project != &project) {
         ExportOptions prepared = options;
         ExportResult failure;
         if (!prepared.snapshot) prepared.snapshot = ProjectBuildSnapshot::capture(project, &failure.error);
         if (!prepared.snapshot) return failure;
+        if (!prepared.buildContext || prepared.buildContext->project != &prepared.snapshot->project) {
+            prepared.buildContext = createBuildContext(prepared.snapshot->project);
+            prepared.buildPlan.reset();
+        }
         return ExportInitPack(prepared.snapshot->project, outputPath, prepared);
     }
 
@@ -748,7 +775,7 @@ ProjectPackExporter::ExportInitPack(const ProjectData& project,
     CollectBuses(project, builder, exportScope);
     if (!CollectSends(project, builder, exportScope, &result.error)) return result;
     CollectAttenuations(project, builder);
-    if (!CollectTypedBindings(project, builder, nullptr, &result.error))
+    if (!CollectTypedBindings(project, builder, nullptr, &result.error, options.buildContext.get()))
         return result;
 
     emit progressChanged(90, "Writing Init pack...");
@@ -773,11 +800,16 @@ ProjectPackExporter::ExportActionPack(const ProjectData& project,
         failure.error = PathUtils::packBuildOutputLocationError();
         return failure;
     }
-    if (!options.snapshot || &project != &options.snapshot->project) {
+    if (!options.snapshot || &project != &options.snapshot->project || !options.buildContext
+        || options.buildContext->project != &project) {
         ExportOptions prepared = options;
         ExportResult failure;
         if (!prepared.snapshot) prepared.snapshot = ProjectBuildSnapshot::capture(project, &failure.error);
         if (!prepared.snapshot) return failure;
+        if (!prepared.buildContext || prepared.buildContext->project != &prepared.snapshot->project) {
+            prepared.buildContext = createBuildContext(prepared.snapshot->project);
+            prepared.buildPlan.reset();
+        }
         return ExportActionPack(prepared.snapshot->project, actionName, outputPath, prepared, sharedMediaIds, sharedObjectIds);
     }
 
@@ -845,10 +877,12 @@ ProjectPackExporter::exportSingleActionPack(
     const std::set<uint32_t>* sharedObjectIds)
 {
     ExportResult result;
-    const auto effectiveGroups = buildFieldGroupEffectiveSnapshot(
-        project, toFieldGroupScope(exportPlatformOf(options)));
-    if (!effectiveGroups.ok()) {
-        result.error = effectiveGroups.diagnostics.front().message;
+    const auto effectiveGroups = options.buildContext
+        ? options.buildContext->capabilities->fieldGroups(exportPlatformOf(options))
+        : std::make_shared<FieldGroupEffectiveSnapshot>(buildFieldGroupEffectiveSnapshot(
+            project, toFieldGroupScope(exportPlatformOf(options))));
+    if (!effectiveGroups->ok()) {
+        result.error = effectiveGroups->diagnostics.front().message;
         return result;
     }
     Bridge::PackBuildSession builder(options.resourceCompiler);
@@ -856,18 +890,27 @@ ProjectPackExporter::exportSingleActionPack(
     const ObjectIndex globalIndex = buildProjectObjectIndex(project);
     const QString language = options.language.trimmed();
     const QStringList languages = language.isEmpty() ? QStringList() : QStringList{language};
-    const auto buildPlan = PackBuildPlanning::buildForAction(
-        project, action.runtimeId(), {options.platform}, languages,
-        QFileInfo(outputPath).completeBaseName(), options.updateSelectedOnly, options.selection);
-    const auto planned = std::find_if(buildPlan.variants.begin(), buildPlan.variants.end(),
+    std::optional<PackBuildPlan> localPlan;
+    const PackBuildPlan* buildPlan = options.buildPlan.get();
+    if (!buildPlan) {
+        RuntimeCapabilityContext context;
+        if (options.buildContext) context.buildSession = options.buildContext->capabilities;
+        localPlan = PackBuildPlanning::buildForAction(
+            project, action.runtimeId(), {options.platform}, languages,
+            QFileInfo(outputPath).completeBaseName(), options.updateSelectedOnly, options.selection, context,
+            options.buildContext ? options.buildContext->closures.get() : nullptr);
+        buildPlan = &*localPlan;
+    }
+    const auto planned = std::find_if(buildPlan->variants.begin(), buildPlan->variants.end(),
                                       [&](const auto& value) {
-        return value.actionStableId == action.runtimeId();
+        return value.actionStableId == action.runtimeId() && value.variant.platform == options.platform
+            && (language.isEmpty() || value.variant.language.isEmpty() || value.variant.language == language);
     });
-    if (planned == buildPlan.variants.end()) {
+    if (planned == buildPlan->variants.end()) {
         result.error = QStringLiteral("Action pack export failed for '%1': %2")
-                           .arg(action.name, buildPlan.diagnostics.empty()
+                           .arg(action.name, buildPlan->diagnostics.empty()
                                ? QStringLiteral("build plan is missing")
-                               : buildPlan.diagnostics.front().message);
+                               : buildPlan->diagnostics.front().message);
         return result;
     }
     if (language.isEmpty() && !planned->variant.language.isEmpty()) {
@@ -907,7 +950,7 @@ ProjectPackExporter::exportSingleActionPack(
     for (const auto& member : closure.objects)
         if (!harkenstudio::IsNull(member.stableId) && visitedObjects.count(member.objectId) != 0)
             closureObjectIds.insert(member.stableId);
-    if (!CollectTypedBindings(project, builder, &closureObjectIds, &result.error))
+    if (!CollectTypedBindings(project, builder, &closureObjectIds, &result.error, options.buildContext.get()))
         return result;
     if (sharedMediaIds)
         for (uint32_t sharedId : *sharedMediaIds)
@@ -954,9 +997,8 @@ ProjectPackExporter::exportSingleActionPack(
     if (options.debugStrings)
     {
         for (uint32_t id : visitedObjects) {
-            const auto* item = findItemByAuthoringHandleInProject(
-                const_cast<ProjectData*>(&project), id);
-            if (item) builder.addStringMapping(item->runtimeId(), item->name);
+            const auto item = globalIndex.find(id);
+            if (item != globalIndex.end()) builder.addStringMapping(item->second->runtimeId(), item->second->name);
         }
     }
 
@@ -983,11 +1025,16 @@ ProjectPackExporter::ExportSharedPack(const ProjectData& project,
         failure.error = PathUtils::packBuildOutputLocationError();
         return failure;
     }
-    if (!options.snapshot || &project != &options.snapshot->project) {
+    if (!options.snapshot || &project != &options.snapshot->project || !options.buildContext
+        || options.buildContext->project != &project) {
         ExportOptions prepared = options;
         ExportResult failure;
         if (!prepared.snapshot) prepared.snapshot = ProjectBuildSnapshot::capture(project, &failure.error);
         if (!prepared.snapshot) return failure;
+        if (!prepared.buildContext || prepared.buildContext->project != &prepared.snapshot->project) {
+            prepared.buildContext = createBuildContext(prepared.snapshot->project);
+            prepared.buildPlan.reset();
+        }
         return ExportSharedPack(prepared.snapshot->project, outputPath, prepared, sharedMedia, sharedObjects);
     }
 
@@ -1031,7 +1078,7 @@ ProjectPackExporter::ExportSharedPack(const ProjectData& project,
         if (item && !harkenstudio::IsNull(item->runtimeId()))
             sharedObjectRuntimeIds.insert(item->runtimeId());
     }
-    if (!CollectTypedBindings(project, builder, &sharedObjectRuntimeIds, &result.error))
+    if (!CollectTypedBindings(project, builder, &sharedObjectRuntimeIds, &result.error, options.buildContext.get()))
         return result;
 
     emit progressChanged(10, "Collecting shared content...");
@@ -1323,10 +1370,12 @@ void ProjectPackExporter::CollectContentInputsFromItem(const ProjectItem* item,
 bool ProjectPackExporter::CollectTypedBindings(const ProjectData& project,
                                                Bridge::PackBuildSession& builder,
                                                const std::set<harkenstudio::ObjectId>* allowedRuntimeObjectIds,
-                                               QString* errorOut)
+                                               QString* errorOut,
+                                               PackBuildContext* buildContext)
 {
-    const BindingRuntimeLowering lowering =
-        BindingRuntimeLoweringSemantics::lowerProject(project);
+    std::optional<BindingRuntimeLowering> ownedLowering;
+    const auto& lowering = buildContext ? buildContext->bindingLowering()
+        : ownedLowering.emplace(BindingRuntimeLoweringSemantics::lowerProject(project));
     if (lowering.failed) {
         if (errorOut)
             *errorOut = lowering.error;
@@ -1526,9 +1575,9 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
             }
             const auto authoredSource = SoundSourceSemantics::authoredView(*source, &conversion->asset);
             auto artifact = SoundSourceDerivative::materialize(
-                conversion->asset.absolutePath, authoredSource,
+                conversion->inputPath(), authoredSource,
                 sound->scheduleOffsetSec, platform, derivativeDir, conversion->settings,
-                &derivativeError, options.snapshot->derivativeCache.get());
+                &derivativeError, options.snapshot->derivativeCache.get(), conversion->sourceInput.get());
             if (canceled()) return false;
             if (!conversion->sourceMatches()) {
                 if (errorOut) *errorOut = QStringLiteral("Source file changed during Sound conversion");
@@ -1538,9 +1587,9 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
             bool fallback = false;
             if (!artifact) {
                 artifact = SoundSourceDerivative::materialize(
-                    conversion->asset.absolutePath, authoredSource,
+                    conversion->inputPath(), authoredSource,
                     sound->scheduleOffsetSec, platform, derivativeDir, ConversionSettings{},
-                    &derivativeError, options.snapshot->derivativeCache.get());
+                    &derivativeError, options.snapshot->derivativeCache.get(), conversion->sourceInput.get());
                 if (canceled()) return false;
                 fallback = artifact.has_value();
             }
@@ -1568,13 +1617,13 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
             if (publish) {
                 builder.addMedia(desc);
             } else {
-                uint64_t revision = 0;
-                if (!stats || !Bridge::computePackMediaContentRevision(desc, &revision)) {
+                const auto revision = options.snapshot->derivativeCache->contentRevision(*artifact);
+                if (!stats || !revision) {
                     if (errorOut) *errorOut = QStringLiteral("Cannot compute converted media revision for Sound %1")
                         .arg(VNX::objectIdString(media.soundStableId));
                     return false;
                 }
-                stats->controlSoundContentRevisions.emplace(media.soundStableId, revision);
+                stats->controlSoundContentRevisions.emplace(media.soundStableId, *revision);
             }
             processedSounds.insert(media.soundStableId);
         }
@@ -1618,9 +1667,15 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
         if (sounds.empty()) continue;
         const auto assetIt = mediaSnapshot.assets.constFind(sourceID);
         const AssetInfo* assetInfo = assetIt == mediaSnapshot.assets.cend() ? nullptr : &*assetIt;
+        std::optional<MediaConversionRequest> inputRequest;
         QString filePath;
 
-        if (assetInfo && !assetInfo->absolutePath.isEmpty()) {
+        if (assetInfo && mediaSnapshot.sourceInputs) {
+            inputRequest = mediaSnapshot.request(sourceID, platform, errorOut);
+            if (!inputRequest) return false;
+            assetInfo = &inputRequest->asset;
+            filePath = inputRequest->inputPath();
+        } else if (assetInfo && !assetInfo->absolutePath.isEmpty()) {
             filePath = assetInfo->absolutePath;
         } else if (assetInfo && !assetInfo->relativePath.isEmpty()) {
             filePath = AudioSourcesDir + "/" + assetInfo->relativePath;
@@ -1648,7 +1703,8 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
         bool loopEndExclusive = false;
 
         if (assetInfo) {
-            const ConversionResult conversion = converter.convert(sourceID, platform);
+            const ConversionResult conversion = inputRequest
+                ? converter.convert(*inputRequest) : converter.convert(sourceID, platform);
             if (canceled()) return false;
             if (conversion.success) {
                 packInputPath = conversion.absolutePath;

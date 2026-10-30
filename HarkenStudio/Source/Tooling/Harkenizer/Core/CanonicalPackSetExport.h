@@ -41,6 +41,13 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
 
 bool RecoverPackOutput(const QString& outputDir, QString* error);
 
+bool ReadValidatedPackPublication(const QString& directory, const QString& projectId,
+                                 const QString& platformId, QJsonArray* packs,
+                                 QStringList* managedFiles, QString* error,
+                                 const QStringList& expectedPackPaths,
+                                 const std::function<bool()>& cancelCheck,
+                                 const PackPublicationProof* publication);
+
 inline bool ValidateSnapshotBusIds(harkenstudio::ObjectId bus, harkenstudio::ObjectId parent,
                                    harkenstudio::ObjectId sendSource, harkenstudio::ObjectId sendTarget,
                                    harkenstudio::ObjectId downmix, harkenstudio::ObjectId master)

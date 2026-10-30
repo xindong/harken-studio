@@ -4,6 +4,7 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND}
         "-DCOMPILER_ARCHIVES=$<TARGET_FILE:harkenizer_resource_compiler>;$<TARGET_FILE:harken_studio_pack_build>;$<TARGET_FILE:harken_studio_media_decode>"
         "-DOUTPUT=${compiler_identity}"
+        "-DIDENTITY_FUNCTION=resourceCompilerIdentity"
         -P "${CMAKE_CURRENT_LIST_DIR}/CompilerIdentity.cmake"
     DEPENDS harkenizer_resource_compiler harken_studio_pack_build harken_studio_media_decode
         "${CMAKE_CURRENT_LIST_DIR}/CompilerIdentity.cmake"

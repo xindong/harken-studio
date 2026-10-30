@@ -1,7 +1,6 @@
 #include "Tooling/Harkenizer/Core/ProjectBuildSnapshot.h"
 
 #include "AssetPipeline/AssetRegistry.h"
-#include "AssetPipeline/AssetImporter.h"
 #include "AssetPipeline/PathUtils.h"
 #include "Components/VAction.h"
 #include "Components/VAttenuation.h"
@@ -112,8 +111,8 @@ std::shared_ptr<const ProjectBuildSnapshot> ProjectBuildSnapshot::capture(
     for (auto it = copies.cbegin(); it != copies.cend(); ++it)
         it.value()->parent = copies.value(it.key()->parent).get();
     snapshot->media = AssetRegistry::instance().buildSnapshot(
-        QFileInfo(source.projectPath).absolutePath(), source.platforms);
-    AssetImporter importer;
+        QFileInfo(source.projectPath).absolutePath(), source.platforms, false);
+    snapshot->media.sourceInputs = std::make_shared<BuildSourceInputs>();
     for (const auto& sourceAsset : source.audioSources) {
         if (snapshot->media.assets.contains(sourceAsset.sourceID)) continue;
         AssetInfo asset;
@@ -121,8 +120,6 @@ std::shared_ptr<const ProjectBuildSnapshot> ProjectBuildSnapshot::capture(
         asset.relativePath = sourceAsset.relativePath;
         asset.absolutePath = QDir(PathUtils::getAudioSourcesDir(snapshot->media.projectRoot))
             .filePath(asset.relativePath);
-        asset.metadata = importer.analyzeFile(asset.absolutePath);
-        asset.contentHash = AssetImporter::computeContentHash(asset.absolutePath);
         snapshot->media.assets.insert(asset.sourceID, asset);
     }
     return snapshot;

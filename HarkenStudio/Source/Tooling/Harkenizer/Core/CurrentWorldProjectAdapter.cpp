@@ -1494,12 +1494,15 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
         setError(error, QStringLiteral("Project sample rate is invalid"));
         return {};
     }
-    const auto sourceIndex = options && options->sourceIndex
-        ? options->sourceIndex
-        : HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(project);
-    auto canonical =
-        HarkenEditor::Bridge::canonicalRuntimeProjectContext(
-            project, projectGeneration, std::nullopt, scope, sourceIndex);
+    const auto sourceIndex = options && options->canonicalContext
+        ? options->canonicalContext->sourceIndex
+        : options && options->sourceIndex ? options->sourceIndex
+            : HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(project);
+    std::optional<HarkenEditor::Bridge::CanonicalRuntimeProjectContextV1> ownedCanonical;
+    const auto& canonical = options && options->canonicalContext
+        ? *options->canonicalContext
+        : ownedCanonical.emplace(HarkenEditor::Bridge::canonicalRuntimeProjectContext(
+            project, projectGeneration, std::nullopt, scope, sourceIndex));
     if (!canonical.ok()) {
         if (!canonical.compileTargetProfile)
             setStatus(status, CurrentWorldBuildStatus::CapabilityUnavailable);

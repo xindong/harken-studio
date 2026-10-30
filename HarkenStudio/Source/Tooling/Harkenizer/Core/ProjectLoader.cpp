@@ -902,12 +902,13 @@ PreparedProject ProjectLoader::prepareProject(const QString& filePath,
     const bool registryLoaded =
         AssetRegistry::loadSnapshotFromFile(projectRoot, prepared.assets);
     prepared.rebuildAssetRegistry = AssetRegistry::reconcileSnapshot(
-        projectRoot, prepared.project->sourceAssets, prepared.assets) || !registryLoaded;
+        projectRoot, prepared.project->sourceAssets, prepared.assets,
+        mode == ProjectSerializer::LoadMode::RecoverTransactions) || !registryLoaded;
     if (cancelled && cancelled())
         return {};
 
-    prepared.index = std::make_unique<ProjectIndex>();
     if (mode == ProjectSerializer::LoadMode::RecoverTransactions) {
+        prepared.index = std::make_unique<ProjectIndex>();
         prepared.index->loadFromCache(projectRoot);
         const auto scanResult = prepared.index->scanProjectRoot(projectRoot);
         if (scanResult != ProjectIndex::ScanResult::Ok) {
@@ -991,6 +992,10 @@ PreparedProject ProjectLoader::prepareProject(const QString& filePath,
     }
     if (cancelled && cancelled())
         return {};
+    if (mode == ProjectSerializer::LoadMode::ReadOnly) {
+        refreshFieldGroupDerivedViews(*prepared.project);
+        return prepared;
+    }
     prepared.folderSaveState = FolderSaveState::capture(*prepared.project, &prepared.error);
     if (!prepared.folderSaveState) {
         prepared.project.reset();

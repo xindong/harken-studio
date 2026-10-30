@@ -9,10 +9,18 @@
 #include <QUuid>
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
+namespace HarkenEditor::Bridge {
+struct CanonicalRuntimeProjectSourceIndexV1;
+struct CanonicalRuntimeProjectContextV1;
+}
+
 namespace VNX {
+
+struct FieldGroupEffectiveSnapshot;
 
 enum class RuntimeCapabilityState : uint8_t
 {
@@ -125,10 +133,34 @@ struct RuntimeCapabilityEntry
     QJsonObject toJson() const;
 };
 
+class RuntimeCapabilityBuildSession;
+
 struct RuntimeCapabilityContext
 {
     PlatformScope platform;
     QString language;
+    std::shared_ptr<RuntimeCapabilityBuildSession> buildSession;
+};
+
+class RuntimeCapabilityBuildSession
+{
+public:
+    explicit RuntimeCapabilityBuildSession(const ProjectData& project);
+    ~RuntimeCapabilityBuildSession();
+
+    std::shared_ptr<const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1>
+        sourceIndex() const;
+    std::shared_ptr<const HarkenEditor::Bridge::CanonicalRuntimeProjectContextV1>
+        canonicalContext(PlatformScope scope);
+    std::shared_ptr<const FieldGroupEffectiveSnapshot> fieldGroups(PlatformScope scope);
+    RuntimeCapabilityEntry compile(const ProjectItem& item,
+                                   RuntimeCapabilityOperation operation,
+                                   const std::optional<BuildVariant>& variant,
+                                   const RuntimeCapabilityContext& context);
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 namespace RuntimeCapabilityMatrix {

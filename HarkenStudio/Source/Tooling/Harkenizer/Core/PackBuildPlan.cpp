@@ -5,6 +5,7 @@
 #include "NameValidator.h"
 #include "ProjectLanguageSemantics.h"
 #include "RuntimeCapabilityMatrix.h"
+#include "BindingRuntimeLowering.h"
 
 #include <QJsonArray>
 #include <algorithm>
@@ -13,6 +14,14 @@
 #include <set>
 
 namespace VNX {
+
+const BindingRuntimeLowering& PackBuildContext::bindingLowering()
+{
+    if (!bindings_)
+        bindings_ = std::make_shared<BindingRuntimeLowering>(BindingRuntimeLoweringSemantics::lowerProject(*project));
+    return *bindings_;
+}
+
 namespace PackBuildPlanning {
 namespace {
 
@@ -139,7 +148,9 @@ PackBuildPlan buildImpl(const ProjectData& project, harkenstudio::ObjectId actio
                         const QStringList& requestedPlatforms,
                         const QStringList& requestedLanguages,
                         const QString& singleActionArtifactName, bool includeUnchecked,
-                        const PackExportSelection& selection)
+                        const PackExportSelection& selection,
+                        const RuntimeCapabilityContext& context,
+                        const ActionClosureBuildContext* closures)
 {
     PackBuildPlan plan;
     const QStringList platforms = requestedPlatforms.isEmpty()
@@ -209,9 +220,9 @@ PackBuildPlan buildImpl(const ProjectData& project, harkenstudio::ObjectId actio
                 variant.relativePackPath =
                     relativePackPath(definition.name, language, variant.artifactName);
                 variant.closure = ActionClosureSemantics::buildForContext(
-                    project, action->runtimeId(), variant.variant, {});
+                    project, action->runtimeId(), variant.variant, context, closures);
                 variant.capability = RuntimeCapabilityMatrix::assessForContext(
-                    *action, project, RuntimeCapabilityOperation::PackBuild, variant.variant, {});
+                    *action, project, RuntimeCapabilityOperation::PackBuild, variant.variant, context);
                 std::map<harkenstudio::ObjectId, std::vector<harkenstudio::ObjectId>> dependencies;
                 for (const auto& edge : variant.closure.edges)
                     if (edge.reason == ActionClosureEdgeReason::PostAction)
@@ -354,18 +365,20 @@ QHash<harkenstudio::ObjectId, QStringList> actionLanguages(const ProjectData& pr
 
 PackBuildPlan build(const ProjectData& project, const QStringList& requestedPlatforms,
                     const QStringList& requestedLanguages, bool includeUnchecked,
-                    const PackExportSelection& selection)
+                    const PackExportSelection& selection, const RuntimeCapabilityContext& context,
+                    const ActionClosureBuildContext* closures)
 {
-    return buildImpl(project, {}, requestedPlatforms, requestedLanguages, {}, includeUnchecked, selection);
+    return buildImpl(project, {}, requestedPlatforms, requestedLanguages, {}, includeUnchecked, selection, context, closures);
 }
 
 PackBuildPlan buildForAction(const ProjectData& project, harkenstudio::ObjectId actionStableId,
                             const QStringList& requestedPlatforms,
                             const QStringList& requestedLanguages,
                             const QString& artifactName, bool includeUnchecked,
-                            const PackExportSelection& selection)
+                            const PackExportSelection& selection, const RuntimeCapabilityContext& context,
+                            const ActionClosureBuildContext* closures)
 {
-    return buildImpl(project, actionStableId, requestedPlatforms, requestedLanguages, artifactName, includeUnchecked, selection);
+    return buildImpl(project, actionStableId, requestedPlatforms, requestedLanguages, artifactName, includeUnchecked, selection, context, closures);
 }
 
 }

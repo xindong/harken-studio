@@ -98,7 +98,8 @@ public:
                                      QMap<uint32_t, QString>& references);
     static bool reconcileSnapshot(const QString& projectRoot,
                                    const QMap<uint32_t, QString>& references,
-                                   QList<AssetInfo>& assets);
+                                   QList<AssetInfo>& assets,
+                                   bool analyzeMissingSources = true);
     QList<AssetInfo> snapshot() const;
     void replaceSnapshot(const QString& projectRoot, const QList<AssetInfo>& assets);
     static bool saveSnapshotToFile(const QString& projectRoot,

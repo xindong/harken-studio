@@ -6,11 +6,14 @@
 
 #include <QHash>
 #include <QJsonObject>
+#include <QSet>
 #include <QString>
 #include <vector>
 #include <set>
 
 namespace VNX {
+
+struct BindingRuntimeLowering;
 
 struct PackBuildVariant
 {
@@ -48,6 +51,38 @@ struct PackBuildPlan
     QJsonObject toJson() const;
 };
 
+struct PackBuildPlanKey
+{
+    QString platform;
+    QString language;
+    PackExportSelection selection;
+    bool updateSelectedOnly = false;
+    QSet<QString> onlyUnits;
+    QSet<QString> onlyPackPaths;
+    std::set<harkenstudio::ObjectId> onlyActionStableIds;
+
+    bool operator==(const PackBuildPlanKey&) const = default;
+};
+
+struct PackBuildContext
+{
+    explicit PackBuildContext(const ProjectData& project)
+        : project(&project), capabilities(std::make_shared<RuntimeCapabilityBuildSession>(project)),
+          closures(std::make_shared<ActionClosureBuildContext>(project))
+    {
+    }
+
+    const ProjectData* project;
+    std::shared_ptr<RuntimeCapabilityBuildSession> capabilities;
+    std::shared_ptr<ActionClosureBuildContext> closures;
+    std::vector<std::pair<PackBuildPlanKey, std::shared_ptr<const PackBuildPlan>>> plans;
+
+    const BindingRuntimeLowering& bindingLowering();
+
+private:
+    std::shared_ptr<const BindingRuntimeLowering> bindings_;
+};
+
 namespace PackBuildPlanning {
 
 QHash<harkenstudio::ObjectId, QStringList> artifactLanguages(
@@ -56,14 +91,18 @@ PackBuildPlan build(const ProjectData& project,
                     const QStringList& platforms = {},
                     const QStringList& languages = {},
                     bool includeUnchecked = false,
-                    const PackExportSelection& selection = {});
+                    const PackExportSelection& selection = {},
+                    const RuntimeCapabilityContext& context = {},
+                    const ActionClosureBuildContext* closures = nullptr);
 PackBuildPlan buildForAction(const ProjectData& project,
                             harkenstudio::ObjectId actionStableId,
                             const QStringList& platforms = {},
                             const QStringList& languages = {},
                             const QString& artifactName = {},
                             bool includeUnchecked = false,
-                            const PackExportSelection& selection = {});
+                            const PackExportSelection& selection = {},
+                            const RuntimeCapabilityContext& context = {},
+                            const ActionClosureBuildContext* closures = nullptr);
 QString stableArtifactKey(harkenstudio::ObjectId actionStableId);
 QString packNameError(const QString& name, bool grouped = false);
 QString relativePackPath(const QString& platform, const QString& language,

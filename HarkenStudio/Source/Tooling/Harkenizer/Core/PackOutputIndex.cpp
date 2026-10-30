@@ -13,7 +13,8 @@ namespace {
 
 bool validOutput(const QString& baseDir, const ProjectPlatform& platform, QString* error,
                  const QVector<PackArtifactMetadata>& artifacts,
-                 const std::function<bool()>& cancelCheck)
+                 const std::function<bool()>& cancelCheck,
+                 const QMap<QString, PackPublicationProof>& publications)
 {
     const QDir dir(ProjectPackExporter::platformOutputDir(baseDir, platform));
     if (QFileInfo(dir.path()).isSymLink()
@@ -29,8 +30,10 @@ bool validOutput(const QString& baseDir, const ProjectPlatform& platform, QStrin
         if (error) *error = QStringLiteral("No generated Pack artifacts for platform: %1").arg(platform.name);
         return false;
     }
-    return ReadPackPublication(dir.path(), {}, ProjectPlatformSemantics::idString(platform.id),
-        &packs, &managedFiles, error, true, expectedPaths, false, cancelCheck);
+    const auto publication = publications.constFind(platformId);
+    return ReadValidatedPackPublication(dir.path(), {}, platformId,
+        &packs, &managedFiles, error, expectedPaths, cancelCheck,
+        publication == publications.cend() ? nullptr : &*publication);
 }
 
 bool preserveDirectorySpelling(const QString& baseDir, const ProjectPlatform& platform)
@@ -53,6 +56,24 @@ bool preserveDirectorySpelling(const QString& baseDir, const ProjectPlatform& pl
 
 }
 
+bool ProjectPackExporter::PreparePackOutputDirectory(const QString& baseDir,
+                                                     const ProjectPlatform& platform,
+                                                     QString* error)
+{
+    const QDir directory(platformOutputDir(baseDir, platform));
+    if (!directory.mkpath(QStringLiteral("."))) {
+        if (error)
+            *error = QStringLiteral("Cannot create platform output directory: %1").arg(directory.path());
+        return false;
+    }
+    if (!preserveDirectorySpelling(baseDir, platform)) {
+        if (error)
+            *error = QStringLiteral("Cannot update platform output directory name: %1").arg(directory.path());
+        return false;
+    }
+    return true;
+}
+
 std::shared_ptr<QLockFile> ProjectPackExporter::LockPackOutputRoot(const QString& baseDir, QString* error)
 {
     if (baseDir.isEmpty() || !QDir().mkpath(baseDir)) {
@@ -72,7 +93,8 @@ std::shared_ptr<QLockFile> ProjectPackExporter::LockPackOutputRoot(const QString
 bool ProjectPackExporter::ValidatePackOutputs(const QString& baseDir,
                                               const QVector<ProjectPlatform>& platforms, QString* error,
                                               const QVector<PackArtifactMetadata>& artifacts,
-                                              const std::function<bool()>& cancelCheck)
+                                              const std::function<bool()>& cancelCheck,
+                                              const QMap<QString, PackPublicationProof>& publications)
 {
     if (baseDir.isEmpty() || !ProjectPlatformSemantics::validatePlatforms(platforms, error)) return false;
     for (const auto& platform : platforms) {
@@ -80,7 +102,8 @@ bool ProjectPackExporter::ValidatePackOutputs(const QString& baseDir,
             if (error) *error = QStringLiteral("Export canceled");
             return false;
         }
-        if (!validOutput(baseDir, platform, error, artifacts, cancelCheck) || !preserveDirectorySpelling(baseDir, platform)) {
+        if (!validOutput(baseDir, platform, error, artifacts, cancelCheck, publications)
+            || !preserveDirectorySpelling(baseDir, platform)) {
             if (error && error->isEmpty())
                 *error = QStringLiteral("Pack output is incomplete or belongs to another platform: %1").arg(platform.name);
             return false;
@@ -94,7 +117,8 @@ bool ProjectPackExporter::FinalizePackOutputs(const QString& baseDir,
                                               const QStringList& requestedIds,
                                               const QStringList& succeededIds, QString* error,
                                               const QVector<PackArtifactMetadata>& artifacts,
-                                              const std::function<bool()>& cancelCheck)
+                                              const std::function<bool()>& cancelCheck,
+                                              const QMap<QString, PackPublicationProof>& publications)
 {
     if (baseDir.isEmpty() || !ProjectPlatformSemantics::validatePlatforms(platforms, error)) return false;
     QVector<ProjectPlatform> completed;
@@ -107,7 +131,7 @@ bool ProjectPackExporter::FinalizePackOutputs(const QString& baseDir,
         completed.append(*platform);
     }
     if (completed.isEmpty()) return true;
-    return ValidatePackOutputs(baseDir, completed, error, artifacts, cancelCheck);
+    return ValidatePackOutputs(baseDir, completed, error, artifacts, cancelCheck, publications);
 }
 
 }

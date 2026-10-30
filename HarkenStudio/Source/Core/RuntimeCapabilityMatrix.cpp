@@ -6,6 +6,7 @@
 #include "EffectChainSemantics.h"
 #include "ItemTypeCatalog.h"
 #include "Tooling/Harkenizer/Core/CurrentWorldProjectAdapter.h"
+#include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "BindingRuntimeLowering.h"
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
 
@@ -20,6 +21,8 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <map>
+#include <tuple>
 #include <set>
 
 namespace VNX {
@@ -182,11 +185,172 @@ QString legacyOperationName(O operation)
     return {};
 }
 
+RuntimeCapabilityEntry compileCurrentWorldCapability(const ProjectItem& item,
+    const ProjectData& project, RuntimeCapabilityOperation operation,
+    const std::optional<BuildVariant>& variant, const RuntimeCapabilityContext& context)
+{
+    RuntimeCapabilityEntry result{item.type, operation, F::ContentClosure, S::Ready, {}};
+    const auto refuse = [&](S state, const QString& diagnostic) {
+        result.state = state;
+        result.diagnostic = diagnostic;
+        return result;
+    };
+    PlatformScope scope = context.platform;
+    CurrentWorldBuildOptions options;
+    if (item.type == T::Action) options.actionRoot = &item;
+    else options.definitionRoot = &item;
+    if (variant) {
+        options.language = variant->language;
+        if (!variant->platform.isEmpty()) {
+            const auto platform = ProjectPlatformSemantics::parseId(variant->platform);
+            if (!platform)
+                return refuse(S::InvalidAuthoring, QStringLiteral("Build platform ID is invalid"));
+            scope = *platform;
+        }
+    }
+    if (context.buildSession) {
+        options.sourceIndex = context.buildSession->sourceIndex();
+        options.canonicalContext = context.buildSession->canonicalContext(scope);
+        options.fieldGroups = context.buildSession->fieldGroups(scope).get();
+    }
+    QString diagnostic;
+    CurrentWorldBuildStatus status = CurrentWorldBuildStatus::InvalidAuthoring;
+    auto request = buildCurrentWorldSyncRequestForContext(
+        const_cast<ProjectData&>(project), scope, &diagnostic, &status, &options, 0, context.language);
+    if (!request)
+        return refuse(status == CurrentWorldBuildStatus::CapabilityUnavailable
+                          ? S::UnavailableEngineContract : S::InvalidAuthoring,
+                      diagnostic);
+    const bool playable = item.type == T::Sound || item.type == T::Container
+        || item.type == T::Track || item.type == T::Segment || item.type == T::Layer;
+    if (playable && std::none_of(request->project.nodes.begin(), request->project.nodes.end(),
+            [&](const auto& node) { return node.guid == item.runtimeId(); }))
+        return refuse(S::InvalidAuthoring,
+                      QStringLiteral("Object has no playable definition in the selected platform and language closure"));
+    if (item.type == T::Action && std::none_of(request->actions.begin(), request->actions.end(),
+            [&](const auto& action) { return action.actionStableId == item.runtimeId(); }))
+        return refuse(S::InvalidAuthoring,
+                      QStringLiteral("Action has no playable steps in the selected language closure"));
+    for (const auto& node : request->project.nodes) {
+        const auto* dependency = findByStableId(project, node.guid);
+        if (!dependency) continue;
+        for (const F dependencyFeature : {F::TypedBinding, F::TypedEffect}) {
+            if (dependencyFeature == F::TypedEffect) {
+                const auto* mix = dependency->comp<VMixNode>();
+                if (!mix) continue;
+                for (const auto& effect : mix->effects.entries()) {
+                    if (!EffectChainSemantics::validate(effect, &diagnostic))
+                        return refuse(S::InvalidAuthoring, diagnostic);
+                    if (effect.bypass)
+                        return refuse(S::UnavailableEngineContract,
+                            QStringLiteral("Current World playable effect graphs do not carry effect bypass"));
+                }
+            } else {
+                const auto binding = bindingCapability(*dependency, project, operation);
+                if (binding.state != S::Ready) return refuse(binding.state, binding.diagnostic);
+            }
+        }
+    }
+    const auto frontEnd = harkenprojectschema::CompileFrontEnd(request->project);
+    if (!frontEnd.ok()) {
+        diagnostic = QStringLiteral("Current World project compilation failed");
+        if (!frontEnd.diagnostics.empty())
+            diagnostic += QStringLiteral(": %1").arg(QString::fromLatin1(
+                harkenprojectschema::DiagnosticCodeName(frontEnd.diagnostics.front().code)));
+        return refuse(S::InvalidAuthoring, diagnostic);
+    }
+    auto materializations = request->materializations;
+    for (auto& definition : materializations)
+        if (definition.kind == harkenplayableproperties::ContentPropertyKindV1::Sound
+            && definition.contentRevision == 0)
+            definition.contentRevision = 1;
+    const auto compiled = harkencurrentworldcompiler::CompileCurrentWorldV1(
+        *frontEnd.project, request->variables, materializations,
+        request->containers, {}, request->transitions, request->actions,
+        &request->busResult->idSet,
+        harkencurrentworldcompiler::CompileCapacityModeV1::AuthoredContent);
+    if (!compiled.ok())
+        return refuse(compiled.status == harkencurrentworldcompiler::CompileStatusV1::Capacity
+                          || compiled.status == harkencurrentworldcompiler::CompileStatusV1::TransitionCapabilityUnavailable
+                          ? S::UnavailableEngineContract : S::InvalidAuthoring,
+                      QStringLiteral("Current World authoring compilation failed (%1, stable id %2)")
+                          .arg(static_cast<uint32_t>(compiled.status))
+                          .arg(objectIdString(compiled.relatedStableId)));
+    if (compiled.world->View().trackScheduleCount != 0
+        || compiled.world->View().segmentScheduleCount != 0)
+        result.diagnostic = scheduleAdmissionDiagnostic();
+    return result;
+}
+
+
 bool isUnsupportedState(S state)
 {
     return state == S::UnavailableEngineContract || state == S::InvalidAuthoring;
 }
 
+}
+
+struct RuntimeCapabilityBuildSession::Impl
+{
+    const ProjectData& project;
+    std::shared_ptr<const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1> source;
+    std::map<PlatformScope, std::shared_ptr<const FieldGroupEffectiveSnapshot>> groups;
+    std::map<PlatformScope, std::shared_ptr<const HarkenEditor::Bridge::CanonicalRuntimeProjectContextV1>> contexts;
+    using CompileKey = std::tuple<const ProjectItem*, RuntimeCapabilityOperation,
+        PlatformScope, QString, std::optional<QString>, QString>;
+    std::map<CompileKey, RuntimeCapabilityEntry> compiled;
+
+    explicit Impl(const ProjectData& value)
+        : project(value), source(HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(value))
+    {
+    }
+};
+
+RuntimeCapabilityBuildSession::RuntimeCapabilityBuildSession(const ProjectData& project)
+    : impl_(std::make_unique<Impl>(project))
+{
+}
+
+RuntimeCapabilityBuildSession::~RuntimeCapabilityBuildSession() = default;
+
+std::shared_ptr<const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1>
+RuntimeCapabilityBuildSession::sourceIndex() const
+{
+    return impl_->source;
+}
+
+std::shared_ptr<const HarkenEditor::Bridge::CanonicalRuntimeProjectContextV1>
+RuntimeCapabilityBuildSession::canonicalContext(PlatformScope scope)
+{
+    auto& context = impl_->contexts[scope];
+    if (!context)
+        context = std::make_shared<HarkenEditor::Bridge::CanonicalRuntimeProjectContextV1>(
+            HarkenEditor::Bridge::canonicalRuntimeProjectContext(
+                const_cast<ProjectData&>(impl_->project), 0, std::nullopt, scope, impl_->source));
+    return context;
+}
+
+std::shared_ptr<const FieldGroupEffectiveSnapshot>
+RuntimeCapabilityBuildSession::fieldGroups(PlatformScope scope)
+{
+    auto& groups = impl_->groups[scope];
+    if (!groups)
+        groups = std::make_shared<FieldGroupEffectiveSnapshot>(
+            buildFieldGroupEffectiveSnapshot(impl_->project, toFieldGroupScope(scope), *impl_->source));
+    return groups;
+}
+
+RuntimeCapabilityEntry RuntimeCapabilityBuildSession::compile(const ProjectItem& item,
+    RuntimeCapabilityOperation operation, const std::optional<BuildVariant>& variant,
+    const RuntimeCapabilityContext& context)
+{
+    const Impl::CompileKey key{&item, operation, context.platform,
+        variant ? variant->platform : QString(),
+        variant ? std::optional<QString>(variant->language) : std::nullopt, context.language};
+    const auto found = impl_->compiled.find(key);
+    if (found != impl_->compiled.end()) return found->second;
+    return impl_->compiled.emplace(key,
+        compileCurrentWorldCapability(item, impl_->project, operation, variant, context)).first->second;
 }
 
 QJsonObject RuntimeCapabilityLocator::toJson() const
@@ -413,85 +577,10 @@ RuntimeCapabilityEntry evaluateForContext(const ProjectItem& item,
         const auto bindings = bindingCapability(item, project, operation);
         if (bindings.state != S::Ready) return refuse(bindings.state, bindings.diagnostic);
     }
-    PlatformScope scope = context.platform;
-    CurrentWorldBuildOptions options;
-    if (item.type == T::Action) options.actionRoot = &item;
-    else options.definitionRoot = &item;
-    if (variant) {
-        options.language = variant->language;
-        if (!variant->platform.isEmpty()) {
-            const auto platform = ProjectPlatformSemantics::parseId(variant->platform);
-            if (!platform)
-                return refuse(S::InvalidAuthoring, QStringLiteral("Build platform ID is invalid"));
-            scope = *platform;
-        }
-    }
-    QString diagnostic;
-    CurrentWorldBuildStatus status = CurrentWorldBuildStatus::InvalidAuthoring;
-    auto request = buildCurrentWorldSyncRequestForContext(
-        const_cast<ProjectData&>(project), scope, &diagnostic, &status, &options, 0, context.language);
-    if (!request)
-        return refuse(status == CurrentWorldBuildStatus::CapabilityUnavailable
-                          ? S::UnavailableEngineContract : S::InvalidAuthoring,
-                      diagnostic);
-    const bool playable = item.type == T::Sound || item.type == T::Container
-        || item.type == T::Track || item.type == T::Segment || item.type == T::Layer;
-    if (playable && std::none_of(request->project.nodes.begin(), request->project.nodes.end(),
-            [&](const auto& node) { return node.guid == item.runtimeId(); }))
-        return refuse(S::InvalidAuthoring,
-                      QStringLiteral("Object has no playable definition in the selected platform and language closure"));
-    if (item.type == T::Action && std::none_of(request->actions.begin(), request->actions.end(),
-            [&](const auto& action) { return action.actionStableId == item.runtimeId(); }))
-        return refuse(S::InvalidAuthoring,
-                      QStringLiteral("Action has no playable steps in the selected language closure"));
-    for (const auto& node : request->project.nodes) {
-        const auto* dependency = findByStableId(project, node.guid);
-        if (!dependency) continue;
-        for (const F dependencyFeature : {F::TypedBinding, F::TypedEffect}) {
-            if (dependencyFeature == F::TypedEffect) {
-                const auto* mix = dependency->comp<VMixNode>();
-                if (!mix) continue;
-                for (const auto& effect : mix->effects.entries()) {
-                    if (!EffectChainSemantics::validate(effect, &diagnostic))
-                        return refuse(S::InvalidAuthoring, diagnostic);
-                    if (effect.bypass)
-                        return refuse(S::UnavailableEngineContract,
-                            QStringLiteral("Current World playable effect graphs do not carry effect bypass"));
-                }
-            } else {
-                const auto binding = bindingCapability(*dependency, project, operation);
-                if (binding.state != S::Ready) return refuse(binding.state, binding.diagnostic);
-            }
-        }
-    }
-    const auto frontEnd = harkenprojectschema::CompileFrontEnd(request->project);
-    if (!frontEnd.ok()) {
-        diagnostic = QStringLiteral("Current World project compilation failed");
-        if (!frontEnd.diagnostics.empty())
-            diagnostic += QStringLiteral(": %1").arg(QString::fromLatin1(
-                harkenprojectschema::DiagnosticCodeName(frontEnd.diagnostics.front().code)));
-        return refuse(S::InvalidAuthoring, diagnostic);
-    }
-    auto materializations = request->materializations;
-    for (auto& definition : materializations)
-        if (definition.kind == harkenplayableproperties::ContentPropertyKindV1::Sound
-            && definition.contentRevision == 0)
-            definition.contentRevision = 1;
-    const auto compiled = harkencurrentworldcompiler::CompileCurrentWorldV1(
-        *frontEnd.project, request->variables, materializations,
-        request->containers, {}, request->transitions, request->actions,
-        &request->busResult->idSet,
-        harkencurrentworldcompiler::CompileCapacityModeV1::AuthoredContent);
-    if (!compiled.ok())
-        return refuse(compiled.status == harkencurrentworldcompiler::CompileStatusV1::Capacity
-                          || compiled.status == harkencurrentworldcompiler::CompileStatusV1::TransitionCapabilityUnavailable
-                          ? S::UnavailableEngineContract : S::InvalidAuthoring,
-                      QStringLiteral("Current World authoring compilation failed (%1, stable id %2)")
-                          .arg(static_cast<uint32_t>(compiled.status))
-                          .arg(objectIdString(compiled.relatedStableId)));
-    if (compiled.world->View().trackScheduleCount != 0
-        || compiled.world->View().segmentScheduleCount != 0)
-        result.diagnostic = scheduleAdmissionDiagnostic();
+    result = context.buildSession
+        ? context.buildSession->compile(item, operation, variant, context)
+        : compileCurrentWorldCapability(item, project, operation, variant, context);
+    result.feature = feature;
     return result;
 }
 

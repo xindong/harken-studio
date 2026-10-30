@@ -123,6 +123,20 @@ struct ActionClosurePlan
     QJsonObject toJson() const;
 };
 
+class ActionClosureBuildContext
+{
+public:
+    explicit ActionClosureBuildContext(const ProjectData& project);
+    ~ActionClosureBuildContext();
+    ActionClosurePlan build(harkenstudio::ObjectId actionStableId,
+                            const BuildVariant& variant,
+                            const RuntimeCapabilityContext& context) const;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
 namespace ActionClosureSemantics {
 
 ActionClosurePlan build(const ProjectData& project,
@@ -131,7 +145,8 @@ ActionClosurePlan build(const ProjectData& project,
 ActionClosurePlan buildForContext(const ProjectData& project,
                                   harkenstudio::ObjectId actionStableId,
                                   const BuildVariant& variant,
-                                  const RuntimeCapabilityContext& context);
+                                  const RuntimeCapabilityContext& context,
+                                  const ActionClosureBuildContext* buildContext = nullptr);
 ActionClosurePlan contentReferences(const ProjectData& project,
                                     harkenstudio::ObjectId actionStableId);
 QString edgeReasonName(ActionClosureEdgeReason reason);

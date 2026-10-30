@@ -277,6 +277,7 @@ endif()
 include(Source/Tooling/Harkenizer/CompilerClient.cmake)
 add_subdirectory(Source/RuntimeBridge)
 add_subdirectory(Source/Tooling/Harkenizer/Core)
+include(Source/Tooling/Harkenizer/BuildIdentity.cmake)
 add_subdirectory(Source/Monitor)
 add_subdirectory(Source/Core)
 # S1a Blueprint — leaf lib (depends on Foundation only).
@@ -473,7 +474,7 @@ add_executable(harkenizer
     Source/Tooling/Harkenizer/Main.cpp
     Source/Tooling/Harkenizer/ResourceWorker.cpp)
 set_target_properties(harkenizer PROPERTIES OUTPUT_NAME "Harkenizer")
-target_link_libraries(harkenizer PRIVATE harkenizer_core harkenizer_resource_compiler)
+target_link_libraries(harkenizer PRIVATE harkenizer_build harkenizer_resource_compiler)
 harken_attach_version_resource(harkenizer "Harkenizer" "Harkenizer.exe")
 add_dependencies(harken_editor harkenizer)
 if(WIN32)

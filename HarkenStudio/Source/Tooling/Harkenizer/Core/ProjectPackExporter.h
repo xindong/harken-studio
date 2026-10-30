@@ -11,6 +11,7 @@
 #include "ProjectTypes.h"
 #include "RuntimeBridge/PackagingBridge.h"
 #include <QObject>
+#include <QMap>
 #include <QSet>
 #include <QString>
 #include <QStringList>
@@ -30,12 +31,23 @@ namespace VNX {
     struct ProjectData;
     struct ProjectItem;
     struct PackBuildPlan;
+    struct PackBuildContext;
     struct WaveformPeakData;
     struct ProjectBuildSnapshot;
     struct MediaBuildSnapshot;
 }
 
 namespace VNX {
+
+struct PackPublicationProof
+{
+    QString directory;
+    QString projectId;
+    QString platformId;
+    QJsonArray packs;
+    QStringList managedFiles;
+    std::weak_ptr<QLockFile> outputLock;
+};
 
 namespace ProjectPackExporterInternal {
 
@@ -50,6 +62,9 @@ namespace ProjectPackExporterInternal {
         QString platform;
         PackExportSelection selection;
         std::shared_ptr<const ProjectBuildSnapshot> snapshot;
+        std::shared_ptr<PackBuildContext> buildContext;
+        std::shared_ptr<const PackBuildPlan> buildPlan;
+        QMap<QString, std::shared_ptr<QLockFile>> platformLocks;
         std::shared_ptr<Harkenizer::ResourceCompilerClient> resourceCompiler;
         QString currentWorldOutputPath;
         QString waveformOutputDir;
@@ -88,10 +103,13 @@ public:
 
     using ExportOptions = ProjectPackExporterInternal::ProjectPackExporterExportOptions;
 
+    static std::shared_ptr<PackBuildContext> createBuildContext(const ProjectData& project);
+
     struct ExportResult
     {
         bool    success = false;
         bool    canceled = false;
+        bool    reusableBuild = true;
         QString outputPath;
         qint64  fileSize  = 0;
         int     objectCount = 0;
@@ -110,6 +128,7 @@ public:
         int skippedPackCount = 0;
         int removedPackCount = 0;
         QVector<PackArtifactMetadata> artifacts;
+        std::optional<PackPublicationProof> publication;
     };
 
     struct PackBuildRecord
@@ -159,11 +178,16 @@ public:
     static QString platformOutputDir(const QString& baseDir,
                                      const ProjectPlatform& platform);
 
+    static bool PreparePackOutputDirectory(const QString& baseDir,
+                                           const ProjectPlatform& platform,
+                                           QString* errorOut = nullptr);
+
     static bool ValidatePackOutputs(const QString& baseDir,
                                     const QVector<ProjectPlatform>& platforms,
                                     QString* errorOut = nullptr,
                                     const QVector<PackArtifactMetadata>& artifacts = {},
-                                    const std::function<bool()>& cancelCheck = {});
+                                    const std::function<bool()>& cancelCheck = {},
+                                    const QMap<QString, PackPublicationProof>& publications = {});
 
     static bool ValidatePackBuildPlatforms(const QVector<ProjectPlatform>& captured,
                                            const QVector<ProjectPlatform>& current,
@@ -175,7 +199,8 @@ public:
                                            const QStringList& selectedPlatformIds,
                                            bool selfCleaning,
                                            const QVector<PackArtifactMetadata>& artifacts = {},
-                                           const std::function<bool()>& cancelCheck = {});
+                                           const std::function<bool()>& cancelCheck = {},
+                                           const QMap<QString, PackPublicationProof>& publications = {});
 
     static bool FinalizePackOutputs(const QString& baseDir,
                                  const QVector<ProjectPlatform>& platforms,
@@ -183,7 +208,8 @@ public:
                                  const QStringList& succeededIds,
                                  QString* errorOut = nullptr,
                                  const QVector<PackArtifactMetadata>& artifacts = {},
-                                 const std::function<bool()>& cancelCheck = {});
+                                 const std::function<bool()>& cancelCheck = {},
+                                 const QMap<QString, PackPublicationProof>& publications = {});
 
     static std::shared_ptr<QLockFile> LockPackOutputRoot(const QString& baseDir,
                                                        QString* errorOut = nullptr);
@@ -223,7 +249,8 @@ public:
                                              const QStringList& platforms,
                                              const ExportOptions& options,
                                              QString* errorOut,
-                                             QString* summaryOut = nullptr);
+                                             QString* summaryOut = nullptr,
+                                             const QSet<QString>& reusablePlatforms = {});
 
 
     struct DependencyNode
@@ -270,8 +297,8 @@ public:
 
 private:
 
-    static PackBuildPlan createBuildPlan(const ProjectData& project,
-                                         const ExportOptions& options);
+    static std::shared_ptr<const PackBuildPlan> createBuildPlan(const ProjectData& project,
+                                                               const ExportOptions& options);
 
     struct MediaCollectionStats
     {
@@ -329,7 +356,8 @@ private:
     bool CollectTypedBindings(const ProjectData& project,
                               HarkenEditor::Bridge::PackBuildSession& builder,
                               const std::set<harkenstudio::ObjectId>* allowedRuntimeObjectIds = nullptr,
-                              QString* errorOut = nullptr);
+                              QString* errorOut = nullptr,
+                              PackBuildContext* buildContext = nullptr);
     void CollectReferencedMedia(const ProjectData& project,
                                  std::set<uint32_t>& referencedMedia);
 

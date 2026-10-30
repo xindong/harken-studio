@@ -94,9 +94,11 @@ struct Builder
     BuildVariant variant;
     RuntimeCapabilityContext capabilityContext;
     bool contentReferencesOnly;
-    Index index;
+    std::shared_ptr<const Index> indexOwner;
+    const Index& index;
     std::shared_ptr<const FieldGroupEffectiveSnapshot> effectiveGroups;
-    EditorUtils::ActionTargetLookup targetLookup;
+    std::shared_ptr<const EditorUtils::ActionTargetLookup> targetLookupOwner;
+    const EditorUtils::ActionTargetLookup& targetLookup;
     ActionClosurePlan plan;
     std::set<harkenstudio::ObjectId> actionVisited;
     std::set<harkenstudio::ObjectId> actionActive;
@@ -107,11 +109,17 @@ struct Builder
     std::set<std::tuple<RuntimeCapabilityFeature, harkenstudio::ObjectId, QString>> capabilityKeys;
 
     Builder(const ProjectData& projectValue, BuildVariant variantValue,
-            RuntimeCapabilityContext context, bool contentReferencesOnlyValue = false)
+            RuntimeCapabilityContext context, bool contentReferencesOnlyValue = false,
+            std::shared_ptr<const Index> sharedIndex = {},
+            std::shared_ptr<const EditorUtils::ActionTargetLookup> sharedLookup = {})
         : project(projectValue), variant(std::move(variantValue)),
           capabilityContext(std::move(context)),
-          contentReferencesOnly(contentReferencesOnlyValue), index(buildIndex(projectValue)),
-          targetLookup(EditorUtils::makeProjectTargetLookup(projectValue))
+          contentReferencesOnly(contentReferencesOnlyValue),
+          indexOwner(sharedIndex ? std::move(sharedIndex) : std::make_shared<Index>(buildIndex(projectValue))),
+          index(*indexOwner),
+          targetLookupOwner(sharedLookup ? std::move(sharedLookup)
+              : std::make_shared<EditorUtils::ActionTargetLookup>(EditorUtils::makeProjectTargetLookup(projectValue))),
+          targetLookup(*targetLookupOwner)
     {
         plan.variant = variant;
         plan.diagnostics = index.diagnostics;
@@ -128,8 +136,11 @@ struct Builder
             }
             scope = toFieldGroupGuid(*parsed);
         }
-        effectiveGroups = std::make_shared<FieldGroupEffectiveSnapshot>(
-            buildFieldGroupEffectiveSnapshot(project, scope));
+        effectiveGroups = capabilityContext.buildSession
+            ? capabilityContext.buildSession->fieldGroups(variant.platform.isEmpty()
+                ? PlatformScope{} : PlatformScope{QUuid::fromString(variant.platform)})
+            : std::make_shared<FieldGroupEffectiveSnapshot>(
+                buildFieldGroupEffectiveSnapshot(project, scope));
         for (const auto& error : effectiveGroups->diagnostics) {
             const auto object = index.guid.find(error.itemGuid);
             diagnostic(ActionClosureDiagnosticCode::SchemaMismatch, error.message,
@@ -660,6 +671,33 @@ struct Builder
 
 }
 
+struct ActionClosureBuildContext::Impl
+{
+    const ProjectData& project;
+    std::shared_ptr<const Index> index;
+    std::shared_ptr<const EditorUtils::ActionTargetLookup> targetLookup;
+
+    explicit Impl(const ProjectData& value)
+        : project(value), index(std::make_shared<Index>(buildIndex(value))),
+          targetLookup(std::make_shared<EditorUtils::ActionTargetLookup>(EditorUtils::makeProjectTargetLookup(value)))
+    {
+    }
+};
+
+ActionClosureBuildContext::ActionClosureBuildContext(const ProjectData& project)
+    : impl_(std::make_unique<Impl>(project))
+{
+}
+
+ActionClosureBuildContext::~ActionClosureBuildContext() = default;
+
+ActionClosurePlan ActionClosureBuildContext::build(harkenstudio::ObjectId actionStableId,
+    const BuildVariant& variant, const RuntimeCapabilityContext& context) const
+{
+    return Builder(impl_->project, variant, context, false,
+        impl_->index, impl_->targetLookup).build(actionStableId);
+}
+
 QJsonObject ActionClosureMember::toJson() const
 {
     return {{QStringLiteral("stableId"), objectIdString(stableId)},
@@ -785,8 +823,10 @@ QString diagnosticCodeName(ActionClosureDiagnosticCode code)
 
 ActionClosurePlan buildForContext(const ProjectData& project, harkenstudio::ObjectId actionStableId,
                                   const BuildVariant& variant,
-                                  const RuntimeCapabilityContext& context)
+                                  const RuntimeCapabilityContext& context,
+                                  const ActionClosureBuildContext* buildContext)
 {
+    if (buildContext) return buildContext->build(actionStableId, variant, context);
     return Builder(project, variant, context).build(actionStableId);
 }
 

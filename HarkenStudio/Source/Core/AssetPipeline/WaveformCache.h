@@ -2,6 +2,7 @@
 #pragma once
 
 #include <QString>
+#include <QByteArray>
 #include <QFuture>
 #include <QObject>
 #include <cstdint>
@@ -87,6 +88,11 @@ public:
 
     static bool load(const QString& audioFilePath, WaveformPeakData& outData);
 
+    static bool readForBuild(const QString& inputPath,
+                            const QString& originalPath,
+                            const QString& sourceContentHash,
+                            QByteArray& bytes);
+
     static std::shared_ptr<const WaveformPeakData> loadShared(const QString& audioFilePath);
 
     static WaveformPeakData readRange(const QString& audioFilePath,
@@ -115,27 +121,32 @@ private:
 
     static bool generateForRevision(const QString& audioFilePath,
                                     uint32_t targetPeaks,
-                                    quint64 revision);
+                                    quint64 revision,
+                                    const QString& originalPath = {},
+                                    const QString& sourceContentHash = {});
     static bool generateMidSideForRevision(const QString& audioFilePath,
                                            WaveformPeakData& outData,
-                                           quint64 revision);
+                                           quint64 revision,
+                                           const QString& originalPath = {});
     static bool writeVKD(const QString& vkdPath,
                           const QString& audioFilePath,
                           const WaveformPeakData& data,
                           uint64_t sourceFileSize,
                           int64_t sourceMtime,
-                          quint64 revision);
+                          quint64 revision,
+                          const QString& sourceContentHash);
 
     static bool readAndValidateHeader(QDataStream& stream,
                                        uint64_t expectedFileSize,
                                        int64_t expectedMtime,
                                        uint32_t& outSectionCount);
 
-    static bool generateFromDecoded(const QString& audioFilePath, const QString& vkdPath,
+    static bool generateFromDecoded(const QString& audioFilePath, const QString& originalPath,
                                      uint32_t targetPeaks,
                                      uint64_t sourceFileSize,
                                      int64_t sourceMtime,
-                                     quint64 revision);
+                                     quint64 revision,
+                                     const QString& sourceContentHash);
 };
 
 }
