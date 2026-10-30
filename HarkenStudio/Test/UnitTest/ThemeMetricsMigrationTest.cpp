@@ -186,7 +186,7 @@ TEST(ThemeControlValidation, ValidatorsAndMasksInstalledAfterPolishKeepAutomatic
     EXPECT_FALSE(masked.property("inputInvalid").toBool());
 }
 
-TEST(ThemeMetricsMigration, ColorPreviewPreservesMetricsAndSemanticTextRoles)
+TEST(ThemeMetricsMigration, ColorPreviewPreservesMetricsAndSynchronizesNativePalette)
 {
     ensureApp();
     QTemporaryDir root;
@@ -228,21 +228,39 @@ TEST(ThemeMetricsMigration, ColorPreviewPreservesMetricsAndSemanticTextRoles)
     QCoreApplication::processEvents();
     editor->setSelection(2, 6);
     const auto original = manager->snapshot();
+    const auto originalPalette = qApp->palette();
     const auto geometry = editor->geometry();
     const auto font = editor->font();
     const auto comboGeometry = fixedCombo->geometry();
     const auto comboMinimum = fixedCombo->minimumSize();
     const auto comboMaximum = fixedCombo->maximumSize();
     const QColor primary(QStringLiteral("#ffc8a0e0"));
+    const QColor secondary(QStringLiteral("#ffb0c9df"));
     const QColor muted(QStringLiteral("#ff73b493"));
+    const QColor mainBackground(QStringLiteral("#ff263040"));
+    const QColor controlBackground(QStringLiteral("#ff354152"));
+    const QColor raisedBackground(QStringLiteral("#ff465668"));
     auto preview = manager->appearance();
     preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("text.primary"), primary);
+    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("text.secondary"), secondary);
     preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("text.muted"), muted);
+    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("background.primary"), mainBackground);
+    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("background.secondary"), controlBackground);
+    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("background.tertiary"), raisedBackground);
     ASSERT_TRUE(manager->previewAppearance(preview).ok());
     QCoreApplication::processEvents();
     EXPECT_EQ(label->palette().color(QPalette::WindowText), primary);
     EXPECT_EQ(headerLabel->palette().color(QPalette::WindowText), muted);
     EXPECT_EQ(localLabel->palette().color(QPalette::WindowText), QColor(QStringLiteral("#ccee77")));
+    EXPECT_EQ(qApp->palette().color(QPalette::Window), mainBackground);
+    EXPECT_EQ(qApp->palette().color(QPalette::Base), controlBackground);
+    EXPECT_EQ(qApp->palette().color(QPalette::ToolTipBase), controlBackground);
+    EXPECT_EQ(qApp->palette().color(QPalette::AlternateBase), raisedBackground);
+    EXPECT_EQ(qApp->palette().color(QPalette::Button), raisedBackground);
+    EXPECT_EQ(qApp->palette().color(QPalette::Text), primary);
+    EXPECT_EQ(qApp->palette().color(QPalette::ToolTipText), primary);
+    EXPECT_EQ(qApp->palette().color(QPalette::Mid), secondary);
+    EXPECT_EQ(qApp->palette().color(QPalette::Dark), muted);
     EXPECT_EQ(editor->geometry(), geometry);
     EXPECT_EQ(editor->font(), font);
     EXPECT_EQ(editor->selectedText(), QStringLiteral("finish"));
@@ -253,6 +271,7 @@ TEST(ThemeMetricsMigration, ColorPreviewPreservesMetricsAndSemanticTextRoles)
     VNX::QtControlSkin::setSemanticProperty(label, "textRole", QStringLiteral("muted"));
     EXPECT_EQ(label->palette().color(QPalette::WindowText), muted);
     manager->cancelAppearancePreview();
+    EXPECT_EQ(qApp->palette(), originalPalette);
     EXPECT_EQ(label->palette().color(QPalette::WindowText), original->ui.colors.textMuted);
     EXPECT_EQ(headerLabel->palette().color(QPalette::WindowText), original->ui.colors.textMuted);
     EXPECT_EQ(localLabel->palette().color(QPalette::WindowText), QColor(QStringLiteral("#ccee77")));

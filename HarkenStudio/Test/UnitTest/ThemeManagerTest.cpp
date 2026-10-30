@@ -461,6 +461,90 @@ TEST(ThemeManager, FailedStoredCustomizationPreservesOtherThemeAndPaletteEdits)
     EXPECT_EQ(restored.snapshot()->ui.colors.accent, builtinColor);
 }
 
+TEST(ThemeManager, MalformedStoredColorsDoNotBlockValidEditsAcrossThemesAndRestarts)
+{
+    const QString packageId = QStringLiteral("theme.custom");
+    const QString missingId = QStringLiteral("theme.missing");
+    const QString builtinId = VNX::builtinThemeId();
+    const QString dark = QStringLiteral("dark");
+    const QString light = QStringLiteral("light");
+    const QString key = QStringLiteral("accent.primary");
+    const QString privateKey = QStringLiteral("private.color");
+    const QColor packageColor(QStringLiteral("#80123456"));
+    const QColor builtinColor(QStringLiteral("#906789ab"));
+    const QColor privateColor(QStringLiteral("#a0abcdef"));
+    for (const auto& format : {QStringLiteral("ThemePaletteColors"),
+                              QStringLiteral("PaletteColors"), QStringLiteral("Colors")})
+    {
+        SCOPED_TRACE(format.toStdString());
+        QTemporaryDir root;
+        ASSERT_TRUE(root.isValid());
+        ASSERT_TRUE(writePackage(root.path(), QStringLiteral("custom"), packageId,
+                                 QStringLiteral("#112233"), QStringLiteral("#334455")));
+        const QString storagePath = root.filePath(QStringLiteral("settings.ini"));
+        QVariantMap owners{
+            {packageId, QVariantMap{{key, packageColor.name(QColor::HexArgb)},
+                                   {QStringLiteral("text.primary"), QStringLiteral("invalid")}}},
+            {builtinId, QVariantMap{{key, builtinColor.name(QColor::HexArgb)},
+                                   {QStringLiteral("text.primary"), QStringLiteral("#xyz")}}},
+            {missingId, QVariantMap{{privateKey, privateColor.name(QColor::HexArgb)},
+                                   {QStringLiteral("private.invalid"), QString()}}}
+        };
+        QVariantMap storedColors;
+        QMap<QString, VNX::ColorPaletteCustomizations> expected;
+        expected[packageId][dark].insert(key, packageColor);
+        expected[builtinId][dark].insert(key, builtinColor);
+        expected[missingId][format == QStringLiteral("ThemePaletteColors") ? dark : QString()]
+            .insert(privateKey, privateColor);
+        for (auto owner = owners.cbegin(); owner != owners.cend(); ++owner)
+        {
+            if (format == QStringLiteral("ThemePaletteColors"))
+                storedColors.insert(owner.key(), QVariantMap{{dark, owner.value()}});
+            else
+                storedColors.insert(format == QStringLiteral("PaletteColors")
+                    ? QStringLiteral("theme:") + owner.key() : owner.key(), owner.value());
+        }
+        if (format == QStringLiteral("ThemePaletteColors"))
+        {
+            auto palettes = storedColors.value(packageId).toMap();
+            palettes.insert(light, QVariantMap{{key, builtinColor.name(QColor::HexArgb)},
+                {QStringLiteral("text.primary"), QStringLiteral("invalid")}});
+            storedColors.insert(packageId, palettes);
+            expected[packageId][light].insert(key, builtinColor);
+        }
+        {
+            VNX::QSettingsStorage storage(storagePath);
+            storage.setValue(QStringLiteral("Appearance/ThemeId"), packageId);
+            storage.setValue(QStringLiteral("Appearance/PaletteId"), dark);
+            storage.setValue(QStringLiteral("Appearance/") + format, storedColors);
+            storage.sync();
+        }
+        {
+            VNX::ThemeManager manager(root.path(), std::make_unique<VNX::QSettingsStorage>(storagePath));
+            EXPECT_EQ(manager.currentThemeId(), packageId);
+            EXPECT_EQ(manager.snapshot()->ui.colors.accent, packageColor);
+            EXPECT_EQ(manager.appearance().colors, expected);
+            auto edited = manager.appearance();
+            edited.paletteId = light;
+            edited.colors[packageId][light].insert(key, privateColor);
+            ASSERT_TRUE(manager.previewAppearance(edited).ok());
+            EXPECT_EQ(manager.snapshot()->ui.colors.accent, privateColor);
+            manager.cancelAppearancePreview();
+            EXPECT_EQ(manager.snapshot()->ui.colors.accent, packageColor);
+            ASSERT_TRUE(manager.applyAppearance(edited).ok());
+            expected[packageId][light].insert(key, privateColor);
+            ASSERT_TRUE(manager.selectTheme(builtinId).ok());
+            EXPECT_EQ(manager.snapshot()->ui.colors.accent, builtinColor);
+        }
+        VNX::ThemeManager restored(root.path(), std::make_unique<VNX::QSettingsStorage>(storagePath));
+        EXPECT_EQ(restored.appearance().colors, expected);
+        EXPECT_EQ(restored.currentThemeId(), builtinId);
+        EXPECT_EQ(restored.snapshot()->ui.colors.accent, builtinColor);
+        ASSERT_TRUE(restored.selectTheme(packageId).ok());
+        EXPECT_EQ(restored.snapshot()->ui.colors.accent, packageColor);
+    }
+}
+
 TEST(ThemeManager, LegacyColorsFollowOwningThemeDefaultWhenInstalledOrRestoredLater)
 {
     const QString packageId = QStringLiteral("theme.paper");

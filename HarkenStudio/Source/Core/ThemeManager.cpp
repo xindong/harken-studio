@@ -418,7 +418,11 @@ ThemeAppearance ThemeManager::persistedAppearance() const
     const auto readColors = [](const QVariantMap& values) {
         ThemeColorOverrides colors;
         for (auto color = values.cbegin(); color != values.cend(); ++color)
-            colors.insert(color.key(), QColor(color->toString()));
+        {
+            const QColor parsed(color->toString());
+            if (parsed.isValid())
+                colors.insert(color.key(), parsed);
+        }
         return colors;
     };
     storage_->beginGroup(QStringLiteral("Appearance"));

@@ -32,6 +32,7 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
          QStringLiteral("Field names, axis labels, inherited references and supporting labels."),
          {
              {QStringLiteral("text.secondary"), std::nullopt},
+             {QStringLiteral("qtPalette.mid"), std::nullopt},
              {QStringLiteral("curve.axisText"), std::nullopt},
              {QStringLiteral("curve.handleLine"), 110},
              {QStringLiteral("curve.handleBorder"), std::nullopt},
@@ -50,6 +51,7 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
          QStringLiteral("Hints, empty states and secondary metadata."),
          {
              {QStringLiteral("text.muted"), std::nullopt},
+             {QStringLiteral("qtPalette.dark"), std::nullopt},
              {QStringLiteral("meter.vu.analogValueText"), std::nullopt},
              {QStringLiteral("meter.vu.barValueText"), std::nullopt},
              {QStringLiteral("feedback.neutral"), std::nullopt},
@@ -67,6 +69,7 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
          QStringLiteral("Main work areas, curve plots and meter canvases."),
          {
              {QStringLiteral("background.primary"), std::nullopt},
+             {QStringLiteral("qtPalette.window"), std::nullopt},
              {QStringLiteral("curve.plotBackground"), std::nullopt},
              {QStringLiteral("curve.handleFill"), std::nullopt},
              {QStringLiteral("curve.crosshairContrast"), 153},
@@ -81,6 +84,8 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
          QStringLiteral("Input fields, secondary surfaces and readout backgrounds."),
          {
              {QStringLiteral("background.secondary"), std::nullopt},
+             {QStringLiteral("qtPalette.base"), std::nullopt},
+             {QStringLiteral("qtPalette.toolTipBase"), std::nullopt},
              {QStringLiteral("curve.readoutBackground"), std::nullopt},
          }},
         {QStringLiteral("background.tertiary"), QStringLiteral("Surfaces"),
@@ -88,6 +93,8 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
          QStringLiteral("Raised controls, node bodies and knob faces."),
          {
              {QStringLiteral("background.tertiary"), std::nullopt},
+             {QStringLiteral("qtPalette.alternateBase"), std::nullopt},
+             {QStringLiteral("qtPalette.button"), std::nullopt},
              {QStringLiteral("nodeGraph.node.bodyNormal"), std::nullopt},
          }},
         {QStringLiteral("panel.background"), QStringLiteral("Surfaces"),
