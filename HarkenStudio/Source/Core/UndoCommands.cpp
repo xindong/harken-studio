@@ -425,7 +425,6 @@ DeleteProjectItemCommand::DeleteProjectItemCommand(
     itemType_ = item->type;
     sourceID_ = item->sourceID;
     objectID_ = item->objectID;
-    expanded_ = item->expanded;
 
     if (parent_) {
         for (size_t i = 0; i < parent_->children.size(); ++i) {

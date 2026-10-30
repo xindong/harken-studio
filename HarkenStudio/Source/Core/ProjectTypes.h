@@ -507,7 +507,6 @@ struct ProjectItem
 
     uint32_t color = 0;
 
-    bool expanded = false;
     harkenplayableproperties::ChassisPresenceV1 playablePropertyPresence;
     DefinitionFieldGroups fieldGroups;
     PlatformOverrideLedgerV1 platformOverrides;
@@ -851,8 +850,6 @@ struct ProjectData
     QString version = "1.0";
     QString author;
     QString description;
-    QString createdDate;
-    QString modifiedDate;
     
     QString projectPath;
     QString audioFolder;

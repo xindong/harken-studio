@@ -670,9 +670,6 @@
         "components": {
           "$ref": "#/$defs/definitionComponents"
         },
-        "expanded": {
-          "type": "boolean"
-        },
         "extensions": {
           "additionalProperties": true,
           "type": "object"
@@ -1103,17 +1100,11 @@
           ],
           "type": "integer"
         },
-        "createdDate": {
-          "type": "string"
-        },
         "description": {
           "type": "string"
         },
         "enableLFE": {
           "type": "boolean"
-        },
-        "modifiedDate": {
-          "type": "string"
         },
         "name": {
           "type": "string"
@@ -1130,9 +1121,6 @@
         },
         "sampleRate": {
           "type": "integer"
-        },
-        "toolVersion": {
-          "type": "string"
         },
         "version": {
           "type": "string"
@@ -1245,9 +1233,6 @@
         },
         "components": {
           "$ref": "#/$defs/components"
-        },
-        "expanded": {
-          "type": "boolean"
         },
         "extensions": {
           "additionalProperties": true,
@@ -2751,11 +2736,11 @@
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "additionalProperties": false,
             "properties": {
-              "componentData": {
-                "$ref": "#/$defs/busComponent"
-              },
               "components": {
-                "$ref": "#/$defs/components"
+                "$ref": "#/$defs/components",
+                "required": [
+                  "bus"
+                ]
               },
               "extensions": {
                 "additionalProperties": true,
@@ -2784,7 +2769,7 @@
               "guid",
               "name",
               "parentRef",
-              "componentData"
+              "components"
             ],
             "type": "object"
           },

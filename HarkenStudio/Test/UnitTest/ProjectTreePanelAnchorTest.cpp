@@ -11,6 +11,8 @@
 
 #include <QApplication>
 #include <QColorDialog>
+#include <QDirIterator>
+#include <QFile>
 #include <QImage>
 #include <QLineEdit>
 #include <QKeyEvent>
@@ -18,6 +20,7 @@
 #include <QPointer>
 #include <QScopeGuard>
 #include <QScrollBar>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QTimer>
 
@@ -284,6 +287,74 @@ TEST_F(ProjectTreePanelAnchorTest, RefreshPreservesEachPanelsSelectionExpansionA
     EXPECT_TRUE(bucket->isSelected());
     EXPECT_EQ(panel_->treeWidget()->currentItem(), bucket);
     EXPECT_EQ(activations, 0);
+}
+
+TEST_F(ProjectTreePanelAnchorTest, ViewStateRemainsLocalAcrossSaveAndReopen)
+{
+    auto& pm = ProjectManager::instance();
+    auto* nested = pm.createItem(selectedLayer_, QStringLiteral("Nested"), ProjectItem::Type::Layer);
+    ASSERT_NE(nested, nullptr);
+    ASSERT_NE(pm.createItem(nested, QStringLiteral("Tone"), ProjectItem::Type::Sound), nullptr);
+    ASSERT_NE(pm.createItem(contextLayer_, QStringLiteral("ContextChild"), ProjectItem::Type::Sound), nullptr);
+    ASSERT_TRUE(pm.saveProject());
+    const QString projectPath = pm.currentProject()->projectPath;
+    const QString projectId = pm.currentProject()->projectId;
+    const QUuid rootGuid = contextLayer_->guid;
+    const QUuid nestedGuid = nested->guid;
+    const auto cleanup = qScopeGuard([&] {
+        QSettings settings;
+        settings.remove(QStringLiteral("ProjectTree/Items/") + projectId);
+    });
+    const auto documents = [&] {
+        QMap<QString, QByteArray> result;
+        QDirIterator files(QFileInfo(projectPath).absolutePath(),
+                           {QStringLiteral("*.hsp"), QStringLiteral("*.vp")},
+                           QDir::Files, QDirIterator::Subdirectories);
+        while (files.hasNext()) {
+            QFile file(files.next());
+            EXPECT_TRUE(file.open(QIODevice::ReadOnly));
+            result.insert(file.fileName(), file.readAll());
+        }
+        return result;
+    };
+    const auto saved = documents();
+    auto explorer = std::make_unique<PresentationProbeExplorer>();
+    panel_->treeItemForProjectItem(contextLayer_)->setExpanded(false);
+    panel_->treeItemForProjectItem(nested)->setExpanded(true);
+    explorer->treeItemForProjectItem(contextLayer_)->setExpanded(true);
+    explorer->treeItemForProjectItem(nested)->setExpanded(false);
+    panel_->rebuildTree();
+    EXPECT_FALSE(panel_->treeItemForProjectItem(contextLayer_)->isExpanded());
+    EXPECT_TRUE(panel_->treeItemForProjectItem(nested)->isExpanded());
+    EXPECT_FALSE(contextLayer_->isDirtyObject());
+    EXPECT_FALSE(nested->isDirtyObject());
+    ASSERT_TRUE(pm.saveProject());
+    EXPECT_EQ(documents(), saved);
+
+    panel_.reset();
+    panel_ = std::make_unique<AnchorProbeHierarchy>();
+    EXPECT_FALSE(panel_->treeItemForProjectItem(contextLayer_)->isExpanded());
+    EXPECT_TRUE(panel_->treeItemForProjectItem(nested)->isExpanded());
+    ASSERT_TRUE(pm.renameItem(nested, QStringLiteral("Renamed")));
+    ASSERT_TRUE(pm.saveProject());
+    ASSERT_TRUE(pm.closeProject());
+    panel_.reset();
+    explorer.reset();
+    ASSERT_TRUE(pm.loadProject(projectPath));
+    panel_ = std::make_unique<AnchorProbeHierarchy>();
+    explorer = std::make_unique<PresentationProbeExplorer>();
+    contextLayer_ = pm.findItemByGuid(rootGuid);
+    nested = pm.findItemByGuid(nestedGuid);
+    ASSERT_NE(contextLayer_, nullptr);
+    ASSERT_NE(nested, nullptr);
+    EXPECT_EQ(nested->name, QStringLiteral("Renamed"));
+    EXPECT_FALSE(panel_->treeItemForProjectItem(contextLayer_)->isExpanded());
+    EXPECT_TRUE(panel_->treeItemForProjectItem(nested)->isExpanded());
+    EXPECT_TRUE(explorer->treeItemForProjectItem(contextLayer_)->isExpanded());
+    EXPECT_FALSE(explorer->treeItemForProjectItem(nested)->isExpanded());
+    const auto reopened = documents();
+    ASSERT_TRUE(pm.saveProject());
+    EXPECT_EQ(documents(), reopened);
 }
 
 TEST_F(ProjectTreePanelAnchorTest, KeyboardCurrentFolderAndCategoryClearObjectContextInMixedSelections)

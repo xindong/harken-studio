@@ -116,18 +116,21 @@ inline bool writeRootBusForProject(const QString& projectPath, int schemaVersion
 
     const QString rootBusId =
         QStringLiteral("99999999-9999-4999-8999-999999999999");
+    QJsonObject content{
+        {QStringLiteral("type"), QStringLiteral("Bus")},
+        {QStringLiteral("guid"), rootBusId},
+        {QStringLiteral("name"), QStringLiteral("Master Audio Bus")},
+        {QStringLiteral("parentRef"), QJsonObject{
+            {QStringLiteral("kind"), QStringLiteral("root")},
+        }},
+    };
+    if (schemaVersion < VNX::ProjectSchema::kProjectSchemaVersion)
+        content.insert(QStringLiteral("componentData"), QJsonObject{});
+    else
+        content.insert(QStringLiteral("components"), QJsonObject{
+            {QStringLiteral("bus"), QJsonObject{}}});
     const QJsonObject bus = projectDocument(
-        QStringLiteral("project.bus"), rootBusId, projectId,
-        QJsonObject{
-            {QStringLiteral("type"), QStringLiteral("Bus")},
-            {QStringLiteral("guid"), rootBusId},
-            {QStringLiteral("name"), QStringLiteral("Master Audio Bus")},
-            {QStringLiteral("parentRef"), QJsonObject{
-                {QStringLiteral("kind"), QStringLiteral("root")},
-            }},
-            {QStringLiteral("componentData"), QJsonObject{}},
-        },
-        schemaVersion);
+        QStringLiteral("project.bus"), rootBusId, projectId, content, schemaVersion);
     QDir projectDirectory(QFileInfo(projectPath).absolutePath());
     if (!projectDirectory.mkpath(QStringLiteral("Busses")))
         return false;

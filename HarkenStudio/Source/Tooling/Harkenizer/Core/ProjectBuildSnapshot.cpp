@@ -51,7 +51,6 @@ std::shared_ptr<ProjectItem> copyItem(
     item->objectPath = source->objectPath;
     item->notes = source->notes;
     item->color = source->color;
-    item->expanded = source->expanded;
     item->playablePropertyPresence = source->playablePropertyPresence;
     item->platformOverrides = source->platformOverrides;
     item->fieldGroups = source->fieldGroups;

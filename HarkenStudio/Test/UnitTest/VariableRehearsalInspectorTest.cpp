@@ -9,8 +9,6 @@
 
 #include <QApplication>
 #include <QFile>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QTemporaryDir>
 
 namespace {
@@ -30,20 +28,6 @@ QByteArray readFile(const QString& path)
     if (!file.open(QIODevice::ReadOnly))
         return {};
     return file.readAll();
-}
-
-// Every save stamps metadata.modifiedDate with a second-resolution clock
-// reading, so two saves that straddle a second boundary differ regardless
-// of what the editor did in between. Drop it before comparing content.
-QByteArray readProjectContent(const QString& path)
-{
-    QJsonObject root = QJsonDocument::fromJson(readFile(path)).object();
-    QJsonObject content = root.value(QStringLiteral("content")).toObject();
-    QJsonObject metadata = content.value(QStringLiteral("metadata")).toObject();
-    metadata.remove(QStringLiteral("modifiedDate"));
-    content[QStringLiteral("metadata")] = metadata;
-    root[QStringLiteral("content")] = content;
-    return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
 
 }
@@ -112,7 +96,7 @@ TEST_F(VariableRehearsalInspectorTest, RehearsalDoesNotTouchDirtyUndoOrProjectBy
     auto& projectManager = VNX::ProjectManager::instance();
     ASSERT_TRUE(projectManager.saveProject());
     const QString projectPath = projectManager.currentProject()->projectPath;
-    const QByteArray before = readProjectContent(projectPath);
+    const QByteArray before = readFile(projectPath);
     ASSERT_FALSE(before.isEmpty());
     auto* undo = VNX::UndoRedoManager::instance().undoStack();
     undo->setClean();
@@ -129,5 +113,5 @@ TEST_F(VariableRehearsalInspectorTest, RehearsalDoesNotTouchDirtyUndoOrProjectBy
     EXPECT_EQ(container_->isDirtyObject(), containerDirty);
     EXPECT_EQ(smooth_->isDirtyObject(), variableDirty);
     ASSERT_TRUE(projectManager.saveProject());
-    EXPECT_EQ(readProjectContent(projectPath), before);
+    EXPECT_EQ(readFile(projectPath), before);
 }

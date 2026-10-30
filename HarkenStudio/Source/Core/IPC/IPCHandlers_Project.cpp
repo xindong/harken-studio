@@ -852,7 +852,6 @@ QJsonObject IPCServer::handleGetItemInfo(const QJsonObject& args)
         {"asset_path", item->type == ProjectItem::Type::Sound
                            ? item->sourcePath
                            : item->parent ? QString{} : project->itemFolderPath(item)},
-        {"expanded", item->expanded},
         {"object_id", static_cast<qint64>(itemShortID(item))},
         {"authoring_handle", static_cast<qint64>(item->objectID)},
         {"source_id", static_cast<qint64>(item->sourceID)},

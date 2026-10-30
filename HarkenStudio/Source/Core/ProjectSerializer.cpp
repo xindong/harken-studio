@@ -36,7 +36,6 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QSaveFile>
-#include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
 #include <QDebug>
@@ -1160,11 +1159,6 @@ QJsonObject ProjectSerializer::projectDocument(const QString& filePath,
     metadata["version"] = project.version;
     metadata["author"] = project.author;
     metadata["description"] = project.description;
-    metadata["createdDate"] = project.createdDate.isEmpty() 
-        ? QDateTime::currentDateTime().toString(Qt::ISODate) 
-        : project.createdDate;
-    metadata["modifiedDate"] = QDateTime::currentDateTime().toString(Qt::ISODate);
-    metadata["toolVersion"] = "HarkenStudio 1.0.0";
     {
         metadata["platforms"] = ProjectPlatformSemantics::platformsToJson(project.platforms);
         metadata["sampleRate"]        = project.sampleRate;
@@ -1563,8 +1557,6 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
     project.version = metadata["version"].toString("1.0");
     project.author = metadata["author"].toString();
     project.description = metadata["description"].toString();
-    project.createdDate = metadata["createdDate"].toString();
-    project.modifiedDate = metadata["modifiedDate"].toString();
 
     if (!ProjectPlatformSemantics::platformsFromJson(metadata["platforms"], &project.platforms, &lastError_))
         return false;
@@ -1674,7 +1666,6 @@ QJsonObject ProjectSerializer::projectItemToJson(const ProjectItem& item, bool i
         json[QStringLiteral("extensions")] = item.extensions;
     json["name"] = item.name;
     json["type"] = ItemTypeCatalog::canonicalName(item.type);
-    json["expanded"] = item.expanded;
 
     writeActionNameBindingRevision(json, item);
 
@@ -1749,7 +1740,6 @@ bool ProjectSerializer::projectItemFromJson(const QJsonObject& json, ProjectItem
     }
     if (!readFieldGroups(json, item, lastError_)) return false;
     item.sourcePath.clear();
-    item.expanded = json["expanded"].toBool(false);
 
     readActionNameBindingRevision(json, item);
 
@@ -1953,7 +1943,6 @@ bool ProjectSerializer::audioBranchFromJson(
     }
     if (!readFieldGroups(json, node, lastError_)) return false;
     node.sourcePath.clear();
-    node.expanded = json["expanded"].toBool(false);
 
     if (!json.value(QStringLiteral("guid")).isString())
         return false;
@@ -2176,7 +2165,6 @@ void writeS3RootIdentity(QJsonObject& obj, const ProjectItem& item)
     obj[QStringLiteral("guid")]       = item.guid.toString(QUuid::WithoutBraces);
     obj[QStringLiteral("type")]       = ItemTypeCatalog::canonicalName(item.type);
     obj[QStringLiteral("name")]       = item.name;
-    obj[QStringLiteral("expanded")]   = item.expanded;
     obj[QStringLiteral("objectPath")] = item.objectPath;
     if (!item.notes.isEmpty())
         obj[QStringLiteral("notes")] = item.notes;
@@ -2197,7 +2185,6 @@ bool readS3RootIdentity(const QJsonObject& json, ProjectItem& item, const char* 
     }
 
     item.name     = name;
-    item.expanded = json.value(QStringLiteral("expanded")).toBool(false);
     if (!json.value(QStringLiteral("guid")).isString())
         return false;
     item.guid = QUuid::fromString(json.value(QStringLiteral("guid")).toString());
@@ -2392,13 +2379,10 @@ QJsonObject ProjectSerializer::busPackToJson(
     root[QStringLiteral("parentRef")] = persistentParentReference(busItem);
     if (root.value(QStringLiteral("parentRef")).toObject().isEmpty()) return {};
 
-    root[QStringLiteral("componentData")] = bc->toJson();
-
     QJsonObject compsObj = componentsToJsonDict(busItem);
     if (!encodeComponentReferences(&compsObj)) return {};
     stripPlayableDefinitionComponentAuthority(busItem.type, compsObj);
-    if (!compsObj.isEmpty())
-        root[QStringLiteral("components")] = compsObj;
+    root[QStringLiteral("components")] = compsObj;
     if (PlayablePropertyAuthoringV1::isDefinitionType(busItem.type)) {
         QJsonObject properties =
             PlayablePropertyAuthoringV1::definitionToJson(busItem);
@@ -2423,10 +2407,10 @@ ProjectItem* ProjectSerializer::busPackFromJson(
         return nullptr;
     }
 
-    if (!json.contains(QStringLiteral("componentData"))
-        || !json.value(QStringLiteral("componentData")).isObject())
+    QJsonObject compsObj = json.value(QStringLiteral("components")).toObject();
+    if (!compsObj.value(QStringLiteral("bus")).isObject())
     {
-        qWarning() << "[BusPack] Missing componentData in payload.";
+        qWarning() << "[BusPack] Missing components.bus in payload.";
         return nullptr;
     }
 
@@ -2434,10 +2418,6 @@ ProjectItem* ProjectSerializer::busPackFromJson(
         QString(), ProjectItem::Type::Bus);
     item->extensions = json.value(QStringLiteral("extensions")).toObject();
     item->attachDefaultComponents();
-
-    VNX::VBus* bc = item->compOrCreate<VNX::VBus>();
-    if (bc)
-        bc->fromJson(json.value(QStringLiteral("componentData")).toObject());
 
     if (!json.value(QStringLiteral("guid")).isString())
         return nullptr;
@@ -2474,18 +2454,13 @@ ProjectItem* ProjectSerializer::busPackFromJson(
                    << "-- rejecting.";
         return nullptr;
     }
-    if (json.contains(QStringLiteral("components"))) {
-        if (!json.value(QStringLiteral("components")).isObject())
-            return nullptr;
-        QJsonObject compsObj = json.value(QStringLiteral("components")).toObject();
-        if (!decodeComponentReferences(&compsObj)) return nullptr;
-        if (hasPlayableDefinitionComponentAuthority(item->type, compsObj)) {
-            qWarning() << "[BusPack] Playable fields remain in components for Bus"
-                       << item->name << "-- rejecting.";
-            return nullptr;
-        }
-        readComponentsFromJsonDict(compsObj, *item);
+    if (!decodeComponentReferences(&compsObj)) return nullptr;
+    if (hasPlayableDefinitionComponentAuthority(item->type, compsObj)) {
+        qWarning() << "[BusPack] Playable fields remain in components for Bus"
+                   << item->name << "-- rejecting.";
+        return nullptr;
     }
+    readComponentsFromJsonDict(compsObj, *item);
     if (PlayablePropertyAuthoringV1::isDefinitionType(item->type)) {
         const QLatin1String key(
             harkenplayableproperties::studio::kEnvelopeJsonKeyV1);

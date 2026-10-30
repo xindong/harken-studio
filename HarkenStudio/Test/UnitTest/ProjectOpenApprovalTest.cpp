@@ -73,7 +73,10 @@ QString writeProject(const QTemporaryDir& directory,
             {QStringLiteral("parentRef"), QJsonObject{
                 {QStringLiteral("kind"), QStringLiteral("root")},
             }},
-            {QStringLiteral("componentData"), QJsonObject{}},
+            {version < VNX::ProjectSchema::kProjectSchemaVersion
+                 ? QStringLiteral("componentData") : QStringLiteral("components"),
+             version < VNX::ProjectSchema::kProjectSchemaVersion
+                 ? QJsonObject{} : QJsonObject{{QStringLiteral("bus"), QJsonObject{}}}},
             {QStringLiteral("playableProperties"), QJsonObject{
                 {QStringLiteral("presence"), QStringLiteral("0000000000000000")},
             }},

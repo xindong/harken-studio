@@ -18,7 +18,6 @@ QJsonObject persistentState(const ProjectItem& item, QJsonObject state)
 
 QJsonObject authoringState(QJsonObject state)
 {
-    state.remove(QStringLiteral("expanded"));
     state.remove(QStringLiteral("objectPath"));
     state.remove(QStringLiteral("nameBindingRevision"));
     return state;

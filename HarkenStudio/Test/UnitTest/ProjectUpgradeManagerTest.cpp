@@ -400,7 +400,7 @@ TEST(ProjectContract, SnapshotDiskAndIncrementalValidationRemainEquivalentAcross
 
     QJsonObject changed = main;
     QJsonObject content = HarkenTest::projectContent(changed);
-    content.insert(QStringLiteral("expanded"), true);
+    content.insert(QStringLiteral("notes"), QStringLiteral("Updated author notes"));
     changed.insert(QStringLiteral("content"), content);
     documents.insert(mainPath, changed);
     compare(true);
@@ -518,7 +518,7 @@ TEST(ProjectContract, IncrementalDependenciesFollowReferencesWithoutPullingInUnr
         QFileInfo(projectPath).fileName()).isEmpty());
     ASSERT_TRUE(baseline.isValid());
     content = HarkenTest::projectContent(main);
-    content.insert(QStringLiteral("expanded"), true);
+    content.insert(QStringLiteral("notes"), QStringLiteral("Updated author notes"));
     main.insert(QStringLiteral("content"), content);
     VNX::ProjectContractValidationBaseline candidate;
     VNX::ProjectContractValidationDetails details;

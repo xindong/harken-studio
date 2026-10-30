@@ -184,7 +184,6 @@ private:
     ProjectItem::Type itemType_;
     uint32_t sourceID_;
     uint32_t objectID_;
-    bool expanded_;
 
     std::shared_ptr<ProjectItem> parentRef_;
     ProjectItem* parent_;

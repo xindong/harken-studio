@@ -1560,7 +1560,6 @@ bool ProjectManager::createMainProjectFile(const ProjectConfig& config, const QS
     project.name = config.name;
     project.author = config.author;
     project.description = config.description;
-    project.createdDate = QDateTime::currentDateTime().toString(Qt::ISODate);
     project.audioFolder = kLayers;
     project.packFolder = "Packs";
     project.projectPath = QDir(projectRoot).filePath(config.name + ".hsp");
@@ -1790,7 +1789,6 @@ PreparedProject ProjectManager::prepareProject(const ProjectConfig& config,
     project.name = config.name;
     project.author = config.author;
     project.description = config.description;
-    project.createdDate = QDateTime::currentDateTime().toString(Qt::ISODate);
     project.audioFolder = kLayers;
     project.packFolder = QStringLiteral("Packs");
     project.projectPath = root.filePath(config.name + QStringLiteral(".hsp"));
@@ -2326,23 +2324,8 @@ bool ProjectManager::saveProject()
     for (const auto& path : m_externalSavePaths)
         if (full && !completeFiles.contains(path) && path != projectFileName && path != registryPath
             && QFileInfo(projectRoot.filePath(path)).isFile()) plan.removed.insert(path);
-    bool unchangedProject = false;
-    if (baseline && plan.files.isEmpty() && plan.removed.isEmpty()
-        && plan.directories == baseline->directories
-        && !m_externalSavePaths.contains(projectFileName)) {
-        const auto& savedRoot = baseline->validation.projectRoot();
-        auto document = plan.projectDocument;
-        auto content = document.value(QStringLiteral("content")).toObject();
-        auto metadata = content.value(QStringLiteral("metadata")).toObject();
-        metadata.insert(QStringLiteral("modifiedDate"),
-            savedRoot.value(QStringLiteral("content")).toObject()
-                .value(QStringLiteral("metadata")).toObject().value(QStringLiteral("modifiedDate")));
-        content.insert(QStringLiteral("metadata"), metadata);
-        document.insert(QStringLiteral("content"), content);
-        unchangedProject = document == savedRoot;
-        if (unchangedProject) plan.projectDocument = savedRoot;
-    }
-    if (!unchangedProject)
+    if (!baseline || plan.projectDocument != baseline->validation.projectRoot()
+        || m_externalSavePaths.contains(projectFileName))
         plan.addFile(projectFileName, ProjectSavePlan::encode(plan.projectDocument), baseline,
                      m_externalSavePaths.contains(projectFileName));
 

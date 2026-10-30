@@ -315,7 +315,6 @@ TEST_P(ProjectSerializationSavedState, SavedContentTracksValuesAcrossObjectKinds
     ASSERT_TRUE(markSaved(saved, project));
     EXPECT_TRUE(saved.refresh(project).isEmpty());
     for (const auto& item : items) {
-        item->expanded = true;
         item->objectPath = QStringLiteral("Changed/Derived/Path");
         ++item->nameBindingRevision;
     }
@@ -599,16 +598,14 @@ TEST_P(ProjectSerializationSavedState, TrackedChangesPreservePersistenceAndAutho
     ASSERT_TRUE(markSaved(saved, project));
     EXPECT_FALSE(saved.requiresFullSave());
     const auto initialRevision = saved.revision();
-    sound->expanded = !sound->expanded;
     const auto actionRevision = action->nameBindingRevision;
     ++action->nameBindingRevision;
-    saved.recordChange(sound.get());
     saved.recordChange(action.get());
     EXPECT_GT(saved.revision(), initialRevision);
     EXPECT_TRUE(saved.refreshPending(project).isEmpty());
     EXPECT_FALSE(sound->dirtyBit);
     EXPECT_FALSE(action->dirtyBit);
-    EXPECT_EQ(saved.candidates(), (QSet<QUuid>{sound->guid, action->guid}));
+    EXPECT_EQ(saved.candidates(), (QSet<QUuid>{action->guid}));
 
     sound->notes = QStringLiteral("Saved content");
     saved.recordChange(sound.get());

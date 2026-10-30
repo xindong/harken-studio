@@ -215,6 +215,7 @@ private:
     void updateFolderRow(QTreeWidgetItem* row, PhysicalFolder* folder);
     void updateBucketRows();
     void setFolderExpanded(PhysicalFolder* folder, bool expanded);
+    void saveItemExpansion() const;
     void updateFolderExpansionPaths();
     void saveFolderExpansion() const;
     PhysicalFolder* folderForTreeItem(QTreeWidgetItem* row) const;
@@ -226,6 +227,7 @@ private:
     std::unique_ptr<ProjectObjectLabels> objectLabels_;
     bool visibilityRefreshPending_ = false;
     QString folderExpansionSettingsKey_;
+    QString itemExpansionSettingsKey_;
     QSet<QString> collapsedFolderPaths_;
     QMap<const PhysicalFolder*, QString> folderRowPaths_;
     QHash<QUuid, bool> itemExpansion_;

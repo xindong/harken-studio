@@ -235,6 +235,21 @@ bool ProjectDocument::validateFieldGroupAuthoring(const QJsonObject& content,
 
 bool ProjectDocument::normalizeContent(QJsonObject* content, QString* error)
 {
+    content->remove(QStringLiteral("expanded"));
+    if (content->value(QStringLiteral("metadata")).isObject()) {
+        auto metadata = content->value(QStringLiteral("metadata")).toObject();
+        for (const auto* key : {"createdDate", "modifiedDate", "toolVersion"})
+            metadata.remove(QLatin1String(key));
+        content->insert(QStringLiteral("metadata"), metadata);
+    }
+    if (content->value(QStringLiteral("type")) == QJsonValue(QStringLiteral("Bus"))
+        && content->contains(QStringLiteral("componentData"))) {
+        auto components = content->value(QStringLiteral("components")).toObject();
+        const auto bus = content->take(QStringLiteral("componentData"));
+        if (!components.contains(QStringLiteral("bus")))
+            components.insert(QStringLiteral("bus"), bus);
+        content->insert(QStringLiteral("components"), components);
+    }
     const auto moveField = [error](QJsonObject& object, const QString& from,
                                    const QString& to) {
         if (!object.contains(from)) return true;
