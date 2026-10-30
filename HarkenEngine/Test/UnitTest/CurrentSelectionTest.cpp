@@ -87,8 +87,6 @@ struct MemoryProgram {
 harken::SelectionMemoryConfigV1 MemoryConfig() {
     harken::SelectionMemoryConfigV1 config{};
     config.maxEmitters = 2;
-    config.maxGlobalRows = 2;
-    config.maxEmitterRowsPerEmitter = 2;
     config.maxPendingDeltasTotal = 8;
     config.maxPendingGlobalPerRow = 4;
     config.maxPendingEmitterPerRow = 4;
@@ -2147,7 +2145,6 @@ static void CheckBatchThenHiddenCancellation(bool crossKey) {
     MemoryProgram global(harken::ContainerModeV1::Sequence), emitter(harken::ContainerModeV1::Sequence);
     global.program.memoryScope = harken::MemoryScopeV1::Global;
     auto config = MemoryConfig();
-    config.maxGlobalRows = config.maxEmitterRowsPerEmitter = 1;
     harken::SelectionMemoryTableV1 table;
     ASSERT_TRUE(table.Reset(config));
     harken::PreparedSelectionPlayV1 first, second, hidden;
@@ -3223,7 +3220,6 @@ TEST(CurrentSelectionMemory, ReplacementRejectsTransitiveThreeBatchCycleAcrossKe
     thirdKey.containerStableId = third.program.containerStableId = harkentest::ObjectId(102);
     thirdKey.programSemanticFingerprint = third.program.programSemanticFingerprint = 202;
     auto config = MemoryConfig();
-    config.maxEmitterRowsPerEmitter = 3;
     harken::SelectionMemoryTableV1 table;
     ASSERT_TRUE(table.Reset(config));
     auto xFirst = MemoryRequest(first, 1), xSecond = MemoryRequest(second, 1, secondKey);
@@ -3903,12 +3899,10 @@ TEST(CurrentSelectionMemory, PreparedPlaySeedProbeCopiesComputePlaySeedInput) {
     EXPECT_FALSE(table.PreparedPlaySeedProbe(second).captured);
 }
 
-TEST(CurrentSelectionMemory, ScopeCapacityRetirementAndQuarantineAreExact) {
+TEST(CurrentSelectionMemory, EmitterGenerationRetirementAndDeltaQuarantineAreExact) {
     MemoryProgram program;
     auto config = MemoryConfig();
     config.maxEmitters = 1;
-    config.maxGlobalRows = 1;
-    config.maxEmitterRowsPerEmitter = 1;
     config.maxPendingDeltasTotal = 1;
     config.maxPendingGlobalPerRow = 1;
     config.maxPendingEmitterPerRow = 1;
@@ -3936,23 +3930,162 @@ TEST(CurrentSelectionMemory, ScopeCapacityRetirementAndQuarantineAreExact) {
         MemoryRequest(program, 1, emitterGenerationOne));
     ASSERT_EQ(harken::SelectionMemoryStatusV1::Ok, emitter.status);
     auto emitterGenerationTwo = MemoryKey(harken::MemoryScopeV1::Emitter, 2);
-    EXPECT_EQ(harken::SelectionMemoryStatusV1::Capacity,
-              table.AppendPlay(
-                       MemoryRequest(program, 2, emitterGenerationTwo))
-                  .status);
+    const auto nextGeneration = table.AppendPlay(MemoryRequest(program, 2, emitterGenerationTwo));
+    ASSERT_EQ(harken::SelectionMemoryStatusV1::Ok, nextGeneration.status);
+    EXPECT_EQ(2u, table.RowCount());
     table.RetireEmitter(0, 1);
     EXPECT_FALSE(table.Delta(emitter.delta).live);
+    EXPECT_TRUE(table.Delta(nextGeneration.delta).live);
+    ASSERT_EQ(harken::SelectionMemoryStatusV1::Ok, table.CommitHead(nextGeneration.delta));
     const auto replacement = table.AppendPlay(
         MemoryRequest(program, 3, emitterGenerationTwo));
     EXPECT_EQ(harken::SelectionMemoryStatusV1::Ok, replacement.status);
     EXPECT_EQ(1u, table.RowCount());
 }
 
+TEST(CurrentSelectionMemory, PersistentHistoryGrowsBeyondOldAggregateWithoutLosingIsolation) {
+    using Status = harken::SelectionMemoryStatusV1;
+    harken::SelectionMemoryTableV1 table, reference;
+    ASSERT_TRUE(table.Reset(MemoryConfig()));
+    ASSERT_TRUE(reference.Reset(MemoryConfig()));
+    EXPECT_EQ(0u, table.RowReservedBytes());
+    EXPECT_EQ(0u, table.RowCommittedBytes());
+    MemoryProgram sequence(harken::ContainerModeV1::Sequence);
+    const auto expectedFirst = reference.AppendPlay(MemoryRequest(sequence, 1));
+    ASSERT_EQ(Status::Ok, expectedFirst.status);
+    ASSERT_EQ(Status::Ok, reference.CommitHead(expectedFirst.delta));
+    constexpr std::uint32_t count = 4097;
+    for (const auto scope : {harken::MemoryScopeV1::Emitter, harken::MemoryScopeV1::Global}) {
+        sequence.program.memoryScope = scope;
+        for (std::uint32_t i = 0; i < count; ++i) {
+            auto key = MemoryKey(scope);
+            key.containerStableId = sequence.program.containerStableId = harkentest::ObjectId(100u + i);
+            const auto selected = table.AppendPlay(MemoryRequest(sequence, i + 1u, key));
+            ASSERT_EQ(Status::Ok, selected.status) << i;
+            ASSERT_EQ(Status::Ok, table.CommitHead(selected.delta));
+        }
+    }
+    EXPECT_EQ(2u * count, table.RowCount());
+    sequence.program.memoryScope = harken::MemoryScopeV1::Emitter;
+    sequence.program.containerStableId = harkentest::ObjectId(100);
+    const auto bytes = table.StorageBytes();
+    const auto expected = reference.AppendPlay(MemoryRequest(sequence, count + 1u));
+    const auto replay = table.AppendPlay(MemoryRequest(sequence, count + 1u));
+    ASSERT_EQ(Status::Ok, expected.status);
+    ASSERT_EQ(Status::Ok, replay.status);
+    EXPECT_EQ(reference.Delta(expected.delta).selectedChildOrdinal, table.Delta(replay.delta).selectedChildOrdinal);
+    ASSERT_EQ(Status::Ok, table.CommitHead(replay.delta));
+    EXPECT_EQ(2u, table.Snapshot(MemoryKey()).selectionOrdinal);
+    EXPECT_EQ(1u, table.Snapshot(MemoryKey(harken::MemoryScopeV1::Global)).selectionOrdinal);
+    EXPECT_EQ(bytes, table.StorageBytes());
+    const auto reserved = table.RowReservedBytes();
+    table.RetireEmitter(0, 1);
+    EXPECT_EQ(count, table.RowCount());
+    const auto replacement = table.AppendPlay(MemoryRequest(sequence, count + 2u, MemoryKey(harken::MemoryScopeV1::Emitter, 2)));
+    ASSERT_EQ(Status::Ok, replacement.status);
+    ASSERT_EQ(Status::Ok, table.CommitHead(replacement.delta));
+    EXPECT_EQ(1u, table.Snapshot(MemoryKey(harken::MemoryScopeV1::Emitter, 2)).selectionOrdinal);
+    EXPECT_EQ(reserved, table.RowReservedBytes());
+    table.RetireWorld(3);
+    EXPECT_EQ(0u, table.RowCount());
+}
+
+TEST(CurrentSelectionMemory, GrowthFailurePreservesHistoryAndReportsActualStorageCause) {
+    using Status = harken::SelectionMemoryStatusV1;
+    using Kind = harken::SelectionStorageFailureKind;
+    using Table = harken::SelectionMemoryTableV1;
+    MemoryProgram sequence(harken::ContainerModeV1::Sequence);
+    Table table;
+    ASSERT_TRUE(table.Reset(MemoryConfig()));
+    const auto first = table.AppendPlay(MemoryRequest(sequence, 1));
+    ASSERT_EQ(Status::Ok, first.status);
+    ASSERT_EQ(Status::Ok, table.CommitHead(first.delta));
+    Table::BackingPreparation backing;
+    const auto requested = table.RowCapacity() + 1u;
+    table.SetCommitPageLimitForTests(0);
+    EXPECT_FALSE(table.PrepareBacking({requested, 1, 1, {}}, &backing));
+    EXPECT_FALSE(backing.Valid());
+    EXPECT_EQ(1u, table.RowCount());
+    EXPECT_EQ(1u, table.Snapshot(MemoryKey()).selectionOrdinal);
+    EXPECT_EQ(MemoryConfig().maxPendingDeltasTotal, table.FreeDeltaCount());
+    EXPECT_EQ(Kind::Allocation, table.ConsumeStorageFailure().kind);
+    EXPECT_EQ(Kind::None, table.ConsumeStorageFailure().kind);
+    table.SetCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_TRUE(table.PrepareBacking({requested, 1, 1, {}}, &backing));
+    const auto bytes = table.StorageBytes();
+    {
+        auto use = backing.Use();
+        harken::memguard::AudioThreadScope audio;
+        const auto replay = table.AppendPlay(MemoryRequest(sequence, 2));
+        ASSERT_EQ(Status::Ok, replay.status);
+        ASSERT_EQ(Status::Ok, table.CommitHead(replay.delta));
+    }
+    EXPECT_EQ(2u, table.Snapshot(MemoryKey()).selectionOrdinal);
+    EXPECT_EQ(bytes, table.StorageBytes());
+    Table::BackingPreparation overflow;
+    EXPECT_FALSE(table.PrepareBacking({UINT32_MAX, 0, 0, {}}, &overflow));
+    EXPECT_EQ(Kind::IndexRange, table.ConsumeStorageFailure().kind);
+}
+
+TEST(GrowingRowStorage, StableRowsAndPreparedHoldsSurviveSegmentGrowth) {
+    harken::GrowingRowStorage<std::uint64_t> storage;
+    ASSERT_TRUE(storage.ConstructThrough(1));
+    auto* first = &storage[0];
+    *first = 42;
+    const auto initialCapacity = storage.Capacity();
+    std::uint32_t dependentPrefix = 0;
+    harken::StableStoragePreparation hold;
+    ASSERT_TRUE(storage.PrepareBacking(initialCapacity + 1u, 1, &hold,
+        [&](std::uint32_t required) noexcept { dependentPrefix = required; return true; }));
+    EXPECT_EQ(initialCapacity + 2u, storage.size());
+    EXPECT_EQ(storage.size(), dependentPrefix);
+    ASSERT_TRUE(storage.ConstructThrough(2));
+    EXPECT_EQ(initialCapacity + 3u, storage.size());
+    EXPECT_EQ(first, &storage[0]);
+    EXPECT_EQ(42u, storage[0]);
+    const auto bytes = storage.CommittedBytes();
+    const auto count = storage.size();
+    {
+        auto use = hold.Use();
+        harken::memguard::AudioThreadScope audio;
+        EXPECT_TRUE(storage.ConstructThrough(count));
+        EXPECT_FALSE(storage.ConstructThrough(count + 1u));
+        EXPECT_EQ(bytes, storage.CommittedBytes());
+    }
+    hold.Release();
+    EXPECT_FALSE(storage.ConstructThrough(count + 1u, [](std::uint32_t) noexcept { return false; }));
+    EXPECT_EQ(count, storage.size());
+    EXPECT_EQ(first, &storage[0]);
+}
+
+TEST(GrowingRowStorage, FailedReservationAndCommitDoNotPublishIncompletePrefix) {
+    harken::GrowingRowStorage<std::uint64_t> storage;
+    ASSERT_TRUE(storage.ConstructThrough(1));
+    const auto initial = storage.Capacity();
+    ASSERT_TRUE(storage.ConstructThrough(initial));
+    auto* first = &storage[0];
+    *first = 91;
+    harken::detail::StablePageReservation::FailNextReservationForTests();
+    EXPECT_FALSE(storage.ConstructThrough(initial + 1u));
+    EXPECT_EQ(initial, storage.size());
+    storage.SetCommitPageLimitForTests(0);
+    EXPECT_FALSE(storage.ConstructThrough(initial + 1u));
+    EXPECT_EQ(initial, storage.size());
+    EXPECT_EQ(first, &storage[0]);
+    EXPECT_EQ(91u, storage[0]);
+    storage.SetCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_TRUE(storage.ConstructThrough(initial + 1u));
+    EXPECT_EQ(first, &storage[0]);
+    EXPECT_EQ(91u, storage[0]);
+    harken::StableStoragePreparation impossible;
+    EXPECT_FALSE(storage.PrepareBacking(UINT32_MAX, 1, &impossible));
+    EXPECT_FALSE(impossible.Valid());
+}
+
 TEST(CurrentSelectionMemory, PreparedShapesPreserveOtherHoldsAndOrdinaryAdmissions) {
     using Status = harken::SelectionMemoryStatusV1;
     using Table = harken::SelectionMemoryTableV1;
     auto config = MemoryConfig();
-    config.maxGlobalRows = 0;
     config.maxPendingDeltasTotal = 4;
     Table table;
     ASSERT_TRUE(table.Reset(config));

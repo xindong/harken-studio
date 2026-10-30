@@ -98,6 +98,7 @@ public:
     }
 private:
     template<class T, class Index> friend class StableRowStorage;
+    template<class T> friend class GrowingRowStorage;
     friend class ImmediateActionLane;
     StableStorageGrowthState* state_ = nullptr;
     std::uint32_t count_ = 0;

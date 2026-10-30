@@ -58720,9 +58720,10 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             if (nativeLaneMembers > UINT64_MAX - laneMembers) return false;
             nativeLaneMembers += laneMembers;
             nativeVoices += voiceRows;
-            nativeSelections = std::min<std::uint64_t>(
-                std::max(selectionMemory.RowCapacity(), selectionMemory.DeltaCapacity()),
-                nativeSelections + 2ull * result.profile.selectionCount);
+            const auto selectionDemand = 2ull * result.profile.selectionCount;
+            if (selectionDemand > UINT32_MAX || nativeSelections > UINT32_MAX - selectionDemand)
+                return shortage();
+            nativeSelections += selectionDemand;
             selectionShape.Include(result.profile.selection);
             nativeRelations += result.profile.referenceRows;
             nativeCompletions += result.profile.Q + result.profile.H[2];
@@ -58907,7 +58908,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             !ledger.PrepareMonitorSelectionBacking(static_cast<std::uint32_t>(std::min<std::uint64_t>(
                 nativeVoices, ledger.MonitorSelectionCapacity())), &nativeCandidate->monitor) ||
             !selectionMemory.PrepareBacking({
-                static_cast<std::uint32_t>(std::min<std::uint64_t>(nativeSelections, selectionMemory.RowCapacity())),
+                static_cast<std::uint32_t>(nativeSelections),
                 static_cast<std::uint32_t>(std::min<std::uint64_t>(nativeSelections, selectionMemory.DeltaCapacity())),
                 std::min(producerCount, selectionMemory.BatchCapacity()), selectionShape},
                 &nativeCandidate->selectionHistory) ||
@@ -70215,6 +70216,15 @@ void FormatLogRecord(const harken::LogRecord& record, char* out,
     else
         std::memcpy(reloadText, objectText.data(), objectText.size());
     switch (record.code) {
+    case harken::kLogCodeSelectionStorageRefused:
+        std::snprintf(out, capacity,
+                      "selection history storage refused: %s, requested rows %llu",
+                      record.arg0 == static_cast<std::uint64_t>(harken::SelectionStorageFailureKind::Allocation)
+                          ? "allocation failed"
+                          : record.arg0 == static_cast<std::uint64_t>(harken::SelectionStorageFailureKind::PreparedBacking)
+                              ? "prepared backing unavailable" : "row index range exhausted",
+                      static_cast<unsigned long long>(record.arg1));
+        break;
     case harken::kLogCodeArenaOverflow:
         std::snprintf(out, capacity,
                       "render arena overflow: %llu bytes requested, block "
@@ -101576,6 +101586,15 @@ VnResult Vn_Update(void) {
             ? UINT64_MAX
             : engine->mixer.BlocksRendered() * engine->config.blockFrames;
     engine->selectionMemory.ApplyDue(dueFrame);
+    const auto selectionStorageFailure = engine->selectionMemory.ConsumeStorageFailure();
+    if (selectionStorageFailure.kind != harken::SelectionStorageFailureKind::None) {
+        harken::LogRecord record{};
+        record.level = VN_LOG_ERROR;
+        record.code = harken::kLogCodeSelectionStorageRefused;
+        record.arg0 = static_cast<std::uint64_t>(selectionStorageFailure.kind);
+        record.arg1 = selectionStorageFailure.requestedRows;
+        engine->logicLogRing.Push(record);
+    }
     engine->queueInstances.ApplyDue(dueFrame);
     engine->meterDetectors.Drain(engine->meterRing);
     ObservePlayablePlayback(*engine);

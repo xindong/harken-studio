@@ -278,8 +278,6 @@ struct EngineConfig {
     std::uint32_t maxContainerInstances = 256;
     std::uint32_t maxQueueCheckpoints = 256;
     std::uint32_t maxQueueChildren = 64;
-    std::uint32_t maxSelectionRowsGlobal = 256;
-    std::uint32_t maxSelectionRowsPerEmitter = 16;
     std::uint32_t maxPendingSelectionDeltasTotal = 512;
     std::uint32_t maxPendingSelectionDeltasGlobalPerRow = 512;
     std::uint32_t maxPendingSelectionDeltasEmitterPerRow = 16;

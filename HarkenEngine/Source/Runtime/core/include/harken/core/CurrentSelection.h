@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "harken/core/StableRowStorage.h"
+#include "harken/core/GrowingRowStorage.h"
 
 #include <algorithm>
 #include <array>
@@ -77,8 +78,6 @@ struct SequenceSelectionV1 {
 
 struct SelectionMemoryConfigV1 {
     std::uint32_t maxEmitters = 128;
-    std::uint32_t maxGlobalRows = 256;
-    std::uint32_t maxEmitterRowsPerEmitter = 16;
     std::uint32_t maxPendingDeltasTotal = 512;
     std::uint32_t maxPendingGlobalPerRow = 512;
     std::uint32_t maxPendingEmitterPerRow = 16;
@@ -142,6 +141,15 @@ enum class SelectionMemoryStatusV1 : std::uint8_t {
     NotHead = 4,
     SequenceComplete = 5,
     RuntimeRecreateRequired = 6,
+};
+
+enum class SelectionStorageFailureKind : std::uint8_t {
+    None, Allocation, PreparedBacking, IndexRange,
+};
+
+struct SelectionStorageFailure {
+    SelectionStorageFailureKind kind = SelectionStorageFailureKind::None;
+    std::uint64_t requestedRows = 0;
 };
 
 struct SelectionAppendResultV1 {
@@ -410,6 +418,11 @@ public:
     };
     bool PrepareBacking(BackingDemand demand, BackingPreparation* out) noexcept;
     std::uint32_t RowCapacity() const noexcept { return rows_.Capacity(); }
+    std::size_t RowReservedBytes() const noexcept { return rows_.ReservedBytes(); }
+    std::size_t RowCommittedBytes() const noexcept { return rows_.CommittedBytes(); }
+    SelectionStorageFailure ConsumeStorageFailure() noexcept {
+        return std::exchange(storageFailure_, {});
+    }
     std::uint32_t DeltaCapacity() const noexcept { return deltas_.Capacity(); }
     std::uint32_t BatchCapacity() const noexcept { return batches_.Capacity(); }
     std::size_t StorageBytes() const noexcept;
@@ -419,7 +432,6 @@ public:
         batches_.SetCommitPageLimitForTests(pages);
     }
     bool Reset(const SelectionMemoryConfigV1& config) noexcept;
-    static std::uint64_t EmitterStorageBytes(const SelectionMemoryConfigV1& config) noexcept;
     SelectionAppendResultV1 AppendPlay(
         const SelectionPlayRequestV1& request) noexcept;
     SelectionAppendResultV1 AppendReset(
@@ -688,6 +700,10 @@ private:
     bool PrepareDelta(DeltaRow& delta, BackingShape shape, bool rollback) noexcept;
     bool PrepareSharedScratch(BackingShape shape) noexcept;
     bool PrepareRowIndices(std::uint32_t count) noexcept;
+    bool NoteStorageFailure(SelectionStorageFailureKind kind, std::uint64_t requested) noexcept {
+        storageFailure_ = {kind, requested};
+        return false;
+    }
     bool PrepareDeltaIndices(std::uint32_t count) noexcept;
     bool PrepareBatchIndices(std::uint32_t count) noexcept;
     bool ProtectBacking(std::uint32_t excludedRow = UINT32_MAX,
@@ -747,7 +763,7 @@ private:
     DeltaRow* ResolveDelta(SelectionDeltaRefV1 ref) noexcept;
 
     SelectionMemoryConfigV1 config_{};
-    StableRowStorage<Row> rows_;
+    GrowingRowStorage<Row> rows_;
     StableRowStorage<DeltaRow> deltas_;
     StableRowStorage<BatchRow> batches_;
     BackingPreparation* backing_ = nullptr;
@@ -766,6 +782,7 @@ private:
     std::uint32_t quarantinedDeltaCount_ = 0;
     std::uint64_t tableLifetime_ = 0;
     std::uint64_t mutationEpoch_ = 1;
+    SelectionStorageFailure storageFailure_{};
 };
 
 std::size_t SelectionSeedByteCountV1(

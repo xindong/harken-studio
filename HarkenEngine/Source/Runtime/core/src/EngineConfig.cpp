@@ -659,8 +659,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         return VN_INVALID_CONFIG;
     }
 
-    SelectionMemoryConfigV1 defaultSelectionConfig{};
-    defaultSelectionConfig.maxEmitterRowsPerEmitter = resolved.maxSelectionRowsPerEmitter;
     std::uint64_t defaultContextBytes = 0;
     std::uint64_t parkedStateBytes = 0;
     if (!CheckedMul(resolved.voiceCapacity.Logical(), sizeof(VnEmitterHandle),
@@ -668,14 +666,11 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         !CheckedAdd(bytesPerEmitter,
                     EmitterTable::StorageBytesPerEmitter(resolved.emitterVariableSlots),
                     &defaultContextBytes) ||
-        !CheckedAdd(defaultContextBytes,
-                    SelectionMemoryTableV1::EmitterStorageBytes(defaultSelectionConfig),
-                    &defaultContextBytes) ||
         !CheckedAdd(defaultContextBytes, sizeof(std::uint32_t), &defaultContextBytes) ||
+        // Preserve the fixed context allowance independently of history growth.
+        !CheckedAdd(defaultContextBytes, 64ull * 4u, &defaultContextBytes) ||
         !CheckedAdd(defaultContextBytes, parkedStateBytes, &defaultContextBytes) ||
-        !CheckedAdd(defaultContextBytes,
-                    64ull * (4ull + 2ull * resolved.maxSelectionRowsPerEmitter),
-                    &defaultContextBytes) || defaultContextBytes > (16ull << 20)) {
+        defaultContextBytes > (16ull << 20)) {
         return VN_INVALID_CONFIG;
     }
 
