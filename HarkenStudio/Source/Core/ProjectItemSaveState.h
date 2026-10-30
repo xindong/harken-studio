@@ -10,11 +10,14 @@ namespace VNX {
 
 struct ProjectData;
 struct ProjectItem;
+class ProjectSerializer;
 
 class ProjectItemSaveState
 {
 public:
     bool markSaved(const ProjectData& project);
+    bool markSaved(const ProjectData& project, const ProjectSerializer& serializer,
+                   const QHash<QUuid, QJsonObject>& serializedItems);
     QList<ProjectItem*> refresh(ProjectData& project, const QSet<QUuid>* authoringWriteSet = nullptr);
     void recordPreview(const QUuid& guid);
     void invalidate();

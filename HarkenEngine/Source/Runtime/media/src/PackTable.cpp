@@ -927,7 +927,7 @@ const PackEntry* PackTable::FindEntryBySound(
             // still the pack's own: after the caller re-registers the id
             // with other content, pack loop facts would be lies about it.
             if (registry.CookieOf(soundId) != entry.registrationCookie) {
-                return nullptr;
+                continue;
             }
             return &entry;
         }
@@ -1754,6 +1754,35 @@ VnResult PackTable::CanReplacePreparedV2(
     return VN_OK;
 }
 
+PackTable::PreparedMutation::~PreparedMutation() noexcept {
+    if (m_owner != nullptr) {
+        m_owner->CancelPreparedMutation(this);
+    }
+}
+
+PackTable::PreparedMutation::PreparedMutation(PreparedMutation&& other) noexcept {
+    *this = std::move(other);
+}
+
+PackTable::PreparedMutation& PackTable::PreparedMutation::operator=(
+    PreparedMutation&& other) noexcept {
+    if (this != &other) {
+        if (m_owner != nullptr) {
+            m_owner->CancelPreparedMutation(this);
+        }
+        m_owner = std::exchange(other.m_owner, nullptr);
+        m_handle = std::exchange(other.m_handle, 0);
+        m_unload = std::exchange(other.m_unload, false);
+        m_revisionKey = std::exchange(other.m_revisionKey, PackRevisionKey{});
+        m_resourceToken = std::exchange(other.m_resourceToken, 0);
+        m_bytes = std::move(other.m_bytes);
+        m_entries = std::move(other.m_entries);
+        m_pcm = std::move(other.m_pcm);
+        m_predecessor = std::exchange(other.m_predecessor, RetiredReplace{});
+    }
+    return *this;
+}
+
 VnResult PackTable::PrepareRevisionMutation(
     VnPackHandle handle, AlignedBuffer& bytes,
     std::vector<PackEntry>& entries,
@@ -1788,12 +1817,12 @@ VnResult PackTable::PrepareRevisionMutation(
     if (reserved != VN_OK) {
         return reserved;
     }
+    prepared.m_owner = this;
     try {
         if (revisionKey != nullptr && revisionKey->packStableId != 0) {
             const VnResult staged = PrepareCanonicalMedia(
                 handle, bytes, parsedMedia, entries, registry, &prepared.m_pcm);
             if (staged != VN_OK) {
-                ReleaseRetiringRow(*row);
                 return staged;
             }
         } else {
@@ -1824,8 +1853,6 @@ VnResult PackTable::PrepareRevisionMutation(
                 registrations.empty() ? nullptr : registrations.data(),
                 registrations.size(), ownedCount, &prepared.m_pcm);
             if (staged != VN_OK) {
-                ReleaseRetiringRow(*row);
-                prepared.m_predecessor = RetiredReplace{};
                 return staged;
             }
             for (std::size_t i = 0; i < entries.size(); ++i) {
@@ -1834,11 +1861,8 @@ VnResult PackTable::PrepareRevisionMutation(
             }
         }
     } catch (const std::bad_alloc&) {
-        ReleaseRetiringRow(*row);
-        prepared.m_predecessor = RetiredReplace{};
         return VN_BACKPRESSURE;
     }
-    prepared.m_owner = this;
     prepared.m_handle = handle;
     prepared.m_revisionKey =
         revisionKey != nullptr ? *revisionKey : PackRevisionKey{};

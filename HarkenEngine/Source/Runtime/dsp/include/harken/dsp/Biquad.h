@@ -370,7 +370,7 @@ struct BiquadParameterGlide {
         if (!active) {
             return;
         }
-        progress = std::min(total, progress + frames);
+        progress += std::min(frames, total - progress);
         const float amount = total == 0
                                  ? 1.0f
                                  : static_cast<float>(progress) /

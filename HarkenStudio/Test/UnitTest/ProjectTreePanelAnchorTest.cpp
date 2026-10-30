@@ -1,16 +1,22 @@
 #include "ProjectManager.h"
 #include "ProjectTypes.h"
+#include "Components/VSelection.h"
+#include "ThemeManager.h"
 #include "UndoCommands.h"
 #include "Widgets/Hierarchy/Hierarchy.h"
+#include "Widgets/ProjectExplorer/ProjectExplorer.h"
 #include "Widgets/Shared/InlineRenameEdit.h"
 
 #include <gtest/gtest.h>
 
 #include <QApplication>
 #include <QColorDialog>
+#include <QImage>
 #include <QLineEdit>
 #include <QKeyEvent>
+#include <QPixmap>
 #include <QPointer>
+#include <QScopeGuard>
 #include <QScrollBar>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -42,6 +48,13 @@ public:
     {
         prepareItemContextMenu(treeItemForProjectItem(item), item);
     }
+};
+
+class PresentationProbeExplorer : public ProjectExplorer
+{
+public:
+    using ProjectTreePanel::treeItemForProjectItem;
+    using ProjectTreePanel::updateTreeItem;
 };
 
 class ProjectTreePanelAnchorTest : public ::testing::Test
@@ -114,6 +127,88 @@ TEST_F(ProjectTreePanelAnchorTest, InlineRenameDoesNotTouchADeletedTarget)
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     EXPECT_EQ(pm.findItemByGuid(guid), nullptr);
     EXPECT_EQ(selectedLayer_->name, survivingName);
+}
+
+TEST_F(ProjectTreePanelAnchorTest, RefreshedPresentationMatchesFreshRowsAcrossAuthoringAndThemeChanges)
+{
+    auto& pm = ProjectManager::instance();
+    auto* container = pm.createItem(selectedLayer_, QStringLiteral("PresentationContainer"),
+                                    ProjectItem::Type::Container);
+    ASSERT_NE(container, nullptr);
+    auto* selection = container->comp<VSelection>();
+    ASSERT_NE(selection, nullptr);
+    PresentationProbeExplorer explorer;
+    auto& theme = ThemeManager::instance();
+    const auto committedAppearance = theme.appearance();
+    const auto committedSnapshot = theme.snapshot();
+    const auto cancelPreview = qScopeGuard([&] { theme.cancelAppearancePreview(); });
+
+    const auto verify = [&](const char* stage) {
+        SCOPED_TRACE(stage);
+        explorer.onProjectSaved();
+        explorer.onProjectSaved();
+        for (auto* item : {selectedLayer_, container}) {
+            SCOPED_TRACE(item->name.toStdString());
+            auto* row = explorer.treeItemForProjectItem(item);
+            ASSERT_NE(row, nullptr);
+            QTreeWidgetItem fresh;
+            explorer.updateTreeItem(&fresh, item);
+            EXPECT_EQ(row->text(0), fresh.text(0));
+            EXPECT_EQ(row->font(0).resolve(explorer.treeWidget()->font()),
+                      fresh.font(0).resolve(explorer.treeWidget()->font()));
+            EXPECT_EQ(row->toolTip(0), fresh.toolTip(0));
+            EXPECT_EQ(row->data(0, Qt::ForegroundRole), fresh.data(0, Qt::ForegroundRole));
+            const int extent = theme.metrics().objectIconExtent;
+            for (const auto mode : {QIcon::Normal, QIcon::Disabled, QIcon::Selected}) {
+                for (const auto state : {QIcon::Off, QIcon::On}) {
+                    for (const qreal scale : {1.0, 2.0}) {
+                        const auto actual = row->icon(0).pixmap(
+                            QSize(extent, extent), scale, mode, state).toImage();
+                        const auto expected = fresh.icon(0).pixmap(
+                            QSize(extent, extent), scale, mode, state).toImage();
+                        ASSERT_FALSE(expected.isNull());
+                        EXPECT_EQ(actual, expected);
+                    }
+                }
+            }
+        }
+    };
+
+    verify("initial");
+    ASSERT_TRUE(pm.setItemsColor({selectedLayer_, container}, QColor(12, 146, 213).rgba()));
+    verify("color");
+    selection->mode = SelectionMode::Sequence;
+    explorer.onItemPropertyChanged(container, QStringLiteral("mode"));
+    verify("sequence");
+    selection->playType = SelectionPlayType::Queue;
+    explorer.onItemPropertyChanged(container, QStringLiteral("playType"));
+    verify("queue");
+
+    auto preview = committedAppearance;
+    preview.themeId = builtinThemeId();
+    const QColor previewAccent(201, 47, 129);
+    const QColor previewText(41, 192, 156);
+    preview.colors[preview.paletteId].insert(QStringLiteral("accent.primary"), previewAccent);
+    preview.colors[preview.paletteId].insert(QStringLiteral("text.primary"), previewText);
+    ASSERT_TRUE(theme.previewAppearance(preview).ok());
+    ASSERT_EQ(theme.snapshot()->ui.colors.accent, previewAccent);
+    ASSERT_EQ(theme.snapshot()->ui.colors.textPrimary, previewText);
+    ASSERT_NE(theme.snapshot()->ui.colors.accent, committedSnapshot->ui.colors.accent);
+    ASSERT_NE(theme.snapshot()->ui.colors.textPrimary, committedSnapshot->ui.colors.textPrimary);
+    verify("theme preview");
+    EXPECT_EQ(theme.appearance(), committedAppearance);
+    theme.cancelAppearancePreview();
+    verify("theme restored");
+
+    ASSERT_TRUE(pm.saveProject());
+    verify("saved");
+    EXPECT_FALSE(container->isDirtyObject());
+    EXPECT_FALSE(explorer.treeItemForProjectItem(container)->font(0).italic());
+    ASSERT_TRUE(pm.setItemsColor({selectedLayer_, container}, 0));
+    selection->mode = SelectionMode::Random;
+    selection->playType = SelectionPlayType::Single;
+    explorer.onItemPropertyChanged(container, QStringLiteral("mode"));
+    verify("restored authoring");
 }
 
 TEST_F(ProjectTreePanelAnchorTest, RefreshPreservesEachPanelsSelectionExpansionAndScroll)

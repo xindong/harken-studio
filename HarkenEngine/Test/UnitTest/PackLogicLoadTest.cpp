@@ -563,6 +563,18 @@ public:
         m_entries.push_back(std::move(entry));
     }
 
+    void AddBusSend(VnBusId from, VnBusId to, float levelDb) {
+        Entry entry;
+        entry.kind = harken::kPackEntryKindBusSend;
+        entry.payload.resize(harken::kPackV2BusSendPayloadBytes);
+        harken::PackBusSendEntry send;
+        send.fromBusId = from;
+        send.toBusId = to;
+        send.levelDb = levelDb;
+        harken::SerializePackV2BusSend(send, entry.payload.data());
+        m_entries.push_back(std::move(entry));
+    }
+
     void AddDiscreteVariable(VnVariableId variableId) {
         Entry entry;
         entry.kind = harken::kPackEntryKindDiscreteVariable;
@@ -1553,6 +1565,47 @@ TEST(PackLogicLoad, FiniteOverflowingBusMixRefusesWithoutMutation) {
     EXPECT_EQ(0u, engine->packs.LoadedCount());
     EXPECT_EQ(1u, engine->buses.BusCount());
     EXPECT_EQ(harken::kInvalidBusIndex, engine->buses.FindIndex(harkentest::ObjectId(13191)));
+}
+
+TEST(PackLogicLoad, OverflowingSendRejectsLoadAndReplaceWithoutMutation) {
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    const auto source = harkentest::ObjectId(13201);
+    const auto target = harkentest::ObjectId(13202);
+    V2Builder overflow(harken::kPackKindResident);
+    overflow.AddBus(source, VN_BUS_MASTER);
+    overflow.AddBus(target, VN_BUS_MASTER);
+    overflow.AddBusSend(source, target, 800.0f);
+    const auto overflowPath = TempPath("pll_send_finite_overflow.pack");
+    WriteFileBytes(overflowPath, overflow.Build());
+    VnPackHandle pack = 0;
+    EXPECT_EQ(VN_BAD_PACK, LoadPack(overflowPath, &pack));
+    EXPECT_EQ(0u, pack);
+    EXPECT_EQ(0u, engine->packs.LoadedCount());
+    EXPECT_EQ(1u, engine->buses.BusCount());
+
+    V2Builder accepted(harken::kPackKindResident);
+    accepted.AddBus(source, VN_BUS_MASTER);
+    accepted.AddBus(target, VN_BUS_MASTER);
+    accepted.AddBusSend(source, target, -6.0f);
+    const auto acceptedPath = TempPath("pll_send_before_overflow.pack");
+    WriteFileBytes(acceptedPath, accepted.Build());
+    ASSERT_EQ(VN_OK, LoadPack(acceptedPath, &pack));
+    const auto index = engine->buses.FindIndex(source);
+    ASSERT_NE(harken::kInvalidBusIndex, index);
+    const auto generation = engine->buses.GenerationAt(index);
+    const auto plans = engine->topologyPlanCount;
+    const auto published = engine->commands.PublishedHead();
+    EXPECT_EQ(VN_BAD_PACK, ReplacePack(pack, overflowPath));
+    EXPECT_EQ(index, engine->buses.FindIndex(source));
+    EXPECT_EQ(generation, engine->buses.GenerationAt(index));
+    EXPECT_EQ(plans, engine->topologyPlanCount);
+    EXPECT_EQ(published, engine->commands.PublishedHead());
+    const auto* record = engine->logicPacks.RecordFor(pack);
+    ASSERT_NE(nullptr, record);
+    ASSERT_EQ(1u, record->busSends.size());
+    EXPECT_FLOAT_EQ(-6.0f, record->busSends[0].levelDb);
 }
 
 TEST(PackLogicReplace, NonFiniteBusMixSumLeavesLoadedRevisionIntact) {

@@ -427,8 +427,13 @@ TEST(BusTopologySnapshot, RefusalsDoNotAdvanceOwnerOrGraphRevision) {
     EXPECT_EQ(VN_SEND_CYCLE, Vn_ApplyBusTopology(&cycleDesc));
     EXPECT_EQ(plansBefore, session.Engine()->topologyPlanCount);
 
-    cycleDesc.sendCount = 0;
-    cycleDesc.sends = nullptr;
+    cycleSends[0] = Send(harkentest::ObjectId(11), VN_BUS_MASTER, 800.0f);
+    EXPECT_EQ(VN_INVALID_ARG, Vn_ApplyBusTopology(&cycleDesc));
+    EXPECT_EQ(plansBefore, session.Engine()->topologyPlanCount);
+    EXPECT_EQ(before.acceptedBusTopologyRevision,
+              Snapshot().acceptedBusTopologyRevision);
+
+    cycleSends[0].levelDb = -800.0f;
     ASSERT_EQ(VN_OK, Vn_ApplyBusTopology(&cycleDesc));
     EXPECT_EQ(plansBefore + 1, session.Engine()->topologyPlanCount);
 }

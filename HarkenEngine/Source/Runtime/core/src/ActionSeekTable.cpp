@@ -236,18 +236,19 @@ VnResult ActionSeekTable::Query(
                      : state == ActionSeekLifecycle::Cancelled
                            ? VN_ACTION_SEEK_CANCELLED
                            : VN_ACTION_SEEK_ACCEPTED;
-    info.result = (state == ActionSeekLifecycle::Applied ||
-                   state == ActionSeekLifecycle::Cancelled)
-                      ? row->result
-                      : VN_OK;
     info.firing = row->firing;
     info.targetCount = row->targetCount;
-    info.appliedCount = row->appliedCount;
-    info.cancelledCount = row->cancelledCount;
     info.acceptedLogicSequence = row->acceptedLogicSequence;
-    info.appliedAudioBlockSequence = row->appliedAudioBlockSequence;
-    info.minimumAppliedSourceFrame = row->minimumAppliedSourceFrame;
-    info.maximumAppliedSourceFrame = row->maximumAppliedSourceFrame;
+    // The terminal release publishes all completion fields as one record.
+    if (state == ActionSeekLifecycle::Applied ||
+        state == ActionSeekLifecycle::Cancelled) {
+        info.result = row->result;
+        info.appliedCount = row->appliedCount;
+        info.cancelledCount = row->cancelledCount;
+        info.appliedAudioBlockSequence = row->appliedAudioBlockSequence;
+        info.minimumAppliedSourceFrame = row->minimumAppliedSourceFrame;
+        info.maximumAppliedSourceFrame = row->maximumAppliedSourceFrame;
+    }
     *outInfo = info;
     return VN_OK;
 }

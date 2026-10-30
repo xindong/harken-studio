@@ -24,6 +24,7 @@
 #include "PackExportSelection.h"
 #include "Components/VBus.h"
 #include "ProjectSerializer.h"
+#include "ProjectContract.h"
 #include "FileWatcher.h"
 #include "StartupProgress.h"
 
@@ -43,6 +44,7 @@ class ProjectIndex;
 class ProjectInstance;
 class FolderSaveState;
 class ProjectItemSaveState;
+class ProjectSaveSnapshot;
 class IntegrityScanner;
 class PlacementContext;
 class VMixNode;
@@ -643,6 +645,8 @@ private:
     std::unique_ptr<FolderSaveState> m_folderSaveState;
     std::unique_ptr<ProjectItemSaveState> m_itemSaveState;
     ProjectSerializer m_serializer;
+    ProjectContractReadContext m_saveContractContext;
+    std::unique_ptr<ProjectSaveSnapshot> m_savedSnapshot;
     std::function<void(StartupPhase)> m_startupProgressCallback;
 
     ClipboardOp        m_clipboardOp = ClipboardOp::None;

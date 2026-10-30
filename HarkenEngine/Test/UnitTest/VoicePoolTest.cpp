@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <barrier>
 #include <bit>
 #include <chrono>
 #include <limits>
@@ -2330,6 +2331,68 @@ TEST(VoicePool, BusTombstonesSkipClaimedAndMigrateRendering) {
     engine->voices.ApplyStop(renderingHandle, 0, 0, engine->notifications, 0);
     engine->voices.ApplyStop(claimedHandle, 0, 0, engine->notifications, 0);
     EXPECT_EQ(0u, engine->voices.ActiveCount());
+}
+
+TEST(VoicePool, LogicCancellationAndAudioCompletionReclaimEveryEffect) {
+    auto config = VoicePoolConfig(2, kBlockFrames, kSampleRate);
+    config.fxSlotsPerVoice = 8;
+    config.gainEffectPoolCapacity = 16;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto samples = harkentest::MakeDC(4096, 0.125f);
+    const auto pcm = MonoDesc(samples, kSampleRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &pcm));
+    const auto completed = engine.voices.CompletedCount();
+    for (unsigned iteration = 0; iteration < 256; ++iteration) {
+        SCOPED_TRACE(iteration);
+        VnVoiceHandle gated = 0, playing = 0;
+        ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &gated, true));
+        harken::VoicePool::PreparedCommitProof proof;
+        ASSERT_TRUE(CaptureOriginalPreparation(engine, gated, &proof));
+        harken::VoicePool::ConsumePreparedCommit(std::move(proof));
+        harken::TimelineArmToken arm{};
+        ASSERT_TRUE(PrepareOriginalArm(engine, gated, &arm));
+        harken::CommandRecord command{};
+        command.opcode = harken::kOpcodePlay;
+        command.payload.play.batch = {harken::kPlayLedBatchVersion,
+            harken::PlayLedBatchKind::TimelineArm, 0, 1,
+            (static_cast<std::uint64_t>(arm.generation) << 32) | arm.slot};
+        command.payload.play.handle = gated;
+        command.payload.play.sourceIdentity = gated;
+        ASSERT_TRUE(engine.commands.TryPush(command));
+        engine.nullBackend.Pump(1);
+        ASSERT_TRUE(engine.voices.Resolve(gated)->timelineGated);
+        ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &playing));
+        engine.voices.ApplyPlay(playing, playing, 0, 0);
+        for (auto voice : {gated, playing}) {
+            for (std::uint32_t slot = 0; slot < 8; ++slot) {
+                const auto ref = engine.effectBank.Acquire(VN_EFFECT_GAIN);
+                ASSERT_EQ(VN_EFFECT_GAIN, ref.type);
+                engine.voices.ApplySetVoiceEffect(voice, slot, ref.type,
+                    ref.poolIndex, ref.generation);
+            }
+        }
+        ASSERT_EQ(16u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
+        std::barrier ready(2);
+        std::thread audio([&] {
+            ready.arrive_and_wait();
+            engine.voices.ApplyStop(playing, 0, 0, engine.notifications, 0);
+        });
+        ready.arrive_and_wait();
+        const bool cancelled = engine.voices.CancelTimelineBinding(
+            static_cast<std::uint32_t>(gated), static_cast<std::uint32_t>(gated >> 32));
+        audio.join();
+        ASSERT_TRUE(cancelled);
+        engine.effectBank.DrainRetire();
+        ASSERT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
+        EXPECT_EQ(0u, engine.voices.ActiveCount());
+        EXPECT_EQ(0u, engine.registry.Lookup(harkentest::ObjectId(1)).useCount->load());
+        EXPECT_EQ(completed + (iteration + 1u) * 2u, engine.voices.CompletedCount());
+        RetireOriginalArm(engine, arm);
+        VnNotification notification{};
+        while (engine.notifications.TryPop(notification)) {}
+    }
 }
 
 TEST(VoicePool, BusTombstonesInterleaveWithPlayAndRelease) {

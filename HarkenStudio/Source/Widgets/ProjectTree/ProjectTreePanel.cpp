@@ -36,6 +36,7 @@
 #include <QUuid>
 #include <algorithm>
 #include <functional>
+#include <optional>
 #include <vector>
 
 #include "Core/AssetPipeline/ImportAssetsCommand.h"
@@ -62,6 +63,40 @@ QColor mediaStatusColor(MediaStatus status)
     case MediaStatus::Orphaned: return colors.textMuted;
     default: return {};
     }
+}
+
+struct TreeRowIconKey
+{
+    quint64 themeGeneration = 0;
+    qint64 paletteKey = 0;
+    qreal devicePixelRatio = 1.0;
+    int extent = 0;
+    int itemType = -1;
+    QString logicalId;
+    QString alternateLogicalId;
+    QColor tint;
+    uint32_t color = 0;
+
+    bool operator==(const TreeRowIconKey&) const = default;
+};
+
+class ProjectTreeRow final : public QTreeWidgetItem
+{
+public:
+    using QTreeWidgetItem::QTreeWidgetItem;
+
+    std::optional<TreeRowIconKey> iconKey;
+};
+
+TreeRowIconKey treeRowIconKey(const QWidget& widget)
+{
+    const auto& theme = ThemeManager::instance();
+    TreeRowIconKey key;
+    key.themeGeneration = theme.snapshot()->generation;
+    key.paletteKey = QApplication::palette().cacheKey();
+    key.devicePixelRatio = widget.devicePixelRatioF();
+    key.extent = theme.metrics().objectIconExtent;
+    return key;
 }
 
 QString actionStepMenuLabel(VActionStep::Type type)
@@ -867,7 +902,7 @@ QTreeWidgetItem* ProjectTreePanel::ensureFolderRow(const PhysicalFolder* folder)
     QTreeWidgetItem* parentRow = folder->parent
         ? ensureFolderRow(folder->parent)
         : ensureCategoryFolder(ProjectManager::instance().currentProject()->folderBucket(folder));
-    auto* row = new QTreeWidgetItem(parentRow);
+    auto* row = new ProjectTreeRow(parentRow);
     row->setFlags(row->flags() | Qt::ItemIsEditable);
     folderMap_.insert(row, mutableFolder);
     reverseFolderMap_.insert(mutableFolder, row);
@@ -888,9 +923,21 @@ void ProjectTreePanel::updateFolderRow(QTreeWidgetItem* row, PhysicalFolder* fol
     QFont font = row->font(0);
     font.setItalic(dirty);
     row->setFont(0, font);
-    row->setIcon(0, ThemeManager::instance().resolveToggleIcon(
-        QString::fromLatin1(ThemeAssetIds::TreeFolderOpen),
-        QString::fromLatin1(ThemeAssetIds::TreeFolderClosed)).icon);
+    auto key = treeRowIconKey(*this);
+    key.logicalId = QString::fromLatin1(ThemeAssetIds::TreeFolderOpen);
+    key.alternateLogicalId = QString::fromLatin1(ThemeAssetIds::TreeFolderClosed);
+    auto* cachedRow = dynamic_cast<ProjectTreeRow*>(row);
+    if (!cachedRow || !cachedRow->iconKey || *cachedRow->iconKey != key) {
+        const QIcon icon = ThemeManager::instance().resolveToggleIcon(
+            key.logicalId, key.alternateLogicalId).icon;
+        row->setIcon(0, icon);
+        if (cachedRow) {
+            if (icon.isNull())
+                cachedRow->iconKey.reset();
+            else
+                cachedRow->iconKey = std::move(key);
+        }
+    }
     const auto* project = ProjectManager::instance().currentProject();
     row->setToolTip(0, tr("Folder: %1").arg(project
         ? project->folderBucket(folder) + QLatin1Char('/') + project->folderRelPath(folder)
@@ -2172,12 +2219,9 @@ void ProjectTreePanel::updateTreeItem(QTreeWidgetItem* treeItem, ProjectItem* pr
         ? SoundSourceEditing::activeSourceId(
               *projectItem, PlatformContextService::instance().context().primary, language)
         : 0;
-    if (projectItem->type == ProjectItem::Type::Sound)
-        treeItem->setData(0, Qt::ForegroundRole, QVariant());
-    const QString activePath = projectItem->type == ProjectItem::Type::Sound
-        ? SoundSourceEditing::activeRelativePath(
-              *projectItem, PlatformContextService::instance().context().primary, language)
-        : QString{};
+    const AssetInfo* asset = activeSourceID != 0
+        ? AssetRegistry::instance().getAsset(activeSourceID) : nullptr;
+    const QString activePath = asset ? asset->relativePath : QString{};
     if (!activePath.isEmpty())
     {
         tooltip = tr("Sound: %1\nSource: %2").arg(projectItem->name, activePath);
@@ -2214,13 +2258,8 @@ void ProjectTreePanel::updateTreeItem(QTreeWidgetItem* treeItem, ProjectItem* pr
                 break;
         }
 
-        if (statusColor.isValid())
-            treeItem->setForeground(0, statusColor);
-        else
-            treeItem->setData(0, Qt::ForegroundRole, QVariant());
         tooltip += QStringLiteral("\nMedia Status: ") + statusLabel;
 
-        const AssetInfo* asset = AssetRegistry::instance().getAsset(activeSourceID);
         if (asset) {
             tooltip += QStringLiteral("\nFormat: ") + asset->metadata.originalFormat;
             tooltip += QStringLiteral("\nDuration: ") +
@@ -2232,7 +2271,30 @@ void ProjectTreePanel::updateTreeItem(QTreeWidgetItem* treeItem, ProjectItem* pr
         }
     }
 
-    treeItem->setIcon(0, decorateItemIcon(iconForItem(*projectItem, statusColor), projectItem));
+    if (projectItem->type == ProjectItem::Type::Sound) {
+        if (statusColor.isValid())
+            treeItem->setForeground(0, statusColor);
+        else
+            treeItem->setData(0, Qt::ForegroundRole, QVariant());
+    }
+
+    auto key = treeRowIconKey(*this);
+    key.itemType = static_cast<int>(projectItem->type);
+    key.logicalId = QString::fromLatin1(iconLogicalIdForItem(*projectItem));
+    key.tint = statusColor;
+    key.color = projectItem->color;
+    auto* cachedRow = dynamic_cast<ProjectTreeRow*>(treeItem);
+    if (!cachedRow || !cachedRow->iconKey || *cachedRow->iconKey != key) {
+        const QIcon base = iconForItem(*projectItem, statusColor);
+        const QIcon icon = decorateItemIcon(base, projectItem);
+        treeItem->setIcon(0, icon);
+        if (cachedRow) {
+            if (base.isNull() || icon.isNull())
+                cachedRow->iconKey.reset();
+            else
+                cachedRow->iconKey = std::move(key);
+        }
+    }
 
     if (const auto* project = ProjectManager::instance().currentProject()) {
         QString path = objectLabels_ ? objectLabels_->path(*projectItem) : QString{};
@@ -2251,7 +2313,7 @@ void ProjectTreePanel::updateTreeItem(QTreeWidgetItem* treeItem, ProjectItem* pr
 
 QTreeWidgetItem* ProjectTreePanel::createTreeItem(ProjectItem* item)
 {
-    QTreeWidgetItem* treeItem = new QTreeWidgetItem();
+    QTreeWidgetItem* treeItem = new ProjectTreeRow();
     treeItem->setFlags(treeItem->flags() | Qt::ItemIsEditable);
 
     updateTreeItem(treeItem, item);

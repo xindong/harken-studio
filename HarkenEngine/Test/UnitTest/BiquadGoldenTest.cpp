@@ -488,6 +488,22 @@ TEST(BiquadGolden, ParameterGlideIsInvariantToControlBlockSplits) {
     EXPECT_FLOAT_EQ(whole.currentGainDb, split.currentGainDb);
 }
 
+TEST(BiquadGolden, ParameterGlideCompletesAtMaximumFrameDuration) {
+    harken::BiquadParameterGlide glide;
+    glide.Snap(100.0f, 0.5f, -12.0f);
+    glide.Retarget(6400.0f, 2.0f, 6.0f, UINT32_MAX);
+    glide.Advance(UINT32_MAX - 15u);
+    ASSERT_TRUE(glide.active);
+    glide.Advance(16);
+    EXPECT_FALSE(glide.active);
+    EXPECT_EQ(UINT32_MAX, glide.progress);
+    EXPECT_NEAR(6400.0f, glide.FrequencyHz(), 0.01f);
+    EXPECT_FLOAT_EQ(2.0f, glide.Q());
+    EXPECT_FLOAT_EQ(6.0f, glide.currentGainDb);
+    glide.Advance(256);
+    EXPECT_EQ(UINT32_MAX, glide.progress);
+}
+
 // The glide must interpolate in stable parameter domains — log-frequency,
 // log-Q, and decibel gain — never in the raw Hz / linear-Q / linear-amplitude
 // domains. Steady-state endpoint checks cannot detect the domain: a

@@ -376,6 +376,60 @@ TEST(BusSend, OutputVolumeRefusalsPreserveAcceptedGains) {
     EXPECT_EQ(VN_OK, Vn_SetVoiceOutputVolume(handle, 600.0f, 0));
 }
 
+TEST(BusSend, OverflowRefusalsPreserveFilteredBusAndVoiceSends) {
+    VnConfig config = MakeNullConfig(2, kBlockFrames);
+    config.maxBuses = 4;
+    config.busSendSlotsPerBus = 2;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    const auto dc = RegisterDc(0.1f);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(kBusA, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_CreateBus(kBusB, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_CreateBus(kBusC, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_SetBusFilter(kBusB, 0, 1000.0f, 0.707f, 1, 0));
+    ASSERT_EQ(VN_OK, Vn_SetBusFilter(kBusC, 0, 1000.0f, 0.707f, 1, 0));
+    ASSERT_EQ(VN_OK, Vn_ConnectBusSend(kBusA, kBusB, 0.0f));
+    auto play = MakePlayDesc(harkentest::ObjectId(1));
+    play.busId = kBusA;
+    play.loopCount = 0;
+    VnVoiceHandle handle = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
+    ASSERT_EQ(VN_OK, Vn_SetVoiceSend(handle, 0, kBusB, 0.0f));
+    const auto expectSettled = [&](float expected) {
+        Capture out;
+        PumpAndCapture(engine, 4, out);
+        ASSERT_GE(out.left.size(), kBlockFrames);
+        for (std::size_t i = out.left.size() - kBlockFrames;
+             i < out.left.size(); ++i) {
+            ASSERT_NEAR(expected, out.left[i], 1e-4f);
+            ASSERT_NEAR(expected, out.right[i], 1e-4f);
+        }
+    };
+    expectSettled(0.3f);
+    for (const float invalid : {800.0f, (std::numeric_limits<float>::max)(),
+                               std::numeric_limits<float>::quiet_NaN(),
+                               std::numeric_limits<float>::infinity(),
+                               -std::numeric_limits<float>::infinity()}) {
+        const auto published = engine->commands.PublishedHead();
+        const auto plans = engine->topologyPlanCount;
+        EXPECT_EQ(VN_INVALID_ARG, Vn_ConnectBusSend(kBusA, kBusC, invalid));
+        EXPECT_EQ(VN_INVALID_ARG, Vn_SetBusSendLevel(kBusA, kBusB, invalid, 0));
+        EXPECT_EQ(VN_INVALID_ARG, Vn_SetVoiceSend(handle, 0, kBusC, invalid));
+        EXPECT_EQ(VN_INVALID_ARG, Vn_SetVoiceSendLevel(handle, 0, invalid, 0));
+        EXPECT_EQ(published, engine->commands.PublishedHead());
+        EXPECT_EQ(plans, engine->topologyPlanCount);
+        expectSettled(0.3f);
+    }
+    ASSERT_EQ(VN_OK, Vn_ConnectBusSend(kBusA, kBusC, -800.0f));
+    ASSERT_EQ(VN_OK, Vn_SetBusSendLevel(kBusA, kBusB, -800.0f, 0));
+    ASSERT_EQ(VN_OK, Vn_SetVoiceSendLevel(handle, 0, -800.0f, 0));
+    expectSettled(0.1f);
+    ASSERT_EQ(VN_OK, Vn_SetBusSendLevel(kBusA, kBusB, 0.0f, 0));
+    ASSERT_EQ(VN_OK, Vn_SetVoiceSend(handle, 0, kBusB, 0.0f));
+    expectSettled(0.3f);
+}
+
 TEST(BusSend, PendingOutputVolumeBypassesFullQueueAndSnapsAtOnset) {
     VnConfig config = MakeNullConfig(2, kBlockFrames);
     config.commandQueueDepth = 16;
@@ -401,6 +455,8 @@ TEST(BusSend, PendingOutputVolumeBypassesFullQueueAndSnapsAtOnset) {
     const float pendingOutput =
         session.Engine()->pendingStarts[resolved.ledgerSlot].outputBusVolumeDb;
     EXPECT_EQ(VN_INVALID_ARG, Vn_SetVoiceOutputVolume(handle, 800.0f, 0));
+    EXPECT_EQ(VN_INVALID_ARG, Vn_SetVoiceSend(handle, 0, kBusB, 800.0f));
+    EXPECT_EQ(VN_INVALID_ARG, Vn_SetVoiceSendLevel(handle, 0, 800.0f, 0));
     EXPECT_EQ(published, session.Engine()->commands.PublishedHead());
     EXPECT_FLOAT_EQ(
         pendingOutput,
@@ -799,6 +855,9 @@ TEST(BusSend, ParkReturnRoundTripsVoiceSends) {
     parked.structSize = sizeof(VnSnapshot);
     Vn_CaptureSnapshot(&parked);
     ASSERT_EQ(1u, parked.parkedVoiceCount);
+
+    EXPECT_EQ(VN_INVALID_ARG, Vn_SetVoiceSend(handle, 0, kBusB, 800.0f));
+    EXPECT_EQ(VN_INVALID_ARG, Vn_SetVoiceSendLevel(handle, 0, 800.0f, 0));
 
     // Raise it audible again: it returns and its send is re-applied. Pump with
     // interleaved updates so the return issues and the resumed voice settles
