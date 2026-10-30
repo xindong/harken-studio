@@ -177,7 +177,8 @@ std::uint32_t DeferredIntentPool::ClaimDue(
     std::uint64_t windowEndFrame, const PlayableInstanceTable& instances,
     DeferredIntentClaim* out, std::uint32_t capacity,
     std::uint32_t* staleDropped, std::uint32_t* dueCount,
-    std::uint64_t currentQuantum) {
+    std::uint64_t currentQuantum,
+    std::vector<DeferredIntentClaim>* staleClaims) {
     std::uint32_t claimed = 0;
     std::uint32_t dropped = 0;
     std::uint32_t due = 0;
@@ -205,6 +206,8 @@ std::uint32_t DeferredIntentPool::ClaimDue(
                 DeferredIntentOwnerDomain::Playable &&
             !instances.ValidateStamp(entry.intent.ownerHandle,
                                      entry.intent.ownerEpoch)) {
+            if (staleClaims != nullptr)
+                staleClaims->push_back({{slot, entry.generation}, entry.intent});
             FreeEntry(entry);
             ++dropped;
             continue;
@@ -389,7 +392,8 @@ std::uint32_t DeferredIntentPool::Materialize(
 
 std::uint32_t DeferredIntentPool::DropStale(
     const PlayableInstanceTable& instances,
-    std::vector<std::uint64_t>* droppedPayloads) {
+    std::vector<std::uint64_t>* droppedPayloads,
+    std::vector<DeferredIntentClaim>* staleClaims) {
     if (m_count == 0) return 0;
     std::uint32_t dropped = 0;
     for (Entry& entry : m_entries) {
@@ -404,6 +408,9 @@ std::uint32_t DeferredIntentPool::DropStale(
         if (droppedPayloads != nullptr) {
             droppedPayloads->push_back(entry.intent.payload);
         }
+        if (staleClaims != nullptr)
+            staleClaims->push_back({{static_cast<std::uint32_t>(
+                &entry - m_entries.data()), entry.generation}, entry.intent});
         FreeEntry(entry);
         ++dropped;
     }

@@ -127,7 +127,7 @@ std::uint64_t ServiceDeferred(
     std::uint32_t attempted = 0;
     while (attempted < budget) {
         harken::DeferredIntentClaim claim{};
-        if (deferred.ClaimDue(pool.WindowEndFrame(), instances, &claim, 1,
+        if (planner.ClaimDeferredDue(pool.WindowEndFrame(), &claim, 1,
                               nullptr, nullptr, currentQuantum) == 0) {
             break;
         }
@@ -413,7 +413,7 @@ TEST(TimelinePlanner, LongOccurrencePublishesRollingGroupsWithoutSpanFailure) {
     EXPECT_EQ(result.firstFrame, program.entryAnchorFrame);
     EXPECT_EQ(deferred.Count(), 1u);
     std::array<harken::DeferredIntentClaim, 1> due{};
-    EXPECT_EQ(deferred.ClaimDue(pool.WindowEndFrame(), instances, due.data(),
+    EXPECT_EQ(planner.ClaimDeferredDue(pool.WindowEndFrame(), due.data(),
                                 1u),
               0u);
     EXPECT_EQ(pool.LiveTransactionCount(), 1u);
@@ -1777,4 +1777,135 @@ TEST(TimelinePlanner, ExtremeNegativeOffsetFilesAtTheClampedFrame) {
     EXPECT_GE(result.firstFrame, pool.PublishCutoffFrame());
     EXPECT_LE(result.firstFrame, pool.WindowStartFrame() + 400u);
     EXPECT_EQ(deferred.Count(), 0u);
+}
+
+TEST(TimelinePlanner, StaleClaimAfterSiblingCancellationReleasesSideStorage) {
+    for (const bool countOnly : {false, true}) {
+        SCOPED_TRACE(countOnly);
+        PlayableInstanceTable instances(2);
+        const auto owner = instances.Acquire(PlayableKind::Segment, 0);
+        ScheduledTransactionPool pool;
+        ASSERT_TRUE(pool.Reset(PoolConfig(100, 400), 0, kEpoch));
+        DeferredIntentPool deferred(2, 0);
+        TimelinePlanner planner;
+        ASSERT_TRUE(planner.Reset({}, &pool, &deferred, &instances));
+
+        const EventTemplate event[] = {{0, 1, 0, 0, 0, 0x51}};
+        harken::TimelineProgramView runtime{};
+        runtime.generation = 1;
+        ProgramView cancelled{};
+        cancelled.ownerInstance = owner;
+        cancelled.ownerInstanceScheduleEpoch = instances.Classify(owner).scheduleEpoch;
+        cancelled.transactionId = 1;
+        cancelled.entryAnchorFrame = 450;
+        cancelled.events = event;
+        cancelled.eventCount = 1;
+        cancelled.runtimeProgram = {1, &runtime};
+        PostInput input{};
+        input.transportEpoch = kEpoch;
+        ASSERT_EQ(PostStatus::Deferred, planner.PostPlay(cancelled, input).status);
+
+        DeferredIntent action{};
+        action.ownerDomain = harken::DeferredIntentOwnerDomain::Action;
+        action.ownerHandle = 777;
+        action.ownerEpoch = 1;
+        action.dueFrame = 400;
+        const auto added = deferred.AddClaimable(action);
+        ASSERT_EQ(DeferredIntentRefusal::None, added.status);
+
+        std::array<ConsumedEvent, 1> consumed{};
+        ASSERT_EQ(0u, ConsumeFrontier(pool, consumed.data(), consumed.size()));
+        ASSERT_TRUE(planner.ReclaimConsumedQuantum());
+        ASSERT_EQ(500u, pool.WindowEndFrame());
+        planner.DropStaleDeferred();
+        harken::DeferredIntentClaim claim{};
+        ASSERT_EQ(1u, planner.ClaimDeferredDue(pool.WindowEndFrame(), &claim, 1));
+        ASSERT_EQ(harken::DeferredIntentOwnerDomain::Action, claim.intent.ownerDomain);
+
+        // The materialized sibling Action commits an Immediate Stop here.
+        ASSERT_TRUE(instances.BumpScheduleEpoch(owner));
+        ASSERT_TRUE(deferred.Release(claim.token));
+        std::uint32_t dropped = 0;
+        ASSERT_EQ(0u, planner.ClaimDeferredDue(pool.WindowEndFrame(),
+            countOnly ? nullptr : &claim, countOnly ? 0u : 1u, &dropped));
+        ASSERT_EQ(1u, dropped);
+        ASSERT_EQ(0u, deferred.Count());
+        planner.DropStaleDeferred();
+
+
+        EXPECT_FALSE(planner.HasProgramReference(cancelled.runtimeProgram));
+        EXPECT_EQ(UINT64_MAX, planner.DeferredBlockerBefore(600));
+        ProgramView first = cancelled;
+        first.ownerInstanceScheduleEpoch = instances.Classify(owner).scheduleEpoch;
+        first.transactionId = 2;
+        first.entryAnchorFrame = 600;
+        ProgramView second = first;
+        second.transactionId = 3;
+        second.entryAnchorFrame = 601;
+        EXPECT_EQ(PostStatus::Deferred, planner.PostPlay(first, input).status);
+        EXPECT_EQ(PostStatus::Deferred, planner.PostPlay(second, input).status);
+    }
+}
+
+TEST(TimelinePlanner, StaleCleanupPreservesOtherOwnerWithTheSamePayloadIndex) {
+    for (const bool staleRolling : {false, true}) {
+        for (const bool countOnly : {false, true}) {
+            SCOPED_TRACE(staleRolling);
+            SCOPED_TRACE(countOnly);
+            PlayableInstanceTable instances(2);
+            const auto rollingOwner = instances.Acquire(PlayableKind::Segment, 0);
+            const auto ordinaryOwner = instances.Acquire(PlayableKind::Segment, 0);
+            ScheduledTransactionPool pool;
+            ASSERT_TRUE(pool.Reset(PoolConfig(100, 400), 0, kEpoch));
+            DeferredIntentPool deferred(4, 0);
+            TimelinePlanner planner;
+            ASSERT_TRUE(planner.Reset({}, &pool, &deferred, &instances));
+
+            const EventTemplate rollingEvents[] = {
+                {0, 1, 0, 0, 20, 0}, {900, 1, 0, 0, 50, 1}};
+            const EventTemplate ordinaryEvent[] = {{0, 1, 0, 0, 0, 2}};
+            harken::TimelineProgramView runtime[2]{};
+            ProgramView rolling{};
+            rolling.ownerInstance = rollingOwner;
+            rolling.ownerInstanceScheduleEpoch = instances.Classify(rollingOwner).scheduleEpoch;
+            rolling.transactionId = 1;
+            rolling.entryAnchorFrame = pool.PublishCutoffFrame();
+            rolling.events = rollingEvents;
+            rolling.eventCount = 2;
+            rolling.rollingGroups = true;
+            rolling.armToken = {0, 1};
+            rolling.runtimeProgram = {1, &runtime[0]};
+            ProgramView ordinary{};
+            ordinary.ownerInstance = ordinaryOwner;
+            ordinary.ownerInstanceScheduleEpoch = instances.Classify(ordinaryOwner).scheduleEpoch;
+            ordinary.transactionId = 2;
+            ordinary.entryAnchorFrame = 600;
+            ordinary.events = ordinaryEvent;
+            ordinary.eventCount = 1;
+            ordinary.runtimeProgram = {1, &runtime[1]};
+            PostInput input{};
+            input.transportEpoch = kEpoch;
+            ASSERT_EQ(PostStatus::Reserved, planner.PostPlay(rolling, input).status);
+            ASSERT_EQ(PostStatus::Deferred, planner.PostPlay(ordinary, input).status);
+            ASSERT_EQ(2u, deferred.Count());
+            ASSERT_TRUE(instances.BumpScheduleEpoch(staleRolling ? rollingOwner : ordinaryOwner));
+            if (countOnly) {
+                std::uint32_t dropped = 0;
+                EXPECT_EQ(0u, planner.ClaimDeferredDue(UINT64_MAX, nullptr, 0, &dropped));
+                EXPECT_EQ(1u, dropped);
+            } else {
+                planner.DropStaleDeferred();
+            }
+            EXPECT_EQ(1u, deferred.Count());
+            EXPECT_EQ(staleRolling, planner.RollingAbortPending(rolling.armToken));
+            EXPECT_EQ(staleRolling, planner.HasProgramReference(ordinary.runtimeProgram));
+            EXPECT_TRUE(planner.HasProgramReference(rolling.runtimeProgram));
+            EXPECT_EQ(staleRolling ? ordinary.entryAnchorFrame : rolling.entryAnchorFrame + 900,
+                      planner.DeferredBlockerBefore(UINT64_MAX));
+            if (staleRolling) {
+                EXPECT_TRUE(planner.CompleteRollingAbort(rolling.armToken));
+                EXPECT_FALSE(planner.HasProgramReference(rolling.runtimeProgram));
+            }
+        }
+    }
 }

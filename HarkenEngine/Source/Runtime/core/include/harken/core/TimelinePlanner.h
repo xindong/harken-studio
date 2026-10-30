@@ -207,6 +207,11 @@ public:
     bool ReclaimConsumedQuantum();
 
     void DropStaleDeferred();
+    std::uint32_t ClaimDeferredDue(
+        std::uint64_t windowEndFrame, DeferredIntentClaim* out,
+        std::uint32_t capacity, std::uint32_t* staleDropped = nullptr,
+        std::uint32_t* dueCount = nullptr,
+        std::uint64_t currentQuantum = UINT64_MAX);
     TimelineDeferredMaterializeStatus MaterializeDeferredClaim(
         const DeferredIntentClaim& claim, TransportEpoch transportEpoch,
         std::uint64_t cutoffFrame);
@@ -295,6 +300,7 @@ private:
                             bool trimBeforeFrontier = false,
                             std::uint64_t publicationFrontier = UINT64_MAX);
     void ReleaseDeferredSlot(std::uint64_t payload);
+    void ReleaseStaleDeferredClaims();
     std::uint64_t MaterializeDue(TransportEpoch transportEpoch,
                                 std::uint64_t cutoffFrame,
                                 std::uint64_t windowEndFrame);
@@ -326,7 +332,7 @@ private:
     // Reserve-time scratch for a transaction's events, sized once at Reset.
     std::vector<ScheduledEventInput> scratchEvents_;
     EventTemplate rollingEventScratch_{};
-    std::vector<std::uint64_t> stalePayloadScratch_;
+    std::vector<DeferredIntentClaim> staleClaimScratch_;
 
     std::uint64_t materializationsRetried_ = 0;
     std::uint64_t materializationReserveFailures_ = 0;

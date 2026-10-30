@@ -68839,9 +68839,9 @@ void TimelineServiceCoordinator::Service() {
         while (materializationsUsed_ < ordinaryBudget) {
             harken::DeferredIntentClaim claim{};
             std::uint32_t passDueCount = 0;
-            const std::uint32_t claimed = engine_.timelineDeferred.ClaimDue(
+            const std::uint32_t claimed = engine_.timelinePlanner.ClaimDeferredDue(
                 engine_.timelinePool.WindowEndFrame(),
-                engine_.playableInstances, &claim, 1, nullptr,
+                &claim, 1, nullptr,
                 &passDueCount, budgetQuantumStamp);
             dueMaterializations =
                 std::max(dueMaterializations, passDueCount);
@@ -68881,11 +68881,12 @@ void TimelineServiceCoordinator::Service() {
             }
         }
         if (materializationBudget == 0) {
-            (void)engine_.timelineDeferred.ClaimDue(
+            (void)engine_.timelinePlanner.ClaimDeferredDue(
                 engine_.timelinePool.WindowEndFrame(),
-                engine_.playableInstances, nullptr, 0, nullptr,
+                nullptr, 0, nullptr,
                 &dueMaterializations, budgetQuantumStamp);
         }
+        engine_.timelinePlanner.DropStaleDeferred();
         materializationHighWater_ =
             std::max(materializationHighWater_, materializationsUsed_);
         if (!budgetPacedForStamp_ &&

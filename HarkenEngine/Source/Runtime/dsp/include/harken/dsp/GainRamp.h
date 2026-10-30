@@ -225,8 +225,8 @@ struct OutputGain {
         }
     }
 
-    float At(std::uint32_t frame) const {
-        return EvaluateK(static_cast<std::uint64_t>(frame) + 1);
+    float At(std::uint64_t frame) const {
+        return frame >= remainingFrames ? target : EvaluateK(frame + 1);
     }
 
     void Advance(std::uint32_t frames) {
@@ -496,6 +496,26 @@ struct GainRamp {
         target = gain;
     }
 
+    void SetBlockTarget(float begin, float end, std::uint64_t completed,
+                        std::uint64_t total) {
+        OutputGain trajectory;
+        trajectory.current = begin;
+        trajectory.Set(end, total);
+        SetTarget(trajectory.At(completed));
+    }
+
+    void MixAddBlock(const float* const* source, float* const* destination,
+                     std::uint32_t channelCount, std::uint32_t offset,
+                     std::uint32_t frames) {
+        if (frames == 0) return;
+        OutputGain span;
+        span.current = current;
+        span.Set(target, frames);
+        for (std::uint32_t ch = 0; ch < channelCount; ++ch)
+            span.MixAdd(source[ch] + offset, destination[ch] + offset, frames, 0);
+        current = target;
+    }
+
     // Multiplies the ramp into planar channels [offset, offset+frames).
     // Sample n scales by current + (target-current)*(n+1)/frames, so the
     // block's last sample lands exactly on target; current becomes target
@@ -505,24 +525,10 @@ struct GainRamp {
         if (frames == 0) {
             return;
         }
-        if (current == target) {
-            for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
-                float* p = channels[ch] + offset;
-                for (std::uint32_t i = 0; i < frames; ++i) {
-                    p[i] *= current;
-                }
-            }
-            return;
-        }
-        const float step = (target - current) / static_cast<float>(frames);
-        for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
-            float* p = channels[ch] + offset;
-            float g = current;
-            for (std::uint32_t i = 0; i < frames; ++i) {
-                g += step;
-                p[i] *= g;
-            }
-        }
+        OutputGain span;
+        span.current = current;
+        span.Set(target, frames);
+        span.Apply(channels, channelCount, offset, frames);
         current = target;
     }
 };

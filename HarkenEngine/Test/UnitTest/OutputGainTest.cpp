@@ -333,6 +333,45 @@ TEST(OutputGain, GainRampOneBlockDurationUnchanged) {
     EXPECT_EQ(0.75f, ramp.current);
 }
 
+TEST(OutputGain, WideBlockProgressAndShortSendSpansPreserveEndpoints) {
+    harken::GainRamp ramp;
+    const auto total = std::uint64_t{1} << 40;
+    ramp.SetBlockTarget(0.0f, 1.0f, total / 2 - 1, total);
+    EXPECT_EQ(0.5f, ramp.target);
+    ramp.SetBlockTarget(1.0f, 0.0f, total - 1, total);
+    EXPECT_EQ(0.0f, ramp.target);
+    OutputGain wide;
+    wide.current = 0.0f;
+    wide.Set(1.0f, UINT64_MAX);
+    EXPECT_EQ(1.0f, wide.At(UINT64_MAX));
+
+    for (const auto frames : {0u, 1u, 3u, 5u, 129u}) {
+        SCOPED_TRACE(frames);
+        std::array<float, 132> source{}, left{}, right{};
+        source.fill(0.5f);
+        left.fill(kCanary);
+        right.fill(kCanary);
+        for (std::uint32_t i = 1; i <= frames; ++i)
+            left[i] = right[i] = 0.125f;
+        const float* inputs[] = {source.data(), source.data()};
+        float* outputs[] = {left.data(), right.data()};
+        ramp.SnapTo(0.25f);
+        ramp.SetTarget(0.75f);
+        ramp.MixAddBlock(inputs, outputs, 2, 1, frames);
+        EXPECT_EQ(kCanary, left[0]);
+        EXPECT_EQ(kCanary, right[0]);
+        EXPECT_EQ(kCanary, left[frames + 1]);
+        EXPECT_EQ(kCanary, right[frames + 1]);
+        for (std::uint32_t i = 0; i < frames; ++i) {
+            const float expected = 0.125f + 0.5f *
+                (0.25f + 0.5f * static_cast<float>(i + 1) / frames);
+            EXPECT_FLOAT_EQ(expected, left[i + 1]);
+            EXPECT_FLOAT_EQ(left[i + 1], right[i + 1]);
+        }
+        EXPECT_EQ(frames == 0 ? 0.25f : 0.75f, ramp.current);
+    }
+}
+
 TEST(OutputGain, FillMatchesAtAndDoesNotAdvance) {
     harken::floatmode::ScopedFlushDenormals denormals;
     OutputGain gain;

@@ -1071,38 +1071,10 @@ void BusTree::FoldBusOutput(Bus& bus, float* const* planes,
 void BusTree::ScatterSend(const float* const* src, float* const* dst,
                           std::uint32_t blockFrames, SendEdge& edge) {
     if (edge.ramping) {
-        const float t = static_cast<float>(edge.rampBlocksDone + 1) /
-                        static_cast<float>(edge.rampBlocksTotal);
-        edge.gain.SetTarget(edge.rampStartGain +
-                            (edge.rampEndGain - edge.rampStartGain) * t);
+        edge.gain.SetBlockTarget(edge.rampStartGain, edge.rampEndGain,
+                                 edge.rampBlocksDone, edge.rampBlocksTotal);
     }
-    // Multiply-accumulate the source's finalized (post-gain) planes into the
-    // target, mirroring GainRamp::ApplyBlock's per-sample interpolation so the
-    // level ramps identically to a bus gain — but adding into the target rather
-    // than scaling in place.
-    const float cur = edge.gain.current;
-    const float tgt = edge.gain.target;
-    if (cur == tgt) {
-        for (std::uint32_t ch = 0; ch < m_mixChannels; ++ch) {
-            const float* s = src[ch];
-            float* d = dst[ch];
-            for (std::uint32_t n = 0; n < blockFrames; ++n) {
-                d[n] += s[n] * cur;
-            }
-        }
-    } else {
-        const float step = (tgt - cur) / static_cast<float>(blockFrames);
-        for (std::uint32_t ch = 0; ch < m_mixChannels; ++ch) {
-            const float* s = src[ch];
-            float* d = dst[ch];
-            float g = cur;
-            for (std::uint32_t n = 0; n < blockFrames; ++n) {
-                g += step;
-                d[n] += s[n] * g;
-            }
-        }
-        edge.gain.current = tgt;
-    }
+    edge.gain.MixAddBlock(src, dst, m_mixChannels, 0, blockFrames);
     if (edge.ramping) {
         ++edge.rampBlocksDone;
         if (edge.rampBlocksDone >= edge.rampBlocksTotal) {
