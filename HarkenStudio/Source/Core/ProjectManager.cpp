@@ -3193,7 +3193,8 @@ bool ProjectManager::saveProject()
         emit errorOccurred(saveError);
         return false;
     }
-    const bool resumeWatcher = m_fileWatcher.beginProjectWrite(projectTransaction->changedPaths());
+    const bool resumeWatcher = m_fileWatcher.beginProjectWrite(
+        projectRoot.path(), projectTransaction->changedPaths());
     const auto restoreWatcher = qScopeGuard([&] {
         if (resumeWatcher) m_fileWatcher.endProjectWrite();
     });

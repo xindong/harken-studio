@@ -1046,7 +1046,7 @@ TEST(ProjectTransaction, FileAndDirectoryReplacementsRecoverTheirOriginalKinds)
             {QStringLiteral("Layers/File"), QStringLiteral("Layers/File/new.bin"),
              QStringLiteral("Layers/Directory"), QStringLiteral("Layers/Directory/child.bin")}, &error);
         ASSERT_NE(transaction, nullptr) << error.toStdString();
-        ASSERT_TRUE(watcher.beginProjectWrite(transaction->changedPaths()));
+        ASSERT_TRUE(watcher.beginProjectWrite(directory.path(), transaction->changedPaths()));
         ASSERT_TRUE(transaction->replaceFromDirectory(staging.path(),
             QStringList{QStringLiteral("Layers")}, &error)) << error.toStdString();
         EXPECT_TRUE(QFileInfo(directory.filePath(QStringLiteral("Layers/Directory"))).isFile());
