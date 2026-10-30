@@ -1,6 +1,8 @@
 #pragma once
 
 #include <QProxyStyle>
+#include <QHash>
+#include <QPointer>
 #include <QSet>
 
 namespace VNX {
@@ -47,8 +49,10 @@ protected:
 
 private:
     ThemeManager& theme() const;
+    void scheduleAppearanceRefresh(QWidget* widget);
     ThemeManager* themeManager_;
     QSet<QWidget*> observedWidgets_;
+    QHash<QWidget*, QPointer<QWidget>> pendingRefreshes_;
 };
 
 }
