@@ -45,10 +45,8 @@ std::shared_ptr<ProjectItem> copyItem(
     item->sourceID = source->sourceID;
     item->objectID = source->objectID;
     item->guid = source->guid;
-    item->nameBindingRevision = source->nameBindingRevision;
     item->documentHeader = source->documentHeader;
     item->extensions = source->extensions;
-    item->objectPath = source->objectPath;
     item->notes = source->notes;
     item->color = source->color;
     item->playablePropertyPresence = source->playablePropertyPresence;
@@ -57,7 +55,6 @@ std::shared_ptr<ProjectItem> copyItem(
     item->parentRef = source->parentRef;
     item->dirtyBit = source->dirtyBit;
     item->outputBusOverride = source->outputBusOverride;
-    item->canvasPos = source->canvasPos;
     copyComponent<VMixNode>(*source, *item);
     copyComponent<VAudio>(*source, *item);
     copyComponent<VSelection>(*source, *item);

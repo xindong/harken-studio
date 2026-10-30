@@ -23,7 +23,7 @@ SPEC.loader.exec_module(MODULE)
 
 def documents(root: Path) -> dict:
     return {
-        "root": (root / "Fixture.hsp", {"harkenDocument": {"id": "root", "type": "project.root", "savedStudioVersion": "1.0", "packSchemaVersion": 1},
+        "root": (root / "Fixture.hsp", {"harkenDocument": {"id": "root", "type": "project.root", "studioVersion": "1.0", "packSchemaVersion": 1},
             "content": {"metadata": {"description": "Original"},
                         "extensions": {"future": {"flag": True, "integer": 9007199254740993}}}}),
         "action": (root / "Actions/Trigger.vp", {"harkenDocument": {"id": "action", "type": "project.action"},
@@ -38,8 +38,9 @@ def edited_documents(before: dict, pack_schema_version: int = 2) -> tuple[dict, 
     edits = []
     for identity, (_, document) in after.items():
         header = document["harkenDocument"]
-        if "savedStudioVersion" in header:
-            header["savedStudioVersion"] = "1.1"
+        for field in ("studioVersion", "savedStudioVersion"):
+            if field in header:
+                header[field] = "1.1"
         if identity == "root" and "packSchemaVersion" in header:
             header["packSchemaVersion"] = pack_schema_version
         if identity == "master":
@@ -107,6 +108,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
                 before = documents(Path("Fixture"))
                 if historical:
                     before["root"][1]["harkenDocument"].pop("packSchemaVersion")
+                    before["root"][1]["harkenDocument"].pop("studioVersion")
                     before["root"][1]["content"]["metadata"]["modifiedDate"] = "2026-09-07T00:00:00Z"
                     for _, document in before.values():
                         document["harkenDocument"]["savedStudioVersion"] = "1.0"
@@ -114,7 +116,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
                 if historical:
                     after["root"][1]["content"]["metadata"]["modifiedDate"] = "2026-10-01T00:00:00Z"
                 MODULE.verify_edit(before, after, report)
-                for identity, key, value in (("root", "savedStudioVersion", "1.0"),
+                for identity, key, value in (("root", "savedStudioVersion" if historical else "studioVersion", "1.0"),
                                               ("root", "packSchemaVersion", 1),
                                               ("action", "savedStudioVersion", "1.0"),
                                               ("master", "packSchemaVersion", 2)):

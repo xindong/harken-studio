@@ -438,24 +438,6 @@ bool WriteFieldGroupsJson(const DefinitionFieldGroups& groups,
     return true;
 }
 
-bool ValidateFieldGroupsPropertyModelMarkerJson(const std::string& text,
-                                                 std::string& error)
-{
-    JsonValue root;
-    if (!harkenstudiojson::ParseJson(text, &root, &error)) return false;
-    if (root.kind != JsonValue::Kind::Object)
-        return Fail(error, "document", "expected an object");
-    const auto* header = root.Find("harkenDocument");
-    if (!header || header->kind != JsonValue::Kind::Object)
-        return Fail(error, "harkenDocument", "expected an object");
-    const auto* propertyModel = header->Find("propertyModel");
-    if (!propertyModel || propertyModel->kind != JsonValue::Kind::String
-        || propertyModel->text != kFieldGroupsPropertyModel)
-        return Fail(error, "harkenDocument.propertyModel", "fieldGroupsV1 authoring model required; recreate this project in Studio");
-    error.clear();
-    return true;
-}
-
 bool ValidateOccurrenceFieldGroupExclusionJson(const std::string& text,
                                                 std::string& error)
 {

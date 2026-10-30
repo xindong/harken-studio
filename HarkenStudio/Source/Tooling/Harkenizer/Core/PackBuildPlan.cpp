@@ -391,7 +391,7 @@ bool PackBuildPlan::ready() const
         });
 }
 
-QJsonObject PackBuildPlan::toJson() const
+QJsonObject PackBuildPlan::toJson(const ProjectData& project) const
 {
     QJsonArray unitsJson;
     for (const auto& unit : units) {
@@ -424,7 +424,7 @@ QJsonObject PackBuildPlan::toJson() const
                 return values;
             }()},
             {QStringLiteral("capability"), variant.capability.toJson()},
-            {QStringLiteral("closure"), variant.closure.toJson()}});
+            {QStringLiteral("closure"), variant.closure.toJson(project)}});
     QJsonArray objects;
     for (const auto id : sharedObjectIds) objects.append(objectIdString(id));
     QJsonArray media;

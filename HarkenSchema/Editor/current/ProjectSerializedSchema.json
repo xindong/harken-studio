@@ -35,60 +35,6 @@
       ],
       "type": "object"
     },
-    "actionPublishedNameHistoryRow": {
-      "additionalProperties": false,
-      "if": {
-        "properties": {
-          "event": {
-            "enum": [
-              "renamed_from",
-              "reuse_undone"
-            ]
-          }
-        },
-        "required": [
-          "event"
-        ]
-      },
-      "properties": {
-        "event": {
-          "enum": [
-            "created",
-            "deleted",
-            "renamed_from",
-            "reuse_approved",
-            "reuse_undone"
-          ],
-          "type": "string"
-        },
-        "name": {
-          "minLength": 1,
-          "type": "string"
-        },
-        "nameBindingRevision": {
-          "$ref": "#/$defs/positiveInteger"
-        },
-        "objectGuid": {
-          "$ref": "#/$defs/uuid"
-        },
-        "priorName": {
-          "minLength": 1,
-          "type": "string"
-        }
-      },
-      "required": [
-        "name",
-        "objectGuid",
-        "nameBindingRevision",
-        "event"
-      ],
-      "then": {
-        "required": [
-          "priorName"
-        ]
-      },
-      "type": "object"
-    },
     "actionQuantize": {
       "additionalProperties": false,
       "properties": {
@@ -643,22 +589,6 @@
     "layerNode": {
       "additionalProperties": false,
       "properties": {
-        "canvasPos": {
-          "additionalProperties": false,
-          "properties": {
-            "x": {
-              "type": "number"
-            },
-            "y": {
-              "type": "number"
-            }
-          },
-          "required": [
-            "x",
-            "y"
-          ],
-          "type": "object"
-        },
         "children": {
           "maxItems": 0,
           "type": "array"
@@ -681,9 +611,6 @@
           "type": "string"
         },
         "notes": {
-          "type": "string"
-        },
-        "objectPath": {
           "type": "string"
         },
         "order": {
@@ -1103,9 +1030,6 @@
         "description": {
           "type": "string"
         },
-        "enableLFE": {
-          "type": "boolean"
-        },
         "name": {
           "type": "string"
         },
@@ -1116,31 +1040,13 @@
           "minItems": 1,
           "type": "array"
         },
-        "projectTemplateId": {
-          "type": "string"
-        },
         "sampleRate": {
           "type": "integer"
-        },
-        "version": {
-          "type": "string"
         }
       },
       "required": [
         "platforms"
       ],
-      "type": "object"
-    },
-    "projectPaths": {
-      "additionalProperties": false,
-      "properties": {
-        "audioFolder": {
-          "type": "string"
-        },
-        "packFolder": {
-          "type": "string"
-        }
-      },
       "type": "object"
     },
     "projectPlatform": {
@@ -1246,9 +1152,6 @@
           "type": "string"
         },
         "notes": {
-          "type": "string"
-        },
-        "objectPath": {
           "type": "string"
         },
         "parentRef": {
@@ -2601,12 +2504,6 @@
                 "minLength": 1,
                 "type": "string"
               },
-              "nameBindingRevision": {
-                "$ref": "#/$defs/positiveInteger"
-              },
-              "objectPath": {
-                "type": "string"
-              },
               "parentRef": {
                 "$ref": "#/$defs/parentRef"
               },
@@ -2635,10 +2532,6 @@
                 "format": "uuid",
                 "type": "string"
               },
-              "propertyModel": {
-                "const": "fieldGroupsV1",
-                "type": "string"
-              },
               "schemaVersion": {
                 "type": "integer"
               },
@@ -2651,12 +2544,11 @@
               "type",
               "id",
               "projectId",
-              "schemaVersion",
-              "propertyModel"
+              "schemaVersion"
             ],
             "type": "object",
             "propertyNames": {
-              "pattern": "^(?!(savedStudioVersion|packSchemaVersion)$)"
+              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
             }
           }
         },
@@ -2691,10 +2583,6 @@
                 "format": "uuid",
                 "type": "string"
               },
-              "propertyModel": {
-                "const": "fieldGroupsV1",
-                "type": "string"
-              },
               "schemaVersion": {
                 "type": "integer"
               },
@@ -2707,12 +2595,11 @@
               "type",
               "id",
               "projectId",
-              "schemaVersion",
-              "propertyModel"
+              "schemaVersion"
             ],
             "type": "object",
             "propertyNames": {
-              "pattern": "^(?!(savedStudioVersion|packSchemaVersion)$)"
+              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
             }
           }
         },
@@ -2784,10 +2671,6 @@
                 "format": "uuid",
                 "type": "string"
               },
-              "propertyModel": {
-                "const": "fieldGroupsV1",
-                "type": "string"
-              },
               "schemaVersion": {
                 "type": "integer"
               },
@@ -2800,12 +2683,11 @@
               "type",
               "id",
               "projectId",
-              "schemaVersion",
-              "propertyModel"
+              "schemaVersion"
             ],
             "type": "object",
             "propertyNames": {
-              "pattern": "^(?!(savedStudioVersion|packSchemaVersion)$)"
+              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
             }
           }
         },
@@ -2840,10 +2722,6 @@
                 "format": "uuid",
                 "type": "string"
               },
-              "propertyModel": {
-                "const": "fieldGroupsV1",
-                "type": "string"
-              },
               "schemaVersion": {
                 "type": "integer"
               },
@@ -2856,12 +2734,11 @@
               "type",
               "id",
               "projectId",
-              "schemaVersion",
-              "propertyModel"
+              "schemaVersion"
             ],
             "type": "object",
             "propertyNames": {
-              "pattern": "^(?!(savedStudioVersion|packSchemaVersion)$)"
+              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
             }
           }
         },
@@ -2886,12 +2763,6 @@
             "additionalProperties": false,
             "properties": {
               "actionPackTargeting": {},
-              "actionPublishedNameHistory": {
-                "items": {
-                  "$ref": "#/$defs/actionPublishedNameHistoryRow"
-                },
-                "type": "array"
-              },
               "conversionFailurePolicy": {
                 "enum": [
                   "abort_build",
@@ -2936,9 +2807,6 @@
               "packOutputDir": {
                 "type": "string"
               },
-              "paths": {
-                "$ref": "#/$defs/projectPaths"
-              },
               "projectLanguages": {
                 "$ref": "#/$defs/stringArray"
               },
@@ -2957,8 +2825,7 @@
               }
             },
             "required": [
-              "metadata",
-              "paths"
+              "metadata"
             ],
             "type": "object"
           },
@@ -2973,14 +2840,6 @@
                 "format": "uuid",
                 "type": "string"
               },
-              "propertyModel": {
-                "const": "fieldGroupsV1",
-                "type": "string"
-              },
-              "savedStudioVersion": {
-                "minLength": 1,
-                "type": "string"
-              },
               "schemaVersion": {
                 "type": "integer"
               },
@@ -2991,6 +2850,10 @@
               "packSchemaVersion": {
                 "minimum": 1,
                 "type": "integer"
+              },
+              "studioVersion": {
+                "minLength": 1,
+                "type": "string"
               }
             },
             "required": [
@@ -2998,11 +2861,13 @@
               "id",
               "projectId",
               "schemaVersion",
-              "savedStudioVersion",
-              "propertyModel",
+              "studioVersion",
               "packSchemaVersion"
             ],
-            "type": "object"
+            "type": "object",
+            "propertyNames": {
+              "pattern": "^(?!(savedStudioVersion|propertyModel)$)"
+            }
           }
         },
         "required": [
@@ -3036,10 +2901,6 @@
                 "format": "uuid",
                 "type": "string"
               },
-              "propertyModel": {
-                "const": "fieldGroupsV1",
-                "type": "string"
-              },
               "schemaVersion": {
                 "type": "integer"
               },
@@ -3052,12 +2913,11 @@
               "type",
               "id",
               "projectId",
-              "schemaVersion",
-              "propertyModel"
+              "schemaVersion"
             ],
             "type": "object",
             "propertyNames": {
-              "pattern": "^(?!(savedStudioVersion|packSchemaVersion)$)"
+              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
             }
           }
         },

@@ -108,13 +108,9 @@ class SchemaArchiveTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             MODULE["validate_schema_language"]({"type": "string", "deprecated": "true"}, "field")
 
-    def test_field_groups_require_model_and_explicit_inheritance_values(self) -> None:
+    def test_field_groups_require_explicit_inheritance_values(self) -> None:
         loaded = MODULE["load_tree"]("Editor")
         source = loaded["current"]
-        for document in source["x-harken-documentTypes"]:
-            header = document["schema"]["properties"]["harkenDocument"]
-            self.assertEqual(header["properties"]["propertyModel"]["const"], "fieldGroupsV1")
-            self.assertIn("propertyModel", header["required"])
         state = source["$defs"]["fieldGroupSharedMainOutput"]
         self.assertEqual(state["if"]["properties"]["inherit"], {"const": False})
         self.assertEqual(state["then"]["required"], ["values"])
@@ -158,7 +154,7 @@ class SchemaArchiveTest(unittest.TestCase):
             current_path = root / "Editor" / "current" / "ProjectSerializedSchema.json"
             current = read_json(current_path)
             project = next(item for item in current["x-harken-documentTypes"] if item["type"] == "project.root")
-            project["schema"]["properties"]["harkenDocument"]["properties"]["savedStudioVersion"]["minLength"] = 2
+            project["schema"]["properties"]["harkenDocument"]["properties"]["studioVersion"]["minLength"] = 2
             write_json(current_path, current)
             after = MODULE["build_bundle"](root)
             self.assertEqual(after["manifest"]["trees"], before["manifest"]["trees"])
@@ -375,13 +371,22 @@ class SchemaArchiveTest(unittest.TestCase):
                 header = document["properties"]["harkenDocument"]
                 self.assertFalse(document["additionalProperties"])
                 self.assertTrue(header["additionalProperties"])
-                if source["projectSchemaVersion"] != EDITOR_VERSION or item["type"] == "project.root":
-                    self.assertIn("savedStudioVersion", header["required"])
-                    self.assertEqual(header["properties"]["savedStudioVersion"], {"minLength": 1, "type": "string"})
+                if source["projectSchemaVersion"] != EDITOR_VERSION:
+                    version_field = "savedStudioVersion"
+                elif item["type"] == "project.root":
+                    version_field = "studioVersion"
                 else:
-                    self.assertNotIn("savedStudioVersion", header["required"])
-                    self.assertNotIn("savedStudioVersion", header["properties"])
-                    for name in ("savedStudioVersion", "packSchemaVersion"):
+                    version_field = None
+                if version_field:
+                    self.assertIn(version_field, header["required"])
+                    self.assertEqual(header["properties"][version_field], {"minLength": 1, "type": "string"})
+                if source["projectSchemaVersion"] == EDITOR_VERSION:
+                    retired = ["savedStudioVersion", "propertyModel"]
+                    if item["type"] != "project.root":
+                        retired += ["studioVersion", "packSchemaVersion"]
+                    for name in retired:
+                        self.assertNotIn(name, header["required"])
+                        self.assertNotIn(name, header["properties"])
                         self.assertIsNone(re.search(header["propertyNames"]["pattern"], name))
                     self.assertIsNotNone(re.search(header["propertyNames"]["pattern"], "customMetadata"))
                 if source["projectSchemaVersion"] == EDITOR_VERSION and item["type"] == "project.root":

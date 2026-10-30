@@ -57,9 +57,6 @@ QString writeProject(const QTemporaryDir& directory,
         {QStringLiteral("metadata"), QJsonObject{
             {QStringLiteral("name"), QStringLiteral("Legacy")},
         }},
-        {QStringLiteral("paths"), QJsonObject{
-            {QStringLiteral("audioFolder"), QStringLiteral("Layers")},
-        }},
         {QStringLiteral("extensions"), QJsonObject{
             {QStringLiteral("authorNotes"), QJsonArray{17, true, QStringLiteral("Keep")}},
         }},

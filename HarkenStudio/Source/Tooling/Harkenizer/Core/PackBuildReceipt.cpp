@@ -88,10 +88,7 @@ std::optional<QJsonObject> projectIdentity(const ProjectBuildSnapshot& snapshot,
         visited.insert(item);
         auto object = serializer.projectItemToJson(*item, false);
         if (object.isEmpty()) return false;
-        object.remove(QStringLiteral("expanded"));
-        object.remove(QStringLiteral("canvasPos"));
         object.insert(QStringLiteral("documentHeader"), item->documentHeader);
-        object.insert(QStringLiteral("nameBindingRevision"), QString::number(item->nameBindingRevision));
         object.insert(QStringLiteral("physicalPath"), project.itemPath(item));
         object.insert(QStringLiteral("documentPath"), project.objectFilePath(item));
         object.insert(QStringLiteral("treeParent"), item->parent
@@ -117,14 +114,6 @@ std::optional<QJsonObject> projectIdentity(const ProjectBuildSnapshot& snapshot,
     }
     QJsonArray groups;
     for (const auto& group : project.packGroups) groups.append(group.toJson());
-    QJsonArray history;
-    for (const auto& row : project.actionPublishedNameHistory)
-        history.append(QJsonObject{
-            {QStringLiteral("name"), row.name},
-            {QStringLiteral("guid"), row.objectGuid.toString(QUuid::WithoutBraces)},
-            {QStringLiteral("revision"), QString::number(row.nameBindingRevision)},
-            {QStringLiteral("event"), row.event},
-            {QStringLiteral("priorName"), row.priorName}});
     QJsonObject media;
     for (auto it = snapshot.media.assets.cbegin(); it != snapshot.media.assets.cend(); ++it) {
         const auto& asset = it.value();
@@ -139,21 +128,16 @@ std::optional<QJsonObject> projectIdentity(const ProjectBuildSnapshot& snapshot,
     return QJsonObject{
         {QStringLiteral("projectId"), project.projectId},
         {QStringLiteral("name"), project.name},
-        {QStringLiteral("version"), project.version},
         {QStringLiteral("author"), project.author},
         {QStringLiteral("description"), project.description},
         {QStringLiteral("header"), project.documentHeader},
         {QStringLiteral("extensions"), project.extensions},
         {QStringLiteral("projectPath"), project.projectPath},
-        {QStringLiteral("audioFolder"), project.audioFolder},
-        {QStringLiteral("packFolder"), project.packFolder},
         {QStringLiteral("languages"), QJsonArray::fromStringList(project.projectLanguages)},
         {QStringLiteral("defaultLanguage"), project.defaultLanguage},
         {QStringLiteral("platforms"), ProjectPlatformSemantics::platformsToJson(project.platforms)},
         {QStringLiteral("sampleRate"), project.sampleRate},
         {QStringLiteral("channelConfig"), static_cast<int>(project.channelConfig)},
-        {QStringLiteral("enableLFE"), project.enableLFE},
-        {QStringLiteral("templateId"), project.projectTemplateId},
         {QStringLiteral("exportProjectData"), project.buildExportProjectData},
         {QStringLiteral("exportPackMetadata"), project.buildExportPackMetadata},
         {QStringLiteral("exportWaveforms"), project.buildExportWaveforms},
@@ -161,7 +145,6 @@ std::optional<QJsonObject> projectIdentity(const ProjectBuildSnapshot& snapshot,
         {QStringLiteral("bindings"), bindings},
         {QStringLiteral("items"), items},
         {QStringLiteral("groups"), groups},
-        {QStringLiteral("nameHistory"), history},
         {QStringLiteral("media"), media},
         {QStringLiteral("mediaOverrides"), overrides}};
 }

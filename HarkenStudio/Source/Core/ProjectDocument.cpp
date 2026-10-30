@@ -131,15 +131,15 @@ QJsonObject ProjectDocument::createHeader(const QString& type,
     header.insert(QStringLiteral("projectId"), projectId);
     header.insert(QStringLiteral("schemaVersion"),
                   ProjectSchema::kProjectSchemaVersion);
-    header.insert(QStringLiteral("propertyModel"),
-                  QString::fromLatin1(ProjectSchema::kProjectPropertyModel));
+    header.remove(QStringLiteral("propertyModel"));
+    header.remove(QStringLiteral("savedStudioVersion"));
     if (type == QStringLiteral("project.root")) {
-        header.insert(QStringLiteral("savedStudioVersion"), QString::fromUtf8(
+        header.insert(QStringLiteral("studioVersion"), QString::fromUtf8(
             Harken::BuildInfo::Version.data(),
             static_cast<int>(Harken::BuildInfo::Version.size())));
         header.insert(QStringLiteral("packSchemaVersion"), HARKEN_PACK_SCHEMA_VERSION);
     } else {
-        header.remove(QStringLiteral("savedStudioVersion"));
+        header.remove(QStringLiteral("studioVersion"));
         header.remove(QStringLiteral("packSchemaVersion"));
     }
     return header;
@@ -194,26 +194,25 @@ bool ProjectDocument::parse(const QJsonObject& document,
         return fail(QStringLiteral("Project Schema version is invalid"));
     }
     parsed.schemaVersion = version.toInt();
-    if (parsed.schemaVersion == ProjectSchema::kProjectSchemaVersion
-        && header.value(QStringLiteral("propertyModel"))
-            != QJsonValue(QString::fromLatin1(ProjectSchema::kProjectPropertyModel)))
-        return fail(QStringLiteral("Unsupported project property model; recreate this project in Studio"));
     const bool projectRoot = parsed.type == QStringLiteral("project.root");
     if (projectRoot || parsed.schemaVersion < ProjectSchema::kProjectSchemaVersion) {
-        parsed.savedStudioVersion =
-            header.value(QStringLiteral("savedStudioVersion")).toString();
+        parsed.studioVersion = header.value(parsed.schemaVersion < ProjectSchema::kProjectSchemaVersion
+            ? QStringLiteral("savedStudioVersion") : QStringLiteral("studioVersion")).toString();
         if (parsed.schemaVersion >= ProjectSchema::kProjectSchemaVersions[0]
-            && parsed.savedStudioVersion.isEmpty())
+            && parsed.studioVersion.isEmpty())
             return fail(QStringLiteral("Project document header is malformed"));
     }
     if (parsed.schemaVersion == ProjectSchema::kProjectSchemaVersion) {
+        if (header.contains(QStringLiteral("propertyModel"))
+            || header.contains(QStringLiteral("savedStudioVersion")))
+            return fail(QStringLiteral("Project document header contains retired metadata"));
         if (projectRoot) {
             const auto packVersion = header.value(QStringLiteral("packSchemaVersion"));
             if (!packVersion.isDouble() || !std::isfinite(packVersion.toDouble())
                 || packVersion.toInt() <= 0 || packVersion.toDouble() != packVersion.toInt())
                 return fail(QStringLiteral("Project Pack Schema version is invalid"));
             parsed.packSchemaVersion = packVersion.toInt();
-        } else if (header.contains(QStringLiteral("savedStudioVersion"))
+        } else if (header.contains(QStringLiteral("studioVersion"))
                    || header.contains(QStringLiteral("packSchemaVersion"))) {
             return fail(QStringLiteral("Object document header contains project version metadata"));
         }
@@ -235,10 +234,13 @@ bool ProjectDocument::validateFieldGroupAuthoring(const QJsonObject& content,
 
 bool ProjectDocument::normalizeContent(QJsonObject* content, QString* error)
 {
-    content->remove(QStringLiteral("expanded"));
+    for (const auto* key : {"expanded", "objectPath", "canvasPos", "nameBindingRevision",
+                            "actionPublishedNameHistory", "paths"})
+        content->remove(QLatin1String(key));
     if (content->value(QStringLiteral("metadata")).isObject()) {
         auto metadata = content->value(QStringLiteral("metadata")).toObject();
-        for (const auto* key : {"createdDate", "modifiedDate", "toolVersion"})
+        for (const auto* key : {"createdDate", "modifiedDate", "toolVersion", "version",
+                                "projectTemplateId", "enableLFE"})
             metadata.remove(QLatin1String(key));
         content->insert(QStringLiteral("metadata"), metadata);
     }

@@ -316,12 +316,17 @@ TEST_F(ProjectDocumentRoundTripTest, SupportedDocumentVersionsPreserveContentThr
             header.insert(QStringLiteral("schemaVersion"), version);
             if (version < ProjectSchema::kProjectSchemaVersion) {
                 header.insert(QStringLiteral("savedStudioVersion"), QStringLiteral("1.0.0"));
+                header.insert(QStringLiteral("propertyModel"), QStringLiteral("fieldGroupsV1"));
+                header.remove(QStringLiteral("studioVersion"));
                 header.remove(QStringLiteral("packSchemaVersion"));
             }
             document.insert(QStringLiteral("harkenDocument"), header);
             auto content = HarkenTest::projectContent(document);
             if (version < ProjectSchema::kProjectSchemaVersion) {
                 if (header.value(QStringLiteral("type")) == QStringLiteral("project.root")) {
+                    content.insert(QStringLiteral("paths"), QJsonObject{
+                        {QStringLiteral("audioFolder"), QStringLiteral("Layers")},
+                    });
                     auto metadata = content.value(QStringLiteral("metadata")).toObject();
                     metadata.insert(QStringLiteral("createdDate"), QStringLiteral("2001-02-03T04:05:06Z"));
                     metadata.insert(QStringLiteral("modifiedDate"), QStringLiteral("2001-02-03T04:05:06Z"));
@@ -406,6 +411,44 @@ TEST_F(ProjectDocumentRoundTripTest, SupportedDocumentVersionsPreserveContentThr
     }
 }
 
+TEST_F(ProjectDocumentRoundTripTest, RenamingAnAncestorDoesNotRewriteDescendantDocuments)
+{
+    auto& manager = ProjectManager::instance();
+    ASSERT_TRUE(manager.loadProject(projectPath_));
+    UndoRedoManager::instance().clearHistory();
+    auto* segment = manager.findItemByGuid(segmentGuid_);
+    ASSERT_NE(segment, nullptr);
+    auto* ancestor = segment->parent;
+    ASSERT_NE(ancestor, nullptr);
+    const auto ancestorId = ancestor->guid.toString(QUuid::WithoutBraces);
+    const auto committed = savedDocumentContent();
+    QMap<QString, QDateTime> modificationTimes;
+    for (auto it = pathsById_.cbegin(); it != pathsById_.cend(); ++it)
+        modificationTimes.insert(it.key(), QFileInfo(it.value()).lastModified());
+    ASSERT_TRUE(manager.renameItem(ancestor, QStringLiteral("RenamedMain")));
+    EXPECT_FALSE(segment->isDirtyObject());
+    ASSERT_TRUE(manager.saveProject());
+    const auto renamedPaths = documentPathsById(projectDirectory_);
+    for (auto it = pathsById_.cbegin(); it != pathsById_.cend(); ++it) {
+        const auto path = renamedPaths.value(it.key());
+        if (it.key() == ancestorId) {
+            EXPECT_NE(readFile(path), committed.value(it.value()));
+            continue;
+        }
+        EXPECT_EQ(readFile(path), committed.value(it.value())) << path.toStdString();
+        EXPECT_EQ(QFileInfo(path).lastModified(), modificationTimes.value(it.key())) << path.toStdString();
+    }
+    const auto renamed = savedDocumentContent();
+    ASSERT_TRUE(manager.closeProject());
+    ASSERT_TRUE(manager.loadProject(projectPath_));
+    segment = manager.findItemByGuid(segmentGuid_);
+    ASSERT_NE(segment, nullptr);
+    ASSERT_NE(segment->parent, nullptr);
+    EXPECT_EQ(segment->parent->name, QStringLiteral("RenamedMain"));
+    ASSERT_TRUE(manager.saveProject());
+    EXPECT_EQ(savedDocumentContent(), renamed);
+}
+
 TEST_F(ProjectDocumentRoundTripTest, UnchangedDocumentsPreserveBytesAndModificationTimesAcrossSaves)
 {
     auto& manager = ProjectManager::instance();
@@ -443,7 +486,7 @@ TEST_F(ProjectDocumentRoundTripTest, UnchangedDocumentsPreserveBytesAndModificat
     auto document = readObject(projectPath_);
     const auto currentHeader = HarkenTest::projectHeader(document);
     auto previousHeader = currentHeader;
-    previousHeader.insert(QStringLiteral("savedStudioVersion"), QStringLiteral("0.0.0"));
+    previousHeader.insert(QStringLiteral("studioVersion"), QStringLiteral("0.0.0"));
     previousHeader.insert(QStringLiteral("packSchemaVersion"), HARKEN_PACK_SCHEMA_VERSION + 1);
     document.insert(QStringLiteral("harkenDocument"), previousHeader);
     writeObject(projectPath_, document);

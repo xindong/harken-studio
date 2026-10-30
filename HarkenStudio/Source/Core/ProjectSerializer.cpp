@@ -66,84 +66,6 @@ std::optional<ProjectItem::Type> itemTypeFromJson(const QJsonObject& json)
     return *type;
 }
 
-constexpr char kNameBindingRevision[] = "nameBindingRevision";
-constexpr char kActionPublishedNameHistory[] = "actionPublishedNameHistory";
-
-void writeActionNameBindingRevision(QJsonObject& json, const ProjectItem& item)
-{
-    if (item.type != ProjectItem::Type::Action) return;
-    json[QLatin1String(kNameBindingRevision)] =
-        static_cast<qint64>(item.nameBindingRevision);
-}
-
-void readActionNameBindingRevision(const QJsonObject& json, ProjectItem& item)
-{
-    if (item.type != ProjectItem::Type::Action) return;
-    item.nameBindingRevision = 1;
-    if (!json.contains(QLatin1String(kNameBindingRevision))) return;
-    const qint64 value =
-        json.value(QLatin1String(kNameBindingRevision)).toInteger(0);
-    if (value >= 1)
-        item.nameBindingRevision = static_cast<uint64_t>(value);
-}
-
-bool isActionPublishedNameEvent(const QString& event)
-{
-    return event == QStringLiteral("created")
-        || event == QStringLiteral("deleted")
-        || event == QStringLiteral("renamed_from")
-        || event == QStringLiteral("reuse_approved")
-        || event == QStringLiteral("reuse_undone");
-}
-
-bool eventRequiresPriorName(const QString& event)
-{
-    return event == QStringLiteral("renamed_from")
-        || event == QStringLiteral("reuse_undone");
-}
-
-QJsonObject actionPublishedNameHistoryRowToJson(
-    const ActionPublishedNameHistoryRow& row)
-{
-    QJsonObject obj;
-    obj[QStringLiteral("name")] = row.name;
-    obj[QStringLiteral("objectGuid")] =
-        row.objectGuid.toString(QUuid::WithoutBraces);
-    obj[QLatin1String(kNameBindingRevision)] =
-        static_cast<qint64>(row.nameBindingRevision);
-    obj[QStringLiteral("event")] = row.event;
-    if (!row.priorName.isEmpty())
-        obj[QStringLiteral("priorName")] = row.priorName;
-    return obj;
-}
-
-bool actionPublishedNameHistoryRowFromJson(const QJsonObject& obj,
-                                           ActionPublishedNameHistoryRow* row)
-{
-    if (!row) return false;
-    ActionPublishedNameHistoryRow parsed;
-    parsed.name = obj.value(QStringLiteral("name")).toString();
-    if (parsed.name.isEmpty() || !obj.value(QStringLiteral("objectGuid")).isString())
-        return false;
-    parsed.objectGuid =
-        QUuid::fromString(obj.value(QStringLiteral("objectGuid")).toString());
-    if (parsed.objectGuid.isNull()) return false;
-    const qint64 revision =
-        obj.value(QLatin1String(kNameBindingRevision)).toInteger(0);
-    if (revision < 1) return false;
-    parsed.nameBindingRevision = static_cast<uint64_t>(revision);
-    parsed.event = obj.value(QStringLiteral("event")).toString();
-    if (!isActionPublishedNameEvent(parsed.event)) return false;
-    parsed.priorName = obj.value(QStringLiteral("priorName")).toString();
-    if (eventRequiresPriorName(parsed.event)) {
-        if (parsed.priorName.isEmpty()) return false;
-    } else if (obj.contains(QStringLiteral("priorName"))) {
-        return false;
-    }
-    *row = std::move(parsed);
-    return true;
-}
-
 struct ComponentFields {
     QStringList definition;
     QStringList fieldGroup;
@@ -1156,15 +1078,12 @@ QJsonObject ProjectSerializer::projectDocument(const QString& filePath,
     
     QJsonObject metadata;
     metadata["name"] = project.name;
-    metadata["version"] = project.version;
     metadata["author"] = project.author;
     metadata["description"] = project.description;
     {
         metadata["platforms"] = ProjectPlatformSemantics::platformsToJson(project.platforms);
         metadata["sampleRate"]        = project.sampleRate;
         metadata["channelConfig"]     = static_cast<int>(project.channelConfig);
-        metadata["enableLFE"]         = project.enableLFE;
-        metadata["projectTemplateId"] = project.projectTemplateId;
     }
     root["metadata"] = metadata;
 
@@ -1172,11 +1091,6 @@ QJsonObject ProjectSerializer::projectDocument(const QString& filePath,
         root[QStringLiteral("extensions")] = project.extensions;
 
     emit progressChanged(20, tr("Saving project structure..."));
-
-    QJsonObject paths;
-    paths["audioFolder"] = project.audioFolder;
-    paths["packFolder"] = project.packFolder;
-    root["paths"] = paths;
 
     QJsonObject sourceAssets;
     for (auto it = project.sourceAssets.cbegin(); it != project.sourceAssets.cend(); ++it)
@@ -1241,13 +1155,6 @@ QJsonObject ProjectSerializer::projectDocument(const QString& filePath,
         root["buildExportWaveforms"] = true;
     if (!project.buildWaveformOutputDir.isEmpty())
         root["buildWaveformOutputDir"] = PathUtils::normalizePackBuildOutputDir(project.buildWaveformOutputDir, filePath);
-
-    if (!project.actionPublishedNameHistory.empty()) {
-        QJsonArray history;
-        for (const auto& row : project.actionPublishedNameHistory)
-            history.append(actionPublishedNameHistoryRowToJson(row));
-        root[QLatin1String(kActionPublishedNameHistory)] = history;
-    }
 
     return ProjectDocument::create(
         QStringLiteral("project.root"), project.projectId, project.projectId, root,
@@ -1554,7 +1461,6 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
 
     QJsonObject metadata = root["metadata"].toObject();
     project.name = metadata["name"].toString();
-    project.version = metadata["version"].toString("1.0");
     project.author = metadata["author"].toString();
     project.description = metadata["description"].toString();
 
@@ -1567,19 +1473,8 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
         project.channelConfig = static_cast<AudioChannelConfig>(
             metadata["channelConfig"].toInt(static_cast<int>(project.channelConfig)));
     }
-    if (metadata.contains("enableLFE")) {
-        project.enableLFE = metadata["enableLFE"].toBool(project.enableLFE);
-    }
-    if (metadata.contains("projectTemplateId")) {
-        project.projectTemplateId = metadata["projectTemplateId"].toString();
-    }
-
     emit progressChanged(60, tr("Loading project structure..."));
 
-    QJsonObject paths = root["paths"].toObject();
-    project.audioFolder = paths["audioFolder"].toString(
-        QString::fromLatin1(ItemTypeCatalog::kLayersFolderName));
-    project.packFolder = paths["packFolder"].toString();
     project.projectPath = resolvedProjectFilePath;
 
 
@@ -1639,16 +1534,6 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
                 project.deploymentProfiles.push_back(std::move(profile));
         }
     }
-    project.actionPublishedNameHistory.clear();
-    if (root.contains(QLatin1String(kActionPublishedNameHistory))) {
-        for (const auto& value : root[QLatin1String(kActionPublishedNameHistory)].toArray()) {
-            if (!value.isObject()) continue;
-            ActionPublishedNameHistoryRow row;
-            if (actionPublishedNameHistoryRowFromJson(value.toObject(), &row))
-                project.actionPublishedNameHistory.push_back(std::move(row));
-        }
-    }
-
     project.nextObjectID = nextTransientObjectId_;
 
     recordLoadedDocument(resolvedProjectFilePath, data);
@@ -1667,10 +1552,7 @@ QJsonObject ProjectSerializer::projectItemToJson(const ProjectItem& item, bool i
     json["name"] = item.name;
     json["type"] = ItemTypeCatalog::canonicalName(item.type);
 
-    writeActionNameBindingRevision(json, item);
-
     json["guid"] = item.guid.toString(QUuid::WithoutBraces);
-    json["objectPath"] = item.objectPath;
 
     json["parentRef"] = persistentParentReference(item);
     if (json.value(QStringLiteral("parentRef")).toObject().isEmpty()) return {};
@@ -1685,14 +1567,6 @@ QJsonObject ProjectSerializer::projectItemToJson(const ProjectItem& item, bool i
 
     if (!PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item.type))
         json["outputBusOverride"] = item.outputBusOverride;
-
-    if (item.canvasPos.x() != 0.0 || item.canvasPos.y() != 0.0)
-    {
-        QJsonObject pos;
-        pos["x"] = item.canvasPos.x();
-        pos["y"] = item.canvasPos.y();
-        json["canvasPos"] = pos;
-    }
 
     QJsonObject compsObj;
     const auto& excluded = excludedComponentFields(item.type);
@@ -1741,8 +1615,6 @@ bool ProjectSerializer::projectItemFromJson(const QJsonObject& json, ProjectItem
     if (!readFieldGroups(json, item, lastError_)) return false;
     item.sourcePath.clear();
 
-    readActionNameBindingRevision(json, item);
-
     if (!json.value(QStringLiteral("guid")).isString()) return false;
     item.guid = QUuid::fromString(json["guid"].toString());
     if (item.guid.isNull()) return false;
@@ -1753,7 +1625,6 @@ bool ProjectSerializer::projectItemFromJson(const QJsonObject& json, ProjectItem
     if (registered == referencesByGuid_.cend() || registered->type != item.type)
         return false;
     item.objectID = registered->objectId;
-    item.objectPath = json["objectPath"].toString();
 
     if (json.contains("parentRef")) {
         if (!loadParentReference(json["parentRef"].toObject(), &item.parentRef)) {
@@ -1767,12 +1638,6 @@ bool ProjectSerializer::projectItemFromJson(const QJsonObject& json, ProjectItem
     item.color = static_cast<uint32_t>(json.value("color").toInteger(0));
 
     item.outputBusOverride = json["outputBusOverride"].toBool();
-
-    if (json.contains("canvasPos"))
-    {
-        const QJsonObject pos = json["canvasPos"].toObject();
-        item.canvasPos = QPointF(pos["x"].toDouble(0.0), pos["y"].toDouble(0.0));
-    }
 
     const QLatin1String propertiesKey(
         harkenplayableproperties::studio::kEnvelopeJsonKeyV1);
@@ -1902,7 +1767,6 @@ QJsonObject ProjectSerializer::audioBranchToJson(const ProjectItem& node) const
 {
     auto json = projectItemToJson(node, false);
     if (json.isEmpty()) return {};
-    json.remove(QLatin1String(kNameBindingRevision));
 
     QJsonArray children;
     for (const auto& child : node.children)
@@ -1956,7 +1820,6 @@ bool ProjectSerializer::audioBranchFromJson(
     if (registered == referencesByGuid_.cend() || registered->type != node.type)
         return false;
     node.objectID = registered->objectId;
-    node.objectPath = json["objectPath"].toString();
     if (json.contains("parentRef")) {
         if (!loadParentReference(json["parentRef"].toObject(), &node.parentRef)) {
             qWarning() << "[AudioPack] Invalid parentRef for item"
@@ -1968,12 +1831,6 @@ bool ProjectSerializer::audioBranchFromJson(
     node.color = static_cast<uint32_t>(json.value("color").toInteger(0));
 
     node.outputBusOverride = json["outputBusOverride"].toBool();
-
-    if (json.contains("canvasPos"))
-    {
-        const QJsonObject pos = json["canvasPos"].toObject();
-        node.canvasPos = QPointF(pos["x"].toDouble(0.0), pos["y"].toDouble(0.0));
-    }
 
     const QLatin1String propertiesKey(
         harkenplayableproperties::studio::kEnvelopeJsonKeyV1);
@@ -2070,9 +1927,6 @@ QJsonObject ProjectSerializer::actionPackToJson(const ProjectItem& event) const
     obj[QStringLiteral("guid")]     = event.guid.toString(QUuid::WithoutBraces);
     obj[QStringLiteral("type")]     = QStringLiteral("Action");
     obj[QStringLiteral("name")]     = event.name;
-    writeActionNameBindingRevision(obj, event);
-    if (!event.objectPath.isEmpty())
-        obj[QStringLiteral("objectPath")] = event.objectPath;
     obj[QStringLiteral("parentRef")] = persistentParentReference(event);
     if (obj.value(QStringLiteral("parentRef")).toObject().isEmpty()) return {};
 
@@ -2115,7 +1969,6 @@ bool ProjectSerializer::actionPackFromJson(const QJsonObject& json, ProjectItem&
     event.guid = QUuid::fromString(json.value(QStringLiteral("guid")).toString());
     if (event.guid.isNull())
         return false;
-    readActionNameBindingRevision(json, event);
     if (!referencesByGuid_.contains(event.guid)
         && !registerReadGuid(event.guid, event.type, event.guid, event.name))
         return false;
@@ -2124,7 +1977,6 @@ bool ProjectSerializer::actionPackFromJson(const QJsonObject& json, ProjectItem&
         || registered->type != ProjectItem::Type::Action)
         return false;
     event.objectID = registered->objectId;
-    event.objectPath = json.value(QStringLiteral("objectPath")).toString();
 
     if (json.contains(QStringLiteral("parentRef")))
     {
@@ -2165,7 +2017,6 @@ void writeS3RootIdentity(QJsonObject& obj, const ProjectItem& item)
     obj[QStringLiteral("guid")]       = item.guid.toString(QUuid::WithoutBraces);
     obj[QStringLiteral("type")]       = ItemTypeCatalog::canonicalName(item.type);
     obj[QStringLiteral("name")]       = item.name;
-    obj[QStringLiteral("objectPath")] = item.objectPath;
     if (!item.notes.isEmpty())
         obj[QStringLiteral("notes")] = item.notes;
     if (item.color != 0)
@@ -2190,7 +2041,6 @@ bool readS3RootIdentity(const QJsonObject& json, ProjectItem& item, const char* 
     item.guid = QUuid::fromString(json.value(QStringLiteral("guid")).toString());
     if (item.guid.isNull())
         return false;
-    item.objectPath = json.value(QStringLiteral("objectPath")).toString();
     item.notes = json.value(QStringLiteral("notes")).toString();
     item.color = static_cast<uint32_t>(json.value(QStringLiteral("color")).toInteger(0));
     return true;

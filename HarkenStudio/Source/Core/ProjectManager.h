@@ -612,8 +612,6 @@ private:
                                 const QString& bucketFolderHint, QUndoCommand* undoParent,
                                 const Clip* initialClip,
                                 VariableKind variableKind = VariableKind::Smooth);
-    void recordDeletedNameHistory(ProjectItem* item);
-    void recordCreatedNameHistory(ProjectItem* item);
     static std::unique_ptr<ProjectSaveBaseline> captureSaveBaseline(
         ProjectData& project, ProjectItemSaveState& itemSaveState,
         const QHash<QString, QByteArray>& loadedDocuments, QString* error);

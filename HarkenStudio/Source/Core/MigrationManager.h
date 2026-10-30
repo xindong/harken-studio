@@ -53,7 +53,6 @@ public:
                         QString* error = nullptr,
                         ProjectMigrationProgressCallback progress = {}) const;
 
-    static void backfillItemGuidAndPath(ProjectItem* item, ProjectItem* parent);
 
 private:
     ProjectMigrationRegistry registry_;

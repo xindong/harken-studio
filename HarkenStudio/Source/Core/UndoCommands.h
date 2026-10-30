@@ -61,7 +61,7 @@ public:
     bool canRedo() const;
     bool undo();
     bool redo();
-    bool isClean() const { return undoStack_.isClean(); }
+    bool isClean() const;
     void setClean() { undoStack_.setClean(); }
     const QSet<QUuid>* currentAuthoringWriteSet() const { return authoringWriteSet_; }
 
@@ -78,8 +78,10 @@ private:
     QAction* createReplayAction(QObject* parent, const QString& prefix, bool redo);
     bool replay(bool redo);
     void refreshReplayAvailability();
+    void refreshCleanState();
     
     QUndoStack undoStack_;
+    bool clean_ = true;
     const QSet<QUuid>* authoringWriteSet_ = nullptr;
     std::vector<std::optional<QSet<QUuid>>> macroWriteSets_;
 };

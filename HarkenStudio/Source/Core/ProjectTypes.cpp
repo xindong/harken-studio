@@ -401,6 +401,14 @@ const MediaFileRef* getMediaRef(const ProjectItem* root, uint32_t sourceID)
     return nullptr;
 }
 
+QString ProjectItem::objectPath() const
+{
+    QStringList names;
+    for (const auto* item = this; item; item = item->parent)
+        names.prepend(item->name);
+    return QLatin1Char('\\') + names.join(QLatin1Char('\\'));
+}
+
 bool validateProjectObjectIdentities(const ProjectData& project, QString* error)
 {
     QSet<QUuid> identities;
@@ -451,12 +459,6 @@ bool validateProjectObjectIdentities(const ProjectData& project, QString* error)
     if (!visit(project.root.get())) return false;
     for (const auto* binding : project.allFileBindings())
         if (binding && !visit(binding->rootItem.get())) return false;
-    for (const auto& row : project.actionPublishedNameHistory) {
-        if (row.objectGuid.isNull()) {
-            if (error) *error = QStringLiteral("Action history contains a missing GUID");
-            return false;
-        }
-    }
     return true;
 }
 

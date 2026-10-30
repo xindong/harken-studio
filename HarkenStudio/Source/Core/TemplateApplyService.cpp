@@ -36,24 +36,12 @@ namespace VNX {
 
 namespace {
 
-QString seedObjectPath(const ProjectItem* parent, const QString& name)
-{
-    return parent ? parent->objectPath + QStringLiteral("\\") + name
-                  : QStringLiteral("\\") + name;
-}
-
 struct TemplateIdentityMap
 {
     QHash<uint32_t, uint32_t> objects;
     QHash<harkenstudio::ObjectId, harkenstudio::ObjectId> stableIds;
     QHash<QUuid, QUuid> guids;
 };
-
-QString importedObjectPath(const ProjectItem* parent, const QString& name)
-{
-    return parent ? parent->objectPath + QStringLiteral("\\") + name
-                  : QStringLiteral("\\") + name;
-}
 
 void remintTree(ProjectData& project, ProjectItem* item, ProjectItem* parent,
                 TemplateIdentityMap& identities)
@@ -71,7 +59,6 @@ void remintTree(ProjectData& project, ProjectItem* item, ProjectItem* parent,
         item->parentRef.kind = ParentRef::Kind::Item;
         item->parentRef.guid = parent->guid;
     }
-    item->objectPath = importedObjectPath(parent, item->name);
     if (oldObjectId != 0) identities.objects.insert(oldObjectId, item->objectID);
     if (!harkenstudio::IsNull(oldStableId)) identities.stableIds.insert(oldStableId, item->runtimeId());
     if (!oldGuid.isNull()) identities.guids.insert(oldGuid, item->guid);
@@ -236,7 +223,6 @@ bool TemplateApplyService::seedBusBranch(ProjectData& project,
     }
     childItem->name = name;
     childItem->parent     = parentBus;
-    childItem->objectPath = seedObjectPath(parentBus, name);
 
     parentBus->children.push_back(std::move(childItem));
     ProjectItem* childRaw = parentBus->children.back().get();
@@ -565,15 +551,6 @@ bool TemplateApplyService::seedTemplateInto(
     if (!refreshFieldGroupDerivedViews(project)) {
         rollbackGroups();
         return setErr(QStringLiteral("Cannot derive field group references"));
-    }
-    for (size_t i = actionCount; i < project.actions.size(); ++i) {
-        auto& item = *project.actions[i].rootItem;
-        item.nameBindingRevision = 1;
-        ActionPublishedNameHistoryRow row;
-        row.name = item.name;
-        row.objectGuid = item.guid;
-        row.event = QStringLiteral("created");
-        project.actionPublishedNameHistory.push_back(std::move(row));
     }
     return true;
 }

@@ -63,9 +63,6 @@ QString createBaselineProject(const QTemporaryDir& directory)
                   {QStringLiteral("metadata"), QJsonObject{
                       {QStringLiteral("name"), QStringLiteral("Baseline")},
                   }},
-                  {QStringLiteral("paths"), QJsonObject{
-                      {QStringLiteral("audioFolder"), QStringLiteral("Layers")},
-                  }},
                   {QStringLiteral("extensions"), QJsonObject{
                       {QStringLiteral("test"), QJsonObject{
                           {QStringLiteral("payload"), QStringLiteral("must-survive")},
@@ -434,10 +431,10 @@ TEST(ProjectContract, SnapshotDiskAndIncrementalValidationRemainEquivalentAcross
     documents.insert(mainPath, main);
     compare(true);
 
-    for (const auto* key : {"savedStudioVersion", "packSchemaVersion"}) {
+    for (const auto* key : {"studioVersion", "savedStudioVersion", "packSchemaVersion", "propertyModel"}) {
         changed = main;
         header = HarkenTest::projectHeader(changed);
-        header.insert(QLatin1String(key), HarkenTest::projectHeader(root).value(QLatin1String(key)));
+        header.insert(QLatin1String(key), QStringLiteral("unexpected"));
         changed.insert(QStringLiteral("harkenDocument"), header);
         documents.insert(mainPath, changed);
         compare(false);

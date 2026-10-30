@@ -1261,12 +1261,7 @@ TEST(EditorProjectPackExporterManifest, OptionalCompanionDataFollowsPublicationL
     VNX::SpatialRatingFieldGroup rating;
     rating.spatialAttenuationRef = VNX::toFieldGroupGuid(attenuation->guid);
     project.layers.front().rootItem->fieldGroups.spatialRating.shared = {VNX::FieldGroupMode::Local, rating};
-    const auto assignPath = [&](auto&& self, VNX::ProjectItem* item, const QString& prefix) -> void {
-        item->objectPath = prefix + QLatin1Char('\\') + item->name;
-        for (const auto& child : item->children) self(self, child.get(), item->objectPath);
-    };
-    for (auto* file : project.allFileBindings())
-        assignPath(assignPath, file->rootItem.get(), QString());
+    project.layers.front().rootItem->name = QStringLiteral("RenamedLayer");
     const QString root = QDir(dir.path()).filePath(QStringLiteral("BuildPacks"));
     const QString output = VNX::ProjectPackExporter::platformOutputDir(root, project.platforms.front());
     const QString waveformRoot = VNX::PathUtils::waveformBuildOutputRoot(project.projectPath, {});
@@ -1304,6 +1299,9 @@ TEST(EditorProjectPackExporterManifest, OptionalCompanionDataFollowsPublicationL
             EXPECT_FALSE(guids.contains(guid));
             guids.insert(guid);
             EXPECT_FALSE(object.value(QStringLiteral("path")).toString().isEmpty());
+            if (QUuid(guid) == trimmedSound->guid)
+                EXPECT_EQ(object.value(QStringLiteral("path")).toString(),
+                          QStringLiteral("\\RenamedLayer\\") + trimmedSound->name);
             if (row.value(QStringLiteral("name")) != QStringLiteral("Init"))
                 EXPECT_NE(object.value(QStringLiteral("type")).toString(), QStringLiteral("Bus"));
         }
@@ -5972,8 +5970,6 @@ TEST(EditorProjectPackExporterManifest, ProjectBuildReusePreservesDiagnosticsAft
         binding->rootItem = std::make_shared<VNX::ProjectItem>();
         ASSERT_TRUE(reader.projectItemFromJson(roots.at(static_cast<qsizetype>(index++)).toObject(),
             *binding->rootItem)) << reader.lastError().toStdString();
-        binding->rootItem->expanded = !binding->rootItem->expanded;
-        binding->rootItem->canvasPos = QPointF(100.0, 200.0);
     }
     ASSERT_NE(reloaded.actions.front().rootItem->objectID,
         context.project.actions.front().rootItem->objectID);

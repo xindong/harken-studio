@@ -16,13 +16,6 @@ QJsonObject persistentState(const ProjectItem& item, QJsonObject state)
     return state;
 }
 
-QJsonObject authoringState(QJsonObject state)
-{
-    state.remove(QStringLiteral("objectPath"));
-    state.remove(QStringLiteral("nameBindingRevision"));
-    return state;
-}
-
 }
 
 ProjectItemSaveState::ProjectItemSaveState() = default;
@@ -178,7 +171,7 @@ QList<ProjectItem*> ProjectItemSaveState::refreshItems(const QList<ProjectItem*>
         else
             candidates_.remove(item->guid);
         const bool dirty = saved == saved_.cend()
-            || authoringState(*saved) != authoringState(state);
+            || *saved != state;
         if (item->dirtyBit != dirty) {
             item->dirtyBit = dirty;
             changed.append(item);

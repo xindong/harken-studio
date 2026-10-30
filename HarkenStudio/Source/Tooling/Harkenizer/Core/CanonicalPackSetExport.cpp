@@ -1322,7 +1322,7 @@ bool fillPackMetadata(const ProjectData& project, const PackMeta& pack,
             {QStringLiteral("guid"), objectIdString(id)},
             {QStringLiteral("name"), item.name},
             {QStringLiteral("type"), ItemTypeCatalog::canonicalName(item.type)},
-            {QStringLiteral("path"), item.objectPath}});
+            {QStringLiteral("path"), item.objectPath()}});
     }
     companion->insert(QStringLiteral("metadata"), QJsonObject{
         {QStringLiteral("packStableId"), QString::number(image.packStableId)},

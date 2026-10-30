@@ -30,8 +30,6 @@ inline QJsonObject projectDocument(const QString& type,
     };
     QJsonObject authoredContent = content;
     if (schemaVersion >= VNX::ProjectSchema::kProjectSchemaVersion) {
-        header.insert(QStringLiteral("propertyModel"),
-                      QLatin1String(VNX::ProjectSchema::kProjectPropertyModel));
         const QString itemType = content.value(QStringLiteral("type")).toString();
         const bool hasFieldGroups = itemType == QStringLiteral("Sound")
             || itemType == QStringLiteral("Container") || itemType == QStringLiteral("Layer")
@@ -53,13 +51,15 @@ inline QJsonObject projectDocument(const QString& type,
             });
         }
     }
-    if (schemaVersion >= 2
-        && (schemaVersion < VNX::ProjectSchema::kProjectSchemaVersion
-            || type == QStringLiteral("project.root")))
+    if (schemaVersion >= 2 && schemaVersion < VNX::ProjectSchema::kProjectSchemaVersion) {
         header.insert(QStringLiteral("savedStudioVersion"), QStringLiteral("1.0.0"));
+        header.insert(QStringLiteral("propertyModel"), QStringLiteral("fieldGroupsV1"));
+    }
     if (schemaVersion >= VNX::ProjectSchema::kProjectSchemaVersion
-        && type == QStringLiteral("project.root"))
+        && type == QStringLiteral("project.root")) {
+        header.insert(QStringLiteral("studioVersion"), QStringLiteral("1.0.0"));
         header.insert(QStringLiteral("packSchemaVersion"), HARKEN_PACK_SCHEMA_VERSION);
+    }
     return {
         {QStringLiteral("harkenDocument"), header},
         {QStringLiteral("content"), authoredContent},
@@ -72,6 +72,10 @@ inline QJsonObject projectRoot(const QJsonObject& content,
                                const QString& projectId = kProjectId)
 {
     QJsonObject configured = content;
+    if (schemaVersion < VNX::ProjectSchema::kProjectSchemaVersion)
+        configured.insert(QStringLiteral("paths"), QJsonObject{
+            {QStringLiteral("audioFolder"), QStringLiteral("Layers")},
+        });
     if (schemaVersion == VNX::ProjectSchema::kProjectSchemaVersion
         && content.value(QStringLiteral("metadata")).isObject()) {
         auto metadata = content.value(QStringLiteral("metadata")).toObject();

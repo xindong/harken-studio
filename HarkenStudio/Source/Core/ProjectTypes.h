@@ -6,7 +6,6 @@
 #include <QStringList>
 #include <QList>
 #include <QSet>
-#include <QPointF>
 #include <QUuid>
 #include <QVariantMap>
 #include <QJsonArray>
@@ -349,7 +348,6 @@ struct ProjectConfig
     QVector<ProjectPlatform> platforms = ProjectPlatformSemantics::defaultPlatforms();
     int sampleRate = 48000;
     AudioChannelConfig channelConfig = AudioChannelConfig::Stereo_2_0;
-    bool enableLFE = true;
     QString templateId;
     QJsonObject templateData;
     QString author;
@@ -495,13 +493,12 @@ struct ProjectItem
     uint32_t sourceID = 0;
     uint32_t objectID = 0;
     harkenstudio::ObjectId runtimeId() const { return runtimeObjectId(guid); }
-    uint64_t nameBindingRevision = 1;
 
     QUuid    guid;
     QJsonObject documentHeader;
     QJsonObject extensions;
 
-    QString  objectPath;
+    QString objectPath() const;
 
     QString  notes;
 
@@ -529,9 +526,6 @@ struct ProjectItem
     bool outputBusOverride = false;
     bool isOutputBusOverride() const { return outputBusOverride; }
     void setOutputBusOverride(bool v) { outputBusOverride = v; }
-
-    QPointF canvasPos = QPointF(0.0, 0.0);
-
 
     ComponentStore components;
 
@@ -651,16 +645,6 @@ struct PackGroup
         group.allPlatforms = obj["allPlatforms"].toBool();
         return group;
     }
-};
-
-struct ActionPublishedNameHistoryRow
-{
-    QString name;
-    QUuid objectGuid;
-    harkenstudio::ObjectId runtimeId() const { return runtimeObjectId(objectGuid); }
-    uint64_t nameBindingRevision = 1;
-    QString event;
-    QString priorName;
 };
 
 enum class AttenuationDimension : uint8_t
@@ -847,13 +831,10 @@ struct ProjectData
     QJsonObject extensions;
 
     QString name;
-    QString version = "1.0";
     QString author;
     QString description;
     
     QString projectPath;
-    QString audioFolder;
-    QString packFolder;
 
     QMap<uint32_t, QString> sourceAssets;
     
@@ -908,15 +889,12 @@ struct ProjectData
     QString     defaultLanguage;
 
     std::vector<PackGroup> packGroups;
-    std::vector<ActionPublishedNameHistoryRow> actionPublishedNameHistory;
 
     QVector<ProjectPlatform> platforms;
 
     QStringList platformIds() const { return ProjectPlatformSemantics::ids(platforms); }
     int                sampleRate         = 48000;
     AudioChannelConfig channelConfig      = AudioChannelConfig::Stereo_2_0;
-    bool               enableLFE          = true;
-    QString            projectTemplateId  = "basic_3d";
 
     struct DeploymentProfile
     {
