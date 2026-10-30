@@ -1237,25 +1237,39 @@ void MainWindow::setupMenuBar()
 
     helpMenu->addSeparator();
 
-    QAction* websiteAction = helpMenu->addAction(tr("Harken &Website"));
-    websiteAction->setObjectName("helpMenu_harkenWebsite");
+    QAction* websiteAction = helpMenu->addAction(tr("Official &Website"));
+    websiteAction->setObjectName("helpMenu_viewStudioWebsite");
     connect(websiteAction, &QAction::triggered, this, []() {
         QDesktopServices::openUrl(
-            QUrl(QStringLiteral("https://harken.xd.com/")));
+            QUrl(QStringLiteral("https://harkenstudio.xd.com/")));
     });
 
-    QAction* documentationAction = helpMenu->addAction(tr("Online &Documentation"));
-    documentationAction->setObjectName("helpMenu_onlineDocumentation");
-    connect(documentationAction, &QAction::triggered, this, []() {
+    QAction* tutorialAction = helpMenu->addAction(tr("Online &Tutorial"));
+    tutorialAction->setObjectName("helpMenu_onlineTutorial");
+    connect(tutorialAction, &QAction::triggered, this, []() {
         QDesktopServices::openUrl(
-            QUrl(QStringLiteral("https://harken.xd.com/#/docs/")));
+            QUrl(QStringLiteral("https://harkenstudio.xd.com/#/tutorial")));
     });
 
-    QAction* repositoryAction = helpMenu->addAction(tr("Harken &Repository"));
+    QAction* repositoryAction = helpMenu->addAction(tr("GitHub &Repository"));
     repositoryAction->setObjectName("helpMenu_harkenRepository");
     connect(repositoryAction, &QAction::triggered, this, []() {
         QDesktopServices::openUrl(
             QUrl(QStringLiteral("https://github.com/xindong/harken-studio")));
+    });
+
+    QAction* privacyPolicyAction = helpMenu->addAction(tr("&Privacy Policy"));
+    privacyPolicyAction->setObjectName("helpMenu_privacyPolicy");
+    connect(privacyPolicyAction, &QAction::triggered, this, []() {
+        QDesktopServices::openUrl(
+            QUrl(QStringLiteral("https://harkenstudio.xd.com/pages/zh/privacy.html")));
+    });
+
+    QAction* termsOfUseAction = helpMenu->addAction(tr("Terms of &Use"));
+    termsOfUseAction->setObjectName("helpMenu_termsOfUse");
+    connect(termsOfUseAction, &QAction::triggered, this, []() {
+        QDesktopServices::openUrl(
+            QUrl(QStringLiteral("https://harkenstudio.xd.com/pages/zh/terms.html")));
     });
 
     helpMenu->addSeparator();
