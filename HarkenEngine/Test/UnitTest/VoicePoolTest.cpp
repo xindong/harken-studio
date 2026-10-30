@@ -280,6 +280,12 @@ TEST(VoicePool, ReleaseObserverSurvivesNaturalExitAndSlotReuse) {
     EXPECT_EQ(0u, engine.voices.ConstructedSlotCount());
     EXPECT_EQ(1u, engine.voices.AvailableSlotCount());
     engine.voices.SetHighRatioCommitPageLimitForTests(SIZE_MAX);
+    engine.sourceCursors.SetCommitPageLimitForTests(1, 0);
+    EXPECT_EQ(VN_NO_VOICE, ClaimObserverVoice(engine, &first));
+    EXPECT_EQ(0u, first);
+    EXPECT_EQ(0u, engine.voices.ConstructedSlotCount());
+    EXPECT_EQ(1u, engine.voices.AvailableSlotCount());
+    engine.sourceCursors.SetCommitPageLimitForTests(1, SIZE_MAX);
     harken::VoiceTimelineSink secondSink(engine.voices, engine.timelineArms);
     harken::VoicePool::SlotStorageRegistration refusedStorage;
     ASSERT_TRUE(engine.voices.AttachSlotStoragePreparation(refusedStorage, nullptr,

@@ -98,6 +98,7 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
       m_notifications(notifications),
       m_logRing(logRing),
       m_sourceCursors(sourceCursors),
+      m_audibilityParkEnabled(config.audibilityParkEnabled != 0),
       m_meterRing(meterRing),
       m_originalSources(originalSources),
       m_timelineArms(timelineArms),
@@ -1532,8 +1533,8 @@ void MixerLoop::DrainQueuedCommands(std::uint32_t quantumCount) {
 
 void MixerLoop::PublishSourceCursors(std::uint64_t blockIndex,
                                       std::uint64_t outputFrame) {
-    auto* rows = m_sourceCursors.BeginWrite();
-    m_voices.FillSourceCursors(rows, m_sourceCursors.SlotCount());
+    const auto cursors = m_sourceCursors.BeginWrite(m_voices.ConstructedSlotCount());
+    m_voices.FillSourceCursors(cursors, m_audibilityParkEnabled);
     m_sourceCursors.EndWrite(blockIndex, outputFrame, m_commands.ConsumedCount());
 }
 
@@ -1897,9 +1898,9 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
         publicationRecord->flags |= rtprobe::kTimelineFlagSourceCursorPublished;
     }
 #endif
-    PublishSourceCursors(blockIndex, (blockIndex + 1u) * frames);
-
-    (void)m_voices.PublishCompletionProgress(blockIndex);
+    const auto cursors = m_sourceCursors.BeginWrite(m_voices.ConstructedSlotCount());
+    (void)m_voices.PublishCompletionProgress(blockIndex, cursors, m_audibilityParkEnabled);
+    m_sourceCursors.EndWrite(blockIndex, (blockIndex + 1u) * frames, m_commands.ConsumedCount());
     // Source cursor and progress publication are the final payload users.
     m_voices.EndAudioBlock();
     const std::uint64_t renderedSequence = blockIndex + 1;

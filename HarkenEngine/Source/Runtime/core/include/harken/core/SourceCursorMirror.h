@@ -1,132 +1,184 @@
-// Source-timeline mirror: the audio thread publishes, once per block, each
-// configured voice slot's render generation, source cursor, and remaining loop
-// passes and consumed resident-source progress. Logic uses the same coherent
-// publication for audibility parking and source-timed controls.
-// One row per configured voice slot — deliberately NOT the public snapshot's
-// voices[] array
-// (capped at 64) — because parking must work at any pool size.
-//
-// This is a dedicated internal three-slot mirror, separate from the snapshot
-// payload: the tuple is engine-internal timeline authority, not a public
-// observability field, and its width is maxVoices rather than the frozen 64-row
-// public layout. A single-reader pin protects the confirmed published slot while
-// it is copied. Storage is preallocated at construction; BeginWrite/EndWrite
-// touch no heap, take no locks, and never wait.
+// Audio-owned source progress, shared by parking and source-timed controls.
+// One serialized logic owner prepares stable rows before publishing voice slots.
+// The audio writer never allocates, waits, or clears unused rows. A single-reader
+// pin protects each publication; its serial distinguishes untouched ring rows.
 #ifndef HARKEN_CORE_SOURCE_CURSOR_MIRROR_H
 #define HARKEN_CORE_SOURCE_CURSOR_MIRROR_H
 
-#include "harken/core/ResamplerAdvance.h"
+#include "harken/core/SourcePhase.h"
+#include "harken/core/StableRowStorage.h"
 
 #include <atomic>
+#include <cassert>
 #include <cstdint>
+#include <new>
 #include <type_traits>
-#include <vector>
 
 namespace harken {
 
 class SourceCursorMirror {
 public:
-    // One configured voice slot's published timeline authority for a block.
+    struct ConsumedProgress {
+        std::uint64_t sourceReadFrame = 0;
+        std::uint64_t sourceStartFrame = 0;
+        ExactSourcePhase sourcePhase{};
+        double currentRatio = 1.0;
+        double targetRatio = 1.0;
+        double rampStep = 0.0;
+        std::uint32_t rampRemaining = 0;
+        std::uint32_t activationLoopsRemaining = 0;
+    };
+
     struct Row {
-        std::uint64_t sourceFrame = 0;          // frames pushed to the resampler
-        std::uint32_t renderGeneration = 0;     // generation occupying this slot
-        std::uint32_t loopPassesRemaining = 0;  // 0 for infinite or inactive
-        bool active = false;                    // rendered in this slot this block
+        std::uint64_t sourceFrame = 0; // Frames fed, distinct from consumption.
+        std::uint64_t publicationSerial = 0;
+        std::uint32_t renderGeneration = 0;
+        std::uint32_t loopPassesRemaining = 0;
+        bool active = false;
         bool exactTimingValid = false;
         bool awaitingStart = false;
-        ResamplerAdvanceState progress{};
+        bool loopInfinite = false;
+        bool hasExitMarker = false;
+        ConsumedProgress progress{};
     };
-    static_assert(std::is_trivially_copyable_v<Row>,
-                  "cursor rows must remain plain copyable payload");
+
+    struct ParkingRow {
+        std::uint64_t sourceFrame = 0;
+        std::uint32_t renderGeneration = 0;
+        std::uint32_t loopPassesRemaining = 0;
+        bool active = false;
+    };
+
+    static_assert(sizeof(ConsumedProgress) == 64 && sizeof(Row) == 96);
+    static_assert(sizeof(ParkingRow) == 24);
+    static_assert(std::is_trivially_copyable_v<Row>);
 
     struct Publication {
         std::uint64_t blockIndex = 0;
         std::uint64_t outputFrame = 0;
         std::uint64_t consumedCommands = 0;
+        std::uint64_t serial = 0;
+        std::uint32_t availableCount = 0;
     };
 
-    // slotCount = configured voice-pool size (maxVoices). All three slots hold
-    // that many rows, allocated once here.
+    struct WriteView {
+        Row* rows = nullptr;
+        std::uint32_t count = 0;
+        std::uint64_t serial = 0;
+    };
+
     explicit SourceCursorMirror(std::uint32_t slotCount)
         : m_slotCount(slotCount == 0 ? 1 : slotCount) {
-        m_slots[0].rows.assign(m_slotCount, Row{});
-        m_slots[1].rows.assign(m_slotCount, Row{});
-        m_slots[2].rows.assign(m_slotCount, Row{});
+        for (auto& slot : m_slots)
+            if (!slot.rows.Reserve(m_slotCount)) throw std::bad_alloc();
     }
 
-    std::uint32_t SlotCount() const { return m_slotCount; }
+    std::uint32_t SlotCount() const noexcept { return m_slotCount; }
 
-    // Writer side (audio thread). Every row must be written each block because
-    // a slot retains its payload between uses.
-    Row* BeginWrite() {
+    // Dependencies are prepared before VoicePool releases its constructed count.
+    // Partial growth is retained for retry, but grants no new voice identity.
+    bool Prepare(std::uint32_t count) noexcept {
+        for (auto& slot : m_slots)
+            if (!slot.rows.ConstructThrough(count)) return false;
+        return true;
+    }
+
+    std::size_t ReservedBytes() const noexcept {
+        return m_slots[0].rows.ReservedBytes() + m_slots[1].rows.ReservedBytes() +
+            m_slots[2].rows.ReservedBytes();
+    }
+
+    std::size_t CommittedBytes() const noexcept {
+        return m_slots[0].rows.CommittedBytes() + m_slots[1].rows.CommittedBytes() +
+            m_slots[2].rows.CommittedBytes();
+    }
+
+    std::size_t RequestedBytes() const noexcept {
+        return m_slots[0].rows.RequestedBytes() + m_slots[1].rows.RequestedBytes() +
+            m_slots[2].rows.RequestedBytes();
+    }
+
+    void SetCommitPageLimitForTests(std::uint32_t slot, std::size_t pages) noexcept {
+        assert(slot < kSlotCount);
+        m_slots[slot].rows.SetCommitPageLimitForTests(pages);
+    }
+
+    // count is one acquired VoicePool prefix, held fixed through EndWrite.
+    WriteView BeginWrite(std::uint32_t count) noexcept {
         const std::uint32_t pin = m_pin.load(std::memory_order_seq_cst);
         m_writeIndex = (m_lastPublished + 1u) % kSlotCount;
-        if (m_writeIndex == pin) {
-            m_writeIndex = (m_writeIndex + 1u) % kSlotCount;
-        }
-        return m_slots[m_writeIndex].rows.data();
+        if (m_writeIndex == pin) m_writeIndex = (m_writeIndex + 1u) % kSlotCount;
+        assert(count <= m_slots[m_writeIndex].rows.ConstructedCount());
+        m_writeCount = count;
+        if (++m_writeSerial == 0) ++m_writeSerial;
+        return {m_slots[m_writeIndex].rows.data(), count, m_writeSerial};
     }
 
-    // Publishes the filled half stamped with the block index it describes.
     void EndWrite(std::uint64_t blockIndex, std::uint64_t outputFrame = 0,
-                  std::uint64_t consumedCommands = 0) {
+                  std::uint64_t consumedCommands = 0) noexcept {
         Slot& slot = m_slots[m_writeIndex];
-        slot.publication = {blockIndex, outputFrame, consumedCommands};
+        slot.publication = {blockIndex, outputFrame, consumedCommands,
+                            m_writeSerial, m_writeCount};
         m_published.store(m_writeIndex, std::memory_order_seq_cst);
         m_lastPublished = m_writeIndex;
     }
 
-    // Reader side (logic thread). The confirmed pin protects the rows and block
-    // index as one publication. On collision, both caller outputs stay intact.
-    bool Capture(Row* out, std::uint64_t* outBlockIndex) const {
-        Publication publication{};
-        if (!CaptureRange(0, m_slotCount, out, &publication)) return false;
-        *outBlockIndex = publication.blockIndex;
-        return true;
+    bool CaptureRow(std::uint32_t index, Row* out, Publication* publication) const {
+        if (out == nullptr || publication == nullptr) return false;
+        return CapturePinned([&](const Slot& slot, const Publication& captured) {
+            if (index >= captured.availableCount) return false;
+            const Row& row = slot.rows.data()[index];
+            *out = row.publicationSerial == captured.serial ? row : Row{};
+            return true;
+        }, publication);
     }
 
-    bool CaptureRow(std::uint32_t index, Row* out, Publication* publication) const {
-        return index < m_slotCount && out != nullptr && publication != nullptr &&
-            CaptureRange(index, 1, out, publication);
+    bool CaptureParking(ParkingRow* out, std::uint32_t capacity,
+                        Publication* publication) const {
+        if (publication == nullptr) return false;
+        return CapturePinned([&](const Slot& slot, const Publication& captured) {
+            if (capacity < captured.availableCount ||
+                (out == nullptr && captured.availableCount != 0)) return false;
+            const Row* rows = slot.rows.data();
+            for (std::uint32_t i = 0; i < captured.availableCount; ++i) {
+                const Row& row = rows[i];
+                out[i] = row.publicationSerial == captured.serial
+                    ? ParkingRow{row.sourceFrame, row.renderGeneration,
+                                 row.loopPassesRemaining, row.active}
+                    : ParkingRow{};
+            }
+            return true;
+        }, publication);
     }
 
 private:
-    bool CaptureRange(std::uint32_t first, std::uint32_t count,
-                      Row* out, Publication* publication) const {
+    template<class Capture>
+    bool CapturePinned(Capture&& capture, Publication* publication) const {
         for (int attempt = 0; attempt < kCaptureAttempts; ++attempt) {
-            const std::uint32_t candidate =
-                m_published.load(std::memory_order_seq_cst);
+            const std::uint32_t candidate = m_published.load(std::memory_order_seq_cst);
             m_pin.store(candidate, std::memory_order_seq_cst);
             if (m_published.load(std::memory_order_seq_cst) != candidate) {
                 m_pin.store(kNoPin, std::memory_order_release);
                 continue;
             }
             const Slot& slot = m_slots[candidate];
-            for (std::uint32_t i = 0; i < count; ++i) {
-                out[i] = slot.rows[first + i];
-            }
             const Publication captured = slot.publication;
+            const bool ok = capture(slot, captured);
             m_pin.store(kNoPin, std::memory_order_release);
-            *publication = captured;
-            return true;
+            if (ok) *publication = captured;
+            return ok;
         }
         m_pin.store(kNoPin, std::memory_order_release);
         return false;
     }
 
-private:
     static constexpr int kCaptureAttempts = 4;
     static constexpr std::uint32_t kSlotCount = 3;
     static constexpr std::uint32_t kNoPin = kSlotCount;
-    static_assert(std::atomic<std::uint32_t>::is_always_lock_free,
-                  "control words must be lock-free on the audio thread");
-    static_assert(kSlotCount == 3,
-                  "single-reader ownership requires three slots");
-    static_assert(kNoPin == kSlotCount,
-                  "the no-pin value must immediately follow the slots");
+    static_assert(std::atomic<std::uint32_t>::is_always_lock_free);
 
     struct Slot {
-        std::vector<Row> rows;
+        StableRowStorage<Row> rows;
         Publication publication{};
     };
 
@@ -134,8 +186,10 @@ private:
     Slot m_slots[kSlotCount];
     std::atomic<std::uint32_t> m_published{0};
     mutable std::atomic<std::uint32_t> m_pin{kNoPin};
-    std::uint32_t m_lastPublished = 0; // writer-owned
-    std::uint32_t m_writeIndex = 1;    // writer-owned selected slot
+    std::uint32_t m_lastPublished = 0;
+    std::uint32_t m_writeIndex = 1;
+    std::uint32_t m_writeCount = 0;
+    std::uint64_t m_writeSerial = 0;
 };
 
 } // namespace harken

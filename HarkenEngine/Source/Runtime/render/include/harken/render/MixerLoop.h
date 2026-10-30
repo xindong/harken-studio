@@ -270,6 +270,7 @@ private:
     // Per-slot source-cursor mirror the block loop publishes for audibility
     // parking's timeline authority. Owned by the engine; the mixer only writes.
     SourceCursorMirror& m_sourceCursors;
+    const bool m_audibilityParkEnabled;
     // Meter block ring: one record of all three bus tap rows per rendered
     // block while any meter Variable exists. Owned by the engine;
     // the mixer only appends. The armed gate keeps the unarmed cost to one

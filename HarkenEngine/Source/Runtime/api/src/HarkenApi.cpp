@@ -8139,6 +8139,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         voicePreparation.streamRingToken = streamRingToken;
         voicePreparation.streamGeneration = static_cast<std::uint32_t>(streamRingToken >> 32);
     }
+    std::uint64_t installedExitMarkerSourceFrame = 0;
     if (harken::VoiceRenderContext* renderContext =
             engine.voices.Resolve(render)) {
         renderContext->authoredSourceDeadlineFrame =
@@ -8164,6 +8165,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
             FillStopLeafExitMarker(engine, start, &advance);
             renderContext->hasExitMarker = advance.hasExitMarker;
             renderContext->exitMarkerSourceFrame = advance.exitMarkerSourceFrame;
+            installedExitMarkerSourceFrame = advance.exitMarkerSourceFrame;
             break;
         }
     }
@@ -8656,7 +8658,9 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
     result.monitorSelection.arm = arm;
     engine.timelineVoiceInstallIdentities[renderSlot] = {
         render, playableRoot, install.target, releaseObserver, startFrame, arm,
-        bus.index, bus.generation, timelineSends};
+        bus.index, bus.generation, timelineSends,
+        view.frames, view.loop.startFrame, view.LoopEndFrame(),
+        installedExitMarkerSourceFrame};
     if (prepareOnly) {
         preparedOut->ledgerSlot = ledgerSlot;
         preparedOut->renderHandle = render;
@@ -73739,9 +73743,10 @@ void RunAudibilityPass(harken::Engine& engine) {
     parkedSlots.clear();
     parkedHandles.clear();
     // Coherent snapshot of the per-slot source cursors (timeline authority).
-    std::uint64_t mirrorBlock = 0;
+    harken::SourceCursorMirror::Publication mirrorPublication{};
     const bool haveMirror =
-        engine.sourceCursors.Capture(rows.data(), &mirrorBlock);
+        engine.sourceCursors.CaptureParking(rows.data(), rows.size(), &mirrorPublication);
+    const std::uint64_t mirrorBlock = mirrorPublication.blockIndex;
     const std::uint64_t currentBlock = engine.serviceFrameClock / blockFrames;
 
     // Virtual time + return runs first. Each record owns its last advance frame,
@@ -74028,7 +74033,7 @@ void RunAudibilityPass(harken::Engine& engine) {
         const harken::VoicePlayFacts& facts = engine.voicePlayFacts[slot];
         const std::uint32_t renderGeneration =
             static_cast<std::uint32_t>(render >> 32);
-        if (!haveMirror || slot >= rows.size() || !rows[slot].active ||
+        if (!haveMirror || slot >= mirrorPublication.availableCount || !rows[slot].active ||
             currentBlock > mirrorBlock + 1 ||
             rows[slot].renderGeneration != renderGeneration ||
             (facts.loopCount > 1u &&
@@ -77997,14 +78002,30 @@ VnResult ResolveStopLeafSilence(
             return VN_OK;
         }
         if (!cursor.exactTimingValid) return VN_CAPABILITY_UNAVAILABLE;
-        advance = cursor.progress;
+        harken::EngineTimelineVoiceInstallIdentity installation{};
+        if (!engine.CaptureTimelineVoiceInstallIdentity(row.renderHandle, &installation) ||
+            !harken::Engine::SameOriginalSingleArm(installation.startArm, row.arm) ||
+            installation.rootInstance != row.rootInstance)
+            return VN_BACKPRESSURE;
+        const auto& progress = cursor.progress;
+        advance.pcmFrameCount = installation.sourceFrameCount;
+        advance.loopStartFrame = installation.loopStartFrame;
+        advance.loopEndFrame = installation.loopEndFrame;
+        advance.sourceStartFrame = progress.sourceStartFrame;
+        advance.sourcePhase = progress.sourcePhase;
+        advance.currentRatio = progress.currentRatio;
+        advance.targetRatio = progress.targetRatio;
+        advance.rampStep = progress.rampStep;
+        advance.rampRemaining = progress.rampRemaining;
+        SetResamplerConsumedPosition(&advance, progress.sourceStartFrame,
+            progress.activationLoopsRemaining,
+            progress.sourceReadFrame > harken::kResampleHistoryPad
+                ? progress.sourceReadFrame - harken::kResampleHistoryPad : 0);
+        advance.loopInfinite = cursor.loopInfinite;
+        advance.hasExitMarker = cursor.hasExitMarker;
+        advance.exitMarkerSourceFrame = installation.exitMarkerSourceFrame;
         advance.absoluteStartFrame = publication.outputFrame;
         if (cursor.awaitingStart) {
-            harken::EngineTimelineVoiceInstallIdentity installation{};
-            if (!engine.CaptureTimelineVoiceInstallIdentity(row.renderHandle, &installation) ||
-                !harken::Engine::SameOriginalSingleArm(installation.startArm, row.arm) ||
-                installation.rootInstance != row.rootInstance)
-                return VN_BACKPRESSURE;
             harken::TimelineArmObservation observation{};
             if (!engine.timelineArms.Observe(row.arm, &observation) ||
                 observation.state != harken::ArmState::Published ||
