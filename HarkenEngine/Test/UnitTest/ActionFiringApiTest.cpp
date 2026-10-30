@@ -11914,7 +11914,8 @@ void CheckNaturalEndStopAfterAppliedSeek(std::uint64_t seekFrame,
         EXPECT_EQ(blockBeforeSeek * kFrames, publication.outputFrame);
         EXPECT_EQ(engine.commands.ConsumedCount(), publication.consumedCommands);
         ASSERT_TRUE(cursor.exactTimingValid);
-        EXPECT_EQ(seekFrame, cursor.progress.sourceIntegerFrame);
+        EXPECT_EQ(seekFrame, cursor.progress.sourceStartFrame);
+        EXPECT_LE(cursor.progress.sourceReadFrame, harken::kResampleHistoryPad);
     } else if (workers == 0) {
         // Hold audio after Seek is APPLIED but before progress publication.
         struct Pause {

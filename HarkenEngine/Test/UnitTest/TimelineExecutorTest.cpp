@@ -2631,12 +2631,13 @@ TEST(TimelineExecutor, ReplaceAfterDeferredGenerationMaxCleansProductionState) {
     }
     EXPECT_EQ(engine->timelineArms.LiveCount(), 0u);
     EXPECT_EQ(engine->voices.ActiveCount(), 0u);
-    std::vector<harken::SourceCursorMirror::Row> cursors(
+    std::vector<harken::SourceCursorMirror::ParkingRow> cursors(
         engine->sourceCursors.SlotCount());
-    std::uint64_t cursorBlock = 0;
-    ASSERT_TRUE(engine->sourceCursors.Capture(cursors.data(), &cursorBlock));
-    EXPECT_TRUE(std::none_of(cursors.begin(), cursors.end(),
-                             [](const harken::SourceCursorMirror::Row& row) {
+    harken::SourceCursorMirror::Publication cursorPublication{};
+    ASSERT_TRUE(engine->sourceCursors.CaptureParking(cursors.data(),
+        static_cast<std::uint32_t>(cursors.size()), &cursorPublication));
+    EXPECT_TRUE(std::none_of(cursors.begin(), cursors.begin() + cursorPublication.availableCount,
+                             [](const harken::SourceCursorMirror::ParkingRow& row) {
                                  return row.active;
                              }));
     EXPECT_EQ(engine->timelineDeferred.Count(), 0u);

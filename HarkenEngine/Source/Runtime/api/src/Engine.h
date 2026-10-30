@@ -2933,6 +2933,10 @@ struct EngineTimelineVoiceInstallIdentity {
     std::uint32_t busIndex = 0;
     std::uint32_t busGeneration = 0;
     std::array<VoiceSendConfig, kMaxVoiceSendSlots> voiceSends{};
+    std::uint64_t sourceFrameCount = 0;
+    std::uint64_t loopStartFrame = 0;
+    std::uint64_t loopEndFrame = 0;
+    std::uint64_t exitMarkerSourceFrame = 0;
 };
 
 struct EnginePlainImmediateSource {
@@ -7160,6 +7164,8 @@ public:
             return static_cast<Engine*>(context)->PrepareVoiceBindingCatalogStorage();
         });
         const auto renderCapacity = resolved.voiceCapacity.Render();
+        if (resolved.audibilityParkEnabled != 0 &&
+            !audibilityCursorRows.Reserve(renderCapacity)) throw std::bad_alloc();
         if (!voiceOriginPlayable.Reserve(renderCapacity) ||
             !voicePlayFacts.Reserve(renderCapacity) || !playbackPaths.Reserve(renderCapacity) ||
             !timelineVoiceInstallIdentities.Reserve(renderCapacity) ||
@@ -7173,9 +7179,6 @@ public:
         // Virtual Voices are active.
         if (!parkRecords.Reserve(resolved.voiceCapacity.Logical())) throw std::bad_alloc();
         if (resolved.audibilityParkEnabled != 0) {
-            detail::CheckedGrow(audibilityCursorRows, sourceCursors.SlotCount(),
-                                detail::LogicAllocSite::AudibilityRows);
-            audibilityCursorRows.resize(sourceCursors.SlotCount());
             detail::CheckedGrow(audibilityParkedSlots, resolved.voiceCapacity.Virtual(),
                                 detail::LogicAllocSite::AudibilityParked);
             audibilityParkedSlots.reserve(resolved.voiceCapacity.Virtual());
@@ -14754,7 +14757,7 @@ public:
     StableSlotStorage<ParkRecord> parkRecords;
     // Bounded scratch for one logic-side audibility pass; cursors are captured
     // anew and parked identities are rebuilt on every pass.
-    std::vector<SourceCursorMirror::Row> audibilityCursorRows;
+    StableRowStorage<SourceCursorMirror::ParkingRow> audibilityCursorRows;
     std::vector<std::uint32_t> audibilityParkedSlots;
     std::vector<VnVoiceHandle> audibilityParkedHandles;
     std::uint64_t parkedHighWater = 0;
@@ -14870,7 +14873,9 @@ public:
         return true;
     }
     bool PrepareLogicVoiceStorage(std::uint32_t count) noexcept {
-        if (!params.PrepareVoiceStorage(count) || !spatial.PrepareVoiceStorage(count) ||
+        if (!sourceCursors.Prepare(count) ||
+            (config.audibilityParkEnabled != 0 && !audibilityCursorRows.ConstructThrough(count)) ||
+            !params.PrepareVoiceStorage(count) || !spatial.PrepareVoiceStorage(count) ||
             !voiceOriginPlayable.ConstructThrough(count) || !voicePlayFacts.ConstructThrough(count) ||
             !playbackPaths.ConstructThrough(count) || !timelineVoiceInstallIdentities.ConstructThrough(count) ||
             !voiceEffectInstanceRefs.ConstructThrough(count) || !effectSlotConfig.ConstructThrough(count) ||
