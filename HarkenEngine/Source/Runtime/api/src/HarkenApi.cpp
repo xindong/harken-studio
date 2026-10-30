@@ -8157,8 +8157,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
                 continue;
             }
             harken::ResamplerAdvanceState advance{};
-            advance.currentRatio =
-                install.pitchRatio > 0.0f ? install.pitchRatio : 1.0;
+            advance.currentRatio = renderContext->resampler.CurrentRatio();
             advance.targetRatio = advance.currentRatio;
             advance.sourceStartFrame = install.sourceStartFrame;
             advance.absoluteStartFrame = startFrame;
