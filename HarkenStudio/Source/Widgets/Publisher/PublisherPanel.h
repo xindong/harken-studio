@@ -71,6 +71,7 @@ private:
     void populateProjectPackTable();
     void requestPackTableRefresh();
     void updatePackProgress(const QString& platform, const QString& language, const QString& unitKey);
+    void updateBuildStage();
     void applyGenerationState(QTreeWidgetItem* item, const QString& platform,
                               const QString& language, const QString& unitKey);
     void populatePlatformControls();
@@ -93,6 +94,7 @@ private:
 
     ProportionalTreeWidget* packTree_ = nullptr;
     QLabel*       objectSendWarningLabel_ = nullptr;
+    QLabel*       buildStageLabel_ = nullptr;
     bool          packTreeUpdating_ = false;
     bool          nameFilterActive_ = false;
 

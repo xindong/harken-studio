@@ -1032,6 +1032,10 @@ inline bool validateProjectTree(const ProjectItem* root)
     return true;
 }
 
+ProjectItem* findItemByObjectID(ProjectItem* root, uint32_t objectID);
+ProjectItem* findItemByAuthoringHandle(ProjectItem* root, uint32_t authoringHandle);
+ProjectItem* findItemByAuthoringHandleInProject(ProjectData* project, uint32_t authoringHandle);
+
 bool validateProjectObjectIdentities(const ProjectData& project, QString* error = nullptr);
 
 inline ObjectIdRepairResult ensureUniqueObjectIds(ProjectData& project)

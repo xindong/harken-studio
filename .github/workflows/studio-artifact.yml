@@ -122,12 +122,9 @@ jobs:
           -DHARKEN_BUILD_EDITOR=ON
           -DHARKEN_BUILD_TOOLS=ON
 
-      - name: Build HarkenEditor and harken_packc
+      - name: Build HarkenEditor and Harkenizer
         shell: bash
-        run: |
-          for target in harken_editor harken_packc; do
-            cmake --build build --config Release --target "$target" --parallel
-          done
+        run: cmake --build build --config Release --target harken_editor harkenizer --parallel
 
       - name: Download Integration bundle
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -158,7 +155,7 @@ jobs:
         run: |
           set -euo pipefail
           status=0
-          for required in HarkenStudio.exe packc.exe qt.conf HarkenIntegration HarkenIntegration/Unity/Harken Legal/NOTICE.txt; do
+          for required in HarkenStudio.exe Harkenizer.exe qt.conf HarkenIntegration HarkenIntegration/Unity/Harken Legal/NOTICE.txt; do
             if [ ! -e "build/bin/Release/$required" ]; then
               echo "::error::missing deployed content: build/bin/Release/$required"
               status=1
@@ -175,6 +172,9 @@ jobs:
               status=1
             fi
           done
+          if [ "$status" -eq 0 ]; then
+            build/bin/Release/Harkenizer.exe --help
+          fi
           exit $status
 
       - name: Upload Windows studio artifact
@@ -416,6 +416,19 @@ jobs:
             echo "::error file=$binary::expected ${{ matrix.arch }}, found: $archs"
             status=1
           fi
+          executor="$bundle/Contents/MacOS/Harkenizer"
+          if [ ! -x "$executor" ]; then
+            echo "::error::missing or non-executable Harkenizer: $executor"
+            status=1
+          else
+            archs=$(lipo -archs "$executor")
+            echo "Harkenizer architectures: $archs"
+            if [ "$archs" != "${{ matrix.arch }}" ]; then
+              echo "::error file=$executor::expected ${{ matrix.arch }}, found: $archs"
+              status=1
+            fi
+            "$executor" --help
+          fi
           build_id=$(sed -n 's/.*BuildId[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
             build/generated/harken_buildinfo/harken_buildinfo.h)
           expected_platform="macos-${{ matrix.slug }}"
@@ -424,7 +437,7 @@ jobs:
             status=1
           fi
           for required in \
-            "$bundle/Contents/MacOS/packc" \
+            "$bundle/Contents/MacOS/Harkenizer" \
             "$bundle/Contents/MacOS/HarkenIntegration" \
             "$bundle/Contents/MacOS/HarkenIntegration/Unity/Harken" \
             "$bundle/Contents/Resources/HarkenStudio.icns" \

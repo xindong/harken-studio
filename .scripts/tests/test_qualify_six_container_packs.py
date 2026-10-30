@@ -117,7 +117,7 @@ def _report_from_main_popen_failure(error: BaseException) -> dict:
         studio = bin_dir / "HarkenStudio.exe"
         host = bin_dir / "harken_host.exe"
         capture = bin_dir / "harken_process_loopback_capture.exe"
-        (bin_dir / "packc.exe").write_bytes(b"packc")
+        (bin_dir / "Harkenizer.exe").write_bytes(b"harkenizer")
         studio.write_bytes(b"studio")
         host.write_bytes(b"host")
         capture.write_bytes(b"capture")
@@ -431,6 +431,9 @@ class QualifySixContainerPacksTest(unittest.TestCase):
             "",
         )
         written = _report_from_main_popen_failure(failure)
+        self.assertEqual(Path(written["binaries"]["harkenizer"]["path"]).name, "Harkenizer.exe")
+        self.assertEqual(written["binaries"]["harkenizer"]["sha256"],
+                         MODULE.hashlib.sha256(b"harkenizer").hexdigest().upper())
         self.assertIn("found", written["error"])
         self.assertEqual(
             {"returncode", "stdout", "stderr"},

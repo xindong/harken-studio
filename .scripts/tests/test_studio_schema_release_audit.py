@@ -588,15 +588,20 @@ class ReleaseLifecycleTest(unittest.TestCase):
             MODULE.require_current_reader({"currentReader": reader})
 
     def test_changed_persistence_paths_are_reviewed_without_internal_format_scopes(self) -> None:
-        paths = ["HarkenStudio/Source/Core/ProjectSchemaValidator.cpp", "HarkenIntegration/Unity/Harken/Runtime/Sdk/PackCompanion.cs",
-                 "HarkenStudio/Source/Core/MigrationManager.cpp", "HarkenStudio/Source/Core/ProjectMigration.cpp",
-                 "HarkenStudio/Source/Core/ProjectMigration.h"]
-        with patch.object(MODULE, "changed_files", return_value=paths):
+        editor_paths = ["HarkenStudio/Source/Core/ProjectSchemaValidator.cpp",
+                        "HarkenStudio/Source/Core/MigrationManager.cpp",
+                        "HarkenStudio/Source/Core/ProjectMigration.cpp",
+                        "HarkenStudio/Source/Core/ProjectMigration.h",
+                        "HarkenStudio/Source/Tooling/Harkenizer/Core/ProjectLoader.cpp"]
+        pack_paths = ["HarkenIntegration/Unity/Harken/Runtime/Sdk/PackCompanion.cs",
+                      "HarkenStudio/Source/Tooling/Harkenizer/Core/CanonicalPackSetExport.cpp",
+                      "HarkenStudio/Source/Tooling/Harkenizer/Core/ProjectPackExporter.cpp"]
+        with patch.object(MODULE, "changed_files", return_value=editor_paths + pack_paths):
             scopes = MODULE.review_scopes("HEAD", "WORKTREE")
         self.assertEqual({value["scope"] for value in scopes}, {"Editor", "Pack"})
-        editor_files = next(value["files"] for value in scopes if value["scope"] == "Editor")
-        for path in paths[2:]:
-            self.assertIn(path, editor_files)
+        for tree, paths in (("Editor", editor_paths), ("Pack", pack_paths)):
+            files = next(value["files"] for value in scopes if value["scope"] == tree)
+            self.assertEqual(set(files), set(paths))
 
 
 class BaselinePackageTest(unittest.TestCase):

@@ -480,11 +480,14 @@ class ReleaseEvidenceTest(unittest.TestCase):
         binary.write_bytes(b"MZfixture")
         library = self.build / "bin/Release/libQWKCore.dylib"
         library.write_bytes(b"\xcf\xfa\xed\xfebuild-library")
+        executable = self.build / "bin/Release/Harkenizer"
+        executable.write_bytes(b"\xcf\xfa\xed\xfebuild-executable")
         self.model["artifacts"] = [
             {"target": target, "type": kind, "name": path.name,
              "sha256": evidence.sha256(path), "path": path.relative_to(self.build).as_posix()}
             for target, kind, path in (("harken_editor", "EXECUTABLE", binary),
-                                      ("QWKCore", "SHARED_LIBRARY", library))]
+                                      ("QWKCore", "SHARED_LIBRARY", library),
+                                      ("harkenizer", "EXECUTABLE", executable))]
         tool = self.root / "macdeployqt"
         tool.write_bytes(b"deployment tool")
         deployed = bundle / "Contents/Frameworks/libQWKCore.dylib"
@@ -495,51 +498,65 @@ class ReleaseEvidenceTest(unittest.TestCase):
                 mock.patch.object(deploy_macos_bundle.subprocess, "run", side_effect=transform):
             deploy_macos_bundle.deploy(self.build, bundle, tool, "Release")
 
-    def test_macos_deployment_records_and_verifies_transformed_build_libraries(self):
+    def test_macos_deployment_records_and_verifies_transformed_build_binaries(self):
         bundle, library, tool, deployed = self.macos_deployment_fixture()
+        executable = bundle / "Contents/MacOS/Harkenizer"
         def transform(command, check):
-            self.assertEqual(command, [str(tool), str(bundle), "-always-overwrite"])
+            self.assertEqual(command, [str(tool), str(bundle), "-always-overwrite",
+                                       f"-executable={executable}"])
             self.assertTrue(check)
             self.assertEqual(deployed.read_bytes(), library.read_bytes())
+            self.assertEqual(executable.read_bytes(), library.with_name("Harkenizer").read_bytes())
             deployed.write_bytes(b"\xcf\xfa\xed\xfedeployed-library")
+            executable.write_bytes(b"\xcf\xfa\xed\xfedeployed-executable")
         self.run_macos_deployment(bundle, tool, transform)
         report = evidence.read_macos_deployment(self.build, "studio", "Release", self.model)
         self.assertEqual(report["tool"], {"name": "macdeployqt", "sha256": evidence.sha256(tool)})
         self.assertEqual(report["libraries"][0]["sourceArtifact"], self.model["artifacts"][1])
         self.assertEqual(report["libraries"][0]["sha256"], evidence.sha256(deployed))
+        self.assertEqual(report["executables"][0]["sourceArtifact"], self.model["artifacts"][2])
+        self.assertEqual(report["executables"][0]["sha256"], evidence.sha256(executable))
         origins = evidence.verify_payload_binaries(bundle.parent, self.model, None, set(), deployment=report)
-        origin = next(record for record in origins if record["path"] == report["libraries"][0]["path"])
-        self.assertEqual(origin["origin"], "CMake target via macdeployqt")
+        for group in ("libraries", "executables"):
+            origin = next(record for record in origins if record["path"] == report[group][0]["path"])
+            self.assertEqual(origin["origin"], "CMake target via macdeployqt")
         with self.assertRaises(ValueError):
             evidence.verify_payload_binaries(bundle.parent, self.model, None, set())
-        deployed.write_bytes(b"\xcf\xfa\xed\xfetampered-library")
-        with self.assertRaises(ValueError):
-            evidence.verify_payload_binaries(bundle.parent, self.model, None, set(), deployment=report)
+        for binary in (deployed, executable):
+            with self.subTest(binary=binary):
+                original = binary.read_bytes()
+                binary.write_bytes(b"\xcf\xfa\xed\xfetampered")
+                with self.assertRaises(ValueError):
+                    evidence.verify_payload_binaries(bundle.parent, self.model, None, set(), deployment=report)
+                binary.write_bytes(original)
 
     def test_macos_deployment_rejects_stale_or_mismatched_receipts(self):
         bundle, library, tool, deployed = self.macos_deployment_fixture()
         self.run_macos_deployment(bundle, tool, lambda *args, **kwargs: deployed.write_bytes(b"deployed"))
         path = evidence.macos_deployment_path(self.build, "studio", "Release")
         original = path.read_bytes()
-        for field in ("commit", "platform", "source-hash", "target", "path", "duplicate"):
-            with self.subTest(field=field):
-                path.write_bytes(original)
-                report = evidence.read_json(path)
-                if field == "commit":
-                    report["identity"]["gitCommit"] = "0" * 40
-                elif field == "platform":
-                    report["identity"]["platform"] = "windows-x64"
-                elif field == "source-hash":
-                    report["libraries"][0]["sourceArtifact"]["sha256"] = "0" * 64
-                elif field == "target":
-                    report["libraries"][0]["sourceArtifact"]["target"] = "unbuilt-library"
-                elif field == "path":
-                    report["libraries"][0]["path"] = "HarkenStudio.app/Contents/Frameworks/other.dylib"
-                else:
-                    report["libraries"].append(report["libraries"][0])
-                evidence.write_json(path, report)
-                with self.assertRaises(ValueError):
-                    evidence.read_macos_deployment(self.build, "studio", "Release", self.model)
+        for group in ("libraries", "executables"):
+            for field in ("commit", "platform", "source-hash", "target", "path", "duplicate", "source"):
+                with self.subTest(group=group, field=field):
+                    path.write_bytes(original)
+                    report = evidence.read_json(path)
+                    if field == "commit":
+                        report["identity"]["gitCommit"] = "0" * 40
+                    elif field == "platform":
+                        report["identity"]["platform"] = "windows-x64"
+                    elif field == "source-hash":
+                        report[group][0]["sourceArtifact"]["sha256"] = "0" * 64
+                    elif field == "target":
+                        report[group][0]["sourceArtifact"]["target"] = "unbuilt-target"
+                    elif field == "path":
+                        report[group][0]["path"] = "HarkenStudio.app/Contents/MacOS/other"
+                    elif field == "source":
+                        report[group][0]["sourceArtifact"] = self.model["artifacts"][0]
+                    else:
+                        report[group].append(report[group][0])
+                    evidence.write_json(path, report)
+                    with self.assertRaises(ValueError):
+                        evidence.read_macos_deployment(self.build, "studio", "Release", self.model)
 
     def test_failed_macos_deployment_invalidates_the_previous_receipt(self):
         bundle, library, tool, deployed = self.macos_deployment_fixture()
@@ -553,9 +570,22 @@ class ReleaseEvidenceTest(unittest.TestCase):
 
     def test_macos_deployment_rejects_source_changes_during_deployment(self):
         bundle, library, tool, deployed = self.macos_deployment_fixture()
-        with self.assertRaises(ValueError):
-            self.run_macos_deployment(bundle, tool, lambda *args, **kwargs: library.write_bytes(b"changed"))
-        self.assertFalse(evidence.macos_deployment_path(self.build, "studio", "Release").exists())
+        for source in (library, library.with_name("Harkenizer")):
+            with self.subTest(source=source):
+                original = source.read_bytes()
+                with self.assertRaises(ValueError):
+                    self.run_macos_deployment(bundle, tool, lambda *args, **kwargs: source.write_bytes(b"changed"))
+                self.assertFalse(evidence.macos_deployment_path(self.build, "studio", "Release").exists())
+                source.write_bytes(original)
+
+    def test_macos_deployment_requires_the_executor_build_artifact(self):
+        bundle, library, tool, deployed = self.macos_deployment_fixture()
+        self.model["artifacts"] = self.model["artifacts"][:-1]
+        receipt = evidence.macos_deployment_path(self.build, "studio", "Release")
+        evidence.write_json(receipt, {"previous": True})
+        with self.assertRaisesRegex(ValueError, "requires the built Harkenizer"):
+            self.run_macos_deployment(bundle, tool, mock.Mock())
+        self.assertFalse(receipt.exists())
 
     def test_payload_changes_during_packaging_are_rejected(self):
         directory = self.prepare()

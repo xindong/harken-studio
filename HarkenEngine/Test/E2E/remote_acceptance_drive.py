@@ -6,13 +6,13 @@ vintage-stamped snapshots.
 
 The driver builds its own content: it synthesizes wav sources with the
 standard-library wave module, compiles two pack generations through the
-real packc tool, and never touches audio hardware (the server runs
---null). Every step is checked; the first unexpected engine result or
+private Harkenizer resource worker, and never touches audio hardware
+(the server runs --null). Every step is checked; the first unexpected engine result or
 protocol fault fails the run with a nonzero exit code.
 
 Usage:
   py -3 HarkenEngine/Test/E2E/remote_acceptance_drive.py \
-      --host <harken_host.exe> --packc <packc.exe> [--pipe <name>]
+      --host <harken_host.exe> --harkenizer <Harkenizer.exe> [--pipe <name>]
       [--keep-server] [--trace <journal.vtrc>]
 
 With --trace the server journals the whole drill session (remote-serve
@@ -76,23 +76,43 @@ def write_wav(path, freq_hz, seconds=0.15, rate=48000):
         out.writeframes(bytes(samples))
 
 
-def build_pack(packc, wav_path, pack_path):
+def build_pack(harkenizer, wav_path, pack_path):
     manifest_path = pack_path + ".manifest.json"
-    manifest = {"sounds": [{"path": wav_path.replace("\\", "/"),
-                             "id": SOUND_ID}]}
+    manifest = {"manifestVersion": 3,
+                "output": pack_path.replace("\\", "/"),
+                "entries": [{"path": wav_path.replace("\\", "/"),
+                             "id": "3da91a64-b947-4560-0000-%012x" % SOUND_ID}]}
     with open(manifest_path, "w", encoding="utf-8") as out:
         json.dump(manifest, out)
-    result = subprocess.run([packc, manifest_path, pack_path],
-                            capture_output=True, text=True)
+    result = subprocess.run(
+        [harkenizer, "--resource-worker"],
+        input=json.dumps({"manifest": manifest_path}) + "\n",
+        capture_output=True, text=True, encoding="utf-8")
     if result.returncode != 0:
-        fail("packc failed for %s: %s" % (pack_path, result.stderr.strip()))
+        fail("Harkenizer worker failed for %s: %s" %
+             (pack_path, result.stderr.strip() or result.stdout.strip()))
+    try:
+        ready, response = [json.loads(line) for line in result.stdout.splitlines()]
+    except ValueError:
+        fail("invalid Harkenizer worker response for %s" % pack_path)
+    if not isinstance(ready, dict) or ready.get("protocol") != 1 \
+            or not isinstance(ready.get("compiler"), str) or not ready["compiler"]:
+        fail("invalid Harkenizer worker handshake for %s" % pack_path)
+    if not isinstance(response, dict) or response.get("success") is not True:
+        diagnostic = (response.get("error") or response.get("diagnosticLog")
+                      or response.get("outputLog")) if isinstance(response, dict) else response
+        fail("Harkenizer resource compilation failed for %s: %s" %
+             (pack_path, diagnostic))
+    if not os.path.isfile(pack_path) or os.path.getsize(pack_path) == 0:
+        fail("Harkenizer produced no pack at %s" % pack_path)
     return pack_path
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", required=True)
-    parser.add_argument("--packc", required=True)
+    parser.add_argument("--harkenizer", required=True,
+                        help="Harkenizer executable providing the private resource worker")
     parser.add_argument("--pipe", default="HarkenRemoteDrive.%d" % os.getpid())
     parser.add_argument("--keep-server", action="store_true")
     parser.add_argument("--trace", default=None,
@@ -111,8 +131,8 @@ def main():
     wav_v2 = os.path.join(WORK_DIR, "tone_v2.wav")
     write_wav(wav_v1, 440.0)
     write_wav(wav_v2, 880.0)
-    pack_v1 = build_pack(args.packc, wav_v1, os.path.join(WORK_DIR, "v1.pack"))
-    pack_v2 = build_pack(args.packc, wav_v2, os.path.join(WORK_DIR, "v2.pack"))
+    pack_v1 = build_pack(args.harkenizer, wav_v1, os.path.join(WORK_DIR, "v1.pack"))
+    pack_v2 = build_pack(args.harkenizer, wav_v2, os.path.join(WORK_DIR, "v2.pack"))
     step("content built (two pack generations)")
 
     pipe_name = args.pipe

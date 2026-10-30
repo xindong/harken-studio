@@ -51,6 +51,7 @@
       "HarkenStudio/Source/Core/TransitionSemantics.*",
       "HarkenStudio/Source/Main.cpp",
       "HarkenStudio/Source/MainWindow.cpp",
+      "HarkenStudio/Source/Tooling/Harkenizer/Core/ProjectLoader*",
       "HarkenStudio/Source/Widgets/Inspector/**/*Schema*",
       "HarkenStudio/Test/UnitTest/ProjectDocumentRoundTripTest.cpp",
       "HarkenStudio/Test/UnitTest/ProjectMigrationTest.cpp"
@@ -64,9 +65,9 @@
       "HarkenIntegration/Unity/Harken/Runtime/Sdk/PackDirectorySource.cs",
       "HarkenIntegration/Unity/Harken/Runtime/Sdk/PackPaths.cs",
       "HarkenEngine/Tool/Host/PackCompanion.h",
-      "HarkenStudio/Source/Core/CanonicalPackSetExport.*",
-      "HarkenStudio/Source/Core/ProjectPackExporter.*",
       "HarkenStudio/Source/RuntimeBridge/PackagingBridge.*",
+      "HarkenStudio/Source/Tooling/Harkenizer/Core/CanonicalPackSetExport.*",
+      "HarkenStudio/Source/Tooling/Harkenizer/Core/ProjectPackExporter.*",
       "HarkenEngine/Test/**/PackFoundationQualification*",
       "HarkenIntegration/Test/ContractTest/**"
     ]

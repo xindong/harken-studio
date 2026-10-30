@@ -27,6 +27,8 @@ class ProjectSerializer : public QObject
     Q_OBJECT
 
 public:
+    enum class LoadMode { RecoverTransactions, ReadOnly };
+
     explicit ProjectSerializer(QObject* parent = nullptr);
     ~ProjectSerializer() override;
 
@@ -48,7 +50,8 @@ public:
                      bool allowUpgrade = false,
                      ProjectUpgradeProgressCallback upgradeProgress = {},
                      ProjectUpgradeApprovalCallback upgradeApproval = {},
-                     ProjectContractReadContext* context = nullptr);
+                     ProjectContractReadContext* context = nullptr,
+                     LoadMode mode = LoadMode::RecoverTransactions);
 
     const ProjectUpgradeResult& upgradeResult() const { return upgradeResult_; }
     void recordLoadedDocument(const QString& path, const QByteArray& bytes);

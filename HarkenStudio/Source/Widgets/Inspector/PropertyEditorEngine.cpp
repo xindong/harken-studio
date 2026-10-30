@@ -1,6 +1,6 @@
 
 #include "PropertyEditorEngine.h"
-#include "Core/CanonicalRuntimeProjectAdapterPrivate.h"
+#include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "WidgetFactory.h"
 #include "InspectorTabContainer.h"
 #include "InspectorLayout.h"

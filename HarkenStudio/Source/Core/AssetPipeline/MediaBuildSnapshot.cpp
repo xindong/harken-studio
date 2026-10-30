@@ -7,8 +7,14 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <utility>
 
 namespace VNX {
+
+QString MediaConversionRequest::inputPath() const
+{
+    return sourceInput ? sourceInput->inputPath : asset.absolutePath;
+}
 
 QString MediaConversionRequest::fingerprint() const
 {
@@ -36,6 +42,9 @@ QString MediaConversionRequest::jobKey() const
 
 bool MediaConversionRequest::sourceMatches() const
 {
+    if (sourceInput)
+        return sourceInput->contentHash == asset.contentHash
+            && QFileInfo::exists(sourceInput->inputPath);
     return !asset.contentHash.isEmpty()
         && AssetImporter::computeContentHash(asset.absolutePath) == asset.contentHash;
 }
@@ -47,6 +56,17 @@ bool MediaConversionRequest::cacheValid() const
         && it->fingerprint == fingerprint() && it->cachePath == cachePath()
         && sourceMatches()
         && QFileInfo::exists(QDir(PathUtils::getCacheDir(projectRoot)).filePath(it->cachePath));
+}
+
+QString MediaBuildSnapshot::sourceFingerprint(uint32_t sourceID, QString* error) const
+{
+    const auto asset = assets.constFind(sourceID);
+    if (asset == assets.cend()) {
+        if (error) *error = QStringLiteral("Asset not found in media snapshot: %1").arg(sourceID);
+        return {};
+    }
+    return sourceInputs ? sourceInputs->sourceFingerprint(*asset, error)
+        : AssetImporter::computeContentHash(asset->absolutePath);
 }
 
 std::optional<MediaConversionRequest> MediaBuildSnapshot::request(
@@ -62,11 +82,19 @@ std::optional<MediaConversionRequest> MediaBuildSnapshot::request(
         if (error) *error = QStringLiteral("Asset not found in media snapshot");
         return std::nullopt;
     }
+    AssetInfo current = *asset;
+    std::shared_ptr<const BuildSourceInput> input;
+    if (sourceInputs) {
+        input = sourceInputs->capture(current, error);
+        if (!input) return std::nullopt;
+        current.contentHash = input->contentHash;
+        current.metadata = input->metadata;
+    }
     const auto overrideIt = fileOverrides.constFind(sourceID);
     const auto settings = PlatformProfileManager::effectiveSettingsForAsset(
-        *asset, *definition, overrideIt == fileOverrides.cend() ? nullptr : &*overrideIt);
+        current, *definition, overrideIt == fileOverrides.cend() ? nullptr : &*overrideIt);
     return MediaConversionRequest{projectRoot, registrySession,
-        platformRevisions.value(platformId), *definition, *asset, settings};
+        platformRevisions.value(platformId), *definition, std::move(current), settings, std::move(input)};
 }
 
 }

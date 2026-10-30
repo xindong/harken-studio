@@ -1,7 +1,7 @@
 #include "Core/Components/VSelection.h"
 #include "FieldGroupEditing.h"
 
-#include "CanonicalRuntimeProjectAdapterPrivate.h"
+#include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "Components/VTrack.h"
 #include "PlayablePropertyAuthoringV1.h"
 #include "ProjectTypes.h"

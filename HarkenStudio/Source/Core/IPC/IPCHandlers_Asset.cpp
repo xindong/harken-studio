@@ -1,5 +1,6 @@
 #include "../PropertyEditSession.h"
-#include "../ProjectBuildSnapshot.h"
+#include "Tooling/Harkenizer/Core/ProjectBuildSnapshot.h"
+#include "Tooling/Harkenizer/Core/ProjectPackBuildService.h"
 #include "IPCServerInternal.h"
 #include "AudioEngine.h"
 #include "AssetPipeline/PathUtils.h"
@@ -390,16 +391,12 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
         struct ExportGate {
             ~ExportGate() { ProjectPackExporter::endBackgroundExport(); }
         } gate;
-        ProjectPackExporter exporter;
-
         QJsonArray platformResults;
         QVector<PackGenerationRecord> generationRecords;
         std::map<std::tuple<QString, QString, QString>, PackGenerationProgress> unitProgress;
         QMap<QString, QVector<PackArtifactMetadata>> publishedArtifacts;
-        bool allSuccess = true;
         QString firstError;
         int done = 0;
-        QStringList succeededPlatforms;
         ProjectPackExporter::ExportOptions exportOpts;
         exportOpts.snapshot = snapshot;
         exportOpts.selection = exportSelection;
@@ -416,30 +413,38 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
                 PackGenerationRecordStore::instance().updateProgress(runId, progress);
             }, Qt::QueuedConnection);
         };
+        exportOpts.observationCallback = [this, pmGuard, project, runId](const PackBuildObservation& observation) {
+            QMetaObject::invokeMethod(this, [pmGuard, project, runId, observation]() {
+                if (!pmGuard || pmGuard->currentProject() != project.get()) return;
+                PackGenerationRecordStore::instance().updateObservation(runId, observation);
+            }, Qt::QueuedConnection);
+        };
         exportOpts.debugStrings = true;
-        const bool preflightSucceeded = ProjectPackExporter::ValidatePackBuildWriteAccess(
-            snapshot->project, outputPath, platforms, exportOpts, &firstError);
-        allSuccess = preflightSucceeded;
-        if (preflightSucceeded) {
+        ProjectPackBuildService::Request buildRequest;
+        buildRequest.outputRoot = outputPath;
+        buildRequest.platforms = platforms;
+        buildRequest.options = exportOpts;
+        buildRequest.outputLock = outputLock;
+        buildRequest.stopOnCanceledPlatform = false;
+        buildRequest.artifactOrder = ProjectPackBuildService::ArtifactOrder::PlatformId;
+        buildRequest.finalizationCancelCheck = [cancel, platformChanged] {
+            return cancel->load(std::memory_order_relaxed) || platformChanged->load(std::memory_order_relaxed);
+        };
+        buildRequest.preflightFinished = [this, runId] {
             QMetaObject::invokeMethod(this, [this, runId] {
                 auto& store = PackGenerationRecordStore::instance();
                 if (!store.isCurrentRun(runId)) return;
                 store.finishPreflight(runId);
                 packBuildMessage_ = QStringLiteral("Building packs...");
             }, Qt::QueuedConnection);
-        }
-        for (const QString& platform : platforms)
-        {
-            if (!preflightSucceeded || cancel->load(std::memory_order_relaxed)) break;
-            exportOpts.platform = platform;
-
-            QElapsedTimer timer;
-            timer.start();
-            const auto& definition = *ProjectPlatformSemantics::find(snapshot->project.platforms, QUuid(platform));
-            const QString platformDir = ProjectPackExporter::platformOutputDir(outputPath, definition);
-            std::vector<ProjectPackExporter::PackBuildRecord> records;
-            const auto result = exporter.ExportAllPacks(
-                snapshot->project, platformDir, exportOpts, &records);
+        };
+        buildRequest.platformFinished = [&](const ProjectPackBuildService::PlatformResult& completed) {
+            const auto& platform = completed.platform;
+            const auto& definition = completed.definition;
+            const auto& platformDir = completed.outputDir;
+            const auto& records = completed.records;
+            const auto& result = completed.result;
+            const auto& timer = completed.timer;
             if (result.success) publishedArtifacts.insert(platform, result.artifacts);
             for (const auto& record : records) {
                 QString source;
@@ -485,8 +490,6 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
                     definition.basePlatform, definition.toJson(), {}, result.canceled});
             }
 
-            if (result.success) succeededPlatforms.append(platform);
-            allSuccess = allSuccess && result.success;
             if (!result.success && firstError.isEmpty())
                 firstError = result.error;
 
@@ -518,31 +521,24 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
                 packBuildProgress_ = percent;
                 packBuildMessage_ = message;
             }, Qt::QueuedConnection);
-        }
-
-        bool canceled = cancel->load(std::memory_order_relaxed);
+        };
+        const auto build = ProjectPackBuildService::run(buildRequest);
+        const bool preflightSucceeded = build.preflightSucceeded;
+        bool allSuccess = build.allPlatformsSucceeded;
+        if (!preflightSucceeded) firstError = build.preflightError;
+        const auto& succeededPlatforms = build.succeededPlatforms;
+        bool canceled = build.canceled;
         QString publicationError;
         QStringList publicationWarnings;
-        QVector<PackArtifactMetadata> completedArtifacts;
-        for (const auto& artifacts : publishedArtifacts)
-            completedArtifacts.append(artifacts);
-        const auto publicationCanceled = [cancel, platformChanged] {
-            return cancel->load(std::memory_order_relaxed) || platformChanged->load(std::memory_order_relaxed);
-        };
-        if (preflightSucceeded && !canceled) {
-            bool finalized;
-            if (allSuccess) {
-                const auto publication = ProjectPackExporter::FinalizePackExport(
-                    outputPath, snapshot->project, platforms, false, completedArtifacts, publicationCanceled);
+        if (build.finalization != ProjectPackBuildService::Finalization::None) {
+            const bool finalized = build.finalizationResult.success;
+            if (build.finalization == ProjectPackBuildService::Finalization::Complete) {
+                const auto& publication = build.finalizationResult;
                 publicationWarnings = publication.warnings;
-                finalized = publication.success;
-                canceled = publication.canceled && cancel->load(std::memory_order_relaxed);
                 publicationError = publication.canceled && !canceled
                     ? QStringLiteral("Pack platforms changed during the build; output finalization stopped") : publication.error;
             } else {
-                finalized = ProjectPackExporter::FinalizePackOutputs(outputPath, snapshot->project.platforms,
-                    platforms, succeededPlatforms, &publicationError, completedArtifacts, publicationCanceled);
-                canceled = !finalized && cancel->load(std::memory_order_relaxed);
+                publicationError = build.finalizationResult.error;
                 if (!finalized && platformChanged->load(std::memory_order_relaxed))
                     publicationError = QStringLiteral("Pack platforms changed during the build; output finalization stopped");
             }

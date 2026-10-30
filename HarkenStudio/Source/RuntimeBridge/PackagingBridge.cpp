@@ -1,6 +1,7 @@
 #include "PackagingBridge.h"
 #include "ProjectSyncBridge.h"
 #include "Utils/AudioFileReader.h"
+#include "Tooling/Harkenizer/ResourceCompilerClient.h"
 #include <harken_studio_build/BindingTransition.h>
 #include <harken_studio_build/BindingTargets.h>
 
@@ -13,7 +14,6 @@
 #include <harken_studio_build/EffectEncoding.h>
 #include <harken_studio_build/MediaContentRevision.h>
 
-#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
@@ -24,8 +24,6 @@
 #include <QJsonObject>
 #include <QMutex>
 #include <QMutexLocker>
-#include <QProcess>
-#include <QStandardPaths>
 #include <QTemporaryDir>
 
 #include <algorithm>
@@ -521,52 +519,6 @@ bool initAudioDecoder(VNX::AudioFileReader& file, ma_decoder& decoder)
     return ma_decoder_init(read, seek, &file, &config, &decoder) == MA_SUCCESS;
 }
 
-QString quoteProcessError(QProcess& process)
-{
-    const QString stdErr = QString::fromLocal8Bit(process.readAllStandardError()).trimmed();
-    const QString stdOut = QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed();
-    if (!stdErr.isEmpty() && !stdOut.isEmpty())
-        return stdErr + QStringLiteral("\n") + stdOut;
-    return !stdErr.isEmpty() ? stdErr : stdOut;
-}
-
-QString findPackcExecutable()
-{
-    const QString env = qEnvironmentVariable(QStringLiteral("HARKEN_PACKC_PATH").toUtf8().constData());
-    if (!env.isEmpty() && QFileInfo::exists(env))
-        return env;
-
-    const QStringList exeNames =
-#ifdef _WIN32
-        {QStringLiteral("packc.exe"), QStringLiteral("harken_packc.exe")};
-#else
-        {QStringLiteral("packc"), QStringLiteral("harken_packc")};
-#endif
-
-    const QStringList roots = {
-        QCoreApplication::applicationDirPath(),
-        QDir::currentPath(),
-        QDir(QDir::currentPath()).filePath(QStringLiteral("bin")),
-        QDir(QDir::currentPath()).filePath(QStringLiteral("../bin"))
-    };
-    for (const QString& root : roots)
-    {
-        for (const QString& exeName : exeNames)
-        {
-            const QString candidate = QDir(root).filePath(exeName);
-            if (QFileInfo::exists(candidate))
-                return candidate;
-        }
-    }
-    for (const QString& exeName : exeNames)
-    {
-        const QString path = QStandardPaths::findExecutable(exeName);
-        if (!path.isEmpty())
-            return path;
-    }
-    return QString();
-}
-
 } // namespace
 
 QString packArtifactExtension() { return QStringLiteral(".bytes"); }
@@ -818,6 +770,7 @@ bool isPackCodecCodebookSection(uint32_t) { return false; }
 
 struct PackBuildSession::Impl
 {
+    std::shared_ptr<Harkenizer::ResourceCompilerClient> compiler;
     struct MediaEntry
     {
         harkenstudio::ObjectId id{};
@@ -1212,22 +1165,23 @@ struct PackBuildSession::Impl
         QFile file(manifestPath);
         if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
         {
-            lastError = QStringLiteral("Cannot write packc manifest: %1").arg(manifestPath);
+            lastError = QStringLiteral("Cannot write resource manifest: %1").arg(manifestPath);
             return false;
         }
         const QByteArray data = QJsonDocument(root).toJson();
         if (file.write(data) != data.size())
         {
-            lastError = QStringLiteral("Cannot finish packc manifest: %1").arg(manifestPath);
+            lastError = QStringLiteral("Cannot finish resource manifest: %1").arg(manifestPath);
             return false;
         }
         return true;
     }
 };
 
-PackBuildSession::PackBuildSession()
+PackBuildSession::PackBuildSession(std::shared_ptr<Harkenizer::ResourceCompilerClient> compiler)
     : impl_(new Impl)
 {
+    impl_->compiler = compiler ? std::move(compiler) : std::make_shared<Harkenizer::ResourceCompilerClient>();
 }
 
 PackBuildSession::~PackBuildSession() = default;
@@ -1502,19 +1456,14 @@ bool PackBuildSession::buildToFile(const QString& outputPath)
 {
     impl_->lastError.clear();
     impl_->warnings = impl_->pendingWarnings;
-    const QString packc = findPackcExecutable();
-    if (packc.isEmpty())
-    {
-        impl_->lastError = QStringLiteral("harken_packc executable was not found");
-        return false;
-    }
+    if (impl_->compiler->identity(&impl_->lastError).isEmpty()) return false;
 
     QDir().mkpath(QFileInfo(outputPath).absolutePath());
     QTemporaryDir workDir(QDir(QFileInfo(outputPath).absolutePath())
-                              .filePath(QStringLiteral(".packc_XXXXXX")));
+                              .filePath(QStringLiteral(".harkenizer_XXXXXX")));
     if (!workDir.isValid())
     {
-        impl_->lastError = QStringLiteral("Cannot create packc work directory near %1")
+        impl_->lastError = QStringLiteral("Cannot create resource compilation directory near %1")
                                .arg(outputPath);
         return false;
     }
@@ -1523,42 +1472,31 @@ bool PackBuildSession::buildToFile(const QString& outputPath)
     if (!impl_->writeManifest(manifestPath, outputPath))
         return false;
 
-    QProcess process;
-    process.setProgram(packc);
-    process.setArguments({manifestPath});
-    process.start();
-    if (!process.waitForStarted())
+    const auto compiled = impl_->compiler->compile(manifestPath, outputPath);
+    if (compiled.status != Harkenizer::ResourceCompilerClient::Status::Succeeded)
     {
-        impl_->lastError = QStringLiteral("Cannot start harken_packc: %1").arg(packc);
-        return false;
-    }
-    if (!process.waitForFinished(300000))
-    {
-        process.kill();
-        process.waitForFinished();
-        impl_->lastError = QStringLiteral("harken_packc timed out for %1").arg(outputPath);
-        return false;
-    }
-
-    const int exitCode = process.exitCode();
-    const QString processText = quoteProcessError(process);
-    if (process.exitStatus() != QProcess::NormalExit || exitCode != 0)
-    {
+        if (compiled.status != Harkenizer::ResourceCompilerClient::Status::Refused
+            && compiled.status != Harkenizer::ResourceCompilerClient::Status::Crashed) {
+            impl_->lastError = compiled.error;
+            return false;
+        }
         QString reportText;
         QFile report(outputPath + QStringLiteral(".report.json"));
         if (report.open(QIODevice::ReadOnly | QIODevice::Text))
             reportText = QString::fromUtf8(report.readAll()).trimmed();
-        impl_->lastError = !reportText.isEmpty()
-            ? reportText
-            : (processText.isEmpty()
-                   ? QStringLiteral("harken_packc failed with exit code %1").arg(exitCode)
-                   : processText);
+        QString processText = compiled.diagnosticLog.trimmed();
+        if (!compiled.outputLog.trimmed().isEmpty()) {
+            if (!processText.isEmpty()) processText += QLatin1Char('\n');
+            processText += compiled.outputLog.trimmed();
+        }
+        impl_->lastError = !reportText.isEmpty() ? reportText
+            : !processText.isEmpty() ? processText : compiled.error;
         return false;
     }
 
     if (!QFileInfo::exists(outputPath))
     {
-        impl_->lastError = QStringLiteral("harken_packc did not create output: %1").arg(outputPath);
+        impl_->lastError = QStringLiteral("Harkenizer did not create output: %1").arg(outputPath);
         return false;
     }
     return true;
@@ -1587,7 +1525,9 @@ QString PackBuildSession::inputFingerprint()
         }
         return true;
     };
-    if (!addFile(findPackcExecutable())) return {};
+    const auto compilerIdentity = impl_->compiler->identity(&impl_->lastError);
+    if (compilerIdentity.isEmpty()) return {};
+    hash.addData(compilerIdentity);
     if (!impl_->initPack)
         for (const auto& entry : impl_->media)
             if (!addFile(entry.path)) return {};

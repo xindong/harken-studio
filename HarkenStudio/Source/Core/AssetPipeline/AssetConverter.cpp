@@ -1,11 +1,13 @@
 
 #include "AssetConverter.h"
 #include "AssetRegistry.h"
+#include "CacheArtifactWriter.h"
 #include "PathUtils.h"
 #include "PlatformProfile.h"
 #include "../ProjectPlatformActivity.h"
 
 #include <QFile>
+#include <QCryptographicHash>
 #include <QSaveFile>
 #include <QDateTime>
 #include <QPointer>
@@ -274,11 +276,10 @@ bool AssetConverter::processSamples(std::vector<float>& samples, int& sampleRate
     return true;
 }
 
-bool AssetConverter::writeFloatWav(const QString& path,
-                                   const std::vector<float>& interleaved,
-                                   uint16_t channels, uint32_t sampleRate)
+static bool writeFloatWavData(QIODevice& file, const std::vector<float>& interleaved,
+                              uint16_t channels, uint32_t sampleRate,
+                              QString* contentHash = nullptr)
 {
-    QDir().mkpath(QFileInfo(path).absolutePath());
     if (channels < 1 || channels > 2 || sampleRate == 0 || interleaved.empty()
         || interleaved.size() % channels != 0)
         return false;
@@ -289,8 +290,6 @@ bool AssetConverter::writeFloatWav(const QString& path,
         || dataBytes > std::numeric_limits<uint32_t>::max()
         || riffSize > std::numeric_limits<uint32_t>::max())
         return false;
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly)) return false;
     const uint16_t blockAlign = channels * sizeof(float);
     const uint32_t byteRate = sampleRate * blockAlign;
     QByteArray header;
@@ -311,9 +310,42 @@ bool AssetConverter::writeFloatWav(const QString& path,
     appendU32(header, static_cast<uint32_t>(frames));
     header.append("data", 4);
     appendU32(header, static_cast<uint32_t>(dataBytes));
-    return file.write(header) == header.size()
-        && file.write(reinterpret_cast<const char*>(interleaved.data()),
-                      static_cast<qint64>(dataBytes)) == static_cast<qint64>(dataBytes) && file.commit();
+    const auto* samples = reinterpret_cast<const char*>(interleaved.data());
+    if (file.write(header) != header.size()
+        || file.write(samples, static_cast<qint64>(dataBytes)) != static_cast<qint64>(dataBytes))
+        return false;
+    if (contentHash) {
+        QCryptographicHash hash(QCryptographicHash::Sha256);
+        hash.addData(header);
+        hash.addData(QByteArrayView(samples, static_cast<qsizetype>(dataBytes)));
+        *contentHash = QString::fromLatin1(hash.result().toHex());
+    }
+    return true;
+}
+
+bool AssetConverter::writeFloatWav(const QString& path,
+                                   const std::vector<float>& interleaved,
+                                   uint16_t channels, uint32_t sampleRate)
+{
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QSaveFile file(path);
+    return file.open(QIODevice::WriteOnly)
+        && writeFloatWavData(file, interleaved, channels, sampleRate) && file.commit();
+}
+
+bool AssetConverter::writeFloatWavCache(const QString& path,
+                                        const std::vector<float>& interleaved,
+                                        uint16_t channels, uint32_t sampleRate,
+                                        QString* contentHash)
+{
+    if (contentHash) contentHash->clear();
+    QString writtenHash;
+    const bool written = writeCacheArtifact(path, [&](QIODevice& file) {
+        return writeFloatWavData(file, interleaved, channels, sampleRate,
+                                 contentHash ? &writtenHash : nullptr);
+    });
+    if (written && contentHash) *contentHash = writtenHash;
+    return written;
 }
 
 
@@ -387,7 +419,7 @@ ConversionResult AssetConverter::doConversion(
 
     std::vector<float> samples;
     int channels, sampleRate;
-    if (!decodeSource(asset->absolutePath, samples, channels, sampleRate)) {
+    if (!decodeSource(request.inputPath(), samples, channels, sampleRate)) {
         result.errorMessage = "Failed to decode source file";
         emitFailed(result.errorMessage);
         return result;

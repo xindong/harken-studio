@@ -3,9 +3,9 @@
 #include "AssetPipeline/PathUtils.h"
 #include "Components/VAction.h"
 #include "Components/VSound.h"
-#include "CanonicalPackSetExport.h"
+#include "Tooling/Harkenizer/Core/CanonicalPackSetExport.h"
 #include "ProjectManager.h"
-#include "ProjectPackExporter.h"
+#include "Tooling/Harkenizer/Core/ProjectPackExporter.h"
 #include "ProjectTypes.h"
 #include "RuntimeBridge/PackagingBridge.h"
 #include "FieldGroupProjectAdapter.h"
@@ -31,8 +31,8 @@
 #include <utility>
 #include <vector>
 
-#ifndef HARKEN_PACKC_PATH
-#error "HARKEN_PACKC_PATH must point at the packc executable"
+#ifndef HARKENIZER_PATH
+#error "HARKENIZER_PATH must point at the Harkenizer executable"
 #endif
 
 using namespace VNX;
@@ -116,7 +116,7 @@ protected:
     void SetUp() override
     {
         ensureApp();
-        qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+        qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
         auto& manager = ProjectManager::instance();
         if (manager.isProjectOpen())
             manager.closeProject();

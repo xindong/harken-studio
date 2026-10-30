@@ -1,16 +1,13 @@
 #include "ProjectInstance.h"
 
-#include <QApplication>
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDeadlineTimer>
 #include <QDir>
 #include <QFileInfo>
 #include <QHash>
-#include <QPointer>
 #include <QThread>
 #include <QTimer>
-#include <QWidget>
-#include <QWindow>
 
 #ifdef Q_OS_WIN
 #include <QJsonDocument>
@@ -37,29 +34,8 @@ QHash<QString, std::weak_ptr<ProjectInstance>>& instances()
     return value;
 }
 
-QPointer<QWidget> activationWindow;
+void (*activationHandler)() = nullptr;
 bool pendingActivation = false;
-
-void focusWindow()
-{
-    QWidget* window = activationWindow;
-    if (window && window->isMinimized())
-        window->setWindowState(window->windowState() & ~Qt::WindowMinimized);
-    if (QWidget* modal = QApplication::activeModalWidget())
-        window = modal;
-    if (!window)
-        return;
-    if (window->isMinimized())
-        window->setWindowState(window->windowState() & ~Qt::WindowMinimized);
-    window->show();
-    window->raise();
-    window->activateWindow();
-    if (QWindow* handle = window->windowHandle())
-        handle->requestActivate();
-#ifdef Q_OS_WIN
-    SetForegroundWindow(reinterpret_cast<HWND>(window->winId()));
-#endif
-}
 
 QString currentUserIdentity()
 {
@@ -272,7 +248,8 @@ QString ProjectInstance::identityForProject(const QString& projectFile)
     return canonical;
 }
 
-ProjectInstance::Acquisition ProjectInstance::acquire(const QString& projectFile)
+ProjectInstance::Acquisition ProjectInstance::acquire(const QString& projectFile,
+                                                     ActivationPolicy activation)
 {
     if (!QCoreApplication::instance() ||
         QThread::currentThread() != QCoreApplication::instance()->thread())
@@ -303,13 +280,15 @@ ProjectInstance::Acquisition ProjectInstance::acquire(const QString& projectFile
         const DWORD state = WaitForSingleObject(instance->native_->mutex, 0);
         if (state == WAIT_OBJECT_0 || state == WAIT_ABANDONED) {
             instance->native_->ownsMutex = true;
-            if (!instance->native_->listen(name, instance.get()))
+            if (activation == ActivationPolicy::Allow && !instance->native_->listen(name, instance.get()))
                 return {Status::Failed, {}, QStringLiteral("Could not start the project activation channel.")};
             registry.insert(identity, instance);
             return {Status::Acquired, instance, {}};
         }
         if (state == WAIT_FAILED)
             return {Status::Failed, {}, QStringLiteral("Could not inspect the project activation guard.")};
+        if (activation == ActivationPolicy::Deny)
+            return {Status::Failed, {}, QStringLiteral("The project is in use by another process.")};
         if (forwardActivation(name, deadline))
             return {Status::Forwarded, {}, {}};
         if (!deadline.hasExpired())
@@ -325,6 +304,11 @@ ProjectInstance::Acquisition ProjectInstance::acquire(const QString& projectFile
         instance->native_->port = CFMessagePortCreateLocal(
             kCFAllocatorDefault, portName, NativeData::receive, &context, nullptr);
         if (instance->native_->port) {
+            if (activation == ActivationPolicy::Deny) {
+                CFRelease(portName);
+                registry.insert(identity, instance);
+                return {Status::Acquired, instance, {}};
+            }
             instance->native_->source = CFMessagePortCreateRunLoopSource(
                 kCFAllocatorDefault, instance->native_->port, 0);
             if (!instance->native_->source) {
@@ -336,6 +320,10 @@ ProjectInstance::Acquisition ProjectInstance::acquire(const QString& projectFile
             CFRelease(portName);
             registry.insert(identity, instance);
             return {Status::Acquired, instance, {}};
+        }
+        if (activation == ActivationPolicy::Deny) {
+            CFRelease(portName);
+            return {Status::Failed, {}, QStringLiteral("The project is in use by another process.")};
         }
         if (CFMessagePortRef remote = CFMessagePortCreateRemote(kCFAllocatorDefault, portName)) {
             CFDataRef reply = nullptr;
@@ -362,19 +350,20 @@ ProjectInstance::Acquisition ProjectInstance::acquire(const QString& projectFile
     return {Status::Failed, {}, QStringLiteral("The project is already opening in another Studio instance, but that instance did not respond to activation. Try again after it finishes opening.")};
 }
 
-void ProjectInstance::setActivationWindow(QWidget* window)
+void ProjectInstance::setActivationHandler(void (*handler)(), bool windowAvailable)
 {
-    activationWindow = window;
-    if (window && pendingActivation) {
+    activationHandler = handler;
+    if (windowAvailable && pendingActivation) {
         pendingActivation = false;
-        focusWindow();
+        activationHandler();
     }
 }
 
 void ProjectInstance::activateWindow()
 {
     pendingActivation = true;
-    focusWindow();
+    if (activationHandler)
+        activationHandler();
 }
 
 void ProjectInstance::receiveActivation()

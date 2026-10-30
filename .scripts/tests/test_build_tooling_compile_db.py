@@ -113,7 +113,7 @@ class ToolingCompilationDatabaseTest(unittest.TestCase):
                 ),
                 self._entry(
                     "HarkenEngine/Tool/Host/Main.cpp",
-                    "harken_packc",
+                    "harkenizer",
                     extra="-DALTERNATE_TOOL=1",
                 ),
                 self._entry(
@@ -134,6 +134,20 @@ class ToolingCompilationDatabaseTest(unittest.TestCase):
         self.assertIn("harken_core.dir", runtime_entry["output"])
         self.assertIn("harken_host.dir", host_entry["output"])
         self.assertIn("harken_editor_tests.dir", editor_entry["output"])
+
+        for relative, target in (
+            ("ResourceCompiler/ResourceCompiler.cpp", "harkenizer_resource_compiler"),
+            ("Core/ProjectPackBuildService.cpp", "harkenizer_core"),
+            ("ResourceCompilerClient.cpp", "harkenizer_compiler_client"),
+            ("Main.cpp", "harkenizer"),
+        ):
+            with self.subTest(source=relative):
+                source = "HarkenStudio/Source/Tooling/Harkenizer/" + relative
+                owned = self._entry(source, target)
+                alternate = self._entry(source, "harken_editor_tests", extra="-DTEST_VARIANT=1")
+                selected = MODULE._choose_entry(
+                    Path(owned["file"]), [alternate, owned], "tooling", self.root)
+                self.assertEqual(selected, owned)
 
     def test_excludes_dependencies_studio_and_standalone_clients(self) -> None:
         entries = self._required_entries()

@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import shutil
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -53,6 +54,8 @@ class BuildStudioPackageTest(unittest.TestCase):
                 "gitDirty": False,
             }
         self.module.run_studio_self_test = self_test
+        self.run_harkenizer_smoke_test = self.module.run_harkenizer_smoke_test
+        self.harkenizer_smoke_test = mock.patch.object(self.module, "run_harkenizer_smoke_test").start()
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -84,6 +87,7 @@ class BuildStudioPackageTest(unittest.TestCase):
         (self.input_dir / "data").mkdir(parents=True)
         if with_binary:
             (self.input_dir / "HarkenStudio.exe").write_bytes(b"stub-binary")
+        (self.input_dir / "Harkenizer.exe").write_bytes(b"stub-executor")
         (self.input_dir / "data" / "asset.bin").write_bytes(b"payload" * 100)
         self.publish_schema(self.input_dir / "schema")
         unity = self.input_dir / "HarkenIntegration" / "Unity" / "Harken"
@@ -136,11 +140,12 @@ class BuildStudioPackageTest(unittest.TestCase):
             for path in (self.input_dir / "schema").rglob("*")
             if path.is_file()
         }
-        self.assertEqual(summary["fileCount"], 4 + len(schema_files) + len(self.legal_paths))
+        self.assertEqual(summary["fileCount"], 5 + len(schema_files) + len(self.legal_paths))
 
         with zipfile.ZipFile(package) as archive:
             names = set(archive.namelist())
             self.assertIn("HarkenStudio.exe", names)
+            self.assertEqual(archive.read("Harkenizer.exe"), b"stub-executor")
             self.assertIn("data/asset.bin", names)
             self.assertIn("package-manifest.json", names)
             self.assertIn("capabilities.json", names)
@@ -163,6 +168,7 @@ class BuildStudioPackageTest(unittest.TestCase):
             by_path = {f["path"]: f for f in manifest["files"]}
             self.assertEqual(set(by_path), schema_files | self.legal_paths | {
                     "HarkenStudio.exe",
+                    "Harkenizer.exe",
                     "data/asset.bin",
                     "HarkenIntegration/Unity/Harken/package.json",
                     "HarkenSDK/Unity/Harken/package.json",
@@ -281,6 +287,7 @@ class BuildStudioPackageTest(unittest.TestCase):
         app = self.input_dir / "HarkenStudio.app" / "Contents" / "MacOS"
         app.mkdir(parents=True)
         (app / "HarkenStudio").write_bytes(b"stub-binary")
+        (app / "Harkenizer").write_bytes(b"stub-executor")
         self.publish_schema(app / "schema")
         unity = app / "HarkenIntegration" / "Unity" / "Harken"
         unity.mkdir(parents=True)
@@ -290,6 +297,7 @@ class BuildStudioPackageTest(unittest.TestCase):
         self.publish_compatibility(app)
         summary = self.run_build()
         with zipfile.ZipFile(summary["package"]) as archive:
+            self.assertEqual(archive.read("HarkenStudio.app/Contents/MacOS/Harkenizer"), b"stub-executor")
             manifest = json.loads(archive.read("package-manifest.json"))
             artifacts = manifest["components"][0]["artifacts"]
             self.assertEqual(
@@ -301,6 +309,61 @@ class BuildStudioPackageTest(unittest.TestCase):
         self.make_input(with_binary=False)
         with self.assertRaises(SystemExit):
             self.run_build()
+
+    def test_missing_or_empty_executor_prevents_package_creation(self):
+        self.make_input()
+        binary = self.input_dir / "Harkenizer.exe"
+        binary.unlink()
+        for missing in (True, False):
+            with self.subTest(missing=missing):
+                if not missing:
+                    binary.touch()
+                with self.assertRaisesRegex(SystemExit, "Harkenizer binary is missing or empty"):
+                    self.run_build()
+                self.assertFalse(self.output_dir.exists())
+        self.harkenizer_smoke_test.assert_not_called()
+
+    def test_retired_executor_prevents_package_creation_without_removing_files(self):
+        for platform, binary_name in (
+            ("windows", "HarkenStudio.exe"),
+            ("macos", "HarkenStudio.app/Contents/MacOS/HarkenStudio"),
+        ):
+            self.input_dir = self.root / platform
+            binary = self.input_dir / binary_name
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b"stub-binary")
+            for name in ("packc", "packc.exe", "harken_packc", "harken_packc.exe", "PACKC.EXE"):
+                with self.subTest(platform=platform, name=name):
+                    retired = binary.with_name(name)
+                    retired.write_bytes(b"retired-executor")
+                    with self.assertRaisesRegex(SystemExit, "retired packc executable"):
+                        self.run_build()
+                    self.assertEqual(retired.read_bytes(), b"retired-executor")
+                    self.assertFalse(self.output_dir.exists())
+                    retired.unlink()
+        self.harkenizer_smoke_test.assert_not_called()
+        self.evidence.prepare.assert_not_called()
+
+    def test_retired_name_outside_binary_directory_remains_payload(self):
+        self.make_input()
+        (self.input_dir / "data" / "packc.exe").write_bytes(b"unrelated-data")
+        summary = self.run_build()
+        with zipfile.ZipFile(summary["package"]) as archive:
+            self.assertEqual(archive.read("data/packc.exe"), b"unrelated-data")
+
+    def test_executor_startup_failures_prevent_package_creation(self):
+        self.make_input()
+        self.harkenizer_smoke_test.side_effect = self.run_harkenizer_smoke_test
+        for result in (mock.Mock(returncode=1), OSError("missing runtime"),
+                       subprocess.TimeoutExpired("Harkenizer", 30)):
+            with self.subTest(result=result), mock.patch.object(self.module.subprocess, "run") as run:
+                if isinstance(result, Exception):
+                    run.side_effect = result
+                else:
+                    run.return_value = result
+                with self.assertRaisesRegex(SystemExit, "Harkenizer"):
+                    self.run_build()
+                self.assertFalse(self.output_dir.exists())
 
     def test_missing_schema_archive_is_rejected(self):
         self.make_input()

@@ -27,6 +27,10 @@
 #include <memory>
 #include <vector>
 
+namespace Harkenizer {
+class ResourceCompilerClient;
+}
+
 namespace HarkenEditor {
 namespace Bridge {
 
@@ -338,7 +342,7 @@ struct PackMediaDesc
 {
     harkenstudio::ObjectId sourceId = {}; // new .pack entry id (runtime stable sound id)
     uint32_t authoringSourceId = 0; // editor source row, for diagnostics/UI only
-    QString sourcePath; // WAV path consumed by harken_packc
+    QString sourcePath;
     bool downmixToMono = false;
     bool loopable = false;
     uint64_t loopStartFrame = 0;
@@ -359,7 +363,7 @@ bool computePackMediaContentRevision(const PackMediaDesc& media, uint64_t* revis
 class PackBuildSession
 {
 public:
-    PackBuildSession();
+    explicit PackBuildSession(std::shared_ptr<Harkenizer::ResourceCompilerClient> compiler = {});
     ~PackBuildSession();
     PackBuildSession(const PackBuildSession&) = delete;
     PackBuildSession& operator=(const PackBuildSession&) = delete;

@@ -1,6 +1,6 @@
 #include "FieldGroupProjectAdapter.h"
 
-#include "CanonicalRuntimeProjectAdapterPrivate.h"
+#include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "ProjectTypes.h"
 
 #include <map>

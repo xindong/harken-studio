@@ -1,6 +1,6 @@
 #include "FieldGroupInspectorView.h"
 
-#include "Core/CanonicalRuntimeProjectAdapterPrivate.h"
+#include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "Core/PlayablePropertyAuthoringV1.h"
 #include "Core/ProjectTypes.h"
 #include "Core/FieldGroupJson.h"

@@ -26,6 +26,7 @@
 #include "RemoteServe.h"
 #include "SchedulingMeasure.h"
 #include "TraceReplay.h"
+#include "ResourceCompiler.h"
 #include "JsonWriter.h"
 #include "harken/core/AllocGuard.h"
 #include "harken/media/StreamFormat.h"
@@ -142,7 +143,7 @@ void PrintUsage() {
         "                 by an internal clock - no audio hardware.\n");
     std::fprintf(stderr,
                  "\nstream-endurance writes a low-level source under .temp/,\n"
-                 "compiles it through packc --stream, streams it, polls\n"
+                 "compiles it through Harkenizer's resource compiler, streams it, polls\n"
                  "Vn_CaptureSnapshot, and exits on the ended notification.\n");
     std::fprintf(stderr,
                  "\nm2-scene plays a streamed music sound, an in-memory\n"
@@ -906,22 +907,19 @@ std::string QuoteArg(const std::filesystem::path& path) {
     return "\"" + path.string() + "\"";
 }
 
-std::filesystem::path ResolvePackcPath(const Options& options,
-                                       char** argv) {
-    if (!options.packcPath.empty()) {
-        return std::filesystem::path(options.packcPath);
-    }
-    std::filesystem::path exe = std::filesystem::absolute(argv[0]);
-#if defined(_WIN32)
-    return exe.parent_path() / "packc.exe";
-#else
-    return exe.parent_path() / "packc";
-#endif
-}
-
-bool RunPackcStream(const std::filesystem::path& packc,
+bool CompileStream(const Options& options,
                        const std::filesystem::path& manifest) {
-    const std::string command = QuoteArg(packc) + " --stream " +
+    if (options.packcPath.empty()) {
+        harkenizer::resourcecompiler::Request request;
+        const auto path = manifest.u8string();
+        request.manifestPaths.emplace_back(path.begin(), path.end());
+        request.container = harkenizer::resourcecompiler::Container::Stream;
+        const auto result = harkenizer::resourcecompiler::compile(request);
+        std::fputs(result.outputLog.c_str(), stdout);
+        std::fputs(result.diagnosticLog.c_str(), stderr);
+        return result.success;
+    }
+    const std::string command = QuoteArg(options.packcPath) + " --stream " +
                                 QuoteArg(manifest);
 #if defined(_WIN32)
     // cmd.exe strips the first and last quote character from the string it
@@ -1202,9 +1200,8 @@ int RunStreamEndurance(const Options& options, char** argv) {
         std::fprintf(stderr, "error: cannot write endurance manifest\n");
         return 1;
     }
-    const std::filesystem::path packc = ResolvePackcPath(options, argv);
-    if (!RunPackcStream(packc, manifestPath)) {
-        std::fprintf(stderr, "error: packc --stream failed\n");
+    if (!CompileStream(options, manifestPath)) {
+        std::fprintf(stderr, "error: stream resource compilation failed\n");
         return 1;
     }
 
@@ -2163,9 +2160,8 @@ int RunM2Scene(const Options& options, char** argv) {
         std::fprintf(stderr, "error: cannot write m2-scene manifest\n");
         return 1;
     }
-    const std::filesystem::path packc = ResolvePackcPath(options, argv);
-    if (!RunPackcStream(packc, manifestPath)) {
-        std::fprintf(stderr, "error: packc --stream failed\n");
+    if (!CompileStream(options, manifestPath)) {
+        std::fprintf(stderr, "error: stream resource compilation failed\n");
         return 1;
     }
 

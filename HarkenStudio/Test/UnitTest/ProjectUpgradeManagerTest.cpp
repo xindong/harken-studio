@@ -2,6 +2,7 @@
 #include "Core/FileWatcher.h"
 #include "Core/ProjectTransaction.h"
 #include "Core/ProjectSaveSnapshot.h"
+#include "Tooling/Harkenizer/Core/ProjectLoader.h"
 #include "Core/FieldGroupJson.h"
 #include "Core/FieldGroupProjectAdapter.h"
 #include "Core/SelectionData.h"
@@ -738,6 +739,73 @@ TEST(ProjectUpgradeManager, ChangedProjectIsNotOverwrittenByStaleAnalysis)
                   .value(QStringLiteral("test")).toObject()
                   .value(QStringLiteral("payload")).toString(),
               QStringLiteral("newer-content"));
+}
+
+TEST(ProjectUpgradeManager, ReadOnlyPreparationLeavesDocumentsAndCachesUntouched)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString projectPath = createBaselineProject(directory);
+    const QJsonObject before = readJson(projectPath);
+    const auto prepared = VNX::ProjectLoader::prepareProject(projectPath, false, {}, {}, {}, nullptr,
+        VNX::ProjectSerializer::LoadMode::ReadOnly);
+    ASSERT_TRUE(prepared.project) << prepared.error.toStdString();
+    EXPECT_EQ(readJson(projectPath), before);
+    EXPECT_FALSE(QDir(directory.filePath(QStringLiteral(".cache"))).exists());
+    EXPECT_FALSE(VNX::ProjectTransaction::recoveryRequired(projectPath));
+}
+
+TEST(ProjectUpgradeManager, ReadOnlyLoadDoesNotRecoverInterruptedWrites)
+{
+    QTemporaryDir directory;
+    QTemporaryDir staging;
+    ASSERT_TRUE(directory.isValid() && staging.isValid());
+    const QString projectPath = createBaselineProject(directory);
+    const QJsonObject before = readJson(projectPath);
+    QJsonObject changed = before;
+    QJsonObject content = HarkenTest::projectContent(changed);
+    QJsonObject metadata = content.value(QStringLiteral("metadata")).toObject();
+    metadata.insert(QStringLiteral("name"), QStringLiteral("Interrupted"));
+    content.insert(QStringLiteral("metadata"), metadata);
+    changed.insert(QStringLiteral("content"), content);
+    writeJson(staging.filePath(QStringLiteral("Baseline.hsp")), changed);
+    QString error;
+    {
+        auto transaction = VNX::ProjectTransaction::begin(projectPath, {QStringLiteral("Baseline.hsp")}, &error);
+        ASSERT_TRUE(transaction) << error.toStdString();
+        ASSERT_TRUE(transaction->replaceFromDirectory(staging.path(), &error)) << error.toStdString();
+    }
+    ASSERT_TRUE(VNX::ProjectTransaction::recoveryRequired(projectPath));
+    VNX::ProjectSerializer serializer;
+    VNX::ProjectData project;
+    EXPECT_FALSE(serializer.loadProject(projectPath, project, false, {}, {}, nullptr,
+        VNX::ProjectSerializer::LoadMode::ReadOnly));
+    EXPECT_TRUE(VNX::ProjectTransaction::recoveryRequired(projectPath));
+    EXPECT_EQ(readJson(projectPath), changed);
+    ASSERT_TRUE(VNX::ProjectTransaction::recover(projectPath, &error)) << error.toStdString();
+    EXPECT_EQ(readJson(projectPath), before);
+}
+
+TEST(ProjectUpgradeManager, ReadOnlyLoadCannotApproveSchemaChanges)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString projectPath = createBaselineProject(directory);
+    QJsonObject before = readJson(projectPath);
+    QJsonObject header = HarkenTest::projectHeader(before);
+    header.insert(QStringLiteral("schemaVersion"), 1);
+    header.remove(QStringLiteral("propertyModel"));
+    before.insert(QStringLiteral("harkenDocument"), header);
+    writeJson(projectPath, before);
+    bool approved = false;
+    VNX::ProjectSerializer serializer;
+    VNX::ProjectData project;
+    EXPECT_FALSE(serializer.loadProject(projectPath, project, true, {},
+        [&approved](const VNX::ProjectUpgradeAnalysis&) { approved = true; return true; },
+        nullptr, VNX::ProjectSerializer::LoadMode::ReadOnly));
+    EXPECT_FALSE(approved);
+    EXPECT_EQ(readJson(projectPath), before);
+    EXPECT_FALSE(VNX::ProjectTransaction::recoveryRequired(projectPath));
 }
 
 TEST(ProjectTransaction, DeltaRecoveryRestoresOnlyItsExplicitMutations)

@@ -15,11 +15,15 @@
 #include "Components/VSelection.h"
 #include "Components/VTrack.h"
 #include "Components/VVariable.h"
-#include "PackBuildPlan.h"
-#include "CanonicalPackSetExport.h"
+#include "Tooling/Harkenizer/Core/PackBuildPlan.h"
+#include "Tooling/Harkenizer/Core/CanonicalPackSetExport.h"
 #include "PlayablePropertyAuthoringV1.h"
-#include "ProjectPackExporter.h"
+#include "Tooling/Harkenizer/Core/ProjectPackExporter.h"
+#include "Tooling/Harkenizer/Core/ProjectPackBuildService.h"
+#include "Tooling/Harkenizer/Core/ProjectBuildSnapshot.h"
+#include "ProjectSerializer.h"
 #include "ProjectSchemaGenerated.h"
+#include "ItemTypeCatalog.h"
 #include "NameValidator.h"
 #include "ProjectTypes.h"
 #include "FieldGroupProjectAdapter.h"
@@ -69,8 +73,8 @@
 #include <vector>
 #include "Support/ProjectPlatformTestUtils.h"
 
-#ifndef HARKEN_PACKC_PATH
-#error "HARKEN_PACKC_PATH must point at the packc executable"
+#ifndef HARKENIZER_PATH
+#error "HARKENIZER_PATH must point at the Harkenizer executable"
 #endif
 
 namespace {
@@ -684,9 +688,89 @@ void renamePublicationToLegacy(const QDir& dir, bool wrapped,
 
 } // namespace
 
+TEST(EditorProjectPackExporterManifest, SharedPlanningPreservesVariantCapabilitiesAndDiagnostics)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    VNX::AssetRegistry::instance().clear();
+    const auto clearAssets = qScopeGuard([] { VNX::AssetRegistry::instance().clear(); });
+    VNX::AssetRegistry::instance().setProjectRoot(dir.path());
+    const auto sharedSource = registerToneAsset(dir.path(), QStringLiteral("shared.wav"), 1.0f);
+    const auto soloSource = registerToneAsset(dir.path(), QStringLiteral("solo.wav"), 0.5f);
+    auto project = HarkenTest::projectWithPlatforms({"Windows", "Android"});
+    ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), sharedSource, soloSource,
+        {{QStringLiteral("Common"), 21, kSharedSoundObjectId},
+         {QStringLiteral("Localized"), 22, kSoloSoundObjectId},
+         {QStringLiteral("CommonAgain"), 23, kSharedSoundObjectId}}));
+    ASSERT_NO_FATAL_FAILURE(localizeSoloSound(project, soloSource));
+    const auto build = VNX::ProjectPackExporter::createBuildContext(project);
+    VNX::RuntimeCapabilityContext cached;
+    cached.buildSession = build->capabilities;
+    const auto platforms = project.platformIds();
+    const auto directPlan = VNX::PackBuildPlanning::build(project, platforms, {}, true);
+    ASSERT_TRUE(std::any_of(directPlan.variants.begin(), directPlan.variants.end(),
+        [](const auto& variant) { return variant.capability.permitted(); }));
+    for (int pass = 0; pass < 2; ++pass) {
+        const auto sharedPlan = VNX::PackBuildPlanning::build(project, platforms, {}, true, {},
+            cached, build->closures.get());
+        EXPECT_EQ(directPlan.toJson(), sharedPlan.toJson());
+    }
+    std::vector<const VNX::ProjectItem*> items;
+    for (const auto* binding : project.allFileBindings()) {
+        const auto collect = [&](const auto& self, const VNX::ProjectItem* item) -> void {
+            items.push_back(item);
+            for (const auto& child : item->children) self(self, child.get());
+        };
+        if (binding && binding->rootItem) collect(collect, binding->rootItem.get());
+    }
+    for (const auto& platform : platforms) {
+        for (const auto& language : project.projectLanguages) {
+            const VNX::BuildVariant variant{platform, language};
+            for (const auto* item : items) {
+                for (const auto& entry : VNX::RuntimeCapabilityMatrix::entries()) {
+                    if (entry.objectType != item->type) continue;
+                    const auto direct = VNX::RuntimeCapabilityMatrix::evaluateForContext(
+                        *item, project, entry.operation, entry.feature, variant, {});
+                    const auto shared = VNX::RuntimeCapabilityMatrix::evaluateForContext(
+                        *item, project, entry.operation, entry.feature, variant, cached);
+                    EXPECT_EQ(direct.toJson(), shared.toJson())
+                        << item->name.toStdString() << " " << platform.toStdString()
+                        << " " << language.toStdString()
+                        << " " << VNX::RuntimeCapabilityMatrix::featureName(entry.feature).toStdString();
+                }
+            }
+        }
+    }
+    const auto& localized = *project.layers.front().rootItem->children.at(1);
+    for (const auto& platform : platforms) {
+        for (const auto& language : project.projectLanguages) {
+            VNX::RuntimeCapabilityContext direct{QUuid::fromString(platform), language};
+            auto shared = direct;
+            shared.buildSession = build->capabilities;
+            for (const auto& variant : {std::optional<VNX::BuildVariant>{},
+                    std::optional<VNX::BuildVariant>{VNX::BuildVariant{}}}) {
+                const auto expected = VNX::RuntimeCapabilityMatrix::assessForContext(
+                    localized, project, VNX::RuntimeCapabilityOperation::PackBuild, variant, direct);
+                const auto actual = VNX::RuntimeCapabilityMatrix::assessForContext(
+                    localized, project, VNX::RuntimeCapabilityOperation::PackBuild, variant, shared);
+                EXPECT_EQ(expected.toJson(), actual.toJson());
+            }
+        }
+    }
+    project.actions.front().rootItem->children.back()->comp<VNX::VAction>()->steps.front().targetObjectID = 999;
+    const auto invalidBuild = VNX::ProjectPackExporter::createBuildContext(project);
+    VNX::RuntimeCapabilityContext invalidContext;
+    invalidContext.buildSession = invalidBuild->capabilities;
+    const auto invalidDirect = VNX::PackBuildPlanning::build(project, platforms, {}, true);
+    ASSERT_FALSE(invalidDirect.ready());
+    const auto invalidShared = VNX::PackBuildPlanning::build(project, platforms, {}, true, {},
+        invalidContext, invalidBuild->closures.get());
+    EXPECT_EQ(invalidDirect.toJson(), invalidShared.toJson());
+}
+
 TEST(EditorProjectPackExporterManifest, StopOnlyPublishesNoTargetMediaOrDefinitions)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -728,7 +812,7 @@ TEST(EditorProjectPackExporterManifest, StopOnlyPublishesNoTargetMediaOrDefiniti
 
 TEST(EditorProjectPackExporterManifest, StopControlsKeepLocalizedFingerprintsAndMixedPlaybackMedia)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -814,7 +898,7 @@ TEST(EditorProjectPackExporterManifest, StopControlsKeepLocalizedFingerprintsAnd
 
 TEST(EditorProjectPackExporterManifest, StopContainerAndQuantizeReferenceDoNotOwnDescendantMedia)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     for (bool queue : {false, true}) {
         SCOPED_TRACE(queue);
         QTemporaryDir dir;
@@ -874,7 +958,7 @@ TEST(EditorProjectPackExporterManifest, StopContainerAndQuantizeReferenceDoNotOw
 
 TEST(EditorProjectPackExporterManifest, StopTimelineTargetsDoNotPublishSchedulesOrMedia)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     for (const auto type : {VNX::ProjectItem::Type::Track, VNX::ProjectItem::Type::Segment}) {
         for (bool withProvider : {false, true}) {
             SCOPED_TRACE(static_cast<int>(type));
@@ -934,7 +1018,7 @@ TEST(EditorProjectPackExporterManifest, StopTimelineTargetsDoNotPublishSchedules
 
 TEST(EditorProjectPackExporterManifest, MediaFreeDelayedStopCapturesOnlyExistingInstances)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -1045,7 +1129,7 @@ TEST(EditorProjectPackExporterManifest, MediaFreeDelayedStopCapturesOnlyExisting
 
 TEST(EditorProjectPackExporterManifest, CompanionsCoverEachExportedAction)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -1136,7 +1220,7 @@ TEST(EditorProjectPackExporterManifest, CompanionsCoverEachExportedAction)
 
 TEST(EditorProjectPackExporterManifest, OptionalCompanionDataFollowsPublicationLifecycle)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -1331,7 +1415,7 @@ TEST(EditorProjectPackExporterManifest, OptionalCompanionDataFollowsPublicationL
 TEST(EditorProjectPackExporterManifest,
      LoopMediaRevisionMatchesCanonicalRuntimeRegistration)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -1382,7 +1466,7 @@ TEST(EditorProjectPackExporterManifest,
 
 TEST(EditorProjectPackExporterManifest, InitHasNoRoutingCatalogAndEveryPackHasKind21)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -1451,7 +1535,7 @@ TEST(EditorProjectPackExporterManifest, InitHasNoRoutingCatalogAndEveryPackHasKi
 
 TEST(EditorProjectPackExporterManifest, RenameKeepsCompanionIdentitySelfConsistent)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -1538,7 +1622,7 @@ TEST(EditorProjectPackExporterManifest, RenameKeepsCompanionIdentitySelfConsiste
 
 TEST(EditorProjectPackExporterManifest, InvalidActionPackNamesPreservePublishedFiles)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     auto& registry = VNX::AssetRegistry::instance();
@@ -1611,7 +1695,7 @@ TEST(EditorProjectPackExporterManifest, InvalidActionPackNamesPreservePublishedF
 
 TEST(EditorProjectPackExporterManifest, UntargetedUnitsStayOutOfPublication)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -1662,7 +1746,7 @@ TEST(EditorProjectPackExporterManifest, UntargetedUnitsStayOutOfPublication)
 
 TEST(EditorProjectPackExporterManifest, ActionNameCollisionFailsBeforePublishing)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -1700,7 +1784,7 @@ TEST(EditorProjectPackExporterManifest, ActionNameCollisionFailsBeforePublishing
 
 TEST(EditorProjectPackExporterManifest, CompanionCommitFailureFailsWholeExport)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -1738,7 +1822,7 @@ TEST(EditorProjectPackExporterManifest, CompanionCommitFailureFailsWholeExport)
 
 TEST(EditorProjectPackExporterManifest, UnsupportedBusPropertiesKeepPublishedPackSetUnchanged)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir source;
     QTemporaryDir output;
     ASSERT_TRUE(source.isValid());
@@ -1833,7 +1917,7 @@ TEST(EditorProjectPackExporterManifest, UnsupportedBusPropertiesKeepPublishedPac
 
 TEST(EditorProjectPackExporterManifest, TwoExportsAreByteIdentical)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
 
     QTemporaryDir firstDir;
     QTemporaryDir secondDir;
@@ -1873,7 +1957,7 @@ TEST(EditorProjectPackExporterManifest, TwoExportsAreByteIdentical)
 
 TEST(EditorProjectPackExporterManifest, ProductionPackPairGoldenIsRepeatable)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir source;
     ASSERT_TRUE(source.isValid());
     auto& registry = VNX::AssetRegistry::instance();
@@ -1945,7 +2029,7 @@ TEST(EditorProjectPackExporterManifest, ProductionPackPairGoldenIsRepeatable)
 
 TEST(EditorProjectPackExporterManifest, LegacySnapshotRequestFieldsDoNotOverrideBusProjection)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir source;
     ASSERT_TRUE(source.isValid());
     auto& registry = VNX::AssetRegistry::instance();
@@ -2010,7 +2094,7 @@ TEST(EditorProjectPackExporterManifest, LegacySnapshotRequestFieldsDoNotOverride
 
 TEST(EditorProjectPackExporterManifest, CanonicalContentOmitsKindNineAndClaimsContainer)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -2101,7 +2185,7 @@ TEST(EditorProjectPackExporterManifest, CanonicalContentOmitsKindNineAndClaimsCo
 TEST(EditorProjectPackExporterManifest,
      DefaultBlendExportsTargetsWithoutVariableAxesOrCurves)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -2148,7 +2232,7 @@ TEST(EditorProjectPackExporterManifest,
 TEST(EditorProjectPackExporterManifest,
      CanonicalPartitionsNormalizeLocalTransitionIdentity)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -2299,7 +2383,7 @@ TEST(EditorProjectPackExporterManifest,
 TEST(EditorProjectPackExporterManifest,
      CanonicalCurrentWorldPreservesNonSoundLoopCounts)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -2463,7 +2547,7 @@ TEST(EditorProjectPackExporterManifest,
 
 TEST(EditorProjectPackExporterManifest, ExportedPairsHaveDistinctPackAndActionIdentities)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -2510,7 +2594,7 @@ TEST(EditorProjectPackExporterManifest, ExportedPairsHaveDistinctPackAndActionId
 
 TEST(EditorProjectPackExporterManifest, LaterExportPreservesUnownedFiles)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -2581,7 +2665,7 @@ TEST(EditorProjectPackExporterManifest, LaterExportPreservesUnownedFiles)
 
 TEST(EditorProjectPackExporterManifest, FullRebuildReplacesRetiredOutputsWithoutReadingTheirMetadata)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     auto& registry = VNX::AssetRegistry::instance();
     registry.clear();
@@ -2623,7 +2707,7 @@ TEST(EditorProjectPackExporterManifest, FullRebuildReplacesRetiredOutputsWithout
 
 TEST(EditorProjectPackExporterManifest, FullRebuildCleansDotPrefixedRetiredOutputs)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     auto& registry = VNX::AssetRegistry::instance();
     registry.clear();
@@ -2654,7 +2738,7 @@ TEST(EditorProjectPackExporterManifest, FullRebuildCleansDotPrefixedRetiredOutpu
 
 TEST(EditorProjectPackExporterManifest, ExportsPlayableDemoSampleFixtures)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir sources;
     QTemporaryDir first;
     QTemporaryDir second;
@@ -2794,7 +2878,7 @@ TEST(EditorProjectPackExporterManifest, ExportsPlayableDemoSampleFixtures)
 
 TEST(EditorProjectPackExporterManifest, LanguageVariantsKeepDistinctPackIdentities)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -2950,7 +3034,7 @@ TEST(EditorProjectPackExporterManifest, LanguageVariantsKeepDistinctPackIdentiti
 
 TEST(EditorProjectPackExporterManifest, LanguageTargetingPublishesIndependentPlayablePairs)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3076,7 +3160,7 @@ TEST(EditorProjectPackExporterManifest, LanguageTargetingPublishesIndependentPla
 
 TEST(EditorProjectPackExporterManifest, SelectedNonLocalizedActionsAreSelfContained)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3127,7 +3211,7 @@ TEST(EditorProjectPackExporterManifest, SelectedNonLocalizedActionsAreSelfContai
 
 TEST(EditorProjectPackExporterManifest, LocalizedActionEmbedsNonLocalizedExecutionClosure)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3207,7 +3291,7 @@ TEST(EditorProjectPackExporterManifest, LocalizedActionEmbedsNonLocalizedExecuti
 
 TEST(EditorProjectPackExporterManifest, MixedLanguageVariantsOwnMatchingDefinitionsAndMedia)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3345,7 +3429,7 @@ TEST(EditorProjectPackExporterManifest, MixedLanguageVariantsOwnMatchingDefiniti
 
 TEST(EditorProjectPackExporterManifest, RuntimeBundlePreservesLanguagePathsThroughDeploy)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3471,7 +3555,7 @@ TEST(EditorProjectPackExporterManifest, RuntimeBundlePreservesLanguagePathsThrou
 
 TEST(EditorProjectPackExporterManifest, RuntimeBundleDissolvesLegacyGroupsAndKeepsAllActionsAvailable)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3515,7 +3599,7 @@ TEST(EditorProjectPackExporterManifest, RuntimeBundleDissolvesLegacyGroupsAndKee
 
 TEST(EditorProjectPackExporterManifest, ExternalLocalizedOccurrenceKeepsInvalidOwnershipRejected)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3559,7 +3643,7 @@ TEST(EditorProjectPackExporterManifest, ExternalLocalizedOccurrenceKeepsInvalidO
 
 TEST(EditorProjectPackExporterManifest, LocalizedSinglePackRequiresExplicitLanguage)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3598,7 +3682,7 @@ TEST(EditorProjectPackExporterManifest, LocalizedSinglePackRequiresExplicitLangu
 
 TEST(EditorProjectPackExporterManifest, MissingLocalizedActiveWritesNoPacks)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3638,7 +3722,7 @@ TEST(EditorProjectPackExporterManifest, MissingLocalizedActiveWritesNoPacks)
 
 TEST(EditorProjectPackExporterManifest, LegacyMixedGroupKeepsCommonAndLocalizedDefinitionsInIndependentPacks)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3696,7 +3780,7 @@ TEST(EditorProjectPackExporterManifest, LegacyMixedGroupKeepsCommonAndLocalizedD
 
 TEST(EditorProjectPackExporterManifest, InvalidRequestedLanguageWritesNoPacks)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3735,7 +3819,7 @@ TEST(EditorProjectPackExporterManifest, InvalidRequestedLanguageWritesNoPacks)
 
 TEST(EditorProjectPackExporterManifest, SelectedPostActionChainWithoutLanguagesWritesNoPacks)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3776,7 +3860,7 @@ TEST(EditorProjectPackExporterManifest, SelectedPostActionChainWithoutLanguagesW
 
 TEST(EditorProjectPackExporterManifest, InterruptedPublishRestoresOwnedFilesAndPreservesNeighbors)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     auto& registry = VNX::AssetRegistry::instance();
@@ -3872,7 +3956,7 @@ TEST(EditorProjectPackExporterManifest, InterruptedPublishRestoresOwnedFilesAndP
 
 TEST(EditorProjectPackExporterManifest, CompletedPublicationCopiesAreRemovedWithoutInventories)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     auto& registry = VNX::AssetRegistry::instance();
     registry.clear();
@@ -3912,7 +3996,7 @@ TEST(EditorProjectPackExporterManifest, CompletedPublicationCopiesAreRemovedWith
 
 TEST(EditorProjectPackExporterManifest, FailedInterruptedRecoveryKeepsSnapshotAndStopsPublish)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3964,7 +4048,7 @@ namespace {
 
 void verifyIncrementalPublication(const QString& directory)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     const QDir dir(directory);
     auto& registry = VNX::AssetRegistry::instance();
     registry.clear();
@@ -4085,7 +4169,7 @@ TEST(EditorProjectPackExporterManifest, IncrementalPublicationActivatesRepairedP
 
 TEST(EditorProjectPackExporterManifest, PublicationSelectionReconcilesTheWholeOutputDirectory)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     auto& registry = VNX::AssetRegistry::instance();
@@ -4255,7 +4339,7 @@ TEST(EditorProjectPackExporterManifest, PublicationSelectionReconcilesTheWholeOu
 
 TEST(EditorProjectPackExporterManifest, LanguageCleanupKeepsSharedInitAndSelectedPairs)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     auto& registry = VNX::AssetRegistry::instance();
@@ -4303,7 +4387,7 @@ namespace {
 
 void verifyPartialPublication(const QString& directory, void (*verifyActivation)(const QString&))
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     const QDir dir(directory);
     auto& registry = VNX::AssetRegistry::instance();
     registry.clear();
@@ -4480,7 +4564,7 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationActivatesSelectedUpdat
 
 TEST(EditorProjectPackExporterManifest, CapacityGrowthPreservesUnselectedPublishedContent)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     auto& registry = VNX::AssetRegistry::instance();
@@ -4578,7 +4662,7 @@ TEST(EditorProjectPackExporterManifest, CapacityGrowthPreservesUnselectedPublish
 
 TEST(EditorProjectPackExporterManifest, PartialPublicationCombinesScheduleAndEffectCapacity)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     auto& registry = VNX::AssetRegistry::instance();
@@ -4791,7 +4875,7 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationCombinesScheduleAndEff
 
 TEST(EditorProjectPackExporterManifest, LanguageVariantsShareCapacityWithoutAddingAlternativeDefinitions)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     auto& registry = VNX::AssetRegistry::instance();
@@ -4846,7 +4930,7 @@ TEST(EditorProjectPackExporterManifest, LanguageVariantsShareCapacityWithoutAddi
 
 TEST(EditorProjectPackExporterManifest, PartialPublicationPreservesOrdersAcrossLanguageAlternatives)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     for (bool conflictingEmbeddedOrder : {false, true}) {
         SCOPED_TRACE(conflictingEmbeddedOrder);
         QTemporaryDir dir;
@@ -4982,7 +5066,7 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationPreservesOrdersAcrossL
 
 TEST(EditorProjectPackExporterManifest, PartialPublicationRefreshesEmbeddedClosureAndKeepsOtherPairs)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     auto& registry = VNX::AssetRegistry::instance();
@@ -5056,7 +5140,7 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationRefreshesEmbeddedClosu
 
 TEST(EditorProjectPackExporterManifest, WriteProtectionPreflightRespectsExportScopeAndPreservesOutputs)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     QTemporaryDir output;
     ASSERT_TRUE(dir.isValid());
@@ -5161,7 +5245,7 @@ TEST(EditorProjectPackExporterManifest, WriteProtectionPreflightRespectsExportSc
 
 TEST(EditorProjectPackExporterManifest, WriteProtectionChangedDuringBuildPreservesPublication)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     auto& registry = VNX::AssetRegistry::instance();
@@ -5216,7 +5300,7 @@ struct PackWriteAccessProject
     void setup(bool waveforms = false)
     {
         ASSERT_TRUE(directory.isValid());
-        qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+        qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
         auto& registry = VNX::AssetRegistry::instance();
         registry.clear();
         registry.setProjectRoot(directory.path());
@@ -5380,7 +5464,7 @@ TEST(EditorProjectPackExporterManifest, ProtectedLegacyWaveformLocationsCannotWr
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     const QString projectRoot = directory.filePath(QStringLiteral("Project"));
     ASSERT_TRUE(QDir().mkpath(projectRoot));
     auto& registry = VNX::AssetRegistry::instance();
@@ -5600,6 +5684,416 @@ TEST(EditorProjectPackExporterManifest, CanceledFinalizationKeepsPublishedFiles)
         QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden).isEmpty());
 }
 
+TEST(EditorProjectPackExporterManifest, ProjectBuildCancellationPreservesCommittedPlatformsAndRootPublication)
+{
+    PackWriteAccessProject context;
+    ASSERT_NO_FATAL_FAILURE(context.setup());
+    context.project.buildExportProjectData = true;
+    const auto initial = context.exporter.ExportAllPacks(context.project, {}, context.options);
+    ASSERT_TRUE(initial.success) << initial.error.toStdString();
+    const QDir root(context.root);
+    const QByteArray previousProject = readFileBytes(root.filePath(QStringLiteral("Project.json")));
+    ASSERT_FALSE(previousProject.isEmpty());
+    const QByteArray previousContent = readFileBytes(context.live.filePath(QStringLiteral("One.bytes")));
+    ASSERT_FALSE(previousContent.isEmpty());
+    const QString sentinel = root.filePath(QStringLiteral("obsolete.bin"));
+    ASSERT_NO_FATAL_FAILURE(writeFileBytes(sentinel, QByteArray("keep until all platforms finish")));
+    context.project.name += QStringLiteral(" changed");
+    context.project.actions.front().rootItem->children.front()->comp<VNX::VAction>()->steps.front().delay = 0.1f;
+    QString error;
+    const auto snapshot = VNX::ProjectBuildSnapshot::capture(context.project, &error);
+    ASSERT_TRUE(snapshot) << error.toStdString();
+    bool canceled = false;
+    QMap<QString, QByteArray> committed;
+    VNX::ProjectPackBuildService::Request request;
+    request.outputRoot = context.root;
+    request.platforms = {context.platform, HarkenTest::platformIdString("Android")};
+    request.options.snapshot = snapshot;
+    request.options.selfCleaning = true;
+    request.options.cancelCheck = [&] { return canceled; };
+    request.platformFinished = [&](const VNX::ProjectPackBuildService::PlatformResult& completed) {
+        EXPECT_EQ(completed.platform, context.platform);
+        EXPECT_TRUE(completed.result.success) << completed.result.error.toStdString();
+        for (const auto& name : publicationFiles(completed.outputDir))
+            committed.insert(name, readFileBytes(QDir(completed.outputDir).filePath(name)));
+        QString lockError;
+        EXPECT_FALSE(VNX::ProjectPackExporter::LockPackOutputRoot(context.root, &lockError));
+        canceled = true;
+    };
+    const auto result = VNX::ProjectPackBuildService::run(request);
+    ASSERT_TRUE(result.preflightSucceeded) << result.preflightError.toStdString();
+    EXPECT_TRUE(result.canceled);
+    ASSERT_FALSE(committed.isEmpty());
+    EXPECT_NE(readFileBytes(context.live.filePath(QStringLiteral("One.bytes"))), previousContent);
+    for (auto file = committed.cbegin(); file != committed.cend(); ++file)
+        EXPECT_EQ(readFileBytes(context.live.filePath(file.key())), file.value());
+    EXPECT_FALSE(QFileInfo::exists(root.filePath(QStringLiteral("Android/Init.bytes"))));
+    EXPECT_FALSE(QFileInfo::exists(root.filePath(QStringLiteral("Android/One.bytes"))));
+    EXPECT_EQ(readFileBytes(root.filePath(QStringLiteral("Project.json"))), previousProject);
+    EXPECT_EQ(readFileBytes(sentinel), QByteArray("keep until all platforms finish"));
+    const auto released = VNX::ProjectPackExporter::LockPackOutputRoot(context.root, &error);
+    EXPECT_TRUE(released) << error.toStdString();
+}
+
+TEST(EditorProjectPackExporterManifest, ProjectBuildLockAndPreflightFailuresPreserveOutputs)
+{
+    PackWriteAccessProject context;
+    ASSERT_NO_FATAL_FAILURE(context.setup());
+    const QDir root(context.root);
+    const QString sentinel = root.filePath(QStringLiteral("Project.json"));
+    const QString recoveryMarker = context.live.filePath(QStringLiteral(".harken-pack-publishing"));
+    ASSERT_NO_FATAL_FAILURE(writeFileBytes(sentinel, QByteArray("previous project publication")));
+    ASSERT_NO_FATAL_FAILURE(writeFileBytes(recoveryMarker, QByteArray("incomplete transaction")));
+    QString error;
+    const auto snapshot = VNX::ProjectBuildSnapshot::capture(context.project, &error);
+    ASSERT_TRUE(snapshot) << error.toStdString();
+    auto lock = VNX::ProjectPackExporter::LockPackOutputRoot(context.root, &error);
+    ASSERT_TRUE(lock) << error.toStdString();
+    bool platformStarted = false;
+    VNX::ProjectPackBuildService::Request request;
+    request.outputRoot = context.root;
+    request.platforms = {context.platform};
+    request.options.snapshot = snapshot;
+    request.options.progressCallback = [&](const VNX::PackGenerationProgress&) { platformStarted = true; };
+    const auto competing = VNX::ProjectPackBuildService::run(request);
+    EXPECT_FALSE(competing.outputLocked);
+    EXPECT_FALSE(competing.preflightSucceeded);
+    EXPECT_FALSE(platformStarted);
+    EXPECT_EQ(readFileBytes(sentinel), QByteArray("previous project publication"));
+    EXPECT_EQ(readFileBytes(recoveryMarker), QByteArray("incomplete transaction"));
+    request.outputLock = lock;
+    const auto rejected = VNX::ProjectPackBuildService::run(request);
+    EXPECT_TRUE(rejected.outputLocked);
+    EXPECT_FALSE(rejected.preflightSucceeded);
+    EXPECT_FALSE(platformStarted);
+    EXPECT_TRUE(rejected.preflightError.startsWith(QStringLiteral("Cannot recover interrupted pack publish:")))
+        << rejected.preflightError.toStdString();
+    EXPECT_TRUE(lock->isLocked());
+    EXPECT_FALSE(VNX::ProjectPackExporter::LockPackOutputRoot(context.root, &error));
+    EXPECT_FALSE(QFileInfo::exists(context.live.filePath(QStringLiteral("Init.bytes"))));
+    EXPECT_EQ(readFileBytes(sentinel), QByteArray("previous project publication"));
+    EXPECT_EQ(readFileBytes(recoveryMarker), QByteArray("incomplete transaction"));
+    const QDir protectedRoot(context.directory.path());
+    const QString protectedFile = protectedRoot.filePath(QStringLiteral("project-data.txt"));
+    const QString protectedMarker = protectedRoot.filePath(QStringLiteral(".harken-pack-publishing"));
+    const QString previous = QStringLiteral(".harken-pack-previous-protected");
+    ASSERT_NO_FATAL_FAILURE(writeFileBytes(protectedFile, QByteArray("project data")));
+    ASSERT_NO_FATAL_FAILURE(writeFileBytes(protectedRoot.filePath(previous + QStringLiteral("/project-data.txt")),
+        QByteArray("unrelated previous data")));
+    const QJsonObject transaction{{"version", 1}, {"previous", previous},
+        {"next", QStringLiteral(".harken-pack-next-protected")},
+        {"previousFiles", QJsonArray{QStringLiteral("project-data.txt")}},
+        {"nextFiles", QJsonArray{QStringLiteral("project-data.txt")}}};
+    const auto protectedTransaction = QJsonDocument(transaction).toJson();
+    ASSERT_NO_FATAL_FAILURE(writeFileBytes(protectedMarker, protectedTransaction));
+    request.outputRoot = protectedRoot.path();
+    request.outputLock.reset();
+    const auto protectedResult = VNX::ProjectPackBuildService::run(request);
+    EXPECT_FALSE(protectedResult.outputLocked);
+    EXPECT_EQ(protectedResult.preflightError, VNX::PathUtils::packBuildOutputLocationError());
+    EXPECT_EQ(readFileBytes(protectedFile), QByteArray("project data"));
+    EXPECT_EQ(readFileBytes(protectedMarker), protectedTransaction);
+}
+
+TEST(EditorProjectPackExporterManifest, ProjectBuildCleanupPreservesActiveLocksAcrossPlatforms)
+{
+    PackWriteAccessProject context;
+    ASSERT_NO_FATAL_FAILURE(context.setup());
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        SCOPED_TRACE(attempt);
+        if (attempt == 1) context.project.platforms.front().name = QStringLiteral("windows");
+        const QString obsolete = QDir(context.root).filePath(QStringLiteral("obsolete.bin"));
+        ASSERT_NO_FATAL_FAILURE(writeFileBytes(obsolete, QByteArray("remove during cleanup")));
+        QString error;
+        VNX::ProjectPackBuildService::Request request;
+        request.outputRoot = context.root;
+        request.platforms = HarkenTest::platformIdStrings({"Windows", "Android"});
+        request.options.selfCleaning = true;
+        request.options.snapshot = VNX::ProjectBuildSnapshot::capture(context.project, &error);
+        ASSERT_TRUE(request.options.snapshot) << error.toStdString();
+        std::vector<std::shared_ptr<QLockFile>> heldLocks;
+        request.platformFinished = [&](const VNX::ProjectPackBuildService::PlatformResult& built) {
+            ASSERT_TRUE(built.result.success) << built.result.error.toStdString();
+            ASSERT_TRUE(built.result.publication);
+            auto lock = built.result.publication->outputLock.lock();
+            ASSERT_TRUE(lock);
+            heldLocks.push_back(std::move(lock));
+        };
+        const auto built = VNX::ProjectPackBuildService::run(request);
+        ASSERT_TRUE(built.allPlatformsSucceeded) << built.preflightError.toStdString();
+        ASSERT_TRUE(built.finalizationResult.success) << built.finalizationResult.error.toStdString();
+        ASSERT_EQ(heldLocks.size(), request.platforms.size());
+        EXPECT_FALSE(QFileInfo::exists(obsolete));
+        for (const auto& platform : built.platforms) {
+            const QDir output(platform.outputDir);
+            EXPECT_TRUE(QDir(context.root).entryList(QDir::Dirs | QDir::NoDotAndDotDot)
+                .contains(platform.definition.name));
+            const QString lockPath = output.filePath(QStringLiteral(".harken-pack-platform.lock"));
+            EXPECT_TRUE(QFileInfo::exists(output.filePath(QStringLiteral("Init.bytes"))));
+            EXPECT_TRUE(QFileInfo::exists(output.filePath(QStringLiteral("One.bytes"))));
+            EXPECT_TRUE(QFileInfo::exists(lockPath));
+            QLockFile competing(lockPath);
+            competing.setStaleLockTime(0);
+            EXPECT_FALSE(competing.tryLock());
+        }
+    }
+}
+
+TEST(EditorProjectPackExporterManifest, ProjectBuildIncrementalResultsMatchForcedBuildAfterInputAndOutputChanges)
+{
+    PackWriteAccessProject context;
+    ASSERT_NO_FATAL_FAILURE(context.setup());
+    const auto build = [&](bool force) {
+        QString error;
+        VNX::ProjectPackBuildService::Request request;
+        request.outputRoot = context.root;
+        request.platforms = {context.platform};
+        request.options.snapshot = VNX::ProjectBuildSnapshot::capture(context.project, &error);
+        EXPECT_TRUE(request.options.snapshot) << error.toStdString();
+        request.options.forceReexport = force;
+        return VNX::ProjectPackBuildService::run(request);
+    };
+    const auto initial = build(false);
+    ASSERT_TRUE(initial.allPlatformsSucceeded) << initial.preflightError.toStdString();
+    ASSERT_TRUE(initial.finalizationResult.success) << initial.finalizationResult.error.toStdString();
+    QByteArray previousContent = readFileBytes(context.live.filePath(QStringLiteral("One.bytes")));
+    const QString sourcePath = QDir(VNX::PathUtils::getAudioSourcesDir(context.directory.path()))
+        .filePath(QStringLiteral("tone.wav"));
+    const std::vector<std::function<void()>> changes{
+        [&] {
+            context.project.actions.front().rootItem->children.front()
+                ->comp<VNX::VAction>()->steps.front().delay = 0.125f;
+        },
+        [&] {
+            const auto modified = QFileInfo(sourcePath).lastModified();
+            auto bytes = readFileBytes(sourcePath);
+            ASSERT_GE(bytes.size(), static_cast<qsizetype>(sizeof(float)));
+            const float sample = 0.75f;
+            std::memcpy(bytes.data() + bytes.size() - sizeof(sample), &sample, sizeof(sample));
+            ASSERT_NO_FATAL_FAILURE(writeFileBytes(sourcePath, bytes));
+            QFile file(sourcePath);
+            ASSERT_TRUE(file.open(QIODevice::ReadWrite));
+            ASSERT_TRUE(file.setFileTime(modified, QFileDevice::FileModificationTime));
+            EXPECT_EQ(QFileInfo(sourcePath).size(), bytes.size());
+            EXPECT_EQ(QFileInfo(sourcePath).lastModified(), modified);
+        },
+        [&] {
+            const QString path = context.live.filePath(QStringLiteral("One.bytes"));
+            const auto modified = QFileInfo(path).lastModified();
+            auto bytes = readFileBytes(path);
+            ASSERT_FALSE(bytes.isEmpty());
+            bytes[bytes.size() - 1] = static_cast<char>(bytes.back() ^ 0x40);
+            ASSERT_NO_FATAL_FAILURE(writeFileBytes(path, bytes));
+            QFile file(path);
+            ASSERT_TRUE(file.open(QIODevice::ReadWrite));
+            ASSERT_TRUE(file.setFileTime(modified, QFileDevice::FileModificationTime));
+        },
+        [&] {
+            ASSERT_TRUE(QFile::remove(context.live.filePath(QStringLiteral("One.json"))));
+        },
+        [&] {
+            context.project.buildExportPackMetadata = true;
+        }};
+    for (size_t index = 0; index < changes.size(); ++index) {
+        SCOPED_TRACE(index);
+        ASSERT_NO_FATAL_FAILURE(changes[index]());
+        const auto incremental = build(false);
+        ASSERT_TRUE(incremental.allPlatformsSucceeded) << incremental.preflightError.toStdString();
+        ASSERT_TRUE(incremental.finalizationResult.success) << incremental.finalizationResult.error.toStdString();
+        ASSERT_EQ(incremental.platforms.size(), 1u);
+        const auto content = readFileBytes(context.live.filePath(QStringLiteral("One.bytes")));
+        if (index < 2) EXPECT_NE(content, previousContent);
+        previousContent = content;
+        QMap<QString, QByteArray> expected;
+        for (const auto& path : publicationFiles(context.live.path()))
+            expected.insert(path, readFileBytes(context.live.filePath(path)));
+        const auto forced = build(true);
+        ASSERT_TRUE(forced.allPlatformsSucceeded) << forced.preflightError.toStdString();
+        ASSERT_TRUE(forced.finalizationResult.success) << forced.finalizationResult.error.toStdString();
+        ASSERT_EQ(forced.platforms.size(), 1u);
+        EXPECT_EQ(incremental.platforms.front().result.warnings, forced.platforms.front().result.warnings);
+        EXPECT_EQ(publicationFiles(context.live.path()), expected.keys());
+        for (auto it = expected.cbegin(); it != expected.cend(); ++it)
+            EXPECT_EQ(readFileBytes(context.live.filePath(it.key())), it.value()) << it.key().toStdString();
+    }
+}
+
+TEST(EditorProjectPackExporterManifest, ProjectBuildReusePreservesDiagnosticsAfterReload)
+{
+    PackWriteAccessProject context;
+    ASSERT_NO_FATAL_FAILURE(context.setup());
+    auto actions = std::move(context.project.actions.front().rootItem->children);
+    actions.push_back(makeItem(QStringLiteral("Empty"), VNX::ProjectItem::Type::Action, 55));
+    context.project.actions.clear();
+    for (auto& action : actions) {
+        action->parent = nullptr;
+        VNX::ProjectFileBinding binding;
+        binding.rootItem = std::move(action);
+        binding.parentFolder = QLatin1String(VNX::ItemTypeCatalog::kActionsFolderName);
+        context.project.actions.push_back(std::move(binding));
+    }
+    const auto build = [&](const std::shared_ptr<const VNX::ProjectBuildSnapshot>& snapshot,
+                           bool* compiled) {
+        VNX::ProjectPackBuildService::Request request;
+        request.outputRoot = context.root;
+        request.platforms = {context.platform};
+        request.options.snapshot = snapshot;
+        request.options.observationCallback = [compiled](const VNX::PackBuildObservation& observation) {
+            if (observation.stage == VNX::PackBuildObservationStage::CompilingProject) *compiled = true;
+        };
+        return VNX::ProjectPackBuildService::run(request);
+    };
+    QString error;
+    const auto firstSnapshot = VNX::ProjectBuildSnapshot::capture(context.project, &error);
+    ASSERT_TRUE(firstSnapshot) << error.toStdString();
+    bool compiled = false;
+    const auto initial = build(firstSnapshot, &compiled);
+    ASSERT_TRUE(initial.allPlatformsSucceeded) << initial.preflightError.toStdString();
+    ASSERT_TRUE(initial.finalizationResult.success) << initial.finalizationResult.error.toStdString();
+    ASSERT_EQ(initial.platforms.size(), 1u);
+    ASSERT_TRUE(compiled);
+    ASSERT_FALSE(initial.platforms.front().result.warnings.isEmpty());
+    QMap<QString, QByteArray> expected;
+    for (const auto& path : publicationFiles(context.live.path()))
+        expected.insert(path, readFileBytes(context.live.filePath(path)));
+    VNX::ProjectSerializer writer;
+    ASSERT_TRUE(writer.prepareReferenceWrite(context.project)) << writer.lastError().toStdString();
+    QJsonArray roots;
+    for (const auto* binding : context.project.allFileBindings()) {
+        const auto serialized = writer.projectItemToJson(*binding->rootItem);
+        ASSERT_FALSE(serialized.isEmpty()) << writer.lastError().toStdString();
+        roots.append(serialized);
+    }
+    VNX::ProjectSerializer reader;
+    ASSERT_TRUE(reader.prepareStandaloneReferenceRead(roots)) << reader.lastError().toStdString();
+    auto reloaded = context.project;
+    size_t index = 0;
+    for (auto* binding : reloaded.allFileBindings()) {
+        binding->rootItem = std::make_shared<VNX::ProjectItem>();
+        ASSERT_TRUE(reader.projectItemFromJson(roots.at(static_cast<qsizetype>(index++)).toObject(),
+            *binding->rootItem)) << reader.lastError().toStdString();
+        binding->rootItem->expanded = !binding->rootItem->expanded;
+        binding->rootItem->canvasPos = QPointF(100.0, 200.0);
+    }
+    ASSERT_NE(reloaded.actions.front().rootItem->objectID,
+        context.project.actions.front().rootItem->objectID);
+    const auto captured = VNX::ProjectBuildSnapshot::capture(reloaded, &error);
+    ASSERT_TRUE(captured) << error.toStdString();
+    auto nextSnapshot = std::make_shared<VNX::ProjectBuildSnapshot>(*captured);
+    nextSnapshot->project.audioSources.clear();
+    nextSnapshot->project.sourceAssets.clear();
+    for (auto& asset : nextSnapshot->media.assets) {
+        asset.metadata = {};
+        asset.contentHash.clear();
+        asset.ownerObjectGuid.clear();
+        asset.isOrphaned = !asset.isOrphaned;
+    }
+    compiled = false;
+    const auto reused = build(nextSnapshot, &compiled);
+    ASSERT_TRUE(reused.allPlatformsSucceeded) << reused.preflightError.toStdString();
+    ASSERT_TRUE(reused.finalizationResult.success) << reused.finalizationResult.error.toStdString();
+    ASSERT_EQ(reused.platforms.size(), 1u);
+    EXPECT_FALSE(compiled);
+    EXPECT_EQ(reused.platforms.front().result.warnings, initial.platforms.front().result.warnings);
+    ASSERT_EQ(reused.platforms.front().records.size(), initial.platforms.front().records.size());
+    for (const auto& record : reused.platforms.front().records) {
+        const auto prior = std::find_if(initial.platforms.front().records.begin(),
+            initial.platforms.front().records.end(), [&](const auto& candidate) {
+                return candidate.unitKey == record.unitKey && candidate.language == record.language;
+            });
+        ASSERT_NE(prior, initial.platforms.front().records.end());
+        EXPECT_EQ(record.warnings, prior->warnings);
+        EXPECT_EQ(record.omitted, prior->omitted);
+        EXPECT_TRUE(record.success);
+        if (record.source == VNX::ProjectPackExporter::PackBuildRecord::Source::Action) {
+            const auto action = std::find_if(reloaded.actions.begin(),
+                reloaded.actions.end(), [&](const auto& binding) {
+                    return binding.rootItem->name == record.packName;
+                });
+            ASSERT_NE(action, reloaded.actions.end());
+            EXPECT_EQ(record.objectID, action->rootItem->objectID);
+        }
+    }
+    for (auto it = expected.cbegin(); it != expected.cend(); ++it)
+        EXPECT_EQ(readFileBytes(context.live.filePath(it.key())), it.value()) << it.key().toStdString();
+}
+
+TEST(EditorProjectPackExporterManifest, ProjectBuildReuseOnlyDependsOnSelectedPlatformSources)
+{
+    PackWriteAccessProject context;
+    ASSERT_NO_FATAL_FAILURE(context.setup());
+    const auto androidSource = registerToneAsset(context.directory.path(), "android.wav", 0.4f);
+    auto& sources = context.project.layers.front().rootItem->children.front()
+        ->comp<VNX::VSound>()->sources.plain;
+    VNX::SoundSourceDef android;
+    android.entryId = QUuid::createUuid();
+    android.sourceId = androidSource;
+    sources.entries.push_back(android);
+    sources.platforms[HarkenTest::platformIdString("Android")].active = android.entryId;
+    const auto build = [&](const QStringList& platforms, bool* compiled) {
+        QString error;
+        VNX::ProjectPackBuildService::Request request;
+        request.outputRoot = context.root;
+        request.platforms = platforms;
+        request.options.snapshot = VNX::ProjectBuildSnapshot::capture(context.project, &error);
+        EXPECT_TRUE(request.options.snapshot) << error.toStdString();
+        request.options.observationCallback = [compiled](const VNX::PackBuildObservation& observation) {
+            if (observation.stage == VNX::PackBuildObservationStage::CompilingProject) *compiled = true;
+        };
+        return VNX::ProjectPackBuildService::run(request);
+    };
+    bool compiled = false;
+    const auto initial = build(HarkenTest::platformIdStrings({"Windows", "Android"}), &compiled);
+    ASSERT_TRUE(initial.allPlatformsSucceeded) << initial.preflightError.toStdString();
+    ASSERT_TRUE(initial.finalizationResult.success) << initial.finalizationResult.error.toStdString();
+    const auto windowsBytes = readFileBytes(context.live.filePath(QStringLiteral("One.bytes")));
+    ASSERT_TRUE(QFile::remove(QDir(VNX::PathUtils::getAudioSourcesDir(context.directory.path()))
+        .filePath(QStringLiteral("android.wav"))));
+    compiled = false;
+    const auto reused = build({context.platform}, &compiled);
+    ASSERT_TRUE(reused.allPlatformsSucceeded) << reused.preflightError.toStdString();
+    ASSERT_TRUE(reused.finalizationResult.success) << reused.finalizationResult.error.toStdString();
+    EXPECT_FALSE(compiled);
+    EXPECT_EQ(readFileBytes(context.live.filePath(QStringLiteral("One.bytes"))), windowsBytes);
+}
+
+TEST(EditorProjectPackExporterManifest, PublicationValidationKeepsDependencyAndLockLifetimeBoundaries)
+{
+    PackWriteAccessProject context;
+    ASSERT_NO_FATAL_FAILURE(context.setup());
+    QString error;
+    VNX::ProjectPackBuildService::Request request;
+    request.outputRoot = context.root;
+    request.platforms = {context.platform};
+    request.options.snapshot = VNX::ProjectBuildSnapshot::capture(context.project, &error);
+    ASSERT_TRUE(request.options.snapshot) << error.toStdString();
+    request.platformFinished = [&](const VNX::ProjectPackBuildService::PlatformResult& built) {
+        ASSERT_TRUE(built.result.success) << built.result.error.toStdString();
+        ASSERT_TRUE(built.result.publication);
+        const QMap<QString, VNX::PackPublicationProof> publications{
+            {context.platform, *built.result.publication}};
+        EXPECT_TRUE(VNX::ProjectPackExporter::ValidatePackOutputs(context.root,
+            {built.definition}, &error, built.result.artifacts, {}, publications)) << error.toStdString();
+        auto incomplete = built.result.artifacts;
+        incomplete.removeIf([](const auto& artifact) { return artifact.unitKey == QStringLiteral("Init"); });
+        ASSERT_FALSE(incomplete.isEmpty());
+        EXPECT_FALSE(VNX::ProjectPackExporter::ValidatePackOutputs(context.root,
+            {built.definition}, &error, incomplete, {}, publications));
+    };
+    const auto built = VNX::ProjectPackBuildService::run(request);
+    ASSERT_TRUE(built.allPlatformsSucceeded) << built.preflightError.toStdString();
+    ASSERT_TRUE(built.finalizationResult.success) << built.finalizationResult.error.toStdString();
+    ASSERT_EQ(built.platforms.size(), 1u);
+    ASSERT_TRUE(built.platforms.front().result.publication);
+    const QMap<QString, VNX::PackPublicationProof> publications{
+        {context.platform, *built.platforms.front().result.publication}};
+    const QString path = context.live.filePath(QStringLiteral("One.bytes"));
+    const auto valid = readFileBytes(path);
+    ASSERT_NO_FATAL_FAILURE(writeFileBytes(path, valid.chopped(1)));
+    EXPECT_FALSE(VNX::ProjectPackExporter::ValidatePackOutputs(context.root,
+        {built.platforms.front().definition}, &error, built.artifacts, {}, publications));
+}
+
 TEST(EditorProjectPackExporterManifest, RecoveryPrecedesPreflightForRootAndPartialExports)
 {
     for (const bool directPartial : {false, true}) {
@@ -5738,7 +6232,7 @@ TEST(EditorProjectPackExporterManifest, PartialExportMustPreflightInvalidInitTha
 
 TEST(EditorProjectPackExporterManifest, CancelAfterMediaPreparationKeepsPreviousSet)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -5795,7 +6289,7 @@ TEST(EditorProjectPackExporterManifest, CancelAfterMediaPreparationKeepsPrevious
 
 TEST(EditorProjectPackExporterManifest, FailedPublishLeavesPreviousSet)
 {
-    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();

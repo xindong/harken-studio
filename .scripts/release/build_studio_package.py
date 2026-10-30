@@ -99,6 +99,16 @@ def run_studio_self_test(binary: Path) -> dict:
     return report
 
 
+def run_harkenizer_smoke_test(binary: Path) -> None:
+    try:
+        completed = subprocess.run(
+            [str(binary), "--help"], check=False, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise SystemExit(f"error: cannot run Harkenizer: {error}") from error
+    if completed.returncode != 0:
+        raise SystemExit("error: Harkenizer startup verification failed")
+
+
 def verify_studio_self_test(report: dict, schema: dict) -> None:
     if (
         report.get("ok") is not True
@@ -193,6 +203,13 @@ def build_package(args: argparse.Namespace) -> dict:
         raise SystemExit(f"error: input directory not found: {input_dir}")
 
     binary = studio_binary(input_dir)
+    for path in binary.parent.iterdir():
+        if path.name.casefold() in {"packc", "packc.exe", "harken_packc", "harken_packc.exe"}:
+            raise SystemExit(f"error: deployed Studio contains a retired packc executable: {path}")
+    harkenizer = binary.with_name("Harkenizer.exe" if binary.suffix == ".exe" else "Harkenizer")
+    if harkenizer.is_symlink() or not harkenizer.is_file() or harkenizer.stat().st_size == 0:
+        raise SystemExit(f"error: deployed Harkenizer binary is missing or empty: {harkenizer}")
+    run_harkenizer_smoke_test(harkenizer)
     legal_dir = input_dir / "Legal" if binary.suffix == ".exe" else binary.parent.parent / "Resources" / "Legal"
     collect_legal_texts.verify("studio", legal_dir)
     collect_legal_texts.verify_integration(binary.parent / "HarkenIntegration")

@@ -6,7 +6,7 @@
 #include "AssetPipeline/AssetRegistry.h"
 #include "AssetPipeline/AssetImporter.h"
 #include "AssetPipeline/MediaPool.h"
-#include "CurrentWorldProjectAdapter.h"
+#include "Tooling/Harkenizer/Core/CurrentWorldProjectAdapter.h"
 #include "Components/VAction.h"
 #include "IPC/IPCServer.h"
 #include "ProjectManager.h"

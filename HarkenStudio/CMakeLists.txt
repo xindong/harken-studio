@@ -168,11 +168,7 @@ set(HARKEN_EDITOR_LIB_SOURCES
     Source/Core/HubLauncher.h
     Source/Core/StartupCoordinator.cpp
     Source/Core/StartupCoordinator.h
-    Source/Core/ProjectInstance.cpp
-    Source/Core/ProjectInstance.h
     Source/Core/ProjectFormatVersion.h
-    Source/Core/ProjectPreflight/ProjectPreflight.cpp
-    Source/Core/ProjectPreflight/ProjectPreflight.h
     Source/Core/ProjectOpenProtocol.cpp
     Source/Core/ProjectOpenProtocol.h
     Source/Core/ProjectOpenApproval.cpp
@@ -221,7 +217,6 @@ set(HARKEN_EDITOR_LIB_SOURCES
     Source/Core/IPC/IPCHandlers_Project.cpp
     Source/Core/IPC/IPCHandlers_Spatial.cpp
     Source/Core/IPC/IPCHandlers_System.cpp
-    Source/Core/ProjectSerializer.cpp
     Source/Core/AssetPipeline/ImportAssetsCommand.cpp
     Source/Core/AssetPipeline/ImportSoundSourcesCommand.cpp
     Source/Core/TemplateApplyService.cpp
@@ -279,7 +274,10 @@ endif()
 # Runtime bridge -- the only sanctioned editor target that may talk to the
 # engine. Must precede Source/Core: harken_editor_foundation links it; all
 # editor runtime access goes through it.
+include(Source/Tooling/Harkenizer/CompilerClient.cmake)
 add_subdirectory(Source/RuntimeBridge)
+add_subdirectory(Source/Tooling/Harkenizer/Core)
+include(Source/Tooling/Harkenizer/BuildIdentity.cmake)
 add_subdirectory(Source/Monitor)
 add_subdirectory(Source/Core)
 # S1a Blueprint — leaf lib (depends on Foundation only).
@@ -472,6 +470,17 @@ endif()
 
 target_link_libraries(harken_editor PRIVATE harken_editor_lib)
 
+add_executable(harkenizer
+    Source/Tooling/Harkenizer/Main.cpp
+    Source/Tooling/Harkenizer/ResourceWorker.cpp)
+set_target_properties(harkenizer PROPERTIES OUTPUT_NAME "Harkenizer")
+target_link_libraries(harkenizer PRIVATE harkenizer_build harkenizer_resource_compiler)
+harken_attach_version_resource(harkenizer "Harkenizer" "Harkenizer.exe")
+add_dependencies(harken_editor harkenizer)
+if(WIN32)
+    target_link_libraries(harkenizer PRIVATE opengl32 ole32 shell32)
+endif()
+
 if(NOT Python3_Interpreter_FOUND)
     message(FATAL_ERROR "Python 3 is required to publish the Studio Schema snapshot")
 endif()
@@ -485,8 +494,17 @@ add_custom_command(TARGET harken_editor POST_BUILD
     COMMENT "Publishing the Studio Schema build snapshot"
 )
 
+add_custom_command(TARGET harkenizer POST_BUILD
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_SOURCE_DIR}/.scripts/schema_archive.py"
+        --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
+        --check-generated "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
+        --publish "$<TARGET_FILE_DIR:harkenizer>/schema"
+)
+
 if(_harken_macos_agl_framework_missing)
     harken_remove_missing_agl_framework(harken_editor)
+    harken_remove_missing_agl_framework(harkenizer)
 endif()
 
 if(WIN32)
@@ -499,6 +517,19 @@ if(WIN32)
     find_program(WINDEPLOYQT_EXE windeployqt
         HINTS ${Qt6_DIR}/../../../bin
         REQUIRED)
+
+    add_custom_command(TARGET harkenizer POST_BUILD
+        COMMAND ${WINDEPLOYQT_EXE}
+            $<$<CONFIG:Debug>:--debug>
+            $<$<NOT:$<CONFIG:Debug>>:--release>
+            --no-translations
+            --no-compiler-runtime
+            --no-system-d3d-compiler
+            --no-system-dxc-compiler
+            --no-opengl-sw
+            --no-quick-import
+            $<TARGET_FILE:harkenizer>
+    )
 
     add_custom_command(TARGET harken_editor POST_BUILD
         COMMAND ${WINDEPLOYQT_EXE}
@@ -546,19 +577,12 @@ if(APPLE)
         HINTS ${Qt6_DIR}/../../../bin
         REQUIRED)
 
-    if(TARGET harken_packc)
-        add_dependencies(harken_editor harken_packc)
-        add_custom_command(TARGET harken_editor POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "$<TARGET_FILE:harken_packc>"
-                "$<TARGET_FILE_DIR:harken_editor>/$<TARGET_FILE_NAME:harken_packc>"
-            COMMENT "Bundling harken_packc beside Harken Studio"
-        )
-    endif()
-
     add_custom_command(TARGET harken_editor POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory
             "$<TARGET_BUNDLE_DIR:harken_editor>/Contents/PlugIns/platforms"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:harkenizer>"
+            "$<TARGET_FILE_DIR:harken_editor>/$<TARGET_FILE_NAME:harkenizer>"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:Qt6::QOffscreenIntegrationPlugin>"
             "$<TARGET_BUNDLE_DIR:harken_editor>/Contents/PlugIns/platforms/"

@@ -51,6 +51,7 @@
 // manifests (subprocess, the pipeline-test precedent); refusals assert
 // the old revision through rendering, not internal state.
 #include "Common/ObjectIdTestSupport.h"
+#include "Common/ResourceCompilerTestUtil.h"
 #include "Common/TestUtil.h"
 
 #include "PackLogicStore.h"
@@ -70,9 +71,6 @@
 #include <string>
 #include <vector>
 
-#ifndef HARKEN_PACKC_PATH
-#error "HARKEN_PACKC_PATH must point at the packc executable"
-#endif
 #ifndef HARKEN_TEMP_DIR
 #error "HARKEN_TEMP_DIR must point at the repository's .temp directory"
 #endif
@@ -95,22 +93,6 @@ std::string TempPath(const std::string& name) {
     return std::string(HARKEN_TEMP_DIR "/") + name;
 }
 
-// Runs packc with the given argument list and returns the process exit
-// code (the pipeline test's quoting rules for cmd.exe).
-int RunPackc(const std::vector<std::string>& args) {
-    std::string exe = HARKEN_PACKC_PATH;
-    for (char& c : exe) {
-        if (c == '/') {
-            c = '\\';
-        }
-    }
-    std::string command = "\"\"" + exe + "\"";
-    for (const std::string& arg : args) {
-        command += " \"" + arg + "\"";
-    }
-    command += "\"";
-    return std::system(command.c_str());
-}
 
 // Minimal IEEE float32 RIFF/WAVE writer (the pipeline test's shape):
 // samples travel verbatim, so the pack blob carries the exact floats
@@ -182,7 +164,7 @@ void WriteWavF32(const std::string& path,
             return false;
         }
     }
-    return RunPackc({manifestPath}) == 0;
+    return harkentest::CompileResources({manifestPath}) == 0;
 }
 
 [[nodiscard]] bool BuildMediaPackFile(const std::string& name,
@@ -203,7 +185,7 @@ void WriteWavF32(const std::string& path,
             return false;
         }
     }
-    return RunPackc({manifestPath}) == 0;
+    return harkentest::CompileResources({manifestPath}) == 0;
 }
 
 std::string V2LogicManifest(const std::string& outputPath,

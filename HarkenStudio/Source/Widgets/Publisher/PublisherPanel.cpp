@@ -7,12 +7,12 @@
 #include "../../Core/Components/VAction.h"
 #include "../../Core/ItemTypeCatalog.h"
 #include "../../Core/ItemTypeIcons.h"
-#include "../../Core/PackBuildPlan.h"
+#include "Tooling/Harkenizer/Core/PackBuildPlan.h"
 #include "../../Core/PackArtifactCache.h"
 #include "../../Core/ProjectLanguageSemantics.h"
 #include "../../Core/PlatformContextService.h"
 #include "../../Core/ProjectPlatformActivity.h"
-#include "../../Core/ProjectPackExporter.h"
+#include "Tooling/Harkenizer/Core/ProjectPackExporter.h"
 #include "../../Core/ProjectManager.h"
 #include "../../Core/ProjectTypes.h"
 #include "../../Core/QtControlSkin.h"
@@ -335,6 +335,8 @@ PublisherPanel::PublisherPanel(QWidget* parent)
             this, &PublisherPanel::requestPackTableRefresh);
     connect(&PackGenerationRecordStore::instance(), &PackGenerationRecordStore::progressChanged,
             this, &PublisherPanel::updatePackProgress);
+    connect(&PackGenerationRecordStore::instance(), &PackGenerationRecordStore::globalObservationChanged,
+            this, &PublisherPanel::updateBuildStage);
     connect(&PackGenerationRecordStore::instance(), &PackGenerationRecordStore::exportActivityChanged,
             this, [this](bool) {
         cancelRequested_ = false;
@@ -436,6 +438,7 @@ PublisherPanel::PublisherPanel(QWidget* parent)
     });
 
     populatePlatformControls();
+    updateBuildStage();
     requestPackTableRefresh();
 }
 
@@ -466,6 +469,14 @@ void PublisherPanel::setupUI()
             this, &PublisherPanel::applyNameFilter);
     contentLayout->addWidget(searchEdit_);
 
+    buildStageLabel_ = new QLabel();
+    buildStageLabel_->setObjectName("packBuildStageLabel");
+    buildStageLabel_->setTextFormat(Qt::PlainText);
+    buildStageLabel_->setProperty("textRole", QStringLiteral("muted"));
+    buildStageLabel_->setWordWrap(true);
+    buildStageLabel_->setVisible(false);
+    contentLayout->addWidget(buildStageLabel_);
+
     auto* table = new TableWidget(TableOptions::display(), content);
     packTree_ = table->createCustomView(QStringLiteral("packTree"),
         [](QWidget* parent, ThemeManager* themeManager) {
@@ -474,6 +485,8 @@ void PublisherPanel::setupUI()
     packTree_->setHeaderLabels(
         {tr("Name"), tr("Built"), tr("Size"), tr("Modified"),
          tr("Result"), tr("Cost"), tr("File"), tr("Version")});
+    packTree_->headerItem()->setToolTip(kColCost,
+        tr("Media preparation and pack writing time; excludes shared compilation and publication."));
     packTree_->setPinnedTrailingColumns({kColResult, kColCost});
     packTree_->setAccentedColumns({kColResult, kColCost});
     packTree_->setColumnSeparatorBefore(kColResult);
@@ -617,6 +630,28 @@ void PublisherPanel::updatePackProgress(const QString& platform, const QString& 
         packTree_->viewport()->update(QRect(0, row.top(), packTree_->viewport()->width(), row.height()));
 }
 
+void PublisherPanel::updateBuildStage()
+{
+    const auto* observation = PackGenerationRecordStore::instance().globalObservation();
+    buildStageLabel_->setVisible(observation != nullptr);
+    if (!observation) {
+        buildStageLabel_->clear();
+        return;
+    }
+    QString stage;
+    switch (observation->stage) {
+    case PackBuildObservationStage::Preflight: stage = tr("Checking outputs"); break;
+    case PackBuildObservationStage::PreparingMedia: stage = tr("Preparing media"); break;
+    case PackBuildObservationStage::CompilingProject: stage = tr("Compiling project"); break;
+    case PackBuildObservationStage::WritingPacks: stage = tr("Writing packs"); break;
+    case PackBuildObservationStage::Publishing: stage = tr("Validating and publishing"); break;
+    case PackBuildObservationStage::Finalizing: stage = tr("Finalizing outputs"); break;
+    default: break;
+    }
+    buildStageLabel_->setText(observation->platform.isEmpty() ? stage
+        : tr("%1: %2").arg(platformName(observation->platform), stage));
+}
+
 void PublisherPanel::applyGenerationState(QTreeWidgetItem* item, const QString& platform,
                                           const QString& language, const QString& unitKey)
 {
@@ -624,6 +659,8 @@ void PublisherPanel::applyGenerationState(QTreeWidgetItem* item, const QString& 
     const auto* record = store.find(platform, language, unitKey);
     item->setText(kColResult, {});
     item->setText(kColCost, {});
+    item->setToolTip(kColCost,
+        tr("Media preparation and pack writing time; excludes shared compilation and publication."));
     item->setToolTip(kColResult, {});
     item->setData(kColResult, TableTextRole, static_cast<int>(TableTextState::Normal));
     item->setData(kColName, TableRowProgressRole, {});
@@ -643,12 +680,13 @@ void PublisherPanel::applyGenerationState(QTreeWidgetItem* item, const QString& 
     if (const auto* progress = store.findProgress(platform, language, unitKey)) {
         QString stage;
         auto state = TableRowProgressState::Active;
+        bool waiting = false;
         switch (progress->stage) {
-        case PackGenerationStage::Queued: stage = tr("Queued"); break;
+        case PackGenerationStage::Queued: stage = tr("Queued"); waiting = true; break;
         case PackGenerationStage::Preparing: stage = tr("Preparing"); break;
-        case PackGenerationStage::Compiling: stage = tr("Compiling"); break;
+        case PackGenerationStage::Compiling: stage = tr("Prepared"); waiting = true; break;
         case PackGenerationStage::Writing: stage = tr("Writing"); break;
-        case PackGenerationStage::Publishing: stage = tr("Publishing"); break;
+        case PackGenerationStage::Publishing: stage = tr("Ready to publish"); waiting = true; break;
         case PackGenerationStage::Complete:
             stage = tr("Completed");
             state = TableRowProgressState::Complete;
@@ -668,11 +706,23 @@ void PublisherPanel::applyGenerationState(QTreeWidgetItem* item, const QString& 
                     ? TableTextState::Disabled : TableTextState::Warning));
             return;
         }
+        if (const auto* observation = store.findObservation(platform, language, unitKey)) {
+            stage = observation->stage == PackBuildObservationStage::Prepared
+                ? tr("Prepared") : tr("Ready to publish");
+            waiting = true;
+        }
         const int percent = state == TableRowProgressState::Complete
             ? 100 : std::clamp(progress->percent, 0, 100);
-        item->setData(kColName, TableRowProgressRole, percent);
-        item->setData(kColName, TableRowProgressStateRole, static_cast<int>(state));
-        if (state == TableRowProgressState::Active) {
+        if (!waiting) {
+            item->setData(kColName, TableRowProgressRole, percent);
+            item->setData(kColName, TableRowProgressStateRole, static_cast<int>(state));
+        }
+        if (waiting) {
+            item->setText(kColResult, stage);
+            item->setText(kColCost, {});
+            item->setToolTip(kColResult, stage);
+            item->setData(kColResult, TableTextRole, static_cast<int>(TableTextState::Muted));
+        } else if (state == TableRowProgressState::Active) {
             item->setText(kColResult, stage);
             item->setText(kColCost, {});
             item->setToolTip(kColResult, tr("%1 (%2%)").arg(stage).arg(percent));

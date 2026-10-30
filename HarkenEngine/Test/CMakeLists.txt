@@ -326,7 +326,7 @@ add_executable(harken_runtime_tests
 target_link_libraries(harken_runtime_tests PRIVATE harken_core harken_buildinfo harken_remote
                       harken_reference_slots harken_resource_facts_contract
                       harken_program_registration harken_current_world_compiler
-                      harken_preview
+                      harken_preview harkenizer_resource_compiler harken_studio_pack_build
                       GTest::gtest_main)
 if(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     target_compile_definitions(harken_runtime_tests PRIVATE
@@ -376,26 +376,15 @@ target_include_directories(harken_runtime_tests PRIVATE
     # The host tool's pure parsing helpers are unit-tested here.
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Host
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Common
-    # The packc authoring-range predicate (RecipeParamInAuthoredRange) is pinned
-    # here against the runtime effect-parameter validator for accept-domain
-    # equality.
-    ${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/PackC
     # The generated C# binding's C++ ABI-pin header (compiled by
     # BindingAbiPinTest.cpp to make table<->Harken.h drift a compile error).
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Binding/generated
 )
 set_source_files_properties(UnitTest/MonitorAbiPinC.c PROPERTIES LANGUAGE C)
 
-# The pack round-trip cases drive the real compiler tool as a subprocess
-# and write their scratch files under the repository's .temp/ directory
-# (the one sanctioned scratch location, gitignored).
 target_compile_definitions(harken_runtime_tests PRIVATE
-    HARKEN_PACKC_PATH="$<TARGET_FILE:harken_packc>"
     HARKEN_TEMP_DIR="${CMAKE_SOURCE_DIR}/.temp")
-add_dependencies(harken_runtime_tests harken_packc)
 
-# The remote-channel end-to-end cases drive harken_host remote-serve as a
-# subprocess over a named pipe (the packc-subprocess precedent).
 target_compile_definitions(harken_runtime_tests PRIVATE
     HARKEN_HOST_PATH="$<TARGET_FILE:harken_host>")
 add_dependencies(harken_runtime_tests harken_host)

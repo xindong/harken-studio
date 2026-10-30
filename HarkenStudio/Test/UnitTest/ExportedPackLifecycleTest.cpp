@@ -16,14 +16,14 @@
 #include "Components/VTrack.h"
 #include "Components/VVariable.h"
 #include "BindingSemantics.h"
-#include "CurrentWorldProjectAdapter.h"
+#include "Tooling/Harkenizer/Core/CurrentWorldProjectAdapter.h"
 #include "PlayablePropertyAuthoringV1.h"
 #include "AudioEngine.h"
 #include "PlatformContextService.h"
 #include "ProjectManager.h"
 #include "FolderSaveState.h"
-#include "ProjectPackExporter.h"
-#include "CanonicalPackSetExport.h"
+#include "Tooling/Harkenizer/Core/ProjectPackExporter.h"
+#include "Tooling/Harkenizer/Core/CanonicalPackSetExport.h"
 #include "RuntimeSyncCoordinator.h"
 #include "ProjectTypes.h"
 #include "FieldGroupProjectAdapter.h"
@@ -86,8 +86,8 @@
 #error "HARKEN_HOST_PATH must point at the harken_host executable"
 #endif
 
-#ifndef HARKEN_PACKC_PATH
-#error "HARKEN_PACKC_PATH must point at the packc executable"
+#ifndef HARKENIZER_PATH
+#error "HARKENIZER_PATH must point at the Harkenizer executable"
 #endif
 
 #ifndef HARKEN_TEMP_DIR
@@ -1574,7 +1574,7 @@ class AuthoredPackLifecycle : public ::testing::Test
 protected:
     void SetUp() override
     {
-        qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+        qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
         ASSERT_TRUE(dir_.isValid());
         ASSERT_NO_FATAL_FAILURE(prepareExportedPackProject(project_, dir_.path()));
     }
@@ -2956,7 +2956,7 @@ class ExportedPackLifecycle : public AuthoredPackLifecycle
 protected:
     static void SetUpTestSuite()
     {
-        qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+        qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
         preparedDir_ = std::make_unique<QTemporaryDir>();
         ASSERT_TRUE(preparedDir_->isValid());
         {
@@ -2993,7 +2993,7 @@ class ExportedPackReadOnlyLifecycle : public ::testing::Test
 protected:
     static void SetUpTestSuite()
     {
-        qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+        qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
         preparedDir_ = std::make_unique<QTemporaryDir>();
         ASSERT_TRUE(preparedDir_->isValid());
         {

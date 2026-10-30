@@ -36,12 +36,11 @@ void appendU32(QByteArray& out, uint32_t value)
     out.append(static_cast<char>((value >> 24) & 0xffu));
 }
 
-void writeWav(const QString& path, uint32_t frames, float value)
+void writeWav(const QString& path, uint32_t frames, float value, uint16_t channels = 1)
 {
-    const std::vector<float> samples(frames, value);
-    constexpr uint16_t channels = 1;
+    const std::vector<float> samples(frames * channels, value);
     constexpr uint32_t sampleRate = 48000;
-    constexpr uint16_t blockAlign = channels * sizeof(float);
+    const uint16_t blockAlign = channels * sizeof(float);
     constexpr uint32_t fmtSize = 18;
     constexpr uint32_t factSize = 4;
     const uint32_t dataBytes = static_cast<uint32_t>(samples.size() * sizeof(float));
@@ -100,6 +99,71 @@ TEST(MediaPoolRefreshTest, SharedWaveformsRefreshAfterSourceAndCacheChanges)
     ASSERT_NE(updated, nullptr);
     EXPECT_FLOAT_EQ(updated->peaks[1], 0.6f);
     EXPECT_FLOAT_EQ(original->peaks[1], 0.2f);
+}
+
+TEST(MediaPoolRefreshTest, CapturedWaveformsShareCacheAndRejectStaleContentWithUnchangedMetadata)
+{
+    using namespace VNX;
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString audioDir = dir.filePath(QStringLiteral("AudioSources"));
+    ASSERT_TRUE(QDir().mkpath(audioDir));
+    const QString path = QDir(audioDir).filePath(QStringLiteral("source.wav"));
+    const QString captured = dir.filePath(QStringLiteral("captured.wav"));
+    writeWav(path, 480, 0.2f, 2);
+    const auto sourceTime = QFileInfo(path).lastModified();
+    const auto capture = [&] {
+        QFile::remove(captured);
+        if (!QFile::copy(path, captured))
+            return false;
+        QFile file(captured);
+        return file.open(QIODevice::ReadWrite)
+            && file.setFileTime(sourceTime, QFileDevice::FileModificationTime);
+    };
+    ASSERT_TRUE(capture());
+    ASSERT_TRUE(WaveformCache::generate(path, 128));
+    WaveformPeakData midSide;
+    ASSERT_TRUE(WaveformCache::generateMidSide(path, midSide));
+    const auto original = WaveformCache::loadShared(path);
+    ASSERT_NE(original, nullptr);
+    const auto cacheTime = QFileInfo(WaveformCache::cachePath(path)).lastModified();
+    QByteArray bytes;
+    ASSERT_TRUE(WaveformCache::readForBuild(captured, path,
+        AssetImporter::computeContentHash(captured), bytes));
+    EXPECT_EQ(QFileInfo(WaveformCache::cachePath(path)).lastModified(), cacheTime);
+    EXPECT_FALSE(QFileInfo::exists(WaveformCache::cachePath(captured)));
+    const auto originalBytes = bytes;
+    const auto originalHash = AssetImporter::computeContentHash(captured);
+    ASSERT_TRUE(QFile::remove(WaveformCache::cachePath(path) + QStringLiteral(".source.json")));
+    ASSERT_TRUE(WaveformCache::readForBuild(captured, path, originalHash, bytes));
+    EXPECT_EQ(bytes, originalBytes);
+
+    writeWav(path, 480, 0.6f, 2);
+    QFile source(path);
+    ASSERT_TRUE(source.open(QIODevice::ReadWrite));
+    ASSERT_TRUE(source.setFileTime(sourceTime, QFileDevice::FileModificationTime));
+    source.close();
+    ASSERT_TRUE(capture());
+    const auto updatedHash = AssetImporter::computeContentHash(captured);
+    ASSERT_NE(updatedHash, originalHash);
+    ASSERT_TRUE(WaveformCache::readForBuild(captured, path, updatedHash, bytes));
+    EXPECT_NE(bytes, originalBytes);
+    const auto updated = WaveformCache::loadShared(path);
+    ASSERT_NE(updated, nullptr);
+    EXPECT_EQ(updated->numPeaks, original->numPeaks);
+    EXPECT_TRUE(updated->hasMidSideData());
+    EXPECT_FLOAT_EQ(updated->peaks[1], 0.6f);
+    EXPECT_FLOAT_EQ(original->peaks[1], 0.2f);
+
+    QFile cache(WaveformCache::cachePath(path));
+    ASSERT_TRUE(cache.open(QIODevice::WriteOnly));
+    ASSERT_EQ(cache.write(originalBytes), originalBytes.size());
+    cache.close();
+    const auto updatedBytes = bytes;
+    ASSERT_TRUE(WaveformCache::readForBuild(captured, path, updatedHash, bytes));
+    EXPECT_EQ(bytes, updatedBytes);
+    ASSERT_TRUE(cache.open(QIODevice::ReadOnly));
+    EXPECT_EQ(cache.readAll(), bytes);
 }
 
 TEST(MediaPoolRefreshTest, CacheRemovalInvalidatesPendingWaveformPublication)

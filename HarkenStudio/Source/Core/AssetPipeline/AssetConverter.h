@@ -70,6 +70,10 @@ public:
     static bool writeFloatWav(const QString& path,
                               const std::vector<float>& interleaved,
                               uint16_t channels, uint32_t sampleRate);
+    static bool writeFloatWavCache(const QString& path,
+                                   const std::vector<float>& interleaved,
+                                   uint16_t channels, uint32_t sampleRate,
+                                   QString* contentHash = nullptr);
 
 signals:
     void conversionProgress(uint32_t sourceID, VNX::ProjectPlatformId platform, int percent);

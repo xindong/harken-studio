@@ -6,7 +6,6 @@
 #include "PlayablePropertyAuthoringV1.h"
 #include "PlaybackReferenceValidation.h"
 #include "ActionStepUtils.h"
-#include "ProjectPackExporter.h"
 #include "ProjectPreflight/ProjectPreflight.h"
 #include "ItemTypeCatalog.h"
 #include "MigrationManager.h"
@@ -31,7 +30,6 @@
 #include "Components/VSelection.h"
 #include "Components/VSound.h"
 #include "Components/VAttenuation.h"
-#include "Widgets/ProjectExplorer/ProjectExplorer.h"
 
 #include <QFile>
 #include <QJsonDocument>
@@ -1389,7 +1387,8 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
                                     bool allowUpgrade,
                                     ProjectUpgradeProgressCallback upgradeProgress,
                                     ProjectUpgradeApprovalCallback upgradeApproval,
-                                    ProjectContractReadContext* context)
+                                    ProjectContractReadContext* context,
+                                    LoadMode mode)
 {
     ProjectContractReadContext localContext;
     if (!context) context = &localContext;
@@ -1406,6 +1405,11 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
         emit errorOccurred(ProjectUpgradeMessages::userMessage(lastError_, true));
         return false;
     }
+    if (mode == LoadMode::ReadOnly && ProjectTransaction::recoveryRequired(location.projectFilePath)) {
+        lastError_ = QStringLiteral("Project recovery is required. Open the project in Studio before building.");
+        emit errorOccurred(lastError_);
+        return false;
+    }
     const auto modelProbe = ProjectContractRegistry::instance().probe(location.projectFilePath, context);
     if (!modelProbe.ok) {
         lastError_ = modelProbe.blockingErrors.isEmpty()
@@ -1415,7 +1419,7 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
     }
 
     const bool boundUpgradeOpen = static_cast<bool>(upgradeApproval);
-    if (!boundUpgradeOpen) {
+    if (!boundUpgradeOpen && mode == LoadMode::RecoverTransactions) {
         QString recoveryError;
         const auto recoveryProgress = [&upgradeProgress](
             int completedFiles, int totalFiles,
@@ -1449,7 +1453,7 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
     }
     const QString resolvedProjectFilePath = analysis.projectFilePath;
     if (analysis.upgradeRequired) {
-        if (!allowUpgrade) {
+        if (!allowUpgrade || mode == LoadMode::ReadOnly) {
             const PreflightReport preflight = ProjectPreflight::run(
                 resolvedProjectFilePath, analysis.targetSchema, context);
             if (!preflight.blockingErrors.isEmpty()) {

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "CanonicalRuntimeProjectAdapter.h"
+#include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapter.h"
 
 #include "FieldGroups.h"
 #include "ProjectPlatform.h"

@@ -1,5 +1,5 @@
 #include "../ActionManager.h"
-#include "../CanonicalRuntimeProjectAdapterPrivate.h"
+#include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "../ProjectManager.h"
 #include "../FieldGroupEditing.h"
 #include "../FieldGroupJson.h"

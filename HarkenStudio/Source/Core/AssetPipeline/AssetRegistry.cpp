@@ -420,7 +420,7 @@ MediaBuildSnapshot AssetRegistry::buildSnapshot(
                                             .value(QStringLiteral("content")).toObject();
             QMap<uint32_t, QString> references;
             if (sourceAssetsFromJson(content.value(QStringLiteral("sourceAssets")), references))
-                reconcileSnapshot(root, references, assets);
+                reconcileSnapshot(root, references, assets, resolveMissingHashes);
             else
                 assets.clear();
         }
@@ -449,7 +449,7 @@ std::optional<MediaConversionRequest> AssetRegistry::conversionRequest(
     }
     MediaConversionRequest request{projectRoot_, session_, platformRevisions_.value(platform),
         *definition, *asset, PlatformProfileManager::effectiveSettingsForAsset(
-            *asset, *definition, PlatformProfileManager::instance().getFileOverride(sourceID))};
+            *asset, *definition, PlatformProfileManager::instance().getFileOverride(sourceID)), {}};
     lock.unlock();
     if (request.asset.contentHash.isEmpty())
         request.asset.contentHash = AssetImporter::computeContentHash(request.asset.absolutePath);
@@ -701,7 +701,8 @@ bool AssetRegistry::sourceAssetsFromJson(const QJsonValue& value,
 
 bool AssetRegistry::reconcileSnapshot(const QString& projectRoot,
                                       const QMap<uint32_t, QString>& references,
-                                      QList<AssetInfo>& assets)
+                                      QList<AssetInfo>& assets,
+                                      bool analyzeMissingSources)
 {
     QHash<uint32_t, AssetInfo> cached;
     for (const auto& asset : assets) cached.insert(asset.sourceID, asset);
@@ -720,7 +721,7 @@ bool AssetRegistry::reconcileSnapshot(const QString& projectRoot,
             info.relativePath = it.value();
             info.absolutePath = audioRoot.filePath(info.relativePath);
             const QFileInfo file(info.absolutePath);
-            if (file.isFile()) {
+            if (analyzeMissingSources && file.isFile()) {
                 info.lastModified = file.lastModified().toSecsSinceEpoch();
                 info.metadata = importer.analyzeFile(info.absolutePath);
                 info.contentHash = AssetImporter::computeContentHash(info.absolutePath);

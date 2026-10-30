@@ -5,6 +5,12 @@
 
 add_library(harken_editor_foundation STATIC
     # --- Core root ---
+    ActionClosureEditorAdapter.cpp
+    CurrentWorldEditorAdapter.cpp
+    ProjectInstanceEditorAdapter.cpp
+    ReferenceSlotEditorAdapter.cpp
+    RuntimeCapabilityEditorAdapter.cpp
+    VariableConsumerEditing.cpp
     AppSettings.cpp
     AppSettings.h
     AuthoringPolicy.cpp
@@ -24,19 +30,11 @@ add_library(harken_editor_foundation STATIC
     VariableRehearsal.h
     BusPlacementRules.cpp
     BusPlacementRules.h
-    BusRouteGraph.cpp
-    BusRouteGraph.h
-    BucketFolderStore.cpp
-    BucketFolderStore.h
-    FolderSaveState.cpp
-    FolderSaveState.h
     Component.h
     ContextInfo.cpp
     ContextInfo.h
     ContextInfoService.cpp
     ContextInfoService.h
-    CompileTargetProfileCatalog.cpp
-    CompileTargetProfileCatalog.h
     HelpCatalog.cpp
     HelpCatalog.h
     ReentrancyGuard.h
@@ -51,115 +49,33 @@ add_library(harken_editor_foundation STATIC
     ProjectObjectIndex.h
     RuntimeSyncCoordinator.cpp
     RuntimeSyncCoordinator.h
-    ActionStepUtils.cpp
-    ActionStepUtils.h
-    ActionStepEditing.cpp
-    ActionStepEditing.h
-    ActionClosureSemantics.cpp
-    ActionClosureSemantics.h
-    PackExportSelection.cpp
-    PackExportSelection.h
-    PackBuildPlan.cpp
-    PackBuildPlan.h
-    PackGenerationRecord.cpp
-    PackGenerationRecord.h
-    PackArtifactCache.cpp
-    PackArtifactCache.h
-    EffectChainSemantics.cpp
-    EffectChainSemantics.h
-    RuntimeU64Json.cpp
-    RuntimeU64Json.h
-    RuntimeCapabilityMatrix.cpp
-    RuntimeCapabilityMatrix.h
     RuntimeCapabilityTypes.h
     RuntimeContainerLowering.cpp
     RuntimeContainerLowering.h
     ISettingsStorage.h
     LanguageManager.cpp
     LanguageManager.h
-    MigrationManager.cpp
-    MigrationManager.h
-    ProjectDataPolicy.cpp
-    ProjectDataPolicy.h
     PhysicalFolderOperations.cpp
     PhysicalFolderOperations.h
-    ProjectDocument.cpp
-    ProjectDocument.h
-    ProjectIssue.cpp
-    ProjectIssue.h
-    ProjectMigration.cpp
-    ProjectMigration.h
-    ${HARKEN_SCHEMA_GENERATED_PROJECT_HEADER}
-    ${HARKEN_SCHEMA_GENERATED_BUILD_HEADER}
-    ${HARKEN_SCHEMA_GENERATED_VALIDATOR_SOURCE}
-    ${HARKEN_SCHEMA_GENERATED_VALIDATOR_HEADER}
     ProjectSchemaRules.h
-    ProjectSchemaValidator.cpp
-    ProjectSchemaValidator.h
-    SchemaArchive.cpp
-    SchemaArchive.h
     SchemaCompatibilityProbe.cpp
     SchemaCompatibilityProbe.h
-    ProjectLocator.cpp
-    ProjectLocator.h
-    ProjectVolume.cpp
-    ProjectVolume.h
-    ProjectContract.cpp
-    ProjectContract.h
-    ProjectUpgradeMessages.cpp
-    ProjectUpgradeMessages.h
-    ProjectTransaction.cpp
-    ProjectTransaction.h
-    ProjectUpgradeManager.cpp
-    ProjectUpgradeManager.h
-    NameValidator.cpp
-    NameValidator.h
     NamedLayoutStore.cpp
     NamedLayoutStore.h
     BuiltinLayouts.cpp
     BuiltinLayouts.h
     # Eliminate-Pack S4 — .cache/project_index/ dual index (design §2.4).
-    ProjectIndex.cpp
-    ProjectIndex.h
     # Eliminate-Pack S4.3 — integrity scan (design §2.2 Pass 3 / §2.10).
-    IntegrityScanner.cpp
-    IntegrityScanner.h
-    ProjectPackExporter.cpp
-    PackOutputIndex.cpp
-    ProjectPackExporter.h
     RuntimeContentBundleBuilder.cpp
     RuntimeContentBundleBuilder.h
-    CanonicalPackSetExport.cpp
-    CanonicalPackSetExport.h
     PackGroupEditing.cpp
     PackGroupEditing.h
-    ProjectItemComponents.cpp
-    PlayablePropertyAuthoringV1.cpp
-    PlayablePropertyAuthoringV1.h
     PlatformContext.h
     PlatformContextService.cpp
     PlatformContextService.h
     LanguageContextService.cpp
     LanguageContextService.h
-    CurrentWorldProjectAdapter.cpp
-    CurrentWorldProjectAdapter.h
-    CurrentWorldArtifactWriter.cpp
-    CurrentWorldArtifactWriter.h
-    CurrentWorldArtifactWriterInternal.h
-    CanonicalRuntimeProjectAdapter.cpp
-    CanonicalRuntimeProjectAdapter.h
-    CanonicalRuntimeProjectAdapterPrivate.h
-    FieldGroupProjectAdapter.cpp
-    FieldGroupProjectAdapter.h
     AuthoringPlatform.h
-    FieldGroups.cpp
-    FieldGroups.h
-    FieldGroupEditing.cpp
-    FieldGroupEditing.h
-    FieldGroupDerivedView.cpp
-    FieldGroupDerivedView.h
-    FieldGroupJson.cpp
-    FieldGroupJson.h
     ProjectManager.cpp
     ProjectManager.h
     PhysicalFolderReferenceEdits.cpp
@@ -168,26 +84,10 @@ add_library(harken_editor_foundation STATIC
     PropertyEditSession.h
     ProjectTemplateLoader.cpp
     ProjectTemplateLoader.h
-    ProjectTypes.h
-    ProjectTypes.cpp
     ProjectItemSaveState.cpp
     ProjectItemSaveState.h
     ProjectSavePlan.h
-    ProjectPlatform.cpp
-    ProjectBuildSnapshot.cpp
-    ProjectBuildSnapshot.h
-    ProjectPlatform.h
     ProjectPlatformCommandSchema.h
-    ProjectPlatformActivity.cpp
-    ProjectPlatformActivity.h
-    ProjectLanguageSemantics.h
-    ProjectLanguageSemantics.cpp
-    SoundSourceEditing.h
-    SoundSourceEditing.cpp
-    SoundSourceDerivative.h
-    SoundSourceDerivative.cpp
-    PlacementContext.cpp
-    PlacementContext.h
     PanelInstanceRegistry.cpp
     PanelInstanceRegistry.h
     ComponentRecipeRegistry.cpp
@@ -231,51 +131,17 @@ add_library(harken_editor_foundation STATIC
     ThemeAssetCatalog.h
     BuiltinTheme.cpp
     BuiltinTheme.h
-    ComponentCatalog.cpp
-    ComponentCatalog.h
-    ItemTypeCatalog.cpp
-    ItemTypeCatalog.h
     ItemPropertySchema.h
-    VariableSemantics.cpp
-    VariableSemantics.h
-    VariableConsumerSemantics.cpp
-    VariableConsumerSemantics.h
     VariableImpactSemantics.cpp
     VariableImpactSemantics.h
-    CurveSemantics.cpp
-    CurveSemantics.h
-    BindingSemantics.cpp
-    BindingSemantics.h
-    BindingContract.cpp
-    BindingContract.h
-    BindingRuntimeLowering.cpp
-    BindingRuntimeLowering.h
     BindingEditing.cpp
     BindingEditing.h
-    GridSemantics.cpp
-    MixingSemantics.cpp
-    MixingSemantics.h
-    PlaybackReferenceValidation.cpp
-    PlaybackReferenceValidation.h
-    GridSemantics.h
-    TransitionSemantics.cpp
-    TransitionSemantics.h
     TransitionFieldGating.cpp
     TransitionFieldGating.h
     TransitionRehearsal.cpp
     TransitionRehearsal.h
-    ContainerBehaviorSemantics.cpp
-    ContainerBehaviorSemantics.h
-    Timeline/TimelineTypes.cpp
-    Timeline/TimelineTypes.h
-    Timeline/TimelineCoordinates.cpp
-    Timeline/TimelineCoordinates.h
     Timeline/TimelineEditing.cpp
     Timeline/TimelineEditing.h
-    Timeline/TimelineSemantics.cpp
-    Timeline/TimelineSemantics.h
-    ReferenceSlotResolution.cpp
-    ReferenceSlotResolution.h
     ItemTypeIcons.cpp
     ItemTypeIcons.h
     FontManager.cpp
@@ -303,43 +169,20 @@ add_library(harken_editor_foundation STATIC
     StartupProgress.h
     # --- Core/Actions: all Action files moved to harken_editor_lib (depend on IPCServer/UI layer) ---
     # --- Core/AssetPipeline ---
-    AssetPipeline/AssetConverter.cpp
-    AssetPipeline/AssetConverter.h
-    AssetPipeline/MediaBuildSnapshot.cpp
-    AssetPipeline/MediaBuildSnapshot.h
     AssetPipeline/AssetGarbageCollector.cpp
     AssetPipeline/AssetGarbageCollector.h
-    AssetPipeline/AssetImporter.cpp
-    AssetPipeline/AssetImporter.h
-    AssetPipeline/AssetRegistry.cpp
-    AssetPipeline/AssetRegistry.h
+    AssetPipeline/AssetImport.cpp
     AssetPipeline/SourceFileSystem.cpp
     AssetPipeline/SourceFileSystem.h
     AssetPipeline/AssetTypes.h
     AssetPipeline/AudioImportGate.cpp
     AssetPipeline/AudioImportGate.h
-    AssetPipeline/AudioFormatCatalog.cpp
-    AssetPipeline/AudioFormatCatalog.h
     AssetPipeline/MediaPool.cpp
     AssetPipeline/MediaPool.h
-    AssetPipeline/PathUtils.cpp
-    AssetPipeline/PathUtils.h
-    AssetPipeline/PlatformProfile.cpp
-    AssetPipeline/PlatformProfile.h
     AssetPipeline/WaveformAnalysis.h
-    AssetPipeline/WaveformCache.cpp
-    AssetPipeline/WaveformCache.h
     # --- Core/Components (header-only) ---
-    Components/VAttenuation.h
-    Components/VAttenuation.cpp
     Components/VAudio.h
     Components/VSpatial.h
-    Components/VSelection.h
-    Components/VSelection.cpp
-    Components/VSound.h
-    Components/VSound.cpp
-    SoundSourceSemantics.h
-    SoundSourceSemantics.cpp
     Components/VVariable.h
     Components/VAction.h
     Components/VTrack.h
@@ -440,6 +283,7 @@ target_include_directories(harken_editor_foundation PRIVATE
 )
 
 target_link_libraries(harken_editor_foundation PUBLIC
+    harkenizer_build
     harken_integration_tooling
     Qt6::Widgets
     Qt6::Concurrent
