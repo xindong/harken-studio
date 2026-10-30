@@ -160,6 +160,16 @@ MeterPanel::MeterPanel(QWidget* parent, Presentation presentation)
         }
     });
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, &MeterPanel::updatePresentation);
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this, [this] {
+        if (presentation_ == Presentation::Embedded) {
+            auto& theme = ThemeManager::instance();
+            expandButton_->setIcon(theme.resolveToggleIcon(
+                QString::fromLatin1(ThemeAssetIds::NavigationChevronDown),
+                QString::fromLatin1(ThemeAssetIds::NavigationChevronRight)).icon);
+            detachButton_->setIcon(theme.resolveIcon(QString::fromLatin1(ThemeAssetIds::InspectorDetach)).icon);
+        }
+        update();
+    });
     connect(&FontManager::instance(), &FontManager::fontChanged, this, &MeterPanel::updatePresentation);
     setBus(0);
     setMinimumSize(minimumSizeHint());

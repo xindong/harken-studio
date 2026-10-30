@@ -10,6 +10,7 @@ namespace allocation_probe {
 thread_local bool enabled = false;
 thread_local std::size_t count = 0;
 thread_local std::size_t bytes = 0;
+thread_local std::size_t failAt = 0;
 thread_local bool (*countIf)(void*) noexcept = nullptr;
 thread_local void* countContext = nullptr;
 
@@ -17,6 +18,10 @@ void* Allocate(std::size_t size, std::size_t alignment = 0) {
     if (enabled && (countIf == nullptr || countIf(countContext))) {
         ++count;
         bytes += size;
+        if (failAt != 0 && count == failAt) {
+            failAt = 0;
+            throw std::bad_alloc{};
+        }
     }
     size = size == 0 ? 1 : size;
     for (;;) {

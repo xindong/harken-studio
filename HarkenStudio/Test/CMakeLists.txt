@@ -53,6 +53,7 @@ add_executable(harken_editor_tests
     UnitTest/ProjectMigrationTest.cpp
     UnitTest/AudioFormatDecodeTest.cpp
     UnitTest/MediaPoolRefreshTest.cpp
+    UnitTest/FileWatcherTest.cpp
     UnitTest/ProjectPackExporterManifestTest.cpp
     UnitTest/ExportedPackLifecycleTest.cpp
     UnitTest/CanonicalBusSendSnapshotParserTest.cpp

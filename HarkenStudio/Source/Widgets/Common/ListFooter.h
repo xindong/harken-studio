@@ -29,6 +29,7 @@ protected:
 
 private:
     void applyTheme();
+    void refreshIcons();
 
     ThemeManager* themeManager_;
     QToolButton* addButton_ = nullptr;

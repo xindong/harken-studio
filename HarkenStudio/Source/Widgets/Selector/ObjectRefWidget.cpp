@@ -67,7 +67,13 @@ ObjectRefWidget::ObjectRefWidget(QWidget* parent)
 
     connect(pickButton_, &QToolButton::clicked, this, [this] { openSelector(); });
     connect(&theme, &ThemeManager::themeChanged, this,
-            [this]() { refreshDisplay(); });
+            [this]() { refreshMetrics(); });
+    connect(&theme, &ThemeManager::appearanceChanged, this, [this]() {
+        pickButton_->setIcon(ThemeManager::instance().resolveIcon(
+            QString::fromLatin1(ThemeAssetIds::SelectorTarget)).icon);
+        refreshIcon();
+        update();
+    });
     bindChanged();
 
     refreshDisplay();

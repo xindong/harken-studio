@@ -23,21 +23,25 @@ SPEC.loader.exec_module(MODULE)
 
 def documents(root: Path) -> dict:
     return {
-        "root": (root / "Fixture.hsp", {"harkenDocument": {"id": "root", "type": "project.root", "savedStudioVersion": "1.0"},
+        "root": (root / "Fixture.hsp", {"harkenDocument": {"id": "root", "type": "project.root", "savedStudioVersion": "1.0", "packSchemaVersion": 1},
             "content": {"metadata": {"description": "Original", "modifiedDate": "2026-09-07T00:00:00Z"},
                         "extensions": {"future": {"flag": True, "integer": 9007199254740993}}}}),
-        "action": (root / "Actions/Trigger.vp", {"harkenDocument": {"id": "action", "type": "project.action", "savedStudioVersion": "1.0"},
+        "action": (root / "Actions/Trigger.vp", {"harkenDocument": {"id": "action", "type": "project.action"},
             "content": {"name": "Trigger", "type": "Action", "extensions": {"future": [True, None, {}, []]}}}),
-        "master": (root / "Busses/Master.vp", {"harkenDocument": {"id": "master", "type": "project.bus", "savedStudioVersion": "1.0"},
+        "master": (root / "Busses/Master.vp", {"harkenDocument": {"id": "master", "type": "project.bus"},
             "content": {"name": "Master", "parentRef": {"kind": "root"}, "extensions": {}}}),
     }
 
 
-def edited_documents(before: dict) -> tuple[dict, dict]:
+def edited_documents(before: dict, pack_schema_version: int = 2) -> tuple[dict, dict]:
     after = copy.deepcopy(before)
     edits = []
     for identity, (_, document) in after.items():
-        document["harkenDocument"]["savedStudioVersion"] = "1.1"
+        header = document["harkenDocument"]
+        if "savedStudioVersion" in header:
+            header["savedStudioVersion"] = "1.1"
+        if identity == "root" and "packSchemaVersion" in header:
+            header["packSchemaVersion"] = pack_schema_version
         if identity == "master":
             continue
         path = "/content/metadata/description" if identity == "root" else "/content/name"
@@ -45,7 +49,7 @@ def edited_documents(before: dict) -> tuple[dict, dict]:
         original = parent[key]
         parent[key] += "\nSchema compatibility edit" if identity == "root" else "_schema_edit"
         edits.append({"documentId": identity, "jsonPath": path, "before": original, "after": parent[key]})
-    return after, {"version": "1.1", "edits": edits}
+    return after, {"version": "1.1", "packSchemaVersion": pack_schema_version, "edits": edits}
 
 
 def write_documents(values: dict) -> None:
@@ -98,9 +102,24 @@ class SchemaCompatibilityTest(unittest.TestCase):
         self.assertTrue(MODULE.same_generation_errors("Pack", self.pack, candidate))
 
     def test_fixed_normal_edits_preserve_raw_content(self) -> None:
-        before = documents(Path("Fixture"))
-        after, report = edited_documents(before)
-        MODULE.verify_edit(before, after, report)
+        for historical in (False, True):
+            with self.subTest(historical=historical):
+                before = documents(Path("Fixture"))
+                if historical:
+                    before["root"][1]["harkenDocument"].pop("packSchemaVersion")
+                    for _, document in before.values():
+                        document["harkenDocument"]["savedStudioVersion"] = "1.0"
+                after, report = edited_documents(before)
+                MODULE.verify_edit(before, after, report)
+                for identity, key, value in (("root", "savedStudioVersion", "1.0"),
+                                              ("root", "packSchemaVersion", 1),
+                                              ("action", "savedStudioVersion", "1.0"),
+                                              ("master", "packSchemaVersion", 2)):
+                    with self.subTest(document=identity, field=key):
+                        damaged = copy.deepcopy(after)
+                        damaged[identity][1]["harkenDocument"][key] = value
+                        with self.assertRaises(ValueError):
+                            MODULE.verify_edit(before, damaged, report)
 
     def test_action_rename_revision_and_history_are_checked_exactly(self) -> None:
         self.check_action_rename_history(legacy=True)
@@ -687,7 +706,8 @@ class ReaderGateTest(unittest.TestCase):
         else:
             project = Path(request["projectPath"])
             if request["mode"] == "edit":
-                after, changed = edited_documents(MODULE.project_documents(project))
+                after, changed = edited_documents(MODULE.project_documents(project),
+                                                  expected["trees"]["Pack"]["currentVersion"])
                 write_documents(after)
                 edits = changed["edits"]
         return {"buildId": "fixture", "version": "1.1", "gitCommit": "a" * 40, "gitDirty": False,

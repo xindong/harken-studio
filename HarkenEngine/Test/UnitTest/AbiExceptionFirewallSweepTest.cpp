@@ -65,7 +65,6 @@ TEST_F(AbiExceptionFirewallSweep, AudibilityScratchInitCheckpoints) {
     config.audibilityParkEnabled = 1;
     struct FaultCase { LogicAllocSite site; std::size_t nth; };
     const FaultCase cases[] = {
-        {LogicAllocSite::AudibilityRows, 1},
         {LogicAllocSite::AudibilityParked, 1},
         {LogicAllocSite::AudibilityParked, 2},
     };

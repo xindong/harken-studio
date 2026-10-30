@@ -208,12 +208,12 @@ TEST(ProjectOpenApproval, ChangedFilesAndPendingJournalDoNotConsumeApproval)
     EXPECT_TRUE(VNX::ProjectTransaction::recover(path, &error)) << error.toStdString();
 }
 
-TEST(StudioProjectOpen, FailedSaveAsPreservesOriginalProjectSession)
+TEST(StudioProjectOpen, SaveAsKeepsTheActiveProjectSessionAndFileObservationConsistent)
 {
     VNX::TestSupport::ensureApp();
     if (runInChild()) return;
     QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
-    QTemporaryDir directory{QStringLiteral(HARKEN_TEMP_DIR "/save-as-failure-XXXXXX")};
+    QTemporaryDir directory{QStringLiteral(HARKEN_TEMP_DIR "/save-as-session-XXXXXX")};
     ASSERT_TRUE(directory.isValid());
     const QString path = writeProject(directory);
     VNX::MainWindow window;
@@ -286,6 +286,42 @@ TEST(StudioProjectOpen, FailedSaveAsPreservesOriginalProjectSession)
     EXPECT_FALSE(QFileInfo::exists(destination));
     EXPECT_EQ(readBytes(obstruction), QByteArray("keep"));
     EXPECT_FALSE(VNX::ProjectTransaction::recoveryRequired(destination));
+
+    ASSERT_TRUE(QFile::remove(obstruction));
+    const QString destinationSource = directory.filePath(
+        QStringLiteral("Destination/AudioSources/copied.wav"));
+    ASSERT_TRUE(QDir().mkpath(QFileInfo(destinationSource).absolutePath()));
+    QFile copiedSource(destinationSource);
+    ASSERT_TRUE(copiedSource.open(QIODevice::WriteOnly));
+    copiedSource.close();
+    const QString staleDocument = directory.filePath(
+        QStringLiteral("Destination/Actions/Obsolete/Previous.vp"));
+    writeObject(staleDocument, {{QStringLiteral("previousProject"), true}});
+    responder.start(5);
+    ASSERT_TRUE(QMetaObject::invokeMethod(&window, "onSaveProjectAs", Qt::DirectConnection));
+    responder.stop();
+    ASSERT_EQ(failures.size(), 1);
+    EXPECT_EQ(projects.currentProject(), project);
+    EXPECT_EQ(project->projectPath, destination);
+    EXPECT_EQ(project->name, QStringLiteral("Copy"));
+    EXPECT_EQ(projects.findItemByGuid(pending->guid), pending);
+    EXPECT_TRUE(undo.isClean());
+    EXPECT_TRUE(originalInstance.expired());
+    EXPECT_TRUE(QFileInfo::exists(destination));
+    EXPECT_FALSE(QFileInfo::exists(staleDocument));
+    EXPECT_FALSE(QDir(QFileInfo(staleDocument).absolutePath()).exists());
+    EXPECT_TRUE(projects.fileWatcher()->isWatching());
+    EXPECT_EQ(projects.fileWatcher()->sourceFiles(), QStringList{destinationSource});
+    ASSERT_TRUE(projects.saveProject());
+    EXPECT_EQ(projects.fileWatcher()->sourceFiles(), QStringList{destinationSource});
+    const auto pendingGuid = pending->guid;
+    ASSERT_TRUE(projects.closeProject());
+    ASSERT_TRUE(projects.loadProject(destination));
+    ASSERT_TRUE(VNX::TestSupport::spinUntil([&] {
+        return projects.currentProject()
+            && projects.currentProject()->projectPath == destination;
+    }, 5000));
+    EXPECT_NE(projects.findItemByGuid(pendingGuid), nullptr);
 }
 
 TEST(StudioProjectOpen, CurrentGenerationOpenRetainsTransactionRecovery)

@@ -34,6 +34,7 @@ struct PreparedProject
     std::unique_ptr<IntegrityScanner> integrityScanner;
     IntegrityScanner::Report integrityReport;
     QList<AssetInfo> assets;
+    QHash<QString, QByteArray> loadedDocuments;
     QStringList diagnostics;
     QString error;
     bool rebuildAssetRegistry = false;

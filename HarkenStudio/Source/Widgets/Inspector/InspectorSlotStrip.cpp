@@ -32,7 +32,7 @@ InspectorSlotStrip::InspectorSlotStrip(QWidget* parent)
         cellLayout->setSpacing(0);
         layout_->addWidget(slot.cell);
     }
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
             this, [this] { update(); });
 }
 

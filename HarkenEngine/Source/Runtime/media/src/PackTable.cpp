@@ -143,7 +143,7 @@ bool PackTable::PrepareContentStorage() noexcept {
 
 VnResult PackTable::PrepareRetiringRow(
     VnPackHandle handle, std::size_t predecessorEntryCount,
-    std::size_t successorEntryCount, bool preservePackEntries,
+    std::size_t successorEntryCount,
     RetiredReplace* outReservation,
     RetiringGeneration** outRow) noexcept {
     if (outRow == nullptr) {
@@ -168,9 +168,7 @@ VnResult PackTable::PrepareRetiringRow(
             selected = i;
         }
         if (row.entries.capacity() >= predecessorEntryCount &&
-            row.successorEntries.capacity() >= successorEntryCount &&
-            (!preservePackEntries ||
-             row.packEntries.capacity() >= predecessorEntryCount)) {
+            row.successorEntries.capacity() >= successorEntryCount) {
             selected = i;
             break;
         }
@@ -188,9 +186,6 @@ VnResult PackTable::PrepareRetiringRow(
     try {
         row.entries.reserve(predecessorEntryCount);
         row.successorEntries.reserve(successorEntryCount);
-        if (preservePackEntries) {
-            row.packEntries.reserve(predecessorEntryCount);
-        }
     } catch (...) {
         return VN_BACKPRESSURE;
     }
@@ -590,6 +585,8 @@ VnResult PackTable::Load(const char* utf8Path, PCMRegistry& registry,
                 }
                 return result;
             }
+            entries[i].registration = registry.ReferenceOf(
+                e.soundId, entries[i].registrationCookie);
             registered = i + 1;
         }
     } catch (...) {
@@ -629,25 +626,9 @@ VnResult PackTable::Unload(VnPackHandle handle,
         ++m_staleHandleHits;
         return VN_STALE_HANDLE;
     }
-    if (slot->closureRefCount != 0) {
-        return VN_IN_USE;
-    }
-    // Liveness gate before any mutation: unload is all-or-nothing like
-    // load, so the refusal leaves every entry registered. Only entries
-    // the pack still owns participate: a cookie mismatch means the caller
-    // unregistered the id (and possibly re-registered content of their
-    // own under it) — that registration is not the pack's to gate on or
-    // to remove.
-    for (const PackEntry& entry : slot->entries) {
-        if (registry.CookieOf(entry.soundId) != entry.registrationCookie ||
-            OtherPackReferences(handle, entry.soundId, entry.registrationCookie)) {
-            continue;
-        }
-        const PCMView view = registry.Lookup(entry.soundId);
-        if (view.Valid() && view.useCount != nullptr &&
-            view.useCount->load(std::memory_order_acquire) != 0) {
-            return VN_IN_USE;
-        }
+    const VnResult canUnload = CanUnload(handle, registry);
+    if (canUnload != VN_OK) {
+        return canUnload;
     }
     // No voice can start between the gate above and these unregisters
     // (raw voice starts share the externally synchronized API thread), and use
@@ -771,7 +752,7 @@ VnResult PackTable::CommitPreparedReplace(PreparedReplaceToken* token,
     std::vector<PackEntry>& entries = token->m_entries;
     RetiringGeneration* old = nullptr;
     const VnResult reserved = PrepareRetiringRow(
-        token->m_handle, slot->entries.size(), 0, false, nullptr, &old);
+        token->m_handle, slot->entries.size(), 0, nullptr, &old);
     if (reserved != VN_OK) {
         return reserved;
     }
@@ -834,6 +815,8 @@ VnResult PackTable::CommitPreparedReplace(PreparedReplaceToken* token,
                 ReleaseRetiringRow(*old);
                 return result;
             }
+            entries[i].registration = registry.ReferenceOf(
+                e.soundId, entries[i].registrationCookie);
             registered = static_cast<std::uint32_t>(i) + 1;
         }
     } catch (...) {
@@ -855,6 +838,7 @@ VnResult PackTable::CommitPreparedReplace(PreparedReplaceToken* token,
     // Swap the slot to the new generation. The handle survives: the slot
     // generation is untouched, only the content changed.
     old->bytes = std::move(slot->bytes);
+    old->packEntries = std::move(slot->entries);
     old->closureRefCount = slot->closureRefCount;
     slot->bytes = std::move(bytes);
     slot->entries = std::move(entries);
@@ -914,8 +898,12 @@ const std::vector<PackEntry>* PackTable::Entries(
 }
 
 const PackEntry* PackTable::FindEntryBySound(
-    VnSoundId soundId, const PCMRegistry& registry) const {
-    for (const Slot& slot : m_slots) {
+    VnSoundId soundId, const PCMRegistry& registry,
+    VnPackHandle* outOwner) const {
+    if (outOwner != nullptr) *outOwner = 0;
+    const auto currentCookie = registry.CookieOf(soundId);
+    for (std::size_t index = 0; index < m_slots.size(); ++index) {
+        const Slot& slot = m_slots[index];
         if (!slot.loaded) {
             continue;
         }
@@ -926,8 +914,12 @@ const PackEntry* PackTable::FindEntryBySound(
             // Serve metadata only while the registration under the id is
             // still the pack's own: after the caller re-registers the id
             // with other content, pack loop facts would be lies about it.
-            if (registry.CookieOf(soundId) != entry.registrationCookie) {
-                return nullptr;
+            if (currentCookie != entry.registrationCookie) {
+                continue;
+            }
+            if (outOwner != nullptr) {
+                *outOwner = MakePackHandle(static_cast<std::uint32_t>(index),
+                                           slot.generation);
             }
             return &entry;
         }
@@ -1220,7 +1212,7 @@ VnResult PackTable::PrepareCanonicalSet(
             RetiringGeneration* row = nullptr;
             const VnResult reserved = PrepareRetiringRow(
                 MakePackHandle(static_cast<std::uint32_t>(index), slot.generation),
-                slot.entries.size(), 0, false, &change.predecessor, &row);
+                slot.entries.size(), 0, &change.predecessor, &row);
             if (reserved != VN_OK) {
                 return reserved;
             }
@@ -1270,7 +1262,7 @@ VnResult PackTable::PrepareCanonicalSet(
                 }
                 for (const auto& entry : slot.entries) {
                     if (entry.soundId == id && entry.registrationCookie == cookie &&
-                        entry.registration.Valid()) {
+                        entry.registration.OwnsSamples()) {
                         return true;
                     }
                 }
@@ -1286,7 +1278,7 @@ VnResult PackTable::PrepareCanonicalSet(
             const auto cookie = registry.CookieOf(id);
             if (cookie != 0) {
                 const PackEntry* old = FindEntryBySound(id, registry);
-                if (old == nullptr || !old->registration.Valid()) {
+                if (old == nullptr || !old->registration.OwnsSamples()) {
                     m_conflictingSoundId = id;
                     return VN_IN_USE;
                 }
@@ -1499,7 +1491,7 @@ VnResult PackTable::PrepareCanonicalMedia(
         const std::uint64_t cookie = registry.CookieOf(media.soundId);
         if (cookie != 0) {
             const PackEntry* existing = FindEntryBySound(media.soundId, registry);
-            if (existing == nullptr || !existing->registration.Valid()) {
+            if (existing == nullptr || !existing->registration.OwnsSamples()) {
                 return VN_IN_USE;
             }
             const PCMView view = existing->registration.View();
@@ -1640,6 +1632,8 @@ VnResult PackTable::LoadPrepared(PreparedLoadToken* token,
                 }
                 return result;
             }
+            entries[i].registration = registry.ReferenceOf(
+                e.soundId, entries[i].registrationCookie);
             registered = static_cast<std::uint32_t>(i) + 1;
         }
     } catch (...) {
@@ -1687,6 +1681,13 @@ VnResult PackTable::CanUnload(VnPackHandle handle,
         return VN_IN_USE;
     }
     for (const PackEntry& entry : slot->entries) {
+        // Cookie provenance controls removal of the current registration;
+        // original readers independently control the lifetime of Pack bytes.
+        const PCMView original = entry.registration.View();
+        if (!entry.registration.OwnsSamples() && original.useCount != nullptr &&
+            original.useCount->load(std::memory_order_acquire) != 0) {
+            return VN_IN_USE;
+        }
         if (registry.CookieOf(entry.soundId) != entry.registrationCookie ||
             OtherPackReferences(handle, entry.soundId, entry.registrationCookie)) {
             continue;
@@ -1754,6 +1755,35 @@ VnResult PackTable::CanReplacePreparedV2(
     return VN_OK;
 }
 
+PackTable::PreparedMutation::~PreparedMutation() noexcept {
+    if (m_owner != nullptr) {
+        m_owner->CancelPreparedMutation(this);
+    }
+}
+
+PackTable::PreparedMutation::PreparedMutation(PreparedMutation&& other) noexcept {
+    *this = std::move(other);
+}
+
+PackTable::PreparedMutation& PackTable::PreparedMutation::operator=(
+    PreparedMutation&& other) noexcept {
+    if (this != &other) {
+        if (m_owner != nullptr) {
+            m_owner->CancelPreparedMutation(this);
+        }
+        m_owner = std::exchange(other.m_owner, nullptr);
+        m_handle = std::exchange(other.m_handle, 0);
+        m_unload = std::exchange(other.m_unload, false);
+        m_revisionKey = std::exchange(other.m_revisionKey, PackRevisionKey{});
+        m_resourceToken = std::exchange(other.m_resourceToken, 0);
+        m_bytes = std::move(other.m_bytes);
+        m_entries = std::move(other.m_entries);
+        m_pcm = std::move(other.m_pcm);
+        m_predecessor = std::exchange(other.m_predecessor, RetiredReplace{});
+    }
+    return *this;
+}
+
 VnResult PackTable::PrepareRevisionMutation(
     VnPackHandle handle, AlignedBuffer& bytes,
     std::vector<PackEntry>& entries,
@@ -1784,16 +1814,16 @@ VnResult PackTable::PrepareRevisionMutation(
     PreparedMutation prepared;
     RetiringGeneration* row = nullptr;
     const VnResult reserved = PrepareRetiringRow(
-        handle, ownedCount, 0, false, &prepared.m_predecessor, &row);
+        handle, ownedCount, 0, &prepared.m_predecessor, &row);
     if (reserved != VN_OK) {
         return reserved;
     }
+    prepared.m_owner = this;
     try {
         if (revisionKey != nullptr && revisionKey->packStableId != 0) {
             const VnResult staged = PrepareCanonicalMedia(
                 handle, bytes, parsedMedia, entries, registry, &prepared.m_pcm);
             if (staged != VN_OK) {
-                ReleaseRetiringRow(*row);
                 return staged;
             }
         } else {
@@ -1824,21 +1854,18 @@ VnResult PackTable::PrepareRevisionMutation(
                 registrations.empty() ? nullptr : registrations.data(),
                 registrations.size(), ownedCount, &prepared.m_pcm);
             if (staged != VN_OK) {
-                ReleaseRetiringRow(*row);
-                prepared.m_predecessor = RetiredReplace{};
                 return staged;
             }
             for (std::size_t i = 0; i < entries.size(); ++i) {
+                entries[i].registration =
+                    prepared.m_pcm.ReferenceOf(entries[i].soundId);
                 entries[i].registrationCookie =
                     prepared.m_pcm.CookieOf(entries[i].soundId);
             }
         }
     } catch (const std::bad_alloc&) {
-        ReleaseRetiringRow(*row);
-        prepared.m_predecessor = RetiredReplace{};
         return VN_BACKPRESSURE;
     }
-    prepared.m_owner = this;
     prepared.m_handle = handle;
     prepared.m_revisionKey =
         revisionKey != nullptr ? *revisionKey : PackRevisionKey{};
@@ -1874,7 +1901,7 @@ VnResult PackTable::PrepareUnloadMutation(VnPackHandle handle,
     PreparedMutation prepared;
     RetiringGeneration* row = nullptr;
     const VnResult reserved = PrepareRetiringRow(
-        handle, ownedCount, 0, false, &prepared.m_predecessor, &row);
+        handle, ownedCount, 0, &prepared.m_predecessor, &row);
     if (reserved != VN_OK) {
         return reserved;
     }
@@ -1985,15 +2012,12 @@ VnResult PackTable::ReplacePreparedV2(
     RetiringGeneration* old = nullptr;
     const VnResult reserved = PrepareRetiringRow(
         handle, slot->entries.size(), entries.size(),
-        outPredecessor != nullptr, outPredecessor, &old);
+        outPredecessor, &old);
     if (reserved != VN_OK) {
         return reserved;
     }
     old->revisionKey = slot->revisionKey;
     old->resourceToken = slot->resourceToken;
-    if (outPredecessor != nullptr) {
-        old->packEntries = slot->entries;
-    }
 
     // Retire every still-owned old entry whole (draining voices keep
     // reading through their captured views); ids shared by both
@@ -2049,6 +2073,8 @@ VnResult PackTable::ReplacePreparedV2(
                 unwind();
                 return result;
             }
+            entries[i].registration = registry.ReferenceOf(
+                e.soundId, entries[i].registrationCookie);
             registered = static_cast<std::uint32_t>(i) + 1;
         }
     } catch (...) {
@@ -2058,6 +2084,7 @@ VnResult PackTable::ReplacePreparedV2(
 
     // Commit tail: moves and POD writes only, nothing below can throw.
     old->bytes = std::move(slot->bytes);
+    old->packEntries = std::move(slot->entries);
     old->closureRefCount = slot->closureRefCount;
     if (parsedMedia.empty()) {
         slot->bytes.reset(); // a resident revision pins no buffer
@@ -2125,6 +2152,7 @@ void PackTable::RestorePreparedReplaceV2(VnPackHandle handle,
     }
 
     AlignedBuffer successorBytes = std::move(slot->bytes);
+    auto successorPackEntries = std::move(slot->entries);
     slot->bytes = std::move(row->bytes);
     slot->entries = std::move(row->packEntries);
     slot->revisionKey = row->revisionKey;
@@ -2136,7 +2164,7 @@ void PackTable::RestorePreparedReplaceV2(VnPackHandle handle,
     row->revisionKey = successorKey;
     row->resourceToken = successorToken;
     row->closureRefCount = successorClosureRefCount;
-    row->packEntries.clear();
+    row->packEntries = std::move(successorPackEntries);
     if (row->closureRefCount == 0 && row->Drained()) {
         ReleaseRetiringRow(*row);
     } else {
@@ -2147,23 +2175,9 @@ void PackTable::RestorePreparedReplaceV2(VnPackHandle handle,
 
 VnPackHandle PackTable::OwnerOfSound(VnSoundId soundId,
                                      const PCMRegistry& registry) const {
-    for (std::size_t i = 0; i < m_slots.size(); ++i) {
-        const Slot& slot = m_slots[i];
-        if (!slot.loaded) {
-            continue;
-        }
-        for (const PackEntry& entry : slot.entries) {
-            if (entry.soundId != soundId) {
-                continue;
-            }
-            if (registry.CookieOf(soundId) != entry.registrationCookie) {
-                return 0;
-            }
-            return MakePackHandle(static_cast<std::uint32_t>(i),
-                                  slot.generation);
-        }
-    }
-    return 0;
+    VnPackHandle owner = 0;
+    (void)FindEntryBySound(soundId, registry, &owner);
+    return owner;
 }
 
 bool PackTable::ActiveRevisionIdentity(

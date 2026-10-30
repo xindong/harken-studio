@@ -25,6 +25,7 @@
 #include "Components/VBus.h"
 #include "ProjectSerializer.h"
 #include "Tooling/Harkenizer/Core/ProjectLoader.h"
+#include "ProjectContract.h"
 #include "FileWatcher.h"
 #include "StartupProgress.h"
 
@@ -44,6 +45,8 @@ class ProjectIndex;
 class ProjectInstance;
 class FolderSaveState;
 class ProjectItemSaveState;
+class ProjectSaveSnapshot;
+struct ProjectSaveBaseline;
 class IntegrityScanner;
 class PlacementContext;
 class VMixNode;
@@ -611,12 +614,17 @@ private:
                                 VariableKind variableKind = VariableKind::Smooth);
     void recordDeletedNameHistory(ProjectItem* item);
     void recordCreatedNameHistory(ProjectItem* item);
+    static std::unique_ptr<ProjectSaveBaseline> captureSaveBaseline(
+        ProjectData& project, ProjectItemSaveState& itemSaveState,
+        const QHash<QString, QByteArray>& loadedDocuments, QString* error);
 
     std::shared_ptr<ProjectInstance> m_projectInstance;
     std::shared_ptr<ProjectData> m_currentProject;
     std::unique_ptr<FolderSaveState> m_folderSaveState;
     std::unique_ptr<ProjectItemSaveState> m_itemSaveState;
     ProjectSerializer m_serializer;
+    std::unique_ptr<ProjectSaveBaseline> m_saveBaseline;
+    QSet<QString> m_externalSavePaths;
     std::function<void(StartupPhase)> m_startupProgressCallback;
 
     ClipboardOp        m_clipboardOp = ClipboardOp::None;

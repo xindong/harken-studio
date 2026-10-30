@@ -72,8 +72,8 @@ TransitionFadeButton::TransitionFadeButton(QWidget* parent)
     setAutoRaise(true);
     setCursor(Qt::PointingHandCursor);
     QtControlSkin::setSemanticProperty(this, "fieldRole", QStringLiteral("preview"));
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
-            this, [this]() { refresh(); });
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
+            this, [this]() { update(); });
     refresh();
 }
 
@@ -224,7 +224,9 @@ TransitionFadePopup::TransitionFadePopup(const QString& title,
         resetToCanonical();
     });
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this,
-            [this]() { style()->unpolish(this); style()->polish(this); refreshResetState(); });
+            [this]() { style()->unpolish(this); style()->polish(this); });
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this,
+            [this]() { refreshResetState(); update(); });
     if (load_) {
         connect(&ProjectManager::instance(), &ProjectManager::itemPropertyChanged, this,
                 [this](ProjectItem*, const QString& property, const QObject*) {

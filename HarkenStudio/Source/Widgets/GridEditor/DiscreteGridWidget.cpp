@@ -161,8 +161,15 @@ DiscreteGridWidget::DiscreteGridWidget(QWidget* parent)
             else
                 emit navigateToItem(id);
         });
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
-            this, &DiscreteGridWidget::refreshDerived);
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this, [this] {
+        if (winner_ >= 0 && winner_ < table_->rowCount()) {
+            const QSignalBlocker blocker(table_->model());
+            const QBrush highlight(ThemeManager::instance().colors().bgHover);
+            for (int axis = 0; axis < static_cast<int>(grid_.axes.size()); ++axis)
+                table_->item(winner_, axis + kFirstAxisColumn)->setBackground(highlight);
+        }
+        table_->viewport()->update();
+    });
     connect(&ProjectManager::instance().variableRehearsal(),
             &VariableRehearsal::rehearsalChanged, this, [this](const QUuid&) {
         if (boundItem_)

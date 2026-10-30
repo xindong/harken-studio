@@ -79,6 +79,7 @@ std::shared_ptr<ProjectItem> loadOneActionFile(const QFileInfo& fileInfo,
     }
 
     ev->documentHeader = document.header;
+    serializer.recordLoadedDocument(fileInfo.absoluteFilePath(), data);
 
     return ev;
 }
@@ -226,6 +227,7 @@ std::shared_ptr<ProjectItem> loadOneS3File(const SingleObjHierarchySpec& spec,
     item->documentHeader = document.header;
 
     rebindOwner(*item, nullptr);
+    serializer.recordLoadedDocument(fileInfo.absoluteFilePath(), data);
     return item;
 }
 
@@ -339,6 +341,7 @@ LoadOneBusPackResult loadOneBusPack(const QFileInfo& fileInfo,
     }
     item->documentHeader = document.header;
     project.setObjectFileLocation(item, nullptr, fileInfo.absoluteFilePath());
+    serializer.recordLoadedDocument(fileInfo.absoluteFilePath(), bytes);
     return LoadOneBusPackResult::Ok;
 }
 
@@ -599,6 +602,7 @@ bool loadOneLayerPack(const QFileInfo& fileInfo,
         layer->parentRef.guid = outParentGuid;
     }
 
+    serializer.recordLoadedDocument(fileInfo.absoluteFilePath(), bytes);
     outLayer = layer;
     return true;
 }
@@ -825,6 +829,7 @@ PreparedProject::PreparedProject(PreparedProject&& other) noexcept
       integrityScanner(std::move(other.integrityScanner)),
       integrityReport(std::move(other.integrityReport)),
       assets(std::move(other.assets)),
+      loadedDocuments(std::move(other.loadedDocuments)),
       diagnostics(std::move(other.diagnostics)),
       error(std::move(other.error)),
       rebuildAssetRegistry(other.rebuildAssetRegistry),
@@ -846,6 +851,7 @@ PreparedProject& PreparedProject::operator=(PreparedProject&& other) noexcept
     integrityScanner = std::move(other.integrityScanner);
     integrityReport = std::move(other.integrityReport);
     assets = std::move(other.assets);
+    loadedDocuments = std::move(other.loadedDocuments);
     diagnostics = std::move(other.diagnostics);
     error = std::move(other.error);
     rebuildAssetRegistry = other.rebuildAssetRegistry;
@@ -996,6 +1002,7 @@ PreparedProject ProjectLoader::prepareProject(const QString& filePath,
         refreshFieldGroupDerivedViews(*prepared.project);
         return prepared;
     }
+    prepared.loadedDocuments = serializer.loadedDocuments();
     prepared.folderSaveState = FolderSaveState::capture(*prepared.project, &prepared.error);
     if (!prepared.folderSaveState) {
         prepared.project.reset();

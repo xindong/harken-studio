@@ -86,12 +86,16 @@ MigrationManager::MigrationManager()
                     return false;
                 QJsonObject header = document.value(QStringLiteral("harkenDocument")).toObject();
                 header.insert(QStringLiteral("schemaVersion"), targetSchema);
-                document.insert(QStringLiteral("harkenDocument"), header);
                 if (targetSchema == CURRENT_PROJECT_SCHEMA_VERSION) {
+                    header = ProjectDocument::createHeader(
+                        header.value(QStringLiteral("type")).toString(),
+                        header.value(QStringLiteral("id")).toString(),
+                        header.value(QStringLiteral("projectId")).toString(), header);
                     auto content = document.value(QStringLiteral("content")).toObject();
                     if (!ProjectDocument::normalizeContent(&content, error)) return false;
                     document.insert(QStringLiteral("content"), content);
                 }
+                document.insert(QStringLiteral("harkenDocument"), header);
                 if (!workspace.writeObject(relative, document, error))
                     return false;
             }

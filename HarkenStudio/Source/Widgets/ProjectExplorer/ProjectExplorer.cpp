@@ -87,7 +87,19 @@ ProjectExplorer::ProjectExplorer(QWidget* parent)
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this]() {
         const int extent = ThemeManager::instance().metrics().objectIconExtent;
         sourcesTree_->setIconSize(QSize(extent, extent));
-        rebuildSourcesTree();
+    });
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this, [this]() {
+        auto& theme = ThemeManager::instance();
+        const auto sourceIcon = theme.resolveIcon(QString::fromLatin1(ThemeAssetIds::AudioSource)).icon;
+        const auto folderIcon = theme.resolveToggleIcon(
+            QString::fromLatin1(ThemeAssetIds::TreeFolderOpen),
+            QString::fromLatin1(ThemeAssetIds::TreeFolderClosed)).icon;
+        const QSignalBlocker blocker(sourcesTree_->model());
+        for (auto* row : std::as_const(sourceRows_))
+            row->setIcon(0, sourceIcon);
+        for (auto* row : std::as_const(sourceFolders_))
+            row->setIcon(0, folderIcon);
+        sourcesTree_->viewport()->update();
     });
     connect(&AppSettings::instance(), &AppSettings::fontSizeChanged, this,
             [this](PanelId panelId, int size) {

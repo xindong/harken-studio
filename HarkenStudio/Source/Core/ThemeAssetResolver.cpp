@@ -20,6 +20,7 @@
 #include <QSvgRenderer>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <limits>
 #include <utility>
@@ -112,6 +113,7 @@ public:
         std::weak_ptr<const ThemeSnapshot> snapshot;
         ThemeAssetMapDto assets;
         QMap<QString, QString> roots;
+        quint64 generation = 0;
     };
 
     explicit Impl(ThemeAssetResolverLimits configuredLimits)
@@ -336,9 +338,15 @@ ThemeAssetResolver::~ThemeAssetResolver() = default;
 void ThemeAssetResolver::registerSnapshot(
     const ThemeSnapshotPtr& snapshot,
     ThemeAssetMapDto assets,
-    QMap<QString, QString> packageRoots)
+    QMap<QString, QString> packageRoots,
+    const ThemeSnapshotPtr& sharedAssets)
 {
+    static std::atomic<quint64> nextGeneration{0};
     QMutexLocker lock(&impl_->mutex);
+    const auto generation = sharedAssets
+        ? impl_->catalogs.value(sharedAssets->generation).generation
+        : ++nextGeneration;
+    Q_ASSERT(generation != 0);
     for (auto it = impl_->catalogs.begin(); it != impl_->catalogs.end();)
     {
         if (it->snapshot.expired())
@@ -347,7 +355,13 @@ void ThemeAssetResolver::registerSnapshot(
             ++it;
     }
     impl_->catalogs.insert(snapshot->generation, Impl::Catalog{
-        snapshot, std::move(assets), std::move(packageRoots)});
+        snapshot, std::move(assets), std::move(packageRoots), generation});
+}
+
+quint64 ThemeAssetResolver::assetGeneration(const ThemeSnapshotPtr& snapshot) const
+{
+    const auto catalog = snapshot ? impl_->catalogFor(snapshot) : std::nullopt;
+    return catalog ? catalog->generation : 0;
 }
 
 ThemeImageResolution ThemeAssetResolver::resolveImage(
@@ -373,7 +387,7 @@ ThemeImageResolution ThemeAssetResolver::resolveImage(
         return result;
     }
     const QString cacheKey = QStringLiteral("%1:%2:%3")
-        .arg(snapshot->generation).arg(logicalId, variantKey(variant));
+        .arg(assetGeneration(snapshot)).arg(logicalId, variantKey(variant));
     {
         QMutexLocker lock(&impl_->mutex);
         if (const auto cached = impl_->imageCache.value(cacheKey).lock())
@@ -612,7 +626,7 @@ ThemeFontResolution ThemeAssetResolver::resolveFont(
         return result;
     }
     const QString cacheKey = QStringLiteral("%1:%2:%3")
-        .arg(snapshot->generation)
+        .arg(assetGeneration(snapshot))
         .arg(logicalId)
         .arg(QString::number(pixelSize, 'f', 3));
     {

@@ -113,6 +113,20 @@ TEST_P(BucketFolderPersistenceTest, NestedFolderPayloadFollowsItsOwnLocationAndR
         ASSERT_TRUE(file.open(QIODevice::ReadOnly));
         EXPECT_EQ(file.readAll(), childBytes);
     }
+    parentFolder = manager.currentProject()->findFolderByPath(bucketName(), QStringLiteral("Original"));
+    ASSERT_NE(parentFolder, nullptr);
+    ASSERT_TRUE(manager.renameFolder(parentFolder, QStringLiteral("ORIGINAL")));
+    ASSERT_TRUE(manager.saveProject());
+    const auto names = QDir(bucketRoot()).entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    EXPECT_TRUE(names.contains(QStringLiteral("ORIGINAL")));
+    EXPECT_FALSE(names.contains(QStringLiteral("Original")));
+    ASSERT_TRUE(manager.closeProject());
+    ASSERT_TRUE(manager.loadProject(projectPath_));
+    ASSERT_NE(manager.currentProject()->findFolderByPath(
+        bucketName(), QStringLiteral("ORIGINAL/Nested")), nullptr);
+    QFile retained(QDir(bucketRoot()).filePath(QStringLiteral("ORIGINAL/Nested/.hidden.bin")));
+    ASSERT_TRUE(retained.open(QIODevice::ReadOnly));
+    EXPECT_EQ(retained.readAll(), childBytes);
 }
 
 INSTANTIATE_TEST_SUITE_P(AllFolderBuckets,

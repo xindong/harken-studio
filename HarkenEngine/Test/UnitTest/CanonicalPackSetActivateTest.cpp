@@ -1,4 +1,5 @@
 #include "UnitTest/CanonicalPackSetActivate.h"
+#include "AllocationProbe.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 
@@ -2370,6 +2371,45 @@ TEST(CanonicalPackSetActivate, InitBus2BindingUsesLiveIndex) {
     EXPECT_EQ(harken::kInvalidBusIndex,
               session.Engine()->buses.FindIndex(VN_OBJECT_ID(0, 2)));
     EXPECT_EQ(nullptr, session.Engine()->bindings.Find(kBusBindingId));
+}
+
+TEST(CanonicalPackSetActivate, AllocationAfterBindingPreparationRollsBackAndRetries) {
+    EngineSession session(CanonicalActivationConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) /
+                           "canonical-binding-allocation-failure";
+    const auto bytes = harkentest::BuildMasterInitWithBusBindingBytes(
+        kBusBindingId, kBindingVariableId, VN_BUS_MASTER);
+    const auto baselineWorstCase = engine->propertyPublisher.WorstCaseCommits();
+    const auto dependencySlot = engine->bindings.Dependencies().ParamBindingCapacity();
+    allocation_probe::count = 0;
+    allocation_probe::failAt = 1;
+    allocation_probe::countContext = engine;
+    allocation_probe::countIf = +[](void* context) noexcept {
+        const auto* current = static_cast<harken::Engine*>(context);
+        return current->bindings.Dependencies().HasBindingPreparation(
+            current->bindings.Dependencies().ParamBindingCapacity());
+    };
+    allocation_probe::enabled = true;
+    const auto failed = harkentest::ActivateInitBytesV1(
+        directory, bytes, harkentest::packfoundation::kInitPackStableId);
+    allocation_probe::enabled = false;
+    allocation_probe::countIf = nullptr;
+    allocation_probe::countContext = nullptr;
+    const bool faultConsumed = allocation_probe::failAt == 0;
+    allocation_probe::failAt = 0;
+    EXPECT_TRUE(faultConsumed);
+    EXPECT_NE(VN_OK, failed.result);
+    EXPECT_EQ(0u, failed.initHandle);
+    EXPECT_EQ(nullptr, engine->bindings.Find(kBusBindingId));
+    EXPECT_FALSE(engine->bindings.Dependencies().HasBindingPreparation(dependencySlot));
+    EXPECT_EQ(baselineWorstCase, engine->propertyPublisher.WorstCaseCommits());
+    const auto retry = harkentest::ActivateInitBytesV1(
+        directory, bytes, harkentest::packfoundation::kInitPackStableId);
+    ASSERT_EQ(VN_OK, retry.result);
+    EXPECT_TRUE(engine->bindings.HasOwnedAttachment(
+        kBusBindingId, VN_TARGET_SCOPE_BUS, VN_BUS_MASTER, retry.initHandle));
 }
 
 TEST(CanonicalPackSetActivate, AfterAllPreparedBeforeCommitRollsBackBindings) {

@@ -51,7 +51,7 @@ InspectorLaunchEntry::InspectorLaunchEntry(const QString& slot, QWidget* parent,
             QString::fromLatin1(ThemeAssetIds::InspectorDetach)).icon);
     };
     refreshIcon();
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
             this, [refreshIcon]() { refreshIcon(); });
     button_->setAutoRaise(true);
     button_->setToolButtonStyle(Qt::ToolButtonIconOnly);

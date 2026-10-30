@@ -86,6 +86,7 @@ add_library(harken_editor_foundation STATIC
     ProjectTemplateLoader.h
     ProjectItemSaveState.cpp
     ProjectItemSaveState.h
+    ProjectSavePlan.h
     ProjectPlatformCommandSchema.h
     PanelInstanceRegistry.cpp
     PanelInstanceRegistry.h
@@ -110,7 +111,11 @@ add_library(harken_editor_foundation STATIC
     QtControlSkin.h
     HarkenStyle.cpp
     HarkenStyle.h
+    WidgetAppearance.cpp
+    WidgetAppearance.h
     ThemeSnapshot.h
+    ColorPalette.cpp
+    ColorPalette.h
     ThemeColorCatalog.cpp
     ThemeColorCatalog.h
     ThemeColorResolver.cpp

@@ -105,6 +105,7 @@ private:
     void setupTimeline();
     void layoutTimeline();
     void refreshTimelineControls();
+    void refreshTimelineAppearance();
     void zoomVertically(int y, double factor);
     QRect channelViewportRect() const;
     QRect channelWaveformRect() const;

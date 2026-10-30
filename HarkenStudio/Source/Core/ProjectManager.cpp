@@ -35,6 +35,8 @@
 #include "ProjectContract.h"
 #include "ProjectDataPolicy.h"
 #include "ProjectDocument.h"
+#include "ProjectSaveSnapshot.h"
+#include "ProjectSavePlan.h"
 #include "ProjectTransaction.h"
 #include "ProjectUpgradeMessages.h"
 #include "NameValidator.h"
@@ -126,15 +128,38 @@ bool copyDirectoryTree(const QString& sourcePath, const QString& destinationPath
     return true;
 }
 
-bool writePackAtomically(const QString& filePath, const QByteArray& bytes)
+QJsonObject createPackDocument(const QString& filePath, const QString& type,
+                              const QString& id, const QString& projectId,
+                              const QJsonObject& content, const QJsonObject& originalHeader,
+                              ProjectSaveSnapshot* snapshot)
 {
+    return snapshot ? snapshot->createDocument(filePath, type, id, projectId, content, originalHeader)
+                    : ProjectDocument::create(type, id, projectId, content, originalHeader);
+}
+
+bool writePackFile(const QString& filePath, const QJsonObject& document,
+                   ProjectSaveSnapshot* snapshot)
+{
+    if (snapshot) {
+        const auto result = snapshot->prepareDocument(filePath, document);
+        if (result != ProjectSaveSnapshot::WriteResult::Physical)
+            return result == ProjectSaveSnapshot::WriteResult::Stored;
+    }
+    const QByteArray bytes = QJsonDocument(document).toJson(QJsonDocument::Indented);
     constexpr int kMaxAttempts = 3;
     constexpr int kRetryDelayMs = 50;
     for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
-        QSaveFile output(filePath);
-        if (output.open(QIODevice::WriteOnly | QIODevice::Text)
-            && output.write(bytes) == bytes.size() && output.commit())
-            return true;
+        if (snapshot) {
+            QFile output(filePath);
+            if (output.open(QIODevice::WriteOnly | QIODevice::Text)
+                && output.write(bytes) == bytes.size() && output.flush())
+                return true;
+        } else {
+            QSaveFile output(filePath);
+            if (output.open(QIODevice::WriteOnly | QIODevice::Text)
+                && output.write(bytes) == bytes.size() && output.commit())
+                return true;
+        }
         if (attempt < kMaxAttempts)
             QThread::msleep(kRetryDelayMs);
     }
@@ -247,7 +272,7 @@ void migrateAudioSourceLayout(const QString& projectRoot)
 
 bool saveOneAction(const QString& targetDirPath, const QString& projectId,
                   const ProjectItem& ev,
-                  ProjectSerializer& serializer)
+                  ProjectSerializer& serializer, ProjectSaveSnapshot* snapshot)
 {
     if (ev.type != ProjectItem::Type::Action) {
         qWarning() << "[ActionLoader] saveOneAction called on non-Action:" << ev.name;
@@ -268,12 +293,11 @@ bool saveOneAction(const QString& targetDirPath, const QString& projectId,
         return false;
     }
 
-    const QJsonObject document = ProjectDocument::create(
-        QStringLiteral("project.action"),
+    const QJsonObject document = createPackDocument(
+        filePath, QStringLiteral("project.action"),
         ev.guid.toString(QUuid::WithoutBraces), projectId, content,
-        ev.documentHeader);
-    const QByteArray bytes = QJsonDocument(document).toJson(QJsonDocument::Indented);
-    if (!writePackAtomically(filePath, bytes)) {
+        ev.documentHeader, snapshot);
+    if (!writePackFile(filePath, document, snapshot)) {
         qWarning() << "[ActionLoader] Short write to:" << filePath;
         return false;
     }
@@ -284,7 +308,8 @@ bool saveActionsBucket(const QString& projectRoot, const QString& projectId,
                        ProjectData& project,
                        std::vector<ProjectFileBinding>& bucket,
 
-                       ProjectSerializer& serializer)
+                       ProjectSerializer& serializer,
+                       ProjectSaveSnapshot* snapshot = nullptr)
 {
     QDir eventsDir(ProjectLoaderInternal::actionsRootDir(projectRoot));
     const QString eventsRootAbs = eventsDir.absolutePath();
@@ -300,7 +325,7 @@ bool saveActionsBucket(const QString& projectRoot, const QString& projectId,
             QDir(targetDirPath).filePath(NameValidator::objectFileName(ev.name, ev.guid));
         writtenAbsPaths.insert(BucketFolderStore::pathComparisonKey(fullPath));
 
-        if (saveOneAction(targetDirPath, projectId, ev, serializer)) {
+        if (saveOneAction(targetDirPath, projectId, ev, serializer, snapshot)) {
             project.setObjectFileLocation(&ev, project.objectFolder(&ev), fullPath);
             ++savedCount;
         } else {
@@ -374,7 +399,7 @@ bool saveOneS3File(const QString& targetDirPath,
                    const QString& projectId,
                    const ProjectLoaderInternal::SingleObjHierarchySpec& spec,
                    const ProjectItem& top,
-                   ProjectSerializer& serializer)
+                   ProjectSerializer& serializer, ProjectSaveSnapshot* snapshot)
 {
     if (top.type != spec.topType) {
         qWarning() << "[S3Saver] type mismatch in" << spec.folderName << ":"
@@ -395,11 +420,10 @@ bool saveOneS3File(const QString& targetDirPath,
         return false;
     }
 
-    const QJsonObject document = ProjectDocument::create(
-        ProjectLoaderInternal::s3DocumentType(spec), top.guid.toString(QUuid::WithoutBraces),
-        projectId, content, top.documentHeader);
-    const QByteArray bytes = QJsonDocument(document).toJson(QJsonDocument::Indented);
-    if (!writePackAtomically(filePath, bytes)) {
+    const QJsonObject document = createPackDocument(
+        filePath, ProjectLoaderInternal::s3DocumentType(spec), top.guid.toString(QUuid::WithoutBraces),
+        projectId, content, top.documentHeader, snapshot);
+    if (!writePackFile(filePath, document, snapshot)) {
         qWarning() << "[S3Saver] short write:" << filePath;
         return false;
     }
@@ -412,7 +436,8 @@ bool saveS3HierarchyBucket(const QString& projectRoot,
                            const ProjectLoaderInternal::SingleObjHierarchySpec& spec,
                            std::vector<ProjectFileBinding>& bucket,
 
-                           ProjectSerializer& serializer)
+                           ProjectSerializer& serializer,
+                           ProjectSaveSnapshot* snapshot = nullptr)
 {
     QDir hierDir(ProjectLoaderInternal::s3RootDir(projectRoot, spec));
     const QString hierRootAbs = hierDir.absolutePath();
@@ -428,7 +453,7 @@ bool saveS3HierarchyBucket(const QString& projectRoot,
             QDir(targetDirPath).filePath(NameValidator::objectFileName(top.name, top.guid));
         writtenAbsPaths.insert(BucketFolderStore::pathComparisonKey(fullPath));
 
-        if (saveOneS3File(targetDirPath, projectId, spec, top, serializer)) {
+        if (saveOneS3File(targetDirPath, projectId, spec, top, serializer, snapshot)) {
             project.setObjectFileLocation(&top, project.objectFolder(&top), fullPath);
             ++savedCount;
         } else {
@@ -506,7 +531,7 @@ QString busPackFileName(const ProjectItem& busItem)
 bool saveOneBusPack(const QString& projectRoot,
                    const QString& projectId,
                    const ProjectItem& busItem,
-                   ProjectSerializer& serializer)
+                   ProjectSerializer& serializer, ProjectSaveSnapshot* snapshot)
 {
     QDir dir(ProjectLoaderInternal::busFolderAbs(projectRoot));
     if (!dir.exists() && !QDir().mkpath(dir.absolutePath())) {
@@ -523,12 +548,11 @@ bool saveOneBusPack(const QString& projectRoot,
         return false;
     }
 
-    const QJsonObject document = ProjectDocument::create(
-        QStringLiteral("project.bus"),
+    const QJsonObject document = createPackDocument(
+        filePath, QStringLiteral("project.bus"),
         busItem.guid.toString(QUuid::WithoutBraces), projectId, content,
-        busItem.documentHeader);
-    const QByteArray bytes = QJsonDocument(document).toJson(QJsonDocument::Indented);
-    if (!writePackAtomically(filePath, bytes)) {
+        busItem.documentHeader, snapshot);
+    if (!writePackFile(filePath, document, snapshot)) {
         qWarning() << "[BussesPack] Short write to:" << filePath;
         return false;
     }
@@ -538,7 +562,8 @@ bool saveOneBusPack(const QString& projectRoot,
 bool saveBussesPacksImpl(const QString& projectRoot,
                               ProjectData& project,
                               ProjectSerializer& serializer,
-                              QString* errOut)
+                              QString* errOut,
+                              ProjectSaveSnapshot* snapshot = nullptr)
 {
     QDir dir(ProjectLoaderInternal::busFolderAbs(projectRoot));
     if (!dir.exists() && !QDir().mkpath(dir.absolutePath())) {
@@ -558,7 +583,7 @@ bool saveBussesPacksImpl(const QString& projectRoot,
         if (node->type == ProjectItem::Type::Bus) {
             const QString fileName = busPackFileName(*node);
             writtenNames.insert(fileName);
-            if (saveOneBusPack(projectRoot, project.projectId, *node, serializer)) {
+            if (saveOneBusPack(projectRoot, project.projectId, *node, serializer, snapshot)) {
                 project.setObjectFileLocation(node, nullptr, dir.filePath(fileName));
                 ++wrote;
             } else {
@@ -646,7 +671,8 @@ bool saveOneLayerPack(const QString& directory,
                           const ProjectItem& layer,
                           const QUuid& parentGuid,
                           int order,
-                          ProjectSerializer& serializer)
+                          ProjectSerializer& serializer, ProjectSaveSnapshot* snapshot,
+                          QHash<QUuid, QJsonObject>* serializedItems)
 {
     if (!ProjectLoaderInternal::isLayersBucketRootType(layer.type)) {
         qWarning() << "[LayersPack] saveOneLayerPack called on type not in"
@@ -656,7 +682,8 @@ bool saveOneLayerPack(const QString& directory,
     }
 
     QDir dir(directory);
-    if (!dir.exists()) {
+    if ((!snapshot || !snapshot->containsPreparedDirectory(dir.absolutePath()))
+        && !dir.exists()) {
         qWarning() << "[LayersPack] Directory does not exist:" << dir.absolutePath();
         return false;
     }
@@ -669,6 +696,7 @@ bool saveOneLayerPack(const QString& directory,
                    << filePath;
         return false;
     }
+    if (serializedItems) serializedItems->insert(layer.guid, data);
     if (!parentGuid.isNull()) {
         ParentRef pr;
         pr.kind = ParentRef::Kind::Item;
@@ -678,12 +706,11 @@ bool saveOneLayerPack(const QString& directory,
     }
     data["order"] = order;
 
-    const QJsonObject document = ProjectDocument::create(
-        QStringLiteral("project.layer"),
+    const QJsonObject document = createPackDocument(
+        filePath, QStringLiteral("project.layer"),
         layer.guid.toString(QUuid::WithoutBraces), projectId, data,
-        layer.documentHeader);
-    const QByteArray bytes = QJsonDocument(document).toJson(QJsonDocument::Indented);
-    if (!writePackAtomically(filePath, bytes)) {
+        layer.documentHeader, snapshot);
+    if (!writePackFile(filePath, document, snapshot)) {
         qWarning() << "[LayersPack] Short write to:" << filePath;
         return false;
     }
@@ -697,6 +724,8 @@ void saveLayerRecursive(const QString& bucketDirectory,
                              const QUuid& parentGuid,
                              int order,
                              ProjectSerializer& serializer,
+                             ProjectSaveSnapshot* snapshot,
+                             QHash<QUuid, QJsonObject>* serializedItems,
                              QSet<QString>& writtenAbsPaths,
                              int& wroteCount,
                              bool& allOk)
@@ -707,7 +736,8 @@ void saveLayerRecursive(const QString& bucketDirectory,
     const QString filePath = QDir(directory).filePath(layerPackFileName(node));
     writtenAbsPaths.insert(BucketFolderStore::pathComparisonKey(
         filePath));
-    if (saveOneLayerPack(directory, projectId, node, parentGuid, order, serializer)) {
+    if (saveOneLayerPack(directory, projectId, node, parentGuid, order, serializer, snapshot,
+                         serializedItems)) {
         project.setObjectFileLocation(&node, project.objectFolder(&node), filePath);
         ++wroteCount;
     } else {
@@ -718,7 +748,7 @@ void saveLayerRecursive(const QString& bucketDirectory,
         const auto& child = node.children[i];
         if (!child) continue;
         saveLayerRecursive(bucketDirectory, projectId, project, *child, node.guid, static_cast<int>(i),
-                                serializer, writtenAbsPaths, wroteCount, allOk);
+                                serializer, snapshot, serializedItems, writtenAbsPaths, wroteCount, allOk);
     }
 }
 
@@ -728,7 +758,9 @@ bool saveLayersBucket(const QString& projectRoot,
                               std::vector<ProjectFileBinding>& bucket,
 
                               ProjectSerializer& serializer,
-                              QString* errOut)
+                              QString* errOut,
+                              ProjectSaveSnapshot* snapshot = nullptr,
+                              QHash<QUuid, QJsonObject>* serializedItems = nullptr)
 {
     QDir dir(ProjectLoaderInternal::layersFolderAbs(projectRoot));
     if (!dir.exists() && !QDir().mkpath(dir.absolutePath())) {
@@ -746,7 +778,7 @@ bool saveLayersBucket(const QString& projectRoot,
         if (!layer || !ProjectLoaderInternal::isLayersBucketRootType(layer->type)) continue;
         if (layer->parentRef.kind != ParentRef::Kind::Root) continue;
         saveLayerRecursive(dir.absolutePath(), projectId, project, *layer, QUuid{}, rootOrder++, serializer,
-                                writtenAbsPaths, wrote, allOk);
+                                snapshot, serializedItems, writtenAbsPaths, wrote, allOk);
     }
 
     QDirIterator existing(dir.absolutePath(), QStringList() << QStringLiteral("*.vp"),
@@ -821,10 +853,34 @@ ProjectManager::ProjectManager(QObject* parent)
     connect(this, &ProjectManager::itemRenamed, this, invalidateSaveState);
     connect(this, &ProjectManager::itemDeleted, this, invalidateSaveState);
     connect(this, &ProjectManager::itemMoved, this, invalidateSaveState);
+    connect(this, &ProjectManager::folderCreated, this, invalidateSaveState);
+    connect(this, &ProjectManager::folderRenamed, this, invalidateSaveState);
+    connect(this, &ProjectManager::folderDeleted, this, invalidateSaveState);
+    connect(this, &ProjectManager::folderMoved, this, invalidateSaveState);
+    connect(this, &ProjectManager::targetPlatformsChanged, this, invalidateSaveState);
+    connect(this, &ProjectManager::itemPropertyChanged, this,
+        [this](ProjectItem* item, const QString& property) {
+            if (m_itemSaveState && property != QStringLiteral("dirty"))
+                m_itemSaveState->recordChange(item);
+        });
+    connect(this, &ProjectManager::busChanged, this, [this](uint32_t id) {
+        if (m_itemSaveState) m_itemSaveState->recordChange(findBusItem(id));
+    });
+    connect(this, &ProjectManager::packExternallyModified, this, [this](const QString& path) {
+        if (!m_currentProject) return;
+        const QDir root(QFileInfo(m_currentProject->projectPath).absolutePath());
+        const QString relative = root.relativeFilePath(path);
+        if (!ProjectDataPolicy::isSafeRelativePath(relative)) return;
+        m_externalSavePaths.insert(relative);
+        if (m_itemSaveState && (!m_saveBaseline || m_saveBaseline->directories.contains(relative)
+            || QFileInfo(path).isDir())) m_itemSaveState->invalidate();
+    });
     connect(&UndoRedoManager::instance(), &UndoRedoManager::indexChanged, this, [this] {
         if (!m_currentProject || !m_itemSaveState) return;
         const auto* writes = UndoRedoManager::instance().currentAuthoringWriteSet();
-        for (auto* item : m_itemSaveState->refresh(*m_currentProject, writes))
+        if (!writes) m_itemSaveState->invalidate();
+        else for (const auto& guid : *writes) m_itemSaveState->recordPreview(guid);
+        for (auto* item : m_itemSaveState->refreshPending(*m_currentProject))
             emit itemPropertyChanged(item, QStringLiteral("dirty"));
     });
 }
@@ -1806,6 +1862,19 @@ bool ProjectManager::commitPreparedProject(PreparedProject&& prepared)
         return false;
     }
 
+    std::unique_ptr<ProjectSaveBaseline> saveBaseline;
+    if (prepared.loadedDocuments.isEmpty()) {
+        itemSaveState->invalidate();
+    } else {
+        QString baselineError;
+        saveBaseline = captureSaveBaseline(*prepared.project, *itemSaveState,
+                                           prepared.loadedDocuments, &baselineError);
+        if (!saveBaseline) {
+            emit errorOccurred(baselineError);
+            return false;
+        }
+    }
+
     drainPendingDestruction();
     if (m_runtimeCloseRevision) {
         m_queuedPreparedProject.emplace(std::move(prepared));
@@ -1845,6 +1914,8 @@ bool ProjectManager::commitPreparedProject(PreparedProject&& prepared)
         prepared.releaseUpgradeRecovery();
     }
     m_currentProject = std::move(prepared.project);
+    m_saveBaseline = std::move(saveBaseline);
+    m_externalSavePaths.clear();
     m_projectInstance = std::move(prepared.instance);
     m_folderSaveState = std::move(prepared.folderSaveState);
     m_itemSaveState = std::move(itemSaveState);
@@ -2000,212 +2071,405 @@ void ProjectManager::reconcileAssetsOnOpen(int bindingLoadFailures)
     }
 }
 
+std::unique_ptr<ProjectSaveBaseline> ProjectManager::captureSaveBaseline(
+    ProjectData& project, ProjectItemSaveState& itemSaveState,
+    const QHash<QString, QByteArray>& loadedDocuments, QString* error)
+{
+    auto baseline = std::make_unique<ProjectSaveBaseline>();
+    baseline->projectPath = project.projectPath;
+    const QDir root(QFileInfo(baseline->projectPath).absolutePath());
+    const auto captureBytes = [&](const QString& path, const QByteArray& bytes) {
+        const QString relative = root.relativeFilePath(path);
+        baseline->files.insert(relative, bytes);
+        baseline->hashes.insert(relative, QCryptographicHash::hash(bytes, QCryptographicHash::Sha256));
+    };
+    for (auto document = loadedDocuments.cbegin(); document != loadedDocuments.cend(); ++document) {
+        const QString relative = root.relativeFilePath(document.key());
+        if (!ProjectDataPolicy::isSafeRelativePath(relative)) {
+            if (error) *error = QStringLiteral("Loaded project document is outside the project: %1")
+                .arg(document.key());
+            return {};
+        }
+        captureBytes(document.key(), document.value());
+    }
+    const QString projectFileName = QFileInfo(baseline->projectPath).fileName();
+    if (!baseline->files.contains(projectFileName)) {
+        if (error) *error = QStringLiteral("Loaded project document bytes are missing: %1")
+            .arg(baseline->projectPath);
+        return {};
+    }
+    const auto captureFile = [&](const QString& path) -> bool {
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly)) {
+            if (error) *error = QStringLiteral("Cannot read saved project file: %1").arg(path);
+            return {};
+        }
+        captureBytes(path, file.readAll());
+        return true;
+    };
+    auto directories = getStandardDirectories();
+    directories.append(QStringLiteral(".cache/asset_registry"));
+    for (const QString& directory : directories) {
+        if (!QDir(root.filePath(directory)).exists()) continue;
+        baseline->directories.insert(directory);
+        QDirIterator entries(root.filePath(directory),
+            QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
+            QDirIterator::Subdirectories);
+        while (entries.hasNext()) {
+            entries.next();
+            if (entries.fileInfo().isSymLink()) {
+                if (error) *error = QStringLiteral("Cannot save a project containing a symbolic link: %1")
+                    .arg(entries.filePath());
+                return {};
+            }
+            if (entries.fileInfo().isDir())
+                baseline->directories.insert(root.relativeFilePath(entries.filePath()));
+            else if (entries.fileInfo().suffix().compare(QStringLiteral("vp"), Qt::CaseInsensitive) != 0
+                && entries.fileInfo().suffix().compare(QStringLiteral("hsp"), Qt::CaseInsensitive) != 0
+                && !captureFile(entries.filePath())) return {};
+        }
+    }
+    QHash<QString, QJsonObject> documents;
+    for (auto it = baseline->files.cbegin(); it != baseline->files.cend(); ++it)
+        if (it.key().endsWith(QStringLiteral(".vp"), Qt::CaseInsensitive))
+            documents.insert(it.key(), QJsonDocument::fromJson(it.value()).object());
+    const auto projectDocument = QJsonDocument::fromJson(
+        baseline->files.value(projectFileName)).object();
+    const auto errors = ProjectContractRegistry::instance().validateSnapshot(
+        root.path(), projectDocument, true, documents, &baseline->context, &baseline->validation,
+        projectFileName, false);
+    if (!errors.isEmpty()) {
+        if (error) *error = errors.first();
+        return {};
+    }
+    if (!itemSaveState.ensurePrepared(project)) return {};
+    auto& serializer = itemSaveState.serializer();
+    bool missingDocument = false;
+    const auto checkItem = [&](auto&& self, ProjectItem& item, int order) -> bool {
+        const QString path = root.relativeFilePath(project.objectFilePath(&item));
+        const auto document = serializer.itemDocument(item, project.projectId, order);
+        if (document.isEmpty()) {
+            if (error) *error = serializer.lastError();
+            return {};
+        }
+        if (!documents.contains(path)) missingDocument = true;
+        else if (documents.value(path) != document) baseline->normalizedDocuments.insert(item.guid);
+        for (size_t i = 0; i < item.children.size(); ++i)
+            if (!self(self, *item.children[i], static_cast<int>(i))) return {};
+        return true;
+    };
+    for (const auto bucket : ItemTypeCatalog::allBuckets()) {
+        const auto* bindings = project.getBucketForFolder(ItemTypeCatalog::folderNameOf(bucket));
+        if (!bindings) continue;
+        for (size_t i = 0; i < bindings->size(); ++i)
+            if ((*bindings)[i].rootItem
+                && !checkItem(checkItem, *(*bindings)[i].rootItem, static_cast<int>(i))) return {};
+    }
+    if (missingDocument) itemSaveState.invalidate();
+    return baseline;
+}
+
 bool ProjectManager::saveProject()
 {
-    if (!m_currentProject) return false;
-    QString sourceRecoveryError;
-    if (!SourceFileSystem::recoverDiscard(&sourceRecoveryError)) {
-        emit errorOccurred(sourceRecoveryError);
+    if (!m_currentProject || !m_itemSaveState) return false;
+    QString saveError;
+    const auto fail = [&](const QString& error) {
+        emit errorOccurred(error);
         return false;
-    }
-    m_fileWatcher.refreshSources();
-    if (!PathUtils::isValidPackBuildOutputDir(m_currentProject->packBuildOutputDir,
-                                             m_currentProject->projectPath)) {
-        emit errorOccurred(PathUtils::packBuildOutputLocationError());
-        return false;
-    }
-
-    QString referenceError;
-    if (!validatePlaybackReferences(*m_currentProject, &referenceError)) {
-        emit errorOccurred(referenceError);
-        return false;
-    }
-
+    };
+    if (!SourceFileSystem::recoverDiscard(&saveError)) return fail(saveError);
     PropertyEditSession::finishAllActive(true);
+    m_fileWatcher.refreshSources();
+    for (auto* item : m_itemSaveState->refreshPending(*m_currentProject))
+        emit itemPropertyChanged(item, QStringLiteral("dirty"));
+    if (!m_itemSaveState->ensurePrepared(*m_currentProject))
+        return fail(QStringLiteral("Cannot prepare project document references"));
 
-    QString identityError;
-    if (!validateProjectObjectIdentities(*m_currentProject, &identityError)) {
-        emit errorOccurred(identityError);
-        return false;
-    }
-
-    QString platformError;
-    if (!ProjectPlatformSemantics::validateProject(*m_currentProject, &platformError)) {
-        emit errorOccurred(platformError);
-        return false;
-    }
-
-    QTemporaryDir stagedDirectory;
-    if (!stagedDirectory.isValid()) {
-        emit errorOccurred(QStringLiteral("Cannot prepare project save directory"));
-        return false;
-    }
     const QDir projectRoot(QFileInfo(m_currentProject->projectPath).absolutePath());
-    const QDir stagedRoot(stagedDirectory.path());
     const QString projectFileName = QFileInfo(m_currentProject->projectPath).fileName();
-    const QString stagedProjectPath = stagedRoot.filePath(projectFileName);
+    const QString registryDirectory = QStringLiteral(".cache/asset_registry");
+    const QString registryPath = registryDirectory + QStringLiteral("/assets.json");
+    const bool sameProject = m_saveBaseline
+        && m_saveBaseline->projectPath == m_currentProject->projectPath;
+    const auto* baseline = sameProject ? m_saveBaseline.get() : nullptr;
+    const bool full = !baseline || m_itemSaveState->requiresFullSave();
+    auto& serializer = m_itemSaveState->serializer();
+    ProjectSavePlan plan;
     ProjectData stagedProject = *m_currentProject;
     stagedProject.sourceAssets.clear();
     for (const auto& asset : AssetRegistry::instance().snapshot())
         stagedProject.sourceAssets.insert(asset.sourceID, asset.relativePath);
+    plan.projectDocument = serializer.projectDocument(m_currentProject->projectPath, stagedProject);
+    if (plan.projectDocument.isEmpty()) return fail(serializer.lastError());
 
-    QString saveError;
-    if (!m_folderSaveState->stage(stagedProject, stagedRoot.path(), &saveError)) {
-        emit errorOccurred(saveError);
-        return false;
-    }
-    const QString registryDirectory = QStringLiteral(".cache/asset_registry");
-    if (!copyDirectoryTree(projectRoot.filePath(registryDirectory),
-                           stagedRoot.filePath(registryDirectory))) {
-        emit errorOccurred(QStringLiteral("Cannot prepare the asset registry for saving"));
-        return false;
-    }
-    if (!m_serializer.prepareProjectSave(m_currentProject->projectPath, stagedProject, stagedProjectPath)) {
-        emit errorOccurred(m_serializer.lastError());
-        return false;
-    }
-    const auto cancelPreparedSave = qScopeGuard([&] { m_serializer.cancelProjectSave(); });
-
-    bool hierarchySaveOk = saveActionsBucket(stagedRoot.path(), stagedProject.projectId,
-        stagedProject, stagedProject.actions, m_serializer);
-    for (const auto& spec : ProjectLoaderInternal::s3Specs()) {
-        auto* bucket = stagedProject.getBucketForFolder(spec.folderName);
-        if (bucket && !saveS3HierarchyBucket(stagedRoot.path(), stagedProject.projectId,
-                stagedProject, spec, *bucket, m_serializer))
-            hierarchySaveOk = false;
-    }
-    if (!saveLayersBucket(stagedRoot.path(), stagedProject.projectId, stagedProject,
-                          stagedProject.layers, m_serializer, &saveError))
-        hierarchySaveOk = false;
-    if (!saveBussesPacksImpl(stagedRoot.path(), stagedProject, m_serializer, &saveError))
-        hierarchySaveOk = false;
-    if (!AssetRegistry::instance().saveToFile(
-            stagedRoot.filePath(registryDirectory + QStringLiteral("/assets.json"))))
-        hierarchySaveOk = false;
-    if (!hierarchySaveOk) {
-        emit errorOccurred(saveError.isEmpty()
-            ? QStringLiteral("Failed to prepare project files for saving") : saveError);
-        return false;
-    }
-    if (!m_serializer.commitProjectSave()) return false;
-
-    QFile stagedFile(stagedProjectPath);
-    QJsonParseError parseError;
-    const QJsonDocument committedDocument = QJsonDocument::fromJson(
-        stagedFile.open(QIODevice::ReadOnly) ? stagedFile.readAll() : QByteArray(), &parseError);
-    stagedFile.close();
-    const QStringList validationErrors =
-        (!committedDocument.isObject() || parseError.error != QJsonParseError::NoError)
-            ? QStringList{QStringLiteral("Prepared project file is invalid JSON")}
-            : ProjectContractRegistry::instance().validateTree(
-                stagedRoot.path(), committedDocument.object(), true);
-    if (!validationErrors.isEmpty()) {
-        emit errorOccurred(validationErrors.first());
-        return false;
-    }
-
-    auto itemSaveState = std::make_unique<ProjectItemSaveState>();
-    if (!itemSaveState->markSaved(stagedProject)) {
-        emit errorOccurred(QStringLiteral("Cannot capture saved project object content"));
-        return false;
-    }
-
-    QStringList directoryRoots = getStandardDirectories();
-    directoryRoots.append(registryDirectory);
-    QHash<QString, QString> writePaths;
-    writePaths.insert(BucketFolderStore::pathComparisonKey(projectFileName), projectFileName);
-    for (const auto& root : {projectRoot, stagedRoot}) {
-        for (const QString& directory : directoryRoots) {
-            QDirIterator entries(root.filePath(directory),
-                QDir::Files | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
-                QDirIterator::Subdirectories);
-            while (entries.hasNext()) {
-                const QString path = entries.next();
-                if (entries.fileInfo().isSymLink()) {
-                    emit errorOccurred(QStringLiteral("Cannot save a project containing a symbolic link: %1").arg(path));
-                    return false;
-                }
-                const QString relative = root.relativeFilePath(path);
-                writePaths.insert(BucketFolderStore::pathComparisonKey(relative), relative);
+    std::unique_ptr<QTemporaryDir> stagedDirectory;
+    QHash<QString, QByteArray> completeFiles;
+    QSet<QString> replacedDirectories;
+    if (full) {
+        stagedDirectory = std::make_unique<QTemporaryDir>();
+        if (!stagedDirectory->isValid())
+            return fail(QStringLiteral("Cannot prepare project save directory"));
+        if (!validateProjectObjectIdentities(stagedProject, &saveError)
+            || !validatePlaybackReferences(stagedProject, &saveError)
+            || !ProjectPlatformSemantics::validateProject(stagedProject, &saveError))
+            return fail(saveError);
+        const auto groupValidation = validateFieldGroupProject(stagedProject);
+        if (!groupValidation.ok()) return fail(groupValidation.diagnostics.front().message);
+        const QDir stagedRoot(stagedDirectory->path());
+        if (!m_folderSaveState->stage(stagedProject, stagedRoot.path(), &saveError))
+            return fail(saveError);
+        if (!copyDirectoryTree(projectRoot.filePath(registryDirectory),
+                               stagedRoot.filePath(registryDirectory)))
+            return fail(QStringLiteral("Cannot prepare the asset registry for saving"));
+        ProjectSaveSnapshot snapshot(stagedRoot.path());
+        snapshot.prepareDirectoryLayout();
+        bool generated = saveActionsBucket(stagedRoot.path(), stagedProject.projectId,
+            stagedProject, stagedProject.actions, serializer, &snapshot);
+        for (const auto& spec : ProjectLoaderInternal::s3Specs()) {
+            auto* bucket = stagedProject.getBucketForFolder(spec.folderName);
+            if (bucket && !saveS3HierarchyBucket(stagedRoot.path(), stagedProject.projectId,
+                    stagedProject, spec, *bucket, serializer, &snapshot)) generated = false;
+        }
+        if (!saveLayersBucket(stagedRoot.path(), stagedProject.projectId, stagedProject,
+                stagedProject.layers, serializer, &saveError, &snapshot, &plan.serializedItems)
+            || !saveBussesPacksImpl(stagedRoot.path(), stagedProject, serializer, &saveError, &snapshot))
+            generated = false;
+        if (!generated) return fail(saveError.isEmpty()
+            ? QStringLiteral("Cannot generate project documents") : saveError);
+        QDirIterator entries(stagedRoot.path(),
+            QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
+            QDirIterator::Subdirectories);
+        while (entries.hasNext()) {
+            entries.next();
+            const QString relative = stagedRoot.relativeFilePath(entries.filePath());
+            if (entries.fileInfo().isDir()) {
+                plan.directories.insert(relative);
+            } else {
+                QFile file(entries.filePath());
+                if (!file.open(QIODevice::ReadOnly))
+                    return fail(QStringLiteral("Cannot read staged file: %1").arg(relative));
+                const auto bytes = file.readAll();
+                completeFiles.insert(relative, bytes);
+                plan.addFile(relative, bytes, baseline, m_externalSavePaths.contains(relative));
+                if (relative.endsWith(QStringLiteral(".vp")))
+                    plan.documents.insert(relative, QJsonDocument::fromJson(bytes).object());
+                plan.permissions.insert(relative, file.permissions());
             }
         }
+        for (auto it = snapshot.documents().cbegin(); it != snapshot.documents().cend(); ++it) {
+            plan.addDocument(it.key(), it.value(), baseline, m_externalSavePaths.contains(it.key()));
+            completeFiles.insert(it.key(), snapshot.files().value(it.key()));
+            plan.permissions.insert(it.key(), snapshot.permissions(it.key()));
+        }
+        if (baseline) {
+            for (auto it = baseline->files.cbegin(); it != baseline->files.cend(); ++it)
+                if (it.key() != projectFileName && it.key() != registryPath
+                    && !completeFiles.contains(it.key())) plan.removed.insert(it.key());
+            replacedDirectories = baseline->directories;
+        } else {
+            auto roots = getStandardDirectories();
+            roots.append(registryDirectory);
+            for (const auto& directory : roots) {
+                if (!QDir(projectRoot.filePath(directory)).exists()) continue;
+                replacedDirectories.insert(directory);
+                QDirIterator targets(projectRoot.filePath(directory),
+                    QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
+                    QDirIterator::Subdirectories);
+                while (targets.hasNext()) {
+                    targets.next();
+                    if (targets.fileInfo().isSymLink())
+                        return fail(QStringLiteral("Cannot replace a symbolic link: %1").arg(targets.filePath()));
+                    const QString relative = projectRoot.relativeFilePath(targets.filePath());
+                    if (targets.fileInfo().isDir()) replacedDirectories.insert(relative);
+                    else if (relative != registryPath && !completeFiles.contains(relative))
+                        plan.removed.insert(relative);
+                }
+            }
+        }
+        for (auto* binding : stagedProject.allDocumentBindings())
+            if (!binding->filePath.isEmpty())
+                binding->filePath = projectRoot.filePath(stagedRoot.relativeFilePath(binding->filePath));
+    } else {
+        plan.directories = baseline->directories;
+        plan.acceptedItems = m_itemSaveState->candidates() | baseline->normalizedDocuments;
+        QSet<QUuid> documentItems;
+        for (const auto& guid : plan.acceptedItems) {
+            auto* item = m_itemSaveState->findItem(guid);
+            if (!item) return fail(QStringLiteral("A changed project object no longer exists"));
+            const auto serialized = serializer.projectItemToJson(*item, false);
+            if (serialized.isEmpty()) return fail(serializer.lastError());
+            plan.serializedItems.insert(guid, serialized);
+            while (item && stagedProject.objectFilePath(item).isEmpty()) item = item->parent;
+            if (item) documentItems.insert(item->guid);
+        }
+        for (const auto& path : m_externalSavePaths) {
+            const auto document = baseline->validation.documents().value(path);
+            const QUuid guid(document.value(QStringLiteral("harkenDocument")).toObject()
+                .value(QStringLiteral("id")).toString());
+            if (!guid.isNull() && m_itemSaveState->findItem(guid)) documentItems.insert(guid);
+            else if (baseline->files.contains(path)) plan.files.insert(path, baseline->files.value(path));
+            else if (QFileInfo(projectRoot.filePath(path)).isFile()) plan.removed.insert(path);
+        }
+        for (const auto& guid : documentItems) {
+            const auto* item = m_itemSaveState->findItem(guid);
+            const QString path = projectRoot.relativeFilePath(stagedProject.objectFilePath(item));
+            const auto previous = baseline->validation.documents().value(path);
+            const int order = previous.value(QStringLiteral("content")).toObject()
+                .value(QStringLiteral("order")).toInt();
+            const auto document = serializer.itemDocument(*item, stagedProject.projectId, order);
+            if (document.isEmpty()) return fail(serializer.lastError());
+            plan.addDocument(path, document, baseline, m_externalSavePaths.contains(path));
+        }
     }
-    auto projectTransaction = ProjectTransaction::begin(
-        m_currentProject->projectPath, writePaths.values(), &saveError);
-    if (!projectTransaction) {
-        emit errorOccurred(saveError);
-        return false;
+    plan.addFile(registryPath, ProjectSavePlan::encode(AssetRegistry::instance().toJson()), baseline,
+                 m_externalSavePaths.contains(registryPath));
+    for (const auto& path : m_externalSavePaths)
+        if (full && !completeFiles.contains(path) && path != projectFileName && path != registryPath
+            && QFileInfo(projectRoot.filePath(path)).isFile()) plan.removed.insert(path);
+    bool unchangedProject = false;
+    if (baseline && plan.files.isEmpty() && plan.removed.isEmpty()
+        && plan.directories == baseline->directories
+        && !m_externalSavePaths.contains(projectFileName)) {
+        const auto& savedRoot = baseline->validation.projectRoot();
+        auto document = plan.projectDocument;
+        auto content = document.value(QStringLiteral("content")).toObject();
+        auto metadata = content.value(QStringLiteral("metadata")).toObject();
+        metadata.insert(QStringLiteral("modifiedDate"),
+            savedRoot.value(QStringLiteral("content")).toObject()
+                .value(QStringLiteral("metadata")).toObject().value(QStringLiteral("modifiedDate")));
+        content.insert(QStringLiteral("metadata"), metadata);
+        document.insert(QStringLiteral("content"), content);
+        unchangedProject = document == savedRoot;
+        if (unchangedProject) plan.projectDocument = savedRoot;
     }
-    const bool resumeWatcher = m_fileWatcher.isWatching();
-    m_fileWatcher.stopWatching();
-    const auto restoreWatcher = qScopeGuard([&] {
-        if (resumeWatcher) m_fileWatcher.startWatching(projectRoot.path());
-    });
-    if (!projectTransaction->replaceFromDirectory(stagedRoot.path(), directoryRoots, &saveError)
-        || !projectTransaction->commit(false, &saveError)) {
-        QString rollbackError;
-        if (!projectTransaction->rollback(&rollbackError))
-            emit errorOccurred(rollbackError);
-        emit errorOccurred(saveError);
-        return false;
+    if (!unchangedProject)
+        plan.addFile(projectFileName, ProjectSavePlan::encode(plan.projectDocument), baseline,
+                     m_externalSavePaths.contains(projectFileName));
+
+    QSet<QString> removedDocuments;
+    if (baseline)
+        for (const auto& path : plan.removed)
+            if (baseline->validation.documents().contains(path)) removedDocuments.insert(path);
+    auto& contract = ProjectContractRegistry::instance();
+    const auto errors = baseline
+        ? contract.validateIncrementalSnapshot(projectRoot.path(), plan.projectDocument, true,
+            plan.documents, removedDocuments, baseline->validation, &plan.validation,
+            &m_saveBaseline->context, &plan.validationDetails)
+        : contract.validateSnapshot(stagedDirectory->path(), plan.projectDocument, true,
+            plan.documents, nullptr, &plan.validation, projectFileName);
+    if (!errors.isEmpty()) return fail(errors.first());
+    if (!full && plan.validationDetails.fullValidation) {
+        if (!validateProjectObjectIdentities(stagedProject, &saveError)
+            || !validatePlaybackReferences(stagedProject, &saveError)
+            || !ProjectPlatformSemantics::validateProject(stagedProject, &saveError))
+            return fail(saveError);
+        const auto groupValidation = validateFieldGroupProject(stagedProject);
+        if (!groupValidation.ok()) return fail(groupValidation.diagnostics.front().message);
     }
-    for (auto* binding : stagedProject.allDocumentBindings()) {
-        const QString relative = stagedRoot.relativeFilePath(binding->filePath);
-        if (!binding->filePath.isEmpty() && ProjectDataPolicy::isSafeRelativePath(relative))
-            binding->filePath = projectRoot.filePath(relative);
+
+    ProjectTransaction::DeltaPlan transactionPlan;
+    QSet<QString> writeKeys;
+    QHash<QString, QByteArray> committedHashes;
+    for (auto it = plan.files.cbegin(); it != plan.files.cend(); ++it) {
+        transactionPlan.writes.append({it.key(), it.value(), plan.permissions.value(it.key())});
+        writeKeys.insert(BucketFolderStore::pathComparisonKey(it.key()));
+        committedHashes.insert(projectRoot.filePath(it.key()),
+            QCryptographicHash::hash(it.value(), QCryptographicHash::Sha256));
     }
-    m_currentProject->documentBindings = std::move(stagedProject.documentBindings);
+    for (const auto& path : plan.removed) {
+        if (writeKeys.contains(BucketFolderStore::pathComparisonKey(path))) continue;
+        transactionPlan.deletes.append(path);
+        writeKeys.insert(BucketFolderStore::pathComparisonKey(path));
+        committedHashes.insert(projectRoot.filePath(path), {});
+    }
+    if (full) {
+        for (const auto& path : plan.directories)
+            if (!baseline || !baseline->directories.contains(path))
+                transactionPlan.directories.append({path, true});
+        for (const auto& path : replacedDirectories)
+            if (!plan.directories.contains(path)) transactionPlan.directories.append({path, false});
+    }
+    if (baseline) {
+        for (const auto& path : plan.validationDetails.readPaths) {
+            if (writeKeys.contains(BucketFolderStore::pathComparisonKey(path))) continue;
+            if (!baseline->hashes.contains(path))
+                return fail(QStringLiteral("Missing saved dependency: %1").arg(path));
+            transactionPlan.readSet.append({path, baseline->hashes.value(path), true});
+        }
+    }
+    std::unique_ptr<ProjectItemSaveState> fullItemState;
+    QHash<QUuid, QJsonObject> acceptedStates;
+    if (full) {
+        fullItemState = std::make_unique<ProjectItemSaveState>();
+        if (!fullItemState->markSaved(stagedProject, serializer, plan.serializedItems))
+            return fail(QStringLiteral("Cannot capture saved project object content"));
+    } else if (!m_itemSaveState->prepareAccepted(stagedProject, plan.acceptedItems,
+                                                serializer, plan.serializedItems, &acceptedStates)) {
+        return fail(QStringLiteral("Cannot capture saved project object content"));
+    }
+
+    if (!transactionPlan.writes.isEmpty() || !transactionPlan.deletes.isEmpty()
+        || !transactionPlan.directories.isEmpty()) {
+        auto transaction = ProjectTransaction::beginDelta(m_currentProject->projectPath,
+                                                          transactionPlan, &saveError);
+        if (!transaction) return fail(saveError);
+        const bool resumeWatcher = m_fileWatcher.beginProjectWrite(projectRoot.path(), transaction->changedPaths());
+        bool committed = false;
+        const auto restoreWatcher = qScopeGuard([&] {
+            if (resumeWatcher) m_fileWatcher.endProjectWrite(committed ? committedHashes : QHash<QString, QByteArray>{});
+        });
+        if (!transaction->applyDelta(&saveError) || !transaction->commit(false, &saveError)) {
+            QString rollbackError;
+            if (!transaction->rollback(&rollbackError)) emit errorOccurred(rollbackError);
+            return fail(saveError);
+        }
+        committed = true;
+    } else if (!ProjectTransaction::verifyReadSet(m_currentProject->projectPath,
+                                                 transactionPlan.readSet, &saveError)) {
+        return fail(saveError);
+    }
+    if (full) {
+        m_currentProject->documentBindings = std::move(stagedProject.documentBindings);
+        m_itemSaveState = std::move(fullItemState);
+        m_folderSaveState->markSaved(*m_currentProject);
+    } else {
+        m_itemSaveState->publishAccepted(acceptedStates);
+    }
     m_currentProject->sourceAssets = std::move(stagedProject.sourceAssets);
-
-    AssetRegistry::instance().markAllCommitted();
-
-    m_currentProject->documentHeader =
-        committedDocument.object().value(QStringLiteral("harkenDocument")).toObject();
-    const auto updateDocumentHeaders = [&](auto&& self, ProjectItem& item) -> void {
-        QString type;
-        switch (ItemTypeCatalog::bucketOf(item.type)) {
-        case ItemTypeCatalog::Bucket::Layers:
-            type = QStringLiteral("project.layer");
-            break;
-        case ItemTypeCatalog::Bucket::Actions:
-            type = QStringLiteral("project.action");
-            break;
-        case ItemTypeCatalog::Bucket::Attenuations:
-            type = QStringLiteral("project.attenuation");
-            break;
-        case ItemTypeCatalog::Bucket::Busses:
-            type = QStringLiteral("project.bus");
-            break;
-        case ItemTypeCatalog::Bucket::Variables:
-            type = QStringLiteral("project.variable");
-            break;
-        default:
-            break;
-        }
-        if (!type.isEmpty()) {
-            item.documentHeader = ProjectDocument::createHeader(
-                type, item.guid.toString(QUuid::WithoutBraces),
-                m_currentProject->projectId, item.documentHeader);
-        }
-        for (const auto& child : item.children)
-            if (child) self(self, *child);
-    };
-    for (auto* binding : m_currentProject->allFileBindings())
-    {
-        if (binding && binding->rootItem) {
-            updateDocumentHeaders(updateDocumentHeaders, *binding->rootItem);
-            binding->rootItem->clearDirty();
-        }
+    m_currentProject->documentHeader = plan.projectDocument.value(QStringLiteral("harkenDocument")).toObject();
+    for (auto it = plan.documents.cbegin(); it != plan.documents.cend(); ++it) {
+        const auto header = it->value(QStringLiteral("harkenDocument")).toObject();
+        auto* item = m_itemSaveState->findItem(QUuid(header.value(QStringLiteral("id")).toString()));
+        if (item) item->documentHeader = header;
     }
-
+    if (full) {
+        for (auto* binding : m_currentProject->allFileBindings())
+            if (binding->rootItem) binding->rootItem->clearDirty();
+    } else {
+        for (const auto& guid : plan.acceptedItems)
+            if (auto* item = m_itemSaveState->findItem(guid)) item->dirtyBit = false;
+    }
+    if (!sameProject) m_saveBaseline = std::make_unique<ProjectSaveBaseline>();
+    m_saveBaseline->projectPath = m_currentProject->projectPath;
+    for (const auto& path : plan.removed) {
+        m_saveBaseline->files.remove(path);
+        m_saveBaseline->hashes.remove(path);
+    }
+    for (auto it = plan.files.cbegin(); it != plan.files.cend(); ++it) {
+        m_saveBaseline->files.insert(it.key(), it.value());
+        m_saveBaseline->hashes.insert(it.key(), committedHashes.value(projectRoot.filePath(it.key())));
+    }
+    m_saveBaseline->directories = std::move(plan.directories);
+    m_saveBaseline->validation = std::move(plan.validation);
+    m_saveBaseline->normalizedDocuments.clear();
+    m_externalSavePaths.clear();
+    AssetRegistry::instance().markAllCommitted();
     SourceFileSystem::commitChanges();
-    m_folderSaveState->markSaved(*m_currentProject);
-    m_itemSaveState = std::move(itemSaveState);
     UndoRedoManager::instance().setClean();
-
     emit projectSaved();
     return true;
 }
+
 
 bool ProjectManager::closeProject()
 {
@@ -2260,6 +2524,8 @@ bool ProjectManager::closeProject()
         m_closing = true;
         m_runtimePrepared = false;
         m_itemSaveState.reset();
+        m_saveBaseline.reset();
+        m_externalSavePaths.clear();
         UndoRedoManager::instance().clear();
         m_folderSaveState.reset();
         AssetRegistry::instance().clear();

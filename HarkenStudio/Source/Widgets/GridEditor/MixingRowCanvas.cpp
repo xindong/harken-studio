@@ -90,6 +90,10 @@ void MixingRowCanvas::paintEvent(QPaintEvent*)
     auto data = renderData();
     data.frameVisible = false;
     const auto& colors = ThemeManager::instance().colors();
+    if (selected_ >= 0)
+        data.curveColor = colors.categoricalColor(selected_);
+    for (int i = 0; i < data.overlays.size(); ++i)
+        data.overlays[i].color = colors.categoricalColor(overlayClips_[i]).darker(150);
     if (!isEnabled()) {
         style.colors.plotBackground = colors.bgSecondary;
         style.colors.axisText = colors.textDisabled;

@@ -11835,6 +11835,195 @@ TEST(ActionFiringApi, QuantizedStopFadeStartsBeforeTheBoundary) {
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(segmentFiring));
 }
 
+void CheckNaturalEndStopAfterAppliedSeek(std::uint64_t seekFrame,
+                                        bool suspended, std::uint32_t workers) {
+    (void)Vn_Term();
+    constexpr std::uint32_t kFrames = 64;
+    constexpr std::uint32_t kRate = 48000;
+    constexpr std::uint64_t kSourceFrames = 32768;
+    auto config = harkentest::MakeNullConfig(2, kFrames, kRate);
+    config.audibilityParkEnabled = workers != 0 ? 1u : 0u;
+    config.renderWorkerCount = workers;
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const std::vector<float> samples(kSourceFrames, 0.25f);
+    const auto pcm = harkentest::MonoDesc(samples, kRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+    CanonicalActionWorld image(engine.registry.Lookup(
+        CanonicalActionWorld::kFirstSound).contentRevision);
+    image.MakeImmediateSoundPlayAction();
+    image.MakeQuantizedSoundStopAction(
+        harken::ActionQuantizeTimingV1::NaturalEnd,
+        harken::ActionIfSilentV1::Immediate, 0,
+        harken::ActionTargetKindV1::Sound, 10, 14, harkentest::ObjectId(51));
+    SetAbsoluteTime(&image.steps[14].fade, 5'000'000);
+    image.actions[10].programSemanticFingerprint =
+        harken::ComputeActionProgramFingerprintV1(image.actions[10]);
+    image.world.identity.runtimeSemanticFingerprint =
+        harken::ComputeCurrentWorldFingerprintV4(image.world);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harken::InstallContainerWorldV1(engine, image.world).status);
+
+    auto post = ValidPostDesc();
+    post.actionId = image.actions[9].actionStableId;
+    VnActionFiringHandle playing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &playing));
+    VnVoiceHandle renderHandle = 0;
+    std::uint64_t originalStartFrame = 0;
+    for (unsigned attempt = 0; attempt < 16 && renderHandle == 0; ++attempt) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        for (const auto& row : engine.playableServices) {
+            if (row.phase == harken::EnginePlayableStartPhase::Started &&
+                row.InvocationValid() && row.Invocation().actionFiring == playing) {
+                renderHandle = row.renderHandle;
+                originalStartFrame = row.startFrame;
+            }
+        }
+    }
+    ASSERT_NE(0u, renderHandle);
+    for (unsigned block = 0; block < 4; ++block) {
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    ASSERT_TRUE(engine.voices.IsAlive(renderHandle));
+    ASSERT_EQ(0u, engine.actionDeferredRecords.LiveCount());
+
+    VnActionSeekDescV1 seek{};
+    seek.structSize = sizeof(seek);
+    seek.firing = playing;
+    seek.mode = VN_ACTION_SEEK_ABSOLUTE;
+    seek.positionMs = static_cast<double>(seekFrame) * 1000.0 / kRate;
+    const auto blockBeforeSeek = engine.mixer.BlocksRendered();
+    VnActionSeekTicket ticket = 0;
+    ASSERT_EQ(VN_OK, Vn_SeekActionFiring(&seek, &ticket));
+    ASSERT_NE(0u, ticket);
+    VnActionSeekInfoV1 seekInfo{};
+    seekInfo.structSize = sizeof(seekInfo);
+    if (suspended) {
+        engine.nullBackend.SetSuspended(true);
+        engine.mixer.DrainQueuedCommands(1);
+        engine.nullBackend.SetSuspended(false);
+        ASSERT_EQ(blockBeforeSeek, engine.mixer.BlocksRendered());
+        harken::SourceCursorMirror::Row cursor{};
+        harken::SourceCursorMirror::Publication publication{};
+        ASSERT_TRUE(engine.sourceCursors.CaptureRow(
+            static_cast<std::uint32_t>(renderHandle), &cursor, &publication));
+        EXPECT_EQ(blockBeforeSeek * kFrames, publication.outputFrame);
+        EXPECT_EQ(engine.commands.ConsumedCount(), publication.consumedCommands);
+        ASSERT_TRUE(cursor.exactTimingValid);
+        EXPECT_EQ(seekFrame, cursor.progress.sourceStartFrame);
+        EXPECT_LE(cursor.progress.sourceReadFrame, harken::kResampleHistoryPad);
+    } else if (workers == 0) {
+        // Hold audio after Seek is APPLIED but before progress publication.
+        struct Pause {
+            std::atomic<bool> entered{false}, released{false};
+        } pause;
+        engine.mixer.SetTimelineFinalizedHookForTest(
+            +[](void* context, std::uint64_t) noexcept {
+                auto& pause = *static_cast<Pause*>(context);
+                pause.entered.store(true, std::memory_order_release);
+                while (!pause.released.load(std::memory_order_acquire))
+                    std::this_thread::yield();
+            }, &pause);
+        std::thread audio([&] { engine.nullBackend.Pump(1); });
+        struct AudioScope {
+            harken::Engine& engine;
+            Pause& pause;
+            std::thread& audio;
+            ~AudioScope() {
+                pause.released.store(true, std::memory_order_release);
+                audio.join();
+                engine.mixer.SetTimelineFinalizedHookForTest(nullptr, nullptr);
+            }
+        } scope{engine, pause, audio};
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (!pause.entered.load(std::memory_order_acquire) &&
+               std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+        ASSERT_TRUE(pause.entered.load(std::memory_order_acquire));
+        ASSERT_EQ(VN_OK, Vn_QueryActionSeek(ticket, &seekInfo));
+        ASSERT_EQ(VN_ACTION_SEEK_APPLIED, seekInfo.state);
+        ASSERT_EQ(VN_OK, Vn_ReleaseActionSeek(ticket));
+        ticket = 0;
+        const auto owners = CaptureActionPreparationOwners(engine);
+        post.actionId = image.actions[10].actionStableId;
+        VnActionFiringHandle refused = 0;
+        EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&post, &refused));
+        EXPECT_EQ(0u, refused);
+        EXPECT_EQ(0u, engine.actionDeferredRecords.LiveCount());
+        ExpectActionPreparationOwnersUnchanged(engine, owners);
+    } else {
+        engine.nullBackend.Pump(1);
+    }
+    if (ticket != 0) {
+        ASSERT_EQ(VN_OK, Vn_QueryActionSeek(ticket, &seekInfo));
+        ASSERT_EQ(VN_OK, Vn_ReleaseActionSeek(ticket));
+    }
+    ASSERT_EQ(VN_ACTION_SEEK_APPLIED, seekInfo.state);
+    ASSERT_EQ(VN_OK, seekInfo.result);
+    ASSERT_EQ(1u, seekInfo.appliedCount);
+    ASSERT_EQ(seekFrame, seekInfo.minimumAppliedSourceFrame);
+    ASSERT_EQ(seekFrame, seekInfo.maximumAppliedSourceFrame);
+    ASSERT_EQ(blockBeforeSeek + 1u, seekInfo.appliedAudioBlockSequence);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    // Unrelated accepted controls do not invalidate a completed source cut.
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, 0.0f, 0));
+    ASSERT_GT(engine.commands.PublishedHead(), engine.commands.ConsumedCount());
+
+    const auto expectedEnd = blockBeforeSeek * kFrames + kSourceFrames - seekFrame;
+    const auto staleEnd = originalStartFrame + kSourceFrames;
+    ASSERT_NE(expectedEnd, staleEnd);
+    ASSERT_GT(expectedEnd - 240u, engine.timelinePool.WindowEndFrame());
+
+    post.actionId = image.actions[10].actionStableId;
+    VnActionFiringHandle stopping = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &stopping));
+    ASSERT_NE(0u, stopping);
+    ASSERT_EQ(1u, engine.actionDeferredRecords.LiveCount());
+    harken::ActionDeferredRecordToken recordToken{};
+    harken::ActionDeferredRecord record{};
+    harken::ActionDeferredRecordState recordState =
+        harken::ActionDeferredRecordState::Free;
+    ASSERT_TRUE(engine.actionDeferredRecords.CaptureAt(
+        0, &recordToken, &record, &recordState));
+    ASSERT_EQ(stopping, record.firing);
+    EXPECT_EQ(expectedEnd, record.intendedBoundaryFrame)
+        << "original end = " << staleEnd
+        << ", seek applied at block sequence = "
+        << seekInfo.appliedAudioBlockSequence;
+    std::uint64_t lastAudibleFrame = 0;
+    const auto deadlineBlock = (expectedEnd + kFrames - 1u) / kFrames + 8u;
+    while (engine.mixer.BlocksRendered() < deadlineBlock) {
+        const auto firstFrame = engine.mixer.BlocksRendered() * kFrames;
+        engine.nullBackend.Pump(1);
+        const auto* output = engine.nullBackend.LastBlock();
+        for (std::uint32_t frame = 0; frame < kFrames; ++frame) {
+            if (std::abs(output[frame * engine.nullBackend.Channels()]) > 1.0e-7f)
+                lastAudibleFrame = firstFrame + frame;
+        }
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    // The authored fade reaches exact zero on its final sample (end - 1).
+    EXPECT_EQ(expectedEnd, lastAudibleFrame + 2u);
+    EXPECT_EQ(0u, engine.actionDeferredRecords.LiveCount());
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(stopping));
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(playing));
+}
+
+TEST(ActionFiringApi, NaturalEndStopAfterAppliedSeekUsesNewSourceEnd) {
+    CheckNaturalEndStopAfterAppliedSeek(0, false, 0);
+}
+
+TEST(ActionFiringApi, NaturalEndStopAfterForwardSeekUsesWorkerProgress) {
+    CheckNaturalEndStopAfterAppliedSeek(12000, false, 2);
+}
+
+TEST(ActionFiringApi, NaturalEndStopAfterSuspendedSeekKeepsOutputClockFrozen) {
+    CheckNaturalEndStopAfterAppliedSeek(12000, true, 0);
+}
+
 TEST(ActionFiringApi, NaturalEndStopUsesRemainingSourceDuration) {
     (void)Vn_Term();
     harkentest::EngineSession session(
@@ -11983,6 +12172,123 @@ TEST(ActionFiringApi, NaturalEndStopOfPendingPlayUsesActualStart) {
     EXPECT_EQ(row->startFrame + samples.size(), record.intendedBoundaryFrame);
 }
 
+TEST(ActionFiringApi, PendingLocalStopRetainsHeldIntentUntilConsumedProgressIsPublished) {
+    (void)Vn_Term();
+    constexpr std::uint32_t kBlockFrames = 64;
+    harkentest::EngineSession session(
+        harkentest::MakeNullConfig(2, kBlockFrames, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    harken::Engine* engine = session.Engine();
+    std::vector<float> samples(16384, 0.25f);
+    const VnPCMDesc pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK,
+              Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+    CanonicalActionWorld image(
+        engine->registry.Lookup(CanonicalActionWorld::kFirstSound)
+            .contentRevision);
+    image.MakeImmediateSoundPlayAction();
+    image.MakeQuantizedSoundStopAction(
+        harken::ActionQuantizeTimingV1::NaturalEnd,
+        harken::ActionIfSilentV1::Immediate, 0,
+        harken::ActionTargetKindV1::Sound, 10, 14,
+        harkentest::ObjectId(51));
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+              harken::InstallContainerWorldV1(*engine, image.world).status);
+    VnPostActionDesc playDesc = ValidPostDesc();
+    playDesc.actionId = image.actions[9].actionStableId;
+    VnActionFiringHandle play = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&playDesc, &play));
+    const auto row = std::find_if(
+        engine->playableServices.begin(), engine->playableServices.end(),
+        [play](const harken::EnginePlayableServiceRow& candidate) {
+            return candidate.InvocationValid() &&
+                   candidate.Invocation().actionFiring == play;
+        });
+    ASSERT_NE(engine->playableServices.end(), row);
+    ASSERT_EQ(harken::EnginePlayableStartPhase::PendingImmediateEntry,
+              row->phase);
+    const std::uint64_t oldStart = row->startFrame;
+    VnPostActionDesc stopDesc = ValidPostDesc();
+    stopDesc.actionId = image.actions[10].actionStableId;
+    VnActionFiringHandle stop = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&stopDesc, &stop));
+    ASSERT_EQ(1u, engine->actionDeferredRecords.LiveCount());
+    const std::uint64_t rendered = engine->mixer.BlocksRendered();
+    ASSERT_LE(rendered, oldStart / kBlockFrames);
+    ASSERT_LE(oldStart / kBlockFrames - rendered + 1u, 64u);
+    engine->nullBackend.Pump(static_cast<std::uint32_t>(
+        oldStart / kBlockFrames - rendered + 1u));
+    harken::ActionDeferredRecordToken heldToken{};
+    harken::ActionDeferredRecord heldRecord{};
+    harken::ActionDeferredRecordState heldState{};
+    ASSERT_TRUE(engine->actionDeferredRecords.CaptureAt(
+        0, &heldToken, &heldRecord, &heldState));
+    ASSERT_EQ(harken::ActionDeferredRecordState::Held, heldState);
+    ASSERT_TRUE(heldRecord.waitingForImmediateEntry);
+    ASSERT_EQ(UINT64_MAX, heldRecord.intendedBoundaryFrame);
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, 0.0f, 0));
+    struct Pause {
+        std::atomic<bool> entered{false}, released{false};
+    } pause;
+    engine->mixer.SetTimelineFinalizedHookForTest(
+        +[](void* context, std::uint64_t) noexcept {
+            auto& pause = *static_cast<Pause*>(context);
+            pause.entered.store(true, std::memory_order_release);
+            while (!pause.released.load(std::memory_order_acquire))
+                std::this_thread::yield();
+        }, &pause);
+    std::thread audio([&] { engine->nullBackend.Pump(1); });
+    struct AudioScope {
+        harken::Engine& engine;
+        Pause& pause;
+        std::thread& audio;
+        ~AudioScope() {
+            pause.released.store(true, std::memory_order_release);
+            audio.join();
+            engine.mixer.SetTimelineFinalizedHookForTest(nullptr, nullptr);
+        }
+    };
+    {
+        AudioScope scope{*engine, pause, audio};
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (!pause.entered.load(std::memory_order_acquire) &&
+               std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+        ASSERT_TRUE(pause.entered.load(std::memory_order_acquire));
+        harken::SourceCursorMirror::Row cursor{};
+        harken::SourceCursorMirror::Publication publication{};
+        ASSERT_TRUE(engine->sourceCursors.CaptureRow(
+            static_cast<std::uint32_t>(row->renderHandle), &cursor, &publication));
+        ASSERT_LT(publication.consumedCommands, engine->commands.ConsumedCount());
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_NE(harken::EnginePlayableStartPhase::PendingImmediateEntry, row->phase);
+        harken::ActionDeferredRecordToken stillHeld{};
+        harken::ActionDeferredRecord record{};
+        ASSERT_TRUE(engine->actionDeferredRecords.CaptureAt(0, &stillHeld, &record, &heldState));
+        EXPECT_EQ(heldToken.slot, stillHeld.slot);
+        EXPECT_EQ(heldToken.generation, stillHeld.generation);
+        EXPECT_EQ(harken::ActionDeferredRecordState::Held, heldState);
+        EXPECT_TRUE(record.waitingForImmediateEntry);
+        EXPECT_EQ(UINT64_MAX, record.intendedBoundaryFrame);
+        EXPECT_EQ(heldRecord.firing, record.firing);
+        EXPECT_EQ(heldRecord.rootPlayable, record.rootPlayable);
+        EXPECT_EQ(heldRecord.rootScheduleEpoch, record.rootScheduleEpoch);
+        EXPECT_FALSE(engine->runtimeRecreateRequired);
+    }
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_GT(row->startFrame, oldStart);
+    harken::ActionDeferredRecordToken token{};
+    harken::ActionDeferredRecord record{};
+    harken::ActionDeferredRecordState state =
+        harken::ActionDeferredRecordState::Free;
+    ASSERT_TRUE(engine->actionDeferredRecords.CaptureAt(
+        0, &token, &record, &state));
+    EXPECT_EQ(heldToken.slot, token.slot);
+    EXPECT_EQ(heldToken.generation, token.generation);
+    EXPECT_FALSE(record.waitingForImmediateEntry);
+    EXPECT_EQ(row->startFrame + samples.size(), record.intendedBoundaryFrame);
+    EXPECT_FALSE(engine->runtimeRecreateRequired);
+}
+
 TEST(ActionFiringApi, PendingNaturalEndStopReleasesIntentWhenPlayIsCancelled) {
     (void)Vn_Term();
     harkentest::EngineSession session(
@@ -12023,6 +12329,53 @@ TEST(ActionFiringApi, PendingNaturalEndStopReleasesIntentWhenPlayIsCancelled) {
     }
     EXPECT_EQ(0u, engine->actionDeferredRecords.LiveCount());
     EXPECT_NE(VN_ACTION_STEP_AWAITING_MATERIALIZATION, step.state);
+}
+
+TEST(ActionFiringApi, PendingNaturalEndStopReleasesOwnersAfterShortSourceFinishes) {
+    (void)Vn_Term();
+    harkentest::EngineSession session(
+        harkentest::MakeNullConfig(2, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    harken::Engine* engine = session.Engine();
+    std::vector<float> samples(32, 0.25f);
+    const VnPCMDesc pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK,
+              Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+    CanonicalActionWorld image(
+        engine->registry.Lookup(CanonicalActionWorld::kFirstSound)
+            .contentRevision);
+    image.MakeImmediateSoundPlayAction();
+    image.MakeQuantizedSoundStopAction(
+        harken::ActionQuantizeTimingV1::NaturalEnd,
+        harken::ActionIfSilentV1::Immediate, 0,
+        harken::ActionTargetKindV1::Sound, 10, 14,
+        harkentest::ObjectId(51));
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+              harken::InstallContainerWorldV1(*engine, image.world).status);
+    const auto baseline = CaptureActionReclaimableOwners(*engine);
+    VnPostActionDesc desc = ValidPostDesc();
+    desc.actionId = image.actions[9].actionStableId;
+    VnActionFiringHandle play = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &play));
+    desc.actionId = image.actions[10].actionStableId;
+    VnActionFiringHandle stop = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &stop));
+    ASSERT_EQ(1u, engine->actionDeferredRecords.LiveCount());
+    VnActionStepResult step{};
+    step.structSize = sizeof(step);
+    for (std::uint32_t block = 0; block < 32; ++block) {
+        engine->nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_EQ(VN_OK, Vn_QueryActionStep(stop, 0, &step));
+    }
+    EXPECT_EQ(0u, engine->actionDeferredRecords.LiveCount());
+    EXPECT_NE(VN_ACTION_STEP_AWAITING_MATERIALIZATION, step.state);
+    EXPECT_EQ(0u, engine->voices.ActiveCount());
+    EXPECT_EQ(0u, engine->sourceTerminals.OccupiedCount());
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(stop));
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(play));
+    EXPECT_EQ(baseline, CaptureActionReclaimableOwners(*engine));
+    EXPECT_FALSE(engine->runtimeRecreateRequired);
 }
 
 TEST(ActionFiringApi, CurrentLoopEndStopUsesTheFirstPassEnd) {
@@ -12164,16 +12517,18 @@ TEST(ActionFiringApi, ExitMarkerStopDropsWhenNoMarkerExists) {
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(playFiring));
 }
 
-TEST(ActionFiringApi, ExitMarkerStopSchedulesTheAuthoredMarker) {
+static void CheckExitMarkerStopSampleRate(std::uint32_t sourceRate, bool afterStart) {
+    SCOPED_TRACE(sourceRate);
+    SCOPED_TRACE(afterStart);
     (void)Vn_Term();
     harkentest::EngineSession session(
-        harkentest::MakeNullConfig(2, 256, 48000));
+        harkentest::MakeNullConfig(2, afterStart ? 64 : 256, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     std::vector<float> first(4096, 0.25f);
-    std::vector<float> second(4096, -0.25f);
-    const VnPCMDesc firstPcm = harkentest::MonoDesc(first, 48000);
-    const VnPCMDesc secondPcm = harkentest::MonoDesc(second, 48000);
+    std::vector<float> second(4096, afterStart ? 0.25f : -0.25f);
+    const VnPCMDesc firstPcm = harkentest::MonoDesc(first, sourceRate);
+    const VnPCMDesc secondPcm = harkentest::MonoDesc(second, sourceRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound,
                                     &firstPcm));
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound,
@@ -12203,8 +12558,25 @@ TEST(ActionFiringApi, ExitMarkerStopSchedulesTheAuthoredMarker) {
     playDesc.actionId = image.actions[9].actionStableId;
     VnActionFiringHandle playFiring = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&playDesc, &playFiring));
-    const std::uint64_t expected =
+    std::uint64_t expected =
         engine->playableServices[0].startFrame + 480u;
+    if (afterStart) {
+        bool started = false;
+        for (unsigned block = 0; block < 16 && !started; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            engine->nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+            for (const auto& row : engine->playableServices) {
+                if (row.phase == harken::EnginePlayableStartPhase::Started &&
+                    row.InvocationValid() && row.Invocation().actionFiring == playFiring) {
+                    started = true;
+                    expected = row.startFrame + 480u;
+                }
+            }
+        }
+        ASSERT_TRUE(started);
+        ASSERT_LT(engine->mixer.BlocksRendered() * 64u, expected);
+    }
     SCOPED_TRACE(::testing::Message() << "arm capacity=" << engine->timelineArms.Capacity()
                                     << ", live=" << engine->timelineArms.LiveCount());
     VnPostActionDesc stopDesc = ValidPostDesc();
@@ -12216,7 +12588,7 @@ TEST(ActionFiringApi, ExitMarkerStopSchedulesTheAuthoredMarker) {
     ASSERT_EQ(VN_OK, Vn_QueryActionStep(stopFiring, 0, &step));
     EXPECT_NE(VN_ACTION_STEP_NO_OP, step.state);
     EXPECT_EQ(1u, step.capturedPlayableCount);
-    if (expected >= engine->timelinePool.WindowEndFrame()) {
+    if (!afterStart && expected >= engine->timelinePool.WindowEndFrame()) {
         harken::ActionDeferredRecordToken token{};
         harken::ActionDeferredRecord record{};
         harken::ActionDeferredRecordState state =
@@ -12224,14 +12596,43 @@ TEST(ActionFiringApi, ExitMarkerStopSchedulesTheAuthoredMarker) {
         ASSERT_TRUE(engine->actionDeferredRecords.CaptureAt(
             0, &token, &record, &state));
         EXPECT_EQ(expected, record.intendedBoundaryFrame);
-    } else {
+    } else if (!afterStart) {
         const std::uint64_t silence = RematerializedStopSilence(engine);
-        if (silence != 0) {
-            EXPECT_EQ(expected, silence);
-        }
+        if (silence != 0) EXPECT_EQ(expected, silence);
     }
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(stopFiring));
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(playFiring));
+    if (afterStart) {
+        std::uint64_t lastAudibleFrame = 0;
+        while (engine->mixer.BlocksRendered() * 64u < expected + 1024u) {
+            const auto firstFrame = engine->mixer.BlocksRendered() * 64u;
+            engine->nullBackend.Pump(1);
+            ASSERT_EQ(firstFrame + 64u, engine->mixer.BlocksRendered() * 64u);
+            const auto* output = engine->nullBackend.LastBlock();
+            for (std::uint32_t frame = 0; frame < 64; ++frame) {
+                if (std::abs(output[frame * engine->nullBackend.Channels()]) > 1.0e-7f)
+                    lastAudibleFrame = firstFrame + frame;
+            }
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        // Zero authored fade uses the shared timeline declick after the marker.
+        const auto declickFrames =
+            (harken::kTimelineStopDeclickMs * 48000u + 999u) / 1000u;
+        EXPECT_EQ(expected + declickFrames, lastAudibleFrame + 2u);
+        EXPECT_EQ(0u, engine->voices.ActiveCount());
+        EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(stopFiring));
+        EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(playFiring));
+    }
+}
+
+TEST(ActionFiringApi, ExitMarkerStopSchedulesTheAuthoredMarker) {
+    CheckExitMarkerStopSampleRate(48000, false);
+}
+
+TEST(ActionFiringApi, ExitMarkerStopAfterStartPreservesTimelineAcrossSampleRates) {
+    for (const auto sourceRate : {24000u, 48000u, 96000u}) {
+        CheckExitMarkerStopSampleRate(sourceRate, true);
+    }
 }
 
 TEST(ActionFiringApi, ReferencedExitMarkerStopUsesTheReferenceSegmentTimeline) {
@@ -33273,6 +33674,60 @@ TEST(ActionFiringContract, ResidentSeekAppliesAtBlockBoundaryAndRendersTargetFra
     EXPECT_EQ(0u, ticket);
 }
 
+TEST(ActionFiringContract, RelativeSeekFrameOverflowRefusesWithoutTicket) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig(1, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    const auto samples = harkentest::MakeDC(4096, 0.25f);
+    // 64 source frames per millisecond makes the signed boundary exact.
+    const auto pcm = harkentest::MonoDesc(samples, 64000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+    CanonicalActionWorld image(engine->registry.Lookup(
+        CanonicalActionWorld::kFirstSound).contentRevision);
+    image.MakeImmediateSoundPlayAction();
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+              harken::InstallContainerWorldV1(*engine, image.world).status);
+    auto post = ValidPostDesc();
+    post.actionId = image.actions[9].actionStableId;
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+    bool started = false;
+    for (unsigned block = 0; block < 16 && !started; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+        started = std::any_of(engine->playableServices.begin(),
+            engine->playableServices.end(), [&](const auto& row) {
+                return row.phase == harken::EnginePlayableStartPhase::Started &&
+                    row.InvocationValid() && row.Invocation().actionFiring == firing;
+            });
+    }
+    ASSERT_TRUE(started);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    VnActionSeekDescV1 seek{};
+    seek.structSize = sizeof(seek);
+    seek.firing = firing;
+    seek.mode = VN_ACTION_SEEK_RELATIVE;
+    for (const double sign : {-1.0, 1.0}) {
+        seek.positionMs = sign * std::ldexp(1.0, 57);
+        VnActionSeekTicket ticket = 0;
+        EXPECT_EQ(VN_INVALID_ARG, Vn_SeekActionFiring(&seek, &ticket));
+        EXPECT_EQ(0u, ticket);
+        if (ticket != 0) {
+            engine->nullBackend.Pump(1);
+            (void)Vn_ReleaseActionSeek(ticket);
+        }
+    }
+    seek.positionMs = 1.0;
+    VnActionSeekTicket ticket = 0;
+    ASSERT_EQ(VN_OK, Vn_SeekActionFiring(&seek, &ticket));
+    engine->nullBackend.Pump(1);
+    VnActionSeekInfoV1 info{};
+    info.structSize = sizeof(info);
+    ASSERT_EQ(VN_OK, Vn_QueryActionSeek(ticket, &info));
+    EXPECT_EQ(VN_ACTION_SEEK_APPLIED, info.state);
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionSeek(ticket));
+}
+
 TEST(ActionFiringContract, SeekPreservesResamplingOfNonUnityPitch) {
     for (const bool streamed : {false, true}) {
         SCOPED_TRACE(streamed);
@@ -33479,6 +33934,203 @@ TEST(ActionFiringApi, ResidentSeekTargetsOnlyTheSelectedConcurrentFiring) {
                        engine->nullBackend.Channels()],
                 0.03f);
     EXPECT_EQ(VN_OK, Vn_ReleaseActionSeek(ticket));
+}
+
+TEST(ActionFiringApi, ResidentZeroSeekPreservesFiniteLoopOutputDuration) {
+    const auto run = [](bool seekEnabled, std::uint32_t mode,
+                        std::vector<float>& blocks) {
+        harkentest::EngineSession session(harkentest::MakeNullConfig(1, 64, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        std::vector<float> samples(4096, 0.2f);
+        std::fill(samples.begin(), samples.begin() + 192, 0.1f);
+        const auto pcm = harkentest::MonoDesc(samples, 48000);
+        ASSERT_EQ(VN_OK, engine.registry.RegisterPCM(
+            CanonicalActionWorld::kFirstSound, &pcm, nullptr,
+            harken::PcmLoopRegion{0, 192}));
+        CanonicalActionWorld image(engine.registry.Lookup(
+            CanonicalActionWorld::kFirstSound).contentRevision);
+        image.properties[0].payload.presentMask |= UINT64_C(0x8);
+        image.properties[0].payload.values[3].bits = 4;
+        image.RelinkFirstSound();
+        image.MakeImmediateSoundPlayAction();
+        ASSERT_EQ(harken::WorldInstallStatus::Ok,
+            harken::InstallContainerWorldV1(engine, image.world).status);
+        auto post = ValidPostDesc();
+        post.actionId = image.actions[9].actionStableId;
+        VnActionFiringHandle firing = 0;
+        ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+        VnVoiceHandle voice = 0;
+        for (unsigned attempt = 0; attempt < 8 && voice == 0; ++attempt) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            engine.nullBackend.Pump(1);
+            for (const auto& row : engine.playableServices) {
+                if (row.phase == harken::EnginePlayableStartPhase::Started &&
+                    row.InvocationValid() && row.Invocation().actionFiring == firing)
+                    voice = row.renderHandle;
+            }
+        }
+        ASSERT_NE(0u, voice);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        const auto* before = engine.voices.Resolve(voice);
+        ASSERT_NE(nullptr, before);
+        const auto audible = before->resampler.SourceFrame() - harken::kResampleHistoryPad;
+        ASSERT_LT(audible, 192u);
+        VnActionSeekTicket ticket = 0;
+        if (seekEnabled) {
+            VnActionSeekDescV1 seek{};
+            seek.structSize = sizeof(seek);
+            seek.firing = firing;
+            seek.mode = mode;
+            seek.positionMs = mode == VN_ACTION_SEEK_RELATIVE
+                ? 0.0 : static_cast<double>(audible) * 1000.0 / 48000.0;
+            ASSERT_EQ(VN_OK, Vn_SeekActionFiring(&seek, &ticket));
+        }
+        for (unsigned block = 0; block < 100 && engine.voices.IsAlive(voice); ++block) {
+            const auto sequence = engine.mixer.BlocksRendered();
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(sequence + 1u, engine.mixer.BlocksRendered());
+            blocks.push_back(engine.nullBackend.LastBlock()[
+                (engine.nullBackend.BlockFrames() - 1u) * engine.nullBackend.Channels()]);
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        EXPECT_FALSE(engine.voices.IsAlive(voice));
+        if (seekEnabled) {
+            VnActionSeekInfoV1 info{};
+            info.structSize = sizeof(info);
+            ASSERT_EQ(VN_OK, Vn_QueryActionSeek(ticket, &info));
+            EXPECT_EQ(VN_ACTION_SEEK_APPLIED, info.state);
+            EXPECT_EQ(audible, info.minimumAppliedSourceFrame);
+            EXPECT_EQ(VN_OK, Vn_ReleaseActionSeek(ticket));
+        }
+        for (unsigned block = 0; block < 8; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            engine.nullBackend.Pump(1);
+        }
+        EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+        EXPECT_EQ(0u, engine.registry.Lookup(CanonicalActionWorld::kFirstSound).useCount->load());
+    };
+    std::vector<float> reference;
+    ASSERT_NO_FATAL_FAILURE(run(false, VN_ACTION_SEEK_RELATIVE, reference));
+    for (auto mode : {VN_ACTION_SEEK_RELATIVE, VN_ACTION_SEEK_ABSOLUTE}) {
+        SCOPED_TRACE(mode);
+        std::vector<float> sought;
+        ASSERT_NO_FATAL_FAILURE(run(true, mode, sought));
+        EXPECT_EQ(reference.size(), sought.size());
+        for (std::size_t i = 1; i < std::min(reference.size(), sought.size()); ++i)
+            EXPECT_NEAR(reference[i], sought[i], 0.005f) << "block " << i;
+    }
+}
+
+TEST(ActionFiringApi, SeekCannotReviveSourceAfterUnservicedEndDuringEffectTail) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig(2, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto samples = harkentest::MakeDC(256, 0.1f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+    const auto siblingSamples = harkentest::MakeDC(1024, 0.2f);
+    const auto siblingPcm = harkentest::MonoDesc(siblingSamples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &siblingPcm));
+    CanonicalActionWorld image(engine.registry.Lookup(
+        CanonicalActionWorld::kFirstSound).contentRevision,
+        engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision, true);
+    image.MakeImmediateSoundPlayAction();
+    image.steps[12] = image.steps[11];
+    image.steps[12].authoredEventIndex = 1;
+    image.steps[11].target.stableId = CanonicalActionWorld::kSecondSound;
+    image.steps[11].target.expectedProgramSemanticFingerprint =
+        image.properties[1].programSemanticFingerprint;
+    image.actions[9].stepCount = 2;
+    image.actions[9].expandedStepOccurrenceCount = 2;
+    image.actions[9].programSemanticFingerprint =
+        harken::ComputeActionProgramFingerprintV1(image.actions[9]);
+    image.world.identity.runtimeSemanticFingerprint =
+        harken::ComputeCurrentWorldFingerprintV4(image.world);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harken::InstallContainerWorldV1(engine, image.world).status);
+    auto post = ValidPostDesc();
+    post.actionId = image.actions[9].actionStableId;
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+    VnVoiceHandle voice = 0;
+    VnVoiceHandle sibling = 0;
+    harken::TimelineArmToken sourceArm{};
+    for (unsigned attempt = 0; attempt < 8 && (voice == 0 || sibling == 0); ++attempt) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.nullBackend.Pump(1);
+        for (const auto& row : engine.playableServices) {
+            if (row.phase == harken::EnginePlayableStartPhase::Started &&
+                row.InvocationValid() && row.Invocation().actionFiring == firing) {
+                if (row.leaf.stableId == CanonicalActionWorld::kFirstSound) {
+                    voice = row.renderHandle;
+                    sourceArm = row.arm;
+                } else if (row.leaf.stableId == CanonicalActionWorld::kSecondSound)
+                    sibling = row.renderHandle;
+            }
+        }
+    }
+    ASSERT_NE(0u, voice);
+    ASSERT_NE(0u, sibling);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    for (unsigned block = 0; block < 16; ++block) {
+        const auto* render = engine.voices.Resolve(voice);
+        ASSERT_NE(nullptr, render);
+        if (render->phase == harken::SourcePhase::Draining) break;
+        engine.nullBackend.Pump(1);
+    }
+    const auto* ended = engine.voices.Resolve(voice);
+    ASSERT_NE(nullptr, ended);
+    ASSERT_EQ(harken::SourcePhase::Draining, ended->phase);
+    harken::TimelineArmObservation completed{};
+    ASSERT_TRUE(engine.timelineArms.Observe(sourceArm, &completed));
+    ASSERT_NE(0u, completed.logicalCompletionSequence);
+    ASSERT_LE(completed.logicalCompletionSequence, engine.mixer.BlocksRendered());
+    const auto* siblingBefore = engine.voices.Resolve(sibling);
+    ASSERT_NE(nullptr, siblingBefore);
+    ASSERT_EQ(harken::SourcePhase::Active, siblingBefore->phase);
+    const auto siblingConsumed = siblingBefore->resampler.SourceFrame();
+    VnActionSeekDescV1 seek{};
+    seek.structSize = sizeof(seek);
+    seek.firing = firing;
+    seek.mode = VN_ACTION_SEEK_ABSOLUTE;
+    VnActionSeekTicket ticket = 0;
+    ASSERT_EQ(VN_OK, Vn_SeekActionFiring(&seek, &ticket));
+    const auto blockBefore = engine.mixer.BlocksRendered();
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(blockBefore + 1u, engine.mixer.BlocksRendered());
+    VnActionSeekInfoV1 info{};
+    info.structSize = sizeof(info);
+    ASSERT_EQ(VN_OK, Vn_QueryActionSeek(ticket, &info));
+    EXPECT_EQ(VN_ACTION_SEEK_CANCELLED, info.state);
+    EXPECT_EQ(VN_STALE_HANDLE, info.result);
+    EXPECT_EQ(0u, info.appliedCount);
+    EXPECT_EQ(2u, info.cancelledCount);
+    const auto* after = engine.voices.Resolve(voice);
+    ASSERT_NE(nullptr, after);
+    EXPECT_NE(harken::SourcePhase::Active, after->phase);
+    harken::TimelineArmObservation completedAfter{};
+    ASSERT_TRUE(engine.timelineArms.Observe(sourceArm, &completedAfter));
+    EXPECT_EQ(completed.logicalCompletionSequence, completedAfter.logicalCompletionSequence);
+    const auto* siblingAfter = engine.voices.Resolve(sibling);
+    ASSERT_NE(nullptr, siblingAfter);
+    EXPECT_EQ(siblingConsumed + 64u, siblingAfter->resampler.SourceFrame());
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionSeek(ticket));
+    engine.nullBackend.Pump(32);
+    for (unsigned block = 0; block < 8; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.nullBackend.Pump(1);
+    }
+    EXPECT_EQ(0u, engine.voices.ActiveCount());
+    EXPECT_EQ(0u, engine.effectBank.DelayInUse());
+    VnActionFiringInfo firingInfo{};
+    firingInfo.structSize = sizeof(firingInfo);
+    ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &firingInfo));
+    EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, firingInfo.state);
+    EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, firingInfo.outcome);
+    EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, firingInfo.terminalReason);
+    EXPECT_EQ(0u, firingInfo.livePlayableCount);
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
 
 TEST(ActionFiringApi,
@@ -33772,6 +34424,77 @@ TEST(ActionFiringApi,
 
     run(false);
     run(true);
+}
+
+TEST(ActionFiringApi, StreamLocalStopPreservesMissingBoundaryPolicy) {
+    for (const auto timing : {harken::ActionQuantizeTimingV1::NaturalEnd,
+                             harken::ActionQuantizeTimingV1::CurrentLoopEnd,
+                             harken::ActionQuantizeTimingV1::ExitMarker}) {
+        for (const auto ifSilent : {harken::ActionIfSilentV1::Drop,
+                                   harken::ActionIfSilentV1::Immediate}) {
+            SCOPED_TRACE(static_cast<int>(timing));
+            SCOPED_TRACE(static_cast<int>(ifSilent));
+            (void)Vn_Term();
+            auto config = harkentest::MakeNullConfig(1, 64, 48000);
+            config.maxStreams = 2;
+            config.streamRingFrames = 256;
+            config.prebufferMs = 1;
+            harkentest::EngineSession session(config);
+            ASSERT_EQ(VN_OK, session.InitResult());
+            auto& engine = *session.Engine();
+            engine.streams.SetMaxServeFramesForTest(512);
+            const std::vector<float> samples(4096, 0.25f);
+            const auto path = WriteActionStream("action_stream_local_stop.stream",
+                CanonicalActionWorld::kFirstSound, samples);
+            ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(
+                CanonicalActionWorld::kFirstSound, path.c_str()));
+            harken::StreamManager::StreamFacts facts{};
+            ASSERT_TRUE(engine.streams.FindFile(CanonicalActionWorld::kFirstSound, &facts));
+            CanonicalActionWorld image(facts.contentRevision);
+            image.properties[0].payload.presentMask |= UINT64_C(0x10);
+            image.properties[0].payload.values[4].bits = 1;
+            image.RelinkFirstSound();
+            image.MakeImmediateSoundPlayAction();
+            image.MakeQuantizedSoundStopAction(timing, ifSilent, 0,
+                harken::ActionTargetKindV1::Sound, 10, 14, harkentest::ObjectId(51));
+            ASSERT_EQ(harken::WorldInstallStatus::Ok,
+                harken::InstallContainerWorldV1(engine, image.world).status);
+            auto post = ValidPostDesc();
+            post.actionId = image.actions[9].actionStableId;
+            VnActionFiringHandle play = 0;
+            ASSERT_EQ(VN_OK, Vn_PostAction(&post, &play));
+            for (unsigned block = 0; block < 12; ++block) {
+                ASSERT_EQ(VN_OK, Vn_Update());
+                engine.streams.SyncServe();
+                engine.nullBackend.Pump(1);
+            }
+            ASSERT_EQ(VN_OK, Vn_Update());
+            ASSERT_EQ(1u, engine.voices.ActiveCount());
+            post.actionId = image.actions[10].actionStableId;
+            VnActionFiringHandle stop = 0;
+            ASSERT_EQ(VN_OK, Vn_PostAction(&post, &stop));
+            if (ifSilent == harken::ActionIfSilentV1::Drop) {
+                VnActionStepResult step{};
+                step.structSize = sizeof(step);
+                ASSERT_EQ(VN_OK, Vn_QueryActionStep(stop, 0, &step));
+                EXPECT_EQ(VN_ACTION_STEP_NO_OP, step.state);
+                EXPECT_EQ(0u, step.capturedPlayableCount);
+                EXPECT_EQ(1u, engine.voices.ActiveCount());
+                ASSERT_EQ(VN_OK, Vn_StopActionFiring(play, 0));
+            }
+            for (unsigned block = 0; block < 32; ++block) {
+                engine.streams.SyncServe();
+                engine.nullBackend.Pump(1);
+                ASSERT_EQ(VN_OK, Vn_Update());
+            }
+            EXPECT_EQ(0u, engine.actionDeferredRecords.LiveCount());
+            EXPECT_EQ(0u, engine.voices.ActiveCount());
+            EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
+            EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(stop));
+            EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(play));
+            EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(CanonicalActionWorld::kFirstSound));
+        }
+    }
 }
 
 TEST(ActionFiringApi, StreamSeekSwapsExactRingAndRendersRequestedSourceFrames) {

@@ -527,6 +527,7 @@ void registerContainerActions(ActionManager& mgr,
                     applyFn(ci, undoNewValue);
                 };
                 r.undoText = QString("Set %1").arg(propertyName);
+                r.authoringWriteSet = QSet<QUuid>{container->guid};
             }
 
             return r;

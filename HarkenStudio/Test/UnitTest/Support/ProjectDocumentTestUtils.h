@@ -53,8 +53,13 @@ inline QJsonObject projectDocument(const QString& type,
             });
         }
     }
-    if (schemaVersion >= 2)
+    if (schemaVersion >= 2
+        && (schemaVersion < VNX::ProjectSchema::kProjectSchemaVersion
+            || type == QStringLiteral("project.root")))
         header.insert(QStringLiteral("savedStudioVersion"), QStringLiteral("1.0.0"));
+    if (schemaVersion >= VNX::ProjectSchema::kProjectSchemaVersion
+        && type == QStringLiteral("project.root"))
+        header.insert(QStringLiteral("packSchemaVersion"), HARKEN_PACK_SCHEMA_VERSION);
     return {
         {QStringLiteral("harkenDocument"), header},
         {QStringLiteral("content"), authoredContent},

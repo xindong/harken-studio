@@ -134,6 +134,7 @@ void ControlPanel::setupUI()
 {
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setObjectName(QStringLiteral("ControlPanel"));
+    setAttribute(Qt::WA_StyledBackground);
 
     auto* root = new QGridLayout(this);
     root->setContentsMargins(8, 8, 8, 8);

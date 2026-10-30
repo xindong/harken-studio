@@ -186,6 +186,7 @@ ActionResult applyBusPropertiesArgs(const QJsonObject& args, const QObject* orig
     r.undoText = changedCount == 1
         ? QObject::tr("Set Bus %1").arg(propKey)
         : QObject::tr("Set Bus Properties");
+    r.authoringWriteSet = QSet<QUuid>{busGuid};
     return r;
 }
 

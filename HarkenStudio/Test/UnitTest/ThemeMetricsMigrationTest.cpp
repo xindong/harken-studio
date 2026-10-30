@@ -5,10 +5,12 @@
 #include "Widgets/Common/ProportionalTreeWidget.h"
 #include "Widgets/Common/TableWidget.h"
 #include "Widgets/Common/MatrixTableWidget.h"
+#include "Widgets/ControlPanel/ControlPanel.h"
 
 #include <gtest/gtest.h>
 
 #include <QApplication>
+#include <QComboBox>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -18,9 +20,17 @@
 #include <QLineEdit>
 #include <QIntValidator>
 #include <QListWidget>
+#include <QMainWindow>
+#include <QMenuBar>
+#include <QImage>
+#include <QProgressBar>
+#include <QPushButton>
 #include <QTableWidget>
 #include <QScopeGuard>
 #include <QStyleFactory>
+#include <QStyleOptionMenuItem>
+#include <QStylePainter>
+#include <QToolBar>
 #include <QVBoxLayout>
 #include <QTemporaryDir>
 
@@ -90,6 +100,36 @@ std::unique_ptr<VNX::ThemeManager> makeManager(const QString& root)
         root, std::make_unique<VNX::MemorySettingsStorage>());
 }
 
+class StatefulMenuBar final : public QMenuBar
+{
+public:
+    QStyle::State itemState;
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QStylePainter painter(this);
+        QStyleOption panel;
+        panel.initFrom(this);
+        painter.drawControl(QStyle::CE_MenuBarEmptyArea, panel);
+        for (auto* action : actions()) {
+            QStyleOptionMenuItem item;
+            initStyleOption(&item, action);
+            item.rect = actionGeometry(action);
+            item.state |= itemState;
+            painter.drawControl(QStyle::CE_MenuBarItem, item);
+        }
+    }
+};
+
+QImage renderWidget(QWidget& widget)
+{
+    QImage image(widget.size(), QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    widget.render(&image);
+    return image;
+}
+
 }
 
 TEST(ThemeControlValidation, UnconstrainedEditorsPreserveDomainValidation)
@@ -142,6 +182,361 @@ TEST(ThemeControlValidation, ValidatorsAndMasksInstalledAfterPolishKeepAutomatic
     EXPECT_TRUE(masked.property("inputInvalid").toBool());
     masked.setText(QStringLiteral("42"));
     EXPECT_FALSE(masked.property("inputInvalid").toBool());
+}
+
+TEST(ThemeMetricsMigration, ColorPreviewPreservesMetricsAndSemanticTextRoles)
+{
+    ensureApp();
+    QTemporaryDir root;
+    auto manager = makeManager(root.path());
+    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    QWidget panel;
+    panel.setStyle(&style);
+    auto* layout = new QVBoxLayout(&panel);
+    auto* label = new QLabel(QStringLiteral("Parameter"), &panel);
+    label->setProperty("textRole", QStringLiteral("primary"));
+    label->setStyle(&style);
+    auto* header = new QWidget(&panel);
+    header->setObjectName(QStringLiteral("listHead"));
+    header->setStyle(&style);
+    auto* headerLayout = new QVBoxLayout(header);
+    auto* headerLabel = new QLabel(QStringLiteral("Column"), header);
+    headerLabel->setProperty("textRole", QStringLiteral("primary"));
+    headerLabel->setStyle(&style);
+    headerLayout->addWidget(headerLabel);
+    auto* editor = new QLineEdit(QStringLiteral("unfinished input"), &panel);
+    editor->setStyle(&style);
+    auto* localLabel = new QLabel(QStringLiteral("Local appearance"), &panel);
+    localLabel->setStyle(&style);
+    localLabel->setProperty("textRole", QStringLiteral("primary"));
+    localLabel->setStyleSheet(QStringLiteral("color: #ccee77; padding-left: 3px;"));
+    auto* fixedCombo = new QComboBox(&panel);
+    fixedCombo->setStyle(&style);
+    fixedCombo->addItems({QStringLiteral("First"), QStringLiteral("Second")});
+    fixedCombo->setCurrentIndex(1);
+    fixedCombo->ensurePolished();
+    fixedCombo->setFixedSize(173, 37);
+    layout->addWidget(label);
+    layout->addWidget(header);
+    layout->addWidget(editor);
+    layout->addWidget(localLabel);
+    layout->addWidget(fixedCombo);
+    panel.resize(400, 200);
+    panel.show();
+    QCoreApplication::processEvents();
+    editor->setSelection(2, 6);
+    const auto original = manager->snapshot();
+    const auto geometry = editor->geometry();
+    const auto font = editor->font();
+    const auto comboGeometry = fixedCombo->geometry();
+    const auto comboMinimum = fixedCombo->minimumSize();
+    const auto comboMaximum = fixedCombo->maximumSize();
+    const QColor primary(QStringLiteral("#ffc8a0e0"));
+    const QColor muted(QStringLiteral("#ff73b493"));
+    auto preview = manager->appearance();
+    preview.colors[preview.paletteId].insert(QStringLiteral("text.primary"), primary);
+    preview.colors[preview.paletteId].insert(QStringLiteral("text.muted"), muted);
+    ASSERT_TRUE(manager->previewAppearance(preview).ok());
+    QCoreApplication::processEvents();
+    EXPECT_EQ(label->palette().color(QPalette::WindowText), primary);
+    EXPECT_EQ(headerLabel->palette().color(QPalette::WindowText), muted);
+    EXPECT_EQ(localLabel->palette().color(QPalette::WindowText), QColor(QStringLiteral("#ccee77")));
+    EXPECT_EQ(editor->geometry(), geometry);
+    EXPECT_EQ(editor->font(), font);
+    EXPECT_EQ(editor->selectedText(), QStringLiteral("finish"));
+    EXPECT_EQ(fixedCombo->geometry(), comboGeometry);
+    EXPECT_EQ(fixedCombo->minimumSize(), comboMinimum);
+    EXPECT_EQ(fixedCombo->maximumSize(), comboMaximum);
+    EXPECT_EQ(fixedCombo->currentText(), QStringLiteral("Second"));
+    VNX::QtControlSkin::setSemanticProperty(label, "textRole", QStringLiteral("muted"));
+    EXPECT_EQ(label->palette().color(QPalette::WindowText), muted);
+    manager->cancelAppearancePreview();
+    EXPECT_EQ(label->palette().color(QPalette::WindowText), original->ui.colors.textMuted);
+    EXPECT_EQ(headerLabel->palette().color(QPalette::WindowText), original->ui.colors.textMuted);
+    EXPECT_EQ(localLabel->palette().color(QPalette::WindowText), QColor(QStringLiteral("#ccee77")));
+    EXPECT_EQ(editor->text(), QStringLiteral("unfinished input"));
+    EXPECT_EQ(editor->selectedText(), QStringLiteral("finish"));
+    EXPECT_EQ(fixedCombo->geometry(), comboGeometry);
+    EXPECT_EQ(fixedCombo->minimumSize(), comboMinimum);
+    EXPECT_EQ(fixedCombo->maximumSize(), comboMaximum);
+    EXPECT_EQ(fixedCombo->currentText(), QStringLiteral("Second"));
+}
+
+TEST(ThemeMetricsMigration, PolishedDescendantsFollowAncestorChangesAcrossMoveDestroyAndShow)
+{
+    ensureApp();
+    QTemporaryDir root;
+    auto manager = makeManager(root.path());
+    manager->widgetAppearance().updateStyleSheet(QStringLiteral(R"qss(
+        QLabel { color: #111111; }
+        #surface QLabel { color: #224466; }
+        #surface[active="true"] QLabel { color: #446688; }
+        #renamed QLabel { color: #6688aa; }
+        #destination[active="false"] QLabel { color: #aaccee; }
+        #destination[active="true"] QLabel { color: #88aacc; }
+        #destination[windowTitle="Native scope"] QLabel { color: #cc8844; }
+    )qss"));
+    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    auto ancestor = std::make_unique<QWidget>();
+    ancestor->setObjectName(QStringLiteral("surface"));
+    ancestor->setProperty("active", true);
+    ancestor->setStyle(&style);
+    ancestor->ensurePolished();
+    QWidget destination;
+    destination.setObjectName(QStringLiteral("destination"));
+    destination.setProperty("active", false);
+    destination.setStyle(&style);
+    destination.ensurePolished();
+    QLabel child(QStringLiteral("Surviving descendant"), ancestor.get());
+    child.setStyle(&style);
+    child.ensurePolished();
+    EXPECT_EQ(child.palette().color(QPalette::WindowText), QColor(QStringLiteral("#446688")));
+
+    ancestor->setProperty("active", false);
+    QCoreApplication::processEvents();
+    EXPECT_EQ(child.palette().color(QPalette::WindowText), QColor(QStringLiteral("#224466")));
+    ancestor->setObjectName(QStringLiteral("renamed"));
+    QCoreApplication::processEvents();
+    EXPECT_EQ(child.palette().color(QPalette::WindowText), QColor(QStringLiteral("#6688aa")));
+
+    ancestor->setObjectName(QStringLiteral("surface"));
+    child.setParent(&destination);
+    ancestor.reset();
+    QCoreApplication::processEvents();
+    EXPECT_EQ(child.parentWidget(), &destination);
+    EXPECT_EQ(child.palette().color(QPalette::WindowText), QColor(QStringLiteral("#aaccee")));
+
+    child.hide();
+    destination.show();
+    QCoreApplication::processEvents();
+    ASSERT_FALSE(child.isVisible());
+    destination.setProperty("active", true);
+    child.show();
+    EXPECT_EQ(child.palette().color(QPalette::WindowText), QColor(QStringLiteral("#88aacc")));
+    QCoreApplication::processEvents();
+    EXPECT_EQ(child.palette().color(QPalette::WindowText), QColor(QStringLiteral("#88aacc")));
+
+    destination.setWindowTitle(QStringLiteral("Native scope"));
+    QEvent styleChanged(QEvent::StyleChange);
+    QCoreApplication::sendEvent(&destination, &styleChanged);
+    QCoreApplication::processEvents();
+    EXPECT_EQ(child.palette().color(QPalette::WindowText), QColor(QStringLiteral("#cc8844")));
+    destination.setWindowTitle(QString());
+    QCoreApplication::sendEvent(&destination, &styleChanged);
+    QCoreApplication::processEvents();
+    EXPECT_EQ(child.palette().color(QPalette::WindowText), QColor(QStringLiteral("#88aacc")));
+}
+
+TEST(ThemeMetricsMigration, MenuStateColorsCoverPaddingWithoutChangingGeometry)
+{
+    ensureApp();
+    QTemporaryDir root;
+    auto manager = makeManager(root.path());
+    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    StatefulMenuBar bar;
+    bar.setObjectName(QStringLiteral("titleBarMenuBar"));
+    bar.setStyle(&style);
+    bar.setStyleSheet(QStringLiteral(
+        "#titleBarMenuBar::item { padding-top: 11px; padding-bottom: 11px; }"));
+    auto* action = bar.addAction(QStringLiteral("Menu action"));
+    bar.resize(400, bar.sizeHint().height());
+    bar.show();
+    QCoreApplication::processEvents();
+    const QRect actionRect = bar.actionGeometry(action);
+    const QSize sizeHint = bar.sizeHint();
+    ASSERT_FALSE(actionRect.isEmpty());
+    const auto checkStates = [&] {
+        for (const bool pressed : {false, true}) {
+            bar.itemState = QStyle::State_Selected;
+            if (pressed) bar.itemState |= QStyle::State_Sunken;
+            const auto image = renderWidget(bar);
+            const auto expected = pressed ? manager->colors().accent : manager->colors().bgHover;
+            EXPECT_EQ(image.pixelColor(actionRect.left() + 1, actionRect.center().y()), expected);
+            EXPECT_EQ(image.pixelColor(actionRect.center().x(), actionRect.top() + 1), expected);
+            EXPECT_EQ(image.pixelColor(actionRect.center().x(), actionRect.bottom() - 1), expected);
+        }
+    };
+    checkStates();
+    auto preview = manager->appearance();
+    const QColor hover(QStringLiteral("#ff6d3a91"));
+    const QColor accent(QStringLiteral("#ff217d9b"));
+    preview.colors[preview.paletteId].insert(QStringLiteral("background.hover"), hover);
+    preview.colors[preview.paletteId].insert(QStringLiteral("accent.primary"), accent);
+    ASSERT_TRUE(manager->previewAppearance(preview).ok());
+    QCoreApplication::processEvents();
+    EXPECT_EQ(manager->colors().bgHover, hover);
+    EXPECT_EQ(manager->colors().accent, accent);
+    EXPECT_EQ(bar.actionGeometry(action), actionRect);
+    EXPECT_EQ(bar.sizeHint(), sizeHint);
+    checkStates();
+    manager->cancelAppearancePreview();
+    EXPECT_EQ(bar.actionGeometry(action), actionRect);
+    EXPECT_EQ(bar.sizeHint(), sizeHint);
+    checkStates();
+}
+
+TEST(ThemeMetricsMigration, ButtonTextAlignmentMatchesNativeStyleWrapping)
+{
+    ensureApp();
+    QTemporaryDir root;
+    auto manager = makeManager(root.path());
+    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    std::unique_ptr<QStyle> nativeStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+    QPushButton reference(QStringLiteral("Action label"));
+    reference.setStyle(nativeStyle.get());
+    reference.setObjectName(QStringLiteral("alignmentButton"));
+    reference.resize(280, 36);
+    QPushButton actual(reference.text());
+    actual.setStyle(&style);
+    actual.setObjectName(reference.objectName());
+    actual.resize(reference.size());
+    const auto textBounds = [](const QImage& image) {
+        QRect result;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x) {
+                const auto pixel = image.pixelColor(x, y);
+                if (pixel.red() > 180 && pixel.green() > 180 && pixel.blue() > 180)
+                    result = result.united(QRect(x, y, 1, 1));
+            }
+        return result;
+    };
+    for (const auto& alignment : {QStringLiteral("left"), QStringLiteral("center"), QStringLiteral("right")}) {
+        SCOPED_TRACE(alignment.toStdString());
+        const QString source = QStringLiteral(
+            "#alignmentButton { color: #ffffff; background: #112233; border: 0px;"
+            "padding: 4px 8px; text-align: %1; }").arg(alignment);
+        reference.setStyleSheet(source);
+        actual.setStyleSheet(manager->widgetAppearance().updateWidgetStyle(&actual, source));
+        reference.ensurePolished();
+        actual.ensurePolished();
+        const auto expected = textBounds(renderWidget(reference));
+        ASSERT_FALSE(expected.isEmpty());
+        EXPECT_EQ(textBounds(renderWidget(actual)), expected);
+    }
+}
+
+TEST(ThemeMetricsMigration, ToolbarSurfaceAndBorderSurviveNativeStyleWrapping)
+{
+    ensureApp();
+    QTemporaryDir root;
+    auto manager = makeManager(root.path());
+    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    for (const bool floating : {false, true}) {
+        SCOPED_TRACE(floating ? "floating" : "docked");
+        QMainWindow window;
+        window.setStyle(&style);
+        QToolBar toolbar;
+        toolbar.setStyle(&style);
+        toolbar.addAction(QStringLiteral("Action"));
+        if (floating) {
+            toolbar.resize(400, toolbar.sizeHint().height());
+            toolbar.show();
+        } else {
+            window.addToolBar(&toolbar);
+            window.resize(400, 120);
+            window.show();
+        }
+        QCoreApplication::processEvents();
+        const auto image = renderWidget(toolbar);
+        const int x = toolbar.width() - toolbar.contentsMargins().right() - 1;
+        EXPECT_EQ(image.pixelColor(x, toolbar.height() / 2), manager->snapshot()->qtPalette.window);
+        EXPECT_EQ(image.pixelColor(x, 0), manager->colors().sectionSeparator);
+    }
+}
+
+TEST(ThemeMetricsMigration, OwnedPanelSurfaceSurvivesVisibilityAndColorPreview)
+{
+    ensureApp();
+    QTemporaryDir root;
+    auto manager = makeManager(root.path());
+    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    QWidget window;
+    window.setStyle(&style);
+    auto* layout = new QVBoxLayout(&window);
+    ControlPanel panel(&window);
+    panel.setStyle(&style);
+    layout->addWidget(&panel);
+    window.resize(1000, 220);
+    window.show();
+    QCoreApplication::processEvents();
+    const QRect geometry = panel.geometry();
+    const auto check = [&](const char* stage) {
+        SCOPED_TRACE(stage);
+        ASSERT_TRUE(panel.isVisible());
+        const auto image = renderWidget(window);
+        const auto origin = panel.mapTo(&window, QPoint());
+        EXPECT_EQ(image.pixelColor(origin + QPoint(1, panel.height() / 2)),
+                  manager->colors().auditionBg);
+        EXPECT_EQ(image.pixelColor(origin + QPoint(panel.width() / 2, 0)),
+                  manager->colors().borderPrimary);
+        EXPECT_EQ(panel.geometry(), geometry);
+    };
+    check("initial show");
+    panel.hide();
+    auto preview = manager->appearance();
+    preview.colors[preview.paletteId].insert(QStringLiteral("border.primary"),
+                                             QColor(QStringLiteral("#945bd1")));
+    preview.colors[preview.paletteId].insert(QStringLiteral("background.primary"),
+                                             QColor(QStringLiteral("#1a2836")));
+    ASSERT_TRUE(manager->previewAppearance(preview).ok());
+    panel.show();
+    QCoreApplication::processEvents();
+    check("preview after show");
+    manager->cancelAppearancePreview();
+    QCoreApplication::processEvents();
+    check("cancel preview");
+}
+
+TEST(ThemeMetricsMigration, ProgressContentsPreserveOuterBorderAcrossDirectionsAndPreview)
+{
+    ensureApp();
+    QTemporaryDir root;
+    auto manager = makeManager(root.path());
+    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    QProgressBar progress;
+    progress.setProperty("shellRole", QStringLiteral("statusProgress"));
+    progress.setStyle(&style);
+    progress.setRange(0, 100);
+    progress.setTextVisible(false);
+    progress.resize(320, 30);
+    progress.show();
+    QCoreApplication::processEvents();
+    const QRect geometry = progress.geometry();
+    const auto checkBoundary = [&] {
+        for (const auto direction : {Qt::LeftToRight, Qt::RightToLeft}) {
+            progress.setLayoutDirection(direction);
+            for (const bool inverted : {false, true}) {
+                progress.setInvertedAppearance(inverted);
+                for (const int value : {0, 37, 100}) {
+                    SCOPED_TRACE(::testing::Message() << "direction=" << direction
+                        << " inverted=" << inverted << " value=" << value);
+                    progress.setValue(value);
+                    const auto image = renderWidget(progress);
+                    const QPoint center = image.rect().center();
+                    const auto border = manager->colors().borderPrimary;
+                    EXPECT_EQ(image.pixelColor(center.x(), 0), border);
+                    EXPECT_EQ(image.pixelColor(center.x(), image.height() - 1), border);
+                    EXPECT_EQ(image.pixelColor(0, center.y()), border);
+                    EXPECT_EQ(image.pixelColor(image.width() - 1, center.y()), border);
+                    if (value == 0)
+                        EXPECT_EQ(image.pixelColor(center), manager->colors().bgPrimary);
+                    if (value == 100)
+                        EXPECT_EQ(image.pixelColor(center), manager->colors().accent);
+                    EXPECT_EQ(progress.geometry(), geometry);
+                }
+            }
+        }
+    };
+    checkBoundary();
+    auto preview = manager->appearance();
+    preview.colors[preview.paletteId].insert(QStringLiteral("border.primary"), QColor(QStringLiteral("#ffb68442")));
+    preview.colors[preview.paletteId].insert(QStringLiteral("accent.primary"), QColor(QStringLiteral("#ff327f95")));
+    ASSERT_TRUE(manager->previewAppearance(preview).ok());
+    QCoreApplication::processEvents();
+    checkBoundary();
+    manager->cancelAppearancePreview();
+    QCoreApplication::processEvents();
+    checkBoundary();
 }
 
 TEST(ThemeMetricsMigration, MatrixThemeChangesPreserveEditingState)

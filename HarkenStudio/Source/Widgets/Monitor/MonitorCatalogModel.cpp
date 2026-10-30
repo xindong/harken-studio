@@ -138,7 +138,7 @@ MonitorCatalogModel::MonitorCatalogModel(Monitor::EventCaptureController* captur
             emit dataChanged(index(0, Object), index(rowCount() - 1, Object),
                              {ProjectObjectIdRole, TableCursorRole, Qt::DecorationRole});
     });
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this] {
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this, [this] {
         objectIcons_.clear();
         if (rowCount() > 0)
             emit dataChanged(index(0, Object), index(rowCount() - 1, Object), {Qt::DecorationRole});

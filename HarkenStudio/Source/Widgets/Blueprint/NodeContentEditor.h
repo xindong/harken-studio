@@ -82,12 +82,19 @@ class NodeContentRenderer
 {
 public:
     NodeContentPresentation presentation(const NodeContentInfo& info, NodeContentFields fields,
-                                         int labelWidth, bool routeGain);
+                                         std::optional<int> labelWidth, bool routeGain);
     void clear();
+    void clearDrawings();
 
 private:
+    struct RenderEditor
+    {
+        std::unique_ptr<NodeContentEditor> widget;
+        NodeContentInfo info;
+    };
+
     QWidget host_;
-    std::map<std::tuple<int, int, int, bool>, std::unique_ptr<NodeContentEditor>> editors_;
+    std::map<std::tuple<int, int, std::optional<int>, bool>, RenderEditor> editors_;
     QCache<QByteArray, NodeContentPresentation> cache_{256};
 };
 

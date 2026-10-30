@@ -48,7 +48,7 @@ PlaybackControls::PlaybackControls(QWidget* parent)
     ContextInfo::tag(playBtn_, ContextTopic::forPanel(QStringLiteral("audition.play")));
     ContextInfo::tag(stopBtn_, ContextTopic::forPanel(QStringLiteral("audition.stop")));
     ContextInfo::tag(resetBtn_, ContextTopic::forPanel(QStringLiteral("audition.reset")));
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
             this, &PlaybackControls::applyTheme);
     connect(&ShortcutManager::instance(), &ShortcutManager::shortcutChanged,
             this, [this](const QString& id, const QKeySequence&) {

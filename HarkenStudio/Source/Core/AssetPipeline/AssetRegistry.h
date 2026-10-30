@@ -89,6 +89,7 @@ public:
 
 
     bool saveToFile(const QString& path = QString());
+    QJsonObject toJson() const;
 
     bool loadFromFile(const QString& path = QString());
     static bool loadSnapshotFromFile(const QString& projectRoot,
@@ -134,6 +135,7 @@ private:
 
 
     QString assetsFilePath() const;
+    QJsonObject toJsonLocked() const;
 
     void updatePathIndex(const AssetInfo& info);
 

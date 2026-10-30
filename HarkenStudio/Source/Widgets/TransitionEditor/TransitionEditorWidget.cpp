@@ -653,10 +653,11 @@ TransitionEditorWidget::TransitionEditorWidget(QWidget* parent)
     });
 
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this]() {
-        refreshStatusBar();
         if (boundItem_)
             rebuildRuleList();
     });
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
+            this, &TransitionEditorWidget::refreshStatusBar);
 
     clearEditor();
 }

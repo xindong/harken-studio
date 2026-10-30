@@ -144,12 +144,14 @@ struct ThemeAssetInsetsDto
     int top = 0;
     int right = 0;
     int bottom = 0;
+    bool operator==(const ThemeAssetInsetsDto&) const = default;
 };
 
 struct ThemeAssetSourceDto
 {
     QString path;
     double scale = 1.0;
+    bool operator==(const ThemeAssetSourceDto&) const = default;
 };
 
 struct ThemeAssetDto
@@ -157,11 +159,13 @@ struct ThemeAssetDto
     ThemeAssetKind kind = ThemeAssetKind::Image;
     QVector<ThemeAssetSourceDto> sources;
     std::optional<ThemeAssetInsetsDto> insets;
+    bool operator==(const ThemeAssetDto&) const = default;
 };
 
 struct ThemeAssetMapDto
 {
     QMap<QString, ThemeAssetDto> assets;
+    bool operator==(const ThemeAssetMapDto&) const = default;
 };
 
 }

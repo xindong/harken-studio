@@ -146,7 +146,7 @@ BlueprintPanel::BlueprintPanel(QWidget* parent)
     for (auto* button : {selectButton_, panButton_, snapButton_, filterButton_, visibilityButton_})
         connect(button, &QToolButton::toggled, this, &BlueprintPanel::refreshIcons_);
     refreshIcons_();
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, &BlueprintPanel::refreshIcons_);
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this, &BlueprintPanel::refreshIcons_);
 
     auto* statusBar = new QFrame(this);
     statusBar->setObjectName(QStringLiteral("BlueprintStatusBar"));

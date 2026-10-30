@@ -1238,25 +1238,39 @@ void MainWindow::setupMenuBar()
 
     helpMenu->addSeparator();
 
-    QAction* websiteAction = helpMenu->addAction(tr("Harken &Website"));
-    websiteAction->setObjectName("helpMenu_harkenWebsite");
+    QAction* websiteAction = helpMenu->addAction(tr("Official &Website"));
+    websiteAction->setObjectName("helpMenu_viewStudioWebsite");
     connect(websiteAction, &QAction::triggered, this, []() {
         QDesktopServices::openUrl(
-            QUrl(QStringLiteral("https://harken.xd.com/")));
+            QUrl(QStringLiteral("https://harkenstudio.xd.com/")));
     });
 
-    QAction* documentationAction = helpMenu->addAction(tr("Online &Documentation"));
-    documentationAction->setObjectName("helpMenu_onlineDocumentation");
-    connect(documentationAction, &QAction::triggered, this, []() {
+    QAction* tutorialAction = helpMenu->addAction(tr("Online &Tutorial"));
+    tutorialAction->setObjectName("helpMenu_onlineTutorial");
+    connect(tutorialAction, &QAction::triggered, this, []() {
         QDesktopServices::openUrl(
-            QUrl(QStringLiteral("https://harken.xd.com/#/docs/")));
+            QUrl(QStringLiteral("https://harkenstudio.xd.com/#/tutorial")));
     });
 
-    QAction* repositoryAction = helpMenu->addAction(tr("Harken &Repository"));
+    QAction* repositoryAction = helpMenu->addAction(tr("GitHub &Repository"));
     repositoryAction->setObjectName("helpMenu_harkenRepository");
     connect(repositoryAction, &QAction::triggered, this, []() {
         QDesktopServices::openUrl(
             QUrl(QStringLiteral("https://github.com/xindong/harken-studio")));
+    });
+
+    QAction* privacyPolicyAction = helpMenu->addAction(tr("&Privacy Policy"));
+    privacyPolicyAction->setObjectName("helpMenu_privacyPolicy");
+    connect(privacyPolicyAction, &QAction::triggered, this, []() {
+        QDesktopServices::openUrl(
+            QUrl(QStringLiteral("https://harkenstudio.xd.com/pages/zh/privacy.html")));
+    });
+
+    QAction* termsOfUseAction = helpMenu->addAction(tr("Terms of &Use"));
+    termsOfUseAction->setObjectName("helpMenu_termsOfUse");
+    connect(termsOfUseAction, &QAction::triggered, this, []() {
+        QDesktopServices::openUrl(
+            QUrl(QStringLiteral("https://harkenstudio.xd.com/pages/zh/terms.html")));
     });
 
     helpMenu->addSeparator();
@@ -1315,7 +1329,7 @@ void MainWindow::setupMainToolBar()
     });
     connect(remoteConnection_, &HarkenEditor::Bridge::RemoteConnection::stateChanged,
             button, refresh);
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, button, refresh);
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, button, refresh);
     refresh();
 
     auto* captureAction = new QAction(tr("Start Capture"), toolbar);
@@ -1342,7 +1356,7 @@ void MainWindow::setupMainToolBar()
         refreshCapture();
     });
     connect(eventCaptureController_, &Monitor::EventCaptureController::stateChanged, captureButton, refreshCapture);
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, captureButton, refreshCapture);
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, captureButton, refreshCapture);
     refreshCapture();
 }
 
@@ -4196,7 +4210,7 @@ bool MainWindow::createProjectFromConfig(
 
     projectExplorer_->newProject(pmProject ? pmProject->name : config.name);
 
-    UndoRedoManager::instance().clear();
+    UndoRedoManager::instance().clearHistory();
 
     setProjectModified(false);
     updateWindowTitle();
@@ -5178,7 +5192,7 @@ void MainWindow::syncWindowToOpenedProject(const QString& path)
     if (ProjectData* project = ProjectManager::instance().currentProject())
         projectExplorer_->newProject(project->name);
 
-    UndoRedoManager::instance().clear();
+    UndoRedoManager::instance().clearHistory();
 
     setProjectModified(false);
     updateWindowTitle();
@@ -5199,7 +5213,7 @@ void MainWindow::finishPreparedProject(
     currentProjectPath_ = project ? project->projectPath : path;
     projectExplorer_->newProject(project ? project->name
                                          : QFileInfo(path).completeBaseName());
-    UndoRedoManager::instance().clear();
+    UndoRedoManager::instance().clearHistory();
     setProjectModified(false);
     updateWindowTitle();
     addRecentProject(currentProjectPath_);

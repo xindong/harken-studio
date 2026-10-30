@@ -1022,17 +1022,21 @@ TEST(Park, LiveFiniteUsesRealMirrorAndReturnsRemainingPasses) {
     const std::uint32_t generation =
         static_cast<std::uint32_t>(render >> 32);
 
-    std::vector<harken::SourceCursorMirror::Row> rows(
+    std::vector<harken::SourceCursorMirror::ParkingRow> rows(
         engine->sourceCursors.SlotCount());
-    harken::SourceCursorMirror::Row crossedRow{};
+    harken::SourceCursorMirror::ParkingRow crossedRow{};
+    harken::SourceCursorMirror::Publication cursorPublication{};
     std::uint64_t crossedBlock = 0;
     bool crossed = false;
     for (int i = 0; i < 8 && !crossed; ++i) {
         engine->nullBackend.Pump(1);
         ASSERT_EQ(VN_OK, Vn_Update());
         ASSERT_TRUE(
-            engine->sourceCursors.Capture(rows.data(), &crossedBlock));
-        const harken::SourceCursorMirror::Row& row = rows[slot];
+            engine->sourceCursors.CaptureParking(rows.data(),
+                static_cast<std::uint32_t>(rows.size()), &cursorPublication));
+        crossedBlock = cursorPublication.blockIndex;
+        ASSERT_LT(slot, cursorPublication.availableCount);
+        const harken::SourceCursorMirror::ParkingRow& row = rows[slot];
         if (row.active && row.renderGeneration == generation &&
             row.loopPassesRemaining > 0u &&
             row.loopPassesRemaining < kAuthoredPasses) {
@@ -1066,9 +1070,11 @@ TEST(Park, LiveFiniteUsesRealMirrorAndReturnsRemainingPasses) {
     EXPECT_EQ(deferredBefore + 1u, engine->parkDeferredCount);
 
     engine->nullBackend.Pump(3);
-    std::uint64_t freshBlock = 0;
-    ASSERT_TRUE(engine->sourceCursors.Capture(rows.data(), &freshBlock));
-    const harken::SourceCursorMirror::Row freshRow = rows[slot];
+    ASSERT_TRUE(engine->sourceCursors.CaptureParking(rows.data(),
+        static_cast<std::uint32_t>(rows.size()), &cursorPublication));
+    const std::uint64_t freshBlock = cursorPublication.blockIndex;
+    ASSERT_LT(slot, cursorPublication.availableCount);
+    const harken::SourceCursorMirror::ParkingRow freshRow = rows[slot];
     ASSERT_TRUE(freshRow.active);
     ASSERT_EQ(generation, freshRow.renderGeneration);
     ASSERT_GT(freshRow.loopPassesRemaining, 0u);

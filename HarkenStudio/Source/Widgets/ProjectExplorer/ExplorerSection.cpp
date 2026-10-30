@@ -82,6 +82,10 @@ ExplorerSection::ExplorerSection(const QString& title, QWidget* parent)
     });
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
             this, [this]() { updateHeader(); });
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this, [this]() {
+        toggle_->setIcon(ThemeManager::instance().resolveIcon(QString::fromLatin1(isExpanded()
+            ? ThemeAssetIds::NavigationChevronDown : ThemeAssetIds::NavigationChevronRight)).icon);
+    });
     updateHeader();
 }
 

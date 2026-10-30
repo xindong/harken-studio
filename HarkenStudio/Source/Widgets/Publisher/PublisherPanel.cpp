@@ -423,6 +423,19 @@ PublisherPanel::PublisherPanel(QWidget* parent)
     });
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
             this, &PublisherPanel::requestPackTableRefresh);
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this, [this] {
+        const auto folderIcon = ThemeManager::instance().resolveToggleIcon(
+            QString::fromLatin1(ThemeAssetIds::TreeFolderOpen),
+            QString::fromLatin1(ThemeAssetIds::TreeFolderClosed)).icon;
+        const auto actionIcon = iconForItemType(ProjectItem::Type::Action);
+        const QSignalBlocker blocker(packTree_->model());
+        for (QTreeWidgetItemIterator it(packTree_); *it; ++it) {
+            const auto kind = static_cast<NodeKind>((*it)->data(0, kNodeKindRole).toInt());
+            if (kind == NodeKind::Folder) (*it)->setIcon(kColName, folderIcon);
+            else if (kind == NodeKind::Action) (*it)->setIcon(kColName, actionIcon);
+        }
+        packTree_->viewport()->update();
+    });
 
     populatePlatformControls();
     updateBuildStage();
@@ -532,7 +545,7 @@ QWidget* PublisherPanel::createToolbar()
         const int extent = theme.metrics().objectIconExtent;
         publishSettingsButton_->setIconSize(QSize(extent, extent));
     };
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
             this, updateSettingsIcon);
     updateSettingsIcon();
     connect(publishSettingsButton_, &QToolButton::clicked,

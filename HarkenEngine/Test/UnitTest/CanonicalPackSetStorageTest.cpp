@@ -66,6 +66,40 @@ TEST(CanonicalPackSetStorage, DistinctHandlesAndTokensShareEqualMedia) {
               second->front().registration.View().channels[0]);
 }
 
+TEST(CanonicalPackSetStorage, EqualMediaRevisionsDoNotPinOldRowsForCurrentReaders) {
+    harken::PCMRegistry registry;
+    harken::PackTable packs(1, 1, 1);
+    const auto sound = harkentest::ObjectId(100);
+    SetStorageMember member(21, sound, 0.25f);
+    harken::PackTable::PreparedSetMutation initial;
+    ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({member.Input()}, {}, registry, &initial));
+    packs.CommitPreparedSet(&initial, registry);
+    const auto handle = initial.HandleAt(0);
+    const auto current = registry.Lookup(sound);
+    ASSERT_NE(nullptr, current.useCount);
+    current.useCount->fetch_add(1, std::memory_order_acq_rel);
+    for (unsigned revision = 2; revision <= 32; ++revision) {
+        SCOPED_TRACE(revision);
+        member.key.contentRevision = revision;
+        harken::PackTable::PreparedSetMutation next;
+        const auto result = packs.PrepareCanonicalSet({member.Input(handle)}, {}, registry, &next);
+        EXPECT_EQ(VN_OK, result);
+        if (result != VN_OK) break;
+        packs.CommitPreparedSet(&next, registry);
+        packs.SweepRetiring(+[](void*, harken::PackResourceRevisionToken) { return false; });
+        EXPECT_EQ(0u, packs.RetiringCount());
+        EXPECT_EQ(current.useCount, registry.Lookup(sound).useCount);
+        EXPECT_FLOAT_EQ(0.25f, current.channels[0][0]);
+        if (packs.RetiringCount() != 0u) break;
+    }
+    current.useCount->fetch_sub(1, std::memory_order_acq_rel);
+    packs.SweepRetiring(+[](void*, harken::PackResourceRevisionToken) { return false; });
+    ASSERT_EQ(VN_OK, packs.Unload(handle, registry));
+    EXPECT_EQ(0u, packs.RetiringCount());
+    EXPECT_EQ(0u, packs.LoadedCount());
+    EXPECT_EQ(0u, registry.Count());
+}
+
 TEST(CanonicalPackSetStorage, KeptOwnerSurvivesSharedOwnerRemovalAndOldReaderReplacement) {
     harken::PCMRegistry registry;
     harken::PackTable packs(2, 4, 2);
@@ -676,6 +710,38 @@ TEST(CanonicalPackSetStorage, LegacyEmptyLoopRegistrationIsNotReusedForAuthoredL
     EXPECT_NE(oldRevision, registry.Lookup(harkentest::ObjectId(100)).contentRevision);
     EXPECT_EQ(2u, registry.Lookup(harkentest::ObjectId(100)).loop.startFrame);
     EXPECT_EQ(6u, registry.Lookup(harkentest::ObjectId(100)).loop.endFrame);
+}
+
+TEST(CanonicalPackSetStorage, EqualLegacyReferenceMediaCannotAcquireAnotherPackOwner) {
+    harken::PCMRegistry registry;
+    harken::PackTable packs(2, 4);
+    const auto sound = harkentest::ObjectId(100);
+    SetStorageMember legacy(21, sound, 0.25f), shared(22, sound, 0.25f);
+    std::vector<harken::PackEntry> entries(1);
+    entries[0].soundId = sound;
+    entries[0].frameCount = 8;
+    harken::PackTable::PreparedLoadToken load;
+    ASSERT_EQ(VN_OK, packs.PrepareLoad(&load));
+    VnPackHandle handle = 0;
+    ASSERT_EQ(VN_OK, packs.LoadPrepared(&load, legacy.bytes, std::move(entries),
+                                      legacy.media, registry, &handle));
+    const auto cookie = registry.CookieOf(sound);
+    harken::PackTable::PreparedSetMutation set;
+    EXPECT_EQ(VN_IN_USE, packs.PrepareCanonicalSet({shared.Input()}, {}, registry, &set));
+    ASSERT_EQ(VN_OK, packs.PrepareLoad(&load));
+    entries.resize(1);
+    entries[0].soundId = sound;
+    entries[0].frameCount = 8;
+    shared.key.handle = load.Handle();
+    shared.key.slotGeneration = static_cast<std::uint32_t>(load.Handle() >> 32);
+    VnPackHandle refusedHandle = 0;
+    EXPECT_EQ(VN_IN_USE, packs.LoadPrepared(&load, shared.bytes, std::move(entries),
+                                          shared.media, registry, &refusedHandle, &shared.key));
+    EXPECT_EQ(0u, refusedHandle);
+    EXPECT_EQ(cookie, registry.CookieOf(sound));
+    EXPECT_EQ(1u, packs.LoadedCount());
+    ASSERT_EQ(VN_OK, packs.Unload(handle, registry));
+    EXPECT_EQ(0u, registry.Count());
 }
 
 TEST(CanonicalPackSetStorage, FullTableAndInvalidArgumentsKeepCurrentGeneration) {

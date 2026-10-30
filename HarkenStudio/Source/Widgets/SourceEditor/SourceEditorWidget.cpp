@@ -285,7 +285,7 @@ SourceEditorWidget::SourceEditorWidget(QWidget* parent)
         else
             refreshAuditionControls();
     });
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
             this, &SourceEditorWidget::applyAuditionTheme);
 
     auto& assets = AssetRegistry::instance();

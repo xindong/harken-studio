@@ -167,6 +167,142 @@ PackEntrySpec MakeSineEntry(VnSoundId id, std::size_t frames) {
 
 // --- lifecycle ---
 
+static std::vector<std::uint8_t> MakeMediaConsumerProbeBytes(
+    VnSoundId sound, VnBindingId binding, VnVariableId variable) {
+    harkentest::packfoundation::ImageBuilder image(harken::kPackKindContent);
+    VnBindingDesc definition{};
+    definition.structSize = sizeof(definition);
+    definition.variableId = variable;
+    definition.targetScopeKind = VN_TARGET_SCOPE_VOICE;
+    definition.targetId = VN_TARGET_VOICE_VOLUME;
+    definition.curve.structSize = sizeof(definition.curve);
+    definition.curve.pointCount = 1;
+    definition.curve.points[0] = {0.0f, 0.0f};
+    std::vector<std::uint8_t> definitionBytes(
+        static_cast<std::size_t>(harken::kPackV2BindingDefinitionPayloadBytes));
+    harken::SerializePackV2BindingDefinition(
+        binding, definition, definitionBytes.data());
+    image.AddEntry(harken::kPackEntryKindBindingDefinition, binding,
+        std::move(definitionBytes), harken::kPackV2SchemaVintage);
+
+    harken::PackBindingAttachmentEntry attachment{};
+    attachment.bindingId = binding;
+    attachment.scopeKind = VN_TARGET_SCOPE_VOICE;
+    attachment.objectId = sound;
+    std::vector<std::uint8_t> attachmentBytes(
+        static_cast<std::size_t>(harken::kPackV2BindingAttachmentPayloadBytes));
+    harken::SerializePackV2BindingAttachment(attachment, attachmentBytes.data());
+    image.AddEntry(harken::kPackEntryKindBindingAttachment, std::uint64_t{0},
+        std::move(attachmentBytes), harken::kPackV2SchemaVintage);
+    return image.Build();
+}
+
+enum class MediaProviderProbeOperation {
+    CompactUnload,
+    CompactRemovingReplace,
+    StaleRecordThenSectionedUnload
+};
+
+static void RunMediaProviderProbe(MediaProviderProbeOperation operation) {
+    (void)Vn_Term();
+    EngineSession session(MakeNullConfig(1, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto sound = harkentest::ObjectId(91001);
+    const auto binding = harkentest::ObjectId(91002);
+    const auto variable = harkentest::ObjectId(91003);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harkentest::InstallSmoothDefinitions(&engine, {variable}, 0.0f, 1.0f).status);
+
+    const bool staleRecord =
+        operation == MediaProviderProbeOperation::StaleRecordThenSectionedUnload;
+    const std::string suffix = std::to_string(static_cast<unsigned>(operation));
+    const auto providerPath = TempPath("audit_media_provider_" + suffix + ".pack");
+    VnPackHandle stale = 0;
+    if (staleRecord) {
+        const auto stalePath = TempPath("audit_media_stale_" + suffix + ".pack");
+        WriteFileBytes(stalePath, BuildPackBytes({MakeSineEntry(sound, 512)}));
+        ASSERT_EQ(VN_OK, LoadPack(stalePath, &stale));
+        ASSERT_EQ(VN_OK, Vn_UnregisterPCM(sound));
+        harkentest::packfoundation::ImageBuilder provider(harken::kPackKindContent);
+        provider.AddMedia(sound, harkentest::MakeDC(512, 0.25f));
+        WriteFileBytes(providerPath, provider.Build());
+    } else {
+        WriteFileBytes(providerPath, BuildPackBytes({MakeSineEntry(sound, 512)}));
+    }
+    VnPackHandle provider = 0;
+    ASSERT_EQ(VN_OK, LoadPack(providerPath, &provider));
+    ASSERT_NE(0u, provider);
+    const auto providerCookie = engine.registry.CookieOf(sound);
+    ASSERT_NE(0u, providerCookie);
+    if (!staleRecord) {
+        ASSERT_EQ(nullptr, engine.logicPacks.RecordFor(provider));
+    }
+
+    const auto consumerPath = TempPath("audit_media_consumer_" + suffix + ".pack");
+    WriteFileBytes(consumerPath, MakeMediaConsumerProbeBytes(sound, binding, variable));
+    VnPackHandle consumer = 0;
+    ASSERT_EQ(VN_OK, LoadPack(consumerPath, &consumer));
+    ASSERT_NE(0u, consumer);
+    ASSERT_NE(nullptr, engine.logicPacks.RecordFor(consumer));
+    ASSERT_EQ(1u, engine.bindings.AttachmentCount());
+    EXPECT_EQ(provider, engine.packs.OwnerOfSound(sound, engine.registry));
+    EXPECT_EQ(consumer, engine.logicPacks.ConsumerOf(provider));
+
+    if (operation == MediaProviderProbeOperation::CompactRemovingReplace) {
+        const auto retainedPath = TempPath("audit_media_retained.pack");
+        WriteFileBytes(retainedPath, BuildPackBytes({MakeSineEntry(sound, 768)}));
+        VnPackDesc retained{};
+        retained.structSize = sizeof(retained);
+        retained.utf8Path = retainedPath.c_str();
+        ASSERT_EQ(VN_OK, Vn_ReplacePack(provider, &retained));
+        ASSERT_EQ(provider, engine.packs.OwnerOfSound(sound, engine.registry));
+        const auto retainedCookie = engine.registry.CookieOf(sound);
+        ASSERT_NE(providerCookie, retainedCookie);
+
+        const auto removedPath = TempPath("audit_media_removed.pack");
+        WriteFileBytes(removedPath,
+            BuildPackBytes({MakeSineEntry(harkentest::ObjectId(91004), 512)}));
+        VnPackDesc removed{};
+        removed.structSize = sizeof(removed);
+        removed.utf8Path = removedPath.c_str();
+        const auto result = Vn_ReplacePack(provider, &removed);
+        EXPECT_EQ(VN_IN_USE, result);
+        EXPECT_EQ(retainedCookie, engine.registry.CookieOf(sound));
+        EXPECT_FALSE(engine.registry.Lookup(harkentest::ObjectId(91004)).Valid());
+        if (result != VN_IN_USE) return;
+        ASSERT_EQ(VN_OK, Vn_UnloadPack(consumer));
+        ASSERT_EQ(VN_OK, Vn_ReplacePack(provider, &removed));
+        EXPECT_FALSE(engine.registry.Lookup(sound).Valid());
+        EXPECT_TRUE(engine.registry.Lookup(harkentest::ObjectId(91004)).Valid());
+    } else {
+        const auto result = Vn_UnloadPack(provider);
+        EXPECT_EQ(VN_IN_USE, result);
+        EXPECT_EQ(providerCookie, engine.registry.CookieOf(sound));
+        EXPECT_NE(nullptr, engine.packs.Entries(provider));
+        if (result != VN_IN_USE) return;
+        ASSERT_EQ(VN_OK, Vn_UnloadPack(consumer));
+    }
+    ASSERT_EQ(VN_OK, Vn_UnloadPack(provider));
+    if (stale != 0) ASSERT_EQ(VN_OK, Vn_UnloadPack(stale));
+    EXPECT_EQ(0u, engine.packs.LoadedCount());
+    EXPECT_EQ(0u, engine.registry.Count());
+    EXPECT_EQ(0u, engine.bindings.AttachmentCount());
+    EXPECT_EQ(0u, engine.bindings.DefinitionCount());
+}
+
+TEST(Pack, CompactProviderUnloadRefusesWhileSectionedConsumerIsLoaded) {
+    RunMediaProviderProbe(MediaProviderProbeOperation::CompactUnload);
+}
+
+TEST(Pack, CompactProviderRemovingReplaceRefusesWhileSectionedConsumerIsLoaded) {
+    RunMediaProviderProbe(MediaProviderProbeOperation::CompactRemovingReplace);
+}
+
+TEST(Pack, StaleEarlierRegistrationDoesNotHideCurrentProviderFromSectionedConsumer) {
+    RunMediaProviderProbe(MediaProviderProbeOperation::StaleRecordThenSectionedUnload);
+}
+
 TEST(Pack, LoadRegistersEntriesAndUnloadRemovesThem) {
     EngineSession session(MakeNullConfig(0, kBlockFrames));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -367,6 +503,58 @@ TEST(Pack, FindEntryBySoundStopsServingReRegisteredId) {
     EXPECT_EQ(VN_OK, Vn_UnloadPack(pack));
     EXPECT_TRUE(session.Engine()->registry.Lookup(harkentest::ObjectId(42)).Valid());
     EXPECT_EQ(VN_OK, Vn_UnregisterPCM(harkentest::ObjectId(42)));
+}
+
+TEST(Pack, LaterPackOwnsLoopMetadataAfterEarlierRegistrationIsRemoved) {
+    EngineSession session(MakeNullConfig(2, 64));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto sound = harkentest::ObjectId(42);
+    PackEntrySpec old = MakeSineEntry(sound, 2048);
+    old.loopable = true;
+    old.loopStart = 8;
+    old.loopEnd = 128;
+    PackEntrySpec current = old;
+    current.loopStart = 256;
+    current.loopEnd = 1024;
+    const auto oldPath = TempPath("pack_stale_metadata_owner.pack");
+    const auto currentPath = TempPath("pack_current_metadata_owner.pack");
+    WriteFileBytes(oldPath, BuildPackBytes({old}));
+    WriteFileBytes(currentPath, BuildPackBytes({current}));
+    VnPackHandle first = 0, second = 0;
+    ASSERT_EQ(VN_OK, LoadPack(oldPath, &first));
+    ASSERT_EQ(VN_OK, Vn_UnregisterPCM(sound));
+    ASSERT_EQ(VN_OK, LoadPack(currentPath, &second));
+    const auto cookie = engine.registry.CookieOf(sound);
+    EXPECT_EQ(second, engine.packs.OwnerOfSound(sound, engine.registry));
+    const auto* entry = engine.packs.FindEntryBySound(sound, engine.registry);
+    EXPECT_NE(nullptr, entry);
+    if (entry != nullptr) {
+        EXPECT_EQ(cookie, entry->registrationCookie);
+        EXPECT_EQ(current.loopStart, entry->loopStartFrame);
+        EXPECT_EQ(current.loopEnd, entry->loopEndFrame);
+    }
+    auto play = MakePlayDesc(sound);
+    play.loopCount = 2;
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    const auto block = engine.mixer.BlocksRendered();
+    engine.nullBackend.Pump(1);
+    ASSERT_GT(engine.mixer.BlocksRendered(), block);
+    const auto* render = engine.voices.Resolve(harkentest::RenderHandle(&engine, voice));
+    ASSERT_NE(nullptr, render);
+    EXPECT_EQ(current.loopStart, render->loopStartFrame);
+    EXPECT_EQ(current.loopEnd, render->loopEndFrame);
+    ASSERT_EQ(VN_OK, Vn_UnloadPack(first));
+    EXPECT_EQ(cookie, engine.registry.CookieOf(sound));
+    EXPECT_EQ(VN_IN_USE, Vn_UnloadPack(second));
+    ASSERT_EQ(VN_OK, Vn_Stop(voice, 0));
+    engine.nullBackend.Pump(2);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_EQ(VN_OK, Vn_UnloadPack(second));
+    EXPECT_EQ(0u, engine.packs.LoadedCount());
+    EXPECT_EQ(0u, engine.registry.Count());
+    EXPECT_EQ(0u, engine.voices.ActiveCount());
 }
 
 TEST(Pack, StalePackHandleBenignAndCounted) {

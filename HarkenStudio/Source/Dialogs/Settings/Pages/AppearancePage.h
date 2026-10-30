@@ -5,16 +5,16 @@
 
 #include <QPointer>
 
-class QColorDialog;
 class QComboBox;
 class QHideEvent;
 class QLabel;
-class QListWidget;
 class QPushButton;
 class QShowEvent;
+class QTimer;
 
 namespace VNX {
 
+class ColorEditorDialog;
 class ProportionalTreeWidget;
 class SearchField;
 struct ThemeColorRole;
@@ -39,12 +39,13 @@ protected:
 
 private:
     void selectTheme();
+    void selectColorPreset();
     void applyLanguage();
     void refreshLanguage();
     bool commitAppearance(const ThemeAppearance& appearance);
-    void refreshPresets();
-    bool loadBaseTheme();
-    void refreshColors();
+    void refreshPresets(bool currentOnly = false);
+    bool loadBasePalette();
+    void refreshColors(const QString& changedKey = {});
     void filterColors();
     void refreshSelectedColor();
     const ThemeColorRole* selectedRole() const;
@@ -52,13 +53,15 @@ private:
     ThemeAppearance appearanceWithColor(const QString& key, const QColor& color) const;
     bool setColor(const QString& key, const QColor& color);
     void editSelectedColor();
+    void publishPreview();
     void resetSelectedColor();
     void resetColors();
     void cancelPreview();
     void showError(const QList<ThemePackageDiagnostic>& diagnostics);
 
     ThemeManager* themeManager_ = nullptr;
-    QListWidget* themePresets_ = nullptr;
+    QComboBox* themeCombo_ = nullptr;
+    QComboBox* colorPresets_ = nullptr;
     QComboBox* languageCombo_ = nullptr;
     QComboBox* colorGroup_ = nullptr;
     SearchField* colorSearch_ = nullptr;
@@ -67,10 +70,13 @@ private:
     QLabel* errorLabel_ = nullptr;
     QPushButton* colorReset_ = nullptr;
     QPushButton* colorsReset_ = nullptr;
-    QPointer<QColorDialog> colorDialog_;
+    QPointer<ColorEditorDialog> colorDialog_;
+    QTimer* previewTimer_ = nullptr;
+    QString previewColorKey_;
+    QColor pendingPreviewColor_;
 
-    ThemeSnapshotPtr baseTheme_;
-    QMap<QString, ThemeSnapshotPtr> presetThemes_;
+    std::optional<ColorPalette> basePalette_;
+    QMap<QString, ColorPalette> palettes_;
     ThemeAppearance appearance_;
     bool updatingAppearance_ = false;
     bool previewActive_ = false;

@@ -1,15 +1,20 @@
 #include "UnitTest/StudioObjectIdTestSupport.h"
 #include "Core/BindingSemantics.h"
+#include "Core/ActionManager.h"
+#include "Core/ActionStepEditing.h"
 #include "Core/EffectChainSemantics.h"
 #include "Core/Components/VSegment.h"
 #include "Core/ProjectManager.h"
+#include "Core/ProjectSerializer.h"
 #include "Core/ProjectTypes.h"
 #include "Core/ProjectUpgradeManager.h"
+#include "Core/UndoCommands.h"
 #include "Support/ProjectDocumentTestUtils.h"
 
 #include <gtest/gtest.h>
 
 #include <QApplication>
+#include <QDateTime>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
@@ -236,6 +241,26 @@ protected:
         }
     }
 
+    QMap<QString, QByteArray> savedDocumentContent()
+    {
+        QMap<QString, QByteArray> result;
+        const auto paths = documentPathsById(projectDirectory_);
+        for (auto it = paths.cbegin(); it != paths.cend(); ++it) {
+            auto bytes = readFile(it.value());
+            if (it.value() == projectPath_) {
+                auto document = QJsonDocument::fromJson(bytes).object();
+                auto content = HarkenTest::projectContent(document);
+                auto metadata = content.value(QStringLiteral("metadata")).toObject();
+                metadata.remove(QStringLiteral("modifiedDate"));
+                content.insert(QStringLiteral("metadata"), metadata);
+                document.insert(QStringLiteral("content"), content);
+                bytes = QJsonDocument(document).toJson(QJsonDocument::Compact);
+            }
+            result.insert(it.value(), bytes);
+        }
+        return result;
+    }
+
     QTemporaryDir directory_;
     QString projectPath_;
     QString projectDirectory_;
@@ -293,6 +318,10 @@ TEST_F(ProjectDocumentRoundTripTest, SupportedDocumentVersionsPreserveContentThr
             auto document = it.value();
             auto header = HarkenTest::projectHeader(document);
             header.insert(QStringLiteral("schemaVersion"), version);
+            if (version < ProjectSchema::kProjectSchemaVersion) {
+                header.insert(QStringLiteral("savedStudioVersion"), QStringLiteral("1.0.0"));
+                header.remove(QStringLiteral("packSchemaVersion"));
+            }
             document.insert(QStringLiteral("harkenDocument"), header);
             auto content = HarkenTest::projectContent(document);
             if (version == 7 && header.value(QStringLiteral("type")) == QStringLiteral("project.root")) {
@@ -330,6 +359,7 @@ TEST_F(ProjectDocumentRoundTripTest, SupportedDocumentVersionsPreserveContentThr
         }
         QString error;
         ASSERT_TRUE(manager.loadProject(projectPath_, false, &error)) << error.toStdString();
+        UndoRedoManager::instance().clearHistory();
         expectModelMetadata(*manager.currentProject());
         auto* segment = manager.findItemByGuid(segmentGuid_);
         ASSERT_NE(segment, nullptr);
@@ -357,10 +387,242 @@ TEST_F(ProjectDocumentRoundTripTest, SupportedDocumentVersionsPreserveContentThr
                 EXPECT_EQ(content.value(QStringLiteral("components")),
                           original.value(QStringLiteral("components")));
         }
+        const auto normalized = savedDocumentContent();
+        ASSERT_TRUE(manager.loadProject(projectPath_));
+        UndoRedoManager::instance().clearHistory();
+        ASSERT_TRUE(manager.saveProject());
+        EXPECT_EQ(savedDocumentContent(), normalized);
+        ASSERT_TRUE(manager.closeProject());
     }
 }
 
+TEST_F(ProjectDocumentRoundTripTest, UnchangedDocumentsPreserveBytesAndModificationTimesAcrossSaves)
+{
+    auto& manager = ProjectManager::instance();
+    auto& undo = UndoRedoManager::instance();
+    ASSERT_TRUE(manager.loadProject(projectPath_));
+    undo.clearHistory();
+    ASSERT_TRUE(manager.saveProject());
+    ASSERT_TRUE(manager.closeProject());
+
+    const QString savedDate = QStringLiteral("2001-02-03T04:05:06Z");
+    const auto savedTime = QDateTime::fromString(savedDate, Qt::ISODate);
+    auto document = readObject(projectPath_);
+    auto content = HarkenTest::projectContent(document);
+    auto metadata = content.value(QStringLiteral("metadata")).toObject();
+    metadata.insert(QStringLiteral("modifiedDate"), savedDate);
+    content.insert(QStringLiteral("metadata"), metadata);
+    document.insert(QStringLiteral("content"), content);
+    writeObject(projectPath_, document);
+
+    QMap<QString, QByteArray> committed;
+    QMap<QString, QDateTime> modificationTimes;
+    const auto paths = documentPathsById(projectDirectory_);
+    for (const auto& path : paths) {
+        QFile file(path);
+        ASSERT_TRUE(file.open(QIODevice::ReadWrite)) << path.toStdString();
+        ASSERT_TRUE(file.setFileTime(savedTime, QFileDevice::FileModificationTime))
+            << path.toStdString();
+        file.close();
+        committed.insert(path, readFile(path));
+        modificationTimes.insert(path, QFileInfo(path).lastModified());
+    }
+
+    ASSERT_TRUE(manager.loadProject(projectPath_));
+    undo.clearHistory();
+    ASSERT_TRUE(manager.saveProject());
+    for (auto it = committed.cbegin(); it != committed.cend(); ++it) {
+        EXPECT_EQ(readFile(it.key()), it.value()) << it.key().toStdString();
+        EXPECT_EQ(QFileInfo(it.key()).lastModified(), modificationTimes.value(it.key()))
+            << it.key().toStdString();
+    }
+
+    ASSERT_TRUE(manager.closeProject());
+    document = readObject(projectPath_);
+    const auto currentHeader = HarkenTest::projectHeader(document);
+    auto previousHeader = currentHeader;
+    previousHeader.insert(QStringLiteral("savedStudioVersion"), QStringLiteral("0.0.0"));
+    previousHeader.insert(QStringLiteral("packSchemaVersion"), HARKEN_PACK_SCHEMA_VERSION + 1);
+    document.insert(QStringLiteral("harkenDocument"), previousHeader);
+    writeObject(projectPath_, document);
+    ASSERT_TRUE(manager.loadProject(projectPath_));
+    undo.clearHistory();
+    EXPECT_EQ(HarkenTest::projectHeader(readObject(projectPath_)), previousHeader);
+    ASSERT_TRUE(manager.saveProject());
+    EXPECT_EQ(HarkenTest::projectHeader(readObject(projectPath_)), currentHeader);
+    for (auto it = committed.cbegin(); it != committed.cend(); ++it) {
+        if (it.key() == projectPath_) continue;
+        EXPECT_EQ(readFile(it.key()), it.value()) << it.key().toStdString();
+        EXPECT_EQ(QFileInfo(it.key()).lastModified(), modificationTimes.value(it.key()))
+            << it.key().toStdString();
+    }
+
+    const QString description = QStringLiteral("Edited after an unchanged save");
+    manager.currentProject()->description = description;
+    ASSERT_TRUE(manager.saveProject());
+    const auto savedMetadata = HarkenTest::projectContent(readObject(projectPath_))
+        .value(QStringLiteral("metadata")).toObject();
+    EXPECT_EQ(savedMetadata.value(QStringLiteral("description")).toString(), description);
+    const auto modifiedTime = QDateTime::fromString(
+        savedMetadata.value(QStringLiteral("modifiedDate")).toString(), Qt::ISODate);
+    EXPECT_TRUE(modifiedTime.isValid());
+    EXPECT_GT(modifiedTime, savedTime);
+    EXPECT_GT(QFileInfo(projectPath_).lastModified(), modificationTimes.value(projectPath_));
+    for (auto it = committed.cbegin(); it != committed.cend(); ++it) {
+        if (it.key() == projectPath_) continue;
+        EXPECT_EQ(readFile(it.key()), it.value()) << it.key().toStdString();
+        EXPECT_EQ(QFileInfo(it.key()).lastModified(), modificationTimes.value(it.key()))
+            << it.key().toStdString();
+    }
+}
+
+TEST_F(ProjectDocumentRoundTripTest, OrdinaryEditsAndUndoPreserveTheSameDocumentsAcrossSavePaths)
+{
+    auto& manager = ProjectManager::instance();
+    auto& actions = ActionManager::instance();
+    auto& undo = UndoRedoManager::instance();
+    actions.clearAllForTesting();
+    const auto cleanup = qScopeGuard([&] {
+        undo.clearHistory();
+        actions.clearAllForTesting();
+    });
+    registerProjectActions(actions, &manager, nullptr);
+    ASSERT_TRUE(manager.loadProject(projectPath_));
+    undo.clearHistory();
+    ASSERT_TRUE(manager.saveProject());
+    const auto original = savedDocumentContent();
+    QList<QUuid> edited;
+    for (auto it = documentsById_.cbegin(); it != documentsById_.cend(); ++it) {
+        if (HarkenTest::projectHeader(it.value()).value(QStringLiteral("type"))
+            == QStringLiteral("project.root")) continue;
+        auto* item = manager.findItemByGuid(QUuid(it.key()));
+        ASSERT_NE(item, nullptr);
+        SCOPED_TRACE(item->name.toStdString());
+        QString property = QStringLiteral("notes");
+        QJsonValue value = QStringLiteral("Edited after opening");
+        if (item->type == ProjectItem::Type::Bus) {
+            property = QStringLiteral("volume");
+            value = -6.0;
+        } else if (item->type == ProjectItem::Type::Action) {
+            const auto* target = manager.findItemByGuid(segmentGuid_);
+            ASSERT_NE(target, nullptr);
+            VActionStep step;
+            step.targetObjectID = target->objectID;
+            step.targetName = target->name;
+            property = QStringLiteral("steps");
+            value = ActionStepEditing::stepsToJson({step});
+        }
+        const auto result = actions.execute(QStringLiteral("set_item_property"), {
+            {QStringLiteral("authoring_handle"), static_cast<qint64>(item->objectID)},
+            {QStringLiteral("property"), property}, {QStringLiteral("value"), value}});
+        ASSERT_TRUE(result.success) << result.errorMessage.toStdString();
+        EXPECT_TRUE(item->dirtyBit);
+        edited.append(item->guid);
+    }
+    ASSERT_FALSE(edited.isEmpty());
+    for (qsizetype i = 0; i < edited.size(); ++i) ASSERT_TRUE(undo.undo());
+    for (const auto& guid : edited) EXPECT_FALSE(manager.findItemByGuid(guid)->dirtyBit);
+    ASSERT_TRUE(manager.saveProject());
+    EXPECT_EQ(savedDocumentContent(), original);
+
+    for (qsizetype i = 0; i < edited.size(); ++i) ASSERT_TRUE(undo.redo());
+    ASSERT_TRUE(manager.saveProject());
+    const auto saved = savedDocumentContent();
+    const auto authoredItems = [&] {
+        ProjectSerializer serializer;
+        EXPECT_TRUE(serializer.prepareReferenceWrite(*manager.currentProject()));
+        QMap<QUuid, QJsonObject> states;
+        for (const auto& guid : edited) {
+            const auto* item = manager.findItemByGuid(guid);
+            EXPECT_NE(item, nullptr);
+            if (item) states.insert(guid, serializer.projectItemToJson(*item, false));
+        }
+        return states;
+    };
+    const auto authored = authoredItems();
+    EXPECT_NE(saved, original);
+    for (const auto& guid : edited) EXPECT_FALSE(manager.findItemByGuid(guid)->dirtyBit);
+    undo.clear();
+    ASSERT_TRUE(manager.saveProject());
+    EXPECT_EQ(savedDocumentContent(), saved);
+    ASSERT_TRUE(manager.closeProject());
+    ASSERT_TRUE(manager.loadProject(projectPath_));
+    undo.clearHistory();
+    expectModelMetadata(*manager.currentProject());
+    EXPECT_EQ(authoredItems(), authored);
+    for (const auto& guid : edited) {
+        const auto* item = manager.findItemByGuid(guid);
+        ASSERT_NE(item, nullptr);
+        EXPECT_FALSE(item->dirtyBit);
+    }
+    ASSERT_TRUE(manager.saveProject());
+    EXPECT_EQ(savedDocumentContent(), saved);
+}
+
 #ifdef Q_OS_WIN
+TEST_F(ProjectDocumentRoundTripTest, FailedObjectSaveRetainsEditsForRetryAndSubsequentUndo)
+{
+    auto& manager = ProjectManager::instance();
+    auto& actions = ActionManager::instance();
+    auto& undo = UndoRedoManager::instance();
+    actions.clearAllForTesting();
+    const auto cleanup = qScopeGuard([&] {
+        undo.clearHistory();
+        actions.clearAllForTesting();
+    });
+    registerProjectActions(actions, &manager, nullptr);
+    ASSERT_TRUE(manager.loadProject(projectPath_));
+    undo.clearHistory();
+    ASSERT_TRUE(manager.saveProject());
+    const auto committed = savedDocumentContent();
+    const auto committedRoot = readFile(projectPath_);
+    auto* item = manager.findItemByGuid(segmentGuid_);
+    ASSERT_NE(item, nullptr);
+    const QString occupiedPath = manager.currentProject()->objectFilePath(item);
+    ASSERT_TRUE(committed.contains(occupiedPath));
+    HANDLE occupied = CreateFileW(reinterpret_cast<LPCWSTR>(occupiedPath.utf16()),
+        GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL, nullptr);
+    ASSERT_NE(occupied, INVALID_HANDLE_VALUE);
+    const auto release = qScopeGuard([&] {
+        if (occupied != INVALID_HANDLE_VALUE) CloseHandle(occupied);
+    });
+    const auto result = actions.execute(QStringLiteral("set_item_property"), {
+        {QStringLiteral("authoring_handle"), static_cast<qint64>(item->objectID)},
+        {QStringLiteral("property"), QStringLiteral("notes")},
+        {QStringLiteral("value"), QStringLiteral("Retained after failed save")}});
+    ASSERT_TRUE(result.success) << result.errorMessage.toStdString();
+    EXPECT_FALSE(manager.saveProject());
+    EXPECT_EQ(savedDocumentContent(), committed);
+    EXPECT_EQ(readFile(projectPath_), committedRoot);
+    EXPECT_TRUE(item->dirtyBit);
+    EXPECT_FALSE(undo.isClean());
+    ASSERT_TRUE(CloseHandle(occupied));
+    occupied = INVALID_HANDLE_VALUE;
+    ASSERT_TRUE(manager.saveProject());
+    EXPECT_FALSE(item->dirtyBit);
+    EXPECT_TRUE(undo.isClean());
+    EXPECT_NE(savedDocumentContent(), committed);
+    ASSERT_TRUE(undo.undo());
+    EXPECT_TRUE(item->dirtyBit);
+    ASSERT_TRUE(manager.saveProject());
+    const auto restored = savedDocumentContent();
+    EXPECT_EQ(restored.keys(), committed.keys());
+    for (auto it = committed.cbegin(); it != committed.cend(); ++it) {
+        if (it.key() == occupiedPath)
+            EXPECT_EQ(QJsonDocument::fromJson(restored.value(it.key())),
+                      QJsonDocument::fromJson(it.value()));
+        else
+            EXPECT_EQ(restored.value(it.key()), it.value()) << it.key().toStdString();
+    }
+    ASSERT_TRUE(manager.closeProject());
+    ASSERT_TRUE(manager.loadProject(projectPath_));
+    item = manager.findItemByGuid(segmentGuid_);
+    ASSERT_NE(item, nullptr);
+    EXPECT_TRUE(item->notes.isEmpty());
+    expectModelMetadata(*manager.currentProject());
+}
+
 TEST_F(ProjectDocumentRoundTripTest, OccupiedFilesDoNotDamageCommittedContentWhenSavingFails)
 {
     const QDir root(projectDirectory_);
