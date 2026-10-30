@@ -90,7 +90,10 @@ public:
 
     void registerSnapshot(const ThemeSnapshotPtr& snapshot,
                           ThemeAssetMapDto assets,
-                          QMap<QString, QString> packageRoots);
+                          QMap<QString, QString> packageRoots,
+                          const ThemeSnapshotPtr& sharedAssets = {});
+
+    quint64 assetGeneration(const ThemeSnapshotPtr& snapshot) const;
 
     ThemeImageResolution resolveImage(
         const ThemeSnapshotPtr& snapshot,

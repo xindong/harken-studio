@@ -210,6 +210,8 @@ add_library(harken_editor_foundation STATIC
     QtControlSkin.h
     HarkenStyle.cpp
     HarkenStyle.h
+    WidgetAppearance.cpp
+    WidgetAppearance.h
     ThemeSnapshot.h
     ColorPalette.cpp
     ColorPalette.h

@@ -200,6 +200,10 @@ ComponentRecipeHost::ComponentRecipeHost(
 {
     connect(themeManager_, &ThemeManager::themeChanged, this,
             [this]() { applyRecipe(); });
+    connect(themeManager_, &ThemeManager::appearanceChanged, this, [this]() {
+        for (auto* container : slots_)
+            container->setBackgroundAsset(container->backgroundAsset());
+    });
 }
 
 ComponentRecipeHost::~ComponentRecipeHost() = default;

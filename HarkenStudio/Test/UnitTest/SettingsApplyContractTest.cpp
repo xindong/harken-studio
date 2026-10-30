@@ -15,6 +15,7 @@
 #include <QDir>
 #include <QDoubleSpinBox>
 #include <QEvent>
+#include <QEventLoop>
 #include <QFile>
 #include <QLabel>
 #include <QLineEdit>
@@ -23,6 +24,7 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QTreeWidget>
 
 #include <gtest/gtest.h>
@@ -86,6 +88,28 @@ bool finishColorEdit(QWidget& page, QTreeWidget& colors, const QColor& color)
     picker->accept();
     QCoreApplication::sendPostedEvents(picker, QEvent::DeferredDelete);
     return true;
+}
+
+bool waitForPreview(VNX::ThemeManager& manager, const QColor& color)
+{
+    if (manager.snapshot()->ui.colors.textPrimary == color) return true;
+    QEventLoop loop;
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+    QObject::connect(&manager, &VNX::ThemeManager::appearanceChanged, &loop, [&] {
+        if (manager.snapshot()->ui.colors.textPrimary == color) loop.quit();
+    });
+    timeout.start(1000);
+    loop.exec();
+    return manager.snapshot()->ui.colors.textPrimary == color;
+}
+
+void settlePreviewEvents()
+{
+    QEventLoop loop;
+    QTimer::singleShot(50, &loop, &QEventLoop::quit);
+    loop.exec();
 }
 
 QVariantMap storedValues(const VNX::ISettingsStorage& storage)
@@ -481,13 +505,19 @@ TEST_F(SettingsApplyContractTest, AppearanceFollowsExternalCommittedPaletteAndCo
     ASSERT_NE(presets, nullptr);
     ASSERT_NE(colors, nullptr);
     ASSERT_TRUE(selectColor(*colors, QStringLiteral("text.primary")));
+    auto* picker = openColorEditor(panel, *colors);
+    ASSERT_NE(picker, nullptr);
+    picker->setCurrentColor(QColor(11, 47, 101, 192));
 
     auto appearance = theme_->appearance();
     appearance.paletteId = builtinAmberPaletteId();
     const QColor externalColor(63, 95, 127, 160);
     appearance.colors[appearance.paletteId].insert(QStringLiteral("text.primary"), externalColor);
     ASSERT_TRUE(theme_->applyAppearance(appearance).ok());
+    settlePreviewEvents();
 
+    EXPECT_EQ(theme_->appearance(), appearance);
+    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, externalColor);
     EXPECT_EQ(themes->currentData().toString(), appearance.themeId);
     EXPECT_EQ(presets->currentData().toString(), appearance.paletteId);
     EXPECT_EQ(QColor(colors->currentItem()->text(1)), externalColor);
@@ -507,7 +537,13 @@ TEST_F(SettingsApplyContractTest, ColorPickerPreviewRequiresAcceptance)
         ASSERT_TRUE(selectColor(*colors, QStringLiteral("text.primary")));
         auto* picker = openColorEditor(page, *colors);
         ASSERT_NE(picker, nullptr);
+        picker->setCurrentColor(QColor(17, 43, 89, 128));
         picker->setCurrentColor(previewColor);
+        EXPECT_EQ(picker->currentColor(), previewColor);
+        ASSERT_TRUE(waitForPreview(*theme_, previewColor));
+        const auto preview = theme_->snapshot();
+        settlePreviewEvents();
+        EXPECT_EQ(theme_->snapshot(), preview);
         EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, previewColor);
         EXPECT_EQ(theme_->appearance(), committed);
         EXPECT_EQ(storedValues(*themeStorage_), before);
@@ -539,7 +575,7 @@ TEST_F(SettingsApplyContractTest, ColorPickerPreviewRequiresAcceptance)
         alphaSlider->setSliderDown(true);
         alphaSlider->setValue(120);
         EXPECT_TRUE(alphaBinding->isEditing());
-        EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, QColor(27, 81, 143, 120));
+        ASSERT_TRUE(waitForPreview(*theme_, QColor(27, 81, 143, 120)));
         alphaSlider->setValue(160);
         EXPECT_TRUE(alphaBinding->isEditing());
         EXPECT_EQ(picker->currentColor(), QColor(27, 81, 143, 160));
@@ -547,7 +583,7 @@ TEST_F(SettingsApplyContractTest, ColorPickerPreviewRequiresAcceptance)
         alphaSlider->setSliderDown(false);
         EXPECT_EQ(alpha->value(), 64);
         EXPECT_EQ(picker->currentColor(), QColor(27, 81, 143, 64));
-        EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, picker->currentColor());
+        ASSERT_TRUE(waitForPreview(*theme_, picker->currentColor()));
         EXPECT_EQ(storedValues(*themeStorage_), before);
 
         red->setValue(255);
@@ -569,20 +605,22 @@ TEST_F(SettingsApplyContractTest, ColorPickerPreviewRequiresAcceptance)
         EXPECT_EQ(picker->currentColor(), QColor(0, 0, 0, 64));
         value->setValue(100);
         EXPECT_EQ(picker->currentColor(), QColor(0, 255, 0, 64));
-        EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, picker->currentColor());
+        ASSERT_TRUE(waitForPreview(*theme_, picker->currentColor()));
         EXPECT_EQ(theme_->appearance(), committed);
         EXPECT_EQ(storedValues(*themeStorage_), before);
 
+        picker->setCurrentColor(QColor(59, 103, 149, 208));
         picker->reject();
+        settlePreviewEvents();
         EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, original->ui.colors.textPrimary);
         EXPECT_EQ(theme_->appearance(), committed);
         EXPECT_EQ(storedValues(*themeStorage_), before);
-        QCoreApplication::sendPostedEvents(picker, QEvent::DeferredDelete);
-
         picker = openColorEditor(page, *colors);
         ASSERT_NE(picker, nullptr);
+        picker->setCurrentColor(QColor(19, 61, 127, 160));
         picker->setCurrentColor(previewColor);
         picker->accept();
+        settlePreviewEvents();
         EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, previewColor);
         EXPECT_EQ(theme_->appearance().colors.value(committed.paletteId)
                       .value(QStringLiteral("text.primary")), previewColor);
@@ -614,7 +652,7 @@ TEST_F(SettingsApplyContractTest, FailedPickerCommitAndPageDestructionRestoreCom
         auto* picker = openColorEditor(page, *colors);
         ASSERT_NE(picker, nullptr);
         picker->setCurrentColor(previewColor);
-        ASSERT_EQ(manager.snapshot()->ui.colors.textPrimary, previewColor);
+        ASSERT_TRUE(waitForPreview(manager, previewColor));
         stored->writable = false;
         picker->accept();
 
@@ -628,8 +666,10 @@ TEST_F(SettingsApplyContractTest, FailedPickerCommitAndPageDestructionRestoreCom
         picker = openColorEditor(page, *colors);
         ASSERT_NE(picker, nullptr);
         picker->setCurrentColor(previewColor);
-        ASSERT_EQ(manager.snapshot()->ui.colors.textPrimary, previewColor);
+        ASSERT_TRUE(waitForPreview(manager, previewColor));
+        picker->setCurrentColor(QColor(71, 113, 157, 224));
     }
+    settlePreviewEvents();
     EXPECT_EQ(manager.appearance(), committed);
     EXPECT_EQ(manager.snapshot()->ui.colors.textPrimary, original->ui.colors.textPrimary);
     EXPECT_EQ(storedValues(*stored), before);

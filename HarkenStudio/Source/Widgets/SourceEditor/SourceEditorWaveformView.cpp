@@ -57,6 +57,8 @@ SourceEditorWaveformView::SourceEditorWaveformView(QWidget* parent, Presentation
     });
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
             this, [this]() { refreshTimelineControls(); update(); });
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
+            this, [this]() { refreshTimelineAppearance(); update(); });
     connect(&MediaPool::instance(), &MediaPool::waveformReady, this, [this](uint32_t sourceID) {
         if (asset_ && asset_->sourceID == sourceID && WaveformCache::load(path_, peaks_)) {
             ++requestRevision_;

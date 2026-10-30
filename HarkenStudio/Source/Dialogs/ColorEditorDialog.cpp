@@ -248,7 +248,7 @@ ColorEditorDialog::ColorEditorDialog(const QColor& color, QWidget* parent)
         screenPick->setFixedSize(extent, extent);
     };
     refreshIcon();
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, screenPick, refreshIcon);
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, screenPick, refreshIcon);
     connect(screenPick, &QToolButton::clicked, this, &ColorEditorDialog::pickScreenColor);
     screenPickTimer_ = new QTimer(this);
     screenPickTimer_->setInterval(30);

@@ -99,7 +99,7 @@ InspectorPanel::InspectorPanel(QWidget* parent)
     QFont font = FontManager::instance().getFont(FontRole::Body, fontSize);
     setFont(font);
 
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
             this, &InspectorPanel::applyTheme);
 
     connect(&ProjectManager::instance(), &ProjectManager::itemPropertyChanged,

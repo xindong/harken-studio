@@ -117,7 +117,11 @@ void FontManager::applyTheme(ThemeSnapshotPtr snapshot)
 {
     if (snapshot_ == snapshot)
         return;
+    const bool changed = !snapshot_ || !snapshot
+        || snapshot_->ui.typography != snapshot->ui.typography;
     snapshot_ = std::move(snapshot);
+    if (!changed)
+        return;
     sansFamily_ = snapshot_ && !snapshot_->ui.typography.body.family.isEmpty()
         ? snapshot_->ui.typography.body.family
         : systemSansFamily_;

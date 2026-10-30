@@ -7,6 +7,7 @@
 #include "ThemeColorCatalog.h"
 #include "ThemePackageLoader.h"
 #include "ThemeSnapshot.h"
+#include "WidgetAppearance.h"
 
 #include <QColor>
 #include <QObject>
@@ -63,6 +64,8 @@ public:
         return lastDiagnostics_;
     }
     ThemeAssetResolver& assetResolver() { return assetResolver_; }
+    WidgetAppearance& widgetAppearance() { return widgetAppearance_; }
+    const WidgetAppearance& widgetAppearance() const { return widgetAppearance_; }
     ThemeIconResolution resolveIcon(
         const QString& logicalId,
         const ThemeAssetVariant& variant = {})
@@ -124,17 +127,19 @@ public:
 
 signals:
     void themeChanged(VNX::ThemeSnapshotPtr snapshot);
+    void appearanceChanged(VNX::ThemeSnapshotPtr snapshot);
 
 private:
     explicit ThemeManager(QObject* parent = nullptr);
 
-    void publishCandidate(const ThemePackageCandidate& candidate, bool notify);
+    void publishCandidate(const ThemePackageCandidate& candidate, bool notify,
+                          bool reloadAssets = false);
     ThemeManagerOperationResult updateAppearance(const ThemeAppearance& appearance,
                                                   bool persist);
     ThemePackageLoadResult customizedCandidate(const ThemeAppearance& appearance,
                                                bool reusePreviewBase = false);
     bool checkPublicationThread(ThemeManagerOperationResult& result) const;
-    void applyApplicationTheme();
+    void applyApplicationTheme(bool structureChanged);
     bool persistAppearance(const ThemeAppearance& appearance,
                            QList<ThemePackageDiagnostic>& diagnostics);
     ThemeAppearance persistedAppearance() const;
@@ -143,11 +148,15 @@ private:
     std::unique_ptr<ISettingsStorage> storage_;
     ThemePackageLoadOptions loadOptions_;
     ThemeAssetResolver assetResolver_;
+    WidgetAppearance widgetAppearance_;
     ThemeSnapshotPtr snapshot_;
     QString currentThemeId_;
     QString currentPaletteId_;
     ColorPaletteCustomizations customizations_;
     ThemePackageCandidate committedCandidate_;
+    QString publishedThemeId_;
+    ThemeAssetMapDto publishedAssets_;
+    QMap<QString, QString> publishedAssetRoots_;
     std::optional<ThemePackageCandidate> previewBaseCandidate_;
     std::optional<ColorPalette> previewBasePalette_;
     bool previewActive_ = false;

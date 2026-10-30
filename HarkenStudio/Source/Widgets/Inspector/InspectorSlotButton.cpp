@@ -19,7 +19,7 @@ InspectorSlotButton::InspectorSlotButton(InspectorSlotKind kind, QWidget* parent
     setCursor(Qt::PointingHandCursor);
     setAccessibleName(kind == InspectorSlotKind::Binding
         ? tr("Variable binding") : tr("Attenuation binding"));
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
             this, [this] { update(); });
 }
 

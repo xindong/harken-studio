@@ -1,14 +1,18 @@
 #include "Core/ColorPalette.h"
+#include "Core/FontManager.h"
 #include "Core/MemorySettingsStorage.h"
 #include "Core/QSettingsStorage.h"
 #include "Core/ThemeColorCatalog.h"
 #include "Core/ThemeColorResolver.h"
 #include "Core/ThemeManager.h"
+#include "Core/WidgetAppearance.h"
 
 #include <QDir>
 #include <QFile>
 #include <QSet>
 #include <QTemporaryDir>
+#include <QToolButton>
+#include <QWidget>
 
 #include <gtest/gtest.h>
 
@@ -96,10 +100,21 @@ TEST(ThemeManager, ReloadDoesNotMutatePreviouslyPublishedSnapshot)
     VNX::ThemeManager manager(root.path(), memoryStorage());
     ASSERT_TRUE(manager.selectTheme(QStringLiteral("theme.mutable")).ok());
     const auto oldSnapshot = manager.snapshot();
+    int fonts = 0;
+    int structures = 0;
+    QObject::connect(&VNX::FontManager::instance(), &VNX::FontManager::fontChanged,
+                     &manager, [&] { ++fonts; });
+    QObject::connect(&manager, &VNX::ThemeManager::themeChanged,
+                     &manager, [&] { ++structures; });
     ASSERT_TRUE(writePackage(root.path(), QStringLiteral("mutable"),
                              QStringLiteral("theme.mutable"),
                              QStringLiteral("#ff333333"),
                              QStringLiteral("#ff444444")));
+    const int pointSize = oldSnapshot->ui.typography.body.pointSize + 2;
+    ASSERT_TRUE(writeFile(QDir(root.path()).filePath(QStringLiteral("mutable/tokens.json")),
+        QStringLiteral("{\"colors\":{\"accent.primary\":\"#ff333333\"},"
+                       "\"fonts\":{\"body\":{\"pointSize\":%1}}}")
+            .arg(pointSize).toUtf8()));
 
     ASSERT_TRUE(manager.reloadTheme().ok());
 
@@ -107,6 +122,10 @@ TEST(ThemeManager, ReloadDoesNotMutatePreviouslyPublishedSnapshot)
               QColor(QStringLiteral("#ff111111")));
     EXPECT_EQ(manager.snapshot()->ui.colors.accent,
               QColor(QStringLiteral("#ff333333")));
+    EXPECT_EQ(manager.snapshot()->ui.typography.body.pointSize, pointSize);
+    EXPECT_NE(oldSnapshot->ui.typography.body.pointSize, pointSize);
+    EXPECT_EQ(fonts, 1);
+    EXPECT_EQ(structures, 1);
 }
 
 TEST(ThemeManager, RejectsPublicationFromAnotherThread)
@@ -588,6 +607,15 @@ TEST(ThemeManager, EditableColorCatalogContainsUniqueSupportedSourceRoles)
     ASSERT_TRUE(base.ok());
     QSet<QString> keys;
     const QColor probe(QStringLiteral("#cc123456"));
+    int appearances = 0;
+    int structures = 0;
+    int fonts = 0;
+    QObject::connect(&manager, &VNX::ThemeManager::appearanceChanged, &manager,
+                     [&] { ++appearances; });
+    QObject::connect(&manager, &VNX::ThemeManager::themeChanged, &manager,
+                     [&] { ++structures; });
+    QObject::connect(&VNX::FontManager::instance(), &VNX::FontManager::fontChanged,
+                     &manager, [&] { ++fonts; });
     ASSERT_FALSE(VNX::themeColorRoles().isEmpty());
     for (const auto& role : VNX::themeColorRoles())
     {
@@ -612,5 +640,240 @@ TEST(ThemeManager, EditableColorCatalogContainsUniqueSupportedSourceRoles)
         ASSERT_TRUE(VNX::applyThemeColor(throughPackage, key, probe));
         VNX::resolveThemeColors(throughPackage);
         EXPECT_EQ(role.read(throughPackage), role.read(throughCatalog));
+
+        auto preview = manager.appearance();
+        preview.colors[preview.paletteId].insert(key, probe);
+        ASSERT_TRUE(manager.previewAppearance(preview).ok());
+        EXPECT_EQ(role.read(*manager.snapshot()), probe);
+        manager.cancelAppearancePreview();
+        EXPECT_EQ(role.read(*manager.snapshot()), role.read(*base.candidate->snapshot));
     }
+    EXPECT_EQ(appearances, VNX::themeColorRoles().size() * 2);
+    EXPECT_EQ(structures, 0);
+    EXPECT_EQ(fonts, 0);
+
+    auto alternate = manager.appearance();
+    alternate.paletteId = VNX::builtinAmberPaletteId();
+    ASSERT_TRUE(manager.previewAppearance(alternate).ok());
+    ASSERT_TRUE(manager.applyAppearance(alternate).ok());
+    EXPECT_EQ(structures, 0);
+    EXPECT_EQ(fonts, 0);
+    EXPECT_EQ(appearances, VNX::themeColorRoles().size() * 2 + 2);
+    ASSERT_TRUE(manager.reloadTheme().ok());
+    EXPECT_EQ(structures, 1);
+    EXPECT_EQ(fonts, 0);
+}
+
+TEST(WidgetAppearance, CascadesStructuralSelectorsAndInvalidatesDescendants)
+{
+    QWidget root;
+    root.setObjectName(QStringLiteral("surface"));
+    root.setProperty("active", true);
+    QWidget container(&root);
+    QToolButton button(&container);
+    button.setObjectName(QStringLiteral("action"));
+    VNX::WidgetAppearance appearance;
+    appearance.updateStyleSheet(QStringLiteral(R"qss(
+        QWidget { color: #111111; background: #222222; }
+        #surface[active="true"] QToolButton { color: #333333; }
+        #surface > QToolButton { color: #444444; }
+        #action { background: #555555; }
+        QToolButton { background: #666666; }
+        QToolButton { border: 1px solid #777777; }
+        QToolButton { border-color: #888888; }
+        .QWidget { selection-color: #999999; }
+    )qss"));
+    auto visual = appearance.visual(&button, QStyle::State_Enabled);
+    EXPECT_EQ(visual.foreground, QColor(QStringLiteral("#333333")));
+    EXPECT_EQ(visual.background, QColor(QStringLiteral("#555555")));
+    EXPECT_EQ(visual.borderColors[0], QColor(QStringLiteral("#888888")));
+    EXPECT_FALSE(visual.selectionForeground.isValid());
+    EXPECT_EQ(appearance.visual(&container, QStyle::State_Enabled).selectionForeground,
+              QColor(QStringLiteral("#999999")));
+
+    root.setProperty("active", false);
+    appearance.invalidate(&root);
+    EXPECT_EQ(appearance.visual(&button, QStyle::State_Enabled).foreground,
+              QColor(QStringLiteral("#111111")));
+
+    button.setParent(&root);
+    appearance.invalidate(&button);
+    EXPECT_EQ(appearance.visual(&button, QStyle::State_Enabled).foreground,
+              QColor(QStringLiteral("#444444")));
+}
+
+TEST(WidgetAppearance, ResolvesSubcontrolStatesWithoutLeakingWidgetPaint)
+{
+    QWidget widget;
+    VNX::WidgetAppearance appearance;
+    appearance.updateStyleSheet(QStringLiteral(R"qss(
+        QWidget { background: #111111; color: #222222; }
+        QWidget::handle { width: 12px; height: 20px; margin: 1px 2px 3px 4px; }
+        QWidget::handle:horizontal { background: rgba(20, 30, 40, 1); }
+        QWidget::handle:vertical { background: #333333; }
+        QWidget::handle:horizontal:!selected { border: 2px solid rgba(50, 60, 70, 0.5); }
+        QWidget::handle:horizontal:selected { background: transparent; image: none; }
+        QWidget::handle:horizontal:disabled { color: #444444; }
+    )qss"));
+    auto visual = appearance.visual(&widget, QStyle::State_Enabled, u"handle",
+                                     {QStringLiteral("horizontal")});
+    EXPECT_EQ(visual.background, QColor(20, 30, 40));
+    EXPECT_FALSE(visual.foreground.isValid());
+    EXPECT_EQ(visual.borderColors[0], QColor(50, 60, 70, 127));
+    EXPECT_EQ(visual.size, QSize(12, 20));
+    EXPECT_EQ(visual.minimum, QSize(-1, -1));
+    EXPECT_EQ(visual.margin, QMargins(4, 1, 2, 3));
+    EXPECT_TRUE(visual.image.isNull());
+
+    visual = appearance.visual(&widget, QStyle::State_Selected, u"handle",
+                                {QStringLiteral("horizontal")});
+    EXPECT_EQ(visual.background, QColor(Qt::transparent));
+    EXPECT_EQ(visual.foreground, QColor(QStringLiteral("#444444")));
+    EXPECT_EQ(visual.borders, QMargins());
+    EXPECT_TRUE(visual.image.isEmpty());
+    EXPECT_FALSE(visual.image.isNull());
+    EXPECT_EQ(appearance.visual(&widget, QStyle::State_Enabled | QStyle::State_Horizontal,
+                                u"handle", {QStringLiteral("vertical")}).background,
+              QColor(QStringLiteral("#333333")));
+}
+
+TEST(WidgetAppearance, ColorChangesKeepNativeLayoutAndUpdateCachedRules)
+{
+    QWidget widget;
+    widget.setObjectName(QStringLiteral("panel"));
+    VNX::WidgetAppearance appearance;
+    QString source = QStringLiteral(R"qss(
+        #panel {
+            background: #112233;
+            border: 1px solid #445566;
+            border-bottom: 3px solid #778899;
+            border-radius: 8px;
+            border-top-left-radius: 2px;
+            padding: 3px 5px;
+            min-width: 40px;
+            max-height: 80px;
+            text-align: right;
+            font-size: 12pt;
+        }
+    )qss");
+    appearance.updateStyleSheet(source);
+    const auto before = appearance.visual(&widget, QStyle::State_Enabled);
+    const auto native = appearance.nativeStyleSheet();
+    EXPECT_FALSE(native.contains(QStringLiteral("#112233")));
+    EXPECT_FALSE(native.contains(QStringLiteral("border-radius")));
+    EXPECT_FALSE(native.contains(QStringLiteral("text-align")));
+    EXPECT_TRUE(native.contains(QStringLiteral("font-size: 12pt")));
+    EXPECT_TRUE(native.contains(QStringLiteral("border-bottom-width: 3px")));
+
+    source.replace(QStringLiteral("#112233"), QStringLiteral("#abcdef"));
+    source.replace(QStringLiteral("#445566"), QStringLiteral("#fedcba"));
+    appearance.updateStyleSheet(source);
+    const auto after = appearance.visual(&widget, QStyle::State_Enabled);
+    EXPECT_EQ(appearance.nativeStyleSheet(), native);
+    EXPECT_EQ(after.background, QColor(QStringLiteral("#abcdef")));
+    EXPECT_EQ(after.borderColors[0], QColor(QStringLiteral("#fedcba")));
+    EXPECT_EQ(after.borderColors[3], QColor(QStringLiteral("#778899")));
+    EXPECT_EQ(after.borders, QMargins(1, 1, 1, 3));
+    EXPECT_EQ(after.borders, before.borders);
+    EXPECT_EQ(after.padding, QMargins(5, 3, 5, 3));
+    EXPECT_EQ(after.radii, (std::array<QSizeF, 4>{QSizeF(2, 2), QSizeF(8, 8), QSizeF(8, 8), QSizeF(8, 8)}));
+    EXPECT_EQ(after.minimum, QSize(40, -1));
+    EXPECT_EQ(after.maximum, QSize(-1, 80));
+    EXPECT_EQ(after.textAlignment, Qt::AlignRight | Qt::AlignVCenter);
+
+    source.replace(QStringLiteral("border: 1px"), QStringLiteral("border: 4px"));
+    appearance.updateStyleSheet(source);
+    EXPECT_NE(appearance.nativeStyleSheet(), native);
+    EXPECT_EQ(appearance.visual(&widget, QStyle::State_Enabled).borders, QMargins(4, 4, 4, 3));
+
+    source.replace(QStringLiteral("#panel"), QStringLiteral("#otherPanel"));
+    appearance.updateStyleSheet(source);
+    EXPECT_FALSE(appearance.visual(&widget, QStyle::State_Enabled).background.isValid());
+}
+
+TEST(WidgetAppearance, LocalScopesOverrideGlobalRulesWithoutLosingUndeclaredColors)
+{
+    QWidget root;
+    QWidget container(&root);
+    QToolButton button(&container);
+    button.setObjectName(QStringLiteral("action"));
+    root.setStyleSheet(QStringLiteral("#action { color: #112233; background: #223344; font-family: 'Arial'; }"));
+    container.setStyleSheet(QStringLiteral("QToolButton { color: #334455; font-weight: normal; }"));
+    button.setStyleSheet(QStringLiteral("padding: 3px;"));
+    VNX::WidgetAppearance appearance;
+    appearance.updateStyleSheet(QStringLiteral(
+        "#action { color: #445566; border: 2px solid #556677; }"
+        "QHeaderView::section, QToolButton { font-size: 13px; font-weight: bold; padding: 1px;"
+        "letter-spacing: 2px; text-transform: uppercase; }"));
+    auto visual = appearance.visual(&button, QStyle::State_Enabled);
+    EXPECT_EQ(visual.foreground, QColor(QStringLiteral("#334455")));
+    EXPECT_EQ(visual.background, QColor(QStringLiteral("#223344")));
+    EXPECT_EQ(visual.borderColors[0], QColor(QStringLiteral("#556677")));
+    EXPECT_EQ(visual.padding, QMargins(3, 3, 3, 3));
+    QFont inherited;
+    inherited.setItalic(true);
+    const auto resolved = visual.font.resolve(inherited);
+    EXPECT_EQ(resolved.families(), QStringList{QStringLiteral("Arial")});
+    EXPECT_EQ(resolved.pixelSize(), 13);
+    EXPECT_EQ(resolved.weight(), QFont::Normal);
+    EXPECT_EQ(resolved.letterSpacing(), 2);
+    EXPECT_EQ(resolved.capitalization(), QFont::AllUppercase);
+    EXPECT_TRUE(resolved.italic());
+    const auto& native = appearance.nativeStyleSheet();
+    const int section = native.indexOf(QStringLiteral("QHeaderView::section"));
+    ASSERT_GE(section, 0);
+    EXPECT_FALSE(native.mid(section, native.indexOf(QLatin1Char('}'), section) - section)
+                     .contains(QStringLiteral("font-")));
+    EXPECT_FALSE(native.mid(section, native.indexOf(QLatin1Char('}'), section) - section)
+                     .contains(QStringLiteral("letter-spacing")));
+    EXPECT_TRUE(native.contains(QStringLiteral("QToolButton {\n    font-size: 13px")));
+
+    button.setStyleSheet(QStringLiteral("color: #667788;"));
+    appearance.invalidate(&button);
+    EXPECT_EQ(appearance.visual(&button, QStyle::State_Enabled).foreground,
+              QColor(QStringLiteral("#667788")));
+    appearance.updateStyleSheet(QStringLiteral("#action { color: #778899; border: 2px solid #8899aa; }"));
+    visual = appearance.visual(&button, QStyle::State_Enabled);
+    EXPECT_EQ(visual.foreground, QColor(QStringLiteral("#667788")));
+    EXPECT_EQ(visual.borderColors[0], QColor(QStringLiteral("#8899aa")));
+
+    button.setStyleSheet(QString());
+    container.setStyleSheet(QStringLiteral("QToolButton { color: #99aabb; }"));
+    appearance.invalidate(&container);
+    EXPECT_EQ(appearance.visual(&button, QStyle::State_Enabled).foreground,
+              QColor(QStringLiteral("#99aabb")));
+}
+
+TEST(WidgetAppearance, ManagedLocalColorsUpdateWithoutChangingNativeLayout)
+{
+    QWidget root;
+    QToolButton button(&root);
+    VNX::WidgetAppearance appearance;
+    appearance.updateStyleSheet(QStringLiteral("QToolButton { color: #112233; background: #223344; }"));
+    EXPECT_EQ(appearance.visual(&button, QStyle::State_Enabled).foreground,
+              QColor(QStringLiteral("#112233")));
+    EXPECT_TRUE(appearance.updateWidgetStyle(&root,
+        QStringLiteral("QToolButton { color: #334455; }")).isEmpty());
+    EXPECT_TRUE(root.styleSheet().isEmpty());
+    EXPECT_EQ(appearance.visual(&button, QStyle::State_Enabled).foreground,
+              QColor(QStringLiteral("#334455")));
+
+    QString source = QStringLiteral("QToolButton { background: #445566; padding: 4px; font-size: 12px; }"
+                                    "QToolButton:hover { background: #556677; }");
+    const QString native = appearance.updateWidgetStyle(&button, source);
+    button.setStyleSheet(native);
+    appearance.invalidate(&button);
+    EXPECT_EQ(appearance.visual(&button, QStyle::State_Enabled).background,
+              QColor(QStringLiteral("#445566")));
+    EXPECT_EQ(appearance.visual(&button, QStyle::State_Enabled | QStyle::State_MouseOver).background,
+              QColor(QStringLiteral("#556677")));
+
+    source.replace(QStringLiteral("#445566"), QStringLiteral("#667788"));
+    EXPECT_EQ(appearance.updateWidgetStyle(&button, source), native);
+    EXPECT_EQ(button.styleSheet(), native);
+    const auto visual = appearance.visual(&button, QStyle::State_Enabled);
+    EXPECT_EQ(visual.background, QColor(QStringLiteral("#667788")));
+    EXPECT_EQ(visual.foreground, QColor(QStringLiteral("#334455")));
+    EXPECT_EQ(visual.padding, QMargins(4, 4, 4, 4));
+    EXPECT_EQ(visual.font.pixelSize(), 12);
 }

@@ -486,7 +486,7 @@ BlueprintCanvasWidget::BlueprintCanvasWidget(QWidget* parent)
             this, &BlueprintCanvasWidget::refreshNodeTitles_, Qt::QueuedConnection);
     connect(&MediaPool::instance(), &MediaPool::mediaStatusChanged,
             this, &BlueprintCanvasWidget::refreshNodeTitles_, Qt::QueuedConnection);
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
             this, &BlueprintCanvasWidget::refreshNodeTitles_);
     connect(&pm, &ProjectManager::activePropertyEditsFinishing,
             this, &BlueprintCanvasWidget::finishNodeEdits_);
@@ -2153,8 +2153,10 @@ bool BlueprintCanvasWidget::canCollapseChain(uint32_t objectId) const
 bool BlueprintCanvasWidget::viewportEvent(QEvent* event)
 {
     switch (event->type()) {
-    case QEvent::StyleChange:
     case QEvent::PaletteChange:
+        scheduleContentAppearanceRefresh_();
+        break;
+    case QEvent::StyleChange:
     case QEvent::FontChange:
     case QEvent::DevicePixelRatioChange:
         scheduleContentPresentationRefresh_();

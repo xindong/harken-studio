@@ -4,10 +4,12 @@
 #include "../../Core/ThemeManager.h"
 #include "../../Core/QtControlSkin.h"
 #include "../../Core/ThemeAssetCatalog.h"
+#include "../../Core/HarkenStyle.h"
 #include <QPropertyAnimation>
 #include <QMargins>
 #include <QShowEvent>
 #include <QHBoxLayout>
+#include <utility>
 
 namespace VNX {
 
@@ -76,6 +78,7 @@ CollapsibleSection::CollapsibleSection(const QString& title,
     connect(&theme, &ThemeManager::themeChanged, this, [this]() {
         applyTheme();
     });
+    connect(&theme, &ThemeManager::appearanceChanged, this, &CollapsibleSection::refreshAppearance);
 
     applyTheme();
 }
@@ -200,33 +203,11 @@ void CollapsibleSection::showEvent(QShowEvent* event)
 void CollapsibleSection::applyTheme()
 {
     auto& theme = ThemeManager::instance();
-    const QtControlSkin skin(theme.snapshot());
-    const auto& colors = theme.colors();
     const int lvl = level_ < 0 ? 0 : level_;
-
-    QString headerStyle = skin.collapsibleHeaderStyle(
-        indicatorColor_, expanded_, hasCustomIndicator_, lvl);
     const int headerSpacing = theme.metrics().spacingSmall;
     headerLayout_->setColumnMinimumWidth(2, headerWidget_ ? headerSpacing : 0);
-    if (headerWidget_)
-        headerStyle += QStringLiteral("QToolButton { padding-right: %1px; }")
-            .arg(headerWidget_->sizeHint().width() + 2 * headerSpacing);
-    toggleButton_->setStyleSheet(headerStyle);
-    headerLine_->setStyleSheet(
-        skin.collapsibleIndicatorStyle(indicatorColor_, 180, false));
-
     if (railFrame_)
-    {
-        const bool show = lvl >= 1;
-        railFrame_->setVisible(show);
-        if (show)
-        {
-            QColor c = hasCustomIndicator_ ? indicatorColor_ : colors.accent;
-            c.setAlpha(lvl == 1 ? 150 : 100);
-            railFrame_->setStyleSheet(
-                skin.collapsibleIndicatorStyle(c, c.alpha(), true));
-        }
-    }
+        railFrame_->setVisible(lvl >= 1);
 
     if (contentArea_->layout())
     {
@@ -242,10 +223,37 @@ void CollapsibleSection::applyTheme()
         innerContent_->layout()->setContentsMargins(m);
     }
 
-    const QColor caretColor = hasCustomIndicator_ ? indicatorColor_
-                            : (lvl == 0 ? colors.textSecondary : colors.textMuted);
     const int chevronExtent = theme.metrics().navigationChevronExtent;
     toggleButton_->setIconSize(QSize(chevronExtent, chevronExtent));
+    refreshAppearance();
+}
+
+void CollapsibleSection::refreshAppearance()
+{
+    auto& theme = ThemeManager::instance();
+    const QtControlSkin skin(theme.snapshot());
+    const auto& colors = theme.colors();
+    const int lvl = level_ < 0 ? 0 : level_;
+    const auto applyStyle = [&theme](QWidget* widget, QString source) {
+        const auto& native = theme.widgetAppearance().updateWidgetStyle(widget, std::move(source));
+        if (widget->styleSheet() != native) widget->setStyleSheet(native);
+        HarkenStyle::refreshWidgetAppearance(widget, theme);
+        widget->update();
+    };
+    QString headerStyle = skin.collapsibleHeaderStyle(
+        indicatorColor_, expanded_, hasCustomIndicator_, lvl);
+    if (headerWidget_)
+        headerStyle += QStringLiteral("QToolButton { padding-right: %1px; }")
+            .arg(headerWidget_->sizeHint().width() + 2 * theme.metrics().spacingSmall);
+    applyStyle(toggleButton_, std::move(headerStyle));
+    applyStyle(headerLine_, skin.collapsibleIndicatorStyle(indicatorColor_, 180, false));
+    if (railFrame_ && lvl >= 1) {
+        QColor color = hasCustomIndicator_ ? indicatorColor_ : colors.accent;
+        color.setAlpha(lvl == 1 ? 150 : 100);
+        applyStyle(railFrame_, skin.collapsibleIndicatorStyle(color, color.alpha(), true));
+    }
+    const QColor caretColor = hasCustomIndicator_ ? indicatorColor_
+                            : (lvl == 0 ? colors.textSecondary : colors.textMuted);
     toggleButton_->setIcon(theme.resolveIcon(
         QString::fromLatin1(expanded_ ? ThemeAssetIds::NavigationChevronDown
                                      : ThemeAssetIds::NavigationChevronRight),

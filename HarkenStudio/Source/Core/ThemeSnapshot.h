@@ -79,6 +79,7 @@ struct ThemeColors
         Q_ASSERT(index >= 0);
         return categoricalPalette[static_cast<size_t>(index) % categoricalPalette.size()];
     }
+    bool operator==(const ThemeColors&) const = default;
 };
 
 struct ThemeMetrics
@@ -109,6 +110,7 @@ struct ThemeMetrics
         int compactColumnWidth = 0;
         int minimumColumnWidth = 0;
         int resizeHandleRadius = 0;
+        bool operator==(const Table&) const = default;
     } table;
 
     struct Inspector {
@@ -138,6 +140,7 @@ struct ThemeMetrics
                 : bindingSlotWidth;
             return occupiedSlots * (cell + slotSpacing);
         }
+        bool operator==(const Inspector&) const = default;
     } inspector;
 
     struct Parameter {
@@ -149,6 +152,7 @@ struct ThemeMetrics
         int sliderGrooveThickness = 0;
         int sliderHandleThickness = 0;
         int sliderHandleLength = 0;
+        bool operator==(const Parameter&) const = default;
     } parameter;
 
     struct Timeline {
@@ -172,7 +176,9 @@ struct ThemeMetrics
         int compactHeaderWidth = 0;
         int queueLaneLabelWidth = 0;
         int headerGripWidth = 0;
+        bool operator==(const Timeline&) const = default;
     } timeline;
+    bool operator==(const ThemeMetrics&) const = default;
 };
 
 struct ThemeFontStyle
@@ -180,6 +186,7 @@ struct ThemeFontStyle
     QString family;
     int pointSize = 0;
     int weight = 0;
+    bool operator==(const ThemeFontStyle&) const = default;
 };
 
 struct ThemeTypography
@@ -191,6 +198,7 @@ struct ThemeTypography
     ThemeFontStyle axis;
     ThemeFontStyle mono;
     ThemeFontStyle label;
+    bool operator==(const ThemeTypography&) const = default;
 };
 
 struct ParameterPresentationStyle
@@ -212,6 +220,7 @@ struct ParameterPresentationStyle
         }
         return ParameterPresenterId::SliderWithValue;
     }
+    bool operator==(const ParameterPresentationStyle&) const = default;
 };
 
 struct ComponentRecipeSlot
@@ -224,6 +233,7 @@ struct ComponentRecipeSlot
     ComponentRecipeAlignment alignment = ComponentRecipeAlignment::Fill;
     std::optional<ParameterPresenterId> presenter;
     QString asset;
+    bool operator==(const ComponentRecipeSlot&) const = default;
 };
 
 struct ComponentRecipe
@@ -232,6 +242,7 @@ struct ComponentRecipe
     ComponentRecipeBreakpoint breakpoint = ComponentRecipeBreakpoint::Default;
     ComponentRecipeVariant variant = ComponentRecipeVariant::TrackCompact;
     QVector<ComponentRecipeSlot> items;
+    bool operator==(const ComponentRecipe&) const = default;
 };
 
 struct PresentationRecipes
@@ -246,6 +257,7 @@ struct PresentationRecipes
         const auto it = entries.constFind(componentRecipeKey(host, breakpoint));
         return it == entries.constEnd() ? nullptr : &it.value();
     }
+    bool operator==(const PresentationRecipes&) const = default;
 };
 
 struct UiTokens
@@ -255,6 +267,7 @@ struct UiTokens
     ThemeTypography typography;
     ParameterPresentationStyle parameterPresenters;
     PresentationRecipes recipes;
+    bool operator==(const UiTokens&) const = default;
 };
 
 struct QtPaletteColors
@@ -278,6 +291,7 @@ struct QtPaletteColors
     QColor disabledText;
     QColor disabledButtonText;
     QColor disabledHighlight;
+    bool operator==(const QtPaletteColors&) const = default;
 };
 
 struct QtAdsStyle
@@ -320,12 +334,15 @@ struct QtAdsStyle
         int autoHideSideBarSpacing = 0;
         int autoHideTitleBorderWidth = 0;
         int autoHideTitlePaddingLeft = 0;
+        bool operator==(const Metrics&) const = default;
     } metrics;
+    bool operator==(const QtAdsStyle&) const = default;
 };
 
 struct ThirdPartyStyles
 {
     QtAdsStyle qtAds;
+    bool operator==(const ThirdPartyStyles&) const = default;
 };
 
 struct WaveformStyle
@@ -343,17 +360,20 @@ struct WaveformStyle
         QColor peak;
         int accentQuietAlpha = 0;
         int accentPeakAlpha = 0;
+        bool operator==(const StaticMode&) const = default;
     } staticMode;
 
     struct MultiBandMode {
         std::array<QColor, 3> colors;
         std::array<float, 3> gains{};
         float alpha = 0.0f;
+        bool operator==(const MultiBandMode&) const = default;
     } multiBandMode;
 
     struct ColorMapMode {
         std::array<float, 4> offset{};
         std::array<float, 4> slope{};
+        bool operator==(const ColorMapMode&) const = default;
     } colorMapMode;
 
     struct SplitStereo {
@@ -363,6 +383,7 @@ struct WaveformStyle
         int labelPointSize = 0;
         int labelRightInset = 0;
         int labelBaselineOffset = 0;
+        bool operator==(const SplitStereo&) const = default;
     } splitStereo;
 
     struct RawPeaks {
@@ -370,6 +391,7 @@ struct WaveformStyle
         QColor centerLine;
         qreal cornerRadius = 0.0;
         qreal centerLineWidth = 0.0;
+        bool operator==(const RawPeaks&) const = default;
     } rawPeaks;
 
     struct DbScale {
@@ -380,9 +402,11 @@ struct WaveformStyle
         qreal amplitudeScale = 0.0;
         int labelLeftInset = 0;
         int labelBaselineOffset = 0;
+        bool operator==(const DbScale&) const = default;
     } dbScale;
 
     qreal amplitudeScale = 0.0;
+    bool operator==(const WaveformStyle&) const = default;
 };
 
 enum class CurveColorRole
@@ -422,6 +446,7 @@ struct CurveStyle
         QColor playhead;
         QColor readoutBackground;
         QColor readoutText;
+        bool operator==(const Colors&) const = default;
     } colors;
 
     struct Metrics {
@@ -481,7 +506,9 @@ struct CurveStyle
         qreal readoutAboveOffset = 0.0;
         qreal readoutBelowOffset = 0.0;
         qreal readoutRadius = 0.0;
+        bool operator==(const Metrics&) const = default;
     } metrics;
+    bool operator==(const CurveStyle&) const = default;
 };
 
 struct MeterStyle
@@ -514,6 +541,7 @@ struct MeterStyle
         QColor liveHighlight;
         QColor correlationPositive;
         QColor correlationNegative;
+        bool operator==(const Stereo&) const = default;
     } stereo;
 
     struct Layout {
@@ -522,6 +550,7 @@ struct MeterStyle
         QColor dividerSnapped;
         QColor dropBorder;
         QColor dropFill;
+        bool operator==(const Layout&) const = default;
     } layout;
 
     struct Interaction {
@@ -530,6 +559,7 @@ struct MeterStyle
             QColor accentGuide;
             QColor readoutBackground;
             QColor readoutText;
+            bool operator==(const Colors&) const = default;
         } colors;
 
         struct Metrics {
@@ -542,7 +572,9 @@ struct MeterStyle
             qreal aboveGap = 0.0;
             qreal belowOffset = 0.0;
             qreal radius = 0.0;
+            bool operator==(const Metrics&) const = default;
         } metrics;
+        bool operator==(const Interaction&) const = default;
     } interaction;
 
     struct Peak {
@@ -561,6 +593,7 @@ struct MeterStyle
             QColor clipBackground;
             QColor clipText;
             QColor label;
+            bool operator==(const Colors&) const = default;
         } colors;
 
         struct Metrics {
@@ -590,7 +623,9 @@ struct MeterStyle
             int channelLabelBottomOffset = 0;
             int valueLabelBottomOffset = 0;
             int labelHeight = 0;
+            bool operator==(const Metrics&) const = default;
         } metrics;
+        bool operator==(const Peak&) const = default;
     } peakMeter;
 
     struct Loudness {
@@ -601,6 +636,7 @@ struct MeterStyle
             QColor targetText;
             QColor labelText;
             QColor valueText;
+            bool operator==(const Colors&) const = default;
         } colors;
 
         struct Metrics {
@@ -626,7 +662,9 @@ struct MeterStyle
             qreal channelLabelHeight = 0.0;
             qreal valueLabelBottomOffset = 0.0;
             qreal valueLabelHeight = 0.0;
+            bool operator==(const Metrics&) const = default;
         } metrics;
+        bool operator==(const Loudness&) const = default;
     } loudnessMeter;
 
     struct VU {
@@ -647,6 +685,7 @@ struct MeterStyle
             QColor barGrid;
             QColor barLabelText;
             QColor barValueText;
+            bool operator==(const Colors&) const = default;
         } colors;
 
         struct Metrics {
@@ -703,7 +742,9 @@ struct MeterStyle
             int barChannelLabelHeight = 0;
             int barValueLabelBottomOffset = 0;
             int barValueLabelHeight = 0;
+            bool operator==(const Metrics&) const = default;
         } metrics;
+        bool operator==(const VU&) const = default;
     } vuMeter;
 
     struct Spectrum {
@@ -721,6 +762,7 @@ struct MeterStyle
             QColor horizontalGrid;
             QColor verticalGrid;
             QColor axisText;
+            bool operator==(const Colors&) const = default;
         } colors;
 
         struct Metrics {
@@ -747,7 +789,9 @@ struct MeterStyle
             qreal frequencyLabelTopOffset = 0.0;
             qreal frequencyLabelWidth = 0.0;
             qreal frequencyLabelHeight = 0.0;
+            bool operator==(const Metrics&) const = default;
         } metrics;
+        bool operator==(const Spectrum&) const = default;
     } spectrumMeter;
 
     struct Spectrogram {
@@ -757,6 +801,7 @@ struct MeterStyle
             QColor grid;
             QColor axisText;
             QColor timeText;
+            bool operator==(const Colors&) const = default;
         } colors;
 
         struct Metrics {
@@ -771,8 +816,11 @@ struct MeterStyle
             qreal frequencyLabelHeight = 0.0;
             qreal timeLabelTopOffset = 0.0;
             qreal timeLabelHeight = 0.0;
+            bool operator==(const Metrics&) const = default;
         } metrics;
+        bool operator==(const Spectrogram&) const = default;
     } spectrogramMeter;
+    bool operator==(const MeterStyle&) const = default;
 };
 
 struct FeedbackStyle
@@ -785,6 +833,7 @@ struct FeedbackStyle
     QColor overlayBackground;
     QColor overlayErrorBackground;
     QColor overlayHighlight;
+    bool operator==(const FeedbackStyle&) const = default;
 };
 
 struct DomainColors
@@ -796,6 +845,7 @@ struct DomainColors
 
     struct Startup {
         std::array<QColor, 4> wavePalette;
+        bool operator==(const Startup&) const = default;
     } startup;
 
     struct PinDomain {
@@ -805,6 +855,7 @@ struct DomainColors
         QColor ring;
         QColor targetOk;
         QColor targetBad;
+        bool operator==(const PinDomain&) const = default;
     } pinDomain;
 
     struct NodeGraphNode {
@@ -829,6 +880,7 @@ struct DomainColors
         QColor waveformBg;
         QColor waveformCenter;
         QColor blueprintWaveform;
+        bool operator==(const NodeGraphNode&) const = default;
     } nodeGraphNode;
 
     struct Blueprint {
@@ -842,6 +894,7 @@ struct DomainColors
         QColor busRoute;
         QColor send;
         QColor overrideRoute;
+        bool operator==(const Blueprint&) const = default;
     } blueprint;
 
     struct Timeline {
@@ -858,6 +911,7 @@ struct DomainColors
         QColor unavailableOverlay;
         QColor unavailableText;
         QColor outOfSpanVeil;
+        bool operator==(const Timeline&) const = default;
     } timeline;
 
     struct Music {
@@ -868,6 +922,7 @@ struct DomainColors
         QColor beatGridMinor;
         QColor cursor;
         QColor loopRegion;
+        bool operator==(const Music&) const = default;
     } music;
 
     struct Log {
@@ -876,6 +931,7 @@ struct DomainColors
         QColor warning;
         QColor error;
         QColor critical;
+        bool operator==(const Log&) const = default;
     } log;
 
     struct Monitor {
@@ -919,11 +975,13 @@ struct DomainColors
         QColor spatialDopplerHi;
         QColor spatialDopplerLo;
         QColor spatialDot;
+        bool operator==(const Monitor&) const = default;
     } monitor;
 
     struct AI {
         QColor brandAccent;
         QColor userAccent;
+        bool operator==(const AI&) const = default;
     } ai;
 
     struct Scene3D {
@@ -940,6 +998,7 @@ struct DomainColors
         QColor hudLpf;
         QColor hudWidth;
         QColor dopplerIdle;
+        bool operator==(const Scene3D&) const = default;
     } scene3d;
 
     struct Spatial {
@@ -958,7 +1017,9 @@ struct DomainColors
         QColor layerLpf;
         QColor layerWidth;
         QColor layerReverb;
+        bool operator==(const Spatial&) const = default;
     } spatial;
+    bool operator==(const DomainColors&) const = default;
 };
 
 struct ThemeSnapshot
@@ -969,6 +1030,7 @@ struct ThemeSnapshot
     QtPaletteColors qtPalette;
     ThirdPartyStyles thirdParty;
     DomainColors domains;
+    bool operator==(const ThemeSnapshot&) const = default;
 };
 
 using ThemeSnapshotPtr = std::shared_ptr<const ThemeSnapshot>;

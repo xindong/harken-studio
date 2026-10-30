@@ -555,7 +555,7 @@ private:
             iconLabel->setPixmap(theme.resolveIcon(QString::fromLatin1(typeIconId(type)))
                 .icon.pixmap(iconLabel->size(), iconLabel->devicePixelRatioF()));
         };
-        QObject::connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
+        QObject::connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
                          iconLabel, refreshIcon);
         refreshIcon();
         typeCell->addWidget(iconLabel, 0);

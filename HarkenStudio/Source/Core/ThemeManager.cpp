@@ -4,6 +4,7 @@
 #include "BuiltinTheme.h"
 #include "ThemeColorResolver.h"
 #include "FontManager.h"
+#include "HarkenStyle.h"
 #include "QtAdsThemeAdapter.h"
 #include "QtControlSkin.h"
 #include "QSettingsStorage.h"
@@ -11,11 +12,11 @@
 #include <QApplication>
 #include <QDir>
 #include <QPainter>
-#include <QPixmapCache>
 #include <QRect>
 #include <QStandardPaths>
 #include <QStyleHints>
 #include <QThread>
+#include <QWidget>
 
 #include <utility>
 
@@ -83,7 +84,7 @@ ThemeManager::ThemeManager(QString userThemesRoot,
         committedCandidate_ = *loaded.candidate;
         publishCandidate(committedCandidate_, false);
     }
-    applyApplicationTheme();
+    applyApplicationTheme(true);
 }
 
 ThemePackageDiscoveryResult ThemeManager::refreshThemes()
@@ -118,7 +119,7 @@ ThemeManagerOperationResult ThemeManager::reloadTheme()
     previewActive_ = false;
     previewBaseCandidate_.reset();
     previewBasePalette_.reset();
-    publishCandidate(committedCandidate_, true);
+    publishCandidate(committedCandidate_, true, true);
     result.published = true;
     lastDiagnostics_.clear();
     return result;
@@ -304,19 +305,33 @@ void ThemeManager::cancelAppearancePreview()
 }
 
 void ThemeManager::publishCandidate(const ThemePackageCandidate& candidate,
-                                    bool notify)
+                                    bool notify, bool reloadAssets)
 {
+    const auto previous = snapshot_;
+    const bool assetsChanged = reloadAssets || publishedThemeId_ != candidate.manifest.id
+        || publishedAssets_ != candidate.assets || publishedAssetRoots_ != candidate.assetRoots;
+    ThemeSnapshot structure = *candidate.snapshot;
+    ColorPalette previousColors;
+    previousColors.snapshot = previous;
+    applyColorPalette(structure, previousColors);
+    structure.generation = previous->generation;
+    const bool structureChanged = assetsChanged || structure != *previous;
     ThemeSnapshot published = *candidate.snapshot;
     published.generation = ++generation_;
     snapshot_ = std::make_shared<const ThemeSnapshot>(std::move(published));
     assetResolver_.registerSnapshot(snapshot_, candidate.assets,
-                                    candidate.assetRoots);
-    applyApplicationTheme();
-    if (notify)
-        emit themeChanged(snapshot_);
+                                    candidate.assetRoots, assetsChanged ? ThemeSnapshotPtr{} : previous);
+    publishedThemeId_ = candidate.manifest.id;
+    publishedAssets_ = candidate.assets;
+    publishedAssetRoots_ = candidate.assetRoots;
+    applyApplicationTheme(structureChanged);
+    if (notify) {
+        if (structureChanged) emit themeChanged(snapshot_);
+        emit appearanceChanged(snapshot_);
+    }
 }
 
-void ThemeManager::applyApplicationTheme()
+void ThemeManager::applyApplicationTheme(bool structureChanged)
 {
     auto* application = qobject_cast<QApplication*>(QCoreApplication::instance());
     if (!application)
@@ -327,18 +342,31 @@ void ThemeManager::applyApplicationTheme()
         snapshot_->colorScheme == ThemeColorScheme::Light
             ? Qt::ColorScheme::Light
             : Qt::ColorScheme::Dark);
-    application->setPalette(skin.applicationPalette());
+    bool refreshWidgetPalettes = structureChanged;
     const QString baseStyleSheet = skin.applicationStyleSheet();
     if (!baseStyleSheet.isNull())
     {
-        application->setStyleSheet(
-            QtAdsThemeAdapter(snapshot_)
-                .composeApplicationStyleSheet(baseStyleSheet));
+        const auto styleSheet = QtAdsThemeAdapter(snapshot_).composeApplicationStyleSheet(baseStyleSheet);
+        refreshWidgetPalettes |= widgetAppearance_.updateStyleSheet(styleSheet);
+        const auto& nativeStyleSheet = widgetAppearance_.nativeStyleSheet();
+        if (application->styleSheet() != nativeStyleSheet) {
+            application->setStyleSheet(nativeStyleSheet);
+            refreshWidgetPalettes = true;
+        }
     }
-    application->setFont(fontManager.getFont(snapshot_, FontRole::Body));
-    QtAdsThemeAdapter::applyIcons(assetResolver_, snapshot_);
-    QPixmapCache::clear();
+    const auto palette = skin.applicationPalette();
+    if (application->palette() != palette) {
+        application->setPalette(palette);
+        refreshWidgetPalettes = true;
+    }
+    const auto font = fontManager.getFont(snapshot_, FontRole::Body);
+    if (application->font() != font) application->setFont(font);
+    if (structureChanged) QtAdsThemeAdapter::applyIcons(assetResolver_, snapshot_);
     fontManager.applyTheme(snapshot_);
+    if (refreshWidgetPalettes)
+        for (auto* widget : application->allWidgets())
+            HarkenStyle::refreshWidgetAppearance(widget, *this);
+    for (auto* window : application->topLevelWidgets()) window->update();
 }
 
 bool ThemeManager::persistAppearance(

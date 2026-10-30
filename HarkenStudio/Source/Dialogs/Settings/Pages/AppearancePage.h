@@ -10,6 +10,7 @@ class QHideEvent;
 class QLabel;
 class QPushButton;
 class QShowEvent;
+class QTimer;
 
 namespace VNX {
 
@@ -42,9 +43,9 @@ private:
     void applyLanguage();
     void refreshLanguage();
     bool commitAppearance(const ThemeAppearance& appearance);
-    void refreshPresets();
+    void refreshPresets(bool currentOnly = false);
     bool loadBasePalette();
-    void refreshColors();
+    void refreshColors(const QString& changedKey = {});
     void filterColors();
     void refreshSelectedColor();
     const ThemeColorRole* selectedRole() const;
@@ -52,6 +53,7 @@ private:
     ThemeAppearance appearanceWithColor(const QString& key, const QColor& color) const;
     bool setColor(const QString& key, const QColor& color);
     void editSelectedColor();
+    void publishPreview();
     void resetSelectedColor();
     void resetColors();
     void cancelPreview();
@@ -69,6 +71,9 @@ private:
     QPushButton* colorReset_ = nullptr;
     QPushButton* colorsReset_ = nullptr;
     QPointer<ColorEditorDialog> colorDialog_;
+    QTimer* previewTimer_ = nullptr;
+    QString previewColorKey_;
+    QColor pendingPreviewColor_;
 
     std::optional<ColorPalette> basePalette_;
     QMap<QString, ColorPalette> palettes_;

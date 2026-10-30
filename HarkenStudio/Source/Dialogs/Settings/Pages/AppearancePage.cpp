@@ -24,6 +24,7 @@
 #include <QStandardItemModel>
 #include <QStyledItemDelegate>
 #include <QStylePainter>
+#include <QTimer>
 
 namespace VNX {
 
@@ -287,6 +288,11 @@ AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
     body->addWidget(colors);
     body->addStretch();
 
+    previewTimer_ = new QTimer(this);
+    previewTimer_->setInterval(16);
+    previewTimer_->setTimerType(Qt::PreciseTimer);
+    connect(previewTimer_, &QTimer::timeout, this, &AppearancePage::publishPreview);
+
     connect(themeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &AppearancePage::selectTheme);
     connect(colorPresets_, QOverload<int>::of(&QComboBox::activated),
@@ -302,7 +308,7 @@ AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
             [this](QTreeWidgetItem*, int) { editSelectedColor(); });
     connect(colorReset_, &QPushButton::clicked, this, &AppearancePage::resetSelectedColor);
     connect(colorsReset_, &QPushButton::clicked, this, &AppearancePage::resetColors);
-    connect(themeManager_, &ThemeManager::themeChanged, this, [this] {
+    connect(themeManager_, &ThemeManager::appearanceChanged, this, [this] {
         if (updatingAppearance_) return;
         if (colorDialog_) colorDialog_->reject();
         load();
@@ -409,6 +415,8 @@ void AppearancePage::selectColorPreset()
 
 bool AppearancePage::commitAppearance(const ThemeAppearance& appearance)
 {
+    previewTimer_->stop();
+    pendingPreviewColor_ = QColor();
     ThemeManagerOperationResult result;
     {
         const QScopedValueRollback guard(updatingAppearance_, true);
@@ -430,23 +438,25 @@ bool AppearancePage::loadBasePalette()
     return loaded.ok();
 }
 
-void AppearancePage::refreshPresets()
+void AppearancePage::refreshPresets(bool currentOnly)
 {
     const QSignalBlocker blocker(colorPresets_);
     auto* model = static_cast<QStandardItemModel*>(colorPresets_->model());
     for (int i = 0; i < colorPresets_->count(); ++i) {
+        if (currentOnly && i != colorPresets_->currentIndex()) continue;
         const QString id = colorPresets_->itemData(i).toString();
         const QString name = colorPresets_->itemText(i);
         const auto base = palettes_.constFind(id);
         const bool available = base != palettes_.cend();
         const auto overrides = appearance_.colors.value(id);
         colorPresets_->setItemData(i, available ? presetSwatch(*base, overrides) : QPixmap(), Qt::UserRole + 1);
+        if (currentOnly) continue;
         model->item(i)->setEnabled(available);
         colorPresets_->setItemData(i, available
             ? tr("Use the global %1 palette with the current theme. Edits to this palette are shared by all themes.\nMain background · Controls · Selection · Accent · Primary text\nSecondary text · Success · Warning · Error · Information").arg(name)
             : tr("Unavailable"), Qt::ToolTipRole);
     }
-    colorPresets_->setCurrentIndex(colorPresets_->findData(appearance_.paletteId));
+    if (!currentOnly) colorPresets_->setCurrentIndex(colorPresets_->findData(appearance_.paletteId));
     colorPresets_->update();
 }
 
@@ -456,16 +466,21 @@ QColor AppearancePage::effectiveColor(const ThemeColorRole& role) const
     return appearance_.colors.value(appearance_.paletteId).value(key, basePalette_->colors.value(key));
 }
 
-void AppearancePage::refreshColors()
+void AppearancePage::refreshColors(const QString& changedKey)
 {
-    refreshPresets();
-    colorTree_->setEnabled(bool(basePalette_));
-    colorGroup_->setEnabled(bool(basePalette_));
-    colorSearch_->setEnabled(bool(basePalette_));
+    const bool fullRefresh = changedKey.isEmpty();
+    refreshPresets(!fullRefresh);
+    if (fullRefresh) {
+        colorTree_->setEnabled(bool(basePalette_));
+        colorGroup_->setEnabled(bool(basePalette_));
+        colorSearch_->setEnabled(bool(basePalette_));
+    }
     colorsReset_->setEnabled(basePalette_ && !appearance_.colors.value(appearance_.paletteId).isEmpty());
     for (int i = 0; i < colorTree_->topLevelItemCount(); ++i) {
         auto* item = colorTree_->topLevelItem(i);
-        const auto* role = findThemeColorRole(item->data(0, Qt::UserRole).toString());
+        const QString key = item->data(0, Qt::UserRole).toString();
+        if (!fullRefresh && key != changedKey) continue;
+        const auto* role = findThemeColorRole(key);
         if (!basePalette_) {
             item->setText(1, QString());
             item->setText(2, QString());
@@ -476,14 +491,17 @@ void AppearancePage::refreshColors()
         const QColor value = effectiveColor(*role);
         const QColor original = basePalette_->colors.value(QString::fromLatin1(role->key));
         item->setText(1, colorText(value));
-        item->setText(2, colorText(original));
         item->setIcon(1, colorIcon(value, palette(), devicePixelRatioF()));
-        item->setIcon(2, colorIcon(original, palette(), devicePixelRatioF()));
+        if (fullRefresh) {
+            item->setText(2, colorText(original));
+            item->setIcon(2, colorIcon(original, palette(), devicePixelRatioF()));
+        }
         item->setToolTip(1, value == original ? tr("Palette default") : tr("Customized global palette color"));
         item->setData(1, TableTextRole, static_cast<int>(
             value == original ? TableTextState::Normal : TableTextState::Custom));
     }
-    filterColors();
+    if (fullRefresh) filterColors();
+    else refreshSelectedColor();
 }
 
 void AppearancePage::filterColors()
@@ -549,25 +567,21 @@ void AppearancePage::editSelectedColor()
     const auto* role = selectedRole();
     if (!role) return;
     const QString key = QString::fromLatin1(role->key);
+    previewColorKey_ = key;
     auto* dialog = new ColorEditorDialog(effectiveColor(*role), this);
     colorDialog_ = dialog;
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->setObjectName(QStringLiteral("appearanceColorDialog"));
     dialog->setWindowTitle(tr("Color: %1").arg(roleText(role->label)));
     connect(dialog, &ColorEditorDialog::currentColorChanged, this,
-            [this, key](const QColor& color) {
+            [this](const QColor& color) {
         if (!color.isValid()) return;
-        const auto preview = appearanceWithColor(key, color);
-        const QScopedValueRollback guard(updatingAppearance_, true);
-        const auto result = themeManager_->previewAppearance(preview);
-        if (result.ok()) {
-            previewActive_ = true;
-            appearance_ = preview;
-            refreshColors();
-        }
-        showError(result.diagnostics);
+        pendingPreviewColor_ = color;
+        if (!previewTimer_->isActive()) previewTimer_->start();
     });
     connect(dialog, &QDialog::finished, this, [this, dialog, key](int result) {
+        previewTimer_->stop();
+        pendingPreviewColor_ = QColor();
         colorDialog_.clear();
         if (result == QDialog::Accepted) {
             setColor(key, dialog->currentColor());
@@ -577,6 +591,24 @@ void AppearancePage::editSelectedColor()
         }
     });
     dialog->open();
+}
+
+void AppearancePage::publishPreview()
+{
+    if (!colorDialog_ || !pendingPreviewColor_.isValid()) {
+        previewTimer_->stop();
+        return;
+    }
+    const auto preview = appearanceWithColor(previewColorKey_, pendingPreviewColor_);
+    pendingPreviewColor_ = QColor();
+    const QScopedValueRollback guard(updatingAppearance_, true);
+    const auto result = themeManager_->previewAppearance(preview);
+    if (result.ok()) {
+        previewActive_ = true;
+        appearance_ = preview;
+        refreshColors(previewColorKey_);
+    }
+    showError(result.diagnostics);
 }
 
 void AppearancePage::resetSelectedColor()
@@ -594,6 +626,8 @@ void AppearancePage::resetColors()
 
 void AppearancePage::cancelPreview()
 {
+    previewTimer_->stop();
+    pendingPreviewColor_ = QColor();
     if (!previewActive_) return;
     const QScopedValueRollback guard(updatingAppearance_, true);
     themeManager_->cancelAppearancePreview();

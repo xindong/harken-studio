@@ -43,7 +43,7 @@ QAction* makePinAction(QWidget* content, bool pinned,
         action->setToolTip(action->text());
     };
     QObject::connect(action, &QAction::toggled, action, refresh);
-    QObject::connect(&ThemeManager::instance(), &ThemeManager::themeChanged, action, refresh);
+    QObject::connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, action, refresh);
     refresh();
     return action;
 }

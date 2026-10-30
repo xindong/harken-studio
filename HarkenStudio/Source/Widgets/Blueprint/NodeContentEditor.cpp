@@ -265,23 +265,26 @@ NodeContentPresentation NodeContentEditor::presentation()
 }
 
 NodeContentPresentation NodeContentRenderer::presentation(const NodeContentInfo& info,
-    NodeContentFields fields, int labelWidth, bool routeGain)
+    NodeContentFields fields, std::optional<int> labelWidth, bool routeGain)
 {
     QByteArray key;
     QDataStream stream(&key, QIODevice::WriteOnly);
-    stream << info.fields().toInt() << fields.toInt() << labelWidth << routeGain
+    stream << info.fields().toInt() << fields.toInt() << labelWidth.has_value() << labelWidth.value_or(0) << routeGain
         << info.volume.value_or(0) << info.pitch.value_or(0) << info.outputVolume.value_or(0)
         << info.offsetOfStart.value_or(0) << info.loopCount.value_or(0) << info.sendVolume.value_or(0);
     if (const auto* cached = cache_.object(key)) return *cached;
     auto& editor = editors_[{info.fields().toInt(), fields.toInt(), labelWidth, routeGain}];
-    if (!editor) {
-        editor = std::make_unique<NodeContentEditor>(info, fields, labelWidth, &host_);
-        editor->setRouteGainMode(routeGain);
-        editor->hide();
-    } else {
-        editor->setValues(info);
+    if (!editor.widget) {
+        editor.widget = std::make_unique<NodeContentEditor>(info, fields,
+            labelWidth ? *labelWidth : NodeContentEditor::labelWidth(fields), &host_);
+        editor.widget->setRouteGainMode(routeGain);
+        editor.widget->hide();
+        editor.info = info;
+    } else if (editor.info != info) {
+        editor.widget->setValues(info);
+        editor.info = info;
     }
-    auto result = editor->presentation();
+    auto result = editor.widget->presentation();
     cache_.insert(key, new NodeContentPresentation(result));
     return result;
 }
@@ -290,6 +293,11 @@ void NodeContentRenderer::clear()
 {
     cache_.clear();
     editors_.clear();
+}
+
+void NodeContentRenderer::clearDrawings()
+{
+    cache_.clear();
 }
 
 int NodeContentEditor::labelWidth(NodeContentFields fields)

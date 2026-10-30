@@ -43,7 +43,7 @@ ToastPresenter::ToastPresenter(QWidget* host)
         updatePlacement();
         update();
     });
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this]() {
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this, [this]() {
         update();
     });
     host->installEventFilter(this);

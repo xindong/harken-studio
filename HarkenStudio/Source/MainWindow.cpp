@@ -1314,7 +1314,7 @@ void MainWindow::setupMainToolBar()
     });
     connect(remoteConnection_, &HarkenEditor::Bridge::RemoteConnection::stateChanged,
             button, refresh);
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, button, refresh);
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, button, refresh);
     refresh();
 
     auto* captureAction = new QAction(tr("Start Capture"), toolbar);
@@ -1341,7 +1341,7 @@ void MainWindow::setupMainToolBar()
         refreshCapture();
     });
     connect(eventCaptureController_, &Monitor::EventCaptureController::stateChanged, captureButton, refreshCapture);
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, captureButton, refreshCapture);
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, captureButton, refreshCapture);
     refreshCapture();
 }
 

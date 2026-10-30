@@ -21,7 +21,7 @@ SearchField::SearchField(QWidget* parent)
     });
 
     applyTheme();
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this]() {
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this, [this]() {
         applyTheme();
     });
 }

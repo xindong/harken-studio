@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QProxyStyle>
+#include <QSet>
 
 namespace VNX {
 
@@ -13,6 +14,7 @@ public:
     using QProxyStyle::polish;
     using QProxyStyle::unpolish;
 
+    static void refreshWidgetAppearance(QWidget* widget, ThemeManager& manager);
     void polish(QWidget* widget) override;
     void unpolish(QWidget* widget) override;
     int styleHint(StyleHint hint, const QStyleOption* option = nullptr,
@@ -28,6 +30,9 @@ public:
     QRect subControlRect(ComplexControl control, const QStyleOptionComplex* option,
                           SubControl subControl,
                           const QWidget* widget = nullptr) const override;
+    SubControl hitTestComplexControl(ComplexControl control,
+                                     const QStyleOptionComplex* option, const QPoint& point,
+                                     const QWidget* widget = nullptr) const override;
     void drawPrimitive(PrimitiveElement element, const QStyleOption* option,
                        QPainter* painter,
                        const QWidget* widget = nullptr) const override;
@@ -43,6 +48,7 @@ protected:
 private:
     ThemeManager& theme() const;
     ThemeManager* themeManager_;
+    QSet<QWidget*> observedWidgets_;
 };
 
 }
