@@ -1366,11 +1366,13 @@ public:
         return true;
     }
 
-    // Consumer side. Records consumed so far. Paired with a PublishedHead taken
+    // Records consumed so far. Logic may acquire this cut before reading a
+    // source-progress publication; it does not promise control ACK settlement.
+    // On the consumer, paired with a PublishedHead taken
     // at drain entry, this gives the work that pass owes without re-reading the
     // producer's position as it advances.
     std::uint64_t ConsumedCount() const {
-        return m_tail.load(std::memory_order_relaxed);
+        return m_tail.load(std::memory_order_acquire);
     }
 
     std::uint64_t BackpressureCount() const { return m_backpressure; }

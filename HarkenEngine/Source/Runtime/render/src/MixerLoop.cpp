@@ -85,7 +85,7 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
                      ProjectGenerationInstallAckRingV1* installAckRing,
                      OriginalSourceSubmissionRegistry* originalSources)
     : m_maxBuses(config.maxBuses),
-      m_audibilityParkEnabled(config.audibilityParkEnabled),
+      m_blockFrames(config.blockFrames),
       m_maxCommandsPerQuantum(config.maxControlCommandsPerQuantum),
       m_voices(voices),
       m_buses(buses),
@@ -98,6 +98,7 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
       m_notifications(notifications),
       m_logRing(logRing),
       m_sourceCursors(sourceCursors),
+      m_audibilityParkEnabled(config.audibilityParkEnabled != 0),
       m_meterRing(meterRing),
       m_originalSources(originalSources),
       m_timelineArms(timelineArms),
@@ -1523,9 +1524,18 @@ void MixerLoop::DrainQueuedCommands(std::uint32_t quantumCount) {
         m_voices.BeginAudioBlock(m_blocksRendered.load(std::memory_order_relaxed));
         (void)DrainCommands(m_blocksRendered.load(std::memory_order_relaxed),
                             m_commands.CaptureBlockInputCut());
+        const auto blocks = m_blocksRendered.load(std::memory_order_relaxed);
+        PublishSourceCursors(blocks, blocks * m_blockFrames);
         // Serialized drain returns its real readers without an audio fence.
         m_voices.EndAudioBlock();
     }
+}
+
+void MixerLoop::PublishSourceCursors(std::uint64_t blockIndex,
+                                      std::uint64_t outputFrame) {
+    const auto cursors = m_sourceCursors.BeginWrite(m_voices.ConstructedSlotCount());
+    m_voices.FillSourceCursors(cursors, m_audibilityParkEnabled);
+    m_sourceCursors.EndWrite(blockIndex, outputFrame, m_commands.ConsumedCount());
 }
 
 void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
@@ -1881,25 +1891,16 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
                              m_meterGenerationScratch.data());
     }
 
-    // Publish the per-slot source-cursor mirror for audibility parking's
-    // timeline authority — one row per configured voice slot, stamped with this
-    // block index, through the mirror's own seqlock (the fill writes every row,
-    // so a slot not rendering this block reports inactive). Gated on the parking
-    // config so a build with parking off does no extra audio-thread work and
-    // stays bit-identical to the prior behavior.
-    if (m_audibilityParkEnabled != 0) {
+    // Parking and source-timed controls share one coherent audio-owned cut.
+    // Workers have returned before publication; EndAudioBlock releases readers.
 #if defined(HARKEN_RT_PROBE_MIX_PUBLICATION)
-        if (publicationRecord != nullptr) {
-            publicationRecord->flags |=
-                rtprobe::kTimelineFlagSourceCursorPublished;
-        }
-#endif
-        SourceCursorMirror::Row* cursorRows = m_sourceCursors.BeginWrite();
-        m_voices.FillSourceCursors(cursorRows, m_sourceCursors.SlotCount());
-        m_sourceCursors.EndWrite(blockIndex);
+    if (publicationRecord != nullptr) {
+        publicationRecord->flags |= rtprobe::kTimelineFlagSourceCursorPublished;
     }
-
-    (void)m_voices.PublishCompletionProgress(blockIndex);
+#endif
+    const auto cursors = m_sourceCursors.BeginWrite(m_voices.ConstructedSlotCount());
+    (void)m_voices.PublishCompletionProgress(blockIndex, cursors, m_audibilityParkEnabled);
+    m_sourceCursors.EndWrite(blockIndex, (blockIndex + 1u) * frames, m_commands.ConsumedCount());
     // Source cursor and progress publication are the final payload users.
     m_voices.EndAudioBlock();
     const std::uint64_t renderedSequence = blockIndex + 1;

@@ -223,9 +223,11 @@ private:
         const TimelineExecutionResult& result) noexcept;
     void PublishSnapshot(std::uint64_t blockIndex, bool blockRendered,
                          const BlockTiming& timing);
+    void PublishSourceCursors(std::uint64_t blockIndex,
+                              std::uint64_t outputFrame);
 
     const std::uint32_t m_maxBuses;
-    const std::uint32_t m_audibilityParkEnabled;
+    const std::uint32_t m_blockFrames;
     // The per-quantum command ceiling. Read by two threads -- the audio thread
     // each block in DrainCommands, and the logic thread on every command
     // admission through MaxCommandsPerQuantum() -- and written by neither once
@@ -268,6 +270,7 @@ private:
     // Per-slot source-cursor mirror the block loop publishes for audibility
     // parking's timeline authority. Owned by the engine; the mixer only writes.
     SourceCursorMirror& m_sourceCursors;
+    const bool m_audibilityParkEnabled;
     // Meter block ring: one record of all three bus tap rows per rendered
     // block while any meter Variable exists. Owned by the engine;
     // the mixer only appends. The armed gate keeps the unarmed cost to one

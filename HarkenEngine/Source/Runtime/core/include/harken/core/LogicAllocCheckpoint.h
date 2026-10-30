@@ -10,7 +10,6 @@ namespace harken::detail {
 enum class LogicAllocSite : unsigned int {
     None = 0,
     DestroyBusDetaches,
-    AudibilityRows,
     AudibilityParked,
     AudibilityCandidates,
     ParkCaptureStorage,

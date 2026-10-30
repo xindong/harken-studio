@@ -331,6 +331,61 @@ TEST(HotReload, PCMSecondReplaceWhileDrainingRefusedThenAdmitted) {
     EXPECT_EQ(3u * kBlock, engine->registry.Lookup(harkentest::ObjectId(101)).frames);
 }
 
+TEST(HotReload, IndividuallyReplacedPcmKeepsOriginalPackBackingUntilVoiceDrains) {
+    for (const bool replacePack : {false, true}) {
+        SCOPED_TRACE(replacePack);
+        EngineSession session(ReloadConfig());
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        const auto sound = harkentest::ObjectId(105);
+        const auto successorSound = harkentest::ObjectId(106);
+        const auto path = TempPath("hot_reload_original_backing.pack");
+        const auto successorPath = TempPath("hot_reload_successor_backing.pack");
+        WriteFileBytes(path, BuildPackBytes({DcEntry(sound, 0.25f, 16 * kBlock)}));
+        WriteFileBytes(successorPath,
+                       BuildPackBytes({DcEntry(successorSound, 0.75f, kBlock)}));
+        VnPackHandle pack = 0;
+        ASSERT_EQ(VN_OK, LoadPack(path, &pack));
+        const auto originalCookie = engine->registry.CookieOf(sound);
+        VnVoiceHandle voice = 0;
+        const auto play = MakePlayDesc(sound);
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+        Capture before;
+        PumpAndCapture(engine, 2, before);
+        const auto oldLevel = before.left[kBlock + kBlock / 2];
+        ASSERT_GT(oldLevel, 0.0f);
+
+        ASSERT_EQ(VN_OK, ReplaceDc(sound, 0.5f, 4 * kBlock));
+        const auto replacementCookie = engine->registry.CookieOf(sound);
+        ASSERT_NE(originalCookie, replacementCookie);
+        ASSERT_EQ(1u, engine->registry.RetiredCount());
+        if (replacePack) {
+            ASSERT_EQ(VN_OK, ReplacePack(pack, successorPath));
+            EXPECT_EQ(1u, engine->packs.RetiringCount());
+            // Do not read potentially freed samples when the retention gate fails.
+            if (engine->packs.RetiringCount() != 1u) continue;
+        } else {
+            EXPECT_EQ(VN_IN_USE, engine->packs.CanUnload(pack, engine->registry));
+            const auto result = Vn_UnloadPack(pack);
+            EXPECT_EQ(VN_IN_USE, result);
+            if (result != VN_IN_USE) continue;
+        }
+        Capture after;
+        PumpAndCapture(engine, 1, after);
+        EXPECT_EQ(oldLevel, after.left[kBlock / 2]);
+        ASSERT_EQ(VN_OK, Vn_Stop(voice, 0));
+        PumpAndUpdate(engine, 2);
+        EXPECT_EQ(0u, engine->registry.RetiredCount());
+        EXPECT_EQ(0u, engine->packs.RetiringCount());
+        ASSERT_EQ(VN_OK, Vn_UnloadPack(pack));
+        EXPECT_EQ(0u, engine->packs.LoadedCount());
+        EXPECT_EQ(replacementCookie, engine->registry.CookieOf(sound));
+        EXPECT_FLOAT_EQ(0.5f, engine->registry.Lookup(sound).channels[0][0]);
+        ASSERT_EQ(VN_OK, Vn_UnregisterPCM(sound));
+        EXPECT_EQ(0u, engine->registry.Count());
+    }
+}
+
 TEST(HotReload, PCMRefusalsAreAllOrNothingAndNeverRegister) {
     EngineSession session(ReloadConfig());
     ASSERT_EQ(VN_OK, session.InitResult());

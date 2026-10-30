@@ -509,7 +509,8 @@ public:
     void EndAudioBlock() noexcept;
     void StageCompletionProgressForSilentBlock(
         std::uint64_t blockIndex) noexcept;
-    bool PublishCompletionProgress(std::uint64_t blockIndex) noexcept;
+    bool PublishCompletionProgress(std::uint64_t blockIndex,
+        SourceCursorMirror::WriteView cursors = {}, bool captureParking = false) noexcept;
     void AdvanceArenaSilentStreamParks(std::uint32_t blockFrames);
 
     // Voice parameter application, audio side, at block start. Values
@@ -677,8 +678,8 @@ public:
     // true, every other slot reports inactive. Audio thread, at the end of a
     // rendered block. Stream slots report their (unused-for-park) srcCursor;
     // audibility parking consults only PCM voices.
-    void FillSourceCursors(SourceCursorMirror::Row* rows,
-                           std::uint32_t count) const;
+    void FillSourceCursors(SourceCursorMirror::WriteView cursors,
+                           bool captureParking) const;
 
     // Audio-thread resident-source seek transaction. CanApplySeek is read-only
     // so MixerLoop can prove a complete batch before CommitSeek mutates any
@@ -1205,6 +1206,8 @@ private:
     bool m_originalBodyMarkerExhausted = false;
     bool m_originalBodyShutdown = false;
     StableRowStorage<Slot> m_slots;
+    static void FillSourceCursor(const Slot& slot, SlotState state,
+        SourceCursorMirror::Row& row, std::uint64_t serial, bool captureParking) noexcept;
     SlotStorageRegistration* m_slotStorageRegistrations = nullptr;
     std::vector<OriginalCallbackStorageLease> m_originalCallbackStorage;
     bool m_originalSourceCallbackOpen = false;

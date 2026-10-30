@@ -3417,6 +3417,242 @@ TEST(PackComposition, CanonicalUnloadExRefusesAnchorWithoutMutation) {
               Vn_UnloadPackEx(packA, VN_PACK_UNLOAD_REFUSE_IF_USED));
 }
 
+struct ReferenceBackingRevision {
+    PackCanonicalImage image;
+    PackTable::AlignedBuffer bytes;
+    std::vector<PackEntry> entries;
+};
+
+ReferenceBackingRevision MakeReferenceBackingRevision(
+    VnSoundId soundId, float sample, std::uint64_t revision = 1) {
+    ReferenceBackingRevision result;
+    const auto encoded = BuildContentPack(
+        22, revision, 7 + revision, harkentest::ObjectId(2002),
+        harkentest::ObjectId(7), 0, 0x3f000000u, soundId,
+        harkentest::MakeDC(8, sample));
+    EXPECT_EQ(VN_OK, ParsePackCanonicalImage(
+                         encoded.data(), encoded.size(), &result.image));
+    result.bytes.reset(static_cast<std::uint8_t*>(::operator new[](
+        encoded.size(), std::align_val_t{kPackBlobAlign})));
+    std::memcpy(result.bytes.get(), encoded.data(), encoded.size());
+    result.entries.reserve(result.image.media.size());
+    for (const PackTocEntry& source : result.image.media) {
+        PackEntry entry;
+        entry.soundId = source.soundId;
+        entry.flags = source.flags;
+        entry.frameCount = source.frameCount;
+        entry.loopStartFrame = source.loopStartFrame;
+        entry.loopEndFrame = source.loopEndFrame;
+        result.entries.push_back(entry);
+    }
+    return result;
+}
+
+VnResult LoadReferenceBackingRevision(PackTable& packs, PCMRegistry& registry,
+                                     ReferenceBackingRevision& revision,
+                                     VnPackHandle* handle) {
+    PackTable::PreparedLoadToken load;
+    const VnResult prepared = packs.PrepareLoad(&load);
+    if (prepared != VN_OK) {
+        return prepared;
+    }
+    return packs.LoadPrepared(&load, revision.bytes,
+                              std::move(revision.entries), revision.image.media,
+                              registry, handle);
+}
+
+TEST(PackCompositionContract,
+     ReferenceBackingUnloadWaitsForIndividuallyReplacedPcm) {
+    // Each registration path must retain its original registration identity.
+    // 0: LoadPrepared; 1: PrepareRevisionMutation; 2: ReplacePreparedV2.
+    for (unsigned registrationPath = 0; registrationPath != 3; ++registrationPath) {
+        SCOPED_TRACE(registrationPath);
+        constexpr VnSoundId soundId = harkentest::ObjectId(4481);
+        PCMRegistry registry;
+        PackTable packs(1, 1);
+        auto original = MakeReferenceBackingRevision(soundId, 0.25f);
+        ASSERT_EQ(1u, original.image.media.size());
+        VnPackHandle handle = 0;
+        if (registrationPath == 0) {
+            ASSERT_EQ(VN_OK, LoadReferenceBackingRevision(
+                                 packs, registry, original, &handle));
+        } else {
+            ReferenceBackingRevision empty;
+            ASSERT_EQ(VN_OK, LoadReferenceBackingRevision(
+                                 packs, registry, empty, &handle));
+            ASSERT_EQ(VN_OK, packs.CanReplacePreparedV2(
+                                 handle, original.image.media, registry));
+            if (registrationPath == 1) {
+                PackTable::PreparedMutation mutation;
+                ASSERT_EQ(VN_OK, packs.PrepareRevisionMutation(
+                                     handle, original.bytes, original.entries,
+                                     original.image.media, registry, &mutation));
+                packs.CommitPreparedMutation(&mutation, registry);
+            } else {
+                ASSERT_EQ(VN_OK, packs.ReplacePreparedV2(
+                                     handle, original.bytes, original.entries,
+                                     original.image.media, registry));
+            }
+        }
+
+        const PCMView old = registry.Lookup(soundId);
+        ASSERT_TRUE(old.Valid());
+        ASSERT_NE(nullptr, old.useCount);
+        const auto oldCookie = registry.CookieOf(soundId);
+        old.useCount->store(1, std::memory_order_release);
+        const auto newSamples = harkentest::MakeDC(8, 0.75f);
+        const auto desc = harkentest::MonoDesc(newSamples, 48000);
+        ASSERT_EQ(VN_OK, registry.ReplacePCM(soundId, &desc));
+        const auto callerCookie = registry.CookieOf(soundId);
+        ASSERT_NE(oldCookie, callerCookie);
+        ASSERT_EQ(1u, registry.RetiredCount());
+
+        // Check lifetime before reading the borrowed samples.
+        ASSERT_EQ(VN_IN_USE, packs.CanUnload(handle, registry));
+        ASSERT_EQ(VN_IN_USE, packs.Unload(handle, registry));
+        EXPECT_EQ(1u, packs.LoadedCount());
+        EXPECT_FLOAT_EQ(0.25f, old.channels[0][0]);
+        EXPECT_FLOAT_EQ(0.75f, registry.Lookup(soundId).channels[0][0]);
+
+        old.useCount->store(0, std::memory_order_release);
+        registry.SweepRetired();
+        ASSERT_EQ(0u, registry.RetiredCount());
+        ASSERT_EQ(VN_OK, packs.CanUnload(handle, registry));
+        ASSERT_EQ(VN_OK, packs.Unload(handle, registry));
+        EXPECT_EQ(0u, packs.LoadedCount());
+        EXPECT_EQ(0u, packs.RetiringCount());
+        EXPECT_EQ(callerCookie, registry.CookieOf(soundId));
+        ASSERT_TRUE(registry.Lookup(soundId).Valid());
+        EXPECT_FLOAT_EQ(0.75f, registry.Lookup(soundId).channels[0][0]);
+        ASSERT_EQ(VN_OK, registry.UnregisterPCM(soundId));
+        EXPECT_EQ(0u, registry.Count());
+    }
+}
+
+TEST(PackCompositionContract,
+     ReferenceBackingWholePackReplaceRetainsDetachedOriginalPcm) {
+    for (const bool preparedMutation : {false, true}) {
+        SCOPED_TRACE(preparedMutation);
+        constexpr VnSoundId oldId = harkentest::ObjectId(4482);
+        constexpr VnSoundId nextId = harkentest::ObjectId(4483);
+        PCMRegistry registry;
+        PackTable packs(1, 1);
+        auto original = MakeReferenceBackingRevision(oldId, 0.25f);
+        auto successor = MakeReferenceBackingRevision(nextId, 0.5f, 2);
+        ASSERT_EQ(1u, original.image.media.size());
+        ASSERT_EQ(1u, successor.image.media.size());
+        VnPackHandle handle = 0;
+        ASSERT_EQ(VN_OK, LoadReferenceBackingRevision(
+                             packs, registry, original, &handle));
+        const PCMView old = registry.Lookup(oldId);
+        ASSERT_TRUE(old.Valid());
+        ASSERT_NE(nullptr, old.useCount);
+        old.useCount->store(1, std::memory_order_release);
+        const auto newSamples = harkentest::MakeDC(8, 0.75f);
+        const auto desc = harkentest::MonoDesc(newSamples, 48000);
+        ASSERT_EQ(VN_OK, registry.ReplacePCM(oldId, &desc));
+        const auto callerCookie = registry.CookieOf(oldId);
+        ASSERT_EQ(1u, registry.RetiredCount());
+
+        // The successor omits oldId: the caller-owned replacement is preserved.
+        ASSERT_EQ(VN_OK, packs.CanReplacePreparedV2(
+                             handle, successor.image.media, registry));
+        if (preparedMutation) {
+            PackTable::PreparedMutation mutation;
+            ASSERT_EQ(VN_OK, packs.PrepareRevisionMutation(
+                                 handle, successor.bytes, successor.entries,
+                                 successor.image.media, registry, &mutation));
+            packs.CommitPreparedMutation(&mutation, registry);
+        } else {
+            ASSERT_EQ(VN_OK, packs.ReplacePreparedV2(
+                                 handle, successor.bytes, successor.entries,
+                                 successor.image.media, registry));
+        }
+
+        // Require retention before reading the borrowed samples.
+        ASSERT_EQ(1u, packs.RetiringCount());
+        packs.SweepRetiring(
+            +[](void*, PackResourceRevisionToken) { return false; });
+        ASSERT_EQ(1u, packs.RetiringCount());
+        EXPECT_FLOAT_EQ(0.25f, old.channels[0][0]);
+        EXPECT_EQ(callerCookie, registry.CookieOf(oldId));
+        ASSERT_TRUE(registry.Lookup(nextId).Valid());
+        EXPECT_FLOAT_EQ(0.5f, registry.Lookup(nextId).channels[0][0]);
+
+        old.useCount->store(0, std::memory_order_release);
+        registry.SweepRetired();
+        packs.SweepRetiring(
+            +[](void*, PackResourceRevisionToken) { return false; });
+        EXPECT_EQ(0u, registry.RetiredCount());
+        EXPECT_EQ(0u, packs.RetiringCount());
+        ASSERT_EQ(VN_OK, packs.Unload(handle, registry));
+        EXPECT_FALSE(registry.Lookup(nextId).Valid());
+        EXPECT_EQ(callerCookie, registry.CookieOf(oldId));
+        ASSERT_EQ(VN_OK, registry.UnregisterPCM(oldId));
+        EXPECT_EQ(0u, registry.Count());
+    }
+}
+
+TEST(PackCompositionContract,
+     ReferenceBackingRestoreRetainsIndividuallyReplacedSuccessorPcm) {
+    constexpr VnSoundId oldId = harkentest::ObjectId(4484);
+    constexpr VnSoundId nextId = harkentest::ObjectId(4485);
+    PCMRegistry registry;
+    PackTable packs(1, 1);
+    auto original = MakeReferenceBackingRevision(oldId, 0.25f);
+    auto successor = MakeReferenceBackingRevision(nextId, 0.5f, 2);
+    ASSERT_EQ(1u, original.image.media.size());
+    ASSERT_EQ(1u, successor.image.media.size());
+    VnPackHandle handle = 0;
+    ASSERT_EQ(VN_OK, LoadReferenceBackingRevision(
+                         packs, registry, original, &handle));
+    const auto predecessorCookie = registry.CookieOf(oldId);
+    ASSERT_EQ(VN_OK, packs.CanReplacePreparedV2(
+                         handle, successor.image.media, registry));
+    PackTable::RetiredReplace predecessor;
+    ASSERT_EQ(VN_OK, packs.ReplacePreparedV2(
+                         handle, successor.bytes, successor.entries,
+                         successor.image.media, registry, &predecessor));
+    ASSERT_TRUE(predecessor.IsPrepared());
+
+    const PCMView next = registry.Lookup(nextId);
+    ASSERT_TRUE(next.Valid());
+    ASSERT_NE(nullptr, next.useCount);
+    next.useCount->store(1, std::memory_order_release);
+    const auto callerSamples = harkentest::MakeDC(8, 0.75f);
+    const auto desc = harkentest::MonoDesc(callerSamples, 48000);
+    ASSERT_EQ(VN_OK, registry.ReplacePCM(nextId, &desc));
+    const auto callerCookie = registry.CookieOf(nextId);
+    ASSERT_EQ(1u, registry.RetiredCount());
+
+    packs.RestorePreparedReplaceV2(handle, predecessor, registry);
+    EXPECT_FALSE(predecessor.IsPrepared());
+    // The rolled-back successor still has a reader of its original bytes.
+    ASSERT_EQ(1u, packs.RetiringCount());
+    packs.SweepRetiring(
+        +[](void*, PackResourceRevisionToken) { return false; });
+    ASSERT_EQ(1u, packs.RetiringCount());
+    EXPECT_FLOAT_EQ(0.5f, next.channels[0][0]);
+    EXPECT_EQ(predecessorCookie, registry.CookieOf(oldId));
+    ASSERT_TRUE(registry.Lookup(oldId).Valid());
+    EXPECT_FLOAT_EQ(0.25f, registry.Lookup(oldId).channels[0][0]);
+    EXPECT_EQ(callerCookie, registry.CookieOf(nextId));
+    ASSERT_TRUE(registry.Lookup(nextId).Valid());
+    EXPECT_FLOAT_EQ(0.75f, registry.Lookup(nextId).channels[0][0]);
+
+    next.useCount->store(0, std::memory_order_release);
+    registry.SweepRetired();
+    packs.SweepRetiring(
+        +[](void*, PackResourceRevisionToken) { return false; });
+    EXPECT_EQ(0u, registry.RetiredCount());
+    EXPECT_EQ(0u, packs.RetiringCount());
+    ASSERT_EQ(VN_OK, packs.Unload(handle, registry));
+    EXPECT_FALSE(registry.Lookup(oldId).Valid());
+    EXPECT_EQ(callerCookie, registry.CookieOf(nextId));
+    ASSERT_EQ(VN_OK, registry.UnregisterPCM(nextId));
+    EXPECT_EQ(0u, registry.Count());
+}
+
 TEST(PackCompositionContract, RetirementCapacityRefusesBeforePublishingSuccessor) {
     static_assert(!std::is_copy_constructible_v<PackTable::RetiredReplace>);
     constexpr VnObjectId kSoundId = harkentest::ObjectId(4405);

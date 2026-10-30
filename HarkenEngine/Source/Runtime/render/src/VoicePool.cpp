@@ -2768,31 +2768,44 @@ void VoicePool::ApplyPlay(VnVoiceHandle handle, VnVoiceHandle sourceIdentity,
     }
 }
 
-void VoicePool::FillSourceCursors(SourceCursorMirror::Row* rows,
-                                  std::uint32_t count) const {
-    const std::uint32_t n =
-        std::min(count, static_cast<std::uint32_t>(m_slots.size()));
-    for (std::uint32_t i = 0; i < n; ++i) {
-        const Slot& slot = m_slots[i];
-        if (IsAudioRenderingState(slot.state.load(std::memory_order_acquire))) {
-            rows[i].sourceFrame = slot.render.srcCursor;
-            rows[i].renderGeneration =
-                slot.generation.load(std::memory_order_relaxed);
-            rows[i].loopPassesRemaining =
-                slot.render.loopPassesRemaining;
-            rows[i].active = true;
-        } else {
-            rows[i].sourceFrame = 0;
-            rows[i].renderGeneration = 0;
-            rows[i].loopPassesRemaining = 0;
-            rows[i].active = false;
-        }
+void VoicePool::FillSourceCursor(const Slot& slot, SlotState state,
+    SourceCursorMirror::Row& row, std::uint64_t serial, bool captureParking) noexcept {
+    if (!IsAudioRenderingState(state)) return;
+    const auto& render = slot.render;
+    const bool timelineSource = render.timelineArmSlot != UINT32_MAX &&
+        render.timelineArmGeneration != 0;
+    if (!captureParking && !timelineSource) return;
+    row.sourceFrame = render.srcCursor;
+    row.renderGeneration = slot.generation.load(std::memory_order_relaxed);
+    row.loopPassesRemaining = render.loopPassesRemaining;
+    row.active = true;
+    row.exactTimingValid = timelineSource && render.streamRing == nullptr &&
+        render.pcm.Valid() &&
+        render.resampler.Profile() == ResampleProfile::LegacyCompatibility;
+    row.awaitingStart = render.timelineGated;
+    row.loopInfinite = render.loopInfinite;
+    row.hasExitMarker = render.hasExitMarker;
+    if (row.exactTimingValid) {
+        auto& progress = row.progress;
+        progress.sourceReadFrame = render.resampler.SourceFrame();
+        progress.sourceStartFrame = render.sourceActivationStartFrame;
+        progress.sourcePhase = {render.resampler.phaseHigh, render.resampler.phaseLow};
+        progress.currentRatio = render.resampler.CurrentRatio();
+        progress.targetRatio = render.resampler.TargetRatio();
+        progress.rampStep = render.resampler.RampStep();
+        progress.rampRemaining = render.resampler.RampFramesRemaining();
+        progress.activationLoopsRemaining = render.sourceActivationLoopsRemaining;
     }
-    for (std::uint32_t i = n; i < count; ++i) {
-        rows[i].sourceFrame = 0;
-        rows[i].renderGeneration = 0;
-        rows[i].loopPassesRemaining = 0;
-        rows[i].active = false;
+    row.publicationSerial = serial;
+}
+
+void VoicePool::FillSourceCursors(SourceCursorMirror::WriteView cursors,
+                                bool captureParking) const {
+    const auto count = std::min(cursors.count, m_slots.ConstructedCount());
+    for (std::uint32_t i = 0; i < count; ++i) {
+        const Slot& slot = m_slots[i];
+        FillSourceCursor(slot, slot.state.load(std::memory_order_acquire),
+            cursors.rows[i], cursors.serial, captureParking);
     }
 }
 
@@ -3477,10 +3490,15 @@ void VoicePool::StageCompletionProgressForSilentBlock(
 }
 
 bool VoicePool::PublishCompletionProgress(
-    std::uint64_t blockIndex) noexcept {
+    std::uint64_t blockIndex, SourceCursorMirror::WriteView cursors,
+    bool captureParking) noexcept {
     bool success = blockIndex != UINT64_MAX;
+    std::uint32_t index = 0;
     for (Slot& slot : m_slots) {
         const auto state = slot.state.load(std::memory_order_acquire);
+        if (index < cursors.count)
+            FillSourceCursor(slot, state, cursors.rows[index], cursors.serial, captureParking);
+        ++index;
         if (state == SlotState::Prepared || state == SlotState::PreparedCommitHeld) continue;
         if (slot.completionProgressTerminal) {
             success = false;

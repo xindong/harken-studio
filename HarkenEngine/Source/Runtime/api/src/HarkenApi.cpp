@@ -6658,7 +6658,7 @@ bool CaptureDeferredActionStopRoots(
 void RebasePendingImmediateStopIntents(
     harken::Engine& engine,
     const harken::EnginePlayableServiceRow& row) noexcept;
-void RetireCancelledPendingImmediateStopIntents(
+void ServicePendingImmediateStopIntents(
     harken::Engine& engine) noexcept;
 
 // Forward declarations for the bus-graph/send helpers defined at the end of
@@ -8139,6 +8139,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         voicePreparation.streamRingToken = streamRingToken;
         voicePreparation.streamGeneration = static_cast<std::uint32_t>(streamRingToken >> 32);
     }
+    std::uint64_t installedExitMarkerSourceFrame = 0;
     if (harken::VoiceRenderContext* renderContext =
             engine.voices.Resolve(render)) {
         renderContext->authoredSourceDeadlineFrame =
@@ -8156,14 +8157,14 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
                 continue;
             }
             harken::ResamplerAdvanceState advance{};
-            advance.currentRatio =
-                install.pitchRatio > 0.0f ? install.pitchRatio : 1.0;
+            advance.currentRatio = renderContext->resampler.CurrentRatio();
             advance.targetRatio = advance.currentRatio;
             advance.sourceStartFrame = install.sourceStartFrame;
             advance.absoluteStartFrame = startFrame;
             FillStopLeafExitMarker(engine, start, &advance);
             renderContext->hasExitMarker = advance.hasExitMarker;
             renderContext->exitMarkerSourceFrame = advance.exitMarkerSourceFrame;
+            installedExitMarkerSourceFrame = advance.exitMarkerSourceFrame;
             break;
         }
     }
@@ -8656,7 +8657,9 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
     result.monitorSelection.arm = arm;
     engine.timelineVoiceInstallIdentities[renderSlot] = {
         render, playableRoot, install.target, releaseObserver, startFrame, arm,
-        bus.index, bus.generation, timelineSends};
+        bus.index, bus.generation, timelineSends,
+        view.frames, view.loop.startFrame, view.LoopEndFrame(),
+        installedExitMarkerSourceFrame};
     if (prepareOnly) {
         preparedOut->ledgerSlot = ledgerSlot;
         preparedOut->renderHandle = render;
@@ -12403,8 +12406,8 @@ bool PlayableMemberStorageHasReaders(
     return false;
 }
 
-bool CaptureOrdinaryUnpublishedStartProof(
-    harken::Engine& engine, harken::EnginePlayableServiceRow& row) noexcept {
+bool OrdinaryStartIdentityMatches(
+    const harken::EnginePlayableServiceRow& row) noexcept {
     const auto* runtime = row.schedule.runtimeProgram.program;
     const auto* current = ResolveQueueCurrentProgram(row, 0);
     if (!row.ordinaryStartTransaction.Valid() || row.queueMode ||
@@ -12416,7 +12419,12 @@ bool CaptureOrdinaryUnpublishedStartProof(
         runtime->payloads == nullptr || runtime->payloads[0].kind != harken::TimelineEventKind::Start ||
         !harken::Engine::SameOriginalSingleArm(row.schedule.armToken, row.arm))
         return false;
-    if (row.ordinaryStartCancelProof) return true;
+    return true;
+}
+
+bool OrdinaryStartIsUnpublished(
+    harken::Engine& engine, const harken::EnginePlayableServiceRow& row) noexcept {
+    if (!OrdinaryStartIdentityMatches(row)) return false;
     harken::TimelineArmObservation observation{};
     if (!engine.timelineArms.Observe(row.arm, &observation) ||
         observation.startedBlockSequence != 0 ||
@@ -12435,6 +12443,14 @@ bool CaptureOrdinaryUnpublishedStartProof(
         engine.timelinePool.PageStamp(header->absoluteQuantumIndex) ==
             header->absoluteQuantumIndex)
         return false;
+    return true;
+}
+
+bool CaptureOrdinaryUnpublishedStartProof(
+    harken::Engine& engine, harken::EnginePlayableServiceRow& row) noexcept {
+    if (!OrdinaryStartIdentityMatches(row)) return false;
+    if (row.ordinaryStartCancelProof) return true;
+    if (!OrdinaryStartIsUnpublished(engine, row)) return false;
     row.ordinaryStartProofService = row.identity;
     row.ordinaryStartProofPartition = row.partition;
     row.ordinaryStartProofInvocationGeneration = row.invocationGeneration;
@@ -68385,7 +68401,7 @@ void TimelineServiceCoordinator::Service() {
     if (!engine_.deferPendingImmediateEntriesForTest)
         ServicePendingImmediateEntries(engine_, &requiredPublicationFrame);
     if (engine_.timelineStartScratch.retryCleanup.active) return;
-    RetireCancelledPendingImmediateStopIntents(engine_);
+    ServicePendingImmediateStopIntents(engine_);
     ServiceNativeQueueReplacements(engine_, observedAudioSequence);
     ServicePlayableStarts(engine_, observedAudioSequence, &blockingFrame,
                           &requiredPublicationFrame);
@@ -72591,6 +72607,33 @@ bool CurrentPcmGenerationTouchesGuardedVoice(
     return blocked;
 }
 
+bool PackProviderHasConsumer(harken::Engine& engine, VnPackHandle handle) {
+    const VnPackHandle consumer = engine.logicPacks.ConsumerOf(handle);
+    if (consumer == 0) {
+        return false;
+    }
+    harken::LogRecord log{};
+    log.level = VN_LOG_WARN;
+    log.code = harken::kLogCodePackProviderInUse;
+    log.arg0 = handle;
+    log.arg1 = consumer;
+    engine.logicLogRing.Push(log);
+    return true;
+}
+
+bool PackReplacementRemovesMedia(
+    const harken::Engine& engine, VnPackHandle handle,
+    const std::vector<harken::PackTocEntry>& successor) {
+    const auto* original = engine.packs.Entries(handle);
+    return original != nullptr && std::any_of(original->begin(), original->end(),
+        [&](const harken::PackEntry& entry) {
+            return std::none_of(successor.begin(), successor.end(),
+                [&](const harken::PackTocEntry& media) {
+                    return media.soundId == entry.soundId;
+                });
+        });
+}
+
 bool PackCurrentMediaTouchesGuardedVoice(harken::Engine& engine,
                                          VnPackHandle handle) {
     const std::vector<harken::PackEntry>* entries =
@@ -73699,9 +73742,10 @@ void RunAudibilityPass(harken::Engine& engine) {
     parkedSlots.clear();
     parkedHandles.clear();
     // Coherent snapshot of the per-slot source cursors (timeline authority).
-    std::uint64_t mirrorBlock = 0;
+    harken::SourceCursorMirror::Publication mirrorPublication{};
     const bool haveMirror =
-        engine.sourceCursors.Capture(rows.data(), &mirrorBlock);
+        engine.sourceCursors.CaptureParking(rows.data(), rows.size(), &mirrorPublication);
+    const std::uint64_t mirrorBlock = mirrorPublication.blockIndex;
     const std::uint64_t currentBlock = engine.serviceFrameClock / blockFrames;
 
     // Virtual time + return runs first. Each record owns its last advance frame,
@@ -73988,7 +74032,7 @@ void RunAudibilityPass(harken::Engine& engine) {
         const harken::VoicePlayFacts& facts = engine.voicePlayFacts[slot];
         const std::uint32_t renderGeneration =
             static_cast<std::uint32_t>(render >> 32);
-        if (!haveMirror || slot >= rows.size() || !rows[slot].active ||
+        if (!haveMirror || slot >= mirrorPublication.availableCount || !rows[slot].active ||
             currentBlock > mirrorBlock + 1 ||
             rows[slot].renderGeneration != renderGeneration ||
             (facts.loopCount > 1u &&
@@ -77905,14 +77949,14 @@ void FillStopLeafExitMarker(const harken::Engine& engine,
     advance->exitMarkerSourceFrame = static_cast<std::uint64_t>(sourceDelta);
 }
 
-bool ResolveStopLeafSilence(
+VnResult ResolveStopLeafSilence(
     harken::Engine& engine, const harken::EnginePlayableServiceRow& row,
     const harken::EngineActionStepPlanRow& planned,
     std::uint64_t delayedFrame, std::uint32_t fadeFrames,
     std::uint64_t* outSilence, bool* outMissing) noexcept {
     if (outSilence == nullptr || outMissing == nullptr ||
         planned.step == nullptr) {
-        return false;
+        return VN_CAPABILITY_UNAVAILABLE;
     }
     *outMissing = false;
     *outSilence = 0;
@@ -77920,87 +77964,148 @@ bool ResolveStopLeafSilence(
     const std::uint64_t delayBase =
         ActionQuantizeBaseFrame(engine, delayedFrame);
     if (timing == harken::ActionQuantizeTimingV1::Immediate) {
-        return CheckedAddFrames(delayBase, fadeFrames, outSilence);
+        return CheckedAddFrames(delayBase, fadeFrames, outSilence)
+            ? VN_OK : VN_CAPABILITY_UNAVAILABLE;
     }
     if (!ActionStopTimingIsLocal(*planned.step)) {
         *outSilence = planned.deferredFrame != 0 ? planned.deferredFrame
                                                  : delayBase;
-        return *outSilence != UINT64_MAX;
+        return *outSilence != UINT64_MAX ? VN_OK : VN_CAPABILITY_UNAVAILABLE;
     }
-    const harken::PCMView media =
-        engine.registry.Lookup(row.leaf.stableId != VnObjectId{} ? row.leaf.stableId
-                                                      : row.root.stableId);
-    if (media.frames == 0 || media.sampleRate == 0 ||
-        engine.config.mixRate.SampleRate() == 0) {
-        *outMissing = true;
-        return true;
-    }
-    const RetainedTimelineVoiceInstallBorrow install{engine, row};
-    if (install.Status() != VN_OK) return false;
-    const auto& voice = *install.Input().facts;
     harken::ResamplerAdvanceState advance{};
-    advance.sourceIntegerFrame = voice.sourceStartFrame;
-    advance.sourceStartFrame = voice.sourceStartFrame;
-    advance.pcmFrameCount = media.frames;
-    advance.loopStartFrame = media.loop.startFrame;
-    advance.loopEndFrame = media.LoopEndFrame();
-    advance.loopsRemaining = voice.loopCount;
-    advance.loopInfinite = voice.loopCount == 0;
-    advance.absoluteStartFrame =
-        row.startFrame != 0 ? row.startFrame : delayBase;
-    const std::uint32_t slot =
-        static_cast<std::uint32_t>(row.renderHandle);
-    if (row.renderHandle != 0 && slot < engine.voicePlayFacts.size() &&
-        engine.voicePlayFacts[slot].valid &&
-        engine.voicePlayFacts[slot].loopEndFrame >
-            engine.voicePlayFacts[slot].loopStartFrame) {
-        const auto& facts = engine.voicePlayFacts[slot];
-        advance.loopStartFrame = facts.loopStartFrame;
-        advance.loopEndFrame = facts.loopEndFrame;
-        if (facts.sourceFrameCount != 0) {
-            advance.pcmFrameCount = facts.sourceFrameCount;
+    const bool queueProgress = row.HasFeatureArrays() &&
+        row.QueuePayload().queueCurrentOccurrence.generation != 0;
+    if (!queueProgress) {
+        const RetainedTimelineVoiceInstallBorrow install{engine, row};
+        if (install.Status() != VN_OK) return VN_CAPABILITY_UNAVAILABLE;
+        if (install.Input().facts->streamed) {
+            // Local stream boundaries retain the existing ifSilent policy.
+            *outMissing = true;
+            return VN_OK;
         }
     }
-    double ratio = voice.pitchRatio > 0.0f ? voice.pitchRatio : 1.0;
-    ratio *= static_cast<double>(media.sampleRate) /
-             static_cast<double>(engine.config.mixRate.SampleRate());
-    advance.currentRatio = ratio;
-    advance.targetRatio = ratio;
-    if (row.HasFeatureArrays() && row.QueuePayload().queueCurrentOccurrence.generation != 0) {
-        const harken::CompletionProgressRow* progress =
-            engine.timelineOccurrences.CompletionProgressOf(
-                row.QueuePayload().queueCurrentOccurrence);
-        harken::CompletionProgressSnapshot snapshot{};
-        if (progress == nullptr ||
-            !harken::CaptureCompletionProgress(*progress, &snapshot) ||
-            snapshot.occurrence.generation !=
-                row.QueuePayload().queueCurrentOccurrence.generation) {
+    if (!queueProgress && !row.actionPrepared &&
+        !OrdinaryStartIsUnpublished(engine, row)) {
+        // Accepted commands do not move this captured boundary. Cover commands
+        // already consumed, including Seek applied before block-end publication.
+        const auto consumedCut = engine.commands.ConsumedCount();
+        harken::SourceCursorMirror::Row cursor{};
+        harken::SourceCursorMirror::Publication publication{};
+        if (!engine.sourceCursors.CaptureRow(
+                static_cast<std::uint32_t>(row.renderHandle), &cursor, &publication) ||
+            publication.consumedCommands < consumedCut) return VN_BACKPRESSURE;
+        if (!cursor.active || cursor.renderGeneration !=
+                static_cast<std::uint32_t>(row.renderHandle >> 32u)) {
+            if (engine.voices.IsAlive(row.renderHandle)) return VN_BACKPRESSURE;
             *outMissing = true;
-            return true;
+            return VN_OK;
         }
-        // Binding creates an identity-only snapshot. Legacy's actual read head
-        // starts at the history pad, including a callback with zero output.
-        // Until that state arrives, retain the frozen initial playback facts.
-        if (snapshot.resamplerSourceFrame >= harken::kResampleHistoryPad) {
-            advance.sourcePhase = {snapshot.resamplerPhaseHigh, snapshot.resamplerPhaseLow};
-            if (std::isfinite(snapshot.currentRatio) &&
-                snapshot.currentRatio > 0.0) {
-                advance.currentRatio = snapshot.currentRatio;
-                advance.targetRatio = snapshot.targetRatio;
-                advance.rampStep = snapshot.rampStep;
-                advance.rampRemaining = snapshot.rampRemaining;
+        if (!cursor.exactTimingValid) return VN_CAPABILITY_UNAVAILABLE;
+        harken::EngineTimelineVoiceInstallIdentity installation{};
+        if (!engine.CaptureTimelineVoiceInstallIdentity(row.renderHandle, &installation))
+            return VN_BACKPRESSURE;
+        const auto& progress = cursor.progress;
+        advance.pcmFrameCount = installation.sourceFrameCount;
+        advance.loopStartFrame = installation.loopStartFrame;
+        advance.loopEndFrame = installation.loopEndFrame;
+        advance.sourceStartFrame = progress.sourceStartFrame;
+        advance.sourcePhase = progress.sourcePhase;
+        advance.currentRatio = progress.currentRatio;
+        advance.targetRatio = progress.targetRatio;
+        advance.rampStep = progress.rampStep;
+        advance.rampRemaining = progress.rampRemaining;
+        SetResamplerConsumedPosition(&advance, progress.sourceStartFrame,
+            progress.activationLoopsRemaining,
+            progress.sourceReadFrame > harken::kResampleHistoryPad
+                ? progress.sourceReadFrame - harken::kResampleHistoryPad : 0);
+        advance.loopInfinite = cursor.loopInfinite;
+        advance.hasExitMarker = cursor.hasExitMarker;
+        advance.exitMarkerSourceFrame = installation.exitMarkerSourceFrame;
+        advance.absoluteStartFrame = publication.outputFrame;
+        if (cursor.awaitingStart) {
+            if (!harken::Engine::SameOriginalSingleArm(installation.startArm, row.arm) ||
+                installation.rootInstance != row.rootInstance) return VN_BACKPRESSURE;
+            harken::TimelineArmObservation observation{};
+            if (!engine.timelineArms.Observe(row.arm, &observation) ||
+                observation.state != harken::ArmState::Published ||
+                observation.startedBlockSequence != 0) return VN_BACKPRESSURE;
+            advance.absoluteStartFrame = installation.onsetFrame;
+        }
+    } else {
+        const harken::PCMView media =
+            engine.registry.Lookup(row.leaf.stableId != VnObjectId{} ? row.leaf.stableId
+                                                          : row.root.stableId);
+        if (media.frames == 0 || media.sampleRate == 0 ||
+            engine.config.mixRate.SampleRate() == 0) {
+            *outMissing = true;
+            return VN_OK;
+        }
+        const RetainedTimelineVoiceInstallBorrow install{engine, row};
+        if (install.Status() != VN_OK) return VN_CAPABILITY_UNAVAILABLE;
+        const auto& voice = *install.Input().facts;
+        advance.sourceIntegerFrame = voice.sourceStartFrame;
+        advance.sourceStartFrame = voice.sourceStartFrame;
+        advance.pcmFrameCount = media.frames;
+        advance.loopStartFrame = media.loop.startFrame;
+        advance.loopEndFrame = media.LoopEndFrame();
+        advance.loopsRemaining = voice.loopCount;
+        advance.loopInfinite = voice.loopCount == 0;
+        advance.absoluteStartFrame =
+            row.startFrame != 0 ? row.startFrame : delayBase;
+        const std::uint32_t slot =
+            static_cast<std::uint32_t>(row.renderHandle);
+        if (row.renderHandle != 0 && slot < engine.voicePlayFacts.size() &&
+            engine.voicePlayFacts[slot].valid &&
+            engine.voicePlayFacts[slot].loopEndFrame >
+                engine.voicePlayFacts[slot].loopStartFrame) {
+            const auto& facts = engine.voicePlayFacts[slot];
+            advance.loopStartFrame = facts.loopStartFrame;
+            advance.loopEndFrame = facts.loopEndFrame;
+            if (facts.sourceFrameCount != 0) {
+                advance.pcmFrameCount = facts.sourceFrameCount;
             }
-            advance.loopInfinite = snapshot.loopInfinite != 0;
-            if (snapshot.loopEndFrame > snapshot.loopStartFrame) {
-                advance.loopStartFrame = snapshot.loopStartFrame;
-                advance.loopEndFrame = snapshot.loopEndFrame;
+        }
+        double ratio = voice.pitchRatio > 0.0f ? voice.pitchRatio : 1.0;
+        ratio *= static_cast<double>(media.sampleRate) /
+                 static_cast<double>(engine.config.mixRate.SampleRate());
+        advance.currentRatio = ratio;
+        advance.targetRatio = ratio;
+        if (row.HasFeatureArrays() && row.QueuePayload().queueCurrentOccurrence.generation != 0) {
+            const harken::CompletionProgressRow* progress =
+                engine.timelineOccurrences.CompletionProgressOf(
+                    row.QueuePayload().queueCurrentOccurrence);
+            harken::CompletionProgressSnapshot snapshot{};
+            if (progress == nullptr ||
+                !harken::CaptureCompletionProgress(*progress, &snapshot) ||
+                snapshot.occurrence.generation !=
+                    row.QueuePayload().queueCurrentOccurrence.generation) {
+                *outMissing = true;
+                return VN_OK;
             }
-            harken::SetResamplerConsumedPosition(&advance, voice.sourceStartFrame, voice.loopCount,
-                snapshot.resamplerSourceFrame > harken::kResampleHistoryPad
-                    ? snapshot.resamplerSourceFrame - harken::kResampleHistoryPad : 0);
-            advance.logicalOutputFramesProduced =
-                snapshot.logicalOutputFramesProduced;
-            advance.hasExitMarker = snapshot.hasExitMarker != 0;
+            // Binding creates an identity-only snapshot. Legacy's actual read head
+            // starts at the history pad, including a callback with zero output.
+            // Until that state arrives, retain the frozen initial playback facts.
+            if (snapshot.resamplerSourceFrame >= harken::kResampleHistoryPad) {
+                advance.sourcePhase = {snapshot.resamplerPhaseHigh, snapshot.resamplerPhaseLow};
+                if (std::isfinite(snapshot.currentRatio) &&
+                    snapshot.currentRatio > 0.0) {
+                    advance.currentRatio = snapshot.currentRatio;
+                    advance.targetRatio = snapshot.targetRatio;
+                    advance.rampStep = snapshot.rampStep;
+                    advance.rampRemaining = snapshot.rampRemaining;
+                }
+                advance.loopInfinite = snapshot.loopInfinite != 0;
+                if (snapshot.loopEndFrame > snapshot.loopStartFrame) {
+                    advance.loopStartFrame = snapshot.loopStartFrame;
+                    advance.loopEndFrame = snapshot.loopEndFrame;
+                }
+                harken::SetResamplerConsumedPosition(&advance, voice.sourceStartFrame, voice.loopCount,
+                    snapshot.resamplerSourceFrame > harken::kResampleHistoryPad
+                        ? snapshot.resamplerSourceFrame - harken::kResampleHistoryPad : 0);
+                advance.logicalOutputFramesProduced =
+                    snapshot.logicalOutputFramesProduced;
+                advance.hasExitMarker = snapshot.hasExitMarker != 0;
+            }
         }
     }
     FillStopLeafExitMarker(engine, row, &advance);
@@ -78014,14 +78119,14 @@ bool ResolveStopLeafSilence(
     harken::ResamplerBoundaryResult resolved{};
     if (!harken::ResolveResamplerBoundary(advance, kind, delayedFrame,
                                          &resolved)) {
-        return false;
+        return VN_CAPABILITY_UNAVAILABLE;
     }
     if (!resolved.available) {
         *outMissing = true;
-        return true;
+        return VN_OK;
     }
     *outSilence = resolved.outputFrame;
-    return true;
+    return VN_OK;
 }
 
 std::uint64_t ActionQuantizeBaseFrame(const harken::Engine& engine,
@@ -78070,7 +78175,66 @@ void SettleHeldPendingImmediateStopIntent(
         engine.runtimeRecreateRequired = true;
 }
 
-void RetireCancelledPendingImmediateStopIntents(
+void RebasePendingImmediateStopIntent(
+    harken::Engine& engine, const harken::EnginePlayableServiceRow& row,
+    harken::ActionDeferredRecordToken token,
+    const harken::ActionDeferredRecord& record) noexcept {
+    const auto settle = [&](VnResult result,
+                            harken::ActionTerminalReason reason) noexcept {
+        SettleHeldPendingImmediateStopIntent(
+            engine, token, record, result, reason);
+    };
+
+    if (!engine.playableInstances.ValidateStamp(
+            row.rootInstance, record.rootScheduleEpoch)) {
+        settle(VN_UNKNOWN_ID, harken::ActionTerminalReason::TargetGone);
+        return;
+    }
+    harken::EngineActionStepPlanRow planned{};
+    planned.step = &record.step;
+    planned.deferredFrame = record.authoredExecutionFrame;
+    planned.quantizeBaseFrame = record.authoredQuantizeBaseFrame;
+    std::uint32_t fadeFrames = 0;
+    std::uint64_t silence = 0;
+    bool missing = false;
+    if (!ResolveImmediateActionStopFadeFrames(
+            record.step.fade, engine.config.mixRate.SampleRate(), &fadeFrames)) {
+        settle(VN_CAPABILITY_UNAVAILABLE,
+               harken::ActionTerminalReason::CapabilityUnavailable);
+        return;
+    }
+    const auto resolved = ResolveStopLeafSilence(
+        engine, row, planned, record.authoredExecutionFrame, fadeFrames,
+        &silence, &missing);
+    if (resolved == VN_BACKPRESSURE) return;
+    if (resolved != VN_OK) {
+        settle(resolved, harken::ActionTerminalReason::CapabilityUnavailable);
+        return;
+    }
+    if (missing) {
+        if (record.step.ifSilent == harken::ActionIfSilentV1::Drop) {
+            settle(VN_OK, harken::ActionTerminalReason::None);
+            return;
+        }
+        silence = ActionQuantizeBaseFrame(
+            engine, record.authoredExecutionFrame);
+    }
+    std::uint64_t fadeStart = 0;
+    std::uint32_t effectiveFade = 0;
+    if (!ComputeStopFadeWindows(
+            silence, fadeFrames, record.authoredQuantizeBaseFrame,
+            engine.timelinePool.PublishCutoffFrame(), &fadeStart,
+            &effectiveFade)) {
+        settle(VN_BACKPRESSURE,
+               harken::ActionTerminalReason::Deadline);
+        return;
+    }
+    if (!engine.actionDeferredRecords.RebaseHeldPendingStop(
+            token, &engine.timelineDeferred, fadeStart, silence))
+        engine.runtimeRecreateRequired = true;
+}
+
+void ServicePendingImmediateStopIntents(
     harken::Engine& engine) noexcept {
     if (engine.actionDeferredRecords.LiveCount() == 0) return;
     for (std::uint32_t slot = 0;
@@ -78092,6 +78256,16 @@ void RetireCancelledPendingImmediateStopIntents(
             SettleHeldPendingImmediateStopIntent(
                 engine, token, record, VN_UNKNOWN_ID,
                 harken::ActionTerminalReason::TargetGone);
+            continue;
+        }
+        std::uint32_t cursor = 0;
+        while (const auto* row = engine.NextOccupiedPlayableService(&cursor)) {
+            if (row->rootInstance != record.rootPlayable || !row->InvocationValid() ||
+                row->phase == harken::EnginePlayableStartPhase::Free ||
+                row->phase == harken::EnginePlayableStartPhase::PendingImmediateEntry)
+                continue;
+            RebasePendingImmediateStopIntent(engine, *row, token, record);
+            break;
         }
     }
 }
@@ -78111,55 +78285,7 @@ void RebasePendingImmediateStopIntents(
             engine.OriginalDeferredHeldCancellationPending(token) ||
             record.rootPlayable != row.rootInstance) continue;
 
-        const auto settle = [&](VnResult result,
-                                harken::ActionTerminalReason reason) noexcept {
-            SettleHeldPendingImmediateStopIntent(
-                engine, token, record, result, reason);
-        };
-
-        if (!engine.playableInstances.ValidateStamp(
-                row.rootInstance, record.rootScheduleEpoch)) {
-            settle(VN_UNKNOWN_ID, harken::ActionTerminalReason::TargetGone);
-            continue;
-        }
-        harken::EngineActionStepPlanRow planned{};
-        planned.step = &record.step;
-        planned.deferredFrame = record.authoredExecutionFrame;
-        planned.quantizeBaseFrame = record.authoredQuantizeBaseFrame;
-        std::uint32_t fadeFrames = 0;
-        std::uint64_t silence = 0;
-        bool missing = false;
-        if (!ResolveImmediateActionStopFadeFrames(
-                record.step.fade, engine.config.mixRate.SampleRate(),
-                &fadeFrames) ||
-            !ResolveStopLeafSilence(engine, row, planned,
-                                    record.authoredExecutionFrame, fadeFrames,
-                                    &silence, &missing)) {
-            settle(VN_CAPABILITY_UNAVAILABLE,
-                   harken::ActionTerminalReason::CapabilityUnavailable);
-            continue;
-        }
-        if (missing) {
-            if (record.step.ifSilent == harken::ActionIfSilentV1::Drop) {
-                settle(VN_OK, harken::ActionTerminalReason::None);
-                continue;
-            }
-            silence = ActionQuantizeBaseFrame(
-                engine, record.authoredExecutionFrame);
-        }
-        std::uint64_t fadeStart = 0;
-        std::uint32_t effectiveFade = 0;
-        if (!ComputeStopFadeWindows(
-                silence, fadeFrames, record.authoredQuantizeBaseFrame,
-                engine.timelinePool.PublishCutoffFrame(), &fadeStart,
-                &effectiveFade)) {
-            settle(VN_BACKPRESSURE,
-                   harken::ActionTerminalReason::Deadline);
-            continue;
-        }
-        if (!engine.actionDeferredRecords.RebaseHeldPendingStop(
-                token, &engine.timelineDeferred, fadeStart, silence))
-            engine.runtimeRecreateRequired = true;
+        RebasePendingImmediateStopIntent(engine, row, token, record);
     }
 }
 
@@ -78951,10 +79077,11 @@ bool ExpandImmediateAction(ImmediateActionPlan* plan,
                     }
                     std::uint64_t silence = 0;
                     bool missing = false;
-                    if (!ResolveStopLeafSilence(
-                            *plan->engine, row, step, delayedFrame,
-                            step.fadeFrames, &silence, &missing)) {
-                        plan->result = VN_CAPABILITY_UNAVAILABLE;
+                    const auto resolved = ResolveStopLeafSilence(
+                        *plan->engine, row, step, delayedFrame,
+                        step.fadeFrames, &silence, &missing);
+                    if (resolved != VN_OK) {
+                        plan->result = resolved;
                         return false;
                     }
                     if (missing) {
@@ -93311,11 +93438,14 @@ bool CaptureDeferredActionStopRoots(
             ActionStopTimingIsLocal(authored);
         std::uint64_t silence = 0;
         bool missing = false;
-        if (!pendingEntry && !ResolveStopLeafSilence(
+        if (!pendingEntry) {
+            const auto resolved = ResolveStopLeafSilence(
                 engine, row, planned, planned.deferredFrame,
-                planned.fadeFrames, &silence, &missing)) {
-            plan.result = VN_CAPABILITY_UNAVAILABLE;
-            return false;
+                planned.fadeFrames, &silence, &missing);
+            if (resolved != VN_OK) {
+                plan.result = resolved;
+                return false;
+            }
         }
         if (missing) {
             if (authored.ifSilent == harken::ActionIfSilentV1::Drop) {
@@ -93697,13 +93827,15 @@ bool PrepareImmediateActionStop(
         bool missing = false;
         if (plan.materializingDeferred && planned.deferredFrame != 0) {
             silence = planned.deferredFrame;
-        } else if (!ResolveStopLeafSilence(engine, row, planned,
-                                           planned.deferredFrame,
-                                           planned.fadeFrames, &silence,
-                                           &missing)) {
-            plan.result = VN_CAPABILITY_UNAVAILABLE;
-            (void)ReleaseImmediateActionStops(plan);
-            return false;
+        } else {
+            const auto resolved = ResolveStopLeafSilence(
+                engine, row, planned, planned.deferredFrame,
+                planned.fadeFrames, &silence, &missing);
+            if (resolved != VN_OK) {
+                plan.result = resolved;
+                (void)ReleaseImmediateActionStops(plan);
+                return false;
+            }
         }
         if (missing) {
             if (authored.ifSilent == harken::ActionIfSilentV1::Drop) {
@@ -102651,8 +102783,8 @@ static VnResult UnloadPackWithFlags(VnPackHandle handle,
         /* Logic-bearing packs unload through the section-19 path. Resident
          * packs unwind only when their capability set is reversible and no
          * foreign references or loaded consumers remain; content packs unwind
-         * symmetrically. Handles with no logic record, including v1 packs and
-         * stale handles, keep the v1 path verbatim. */
+         * symmetrically. Compact media providers share the consumer gate
+         * before their synchronous media-only unload. */
         if (engine->packComposition.Authority() ==
                 harken::PackAuthorityMode::Pack &&
             engine->packComposition.Published() != nullptr) {
@@ -102685,6 +102817,10 @@ static VnResult UnloadPackWithFlags(VnPackHandle handle,
         }
         if (engine->logicPacks.RecordFor(handle) != nullptr) {
             return harken::UnloadPackV2(*engine, handle);
+        }
+        if (engine->packs.Entries(handle) != nullptr &&
+            PackProviderHasConsumer(*engine, handle)) {
+            return VN_IN_USE;
         }
         if (engine->packs.Entries(handle) != nullptr &&
             PackCurrentMediaTouchesGuardedVoice(*engine, handle)) {
@@ -112533,6 +112669,11 @@ VnResult Vn_ReplacePack(VnPackHandle handle, const VnPackDesc* desc) {
             return NoteHotReload(*engine, valid,
                                  harken::kHotReloadClassPack, handle);
         }
+        if (PackReplacementRemovesMedia(*engine, handle, prepared.Media()) &&
+            PackProviderHasConsumer(*engine, handle)) {
+            return NoteHotReload(*engine, VN_IN_USE,
+                                 harken::kHotReloadClassPack, handle);
+        }
         if (PackCurrentMediaTouchesGuardedVoice(*engine, handle)) {
             engine->commands.NoteBackpressure();
             return NoteHotReload(*engine, VN_BACKPRESSURE,
@@ -113925,14 +114066,7 @@ VnResult UnloadReversibleResident(Engine& engine,
         return VN_IN_USE;
     }
 
-    const VnPackHandle consumer = engine.logicPacks.ConsumerOf(handle);
-    if (consumer != 0) {
-        LogRecord log{};
-        log.level = VN_LOG_WARN;
-        log.code = kLogCodePackProviderInUse;
-        log.arg0 = handle;
-        log.arg1 = consumer;
-        engine.logicLogRing.Push(log);
+    if (PackProviderHasConsumer(engine, handle)) {
         return VN_IN_USE;
     }
     VnResult result = engine.packs.CanUnload(handle, engine.registry);
@@ -114489,14 +114623,7 @@ VnResult UnloadPackV2(Engine& engine, VnPackHandle handle) {
     if (record->packKind == kPackKindResident) {
         return UnloadReversibleResident(engine, *record);
     }
-    const VnPackHandle consumer = engine.logicPacks.ConsumerOf(handle);
-    if (consumer != 0) {
-        LogRecord log{};
-        log.level = VN_LOG_WARN;
-        log.code = kLogCodePackProviderInUse;
-        log.arg0 = handle;
-        log.arg1 = consumer;
-        engine.logicLogRing.Push(log);
+    if (PackProviderHasConsumer(engine, handle)) {
         return VN_IN_USE;
     }
 
@@ -114739,38 +114866,10 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
     // have resolved through refuses while a consumer exists. Per-entry
     // consumer edges are not recorded, so the gate is conservative — it
     // never orphans, it only over-refuses.
-    bool removesReferenceable = !revision.removeBindingDefs.empty();
-    if (!removesReferenceable) {
-        const std::vector<PackEntry>* oldMedia =
-            engine.packs.Entries(revision.handle);
-        if (oldMedia != nullptr) {
-            for (const PackEntry& entry : *oldMedia) {
-                bool present = false;
-                for (const PackTocEntry& media : image.media) {
-                    if (media.soundId == entry.soundId) {
-                        present = true;
-                        break;
-                    }
-                }
-                if (!present) {
-                    removesReferenceable = true;
-                    break;
-                }
-            }
-        }
-    }
-    if (removesReferenceable) {
-        const VnPackHandle consumer =
-            engine.logicPacks.ConsumerOf(revision.handle);
-        if (consumer != 0) {
-            LogRecord log{};
-            log.level = VN_LOG_WARN;
-            log.code = kLogCodePackProviderInUse;
-            log.arg0 = revision.handle;
-            log.arg1 = consumer;
-            engine.logicLogRing.Push(log);
-            return VN_IN_USE;
-        }
+    const bool removesReferenceable = !revision.removeBindingDefs.empty() ||
+        PackReplacementRemovesMedia(engine, revision.handle, image.media);
+    if (removesReferenceable && PackProviderHasConsumer(engine, revision.handle)) {
+        return VN_IN_USE;
     }
 
     // Media: the v1 replace gates (retiring bound, foreign ownership).
