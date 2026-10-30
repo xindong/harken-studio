@@ -904,6 +904,30 @@ TEST(CascadeProtocol, StarvedTailStopKeepsItsExactFadeClock) {
     }
 }
 
+TEST(CascadeProtocol, StarvedParkDoesNotAdoptControlsAfterItsEnd) {
+    const auto dc = harkentest::MakeDC(kBlock, 1.0f);
+    CascadeHarness harness(dc);
+    std::vector<float> storage(kBlock, 0.0f);
+    float* planes[harken::kMaxChannels] = {storage.data()};
+    harken::StreamRing stream;
+    stream.Wire(planes, kBlock);
+    stream.ResetForUse(1);
+    auto& ctx = harness.ctx;
+    ctx.streamRing = &stream;
+    ctx.streamGateOpen = true;
+    ctx.streamParkActive = true;
+    ctx.fading = true;
+    ctx.fadeTotalFrames = 16;
+    ctx.engineSampleRate = 48000;
+    ctx.timelineEvents.eventCount = 1;
+    auto& event = ctx.timelineEvents.events[0];
+    event = harken::VoiceTimelineEvent{harken::TimelineEventKind::Stop};
+    event.offset = 200;
+    EXPECT_EQ(SourcePhase::Done, harness.RenderBlock().phase);
+    EXPECT_EQ(16u, ctx.stagedPlaybackEndOffset);
+    EXPECT_EQ(harken::SourceTerminalKind::Parked, ctx.stagedPlaybackEnd);
+}
+
 TEST(CascadeProtocol, HighRatioImmediateStopReleasesViaEscapeValve) {
     NotificationLog log;
     harkentest::EngineSession session(ConfigWithLog(&log));

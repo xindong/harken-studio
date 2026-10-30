@@ -1241,7 +1241,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
              eventIndex < timelineSpan.eventCount; ++eventIndex) {
             const auto& event = timelineSpan.events[eventIndex];
             if (event.offset > offset && event.offset >= offset + produced &&
-                event.offset < blockFrames &&
+                event.offset < offset + target &&
                 TimelineEventPrecedesRootStop(ctx, eventIndex, blockFrames) &&
                 (event.Kind() == TimelineEventKind::Envelope ||
                  event.Kind() == TimelineEventKind::VariableWeight ||
