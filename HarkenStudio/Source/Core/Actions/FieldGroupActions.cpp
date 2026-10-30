@@ -161,6 +161,7 @@ ActionResult executeGroupEdit(ProjectManager* manager, const QString& action,
     result.undoText = QStringLiteral("Edit Field Group");
     result.undoFn = [restore, before = *prepared.before, after = *prepared.after] { restore(after, before); };
     result.redoFn = [restore, before = *prepared.before, after = *prepared.after] { restore(before, after); };
+    result.authoringWriteSet = QSet<QUuid>{request.definition};
     return result;
 }
 

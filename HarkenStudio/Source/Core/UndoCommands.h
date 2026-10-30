@@ -55,6 +55,7 @@ public:
     void beginMacro(const QString& text);
     void endMacro();
     void clear();
+    void clearHistory();
     
     bool canUndo() const;
     bool canRedo() const;
@@ -80,6 +81,7 @@ private:
     
     QUndoStack undoStack_;
     const QSet<QUuid>* authoringWriteSet_ = nullptr;
+    std::vector<std::optional<QSet<QUuid>>> macroWriteSets_;
 };
 
 class PropertyChangeCommand : public QUndoCommand
@@ -589,8 +591,7 @@ public:
 
     bool canReplay() const { return !canReplay_ || canReplay_(); }
     const QSet<QUuid>* authoringWriteSet() const {
-        return mergeId_ == 0 && childCount() == 0 && authoringWriteSet_
-            ? &*authoringWriteSet_ : nullptr;
+        return authoringWriteSet_ ? &*authoringWriteSet_ : nullptr;
     }
 
     void undo() override { undoFn_(); }
@@ -603,6 +604,10 @@ public:
         auto* o = dynamic_cast<const RuntimeActionCommand*>(other);
         if (!o || o->mergeId_ != mergeId_ || mergeId_ == 0) return false;
         redoFn_ = o->redoFn_;
+        if (authoringWriteSet_ && o->authoringWriteSet_)
+            *authoringWriteSet_ |= *o->authoringWriteSet_;
+        else
+            authoringWriteSet_.reset();
         setText(o->text());
         return true;
     }

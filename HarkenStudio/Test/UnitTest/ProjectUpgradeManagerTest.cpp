@@ -4,11 +4,13 @@
 #include "Core/ProjectSaveSnapshot.h"
 #include "Core/FieldGroupJson.h"
 #include "Core/FieldGroupProjectAdapter.h"
+#include "Core/SelectionData.h"
 #include "Support/ProjectDocumentTestUtils.h"
 
 #include <gtest/gtest.h>
 
 #include <QDateTime>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -335,7 +337,7 @@ TEST(ProjectSaveSnapshot, DocumentBytesMatchTextFilesAndRejectDirectoryCollision
     }
 }
 
-TEST(ProjectContract, SnapshotAndDiskValidationRemainEquivalentAcrossChanges)
+TEST(ProjectContract, SnapshotDiskAndIncrementalValidationRemainEquivalentAcrossChanges)
 {
     QTemporaryDir staging;
     ASSERT_TRUE(staging.isValid());
@@ -351,6 +353,8 @@ TEST(ProjectContract, SnapshotAndDiskValidationRemainEquivalentAcrossChanges)
     ASSERT_TRUE(QFile::remove(staging.filePath(mainPath)));
     ASSERT_TRUE(QFile::remove(staging.filePath(busPath)));
     VNX::ProjectContractReadContext context;
+    VNX::ProjectContractReadContext incrementalContext;
+    VNX::ProjectContractValidationBaseline baseline;
     const auto compare = [&](bool valid) {
         QTemporaryDir disk;
         EXPECT_TRUE(disk.isValid());
@@ -360,7 +364,8 @@ TEST(ProjectContract, SnapshotAndDiskValidationRemainEquivalentAcrossChanges)
         auto expected = VNX::ProjectContractRegistry::instance().validateTree(
             disk.path(), root, true);
         auto actual = VNX::ProjectContractRegistry::instance().validateSnapshot(
-            staging.path(), root, true, documents, &context);
+            staging.path(), root, true, documents, &context,
+            baseline.isValid() ? nullptr : &baseline);
         auto fresh = VNX::ProjectContractRegistry::instance().validateSnapshot(
             staging.path(), root, true, documents);
         expected.sort();
@@ -369,11 +374,51 @@ TEST(ProjectContract, SnapshotAndDiskValidationRemainEquivalentAcrossChanges)
         EXPECT_EQ(actual, expected);
         EXPECT_EQ(actual, fresh);
         EXPECT_EQ(actual.isEmpty(), valid) << actual.join(QLatin1Char('\n')).toStdString();
+        if (!baseline.isValid()) return;
+        QHash<QString, QJsonObject> changed;
+        QSet<QString> removed;
+        for (auto document = documents.cbegin(); document != documents.cend(); ++document)
+            if (!baseline.documents().contains(document.key())
+                || baseline.documents().value(document.key()) != document.value())
+                changed.insert(document.key(), document.value());
+        for (auto document = baseline.documents().cbegin(); document != baseline.documents().cend(); ++document)
+            if (!documents.contains(document.key())) removed.insert(document.key());
+        const auto previousRoot = baseline.projectRoot();
+        const auto previousDocuments = baseline.documents();
+        VNX::ProjectContractValidationBaseline candidate;
+        auto incremental = VNX::ProjectContractRegistry::instance().validateIncrementalSnapshot(
+            staging.path(), root, true, changed, removed, baseline, &candidate, &incrementalContext);
+        incremental.sort();
+        EXPECT_EQ(incremental, expected);
+        EXPECT_EQ(candidate.isValid(), valid);
+        EXPECT_EQ(baseline.projectRoot(), previousRoot);
+        EXPECT_EQ(baseline.documents(), previousDocuments);
+        if (candidate.isValid()) baseline = std::move(candidate);
     };
     compare(true);
 
     QJsonObject changed = main;
     QJsonObject content = HarkenTest::projectContent(changed);
+    content.insert(QStringLiteral("expanded"), true);
+    changed.insert(QStringLiteral("content"), content);
+    documents.insert(mainPath, changed);
+    compare(true);
+
+    content.insert(QStringLiteral("order"), false);
+    changed.insert(QStringLiteral("content"), content);
+    documents.insert(mainPath, changed);
+    compare(false);
+
+    changed = main;
+    content = HarkenTest::projectContent(changed);
+    content.insert(QStringLiteral("components"), QJsonObject{
+        {QStringLiteral("unknownComponent"), QJsonObject{}}});
+    changed.insert(QStringLiteral("content"), content);
+    documents.insert(mainPath, changed);
+    compare(false);
+
+    changed = main;
+    content = HarkenTest::projectContent(changed);
     content.insert(QStringLiteral("name"), false);
     changed.insert(QStringLiteral("content"), content);
     documents.insert(mainPath, changed);
@@ -423,6 +468,170 @@ TEST(ProjectContract, SnapshotAndDiskValidationRemainEquivalentAcrossChanges)
     compare(true);
 }
 
+TEST(ProjectContract, IncrementalDependenciesFollowReferencesWithoutPullingInUnrelatedDocuments)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString projectPath = createBaselineProject(directory);
+    const QJsonObject root = readJson(projectPath);
+    const QString mainPath = QStringLiteral("Layers/Main.vp");
+    QJsonObject main = readJson(directory.filePath(mainPath));
+    QJsonObject other = main;
+    const QString otherGuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    auto header = HarkenTest::projectHeader(other);
+    header.insert(QStringLiteral("id"), otherGuid);
+    other.insert(QStringLiteral("harkenDocument"), header);
+    auto content = HarkenTest::projectContent(other);
+    content.insert(QStringLiteral("guid"), otherGuid);
+    content.insert(QStringLiteral("name"), QStringLiteral("Other"));
+    other.insert(QStringLiteral("content"), content);
+    writeJson(directory.filePath(QStringLiteral("Layers/Other.vp")), other);
+    writeJson(directory.filePath(QStringLiteral("A.hsp")), root);
+
+    VNX::ProjectContractValidationBaseline baseline;
+    ASSERT_TRUE(VNX::ProjectContractRegistry::instance().validateTree(
+        directory.path(), root, true, {}, nullptr, &baseline,
+        QFileInfo(projectPath).fileName()).isEmpty());
+    ASSERT_TRUE(baseline.isValid());
+    content = HarkenTest::projectContent(main);
+    content.insert(QStringLiteral("expanded"), true);
+    main.insert(QStringLiteral("content"), content);
+    VNX::ProjectContractValidationBaseline candidate;
+    VNX::ProjectContractValidationDetails details;
+    ASSERT_TRUE(VNX::ProjectContractRegistry::instance().validateIncrementalSnapshot(
+        directory.path(), root, true, {{mainPath, main}}, {}, baseline,
+        &candidate, nullptr, &details).isEmpty());
+    EXPECT_FALSE(details.fullValidation);
+    EXPECT_TRUE(details.readPaths.contains(QStringLiteral("Baseline.hsp")));
+    EXPECT_TRUE(details.readPaths.contains(QStringLiteral("Busses/Root.vp")));
+    EXPECT_TRUE(details.readPaths.contains(mainPath));
+    EXPECT_FALSE(details.readPaths.contains(QStringLiteral("Layers/Other.vp")));
+    EXPECT_FALSE(details.readPaths.contains(QStringLiteral("A.hsp")));
+    EXPECT_NE(candidate.documents().value(mainPath), baseline.documents().value(mainPath));
+
+    QTemporaryDir emptyDirectory;
+    ASSERT_TRUE(emptyDirectory.isValid());
+    VNX::ProjectContractValidationBaseline renamedBaseline;
+    ASSERT_TRUE(VNX::ProjectContractRegistry::instance().validateSnapshot(
+        emptyDirectory.path(), root, true, baseline.documents(), nullptr,
+        &renamedBaseline, QStringLiteral("Saved.hsp")).isEmpty());
+    EXPECT_TRUE(renamedBaseline.dependencyPaths({}).isEmpty());
+    EXPECT_TRUE(renamedBaseline.dependencyPaths({mainPath}).contains(QStringLiteral("Saved.hsp")));
+
+    content.insert(QStringLiteral("parentRef"), QJsonObject{
+        {QStringLiteral("kind"), QStringLiteral("item")},
+        {QStringLiteral("id"), HarkenTest::projectContent(main).value(QStringLiteral("guid"))}});
+    main.insert(QStringLiteral("content"), content);
+    EXPECT_FALSE(VNX::ProjectContractRegistry::instance().validateIncrementalSnapshot(
+        directory.path(), root, true, {{mainPath, main}}, {}, baseline,
+        &candidate, nullptr, &details).isEmpty());
+    EXPECT_TRUE(details.fullValidation);
+    EXPECT_TRUE(details.readPaths.contains(QStringLiteral("Layers/Other.vp")));
+    EXPECT_FALSE(candidate.isValid());
+    EXPECT_TRUE(baseline.isValid());
+}
+
+TEST(ProjectContract, ParentDependenciesKeepInheritedTargetsWithoutExpandingPlaybackSubtrees)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString projectPath = createBaselineProject(directory);
+    const QJsonObject root = readJson(projectPath);
+    const QJsonObject original = readJson(directory.filePath(QStringLiteral("Layers/Main.vp")));
+    const auto newGuid = [] { return QUuid::createUuid().toString(QUuid::WithoutBraces); };
+    const QString parentId = newGuid();
+    const QString childId = HarkenTest::projectContent(original).value(QStringLiteral("guid")).toString();
+    const QString siblingId = newGuid();
+    const QString descendantId = newGuid();
+    const QString variableId = newGuid();
+    const QString attenuationId = newGuid();
+    const auto definition = [&](const QString& id, const QString& name,
+                                const QString& type, const QString& parent) {
+        auto content = HarkenTest::projectContent(original);
+        content.insert(QStringLiteral("guid"), id);
+        content.insert(QStringLiteral("name"), name);
+        content.insert(QStringLiteral("type"), type);
+        content.insert(QStringLiteral("parentRef"), parent.isEmpty()
+            ? QJsonObject{{QStringLiteral("kind"), QStringLiteral("root")}}
+            : QJsonObject{{QStringLiteral("kind"), QStringLiteral("item")},
+                          {QStringLiteral("id"), parent}});
+        return HarkenTest::projectDocument(QStringLiteral("project.layer"), id,
+                                           HarkenTest::kProjectId, content);
+    };
+    const auto selection = [&](const QStringList& children, const QString& variable = QString()) {
+        VNX::SelectionData data;
+        data.shared.occurrenceOrdinalHighWater = children.size();
+        for (qsizetype index = 0; index < children.size(); ++index) {
+            const auto ordinal = static_cast<uint32_t>(index);
+            data.shared.entries.push_back({QUuid(children.at(index)), ordinal,
+                {{ordinal, ordinal, 50}}, {}, {}});
+        }
+        if (!variable.isEmpty()) data.shared.matchAxes.push_back(QUuid(variable));
+        return QJsonObject{{QStringLiteral("selection"), QJsonObject{
+            {QStringLiteral("selections"), data.toJson()}}}};
+    };
+    auto parent = definition(parentId, QStringLiteral("Parent"), QStringLiteral("Container"), {});
+    auto content = HarkenTest::projectContent(parent);
+    content.insert(QStringLiteral("components"), selection({childId, siblingId}, variableId));
+    auto groups = content.value(QStringLiteral("fieldGroups")).toObject();
+    auto shared = groups.value(QStringLiteral("shared")).toObject();
+    shared.insert(QStringLiteral("spatialRating"), QJsonObject{
+        {QStringLiteral("inherit"), false},
+        {QStringLiteral("values"), QJsonObject{
+            {QStringLiteral("spatialAttenuationRef"), attenuationId},
+            {QStringLiteral("spatialIs3DEnabled"), true},
+            {QStringLiteral("spatialPanning"), 0},
+            {QStringLiteral("spatialAttenuationDistanceScaling"), 1}}}});
+    groups.insert(QStringLiteral("shared"), shared);
+    content.insert(QStringLiteral("fieldGroups"), groups);
+    parent.insert(QStringLiteral("content"), content);
+    auto child = definition(childId, QStringLiteral("Main"), QStringLiteral("Sound"), parentId);
+    content = HarkenTest::projectContent(child);
+    content.insert(QStringLiteral("extensions"), QJsonObject{{QStringLiteral("opaqueGuid"), descendantId}});
+    child.insert(QStringLiteral("content"), content);
+    auto sibling = definition(siblingId, QStringLiteral("Sibling"), QStringLiteral("Container"), parentId);
+    content = HarkenTest::projectContent(sibling);
+    content.insert(QStringLiteral("components"), selection({descendantId}));
+    sibling.insert(QStringLiteral("content"), content);
+    const auto independent = [&](const QString& id, const QString& name, const QString& type,
+                                  const QJsonObject& properties = QJsonObject{}) {
+        return HarkenTest::projectDocument(QStringLiteral("project.") + type.toLower(), id,
+            HarkenTest::kProjectId, QJsonObject{
+                {QStringLiteral("guid"), id}, {QStringLiteral("type"), type},
+                {QStringLiteral("name"), name},
+                {QStringLiteral("parentRef"), QJsonObject{{QStringLiteral("kind"), QStringLiteral("root")}}},
+                {QStringLiteral("components"), QJsonObject{{type.toLower(), properties}}}});
+    };
+    const QHash<QString, QJsonObject> documents{
+        {QStringLiteral("Busses/Root.vp"), readJson(directory.filePath(QStringLiteral("Busses/Root.vp")))},
+        {QStringLiteral("Layers/Main.vp"), child},
+        {QStringLiteral("Layers/Parent.vp"), parent},
+        {QStringLiteral("Layers/Sibling.vp"), sibling},
+        {QStringLiteral("Layers/Descendant.vp"), definition(descendantId,
+            QStringLiteral("Descendant"), QStringLiteral("Sound"), siblingId)},
+        {QStringLiteral("Variables/Selector.vp"), independent(variableId,
+            QStringLiteral("Selector"), QStringLiteral("Variable"))},
+        {QStringLiteral("Attenuations/Distance.vp"), independent(attenuationId,
+            QStringLiteral("Distance"), QStringLiteral("Attenuation"), QJsonObject{
+                {QStringLiteral("maxDistance"), 100},
+                {QStringLiteral("dimensions"), QJsonArray{}}})}};
+    VNX::ProjectContractValidationBaseline baseline;
+    const auto errors = VNX::ProjectContractRegistry::instance().validateSnapshot(
+        directory.path(), root, true, documents, nullptr, &baseline,
+        QStringLiteral("Baseline.hsp"), false);
+    ASSERT_TRUE(errors.isEmpty()) << errors.join(QLatin1Char('\n')).toStdString();
+    const auto childReads = baseline.dependencyPaths({QStringLiteral("Layers/Main.vp")});
+    for (const auto& required : {QStringLiteral("Layers/Parent.vp"), QStringLiteral("Busses/Root.vp"),
+                                QStringLiteral("Variables/Selector.vp"), QStringLiteral("Attenuations/Distance.vp")})
+        EXPECT_TRUE(childReads.contains(required)) << required.toStdString();
+    EXPECT_FALSE(childReads.contains(QStringLiteral("Layers/Sibling.vp")));
+    EXPECT_FALSE(childReads.contains(QStringLiteral("Layers/Descendant.vp")));
+    const auto parentReads = baseline.dependencyPaths({QStringLiteral("Layers/Parent.vp")});
+    EXPECT_TRUE(parentReads.contains(QStringLiteral("Layers/Main.vp")));
+    EXPECT_TRUE(parentReads.contains(QStringLiteral("Layers/Sibling.vp")));
+    EXPECT_FALSE(parentReads.contains(QStringLiteral("Layers/Descendant.vp")));
+}
+
 TEST(ProjectContract, SnapshotOverridesDiskDocumentsWithoutHidingOtherInvalidFiles)
 {
     QTemporaryDir staging;
@@ -445,6 +654,15 @@ TEST(ProjectContract, SnapshotOverridesDiskDocumentsWithoutHidingOtherInvalidFil
 
     const QString extraPath = staging.filePath(QStringLiteral("Layers/Extra.vp"));
     writeJson(extraPath, QJsonObject{});
+    auto loadedDocuments = documents;
+    loadedDocuments.insert(QStringLiteral("Busses/Root.vp"),
+        readJson(staging.filePath(QStringLiteral("Busses/Root.vp"))));
+    VNX::ProjectContractValidationBaseline loadedBaseline;
+    EXPECT_TRUE(VNX::ProjectContractRegistry::instance().validateSnapshot(
+        staging.path(), root, true, loadedDocuments, nullptr, &loadedBaseline,
+        QStringLiteral("Baseline.hsp"), false).isEmpty());
+    EXPECT_TRUE(loadedBaseline.isValid());
+    EXPECT_FALSE(loadedBaseline.documents().contains(QStringLiteral("Layers/Extra.vp")));
     auto actual = VNX::ProjectContractRegistry::instance().validateSnapshot(
         staging.path(), root, true, documents, &context);
     EXPECT_FALSE(actual.isEmpty());
@@ -498,6 +716,297 @@ TEST(ProjectUpgradeManager, ChangedProjectIsNotOverwrittenByStaleAnalysis)
                   .value(QStringLiteral("payload")).toString(),
               QStringLiteral("newer-content"));
 }
+
+TEST(ProjectTransaction, DeltaRecoveryRestoresOnlyItsExplicitMutations)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString projectPath = createBaselineProject(directory);
+    const QJsonObject original = readJson(projectPath);
+    const QJsonObject payload{{QStringLiteral("value"), 1}};
+    writeJson(directory.filePath(QStringLiteral("Nodes/remove.vp")), payload);
+    writeJson(directory.filePath(QStringLiteral("Nodes/old.vp")), payload);
+    writeJson(directory.filePath(QStringLiteral("Nodes/unrelated.vp")), payload);
+    ASSERT_TRUE(QDir().mkpath(directory.filePath(QStringLiteral("Empty"))));
+    const QJsonObject changed{{QStringLiteral("value"), 2}};
+    VNX::ProjectTransaction::DeltaPlan plan;
+    plan.writes = {
+        {QStringLiteral("Baseline.hsp"), QJsonDocument(changed).toJson()},
+        {QStringLiteral("New/Nested/added.vp"), QJsonDocument(changed).toJson()}};
+    plan.deletes = {QStringLiteral("Nodes/remove.vp")};
+    plan.renames = {{QStringLiteral("Nodes/old.vp"), QStringLiteral("Nodes/renamed.vp")}};
+    plan.directories = {{QStringLiteral("Empty"), false}};
+    QString error;
+    {
+        auto transaction = VNX::ProjectTransaction::beginDelta(projectPath, plan, &error);
+        ASSERT_NE(transaction, nullptr) << error.toStdString();
+        writeJson(directory.filePath(QStringLiteral("Nodes/remove.vp")), changed);
+        ASSERT_TRUE(transaction->applyDelta(&error)) << error.toStdString();
+        EXPECT_EQ(readJson(projectPath), changed);
+        EXPECT_FALSE(QFileInfo::exists(directory.filePath(QStringLiteral("Nodes/remove.vp"))));
+        EXPECT_FALSE(QFileInfo::exists(directory.filePath(QStringLiteral("Nodes/old.vp"))));
+        EXPECT_EQ(readJson(directory.filePath(QStringLiteral("Nodes/renamed.vp"))), payload);
+        EXPECT_FALSE(QFileInfo::exists(directory.filePath(QStringLiteral("Empty"))));
+        writeJson(directory.filePath(QStringLiteral("Nodes/unrelated.vp")), changed);
+    }
+    ASSERT_TRUE(VNX::ProjectTransaction::recover(projectPath, &error)) << error.toStdString();
+    EXPECT_EQ(readJson(projectPath), original);
+    EXPECT_EQ(readJson(directory.filePath(QStringLiteral("Nodes/remove.vp"))), payload);
+    EXPECT_EQ(readJson(directory.filePath(QStringLiteral("Nodes/old.vp"))), payload);
+    EXPECT_EQ(readJson(directory.filePath(QStringLiteral("Nodes/unrelated.vp"))), changed);
+    EXPECT_FALSE(QFileInfo::exists(directory.filePath(QStringLiteral("Nodes/renamed.vp"))));
+    EXPECT_FALSE(QFileInfo::exists(directory.filePath(QStringLiteral("New"))));
+    EXPECT_TRUE(QFileInfo(directory.filePath(QStringLiteral("Empty"))).isDir());
+}
+
+TEST(ProjectTransaction, BatchedDeltaWritesCommitAndRecoverAsOneChangeSet)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString projectPath = createBaselineProject(directory);
+    const QJsonObject original{{QStringLiteral("version"), 1}};
+    const QJsonObject saved{{QStringLiteral("version"), 2}};
+    VNX::ProjectTransaction::DeltaPlan plan;
+    for (int index = 0; index < 96; ++index) {
+        const QString path = QStringLiteral("Layers/Batch%1.vp").arg(index, 3, 10, QLatin1Char('0'));
+        writeJson(directory.filePath(path), original);
+        plan.writes.append({path, QJsonDocument(saved).toJson()});
+    }
+    QString error;
+    {
+        auto transaction = VNX::ProjectTransaction::beginDelta(projectPath, plan, &error);
+        ASSERT_NE(transaction, nullptr) << error.toStdString();
+        ASSERT_TRUE(transaction->applyDelta(&error)) << error.toStdString();
+        for (const auto& write : plan.writes)
+            EXPECT_EQ(readJson(directory.filePath(write.path)), saved);
+    }
+    ASSERT_TRUE(VNX::ProjectTransaction::recover(projectPath, &error)) << error.toStdString();
+    for (const auto& write : plan.writes)
+        EXPECT_EQ(readJson(directory.filePath(write.path)), original);
+    auto transaction = VNX::ProjectTransaction::beginDelta(projectPath, plan, &error);
+    ASSERT_NE(transaction, nullptr) << error.toStdString();
+    ASSERT_TRUE(transaction->applyDelta(&error)) << error.toStdString();
+    ASSERT_TRUE(transaction->commit(false, &error)) << error.toStdString();
+    for (const auto& write : plan.writes)
+        EXPECT_EQ(readJson(directory.filePath(write.path)), saved);
+    EXPECT_FALSE(VNX::ProjectTransaction::recoveryRequired(projectPath));
+}
+
+TEST(ProjectTransaction, FailedBatchProtectsExternalContentUntilRecoveryCanFinish)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString projectPath = createBaselineProject(directory);
+    const QJsonObject original{{QStringLiteral("version"), 1}};
+    const QJsonObject saved{{QStringLiteral("version"), 2}};
+    VNX::ProjectTransaction::DeltaPlan plan;
+    for (int index = 0; index < 96; ++index) {
+        const QString path = QStringLiteral("Layers/Batch%1.vp").arg(index, 3, 10, QLatin1Char('0'));
+        writeJson(directory.filePath(path), original);
+        plan.writes.append({path, QJsonDocument(saved).toJson()});
+    }
+    QString error;
+    {
+        auto transaction = VNX::ProjectTransaction::beginDelta(projectPath, plan, &error);
+        ASSERT_NE(transaction, nullptr) << error.toStdString();
+        ASSERT_TRUE(QDir().mkpath(QDir(transaction->backupDirectory()).filePath(
+            QStringLiteral(".staged/") + plan.writes.first().path)));
+        EXPECT_FALSE(transaction->applyDelta(&error));
+        ASSERT_TRUE(transaction->rollback(&error)) << error.toStdString();
+        for (const auto& write : plan.writes)
+            EXPECT_EQ(readJson(directory.filePath(write.path)), original);
+    }
+    auto transaction = VNX::ProjectTransaction::beginDelta(projectPath, plan, &error);
+    ASSERT_NE(transaction, nullptr) << error.toStdString();
+    const QString blocked = directory.filePath(plan.writes.first().path);
+    ASSERT_TRUE(QFile::remove(blocked));
+    ASSERT_TRUE(QDir().mkpath(blocked));
+    const QString externalPath = QDir(blocked).filePath(QStringLiteral("External.json"));
+    const QJsonObject external{{QStringLiteral("external"), true}};
+    writeJson(externalPath, external);
+    EXPECT_FALSE(transaction->applyDelta(&error));
+    EXPECT_FALSE(transaction->rollback(&error));
+    EXPECT_EQ(readJson(externalPath), external);
+    ASSERT_TRUE(QFile::remove(externalPath));
+    ASSERT_TRUE(QDir().rmdir(blocked));
+    writeJson(blocked, original);
+    ASSERT_TRUE(transaction->rollback(&error)) << error.toStdString();
+    for (const auto& write : plan.writes)
+        EXPECT_EQ(readJson(directory.filePath(write.path)), original);
+    EXPECT_FALSE(VNX::ProjectTransaction::recoveryRequired(projectPath));
+}
+
+TEST(ProjectTransaction, ReadOnlyDependenciesRejectConflictsWithoutPreparingRecovery)
+{
+    QTemporaryDir container;
+    ASSERT_TRUE(container.isValid());
+    QTemporaryDir directory(container.filePath(QStringLiteral("project-XXXXXX")));
+    ASSERT_TRUE(directory.isValid());
+    const QString projectPath = createBaselineProject(directory);
+    QFile file(projectPath);
+    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+    const QByteArray hash = QCryptographicHash::hash(file.readAll(), QCryptographicHash::Sha256);
+    file.close();
+    const QList<VNX::ProjectTransaction::ReadDependency> readSet{
+        {QStringLiteral("Baseline.hsp"), hash},
+        {QStringLiteral("NotCreated.vp"), {}, false}};
+    const auto entries = QDir(container.path()).entryList(QDir::AllEntries | QDir::Hidden
+        | QDir::System | QDir::NoDotAndDotDot);
+    QString error;
+    ASSERT_TRUE(VNX::ProjectTransaction::verifyReadSet(projectPath, readSet, &error))
+        << error.toStdString();
+    writeJson(directory.filePath(QStringLiteral("NotCreated.vp")),
+              QJsonObject{{QStringLiteral("external"), true}});
+    EXPECT_FALSE(VNX::ProjectTransaction::verifyReadSet(projectPath, readSet, &error));
+    ASSERT_TRUE(QFile::remove(directory.filePath(QStringLiteral("NotCreated.vp"))));
+    const QJsonObject external{{QStringLiteral("external"), true}};
+    writeJson(projectPath, external);
+    EXPECT_FALSE(VNX::ProjectTransaction::verifyReadSet(projectPath, readSet, &error));
+    EXPECT_EQ(readJson(projectPath), external);
+    EXPECT_FALSE(VNX::ProjectTransaction::recoveryRequired(projectPath));
+    EXPECT_EQ(QDir(container.path()).entryList(QDir::AllEntries | QDir::Hidden
+        | QDir::System | QDir::NoDotAndDotDot), entries);
+}
+
+TEST(ProjectTransaction, DeltaReadConflictDoesNotRestoreExternalDependencyContents)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString projectPath = createBaselineProject(directory);
+    const QJsonObject original = readJson(projectPath);
+    const QString dependency = directory.filePath(QStringLiteral("Nodes/dependency.vp"));
+    writeJson(dependency, QJsonObject{{QStringLiteral("value"), 1}});
+    QFile file(dependency);
+    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+    const QByteArray hash = QCryptographicHash::hash(file.readAll(), QCryptographicHash::Sha256);
+    file.close();
+    VNX::ProjectTransaction::DeltaPlan plan;
+    plan.writes = {{QStringLiteral("Baseline.hsp"), QByteArrayLiteral("{\"value\":2}")}};
+    plan.readSet = {{QStringLiteral("Nodes/dependency.vp"), hash}};
+    QString error;
+    auto transaction = VNX::ProjectTransaction::beginDelta(projectPath, plan, &error);
+    ASSERT_NE(transaction, nullptr) << error.toStdString();
+    ASSERT_TRUE(transaction->applyDelta(&error)) << error.toStdString();
+    const QJsonObject external{{QStringLiteral("external"), true}};
+    writeJson(dependency, external);
+    EXPECT_FALSE(transaction->commit(false, &error));
+    ASSERT_TRUE(transaction->rollback(&error)) << error.toStdString();
+    EXPECT_EQ(readJson(projectPath), original);
+    EXPECT_EQ(readJson(dependency), external);
+    transaction.reset();
+    EXPECT_EQ(VNX::ProjectTransaction::beginDelta(projectPath, plan, &error), nullptr);
+    EXPECT_FALSE(VNX::ProjectTransaction::recoveryRequired(projectPath));
+}
+
+TEST(ProjectTransaction, DeltaOwnsItsInstallationAndProtectsLaterExternalChanges)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString projectPath = createBaselineProject(directory);
+    VNX::ProjectTransaction::DeltaPlan plan;
+    const QJsonObject saved{{QStringLiteral("saved"), true}};
+    plan.writes = {{QStringLiteral("Baseline.hsp"), QJsonDocument(saved).toJson()}};
+    QString error;
+    auto transaction = VNX::ProjectTransaction::beginDelta(projectPath, plan, &error);
+    ASSERT_NE(transaction, nullptr) << error.toStdString();
+    const QJsonObject external{{QStringLiteral("external"), true}};
+    writeJson(projectPath, external);
+    ASSERT_TRUE(transaction->applyDelta(&error)) << error.toStdString();
+    ASSERT_TRUE(transaction->commit(false, &error)) << error.toStdString();
+    EXPECT_EQ(readJson(projectPath), saved);
+    transaction.reset();
+    transaction = VNX::ProjectTransaction::beginDelta(projectPath, plan, &error);
+    ASSERT_NE(transaction, nullptr) << error.toStdString();
+    ASSERT_TRUE(transaction->applyDelta(&error)) << error.toStdString();
+    writeJson(projectPath, external);
+    EXPECT_FALSE(transaction->commit(false, &error));
+    EXPECT_FALSE(transaction->rollback(&error));
+    EXPECT_EQ(readJson(projectPath), external);
+    writeJson(projectPath, saved);
+    ASSERT_TRUE(transaction->rollback(&error)) << error.toStdString();
+}
+
+TEST(ProjectTransaction, DeltaDirectoryRemovalCannotConsumeUnplannedFiles)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString projectPath = createBaselineProject(directory);
+    const QString outsider = directory.filePath(QStringLiteral("Nodes/unrelated.vp"));
+    const QJsonObject payload{{QStringLiteral("external"), true}};
+    writeJson(outsider, payload);
+    VNX::ProjectTransaction::DeltaPlan plan;
+    plan.directories = {{QStringLiteral("Nodes"), false}};
+    QString error;
+    auto transaction = VNX::ProjectTransaction::beginDelta(projectPath, plan, &error);
+    ASSERT_NE(transaction, nullptr) << error.toStdString();
+    EXPECT_FALSE(transaction->applyDelta(&error));
+    EXPECT_EQ(readJson(outsider), payload);
+    ASSERT_TRUE(transaction->rollback(&error)) << error.toStdString();
+}
+
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
+TEST(ProjectTransaction, DeltaKeepsUnplannedParentDirectorySpelling)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString projectPath = createBaselineProject(directory);
+    const QJsonObject original{{QStringLiteral("value"), 1}};
+    const QJsonObject changed{{QStringLiteral("value"), 2}};
+    writeJson(directory.filePath(QStringLiteral("PARENT/Child/Voice.vp")), original);
+    VNX::ProjectTransaction::DeltaPlan plan;
+    plan.writes = {{QStringLiteral("parent/child/Voice.vp"), QJsonDocument(changed).toJson()},
+                   {QStringLiteral("parent/child/New/Added.vp"), QJsonDocument(changed).toJson()}};
+    plan.directories = {{QStringLiteral("parent/child/New"), true}};
+    QString error;
+    auto transaction = VNX::ProjectTransaction::beginDelta(projectPath, plan, &error);
+    ASSERT_NE(transaction, nullptr) << error.toStdString();
+    ASSERT_TRUE(transaction->applyDelta(&error)) << error.toStdString();
+    ASSERT_TRUE(transaction->commit(false, &error)) << error.toStdString();
+    EXPECT_TRUE(QDir(directory.path()).entryList(QDir::Dirs).contains(QStringLiteral("PARENT")));
+    EXPECT_TRUE(QDir(directory.filePath(QStringLiteral("PARENT")))
+                    .entryList(QDir::Dirs).contains(QStringLiteral("Child")));
+    EXPECT_EQ(readJson(directory.filePath(QStringLiteral("PARENT/Child/Voice.vp"))), changed);
+    EXPECT_EQ(readJson(directory.filePath(QStringLiteral("PARENT/Child/New/Added.vp"))), changed);
+}
+
+TEST(ProjectTransaction, DeltaCaseOnlyRenameRecoversSpellingAndFrozenContents)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString projectPath = createBaselineProject(directory);
+    const QJsonObject payload{{QStringLiteral("value"), 1}};
+    writeJson(directory.filePath(QStringLiteral("Original/Voice.vp")), payload);
+    VNX::ProjectTransaction::DeltaPlan plan;
+    plan.renames = {{QStringLiteral("Original/Voice.vp"), QStringLiteral("ORIGINAL/VOICE.vp")}};
+    plan.directories = {{QStringLiteral("Original"), false}, {QStringLiteral("ORIGINAL"), true}};
+    QString error;
+    {
+        auto transaction = VNX::ProjectTransaction::beginDelta(projectPath, plan, &error);
+        ASSERT_NE(transaction, nullptr) << error.toStdString();
+        writeJson(directory.filePath(QStringLiteral("Original/Voice.vp")),
+                  QJsonObject{{QStringLiteral("external"), true}});
+        ASSERT_TRUE(transaction->applyDelta(&error)) << error.toStdString();
+        EXPECT_TRUE(QDir(directory.path()).entryList(QDir::Dirs).contains(QStringLiteral("ORIGINAL")));
+        EXPECT_TRUE(QDir(directory.filePath(QStringLiteral("ORIGINAL")))
+                        .entryList(QDir::Files).contains(QStringLiteral("VOICE.vp")));
+        EXPECT_EQ(readJson(directory.filePath(QStringLiteral("ORIGINAL/VOICE.vp"))), payload);
+    }
+    ASSERT_TRUE(VNX::ProjectTransaction::recover(projectPath, &error)) << error.toStdString();
+    EXPECT_TRUE(QDir(directory.path()).entryList(QDir::Dirs).contains(QStringLiteral("Original")));
+    EXPECT_TRUE(QDir(directory.filePath(QStringLiteral("Original")))
+                    .entryList(QDir::Files).contains(QStringLiteral("Voice.vp")));
+    EXPECT_EQ(readJson(directory.filePath(QStringLiteral("Original/Voice.vp"))), payload);
+    const QJsonObject external{{QStringLiteral("external"), true}};
+    writeJson(directory.filePath(QStringLiteral("Original/Unplanned.vp")), external);
+    auto transaction = VNX::ProjectTransaction::beginDelta(projectPath, plan, &error);
+    ASSERT_NE(transaction, nullptr) << error.toStdString();
+    writeJson(directory.filePath(QStringLiteral("Original/Voice.vp")), external);
+    EXPECT_FALSE(transaction->applyDelta(&error));
+    ASSERT_TRUE(transaction->rollback(&error)) << error.toStdString();
+    EXPECT_EQ(readJson(directory.filePath(QStringLiteral("Original/Voice.vp"))), payload);
+    EXPECT_EQ(readJson(directory.filePath(QStringLiteral("Original/Unplanned.vp"))), external);
+}
+#endif
 
 TEST(ProjectTransaction, TargetChangeIsRejectedBeforeWrite)
 {

@@ -294,6 +294,9 @@ TEST(StudioProjectOpen, SaveAsKeepsTheActiveProjectSessionAndFileObservationCons
     QFile copiedSource(destinationSource);
     ASSERT_TRUE(copiedSource.open(QIODevice::WriteOnly));
     copiedSource.close();
+    const QString staleDocument = directory.filePath(
+        QStringLiteral("Destination/Actions/Obsolete/Previous.vp"));
+    writeObject(staleDocument, {{QStringLiteral("previousProject"), true}});
     responder.start(5);
     ASSERT_TRUE(QMetaObject::invokeMethod(&window, "onSaveProjectAs", Qt::DirectConnection));
     responder.stop();
@@ -305,10 +308,20 @@ TEST(StudioProjectOpen, SaveAsKeepsTheActiveProjectSessionAndFileObservationCons
     EXPECT_TRUE(undo.isClean());
     EXPECT_TRUE(originalInstance.expired());
     EXPECT_TRUE(QFileInfo::exists(destination));
+    EXPECT_FALSE(QFileInfo::exists(staleDocument));
+    EXPECT_FALSE(QDir(QFileInfo(staleDocument).absolutePath()).exists());
     EXPECT_TRUE(projects.fileWatcher()->isWatching());
     EXPECT_EQ(projects.fileWatcher()->sourceFiles(), QStringList{destinationSource});
     ASSERT_TRUE(projects.saveProject());
     EXPECT_EQ(projects.fileWatcher()->sourceFiles(), QStringList{destinationSource});
+    const auto pendingGuid = pending->guid;
+    ASSERT_TRUE(projects.closeProject());
+    ASSERT_TRUE(projects.loadProject(destination));
+    ASSERT_TRUE(VNX::TestSupport::spinUntil([&] {
+        return projects.currentProject()
+            && projects.currentProject()->projectPath == destination;
+    }, 5000));
+    EXPECT_NE(projects.findItemByGuid(pendingGuid), nullptr);
 }
 
 TEST(StudioProjectOpen, CurrentGenerationOpenRetainsTransactionRecovery)

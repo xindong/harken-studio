@@ -1872,6 +1872,7 @@ void ProjectTreePanel::onItemExpanded(QTreeWidgetItem* item)
     if (ProjectItem* projItem = itemMap_.value(item, nullptr))
     {
         projItem->expanded = true;
+        emit ProjectManager::instance().itemPropertyChanged(projItem, QStringLiteral("expanded"));
         itemExpansion_.insert(projItem->guid, true);
     }
 }
@@ -1882,6 +1883,7 @@ void ProjectTreePanel::onItemCollapsed(QTreeWidgetItem* item)
     if (ProjectItem* projItem = itemMap_.value(item, nullptr))
     {
         projItem->expanded = false;
+        emit ProjectManager::instance().itemPropertyChanged(projItem, QStringLiteral("expanded"));
         itemExpansion_.insert(projItem->guid, false);
     }
 }

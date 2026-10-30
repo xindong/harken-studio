@@ -590,6 +590,91 @@ TEST_P(ProjectSerializationSavedState, ScopedSavedContentMatchesFullComparisonAc
     compare();
 }
 
+TEST_P(ProjectSerializationSavedState, TrackedChangesPreservePersistenceAndAuthoringSavePoints)
+{
+    ProjectData project = HarkenTest::projectWithPlatforms();
+    const auto sound = addSaveStateRoot(project, QStringLiteral("Tone"), ProjectItem::Type::Sound, 1);
+    const auto action = addSaveStateRoot(project, QStringLiteral("Play"), ProjectItem::Type::Action, 2);
+    VNX::ProjectItemSaveState saved;
+    ASSERT_TRUE(markSaved(saved, project));
+    EXPECT_FALSE(saved.requiresFullSave());
+    const auto initialRevision = saved.revision();
+    sound->expanded = !sound->expanded;
+    const auto actionRevision = action->nameBindingRevision;
+    ++action->nameBindingRevision;
+    saved.recordChange(sound.get());
+    saved.recordChange(action.get());
+    EXPECT_GT(saved.revision(), initialRevision);
+    EXPECT_TRUE(saved.refreshPending(project).isEmpty());
+    EXPECT_FALSE(sound->dirtyBit);
+    EXPECT_FALSE(action->dirtyBit);
+    EXPECT_EQ(saved.candidates(), (QSet<QUuid>{sound->guid, action->guid}));
+
+    sound->notes = QStringLiteral("Saved content");
+    saved.recordChange(sound.get());
+    saved.refreshPending(project);
+    EXPECT_TRUE(sound->dirtyBit);
+    const QHash<QUuid, QJsonObject> captured{
+        {sound->guid, saved.serializer().projectItemToJson(*sound, false)}};
+    EXPECT_FALSE(saved.acceptSaved(project, {sound->guid, QUuid::createUuid()},
+                                   saved.serializer(), captured));
+    EXPECT_EQ(saved.candidates(), (QSet<QUuid>{sound->guid, action->guid}));
+    QHash<QUuid, QJsonObject> accepted;
+    ASSERT_TRUE(saved.prepareAccepted(project, {sound->guid}, saved.serializer(), captured, &accepted));
+    EXPECT_EQ(saved.candidates(), (QSet<QUuid>{sound->guid, action->guid}));
+    EXPECT_TRUE(sound->dirtyBit);
+    saved.publishAccepted(accepted);
+    EXPECT_EQ(saved.candidates(), (QSet<QUuid>{action->guid}));
+    saved.recordChange(sound.get());
+    saved.refreshPending(project);
+    EXPECT_FALSE(sound->dirtyBit);
+    action->nameBindingRevision = actionRevision;
+    saved.recordChange(action.get());
+    saved.refreshPending(project);
+    EXPECT_TRUE(saved.candidates().isEmpty());
+
+    sound->notes.clear();
+    saved.recordPreview(sound->guid);
+    saved.refreshPending(project);
+    EXPECT_TRUE(sound->dirtyBit);
+    EXPECT_EQ(saved.candidates(), (QSet<QUuid>{sound->guid}));
+    sound->notes = QStringLiteral("Saved content");
+    saved.recordPreview(sound->guid);
+    saved.refreshPending(project);
+    EXPECT_FALSE(sound->dirtyBit);
+    EXPECT_TRUE(saved.candidates().isEmpty());
+}
+
+TEST_P(ProjectSerializationSavedState, StructuralInvalidationRefreshesIdentityWithoutLosingTheSavePoint)
+{
+    ProjectData project = HarkenTest::projectWithPlatforms();
+    const auto layer = addSaveStateRoot(project, QStringLiteral("Layer"), ProjectItem::Type::Layer, 1);
+    auto sound = addChild(*layer, "Tone", ProjectItem::Type::Sound);
+    sound->objectID = 2;
+    sound->parentRef.kind = VNX::ParentRef::Kind::Item;
+    VNX::ProjectItemSaveState saved;
+    ASSERT_TRUE(markSaved(saved, project));
+    const auto identity = sound->guid;
+    const auto content = saved.serializer().projectItemToJson(*sound, false);
+    auto restored = std::make_shared<ProjectItem>();
+    ASSERT_TRUE(saved.serializer().projectItemFromJson(content, *restored));
+    restored->parent = layer.get();
+    restored->markDirty();
+    layer->children[0] = restored;
+    sound.reset();
+    saved.invalidate();
+    EXPECT_EQ(saved.findItem(identity), nullptr);
+    EXPECT_TRUE(saved.requiresFullSave());
+    ASSERT_TRUE(saved.ensurePrepared(project));
+    EXPECT_EQ(saved.findItem(identity), restored.get());
+    saved.refreshPending(project);
+    EXPECT_FALSE(restored->dirtyBit);
+    EXPECT_TRUE(saved.candidates().isEmpty());
+    EXPECT_TRUE(saved.requiresFullSave());
+    ASSERT_TRUE(markSaved(saved, project));
+    EXPECT_FALSE(saved.requiresFullSave());
+}
+
 INSTANTIATE_TEST_SUITE_P(SerializationSources, ProjectSerializationSavedState,
     ::testing::Bool(), [](const ::testing::TestParamInfo<bool>& info) {
         return info.param ? "Captured" : "Independent";

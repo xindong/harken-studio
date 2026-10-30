@@ -37,6 +37,9 @@ public:
     bool saveProject(const QString& filePath, ProjectData& project);
     bool saveProject(const QString& filePath, const ProjectData& project);
     bool prepareReferenceWrite(const ProjectData& project);
+    QJsonObject projectDocument(const QString& filePath, const ProjectData& project);
+    QJsonObject itemDocument(const ProjectItem& item, const QString& projectId,
+                              int order = 0) const;
     bool prepareProjectSave(const QString& filePath, ProjectData& project,
                             const QString& stagingFilePath = {});
     bool commitProjectSave(QJsonObject* savedHeader = nullptr);
@@ -48,6 +51,8 @@ public:
                      ProjectContractReadContext* context = nullptr);
 
     const ProjectUpgradeResult& upgradeResult() const { return upgradeResult_; }
+    void recordLoadedDocument(const QString& path, const QByteArray& bytes);
+    const QHash<QString, QByteArray>& loadedDocuments() const { return loadedDocuments_; }
 
 
     QJsonObject projectItemToJson(const ProjectItem& item, bool includeChildren = true) const;
@@ -148,6 +153,7 @@ private:
     QByteArray pendingSaveBytes_;
     QJsonObject pendingSaveHeader_;
     ProjectUpgradeResult upgradeResult_;
+    QHash<QString, QByteArray> loadedDocuments_;
     mutable QHash<uint32_t, ReferenceTarget> referencesByObjectId_;
     mutable QHash<harkenstudio::ObjectId, ReferenceTarget> referencesByRuntimeStableId_;
     mutable QHash<QUuid, ReferenceTarget> referencesByGuid_;
