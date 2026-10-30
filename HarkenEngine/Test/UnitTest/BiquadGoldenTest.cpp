@@ -677,4 +677,64 @@ TEST(BiquadGolden, HighShelfFromTrigMatchesIndependentCookbook) {
     EXPECT_NEAR(1.0, RefMagnitude(AsRef(c), 2.0 * kPi * 50.0 / kRate), 5e-3);
 }
 
+TEST(BiquadGolden, LargeFiniteInputPreservesRepresentableFeedback) {
+    const auto c = harken::MakeHighpass(kRate, 1000.0f, 0.707f);
+    BiquadState state;
+    constexpr float input = 2.5118864e38f;
+    const double expectedY = static_cast<double>(c.b0) * input;
+    const double expectedZ1 = static_cast<double>(c.b1) * input - c.a1 * expectedY;
+    const double expectedZ2 = static_cast<double>(c.b2) * input - c.a2 * expectedY;
+    const float output = harken::BiquadTick(c, state, input);
+    ASSERT_TRUE(std::isfinite(output));
+    ASSERT_TRUE(std::isfinite(state.z1));
+    ASSERT_TRUE(std::isfinite(state.z2));
+    EXPECT_NEAR(expectedY, output, std::abs(expectedY) * 1e-6);
+    EXPECT_NEAR(expectedZ1, state.z1, std::abs(expectedZ1) * 1e-6);
+    EXPECT_NEAR(expectedZ2, state.z2, std::abs(expectedZ2) * 1e-6);
+    for (unsigned i = 0; i < 4096; ++i) {
+        ASSERT_TRUE(std::isfinite(harken::BiquadTick(c, state, 1.0f)));
+    }
+    EXPECT_NEAR(0.0f, harken::BiquadTick(c, state, 1.0f), 1e-4f);
+}
+
+TEST(BiquadGolden, LargeFiniteDcSeedRetainsSteadyState) {
+    const auto c = harken::MakeHighpass(kRate, 1000.0f, 0.707f);
+    constexpr float input = 2.5118864e38f;
+    BiquadState state;
+    harken::SeedBiquadStateForDc(state, c, input);
+    const double expectedZ2 = static_cast<double>(c.b2) * input;
+    const double expectedZ1 = static_cast<double>(c.b1) * input + expectedZ2;
+    EXPECT_NEAR(expectedZ1, state.z1, std::abs(expectedZ1) * 1e-6);
+    EXPECT_NEAR(expectedZ2, state.z2, std::abs(expectedZ2) * 1e-6);
+    EXPECT_NEAR(0.0, harken::BiquadTick(c, state, input),
+                static_cast<double>(input) * 1e-6);
+}
+
+TEST(BiquadGolden, DisableTransitionPreservesLargeFiniteEndpoints) {
+    constexpr float input = 2.5118864e38f;
+    for (unsigned progress : {0u, 1u, 2u}) {
+        SCOPED_TRACE(progress);
+        auto c = harken::MakeLowpass(kRate, 12000.0f, 0.707f);
+        BiquadState state[1];
+        for (unsigned i = 0; i < 256; ++i) {
+            ASSERT_TRUE(std::isfinite(harken::BiquadTick(c, state[0], input)));
+        }
+        auto referenceState = state[0];
+        const double source = harken::BiquadTick(c, referenceState, -input);
+        const double mix = static_cast<double>(progress) / 2.0;
+        const double expected = source * (1.0 - mix) - input * mix;
+        harken::BiquadTransitionState<1> transition;
+        harken::RequestBiquadTransition(transition, true, c, 0, false, c, 3);
+        transition.progress = progress;
+        bool enabled = true;
+        std::uint32_t tail = 0;
+        float sample = -input;
+        float* channels[] = {&sample};
+        harken::BiquadProcessSmoothed(transition, enabled, c, state,
+                                     tail, channels, 1, 0, 1);
+        ASSERT_TRUE(std::isfinite(sample));
+        EXPECT_NEAR(expected, sample, std::abs(expected) * 1e-6);
+    }
+}
+
 } // namespace
