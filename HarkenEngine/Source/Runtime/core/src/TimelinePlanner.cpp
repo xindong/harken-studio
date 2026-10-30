@@ -35,8 +35,8 @@ bool TimelinePlanner::Reset(const Config& config, ScheduledTransactionPool* pool
                                     deferredCapacity);
     rolling_.assign(rollingCapacity, RollingCursor{});
     scratchEvents_.assign(pool->MaxTransactionEvents(), ScheduledEventInput{});
-    stalePayloadScratch_.clear();
-    stalePayloadScratch_.reserve(deferredCapacity);
+    staleClaimScratch_.clear();
+    staleClaimScratch_.reserve(deferredCapacity);
 
     materializationsRetried_ = 0;
     materializationReserveFailures_ = 0;
@@ -68,7 +68,7 @@ bool TimelinePlanner::ResetForTransport() noexcept {
     std::fill(rolling_.begin(), rolling_.end(), RollingCursor{});
     std::fill(scratchEvents_.begin(), scratchEvents_.end(),
               ScheduledEventInput{});
-    stalePayloadScratch_.clear();
+    staleClaimScratch_.clear();
     rollingEventScratch_ = {};
     materializationsRetried_ = 0;
     materializationReserveFailures_ = 0;
@@ -724,23 +724,47 @@ bool TimelinePlanner::CompleteRollingAbort(TimelineArmToken armToken) {
 }
 
 void TimelinePlanner::DropStaleDeferred() {
+    if (!valid_) return;
+    staleClaimScratch_.clear();
+    deferredPool_->DropStale(*instances_, nullptr, &staleClaimScratch_);
+    ReleaseStaleDeferredClaims();
+}
+
+std::uint32_t TimelinePlanner::ClaimDeferredDue(
+    std::uint64_t windowEndFrame, DeferredIntentClaim* out,
+    std::uint32_t capacity, std::uint32_t* staleDropped,
+    std::uint32_t* dueCount, std::uint64_t currentQuantum) {
     if (!valid_) {
-        return;
+        if (staleDropped != nullptr) *staleDropped = 0;
+        if (dueCount != nullptr) *dueCount = 0;
+        return 0;
     }
-    stalePayloadScratch_.clear();
-    deferredPool_->DropStale(*instances_, &stalePayloadScratch_);
-    for (const std::uint64_t payload : stalePayloadScratch_) {
-        const std::size_t slot = static_cast<std::size_t>(payload);
+    staleClaimScratch_.clear();
+    const auto claimed = deferredPool_->ClaimDue(windowEndFrame, *instances_,
+        out, capacity, staleDropped, dueCount, currentQuantum, &staleClaimScratch_);
+    ReleaseStaleDeferredClaims();
+    return claimed;
+}
+
+void TimelinePlanner::ReleaseStaleDeferredClaims() {
+    for (const auto& claim : staleClaimScratch_) {
+        const auto& intent = claim.intent;
+        const std::size_t slot = static_cast<std::size_t>(intent.payload);
         if (slot < rolling_.size() &&
             rolling_[slot].state != RollingState::Free &&
-            rolling_[slot].state != RollingState::Aborted) {
+            rolling_[slot].state != RollingState::Aborted &&
+            rolling_[slot].deferred.slot == claim.token.slot &&
+            rolling_[slot].deferred.generation == claim.token.generation) {
             if (armTable_ != nullptr && rolling_[slot].armToken.Valid()) {
                 (void)armTable_->RequestCancel(rolling_[slot].armToken);
             }
             rolling_[slot].deferred = {};
             rolling_[slot].state = RollingState::Aborted;
-        } else {
-            ReleaseDeferredSlot(payload);
+        } else if (slot < deferredProgram_.size() && deferredSlotUsed_[slot] == 1 &&
+                   deferredProgram_[slot] != nullptr &&
+                   deferredProgram_[slot]->ownerInstance == intent.ownerHandle &&
+                   deferredProgram_[slot]->ownerInstanceScheduleEpoch == intent.ownerEpoch) {
+            ReleaseDeferredSlot(intent.payload);
         }
     }
 }
@@ -893,8 +917,8 @@ std::uint64_t TimelinePlanner::MaterializeDue(
     DeferredIntentClaim claim{};
     while (true) {
         std::uint32_t passDueCount = 0;
-        const std::uint32_t claimed = deferredPool_->ClaimDue(
-            windowEndFrame, *instances_, &claim, 1, nullptr, &passDueCount,
+        const std::uint32_t claimed = ClaimDeferredDue(
+            windowEndFrame, &claim, 1, nullptr, &passDueCount,
             budgetQuantum);
         if (claimed == 0) {
             break;

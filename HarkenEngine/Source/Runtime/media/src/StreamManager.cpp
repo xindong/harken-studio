@@ -1173,8 +1173,11 @@ void StreamManager::ServeOneSlot(StreamSlot& slot) {
     const std::uint64_t chunkBytes =
         StreamChunkBytes(chunkFrames, file.toc.channelCount);
     std::uint32_t framesServed = 0;
-    const std::uint32_t maxServeFrames =
+    const std::uint32_t testLimit =
         m_maxServeFramesForTest.load(std::memory_order_relaxed);
+    const std::uint32_t availableAtEntry = ring.WriteAvailable();
+    const std::uint32_t maxServeFrames = testLimit == 0
+        ? availableAtEntry : std::min(availableAtEntry, testLimit);
 
     for (;;) {
         const bool wrapAtLimit =
@@ -1199,6 +1202,7 @@ void StreamManager::ServeOneSlot(StreamSlot& slot) {
             slot.feedStopped = true;
             return;
         }
+        if (framesServed >= maxServeFrames) return;
         const StreamSeek seek =
             StreamSeekToFrame(slot.nextFrame, chunkFrames);
         if (slot.stagedChunk != seek.chunkIndex) {
@@ -1227,13 +1231,8 @@ void StreamManager::ServeOneSlot(StreamSlot& slot) {
         if (span == 0) {
             return; // ring full; the next pass resumes here
         }
-        std::uint32_t serveBudget = span;
-        if (maxServeFrames != 0) {
-            if (framesServed >= maxServeFrames) {
-                return;
-            }
-            serveBudget = std::min(serveBudget, maxServeFrames - framesServed);
-        }
+        const std::uint32_t serveBudget =
+            std::min(span, maxServeFrames - framesServed);
         const std::uint32_t n =
             std::min({serveBudget, remainInChunk, remainToLimit});
         for (std::uint32_t ch = 0; ch < channels; ++ch) {

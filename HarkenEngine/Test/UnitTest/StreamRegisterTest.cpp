@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,10 @@ struct StreamManagerTestAccess {
         for (const auto& column : manager.m_ringStorage) bytes += column.CommittedBytes();
         return bytes;
     }
+    static std::istream& Input(StreamManager& manager, std::uint32_t file) {
+        return manager.m_files[file]->file;
+    }
+    static void ServeSlots(StreamManager& manager) { manager.ServeSlots(); }
 };
 } // namespace harken::detail
 
@@ -92,6 +97,87 @@ std::vector<std::uint8_t> MakeValidImage(VnObjectId soundId,
     const std::vector<float> tone =
         harkentest::MakeSine(frames, 500.0, kRate, 0.5f);
     return BuildStreamBytes(spec, tone);
+}
+
+TEST(StreamRegister, ContinuousConsumptionDoesNotStarveAnotherStream) {
+    auto config = MakeNullConfig(2, 64, kRate);
+    config.maxStreams = 2;
+    config.streamRingFrames = 8;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& streams = session.Engine()->streams;
+    using Access = harken::detail::StreamManagerTestAccess;
+    streams.SetThrottled(true);
+    std::uint32_t files[2]{};
+    std::uint64_t tokens[2]{};
+    for (std::uint32_t i = 0; i < 2; ++i) {
+        StreamSpec spec;
+        spec.soundId = harkentest::ObjectId(7090 + i);
+        spec.sampleRate = kRate;
+        spec.channelCount = 1;
+        spec.chunkFrames = 1;
+        const auto path = TempPath("stream_service_fairness_" + std::to_string(i) + ".stream");
+        WriteFileBytes(path, BuildStreamBytes(spec, {0.25f, 0.25f}));
+        ASSERT_EQ(VN_OK, streams.RegisterFile(spec.soundId, path.c_str()));
+        harken::StreamManager::StreamFacts facts;
+        ASSERT_TRUE(streams.FindFile(spec.soundId, &facts));
+        files[i] = facts.fileIndex;
+        ASSERT_TRUE(streams.PrepareSlotWorkingSet(i, 1));
+        ASSERT_EQ(VN_OK, streams.ActivateSlot(i, files[i], 0, 0, 2, 0, &tokens[i]));
+    }
+    streams.SyncServe();
+
+    class ReadObserver final : public std::streambuf {
+    public:
+        ReadObserver(std::istream& input, std::function<void()> callback)
+            : input_(input), original_(input.rdbuf()), callback_(std::move(callback)) {
+            input_.rdbuf(this);
+        }
+        ~ReadObserver() override { input_.rdbuf(original_); }
+    private:
+        std::streamsize xsgetn(char* data, std::streamsize size) override {
+            callback_();
+            return original_->sgetn(data, size);
+        }
+        pos_type seekoff(off_type offset, std::ios_base::seekdir direction,
+                         std::ios_base::openmode mode) override {
+            return original_->pubseekoff(offset, direction, mode);
+        }
+        pos_type seekpos(pos_type position, std::ios_base::openmode mode) override {
+            return original_->pubseekpos(position, mode);
+        }
+        std::istream& input_;
+        std::streambuf* original_;
+        std::function<void()> callback_;
+    };
+    std::uint32_t firstReads = 0;
+    std::uint32_t firstReadsWhenSecondServed = UINT32_MAX;
+    {
+        ReadObserver first(Access::Input(streams, files[0]), [&] {
+            if (++firstReads < 64) {
+                auto* ring = streams.RingOf(0);
+                ring->AdvanceRead(ring->ReadAvailable());
+            }
+        });
+        ReadObserver second(Access::Input(streams, files[1]), [&] {
+            if (firstReadsWhenSecondServed == UINT32_MAX)
+                firstReadsWhenSecondServed = firstReads;
+        });
+        Access::ServeSlots(streams);
+    }
+    EXPECT_LT(firstReadsWhenSecondServed, 64u);
+    for (std::uint32_t i = 0; i < 2; ++i) {
+        auto* ring = streams.RingOf(i);
+        const float* planes[harken::kMaxChannels]{};
+        ASSERT_GT(ring->ContiguousRead(planes), 0u);
+        EXPECT_EQ(0.25f, planes[0][0]);
+        ASSERT_TRUE(streams.RetirePreparedSlot(ring, tokens[i]));
+    }
+    streams.SyncServe();
+    EXPECT_EQ(2u, streams.FreeSlotCount());
+    EXPECT_EQ(0u, streams.PendingRequestCountForTest());
+    for (std::uint32_t i = 0; i < 2; ++i)
+        EXPECT_EQ(VN_OK, streams.UnregisterFile(harkentest::ObjectId(7090 + i)));
 }
 
 TEST(StreamRegister, RegisterExposesTocFactsThroughFindFile) {

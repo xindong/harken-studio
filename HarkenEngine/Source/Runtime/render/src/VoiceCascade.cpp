@@ -33,35 +33,11 @@ void ScatterVoiceSends(VoiceRenderContext& ctx, float* const* busPlanes,
             continue;
         }
         if (send.ramping) {
-            const float t = static_cast<float>(send.rampBlocksDone + 1) /
-                            static_cast<float>(send.rampBlocksTotal);
-            send.gain.SetTarget(send.rampStartGain +
-                                (send.rampEndGain - send.rampStartGain) * t);
+            send.gain.SetBlockTarget(send.rampStartGain, send.rampEndGain,
+                                     send.rampBlocksDone, send.rampBlocksTotal);
         }
         float* const* dst = busPlanes + send.targetBusIndex * mixChannels;
-        const float cur = send.gain.current;
-        const float tgt = send.gain.target;
-        if (cur == tgt) {
-            for (std::uint32_t ch = 0; ch < mixChannels; ++ch) {
-                const float* srcp = tap[ch] + offset;
-                float* dstp = dst[ch] + offset;
-                for (std::uint32_t i = 0; i < produced; ++i) {
-                    dstp[i] += srcp[i] * cur;
-                }
-            }
-        } else {
-            const float step = (tgt - cur) / static_cast<float>(produced);
-            for (std::uint32_t ch = 0; ch < mixChannels; ++ch) {
-                const float* srcp = tap[ch] + offset;
-                float* dstp = dst[ch] + offset;
-                float g = cur;
-                for (std::uint32_t i = 0; i < produced; ++i) {
-                    g += step;
-                    dstp[i] += srcp[i] * g;
-                }
-            }
-            send.gain.current = tgt;
-        }
+        send.gain.MixAddBlock(tap, dst, mixChannels, offset, produced);
         if (send.ramping) {
             ++send.rampBlocksDone;
             if (send.rampBlocksDone >= send.rampBlocksTotal) {

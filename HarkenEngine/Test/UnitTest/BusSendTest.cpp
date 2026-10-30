@@ -430,6 +430,102 @@ TEST(BusSend, OverflowRefusalsPreserveFilteredBusAndVoiceSends) {
     expectSettled(0.3f);
 }
 
+TEST(BusSend, FallingLevelsKeepTheirEndpointAndPolarity) {
+    constexpr std::uint32_t kRampFrames = 256;
+    for (const bool voiceSend : {false, true}) {
+        for (const auto levels : {std::pair{60.0f, -96.0f},
+                                  std::pair{720.0f, -1000.0f}}) {
+            SCOPED_TRACE(voiceSend);
+            SCOPED_TRACE(levels.first);
+            VnConfig config = MakeNullConfig(1, kRampFrames);
+            config.maxBuses = 3;
+            config.busSendSlotsPerBus = 1;
+            EngineSession session(config);
+            ASSERT_EQ(VN_OK, session.InitResult());
+            const auto dc = RegisterDc(0.5f);
+            ASSERT_EQ(VN_OK, Vn_CreateBus(kBusA, VN_BUS_MASTER));
+            ASSERT_EQ(VN_OK, Vn_CreateBus(kBusB, VN_BUS_MASTER));
+            ASSERT_EQ(VN_OK, Vn_SetBusOutputVolume(kBusA, -1000.0f, 0));
+            auto play = MakePlayDesc(harkentest::ObjectId(1));
+            play.busId = kBusA;
+            play.loopCount = 0;
+            VnVoiceHandle voice = 0;
+            ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+            ASSERT_EQ(VN_OK, voiceSend
+                ? Vn_SetVoiceSend(voice, 0, kBusB, levels.first)
+                : Vn_ConnectBusSend(kBusA, kBusB, levels.first));
+            Capture initial;
+            PumpAndCapture(session.Engine(), 1, initial);
+            ASSERT_EQ(1.0f, initial.left.back());
+            ASSERT_EQ(VN_OK, voiceSend
+                ? Vn_SetVoiceSendLevel(voice, 0, levels.second, 1)
+                : Vn_SetBusSendLevel(kBusA, kBusB, levels.second, 1));
+            Capture falling;
+            PumpAndCapture(session.Engine(), 2, falling);
+            ASSERT_EQ(2u * kRampFrames, falling.left.size());
+            const float expected = 0.5f * std::pow(10.0f, levels.second / 20.0f);
+            for (std::size_t i = 0; i < kRampFrames; ++i) {
+                EXPECT_GE(falling.left[i], expected) << i;
+                EXPECT_GE(falling.right[i], expected) << i;
+            }
+            for (std::size_t i = kRampFrames - 1; i < falling.left.size(); ++i) {
+                EXPECT_FLOAT_EQ(expected, falling.left[i]) << i;
+                EXPECT_FLOAT_EQ(expected, falling.right[i]) << i;
+            }
+        }
+    }
+}
+
+TEST(BusSend, MultiBlockLevelRetargetStartsAtTheCurrentGain) {
+    for (const bool voiceSend : {false, true}) {
+        SCOPED_TRACE(voiceSend);
+        auto config = MakeNullConfig(1, kBlockFrames);
+        config.maxBuses = 3;
+        config.busSendSlotsPerBus = 1;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        const auto dc = RegisterDc(0.5f);
+        ASSERT_EQ(VN_OK, Vn_CreateBus(kBusA, VN_BUS_MASTER));
+        ASSERT_EQ(VN_OK, Vn_CreateBus(kBusB, VN_BUS_MASTER));
+        ASSERT_EQ(VN_OK, Vn_SetBusOutputVolume(kBusA, -1000.0f, 0));
+        auto play = MakePlayDesc(harkentest::ObjectId(1));
+        play.busId = kBusA;
+        play.loopCount = 0;
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+        ASSERT_EQ(VN_OK, voiceSend ? Vn_SetVoiceSend(voice, 0, kBusB, -12.0f)
+                                  : Vn_ConnectBusSend(kBusA, kBusB, -12.0f));
+        Capture initial;
+        PumpAndCapture(session.Engine(), 1, initial);
+        const auto setLevel = [&](float level) {
+            return voiceSend ? Vn_SetVoiceSendLevel(voice, 0, level, 4)
+                             : Vn_SetBusSendLevel(kBusA, kBusB, level, 4);
+        };
+        const float start = std::pow(10.0f, -12.0f / 20.0f);
+        const float target = std::pow(10.0f, -6.0f / 20.0f);
+        ASSERT_EQ(VN_OK, setLevel(-6.0f));
+        Capture first;
+        PumpAndCapture(session.Engine(), 1, first);
+        for (std::size_t i = 0; i < first.left.size(); ++i) {
+            const float expected = 0.5f * (start + (target - start) *
+                static_cast<float>(i + 1) / (3 * kBlockFrames));
+            EXPECT_NEAR(expected, first.left[i], 1.0e-6f);
+            EXPECT_EQ(first.left[i], first.right[i]);
+        }
+        ASSERT_EQ(VN_OK, setLevel(0.0f));
+        Capture restarted;
+        PumpAndCapture(session.Engine(), 4, restarted);
+        const float restart = start + (target - start) / 3;
+        for (std::size_t i = 0; i < restarted.left.size(); ++i) {
+            const float progress = std::min(1.0f,
+                static_cast<float>(i + 1) / (3 * kBlockFrames));
+            const float expected = 0.5f * (restart + (1.0f - restart) * progress);
+            EXPECT_NEAR(expected, restarted.left[i], 1.0e-6f);
+            EXPECT_EQ(restarted.left[i], restarted.right[i]);
+        }
+    }
+}
+
 TEST(BusSend, PendingOutputVolumeBypassesFullQueueAndSnapsAtOnset) {
     VnConfig config = MakeNullConfig(2, kBlockFrames);
     config.commandQueueDepth = 16;

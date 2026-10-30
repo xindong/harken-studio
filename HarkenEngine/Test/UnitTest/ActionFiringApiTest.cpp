@@ -75458,3 +75458,109 @@ TEST(ActionFiringApi, SingleSoundReachesConfiguredRenderCapacity) {
     EXPECT_EQ(1u, engine.playableInstances.LiveCount());
     EXPECT_EQ(hits, harken::memguard::HitCount());
 }
+
+TEST(ActionFiringApi,
+     LastDeferredStopInBudgetReclaimsFutureProgramInSameUpdate) {
+    // Borrowed program storage must outlive EngineSession, including failures.
+    harken::EventTemplate deferredEvent{};
+    harken::TimelineProgramView deferredRuntime{};
+    harken::ProgramView deferredProgram{};
+
+    (void)Vn_Term();
+    constexpr std::uint32_t blockFrames = 256;
+    constexpr std::uint32_t sampleRate = 48000;
+    harkentest::EngineSession session(
+        harkentest::MakeNullConfig(2, blockFrames, sampleRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    engine->timelineService->SetDeferredMaterializationBudgetForTests(1);
+    ASSERT_GT(sampleRate, engine->config.scheduleHorizonFrames);
+    const auto delayFrame = engine->timelinePool.WindowEndFrame() + blockFrames;
+
+    // Keep the real voice alive beyond materialization and the remaining fade.
+    std::vector<float> samples(delayFrame + 2u * sampleRate + blockFrames, 0.25f);
+    const auto pcm = harkentest::MonoDesc(samples, sampleRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+    CanonicalActionWorld image(
+        engine->registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision);
+    image.MakeDelayedSeparateSoundStopAction(
+        DelayNanosecondsForTargetFrame(*engine, delayFrame));
+    image.SetSeparateStopFade(1000000000);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+              harken::InstallContainerWorldV1(*engine, image.world).status);
+
+    auto desc = ValidPostDesc();
+    desc.actionId = image.actions[9].actionStableId;
+    VnActionFiringHandle playFiring = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &playFiring));
+    desc.actionId = image.actions[8].actionStableId;
+    VnActionFiringHandle stopFiring = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &stopFiring));
+    ASSERT_EQ(1u, engine->actionDeferredRecords.LiveCount());
+    harken::ActionDeferredRecordToken recordToken{};
+    harken::ActionDeferredRecord record{};
+    harken::ActionDeferredRecordState recordState{};
+    ASSERT_TRUE(engine->actionDeferredRecords.CaptureAt(
+        0, &recordToken, &record, &recordState));
+    ASSERT_EQ(harken::ActionDeferredRecordState::Held, recordState);
+    ASSERT_NE(0u, record.rootPlayable);
+    ASSERT_EQ(delayFrame, record.firstRowFrame);
+    ASSERT_EQ(delayFrame + sampleRate, record.lastRowFrame);
+    ASSERT_TRUE(engine->playableInstances.ValidateStamp(
+        record.rootPlayable, record.rootScheduleEpoch));
+
+    deferredEvent.logicCommitSequence = engine->logicCommits.Current();
+    deferredRuntime.generation = 0xD3000001u;
+    deferredProgram.ownerInstance = record.rootPlayable;
+    deferredProgram.ownerInstanceScheduleEpoch = record.rootScheduleEpoch;
+    deferredProgram.transactionId = 0xD3000001u;
+    deferredProgram.entryAnchorFrame = record.lastRowFrame + 2u * blockFrames;
+    deferredProgram.events = &deferredEvent;
+    deferredProgram.eventCount = 1;
+    deferredProgram.runtimeProgram = {deferredRuntime.generation, &deferredRuntime};
+    harken::PostInput input{};
+    input.transportEpoch = engine->timelinePool.Epoch();
+    input.logicCommitSequence = deferredEvent.logicCommitSequence;
+    ASSERT_EQ(harken::PostStatus::Deferred,
+              engine->timelinePlanner.PostPlay(deferredProgram, input).status);
+    ASSERT_EQ(2u, engine->timelineDeferred.Count());
+    ASSERT_TRUE(engine->timelinePlanner.HasProgramReference(
+        deferredProgram.runtimeProgram));
+    ASSERT_EQ(0u, engine->timelineService->MaterializationHighWater());
+
+    bool observedMaterialization = false;
+    const auto maxUpdates = record.lastRowFrame / blockFrames +
+        engine->timelinePool.PageCount() + 16u;
+    for (std::uint64_t update = 0; update < maxUpdates; ++update) {
+        ASSERT_EQ(1u, engine->actionDeferredRecords.LiveCount());
+        ASSERT_TRUE(engine->playableInstances.ValidateStamp(
+            record.rootPlayable, record.rootScheduleEpoch));
+        engine->nullBackend.Pump(1);
+        const auto audioSequence = engine->mixer.BlocksRendered();
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_EQ(audioSequence, engine->mixer.BlocksRendered());
+        if (engine->actionDeferredRecords.LiveCount() != 0) continue;
+
+        // Everything below observes this exact Update, with no second pump.
+        observedMaterialization = true;
+        const auto owner = engine->playableInstances.Classify(record.rootPlayable);
+        ASSERT_TRUE(owner.live);
+        EXPECT_NE(record.rootScheduleEpoch, owner.scheduleEpoch);
+        EXPECT_EQ(1u, engine->timelineService->MaterializationHighWater());
+        EXPECT_GE(deferredProgram.entryAnchorFrame, engine->timelinePool.WindowEndFrame());
+        VnActionStepResult stop{};
+        stop.structSize = sizeof(stop);
+        ASSERT_EQ(VN_OK, Vn_QueryActionStep(stopFiring, 0, &stop));
+        EXPECT_EQ(VN_ACTION_STEP_ACTIVE, stop.state);
+        EXPECT_EQ(1u, stop.remainingPlayableCount);
+
+        EXPECT_EQ(0u, engine->timelineDeferred.Count());
+        EXPECT_FALSE(engine->timelinePlanner.HasProgramReference(
+            deferredProgram.runtimeProgram));
+        EXPECT_EQ(UINT64_MAX, engine->timelinePlanner.DeferredBlockerBefore(
+            deferredProgram.entryAnchorFrame + 1u));
+        EXPECT_FALSE(engine->runtimeRecreateRequired);
+        break;
+    }
+    EXPECT_TRUE(observedMaterialization);
+}

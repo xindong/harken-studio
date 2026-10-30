@@ -124,7 +124,8 @@ public:
                            DeferredIntentClaim* out, std::uint32_t capacity,
                            std::uint32_t* staleDropped = nullptr,
                            std::uint32_t* dueCount = nullptr,
-                           std::uint64_t currentQuantum = UINT64_MAX);
+                           std::uint64_t currentQuantum = UINT64_MAX,
+                           std::vector<DeferredIntentClaim>* staleClaims = nullptr);
     DeferredIntentRefusal Retry(DeferredIntentToken token,
                                 std::uint64_t notBeforeQuantum = 0);
     DeferredIntentAddResult Replace(DeferredIntentToken token,
@@ -163,7 +164,8 @@ public:
     // optional: correctness does not depend on it, only occupancy does.
     std::uint32_t DropStale(
         const PlayableInstanceTable& instances,
-        std::vector<std::uint64_t>* droppedPayloads = nullptr);
+        std::vector<std::uint64_t>* droppedPayloads = nullptr,
+        std::vector<DeferredIntentClaim>* staleClaims = nullptr);
 
 private:
     friend class ActionDeferredRecordTable;
