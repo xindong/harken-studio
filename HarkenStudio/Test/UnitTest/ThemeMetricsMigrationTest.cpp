@@ -5,6 +5,7 @@
 #include "Widgets/Common/ProportionalTreeWidget.h"
 #include "Widgets/Common/TableWidget.h"
 #include "Widgets/Common/MatrixTableWidget.h"
+#include "Widgets/ControlPanel/ControlPanel.h"
 
 #include <gtest/gtest.h>
 
@@ -441,6 +442,49 @@ TEST(ThemeMetricsMigration, ToolbarSurfaceAndBorderSurviveNativeStyleWrapping)
         EXPECT_EQ(image.pixelColor(x, toolbar.height() / 2), manager->snapshot()->qtPalette.window);
         EXPECT_EQ(image.pixelColor(x, 0), manager->colors().sectionSeparator);
     }
+}
+
+TEST(ThemeMetricsMigration, OwnedPanelSurfaceSurvivesVisibilityAndColorPreview)
+{
+    ensureApp();
+    QTemporaryDir root;
+    auto manager = makeManager(root.path());
+    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    QWidget window;
+    window.setStyle(&style);
+    auto* layout = new QVBoxLayout(&window);
+    ControlPanel panel(&window);
+    panel.setStyle(&style);
+    layout->addWidget(&panel);
+    window.resize(1000, 220);
+    window.show();
+    QCoreApplication::processEvents();
+    const QRect geometry = panel.geometry();
+    const auto check = [&](const char* stage) {
+        SCOPED_TRACE(stage);
+        ASSERT_TRUE(panel.isVisible());
+        const auto image = renderWidget(window);
+        const auto origin = panel.mapTo(&window, QPoint());
+        EXPECT_EQ(image.pixelColor(origin + QPoint(1, panel.height() / 2)),
+                  manager->colors().auditionBg);
+        EXPECT_EQ(image.pixelColor(origin + QPoint(panel.width() / 2, 0)),
+                  manager->colors().borderPrimary);
+        EXPECT_EQ(panel.geometry(), geometry);
+    };
+    check("initial show");
+    panel.hide();
+    auto preview = manager->appearance();
+    preview.colors[preview.paletteId].insert(QStringLiteral("border.primary"),
+                                             QColor(QStringLiteral("#945bd1")));
+    preview.colors[preview.paletteId].insert(QStringLiteral("background.primary"),
+                                             QColor(QStringLiteral("#1a2836")));
+    ASSERT_TRUE(manager->previewAppearance(preview).ok());
+    panel.show();
+    QCoreApplication::processEvents();
+    check("preview after show");
+    manager->cancelAppearancePreview();
+    QCoreApplication::processEvents();
+    check("cancel preview");
 }
 
 TEST(ThemeMetricsMigration, ProgressContentsPreserveOuterBorderAcrossDirectionsAndPreview)
