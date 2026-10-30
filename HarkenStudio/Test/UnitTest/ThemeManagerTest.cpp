@@ -7,7 +7,9 @@
 #include "Core/ThemeManager.h"
 #include "Core/WidgetAppearance.h"
 
+#include <QCoreApplication>
 #include <QDir>
+#include <QEvent>
 #include <QFile>
 #include <QSet>
 #include <QTemporaryDir>
@@ -17,6 +19,7 @@
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <optional>
 #include <thread>
 
 namespace {
@@ -702,6 +705,212 @@ TEST(WidgetAppearance, CascadesStructuralSelectorsAndInvalidatesDescendants)
               QColor(QStringLiteral("#444444")));
 }
 
+TEST(WidgetAppearance, CachedResolutionMatchesFreshResolutionAcrossWidgetLifecycles)
+{
+    QWidget root;
+    root.setObjectName(QStringLiteral("surface"));
+    root.setProperty("active", true);
+    QWidget otherRoot;
+    otherRoot.setObjectName(QStringLiteral("other"));
+    QWidget container(&root);
+    std::optional<QToolButton> button(std::in_place, &container);
+    button->setObjectName(QStringLiteral("action"));
+    const QString source = QStringLiteral(R"qss(
+        QToolButton { color: #111111; background: #222222; border: 1px solid #333333; padding: 2px; }
+        #surface[active="true"] QToolButton { color: #445566; }
+        #renamed QToolButton { color: #778899; }
+        #other QToolButton { background: #aabbcc; }
+        #surface > QToolButton { border: 3px solid #6699aa; }
+        QToolButton[autoRaise="true"] { border: 4px solid #abcdef; margin: 4px; }
+        #action { background: #334455; }
+    )qss");
+    VNX::WidgetAppearance cached;
+    cached.updateStyleSheet(source);
+    const auto compare = [&](const char* stage) {
+        SCOPED_TRACE(stage);
+        const auto actual = cached.visual(&*button, QStyle::State_Enabled);
+        VNX::WidgetAppearance fresh;
+        fresh.updateStyleSheet(source);
+        const auto expected = fresh.visual(&*button, QStyle::State_Enabled);
+        EXPECT_EQ(actual.foreground, expected.foreground);
+        EXPECT_EQ(actual.background, expected.background);
+        EXPECT_EQ(actual.borderSpecified, expected.borderSpecified);
+        EXPECT_EQ(actual.borders, expected.borders);
+        EXPECT_EQ(actual.borderColors, expected.borderColors);
+        EXPECT_EQ(actual.radii, expected.radii);
+        EXPECT_EQ(actual.padding, expected.padding);
+        EXPECT_EQ(actual.margin, expected.margin);
+        EXPECT_EQ(actual.size, expected.size);
+        EXPECT_EQ(actual.minimum, expected.minimum);
+        EXPECT_EQ(actual.maximum, expected.maximum);
+        EXPECT_EQ(actual.font, expected.font);
+        return actual;
+    };
+
+    EXPECT_FALSE(button->testAttribute(Qt::WA_WState_Polished));
+    EXPECT_EQ(compare("before polish").foreground, QColor(QStringLiteral("#445566")));
+    button->ensurePolished();
+    compare("after polish");
+
+    root.setProperty("active", false);
+    EXPECT_EQ(compare("ancestor property").foreground, QColor(QStringLiteral("#111111")));
+    root.setObjectName(QStringLiteral("renamed"));
+    EXPECT_EQ(compare("ancestor name").foreground, QColor(QStringLiteral("#778899")));
+    root.setObjectName(QStringLiteral("surface"));
+    root.setProperty("active", true);
+    compare("restored ancestor selectors");
+
+    container.setParent(&otherRoot);
+    EXPECT_EQ(compare("reparented subtree").background, QColor(QStringLiteral("#aabbcc")));
+    button->setParent(&root);
+    EXPECT_EQ(compare("direct parent selector").borders, QMargins(3, 3, 3, 3));
+
+    root.setStyleSheet(QStringLiteral("QToolButton { color: #aa1122; border: 2px solid #bb2233; }"));
+    EXPECT_EQ(compare("new local scope").foreground, QColor(QStringLiteral("#aa1122")));
+    root.setStyleSheet(QStringLiteral("#missing { color: #cc3344; }"));
+    EXPECT_EQ(compare("local selector removed").foreground, QColor(QStringLiteral("#445566")));
+    root.setStyleSheet(QStringLiteral("#action { color: #dd4455; padding: 6px; }"));
+    EXPECT_EQ(compare("local selector replaced").padding, QMargins(6, 6, 6, 6));
+    button->setStyleSheet(QStringLiteral("background: #ee5566;"));
+    EXPECT_EQ(compare("nested local scope").background, QColor(QStringLiteral("#ee5566")));
+    button->setStyleSheet(QString());
+    root.setStyleSheet(QString());
+    EXPECT_EQ(compare("local scopes cleared").foreground, QColor(QStringLiteral("#445566")));
+
+    button->setAutoRaise(true);
+    QEvent styleChanged(QEvent::StyleChange);
+    QCoreApplication::sendEvent(&*button, &styleChanged);
+    EXPECT_EQ(compare("native property after style change").margin, QMargins(4, 4, 4, 4));
+    button->setAutoRaise(false);
+    QCoreApplication::sendEvent(&*button, &styleChanged);
+    EXPECT_EQ(compare("native property restored").margin, QMargins());
+
+    button->setStyleSheet(QStringLiteral("QToolButton { color: #c0ffee; background: #decade; }"));
+    compare("local scope before destruction");
+    const auto* previousAddress = &*button;
+    button.reset();
+    button.emplace(&otherRoot);
+    EXPECT_EQ(&*button, previousAddress);
+    button->setObjectName(QStringLiteral("replacement"));
+    const auto replacement = compare("new widget at reused address");
+    EXPECT_EQ(replacement.foreground, QColor(QStringLiteral("#111111")));
+    EXPECT_EQ(replacement.background, QColor(QStringLiteral("#aabbcc")));
+}
+
+TEST(WidgetAppearance, CachedSelectorsFollowPreviouslyUnmatchedInputsAndAncestorPaths)
+{
+    QWidget root;
+    QWidget container(&root);
+    QToolButton button(&container);
+    const QString source = QStringLiteral(R"qss(
+        QToolButton { color: #112233; }
+        QWidget[scopeMode="active"] QToolButton[controlRole="action"] { color: #445566; }
+        QWidget[windowTitle="Native scope"] QToolButton { color: #778899; }
+        QWidget[armed="true"][mode="active"] QToolButton { selection-color: #abcdef; }
+    )qss");
+    VNX::WidgetAppearance cached;
+    cached.updateStyleSheet(source);
+    const auto check = [&](const char* stage, const QColor& expected) {
+        SCOPED_TRACE(stage);
+        const auto actual = cached.visual(&button, QStyle::State_Enabled);
+        VNX::WidgetAppearance fresh;
+        fresh.updateStyleSheet(source);
+        const auto uncached = fresh.visual(&button, QStyle::State_Enabled);
+        EXPECT_EQ(actual.foreground, uncached.foreground);
+        EXPECT_EQ(actual.selectionForeground, uncached.selectionForeground);
+        EXPECT_EQ(actual.foreground, expected);
+        return actual;
+    };
+
+    check("unmatched inputs", QColor(QStringLiteral("#112233")));
+    button.setProperty("controlRole", QStringLiteral("action"));
+    check("matching target only", QColor(QStringLiteral("#112233")));
+    container.setProperty("scopeMode", QStringLiteral("active"));
+    check("new matching ancestor", QColor(QStringLiteral("#445566")));
+    root.setProperty("scopeMode", QStringLiteral("active"));
+    check("both ancestors match", QColor(QStringLiteral("#445566")));
+    container.setProperty("scopeMode", QStringLiteral("inactive"));
+    check("outer ancestor still matches", QColor(QStringLiteral("#445566")));
+    root.setProperty("scopeMode", QVariant());
+    check("matching ancestor removed", QColor(QStringLiteral("#112233")));
+    container.setProperty("scopeMode", QStringLiteral("active"));
+    button.setProperty("controlRole", QVariant());
+    check("matching target removed", QColor(QStringLiteral("#112233")));
+
+    root.setWindowTitle(QStringLiteral("Native scope"));
+    QEvent styleChanged(QEvent::StyleChange);
+    QCoreApplication::sendEvent(&root, &styleChanged);
+    check("native ancestor property", QColor(QStringLiteral("#778899")));
+    root.setWindowTitle(QString());
+    QCoreApplication::sendEvent(&root, &styleChanged);
+    check("native ancestor restored", QColor(QStringLiteral("#112233")));
+
+    root.setProperty("mode", QStringLiteral("active"));
+    EXPECT_FALSE(check("compound selector still unmatched", QColor(QStringLiteral("#112233")))
+                     .selectionForeground.isValid());
+    root.setProperty("armed", true);
+    EXPECT_EQ(check("compound selector begins matching", QColor(QStringLiteral("#112233")))
+                  .selectionForeground, QColor(QStringLiteral("#abcdef")));
+    root.setProperty("mode", QVariant());
+    EXPECT_FALSE(check("newly observed input removed", QColor(QStringLiteral("#112233")))
+                     .selectionForeground.isValid());
+    root.setProperty("armed", false);
+    root.setProperty("mode", QStringLiteral("active"));
+    EXPECT_FALSE(check("compound selector changes together", QColor(QStringLiteral("#112233")))
+                     .selectionForeground.isValid());
+    root.setProperty("armed", true);
+    EXPECT_EQ(check("compound selector restored", QColor(QStringLiteral("#112233")))
+                  .selectionForeground, QColor(QStringLiteral("#abcdef")));
+}
+
+TEST(WidgetAppearance, ReplacedGlobalAndManagedSelectorsTrackTheirNewInputs)
+{
+    QWidget root;
+    QWidget container(&root);
+    QToolButton button(&container);
+    QString source = QStringLiteral("QToolButton { color: #112233; background: #223344; }");
+    QString localSource = QStringLiteral(
+        "QWidget[scopeMode=\"active\"] QToolButton { color: #445566; }");
+    VNX::WidgetAppearance cached;
+    cached.updateStyleSheet(source);
+    cached.updateWidgetStyle(&root, localSource);
+    const auto check = [&](const char* stage, const QColor& expected) {
+        SCOPED_TRACE(stage);
+        const auto actual = cached.visual(&button, QStyle::State_Enabled);
+        VNX::WidgetAppearance fresh;
+        fresh.updateStyleSheet(source);
+        fresh.updateWidgetStyle(&root, localSource);
+        const auto uncached = fresh.visual(&button, QStyle::State_Enabled);
+        EXPECT_EQ(actual.foreground, uncached.foreground);
+        EXPECT_EQ(actual.background, uncached.background);
+        EXPECT_EQ(actual.foreground, expected);
+    };
+
+    check("unmatched managed selector", QColor(QStringLiteral("#112233")));
+    root.setProperty("scopeMode", QStringLiteral("active"));
+    check("managed ancestor input", QColor(QStringLiteral("#445566")));
+    localSource = QStringLiteral(
+        "QToolButton[replacementRole=\"selected\"] { color: #778899; }");
+    cached.updateWidgetStyle(&root, localSource);
+    check("managed selector replaced", QColor(QStringLiteral("#112233")));
+    button.setProperty("replacementRole", QStringLiteral("selected"));
+    check("new managed input", QColor(QStringLiteral("#778899")));
+    button.setProperty("replacementRole", QVariant());
+    check("new managed input removed", QColor(QStringLiteral("#112233")));
+    localSource.clear();
+    cached.updateWidgetStyle(&root, localSource);
+    check("managed scope cleared", QColor(QStringLiteral("#112233")));
+
+    source += QStringLiteral(
+        "QWidget[replacementScope=\"active\"] QToolButton { color: #99aabb; }");
+    cached.updateStyleSheet(source);
+    check("global selector replaced", QColor(QStringLiteral("#112233")));
+    container.setProperty("replacementScope", QStringLiteral("active"));
+    check("new global input", QColor(QStringLiteral("#99aabb")));
+    container.setProperty("replacementScope", QVariant());
+    check("new global input removed", QColor(QStringLiteral("#112233")));
+}
+
 TEST(WidgetAppearance, ResolvesSubcontrolStatesWithoutLeakingWidgetPaint)
 {
     QWidget widget;
@@ -761,7 +970,7 @@ TEST(WidgetAppearance, ColorChangesKeepNativeLayoutAndUpdateCachedRules)
     const auto native = appearance.nativeStyleSheet();
     EXPECT_FALSE(native.contains(QStringLiteral("#112233")));
     EXPECT_FALSE(native.contains(QStringLiteral("border-radius")));
-    EXPECT_FALSE(native.contains(QStringLiteral("text-align")));
+    EXPECT_TRUE(native.contains(QStringLiteral("text-align: right")));
     EXPECT_TRUE(native.contains(QStringLiteral("font-size: 12pt")));
     EXPECT_TRUE(native.contains(QStringLiteral("border-bottom-width: 3px")));
 

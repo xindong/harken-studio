@@ -9,6 +9,7 @@
 #include <QMetaProperty>
 #include <QPointer>
 #include <QRegularExpression>
+#include <QSet>
 #include <QWidget>
 
 #include <algorithm>
@@ -252,6 +253,7 @@ bool parseDeclaration(VisualPatch& patch, const QString& property, const QString
             else if (word == QLatin1String("top")) result.textAlignment = (result.textAlignment & ~Qt::AlignVertical_Mask) | Qt::AlignTop;
             else if (word == QLatin1String("bottom")) result.textAlignment = (result.textAlignment & ~Qt::AlignVertical_Mask) | Qt::AlignBottom;
         }
+        return false;
     } else if (property == QLatin1String("border-radius")) {
         patch.radii.fill(radiusValue(value));
     } else if (property.startsWith(QLatin1String("border-")) && property.endsWith(QLatin1String("-radius"))) {
@@ -459,14 +461,217 @@ void parseBlock(StyleBlock& block)
             + fonts.join(QStringLiteral(";\n    ")) + QStringLiteral(";\n}\n");
 }
 
-bool matchesStructure(const QWidget* widget, const SelectorTerm& term)
+struct SelectorProperty
+{
+    QVariant value;
+    quint64 revision = 0;
+};
+
+class SelectorDependencies
+{
+public:
+    void observe(const QWidget* widget)
+    {
+        if (nodeIndices_.contains(widget)) return;
+        nodeIndices_.insert(widget, nodes_.size());
+        nodes_.append({const_cast<QWidget*>(widget), widget->metaObject(), {}, false});
+    }
+
+    const QWidget* parent(const QWidget* widget)
+    {
+        observe(widget);
+        auto& node = nodes_[nodeIndices_.value(widget)];
+        node.parent = widget->parentWidget();
+        node.usesParent = true;
+        return node.parent;
+    }
+
+    void observe(const std::shared_ptr<SelectorProperty>& property)
+    {
+        if (propertyIndices_.contains(property.get())) return;
+        propertyIndices_.insert(property.get());
+        properties_.append({property, property->revision});
+    }
+
+    bool contains(const SelectorProperty* property) const
+    {
+        return propertyIndices_.contains(property);
+    }
+
+    bool current() const
+    {
+        for (const auto& node : nodes_)
+            if (!node.widget || node.widget->metaObject() != node.type
+                || (node.usesParent && node.widget->parentWidget() != node.parent)) return false;
+        for (const auto& property : properties_)
+            if (property.input->revision != property.revision) return false;
+        return true;
+    }
+
+    void finish()
+    {
+        nodeIndices_.clear();
+        propertyIndices_.clear();
+    }
+
+private:
+    struct Node
+    {
+        QPointer<QWidget> widget;
+        const QMetaObject* type;
+        QPointer<QWidget> parent;
+        bool usesParent;
+    };
+
+    struct Property
+    {
+        std::shared_ptr<SelectorProperty> input;
+        quint64 revision;
+    };
+
+    QVector<Node> nodes_;
+    QVector<Property> properties_;
+    QHash<const QWidget*, int> nodeIndices_;
+    QSet<const SelectorProperty*> propertyIndices_;
+};
+
+class SelectorInputs : public QObject
+{
+public:
+    const QVariant& read(const QWidget* widget, const QByteArray& name,
+                         SelectorDependencies& dependencies)
+    {
+        auto& input = observe(widget);
+        auto found = input.properties.find(name);
+        if (found == input.properties.end()) {
+            auto property = std::make_shared<SelectorProperty>();
+            property->value = widget->property(name.constData());
+            found = input.properties.insert(name, std::move(property));
+        } else if (!dependencies.contains(found->get())) {
+            update(input, **found, widget->property(name.constData()));
+        }
+        dependencies.observe(*found);
+        return (*found)->value;
+    }
+
+    void invalidate(const QWidget* widget)
+    {
+        const auto found = inputs_.find(widget);
+        if (found == inputs_.end()) return;
+        for (auto& property : found->properties) ++property->revision;
+        poll(widget, *found);
+        found->changed = !found->properties.isEmpty();
+    }
+
+    bool synchronize(const QWidget* widget)
+    {
+        auto& input = observe(widget);
+        const_cast<QWidget*>(widget)->installEventFilter(this);
+        poll(widget, input);
+        return std::exchange(input.changed, false);
+    }
+
+    bool takeChanges(const QWidget* widget)
+    {
+        const auto found = inputs_.find(widget);
+        return found != inputs_.end() && std::exchange(found->changed, false);
+    }
+
+    bool usesProperty(const QWidget* widget, const QByteArray& name) const
+    {
+        const auto found = inputs_.constFind(widget);
+        if (found == inputs_.cend()) return false;
+        const auto property = found->properties.constFind(name);
+        return property != found->properties.cend() && property->use_count() > 1;
+    }
+
+private:
+    struct Input
+    {
+        QHash<QByteArray, std::shared_ptr<SelectorProperty>> properties;
+        bool changed = false;
+    };
+
+    static void update(Input& input, SelectorProperty& property, QVariant value)
+    {
+        if (property.value == value) return;
+        property.value = std::move(value);
+        ++property.revision;
+        input.changed = true;
+    }
+
+    void poll(const QWidget* widget, Input& input)
+    {
+        for (auto it = input.properties.begin(); it != input.properties.end();) {
+            if (it->use_count() == 1) {
+                it = input.properties.erase(it);
+            } else {
+                update(input, **it, widget->property(it.key().constData()));
+                ++it;
+            }
+        }
+    }
+
+    void changedProperty(const QWidget* widget, const QByteArray& name)
+    {
+        const auto found = inputs_.find(widget);
+        if (found == inputs_.end()) return;
+        const auto property = found->properties.find(name);
+        if (property != found->properties.end())
+            update(*found, **property, widget->property(name.constData()));
+    }
+
+    Input& observe(const QWidget* widget)
+    {
+        auto found = inputs_.find(widget);
+        if (found == inputs_.end()) {
+            found = inputs_.insert(widget, {});
+            auto* observed = const_cast<QWidget*>(widget);
+            observed->installEventFilter(this);
+            connect(observed, &QObject::objectNameChanged, this,
+                    [this, widget] { changedProperty(widget, QByteArrayLiteral("objectName")); });
+            connect(observed, &QObject::destroyed, this, [this, widget] {
+                const auto input = inputs_.find(widget);
+                if (input == inputs_.end()) return;
+                for (auto& property : input->properties) ++property->revision;
+                inputs_.erase(input);
+            });
+        }
+        return *found;
+    }
+
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        if (event->type() == QEvent::DynamicPropertyChange) {
+            changedProperty(static_cast<QWidget*>(watched),
+                static_cast<QDynamicPropertyChangeEvent*>(event)->propertyName());
+        } else if (event->type() == QEvent::StyleChange) {
+            const auto found = inputs_.find(static_cast<QWidget*>(watched));
+            if (found != inputs_.end()) poll(static_cast<QWidget*>(watched), *found);
+        }
+        return false;
+    }
+
+    QHash<const QWidget*, Input> inputs_;
+};
+
+bool matchesType(const QWidget* widget, const SelectorTerm& term)
 {
     if (!widget) return false;
     if (!term.type.isEmpty() && !widget->inherits(term.type.toUtf8().constData())) return false;
     if (!term.exactClass.isEmpty() && term.exactClass != QLatin1String(widget->metaObject()->className())) return false;
-    if (!term.id.isEmpty() && term.id != widget->objectName()) return false;
+    return true;
+}
+
+bool matchesStructure(const QWidget* widget, const SelectorTerm& term,
+                      SelectorInputs& inputs, SelectorDependencies& dependencies)
+{
+    dependencies.observe(widget);
+    if (!matchesType(widget, term)) return false;
+    if (!term.id.isEmpty()
+        && term.id != inputs.read(widget, QByteArrayLiteral("objectName"), dependencies).toString()) return false;
     for (const auto& [name, expected] : term.attributes) {
-        const auto value = widget->property(name.constData());
+        const auto& value = inputs.read(widget, name, dependencies);
         if (!value.isValid()) return false;
         if (expected.isNull()) continue;
         if (value.toString() == expected) continue;
@@ -520,16 +725,17 @@ bool stateValue(const StatePredicate& predicate, const QWidget* widget,
 using MatchPath = QVector<QPointer<QWidget>>;
 
 void collectPaths(const Rule& rule, int termIndex, const QWidget* widget,
-                   MatchPath& path, QVector<MatchPath>& result)
+                   MatchPath& path, QVector<MatchPath>& result,
+                   SelectorInputs& inputs, SelectorDependencies& dependencies)
 {
-    if (!matchesStructure(widget, rule.terms[termIndex])) return;
+    if (!matchesStructure(widget, rule.terms[termIndex], inputs, dependencies)) return;
     path[termIndex] = const_cast<QWidget*>(widget);
     if (termIndex == 0) {
         result.append(path);
         return;
     }
-    for (auto* parent = widget->parentWidget(); parent; parent = parent->parentWidget()) {
-        collectPaths(rule, termIndex - 1, parent, path, result);
+    for (auto* parent = dependencies.parent(widget); parent; parent = dependencies.parent(parent)) {
+        collectPaths(rule, termIndex - 1, parent, path, result, inputs, dependencies);
         if (rule.terms[termIndex].directParent) break;
     }
 }
@@ -563,9 +769,10 @@ public:
     struct WidgetRules
     {
         QPointer<QWidget> widget;
-        const QMetaObject* metaObject = nullptr;
+        SelectorDependencies targetDependencies;
+        QVector<int> targetRules;
+        SelectorDependencies dependencies;
         QVector<Candidate> candidates;
-        QVector<QPointer<QWidget>> localScopes;
     };
 
     struct LocalRules
@@ -593,41 +800,80 @@ public:
     QString native;
     QVector<StyleBlock> blocks;
     QVector<Rule> rules;
-    bool includeLocalScopes = true;
+    std::shared_ptr<SelectorInputs> inputs = std::make_shared<SelectorInputs>();
     mutable QHash<const QWidget*, WidgetRules> widgets;
+    mutable QHash<const QMetaObject*, QVector<int>> rulesByType;
     mutable QHash<const QWidget*, LocalRules> localRules;
-    QHash<const QWidget*, WidgetGeometry> geometries;
+    mutable QHash<const QWidget*, WidgetGeometry> geometries;
+    mutable QSet<const QWidget*> observedWidgets;
+    QObject lifetime;
+
+    void observe(const QWidget* widget) const
+    {
+        if (observedWidgets.contains(widget)) return;
+        observedWidgets.insert(widget);
+        QObject::connect(widget, &QObject::destroyed, &lifetime, [this, widget] {
+            widgets.remove(widget);
+            localRules.remove(widget);
+            geometries.remove(widget);
+            observedWidgets.remove(widget);
+        });
+    }
 
     const WidgetRules& candidates(const QWidget* widget) const
     {
         auto found = widgets.find(widget);
-        if (found != widgets.end() && found->widget == widget && found->metaObject == widget->metaObject())
+        const bool targetCurrent = found != widgets.end() && found->targetDependencies.current();
+        if (targetCurrent && found->dependencies.current())
             return *found;
+        observe(widget);
         WidgetRules result;
         result.widget = const_cast<QWidget*>(widget);
-        result.metaObject = widget->metaObject();
-        if (includeLocalScopes)
-            for (auto* owner = const_cast<QWidget*>(widget); owner; owner = owner->parentWidget()) {
-                const auto local = localRules.constFind(owner);
-                if (!owner->styleSheet().isEmpty() || (local != localRules.cend()
-                    && local->widget == owner && local->managed)) result.localScopes.append(owner);
+        if (targetCurrent) {
+            result.targetDependencies = found->targetDependencies;
+            result.targetRules = found->targetRules;
+        } else {
+            result.targetDependencies.observe(widget);
+            auto typedRules = rulesByType.constFind(widget->metaObject());
+            if (typedRules == rulesByType.cend()) {
+                QVector<int> indices;
+                for (int index = 0; index < rules.size(); ++index)
+                    if (!rules[index].terms.isEmpty() && matchesType(widget, rules[index].terms.last()))
+                        indices.append(index);
+                typedRules = rulesByType.insert(widget->metaObject(), std::move(indices));
             }
-        for (int index = 0; index < rules.size(); ++index) {
+            for (const int index : *typedRules)
+                if (matchesStructure(widget, rules[index].terms.last(), *inputs, result.targetDependencies))
+                    result.targetRules.append(index);
+            result.targetDependencies.finish();
+        }
+        for (const int index : result.targetRules) {
             const auto& rule = rules[index];
-            if (rule.terms.isEmpty()) continue;
             Candidate candidate;
             candidate.rule = index;
             MatchPath path(rule.terms.size());
-            collectPaths(rule, rule.terms.size() - 1, widget, path, candidate.paths);
+            path.last() = const_cast<QWidget*>(widget);
+            if (rule.terms.size() == 1) {
+                candidate.paths.append(std::move(path));
+            } else {
+                for (auto* parent = result.dependencies.parent(widget); parent;
+                     parent = result.dependencies.parent(parent)) {
+                    collectPaths(rule, rule.terms.size() - 2, parent, path,
+                                 candidate.paths, *inputs, result.dependencies);
+                    if (rule.terms.last().directParent) break;
+                }
+            }
             if (!candidate.paths.isEmpty()) result.candidates.append(std::move(candidate));
         }
+        result.dependencies.finish();
         return *widgets.insert(widget, std::move(result));
     }
 
     void apply(ControlVisual& result, const QWidget* widget, QStyle::State state,
                QStringView part, const QStringList& extraStates) const
     {
-        for (const auto& candidate : candidates(widget).candidates) {
+        const auto& matched = candidates(widget);
+        for (const auto& candidate : matched.candidates) {
             const auto& rule = rules[candidate.rule];
             if (rule.part != part) continue;
             if (std::any_of(candidate.paths.cbegin(), candidate.paths.cend(), [&](const MatchPath& path) {
@@ -715,11 +961,11 @@ bool WidgetAppearance::updateStyleSheet(QString styleSheet)
             rule.patch = block.patch;
         }
         impl_->widgets.clear();
+        impl_->rulesByType.clear();
     }
     if (nativeChanged) {
         QString native;
         for (const auto& block : impl_->blocks) native += block.native;
-        if (impl_->native != native) impl_->widgets.clear();
         impl_->native = std::move(native);
     }
     return true;
@@ -732,15 +978,15 @@ const QString& WidgetAppearance::nativeStyleSheet() const
 
 const QString& WidgetAppearance::updateWidgetStyle(QWidget* widget, QString styleSheet)
 {
+    impl_->observe(widget);
     auto found = impl_->localRules.find(widget);
     if (found == impl_->localRules.end() || found->widget != widget) {
         Impl::LocalRules local;
         local.widget = widget;
         local.appearance = std::make_shared<WidgetAppearance>();
-        local.appearance->impl_->includeLocalScopes = false;
+        local.appearance->impl_->inputs = impl_->inputs;
         found = impl_->localRules.insert(widget, std::move(local));
     }
-    const bool addedScope = !found->managed;
     found->managed = true;
     if (found->source != styleSheet) {
         found->source = std::move(styleSheet);
@@ -748,12 +994,12 @@ const QString& WidgetAppearance::updateWidgetStyle(QWidget* widget, QString styl
             ? found->source : QStringLiteral("* {") + found->source + QLatin1Char('}'));
     }
     const auto appearance = found->appearance;
-    if (addedScope) invalidate(widget);
     return appearance->nativeStyleSheet();
 }
 
 void WidgetAppearance::updateWidgetGeometry(QWidget* widget, const ControlVisual& visual)
 {
+    impl_->observe(widget);
     const auto dropdown = this->visual(widget, QStyle::State_Enabled, u"drop-down");
     const Impl::WidgetGeometry next{widget, visual.size, visual.minimum, visual.maximum,
         visual.margin + visual.borders + visual.padding,
@@ -794,7 +1040,12 @@ ControlVisual WidgetAppearance::visual(const QWidget* widget, QStyle::State stat
     ControlVisual result;
     if (!widget) return result;
     impl_->apply(result, widget, state, part, extraStates);
-    const auto& scopes = impl_->candidates(widget).localScopes;
+    QVector<QPointer<QWidget>> scopes;
+    for (auto* owner = const_cast<QWidget*>(widget); owner; owner = owner->parentWidget()) {
+        const auto local = impl_->localRules.constFind(owner);
+        if (!owner->styleSheet().isEmpty() || (local != impl_->localRules.cend()
+            && local->widget == owner && local->managed)) scopes.append(owner);
+    }
     for (auto owner = scopes.crbegin(); owner != scopes.crend(); ++owner) {
         if (!*owner) continue;
         auto found = impl_->localRules.find(*owner);
@@ -802,7 +1053,8 @@ ControlVisual WidgetAppearance::visual(const QWidget* widget, QStyle::State stat
             Impl::LocalRules local;
             local.widget = *owner;
             local.appearance = std::make_shared<WidgetAppearance>();
-            local.appearance->impl_->includeLocalScopes = false;
+            local.appearance->impl_->inputs = impl_->inputs;
+            impl_->observe(*owner);
             found = impl_->localRules.insert(*owner, std::move(local));
         }
         if (!found->managed) {
@@ -821,23 +1073,22 @@ ControlVisual WidgetAppearance::visual(const QWidget* widget, QStyle::State stat
 
 void WidgetAppearance::invalidate(const QWidget* widget)
 {
-    for (auto it = impl_->geometries.begin(); it != impl_->geometries.end();) {
-        if (it->widget.isNull()) it = impl_->geometries.erase(it);
-        else ++it;
-    }
-    for (auto it = impl_->widgets.begin(); it != impl_->widgets.end();) {
-        if (it->widget.isNull() || it.key() == widget || (widget && widget->isAncestorOf(it->widget)))
-            it = impl_->widgets.erase(it);
-        else
-            ++it;
-    }
-    for (auto it = impl_->localRules.begin(); it != impl_->localRules.end();) {
-        if (it->widget.isNull()) it = impl_->localRules.erase(it);
-        else {
-            it->appearance->invalidate(widget);
-            ++it;
-        }
-    }
+    impl_->inputs->invalidate(widget);
+}
+
+bool WidgetAppearance::synchronize(const QWidget* widget)
+{
+    return impl_->inputs->synchronize(widget);
+}
+
+bool WidgetAppearance::takeDependencyChanges(const QWidget* widget)
+{
+    return impl_->inputs->takeChanges(widget);
+}
+
+bool WidgetAppearance::usesProperty(const QWidget* widget, const QByteArray& name) const
+{
+    return impl_->inputs->usesProperty(widget, name);
 }
 
 void WidgetAppearance::clearWidgetCache()

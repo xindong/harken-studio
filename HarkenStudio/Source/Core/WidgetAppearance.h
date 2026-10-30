@@ -53,6 +53,9 @@ public:
     ControlVisual visual(const QWidget* widget, QStyle::State state,
                          QStringView part = {}, QStringList extraStates = {}) const;
     void invalidate(const QWidget* widget);
+    bool synchronize(const QWidget* widget);
+    bool takeDependencyChanges(const QWidget* widget);
+    bool usesProperty(const QWidget* widget, const QByteArray& name) const;
     void clearWidgetCache();
 
 private:

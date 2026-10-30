@@ -9,11 +9,14 @@
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
+#include <QDialog>
 #include <QDynamicPropertyChangeEvent>
 #include <QFrame>
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QLabel>
+#include <QMainWindow>
+#include <QMdiSubWindow>
 #include <QMenu>
 #include <QMenuBar>
 #include <QPainterPath>
@@ -25,7 +28,9 @@
 #include <QStyleOptionSlider>
 #include <QTabWidget>
 #include <QToolBar>
+#include <QTimer>
 #include <algorithm>
+#include <utility>
 #include <QComboBox>
 #include <QEvent>
 #include <QLineEdit>
@@ -337,9 +342,35 @@ void HarkenStyle::refreshWidgetAppearance(QWidget* widget, ThemeManager& manager
     refreshPalette(widget, manager, widgetState(widget));
 }
 
+void HarkenStyle::scheduleAppearanceRefresh(QWidget* widget)
+{
+    const bool scheduled = !pendingRefreshes_.isEmpty();
+    pendingRefreshes_.insert(widget, widget);
+    if (scheduled) return;
+    QTimer::singleShot(0, this, [this] {
+        const auto pending = std::exchange(pendingRefreshes_, {});
+        for (const auto& root : pending) {
+            if (!root) continue;
+            bool covered = false;
+            for (auto* parent = root->parentWidget(); parent; parent = parent->parentWidget())
+                if (pending.value(parent) == parent) {
+                    covered = true;
+                    break;
+                }
+            if (covered) continue;
+            auto widgets = root->findChildren<QWidget*>();
+            widgets.prepend(root);
+            for (auto* widget : widgets)
+                if (widget->testAttribute(Qt::WA_WState_Polished)) {
+                    refreshWidgetAppearance(widget, theme());
+                    widget->update();
+                }
+        }
+    });
+}
+
 void HarkenStyle::polish(QWidget* widget)
 {
-    theme().widgetAppearance().invalidate(widget);
     if (qobject_cast<QAbstractButton*>(widget)
         && (widget->inherits("ads::CTitleBarButton")
             || (widget->objectName() == QLatin1String("tabCloseButton")
@@ -353,19 +384,20 @@ void HarkenStyle::polish(QWidget* widget)
             || widget->inherits("QLineEditIconButton")))
         widget->setProperty("flatIconButton", true);
     QProxyStyle::polish(widget);
-    if (!paintsControlSurface(widget)) widget->setAttribute(Qt::WA_StyledBackground);
+    if (widget->metaObject() == &QWidget::staticMetaObject
+        || qobject_cast<QHeaderView*>(widget) || qobject_cast<QTabBar*>(widget)
+        || qobject_cast<QFrame*>(widget) || qobject_cast<QMainWindow*>(widget)
+        || qobject_cast<QMdiSubWindow*>(widget) || qobject_cast<QMenuBar*>(widget)
+        || qobject_cast<QDialog*>(widget) || qobject_cast<QToolBar*>(widget))
+        widget->setAttribute(Qt::WA_StyledBackground);
     widget->setAttribute(Qt::WA_Hover);
     widget->installEventFilter(this);
+    if (theme().widgetAppearance().synchronize(widget))
+        scheduleAppearanceRefresh(widget);
     if (!observedWidgets_.contains(widget)) {
         observedWidgets_.insert(widget);
         connect(widget, &QObject::objectNameChanged, this, [this, widget] {
-            theme().widgetAppearance().invalidate(widget);
-            refreshWidgetAppearance(widget, theme());
-            widget->update();
-            for (auto* child : widget->findChildren<QWidget*>()) {
-                refreshWidgetAppearance(child, theme());
-                child->update();
-            }
+            scheduleAppearanceRefresh(widget);
         });
         connect(widget, &QObject::destroyed, this, [this, widget] { observedWidgets_.remove(widget); });
         if (auto* button = qobject_cast<QAbstractButton*>(widget))
@@ -405,7 +437,6 @@ void HarkenStyle::polish(QWidget* widget)
 
 void HarkenStyle::unpolish(QWidget* widget)
 {
-    theme().widgetAppearance().invalidate(widget);
     widget->removeEventFilter(this);
     QProxyStyle::unpolish(widget);
 }
@@ -417,20 +448,16 @@ bool HarkenStyle::eventFilter(QObject* watched, QEvent* event)
         bool refresh = false;
         QStyle::State state = widgetState(widget);
         switch (event->type()) {
-        case QEvent::Destroy:
-            theme().widgetAppearance().invalidate(widget);
-            break;
         case QEvent::DynamicPropertyChange:
             if (const auto name = static_cast<QDynamicPropertyChangeEvent*>(event)->propertyName();
-                name.startsWith("_q_") || name == "_vnIconButtonCacheKey") break;
+                !theme().widgetAppearance().usesProperty(widget, name)) break;
             [[fallthrough]];
         case QEvent::ParentChange:
+            scheduleAppearanceRefresh(widget);
+            break;
         case QEvent::StyleChange:
-            theme().widgetAppearance().invalidate(widget);
-            for (auto* child : widget->findChildren<QWidget*>()) {
-                refreshWidgetAppearance(child, theme());
-                child->update();
-            }
+            if (theme().widgetAppearance().takeDependencyChanges(widget))
+                scheduleAppearanceRefresh(widget);
             refresh = true;
             break;
         case QEvent::Enter:
@@ -1025,6 +1052,12 @@ void HarkenStyle::drawControl(ControlElement element, const QStyleOption* option
     case CE_MenuBarEmptyArea:
     case CE_MenuEmptyArea:
         return;
+    case CE_SizeGrip:
+        if (visual.background.isValid() || visual.borderSpecified || !visual.image.isNull()) {
+            paintVisual(painter, option->rect, visual);
+            return;
+        }
+        break;
     case CE_Splitter: {
         const QWidget* owner = qobject_cast<const QSplitterHandle*>(widget) ? widget->parentWidget() : widget;
         paintVisual(painter, option->rect, theme().widgetAppearance().visual(owner, option->state, u"handle"));
