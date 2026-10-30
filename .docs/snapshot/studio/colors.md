@@ -1,12 +1,14 @@
-# Studio 颜色职责与收束清单
+# Studio 主题色卡与颜色职责
 
 最近核对：2026-10-30。
 
-Studio 的颜色按语义职责分配。同一职责跨面板、跨控件使用共同来源；默认 RGB 相同但语义不同的数据和状态颜色仍可独立。对象类型由图标形状和文字表达，不分配类别识别色；对象标记色由用户定义。主题提供颜色，业务组件声明用途，Renderer 使用解析后的样式。
+主题拥有自己的颜色职责、职责到绘制位置的绑定和一个或多个色卡。色卡提供该主题各职责的颜色值及明暗模式，用户修改按主题和色卡隔离。不同主题可以使用不同的职责清单；一个主题可以让网格复用边界色，另一个主题可以提供独立网格色。Renderer 继续消费完整、不可变的样式快照。
 
-颜色收束阶段统一字段文字和通用交互，移除 10 个重复 UI 颜色字段，将 62 个领域颜色配置项收束为共享角色的解析结果，另删除 7 个 Source 预览独立颜色项和 18 个对象类别、节点角色颜色项。保持现有深色背景层次、专业数据配色和用户项目标记色。在此基础上，Preferences 的 Appearance 页面现已提供按职责分类的颜色定制。
+内置主题正式命名为 **Studio Default**（`harken.studio.default`），提供 **Dark**（`dark`，默认）和 **Light**（`light`）两张色卡。Dark 保留原有深色视觉；Light 提供适合浅色表面的文字、交互、边界和领域绘图配色。之前用于测试的 Amber 已移除。项目对象标记色仍属于项目数据。
 
-## 通用颜色职责
+## Studio Default 颜色职责
+
+以下职责与共享关系属于 Studio Default 的设计，不要求其他主题采用相同目录。
 
 | 职责 | 主题键 | 使用边界 |
 |---|---|---|
@@ -32,11 +34,17 @@ Studio 的颜色按语义职责分配。同一职责跨面板、跨控件使用�
 
 ## 解析与发布
 
-`ThemeColorResolver` 在内置主题构造完成、外部主题父子继承及覆盖全部完成后，统一生成共享样式。Qt 的主要文字、禁用文字、链接、高亮及高亮文字也在此解析。
+`ThemeColorResolver` 接受当前主题的职责绑定与当前色卡值，将它们写入固定的渲染颜色位置。绑定可指定独立 Alpha。原有共享文字、网格、节点背景等派生关系已成为 Studio Default 的绑定声明，解析器不再为所有主题强制建立相同关系。
 
-`ThemeSnapshot` 中保留领域 Renderer 所需的已解析颜色槽位。这些槽位是输出，不再是独立的主题配置项；保留它们使 Renderer 只依赖自身样式，不需要读取全局主题管理器。快照发布后保持不可变，重新加载产生新快照。
+Studio Default 将 Qt 原生窗口、输入框、提示框和按钮背景绑定到对应表面职责，并同步原生文字与辅助颜色；色卡默认值、用户预览和取消恢复共用这些绑定。其他主题可以定义自己的对应关系。
 
-主题包使用 `schemaVersion: 6`，不接受旧版本；已收束的细分键也不作为别名保留。旧版本返回版本诊断，版本 6 中继续填写已移除键会返回 `UnknownSemanticKey`，不会静默忽略。调整共享用途须修改下表列出的源角色。
+`ThemeSnapshot` 中保留领域 Renderer 所需的已解析颜色槽位。主题职责可以绑定这些槽位，Renderer 只依赖自身样式，不需要读取任意主题职责名或全局主题管理器。快照发布后保持不可变，重新加载产生新快照。
+
+主题包使用 `schemaVersion: 7`。`entries.colors` 可指定颜色定义文件，文件声明 `roles`、`palettes` 和 `defaultPalette`。每个职责提供 `key`、`group`、`label`、`description` 及 `bindings`；每个绑定提供有效绘制位置 `target`，可选 `alpha`。每张色卡声明 `id`、`displayName`、`colorScheme` 与完整的职责颜色 `colors`。显式颜色定义替换继承的职责和色卡定义；未声明时继承基础主题。色卡 ID 仅在所属主题中有效。
+
+主题加载校验角色、色卡和绘制目标的唯一性，检查职责引用、颜色值、Alpha 及色卡完整性。未知目标不会静默忽略。职责可使用主题自己的名称，但必须绑定到实际渲染位置。
+
+声明 `entries.colors` 的继承层以该文档中的色卡值为准，同层 `tokens` 或 `visuals` 再赋值任何已绑定目标会报告冲突。未声明颜色定义的继承层可通过任意不带固定 Alpha 的绑定目标更新所属职责，绑定顺序不改变语义；同层多个目标对同一职责给出不同颜色会报告冲突，给出相同颜色则允许。带固定 Alpha 的目标不能直接反向覆盖职责值。未绑定的绘制位置可继续使用 `tokens` 或 `visuals` 中的字面颜色。
 
 ### 控件样式缓存与启动边界
 
@@ -56,7 +64,7 @@ PR 集成复验基于已含 #194 的主线 `9235952a`：编辑器与测试目标
 
 ## 用户颜色定制
 
-`ThemeColorCatalog` 定义对外开放的 76 个源颜色角色，共 11 类。每项包含职责名称、用途说明和主题语义键；不开放 `ThemeColorResolver` 的派生槽位，不重新引入被删除的细分项。窗口壳层按钮细节、Logo 扫光和声谱图固定热力色阶未加入这份用户定制目录；项目对象标记色仍属于项目数据。启动波浪的四档色阶单独表达动画配色，不绑定界面强调色；Logo 底板复用已有 `panel.background`。
+Studio Default 提供 76 个可编辑源颜色角色，共 11 类。每项包含职责名称、用途说明、主题职责键和绘制绑定。外部主题可声明自己的目录，Appearance 按当前主题生成分类与颜色行。窗口壳层按钮细节、Logo 扫光和声谱图固定热力色阶未加入 Studio Default 的用户定制目录；启动波浪的四档色阶单独表达动画配色，Logo 底板复用 `panel.background`。
 
 | 分类 | 数量 | 开放范围 |
 |---|---|---|
@@ -72,19 +80,19 @@ PR 集成复验基于已含 #194 的主线 `9235952a`：编辑器与测试目标
 | Blueprint | 9 | 画布、网格点、三类端口、三类关系连线、节点波形 |
 | Startup | 4 | 启动波浪的暗部、低色阶、高色阶和高光 |
 
-入口为可停靠的 **Preferences → Appearance** 面板。上方 Appearance 分组保留 `Theme` 和 Information Language。`Theme` 下拉字段切换完整主题，包括字体、图标及控件尺寸。下方 **Global Colors** 分组统一包含 Color Presets、分类与搜索、详细颜色表格及重置操作。每个主题提供一个默认色板；切换主题时自动选中其默认色板，之后可以通过 Color Presets 标准下拉框选择任意全局色板。Color Presets 沿用上方字段的标准表单列比例，左侧标签、右侧下拉框。色板应用不改变主题身份或非颜色属性。下拉框的收起状态和展开选项均在左侧显示色板名称，右侧绘制较薄的色条，不附加 `Default colors` 文案。色条按顺序展示主背景、控件背景、选中背景、强调色、主要文字、次要文字、成功、警告、错误、信息十种代表色。
+入口为可停靠的 **Preferences → Appearance** 面板。上方 Appearance 分组保留 `Theme` 和 Information Language。`Theme` 下拉字段切换完整主题，包括字体、图标及控件尺寸。下方 **Theme Colors** 分组包含 Color Palette、分类与搜索、详细颜色表格及重置操作。切换主题时选中目标主题的默认色卡，Color Palette 仅列出该主题提供的色卡。字段沿用标准表单列比例；色卡选择不改变主题身份或非颜色属性。下拉框左侧显示色卡名称，右侧色条按顺序展示主背景、控件背景、选中背景、强调色、主要文字、次要文字、成功、警告、错误、信息十种渲染颜色。色条通过当前主题绑定生成，不依赖主题使用固定的职责名称。
 
-内置完整主题只有 `Harken Dark`（`harken.builtin.dark`）。其默认色板和暖炭背景、琥珀强调色的 `Harken Amber` 色板属于同一个全局色板集合，Amber 不再作为主题发现、选择或继承。已安装外部主题各自提供的默认色板也进入这一共享集合，所有主题都能使用。主题默认色板 ID 为 `theme:<themeId>`，独立 Amber 色板 ID 为 `harken.palette.amber`；色板身份独立于当前主题，下拉框按已选色板 ID 标识选择。
+Theme Colors 编辑当前主题的当前色卡。即使另一个主题使用相同色卡 ID，颜色修改也彼此隔离。分类和搜索共同过滤颜色列表，搜索覆盖职责名称、分类、用途说明及颜色键。列表并列展示当前颜色与 `Palette Default`，两列均使用 44 像素宽的色块，下方等宽的 3 像素细条与色块紧贴、共用外边框，中间仅以一条边框线分隔。细条按 Alpha 值显示不透明度：0 为空条，255 为满条；填充固定白色、背景固定黑色，不参与色卡管理。选中项在下方显示用途说明。双击表格行打开 `ColorEditorDialog`：上方是 SV 二维选色区域和窄 H 色相条，下方分别排列 H/S/V、R/G/B 数值，底部通过公有 `LinearSliderPresenter` 提供共用的 A 透明度滑条与数值。H 为 0–359，S/V 为 0–100，R/G/B/A 为 0–255，数值不显示单位后缀；A 独立于两种色彩坐标，修改透明度不重算 RGB。底部操作行左侧的 20×20 吸管图标用于屏幕拾色；拾色保留当前 A 值；拾色时按 Esc 取消此次拾取并恢复拾色前的颜色。
 
-Global Colors 编辑的是当前全局色板，修改不会另存为某个主题的私有配色；在其他主题中选中同一色板时使用同一份修改。分类和搜索共同过滤颜色列表，搜索覆盖职责名称、分类、用途说明及颜色键。列表并列展示当前颜色与 `Palette Default`，两列均使用 44 像素宽的色块，下方等宽的 3 像素细条与色块紧贴、共用外边框，中间仅以一条边框线分隔。细条按 Alpha 值显示不透明度：0 为空条，255 为满条；填充固定白色、背景固定黑色，不参与色板管理。选中项在下方显示用途说明。双击表格行打开 `ColorEditorDialog`：上方是 SV 二维选色区域和窄 H 色相条，下方分别排列 H/S/V、R/G/B 数值，底部通过公有 `LinearSliderPresenter` 提供共用的 A 透明度滑条与数值。H 为 0–359，S/V 为 0–100，R/G/B/A 为 0–255，数值不显示单位后缀；A 独立于两种色彩坐标，修改透明度不重算 RGB。面板不包含 Basic colors、Custom colors、HTML 输入或独立大预览色块。底部操作行左侧的 20×20 吸管图标用于屏幕拾色，按钮沿用公有图标按钮的圆角和交互状态，通过 `iconButtonBackground` 使用 `background.tertiary` 作为常态背景；拾色保留当前 A 值；拾色时按 Esc 取消此次拾取并恢复拾色前的颜色。
+底部右侧并排保留 `Reset Selected` 和 `Reset All`，分别恢复当前主题所选色卡中的选中角色和全部颜色覆盖。默认值来自该色卡，恢复操作立即保存，其他主题和色卡的修改保持不变。
 
-底部右侧并排保留 `Reset Selected` 和 `Reset All`，分别恢复所选色板中的选中颜色角色和全部颜色覆盖。默认值来自该色板本身，恢复操作立即保存，并影响所有主题随后使用该色板时的颜色；其他色板的修改保持不变。
+主题选择、色卡选择、完成颜色编辑、恢复默认及 Information Language 均即时保存。切换主题选择目标主题的默认色卡，重新加载主题和程序重启则保留已保存的主题与所选色卡。颜色对话框支持 Alpha 与实时预览：预览只发布临时快照，OK 后保存，Cancel、Esc 或关闭选色器恢复已提交外观。关闭或停靠 Preferences 不撤销已保存设置；AI 连接配置仍使用独立的 Save Connection 事务。
 
-主题选择、色板选择、完成颜色编辑、恢复默认及 Information Language 均即时保存，不保留全局 Apply/Cancel 或预览开关。切换主题选择目标主题的默认色板，重新加载主题和程序重启则保留已保存的主题与所选全局色板。颜色对话框支持 Alpha 与实时预览：预览只发布临时快照，OK 后保存，Cancel、Esc 或关闭选色器恢复已提交外观。关闭或停靠 Preferences 不撤销已保存设置；AI 连接配置仍使用独立的 Save Connection 事务。
+主题选择保存在 `Appearance/ThemeId`，色卡选择保存在 `Appearance/PaletteId`。颜色覆盖以主题 ID、色卡 ID、职责键分层保存在 `Appearance/ThemePaletteColors`，不修改主题包或项目。旧设置在读取时迁移到所属主题的默认色卡；测试 Amber 不再作为可选配色保留。暂不可用主题的旧默认覆盖以空色卡键暂存，主题恢复后再迁入其声明的默认色卡；已有明确色卡覆盖优先。活动职责失效导致恢复失败时，仍保留其他主题与色卡的覆盖，避免随后保存时丢失。
 
-主题选择保存在 `Appearance/ThemeId`，色板选择保存在 `Appearance/PaletteId`，颜色覆盖以色板 ID 为键保存在 `Appearance/PaletteColors`，不修改主题包或项目。旧 `Appearance/Colors` 的主题键迁移为对应默认色板键；旧 Amber 主题选择迁移为 Dark 主题加 Amber 色板，已有颜色编辑保留。成功保存新结构后移除旧 Colors 键。暂不可用色板的有效覆盖仍保留，来源主题重新安装后可继续使用。
+读取当前及旧版存储格式时跳过无法解析的色值，保留所有有效覆盖，包括未安装主题的私有职责。损坏的存储值不阻断后续切换、预览或保存；新提交的非法颜色仍被拒绝。
 
-组合顺序为完整主题 → 全局色板的完整颜色集合 → 所选色板的用户颜色覆盖 → `ThemeColorResolver` → 最终不可变快照。色板携带主题包支持的完整颜色值及明暗模式，包含未开放为编辑项的合法颜色；应用时只复制颜色，保留目标主题的尺寸、字体、组件布局和资源。用户覆盖与主题包共用 `applyThemeColor` 的语义赋值路径。所有主题使用同一组合路径，避免应用同一色板时残留目标主题的旧颜色。预览取消使用已提交候选，未知角色、非法颜色、存储不可写或跨线程发布均不提交新设置。
+组合顺序为主题结构与色卡基础快照 → 当前主题当前色卡的用户覆盖 → 按主题职责绑定解析 → 最终不可变快照。色卡保留主题的尺寸、字体、组件布局和资源。用户覆盖与主题包共用 `applyThemeColor` 的绘制位置赋值路径。预览取消使用已提交候选，未知角色、非法颜色、存储不可写或跨线程发布均不提交新设置。
 
 连续预览同一主题和色板时复用首次加载的基础候选与色板，每次都从未应用用户覆盖的颜色生成结果，避免反复扫描主题清单及解析继承链，也避免移除覆盖后残留上一次预览的颜色。取消、成功提交、成功切换或重新加载主题后结束该缓存的生命周期；提交和显式重新加载继续读取基础主题和色板。
 
@@ -112,9 +120,11 @@ Global Colors 编辑的是当前全局色板，修改不会另存为某个主题
 
 性能及渲染原始数据位于本地 `.temp/theme-preview-profile/`，最终实际窗口使用 `main-window-visual-fix7-` 前缀，菜单工具栏汇总为 `menu-toolbar-fix7-summary.json`，通用表单为 `render-menu-toolbar-fix7*`。下拉框尺寸与命中范围记录位于 `.temp/combo-size-contract/fix6-size-contract-summary.json`；fix7 仅调整共享边框绘制，没有改变该几何实现。
 
-最新 `harken_editor` 和 `harken_editor_tests` 编译通过，相关 78 项测试、QSS 归属检查及其 6 项脚本测试通过，Studio `--self-test` 返回 `ok: true`。契约覆盖全部可编辑颜色不触发结构/字体重建、完整主题仍应用字体与结构、资源缓存跨配色快照复用、局部样式层级、编辑状态保持，以及预览停手、确认和取消的生命周期。本次在现有测试文件中补充菜单高亮覆盖留白、停靠及浮动工具栏表面与边框、进度填充不覆盖外边界，并扩展纯调色保留业务固定尺寸的检查。
+上一轮预览性能与绘制修复的 `harken_editor` 和 `harken_editor_tests` 编译通过，相关 78 项测试、QSS 归属检查及其 6 项脚本测试通过，Studio `--self-test` 返回 `ok: true`。这些历史记录覆盖全部可编辑颜色不触发结构/字体重建、完整主题仍应用字体与结构、资源缓存跨配色快照复用、局部样式层级、编辑状态保持，以及预览停手、确认和取消的生命周期；不作为本次主题色卡合同变更的验收结果。
 
-实现入口为 `ColorPalette.*`、`BuiltinTheme.*`、`ThemeColorCatalog.*`、`ThemeManager.*`、`ThemePackageLoader.*`、`Dialogs/ColorEditorDialog.*` 和 `Dialogs/Settings/Pages/AppearancePage.*`。契约测试覆盖单一内置主题、全局色板跨主题共享、主题切换默认色板、保留非颜色属性、预览取消、重置、重载、重启及旧设置迁移。
+实现入口为 `ColorPalette.*`、`BuiltinTheme.*`、`ThemeColorCatalog.*`、`ThemeColorResolver.*`、`ThemeManager.*`、`ThemePackageParser.*`、`ThemePackageLoader.*`、`Dialogs/ColorEditorDialog.*` 和 `Dialogs/Settings/Pages/AppearancePage.*`。主题色卡契约覆盖不同职责目录、同名色卡跨主题隔离、主题切换默认色卡、非颜色属性保持、预览取消、重置、重载、重启及旧设置迁移。
+
+本次主题色卡模型在 Windows x64、Qt 6.8.3、RelWithDebInfo 下完成 `harken_editor` 与 `harken_editor_tests` 构建，相关 65 项测试通过，QSS 归属检查及其 6 项脚本测试通过，Studio `--self-test` 返回 `ok: true`。隔离设置的真实 Qt 验收窗口检查了 Dark / Light 切换、颜色编辑器、复选框和 Light 启动画面；未覆盖所有业务面板或实际多屏 DPI。新增浅色验收发现的勾号固定白色与栅格着色缩半问题已修复，通用测试验证启用／禁用勾号可见性及 1x／2x 着色后的像素覆盖和 DPR 保持。记录位于 `.temp/theme-palettes-final-tests.xml` 与 `.temp/theme-palette-validation/`。
 
 以下为全局色板模型调整前的历史验收记录，不代表当前模型的验收结果。
 
@@ -136,11 +146,11 @@ Global Colors 编辑的是当前全局色板，修改不会另存为某个主题
 
 以上 10 个 UI 字段连同独立配置键均已删除，消费者直接使用共同来源。旋钮指示线、窗口关闭按钮、标题栏文字等仍保留其视觉职责。
 
-## 已收束的领域配置
+## Studio Default 的领域绑定
 
-下表左列为原主题键；同一行列出的项目现在共享右列的源。未写透明度时保留源颜色，写明透明度时在解析结果上应用固定 Alpha，范围为 0 至 255。
+下表记录 Studio Default 的领域绘制位置与角色绑定。其他主题可以为这些位置声明不同的来源。未写透明度时保留源颜色，写明透明度时在解析结果上应用固定 Alpha，范围为 0 至 255。
 
-| 原曲线与波形键 | 共同来源 |
+| 曲线与波形绘制位置 | Studio Default 来源 |
 |---|---|
 | `curve.canvasBackground` | `panel.background` |
 | `curve.canvasBorder` | `border.view` |
@@ -157,7 +167,7 @@ Global Colors 编辑的是当前全局色板，修改不会另存为某个主题
 
 `waveform.previewGradientTop`、`waveform.previewGradientMid`、`waveform.previewLoopFill`、`waveform.previewLoopBorder`、`waveform.previewPeakClip`、`waveform.previewPeakSafe` 没有实际绘制消费者，成员、默认值和独立配置键一并删除，不再保留无效色板项。Source Editor 的字段名、值、空状态、警告、表面、边界和坐标均遵循共享职责；裁剪与循环标记继续使用缩略图和 External Editor 共用的波形样式。
 
-| 原仪表键 | 共同来源 |
+| 仪表绘制位置 | Studio Default 来源 |
 |---|---|
 | `meter.interaction.crosshair` | `text.primary`，Alpha 89 |
 | `meter.interaction.readoutBackground` | `background.primary`，Alpha 221 |
@@ -172,7 +182,7 @@ Global Colors 编辑的是当前全局色板，修改不会另存为某个主题
 | `meter.vu.analogArc`、`meter.vu.barGrid` | `border.primary` |
 | `meter.vu.analogValueText`、`meter.vu.barValueText` | `text.muted`，保留 VU 读数原有的弱化层级 |
 
-| 原节点与反馈键 | 共同来源 |
+| 节点与反馈绘制位置 | Studio Default 来源 |
 |---|---|
 | `nodeGraph.node.bodyNormal` | `background.tertiary` |
 | `nodeGraph.node.bodySelected` | `background.hover` |
@@ -206,11 +216,11 @@ Global Colors 编辑的是当前全局色板，修改不会另存为某个主题
 | 项目对象标记 | 用户手动指定的轨道、对象颜色属于项目数据，主题切换不改写它们 |
 | 固定数据视觉 | 声谱图固定插值色阶仍作为连续数据映射处理，不替换成 UI 强调色或分类色板 |
 
-启动波浪的四档抖动色阶使用 `startup.wave.shadow/low/high/highlight`，默认依次为 `#06121F`、`#173D5C`、`#5F9EC7`、`#E4F3FF`，精确保留原蓝色色系。两套内置预设的波浪默认值相同，各自可保存覆盖，Reset 恢复这组默认值。波浪的 Alpha 在着色器中与启动窗口现有的 `background.primary` 合成：Alpha 为 0 时显示背景，为 255 时显示原色，中间值按比例混合；原生窗口仍为不透明表面。Logo 本体保留原灰白扫光（`#B5B5B5`、`#D3D3D5`、`#FFFFFF`），不与波浪或文字主题色联动；底板使用已有 `panel.background`，没有独立配置项。`StartupLoadingWindow` 在创建 Renderer 时传入已恢复用户设置的只读主题快照；渲染线程读取该快照，不访问 ThemeManager。波浪自定义在下次启动时生效。
+启动波浪的四档抖动色阶使用 `startup.wave.shadow/low/high/highlight`。Dark 保留原蓝色色系 `#06121F`、`#173D5C`、`#5F9EC7`、`#E4F3FF`，Light 使用适合浅色启动表面的色阶；两张色卡各自保存覆盖，Reset 恢复当前色卡的默认值。波浪的 Alpha 在着色器中与启动窗口的 `background.primary` 合成：Alpha 为 0 时显示背景，为 255 时显示原色，中间值按比例混合；原生窗口仍为不透明表面。Logo 使用 `startup.logo.base/mid/highlight` 三个渲染颜色位置，Dark 保留原灰白扫光（`#B5B5B5`、`#D3D3D5`、`#FFFFFF`），Light 提供深蓝与青色扫光；Studio Default 不将这三项开放为用户编辑职责。Logo 底板使用 `panel.background`。`StartupLoadingWindow` 在创建 Renderer 时传入已恢复用户设置的只读主题快照；渲染线程读取该快照，不访问 ThemeManager。启动颜色修改在下次启动时生效。
 
-外部主题通过 `manifest.entries.tokens` 对应 JSON 的 `colors` 配置上述四键；已用实际外部包读取验证，不增加主题格式版本或单独的启动视觉文档。
+外部主题可在颜色定义中为波浪或 Logo 渲染位置声明自己的职责绑定，并在各色卡中提供独立颜色。未绑定的启动颜色也可通过 `entries.tokens` 对应 JSON 的 `colors` 指定字面值。
 
-启动动画的验收使用临时 Renderer 副本在交换缓冲前读回实际 OpenGL 首帧，不添加产品调试接口。当前记录位于 `.temp/color-customization-qa/`：`startup-restored-blue.png` 验证原四档蓝色及原 Logo 灰白；`startup-independent-ui.png` 验证修改界面强调色、主次文字色不影响波浪与 Logo；`startup-wave-custom.png` 验证波浪独立覆盖及底板对已有面板背景的复用，Logo 扫光保持原灰白。像素计数见 `startup-restored-verification.json`，设置入口见 `startup-palette-final-window.png`。分类 Reset 已确认只移除波浪覆盖，保留其他分类的修改。早期 `startup-dark.png`、`startup-amber.png`、`startup-custom.png` 记录的是已撤销的通用界面颜色联动，不作为当前波浪及 Logo 配色的验收依据。
+此前深色启动动画的验收使用临时 Renderer 副本在交换缓冲前读回实际 OpenGL 首帧，不添加产品调试接口。历史记录位于 `.temp/color-customization-qa/`：`startup-restored-blue.png` 验证原四档蓝色及原 Logo 灰白；`startup-independent-ui.png` 验证修改界面强调色、主次文字色不影响波浪与 Logo；`startup-wave-custom.png` 验证波浪独立覆盖及底板对已有面板背景的复用。像素计数见 `startup-restored-verification.json`，设置入口见 `startup-palette-final-window.png`。这些记录不代表新增 Light 或外部主题 Logo 绑定的验收结果；早期 `startup-dark.png`、`startup-amber.png`、`startup-custom.png` 记录的是已撤销的通用界面颜色联动。
 
 Alpha 验证使用隔离设置加载实际启动 Renderer，读回默认四色、四槽统一 Alpha 0/128/255，以及四槽分别为 0/64/128/255 的五组画面。Logo 外像素的默认 RGB 与原四档一致，透明度合成符合前景与 `background.primary` 的混合值（允许 1 级量化误差），最终窗口表面保持不透明。14 项像素检查通过，临时设置已恢复；截图为 `startup-alpha-*.png`，记录为 `startup-alpha-report.json`。
 

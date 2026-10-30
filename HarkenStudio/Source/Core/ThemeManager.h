@@ -33,9 +33,17 @@ struct ThemeAppearance
 {
     QString themeId;
     QString paletteId;
-    ColorPaletteCustomizations colors;
+    QMap<QString, ColorPaletteCustomizations> colors;
 
     bool operator==(const ThemeAppearance&) const = default;
+};
+
+struct ColorPaletteLoadResult
+{
+    std::optional<ColorPalette> palette;
+    QList<ThemePackageDiagnostic> diagnostics;
+
+    bool ok() const { return palette.has_value() && diagnostics.isEmpty(); }
 };
 
 class ThemeManager : public QObject
@@ -59,6 +67,7 @@ public:
     QString userThemesRoot() const { return userThemesRoot_; }
     const QList<ThemePackageDescriptor>& availableThemes() const { return themes_; }
     QList<ColorPaletteDescriptor> availablePalettes() const;
+    const QVector<ThemeColorRole>& colorRoles() const { return committedCandidate_.colorRoles; }
     const QList<ThemePackageDiagnostic>& lastDiagnostics() const
     {
         return lastDiagnostics_;
@@ -136,7 +145,7 @@ private:
                           bool reloadAssets = false);
     ThemeManagerOperationResult updateAppearance(const ThemeAppearance& appearance,
                                                   bool persist);
-    ThemePackageLoadResult customizedCandidate(const ThemeAppearance& appearance,
+    ThemePackageLoadResult customizedCandidate(ThemeAppearance& appearance,
                                                bool reusePreviewBase = false);
     bool checkPublicationThread(ThemeManagerOperationResult& result) const;
     void applyApplicationTheme(bool structureChanged);
@@ -152,13 +161,12 @@ private:
     ThemeSnapshotPtr snapshot_;
     QString currentThemeId_;
     QString currentPaletteId_;
-    ColorPaletteCustomizations customizations_;
+    QMap<QString, ColorPaletteCustomizations> customizations_;
     ThemePackageCandidate committedCandidate_;
     QString publishedThemeId_;
     ThemeAssetMapDto publishedAssets_;
     QMap<QString, QString> publishedAssetRoots_;
     std::optional<ThemePackageCandidate> previewBaseCandidate_;
-    std::optional<ColorPalette> previewBasePalette_;
     bool previewActive_ = false;
     QList<ThemePackageDescriptor> themes_;
     QList<ThemePackageDiagnostic> lastDiagnostics_;

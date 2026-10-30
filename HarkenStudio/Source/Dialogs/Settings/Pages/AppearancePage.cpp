@@ -4,6 +4,7 @@
 #include "Core/ContextInfo.h"
 #include "Core/QtControlSkin.h"
 #include "Core/ThemeColorCatalog.h"
+#include "Core/ThemeColorResolver.h"
 #include "Dialogs/ColorEditorDialog.h"
 #include "Widgets/Common/ProportionalTreeWidget.h"
 #include "Widgets/Common/SearchField.h"
@@ -76,29 +77,32 @@ protected:
     }
 };
 
-QString roleText(const char* text)
+QString roleText(const QString& text)
 {
-    return QCoreApplication::translate("ThemeColorCatalog", text);
+    return QCoreApplication::translate("ThemeColorCatalog", text.toUtf8().constData());
 }
 
-QPixmap presetSwatch(const ColorPalette& palette, const ThemeColorOverrides& overrides)
+QPixmap presetSwatch(const ColorPalette& palette, const QVector<ThemeColorRole>& roles,
+                     const ThemeColorOverrides& overrides)
 {
-    const QStringList keys{QStringLiteral("background.primary"),
-        QStringLiteral("background.secondary"), QStringLiteral("background.selected"),
-        QStringLiteral("accent.primary"), QStringLiteral("text.primary"),
-        QStringLiteral("text.secondary"), QStringLiteral("status.success"),
-        QStringLiteral("status.warning"), QStringLiteral("status.error"),
-        QStringLiteral("status.info")};
+    ThemeSnapshot snapshot = *palette.snapshot;
+    auto values = palette.colors;
+    for (auto value = overrides.cbegin(); value != overrides.cend(); ++value)
+        values.insert(value.key(), value.value());
+    resolveThemeColors(snapshot, roles, values);
+    const auto& colors = snapshot.ui.colors;
+    const QColor samples[]{colors.bgPrimary, colors.bgSecondary, colors.bgSelected,
+        colors.accent, colors.textPrimary, colors.textSecondary, colors.success,
+        colors.warning, colors.error, colors.info};
     QPixmap swatch(160, 8);
-    QColor background = overrides.value(keys.first(), palette.colors.value(keys.first()));
+    QColor background = colors.bgPrimary;
     background.setAlpha(255);
     swatch.fill(background);
     QPainter painter(&swatch);
-    for (int i = 0; i < keys.size(); ++i) {
-        const QColor color = overrides.value(keys.at(i), palette.colors.value(keys.at(i)));
-        const int left = i * swatch.width() / keys.size();
-        const int right = (i + 1) * swatch.width() / keys.size();
-        painter.fillRect(left, 0, right - left, swatch.height(), color);
+    for (int i = 0; i < 10; ++i) {
+        const int left = i * swatch.width() / 10;
+        const int right = (i + 1) * swatch.width() / 10;
+        painter.fillRect(left, 0, right - left, swatch.height(), samples[i]);
     }
     return swatch;
 }
@@ -210,16 +214,16 @@ AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
     static_cast<QVBoxLayout*>(appearance->layout())->addLayout(appearanceForm);
     body->addWidget(appearance);
 
-    auto* colors = makeSection(tr("Global Colors"));
+    auto* colors = makeSection(tr("Theme Colors"));
     const auto colorsTopic = ContextTopic::forPanel(QStringLiteral("settings.appearance.colors"));
     ContextInfo::tag(colors, colorsTopic);
     auto* colorsLayout = static_cast<QVBoxLayout*>(colors->layout());
     colorsLayout->setSpacing(8);
     auto* colorsForm = makeForm();
-    auto* presetLabel = new QLabel(tr("Color Presets:"));
+    auto* presetLabel = new QLabel(tr("Color Palette:"));
     colorPresets_ = new ColorPresetComboBox(colors);
     colorPresets_->setObjectName(QStringLiteral("appearanceColorPresets"));
-    colorPresets_->setAccessibleName(tr("Color preset"));
+    colorPresets_->setAccessibleName(tr("Color palette"));
     ContextInfo::tag(colorPresets_, colorsTopic);
     ContextInfo::tag(presetLabel, colorsTopic);
     colorsForm->addRow(presetLabel, colorPresets_);
@@ -229,11 +233,6 @@ AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
     colorGroup_->setObjectName(QStringLiteral("appearanceColorGroup"));
     colorGroup_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     colorGroup_->addItem(tr("All categories"), QString());
-    for (const auto& role : themeColorRoles()) {
-        const QString group = QString::fromLatin1(role.group);
-        if (colorGroup_->findData(group) < 0)
-            colorGroup_->addItem(roleText(role.group), group);
-    }
     colorSearch_ = new SearchField(colors);
     colorSearch_->setObjectName(QStringLiteral("appearanceColorSearch"));
     colorSearch_->setPlaceholderText(tr("Search colors and uses..."));
@@ -251,13 +250,6 @@ AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
     colorTree_->setSelectionBehavior(QAbstractItemView::SelectRows);
     colorTree_->setAllColumnsShowFocus(true);
     colorTree_->setItemDelegate(new ColorSwatchDelegate(colorTree_, themeManager_));
-    for (const auto& role : themeColorRoles()) {
-        auto* item = new QTreeWidgetItem(colorTree_);
-        item->setData(0, Qt::UserRole, QString::fromLatin1(role.key));
-        item->setText(0, roleText(role.label));
-        item->setToolTip(0, roleText(role.description));
-        item->setFlags(item->flags() & ~Qt::ItemIsEditable);
-    }
     colorsLayout->addWidget(table);
 
     colorDescription_ = new QLabel(colors);
@@ -272,13 +264,13 @@ AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
     colorReset_->setObjectName(QStringLiteral("appearanceColorReset"));
     colorsReset_ = new QPushButton(tr("Reset All"), colors);
     colorsReset_->setObjectName(QStringLiteral("appearanceColorsReset"));
-    colorsReset_->setToolTip(tr("Restore the selected global palette to its default colors."));
+    colorsReset_->setToolTip(tr("Restore the selected palette of this theme to its default colors."));
     actions->addStretch();
     actions->addWidget(colorReset_);
     actions->addWidget(colorsReset_);
     colorsLayout->addLayout(actions);
 
-    colors->setToolTip(tr("Color edits are saved to the selected global palette and shared by all themes."));
+    colors->setToolTip(tr("Color edits are saved to the selected palette of this theme."));
     errorLabel_ = new QLabel(colors);
     errorLabel_->setObjectName(QStringLiteral("appearanceColorError"));
     errorLabel_->setProperty("textRole", QStringLiteral("error"));
@@ -365,8 +357,36 @@ void AppearancePage::load()
             if (loaded.ok()) palettes_.insert(palette.id, *loaded.palette);
         }
     }
+    rebuildColorRoles();
     refreshLanguage();
     loadBasePalette();
+}
+
+void AppearancePage::rebuildColorRoles()
+{
+    const auto& roles = themeManager_->colorRoles();
+    if (colorRoles_ == roles) return;
+    const QString selected = colorTree_->currentItem()
+        ? colorTree_->currentItem()->data(0, Qt::UserRole).toString() : QString();
+    const QString group = colorGroup_->currentData().toString();
+    const QSignalBlocker treeBlocker(colorTree_);
+    const QSignalBlocker groupBlocker(colorGroup_);
+    colorRoles_ = roles;
+    colorTree_->clear();
+    colorGroup_->clear();
+    colorGroup_->addItem(tr("All categories"), QString());
+    for (const auto& role : colorRoles_) {
+        if (colorGroup_->findData(role.group) < 0)
+            colorGroup_->addItem(roleText(role.group), role.group);
+        auto* item = new QTreeWidgetItem(colorTree_);
+        item->setData(0, Qt::UserRole, role.key);
+        item->setText(0, roleText(role.label));
+        item->setToolTip(0, roleText(role.description));
+        item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+        if (role.key == selected) colorTree_->setCurrentItem(item);
+    }
+    const int groupIndex = colorGroup_->findData(group);
+    colorGroup_->setCurrentIndex(groupIndex < 0 ? 0 : groupIndex);
 }
 
 void AppearancePage::showEvent(QShowEvent* event)
@@ -400,7 +420,7 @@ void AppearancePage::selectTheme()
     if (themeId.isEmpty()) return;
     auto next = themeManager_->appearance();
     next.themeId = themeId;
-    next.paletteId = defaultPaletteId(themeId);
+    next.paletteId.clear();
     commitAppearance(next);
 }
 
@@ -448,12 +468,12 @@ void AppearancePage::refreshPresets(bool currentOnly)
         const QString name = colorPresets_->itemText(i);
         const auto base = palettes_.constFind(id);
         const bool available = base != palettes_.cend();
-        const auto overrides = appearance_.colors.value(id);
-        colorPresets_->setItemData(i, available ? presetSwatch(*base, overrides) : QPixmap(), Qt::UserRole + 1);
+        const auto overrides = appearance_.colors.value(appearance_.themeId).value(id);
+        colorPresets_->setItemData(i, available ? presetSwatch(*base, colorRoles_, overrides) : QPixmap(), Qt::UserRole + 1);
         if (currentOnly) continue;
         model->item(i)->setEnabled(available);
         colorPresets_->setItemData(i, available
-            ? tr("Use the global %1 palette with the current theme. Edits to this palette are shared by all themes.\nMain background · Controls · Selection · Accent · Primary text\nSecondary text · Success · Warning · Error · Information").arg(name)
+            ? tr("Use the %1 palette of this theme. Edits are saved for this theme and palette.\nMain background · Controls · Selection · Accent · Primary text\nSecondary text · Success · Warning · Error · Information").arg(name)
             : tr("Unavailable"), Qt::ToolTipRole);
     }
     if (!currentOnly) colorPresets_->setCurrentIndex(colorPresets_->findData(appearance_.paletteId));
@@ -462,8 +482,8 @@ void AppearancePage::refreshPresets(bool currentOnly)
 
 QColor AppearancePage::effectiveColor(const ThemeColorRole& role) const
 {
-    const QString key = QString::fromLatin1(role.key);
-    return appearance_.colors.value(appearance_.paletteId).value(key, basePalette_->colors.value(key));
+    const QString key = role.key;
+    return appearance_.colors.value(appearance_.themeId).value(appearance_.paletteId).value(key, basePalette_->colors.value(key));
 }
 
 void AppearancePage::refreshColors(const QString& changedKey)
@@ -475,12 +495,12 @@ void AppearancePage::refreshColors(const QString& changedKey)
         colorGroup_->setEnabled(bool(basePalette_));
         colorSearch_->setEnabled(bool(basePalette_));
     }
-    colorsReset_->setEnabled(basePalette_ && !appearance_.colors.value(appearance_.paletteId).isEmpty());
+    colorsReset_->setEnabled(basePalette_ && !appearance_.colors.value(appearance_.themeId).value(appearance_.paletteId).isEmpty());
     for (int i = 0; i < colorTree_->topLevelItemCount(); ++i) {
         auto* item = colorTree_->topLevelItem(i);
         const QString key = item->data(0, Qt::UserRole).toString();
         if (!fullRefresh && key != changedKey) continue;
-        const auto* role = findThemeColorRole(key);
+        const auto* role = findThemeColorRole(colorRoles_, key);
         if (!basePalette_) {
             item->setText(1, QString());
             item->setText(2, QString());
@@ -489,14 +509,14 @@ void AppearancePage::refreshColors(const QString& changedKey)
             continue;
         }
         const QColor value = effectiveColor(*role);
-        const QColor original = basePalette_->colors.value(QString::fromLatin1(role->key));
+        const QColor original = basePalette_->colors.value(role->key);
         item->setText(1, colorText(value));
         item->setIcon(1, colorIcon(value, palette(), devicePixelRatioF()));
         if (fullRefresh) {
             item->setText(2, colorText(original));
             item->setIcon(2, colorIcon(original, palette(), devicePixelRatioF()));
         }
-        item->setToolTip(1, value == original ? tr("Palette default") : tr("Customized global palette color"));
+        item->setToolTip(1, value == original ? tr("Palette default") : tr("Customized palette color"));
         item->setData(1, TableTextRole, static_cast<int>(
             value == original ? TableTextState::Normal : TableTextState::Custom));
     }
@@ -511,11 +531,11 @@ void AppearancePage::filterColors()
     QTreeWidgetItem* first = nullptr;
     for (int i = 0; i < colorTree_->topLevelItemCount(); ++i) {
         auto* item = colorTree_->topLevelItem(i);
-        const auto* role = findThemeColorRole(item->data(0, Qt::UserRole).toString());
+        const auto* role = findThemeColorRole(colorRoles_, item->data(0, Qt::UserRole).toString());
         const QString searchable = roleText(role->label) + QLatin1Char(' ')
             + roleText(role->group) + QLatin1Char(' ') + roleText(role->description)
-            + QLatin1Char(' ') + QString::fromLatin1(role->key);
-        const bool matches = (group.isEmpty() || group == QLatin1String(role->group))
+            + QLatin1Char(' ') + role->key;
+        const bool matches = (group.isEmpty() || group == role->group)
             && searchable.contains(query, Qt::CaseInsensitive);
         item->setHidden(!matches);
         if (matches && !first) first = item;
@@ -529,13 +549,13 @@ const ThemeColorRole* AppearancePage::selectedRole() const
 {
     auto* item = colorTree_->currentItem();
     return item && !item->isHidden() && basePalette_
-        ? findThemeColorRole(item->data(0, Qt::UserRole).toString()) : nullptr;
+        ? findThemeColorRole(colorRoles_, item->data(0, Qt::UserRole).toString()) : nullptr;
 }
 
 void AppearancePage::refreshSelectedColor()
 {
     const auto* role = selectedRole();
-    colorReset_->setEnabled(role && appearance_.colors.value(appearance_.paletteId).contains(QString::fromLatin1(role->key)));
+    colorReset_->setEnabled(role && appearance_.colors.value(appearance_.themeId).value(appearance_.paletteId).contains(role->key));
     colorDescription_->setText(role ? roleText(role->description)
         : basePalette_ ? tr("No matching colors.") : tr("Palette colors are unavailable."));
 }
@@ -544,20 +564,24 @@ ThemeAppearance AppearancePage::appearanceWithColor(const QString& key, const QC
 {
     auto next = themeManager_->appearance();
     if (color == basePalette_->colors.value(key)) {
-        auto overrides = next.colors.find(next.paletteId);
-        if (overrides != next.colors.end()) {
-            overrides->remove(key);
-            if (overrides->isEmpty()) next.colors.erase(overrides);
+        auto theme = next.colors.find(next.themeId);
+        if (theme != next.colors.end()) {
+            auto overrides = theme->find(next.paletteId);
+            if (overrides != theme->end()) {
+                overrides->remove(key);
+                if (overrides->isEmpty()) theme->erase(overrides);
+            }
+            if (theme->isEmpty()) next.colors.erase(theme);
         }
     } else {
-        next.colors[next.paletteId].insert(key, color);
+        next.colors[next.themeId][next.paletteId].insert(key, color);
     }
     return next;
 }
 
 bool AppearancePage::setColor(const QString& key, const QColor& color)
 {
-    if (!findThemeColorRole(key) || !basePalette_ || !color.isValid()) return false;
+    if (!findThemeColorRole(colorRoles_, key) || !basePalette_ || !color.isValid()) return false;
     return commitAppearance(appearanceWithColor(key, color));
 }
 
@@ -566,7 +590,7 @@ void AppearancePage::editSelectedColor()
     if (colorDialog_) return;
     const auto* role = selectedRole();
     if (!role) return;
-    const QString key = QString::fromLatin1(role->key);
+    const QString key = role->key;
     previewColorKey_ = key;
     auto* dialog = new ColorEditorDialog(effectiveColor(*role), this);
     colorDialog_ = dialog;
@@ -614,13 +638,17 @@ void AppearancePage::publishPreview()
 void AppearancePage::resetSelectedColor()
 {
     if (const auto* role = selectedRole())
-        setColor(QString::fromLatin1(role->key), basePalette_->colors.value(QString::fromLatin1(role->key)));
+        setColor(role->key, basePalette_->colors.value(role->key));
 }
 
 void AppearancePage::resetColors()
 {
     auto next = themeManager_->appearance();
-    next.colors.remove(next.paletteId);
+    auto theme = next.colors.find(next.themeId);
+    if (theme != next.colors.end()) {
+        theme->remove(next.paletteId);
+        if (theme->isEmpty()) next.colors.erase(theme);
+    }
     commitAppearance(next);
 }
 

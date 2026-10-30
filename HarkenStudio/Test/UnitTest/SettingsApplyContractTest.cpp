@@ -346,28 +346,34 @@ TEST_F(SettingsApplyContractTest, ConnectionCommitPreservesLatestIndependentSett
     EXPECT_FALSE(panel.findChild<AIAgentPage*>()->hasPendingChanges());
 }
 
-TEST_F(SettingsApplyContractTest, ThemesSharePaletteEditsAndSelectTheirDefaultOnSwitch)
+TEST_F(SettingsApplyContractTest, ThemePalettesAndRolesKeepEditsIsolatedAcrossSwitchResetAndRestart)
 {
-    const QString firstId = QStringLiteral("theme.custom");
-    const QDir package(root_.filePath(firstId));
+    const QString customId = QStringLiteral("theme.custom");
+    const QDir package(root_.filePath(customId));
     ASSERT_TRUE(package.mkpath(QStringLiteral("visuals")));
     const QMap<QString, QByteArray> files{
         {QStringLiteral("manifest.json"), R"json({
-            "schemaVersion":6,"id":"theme.custom","displayName":"Custom Theme","version":"1.0.0",
+            "schemaVersion":7,"id":"theme.custom","displayName":"Custom Theme","version":"1.0.0",
             "compatibility":{"harkenVersion":">=0.1.0 <1.0.0","capabilities":["curve-v1","meter-v1","waveform-v1"]},
-            "entries":{"tokens":"tokens.json","visuals":{"curve":"visuals/curve.json","meter":"visuals/meter.json","waveform":"visuals/waveform.json"},"assetMap":"assets.json"}
+            "entries":{"tokens":"tokens.json","colors":"colors.json","visuals":{"curve":"visuals/curve.json","meter":"visuals/meter.json","waveform":"visuals/waveform.json"},"assetMap":"assets.json"}
         })json"},
         {QStringLiteral("tokens.json"), R"json({
-            "colors":{"text.primary":"#ff203040"},
-            "metrics":{"table.rowHeight":49},
-            "fonts":{"body":{"pointSize":15}}
+            "colors":{},"metrics":{"table.rowHeight":49},"fonts":{"body":{"pointSize":15}}
+        })json"},
+        {QStringLiteral("colors.json"), R"json({
+            "defaultPalette":"dark",
+            "roles":[
+                {"key":"ink","group":"Surfaces","label":"Ink","description":"Reading text.","bindings":[{"target":"text.primary"}]},
+                {"key":"grid","group":"Canvas","label":"Grid","description":"Independent curve grid.","bindings":[{"target":"curve.grid"}]}
+            ],
+            "palettes":[
+                {"id":"dark","displayName":"Night","colorScheme":"dark","colors":{"ink":"#e0d0c0","grid":"#485868"}},
+                {"id":"paper","displayName":"Paper","colorScheme":"light","colors":{"ink":"#203040","grid":"#98a8b8"}}
+            ]
         })json"},
         {QStringLiteral("visuals/curve.json"), R"json({"colors":{}})json"},
         {QStringLiteral("visuals/meter.json"), R"json({"colors":{}})json"},
-        {QStringLiteral("visuals/waveform.json"), R"json({
-            "colors":{"waveform.selectionHighlight":"#a0556677"},
-            "metrics":{"waveform.colorMap.offset0":0.22,"waveform.multiBand.alpha":0.35}
-        })json"},
+        {QStringLiteral("visuals/waveform.json"), R"json({"colors":{}})json"},
         {QStringLiteral("assets.json"), R"json({"assets":{}})json"}
     };
     for (auto entry = files.cbegin(); entry != files.cend(); ++entry) {
@@ -388,111 +394,70 @@ TEST_F(SettingsApplyContractTest, ThemesSharePaletteEditsAndSelectTheirDefaultOn
     ASSERT_NE(reset, nullptr);
     ASSERT_NE(resetAll, nullptr);
     const QString builtinId = builtinThemeId();
-    const QString customPaletteId = defaultPaletteId(firstId);
-    const QString amberId = builtinAmberPaletteId();
-    const QString primary = QStringLiteral("text.primary");
-    const QString secondary = QStringLiteral("text.secondary");
-    const QColor firstColor(18, 52, 86, 128);
-    const QColor secondColor(135, 114, 89, 192);
+    const QString darkId = QStringLiteral("dark");
+    const QString lightId = QStringLiteral("light");
+    const QString paperId = QStringLiteral("paper");
+    const QString ink = QStringLiteral("ink");
+    const QString grid = QStringLiteral("grid");
+    const QColor editedInk(18, 52, 86, 128);
+    const QColor editedGrid(135, 114, 89, 192);
     const auto builtin = theme_->snapshot();
-    QSet<QString> paletteIds;
-    for (int i = 0; i < presets->count(); ++i)
-        paletteIds.insert(presets->itemData(i).toString());
-    EXPECT_TRUE(paletteIds.contains(amberId));
-    EXPECT_TRUE(paletteIds.contains(customPaletteId));
-    EXPECT_TRUE(paletteIds.contains(defaultPaletteId(builtinId)));
-    ASSERT_TRUE(selectTheme(*themes, firstId));
-    ASSERT_EQ(theme_->currentThemeId(), firstId);
-    EXPECT_EQ(theme_->currentPaletteId(), customPaletteId);
+    EXPECT_GE(presets->findData(darkId), 0);
+    EXPECT_GE(presets->findData(lightId), 0);
+    EXPECT_LT(presets->findData(paperId), 0);
+    ASSERT_TRUE(selectTheme(*themes, customId));
+    ASSERT_EQ(theme_->currentThemeId(), customId);
+    EXPECT_EQ(theme_->currentPaletteId(), darkId);
+    EXPECT_LT(presets->findData(lightId), 0);
+    EXPECT_GE(presets->findData(paperId), 0);
+    EXPECT_FALSE(selectColor(*colors, QStringLiteral("text.primary")));
     const auto defaults = theme_->snapshot();
-    EXPECT_FLOAT_EQ(defaults->domains.waveform.colorMapMode.offset[0], 0.22f);
-    EXPECT_FLOAT_EQ(defaults->domains.waveform.multiBandMode.alpha, 0.35f);
-    const auto before = storedValues(*themeStorage_);
-    const auto palette = theme_->loadPalette(amberId);
-    ASSERT_TRUE(palette.ok());
-    ASSERT_NE(defaults->domains.waveform.selectionHighlight,
-              palette.palette->snapshot->domains.waveform.selectionHighlight);
-    ASSERT_TRUE(applyColorPreset(*presets, amberId));
-    EXPECT_EQ(theme_->currentThemeId(), firstId);
-    EXPECT_EQ(themes->currentData().toString(), firstId);
-    EXPECT_EQ(theme_->currentPaletteId(), amberId);
-    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, palette.palette->colors.value(primary));
-    EXPECT_EQ(theme_->snapshot()->domains.waveform.selectionHighlight,
-              palette.palette->snapshot->domains.waveform.selectionHighlight);
-    EXPECT_EQ(theme_->snapshot()->domains.waveform.colorMapMode.offset,
-              palette.palette->snapshot->domains.waveform.colorMapMode.offset);
-    EXPECT_FLOAT_EQ(theme_->snapshot()->domains.waveform.multiBandMode.alpha,
-                    palette.palette->snapshot->domains.waveform.multiBandMode.alpha);
+    ASSERT_TRUE(selectColor(*colors, ink));
+    ASSERT_TRUE(finishColorEdit(panel, *colors, editedInk));
+    ASSERT_TRUE(selectColor(*colors, grid));
+    ASSERT_TRUE(finishColorEdit(panel, *colors, editedGrid));
+    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, editedInk);
+    EXPECT_EQ(theme_->snapshot()->domains.curve.colors.grid, editedGrid);
     EXPECT_EQ(theme_->snapshot()->ui.metrics.table.rowHeight, 49);
     EXPECT_EQ(theme_->snapshot()->ui.typography.body.pointSize, 15);
 
-    ASSERT_TRUE(selectColor(*colors, primary));
-    ASSERT_TRUE(finishColorEdit(panel, *colors, firstColor));
-    ASSERT_TRUE(selectColor(*colors, secondary));
-    ASSERT_TRUE(finishColorEdit(panel, *colors, secondColor));
-    EXPECT_EQ(theme_->appearance().colors.value(amberId).value(primary), firstColor);
-    EXPECT_EQ(theme_->appearance().colors.value(amberId).value(secondary), secondColor);
-    EXPECT_NE(storedValues(*themeStorage_), before);
+    ASSERT_TRUE(applyColorPreset(*presets, paperId));
+    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, QColor("#203040"));
+    EXPECT_EQ(theme_->snapshot()->colorScheme, ThemeColorScheme::Light);
+    ASSERT_TRUE(applyColorPreset(*presets, darkId));
+    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, editedInk);
+    EXPECT_EQ(theme_->snapshot()->domains.curve.colors.grid, editedGrid);
+
     ASSERT_TRUE(selectTheme(*themes, builtinId));
-    EXPECT_EQ(theme_->currentPaletteId(), defaultPaletteId(builtinId));
+    EXPECT_EQ(theme_->currentPaletteId(), darkId);
     EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, builtin->ui.colors.textPrimary);
-    QSet<QString> switchedPaletteIds;
-    for (int i = 0; i < presets->count(); ++i)
-        switchedPaletteIds.insert(presets->itemData(i).toString());
-    EXPECT_EQ(switchedPaletteIds, paletteIds);
-    ASSERT_TRUE(applyColorPreset(*presets, amberId));
-    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, firstColor);
-    EXPECT_EQ(theme_->snapshot()->ui.colors.textSecondary, secondColor);
-    EXPECT_EQ(theme_->snapshot()->ui.metrics.table.rowHeight, builtin->ui.metrics.table.rowHeight);
-    EXPECT_EQ(theme_->snapshot()->ui.typography.body.pointSize, builtin->ui.typography.body.pointSize);
-
-    ASSERT_TRUE(selectTheme(*themes, firstId));
-    EXPECT_EQ(theme_->currentPaletteId(), customPaletteId);
-    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, defaults->ui.colors.textPrimary);
-    EXPECT_EQ(theme_->snapshot()->domains.waveform.selectionHighlight,
-              defaults->domains.waveform.selectionHighlight);
-    EXPECT_EQ(theme_->snapshot()->domains.waveform.colorMapMode.offset,
-              defaults->domains.waveform.colorMapMode.offset);
-    EXPECT_FLOAT_EQ(theme_->snapshot()->domains.waveform.multiBandMode.alpha,
-                    defaults->domains.waveform.multiBandMode.alpha);
-    ASSERT_TRUE(applyColorPreset(*presets, amberId));
-    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, firstColor);
-    EXPECT_EQ(theme_->snapshot()->ui.colors.textSecondary, secondColor);
-    EXPECT_EQ(theme_->snapshot()->ui.metrics.table.rowHeight, 49);
-    EXPECT_EQ(theme_->snapshot()->ui.typography.body.pointSize, 15);
-    ASSERT_TRUE(selectColor(*colors, primary));
+    EXPECT_FALSE(selectColor(*colors, ink));
+    ASSERT_TRUE(selectColor(*colors, QStringLiteral("text.primary")));
+    const QColor builtinEdit(61, 83, 109);
+    ASSERT_TRUE(finishColorEdit(panel, *colors, builtinEdit));
+    ASSERT_TRUE(selectTheme(*themes, customId));
+    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, editedInk);
+    EXPECT_EQ(theme_->snapshot()->domains.curve.colors.grid, editedGrid);
+    ASSERT_TRUE(selectColor(*colors, ink));
     ASSERT_TRUE(reset->isEnabled());
     reset->click();
-    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, palette.palette->colors.value(primary));
-    EXPECT_FALSE(theme_->appearance().colors.value(amberId).contains(primary));
-    EXPECT_EQ(theme_->appearance().colors.value(amberId).value(secondary), secondColor);
+    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, defaults->ui.colors.textPrimary);
+    EXPECT_EQ(theme_->snapshot()->domains.curve.colors.grid, editedGrid);
     ASSERT_TRUE(resetAll->isEnabled());
     resetAll->click();
-    EXPECT_FALSE(theme_->appearance().colors.contains(amberId));
-    EXPECT_EQ(theme_->snapshot()->ui.colors.textSecondary, palette.palette->colors.value(secondary));
-    EXPECT_EQ(theme_->currentThemeId(), firstId);
-    EXPECT_EQ(theme_->currentPaletteId(), amberId);
-
-    ASSERT_TRUE(selectTheme(*themes, builtinId));
-    ASSERT_TRUE(applyColorPreset(*presets, customPaletteId));
-    EXPECT_EQ(theme_->currentThemeId(), builtinId);
-    EXPECT_EQ(theme_->snapshot()->domains.waveform.selectionHighlight,
-              defaults->domains.waveform.selectionHighlight);
-    EXPECT_EQ(theme_->snapshot()->domains.waveform.colorMapMode.offset,
-              defaults->domains.waveform.colorMapMode.offset);
-    EXPECT_FLOAT_EQ(theme_->snapshot()->domains.waveform.multiBandMode.alpha,
-                    defaults->domains.waveform.multiBandMode.alpha);
-    EXPECT_EQ(theme_->snapshot()->ui.metrics.table.rowHeight, builtin->ui.metrics.table.rowHeight);
+    EXPECT_EQ(theme_->snapshot()->domains.curve.colors.grid, defaults->domains.curve.colors.grid);
+    EXPECT_FALSE(theme_->appearance().colors.contains(customId));
+    EXPECT_EQ(theme_->appearance().colors.value(builtinId).value(darkId)
+                  .value(QStringLiteral("text.primary")), builtinEdit);
+    ASSERT_TRUE(applyColorPreset(*presets, paperId));
     ThemeManager restored(root_.path(), std::make_unique<MemorySettingsStorage>(*themeStorage_));
     EXPECT_EQ(restored.appearance(), theme_->appearance());
-    EXPECT_EQ(restored.currentThemeId(), builtinId);
-    EXPECT_EQ(restored.currentPaletteId(), customPaletteId);
-    EXPECT_EQ(restored.snapshot()->domains.waveform.selectionHighlight,
-              defaults->domains.waveform.selectionHighlight);
-    ASSERT_TRUE(restored.selectTheme(firstId).ok());
-    EXPECT_EQ(restored.currentPaletteId(), customPaletteId);
+    EXPECT_EQ(restored.currentThemeId(), customId);
+    EXPECT_EQ(restored.currentPaletteId(), paperId);
+    EXPECT_EQ(restored.snapshot()->ui.colors.textPrimary, QColor("#203040"));
     EXPECT_EQ(restored.snapshot()->ui.metrics.table.rowHeight, 49);
-    EXPECT_EQ(restored.snapshot()->ui.typography.body.pointSize, 15);
+    ASSERT_TRUE(restored.selectTheme(builtinId).ok());
+    EXPECT_EQ(restored.snapshot()->ui.colors.textPrimary, builtinEdit);
 }
 
 TEST_F(SettingsApplyContractTest, AppearanceFollowsExternalCommittedPaletteAndColors)
@@ -510,9 +475,9 @@ TEST_F(SettingsApplyContractTest, AppearanceFollowsExternalCommittedPaletteAndCo
     picker->setCurrentColor(QColor(11, 47, 101, 192));
 
     auto appearance = theme_->appearance();
-    appearance.paletteId = builtinAmberPaletteId();
+    appearance.paletteId = QStringLiteral("light");
     const QColor externalColor(63, 95, 127, 160);
-    appearance.colors[appearance.paletteId].insert(QStringLiteral("text.primary"), externalColor);
+    appearance.colors[appearance.themeId][appearance.paletteId].insert(QStringLiteral("text.primary"), externalColor);
     ASSERT_TRUE(theme_->applyAppearance(appearance).ok());
     settlePreviewEvents();
 
@@ -622,7 +587,7 @@ TEST_F(SettingsApplyContractTest, ColorPickerPreviewRequiresAcceptance)
         picker->accept();
         settlePreviewEvents();
         EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, previewColor);
-        EXPECT_EQ(theme_->appearance().colors.value(committed.paletteId)
+        EXPECT_EQ(theme_->appearance().colors.value(committed.themeId).value(committed.paletteId)
                       .value(QStringLiteral("text.primary")), previewColor);
         EXPECT_NE(storedValues(*themeStorage_), before);
     }

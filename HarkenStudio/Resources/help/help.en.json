@@ -215,15 +215,15 @@
     },
     "settings.appearance": {
       "title": "Appearance",
-      "body": "Choose a theme and a global color palette, edit palette colors, and set the Information language."
+      "body": "Choose a theme and one of its color palettes, customize that theme's colors, and set the Information language."
     },
     "settings.appearance.theme": {
       "title": "Theme",
-      "body": "Choose the complete theme, including its fonts, icons, and control sizes. Switching themes selects that theme's default color palette. You can then choose any global palette. Install additional themes in %1."
+      "body": "Choose the complete theme, including its fonts, icons, control sizes, and color roles. Switching themes selects that theme's default palette. Studio Default includes Dark and Light palettes. Install additional themes in %1."
     },
     "settings.appearance.colors": {
-      "title": "Global Colors",
-      "body": "All themes share the same global palettes. Choose a palette from the Color Presets dropdown without changing the current theme's fonts, icons, or sizes. Color edits are saved to that palette and are reused wherever it is selected. Palette Default shows its original colors; Reset restores those defaults. The color editor combines an SV area and hue strip with H/S/V and R/G/B fields and a shared A (alpha) control. Changes preview immediately; OK saves, while Cancel or Esc restores the saved colors. The eyedropper samples screen colors while preserving A; Esc cancels sampling and restores the color from before sampling."
+      "title": "Theme Colors",
+      "body": "Choose one of the current theme's palettes from Color Palette. Each theme defines its own editable colors. Color edits are saved only for the selected theme and palette. Palette Default shows its original colors; Reset restores those defaults. The color editor combines an SV area and hue strip with H/S/V and R/G/B fields and a shared A (alpha) control. Changes preview immediately; OK saves, while Cancel or Esc restores the saved colors. The eyedropper samples screen colors while preserving A; Esc cancels sampling and restores the color from before sampling."
     },
     "settings.appearance.language": {
       "title": "Information Language",

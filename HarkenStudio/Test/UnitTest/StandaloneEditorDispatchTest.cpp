@@ -201,8 +201,8 @@ TEST_F(EditorDockLayoutTest, ColorRefreshPreservesBlueprintEditorsAndStructureRe
         drainEvents();
     });
     auto draft = theme.appearance();
-    draft.colors[draft.paletteId].insert(QStringLiteral("background.primary"), QColor(QStringLiteral("#293746")));
-    draft.colors[draft.paletteId].insert(QStringLiteral("text.primary"), QColor(QStringLiteral("#ff3366")));
+    draft.colors[draft.themeId][draft.paletteId].insert(QStringLiteral("background.primary"), QColor(QStringLiteral("#293746")));
+    draft.colors[draft.themeId][draft.paletteId].insert(QStringLiteral("text.primary"), QColor(QStringLiteral("#ff3366")));
     ASSERT_TRUE(theme.previewAppearance(draft).ok());
     drainEvents();
     for (const auto& editor : editors) EXPECT_FALSE(editor.isNull());

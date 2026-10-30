@@ -73,6 +73,10 @@ ThemePackageParseResult<ThemeManifestDto> parseThemeManifest(
     const QByteArray& json,
     const QString& file = QStringLiteral("manifest.json"));
 
+ThemePackageParseResult<ThemeColorDefinitionDto> parseThemeColorDefinition(
+    const QByteArray& json,
+    const QString& file = QStringLiteral("colors.json"));
+
 ThemePackageParseResult<ThemeTokenDto> parseThemeTokens(
     const QByteArray& json,
     const QString& file = QStringLiteral("tokens.json"));

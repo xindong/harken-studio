@@ -67,8 +67,8 @@ TEST(ParameterControlHost, ColorPreviewPreservesActiveEditingAndComponentStructu
     ASSERT_TRUE(QDir().mkpath(package));
     const QList<QPair<QString, QByteArray>> files{
         {QStringLiteral("manifest.json"), R"json({
-            "schemaVersion": 6, "id": "theme.structural", "displayName": "Structural",
-            "version": "1.0.0", "baseThemeId": "harken.builtin.dark",
+            "schemaVersion": 7, "id": "theme.structural", "displayName": "Structural",
+            "version": "1.0.0", "baseThemeId": "harken.studio.default",
             "compatibility": {"harkenVersion": ">=0.1.0 <1.0.0",
                 "capabilities": ["curve-v1", "meter-v1", "waveform-v1"]},
             "entries": {"tokens": "tokens.json", "assetMap": "assets.json",
@@ -112,7 +112,7 @@ TEST(ParameterControlHost, ColorPreviewPreservesActiveEditingAndComponentStructu
 
     auto appearance = manager.appearance();
     const QColor accent(QStringLiteral("#e45a9d"));
-    appearance.colors[appearance.paletteId].insert(QStringLiteral("accent.primary"), accent);
+    appearance.colors[appearance.themeId][appearance.paletteId].insert(QStringLiteral("accent.primary"), accent);
     ASSERT_TRUE(manager.previewAppearance(appearance).ok());
     QApplication::processEvents();
     ASSERT_FALSE(presenter.isNull());

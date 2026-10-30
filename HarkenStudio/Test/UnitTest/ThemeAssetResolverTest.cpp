@@ -39,7 +39,7 @@ bool writePackage(const QString& themesRoot,
 {
     const QString packageRoot = QDir(themesRoot).filePath(directoryName);
     const QByteArray manifest = QByteArray("{")
-        + "\"schemaVersion\":6,\"id\":\"" + id.toUtf8()
+        + "\"schemaVersion\":7,\"id\":\"" + id.toUtf8()
         + "\",\"displayName\":\"Test " + id.toUtf8()
         + "\",\"version\":\"1.0.0\""
         + ",\"compatibility\":{\"harkenVersion\":\">=0.1.0 <1.0.0\","
@@ -92,7 +92,7 @@ TEST(ThemeAssetResolver, ReloadSeparatesCacheAndKeepsOldHandleAlive)
     ASSERT_TRUE(writeImage(imagePath, Qt::blue));
 
     auto preview = manager.appearance();
-    preview.colors[preview.paletteId].insert(QStringLiteral("accent.primary"), Qt::green);
+    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("accent.primary"), Qt::green);
     ASSERT_TRUE(manager.previewAppearance(preview).ok());
     EXPECT_EQ(manager.assetResolver().resolveImage(
                   manager.snapshot(), QStringLiteral("meter.peak.cap")).resource,
@@ -114,6 +114,46 @@ TEST(ThemeAssetResolver, ReloadSeparatesCacheAndKeepsOldHandleAlive)
     EXPECT_NE(currentResource, oldResource);
     EXPECT_EQ(oldResource->image.pixelColor(0, 0), QColor(Qt::red));
     EXPECT_EQ(currentResource->image.pixelColor(0, 0), QColor(Qt::blue));
+}
+
+TEST(ThemeAssetResolver, RasterTintPreservesPixelCoverageAndDevicePixelRatio)
+{
+    QTemporaryDir root;
+    ASSERT_TRUE(root.isValid());
+    const QByteArray assets = R"json({"assets":{"meter.peak.cap":{"type":"image","sources":[{"path":"mask.png","scale":2}]}}})json";
+    ASSERT_TRUE(writePackage(root.path(), QStringLiteral("raster"),
+                             QStringLiteral("theme.raster"), assets));
+    QImage source(QSize(20, 20), QImage::Format_ARGB32_Premultiplied);
+    source.fill(Qt::transparent);
+    for (int y = 5; y < 15; ++y)
+        for (int x = 3; x < 18; ++x)
+            source.setPixelColor(x, y, QColor(255, 255, 255, (x + y) % 2 ? 96 : 255));
+    ASSERT_TRUE(source.save(root.filePath(QStringLiteral("raster/mask.png"))));
+    VNX::ThemeManager manager(root.path(), memoryStorage());
+    ASSERT_TRUE(manager.selectTheme(QStringLiteral("theme.raster")).ok());
+    const QColor tint(QStringLiteral("#307090"));
+    for (const qreal ratio : {1.0, 2.0})
+    {
+        SCOPED_TRACE(ratio);
+        const int extent = qRound(source.width() / ratio);
+        const auto plain = manager.assetResolver().resolveImage(
+            manager.snapshot(), QStringLiteral("meter.peak.cap"),
+            VNX::ThemeAssetVariant{QSize(extent, extent), ratio});
+        const auto colored = manager.assetResolver().resolveImage(
+            manager.snapshot(), QStringLiteral("meter.peak.cap"),
+            VNX::ThemeAssetVariant{QSize(extent, extent), ratio, 0, tint});
+        ASSERT_TRUE(plain.ok());
+        ASSERT_TRUE(colored.ok());
+        const auto& before = plain.resource->image;
+        const auto& after = colored.resource->image;
+        ASSERT_EQ(after.size(), before.size());
+        EXPECT_EQ(after.devicePixelRatio(), ratio);
+        EXPECT_EQ(after.deviceIndependentSize(), before.deviceIndependentSize());
+        EXPECT_EQ(after.pixelColor(3, 5), tint);
+        for (int y = 0; y < before.height(); ++y)
+            for (int x = 0; x < before.width(); ++x)
+                EXPECT_EQ(after.pixelColor(x, y).alpha(), before.pixelColor(x, y).alpha());
+    }
 }
 
 TEST(ThemeAssetResolver, RejectsRuntimePathEscape)

@@ -41,6 +41,7 @@ inline constexpr char BlueprintDisplayVisibility[] = "blueprint.displayVisibilit
 inline constexpr char BlueprintPropertiesFilter[] = "blueprint.propertiesFilter";
 inline constexpr char NavigationChevronDown[] = "navigation.chevron.down";
 inline constexpr char NavigationChevronRight[] = "navigation.chevron.right";
+inline constexpr char CheckboxChecked[] = "checkbox.checked";
 inline constexpr char CheckboxIndeterminate[] = "checkbox.indeterminate";
 inline constexpr char TreeFolderOpen[] = "tree.folder.open";
 inline constexpr char TreeFolderClosed[] = "tree.folder.closed";

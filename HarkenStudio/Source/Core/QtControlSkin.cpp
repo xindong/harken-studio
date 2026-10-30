@@ -459,6 +459,10 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@chevronDownDisabled@"),
             imagePath(ThemeAssetIds::NavigationChevronDown,
                       metrics().navigationChevronExtent, colors().textDisabled));
+    replace(QStringLiteral("@checkboxChecked@"),
+            imagePath(ThemeAssetIds::CheckboxChecked, 10, colors().textPrimary));
+    replace(QStringLiteral("@checkboxCheckedDisabled@"),
+            imagePath(ThemeAssetIds::CheckboxChecked, 10, colors().textDisabled));
     replace(QStringLiteral("@checkboxIndeterminate@"),
             imagePath(ThemeAssetIds::CheckboxIndeterminate, 14, colors().textPrimary));
     replace(QStringLiteral("@checkboxIndeterminateDisabled@"),
