@@ -417,19 +417,22 @@ TEST(CanonicalPackSetStorage, CommitHasNoAllocationsWithReplacementAndSharedFano
 }
 
 TEST(CanonicalPackSetStorage, LoopViewAndContentIdentityMatchDirectRegistration) {
-    for (const auto end : {0u, 6u}) {
+    for (const auto loop : {harken::PcmLoopRegion{0, 0},
+                            harken::PcmLoopRegion{2, 6},
+                            harken::PcmLoopRegion{2, 0}}) {
         harken::PCMRegistry registry, direct;
         harken::PackTable packs(2, 4);
         SetStorageMember a(21, harkentest::ObjectId(100), 0.25f), b(22, harkentest::ObjectId(100), 0.25f);
         a.media[0].flags = b.media[0].flags = harken::kPackFlagLoopable;
-        a.media[0].loopStartFrame = b.media[0].loopStartFrame = end == 0 ? 0 : 2;
-        a.media[0].loopEndFrame = b.media[0].loopEndFrame = end;
+        a.media[0].loopStartFrame = b.media[0].loopStartFrame = loop.startFrame;
+        a.media[0].loopEndFrame = b.media[0].loopEndFrame = loop.endFrame;
         harken::PackTable::PreparedSetMutation first;
         ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({a.Input(), b.Input()}, {}, registry, &first));
         packs.CommitPreparedSet(&first, registry);
         const auto view = registry.Lookup(harkentest::ObjectId(100));
         EXPECT_EQ(a.media[0].loopStartFrame, view.loop.startFrame);
-        EXPECT_EQ(end, view.loop.endFrame);
+        EXPECT_EQ(loop.startFrame != 0 && loop.endFrame == 0 ? 8u : loop.endFrame,
+                  view.loop.endFrame);
         EXPECT_EQ(packs.Entries(first.HandleAt(0))->front().registrationCookie,
                   packs.Entries(first.HandleAt(1))->front().registrationCookie);
         const float* plane = reinterpret_cast<const float*>(a.bytes.get());
@@ -445,6 +448,11 @@ TEST(CanonicalPackSetStorage, LoopViewAndContentIdentityMatchDirectRegistration)
         EXPECT_EQ(direct.Lookup(harkentest::ObjectId(100)).contentRevision, view.contentRevision);
         ASSERT_EQ(VN_OK, direct.RegisterPCM(harkentest::ObjectId(101), &desc, nullptr, harken::PcmLoopRegion{1, 7}));
         EXPECT_NE(direct.Lookup(harkentest::ObjectId(101)).contentRevision, view.contentRevision);
+        harken::PackTable::PreparedSetMutation same;
+        ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet(
+            {a.Input(first.HandleAt(0)), b.Input(first.HandleAt(1))}, {}, registry, &same));
+        packs.CommitPreparedSet(&same, registry);
+        EXPECT_EQ(view.useCount, registry.Lookup(harkentest::ObjectId(100)).useCount);
     }
 }
 
@@ -462,6 +470,61 @@ TEST(CanonicalPackSetStorage, DefaultAndNonLoopableInputsHaveEmptyLoop) {
     harken::PCMRegistry::PackReferenceRegistration defaulted{};
     EXPECT_EQ(0u, defaulted.loop.startFrame);
     EXPECT_EQ(0u, defaulted.loop.endFrame);
+}
+
+TEST(CanonicalPackSetStorage, SinglePackEofLoopLoadsSharesAndReplaces) {
+    harken::PCMRegistry registry;
+    harken::PackTable packs(2, 4, 4);
+    const auto sound = harkentest::ObjectId(100);
+    const auto entriesFor = [](const SetStorageMember& member) {
+        std::vector<harken::PackEntry> entries(1);
+        const auto& media = member.media[0];
+        entries[0].soundId = media.soundId;
+        entries[0].flags = media.flags;
+        entries[0].frameCount = media.frameCount;
+        entries[0].loopStartFrame = media.loopStartFrame;
+        entries[0].loopEndFrame = media.loopEndFrame;
+        return entries;
+    };
+    SetStorageMember a(21, sound, 0.25f), b(22, sound, 0.25f), next(21, sound, 0.5f);
+    for (auto* member : {&a, &b, &next}) {
+        member->media[0].flags = harken::kPackFlagLoopable;
+        member->media[0].loopStartFrame = 2;
+        member->media[0].loopEndFrame = 0;
+    }
+    VnPackHandle handles[2]{};
+    unsigned index = 0;
+    for (auto* member : {&a, &b}) {
+        harken::PackTable::PreparedLoadToken load;
+        ASSERT_EQ(VN_OK, packs.PrepareLoad(&load));
+        member->key.handle = load.Handle();
+        member->key.slotGeneration = static_cast<std::uint32_t>(load.Handle() >> 32);
+        ASSERT_EQ(VN_OK, packs.LoadPrepared(&load, member->bytes, entriesFor(*member),
+            member->media, registry, &handles[index++], &member->key));
+    }
+    EXPECT_EQ(packs.Entries(handles[0])->front().registrationCookie,
+              packs.Entries(handles[1])->front().registrationCookie);
+    ASSERT_EQ(VN_OK, packs.Unload(handles[1], registry));
+    const auto old = registry.Lookup(sound);
+    old.useCount->fetch_add(1, std::memory_order_acq_rel);
+    next.key.handle = handles[0];
+    next.key.slotGeneration = static_cast<std::uint32_t>(handles[0] >> 32);
+    next.key.contentRevision = 2;
+    auto entries = entriesFor(next);
+    harken::PackTable::PreparedMutation replacement;
+    ASSERT_EQ(VN_OK, packs.PrepareRevisionMutation(handles[0], next.bytes, entries,
+        next.media, registry, &replacement, &next.key));
+    packs.CommitPreparedMutation(&replacement, registry);
+    EXPECT_EQ(2u, registry.Lookup(sound).loop.startFrame);
+    EXPECT_EQ(8u, registry.Lookup(sound).LoopEndFrame());
+    EXPECT_FLOAT_EQ(0.5f, registry.Lookup(sound).channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, old.channels[0][0]);
+    old.useCount->fetch_sub(1, std::memory_order_acq_rel);
+    packs.SweepRetiring(+[](void*, harken::PackResourceRevisionToken) { return false; });
+    ASSERT_EQ(VN_OK, packs.Unload(handles[0], registry));
+    EXPECT_EQ(0u, packs.LoadedCount());
+    EXPECT_EQ(0u, packs.RetiringCount());
+    EXPECT_EQ(0u, registry.Count());
 }
 
 TEST(CanonicalPackSetStorage, MetadataMismatchPublishesNothing) {
@@ -500,11 +563,13 @@ TEST(CanonicalPackSetStorage, LoopOnlyReplacementChangesIdentityAndKeepsOldClosu
     const auto token = first.ResourceTokenAt(0);
     harken::PackResourceClosureToken closure = 0;
     ASSERT_EQ(VN_OK, packs.AcquireResourceClosure(&token, 1, &closure));
-    a.media[0].loopEndFrame = 7;
+    a.media[0].loopStartFrame = 2;
+    a.media[0].loopEndFrame = 0;
     harken::PackTable::PreparedSetMutation next;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({a.Input(first.HandleAt(0))}, {}, registry, &next));
     packs.CommitPreparedSet(&next, registry);
-    EXPECT_EQ(7u, registry.Lookup(harkentest::ObjectId(100)).loop.endFrame);
+    EXPECT_EQ(2u, registry.Lookup(harkentest::ObjectId(100)).loop.startFrame);
+    EXPECT_EQ(8u, registry.Lookup(harkentest::ObjectId(100)).loop.endFrame);
     EXPECT_NE(old.contentRevision, registry.Lookup(harkentest::ObjectId(100)).contentRevision);
     harken::PCMView pinned{};
     ASSERT_EQ(VN_OK, packs.LookupExactClosure(closure, harkentest::ObjectId(100), registry, &pinned));
