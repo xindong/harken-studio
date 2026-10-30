@@ -70,7 +70,7 @@ void expandWriteSetPlaceholders(QStringList* writeSet,
 
 MigrationManager::MigrationManager()
 {
-    for (const int sourceSchema : {7, 8}) {
+    for (const int sourceSchema : {7, 8, 9}) {
         const int targetSchema = sourceSchema + 1;
         ProjectMigrationStep step;
         step.id = QStringLiteral("project-schema-%1-to-%2")
