@@ -78003,9 +78003,7 @@ VnResult ResolveStopLeafSilence(
         }
         if (!cursor.exactTimingValid) return VN_CAPABILITY_UNAVAILABLE;
         harken::EngineTimelineVoiceInstallIdentity installation{};
-        if (!engine.CaptureTimelineVoiceInstallIdentity(row.renderHandle, &installation) ||
-            !harken::Engine::SameOriginalSingleArm(installation.startArm, row.arm) ||
-            installation.rootInstance != row.rootInstance)
+        if (!engine.CaptureTimelineVoiceInstallIdentity(row.renderHandle, &installation))
             return VN_BACKPRESSURE;
         const auto& progress = cursor.progress;
         advance.pcmFrameCount = installation.sourceFrameCount;
@@ -78026,6 +78024,8 @@ VnResult ResolveStopLeafSilence(
         advance.exitMarkerSourceFrame = installation.exitMarkerSourceFrame;
         advance.absoluteStartFrame = publication.outputFrame;
         if (cursor.awaitingStart) {
+            if (!harken::Engine::SameOriginalSingleArm(installation.startArm, row.arm) ||
+                installation.rootInstance != row.rootInstance) return VN_BACKPRESSURE;
             harken::TimelineArmObservation observation{};
             if (!engine.timelineArms.Observe(row.arm, &observation) ||
                 observation.state != harken::ArmState::Published ||
