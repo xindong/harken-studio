@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ColorPalette.h"
 #include "ThemePackageDto.h"
 #include "ThemePackageParser.h"
 #include "ThemeSnapshot.h"
@@ -39,6 +40,9 @@ struct ThemePackageCandidate
     ThemeAssetMapDto assets;
     QMap<QString, QString> assetRoots;
     QStringList inheritanceOrder;
+    QVector<ThemeColorRole> colorRoles;
+    QList<ColorPalette> palettes;
+    QString defaultPaletteId;
 };
 
 struct ThemePackageLoadResult
@@ -69,6 +73,7 @@ struct ThemePackageDiscoveryResult
 QString builtinThemeId();
 
 bool applyThemeColor(ThemeSnapshot& theme, const QString& key, const QColor& color);
+QColor readThemeColor(const ThemeSnapshot& theme, const QString& key);
 
 ThemePackageDiscoveryResult discoverThemePackages(
     const QString& themesRoot,

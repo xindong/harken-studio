@@ -74,6 +74,8 @@ const QVector<ThemeAssetCatalogEntry>& themeAssetCatalog()
          ThemeBuiltinAssetFallback::File, QStringLiteral(":/icons/chevron-down.svg")},
         {QString::fromLatin1(NavigationChevronRight), ThemeAssetKind::Image,
          ThemeBuiltinAssetFallback::File, QStringLiteral(":/icons/chevron-right.svg")},
+        {QString::fromLatin1(CheckboxChecked), ThemeAssetKind::Image,
+         ThemeBuiltinAssetFallback::File, QStringLiteral(":/icons/check-white@2x.png")},
         {QString::fromLatin1(CheckboxIndeterminate), ThemeAssetKind::Image,
          ThemeBuiltinAssetFallback::File, QStringLiteral(":/icons/checkbox-indeterminate.svg")},
         {QString::fromLatin1(TreeFolderOpen), ThemeAssetKind::Image,

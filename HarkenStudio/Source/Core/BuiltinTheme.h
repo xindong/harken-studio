@@ -5,5 +5,6 @@
 namespace VNX {
 
 ThemeSnapshot createBuiltinDarkTheme();
+ThemeSnapshot createBuiltinLightTheme();
 
 }

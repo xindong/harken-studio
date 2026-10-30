@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ThemeColorCatalog.h"
+
 #include <QMap>
 #include <QSize>
 #include <QString>
@@ -27,8 +29,8 @@ enum class ThemeArrayInheritancePolicy
 
 struct ThemePackageContract
 {
-    static constexpr int minimumSchemaVersion = 6;
-    static constexpr int maximumSchemaVersion = 6;
+    static constexpr int minimumSchemaVersion = 7;
+    static constexpr int maximumSchemaVersion = 7;
     static constexpr ThemeUnknownFieldPolicy unknownFieldPolicy =
         ThemeUnknownFieldPolicy::Reject;
     static constexpr ThemeDeprecatedFieldPolicy deprecatedFieldPolicy =
@@ -67,6 +69,7 @@ struct ThemePackageEntriesDto
     QString assetMap;
     std::optional<QString> presenters;
     std::optional<QString> recipes;
+    std::optional<QString> colors;
 };
 
 struct ThemePresenterMapDto
@@ -105,11 +108,25 @@ struct ThemeManifestDto
     QString id;
     QString displayName;
     QString version;
-    std::optional<QString> colorScheme;
     std::optional<QString> baseThemeId;
     ThemeCompatibilityDto compatibility;
     ThemePackageEntriesDto entries;
     std::optional<QString> previewAssetId;
+};
+
+struct ThemePaletteDto
+{
+    QString id;
+    QString displayName;
+    ThemeColorScheme colorScheme = ThemeColorScheme::Dark;
+    ThemeColorOverrides colors;
+};
+
+struct ThemeColorDefinitionDto
+{
+    QVector<ThemeColorRole> roles;
+    QList<ThemePaletteDto> palettes;
+    QString defaultPalette;
 };
 
 struct ThemeTokenDto

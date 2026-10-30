@@ -7,22 +7,32 @@
 #include <QString>
 #include <QVector>
 
+#include <optional>
+
 namespace VNX {
 
 using ThemeColorOverrides = QMap<QString, QColor>;
 using ColorPaletteCustomizations = QMap<QString, ThemeColorOverrides>;
 
-struct ThemeColorRole
+struct ThemeColorBinding
 {
-    const char* key;
-    const char* group;
-    const char* label;
-    const char* description;
-    QColor (*read)(const ThemeSnapshot&);
-    void (*write)(ThemeSnapshot&, const QColor&);
+    QString target;
+    std::optional<int> alpha;
+    bool operator==(const ThemeColorBinding&) const = default;
 };
 
-const QVector<ThemeColorRole>& themeColorRoles();
-const ThemeColorRole* findThemeColorRole(const QString& key);
+struct ThemeColorRole
+{
+    QString key;
+    QString group;
+    QString label;
+    QString description;
+    QVector<ThemeColorBinding> bindings;
+    bool operator==(const ThemeColorRole&) const = default;
+};
+
+const QVector<ThemeColorRole>& studioDefaultColorRoles();
+const ThemeColorRole* findThemeColorRole(const QVector<ThemeColorRole>& roles,
+                                       const QString& key);
 
 }

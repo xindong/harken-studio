@@ -1,9 +1,10 @@
 #pragma once
 
+#include "ThemeColorCatalog.h"
+
 namespace VNX {
 
-struct ThemeSnapshot;
-
-void resolveThemeColors(ThemeSnapshot& theme);
+bool resolveThemeColors(ThemeSnapshot& theme, const QVector<ThemeColorRole>& roles,
+                        const ThemeColorOverrides& colors);
 
 }

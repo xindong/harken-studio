@@ -845,6 +845,7 @@ struct DomainColors
 
     struct Startup {
         std::array<QColor, 4> wavePalette;
+        std::array<QColor, 3> logoPalette;
         bool operator==(const Startup&) const = default;
     } startup;
 

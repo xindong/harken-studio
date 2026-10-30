@@ -1,6 +1,5 @@
 #include "ThemePackageLoader.h"
 
-#include "BuiltinTheme.h"
 #include "ThemeColorResolver.h"
 #include "ComponentRecipeRegistry.h"
 #include "ParameterPresenterRegistry.h"
@@ -8,6 +7,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QMap>
@@ -24,17 +24,16 @@ namespace VNX {
 
 namespace {
 
-constexpr auto kBuiltinThemeId = "harken.builtin.dark";
+constexpr auto kBuiltinThemeId = "harken.studio.default";
 
 struct BuiltinThemeDefinition
 {
     const char* id;
     const char* displayName;
-    ThemeSnapshot (*create)();
 };
 
 constexpr BuiltinThemeDefinition kBuiltinThemes[]{
-    {kBuiltinThemeId, "Harken Dark", createBuiltinDarkTheme},
+    {kBuiltinThemeId, "Studio Default"},
 };
 
 const BuiltinThemeDefinition* findBuiltinTheme(const QString& id)
@@ -356,6 +355,7 @@ std::optional<QByteArray> readJsonFile(
 struct SemanticDocuments
 {
     ThemeTokenDto tokens;
+    std::optional<ThemeColorDefinitionDto> colors;
     ThemeVisualDto curve;
     ThemeVisualDto meter;
     ThemeVisualDto waveform;
@@ -652,10 +652,14 @@ std::optional<SemanticDocuments> loadDocuments(
         recipes = load(*package.manifest.entries.recipes,
                        QStringLiteral("$.entries.recipes"));
     }
+    std::optional<QByteArray> colors;
+    if (package.manifest.entries.colors)
+        colors = load(*package.manifest.entries.colors, QStringLiteral("$.entries.colors"));
     if (!tokens || !curve || !meter || !waveform || !domainVisualsLoaded
         || !assets
         || (package.manifest.entries.presenters && !presenters)
-        || (package.manifest.entries.recipes && !recipes))
+        || (package.manifest.entries.recipes && !recipes)
+        || (package.manifest.entries.colors && !colors))
         return std::nullopt;
 
     const QString prefix = package.displayRoot + QLatin1Char('/');
@@ -731,6 +735,18 @@ std::optional<SemanticDocuments> loadDocuments(
                          documents.assets, diagnostics))
         return std::nullopt;
 
+    if (colors)
+    {
+        const auto parsed = parseThemeColorDefinition(
+            *colors, prefix + *package.manifest.entries.colors);
+        if (!parsed.ok())
+        {
+            diagnostics.append(parsed.diagnostics);
+            return std::nullopt;
+        }
+        documents.colors = *parsed.value;
+    }
+
     for (auto assetIt = documents.assets.assets.begin();
          assetIt != documents.assets.assets.end(); ++assetIt)
     {
@@ -774,89 +790,93 @@ bool assignNumber(T& destination, double value)
     return true;
 }
 
-bool applyTokenColor(const QString& key,
-                     const QColor& value,
-                     ThemeSnapshot& theme)
+template<typename Snapshot>
+auto tokenColorSlot(const QString& key, Snapshot& theme)
+    -> decltype(&theme.ui.colors.accent)
 {
-    auto& colors = theme.ui.colors;
-    if (key == QStringLiteral("background.primary"))
+#define COLOR_SLOT(name, field) \
+    if (key == QStringLiteral(name)) return &theme.field
+    COLOR_SLOT("background.primary", ui.colors.bgPrimary);
+    COLOR_SLOT("background.secondary", ui.colors.bgSecondary);
+    COLOR_SLOT("background.tertiary", ui.colors.bgTertiary);
+    COLOR_SLOT("text.secondary", ui.colors.textSecondary);
+    COLOR_SLOT("text.muted", ui.colors.textMuted);
+    COLOR_SLOT("drop.highlight", ui.colors.dropHighlight);
+    COLOR_SLOT("drop.accent", ui.colors.dropAccent);
+    COLOR_SLOT("qtPalette.window", qtPalette.window);
+    COLOR_SLOT("qtPalette.windowText", qtPalette.windowText);
+    COLOR_SLOT("qtPalette.base", qtPalette.base);
+    COLOR_SLOT("qtPalette.alternateBase", qtPalette.alternateBase);
+    COLOR_SLOT("qtPalette.toolTipBase", qtPalette.toolTipBase);
+    COLOR_SLOT("qtPalette.toolTipText", qtPalette.toolTipText);
+    COLOR_SLOT("qtPalette.text", qtPalette.text);
+    COLOR_SLOT("qtPalette.button", qtPalette.button);
+    COLOR_SLOT("qtPalette.buttonText", qtPalette.buttonText);
+    COLOR_SLOT("qtPalette.brightText", qtPalette.brightText);
+    COLOR_SLOT("qtPalette.link", qtPalette.link);
+    COLOR_SLOT("qtPalette.highlight", qtPalette.highlight);
+    COLOR_SLOT("qtPalette.highlightedText", qtPalette.highlightedText);
+    COLOR_SLOT("qtPalette.light", qtPalette.light);
+    COLOR_SLOT("qtPalette.dark", qtPalette.dark);
+    COLOR_SLOT("qtPalette.mid", qtPalette.mid);
+    COLOR_SLOT("qtPalette.disabledText", qtPalette.disabledText);
+    COLOR_SLOT("qtPalette.disabledButtonText", qtPalette.disabledButtonText);
+    COLOR_SLOT("qtPalette.disabledHighlight", qtPalette.disabledHighlight);
+    COLOR_SLOT("qtAds.chromeBackground", thirdParty.qtAds.chromeBackground);
+    COLOR_SLOT("qtAds.inactiveTabText", thirdParty.qtAds.inactiveTabText);
+    COLOR_SLOT("qtAds.closeButtonHover", thirdParty.qtAds.closeButtonHover);
+    COLOR_SLOT("qtAds.closeButtonPressed", thirdParty.qtAds.closeButtonPressed);
+    COLOR_SLOT("qtAds.lightHoverOverlay", thirdParty.qtAds.lightHoverOverlay);
+    COLOR_SLOT("accent.primary", ui.colors.accent);
+    COLOR_SLOT("accent.hover", ui.colors.accentHover);
+    COLOR_SLOT("accent.text", ui.colors.accentText);
+    COLOR_SLOT("text.primary", ui.colors.textPrimary);
+    COLOR_SLOT("text.disabled", ui.colors.textDisabled);
+    COLOR_SLOT("palette.categorical0", ui.colors.categoricalPalette[0]);
+    COLOR_SLOT("palette.categorical1", ui.colors.categoricalPalette[1]);
+    COLOR_SLOT("palette.categorical2", ui.colors.categoricalPalette[2]);
+    COLOR_SLOT("palette.categorical3", ui.colors.categoricalPalette[3]);
+    COLOR_SLOT("palette.categorical4", ui.colors.categoricalPalette[4]);
+    COLOR_SLOT("palette.categorical5", ui.colors.categoricalPalette[5]);
+    COLOR_SLOT("palette.categorical6", ui.colors.categoricalPalette[6]);
+    COLOR_SLOT("background.hover", ui.colors.bgHover);
+    COLOR_SLOT("background.selected", ui.colors.bgSelected);
+    COLOR_SLOT("border.primary", ui.colors.borderPrimary);
+    COLOR_SLOT("border.secondary", ui.colors.borderSecondary);
+    COLOR_SLOT("border.view", ui.colors.viewBorder);
+    COLOR_SLOT("status.success", ui.colors.success);
+    COLOR_SLOT("status.warning", ui.colors.warning);
+    COLOR_SLOT("status.error", ui.colors.error);
+    COLOR_SLOT("status.info", ui.colors.info);
+    COLOR_SLOT("track.background", ui.colors.trackBackground);
+    COLOR_SLOT("track.backgroundAlternate", ui.colors.trackBackgroundAlt);
+    COLOR_SLOT("bus.background", ui.colors.busBackground);
+    COLOR_SLOT("bus.backgroundActive", ui.colors.busBackgroundActive);
+    COLOR_SLOT("slider.track", ui.colors.sliderTrack);
+    COLOR_SLOT("knob.indicator", ui.colors.knobIndicator);
+    COLOR_SLOT("panel.background", ui.colors.panelBackground);
+    COLOR_SLOT("section.separator", ui.colors.sectionSeparator);
+    COLOR_SLOT("header.background", ui.colors.headerBackground);
+    COLOR_SLOT("audition.background", ui.colors.auditionBg);
+    COLOR_SLOT("audition.playActive", ui.colors.auditionPlayActive);
+    COLOR_SLOT("audition.stopActive", ui.colors.auditionStopActive);
+    COLOR_SLOT("shell.menuText", ui.colors.shellMenuText);
+    COLOR_SLOT("shell.menuHoverText", ui.colors.shellMenuHoverText);
+    COLOR_SLOT("shell.buttonText", ui.colors.shellButtonText);
+    COLOR_SLOT("shell.buttonHoverText", ui.colors.shellButtonHoverText);
+    COLOR_SLOT("shell.closeHover", ui.colors.shellCloseHover);
+    COLOR_SLOT("shell.closePressed", ui.colors.shellClosePressed);
+#undef COLOR_SLOT
+    return nullptr;
+}
+
+bool applyTokenColor(const QString& key, const QColor& value, ThemeSnapshot& theme)
+{
+    if (auto* color = tokenColorSlot(key, theme))
     {
-        colors.bgPrimary = value;
-        theme.qtPalette.window = value;
+        *color = value;
         return true;
     }
-    if (key == QStringLiteral("background.secondary"))
-    {
-        colors.bgSecondary = value;
-        theme.qtPalette.base = value;
-        theme.qtPalette.toolTipBase = value;
-        return true;
-    }
-    if (key == QStringLiteral("background.tertiary"))
-    {
-        colors.bgTertiary = value;
-        theme.qtPalette.alternateBase = value;
-        theme.qtPalette.button = value;
-        return true;
-    }
-    if (key == QStringLiteral("text.secondary"))
-    {
-        colors.textSecondary = value;
-        theme.qtPalette.mid = value;
-        return true;
-    }
-    if (key == QStringLiteral("text.muted"))
-    {
-        colors.textMuted = value;
-        theme.qtPalette.dark = value;
-        return true;
-    }
-#define TOKEN_COLOR(name, field)                                                \
-    if (key == QStringLiteral(name))                                            \
-    {                                                                           \
-        colors.field = value;                                                   \
-        return true;                                                            \
-    }
-    TOKEN_COLOR("accent.primary", accent)
-    TOKEN_COLOR("accent.hover", accentHover)
-    TOKEN_COLOR("accent.text", accentText)
-    TOKEN_COLOR("text.primary", textPrimary)
-    TOKEN_COLOR("text.disabled", textDisabled)
-    TOKEN_COLOR("palette.categorical0", categoricalPalette[0])
-    TOKEN_COLOR("palette.categorical1", categoricalPalette[1])
-    TOKEN_COLOR("palette.categorical2", categoricalPalette[2])
-    TOKEN_COLOR("palette.categorical3", categoricalPalette[3])
-    TOKEN_COLOR("palette.categorical4", categoricalPalette[4])
-    TOKEN_COLOR("palette.categorical5", categoricalPalette[5])
-    TOKEN_COLOR("palette.categorical6", categoricalPalette[6])
-    TOKEN_COLOR("background.hover", bgHover)
-    TOKEN_COLOR("background.selected", bgSelected)
-    TOKEN_COLOR("border.primary", borderPrimary)
-    TOKEN_COLOR("border.secondary", borderSecondary)
-    TOKEN_COLOR("border.view", viewBorder)
-    TOKEN_COLOR("status.success", success)
-    TOKEN_COLOR("status.warning", warning)
-    TOKEN_COLOR("status.error", error)
-    TOKEN_COLOR("status.info", info)
-    TOKEN_COLOR("track.background", trackBackground)
-    TOKEN_COLOR("track.backgroundAlternate", trackBackgroundAlt)
-    TOKEN_COLOR("bus.background", busBackground)
-    TOKEN_COLOR("bus.backgroundActive", busBackgroundActive)
-    TOKEN_COLOR("slider.track", sliderTrack)
-    TOKEN_COLOR("knob.indicator", knobIndicator)
-    TOKEN_COLOR("panel.background", panelBackground)
-    TOKEN_COLOR("section.separator", sectionSeparator)
-    TOKEN_COLOR("header.background", headerBackground)
-    TOKEN_COLOR("audition.background", auditionBg)
-    TOKEN_COLOR("audition.playActive", auditionPlayActive)
-    TOKEN_COLOR("audition.stopActive", auditionStopActive)
-    TOKEN_COLOR("shell.menuText", shellMenuText)
-    TOKEN_COLOR("shell.menuHoverText", shellMenuHoverText)
-    TOKEN_COLOR("shell.buttonText", shellButtonText)
-    TOKEN_COLOR("shell.buttonHoverText", shellButtonHoverText)
-    TOKEN_COLOR("shell.closeHover", shellCloseHover)
-    TOKEN_COLOR("shell.closePressed", shellClosePressed)
-#undef TOKEN_COLOR
     return false;
 }
 
@@ -962,28 +982,50 @@ ThemeFontStyle* fontRole(const QString& key, ThemeSnapshot& theme)
     return nullptr;
 }
 
-bool applyCurveColor(const QString& key,
-                     const QColor& value,
-                     ThemeSnapshot& theme)
+template<typename Snapshot>
+auto curveColorSlot(const QString& key, Snapshot& theme)
+    -> decltype(&theme.ui.colors.accent)
 {
-    auto& colors = theme.domains.curve.colors;
-#define CURVE_COLOR(name, field)                                                \
-    if (key == QStringLiteral("curve." name))                                  \
-    {                                                                           \
-        colors.field = value;                                                   \
-        return true;                                                            \
+#define COLOR_SLOT(name, field) \
+    if (key == QStringLiteral(name)) return &theme.field
+    COLOR_SLOT("curve.canvasBackground", domains.curve.colors.canvasBackground);
+    COLOR_SLOT("curve.canvasBorder", domains.curve.colors.canvasBorder);
+    COLOR_SLOT("curve.plotBackground", domains.curve.colors.plotBackground);
+    COLOR_SLOT("curve.grid", domains.curve.colors.grid);
+    COLOR_SLOT("curve.plotBorder", domains.curve.colors.plotBorder);
+    COLOR_SLOT("curve.axisText", domains.curve.colors.axisText);
+    COLOR_SLOT("curve.handleLine", domains.curve.colors.handleLine);
+    COLOR_SLOT("curve.handleBorder", domains.curve.colors.handleBorder);
+    COLOR_SLOT("curve.handleActiveBorder", domains.curve.colors.handleActiveBorder);
+    COLOR_SLOT("curve.handleFill", domains.curve.colors.handleFill);
+    COLOR_SLOT("curve.handleActiveFill", domains.curve.colors.handleActiveFill);
+    COLOR_SLOT("curve.pointBorder", domains.curve.colors.pointBorder);
+    COLOR_SLOT("curve.pointSelectedBorder", domains.curve.colors.pointSelectedBorder);
+    COLOR_SLOT("curve.pointSelectedFill", domains.curve.colors.pointSelectedFill);
+    COLOR_SLOT("curve.crosshairContrast", domains.curve.colors.crosshairContrast);
+    COLOR_SLOT("curve.readoutBackground", domains.curve.colors.readoutBackground);
+    COLOR_SLOT("curve.readoutText", domains.curve.colors.readoutText);
+    COLOR_SLOT("curve.line", domains.curve.colors.attenuationVolume);
+    COLOR_SLOT("curve.attenuationVolume", domains.curve.colors.attenuationVolume);
+    COLOR_SLOT("curve.attenuationPitch", domains.curve.colors.attenuationPitch);
+    COLOR_SLOT("curve.parameterBinding", domains.curve.colors.parameterBinding);
+    COLOR_SLOT("curve.gridFade", domains.curve.colors.gridFade);
+    COLOR_SLOT("curve.ghost", domains.curve.colors.ghost);
+    COLOR_SLOT("curve.lassoBorder", domains.curve.colors.lassoBorder);
+    COLOR_SLOT("curve.lassoFill", domains.curve.colors.lassoFill);
+    COLOR_SLOT("curve.crosshair", domains.curve.colors.crosshair);
+    COLOR_SLOT("curve.playhead", domains.curve.colors.playhead);
+#undef COLOR_SLOT
+    return nullptr;
+}
+
+bool applyCurveColor(const QString& key, const QColor& value, ThemeSnapshot& theme)
+{
+    if (auto* color = curveColorSlot(key, theme))
+    {
+        *color = value;
+        return true;
     }
-    CURVE_COLOR("line", attenuationVolume)
-    CURVE_COLOR("attenuationVolume", attenuationVolume)
-    CURVE_COLOR("attenuationPitch", attenuationPitch)
-    CURVE_COLOR("parameterBinding", parameterBinding)
-    CURVE_COLOR("gridFade", gridFade)
-    CURVE_COLOR("ghost", ghost)
-    CURVE_COLOR("lassoBorder", lassoBorder)
-    CURVE_COLOR("lassoFill", lassoFill)
-    CURVE_COLOR("crosshair", crosshair)
-    CURVE_COLOR("playhead", playhead)
-#undef CURVE_COLOR
     return false;
 }
 
@@ -1049,41 +1091,41 @@ bool applyCurveMetric(const QString& key, double value, ThemeSnapshot& theme)
     return false;
 }
 
-bool applyWaveformColor(const QString& key,
-                        const QColor& value,
-                        ThemeSnapshot& theme)
+template<typename Snapshot>
+auto waveformColorSlot(const QString& key, Snapshot& theme)
+    -> decltype(&theme.ui.colors.accent)
 {
-    auto& waveform = theme.domains.waveform;
-#define WAVEFORM_COLOR(name, field)                                             \
-    if (key == QStringLiteral("waveform." name))                               \
-    {                                                                           \
-        waveform.field = value;                                                 \
-        return true;                                                            \
-    }
-    WAVEFORM_COLOR("line", line)
-    WAVEFORM_COLOR("fill", fill)
-    WAVEFORM_COLOR("selectionHighlight", selectionHighlight)
-    WAVEFORM_COLOR("cursor", cursor)
-    WAVEFORM_COLOR("regionMarker", regionMarker)
-    WAVEFORM_COLOR("trimHandle", trimHandle)
-    WAVEFORM_COLOR("loopHandle", loopHandle)
-    WAVEFORM_COLOR("static.quiet", staticMode.quiet)
-    WAVEFORM_COLOR("static.peak", staticMode.peak)
-    WAVEFORM_COLOR("splitStereo.divider", splitStereo.divider)
-    WAVEFORM_COLOR("splitStereo.label", splitStereo.label)
-    WAVEFORM_COLOR("rawPeaks.background", rawPeaks.background)
-    WAVEFORM_COLOR("rawPeaks.centerLine", rawPeaks.centerLine)
-    if (key.startsWith(QStringLiteral("waveform.multiBand.color")))
+#define COLOR_SLOT(name, field) \
+    if (key == QStringLiteral(name)) return &theme.field
+    COLOR_SLOT("waveform.dbScale.grid", domains.waveform.dbScale.grid);
+    COLOR_SLOT("waveform.dbScale.label", domains.waveform.dbScale.label);
+    COLOR_SLOT("waveform.line", domains.waveform.line);
+    COLOR_SLOT("waveform.fill", domains.waveform.fill);
+    COLOR_SLOT("waveform.selectionHighlight", domains.waveform.selectionHighlight);
+    COLOR_SLOT("waveform.cursor", domains.waveform.cursor);
+    COLOR_SLOT("waveform.regionMarker", domains.waveform.regionMarker);
+    COLOR_SLOT("waveform.trimHandle", domains.waveform.trimHandle);
+    COLOR_SLOT("waveform.loopHandle", domains.waveform.loopHandle);
+    COLOR_SLOT("waveform.static.quiet", domains.waveform.staticMode.quiet);
+    COLOR_SLOT("waveform.static.peak", domains.waveform.staticMode.peak);
+    COLOR_SLOT("waveform.splitStereo.divider", domains.waveform.splitStereo.divider);
+    COLOR_SLOT("waveform.splitStereo.label", domains.waveform.splitStereo.label);
+    COLOR_SLOT("waveform.rawPeaks.background", domains.waveform.rawPeaks.background);
+    COLOR_SLOT("waveform.rawPeaks.centerLine", domains.waveform.rawPeaks.centerLine);
+    COLOR_SLOT("waveform.multiBand.color0", domains.waveform.multiBandMode.colors[0]);
+    COLOR_SLOT("waveform.multiBand.color1", domains.waveform.multiBandMode.colors[1]);
+    COLOR_SLOT("waveform.multiBand.color2", domains.waveform.multiBandMode.colors[2]);
+#undef COLOR_SLOT
+    return nullptr;
+}
+
+bool applyWaveformColor(const QString& key, const QColor& value, ThemeSnapshot& theme)
+{
+    if (auto* color = waveformColorSlot(key, theme))
     {
-        bool ok = false;
-        const int index = key.sliced(24).toInt(&ok);
-        if (ok && index >= 0 && index < 3)
-        {
-            waveform.multiBandMode.colors[static_cast<size_t>(index)] = value;
-            return true;
-        }
+        *color = value;
+        return true;
     }
-#undef WAVEFORM_COLOR
     return false;
 }
 
@@ -1135,57 +1177,112 @@ bool applyWaveformMetric(const QString& key,
     return false;
 }
 
-bool applyMeterColor(const QString& key,
-                     const QColor& value,
-                     ThemeSnapshot& theme)
+template<typename Snapshot>
+auto meterColorSlot(const QString& key, Snapshot& theme)
+    -> decltype(&theme.ui.colors.accent)
 {
-    auto& meter = theme.domains.meter;
-#define METER_COLOR(name, field)                                                \
-    if (key == QStringLiteral("meter." name))                                  \
-    {                                                                           \
-        meter.field = value;                                                    \
-        return true;                                                            \
+#define COLOR_SLOT(name, field) \
+    if (key == QStringLiteral(name)) return &theme.field
+    COLOR_SLOT("meter.oscilloscopeGrid", domains.meter.oscilloscopeGrid);
+    COLOR_SLOT("meter.oscilloscopeGlow", domains.meter.oscilloscopeGlow);
+    COLOR_SLOT("meter.waveformFill", domains.meter.waveformFill);
+    COLOR_SLOT("meter.waveformGrid", domains.meter.waveformGrid);
+    COLOR_SLOT("meter.stereo.trailOuter", domains.meter.stereo.trailOuter);
+    COLOR_SLOT("meter.stereo.trailMiddle", domains.meter.stereo.trailMiddle);
+    COLOR_SLOT("meter.stereo.trailCore", domains.meter.stereo.trailCore);
+    COLOR_SLOT("meter.stereo.gridPrimary", domains.meter.stereo.gridPrimary);
+    COLOR_SLOT("meter.stereo.gridSecondary", domains.meter.stereo.gridSecondary);
+    COLOR_SLOT("meter.stereo.liveGlowWide", domains.meter.stereo.liveGlowWide);
+    COLOR_SLOT("meter.stereo.liveGlowMedium", domains.meter.stereo.liveGlowMedium);
+    COLOR_SLOT("meter.stereo.liveHighlight", domains.meter.stereo.liveHighlight);
+    COLOR_SLOT("meter.stereo.correlationPositive", domains.meter.stereo.correlationPositive);
+    COLOR_SLOT("meter.stereo.correlationNegative", domains.meter.stereo.correlationNegative);
+    COLOR_SLOT("meter.layout.dividerHover", domains.meter.layout.dividerHover);
+    COLOR_SLOT("meter.layout.dividerDragging", domains.meter.layout.dividerDragging);
+    COLOR_SLOT("meter.layout.dividerSnapped", domains.meter.layout.dividerSnapped);
+    COLOR_SLOT("meter.layout.dropBorder", domains.meter.layout.dropBorder);
+    COLOR_SLOT("meter.layout.dropFill", domains.meter.layout.dropFill);
+    COLOR_SLOT("meter.interaction.crosshair", domains.meter.interaction.colors.crosshair);
+    COLOR_SLOT("meter.interaction.readoutBackground", domains.meter.interaction.colors.readoutBackground);
+    COLOR_SLOT("meter.interaction.readoutText", domains.meter.interaction.colors.readoutText);
+    COLOR_SLOT("meter.peakMeter.canvasBackground", domains.meter.peakMeter.colors.canvasBackground);
+    COLOR_SLOT("meter.peakMeter.trackBackground", domains.meter.peakMeter.colors.trackBackground);
+    COLOR_SLOT("meter.peakMeter.grid", domains.meter.peakMeter.colors.grid);
+    COLOR_SLOT("meter.peakMeter.tickText", domains.meter.peakMeter.colors.tickText);
+    COLOR_SLOT("meter.peakMeter.label", domains.meter.peakMeter.colors.label);
+    COLOR_SLOT("meter.loudness.canvasBackground", domains.meter.loudnessMeter.colors.canvasBackground);
+    COLOR_SLOT("meter.loudness.trackBackground", domains.meter.loudnessMeter.colors.trackBackground);
+    COLOR_SLOT("meter.loudness.targetText", domains.meter.loudnessMeter.colors.targetText);
+    COLOR_SLOT("meter.loudness.labelText", domains.meter.loudnessMeter.colors.labelText);
+    COLOR_SLOT("meter.loudness.valueText", domains.meter.loudnessMeter.colors.valueText);
+    COLOR_SLOT("meter.vu.canvasBackground", domains.meter.vuMeter.colors.canvasBackground);
+    COLOR_SLOT("meter.vu.titleText", domains.meter.vuMeter.colors.titleText);
+    COLOR_SLOT("meter.vu.trackBackground", domains.meter.vuMeter.colors.trackBackground);
+    COLOR_SLOT("meter.vu.analogArc", domains.meter.vuMeter.colors.analogArc);
+    COLOR_SLOT("meter.vu.analogNegativeTick", domains.meter.vuMeter.colors.analogNegativeTick);
+    COLOR_SLOT("meter.vu.analogValueText", domains.meter.vuMeter.colors.analogValueText);
+    COLOR_SLOT("meter.vu.analogLabelText", domains.meter.vuMeter.colors.analogLabelText);
+    COLOR_SLOT("meter.vu.barGrid", domains.meter.vuMeter.colors.barGrid);
+    COLOR_SLOT("meter.vu.barLabelText", domains.meter.vuMeter.colors.barLabelText);
+    COLOR_SLOT("meter.vu.barValueText", domains.meter.vuMeter.colors.barValueText);
+    COLOR_SLOT("meter.spectrum.canvasBackground", domains.meter.spectrumMeter.colors.canvasBackground);
+    COLOR_SLOT("meter.spectrum.horizontalGrid", domains.meter.spectrumMeter.colors.horizontalGrid);
+    COLOR_SLOT("meter.spectrum.verticalGrid", domains.meter.spectrumMeter.colors.verticalGrid);
+    COLOR_SLOT("meter.spectrum.axisText", domains.meter.spectrumMeter.colors.axisText);
+    COLOR_SLOT("meter.spectrogram.canvasBackground", domains.meter.spectrogramMeter.colors.canvasBackground);
+    COLOR_SLOT("meter.spectrogram.grid", domains.meter.spectrogramMeter.colors.grid);
+    COLOR_SLOT("meter.spectrogram.axisText", domains.meter.spectrogramMeter.colors.axisText);
+    COLOR_SLOT("meter.spectrogram.timeText", domains.meter.spectrogramMeter.colors.timeText);
+    COLOR_SLOT("meter.green", domains.meter.green);
+    COLOR_SLOT("meter.yellow", domains.meter.yellow);
+    COLOR_SLOT("meter.red", domains.meter.red);
+    COLOR_SLOT("meter.peak", domains.meter.peak);
+    COLOR_SLOT("meter.rms", domains.meter.rms);
+    COLOR_SLOT("meter.clipOn", domains.meter.clipOn);
+    COLOR_SLOT("meter.clipOff", domains.meter.clipOff);
+    COLOR_SLOT("meter.background", domains.meter.background);
+    COLOR_SLOT("meter.lufsMomentary", domains.meter.lufsMomentary);
+    COLOR_SLOT("meter.lufsShortTerm", domains.meter.lufsShortTerm);
+    COLOR_SLOT("meter.lufsIntegrated", domains.meter.lufsIntegrated);
+    COLOR_SLOT("meter.interaction.accentGuide", domains.meter.interaction.colors.accentGuide);
+    COLOR_SLOT("meter.peakMeter.gradientError", domains.meter.peakMeter.colors.gradientError);
+    COLOR_SLOT("meter.peakMeter.gradientWarning", domains.meter.peakMeter.colors.gradientWarning);
+    COLOR_SLOT("meter.peakMeter.gradientYellow", domains.meter.peakMeter.colors.gradientYellow);
+    COLOR_SLOT("meter.peakMeter.gradientAccent", domains.meter.peakMeter.colors.gradientAccent);
+    COLOR_SLOT("meter.peakMeter.gradientGreen", domains.meter.peakMeter.colors.gradientAccent);
+    COLOR_SLOT("meter.peakMeter.rmsOverlay", domains.meter.peakMeter.colors.rmsOverlay);
+    COLOR_SLOT("meter.peakMeter.holdHalo", domains.meter.peakMeter.colors.holdHalo);
+    COLOR_SLOT("meter.peakMeter.holdLine", domains.meter.peakMeter.colors.holdLine);
+    COLOR_SLOT("meter.peakMeter.clipBackground", domains.meter.peakMeter.colors.clipBackground);
+    COLOR_SLOT("meter.peakMeter.clipText", domains.meter.peakMeter.colors.clipText);
+    COLOR_SLOT("meter.loudness.targetLine", domains.meter.loudnessMeter.colors.targetLine);
+    COLOR_SLOT("meter.vu.analogPositiveTick", domains.meter.vuMeter.colors.analogPositiveTick);
+    COLOR_SLOT("meter.vu.analogOverloadArc", domains.meter.vuMeter.colors.analogOverloadArc);
+    COLOR_SLOT("meter.vu.analogNeedleGlow", domains.meter.vuMeter.colors.analogNeedleGlow);
+    COLOR_SLOT("meter.vu.analogNeedle", domains.meter.vuMeter.colors.analogNeedle);
+    COLOR_SLOT("meter.vu.analogPivot", domains.meter.vuMeter.colors.analogPivot);
+    COLOR_SLOT("meter.vu.barWarning", domains.meter.vuMeter.colors.barWarning);
+    COLOR_SLOT("meter.spectrum.fillTop", domains.meter.spectrumMeter.colors.fillTop);
+    COLOR_SLOT("meter.spectrum.fillUpperMiddle", domains.meter.spectrumMeter.colors.fillUpperMiddle);
+    COLOR_SLOT("meter.spectrum.fillLowerMiddle", domains.meter.spectrumMeter.colors.fillLowerMiddle);
+    COLOR_SLOT("meter.spectrum.fillBottom", domains.meter.spectrumMeter.colors.fillBottom);
+    COLOR_SLOT("meter.spectrum.lineGlowWide", domains.meter.spectrumMeter.colors.lineGlowWide);
+    COLOR_SLOT("meter.spectrum.lineGlowMedium", domains.meter.spectrumMeter.colors.lineGlowMedium);
+    COLOR_SLOT("meter.spectrum.lineGlowNarrow", domains.meter.spectrumMeter.colors.lineGlowNarrow);
+    COLOR_SLOT("meter.spectrum.lineHighlight", domains.meter.spectrumMeter.colors.lineHighlight);
+    COLOR_SLOT("meter.spectrum.peakLine", domains.meter.spectrumMeter.colors.peakLine);
+    COLOR_SLOT("meter.spectrogram.emptyHistory", domains.meter.spectrogramMeter.colors.emptyHistory);
+#undef COLOR_SLOT
+    return nullptr;
+}
+
+bool applyMeterColor(const QString& key, const QColor& value, ThemeSnapshot& theme)
+{
+    if (auto* color = meterColorSlot(key, theme))
+    {
+        *color = value;
+        return true;
     }
-    METER_COLOR("green", green)
-    METER_COLOR("yellow", yellow)
-    METER_COLOR("red", red)
-    METER_COLOR("peak", peak)
-    METER_COLOR("rms", rms)
-    METER_COLOR("clipOn", clipOn)
-    METER_COLOR("clipOff", clipOff)
-    METER_COLOR("background", background)
-    METER_COLOR("lufsMomentary", lufsMomentary)
-    METER_COLOR("lufsShortTerm", lufsShortTerm)
-    METER_COLOR("lufsIntegrated", lufsIntegrated)
-    METER_COLOR("interaction.accentGuide", interaction.colors.accentGuide)
-    METER_COLOR("peakMeter.gradientError", peakMeter.colors.gradientError)
-    METER_COLOR("peakMeter.gradientWarning", peakMeter.colors.gradientWarning)
-    METER_COLOR("peakMeter.gradientYellow", peakMeter.colors.gradientYellow)
-    METER_COLOR("peakMeter.gradientAccent", peakMeter.colors.gradientAccent)
-    METER_COLOR("peakMeter.gradientGreen", peakMeter.colors.gradientAccent)
-    METER_COLOR("peakMeter.rmsOverlay", peakMeter.colors.rmsOverlay)
-    METER_COLOR("peakMeter.holdHalo", peakMeter.colors.holdHalo)
-    METER_COLOR("peakMeter.holdLine", peakMeter.colors.holdLine)
-    METER_COLOR("peakMeter.clipBackground", peakMeter.colors.clipBackground)
-    METER_COLOR("peakMeter.clipText", peakMeter.colors.clipText)
-    METER_COLOR("loudness.targetLine", loudnessMeter.colors.targetLine)
-    METER_COLOR("vu.analogPositiveTick", vuMeter.colors.analogPositiveTick)
-    METER_COLOR("vu.analogOverloadArc", vuMeter.colors.analogOverloadArc)
-    METER_COLOR("vu.analogNeedleGlow", vuMeter.colors.analogNeedleGlow)
-    METER_COLOR("vu.analogNeedle", vuMeter.colors.analogNeedle)
-    METER_COLOR("vu.analogPivot", vuMeter.colors.analogPivot)
-    METER_COLOR("vu.barWarning", vuMeter.colors.barWarning)
-    METER_COLOR("spectrum.fillTop", spectrumMeter.colors.fillTop)
-    METER_COLOR("spectrum.fillUpperMiddle", spectrumMeter.colors.fillUpperMiddle)
-    METER_COLOR("spectrum.fillLowerMiddle", spectrumMeter.colors.fillLowerMiddle)
-    METER_COLOR("spectrum.fillBottom", spectrumMeter.colors.fillBottom)
-    METER_COLOR("spectrum.lineGlowWide", spectrumMeter.colors.lineGlowWide)
-    METER_COLOR("spectrum.lineGlowMedium", spectrumMeter.colors.lineGlowMedium)
-    METER_COLOR("spectrum.lineGlowNarrow", spectrumMeter.colors.lineGlowNarrow)
-    METER_COLOR("spectrum.lineHighlight", spectrumMeter.colors.lineHighlight)
-    METER_COLOR("spectrum.peakLine", spectrumMeter.colors.peakLine)
-    METER_COLOR("spectrogram.emptyHistory", spectrogramMeter.colors.emptyHistory)
-#undef METER_COLOR
     return false;
 }
 
@@ -1344,157 +1441,172 @@ bool applyMeterMetric(const QString& key, double value, ThemeSnapshot& theme)
     return false;
 }
 
-bool applyDomainColor(const QString& key,
-                      const QColor& value,
-                      ThemeSnapshot& theme)
+template<typename Snapshot>
+auto domainColorSlot(const QString& key, Snapshot& theme)
+    -> decltype(&theme.ui.colors.accent)
 {
-#define DOMAIN_COLOR(name, field)                                                \
-    if (key == QStringLiteral(name))                                              \
-    {                                                                             \
-        theme.domains.field = value;                                              \
-        return true;                                                              \
-    }
-    DOMAIN_COLOR("startup.wave.shadow", startup.wavePalette[0])
-    DOMAIN_COLOR("startup.wave.low", startup.wavePalette[1])
-    DOMAIN_COLOR("startup.wave.high", startup.wavePalette[2])
-    DOMAIN_COLOR("startup.wave.highlight", startup.wavePalette[3])
+#define COLOR_SLOT(name, field) \
+    if (key == QStringLiteral(name)) return &theme.field
+    COLOR_SLOT("nodeGraph.node.bodyNormal", domains.nodeGraphNode.bodyNormal);
+    COLOR_SLOT("nodeGraph.node.bodySelected", domains.nodeGraphNode.bodySelected);
+    COLOR_SLOT("nodeGraph.node.titleText", domains.nodeGraphNode.titleText);
+    COLOR_SLOT("nodeGraph.node.contentLabel", domains.nodeGraphNode.contentLabel);
+    COLOR_SLOT("nodeGraph.node.contentValue", domains.nodeGraphNode.contentValue);
+    COLOR_SLOT("blueprint.edgeLabelText", domains.blueprint.edgeLabelText);
+    COLOR_SLOT("feedback.success", domains.feedback.success);
+    COLOR_SLOT("feedback.warning", domains.feedback.warning);
+    COLOR_SLOT("feedback.error", domains.feedback.error);
+    COLOR_SLOT("feedback.info", domains.feedback.info);
+    COLOR_SLOT("feedback.neutral", domains.feedback.neutral);
+    COLOR_SLOT("feedback.overlayHighlight", domains.feedback.overlayHighlight);
+    COLOR_SLOT("startup.logo.base", domains.startup.logoPalette[0]);
+    COLOR_SLOT("startup.logo.mid", domains.startup.logoPalette[1]);
+    COLOR_SLOT("startup.logo.highlight", domains.startup.logoPalette[2]);
+    COLOR_SLOT("startup.wave.shadow", domains.startup.wavePalette[0]);
+    COLOR_SLOT("startup.wave.low", domains.startup.wavePalette[1]);
+    COLOR_SLOT("startup.wave.high", domains.startup.wavePalette[2]);
+    COLOR_SLOT("startup.wave.highlight", domains.startup.wavePalette[3]);
+    COLOR_SLOT("feedback.overlayBackground", domains.feedback.overlayBackground);
+    COLOR_SLOT("feedback.overlayErrorBackground", domains.feedback.overlayErrorBackground);
+    COLOR_SLOT("nodeGraph.pin.audio", domains.pinDomain.audio);
+    COLOR_SLOT("nodeGraph.pin.control", domains.pinDomain.control);
+    COLOR_SLOT("nodeGraph.pin.value", domains.pinDomain.value);
+    COLOR_SLOT("nodeGraph.pin.ring", domains.pinDomain.ring);
+    COLOR_SLOT("nodeGraph.pin.targetOk", domains.pinDomain.targetOk);
+    COLOR_SLOT("nodeGraph.pin.targetBad", domains.pinDomain.targetBad);
+    COLOR_SLOT("nodeGraph.node.borderNormal", domains.nodeGraphNode.borderNormal);
+    COLOR_SLOT("nodeGraph.node.borderHoverMix", domains.nodeGraphNode.borderHoverMix);
+    COLOR_SLOT("nodeGraph.node.dropTarget", domains.nodeGraphNode.dropTarget);
+    COLOR_SLOT("nodeGraph.node.shadow", domains.nodeGraphNode.shadow);
+    COLOR_SLOT("nodeGraph.node.sandboxBadgeBg", domains.nodeGraphNode.sandboxBadgeBg);
+    COLOR_SLOT("nodeGraph.node.sandboxBadgeText", domains.nodeGraphNode.sandboxBadgeText);
+    COLOR_SLOT("nodeGraph.node.badgeOverride", domains.nodeGraphNode.badgeOverride);
+    COLOR_SLOT("nodeGraph.node.badgeChild", domains.nodeGraphNode.badgeChild);
+    COLOR_SLOT("nodeGraph.node.badgeReceive", domains.nodeGraphNode.badgeReceive);
+    COLOR_SLOT("nodeGraph.node.waveformBg", domains.nodeGraphNode.waveformBg);
+    COLOR_SLOT("nodeGraph.node.waveformCenter", domains.nodeGraphNode.waveformCenter);
+    COLOR_SLOT("nodeGraph.node.blueprintWaveform", domains.nodeGraphNode.blueprintWaveform);
+    COLOR_SLOT("blueprint.canvasBackground", domains.blueprint.canvasBackground);
+    COLOR_SLOT("blueprint.gridDot", domains.blueprint.gridDot);
+    COLOR_SLOT("blueprint.edgeLabelBg", domains.blueprint.edgeLabelBg);
+    COLOR_SLOT("blueprint.placementChain", domains.blueprint.placementChain);
+    COLOR_SLOT("blueprint.organizationChain", domains.blueprint.organizationChain);
+    COLOR_SLOT("blueprint.containment", domains.blueprint.containment);
+    COLOR_SLOT("blueprint.busRoute", domains.blueprint.busRoute);
+    COLOR_SLOT("blueprint.send", domains.blueprint.send);
+    COLOR_SLOT("blueprint.overrideRoute", domains.blueprint.overrideRoute);
+    COLOR_SLOT("timeline.entry", domains.timeline.entry);
+    COLOR_SLOT("timeline.exit", domains.timeline.exit);
+    COLOR_SLOT("timeline.transition", domains.timeline.transition);
+    COLOR_SLOT("timeline.clip", domains.timeline.clip);
+    COLOR_SLOT("timeline.clipSelected", domains.timeline.clipSelected);
+    COLOR_SLOT("timeline.clipBorder", domains.timeline.clipBorder);
+    COLOR_SLOT("timeline.clipSelectedBorder", domains.timeline.clipSelectedBorder);
+    COLOR_SLOT("timeline.clipText", domains.timeline.clipText);
+    COLOR_SLOT("timeline.badge", domains.timeline.badge);
+    COLOR_SLOT("timeline.emergenceMarker", domains.timeline.emergenceMarker);
+    COLOR_SLOT("timeline.unavailableOverlay", domains.timeline.unavailableOverlay);
+    COLOR_SLOT("timeline.unavailableText", domains.timeline.unavailableText);
+    COLOR_SLOT("timeline.outOfSpanVeil", domains.timeline.outOfSpanVeil);
+    COLOR_SLOT("music.beatGridMajor", domains.music.beatGridMajor);
+    COLOR_SLOT("music.beatGridMinor", domains.music.beatGridMinor);
+    COLOR_SLOT("music.cursor", domains.music.cursor);
+    COLOR_SLOT("music.loopRegion", domains.music.loopRegion);
+    COLOR_SLOT("log.debug", domains.log.debug);
+    COLOR_SLOT("log.info", domains.log.info);
+    COLOR_SLOT("log.warning", domains.log.warning);
+    COLOR_SLOT("log.error", domains.log.error);
+    COLOR_SLOT("log.critical", domains.log.critical);
+    COLOR_SLOT("monitor.stateStolen", domains.monitor.stateStolen);
+    COLOR_SLOT("monitor.statePlaying", domains.monitor.statePlaying);
+    COLOR_SLOT("monitor.stateStarting", domains.monitor.stateStarting);
+    COLOR_SLOT("monitor.stateVirtual", domains.monitor.stateVirtual);
+    COLOR_SLOT("monitor.stateReleasing", domains.monitor.stateReleasing);
+    COLOR_SLOT("monitor.stateStopping", domains.monitor.stateStopping);
+    COLOR_SLOT("monitor.statePaused", domains.monitor.statePaused);
+    COLOR_SLOT("monitor.stateDefault", domains.monitor.stateDefault);
+    COLOR_SLOT("monitor.virtualDim", domains.monitor.virtualDim);
+    COLOR_SLOT("monitor.mutedText", domains.monitor.mutedText);
+    COLOR_SLOT("monitor.lowVolume", domains.monitor.lowVolume);
+    COLOR_SLOT("monitor.busIdText", domains.monitor.busIdText);
+    COLOR_SLOT("monitor.peakClip", domains.monitor.peakClip);
+    COLOR_SLOT("monitor.peakCaution", domains.monitor.peakCaution);
+    COLOR_SLOT("monitor.peakSafe", domains.monitor.peakSafe);
+    COLOR_SLOT("monitor.pitchHigh", domains.monitor.pitchHigh);
+    COLOR_SLOT("monitor.pitchLow", domains.monitor.pitchLow);
+    COLOR_SLOT("monitor.cpuCritical", domains.monitor.cpuCritical);
+    COLOR_SLOT("monitor.cpuWarning", domains.monitor.cpuWarning);
+    COLOR_SLOT("monitor.cpuSafe", domains.monitor.cpuSafe);
+    COLOR_SLOT("monitor.bufferWarning", domains.monitor.bufferWarning);
+    COLOR_SLOT("monitor.bufferNormal", domains.monitor.bufferNormal);
+    COLOR_SLOT("monitor.underrunFlash", domains.monitor.underrunFlash);
+    COLOR_SLOT("monitor.underrunIdle", domains.monitor.underrunIdle);
+    COLOR_SLOT("monitor.underrunNone", domains.monitor.underrunNone);
+    COLOR_SLOT("monitor.spatialGainHigh", domains.monitor.spatialGainHigh);
+    COLOR_SLOT("monitor.spatialGainLow", domains.monitor.spatialGainLow);
+    COLOR_SLOT("monitor.spatialLpf", domains.monitor.spatialLpf);
+    COLOR_SLOT("monitor.spatialWidth", domains.monitor.spatialWidth);
+    COLOR_SLOT("monitor.spatialDistance", domains.monitor.spatialDistance);
+    COLOR_SLOT("monitor.spatialReverb", domains.monitor.spatialReverb);
+    COLOR_SLOT("monitor.spatialDopplerHi", domains.monitor.spatialDopplerHi);
+    COLOR_SLOT("monitor.spatialDopplerLo", domains.monitor.spatialDopplerLo);
+    COLOR_SLOT("monitor.spatialDot", domains.monitor.spatialDot);
+    COLOR_SLOT("ai.brandAccent", domains.ai.brandAccent);
+    COLOR_SLOT("ai.userAccent", domains.ai.userAccent);
+    COLOR_SLOT("scene3d.listener", domains.scene3d.listener);
+    COLOR_SLOT("scene3d.listenerCone", domains.scene3d.listenerCone);
+    COLOR_SLOT("scene3d.room", domains.scene3d.room);
+    COLOR_SLOT("scene3d.emitterMin", domains.scene3d.emitterMin);
+    COLOR_SLOT("scene3d.emitterMax", domains.scene3d.emitterMax);
+    COLOR_SLOT("scene3d.hudBackground", domains.scene3d.hudBackground);
+    COLOR_SLOT("scene3d.hudTitle", domains.scene3d.hudTitle);
+    COLOR_SLOT("scene3d.hudLabel", domains.scene3d.hudLabel);
+    COLOR_SLOT("scene3d.hudGain", domains.scene3d.hudGain);
+    COLOR_SLOT("scene3d.hudGainLow", domains.scene3d.hudGainLow);
+    COLOR_SLOT("scene3d.hudLpf", domains.scene3d.hudLpf);
+    COLOR_SLOT("scene3d.hudWidth", domains.scene3d.hudWidth);
+    COLOR_SLOT("scene3d.dopplerIdle", domains.scene3d.dopplerIdle);
+    COLOR_SLOT("spatial.background", domains.spatial.background);
+    COLOR_SLOT("spatial.grid", domains.spatial.grid);
+    COLOR_SLOT("spatial.axis", domains.spatial.axis);
+    COLOR_SLOT("spatial.axisLabel", domains.spatial.axisLabel);
+    COLOR_SLOT("spatial.tangentLine", domains.spatial.tangentLine);
+    COLOR_SLOT("spatial.tangentHover", domains.spatial.tangentHover);
+    COLOR_SLOT("spatial.tangentActive", domains.spatial.tangentActive);
+    COLOR_SLOT("spatial.pointSelected", domains.spatial.pointSelected);
+    COLOR_SLOT("spatial.previewMarker", domains.spatial.previewMarker);
+    COLOR_SLOT("spatial.infoText", domains.spatial.infoText);
+    COLOR_SLOT("spatial.legendBg", domains.spatial.legendBg);
+    COLOR_SLOT("spatial.layerVolume", domains.spatial.layerVolume);
+    COLOR_SLOT("spatial.layerLpf", domains.spatial.layerLpf);
+    COLOR_SLOT("spatial.layerWidth", domains.spatial.layerWidth);
+    COLOR_SLOT("spatial.layerReverb", domains.spatial.layerReverb);
+#undef COLOR_SLOT
+    for (int index = 0; index < DomainColors::Music::kTrackColorCount; ++index)
+        if (key == QStringLiteral("music.trackColor%1").arg(index))
+            return &theme.domains.music.trackColors[static_cast<size_t>(index)];
+    return nullptr;
+}
 
-    DOMAIN_COLOR("feedback.overlayBackground", feedback.overlayBackground)
-    DOMAIN_COLOR("feedback.overlayErrorBackground", feedback.overlayErrorBackground)
-
-    DOMAIN_COLOR("nodeGraph.pin.audio", pinDomain.audio)
-    DOMAIN_COLOR("nodeGraph.pin.control", pinDomain.control)
-    DOMAIN_COLOR("nodeGraph.pin.value", pinDomain.value)
-    DOMAIN_COLOR("nodeGraph.pin.ring", pinDomain.ring)
-    DOMAIN_COLOR("nodeGraph.pin.targetOk", pinDomain.targetOk)
-    DOMAIN_COLOR("nodeGraph.pin.targetBad", pinDomain.targetBad)
-    DOMAIN_COLOR("nodeGraph.node.borderNormal", nodeGraphNode.borderNormal)
-    DOMAIN_COLOR("nodeGraph.node.borderHoverMix", nodeGraphNode.borderHoverMix)
-    DOMAIN_COLOR("nodeGraph.node.dropTarget", nodeGraphNode.dropTarget)
-    DOMAIN_COLOR("nodeGraph.node.shadow", nodeGraphNode.shadow)
-    DOMAIN_COLOR("nodeGraph.node.sandboxBadgeBg", nodeGraphNode.sandboxBadgeBg)
-    DOMAIN_COLOR("nodeGraph.node.sandboxBadgeText", nodeGraphNode.sandboxBadgeText)
-    DOMAIN_COLOR("nodeGraph.node.badgeOverride", nodeGraphNode.badgeOverride)
-    DOMAIN_COLOR("nodeGraph.node.badgeChild", nodeGraphNode.badgeChild)
-    DOMAIN_COLOR("nodeGraph.node.badgeReceive", nodeGraphNode.badgeReceive)
-    DOMAIN_COLOR("nodeGraph.node.waveformBg", nodeGraphNode.waveformBg)
-    DOMAIN_COLOR("nodeGraph.node.waveformCenter", nodeGraphNode.waveformCenter)
-    DOMAIN_COLOR("nodeGraph.node.blueprintWaveform", nodeGraphNode.blueprintWaveform)
-
-    DOMAIN_COLOR("blueprint.canvasBackground", blueprint.canvasBackground)
-    DOMAIN_COLOR("blueprint.gridDot", blueprint.gridDot)
-    DOMAIN_COLOR("blueprint.edgeLabelBg", blueprint.edgeLabelBg)
-    DOMAIN_COLOR("blueprint.placementChain", blueprint.placementChain)
-    DOMAIN_COLOR("blueprint.organizationChain", blueprint.organizationChain)
-    DOMAIN_COLOR("blueprint.containment", blueprint.containment)
-    DOMAIN_COLOR("blueprint.busRoute", blueprint.busRoute)
-    DOMAIN_COLOR("blueprint.send", blueprint.send)
-    DOMAIN_COLOR("blueprint.overrideRoute", blueprint.overrideRoute)
-
-    DOMAIN_COLOR("timeline.entry", timeline.entry)
-    DOMAIN_COLOR("timeline.exit", timeline.exit)
-    DOMAIN_COLOR("timeline.transition", timeline.transition)
-    DOMAIN_COLOR("timeline.clip", timeline.clip)
-    DOMAIN_COLOR("timeline.clipSelected", timeline.clipSelected)
-    DOMAIN_COLOR("timeline.clipBorder", timeline.clipBorder)
-    DOMAIN_COLOR("timeline.clipSelectedBorder", timeline.clipSelectedBorder)
-    DOMAIN_COLOR("timeline.clipText", timeline.clipText)
-    DOMAIN_COLOR("timeline.badge", timeline.badge)
-    DOMAIN_COLOR("timeline.emergenceMarker", timeline.emergenceMarker)
-    DOMAIN_COLOR("timeline.unavailableOverlay", timeline.unavailableOverlay)
-    DOMAIN_COLOR("timeline.unavailableText", timeline.unavailableText)
-    DOMAIN_COLOR("timeline.outOfSpanVeil", timeline.outOfSpanVeil)
-
-    DOMAIN_COLOR("music.beatGridMajor", music.beatGridMajor)
-    DOMAIN_COLOR("music.beatGridMinor", music.beatGridMinor)
-    DOMAIN_COLOR("music.cursor", music.cursor)
-    DOMAIN_COLOR("music.loopRegion", music.loopRegion)
-    if (key.startsWith(QStringLiteral("music.trackColor")))
+bool applyDomainColor(const QString& key, const QColor& value, ThemeSnapshot& theme)
+{
+    if (auto* color = domainColorSlot(key, theme))
     {
-        bool ok = false;
-        const int index = key.sliced(16).toInt(&ok);
-        if (ok && index >= 0 && index < DomainColors::Music::kTrackColorCount)
-        {
-            theme.domains.music.trackColors[static_cast<size_t>(index)] = value;
-            return true;
-        }
+        *color = value;
+        return true;
     }
-
-    DOMAIN_COLOR("log.debug", log.debug)
-    DOMAIN_COLOR("log.info", log.info)
-    DOMAIN_COLOR("log.warning", log.warning)
-    DOMAIN_COLOR("log.error", log.error)
-    DOMAIN_COLOR("log.critical", log.critical)
-
-    DOMAIN_COLOR("monitor.stateStolen", monitor.stateStolen)
-    DOMAIN_COLOR("monitor.statePlaying", monitor.statePlaying)
-    DOMAIN_COLOR("monitor.stateStarting", monitor.stateStarting)
-    DOMAIN_COLOR("monitor.stateVirtual", monitor.stateVirtual)
-    DOMAIN_COLOR("monitor.stateReleasing", monitor.stateReleasing)
-    DOMAIN_COLOR("monitor.stateStopping", monitor.stateStopping)
-    DOMAIN_COLOR("monitor.statePaused", monitor.statePaused)
-    DOMAIN_COLOR("monitor.stateDefault", monitor.stateDefault)
-    DOMAIN_COLOR("monitor.virtualDim", monitor.virtualDim)
-    DOMAIN_COLOR("monitor.mutedText", monitor.mutedText)
-    DOMAIN_COLOR("monitor.lowVolume", monitor.lowVolume)
-    DOMAIN_COLOR("monitor.busIdText", monitor.busIdText)
-    DOMAIN_COLOR("monitor.peakClip", monitor.peakClip)
-    DOMAIN_COLOR("monitor.peakCaution", monitor.peakCaution)
-    DOMAIN_COLOR("monitor.peakSafe", monitor.peakSafe)
-    DOMAIN_COLOR("monitor.pitchHigh", monitor.pitchHigh)
-    DOMAIN_COLOR("monitor.pitchLow", monitor.pitchLow)
-    DOMAIN_COLOR("monitor.cpuCritical", monitor.cpuCritical)
-    DOMAIN_COLOR("monitor.cpuWarning", monitor.cpuWarning)
-    DOMAIN_COLOR("monitor.cpuSafe", monitor.cpuSafe)
-    DOMAIN_COLOR("monitor.bufferWarning", monitor.bufferWarning)
-    DOMAIN_COLOR("monitor.bufferNormal", monitor.bufferNormal)
-    DOMAIN_COLOR("monitor.underrunFlash", monitor.underrunFlash)
-    DOMAIN_COLOR("monitor.underrunIdle", monitor.underrunIdle)
-    DOMAIN_COLOR("monitor.underrunNone", monitor.underrunNone)
-    DOMAIN_COLOR("monitor.spatialGainHigh", monitor.spatialGainHigh)
-    DOMAIN_COLOR("monitor.spatialGainLow", monitor.spatialGainLow)
-    DOMAIN_COLOR("monitor.spatialLpf", monitor.spatialLpf)
-    DOMAIN_COLOR("monitor.spatialWidth", monitor.spatialWidth)
-    DOMAIN_COLOR("monitor.spatialDistance", monitor.spatialDistance)
-    DOMAIN_COLOR("monitor.spatialReverb", monitor.spatialReverb)
-    DOMAIN_COLOR("monitor.spatialDopplerHi", monitor.spatialDopplerHi)
-    DOMAIN_COLOR("monitor.spatialDopplerLo", monitor.spatialDopplerLo)
-    DOMAIN_COLOR("monitor.spatialDot", monitor.spatialDot)
-
-    DOMAIN_COLOR("ai.brandAccent", ai.brandAccent)
-    DOMAIN_COLOR("ai.userAccent", ai.userAccent)
-
-    DOMAIN_COLOR("scene3d.listener", scene3d.listener)
-    DOMAIN_COLOR("scene3d.listenerCone", scene3d.listenerCone)
-    DOMAIN_COLOR("scene3d.room", scene3d.room)
-    DOMAIN_COLOR("scene3d.emitterMin", scene3d.emitterMin)
-    DOMAIN_COLOR("scene3d.emitterMax", scene3d.emitterMax)
-    DOMAIN_COLOR("scene3d.hudBackground", scene3d.hudBackground)
-    DOMAIN_COLOR("scene3d.hudTitle", scene3d.hudTitle)
-    DOMAIN_COLOR("scene3d.hudLabel", scene3d.hudLabel)
-    DOMAIN_COLOR("scene3d.hudGain", scene3d.hudGain)
-    DOMAIN_COLOR("scene3d.hudGainLow", scene3d.hudGainLow)
-    DOMAIN_COLOR("scene3d.hudLpf", scene3d.hudLpf)
-    DOMAIN_COLOR("scene3d.hudWidth", scene3d.hudWidth)
-    DOMAIN_COLOR("scene3d.dopplerIdle", scene3d.dopplerIdle)
-
-    DOMAIN_COLOR("spatial.background", spatial.background)
-    DOMAIN_COLOR("spatial.grid", spatial.grid)
-    DOMAIN_COLOR("spatial.axis", spatial.axis)
-    DOMAIN_COLOR("spatial.axisLabel", spatial.axisLabel)
-    DOMAIN_COLOR("spatial.tangentLine", spatial.tangentLine)
-    DOMAIN_COLOR("spatial.tangentHover", spatial.tangentHover)
-    DOMAIN_COLOR("spatial.tangentActive", spatial.tangentActive)
-    DOMAIN_COLOR("spatial.pointSelected", spatial.pointSelected)
-    DOMAIN_COLOR("spatial.previewMarker", spatial.previewMarker)
-    DOMAIN_COLOR("spatial.infoText", spatial.infoText)
-    DOMAIN_COLOR("spatial.legendBg", spatial.legendBg)
-    DOMAIN_COLOR("spatial.layerVolume", spatial.layerVolume)
-    DOMAIN_COLOR("spatial.layerLpf", spatial.layerLpf)
-    DOMAIN_COLOR("spatial.layerWidth", spatial.layerWidth)
-    DOMAIN_COLOR("spatial.layerReverb", spatial.layerReverb)
-#undef DOMAIN_COLOR
     return false;
+}
+
+template<typename Snapshot>
+auto themeColorSlot(const QString& key, Snapshot& theme)
+    -> decltype(&theme.ui.colors.accent)
+{
+    if (auto* color = tokenColorSlot(key, theme)) return color;
+    if (auto* color = curveColorSlot(key, theme)) return color;
+    if (auto* color = waveformColorSlot(key, theme)) return color;
+    if (auto* color = meterColorSlot(key, theme)) return color;
+    return domainColorSlot(key, theme);
 }
 
 bool applyNoDomainMetric(const QString&, double, ThemeSnapshot&)
@@ -1995,6 +2107,104 @@ bool applySemantics(const SemanticDocuments& documents,
     return true;
 }
 
+bool validateColorBindings(const QVector<ThemeColorRole>& roles,
+                           const ThemeSnapshot& snapshot,
+                           const QString& file,
+                           QList<ThemePackageDiagnostic>& diagnostics)
+{
+    QSet<const QColor*> targets;
+    for (qsizetype roleIndex = 0; roleIndex < roles.size(); ++roleIndex)
+    {
+        const auto& role = roles.at(roleIndex);
+        for (qsizetype bindingIndex = 0; bindingIndex < role.bindings.size(); ++bindingIndex)
+        {
+            const auto& binding = role.bindings.at(bindingIndex);
+            const QString path = QStringLiteral("$.roles[%1].bindings[%2].target")
+                .arg(roleIndex).arg(bindingIndex);
+            const auto* target = themeColorSlot(binding.target, snapshot);
+            if (!target)
+            {
+                diagnostics.append(diagnostic(ThemePackageErrorCode::UnknownSemanticKey,
+                    file, path, QStringLiteral("Unknown render color target: ") + binding.target));
+                return false;
+            }
+            if (targets.contains(target))
+            {
+                diagnostics.append(diagnostic(ThemePackageErrorCode::InvalidValue,
+                    file, path, QStringLiteral("A render color target can be bound only once.")));
+                return false;
+            }
+            targets.insert(target);
+        }
+    }
+    return true;
+}
+
+bool collectRoleOverrides(const SemanticDocuments& documents,
+                          const DiscoveredPackage& package,
+                          const QVector<ThemeColorRole>& roles,
+                          const ThemeSnapshot& snapshot,
+                          ThemeColorOverrides& overrides,
+                          QList<ThemePackageDiagnostic>& diagnostics)
+{
+    struct BoundColor {
+        const ThemeColorRole* role;
+        bool fixedAlpha;
+    };
+    QHash<const QColor*, BoundColor> bindings;
+    for (const auto& role : roles)
+        for (const auto& binding : role.bindings)
+            bindings.insert(themeColorSlot(binding.target, snapshot), {&role, binding.alpha.has_value()});
+    const QString prefix = package.displayRoot + QLatin1Char('/');
+    const auto collect = [&](const QMap<QString, QString>& colors, const QString& relative) {
+        for (auto color = colors.constBegin(); color != colors.constEnd(); ++color)
+        {
+            const auto* target = themeColorSlot(color.key(), snapshot);
+            if (!target || !bindings.contains(target))
+                continue;
+            const auto binding = bindings.value(target);
+            const QString& roleKey = binding.role->key;
+            QString conflict;
+            if (documents.colors)
+                conflict = QStringLiteral("Color role '%1' is defined by this package's palettes; remove the direct render color assignment.").arg(roleKey);
+            else if (binding.fixedAlpha)
+                conflict = QStringLiteral("Color target '%1' has a fixed alpha binding; override role '%2' in a color definition instead.")
+                    .arg(color.key(), roleKey);
+            const QColor value(color.value());
+            if (conflict.isEmpty() && overrides.contains(roleKey) && overrides.value(roleKey) != value)
+                conflict = QStringLiteral("Multiple render color assignments give conflicting values to role '%1'.").arg(roleKey);
+            if (!conflict.isEmpty())
+            {
+                diagnostics.append(diagnostic(ThemePackageErrorCode::InvalidValue,
+                    prefix + relative, QStringLiteral("$.colors.") + color.key(), conflict));
+                return false;
+            }
+            overrides.insert(roleKey, value);
+        }
+        return true;
+    };
+    if (!collect(documents.tokens.colors, package.manifest.entries.tokens)
+        || !collect(documents.curve.colors, package.manifest.entries.visuals.curve)
+        || !collect(documents.meter.colors, package.manifest.entries.visuals.meter)
+        || !collect(documents.waveform.colors, package.manifest.entries.visuals.waveform))
+        return false;
+#define COLLECT_VISUAL(name) \
+    if (package.manifest.entries.visuals.name \
+        && !collect(documents.name.colors, *package.manifest.entries.visuals.name)) return false
+    COLLECT_VISUAL(nodeGraph);
+    COLLECT_VISUAL(blueprint);
+    COLLECT_VISUAL(timeline);
+    COLLECT_VISUAL(music);
+    COLLECT_VISUAL(log);
+    COLLECT_VISUAL(monitor);
+    COLLECT_VISUAL(ai);
+    COLLECT_VISUAL(scene3d);
+    COLLECT_VISUAL(spatial);
+    COLLECT_VISUAL(feedback);
+#undef COLLECT_VISUAL
+    return true;
+}
+
 }
 
 QString builtinThemeId()
@@ -2004,12 +2214,17 @@ QString builtinThemeId()
 
 bool applyThemeColor(ThemeSnapshot& theme, const QString& key, const QColor& color)
 {
-    return color.isValid()
-        && (applyTokenColor(key, color, theme)
-            || applyCurveColor(key, color, theme)
-            || applyWaveformColor(key, color, theme)
-            || applyMeterColor(key, color, theme)
-            || applyDomainColor(key, color, theme));
+    auto* target = themeColorSlot(key, theme);
+    if (!target || !color.isValid())
+        return false;
+    *target = color;
+    return true;
+}
+
+QColor readThemeColor(const ThemeSnapshot& theme, const QString& key)
+{
+    const auto* color = themeColorSlot(key, theme);
+    return color ? *color : QColor{};
 }
 
 ThemePackageDiscoveryResult discoverThemePackages(
@@ -2129,8 +2344,11 @@ ThemePackageLoadResult loadThemePackageCandidate(
         candidate.manifest.id = themeId;
         candidate.manifest.displayName = QString::fromLatin1(builtin->displayName);
         candidate.manifest.version = options.harkenVersion;
-        candidate.snapshot = std::make_shared<const ThemeSnapshot>(
-            builtin->create());
+        candidate.manifest.schemaVersion = ThemePackageContract::maximumSchemaVersion;
+        candidate.colorRoles = studioDefaultColorRoles();
+        candidate.palettes = createStudioDefaultPalettes();
+        candidate.defaultPaletteId = QStringLiteral("dark");
+        candidate.snapshot = candidate.palettes.front().snapshot;
         candidate.inheritanceOrder.append(themeId);
         result.candidate = std::move(candidate);
         return result;
@@ -2308,15 +2526,12 @@ ThemePackageLoadResult loadThemePackageCandidate(
         totalBytes += package->manifestBytes;
     }
     SemanticDocuments merged;
-    ThemeSnapshot snapshot = findBuiltinTheme(currentId)->create();
+    QVector<ThemeColorRole> colorRoles = studioDefaultColorRoles();
+    QList<ColorPalette> palettes = createStudioDefaultPalettes();
+    QString defaultPaletteId = QStringLiteral("dark");
+    ThemeSnapshot snapshot = *palettes.front().snapshot;
     for (const DiscoveredPackage* package : chain)
     {
-        if (package->manifest.colorScheme)
-        {
-            snapshot.colorScheme = *package->manifest.colorScheme == QStringLiteral("light")
-                ? ThemeColorScheme::Light
-                : ThemeColorScheme::Dark;
-        }
         if (!compatible(*package, options, result.diagnostics))
             return result;
         const auto documents = loadDocuments(*package, options, totalBytes,
@@ -2325,13 +2540,64 @@ ThemePackageLoadResult loadThemePackageCandidate(
             return result;
         SemanticDocuments effective = merged;
         overlay(effective, *documents);
-        if (!applySemantics(*documents, *package, effective.assets, snapshot,
-                            result.diagnostics))
+        if (documents->colors)
+        {
+            colorRoles = documents->colors->roles;
+            if (!validateColorBindings(colorRoles, snapshot,
+                    package->displayRoot + QLatin1Char('/') + *package->manifest.entries.colors,
+                    result.diagnostics))
+                return result;
+        }
+        ThemeColorOverrides roleOverrides;
+        if (!collectRoleOverrides(*documents, *package, colorRoles, snapshot,
+                                  roleOverrides, result.diagnostics))
             return result;
+        if (documents->colors)
+        {
+            if (!applySemantics(*documents, *package, effective.assets, snapshot,
+                                result.diagnostics))
+                return result;
+            palettes.clear();
+            defaultPaletteId = documents->colors->defaultPalette;
+            for (const auto& definition : documents->colors->palettes)
+            {
+                ThemeSnapshot paletteSnapshot = snapshot;
+                paletteSnapshot.colorScheme = definition.colorScheme;
+                if (!resolveThemeColors(paletteSnapshot, colorRoles, definition.colors))
+                {
+                    result.diagnostics.append(diagnostic(ThemePackageErrorCode::InvalidColor,
+                        package->displayRoot + QLatin1Char('/') + *package->manifest.entries.colors,
+                        QStringLiteral("$.palettes"), QStringLiteral("Palette colors could not be resolved.")));
+                    return result;
+                }
+                palettes.append({definition.id, definition.displayName, definition.colors,
+                    std::make_shared<const ThemeSnapshot>(std::move(paletteSnapshot))});
+            }
+        }
+        else
+        {
+            for (auto& palette : palettes)
+            {
+                ThemeSnapshot paletteSnapshot = *palette.snapshot;
+                if (!applySemantics(*documents, *package, effective.assets,
+                                    paletteSnapshot, result.diagnostics))
+                    return result;
+                overlayMap(palette.colors, roleOverrides);
+                if (!resolveThemeColors(paletteSnapshot, colorRoles, palette.colors))
+                {
+                    result.diagnostics.append(diagnostic(ThemePackageErrorCode::InvalidColor,
+                        package->displayRoot + QStringLiteral("/manifest.json"),
+                        QStringLiteral("$.entries"), QStringLiteral("Inherited palette colors could not be resolved.")));
+                    return result;
+                }
+                palette.snapshot = std::make_shared<const ThemeSnapshot>(std::move(paletteSnapshot));
+            }
+        }
+        const auto selected = std::find_if(palettes.cbegin(), palettes.cend(),
+            [&defaultPaletteId](const ColorPalette& palette) { return palette.id == defaultPaletteId; });
+        snapshot = *selected->snapshot;
         merged = std::move(effective);
     }
-
-    resolveThemeColors(snapshot);
 
     ThemePackageCandidate candidate;
     if (packages.value(themeId).manifest.previewAssetId
@@ -2348,6 +2614,9 @@ ThemePackageLoadResult loadThemePackageCandidate(
     }
     candidate.manifest = packages.value(themeId).manifest;
     candidate.snapshot = std::make_shared<const ThemeSnapshot>(std::move(snapshot));
+    candidate.colorRoles = std::move(colorRoles);
+    candidate.palettes = std::move(palettes);
+    candidate.defaultPaletteId = defaultPaletteId;
     candidate.assets = std::move(merged.assets);
     for (const DiscoveredPackage* package : chain)
         candidate.assetRoots.insert(package->manifest.id, package->root);

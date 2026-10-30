@@ -92,6 +92,7 @@ QImage tinted(QImage image, const QColor& tint)
     if (!tint.isValid() || image.isNull())
         return image;
     QImage result(image.size(), QImage::Format_ARGB32_Premultiplied);
+    result.setDevicePixelRatio(image.devicePixelRatio());
     result.fill(0);
     {
         QPainter painter(&result);
@@ -99,7 +100,6 @@ QImage tinted(QImage image, const QColor& tint)
         painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
         painter.fillRect(result.rect(), tint);
     }
-    result.setDevicePixelRatio(image.devicePixelRatio());
     return result;
 }
 

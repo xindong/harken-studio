@@ -875,7 +875,7 @@ QListView::indicator:checked,
 QTableView::indicator:checked {
     background-color: @bgSecondary@;
     border-color: @borderSecondary@;
-    image: url(:/icons/check-white.png);
+    image: url("@checkboxChecked@");
 }
 
 QCheckBox::indicator:checked:hover,
@@ -917,7 +917,7 @@ QListView::indicator:checked:disabled,
 QTableView::indicator:checked:disabled {
     background-color: @bgPrimary@;
     border-color: @borderPrimary@;
-    image: url(:/icons/check-dim.png);
+    image: url("@checkboxCheckedDisabled@");
 }
 
 QCheckBox::indicator:indeterminate:disabled,

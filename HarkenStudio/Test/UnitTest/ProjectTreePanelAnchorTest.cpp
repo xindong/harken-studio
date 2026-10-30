@@ -188,8 +188,8 @@ TEST_F(ProjectTreePanelAnchorTest, RefreshedPresentationMatchesFreshRowsAcrossAu
     preview.themeId = builtinThemeId();
     const QColor previewAccent(201, 47, 129);
     const QColor previewText(41, 192, 156);
-    preview.colors[preview.paletteId].insert(QStringLiteral("accent.primary"), previewAccent);
-    preview.colors[preview.paletteId].insert(QStringLiteral("text.primary"), previewText);
+    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("accent.primary"), previewAccent);
+    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("text.primary"), previewText);
     ASSERT_TRUE(theme.previewAppearance(preview).ok());
     ASSERT_EQ(theme.snapshot()->ui.colors.accent, previewAccent);
     ASSERT_EQ(theme.snapshot()->ui.colors.textPrimary, previewText);

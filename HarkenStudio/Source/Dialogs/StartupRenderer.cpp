@@ -131,7 +131,7 @@ void main()
 )glsl";
 
 void drawLogo(QOpenGLPaintDevice& device, const QImage& logo, qreal time,
-              const QColor& background)
+              const QColor& background, const std::array<QColor, 3>& palette)
 {
     QPainter painter(&device);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
@@ -148,13 +148,13 @@ void drawLogo(QOpenGLPaintDevice& device, const QImage& logo, qreal time,
     const qreal shineCenter = logoSize.width() * (-0.5 + shineProgress * 2.0);
     QLinearGradient shineGradient(QPointF(shineCenter - 145.0, logoSize.height()),
                                   QPointF(shineCenter + 145.0, 0.0));
-    shineGradient.setColorAt(0.0, QColor(181, 181, 181));
-    shineGradient.setColorAt(0.22, QColor(181, 181, 181));
-    shineGradient.setColorAt(0.38, QColor(211, 211, 213));
-    shineGradient.setColorAt(0.5, QColor(255, 255, 255));
-    shineGradient.setColorAt(0.62, QColor(211, 211, 213));
-    shineGradient.setColorAt(0.78, QColor(181, 181, 181));
-    shineGradient.setColorAt(1.0, QColor(181, 181, 181));
+    shineGradient.setColorAt(0.0, palette[0]);
+    shineGradient.setColorAt(0.22, palette[0]);
+    shineGradient.setColorAt(0.38, palette[1]);
+    shineGradient.setColorAt(0.5, palette[2]);
+    shineGradient.setColorAt(0.62, palette[1]);
+    shineGradient.setColorAt(0.78, palette[0]);
+    shineGradient.setColorAt(1.0, palette[0]);
 
     QImage shinyLogo(logo.size(), QImage::Format_ARGB32_Premultiplied);
     shinyLogo.setDevicePixelRatio(logo.devicePixelRatio());
@@ -347,7 +347,8 @@ void StartupRenderer::renderLoop()
 
             QOpenGLPaintDevice device(QSize(width, height));
             device.setDevicePixelRatio(dpr);
-            drawLogo(device, logo, time, theme_->ui.colors.panelBackground);
+            drawLogo(device, logo, time, theme_->ui.colors.panelBackground,
+                     theme_->domains.startup.logoPalette);
             context.swapBuffers(window_);
             if (!initialFramePresented_.exchange(true, std::memory_order_acq_rel))
                 emit initialFramePresented();

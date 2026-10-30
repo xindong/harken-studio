@@ -44,6 +44,7 @@ private:
     void refreshLanguage();
     bool commitAppearance(const ThemeAppearance& appearance);
     void refreshPresets(bool currentOnly = false);
+    void rebuildColorRoles();
     bool loadBasePalette();
     void refreshColors(const QString& changedKey = {});
     void filterColors();
@@ -75,6 +76,7 @@ private:
     QString previewColorKey_;
     QColor pendingPreviewColor_;
 
+    QVector<ThemeColorRole> colorRoles_;
     std::optional<ColorPalette> basePalette_;
     QMap<QString, ColorPalette> palettes_;
     ThemeAppearance appearance_;

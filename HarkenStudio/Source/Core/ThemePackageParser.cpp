@@ -5,6 +5,7 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QJsonValue>
+#include <QRegularExpression>
 #include <QSet>
 
 #include <cmath>
@@ -517,7 +518,6 @@ ThemePackageParseResult<ThemeManifestDto> parseThemeManifest(
         QStringLiteral("id"),
         QStringLiteral("displayName"),
         QStringLiteral("version"),
-        QStringLiteral("colorScheme"),
         QStringLiteral("baseThemeId"),
         QStringLiteral("compatibility"),
         QStringLiteral("entries"),
@@ -534,9 +534,6 @@ ThemePackageParseResult<ThemeManifestDto> parseThemeManifest(
         || !readRequiredString(*root, QStringLiteral("version"), file,
                                QStringLiteral("$"), dto.version,
                                result.diagnostics)
-        || !readOptionalString(*root, QStringLiteral("colorScheme"), file,
-                               QStringLiteral("$"), dto.colorScheme,
-                               result.diagnostics)
         || !readOptionalString(*root, QStringLiteral("baseThemeId"), file,
                                QStringLiteral("$"), dto.baseThemeId,
                                result.diagnostics)
@@ -544,14 +541,6 @@ ThemePackageParseResult<ThemeManifestDto> parseThemeManifest(
                                QStringLiteral("$"), dto.previewAssetId,
                                result.diagnostics))
         return result;
-
-    if (dto.colorScheme
-        && *dto.colorScheme != QStringLiteral("dark")
-        && *dto.colorScheme != QStringLiteral("light"))
-        return failed<ThemeManifestDto>(
-            ThemePackageErrorCode::InvalidValue, file,
-            QStringLiteral("$.colorScheme"),
-            QStringLiteral("Color scheme must be dark or light."));
 
     QJsonObject compatibility;
     if (!readRequiredObject(*root, QStringLiteral("compatibility"), file,
@@ -584,7 +573,7 @@ ThemePackageParseResult<ThemeManifestDto> parseThemeManifest(
             entries,
             {QStringLiteral("tokens"), QStringLiteral("visuals"),
              QStringLiteral("assetMap"), QStringLiteral("presenters"),
-             QStringLiteral("recipes")},
+             QStringLiteral("recipes"), QStringLiteral("colors")},
             file, QStringLiteral("$.entries"), result.diagnostics)
         || !readRequiredString(
             entries, QStringLiteral("tokens"), file,
@@ -601,6 +590,10 @@ ThemePackageParseResult<ThemeManifestDto> parseThemeManifest(
         || !readOptionalString(
             entries, QStringLiteral("recipes"), file,
             QStringLiteral("$.entries"), dto.entries.recipes,
+            result.diagnostics)
+        || !readOptionalString(
+            entries, QStringLiteral("colors"), file,
+            QStringLiteral("$.entries"), dto.entries.colors,
             result.diagnostics))
         return result;
 
@@ -672,6 +665,161 @@ ThemePackageParseResult<ThemeManifestDto> parseThemeManifest(
             result.diagnostics))
         return result;
 
+    result.value = std::move(dto);
+    return result;
+}
+
+ThemePackageParseResult<ThemeColorDefinitionDto> parseThemeColorDefinition(
+    const QByteArray& json, const QString& file)
+{
+    ParseResult<ThemeColorDefinitionDto> result;
+    const auto root = parseRootObject(json, file, result);
+    if (!root)
+        return result;
+    ThemeColorDefinitionDto dto;
+    if (!rejectUnknownFields(*root,
+            {QStringLiteral("roles"), QStringLiteral("palettes"),
+             QStringLiteral("defaultPalette")}, file, QStringLiteral("$"),
+            result.diagnostics)
+        || !readRequiredString(*root, QStringLiteral("defaultPalette"), file,
+                               QStringLiteral("$"), dto.defaultPalette,
+                               result.diagnostics))
+        return result;
+    const auto fail = [&](ThemePackageErrorCode code, const QString& path,
+                          const QString& message) {
+        result.diagnostics.append(diagnostic(code, file, path, message));
+        return result;
+    };
+    if (!root->value(QStringLiteral("roles")).isArray()
+        || !root->value(QStringLiteral("palettes")).isArray())
+        return fail(ThemePackageErrorCode::FieldTypeMismatch, QStringLiteral("$"),
+                    QStringLiteral("Roles and palettes must be arrays."));
+
+    QSet<QString> roleKeys;
+    QSet<QString> targets;
+    const QJsonArray roles = root->value(QStringLiteral("roles")).toArray();
+    for (qsizetype index = 0; index < roles.size(); ++index)
+    {
+        const QString path = QStringLiteral("$.roles[%1]").arg(index);
+        if (!roles.at(index).isObject())
+            return fail(ThemePackageErrorCode::FieldTypeMismatch, path,
+                        QStringLiteral("Expected a role object."));
+        const QJsonObject object = roles.at(index).toObject();
+        ThemeColorRole role;
+        if (!rejectUnknownFields(object,
+                {QStringLiteral("key"), QStringLiteral("group"),
+                 QStringLiteral("label"), QStringLiteral("description"),
+                 QStringLiteral("bindings")}, file, path, result.diagnostics)
+            || !readRequiredString(object, QStringLiteral("key"), file, path,
+                                   role.key, result.diagnostics)
+            || !readRequiredString(object, QStringLiteral("group"), file, path,
+                                   role.group, result.diagnostics)
+            || !readRequiredString(object, QStringLiteral("label"), file, path,
+                                   role.label, result.diagnostics)
+            || !readRequiredString(object, QStringLiteral("description"), file, path,
+                                   role.description, result.diagnostics))
+            return result;
+        if (roleKeys.contains(role.key))
+            return fail(ThemePackageErrorCode::InvalidValue, path + QStringLiteral(".key"),
+                        QStringLiteral("Color role keys must be unique."));
+        roleKeys.insert(role.key);
+        if (!object.value(QStringLiteral("bindings")).isArray()
+            || object.value(QStringLiteral("bindings")).toArray().isEmpty())
+            return fail(ThemePackageErrorCode::InvalidValue,
+                        path + QStringLiteral(".bindings"),
+                        QStringLiteral("Each color role requires at least one binding."));
+        const QJsonArray bindings = object.value(QStringLiteral("bindings")).toArray();
+        for (qsizetype bindingIndex = 0; bindingIndex < bindings.size(); ++bindingIndex)
+        {
+            const QString bindingPath = path + QStringLiteral(".bindings[%1]").arg(bindingIndex);
+            if (!bindings.at(bindingIndex).isObject())
+                return fail(ThemePackageErrorCode::FieldTypeMismatch, bindingPath,
+                            QStringLiteral("Expected a color binding object."));
+            const QJsonObject bindingObject = bindings.at(bindingIndex).toObject();
+            ThemeColorBinding binding;
+            if (!rejectUnknownFields(bindingObject,
+                    {QStringLiteral("target"), QStringLiteral("alpha")}, file,
+                    bindingPath, result.diagnostics)
+                || !readRequiredString(bindingObject, QStringLiteral("target"),
+                                       file, bindingPath, binding.target,
+                                       result.diagnostics))
+                return result;
+            if (targets.contains(binding.target))
+                return fail(ThemePackageErrorCode::InvalidValue,
+                            bindingPath + QStringLiteral(".target"),
+                            QStringLiteral("A render color target can be bound only once."));
+            targets.insert(binding.target);
+            if (bindingObject.contains(QStringLiteral("alpha")))
+            {
+                const QJsonValue alpha = bindingObject.value(QStringLiteral("alpha"));
+                const double value = alpha.toDouble(-1.0);
+                if (!alpha.isDouble() || !std::isfinite(value) || value < 0.0
+                    || value > 255.0 || std::floor(value) != value)
+                    return fail(ThemePackageErrorCode::InvalidValue,
+                                bindingPath + QStringLiteral(".alpha"),
+                                QStringLiteral("Binding alpha must be an integer from 0 to 255."));
+                binding.alpha = static_cast<int>(value);
+            }
+            role.bindings.append(std::move(binding));
+        }
+        dto.roles.append(std::move(role));
+    }
+
+    static const QRegularExpression colorPattern(QStringLiteral("^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"));
+    static const QRegularExpression idPattern(QStringLiteral("^[a-z0-9][a-z0-9._-]{0,127}$"));
+    QSet<QString> paletteIds;
+    const QJsonArray palettes = root->value(QStringLiteral("palettes")).toArray();
+    for (qsizetype index = 0; index < palettes.size(); ++index)
+    {
+        const QString path = QStringLiteral("$.palettes[%1]").arg(index);
+        if (!palettes.at(index).isObject())
+            return fail(ThemePackageErrorCode::FieldTypeMismatch, path,
+                        QStringLiteral("Expected a palette object."));
+        const QJsonObject object = palettes.at(index).toObject();
+        ThemePaletteDto palette;
+        QString scheme;
+        QJsonObject colors;
+        if (!rejectUnknownFields(object,
+                {QStringLiteral("id"), QStringLiteral("displayName"),
+                 QStringLiteral("colorScheme"), QStringLiteral("colors")},
+                file, path, result.diagnostics)
+            || !readRequiredString(object, QStringLiteral("id"), file, path,
+                                   palette.id, result.diagnostics)
+            || !readRequiredString(object, QStringLiteral("displayName"), file, path,
+                                   palette.displayName, result.diagnostics)
+            || !readRequiredString(object, QStringLiteral("colorScheme"), file, path,
+                                   scheme, result.diagnostics)
+            || !readRequiredObject(object, QStringLiteral("colors"), file, path,
+                                   colors, result.diagnostics))
+            return result;
+        if (!idPattern.match(palette.id).hasMatch() || paletteIds.contains(palette.id))
+            return fail(ThemePackageErrorCode::InvalidValue, path + QStringLiteral(".id"),
+                        QStringLiteral("Palette IDs must be stable and unique within the theme."));
+        paletteIds.insert(palette.id);
+        if (scheme != QStringLiteral("dark") && scheme != QStringLiteral("light"))
+            return fail(ThemePackageErrorCode::InvalidValue, path + QStringLiteral(".colorScheme"),
+                        QStringLiteral("Color scheme must be dark or light."));
+        palette.colorScheme = scheme == QStringLiteral("light")
+            ? ThemeColorScheme::Light : ThemeColorScheme::Dark;
+        for (auto color = colors.constBegin(); color != colors.constEnd(); ++color)
+        {
+            const QString colorPath = path + QStringLiteral(".colors.") + color.key();
+            if (!roleKeys.contains(color.key()))
+                return fail(ThemePackageErrorCode::UnknownSemanticKey, colorPath,
+                            QStringLiteral("Palette color does not reference a declared role."));
+            if (!color->isString() || !colorPattern.match(color->toString()).hasMatch())
+                return fail(ThemePackageErrorCode::InvalidColor, colorPath,
+                            QStringLiteral("Palette colors must use #RRGGBB or #AARRGGBB."));
+            palette.colors.insert(color.key(), QColor(color->toString()));
+        }
+        if (palette.colors.size() != roleKeys.size())
+            return fail(ThemePackageErrorCode::MissingField, path + QStringLiteral(".colors"),
+                        QStringLiteral("Each palette must provide every declared color role."));
+        dto.palettes.append(std::move(palette));
+    }
+    if (!paletteIds.contains(dto.defaultPalette))
+        return fail(ThemePackageErrorCode::InvalidValue, QStringLiteral("$.defaultPalette"),
+                    QStringLiteral("The default palette must reference a declared palette."));
     result.value = std::move(dto);
     return result;
 }

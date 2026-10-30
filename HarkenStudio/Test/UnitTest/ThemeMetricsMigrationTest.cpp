@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDir>
 #include <QFile>
@@ -28,6 +29,7 @@
 #include <QTableWidget>
 #include <QScopeGuard>
 #include <QStyleFactory>
+#include <QStyleOptionButton>
 #include <QStyleOptionMenuItem>
 #include <QStylePainter>
 #include <QToolBar>
@@ -60,7 +62,7 @@ bool writeDenseMetricsPackage(const QString& themesRoot, const QString& id)
 {
     const QString root = QDir(themesRoot).filePath(id);
     const QByteArray manifest = QByteArray("{")
-        + "\"schemaVersion\":6,\"id\":\"" + id.toUtf8()
+        + "\"schemaVersion\":7,\"id\":\"" + id.toUtf8()
         + "\",\"displayName\":\"" + id.toUtf8()
         + "\",\"version\":\"1.0.0\",\"baseThemeId\":\""
         + VNX::builtinThemeId().toUtf8() + "\""
@@ -234,8 +236,8 @@ TEST(ThemeMetricsMigration, ColorPreviewPreservesMetricsAndSemanticTextRoles)
     const QColor primary(QStringLiteral("#ffc8a0e0"));
     const QColor muted(QStringLiteral("#ff73b493"));
     auto preview = manager->appearance();
-    preview.colors[preview.paletteId].insert(QStringLiteral("text.primary"), primary);
-    preview.colors[preview.paletteId].insert(QStringLiteral("text.muted"), muted);
+    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("text.primary"), primary);
+    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("text.muted"), muted);
     ASSERT_TRUE(manager->previewAppearance(preview).ok());
     QCoreApplication::processEvents();
     EXPECT_EQ(label->palette().color(QPalette::WindowText), primary);
@@ -327,6 +329,55 @@ TEST(ThemeMetricsMigration, PolishedDescendantsFollowAncestorChangesAcrossMoveDe
     EXPECT_EQ(child.palette().color(QPalette::WindowText), QColor(QStringLiteral("#88aacc")));
 }
 
+TEST(ThemeMetricsMigration, CheckedIndicatorsRemainDistinguishableAcrossPalettesAndEnabledStates)
+{
+    ensureApp();
+    QTemporaryDir root;
+    auto manager = makeManager(root.path());
+    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    QCheckBox check(QStringLiteral("Enabled setting"));
+    check.setStyle(&style);
+    check.resize(180, 28);
+    check.show();
+    for (const auto& palette : manager->availablePalettes())
+    {
+        SCOPED_TRACE(palette.id.toStdString());
+        auto appearance = manager->appearance();
+        appearance.paletteId = palette.id;
+        ASSERT_TRUE(manager->applyAppearance(appearance).ok());
+        for (const bool enabled : {true, false})
+        {
+            SCOPED_TRACE(enabled);
+            check.setEnabled(enabled);
+            check.setChecked(false);
+            QCoreApplication::processEvents();
+            const auto unchecked = renderWidget(check);
+            QStyleOptionButton option;
+            option.initFrom(&check);
+            option.text = check.text();
+            const QRect indicator = check.style()->subElementRect(
+                QStyle::SE_CheckBoxIndicator, &option, &check).intersected(unchecked.rect());
+            ASSERT_FALSE(indicator.isEmpty());
+            check.setChecked(true);
+            QCoreApplication::processEvents();
+            const auto checked = renderWidget(check);
+            int visiblePixels = 0;
+            for (int y = indicator.top(); y <= indicator.bottom(); ++y)
+            {
+                for (int x = indicator.left(); x <= indicator.right(); ++x)
+                {
+                    const QColor before = unchecked.pixelColor(x, y);
+                    const QColor after = checked.pixelColor(x, y);
+                    const int difference = qMax(qAbs(after.red() - before.red()),
+                        qMax(qAbs(after.green() - before.green()), qAbs(after.blue() - before.blue())));
+                    if (difference >= 24) ++visiblePixels;
+                }
+            }
+            EXPECT_GE(visiblePixels, 8);
+        }
+    }
+}
+
 TEST(ThemeMetricsMigration, MenuStateColorsCoverPaddingWithoutChangingGeometry)
 {
     ensureApp();
@@ -360,8 +411,8 @@ TEST(ThemeMetricsMigration, MenuStateColorsCoverPaddingWithoutChangingGeometry)
     auto preview = manager->appearance();
     const QColor hover(QStringLiteral("#ff6d3a91"));
     const QColor accent(QStringLiteral("#ff217d9b"));
-    preview.colors[preview.paletteId].insert(QStringLiteral("background.hover"), hover);
-    preview.colors[preview.paletteId].insert(QStringLiteral("accent.primary"), accent);
+    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("background.hover"), hover);
+    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("accent.primary"), accent);
     ASSERT_TRUE(manager->previewAppearance(preview).ok());
     QCoreApplication::processEvents();
     EXPECT_EQ(manager->colors().bgHover, hover);
@@ -474,9 +525,9 @@ TEST(ThemeMetricsMigration, OwnedPanelSurfaceSurvivesVisibilityAndColorPreview)
     check("initial show");
     panel.hide();
     auto preview = manager->appearance();
-    preview.colors[preview.paletteId].insert(QStringLiteral("border.primary"),
+    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("border.primary"),
                                              QColor(QStringLiteral("#945bd1")));
-    preview.colors[preview.paletteId].insert(QStringLiteral("background.primary"),
+    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("background.primary"),
                                              QColor(QStringLiteral("#1a2836")));
     ASSERT_TRUE(manager->previewAppearance(preview).ok());
     panel.show();
@@ -529,8 +580,8 @@ TEST(ThemeMetricsMigration, ProgressContentsPreserveOuterBorderAcrossDirectionsA
     };
     checkBoundary();
     auto preview = manager->appearance();
-    preview.colors[preview.paletteId].insert(QStringLiteral("border.primary"), QColor(QStringLiteral("#ffb68442")));
-    preview.colors[preview.paletteId].insert(QStringLiteral("accent.primary"), QColor(QStringLiteral("#ff327f95")));
+    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("border.primary"), QColor(QStringLiteral("#ffb68442")));
+    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("accent.primary"), QColor(QStringLiteral("#ff327f95")));
     ASSERT_TRUE(manager->previewAppearance(preview).ok());
     QCoreApplication::processEvents();
     checkBoundary();

@@ -1,5 +1,6 @@
 #include "BuiltinTheme.h"
 #include "ThemeColorResolver.h"
+#include "ThemePackageLoader.h"
 
 #include <QFont>
 
@@ -249,6 +250,9 @@ ThemeSnapshot createBuiltinDarkTheme()
         QColor("#173D5C"),
         QColor("#5F9EC7"),
         QColor("#E4F3FF"),
+    }};
+    domains.startup.logoPalette = {{
+        QColor(181, 181, 181), QColor(211, 211, 213), QColor(255, 255, 255),
     }};
 
     domains.meter.green = QColor(0x00, 0xC8, 0x53);
@@ -739,7 +743,328 @@ ThemeSnapshot createBuiltinDarkTheme()
     domains.spatial.layerWidth = QColor(46, 204, 113);
     domains.spatial.layerReverb = QColor(241, 196, 15);
 
-    resolveThemeColors(theme);
+    ThemeColorOverrides roleColors;
+    for (const auto& role : studioDefaultColorRoles())
+        roleColors.insert(role.key, readThemeColor(theme, role.key));
+    resolveThemeColors(theme, studioDefaultColorRoles(), roleColors);
+    return theme;
+}
+
+ThemeSnapshot createBuiltinLightTheme()
+{
+    ThemeSnapshot theme = createBuiltinDarkTheme();
+    theme.colorScheme = ThemeColorScheme::Light;
+    auto& colors = theme.ui.colors;
+    colors.accent = QColor("#007B8B");
+    colors.accentHover = QColor("#006674");
+    colors.accentText = QColor("#FFFFFF");
+    colors.categoricalPalette = {{
+        colors.accent, QColor("#7753B8"), QColor("#A87312"), QColor("#326EB4"),
+        QColor("#C05A48"), QColor("#2B8352"), QColor("#AD4D86"),
+    }};
+    colors.bgPrimary = QColor("#F4F6F9");
+    colors.bgSecondary = QColor("#FFFFFF");
+    colors.bgTertiary = QColor("#E8EDF3");
+    colors.bgHover = QColor("#DCE5EE");
+    colors.bgSelected = QColor("#D0E8EE");
+    colors.borderPrimary = QColor("#BCC7D3");
+    colors.borderSecondary = QColor("#8D9EAF");
+    colors.viewBorder = QColor("#B9C5D1");
+    colors.dropHighlight = QColor("#40326EB4");
+    colors.dropAccent = QColor("#C0007B8B");
+    colors.textPrimary = QColor("#202B38");
+    colors.textSecondary = QColor("#506174");
+    colors.textMuted = QColor("#697889");
+    colors.textDisabled = QColor("#98A4B1");
+    colors.success = QColor("#217A45");
+    colors.warning = QColor("#A76400");
+    colors.error = QColor("#C53642");
+    colors.info = QColor("#176DB0");
+    colors.trackBackground = QColor("#F8FAFC");
+    colors.trackBackgroundAlt = QColor("#EEF3F7");
+    colors.busBackground = QColor("#E7EEF4");
+    colors.busBackgroundActive = QColor("#20007B8B");
+    colors.sliderTrack = QColor("#B7C5D3");
+    colors.knobIndicator = QColor("#293C50");
+    colors.panelBackground = QColor("#EEF2F6");
+    colors.sectionSeparator = QColor("#C5CFDA");
+    colors.headerBackground = QColor("#E2E8EF");
+    colors.auditionBg = QColor("#E8EEF4");
+    colors.auditionPlayActive = colors.success;
+    colors.auditionStopActive = colors.error;
+    colors.shellMenuText = colors.textSecondary;
+    colors.shellMenuHoverText = colors.textPrimary;
+    colors.shellButtonText = colors.textSecondary;
+    colors.shellButtonHoverText = colors.textPrimary;
+    colors.shellCloseHover = QColor("#C93042");
+    colors.shellClosePressed = QColor("#A92234");
+
+    auto& palette = theme.qtPalette;
+    palette.window = QColor("#EEF2F6");
+    palette.base = QColor("#FFFFFF");
+    palette.alternateBase = QColor("#F1F5F9");
+    palette.toolTipBase = QColor("#FAFCFE");
+    palette.button = QColor("#E8EDF3");
+    palette.brightText = QColor("#FFFFFF");
+    palette.light = QColor("#FFFFFF");
+    palette.dark = QColor("#8696A7");
+    palette.mid = QColor("#B6C2D0");
+    palette.disabledHighlight = QColor("#CAD5E0");
+
+    auto& qtAds = theme.thirdParty.qtAds;
+    qtAds.chromeBackground = QColor("#DCE4EC");
+    qtAds.inactiveTabText = QColor("#66788A");
+    qtAds.closeButtonHover = QColor("#C93042");
+    qtAds.closeButtonPressed = QColor("#A92234");
+    qtAds.lightHoverOverlay = QColor("#1834485C");
+    qtAds.activeTabAccentOpacity = 0.16;
+    qtAds.dropOverlayOpacity = 0.10;
+
+    auto& domains = theme.domains;
+    domains.startup.wavePalette = {{
+        QColor("#BACFDF"), QColor("#92B6CD"), QColor("#578BAA"), QColor("#256585"),
+    }};
+    domains.startup.logoPalette = {{
+        QColor("#344B60"), QColor("#286B83"), QColor("#007B8B"),
+    }};
+
+    auto& meter = domains.meter;
+    meter.green = QColor("#23814E");
+    meter.yellow = QColor("#B48712");
+    meter.red = QColor("#C33047");
+    meter.peak = QColor("#BF5930");
+    meter.rms = QColor("#397D54");
+    meter.clipOn = QColor("#C3263C");
+    meter.clipOff = QColor("#D8B4BA");
+    meter.background = QColor("#E8EEF4");
+    meter.lufsMomentary = QColor("#326EB4");
+    meter.lufsShortTerm = QColor("#278250");
+    meter.lufsIntegrated = QColor("#A96A12");
+    meter.oscilloscopeGrid = QColor("#28202B38");
+    meter.oscilloscopeGlow = QColor("#50202B38");
+    meter.waveformFill = QColor("#B4202B38");
+    meter.waveformGrid = QColor("#30202B38");
+    meter.stereo.trailOuter = QColor("#18A36B12");
+    meter.stereo.trailMiddle = QColor("#30A36B12");
+    meter.stereo.trailCore = QColor("#508B5810");
+    meter.stereo.gridPrimary = QColor("#30202B38");
+    meter.stereo.gridSecondary = QColor("#18202B38");
+    meter.stereo.liveGlowWide = QColor("#28A36B12");
+    meter.stereo.liveGlowMedium = QColor("#70A36B12");
+    meter.stereo.liveHighlight = QColor("#E08B5810");
+    meter.stereo.correlationPositive = QColor("#C0217A45");
+    meter.stereo.correlationNegative = QColor("#C0C53642");
+    meter.layout.dividerHover = QColor("#A0326EB4");
+    meter.layout.dividerDragging = QColor("#D0007B8B");
+    meter.layout.dividerSnapped = QColor("#E0217A45");
+    meter.layout.dropBorder = QColor("#D0007B8B");
+    meter.layout.dropFill = QColor("#22007B8B");
+    meter.interaction.colors.accentGuide = QColor("#A76400");
+
+    auto& peak = meter.peakMeter.colors;
+    peak.gradientAccent = QColor("#008E94");
+    peak.gradientYellow = QColor("#A99216");
+    peak.gradientWarning = QColor("#C17B13");
+    peak.gradientError = colors.error;
+    peak.rmsOverlay = QColor("#60203040");
+    peak.holdHalo = QColor("#30334557");
+    peak.holdLine = QColor("#E0334557");
+    peak.clipBackground = colors.error;
+    peak.clipText = QColor("#FFFFFF");
+    meter.loudnessMeter.colors.targetLine = QColor("#C09B6100");
+
+    auto& vu = meter.vuMeter.colors;
+    vu.analogPositiveTick = QColor("#C0C53642");
+    vu.analogOverloadArc = QColor("#80C53642");
+    vu.analogNeedleGlow = QColor("#30007B8B");
+    vu.analogNeedle = QColor("#ED293C50");
+    vu.analogPivot = colors.accent;
+    vu.barWarning = colors.warning;
+
+    auto& spectrum = meter.spectrumMeter.colors;
+    spectrum.fillTop = QColor("#80007B8B");
+    spectrum.fillUpperMiddle = QColor("#60326EB4");
+    spectrum.fillLowerMiddle = QColor("#40007B8B");
+    spectrum.fillBottom = QColor("#12007B8B");
+    spectrum.lineGlowWide = QColor("#18007B8B");
+    spectrum.lineGlowMedium = QColor("#30007B8B");
+    spectrum.lineGlowNarrow = QColor("#70007B8B");
+    spectrum.lineHighlight = QColor("#E0006374");
+    spectrum.peakLine = QColor("#A0506174");
+    meter.spectrogramMeter.colors.emptyHistory = colors.bgPrimary;
+
+    domains.feedback.overlayBackground = QColor("#F0E8F0F8");
+    domains.feedback.overlayErrorBackground = QColor("#F0F8E7E9");
+
+    auto& waveform = domains.waveform;
+    waveform.line = QColor("#23814E");
+    waveform.fill = QColor("#4023814E");
+    waveform.selectionHighlight = QColor("#35007B8B");
+    waveform.cursor = colors.textPrimary;
+    waveform.regionMarker = QColor("#A87312");
+    waveform.trimHandle = QColor("#326EB4");
+    waveform.loopHandle = QColor("#278250");
+    waveform.staticMode.quiet = QColor("#B43078AD");
+    waveform.staticMode.peak = QColor("#C0007E8A");
+    waveform.multiBandMode.colors = {
+        QColor("#C64B4B"), QColor("#388C4F"), QColor("#3B64B7"),
+    };
+    waveform.colorMapMode.offset = {0.05f, 0.25f, 0.50f, 0.18f};
+    waveform.colorMapMode.slope = {0.0f, 0.35f, 0.15f, 0.75f};
+    waveform.splitStereo.divider = QColor("#AEBCCA");
+    waveform.splitStereo.label = colors.textSecondary;
+    waveform.rawPeaks.background = QColor("#90E1E8F0");
+    waveform.rawPeaks.centerLine = QColor("#60607488");
+
+    auto& curve = domains.curve.colors;
+    curve.attenuationVolume = colors.accent;
+    curve.attenuationPitch = QColor("#326EB4");
+    curve.parameterBinding = QColor("#7753B8");
+    curve.gridFade = colors.accent;
+    curve.ghost = QColor("#70506174");
+    curve.lassoBorder = QColor("#A0326EB4");
+    curve.lassoFill = QColor("#20326EB4");
+    curve.crosshair = QColor("#99506174");
+    curve.playhead = QColor("#80202B38");
+
+    domains.pinDomain.audio = colors.accent;
+    domains.pinDomain.control = QColor("#7753B8");
+    domains.pinDomain.value = QColor("#A87312");
+    domains.pinDomain.ring = QColor("#F8FAFC");
+    domains.pinDomain.targetOk = colors.success;
+    domains.pinDomain.targetBad = colors.error;
+
+    auto& node = domains.nodeGraphNode;
+    node.borderNormal = QColor("#A9B7C6");
+    node.borderHoverMix = QColor("#34485C");
+    node.dropTarget = colors.success;
+    node.shadow = QColor("#22304458");
+    node.sandboxBadgeBg = QColor("#E0C53642");
+    node.sandboxBadgeText = QColor("#FFFFFF");
+    node.badgeOverride = QColor("#B36C00");
+    node.badgeChild = QColor("#7753B8");
+    node.badgeReceive = QColor("#B54C80");
+    node.waveformBg = QColor("#F8FAFC");
+    node.waveformCenter = QColor("#60A0AFBE");
+    node.blueprintWaveform = QColor("#D0007B80");
+
+    auto& blueprint = domains.blueprint;
+    blueprint.canvasBackground = QColor("#F5F8FB");
+    blueprint.gridDot = QColor("#C1CEDA");
+    blueprint.edgeLabelBg = QColor("#EBF5F8FB");
+    blueprint.placementChain = colors.accent;
+    blueprint.organizationChain = QColor("#7753B8");
+    blueprint.containment = QColor("#74859A");
+    blueprint.busRoute = colors.success;
+    blueprint.send = QColor("#B54C80");
+    blueprint.overrideRoute = QColor("#B36C00");
+
+    auto& timeline = domains.timeline;
+    timeline.entry = QColor("#278250");
+    timeline.exit = QColor("#C05242");
+    timeline.transition = QColor("#A87312");
+    timeline.clip = QColor("#C6DDF0");
+    timeline.clipSelected = QColor("#77AED8");
+    timeline.clipBorder = QColor("#7CA4C7");
+    timeline.clipSelectedBorder = QColor("#1C639C");
+    timeline.clipText = QColor("#24425F");
+    timeline.badge = QColor("#A45C22");
+    timeline.emergenceMarker = QColor("#AF7915");
+    timeline.unavailableOverlay = QColor("#30758595");
+    timeline.unavailableText = QColor("#90607080");
+    timeline.outOfSpanVeil = QColor("#80EDF2F7");
+
+    domains.music.trackColors = {{
+        QColor("#337CB3"), QColor("#C14E4B"), QColor("#39834D"), QColor("#A88214"),
+        QColor("#9152A1"), QColor("#228592"), QColor("#BC6639"), QColor("#657F8C"),
+        QColor("#B74775"), QColor("#718B3C"), QColor("#596BA6"), QColor("#948417"),
+    }};
+    domains.music.beatGridMajor = QColor("#40506174");
+    domains.music.beatGridMinor = QColor("#20506174");
+    domains.music.cursor = colors.textPrimary;
+    domains.music.loopRegion = QColor("#28007B8B");
+
+    domains.log.debug = colors.textMuted;
+    domains.log.info = colors.textPrimary;
+    domains.log.warning = colors.warning;
+    domains.log.error = colors.error;
+    domains.log.critical = QColor("#A91930");
+
+    auto& monitor = domains.monitor;
+    monitor.stateStolen = QColor("#B92F42");
+    monitor.statePlaying = QColor("#278250");
+    monitor.stateStarting = QColor("#6C851B");
+    monitor.stateVirtual = QColor("#6266AE");
+    monitor.stateReleasing = QColor("#AA7518");
+    monitor.stateStopping = QColor("#A14C50");
+    monitor.statePaused = QColor("#80619D");
+    monitor.stateDefault = QColor("#6B7B8C");
+    monitor.virtualDim = QColor("#8795A4");
+    monitor.mutedText = QColor("#A65D63");
+    monitor.lowVolume = QColor("#6D7B89");
+    monitor.busIdText = QColor("#65748D");
+    monitor.peakClip = colors.error;
+    monitor.peakCaution = colors.warning;
+    monitor.peakSafe = colors.success;
+    monitor.pitchHigh = QColor("#BB4E52");
+    monitor.pitchLow = QColor("#545AB1");
+    monitor.cpuCritical = colors.error;
+    monitor.cpuWarning = colors.warning;
+    monitor.cpuSafe = colors.success;
+    monitor.bufferWarning = colors.warning;
+    monitor.bufferNormal = colors.info;
+    monitor.underrunFlash = QColor("#C0273D");
+    monitor.underrunIdle = QColor("#A96830");
+    monitor.underrunNone = colors.textMuted;
+    monitor.spatialGainHigh = colors.success;
+    monitor.spatialGainLow = QColor("#A17A23");
+    monitor.spatialLpf = QColor("#396F9D");
+    monitor.spatialWidth = QColor("#A051A0");
+    monitor.spatialDistance = QColor("#858426");
+    monitor.spatialReverb = QColor("#25868A");
+    monitor.spatialDopplerHi = monitor.pitchHigh;
+    monitor.spatialDopplerLo = monitor.pitchLow;
+    monitor.spatialDot = colors.accent;
+
+    domains.ai.brandAccent = colors.accent;
+    domains.ai.userAccent = QColor("#B4582E");
+
+    auto& scene = domains.scene3d;
+    scene.listener = QColor("#217BA7");
+    scene.listenerCone = QColor("#54A0C8");
+    scene.room = QColor("#7D81A9");
+    scene.emitterMin = QColor("#27934C");
+    scene.emitterMax = QColor("#C53C43");
+    scene.hudBackground = QColor("#E8F3F6FA");
+    scene.hudTitle = colors.textPrimary;
+    scene.hudLabel = colors.textSecondary;
+    scene.hudGain = colors.success;
+    scene.hudGainLow = QColor("#A17A23");
+    scene.hudLpf = QColor("#396F9D");
+    scene.hudWidth = QColor("#A051A0");
+    scene.dopplerIdle = colors.textMuted;
+
+    auto& spatial = domains.spatial;
+    spatial.background = QColor("#F6F8FB");
+    spatial.grid = QColor("#DCE4EC");
+    spatial.axis = QColor("#A3B2C2");
+    spatial.axisLabel = colors.textSecondary;
+    spatial.tangentLine = QColor("#8797A9");
+    spatial.tangentHover = QColor("#5F758E");
+    spatial.tangentActive = QColor("#B47915");
+    spatial.pointSelected = QColor("#9F7500");
+    spatial.previewMarker = QColor("#B034485C");
+    spatial.infoText = colors.textPrimary;
+    spatial.legendBg = QColor("#DEE6EF");
+    spatial.layerVolume = QColor("#BE4E43");
+    spatial.layerLpf = QColor("#327BAE");
+    spatial.layerWidth = QColor("#288357");
+    spatial.layerReverb = QColor("#9B7F10");
+
+    ThemeColorOverrides roleColors;
+    for (const auto& role : studioDefaultColorRoles())
+        roleColors.insert(role.key, readThemeColor(theme, role.key));
+    resolveThemeColors(theme, studioDefaultColorRoles(), roleColors);
     return theme;
 }
 
