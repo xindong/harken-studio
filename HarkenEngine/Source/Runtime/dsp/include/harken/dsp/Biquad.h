@@ -416,6 +416,11 @@ inline bool IsBiquadStable(const BiquadCoeffs& c) {
            std::fabs(c.a1) < (1.0f + c.a2);
 }
 
+inline bool BiquadResultFitsFloat(double value) {
+    // This comparison also rejects NaN and infinity before narrowing.
+    return std::fabs(value) <= (std::numeric_limits<float>::max)();
+}
+
 inline void SeedBiquadStateForDc(BiquadState& state,
                                  const BiquadCoeffs& coeffs, float input) {
     const float denominator = 1.0f + coeffs.a1 + coeffs.a2;
@@ -426,13 +431,24 @@ inline void SeedBiquadStateForDc(BiquadState& state,
     }
     const float output =
         (coeffs.b0 + coeffs.b1 + coeffs.b2) / denominator * input;
-    if (!std::isfinite(output)) {
-        state.Reset();
-        return;
-    }
     const float z2 = coeffs.b2 * input - coeffs.a2 * output;
     const float z1 = coeffs.b1 * input - coeffs.a1 * output + z2;
-    if (!std::isfinite(z1) || !std::isfinite(z2)) {
+    if (!std::isfinite(output) || !std::isfinite(z1) || !std::isfinite(z2)) {
+        // Large products can overflow before cancellation even when the
+        // steady-state output and both feedback values fit in float.
+        const double wideOutput =
+            (static_cast<double>(coeffs.b0) + coeffs.b1 + coeffs.b2) /
+            denominator * input;
+        const double wideZ2 = static_cast<double>(coeffs.b2) * input -
+                              coeffs.a2 * wideOutput;
+        const double wideZ1 = static_cast<double>(coeffs.b1) * input -
+                              coeffs.a1 * wideOutput + wideZ2;
+        if (BiquadResultFitsFloat(wideOutput) && BiquadResultFitsFloat(wideZ1) &&
+            BiquadResultFitsFloat(wideZ2)) {
+            state.z1 = static_cast<float>(wideZ1);
+            state.z2 = static_cast<float>(wideZ2);
+            return;
+        }
         state.Reset();
         return;
     }
@@ -640,7 +656,13 @@ inline void BiquadProcessSmoothed(
                     ? 1.0f
                     : static_cast<float>(transition.progress) /
                           static_cast<float>(transition.total - 1u);
-            channels[ch][offset + i] = source + (target - source) * mix;
+            float blended = source + (target - source) * mix;
+            if (!std::isfinite(blended)) {
+                const double wide = static_cast<double>(source) +
+                    (static_cast<double>(target) - source) * mix;
+                if (BiquadResultFitsFloat(wide)) blended = static_cast<float>(wide);
+            }
+            channels[ch][offset + i] = blended;
         }
         if (transition.transitioning) {
             ++transition.progress;
@@ -674,9 +696,24 @@ inline void BiquadProcessSmoothed(
 }
 
 inline float BiquadTick(const BiquadCoeffs& c, BiquadState& s, float x) {
-    const float y = c.b0 * x + s.z1;
-    s.z1 = c.b1 * x - c.a1 * y + s.z2;
-    s.z2 = c.b2 * x - c.a2 * y;
+    float y = c.b0 * x + s.z1;
+    float z1 = c.b1 * x - c.a1 * y + s.z2;
+    float z2 = c.b2 * x - c.a2 * y;
+    if (!std::isfinite(y) || !std::isfinite(z1) || !std::isfinite(z2)) {
+        // Retry from the original state, preserving the normal float path's
+        // rounding. Do not clamp or reset genuinely unrepresentable signals.
+        const double wideY = static_cast<double>(c.b0) * x + s.z1;
+        const double wideZ1 = static_cast<double>(c.b1) * x - c.a1 * wideY + s.z2;
+        const double wideZ2 = static_cast<double>(c.b2) * x - c.a2 * wideY;
+        if (BiquadResultFitsFloat(wideY) && BiquadResultFitsFloat(wideZ1) &&
+            BiquadResultFitsFloat(wideZ2)) {
+            y = static_cast<float>(wideY);
+            z1 = static_cast<float>(wideZ1);
+            z2 = static_cast<float>(wideZ2);
+        }
+    }
+    s.z1 = z1;
+    s.z2 = z2;
     return y;
 }
 

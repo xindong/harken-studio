@@ -303,4 +303,34 @@ TEST(BusFilter, LiveOutputFirstEnableDoesNotSnapHpf) {
         ExpectLiveFirstHpfCutCrossfades(&Vn_SetBusOutputFilter));
 }
 
+TEST(BusFilter, LargeFiniteGainDoesNotPoisonLaterAudio) {
+    EngineSession session(MakeNullConfig(2, kBlockFrames, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    std::vector<float> samples(8192, 1.0f);
+    for (std::size_t i = kBlockFrames; i < samples.size(); ++i) {
+        samples[i] = 0.25f * std::sin(static_cast<float>(i) *
+                                    6.283185307179586f * 1000.0f / 48000.0f);
+    }
+    const auto desc = MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
+    auto play = MakePlayDesc(harkentest::ObjectId(1));
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    ASSERT_EQ(VN_OK, Vn_SetBusFilter(VN_BUS_MASTER, harken::kFilterKindHighpass,
+                                    1000.0f, 0.707f, 1, 0));
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, 768.0f, 0));
+    Capture loud;
+    PumpAndCapture(session.Engine(), 1, loud);
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, 0.0f, 0));
+    Capture recovered;
+    PumpAndCapture(session.Engine(), 64, recovered);
+    double energy = 0.0;
+    for (std::size_t i = recovered.left.size() - 768; i < recovered.left.size(); ++i) {
+        ASSERT_TRUE(std::isfinite(recovered.left[i]));
+        energy += static_cast<double>(recovered.left[i]) * recovered.left[i];
+    }
+    // A 0.25-amplitude sine at the Butterworth corner has RMS 0.125.
+    EXPECT_NEAR(0.125, std::sqrt(energy / 768.0), 0.002);
+}
+
 } // namespace
