@@ -25,7 +25,7 @@ public:
     bool isWatching() const { return watching_ && !projectWriteActive_; }
     QStringList sourceFiles() const;
     void refreshSources();
-    bool beginProjectWrite(const QStringList& changedPaths);
+    bool beginProjectWrite(const QString& projectRoot, const QStringList& changedPaths);
     void endProjectWrite();
 
     void setDebounceInterval(int ms);

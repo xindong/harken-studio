@@ -76,32 +76,33 @@ void FileWatcher::stopWatching()
     if (wasWatching) qDebug() << "[FileWatcher] Stopped watching";
 }
 
-bool FileWatcher::beginProjectWrite(const QStringList& changedPaths)
+bool FileWatcher::beginProjectWrite(const QString& projectRoot, const QStringList& changedPaths)
 {
     if (!watching_ || projectWriteActive_) return false;
 #ifdef Q_OS_WIN
-    projectWriteActive_ = true;
-    debounceTimer_.stop();
-    suppressTimer_.stop();
-    suppressed_ = false;
-    pendingModified_.clear();
-    pendingWUModified_.clear();
-    sourceSnapshot_.clear();
-    projectSnapshot_.clear();
-    QSet<QString> changed;
-    for (const auto& path : changedPaths)
-        changed.insert(QDir::cleanPath(QDir::fromNativeSeparators(path)).toCaseFolded());
-    QStringList removed;
-    for (const auto& path : watcher_.files() + watcher_.directories())
-        if (changed.contains(QDir::cleanPath(QDir::fromNativeSeparators(path)).toCaseFolded()))
-            removed.append(path);
-    if (removed.isEmpty() || watcher_.removePaths(removed).isEmpty()) return true;
+    if (projectRoot == projectRoot_) {
+        projectWriteActive_ = true;
+        debounceTimer_.stop();
+        suppressTimer_.stop();
+        suppressed_ = false;
+        pendingModified_.clear();
+        pendingWUModified_.clear();
+        sourceSnapshot_.clear();
+        projectSnapshot_.clear();
+        QSet<QString> changed;
+        for (const auto& path : changedPaths)
+            changed.insert(QDir::cleanPath(QDir::fromNativeSeparators(path)).toCaseFolded());
+        QStringList removed;
+        for (const auto& path : watcher_.files() + watcher_.directories())
+            if (changed.contains(QDir::cleanPath(QDir::fromNativeSeparators(path)).toCaseFolded()))
+                removed.append(path);
+        if (removed.isEmpty() || watcher_.removePaths(removed).isEmpty()) return true;
+    }
 #else
     Q_UNUSED(changedPaths)
 #endif
-    const QString root = projectRoot_;
     stopWatching();
-    restartAfterWriteRoot_ = root;
+    restartAfterWriteRoot_ = projectRoot;
     projectWriteActive_ = true;
     return true;
 }

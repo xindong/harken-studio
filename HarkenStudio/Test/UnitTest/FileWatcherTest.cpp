@@ -114,7 +114,7 @@ class FileWatcherWriteContract : public FileWatcherContract,
 protected:
     bool beginWrite(const QStringList& paths)
     {
-        if (GetParam()) return watcher_.beginProjectWrite(paths);
+        if (GetParam()) return watcher_.beginProjectWrite(directory_.path(), paths);
         if (!watcher_.isWatching()) return false;
         watcher_.stopWatching();
         return true;
@@ -166,11 +166,11 @@ INSTANTIATE_TEST_SUITE_P(WriteLifecycle, FileWatcherWriteContract, ::testing::Bo
 
 TEST_F(FileWatcherContract, RollbackAndConsecutiveWritesPreserveLaterNotifications)
 {
-    ASSERT_TRUE(watcher_.beginProjectWrite({changed_}));
+    ASSERT_TRUE(watcher_.beginProjectWrite(directory_.path(), {changed_}));
     ASSERT_TRUE(replaceFile(changed_, "temporary transaction content"));
     ASSERT_TRUE(replaceFile(changed_, "changed before"));
     watcher_.endProjectWrite();
-    ASSERT_TRUE(watcher_.beginProjectWrite({changed_}));
+    ASSERT_TRUE(watcher_.beginProjectWrite(directory_.path(), {changed_}));
     ASSERT_TRUE(replaceFile(changed_, "next committed content"));
     watcher_.endProjectWrite();
     settleEvents();
@@ -194,7 +194,7 @@ TEST_F(FileWatcherContract, EmptyDirectoryChangesDoNotPreventWritesOrLeaveReplac
     ASSERT_TRUE(QDir().mkpath(removed));
     ASSERT_TRUE(QDir().mkpath(restored));
     watcher_.startWatching(directory_.path());
-    ASSERT_TRUE(watcher_.beginProjectWrite({}));
+    ASSERT_TRUE(watcher_.beginProjectWrite(directory_.path(), {}));
     ASSERT_TRUE(QDir().rename(removed, renamed));
     ASSERT_TRUE(QDir().rmdir(restored));
     ASSERT_TRUE(QDir().mkpath(restored));
@@ -213,7 +213,7 @@ TEST_F(FileWatcherContract, EmptyDirectoryChangesDoNotPreventWritesOrLeaveReplac
 
 TEST_F(FileWatcherContract, SourceCreationDeletionAndProjectClosureKeepTheirNotificationBoundaries)
 {
-    ASSERT_TRUE(watcher_.beginProjectWrite({changed_}));
+    ASSERT_TRUE(watcher_.beginProjectWrite(directory_.path(), {changed_}));
     ASSERT_TRUE(replaceFile(changed_, "saved"));
     watcher_.endProjectWrite();
     const QString added = directory_.filePath(QStringLiteral("AudioSources/Nested/Added.wav"));
@@ -222,12 +222,12 @@ TEST_F(FileWatcherContract, SourceCreationDeletionAndProjectClosureKeepTheirNoti
     ASSERT_TRUE(waitFor([&] {
         return addedSources_.contains(added) && removedSources_.contains(source_);
     }));
-    ASSERT_TRUE(watcher_.beginProjectWrite({changed_}));
+    ASSERT_TRUE(watcher_.beginProjectWrite(directory_.path(), {changed_}));
     watcher_.stopWatching();
     watcher_.endProjectWrite();
     EXPECT_FALSE(watcher_.isWatching());
     EXPECT_TRUE(watcher_.sourceFiles().isEmpty());
-    EXPECT_FALSE(watcher_.beginProjectWrite({changed_}));
+    EXPECT_FALSE(watcher_.beginProjectWrite(directory_.path(), {changed_}));
 
     QTemporaryDir reopened;
     ASSERT_TRUE(reopened.isValid());
@@ -250,7 +250,7 @@ TEST_F(FileWatcherContract, SourceCreationDeletionAndProjectClosureKeepTheirNoti
 
 TEST_F(FileWatcherContract, RestoredSizeAndTimestampDoNotHideNativeExternalChangeNotifications)
 {
-    ASSERT_TRUE(watcher_.beginProjectWrite({changed_}));
+    ASSERT_TRUE(watcher_.beginProjectWrite(directory_.path(), {changed_}));
     ASSERT_TRUE(replaceFile(changed_, "saved content"));
     watcher_.endProjectWrite();
     const QFileInfo committed(changed_);
@@ -275,7 +275,7 @@ TEST_F(FileWatcherContract, RestoredSizeAndTimestampDoNotHideNativeExternalChang
 TEST_F(FileWatcherContract, CaseOnlyReplacementDoesNotReportSelfWritesAndKeepsTheNewSpellingObserved)
 {
     const QString renamed = directory_.filePath(QStringLiteral("Layers/changed.VP"));
-    ASSERT_TRUE(watcher_.beginProjectWrite({renamed}));
+    ASSERT_TRUE(watcher_.beginProjectWrite(directory_.path(), {renamed}));
     ASSERT_TRUE(QFile::remove(changed_));
     ASSERT_TRUE(replaceFile(renamed, "case renamed content"));
     watcher_.endProjectWrite();
