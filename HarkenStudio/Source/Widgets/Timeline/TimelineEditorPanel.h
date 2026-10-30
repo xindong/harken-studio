@@ -273,6 +273,7 @@ private:
     int64_t authoredDuration(ProjectItem* target, int laneIndex) const;
     bool commitTimelineAction(ActionResult result);
     void applyThemeMetrics();
+    void refreshThemeIcons();
     void applyLaneHeaderWidth();
     void setLaneHeaderResizeHighlighted(bool highlighted);
     void elideLaneHeaderText();

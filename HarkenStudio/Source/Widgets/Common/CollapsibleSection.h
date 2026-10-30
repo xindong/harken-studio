@@ -47,6 +47,7 @@ protected:
 
 private:
     void applyTheme();
+    void refreshAppearance();
     int detectNestingLevel() const;
 
     QToolButton* toggleButton_;

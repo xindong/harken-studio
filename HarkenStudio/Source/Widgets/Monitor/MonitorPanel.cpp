@@ -340,7 +340,7 @@ void MonitorPanel::setCaptureController(Monitor::EventCaptureController* capture
     const auto refreshJumpIcon = [this] {
         jumpButton_->setIcon(ThemeManager::instance().resolveIcon(QString::fromLatin1(ThemeAssetIds::SelectorTarget)).icon);
     };
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, jumpButton_, refreshJumpIcon);
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, jumpButton_, refreshJumpIcon);
     refreshJumpIcon();
     autoScroll_->show();
     copy_->show();

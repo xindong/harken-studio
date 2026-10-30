@@ -59,6 +59,10 @@ TableGroupHeader::TableGroupHeader(const QString& text, QWidget* parent, ThemeMa
         connect(chevron_, &QToolButton::clicked, this, [this] { setExpanded(!expanded_); });
     }
     connect(themeManager_, &ThemeManager::themeChanged, this, &TableGroupHeader::applyTheme);
+    connect(themeManager_, &ThemeManager::appearanceChanged, this, [this] {
+        if (chevron_) chevron_->setIcon(chevronIcon(expanded_, themeManager_));
+        update();
+    });
     connect(&FontManager::instance(), &FontManager::fontChanged, this, &TableGroupHeader::applyTheme);
     applyTheme();
 }

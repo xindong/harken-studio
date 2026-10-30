@@ -35,7 +35,6 @@ struct BuiltinThemeDefinition
 
 constexpr BuiltinThemeDefinition kBuiltinThemes[]{
     {kBuiltinThemeId, "Harken Dark", createBuiltinDarkTheme},
-    {"harken.builtin.amber", "Harken Amber", createBuiltinAmberTheme},
 };
 
 const BuiltinThemeDefinition* findBuiltinTheme(const QString& id)

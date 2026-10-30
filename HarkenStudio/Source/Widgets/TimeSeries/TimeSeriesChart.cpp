@@ -55,6 +55,10 @@ TimeSeriesChart::TimeSeriesChart(QWidget* parent)
     setMouseTracking(true);
     setMinimumSize(80, 48);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this, [this] {
+        buffer_ = {};
+        update();
+    });
 }
 
 void TimeSeriesChart::updateData(const TimeSeriesChartModel& model)

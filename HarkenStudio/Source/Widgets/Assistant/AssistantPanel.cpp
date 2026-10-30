@@ -101,6 +101,19 @@ AIMessageWidget::AIMessageWidget(const QString& text, int fontSize, QWidget* par
 {
     setObjectName("AIMessageWidget");
     setupUI(text, fontSize);
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this,
+        [this, text, border = ThemeManager::instance().colors().borderSecondary]() mutable {
+            const auto color = ThemeManager::instance().colors().borderSecondary;
+            if (border == color) return;
+            border = color;
+            const auto html = AIMarkdownRenderer::renderToHtml(text, color);
+            if (contentLabel_->text() == html) return;
+            const int selectionStart = contentLabel_->selectionStart();
+            const int selectionLength = contentLabel_->selectedText().size();
+            contentLabel_->setText(html);
+            if (selectionStart >= 0)
+                contentLabel_->setSelection(selectionStart, selectionLength);
+        });
 }
 
 void AIMessageWidget::setupUI(const QString& text, int fontSize)
@@ -290,11 +303,13 @@ AssistantPanel::AssistantPanel(QWidget* parent)
     connect(&AppSettings::instance(), &AppSettings::fontSizeChanged,
             this, &AssistantPanel::onFontSettingsChanged);
 
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
+    connect(&FontManager::instance(), &FontManager::fontChanged,
             this, [this]() {
                 applyFontSettings();
                 update();
             });
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
+            this, &AssistantPanel::applyAppearance);
 }
 
 AssistantPanel::~AssistantPanel() = default;
@@ -403,7 +418,7 @@ void AssistantPanel::setupUI()
 
     applyFontSettings();
     updateInputFrameStyle(false);
-    applyNewConversationButtonStyle();
+    applyAppearance();
     setTurnActive(false);
     updateEmptyState();
 }
@@ -637,11 +652,7 @@ void AssistantPanel::onConversationSessionsChanged(
 void AssistantPanel::setTurnActive(bool active)
 {
     turnActive_ = active;
-    const auto& tc = ThemeManager::instance().colors();
-    sendBtn_->setIcon(ThemeManager::instance().resolveIcon(
-        QString::fromLatin1(active ? ThemeAssetIds::AssistantStop
-                                  : ThemeAssetIds::AssistantSend),
-        ThemeAssetVariant{QSize(), 1.0, 0, active ? tc.accentText : tc.textPrimary}).icon);
+    refreshSendIcon();
     sendBtn_->setToolTip(active ? tr("Stop the current AI operation") : tr("Send"));
     QtControlSkin::setSemanticProperty(sendBtn_, "turnActive", active);
     inputEdit_->setEnabled(!active);
@@ -874,12 +885,24 @@ void AssistantPanel::applyFontSettings()
     QFont inputFont(FontManager::instance().sansFamily());
     inputFont.setPixelSize(currentFontSize_);
     inputEdit_->setFont(inputFont);
-    updateInputFrameStyle(inputEdit_->hasFocus());
-    applyNewConversationButtonStyle();
-    setTurnActive(turnActive_);
-    applyEmptyLabelStyle();
 
     refreshMessages();
+}
+
+void AssistantPanel::applyAppearance()
+{
+    applyNewConversationButtonStyle();
+    refreshSendIcon();
+    applyEmptyLabelStyle();
+}
+
+void AssistantPanel::refreshSendIcon()
+{
+    const auto& colors = ThemeManager::instance().colors();
+    sendBtn_->setIcon(ThemeManager::instance().resolveIcon(
+        QString::fromLatin1(turnActive_ ? ThemeAssetIds::AssistantStop
+                                      : ThemeAssetIds::AssistantSend),
+        ThemeAssetVariant{QSize(), 1.0, 0, turnActive_ ? colors.accentText : colors.textPrimary}).icon);
 }
 
 void AssistantPanel::applyNewConversationButtonStyle()

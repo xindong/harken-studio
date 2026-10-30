@@ -32,6 +32,7 @@ ListFooter::ListFooter(QWidget* parent, bool standardButtons, ThemeManager* them
         removeButton_->setEnabled(false);
     }
     connect(themeManager_, &ThemeManager::themeChanged, this, [this] { applyTheme(); });
+    connect(themeManager_, &ThemeManager::appearanceChanged, this, &ListFooter::refreshIcons);
     applyTheme();
 }
 
@@ -78,20 +79,13 @@ void ListFooter::changeEvent(QEvent* event)
 void ListFooter::applyTheme()
 {
     if (!layout()) return;
-    if (addButton_)
-        addButton_->setIcon(themeManager_->resolveIcon(
-            QString::fromLatin1(ThemeAssetIds::TableAdd)).icon);
-    if (removeButton_)
-        removeButton_->setIcon(themeManager_->resolveIcon(
-            QString::fromLatin1(ThemeAssetIds::TableRemove)).icon);
+    refreshIcons();
     const auto& metrics = themeManager_->metrics().table;
     layout()->setContentsMargins(metrics.cellPaddingX, metrics.cellPaddingY,
                                  metrics.cellPaddingX, metrics.cellPaddingY);
     layout()->setSpacing(metrics.buttonSpacing);
     int height = metrics.footerHeight;
     for (auto* button : findChildren<QToolButton*>(QString(), Qt::FindDirectChildrenOnly)) {
-        const auto asset = button->property("tableIconAsset").toString();
-        if (!asset.isEmpty()) button->setIcon(themeManager_->resolveIcon(asset).icon);
         button->ensurePolished();
         const bool compact = button->property("tableCompactAction").toBool();
         if (compact) button->setIconSize(QSize(themeManager_->metrics().objectIconExtent,
@@ -105,6 +99,20 @@ void ListFooter::applyTheme()
         height = std::max(height, buttonHeight + metrics.cellPaddingY * 2);
     }
     setFixedHeight(height);
+}
+
+void ListFooter::refreshIcons()
+{
+    if (addButton_)
+        addButton_->setIcon(themeManager_->resolveIcon(
+            QString::fromLatin1(ThemeAssetIds::TableAdd)).icon);
+    if (removeButton_)
+        removeButton_->setIcon(themeManager_->resolveIcon(
+            QString::fromLatin1(ThemeAssetIds::TableRemove)).icon);
+    for (auto* button : findChildren<QToolButton*>(QString(), Qt::FindDirectChildrenOnly)) {
+        const auto asset = button->property("tableIconAsset").toString();
+        if (!asset.isEmpty()) button->setIcon(themeManager_->resolveIcon(asset).icon);
+    }
 }
 
 }

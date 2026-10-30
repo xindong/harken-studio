@@ -46,8 +46,7 @@ ToggleSwitch::ToggleSwitch(const QString& labelText, QWidget* parent)
     setCursor(Qt::PointingHandCursor);
 
     applyTheme();
-    connect(&theme, &ThemeManager::themeChanged, this, [this]() {
-        applyTheme();
+    connect(&theme, &ThemeManager::appearanceChanged, this, [this]() {
         update();
     });
 }

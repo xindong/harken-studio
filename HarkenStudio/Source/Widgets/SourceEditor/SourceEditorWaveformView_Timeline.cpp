@@ -324,13 +324,21 @@ void SourceEditorWaveformView::refreshTimelineControls()
             ? int(std::lround(viewStart_ / maxStart * scroll_->maximum())) : 0);
         scroll_->setEnabled(valid && page < kScrollSteps);
     }
-    auto& manager = ThemeManager::instance();
-    const auto theme = manager.snapshot();
     const int iconExtent = std::min(scroll_->sizeHint().height(), channelScroll_->sizeHint().width());
-    const ThemeAssetVariant variant{QSize(iconExtent, iconExtent), devicePixelRatioF(), 0, theme->ui.colors.textSecondary};
     for (auto* button : {zoomIn_, zoomOut_, verticalZoomIn_, verticalZoomOut_})
         button->setIconSize(QSize(iconExtent, iconExtent));
     units_->setToolTip(frameDisplay_ ? tr("Time unit: audio sample frames") : tr("Time unit: seconds"));
+    refreshTimelineAppearance();
+    layoutTimeline();
+}
+
+void SourceEditorWaveformView::refreshTimelineAppearance()
+{
+    if (!units_)
+        return;
+    auto& manager = ThemeManager::instance();
+    const auto theme = manager.snapshot();
+    const ThemeAssetVariant variant{zoomIn_->iconSize(), devicePixelRatioF(), 0, theme->ui.colors.textSecondary};
     zoomOut_->setIcon(manager.resolveIcon(QString::fromLatin1(ThemeAssetIds::TableRemove), variant).icon);
     zoomIn_->setIcon(manager.resolveIcon(QString::fromLatin1(ThemeAssetIds::TableAdd), variant).icon);
     verticalZoomIn_->setIcon(zoomIn_->icon());
@@ -339,7 +347,6 @@ void SourceEditorWaveformView::refreshTimelineControls()
     palette.setColor(QPalette::Window, theme->ui.colors.bgSecondary);
     palette.setColor(QPalette::WindowText, theme->ui.colors.textPrimary);
     handleValue_->setPalette(palette);
-    layoutTimeline();
 }
 
 void SourceEditorWaveformView::paintTimeline(QPainter& painter)

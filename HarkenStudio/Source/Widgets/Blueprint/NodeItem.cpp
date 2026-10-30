@@ -584,6 +584,12 @@ void NodeItem::refreshContentPresentation()
     update();
 }
 
+void NodeItem::refreshContentAppearance()
+{
+    if (contentPresentationFactory_) contentPresentation_ = contentPresentationFactory_();
+    update();
+}
+
 void NodeItem::setWaveformPeaks(const std::vector<float>& peaks)
 {
     waveformPeaks_ = peaks;

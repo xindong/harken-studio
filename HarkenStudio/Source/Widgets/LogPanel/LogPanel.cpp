@@ -308,7 +308,7 @@ LogPanel::LogPanel(QWidget* parent)
     setupUI();
     setupConnections();
     refreshIcons();
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
             this, [this]() { refreshIcons(); });
     
     connect(&AppSettings::instance(), &AppSettings::fontSizeChanged,

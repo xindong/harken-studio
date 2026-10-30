@@ -140,6 +140,7 @@ TEST_F(ProjectTreePanelAnchorTest, RefreshedPresentationMatchesFreshRowsAcrossAu
     PresentationProbeExplorer explorer;
     auto& theme = ThemeManager::instance();
     const auto committedAppearance = theme.appearance();
+    const auto committedSnapshot = theme.snapshot();
     const auto cancelPreview = qScopeGuard([&] { theme.cancelAppearancePreview(); });
 
     const auto verify = [&](const char* stage) {
@@ -185,9 +186,15 @@ TEST_F(ProjectTreePanelAnchorTest, RefreshedPresentationMatchesFreshRowsAcrossAu
 
     auto preview = committedAppearance;
     preview.themeId = builtinThemeId();
-    preview.colors[preview.themeId].insert(QStringLiteral("accent.primary"), QColor(201, 47, 129));
-    preview.colors[preview.themeId].insert(QStringLiteral("text.primary"), QColor(41, 192, 156));
+    const QColor previewAccent(201, 47, 129);
+    const QColor previewText(41, 192, 156);
+    preview.colors[preview.paletteId].insert(QStringLiteral("accent.primary"), previewAccent);
+    preview.colors[preview.paletteId].insert(QStringLiteral("text.primary"), previewText);
     ASSERT_TRUE(theme.previewAppearance(preview).ok());
+    ASSERT_EQ(theme.snapshot()->ui.colors.accent, previewAccent);
+    ASSERT_EQ(theme.snapshot()->ui.colors.textPrimary, previewText);
+    ASSERT_NE(theme.snapshot()->ui.colors.accent, committedSnapshot->ui.colors.accent);
+    ASSERT_NE(theme.snapshot()->ui.colors.textPrimary, committedSnapshot->ui.colors.textPrimary);
     verify("theme preview");
     EXPECT_EQ(theme.appearance(), committedAppearance);
     theme.cancelAppearancePreview();

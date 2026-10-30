@@ -91,6 +91,21 @@ TEST(ThemeAssetResolver, ReloadSeparatesCacheAndKeepsOldHandleAlive)
     ASSERT_NE(oldResource, nullptr);
     ASSERT_TRUE(writeImage(imagePath, Qt::blue));
 
+    auto preview = manager.appearance();
+    preview.colors[preview.paletteId].insert(QStringLiteral("accent.primary"), Qt::green);
+    ASSERT_TRUE(manager.previewAppearance(preview).ok());
+    EXPECT_EQ(manager.assetResolver().resolveImage(
+                  manager.snapshot(), QStringLiteral("meter.peak.cap")).resource,
+              oldResource);
+    manager.cancelAppearancePreview();
+    EXPECT_EQ(manager.assetResolver().resolveImage(
+                  manager.snapshot(), QStringLiteral("meter.peak.cap")).resource,
+              oldResource);
+    ASSERT_TRUE(manager.applyAppearance(preview).ok());
+    EXPECT_EQ(manager.assetResolver().resolveImage(
+                  manager.snapshot(), QStringLiteral("meter.peak.cap")).resource,
+              oldResource);
+
     ASSERT_TRUE(manager.reloadTheme().ok());
     const auto currentResource = manager.assetResolver().resolveImage(
         manager.snapshot(), QStringLiteral("meter.peak.cap")).resource;

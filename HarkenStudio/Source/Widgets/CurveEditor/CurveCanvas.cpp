@@ -288,7 +288,7 @@ CurveCanvas::CurveCanvas(QWidget* parent)
                                [this]() { pasteFromClipboard(); });
     shortcuts.bindWidgetAction(Shortcuts::Delete, this,
                                [this]() { deleteSelectedPoint(); });
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
             this, [this]() { update(); });
     setCurve({});
 }

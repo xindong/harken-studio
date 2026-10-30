@@ -82,7 +82,7 @@ QPixmap SvgIconEngine::scaledPixmap(const QSize& size, QIcon::Mode mode,
         : offLogicalId_;
     const QColor color = resolveColor(mode);
     const QString cacheKey = QStringLiteral("theme-icon:%1:%2:%3x%4:%5:%6:%7:%8")
-        .arg(snapshot_->generation)
+        .arg(resolver_->assetGeneration(snapshot_))
         .arg(logicalId)
         .arg(size.width())
         .arg(size.height())
@@ -124,7 +124,7 @@ QSize SvgIconEngine::actualSize(const QSize& size, QIcon::Mode, QIcon::State)
 QString SvgIconEngine::key() const
 {
     return QStringLiteral("ThemeAssetIconEngine:%1:%2:%3:%4")
-        .arg(snapshot_ ? snapshot_->generation : 0)
+        .arg(resolver_ ? resolver_->assetGeneration(snapshot_) : 0)
         .arg(onLogicalId_, offLogicalId_,
              overrideColor_.isValid() ? overrideColor_.name(QColor::HexArgb)
                                       : QString());

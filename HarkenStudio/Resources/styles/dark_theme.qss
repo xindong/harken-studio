@@ -365,6 +365,10 @@ QAbstractButton[flatIconButton="true"] {
     padding: 0px;
 }
 
+QAbstractButton[flatIconButton="true"][iconButtonBackground="true"] {
+    background-color: @bgTertiary@;
+}
+
 QAbstractButton[flatIconButton="true"]:hover:enabled,
 QAbstractButton[flatIconButton="true"]:pressed:enabled {
     background-color: @iconButtonHover@;

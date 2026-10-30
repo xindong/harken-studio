@@ -348,6 +348,9 @@ TimelineEditorPanel::TimelineEditorPanel(QWidget* parent,
 
     connect(themeManager_, &ThemeManager::themeChanged, this, [this] {
         applyThemeMetrics();
+    });
+    connect(themeManager_, &ThemeManager::appearanceChanged, this, [this] {
+        refreshThemeIcons();
         refreshTimelinePaint();
     });
     connect(&FontManager::instance(), &FontManager::fontChanged,
@@ -575,20 +578,12 @@ void TimelineEditorPanel::applyThemeMetrics()
     const auto& metrics = themeManager_->metrics();
     toolbar_->setFixedHeight(metrics.timeline.rulerHeight);
     const int extent = horizontalScrollBar_->sizeHint().height();
-    const ThemeAssetVariant variant{QSize(extent, extent), devicePixelRatioF(), 0,
-        themeManager_->snapshot()->ui.colors.textSecondary};
     for (auto* button : {addTrackButton_, zoomInButton_, zoomOutButton_,
                          verticalZoomInButton_, verticalZoomOutButton_}) {
         button->setFixedSize(extent, extent);
         button->setIconSize(QSize(extent, extent));
     }
-    addTrackButton_->setIcon(themeManager_->resolveIcon(
-        QString::fromLatin1(ThemeAssetIds::TableAdd), variant).icon);
-    zoomInButton_->setIcon(addTrackButton_->icon());
-    zoomOutButton_->setIcon(themeManager_->resolveIcon(
-        QString::fromLatin1(ThemeAssetIds::TableRemove), variant).icon);
-    verticalZoomInButton_->setIcon(zoomInButton_->icon());
-    verticalZoomOutButton_->setIcon(zoomOutButton_->icon());
+    refreshThemeIcons();
     verticalTools_->setFixedWidth(extent + 1);
     scrollCorner_->setFixedWidth(verticalTools_->width());
     headerColumn_->refreshRows();
@@ -596,6 +591,19 @@ void TimelineEditorPanel::applyThemeMetrics()
     syncLaneGeometry();
     refreshHorizontalRange();
     refreshTimelinePaint();
+}
+
+void TimelineEditorPanel::refreshThemeIcons()
+{
+    const ThemeAssetVariant variant{addTrackButton_->iconSize(), devicePixelRatioF(), 0,
+        themeManager_->colors().textSecondary};
+    addTrackButton_->setIcon(themeManager_->resolveIcon(
+        QString::fromLatin1(ThemeAssetIds::TableAdd), variant).icon);
+    zoomInButton_->setIcon(addTrackButton_->icon());
+    zoomOutButton_->setIcon(themeManager_->resolveIcon(
+        QString::fromLatin1(ThemeAssetIds::TableRemove), variant).icon);
+    verticalZoomInButton_->setIcon(zoomInButton_->icon());
+    verticalZoomOutButton_->setIcon(zoomOutButton_->icon());
 }
 
 void TimelineEditorPanel::applyPresentation()

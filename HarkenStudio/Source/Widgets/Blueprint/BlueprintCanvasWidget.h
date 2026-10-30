@@ -282,11 +282,13 @@ private:
     int nodeContentLabelWidth_ = 0;
     bool contentRetirementScheduled_ = false;
     bool contentPresentationRefreshScheduled_ = false;
+    bool contentStructureRefreshNeeded_ = false;
     void initializeNodeEditors_();
     void trackNodeEditor_(NodeItem* node, NodeContentEditor* editor);
     void activateNodeEditorAt_(const QPoint& position);
     void scheduleContentRetirement_();
     void scheduleContentPresentationRefresh_();
+    void scheduleContentAppearanceRefresh_();
     void refreshContentPresentations_();
     void installNodeEditor_(NodeItem* node, const BlueprintNodeDesc& desc);
     void installGainEditor_(NodeItem* node);

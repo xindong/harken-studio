@@ -24,6 +24,7 @@ inline constexpr char RemoteConnect[] = "shell.remote.connect";
 inline constexpr char MonitorCapture[] = "shell.monitor.capture";
 inline constexpr char PlatformEditAll[] = "shell.platform.editAll";
 inline constexpr char Settings[] = "navigation.settings";
+inline constexpr char ColorEyedropper[] = "color.eyedropper";
 inline constexpr char DockClose[] = "dock.close";
 inline constexpr char DockPin[] = "dock.pin";
 inline constexpr char DockPinFilled[] = "dock.pin.filled";

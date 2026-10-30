@@ -26,17 +26,35 @@ void BlueprintCanvasWidget::initializeNodeEditors_()
     connect(this, &BlueprintCanvasView::zoomChanged, this, [this] { scheduleContentRetirement_(); });
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
         this, &BlueprintCanvasWidget::scheduleContentPresentationRefresh_);
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
+        this, &BlueprintCanvasWidget::scheduleContentAppearanceRefresh_);
     connect(&FontManager::instance(), &FontManager::fontChanged,
         this, &BlueprintCanvasWidget::scheduleContentPresentationRefresh_);
 }
 
 void BlueprintCanvasWidget::scheduleContentPresentationRefresh_()
 {
+    contentStructureRefreshNeeded_ = true;
+    scheduleContentAppearanceRefresh_();
+}
+
+void BlueprintCanvasWidget::scheduleContentAppearanceRefresh_()
+{
     if (!contentRenderer_ || contentPresentationRefreshScheduled_) return;
     contentPresentationRefreshScheduled_ = true;
     QTimer::singleShot(0, this, [this] {
         contentPresentationRefreshScheduled_ = false;
-        refreshContentPresentations_();
+        if (contentStructureRefreshNeeded_) {
+            contentStructureRefreshNeeded_ = false;
+            refreshContentPresentations_();
+        } else {
+            contentRenderer_->clearDrawings();
+            for (const auto& [key, node] : nodeMap_)
+                node->refreshContentAppearance();
+            for (auto* node : gainNodes_)
+                if (node) node->refreshContentAppearance();
+            viewport()->update();
+        }
     });
 }
 
@@ -218,7 +236,7 @@ void BlueprintCanvasWidget::installGainEditor_(NodeItem* node)
         return editor;
     }, [this, node]() {
         return contentRenderer_->presentation(node->contentInfo(), node->contentFields(),
-            NodeContentEditor::labelWidth(node->contentFields()), true);
+            std::nullopt, true);
     });
 }
 

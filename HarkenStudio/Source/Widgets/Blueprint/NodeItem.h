@@ -177,6 +177,7 @@ public:
     QWidget* ensureContentWidget();
     bool releaseContentWidget();
     void refreshContentPresentation();
+    void refreshContentAppearance();
 
     void setContentFields(NodeContentFields fields);
     NodeContentFields contentFields() const { return contentFields_; }

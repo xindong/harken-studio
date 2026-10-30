@@ -97,6 +97,8 @@ private slots:
 private:
     void setupUI();
     void applyFontSettings();
+    void applyAppearance();
+    void refreshSendIcon();
     void refreshMessages();
     void relayoutMessages();
     void applyNewConversationButtonStyle();

@@ -3,6 +3,7 @@
 #include "Core/IPC/IPCServer.h"
 #include "Core/LayoutController.h"
 #include "Core/SelectionRouter.h"
+#include "Core/ThemeManager.h"
 #include "Core/UndoCommands.h"
 #include "Components/VTrack.h"
 #include "MainWindow.h"
@@ -10,6 +11,7 @@
 #include "ProjectManager.h"
 #include "ProjectTypes.h"
 #include "Widgets/Blueprint/BlueprintCanvasWidget.h"
+#include "Widgets/Blueprint/NodeContentEditor.h"
 #include "Widgets/GridEditor/GridEditorPanel.h"
 #include "Widgets/GridEditor/DiscreteGridWidget.h"
 #include "Widgets/GridEditor/SelectionListWidget.h"
@@ -36,6 +38,8 @@
 #include <QTableWidget>
 #include <QTcpSocket>
 #include <QMouseEvent>
+#include <QPainter>
+#include <QPointer>
 #include <QTimer>
 #include <memory>
 
@@ -149,6 +153,72 @@ protected:
     VNX::LayoutController* controller_ = nullptr;
 };
 
+}
+
+TEST_F(EditorDockLayoutTest, ColorRefreshPreservesBlueprintEditorsAndStructureRefreshReplacesThem)
+{
+    auto& project = VNX::ProjectManager::instance();
+    ASSERT_NE(project.createItem(nullptr, QStringLiteral("ColorPreviewNode"), VNX::ProjectItem::Type::Sound), nullptr);
+    auto* blueprint = window_->findChild<VNX::BlueprintCanvasWidget*>();
+    ASSERT_NE(blueprint, nullptr);
+    blueprint->setSoundsFiltered(false);
+    blueprint->rebuildFromProject();
+    drainEvents();
+    drainEvents();
+
+    QList<QPointer<VNX::NodeContentEditor>> editors;
+    for (auto* widget : QApplication::allWidgets()) {
+        auto* editor = qobject_cast<VNX::NodeContentEditor*>(widget);
+        if (editor && editor->isHidden() && editor->parentWidget()
+            && !editor->parentWidget()->parentWidget()) editors.append(editor);
+    }
+    ASSERT_FALSE(editors.isEmpty());
+
+    VNX::NodeContentRenderer renderer;
+    VNX::NodeContentInfo content;
+    content.volume = -3.0f;
+    const auto initialDrawing = renderer.presentation(content, content.fields(), std::nullopt, true);
+    const auto image = [](const VNX::NodeContentPresentation& presentation) {
+        QImage result(presentation.size, QImage::Format_ARGB32_Premultiplied);
+        result.fill(Qt::transparent);
+        QPainter painter(&result);
+        painter.drawPicture(0, 0, presentation.drawing);
+        return result;
+    };
+    const auto initialImage = image(initialDrawing);
+
+    const auto originalPalette = blueprint->viewport()->palette();
+    auto palette = originalPalette;
+    palette.setColor(QPalette::Base, QColor(QStringLiteral("#326475")));
+    blueprint->viewport()->setPalette(palette);
+    drainEvents();
+    for (const auto& editor : editors) EXPECT_FALSE(editor.isNull());
+
+    auto& theme = VNX::ThemeManager::instance();
+    const auto restore = qScopeGuard([&] {
+        theme.cancelAppearancePreview();
+        blueprint->viewport()->setPalette(originalPalette);
+        drainEvents();
+    });
+    auto draft = theme.appearance();
+    draft.colors[draft.paletteId].insert(QStringLiteral("background.primary"), QColor(QStringLiteral("#293746")));
+    draft.colors[draft.paletteId].insert(QStringLiteral("text.primary"), QColor(QStringLiteral("#ff3366")));
+    ASSERT_TRUE(theme.previewAppearance(draft).ok());
+    drainEvents();
+    for (const auto& editor : editors) EXPECT_FALSE(editor.isNull());
+    renderer.clearDrawings();
+    const auto colorDrawing = renderer.presentation(content, content.fields(), std::nullopt, true);
+    EXPECT_EQ(colorDrawing.size, initialDrawing.size);
+    EXPECT_EQ(colorDrawing.fields, initialDrawing.fields);
+    EXPECT_NE(image(colorDrawing), initialImage);
+    content.volume = -12.0f;
+    const auto valueDrawing = renderer.presentation(content, content.fields(), std::nullopt, true);
+    EXPECT_NE(image(valueDrawing), image(colorDrawing));
+
+    QEvent styleChange(QEvent::StyleChange);
+    QApplication::sendEvent(blueprint->viewport(), &styleChange);
+    drainEvents();
+    for (const auto& editor : editors) EXPECT_TRUE(editor.isNull());
 }
 
 TEST_F(EditorDockLayoutTest, AuditionTargetInvalidatesWithDeletedSubtreesAndProjectClosure)

@@ -53,6 +53,18 @@ namespace VNX {
 namespace {
 constexpr int kBucketRole = TreeRowStyle::kBucketRole;
 
+QColor mediaStatusColor(MediaStatus status)
+{
+    const auto& colors = ThemeManager::instance().colors();
+    switch (status) {
+    case MediaStatus::Outdated: return colors.warning;
+    case MediaStatus::Missing:
+    case MediaStatus::Error: return colors.error;
+    case MediaStatus::Orphaned: return colors.textMuted;
+    default: return {};
+    }
+}
+
 struct TreeRowIconKey
 {
     quint64 themeGeneration = 0;
@@ -186,15 +198,32 @@ void ProjectTreePanel::initPanel()
             [this]() {
                 const int extent = ThemeManager::instance().metrics().objectIconExtent;
                 treeWidget_->setIconSize(QSize(extent, extent));
-                for (auto it = itemMap_.cbegin(); it != itemMap_.cend(); ++it)
-                    updateTreeItem(it.key(), it.value());
+            });
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this,
+            [this]() {
+                const QSignalBlocker blocker(treeWidget_->model());
+                for (auto it = itemMap_.cbegin(); it != itemMap_.cend(); ++it) {
+                    QColor color;
+                    const auto* item = it.value();
+                    if (item->type == ProjectItem::Type::Sound) {
+                        const auto language = SoundSourceEditing::previewLanguage(
+                            *item, LanguageContextService::instance().language());
+                        const auto source = SoundSourceEditing::activeSourceId(
+                            *item, PlatformContextService::instance().context().primary, language);
+                        if (source != 0) color = mediaStatusColor(MediaPool::instance().cachedStatus(source));
+                        it.key()->setData(0, Qt::ForegroundRole,
+                            color.isValid() ? QVariant::fromValue(QBrush(color)) : QVariant());
+                    }
+                    it.key()->setIcon(0, decorateItemIcon(iconForItem(*item, color), item));
+                }
+                const auto folderIcon = ThemeManager::instance().resolveToggleIcon(
+                    QString::fromLatin1(ThemeAssetIds::TreeFolderOpen),
+                    QString::fromLatin1(ThemeAssetIds::TreeFolderClosed)).icon;
                 for (auto it = folderMap_.cbegin(); it != folderMap_.cend(); ++it)
-                    updateFolderRow(it.key(), it.value());
+                    it.key()->setIcon(0, folderIcon);
                 for (QTreeWidgetItem* folder : std::as_const(categoryFolders_)) {
                     if (folder)
-                        folder->setIcon(0, ThemeManager::instance().resolveToggleIcon(
-                            QString::fromLatin1(ThemeAssetIds::TreeFolderOpen),
-                            QString::fromLatin1(ThemeAssetIds::TreeFolderClosed)).icon);
+                        folder->setIcon(0, folderIcon);
                 }
                 if (treeWidget_)
                     treeWidget_->viewport()->update();
@@ -2202,7 +2231,7 @@ void ProjectTreePanel::updateTreeItem(QTreeWidgetItem* treeItem, ProjectItem* pr
     if (activeSourceID != 0)
     {
         MediaStatus mediaStatus = MediaPool::instance().cachedStatus(activeSourceID);
-        const auto& tc = ThemeManager::instance().colors();
+        statusColor = mediaStatusColor(mediaStatus);
         QString statusLabel;
 
         switch (mediaStatus) {
@@ -2213,22 +2242,18 @@ void ProjectTreePanel::updateTreeItem(QTreeWidgetItem* treeItem, ProjectItem* pr
                 statusLabel = tr("Not Converted");
                 break;
             case MediaStatus::Outdated:
-                statusColor = tc.warning;
                 statusLabel = tr("Outdated");
                 break;
             case MediaStatus::Missing:
-                statusColor = tc.error;
                 statusLabel = tr("Missing");
                 break;
             case MediaStatus::Orphaned:
-                statusColor = tc.textMuted;
                 statusLabel = tr("Orphaned");
                 break;
             case MediaStatus::Converting:
                 statusLabel = tr("Converting...");
                 break;
             case MediaStatus::Error:
-                statusColor = tc.error;
                 statusLabel = tr("Error");
                 break;
         }
