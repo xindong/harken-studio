@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <utility>
 
 namespace VNX {
 
@@ -130,6 +131,237 @@ QString packDomain(const QJsonObject& object, int schemaVersion)
     return {};
 }
 
+QJsonValue valueAt(QJsonValue value, const QStringList& path)
+{
+    for (const QString& segment : path) {
+        if (!value.isObject()) return QJsonValue(QJsonValue::Undefined);
+        const QJsonObject object = value.toObject();
+        if (!object.contains(segment)) return QJsonValue(QJsonValue::Undefined);
+        value = object.value(segment);
+    }
+    return value;
+}
+
+struct LocatedValue
+{
+    QJsonValue value;
+    QJsonObject parent;
+    QString path;
+};
+
+QList<LocatedValue> locatedValues(const QJsonObject& root,
+                                  const QStringList& segments,
+                                  const QString& rootPath)
+{
+    QList<LocatedValue> values;
+    std::function<void(const QJsonValue&, qsizetype, const QString&,
+                       const QJsonObject&)> visit;
+    visit = [&](const QJsonValue& current, qsizetype index,
+                const QString& path, const QJsonObject& parent) {
+        if (index == segments.size()) {
+            values.append({current, parent, path});
+            return;
+        }
+        const QString& segment = segments.at(index);
+        if (segment == QLatin1String("*")) {
+            if (!current.isArray()) return;
+            const QJsonArray array = current.toArray();
+            for (qsizetype itemIndex = 0; itemIndex < array.size(); ++itemIndex) {
+                const QJsonValue item = array.at(itemIndex);
+                visit(item, index + 1,
+                      path + QStringLiteral("[%1]").arg(itemIndex),
+                      item.toObject());
+            }
+            return;
+        }
+        if (!current.isObject()) return;
+        const QJsonObject object = current.toObject();
+        if (!object.contains(segment)) return;
+        visit(object.value(segment), index + 1,
+              path + QLatin1Char('.') + segment, object);
+    };
+    visit(root, 0, rootPath, root);
+    return values;
+}
+
+QJsonObject rootSemanticProjection(const QJsonObject& document)
+{
+    QJsonObject result = document;
+    QJsonObject content = result.value(QStringLiteral("content")).toObject();
+    QJsonObject metadata = content.value(QStringLiteral("metadata")).toObject();
+    metadata.remove(QStringLiteral("modifiedDate"));
+    content.insert(QStringLiteral("metadata"), metadata);
+    result.insert(QStringLiteral("content"), content);
+    return result;
+}
+
+QJsonArray documentSemanticProjection(const QJsonObject& document, int schemaVersion,
+                                      QList<ProjectSchemaReferenceRule>* referenceRules = nullptr)
+{
+    const QJsonObject header = document.value(QStringLiteral("harkenDocument")).toObject();
+    const QJsonObject content = document.value(QStringLiteral("content")).toObject();
+    const QJsonObject components = content.value(QStringLiteral("components")).toObject();
+    QJsonArray result{header, content.value(QStringLiteral("guid")),
+        content.value(QStringLiteral("type")), content.value(QStringLiteral("name")),
+        content.value(QStringLiteral("children")), content.value(QStringLiteral("fieldGroups")),
+        components.value(QStringLiteral("selection")),
+        components.value(QStringLiteral("tracktimeline")),
+        components.value(QStringLiteral("action")),
+        components.value(QStringLiteral("mixnode")).toObject().value(QStringLiteral("bindings"))};
+    ContractRuleExecutor executor;
+    executor.uniqueAcrossProjectCheck = [&](const QStringList& fields) {
+        for (const QString& field : fields)
+            result.append(field == QLatin1String("documentId")
+                ? header.value(QStringLiteral("id")) : content.value(field));
+    };
+    executor.documentIdMirrorsRootCheck = [&](const QStringList&) {
+        result.append(header.value(QStringLiteral("id")));
+        result.append(content.value(QStringLiteral("guid")));
+    };
+    executor.projectIdUniformCheck = [&] {
+        result.append(header.value(QStringLiteral("projectId")));
+    };
+    executor.referencesResolveCheck = [&](const QList<ProjectSchemaReferenceRule>& references) {
+        if (referenceRules) *referenceRules = references;
+        for (const ProjectSchemaReferenceRule& reference : references) {
+            QJsonArray values;
+            for (const LocatedValue& located : locatedValues(content, reference.path, {})) {
+                QJsonArray entry{located.path, located.value};
+                if (!reference.selectorField.isEmpty())
+                    entry.append(located.parent.value(reference.selectorField));
+                values.append(entry);
+            }
+            result.append(values);
+        }
+    };
+    executor.acyclicCheck = [&](const QStringList& path) {
+        result.append(valueAt(content, path));
+    };
+    executor.singletonCheck = [&](const QString&, const QStringList& path,
+                                  const QString&, const QString&) {
+        result.append(valueAt(content, path));
+    };
+    executor.schemaVersionUniformCheck = [&] {
+        result.append(header.value(QStringLiteral("schemaVersion")));
+    };
+    QStringList errors;
+    if (!GeneratedSchemaRegistry::validateProjectRules(schemaVersion, executor, errors)
+        || !errors.isEmpty())
+        return {};
+    return result;
+}
+
+QSet<QString> referencedDocumentPaths(const QJsonObject& document, int schemaVersion,
+                                     const QHash<QString, QString>& pathsByGuid,
+                                     const QString& rootBusPath)
+{
+    QSet<QString> result;
+    const auto addReference = [&](const QJsonValue& value) {
+        const QUuid guid = QUuid::fromString(value.isObject()
+            ? value.toObject().value(QStringLiteral("id")).toString() : value.toString());
+        if (guid.isNull()) return;
+        const auto path = pathsByGuid.constFind(guid.toString(QUuid::WithoutBraces));
+        if (path != pathsByGuid.cend()) result.insert(path.value());
+    };
+    const QJsonObject content = document.value(QStringLiteral("content")).toObject();
+    QList<ProjectSchemaReferenceRule> referenceRules;
+    documentSemanticProjection(document, schemaVersion, &referenceRules);
+    for (const auto& rule : referenceRules)
+        for (const auto& value : locatedValues(content, rule.path, {}))
+            addReference(value.value);
+
+    const QJsonObject groups = content.value(QStringLiteral("fieldGroups")).toObject();
+    const auto addGroupReferences = [&](const QJsonObject& scope) {
+        addReference(valueAt(scope, {QStringLiteral("mainOutput"), QStringLiteral("values"),
+                                     QStringLiteral("mainOutputBusRef")}));
+        addReference(valueAt(scope, {QStringLiteral("spatialRating"), QStringLiteral("values"),
+                                     QStringLiteral("spatialAttenuationRef")}));
+        for (const auto& row : valueAt(scope, {QStringLiteral("send"), QStringLiteral("values"),
+                                              QStringLiteral("sends")}).toArray())
+            addReference(row.toObject().value(QStringLiteral("targetBusID")));
+    };
+    if (!groups.isEmpty()) {
+        if (!rootBusPath.isEmpty()) result.insert(rootBusPath);
+        addGroupReferences(groups.value(QStringLiteral("shared")).toObject());
+        const QJsonObject platforms = groups.value(QStringLiteral("platforms")).toObject();
+        for (auto scope = platforms.constBegin(); scope != platforms.constEnd(); ++scope)
+            addGroupReferences(scope.value().toObject());
+    }
+
+    const QJsonObject components = content.value(QStringLiteral("components")).toObject();
+    const QJsonObject selection = components.value(QStringLiteral("selection")).toObject();
+    const QJsonObject selections = selection.value(QStringLiteral("selections")).toObject();
+    const auto addSelectionReferences = [&](const QJsonObject& table) {
+        for (const auto& axis : table.value(QStringLiteral("matchAxes")).toArray()) addReference(axis);
+        for (const auto& axis : table.value(QStringLiteral("blendAxes")).toArray())
+            addReference(axis.isObject() ? axis.toObject().value(QStringLiteral("variable")) : axis);
+        for (const auto& row : table.value(QStringLiteral("entries")).toArray()) {
+            const QJsonObject entry = row.toObject();
+            addReference(entry.value(QStringLiteral("childGuid")));
+            for (const auto& curve : entry.value(QStringLiteral("curves")).toArray())
+                addReference(curve.toObject().value(QStringLiteral("variable")));
+        }
+    };
+    addSelectionReferences(selections.value(QStringLiteral("shared")).toObject());
+    const QJsonObject selectionPlatforms = selections.value(QStringLiteral("platforms")).toObject();
+    for (auto table = selectionPlatforms.constBegin(); table != selectionPlatforms.constEnd(); ++table)
+        addSelectionReferences(table.value().toObject());
+    for (const auto& rule : selection.value(QStringLiteral("transitions")).toObject()
+             .value(QStringLiteral("rules")).toArray()) {
+        const QJsonObject transition = rule.toObject();
+        for (const auto* field : {"source", "target", "bridge"})
+            addReference(transition.value(QLatin1String(field)));
+    }
+    for (const auto& binding : components.value(QStringLiteral("mixnode")).toObject()
+             .value(QStringLiteral("bindings")).toArray())
+        addReference(binding.toObject().value(QStringLiteral("variable")));
+    for (const auto& step : components.value(QStringLiteral("action")).toObject()
+             .value(QStringLiteral("steps")).toArray()) {
+        addReference(step.toObject().value(QStringLiteral("targetRef")));
+        addReference(valueAt(step, {QStringLiteral("quantize"), QStringLiteral("referenceRef")}));
+    }
+    return result;
+}
+
+QSet<QString> inheritedDocumentPaths(const QSet<QString>& references)
+{
+    QSet<QString> result;
+    for (const QString& path : references) {
+        const QString domain = domainForFolder(path.section(QLatin1Char('/'), 0, 0));
+        if (domain == QLatin1String("pack.bus") || domain == QLatin1String("pack.attenuation")
+            || domain == QLatin1String("pack.variable"))
+            result.insert(path);
+    }
+    return result;
+}
+
+}
+
+void ProjectContractValidationBaseline::clear()
+{
+    *this = {};
+}
+
+QStringList ProjectContractValidationBaseline::dependencyPaths(
+    const QStringList& changedPaths) const
+{
+    if (!valid_ || changedPaths.isEmpty()) return {};
+    QSet<QString> paths{rootRelativePath_};
+    QSet<QString> ancestors;
+    for (const QString& path : changedPaths) {
+        paths.insert(path);
+        paths.unite(dependencies_.value(path));
+        QString parent = parentPaths_.value(path);
+        while (!parent.isEmpty() && !ancestors.contains(parent)) {
+            ancestors.insert(parent);
+            paths.insert(parent);
+            paths.unite(inheritedDependencies_.value(parent));
+            parent = parentPaths_.value(parent);
+        }
+    }
+    QStringList result = paths.values();
+    result.sort();
+    return result;
 }
 
 void ProjectContractReadContext::clear()
@@ -302,39 +534,129 @@ QStringList ProjectContractRegistry::validateTree(
     const QString& projectDirectory, const QJsonObject& projectRootDocument,
     bool requireCurrentSchema,
     const QHash<QString, QJsonObject>& overrides,
-    ProjectContractReadContext* context) const
+    ProjectContractReadContext* context,
+    ProjectContractValidationBaseline* baseline,
+    const QString& rootRelativePath) const
 {
     return validateTreeImpl(projectDirectory, projectRootDocument, requireCurrentSchema,
-                            overrides, context, false);
+                            overrides, context, false, baseline, true, false, rootRelativePath);
 }
 
 QStringList ProjectContractRegistry::validateSnapshot(
     const QString& projectDirectory, const QJsonObject& projectRootDocument,
     bool requireCurrentSchema, const QHash<QString, QJsonObject>& documents,
-    ProjectContractReadContext* context) const
+    ProjectContractReadContext* context,
+    ProjectContractValidationBaseline* baseline,
+    const QString& rootRelativePath, bool includePhysicalDocuments) const
 {
     return validateTreeImpl(projectDirectory, projectRootDocument, requireCurrentSchema,
-                            documents, context, true);
+                            documents, context, true, baseline, includePhysicalDocuments,
+                            false, rootRelativePath);
+}
+
+QStringList ProjectContractRegistry::validateIncrementalSnapshot(
+    const QString& projectDirectory, const QJsonObject& projectRootDocument,
+    bool requireCurrentSchema, const QHash<QString, QJsonObject>& changedDocuments,
+    const QSet<QString>& removedPaths,
+    const ProjectContractValidationBaseline& baseline,
+    ProjectContractValidationBaseline* validatedBaseline,
+    ProjectContractReadContext* context,
+    ProjectContractValidationDetails* details) const
+{
+    if (details) *details = {};
+    if (!baseline.isValid()) {
+        if (validatedBaseline) validatedBaseline->clear();
+        return {QStringLiteral("Incremental validation requires a validated project baseline")};
+    }
+    QStringList errors;
+    const auto validatePath = [&](const QString& path) {
+        if (!ProjectDataPolicy::isSafeRelativePath(path)
+            || ProjectDataPolicy::normalizeRelativePath(path) != path
+            || QFileInfo(path).suffix().compare(QStringLiteral("vp"), Qt::CaseInsensitive) != 0
+            || domainForFolder(path.section(QLatin1Char('/'), 0, 0)).isEmpty())
+            errors.append(QStringLiteral("Invalid project document path: %1").arg(path));
+    };
+    for (const QString& path : removedPaths) {
+        validatePath(path);
+        if (changedDocuments.contains(path))
+            errors.append(QStringLiteral("Project document is both changed and removed: %1").arg(path));
+    }
+    bool reuseGlobalValidation = removedPaths.isEmpty()
+        && baseline.requireCurrentSchema_ == requireCurrentSchema
+        && rootSemanticProjection(projectRootDocument)
+            == rootSemanticProjection(baseline.rootDocument_);
+    for (auto document = changedDocuments.cbegin(); document != changedDocuments.cend(); ++document) {
+        validatePath(document.key());
+        if (!reuseGlobalValidation) continue;
+        const auto previous = baseline.semanticProjections_.constFind(document.key());
+        const QJsonArray projection = documentSemanticProjection(document.value(), baseline.schemaVersion_);
+        if (previous == baseline.semanticProjections_.cend()
+            || projection.isEmpty() || previous.value() != projection)
+            reuseGlobalValidation = false;
+    }
+    if (!errors.isEmpty()) {
+        if (validatedBaseline) validatedBaseline->clear();
+        return errors;
+    }
+
+    ProjectContractValidationBaseline candidate;
+    if (reuseGlobalValidation) {
+        errors = validateTreeImpl(projectDirectory, projectRootDocument, requireCurrentSchema,
+            changedDocuments, context, true, nullptr, false, true, baseline.rootRelativePath_);
+        if (errors.isEmpty() && validatedBaseline) {
+            candidate = baseline;
+            candidate.rootDocument_ = projectRootDocument;
+            for (auto document = changedDocuments.cbegin(); document != changedDocuments.cend(); ++document) {
+                candidate.documents_.insert(document.key(), document.value());
+            }
+        }
+        if (details) details->readPaths = baseline.dependencyPaths(changedDocuments.keys());
+    } else {
+        QHash<QString, QJsonObject> documents = baseline.documents_;
+        for (const QString& path : removedPaths) documents.remove(path);
+        for (auto document = changedDocuments.cbegin(); document != changedDocuments.cend(); ++document)
+            documents.insert(document.key(), document.value());
+        errors = validateTreeImpl(projectDirectory, projectRootDocument, requireCurrentSchema,
+            documents, context, true, validatedBaseline ? &candidate : nullptr,
+            false, false, baseline.rootRelativePath_);
+        if (details) {
+            details->fullValidation = true;
+            QSet<QString> paths{baseline.rootRelativePath_};
+            for (auto document = baseline.documents_.cbegin(); document != baseline.documents_.cend(); ++document)
+                paths.insert(document.key());
+            for (auto document = documents.cbegin(); document != documents.cend(); ++document)
+                paths.insert(document.key());
+            details->readPaths = paths.values();
+            details->readPaths.sort();
+        }
+    }
+    if (validatedBaseline) *validatedBaseline = std::move(candidate);
+    return errors;
 }
 
 QStringList ProjectContractRegistry::validateTreeImpl(
     const QString& projectDirectory, const QJsonObject& projectRootDocument,
     bool requireCurrentSchema, const QHash<QString, QJsonObject>& overrides,
-    ProjectContractReadContext* context, bool includeVirtualDocuments) const
+    ProjectContractReadContext* context, bool includeVirtualDocuments,
+    ProjectContractValidationBaseline* baseline, bool includePhysicalDocuments,
+    bool reuseGlobalValidation, const QString& knownRootRelativePath) const
 {
     QStringList errors;
     const QDir directory(projectDirectory);
-    const QStringList projectFiles = directory.entryList(
-        {QStringLiteral("*.hsp")}, QDir::Files, QDir::Name);
-    const QString rootRelativePath = projectFiles.isEmpty()
-        ? directory.dirName() + QStringLiteral(".hsp")
-        : projectFiles.first();
+    QString rootRelativePath = knownRootRelativePath;
+    if (rootRelativePath.isEmpty()) {
+        const QStringList projectFiles = directory.entryList(
+            {QStringLiteral("*.hsp")}, QDir::Files, QDir::Name);
+        rootRelativePath = projectFiles.isEmpty()
+            ? directory.dirName() + QStringLiteral(".hsp") : projectFiles.first();
+    }
     ProjectDocumentData rootDocument;
     QString rootDocumentError;
     if (!decodeDocument(projectRootDocument, QStringLiteral("project.root"),
                          rootRelativePath, &rootDocument, &rootDocumentError, context)) {
         errors.append(rootDocumentError);
         if (includeVirtualDocuments && context) context->clear();
+        if (baseline) baseline->clear();
         return errors;
     }
     QSet<QString> validatedPaths{rootRelativePath};
@@ -367,6 +689,7 @@ QStringList ProjectContractRegistry::validateTreeImpl(
         {rootDocument.id, {rootRelativePath}}};
     QList<NodeRecord> nodes;
     QList<PackRecord> packs;
+    QHash<QString, QJsonObject> validatedDocuments;
 
     const auto validateComponents = [&](const QJsonObject& object,
                                         const QString& path) {
@@ -463,17 +786,20 @@ QStringList ProjectContractRegistry::validateTreeImpl(
     }
     for (const QString& folder : managedPackDirectories()) {
         const QDir packDirectory(directory.filePath(folder));
-        if (!packDirectory.exists() && virtualPaths.value(folder).isEmpty())
+        if (virtualPaths.value(folder).isEmpty()
+            && (!includePhysicalDocuments || !packDirectory.exists()))
             continue;
         QStringList paths;
-        QDirIterator files(packDirectory.absolutePath(),
-                           {QStringLiteral("*.vp")},
-                           QDir::Files | QDir::Readable,
-                           QDirIterator::Subdirectories);
-        while (files.hasNext()) {
-            const QFileInfo fileInfo(files.next());
-            paths.append(QDir::fromNativeSeparators(
-                directory.relativeFilePath(fileInfo.absoluteFilePath())));
+        if (includePhysicalDocuments) {
+            QDirIterator files(packDirectory.absolutePath(),
+                               {QStringLiteral("*.vp")},
+                               QDir::Files | QDir::Readable,
+                               QDirIterator::Subdirectories);
+            while (files.hasNext()) {
+                const QFileInfo fileInfo(files.next());
+                paths.append(QDir::fromNativeSeparators(
+                    directory.relativeFilePath(fileInfo.absoluteFilePath())));
+            }
         }
         if (includeVirtualDocuments) {
             QSet<QString> physicalPaths;
@@ -512,6 +838,7 @@ QStringList ProjectContractRegistry::validateTreeImpl(
                 errors.append(QStringLiteral("%1: %2").arg(path, documentError));
                 continue;
             }
+            if (baseline) validatedDocuments.insert(path, packDocument);
             documentIdPaths[document.id].append(path);
             const QJsonObject pack = document.content;
             const QString contentGuid = QUuid::fromString(
@@ -626,55 +953,6 @@ QStringList ProjectContractRegistry::validateTreeImpl(
         }
         if (!allowedTypes.isEmpty() && !allowedTypes.contains(typeByGuid.value(id)))
             report(QStringLiteral("Reference target has the wrong type"));
-    };
-
-    const auto valueAt = [](QJsonValue value, const QStringList& path) {
-        for (const QString& segment : path) {
-            if (!value.isObject()) return QJsonValue(QJsonValue::Undefined);
-            const QJsonObject object = value.toObject();
-            if (!object.contains(segment)) return QJsonValue(QJsonValue::Undefined);
-            value = object.value(segment);
-        }
-        return value;
-    };
-
-    struct LocatedValue {
-        QJsonValue value;
-        QJsonObject parent;
-        QString path;
-    };
-    const auto locatedValues = [](const QJsonObject& root,
-                                  const QStringList& segments,
-                                  const QString& rootPath) {
-        QList<LocatedValue> values;
-        std::function<void(const QJsonValue&, qsizetype, const QString&,
-                           const QJsonObject&)> visit;
-        visit = [&](const QJsonValue& current, qsizetype index,
-                    const QString& path, const QJsonObject& parent) {
-            if (index == segments.size()) {
-                values.append({current, parent, path});
-                return;
-            }
-            const QString& segment = segments.at(index);
-            if (segment == QLatin1String("*")) {
-                if (!current.isArray()) return;
-                const QJsonArray array = current.toArray();
-                for (qsizetype itemIndex = 0; itemIndex < array.size(); ++itemIndex) {
-                    const QJsonValue item = array.at(itemIndex);
-                    visit(item, index + 1,
-                          path + QStringLiteral("[%1]").arg(itemIndex),
-                          item.toObject());
-                }
-                return;
-            }
-            if (!current.isObject()) return;
-            const QJsonObject object = current.toObject();
-            if (!object.contains(segment)) return;
-            visit(object.value(segment), index + 1,
-                  path + QLatin1Char('.') + segment, object);
-        };
-        visit(root, 0, rootPath, root);
-        return values;
     };
 
     ContractRuleExecutor executor;
@@ -880,38 +1158,40 @@ QStringList ProjectContractRegistry::validateTreeImpl(
             errors.append(message);
     };
 
-    QStringList ruleDispatchErrors;
-    GeneratedSchemaRegistry::validateProjectRules(schemaVersion, executor,
-                                                  ruleDispatchErrors);
-    errors.append(ruleDispatchErrors);
+    if (!reuseGlobalValidation) {
+        QStringList ruleDispatchErrors;
+        GeneratedSchemaRegistry::validateProjectRules(schemaVersion, executor,
+                                                      ruleDispatchErrors);
+        errors.append(ruleDispatchErrors);
 
-    QDirIterator allEntries(projectDirectory,
-                            QDir::AllEntries | QDir::Hidden | QDir::System,
-                            QDirIterator::Subdirectories);
-    while (allEntries.hasNext()) {
-        const QFileInfo fileInfo(allEntries.next());
-        const QString relative = QDir::fromNativeSeparators(directory.relativeFilePath(fileInfo.absoluteFilePath()));
-        if (relative.startsWith(QStringLiteral(".cache/folder-operations/"))) continue;
-        if (fileInfo.isSymLink())
-            errors.append(QStringLiteral("Project contains an unsupported symbolic link: %1")
-                              .arg(fileInfo.absoluteFilePath()));
-    }
+        QDirIterator allEntries(projectDirectory,
+                                QDir::AllEntries | QDir::Hidden | QDir::System,
+                                QDirIterator::Subdirectories);
+        while (allEntries.hasNext()) {
+            const QFileInfo fileInfo(allEntries.next());
+            const QString relative = QDir::fromNativeSeparators(directory.relativeFilePath(fileInfo.absoluteFilePath()));
+            if (relative.startsWith(QStringLiteral(".cache/folder-operations/"))) continue;
+            if (fileInfo.isSymLink())
+                errors.append(QStringLiteral("Project contains an unsupported symbolic link: %1")
+                                  .arg(fileInfo.absoluteFilePath()));
+        }
 
-    QDirIterator allFiles(projectDirectory,
-                          QDir::Files | QDir::Hidden | QDir::System,
-                          QDirIterator::Subdirectories);
-    while (allFiles.hasNext()) {
-        const QFileInfo fileInfo(allFiles.next());
-        if (fileInfo.isSymLink()) continue;
-        if (fileInfo.suffix().compare(QStringLiteral("vp"), Qt::CaseInsensitive) != 0)
-            continue;
-        const QString relative = QDir::fromNativeSeparators(directory.relativeFilePath(fileInfo.absoluteFilePath()));
-        if (relative.startsWith(QStringLiteral(".cache/folder-operations/"))) continue;
-        const QString topLevel = relative.section(QChar('/'), 0, 0)
-                                      .section(QChar('\\'), 0, 0);
-        if (domainForFolder(topLevel).isEmpty())
-            errors.append(QStringLiteral("Pack file is outside a managed domain: %1")
-                              .arg(relative));
+        QDirIterator allFiles(projectDirectory,
+                              QDir::Files | QDir::Hidden | QDir::System,
+                              QDirIterator::Subdirectories);
+        while (allFiles.hasNext()) {
+            const QFileInfo fileInfo(allFiles.next());
+            if (fileInfo.isSymLink()) continue;
+            if (fileInfo.suffix().compare(QStringLiteral("vp"), Qt::CaseInsensitive) != 0)
+                continue;
+            const QString relative = QDir::fromNativeSeparators(directory.relativeFilePath(fileInfo.absoluteFilePath()));
+            if (relative.startsWith(QStringLiteral(".cache/folder-operations/"))) continue;
+            const QString topLevel = relative.section(QChar('/'), 0, 0)
+                                          .section(QChar('\\'), 0, 0);
+            if (domainForFolder(topLevel).isEmpty())
+                errors.append(QStringLiteral("Pack file is outside a managed domain: %1")
+                                  .arg(relative));
+        }
     }
 
     QMap<QString, QJsonObject> platformDocuments;
@@ -920,11 +1200,45 @@ QStringList ProjectContractRegistry::validateTreeImpl(
     if (schemaVersion == ProjectSchema::kProjectSchemaVersion)
         errors.append(ProjectPlatformSemantics::validateDocuments(projectRoot, platformDocuments));
 
-    if (includeVirtualDocuments && context) {
+    if (includeVirtualDocuments && context && !reuseGlobalValidation) {
         context->parsed_.clear();
         context->validated_.removeIf([&](const auto& entry) { return !validatedPaths.contains(entry.key()); });
         context->decoded_.removeIf([&](const auto& entry) { return !validatedPaths.contains(entry.key()); });
     }
+    ProjectContractValidationBaseline nextBaseline;
+    if (baseline && errors.isEmpty()) {
+        nextBaseline.valid_ = true;
+        nextBaseline.requireCurrentSchema_ = requireCurrentSchema;
+        nextBaseline.schemaVersion_ = schemaVersion;
+        nextBaseline.rootRelativePath_ = rootRelativePath;
+        nextBaseline.rootDocument_ = projectRootDocument;
+        nextBaseline.documents_ = std::move(validatedDocuments);
+        for (auto document = nextBaseline.documents_.cbegin(); document != nextBaseline.documents_.cend(); ++document) {
+            const QJsonObject content = document.value().value(QStringLiteral("content")).toObject();
+            const QString guid = QUuid::fromString(content.value(QStringLiteral("guid")).toString())
+                .toString(QUuid::WithoutBraces);
+            nextBaseline.pathsByGuid_.insert(guid, document.key());
+            nextBaseline.semanticProjections_.insert(document.key(),
+                documentSemanticProjection(document.value(), schemaVersion));
+        }
+        QString rootBusPath;
+        for (const auto& pack : packs)
+            if (pack.domain == QLatin1String("pack.bus")
+                && pack.object.value(QStringLiteral("parentRef")).toObject()
+                    .value(QStringLiteral("kind")).toString() == QLatin1String("root"))
+                rootBusPath = pack.path;
+        for (auto document = nextBaseline.documents_.cbegin(); document != nextBaseline.documents_.cend(); ++document) {
+            const auto dependencies = referencedDocumentPaths(document.value(), schemaVersion,
+                nextBaseline.pathsByGuid_, rootBusPath);
+            nextBaseline.dependencies_.insert(document.key(), dependencies);
+            nextBaseline.inheritedDependencies_.insert(document.key(), inheritedDocumentPaths(dependencies));
+            const QString parentGuid = QUuid::fromString(valueAt(document.value(),
+                {QStringLiteral("content"), QStringLiteral("parentRef"), QStringLiteral("id")}).toString())
+                .toString(QUuid::WithoutBraces);
+            nextBaseline.parentPaths_.insert(document.key(), nextBaseline.pathsByGuid_.value(parentGuid));
+        }
+    }
+    if (baseline) *baseline = std::move(nextBaseline);
     return errors;
 }
 

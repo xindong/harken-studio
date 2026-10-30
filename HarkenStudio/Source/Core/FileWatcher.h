@@ -3,10 +3,13 @@
 
 #include <QObject>
 #include <QFileSystemWatcher>
+#include <QFileDevice>
 #include <QTimer>
 #include <QSet>
 #include <QMap>
 #include <QDateTime>
+#include <QHash>
+#include <QByteArray>
 #include <QString>
 #include <QStringList>
 
@@ -26,7 +29,7 @@ public:
     QStringList sourceFiles() const;
     void refreshSources();
     bool beginProjectWrite(const QString& projectRoot, const QStringList& changedPaths);
-    void endProjectWrite();
+    void endProjectWrite(const QHash<QString, QByteArray>& expectedInstalledHashes = {});
 
     void setDebounceInterval(int ms);
     int debounceInterval() const { return debounceMs_; }
@@ -49,6 +52,14 @@ private:
     QMap<QString, QPair<qint64, QDateTime>> scanSourceEntries() const;
     QMap<QString, QPair<qint64, QDateTime>> scanProjectEntries() const;
     void refreshWatches();
+    bool matchesSelfWrite(const QString& path);
+
+    struct SavedFileState {
+        QByteArray hash;
+        qint64 size = 0;
+        QDateTime modified;
+        QFileDevice::Permissions permissions{};
+    };
 
     QFileSystemWatcher watcher_;
     QTimer debounceTimer_;
@@ -58,13 +69,15 @@ private:
     bool watching_ = false;
     bool suppressed_ = false;
     bool projectWriteActive_ = false;
-    QString restartAfterWriteRoot_;
     int debounceMs_ = 500;
 
     QMap<QString, QPair<qint64, QDateTime>> sourceSnapshot_;
     QMap<QString, QPair<qint64, QDateTime>> projectSnapshot_;
     QSet<QString> pendingModified_;
     QSet<QString> pendingWUModified_;
+    QSet<QString> projectWritePaths_;
+    QStringList projectWriteTargets_;
+    QHash<QString, SavedFileState> selfWriteStates_;
 };
 
 }

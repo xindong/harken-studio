@@ -45,6 +45,7 @@ class ProjectInstance;
 class FolderSaveState;
 class ProjectItemSaveState;
 class ProjectSaveSnapshot;
+struct ProjectSaveBaseline;
 class IntegrityScanner;
 class PlacementContext;
 class VMixNode;
@@ -85,6 +86,7 @@ struct PreparedProject
     std::unique_ptr<IntegrityScanner> integrityScanner;
     IntegrityScanner::Report integrityReport;
     QList<AssetInfo> assets;
+    QHash<QString, QByteArray> loadedDocuments;
     QStringList diagnostics;
     QString error;
     bool rebuildAssetRegistry = false;
@@ -639,14 +641,17 @@ private:
                                 VariableKind variableKind = VariableKind::Smooth);
     void recordDeletedNameHistory(ProjectItem* item);
     void recordCreatedNameHistory(ProjectItem* item);
+    static std::unique_ptr<ProjectSaveBaseline> captureSaveBaseline(
+        ProjectData& project, ProjectItemSaveState& itemSaveState,
+        const QHash<QString, QByteArray>& loadedDocuments, QString* error);
 
     std::shared_ptr<ProjectInstance> m_projectInstance;
     std::shared_ptr<ProjectData> m_currentProject;
     std::unique_ptr<FolderSaveState> m_folderSaveState;
     std::unique_ptr<ProjectItemSaveState> m_itemSaveState;
     ProjectSerializer m_serializer;
-    ProjectContractReadContext m_saveContractContext;
-    std::unique_ptr<ProjectSaveSnapshot> m_savedSnapshot;
+    std::unique_ptr<ProjectSaveBaseline> m_saveBaseline;
+    QSet<QString> m_externalSavePaths;
     std::function<void(StartupPhase)> m_startupProgressCallback;
 
     ClipboardOp        m_clipboardOp = ClipboardOp::None;

@@ -36,6 +36,7 @@ namespace {
 
 constexpr int kTransactionVersion = 2;
 constexpr qsizetype kParallelVerificationMinimum = 64;
+constexpr qsizetype kParallelFileOperationMinimum = 8;
 
 bool validJournal(const QJsonObject& journal, QString* error);
 
@@ -165,6 +166,21 @@ bool installFileWithoutReplacement(const QString& source, const QString& target)
 #endif
 }
 
+bool prepareFileDirectories(const QStringList& files, QString* error)
+{
+    QSet<QString> directories;
+    for (const QString& path : files) directories.insert(QFileInfo(path).absolutePath());
+    QStringList ordered = directories.values();
+    ordered.sort();
+    for (const QString& directory : ordered) {
+        if (!QDir().mkpath(directory)) {
+            if (error) *error = QStringLiteral("Cannot create transaction directory: %1").arg(directory);
+            return false;
+        }
+    }
+    return true;
+}
+
 bool copyFileVerified(const QString& source, const QString& destination,
                       QByteArray* hash, QString* error)
 {
@@ -291,7 +307,7 @@ bool writeFileVerified(const QByteArray& bytes, const QByteArray& expected,
     }
 #ifndef Q_OS_WIN
     QFile destinationFile(destination);
-    if (!destinationFile.setPermissions(permissions)) {
+    if (permissions != QFileDevice::Permissions{} && !destinationFile.setPermissions(permissions)) {
         if (error) *error = fileOperationError(QStringLiteral("Cannot preserve transaction file permissions"), destinationFile);
         return false;
     }
@@ -584,6 +600,12 @@ bool validJournal(const QJsonObject& journal, QString* error)
             return false;
         }
         const QString displacedPath = entry.value(QStringLiteral("displacedPath")).toString();
+        if (entry.contains(QStringLiteral("displacedHash"))
+            && (!isSha256(entry.value(QStringLiteral("displacedHash")).toString())
+                || displacedPath.isEmpty())) {
+            if (error) *error = QStringLiteral("Project transaction displacement hash is invalid");
+            return false;
+        }
         if (!displacedPath.isEmpty()) {
             const QString cleanDisplaced = QDir::cleanPath(
                 QFileInfo(displacedPath).absoluteFilePath());
@@ -654,10 +676,12 @@ bool currentMatchesKnownState(const QString& path, const QJsonObject& entry,
                 == QStringLiteral("delete"))
             return true;
         const QString displacedPath = entry.value(QStringLiteral("displacedPath")).toString();
+        const QByteArray displacedHash = QByteArray::fromHex(entry.value(
+            QStringLiteral("displacedHash")).toString().toLatin1());
         return !displacedPath.isEmpty()
             && QFileInfo::exists(displacedPath)
             && !oldHash.isEmpty()
-            && fileHash(displacedPath, error) == oldHash;
+            && fileHash(displacedPath, error) == (displacedHash.isEmpty() ? oldHash : displacedHash);
     }
     const QByteArray current = fileHash(path, error);
     return (!oldHash.isEmpty() && current == oldHash)
@@ -745,6 +769,11 @@ struct FileReadResult {
     QByteArray hash;
     QString error;
     bool matches = true;
+};
+
+struct FileEntryResult {
+    QJsonObject entry;
+    QString error;
 };
 
 QThreadPool* transactionVerificationPool()
@@ -954,11 +983,121 @@ std::unique_ptr<ProjectTransaction> ProjectTransaction::beginReplacement(
     return beginImpl(projectFilePath, writeSet, {}, stagedDirectory, &snapshot, error, {});
 }
 
+std::unique_ptr<ProjectTransaction> ProjectTransaction::beginDelta(
+    const QString& projectFilePath, const DeltaPlan& plan, QString* error)
+{
+    const QString projectDirectory = projectDirectoryFor(projectFilePath);
+    const auto validPath = [&](const QString& path) {
+        if (ProjectDataPolicy::normalizeRelativePath(path) != path
+            || !ProjectDataPolicy::isSafeRelativePath(path))
+            return false;
+        QString ancestor = path;
+        while (ancestor != QStringLiteral(".")) {
+            if (QFileInfo(QDir(projectDirectory).filePath(ancestor)).isSymLink())
+                return false;
+            ancestor = QFileInfo(ancestor).path();
+        }
+        return true;
+    };
+    QStringList writeSet;
+    QSet<QString> mutationKeys;
+    const auto addMutation = [&](const QString& path) {
+        const QString key = retainedFileKey(path);
+        if (!validPath(path) || mutationKeys.contains(key)) return false;
+        mutationKeys.insert(key);
+        writeSet.append(path);
+        return true;
+    };
+    bool valid = true;
+    for (const FileWrite& write : plan.writes)
+        valid = addMutation(write.path) && valid;
+    for (const QString& path : plan.deletes)
+        valid = addMutation(path) && valid;
+    for (const FileRename& rename : plan.renames) {
+        valid = validPath(rename.source) && rename.source != rename.target && valid;
+        valid = addMutation(rename.target) && valid;
+        if (rename.source.compare(rename.target, kPathCaseSensitivity) != 0)
+            valid = addMutation(rename.source) && valid;
+    }
+    QSet<QString> readKeys;
+    for (const ReadDependency& read : plan.readSet) {
+        const QString key = retainedFileKey(read.path);
+        valid = validPath(read.path) && !readKeys.contains(key)
+            && !mutationKeys.contains(key)
+            && (read.exists ? read.hash.size() == 32 : read.hash.isEmpty()) && valid;
+        readKeys.insert(key);
+    }
+    QSet<QString> directoryPaths;
+    for (const DirectoryChange& directory : plan.directories) {
+        valid = validPath(directory.path) && !directoryPaths.contains(directory.path) && valid;
+        directoryPaths.insert(directory.path);
+    }
+    if (!valid) {
+        if (error) *error = QStringLiteral("Project transaction delta plan is invalid");
+        return nullptr;
+    }
+    QSet<QString> removedDirectories;
+    for (const DirectoryChange& directory : plan.directories)
+        if (!directory.present) removedDirectories.insert(retainedFileKey(directory.path));
+    QSet<QString> renamedDirectories;
+    for (const DirectoryChange& directory : plan.directories)
+        if (directory.present && removedDirectories.contains(retainedFileKey(directory.path)))
+            renamedDirectories.insert(directory.path);
+    DirectorySpellingSnapshot parentSpellings;
+    const auto preserveParents = [&](const QString& path, bool directory) {
+        QString result;
+        QString requested;
+        const QStringList segments = path.split(QLatin1Char('/'));
+        for (qsizetype index = 0; index < segments.size(); ++index) {
+            if (!result.isEmpty()) result += QLatin1Char('/');
+            if (!requested.isEmpty()) requested += QLatin1Char('/');
+            requested += segments.at(index);
+            QString segment = segments.at(index);
+            if ((directory || index + 1 < segments.size())
+                && !renamedDirectories.contains(requested)) {
+                const QString spelling = physicalPathSpelling(projectDirectory, result + segment, &parentSpellings);
+                if (!spelling.isEmpty()) segment = QFileInfo(spelling).fileName();
+            }
+            result += segment;
+        }
+        return result;
+    };
+    DeltaPlan prepared = plan;
+    writeSet.clear();
+    for (FileWrite& write : prepared.writes) {
+        write.path = preserveParents(write.path, false);
+        writeSet.append(write.path);
+    }
+    for (QString& path : prepared.deletes) {
+        path = preserveParents(path, false);
+        writeSet.append(path);
+    }
+    for (FileRename& rename : prepared.renames) {
+        rename.source = preserveParents(rename.source, false);
+        rename.target = preserveParents(rename.target, false);
+        writeSet.append(rename.target);
+        if (rename.source.compare(rename.target, kPathCaseSensitivity) != 0)
+            writeSet.append(rename.source);
+    }
+    directoryPaths.clear();
+    for (DirectoryChange& directory : prepared.directories) {
+        directory.path = preserveParents(directory.path, true);
+        if (directoryPaths.contains(directory.path)) {
+            if (error) *error = QStringLiteral("Project transaction directory plan is ambiguous");
+            return nullptr;
+        }
+        directoryPaths.insert(directory.path);
+    }
+    for (ReadDependency& read : prepared.readSet)
+        read.path = preserveParents(read.path, false);
+    return beginImpl(projectFilePath, writeSet, {}, {}, nullptr, error, {}, &prepared);
+}
+
 std::unique_ptr<ProjectTransaction> ProjectTransaction::beginImpl(
     const QString& projectFilePath, const QStringList& writeSet,
     const QString& recoveryRoot, const QString& stagedDirectory,
     const ProjectSaveSnapshot* snapshot, QString* error,
-    ProjectTransactionProgressCallback progress)
+    ProjectTransactionProgressCallback progress, const DeltaPlan* delta)
 {
     const QString projectDirectory = projectDirectoryFor(projectFilePath);
     if (!QDir(projectDirectory).exists() || QFileInfo(projectDirectory).isSymLink()) {
@@ -979,6 +1118,17 @@ std::unique_ptr<ProjectTransaction> ProjectTransaction::beginImpl(
     }
 
     auto transaction = std::unique_ptr<ProjectTransaction>(new ProjectTransaction);
+    if (delta) {
+        transaction->delta_ = true;
+        transaction->readSet_ = delta->readSet;
+        for (const FileWrite& write : delta->writes)
+            transaction->stagedFiles_.insert(retainedFileKey(write.path), StagedFile{
+                write.bytes, QCryptographicHash::hash(write.bytes, QCryptographicHash::Sha256),
+                write.permissions});
+        if (normalized.size() >= kParallelFileOperationMinimum
+            || normalized.size() + delta->readSet.size() >= kParallelVerificationMinimum)
+            transaction->verificationPool_ = transactionVerificationPool();
+    }
     if (snapshot) {
         QSet<QString> writeKeys;
         for (const QString& relative : normalized)
@@ -1016,6 +1166,57 @@ std::unique_ptr<ProjectTransaction> ProjectTransaction::beginImpl(
         if (error) *error = QStringLiteral("PROJECT_UPGRADE_RECOVERY_REQUIRED");
         return nullptr;
     }
+    if (delta) {
+        if (!transaction->verifyReadSet(error)) return nullptr;
+        for (const FileRename& rename : delta->renames) {
+            const QFileInfo source(QDir(projectDirectory).filePath(rename.source));
+            const QFileInfo target(QDir(projectDirectory).filePath(rename.target));
+            if (!source.isFile() || source.isSymLink()
+                || (rename.source.compare(rename.target, kPathCaseSensitivity) != 0
+                    && target.exists())) {
+                if (error) *error = QStringLiteral("Project transaction rename is invalid: %1 -> %2")
+                    .arg(rename.source, rename.target);
+                return nullptr;
+            }
+        }
+        QMap<QString, bool> directories;
+        for (const DirectoryChange& change : delta->directories)
+            directories.insert(change.path, change.present);
+        QStringList destinations;
+        for (const FileWrite& write : delta->writes) destinations.append(write.path);
+        for (const FileRename& rename : delta->renames) destinations.append(rename.target);
+        for (const DirectoryChange& change : delta->directories)
+            if (change.present) destinations.append(change.path + QStringLiteral("/placeholder"));
+        for (const QString& destination : destinations) {
+            QString parent = QFileInfo(destination).path();
+            while (parent != QStringLiteral(".")) {
+                if (directories.contains(parent) && !directories.value(parent)) {
+                    if (error) *error = QStringLiteral("Project transaction removes a required directory: %1")
+                        .arg(parent);
+                    return nullptr;
+                }
+                if (!directories.contains(parent)) {
+                    const QString spelling = physicalPathSpelling(projectDirectory, parent);
+                    if (spelling.isEmpty()) directories.insert(parent, true);
+                    else if (spelling != parent) {
+                        if (error) *error = QStringLiteral("Project transaction directory spelling is ambiguous: %1")
+                            .arg(parent);
+                        return nullptr;
+                    }
+                }
+                parent = QFileInfo(parent).path();
+            }
+        }
+        for (auto directory = directories.cbegin(); directory != directories.cend(); ++directory) {
+            const QFileInfo info(QDir(projectDirectory).filePath(directory.key()));
+            const bool existed = info.isDir()
+                && physicalPathSpelling(projectDirectory, directory.key()) == directory.key();
+            transaction->deltaDirectories_.append(QJsonObject{
+                {QStringLiteral("path"), directory.key()},
+                {QStringLiteral("existed"), existed},
+                {QStringLiteral("retained"), directory.value()}});
+        }
+    }
 
     const QString token = QUuid::createUuid().toString(QUuid::WithoutBraces);
     transaction->backupDirectory_ = recoveryRoot.isEmpty()
@@ -1036,23 +1237,46 @@ std::unique_ptr<ProjectTransaction> ProjectTransaction::beginImpl(
     };
     QList<PreparedFile> preparedFiles;
     QList<FileReadResult> preparedReads;
-    if (transaction->verificationPool_ && !progress) {
-        QList<FileReadRequest> requests;
-        for (const QString& relative : transaction->writeSet_) {
-            const QString source = QDir(projectDirectory).filePath(relative);
-            PreparedFile prepared;
-            prepared.exists = QFileInfo(source).isFile();
-            if (prepared.exists) {
-                prepared.oldPath = physicalPathSpelling(projectDirectory, relative, &spellingSnapshot);
-                if (prepared.oldPath == relative
-                    && transaction->stagedFiles_.contains(retainedFileKey(relative))) {
-                    prepared.readIndex = requests.size();
-                    requests.append(FileReadRequest{source, {}, FileReadMode::Hash});
-                }
+    QList<FileReadRequest> requests;
+    QList<qsizetype> indices;
+    for (const QString& relative : transaction->writeSet_) {
+        const QString source = QDir(projectDirectory).filePath(relative);
+        PreparedFile prepared;
+        prepared.exists = QFileInfo(source).isFile();
+        if (prepared.exists) {
+            prepared.oldPath = physicalPathSpelling(projectDirectory, relative,
+                stagedDirectory.isEmpty() && !delta ? nullptr : &spellingSnapshot);
+            if (transaction->verificationPool_ && !progress && !delta
+                && prepared.oldPath == relative
+                && transaction->stagedFiles_.contains(retainedFileKey(relative))) {
+                prepared.readIndex = requests.size();
+                requests.append(FileReadRequest{source, {}, FileReadMode::Hash});
             }
-            preparedFiles.append(std::move(prepared));
         }
+        indices.append(preparedFiles.size());
+        preparedFiles.append(std::move(prepared));
+    }
+    if (!requests.isEmpty())
         preparedReads = readTransactionFiles(transaction->verificationPool_, requests);
+    transaction->parallelFileOperations_ = delta && !progress
+        && transaction->verificationPool_ && normalized.size() >= kParallelFileOperationMinimum
+        && delta->renames.isEmpty() && transaction->deltaDirectories_.isEmpty();
+    if (transaction->parallelFileOperations_) {
+        QSet<QString> paths;
+        for (const QString& path : normalized) paths.insert(retainedFileKey(path));
+        for (qsizetype index : std::as_const(indices)) {
+            const QString& path = normalized.at(index);
+            const QString& oldPath = preparedFiles.at(index).oldPath;
+            if (!oldPath.isEmpty() && oldPath != path)
+                transaction->parallelFileOperations_ = false;
+            QString parent = QFileInfo(path).path();
+            while (parent != QStringLiteral(".")) {
+                if (paths.contains(retainedFileKey(parent)))
+                    transaction->parallelFileOperations_ = false;
+                parent = QFileInfo(parent).path();
+            }
+            if (!transaction->parallelFileOperations_) break;
+        }
     }
     QJsonArray entries;
     qint64 totalBytes = 0;
@@ -1067,19 +1291,22 @@ std::unique_ptr<ProjectTransaction> ProjectTransaction::beginImpl(
     qint64 completedBytes = 0;
     if (progress)
         progress(0, transaction->writeSet_.size(), 0, totalBytes);
-    for (qsizetype index = 0; index < transaction->writeSet_.size(); ++index) {
+    struct BackupResult {
+        QJsonObject entry;
+        QByteArray retainedHash;
+        QString error;
+    };
+    const auto prepareFile = [&](qsizetype index) {
+        BackupResult result;
+        QString* error = &result.error;
         const QString& relative = transaction->writeSet_.at(index);
         QJsonObject entry;
         entry.insert(QStringLiteral("path"), relative);
         const QString source = QDir(projectDirectory).filePath(relative);
-        const bool exists = preparedFiles.isEmpty()
-            ? QFileInfo(source).isFile() : preparedFiles.at(index).exists;
+        const bool exists = preparedFiles.at(index).exists;
         entry.insert(QStringLiteral("existed"), exists);
         if (exists) {
-            const QString oldPath = preparedFiles.isEmpty()
-                ? physicalPathSpelling(projectDirectory, relative,
-                    stagedDirectory.isEmpty() ? nullptr : &spellingSnapshot)
-                : preparedFiles.at(index).oldPath;
+            const QString oldPath = preparedFiles.at(index).oldPath;
             if (!oldPath.isEmpty() && oldPath != relative)
                 entry.insert(QStringLiteral("oldPath"), oldPath);
             QByteArray hash;
@@ -1087,9 +1314,9 @@ std::unique_ptr<ProjectTransaction> ProjectTransaction::beginImpl(
             const QString stagedPath = QDir(stagedDirectory).filePath(relative);
             const auto staged = transaction->stagedFiles_.constFind(retainedFileKey(relative));
             if (!stagedDirectory.isEmpty() && oldPath == relative
-                && (staged != transaction->stagedFiles_.cend() || QFileInfo(stagedPath).isFile())) {
-                const qsizetype readIndex = preparedFiles.isEmpty()
-                    ? -1 : preparedFiles.at(index).readIndex;
+                && (staged != transaction->stagedFiles_.cend()
+                    || (!delta && QFileInfo(stagedPath).isFile()))) {
+                const qsizetype readIndex = preparedFiles.at(index).readIndex;
                 if (readIndex < 0) {
                     hash = fileHash(source, error);
                 } else {
@@ -1100,40 +1327,83 @@ std::unique_ptr<ProjectTransaction> ProjectTransaction::beginImpl(
                 }
                 const QByteArray stagedHash = staged != transaction->stagedFiles_.cend()
                     ? staged->hash : fileHash(stagedPath, error);
-                if (hash.isEmpty() || stagedHash.isEmpty()) {
-                    QDir(transaction->backupDirectory_).removeRecursively();
-                    return nullptr;
-                }
+                if (hash.isEmpty() || stagedHash.isEmpty()) return result;
                 retained = hash == stagedHash;
             }
             if (!retained && !copyFileVerified(source,
                                   QDir(transaction->backupDirectory_).filePath(relative),
-                                  &hash, error)) {
-                QDir(transaction->backupDirectory_).removeRecursively();
-                return nullptr;
-            }
+                                  &hash, error)) return result;
             entry.insert(QStringLiteral("oldHash"), QString::fromLatin1(hash.toHex()));
             if (retained) {
-                transaction->retainedFiles_.insert(retainedFileKey(relative), hash);
+                result.retainedHash = hash;
                 entry.insert(QStringLiteral("operation"), QStringLiteral("write"));
                 entry.insert(QStringLiteral("newHash"), QString::fromLatin1(hash.toHex()));
             }
-            if (progress)
-                completedBytes += QFileInfo(source).size();
         }
         entry.insert(QStringLiteral("state"), QStringLiteral("prepared"));
-        entries.append(entry);
+        result.entry = std::move(entry);
+        return result;
+    };
+    QList<BackupResult> backups;
+    if (transaction->parallelFileOperations_) {
+        QStringList destinations;
+        for (qsizetype index : std::as_const(indices))
+            if (preparedFiles.at(index).exists)
+                destinations.append(QDir(transaction->backupDirectory_).filePath(normalized.at(index)));
+        if (!prepareFileDirectories(destinations, error)) {
+            QDir(transaction->backupDirectory_).removeRecursively();
+            return nullptr;
+        }
+        backups = QtConcurrent::blockingMapped<QList<BackupResult>>(
+            transaction->verificationPool_, indices, prepareFile);
+    }
+    for (qsizetype index : std::as_const(indices)) {
+        const BackupResult result = backups.isEmpty() ? prepareFile(index) : backups.at(index);
+        if (result.entry.isEmpty()) {
+            if (error) *error = result.error;
+            QDir(transaction->backupDirectory_).removeRecursively();
+            return nullptr;
+        }
+        const QString& relative = transaction->writeSet_.at(index);
+        if (!result.retainedHash.isEmpty())
+            transaction->retainedFiles_.insert(retainedFileKey(relative), result.retainedHash);
+        entries.append(result.entry);
         ++completedFiles;
-        if (progress)
+        if (progress) {
+            if (preparedFiles.at(index).exists)
+                completedBytes += QFileInfo(QDir(projectDirectory).filePath(relative)).size();
             progress(completedFiles, transaction->writeSet_.size(),
                      completedBytes, totalBytes);
+        }
     }
-    if (!stagedDirectory.isEmpty() && !spellingSnapshot.matches()) {
+    if ((!stagedDirectory.isEmpty() || delta) && !spellingSnapshot.matches()) {
         if (error) *error = QStringLiteral("Project paths changed while preparing the transaction");
         QDir(transaction->backupDirectory_).removeRecursively();
         return nullptr;
     }
-    transaction->backupFingerprint_ = entryFingerprint(entries, false);
+    if (delta) {
+        for (const FileRename& rename : delta->renames) {
+            const QString backupRelative = rename.source.compare(rename.target, kPathCaseSensitivity) == 0
+                ? rename.target : rename.source;
+            QFile backup(QDir(transaction->backupDirectory_).filePath(backupRelative));
+            if (!backup.open(QIODevice::ReadOnly)) {
+                if (error) *error = fileOperationError(QStringLiteral("Cannot read renamed project file"), backup);
+                QDir(transaction->backupDirectory_).removeRecursively();
+                return nullptr;
+            }
+            const QByteArray bytes = backup.readAll();
+            if (backup.error() != QFileDevice::NoError) {
+                if (error) *error = fileOperationError(QStringLiteral("Cannot read renamed project file"), backup);
+                QDir(transaction->backupDirectory_).removeRecursively();
+                return nullptr;
+            }
+            const QString key = retainedFileKey(rename.target);
+            transaction->stagedFiles_.insert(key, StagedFile{
+                bytes, QCryptographicHash::hash(bytes, QCryptographicHash::Sha256), backup.permissions()});
+            transaction->renamedSources_.insert(key, backupRelative);
+        }
+    }
+    transaction->backupFingerprint_ = entryFingerprint(entries, false, transaction->deltaDirectories_);
     QJsonObject journal{
         {QStringLiteral("version"), kTransactionVersion},
         {QStringLiteral("transactionId"), token},
@@ -1144,6 +1414,7 @@ std::unique_ptr<ProjectTransaction> ProjectTransaction::beginImpl(
         {QStringLiteral("state"), QStringLiteral("prepared")},
         {QStringLiteral("entries"), entries},
     };
+    if (delta) journal.insert(QStringLiteral("directories"), transaction->deltaDirectories_);
     if (!writeJson(transaction->transactionPath_, journal, error)) {
         QDir(transaction->backupDirectory_).removeRecursively();
         return nullptr;
@@ -1165,7 +1436,82 @@ QStringList ProjectTransaction::changedPaths() const
     for (const QString& relative : writeSet_)
         if (!retainedFiles_.contains(retainedFileKey(relative)))
             paths.append(root.filePath(relative));
+    for (const QJsonValue& value : deltaDirectories_) {
+        const QJsonObject directory = value.toObject();
+        if (directory.value(QStringLiteral("existed")) != directory.value(QStringLiteral("retained")))
+            paths.append(root.filePath(directory.value(QStringLiteral("path")).toString()));
+    }
     return paths;
+}
+
+bool ProjectTransaction::verifyReadSet(QString* error) const
+{
+    return verifyReadSet(projectDirectory_, readSet_, error);
+}
+
+bool ProjectTransaction::verifyReadSet(const QString& projectFilePath,
+                                     const QList<ReadDependency>& readSet,
+                                     QString* error)
+{
+    if (readSet.isEmpty()) return true;
+    const QDir root(projectDirectoryFor(projectFilePath));
+    QList<FileReadRequest> requests;
+    requests.reserve(readSet.size());
+    for (const ReadDependency& read : readSet) {
+        if (!ProjectDataPolicy::isSafeRelativePath(read.path)
+            || ProjectDataPolicy::normalizeRelativePath(read.path) != read.path
+            || (read.exists ? read.hash.size() != 32 : !read.hash.isEmpty())) {
+            if (error) *error = QStringLiteral("Project transaction read set is invalid");
+            return false;
+        }
+        const QString path = root.filePath(read.path);
+        const QFileInfo info(path);
+        if (info.isSymLink() || (read.exists ? !info.isFile() : info.exists())) {
+            if (error) *error = QStringLiteral("Project transaction dependency changed: %1").arg(path);
+            return false;
+        }
+        requests.append(FileReadRequest{path, QJsonObject{
+            {QStringLiteral("existed"), read.exists},
+            {QStringLiteral("oldHash"), QString::fromLatin1(read.hash.toHex())}},
+            FileReadMode::OldState});
+    }
+    const auto results = readTransactionFiles(transactionVerificationPool(), requests);
+    for (qsizetype index = 0; index < results.size(); ++index) {
+        if (!results.at(index).matches) {
+            if (error) *error = results.at(index).error.isEmpty()
+                ? QStringLiteral("Project transaction dependency changed: %1").arg(requests.at(index).path)
+                : results.at(index).error;
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ProjectTransaction::applyDelta(QString* error, ProjectTransactionProgressCallback progress)
+{
+    if (!active_ || !delta_) {
+        if (error) *error = QStringLiteral("Project delta transaction is not ready");
+        return false;
+    }
+    QJsonObject journal = readJson(transactionPath_, error);
+    if (journal.isEmpty()) return false;
+    if (journal.value(QStringLiteral("state")) != QStringLiteral("prepared")) {
+        if (error) *error = QStringLiteral("Project delta transaction has already started installation");
+        return false;
+    }
+    for (const QJsonValue& value : deltaDirectories_) {
+        const QJsonObject directory = value.toObject();
+        const QString relative = directory.value(QStringLiteral("path")).toString();
+        const QFileInfo info(QDir(projectDirectory_).filePath(relative));
+        const bool exists = info.isDir()
+            && physicalPathSpelling(projectDirectory_, relative) == relative;
+        if (info.isSymLink() || exists != directory.value(QStringLiteral("existed")).toBool()) {
+            if (error) *error = QStringLiteral("Project directory changed before transaction write: %1")
+                .arg(info.absoluteFilePath());
+            return false;
+        }
+    }
+    return install(std::move(journal), {}, error, std::move(progress));
 }
 
 bool ProjectTransaction::replaceFromDirectory(const QString& stagedDirectory,
@@ -1180,7 +1526,7 @@ bool ProjectTransaction::replaceFromDirectory(const QString& stagedDirectory,
                                                QString* error,
                                                ProjectTransactionProgressCallback progress)
 {
-    if (!active_ || !QDir(stagedDirectory).exists()) {
+    if (!active_ || delta_ || !QDir(stagedDirectory).exists()) {
         if (error) *error = QStringLiteral("Project transaction is not ready");
         return false;
     }
@@ -1274,6 +1620,14 @@ bool ProjectTransaction::replaceFromDirectory(const QString& stagedDirectory,
                        QString::fromLatin1(backupFingerprint_.toHex()));
     }
     journal.insert(QStringLiteral("entries"), entries);
+    return install(std::move(journal), stagedDirectory, error, std::move(progress));
+}
+
+bool ProjectTransaction::install(QJsonObject journal, const QString& stagedDirectory,
+                                QString* error, ProjectTransactionProgressCallback progress)
+{
+    QJsonArray entries = journal.value(QStringLiteral("entries")).toArray();
+    const QJsonArray directories = journal.value(QStringLiteral("directories")).toArray();
     qint64 totalBytes = 0;
     if (progress) {
         for (const QJsonValue& value : entries) {
@@ -1299,7 +1653,7 @@ bool ProjectTransaction::replaceFromDirectory(const QString& stagedDirectory,
         projectDirectory_, backupDirectory_,
         journal.value(QStringLiteral("transactionId")).toString());
     QList<FileReadResult> plannedReads;
-    if (verificationPool_ && !progress) {
+    if (verificationPool_ && !progress && !delta_) {
         QList<FileReadRequest> requests;
         for (const QJsonValue& value : std::as_const(entries)) {
             const QJsonObject entry = value.toObject();
@@ -1309,7 +1663,12 @@ bool ProjectTransaction::replaceFromDirectory(const QString& stagedDirectory,
         }
         plannedReads = readTransactionFiles(verificationPool_, requests);
     }
-    for (qsizetype index = 0; index < entries.size(); ++index) {
+    QList<qsizetype> indices;
+    for (qsizetype index = 0; index < entries.size(); ++index) indices.append(index);
+    const bool parallel = parallelFileOperations_ && !progress;
+    const auto stageEntry = [&](qsizetype index) {
+        FileEntryResult result;
+        QString* error = &result.error;
         QJsonObject entry = entries.at(index).toObject();
         const QString relative = entry.value(QStringLiteral("path")).toString();
         const QString source = QDir(stagedDirectory).filePath(relative);
@@ -1321,16 +1680,16 @@ bool ProjectTransaction::replaceFromDirectory(const QString& stagedDirectory,
                 : QDir(backupDirectory_).filePath(relative)
             : QString();
         QString verificationError;
-        const bool matches = plannedReads.isEmpty()
+        const bool matches = delta_ || (plannedReads.isEmpty()
             ? currentMatchesOldState(target, entry, &verificationError)
-            : plannedReads.at(index).matches;
+            : plannedReads.at(index).matches);
         if (!plannedReads.isEmpty())
             verificationError = plannedReads.at(index).error;
         if (!matches) {
             if (error) *error = verificationError.isEmpty()
                 ? QStringLiteral("Project changed before transaction write: %1").arg(target)
                 : verificationError;
-            return false;
+            return result;
         }
         const auto retained = retainedFiles_.constFind(retainedFileKey(relative));
         const auto staged = stagedFiles_.constFind(retainedFileKey(relative));
@@ -1341,24 +1700,34 @@ bool ProjectTransaction::replaceFromDirectory(const QString& stagedDirectory,
             if (!matches) {
                 if (error && error->isEmpty())
                     *error = QStringLiteral("Staged project file changed before transaction write: %1").arg(source);
-                return false;
+                return result;
             }
             entry.insert(QStringLiteral("operation"), QStringLiteral("write"));
             entry.insert(QStringLiteral("newHash"), QString::fromLatin1(retained.value().toHex()));
+        } else if (renamedSources_.contains(retainedFileKey(relative))) {
+            const QString snapshot = QDir(backupDirectory_).filePath(
+                QStringLiteral(".staged/") + relative);
+            QByteArray expectedHash;
+            if (!copyFileVerified(QDir(backupDirectory_).filePath(
+                    renamedSources_.value(retainedFileKey(relative))), snapshot, &expectedHash, error)
+                || expectedHash != staged->hash)
+                return result;
+            entry.insert(QStringLiteral("operation"), QStringLiteral("write"));
+            entry.insert(QStringLiteral("newHash"), QString::fromLatin1(expectedHash.toHex()));
         } else if (staged != stagedFiles_.cend()) {
             const QString snapshot = QDir(backupDirectory_).filePath(
                 QStringLiteral(".staged/") + relative);
             if (!writeFileVerified(staged->bytes, staged->hash, staged->permissions, snapshot, error))
-                return false;
+                return result;
             entry.insert(QStringLiteral("operation"), QStringLiteral("write"));
             entry.insert(QStringLiteral("newHash"),
                          QString::fromLatin1(staged->hash.toHex()));
-        } else if (QFileInfo(source).isFile()) {
+        } else if (!delta_ && QFileInfo(source).isFile()) {
             const QString snapshot = QDir(backupDirectory_).filePath(
                 QStringLiteral(".staged/") + relative);
             QByteArray expectedHash;
             if (!copyFileVerified(source, snapshot, &expectedHash, error))
-                return false;
+                return result;
             entry.insert(QStringLiteral("operation"), QStringLiteral("write"));
             entry.insert(QStringLiteral("newHash"),
                          QString::fromLatin1(expectedHash.toHex()));
@@ -1371,7 +1740,28 @@ bool ProjectTransaction::replaceFromDirectory(const QString& stagedDirectory,
         else
             entry.remove(QStringLiteral("displacedPath"));
         entry.insert(QStringLiteral("state"), QStringLiteral("planned"));
-        entries.replace(index, entry);
+        result.entry = std::move(entry);
+        return result;
+    };
+    QList<FileEntryResult> stagedEntries;
+    if (parallel) {
+        QStringList destinations;
+        for (const QJsonValue& value : std::as_const(entries)) {
+            const QString relative = value.toObject().value(QStringLiteral("path")).toString();
+            if (stagedFiles_.contains(retainedFileKey(relative)))
+                destinations.append(QDir(backupDirectory_).filePath(QStringLiteral(".staged/") + relative));
+        }
+        if (!prepareFileDirectories(destinations, error)) return false;
+        stagedEntries = QtConcurrent::blockingMapped<QList<FileEntryResult>>(
+            verificationPool_, indices, stageEntry);
+    }
+    for (qsizetype index : std::as_const(indices)) {
+        const FileEntryResult result = stagedEntries.isEmpty() ? stageEntry(index) : stagedEntries.at(index);
+        if (result.entry.isEmpty()) {
+            if (error) *error = result.error;
+            return false;
+        }
+        entries.replace(index, result.entry);
     }
     journal.insert(QStringLiteral("entries"), entries);
     if (!writeJson(transactionPath_, journal, error))
@@ -1385,7 +1775,7 @@ bool ProjectTransaction::replaceFromDirectory(const QString& stagedDirectory,
     qsizetype detachReadBegin = 0;
     qsizetype detachReadEnd = 0;
     for (qsizetype index = 0; index < entries.size(); ++index) {
-        if (verificationPool_ && !progress && index >= detachReadEnd) {
+        if (verificationPool_ && !progress && !delta_ && index >= detachReadEnd) {
             detachReads.clear();
             detachReadBegin = index;
             detachReadEnd = index;
@@ -1403,13 +1793,13 @@ bool ProjectTransaction::replaceFromDirectory(const QString& stagedDirectory,
                 detachReads = readTransactionFiles(verificationPool_, requests);
             }
         }
-        const QJsonObject entry = entries.at(index).toObject();
+        QJsonObject entry = entries.at(index).toObject();
         const QString target = QDir(projectDirectory_).filePath(
             entry.value(QStringLiteral("path")).toString());
         QString verificationError;
-        const bool matches = detachReads.isEmpty()
+        const bool matches = delta_ || (detachReads.isEmpty()
             ? currentMatchesOldState(target, entry, &verificationError)
-            : detachReads.at(index - detachReadBegin).matches;
+            : detachReads.at(index - detachReadBegin).matches);
         if (!detachReads.isEmpty())
             verificationError = detachReads.at(index - detachReadBegin).error;
         if (!matches) {
@@ -1418,21 +1808,91 @@ bool ProjectTransaction::replaceFromDirectory(const QString& stagedDirectory,
                 : verificationError;
             return false;
         }
-        if (!requiresDetach(entry))
+        const bool detach = delta_
+            ? entry.value(QStringLiteral("operation")) != QStringLiteral("write")
+                || entry.contains(QStringLiteral("oldPath"))
+            : requiresDetach(entry);
+        if (!detach)
             continue;
-        const QByteArray oldHash = QByteArray::fromHex(
+        QByteArray oldHash = QByteArray::fromHex(
             entry.value(QStringLiteral("oldHash")).toString().toLatin1());
+        if (delta_ && QFileInfo::exists(target)) {
+            if (!QFileInfo(target).isFile() || QFileInfo(target).isSymLink()) {
+                if (error) *error = QStringLiteral("Project transaction target changed kind: %1").arg(target);
+                return false;
+            }
+            oldHash = fileHash(target, error);
+            if (oldHash.isEmpty()) return false;
+            entry.insert(QStringLiteral("displacedPath"),
+                QDir(backupDirectory_).filePath(QStringLiteral(".displaced/")
+                    + entry.value(QStringLiteral("path")).toString()));
+            entry.insert(QStringLiteral("displacedHash"), QString::fromLatin1(oldHash.toHex()));
+            entries.replace(index, entry);
+            journal.insert(QStringLiteral("entries"), entries);
+            if (!writeJson(transactionPath_, journal, error)) return false;
+        }
         if (!detachTarget(target, entry.value(QStringLiteral("displacedPath")).toString(),
                           oldHash, adjacentBackup, error))
             return false;
     }
     if (!reconcileDirectories(projectDirectory_, directories, false, error))
         return false;
+    const auto installEntry = [&](QJsonObject entry, bool plannedMatches) {
+        FileEntryResult result;
+        QString* error = &result.error;
+        const QString relative = entry.value(QStringLiteral("path")).toString();
+        const QString target = QDir(projectDirectory_).filePath(relative);
+        if (entry.value(QStringLiteral("operation")) == QStringLiteral("write") && !plannedMatches) {
+            const bool replaceExisting = delta_
+                ? QFileInfo(target).isFile() && !QFileInfo(target).isSymLink()
+                : entry.value(QStringLiteral("existed")).toBool()
+                    && !entry.contains(QStringLiteral("oldPath"))
+                    && currentMatchesOldState(target, entry);
+            if (QFileInfo::exists(target) && !replaceExisting) {
+                *error = QStringLiteral("Project changed during transaction write: %1").arg(target);
+                return result;
+            }
+            if (!QDir().mkpath(QFileInfo(target).absolutePath())) {
+                *error = QStringLiteral("Cannot create project file directory: %1")
+                    .arg(QFileInfo(target).absolutePath());
+                return result;
+            }
+            const QString snapshot = QDir(backupDirectory_).filePath(
+                QStringLiteral(".staged/") + relative);
+            QByteArray installedHash;
+            const bool installed = adjacentBackup && !replaceExisting
+                ? installFileWithoutReplacement(snapshot, target)
+                    || copyFileVerified(snapshot, target, &installedHash, error)
+                : copyFileVerified(snapshot, target, &installedHash, error);
+            if (!installed) return result;
+            QString verificationError;
+            if (!currentMatchesPlannedState(target, entry, &verificationError)) {
+                *error = verificationError.isEmpty()
+                    ? QStringLiteral("Staged project file changed during transaction: %1").arg(target)
+                    : verificationError;
+                return result;
+            }
+        }
+        entry.insert(QStringLiteral("state"), QStringLiteral("written"));
+        result.entry = std::move(entry);
+        return result;
+    };
+    QList<FileEntryResult> installedEntries;
+    if (parallel)
+        installedEntries = QtConcurrent::blockingMapped<QList<FileEntryResult>>(
+            verificationPool_, indices, [&](qsizetype index) {
+                const QJsonObject entry = entries.at(index).toObject();
+                const QString target = QDir(projectDirectory_).filePath(
+                    entry.value(QStringLiteral("path")).toString());
+                const bool matches = entry.value(QStringLiteral("operation")) != QStringLiteral("write")
+                    || currentMatchesPlannedState(target, entry);
+                return installEntry(entry, matches);
+            });
     QList<FileReadResult> installedReads;
     qsizetype installedReadBegin = 0;
     qsizetype installedReadEnd = 0;
     for (qsizetype index = 0; index < entries.size(); ++index) {
-        if (verificationPool_ && !progress && index >= installedReadEnd) {
+        if (!parallel && verificationPool_ && !progress && index >= installedReadEnd) {
             installedReads.clear();
             installedReadBegin = index;
             installedReadEnd = index;
@@ -1451,45 +1911,27 @@ bool ProjectTransaction::replaceFromDirectory(const QString& stagedDirectory,
                 installedReads = readTransactionFiles(verificationPool_, requests);
             }
         }
-        QJsonObject entry = entries.at(index).toObject();
+        const QJsonObject entry = entries.at(index).toObject();
         const QString relative = entry.value(QStringLiteral("path")).toString();
-        const QString target = QDir(projectDirectory_).filePath(relative);
-        if (entry.value(QStringLiteral("operation")) == QStringLiteral("write")
-            && !(installedReads.isEmpty() ? currentMatchesPlannedState(target, entry)
-                : installedReads.at(index - installedReadBegin).matches)) {
-            installedReads.clear();
-            installedReadEnd = index + 1;
-            const bool replaceExisting = entry.value(QStringLiteral("existed")).toBool()
-                && !entry.contains(QStringLiteral("oldPath"))
-                && currentMatchesOldState(target, entry);
-            if (QFileInfo::exists(target) && !replaceExisting) {
-                if (error) *error = QStringLiteral("Project changed during transaction write: %1").arg(target);
-                return false;
+        FileEntryResult result;
+        if (!installedEntries.isEmpty()) {
+            result = installedEntries.at(index);
+        } else {
+            const QString target = QDir(projectDirectory_).filePath(relative);
+            const bool matches = entry.value(QStringLiteral("operation")) != QStringLiteral("write")
+                || (installedReads.isEmpty() ? currentMatchesPlannedState(target, entry)
+                    : installedReads.at(index - installedReadBegin).matches);
+            if (!matches) {
+                installedReads.clear();
+                installedReadEnd = index + 1;
             }
-            if (!QDir().mkpath(QFileInfo(target).absolutePath())) {
-                if (error) *error = QStringLiteral("Cannot create project file directory: %1")
-                    .arg(QFileInfo(target).absolutePath());
-                return false;
-            }
-            const QString snapshot = QDir(backupDirectory_).filePath(
-                QStringLiteral(".staged/") + relative);
-            QByteArray installedHash;
-            const bool installed = adjacentBackup && !replaceExisting
-                ? installFileWithoutReplacement(snapshot, target)
-                    || copyFileVerified(snapshot, target, &installedHash, error)
-                : copyFileVerified(snapshot, target, &installedHash, error);
-            if (!installed)
-                return false;
-            QString verificationError;
-            if (!currentMatchesPlannedState(target, entry, &verificationError)) {
-                if (error) *error = verificationError.isEmpty()
-                    ? QStringLiteral("Staged project file changed during transaction: %1").arg(target)
-                    : verificationError;
-                return false;
-            }
+            result = installEntry(entry, matches);
         }
-        entry.insert(QStringLiteral("state"), QStringLiteral("written"));
-        entries.replace(index, entry);
+        if (result.entry.isEmpty()) {
+            if (error) *error = result.error;
+            return false;
+        }
+        entries.replace(index, result.entry);
         ++completedFiles;
         if (progress) {
             const auto staged = stagedFiles_.constFind(retainedFileKey(relative));
@@ -1514,7 +1956,15 @@ bool ProjectTransaction::commit(bool keepJournal, QString* error)
     QJsonObject journal = readJson(transactionPath_, error);
     if (journal.isEmpty())
         return false;
+    if (!verifyReadSet(error)) return false;
     QJsonArray entries = journal.value(QStringLiteral("entries")).toArray();
+    if (delta_ && (journal.value(QStringLiteral("state")) != QStringLiteral("writing")
+        || std::any_of(entries.cbegin(), entries.cend(), [](const QJsonValue& value) {
+            return value.toObject().value(QStringLiteral("state")) != QStringLiteral("written");
+        }))) {
+        if (error) *error = QStringLiteral("Project delta transaction has not completed installation");
+        return false;
+    }
     const QJsonArray directories = journal.value(QStringLiteral("directories")).toArray();
     for (const QJsonValue& value : directories) {
         const QJsonObject directory = value.toObject();

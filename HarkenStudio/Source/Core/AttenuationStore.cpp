@@ -607,6 +607,7 @@ ActionResult AttenuationStore::edit(ProjectManager* projectManager, VAttenuation
         result.undoText = undoText;
     }
     result.data = QJsonObject{{"definition", attenuation.snapshot().toJson()}};
+    result.authoringWriteSet = QSet<QUuid>{guid};
     return result;
 }
 

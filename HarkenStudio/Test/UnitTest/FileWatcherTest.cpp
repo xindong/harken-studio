@@ -4,6 +4,8 @@
 #include <gtest/gtest.h>
 
 #include <QDir>
+#include <QDateTime>
+#include <QCryptographicHash>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
@@ -194,7 +196,7 @@ TEST_F(FileWatcherContract, EmptyDirectoryChangesDoNotPreventWritesOrLeaveReplac
     ASSERT_TRUE(QDir().mkpath(removed));
     ASSERT_TRUE(QDir().mkpath(restored));
     watcher_.startWatching(directory_.path());
-    ASSERT_TRUE(watcher_.beginProjectWrite(directory_.path(), {}));
+    ASSERT_TRUE(watcher_.beginProjectWrite(directory_.path(), {removed, renamed, restored}));
     ASSERT_TRUE(QDir().rename(removed, renamed));
     ASSERT_TRUE(QDir().rmdir(restored));
     ASSERT_TRUE(QDir().mkpath(restored));
@@ -209,6 +211,86 @@ TEST_F(FileWatcherContract, EmptyDirectoryChangesDoNotPreventWritesOrLeaveReplac
     ASSERT_TRUE(waitFor([&] {
         return projectChanges_.contains(renamedFile) && projectChanges_.contains(restoredFile);
     }));
+}
+
+TEST_F(FileWatcherContract, UnrelatedChangesDuringCommitRemainObservable)
+{
+    const QString added = directory_.filePath(QStringLiteral("Layers/External.vp"));
+    ASSERT_TRUE(watcher_.beginProjectWrite(directory_.path(), {changed_}));
+    ASSERT_TRUE(replaceFile(changed_, "saved content"));
+    ASSERT_TRUE(replaceFile(retained_, "external content during commit"));
+    ASSERT_TRUE(replaceFile(added, "external new document"));
+    ASSERT_TRUE(replaceFile(source_, "external source during commit"));
+    watcher_.endProjectWrite();
+    ASSERT_TRUE(waitFor([&] {
+        return projectChanges_.contains(retained_) && projectChanges_.contains(added)
+            && modifiedSources_.contains(source_);
+    }));
+    EXPECT_FALSE(projectChanges_.contains(changed_));
+}
+
+TEST_F(FileWatcherContract, InstalledContentChecksExposeExternalRewritesAndRecreatedDeletions)
+{
+    const QString created = directory_.filePath(QStringLiteral("Layers/Created.vp"));
+    const QByteArray saved = QByteArrayLiteral("saved content");
+    const QByteArray hash = QCryptographicHash::hash(saved, QCryptographicHash::Sha256);
+    ASSERT_TRUE(watcher_.beginProjectWrite(directory_.path(), {changed_, created, retained_}));
+    ASSERT_TRUE(replaceFile(changed_, saved));
+    ASSERT_TRUE(replaceFile(created, saved));
+    ASSERT_TRUE(QFile::remove(retained_));
+    const QFileInfo committed(changed_);
+    const auto modified = committed.lastModified();
+    QFile external(changed_);
+    ASSERT_TRUE(external.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    ASSERT_EQ(external.write("other content"), saved.size());
+    ASSERT_TRUE(external.flush());
+    ASSERT_TRUE(external.setFileTime(modified, QFileDevice::FileModificationTime));
+    external.close();
+    ASSERT_TRUE(replaceFile(retained_, "externally recreated"));
+    watcher_.endProjectWrite({{changed_, hash}, {created, hash}, {retained_, {}}});
+    ASSERT_TRUE(waitFor([&] {
+        return projectChanges_.contains(changed_) && projectChanges_.contains(retained_);
+    }));
+    EXPECT_FALSE(projectChanges_.contains(created));
+    ASSERT_TRUE(replaceFile(created, "external after watching resumes"));
+    ASSERT_TRUE(waitFor([&] { return projectChanges_.contains(created); }));
+}
+
+TEST_F(FileWatcherContract, EquivalentRootPathsKeepConcurrentChangesObservable)
+{
+    ASSERT_TRUE(watcher_.beginProjectWrite(directory_.path() + QStringLiteral("/."), {changed_}));
+    ASSERT_TRUE(replaceFile(changed_, "saved content"));
+    ASSERT_TRUE(replaceFile(retained_, "external while watches are suspended"));
+    ASSERT_TRUE(replaceFile(source_, "external source while watches are suspended"));
+    watcher_.endProjectWrite();
+    ASSERT_TRUE(waitFor([&] {
+        return projectChanges_.contains(retained_) && modifiedSources_.contains(source_);
+    }));
+    EXPECT_FALSE(projectChanges_.contains(changed_));
+}
+
+TEST_F(FileWatcherContract, SwitchingWriteRootsObservesTargetChangesFromBeforeTheWrite)
+{
+    QTemporaryDir target;
+    ASSERT_TRUE(target.isValid());
+    const QString saved = target.filePath(QStringLiteral("Layers/Saved.vp"));
+    const QString external = target.filePath(QStringLiteral("Layers/External.vp"));
+    const QString source = target.filePath(QStringLiteral("AudioSources/Source.wav"));
+    ASSERT_TRUE(replaceFile(saved, "before"));
+    ASSERT_TRUE(replaceFile(external, "before"));
+    ASSERT_TRUE(replaceFile(source, "before"));
+    ASSERT_TRUE(watcher_.beginProjectWrite(target.path(), {saved}));
+    ASSERT_TRUE(replaceFile(saved, "saved content"));
+    ASSERT_TRUE(replaceFile(external, "external content during write"));
+    ASSERT_TRUE(replaceFile(source, "external source during write"));
+    watcher_.endProjectWrite({{saved, QCryptographicHash::hash(
+        QByteArrayLiteral("saved content"), QCryptographicHash::Sha256)}});
+    ASSERT_TRUE(waitFor([&] {
+        return projectChanges_.contains(external) && modifiedSources_.contains(source);
+    }));
+    EXPECT_FALSE(projectChanges_.contains(saved));
+    EXPECT_TRUE(watcher_.sourceFiles().contains(source));
+    EXPECT_FALSE(watcher_.sourceFiles().contains(source_));
 }
 
 TEST_F(FileWatcherContract, SourceCreationDeletionAndProjectClosureKeepTheirNotificationBoundaries)
@@ -270,6 +352,42 @@ TEST_F(FileWatcherContract, RestoredSizeAndTimestampDoNotHideNativeExternalChang
     EXPECT_EQ(QFileInfo(changed_).size(), size);
     EXPECT_EQ(QFileInfo(changed_).lastModified(), modified);
     ASSERT_TRUE(waitFor([&] { return projectChanges_.contains(changed_); }));
+}
+
+TEST_F(FileWatcherContract, SameContentRewritesAndPermissionChangesRemainObservableAfterSelfWrites)
+{
+    const QByteArray saved = QByteArrayLiteral("unchanged saved content");
+    const auto savedTime = QDateTime::fromString(QStringLiteral("2001-02-03T04:05:06Z"), Qt::ISODate);
+    const auto hash = QCryptographicHash::hash(saved, QCryptographicHash::Sha256);
+    ASSERT_TRUE(watcher_.beginProjectWrite(directory_.path(), {changed_, retained_}));
+    for (const auto& path : {changed_, retained_}) {
+        ASSERT_TRUE(replaceFile(path, saved));
+        QFile file(path);
+        ASSERT_TRUE(file.open(QIODevice::ReadWrite));
+        ASSERT_TRUE(file.setFileTime(savedTime, QFileDevice::FileModificationTime));
+    }
+    watcher_.endProjectWrite({{changed_, hash}, {retained_, hash}});
+    settleEvents();
+    ASSERT_TRUE(projectChanges_.isEmpty());
+
+    const auto permissions = QFileInfo(retained_).permissions();
+    const auto modified = QFileInfo(retained_).lastModified();
+    const auto restorePermissions = qScopeGuard([&] { QFile::setPermissions(retained_, permissions); });
+    ASSERT_TRUE(replaceFile(changed_, saved));
+    EXPECT_NE(QFileInfo(changed_).lastModified(), savedTime);
+    ASSERT_TRUE(QFile::setPermissions(retained_, permissions
+        & ~QFileDevice::WriteOwner & ~QFileDevice::WriteUser
+        & ~QFileDevice::WriteGroup & ~QFileDevice::WriteOther));
+    EXPECT_EQ(QFileInfo(retained_).lastModified(), modified);
+    EXPECT_NE(QFileInfo(retained_).permissions(), permissions);
+    for (const auto& path : {changed_, retained_}) {
+        QFile file(path);
+        ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+        EXPECT_EQ(file.readAll(), saved);
+    }
+    ASSERT_TRUE(waitFor([&] {
+        return projectChanges_.contains(changed_) && projectChanges_.contains(retained_);
+    }));
 }
 
 TEST_F(FileWatcherContract, CaseOnlyReplacementDoesNotReportSelfWritesAndKeepsTheNewSpellingObserved)
