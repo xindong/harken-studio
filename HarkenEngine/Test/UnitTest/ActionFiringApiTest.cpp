@@ -12517,16 +12517,18 @@ TEST(ActionFiringApi, ExitMarkerStopDropsWhenNoMarkerExists) {
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(playFiring));
 }
 
-TEST(ActionFiringApi, ExitMarkerStopSchedulesTheAuthoredMarker) {
+static void CheckExitMarkerStopSampleRate(std::uint32_t sourceRate, bool afterStart) {
+    SCOPED_TRACE(sourceRate);
+    SCOPED_TRACE(afterStart);
     (void)Vn_Term();
     harkentest::EngineSession session(
-        harkentest::MakeNullConfig(2, 256, 48000));
+        harkentest::MakeNullConfig(2, afterStart ? 64 : 256, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     std::vector<float> first(4096, 0.25f);
-    std::vector<float> second(4096, -0.25f);
-    const VnPCMDesc firstPcm = harkentest::MonoDesc(first, 48000);
-    const VnPCMDesc secondPcm = harkentest::MonoDesc(second, 48000);
+    std::vector<float> second(4096, afterStart ? 0.25f : -0.25f);
+    const VnPCMDesc firstPcm = harkentest::MonoDesc(first, sourceRate);
+    const VnPCMDesc secondPcm = harkentest::MonoDesc(second, sourceRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound,
                                     &firstPcm));
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound,
@@ -12556,8 +12558,25 @@ TEST(ActionFiringApi, ExitMarkerStopSchedulesTheAuthoredMarker) {
     playDesc.actionId = image.actions[9].actionStableId;
     VnActionFiringHandle playFiring = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&playDesc, &playFiring));
-    const std::uint64_t expected =
+    std::uint64_t expected =
         engine->playableServices[0].startFrame + 480u;
+    if (afterStart) {
+        bool started = false;
+        for (unsigned block = 0; block < 16 && !started; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            engine->nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+            for (const auto& row : engine->playableServices) {
+                if (row.phase == harken::EnginePlayableStartPhase::Started &&
+                    row.InvocationValid() && row.Invocation().actionFiring == playFiring) {
+                    started = true;
+                    expected = row.startFrame + 480u;
+                }
+            }
+        }
+        ASSERT_TRUE(started);
+        ASSERT_LT(engine->mixer.BlocksRendered() * 64u, expected);
+    }
     SCOPED_TRACE(::testing::Message() << "arm capacity=" << engine->timelineArms.Capacity()
                                     << ", live=" << engine->timelineArms.LiveCount());
     VnPostActionDesc stopDesc = ValidPostDesc();
@@ -12569,7 +12588,7 @@ TEST(ActionFiringApi, ExitMarkerStopSchedulesTheAuthoredMarker) {
     ASSERT_EQ(VN_OK, Vn_QueryActionStep(stopFiring, 0, &step));
     EXPECT_NE(VN_ACTION_STEP_NO_OP, step.state);
     EXPECT_EQ(1u, step.capturedPlayableCount);
-    if (expected >= engine->timelinePool.WindowEndFrame()) {
+    if (!afterStart && expected >= engine->timelinePool.WindowEndFrame()) {
         harken::ActionDeferredRecordToken token{};
         harken::ActionDeferredRecord record{};
         harken::ActionDeferredRecordState state =
@@ -12577,14 +12596,43 @@ TEST(ActionFiringApi, ExitMarkerStopSchedulesTheAuthoredMarker) {
         ASSERT_TRUE(engine->actionDeferredRecords.CaptureAt(
             0, &token, &record, &state));
         EXPECT_EQ(expected, record.intendedBoundaryFrame);
-    } else {
+    } else if (!afterStart) {
         const std::uint64_t silence = RematerializedStopSilence(engine);
-        if (silence != 0) {
-            EXPECT_EQ(expected, silence);
-        }
+        if (silence != 0) EXPECT_EQ(expected, silence);
     }
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(stopFiring));
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(playFiring));
+    if (afterStart) {
+        std::uint64_t lastAudibleFrame = 0;
+        while (engine->mixer.BlocksRendered() * 64u < expected + 1024u) {
+            const auto firstFrame = engine->mixer.BlocksRendered() * 64u;
+            engine->nullBackend.Pump(1);
+            ASSERT_EQ(firstFrame + 64u, engine->mixer.BlocksRendered() * 64u);
+            const auto* output = engine->nullBackend.LastBlock();
+            for (std::uint32_t frame = 0; frame < 64; ++frame) {
+                if (std::abs(output[frame * engine->nullBackend.Channels()]) > 1.0e-7f)
+                    lastAudibleFrame = firstFrame + frame;
+            }
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        // Zero authored fade uses the shared timeline declick after the marker.
+        const auto declickFrames =
+            (harken::kTimelineStopDeclickMs * 48000u + 999u) / 1000u;
+        EXPECT_EQ(expected + declickFrames, lastAudibleFrame + 2u);
+        EXPECT_EQ(0u, engine->voices.ActiveCount());
+        EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(stopFiring));
+        EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(playFiring));
+    }
+}
+
+TEST(ActionFiringApi, ExitMarkerStopSchedulesTheAuthoredMarker) {
+    CheckExitMarkerStopSampleRate(48000, false);
+}
+
+TEST(ActionFiringApi, ExitMarkerStopAfterStartPreservesTimelineAcrossSampleRates) {
+    for (const auto sourceRate : {24000u, 48000u, 96000u}) {
+        CheckExitMarkerStopSampleRate(sourceRate, true);
+    }
 }
 
 TEST(ActionFiringApi, ReferencedExitMarkerStopUsesTheReferenceSegmentTimeline) {
