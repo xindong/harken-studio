@@ -79,12 +79,11 @@ inline QJsonObject projectRoot(const QJsonObject& content,
     if (schemaVersion == VNX::ProjectSchema::kProjectSchemaVersion
         && content.value(QStringLiteral("metadata")).isObject()) {
         auto metadata = content.value(QStringLiteral("metadata")).toObject();
-        if (!metadata.contains(QStringLiteral("platforms"))
+        if (!content.contains(QStringLiteral("deployPlatforms"))
             && !metadata.contains(QStringLiteral("targetPlatforms"))) {
             const auto project = projectWithPlatforms();
-            metadata.insert(QStringLiteral("platforms"),
-                            VNX::ProjectPlatformSemantics::platformsToJson(project.platforms));
-            configured.insert(QStringLiteral("metadata"), metadata);
+            configured.insert(QStringLiteral("deployPlatforms"),
+                              VNX::ProjectPlatformSemantics::platformsToJson(project.platforms));
         }
     }
     return projectDocument(QStringLiteral("project.root"), projectId, projectId,

@@ -29,7 +29,7 @@ RELEASE_SCOPE_CONFIG_PATH = ".scripts/studio-schema-release-scopes.json"
 TREE_NAMES = ("Editor", "Pack")
 SCHEMA_NAMES = {"Editor": "ProjectSerializedSchema.json", "Pack": "PackManifestSchema.json"}
 STUDIO_BINARIES = ("HarkenStudio.exe", "HarkenStudio.app/Contents/MacOS/HarkenStudio")
-EDIT_PATHS = {"/content/metadata/description", "/content/name"}
+EDIT_PATHS = {"/content/metadata/name", "/content/name"}
 
 
 def canonical_bytes(value: Any) -> bytes:
@@ -419,11 +419,11 @@ def verify_edit(before: dict[str, tuple[Path, dict[str, Any]]],
             raise ValueError("Reader reported an unapproved edit")
         document = expected[identity]
         is_root = document["harkenDocument"]["type"] == "project.root"
-        if is_root != (path == "/content/metadata/description"):
+        if is_root != (path == "/content/metadata/name"):
             raise ValueError("Reader edited an unexpected document kind")
         parent, key = pointer_parent(document, path)
         original = parent.get(key, "")
-        suffix = "\nSchema compatibility edit" if is_root else "_schema_edit"
+        suffix = "_schema_edit"
         if not isinstance(original, str) or edit.get("before") != original or edit.get("after") != original + suffix:
             raise ValueError("Reader did not perform the fixed normal edit")
         parent[key] = edit["after"]
@@ -446,7 +446,7 @@ def verify_edit(before: dict[str, tuple[Path, dict[str, Any]]],
         kind = document["harkenDocument"]["type"]
         content = document["content"]
         if kind == "project.root":
-            required_edits.add((identity, "/content/metadata/description"))
+            required_edits.add((identity, "/content/metadata/name"))
         elif content.get("type") != "Folder" and not (
                 kind == "project.bus" and content.get("parentRef", {}).get("kind") == "root"):
             required_edits.add((identity, "/content/name"))

@@ -546,9 +546,6 @@ public:
     QStringList getPackExportSelectedPlatforms() const;
     void setPackExportSelectedPlatformsInternal(const QStringList& value);
 
-    std::vector<PackGroup> getPackGroups() const;
-    void setPackGroupsInternal(std::vector<PackGroup> value);
-
     std::vector<ActionPackTargeting> getActionPackTargeting() const;
     void setActionPackTargetingInternal(std::vector<ActionPackTargeting> value);
 
@@ -590,7 +587,6 @@ signals:
     void projectPublishSettingsChanged();
     void packExportCurrentPlatformChanged(QString newValue);
     void packExportSelectedPlatformsChanged(QStringList newValue);
-    void packGroupsChanged();
     void actionPackTargetingChanged();
     void targetPlatformsChanged(QStringList newValue);
     void projectLanguagesChanged(QStringList newValue);

@@ -45,7 +45,6 @@ bool createFixture(ProjectManager& manager, const QString& outputDirectory)
     ProjectConfig config;
     config.name = output.fileName();
     config.location = output.absolutePath();
-    config.description = QStringLiteral("Schema compatibility fixture");
     if (!manager.createProject(config)) return false;
     ProjectItem* layer = manager.createItem(
         nullptr, QStringLiteral("Main"), ProjectItem::Type::Layer);
@@ -152,13 +151,13 @@ QJsonObject runSchemaCompatibilityProbe(const QJsonObject& request)
     report.insert(QStringLiteral("projectPath"), projectPath);
     QJsonArray edits;
     if (edit) {
-        const QString before = project.description;
-        project.description += QStringLiteral("\nSchema compatibility edit");
+        const QString before = project.name;
+        project.name += QStringLiteral("_schema_edit");
         edits.append(QJsonObject{
             {QStringLiteral("documentId"), project.projectId},
-            {QStringLiteral("jsonPath"), QStringLiteral("/content/metadata/description")},
+            {QStringLiteral("jsonPath"), QStringLiteral("/content/metadata/name")},
             {QStringLiteral("before"), before},
-            {QStringLiteral("after"), project.description},
+            {QStringLiteral("after"), project.name},
         });
         const auto items = documentItems(project);
         QList<QUuid> ids = items.keys();
@@ -192,7 +191,7 @@ QJsonObject runSchemaCompatibilityProbe(const QJsonObject& request)
             const bool root = id == manager.currentProject()->projectId;
             ProjectItem* item = reopenedItems.value(QUuid::fromString(id), nullptr);
             if ((!root && !item)
-                || (root ? manager.currentProject()->description : item->name)
+                || (root ? manager.currentProject()->name : item->name)
                     != entry.value(QStringLiteral("after")).toString())
                 return failed(QStringLiteral("Schema round-trip edits did not survive reopening"));
         }

@@ -57,9 +57,6 @@ QString writeProject(const QTemporaryDir& directory,
         {QStringLiteral("metadata"), QJsonObject{
             {QStringLiteral("name"), QStringLiteral("Legacy")},
         }},
-        {QStringLiteral("extensions"), QJsonObject{
-            {QStringLiteral("authorNotes"), QJsonArray{17, true, QStringLiteral("Keep")}},
-        }},
     }, version));
     const QString busId = QStringLiteral("bbbbbbbb-1111-2222-3333-444444444444");
     writeObject(directory.filePath(QStringLiteral("Legacy/Busses/Master.vp")),
@@ -185,7 +182,9 @@ TEST(ProjectOpenApproval, ChangedFilesAndPendingJournalDoNotConsumeApproval)
     ASSERT_TRUE(approved.upgradeApproval);
     QJsonObject changed = readObject(path);
     QJsonObject content = HarkenTest::projectContent(changed);
-    content.insert(QStringLiteral("extensions"), QJsonObject{{QStringLiteral("authorEdit"), true}});
+    QJsonObject metadata = content.value(QStringLiteral("metadata")).toObject();
+    metadata.insert(QStringLiteral("name"), QStringLiteral("Author edit"));
+    content.insert(QStringLiteral("metadata"), metadata);
     changed.insert(QStringLiteral("content"), content);
     writeObject(path, changed);
     auto before = treeBytes(directory.path());
@@ -333,7 +332,9 @@ TEST(StudioProjectOpen, CurrentGenerationOpenRetainsTransactionRecovery)
     const QByteArray original = readBytes(path);
     QJsonObject changed = readObject(path);
     QJsonObject content = HarkenTest::projectContent(changed);
-    content.insert(QStringLiteral("extensions"), QJsonObject{{QStringLiteral("interruptedEdit"), true}});
+    QJsonObject metadata = content.value(QStringLiteral("metadata")).toObject();
+    metadata.insert(QStringLiteral("name"), QStringLiteral("Interrupted edit"));
+    content.insert(QStringLiteral("metadata"), metadata);
     changed.insert(QStringLiteral("content"), content);
     const QString staging = directory.filePath(QStringLiteral("staging"));
     writeObject(QDir(staging).filePath(QStringLiteral("Legacy.hsp")), changed);
@@ -392,7 +393,9 @@ TEST(StudioProjectOpen, IpcWithoutWindowRecoversInterruptedCurrentProject)
     const QString staging = directory.filePath(QStringLiteral("staging"));
     QJsonObject changed = readObject(path);
     QJsonObject content = HarkenTest::projectContent(changed);
-    content.insert(QStringLiteral("extensions"), QJsonObject{{QStringLiteral("interruptedWrite"), true}});
+    QJsonObject metadata = content.value(QStringLiteral("metadata")).toObject();
+    metadata.insert(QStringLiteral("name"), QStringLiteral("Interrupted write"));
+    content.insert(QStringLiteral("metadata"), metadata);
     changed.insert(QStringLiteral("content"), content);
     writeObject(QDir(staging).filePath(QStringLiteral("Legacy.hsp")), changed);
     QString error;

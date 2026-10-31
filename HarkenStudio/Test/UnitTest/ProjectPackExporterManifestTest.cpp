@@ -1149,11 +1149,6 @@ TEST(EditorProjectPackExporterManifest, CompanionsCoverEachExportedAction)
          {QStringLiteral("LooseOne"), 22, kSharedSoundObjectId},
          {QStringLiteral("LooseTwo"), 23, kSoloSoundObjectId}}));
 
-    VNX::PackGroup group;
-    group.name = QStringLiteral("Bundle");
-    group.actionIds = {harkentest::StudioObjectId(21 + kStableIdBias)};
-    project.packGroups.push_back(group);
-
     VNX::ProjectPackExporter exporter;
     VNX::ProjectPackExporter::ExportOptions opts;
     opts.platform = HarkenTest::platformIdString("Windows");
@@ -1169,7 +1164,6 @@ TEST(EditorProjectPackExporterManifest, CompanionsCoverEachExportedAction)
 
     const QJsonObject groupedPack = findByName(packs, QStringLiteral("GroupedOne"));
     ASSERT_FALSE(groupedPack.isEmpty());
-    EXPECT_TRUE(findByName(packs, QStringLiteral("Bundle")).isEmpty());
     const QJsonObject groupedAction = findByName(
         actionCompanions(manifest), QStringLiteral("GroupedOne"));
     EXPECT_EQ(QUuid(groupedAction.value(QStringLiteral("guid")).toString()),
@@ -1713,13 +1707,6 @@ TEST(EditorProjectPackExporterManifest, UntargetedUnitsStayOutOfPublication)
          {QStringLiteral("LooseKept"), 22, kSharedSoundObjectId},
          {QStringLiteral("LooseDropped"), 23, kSoloSoundObjectId}}));
 
-    VNX::PackGroup group;
-    group.name = QStringLiteral("AndroidBundle");
-    group.actionIds = {harkentest::StudioObjectId(21 + kStableIdBias)};
-    group.allPlatforms = false;
-    group.platformIds = {HarkenTest::platformIdString("Android")};
-    project.packGroups.push_back(group);
-
     VNX::ProjectPackExporter exporter;
     VNX::ProjectPackExporter::ExportOptions opts;
     opts.selection.actionTargeting.push_back(
@@ -1732,7 +1719,6 @@ TEST(EditorProjectPackExporterManifest, UntargetedUnitsStayOutOfPublication)
     const QJsonArray manifest = readPublication(dir.path());
     const QJsonArray packs = manifest;
 
-    EXPECT_TRUE(findByName(packs, QStringLiteral("AndroidBundle")).isEmpty());
     EXPECT_TRUE(findByName(packs, QStringLiteral("LooseDropped")).isEmpty());
     const QJsonObject keptPack = findByName(packs, QStringLiteral("LooseKept"));
     EXPECT_EQ(keptPack.value(QStringLiteral("packKind")).toInt(), 3);
@@ -3551,7 +3537,7 @@ TEST(EditorProjectPackExporterManifest, RuntimeBundlePreservesLanguagePathsThrou
     VNX::AssetRegistry::instance().clear();
 }
 
-TEST(EditorProjectPackExporterManifest, RuntimeBundleDissolvesLegacyGroupsAndKeepsAllActionsAvailable)
+TEST(EditorProjectPackExporterManifest, RuntimeBundleKeepsAllActionsAvailable)
 {
     qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
@@ -3567,11 +3553,6 @@ TEST(EditorProjectPackExporterManifest, RuntimeBundleDissolvesLegacyGroupsAndKee
         {{QStringLiteral("One"), 21, kSoloSoundObjectId},
          {QStringLiteral("Two"), 22, kSharedSoundObjectId}}));
     project.projectLanguages = {QStringLiteral("English"), QStringLiteral("ja")};
-    VNX::PackGroup group;
-    group.name = QStringLiteral("Bundle");
-    group.actionIds = {harkentest::StudioObjectId(21 + kStableIdBias),
-                       harkentest::StudioObjectId(22 + kStableIdBias)};
-    project.packGroups.push_back(group);
     const auto bundle = VNX::RuntimeContentBundleBuilder::build(
         project, QDir(dir.path()).filePath(QStringLiteral("published")),
         HarkenTest::platformIdString("Windows"));
@@ -3718,7 +3699,7 @@ TEST(EditorProjectPackExporterManifest, MissingLocalizedActiveWritesNoPacks)
     VNX::AssetRegistry::instance().clear();
 }
 
-TEST(EditorProjectPackExporterManifest, LegacyMixedGroupKeepsCommonAndLocalizedDefinitionsInIndependentPacks)
+TEST(EditorProjectPackExporterManifest, CommonAndLocalizedDefinitionsStayInIndependentPacks)
 {
     qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
     QTemporaryDir dir;
@@ -3739,11 +3720,6 @@ TEST(EditorProjectPackExporterManifest, LegacyMixedGroupKeepsCommonAndLocalizedD
     play.type = VNX::VActionStep::Type::Play;
     play.targetObjectID = kSharedSoundObjectId;
     project.actions.front().rootItem->children.front()->comp<VNX::VAction>()->steps.push_back(play);
-    VNX::PackGroup group;
-    group.name = QStringLiteral("Dialogue");
-    group.actionIds = {harkentest::StudioObjectId(21 + kStableIdBias),
-                       harkentest::StudioObjectId(22 + kStableIdBias)};
-    project.packGroups.push_back(group);
     VNX::ProjectPackExporter exporter;
     VNX::ProjectPackExporter::ExportOptions opts;
     opts.platform = HarkenTest::platformIdString("Windows");

@@ -235,12 +235,15 @@ bool ProjectDocument::validateFieldGroupAuthoring(const QJsonObject& content,
 bool ProjectDocument::normalizeContent(QJsonObject* content, QString* error)
 {
     for (const auto* key : {"expanded", "objectPath", "canvasPos", "nameBindingRevision",
-                            "actionPublishedNameHistory", "paths"})
+                            "actionPublishedNameHistory", "paths", "path", "sourceID",
+                            "deploymentProfiles", "extensions", "packExportCurrentPlatformId",
+                            "packExportSelectedPlatformIds", "actionPackTargeting", "packOutputDir",
+                            "unityIntegration", "conversionFailurePolicy", "packGroups"})
         content->remove(QLatin1String(key));
     if (content->value(QStringLiteral("metadata")).isObject()) {
         auto metadata = content->value(QStringLiteral("metadata")).toObject();
         for (const auto* key : {"createdDate", "modifiedDate", "toolVersion", "version",
-                                "projectTemplateId", "enableLFE"})
+                                "projectTemplateId", "enableLFE", "author", "description"})
             metadata.remove(QLatin1String(key));
         content->insert(QStringLiteral("metadata"), metadata);
     }

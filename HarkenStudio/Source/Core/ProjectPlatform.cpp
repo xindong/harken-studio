@@ -326,7 +326,7 @@ bool validatePlatforms(const QVector<ProjectPlatform>& platforms, QString* error
 bool platformsFromJson(const QJsonValue& value, QVector<ProjectPlatform>* platforms, QString* error)
 {
     if (!value.isArray())
-        return fail(error, QStringLiteral("Legacy platform format is unsupported; metadata.platforms must contain platform instances. No migration is available."));
+        return fail(error, QStringLiteral("Legacy platform format is unsupported; deployPlatforms must contain platform instances. No migration is available."));
     QVector<ProjectPlatform> parsed;
     for (const auto& value : value.toArray()) {
         const auto json = value.toObject();
@@ -369,22 +369,12 @@ QStringList validateDocuments(const QJsonObject& rootContent, const QMap<QString
     const auto metadata = rootContent.value(QStringLiteral("metadata")).toObject();
     if (metadata.contains(QStringLiteral("targetPlatforms")))
         return {QStringLiteral("Legacy targetPlatforms is unsupported; no migration is available")};
-    if (!platformsFromJson(metadata.value(QStringLiteral("platforms")), &platforms, &error))
+    if (!platformsFromJson(rootContent.value(QStringLiteral("deployPlatforms")), &platforms, &error))
         return {error};
     ReferenceValidator validator(platforms);
     for (const auto& key : {"packExportCurrentPlatform", "packExportSelectedPlatforms", "packExportPlatformOutputRoots"}) {
         if (rootContent.contains(QLatin1String(key)))
             validator.errors.append(QStringLiteral("Legacy platform field is unsupported: %1").arg(QLatin1String(key)));
-    }
-    for (const auto& key : {"deploymentProfiles"}) {
-        qsizetype index = 0;
-        for (const auto& value : rootContent.value(QLatin1String(key)).toArray()) {
-            const auto row = value.toObject();
-            const auto path = QStringLiteral("%1[%2]").arg(QLatin1String(key)).arg(index++);
-            if (row.contains(QStringLiteral("platforms")))
-                validator.errors.append(QStringLiteral("Legacy platform field is unsupported at %1").arg(path));
-            validator.references(row.value(QStringLiteral("platformIds")), path);
-        }
     }
     for (auto it = documents.begin(); it != documents.end(); ++it)
         validator.object(it.value(), it.key());
@@ -409,11 +399,7 @@ QVector<ProjectItem*> referenceOwners(const ProjectData& project)
 bool validateProject(const ProjectData& project, QString* error)
 {
     if (!validatePlatforms(project.platforms, error)) return false;
-    QJsonObject root{{QStringLiteral("metadata"), QJsonObject{{QStringLiteral("platforms"), platformsToJson(project.platforms)}}}};
-    QJsonArray deployments;
-    for (const auto& row : project.deploymentProfiles)
-        deployments.append(QJsonObject{{QStringLiteral("platformIds"), QJsonArray::fromStringList(row.platformIds)}});
-    root.insert(QStringLiteral("deploymentProfiles"), deployments);
+    QJsonObject root{{QStringLiteral("deployPlatforms"), platformsToJson(project.platforms)}};
     QMap<QString, QJsonObject> documents;
     for (const auto* item : referenceOwners(project)) {
         QJsonObject json{{QStringLiteral("platformOverrides"), PlayablePropertyAuthoringV1::platformOverridesToJson(item->platformOverrides)}};
