@@ -16,6 +16,8 @@
 
 #include <gtest/gtest.h>
 
+#include <barrier>
+#include <future>
 #include <limits>
 
 using namespace VNX;
@@ -246,10 +248,40 @@ TEST(SoundSourceSemanticsTest, BuildInputsKeepCapturedMediaStableAndRejectLaterS
     AssetInfo asset;
     asset.sourceID = 1;
     asset.absolutePath = path;
+    std::vector<AssetInfo> assets(4, asset);
+    for (size_t i = 0; i < assets.size(); ++i)
+        assets[i].sourceID = static_cast<uint32_t>(i + 1);
+    ASSERT_TRUE(QDir(directory.path()).mkdir(QStringLiteral("nested")));
+    assets[2].absolutePath = directory.filePath(QStringLiteral("nested/../source.wav"));
+    assets[3].absolutePath = directory.filePath(QStringLiteral("other.wav"));
+    ASSERT_TRUE(AssetConverter::writeFloatWav(
+        assets[3].absolutePath, std::vector<float>(513, -0.5f), 1, 48000));
+    const auto originalHash = AssetImporter::computeContentHash(path);
+    const auto otherHash = AssetImporter::computeContentHash(assets[3].absolutePath);
     BuildSourceInputs inputs;
+    std::barrier<> start(static_cast<std::ptrdiff_t>(assets.size()));
+    std::vector<QString> errors(assets.size());
+    std::vector<std::future<std::shared_ptr<const BuildSourceInput>>> readers;
+    for (size_t i = 0; i < assets.size(); ++i) {
+        readers.push_back(std::async(std::launch::async, [&, i] {
+            start.arrive_and_wait();
+            return inputs.capture(assets[i], &errors[i]);
+        }));
+    }
+    std::vector<std::shared_ptr<const BuildSourceInput>> snapshots;
+    for (size_t i = 0; i < readers.size(); ++i) {
+        const auto snapshot = readers[i].get();
+        ASSERT_TRUE(snapshot) << errors[i].toStdString();
+        const auto& expected = i == 3 ? otherHash : originalHash;
+        EXPECT_EQ(snapshot->contentHash, expected);
+        EXPECT_EQ(AssetImporter::computeContentHash(snapshot->inputPath), expected);
+        EXPECT_EQ(snapshot->metadata.sampleRate, i == 3 ? 48000u : 44100u);
+        EXPECT_EQ(snapshot->metadata.totalSamples, i == 3 ? 513u : 257u);
+        snapshots.push_back(snapshot);
+    }
     QString error;
-    const auto captured = inputs.capture(asset, &error);
-    ASSERT_TRUE(captured) << error.toStdString();
+    EXPECT_TRUE(inputs.verifyUnchanged(&error)) << error.toStdString();
+    const auto& captured = snapshots.front();
     EXPECT_EQ(QFileInfo(captured->inputPath).lastModified(), QFileInfo(path).lastModified());
     ASSERT_TRUE(WaveformCache::generate(path));
     ASSERT_TRUE(WaveformCache::generate(captured->inputPath));
@@ -262,9 +294,12 @@ TEST(SoundSourceSemanticsTest, BuildInputsKeepCapturedMediaStableAndRejectLaterS
     ASSERT_TRUE(changed.open(QIODevice::ReadWrite));
     ASSERT_TRUE(changed.setFileTime(originalTime, QFileDevice::FileModificationTime));
     changed.close();
-    const auto reused = inputs.capture(asset, &error);
-    ASSERT_TRUE(reused) << error.toStdString();
-    EXPECT_EQ(AssetImporter::computeContentHash(reused->inputPath), fingerprint);
+    for (size_t i = 0; i < assets.size(); ++i) {
+        const auto reused = inputs.capture(assets[i], &error);
+        ASSERT_TRUE(reused) << error.toStdString();
+        EXPECT_EQ(AssetImporter::computeContentHash(reused->inputPath), snapshots[i]->contentHash);
+        EXPECT_EQ(inputs.sourceFingerprint(assets[i], &error), snapshots[i]->contentHash);
+    }
     EXPECT_NE(AssetImporter::computeContentHash(path), fingerprint);
     EXPECT_FALSE(inputs.verifyUnchanged(&error));
     BuildSourceInputs nextBuild;
@@ -341,6 +376,52 @@ TEST(SoundSourceSemanticsTest, CacheArtifactReplacementPreservesPreviousFileOnIn
     EXPECT_FALSE(AssetConverter::writeFloatWavCache(path, {}, 1, 44100, &contentHash));
     EXPECT_TRUE(contentHash.isEmpty());
     EXPECT_EQ(AssetImporter::computeContentHash(path), previousHash);
+}
+
+TEST(SoundSourceSemanticsTest, CacheArtifactsCanCreateSharedParentDirectoriesConcurrently)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const auto parent = directory.filePath(QStringLiteral("cache/media/platform"));
+    ASSERT_FALSE(QFileInfo::exists(parent));
+    std::barrier<> start(8);
+    std::vector<std::future<bool>> writers;
+    for (int index = 0; index < 8; ++index) {
+        const auto path = QDir(parent).filePath(QStringLiteral("%1.pcm").arg(index));
+        const auto content = QByteArray::number(index).repeated(257);
+        writers.push_back(std::async(std::launch::async, [&, path, content] {
+            start.arrive_and_wait();
+            return writeCacheArtifact(path, [&](QIODevice& file) {
+                return file.write(content) == content.size();
+            });
+        }));
+    }
+    for (auto& writer : writers)
+        EXPECT_TRUE(writer.get());
+    for (int index = 0; index < 8; ++index) {
+        QFile artifact(QDir(parent).filePath(QStringLiteral("%1.pcm").arg(index)));
+        ASSERT_TRUE(artifact.open(QIODevice::ReadOnly));
+        EXPECT_EQ(artifact.readAll(), QByteArray::number(index).repeated(257));
+    }
+}
+
+TEST(SoundSourceSemanticsTest, CacheArtifactCreationPreservesFilesBlockingItsParentDirectory)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const auto parent = directory.filePath(QStringLiteral("cache"));
+    QFile blocker(parent);
+    ASSERT_TRUE(blocker.open(QIODevice::WriteOnly));
+    ASSERT_EQ(blocker.write("original"), 8);
+    blocker.close();
+    const auto path = QDir(parent).filePath(QStringLiteral("artifact.pcm"));
+    EXPECT_FALSE(writeCacheArtifact(path, [](QIODevice& file) {
+        return file.write("replacement") == 11;
+    }));
+    EXPECT_TRUE(QFileInfo(parent).isFile());
+    ASSERT_TRUE(blocker.open(QIODevice::ReadOnly));
+    EXPECT_EQ(blocker.readAll(), QByteArray("original"));
+    EXPECT_FALSE(QFileInfo::exists(path));
 }
 
 TEST(SoundSourceSemanticsTest, DerivativeCacheRecoversCorruptArtifactsAndPreservesContentRevisions)
