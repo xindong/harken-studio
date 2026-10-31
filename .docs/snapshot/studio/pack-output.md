@@ -2,6 +2,8 @@
 
 ## 输出配置与产物
 
+工程 `.hsp` 的 `content.audio.renderSampleRate` 和 `content.audio.channelConfig` 保存音频编译目标；`content.deployPlatforms` 保存发布平台定义，`content.deployLanguages` 保存发布语言列表，允许没有语言。`content.metadata` 仅保存工程名称。
+
 | 配置／产物 | 默认值或位置 | 当前内容与边界 |
 |---|---|---|
 | Publish Directory | 工程目录下 BuildPacks | 以工程目录为相对路径基准，无法相对化时保留绝对路径 |

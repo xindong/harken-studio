@@ -56,17 +56,10 @@ protected:
         QJsonObject items;
         for (const auto* item : Platforms::referenceOwners(project()))
             items.insert(item->guid.toString(), serializer.projectItemToJson(*item));
-        QJsonArray groups;
-        for (const auto& group : project().packGroups) groups.append(group.toJson());
         QJsonArray targeting;
         for (const auto& row : manager().getActionPackTargeting()) targeting.append(row.toJson());
-        QJsonArray deployments;
-        for (const auto& row : project().deploymentProfiles)
-            deployments.append(QJsonObject{{"id", row.profileId}, {"name", row.name},
-                {"destination", row.destination}, {"platformIds", QJsonArray::fromStringList(row.platformIds)},
-                {"languages", QJsonArray::fromStringList(row.languages)}});
         return {{"platforms", Platforms::platformsToJson(project().platforms)}, {"items", items},
-            {"groups", groups}, {"targeting", targeting}, {"deployments", deployments},
+            {"targeting", targeting},
             {"current", manager().getPackExportCurrentPlatform()},
             {"selected", QJsonArray::fromStringList(manager().getPackExportSelectedPlatforms())}};
     }

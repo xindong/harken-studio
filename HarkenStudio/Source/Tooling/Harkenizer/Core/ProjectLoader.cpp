@@ -759,7 +759,6 @@ bool validateLoadedProjectIdentities(const ProjectData& project, QString* error)
     QSet<uint32_t> objectIds;
     QSet<const ProjectItem*> visited;
     uint32_t maxObjectId = 0;
-    QSet<harkenstudio::ObjectId> actionRuntimeIds;
 
     std::function<bool(const ProjectItem*, const ProjectItem*)> visit =
         [&](const ProjectItem* item, const ProjectItem* expectedParent) {
@@ -784,9 +783,6 @@ bool validateLoadedProjectIdentities(const ProjectData& project, QString* error)
             }
             objectIds.insert(item->objectID);
             maxObjectId = std::max(maxObjectId, item->objectID);
-            if (item->type == ProjectItem::Type::Action)
-                if (!harkenstudio::IsNull(item->runtimeId()))
-                    actionRuntimeIds.insert(item->runtimeId());
             for (const auto& child : item->children) {
                 if (!visit(child.get(), item)) return false;
             }
@@ -805,14 +801,6 @@ bool validateLoadedProjectIdentities(const ProjectData& project, QString* error)
     if (project.nextObjectID == 0 || project.nextObjectID <= maxObjectId) {
         if (error) *error = QStringLiteral("Project identity counters are behind loaded data");
         return false;
-    }
-    for (const PackGroup& group : project.packGroups) {
-        for (const harkenstudio::ObjectId id : group.actionIds) {
-            if (harkenstudio::IsNull(id) || !actionRuntimeIds.contains(id)) {
-                if (error) *error = QStringLiteral("Project pack group references an unknown action");
-                return false;
-            }
-        }
     }
     return true;
 }

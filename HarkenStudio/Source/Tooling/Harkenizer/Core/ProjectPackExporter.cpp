@@ -1919,46 +1919,6 @@ ProjectPackExporter::ValidatePackBuildReadiness(const ProjectData& project,
     const auto sourceIndex = buildContext ? buildContext->capabilities->sourceIndex()
         : Bridge::canonicalRuntimeProjectSourceIndex(project);
     const auto& allActions = sourceIndex->actions;
-    std::set<harkenstudio::ObjectId> actionStableIds;
-    for (const ProjectItem* action : allActions)
-        if (action->comp<VAction>()) actionStableIds.insert(action->runtimeId());
-
-    std::unordered_map<harkenstudio::ObjectId, QString> memberOwner;
-    std::set<QString> groupNames;
-    for (const PackGroup& group : project.packGroups) {
-        if (!groupNames.insert(group.name.toCaseFolded()).second) {
-            result.issues.push_back({ValidationIssue::Error,
-                QStringLiteral("Pack group name '%1' is duplicated (case-insensitive)")
-                    .arg(group.name), 0});
-            ++result.errorCount;
-            result.valid = false;
-        }
-        for (harkenstudio::ObjectId memberId : group.actionIds) {
-            if (!actionStableIds.count(memberId)) {
-                result.issues.push_back({ValidationIssue::Warning,
-                    QStringLiteral("Pack group '%1' member %2 does not resolve to an Action")
-                        .arg(group.name)
-                        .arg(VNX::objectIdString(memberId)),
-                    0});
-                ++result.warningCount;
-            }
-
-            auto owner = memberOwner.find(memberId);
-            if (owner == memberOwner.end()) {
-                memberOwner.emplace(memberId, group.name);
-            } else {
-                result.issues.push_back({ValidationIssue::Error,
-                    QStringLiteral("Action %1 is assigned to multiple pack groups "
-                                   "('%2' and '%3'); each Action may belong to at most one group")
-                        .arg(VNX::objectIdString(memberId))
-                        .arg(owner->second)
-                        .arg(group.name),
-                    0});
-                ++result.errorCount;
-                result.valid = false;
-            }
-        }
-    }
 
     for (const ProjectItem* evt : allActions) {
         const auto* actionComp = evt->comp<VAction>();

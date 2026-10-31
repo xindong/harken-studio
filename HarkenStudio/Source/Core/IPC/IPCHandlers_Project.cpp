@@ -212,8 +212,6 @@ QJsonObject IPCServer::handleCreateProject(const QJsonObject& args)
             return errorResponse("INVALID_ARGS", "Required: name, location");
 
         config.sampleRate = args.value("sample_rate").toInt(48000);
-        config.author = args.value("author").toString();
-        config.description = args.value("description").toString();
 
         const QString cc = args.value("channel_config").toString().toLower();
         if (cc == QStringLiteral("mono"))
@@ -416,8 +414,6 @@ QJsonObject IPCServer::handleGetProjectInfo(const QJsonObject& args)
         {"project_open", true},
         {"name", project->name},
         {"path", project->projectPath},
-        {"author", project->author},
-        {"description", project->description},
         {"packs", packs},
         {"actions", actions},
         {"platforms", platformsArr},

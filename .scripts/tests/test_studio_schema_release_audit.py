@@ -24,7 +24,7 @@ SPEC.loader.exec_module(MODULE)
 def documents(root: Path) -> dict:
     return {
         "root": (root / "Fixture.hsp", {"harkenDocument": {"id": "root", "type": "project.root", "studioVersion": "1.0", "packSchemaVersion": 1},
-            "content": {"metadata": {"description": "Original"},
+            "content": {"metadata": {"name": "Original"},
                         "extensions": {"future": {"flag": True, "integer": 9007199254740993}}}}),
         "action": (root / "Actions/Trigger.vp", {"harkenDocument": {"id": "action", "type": "project.action"},
             "content": {"name": "Trigger", "type": "Action", "extensions": {"future": [True, None, {}, []]}}}),
@@ -45,10 +45,10 @@ def edited_documents(before: dict, pack_schema_version: int = 2) -> tuple[dict, 
             header["packSchemaVersion"] = pack_schema_version
         if identity == "master":
             continue
-        path = "/content/metadata/description" if identity == "root" else "/content/name"
+        path = "/content/metadata/name" if identity == "root" else "/content/name"
         parent, key = MODULE.pointer_parent(document, path)
         original = parent[key]
-        parent[key] += "\nSchema compatibility edit" if identity == "root" else "_schema_edit"
+        parent[key] += "_schema_edit"
         edits.append({"documentId": identity, "jsonPath": path, "before": original, "after": parent[key]})
     return after, {"version": "1.1", "packSchemaVersion": pack_schema_version, "edits": edits}
 
@@ -253,7 +253,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
     def test_probe_cannot_claim_arbitrary_rename_or_bad_timestamp(self) -> None:
         before = documents(Path("Fixture"))
         after, report = edited_documents(before)
-        report["edits"][0]["after"] = "Discarded description"
+        report["edits"][0]["after"] = "Discarded name"
         with self.assertRaises(ValueError):
             MODULE.verify_edit(before, after, report)
         for historical in (False, True):
@@ -277,20 +277,32 @@ class SchemaCompatibilityTest(unittest.TestCase):
             self.assertTrue(backup.is_file())
 
     def test_candidate_metadata_names_are_exercised(self) -> None:
-        candidate = copy.deepcopy(self.editor)
-        for entry in candidate["x-harken-documentTypes"]:
-            entry["schema"]["properties"]["harkenDocument"]["properties"]["futureNote"] = {}
-            content = entry["schema"]["properties"]["content"]
-            if "$ref" not in content:
-                content["properties"]["extensions"]["properties"] = {"futureExtension": {}}
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            write_documents(documents(root))
-            MODULE.inject_metadata(root / "Fixture.hsp", candidate)
-            for _, value in MODULE.project_documents(root / "Fixture.hsp").values():
-                self.assertIn("futureNote", value["harkenDocument"])
-                self.assertIn("futureExtension", value["content"]["extensions"])
-                self.assertIn("schemaCompatibilityMetadata", value["harkenDocument"])
+        for content_extensions in (False, True):
+            with self.subTest(content_extensions=content_extensions):
+                candidate = copy.deepcopy(self.editor)
+                for entry in candidate["x-harken-documentTypes"]:
+                    entry["schema"]["properties"]["harkenDocument"]["properties"]["futureNote"] = {}
+                    content = entry["schema"]["properties"]["content"]
+                    if "$ref" in content:
+                        content = candidate["$defs"][content["$ref"].removeprefix("#/$defs/")]
+                    if content_extensions:
+                        content["properties"]["extensions"] = {
+                            "type": "object", "additionalProperties": True,
+                            "properties": {"futureExtension": {}}}
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    original = documents(root)
+                    for _, document in original.values():
+                        document["content"].pop("extensions", None)
+                    write_documents(original)
+                    MODULE.inject_metadata(root / "Fixture.hsp", candidate)
+                    for _, value in MODULE.project_documents(root / "Fixture.hsp").values():
+                        self.assertIn("futureNote", value["harkenDocument"])
+                        if content_extensions:
+                            self.assertIn("futureExtension", value["content"]["extensions"])
+                        else:
+                            self.assertNotIn("extensions", value["content"])
+                        self.assertIn("schemaCompatibilityMetadata", value["harkenDocument"])
 
 
 class GitHubPublicationTest(unittest.TestCase):

@@ -4292,8 +4292,6 @@ bool MainWindow::createProjectFromConfig(
         {"name",             config.name},
         {"location",         config.location},
         {"sample_rate",      config.sampleRate},
-        {"author",           config.author},
-        {"description",      config.description},
         {"channel_config",   channelConfigKey(config.channelConfig)},
         {"platforms", platforms},
         {"template_id",      config.templateId},
@@ -4353,8 +4351,6 @@ void MainWindow::onNewProject()
     ProjectConfig config;
     config.name = projectName;
     config.location = dir;
-    config.author = "";
-    config.description = "";
     config.templateId   = dlgResult.templateId;
     config.templateData = dlgResult.templateData.toJson();
 
