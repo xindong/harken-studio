@@ -13,6 +13,7 @@
 #include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "Tooling/Harkenizer/Core/CurrentWorldArtifactWriter.h"
 #include "Tooling/Harkenizer/Core/PackBuildPlan.h"
+#include "Tooling/Harkenizer/Core/PackMediaPreparation.h"
 #include "NameValidator.h"
 #include "ItemTypeCatalog.h"
 #include "ProjectTypes.h"
@@ -3411,11 +3412,47 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     observeStage(PackBuildObservationStage::PreparingMedia);
     {
         const auto releaseMedia = qScopeGuard([&] {
+            stagingOpts.mediaPreparation = nullptr;
             if (request.options.snapshot && request.options.snapshot->derivativeCache)
                 request.options.snapshot->derivativeCache->clear();
             if (request.options.snapshot && request.options.snapshot->mediaCache)
                 request.options.snapshot->mediaCache->clear();
         });
+        std::unique_ptr<PackMediaPreparation> mediaPreparation;
+        if (request.options.snapshot && request.options.buildContext) {
+            mediaPreparation = std::make_unique<PackMediaPreparation>(request.options.snapshot->media,
+                request.options.snapshot->derivativeCache, QUuid(request.options.platform),
+                QDir(PathUtils::getCacheDir(QFileInfo(project.projectPath).absolutePath()))
+                    .filePath(QStringLiteral("pack-derivatives/%1").arg(request.options.platform)));
+            const auto& sourceIndex = *request.options.buildContext->capabilities->sourceIndex();
+            for (const PackMeta& pack : packs) {
+                for (const auto actionId : pack.actionStableIds) {
+                    const auto planned = std::find_if(request.plan->variants.begin(), request.plan->variants.end(),
+                        [&](const auto& variant) {
+                            return variant.actionStableId == actionId
+                                && variant.variant.platform == request.options.platform
+                                && (pack.language.isEmpty() || variant.variant.language.isEmpty()
+                                    || variant.variant.language == pack.language);
+                        });
+                    if (planned == request.plan->variants.end()) continue;
+                    std::set<harkenstudio::ObjectId> sounds;
+                    for (const auto* inputs : {&planned->closure.media, &planned->closure.controlMedia}) {
+                        for (const auto& media : *inputs) {
+                            if (!sounds.insert(media.soundStableId).second) continue;
+                            const auto owner = sourceIndex.byQtGuid.find(QUuid(objectIdString(media.soundStableId)));
+                            const auto* sound = owner == sourceIndex.byQtGuid.end()
+                                ? nullptr : owner->second->comp<VSound>();
+                            const auto* source = sound
+                                ? SoundSourceSemantics::findEntry(*sound, media.sourceEntryId) : nullptr;
+                            if (source)
+                                mediaPreparation->add(media.soundStableId, *source, sound->scheduleOffsetSec);
+                        }
+                    }
+                }
+            }
+            mediaPreparation->start();
+            stagingOpts.mediaPreparation = mediaPreparation.get();
+        }
         for (PackMeta& pack : packs) {
             reportProgress(pack, 5, PackGenerationStage::Preparing);
             if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);

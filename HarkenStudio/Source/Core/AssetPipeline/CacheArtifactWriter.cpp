@@ -3,6 +3,8 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QTemporaryFile>
 
 #ifdef Q_OS_WIN
@@ -16,7 +18,11 @@ namespace VNX {
 bool writeCacheArtifact(const QString& path, const std::function<bool(QIODevice&)>& write)
 {
     const QFileInfo destination(path);
-    if (!QDir().mkpath(destination.absolutePath())) return false;
+    if (!QFileInfo(destination.absolutePath()).isDir()) {
+        static QMutex directoryCreation;
+        QMutexLocker lock(&directoryCreation);
+        if (!QDir().mkpath(destination.absolutePath())) return false;
+    }
     QString temporaryPath;
     {
         QTemporaryFile temporary(destination.absoluteFilePath() + QStringLiteral(".XXXXXX"));

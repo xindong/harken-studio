@@ -84,6 +84,7 @@ add_library(harkenizer_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/PackBuildPlan.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/PackBuildReceipt.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/PackExportSelection.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/PackMediaPreparation.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/PackOutputIndex.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ProjectBuildSnapshot.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ProjectLoader.cpp
@@ -171,6 +172,7 @@ add_library(harkenizer_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/PackBuildPlan.h
     ${CMAKE_CURRENT_SOURCE_DIR}/PackBuildReceipt.h
     ${CMAKE_CURRENT_SOURCE_DIR}/PackExportSelection.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/PackMediaPreparation.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ProjectBuildSnapshot.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ProjectLoader.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ProjectPackBuildService.h

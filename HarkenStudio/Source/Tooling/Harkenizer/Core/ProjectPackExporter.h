@@ -36,6 +36,7 @@ namespace VNX {
     struct WaveformPeakData;
     struct ProjectBuildSnapshot;
     struct MediaBuildSnapshot;
+    class PackMediaPreparation;
 }
 
 namespace VNX {
@@ -65,6 +66,7 @@ namespace ProjectPackExporterInternal {
         std::shared_ptr<const ProjectBuildSnapshot> snapshot;
         std::shared_ptr<PackBuildContext> buildContext;
         std::shared_ptr<const PackBuildPlan> buildPlan;
+        PackMediaPreparation* mediaPreparation = nullptr;
         QMap<QString, std::shared_ptr<QLockFile>> platformLocks;
         QString currentWorldOutputPath;
         QString waveformOutputDir;
