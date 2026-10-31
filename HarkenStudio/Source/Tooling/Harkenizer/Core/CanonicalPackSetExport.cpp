@@ -3,6 +3,7 @@
 
 #include "Tooling/Harkenizer/Core/ProjectBuildSnapshot.h"
 #include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
+#include "Tooling/Harkenizer/ResourceCompiler/ResourceCompiler.h"
 #include <QScopeGuard>
 #include "Components/VAction.h"
 #include "Components/VSound.h"
@@ -158,10 +159,13 @@ bool appendEntry(Bridge::PackBuildSession::CanonicalPackEntry entry, const QStri
     if (existing != entries->end()) {
         const bool samePayload = entry.kind == harkenstudiobuild::kPackEntryKindMedia
             ? existing->payload.size() == entry.payload.size()
+                && existing->mediaBytes() == entry.mediaBytes()
                 && std::equal(entry.payload.begin(), entry.payload.begin() + 32,
                               existing->payload.begin())
                 && std::equal(entry.payload.begin() + 40, entry.payload.end(),
                               existing->payload.begin() + 40)
+                && (existing->media == entry.media || entry.mediaBytes() == 0
+                    || std::memcmp(existing->mediaData(), entry.mediaData(), entry.mediaBytes()) == 0)
             : existing->payload == entry.payload;
         if (existing->vintage != entry.vintage || !samePayload) {
             if (error)
@@ -177,7 +181,8 @@ bool appendEntry(Bridge::PackBuildSession::CanonicalPackEntry entry, const QStri
 
 bool collectEntries(const QByteArray& bytes, const QString& path,
                     std::vector<Bridge::PackBuildSession::CanonicalPackEntry>* entries,
-                    QString* error, bool resourcesOnly, bool publicationMetadataOnly)
+                    QString* error, bool resourcesOnly, bool publicationMetadataOnly,
+                    harkenizer::resourcecompiler::MediaCache* mediaCache = nullptr)
 {
     if (bytes.size() < static_cast<int>(harkenstudiobuild::kPackV2HeaderBytes)) {
         if (error)
@@ -215,18 +220,26 @@ bool collectEntries(const QByteArray& bytes, const QString& path,
         if (record.kind == harkenstudiobuild::kPackEntryKindMedia) {
             const harkenstudiobuild::PackTocEntry toc = harkenstudiobuild::ParsePackTocEntry(
                 reinterpret_cast<const std::uint8_t*>(bytes.constData()) + record.offset);
-            entry.payload.resize(static_cast<std::size_t>(
-                harkenstudiobuild::kPackV2MediaPayloadBytes + toc.blobBytes));
+            entry.payload.resize(harkenstudiobuild::kPackV2MediaPayloadBytes);
             std::memcpy(entry.payload.data(),
                         reinterpret_cast<const std::uint8_t*>(bytes.constData()) +
                             record.offset,
                         harkenstudiobuild::kPackV2MediaPayloadBytes);
             harkenstudiobuild::StoreLE64(entry.payload.data() + 32, 0);
             if (toc.blobBytes != 0) {
-                std::memcpy(entry.payload.data() + harkenstudiobuild::kPackV2MediaPayloadBytes,
-                            reinterpret_cast<const std::uint8_t*>(bytes.constData()) +
-                                toc.blobOffset,
-                            static_cast<std::size_t>(toc.blobBytes));
+                const auto* blob = reinterpret_cast<const std::uint8_t*>(bytes.constData()) + toc.blobOffset;
+                if (toc.blobBytes % sizeof(float) != 0) {
+                    if (error) *error = QStringLiteral("Pack '%1' contains invalid PCM media").arg(path);
+                    return false;
+                }
+                if (mediaCache) {
+                    entry.media = mediaCache->intern(blob, static_cast<std::size_t>(toc.blobBytes), toc.blobChecksum);
+                } else {
+                    auto samples = std::make_shared<std::vector<float>>(
+                        static_cast<std::size_t>(toc.blobBytes / sizeof(float)));
+                    std::memcpy(samples->data(), blob, static_cast<std::size_t>(toc.blobBytes));
+                    entry.media = std::move(samples);
+                }
             }
         } else {
             entry.payload.assign(
@@ -241,11 +254,12 @@ bool collectEntries(const QByteArray& bytes, const QString& path,
 
 bool collectEntries(const QString& path,
                     std::vector<Bridge::PackBuildSession::CanonicalPackEntry>* entries,
-                    QString* error, bool resourcesOnly = false, bool publicationMetadataOnly = false)
+                    QString* error, bool resourcesOnly = false, bool publicationMetadataOnly = false,
+                    harkenizer::resourcecompiler::MediaCache* mediaCache = nullptr)
 {
     QByteArray bytes;
     return readAll(path, &bytes, error)
-        && collectEntries(bytes, path, entries, error, resourcesOnly, publicationMetadataOnly);
+        && collectEntries(bytes, path, entries, error, resourcesOnly, publicationMetadataOnly, mediaCache);
 }
 
 QString entriesFingerprint(const std::vector<Bridge::PackBuildSession::CanonicalPackEntry>& entries,
@@ -268,7 +282,7 @@ QString entriesFingerprint(const std::vector<Bridge::PackBuildSession::Canonical
         harkenstudiobuild::StoreLE32(header.data() + 4, entry->vintage);
         harkenstudiobuild::StoreObjectId(header.data() + 8, entry->id);
         harkenstudiobuild::StoreLE64(header.data() + 24, entry->relationOrdinal);
-        harkenstudiobuild::StoreLE64(header.data() + 32, entry->payload.size());
+        harkenstudiobuild::StoreLE64(header.data() + 32, entry->payloadBytes());
         hash.addData(QByteArrayView(reinterpret_cast<const char*>(header.data()), header.size()));
         const auto* bytes = reinterpret_cast<const char*>(entry->payload.data());
         if (entry->kind == harkenstudiobuild::kPackEntryKindMedia && entry->payload.size() >= 40) {
@@ -278,6 +292,8 @@ QString entriesFingerprint(const std::vector<Bridge::PackBuildSession::Canonical
         } else {
             hash.addData(QByteArrayView(bytes, entry->payload.size()));
         }
+        if (entry->mediaBytes() != 0)
+            hash.addData(QByteArrayView(reinterpret_cast<const char*>(entry->mediaData()), entry->mediaBytes()));
     }
     return QString::fromLatin1(hash.result().toHex());
 }
@@ -796,6 +812,7 @@ struct PackMeta
     std::vector<Bridge::PackBuildSession::CanonicalPackEntry> resourceEntries;
     QJsonObject previousRow;
     std::vector<Bridge::PackBuildSession::CanonicalPackEntry> previousEntries;
+    QString previousEntriesFingerprint;
     QString resourceFingerprint;
     QString previousResourceFingerprint;
     QString resourceCacheKey;
@@ -1684,78 +1701,69 @@ bool preparePlayableAfterOwnedCopy(
     return true;
 }
 
-const harkenstudiobuild::PlayablePropertyProgramViewV1* findLiveSlicedPlayable(
-    std::vector<PackMeta>& packs,
-    const QString& language,
-    harkenstudio::ObjectId stableId)
+struct SlicedWorldIndex
 {
-    for (PackMeta& pack : packs) {
-        if (!pack.language.isEmpty() && pack.language != language)
-            continue;
-        for (const auto& playable : pack.slicedPlayables) {
-            if (playable.stableId == stableId)
-                return &playable;
+    std::unordered_map<harkenstudio::ObjectId,
+        const harkenstudiobuild::PlayablePropertyProgramViewV1*> playables;
+    std::unordered_map<harkenstudio::ObjectId,
+        const harkenstudiobuild::TrackScheduleProgramViewV1*> tracks;
+    std::unordered_map<harkenstudio::ObjectId,
+        const harkenstudiobuild::SegmentScheduleProgramViewV1*> segments;
+    std::unordered_map<harkenstudio::ObjectId,
+        const harkenstudiobuild::ActionProgramViewV1*> actions;
+
+    SlicedWorldIndex(const std::vector<PackMeta>& packs, const QString& language)
+    {
+        for (const auto& pack : packs) {
+            if (!pack.language.isEmpty() && pack.language != language)
+                continue;
+            for (const auto& playable : pack.slicedPlayables)
+                playables.emplace(playable.stableId, &playable);
+            for (const auto& track : pack.slicedTracks)
+                tracks.emplace(track.rootDefinition.stableId, &track);
+            for (const auto& segment : pack.slicedSegments)
+                segments.emplace(segment.rootDefinition.stableId, &segment);
+            for (const auto& action : pack.slicedActions)
+                actions.emplace(action.actionStableId, &action);
         }
     }
-    return nullptr;
+};
+
+const harkenstudiobuild::PlayablePropertyProgramViewV1* findLiveSlicedPlayable(
+    const SlicedWorldIndex& index, harkenstudio::ObjectId stableId)
+{
+    const auto found = index.playables.find(stableId);
+    return found == index.playables.end() ? nullptr : found->second;
 }
 
 const harkenstudiobuild::TrackScheduleProgramViewV1* findLiveSlicedTrack(
-    std::vector<PackMeta>& packs,
-    const QString& language,
-    harkenstudio::ObjectId stableId)
+    const SlicedWorldIndex& index, harkenstudio::ObjectId stableId)
 {
-    for (PackMeta& pack : packs) {
-        if (!pack.language.isEmpty() && pack.language != language)
-            continue;
-        for (const auto& track : pack.slicedTracks) {
-            if (track.rootDefinition.stableId == stableId)
-                return &track;
-        }
-    }
-    return nullptr;
+    const auto found = index.tracks.find(stableId);
+    return found == index.tracks.end() ? nullptr : found->second;
 }
 
 const harkenstudiobuild::SegmentScheduleProgramViewV1* findLiveSlicedSegment(
-    std::vector<PackMeta>& packs,
-    const QString& language,
-    harkenstudio::ObjectId stableId)
+    const SlicedWorldIndex& index, harkenstudio::ObjectId stableId)
 {
-    for (PackMeta& pack : packs) {
-        if (!pack.language.isEmpty() && pack.language != language)
-            continue;
-        for (const auto& segment : pack.slicedSegments) {
-            if (segment.rootDefinition.stableId == stableId)
-                return &segment;
-        }
-    }
-    return nullptr;
+    const auto found = index.segments.find(stableId);
+    return found == index.segments.end() ? nullptr : found->second;
 }
 
 const harkenstudiobuild::ActionProgramViewV1* findLiveSlicedAction(
-    std::vector<PackMeta>& packs,
-    const QString& language,
-    harkenstudio::ObjectId stableId)
+    const SlicedWorldIndex& index, harkenstudio::ObjectId stableId)
 {
-    for (PackMeta& pack : packs) {
-        if (!pack.language.isEmpty() && pack.language != language)
-            continue;
-        for (const auto& action : pack.slicedActions) {
-            if (action.actionStableId == stableId)
-                return &action;
-        }
-    }
-    return nullptr;
+    const auto found = index.actions.find(stableId);
+    return found == index.actions.end() ? nullptr : found->second;
 }
 
 void rebindPlayableRefLive(
     harkenstudiobuild::PlayableRefV1* ref,
-    std::vector<PackMeta>& packs,
-    const QString& language)
+    const SlicedWorldIndex& index)
 {
     if (ref == nullptr)
         return;
-    if (const auto* playable = findLiveSlicedPlayable(packs, language, ref->stableId)) {
+    if (const auto* playable = findLiveSlicedPlayable(index, ref->stableId)) {
         ref->expectedProgramSemanticFingerprint = playable->programSemanticFingerprint;
         ref->contentRevision = playable->contentRevision;
         ref->routeStableId = playable->routeStableId;
@@ -1765,23 +1773,21 @@ void rebindPlayableRefLive(
 
 void remapActionObjectRefLive(
     harkenstudiobuild::ActionObjectRefV1* ref,
-    std::vector<PackMeta>& packs,
-    const QString& language)
+    const SlicedWorldIndex& index)
 {
     if (ref == nullptr || ref->stableId == harkenstudio::ObjectId{})
         return;
-    if (const auto* playable = findLiveSlicedPlayable(packs, language, ref->stableId)) {
+    if (const auto* playable = findLiveSlicedPlayable(index, ref->stableId)) {
         ref->expectedProgramSemanticFingerprint = playable->programSemanticFingerprint;
         return;
     }
-    if (const auto* action = findLiveSlicedAction(packs, language, ref->stableId))
+    if (const auto* action = findLiveSlicedAction(index, ref->stableId))
         ref->expectedProgramSemanticFingerprint = action->programSemanticFingerprint;
 }
 
 void rebindPlayableCrossPackRefs(
     harkenstudiobuild::PlayablePropertyProgramViewV1* playable,
-    std::vector<PackMeta>& packs,
-    const QString& language)
+    const SlicedWorldIndex& index)
 {
     if (playable == nullptr)
         return;
@@ -1791,7 +1797,7 @@ void rebindPlayableCrossPackRefs(
             playable->organizationLayerAncestors);
         for (std::uint32_t i = 0; i < playable->organizationLayerAncestorCount; ++i) {
             if (const auto* layer = findLiveSlicedPlayable(
-                    packs, language, ancestors[i].layerStableId))
+                    index, ancestors[i].layerStableId))
                 ancestors[i].layerProgramSemanticFingerprint =
                     layer->programSemanticFingerprint;
         }
@@ -1801,7 +1807,7 @@ void rebindPlayableCrossPackRefs(
         auto* ancestors = const_cast<harkenstudiobuild::StructuralAncestorRefV1*>(
             playable->structuralAncestors);
         for (std::uint32_t i = 0; i < playable->structuralAncestorCount; ++i) {
-            const auto* current = findLiveSlicedPlayable(packs, language, ancestors[i].stableId);
+            const auto* current = findLiveSlicedPlayable(index, ancestors[i].stableId);
             if (current == nullptr)
                 continue;
             ancestors[i].programSemanticFingerprint = current->programSemanticFingerprint;
@@ -1836,8 +1842,7 @@ void rebindLayerAncestorFingerprints(
 
 bool remapScheduleReferenceHintLive(
     harkenstudiobuild::ChildTimingHintV2* hint,
-    std::vector<PackMeta>& packs,
-    const QString& language,
+    const SlicedWorldIndex& index,
     QString* error)
 {
     if (hint == nullptr
@@ -1845,7 +1850,7 @@ bool remapScheduleReferenceHintLive(
         return true;
     auto& key = hint->payload.schedule;
     if (key.kind == harkenstudiobuild::PlayableKindV1::Track) {
-        const auto* track = findLiveSlicedTrack(packs, language, key.stableId);
+        const auto* track = findLiveSlicedTrack(index, key.stableId);
         if (track == nullptr) {
             if (error)
                 *error = QStringLiteral(
@@ -1857,7 +1862,7 @@ bool remapScheduleReferenceHintLive(
         return true;
     }
     if (key.kind == harkenstudiobuild::PlayableKindV1::Segment) {
-        const auto* segment = findLiveSlicedSegment(packs, language, key.stableId);
+        const auto* segment = findLiveSlicedSegment(index, key.stableId);
         if (segment == nullptr) {
             if (error)
                 *error = QStringLiteral(
@@ -1891,14 +1896,6 @@ bool sliceWorld(
     QString* error)
 {
     harkenstudiobuild::ContainerWorldInstallViewV1 slice = world;
-    pack->ownedSends.reserve(
-        static_cast<std::size_t>(world.playablePropertyCount) + world.playableOccurrenceCount);
-    pack->ownedLayerAncestors.reserve(world.playablePropertyCount);
-    pack->ownedStructuralAncestors.reserve(world.playablePropertyCount);
-    pack->ownedPlacements.reserve(world.trackScheduleCount);
-    pack->ownedTrackRefs.reserve(world.segmentScheduleCount);
-    pack->ownedContainerChildren.reserve(world.containerCount);
-    pack->ownedActionSteps.reserve(world.actionCount);
     for (std::uint32_t i = 0; i < world.variableCount; ++i) {
         if (ownedBy(owners, world.variables[i].variableId, packStableId))
             variables->push_back(world.variables[i]);
@@ -2379,21 +2376,61 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
     return true;
 }
 
+struct PreviousPackInspection
+{
+    std::uint64_t packStableId = 0;
+    std::uint32_t packKind = 0;
+    bool decoded = false;
+    bool valid = false;
+    harkenstudio::ObjectId projectId{};
+    harkenstudiobuild::WorldCapacitySummaryV1 capacity;
+    std::vector<harkenstudiobuild::PackDependencyEdge> dependencies;
+    std::set<harkenstudio::ObjectId> layerIds;
+    QString entriesFingerprint;
+    QString resourceCacheKey;
+};
+
+struct PublicationInspection
+{
+    QStringList files;
+    QStringList binaries;
+    QStringList managed;
+    QJsonArray publication;
+    QMap<QString, PreviousPackInspection> previous;
+    QSet<QString> buildPaths;
+};
+
+bool inspectPackPublication(const QString& directory, const QString& projectId,
+                            const QString& platformId, QJsonArray* packs,
+                            QStringList* managedFiles, QString* error, bool requireComplete,
+                            const QStringList& expectedPackPaths, bool allowPlatformReplacement,
+                            const std::function<bool()>& cancelCheck,
+                            PublicationInspection* inspection, bool captureBuildData,
+                            bool forceReexport);
+
 bool collectPlatformWritePaths(const ProjectData& project, const QDir& output,
                                const PackBuildPlan& plan,
                                const ProjectPackExporter::ExportOptions& options,
-                               QStringList* paths, QString* error)
+                               QStringList* paths, QString* error,
+                               PublicationInspection* captured = nullptr)
 {
     paths->append(output.absolutePath());
-    QStringList files, binaries;
-    if (!scanOutputFiles(output, &files, &binaries, error, false, options.cancelCheck)) return false;
-    QJsonArray publication;
-    QStringList managed;
-    if (!ReadPackPublication(output.path(), project.projectId, options.platform,
-            &publication, &managed, error, false, {}, !options.updateSelectedOnly, options.cancelCheck)) return false;
+    PublicationInspection local;
+    auto& inspection = captured ? *captured : local;
+    inspection.buildPaths.insert(QStringLiteral("Init") + Bridge::packArtifactExtension());
+    for (const auto& unit : plan.units)
+        inspection.buildPaths.insert(PackBuildPlanning::packFileName(
+            unit.variant.language, unit.name, Bridge::packArtifactExtension()));
+    if (!inspectPackPublication(output.path(), project.projectId, options.platform,
+            &inspection.publication, &inspection.managed, error, false, {},
+            !options.updateSelectedOnly, options.cancelCheck, &inspection,
+            captured != nullptr, options.forceReexport)) return false;
+    const auto& files = inspection.files;
+    const auto& binaries = inspection.binaries;
+    const auto& managed = inspection.managed;
     QMap<QString, QJsonObject> previous;
     QStringList previousCompanions;
-    for (const auto& value : publication) {
+    for (const auto& value : inspection.publication) {
         const auto row = value.toObject();
         const QString path = row.value(QStringLiteral("path")).toString();
         previous.insert(path, row);
@@ -2414,15 +2451,10 @@ bool collectPlatformWritePaths(const ProjectData& project, const QDir& output,
         plannedFiles.append(relative);
         plannedFiles.append(companion);
         paths->append(QFileInfo(output.filePath(relative)).absolutePath());
-        PackMeta pack;
-        pack.packStableId = id;
-        pack.packKind = kind;
-        pack.previousRow = previous.value(relative);
-        if (pack.previousRow.isEmpty() && files.contains(relative))
-            pack.previousRow.insert(QStringLiteral("path"), relative);
-        QByteArray bytes;
-        harkenstudiobuild::CurrentWorldBodyImage body;
-        const bool valid = readPreviousPack(output, &pack, &bytes, &body);
+        const auto inspected = inspection.previous.constFind(relative);
+        const bool valid = inspected != inspection.previous.cend()
+            && inspected->valid && inspected->packStableId == id
+            && inspected->packKind == kind;
         const bool retained = options.updateSelectedOnly && kind == harkenstudiobuild::kPackKindInit
             && valid && previous.contains(relative);
         if (!retained && (options.forceReexport || !valid))
@@ -2539,6 +2571,21 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
                          const QStringList& expectedPackPaths, bool allowPlatformReplacement,
                          const std::function<bool()>& cancelCheck)
 {
+    return inspectPackPublication(directory, projectId, platformId, packs, managedFiles,
+        error, requireComplete, expectedPackPaths, allowPlatformReplacement, cancelCheck,
+        nullptr, false, false);
+}
+
+namespace {
+
+bool inspectPackPublication(const QString& directory, const QString& projectId,
+                            const QString& platformId, QJsonArray* packs,
+                            QStringList* managedFiles, QString* error, bool requireComplete,
+                            const QStringList& expectedPackPaths, bool allowPlatformReplacement,
+                            const std::function<bool()>& cancelCheck,
+                            PublicationInspection* inspection, bool captureBuildData,
+                            bool forceReexport)
+{
     *packs = {};
     managedFiles->clear();
     const QDir dir(directory);
@@ -2549,6 +2596,11 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
     QStringList files, binaries;
     QString detail;
     if (!scanOutputFiles(dir, &files, &binaries, &detail, false, cancelCheck)) return reject(detail);
+    if (inspection) {
+        inspection->files = files;
+        inspection->binaries = binaries;
+        inspection->previous.clear();
+    }
     for (const auto& path : expectedPackPaths)
         if (!safePublicationPath(dir, path))
             return reject(QStringLiteral("Unsafe requested Pack path '%1'").arg(path));
@@ -2576,13 +2628,44 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
         QByteArray bytes;
         harkenstudiobuild::PackCanonicalImage image;
         harkenstudiobuild::CurrentWorldBodyImage body;
-        if (!readAll(dir.filePath(path), &bytes, &detail)
-            || harkenstudiobuild::ParsePackCanonicalImage(reinterpret_cast<const std::uint8_t*>(bytes.constData()),
-                bytes.size(), &image) != harkenstudiobuild::kPackOk
-            || (image.packKind == harkenstudiobuild::kPackKindInit && image.hasCatalog)
-            || image.hasGameplayCatalog || image.hasVariableNameCatalog
-            || !body.Decode(image.partitionBody.data(), image.partitionBody.size(),
-                harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage)) {
+        const bool parsed = readAll(dir.filePath(path), &bytes, &detail)
+            && harkenstudiobuild::ParsePackCanonicalImage(reinterpret_cast<const std::uint8_t*>(bytes.constData()),
+                bytes.size(), &image) == harkenstudiobuild::kPackOk;
+        const bool catalog = parsed && ((image.packKind == harkenstudiobuild::kPackKindInit && image.hasCatalog)
+            || image.hasGameplayCatalog || image.hasVariableNameCatalog);
+        const bool decoded = parsed && (inspection || !catalog)
+            && body.Decode(image.partitionBody.data(), image.partitionBody.size(),
+                harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage);
+        if (inspection && parsed) {
+            PreviousPackInspection previous;
+            previous.packStableId = image.packStableId;
+            previous.packKind = image.packKind;
+            previous.dependencies = image.dependencyEdges;
+            previous.decoded = decoded;
+            if (decoded) {
+                const auto& world = *body.ProductionView();
+                previous.projectId = world.identity.projectId;
+                previous.capacity = world.capacity;
+                std::vector<Bridge::PackBuildSession::CanonicalPackEntry> entries;
+                QString entryError;
+                previous.valid = inspection->buildPaths.contains(path)
+                    && collectEntries(bytes, dir.filePath(path), &entries, &entryError, false, false);
+                if (previous.valid && captureBuildData) {
+                    if (!forceReexport) {
+                        previous.entriesFingerprint = entriesFingerprint(entries, image.packKind);
+                        previous.resourceCacheKey = QString::fromLatin1(
+                            QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex());
+                    }
+                    if (image.packKind == harkenstudiobuild::kPackKindInit)
+                        for (std::uint32_t i = 0; i < world.playablePropertyCount; ++i)
+                            if (world.playableProperties[i].contentPropertyKind
+                                == harkenstudiobuild::playableproperties::ContentPropertyKindV1::Layer)
+                                previous.layerIds.insert(world.playableProperties[i].stableId);
+                }
+            }
+            inspection->previous.insert(path, std::move(previous));
+        }
+        if (!decoded || catalog) {
             if (requireComplete && selected && hasCompanion)
                 return reject(QStringLiteral("Invalid published Pack '%1'").arg(path));
             continue;
@@ -2830,6 +2913,18 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
             const QFileInfo info(path);
             const auto companion = QDir::cleanPath(QDir(info.path()).filePath(info.completeBaseName() + QStringLiteral(".json")));
             if (files.contains(companion)) continue;
+            if (inspection) {
+                const auto previous = inspection->previous.constFind(path);
+                if (previous != inspection->previous.cend() && previous->decoded
+                    && previous->projectId == expectedProject
+                    && ((previous->packKind == harkenstudiobuild::kPackKindCanonicalContent
+                            && harkenstudiobuild::ValidateCanonicalInitDependency(previous->dependencies, initId)
+                                == harkenstudiobuild::kPackOk)
+                        || (previous->packKind == harkenstudiobuild::kPackKindInit
+                            && previous->packStableId == initId)))
+                    managedFiles->append(path);
+                continue;
+            }
             QByteArray bytes;
             harkenstudiobuild::PackCanonicalImage image;
             harkenstudiobuild::CurrentWorldBodyImage body;
@@ -2848,6 +2943,8 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
     }
     managedFiles->removeDuplicates();
     return !exportCanceled(cancelCheck, error);
+}
+
 }
 
 ProjectPackExporter::ExportResult ExportCanonicalPackSet(
@@ -2939,30 +3036,21 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     if (!recoverInterruptedPublish(liveDir, &result.error))
         return result;
     QStringList writePaths;
+    PublicationInspection previousInspection;
     if (!collectPlatformWritePaths(project, liveDir, *request.plan,
-            request.options, &writePaths, &result.error)
+            request.options, &writePaths, &result.error, &previousInspection)
         || !validateWriteAccess(writePaths, &result.error, request.options.cancelCheck)) {
         result.canceled = request.options.cancelCheck && request.options.cancelCheck();
         return result;
     }
-    QStringList liveNames, allPackNames;
-    if (!scanOutputFiles(liveDir, &liveNames, &allPackNames, &result.error, false,
-            request.options.cancelCheck)) {
-        result.canceled = request.options.cancelCheck && request.options.cancelCheck();
-        return result;
-    }
+    QStringList liveNames = previousInspection.files;
+    const QStringList& allPackNames = previousInspection.binaries;
     const QDir resourceCacheDir(QDir(PathUtils::getDotCacheDir(QFileInfo(project.projectPath).absolutePath()))
         .filePath(QStringLiteral("pack-inputs")));
     QMap<QString, QJsonObject> previousPacks;
     QHash<qulonglong, QJsonObject> publishedPacks;
-    QJsonArray previousPublication;
-    QStringList previousManaged;
-    if (!ReadPackPublication(request.outputDir, project.projectId, request.options.platform,
-            &previousPublication, &previousManaged, &result.error, false, {},
-            !request.options.updateSelectedOnly, request.options.cancelCheck)) {
-        result.canceled = request.options.cancelCheck && request.options.cancelCheck();
-        return result;
-    }
+    const QJsonArray& previousPublication = previousInspection.publication;
+    const QStringList& previousManaged = previousInspection.managed;
     for (const auto& value : previousPublication) {
         const auto row = value.toObject();
         previousPacks.insert(row.value(QStringLiteral("path")).toString(), row);
@@ -3080,25 +3168,23 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         pack.previousRow = previousPacks.value(pack.fileName);
         if (pack.previousRow.isEmpty() && liveNames.contains(pack.fileName))
             pack.previousRow.insert(QStringLiteral("path"), pack.fileName);
-        QByteArray bytes;
-        harkenstudiobuild::CurrentWorldBodyImage body;
-        pack.previousValid = readPreviousPack(liveDir, &pack, &bytes, &body);
+        const auto inspected = previousInspection.previous.constFind(pack.fileName);
+        pack.previousValid = inspected != previousInspection.previous.cend()
+            && inspected->valid && inspected->packStableId == pack.packStableId
+            && inspected->packKind == pack.packKind;
         if (pack.previousValid) {
-            pack.previousCapacity = body.ProductionView()->capacity;
-            if (request.options.updateSelectedOnly && pack.packKind == harkenstudiobuild::kPackKindInit) {
-                const auto* world = body.ProductionView();
-                for (std::uint32_t i = 0; i < world->playablePropertyCount; ++i) {
-                    const auto& property = world->playableProperties[i];
-                    if (property.contentPropertyKind == harkenstudiobuild::playableproperties::ContentPropertyKindV1::Layer)
-                        previousInitLayerIds.insert(property.stableId);
-                }
+            pack.previousEntriesFingerprint = inspected->entriesFingerprint;
+            pack.previousCapacity = inspected->capacity;
+            if (request.options.updateSelectedOnly && pack.packKind == harkenstudiobuild::kPackKindInit)
+                previousInitLayerIds = inspected->layerIds;
+            if (!request.options.forceReexport) {
+                QFile cache(resourceCacheDir.filePath(inspected->resourceCacheKey));
+                if (cache.open(QIODevice::ReadOnly))
+                    pack.previousResourceFingerprint = QString::fromLatin1(cache.readAll());
             }
-            QFile cache(resourceCacheDir.filePath(QString::fromLatin1(
-                QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex())));
-            if (cache.open(QIODevice::ReadOnly))
-                pack.previousResourceFingerprint = QString::fromLatin1(cache.readAll());
         }
     }
+    previousInspection.previous.clear();
 
     {
         std::unordered_set<std::uint64_t> seenPackIds;
@@ -3203,7 +3289,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                 return false;
             }
             if (resource.reusedResources)
-                return collectEntries(resource.outputPath, &meta.resourceEntries, &unit.error, true);
+                return collectEntries(resource.outputPath, &meta.resourceEntries, &unit.error, true, false,
+                    request.options.snapshot ? request.options.snapshot->mediaCache.get() : nullptr);
             for (auto& entry : entries)
                 if (!appendEntry(std::move(entry), path, &meta.resourceEntries, &unit.error)) return false;
             return true;
@@ -3287,7 +3374,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             if (entry.payload.size() < harkenstudiobuild::kPackV2MediaPayloadBytes)
                 return unit;
             const auto media = harkenstudiobuild::ParsePackTocEntry(entry.payload.data());
-            const auto pcmBytes = entry.payload.size() - harkenstudiobuild::kPackV2MediaPayloadBytes;
+            const auto pcmBytes = entry.mediaBytes();
             if (media.sampleFormat != harkenstudiobuild::kPackSampleFormatF32Planar
                 || media.blobBytes != pcmBytes || pcmBytes % sizeof(float) != 0
                 || media.channelCount == 0 || media.frameCount == 0)
@@ -3296,12 +3383,9 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             if (sampleCount % media.channelCount != 0
                 || sampleCount / media.channelCount != media.frameCount)
                 return unit;
-            std::vector<float> planar(sampleCount);
-            std::memcpy(planar.data(),
-                        entry.payload.data() + harkenstudiobuild::kPackV2MediaPayloadBytes, pcmBytes);
             std::vector<const float*> channels(media.channelCount);
             for (std::uint16_t channel = 0; channel < media.channelCount; ++channel)
-                channels[channel] = planar.data() + channel * media.frameCount;
+                channels[channel] = entry.media->data() + channel * media.frameCount;
             std::uint64_t revision = 0;
             const bool loopable =
                 (media.flags & harkenstudiobuild::kPackFlagLoopable) != 0;
@@ -3329,6 +3413,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         const auto releaseMedia = qScopeGuard([&] {
             if (request.options.snapshot && request.options.snapshot->derivativeCache)
                 request.options.snapshot->derivativeCache->clear();
+            if (request.options.snapshot && request.options.snapshot->mediaCache)
+                request.options.snapshot->mediaCache->clear();
         });
         for (PackMeta& pack : packs) {
             reportProgress(pack, 5, PackGenerationStage::Preparing);
@@ -3564,6 +3650,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                 return false;
             return true;
         };
+        const SlicedWorldIndex slicedIndex(packs, language);
         const auto rebindOwnedPlayables = [&](bool initOnly, bool* changed) {
             for (PackMeta& pack : packs) {
                 if (!packNeedsEncode(pack))
@@ -3572,7 +3659,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                     continue;
                 for (auto& playable : pack.slicedPlayables) {
                     const auto before = playable.programSemanticFingerprint;
-                    rebindPlayableCrossPackRefs(&playable, packs, language);
+                    rebindPlayableCrossPackRefs(&playable, slicedIndex);
                     if (changed != nullptr
                         && playable.programSemanticFingerprint != before)
                         *changed = true;
@@ -3590,20 +3677,20 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                 continue;
             for (auto& occurrence : pack.slicedOccurrences) {
                 if (const auto* parent = findLiveSlicedPlayable(
-                        packs, language, occurrence.parentStableId))
+                        slicedIndex, occurrence.parentStableId))
                     occurrence.parentProgramSemanticFingerprint = parent->programSemanticFingerprint;
-                rebindPlayableRefLive(&occurrence.childPlayable, packs, language);
+                rebindPlayableRefLive(&occurrence.childPlayable, slicedIndex);
                 occurrence.occurrenceSemanticFingerprint =
                     harkenstudiobuild::ComputePlayableOccurrenceFingerprintV1(occurrence);
             }
             for (auto& track : pack.slicedTracks) {
-                rebindPlayableRefLive(&track.rootDefinition, packs, language);
+                rebindPlayableRefLive(&track.rootDefinition, slicedIndex);
                 if (track.placements != nullptr) {
                     auto* placements = const_cast<harkenstudiobuild::ScheduleClipPlacementV1*>(
                         track.placements);
                     for (std::uint32_t i = 0; i < track.placementCount; ++i)
                         rebindPlayableRefLive(&placements[i].content,
-                                             packs, language);
+                                             slicedIndex);
                 }
                 track.scheduleSemanticFingerprint =
                     harkenstudiobuild::ComputeTrackScheduleFingerprintV1(track);
@@ -3613,15 +3700,15 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             if (!packNeedsEncode(pack))
                 continue;
             for (auto& segment : pack.slicedSegments) {
-                rebindPlayableRefLive(&segment.rootDefinition, packs, language);
+                rebindPlayableRefLive(&segment.rootDefinition, slicedIndex);
                 if (segment.trackRefs != nullptr) {
                     auto* trackRefs = const_cast<harkenstudiobuild::ScheduleTrackRefV1*>(
                         segment.trackRefs);
                     for (std::uint32_t i = 0; i < segment.trackRefCount; ++i) {
                         rebindPlayableRefLive(&trackRefs[i].trackDefinition,
-                                             packs, language);
+                                             slicedIndex);
                         const auto* track = findLiveSlicedTrack(
-                            packs, language, trackRefs[i].trackDefinition.stableId);
+                            slicedIndex, trackRefs[i].trackDefinition.stableId);
                         if (track == nullptr)
                             return fail(QStringLiteral(
                                 "Segment %1 references missing sliced Track %2")
@@ -3640,14 +3727,14 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                         container.children);
                     for (std::uint32_t i = 0; i < container.childCount; ++i) {
                         rebindPlayableRefLive(&children[i].playable,
-                                             packs, language);
+                                             slicedIndex);
                         if (!remapScheduleReferenceHintLive(&children[i].timingHint,
-                                                            packs, language, &compileError))
+                                                            slicedIndex, &compileError))
                             return fail(compileError);
                     }
                 }
                 const auto* definition = findLiveSlicedPlayable(
-                    packs, language, container.containerStableId);
+                    slicedIndex, container.containerStableId);
                 if (definition == nullptr)
                     return fail(QStringLiteral(
                         "Container %1 is missing from the sliced canonical set")
@@ -3673,8 +3760,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                         auto* steps = const_cast<harkenstudiobuild::ActionStepProgramViewV1*>(
                             action.steps);
                         for (std::uint32_t i = 0; i < action.stepCount; ++i) {
-                            remapActionObjectRefLive(&steps[i].target, packs, language);
-                            remapActionObjectRefLive(&steps[i].quantizeReference, packs, language);
+                            remapActionObjectRefLive(&steps[i].target, slicedIndex);
+                            remapActionObjectRefLive(&steps[i].quantizeReference, slicedIndex);
                         }
                     }
                     const auto before = action.programSemanticFingerprint;
@@ -3844,6 +3931,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                 header.data(), header.size(), contentRevision);
             contentRevision = harkenstudiobuild::Fnv1a64(
                 entry.payload.data(), entry.payload.size(), contentRevision);
+            contentRevision = harkenstudiobuild::Fnv1a64(
+                entry.mediaData(), entry.mediaBytes(), contentRevision);
         }
         for (const auto& row : {std::make_pair(harkenstudiobuild::kPackEntryKindVariablePolicyOverlay,
                                               &pack.variablePolicyOverlayPayload),
@@ -4001,9 +4090,9 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             entries.push_back(std::move(snapshot));
         }
 
-        const bool matches = meta.previousValid
-            && entriesFingerprint(entries, meta.packKind) == entriesFingerprint(meta.previousEntries, meta.packKind);
-        if (matches && !request.options.forceReexport) return reuse();
+        if (!request.options.forceReexport && meta.previousValid
+            && entriesFingerprint(entries, meta.packKind) == meta.previousEntriesFingerprint)
+            return reuse();
         if (!validateWriteAccess({liveDir.filePath(meta.fileName)}, &unit.error)) {
             unit.success = false;
             return unit;
@@ -4037,8 +4126,10 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         recordUnit(pack, unit);
         if (!unit.success)
             return fail(unit.error);
-        for (auto& entry : pack.resourceEntries)
+        for (auto& entry : pack.resourceEntries) {
             std::vector<std::uint8_t>().swap(entry.payload);
+            entry.media.reset();
+        }
         pack.previousEntries.clear();
         if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
         observeUnit(pack, PackBuildObservationStage::ReadyToPublish);

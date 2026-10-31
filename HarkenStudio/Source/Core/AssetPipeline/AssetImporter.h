@@ -46,6 +46,8 @@ public:
 
     AudioMetadata analyzeFile(const QString& path);
 
+    AudioMetadata readMetadata(const QString& path);
+
     static LoopInfo readWavLoopInfo(const QString& path);
 
     static ValidationFlags validateAudio(const QString& path);

@@ -580,7 +580,12 @@ TEST(PackcPipeline, DirectMediaEntriesMatchFileCompilation) {
             harken::StoreLE64(expected.data() + 32, 0);
             std::memcpy(expected.data() + harken::kPackTocEntryBytes,
                         packed.data() + toc.blobOffset, static_cast<std::size_t>(toc.blobBytes));
-            EXPECT_EQ(expected, entries.front().payload);
+            auto actual = entries.front().payload;
+            ASSERT_NE(nullptr, entries.front().media);
+            const auto* mediaBytes = reinterpret_cast<const std::uint8_t*>(entries.front().media->data());
+            actual.insert(actual.end(), mediaBytes,
+                          mediaBytes + entries.front().media->size() * sizeof(float));
+            EXPECT_EQ(expected, actual);
         }
     }
 }

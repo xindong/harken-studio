@@ -27,6 +27,10 @@
 #include <memory>
 #include <vector>
 
+namespace harkenizer::resourcecompiler {
+class MediaCache;
+}
+
 namespace HarkenEditor {
 namespace Bridge {
 
@@ -367,6 +371,7 @@ public:
     PackBuildSession& operator=(const PackBuildSession&) = delete;
 
     void setInitPack(bool enable);
+    void setMediaCache(std::shared_ptr<harkenizer::resourcecompiler::MediaCache> cache);
 
     void addBus(const PackBus& bus);
     void addBusSend(const PackBusSend& send);
@@ -395,6 +400,22 @@ public:
         harkenstudio::ObjectId id{};
         uint64_t relationOrdinal = 0;
         std::vector<uint8_t> payload;
+        std::shared_ptr<const std::vector<float>> media;
+
+        const uint8_t* mediaData() const
+        {
+            return media ? reinterpret_cast<const uint8_t*>(media->data()) : nullptr;
+        }
+
+        std::size_t mediaBytes() const
+        {
+            return media ? media->size() * sizeof(float) : 0;
+        }
+
+        std::size_t payloadBytes() const
+        {
+            return payload.size() + mediaBytes();
+        }
     };
 
     bool buildEntries(std::vector<CanonicalPackEntry>* entries);

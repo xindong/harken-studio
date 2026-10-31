@@ -197,35 +197,32 @@ bool AssetConverter::resample(const std::vector<float>& input,
 
     size_t inputFrames = input.size() / channels;
 
-    std::vector<std::vector<double>> channelBuffers(channels);
-    for (int ch = 0; ch < channels; ++ch) {
-        channelBuffers[ch].resize(inputFrames);
-        for (size_t f = 0; f < inputFrames; ++f)
-            channelBuffers[ch][f] = static_cast<double>(input[f * channels + ch]);
-    }
-
     size_t outputFrames = static_cast<size_t>(
         std::ceil(static_cast<double>(inputFrames) * outputSampleRate / inputSampleRate));
-
-    std::vector<std::vector<double>> outChannels(channels);
 
     if (inputFrames > static_cast<size_t>(std::numeric_limits<int>::max())
         || outputFrames > static_cast<size_t>(std::numeric_limits<int>::max()))
         return false;
-    for (int ch = 0; ch < channels; ++ch) {
+
+    std::vector<float> resampled(outputFrames * channels);
+    if (channels == 1) {
         r8b::CDSPResampler24 resampler(inputSampleRate, outputSampleRate, 4096);
-        outChannels[ch].resize(outputFrames);
-        resampler.oneshot(channelBuffers[ch].data(), static_cast<int>(inputFrames),
-                          outChannels[ch].data(), static_cast<int>(outputFrames));
+        resampler.oneshot(input.data(), static_cast<int>(inputFrames),
+                          resampled.data(), static_cast<int>(outputFrames));
+    } else {
+        std::vector<float> channelInput(inputFrames);
+        std::vector<float> channelOutput(outputFrames);
+        for (int ch = 0; ch < channels; ++ch) {
+            for (size_t f = 0; f < inputFrames; ++f)
+                channelInput[f] = input[f * channels + ch];
+            r8b::CDSPResampler24 resampler(inputSampleRate, outputSampleRate, 4096);
+            resampler.oneshot(channelInput.data(), static_cast<int>(inputFrames),
+                              channelOutput.data(), static_cast<int>(outputFrames));
+            for (size_t f = 0; f < outputFrames; ++f)
+                resampled[f * channels + ch] = channelOutput[f];
+        }
     }
-
-    size_t finalFrames = outChannels[0].size();
-    output.resize(finalFrames * channels);
-
-    for (size_t f = 0; f < finalFrames; ++f) {
-        for (int ch = 0; ch < channels; ++ch)
-            output[f * channels + ch] = static_cast<float>(outChannels[ch][f]);
-    }
+    output = std::move(resampled);
 
     return true;
 }

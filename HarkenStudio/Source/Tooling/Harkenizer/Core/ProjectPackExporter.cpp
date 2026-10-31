@@ -43,8 +43,13 @@
 #include <QScopeGuard>
 #include <QSet>
 #include <QDataStream>
+#include <QThread>
+#include <QThreadPool>
 
 #include <algorithm>
+#include <atomic>
+#include <deque>
+#include <future>
 #include <limits>
 #include <functional>
 #include <vector>
@@ -64,6 +69,7 @@ static bool buildPackResources(Bridge::PackBuildSession& builder, const QString&
                                ProjectPackExporter::ExportResult& result,
                                std::vector<Bridge::PackBuildSession::CanonicalPackEntry>* resourceEntries = nullptr)
 {
+    if (options.snapshot) builder.setMediaCache(options.snapshot->mediaCache);
     if (options.resourceReuse) {
         result.resourceFingerprint = builder.inputFingerprint();
         if (result.resourceFingerprint.isEmpty()) {
@@ -1363,79 +1369,193 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
             .filePath(QStringLiteral("pack-derivatives/%1").arg(options.platform));
         auto inputs = closure->media;
         inputs.insert(inputs.end(), closure->controlMedia.begin(), closure->controlMedia.end());
-        for (const ActionClosureMedia& media : inputs) {
-            if (canceled()) return false;
-            if (processedSounds.count(media.soundStableId) != 0) continue;
-            const auto matchesSound = [&](const auto& candidate) {
-                return candidate.soundStableId == media.soundStableId;
-            };
-            const bool controlInput = std::any_of(
-                closure->controlMedia.begin(), closure->controlMedia.end(), matchesSound);
-            const auto owner = sourceIndex.byQtGuid.find(QUuid(objectIdString(media.soundStableId)));
-            const ProjectItem* soundItem = owner == sourceIndex.byQtGuid.end()
-                ? nullptr : owner->second;
-            const auto* sound = soundItem ? soundItem->comp<VSound>() : nullptr;
-            if (!sound) {
-                if (errorOut) *errorOut = QStringLiteral("Closure media owner %1 is missing")
-                    .arg(VNX::objectIdString(media.soundStableId));
-                return false;
-            }
-            const bool publish = std::any_of(closure->media.begin(), closure->media.end(), matchesSound)
-                && (!includedObjectIds || includedObjectIds->count(soundItem->objectID) != 0)
-                && (!excludedClosureMediaIds
-                    || excludedClosureMediaIds->count(media.authoringSourceId) == 0);
-            if (!publish && !controlInput) continue;
-            const auto* source = SoundSourceSemantics::findEntry(*sound, media.sourceEntryId);
-            if (!source) {
-                if (errorOut) *errorOut = QStringLiteral("Closure source entry is missing for Sound %1")
-                    .arg(VNX::objectIdString(media.soundStableId));
-                return false;
-            }
-            QString derivativeError;
-            const auto conversion = mediaSnapshot.request(source->sourceId, platform, &derivativeError);
-            if (!conversion || !conversion->sourceMatches()) {
-                if (errorOut) *errorOut = conversion
-                    ? QStringLiteral("Source file changed or is unavailable for Sound %1").arg(VNX::objectIdString(media.soundStableId))
-                    : derivativeError;
-                return false;
-            }
-            const auto authoredSource = SoundSourceSemantics::authoredView(*source, &conversion->asset);
-            auto artifact = SoundSourceDerivative::materialize(
-                conversion->inputPath(), authoredSource,
-                sound->scheduleOffsetSec, platform, derivativeDir, conversion->settings,
-                &derivativeError, options.snapshot->derivativeCache.get(), conversion->sourceInput.get());
-            if (canceled()) return false;
-            if (!conversion->sourceMatches()) {
-                if (errorOut) *errorOut = QStringLiteral("Source file changed during Sound conversion");
-                return false;
-            }
-            const QString conversionError = derivativeError;
+        struct PreparedSound
+        {
+            harkenstudio::ObjectId soundId;
+            SoundSourceDef source;
+            double scheduleOffsetSec = 0.0;
+            MediaConversionRequest conversion;
+            bool publish = false;
+            uint64_t estimatedBytes = 0;
+        };
+        struct MediaResult
+        {
+            std::optional<SoundSourceDerivative::MaterializedArtifact> artifact;
+            QString error;
+            QString conversionError;
             bool fallback = false;
-            if (!artifact) {
-                artifact = SoundSourceDerivative::materialize(
-                    conversion->inputPath(), authoredSource,
-                    sound->scheduleOffsetSec, platform, derivativeDir, ConversionSettings{},
-                    &derivativeError, options.snapshot->derivativeCache.get(), conversion->sourceInput.get());
-                if (canceled()) return false;
-                fallback = artifact.has_value();
+        };
+        struct PendingSound
+        {
+            PreparedSound input;
+            std::future<MediaResult> result;
+        };
+        constexpr uint64_t pendingByteLimit = 64u * 1024u * 1024u;
+        const auto estimateBytes = [&](const PreparedSound& input) -> uint64_t {
+            const auto& metadata = input.conversion.asset.metadata;
+            const auto& settings = input.conversion.settings;
+            if (metadata.sampleRate == 0 || metadata.channels == 0
+                || !std::isfinite(input.scheduleOffsetSec) || input.scheduleOffsetSec < 0.0
+                || (settings.performResample && settings.targetSampleRate == 0))
+                return pendingByteLimit + 1;
+            const uint64_t start = std::min(input.source.trimStartFrame, metadata.totalSamples);
+            const uint64_t end = std::clamp(input.source.trimEndFrame.value_or(metadata.totalSamples),
+                start, metadata.totalSamples);
+            const long double frameBytes = static_cast<long double>(metadata.channels) * sizeof(float);
+            const long double decodedBytes = static_cast<long double>(metadata.totalSamples) * frameBytes;
+            const long double trimmedFrames = static_cast<long double>(end - start);
+            const long double outputRate = settings.performResample
+                ? std::max(metadata.sampleRate, settings.targetSampleRate) : metadata.sampleRate;
+            const long double outputFrames = std::ceil(trimmedFrames * outputRate / metadata.sampleRate)
+                + std::ceil(static_cast<long double>(input.scheduleOffsetSec) * outputRate);
+            const long double bytes = 3.0L * (decodedBytes + trimmedFrames * frameBytes
+                + outputFrames * frameBytes);
+            return !std::isfinite(bytes) || bytes > pendingByteLimit
+                ? pendingByteLimit + 1 : static_cast<uint64_t>(std::ceil(bytes));
+        };
+        std::atomic<bool> stop{false};
+        QThreadPool pool;
+        const int workerCount = std::clamp(QThread::idealThreadCount(), 1, 4);
+        pool.setMaxThreadCount(workerCount);
+        const auto prepareMedia = [&stop, platform, derivativeDir,
+            cache = options.snapshot->derivativeCache](const PreparedSound& input) {
+            MediaResult result;
+            if (stop.load(std::memory_order_acquire)) return result;
+            QString derivativeError;
+            const auto& conversion = input.conversion;
+            result.artifact = SoundSourceDerivative::materialize(
+                conversion.inputPath(), input.source,
+                input.scheduleOffsetSec, platform, derivativeDir, conversion.settings,
+                &derivativeError, cache.get(), conversion.sourceInput.get());
+            if (stop.load(std::memory_order_acquire)) return result;
+            if (!conversion.sourceMatches()) {
+                result.error = QStringLiteral("Source file changed during Sound conversion");
+                return result;
             }
-            if (!artifact || !conversion->sourceMatches()) {
-                if (errorOut) *errorOut = QStringLiteral("Derivative media failed for Sound %1: %2")
-                    .arg(VNX::objectIdString(media.soundStableId)).arg(derivativeError);
+            result.conversionError = derivativeError;
+            if (!result.artifact) {
+                if (stop.load(std::memory_order_acquire)) return result;
+                result.artifact = SoundSourceDerivative::materialize(
+                    conversion.inputPath(), input.source,
+                    input.scheduleOffsetSec, platform, derivativeDir, ConversionSettings{},
+                    &derivativeError, cache.get(), conversion.sourceInput.get());
+                if (stop.load(std::memory_order_acquire)) return result;
+                result.fallback = result.artifact.has_value();
+            }
+            if (!result.artifact || !conversion.sourceMatches())
+                result.error = QStringLiteral("Derivative media failed for Sound %1: %2")
+                    .arg(VNX::objectIdString(input.soundId)).arg(derivativeError);
+            return result;
+        };
+        std::deque<PendingSound> pending;
+        std::optional<PreparedSound> prepared;
+        std::optional<QString> planningError;
+        std::set<harkenstudio::ObjectId> plannedSounds;
+        std::set<uint32_t> pendingSources;
+        uint64_t pendingBytes = 0;
+        size_t nextInput = 0;
+        const auto joinWorkers = qScopeGuard([&] {
+            stop.store(true, std::memory_order_release);
+            pool.waitForDone();
+        });
+        for (;;) {
+            if (canceled()) return false;
+            while (!planningError && pending.size() < static_cast<size_t>(workerCount)
+                && (prepared || nextInput < inputs.size())) {
+                if (canceled()) return false;
+                if (!prepared) {
+                    const auto& media = inputs[nextInput];
+                    if (plannedSounds.count(media.soundStableId) != 0) {
+                        ++nextInput;
+                        continue;
+                    }
+                    const auto matchesSound = [&](const auto& candidate) {
+                        return candidate.soundStableId == media.soundStableId;
+                    };
+                    const bool controlInput = std::any_of(
+                        closure->controlMedia.begin(), closure->controlMedia.end(), matchesSound);
+                    const auto owner = sourceIndex.byQtGuid.find(QUuid(objectIdString(media.soundStableId)));
+                    const ProjectItem* soundItem = owner == sourceIndex.byQtGuid.end()
+                        ? nullptr : owner->second;
+                    const auto* sound = soundItem ? soundItem->comp<VSound>() : nullptr;
+                    if (!sound) {
+                        planningError = QStringLiteral("Closure media owner %1 is missing")
+                            .arg(VNX::objectIdString(media.soundStableId));
+                        break;
+                    }
+                    const bool publish = std::any_of(closure->media.begin(), closure->media.end(), matchesSound)
+                        && (!includedObjectIds || includedObjectIds->count(soundItem->objectID) != 0)
+                        && (!excludedClosureMediaIds
+                            || excludedClosureMediaIds->count(media.authoringSourceId) == 0);
+                    if (!publish && !controlInput) {
+                        ++nextInput;
+                        continue;
+                    }
+                    const auto* source = SoundSourceSemantics::findEntry(*sound, media.sourceEntryId);
+                    if (!source) {
+                        planningError = QStringLiteral("Closure source entry is missing for Sound %1")
+                            .arg(VNX::objectIdString(media.soundStableId));
+                        break;
+                    }
+                    if (pendingSources.count(source->sourceId) != 0) break;
+                    QString derivativeError;
+                    auto conversion = mediaSnapshot.request(source->sourceId, platform, &derivativeError);
+                    if (!conversion || !conversion->sourceMatches()) {
+                        planningError = conversion
+                            ? QStringLiteral("Source file changed or is unavailable for Sound %1")
+                                .arg(VNX::objectIdString(media.soundStableId))
+                            : derivativeError;
+                        break;
+                    }
+                    prepared = PreparedSound{media.soundStableId,
+                        SoundSourceSemantics::authoredView(*source, &conversion->asset),
+                        sound->scheduleOffsetSec, std::move(*conversion), publish};
+                    prepared->estimatedBytes = estimateBytes(*prepared);
+                    ++nextInput;
+                }
+                if (!pending.empty() && (prepared->estimatedBytes > pendingByteLimit
+                    || pendingBytes > pendingByteLimit - prepared->estimatedBytes))
+                    break;
+                auto task = std::make_shared<std::packaged_task<MediaResult()>>(
+                    [prepareMedia, input = *prepared] { return prepareMedia(input); });
+                auto future = task->get_future();
+                plannedSounds.insert(prepared->soundId);
+                pendingSources.insert(prepared->source.sourceId);
+                pendingBytes += prepared->estimatedBytes;
+                pending.push_back({std::move(*prepared), std::move(future)});
+                prepared.reset();
+                pool.start([task] { (*task)(); });
+            }
+            if (pending.empty()) {
+                if (planningError) {
+                    if (errorOut) *errorOut = *planningError;
+                    return false;
+                }
+                break;
+            }
+            auto& first = pending.front();
+            while (first.result.wait_for(std::chrono::milliseconds(10)) != std::future_status::ready)
+                if (canceled()) return false;
+            auto result = first.result.get();
+            if (canceled()) return false;
+            if (!result.error.isEmpty()) {
+                if (errorOut) *errorOut = result.error;
                 return false;
             }
+            const auto& input = first.input;
+            const auto& artifact = result.artifact;
             if (stats) {
-                if (fallback) {
+                if (result.fallback) {
                     ++stats->fallbacks;
                     stats->warnings.append(QStringLiteral("Sound %1 used unprocessed media after conversion failed: %2")
-                        .arg(VNX::objectIdString(media.soundStableId)).arg(conversionError));
+                        .arg(VNX::objectIdString(input.soundId)).arg(result.conversionError));
                 } else if (artifact->cacheHit) ++stats->cacheHits;
                 else ++stats->conversions;
             }
             Bridge::PackMediaDesc desc;
-            desc.sourceId = media.soundStableId;
-            desc.authoringSourceId = source->sourceId;
-            desc.sourcePath = conversion->asset.absolutePath;
+            desc.sourceId = input.soundId;
+            desc.authoringSourceId = input.source.sourceId;
+            desc.sourcePath = input.conversion.asset.absolutePath;
             desc.interleavedSamples = artifact->samples;
             desc.contentHash = artifact->contentHash;
             desc.sampleRate = artifact->sampleRate;
@@ -1444,18 +1564,21 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
             desc.loopStartFrame = artifact->loopStartFrame;
             desc.loopEndFrame = artifact->loopEndFrame;
             desc.format = Bridge::PackMediaFormat::PcmFloat;
-            if (publish)
+            if (input.publish)
                 builder.addMedia(desc);
-            if (!publish || options.buildPlan) {
+            if (!input.publish || options.buildPlan) {
                 const auto revision = options.snapshot->derivativeCache->contentRevision(*artifact);
                 if (!stats || !revision) {
                     if (errorOut) *errorOut = QStringLiteral("Cannot compute converted media revision for Sound %1")
-                        .arg(VNX::objectIdString(media.soundStableId));
+                        .arg(VNX::objectIdString(input.soundId));
                     return false;
                 }
-                stats->soundContentRevisions.emplace(media.soundStableId, *revision);
+                stats->soundContentRevisions.emplace(input.soundId, *revision);
             }
-            processedSounds.insert(media.soundStableId);
+            processedSounds.insert(input.soundId);
+            pendingSources.erase(input.source.sourceId);
+            pendingBytes -= input.estimatedBytes;
+            pending.pop_front();
         }
     }
 

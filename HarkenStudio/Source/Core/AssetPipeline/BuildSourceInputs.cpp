@@ -194,7 +194,7 @@ std::shared_ptr<const BuildSourceInput> BuildSourceInputs::capture(const AssetIn
     input->originalPath = path;
     input->inputPath = capturedPath;
     input->contentHash = entry->contentHash;
-    input->metadata = importer.analyzeFile(capturedPath);
+    input->metadata = importer.readMetadata(capturedPath);
     input->storage_ = impl_->storage;
     if (input->metadata.sampleRate == 0 || input->metadata.channels == 0
         || input->metadata.totalSamples == 0) {

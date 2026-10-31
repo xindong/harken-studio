@@ -29,6 +29,14 @@ AssetImporter::~AssetImporter() = default;
 
 AudioMetadata AssetImporter::analyzeFile(const QString& path)
 {
+    auto metadata = readMetadata(path);
+    if (metadata.originalFormat == "WAV")
+        metadata.validation = validateAudio(path);
+    return metadata;
+}
+
+AudioMetadata AssetImporter::readMetadata(const QString& path)
+{
     QString format = detectFormat(path);
 
     if (format == "WAV") {
@@ -295,8 +303,6 @@ AudioMetadata AssetImporter::readWavMetadata(const QString& path)
     meta.originalFormat = "WAV";
 
     meta.loopInfo = readWavLoopInfo(path);
-
-    meta.validation = validateAudio(path);
 
     drwav_uninit(&wav);
     return meta;

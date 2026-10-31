@@ -3,6 +3,7 @@
 #include "AssetPipeline/AssetRegistry.h"
 #include "AssetPipeline/PathUtils.h"
 #include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
+#include "Tooling/Harkenizer/ResourceCompiler/ResourceCompiler.h"
 
 #include <QFileInfo>
 #include <QDir>
@@ -15,6 +16,7 @@ std::shared_ptr<const ProjectBuildSnapshot> ProjectBuildSnapshot::capture(
     if (!ProjectPlatformSemantics::validatePlatforms(source.platforms, error)) return {};
     auto snapshot = std::make_shared<ProjectBuildSnapshot>(source);
     snapshot->derivativeCache = std::make_shared<SoundSourceDerivative::MaterializationCache>();
+    snapshot->mediaCache = std::make_shared<harkenizer::resourcecompiler::MediaCache>();
     snapshot->media = AssetRegistry::instance().buildSnapshot(
         QFileInfo(source.projectPath).absolutePath(), source.platforms, false);
     snapshot->media.sourceInputs = std::make_shared<BuildSourceInputs>();

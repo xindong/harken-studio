@@ -449,7 +449,8 @@ std::vector<EntryPlacement> BuildEntryPlacements(
 bool SerializeEntryPayload(const Manifest& manifest,
                            const std::vector<PackEntry>& entries,
                            const EntryPlacement& placement, std::uint64_t blobOffset,
-                           const std::uint8_t* blob, std::uint8_t* dst, Diag* diag) {
+                           const std::uint8_t* blob, std::uint8_t* dst, Diag* diag,
+                           const std::uint64_t* blobChecksum = nullptr) {
     switch (placement.kind) {
     case harkenstudiobuild::kPackEntryKindMedia: {
         const PackEntry& entry = entries[placement.index];
@@ -463,9 +464,8 @@ bool SerializeEntryPayload(const Manifest& manifest,
         toc.frameCount = entry.frameCount;
         toc.blobOffset = blobOffset;
         toc.blobBytes = blobBytes;
-        toc.blobChecksum = harkenstudiobuild::Fnv1a64(
-            blob,
-            static_cast<std::size_t>(blobBytes));
+        toc.blobChecksum = blobChecksum ? *blobChecksum : harkenstudiobuild::Fnv1a64(
+            blob, static_cast<std::size_t>(blobBytes));
         toc.flags = entry.loopable ? harkenstudiobuild::kPackFlagLoopable : 0;
         toc.loopStartFrame =
             entry.loopable ? entry.loopStartFrame : 0;
@@ -1419,9 +1419,87 @@ Result FinishWithReport(const Report& report, const std::string& reportPath,
 
 }
 
+PreparedMediaBlob MediaCache::prepare(const MediaInput& input)
+{
+    std::lock_guard lock(mutex_);
+    const auto key = std::make_tuple(input.contentHash, input.channels, input.downmixToMono);
+    if (!input.contentHash.empty()) {
+        const auto found = prepared_.find(key);
+        if (found != prepared_.end()) return found->second;
+    }
+    PreparedMediaBlob result;
+    const auto frames = input.sampleCount / input.channels;
+    const bool downmixed = input.downmixToMono && input.channels == 2;
+    if (input.channels == 1 && input.samplesOwner) {
+        result.samples = input.samplesOwner;
+    } else {
+        auto samples = std::make_shared<std::vector<float>>(
+            frames * (downmixed ? 1 : input.channels));
+        auto* blob = reinterpret_cast<std::uint8_t*>(samples->data());
+        if (input.channels == 1) {
+            std::memcpy(blob, input.interleavedSamples, samples->size() * sizeof(float));
+        } else if (downmixed) {
+            for (std::size_t frame = 0; frame < frames; ++frame) {
+                const float sample = static_cast<float>(
+                    (static_cast<double>(input.interleavedSamples[frame * 2])
+                     + static_cast<double>(input.interleavedSamples[frame * 2 + 1])) * 0.5);
+                std::memcpy(blob + frame * sizeof(float), &sample, sizeof(float));
+            }
+        } else {
+            for (std::size_t channel = 0; channel < input.channels; ++channel) {
+                for (std::size_t frame = 0; frame < frames; ++frame) {
+                    std::memcpy(blob + (channel * frames + frame) * sizeof(float),
+                                input.interleavedSamples + frame * input.channels + channel,
+                                sizeof(float));
+                }
+            }
+        }
+        result.samples = std::move(samples);
+    }
+    const auto bytes = result.samples->size() * sizeof(float);
+    result.checksum = harkenstudiobuild::Fnv1a64(result.samples->data(), bytes);
+    const auto candidates = blobs_.equal_range(result.checksum);
+    for (auto found = candidates.first; found != candidates.second; ++found) {
+        if (found->second->size() == result.samples->size()
+            && std::memcmp(found->second->data(), result.samples->data(), bytes) == 0) {
+            result.samples = found->second;
+            if (!input.contentHash.empty()) prepared_.emplace(key, result);
+            return result;
+        }
+    }
+    blobs_.emplace(result.checksum, result.samples);
+    if (!input.contentHash.empty()) prepared_.emplace(key, result);
+    return result;
+}
+
+std::shared_ptr<const std::vector<float>> MediaCache::intern(
+    const std::uint8_t* data, std::size_t bytes, std::uint64_t checksum)
+{
+    if (bytes % sizeof(float) != 0) return {};
+    std::lock_guard lock(mutex_);
+    const auto candidates = blobs_.equal_range(checksum);
+    for (auto found = candidates.first; found != candidates.second; ++found) {
+        if (found->second->size() * sizeof(float) == bytes
+            && std::memcmp(found->second->data(), data, bytes) == 0)
+            return found->second;
+    }
+    auto samples = std::make_shared<std::vector<float>>(bytes / sizeof(float));
+    if (bytes != 0) std::memcpy(samples->data(), data, bytes);
+    blobs_.emplace(checksum, samples);
+    return samples;
+}
+
+void MediaCache::clear()
+{
+    std::lock_guard lock(mutex_);
+    prepared_.clear();
+    blobs_.clear();
+}
+
 bool compileEntries(const std::string& logicSections, bool resident,
                     const std::vector<MediaInput>& media,
-                    std::vector<CompiledEntry>* entries, std::string* error) {
+                    std::vector<CompiledEntry>* entries, std::string* error,
+                    MediaCache* mediaCache) {
     using namespace harkenstudiojson::packc;
     entries->clear();
     Diag diag;
@@ -1453,6 +1531,8 @@ bool compileEntries(const std::string& logicSections, bool resident,
     prepared.reserve(media.size());
     std::vector<CompiledEntry> compiled;
     compiled.reserve(media.size());
+    MediaCache localMediaCache;
+    if (!mediaCache) mediaCache = &localMediaCache;
     std::unordered_set<harkenstudio::ObjectId> identities;
     for (std::size_t i = 0; i < media.size(); ++i) {
         const auto& input = media[i];
@@ -1486,31 +1566,11 @@ bool compileEntries(const std::string& logicSections, bool resident,
         resource.kind = placement.kind;
         resource.vintage = EntryVintage(placement.kind);
         resource.id = placement.id;
-        const auto& audio = prepared.back();
-        const auto frames = static_cast<std::size_t>(audio.frameCount);
-        const auto blobBytes = frames * audio.channelCount * sizeof(float);
-        resource.payload.resize(static_cast<std::size_t>(placement.size) + blobBytes);
-        auto* blob = resource.payload.data() + placement.size;
-        if (input.channels == 1) {
-            std::memcpy(blob, input.interleavedSamples, blobBytes);
-        } else if (audio.downmixed) {
-            for (std::size_t frame = 0; frame < frames; ++frame) {
-                const float sample = static_cast<float>(
-                    (static_cast<double>(input.interleavedSamples[frame * 2])
-                     + static_cast<double>(input.interleavedSamples[frame * 2 + 1])) * 0.5);
-                std::memcpy(blob + frame * sizeof(float), &sample, sizeof(float));
-            }
-        } else {
-            for (std::size_t channel = 0; channel < audio.channelCount; ++channel) {
-                for (std::size_t frame = 0; frame < frames; ++frame) {
-                    std::memcpy(blob + (channel * frames + frame) * sizeof(float),
-                                input.interleavedSamples + frame * input.channels + channel,
-                                sizeof(float));
-                }
-            }
-        }
-        if (!SerializeEntryPayload(manifest, prepared, placement, 0, blob,
-                                   resource.payload.data(), &diag)) return refuse();
+        const auto audio = mediaCache->prepare(input);
+        resource.media = audio.samples;
+        resource.payload.resize(static_cast<std::size_t>(placement.size));
+        if (!SerializeEntryPayload(manifest, prepared, placement, 0, nullptr,
+                                   resource.payload.data(), &diag, &audio.checksum)) return refuse();
         compiled.push_back(std::move(resource));
     }
     if (!ValidateLogicSections(manifest, &diag)) return refuse();

@@ -786,6 +786,7 @@ struct PackBuildSession::Impl
     QStringList warnings;
     QStringList pendingWarnings;
     std::vector<PackMediaDesc> media;
+    std::shared_ptr<harkenizer::resourcecompiler::MediaCache> mediaCache;
     std::unordered_set<harkenstudio::ObjectId> mediaIds;
     std::vector<PackBus> buses;
     std::vector<PackBusSend> busSends;
@@ -1128,6 +1129,11 @@ PackBuildSession::~PackBuildSession() = default;
 
 void PackBuildSession::setInitPack(bool enable) { impl_->initPack = enable; }
 
+void PackBuildSession::setMediaCache(std::shared_ptr<harkenizer::resourcecompiler::MediaCache> cache)
+{
+    impl_->mediaCache = std::move(cache);
+}
+
 void PackBuildSession::addBus(const PackBus& bus)
 {
     impl_->buses.push_back(bus);
@@ -1200,10 +1206,10 @@ std::uint64_t alignUp(std::uint64_t value, std::uint64_t align)
     return (value + align - 1) / align * align;
 }
 
-bool assembleCanonicalPack(const std::vector<PackBuildSession::CanonicalPackEntry>& entries,
-                           PackBuildSession::CanonicalPackKind packKind,
-                           std::vector<std::uint8_t>* out,
-                           QString* error)
+bool writeCanonicalPack(const QString& outputPath,
+                        const std::vector<PackBuildSession::CanonicalPackEntry>& entries,
+                        PackBuildSession::CanonicalPackKind packKind,
+                        QString* error)
 {
     const std::uint64_t dirOffset = harkenstudiobuild::kPackV2HeaderBytes;
     const std::uint64_t dirBytes =
@@ -1231,33 +1237,25 @@ bool assembleCanonicalPack(const std::vector<PackBuildSession::CanonicalPackEntr
             return false;
         }
         blobOffsets[i] = alignUp(fileBytes, harkenstudiobuild::kPackBlobAlign);
-        fileBytes = blobOffsets[i] +
-                    (entries[i].payload.size() - harkenstudiobuild::kPackV2MediaPayloadBytes);
+        fileBytes = blobOffsets[i] + entries[i].mediaBytes();
     }
-    out->assign(static_cast<std::size_t>(fileBytes), 0);
+    std::vector<std::uint8_t> directory(static_cast<std::size_t>(dirBytes));
+    std::vector<std::array<std::uint8_t, harkenstudiobuild::kPackV2MediaPayloadBytes>>
+        mediaPayloads;
+    mediaPayloads.reserve(std::count_if(entries.begin(), entries.end(), [](const auto& entry) {
+        return entry.kind == harkenstudiobuild::kPackEntryKindMedia;
+    }));
     for (std::size_t i = 0; i < entries.size(); ++i) {
-        if (entries[i].payload.empty())
-            continue;
+        const std::uint8_t* payload = entries[i].payload.data();
         if (entries[i].kind == harkenstudiobuild::kPackEntryKindMedia) {
             harkenstudiobuild::PackTocEntry toc =
-                harkenstudiobuild::ParsePackTocEntry(entries[i].payload.data());
-            const std::uint64_t blobBytes =
-                entries[i].payload.size() - harkenstudiobuild::kPackV2MediaPayloadBytes;
+                harkenstudiobuild::ParsePackTocEntry(payload);
             toc.blobOffset = blobOffsets[i];
-            toc.blobBytes = blobBytes;
-            harkenstudiobuild::SerializePackTocEntry(
-                toc, out->data() + static_cast<std::size_t>(offsets[i]));
-            if (blobBytes != 0) {
-                std::memcpy(out->data() + static_cast<std::size_t>(blobOffsets[i]),
-                            entries[i].payload.data() + harkenstudiobuild::kPackV2MediaPayloadBytes,
-                            static_cast<std::size_t>(blobBytes));
-            }
-        } else {
-            std::memcpy(out->data() + static_cast<std::size_t>(offsets[i]),
-                        entries[i].payload.data(), entries[i].payload.size());
+            toc.blobBytes = entries[i].mediaBytes();
+            auto& mediaPayload = mediaPayloads.emplace_back();
+            harkenstudiobuild::SerializePackTocEntry(toc, mediaPayload.data());
+            payload = mediaPayload.data();
         }
-    }
-    for (std::size_t i = 0; i < entries.size(); ++i) {
         harkenstudiobuild::PackV2DirectoryEntry record;
         record.kind = entries[i].kind;
         record.vintage = entries[i].vintage;
@@ -1266,11 +1264,9 @@ bool assembleCanonicalPack(const std::vector<PackBuildSession::CanonicalPackEntr
         record.offset = offsets[i];
         record.size = payloadSizes[i];
         record.payloadChecksum =
-            harkenstudiobuild::Fnv1a64(out->data() + static_cast<std::size_t>(offsets[i]),
-                           static_cast<std::size_t>(record.size));
+            harkenstudiobuild::Fnv1a64(payload, static_cast<std::size_t>(record.size));
         harkenstudiobuild::SerializePackV2DirectoryEntry(
-            record, out->data() + static_cast<std::size_t>(dirOffset) +
-                        i * harkenstudiobuild::kPackV2DirectoryEntryBytes);
+            record, directory.data() + i * harkenstudiobuild::kPackV2DirectoryEntryBytes);
     }
     harkenstudiobuild::PackV2Header header;
     header.formatVersion = harkenstudiobuild::kPackFormatVersion2;
@@ -1280,15 +1276,9 @@ bool assembleCanonicalPack(const std::vector<PackBuildSession::CanonicalPackEntr
     header.entryCount = static_cast<std::uint32_t>(entries.size());
     header.directoryOffset = dirOffset;
     header.directoryChecksum =
-        harkenstudiobuild::Fnv1a64(out->data() + static_cast<std::size_t>(dirOffset),
-                       static_cast<std::size_t>(dirBytes));
-    harkenstudiobuild::SerializePackV2Header(header, out->data());
-    return true;
-}
-
-bool writeBytesAtomically(const QString& outputPath, const std::vector<std::uint8_t>& bytes,
-                          QString* error)
-{
+        harkenstudiobuild::Fnv1a64(directory.data(), directory.size());
+    std::array<std::uint8_t, harkenstudiobuild::kPackV2HeaderBytes> headerBytes;
+    harkenstudiobuild::SerializePackV2Header(header, headerBytes.data());
     QDir().mkpath(QFileInfo(outputPath).absolutePath());
     QFile file(outputPath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
@@ -1296,13 +1286,46 @@ bool writeBytesAtomically(const QString& outputPath, const std::vector<std::uint
             *error = QStringLiteral("Cannot write pack '%1'").arg(outputPath);
         return false;
     }
-    const qint64 wrote = file.write(reinterpret_cast<const char*>(bytes.data()),
-                                    static_cast<qint64>(bytes.size()));
-    if (wrote != static_cast<qint64>(bytes.size()) || !file.flush()) {
+    const auto writeFailed = [&] {
         if (error)
             *error = QStringLiteral("Failed writing pack '%1'").arg(outputPath);
         return false;
+    };
+    const std::array<char, harkenstudiobuild::kPackBlobAlign> padding{};
+    std::uint64_t position = 0;
+    const auto writeAt = [&](std::uint64_t offset, const std::uint8_t* data,
+                             std::uint64_t size) {
+        while (position < offset) {
+            const auto count = static_cast<qint64>(std::min<std::uint64_t>(
+                offset - position, padding.size()));
+            if (file.write(padding.data(), count) != count)
+                return false;
+            position += static_cast<std::uint64_t>(count);
+        }
+        if (size != 0 && file.write(reinterpret_cast<const char*>(data),
+                                   static_cast<qint64>(size)) != static_cast<qint64>(size))
+            return false;
+        position += size;
+        return true;
+    };
+    if (!writeAt(0, headerBytes.data(), headerBytes.size())
+        || !writeAt(dirOffset, directory.data(), directory.size()))
+        return writeFailed();
+    std::size_t mediaIndex = 0;
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        const auto* payload = entries[i].kind == harkenstudiobuild::kPackEntryKindMedia
+            ? mediaPayloads[mediaIndex++].data() : entries[i].payload.data();
+        if (!writeAt(offsets[i], payload, payloadSizes[i]))
+            return writeFailed();
     }
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        if (entries[i].kind != harkenstudiobuild::kPackEntryKindMedia)
+            continue;
+        if (!writeAt(blobOffsets[i], entries[i].mediaData(), entries[i].mediaBytes()))
+            return writeFailed();
+    }
+    if (!file.flush())
+        return writeFailed();
     return true;
 }
 
@@ -1330,6 +1353,7 @@ bool collectExistingEntries(const QString& sourcePath,
             *error = QStringLiteral("Pack '%1' is not a v2 container").arg(sourcePath);
         return false;
     }
+    harkenizer::resourcecompiler::MediaCache mediaCache;
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
         const harkenstudiobuild::PackV2DirectoryEntry record = harkenstudiobuild::ParsePackV2DirectoryEntry(
             reinterpret_cast<const std::uint8_t*>(bytes.constData()) +
@@ -1345,11 +1369,13 @@ bool collectExistingEntries(const QString& sourcePath,
                 record.size);
         if (record.kind == harkenstudiobuild::kPackEntryKindMedia) {
             const harkenstudiobuild::PackTocEntry toc = harkenstudiobuild::ParsePackTocEntry(entry.payload.data());
-            entry.payload.resize(static_cast<std::size_t>(record.size + toc.blobBytes));
-            std::memcpy(entry.payload.data() + record.size,
-                        reinterpret_cast<const std::uint8_t*>(bytes.constData()) +
-                            toc.blobOffset,
-                        static_cast<std::size_t>(toc.blobBytes));
+            entry.media = mediaCache.intern(
+                reinterpret_cast<const std::uint8_t*>(bytes.constData()) + toc.blobOffset,
+                static_cast<std::size_t>(toc.blobBytes), toc.blobChecksum);
+            if (!entry.media) {
+                if (error) *error = QStringLiteral("Pack '%1' contains invalid PCM media").arg(sourcePath);
+                return false;
+            }
         }
         entries->push_back(std::move(entry));
     }
@@ -1362,10 +1388,7 @@ bool PackBuildSession::writeCanonicalPackFile(
     const QString& outputPath, CanonicalPackKind packKind,
     const std::vector<CanonicalPackEntry>& entries, QString* error)
 {
-    std::vector<std::uint8_t> bytes;
-    if (!assembleCanonicalPack(entries, packKind, &bytes, error))
-        return false;
-    return writeBytesAtomically(outputPath, bytes, error);
+    return writeCanonicalPack(outputPath, entries, packKind, error);
 }
 
 bool PackBuildSession::wrapCanonicalPackFile(
@@ -1387,14 +1410,13 @@ bool PackBuildSession::buildEntries(std::vector<CanonicalPackEntry>* entries)
     const auto description = impl_->description();
     if (!impl_->lastError.isEmpty()) return false;
     std::vector<harkenizer::resourcecompiler::MediaInput> media;
-    std::vector<std::vector<float>> decoded;
     if (!impl_->initPack) {
         media.reserve(impl_->media.size());
-        decoded.reserve(impl_->media.size());
         for (const auto& source : impl_->media) {
             harkenizer::resourcecompiler::MediaInput input;
             input.id = source.sourceId;
             input.sourcePath = source.sourcePath.toStdString();
+            input.contentHash = source.contentHash.toStdString();
             input.sampleRate = source.sampleRate;
             input.channels = source.channels;
             input.downmixToMono = source.downmixToMono;
@@ -1402,17 +1424,19 @@ bool PackBuildSession::buildEntries(std::vector<CanonicalPackEntry>* entries)
             input.loopStartFrame = source.loopStartFrame;
             input.loopEndFrame = source.loopEndFrame;
             if (source.interleavedSamples) {
+                input.samplesOwner = source.interleavedSamples;
                 input.interleavedSamples = source.interleavedSamples->data();
                 input.sampleCount = source.interleavedSamples->size();
             } else {
-                auto& samples = decoded.emplace_back();
+                auto samples = std::make_shared<std::vector<float>>();
                 int channels = 0, sampleRate = 0;
-                if (!decodeAudioFileInterleaved(source.sourcePath, samples, channels, sampleRate)) {
+                if (!decodeAudioFileInterleaved(source.sourcePath, *samples, channels, sampleRate)) {
                     impl_->lastError = QStringLiteral("Cannot decode build input: %1").arg(source.sourcePath);
                     return false;
                 }
-                input.interleavedSamples = samples.data();
-                input.sampleCount = samples.size();
+                input.interleavedSamples = samples->data();
+                input.sampleCount = samples->size();
+                input.samplesOwner = std::move(samples);
                 input.sampleRate = static_cast<uint32_t>(sampleRate);
                 input.channels = static_cast<uint16_t>(channels);
             }
@@ -1423,7 +1447,7 @@ bool PackBuildSession::buildEntries(std::vector<CanonicalPackEntry>* entries)
     std::string error;
     if (!harkenizer::resourcecompiler::compileEntries(
             QJsonDocument(description).toJson(QJsonDocument::Compact).toStdString(),
-            impl_->initPack, media, &compiled, &error)) {
+            impl_->initPack, media, &compiled, &error, impl_->mediaCache.get())) {
         impl_->lastError = QString::fromStdString(error);
         return false;
     }
@@ -1436,6 +1460,7 @@ bool PackBuildSession::buildEntries(std::vector<CanonicalPackEntry>* entries)
         entry.id = source.id;
         entry.relationOrdinal = source.relationOrdinal;
         entry.payload = std::move(source.payload);
+        entry.media = std::move(source.media);
         entries->push_back(std::move(entry));
     }
     return true;
