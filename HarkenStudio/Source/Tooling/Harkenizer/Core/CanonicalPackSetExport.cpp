@@ -9,6 +9,7 @@
 #include "Components/VVariable.h"
 #include "Tooling/Harkenizer/Core/CurrentWorldProjectAdapter.h"
 #include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapter.h"
+#include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "Tooling/Harkenizer/Core/CurrentWorldArtifactWriter.h"
 #include "Tooling/Harkenizer/Core/PackBuildPlan.h"
 #include "NameValidator.h"
@@ -2578,6 +2579,8 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
         if (!readAll(dir.filePath(path), &bytes, &detail)
             || harkenstudiobuild::ParsePackCanonicalImage(reinterpret_cast<const std::uint8_t*>(bytes.constData()),
                 bytes.size(), &image) != harkenstudiobuild::kPackOk
+            || (image.packKind == harkenstudiobuild::kPackKindInit && image.hasCatalog)
+            || image.hasGameplayCatalog || image.hasVariableNameCatalog
             || !body.Decode(image.partitionBody.data(), image.partitionBody.size(),
                 harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage)) {
             if (requireComplete && selected && hasCompanion)
@@ -2871,6 +2874,15 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             return result;
         }
     }
+    const auto sourceIndex = request.options.buildContext
+        ? request.options.buildContext->capabilities->sourceIndex()
+        : Bridge::canonicalRuntimeProjectSourceIndex(project);
+    const auto actionFor = [&](harkenstudio::ObjectId id) -> const ProjectItem* {
+        const auto found = sourceIndex->byQtGuid.find(QUuid(objectIdString(id)));
+        return found != sourceIndex->byQtGuid.end()
+            && found->second->type == ProjectItem::Type::Action
+            && found->second->comp<VAction>() ? found->second : nullptr;
+    };
     std::optional<BindingRuntimeLowering> ownedLowering;
     const auto& lowering = request.options.buildContext
         ? request.options.buildContext->bindingLowering()
@@ -2880,8 +2892,19 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         return result;
     }
     std::vector<Bridge::ProjectInputDiagnostic> busDiagnostics;
-    const auto busProjection = Bridge::compileStudioBusProjectionForPlatform(
-        project, QUuid::fromString(request.options.platform), &busDiagnostics);
+    const auto busProjection = [&] {
+        if (!request.options.buildContext)
+            return Bridge::compileStudioBusProjectionForPlatform(
+                project, QUuid::fromString(request.options.platform), &busDiagnostics);
+        const auto context = request.options.buildContext->capabilities->canonicalContext(
+            QUuid(request.options.platform));
+        busDiagnostics = context->diagnostics;
+        if (!context->ok()) return harkenbuscompiler::PublishedBusProjectionV1{};
+        return harkenbuscompiler::BuildPublishedBusProjectionV1(
+            *context->busResult,
+            harkenbuscompiler::BusPublicationCapabilityVintageV1::
+                TopologyVolumeAndSendNeutralOtherProperties);
+    }();
     if (!busDiagnostics.empty() || busProjection.fingerprint == 0) {
         result.error = busDiagnostics.empty()
             ? QStringLiteral("Bus projection is unavailable for target platform %1")
@@ -2994,6 +3017,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     };
 
     ProjectPackExporter::ExportOptions stagingOpts = request.options;
+    stagingOpts.deferBindings = true;
     const std::uint64_t initId = fnvName(request.options.platform + QStringLiteral("/Init"));
 
     std::vector<PackMeta> packs;
@@ -3020,7 +3044,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         for (harkenstudio::ObjectId actionId : planned.actionStableIds) {
             if (request.includedActionIds.count(actionId) == 0)
                 continue;
-            const ProjectItem* action = findAction(project, actionId);
+            const ProjectItem* action = actionFor(actionId);
             if (action && action->comp<VAction>() && !action->comp<VAction>()->steps.empty())
                 content.actionStableIds.push_back(actionId);
         }
@@ -3142,7 +3166,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         record.elapsedMs = pack.elapsedNanoseconds / 1000000;
         record.language = pack.language;
         if (!pack.grouped && !pack.actionStableIds.empty()) {
-            const ProjectItem* action = findAction(project, pack.actionStableIds.front());
+            const ProjectItem* action = actionFor(pack.actionStableIds.front());
             if (action) record.objectID = action->objectID;
         }
         outRecords->push_back(std::move(record));
@@ -3197,17 +3221,20 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             ProjectPackExporter::ExportOptions contentOpts = resourceOptions;
             contentOpts.language = meta.language;
             for (harkenstudio::ObjectId actionId : meta.actionStableIds) {
-                const ProjectItem* action = findAction(project, actionId);
+                const ProjectItem* action = actionFor(actionId);
                 if (!action) {
                     unit.error = QStringLiteral("Missing Action %1 in Pack '%2'")
                                      .arg(VNX::objectIdString(actionId), meta.name);
                     return unit;
                 }
                 std::vector<Bridge::PackBuildSession::CanonicalPackEntry> entries;
-                auto member = exporter.ExportActionPack(
-                    project, action->name, path, contentOpts, nullptr, nullptr, &entries);
+                auto member = contentOpts.buildContext
+                    ? exporter.exportSingleActionPack(
+                        project, *action, path, contentOpts, nullptr, nullptr, &entries)
+                    : exporter.ExportActionPack(
+                        project, action->name, path, contentOpts, nullptr, nullptr, &entries);
                 if (!member.success) return member;
-                for (const auto& [soundId, revision] : member.controlSoundContentRevisions) {
+                for (const auto& [soundId, revision] : member.soundContentRevisions) {
                     const auto [found, inserted] = meta.soundContentRevisions.emplace(soundId, revision);
                     if (!inserted && found->second != revision) {
                         unit.error = QStringLiteral("Conflicting control media revision for Sound %1")
@@ -3250,6 +3277,10 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             }
             if (entry.kind != harkenstudiobuild::kPackEntryKindMedia)
                 continue;
+            if (meta.soundContentRevisions.count(entry.id) != 0) {
+                ++meta.ownedResources;
+                continue;
+            }
             unit.success = false;
             unit.error = QStringLiteral("Pack '%1' contains invalid PCM media %2")
                 .arg(meta.fileName).arg(VNX::objectIdString(entry.id));
@@ -3384,13 +3415,14 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             : nullptr;
         if (request.options.buildContext) {
             buildOptions.sourceIndex = request.options.buildContext->capabilities->sourceIndex();
+            buildOptions.actionLookup = &request.options.buildContext->closures->targetLookup();
             buildOptions.canonicalContext = request.options.buildContext->capabilities->canonicalContext(
                 QUuid(request.options.platform));
         }
         buildOptions.fieldGroups = fieldGroups.get();
         buildOptions.includedActionIds = &packedActionIds;
         buildOptions.includedDefinitionIds = &packedDefinitionIds;
-        buildOptions.skipEmptyActionSteps = true;
+        buildOptions.validatePackResources = true;
         buildOptions.language = language;
         auto worldRequest = buildCurrentWorldSyncRequestForContext(
             project, QUuid::fromString(request.options.platform),
@@ -3910,10 +3942,6 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             return unit;
         }
         auto& entries = meta.resourceEntries;
-        if (!appendCanonicalBindingEntries(lowering, meta, &entries, &unit.error)) {
-            unit.success = false;
-            return unit;
-        }
         Bridge::PackBuildSession::CanonicalPackEntry partition;
         partition.kind = harkenstudiobuild::kPackEntryKindCanonicalDefinitionPartition;
         partition.vintage = harkenstudiobuild::kPackCanonicalRequirementVintage;
@@ -4095,7 +4123,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         if (!pack.retained && pack.packKind == harkenstudiobuild::kPackKindCanonicalContent) {
             if (pack.actionStableIds.size() != 1)
                 return fail(QStringLiteral("An Action Pack must contain exactly one Action"));
-            const auto* action = findAction(project, pack.actionStableIds.front());
+            const auto* action = actionFor(pack.actionStableIds.front());
             if (!action) return fail(QStringLiteral("Action publication identity is unavailable"));
             pack.companion = QJsonObject{{QStringLiteral("schemaVersion"), HARKEN_PACK_SCHEMA_VERSION},
                 {QStringLiteral("name"), action->name},
@@ -4122,23 +4150,16 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             return fail(stagedError);
         pack.resourceCacheKey = QString::fromLatin1(
             QCryptographicHash::hash(stagedBytes, QCryptographicHash::Sha256).toHex());
-        harkenstudiobuild::PackCanonicalImage decoded;
-        if (harkenstudiobuild::ParsePackCanonicalImage(
-                reinterpret_cast<const std::uint8_t*>(stagedBytes.constData()),
-                static_cast<std::uint64_t>(stagedBytes.size()), &decoded)
-            != harkenstudiobuild::kPackOk ||
-            (pack.packKind == harkenstudiobuild::kPackKindCanonicalContent &&
-             harkenstudiobuild::ValidateCanonicalInitDependency(decoded.dependencyEdges, initId)
-                 != harkenstudiobuild::kPackOk))
-            return fail(QStringLiteral("Staged Pack '%1' failed validation")
-                            .arg(pack.fileName));
-        if (pack.packKind == harkenstudiobuild::kPackKindInit && decoded.hasCatalog)
-            return fail(QStringLiteral("Init Pack still contains a routing catalog"));
-        if (decoded.hasGameplayCatalog || decoded.hasVariableNameCatalog)
-            return fail(QStringLiteral("Pack still contains a name publication directory"));
-        if (!pack.retained && project.buildExportPackMetadata
-            && !fillPackMetadata(project, pack, decoded, metadataItems, &pack.companion, &error))
-            return fail(error);
+        if (!pack.retained && project.buildExportPackMetadata) {
+            harkenstudiobuild::PackCanonicalImage decoded;
+            if (harkenstudiobuild::ParsePackCanonicalImage(
+                    reinterpret_cast<const std::uint8_t*>(stagedBytes.constData()),
+                    static_cast<std::uint64_t>(stagedBytes.size()), &decoded)
+                != harkenstudiobuild::kPackOk)
+                return fail(QStringLiteral("Staged Pack '%1' failed validation").arg(pack.fileName));
+            if (!fillPackMetadata(project, pack, decoded, metadataItems, &pack.companion, &error))
+                return fail(error);
+        }
         if (!pack.retained && pack.companion.contains(QStringLiteral("waveforms"))) {
             QString waveformError;
             if (!publishWaveformCompanion(pack.companion, liveDir.filePath(pack.fileName),
@@ -4151,9 +4172,6 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         const QFileInfo file(pack.fileName);
         const QString relative = QDir::cleanPath(QDir(file.path()).filePath(
             file.completeBaseName() + QStringLiteral(".json")));
-        const auto schemaErrors = ProjectSchemaValidator::validatePackManifest(
-            HARKEN_PACK_SCHEMA_VERSION, pack.companion, relative);
-        if (!schemaErrors.isEmpty()) return fail(schemaErrors.join(QLatin1Char('\n')));
         if (pack.retained) {
             if (!copyRelativeFile(liveDir, QDir(stagingDir), relative))
                 return fail(QStringLiteral("Cannot retain Pack companion '%1'").arg(relative));
@@ -4162,28 +4180,14 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         }
         companionNames.append(relative);
         harkenstudiobuild::PackV2Header stagedHeader;
-        if (!harkenstudiobuild::ParsePackV2Header(
+        if (stagedBytes.size() < harkenstudiobuild::kPackV2HeaderBytes
+            || !harkenstudiobuild::ParsePackV2Header(
                 reinterpret_cast<const std::uint8_t*>(stagedBytes.constData()),
                 &stagedHeader))
             return fail(QStringLiteral("Staged Pack '%1' is not a v2 container")
                             .arg(pack.fileName));
         pack.formatVersion = stagedHeader.formatVersion;
         pack.fileSize = stagedBytes.size();
-        for (std::uint32_t i = 0; i < stagedHeader.entryCount; ++i) {
-            const harkenstudiobuild::PackV2DirectoryEntry record =
-                harkenstudiobuild::ParsePackV2DirectoryEntry(
-                    reinterpret_cast<const std::uint8_t*>(stagedBytes.constData())
-                    + stagedHeader.directoryOffset
-                    + i * harkenstudiobuild::kPackV2DirectoryEntryBytes);
-            if (record.kind == harkenstudiobuild::kPackEntryKindContainer)
-                return fail(QStringLiteral(
-                    "Pack '%1' still contains pack entry kind 9")
-                                .arg(pack.fileName));
-            if (record.kind == harkenstudiobuild::kPackEntryKindVoiceRecipe)
-                return fail(QStringLiteral(
-                    "Pack '%1' still contains pack entry kind 11")
-                                .arg(pack.fileName));
-        }
     }
 
     QSet<QString> referencedWaveformFiles;

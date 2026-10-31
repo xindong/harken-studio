@@ -3,6 +3,7 @@
 #include "Tooling/Harkenizer/Core/PackExportSelection.h"
 
 #include "ActionClosureSemantics.h"
+#include "PlaybackReferenceValidation.h"
 
 #include <QHash>
 #include <QJsonObject>
@@ -10,6 +11,7 @@
 #include <QString>
 #include <vector>
 #include <set>
+#include <optional>
 
 namespace VNX {
 
@@ -78,9 +80,13 @@ struct PackBuildContext
     std::vector<std::pair<PackBuildPlanKey, std::shared_ptr<const PackBuildPlan>>> plans;
 
     const BindingRuntimeLowering& bindingLowering();
+    bool validatePlayback(QString* error = nullptr, PlaybackReferenceError* code = nullptr);
 
 private:
     std::shared_ptr<const BindingRuntimeLowering> bindings_;
+    std::optional<bool> playbackValid_;
+    QString playbackError_;
+    PlaybackReferenceError playbackErrorCode_ = PlaybackReferenceError::MissingTarget;
 };
 
 namespace PackBuildPlanning {

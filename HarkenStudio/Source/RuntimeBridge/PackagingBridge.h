@@ -340,6 +340,7 @@ struct PackMediaDesc
     uint32_t authoringSourceId = 0; // editor source row, for diagnostics/UI only
     QString sourcePath;
     std::shared_ptr<const std::vector<float>> interleavedSamples;
+    QString contentHash;
     bool downmixToMono = false;
     bool loopable = false;
     uint64_t loopStartFrame = 0;

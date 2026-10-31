@@ -168,7 +168,7 @@ struct Builder
     void capability(RuntimeCapabilityFeature feature, RuntimeCapabilityState state,
                     harkenstudio::ObjectId objectId, const QString& field)
     {
-        if (contentReferencesOnly)
+        if (contentReferencesOnly || capabilityContext.deferCurrentWorldCompilation)
             return;
         if (!capabilityKeys.emplace(feature, objectId, field).second)
             return;
@@ -696,6 +696,23 @@ ActionClosurePlan ActionClosureBuildContext::build(harkenstudio::ObjectId action
 {
     return Builder(impl_->project, variant, context, false,
         impl_->index, impl_->targetLookup).build(actionStableId);
+}
+
+ActionClosurePlan ActionClosureBuildContext::contentReferences(harkenstudio::ObjectId actionStableId) const
+{
+    return Builder(impl_->project, {}, {}, true,
+        impl_->index, impl_->targetLookup).build(actionStableId);
+}
+
+const ProjectItem* ActionClosureBuildContext::findObject(uint32_t objectId) const
+{
+    const auto found = impl_->index->object.find(objectId);
+    return found == impl_->index->object.end() ? nullptr : found->second;
+}
+
+const EditorUtils::ActionTargetLookup& ActionClosureBuildContext::targetLookup() const
+{
+    return *impl_->targetLookup;
 }
 
 QJsonObject ActionClosureMember::toJson() const

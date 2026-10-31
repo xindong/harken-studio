@@ -22,6 +22,17 @@ const BindingRuntimeLowering& PackBuildContext::bindingLowering()
     return *bindings_;
 }
 
+bool PackBuildContext::validatePlayback(QString* error, PlaybackReferenceError* code)
+{
+    if (!playbackValid_)
+        playbackValid_ = validatePlaybackReferences(*project, &playbackError_, &playbackErrorCode_);
+    if (!*playbackValid_) {
+        if (error) *error = playbackError_;
+        if (code) *code = playbackErrorCode_;
+    }
+    return *playbackValid_;
+}
+
 namespace PackBuildPlanning {
 namespace {
 
@@ -67,43 +78,12 @@ QStringList requestedOrProjectLanguages(const ProjectData& project,
     return languages;
 }
 
-struct ItemIndex
-{
-    std::map<uint32_t, const ProjectItem*> byObject;
-};
-
-void indexItems(const ProjectItem* item, ItemIndex& index)
-{
-    if (!item)
-        return;
-    if (item->objectID != 0)
-        index.byObject.emplace(item->objectID, item);
-    for (const auto& child : item->children)
-        indexItems(child.get(), index);
-}
-
-ItemIndex makeItemIndex(const ProjectData& project)
-{
-    ItemIndex index;
-    indexItems(project.root.get(), index);
-    for (const ProjectFileBinding* binding : project.allFileBindings())
-        if (binding)
-            indexItems(binding->rootItem.get(), index);
-    return index;
-}
-
-const ProjectItem* byObjectId(const ItemIndex& index, uint32_t objectId)
-{
-    const auto it = index.byObject.find(objectId);
-    return it == index.byObject.end() ? nullptr : it->second;
-}
-
-bool localizedClosure(const ActionClosurePlan& closure, const ItemIndex& index)
+bool localizedClosure(const ActionClosurePlan& closure, const ActionClosureBuildContext& context)
 {
     const auto localized = [&](const auto& members) {
         return std::any_of(members.begin(), members.end(), [&](const auto& member) {
             if (member.type != ProjectItem::Type::Sound) return false;
-            const ProjectItem* item = byObjectId(index, member.objectId);
+            const ProjectItem* item = context.findObject(member.objectId);
             const auto* sound = item ? item->comp<VSound>() : nullptr;
             return sound && sound->distinguishLanguage;
         });
@@ -112,35 +92,14 @@ bool localizedClosure(const ActionClosurePlan& closure, const ItemIndex& index)
 }
 
 std::map<harkenstudio::ObjectId, bool> localizedActionsFor(
-    const ProjectData& project, const std::vector<const ProjectItem*>& actionItems,
-    const ItemIndex& index)
+    const std::vector<const ProjectItem*>& actionItems,
+    const ActionClosureBuildContext& context)
 {
-    std::map<harkenstudio::ObjectId, ActionClosurePlan> closures;
     std::map<harkenstudio::ObjectId, bool> localizedActions;
     for (const auto* action : actionItems) {
-        auto closure = ActionClosureSemantics::contentReferences(project, action->runtimeId());
-        localizedActions.emplace(action->runtimeId(), localizedClosure(closure, index));
-        closures.emplace(action->runtimeId(), std::move(closure));
+        const auto closure = context.contentReferences(action->runtimeId());
+        localizedActions.emplace(action->runtimeId(), localizedClosure(closure, context));
     }
-    bool changed;
-    do {
-        changed = false;
-        for (const auto* action : actionItems) {
-            const auto id = action->runtimeId();
-            if (localizedActions.at(id))
-                continue;
-            const bool dependencyLocalized = std::any_of(
-                closures.at(id).actions.begin(), closures.at(id).actions.end(),
-                [&](const auto& member) {
-                    const auto found = localizedActions.find(member.stableId);
-                    return found != localizedActions.end() && found->second;
-                });
-            if (dependencyLocalized) {
-                localizedActions.at(id) = true;
-                changed = true;
-            }
-        }
-    } while (changed);
     return localizedActions;
 }
 
@@ -165,9 +124,13 @@ PackBuildPlan buildImpl(const ProjectData& project, harkenstudio::ObjectId actio
     QString languageError;
     const QStringList languages =
         requestedOrProjectLanguages(project, requestedLanguages, &languageError);
-    const ItemIndex index = makeItemIndex(project);
+    std::unique_ptr<ActionClosureBuildContext> ownedClosures;
+    if (!closures) {
+        ownedClosures = std::make_unique<ActionClosureBuildContext>(project);
+        closures = ownedClosures.get();
+    }
     const auto actionItems = actions(project, actionStableId);
-    const auto localization = localizedActionsFor(project, actionItems, index);
+    const auto localization = localizedActionsFor(actionItems, *closures);
     for (const auto* action : actionItems) {
         const QString artifactName = singleActionArtifactName.isEmpty()
             ? action->name : singleActionArtifactName;
@@ -287,9 +250,9 @@ PackBuildPlan buildImpl(const ProjectData& project, harkenstudio::ObjectId actio
 
 bool localizedAction(const ProjectData& project, harkenstudio::ObjectId actionStableId)
 {
-    const ItemIndex index = makeItemIndex(project);
+    const ActionClosureBuildContext context(project);
     for (const auto* action : actions(project, actionStableId)) {
-        if (localizedClosure(ActionClosureSemantics::buildForContext(project, action->runtimeId(), {}, {}), index))
+        if (localizedClosure(context.contentReferences(action->runtimeId()), context))
             return true;
     }
     return false;
@@ -354,7 +317,8 @@ bool actionIsLocalized(const ProjectData& project, harkenstudio::ObjectId action
 QHash<harkenstudio::ObjectId, QStringList> actionLanguages(const ProjectData& project)
 {
     const auto actionItems = actions(project, {});
-    const auto localization = localizedActionsFor(project, actionItems, makeItemIndex(project));
+    const ActionClosureBuildContext context(project);
+    const auto localization = localizedActionsFor(actionItems, context);
     const auto languages = ProjectLanguageSemantics::buildLanguages(project);
     QHash<harkenstudio::ObjectId, QStringList> result;
     for (const auto* action : actionItems)

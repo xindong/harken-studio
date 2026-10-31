@@ -140,6 +140,7 @@ struct RuntimeCapabilityContext
     PlatformScope platform;
     QString language;
     std::shared_ptr<RuntimeCapabilityBuildSession> buildSession;
+    bool deferCurrentWorldCompilation = false;
 };
 
 class RuntimeCapabilityBuildSession

@@ -13,6 +13,10 @@
 
 namespace VNX {
 
+namespace EditorUtils {
+class ActionTargetLookup;
+}
+
 enum class ActionClosureEdgeReason : uint8_t
 {
     ActionStep = 0,
@@ -130,6 +134,9 @@ public:
     ActionClosurePlan build(harkenstudio::ObjectId actionStableId,
                             const BuildVariant& variant,
                             const RuntimeCapabilityContext& context) const;
+    ActionClosurePlan contentReferences(harkenstudio::ObjectId actionStableId) const;
+    const ProjectItem* findObject(uint32_t objectId) const;
+    const EditorUtils::ActionTargetLookup& targetLookup() const;
 
 private:
     struct Impl;

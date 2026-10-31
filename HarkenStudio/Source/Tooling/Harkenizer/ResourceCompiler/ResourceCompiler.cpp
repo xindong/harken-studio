@@ -135,15 +135,8 @@ std::string CacheIdentityKey(const std::string& sourcePath,
     return key;
 }
 
-// Decodes the entry's wav and converts it at the shared pack/stream
-// boundary to canonical float32 planar samples. A requested stereo
-// downmix performs one double-precision sum and one final float rounding
-// per frame. Source and output peaks are measured for report warnings.
-// Wide decode is opted into only for downmix entries, whose policy check
-// below owns the >2-channel refusal; a preserve entry keeps LoadWav's
-// mono/stereo bound so the build fails loudly at decode.
-bool PreparePlanar(PackEntry* entry, const float* samples, std::size_t sampleCount,
-                   std::uint16_t channels, std::uint32_t sampleRate, Diag* diag) {
+bool PrepareAudioLayout(PackEntry* entry, const float* samples, std::size_t sampleCount,
+                        std::uint16_t channels, std::uint32_t sampleRate, Diag* diag) {
     if (!samples || sampleCount == 0 || channels == 0 || sampleRate == 0
         || sampleCount % channels != 0) {
         return Fail(diag, "invalid prepared audio for '%s'", entry->path.c_str());
@@ -155,7 +148,6 @@ bool PreparePlanar(PackEntry* entry, const float* samples, std::size_t sampleCou
     entry->sampleRate = sampleRate;
     entry->sourceChannelCount = channels;
     entry->frameCount = sampleCount / channels;
-    const std::size_t frames = sampleCount / channels;
     if (!entry->downmix.empty() && channels > 2) {
         return Fail(diag,
                     "cannot downmix '%s' to mono: source has %u "
@@ -163,9 +155,17 @@ bool PreparePlanar(PackEntry* entry, const float* samples, std::size_t sampleCou
                     entry->path.c_str(), channels);
     }
 
-    if (!entry->downmix.empty() && channels == 2) {
-        entry->channelCount = 1;
-        entry->downmixed = true;
+    entry->downmixed = !entry->downmix.empty() && channels == 2;
+    entry->channelCount = entry->downmixed ? 1 : channels;
+    return true;
+}
+
+bool PreparePlanar(PackEntry* entry, const float* samples, std::size_t sampleCount,
+                   std::uint16_t channels, std::uint32_t sampleRate, Diag* diag) {
+    if (!PrepareAudioLayout(entry, samples, sampleCount, channels, sampleRate, diag))
+        return false;
+    const std::size_t frames = sampleCount / channels;
+    if (entry->downmixed) {
         entry->planar.resize(frames);
         float sourcePeak = 0.0f;
         float peak = 0.0f;
@@ -190,7 +190,6 @@ bool PreparePlanar(PackEntry* entry, const float* samples, std::size_t sampleCou
         return true;
     }
 
-    entry->channelCount = static_cast<std::uint16_t>(channels);
     entry->planar.resize(sampleCount);
     float peak = 0.0f;
     for (std::uint32_t ch = 0; ch < channels; ++ch) {
@@ -455,8 +454,7 @@ bool SerializeEntryPayload(const Manifest& manifest,
     case harkenstudiobuild::kPackEntryKindMedia: {
         const PackEntry& entry = entries[placement.index];
         const std::uint64_t blobBytes =
-            static_cast<std::uint64_t>(entry.planar.size()) *
-            sizeof(float);
+            entry.frameCount * entry.channelCount * sizeof(float);
         harkenstudiobuild::PackTocEntry toc;
         toc.soundId = entry.soundId;
         toc.sampleRate = entry.sampleRate;
@@ -1473,8 +1471,8 @@ bool compileEntries(const std::string& logicSections, bool resident,
         source.loopStartFrame = input.loopStartFrame;
         source.loopEndFrame = input.loopEndFrame;
         PackEntry entry = MakePackEntry(source);
-        if (!PreparePlanar(&entry, input.interleavedSamples, input.sampleCount,
-                           input.channels, input.sampleRate, &diag)
+        if (!PrepareAudioLayout(&entry, input.interleavedSamples, input.sampleCount,
+                                input.channels, input.sampleRate, &diag)
             || !ValidateLoopPoints(entry, i, &diag)) return refuse();
         manifest.entries.push_back(std::move(source));
         prepared.push_back(std::move(entry));
@@ -1488,15 +1486,32 @@ bool compileEntries(const std::string& logicSections, bool resident,
         resource.kind = placement.kind;
         resource.vintage = EntryVintage(placement.kind);
         resource.id = placement.id;
-        auto& samples = prepared.back().planar;
-        const auto blobBytes = samples.size() * sizeof(float);
+        const auto& audio = prepared.back();
+        const auto frames = static_cast<std::size_t>(audio.frameCount);
+        const auto blobBytes = frames * audio.channelCount * sizeof(float);
         resource.payload.resize(static_cast<std::size_t>(placement.size) + blobBytes);
         auto* blob = resource.payload.data() + placement.size;
-        std::memcpy(blob, samples.data(), blobBytes);
+        if (input.channels == 1) {
+            std::memcpy(blob, input.interleavedSamples, blobBytes);
+        } else if (audio.downmixed) {
+            for (std::size_t frame = 0; frame < frames; ++frame) {
+                const float sample = static_cast<float>(
+                    (static_cast<double>(input.interleavedSamples[frame * 2])
+                     + static_cast<double>(input.interleavedSamples[frame * 2 + 1])) * 0.5);
+                std::memcpy(blob + frame * sizeof(float), &sample, sizeof(float));
+            }
+        } else {
+            for (std::size_t channel = 0; channel < audio.channelCount; ++channel) {
+                for (std::size_t frame = 0; frame < frames; ++frame) {
+                    std::memcpy(blob + (channel * frames + frame) * sizeof(float),
+                                input.interleavedSamples + frame * input.channels + channel,
+                                sizeof(float));
+                }
+            }
+        }
         if (!SerializeEntryPayload(manifest, prepared, placement, 0, blob,
                                    resource.payload.data(), &diag)) return refuse();
         compiled.push_back(std::move(resource));
-        std::vector<float>().swap(samples);
     }
     if (!ValidateLogicSections(manifest, &diag)) return refuse();
 

@@ -4,6 +4,7 @@
 #include "PlaybackReferenceValidation.h"
 #include "Tooling/Harkenizer/Core/CanonicalPackSetExport.h"
 #include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapter.h"
+#include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "AttenuationStore.h"
 #include "FieldGroupProjectAdapter.h"
 #include "ItemTypeCatalog.h"
@@ -291,8 +292,8 @@ void ProjectPackExporter::ApplyMediaCollectionStats(ExportResult& result,
     result.mediaConversions += stats.conversions;
     result.mediaFallbacks += stats.fallbacks;
     result.warnings.append(stats.warnings);
-    result.controlSoundContentRevisions.insert(
-        stats.controlSoundContentRevisions.begin(), stats.controlSoundContentRevisions.end());
+    result.soundContentRevisions.insert(
+        stats.soundContentRevisions.begin(), stats.soundContentRevisions.end());
 }
 
 
@@ -406,6 +407,7 @@ std::shared_ptr<const PackBuildPlan> ProjectPackExporter::createBuildPlan(
     const PackBuildPlanKey key{options.platform, options.language.trimmed(), options.selection,
         options.updateSelectedOnly || options.includeUnchecked, options.onlyUnits, options.onlyPackPaths, options.onlyActionStableIds};
     RuntimeCapabilityContext context;
+    context.deferCurrentWorldCompilation = true;
     if (options.buildContext) {
         context.buildSession = options.buildContext->capabilities;
         for (const auto& cached : options.buildContext->plans)
@@ -510,7 +512,7 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
     const auto platformActivity = ProjectPlatformActivity::acquire();
     ExportResult result;
     PlaybackReferenceError referenceError;
-    const bool referencesValid = validatePlaybackReferences(project, &result.error, &referenceError);
+    const bool referencesValid = options.buildContext->validatePlayback(&result.error, &referenceError);
     if (!referencesValid && referenceError == PlaybackReferenceError::InvalidStructure)
         return result;
 
@@ -521,7 +523,7 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
     const QString packExt = Bridge::packArtifactExtension();
 
     ExportOptions effectiveOpts = options;
-    const std::vector<const ProjectItem*> allActions = collectAllActionItems(project);
+    const auto& allActions = options.buildContext->capabilities->sourceIndex()->actions;
     std::unordered_map<harkenstudio::ObjectId, const ProjectItem*> actionsByStableId;
     for (const ProjectItem* evt : allActions)
         actionsByStableId.emplace(actionIdentity(evt), evt);
@@ -590,7 +592,7 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
     }
     if (!options.updateSelectedOnly) {
         const ValidationResult readiness =
-            ValidatePackBuildReadiness(project, outputDir);
+            ValidatePackBuildReadiness(project, outputDir, options.buildContext.get());
         if (readiness.errorCount > 0) {
             QStringList errors;
             for (const ValidationIssue& issue : readiness.issues)
@@ -749,7 +751,7 @@ ProjectPackExporter::ExportInitPack(const ProjectData& project,
 
     const auto platformActivity = ProjectPlatformActivity::acquire();
     ExportResult result;
-    if (!validatePlaybackReferences(project, &result.error)) return result;
+    if (!options.buildContext->validatePlayback(&result.error)) return result;
     if (!isSupportedExportPlatform(project, options.platform, &result.error))
         return result;
 
@@ -768,7 +770,8 @@ ProjectPackExporter::ExportInitPack(const ProjectData& project,
     CollectBuses(project, builder, exportScope);
     if (!CollectSends(project, builder, exportScope, &result.error)) return result;
     CollectAttenuations(project, builder);
-    if (!CollectTypedBindings(project, builder, nullptr, &result.error, options.buildContext.get()))
+    if (!options.deferBindings
+        && !CollectTypedBindings(project, builder, nullptr, &result.error, options.buildContext.get()))
         return result;
 
     emit progressChanged(90, "Writing Init pack...");
@@ -809,7 +812,7 @@ ProjectPackExporter::ExportActionPack(const ProjectData& project,
 
     const auto platformActivity = ProjectPlatformActivity::acquire();
     ExportResult result;
-    if (!validatePlaybackReferences(project, &result.error)) return result;
+    if (!options.buildContext->validatePlayback(&result.error)) return result;
     if (options.cancelCheck && options.cancelCheck())
     {
         result.canceled = true;
@@ -820,7 +823,7 @@ ProjectPackExporter::ExportActionPack(const ProjectData& project,
         return result;
 
     std::vector<const ProjectItem*> matches;
-    for (const ProjectItem* action : collectAllActionItems(project))
+    for (const ProjectItem* action : options.buildContext->capabilities->sourceIndex()->actions)
         if (action->name == actionName)
             matches.push_back(action);
 
@@ -852,12 +855,8 @@ ProjectPackExporter::ExportActionPack(const ProjectData& project,
         return result;
     }
 
-    emit progressChanged(10, QStringLiteral("Collecting Action dependencies..."));
-    result = exportSingleActionPack(project, *matches.front(), outputPath, options,
-                                    sharedMediaIds, sharedObjectIds, resourceEntries);
-    if (result.success)
-        emit progressChanged(100, QStringLiteral("Action pack exported."));
-    return result;
+    return exportSingleActionPack(project, *matches.front(), outputPath, options,
+                                  sharedMediaIds, sharedObjectIds, resourceEntries);
 }
 
 
@@ -871,6 +870,7 @@ ProjectPackExporter::exportSingleActionPack(
     const std::set<uint32_t>* sharedObjectIds,
     std::vector<Bridge::PackBuildSession::CanonicalPackEntry>* resourceEntries)
 {
+    emit progressChanged(10, QStringLiteral("Collecting Action dependencies..."));
     ExportResult result;
     const auto effectiveGroups = options.buildContext
         ? options.buildContext->capabilities->fieldGroups(exportPlatformOf(options))
@@ -882,7 +882,7 @@ ProjectPackExporter::exportSingleActionPack(
     }
     Bridge::PackBuildSession builder;
 
-    const ObjectIndex globalIndex = buildProjectObjectIndex(project);
+    const auto& globalIndex = options.buildContext->capabilities->sourceIndex()->byObjectId;
     const QString language = options.language.trimmed();
     const QStringList languages = language.isEmpty() ? QStringList() : QStringList{language};
     std::optional<PackBuildPlan> localPlan;
@@ -941,34 +941,21 @@ ProjectPackExporter::exportSingleActionPack(
                                      requiredMedia, project, exportPlatformOf(variantOptions),
                                      exportLanguageOf(variantOptions), sharedObjectIds);
     }
-    std::set<harkenstudio::ObjectId> closureObjectIds;
-    for (const auto& member : closure.objects)
-        if (!harkenstudio::IsNull(member.stableId) && visitedObjects.count(member.objectId) != 0)
-            closureObjectIds.insert(member.stableId);
-    if (!CollectTypedBindings(project, builder, &closureObjectIds, &result.error, options.buildContext.get()))
-        return result;
+    if (!options.deferBindings) {
+        std::set<harkenstudio::ObjectId> closureObjectIds;
+        for (const auto& member : closure.objects)
+            if (!harkenstudio::IsNull(member.stableId) && visitedObjects.count(member.objectId) != 0)
+                closureObjectIds.insert(member.stableId);
+        if (!CollectTypedBindings(project, builder, &closureObjectIds, &result.error, options.buildContext.get()))
+            return result;
+    }
     if (sharedMediaIds)
         for (uint32_t sharedId : *sharedMediaIds)
             requiredMedia.erase(sharedId);
     result.objectCount = static_cast<int>(visitedObjects.size());
 
-    QSet<uint32_t> actionFilter;
     for (const auto& member : closure.actions)
-        actionFilter.insert(member.objectId);
-    std::set<uint32_t> requiredObjects;
-    CollectActions(project, builder, requiredObjects, &actionFilter);
-    if (QString scErr = takeActionScopeErrors(); !scErr.isEmpty())
-    {
-        result.error = QStringLiteral("Action pack export failed for '%1': %2")
-                           .arg(action.name, scErr);
-        return result;
-    }
-    if (QString tgtErr = takeActionTargetErrors(); !tgtErr.isEmpty())
-    {
-        result.error = QStringLiteral("Action pack export failed for '%1': %2")
-                           .arg(action.name, tgtErr);
-        return result;
-    }
+        builder.addStringMapping(member.stableId, member.name);
 
     MediaCollectionStats mediaStats;
     if (!CollectMedia(project, builder, requiredMedia, &visitedObjects,
@@ -1001,6 +988,7 @@ ProjectPackExporter::exportSingleActionPack(
         return result;
     }
 
+    emit progressChanged(100, QStringLiteral("Action pack exported."));
     return result;
 }
 
@@ -1032,7 +1020,7 @@ ProjectPackExporter::ExportSharedPack(const ProjectData& project,
 
     const auto platformActivity = ProjectPlatformActivity::acquire();
     ExportResult result;
-    if (!validatePlaybackReferences(project, &result.error)) return result;
+    if (!options.buildContext->validatePlayback(&result.error)) return result;
     if (!isSupportedExportPlatform(project, options.platform, &result.error))
         return result;
 
@@ -1198,34 +1186,6 @@ ProjectPackExporter::computeSharedOwnership(const ProjectData& project,
 }
 
 
-QString ProjectPackExporter::takeActionScopeErrors()
-{
-    if (m_actionScopeErrors_.empty())
-        return {};
-    QString joined = QStringLiteral(
-        "Pack export aborted: invalid ActionStep scope. Supported scopes are "
-        "Element, All, and AllExcept with at least one resolvable exception "
-        "object. Fix the action(s) below and re-export:");
-    for (const QString& e : m_actionScopeErrors_)
-        joined += QStringLiteral("\n  - ") + e;
-    m_actionScopeErrors_.clear();
-    return joined;
-}
-
-QString ProjectPackExporter::takeActionTargetErrors()
-{
-    if (m_actionTargetErrors_.empty())
-        return {};
-    QString joined = QStringLiteral(
-        "Pack export aborted: an ActionStep cannot be represented by the current "
-        "runtime or has an invalid target reference. Fix the action(s) below and "
-        "re-export:");
-    for (const QString& e : m_actionTargetErrors_)
-        joined += QStringLiteral("\n  - ") + e;
-    m_actionTargetErrors_.clear();
-    return joined;
-}
-
 void ProjectPackExporter::CollectContentInputsFromItem(const ProjectItem* item,
                                                        Bridge::PackBuildSession& builder,
                                                        std::set<uint32_t>& visitedObjects,
@@ -1371,93 +1331,6 @@ bool ProjectPackExporter::CollectTypedBindings(const ProjectData& project,
     return true;
 }
 
-void ProjectPackExporter::CollectActions(const ProjectData& project,
-                                          Bridge::PackBuildSession& builder,
-                                          std::set<uint32_t>& requiredObjects,
-                                          const QSet<uint32_t>* actionFilter)
-{
-    m_actionScopeErrors_.clear();
-    m_actionTargetErrors_.clear();
-    const VNX::EditorUtils::ActionTargetLookup lookup =
-        VNX::EditorUtils::makeProjectTargetLookup(project);
-    for (const auto* binding : project.allFileBindings())
-    {
-        if (!binding) continue;
-        const auto* wu = binding;
-        std::function<void(const ProjectItem*)> scan = [&](const ProjectItem* item) {
-            if (!item) return;
-
-            const auto* actionComp = item->comp<VAction>();
-            if (item->type == ProjectItem::Type::Action && actionComp && !actionComp->steps.empty())
-            {
-                if (actionFilter && !actionFilter->contains(item->objectID))
-                {
-                    for (const auto& child : item->children)
-                        scan(child.get());
-                    return;
-                }
-                const harkenstudio::ObjectId actionStableId = actionIdentity(item);
-
-                int actionIndex = -1;
-                for (const auto& action : actionComp->steps)
-                {
-                    ++actionIndex;
-                    const auto readiness =
-                        VNX::EditorUtils::actionStepRuntimeReadiness(action);
-                    if (!readiness.ready()) {
-                        m_actionTargetErrors_.push_back(
-                            QStringLiteral("Action '%1' step #%2 (%3): %4.")
-                                .arg(item->name)
-                                .arg(actionIndex)
-                                .arg(action.typeString().isEmpty()
-                                         ? QStringLiteral("unknown")
-                                         : action.typeString())
-                                .arg(readiness.diagnostic));
-                        continue;
-                    }
-                    const VNX::EditorUtils::ActionStepTargetResolution res =
-                        VNX::EditorUtils::resolveActionStepTarget(
-                            action.type, action.targetObjectID, action.targetName, lookup);
-
-                    if (res.state == VNX::EditorUtils::ActionTargetState::Empty)
-                        continue;
-
-                    if (res.state == VNX::EditorUtils::ActionTargetState::Dangling)
-                    {
-                        m_actionTargetErrors_.push_back(
-                            QStringLiteral("Action '%1' step #%2 (target '%3', type %4): "
-                                           "target reference is unresolved%5.")
-                                .arg(item->name)
-                                .arg(actionIndex)
-                                .arg(action.targetName.isEmpty()
-                                         ? QStringLiteral("<none>")
-                                         : action.targetName)
-                                .arg(action.typeString())
-                                .arg(res.ambiguous
-                                         ? QStringLiteral(" (multiple objects share this name)")
-                                         : QStringLiteral(" or its type is not valid for this "
-                                                          "step type")));
-                        continue;
-                    }
-
-                    requiredObjects.insert(res.objectID != 0 ? res.objectID
-                                                             : action.targetObjectID);
-                }
-
-                builder.addStringMapping(actionStableId, item->name);
-            }
-
-
-            for (const auto& child : item->children)
-                scan(child.get());
-        };
-
-        if (wu->rootItem)
-            scan(wu->rootItem.get());
-    }
-}
-
-
 bool ProjectPackExporter::CollectMedia(const ProjectData& project,
                                          Bridge::PackBuildSession& builder,
                                          const std::set<uint32_t>& requiredMedia,
@@ -1485,11 +1358,7 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
     std::set<harkenstudio::ObjectId> processedSounds;
 
     if (closure && (!closure->media.empty() || !closure->controlMedia.empty())) {
-        const ObjectIndex index = buildProjectObjectIndex(project);
-        std::map<harkenstudio::ObjectId, const ProjectItem*> soundsByStableId;
-        for (const auto& [objectId, item] : index)
-            if (item && item->type == ProjectItem::Type::Sound)
-                soundsByStableId.emplace(item->runtimeId(), item);
+        const auto& sourceIndex = *options.buildContext->capabilities->sourceIndex();
         const QString derivativeDir = QDir(PathUtils::getCacheDir(projectDir))
             .filePath(QStringLiteral("pack-derivatives/%1").arg(options.platform));
         auto inputs = closure->media;
@@ -1502,8 +1371,8 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
             };
             const bool controlInput = std::any_of(
                 closure->controlMedia.begin(), closure->controlMedia.end(), matchesSound);
-            const auto owner = soundsByStableId.find(media.soundStableId);
-            const ProjectItem* soundItem = owner == soundsByStableId.end()
+            const auto owner = sourceIndex.byQtGuid.find(QUuid(objectIdString(media.soundStableId)));
+            const ProjectItem* soundItem = owner == sourceIndex.byQtGuid.end()
                 ? nullptr : owner->second;
             const auto* sound = soundItem ? soundItem->comp<VSound>() : nullptr;
             if (!sound) {
@@ -1568,22 +1437,23 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
             desc.authoringSourceId = source->sourceId;
             desc.sourcePath = conversion->asset.absolutePath;
             desc.interleavedSamples = artifact->samples;
+            desc.contentHash = artifact->contentHash;
             desc.sampleRate = artifact->sampleRate;
             desc.channels = artifact->channels;
             desc.loopable = artifact->loopable;
             desc.loopStartFrame = artifact->loopStartFrame;
             desc.loopEndFrame = artifact->loopEndFrame;
             desc.format = Bridge::PackMediaFormat::PcmFloat;
-            if (publish) {
+            if (publish)
                 builder.addMedia(desc);
-            } else {
+            if (!publish || options.buildPlan) {
                 const auto revision = options.snapshot->derivativeCache->contentRevision(*artifact);
                 if (!stats || !revision) {
                     if (errorOut) *errorOut = QStringLiteral("Cannot compute converted media revision for Sound %1")
                         .arg(VNX::objectIdString(media.soundStableId));
                     return false;
                 }
-                stats->controlSoundContentRevisions.emplace(media.soundStableId, *revision);
+                stats->soundContentRevisions.emplace(media.soundStableId, *revision);
             }
             processedSounds.insert(media.soundStableId);
         }
@@ -1998,7 +1868,8 @@ ProjectPackExporter::ValidateBeforeBuild(const ProjectData& project)
 
 ProjectPackExporter::ValidationResult
 ProjectPackExporter::ValidatePackBuildReadiness(const ProjectData& project,
-                                                const QString& outputDir)
+                                                const QString& outputDir,
+                                                PackBuildContext* buildContext)
 {
     if (PathUtils::isProtectedPackOutputPath(outputDir, project.projectPath)
         && !PathUtils::isProjectRootDirectory(outputDir, project.projectPath)) {
@@ -2010,7 +1881,8 @@ ProjectPackExporter::ValidatePackBuildReadiness(const ProjectData& project,
     }
     ValidationResult result;
     QString referenceError;
-    if (!validatePlaybackReferences(project, &referenceError)) {
+    if (!(buildContext ? buildContext->validatePlayback(&referenceError)
+                       : validatePlaybackReferences(project, &referenceError))) {
         result.issues.push_back({ValidationIssue::Error, referenceError, 0});
         result.errorCount = 1;
         result.valid = false;
@@ -2044,22 +1916,12 @@ ProjectPackExporter::ValidatePackBuildReadiness(const ProjectData& project,
         }
     }
 
-    const std::vector<const ProjectItem*> allActions = collectAllActionItems(project);
-
-    std::set<uint32_t> allObjectIDs;
-    for (const auto* binding : project.allFileBindings()) {
-        if (!binding || !binding->rootItem) continue;
-        std::function<void(const ProjectItem*)> collectIds =
-            [&](const ProjectItem* item) {
-                if (!item) return;
-                if (item->objectID != 0)
-                    allObjectIDs.insert(item->objectID);
-                for (const auto& child : item->children)
-                    collectIds(child.get());
-            };
-        collectIds(binding->rootItem.get());
-    }
-    const std::set<harkenstudio::ObjectId> actionStableIds = CollectActionStableIds(project);
+    const auto sourceIndex = buildContext ? buildContext->capabilities->sourceIndex()
+        : Bridge::canonicalRuntimeProjectSourceIndex(project);
+    const auto& allActions = sourceIndex->actions;
+    std::set<harkenstudio::ObjectId> actionStableIds;
+    for (const ProjectItem* action : allActions)
+        if (action->comp<VAction>()) actionStableIds.insert(action->runtimeId());
 
     std::unordered_map<harkenstudio::ObjectId, QString> memberOwner;
     std::set<QString> groupNames;
@@ -2100,9 +1962,10 @@ ProjectPackExporter::ValidatePackBuildReadiness(const ProjectData& project,
 
     for (const ProjectItem* evt : allActions) {
         const auto* actionComp = evt->comp<VAction>();
+        if (!actionComp) continue;
         for (const auto& action : actionComp->steps) {
             if (action.targetObjectID != 0 &&
-                !allObjectIDs.count(action.targetObjectID)) {
+                !sourceIndex->byObjectId.count(action.targetObjectID)) {
                 result.issues.push_back({ValidationIssue::Warning,
                     QStringLiteral("Action '%1' step targets unknown object 0x%2")
                         .arg(evt->name)

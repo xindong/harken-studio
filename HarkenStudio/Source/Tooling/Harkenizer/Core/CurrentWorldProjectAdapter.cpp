@@ -7,6 +7,7 @@
 #include "PlayablePropertyAuthoringV1.h"
 #include "ProjectTypes.h"
 #include "ProjectLanguageSemantics.h"
+#include "RuntimeCapabilityMatrix.h"
 #include "SoundSourceEditing.h"
 #include "Components/VAudio.h"
 #include "Components/VAction.h"
@@ -357,21 +358,24 @@ bool buildDefinitionNode(ProjectItem& item, const ProjectIndex& index,
         return false;
     }
 
-    const auto includedAncestor = [&](ProjectItem* candidate) -> ProjectItem* {
-        auto parentIt = index.parentDefinition.find(candidate);
-        ProjectItem* parent = parentIt == index.parentDefinition.end()
-            ? nullptr : parentIt->second;
-        while (parent != nullptr && included.find(parent) == included.end()) {
-            parentIt = index.parentDefinition.find(parent);
-            parent = parentIt == index.parentDefinition.end()
-                ? nullptr : parentIt->second;
+    std::vector<ProjectItem*> ownedChildren;
+    const auto collectChildren = [&](ProjectItem* owner, const auto& self) -> void {
+        const auto children = index.children.find(owner);
+        if (children == index.children.end()) return;
+        for (ProjectItem* child : children->second) {
+            if (included.find(child) != included.end())
+                ownedChildren.push_back(child);
+            else
+                self(child, self);
         }
-        return parent;
     };
-    for (ProjectItem* child : index.definitions) {
-        if (included.find(child) == included.end()
-            || includedAncestor(child) != &item)
-            continue;
+    collectChildren(&item, collectChildren);
+    std::sort(ownedChildren.begin(), ownedChildren.end(), [](const auto* a, const auto* b) {
+        if (a->runtimeId() != b->runtimeId())
+            return a->runtimeId() < b->runtimeId();
+        return a->guid.toString() < b->guid.toString();
+    });
+    for (ProjectItem* child : ownedChildren) {
         harkenprojectschema::InputOwnershipEdge edge;
         edge.childGuid = authoringGuid(child->guid);
         node.ownedChildren.push_back(std::move(edge));
@@ -1515,7 +1519,10 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
     auto request = std::make_shared<BridgeRequest>();
     request->project.projectId = runtimeObjectId(QUuid(project.projectId));
     const ProjectIndex& index = *canonical.sourceIndex;
-    const auto actionLookup = EditorUtils::makeProjectTargetLookup(project);
+    std::optional<EditorUtils::ActionTargetLookup> ownedActionLookup;
+    const auto& actionLookup = options && options->actionLookup
+        ? *options->actionLookup
+        : ownedActionLookup.emplace(EditorUtils::makeProjectTargetLookup(project));
     ActionBuildClosure closure;
     CurrentWorldBuildOptions scopedOptions;
     const ProjectItem* closureRoot = options
@@ -1558,6 +1565,22 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
     for (ProjectItem* item : index.definitions) {
         if (included.find(item) == included.end())
             continue;
+        if (options && options->validatePackResources) {
+            RuntimeCapabilityContext resourceContext;
+            resourceContext.deferCurrentWorldCompilation = true;
+            for (const auto feature : {RuntimeCapabilityFeature::TypedBinding,
+                                       RuntimeCapabilityFeature::TypedEffect}) {
+                const auto capability = RuntimeCapabilityMatrix::evaluateForContext(
+                    *item, project, RuntimeCapabilityOperation::PackBuild,
+                    feature, std::nullopt, resourceContext);
+                if (capability.state != RuntimeCapabilityState::Ready) {
+                    setStatus(status, capability.state == RuntimeCapabilityState::UnavailableEngineContract
+                        ? CurrentWorldBuildStatus::CapabilityUnavailable : CurrentWorldBuildStatus::InvalidAuthoring);
+                    setError(error, capability.diagnostic);
+                    return {};
+                }
+            }
+        }
         if (!buildDefinitionNode(*item, index, included, groups, editorOrder++,
                                  scope, request.get(), error))
             return {};

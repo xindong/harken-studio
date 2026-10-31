@@ -207,7 +207,7 @@ bool outputInventory(const QString& outputDirectory, QJsonObject* outputs,
 QJsonObject resultJson(const ExportResult& result)
 {
     QJsonObject revisions;
-    for (const auto& [id, revision] : result.controlSoundContentRevisions)
+    for (const auto& [id, revision] : result.soundContentRevisions)
         revisions.insert(objectIdString(id), QString::number(revision));
     QJsonArray artifacts;
     for (const auto& artifact : result.artifacts)
@@ -351,7 +351,7 @@ bool PackBuildReceipt::restore(ExportResult* result, std::vector<BuildRecord>* r
         bool valid = false;
         const auto revision = it.value().toString().toULongLong(&valid);
         if (!parseObjectIdJson(it.key(), &id) || !valid) return false;
-        restored.controlSoundContentRevisions.emplace(id, revision);
+        restored.soundContentRevisions.emplace(id, revision);
     }
     for (const auto& value : saved.value(QStringLiteral("artifacts")).toArray()) {
         const auto row = value.toObject();

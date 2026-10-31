@@ -1245,9 +1245,6 @@ bool assembleCanonicalPack(const std::vector<PackBuildSession::CanonicalPackEntr
                 entries[i].payload.size() - harkenstudiobuild::kPackV2MediaPayloadBytes;
             toc.blobOffset = blobOffsets[i];
             toc.blobBytes = blobBytes;
-            toc.blobChecksum = harkenstudiobuild::Fnv1a64(
-                entries[i].payload.data() + harkenstudiobuild::kPackV2MediaPayloadBytes,
-                static_cast<std::size_t>(blobBytes));
             harkenstudiobuild::SerializePackTocEntry(
                 toc, out->data() + static_cast<std::size_t>(offsets[i]));
             if (blobBytes != 0) {
@@ -1478,9 +1475,14 @@ QString PackBuildSession::inputFingerprint()
             if (source.interleavedSamples) {
                 const auto byteCount = source.interleavedSamples->size() * sizeof(float);
                 hash.addData(QByteArray::number(byteCount) + '\0');
-                hash.addData(QByteArrayView(
-                    reinterpret_cast<const char*>(source.interleavedSamples->data()),
-                    static_cast<qsizetype>(byteCount)));
+                if (!source.contentHash.isEmpty()) {
+                    hash.addData(QByteArrayView("sha256\0", 7));
+                    hash.addData(source.contentHash.toLatin1());
+                } else {
+                    hash.addData(QByteArrayView(
+                        reinterpret_cast<const char*>(source.interleavedSamples->data()),
+                        static_cast<qsizetype>(byteCount)));
+                }
             } else {
                 QFile file(source.sourcePath);
                 if (!file.open(QIODevice::ReadOnly)) {

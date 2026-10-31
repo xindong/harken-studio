@@ -534,6 +534,57 @@ TEST(PackcPipeline, DownmixPolicyIsExactAndPreservesFormatFacts) {
                 1.0e-7);
 }
 
+TEST(PackcPipeline, DirectMediaEntriesMatchFileCompilation) {
+    const std::vector<float> samples = {
+        0.75f, -0.0f, 1.0f, -1.0f, 0.25f, -0.5f,
+        std::numeric_limits<float>::max(), std::numeric_limits<float>::max()
+    };
+    for (const std::uint16_t channels : {1, 2}) {
+        for (const bool downmix : {false, true}) {
+            SCOPED_TRACE(::testing::Message() << "channels=" << channels << " downmix=" << downmix);
+            const auto suffix = std::to_string(channels) + (downmix ? "_mono" : "_preserve");
+            const auto wavPath = TempPath("pipeline_direct_" + suffix + ".wav");
+            const auto packPath = TempPath("pipeline_direct_" + suffix + ".pack");
+            const auto manifestPath = TempPath("pipeline_direct_" + suffix + ".json");
+            WriteWavF32(wavPath, samples, channels, kRate);
+            WriteTextFile(manifestPath, V2ManifestJson(packPath,
+                {V2EntryJson(wavPath, 1201, true, 1, 3, downmix ? "mono" : "")},
+                "{\"cache\":false}"));
+            ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
+
+            const auto id = harkentest::ObjectId(1201);
+            harkenizer::resourcecompiler::MediaInput input;
+            input.id = {id.high, id.low};
+            input.sourcePath = wavPath;
+            input.interleavedSamples = samples.data();
+            input.sampleCount = samples.size();
+            input.sampleRate = kRate;
+            input.channels = channels;
+            input.downmixToMono = downmix;
+            input.loopable = true;
+            input.loopStartFrame = 1;
+            input.loopEndFrame = 3;
+            std::vector<harkenizer::resourcecompiler::CompiledEntry> entries;
+            std::string error;
+            ASSERT_TRUE(harkenizer::resourcecompiler::compileEntries(
+                "{}", false, {input}, &entries, &error)) << error;
+            ASSERT_EQ(1u, entries.size());
+
+            std::vector<std::uint8_t> packed;
+            ASSERT_TRUE(ReadFileBytes(packPath, &packed));
+            harken::PackHeader header;
+            ASSERT_TRUE(harken::ParsePackHeader(packed.data(), &header));
+            const auto toc = harken::ParsePackTocEntry(packed.data() + header.tocOffset);
+            std::vector<std::uint8_t> expected(harken::kPackTocEntryBytes + toc.blobBytes);
+            std::memcpy(expected.data(), packed.data() + header.tocOffset, harken::kPackTocEntryBytes);
+            harken::StoreLE64(expected.data() + 32, 0);
+            std::memcpy(expected.data() + harken::kPackTocEntryBytes,
+                        packed.data() + toc.blobOffset, static_cast<std::size_t>(toc.blobBytes));
+            EXPECT_EQ(expected, entries.front().payload);
+        }
+    }
+}
+
 TEST(PackcPipeline, DownmixRefusesMultichannelWithoutFallbackOutput) {
     const std::vector<float> threeChannel = {
         0.5f, 0.25f, -0.25f,

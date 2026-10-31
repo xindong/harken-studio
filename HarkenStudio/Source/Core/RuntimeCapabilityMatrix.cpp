@@ -577,6 +577,8 @@ RuntimeCapabilityEntry evaluateForContext(const ProjectItem& item,
         const auto bindings = bindingCapability(item, project, operation);
         if (bindings.state != S::Ready) return refuse(bindings.state, bindings.diagnostic);
     }
+    if (context.deferCurrentWorldCompilation)
+        return result;
     result = context.buildSession
         ? context.buildSession->compile(item, operation, variant, context)
         : compileCurrentWorldCapability(item, project, operation, variant, context);

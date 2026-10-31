@@ -31,6 +31,7 @@ namespace VNX {
     struct ProjectData;
     struct ProjectItem;
     struct PackBuildPlan;
+    struct CanonicalPackSetExportRequest;
     struct PackBuildContext;
     struct WaveformPeakData;
     struct ProjectBuildSnapshot;
@@ -69,6 +70,7 @@ namespace ProjectPackExporterInternal {
         QString waveformOutputDir;
         QString language;
         bool    debugStrings = true;
+        bool    deferBindings = false;
         bool    forceReexport = false;
         bool    selfCleaning = false;
         bool    updateSelectedOnly = false;
@@ -121,7 +123,7 @@ public:
         int     mediaConversions = 0;
         int     mediaFallbacks = 0;
         uint64_t currentWorldSemanticFingerprint = 0;
-        std::map<harkenstudio::ObjectId, uint64_t> controlSoundContentRevisions;
+        std::map<harkenstudio::ObjectId, uint64_t> soundContentRevisions;
         QString resourceFingerprint;
         bool reusedResources = false;
         int builtPackCount = 0;
@@ -244,7 +246,8 @@ public:
     ValidationResult ValidateBeforeBuild(const ProjectData& project);
 
     static ValidationResult ValidatePackBuildReadiness(const ProjectData& project,
-                                                       const QString& outputDir);
+                                                       const QString& outputDir,
+                                                       PackBuildContext* buildContext = nullptr);
 
     static bool ValidatePackBuildWriteAccess(const ProjectData& project,
                                              const QString& baseDir,
@@ -298,13 +301,16 @@ public:
     };
 
 private:
+    friend ExportResult ExportCanonicalPackSet(
+        ProjectPackExporter& exporter, const CanonicalPackSetExportRequest& request,
+        std::vector<PackBuildRecord>* outRecords);
 
     static std::shared_ptr<const PackBuildPlan> createBuildPlan(const ProjectData& project,
                                                                const ExportOptions& options);
 
     struct MediaCollectionStats
     {
-        std::map<harkenstudio::ObjectId, uint64_t> controlSoundContentRevisions;
+        std::map<harkenstudio::ObjectId, uint64_t> soundContentRevisions;
         int cacheHits = 0;
         int conversions = 0;
         int fallbacks = 0;
@@ -332,11 +338,6 @@ private:
     SharedOwnership computeSharedOwnership(const ProjectData& project,
                                            const PackBuildPlan& plan,
                                            const std::set<harkenstudio::ObjectId>& includedActionIds) const;
-
-    void CollectActions(const ProjectData& project,
-                        HarkenEditor::Bridge::PackBuildSession& builder,
-                        std::set<uint32_t>& requiredObjects,
-                        const QSet<uint32_t>* actionFilter = nullptr);
 
     bool CollectMedia(const ProjectData& project,
                        HarkenEditor::Bridge::PackBuildSession& builder,
@@ -376,13 +377,6 @@ private:
 
     static void ApplyMediaCollectionStats(ExportResult& result,
                                           const MediaCollectionStats& stats);
-
-    std::vector<QString> m_actionScopeErrors_;
-    QString takeActionScopeErrors();
-
-    std::vector<QString> m_actionTargetErrors_;
-    QString takeActionTargetErrors();
-
 };
 
 }

@@ -20,6 +20,10 @@ struct CurrentWorldScalarUpdate;
 
 namespace VNX {
 
+namespace EditorUtils {
+class ActionTargetLookup;
+}
+
 struct FieldGroupEffectiveSnapshot;
 struct ProjectData;
 struct ProjectItem;
@@ -51,6 +55,8 @@ struct CurrentWorldBuildOptions
     std::shared_ptr<const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1> sourceIndex;
     std::shared_ptr<const HarkenEditor::Bridge::CanonicalRuntimeProjectContextV1> canonicalContext;
     const FieldGroupEffectiveSnapshot* fieldGroups = nullptr;
+    const EditorUtils::ActionTargetLookup* actionLookup = nullptr;
+    bool validatePackResources = false;
 };
 
 HarkenEditor::Bridge::CurrentWorldSyncRequestPtr

@@ -1691,6 +1691,67 @@ TEST(EditorProjectPackExporterManifest, InvalidActionPackNamesPreservePublishedF
     registry.clear();
 }
 
+TEST(EditorProjectPackExporterManifest, InvalidActionStepsInSelectedClosurePreservePublication)
+{
+    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    auto& registry = VNX::AssetRegistry::instance();
+    registry.clear();
+    const auto clearRegistry = qScopeGuard([&] { registry.clear(); });
+    registry.setProjectRoot(dir.path());
+    const auto sourceId = registerToneAsset(dir.path(), QStringLiteral("tone.wav"), 0.5f);
+    auto project = HarkenTest::projectWithPlatforms({"Windows"});
+    ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), sourceId, sourceId,
+        {{QStringLiteral("Caller"), 21, kSharedSoundObjectId},
+         {QStringLiteral("Child"), 22, kSharedSoundObjectId}}));
+    const auto& actions = project.actions.front().rootItem->children;
+    VNX::VActionStep post;
+    post.type = VNX::VActionStep::Type::PostAction;
+    post.targetObjectID = actions.back()->objectID;
+    actions.front()->comp<VNX::VAction>()->steps.push_back(post);
+    const QString outputDir = dir.filePath(QStringLiteral("published"));
+    VNX::ProjectPackExporter exporter;
+    VNX::ProjectPackExporter::ExportOptions options;
+    options.platform = HarkenTest::platformIdString("Windows");
+    options.onlyUnits = {QStringLiteral("Caller")};
+    const auto initial = exporter.ExportAllPacks(project, outputDir, options);
+    ASSERT_TRUE(initial.success) << initial.error.toStdString();
+    const auto publication = [&] {
+        std::map<QString, QByteArray> files;
+        QDirIterator it(outputDir, QDir::Files | QDir::Hidden, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            const QString path = it.next();
+            files.emplace(QDir(outputDir).relativeFilePath(path), readFileBytes(path));
+        }
+        return files;
+    };
+    const auto original = publication();
+    ASSERT_FALSE(original.empty());
+    EXPECT_FALSE(original.contains(QStringLiteral("Child.bytes")));
+    for (const auto& action : actions) {
+        for (const auto type : {VNX::VActionStep::Type::Play,
+                               static_cast<VNX::VActionStep::Type>(255)}) {
+            SCOPED_TRACE(QStringLiteral("%1/%2").arg(action->name)
+                .arg(static_cast<int>(type)).toStdString());
+            VNX::VActionStep invalid;
+            invalid.type = type;
+            invalid.targetObjectID = type == VNX::VActionStep::Type::Play
+                ? 0 : kSharedSoundObjectId;
+            auto& steps = action->comp<VNX::VAction>()->steps;
+            steps.push_back(invalid);
+            const auto rejected = exporter.ExportAllPacks(project, outputDir, options);
+            EXPECT_FALSE(rejected.success);
+            EXPECT_FALSE(rejected.error.isEmpty());
+            EXPECT_EQ(publication(), original);
+            steps.pop_back();
+        }
+    }
+    const auto restored = exporter.ExportAllPacks(project, outputDir, options);
+    ASSERT_TRUE(restored.success) << restored.error.toStdString();
+    EXPECT_EQ(publication(), original);
+}
+
 TEST(EditorProjectPackExporterManifest, UntargetedUnitsStayOutOfPublication)
 {
     qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
