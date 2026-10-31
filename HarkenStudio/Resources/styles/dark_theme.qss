@@ -117,14 +117,21 @@ QToolButton[tone="success"]:checked {
 }
 
 QToolButton#timelineBreadcrumb {
-    color: @accent@;
     border: none;
     background: transparent;
     padding: 0 2px;
 }
 
-QToolButton#timelineBreadcrumb:hover {
-    color: @accentHover@;
+QToolButton#timelineBreadcrumb,
+QToolButton#timelineBreadcrumb:hover,
+QToolButton#gridEditorCrumb,
+QToolButton#gridEditorCrumb:hover {
+    color: @textSecondary@;
+}
+
+QToolButton#timelineBreadcrumb:disabled,
+QToolButton#gridEditorCrumb:disabled {
+    color: @textDisabled@;
 }
 
 /* A label is text on whatever surface hosts it, never a surface of its own.
@@ -458,7 +465,7 @@ QWidget[sourceDropTarget="true"] QToolButton[explorerRole="sectionToggle"] {
 
 QToolButton[explorerRole="sectionToggle"] {
     background: transparent;
-    color: @textPrimary@;
+    color: @textTitle@;
     border: none;
     border-radius: 0;
     margin: 0;
@@ -470,6 +477,10 @@ QToolButton[explorerRole="sectionToggle"] {
 
 QToolButton[explorerRole="sectionToggle"]:hover {
     background-color: @bgHover@;
+}
+
+QToolButton[explorerRole="sectionToggle"]:disabled {
+    color: @textDisabled@;
 }
 
 QSplitter#projectExplorerSplitter::handle,
@@ -998,7 +1009,7 @@ QListView::item:selected {
 
 QHeaderView::section {
     background-color: @headerBackground@;
-    color: @textMuted@;
+    color: @textSecondary@;
     padding: @tableCellPaddingY@px @tableCellPaddingX@px;
     border: none;
     border-bottom: 1px solid @borderPrimary@;
@@ -1295,9 +1306,13 @@ QGroupBox::title {
     subcontrol-position: top left;
     left: 10px;
     padding: 0 5px;
-    color: @accent@;
+    color: @textTitle@;
     font-weight: bold;
     background-color: transparent;
+}
+
+QGroupBox::title:disabled {
+    color: @textDisabled@;
 }
 
 /* ==========================================================================
@@ -1388,10 +1403,10 @@ QWidget#NodeContentEditor QToolButton[segmentedControl="true"] {
 }
 #BlueprintStatusBar QLabel {
     background: transparent;
-    color: @textSecondary@;
+    color: @textPrimary@;
 }
 #BlueprintStatusBar QToolButton {
-    color: @textSecondary@;
+    color: @textPrimary@;
     background: transparent;
     border: none;
     padding: 0px 8px;
@@ -1466,7 +1481,7 @@ QScrollBar[scrollRole="panel"]:vertical {
 }
 
 QLabel[settingsRole="subtitle"] {
-    color: @textPrimary@;
+    color: @textTitle@;
     font-weight: bold;
     background: transparent;
 }
@@ -1507,7 +1522,7 @@ QLineEdit[settingsRole="invalid"] { border: 1px solid @error@; }
 }
 
 QLabel[aboutRole="key"] {
-    color: @textMuted@;
+    color: @textPrimary@;
     font-size: @captionPointSize@pt;
 }
 
@@ -1549,17 +1564,12 @@ QLabel[aboutRole="value"] {
 
 #startupLoadingStatus {
     background-color: transparent;
-    color: @textSecondary@;
+    color: @textPrimary@;
 }
 
 #startupLoadingPercent {
     color: @textPrimary@;
     font-weight: bold;
-}
-
-#startupLoadingWindow[startupState="failed"] #startupLoadingStatus,
-#startupLoadingWindow[startupState="failed"] #startupLoadingPercent {
-    color: @error@;
 }
 
 #startupLoadingProgress {
@@ -1587,7 +1597,7 @@ QLabel[templateRole="sectionTitle"],
 QLabel[templateRole="cardTitle"] {
     background-color: transparent;
     border: none;
-    color: @textPrimary@;
+    color: @textTitle@;
     font-weight: bold;
 }
 
@@ -1674,12 +1684,13 @@ QPushButton[templateRole="card"]:disabled {
 QLabel[textRole="muted"] { color: @textMuted@; }
 QLabel[textRole="secondary"] { color: @textSecondary@; }
 QLabel[textRole="primary"] { color: @textPrimary@; }
+QLabel[textRole="title"] { color: @textTitle@; }
 QLabel[textRole="accent"] { color: @accent@; }
 QLabel[textRole="warning"] { color: @warning@; }
 QLabel[textRole="error"] { color: @error@; }
 QLabel[textRole="info"] { color: @info@; }
 QLabel[textRole="formLabel"] {
-    color: @textSecondary@;
+    color: @textPrimary@;
     font-weight: 500;
     background: transparent;
 }
@@ -1703,7 +1714,7 @@ QWidget#listHead {
     border-bottom: 1px solid @borderPrimary@;
 }
 QWidget#listHead QLabel {
-    color: @textMuted@;
+    color: @textSecondary@;
     font-size: @bodyPointSize@pt;
     background: transparent;
     border: none;
@@ -1763,6 +1774,9 @@ QToolButton[listFootBtn="true"][tableCompactAction="false"]:hover { background-c
 QToolButton[listFootBtn="true"]:disabled { color: @textDisabled@; }
 QLabel[roValue="true"] { color: @textPrimary@; background: transparent; }
 QLabel[textRole]:disabled,
+QLabel[settingsRole="subtitle"]:disabled,
+QLabel[templateRole="sectionTitle"]:disabled,
+QLabel[templateRole="cardTitle"]:disabled,
 QLabel[nodeContentRole="label"]:disabled,
 QLabel[nodeContentRole="value"]:disabled,
 QLabel[roValue="true"]:disabled { color: @textDisabled@; }
@@ -1864,7 +1878,7 @@ QWidget#inspectorTabBar QToolButton {
     border-top: 3px solid transparent;
     border-bottom: 3px solid transparent;
     border-radius: 0px;
-    color: @textSecondary@;
+    color: @textPrimary@;
     font-size: @captionPointSize@pt;
     font-weight: 600;
     padding: 4px 10px;
@@ -1991,7 +2005,7 @@ QWidget#MeterSettingsPopup {
     border: 1px solid @accent@;
     border-radius: @radiusSmall@px;
 }
-QWidget#MeterSettingsPopup QLabel { color: @textSecondary@; font-size: @captionPointSize@pt; padding: 0 4px; }
+QWidget#MeterSettingsPopup QLabel { color: @textPrimary@; font-size: @captionPointSize@pt; padding: 0 4px; }
 QWidget#MeterSettingsPopup QComboBox {
     padding-right: @chevronExtent@px;
     font-size: @captionPointSize@pt;
@@ -2156,7 +2170,7 @@ QSizeGrip {
 
 #titleBarVersion {
     background-color: transparent;
-    color: @textMuted@;
+    color: @textPrimary@;
     font-size: @bodyPointSize@pt;
 }
 

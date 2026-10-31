@@ -1,6 +1,6 @@
 # Studio 主题色卡与颜色职责
 
-最近核对：2026-10-30。
+最近核对：2026-10-31。
 
 主题拥有自己的颜色职责、职责到绘制位置的绑定和一个或多个色卡。色卡提供该主题各职责的颜色值及明暗模式，用户修改按主题和色卡隔离。不同主题可以使用不同的职责清单；一个主题可以让网格复用边界色，另一个主题可以提供独立网格色。Renderer 继续消费完整、不可变的样式快照。
 
@@ -12,9 +12,9 @@
 
 | 职责 | 主题键 | 使用边界 |
 |---|---|---|
-| 主要文字 | `text.primary` | 普通字段值、只读有效值、普通正文；单行、多行输入与节点字段值一致 |
-| 次要文字 | `text.secondary` | 字段名、坐标刻度、辅助标签、节点字段名与连线说明 |
-| 弱化文字 | `text.muted` | 提示、空状态、占位和弱化元信息；不因字段只读就使用此色 |
+| 首要文字 | `text.primary` | 字段名与字段值、只读有效值、普通正文、顶部项目名称、蓝图对象名称；节点字段名与值一致 |
+| 次要文字 | `text.secondary` | 注释说明、表格列头、输入占位提示、空状态、坐标刻度、单位、状态栏摘要、继承引用和面包屑 |
+| 标题文字 | `text.title` | 已加粗的分节与分组标题，包括 Inspector section、Explorer 的 Assets / Sources、设置与偏好标题、GroupBox、模板标题和表格内部的分组条目 |
 | 禁用文字 | `text.disabled` | 控件不可用时的文字，独立于只读状态 |
 | 强调 | `accent.primary` | 控件激活、焦点与强调边框、滑条填充、旋钮有效弧线、曲线编辑点与手柄激活 |
 | 强调悬停 | `accent.hover` | 强调元素自身的悬停变化 |
@@ -26,7 +26,11 @@
 | 反馈 | `status.success/warning/error/info` | 操作反馈；领域 feedback 同义槽位由这里解析 |
 | 分类色板 | `palette.categorical0` 至 `palette.categorical6` | 区分多个条目，不承担固定对象类型或强度数值语义 |
 
-字段名统一声明 `textRole=formLabel`。普通文本标签可声明 `textRole=primary/secondary/muted`；节点内容保留 `nodeContentRole=label/value` 以适配现有绘制入口，但不再拥有独立颜色来源。`roValue` 只读值使用主要文字。禁用状态覆盖这些文字角色。
+字段名统一声明 `textRole=formLabel`，使用首要文字。普通文本标签可声明 `textRole=primary/secondary/title`；节点内容保留 `nodeContentRole=label/value`，两个绘制位置均绑定首要文字，节点辅助副标题使用次要文字。`roValue` 只读值使用首要文字。禁用状态覆盖这些文字角色。
+
+Studio Default 不再开放 `text.muted` 作为独立编辑职责。既有 `text.muted` 渲染位置和 `textRole=muted` 消费者保留，统一由 `text.secondary` 提供颜色；其他主题仍可为这些位置定义自己的职责。Dark / Light 的标题默认色分别沿用各自首要文字的默认色，标题职责可独立编辑，没有另行指定新的 RGB 值。
+
+表格列头使用次要文字；表格内部加粗的分组条目使用标题文字。蓝图对象名称使用常规字重和首要色，绘制、宽度测量与重命名输入框保持一致。蓝图底部栏目的文字，包括 Reset Layout 和缩放比例，使用首要色。Inspector 分类 Tab 的常态文字使用首要色，选中时保留强调色。面包屑当前项与可点击祖先项均使用次要色。
 
 对象引用的有效只读值同样使用主要文字；关闭选择入口不等同于禁用整个控件。继承引用保留次要文字，失效引用保留错误色，真正禁用时统一使用禁用文字。分段控件进入数值编辑时使用主要文字，普通分段选项保持原有层次。
 
@@ -37,6 +41,12 @@
 `ThemeColorResolver` 接受当前主题的职责绑定与当前色卡值，将它们写入固定的渲染颜色位置。绑定可指定独立 Alpha。原有共享文字、网格、节点背景等派生关系已成为 Studio Default 的绑定声明，解析器不再为所有主题强制建立相同关系。
 
 Studio Default 将 Qt 原生窗口、输入框、提示框和按钮背景绑定到对应表面职责，并同步原生文字与辅助颜色；色卡默认值、用户预览和取消恢复共用这些绑定。其他主题可以定义自己的对应关系。
+
+输入占位提示通过 `qtPalette.placeholderText` 绑定到次要文字，样式层直接使用该绘制位置，不再从首要文字生成半透明颜色。
+
+启动画面底部的项目名、进度百分比和状态文字统一使用首要文字，包括失败与取消状态；版本号使用次要文字。失败进度条仍使用错误色。
+
+2026-10-31 文字职责调整后，`harken_editor` 与 `harken_editor_tests` 编译通过，58 项主题、设置、表格及蓝图控件合同测试通过。隔离设置下的 Dark / Light 高对比离屏渲染共 86 项检查通过，覆盖真实折叠标题、Explorer、设置分节、顶部项目名、表格内部的分组条目与普通列头，以及字段、禁用、输入框与下拉框占位提示；蓝图对象名称的首要色与常规字重、重命名输入框，以及同一下拉框从占位到选值再回空的颜色恢复也已核对，预览未改变已提交设置。该检查使用代表性组件，不代表完整工程与原生输入操作验收。记录位于 `.temp/text-role-review/followup/`。
 
 `ThemeSnapshot` 中保留领域 Renderer 所需的已解析颜色槽位。主题职责可以绑定这些槽位，Renderer 只依赖自身样式，不需要读取任意主题职责名或全局主题管理器。快照发布后保持不可变，重新加载产生新快照。
 
@@ -68,7 +78,7 @@ Studio Default 提供 76 个可编辑源颜色角色，共 11 类。每项包含
 
 | 分类 | 数量 | 开放范围 |
 |---|---|---|
-| Text | 4 | 主文字、次文字、弱化文字、禁用文字 |
+| Text | 4 | 首要文字、次要文字、标题文字、禁用文字 |
 | Surfaces | 8 | 主背景、控件背景、抬升背景、面板、标题、轨道、交替轨道、Bus 背景 |
 | Interaction | 10 | 强调及悬停、强调底文字、悬停/选中背景、三类边界、滑条底轨、旋钮指示 |
 | Feedback | 4 | 成功、警告、错误、信息 |
@@ -89,6 +99,8 @@ Theme Colors 编辑当前主题的当前色卡。即使另一个主题使用相�
 主题选择、色卡选择、完成颜色编辑、恢复默认及 Information Language 均即时保存。切换主题选择目标主题的默认色卡，重新加载主题和程序重启则保留已保存的主题与所选色卡。颜色对话框支持 Alpha 与实时预览：预览只发布临时快照，OK 后保存，Cancel、Esc 或关闭选色器恢复已提交外观。关闭或停靠 Preferences 不撤销已保存设置；AI 连接配置仍使用独立的 Save Connection 事务。
 
 主题选择保存在 `Appearance/ThemeId`，色卡选择保存在 `Appearance/PaletteId`。颜色覆盖以主题 ID、色卡 ID、职责键分层保存在 `Appearance/ThemePaletteColors`，不修改主题包或项目。旧设置在读取时迁移到所属主题的默认色卡；测试 Amber 不再作为可选配色保留。暂不可用主题的旧默认覆盖以空色卡键暂存，主题恢复后再迁入其声明的默认色卡；已有明确色卡覆盖优先。活动职责失效导致恢复失败时，仍保留其他主题与色卡的覆盖，避免随后保存时丢失。
+
+Studio Default 已保存的 `text.muted` 覆盖迁入同一色卡的 `text.secondary`；已有 `text.secondary` 覆盖优先，并移除旧职责键。该迁移仅作用于内置主题，不改写其他主题的同名职责。
 
 读取当前及旧版存储格式时跳过无法解析的色值，保留所有有效覆盖，包括未安装主题的私有职责。损坏的存储值不阻断后续切换、预览或保存；新提交的非法颜色仍被拒绝。
 
@@ -178,23 +190,25 @@ Theme Colors 编辑当前主题的当前色卡。即使另一个主题使用相�
 | `meter.peakMeter.label`、`meter.loudness.labelText`、`meter.loudness.valueText` | `text.primary`，Alpha 204 |
 | `meter.loudness.canvasBackground`、`meter.vu.canvasBackground` | `panel.background` |
 | `meter.loudness.trackBackground`、`meter.vu.trackBackground` | `track.background` |
-| `meter.vu.titleText`、`meter.vu.analogLabelText`、`meter.vu.barLabelText` | `text.primary` |
+| `meter.vu.titleText` | `text.title` |
+| `meter.vu.analogLabelText`、`meter.vu.barLabelText` | `text.primary` |
 | `meter.vu.analogArc`、`meter.vu.barGrid` | `border.primary` |
-| `meter.vu.analogValueText`、`meter.vu.barValueText` | `text.muted`，保留 VU 读数原有的弱化层级 |
+| `meter.vu.analogValueText`、`meter.vu.barValueText` | `text.primary` |
 
 | 节点与反馈绘制位置 | Studio Default 来源 |
 |---|---|
 | `nodeGraph.node.bodyNormal` | `background.tertiary` |
 | `nodeGraph.node.bodySelected` | `background.hover` |
-| `nodeGraph.node.contentLabel`、`blueprint.edgeLabelText` | `text.secondary` |
-| `nodeGraph.node.contentValue`、`nodeGraph.node.titleText` | `text.primary` |
+| `nodeGraph.node.contentLabel`、`nodeGraph.node.contentValue` | `text.primary` |
+| `nodeGraph.node.titleText` | `text.primary` |
+| `blueprint.edgeLabelText` | `text.secondary` |
 | `feedback.success/warning/error/info` | 对应的 `status.success/warning/error/info` |
-| `feedback.neutral` | `text.muted` |
+| `feedback.neutral` | `text.secondary` |
 | `feedback.overlayHighlight` | `accent.primary` |
 
 ## 对象颜色职责
 
-对象默认使用共同界面角色，不按 Sound、Audio Layer、Bus、Receive Bus、Attenuation、Action 等类型分配颜色。Blueprint 节点标题底统一使用 `header.background`，标题文字和图标默认使用 `text.primary`；节点波形统一使用 `nodeGraph.node.blueprintWaveform`，不再按 Source、Self、Parent、Bus、ReceiveBus 角色着色。普通波形仍以透明度表达选择状态。
+对象默认使用共同界面角色，不按 Sound、Audio Layer、Bus、Receive Bus、Attenuation、Action 等类型分配颜色。Blueprint 节点标题底统一使用 `header.background`，对象名称使用常规字重，名称文字和图标默认使用 `text.primary`；节点波形统一使用 `nodeGraph.node.blueprintWaveform`，不再按 Source、Self、Parent、Bus、ReceiveBus 角色着色。普通波形仍以透明度表达选择状态。
 
 下列 18 个配置键及对应快照成员、内置值一并删除，不保留旧键兼容：
 
@@ -225,6 +239,8 @@ Theme Colors 编辑当前主题的当前色卡。即使另一个主题使用相�
 Alpha 验证使用隔离设置加载实际启动 Renderer，读回默认四色、四槽统一 Alpha 0/128/255，以及四槽分别为 0/64/128/255 的五组画面。Logo 外像素的默认 RGB 与原四档一致，透明度合成符合前景与 `background.primary` 的混合值（允许 1 级量化误差），最终窗口表面保持不透明。14 项像素检查通过，临时设置已恢复；截图为 `startup-alpha-*.png`，记录为 `startup-alpha-report.json`。
 
 ## 默认视觉变化边界
+
+以下记录颜色收束阶段的历史变化。2026-10-31 的文字职责调整以本文前述 Studio Default 职责与领域绑定表为准。
 
 共同来源保持现有四级文字、青色强调和深色工作区的值。Settings、Source Editor、Publisher 等字段名统一至次要文字；多行输入与只读有效值统一至主要文字。普通滑条、旋钮及被收束的曲线、仪表背景和边框保持原默认色。
 

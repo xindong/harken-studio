@@ -60,7 +60,7 @@ public:
     static QString colorSwatchStyle(const QColor& color);
     QString collapsibleIndicatorStyle(const QColor& color, int alpha,
                                       bool rail) const;
-    QString collapsibleHeaderStyle(const QColor& indicator, bool expanded, bool custom, int level) const;
+    QString collapsibleHeaderStyle(const QColor& indicator, bool custom, int level) const;
     static QString rgba(const QColor& color, int alpha);
 
 private:

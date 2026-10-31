@@ -133,7 +133,7 @@ void TableGroupHeader::paint(QPainter& painter, const QRect& rect, const QString
     painter.fillRect(rect, colors.headerBackground);
     painter.setPen(colors.borderPrimary);
     painter.drawLine(rect.bottomLeft(), rect.bottomRight());
-    painter.setPen(colors.textMuted);
+    painter.setPen(colors.textTitle);
     painter.setFont(font);
     const int controlWidth = std::max(options.checkable ? checkBoxRect(rect, themeManager, widget).width() : 0,
         options.collapsible ? themeManager->metrics().navigationChevronExtent : 0);

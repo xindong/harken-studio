@@ -345,7 +345,7 @@ NodeItem::~NodeItem()
 QRectF NodeItem::titleRect() const
 {
     if (routeGainMode_) return {};
-    QFont font = FontManager::instance().getFont(FontRole::Caption, 10, QFont::Bold);
+    QFont font = FontManager::instance().getFont(FontRole::Caption, 10, QFont::Normal);
     font.setItalic(titleDirty_);
     const QFontMetricsF metrics(font);
     const qreal x = kBodyPadX + 20.0 + 9.0;
@@ -382,7 +382,7 @@ void NodeItem::beginTitleEditing()
     if (!titleProxy_) {
         auto* editor = new InlineRenameEdit(title_, titleRenameHandler_);
         editor->setObjectName(QStringLiteral("nodeTitleEditor"));
-        editor->setFont(FontManager::instance().getFont(FontRole::Caption, 10, QFont::Bold));
+        editor->setFont(FontManager::instance().getFont(FontRole::Caption, 10, QFont::Normal));
         editor->setProperty("fieldRole", QStringLiteral("inspectorValue"));
         QObject::connect(editor, &InlineRenameEdit::finished, editor, [this, editor](bool committed) {
             titleEditing_ = false;
@@ -823,7 +823,7 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
     const float textW = width_ - textX - headPad;
 
     painter->setPen(titleColor);
-    QFont nameFont = FontManager::instance().getFont(FontRole::Caption, 10, QFont::Bold);
+    QFont nameFont = FontManager::instance().getFont(FontRole::Caption, 10, QFont::Normal);
     nameFont.setItalic(titleDirty_);
     painter->setFont(nameFont);
     QFontMetricsF nameFm(nameFont);
@@ -839,7 +839,7 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
         painter->setFont(subFont);
         QFontMetricsF subFm(subFont);
         QString elided = subFm.elidedText(subtitle_, Qt::ElideMiddle, width_ - padX * 2);
-        painter->setPen(ngn.contentLabel);
+        painter->setPen(theme->ui.colors.textSecondary);
         painter->drawText(QRectF(padX, bodyTop, width_ - padX * 2, kSubtitleRowHeight),
                           Qt::AlignVCenter | Qt::AlignLeft, elided);
         bodyTop += kSubtitleRowHeight;

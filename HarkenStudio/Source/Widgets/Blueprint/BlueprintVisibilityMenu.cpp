@@ -87,7 +87,7 @@ BlueprintVisibilityMenu::BlueprintVisibilityMenu(QWidget* parent)
         labelView->setToolTip(label);
         labelView->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         if (definition.group) {
-            labelView->setProperty("textRole", "secondary");
+            labelView->setProperty("textRole", "title");
             QFont font;
             font.setWeight(QFont::DemiBold);
             labelView->setFont(font);

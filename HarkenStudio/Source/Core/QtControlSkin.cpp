@@ -354,6 +354,7 @@ QPalette QtControlSkin::applicationPalette() const
     palette.setColor(QPalette::ToolTipBase, p.toolTipBase);
     palette.setColor(QPalette::ToolTipText, p.toolTipText);
     palette.setColor(QPalette::Text, p.text);
+    palette.setColor(QPalette::PlaceholderText, p.placeholderText);
     palette.setColor(QPalette::Button, p.button);
     palette.setColor(QPalette::ButtonText, p.buttonText);
     palette.setColor(QPalette::BrightText, p.brightText);
@@ -364,6 +365,7 @@ QPalette QtControlSkin::applicationPalette() const
     palette.setColor(QPalette::Dark, p.dark);
     palette.setColor(QPalette::Mid, p.mid);
     palette.setColor(QPalette::Disabled, QPalette::Text, p.disabledText);
+    palette.setColor(QPalette::Disabled, QPalette::PlaceholderText, p.disabledText);
     palette.setColor(QPalette::Disabled, QPalette::ButtonText, p.disabledButtonText);
     palette.setColor(QPalette::Disabled, QPalette::Highlight, p.disabledHighlight);
     return palette;
@@ -488,6 +490,7 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@viewBorder@"), color(colors().viewBorder));
     replace(QStringLiteral("@textPrimary@"), color(colors().textPrimary));
     replace(QStringLiteral("@textSecondary@"), color(colors().textSecondary));
+    replace(QStringLiteral("@textTitle@"), color(colors().textTitle));
     replace(QStringLiteral("@textMuted@"), color(colors().textMuted));
     replace(QStringLiteral("@textDisabled@"), color(colors().textDisabled));
     replace(QStringLiteral("@error@"), color(colors().error));
@@ -589,11 +592,12 @@ QString QtControlSkin::collapsibleIndicatorStyle(const QColor& color, int alpha,
                                       : QString());
 }
 
-QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool expanded, bool custom, int level) const
+QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool custom, int level) const
 {
     const QString indicatorColor = indicator.isValid() ? indicator.name() : accent();
 
-    QString bg, border, font, color, hoverBg, hoverColor, pad;
+    const QString titleColor = colors().textTitle.name(QColor::HexArgb);
+    QString bg, border, font, hoverBg, pad;
     int minH;
     if (level <= 0)
     {
@@ -601,9 +605,7 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool expa
         border   = custom ? QString("border: none; border-bottom: 1px solid %1; border-left: 2px solid %2;").arg(borderPrimary(), indicatorColor)
                           : QString("border: none; border-bottom: 1px solid %1;").arg(borderPrimary());
         font     = "font-size: 11px; font-weight: 700; letter-spacing: 0.5px;";
-        color    = custom ? indicatorColor : (expanded ? accent() : textSecondary());
         hoverBg  = bgTertiary();
-        hoverColor = color;
         pad      = "padding: 3px 6px 3px 4px;";
         minH     = 22;
     }
@@ -613,9 +615,7 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool expa
         border   = custom ? QString("border: none; border-left: 3px solid %1; border-bottom: 1px solid %2;").arg(indicatorColor, borderPrimary())
                           : QString("border: none; border-bottom: 1px solid %1;").arg(borderPrimary());
         font     = "font-size: 11px; font-weight: 600; letter-spacing: 0.3px;";
-        color    = custom ? indicatorColor : accent();
         hoverBg  = bgTertiary();
-        hoverColor = custom ? indicatorColor : accent();
         pad      = "padding: 2px 8px 2px 6px;";
         minH     = 20;
     }
@@ -625,9 +625,7 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool expa
         border   = custom ? QString("border: none; border-left: 2px solid %1;").arg(indicatorColor)
                           : QStringLiteral("border: none;");
         font     = "font-size: 11px; font-weight: 600;";
-        color    = textMuted();
         hoverBg  = QStringLiteral("transparent");
-        hoverColor = textSecondary();
         pad      = "padding: 1px 8px 1px 6px;";
         minH     = 18;
     }
@@ -653,10 +651,10 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool expa
         .arg(bg)
         .arg(border)
         .arg(font + pad)
-        .arg(color)
+        .arg(titleColor)
         .arg(minH)
         .arg(hoverBg)
-        .arg(hoverColor)
+        .arg(titleColor)
         .arg(textDisabled());
 }
 

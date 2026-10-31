@@ -800,6 +800,7 @@ auto tokenColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("background.secondary", ui.colors.bgSecondary);
     COLOR_SLOT("background.tertiary", ui.colors.bgTertiary);
     COLOR_SLOT("text.secondary", ui.colors.textSecondary);
+    COLOR_SLOT("text.title", ui.colors.textTitle);
     COLOR_SLOT("text.muted", ui.colors.textMuted);
     COLOR_SLOT("drop.highlight", ui.colors.dropHighlight);
     COLOR_SLOT("drop.accent", ui.colors.dropAccent);
@@ -810,6 +811,7 @@ auto tokenColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("qtPalette.toolTipBase", qtPalette.toolTipBase);
     COLOR_SLOT("qtPalette.toolTipText", qtPalette.toolTipText);
     COLOR_SLOT("qtPalette.text", qtPalette.text);
+    COLOR_SLOT("qtPalette.placeholderText", qtPalette.placeholderText);
     COLOR_SLOT("qtPalette.button", qtPalette.button);
     COLOR_SLOT("qtPalette.buttonText", qtPalette.buttonText);
     COLOR_SLOT("qtPalette.brightText", qtPalette.brightText);

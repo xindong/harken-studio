@@ -460,6 +460,19 @@ ThemeAppearance ThemeManager::persistedAppearance() const
         appearance.paletteId.clear();
     }
     storage_->endGroup();
+    auto studioColors = appearance.colors.find(builtinThemeId());
+    if (studioColors != appearance.colors.end())
+    {
+        for (auto& colors : *studioColors)
+        {
+            const auto muted = colors.find(QStringLiteral("text.muted"));
+            if (muted == colors.end())
+                continue;
+            if (!colors.contains(QStringLiteral("text.secondary")))
+                colors.insert(QStringLiteral("text.secondary"), *muted);
+            colors.remove(QStringLiteral("text.muted"));
+        }
+    }
     return appearance;
 }
 

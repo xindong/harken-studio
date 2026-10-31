@@ -220,9 +220,6 @@ void configurePalette(QPalette& palette, const ControlVisual& visual)
     if (visual.foreground.isValid()) {
         for (const auto role : {QPalette::WindowText, QPalette::Text, QPalette::ButtonText})
             palette.setColor(role, visual.foreground);
-        QColor placeholder = visual.foreground;
-        placeholder.setAlpha((placeholder.alpha() + 1) / 2);
-        palette.setColor(QPalette::PlaceholderText, placeholder);
     }
     if (visual.alternateBackground.isValid()) palette.setColor(QPalette::AlternateBase, visual.alternateBackground);
     if (visual.selectionBackground.isValid()) palette.setColor(QPalette::Highlight, visual.selectionBackground);
@@ -274,10 +271,20 @@ void refreshPalette(QWidget* widget, ThemeManager& manager, QStyle::State state)
     if (disabled.foreground.isValid())
         for (const auto role : {QPalette::WindowText, QPalette::Text, QPalette::ButtonText})
             palette.setColor(QPalette::Disabled, role, disabled.foreground);
+    if (qobject_cast<const QGroupBox*>(owner)) {
+        const auto title = manager.widgetAppearance().visual(owner, state & ~QStyle::State_Enabled, u"title");
+        if (title.foreground.isValid()) palette.setColor(QPalette::Disabled, QPalette::WindowText, title.foreground);
+    }
     if (disabled.background.isValid()) {
         palette.setColor(QPalette::Disabled, QPalette::Base, disabled.background);
         palette.setColor(QPalette::Disabled, QPalette::Window, disabled.background);
         palette.setColor(QPalette::Disabled, QPalette::Button, disabled.background);
+    }
+    if (const auto* combo = qobject_cast<const QComboBox*>(widget);
+        combo && !combo->isEditable() && combo->currentIndex() < 0) {
+        const auto& colors = manager.snapshot()->qtPalette;
+        palette.setColor(QPalette::Text, colors.placeholderText);
+        palette.setColor(QPalette::Disabled, QPalette::Text, colors.disabledText);
     }
     if (palette != widget->palette()) widget->setPalette(palette);
 }
@@ -404,6 +411,10 @@ void HarkenStyle::polish(QWidget* widget)
             connect(button, &QAbstractButton::toggled, this, [this, widget] {
                 refreshWidgetAppearance(widget, theme());
                 widget->update();
+            });
+        if (auto* combo = qobject_cast<QComboBox*>(widget))
+            connect(combo, &QComboBox::currentIndexChanged, this, [this, widget] {
+                refreshWidgetAppearance(widget, theme());
             });
     }
     refreshWidgetAppearance(widget, theme());
@@ -956,14 +967,6 @@ void HarkenStyle::drawControl(ControlElement element, const QStyleOption* option
             } else {
                 QProxyStyle::drawControl(element, &copy, painter, widget);
             }
-            return;
-        }
-        break;
-    case CE_ComboBoxLabel:
-        if (const auto* combo = qstyleoption_cast<const QStyleOptionComboBox*>(option)) {
-            QStyleOptionComboBox copy = *combo;
-            configurePalette(copy.palette, visual);
-            QProxyStyle::drawControl(element, &copy, painter, widget);
             return;
         }
         break;

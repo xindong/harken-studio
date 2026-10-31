@@ -241,7 +241,7 @@ void CollapsibleSection::refreshAppearance()
         widget->update();
     };
     QString headerStyle = skin.collapsibleHeaderStyle(
-        indicatorColor_, expanded_, hasCustomIndicator_, lvl);
+        indicatorColor_, hasCustomIndicator_, lvl);
     if (headerWidget_)
         headerStyle += QStringLiteral("QToolButton { padding-right: %1px; }")
             .arg(headerWidget_->sizeHint().width() + 2 * theme.metrics().spacingSmall);

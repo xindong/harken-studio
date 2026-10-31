@@ -169,7 +169,7 @@ TEST(ThemeManager, PreviewCancellationKeepsCommittedStateWithoutReloadingFiles)
     const QColor accent(QStringLiteral("#ffbc1234"));
     const QColor text(QStringLiteral("#ffc2d3e4"));
     draft.colors[draft.themeId][draft.paletteId].insert(QStringLiteral("accent.primary"), accent);
-    draft.colors[draft.themeId][draft.paletteId].insert(QStringLiteral("text.secondary"), text);
+    draft.colors[draft.themeId][draft.paletteId].insert(QStringLiteral("text.primary"), text);
     ASSERT_TRUE(manager.previewAppearance(draft).ok());
     const auto preview = manager.snapshot();
     EXPECT_EQ(manager.appearance(), committed);
@@ -470,9 +470,13 @@ TEST(ThemeManager, MalformedStoredColorsDoNotBlockValidEditsAcrossThemesAndResta
     const QString light = QStringLiteral("light");
     const QString key = QStringLiteral("accent.primary");
     const QString privateKey = QStringLiteral("private.color");
+    const QString mutedKey = QStringLiteral("text.muted");
+    const QString secondaryKey = QStringLiteral("text.secondary");
     const QColor packageColor(QStringLiteral("#80123456"));
     const QColor builtinColor(QStringLiteral("#906789ab"));
     const QColor privateColor(QStringLiteral("#a0abcdef"));
+    const QColor mutedColor(QStringLiteral("#b07890ab"));
+    const QColor secondaryColor(QStringLiteral("#c0456789"));
     for (const auto& format : {QStringLiteral("ThemePaletteColors"),
                               QStringLiteral("PaletteColors"), QStringLiteral("Colors")})
     {
@@ -486,16 +490,21 @@ TEST(ThemeManager, MalformedStoredColorsDoNotBlockValidEditsAcrossThemesAndResta
             {packageId, QVariantMap{{key, packageColor.name(QColor::HexArgb)},
                                    {QStringLiteral("text.primary"), QStringLiteral("invalid")}}},
             {builtinId, QVariantMap{{key, builtinColor.name(QColor::HexArgb)},
+                                   {mutedKey, mutedColor.name(QColor::HexArgb)},
                                    {QStringLiteral("text.primary"), QStringLiteral("#xyz")}}},
             {missingId, QVariantMap{{privateKey, privateColor.name(QColor::HexArgb)},
+                                   {mutedKey, privateColor.name(QColor::HexArgb)},
                                    {QStringLiteral("private.invalid"), QString()}}}
         };
         QVariantMap storedColors;
         QMap<QString, VNX::ColorPaletteCustomizations> expected;
         expected[packageId][dark].insert(key, packageColor);
         expected[builtinId][dark].insert(key, builtinColor);
+        expected[builtinId][dark].insert(secondaryKey, mutedColor);
         expected[missingId][format == QStringLiteral("ThemePaletteColors") ? dark : QString()]
             .insert(privateKey, privateColor);
+        expected[missingId][format == QStringLiteral("ThemePaletteColors") ? dark : QString()]
+            .insert(mutedKey, privateColor);
         for (auto owner = owners.cbegin(); owner != owners.cend(); ++owner)
         {
             if (format == QStringLiteral("ThemePaletteColors"))
@@ -511,6 +520,12 @@ TEST(ThemeManager, MalformedStoredColorsDoNotBlockValidEditsAcrossThemesAndResta
                 {QStringLiteral("text.primary"), QStringLiteral("invalid")}});
             storedColors.insert(packageId, palettes);
             expected[packageId][light].insert(key, builtinColor);
+            auto builtinPalettes = storedColors.value(builtinId).toMap();
+            builtinPalettes.insert(light, QVariantMap{
+                {mutedKey, mutedColor.name(QColor::HexArgb)},
+                {secondaryKey, secondaryColor.name(QColor::HexArgb)}});
+            storedColors.insert(builtinId, builtinPalettes);
+            expected[builtinId][light].insert(secondaryKey, secondaryColor);
         }
         {
             VNX::QSettingsStorage storage(storagePath);
@@ -535,11 +550,13 @@ TEST(ThemeManager, MalformedStoredColorsDoNotBlockValidEditsAcrossThemesAndResta
             expected[packageId][light].insert(key, privateColor);
             ASSERT_TRUE(manager.selectTheme(builtinId).ok());
             EXPECT_EQ(manager.snapshot()->ui.colors.accent, builtinColor);
+            EXPECT_EQ(manager.snapshot()->ui.colors.textSecondary, mutedColor);
         }
         VNX::ThemeManager restored(root.path(), std::make_unique<VNX::QSettingsStorage>(storagePath));
         EXPECT_EQ(restored.appearance().colors, expected);
         EXPECT_EQ(restored.currentThemeId(), builtinId);
         EXPECT_EQ(restored.snapshot()->ui.colors.accent, builtinColor);
+        EXPECT_EQ(restored.snapshot()->ui.colors.textSecondary, mutedColor);
         ASSERT_TRUE(restored.selectTheme(packageId).ok());
         EXPECT_EQ(restored.snapshot()->ui.colors.accent, packageColor);
     }

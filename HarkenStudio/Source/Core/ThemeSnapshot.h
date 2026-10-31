@@ -43,6 +43,7 @@ struct ThemeColors
 
     QColor textPrimary;
     QColor textSecondary;
+    QColor textTitle;
     QColor textMuted;
     QColor textDisabled;
 
@@ -279,6 +280,7 @@ struct QtPaletteColors
     QColor toolTipBase;
     QColor toolTipText;
     QColor text;
+    QColor placeholderText;
     QColor button;
     QColor buttonText;
     QColor brightText;

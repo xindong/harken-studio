@@ -120,8 +120,10 @@ void MultiSelectComboBox::paintEvent(QPaintEvent*)
     initStyleOption(&option);
     option.currentIcon = QIcon();
     option.currentText = selectedText_.isEmpty() ? placeholderText() : selectedText_;
-    if (selectedText_.isEmpty())
-        option.palette.setColor(QPalette::ButtonText, option.palette.color(QPalette::PlaceholderText));
+    const auto textColor = option.palette.color(selectedText_.isEmpty()
+        ? QPalette::PlaceholderText : QPalette::ButtonText);
+    option.palette.setColor(QPalette::ButtonText, textColor);
+    option.palette.setColor(QPalette::Text, textColor);
     const QRect textRect = style()->subControlRect(QStyle::CC_ComboBox, &option,
                                                   QStyle::SC_ComboBoxEditField, this);
     option.currentText = fontMetrics().elidedText(option.currentText, Qt::ElideRight, textRect.width());

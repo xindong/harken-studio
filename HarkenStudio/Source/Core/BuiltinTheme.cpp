@@ -39,6 +39,7 @@ ThemeSnapshot createBuiltinDarkTheme()
 
     colors.textPrimary = QColor("#E0E0E0");
     colors.textSecondary = QColor("#AAAAAA");
+    colors.textTitle = colors.textPrimary;
     colors.textMuted = QColor("#666666");
     colors.textDisabled = QColor("#555555");
 
@@ -774,6 +775,7 @@ ThemeSnapshot createBuiltinLightTheme()
     colors.dropAccent = QColor("#C0007B8B");
     colors.textPrimary = QColor("#202B38");
     colors.textSecondary = QColor("#506174");
+    colors.textTitle = colors.textPrimary;
     colors.textMuted = QColor("#697889");
     colors.textDisabled = QColor("#98A4B1");
     colors.success = QColor("#217A45");
