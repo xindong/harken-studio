@@ -68,8 +68,6 @@ add_library(harken_editor_foundation STATIC
     # Eliminate-Pack S4.3 — integrity scan (design §2.2 Pass 3 / §2.10).
     RuntimeContentBundleBuilder.cpp
     RuntimeContentBundleBuilder.h
-    PackGroupEditing.cpp
-    PackGroupEditing.h
     PlatformContext.h
     PlatformContextService.cpp
     PlatformContextService.h

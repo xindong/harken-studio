@@ -317,7 +317,6 @@ TEST_P(ProjectSerializationSavedState, SavedContentTracksValuesAcrossObjectKinds
 
     for (const auto& item : items) {
         item->notes = QStringLiteral("Authoring change");
-        item->extensions = {{QStringLiteral("external"), QJsonArray{1, 2, 3}}};
         item->color = 0x123456;
     }
     saved.refresh(project);
@@ -325,7 +324,6 @@ TEST_P(ProjectSerializationSavedState, SavedContentTracksValuesAcrossObjectKinds
     EXPECT_TRUE(saved.refresh(project).isEmpty());
     for (const auto& item : items) {
         item->notes.clear();
-        item->extensions = {};
         item->color = 0;
     }
     saved.refresh(project);

@@ -364,7 +364,7 @@ class SchemaArchiveTest(unittest.TestCase):
             self.assertEqual(MODULE["check_generated"](generated, expected), [])
             self.assertFalse((SCHEMA_ROOT / "Editor" / str(EDITOR_VERSION + 1)).exists())
 
-    def test_v3_extension_boundaries_are_preserved(self) -> None:
+    def test_document_extension_boundaries_match_the_generation(self) -> None:
         for source in MODULE["read_project_sources"]():
             for item in source["x-harken-documentTypes"]:
                 document = item["schema"]
@@ -396,7 +396,10 @@ class SchemaArchiveTest(unittest.TestCase):
                 if "$ref" in content:
                     content = source["$defs"][content["$ref"][len("#/$defs/"):]]
                 self.assertFalse(content["additionalProperties"])
-                self.assertEqual(content["properties"]["extensions"], {"additionalProperties": True, "type": "object"})
+                if source["projectSchemaVersion"] == EDITOR_VERSION:
+                    self.assertNotIn("extensions", content["properties"])
+                else:
+                    self.assertEqual(content["properties"]["extensions"], {"additionalProperties": True, "type": "object"})
 
     def test_header_version_mismatch_and_patch_inputs_are_rejected(self) -> None:
         source = MODULE["load_source"]()

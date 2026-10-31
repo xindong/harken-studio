@@ -1078,17 +1078,12 @@ QJsonObject ProjectSerializer::projectDocument(const QString& filePath,
     
     QJsonObject metadata;
     metadata["name"] = project.name;
-    metadata["author"] = project.author;
-    metadata["description"] = project.description;
-    {
-        metadata["platforms"] = ProjectPlatformSemantics::platformsToJson(project.platforms);
-        metadata["sampleRate"]        = project.sampleRate;
-        metadata["channelConfig"]     = static_cast<int>(project.channelConfig);
-    }
     root["metadata"] = metadata;
-
-    if (!project.extensions.isEmpty())
-        root[QStringLiteral("extensions")] = project.extensions;
+    root["audio"] = QJsonObject{
+        {"renderSampleRate", project.sampleRate},
+        {"channelConfig", static_cast<int>(project.channelConfig)},
+    };
+    root["deployPlatforms"] = ProjectPlatformSemantics::platformsToJson(project.platforms);
 
     emit progressChanged(20, tr("Saving project structure..."));
 
@@ -1114,35 +1109,10 @@ QJsonObject ProjectSerializer::projectDocument(const QString& filePath,
         QJsonArray langArray;
         for (const auto& lang : projectLanguages)
             langArray.append(lang);
-        root["projectLanguages"] = langArray;
+        root["deployLanguages"] = langArray;
     }
     if (!project.defaultLanguage.isEmpty())
         root["defaultLanguage"] = project.defaultLanguage;
-
-    if (!project.deploymentProfiles.empty()) {
-        QJsonArray profiles;
-        for (const auto& profile : project.deploymentProfiles) {
-            QJsonObject row;
-            row["profileId"] = profile.profileId;
-            row["name"] = profile.name;
-            row["engineKind"] = profile.engineKind;
-            row["destination"] = profile.destination;
-            QJsonArray platforms;
-            for (const QString& platform : profile.platformIds)
-                platforms.append(platform);
-            row["platformIds"] = platforms;
-            QJsonArray languages;
-            for (const QString& language : profile.languages)
-                languages.append(language);
-            row["languages"] = languages;
-            row["deployPacks"] = profile.deployPacks;
-            row["deployManifest"] = profile.deployManifest;
-            row["deployCurrentWorld"] = profile.deployCurrentWorld;
-            row["autoDeployAfterBuild"] = profile.autoDeployAfterBuild;
-            profiles.append(row);
-        }
-        root["deploymentProfiles"] = profiles;
-    }
 
     if (!project.packBuildOutputDir.isEmpty()) {
         root["packBuildOutputDir"] = PathUtils::normalizePackBuildOutputDir(project.packBuildOutputDir, filePath);
@@ -1444,7 +1414,6 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
 
     project.projectId = projectDocument.id;
     project.documentHeader = projectDocument.header;
-    project.extensions = root.value(QStringLiteral("extensions")).toObject();
     if (!AssetRegistry::sourceAssetsFromJson(root.value(QStringLiteral("sourceAssets")),
                                             project.sourceAssets)) {
         lastError_ = QStringLiteral("Invalid source asset references");
@@ -1461,17 +1430,16 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
 
     QJsonObject metadata = root["metadata"].toObject();
     project.name = metadata["name"].toString();
-    project.author = metadata["author"].toString();
-    project.description = metadata["description"].toString();
 
-    if (!ProjectPlatformSemantics::platformsFromJson(metadata["platforms"], &project.platforms, &lastError_))
+    if (!ProjectPlatformSemantics::platformsFromJson(root["deployPlatforms"], &project.platforms, &lastError_))
         return false;
-    if (metadata.contains("sampleRate")) {
-        project.sampleRate = metadata["sampleRate"].toInt(project.sampleRate);
+    const QJsonObject audio = root["audio"].toObject();
+    if (audio.contains("renderSampleRate")) {
+        project.sampleRate = audio["renderSampleRate"].toInt(project.sampleRate);
     }
-    if (metadata.contains("channelConfig")) {
+    if (audio.contains("channelConfig")) {
         project.channelConfig = static_cast<AudioChannelConfig>(
-            metadata["channelConfig"].toInt(static_cast<int>(project.channelConfig)));
+            audio["channelConfig"].toInt(static_cast<int>(project.channelConfig)));
     }
     emit progressChanged(60, tr("Loading project structure..."));
 
@@ -1482,7 +1450,7 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
 
 
     QStringList loadedLanguages;
-    for (const auto& v : root["projectLanguages"].toArray())
+    for (const auto& v : root["deployLanguages"].toArray())
         loadedLanguages.append(v.toString());
     project.projectLanguages = ProjectLanguageSemantics::dropSfxNames(loadedLanguages);
     project.defaultLanguage = root["defaultLanguage"].toString();
@@ -1513,27 +1481,6 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
             "Correct it in Project Settings > Publish before saving. ")
             + PathUtils::packBuildOutputLocationError());
 
-    project.deploymentProfiles.clear();
-    if (root.contains("deploymentProfiles")) {
-        for (const QJsonValue& value : root["deploymentProfiles"].toArray()) {
-            const QJsonObject row = value.toObject();
-            ProjectData::DeploymentProfile profile;
-            profile.profileId = row["profileId"].toString();
-            profile.name = row["name"].toString();
-            profile.engineKind = row["engineKind"].toString();
-            profile.destination = row["destination"].toString();
-            for (const QJsonValue& platform : row["platformIds"].toArray())
-                profile.platformIds.append(platform.toString());
-            for (const QJsonValue& language : row["languages"].toArray())
-                profile.languages.append(language.toString());
-            profile.deployPacks = row["deployPacks"].toBool(true);
-            profile.deployManifest = row["deployManifest"].toBool(true);
-            profile.deployCurrentWorld = row["deployCurrentWorld"].toBool(false);
-            profile.autoDeployAfterBuild = row["autoDeployAfterBuild"].toBool(false);
-            if (!profile.profileId.isEmpty() && !profile.engineKind.isEmpty())
-                project.deploymentProfiles.push_back(std::move(profile));
-        }
-    }
     project.nextObjectID = nextTransientObjectId_;
 
     recordLoadedDocument(resolvedProjectFilePath, data);
@@ -1547,8 +1494,6 @@ QJsonObject ProjectSerializer::projectItemToJson(const ProjectItem& item, bool i
 {
     QJsonObject json;
     if (!writeFieldGroups(item, json)) return {};
-    if (!item.extensions.isEmpty())
-        json[QStringLiteral("extensions")] = item.extensions;
     json["name"] = item.name;
     json["type"] = ItemTypeCatalog::canonicalName(item.type);
 
@@ -1603,7 +1548,6 @@ QJsonObject ProjectSerializer::projectItemToJson(const ProjectItem& item, bool i
 bool ProjectSerializer::projectItemFromJson(const QJsonObject& json, ProjectItem& item) const
 {
     if (!ProjectDocument::validateFieldGroupAuthoring(json, &lastError_)) return false;
-    item.extensions = json.value(QStringLiteral("extensions")).toObject();
     item.name = json["name"].toString();
     const auto type = itemTypeFromJson(json);
     if (!type) return false;
@@ -1796,7 +1740,6 @@ bool ProjectSerializer::audioBranchFromJson(
     ProjectItem& node) const
 {
     if (!ProjectDocument::validateFieldGroupAuthoring(json, &lastError_)) return false;
-    node.extensions = json.value(QStringLiteral("extensions")).toObject();
     node.name     = json["name"].toString();
     const auto type = itemTypeFromJson(json);
     if (!type) return false;
@@ -1922,11 +1865,11 @@ QJsonObject ProjectSerializer::actionPackToJson(const ProjectItem& event) const
 
     QJsonObject obj;
     if (!writeFieldGroups(event, obj)) return {};
-    if (!event.extensions.isEmpty())
-        obj[QStringLiteral("extensions")] = event.extensions;
     obj[QStringLiteral("guid")]     = event.guid.toString(QUuid::WithoutBraces);
     obj[QStringLiteral("type")]     = QStringLiteral("Action");
     obj[QStringLiteral("name")]     = event.name;
+    if (!event.notes.isEmpty())
+        obj[QStringLiteral("notes")] = event.notes;
     obj[QStringLiteral("parentRef")] = persistentParentReference(event);
     if (obj.value(QStringLiteral("parentRef")).toObject().isEmpty()) return {};
 
@@ -1945,7 +1888,6 @@ QJsonObject ProjectSerializer::actionPackToJson(const ProjectItem& event) const
 bool ProjectSerializer::actionPackFromJson(const QJsonObject& json, ProjectItem& event) const
 {
     if (!ProjectDocument::validateFieldGroupAuthoring(json, &lastError_)) return false;
-    event.extensions = json.value(QStringLiteral("extensions")).toObject();
     if (json.value(QStringLiteral("type")).toString() != QStringLiteral("Action"))
     {
         qWarning() << "[ActionPack] Skipping non-Action payload (type="
@@ -1963,6 +1905,7 @@ bool ProjectSerializer::actionPackFromJson(const QJsonObject& json, ProjectItem&
     }
 
     event.name = name;
+    event.notes = json.value(QStringLiteral("notes")).toString();
     event.type = ProjectItem::Type::Action;
     if (!json.value(QStringLiteral("guid")).isString())
         return false;
@@ -2012,8 +1955,6 @@ namespace {
 
 void writeS3RootIdentity(QJsonObject& obj, const ProjectItem& item)
 {
-    if (!item.extensions.isEmpty())
-        obj[QStringLiteral("extensions")] = item.extensions;
     obj[QStringLiteral("guid")]       = item.guid.toString(QUuid::WithoutBraces);
     obj[QStringLiteral("type")]       = ItemTypeCatalog::canonicalName(item.type);
     obj[QStringLiteral("name")]       = item.name;
@@ -2025,7 +1966,6 @@ void writeS3RootIdentity(QJsonObject& obj, const ProjectItem& item)
 
 bool readS3RootIdentity(const QJsonObject& json, ProjectItem& item, const char* tag)
 {
-    item.extensions = json.value(QStringLiteral("extensions")).toObject();
     const QString name = json.value(QStringLiteral("name")).toString();
     NameValidator::Result vr;
     if (!NameValidator::validateItemName(name, item.type, &vr))
@@ -2220,11 +2160,11 @@ QJsonObject ProjectSerializer::busPackToJson(
 
     QJsonObject root;
     if (!writeFieldGroups(busItem, root)) return {};
-    if (!busItem.extensions.isEmpty())
-        root[QStringLiteral("extensions")] = busItem.extensions;
     root[QStringLiteral("type")]       = QStringLiteral("Bus");
     root[QStringLiteral("guid")]       = busItem.guid.toString(QUuid::WithoutBraces);
     root[QStringLiteral("name")]       = busItem.name;
+    if (!busItem.notes.isEmpty())
+        root[QStringLiteral("notes")] = busItem.notes;
 
     root[QStringLiteral("parentRef")] = persistentParentReference(busItem);
     if (root.value(QStringLiteral("parentRef")).toObject().isEmpty()) return {};
@@ -2266,7 +2206,6 @@ ProjectItem* ProjectSerializer::busPackFromJson(
 
     auto item = std::make_shared<ProjectItem>(
         QString(), ProjectItem::Type::Bus);
-    item->extensions = json.value(QStringLiteral("extensions")).toObject();
     item->attachDefaultComponents();
 
     if (!json.value(QStringLiteral("guid")).isString())
@@ -2275,6 +2214,7 @@ ProjectItem* ProjectSerializer::busPackFromJson(
     if (item->guid.isNull())
         return nullptr;
     item->name = json.value(QStringLiteral("name")).toString(item->name);
+    item->notes = json.value(QStringLiteral("notes")).toString();
     const auto registered = referencesByGuid_.constFind(item->guid);
     if (registered == referencesByGuid_.cend()
         || registered->type != ProjectItem::Type::Bus)

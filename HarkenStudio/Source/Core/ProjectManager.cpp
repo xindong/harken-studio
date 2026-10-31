@@ -1234,20 +1234,6 @@ void ProjectManager::setPackExportSelectedPlatformsInternal(const QStringList& v
     setPackExportSelectionInternal(std::move(selection));
 }
 
-std::vector<PackGroup> ProjectManager::getPackGroups() const
-{
-    if (!m_currentProject) return {};
-    return m_currentProject->packGroups;
-}
-
-void ProjectManager::setPackGroupsInternal(std::vector<PackGroup> value)
-{
-    if (!m_currentProject) return;
-    if (m_currentProject->packGroups == value) return;
-    m_currentProject->packGroups = std::move(value);
-    emit packGroupsChanged();
-}
-
 std::vector<ActionPackTargeting> ProjectManager::getActionPackTargeting() const
 {
     return packExportSelection().actionTargeting;
@@ -1296,7 +1282,6 @@ void ProjectManager::notifyProjectPlatformEdits(const QVector<ProjectItem*>& cha
     emit targetPlatformsChanged(m_currentProject->platformIds());
     emit packExportCurrentPlatformChanged(getPackExportCurrentPlatform());
     emit packExportSelectedPlatformsChanged(getPackExportSelectedPlatforms());
-    emit packGroupsChanged();
     emit actionPackTargetingChanged();
     for (auto* item : changedItems) {
         emit itemPropertyChanged(item, QStringLiteral("platformOverrides"), nullptr);
@@ -1541,8 +1526,6 @@ bool ProjectManager::createMainProjectFile(const ProjectConfig& config, const QS
     }
     ProjectData project;
     project.name = config.name;
-    project.author = config.author;
-    project.description = config.description;
     project.projectPath = QDir(projectRoot).filePath(config.name + ".hsp");
 
     project.platforms = config.platforms;
@@ -1766,8 +1749,6 @@ PreparedProject ProjectManager::prepareProject(const ProjectConfig& config,
     ProjectSerializer serializer;
     ProjectData project;
     project.name = config.name;
-    project.author = config.author;
-    project.description = config.description;
     project.projectPath = root.filePath(config.name + QStringLiteral(".hsp"));
     project.projectId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     project.platforms = config.platforms;
@@ -5025,20 +5006,15 @@ void applyFolderComponentReferences(ProjectItem& item, const QJsonObject& state)
         emit ProjectManager::instance().itemPropertyChanged(&item, property);
 }
 
-QJsonObject folderProjectReferences(const ProjectData& project)
+QJsonObject folderProjectReferences()
 {
-    QJsonArray groups;
-    for (const auto& group : project.packGroups) groups.append(group.toJson());
     QJsonArray targeting;
     for (const auto& target : ProjectManager::instance().getActionPackTargeting()) targeting.append(target.toJson());
-    return {{QStringLiteral("packGroups"), groups}, {QStringLiteral("actionPackTargeting"), targeting}};
+    return {{QStringLiteral("actionPackTargeting"), targeting}};
 }
 
-void applyFolderProjectReferences(ProjectData& project, const QJsonObject& state)
+void applyFolderProjectReferences(const QJsonObject& state)
 {
-    project.packGroups.clear();
-    for (const auto& group : state.value(QStringLiteral("packGroups")).toArray())
-        project.packGroups.push_back(PackGroup::fromJson(group.toObject()));
     std::vector<ActionPackTargeting> targeting;
     for (const auto& target : state.value(QStringLiteral("actionPackTargeting")).toArray())
         targeting.push_back(ActionPackTargeting::fromJson(target.toObject()));
@@ -5147,7 +5123,7 @@ DeletedSubtreeRefLog ProjectManager::cleanupReferencesToDeletedSubtree(ProjectIt
             scrub(binding->rootItem.get());
 
     {
-        const auto before = folderProjectReferences(*project);
+        const auto before = folderProjectReferences();
         auto after = PhysicalFolderReferenceEdits::removeReferences(before, deletedGuids);
         QJsonArray targeting;
         for (const auto& value : after.value(QStringLiteral("actionPackTargeting")).toArray()) {
@@ -5160,7 +5136,7 @@ DeletedSubtreeRefLog ProjectManager::cleanupReferencesToDeletedSubtree(ProjectIt
         if (before != after) {
             log.folderProjectReferencesBefore = before;
             log.folderProjectReferencesAfter = after;
-            applyFolderProjectReferences(*project, after);
+            applyFolderProjectReferences(after);
         }
     }
 
@@ -5227,10 +5203,10 @@ void ProjectManager::restoreReferencesFromLog(const DeletedSubtreeRefLog& log,
     };
 
     if (!log.folderProjectReferencesBefore.isEmpty()) {
-        auto current = folderProjectReferences(*project);
+        auto current = folderProjectReferences();
         if (PhysicalFolderReferenceEdits::mergeReferences(current,
                 log.folderProjectReferencesAfter, log.folderProjectReferencesBefore))
-            applyFolderProjectReferences(*project, current);
+            applyFolderProjectReferences(current);
     }
     for (const auto& ref : log.folderComponentRefs) {
         auto* item = findById(ref.ownerObjectID);

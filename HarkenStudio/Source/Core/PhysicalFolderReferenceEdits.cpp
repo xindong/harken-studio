@@ -305,10 +305,6 @@ QJsonObject PhysicalFolderReferenceEdits::removeReferences(QJsonObject content,
         });
     });
     editArray(content, QStringLiteral("children"), [&](auto& child) { child = removeReferences(child, guids); });
-    editArray(content, QStringLiteral("packGroups"), [&](QJsonObject& group) {
-        if (group.contains(QStringLiteral("actionIds")))
-            group.insert(QStringLiteral("actionIds"), filtered(group.value(QStringLiteral("actionIds")).toArray(), [&](const auto& id) { return deleted(id, guids); }));
-    });
     if (content.contains(QStringLiteral("actionPackTargeting")))
         content.insert(QStringLiteral("actionPackTargeting"), filtered(content.value(QStringLiteral("actionPackTargeting")).toArray(), [&](const auto& row) {
             return deleted(row.toObject().value(QStringLiteral("stableId")), guids);

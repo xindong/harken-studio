@@ -63,11 +63,6 @@ QString createBaselineProject(const QTemporaryDir& directory)
                   {QStringLiteral("metadata"), QJsonObject{
                       {QStringLiteral("name"), QStringLiteral("Baseline")},
                   }},
-                  {QStringLiteral("extensions"), QJsonObject{
-                      {QStringLiteral("test"), QJsonObject{
-                          {QStringLiteral("payload"), QStringLiteral("must-survive")},
-                      }},
-                  }},
               }));
     writeJson(directory.filePath(QStringLiteral("Layers/Main.vp")),
               HarkenTest::projectDocument(
@@ -261,13 +256,15 @@ TEST(ProjectSaveSnapshot, DocumentBytesMatchTextFilesAndRejectDirectoryCollision
     QString type = QStringLiteral("project.layer");
     QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QString projectId = HarkenTest::kProjectId;
-    QJsonObject header{{QStringLiteral("external"), QJsonObject{{QStringLiteral("revision"), 1}}}};
+    QJsonObject header{
+        {QStringLiteral("external"), QJsonObject{{QStringLiteral("revision"), 1}}},
+        {QStringLiteral("metadata"), document},
+    };
     QJsonObject content = HarkenTest::projectDocument(type, id, projectId, {
         {QStringLiteral("type"), QStringLiteral("Layer")},
         {QStringLiteral("name"), QStringLiteral("Generated")},
         {QStringLiteral("guid"), id},
         {QStringLiteral("children"), QJsonArray{}},
-        {QStringLiteral("extensions"), document},
     }).value(QStringLiteral("content")).toObject();
     const auto verifyCreated = [&](VNX::ProjectSaveSnapshot& target,
                                    const QJsonObject& authored, bool valid) {
@@ -282,7 +279,7 @@ TEST(ProjectSaveSnapshot, DocumentBytesMatchTextFilesAndRejectDirectoryCollision
     VNX::ProjectSaveSnapshot generated(directory.path());
     verifyCreated(generated, content, true);
     for (const QJsonValue& number : numbers) {
-        content.insert(QStringLiteral("extensions"), QJsonObject{{QStringLiteral("value"), number}});
+        header.insert(QStringLiteral("metadata"), QJsonObject{{QStringLiteral("value"), number}});
         for (int repeat = 0; repeat < 2; ++repeat) {
             VNX::ProjectSaveSnapshot current(directory.path(), &generated);
             verifyCreated(current, content, true);
@@ -608,7 +605,7 @@ TEST(ProjectContract, ParentDependenciesKeepInheritedTargetsWithoutExpandingPlay
     parent.insert(QStringLiteral("content"), content);
     auto child = definition(childId, QStringLiteral("Main"), QStringLiteral("Sound"), parentId);
     content = HarkenTest::projectContent(child);
-    content.insert(QStringLiteral("extensions"), QJsonObject{{QStringLiteral("opaqueGuid"), descendantId}});
+    content.insert(QStringLiteral("notes"), descendantId);
     child.insert(QStringLiteral("content"), content);
     auto sibling = definition(siblingId, QStringLiteral("Sibling"), QStringLiteral("Container"), parentId);
     content = HarkenTest::projectContent(sibling);
@@ -721,20 +718,17 @@ TEST(ProjectUpgradeManager, ChangedProjectIsNotOverwrittenByStaleAnalysis)
     ASSERT_TRUE(analysis.ok);
     QJsonObject root = readJson(projectPath);
     QJsonObject content = HarkenTest::projectContent(root);
-    QJsonObject extensions = content.value(QStringLiteral("extensions")).toObject();
-    QJsonObject test = extensions.value(QStringLiteral("test")).toObject();
-    test.insert(QStringLiteral("payload"), QStringLiteral("newer-content"));
-    extensions.insert(QStringLiteral("test"), test);
-    content.insert(QStringLiteral("extensions"), extensions);
+    QJsonObject metadata = content.value(QStringLiteral("metadata")).toObject();
+    metadata.insert(QStringLiteral("name"), QStringLiteral("newer-content"));
+    content.insert(QStringLiteral("metadata"), metadata);
     root.insert(QStringLiteral("content"), content);
     writeJson(projectPath, root);
 
     const VNX::ProjectUpgradeResult result = manager.execute(analysis);
     EXPECT_FALSE(result.ok);
     EXPECT_EQ(HarkenTest::projectContent(readJson(projectPath))
-                  .value(QStringLiteral("extensions")).toObject()
-                  .value(QStringLiteral("test")).toObject()
-                  .value(QStringLiteral("payload")).toString(),
+                  .value(QStringLiteral("metadata")).toObject()
+                  .value(QStringLiteral("name")).toString(),
               QStringLiteral("newer-content"));
 }
 

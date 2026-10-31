@@ -12,29 +12,6 @@
       },
       "type": "object"
     },
-    "actionPackTargeting": {
-      "additionalProperties": false,
-      "properties": {
-        "allPlatforms": {
-          "type": "boolean"
-        },
-        "language": {
-          "type": "string"
-        },
-        "platformIds": {
-          "$ref": "#/$defs/projectPlatformIds"
-        },
-        "stableId": {
-          "$ref": "#/$defs/uuid"
-        }
-      },
-      "required": [
-        "platformIds",
-        "allPlatforms",
-        "stableId"
-      ],
-      "type": "object"
-    },
     "actionQuantize": {
       "additionalProperties": false,
       "properties": {
@@ -544,45 +521,6 @@
       },
       "type": "object"
     },
-    "deploymentProfile": {
-      "additionalProperties": false,
-      "properties": {
-        "autoDeployAfterBuild": {
-          "type": "boolean"
-        },
-        "deployCurrentWorld": {
-          "type": "boolean"
-        },
-        "deployManifest": {
-          "type": "boolean"
-        },
-        "deployPacks": {
-          "type": "boolean"
-        },
-        "destination": {
-          "type": "string"
-        },
-        "engineKind": {
-          "type": "string"
-        },
-        "languages": {
-          "$ref": "#/$defs/stringArray"
-        },
-        "name": {
-          "type": "string"
-        },
-        "platformIds": {
-          "$ref": "#/$defs/projectPlatformIds"
-        },
-        "profileId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "platformIds"
-      ],
-      "type": "object"
-    },
     "gridAxis": {
       "$ref": "#/$defs/uuid"
     },
@@ -600,10 +538,6 @@
         "components": {
           "$ref": "#/$defs/definitionComponents"
         },
-        "extensions": {
-          "additionalProperties": true,
-          "type": "object"
-        },
         "guid": {
           "$ref": "#/$defs/uuid"
         },
@@ -619,17 +553,11 @@
         "parentRef": {
           "$ref": "#/$defs/parentRef"
         },
-        "path": {
-          "type": "string"
-        },
         "playableProperties": {
           "$ref": "#/$defs/playableProperties"
         },
         "fieldGroups": {
           "$ref": "#/$defs/fieldGroups"
-        },
-        "sourceID": {
-          "$ref": "#/$defs/positiveInteger"
         },
         "type": {
           "enum": [
@@ -723,31 +651,6 @@
       },
       "required": [
         "id"
-      ],
-      "type": "object"
-    },
-    "packGroup": {
-      "additionalProperties": false,
-      "properties": {
-        "actionIds": {
-          "items": {
-            "$ref": "#/$defs/uuid"
-          },
-          "type": "array"
-        },
-        "allPlatforms": {
-          "type": "boolean"
-        },
-        "name": {
-          "type": "string"
-        },
-        "platformIds": {
-          "$ref": "#/$defs/projectPlatformIds"
-        }
-      },
-      "required": [
-        "platformIds",
-        "allPlatforms"
       ],
       "type": "object"
     },
@@ -1011,12 +914,9 @@
       "minimum": 1,
       "type": "integer"
     },
-    "projectMetadata": {
+    "projectAudio": {
       "additionalProperties": false,
       "properties": {
-        "author": {
-          "type": "string"
-        },
         "channelConfig": {
           "enum": [
             0,
@@ -1027,26 +927,19 @@
           ],
           "type": "integer"
         },
-        "description": {
-          "type": "string"
-        },
-        "name": {
-          "type": "string"
-        },
-        "platforms": {
-          "items": {
-            "$ref": "#/$defs/projectPlatform"
-          },
-          "minItems": 1,
-          "type": "array"
-        },
-        "sampleRate": {
+        "renderSampleRate": {
           "type": "integer"
         }
       },
-      "required": [
-        "platforms"
-      ],
+      "type": "object"
+    },
+    "projectMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
       "type": "object"
     },
     "projectPlatform": {
@@ -1085,12 +978,6 @@
     "projectPlatformId": {
       "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
       "type": "string"
-    },
-    "projectPlatformIds": {
-      "items": {
-        "$ref": "#/$defs/projectPlatformId"
-      },
-      "type": "array"
     },
     "projectPlatformProfile": {
       "additionalProperties": false,
@@ -1140,10 +1027,6 @@
         "components": {
           "$ref": "#/$defs/components"
         },
-        "extensions": {
-          "additionalProperties": true,
-          "type": "object"
-        },
         "guid": {
           "$ref": "#/$defs/uuid"
         },
@@ -1156,9 +1039,6 @@
         },
         "parentRef": {
           "$ref": "#/$defs/parentRef"
-        },
-        "path": {
-          "type": "string"
         },
         "type": {
           "enum": [
@@ -1888,18 +1768,6 @@
       ],
       "type": "object"
     },
-    "unityIntegration": {
-      "additionalProperties": false,
-      "properties": {
-        "autoDeploy": {
-          "type": "boolean"
-        },
-        "projectPath": {
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
     "uuid": {
       "format": "uuid",
       "type": "string"
@@ -2493,15 +2361,14 @@
                 },
                 "type": "array"
               },
-              "extensions": {
-                "additionalProperties": true,
-                "type": "object"
-              },
               "guid": {
                 "$ref": "#/$defs/uuid"
               },
               "name": {
                 "minLength": 1,
+                "type": "string"
+              },
+              "notes": {
                 "type": "string"
               },
               "parentRef": {
@@ -2629,15 +2496,14 @@
                   "bus"
                 ]
               },
-              "extensions": {
-                "additionalProperties": true,
-                "type": "object"
-              },
               "guid": {
                 "$ref": "#/$defs/uuid"
               },
               "name": {
                 "minLength": 1,
+                "type": "string"
+              },
+              "notes": {
                 "type": "string"
               },
               "parentRef": {
@@ -2762,26 +2628,18 @@
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "additionalProperties": false,
             "properties": {
-              "actionPackTargeting": {},
-              "conversionFailurePolicy": {
-                "enum": [
-                  "abort_build",
-                  "skip_and_warn"
-                ],
-                "type": "string"
-              },
               "defaultLanguage": {
                 "type": "string"
               },
-              "deploymentProfiles": {
-                "items": {
-                  "$ref": "#/$defs/deploymentProfile"
-                },
-                "type": "array"
+              "audio": {
+                "$ref": "#/$defs/projectAudio"
               },
-              "extensions": {
-                "additionalProperties": true,
-                "type": "object"
+              "deployPlatforms": {
+                "items": {
+                  "$ref": "#/$defs/projectPlatform"
+                },
+                "minItems": 1,
+                "type": "array"
               },
               "metadata": {
                 "$ref": "#/$defs/projectMetadata"
@@ -2801,13 +2659,7 @@
               "buildWaveformOutputDir": {
                 "type": "string"
               },
-              "packExportCurrentPlatformId": {},
-              "packExportSelectedPlatformIds": {},
-              "packGroups": {},
-              "packOutputDir": {
-                "type": "string"
-              },
-              "projectLanguages": {
+              "deployLanguages": {
                 "$ref": "#/$defs/stringArray"
               },
               "sourceAssets": {
@@ -2819,13 +2671,11 @@
                   "type": "string",
                   "minLength": 1
                 }
-              },
-              "unityIntegration": {
-                "$ref": "#/$defs/unityIntegration"
               }
             },
             "required": [
-              "metadata"
+              "metadata",
+              "deployPlatforms"
             ],
             "type": "object"
           },
@@ -2931,7 +2781,6 @@
     }
   ],
   "x-harken-extensionPolicy": {
-    "contentExtensions": "ignorable metadata, preserved on save",
     "headerAdditionalProperties": "ignorable metadata, preserved on save",
     "preservedModulePayloads": {
       "mixNodeComponent.bindings": "unknown object fields and opaque entries preserved; known values parsed by module",

@@ -92,6 +92,16 @@ MigrationManager::MigrationManager()
                         header.value(QStringLiteral("id")).toString(),
                         header.value(QStringLiteral("projectId")).toString(), header);
                     auto content = document.value(QStringLiteral("content")).toObject();
+                    if (header.value(QStringLiteral("type")) == QStringLiteral("project.root")) {
+                        auto metadata = content.value(QStringLiteral("metadata")).toObject();
+                        QJsonObject audio;
+                        audio.insert(QStringLiteral("renderSampleRate"), metadata.take(QStringLiteral("sampleRate")));
+                        audio.insert(QStringLiteral("channelConfig"), metadata.take(QStringLiteral("channelConfig")));
+                        content.insert(QStringLiteral("audio"), audio);
+                        content.insert(QStringLiteral("deployPlatforms"), metadata.take(QStringLiteral("platforms")));
+                        content.insert(QStringLiteral("deployLanguages"), content.take(QStringLiteral("projectLanguages")));
+                        content.insert(QStringLiteral("metadata"), metadata);
+                    }
                     if (!ProjectDocument::normalizeContent(&content, error)) return false;
                     document.insert(QStringLiteral("content"), content);
                 }

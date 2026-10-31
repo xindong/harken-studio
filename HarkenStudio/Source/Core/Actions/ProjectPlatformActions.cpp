@@ -21,9 +21,7 @@ struct RootState
     QVector<ProjectPlatform> platforms;
     QString current;
     QStringList selected;
-    std::vector<PackGroup> groups;
     std::vector<ActionPackTargeting> targeting;
-    std::vector<ProjectData::DeploymentProfile> deployments;
     PlatformContext context;
 };
 
@@ -49,8 +47,7 @@ RootState captureRoot(const ProjectData& project)
 {
     const auto selection = ProjectManager::instance().packExportSelection();
     return {project.platforms, selection.currentPlatformId,
-            selection.selectedPlatformIds, project.packGroups,
-            selection.actionTargeting, project.deploymentProfiles,
+            selection.selectedPlatformIds, selection.actionTargeting,
             PlatformContextService::instance().context()};
 }
 
@@ -109,7 +106,7 @@ bool canApply(const ProjectManager& manager, const EditState& state)
 }
 
 void apply(ProjectManager& manager, const EditState& state, const QStringList& platformIds,
-           bool membershipChanged, bool referencesChanged)
+           bool membershipChanged)
 {
     PropertyEditSession::finishAllActive(false);
     auto& project = *manager.currentProject();
@@ -164,10 +161,6 @@ void apply(ProjectManager& manager, const EditState& state, const QStringList& p
         }
         manager.setPackExportSelectionInternal(std::move(selection));
     }
-    if (referencesChanged) {
-        project.packGroups = state.root.groups;
-        project.deploymentProfiles = state.root.deployments;
-    }
     QVector<ProjectItem*> changed;
     for (const auto& owner : state.owners) {
         auto* item = manager.findItemByGuid(owner.guid);
@@ -214,13 +207,13 @@ ActionResult commitEdit(ProjectManager* manager, EditState before, EditState aft
         }
     }
     const std::weak_ptr<ProjectData> lease = project;
-    const auto replay = [manager, lease, editedIds, membershipChanged, referencesChanged = !removedIds.isEmpty()](const EditState& state) {
+    const auto replay = [manager, lease, editedIds, membershipChanged](const EditState& state) {
         const auto project = lease.lock();
         if (project && manager->currentProject() == project.get() && canApply(*manager, state))
-            apply(*manager, state, editedIds, membershipChanged, referencesChanged);
+            apply(*manager, state, editedIds, membershipChanged);
     };
     auto history = std::make_shared<std::pair<EditState, EditState>>(std::move(before), std::move(after));
-    apply(*manager, history->second, editedIds, membershipChanged, !removedIds.isEmpty());
+    apply(*manager, history->second, editedIds, membershipChanged);
     result.undoFn = [replay, history]() { replay(history->first); };
     result.redoFn = [replay, history]() { replay(history->second); };
     result.canReplay = [manager, lease]() {
@@ -308,9 +301,7 @@ ActionResult executeEdit(ProjectManager* manager, Operation operation, const QJs
         after.root.platforms.removeAt(index);
         after.root.selected.removeAll(id);
         if (after.root.current == id) after.root.current = Platforms::idString(after.root.platforms.first().id);
-        for (auto& group : after.root.groups) group.platformIds.removeAll(id);
         for (auto& targeting : after.root.targeting) targeting.platformIds.removeAll(id);
-        for (auto& deployment : after.root.deployments) deployment.platformIds.removeAll(id);
     } else {
         after.root.platforms[index] = definition;
     }
@@ -369,9 +360,7 @@ ActionResult applyPlatforms(ProjectManager* manager, const QJsonObject& args)
         if (next) continue;
         after.root.selected.removeAll(id);
         if (after.root.current == id) after.root.current = ids.first();
-        for (auto& group : after.root.groups) group.platformIds.removeAll(id);
         for (auto& targeting : after.root.targeting) targeting.platformIds.removeAll(id);
-        for (auto& deployment : after.root.deployments) deployment.platformIds.removeAll(id);
     }
     for (const auto& id : ids) {
         if (oldIds.contains(id)) continue;

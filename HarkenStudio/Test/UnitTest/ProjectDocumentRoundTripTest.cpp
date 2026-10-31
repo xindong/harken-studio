@@ -208,9 +208,6 @@ protected:
             const QJsonObject metadata = extensionMetadata(id);
             header.insert(QStringLiteral("futureHeaderMetadata"), metadata);
             document.insert(QStringLiteral("harkenDocument"), header);
-            QJsonObject content = HarkenTest::projectContent(document);
-            content.insert(QStringLiteral("extensions"), metadata);
-            document.insert(QStringLiteral("content"), content);
             writeObject(path, document);
             documentsById_.insert(id, document);
             pathsById_.insert(id, path);
@@ -228,23 +225,19 @@ protected:
         for (auto it = documentsById_.cbegin(); it != documentsById_.cend(); ++it) {
             const QJsonObject expectedHeader = HarkenTest::projectHeader(it.value());
             QJsonObject header;
-            QJsonObject extensions;
             if (expectedHeader.value(QStringLiteral("type"))
                 == QStringLiteral("project.root")) {
                 header = project.documentHeader;
-                extensions = project.extensions;
             } else {
                 ProjectItem* item = findItem(project, QUuid::fromString(it.key()));
                 ASSERT_NE(item, nullptr) << it.key().toStdString();
                 header = item->documentHeader;
-                extensions = item->extensions;
                 if (const auto* bus = item->comp<VBus>())
                     EXPECT_EQ(bus->toJson(), HarkenTest::projectContent(it.value())
                         .value(QStringLiteral("components")).toObject().value(QStringLiteral("bus")).toObject());
             }
             EXPECT_EQ(header.value(QStringLiteral("futureHeaderMetadata")),
                       expectedHeader.value(QStringLiteral("futureHeaderMetadata")));
-            EXPECT_EQ(extensions, extensionMetadata(it.key()));
         }
     }
 
@@ -274,7 +267,12 @@ TEST_F(ProjectDocumentRoundTripTest, AllDocumentMetadataSurvivesEditingSavingAnd
     for (auto it = pathsById_.cbegin(); it != pathsById_.cend(); ++it)
         EXPECT_EQ(readObject(it.value()), documentsById_.value(it.key()));
 
-    project.description = QStringLiteral("Edited by the baseline reader");
+    project.name = QStringLiteral("Edited by the baseline reader");
+    project.sampleRate = 44100;
+    project.channelConfig = AudioChannelConfig::Surround_5_1;
+    project.platforms = HarkenTest::platforms({"Windows", "Android"});
+    ASSERT_TRUE(manager.addProjectLanguage(QStringLiteral("English")));
+    ASSERT_TRUE(manager.addProjectLanguage(QStringLiteral("Japanese")));
     for (auto it = documentsById_.cbegin(); it != documentsById_.cend(); ++it) {
         const QJsonObject header = HarkenTest::projectHeader(it.value());
         if (header.value(QStringLiteral("type")) == QStringLiteral("project.root"))
@@ -291,6 +289,11 @@ TEST_F(ProjectDocumentRoundTripTest, AllDocumentMetadataSurvivesEditingSavingAnd
     ASSERT_TRUE(manager.loadProject(projectPath_));
     ProjectData& reopened = *manager.currentProject();
     expectModelMetadata(reopened);
+    EXPECT_EQ(reopened.sampleRate, 44100);
+    EXPECT_EQ(reopened.channelConfig, AudioChannelConfig::Surround_5_1);
+    EXPECT_EQ(ProjectPlatformSemantics::platformsToJson(reopened.platforms),
+              ProjectPlatformSemantics::platformsToJson(HarkenTest::platforms({"Windows", "Android"})));
+    EXPECT_EQ(reopened.projectLanguages, (QStringList{"English", "Japanese"}));
     const auto savedPaths = documentPathsById(projectDirectory_);
     EXPECT_EQ(savedPaths.keys(), documentsById_.keys());
     for (auto it = savedPaths.cbegin(); it != savedPaths.cend(); ++it) {
@@ -299,9 +302,13 @@ TEST_F(ProjectDocumentRoundTripTest, AllDocumentMetadataSurvivesEditingSavingAnd
         EXPECT_EQ(header.value(QStringLiteral("futureHeaderMetadata")),
                   HarkenTest::projectHeader(documentsById_.value(it.key()))
                       .value(QStringLiteral("futureHeaderMetadata")));
-        EXPECT_EQ(HarkenTest::projectContent(document).value(QStringLiteral("extensions")),
-                  extensionMetadata(it.key()));
     }
+    ASSERT_TRUE(manager.removeProjectLanguage(QStringLiteral("English")));
+    ASSERT_TRUE(manager.removeProjectLanguage(QStringLiteral("Japanese")));
+    ASSERT_TRUE(manager.saveProject());
+    ASSERT_TRUE(manager.closeProject());
+    ASSERT_TRUE(manager.loadProject(projectPath_));
+    EXPECT_TRUE(manager.currentProject()->projectLanguages.isEmpty());
 }
 
 TEST_F(ProjectDocumentRoundTripTest, SupportedDocumentVersionsPreserveContentThroughOpenSave)
@@ -328,6 +335,11 @@ TEST_F(ProjectDocumentRoundTripTest, SupportedDocumentVersionsPreserveContentThr
                         {QStringLiteral("audioFolder"), QStringLiteral("Layers")},
                     });
                     auto metadata = content.value(QStringLiteral("metadata")).toObject();
+                    const auto audio = content.take(QStringLiteral("audio")).toObject();
+                    metadata.insert(QStringLiteral("sampleRate"), audio.value(QStringLiteral("renderSampleRate")));
+                    metadata.insert(QStringLiteral("channelConfig"), audio.value(QStringLiteral("channelConfig")));
+                    metadata.insert(QStringLiteral("platforms"), content.take(QStringLiteral("deployPlatforms")));
+                    content.insert(QStringLiteral("projectLanguages"), content.take(QStringLiteral("deployLanguages")));
                     metadata.insert(QStringLiteral("createdDate"), QStringLiteral("2001-02-03T04:05:06Z"));
                     metadata.insert(QStringLiteral("modifiedDate"), QStringLiteral("2001-02-03T04:05:06Z"));
                     metadata.insert(QStringLiteral("toolVersion"), QStringLiteral("HarkenStudio 1.0.0"));
@@ -396,8 +408,11 @@ TEST_F(ProjectDocumentRoundTripTest, SupportedDocumentVersionsPreserveContentThr
                       ProjectSchema::kProjectSchemaVersion);
             const auto content = HarkenTest::projectContent(document);
             const auto original = HarkenTest::projectContent(documentsById_.value(it.key()));
-            for (const auto* key : {"type", "name", "guid", "parentRef", "extensions"})
+            for (const auto* key : {"type", "name", "guid", "parentRef"})
                 EXPECT_EQ(content.value(QLatin1String(key)), original.value(QLatin1String(key)));
+            if (HarkenTest::projectHeader(document).value(QStringLiteral("type")) == QStringLiteral("project.root"))
+                for (const auto* key : {"metadata", "audio", "deployPlatforms", "deployLanguages"})
+                    EXPECT_EQ(content.value(QLatin1String(key)), original.value(QLatin1String(key)));
             if (it.key() == segmentGuid_.toString(QUuid::WithoutBraces))
                 EXPECT_EQ(content.value(QStringLiteral("components")),
                           original.value(QStringLiteral("components")));
@@ -502,12 +517,12 @@ TEST_F(ProjectDocumentRoundTripTest, UnchangedDocumentsPreserveBytesAndModificat
             << it.key().toStdString();
     }
 
-    const QString description = QStringLiteral("Edited after an unchanged save");
-    manager.currentProject()->description = description;
+    const QString name = QStringLiteral("Edited after an unchanged save");
+    manager.currentProject()->name = name;
     ASSERT_TRUE(manager.saveProject());
     const auto savedMetadata = HarkenTest::projectContent(readObject(projectPath_))
         .value(QStringLiteral("metadata")).toObject();
-    EXPECT_EQ(savedMetadata.value(QStringLiteral("description")).toString(), description);
+    EXPECT_EQ(savedMetadata.value(QStringLiteral("name")).toString(), name);
     EXPECT_GT(QFileInfo(projectPath_).lastModified(), modificationTimes.value(projectPath_));
     for (auto it = committed.cbegin(); it != committed.cend(); ++it) {
         if (it.key() == projectPath_) continue;
@@ -533,40 +548,42 @@ TEST_F(ProjectDocumentRoundTripTest, OrdinaryEditsAndUndoPreserveTheSameDocument
     ASSERT_TRUE(manager.saveProject());
     const auto original = savedDocumentContent();
     QList<QUuid> edited;
+    qsizetype editCount = 0;
     for (auto it = documentsById_.cbegin(); it != documentsById_.cend(); ++it) {
         if (HarkenTest::projectHeader(it.value()).value(QStringLiteral("type"))
             == QStringLiteral("project.root")) continue;
         auto* item = manager.findItemByGuid(QUuid(it.key()));
         ASSERT_NE(item, nullptr);
         SCOPED_TRACE(item->name.toStdString());
-        QString property = QStringLiteral("notes");
-        QJsonValue value = QStringLiteral("Edited after opening");
+        QList<std::pair<QString, QJsonValue>> properties{
+            {QStringLiteral("notes"), QStringLiteral("Edited after opening\n") + item->name}};
         if (item->type == ProjectItem::Type::Bus) {
-            property = QStringLiteral("volume");
-            value = -6.0;
+            properties.append({QStringLiteral("volume"), -6.0});
         } else if (item->type == ProjectItem::Type::Action) {
             const auto* target = manager.findItemByGuid(segmentGuid_);
             ASSERT_NE(target, nullptr);
             VActionStep step;
             step.targetObjectID = target->objectID;
             step.targetName = target->name;
-            property = QStringLiteral("steps");
-            value = ActionStepEditing::stepsToJson({step});
+            properties.append({QStringLiteral("steps"), ActionStepEditing::stepsToJson({step})});
         }
-        const auto result = actions.execute(QStringLiteral("set_item_property"), {
-            {QStringLiteral("authoring_handle"), static_cast<qint64>(item->objectID)},
-            {QStringLiteral("property"), property}, {QStringLiteral("value"), value}});
-        ASSERT_TRUE(result.success) << result.errorMessage.toStdString();
+        for (const auto& [property, value] : properties) {
+            const auto result = actions.execute(QStringLiteral("set_item_property"), {
+                {QStringLiteral("authoring_handle"), static_cast<qint64>(item->objectID)},
+                {QStringLiteral("property"), property}, {QStringLiteral("value"), value}});
+            ASSERT_TRUE(result.success) << result.errorMessage.toStdString();
+            ++editCount;
+        }
         EXPECT_TRUE(item->dirtyBit);
         edited.append(item->guid);
     }
     ASSERT_FALSE(edited.isEmpty());
-    for (qsizetype i = 0; i < edited.size(); ++i) ASSERT_TRUE(undo.undo());
+    for (qsizetype i = 0; i < editCount; ++i) ASSERT_TRUE(undo.undo());
     for (const auto& guid : edited) EXPECT_FALSE(manager.findItemByGuid(guid)->dirtyBit);
     ASSERT_TRUE(manager.saveProject());
     EXPECT_EQ(savedDocumentContent(), original);
 
-    for (qsizetype i = 0; i < edited.size(); ++i) ASSERT_TRUE(undo.redo());
+    for (qsizetype i = 0; i < editCount; ++i) ASSERT_TRUE(undo.redo());
     ASSERT_TRUE(manager.saveProject());
     const auto saved = savedDocumentContent();
     const auto authoredItems = [&] {
@@ -699,7 +716,7 @@ TEST_F(ProjectDocumentRoundTripTest, OccupiedFilesDoNotDamageCommittedContentWhe
         QStringLiteral("Layers"), QStringLiteral("Occupied"));
     ASSERT_NE(folder, nullptr);
     ASSERT_TRUE(manager.deleteEntries({}, {folder}));
-    manager.currentProject()->description = QStringLiteral("Pending failed save");
+    manager.currentProject()->name = QStringLiteral("Pending failed save");
     EXPECT_FALSE(manager.saveProject());
     for (auto it = committed.cbegin(); it != committed.cend(); ++it)
         EXPECT_EQ(readFile(it.key()), it.value()) << it.key().toStdString();

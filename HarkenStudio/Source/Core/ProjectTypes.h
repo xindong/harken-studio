@@ -350,8 +350,6 @@ struct ProjectConfig
     AudioChannelConfig channelConfig = AudioChannelConfig::Stereo_2_0;
     QString templateId;
     QJsonObject templateData;
-    QString author;
-    QString description;
 };
 
 struct AudioSourceData
@@ -496,7 +494,6 @@ struct ProjectItem
 
     QUuid    guid;
     QJsonObject documentHeader;
-    QJsonObject extensions;
 
     QString objectPath() const;
 
@@ -596,55 +593,6 @@ struct RootFolderSlot
     ProjectFolderBinding binding;
     int                  index = -1;
     bool valid() const { return binding.rootFolder != nullptr; }
-};
-
-struct PackGroup
-{
-    QString name;
-    std::vector<harkenstudio::ObjectId> actionIds;
-    bool allPlatforms = true;
-    QStringList platformIds;
-
-    bool includesPlatform(const QString& platform) const {
-        return allPlatforms || platformIds.contains(platform);
-    }
-
-    bool operator==(const PackGroup& other) const {
-        return name == other.name
-            && actionIds == other.actionIds
-            && allPlatforms == other.allPlatforms
-            && platformIds == other.platformIds;
-    }
-    bool operator!=(const PackGroup& other) const { return !(*this == other); }
-
-    QJsonObject toJson() const {
-        QJsonObject obj;
-        obj["name"] = name;
-        QJsonArray idArray;
-        for (harkenstudio::ObjectId id : actionIds) idArray.append(objectIdString(id));
-        obj["actionIds"] = idArray;
-        obj["allPlatforms"] = allPlatforms;
-        QJsonArray platformArray;
-        for (const auto& p : platformIds) platformArray.append(p);
-        obj["platformIds"] = platformArray;
-        return obj;
-    }
-
-    static PackGroup fromJson(const QJsonObject& obj) {
-        PackGroup group;
-        group.name = obj["name"].toString();
-        for (const auto& v : obj["actionIds"].toArray()) {
-            harkenstudio::ObjectId id{};
-            if (!parseObjectIdJson(v, &id)) return {};
-            group.actionIds.push_back(id);
-        }
-        QStringList rawPlatforms;
-        for (const auto& v : obj["platformIds"].toArray())
-            rawPlatforms.append(v.toString());
-        group.platformIds = rawPlatforms;
-        group.allPlatforms = obj["allPlatforms"].toBool();
-        return group;
-    }
 };
 
 enum class AttenuationDimension : uint8_t
@@ -828,11 +776,8 @@ struct ProjectData
 {
     QString projectId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QJsonObject documentHeader;
-    QJsonObject extensions;
 
     QString name;
-    QString author;
-    QString description;
     
     QString projectPath;
 
@@ -888,28 +833,11 @@ struct ProjectData
     QStringList projectLanguages;
     QString     defaultLanguage;
 
-    std::vector<PackGroup> packGroups;
-
     QVector<ProjectPlatform> platforms;
 
     QStringList platformIds() const { return ProjectPlatformSemantics::ids(platforms); }
     int                sampleRate         = 48000;
     AudioChannelConfig channelConfig      = AudioChannelConfig::Stereo_2_0;
-
-    struct DeploymentProfile
-    {
-        QString profileId;
-        QString name;
-        QString engineKind;
-        QString destination;
-        QStringList platformIds;
-        QStringList languages;
-        bool deployPacks = true;
-        bool deployManifest = true;
-        bool deployCurrentWorld = false;
-        bool autoDeployAfterBuild = false;
-    };
-    std::vector<DeploymentProfile> deploymentProfiles;
 
     QString packBuildOutputDir;
     bool buildExportProjectData = false;

@@ -113,8 +113,6 @@ std::optional<QJsonObject> projectIdentity(const ProjectBuildSnapshot& snapshot,
             {QStringLiteral("root"), binding->rootItem->guid.toString(QUuid::WithoutBraces)},
             {QStringLiteral("bucket"), binding->parentFolder}});
     }
-    QJsonArray groups;
-    for (const auto& group : project.packGroups) groups.append(group.toJson());
     QJsonObject media;
     for (auto it = snapshot.media.assets.cbegin(); it != snapshot.media.assets.cend(); ++it) {
         const auto& asset = it.value();
@@ -129,10 +127,7 @@ std::optional<QJsonObject> projectIdentity(const ProjectBuildSnapshot& snapshot,
     return QJsonObject{
         {QStringLiteral("projectId"), project.projectId},
         {QStringLiteral("name"), project.name},
-        {QStringLiteral("author"), project.author},
-        {QStringLiteral("description"), project.description},
         {QStringLiteral("header"), project.documentHeader},
-        {QStringLiteral("extensions"), project.extensions},
         {QStringLiteral("projectPath"), project.projectPath},
         {QStringLiteral("languages"), QJsonArray::fromStringList(project.projectLanguages)},
         {QStringLiteral("defaultLanguage"), project.defaultLanguage},
@@ -145,7 +140,6 @@ std::optional<QJsonObject> projectIdentity(const ProjectBuildSnapshot& snapshot,
         {QStringLiteral("waveformOutputDirectory"), project.buildWaveformOutputDir},
         {QStringLiteral("bindings"), bindings},
         {QStringLiteral("items"), items},
-        {QStringLiteral("groups"), groups},
         {QStringLiteral("media"), media},
         {QStringLiteral("mediaOverrides"), overrides}};
 }
