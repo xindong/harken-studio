@@ -1692,6 +1692,117 @@ TEST(PackComposition, InspectInitBeforeEngineReturnsCatalogFields) {
     EXPECT_EQ(4096u, report.recommendedCatalogBytes);
 }
 
+TEST(PackCompositionContract, InspectInitReturnsProviderBorrowOnEveryExit) {
+    (void)Vn_Term();
+    ASSERT_EQ(nullptr, harken::detail::ActiveEngine());
+    struct Provider {
+        std::vector<std::uint8_t> bytes = BuildMinimalInit();
+        unsigned acquired = 0;
+        unsigned released = 0;
+        unsigned active = 0;
+        bool failAllocation = false;
+        bool empty = false;
+        bool failProvider = false;
+    } provider;
+    VnPackLoadDesc desc{};
+    desc.structSize = sizeof(desc);
+    desc.flags = VN_PACK_LOAD_FLAG_PROVIDER;
+    desc.providerUserData = &provider;
+    desc.provide = +[](void* data, std::uint64_t, const char*, std::uint32_t,
+                       std::uint64_t, VnPackByteSpan* span) -> VnResult {
+        auto& p = *static_cast<Provider*>(data);
+        if (p.failProvider) return VN_DEVICE_ERROR;
+        ++p.acquired;
+        ++p.active;
+        *span = {};
+        span->structSize = sizeof(*span);
+        if (!p.empty) {
+            span->bytes = p.bytes.data();
+            span->byteCount = p.bytes.size();
+        }
+        if (p.failAllocation) {
+            allocation_probe::count = 0;
+            allocation_probe::failAt = 1;
+            allocation_probe::enabled = true;
+        }
+        return VN_OK;
+    };
+    desc.release = +[](void* data, std::uint64_t, VnPackByteSpan) {
+        auto& p = *static_cast<Provider*>(data);
+        ++p.released;
+        --p.active;
+    };
+    for (unsigned cycle = 0; cycle < 16; ++cycle) {
+        SCOPED_TRACE(cycle);
+        for (unsigned mode = 0; mode < 4; ++mode) {
+            SCOPED_TRACE(mode);
+            provider.failAllocation = mode == 0;
+            provider.empty = mode == 2;
+            provider.failProvider = mode == 3;
+            VnInitPackInspectReport report{};
+            report.structSize = sizeof(report);
+            const VnResult result = Vn_InspectInitPack(&desc, &report);
+            allocation_probe::enabled = false;
+            const bool faultConsumed = allocation_probe::failAt == 0;
+            allocation_probe::failAt = 0;
+            if (provider.failAllocation) EXPECT_TRUE(faultConsumed);
+            const VnResult expected = mode == 0 ? VN_DEVICE_ERROR
+                : mode == 1 ? VN_OK : VN_PACK_PROVIDER_FAILED;
+            EXPECT_EQ(expected, result);
+            EXPECT_EQ(result, report.result);
+            EXPECT_EQ(sizeof(report), report.structSize);
+            EXPECT_EQ(provider.acquired, provider.released);
+            EXPECT_EQ(0u, provider.active);
+            if (mode == 1) {
+                EXPECT_EQ(11u, report.packStableId);
+                EXPECT_EQ(2u, report.catalogEntries);
+            }
+            EXPECT_EQ(nullptr, harken::detail::ActiveEngine());
+        }
+    }
+    EXPECT_EQ(48u, provider.acquired);
+    EXPECT_EQ(48u, provider.released);
+}
+
+TEST(PackCompositionContract, InspectInitResolvesAndEnforcesContainmentRootWithoutEngine) {
+    (void)Vn_Term();
+    ASSERT_EQ(nullptr, harken::detail::ActiveEngine());
+    const auto bytes = BuildMinimalInit();
+    const std::string root = HARKEN_TEMP_DIR "/f2-inspect-root";
+    const auto inside = WriteTemp("f2-inspect-root/Init.pack", bytes);
+    const auto outside = WriteTemp("f2-inspect-outside.pack", bytes);
+    struct Case {
+        const char* path;
+        const char* root;
+        VnResult result;
+    };
+    const Case cases[] = {
+        {"Init.pack", root.c_str(), VN_OK},
+        {inside.c_str(), root.c_str(), VN_OK},
+        {outside.c_str(), root.c_str(), VN_PACK_PATH_ESCAPE},
+        {"../f2-inspect-outside.pack", root.c_str(), VN_PACK_PATH_ESCAPE},
+        {nullptr, root.c_str(), VN_INVALID_ARG},
+        {inside.c_str(), nullptr, VN_INVALID_ARG},
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.path == nullptr ? "no path" : item.path);
+        VnPackLoadDesc desc{};
+        desc.structSize = sizeof(desc);
+        desc.flags = VN_PACK_LOAD_FLAG_ROOT;
+        desc.utf8Path = item.path;
+        desc.utf8ContainmentRoot = item.root;
+        VnInitPackInspectReport report{};
+        report.structSize = sizeof(report);
+        EXPECT_EQ(item.result, Vn_InspectInitPack(&desc, &report));
+        EXPECT_EQ(item.result, report.result);
+        if (item.result == VN_OK) {
+            EXPECT_EQ(11u, report.packStableId);
+            EXPECT_EQ(2u, report.catalogEntries);
+        }
+        EXPECT_EQ(nullptr, harken::detail::ActiveEngine());
+    }
+}
+
 TEST(PackComposition, KnownUnloadedAndAbsentStayDistinct) {
     const std::vector<std::uint8_t> bytes = BuildMinimalInit();
     const std::string path = WriteTemp("f2-known-unloaded.pack", bytes);

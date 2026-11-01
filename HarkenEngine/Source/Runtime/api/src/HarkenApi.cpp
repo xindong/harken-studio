@@ -101126,6 +101126,20 @@ VnResult PlayVoiceRaw(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
 
 namespace harken {
 namespace {
+VnResult AcquireCanonicalBytes(const VnPackLoadDesc& desc,
+                               PackTable::AlignedBuffer* owned,
+                               VnPackByteSpan* span, bool* releaseSpan,
+                               const PackCanonicalImage* catalogOrNull);
+void ReleaseCanonicalBytes(const VnPackLoadDesc& desc, VnPackByteSpan span,
+                           bool releaseSpan);
+
+struct CanonicalByteSpanGuard {
+    const VnPackLoadDesc& load;
+    VnPackByteSpan span{};
+    bool release = false;
+    ~CanonicalByteSpanGuard() { ReleaseCanonicalBytes(load, span, release); }
+};
+
 void ReclaimRetiredAttenuationProfiles(Engine& engine) noexcept;
 }
 
@@ -102572,40 +102586,6 @@ VnResult Vn_LoadCurrentWorld(const VnCurrentWorldLoadDesc* desc,
 VnResult Vn_InspectInitPack(const VnPackLoadDesc* desc,
                             VnInitPackInspectReport* outReport) {
     try {
-        auto readFile = [](const char* utf8Path,
-                           harken::PackTable::AlignedBuffer* owned,
-                           std::uint64_t* fileBytes) -> bool {
-            std::filesystem::path path;
-            if (!harken::TryMakeUtf8Path(utf8Path, &path)) {
-                return false;
-            }
-            std::error_code ec;
-            const std::uintmax_t size = std::filesystem::file_size(path, ec);
-            if (ec || size == 0 ||
-                size > static_cast<std::uintmax_t>(SIZE_MAX)) {
-                return false;
-            }
-            std::ifstream in(path, std::ios::binary);
-            if (!in) {
-                return false;
-            }
-            std::uint8_t* buffer = static_cast<std::uint8_t*>(::operator new[](
-                static_cast<std::size_t>(size),
-                std::align_val_t{harken::kPackBlobAlign}, std::nothrow));
-            if (buffer == nullptr) {
-                return false;
-            }
-            in.read(reinterpret_cast<char*>(buffer),
-                    static_cast<std::streamsize>(size));
-            if (in.gcount() != static_cast<std::streamsize>(size)) {
-                ::operator delete[](buffer,
-                                    std::align_val_t{harken::kPackBlobAlign});
-                return false;
-            }
-            *fileBytes = static_cast<std::uint64_t>(size);
-            owned->reset(buffer);
-            return true;
-        };
         if (outReport == nullptr ||
             outReport->structSize != sizeof(VnInitPackInspectReport)) {
             return VN_INVALID_ARG;
@@ -102622,46 +102602,23 @@ VnResult Vn_InspectInitPack(const VnPackLoadDesc* desc,
             return VN_INVALID_ARG;
         }
         harken::PackTable::AlignedBuffer owned;
-        VnPackByteSpan span{};
-        span.structSize = sizeof(span);
-        bool releaseSpan = false;
+        harken::CanonicalByteSpanGuard bytes{*desc};
         const auto finish = [&](VnResult result) {
-            if (releaseSpan && desc->release != nullptr) {
-                desc->release(desc->providerUserData, desc->packStableId, span);
-            }
             outReport->result = result;
             return result;
         };
-        if ((desc->flags & VN_PACK_LOAD_FLAG_PROVIDER) != 0) {
-            if (desc->provide == nullptr) {
-                return finish(VN_INVALID_ARG);
-            }
-            const VnResult provided =
-                desc->provide(desc->providerUserData, desc->packStableId,
-                              desc->utf8Path, 0, 0, &span);
-            if (provided != VN_OK) {
-                return finish(provided == VN_INVALID_ARG
-                                  ? VN_INVALID_ARG
-                                  : VN_PACK_PROVIDER_FAILED);
-            }
-            if (span.bytes == nullptr || span.byteCount == 0) {
-                return finish(VN_PACK_PROVIDER_FAILED);
-            }
-            releaseSpan = true;
-        } else {
-            if (desc->utf8Path == nullptr) {
-                return finish(VN_INVALID_ARG);
-            }
-            std::uint64_t fileBytes = 0;
-            if (!readFile(desc->utf8Path, &owned, &fileBytes)) {
-                return finish(VN_BAD_PACK);
-            }
-            span.bytes = owned.get();
-            span.byteCount = fileBytes;
+        if ((desc->flags & VN_PACK_LOAD_FLAG_PROVIDER) == 0 &&
+            desc->utf8Path == nullptr) {
+            return finish(VN_INVALID_ARG);
+        }
+        const VnResult acquired = harken::AcquireCanonicalBytes(
+            *desc, &owned, &bytes.span, &bytes.release, nullptr);
+        if (acquired != VN_OK) {
+            return finish(acquired);
         }
         harken::PackCanonicalImage image;
         const VnResult parsed = harken::ParsePackCanonicalImage(
-            span.bytes, span.byteCount, &image);
+            bytes.span.bytes, bytes.span.byteCount, &image);
         if (parsed != VN_OK) {
             return finish(parsed);
         }
@@ -102684,9 +102641,11 @@ VnResult Vn_InspectInitPack(const VnPackLoadDesc* desc,
             image.requirement.requiredCapabilityMask;
         outReport->semanticFingerprint = image.requirement.semanticFingerprint;
         return finish(VN_OK);
-    } catch (const std::bad_alloc&) {
-        return VN_DEVICE_ERROR;
     } catch (...) {
+        if (outReport != nullptr &&
+            outReport->structSize == sizeof(VnInitPackInspectReport)) {
+            outReport->result = VN_DEVICE_ERROR;
+        }
         return VN_DEVICE_ERROR;
     }
 }
@@ -118557,13 +118516,6 @@ void ReleaseCanonicalBytes(const VnPackLoadDesc& desc, VnPackByteSpan span,
         desc.release(desc.providerUserData, desc.packStableId, span);
     }
 }
-
-struct CanonicalByteSpanGuard {
-    const VnPackLoadDesc& load;
-    VnPackByteSpan span{};
-    bool release = false;
-    ~CanonicalByteSpanGuard() { ReleaseCanonicalBytes(load, span, release); }
-};
 
 bool RequiredCycle(const PackComposition& composition,
                    const std::vector<PackDependencyEdge>& incoming,
