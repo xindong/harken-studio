@@ -85,6 +85,13 @@ bool isBindableAddress(const BindingAddress& address)
 
 void normalizeTypedBinding(ParameterBindingDef& binding)
 {
+    const auto contract = BindingContractSemantics::derive(
+        binding.address.slotId, hostTypeOf(binding.address.hostClass));
+    if (contract.outputUnit == BindingOutputUnit::Cent) {
+        const bool reversed = binding.outputMin > binding.outputMax;
+        binding.outputMin = reversed ? contract.legalOutputRange.max : contract.legalOutputRange.min;
+        binding.outputMax = reversed ? contract.legalOutputRange.min : contract.legalOutputRange.max;
+    }
     for (CurvePointDef& point : binding.curve)
         point.x = std::clamp(point.x, 0.0f, 1.0f);
     std::sort(binding.curve.begin(), binding.curve.end(),
@@ -93,8 +100,18 @@ void normalizeTypedBinding(ParameterBindingDef& binding)
         });
     binding.curve.front().x = 0.0f;
     binding.curve.back().x = 1.0f;
-    const float yMin = std::min(binding.outputMin, binding.outputMax);
-    const float yMax = std::max(binding.outputMin, binding.outputMax);
+    float yMin = std::min(binding.outputMin, binding.outputMax);
+    float yMax = std::max(binding.outputMin, binding.outputMax);
+    if (contract.outputUnit == BindingOutputUnit::Cent) {
+        for (const auto& point : binding.curve) {
+            yMin = std::min(yMin, point.value);
+            yMax = std::max(yMax, point.value);
+        }
+        for (const auto& handle : binding.handles) {
+            yMin = std::min({yMin, handle.h1y, handle.h2y});
+            yMax = std::max({yMax, handle.h1y, handle.h2y});
+        }
+    }
     curveNormalize(yMin, yMax, binding.curve, binding.handles);
 }
 
@@ -434,9 +451,9 @@ ParameterBindingDef defaultBinding(const BindingAddress& address, const QUuid& v
     if (address == volumeAddress(hostType)) {
         binding.curve = {{0.0f, 0.0f}, {1.0f, -96.0f}};
     }
-    curveNormalize(std::min(binding.outputMin, binding.outputMax),
-                   std::max(binding.outputMin, binding.outputMax),
-                   binding.curve, binding.handles);
+    if (address == pitchAddress(hostType))
+        binding.curve = {{0.0f, 0.0f}, {1.0f, 0.0f}};
+    normalizeTypedBinding(binding);
     return binding;
 }
 

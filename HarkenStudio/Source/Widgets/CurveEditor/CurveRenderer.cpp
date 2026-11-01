@@ -218,7 +218,8 @@ void CurveRenderer::renderForeground(QPainter& painter, const CurveStyle& style,
 {
     painter.setRenderHint(QPainter::Antialiasing);
     painter.save();
-    const qreal padding = style.metrics.pointSelectedRadius + style.metrics.pointBorderWidth;
+    const qreal padding = data.clipToPlot ? 0.0
+        : style.metrics.pointSelectedRadius + style.metrics.pointBorderWidth;
     painter.setClipRect(data.graphRect.adjusted(-padding, -padding, padding, padding));
     drawOverlays(painter, style, data);
     drawCurve(painter, style, data.curveColor.isValid() ? data.curveColor
