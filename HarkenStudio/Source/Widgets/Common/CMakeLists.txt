@@ -68,6 +68,8 @@ add_library(harken_editor_common STATIC
     ReferenceImpactDialog.h
     ReorderHeaderView.cpp
     ReorderHeaderView.h
+    HeaderResizeHighlight.cpp
+    HeaderResizeHighlight.h
     ProportionalTreeWidget.cpp
     ProportionalTreeWidget.h
     SearchField.cpp

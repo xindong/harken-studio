@@ -183,6 +183,8 @@ private:
     QHeaderView* viewHeader() const;
     void applyColumnOrder();
     int resizeColumnAt(int x) const;
+    void highlightResizeColumn(int column);
+    void refreshResizeHighlight();
     void updateCellMetrics(QWidget* cell);
     void refreshRowState(const Row& row);
     void refreshRowDetails(const Row& row);
@@ -219,6 +221,8 @@ private:
     QList<int> dragWidths_;
     QList<int> visualOrder_;
     int dragColumn_ = -1;
+    int hoveredResizeColumn_ = -1;
+    QPoint resizeHoverPosition_{-1, -1};
     int movingColumn_ = -1;
     int dragX_ = 0;
     bool layoutPending_ = false;

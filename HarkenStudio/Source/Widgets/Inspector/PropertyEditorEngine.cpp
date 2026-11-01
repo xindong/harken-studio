@@ -169,11 +169,16 @@ private:
             setFixedSize(14, 14);
             setCursor(Qt::SizeFDiagCursor);
             setAttribute(Qt::WA_TranslucentBackground);
+            connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
+                    this, qOverload<>(&QWidget::update));
         }
 
         bool isDragging() const { return dragging_; }
 
     protected:
+        void enterEvent(QEnterEvent*) override { update(); }
+        void leaveEvent(QEvent*) override { update(); }
+
         void mousePressEvent(QMouseEvent* event) override
         {
             if (event->button() != Qt::LeftButton) return;
@@ -181,6 +186,7 @@ private:
             startGlobalY_ = event->globalPosition().y();
             startHeight_ = edit_->height();
             grabMouse();
+            update();
             event->accept();
         }
 
@@ -220,7 +226,10 @@ private:
         {
             QPainter painter(this);
             QColor color = palette().color(QPalette::Text);
-            color.setAlphaF(color.alphaF() * 0.45);
+            if (isEnabled() && (underMouse() || dragging_))
+                color = ThemeManager::instance().colors().accent;
+            else
+                color.setAlphaF(color.alphaF() * 0.45);
             QPen pen(color, 2.0, Qt::SolidLine, Qt::SquareCap,
                      Qt::MiterJoin);
             painter.setPen(pen);
@@ -238,12 +247,14 @@ private:
             dragging_ = false;
             if (QWidget::mouseGrabber() == this)
                 releaseMouse();
+            update();
         }
 
         void cancelDragging()
         {
             if (!dragging_) return;
             dragging_ = false;
+            update();
         }
 
         ResizablePlainTextEdit* edit_ = nullptr;
