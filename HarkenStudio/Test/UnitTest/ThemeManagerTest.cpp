@@ -461,7 +461,7 @@ TEST(ThemeManager, FailedStoredCustomizationPreservesOtherThemeAndPaletteEdits)
     EXPECT_EQ(restored.snapshot()->ui.colors.accent, builtinColor);
 }
 
-TEST(ThemeManager, MalformedStoredColorsDoNotBlockValidEditsAcrossThemesAndRestarts)
+TEST(ThemeManager, RetiredAndMalformedStoredColorsDoNotBlockValidEditsAcrossThemesAndRestarts)
 {
     const QString packageId = QStringLiteral("theme.custom");
     const QString missingId = QStringLiteral("theme.missing");
@@ -472,6 +472,11 @@ TEST(ThemeManager, MalformedStoredColorsDoNotBlockValidEditsAcrossThemesAndResta
     const QString privateKey = QStringLiteral("private.color");
     const QString mutedKey = QStringLiteral("text.muted");
     const QString secondaryKey = QStringLiteral("text.secondary");
+    const QString viewKey = QStringLiteral("border.view");
+    const QString tickKey = QStringLiteral("border.tick");
+    const QStringList retiredKeys{QStringLiteral("meter.lufsMomentary"),
+        QStringLiteral("meter.lufsShortTerm"), QStringLiteral("meter.lufsIntegrated"),
+        QStringLiteral("knob.indicator")};
     const QColor packageColor(QStringLiteral("#80123456"));
     const QColor builtinColor(QStringLiteral("#906789ab"));
     const QColor privateColor(QStringLiteral("#a0abcdef"));
@@ -491,9 +496,11 @@ TEST(ThemeManager, MalformedStoredColorsDoNotBlockValidEditsAcrossThemesAndResta
                                    {QStringLiteral("text.primary"), QStringLiteral("invalid")}}},
             {builtinId, QVariantMap{{key, builtinColor.name(QColor::HexArgb)},
                                    {mutedKey, mutedColor.name(QColor::HexArgb)},
+                                   {viewKey, mutedColor.name(QColor::HexArgb)},
                                    {QStringLiteral("text.primary"), QStringLiteral("#xyz")}}},
             {missingId, QVariantMap{{privateKey, privateColor.name(QColor::HexArgb)},
                                    {mutedKey, privateColor.name(QColor::HexArgb)},
+                                   {viewKey, privateColor.name(QColor::HexArgb)},
                                    {QStringLiteral("private.invalid"), QString()}}}
         };
         QVariantMap storedColors;
@@ -501,10 +508,22 @@ TEST(ThemeManager, MalformedStoredColorsDoNotBlockValidEditsAcrossThemesAndResta
         expected[packageId][dark].insert(key, packageColor);
         expected[builtinId][dark].insert(key, builtinColor);
         expected[builtinId][dark].insert(secondaryKey, mutedColor);
+        expected[builtinId][dark].insert(tickKey, mutedColor);
         expected[missingId][format == QStringLiteral("ThemePaletteColors") ? dark : QString()]
             .insert(privateKey, privateColor);
         expected[missingId][format == QStringLiteral("ThemePaletteColors") ? dark : QString()]
             .insert(mutedKey, privateColor);
+        expected[missingId][format == QStringLiteral("ThemePaletteColors") ? dark : QString()]
+            .insert(viewKey, privateColor);
+        for (const auto& retiredKey : retiredKeys) {
+            for (const auto& owner : {builtinId, missingId}) {
+                auto colors = owners.value(owner).toMap();
+                colors.insert(retiredKey, privateColor.name(QColor::HexArgb));
+                owners.insert(owner, colors);
+            }
+            expected[missingId][format == QStringLiteral("ThemePaletteColors") ? dark : QString()]
+                .insert(retiredKey, privateColor);
+        }
         for (auto owner = owners.cbegin(); owner != owners.cend(); ++owner)
         {
             if (format == QStringLiteral("ThemePaletteColors"))
@@ -523,9 +542,13 @@ TEST(ThemeManager, MalformedStoredColorsDoNotBlockValidEditsAcrossThemesAndResta
             auto builtinPalettes = storedColors.value(builtinId).toMap();
             builtinPalettes.insert(light, QVariantMap{
                 {mutedKey, mutedColor.name(QColor::HexArgb)},
+                {viewKey, mutedColor.name(QColor::HexArgb)},
+                {tickKey, secondaryColor.name(QColor::HexArgb)},
+                {retiredKeys.front(), privateColor.name(QColor::HexArgb)},
                 {secondaryKey, secondaryColor.name(QColor::HexArgb)}});
             storedColors.insert(builtinId, builtinPalettes);
             expected[builtinId][light].insert(secondaryKey, secondaryColor);
+            expected[builtinId][light].insert(tickKey, secondaryColor);
         }
         {
             VNX::QSettingsStorage storage(storagePath);
@@ -551,12 +574,14 @@ TEST(ThemeManager, MalformedStoredColorsDoNotBlockValidEditsAcrossThemesAndResta
             ASSERT_TRUE(manager.selectTheme(builtinId).ok());
             EXPECT_EQ(manager.snapshot()->ui.colors.accent, builtinColor);
             EXPECT_EQ(manager.snapshot()->ui.colors.textSecondary, mutedColor);
+            EXPECT_EQ(manager.snapshot()->ui.colors.borderTick, mutedColor);
         }
         VNX::ThemeManager restored(root.path(), std::make_unique<VNX::QSettingsStorage>(storagePath));
         EXPECT_EQ(restored.appearance().colors, expected);
         EXPECT_EQ(restored.currentThemeId(), builtinId);
         EXPECT_EQ(restored.snapshot()->ui.colors.accent, builtinColor);
         EXPECT_EQ(restored.snapshot()->ui.colors.textSecondary, mutedColor);
+        EXPECT_EQ(restored.snapshot()->ui.colors.borderTick, mutedColor);
         ASSERT_TRUE(restored.selectTheme(packageId).ok());
         EXPECT_EQ(restored.snapshot()->ui.colors.accent, packageColor);
     }
@@ -854,6 +879,38 @@ TEST(ThemeManager, ThemeColorEditsAndPaletteSwitchesPreserveStructureAndFonts)
     ASSERT_TRUE(manager.reloadTheme().ok());
     EXPECT_EQ(structures, 1);
     EXPECT_EQ(fonts, 0);
+}
+
+TEST(ThemeManager, PaletteAlphaScalesEveryBoundColorWithoutChangingRgb)
+{
+    QTemporaryDir root;
+    ASSERT_TRUE(root.isValid());
+    VNX::ThemeManager manager(root.path(), memoryStorage());
+    const auto committed = manager.appearance();
+    for (const auto& palette : manager.availablePalettes()) {
+        auto preview = committed;
+        preview.paletteId = palette.id;
+        for (const auto& role : manager.colorRoles())
+            preview.colors[preview.themeId][preview.paletteId][role.key] = QColor(48, 112, 160);
+        ASSERT_TRUE(manager.previewAppearance(preview).ok());
+        const auto opaque = manager.snapshot();
+        for (int alpha : {0, 64, 128, 255}) {
+            for (auto& color : preview.colors[preview.themeId][preview.paletteId])
+                color.setAlpha(alpha);
+            ASSERT_TRUE(manager.previewAppearance(preview).ok());
+            for (const auto& role : manager.colorRoles()) {
+                for (const auto& binding : role.bindings) {
+                    SCOPED_TRACE(binding.target.toStdString());
+                    const auto before = VNX::readThemeColor(*opaque, binding.target);
+                    const auto after = VNX::readThemeColor(*manager.snapshot(), binding.target);
+                    EXPECT_EQ(after.rgb(), before.rgb());
+                    EXPECT_NEAR(after.alphaF(), before.alphaF() * alpha / 255.0, 1.0 / 65535.0);
+                }
+            }
+        }
+    }
+    manager.cancelAppearancePreview();
+    EXPECT_EQ(manager.appearance(), committed);
 }
 
 TEST(WidgetAppearance, CascadesStructuralSelectorsAndInvalidatesDescendants)

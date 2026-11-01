@@ -13,9 +13,9 @@ namespace VNX {
 
 namespace {
 
-QString rgb(const QColor& color)
+QString colorValue(const QColor& color)
 {
-    return color.name(QColor::HexRgb).toUpper();
+    return color.name(QColor::HexArgb).toUpper();
 }
 
 QString rgba(const QColor& color, qreal opacity)
@@ -24,7 +24,7 @@ QString rgba(const QColor& color, qreal opacity)
         .arg(color.red())
         .arg(color.green())
         .arg(color.blue())
-        .arg(QString::number(opacity, 'g', 6));
+        .arg(QString::number(color.alphaF() * opacity, 'g', 6));
 }
 
 }
@@ -253,19 +253,19 @@ ads--CResizeHandle {
 }
 )");
 
-    result.replace(QStringLiteral("@CHROME_BACKGROUND@"), rgb(style.chromeBackground));
-    result.replace(QStringLiteral("@BG_PRIMARY@"), rgb(colors.bgPrimary));
-    result.replace(QStringLiteral("@VIEW_BORDER@"), rgb(colors.viewBorder));
-    result.replace(QStringLiteral("@BG_SECONDARY@"), rgb(colors.bgSecondary));
-    result.replace(QStringLiteral("@BORDER_PRIMARY@"), rgb(colors.borderPrimary));
-    result.replace(QStringLiteral("@BG_TERTIARY@"), rgb(colors.bgTertiary));
+    result.replace(QStringLiteral("@CHROME_BACKGROUND@"), colorValue(style.chromeBackground));
+    result.replace(QStringLiteral("@BG_PRIMARY@"), colorValue(colors.bgPrimary));
+    result.replace(QStringLiteral("@VIEW_BORDER@"), colorValue(colors.viewBorder));
+    result.replace(QStringLiteral("@BG_SECONDARY@"), colorValue(colors.bgSecondary));
+    result.replace(QStringLiteral("@BORDER_PRIMARY@"), colorValue(colors.borderPrimary));
+    result.replace(QStringLiteral("@BG_TERTIARY@"), colorValue(colors.bgTertiary));
     result.replace(QStringLiteral("@ACTIVE_TAB_ACCENT@"), rgba(colors.accent, style.activeTabAccentOpacity));
-    result.replace(QStringLiteral("@BG_SELECTED@"), rgb(colors.bgSelected));
-    result.replace(QStringLiteral("@ACCENT@"), rgb(colors.accent));
-    result.replace(QStringLiteral("@INACTIVE_TAB_TEXT@"), rgb(style.inactiveTabText));
-    result.replace(QStringLiteral("@TEXT_PRIMARY@"), rgb(colors.textPrimary));
-    result.replace(QStringLiteral("@CLOSE_BUTTON_HOVER@"), rgb(style.closeButtonHover));
-    result.replace(QStringLiteral("@CLOSE_BUTTON_PRESSED@"), rgb(style.closeButtonPressed));
+    result.replace(QStringLiteral("@BG_SELECTED@"), colorValue(colors.bgSelected));
+    result.replace(QStringLiteral("@ACCENT@"), colorValue(colors.accent));
+    result.replace(QStringLiteral("@INACTIVE_TAB_TEXT@"), colorValue(style.inactiveTabText));
+    result.replace(QStringLiteral("@TEXT_PRIMARY@"), colorValue(colors.textPrimary));
+    result.replace(QStringLiteral("@CLOSE_BUTTON_HOVER@"), colorValue(style.closeButtonHover));
+    result.replace(QStringLiteral("@CLOSE_BUTTON_PRESSED@"), colorValue(style.closeButtonPressed));
     result.replace(QStringLiteral("@DROP_OVERLAY@"), rgba(colors.accent, style.dropOverlayOpacity));
 
     result.replace(QStringLiteral("@BORDER_WIDTH@"), QString::number(metrics.borderWidth));

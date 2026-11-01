@@ -38,7 +38,8 @@ QString colorText(const QColor& color)
     return color.name(color.alpha() == 255 ? QColor::HexRgb : QColor::HexArgb).toUpper();
 }
 
-QIcon colorIcon(const QColor& color, const QPalette& palette, qreal devicePixelRatio)
+QIcon colorIcon(const QColor& color, const QPalette& palette, const QColor& border,
+                qreal devicePixelRatio)
 {
     QPixmap swatch(kColorSwatchSize * devicePixelRatio);
     swatch.setDevicePixelRatio(devicePixelRatio);
@@ -55,7 +56,7 @@ QIcon colorIcon(const QColor& color, const QPalette& palette, qreal devicePixelR
     painter.fillRect(alphaRect, Qt::black);
     painter.fillRect(QRect(alphaRect.topLeft(), QSize(qRound(alphaRect.width() * color.alphaF()),
                                                      alphaRect.height())), Qt::white);
-    painter.setPen(palette.color(QPalette::Mid));
+    painter.setPen(border);
     painter.drawRect(QRect(QPoint(), kColorSwatchSize).adjusted(0, 0, -1, -1));
     painter.drawLine(colorRect.bottomLeft(), colorRect.bottomRight());
     QIcon icon;
@@ -458,25 +459,23 @@ bool AppearancePage::loadBasePalette()
     return loaded.ok();
 }
 
-void AppearancePage::refreshPresets(bool currentOnly)
+void AppearancePage::refreshPresets()
 {
     const QSignalBlocker blocker(colorPresets_);
     auto* model = static_cast<QStandardItemModel*>(colorPresets_->model());
     for (int i = 0; i < colorPresets_->count(); ++i) {
-        if (currentOnly && i != colorPresets_->currentIndex()) continue;
         const QString id = colorPresets_->itemData(i).toString();
         const QString name = colorPresets_->itemText(i);
         const auto base = palettes_.constFind(id);
         const bool available = base != palettes_.cend();
         const auto overrides = appearance_.colors.value(appearance_.themeId).value(id);
         colorPresets_->setItemData(i, available ? presetSwatch(*base, colorRoles_, overrides) : QPixmap(), Qt::UserRole + 1);
-        if (currentOnly) continue;
         model->item(i)->setEnabled(available);
         colorPresets_->setItemData(i, available
             ? tr("Use the %1 palette of this theme. Edits are saved for this theme and palette.\nMain background · Controls · Selection · Accent · Primary text\nSecondary text · Success · Warning · Error · Information").arg(name)
             : tr("Unavailable"), Qt::ToolTipRole);
     }
-    if (!currentOnly) colorPresets_->setCurrentIndex(colorPresets_->findData(appearance_.paletteId));
+    colorPresets_->setCurrentIndex(colorPresets_->findData(appearance_.paletteId));
     colorPresets_->update();
 }
 
@@ -486,20 +485,16 @@ QColor AppearancePage::effectiveColor(const ThemeColorRole& role) const
     return appearance_.colors.value(appearance_.themeId).value(appearance_.paletteId).value(key, basePalette_->colors.value(key));
 }
 
-void AppearancePage::refreshColors(const QString& changedKey)
+void AppearancePage::refreshColors()
 {
-    const bool fullRefresh = changedKey.isEmpty();
-    refreshPresets(!fullRefresh);
-    if (fullRefresh) {
-        colorTree_->setEnabled(bool(basePalette_));
-        colorGroup_->setEnabled(bool(basePalette_));
-        colorSearch_->setEnabled(bool(basePalette_));
-    }
+    refreshPresets();
+    colorTree_->setEnabled(bool(basePalette_));
+    colorGroup_->setEnabled(bool(basePalette_));
+    colorSearch_->setEnabled(bool(basePalette_));
     colorsReset_->setEnabled(basePalette_ && !appearance_.colors.value(appearance_.themeId).value(appearance_.paletteId).isEmpty());
     for (int i = 0; i < colorTree_->topLevelItemCount(); ++i) {
         auto* item = colorTree_->topLevelItem(i);
         const QString key = item->data(0, Qt::UserRole).toString();
-        if (!fullRefresh && key != changedKey) continue;
         const auto* role = findThemeColorRole(colorRoles_, key);
         if (!basePalette_) {
             item->setText(1, QString());
@@ -511,17 +506,16 @@ void AppearancePage::refreshColors(const QString& changedKey)
         const QColor value = effectiveColor(*role);
         const QColor original = basePalette_->colors.value(role->key);
         item->setText(1, colorText(value));
-        item->setIcon(1, colorIcon(value, palette(), devicePixelRatioF()));
-        if (fullRefresh) {
-            item->setText(2, colorText(original));
-            item->setIcon(2, colorIcon(original, palette(), devicePixelRatioF()));
-        }
+        item->setIcon(1, colorIcon(value, palette(), themeManager_->colors().borderSecondary,
+                                  devicePixelRatioF()));
+        item->setText(2, colorText(original));
+        item->setIcon(2, colorIcon(original, palette(), themeManager_->colors().borderSecondary,
+                                  devicePixelRatioF()));
         item->setToolTip(1, value == original ? tr("Palette default") : tr("Customized palette color"));
         item->setData(1, TableTextRole, static_cast<int>(
             value == original ? TableTextState::Normal : TableTextState::Custom));
     }
-    if (fullRefresh) filterColors();
-    else refreshSelectedColor();
+    filterColors();
 }
 
 void AppearancePage::filterColors()
@@ -630,7 +624,7 @@ void AppearancePage::publishPreview()
     if (result.ok()) {
         previewActive_ = true;
         appearance_ = preview;
-        refreshColors(previewColorKey_);
+        refreshColors();
     }
     showError(result.diagnostics);
 }

@@ -52,10 +52,6 @@ add_library(harken_editor_common STATIC
     MenuComboBox.h
     MultiSelectComboBox.cpp
     MultiSelectComboBox.h
-    RotaryKnobPresenter.cpp
-    RotaryKnobPresenter.h
-    RotaryKnobRenderer.cpp
-    RotaryKnobRenderer.h
     VerticalFaderPresenter.cpp
     VerticalFaderPresenter.h
     ParameterSlider.cpp

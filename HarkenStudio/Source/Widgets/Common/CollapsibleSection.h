@@ -44,6 +44,7 @@ signals:
 
 protected:
     void showEvent(QShowEvent* event) override;
+    void moveEvent(QMoveEvent* event) override;
 
 private:
     void applyTheme();
@@ -65,6 +66,7 @@ private:
     bool expanded_ = false;
     bool dynamicContent_ = false;
     bool hasCustomIndicator_ = false;
+    bool hasTopSeparator_ = false;
     int level_ = -1;
 };
 

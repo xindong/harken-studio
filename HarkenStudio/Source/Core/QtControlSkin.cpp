@@ -472,8 +472,6 @@ QString QtControlSkin::applicationStyleSheet() const
     const auto color = [](const QColor& value) {
         return value.name(QColor::HexArgb);
     };
-    QColor errorOpaque = colors().error;
-    errorOpaque.setAlphaF(1.0);
 
     replace(QStringLiteral("@accent@"), color(colors().accent));
     replace(QStringLiteral("@accentHover@"), color(colors().accentHover));
@@ -494,8 +492,7 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@textMuted@"), color(colors().textMuted));
     replace(QStringLiteral("@textDisabled@"), color(colors().textDisabled));
     replace(QStringLiteral("@error@"), color(colors().error));
-    replace(QStringLiteral("@errorOpaque@"), color(errorOpaque));
-    replace(QStringLiteral("@errorText@"), color(contrastTextColor(errorOpaque)));
+    replace(QStringLiteral("@errorText@"), color(contrastTextColor(colors().error)));
     replace(QStringLiteral("@window@"), color(palette.window));
     replace(QStringLiteral("@base@"), color(palette.base));
     replace(QStringLiteral("@alternateBase@"), color(palette.alternateBase));
@@ -526,6 +523,7 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@toolbarAllPlatformsActive@"), color(colors().success));
     replace(QStringLiteral("@toolbarAllPlatformsHover@"), color(colors().success.lighter(115)));
     replace(QStringLiteral("@compactSliderFill@"), rgba(colors().accent, 85));
+    replace(QStringLiteral("@sliderTrack@"), color(colors().sliderTrack));
     replace(QStringLiteral("@nodeContentLabel@"), color(snapshot_->domains.nodeGraphNode.contentLabel));
     replace(QStringLiteral("@nodeContentValue@"), color(snapshot_->domains.nodeGraphNode.contentValue));
     replace(QStringLiteral("@logDebug@"), color(snapshot_->domains.log.debug));
@@ -535,7 +533,7 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@logCritical@"), color(snapshot_->domains.log.critical));
     replace(QStringLiteral("@aiBrandAccent@"), color(snapshot_->domains.ai.brandAccent));
     replace(QStringLiteral("@aiBrandAccentSoft@"), rgba(snapshot_->domains.ai.brandAccent, 32));
-    replace(QStringLiteral("@aiMessageSeparator@"), rgba(colors().textPrimary, 16));
+    replace(QStringLiteral("@aiMessageSeparator@"), color(colors().borderPrimary));
     replace(QStringLiteral("@aiUserAccent@"), color(snapshot_->domains.ai.userAccent));
     replace(QStringLiteral("@monitorCpuSafe@"), color(snapshot_->domains.monitor.cpuSafe));
     replace(QStringLiteral("@monitorCpuWarning@"), color(snapshot_->domains.monitor.cpuWarning));
@@ -592,9 +590,10 @@ QString QtControlSkin::collapsibleIndicatorStyle(const QColor& color, int alpha,
                                       : QString());
 }
 
-QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool custom, int level) const
+QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool custom, int level,
+                                             bool topSeparator) const
 {
-    const QString indicatorColor = indicator.isValid() ? indicator.name() : accent();
+    const QString indicatorColor = indicator.isValid() ? indicator.name(QColor::HexArgb) : accent();
 
     const QString titleColor = colors().textTitle.name(QColor::HexArgb);
     QString bg, border, font, hoverBg, pad;
@@ -604,6 +603,8 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
         bg       = bgSecondary();
         border   = custom ? QString("border: none; border-bottom: 1px solid %1; border-left: 2px solid %2;").arg(borderPrimary(), indicatorColor)
                           : QString("border: none; border-bottom: 1px solid %1;").arg(borderPrimary());
+        if (topSeparator)
+            border += QStringLiteral(" border-top: 1px solid %1;").arg(borderPrimary());
         font     = "font-size: 11px; font-weight: 700; letter-spacing: 0.5px;";
         hoverBg  = bgTertiary();
         pad      = "padding: 3px 6px 3px 4px;";
@@ -665,7 +666,7 @@ QString QtControlSkin::rgba(const QColor& color, int alpha)
         .arg(color.red())
         .arg(color.green())
         .arg(color.blue())
-        .arg(clampedAlpha);
+        .arg(qRound(color.alphaF() * clampedAlpha));
 }
 
 }

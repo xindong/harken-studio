@@ -1,6 +1,7 @@
 #include "Core/AI/AIAgentConfig.h"
 #include "Core/AppSettings.h"
 #include "Core/ColorPalette.h"
+#include "Core/HarkenStyle.h"
 #include "Core/MemorySettingsStorage.h"
 #include "Core/ThemeManager.h"
 #include "Dialogs/ColorEditorDialog.h"
@@ -18,11 +19,14 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QLabel>
+#include <QImage>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSet>
+#include <QScopeGuard>
 #include <QSlider>
 #include <QSpinBox>
+#include <QStyleFactory>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QTreeWidget>
@@ -595,6 +599,83 @@ TEST_F(SettingsApplyContractTest, ColorPickerPreviewRequiresAcceptance)
     ThemeManager restored(root_.path(), std::make_unique<MemorySettingsStorage>(*themeStorage_));
     EXPECT_EQ(restored.appearance(), theme_->appearance());
     EXPECT_EQ(restored.snapshot()->ui.colors.textPrimary, previewColor);
+}
+
+TEST_F(SettingsApplyContractTest, EveryPaletteRoleHasIdenticalPreviewAndCommittedPresentation)
+{
+    qApp->setStyle(new HarkenStyle(QStyleFactory::create(QStringLiteral("Fusion")), theme_.get()));
+    const auto restoreStyle = qScopeGuard([] { qApp->setStyle(QStyleFactory::create(QStringLiteral("Fusion"))); });
+    AppearancePage page(*theme_);
+    page.load();
+    page.show();
+    settlePreviewEvents();
+    auto* colors = page.findChild<QTreeWidget*>(QStringLiteral("appearanceColorTree"));
+    auto* presets = page.findChild<QComboBox*>(QStringLiteral("appearanceColorPresets"));
+    ASSERT_NE(colors, nullptr);
+    ASSERT_NE(presets, nullptr);
+    const auto presentation = [&] {
+        QMap<QString, QImage> images;
+        for (int row = 0; row < colors->topLevelItemCount(); ++row) {
+            const auto* item = colors->topLevelItem(row);
+            const QString key = item->data(0, Qt::UserRole).toString();
+            for (const int column : {1, 2}) {
+                const auto icon = item->icon(column);
+                const auto sizes = icon.availableSizes();
+                for (const auto& size : sizes)
+                    images.insert(key + QStringLiteral("/%1/%2x%3").arg(column).arg(size.width()).arg(size.height()),
+                                  icon.pixmap(size).toImage());
+            }
+        }
+        for (int index = 0; index < presets->count(); ++index)
+            images.insert(QStringLiteral("preset/") + presets->itemData(index).toString(),
+                          presets->itemData(index, Qt::UserRole + 1).value<QPixmap>().toImage());
+        return images;
+    };
+    const auto original = theme_->appearance();
+    for (const auto& palette : theme_->availablePalettes()) {
+        auto committed = original;
+        committed.paletteId = palette.id;
+        const auto roles = theme_->colorRoles();
+        for (const auto& role : roles) {
+            SCOPED_TRACE((palette.id + QLatin1Char('/') + role.key).toStdString());
+            ASSERT_TRUE(theme_->applyAppearance(committed).ok());
+            settlePreviewEvents();
+            ASSERT_TRUE(selectColor(*colors, role.key));
+            const auto before = presentation();
+            ASSERT_FALSE(before.isEmpty());
+            const auto storage = storedValues(*themeStorage_);
+            auto* picker = openColorEditor(page, *colors);
+            ASSERT_NE(picker, nullptr);
+            const auto generation = theme_->snapshot()->generation;
+            picker->setCurrentColor(QColor(197, 43, 131, 149));
+            settlePreviewEvents();
+            ASSERT_GT(theme_->snapshot()->generation, generation);
+            EXPECT_EQ(theme_->appearance(), committed);
+            EXPECT_EQ(storedValues(*themeStorage_), storage);
+            const auto preview = presentation();
+            auto previewSnapshot = *theme_->snapshot();
+            picker->accept();
+            QCoreApplication::sendPostedEvents(picker, QEvent::DeferredDelete);
+            settlePreviewEvents();
+            auto appliedSnapshot = *theme_->snapshot();
+            appliedSnapshot.generation = previewSnapshot.generation;
+            EXPECT_EQ(appliedSnapshot, previewSnapshot);
+            EXPECT_EQ(presentation(), preview);
+
+            ASSERT_TRUE(theme_->applyAppearance(committed).ok());
+            ASSERT_TRUE(selectColor(*colors, role.key));
+            picker = openColorEditor(page, *colors);
+            ASSERT_NE(picker, nullptr);
+            picker->setCurrentColor(QColor(197, 43, 131, 149));
+            settlePreviewEvents();
+            EXPECT_EQ(presentation(), preview);
+            picker->reject();
+            QCoreApplication::sendPostedEvents(picker, QEvent::DeferredDelete);
+            settlePreviewEvents();
+            EXPECT_EQ(theme_->appearance(), committed);
+            EXPECT_EQ(presentation(), before);
+        }
+    }
 }
 
 TEST_F(SettingsApplyContractTest, FailedPickerCommitAndPageDestructionRestoreCommittedAppearance)

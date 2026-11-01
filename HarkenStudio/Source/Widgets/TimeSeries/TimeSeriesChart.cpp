@@ -264,7 +264,7 @@ void TimeSeriesChart::rebuildBuffer()
                     mark = monitor.cpuWarning;
                 else
                     mark = monitor.bufferWarning;
-                mark.setAlpha(96);
+                mark.setAlphaF(mark.alphaF() * 96 / 255.0);
                 painter.fillRect(QRectF(column.column, 0, 1, height()), mark);
                 continue;
             }
@@ -302,7 +302,7 @@ void TimeSeriesChart::rebuildBuffer()
         if (!text.isEmpty())
         {
             QColor line = ui.textPrimary;
-            line.setAlpha(96);
+            line.setAlphaF(line.alphaF() * 96 / 255.0);
             painter.setPen(line);
             painter.drawLine(hover_->x(), 0, hover_->x(), height());
 

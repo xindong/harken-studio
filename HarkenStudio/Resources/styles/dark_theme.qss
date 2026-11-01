@@ -52,7 +52,7 @@ QWidget#timelineHeaderColumn QWidget#timelineLane {
 }
 
 QWidget#timelineHeaderColumn QFrame#listBox[cellSelection="true"] QWidget[tableRowNumber="true"] {
-    border-right: 1px solid @borderPrimary@;
+    border-right: 1px solid @borderSecondary@;
 }
 
 QFrame#timelineHeaderResizeBar {
@@ -171,12 +171,12 @@ QMenuBar::item {
     background-color: transparent;
     padding: 6px 12px;
     border-radius: @radiusSmall@px;
-    color: @textSecondary@;
+    color: @shellMenuText@;
 }
 
 QMenuBar::item:selected {
     background-color: @bgHover@;
-    color: @brightText@;
+    color: @shellMenuHoverText@;
 }
 
 QMenuBar::item:pressed {
@@ -184,14 +184,23 @@ QMenuBar::item:pressed {
     color: @accentText@;
 }
 
+QMenuBar::item:disabled {
+    color: @textDisabled@;
+}
+
 QWidget[surfaceRole="popup"] {
-    border: 1px solid @borderSecondary@;
+    border: 1px solid @borderPrimary@;
+}
+
+QLabel#timelineCursorValue,
+QLabel#sourceTrimValue {
+    border: 1px solid @borderPrimary@;
 }
 
 QMenu {
     -qt-style-features: background-color;
     background-color: @bgTertiary@;
-    border: 1px solid @borderSecondary@;
+    border: 1px solid @borderPrimary@;
     border-radius: 0px;
     padding: @popupPaddingY@px 0;
 }
@@ -216,7 +225,7 @@ QMenu::item:disabled:selected {
 
 QMenu::separator {
     height: 1px;
-    background-color: @borderSecondary@;
+    background-color: @borderPrimary@;
     margin: 4px 12px;
 }
 
@@ -562,19 +571,19 @@ QPushButton[splitButtonPart="primary"]:disabled {
 }
 
 QFrame[splitButtonPart="divider"] {
-    background-color: @borderPrimary@;
+    background-color: @borderSecondary@;
     border: none;
 }
 
 /* Danger Button (Magenta) */
 QPushButton[danger="true"] {
     background-color: transparent;
-    border: 1px solid @errorOpaque@;
-    color: @errorOpaque@;
+    border: 1px solid @error@;
+    color: @error@;
 }
 
 QPushButton[danger="true"]:hover {
-    background-color: @errorOpaque@;
+    background-color: @error@;
     color: @errorText@;
 }
 
@@ -633,7 +642,7 @@ QLineEdit:focus {
 QLineEdit:disabled {
     background-color: @bgPrimary@;
     color: @textDisabled@;
-    border-color: @borderPrimary@;
+    border-color: @borderSecondary@;
 }
 
 QLineEdit[fieldRole="popup"] {
@@ -655,7 +664,7 @@ QLineEdit[fieldRole="popup"]:focus {
 QLineEdit[fieldRole="popup"]:disabled {
     background-color: @bgPrimary@;
     color: @textDisabled@;
-    border-color: @borderPrimary@;
+    border-color: @borderSecondary@;
 }
 
 /* Colour swatch frame. The fill and its contrast text are the edited value and
@@ -688,11 +697,11 @@ QPlainTextEdit[fieldRole="inspectorText"]:focus {
 QPlainTextEdit[fieldRole="inspectorText"]:disabled {
     background-color: @bgPrimary@;
     color: @textDisabled@;
-    border-color: @borderPrimary@;
+    border-color: @borderSecondary@;
 }
 
 QPlainTextEdit[fieldRole="inspectorText"] QScrollBar:vertical {
-    border-left: 1px solid @borderPrimary@;
+    border-left: 1px solid @borderSecondary@;
 }
 
 /* ==========================================================================
@@ -729,7 +738,7 @@ QComboBox:on {
 QComboBox:disabled {
     background-color: @bgPrimary@;
     color: @textDisabled@;
-    border-color: @borderPrimary@;
+    border-color: @borderSecondary@;
 }
 
 QComboBox:editable {
@@ -756,7 +765,7 @@ QComboBox::down-arrow:disabled {
 
 QComboBox QAbstractItemView {
     background-color: @bgTertiary@;
-    border: 1px solid @borderSecondary@;
+    border: 1px solid @borderPrimary@;
     outline: none;
     padding: @popupPaddingY@px 0;
     color: @textPrimary@;
@@ -813,7 +822,7 @@ QAbstractSpinBox:focus {
 
 QAbstractSpinBox:disabled {
     color: @textDisabled@;
-    border-color: @borderPrimary@;
+    border-color: @borderSecondary@;
     background-color: @bgPrimary@;
 }
 
@@ -835,7 +844,7 @@ QAbstractSpinBox[fieldRole="compact"]:focus {
 
 QAbstractSpinBox[fieldRole="compact"]:disabled {
     color: @textDisabled@;
-    border-color: @borderPrimary@;
+    border-color: @borderSecondary@;
     background-color: @bgPrimary@;
 }
 
@@ -919,7 +928,7 @@ QTreeView::indicator:disabled,
 QListView::indicator:disabled,
 QTableView::indicator:disabled {
     background-color: @bgPrimary@;
-    border-color: @borderPrimary@;
+    border-color: @borderSecondary@;
 }
 
 QCheckBox::indicator:checked:disabled,
@@ -927,7 +936,7 @@ QTreeView::indicator:checked:disabled,
 QListView::indicator:checked:disabled,
 QTableView::indicator:checked:disabled {
     background-color: @bgPrimary@;
-    border-color: @borderPrimary@;
+    border-color: @borderSecondary@;
     image: url("@checkboxCheckedDisabled@");
 }
 
@@ -936,7 +945,7 @@ QTreeView::indicator:indeterminate:disabled,
 QListView::indicator:indeterminate:disabled,
 QTableView::indicator:indeterminate:disabled {
     background-color: @bgPrimary@;
-    border-color: @borderPrimary@;
+    border-color: @borderSecondary@;
     image: url("@checkboxIndeterminateDisabled@");
 }
 
@@ -1007,12 +1016,17 @@ QListView::item:selected {
     border-left: 2px solid @accent@;
 }
 
+QTableView, QTableWidget {
+    border-color: @borderSecondary@;
+    gridline-color: @borderSecondary@;
+}
+
 QHeaderView::section {
     background-color: @headerBackground@;
     color: @textSecondary@;
     padding: @tableCellPaddingY@px @tableCellPaddingX@px;
     border: none;
-    border-bottom: 1px solid @borderPrimary@;
+    border-bottom: 1px solid @borderSecondary@;
     font-size: @bodyPointSize@pt;
     font-weight: normal;
     text-transform: none;
@@ -1020,7 +1034,7 @@ QHeaderView::section {
 }
 
 QHeaderView::section:!last:!only-one {
-    border-right: 1px solid @borderPrimary@;
+    border-right: 1px solid @borderSecondary@;
 }
 
 QHeaderView[columnAccents="true"]::section:checked {
@@ -1086,7 +1100,7 @@ QSlider[sliderRole="parameter"] {
 QSlider[sliderRole="parameter"]::groove:horizontal {
     border: none;
     height: @parameterSliderGroove@px;
-    background-color: @bgHover@;
+    background-color: @sliderTrack@;
     border-radius: 0px;
 }
 
@@ -1096,7 +1110,7 @@ QSlider[sliderRole="parameter"]::sub-page:horizontal {
 }
 
 QSlider[sliderRole="parameter"]::add-page:horizontal {
-    background-color: @bgHover@;
+    background-color: @sliderTrack@;
     border-radius: 0px;
 }
 
@@ -1116,7 +1130,7 @@ QSlider[sliderRole="parameter"]::handle:horizontal:pressed {
 
 QSlider[sliderRole="parameter"]::groove:horizontal:disabled,
 QSlider[sliderRole="parameter"]::sub-page:horizontal:disabled {
-    background-color: @borderPrimary@;
+    background-color: @sliderTrack@;
 }
 
 QSlider[sliderRole="parameter"]::handle:horizontal:disabled {
@@ -1126,12 +1140,12 @@ QSlider[sliderRole="parameter"]::handle:horizontal:disabled {
 QSlider[sliderRole="parameter"]::groove:vertical {
     border: none;
     width: @parameterSliderGroove@px;
-    background-color: @bgHover@;
+    background-color: @sliderTrack@;
     border-radius: 0px;
 }
 
 QSlider[sliderRole="parameter"]::sub-page:vertical {
-    background-color: @bgHover@;
+    background-color: @sliderTrack@;
     border-radius: 0px;
 }
 
@@ -1156,7 +1170,7 @@ QSlider[sliderRole="parameter"]::handle:vertical:pressed {
 
 QSlider[sliderRole="parameter"]::groove:vertical:disabled,
 QSlider[sliderRole="parameter"]::add-page:vertical:disabled {
-    background-color: @borderPrimary@;
+    background-color: @sliderTrack@;
 }
 
 QSlider[sliderRole="parameter"]::handle:vertical:disabled {
@@ -1173,11 +1187,11 @@ QWidget[sliderStyle="compact"] QSlider[sliderRole="parameter"]::groove:horizonta
     height: 6px;
     border: none;
     border-radius: 0px;
-    background: @bgPrimary@;
+    background: @sliderTrack@;
 }
 
 QWidget[sliderStyle="compact"] QSlider[sliderRole="parameter"]::add-page:horizontal {
-    background: @bgPrimary@;
+    background: @sliderTrack@;
     border-radius: 0px;
 }
 
@@ -1215,6 +1229,26 @@ QScrollArea {
     border: none;
 }
 
+QScrollBar::handle {
+    background-color: @borderPrimary@;
+}
+
+QAbstractItemView > QWidget > QScrollBar::handle,
+QPlainTextEdit > QWidget > QScrollBar::handle,
+QTextEdit > QWidget > QScrollBar::handle,
+QScrollBar[scrollRole="table"]::handle {
+    background-color: @borderSecondary@;
+}
+
+QTreeWidget#ProjectTreeWidget > QWidget > QScrollBar::handle,
+QTreeWidget#projectSourcesTree > QWidget > QScrollBar::handle,
+QPlainTextEdit#logTextView > QWidget > QScrollBar::handle,
+QListWidget#aiChatList > QWidget > QScrollBar::handle,
+QScrollBar[scrollRole="panel"]::handle,
+QScrollBar[scrollRole="canvas"]::handle {
+    background-color: @borderPrimary@;
+}
+
 QScrollBar:vertical {
     background-color: transparent;
     width: 10px;
@@ -1222,14 +1256,9 @@ QScrollBar:vertical {
 }
 
 QScrollBar::handle:vertical {
-    background-color: @borderPrimary@;
     min-height: 20px;
     border-radius: 5px;
     margin: 2px;
-}
-
-QScrollBar::handle:vertical:hover {
-    background-color: @borderSecondary@;
 }
 
 QTreeWidget#ProjectTreeWidget QScrollBar::handle:vertical:disabled,
@@ -1257,7 +1286,6 @@ QScrollBar:horizontal {
 }
 
 QScrollBar::handle:horizontal {
-    background-color: @borderPrimary@;
     min-width: 20px;
     border-radius: 5px;
     margin: 2px;
@@ -1494,7 +1522,7 @@ QLabel[settingsRole="subtitle"] {
 QPushButton:disabled {
     background-color: @bgSecondary@;
     color: @textDisabled@;
-    border-color: @borderPrimary@;
+    border-color: @borderSecondary@;
 }
 
 QLabel[settingsRole="statusSuccess"] { color: @success@; }
@@ -1700,7 +1728,7 @@ QLabel[fontWeight="medium"] { font-weight: 500; }
 
 QFrame#listBox {
     background-color: @bgSecondary@;
-    border: 1px solid @borderPrimary@;
+    border: 1px solid @borderSecondary@;
 }
 QFrame#listBox[dropActive="true"] { border-color: @accent@; }
 QScrollArea[tableBody="true"] {
@@ -1711,7 +1739,7 @@ QWidget#tableHeaderClip,
 QWidget#listHead {
     background-color: @headerBackground@;
     border: none;
-    border-bottom: 1px solid @borderPrimary@;
+    border-bottom: 1px solid @borderSecondary@;
 }
 QWidget#listHead QLabel {
     color: @textSecondary@;
@@ -1720,13 +1748,13 @@ QWidget#listHead QLabel {
     border: none;
 }
 QWidget#listHead QLabel[lastColumn="false"] {
-    border-right: 1px solid @borderPrimary@;
+    border-right: 1px solid @borderSecondary@;
 }
 QFrame#listBox QWidget#listRow,
 QFrame#listBox QWidget[listRow="true"] {
     background: @bgPrimary@;
     border: none;
-    border-bottom: 1px solid @borderPrimary@;
+    border-bottom: 1px solid @borderSecondary@;
     border-left: 2px solid transparent;
 }
 QFrame#listBox QWidget#listRow[lastRow="true"],
@@ -1754,13 +1782,13 @@ QFrame#listBox[cellSelection="true"] QWidget[tableRowNumber="true"][selected="tr
 QWidget#listFoot {
     background-color: @headerBackground@;
     border: none;
-    border-top: 1px solid @borderPrimary@;
+    border-top: 1px solid @borderSecondary@;
 }
 QWidget#listFoot[tableGroupFooter="true"] {
     border-top: none;
 }
 QWidget#listFoot[tableGroupFooter="true"][lastRow="false"] {
-    border-bottom: 1px solid @borderPrimary@;
+    border-bottom: 1px solid @borderSecondary@;
 }
 QToolButton[listFootBtn="true"] {
     border: none;
@@ -1794,7 +1822,7 @@ QWidget[fieldRole="preview"][dimmed="true"],
 VNX--ObjectRefWidget:disabled,
 VNX--ObjectRefWidget[dimmed="true"] {
     background-color: @bgPrimary@;
-    border-color: @borderPrimary@;
+    border-color: @borderSecondary@;
 }
 QWidget[fieldRole="preview"]:hover:enabled,
 VNX--ObjectRefWidget[hovered="true"][dimmed="false"]:enabled { border-color: @accent@; }
@@ -1840,7 +1868,7 @@ VNX--ObjectRefWidget[inputInvalid="true"][dimmed="false"]:enabled {
     border-radius: @radiusLarge@px;
 }
 #AssistantPanel QFrame#aiMessageSeparator {
-    background-color: @aiMessageSeparator@;
+    background-color: @borderPrimary@;
     max-height: 1px;
     border: none;
 }
@@ -1860,7 +1888,7 @@ VNX--ObjectRefWidget[inputInvalid="true"][dimmed="false"]:enabled {
     max-height: 16777215px;
     color: @textPrimary@;
 }
-#AssistantPanel QPushButton#assistantSend[turnActive="true"] { background-color: @errorOpaque@; }
+#AssistantPanel QPushButton#assistantSend[turnActive="true"] { background-color: @error@; }
 #AssistantPanel QPushButton#assistantSend[turnActive="true"]:pressed { background-color: @error@; }
 #inspectorSectionSeparator,
 #informationSeparator { background-color: @sectionSeparator@; border: none; }
@@ -1926,7 +1954,7 @@ QToolButton[shellRole="sidebarToggle"] {
 
 QProgressBar[shellRole="statusProgress"] {
     background-color: @bgPrimary@;
-    border: 1px solid @borderPrimary@;
+    border: 1px solid @borderSecondary@;
     border-radius: 3px;
     text-align: center;
     color: @textSecondary@;
@@ -1998,7 +2026,7 @@ QToolButton#meterSubPanelCloseBtn {
 QToolButton#meterSubPanelGearBtn:hover,
 QToolButton#meterSubPanelSplitHBtn:hover,
 QToolButton#meterSubPanelSplitVBtn:hover { background: @bgHover@; border-radius: @radiusSmall@px; }
-QToolButton#meterSubPanelCloseBtn:hover { background: @errorOpaque@; border-radius: @radiusSmall@px; }
+QToolButton#meterSubPanelCloseBtn:hover { background: @error@; border-radius: @radiusSmall@px; }
 
 QWidget#MeterSettingsPopup {
     background: @bgPrimary@;
@@ -2021,10 +2049,10 @@ QFrame#listBox QAbstractItemView[tableRole="navigation"] {
     border: none;
 }
 QScrollBar[scrollRole="table"]:vertical {
-    border-left: 1px solid @borderPrimary@;
+    border-left: 1px solid @borderSecondary@;
 }
 QScrollBar[scrollRole="table"]:horizontal {
-    border-top: 1px solid @borderPrimary@;
+    border-top: 1px solid @borderSecondary@;
 }
 QScrollBar[scrollRole="table"]::handle:vertical:disabled,
 QScrollBar[scrollRole="table"]::handle:horizontal:disabled {
@@ -2033,8 +2061,8 @@ QScrollBar[scrollRole="table"]::handle:horizontal:disabled {
 QWidget#tableScrollCorner {
     background: transparent;
     border: none;
-    border-top: 1px solid @borderPrimary@;
-    border-left: 1px solid @borderPrimary@;
+    border-top: 1px solid @borderSecondary@;
+    border-left: 1px solid @borderSecondary@;
 }
 QAbstractItemView[tableRole="data"]::item {
     padding: @tableCellPaddingY@px @tableCellPaddingX@px;
@@ -2048,7 +2076,7 @@ QAbstractItemView[rowProgress="true"]::item:selected,
 QAbstractItemView[rowProgress="true"]::item:hover:!selected,
 QAbstractItemView[rowProgress="true"]::item:alternate:!selected { background-color: transparent; }
 QFrame#tableRowInsertion { background-color: @accent@; border: none; }
-QFrame[matrixTable="true"] QTableView { gridline-color: @borderPrimary@; }
+QFrame[matrixTable="true"] QTableView { gridline-color: @borderSecondary@; }
 QFrame[matrixHeader="true"] {
     background-color: @headerBackground@;
     border: none;
@@ -2231,4 +2259,8 @@ QDialog QLabel {
 #titleBarMenuBar::item:pressed {
     background-color: @accent@;
     color: @accentText@;
+}
+
+#titleBarMenuBar::item:disabled {
+    color: @textDisabled@;
 }

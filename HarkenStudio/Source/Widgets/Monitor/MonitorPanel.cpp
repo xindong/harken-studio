@@ -93,7 +93,7 @@ protected:
         painter->save();
         painter->setClipRect(option.rect, Qt::IntersectClip);
         painter->fillRect(rect, selected ? colors.bgSelected : colors.bgPrimary);
-        painter->setPen(selected ? colors.accent : colors.borderPrimary);
+        painter->setPen(selected ? colors.accent : colors.borderSecondary);
         painter->setBrush(Qt::NoBrush);
         painter->drawRect(rect.adjusted(0, 0, -1, -1));
         rect.adjust(1, 1, -1, -1);

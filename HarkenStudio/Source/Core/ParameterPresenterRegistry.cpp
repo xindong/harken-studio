@@ -12,8 +12,6 @@ QString parameterPresenterIdName(ParameterPresenterId id)
             return QStringLiteral("horizontal-slider");
         case ParameterPresenterId::VerticalFader:
             return QStringLiteral("vertical-fader");
-        case ParameterPresenterId::RotaryKnob:
-            return QStringLiteral("rotary-knob");
     }
     return {};
 }
@@ -38,8 +36,6 @@ std::optional<ParameterPresenterId> parseParameterPresenterId(const QString& id)
         return ParameterPresenterId::HorizontalSlider;
     if (id == QStringLiteral("vertical-fader"))
         return ParameterPresenterId::VerticalFader;
-    if (id == QStringLiteral("rotary-knob"))
-        return ParameterPresenterId::RotaryKnob;
     return std::nullopt;
 }
 
@@ -67,9 +63,6 @@ ParameterPresenterCapabilities parameterPresenterCapabilities(
         case ParameterPresenterId::VerticalFader:
             return Capability::Vertical | Capability::ValueEditor
                 | Capability::Label;
-        case ParameterPresenterId::RotaryKnob:
-            return Capability::Rotary | Capability::ValueEditor
-                | Capability::Label | Capability::Compact;
     }
     return Capability::None;
 }
@@ -82,7 +75,7 @@ ParameterPresenterId defaultParameterPresenter(
         case ParameterPresenterContext::InspectorFloat:
             return ParameterPresenterId::SliderWithValue;
         case ParameterPresenterContext::EffectParameter:
-            return ParameterPresenterId::RotaryKnob;
+            return ParameterPresenterId::SliderWithValue;
     }
     return ParameterPresenterId::SliderWithValue;
 }
@@ -95,11 +88,9 @@ bool parameterPresenterSupportsContext(ParameterPresenterId id,
         case ParameterPresenterContext::InspectorFloat:
             return id == ParameterPresenterId::SliderWithValue
                 || id == ParameterPresenterId::HorizontalSlider
-                || id == ParameterPresenterId::VerticalFader
-                || id == ParameterPresenterId::RotaryKnob;
+                || id == ParameterPresenterId::VerticalFader;
         case ParameterPresenterContext::EffectParameter:
-            return id == ParameterPresenterId::RotaryKnob
-                || id == ParameterPresenterId::SliderWithValue;
+            return id == ParameterPresenterId::SliderWithValue;
     }
     return false;
 }

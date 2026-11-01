@@ -78,7 +78,7 @@ TEST(ParameterControlHost, ColorPreviewPreservesActiveEditingAndComponentStructu
         {QStringLiteral("tokens.json"), R"json({"colors":{}})json"},
         {QStringLiteral("visuals.json"), R"json({"colors":{}})json"},
         {QStringLiteral("assets.json"), R"json({"assets":{}})json"},
-        {QStringLiteral("presenters.json"), R"json({"contexts":{"inspector.float":"rotary-knob"}})json"},
+        {QStringLiteral("presenters.json"), R"json({"contexts":{"inspector.float":"vertical-fader"}})json"},
         {QStringLiteral("recipes.json"), R"json({"recipes":[{
             "host":"track.header", "variant":"track.expanded", "slots":[{"id":"identity"}]
         }]})json"}
@@ -139,7 +139,7 @@ TEST(ParameterControlHost, ColorPreviewPreservesActiveEditingAndComponentStructu
     EXPECT_DOUBLE_EQ(binding->value(), 0.75);
 
     ASSERT_TRUE(manager.selectTheme(QStringLiteral("theme.structural")).ok());
-    EXPECT_EQ(parameter.presenterId(), VNX::ParameterPresenterId::RotaryKnob);
+    EXPECT_EQ(parameter.presenterId(), VNX::ParameterPresenterId::VerticalFader);
     EXPECT_EQ(recipe.appliedVariant(), VNX::ComponentRecipeVariant::TrackExpanded);
     EXPECT_EQ(recipe.orderedSlotNames(), QStringList{QStringLiteral("identity")});
     EXPECT_EQ(recipe.slotWidget(VNX::ComponentRecipeSlotId::Identity), identity);

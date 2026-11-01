@@ -131,7 +131,7 @@ void TableGroupHeader::paint(QPainter& painter, const QRect& rect, const QString
     const auto font = captionFont(themeManager);
     painter.save();
     painter.fillRect(rect, colors.headerBackground);
-    painter.setPen(colors.borderPrimary);
+    painter.setPen(colors.borderSecondary);
     painter.drawLine(rect.bottomLeft(), rect.bottomRight());
     painter.setPen(colors.textTitle);
     painter.setFont(font);

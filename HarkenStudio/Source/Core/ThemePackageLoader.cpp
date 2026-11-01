@@ -845,6 +845,7 @@ auto tokenColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("background.selected", ui.colors.bgSelected);
     COLOR_SLOT("border.primary", ui.colors.borderPrimary);
     COLOR_SLOT("border.secondary", ui.colors.borderSecondary);
+    COLOR_SLOT("border.tick", ui.colors.borderTick);
     COLOR_SLOT("border.view", ui.colors.viewBorder);
     COLOR_SLOT("status.success", ui.colors.success);
     COLOR_SLOT("status.warning", ui.colors.warning);
@@ -855,7 +856,6 @@ auto tokenColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("bus.background", ui.colors.busBackground);
     COLOR_SLOT("bus.backgroundActive", ui.colors.busBackgroundActive);
     COLOR_SLOT("slider.track", ui.colors.sliderTrack);
-    COLOR_SLOT("knob.indicator", ui.colors.knobIndicator);
     COLOR_SLOT("panel.background", ui.colors.panelBackground);
     COLOR_SLOT("section.separator", ui.colors.sectionSeparator);
     COLOR_SLOT("header.background", ui.colors.headerBackground);
@@ -929,7 +929,6 @@ bool applyTokenMetric(const QString& key, double value, ThemeSnapshot& theme)
     TOKEN_METRIC("inspector.slotSpacing", inspector.slotSpacing);
     TOKEN_METRIC("inspector.separatorHeight", inspector.separatorHeight);
     TOKEN_METRIC("inspector.rangeSeparatorWidth", inspector.rangeSeparatorWidth);
-    TOKEN_METRIC("parameter.knobExtent", parameter.knobExtent);
     TOKEN_METRIC("parameter.faderMinimumHeight", parameter.faderMinimumHeight);
     TOKEN_METRIC("parameter.labelMinimumWidth", parameter.labelMinimumWidth);
     TOKEN_METRIC("parameter.valueMinimumWidth", parameter.valueMinimumWidth);
@@ -1212,21 +1211,6 @@ auto meterColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("meter.peakMeter.grid", domains.meter.peakMeter.colors.grid);
     COLOR_SLOT("meter.peakMeter.tickText", domains.meter.peakMeter.colors.tickText);
     COLOR_SLOT("meter.peakMeter.label", domains.meter.peakMeter.colors.label);
-    COLOR_SLOT("meter.loudness.canvasBackground", domains.meter.loudnessMeter.colors.canvasBackground);
-    COLOR_SLOT("meter.loudness.trackBackground", domains.meter.loudnessMeter.colors.trackBackground);
-    COLOR_SLOT("meter.loudness.targetText", domains.meter.loudnessMeter.colors.targetText);
-    COLOR_SLOT("meter.loudness.labelText", domains.meter.loudnessMeter.colors.labelText);
-    COLOR_SLOT("meter.loudness.valueText", domains.meter.loudnessMeter.colors.valueText);
-    COLOR_SLOT("meter.vu.canvasBackground", domains.meter.vuMeter.colors.canvasBackground);
-    COLOR_SLOT("meter.vu.titleText", domains.meter.vuMeter.colors.titleText);
-    COLOR_SLOT("meter.vu.trackBackground", domains.meter.vuMeter.colors.trackBackground);
-    COLOR_SLOT("meter.vu.analogArc", domains.meter.vuMeter.colors.analogArc);
-    COLOR_SLOT("meter.vu.analogNegativeTick", domains.meter.vuMeter.colors.analogNegativeTick);
-    COLOR_SLOT("meter.vu.analogValueText", domains.meter.vuMeter.colors.analogValueText);
-    COLOR_SLOT("meter.vu.analogLabelText", domains.meter.vuMeter.colors.analogLabelText);
-    COLOR_SLOT("meter.vu.barGrid", domains.meter.vuMeter.colors.barGrid);
-    COLOR_SLOT("meter.vu.barLabelText", domains.meter.vuMeter.colors.barLabelText);
-    COLOR_SLOT("meter.vu.barValueText", domains.meter.vuMeter.colors.barValueText);
     COLOR_SLOT("meter.spectrum.canvasBackground", domains.meter.spectrumMeter.colors.canvasBackground);
     COLOR_SLOT("meter.spectrum.horizontalGrid", domains.meter.spectrumMeter.colors.horizontalGrid);
     COLOR_SLOT("meter.spectrum.verticalGrid", domains.meter.spectrumMeter.colors.verticalGrid);
@@ -1243,9 +1227,6 @@ auto meterColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("meter.clipOn", domains.meter.clipOn);
     COLOR_SLOT("meter.clipOff", domains.meter.clipOff);
     COLOR_SLOT("meter.background", domains.meter.background);
-    COLOR_SLOT("meter.lufsMomentary", domains.meter.lufsMomentary);
-    COLOR_SLOT("meter.lufsShortTerm", domains.meter.lufsShortTerm);
-    COLOR_SLOT("meter.lufsIntegrated", domains.meter.lufsIntegrated);
     COLOR_SLOT("meter.interaction.accentGuide", domains.meter.interaction.colors.accentGuide);
     COLOR_SLOT("meter.peakMeter.gradientError", domains.meter.peakMeter.colors.gradientError);
     COLOR_SLOT("meter.peakMeter.gradientWarning", domains.meter.peakMeter.colors.gradientWarning);
@@ -1257,13 +1238,6 @@ auto meterColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("meter.peakMeter.holdLine", domains.meter.peakMeter.colors.holdLine);
     COLOR_SLOT("meter.peakMeter.clipBackground", domains.meter.peakMeter.colors.clipBackground);
     COLOR_SLOT("meter.peakMeter.clipText", domains.meter.peakMeter.colors.clipText);
-    COLOR_SLOT("meter.loudness.targetLine", domains.meter.loudnessMeter.colors.targetLine);
-    COLOR_SLOT("meter.vu.analogPositiveTick", domains.meter.vuMeter.colors.analogPositiveTick);
-    COLOR_SLOT("meter.vu.analogOverloadArc", domains.meter.vuMeter.colors.analogOverloadArc);
-    COLOR_SLOT("meter.vu.analogNeedleGlow", domains.meter.vuMeter.colors.analogNeedleGlow);
-    COLOR_SLOT("meter.vu.analogNeedle", domains.meter.vuMeter.colors.analogNeedle);
-    COLOR_SLOT("meter.vu.analogPivot", domains.meter.vuMeter.colors.analogPivot);
-    COLOR_SLOT("meter.vu.barWarning", domains.meter.vuMeter.colors.barWarning);
     COLOR_SLOT("meter.spectrum.fillTop", domains.meter.spectrumMeter.colors.fillTop);
     COLOR_SLOT("meter.spectrum.fillUpperMiddle", domains.meter.spectrumMeter.colors.fillUpperMiddle);
     COLOR_SLOT("meter.spectrum.fillLowerMiddle", domains.meter.spectrumMeter.colors.fillLowerMiddle);
@@ -1330,81 +1304,6 @@ bool applyMeterMetric(const QString& key, double value, ThemeSnapshot& theme)
     METER_METRIC("peakMeter.channelLabelBottomOffset", peakMeter.metrics.channelLabelBottomOffset);
     METER_METRIC("peakMeter.valueLabelBottomOffset", peakMeter.metrics.valueLabelBottomOffset);
     METER_METRIC("peakMeter.labelHeight", peakMeter.metrics.labelHeight);
-    METER_METRIC("loudness.outerInsetLeft", loudnessMeter.metrics.outerInsetLeft);
-    METER_METRIC("loudness.outerInsetTop", loudnessMeter.metrics.outerInsetTop);
-    METER_METRIC("loudness.outerInsetRight", loudnessMeter.metrics.outerInsetRight);
-    METER_METRIC("loudness.outerInsetBottom", loudnessMeter.metrics.outerInsetBottom);
-    METER_METRIC("loudness.reservedWidth", loudnessMeter.metrics.reservedWidth);
-    METER_METRIC("loudness.barGap", loudnessMeter.metrics.barGap);
-    METER_METRIC("loudness.minimumBarWidth", loudnessMeter.metrics.minimumBarWidth);
-    METER_METRIC("loudness.gradientTopStop", loudnessMeter.metrics.gradientTopStop);
-    METER_METRIC("loudness.gradientBottomStop", loudnessMeter.metrics.gradientBottomStop);
-    METER_METRIC("loudness.gradientTopLighterFactor", loudnessMeter.metrics.gradientTopLighterFactor);
-    METER_METRIC("loudness.gradientBottomDarkerFactor", loudnessMeter.metrics.gradientBottomDarkerFactor);
-    METER_METRIC("loudness.highlightLighterFactor", loudnessMeter.metrics.highlightLighterFactor);
-    METER_METRIC("loudness.highlightAlpha", loudnessMeter.metrics.highlightAlpha);
-    METER_METRIC("loudness.highlightMinimumBarHeight", loudnessMeter.metrics.highlightMinimumBarHeight);
-    METER_METRIC("loudness.highlightHeight", loudnessMeter.metrics.highlightHeight);
-    METER_METRIC("loudness.targetLineWidth", loudnessMeter.metrics.targetLineWidth);
-    METER_METRIC("loudness.targetLabelHorizontalInset", loudnessMeter.metrics.targetLabelHorizontalInset);
-    METER_METRIC("loudness.targetLabelTopOffset", loudnessMeter.metrics.targetLabelTopOffset);
-    METER_METRIC("loudness.targetLabelHeight", loudnessMeter.metrics.targetLabelHeight);
-    METER_METRIC("loudness.channelLabelHeight", loudnessMeter.metrics.channelLabelHeight);
-    METER_METRIC("loudness.valueLabelBottomOffset", loudnessMeter.metrics.valueLabelBottomOffset);
-    METER_METRIC("loudness.valueLabelHeight", loudnessMeter.metrics.valueLabelHeight);
-    METER_METRIC("vu.outerInsetLeft", vuMeter.metrics.outerInsetLeft);
-    METER_METRIC("vu.outerInsetTop", vuMeter.metrics.outerInsetTop);
-    METER_METRIC("vu.outerInsetRight", vuMeter.metrics.outerInsetRight);
-    METER_METRIC("vu.outerInsetBottom", vuMeter.metrics.outerInsetBottom);
-    METER_METRIC("vu.titleHeight", vuMeter.metrics.titleHeight);
-    METER_METRIC("vu.contentTopInset", vuMeter.metrics.contentTopInset);
-    METER_METRIC("vu.analogGap", vuMeter.metrics.analogGap);
-    METER_METRIC("vu.analogCornerRadius", vuMeter.metrics.analogCornerRadius);
-    METER_METRIC("vu.analogInnerInsetLeft", vuMeter.metrics.analogInnerInsetLeft);
-    METER_METRIC("vu.analogInnerInsetTop", vuMeter.metrics.analogInnerInsetTop);
-    METER_METRIC("vu.analogInnerInsetRight", vuMeter.metrics.analogInnerInsetRight);
-    METER_METRIC("vu.analogInnerInsetBottom", vuMeter.metrics.analogInnerInsetBottom);
-    METER_METRIC("vu.analogLabelStripBottomOffset", vuMeter.metrics.analogLabelStripBottomOffset);
-    METER_METRIC("vu.analogLabelStripHeight", vuMeter.metrics.analogLabelStripHeight);
-    METER_METRIC("vu.analogPivotBottomOffset", vuMeter.metrics.analogPivotBottomOffset);
-    METER_METRIC("vu.analogRadiusScale", vuMeter.metrics.analogRadiusScale);
-    METER_METRIC("vu.analogArcStartPiFactor", vuMeter.metrics.analogArcStartPiFactor);
-    METER_METRIC("vu.analogArcEndPiFactor", vuMeter.metrics.analogArcEndPiFactor);
-    METER_METRIC("vu.analogArcSegments", vuMeter.metrics.analogArcSegments);
-    METER_METRIC("vu.analogArcLineWidth", vuMeter.metrics.analogArcLineWidth);
-    METER_METRIC("vu.analogTickInnerRadiusScale", vuMeter.metrics.analogTickInnerRadiusScale);
-    METER_METRIC("vu.analogTickOuterRadiusScale", vuMeter.metrics.analogTickOuterRadiusScale);
-    METER_METRIC("vu.analogTickLineWidth", vuMeter.metrics.analogTickLineWidth);
-    METER_METRIC("vu.analogTickLabelRadiusScale", vuMeter.metrics.analogTickLabelRadiusScale);
-    METER_METRIC("vu.analogTickLabelHalfWidth", vuMeter.metrics.analogTickLabelHalfWidth);
-    METER_METRIC("vu.analogTickLabelTopOffset", vuMeter.metrics.analogTickLabelTopOffset);
-    METER_METRIC("vu.analogTickLabelWidth", vuMeter.metrics.analogTickLabelWidth);
-    METER_METRIC("vu.analogTickLabelHeight", vuMeter.metrics.analogTickLabelHeight);
-    METER_METRIC("vu.analogOverloadRadiusScale", vuMeter.metrics.analogOverloadRadiusScale);
-    METER_METRIC("vu.analogOverloadSegments", vuMeter.metrics.analogOverloadSegments);
-    METER_METRIC("vu.analogOverloadLineWidth", vuMeter.metrics.analogOverloadLineWidth);
-    METER_METRIC("vu.analogNeedleLengthScale", vuMeter.metrics.analogNeedleLengthScale);
-    METER_METRIC("vu.analogNeedleGlowWidth", vuMeter.metrics.analogNeedleGlowWidth);
-    METER_METRIC("vu.analogNeedleWidth", vuMeter.metrics.analogNeedleWidth);
-    METER_METRIC("vu.analogPivotRadius", vuMeter.metrics.analogPivotRadius);
-    METER_METRIC("vu.analogValueHeight", vuMeter.metrics.analogValueHeight);
-    METER_METRIC("vu.analogLabelTopOffset", vuMeter.metrics.analogLabelTopOffset);
-    METER_METRIC("vu.analogLabelHeight", vuMeter.metrics.analogLabelHeight);
-    METER_METRIC("vu.barGap", vuMeter.metrics.barGap);
-    METER_METRIC("vu.barCornerRadius", vuMeter.metrics.barCornerRadius);
-    METER_METRIC("vu.barHorizontalInset", vuMeter.metrics.barHorizontalInset);
-    METER_METRIC("vu.barOverloadStop", vuMeter.metrics.barOverloadStop);
-    METER_METRIC("vu.barWarningStop", vuMeter.metrics.barWarningStop);
-    METER_METRIC("vu.barYellowStop", vuMeter.metrics.barYellowStop);
-    METER_METRIC("vu.barBrightGreenStop", vuMeter.metrics.barBrightGreenStop);
-    METER_METRIC("vu.barGreenStop", vuMeter.metrics.barGreenStop);
-    METER_METRIC("vu.barOverloadAlpha", vuMeter.metrics.barOverloadAlpha);
-    METER_METRIC("vu.barGreenLighterFactor", vuMeter.metrics.barGreenLighterFactor);
-    METER_METRIC("vu.barGridLineWidth", vuMeter.metrics.barGridLineWidth);
-    METER_METRIC("vu.barChannelLabelBottomOffset", vuMeter.metrics.barChannelLabelBottomOffset);
-    METER_METRIC("vu.barChannelLabelHeight", vuMeter.metrics.barChannelLabelHeight);
-    METER_METRIC("vu.barValueLabelBottomOffset", vuMeter.metrics.barValueLabelBottomOffset);
-    METER_METRIC("vu.barValueLabelHeight", vuMeter.metrics.barValueLabelHeight);
     METER_METRIC("spectrum.plotInsetLeft", spectrumMeter.metrics.plotInsetLeft);
     METER_METRIC("spectrum.plotInsetTop", spectrumMeter.metrics.plotInsetTop);
     METER_METRIC("spectrum.plotInsetRight", spectrumMeter.metrics.plotInsetRight);
@@ -2151,7 +2050,7 @@ bool collectRoleOverrides(const SemanticDocuments& documents,
 {
     struct BoundColor {
         const ThemeColorRole* role;
-        bool fixedAlpha;
+        bool scaledAlpha;
     };
     QHash<const QColor*, BoundColor> bindings;
     for (const auto& role : roles)
@@ -2169,8 +2068,8 @@ bool collectRoleOverrides(const SemanticDocuments& documents,
             QString conflict;
             if (documents.colors)
                 conflict = QStringLiteral("Color role '%1' is defined by this package's palettes; remove the direct render color assignment.").arg(roleKey);
-            else if (binding.fixedAlpha)
-                conflict = QStringLiteral("Color target '%1' has a fixed alpha binding; override role '%2' in a color definition instead.")
+            else if (binding.scaledAlpha)
+                conflict = QStringLiteral("Color target '%1' has an alpha multiplier binding; override role '%2' in a color definition instead.")
                     .arg(color.key(), roleKey);
             const QColor value(color.value());
             if (conflict.isEmpty() && overrides.contains(roleKey) && overrides.value(roleKey) != value)

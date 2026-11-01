@@ -6,6 +6,8 @@
 #include <QDir>
 #include <QFile>
 #include <QImage>
+#include <QPainter>
+#include <QSvgRenderer>
 #include <QTemporaryDir>
 
 #include <gtest/gtest.h>
@@ -153,6 +155,42 @@ TEST(ThemeAssetResolver, RasterTintPreservesPixelCoverageAndDevicePixelRatio)
         for (int y = 0; y < before.height(); ++y)
             for (int x = 0; x < before.width(); ++x)
                 EXPECT_EQ(after.pixelColor(x, y).alpha(), before.pixelColor(x, y).alpha());
+    }
+}
+
+TEST(ThemeAssetResolver, SvgTintAlphaComposesWithAssetOpacityInImagesAndExportedSvg)
+{
+    QTemporaryDir root;
+    ASSERT_TRUE(root.isValid());
+    const QByteArray assets = R"json({"assets":{"meter.peak.cap":{"type":"image","sources":[{"path":"mask.svg"}]}}})json";
+    ASSERT_TRUE(writePackage(root.path(), QStringLiteral("svg"), QStringLiteral("theme.svg"), assets));
+    ASSERT_TRUE(writeFile(root.filePath(QStringLiteral("svg/mask.svg")), R"svg(
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="8">
+          <rect width="8" height="8" fill="currentColor"/>
+          <rect x="8" width="8" height="8" fill="currentColor" fill-opacity="0.5"/>
+          <rect x="16" width="8" height="8" fill="#ff0000"/>
+        </svg>)svg"));
+    VNX::ThemeManager manager(root.path(), memoryStorage());
+    ASSERT_TRUE(manager.selectTheme(QStringLiteral("theme.svg")).ok());
+    for (int alpha : {0, 64, 128, 255}) {
+        const QColor tint(48, 112, 160, alpha);
+        const auto resolved = manager.assetResolver().resolveImage(manager.snapshot(),
+            QStringLiteral("meter.peak.cap"), VNX::ThemeAssetVariant{QSize(24, 8), 1.0, 0, tint});
+        ASSERT_TRUE(resolved.ok());
+        const auto& image = resolved.resource->image;
+        EXPECT_NEAR(image.pixelColor(4, 4).alpha(), alpha, 1);
+        EXPECT_NEAR(image.pixelColor(12, 4).alpha(), alpha * 0.5, 1);
+        EXPECT_NEAR(image.pixelColor(20, 4).alpha(), alpha, 1);
+        if (alpha > 0)
+            EXPECT_EQ(image.pixelColor(20, 4).rgb(), QColor(Qt::red).rgb());
+        QSvgRenderer renderer(resolved.resource->svgData);
+        ASSERT_TRUE(renderer.isValid());
+        QImage exported(image.size(), QImage::Format_ARGB32_Premultiplied);
+        exported.fill(Qt::transparent);
+        QPainter painter(&exported);
+        renderer.render(&painter);
+        painter.end();
+        EXPECT_EQ(exported, image);
     }
 }
 

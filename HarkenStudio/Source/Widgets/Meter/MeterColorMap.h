@@ -34,7 +34,8 @@ public:
             table.append(QColor::fromRgbF(
                 std::lerp(from.redF(), to.redF(), fraction),
                 std::lerp(from.greenF(), to.greenF(), fraction),
-                std::lerp(from.blueF(), to.blueF(), fraction)).rgb());
+                std::lerp(from.blueF(), to.blueF(), fraction),
+                std::lerp(from.alphaF(), to.alphaF(), fraction)).rgba());
         }
         return table;
     }

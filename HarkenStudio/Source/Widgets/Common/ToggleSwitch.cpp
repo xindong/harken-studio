@@ -112,7 +112,8 @@ void ToggleSwitch::paintEvent(QPaintEvent*)
     int g = static_cast<int>(offColor.green() + position_ * (onColor.green() - offColor.green()));
     int b = static_cast<int>(offColor.blue() + position_ * (onColor.blue() - offColor.blue()));
     
-    QColor trackColor(r, g, b);
+    const int a = qRound(offColor.alpha() + position_ * (onColor.alpha() - offColor.alpha()));
+    QColor trackColor(r, g, b, a);
     painter.setPen(QPen(theme.colors().borderSecondary, 1));
     painter.setBrush(trackColor);
     painter.drawRoundedRect(track, switchHeight_ / 2, switchHeight_ / 2);
@@ -127,12 +128,11 @@ void ToggleSwitch::paintEvent(QPaintEvent*)
     QColor thumbTop = theme.colors().textPrimary;
     QColor thumbMid = theme.colors().bgTertiary.lighter(140);
     QColor thumbBottom = theme.colors().bgSecondary.lighter(140);
-    QColor thumbBorder = theme.colors().borderSecondary;
+    const QColor thumbBorder = theme.colors().borderSecondary;
     if (!isEnabled()) {
         thumbTop = theme.colors().textDisabled;
         thumbMid = theme.colors().textDisabled;
         thumbBottom = theme.colors().bgHover;
-        thumbBorder = theme.colors().borderPrimary;
     }
 
     gradient.setColorAt(0.0, thumbTop);

@@ -243,7 +243,7 @@ void refreshPalette(QWidget* widget, ThemeManager& manager, QStyle::State state)
     const QWidget* owner = widget;
     if (const auto* scrollArea = qobject_cast<const QAbstractScrollArea*>(widget->parentWidget()))
         if (scrollArea->viewport() == widget) owner = scrollArea;
-    QPalette palette = widget->palette();
+    QPalette palette = QtControlSkin(manager.snapshot()).applicationPalette();
     const auto visual = manager.widgetAppearance().visual(owner, state);
     if (qobject_cast<QComboBox*>(widget))
         manager.widgetAppearance().updateWidgetGeometry(widget,

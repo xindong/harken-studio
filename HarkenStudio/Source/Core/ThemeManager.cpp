@@ -361,10 +361,11 @@ void ThemeManager::applyApplicationTheme(bool structureChanged)
     if (application->font() != font) application->setFont(font);
     if (structureChanged) QtAdsThemeAdapter::applyIcons(assetResolver_, snapshot_);
     fontManager.applyTheme(snapshot_);
-    if (refreshWidgetPalettes)
-        for (auto* widget : application->allWidgets())
+    for (auto* widget : application->allWidgets()) {
+        if (refreshWidgetPalettes)
             HarkenStyle::refreshWidgetAppearance(widget, *this);
-    for (auto* window : application->topLevelWidgets()) window->update();
+        widget->update();
+    }
 }
 
 bool ThemeManager::persistAppearance(
@@ -465,6 +466,17 @@ ThemeAppearance ThemeManager::persistedAppearance() const
     {
         for (auto& colors : *studioColors)
         {
+            colors.remove(QStringLiteral("knob.indicator"));
+            colors.remove(QStringLiteral("meter.lufsMomentary"));
+            colors.remove(QStringLiteral("meter.lufsShortTerm"));
+            colors.remove(QStringLiteral("meter.lufsIntegrated"));
+            const auto view = colors.find(QStringLiteral("border.view"));
+            if (view != colors.end())
+            {
+                if (!colors.contains(QStringLiteral("border.tick")))
+                    colors.insert(QStringLiteral("border.tick"), *view);
+                colors.remove(QStringLiteral("border.view"));
+            }
             const auto muted = colors.find(QStringLiteral("text.muted"));
             if (muted == colors.end())
                 continue;
@@ -489,7 +501,7 @@ void ThemeManager::paintBindAffordance(QPainter& p, const QRect& rect, BindGlyph
 
     if (hover && enabled) {
         QColor bg = themeColors.accent;
-        bg.setAlpha(active ? 46 : 30);
+        bg.setAlphaF(bg.alphaF() * (active ? 46 : 30) / 255.0);
         p.setPen(Qt::NoPen);
         p.setBrush(bg);
         p.drawRoundedRect(QRectF(rect).adjusted(1.0, 1.0, -1.0, -1.0), 4.0, 4.0);
@@ -513,7 +525,7 @@ void ThemeManager::paintBindAffordance(QPainter& p, const QRect& rect, BindGlyph
     p.drawRoundedRect(front, 1.6, 1.6);
     if (active) {
         QColor fill = themeColors.accent;
-        fill.setAlpha(hover ? 235 : 200);
+        fill.setAlphaF(fill.alphaF() * (hover ? 235 : 200) / 255.0);
         p.setBrush(fill);
         p.drawRoundedRect(front, 1.6, 1.6);
     }

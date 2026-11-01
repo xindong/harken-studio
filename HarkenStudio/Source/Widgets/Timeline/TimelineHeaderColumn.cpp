@@ -164,12 +164,12 @@ void TimelineHeaderColumn::paintEvent(QPaintEvent*)
     painter.fillRect(rect(), theme->ui.colors.bgSecondary);
     painter.setFont(FontManager::instance().getFont(FontRole::Axis));
     const QFontMetrics metrics(painter.font());
-    painter.setPen(theme->ui.colors.textSecondary);
     const auto ticks = TimelineRenderer::amplitudeTicks(panel_->trackWaveformRect(),
         panel_->verticalZoom(), panel_->verticalScroll(), *theme, panel_->amplitudeExponent());
     for (const auto& tick : ticks) {
         if (tick.label.isEmpty())
             continue;
+        painter.setPen(theme->ui.colors.borderTick);
         painter.drawLine(width() - 5, tick.y, width() - 2, tick.y);
         int labelTop = tick.y - metrics.height() / 2;
         if (tick.major) {
@@ -177,6 +177,7 @@ void TimelineHeaderColumn::paintEvent(QPaintEvent*)
             labelTop = std::clamp(labelTop, viewport.top(),
                 std::max(viewport.top(), viewport.bottom() - metrics.height() + 1));
         }
+        painter.setPen(theme->ui.colors.textSecondary);
         painter.drawText(QRect(1, labelTop, width() - 9, metrics.height()),
             Qt::AlignRight | Qt::AlignVCenter, tick.label);
     }

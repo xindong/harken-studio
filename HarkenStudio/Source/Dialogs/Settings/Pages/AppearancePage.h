@@ -43,10 +43,10 @@ private:
     void applyLanguage();
     void refreshLanguage();
     bool commitAppearance(const ThemeAppearance& appearance);
-    void refreshPresets(bool currentOnly = false);
+    void refreshPresets();
     void rebuildColorRoles();
     bool loadBasePalette();
-    void refreshColors(const QString& changedKey = {});
+    void refreshColors();
     void filterColors();
     void refreshSelectedColor();
     const ThemeColorRole* selectedRole() const;

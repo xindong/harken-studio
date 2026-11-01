@@ -2923,9 +2923,9 @@ void BlueprintCanvasWidget::paintLocationPing_(QPainter* painter)
     const double fade = LocationPingAnimation::fadeOpacity(progress);
     const QColor accent = ThemeManager::instance().colors().accent;
     QColor edge = accent;
-    edge.setAlphaF(fade);
+    edge.setAlphaF(edge.alphaF() * fade);
     QColor fill = accent;
-    fill.setAlphaF(0.22 * pop * fade);
+    fill.setAlphaF(fill.alphaF() * 0.22 * pop * fade);
     painter->save();
     painter->resetTransform();
     painter->setClipRect(available, Qt::IntersectClip);
@@ -3100,7 +3100,7 @@ void BlueprintCanvasWidget::paintTransitionWatch_(QPainter* painter)
     const QRect textRect(vp.width() / 2 - textW / 2, vp.height() - 36, textW, 24);
 
     QColor bg = theme->domains.blueprint.canvasBackground;
-    bg.setAlpha(220);
+    bg.setAlphaF(bg.alphaF() * 220 / 255.0);
     painter->setPen(Qt::NoPen);
     painter->setBrush(bg);
     painter->drawRoundedRect(textRect, 6.0, 6.0);

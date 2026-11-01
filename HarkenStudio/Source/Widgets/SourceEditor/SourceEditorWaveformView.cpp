@@ -290,7 +290,7 @@ void SourceEditorWaveformView::paintEvent(QPaintEvent*)
             const int trimStart = handlePosition(static_cast<int>(Handle::TrimStart));
             const int trimEnd = handlePosition(static_cast<int>(Handle::TrimEnd));
             QColor trimmedColor = theme->ui.colors.bgPrimary;
-            trimmedColor.setAlpha(178);
+            trimmedColor.setAlphaF(trimmedColor.alphaF() * 178 / 255.0);
             if (trimStart > waveformRect.left())
                 painter.fillRect(QRect(waveformRect.left(), waveformRect.top(),
                                        trimStart - waveformRect.left(), waveformRect.height()),
@@ -304,7 +304,7 @@ void SourceEditorWaveformView::paintEvent(QPaintEvent*)
                 const int loopStart = handlePosition(static_cast<int>(Handle::LoopStart));
                 const int loopEnd = handlePosition(static_cast<int>(Handle::LoopEnd));
                 QColor loopFill = theme->domains.waveform.loopHandle;
-                loopFill.setAlpha(34);
+                loopFill.setAlphaF(loopFill.alphaF() * 34 / 255.0);
                 painter.fillRect(QRect(loopStart, waveformRect.top(),
                                        std::max(1, loopEnd - loopStart),
                                        waveformRect.height()), loopFill);

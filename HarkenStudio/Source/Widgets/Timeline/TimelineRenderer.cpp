@@ -17,9 +17,9 @@
 namespace VNX {
 namespace {
 
-QColor withAlpha(QColor color, int alpha)
+QColor withOpacity(QColor color, qreal opacity)
 {
-    color.setAlpha(alpha);
+    color.setAlphaF(color.alphaF() * opacity);
     return color;
 }
 
@@ -28,15 +28,15 @@ QColor clipFill(const TimelineClipItem& item, const TimelineStyleView& style)
     const QColor base = item.objectColor.isValid() ? item.objectColor : style.timeline.clip;
     switch (item.state) {
     case TimelineClipVisualState::Hover:
-        return withAlpha(base, 61);
+        return withOpacity(base, 61 / 255.0);
     case TimelineClipVisualState::Selected:
-        return withAlpha(base, 71);
+        return withOpacity(base, 71 / 255.0);
     case TimelineClipVisualState::Dragging:
-        return withAlpha(base, 100);
+        return withOpacity(base, 100 / 255.0);
     case TimelineClipVisualState::Normal:
         break;
     }
-    return withAlpha(base, 41);
+    return withOpacity(base, 41 / 255.0);
 }
 
 QColor clipStroke(const TimelineClipItem& item, const TimelineStyleView& style)
@@ -46,8 +46,8 @@ QColor clipStroke(const TimelineClipItem& item, const TimelineStyleView& style)
         return style.timeline.clipSelectedBorder;
     if (item.state == TimelineClipVisualState::Hover
         || item.state == TimelineClipVisualState::Dragging)
-        return withAlpha(base, 255);
-    return withAlpha(base, 140);
+        return base;
+    return withOpacity(base, 140 / 255.0);
 }
 
 void drawViewport(QPainter& painter,
@@ -74,9 +74,9 @@ void drawLaneRects(QPainter& painter,
             fill = fill.lighter(118);
         painter.fillRect(lane.rect, fill);
         if (lane.selected)
-            painter.fillRect(lane.rect, withAlpha(style.accent.isValid()
+            painter.fillRect(lane.rect, withOpacity(style.accent.isValid()
                                                       ? style.accent
-                                                      : fill, 28));
+                                                      : fill, 28 / 255.0));
         if (lane.accent.isValid())
             painter.fillRect(QRect(lane.rect.left(), lane.rect.top(),
                                    3, lane.rect.height()),
@@ -90,7 +90,7 @@ void drawGrid(QPainter& painter,
 {
     if (!data.timeAxis.ticks.isEmpty()) {
         drawTimeAxisGrid(painter, style.curve.colors.grid, data.viewport, data.timeAxis,
-            withAlpha(style.curve.colors.grid, style.curve.colors.grid.alpha() / 2));
+            withOpacity(style.curve.colors.grid, 0.5));
         painter.save();
         painter.setRenderHint(QPainter::Antialiasing, false);
         painter.setPen(style.curve.colors.grid);
@@ -121,7 +121,7 @@ void drawSemanticBands(QPainter& painter,
     for (const TimelineSemanticBand& band : data.semanticBands) {
         switch (band.kind) {
         case TimelineSemanticBandKind::Nominal:
-            painter.fillRect(band.rect, withAlpha(timeline.clipSelected, 24));
+            painter.fillRect(band.rect, withOpacity(timeline.clipSelected, 24 / 255.0));
             break;
         case TimelineSemanticBandKind::Pickup:
         case TimelineSemanticBandKind::Tail:
@@ -239,7 +239,7 @@ void drawEmergence(QPainter& painter,
         painter.drawLine(item.rect.left() + 2, item.rect.top() + 2,
                          item.rect.right() - 2, item.rect.top() + 2);
     }
-    painter.setPen(QPen(withAlpha(style.timeline.emergenceMarker, 70), 6));
+    painter.setPen(QPen(withOpacity(style.timeline.emergenceMarker, 70 / 255.0), 6));
     painter.drawLine(x, item.rect.top() + 1, x, item.rect.bottom() - 1);
     painter.setPen(QPen(style.timeline.emergenceMarker, 2));
     painter.drawLine(x, item.rect.top() + 1, x, item.rect.bottom() - 1);
@@ -285,8 +285,8 @@ void drawCrossfades(QPainter& painter,
                     const TimelineStyleView& style,
                     const TimelineRenderData& data)
 {
-    const QColor fill = withAlpha(style.timeline.transition, 26);
-    const QColor line = withAlpha(style.timeline.transition, 220);
+    const QColor fill = withOpacity(style.timeline.transition, 26 / 255.0);
+    const QColor line = withOpacity(style.timeline.transition, 220 / 255.0);
     for (const TimelineCrossfadeRegion& region : data.crossfadeRegions) {
         if (region.rect.isEmpty())
             continue;
@@ -334,14 +334,14 @@ void drawMarkerFlag(QPainter& painter, const TimelineMarker& marker, const QColo
     if (flag.isEmpty())
         return;
     if (marker.selected) {
-        painter.setPen(QPen(withAlpha(color, 80), 6));
+        painter.setPen(QPen(withOpacity(color, 80 / 255.0), 6));
         painter.setBrush(Qt::NoBrush);
         painter.drawPolygon(flag);
         painter.setPen(QPen(color, 2));
         painter.setBrush(color);
     } else {
         painter.setPen(Qt::NoPen);
-        painter.setBrush(withAlpha(color, 220));
+        painter.setBrush(withOpacity(color, 220 / 255.0));
     }
     painter.drawPolygon(flag);
 }
@@ -355,7 +355,7 @@ void drawMarker(QPainter& painter, const TimelineMarker& marker, const QColor& c
     const int lineAlpha = marker.shape == TimelineMarkerShape::Line
         ? (marker.selected ? 160 : 90)
         : (marker.selected ? 255 : 180);
-    painter.setPen(QPen(withAlpha(color, lineAlpha), 2));
+    painter.setPen(QPen(withOpacity(color, lineAlpha / 255.0), 2));
     painter.drawLine(marker.x, 1, marker.x, marker.height - 2);
     const int labelWidth = marker.labelMaxWidth;
     if (!marker.label.isEmpty() && labelWidth >= 24) {
@@ -434,7 +434,7 @@ void TimelineRenderer::render(QPainter& painter,
         painter.save();
         if (data.frameless)
             painter.setRenderHint(QPainter::Antialiasing, false);
-        QPen snapPen(data.frameless ? withAlpha(style.accent, 160) : style.music.cursor,
+        QPen snapPen(data.frameless ? withOpacity(style.accent, 160 / 255.0) : style.music.cursor,
             data.frameless ? 1 : 2, data.frameless ? Qt::SolidLine : Qt::DashLine);
         painter.setPen(snapPen);
         painter.drawLine(data.snapGuide.x, data.viewport.top(),

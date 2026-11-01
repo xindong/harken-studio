@@ -30,7 +30,7 @@ protected:
     void paintEvent(QPaintEvent*) override
     {
         QPainter painter(this);
-        painter.setPen(underMouse() ? theme_->colors().accent : theme_->colors().borderPrimary);
+        painter.setPen(underMouse() ? theme_->colors().accent : theme_->colors().borderSecondary);
         if (column_) painter.drawLine(width() / 2, 0, width() / 2, height());
         else painter.drawLine(0, height() - 1, width(), height() - 1);
     }

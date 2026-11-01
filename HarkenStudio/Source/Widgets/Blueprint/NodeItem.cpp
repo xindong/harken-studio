@@ -77,10 +77,10 @@ public:
         const QColor accent = node_->dropFeedback() == NodeItem::DropFeedback::Invalid
             ? theme->ui.colors.error : theme->ui.colors.accent;
         QColor veil = theme->domains.nodeGraphNode.bodyNormal;
-        veil.setAlpha(230);
+        veil.setAlphaF(veil.alphaF() * 230 / 255.0);
         painter->fillRect(rect(), veil);
         QColor tint = accent;
-        tint.setAlpha(20);
+        tint.setAlphaF(tint.alphaF() * 20 / 255.0);
         painter->setBrush(tint);
         painter->setPen(QPen(accent, 1.0, Qt::DashLine, Qt::SquareCap, Qt::MiterJoin));
         const auto zone = rect().adjusted(2.0, 2.0, -2.0, -2.0);
@@ -735,7 +735,8 @@ static QColor blendColors(const QColor& base, const QColor& tint, float ratio)
     return QColor(
         base.red()   + int((tint.red()   - base.red())   * ratio),
         base.green() + int((tint.green() - base.green()) * ratio),
-        base.blue()  + int((tint.blue()  - base.blue())  * ratio));
+        base.blue()  + int((tint.blue()  - base.blue())  * ratio),
+        base.alpha() + int((tint.alpha() - base.alpha()) * ratio));
 }
 
 void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget)
@@ -1005,7 +1006,7 @@ void NodeItem::paintWaveform(QPainter* painter, const QRectF& rect) const
     painter->drawRoundedRect(rect, 2, 2);
     QColor waveColor = ngnWf.blueprintWaveform;
     if (!blueprintWaveformMode_)
-        waveColor.setAlpha(isSelected() ? 255 : 140);
+        waveColor.setAlphaF(waveColor.alphaF() * (isSelected() ? 1.0 : 140 / 255.0));
 
     if (waveformPeakData_ && waveformPeakData_->isValid()) {
         QRect intRect(static_cast<int>(rect.x()), static_cast<int>(rect.y()),

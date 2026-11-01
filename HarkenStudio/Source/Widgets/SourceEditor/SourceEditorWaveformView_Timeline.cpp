@@ -389,8 +389,9 @@ void SourceEditorWaveformView::paintTimeline(QPainter& painter)
             bounds.moveTop(std::clamp(bounds.top(), channelArea.top(),
                 std::max(channelArea.top(), channelArea.bottom() - metrics.height() + 1)));
         if (channelArea.contains(bounds)) {
-            painter.setPen(colors.textSecondary);
+            painter.setPen(colors.borderTick);
             painter.drawLine(axisWidth - 4, tick.y, axisWidth - 1, tick.y);
+            painter.setPen(colors.textSecondary);
             painter.drawText(bounds, Qt::AlignRight | Qt::AlignVCenter, tick.label);
         }
     }
@@ -423,11 +424,11 @@ void SourceEditorWaveformView::paintTimeline(QPainter& painter)
         const int left = edge(previewSource_.trimStartFrame);
         const int right = edge(previewSource_.trimEndFrame.value_or(totalFrames()));
         QColor muted = colors.bgPrimary;
-        muted.setAlpha(175);
+        muted.setAlphaF(muted.alphaF() * 175 / 255.0);
         painter.fillRect(QRect(plot.left(), plot.top(), left - plot.left(), plot.height()), muted);
         painter.fillRect(QRect(right, plot.top(), plot.right() - right + 1, plot.height()), muted);
         QColor selection = waveStyle.trimHandle;
-        selection.setAlpha(35);
+        selection.setAlphaF(selection.alphaF() * 35 / 255.0);
         painter.fillRect(QRect(left, plot.top(), std::max(0, right - left), kTimeAxisHandleBandHeight), selection);
         for (Handle handle : {Handle::TrimStart, Handle::TrimEnd}) {
             const int x = handlePosition(static_cast<int>(handle));
