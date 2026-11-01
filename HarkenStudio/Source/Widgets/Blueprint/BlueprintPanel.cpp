@@ -16,6 +16,7 @@
 #include <QHBoxLayout>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -212,6 +213,8 @@ BlueprintPanel::BlueprintPanel(QWidget* parent)
     meterResizeHandle_->setCursor(Qt::SplitHCursor);
     meterResizeHandle_->hide();
     meterResizeHandle_->installEventFilter(this);
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
+            meterResizeHandle_, qOverload<>(&QWidget::update));
     meter_->installEventFilter(this);
     connect(meter_, &MeterPanel::expandedChanged, this, [this](bool expanded) {
         resizingMeter_ = false;
@@ -311,7 +314,17 @@ bool BlueprintPanel::eventFilter(QObject* watched, QEvent* event)
         || event->type() == QEvent::Show))
         positionOverlays_();
     if (watched == meterResizeHandle_) {
-        if (event->type() == QEvent::MouseButtonPress) {
+        if (event->type() == QEvent::Paint) {
+            if (meterResizeHandle_->isEnabled() && meterResizeHandle_->underMouse()) {
+                QPainter painter(meterResizeHandle_);
+                const int x = meter_->geometry().right() - meterResizeHandle_->x();
+                painter.fillRect(QRect(x, 0, 1, meterResizeHandle_->height()),
+                                 ThemeManager::instance().colors().accent);
+            }
+            return true;
+        } else if (event->type() == QEvent::Enter || event->type() == QEvent::Leave) {
+            meterResizeHandle_->update();
+        } else if (event->type() == QEvent::MouseButtonPress) {
             const auto* mouse = static_cast<QMouseEvent*>(event);
             if (mouse->button() == Qt::LeftButton) {
                 resizingMeter_ = true;

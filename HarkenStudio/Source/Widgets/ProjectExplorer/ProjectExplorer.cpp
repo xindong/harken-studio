@@ -128,8 +128,9 @@ void ProjectExplorer::setupPanelChrome()
 
     sectionsSplitter_ = new QSplitter(Qt::Vertical, content);
     sectionsSplitter_->setObjectName(QStringLiteral("projectExplorerSplitter"));
+    sectionsSplitter_->setProperty("splitterRole", QStringLiteral("border"));
+    sectionsSplitter_->setHandleWidth(1);
     sectionsSplitter_->setChildrenCollapsible(false);
-    sectionsSplitter_->setHandleWidth(0);
     assetsSection_ = new ExplorerSection(tr("Assets"), sectionsSplitter_);
     assetsSection_->setObjectName(QStringLiteral("projectAssetsSection"));
     auto* assetsLayout = new QVBoxLayout(assetsSection_->content());
