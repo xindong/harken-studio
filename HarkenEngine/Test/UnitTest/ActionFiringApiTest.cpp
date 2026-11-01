@@ -57,6 +57,7 @@
 
 namespace harken::detail {
 void SetSourceAcknowledgedHookForTest(void (*hook)(void*), void* context) noexcept;
+void SetSeekCancellationCleanupHookForTest(void (*hook)(void*), void* context) noexcept;
 }
 
 namespace harken::test {
@@ -34658,24 +34659,76 @@ TEST(ActionFiringApi, StreamSeekSwapsExactRingAndRendersRequestedSourceFrames) {
     ASSERT_TRUE(engine->voices.CaptureStreamRingToken(
         service->renderHandle, &ringBeforeCancellation));
     seek.positionMs = 2048.0 * 1000.0 / 48000.0;
-    ticket = 0;
-    ASSERT_EQ(VN_OK, Vn_SeekActionFiring(&seek, &ticket));
-    ASSERT_TRUE(engine->actionSeeks.RequestCancel(ticket, VN_STALE_HANDLE));
-    engine->nullBackend.Pump(1);
-    info = {};
-    info.structSize = sizeof(info);
-    ASSERT_EQ(VN_OK, Vn_QueryActionSeek(ticket, &info));
-    ASSERT_EQ(VN_ACTION_SEEK_CANCELLED, info.state);
-    EXPECT_EQ(VN_STALE_HANDLE, info.result);
-    EXPECT_EQ(0u, info.appliedCount);
-    EXPECT_EQ(1u, info.cancelledCount);
-    std::uint64_t ringAfterCancellation = 0;
-    ASSERT_TRUE(engine->voices.CaptureStreamRingToken(
-        service->renderHandle, &ringAfterCancellation));
-    EXPECT_EQ(ringBeforeCancellation, ringAfterCancellation);
-    engine->streams.SyncServe();
-    EXPECT_EQ(1u, engine->streams.FreeSlotCount());
-    EXPECT_EQ(VN_OK, Vn_ReleaseActionSeek(ticket));
+    const auto cancellationCount = 2u * (engine->streamSeekHandoffs.Capacity() + 1u);
+    for (std::uint32_t attempt = 0; attempt < cancellationCount; ++attempt) {
+        SCOPED_TRACE(attempt);
+        ticket = 0;
+        ASSERT_EQ(VN_OK, Vn_SeekActionFiring(&seek, &ticket));
+        const bool producerFailed = (attempt % 2u) != 0;
+        const VnResult cancellationResult = producerFailed ? VN_DEVICE_ERROR : VN_STALE_HANDLE;
+        if (producerFailed) {
+            harken::CommandRecord command{};
+            ASSERT_TRUE(engine->commands.PeekAt(0, command));
+            ASSERT_EQ(harken::kOpcodeSeekVoice, command.opcode);
+            harken::StreamSeekHandoffSnapshot replacement{};
+            ASSERT_TRUE(engine->streamSeekHandoffs.CanApply(
+                command.payload.seekVoice.streamHandoffToken, ticket,
+                service->renderHandle, &replacement));
+            ASSERT_TRUE(replacement.replacementRing->MarkEndOfData(
+                harken::StreamTerminalReason::ProducerFailure));
+        } else {
+            ASSERT_TRUE(engine->actionSeeks.RequestCancel(ticket, cancellationResult));
+        }
+
+        struct Pause {
+            std::atomic<bool> entered{false}, released{false}, done{false};
+        } pause;
+        harken::detail::SetSeekCancellationCleanupHookForTest(+[](void* opaque) {
+            auto& state = *static_cast<Pause*>(opaque);
+            state.entered.store(true, std::memory_order_release);
+            while (!state.released.load(std::memory_order_acquire)) std::this_thread::yield();
+        }, &pause);
+        std::thread audio([&] {
+            engine->nullBackend.Pump(1);
+            pause.done.store(true, std::memory_order_release);
+        });
+        struct Join {
+            Pause& state;
+            std::thread& audio;
+            ~Join() {
+                state.released.store(true, std::memory_order_release);
+                audio.join();
+                harken::detail::SetSeekCancellationCleanupHookForTest(nullptr, nullptr);
+            }
+        };
+        {
+            Join join{pause, audio};
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+            while (!pause.entered.load(std::memory_order_acquire) &&
+                !pause.done.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline)
+                std::this_thread::yield();
+            ASSERT_TRUE(pause.entered.load(std::memory_order_acquire));
+            info = {};
+            info.structSize = sizeof(info);
+            EXPECT_EQ(VN_OK, Vn_QueryActionSeek(ticket, &info));
+            EXPECT_EQ(VN_ACTION_SEEK_ACCEPTED, info.state);
+            EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionSeek(ticket));
+        }
+        info = {};
+        info.structSize = sizeof(info);
+        EXPECT_EQ(VN_OK, Vn_QueryActionSeek(ticket, &info));
+        EXPECT_EQ(VN_ACTION_SEEK_CANCELLED, info.state);
+        EXPECT_EQ(cancellationResult, info.result);
+        EXPECT_EQ(0u, info.appliedCount);
+        EXPECT_EQ(1u, info.cancelledCount);
+        std::uint64_t ringAfterCancellation = 0;
+        ASSERT_TRUE(engine->voices.CaptureStreamRingToken(
+            service->renderHandle, &ringAfterCancellation));
+        EXPECT_EQ(ringBeforeCancellation, ringAfterCancellation);
+        EXPECT_EQ(VN_OK, Vn_ReleaseActionSeek(ticket));
+        engine->streams.SyncServe();
+        EXPECT_EQ(1u, engine->streams.FreeSlotCount());
+    }
 
     seek.positionMs =
         static_cast<double>(samples.size()) * 1000.0 / 48000.0;
