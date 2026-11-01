@@ -228,6 +228,8 @@ Studio Default 已保存的 `text.muted` 覆盖迁入同一色卡的 `text.secon
 
 2026-11-01 的 Meter 调整取消零刻度与普通刻度的网格强度差异。Peak 和 Loudness 共用的电平柱在展开时，刻度、读数与网格按源 RGBA 的 100% 绘制；收起时统一乘 50%。柱体与峰值保持标记保留原有绘制。Spectrum 和 Spectrogram 的网格按 100% 绘制。相关职责的 Dark / Light 默认 Alpha 均为 255，用户自定义 Alpha 仍与业务比例相乘。
 
+声谱图历史图像使用保留 Alpha 的 ARGB32 格式，与色表的 RGBA 数据一致。存在历史图像时直接合成到画布，只有图像不存在时才单独填充空历史色，避免半透明 `meter.spectrogram.emptyHistory` 叠加两次。回归覆盖色表 Alpha 0/64/128/255 的连续变化、未采样及已采样像素，以及图像存在与不存在时的单次合成结果；修复前两项新增检查失败，修复后相关 17 项主题与仪表测试通过。编辑器与全部 CI 测试目标构建通过，记录位于 `.temp/pr208-spectrogram-alpha/`。
+
 当前 Meter、曲线和音源编辑器使用共用的 `AxisCrosshair` 绘制交错虚线。前景保留原 Dark `#272E3C` / Light `#B9C5D1` 预设色，对比底线继承 `background.primary`，不新增可编辑职责，默认 Alpha 为 255，业务按 100% 绘制；浮动读数的文字继承 `text.primary`，底色继承 `background.secondary`，同样不额外衰减。旧 `meter.interaction` 渲染位置也保留完整源 RGBA。
 
 当前前端的 Loudness（RMS / LUFS）由 `MeterPanel` 调用 `PeakMeterRenderer`，与 Peak 共用色柱。旧 `LoudnessMeterRenderer` 的蓝、绿、橙三柱没有产品调用入口；已删除该绘制器、专属帧与样式、`meter.lufsMomentary/lufsShortTerm/lufsIntegrated` 三项职责及 `meter.loudness.*` 配置键。恢复 Studio Default 已保存设置时只移除这三项旧职责覆盖，其他配色与其他主题同名职责保留。音频测量能力不受影响。

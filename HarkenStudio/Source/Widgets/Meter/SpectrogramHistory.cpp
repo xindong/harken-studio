@@ -43,7 +43,7 @@ const QImage& SpectrogramHistory::image(QSize physicalPixels, double columnsPerP
     columnsPerPixel_ = columnsPerPixel;
     palette_ = palette;
     if (image_.size() != physicalPixels)
-        image_ = QImage(physicalPixels, QImage::Format_RGB32);
+        image_ = QImage(physicalPixels, QImage::Format_ARGB32);
     const int width = physicalPixels.width();
     const int height = physicalPixels.height();
     const int bins = fftSize_ / 2 + 1;

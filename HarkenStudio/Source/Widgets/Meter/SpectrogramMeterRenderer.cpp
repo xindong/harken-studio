@@ -28,9 +28,10 @@ void SpectrogramMeterRenderer::render(
     if (!frame.hasPlot)
         return;
 
-    painter.fillRect(frame.plotBounds, colors.emptyHistory);
     if (!frame.waterfallImage.isNull())
         painter.drawImage(frame.plotBounds, frame.waterfallImage);
+    else
+        painter.fillRect(frame.plotBounds, colors.emptyHistory);
 
     painter.setFont(FontManager::instance().getFont(FontRole::Axis));
     const QFontMetrics font(painter.font());
