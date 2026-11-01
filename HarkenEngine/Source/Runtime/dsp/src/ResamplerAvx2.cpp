@@ -98,8 +98,23 @@ HARKEN_AVX2 std::uint32_t ProduceFixedMonoAvx2(const ResamplerView& source,
         const auto following = _mm256_andnot_ps(endpoint, next);
         const auto interpolated = _mm256_add_ps(first,
             _mm256_mul_ps(fraction, _mm256_sub_ps(following, first)));
-        _mm256_storeu_ps(destination + produced,
-            _mm256_blendv_ps(interpolated, initial, endpoint));
+        const auto result = _mm256_blendv_ps(interpolated, initial, endpoint);
+        _mm256_storeu_ps(destination + produced, result);
+        const auto exponent = _mm256_set1_epi32(0x7f800000);
+        const int exceptional = _mm256_movemask_ps(_mm256_castsi256_ps(
+            _mm256_cmpeq_epi32(_mm256_and_si256(_mm256_castps_si256(result), exponent), exponent)));
+        if (exceptional != 0) {
+            // Keep the wide retry in the shared scalar kernel, off the hot path.
+            float firstSamples[8], nextSamples[8], fractions[8];
+            _mm256_storeu_ps(firstSamples, initial);
+            _mm256_storeu_ps(nextSamples, next);
+            _mm256_storeu_ps(fractions, fraction);
+            for (unsigned lane = 0; lane < 8; ++lane) {
+                if ((exceptional & (1 << lane)) != 0)
+                    destination[produced + lane] = InterpLinear(
+                        firstSamples[lane], nextSamples[lane], fractions[lane]);
+            }
+        }
         const auto nextPosition = phase + 8 * step;
         index += nextPosition >> 53;
         phaseHigh = (nextPosition & fractionMask) << 11;

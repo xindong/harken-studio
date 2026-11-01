@@ -278,6 +278,21 @@ void ProduceFixedLinearMonoSpan(ResamplerView& resampler, float* const* dst,
                 const __m128 result = _mm_or_ps(_mm_and_ps(endpoint, initial),
                     _mm_andnot_ps(endpoint, interpolated));
                 _mm_storeu_ps(dst[0] + dstOffset + produced, result);
+                const auto exponent = _mm_set1_epi32(0x7f800000);
+                const int exceptional = _mm_movemask_ps(_mm_castsi128_ps(
+                    _mm_cmpeq_epi32(_mm_and_si128(_mm_castps_si128(result), exponent), exponent)));
+                if (exceptional != 0) {
+                    // Exceptional lanes share the scalar numerical contract.
+                    float firstSamples[4], nextSamples[4], fractions[4];
+                    _mm_storeu_ps(firstSamples, initial);
+                    _mm_storeu_ps(nextSamples, next);
+                    _mm_storeu_ps(fractions, frac);
+                    for (unsigned lane = 0; lane < 4; ++lane) {
+                        if ((exceptional & (1 << lane)) != 0)
+                            dst[0][dstOffset + produced + lane] = InterpLinear(
+                                firstSamples[lane], nextSamples[lane], fractions[lane]);
+                    }
+                }
                 produced += 4;
                 continue;
             }

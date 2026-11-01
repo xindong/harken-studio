@@ -402,6 +402,84 @@ TEST(ResamplerGolden, UnityRatioIsIdentityForEveryFamily) {
     }
 }
 
+TEST(ResamplerGolden, LinearFiniteExtremesKeepRepresentableInterpolation) {
+    const float maximum = std::numeric_limits<float>::max();
+    for (const float first : {maximum, -maximum}) {
+        for (const float fraction : {0.0f, 0.25f, 0.5f, 0.75f, 1.0f}) {
+            const float expected = static_cast<float>(static_cast<double>(first) +
+                static_cast<double>(fraction) * (-static_cast<double>(first) - first));
+            EXPECT_EQ(expected, harken::InterpLinear(first, -first, fraction));
+        }
+    }
+    const float negativeZero = -0.0f;
+    const float endpoint = harken::InterpLinear(negativeZero, maximum, 0.0f);
+    EXPECT_EQ(0, std::memcmp(&negativeZero, &endpoint, sizeof(float)));
+    const float infinity = std::numeric_limits<float>::infinity();
+    EXPECT_EQ(infinity, harken::InterpLinear(infinity, infinity, 0.0f));
+    EXPECT_TRUE(std::isnan(harken::InterpLinear(infinity, infinity, 0.5f)));
+    EXPECT_TRUE(std::isnan(harken::InterpLinear(
+        std::numeric_limits<float>::quiet_NaN(), 1.0f, 0.5f)));
+}
+
+TEST(ResamplerGolden, LinearFiniteExtremesSurvivePackedSpansAndRingWrap) {
+    constexpr std::uint32_t frames = 3 * kResampleFifoFrames + 29;
+    constexpr std::uint32_t outputFrames = 2 * (frames - 2);
+    constexpr float guard = -123.0f;
+    const std::uint32_t spans[] = {1, 4, 8, 31, 256};
+    for (const auto channels : {1u, 2u, harken::kMaxChannels}) {
+        for (const bool dispatched : {false, true}) {
+            SCOPED_TRACE(::testing::Message() << channels << " dispatched=" << dispatched);
+            std::vector<float> input(channels * frames);
+            std::vector<float> storage(channels * kResampleFifoFrames);
+            std::vector<std::vector<float>> output(channels,
+                std::vector<float>(outputFrames + 2, guard));
+            float* rings[harken::kMaxChannels]{};
+            float* destination[harken::kMaxChannels]{};
+            PCMView view;
+            view.channelCount = channels;
+            view.stride = 1;
+            view.sampleRate = 48000;
+            view.frames = frames;
+            for (std::uint32_t ch = 0; ch < channels; ++ch) {
+                view.channels[ch] = input.data() + ch * frames;
+                rings[ch] = storage.data() + ch * kResampleFifoFrames;
+                destination[ch] = output[ch].data();
+                for (std::uint32_t i = 0; i < frames; ++i) {
+                    input[ch * frames + i] = i % 32 < 4
+                        ? ((i + ch) % 2 ? -1.0f : 1.0f) * std::numeric_limits<float>::max()
+                        : static_cast<float>(static_cast<int>((i + ch) % 17) - 8) / 16.0f;
+                }
+            }
+            Resampler resampler;
+            resampler.Reset(rings, channels, ResampleQuality::Linear, 0.5,
+                            dispatched ? Tables() : nullptr);
+            std::uint32_t fed = 0;
+            std::uint32_t produced = 0;
+            for (std::uint32_t iteration = 0;
+                 iteration < 4 * outputFrames && produced < outputFrames; ++iteration) {
+                const auto request = std::min(spans[iteration % 5], outputFrames - produced);
+                produced += resampler.Produce(destination, 1 + produced, request);
+                EXPECT_EQ(kResampleHistoryPad + produced / 2, resampler.SourceFrame());
+                EXPECT_DOUBLE_EQ((produced % 2) * 0.5, resampler.SourceFraction());
+                const auto feed = std::min({137u, frames - fed, resampler.FreeFrames()});
+                resampler.PushPCM(view, fed, feed);
+                fed += feed;
+            }
+            ASSERT_EQ(outputFrames, produced);
+            for (std::uint32_t ch = 0; ch < channels; ++ch) {
+                EXPECT_EQ(guard, output[ch].front());
+                EXPECT_EQ(guard, output[ch].back());
+                for (std::uint32_t i = 0; i < outputFrames; ++i) {
+                    const double first = input[ch * frames + i / 2];
+                    const double next = input[ch * frames + i / 2 + 1];
+                    const float expected = static_cast<float>(first + (i % 2) * 0.5 * (next - first));
+                    ASSERT_EQ(expected, output[ch][1 + i]) << "channel=" << ch << " frame=" << i;
+                }
+            }
+        }
+    }
+}
+
 TEST(ResamplerGolden, LinearUnityPreservesChannelsAcrossUnevenRingRefills) {
     constexpr std::uint32_t kFrames = 3 * kResampleFifoFrames + 29;
     constexpr std::uint32_t kOffset = 5;
