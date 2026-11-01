@@ -13,14 +13,13 @@
 #include <memory>
 #include <type_traits>
 #include <utility>
-#include <vector>
 
 namespace harken {
 namespace detail {
 
 class StablePageReservation {
 public:
-    StablePageReservation() = default;
+    StablePageReservation() noexcept = default;
     ~StablePageReservation();
     StablePageReservation(const StablePageReservation&) = delete;
     StablePageReservation& operator=(const StablePageReservation&) = delete;
@@ -32,7 +31,7 @@ public:
     void* Address() const noexcept { return address_; }
     std::size_t ReservedBytes() const noexcept { return reservedBytes_; }
     std::size_t CommittedBytes() const noexcept { return committedBytes_; }
-    std::size_t DirectoryBytes() const noexcept { return committedPages_.capacity() * sizeof(std::uint64_t); }
+    std::size_t DirectoryBytes() const noexcept { return committedPageWords_ * sizeof(std::uint64_t); }
     static std::size_t SystemPageBytes() noexcept;
     void SetCommitPageLimitForTests(std::size_t pages) noexcept { remainingPagesForTests_ = pages; }
     static void FailNextReservationForTests() noexcept;
@@ -45,7 +44,8 @@ private:
     std::size_t committedBytes_ = 0;
     std::size_t pageBytes_ = 0;
     std::size_t remainingPagesForTests_ = SIZE_MAX;
-    std::vector<std::uint64_t> committedPages_;
+    std::unique_ptr<std::uint64_t[]> committedPages_;
+    std::size_t committedPageWords_ = 0;
 };
 
 } // namespace detail

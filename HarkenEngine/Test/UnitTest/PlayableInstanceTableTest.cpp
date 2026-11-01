@@ -8,6 +8,8 @@
 
 #include "Common/ObjectIdTestSupport.h"
 #include "harken/core/PlayableInstanceTable.h"
+#include "harken/core/AllocGuard.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/ContainerPlaybackTable.h"
 #include "harken/core/CurrentWorld.h"
 #include "PlayableInstanceTableTestAccess.h"
@@ -465,6 +467,84 @@ TEST(PlayableInstanceTable, PendingStartedObservationsFollowActualRollbackAndRec
     EXPECT_FALSE(table.HasPendingStartedObservations());
     RetireFully(table, direct);
     EXPECT_FALSE(table.HasPendingStartedObservations());
+}
+
+TEST(PlayableInstanceTable, PendingPlaybackEndsAreOncePerCommittedSoundGeneration) {
+    PlayableInstanceTable table(2);
+    harken::PreparedPlayableInstance prepared;
+    ASSERT_TRUE(table.PrepareAcquire(PlayableKind::Sound, 0, &prepared));
+    const auto handle = prepared.Handle();
+    table.RecordPlaybackEnd(handle, 5, 256, {}, {});
+    EXPECT_FALSE(table.HasPendingPlaybackEndObservations());
+    ASSERT_TRUE(table.CommitPrepared(&prepared));
+    table.RecordPlaybackEnd(handle, 0, 256, {}, {});
+    EXPECT_FALSE(table.HasPendingPlaybackEndObservations());
+    table.RecordPlaybackEnd(handle, 5, 256, {}, {});
+    table.RecordPlaybackEnd(handle, 6, 512, {}, {});
+    EXPECT_TRUE(table.HasPendingPlaybackEndObservations());
+    std::uint64_t block = 0, frame = 0;
+    EXPECT_EQ(handle, table.CapturePlaybackEndAt(static_cast<std::uint32_t>(handle), &block, &frame));
+    EXPECT_EQ(5u, block);
+    EXPECT_EQ(256u, frame);
+    table.ObserveFinished(handle);
+    table.ObserveFinished(handle);
+    table.RecordPlaybackEnd(handle, 7, 768, {}, {});
+    EXPECT_FALSE(table.HasPendingPlaybackEndObservations());
+    RetireFully(table, handle);
+    const auto reused = table.Acquire(PlayableKind::Sound, 0);
+    ASSERT_NE(handle, reused);
+    table.RecordPlaybackEnd(handle, 8, 1024, {}, {});
+    EXPECT_FALSE(table.HasPendingPlaybackEndObservations());
+    RetireFully(table, reused);
+    const auto container = table.Acquire(PlayableKind::Container, 0);
+    table.RecordPlaybackEnd(container, 9, 1280, {}, {});
+    EXPECT_FALSE(table.HasPendingPlaybackEndObservations());
+    RetireFully(table, container);
+}
+
+TEST(PlayableInstanceTable, PendingPlaybackEndsFollowSuccessfulRollbackAndRecommit) {
+    PlayableInstanceTable table(1);
+    harken::PreparedPlayableInstance prepared;
+    ASSERT_TRUE(table.PrepareAcquire(PlayableKind::Sound, 0, &prepared));
+    ASSERT_TRUE(table.CommitPrepared(&prepared));
+    const auto handle = prepared.Handle();
+    table.RecordPlaybackEnd(handle, 5, 256, {}, {});
+    ASSERT_TRUE(table.AcquireSourceRetirementHold(handle, prepared.ScheduleEpoch()));
+    EXPECT_FALSE(table.RollbackCommitted(handle));
+    EXPECT_FALSE(table.AdvanceLifecycle(handle, PlayableLifecycle::Retired));
+    EXPECT_TRUE(table.HasPendingPlaybackEndObservations());
+    ASSERT_TRUE(table.ReleaseSourceRetirementHold(handle));
+    ASSERT_TRUE(table.RollbackCommitted(handle));
+    EXPECT_FALSE(table.HasPendingPlaybackEndObservations());
+    ASSERT_TRUE(table.CommitPrepared(&prepared));
+    EXPECT_TRUE(table.HasPendingPlaybackEndObservations());
+    table.ObserveFinished(handle);
+    ASSERT_TRUE(table.RollbackCommitted(handle));
+    ASSERT_TRUE(table.CommitPrepared(&prepared));
+    EXPECT_FALSE(table.HasPendingPlaybackEndObservations());
+    RetireFully(table, handle);
+    EXPECT_FALSE(table.HasPendingPlaybackEndObservations());
+}
+
+TEST(PlayableInstanceTable, PendingPlaybackEndsRetireAndCancelWithoutSurvivingReuse) {
+    PlayableInstanceTable table(2);
+    harken::PreparedPlayableInstance prepared;
+    ASSERT_TRUE(table.PrepareAcquire(PlayableKind::Sound, 0, &prepared));
+    ASSERT_TRUE(table.CommitPrepared(&prepared));
+    const auto direct = table.Acquire(PlayableKind::Sound, 0);
+    table.RecordPlaybackEnd(prepared.Handle(), 1, 128, {}, {});
+    table.RecordPlaybackEnd(direct, 1, 256, {}, {});
+    RetireFully(table, direct);
+    EXPECT_TRUE(table.HasPendingPlaybackEndObservations());
+    ASSERT_TRUE(table.RollbackCommitted(prepared.Handle()));
+    EXPECT_FALSE(table.HasPendingPlaybackEndObservations());
+    ASSERT_TRUE(table.CancelPrepared(&prepared));
+    const auto next = table.Acquire(PlayableKind::Sound, 0);
+    EXPECT_FALSE(table.HasPendingPlaybackEndObservations());
+    table.RecordPlaybackEnd(next, 2, 384, {}, {});
+    EXPECT_TRUE(table.HasPendingPlaybackEndObservations());
+    RetireFully(table, next);
+    EXPECT_FALSE(table.HasPendingPlaybackEndObservations());
 }
 
 TEST(PlayableInstanceTable, AcquiredInstanceReportsItsKindAndParent)
@@ -1053,7 +1133,9 @@ TEST(PlayableTreeExecutor, OriginalInstanceLifetimeCensusIncludesExternalOwnedAn
     const std::array<const harken::PreparedPlayableInstance*, 3> substituted{&root, owned, &copied};
     EXPECT_FALSE(executor.IssueOriginalPreparedInstanceLifetimes(table, substituted, baselines));
     EXPECT_FALSE(std::any_of(baselines.begin(), baselines.end(), [](const auto& pin) { return pin.Valid(); }));
-    ASSERT_TRUE(executor.IssueOriginalPreparedInstanceLifetimes(table, census, baselines));
+    EXPECT_FALSE(executor.IssueOriginalPreparedInstanceLifetimes(table, census, {baselines.data(), 2}));
+    EXPECT_FALSE(std::any_of(baselines.begin(), baselines.end(), [](const auto& pin) { return pin.Valid(); }));
+    ASSERT_TRUE(executor.IssueOriginalPreparedInstanceLifetimes(table, census, {baselines.data(), 3}));
     EXPECT_FALSE(executor.ParentLinkProofHeld());
     EXPECT_FALSE(executor.IssueOriginalPreparedInstanceLifetimes(table, census, baselines));
     for (const auto* original : census) {
@@ -1066,6 +1148,50 @@ TEST(PlayableTreeExecutor, OriginalInstanceLifetimeCensusIncludesExternalOwnedAn
     for (auto& baseline : baselines) baseline.Release();
     ASSERT_TRUE(executor.Cancel(table));
     EXPECT_EQ(4u, table.FreeCount());
+}
+
+TEST(PlayableTreeExecutor, RootPreparationSurvivesEachGenericBackingFailureWithHeldProof) {
+    for (std::size_t allocation = 1; allocation <= 15; ++allocation) {
+        SCOPED_TRACE(allocation);
+        PlayableInstanceTable table(8);
+        table.SetCommitPageLimitForTests(0);
+        EXPECT_FALSE(table.PrepareStorageForAcquire(1));
+        EXPECT_EQ(0u, table.ConstructedEntryCount());
+        EXPECT_EQ(8u, table.FreeCount());
+        table.SetCommitPageLimitForTests(SIZE_MAX);
+        ASSERT_TRUE(table.PrepareStorageForAcquire(1));
+        EXPECT_EQ(1u, table.ConstructedEntryCount());
+        harken::PreparedPlayableInstance root;
+        ASSERT_TRUE(table.PrepareAcquireFromPreparedStorage(PlayableKind::Sound, 0, &root));
+        harken::PlayableTreeExecutor executor(8, false);
+        EXPECT_FALSE(executor.PrepareInstance(table, PlayableKind::Sound));
+        EXPECT_EQ(1u, table.ConstructedEntryCount());
+        ASSERT_TRUE(executor.AdoptPreparedInstance(table, &root));
+        ASSERT_TRUE(executor.ProveInstanceCommits(&table, &root));
+        ASSERT_TRUE(executor.ProveParentLinks(table, &root));
+        const auto* originalLinks = executor.OriginalPreparedParentLinks(table);
+        ASSERT_NE(nullptr, originalLinks);
+        harken::detail::ArmLogicAllocFaultForTests(allocation,
+            harken::detail::LogicAllocSite::PlayableTreeStorage);
+        const bool refused = !executor.PrepareStorage();
+        harken::detail::DisarmLogicAllocFaultForTests();
+        EXPECT_TRUE(refused);
+        EXPECT_EQ(originalLinks, executor.OriginalPreparedParentLinks(table));
+        EXPECT_TRUE(table.PreparedCommitHeld(root));
+        EXPECT_TRUE(table.ParentLinksHeld(root.Handle()));
+        ASSERT_TRUE(executor.PrepareStorage());
+        EXPECT_EQ(originalLinks, executor.OriginalPreparedParentLinks(table));
+        std::array<PlayableInstanceTable::OriginalLifetimePin, 1> baselines;
+        EXPECT_FALSE(table.IssueOriginalPreparedLifetimeBaselines(*originalLinks, {}));
+        EXPECT_FALSE(baselines[0].Valid());
+        ASSERT_TRUE(table.IssueOriginalPreparedLifetimeBaselines(*originalLinks, baselines));
+        ASSERT_TRUE(executor.Commit(table));
+        EXPECT_EQ(1u, table.LiveCount());
+        baselines[0].Release();
+        ASSERT_TRUE(executor.RollbackCommitted(table));
+        ASSERT_TRUE(executor.Cancel(table));
+        EXPECT_EQ(8u, table.FreeCount());
+    }
 }
 
 TEST(PlayableTreeExecutor, OriginalFutureLifetimeDoesNotAcquireHeldArrangingParentLinks) {
@@ -3462,6 +3588,34 @@ TEST(PlayableInstanceTable, ParentLinksProofRejectsAliasesForeignTablesAndPartia
         {&originals[0], &activations[0]}}};
     PlayableInstanceTable::PreparedParentLinksProof tooSmall(1);
     PlayableInstanceTable::PreparedParentLinksProof links(2);
+    PlayableInstanceTable::PreparedParentLinksProof unprepared;
+    EXPECT_FALSE(table.ProvePreparedParentLinks({}, anchors, &unprepared));
+    const auto reservedBytes = links.StorageBytes();
+    struct ObservationHook {
+        bool alreadyArmed = harken::memguard::IsArmed();
+        ObservationHook() { harken::memguard::Install(); }
+        ~ObservationHook() {
+            if (!alreadyArmed) harken::memguard::Uninstall();
+        }
+    } observationHook;
+    for (const std::size_t count : {0u, 1u, 2u}) {
+        harken::memguard::AllocationObservation observed{};
+        bool valid = false;
+        {
+            harken::memguard::AllocationObservationScope observation(observed);
+            valid = table.ProvePreparedParentLinks(
+                std::span(requests).first(count), anchors, &links);
+            links.Release();
+        }
+        ASSERT_TRUE(valid);
+        EXPECT_EQ(reservedBytes, links.StorageBytes());
+        for (const auto& original : originals)
+            EXPECT_FALSE(table.ParentLinksHeld(original.Handle()));
+        if (observed.available) {
+            EXPECT_EQ(0u, observed.logic.allocations);
+            EXPECT_EQ(0u, observed.logic.reallocations);
+        }
+    }
     EXPECT_FALSE(table.ProvePreparedParentLinks(requests, anchors, &tooSmall));
     EXPECT_FALSE(foreign.ProvePreparedParentLinks(requests, anchors, &links));
     auto alias = originals[2];

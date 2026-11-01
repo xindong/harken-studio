@@ -86,6 +86,7 @@ set(HARKEN_RUNTIME_SOURCES
     ${HARKEN_RUNTIME_DIR}/dsp/src/MonoStereoMix.cpp
     ${HARKEN_RUNTIME_DIR}/dsp/src/MonoStereoMixAvx.cpp
     ${HARKEN_RUNTIME_DIR}/dsp/src/Resampler.cpp
+    ${HARKEN_RUNTIME_DIR}/dsp/src/ResamplerAvx2.cpp
     ${HARKEN_RUNTIME_DIR}/media/src/PcmRegistry.cpp
     ${HARKEN_RUNTIME_DIR}/media/src/ResolvedSlotTicket.cpp
     ${HARKEN_RUNTIME_DIR}/media/src/ResourceFacts.cpp
@@ -121,6 +122,8 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND
    MSVC_CXX_ARCHITECTURE_ID STREQUAL "x64")
     set_source_files_properties(${HARKEN_RUNTIME_DIR}/dsp/src/MonoStereoMixAvx.cpp
         PROPERTIES COMPILE_OPTIONS "/arch:AVX;/fp:strict")
+    set_source_files_properties(${HARKEN_RUNTIME_DIR}/dsp/src/ResamplerAvx2.cpp
+        PROPERTIES COMPILE_OPTIONS "/arch:AVX2;/fp:strict")
 endif()
 
 # Private include dirs shared by the static and shared runtime libraries.

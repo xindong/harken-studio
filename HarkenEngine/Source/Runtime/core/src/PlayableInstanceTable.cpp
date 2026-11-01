@@ -1,10 +1,12 @@
 #include "harken/core/PlayableInstanceTable.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 
 #include <algorithm>
 #include <utility>
 #include <cassert>
 #include <limits>
 #include <stdexcept>
+#include <type_traits>
 
 namespace harken {
 namespace {
@@ -333,7 +335,7 @@ bool PlayableInstanceTable::TryFinishOriginalLifetimeDisposition(OriginalLifetim
 }
 bool PlayableInstanceTable::IssueOriginalPreparedLifetimeBaselines(
     const PreparedParentLinksProof& preparation, std::span<OriginalLifetimePin> stableBaselines) noexcept {
-    if (preparation.owner_ != this || !preparation.Valid() || stableBaselines.size() != Capacity()) return false;
+    if (preparation.owner_ != this || !preparation.Valid() || stableBaselines.size() > Capacity()) return false;
     const auto count = preparation.nodeCount_ + preparation.anchorCount_;
     const auto nodeAt = [&preparation](std::size_t index) -> const PreparedParentLinksProof::Node& {
         return index < preparation.nodeCount_ ? preparation.nodes_[index]
@@ -365,10 +367,31 @@ bool PlayableInstanceTable::PreparedCommitHeld(const PreparedPlayableInstance& o
 PlayableInstanceTable::PreparedParentLinksProof::PreparedParentLinksProof(std::size_t capacity) {
     if (capacity > UINT32_MAX || capacity > (std::numeric_limits<std::size_t>::max() - 1u) / 3u)
         throw std::length_error("parent link proof capacity overflow");
-    nodes_.resize(capacity);
-    anchors_.resize(capacity + 1u);
-    held_.resize(3u * capacity + 1u);
-    groups_.resize(capacity);
+    if (!PrepareStorage(capacity)) throw std::bad_alloc{};
+}
+
+bool PlayableInstanceTable::PreparedParentLinksProof::PrepareStorage(std::size_t capacity) noexcept {
+    if (capacity > UINT32_MAX || capacity > (std::numeric_limits<std::size_t>::max() - 1u) / 3u)
+        return false;
+    if (anchorCapacity_ >= capacity + 1u) return true;
+    if (memguard::IsAudioTagged()) return false;
+    static_assert(std::is_nothrow_default_constructible_v<Node>);
+    static_assert(std::is_nothrow_default_constructible_v<HeldEntry>);
+    static_assert(std::is_nothrow_default_constructible_v<Group>);
+    try {
+        const auto grow = [](auto& column, std::size_t count) {
+            detail::CheckedGrow(column, count, detail::LogicAllocSite::PlayableTreeStorage);
+            column.reserve(count);
+        };
+        // These private records contain native pointers and indices only. The
+        // proof object and all externally borrowed original tokens stay put.
+        grow(nodes_, capacity);
+        grow(anchors_, capacity + 1u);
+        grow(held_, 3u * capacity + 1u);
+        grow(groups_, capacity);
+        anchorCapacity_ = capacity + 1u;
+        return true;
+    } catch (...) { return false; }
 }
 
 PlayableInstanceTable::PreparedParentLinksProof::PreparedParentLinksProof(
@@ -385,12 +408,14 @@ PlayableInstanceTable::PreparedParentLinksProof::operator=(PreparedParentLinksPr
     anchors_ = std::move(other.anchors_);
     held_ = std::move(other.held_);
     groups_ = std::move(other.groups_);
+    anchorCapacity_ = std::exchange(other.anchorCapacity_, 0);
     nodeCount_ = other.nodeCount_;
     anchorCount_ = other.anchorCount_;
     heldCount_ = other.heldCount_;
     groupCount_ = other.groupCount_;
     other.owner_ = nullptr;
-    other.nodeCount_ = other.anchorCount_ = other.heldCount_ = other.groupCount_ = 0;
+    other.nodeCount_ = other.groupCount_ = 0;
+    other.anchorCount_ = other.heldCount_ = 0;
     return *this;
 }
 
@@ -421,7 +446,8 @@ void PlayableInstanceTable::PreparedParentLinksProof::Release() noexcept {
         }
     }
     owner_ = nullptr;
-    nodeCount_ = anchorCount_ = heldCount_ = groupCount_ = 0;
+    nodeCount_ = groupCount_ = 0;
+    anchorCount_ = heldCount_ = 0;
 }
 
 bool PlayableInstanceTable::ParentLinksHeld(PlayableInstanceHandle handle) const noexcept {
@@ -449,13 +475,20 @@ bool PlayableInstanceTable::ValidatePreparedParentLinksScope(const PreparedParen
 bool PlayableInstanceTable::ProvePreparedParentLinks(std::span<const ParentLinkRequest> requests,
     std::span<const ParentLinkRequest> anchors, PreparedParentLinksProof* out) noexcept {
     if (out == nullptr || out->owner_ != nullptr) return false;
-    out->nodeCount_ = out->anchorCount_ = out->heldCount_ = out->groupCount_ = 0;
+    out->nodeCount_ = out->groupCount_ = 0;
+    out->anchorCount_ = out->heldCount_ = 0;
     const auto fail = [out]() noexcept {
-        out->nodeCount_ = out->anchorCount_ = out->heldCount_ = out->groupCount_ = 0;
+        out->nodeCount_ = out->groupCount_ = 0;
+        out->anchorCount_ = out->heldCount_ = 0;
         return false;
     };
-    if ((requests.empty() && anchors.size() != 1u) || requests.size() > out->nodes_.size() ||
-        anchors.size() > out->anchors_.size()) return fail();
+    if (out->anchorCapacity_ == 0 ||
+        (requests.empty() && anchors.size() != 1u) ||
+        requests.size() > out->anchorCapacity_ - 1u ||
+        anchors.size() > out->anchorCapacity_) return fail();
+    // Backing was reserved at construction. Only real records need initialization.
+    if (requests.size() > out->nodes_.size()) out->nodes_.resize(requests.size());
+    if (anchors.size() > out->anchors_.size()) out->anchors_.resize(anchors.size());
     const auto captureOriginal = [this](const ParentLinkRequest& request,
         PreparedParentLinksProof::Node& node) noexcept {
         if (request.original == nullptr || request.activation == nullptr ||
@@ -497,7 +530,8 @@ bool PlayableInstanceTable::ProvePreparedParentLinks(std::span<const ParentLinkR
             entry->retirementObserver.actionFiring != 0 || entry->delayedCancellationEpoch != 0) return false;
         for (std::size_t index = 0; index < out->heldCount_; ++index)
             if (out->held_[index].entry == entry) return out->held_[index].handle == handle;
-        if (out->heldCount_ >= out->held_.size()) return false;
+        if (out->heldCount_ >= 3u * (out->anchorCapacity_ - 1u) + 1u) return false;
+        if (out->heldCount_ == out->held_.size()) out->held_.resize(out->heldCount_ + 1u);
         out->held_[out->heldCount_++] = {entry, handle, entry->scheduleEpoch,
             entry->parent, entry->firstChild, entry->nextSibling};
         return true;
@@ -524,7 +558,7 @@ bool PlayableInstanceTable::ProvePreparedParentLinks(std::span<const ParentLinkR
         std::size_t group = 0;
         while (group < out->groupCount_ && out->groups_[group].parent != parent) ++group;
         if (group == out->groupCount_) {
-            if (group >= out->groups_.size()) return fail();
+            if (group >= out->anchorCapacity_ - 1u) return fail();
             Entry* tail = nullptr;
             auto cursor = parent->firstChild;
             std::size_t visited = 0;
@@ -539,6 +573,7 @@ bool PlayableInstanceTable::ProvePreparedParentLinks(std::span<const ParentLinkR
             }
             if (tail != nullptr && !hold(tail, MakeHandle(
                     static_cast<std::uint32_t>(tail - m_entries.data()), tail->generation))) return fail();
+            if (group == out->groups_.size()) out->groups_.resize(group + 1u);
             out->groups_[group] = {parent, tail, static_cast<std::uint32_t>(index), static_cast<std::uint32_t>(index)};
             ++out->groupCount_;
         } else {
@@ -956,18 +991,45 @@ PlayableInstanceHandle PlayableInstanceTable::Acquire(
 bool PlayableInstanceTable::PrepareAcquire(
     PlayableKind kind, PlayableInstanceHandle parent,
     PreparedPlayableInstance* out, const MonitorRequestContext& request, const MonitorEmitterOrigin& emitterOrigin) noexcept {
+    return PrepareAcquireInternal(kind, parent, out, request, emitterOrigin, true);
+}
+
+bool PlayableInstanceTable::PrepareAcquireFromPreparedStorage(
+    PlayableKind kind, PlayableInstanceHandle parent,
+    PreparedPlayableInstance* out, const MonitorRequestContext& request, const MonitorEmitterOrigin& emitterOrigin) noexcept {
+    return PrepareAcquireInternal(kind, parent, out, request, emitterOrigin, false);
+}
+
+bool PlayableInstanceTable::AvailableForAcquire(const Entry& entry) noexcept {
+    return Reusable(entry.lifecycle) && !entry.quarantined && !entry.prepared &&
+        !entry.privateLinksHeld && entry.originalLifetimeCount == 0 &&
+        entry.completedOriginalCancellation.owner_ == nullptr;
+}
+
+bool PlayableInstanceTable::PrepareStorageForAcquire(std::uint32_t count) noexcept {
+    for (const auto& entry : m_entries) {
+        if (count == 0) return true;
+        if (AvailableForAcquire(entry)) --count;
+    }
+    const auto prepared = m_entries.ConstructedCount();
+    // Actual exhaustion is still reported by the original acquire operation.
+    return m_entries.ConstructThrough(prepared + std::min(count, Capacity() - prepared));
+}
+
+bool PlayableInstanceTable::PrepareAcquireInternal(
+    PlayableKind kind, PlayableInstanceHandle parent,
+    PreparedPlayableInstance* out, const MonitorRequestContext& request,
+    const MonitorEmitterOrigin& emitterOrigin, bool prepareStorage) noexcept {
     if (out == nullptr || out->Valid() ||
         (out->owner_ != nullptr && out->owner_->ParentLinksHeld(out->Handle())) ||
         (parent != 0 && (FindAnyMut(parent) == nullptr || ParentLinksHeld(parent)))) {
         return false;
     }
     *out = {};
-    if (!PrepareStorage()) return false;
+    if (prepareStorage && !PrepareStorage()) return false;
     for (std::uint32_t slot = 0; slot < m_entries.size(); ++slot) {
         Entry& entry = m_entries[slot];
-        if (!Reusable(entry.lifecycle) || entry.quarantined ||
-            entry.prepared || entry.privateLinksHeld || entry.originalLifetimeCount != 0 ||
-            entry.completedOriginalCancellation.owner_ != nullptr) {
+        if (!AvailableForAcquire(entry)) {
             continue;
         }
         const IssueResult issue =
@@ -1152,6 +1214,9 @@ void PlayableInstanceTable::ActivatePreparedEntry(Entry& actual,
     ++m_liveCount;
     if (entry->kind == PlayableKind::Sound && !entry->monitorStartedObserved)
         ++m_pendingStartedObservationCount;
+    if (entry->kind == PlayableKind::Sound && !entry->monitorFinishedObserved &&
+        entry->monitorPlaybackEnd.audioBlock != 0)
+        ++m_pendingPlaybackEndObservationCount;
     if (m_liveCount > m_highWater) {
         m_highWater = m_liveCount;
     }
@@ -1304,6 +1369,7 @@ bool PlayableInstanceTable::RollbackCommitted(
     entry->originalDisposition = Entry::OriginalDisposition::None;
     entry->originalDispositionPrepared = {};
     RemovePendingStartedObservation(*entry);
+    RemovePendingPlaybackEndObservation(*entry);
     entry->prepared = true;
     entry->lifecycle = PlayableLifecycle::Free;
     if (entry->delayedCancellationEpoch != 0) {
@@ -1418,6 +1484,14 @@ void PlayableInstanceTable::RecordPlaybackEnd(PlayableInstanceHandle handle,
     if (entry == nullptr || entry->kind != PlayableKind::Sound || audioBlock == 0 ||
         entry->monitorFinishedObserved || entry->monitorPlaybackEnd.audioBlock != 0) return;
     entry->monitorPlaybackEnd = {audioBlock, frame, outcome, cause};
+    ++m_pendingPlaybackEndObservationCount;
+}
+
+void PlayableInstanceTable::RemovePendingPlaybackEndObservation(const Entry& entry) noexcept {
+    if (entry.kind != PlayableKind::Sound || entry.monitorFinishedObserved ||
+        entry.monitorPlaybackEnd.audioBlock == 0) return;
+    assert(m_pendingPlaybackEndObservationCount != 0);
+    --m_pendingPlaybackEndObservationCount;
 }
 
 PlayableInstanceHandle PlayableInstanceTable::CapturePlaybackEndAt(std::uint32_t slot,
@@ -1435,6 +1509,7 @@ PlayableInstanceHandle PlayableInstanceTable::CapturePlaybackEndAt(std::uint32_t
 void PlayableInstanceTable::ObserveFinished(PlayableInstanceHandle handle) noexcept {
     auto* entry = FindMut(handle);
     if (entry == nullptr || entry->kind != PlayableKind::Sound || entry->monitorFinishedObserved) return;
+    RemovePendingPlaybackEndObservation(*entry);
     entry->monitorFinishedObserved = true;
     MonitorLifecycleFacts facts{};
     FillMonitorFacts(*entry, handle, facts);

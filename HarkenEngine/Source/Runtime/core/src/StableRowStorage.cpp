@@ -64,11 +64,13 @@ bool StablePageReservation::Reserve(std::size_t bytes, std::size_t alignment, bo
     if (alignment == 0 || pageBytes % alignment != 0 ||
         !RoundUp(bytes, granularity, &reservedBytes))
         return false;
-    std::vector<std::uint64_t> committedPages;
+    std::unique_ptr<std::uint64_t[]> committedPages;
+    std::size_t committedPageWords = 0;
     if (sparse) {
         try {
             const auto count = reservedBytes / pageBytes;
-            committedPages.resize(count / 64u + (count % 64u != 0));
+            committedPageWords = count / 64u + (count % 64u != 0);
+            committedPages = std::make_unique<std::uint64_t[]>(committedPageWords);
         } catch (...) { return false; }
     }
     if (std::exchange(failNextReservationForTests, false)) return false;
@@ -84,6 +86,7 @@ bool StablePageReservation::Reserve(std::size_t bytes, std::size_t alignment, bo
     pageBytes_ = pageBytes;
     reservedBytes_ = reservedBytes;
     committedPages_.swap(committedPages);
+    committedPageWords_ = committedPageWords;
     return true;
 }
 
@@ -93,7 +96,7 @@ void StablePageReservation::FailNextReservationForTests() noexcept {
 
 bool StablePageReservation::CommitThrough(std::size_t bytes) noexcept {
     if (memguard::IsAudioTagged() || bytes > reservedBytes_) return false;
-    if (!committedPages_.empty()) return CommitRange(0, bytes);
+    if (committedPages_ != nullptr) return CommitRange(0, bytes);
     if (bytes <= committedBytes_) return true;
     std::size_t target = 0;
     if (!RoundUp(bytes, pageBytes_, &target) || target > reservedBytes_) return false;
@@ -141,7 +144,7 @@ bool StablePageReservation::CommitRange(std::size_t offset, std::size_t bytes) n
     if (memguard::IsAudioTagged() || offset > reservedBytes_ || bytes > reservedBytes_ - offset)
         return false;
     if (bytes == 0) return true;
-    if (committedPages_.empty()) return false;
+    if (committedPages_ == nullptr) return false;
     const auto first = offset / pageBytes_;
     const auto last = (offset + bytes - 1u) / pageBytes_;
     const auto isCommitted = [&](std::size_t index) noexcept {
@@ -169,6 +172,7 @@ void StablePageReservation::Swap(StablePageReservation& other) noexcept {
     std::swap(pageBytes_, other.pageBytes_);
     std::swap(remainingPagesForTests_, other.remainingPagesForTests_);
     committedPages_.swap(other.committedPages_);
+    std::swap(committedPageWords_, other.committedPageWords_);
 }
 
 } // namespace harken::detail

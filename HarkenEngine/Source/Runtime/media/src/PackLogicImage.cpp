@@ -3,14 +3,18 @@
 
 #include "harken/core/CurrentWorldCodec.h"
 #include "harken/core/EngineConfig.h"
+#include "harken/core/Utf8Path.h"
 #include "harken/core/detail/CurrentWorldValidation.h"
 #include "harken/dsp/GainRamp.h"
 #include "harken/media/generated/harken_pack_effect_schema.g.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <fstream>
+#include <limits>
 #include <map>
 #include <set>
 #include "harken/core/VariableExecutionFingerprint.h"
@@ -1259,35 +1263,49 @@ bool CanonicalKindLegal(std::uint32_t entryKind, std::uint32_t packKind,
     }
 }
 
+bool InitSelfHashFields(const PackCanonicalImage& image,
+                        std::vector<std::uint64_t>* fields, std::uint64_t* expected) {
+    if (!image.hasCatalog || image.packKind != kPackKindInit) return true;
+    for (std::size_t i = 0; i < image.catalogRows.size(); ++i) {
+        const auto& row = image.catalogRows[i];
+        if (row.ownerPackStableId != image.packStableId) continue;
+        if (!fields->empty() && row.expectedContentHash != *expected) return false;
+        *expected = row.expectedContentHash;
+        fields->push_back(image.catalogPayloadOffset + kInitCatalogHeaderBytes +
+            static_cast<std::uint64_t>(i) * kInitCatalogRowBytes + kInitCatalogContentHashOffset);
+    }
+    return true;
+}
+
+std::uint64_t HashWithZeroFields(const std::uint8_t* bytes, std::size_t count,
+    std::uint64_t offset, const std::vector<std::uint64_t>& fields,
+    std::size_t* fieldCursor, std::uint64_t hash) noexcept {
+    static constexpr std::uint8_t zeros[8]{};
+    std::size_t cursor = 0;
+    while (*fieldCursor < fields.size()) {
+        const auto field = fields[*fieldCursor];
+        if (field + 8 <= offset) { ++*fieldCursor; continue; }
+        if (field >= offset + count) break;
+        const auto begin = std::max(field, offset + cursor);
+        const auto end = std::min(field + 8, offset + count);
+        const auto preceding = static_cast<std::size_t>(begin - offset) - cursor;
+        hash = Fnv1a64(bytes + cursor, preceding, hash);
+        hash = Fnv1a64(zeros, static_cast<std::size_t>(end - begin), hash);
+        cursor = static_cast<std::size_t>(end - offset);
+        if (end == field + 8) ++*fieldCursor;
+    }
+    return Fnv1a64(bytes + cursor, count - cursor, hash);
+}
+
 bool InitSelfHashMatches(const std::uint8_t* bytes, std::uint64_t fileBytes,
                          const PackCanonicalImage& image) {
-    if (!image.hasCatalog || image.packKind != kPackKindInit) {
-        return true;
-    }
-    std::vector<std::uint8_t> copy(bytes, bytes + static_cast<std::size_t>(fileBytes));
-    bool sawInitOwned = false;
+    std::vector<std::uint64_t> fields;
     std::uint64_t expected = 0;
-    for (std::size_t i = 0; i < image.catalogRows.size(); ++i) {
-        const PackInitCatalogRow& row = image.catalogRows[i];
-        if (row.ownerPackStableId != image.packStableId) {
-            continue;
-        }
-        if (!sawInitOwned) {
-            expected = row.expectedContentHash;
-            sawInitOwned = true;
-        } else if (row.expectedContentHash != expected) {
-            return false;
-        }
-        const std::uint64_t rowOffset =
-            image.catalogPayloadOffset + kInitCatalogHeaderBytes +
-            static_cast<std::uint64_t>(i) * kInitCatalogRowBytes;
-        StoreLE64(copy.data() + static_cast<std::size_t>(rowOffset) +
-                      kInitCatalogContentHashOffset, 0);
-    }
-    if (!sawInitOwned) {
-        return true;
-    }
-    return Fnv1a64(copy.data(), static_cast<std::size_t>(fileBytes)) == expected;
+    if (!InitSelfHashFields(image, &fields, &expected)) return false;
+    if (fields.empty()) return true;
+    std::size_t cursor = 0;
+    return HashWithZeroFields(bytes, static_cast<std::size_t>(fileBytes), 0,
+        fields, &cursor, kFnv1a64OffsetBasis) == expected;
 }
 
 VnResult ParseGameplayCatalogPayload(const std::uint8_t* payload,
@@ -1457,9 +1475,318 @@ VnResult ValidateCanonicalInitDependency(
     return found ? VN_OK : VN_BAD_PACK;
 }
 
-VnResult ParsePackCanonicalImage(const std::uint8_t* bytes,
-                                 std::uint64_t fileBytes,
-                                 PackCanonicalImage* out) {
+namespace {
+
+struct SpanCanonicalSource {
+    struct ArtifactHashState {
+        const std::uint8_t* bytes;
+        std::size_t byteCount;
+        std::uint64_t* output;
+        std::size_t cursor = 0;
+        std::uint64_t hash = kFnv1a64OffsetBasis;
+
+        ~ArtifactHashState() noexcept {
+            if (output != nullptr && bytes != nullptr) {
+                // Finish before the acquisition owner releases its byte span,
+                // including when parser allocation unwinds with an exception.
+                *output = Fnv1a64(bytes + cursor, byteCount - cursor, hash);
+            }
+        }
+    };
+    ArtifactHashState artifact;
+    std::uint32_t pairedMediaEntry = UINT32_MAX;
+    std::uint64_t pairedMediaChecksum = 0;
+    std::uint64_t ByteCount() const noexcept { return artifact.byteCount; }
+    const std::uint8_t* Data(std::uint64_t offset, std::uint64_t size) const noexcept {
+        if (artifact.bytes == nullptr || offset > artifact.byteCount ||
+            size > artifact.byteCount - offset) return nullptr;
+        return artifact.bytes + offset;
+    }
+    bool VerifyMedia(const PackTocEntry& media, std::uint32_t i,
+                     const std::uint8_t* dir, const PackV2Header& header,
+                     std::uint64_t dirEnd) {
+        const auto* bytes = artifact.bytes;
+        const auto fileBytes = ByteCount();
+        std::uint64_t checksum = 0;
+        if (artifact.output != nullptr && artifact.cursor < artifact.byteCount) {
+            const auto remaining = artifact.byteCount - artifact.cursor;
+            const auto wholeBytes = static_cast<std::size_t>(
+                std::min<std::uint64_t>(media.blobBytes, remaining));
+            // Both chains retain their own byte order. Directory order
+            // need not match the physical order of the media blobs.
+            const auto hashes = Fnv1a64Pair(
+                bytes + artifact.cursor, wholeBytes,
+                bytes + media.blobOffset,
+                static_cast<std::size_t>(media.blobBytes), artifact.hash);
+            artifact.hash = hashes[0];
+            artifact.cursor += wholeBytes;
+            checksum = hashes[1];
+        } else if (pairedMediaEntry == i) {
+            checksum = pairedMediaChecksum;
+            pairedMediaEntry = UINT32_MAX;
+        } else {
+            bool paired = false;
+            if (header.entryCount - i > 1) {
+                const auto next = ParsePackV2DirectoryEntry(
+                    dir + static_cast<std::size_t>(i + 1) *
+                              kPackV2DirectoryEntryBytes);
+                // Only bounded metadata is inspected ahead. Its original
+                // vintage, payload and blob checks still run in order.
+                if (next.kind == kPackEntryKindMedia &&
+                    next.size == kPackV2MediaPayloadBytes &&
+                    next.offset >= dirEnd && next.offset <= fileBytes &&
+                    next.size <= fileBytes - next.offset &&
+                    next.offset % kPackV2PayloadAlign == 0) {
+                    const auto nextMedia = ParsePackTocEntry(bytes + next.offset);
+                    if (nextMedia.soundId == next.id &&
+                        ValidateV2MediaEntry(nextMedia, fileBytes, dirEnd)) {
+                        const auto hashes = Fnv1a64Pair(
+                            bytes + media.blobOffset,
+                            static_cast<std::size_t>(media.blobBytes),
+                            bytes + nextMedia.blobOffset,
+                            static_cast<std::size_t>(nextMedia.blobBytes));
+                        checksum = hashes[0];
+                        pairedMediaChecksum = hashes[1];
+                        pairedMediaEntry = i + 1;
+                        paired = true;
+                    }
+                }
+            }
+            if (!paired)
+                checksum = Fnv1a64(bytes + media.blobOffset,
+                                  static_cast<std::size_t>(media.blobBytes));
+        }
+        return checksum == media.blobChecksum;
+    }
+    VnResult Finish(const PackCanonicalImage& image,
+        std::vector<std::pair<std::uint64_t, std::uint64_t>>&) const {
+        return InitSelfHashMatches(artifact.bytes, ByteCount(), image)
+            ? VN_OK : VN_PACK_HASH_MISMATCH;
+    }
+};
+
+#if defined(_MSVC_STL_VERSION)
+constexpr std::size_t kCanonicalFileBufferBytes = 16 * 1024;
+// Keep complete buffer fills so invalidation does not discard read-ahead tails.
+constexpr std::size_t kCanonicalReadWindowBytes =
+    (63 * 1024 - kCanonicalFileBufferBytes) / kCanonicalFileBufferBytes *
+    kCanonicalFileBufferBytes;
+#else
+constexpr std::size_t kCanonicalReadWindowBytes = 63 * 1024;
+#endif
+
+struct FileCanonicalSource {
+    std::ifstream& file;
+    std::uint64_t fileBytes;
+    PCMRegistry& registry;
+    std::span<const PCMRegistry::PreparedPackSamples* const> equalCandidates;
+    std::vector<PCMRegistry::PreparedPackSamples>* output;
+    const PackCanonicalReadHooksForTests* hooks;
+    std::uint64_t hash = kFnv1a64OffsetBasis;
+    bool retryWithBytes = false;
+    std::map<std::pair<std::uint64_t, std::uint64_t>, std::vector<std::uint8_t>> metadata;
+
+    std::uint64_t ByteCount() const noexcept { return fileBytes; }
+    const std::uint8_t* Data(std::uint64_t offset, std::uint64_t size) {
+        if (offset > fileBytes || size > fileBytes - offset || size > SIZE_MAX ||
+            size > static_cast<std::uint64_t>(std::numeric_limits<std::streamsize>::max()))
+            return nullptr;
+        const auto key = std::make_pair(offset, size);
+        const auto found = metadata.find(key);
+        if (found != metadata.end()) return found->second.data();
+        auto& bytes = metadata[key];
+        bytes.resize(static_cast<std::size_t>(size == 0 ? 1 : size));
+        file.clear();
+        file.seekg(static_cast<std::streamoff>(offset));
+        if (!file) return nullptr;
+        file.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(size));
+        return file.gcount() == static_cast<std::streamsize>(size) ? bytes.data() : nullptr;
+    }
+    bool VerifyMedia(const PackTocEntry&, std::uint32_t, const std::uint8_t*,
+                     const PackV2Header&, std::uint64_t) const noexcept {
+        // The common parser must finish all metadata checks before physical
+        // bytes are consumed into unpublished sample owners in Finish.
+        return true;
+    }
+    VnResult Finish(const PackCanonicalImage& image,
+                   std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges) {
+        std::sort(ranges.begin(), ranges.end());
+        std::uint64_t previousEnd = 0;
+        for (const auto& range : ranges) {
+            if (range.second == 0) continue;
+            if (range.first < previousEnd) {
+                // Preserve the byte-span parser's accepted layout domain.
+                retryWithBytes = true;
+                return VN_BACKPRESSURE;
+            }
+            previousEnd = range.first + range.second;
+        }
+        std::vector<std::uint64_t> zeroFields;
+        std::uint64_t expectedSelfHash = 0;
+        if (!InitSelfHashFields(image, &zeroFields, &expectedSelfHash))
+            return VN_PACK_HASH_MISMATCH;
+        std::vector<PCMRegistry::PackSampleBuilder> builders(image.media.size());
+        std::vector<PCMRegistry::PreparedPackSamples> completed(image.media.size());
+        std::vector<std::size_t> physicalOrder;
+        physicalOrder.reserve(image.media.size());
+        std::vector<std::uint64_t> checksums(image.media.size(), kFnv1a64OffsetBasis);
+        std::vector<VnResult> sampleStatus(image.media.size(), VN_OK);
+        for (std::size_t i = 0; i < image.media.size(); ++i) {
+            physicalOrder.push_back(i);
+        }
+        std::sort(physicalOrder.begin(), physicalOrder.end(), [&](auto a, auto b) {
+            return image.media[a].blobOffset < image.media[b].blobOffset;
+        });
+        // Physical input, file buffering and the builder's 1 KiB prefix
+        // workspace share the same 64 KiB budget, independent of media size.
+        std::array<float, kCanonicalReadWindowBytes / sizeof(float)> window;
+        auto cached = metadata.begin();
+        std::size_t currentMedia = 0, zeroCursor = 0;
+        auto selfHash = kFnv1a64OffsetBasis;
+        file.clear();
+        file.seekg(0);
+        if (!file) return VN_BAD_PACK;
+        for (std::uint64_t offset = 0; offset < fileBytes;) {
+            const auto count = static_cast<std::size_t>(
+                std::min<std::uint64_t>(sizeof(window), fileBytes - offset));
+            if (hooks != nullptr && hooks->beforeSequentialRead != nullptr)
+                hooks->beforeSequentialRead(hooks->userData, offset);
+#if defined(_MSVC_STL_VERSION)
+            // An absolute seek can reuse the CRT input buffer. SEEK_END
+            // discards it before returning to the requested position, so
+            // metadata comparisons never use bytes from an earlier read.
+            file.clear();
+            file.seekg(0, std::ios::end);
+            file.seekg(static_cast<std::streamoff>(offset));
+            if (!file) return VN_BAD_PACK;
+#endif
+            file.read(reinterpret_cast<char*>(window.data()), static_cast<std::streamsize>(count));
+            if (file.gcount() != static_cast<std::streamsize>(count)) return VN_BAD_PACK;
+            const auto* bytes = reinterpret_cast<const std::uint8_t*>(window.data());
+            const auto end = offset + count;
+            while (cached != metadata.end()) {
+                const auto start = cached->first.first;
+                const auto cachedEnd = start + cached->first.second;
+                if (cachedEnd <= offset) { ++cached; continue; }
+                if (start >= end) break;
+                const auto first = std::max(start, offset);
+                const auto last = std::min(cachedEnd, end);
+                if (std::memcmp(bytes + (first - offset), cached->second.data() + (first - start),
+                                static_cast<std::size_t>(last - first)) != 0)
+                    return VN_BAD_PACK;
+                if (cachedEnd > end) break;
+                ++cached;
+            }
+            if (!zeroFields.empty())
+                selfHash = HashWithZeroFields(bytes, count, offset, zeroFields, &zeroCursor, selfHash);
+            std::size_t cursor = 0;
+            while (cursor < count) {
+                const auto position = offset + cursor;
+                while (currentMedia < physicalOrder.size()) {
+                    const auto& media = image.media[physicalOrder[currentMedia]];
+                    if (media.blobOffset + media.blobBytes > position) break;
+                    ++currentMedia;
+                }
+                if (currentMedia == physicalOrder.size()) {
+                    hash = Fnv1a64(bytes + cursor, count - cursor, hash);
+                    break;
+                }
+                const auto index = physicalOrder[currentMedia];
+                const auto& media = image.media[index];
+                if (position < media.blobOffset) {
+                    const auto step = static_cast<std::size_t>(std::min<std::uint64_t>(
+                        count - cursor, media.blobOffset - position));
+                    hash = Fnv1a64(bytes + cursor, step, hash);
+                    cursor += step;
+                    continue;
+                }
+                const auto step = static_cast<std::size_t>(std::min<std::uint64_t>(
+                    count - cursor, media.blobOffset + media.blobBytes - position));
+                if (cursor % alignof(float) != 0 || step % sizeof(float) != 0) return VN_BAD_PACK;
+                if (position == media.blobOffset) {
+                    VnPCMDesc shape{};
+                    shape.structSize = sizeof(shape);
+                    shape.sampleRate = media.sampleRate;
+                    shape.channels = media.channelCount;
+                    shape.frames = media.frameCount;
+                    shape.layout = VN_PCM_LAYOUT_PLANAR;
+                    shape.policy = VN_PCM_POLICY_COPY;
+                    const PCMRegistry::PreparedPackSamples* candidate = nullptr;
+                    for (std::size_t priorOrder = 0; priorOrder < currentMedia; ++priorOrder) {
+                        const auto prior = physicalOrder[priorOrder];
+                        if (image.media[prior].soundId != media.soundId) continue;
+                        if (!completed[prior].IsPrepared() && sampleStatus[prior] == VN_OK)
+                            sampleStatus[prior] = builders[prior].Complete(&completed[prior]);
+                        if (completed[prior].IsPrepared()) { candidate = &completed[prior]; break; }
+                    }
+                    if (candidate == nullptr) {
+                        for (const auto* prior : equalCandidates) {
+                            if (prior != nullptr && prior->IsPrepared() && prior->SoundId() == media.soundId) {
+                                candidate = prior;
+                                break;
+                            }
+                        }
+                    }
+                    const auto prepared = registry.BeginPackSamples(media.soundId, &shape,
+                        &builders[index], CanonicalPcmLoop(media), candidate);
+                    if (prepared != VN_OK) {
+                        retryWithBytes = prepared == VN_BACKPRESSURE;
+                        return prepared;
+                    }
+                }
+                const auto hashes = Fnv1a64Pair(bytes + cursor, step, bytes + cursor, step,
+                                                hash, checksums[index]);
+                hash = hashes[0];
+                checksums[index] = hashes[1];
+                if (sampleStatus[index] == VN_OK) {
+                    const auto appended = builders[index].Append(window.data() + cursor / sizeof(float),
+                                                                  step / sizeof(float));
+                    if (appended != VN_OK && appended != VN_INVALID_ARG) {
+                        retryWithBytes = builders[index].ReservationUnavailable();
+                        return appended;
+                    }
+                    sampleStatus[index] = appended;
+                }
+                cursor += step;
+            }
+            offset = end;
+        }
+        if (file.get() != std::char_traits<char>::eof() || file.bad()) return VN_BAD_PACK;
+        for (std::size_t i = 0; i < image.media.size(); ++i) {
+            if (checksums[i] != image.media[i].blobChecksum) return VN_BAD_PACK;
+        }
+        if (!zeroFields.empty() && selfHash != expectedSelfHash) return VN_PACK_HASH_MISMATCH;
+        // Retain the existing independent revision chains across two final
+        // owners. This never keeps another complete PCM representation.
+        for (std::size_t order = 0; order < physicalOrder.size(); ++order) {
+            const auto index = physicalOrder[order];
+            if (sampleStatus[index] != VN_OK || completed[index].IsPrepared()) continue;
+            if (order + 1 < physicalOrder.size()) {
+                const auto following = physicalOrder[order + 1];
+                VnResult results[2]{};
+                if (builders[index].TryCompletePair(builders[following],
+                        &completed[index], &completed[following], results)) {
+                    sampleStatus[index] = results[0];
+                    sampleStatus[following] = results[1];
+                    ++order;
+                    continue;
+                }
+            }
+            sampleStatus[index] = builders[index].Complete(&completed[index]);
+        }
+        for (std::size_t i = 0; i < image.media.size(); ++i) {
+            if (sampleStatus[i] != VN_OK) return sampleStatus[i];
+        }
+        *output = std::move(completed);
+        return VN_OK;
+    }
+};
+
+template <class Source>
+VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
+
+    const auto fileBytes = source.ByteCount();
+    const auto* bytes = source.Data(0, kPackV2HeaderBytes);
     if (bytes == nullptr || out == nullptr || fileBytes < kPackV2HeaderBytes) {
         return VN_BAD_PACK;
     }
@@ -1483,7 +1810,8 @@ VnResult ParsePackCanonicalImage(const std::uint8_t* bytes,
         dirBytes > fileBytes - header.directoryOffset) {
         return VN_BAD_PACK;
     }
-    const std::uint8_t* dir = bytes + header.directoryOffset;
+    const std::uint8_t* dir = source.Data(header.directoryOffset, dirBytes);
+    if (dir == nullptr) return VN_BAD_PACK;
     if (Fnv1a64(dir, static_cast<std::size_t>(dirBytes)) !=
         header.directoryChecksum) {
         return VN_BAD_PACK;
@@ -1533,7 +1861,8 @@ VnResult ParsePackCanonicalImage(const std::uint8_t* bytes,
             return VN_BAD_PACK;
         }
         ranges.emplace_back(entry.offset, entry.size);
-        const std::uint8_t* payload = bytes + entry.offset;
+        const std::uint8_t* payload = source.Data(entry.offset, entry.size);
+        if (payload == nullptr) return VN_BAD_PACK;
         const bool catalogKind = entry.kind == kPackEntryKindInitRoutingCatalog;
         if (!catalogKind &&
             Fnv1a64(payload, static_cast<std::size_t>(entry.size)) !=
@@ -1784,11 +2113,7 @@ VnResult ParsePackCanonicalImage(const std::uint8_t* bytes,
                 !ValidateV2MediaEntry(media, fileBytes, dirEnd)) {
                 return VN_BAD_PACK;
             }
-            if (Fnv1a64(bytes + media.blobOffset,
-                        static_cast<std::size_t>(media.blobBytes)) !=
-                media.blobChecksum) {
-                return VN_BAD_PACK;
-            }
+            if (!source.VerifyMedia(media, i, dir, header, dirEnd)) return VN_BAD_PACK;
             ranges.emplace_back(media.blobOffset, media.blobBytes);
             image.media.push_back(media);
             break;
@@ -2027,10 +2352,9 @@ VnResult ParsePackCanonicalImage(const std::uint8_t* bytes,
         }
     }
     if (image.hasCatalog) {
-        std::vector<std::uint8_t> catalogCopy(
-            bytes + image.catalogPayloadOffset,
-            bytes + image.catalogPayloadOffset +
-                static_cast<std::size_t>(image.catalogHeader.catalogBytes));
+        const auto* catalog = source.Data(image.catalogPayloadOffset, image.catalogHeader.catalogBytes);
+        if (catalog == nullptr) return VN_BAD_PACK;
+        std::vector<std::uint8_t> catalogCopy(catalog, catalog + image.catalogHeader.catalogBytes);
         for (std::size_t i = 0; i < image.catalogRows.size(); ++i) {
             if (image.catalogRows[i].ownerPackStableId != image.packStableId)
                 continue;
@@ -2049,11 +2373,65 @@ VnResult ParsePackCanonicalImage(const std::uint8_t* bytes,
             return VN_BAD_PACK;
         }
     }
-    if (!InitSelfHashMatches(bytes, fileBytes, image)) {
-        return VN_PACK_HASH_MISMATCH;
-    }
+    const auto finished = source.Finish(image, ranges);
+    if (finished != VN_OK) return finished;
     *out = std::move(image);
     return VN_OK;
+}
+
+} // namespace
+
+VnResult ParsePackCanonicalImage(const std::uint8_t* bytes, std::uint64_t fileBytes,
+                                 PackCanonicalImage* out, std::uint64_t* artifactHash) {
+    SpanCanonicalSource source{{bytes, static_cast<std::size_t>(fileBytes), artifactHash}};
+    return ParsePackCanonicalCore(source, out);
+}
+
+VnResult ReadPackCanonicalFile(const char* utf8Path, PCMRegistry& registry,
+    PackCanonicalImage* out, std::vector<PCMRegistry::PreparedPackSamples>* samples,
+    std::uint64_t* byteCount, std::uint64_t* artifactHash, std::uint64_t maxBytes,
+    std::span<const PCMRegistry::PreparedPackSamples* const> equalCandidates,
+    bool* retryWithBytes, const PackCanonicalReadHooksForTests* hooks) {
+    if (retryWithBytes != nullptr) *retryWithBytes = false;
+    if (out == nullptr || samples == nullptr || byteCount == nullptr || artifactHash == nullptr)
+        return VN_INVALID_ARG;
+    std::filesystem::path path;
+    if (!TryMakeUtf8Path(utf8Path, &path)) return VN_BAD_PACK;
+#if defined(_MSVC_STL_VERSION)
+    std::array<char, kCanonicalFileBufferBytes> fileBuffer;
+#endif
+    std::ifstream file;
+    // Metadata must be reread by the bounded pass, not served from a stale
+    // stream buffer populated while inspecting the directory.
+#if !defined(_MSVC_STL_VERSION)
+    if (file.rdbuf()->pubsetbuf(nullptr, 0) == nullptr) {
+        if (retryWithBytes != nullptr) *retryWithBytes = true;
+        return VN_BACKPRESSURE;
+    }
+#endif
+    file.open(path, std::ios::binary);
+    if (!file) return VN_BAD_PACK;
+#if defined(_MSVC_STL_VERSION)
+    // Reuse the existing larger-fill strategy before the first file read.
+    // The buffer outlives the stream and is included in the input budget.
+    if (file.rdbuf()->pubsetbuf(fileBuffer.data(), fileBuffer.size()) == nullptr) {
+        if (retryWithBytes != nullptr) *retryWithBytes = true;
+        return VN_BACKPRESSURE;
+    }
+#endif
+    file.seekg(0, std::ios::end);
+    const auto end = file.tellg();
+    if (end <= 0 || static_cast<std::uint64_t>(end) > SIZE_MAX) return VN_BAD_PACK;
+    const auto size = static_cast<std::uint64_t>(end);
+    if (size > maxBytes) return VN_PACK_RESIDENT_CAPACITY;
+    FileCanonicalSource source{file, size, registry, equalCandidates, samples, hooks};
+    const auto result = ParsePackCanonicalCore(source, out);
+    if (retryWithBytes != nullptr) *retryWithBytes = source.retryWithBytes;
+    if (result == VN_OK) {
+        *byteCount = size;
+        *artifactHash = source.hash;
+    }
+    return result;
 }
 
 VnResult CheckPackClosure(const PackLogicImage& image,

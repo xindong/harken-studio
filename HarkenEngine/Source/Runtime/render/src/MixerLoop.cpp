@@ -27,6 +27,12 @@ void SetSourceAcknowledgedHookForTest(void (*hook)(void*), void* context) noexce
     sourceAcknowledgedHook = hook;
     sourceAcknowledgedContext = context;
 }
+static void (*seekCancellationCleanupHook)(void*) = nullptr;
+static void* seekCancellationCleanupContext = nullptr;
+void SetSeekCancellationCleanupHookForTest(void (*hook)(void*), void* context) noexcept {
+    seekCancellationCleanupHook = hook;
+    seekCancellationCleanupContext = context;
+}
 }
 #endif
 
@@ -1047,14 +1053,6 @@ std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
             bool apply = false;
             if (protocolValid) {
                 apply = m_actionSeeks.TryBeginApply(header.ticket);
-                if (!apply) {
-                    (void)m_actionSeeks.FinishRequestedCancellation(
-                        header.ticket);
-                }
-            } else if (!m_actionSeeks.CancelAcceptedFromAudio(
-                           header.ticket, refusal)) {
-                (void)m_actionSeeks.FinishRequestedCancellation(
-                    header.ticket);
             }
 
             const std::uint32_t discardCount =
@@ -1083,15 +1081,30 @@ std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
                     minimumFrame = std::min(minimumFrame, frame);
                     maximumFrame = std::max(maximumFrame, frame);
                 } else if (item.payload.seekVoice.streamHandoffToken != 0) {
+#if defined(HARKEN_TEST_PACK_RESOURCE_OBSERVATION)
+                    if (detail::seekCancellationCleanupHook != nullptr) {
+                        detail::seekCancellationCleanupHook(
+                            detail::seekCancellationCleanupContext);
+                    }
+#endif
                     (void)m_streamSeekHandoffs.CancelFromAudio(
                         item.payload.seekVoice.streamHandoffToken,
                         header.ticket);
                 }
             }
+            // A terminal ticket makes every handoff immediately releasable.
+            // Publish it only after the final audio-side handoff access.
             if (apply) {
                 (void)m_actionSeeks.FinishApplied(
                     header.ticket, blockIndex + 1u, minimumFrame,
                     maximumFrame);
+            } else if (protocolValid) {
+                (void)m_actionSeeks.FinishRequestedCancellation(
+                    header.ticket);
+            } else if (!m_actionSeeks.CancelAcceptedFromAudio(
+                           header.ticket, refusal)) {
+                (void)m_actionSeeks.FinishRequestedCancellation(
+                    header.ticket);
             }
             continue;
         }

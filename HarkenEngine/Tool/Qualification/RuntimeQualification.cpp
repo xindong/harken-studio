@@ -30,7 +30,7 @@ constexpr std::uint64_t kDefaultStorageLimitBytes =
     16ull * 1024ull * 1024ull;
 constexpr std::uint64_t kDeviceOnlyStorageLimitBytes =
     64ull * 1024ull * 1024ull;
-constexpr VnSoundId kQualificationSound = 0x52545155414C0001ull;
+constexpr VnSoundId kQualificationSound{0x52545155414C0001ull, 1};
 #if defined(HARKEN_RT_PROBE_DEVICE_CALLBACK)
 constexpr bool kDeviceCallbackEnabled = true;
 #else
@@ -930,10 +930,8 @@ bool WriteReport(const Options& options,
         snapshotSemanticValid && outputSignalValid &&
         publicationShape.count == publications.count &&
         publicationShape.meterArmedCount == 0 &&
-        publicationShape.sourceCursorPublishedCount ==
-            ((options.audibilityParking || options.virtualVoices != 0)
-                 ? publications.count
-                 : 0);
+        // Source-timed controls share the cursor publication even without parking.
+        publicationShape.sourceCursorPublishedCount == publications.count;
     const bool captureValid =
         lifecycleValid && semanticValid &&
         sink.timelineOverflow == 0 &&

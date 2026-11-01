@@ -216,6 +216,22 @@ std::size_t Engine::ActionPlayDynamicBytes() const noexcept {
             column(storage.variableControlChildKinds) + column(storage.variableControlLeafChildren) +
             column(storage.variableControlContainerRows) + column(storage.variableControlNestedParentIndices) +
             column(storage.variableControlNestedPathOrdinals) + column(storage.variableControlNestedModes) +
+            column(storage.pendingVariableReplacementTops) + column(storage.pendingVariableReplacementLeaves) +
+            column(storage.pendingVariableReplacementNodes) + column(storage.pendingVariableReplacementLeafNodes) +
+            column(storage.pendingVariableReplacementLeafTops) +
+            column(storage.variableControlOuterPathChildren) +
+            column(storage.variableControlOuterPathContainerRows) +
+            column(storage.variableControlNestedPrefixOrdinals) +
+            column(storage.variableControlNestedPrefixPath) +
+            column(storage.variableControlNestedVariableControls) +
+            column(storage.variableControlNestedServices) +
+            column(storage.variableControlNestedDecisions) +
+            column(storage.variableControlNestedSelectedChildOrdinals) +
+            column(storage.variableControlNestedContinuationOrdinals) +
+            column(storage.variableControlLeafHandles) +
+            column(storage.variableControlLeafEpochs) +
+            column(storage.variableControlNestedDecisionOwnerContexts) +
+            column(storage.variableControlNestedOwnerContexts) +
             (storage.playableTreeExecutor ? storage.playableTreeExecutor->StorageBytes() : 0u);
     }
     for (const auto& scratch : actionPlayScratch) {
@@ -8095,6 +8111,17 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
             }
         }
     } else {
+        const bool ordinarySound = directSoundPreparationOwner != nullptr &&
+            engine.MatchesOriginalPlayableServiceStorage(*directSoundPreparationOwner) &&
+            directSoundPreparationOwner->InvocationValid() &&
+            directSoundPreparationOwner->root.kind == harken::PlayableKindV1::Sound &&
+            directSoundPreparationOwner->leaf.kind == harken::PlayableKindV1::Sound &&
+            directSoundPreparationOwner->ownerInstance == parentInstance &&
+            directSoundPreparationOwner->rootInstance == parentInstance &&
+            playableRoot == parentInstance && parentInstance != 0 &&
+            !directSoundPreparationOwner->parentService.Valid() &&
+            !directSoundPreparationOwner->variableControlInstance.Valid() &&
+            directSoundPreparationOwner->Invocation().variableControlOuterRootInstance == 0;
         play = engine.voices.Play(
             view, install.volumeDb, install.pitchRatio, bus.index,
             install.spatialized, 0.0f, 0.0f, 0.0f,
@@ -8104,17 +8131,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
             harken::ResampleProfile::LegacyCompatibility, &render,
             bus.generation, ~std::uint32_t{0}, 0, true,
             install.outputBusVolumeDb, install.spatializationMix,
-            !(directSoundPreparationOwner != nullptr &&
-                engine.MatchesOriginalPlayableServiceStorage(*directSoundPreparationOwner) &&
-                directSoundPreparationOwner->InvocationValid() &&
-                directSoundPreparationOwner->root.kind == harken::PlayableKindV1::Sound &&
-                directSoundPreparationOwner->leaf.kind == harken::PlayableKindV1::Sound &&
-                directSoundPreparationOwner->ownerInstance == parentInstance &&
-                directSoundPreparationOwner->rootInstance == parentInstance &&
-                playableRoot == parentInstance && parentInstance != 0 &&
-                !directSoundPreparationOwner->parentService.Valid() &&
-                !directSoundPreparationOwner->variableControlInstance.Valid() &&
-                directSoundPreparationOwner->Invocation().variableControlOuterRootInstance == 0));
+            !ordinarySound, !ordinarySound || resourceService != nullptr);
     }
     if (play != VN_OK) {
         if (render != 0) {
@@ -11776,7 +11793,8 @@ bool PreparePlayableServiceRow(
     if (requireFeatureArrays && !row.HasFeatureArrays() &&
         (engine.playableServices.PreparedUseActive() || !row.PrepareFeatureArrays())) return false;
     return engine.PrepareOriginalPlayableServiceStorage(
-        row, owner, epoch, *invocationOwner, rootService, originalContext, preparingStorage, preparingParent);
+        row, owner, epoch, *invocationOwner, rootService, originalContext, preparingStorage, preparingParent,
+        requireFeatureArrays);
 }
 
 harken::EnginePlayableServiceReference PlayableServiceReference(
@@ -12362,32 +12380,39 @@ bool PlayableMemberStorageHasReaders(
             scratch.continuationPartition.generation == row.partition.generation) return true;
     }
     const auto bases = StorageBasesForRow(engine, row);
-    for (std::uint32_t index = 0; index < engine.sourceTerminals.Capacity(); ++index) {
-        const auto& source = *engine.sourceTerminals.At(index);
-        if (source.occupied && source.resourceOwner.serviceSlot == row.identity.slot &&
-            source.resourceOwner.serviceGeneration == row.identity.generation) return true;
-    }
-    for (const auto& service : engine.playableServices) {
-        if (&service == &row) continue;
-        for (auto index = service.memberRelationHead; index != UINT32_MAX;
-             index = engine.memberRelations[index].next) {
-            const auto target = engine.memberRelations[index].service;
-            if (target == row.identity) return true;
-            if (!target.Valid() || target.slot >= engine.playableServices.size()) continue;
-            const auto& resource = engine.playableServices[target.slot];
-            auto* branch = engine.ResolvePlayableService(target, resource.ownerInstance, resource.ownerEpoch);
-            // An alias resolves through the service ancestry. Keep that path
-            // alive until its holder detaches the alias, excluding the holder.
-            for (std::size_t depth = 0; branch != nullptr && branch != &service &&
-                    depth < engine.playableServices.size(); ++depth) {
-                if (branch == &row) return true;
-                branch = engine.ResolvePlayableService(branch->parentService);
-            }
+    if (engine.sourceTerminals.OccupiedCount() != 0) {
+        for (std::uint32_t index = 0; index < engine.sourceTerminals.Capacity(); ++index) {
+            const auto& source = *engine.sourceTerminals.At(index);
+            if (source.occupied && source.resourceOwner.serviceSlot == row.identity.slot &&
+                source.resourceOwner.serviceGeneration == row.identity.generation) return true;
         }
-        if (service.HasFeatureArrays())
-            for (const auto& member : service.VariablePayload().variableControlRetargetMembers)
-                if (member.reference.service.token == row.identity &&
-                    member.reference.partitionGeneration == row.partition.generation) return true;
+    }
+    // Retarget references require a constructed member; relation occupancy
+    // independently covers aliases. Fault recovery keeps the full scan.
+    if (engine.runtimeRecreateRequired || engine.occupiedMemberRelations != 0 ||
+        engine.playableMemberRecords.ConstructedCount() != 0) {
+        for (const auto& service : engine.playableServices) {
+            if (&service == &row) continue;
+            for (auto index = service.memberRelationHead; index != UINT32_MAX;
+                 index = engine.memberRelations[index].next) {
+                const auto target = engine.memberRelations[index].service;
+                if (target == row.identity) return true;
+                if (!target.Valid() || target.slot >= engine.playableServices.size()) continue;
+                const auto& resource = engine.playableServices[target.slot];
+                auto* branch = engine.ResolvePlayableService(target, resource.ownerInstance, resource.ownerEpoch);
+                // An alias resolves through the service ancestry. Keep that path
+                // alive until its holder detaches the alias, excluding the holder.
+                for (std::size_t depth = 0; branch != nullptr && branch != &service &&
+                        depth < engine.playableServices.size(); ++depth) {
+                    if (branch == &row) return true;
+                    branch = engine.ResolvePlayableService(branch->parentService);
+                }
+            }
+            if (service.HasFeatureArrays())
+                for (const auto& member : service.VariablePayload().variableControlRetargetMembers)
+                    if (member.reference.service.token == row.identity &&
+                        member.reference.partitionGeneration == row.partition.generation) return true;
+        }
     }
     for (std::uint32_t index = 0; index < row.memberPrograms.size(); ++index) {
         if (!row.memberPrograms[index].Valid()) continue;
@@ -12396,7 +12421,9 @@ bool PlayableMemberStorageHasReaders(
             engine.timelinePlanner.HasProgramReference(record->schedule.runtimeProgram)) return true;
     }
     if (engine.VariableControlRetargetProgramsHaveReaders(row.identity)) return true;
-    for (std::size_t index = 0; index < engine.playableStorage.memberStride; ++index) {
+    const auto memberCount = engine.playableMemberRecords.ConstructedCount() == 0
+        ? std::size_t{0} : engine.playableStorage.memberStride;
+    for (std::size_t index = 0; index < memberCount; ++index) {
         const auto slot = bases.member + index;
         if (engine.ReadPlayableMember(slot).completion.leafInstance == 0) continue;
         const auto& release = engine.ReadPlayableMember(slot).release;
@@ -12804,7 +12831,9 @@ void ObservePlayablePlayback(harken::Engine& engine) noexcept {
             onset.startedBlockSequence > observedAudioSequence) continue;
         events.push_back({arm->programGeneration, onset.startedBlockSequence, arm->startFrame, false});
     }
-    for (std::uint32_t slot = 0, count = engine.playableInstances.ConstructedEntryCount(); slot < count; ++slot) {
+    for (std::uint32_t slot = 0, count = engine.playableInstances.HasPendingPlaybackEndObservations()
+             ? engine.playableInstances.ConstructedEntryCount() : 0;
+         slot < count; ++slot) {
         std::uint64_t block = 0, frame = 0;
         const auto instance = engine.playableInstances.CapturePlaybackEndAt(slot, &block, &frame);
         if (instance != 0 && block <= observedAudioSequence)
@@ -14917,8 +14946,9 @@ PlayableStartResetResult ResetPlayableStartRow(
     const PlayableStorageBases bases =
         StorageBasesForRow(engine, row);
     // Single Sound services keep their installation in the row itself.
-    for (std::size_t index = 0; index <= engine.playableStorage.memberStride;
-         ++index) {
+    const auto memberCount = engine.playableMemberRecords.ConstructedCount() == 0
+        ? std::size_t{0} : engine.playableStorage.memberStride;
+    for (std::size_t index = 0; index <= memberCount; ++index) {
         const auto render = index == 0 ? row.renderHandle :
             engine.ReadPlayableMember(bases.member + index - 1u).render;
         harken::EngineTimelineVoiceInstallIdentity installation{};
@@ -22037,7 +22067,7 @@ bool CancelQueueFutureAttempt(
         !CancelPreparedDecisionOwner(&scratch->queueSuccessorDecisionOwnerContext) ||
         !scratch->storage.ownerLedger.Cancel(scratch->storage.generation)) return false;
     if (!CancelPreparedMemberStorage(engine, scratch->queueFutureMemberBase, scratch->queueFutureMemberCount,
-            scratch->queueFutureMemberSlots, scratch->queueFuturePriorMemberReferences)) return false;
+            scratch->queueFutureMemberSlots.Snapshot(), scratch->queueFuturePriorMemberReferences.Snapshot())) return false;
     scratch->queueFutureMemberCount = 0;
     scratch->pendingVariableReplacementTopology.ReturnOriginalLifetimes();
     if (!scratch->playableTreeExecutor.RollbackCommitted(engine.playableInstances) ||
@@ -22337,11 +22367,13 @@ bool VariableControlRollbackHasMappingReaders(
          engine.timelinePlanner.HasProgramReference(row.schedule.runtimeProgram))) {
         return true;
     }
-    for (std::uint32_t index = 0; index < engine.sourceTerminals.Capacity(); ++index) {
-        const auto& source = *engine.sourceTerminals.At(index);
-        if (source.occupied && source.resourceOwner.serviceSlot == row.identity.slot &&
-            source.resourceOwner.serviceGeneration == row.identity.generation) {
-            return true;
+    if (engine.sourceTerminals.OccupiedCount() != 0) {
+        for (std::uint32_t index = 0; index < engine.sourceTerminals.Capacity(); ++index) {
+            const auto& source = *engine.sourceTerminals.At(index);
+            if (source.occupied && source.resourceOwner.serviceSlot == row.identity.slot &&
+                source.resourceOwner.serviceGeneration == row.identity.generation) {
+                return true;
+            }
         }
     }
     const auto bases = StorageBasesForRow(engine, row);
@@ -28149,8 +28181,8 @@ struct PreparedQueueContinuationTree {
         } else {
             released = scratch->storage.ownerLedger.Cancel(scratch->storage.generation);
             released = released && CancelPreparedMemberStorage(engine, scratch->queueFutureMemberBase,
-                scratch->queueFutureMemberCount, scratch->queueFutureMemberSlots,
-                scratch->queueFuturePriorMemberReferences);
+                scratch->queueFutureMemberCount, scratch->queueFutureMemberSlots.Snapshot(),
+                scratch->queueFuturePriorMemberReferences.Snapshot());
             released = released && scratch->playableTreeExecutor.RollbackCommitted(engine.playableInstances);
             released = released && ReleaseCancelledFrontierServices(engine, *scratch);
             row.variableControlNestedQueueSuccessorInstance = 0;
@@ -43147,15 +43179,17 @@ bool ProvePlainInitialQueueCurrentStart(
          observation.state == harken::ArmState::AudioClaimed));
 }
 
-bool HasFixedImmediateSoundCohort(const harken::Engine& engine,
+bool HasFixedImmediateSoundCohort(harken::Engine& engine,
     harken::ActionFiringHandle root) noexcept {
-    return root != 0 && std::any_of(engine.playableServices.begin(),
-        engine.playableServices.end(), [&](const auto& member) {
-            return member.phase != harken::EnginePlayableStartPhase::Free &&
-                member.InvocationValid() && member.PendingImmediateCohortRoot() == root &&
-                member.pendingImmediateTimeDomain ==
-                    harken::ImmediateLaneTimeDomain::FixedAbsoluteFrame;
-        });
+    if (root == 0) return false;
+    harken::Engine::PlayableCohortCursor cursor{};
+    while (const auto* member = engine.NextOccupiedPlayableCohortService(root, &cursor)) {
+        if (member->phase != harken::EnginePlayableStartPhase::Free &&
+            member->InvocationValid() && member->PendingImmediateCohortRoot() == root &&
+            member->pendingImmediateTimeDomain ==
+                harken::ImmediateLaneTimeDomain::FixedAbsoluteFrame) return true;
+    }
+    return false;
 }
 
 bool ResolvePendingImmediateLeafFrame(const harken::EnginePlayableServiceRow& row,
@@ -79353,17 +79387,27 @@ std::uint32_t CountActionOperations(const ImmediateActionPlan& plan,
     return count;
 }
 
-bool ImmediateActionNeedsContainerState(const ImmediateActionPlan& plan) noexcept {
+bool ImmediateActionHasOnlyIndependentSounds(const ImmediateActionPlan& plan) noexcept {
     if (plan.engine == nullptr || plan.materializingDeferred || plan.deferredParentFiring != 0 ||
-        plan.firingCount != 1 || plan.stepCount != 1) return true;
-    const auto& planned = plan.engine->actionStepPlanScratch[0];
-    // Only an independent immediate Sound has no container-owned future.
-    return !(planned.step != nullptr && planned.depth == 1 && planned.firingIndex == 0 &&
-        plan.engine->actionFiringPlanScratch[0].parentIndex == UINT32_MAX &&
-        !planned.deferred && planned.deferredFrame == 0 &&
-        !planned.cooldownSuppressed && !planned.quantizeSuppressed &&
-        planned.step->opcode == harken::ActionOpcodeV1::Play &&
-        planned.step->target.kind == harken::ActionTargetKindV1::Sound);
+        plan.firingCount != 1 || plan.stepCount == 0 ||
+        plan.engine->actionFiringPlanScratch[0].parentIndex != UINT32_MAX) return false;
+    for (std::uint32_t index = 0; index < plan.stepCount; ++index) {
+        const auto& planned = plan.engine->actionStepPlanScratch[index];
+        if (planned.step == nullptr || planned.depth != 1 || planned.firingIndex != 0 ||
+            planned.deferred || planned.deferredFrame != 0 ||
+            planned.cooldownSuppressed || planned.quantizeSuppressed ||
+            planned.step->opcode != harken::ActionOpcodeV1::Play ||
+            planned.step->target.kind != harken::ActionTargetKindV1::Sound) return false;
+    }
+    return true;
+}
+
+bool ImmediateActionNeedsContainerState(const ImmediateActionPlan& plan) noexcept {
+    // A cohort retry can replace every independent root in this transaction.
+    // Larger or unresolved shapes retain the original complete preparation.
+    return !ImmediateActionHasOnlyIndependentSounds(plan) ||
+        plan.playCount > plan.engine->timelineStartScratch.starts.Capacity() ||
+        plan.playCount > plan.engine->immediateActionLane.EventsPerAttempt();
 }
 
 bool ReserveImmediateActionFirings(void* opaque,
@@ -79388,7 +79432,7 @@ bool ReserveImmediateActionFirings(void* opaque,
         }
         const bool needsContainerState = ImmediateActionNeedsContainerState(*plan);
         // Deferred children and later successors reuse this backing without growth.
-        if ((needsPlayableStorage && !engine.PreparePlayableStateStorage(needsContainerState)) ||
+        if ((needsPlayableStorage && !engine.PreparePlayableStateStorage(needsContainerState, plan->playCount)) ||
             (needsStopStorage && !engine.authoredStopResources.ConstructThrough(engine.authoredStopResources.Capacity()))) {
             plan->result = VN_BACKPRESSURE;
             return false;
@@ -81880,7 +81924,7 @@ bool PreparePlayableExecution(
     harken::PlayableKind kind, const harken::MonitorRequestContext& playbackRequest,
     const harken::MonitorEmitterOrigin& emitterOrigin) noexcept {
     if (scratch == nullptr ||
-        !engine.playableInstances.PrepareAcquire(
+        !engine.playableInstances.PrepareAcquireFromPreparedStorage(
             kind, 0, &scratch->instance, playbackRequest, emitterOrigin)) {
         return false;
     }
@@ -94696,6 +94740,8 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
     plan->ordinaryLeafContainerBatch = ImmediateOrdinaryLeafBatchEligible(*plan);
     plan->initialSoundSequenceQueueRoute = InitialSoundSequenceQueueRouteEligible(*plan);
     if (!PrepareImmediateActionMultiVcSelection(*plan)) return false;
+    // Multiple independent Sound steps keep the same per-attempt storage shape.
+    const bool needsAttemptContainerState = !ImmediateActionHasOnlyIndependentSounds(*plan);
     std::uint32_t preparedCount = 0;
     std::uint32_t preparedStopCount = 0;
     for (std::uint32_t stepIndex = 0;
@@ -94730,7 +94776,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
         harken::EngineFrontierAttemptToken attemptToken{};
         auto* attempt = preparedCount < engine.actionPlayAttemptTokens.size()
             ? AcquireFrontierAttempt(engine, &attemptToken, false,
-                ImmediateActionNeedsContainerState(*plan)) : nullptr;
+                needsAttemptContainerState) : nullptr;
         if (attempt == nullptr) {
             (void)ReleaseImmediateActionStops(*plan);
             for (std::uint32_t prior = preparedCount;
@@ -101126,6 +101172,20 @@ VnResult PlayVoiceRaw(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
 
 namespace harken {
 namespace {
+VnResult AcquireCanonicalBytes(const VnPackLoadDesc& desc,
+                               PackTable::AlignedBuffer* owned,
+                               VnPackByteSpan* span, bool* releaseSpan,
+                               const PackCanonicalImage* catalogOrNull);
+void ReleaseCanonicalBytes(const VnPackLoadDesc& desc, VnPackByteSpan span,
+                           bool releaseSpan);
+
+struct CanonicalByteSpanGuard {
+    const VnPackLoadDesc& load;
+    VnPackByteSpan span{};
+    bool release = false;
+    ~CanonicalByteSpanGuard() { ReleaseCanonicalBytes(load, span, release); }
+};
+
 void ReclaimRetiredAttenuationProfiles(Engine& engine) noexcept;
 }
 
@@ -102572,40 +102632,6 @@ VnResult Vn_LoadCurrentWorld(const VnCurrentWorldLoadDesc* desc,
 VnResult Vn_InspectInitPack(const VnPackLoadDesc* desc,
                             VnInitPackInspectReport* outReport) {
     try {
-        auto readFile = [](const char* utf8Path,
-                           harken::PackTable::AlignedBuffer* owned,
-                           std::uint64_t* fileBytes) -> bool {
-            std::filesystem::path path;
-            if (!harken::TryMakeUtf8Path(utf8Path, &path)) {
-                return false;
-            }
-            std::error_code ec;
-            const std::uintmax_t size = std::filesystem::file_size(path, ec);
-            if (ec || size == 0 ||
-                size > static_cast<std::uintmax_t>(SIZE_MAX)) {
-                return false;
-            }
-            std::ifstream in(path, std::ios::binary);
-            if (!in) {
-                return false;
-            }
-            std::uint8_t* buffer = static_cast<std::uint8_t*>(::operator new[](
-                static_cast<std::size_t>(size),
-                std::align_val_t{harken::kPackBlobAlign}, std::nothrow));
-            if (buffer == nullptr) {
-                return false;
-            }
-            in.read(reinterpret_cast<char*>(buffer),
-                    static_cast<std::streamsize>(size));
-            if (in.gcount() != static_cast<std::streamsize>(size)) {
-                ::operator delete[](buffer,
-                                    std::align_val_t{harken::kPackBlobAlign});
-                return false;
-            }
-            *fileBytes = static_cast<std::uint64_t>(size);
-            owned->reset(buffer);
-            return true;
-        };
         if (outReport == nullptr ||
             outReport->structSize != sizeof(VnInitPackInspectReport)) {
             return VN_INVALID_ARG;
@@ -102622,46 +102648,23 @@ VnResult Vn_InspectInitPack(const VnPackLoadDesc* desc,
             return VN_INVALID_ARG;
         }
         harken::PackTable::AlignedBuffer owned;
-        VnPackByteSpan span{};
-        span.structSize = sizeof(span);
-        bool releaseSpan = false;
+        harken::CanonicalByteSpanGuard bytes{*desc};
         const auto finish = [&](VnResult result) {
-            if (releaseSpan && desc->release != nullptr) {
-                desc->release(desc->providerUserData, desc->packStableId, span);
-            }
             outReport->result = result;
             return result;
         };
-        if ((desc->flags & VN_PACK_LOAD_FLAG_PROVIDER) != 0) {
-            if (desc->provide == nullptr) {
-                return finish(VN_INVALID_ARG);
-            }
-            const VnResult provided =
-                desc->provide(desc->providerUserData, desc->packStableId,
-                              desc->utf8Path, 0, 0, &span);
-            if (provided != VN_OK) {
-                return finish(provided == VN_INVALID_ARG
-                                  ? VN_INVALID_ARG
-                                  : VN_PACK_PROVIDER_FAILED);
-            }
-            if (span.bytes == nullptr || span.byteCount == 0) {
-                return finish(VN_PACK_PROVIDER_FAILED);
-            }
-            releaseSpan = true;
-        } else {
-            if (desc->utf8Path == nullptr) {
-                return finish(VN_INVALID_ARG);
-            }
-            std::uint64_t fileBytes = 0;
-            if (!readFile(desc->utf8Path, &owned, &fileBytes)) {
-                return finish(VN_BAD_PACK);
-            }
-            span.bytes = owned.get();
-            span.byteCount = fileBytes;
+        if ((desc->flags & VN_PACK_LOAD_FLAG_PROVIDER) == 0 &&
+            desc->utf8Path == nullptr) {
+            return finish(VN_INVALID_ARG);
+        }
+        const VnResult acquired = harken::AcquireCanonicalBytes(
+            *desc, &owned, &bytes.span, &bytes.release, nullptr);
+        if (acquired != VN_OK) {
+            return finish(acquired);
         }
         harken::PackCanonicalImage image;
         const VnResult parsed = harken::ParsePackCanonicalImage(
-            span.bytes, span.byteCount, &image);
+            bytes.span.bytes, bytes.span.byteCount, &image);
         if (parsed != VN_OK) {
             return finish(parsed);
         }
@@ -102684,9 +102687,11 @@ VnResult Vn_InspectInitPack(const VnPackLoadDesc* desc,
             image.requirement.requiredCapabilityMask;
         outReport->semanticFingerprint = image.requirement.semanticFingerprint;
         return finish(VN_OK);
-    } catch (const std::bad_alloc&) {
-        return VN_DEVICE_ERROR;
     } catch (...) {
+        if (outReport != nullptr &&
+            outReport->structSize == sizeof(VnInitPackInspectReport)) {
+            outReport->result = VN_DEVICE_ERROR;
+        }
         return VN_DEVICE_ERROR;
     }
 }
@@ -118459,6 +118464,20 @@ const char* CanonicalPackJournalPath(const Engine& engine,
     return storage->c_str();
 }
 
+VnResult ResolveCanonicalFilePath(const VnPackLoadDesc& desc,
+    const PackInitCatalogRow* catalogRow, std::string* resolved) {
+    if ((desc.flags & VN_PACK_LOAD_FLAG_ROOT) != 0) {
+        if (desc.utf8ContainmentRoot == nullptr) return VN_INVALID_ARG;
+        if (desc.utf8Path != nullptr) return ResolveRootUtf8Path(desc, resolved);
+        if (catalogRow == nullptr) return VN_UNKNOWN_ID;
+        return ResolveUnderContainmentRoot(desc.utf8ContainmentRoot,
+            catalogRow->relativeLocator.data(), resolved);
+    }
+    if (desc.utf8Path == nullptr) return VN_INVALID_ARG;
+    *resolved = desc.utf8Path;
+    return VN_OK;
+}
+
 VnResult AcquireCanonicalBytes(const VnPackLoadDesc& desc,
                                PackTable::AlignedBuffer* owned,
                                VnPackByteSpan* span, bool* releaseSpan,
@@ -118509,40 +118528,11 @@ VnResult AcquireCanonicalBytes(const VnPackLoadDesc& desc,
         *releaseSpan = true;
         return VN_OK;
     }
-    if ((desc.flags & VN_PACK_LOAD_FLAG_ROOT) != 0) {
-        if (desc.utf8ContainmentRoot == nullptr) {
-            return VN_INVALID_ARG;
-        }
-        std::string resolved;
-        if (desc.utf8Path != nullptr) {
-            const VnResult rooted = ResolveRootUtf8Path(desc, &resolved);
-            if (rooted != VN_OK) {
-                return rooted;
-            }
-        } else {
-            if (catalogRow == nullptr) {
-                return VN_UNKNOWN_ID;
-            }
-            const VnResult rooted = ResolveUnderContainmentRoot(
-                desc.utf8ContainmentRoot, locator, &resolved);
-            if (rooted != VN_OK) {
-                return rooted;
-            }
-        }
-        std::uint64_t fileBytes = 0;
-        *owned = ReadPackFileAligned(resolved.c_str(), &fileBytes);
-        if (*owned == nullptr) {
-            return VN_BAD_PACK;
-        }
-        span->bytes = owned->get();
-        span->byteCount = fileBytes;
-        return VN_OK;
-    }
-    if (desc.utf8Path == nullptr) {
-        return VN_INVALID_ARG;
-    }
+    std::string resolved;
+    const auto rooted = ResolveCanonicalFilePath(desc, catalogRow, &resolved);
+    if (rooted != VN_OK) return rooted;
     std::uint64_t fileBytes = 0;
-    *owned = ReadPackFileAligned(desc.utf8Path, &fileBytes);
+    *owned = ReadPackFileAligned(resolved.c_str(), &fileBytes);
     if (*owned == nullptr) {
         return VN_BAD_PACK;
     }
@@ -118557,13 +118547,6 @@ void ReleaseCanonicalBytes(const VnPackLoadDesc& desc, VnPackByteSpan span,
         desc.release(desc.providerUserData, desc.packStableId, span);
     }
 }
-
-struct CanonicalByteSpanGuard {
-    const VnPackLoadDesc& load;
-    VnPackByteSpan span{};
-    bool release = false;
-    ~CanonicalByteSpanGuard() { ReleaseCanonicalBytes(load, span, release); }
-};
 
 bool RequiredCycle(const PackComposition& composition,
                    const std::vector<PackDependencyEdge>& incoming,
@@ -119092,6 +119075,8 @@ struct CanonicalSetScope {
 
 struct AcquiredCanonicalSetMember {
     PackTable::AlignedBuffer bytes;
+    std::vector<PCMRegistry::PreparedPackSamples> samples;
+    bool boundedFile = false;
     PackCanonicalImage image;
     std::uint64_t hash = 0;
     std::uint64_t byteCount = 0;
@@ -120168,25 +120153,57 @@ VnResult ValidateCanonicalV2InitBusEntries(const PackCanonicalImage& init) noexc
 
 VnResult AcquireCanonicalSetMember(Engine& engine, const VnPackLoadDesc& load,
     const PackCanonicalImage* catalog, std::uint64_t* stagedBytes,
-    AcquiredCanonicalSetMember* out, std::uint64_t* traceResource = nullptr) {
+    AcquiredCanonicalSetMember* out, std::uint64_t* traceResource = nullptr,
+    std::span<const AcquiredCanonicalSetMember> previous = {}) {
+    VnResult parsed = VN_OK;
     CanonicalByteSpanGuard guard{load};
-    const auto acquired = AcquireCanonicalBytes(load, &out->bytes, &guard.span, &guard.release, catalog);
-    if (acquired != VN_OK) { return acquired; }
-    if (guard.span.structSize != sizeof(VnPackByteSpan) || guard.span.reserved0 != 0) {
-        return VN_PACK_PROVIDER_FAILED;
+    if ((load.flags & VN_PACK_LOAD_FLAG_PROVIDER) == 0 && engine.trace == nullptr) {
+        const PackInitCatalogRow* catalogRow = nullptr;
+        if (catalog != nullptr && catalog->hasCatalog && load.packStableId != 0) {
+            catalogRow = FindCatalogOwner(*catalog, load.packStableId);
+            if (catalogRow == nullptr) return VN_UNKNOWN_ID;
+        }
+        std::string path;
+        const auto rooted = ResolveCanonicalFilePath(load, catalogRow, &path);
+        if (rooted != VN_OK) return rooted;
+        if (*stagedBytes > engine.config.maxPackDecodeStagingBytes) return VN_PACK_RESIDENT_CAPACITY;
+        std::vector<const PCMRegistry::PreparedPackSamples*> candidates;
+        for (const auto& member : previous)
+            for (const auto& samples : member.samples) candidates.push_back(&samples);
+        bool retry = false;
+        parsed = ReadPackCanonicalFile(path.c_str(), engine.registry, &out->image, &out->samples,
+            &out->byteCount, &out->hash, engine.config.maxPackDecodeStagingBytes - *stagedBytes,
+            candidates, &retry);
+        if (parsed == VN_OK) {
+            out->boundedFile = true;
+            *stagedBytes += out->byteCount;
+        } else if (!retry) {
+            return parsed;
+        }
     }
-    if (guard.span.byteCount > engine.config.maxPackDecodeStagingBytes ||
-        *stagedBytes > engine.config.maxPackDecodeStagingBytes - guard.span.byteCount) {
-        return VN_PACK_RESIDENT_CAPACITY;
+    if (!out->boundedFile) {
+        const auto acquired = AcquireCanonicalBytes(load, &out->bytes, &guard.span, &guard.release, catalog);
+        if (acquired != VN_OK) { return acquired; }
+        if (guard.span.structSize != sizeof(VnPackByteSpan) || guard.span.reserved0 != 0) {
+            return VN_PACK_PROVIDER_FAILED;
+        }
+        if (guard.span.byteCount > engine.config.maxPackDecodeStagingBytes ||
+            *stagedBytes > engine.config.maxPackDecodeStagingBytes - guard.span.byteCount) {
+            return VN_PACK_RESIDENT_CAPACITY;
+        }
+        *stagedBytes += guard.span.byteCount;
+        const auto adopted = AdoptOwnedPackBytes(guard.span, &out->bytes);
+        if (adopted != VN_OK) return adopted;
+        out->byteCount = guard.span.byteCount;
+        if (traceResource != nullptr && engine.trace != nullptr) {
+            out->hash = Fnv1a64(out->bytes.get(), static_cast<std::size_t>(out->byteCount));
+            *traceResource = engine.trace->RecordPackBytes(out->bytes.get(), out->byteCount);
+            parsed = ParsePackCanonicalImage(out->bytes.get(), out->byteCount, &out->image);
+        } else {
+            parsed = ParsePackCanonicalImage(out->bytes.get(), out->byteCount,
+                                             &out->image, &out->hash);
+        }
     }
-    *stagedBytes += guard.span.byteCount;
-    const auto adopted = AdoptOwnedPackBytes(guard.span, &out->bytes);
-    if (adopted != VN_OK) return adopted;
-    out->byteCount = guard.span.byteCount;
-    out->hash = Fnv1a64(out->bytes.get(), static_cast<std::size_t>(out->byteCount));
-    if (traceResource != nullptr && engine.trace != nullptr)
-        *traceResource = engine.trace->RecordPackBytes(out->bytes.get(), out->byteCount);
-    const auto parsed = ParsePackCanonicalImage(out->bytes.get(), out->byteCount, &out->image);
     if (parsed != VN_OK) { return parsed; }
     if (out->image.requirement.storageModelVersion != 2) { return VN_PACK_INCOMPATIBLE; }
     if (PackFault(PackStagingFault::AfterParse) || PackFault(PackStagingFault::PartitionDecode)) {
@@ -121073,7 +121090,8 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
         } else {
             if (capturedMembers == nullptr) {
                 const auto loaded = AcquireCanonicalSetMember(engine, MemberToLoadDesc(desc.members[i]),
-                    i == 0 ? nullptr : &out->members.front().image, &stagedBytes, &captured);
+                    i == 0 ? nullptr : &out->members.front().image, &stagedBytes, &captured,
+                    nullptr, std::span<const AcquiredCanonicalSetMember>(out->members.data(), i));
                 if (loaded != VN_OK) return loaded;
             }
             if (operations != nullptr && old != nullptr && captured.hash == old->contentHash)
@@ -121094,9 +121112,10 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
         }
         inputs.push_back({desc.members[i].expectedHandle,
             MakeCanonicalRevisionKey(desc.members[i].expectedHandle, image),
-            captured.keptOwner == nullptr ? &captured.bytes : nullptr,
+            captured.keptOwner == nullptr && !captured.boundedFile ? &captured.bytes : nullptr,
             captured.keptOwner == nullptr ? &image.media : nullptr,
-            captured.keptOwner != nullptr});
+            captured.keptOwner != nullptr,
+            captured.keptOwner == nullptr && captured.boundedFile ? &captured.samples : nullptr});
     }
     const auto mapCount = out->members.front().image.attenuations.size();
     if (mapCount > (UINT64_MAX - stagedBytes) / (kCanonicalAttenuationMapPeakCopies * sizeof(PackAttenuationBindingMapV1::Binding)))
@@ -121486,7 +121505,8 @@ VnResult ActivateCanonicalPackSetImpl(
                             ? &previous->catalog : &captured.front().image;
                         const auto result = AcquireCanonicalSetMember(engine,
                             MemberToLoadDesc(desc.members[i]), init, &staged, &captured[i],
-                            traceResources != nullptr ? &(*traceResources)[i] : nullptr);
+                            traceResources != nullptr ? &(*traceResources)[i] : nullptr,
+                            std::span<const AcquiredCanonicalSetMember>(captured.data(), i));
                         if (result != VN_OK) {
                             if (traceInputMissing != nullptr && traceResources != nullptr)
                                 *traceInputMissing = (*traceResources)[i] == 0;
@@ -122239,16 +122259,32 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
     const VnPackByteSpan& span = spanGuard.span;
     const PackCanonicalImage* publishedCatalog =
         published->hasCatalog ? &published->catalog : nullptr;
-    const VnResult acquired = AcquireCanonicalBytes(
-        *desc, &owned, &spanGuard.span, &spanGuard.release, publishedCatalog);
-    if (acquired != VN_OK) {
-        return acquired;
-    }
     PackCanonicalImage image;
-    const VnResult parsed =
-        ParsePackCanonicalImage(span.bytes, span.byteCount, &image);
-    if (parsed != VN_OK) {
-        return parsed;
+    std::vector<PCMRegistry::PreparedPackSamples> samples;
+    std::uint64_t byteCount = 0, artifactHash = 0;
+    bool boundedFile = false;
+    if ((desc->flags & VN_PACK_LOAD_FLAG_PROVIDER) == 0 && engine.trace == nullptr) {
+        const PackInitCatalogRow* catalogRow = nullptr;
+        if (publishedCatalog != nullptr && desc->packStableId != 0) {
+            catalogRow = FindCatalogOwner(*publishedCatalog, desc->packStableId);
+            if (catalogRow == nullptr) return VN_UNKNOWN_ID;
+        }
+        std::string path;
+        const auto rooted = ResolveCanonicalFilePath(*desc, catalogRow, &path);
+        if (rooted != VN_OK) return rooted;
+        bool retry = false;
+        const auto read = ReadPackCanonicalFile(path.c_str(), engine.registry, &image, &samples,
+            &byteCount, &artifactHash, SIZE_MAX, {}, &retry);
+        if (read == VN_OK) boundedFile = true;
+        else if (!retry) return read;
+    }
+    if (!boundedFile) {
+        const VnResult acquired = AcquireCanonicalBytes(
+            *desc, &owned, &spanGuard.span, &spanGuard.release, publishedCatalog);
+        if (acquired != VN_OK) return acquired;
+        const VnResult parsed =
+            ParsePackCanonicalImage(span.bytes, span.byteCount, &image, &artifactHash);
+        if (parsed != VN_OK) return parsed;
     }
     if (image.packKind != kPackKindCanonicalContent) {
         return VN_PACK_INIT_LIFECYCLE;
@@ -122281,14 +122317,13 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
         return VN_PACK_CYCLE;
     }
     const VnResult catalogCheck = CheckContentAgainstGameplayCatalog(
-        *published, image,
-        Fnv1a64(span.bytes, static_cast<std::size_t>(span.byteCount)));
+        *published, image, artifactHash);
     if (catalogCheck != VN_OK) {
         return catalogCheck;
     }
-    const VnResult adopted = AdoptOwnedPackBytes(span, &owned);
-    if (adopted != VN_OK) {
-        return adopted;
+    if (!boundedFile) {
+        const VnResult adopted = AdoptOwnedPackBytes(span, &owned);
+        if (adopted != VN_OK) return adopted;
     }
     std::vector<PackEntry> mediaEntries = MakeCanonicalMediaEntries(image.media);
     const VnResult canReplace = engine.packs.CanReplacePreparedV2(
@@ -122320,7 +122355,7 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
     PackTable::PreparedMutation media;
     const VnResult preparedMedia = engine.packs.PrepareRevisionMutation(
         handle, owned, mediaEntries, image.media, engine.registry, &media,
-        &successorKey);
+        &successorKey, boundedFile ? &samples : nullptr);
     if (preparedMedia != VN_OK) {
         ReportCanonicalMediaConflict(engine, image);
         return preparedMedia;
@@ -122337,11 +122372,9 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
     const PackCanonicalImage* catalogToPublish = nullptr;
     if (published->hasCatalog) {
         successorCatalog = published->catalog;
-        const std::uint64_t nextHash =
-            Fnv1a64(span.bytes, static_cast<std::size_t>(span.byteCount));
         for (PackInitCatalogRow& row : successorCatalog.catalogRows) {
             if (row.ownerPackStableId == image.packStableId) {
-                row.expectedContentHash = nextHash;
+                row.expectedContentHash = artifactHash;
             }
         }
         catalogToPublish = &successorCatalog;
@@ -122358,8 +122391,7 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
     CanonicalBindingPlanV1 bindingPlan;
     std::vector<AcquiredCanonicalSetMember> members(1);
     members[0].image = image;
-    members[0].hash =
-        Fnv1a64(span.bytes, static_cast<std::size_t>(span.byteCount));
+    members[0].hash = artifactHash;
     members[0].handle = handle;
     std::vector<VnPackHandle> nextHandles;
     nextHandles.reserve(published->owners.size());

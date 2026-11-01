@@ -3,6 +3,7 @@
 #include "harken/core/EngineConfig.h"
 #include "harken/core/Utf8Path.h"
 #include "harken/media/PackFormat.h"
+#include "harken/media/PackLogicImage.h"
 
 #include <algorithm>
 #include <map>
@@ -21,13 +22,40 @@ namespace harken {
 
 namespace {
 
-PcmLoopRegion CanonicalPcmLoop(const PackTocEntry& media) noexcept {
-    if ((media.flags & kPackFlagLoopable) == 0) return {};
-    // Pack permits EOF as zero; non-default PCM regions require an explicit end.
-    // Preserve the default {0, 0} representation and its existing revision.
-    return {media.loopStartFrame,
-            media.loopStartFrame != 0 && media.loopEndFrame == 0
-                ? media.frameCount : media.loopEndFrame};
+bool EqualSamples(const PCMView& left, const PCMView& right) noexcept {
+    assert(left.stride == 1 && right.stride == 1);
+    if (right.sampleFormat == PcmSampleFormat::Float32) {
+        for (std::uint32_t ch = 0; ch < left.channelCount; ++ch) {
+            if (left.sampleFormat == PcmSampleFormat::Float32) {
+                if (std::memcmp(left.channels[ch], right.channels[ch],
+                                static_cast<std::size_t>(left.frames) * sizeof(float)) != 0)
+                    return false;
+            } else {
+                for (std::uint64_t frame = 0; frame < left.frames; ++frame) {
+                    const float sample = left.ReadSample(ch, frame);
+                    if (std::memcmp(&sample, right.SamplePtr(ch, frame), sizeof(float)) != 0)
+                        return false;
+                }
+            }
+        }
+        return true;
+    }
+    if (left.sampleFormat == PcmSampleFormat::Float32) return EqualSamples(right, left);
+    for (std::uint32_t ch = 0; ch < left.channelCount; ++ch) {
+        if (std::memcmp(left.channels[ch], right.channels[ch],
+                        static_cast<std::size_t>(left.frames) * sizeof(std::int16_t)) != 0)
+            return false;
+    }
+    return true;
+}
+
+bool EqualPlanarSamples(const PCMView& view, const float* samples) noexcept {
+    PCMView source = view;
+    source.sampleFormat = PcmSampleFormat::Float32;
+    for (std::uint32_t ch = 0; ch < view.channelCount; ++ch)
+        source.channels[ch] = samples + static_cast<std::size_t>(ch) * view.frames;
+    // Sample sharing preserves signed zero, unlike semantic revisions.
+    return EqualSamples(view, source);
 }
 
 VnPackHandle MakePackHandle(std::uint32_t slot,
@@ -1161,6 +1189,7 @@ VnResult PackTable::PrepareCanonicalSet(
             if (member.keep) {
                 const auto* slot = SlotFor(member.expectedHandle);
                 if (slot == nullptr || member.bytes != nullptr || member.media != nullptr ||
+                    member.samples != nullptr ||
                     slot->revisionKey.packStableId != member.revisionKey.packStableId)
                     return VN_INVALID_ARG;
                 const auto index = static_cast<std::uint32_t>(member.expectedHandle);
@@ -1171,8 +1200,10 @@ VnResult PackTable::PrepareCanonicalSet(
                 continue;
             }
             if (member.revisionKey.packStableId == 0 || member.media == nullptr ||
+                (member.samples != nullptr &&
+                 (member.bytes != nullptr || member.samples->size() != member.media->size())) ||
                 (!member.media->empty() &&
-                 (member.bytes == nullptr || !*member.bytes))) {
+                 member.samples == nullptr && (member.bytes == nullptr || !*member.bytes))) {
                 return VN_INVALID_ARG;
             }
             std::size_t index = static_cast<std::uint32_t>(member.expectedHandle);
@@ -1231,7 +1262,20 @@ VnResult PackTable::PrepareCanonicalSet(
         struct MediaSource {
             const PackTocEntry* media = nullptr;
             const float* samples = nullptr;
+            PCMRegistry::PreparedPackSamples* prepared = nullptr;
             PCMRegistry::PackReference reference;
+
+            PCMView View() const noexcept {
+                if (prepared != nullptr) return prepared->View();
+                PCMView view;
+                view.channelCount = media->channelCount;
+                view.sampleRate = media->sampleRate;
+                view.frames = media->frameCount;
+                view.loop = CanonicalPcmLoop(*media);
+                for (std::uint32_t ch = 0; ch < view.channelCount; ++ch)
+                    view.channels[ch] = samples + static_cast<std::size_t>(ch) * view.frames;
+                return view;
+            }
         };
         std::map<VnSoundId, MediaSource> mediaUnion;
         const auto sameMedia = [](const MediaSource& left, const MediaSource& right) {
@@ -1242,20 +1286,26 @@ VnResult PackTable::PrepareCanonicalSet(
                 a.loopStartFrame != b.loopStartFrame || a.loopEndFrame != b.loopEndFrame) {
                 return false;
             }
-            for (std::uint32_t channel = 0; channel < a.channelCount; ++channel) {
-                const auto offset = static_cast<std::size_t>(channel) * a.frameCount;
-                if (std::memcmp(left.samples + offset, right.samples + offset,
-                                static_cast<std::size_t>(a.frameCount) * sizeof(float)) != 0) {
-                    return false;
-                }
-            }
-            return true;
+            return EqualSamples(left.View(), right.View());
         };
         for (const auto& member : members) {
             if (member.keep) continue;
-            for (const auto& media : *member.media) {
-                MediaSource source{&media, reinterpret_cast<const float*>(
-                    member.bytes->get() + media.blobOffset), {}};
+            for (std::size_t entry = 0; entry < member.media->size(); ++entry) {
+                const auto& media = (*member.media)[entry];
+                MediaSource source;
+                source.media = &media;
+                if (member.samples != nullptr) {
+                    source.prepared = &(*member.samples)[entry];
+                    const auto view = source.prepared->View();
+                    const auto loop = CanonicalPcmLoop(media);
+                    if (!source.prepared->IsPrepared() || source.prepared->SoundId() != media.soundId ||
+                        view.sampleRate != media.sampleRate || view.channelCount != media.channelCount ||
+                        view.frames != media.frameCount || view.stride != 1 ||
+                        view.loop.startFrame != loop.startFrame || view.loop.endFrame != loop.endFrame)
+                        return VN_INVALID_ARG;
+                } else {
+                    source.samples = reinterpret_cast<const float*>(member.bytes->get() + media.blobOffset);
+                }
                 const auto [it, inserted] = mediaUnion.emplace(media.soundId, source);
                 if (!inserted && !sameMedia(it->second, source)) {
                     m_conflictingSoundId = media.soundId;
@@ -1301,11 +1351,7 @@ VnResult PackTable::PrepareCanonicalSet(
                     old->flags == media.flags &&
                     old->loopStartFrame == media.loopStartFrame &&
                     old->loopEndFrame == media.loopEndFrame;
-                for (std::uint32_t ch = 0; equal && ch < media.channelCount; ++ch) {
-                    equal = std::memcmp(view.channels[ch], source.samples +
-                        static_cast<std::size_t>(ch) * media.frameCount,
-                        static_cast<std::size_t>(media.frameCount) * sizeof(float)) == 0;
-                }
+                equal = equal && EqualSamples(view, source.View());
                 if (equal) {
                     source.reference = old->registration;
                     continue;
@@ -1315,12 +1361,17 @@ VnResult PackTable::PrepareCanonicalSet(
                     return VN_IN_USE;
                 }
             }
+            PCMRegistry::PackReferenceRegistration registration{};
+            registration.soundId = id;
+            if (source.prepared != nullptr) {
+                registration.samples = source.prepared;
+                registrations.push_back(registration);
+                continue;
+            }
             auto& channelPlanes = planes[sourceIndex++];
             for (std::uint32_t ch = 0; ch < media.channelCount; ++ch) {
                 channelPlanes[ch] = source.samples + static_cast<std::size_t>(ch) * media.frameCount;
             }
-            PCMRegistry::PackReferenceRegistration registration{};
-            registration.soundId = id;
             registration.loop = loop;
             registration.desc.structSize = sizeof(VnPCMDesc);
             registration.desc.sampleRate = media.sampleRate;
@@ -1486,15 +1537,29 @@ VnResult PackTable::PrepareCanonicalMedia(
     VnPackHandle replacing, const AlignedBuffer& bytes,
     const std::vector<PackTocEntry>& parsedMedia,
     std::vector<PackEntry>& entries, PCMRegistry& registry,
-    PCMRegistry::PreparedPackMutation* out) {
+    PCMRegistry::PreparedPackMutation* out,
+    std::vector<PCMRegistry::PreparedPackSamples>* samples) {
+    if (samples != nullptr && (bytes != nullptr || samples->size() != parsedMedia.size()))
+        return VN_INVALID_ARG;
     std::vector<PCMRegistry::PackReferenceRegistration> registrations;
-    std::vector<std::array<const float*, kMaxChannels>> planes(parsedMedia.size());
+    std::vector<std::array<const float*, kMaxChannels>> planes(
+        samples == nullptr ? parsedMedia.size() : 0);
     registrations.reserve(parsedMedia.size());
     const Slot* predecessor = SlotFor(replacing);
     for (std::size_t i = 0; i < parsedMedia.size(); ++i) {
         const PackTocEntry& media = parsedMedia[i];
         const PcmLoopRegion loop = CanonicalPcmLoop(media);
-        const float* blob = reinterpret_cast<const float*>(bytes.get() + media.blobOffset);
+        auto* prepared = samples != nullptr ? &(*samples)[i] : nullptr;
+        const auto preparedView = prepared != nullptr ? prepared->View() : PCMView{};
+        if (prepared != nullptr &&
+            (!prepared->IsPrepared() || prepared->SoundId() != media.soundId ||
+             preparedView.sampleRate != media.sampleRate ||
+             preparedView.channelCount != media.channelCount || preparedView.frames != media.frameCount ||
+             preparedView.stride != 1 || preparedView.loop.startFrame != loop.startFrame ||
+             preparedView.loop.endFrame != loop.endFrame))
+            return VN_INVALID_ARG;
+        const float* blob = prepared == nullptr
+            ? reinterpret_cast<const float*>(bytes.get() + media.blobOffset) : nullptr;
         const std::uint64_t cookie = registry.CookieOf(media.soundId);
         if (cookie != 0) {
             const PackEntry* existing = FindEntryBySound(media.soundId, registry);
@@ -1510,11 +1575,8 @@ VnResult PackTable::PrepareCanonicalMedia(
                 existing->flags == media.flags &&
                 existing->loopStartFrame == media.loopStartFrame &&
                 existing->loopEndFrame == media.loopEndFrame;
-            for (std::uint32_t ch = 0; equal && ch < media.channelCount; ++ch) {
-                equal = std::memcmp(view.channels[ch],
-                    blob + static_cast<std::size_t>(ch) * media.frameCount,
-                    static_cast<std::size_t>(media.frameCount) * sizeof(float)) == 0;
-            }
+            equal = equal && (prepared != nullptr
+                ? EqualSamples(view, preparedView) : EqualPlanarSamples(view, blob));
             if (equal) {
                 entries[i].registration = existing->registration;
                 entries[i].registrationCookie = cookie;
@@ -1526,19 +1588,22 @@ VnResult PackTable::PrepareCanonicalMedia(
                 return VN_IN_USE;
             }
         }
-        for (std::uint32_t ch = 0; ch < media.channelCount; ++ch) {
-            planes[i][ch] = blob + static_cast<std::size_t>(ch) * media.frameCount;
-        }
         PCMRegistry::PackReferenceRegistration registration{};
         registration.soundId = media.soundId;
-        registration.loop = loop;
-        registration.desc.structSize = sizeof(VnPCMDesc);
-        registration.desc.sampleRate = media.sampleRate;
-        registration.desc.channels = media.channelCount;
-        registration.desc.layout = VN_PCM_LAYOUT_PLANAR;
-        registration.desc.policy = VN_PCM_POLICY_COPY;
-        registration.desc.frames = media.frameCount;
-        registration.desc.samplesPlanar = planes[i].data();
+        if (prepared != nullptr) {
+            registration.samples = prepared;
+        } else {
+            for (std::uint32_t ch = 0; ch < media.channelCount; ++ch)
+                planes[i][ch] = blob + static_cast<std::size_t>(ch) * media.frameCount;
+            registration.loop = loop;
+            registration.desc.structSize = sizeof(VnPCMDesc);
+            registration.desc.sampleRate = media.sampleRate;
+            registration.desc.channels = media.channelCount;
+            registration.desc.layout = VN_PCM_LAYOUT_PLANAR;
+            registration.desc.policy = VN_PCM_POLICY_COPY;
+            registration.desc.frames = media.frameCount;
+            registration.desc.samplesPlanar = planes[i].data();
+        }
         registrations.push_back(registration);
     }
     std::size_t retiringCount = 0;
@@ -1574,8 +1639,11 @@ VnResult PackTable::LoadPrepared(PreparedLoadToken* token,
                                  const std::vector<PackTocEntry>& parsedMedia,
                                  PCMRegistry& registry,
                                  VnPackHandle* outHandle,
-                                 const PackRevisionKey* revisionKey) {
+                                 const PackRevisionKey* revisionKey,
+                                 std::vector<PCMRegistry::PreparedPackSamples>* samples) {
     m_conflictingSoundId = {};
+    if (samples != nullptr && (revisionKey == nullptr || revisionKey->packStableId == 0))
+        return VN_INVALID_ARG;
     assert(token != nullptr && token->m_owner == this &&
            token->m_slotIndex < m_slots.size() &&
            token->m_generation ==
@@ -1606,7 +1674,7 @@ VnResult PackTable::LoadPrepared(PreparedLoadToken* token,
     PCMRegistry::PreparedPackMutation media;
     if (canonical) {
         const VnResult staged = PrepareCanonicalMedia(
-            0, bytes, parsedMedia, entries, registry, &media);
+            0, bytes, parsedMedia, entries, registry, &media, samples);
         if (staged != VN_OK) {
             return staged;
         }
@@ -1795,9 +1863,11 @@ VnResult PackTable::PrepareRevisionMutation(
     VnPackHandle handle, AlignedBuffer& bytes,
     std::vector<PackEntry>& entries,
     const std::vector<PackTocEntry>& parsedMedia, PCMRegistry& registry,
-    PreparedMutation* out, const PackRevisionKey* revisionKey) {
+    PreparedMutation* out, const PackRevisionKey* revisionKey,
+    std::vector<PCMRegistry::PreparedPackSamples>* samples) {
     m_conflictingSoundId = {};
-    if (out == nullptr || entries.size() != parsedMedia.size()) {
+    if (out == nullptr || entries.size() != parsedMedia.size() ||
+        (samples != nullptr && (revisionKey == nullptr || revisionKey->packStableId == 0))) {
         return VN_INVALID_ARG;
     }
     *out = PreparedMutation{};
@@ -1829,7 +1899,7 @@ VnResult PackTable::PrepareRevisionMutation(
     try {
         if (revisionKey != nullptr && revisionKey->packStableId != 0) {
             const VnResult staged = PrepareCanonicalMedia(
-                handle, bytes, parsedMedia, entries, registry, &prepared.m_pcm);
+                handle, bytes, parsedMedia, entries, registry, &prepared.m_pcm, samples);
             if (staged != VN_OK) {
                 return staged;
             }

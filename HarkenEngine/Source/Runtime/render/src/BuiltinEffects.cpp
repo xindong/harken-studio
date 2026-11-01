@@ -1,4 +1,5 @@
 #include "harken/render/BuiltinEffects.h"
+#include "harken/dsp/GainRamp.h"
 
 #include "harken/render/generated/harken_effect_registry.g.h"
 
@@ -632,6 +633,13 @@ void GainProcess(void* state, float* const* channels,
         // Exact unity (0 dB): bit-transparent neutral fast path. The buffer is
         // left untouched, so the output bytes are identical to a no-effect
         // render — no multiply, no rounding.
+        g->hasRendered = g->hasRendered || frames != 0;
+        return;
+    }
+    if (g->transitionFramesRemaining == 0 && frames <= UINT32_MAX - offset &&
+        frames < UINT32_MAX - 3u) {
+        output_gain_detail::MulConstant(channels, channelCount, offset, frames,
+                                       g->gainLinear);
         g->hasRendered = g->hasRendered || frames != 0;
         return;
     }

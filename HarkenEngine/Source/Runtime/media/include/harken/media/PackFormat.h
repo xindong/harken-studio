@@ -15,6 +15,8 @@
 #define HARKEN_MEDIA_PACK_FORMAT_H
 
 #include <harken/ObjectId.h>
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -69,6 +71,26 @@ inline std::uint64_t Fnv1a64(const void* data, std::size_t bytes,
         hash *= kFnv1a64Prime;
     }
     return hash;
+}
+
+// Interleave two independent checksums without changing either byte sequence.
+inline std::array<std::uint64_t, 2> Fnv1a64Pair(
+    const void* firstData, std::size_t firstBytes,
+    const void* secondData, std::size_t secondBytes,
+    std::uint64_t firstHash = kFnv1a64OffsetBasis,
+    std::uint64_t secondHash = kFnv1a64OffsetBasis) {
+    const auto* first = static_cast<const unsigned char*>(firstData);
+    const auto* second = static_cast<const unsigned char*>(secondData);
+    const std::size_t common = std::min(firstBytes, secondBytes);
+    for (std::size_t i = 0; i < common; ++i) {
+        firstHash = (firstHash ^ first[i]) * kFnv1a64Prime;
+        secondHash = (secondHash ^ second[i]) * kFnv1a64Prime;
+    }
+    if (firstBytes != common)
+        firstHash = Fnv1a64(first + common, firstBytes - common, firstHash);
+    if (secondBytes != common)
+        secondHash = Fnv1a64(second + common, secondBytes - common, secondHash);
+    return {firstHash, secondHash};
 }
 
 // --- little-endian field access ---

@@ -224,9 +224,13 @@ public:
         Owner* owner_ = nullptr;
         std::uint32_t slot_ = 0;
     };
-    Iterator<false> begin() noexcept { return {this, 0}; }
+    Iterator<false> begin() noexcept {
+        return {this, ConstructedCount() == 0 ? capacity_ : 0u};
+    }
     Iterator<false> end() noexcept { return {this, capacity_}; }
-    Iterator<true> begin() const noexcept { return {this, 0}; }
+    Iterator<true> begin() const noexcept {
+        return {this, ConstructedCount() == 0 ? capacity_ : 0u};
+    }
     Iterator<true> end() const noexcept { return {this, capacity_}; }
 
 private:

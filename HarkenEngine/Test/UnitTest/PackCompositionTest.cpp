@@ -1692,6 +1692,117 @@ TEST(PackComposition, InspectInitBeforeEngineReturnsCatalogFields) {
     EXPECT_EQ(4096u, report.recommendedCatalogBytes);
 }
 
+TEST(PackCompositionContract, InspectInitReturnsProviderBorrowOnEveryExit) {
+    (void)Vn_Term();
+    ASSERT_EQ(nullptr, harken::detail::ActiveEngine());
+    struct Provider {
+        std::vector<std::uint8_t> bytes = BuildMinimalInit();
+        unsigned acquired = 0;
+        unsigned released = 0;
+        unsigned active = 0;
+        bool failAllocation = false;
+        bool empty = false;
+        bool failProvider = false;
+    } provider;
+    VnPackLoadDesc desc{};
+    desc.structSize = sizeof(desc);
+    desc.flags = VN_PACK_LOAD_FLAG_PROVIDER;
+    desc.providerUserData = &provider;
+    desc.provide = +[](void* data, std::uint64_t, const char*, std::uint32_t,
+                       std::uint64_t, VnPackByteSpan* span) -> VnResult {
+        auto& p = *static_cast<Provider*>(data);
+        if (p.failProvider) return VN_DEVICE_ERROR;
+        ++p.acquired;
+        ++p.active;
+        *span = {};
+        span->structSize = sizeof(*span);
+        if (!p.empty) {
+            span->bytes = p.bytes.data();
+            span->byteCount = p.bytes.size();
+        }
+        if (p.failAllocation) {
+            allocation_probe::count = 0;
+            allocation_probe::failAt = 1;
+            allocation_probe::enabled = true;
+        }
+        return VN_OK;
+    };
+    desc.release = +[](void* data, std::uint64_t, VnPackByteSpan) {
+        auto& p = *static_cast<Provider*>(data);
+        ++p.released;
+        --p.active;
+    };
+    for (unsigned cycle = 0; cycle < 16; ++cycle) {
+        SCOPED_TRACE(cycle);
+        for (unsigned mode = 0; mode < 4; ++mode) {
+            SCOPED_TRACE(mode);
+            provider.failAllocation = mode == 0;
+            provider.empty = mode == 2;
+            provider.failProvider = mode == 3;
+            VnInitPackInspectReport report{};
+            report.structSize = sizeof(report);
+            const VnResult result = Vn_InspectInitPack(&desc, &report);
+            allocation_probe::enabled = false;
+            const bool faultConsumed = allocation_probe::failAt == 0;
+            allocation_probe::failAt = 0;
+            if (provider.failAllocation) EXPECT_TRUE(faultConsumed);
+            const VnResult expected = mode == 0 ? VN_DEVICE_ERROR
+                : mode == 1 ? VN_OK : VN_PACK_PROVIDER_FAILED;
+            EXPECT_EQ(expected, result);
+            EXPECT_EQ(result, report.result);
+            EXPECT_EQ(sizeof(report), report.structSize);
+            EXPECT_EQ(provider.acquired, provider.released);
+            EXPECT_EQ(0u, provider.active);
+            if (mode == 1) {
+                EXPECT_EQ(11u, report.packStableId);
+                EXPECT_EQ(2u, report.catalogEntries);
+            }
+            EXPECT_EQ(nullptr, harken::detail::ActiveEngine());
+        }
+    }
+    EXPECT_EQ(48u, provider.acquired);
+    EXPECT_EQ(48u, provider.released);
+}
+
+TEST(PackCompositionContract, InspectInitResolvesAndEnforcesContainmentRootWithoutEngine) {
+    (void)Vn_Term();
+    ASSERT_EQ(nullptr, harken::detail::ActiveEngine());
+    const auto bytes = BuildMinimalInit();
+    const std::string root = HARKEN_TEMP_DIR "/f2-inspect-root";
+    const auto inside = WriteTemp("f2-inspect-root/Init.pack", bytes);
+    const auto outside = WriteTemp("f2-inspect-outside.pack", bytes);
+    struct Case {
+        const char* path;
+        const char* root;
+        VnResult result;
+    };
+    const Case cases[] = {
+        {"Init.pack", root.c_str(), VN_OK},
+        {inside.c_str(), root.c_str(), VN_OK},
+        {outside.c_str(), root.c_str(), VN_PACK_PATH_ESCAPE},
+        {"../f2-inspect-outside.pack", root.c_str(), VN_PACK_PATH_ESCAPE},
+        {nullptr, root.c_str(), VN_INVALID_ARG},
+        {inside.c_str(), nullptr, VN_INVALID_ARG},
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.path == nullptr ? "no path" : item.path);
+        VnPackLoadDesc desc{};
+        desc.structSize = sizeof(desc);
+        desc.flags = VN_PACK_LOAD_FLAG_ROOT;
+        desc.utf8Path = item.path;
+        desc.utf8ContainmentRoot = item.root;
+        VnInitPackInspectReport report{};
+        report.structSize = sizeof(report);
+        EXPECT_EQ(item.result, Vn_InspectInitPack(&desc, &report));
+        EXPECT_EQ(item.result, report.result);
+        if (item.result == VN_OK) {
+            EXPECT_EQ(11u, report.packStableId);
+            EXPECT_EQ(2u, report.catalogEntries);
+        }
+        EXPECT_EQ(nullptr, harken::detail::ActiveEngine());
+    }
+}
+
 TEST(PackComposition, KnownUnloadedAndAbsentStayDistinct) {
     const std::vector<std::uint8_t> bytes = BuildMinimalInit();
     const std::string path = WriteTemp("f2-known-unloaded.pack", bytes);
@@ -2161,6 +2272,48 @@ TEST_F(NativeSlicePack, CanonicalMediaPreservesLoopRegionAcrossLoadAndReplace) {
     EXPECT_EQ(10u, view.loop.endFrame);
 }
 
+TEST_F(NativeSlicePack, BoundedReplacementKeepsOldMediaAcrossLateFailureAndRetry) {
+    constexpr VnObjectId sound = harkentest::ObjectId(4512);
+    const auto initial = BuildContentPack(22, 1, 7, harkentest::ObjectId(2002),
+        harkentest::ObjectId(7), 0, 0x3f000000u, sound, harkentest::MakeDC(90001, 0.25f));
+    ASSERT_NO_FATAL_FAILURE(Load(initial));
+    auto data = harkentest::MakeDC(90001, 0.5f);
+    data.back() = -0.0f;
+    const auto replacement = BuildContentPack(22, 2, 8, harkentest::ObjectId(2002),
+        harkentest::ObjectId(7), 0, 0xbf000000u, sound, data);
+    PackCanonicalImage parsed;
+    ASSERT_EQ(VN_OK, ParsePackCanonicalImage(replacement.data(), replacement.size(), &parsed));
+    ASSERT_EQ(1u, parsed.media.size());
+    auto corrupt = replacement;
+    corrupt[parsed.media[0].blobOffset + parsed.media[0].blobBytes - 1] ^= 1;
+    auto& engine = *session.Engine();
+    const auto old = engine.registry.Lookup(sound);
+    const auto cookie = engine.registry.CookieOf(sound);
+    const auto generation = engine.packComposition.CompositeGeneration();
+    EXPECT_EQ(VN_BAD_PACK, Replace(corrupt));
+    EXPECT_EQ(generation, engine.packComposition.CompositeGeneration());
+    EXPECT_EQ(cookie, engine.registry.CookieOf(sound));
+    SetPackStagingFaultForTests(PackStagingFault::CompositionPublish);
+    const auto refused = Replace(replacement);
+    SetPackStagingFaultForTests(PackStagingFault::None);
+    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, refused);
+    EXPECT_EQ(generation, engine.packComposition.CompositeGeneration());
+    EXPECT_EQ(old.channels[0], engine.registry.Lookup(sound).channels[0]);
+    EXPECT_EQ(cookie, engine.registry.CookieOf(sound));
+    EXPECT_EQ(0u, engine.packs.RetiringCount());
+    old.useCount->fetch_add(1, std::memory_order_acq_rel);
+    const auto replaced = Replace(replacement);
+    EXPECT_FLOAT_EQ(0.25f, old.ReadSample(0, 90000));
+    old.useCount->fetch_sub(1, std::memory_order_acq_rel);
+    ASSERT_EQ(VN_OK, replaced);
+    const auto current = engine.registry.Lookup(sound);
+    EXPECT_EQ(PcmSampleFormat::Float32, current.sampleFormat);
+    EXPECT_FLOAT_EQ(0.5f, current.ReadSample(0, 0));
+    const float last = current.ReadSample(0, 90000), negativeZero = -0.0f;
+    EXPECT_EQ(0, std::memcmp(&last, &negativeZero, sizeof(float)));
+    EXPECT_NE(cookie, engine.registry.CookieOf(sound));
+}
+
 TEST_F(NativeSlicePack, ValidatorRefusalHasNoEffectsAndRawPostStillSucceeds) {
     const auto bytes = BuildContentPack(22, 1, 7, harkentest::ObjectId(2002));
     ASSERT_NO_FATAL_FAILURE(Load(bytes));
@@ -2508,7 +2661,7 @@ TEST(PackComposition,
                          childSnapshot.owner.pack.resourceClosureToken,
                          kSoundId, session.Engine()->registry, &exact));
     ASSERT_TRUE(exact.Valid());
-    EXPECT_FLOAT_EQ(0.25f, exact.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, exact.ReadSample(0, 0));
 
     ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(root));
     EXPECT_EQ(VN_STALE_HANDLE,
@@ -2590,9 +2743,9 @@ TEST(PackCompositionContract, DelayedPlayKeepsAdmissionPackRevisionAfterReplace)
     ASSERT_EQ(VN_OK, session.Engine()->packs.LookupExactClosure(
                          record.targetPackLease.resourceClosureToken, kSoundId,
                          session.Engine()->registry, &exact));
-    EXPECT_FLOAT_EQ(0.25f, exact.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, exact.ReadSample(0, 0));
     EXPECT_FLOAT_EQ(0.75f,
-                    session.Engine()->registry.Lookup(kSoundId).channels[0][0]);
+                    session.Engine()->registry.Lookup(kSoundId).ReadSample(0, 0));
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(firing));
 }
 
@@ -3112,19 +3265,19 @@ TEST(PackComposition, MultipleAnchoredRevisionsResolveExactPcmUntilReleased) {
 
     const PCMView active = session.Engine()->registry.Lookup(kSoundId);
     ASSERT_TRUE(active.Valid());
-    EXPECT_FLOAT_EQ(0.75f, active.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.75f, active.ReadSample(0, 0));
 
     PCMView exact{};
     ASSERT_EQ(VN_OK, session.Engine()->packs.LookupExact(
                          lookupA.lease.resourceToken, kSoundId,
                          session.Engine()->registry, &exact));
     ASSERT_TRUE(exact.Valid());
-    EXPECT_FLOAT_EQ(0.25f, exact.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, exact.ReadSample(0, 0));
     ASSERT_EQ(VN_OK, session.Engine()->packs.LookupExact(
                          lookupB.lease.resourceToken, kSoundId,
                          session.Engine()->registry, &exact));
     ASSERT_TRUE(exact.Valid());
-    EXPECT_FLOAT_EQ(0.5f, exact.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.5f, exact.ReadSample(0, 0));
     EXPECT_EQ(VN_CONTENT_NOT_LOADED,
               session.Engine()->packs.LookupExact(
                   std::numeric_limits<std::uint64_t>::max(), kSoundId,
@@ -3227,19 +3380,19 @@ TEST(PackCompositionContract, ActionAnchorPinsTransitiveProviderResources) {
     EXPECT_EQ(0xbf000000u, activeB->steps[0].valueBits);
     EXPECT_EQ(0xbf000000u, activeC->steps[0].valueBits);
     EXPECT_FLOAT_EQ(0.5f,
-                    session.Engine()->registry.Lookup(kSoundB).channels[0][0]);
+                    session.Engine()->registry.Lookup(kSoundB).ReadSample(0, 0));
     EXPECT_FLOAT_EQ(0.75f,
-                    session.Engine()->registry.Lookup(kSoundC).channels[0][0]);
+                    session.Engine()->registry.Lookup(kSoundC).ReadSample(0, 0));
 
     PCMView exact{};
     ASSERT_EQ(VN_OK, session.Engine()->packs.LookupExactClosure(
                          anchor.lease.resourceClosureToken, kSoundB,
                          session.Engine()->registry, &exact));
-    EXPECT_FLOAT_EQ(0.25f, exact.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, exact.ReadSample(0, 0));
     ASSERT_EQ(VN_OK, session.Engine()->packs.LookupExactClosure(
                          anchor.lease.resourceClosureToken, kSoundC,
                          session.Engine()->registry, &exact));
-    EXPECT_FLOAT_EQ(0.375f, exact.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.375f, exact.ReadSample(0, 0));
     EXPECT_EQ(2u, session.Engine()->packs.RetiringCount());
 
     PackPartitionLease mismatched = anchor.lease;
@@ -3322,7 +3475,7 @@ TEST(PackComposition, CanonicalUnloadKeepsAnchoredRevisionUntilRelease) {
                          anchor.lease.resourceClosureToken, kSoundId,
                          session.Engine()->registry, &exact));
     ASSERT_TRUE(exact.Valid());
-    EXPECT_FLOAT_EQ(0.25f, exact.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, exact.ReadSample(0, 0));
 
     members[0].expectedHandle = initHandle;
     VnCanonicalPackSetActivationReportV1 reactivation{};
@@ -3511,8 +3664,8 @@ TEST(PackCompositionContract,
         ASSERT_EQ(VN_IN_USE, packs.CanUnload(handle, registry));
         ASSERT_EQ(VN_IN_USE, packs.Unload(handle, registry));
         EXPECT_EQ(1u, packs.LoadedCount());
-        EXPECT_FLOAT_EQ(0.25f, old.channels[0][0]);
-        EXPECT_FLOAT_EQ(0.75f, registry.Lookup(soundId).channels[0][0]);
+        EXPECT_FLOAT_EQ(0.25f, old.ReadSample(0, 0));
+        EXPECT_FLOAT_EQ(0.75f, registry.Lookup(soundId).ReadSample(0, 0));
 
         old.useCount->store(0, std::memory_order_release);
         registry.SweepRetired();
@@ -3523,7 +3676,7 @@ TEST(PackCompositionContract,
         EXPECT_EQ(0u, packs.RetiringCount());
         EXPECT_EQ(callerCookie, registry.CookieOf(soundId));
         ASSERT_TRUE(registry.Lookup(soundId).Valid());
-        EXPECT_FLOAT_EQ(0.75f, registry.Lookup(soundId).channels[0][0]);
+        EXPECT_FLOAT_EQ(0.75f, registry.Lookup(soundId).ReadSample(0, 0));
         ASSERT_EQ(VN_OK, registry.UnregisterPCM(soundId));
         EXPECT_EQ(0u, registry.Count());
     }
@@ -3574,10 +3727,10 @@ TEST(PackCompositionContract,
         packs.SweepRetiring(
             +[](void*, PackResourceRevisionToken) { return false; });
         ASSERT_EQ(1u, packs.RetiringCount());
-        EXPECT_FLOAT_EQ(0.25f, old.channels[0][0]);
+        EXPECT_FLOAT_EQ(0.25f, old.ReadSample(0, 0));
         EXPECT_EQ(callerCookie, registry.CookieOf(oldId));
         ASSERT_TRUE(registry.Lookup(nextId).Valid());
-        EXPECT_FLOAT_EQ(0.5f, registry.Lookup(nextId).channels[0][0]);
+        EXPECT_FLOAT_EQ(0.5f, registry.Lookup(nextId).ReadSample(0, 0));
 
         old.useCount->store(0, std::memory_order_release);
         registry.SweepRetired();
@@ -3632,13 +3785,13 @@ TEST(PackCompositionContract,
     packs.SweepRetiring(
         +[](void*, PackResourceRevisionToken) { return false; });
     ASSERT_EQ(1u, packs.RetiringCount());
-    EXPECT_FLOAT_EQ(0.5f, next.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.5f, next.ReadSample(0, 0));
     EXPECT_EQ(predecessorCookie, registry.CookieOf(oldId));
     ASSERT_TRUE(registry.Lookup(oldId).Valid());
-    EXPECT_FLOAT_EQ(0.25f, registry.Lookup(oldId).channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, registry.Lookup(oldId).ReadSample(0, 0));
     EXPECT_EQ(callerCookie, registry.CookieOf(nextId));
     ASSERT_TRUE(registry.Lookup(nextId).Valid());
-    EXPECT_FLOAT_EQ(0.75f, registry.Lookup(nextId).channels[0][0]);
+    EXPECT_FLOAT_EQ(0.75f, registry.Lookup(nextId).ReadSample(0, 0));
 
     next.useCount->store(0, std::memory_order_release);
     registry.SweepRetired();
@@ -3796,7 +3949,7 @@ TEST(PackCompositionContract, RetirementCapacityRefusesBeforePublishingSuccessor
     EXPECT_EQ(actionBefore, composition.FindAction(harkentest::ObjectId(2002)));
     EXPECT_EQ(pcmBefore.channels[0], registry.Lookup(kSoundId).channels[0]);
     EXPECT_EQ(cookieBefore, registry.CookieOf(kSoundId));
-    EXPECT_FLOAT_EQ(0.75f, registry.Lookup(kSoundId).channels[0][0]);
+    EXPECT_FLOAT_EQ(0.75f, registry.Lookup(kSoundId).ReadSample(0, 0));
 
     ASSERT_EQ(VN_OK, composition.ReleaseLease(leaseA.lease));
     ASSERT_EQ(VN_OK, composition.ReleaseLease(leaseB.lease));
@@ -3827,7 +3980,7 @@ TEST(PackCompositionContract, RetirementCapacityRefusesBeforePublishingSuccessor
         EXPECT_EQ(tokenC, restoredToken);
         return restored;
     }());
-    EXPECT_FLOAT_EQ(0.75f, registry.Lookup(kSoundId).channels[0][0]);
+    EXPECT_FLOAT_EQ(0.75f, registry.Lookup(kSoundId).ReadSample(0, 0));
 }
 
 static_assert(noexcept(std::declval<PackTable&>().CommitPreparedMutation(
@@ -4215,7 +4368,7 @@ TEST(PackCompositionContract, ResourceClosureCapacityIsAtomicAndStaleSafe) {
     ASSERT_EQ(VN_OK,
               packs.LookupExactClosure(first, kSoundId, registry, &exact));
     ASSERT_TRUE(exact.Valid());
-    EXPECT_FLOAT_EQ(0.25f, exact.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, exact.ReadSample(0, 0));
 
     PackResourceClosureToken refused = 0;
     EXPECT_EQ(VN_BACKPRESSURE,
@@ -4249,7 +4402,7 @@ TEST(PackCompositionContract, ResourceClosureCapacityIsAtomicAndStaleSafe) {
     EXPECT_EQ(VN_OK, packs.ValidateResourceClosure(second));
     ASSERT_EQ(VN_OK,
               packs.LookupExactClosure(second, kSoundId, registry, &exact));
-    EXPECT_FLOAT_EQ(0.25f, exact.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, exact.ReadSample(0, 0));
     EXPECT_EQ(VN_OK, packs.ReleaseResourceClosure(second));
 
     constexpr std::uint32_t kMaxGeneration =
@@ -4331,7 +4484,7 @@ TEST(PackComposition, ReplaceSwapsPackTableMedia) {
     const PCMView oldMedia = session.Engine()->registry.Lookup(kSoundId);
     ASSERT_TRUE(oldMedia.Valid());
     ASSERT_NE(nullptr, oldMedia.channels[0]);
-    EXPECT_FLOAT_EQ(0.25f, oldMedia.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, oldMedia.ReadSample(0, 0));
     const std::uint64_t oldCookie = session.Engine()->registry.CookieOf(kSoundId);
     EXPECT_NE(0u, oldCookie);
 
@@ -4349,7 +4502,7 @@ TEST(PackComposition, ReplaceSwapsPackTableMedia) {
     ASSERT_NE(nullptr, nextMedia.channels[0]);
     EXPECT_NE(oldMedia.channels[0], nextMedia.channels[0]);
     EXPECT_NE(oldCookie, session.Engine()->registry.CookieOf(kSoundId));
-    EXPECT_FLOAT_EQ(0.75f, nextMedia.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.75f, nextMedia.ReadSample(0, 0));
 
     const PackIdentityLookup after =
         session.Engine()->packComposition.Lookup(harkentest::ObjectId(2002));
@@ -4412,7 +4565,7 @@ TEST(PackCompositionContract, FailedReplacePublishKeepsPriorMedia) {
     const PCMView oldMedia = session.Engine()->registry.Lookup(kSoundId);
     ASSERT_TRUE(oldMedia.Valid());
     ASSERT_NE(nullptr, oldMedia.channels[0]);
-    EXPECT_FLOAT_EQ(0.25f, oldMedia.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, oldMedia.ReadSample(0, 0));
     const std::uint64_t oldCookie = session.Engine()->registry.CookieOf(kSoundId);
     EXPECT_NE(0u, oldCookie);
     PackRevisionKey oldRevisionKey{};
@@ -4443,7 +4596,7 @@ TEST(PackCompositionContract, FailedReplacePublishKeepsPriorMedia) {
     ASSERT_NE(nullptr, restored.channels[0]);
     EXPECT_EQ(oldMedia.channels[0], restored.channels[0]);
     EXPECT_EQ(oldCookie, session.Engine()->registry.CookieOf(kSoundId));
-    EXPECT_FLOAT_EQ(0.25f, restored.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, restored.ReadSample(0, 0));
     EXPECT_EQ(0u, session.Engine()->packs.RetiringCount());
     PackRevisionKey restoredRevisionKey{};
     PackResourceRevisionToken restoredResourceToken = 0;
@@ -4457,7 +4610,7 @@ TEST(PackCompositionContract, FailedReplacePublishKeepsPriorMedia) {
     const PCMView retried = session.Engine()->registry.Lookup(kSoundId);
     ASSERT_TRUE(retried.Valid());
     ASSERT_NE(nullptr, retried.channels[0]);
-    EXPECT_FLOAT_EQ(0.75f, retried.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.75f, retried.ReadSample(0, 0));
 
     const std::uint64_t committedGeneration =
         session.Engine()->packComposition.CompositeGeneration();
@@ -4750,7 +4903,7 @@ TEST(PackComposition, DelayedPlayUnloadRetiresAdmissionRevision) {
     ASSERT_EQ(VN_OK, session.Engine()->packs.LookupExactClosure(
                          record.targetPackLease.resourceClosureToken, kSoundId,
                          session.Engine()->registry, &exact));
-    EXPECT_FLOAT_EQ(0.25f, exact.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, exact.ReadSample(0, 0));
 
     ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
@@ -5708,7 +5861,7 @@ TEST(PackComposition, ProvisionalActionMediaSharesStorageAndSurvivesEitherUnload
             EXPECT_EQ(original.channels[0], session.Engine()->registry.Lookup(soundId).channels[0]);
             ASSERT_EQ(VN_OK, Vn_UnloadPack(handles[reverseUnload ? 1 : 2]));
             EXPECT_FALSE(session.Engine()->registry.Lookup(soundId).Valid());
-            EXPECT_FLOAT_EQ(0.25f, original.channels[0][0]);
+            EXPECT_FLOAT_EQ(0.25f, original.ReadSample(0, 0));
             original.useCount->fetch_sub(1);
             session.Engine()->packs.SweepRetiring(+[](void*, PackResourceRevisionToken) { return false; });
             EXPECT_EQ(0u, session.Engine()->packs.RetiringCount());
@@ -5764,8 +5917,8 @@ TEST(PackCompositionContract, SharedMediaConflictAndReplacementAreTransactional)
     original.useCount->fetch_add(1);
     desc.utf8Path = paths[3].c_str();
     ASSERT_EQ(VN_OK, Vn_ReplacePack(handles[1], reinterpret_cast<const VnPackDesc*>(&desc)));
-    EXPECT_FLOAT_EQ(0.5f, session.Engine()->registry.Lookup(soundId).channels[0][0]);
-    EXPECT_FLOAT_EQ(0.25f, original.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.5f, session.Engine()->registry.Lookup(soundId).ReadSample(0, 0));
+    EXPECT_FLOAT_EQ(0.25f, original.ReadSample(0, 0));
     original.useCount->fetch_sub(1);
 }
 

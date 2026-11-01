@@ -352,7 +352,8 @@ void ApplyTimelineControlEvent(VoiceRenderContext& ctx,
         envelope.startFrame = event.frame;
         envelope.endFrame = event.endFrame;
         if (envelope.useCurve) {
-            envelope.curve = *event.envelopeCurve;
+            assert(envelope.curve != nullptr);
+            *envelope.curve = *event.envelopeCurve;
         }
         if (envelope.fadeOut) {
             ctx.timelineFadeOutCoveredSample =
@@ -401,7 +402,7 @@ bool PreparePlainPcm(const VoiceRenderContext& ctx, std::uint32_t blockFrames,
     const auto& rs = ctx.resampler;
     if (offset >= blockFrames || ctx.pcm.channelCount == 0 ||
         ctx.pcm.channelCount > 2 || ctx.phase != SourcePhase::Active ||
-        ctx.streamRing != nullptr || ctx.streamParkActive ||
+        ctx.streamParkActive ||
         ctx.voiceSendActiveCount != 0 || ctx.dynamicVoiceTapActive ||
         ctx.tailStarted || ctx.tailRemaining != 0 ||
         ctx.tailRearmPosition != kNoTailRearmPosition ||
@@ -435,6 +436,19 @@ bool PreparePlainPcm(const VoiceRenderContext& ctx, std::uint32_t blockFrames,
     const std::uint64_t needed = frames + 1 > available ? frames + 1 - available : 0;
     const std::uint64_t extra =
         ((needed + kResampleChunkFrames - 1) / kResampleChunkFrames) * kResampleChunkFrames;
+    if (ctx.streamRing != nullptr) {
+        // Keep the producer's unread prefix intact until the existing feed
+        // helper copies it into the voice-owned FIFO. Partial spans and wrap
+        // boundaries use the generic interleaved feed/produce path.
+        if (rs.phaseHigh != 0 || rs.phaseLow != 0 ||
+            frames > UINT64_MAX - rs.readIndex || extra > rs.FreeFrames() ||
+            extra > UINT64_MAX - rs.writeIndex || ctx.streamRing->SourceEnded())
+            return false;
+        const float* planes[kMaxChannels] = {};
+        if (ctx.streamRing->ContiguousRead(planes) < extra) return false;
+        feedFrames = static_cast<std::uint32_t>(extra);
+        return true;
+    }
     const std::uint64_t limit = ctx.loopInfinite || ctx.loopPassesRemaining > 1
         ? ctx.loopEndFrame : ctx.pcm.frames;
     // Every feed stays a complete chunk, matching the interleaved source pass.
@@ -461,10 +475,21 @@ void CopyPlainPcm(const VoiceRenderContext& ctx, float* const* planes,
 bool RunPlainPcm(VoiceRenderContext& ctx, std::uint32_t frames) {
     const auto feedFrames = ctx.cascade.plainPcmFeedFrames;
     if (feedFrames != 0) {
-        // Preparation proved that every complete chunk fits before the next
-        // source boundary. One push preserves the same ring contents and cursors.
-        ctx.resampler.PushPCM(ctx.pcm, ctx.srcCursor, feedFrames);
-        ctx.srcCursor += feedFrames;
+        if (ctx.streamRing != nullptr) {
+            // Preparation proved that each complete feed fits both FIFOs.
+            // Only the voice-owned FIFO is borrowed; the stream read lease
+            // ends inside FeedResamplerFromStream, after its PCM copy.
+            for (std::uint32_t fed = 0; fed < feedFrames; fed += kResampleChunkFrames) {
+                const bool supplied = FeedResamplerFromStream(ctx);
+                assert(supplied);
+                (void)supplied;
+            }
+        } else {
+            // Preparation proved that every complete chunk fits before the next
+            // source boundary. One push preserves the same ring contents and cursors.
+            ctx.resampler.PushPCM(ctx.pcm, ctx.srcCursor, feedFrames);
+            ctx.srcCursor += feedFrames;
+        }
     }
     if (!ctx.resampler.BorrowLinearUnity(frames, ctx.cascade.borrowed)) return false;
     ctx.monitorPreChainFrames = 0;
@@ -482,6 +507,7 @@ bool RunPlainPcm(VoiceRenderContext& ctx, std::uint32_t frames) {
         ctx.highShelfTransition.lastInput[ch] = input;
     }
     ctx.logicalSourceOutputFramesThisBlock = frames;
+    if (ctx.streamRing != nullptr) ctx.starvedThisBlock = false;
     ctx.cascade.produced = frames;
     ctx.phase = SourcePhase::Active;
     ctx.lastResult = {frames, SourcePhase::Active};
@@ -1215,10 +1241,10 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
                               : static_cast<float>(done) * reciprocal;
                 float envelopeGain = progress;
                 if (envelope.useCurve) {
-                    const float curveX = envelope.curve.xMin +
-                        (envelope.curve.xMax - envelope.curve.xMin) *
+                    const float curveX = envelope.curve->xMin +
+                        (envelope.curve->xMax - envelope.curve->xMin) *
                             progress;
-                    envelopeGain = envelope.curve.Eval(curveX);
+                    envelopeGain = envelope.curve->Eval(curveX);
                 }
                 if (envelope.fadeOut) {
                     envelopeGain = 1.0f - envelopeGain;
@@ -1433,22 +1459,32 @@ void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
             const float* src0 = scratch[0] + offset;
             const float* src1 = channels == 2 ? scratch[1] + offset : nullptr;
             if (ctx.spatialMatrix.Settled()) {
-                for (std::uint32_t ch = 0; ch < mixChannels; ++ch) {
-                    const float a = ctx.spatialMatrix.target.gain[0][ch];
-                    const float b = ctx.spatialMatrix.target.gain[1][ch];
-                    float* dst = dry[ch] + offset;
-                    float* image = haveTap ? tap[ch] + offset : nullptr;
-                    if (image != nullptr) {
-                        for (std::uint32_t i = 0; i < produced; ++i)
-                            image[i] = src0[i] * a + (src1 != nullptr ? src1[i] * b : 0.0f);
-                        ctx.outputGain.MixAdd(image, dst, produced, 0);
-                    } else if (b == 0.0f) {
-                        if (a != 0.0f) ctx.outputGain.MixAdd(src0, dst, produced, 0, a);
-                    } else if (a == 0.0f) {
-                        ctx.outputGain.MixAdd(src1, dst, produced, 0, b);
-                    } else {
-                        ctx.outputGain.MixAdd(src0, dst, produced, 0, a);
-                        ctx.outputGain.MixAdd(src1, dst, produced, 0, b);
+                if (channels == 1 && mixChannels == 2 && !haveTap &&
+                    ctx.outputGain.remainingFrames == 0 &&
+                    ctx.spatialMatrix.target.gain[0][0] != 0.0f &&
+                    ctx.spatialMatrix.target.gain[0][1] != 0.0f) {
+                    monoStereoMix(src0, dry[0] + offset, dry[1] + offset,
+                        produced, 1.0f,
+                        ctx.spatialMatrix.target.gain[0][0] * ctx.outputGain.target,
+                        ctx.spatialMatrix.target.gain[0][1] * ctx.outputGain.target);
+                } else {
+                    for (std::uint32_t ch = 0; ch < mixChannels; ++ch) {
+                        const float a = ctx.spatialMatrix.target.gain[0][ch];
+                        const float b = ctx.spatialMatrix.target.gain[1][ch];
+                        float* dst = dry[ch] + offset;
+                        float* image = haveTap ? tap[ch] + offset : nullptr;
+                        if (image != nullptr) {
+                            for (std::uint32_t i = 0; i < produced; ++i)
+                                image[i] = src0[i] * a + (src1 != nullptr ? src1[i] * b : 0.0f);
+                            ctx.outputGain.MixAdd(image, dst, produced, 0);
+                        } else if (b == 0.0f) {
+                            if (a != 0.0f) ctx.outputGain.MixAdd(src0, dst, produced, 0, a);
+                        } else if (a == 0.0f) {
+                            ctx.outputGain.MixAdd(src1, dst, produced, 0, b);
+                        } else {
+                            ctx.outputGain.MixAdd(src0, dst, produced, 0, a);
+                            ctx.outputGain.MixAdd(src1, dst, produced, 0, b);
+                        }
                     }
                 }
             } else {
@@ -1529,6 +1565,9 @@ void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
 
 }
 
+#if (defined(_M_X64) || defined(__x86_64__)) && (defined(__clang__) || defined(__GNUC__))
+__attribute__((aligned(64)))
+#endif
 StageResult RenderVoiceBlock(VoiceRenderContext& ctx, BlockArena& arena,
                              float* const* busPlanes, std::uint32_t blockFrames,
                              std::uint32_t mixChannels,

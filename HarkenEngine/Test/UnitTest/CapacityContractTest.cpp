@@ -289,6 +289,60 @@ TEST(StableBackingPreparation, SparsePageRetryPreservesLiveRunsAcrossDirectoryWo
     EXPECT_EQ(10u * page, storage.CommittedBytes());
 }
 
+TEST(StableBackingPreparation, SparseDirectoryAllocationFailureCanRetryAndSwapLiveBacking) {
+    harken::detail::StablePageReservation storage, other;
+    const auto page = storage.SystemPageBytes();
+    ASSERT_GT(page, 0u);
+
+    const auto savedEnabled = allocation_probe::enabled;
+    const auto savedFailAt = allocation_probe::failAt;
+    const auto savedCountIf = allocation_probe::countIf;
+    allocation_probe::countIf = nullptr;
+    allocation_probe::failAt = allocation_probe::count + 1;
+    allocation_probe::enabled = true;
+    const bool reserved = storage.Reserve(70u * page, alignof(std::uint64_t), true);
+    const bool faultReached = allocation_probe::failAt == 0;
+    allocation_probe::enabled = savedEnabled;
+    allocation_probe::failAt = savedFailAt;
+    allocation_probe::countIf = savedCountIf;
+
+    EXPECT_TRUE(faultReached);
+    EXPECT_FALSE(reserved);
+    EXPECT_EQ(nullptr, storage.Address());
+    EXPECT_EQ(0u, storage.ReservedBytes());
+    EXPECT_EQ(0u, storage.CommittedBytes());
+    EXPECT_EQ(0u, storage.DirectoryBytes());
+    ASSERT_TRUE(storage.Reserve(70u * page, alignof(std::uint64_t), true));
+    ASSERT_TRUE(storage.CommitRange(65u * page, page));
+    auto* const sparseAddress = static_cast<unsigned char*>(storage.Address());
+    std::memset(sparseAddress + 65u * page, 0x5a, page);
+    const auto directoryBytes = storage.DirectoryBytes();
+    EXPECT_GT(directoryBytes, 0u);
+    storage.SetCommitPageLimitForTests(0);
+
+    ASSERT_TRUE(other.Reserve(page, alignof(std::uint64_t)));
+    ASSERT_TRUE(other.CommitThrough(page));
+    auto* const denseAddress = static_cast<unsigned char*>(other.Address());
+    std::memset(denseAddress, 0xa5, page);
+    storage.Swap(other);
+
+    EXPECT_EQ(sparseAddress, other.Address());
+    EXPECT_EQ(denseAddress, storage.Address());
+    EXPECT_EQ(directoryBytes, other.DirectoryBytes());
+    EXPECT_EQ(0u, storage.DirectoryBytes());
+    EXPECT_TRUE(other.CommitRange(65u * page, page));
+    EXPECT_FALSE(other.CommitRange(66u * page, page));
+    EXPECT_TRUE(storage.CommitThrough(page));
+    EXPECT_TRUE(std::all_of(sparseAddress + 65u * page, sparseAddress + 66u * page,
+        [](unsigned char value) { return value == 0x5a; }));
+    EXPECT_TRUE(std::all_of(denseAddress, denseAddress + page,
+        [](unsigned char value) { return value == 0xa5; }));
+    other.SetCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_TRUE(other.CommitRange(66u * page, page));
+    EXPECT_TRUE(std::all_of(sparseAddress + 66u * page, sparseAddress + 67u * page,
+        [](unsigned char value) { return value == 0; }));
+}
+
 TEST(StableBackingPreparation, DependenciesPrecedePublicationAndPreparedUseCannotGrow) {
     harken::StableRowStorage<std::uint64_t, std::size_t> rows, dependencies;
     ASSERT_TRUE(rows.Reserve(8));
@@ -590,6 +644,71 @@ VnConfig MakeNullConfig() {
     config.structSize = sizeof(VnConfig);
     config.deviceMode = VN_DEVICE_NULL;
     return config;
+}
+
+TEST(StableBackingPreparation, OriginalSourceAllowanceFillsOrdinaryHolesAndRetriesBeforePublication) {
+    auto config = MakeNullConfig();
+    config.maxVoices = 8;
+    config.maxTriggerDepth = 2;
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    auto& single = engine.originalSinglePreparationHolders;
+    auto& queue = engine.originalQueueSourcePreparationHolders;
+    single.SetCommitPageLimitForTests(0);
+    queue.SetCommitPageLimitForTests(0);
+    harken::TimelineArmToken first{};
+    ASSERT_TRUE(engine.timelineArms.Prepare(0, 1, 256, 256, 1, {}, &first));
+    EXPECT_EQ(0u, single.ConstructedCount());
+    EXPECT_EQ(0u, queue.ConstructedCount());
+    const auto ordinaryRows = engine.timelineArms.ConstructedRowCount();
+    ASSERT_GT(ordinaryRows, 0u);
+
+    // A failed dependent-column preparation cannot issue an allowance or
+    // consume the already prepared Arm. Partial backing remains retryable.
+    harken::StableStoragePreparation backing;
+    EXPECT_FALSE(engine.timelineArms.PrepareBacking(1, &backing));
+    EXPECT_FALSE(backing.Valid());
+    EXPECT_EQ(ordinaryRows, engine.timelineArms.ConstructedRowCount());
+    EXPECT_EQ(1u, engine.timelineArms.LiveCount());
+    single.SetCommitPageLimitForTests(SIZE_MAX);
+    EXPECT_FALSE(engine.timelineArms.PrepareBacking(1, &backing));
+    EXPECT_FALSE(backing.Valid());
+    EXPECT_TRUE(single.IsConstructed(first.slot));
+    EXPECT_FALSE(queue.IsConstructed(first.slot));
+    auto* const retainedSingle = &single[first.slot];
+    EXPECT_EQ(ordinaryRows, engine.timelineArms.ConstructedRowCount());
+    EXPECT_EQ(1u, engine.timelineArms.LiveCount());
+
+    queue.SetCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_TRUE(engine.timelineArms.PrepareBacking(1, &backing));
+    ASSERT_TRUE(backing.Valid());
+    EXPECT_EQ(retainedSingle, &single[first.slot]);
+    const auto preparedRows = engine.timelineArms.ConstructedRowCount();
+    for (std::uint32_t slot = 0; slot < preparedRows; ++slot) {
+        EXPECT_TRUE(single.IsConstructed(slot));
+        EXPECT_TRUE(queue.IsConstructed(slot));
+    }
+    const auto singleBytes = single.CommittedBytes();
+    const auto queueBytes = queue.CommittedBytes();
+    single.SetCommitPageLimitForTests(0);
+    queue.SetCommitPageLimitForTests(0);
+    engine.timelineArms.SetRowCommitPageLimitForTests(0);
+    engine.timelineArms.SetScopeCommitPageLimitForTests(0);
+    engine.originalSourceSubmissions.SetCommitPageLimitForTests(0);
+    {
+        const auto use = backing.Use();
+        harken::TimelineArmToken second{};
+        ASSERT_TRUE(engine.timelineArms.Prepare(1, 1, 256, 256, 1, {}, &second));
+        EXPECT_TRUE(single.IsConstructed(second.slot));
+        EXPECT_TRUE(queue.IsConstructed(second.slot));
+        EXPECT_EQ(preparedRows, engine.timelineArms.ConstructedRowCount());
+        EXPECT_EQ(singleBytes, single.CommittedBytes());
+        EXPECT_EQ(queueBytes, queue.CommittedBytes());
+        EXPECT_TRUE(engine.timelineArms.CancelPrepared(second));
+    }
+    EXPECT_TRUE(engine.timelineArms.CancelPrepared(first));
+    EXPECT_EQ(0u, engine.timelineArms.LiveCount());
 }
 
 TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtectedGrowth) {
@@ -1447,12 +1566,14 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     testing::Test::RecordProperty("frozen_frontier_event_proof_capacity_bytes",
         std::to_string(engine->voices.Capacity() * frozenProofBytesPerVoice));
     constexpr auto queueFutureRollbackBytes =
-        sizeof(harken::EngineActionPlayScratch::queueFutureMemberSlots) +
-        sizeof(harken::EngineActionPlayScratch::queueFuturePriorMemberReferences);
+        sizeof(harken::EngineActionPlayScratch::QueueScratchArrays::queueFutureMemberSlots) +
+        sizeof(harken::EngineActionPlayScratch::QueueScratchArrays::queueFuturePriorMemberReferences);
     testing::Test::RecordProperty("queue_future_rollback_bytes_per_scratch",
         std::to_string(queueFutureRollbackBytes));
     testing::Test::RecordProperty("queue_future_rollback_capacity_bytes",
         std::to_string(engine->actionPlayScratch.size() * queueFutureRollbackBytes));
+    testing::Test::RecordProperty("action_play_scratch_bytes",
+        std::to_string(sizeof(harken::EngineActionPlayScratch)));
     testing::Test::RecordProperty("variable_weight_owner_bytes", std::to_string(sizeof(harken::VariableWeightControlIdentity)));
     testing::Test::RecordProperty("authored_stop_identity_bytes", std::to_string(sizeof(harken::AuthoredStopOperationIdentity)));
     testing::Test::RecordProperty("frontier_event_family_capacity_increase_bytes",

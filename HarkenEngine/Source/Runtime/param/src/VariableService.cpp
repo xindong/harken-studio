@@ -5109,9 +5109,7 @@ bool VariableServiceV1::HasNativePublicationHold(VnVoiceHandle nativeHandle) con
         if ((state == TimelineReadUseState::Prepared || state == TimelineReadUseState::Published) &&
             use.nativeHandle == nativeHandle) return true;
     }
-    for (std::uint32_t index = 0; index < readCutCapacity_; ++index) {
-        if (!readCuts_.IsConstructed(index)) continue;
-        const auto& cut = readCuts_[index];
+    for (const auto& cut : readCuts_) {
         if (cut.state.load(std::memory_order_acquire) != ReadCutState::Published) continue;
         if (cut.nativeHandle == nativeHandle &&
             cut.nativeReceipt.load(std::memory_order_acquire) != VariableNativeStartReceipt::None) return true;

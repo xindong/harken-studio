@@ -1591,6 +1591,61 @@ TEST(ResamplerProfessionalFacade,
     EXPECT_EQ(-inf, harken::InterpLinear(-inf, -inf, 0.0f));
     EXPECT_FLOAT_EQ(0.25f,
                     harken::InterpLinear(0.25f, 0.75f, 0.0f));
+
+    for (const std::uint32_t bits :
+         {0x00000000u, 0x80000000u, 0x7f800000u, 0xff800000u,
+          0x7fc12345u, 0x7f812345u}) {
+        SCOPED_TRACE(bits);
+        std::vector<float> ring(kResampleFifoFrames, 0.0f);
+        float* rings[1] = {ring.data()};
+        Resampler resampler;
+        resampler.Reset(rings, 1, ResampleQuality::Linear, 0.5, Tables());
+        for (float& sample : ring)
+            std::memcpy(&sample, &bits, sizeof(bits));
+        resampler.writeIndex = resampler.readIndex + 16;
+        float output[7] = {};
+        float* destination[1] = {output + 1};
+        ASSERT_EQ(5u, resampler.Produce(destination, 0, 5));
+        for (const unsigned frame : {0u, 2u, 4u}) {
+            std::uint32_t actual = 0;
+            std::memcpy(&actual, &destination[0][frame], sizeof(actual));
+            EXPECT_EQ(bits, actual);
+        }
+        EXPECT_EQ(0.0f, output[0]);
+        EXPECT_EQ(0.0f, output[6]);
+    }
+}
+
+TEST(ResamplerProfessionalFacade,
+     LinearOverlappingOutputPreservesSequentialReads) {
+    for (const int outputOffset : {-4, 0, 1}) {
+        SCOPED_TRACE(outputOffset);
+        std::vector<float> grouped(kResampleFifoFrames + 16, -987.25f);
+        std::vector<float> sequential(grouped);
+        Resampler resamplers[2];
+        float* rings[2] = {grouped.data() + 8, sequential.data() + 8};
+        for (unsigned side = 0; side < 2; ++side) {
+            resamplers[side].Reset(&rings[side], 1,
+                                  ResampleQuality::Linear, 0.5, Tables());
+            for (unsigned frame = 0; frame < kResampleFifoFrames; ++frame)
+                rings[side][frame] = static_cast<float>(frame % 17) * 0.03125f;
+            resamplers[side].readIndex = kResampleFifoFrames - 1;
+            resamplers[side].readPos = kResampleFifoFrames - 1;
+            resamplers[side].writeIndex = kResampleFifoFrames + 15;
+        }
+        float* groupedOutput[1] = {rings[0] + outputOffset};
+        float* sequentialOutput[1] = {rings[1] + outputOffset};
+        ASSERT_EQ(5u, resamplers[0].Produce(groupedOutput, 0, 5));
+        for (unsigned frame = 0; frame < 5; ++frame)
+            ASSERT_EQ(1u, resamplers[1].Produce(sequentialOutput, frame, 1));
+        EXPECT_EQ(0, std::memcmp(grouped.data(), sequential.data(),
+                                 grouped.size() * sizeof(float)));
+        EXPECT_EQ(resamplers[0].readIndex, resamplers[1].readIndex);
+        EXPECT_EQ(resamplers[0].phaseHigh, resamplers[1].phaseHigh);
+        EXPECT_EQ(resamplers[0].phaseLow, resamplers[1].phaseLow);
+        EXPECT_DOUBLE_EQ(resamplers[0].readFraction, resamplers[1].readFraction);
+        EXPECT_DOUBLE_EQ(resamplers[0].readPos, resamplers[1].readPos);
+    }
 }
 
 TEST(ResamplerProfessionalFacade,

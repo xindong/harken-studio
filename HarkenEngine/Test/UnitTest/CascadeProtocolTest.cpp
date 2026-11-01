@@ -164,6 +164,146 @@ TEST(CascadeProtocol, PlainLinearPcmPreservesSamplesAndStateThroughReconfigurati
     }
 }
 
+TEST(CascadeProtocol, PlainLinearStreamPreservesSamplesAndStateThroughRecovery) {
+    const auto source = harkentest::MakeSine(16384, 997.0, 48000.0, 0.73f);
+    const auto right = harkentest::MakeSine(16384, 313.0, 48000.0, 0.41f);
+    constexpr std::uint32_t capacity = 2048;
+    for (bool stereo : {false, true}) {
+        for (auto terminal : {harken::StreamTerminalReason::NaturalEnd,
+                              harken::StreamTerminalReason::IntegrityAbort,
+                              harken::StreamTerminalReason::ProducerFailure}) {
+            SCOPED_TRACE(::testing::Message() << stereo << '/' << static_cast<int>(terminal));
+            CascadeHarness plain(source, 1.0, ResampleQuality::Linear,
+                                 stereo ? &right : nullptr);
+            CascadeHarness generic(source, 1.0, ResampleQuality::Linear,
+                                   stereo ? &right : nullptr);
+            generic.ctx.fxSlots[0].process =
+                [](void*, float* const*, std::uint32_t, std::uint32_t, std::uint32_t) {};
+            std::array<CascadeHarness*, 2> harnesses{&plain, &generic};
+            std::array<harken::StreamRing, 2> streams;
+            std::array<std::vector<float>, 2> storage;
+            for (std::size_t i = 0; i < harnesses.size(); ++i) {
+                auto& ctx = harnesses[i]->ctx;
+                storage[i].resize(capacity * ctx.pcm.channelCount);
+                float* planes[harken::kMaxChannels] = {};
+                for (std::uint32_t ch = 0; ch < ctx.pcm.channelCount; ++ch)
+                    planes[ch] = storage[i].data() + capacity * ch;
+                streams[i].Wire(planes, capacity);
+                streams[i].ResetForUse(ctx.pcm.channelCount);
+                // The first feed crosses the stream ring's physical wrap.
+                streams[i].readIndex.store(capacity - 64);
+                streams[i].writeIndex.store(capacity - 64);
+                ctx.streamRing = &streams[i];
+                ctx.prebufferTargetFrames = 512;
+                ctx.engineSampleRate = 48000;
+                ctx.startOffsetFrames = 19;
+                ctx.gain.Set(0.37f);
+                ctx.outputGain.Set(0.73f);
+                ctx.pan = 0.23f;
+                ctx.width = 0.61f;
+            }
+            std::uint32_t published = 0;
+            auto publish = [&](std::uint32_t frames) {
+                ASSERT_LE(published + frames, source.size());
+                for (auto& stream : streams) {
+                    ASSERT_LE(frames, stream.WriteAvailable());
+                    const auto write = stream.writeIndex.load();
+                    for (std::uint32_t frame = 0; frame < frames; ++frame) {
+                        const auto pos = static_cast<std::uint32_t>(write + frame) & stream.mask;
+                        stream.planes[0][pos] = source[published + frame];
+                        if (stereo) stream.planes[1][pos] = right[published + frame];
+                    }
+                    stream.PublishWrite(frames);
+                }
+                published += frames;
+            };
+            for (std::uint32_t block = 0; block < 32; ++block) {
+                SCOPED_TRACE(block);
+                if (block == 0) publish(768);
+                if (block == 5) publish(1024);
+                if (block >= 7 && block <= 18)
+                    publish(std::min(512u, streams[0].WriteAvailable()));
+                if (block == 18) {
+                    ASSERT_GT(streams[0].ReadAvailable(), 0u);
+                    for (auto& stream : streams) ASSERT_TRUE(stream.MarkEndOfData(terminal));
+                }
+                for (auto* harness : harnesses) {
+                    auto& ctx = harness->ctx;
+                    ctx.timelineEvents.quantumIndex = block;
+                    if (block == 6) harness->arena.SetCapacityForTests(0);
+                    if (block == 7) harness->arena.RestoreCapacityForTests();
+                    if (block == 8 || block == 10)
+                        ctx.resampler.UpdateRatio(block == 8 ? 0.5 : 1.0, 0);
+                    if (block == 12 || block == 14) {
+                        const auto coeffs = harken::MakeLowpassFromTrig(
+                            harness->trig.Lookup(48000.0f, 2200.0f), 0.707f);
+                        harken::RequestBiquadTransition(
+                            ctx.lpfTransition, ctx.lpfEnabled, ctx.lpfCoeffs,
+                            harken::EstimateBiquadTailFrames(coeffs), block == 12,
+                            coeffs, 32);
+                    }
+                }
+                const auto beforeStreamRead = streams[0].readIndex.load();
+                const auto beforeRead = plain.ctx.resampler.readIndex;
+                const auto beforeWrite = plain.ctx.resampler.writeIndex;
+                const auto actual = plain.RenderBlock();
+                const auto expected = generic.RenderBlock();
+                EXPECT_EQ(expected.framesProduced, actual.framesProduced);
+                EXPECT_EQ(expected.phase, actual.phase);
+                EXPECT_EQ(generic.masterL, plain.masterL);
+                EXPECT_EQ(generic.masterR, plain.masterR);
+                EXPECT_EQ(generic.ctx.srcCursor, plain.ctx.srcCursor);
+                EXPECT_EQ(generic.ctx.resampler.readIndex, plain.ctx.resampler.readIndex);
+                EXPECT_EQ(generic.ctx.resampler.writeIndex, plain.ctx.resampler.writeIndex);
+                EXPECT_EQ(generic.ctx.resampler.readFraction, plain.ctx.resampler.readFraction);
+                EXPECT_EQ(generic.ctx.resampler.readPos, plain.ctx.resampler.readPos);
+                EXPECT_EQ(generic.ctx.resampler.phaseHigh, plain.ctx.resampler.phaseHigh);
+                EXPECT_EQ(generic.ctx.resampler.phaseLow, plain.ctx.resampler.phaseLow);
+                EXPECT_EQ(generic.ctx.resampler.inputEnded, plain.ctx.resampler.inputEnded);
+                EXPECT_EQ(generic.ring, plain.ring);
+                EXPECT_EQ(streams[1].readIndex.load(), streams[0].readIndex.load());
+                EXPECT_EQ(streams[1].TerminalReason(), streams[0].TerminalReason());
+                EXPECT_EQ(generic.ctx.starvedThisBlock, plain.ctx.starvedThisBlock);
+                EXPECT_EQ(generic.ctx.streamGateOpen, plain.ctx.streamGateOpen);
+                EXPECT_EQ(generic.ctx.logicalSourceOutputFramesThisBlock,
+                          plain.ctx.logicalSourceOutputFramesThisBlock);
+                EXPECT_EQ(generic.ctx.stagedSourceTerminal, plain.ctx.stagedSourceTerminal);
+                EXPECT_EQ(generic.ctx.stagedSourceTerminalOffset, plain.ctx.stagedSourceTerminalOffset);
+                EXPECT_EQ(generic.ctx.stagedPlaybackEnd, plain.ctx.stagedPlaybackEnd);
+                EXPECT_EQ(generic.ctx.stagedPlaybackEndOffset, plain.ctx.stagedPlaybackEndOffset);
+                EXPECT_EQ(generic.arena.HighWaterBytes(), plain.arena.HighWaterBytes());
+                for (std::uint32_t ch = 0; ch < plain.ctx.pcm.channelCount; ++ch) {
+                    EXPECT_EQ(generic.ctx.lpfTransition.lastInput[ch], plain.ctx.lpfTransition.lastInput[ch]);
+                    EXPECT_EQ(generic.ctx.hpfTransition.lastInput[ch], plain.ctx.hpfTransition.lastInput[ch]);
+                    EXPECT_EQ(generic.ctx.shelfTransition.lastInput[ch], plain.ctx.shelfTransition.lastInput[ch]);
+                    EXPECT_EQ(generic.ctx.highShelfTransition.lastInput[ch], plain.ctx.highShelfTransition.lastInput[ch]);
+                }
+                if (block == 4) EXPECT_TRUE(plain.ctx.starvedThisBlock);
+                if (block == 5) {
+                    EXPECT_EQ(kBlock, actual.framesProduced);
+                    EXPECT_FALSE(plain.ctx.starvedThisBlock);
+                }
+#if !HARKEN_STAGE_TAPS_ACTIVE
+                // These assertions require the production STAGE_TAPS=OFF build;
+                // generic-vs-generic agreement cannot validate the borrowed path.
+                if (block == 1 || block == 5)
+                    EXPECT_GT(plain.ctx.cascade.borrowed.frames, 0u);
+#endif
+                if (block == 0 || block == 6 || block >= 18)
+                    EXPECT_EQ(0u, plain.ctx.cascade.borrowed.frames);
+                if (block == 6) {
+                    EXPECT_EQ(0u, actual.framesProduced);
+                    EXPECT_EQ(beforeStreamRead, streams[0].readIndex.load());
+                    EXPECT_EQ(beforeRead, plain.ctx.resampler.readIndex);
+                    EXPECT_EQ(beforeWrite, plain.ctx.resampler.writeIndex);
+                }
+            }
+            EXPECT_EQ(SourcePhase::Done, plain.ctx.phase);
+            EXPECT_EQ(terminal, streams[0].TerminalReason());
+        }
+    }
+}
+
 constexpr float kTailOffset = 0.25f;
 
 void AddOffsetProcess(void* state, float* const* channels,

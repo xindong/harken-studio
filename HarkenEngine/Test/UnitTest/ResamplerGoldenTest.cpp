@@ -21,6 +21,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <memory>
 
 namespace {
 
@@ -159,7 +160,8 @@ std::vector<float> RunRampedTone(ResampleQuality quality, double initialRatio,
                                  double targetRatio,
                                  std::uint32_t rampFrames,
                                  double sourceFrequency, float amplitude,
-                                 std::size_t maxOut) {
+                                 std::size_t maxOut,
+                                 std::uint32_t outputChunk = UINT32_MAX) {
     const double maximumRatio = std::max(initialRatio, targetRatio);
     const std::size_t inputFrames = static_cast<std::size_t>(
         static_cast<double>(maxOut + kResampleChunkFrames) * maximumRatio) +
@@ -186,7 +188,8 @@ std::vector<float> RunRampedTone(ResampleQuality quality, double initialRatio,
     std::uint32_t produced = 0;
     while (produced < maxOut) {
         produced += rs.Produce(dst, produced,
-                               static_cast<std::uint32_t>(maxOut) - produced);
+                               std::min(outputChunk,
+                                   static_cast<std::uint32_t>(maxOut) - produced));
         if (produced >= maxOut)
             break;
         if (cursor < view.frames) {
@@ -206,6 +209,24 @@ std::vector<float> RunRampedTone(ResampleQuality quality, double initialRatio,
     }
     out.resize(produced);
     return out;
+}
+
+TEST(ResamplerRatioRamp, LinearCompletionIsIndependentOfOutputPartitioning) {
+    constexpr std::size_t kFrames = 4099;
+    for (const double target : {44100.0 / 48000.0, 0.75, 0.5000000001}) {
+        SCOPED_TRACE(target);
+        const auto reference = RunRampedTone(ResampleQuality::Linear,
+            0.781250000000001, target, 7, 17003.0, 0.9f, kFrames);
+        ASSERT_EQ(kFrames, reference.size());
+        for (const std::uint32_t chunk : {1u, 3u, 4u, 7u, 17u, 257u}) {
+            SCOPED_TRACE(chunk);
+            const auto actual = RunRampedTone(ResampleQuality::Linear,
+                0.781250000000001, target, 7, 17003.0, 0.9f, kFrames, chunk);
+            ASSERT_EQ(reference.size(), actual.size());
+            EXPECT_EQ(0, std::memcmp(reference.data(), actual.data(),
+                                    reference.size() * sizeof(float)));
+        }
+    }
 }
 
 void PushFramesInChunks(Resampler& rs, const PCMView& view,
@@ -473,6 +494,72 @@ TEST(ResamplerGolden, LinearUnityPreservesChannelsAcrossUnevenRingRefills) {
                     EXPECT_EQ(kGuard, output[ch][i]);
                 for (std::uint32_t i = kOffset + kFrames; i < output[ch].size(); ++i)
                     EXPECT_EQ(kGuard, output[ch][i]);
+            }
+        }
+    }
+}
+
+TEST(ResamplerGolden, CompactInputMatchesFloatAcrossWrappedAndOversizedFeeds) {
+    constexpr std::uint32_t frames = 4 * kResampleFifoFrames + 19;
+    auto multirateTables = std::make_unique<harken::MultirateResampleTables>();
+    multirateTables->Init();
+    for (const auto channels : {1u, 2u, harken::kMaxChannels}) {
+        for (const bool interleaved : {false, true}) {
+            const auto stride = interleaved ? channels + 1 : 1;
+            std::vector<std::int16_t> compact((channels + 1) * frames);
+            std::vector<float> expanded(compact.size());
+            constexpr std::int16_t edges[]{-32768, -12345, -1, 0, 1, 12345, 32766, 32767};
+            for (std::size_t i = 0; i < compact.size(); ++i) {
+                compact[i] = i < 128 ? edges[i % 8] : static_cast<std::int16_t>(
+                    static_cast<int>((i * 40503u) % 65536) - 32768);
+                expanded[i] = static_cast<float>(compact[i]) * 0x1p-15f;
+            }
+            PCMView views[2];
+            for (auto& view : views) {
+                view.channelCount = channels;
+                view.stride = stride;
+                view.frames = frames;
+                view.sampleRate = 48000;
+            }
+            views[1].sampleFormat = harken::PcmSampleFormat::ExactInt16;
+            for (std::uint32_t ch = 0; ch < channels; ++ch) {
+                const auto offset = interleaved ? ch : ch * frames;
+                views[0].channels[ch] = expanded.data() + offset;
+                views[1].channels[ch] = compact.data() + offset;
+            }
+            for (unsigned mode = 0; mode < 4; ++mode) {
+                const bool professional = (mode & 1) != 0;
+                const bool dispatched = (mode & 2) != 0;
+                SCOPED_TRACE(::testing::Message() << channels << " interleaved="
+                    << interleaved << " professional=" << professional
+                    << " dispatched=" << dispatched);
+                std::vector<float> storage[2];
+                float* rings[2][harken::kMaxChannels]{};
+                Resampler readers[2];
+                auto workspaces = std::make_unique<harken::MultirateResamplerCandidate[]>(2);
+                for (unsigned side = 0; side < 2; ++side) {
+                    storage[side].resize(channels * kResampleFifoFrames);
+                    for (std::uint32_t ch = 0; ch < channels; ++ch)
+                        rings[side][ch] = storage[side].data() + ch * kResampleFifoFrames;
+                    readers[side].Reset(rings[side], channels, ResampleQuality::Linear,
+                                        1.0, dispatched ? Tables() : nullptr);
+                    if (professional) {
+                        workspaces[side].Reset(rings[side], channels, 1.0,
+                            dispatched ? multirateTables.get() : nullptr);
+                        readers[side].professional = &workspaces[side];
+                        readers[side].resampleProfile = harken::ResampleProfile::Professional44148;
+                    }
+                }
+                for (const auto count : {0u, 1u, 7u, 8u, 15u, 16u, 17u, 31u, 32u, 33u,
+                                          kResampleFifoFrames - 3,
+                                          kResampleFifoFrames + 17, 2 * kResampleFifoFrames + 1}) {
+                    for (unsigned side = 0; side < 2; ++side)
+                        readers[side].PushPCM(views[side], 3, count);
+                    ASSERT_EQ(0, std::memcmp(storage[0].data(), storage[1].data(),
+                                             storage[0].size() * sizeof(float))) << count;
+                    EXPECT_EQ(readers[0].writeIndex, readers[1].writeIndex);
+                    EXPECT_EQ(workspaces[0].rawWriteIndex, workspaces[1].rawWriteIndex);
+                }
             }
         }
     }

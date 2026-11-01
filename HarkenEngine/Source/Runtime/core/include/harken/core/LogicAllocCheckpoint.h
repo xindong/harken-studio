@@ -42,6 +42,8 @@ enum class LogicAllocSite : unsigned int {
     PlaybackPathStorage,
     VariableControlRetargetStorage,
     ActionPlayContainerStorage,
+    PlayableTreeStorage,
+    FrontierOwnerLedgerStorage,
 };
 
 struct LogicAllocFaultState {

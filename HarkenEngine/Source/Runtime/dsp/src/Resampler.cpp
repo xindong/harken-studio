@@ -16,6 +16,66 @@
 #define HARKEN_RESAMPLER_HAS_SSE2 0
 #endif
 #include <limits>
+#if defined(_M_X64) || defined(__x86_64__)
+#if defined(_MSC_VER)
+#include <intrin.h>
+#else
+#include <cpuid.h>
+#endif
+#endif
+
+namespace harken {
+std::uint32_t ProduceFixedMonoAvx2(const ResamplerView&, float*, std::uint32_t,
+    std::uint64_t&, std::uint64_t&, std::uint64_t) noexcept;
+void ExpandExactInt16Avx2(float*, const std::int16_t*, std::uint32_t) noexcept;
+
+namespace {
+void ExpandExactInt16(float*, const std::int16_t*, std::uint32_t) noexcept;
+
+bool SupportsAvx2() noexcept {
+#if !defined(HARKEN_RESAMPLER_FORCE_SCALAR) && (defined(_M_X64) || defined(__x86_64__))
+    constexpr unsigned required = (1u << 26) | (1u << 27) | (1u << 28);
+#if defined(_MSC_VER)
+    int registers[4]{};
+    __cpuid(registers, 0);
+    if (registers[0] < 7) return false;
+    __cpuidex(registers, 1, 0);
+    if ((static_cast<unsigned>(registers[2]) & required) != required ||
+        (_xgetbv(0) & 6u) != 6u) return false;
+    __cpuidex(registers, 7, 0);
+    if ((static_cast<unsigned>(registers[1]) & (1u << 5)) != 0)
+        return true;
+#else
+    unsigned a = 0, b = 0, c = 0, d = 0;
+    if (__get_cpuid_max(0, nullptr) < 7 ||
+        !__get_cpuid(1, &a, &b, &c, &d) || (c & required) != required)
+        return false;
+    unsigned low = 0, high = 0;
+    __asm__ __volatile__("xgetbv" : "=a"(low), "=d"(high) : "c"(0));
+    if ((low & 6u) != 6u) return false;
+    __cpuid_count(7, 0, a, b, c, d);
+    if ((b & (1u << 5)) != 0) return true;
+#endif
+#endif
+    return false;
+}
+} // namespace
+
+FixedMonoKernel SelectFixedMonoKernel() noexcept {
+#if defined(_M_X64) || defined(__x86_64__)
+    if (SupportsAvx2()) return &ProduceFixedMonoAvx2;
+#endif
+    return nullptr;
+}
+
+ExactInt16ExpandKernel SelectExactInt16ExpandKernel() noexcept {
+#if defined(_M_X64) || defined(__x86_64__)
+    if (SupportsAvx2()) return &ExpandExactInt16Avx2;
+#endif
+    return &ExpandExactInt16;
+}
+} // namespace harken
+
 
 namespace harken {
 
@@ -24,6 +84,211 @@ namespace {
 constexpr std::uint32_t kRingMask = kResampleFifoFrames - 1;
 static_assert((kResampleFifoFrames & kRingMask) == 0,
               "ring capacity must be a power of two");
+
+void ExpandExactInt16(float* dst, const std::int16_t* src,
+                      std::uint32_t frames) noexcept {
+    std::uint32_t i = 0;
+#if HARKEN_RESAMPLER_HAS_SSE2
+    const __m128 scale = _mm_set1_ps(0x1p-15f);
+    for (; frames - i >= 8; i += 8) {
+        const __m128i samples = _mm_loadu_si128(
+            reinterpret_cast<const __m128i*>(src + i));
+        const __m128i sign = _mm_srai_epi16(samples, 15);
+        _mm_storeu_ps(dst + i, _mm_mul_ps(scale,
+            _mm_cvtepi32_ps(_mm_unpacklo_epi16(samples, sign))));
+        _mm_storeu_ps(dst + i + 4, _mm_mul_ps(scale,
+            _mm_cvtepi32_ps(_mm_unpackhi_epi16(samples, sign))));
+    }
+#endif
+    for (; i < frames; ++i)
+        dst[i] = static_cast<float>(src[i]) * 0x1p-15f;
+}
+
+template <std::uint32_t RingFrames>
+void PushExactInt16(const PCMView& pcm, std::uint64_t startFrame,
+                    std::uint32_t frames, float* const* ring,
+                    std::uint32_t channels, std::uint64_t writeIndex,
+                    ExactInt16ExpandKernel expand) noexcept {
+    if (frames == 0) return;
+    if (!expand) expand = &ExpandExactInt16;
+    constexpr std::uint32_t mask = RingFrames - 1;
+    static_assert((RingFrames & mask) == 0);
+    const auto offset = static_cast<std::uint32_t>(writeIndex & mask);
+    const auto first = std::min(frames, RingFrames - offset);
+    for (std::uint32_t ch = 0; ch < channels; ++ch) {
+        const auto* src = pcm.Int16SamplePtr(ch, startFrame);
+        if (pcm.stride == 1 && frames <= RingFrames) {
+            expand(ring[ch] + offset, src, first);
+            if (frames != first)
+                expand(ring[ch], src + first, frames - first);
+        } else {
+            for (std::uint32_t i = 0; i < frames; ++i)
+                ring[ch][(writeIndex + i) & mask] =
+                    static_cast<float>(src[static_cast<std::size_t>(i) * pcm.stride]) *
+                    0x1p-15f;
+        }
+    }
+}
+
+float FixedLinearMonoFraction(std::uint64_t high) noexcept {
+    // Preserve relative precision near zero. Above 1/64, dropping the low
+    // bits changes the coefficient by at most one float ULP after rounding.
+    if (high < (UINT64_C(1) << 58))
+        return static_cast<float>(static_cast<std::int64_t>(high >> 11)) *
+               0x1p-53f;
+    return static_cast<float>(static_cast<std::int32_t>(high >> 33)) *
+           0x1p-31f;
+}
+
+template <bool DirectFraction>
+#if defined(_MSC_VER)
+__forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+__attribute__((always_inline)) inline
+#else
+inline
+#endif
+void ProduceFixedLinearMonoSpan(ResamplerView& resampler, float* const* dst,
+    std::uint32_t dstOffset, std::uint32_t maxFrames, ExactSourcePhase& phase,
+    const SourcePhaseStep& fixedStep, std::uint64_t& index, double& fraction,
+    std::uint32_t& produced) noexcept {
+#if HARKEN_RESAMPLER_HAS_SSE2
+    bool checkedPackedOutput = false;
+    bool packedOutput = false;
+    const std::uint64_t stepUnits = fixedStep.fraction.high >> 11;
+    const __m128i phaseOffsets01 = _mm_set_epi64x(
+        static_cast<std::int64_t>(stepUnits), 0);
+    const __m128i phaseOffsets23 = _mm_set_epi64x(
+        static_cast<std::int64_t>(3 * stepUnits),
+        static_cast<std::int64_t>(2 * stepUnits));
+#endif
+    const auto produceMonoSample = [&]() {
+        const float frac = DirectFraction
+            ? FixedLinearMonoFraction(phase.high) : static_cast<float>(fraction);
+        const float* r = resampler.ring[0];
+        dst[0][dstOffset + produced] =
+            InterpLinear(r[index & kRingMask],
+                         r[(index + 1) & kRingMask], frac);
+        const std::uint64_t whole = StepSourcePhase(fixedStep, &phase);
+        if constexpr (!DirectFraction)
+            fraction = SourcePhaseFraction(phase);
+        index += whole;
+        ++produced;
+    };
+    // Each exact step advances at most one input frame here.
+    // Keep boundary samples in the original scalar loop below.
+    while (maxFrames - produced >= 4 &&
+           index <= UINT64_MAX - 4 && index + 4 < resampler.writeIndex &&
+           (!resampler.inputEnded || index + 3 < resampler.inputEndIndex)) {
+        resampler.highRatioFilterActive = false;
+#if HARKEN_RESAMPLER_HAS_SSE2
+        if constexpr (DirectFraction) {
+            if (!checkedPackedOutput) {
+                checkedPackedOutput = true;
+                const auto outputBase = reinterpret_cast<std::uintptr_t>(dst[0]);
+                const auto ringBase = reinterpret_cast<std::uintptr_t>(resampler.ring[0]);
+                constexpr auto ringBytes = kResampleFifoFrames * sizeof(float);
+                const auto outputLimit = static_cast<std::uint64_t>(dstOffset) + maxFrames;
+                if (maxFrames <= UINT32_MAX - dstOffset &&
+                    outputLimit <= (UINTPTR_MAX - outputBase) / sizeof(float) &&
+                    ringBase <= UINTPTR_MAX - ringBytes) {
+                    const auto outputBegin = outputBase +
+                        static_cast<std::uintptr_t>(dstOffset) * sizeof(float);
+                    const auto outputEnd = outputBase +
+                        static_cast<std::uintptr_t>(outputLimit) * sizeof(float);
+                    packedOutput = outputEnd <= ringBase ||
+                                   outputBegin >= ringBase + ringBytes;
+                }
+            }
+            if (packedOutput) {
+                if (resampler.tables != nullptr && resampler.tables->fixedMonoKernel != nullptr) {
+                    const auto wide = resampler.tables->fixedMonoKernel(resampler,
+                        dst[0] + dstOffset + produced, maxFrames - produced,
+                        index, phase.high, fixedStep.fraction.high);
+                    if (wide != 0) {
+                        produced += wide;
+                        continue;
+                    }
+                }
+                constexpr auto fractionMask = (UINT64_C(1) << 53) - 1;
+                const auto phaseUnits = phase.high >> 11;
+                const __m128i phaseBase = _mm_set1_epi64x(
+                    static_cast<std::int64_t>(phaseUnits));
+                const __m128i positions01 = _mm_add_epi64(phaseBase, phaseOffsets01);
+                const __m128i positions23 = _mm_add_epi64(phaseBase, phaseOffsets23);
+                const auto packLowWords = [](__m128i first, __m128i second) {
+                    return _mm_castps_si128(_mm_shuffle_ps(
+                        _mm_castsi128_ps(first), _mm_castsi128_ps(second),
+                        _MM_SHUFFLE(2, 0, 2, 0)));
+                };
+                const __m128i whole = packLowWords(
+                    _mm_srli_epi64(positions01, 53), _mm_srli_epi64(positions23, 53));
+                const __m128i offsets = _mm_and_si128(_mm_add_epi32(whole,
+                    _mm_set1_epi32(static_cast<int>(index & kRingMask))),
+                    _mm_set1_epi32(kRingMask));
+                std::uint32_t ringOffsets[4];
+                _mm_storeu_si128(reinterpret_cast<__m128i*>(ringOffsets), offsets);
+                const __m128i words = _mm_and_si128(packLowWords(
+                    _mm_srli_epi64(positions01, 22), _mm_srli_epi64(positions23, 22)),
+                    _mm_set1_epi32(INT32_MAX));
+                __m128 frac = _mm_mul_ps(_mm_cvtepi32_ps(words),
+                                         _mm_set1_ps(0x1p-31f));
+                const int small = _mm_movemask_ps(_mm_castsi128_ps(
+                    _mm_cmplt_epi32(words, _mm_set1_epi32(1 << 25))));
+                if (small != 0) {
+                    float fractions[4];
+                    _mm_storeu_ps(fractions, frac);
+                    for (unsigned lane = 0; lane < 4; ++lane) {
+                        if ((small & (1 << lane)) != 0) {
+                            const auto fractionUnits =
+                                (phaseUnits + lane * stepUnits) & fractionMask;
+                            fractions[lane] = FixedLinearMonoFraction(fractionUnits << 11);
+                        }
+                    }
+                    frac = _mm_loadu_ps(fractions);
+                }
+                // Aligned Q53 positions retain every exact carry. Four steps
+                // fit below 2^56, and the surrounding guard reserves four indices.
+                const auto nextPosition = phaseUnits + 4 * stepUnits;
+                index += nextPosition >> 53;
+                phase.high = (nextPosition & fractionMask) << 11;
+                const float* r = resampler.ring[0];
+                __m128 initial;
+                __m128 next;
+                // Each step advances by zero or one. A total of three across
+                // the first three steps proves all four offsets consecutive.
+                if (ringOffsets[0] <= kRingMask - 4 &&
+                    ringOffsets[3] == ringOffsets[0] + 3) {
+                    initial = _mm_loadu_ps(r + ringOffsets[0]);
+                    next = _mm_loadu_ps(r + ringOffsets[0] + 1);
+                } else {
+                    initial = _mm_setr_ps(r[ringOffsets[0]], r[ringOffsets[1]],
+                                         r[ringOffsets[2]], r[ringOffsets[3]]);
+                    next = _mm_setr_ps(r[(ringOffsets[0] + 1) & kRingMask],
+                                      r[(ringOffsets[1] + 1) & kRingMask],
+                                      r[(ringOffsets[2] + 1) & kRingMask],
+                                      r[(ringOffsets[3] + 1) & kRingMask]);
+                }
+                const __m128 endpoint = _mm_cmpeq_ps(frac, _mm_setzero_ps());
+                // Select the original source bits exactly at integer phases.
+                const __m128 base = _mm_andnot_ps(endpoint, initial);
+                const __m128 following = _mm_andnot_ps(endpoint, next);
+                const __m128 interpolated = _mm_add_ps(base,
+                    _mm_mul_ps(frac, _mm_sub_ps(following, base)));
+                const __m128 result = _mm_or_ps(_mm_and_ps(endpoint, initial),
+                    _mm_andnot_ps(endpoint, interpolated));
+                _mm_storeu_ps(dst[0] + dstOffset + produced, result);
+                produced += 4;
+                continue;
+            }
+        }
+#endif
+        produceMonoSample();
+        produceMonoSample();
+        produceMonoSample();
+        produceMonoSample();
+    }
+}
 
 constexpr double kMaxDirectKernelScale = 16.0;
 constexpr std::uint32_t kMaxSinc8Need = 57;  // ceil(3.5 * 16) + 1
@@ -1241,6 +1506,7 @@ ResampleProfile SelectResampleProfile(std::uint32_t sourceRate,
 }
 
 void MultirateResampleTables::Init() {
+    exactInt16ExpandKernel = SelectExactInt16ExpandKernel();
     constexpr double kHalfbandBeta = 9.0;
     constexpr double kResidualBeta = 9.0;
     constexpr double kHalfbandCenter =
@@ -1411,6 +1677,13 @@ std::uint32_t MultirateResamplerCandidate::FreeFrames() const {
 void MultirateResamplerCandidate::PushPCM(
     const PCMView& pcm, std::uint64_t startFrame,
     std::uint32_t frames) {
+    if (pcm.sampleFormat == PcmSampleFormat::ExactInt16) {
+        PushExactInt16<kCandidateRawRingMask + 1>(
+            pcm, startFrame, frames, rawRing, channelCount, rawWriteIndex,
+            tables ? tables->exactInt16ExpandKernel : nullptr);
+        rawWriteIndex += frames;
+        return;
+    }
     for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
         const float* source = pcm.SamplePtr(ch, startFrame);
         for (std::uint32_t frame = 0; frame < frames; ++frame) {
@@ -2126,6 +2399,13 @@ void ResamplerView::PushPCM(const PCMView& pcm, std::uint64_t startFrame,
 
     if (frames == 0)
         return;
+    if (pcm.sampleFormat == PcmSampleFormat::ExactInt16) {
+        PushExactInt16<kResampleFifoFrames>(
+            pcm, startFrame, frames, ring, channelCount, writeIndex,
+            tables ? tables->exactInt16ExpandKernel : nullptr);
+        writeIndex += frames;
+        return;
+    }
     const std::uint32_t offset = writeIndex & kRingMask;
     const std::uint32_t first =
         std::min(frames, kResampleFifoFrames - offset);
@@ -2223,6 +2503,9 @@ bool ResamplerView::BorrowLinearUnity(std::uint32_t frames,
     return true;
 }
 
+#if (defined(_M_X64) || defined(__x86_64__)) && (defined(__clang__) || defined(__GNUC__))
+__attribute__((aligned(64)))
+#endif
 std::uint32_t ResamplerView::Produce(float* const* dst, std::uint32_t dstOffset,
                                  std::uint32_t maxFrames) {
     if (resampleProfile == ResampleProfile::Professional44148) {
@@ -2262,6 +2545,67 @@ std::uint32_t ResamplerView::Produce(float* const* dst, std::uint32_t dstOffset,
         return frames;
     }
 
+    SourcePhaseStep fixedStep{};
+    if (resampleProfile == ResampleProfile::LegacyCompatibility &&
+        quality == ResampleQuality::Linear && rampRemaining == 0 &&
+        ratio == targetRatio && phaseLow == 0 &&
+        DecodeSourcePhaseStep(ratio, &fixedStep) &&
+        fixedStep.fraction.low == 0) {
+        // Keep the exact clock and boundary checks, but avoid dispatching
+        // unused quality, ramp and filter paths for every output sample.
+        fixedStep.fraction.low = 0;
+        ExactSourcePhase phase{phaseHigh, 0};
+        std::uint64_t index = readIndex;
+        double fraction = readFraction;
+        std::uint32_t produced = 0;
+        const bool directMonoFraction = channelCount == 1 && fixedStep.whole == 0 &&
+            ((phase.high | fixedStep.fraction.high) & UINT64_C(2047)) == 0;
+        if (channelCount == 1 && fixedStep.whole == 0) {
+            if (directMonoFraction)
+                ProduceFixedLinearMonoSpan<true>(*this, dst, dstOffset, maxFrames,
+                    phase, fixedStep, index, fraction, produced);
+            else
+                ProduceFixedLinearMonoSpan<false>(*this, dst, dstOffset, maxFrames,
+                    phase, fixedStep, index, fraction, produced);
+        }
+        while (produced < maxFrames) {
+            if (inputEnded && index >= inputEndIndex)
+                break;
+            highRatioFilterActive = false;
+            if (index + 1 >= writeIndex)
+                break;
+            const float frac = directMonoFraction
+                ? FixedLinearMonoFraction(phase.high) : static_cast<float>(fraction);
+            for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
+                const float* r = ring[ch];
+                dst[ch][dstOffset + produced] =
+                    InterpLinear(r[index & kRingMask],
+                                 r[(index + 1) & kRingMask], frac);
+            }
+            const std::uint64_t whole = StepSourcePhase(fixedStep, &phase);
+            if (!directMonoFraction)
+                fraction = SourcePhaseFraction(phase);
+            if (index > UINT64_MAX - whole) {
+                index = UINT64_MAX;
+                fraction = 0.0;
+                phase = {};
+            } else {
+                index += whole;
+            }
+            ++produced;
+        }
+        if (produced != 0) {
+            if (directMonoFraction)
+                fraction = SourcePhaseFraction(phase);
+            readIndex = index;
+            readFraction = fraction;
+            readPos = static_cast<double>(index) + fraction;
+            phaseHigh = phase.high;
+            phaseLow = phase.low;
+        }
+        return produced;
+    }
+
     // Linear/Hermite keep a bounded interpolator at every ratio. Pitch-up
     // must not switch to scaled sinc or the high-ratio streaming filter;
     // those paths ignore the selected interpolator and dominate MixerLoop.
@@ -2288,6 +2632,14 @@ std::uint32_t ResamplerView::Produce(float* const* dst, std::uint32_t dstOffset,
         if (inputEnded && readIndex >= inputEndIndex) {
             break; // every real input frame consumed
         }
+        // A ramp can end inside this call. Use the same coefficient rule as
+        // the fixed span only when the ramp was already idle for this output.
+        const bool directMonoFraction =
+            resampleProfile == ResampleProfile::LegacyCompatibility &&
+            directInterp && channelCount == 1 && rampRemaining == 0 &&
+            ratio == targetRatio && exactStep && phaseStep.whole == 0 &&
+            exactPhase.low == 0 && phaseStep.fraction.low == 0 &&
+            ((exactPhase.high | phaseStep.fraction.high) & UINT64_C(2047)) == 0;
         double frameRatio = ratio;
         if (rampRemaining != 0) {
             frameRatio += rampStep;
@@ -2320,7 +2672,8 @@ std::uint32_t ResamplerView::Produce(float* const* dst, std::uint32_t dstOffset,
             --rampRemaining;
             exactStep = DecodeSourcePhaseStep(ratio, &phaseStep);
         }
-        const float frac = static_cast<float>(readFraction);
+        const float frac = directMonoFraction
+            ? FixedLinearMonoFraction(exactPhase.high) : static_cast<float>(readFraction);
 
         if (downsampling && !highRatio) {
             if (geometry.useSinc16) {
