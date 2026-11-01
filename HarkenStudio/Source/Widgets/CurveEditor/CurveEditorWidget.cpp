@@ -324,8 +324,10 @@ void CurveEditorWidget::reloadBindingView(bool preserveCanvasSelection)
         profile.yAxisLabel += QStringLiteral(" (%1)").arg(profile.valueUnit);
     profile.yMin = std::min(binding->outputMin, binding->outputMax);
     profile.yMax = std::max(binding->outputMin, binding->outputMax);
-    if (contract.outputUnit == BindingOutputUnit::Decibel) {
+    if (contract.outputUnit == BindingOutputUnit::Decibel)
         profile.axisScale = CurveAxisScale::MirroredAmplitudeDb;
+    if (contract.outputUnit == BindingOutputUnit::Decibel
+        || contract.outputUnit == BindingOutputUnit::Cent) {
         profile.yMin = contract.legalOutputRange.min;
         profile.yMax = contract.legalOutputRange.max;
         profile.yRangeEditable = false;
@@ -333,6 +335,11 @@ void CurveEditorWidget::reloadBindingView(bool preserveCanvasSelection)
     profile.defaultEndValue = binding->outputMax;
     if (binding->address == BindingSemantics::volumeAddress(host->type)) {
         profile.defaultEndValue = -96.0f;
+    }
+    if (binding->address == BindingSemantics::pitchAddress(host->type)) {
+        profile.defaultEndValue = 0.0f;
+        profile.clampYToPlot = false;
+        profile.preserveOutOfRangeValues = true;
     }
     canvas_->setProfile(profile);
 

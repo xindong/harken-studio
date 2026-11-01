@@ -412,7 +412,8 @@ bool CurveCanvas::setPointCoordinates(int index, float x, float value)
                          xMax_);
     if (!profile_.endpointsFollowDomain && x == before.x)
         point.x = before.x;
-    point.value = std::clamp(value, valueMin(), valueMax());
+    point.value = profile_.preserveOutOfRangeValues && value == before.value
+        ? before.value : std::clamp(value, valueMin(), valueMax());
     if (point.x == before.x && point.value == before.value)
         return false;
 
@@ -784,6 +785,8 @@ void CurveCanvas::mouseMoveEvent(QMouseEvent* event)
     const double maximum = curveAxisNormalizedY(axisScale(), yMin(), yMax(), valueMax());
     for (int index : indices) {
         const double value = curveAxisNormalizedY(axisScale(), yMin(), yMax(), anchorPoints.at(index).value);
+        if (profile_.preserveOutOfRangeValues && (value < minimum || value > maximum))
+            continue;
         valueDelta = std::clamp(valueDelta, minimum - value, maximum - value);
     }
 
@@ -1094,9 +1097,9 @@ QPointF CurveCanvas::pointToScreen(const CurvePointDef& point) const
     const double nx = std::clamp((static_cast<double>(point.x) - xMin_)
                                      / (static_cast<double>(xMax_) - xMin_),
                                  0.0, 1.0);
-    const double ny = yMin() == yMax() ? 0.5
-        : std::clamp(curveAxisNormalizedY(axisScale(), yMin(), yMax(), point.value),
-                                 0.0, 1.0);
+    double ny = yMin() == yMax() ? 0.5
+        : curveAxisNormalizedY(axisScale(), yMin(), yMax(), point.value);
+    if (profile_.clampYToPlot) ny = std::clamp(ny, 0.0, 1.0);
     return QPointF(graph.left() + nx * graph.width(),
                    graph.bottom() - ny * graph.height());
 }
@@ -1571,7 +1574,8 @@ int CurveCanvas::insertPointBySplit(float x)
         return curveAxisNormalizedY(axisScale(), yMin(), yMax(), value);
     };
     const auto fromDomain = [this](double y) {
-        return curveAxisValueFromNormalizedY(axisScale(), yMin(), yMax(), y);
+        return std::clamp(curveAxisValueFromNormalizedY(axisScale(), yMin(), yMax(), y),
+            valueMin(), valueMax());
     };
 
     const CurvePointDef& a = points_.at(seg);
@@ -1632,9 +1636,9 @@ void CurveCanvas::applyCurvePreset(int segment, float u1, float v1, float u2, fl
 
     CurveHandlePairDef next;
     next.h1x = a.x + u1 * (b.x - a.x);
-    next.h1y = vToValue(v1);
+    next.h1y = std::clamp(vToValue(v1), valueMin(), valueMax());
     next.h2x = a.x + u2 * (b.x - a.x);
-    next.h2y = vToValue(v2);
+    next.h2y = std::clamp(vToValue(v2), valueMin(), valueMax());
     if (sameHandlePair(handles_.at(segment), next))
         return;
 
@@ -1877,11 +1881,11 @@ bool CurveCanvas::pastePayload(const QJsonObject& obj)
         points_[index].value = value;
         if (point.hasLeftHandle && index > 0 && index - 1 < handles_.size()) {
             handles_[index - 1].h2x = static_cast<float>(point.leftHandle.x());
-            handles_[index - 1].h2y = static_cast<float>(point.leftHandle.y());
+            handles_[index - 1].h2y = std::clamp(static_cast<float>(point.leftHandle.y()), valueMin(), valueMax());
         }
         if (point.hasRightHandle && index < points_.size() - 1 && index < handles_.size()) {
             handles_[index].h1x = static_cast<float>(point.rightHandle.x());
-            handles_[index].h1y = static_cast<float>(point.rightHandle.y());
+            handles_[index].h1y = std::clamp(static_cast<float>(point.rightHandle.y()), valueMin(), valueMax());
         }
         pastedIndices.insert(index);
     }
@@ -1930,7 +1934,8 @@ void CurveCanvas::normalizeCurve()
         points_.front().x = xMin_;
         points_.back().x = xMax_;
     }
-    curveNormalize(valueMin(), valueMax(), points_, handles_);
+    curveNormalize(profile_.preserveOutOfRangeValues ? std::numeric_limits<float>::lowest() : valueMin(),
+        profile_.preserveOutOfRangeValues ? std::numeric_limits<float>::max() : valueMax(), points_, handles_);
 }
 
 QVector<CurvePointDef> CurveCanvas::defaultCurve() const
@@ -2237,6 +2242,22 @@ CurveRenderData CurveCanvas::renderData() const
             / static_cast<double>(xMax_ - xMin_);
         data.playhead.visible = true;
         data.playhead.x = graph.left() + graph.width() * nx;
+    }
+    if (!profile_.clampYToPlot) {
+        data.clipToPlot = true;
+        const auto outsidePlot = [&graph](const QPainterPath& path) {
+            const auto bounds = path.boundingRect();
+            return bounds.bottom() < graph.top() || bounds.top() > graph.bottom()
+                || bounds.right() < graph.left() || bounds.left() > graph.right();
+        };
+        if (outsidePlot(data.continuousPath)) data.continuousPath = {};
+        if (data.discretePath && outsidePlot(*data.discretePath)) data.discretePath = QPainterPath{};
+        for (auto& overlay : data.overlays) {
+            if (outsidePlot(overlay.path)) overlay.path = {};
+            if (overlay.discretePath && outsidePlot(*overlay.discretePath)) overlay.discretePath = QPainterPath{};
+        }
+        data.points.erase(std::remove_if(data.points.begin(), data.points.end(),
+            [&graph](const CurveRenderPoint& point) { return !graph.contains(point.position); }), data.points.end());
     }
     return data;
 }

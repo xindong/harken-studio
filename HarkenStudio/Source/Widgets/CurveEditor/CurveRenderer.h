@@ -82,6 +82,7 @@ struct CurveRenderPlayhead
 struct CurveRenderData
 {
     bool frameVisible = true;
+    bool clipToPlot = false;
     QRectF canvasRect;
     QRectF graphRect;
     QFont tickFont;
