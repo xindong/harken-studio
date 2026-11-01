@@ -5,6 +5,7 @@
 #include "Tooling/Harkenizer/Core/PackBuildReceipt.h"
 #include "Tooling/Harkenizer/BuildIdentity.h"
 #include "AssetPipeline/BuildSourceInputs.h"
+#include "AssetPipeline/FileContentCache.h"
 #include "AssetPipeline/PathUtils.h"
 
 #include <QDir>
@@ -50,6 +51,7 @@ Result run(const Request& request)
     std::map<QString, PackBuildReceipt> receipts;
     std::map<QString, PlatformResult> restored;
     QSet<QString> reusablePlatforms;
+    std::optional<ProjectBuildIdentity> projectIdentity;
     for (const auto& platform : request.platforms) {
         if (canceled()) {
             result.canceled = true;
@@ -69,7 +71,7 @@ Result run(const Request& request)
         if (!RecoverPackOutput(directory.path(), &result.preflightError)) return result;
         options.platform = platform;
         auto receipt = PackBuildReceipt::prepare(options.snapshot, options, directory.path(),
-            QByteArray(Harkenizer::projectBuildIdentity()));
+            QByteArray(Harkenizer::projectBuildIdentity()), projectIdentity);
         if (!receipt) continue;
         PlatformResult cached;
         if (receipt->restore(&cached.result, &cached.records)) {
@@ -177,6 +179,7 @@ Result run(const Request& request)
                     built.result.reusableBuild && built.result.mediaFallbacks == 0,
                     sourceDependencies.value(built.platform));
         }
+        if (options.snapshot->fileContentCache) options.snapshot->fileContentCache->save();
     }
     return result;
 }

@@ -1,6 +1,7 @@
 #include "BuildSourceInputs.h"
 
 #include "AssetImporter.h"
+#include "FileContentCache.h"
 #include "Utils/AudioFileReader.h"
 
 #include <QCryptographicHash>
@@ -59,6 +60,7 @@ struct BuildSourceInputs::Impl
     QMap<uint32_t, QString> fingerprints;
     std::once_flag storageInitialization;
     std::shared_ptr<QTemporaryDir> storage;
+    std::shared_ptr<FileContentCache> cache;
 
     std::shared_ptr<Entry> find(const AssetInfo& asset, QString* error)
     {
@@ -91,7 +93,7 @@ struct BuildSourceInputs::Impl
     {
         const auto path = sourcePath(asset);
         if (entry.contentHash.isEmpty()) {
-            const auto hash = AssetImporter::computeContentHash(path);
+            const auto hash = cache->digest(path);
             if (hash.isEmpty()) {
                 fail(error, QStringLiteral("Cannot read audio source: %1").arg(path));
                 return false;
@@ -105,7 +107,11 @@ struct BuildSourceInputs::Impl
     }
 };
 
-BuildSourceInputs::BuildSourceInputs() : impl_(std::make_unique<Impl>()) {}
+BuildSourceInputs::BuildSourceInputs(std::shared_ptr<FileContentCache> cache)
+    : impl_(std::make_unique<Impl>())
+{
+    impl_->cache = cache ? std::move(cache) : std::make_shared<FileContentCache>();
+}
 BuildSourceInputs::~BuildSourceInputs() = default;
 
 QString BuildSourceInputs::sourceFingerprint(const AssetInfo& asset, QString* error)
@@ -253,7 +259,12 @@ bool BuildSourceInputs::verifyUnchanged(QString* error, const std::function<bool
                 fail(error, QStringLiteral("Export canceled"));
                 return false;
             }
-            if (AssetImporter::computeContentHash(path) != entry->contentHash) {
+            const auto hash = impl_->cache->digest(path, canceled);
+            if (canceled && canceled()) {
+                fail(error, QStringLiteral("Export canceled"));
+                return false;
+            }
+            if (hash != entry->contentHash) {
                 fail(error, QStringLiteral("Source file changed during the build: %1").arg(path));
                 return false;
             }

@@ -10,6 +10,8 @@ class QTemporaryDir;
 
 namespace VNX {
 
+class FileContentCache;
+
 class BuildSourceInput
 {
 public:
@@ -26,7 +28,7 @@ private:
 class BuildSourceInputs
 {
 public:
-    BuildSourceInputs();
+    explicit BuildSourceInputs(std::shared_ptr<FileContentCache> cache = {});
     ~BuildSourceInputs();
 
     QString sourceFingerprint(const AssetInfo& asset, QString* error = nullptr);

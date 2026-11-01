@@ -4632,11 +4632,7 @@ ProjectPackExporter::ExportResult ProjectPackExporter::FinalizePackExport(
     std::vector<std::unique_ptr<QLockFile>> waveformCleanupLocks;
     if (!preserveBusyWaveformOutputs(liveDir, liveNames, &publishedNames, &preservedNames,
             &waveformCleanupLocks, &result.warnings, &result.error, isCanceled)) return result;
-    QTemporaryDir next(liveDir.filePath(QString::fromLatin1(kNextPrefix) + QStringLiteral("XXXXXX")));
-    if (!next.isValid()) {
-        result.error = QStringLiteral("Cannot stage the Pack output publication");
-        return result;
-    }
+    QJsonObject metadata;
     if (project.buildExportProjectData) {
         QJsonArray platformRows;
         for (const auto& platform : platforms) {
@@ -4645,7 +4641,7 @@ ProjectPackExporter::ExportResult ProjectPackExporter::FinalizePackExport(
                 {QStringLiteral("name"), platform.name},
                 {QStringLiteral("basePlatform"), ProjectPlatformSemantics::basePlatformName(platform.basePlatform)}});
         }
-        const QJsonObject metadata{
+        metadata = QJsonObject{
             {QStringLiteral("schemaVersion"), HARKEN_PACK_SCHEMA_VERSION},
             {QStringLiteral("projectGuid"), QUuid(project.projectId).toString(QUuid::WithoutBraces)},
             {QStringLiteral("projectName"), project.name},
@@ -4660,15 +4656,31 @@ ProjectPackExporter::ExportResult ProjectPackExporter::FinalizePackExport(
             result.error = errors.join(QLatin1Char('\n'));
             return result;
         }
-        if (!writeStagedJson(QDir(next.path()).filePath(metadataName), metadata, &result.error)) return result;
+        QFile current(liveDir.filePath(metadataName));
+        if (liveNames.contains(metadataName) && current.open(QIODevice::ReadOnly | QIODevice::Text)
+            && current.readAll() == QJsonDocument(metadata).toJson(QJsonDocument::Indented)
+            && current.error() == QFileDevice::NoError) preservedNames.append(metadataName);
         publishedNames.append(metadataName);
     }
     if (isCanceled()) return result;
-    if (!commitPublication(liveDir, next.path(), liveNames, publishedNames, preservedNames,
+    const auto needsPublication = [&](const QString& name) { return !preservedNames.contains(name); };
+    std::unique_ptr<QTemporaryDir> next;
+    if (std::any_of(liveNames.cbegin(), liveNames.cend(), needsPublication)
+        || std::any_of(publishedNames.cbegin(), publishedNames.cend(), needsPublication)) {
+        next = std::make_unique<QTemporaryDir>(liveDir.filePath(
+            QString::fromLatin1(kNextPrefix) + QStringLiteral("XXXXXX")));
+        if (!next->isValid()) {
+            result.error = QStringLiteral("Cannot stage the Pack output publication");
+            return result;
+        }
+        if (project.buildExportProjectData && !preservedNames.contains(metadataName)
+            && !writeStagedJson(QDir(next->path()).filePath(metadataName), metadata, &result.error)) return result;
+    }
+    if (!commitPublication(liveDir, next ? next->path() : QString(), liveNames, publishedNames, preservedNames,
             &result.error, isCanceled)) {
         QString detail;
         if (!recoverInterruptedPublish(liveDir, &detail)) {
-            next.setAutoRemove(false);
+            if (next) next->setAutoRemove(false);
             result.error += QLatin1Char('\n') + detail;
         }
         return result;

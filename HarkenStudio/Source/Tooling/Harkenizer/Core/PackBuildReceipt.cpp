@@ -2,9 +2,9 @@
 
 #include "Tooling/Harkenizer/Core/ProjectBuildSnapshot.h"
 #include "AssetPipeline/BuildSourceInputs.h"
+#include "AssetPipeline/FileContentCache.h"
 #include "AssetPipeline/PathUtils.h"
 #include "ProjectSchemaGenerated.h"
-#include "ProjectSerializer.h"
 #include "harken_buildinfo.h"
 
 #include <QCryptographicHash>
@@ -29,21 +29,6 @@ QString digest(const QByteArray& bytes)
 QString digest(const QJsonObject& object)
 {
     return digest(QJsonDocument(object).toJson(QJsonDocument::Compact));
-}
-
-QString fileDigest(const QString& path, const std::function<bool()>& canceled)
-{
-    QFile file(path);
-    if (!QFileInfo(path).isFile() || QFileInfo(path).isSymLink() || !file.open(QIODevice::ReadOnly)) return {};
-    QCryptographicHash hash(QCryptographicHash::Sha256);
-    while (!file.atEnd()) {
-        if (canceled && canceled()) return {};
-        const QByteArray bytes = file.read(1024 * 1024);
-        if (bytes.isEmpty() && file.error() != QFile::NoError) return {};
-        hash.addData(bytes);
-    }
-    if (file.error() != QFile::NoError) return {};
-    return QString::fromLatin1(hash.result().toHex());
 }
 
 QJsonArray sortedStrings(const QSet<QString>& values)
@@ -74,78 +59,11 @@ QJsonObject requestIdentity(const ProjectPackExporter::ExportOptions& options)
         {QStringLiteral("onlyActions"), onlyActions}};
 }
 
-std::optional<QJsonObject> projectIdentity(const ProjectBuildSnapshot& snapshot,
-                                         QMap<uint32_t, QString>* objectGuids,
-                                         const std::function<bool()>& canceled)
-{
-    const auto& project = snapshot.project;
-    ProjectSerializer serializer;
-    if (!serializer.prepareReferenceWrite(project)) return std::nullopt;
-    QJsonArray items;
-    QSet<const ProjectItem*> visited;
-    const auto visit = [&](const auto& self, const ProjectItem* item) -> bool {
-        if (!item || visited.contains(item)) return true;
-        if (canceled && canceled()) return false;
-        visited.insert(item);
-        auto object = serializer.projectItemToJson(*item, false);
-        if (object.isEmpty()) return false;
-        object.insert(QStringLiteral("documentHeader"), item->documentHeader);
-        object.insert(QStringLiteral("physicalPath"), project.itemPath(item));
-        object.insert(QStringLiteral("documentPath"), project.objectFilePath(item));
-        object.insert(QStringLiteral("treeParent"), item->parent
-            ? item->parent->guid.toString(QUuid::WithoutBraces) : QString());
-        QJsonArray children;
-        for (const auto& child : item->children)
-            children.append(child ? child->guid.toString(QUuid::WithoutBraces) : QString());
-        object.insert(QStringLiteral("children"), children);
-        items.append(object);
-        if (item->objectID != 0)
-            objectGuids->insert(item->objectID, item->guid.toString(QUuid::WithoutBraces));
-        for (const auto& child : item->children)
-            if (!self(self, child.get())) return false;
-        return true;
-    };
-    if (!visit(visit, project.root.get())) return std::nullopt;
-    QJsonArray bindings;
-    for (const auto* binding : project.allFileBindings()) {
-        if (!binding || !binding->rootItem || !visit(visit, binding->rootItem.get())) return std::nullopt;
-        bindings.append(QJsonObject{
-            {QStringLiteral("root"), binding->rootItem->guid.toString(QUuid::WithoutBraces)},
-            {QStringLiteral("bucket"), binding->parentFolder}});
-    }
-    QJsonObject media;
-    for (auto it = snapshot.media.assets.cbegin(); it != snapshot.media.assets.cend(); ++it) {
-        const auto& asset = it.value();
-        media.insert(QString::number(it.key()), QJsonObject{
-            {QStringLiteral("path"), asset.absolutePath},
-            {QStringLiteral("relativePath"), asset.relativePath},
-            {QStringLiteral("settings"), asset.settings.toJson()}});
-    }
-    QJsonObject overrides;
-    for (auto it = snapshot.media.fileOverrides.cbegin(); it != snapshot.media.fileOverrides.cend(); ++it)
-        overrides.insert(QString::number(it.key()), it.value().toJson());
-    return QJsonObject{
-        {QStringLiteral("projectId"), project.projectId},
-        {QStringLiteral("name"), project.name},
-        {QStringLiteral("header"), project.documentHeader},
-        {QStringLiteral("projectPath"), project.projectPath},
-        {QStringLiteral("languages"), QJsonArray::fromStringList(project.projectLanguages)},
-        {QStringLiteral("defaultLanguage"), project.defaultLanguage},
-        {QStringLiteral("platforms"), ProjectPlatformSemantics::platformsToJson(project.platforms)},
-        {QStringLiteral("sampleRate"), project.sampleRate},
-        {QStringLiteral("channelConfig"), static_cast<int>(project.channelConfig)},
-        {QStringLiteral("exportProjectData"), project.buildExportProjectData},
-        {QStringLiteral("exportPackMetadata"), project.buildExportPackMetadata},
-        {QStringLiteral("exportWaveforms"), project.buildExportWaveforms},
-        {QStringLiteral("waveformOutputDirectory"), project.buildWaveformOutputDir},
-        {QStringLiteral("bindings"), bindings},
-        {QStringLiteral("items"), items},
-        {QStringLiteral("media"), media},
-        {QStringLiteral("mediaOverrides"), overrides}};
-}
-
-bool outputInventory(const QString& outputDirectory, QJsonObject* outputs,
-                     const std::function<bool()>& canceled)
+bool outputInventory(const QString& outputDirectory, FileContentCache& cache,
+                     QJsonObject* outputs, QStringList* platformFiles,
+                     const std::function<bool()>& canceled,
+                     const QJsonObject* expectedOutputs = nullptr,
+                     const QStringList* expectedPlatformFiles = nullptr)
 {
     QStringList files;
     const auto scan = [&](const auto& self, const QDir& directory) -> bool {
@@ -174,24 +92,34 @@ bool outputInventory(const QString& outputDirectory, QJsonObject* outputs,
         return true;
     };
     if (!scan(scan, QDir(outputDirectory))) return false;
-    const auto platformFiles = files;
-    for (const auto& path : platformFiles) {
-        if (!path.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive)) continue;
-        const QFileInfo info(path);
-        if (!QFileInfo::exists(info.dir().filePath(info.completeBaseName() + QStringLiteral(".bytes")))) continue;
-        QFile companion(path);
-        if (!companion.open(QIODevice::ReadOnly)) return false;
-        const auto object = QJsonDocument::fromJson(companion.readAll()).object();
-        for (const auto& value : object.value(QStringLiteral("waveforms")).toArray()) {
-            const QString waveform = value.toObject().value(QStringLiteral("file")).toString();
-            if (waveform.isEmpty()) return false;
-            files.append(QDir::cleanPath(info.dir().absoluteFilePath(waveform)));
+    files.sort();
+    *platformFiles = files;
+    if (expectedPlatformFiles && *platformFiles != *expectedPlatformFiles) return false;
+    if (expectedOutputs) {
+        for (const auto& path : files)
+            if (!expectedOutputs->contains(path)) return false;
+        files = expectedOutputs->keys();
+    } else {
+        for (const auto& path : *platformFiles) {
+            if (!path.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive)) continue;
+            const QFileInfo info(path);
+            if (!QFileInfo::exists(info.dir().filePath(info.completeBaseName() + QStringLiteral(".bytes")))) continue;
+            QFile companion(path);
+            if (!companion.open(QIODevice::ReadOnly)) return false;
+            const auto object = QJsonDocument::fromJson(companion.readAll()).object();
+            for (const auto& value : object.value(QStringLiteral("waveforms")).toArray()) {
+                const QString waveform = value.toObject().value(QStringLiteral("file")).toString();
+                if (waveform.isEmpty()) return false;
+                files.append(QDir::cleanPath(info.dir().absoluteFilePath(waveform)));
+            }
         }
     }
     files.removeDuplicates();
     files.sort();
     for (const auto& path : files) {
-        const auto hash = fileDigest(path, canceled);
+        const QFileInfo info(path);
+        if (!info.isFile() || info.isSymLink()) return false;
+        const auto hash = cache.digest(path, canceled);
         if (hash.isEmpty()) return false;
         outputs->insert(path, hash);
     }
@@ -266,9 +194,10 @@ QStringList stringList(const QJsonValue& value)
 std::optional<PackBuildReceipt> PackBuildReceipt::prepare(
     std::shared_ptr<const ProjectBuildSnapshot> snapshot,
     const ProjectPackExporter::ExportOptions& options,
-    const QString& outputDirectory, const QByteArray& buildIdentity)
+    const QString& outputDirectory, const QByteArray& buildIdentity,
+    std::optional<ProjectBuildIdentity>& projectIdentity)
 {
-    if (!snapshot || !snapshot->media.sourceInputs || buildIdentity.isEmpty()
+    if (!snapshot || !snapshot->media.sourceInputs || !snapshot->fileContentCache || buildIdentity.isEmpty()
         || options.forceReexport || !options.currentWorldOutputPath.isEmpty()
         || options.resourceReuse || outputDirectory.isEmpty()
         || (options.cancelCheck && options.cancelCheck())) return std::nullopt;
@@ -278,12 +207,13 @@ std::optional<PackBuildReceipt> PackBuildReceipt::prepare(
     receipt.outputDirectory_ = QDir(outputDirectory).absolutePath();
     receipt.platform_ = options.platform;
     receipt.platformLock_ = options.platformLocks.value(options.platform);
-    const auto project = projectIdentity(*receipt.snapshot_, &receipt.objectGuids_, receipt.canceled_);
-    if (!project) return std::nullopt;
+    if (!projectIdentity) projectIdentity = receipt.snapshot_->buildIdentity(receipt.canceled_);
+    if (!projectIdentity) return std::nullopt;
+    receipt.objectGuids_ = projectIdentity->objectGuids;
     auto identity = requestIdentity(options);
     identity.insert(QStringLiteral("outputDirectory"), receipt.outputDirectory_);
     receipt.scope_ = digest(identity);
-    identity.insert(QStringLiteral("project"), *project);
+    identity.insert(QStringLiteral("project"), projectIdentity->fingerprint);
     identity.insert(QStringLiteral("buildIdentity"), QString::fromLatin1(buildIdentity.toHex()));
     identity.insert(QStringLiteral("packSchema"), HARKEN_PACK_SCHEMA_VERSION);
     identity.insert(QStringLiteral("projectSchema"), ProjectSchema::kProjectSchemaVersion);
@@ -306,16 +236,18 @@ bool PackBuildReceipt::restore(ExportResult* result, std::vector<BuildRecord>* r
     if (error.error != QJsonParseError::NoError || !document.isObject()) return false;
     const auto envelope = document.object();
     const auto payload = envelope.value(QStringLiteral("payload")).toObject();
-    if (payload.value(QStringLiteral("version")).toInt() != 1
+    if (payload.value(QStringLiteral("version")).toInt() != 2
         || payload.value(QStringLiteral("scope")).toString() != scope_
         || payload.value(QStringLiteral("fingerprint")).toString() != fingerprint_
         || envelope.value(QStringLiteral("hash")).toString() != digest(payload)
         || !payload.value(QStringLiteral("sources")).isObject()
         || !payload.value(QStringLiteral("outputs")).isObject()
+        || !payload.value(QStringLiteral("platformFiles")).isArray()
         || !payload.value(QStringLiteral("result")).isObject()
         || !payload.value(QStringLiteral("records")).isArray()) return false;
     const auto sources = payload.value(QStringLiteral("sources")).toObject();
-    BuildSourceInputs probes;
+    BuildSourceInputs probes(snapshot_->fileContentCache);
+    if (!probes.adopt(*snapshot_->media.sourceInputs)) return false;
     for (auto it = sources.constBegin(); it != sources.constEnd(); ++it) {
         if (canceled_ && canceled_()) return false;
         bool valid = false;
@@ -326,8 +258,12 @@ bool PackBuildReceipt::restore(ExportResult* result, std::vector<BuildRecord>* r
             || probes.sourceFingerprint(*asset) != it.value().toString()) return false;
     }
     QJsonObject outputs;
-    if (!outputInventory(outputDirectory_, &outputs, canceled_)
-        || outputs != payload.value(QStringLiteral("outputs")).toObject()) return false;
+    QStringList platformFiles;
+    const auto expectedOutputs = payload.value(QStringLiteral("outputs")).toObject();
+    const auto expectedPlatformFiles = stringList(payload.value(QStringLiteral("platformFiles")));
+    if (!outputInventory(outputDirectory_, *snapshot_->fileContentCache, &outputs,
+            &platformFiles, canceled_, &expectedOutputs, &expectedPlatformFiles)
+        || outputs != expectedOutputs) return false;
     const auto saved = payload.value(QStringLiteral("result")).toObject();
     ExportResult restored;
     restored.outputPath = saved.value(QStringLiteral("outputPath")).toString();
@@ -438,18 +374,21 @@ bool PackBuildReceipt::save(const ExportResult& result, const std::vector<BuildR
         savedRecords.append(recordJson(record, objectGuids_));
     }
     QJsonObject outputs;
-    if (!outputInventory(outputDirectory_, &outputs, canceled_)) return false;
+    QStringList platformFiles;
+    if (!outputInventory(outputDirectory_, *snapshot_->fileContentCache, &outputs,
+            &platformFiles, canceled_)) return false;
     QJsonObject sources;
     for (auto it = sourceDependencies.cbegin(); it != sourceDependencies.cend(); ++it) {
         if (it.value().isEmpty()) return false;
         sources.insert(QString::number(it.key()), it.value());
     }
     const QJsonObject payload{
-        {QStringLiteral("version"), 1},
+        {QStringLiteral("version"), 2},
         {QStringLiteral("scope"), scope_},
         {QStringLiteral("fingerprint"), fingerprint_},
         {QStringLiteral("sources"), sources},
         {QStringLiteral("outputs"), outputs},
+        {QStringLiteral("platformFiles"), QJsonArray::fromStringList(platformFiles)},
         {QStringLiteral("result"), resultJson(result)},
         {QStringLiteral("records"), savedRecords}};
     const auto bytes = QJsonDocument(QJsonObject{

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Tooling/Harkenizer/Core/ProjectPackExporter.h"
+#include "Tooling/Harkenizer/Core/ProjectBuildSnapshot.h"
 
 #include <QByteArray>
 #include <QMap>
@@ -13,7 +14,8 @@ public:
     static std::optional<PackBuildReceipt> prepare(
         std::shared_ptr<const ProjectBuildSnapshot> snapshot,
         const ProjectPackExporter::ExportOptions& options,
-        const QString& outputDirectory, const QByteArray& buildIdentity);
+        const QString& outputDirectory, const QByteArray& buildIdentity,
+        std::optional<ProjectBuildIdentity>& projectIdentity);
 
     bool restore(ProjectPackExporter::ExportResult* result,
                  std::vector<ProjectPackExporter::PackBuildRecord>* records) const;

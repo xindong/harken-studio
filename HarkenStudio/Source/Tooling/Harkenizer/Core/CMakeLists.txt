@@ -9,6 +9,7 @@ add_library(harkenizer_core STATIC
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/AudioFormatCatalog.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/BuildSourceInputs.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/CacheArtifactWriter.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/FileContentCache.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/MediaBuildSnapshot.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/PathUtils.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/PlatformProfile.cpp
@@ -100,6 +101,7 @@ add_library(harkenizer_core STATIC
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/AudioFormatCatalog.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/BuildSourceInputs.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/CacheArtifactWriter.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/FileContentCache.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/MediaBuildSnapshot.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/PathUtils.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/PlatformProfile.h
