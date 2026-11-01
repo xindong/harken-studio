@@ -199,6 +199,8 @@ public:
     bool PrepareStorage() noexcept {
         return m_entries.ConstructThrough(m_entries.Capacity());
     }
+    // Prepare the reusable rows needed by one transaction without changing capacity.
+    bool PrepareStorageForAcquire(std::uint32_t count) noexcept;
     std::size_t StorageBytes() const noexcept { return m_entries.RequestedBytes(); }
     std::size_t StorageCommittedBytes() const noexcept { return m_entries.CommittedBytes(); }
     std::size_t StorageReservedBytes() const noexcept { return m_entries.ReservedBytes(); }
@@ -310,6 +312,14 @@ public:
     public:
         PreparedParentLinksProof() = default;
         explicit PreparedParentLinksProof(std::size_t capacity);
+        bool PrepareStorage(std::size_t capacity) noexcept;
+        // Dynamic vector backing only; the owning object accounts for inline storage.
+        std::size_t StorageBytes() const noexcept {
+            return nodes_.capacity() * sizeof(Node) +
+                anchors_.capacity() * sizeof(Node) +
+                held_.capacity() * sizeof(HeldEntry) +
+                groups_.capacity() * sizeof(Group);
+        }
         ~PreparedParentLinksProof() { Release(); }
         PreparedParentLinksProof(const PreparedParentLinksProof&) = delete;
         PreparedParentLinksProof& operator=(const PreparedParentLinksProof&) = delete;
@@ -350,10 +360,13 @@ public:
         std::vector<Node> anchors_;
         std::vector<HeldEntry> held_;
         std::vector<Group> groups_;
-        std::size_t nodeCount_ = 0;
+        // Zero means no backing; explicit capacity zero still permits a root anchor.
+        std::size_t anchorCapacity_ = 0;
+        // Both counts are bounded by the constructor's uint32 capacity.
+        std::uint32_t nodeCount_ = 0;
+        std::uint32_t groupCount_ = 0;
         std::size_t anchorCount_ = 0;
         std::size_t heldCount_ = 0;
-        std::size_t groupCount_ = 0;
     };
     bool ParentLinksHeld(PlayableInstanceHandle handle) const noexcept;
     bool ProvePreparedParentLinks(std::span<const ParentLinkRequest> requests,
@@ -395,6 +408,10 @@ public:
                         PreparedPlayableInstance* out,
                         const MonitorRequestContext& request = {},
                      const MonitorEmitterOrigin& emitterOrigin = {}) noexcept;
+    bool PrepareAcquireFromPreparedStorage(PlayableKind kind, PlayableInstanceHandle parent,
+                        PreparedPlayableInstance* out,
+                        const MonitorRequestContext& request = {},
+                        const MonitorEmitterOrigin& emitterOrigin = {}) noexcept;
     bool SetPreparedRootMetadata(
         const PreparedPlayableInstance& prepared,
         const PlayableRootMetadata& metadata) noexcept;
@@ -456,6 +473,7 @@ public:
                              MonitorLifecycleFacts* out) const noexcept;
     bool NeedsStartedObservation(PlayableInstanceHandle handle) const noexcept;
     bool HasPendingStartedObservations() const noexcept { return m_pendingStartedObservationCount != 0; }
+    bool HasPendingPlaybackEndObservations() const noexcept { return m_pendingPlaybackEndObservationCount != 0; }
     void ObserveStarted(PlayableInstanceHandle handle, std::uint64_t audioBlock,
                         std::uint64_t frame) noexcept;
     void RecordPlaybackEnd(PlayableInstanceHandle handle, std::uint64_t audioBlock,
@@ -637,6 +655,7 @@ private:
     Entry* FindPrepared(const PreparedPlayableInstance& prepared) noexcept;
     void ActivatePreparedEntry(Entry& entry, PlayableInstanceHandle handle) noexcept;
     void RemovePendingStartedObservation(const Entry& entry) noexcept;
+    void RemovePendingPlaybackEndObservation(const Entry& entry) noexcept;
     bool IsCancellationPrepared(
         const PreparedPlayableCancellation& prepared) const noexcept;
     bool OwnsDelayedCancellation(
@@ -652,6 +671,10 @@ private:
 
     bool CancelPreparedImpl(PreparedPlayableInstance* prepared,
         OriginalLifetimePin* originalBaseline, bool retainNativeReceipt) noexcept;
+    static bool AvailableForAcquire(const Entry& entry) noexcept;
+    bool PrepareAcquireInternal(PlayableKind kind, PlayableInstanceHandle parent,
+        PreparedPlayableInstance* out, const MonitorRequestContext& request,
+        const MonitorEmitterOrigin& emitterOrigin, bool prepareStorage) noexcept;
     bool MatchesOriginalLifetime(const OriginalLifetimePin& original) const noexcept;
     OriginalLifetimePin* FindOriginalLifetimeBaseline(Entry& entry,
         PlayableInstanceHandle handle, OriginalLifetimePin* supplied) noexcept;
@@ -677,6 +700,7 @@ private:
     bool m_scheduleEpochExhausted = false;
     std::uint32_t m_liveCount = 0;
     std::uint32_t m_pendingStartedObservationCount = 0;
+    std::uint32_t m_pendingPlaybackEndObservationCount = 0;
     std::uint32_t m_highWater = 0;
     std::uint32_t m_quarantinedCount = 0;
     std::uint64_t m_preparedCancellationCount = 0;

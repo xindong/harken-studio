@@ -31,6 +31,7 @@
 
 #include "harken/media/PackFormat.h"
 #include "harken/media/PackFormatV2.h"
+#include "harken/media/PcmRegistry.h"
 
 #include <cstdint>
 #include "harken/media/PackVariableNameCatalog.h"
@@ -38,6 +39,14 @@
 #include <vector>
 
 namespace harken {
+
+inline PcmLoopRegion CanonicalPcmLoop(const PackTocEntry& media) noexcept {
+    if ((media.flags & kPackFlagLoopable) == 0) return {};
+    // Pack permits EOF as zero; keep the default PCM region representation.
+    return {media.loopStartFrame,
+            media.loopStartFrame != 0 && media.loopEndFrame == 0
+                ? media.frameCount : media.loopEndFrame};
+}
 
 // One parsed v2 pack, typed by entry kind. Media entries keep the v1
 // record form (their wire format is the v1 TOC entry, untouched);
@@ -410,9 +419,25 @@ bool ValidateCanonicalBusParentForestV2(
 // with VN_PACK_INCOMPATIBLE before this runs. Illegal directory vintage,
 // a program-chapter bodyVintage that is not the current write table,
 // and v2 Container / VoiceRecipe entries are VN_PACK_INCOMPATIBLE too.
+// An optional artifact hash covers the original bytes, including on parse
+// failure. It is independent of all parser checks and their error order.
 VnResult ParsePackCanonicalImage(const std::uint8_t* bytes,
                                  std::uint64_t fileBytes,
-                                 PackCanonicalImage* out);
+                                 PackCanonicalImage* out,
+                                 std::uint64_t* artifactHash = nullptr);
+
+// Uses the same semantic parser, then verifies the cached metadata and all
+// physical bytes before returning immutable sample owners. Image and sample
+// outputs are unchanged on failure. Unsupported layouts request a byte-span retry.
+struct PackCanonicalReadHooksForTests {
+    void (*beforeSequentialRead)(void*, std::uint64_t) = nullptr;
+    void* userData = nullptr;
+};
+VnResult ReadPackCanonicalFile(const char* utf8Path, PCMRegistry& registry,
+    PackCanonicalImage* out, std::vector<PCMRegistry::PreparedPackSamples>* samples,
+    std::uint64_t* byteCount, std::uint64_t* artifactHash, std::uint64_t maxBytes,
+    std::span<const PCMRegistry::PreparedPackSamples* const> equalCandidates = {},
+    bool* retryWithBytes = nullptr, const PackCanonicalReadHooksForTests* hooks = nullptr);
 
 // Already-loaded-state view for the closure check. Every callback
 // answers "does this id resolve outside the pack right now": playables

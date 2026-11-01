@@ -212,6 +212,8 @@ public:
         const AlignedBuffer* bytes = nullptr;
         const std::vector<PackTocEntry>* media = nullptr;
         bool keep = false;
+        // Mutually exclusive with bytes; records match media in directory order.
+        std::vector<PCMRegistry::PreparedPackSamples>* samples = nullptr;
     };
 
     class PreparedSetMutation {
@@ -338,7 +340,8 @@ public:
                           std::vector<PackEntry>&& entries,
                           const std::vector<PackTocEntry>& parsedMedia,
                           PCMRegistry& registry, VnPackHandle* outHandle,
-                          const PackRevisionKey* revisionKey = nullptr);
+                          const PackRevisionKey* revisionKey = nullptr,
+                          std::vector<PCMRegistry::PreparedPackSamples>* samples = nullptr);
 
     // The unload liveness gate alone, side-effect-free: VN_STALE_HANDLE
     // for a dead handle, VN_IN_USE while any still-owned entry has a
@@ -373,7 +376,8 @@ public:
         std::vector<PackEntry>& entries,
         const std::vector<PackTocEntry>& parsedMedia, PCMRegistry& registry,
         PreparedMutation* out,
-        const PackRevisionKey* revisionKey = nullptr);
+        const PackRevisionKey* revisionKey = nullptr,
+        std::vector<PCMRegistry::PreparedPackSamples>* samples = nullptr);
     VnResult PrepareUnloadMutation(VnPackHandle handle,
                                    const PCMRegistry& registry,
                                    PreparedMutation* out);
@@ -543,7 +547,8 @@ private:
         VnPackHandle replacing, const AlignedBuffer& bytes,
         const std::vector<PackTocEntry>& parsedMedia,
         std::vector<PackEntry>& entries, PCMRegistry& registry,
-        PCMRegistry::PreparedPackMutation* out);
+        PCMRegistry::PreparedPackMutation* out,
+        std::vector<PCMRegistry::PreparedPackSamples>* samples);
     VnResult PrepareRetiringRow(
         VnPackHandle handle, std::size_t predecessorEntryCount,
         std::size_t successorEntryCount,

@@ -1760,6 +1760,7 @@ public:
 private:
     friend struct EnginePlayableServiceRow;
     friend struct EngineOwnedQueueFutureFiling;
+    friend struct EngineActionPlayScratch;
     void Bind(Array& values) noexcept { values_ = &values; }
     Array* values_ = nullptr;
 };
@@ -4231,6 +4232,162 @@ struct EngineScheduleAttemptChildren {
     std::uint32_t selectionEventNext = 0;
 };
 
+struct EnginePendingVariableReplacementTop {
+    PlayableRefV1 root{};
+    std::uint32_t frontierPolicyIndex = UINT32_MAX;
+    std::uint32_t authoredChildOrdinal = 0;
+    WeightSegmentV1 weight{};
+    VariableControlSide side = VariableControlSide::Discrete;
+    std::uint64_t logicalCompletionOffset = 0;
+    bool hasLogicalCompletion = false;
+};
+
+struct EnginePendingVariableReplacementLeaf {
+    PlayableRefV1 leaf{};
+    std::uint32_t authoredChildOrdinal = 0;
+    WeightSegmentV1 weight{};
+    VariableControlSide side = VariableControlSide::Discrete;
+    std::uint16_t memberOrdinal = 0;
+    std::uint32_t controlIndex = UINT32_MAX;
+    std::uint32_t controlChildOrdinal = 0;
+    std::uint32_t frontierPolicyIndex = UINT32_MAX;
+    std::uint16_t nativeMemberOrdinal = 0;
+    std::uint64_t authoredOffset = 0;
+    EnginePlayableMemberReference storageReference{};
+    TimelineSemanticTarget target{};
+    LogicCommitSequence sequence = 0;
+    TimelineTransactionProgramRef program{};
+};
+
+struct EnginePendingVariableReplacementTopologyNode {
+    PlayableInstanceHandle handle = 0;
+    PlayableInstanceHandle parent = 0;
+    std::uint64_t epoch = 0;
+    PlayableKind kind = PlayableKind::Sound;
+    PlayableInstanceTable::OriginalLifetimePin original;
+};
+
+struct EnginePreparedVariableControlOwnerContext {
+    EnginePreparedVariableControlOwnerContext() noexcept = default;
+    EnginePreparedVariableControlOwnerContext(const EnginePreparedVariableControlOwnerContext&) = delete;
+    EnginePreparedVariableControlOwnerContext& operator=(const EnginePreparedVariableControlOwnerContext&) = delete;
+    EnginePreparedVariableControlOwnerContext(EnginePreparedVariableControlOwnerContext&& other) noexcept {
+        *this = std::move(other);
+    }
+    EnginePreparedVariableControlOwnerContext& operator=(EnginePreparedVariableControlOwnerContext&& other) noexcept {
+        if (this == &other || serviceProofRequired_ || other.serviceProofRequired_ ||
+            serviceCommitProof.Valid() || other.serviceCommitProof.Valid()) return *this;
+        table = other.table;
+        prepared = other.prepared;
+        output = other.output;
+        discreteDecision = other.discreteDecision;
+        continuousDecision = other.continuousDecision;
+        activationDecision = other.activationDecision;
+        activationBank = other.activationBank;
+        activationSide = other.activationSide;
+        row = other.row;
+        nestedIndex = other.nestedIndex;
+        nestedCount = other.nestedCount;
+        activate = other.activate;
+        committed = other.committed;
+        activated = other.activated;
+        engine = other.engine;
+        service = other.service;
+        commitProof = std::move(other.commitProof);
+        commitProofRequired = other.commitProofRequired;
+        originalServiceInput_ = other.originalServiceInput_;
+        originalServiceEngine_ = other.originalServiceEngine_;
+        originalService_ = other.originalService_;
+        originalServiceReference_ = other.originalServiceReference_;
+        originalInvocation_ = other.originalInvocation_;
+        other.originalServiceInput_.Reset();
+        other.originalServiceEngine_ = nullptr;
+        other.originalService_ = nullptr;
+        other.originalServiceReference_ = {};
+        other.originalInvocation_ = nullptr;
+        return *this;
+    }
+    bool CanPrepareOriginalService() const noexcept {
+        return !serviceProofRequired_ && !serviceCommitProof.Valid() &&
+            !originalServiceInput_.Valid() && originalService_ == nullptr;
+    }
+    EnginePlayablePartitionToken ReserveOriginalService(EnginePlayablePartitionPool& pool,
+        Engine* originalEngine, EnginePlayableServiceRow& originalRow,
+        EnginePlayablePartitionPool::OriginalStoragePin* originalStorage = nullptr) noexcept {
+        if (!CanPrepareOriginalService()) return {};
+        const auto token = pool.Reserve(originalRow.identity, &originalServiceInput_, originalStorage);
+        if (token.Valid()) {
+            originalServiceEngine_ = originalEngine;
+            originalService_ = &originalRow;
+        }
+        return token;
+    }
+    void DiscardUnassociatedServiceReservation() noexcept {
+        assert(!originalServiceReference_.Valid() && !serviceProofRequired_);
+        const bool reset = originalServiceInput_.Reset();
+        assert(reset);
+        (void)reset;
+        originalServiceEngine_ = nullptr;
+        originalService_ = nullptr;
+    }
+    bool RecordOriginalServiceAssociation() noexcept {
+        if (originalService_ == nullptr || !originalServiceInput_.Valid() ||
+            originalServiceReference_.Valid() || serviceProofRequired_ ||
+            !originalService_->InvocationValid() || originalService_->ownerInstance == 0 ||
+            originalService_->ownerEpoch == 0) return false;
+        originalServiceReference_ = {originalService_->identity, originalService_->ownerInstance,
+            originalService_->ownerEpoch, originalService_->invocationGeneration};
+        originalInvocation_ = originalService_->invocation;
+        return true;
+    }
+    bool OriginalServiceAssociationMatches(Engine* expectedEngine,
+        const EnginePlayableServiceRow* expectedService) const noexcept {
+        return originalServiceEngine_ == expectedEngine && expectedService != nullptr &&
+            originalService_ == expectedService && originalServiceInput_.Valid() &&
+            originalServiceReference_.Valid() &&
+            expectedService->identity == originalServiceInput_.Owner() &&
+            expectedService->identity == originalServiceReference_.token &&
+            expectedService->partition.slot == originalServiceInput_.Token().slot &&
+            expectedService->partition.generation == originalServiceInput_.Token().generation &&
+            expectedService->ownerInstance == originalServiceReference_.owner &&
+            expectedService->ownerEpoch == originalServiceReference_.epoch &&
+            expectedService->invocationGeneration == originalServiceReference_.invocationGeneration &&
+            expectedService->invocation == originalInvocation_ && expectedService->InvocationValid() &&
+            originalServiceInput_.Pool()->Owns(originalServiceInput_.Token(), originalServiceInput_.Owner());
+    }
+    bool ServiceCommitProofRequired() const noexcept { return serviceProofRequired_; }
+    void SelectServiceCommitProof() noexcept { serviceProofRequired_ = true; }
+    const EnginePlayablePartitionPool::ReservationInput& OriginalServiceInput() const noexcept {
+        return originalServiceInput_;
+    }
+    const EnginePlayableServiceRow* OriginalService() const noexcept { return originalService_; }
+    VariableControlInstanceTable* table = nullptr;
+    PreparedVariableControlInstance* prepared = nullptr;
+    VariableControlInstanceToken* output = nullptr;
+    DecisionToken* discreteDecision = nullptr;
+    DecisionToken* continuousDecision = nullptr;
+    DecisionToken* activationDecision = nullptr;
+    BankVersionToken* activationBank = nullptr;
+    VariableControlSide activationSide = VariableControlSide::Discrete;
+    EnginePlayableServiceRow* row = nullptr;
+    std::uint32_t nestedIndex = UINT32_MAX;
+    std::uint32_t* nestedCount = nullptr;
+    bool activate = false;
+    bool committed = false;
+    bool activated = false;
+    Engine* engine = nullptr;
+    EnginePlayableServiceRow* service = nullptr;
+    VariableControlInstanceTable::PreparedCommitProof commitProof{};
+    bool commitProofRequired = false;
+    EnginePlayablePartitionPool::PreparedCommitProof serviceCommitProof{};
+private:
+    EnginePlayablePartitionPool::ReservationInput originalServiceInput_{};
+    Engine* originalServiceEngine_ = nullptr;
+    EnginePlayableServiceRow* originalService_ = nullptr;
+    EnginePlayableServiceReference originalServiceReference_{};
+    EnginePlayableStartRow* originalInvocation_ = nullptr;
+    bool serviceProofRequired_ = false;
+};
 struct EngineActionPlayStorage {
     struct InitialSelectionContext {
         SelectionPendingBatchIdentityV1 identity{};
@@ -4281,6 +4438,24 @@ struct EngineActionPlayStorage {
     std::uint32_t containerNodeCapacity = 0;
     std::uint32_t containerMemberCapacity = 0;
     std::uint32_t containerChildCapacity = 0;
+    std::vector<EnginePendingVariableReplacementTop> pendingVariableReplacementTops;
+    std::vector<EnginePendingVariableReplacementLeaf> pendingVariableReplacementLeaves;
+    std::vector<EnginePendingVariableReplacementTopologyNode> pendingVariableReplacementNodes;
+    std::vector<std::uint32_t> pendingVariableReplacementLeafNodes;
+    std::vector<std::uint32_t> pendingVariableReplacementLeafTops;
+    std::vector<PreparedPlayableInstance> variableControlOuterPathChildren;
+    std::vector<PreparedContainerPlaybackRow> variableControlOuterPathContainerRows;
+    std::vector<std::uint32_t> variableControlNestedPrefixOrdinals;
+    std::vector<SelectionPathNodeV1> variableControlNestedPrefixPath;
+    std::vector<PreparedVariableControlInstance> variableControlNestedVariableControls;
+    std::vector<EnginePlayableServiceReference> variableControlNestedServices;
+    std::vector<PreparedDecisionReservation> variableControlNestedDecisions;
+    std::vector<std::uint32_t> variableControlNestedSelectedChildOrdinals;
+    std::vector<std::uint32_t> variableControlNestedContinuationOrdinals;
+    std::vector<PlayableInstanceHandle> variableControlLeafHandles;
+    std::vector<std::uint64_t> variableControlLeafEpochs;
+    std::vector<EnginePreparedDecisionOwnerContext> variableControlNestedDecisionOwnerContexts;
+    std::vector<EnginePreparedVariableControlOwnerContext> variableControlNestedOwnerContexts;
     bool containerStoragePrepared = false;
     explicit EngineActionPlayStorage(std::uint32_t nodeCapacity =
         kMaxKnownScheduleLeaves + 64u + kSelectionPathNodeCapacity + 1u,
@@ -4291,9 +4466,9 @@ struct EngineActionPlayStorage {
           : containerNodeCapacity(nodeCapacity), containerMemberCapacity(memberCapacity),
             containerChildCapacity(ownerLimits != nullptr ? nodeCapacity : 0u),
             privateInitialVcLaneCapacity(laneMetadataCapacity),
-            frontierServices(nodeCapacity), queueRoleCapacity(nodeCapacity),
-            playableTreeExecutor(std::in_place, nodeCapacity) {
-        if (ownerLimits != nullptr) ownerLedger.Initialize(*ownerLimits);
+            queueRoleCapacity(nodeCapacity),
+            playableTreeExecutor(std::in_place, nodeCapacity, false) {
+        if (ownerLimits != nullptr) ownerLedger.Initialize(*ownerLimits, 2u);
         if (needsContainerState && !PrepareContainerStorage()) throw std::bad_alloc();
     }
     bool PrepareContainerStorage() noexcept {
@@ -4325,6 +4500,29 @@ struct EngineActionPlayStorage {
             grow(variableControlNestedParentIndices, containerChildCapacity);
             grow(variableControlNestedPathOrdinals, containerChildCapacity);
             grow(variableControlNestedModes, containerChildCapacity);
+            // Independent Sound roots use the service row, not nested service contexts.
+            // This column grows once from empty; retained context addresses never move.
+            grow(frontierServices, containerNodeCapacity);
+            grow(pendingVariableReplacementTops, kMaxKnownScheduleLeaves);
+            grow(pendingVariableReplacementLeaves, kMaxKnownScheduleLeaves);
+            grow(pendingVariableReplacementNodes, 2u * kMaxKnownScheduleLeaves + 1u);
+            grow(pendingVariableReplacementLeafNodes, kMaxKnownScheduleLeaves);
+            grow(pendingVariableReplacementLeafTops, kMaxKnownScheduleLeaves);
+            grow(variableControlOuterPathChildren, kSelectionPathNodeCapacity);
+            grow(variableControlOuterPathContainerRows, kSelectionPathNodeCapacity);
+            grow(variableControlNestedPrefixOrdinals, kSelectionPathNodeCapacity);
+            grow(variableControlNestedPrefixPath, kSelectionPathNodeCapacity);
+            grow(variableControlNestedVariableControls, kMaxKnownScheduleLeaves + 64u);
+            grow(variableControlNestedServices, kMaxKnownScheduleLeaves + 64u);
+            grow(variableControlNestedDecisions, kMaxKnownScheduleLeaves + 64u);
+            grow(variableControlNestedSelectedChildOrdinals, kMaxKnownScheduleLeaves + 64u);
+            grow(variableControlNestedContinuationOrdinals, kMaxKnownScheduleLeaves + 64u);
+            grow(variableControlLeafHandles, kMaxKnownScheduleLeaves);
+            grow(variableControlLeafEpochs, kMaxKnownScheduleLeaves);
+            grow(variableControlNestedDecisionOwnerContexts, kMaxActionVariableControlOwnerTokens);
+            grow(variableControlNestedOwnerContexts, kMaxActionVariableControlOwnerTokens);
+            if (!playableTreeExecutor->PrepareStorage() ||
+                !ownerLedger.PrepareStorage(ownerLedger.Capacity())) return false;
             // No container consumer borrows these columns before full preparation.
             // Retain completed columns across refusal; ready backing never moves.
             containerStoragePrepared = true;
@@ -4478,7 +4676,15 @@ struct EngineActionPlayScratch {
     // All page/lane groups are covered by this scratch's single exposure owner.
     static constexpr std::uint32_t kFrontierExposureOwnerCapacity = 1;
     explicit EngineActionPlayScratch(EngineActionPlayStorage& persistent) noexcept
-        : storage(persistent), playableTreeExecutor(*persistent.playableTreeExecutor),
+        : storage(persistent),
+          pendingVariableReplacementTops(persistent.pendingVariableReplacementTops),
+          pendingVariableReplacementTopology(persistent),
+          pendingVariableReplacementLeaves(persistent.pendingVariableReplacementLeaves),
+          playableTreeExecutor(*persistent.playableTreeExecutor),
+          variableControlOuterPathChildren(persistent.variableControlOuterPathChildren),
+          variableControlOuterPathContainerRows(persistent.variableControlOuterPathContainerRows),
+          variableControlNestedPrefixOrdinals(persistent.variableControlNestedPrefixOrdinals),
+          variableControlNestedPrefixPath(persistent.variableControlNestedPrefixPath),
           variableControlChildren(persistent.variableControlChildren),
           variableControlChildKinds(persistent.variableControlChildKinds),
           variableControlLeafChildren(persistent.variableControlLeafChildren),
@@ -4486,8 +4692,45 @@ struct EngineActionPlayScratch {
           variableControlNestedParentIndices(persistent.variableControlNestedParentIndices),
           variableControlNestedPathOrdinals(persistent.variableControlNestedPathOrdinals),
           variableControlNestedModes(persistent.variableControlNestedModes),
-          variableControlInitialCommittedSlices(persistent.initialControlSlices) {
+          variableControlNestedVariableControls(persistent.variableControlNestedVariableControls),
+          variableControlNestedServices(persistent.variableControlNestedServices),
+          variableControlNestedDecisions(persistent.variableControlNestedDecisions),
+          variableControlNestedSelectedChildOrdinals(persistent.variableControlNestedSelectedChildOrdinals),
+          variableControlNestedContinuationOrdinals(persistent.variableControlNestedContinuationOrdinals),
+          variableControlLeafHandles(persistent.variableControlLeafHandles),
+          variableControlLeafEpochs(persistent.variableControlLeafEpochs),
+          variableControlInitialCommittedSlices(persistent.initialControlSlices),
+          variableControlNestedDecisionOwnerContexts(persistent.variableControlNestedDecisionOwnerContexts),
+          variableControlNestedOwnerContexts(persistent.variableControlNestedOwnerContexts) {
+        std::fill(pendingVariableReplacementTops.begin(), pendingVariableReplacementTops.end(),
+            PendingVariableReplacementTop{});
+        std::fill(pendingVariableReplacementLeaves.begin(), pendingVariableReplacementLeaves.end(),
+            PendingVariableReplacementLeaf{});
         privateInitialVcPageCohort.laneMemberManifests = persistent.privateInitialVcLaneMembers;
+        if (persistent.containerStoragePrepared) PrepareQueueScratchArrays();
+    }
+    ~EngineActionPlayScratch() {
+        // Retain the column storage, but end prepared ownership with this scratch.
+        // Fresh cells keep the original defaults and stable addresses for reuse.
+        const auto reset = []<class T>(std::vector<T>& column) noexcept {
+            for (auto it = column.rbegin(); it != column.rend(); ++it)
+                std::destroy_at(std::addressof(*it));
+            for (auto& value : column) std::construct_at(std::addressof(value));
+        };
+        // Owners release their proofs before the reservations they reference.
+        reset(variableControlNestedOwnerContexts);
+        reset(variableControlNestedDecisionOwnerContexts);
+        reset(variableControlLeafEpochs);
+        reset(variableControlLeafHandles);
+        reset(variableControlNestedContinuationOrdinals);
+        reset(variableControlNestedSelectedChildOrdinals);
+        reset(variableControlNestedDecisions);
+        reset(variableControlNestedServices);
+        reset(variableControlNestedVariableControls);
+        reset(variableControlNestedPrefixPath);
+        reset(variableControlNestedPrefixOrdinals);
+        reset(variableControlOuterPathContainerRows);
+        reset(variableControlOuterPathChildren);
     }
     EngineActionPlayStorage& storage;
     MonitorControlCause cancellationCause{};
@@ -4674,28 +4917,15 @@ struct EngineActionPlayScratch {
     std::uint64_t pendingVariableReplacementEntryGeneration = 0;
     VariableReadCutRef pendingVariableReplacementCut{};
     std::uint32_t pendingVariableReplacementCommandCount = 0;
-    struct PendingVariableReplacementTop {
-        PlayableRefV1 root{};
-        std::uint32_t frontierPolicyIndex = UINT32_MAX;
-        std::uint32_t authoredChildOrdinal = 0;
-        WeightSegmentV1 weight{};
-        VariableControlSide side = VariableControlSide::Discrete;
-        std::uint64_t logicalCompletionOffset = 0;
-        bool hasLogicalCompletion = false;
-    };
-    std::array<PendingVariableReplacementTop, kMaxKnownScheduleLeaves> pendingVariableReplacementTops{};
+    using PendingVariableReplacementTop = EnginePendingVariableReplacementTop;
+    std::vector<PendingVariableReplacementTop>& pendingVariableReplacementTops;
     std::uint32_t pendingVariableReplacementTopCount = 0;
     class PendingVariableReplacementTopology {
         friend struct Engine;
-        struct Node {
-            PlayableInstanceHandle handle = 0;
-            PlayableInstanceHandle parent = 0;
-            std::uint64_t epoch = 0;
-            PlayableKind kind = PlayableKind::Sound;
-            PlayableInstanceTable::OriginalLifetimePin original;
-        };
-        std::array<Node, 2u * kMaxKnownScheduleLeaves + 1u> nodes{};
-        std::array<std::uint32_t, kMaxKnownScheduleLeaves> leafNodes{}, leafTops{};
+        using Node = EnginePendingVariableReplacementTopologyNode;
+        std::vector<Node>& nodes;
+        std::vector<std::uint32_t>& leafNodes;
+        std::vector<std::uint32_t>& leafTops;
         std::uint32_t nodeCount = 0;
         bool sealed = false;
         EngineFrontierAttemptToken futureParent{}, futurePreparation{};
@@ -4704,6 +4934,20 @@ struct EngineActionPlayScratch {
         QueueInstanceToken futureQueue{};
         PlayableInstanceHandle futureRoot = 0;
     public:
+        explicit PendingVariableReplacementTopology(EngineActionPlayStorage& persistent) noexcept
+            : nodes(persistent.pendingVariableReplacementNodes),
+              leafNodes(persistent.pendingVariableReplacementLeafNodes),
+              leafTops(persistent.pendingVariableReplacementLeafTops) {
+            for (auto& node : nodes) node = Node{};
+            std::fill(leafNodes.begin(), leafNodes.end(), 0u);
+            std::fill(leafTops.begin(), leafTops.end(), 0u);
+        }
+        PendingVariableReplacementTopology(const PendingVariableReplacementTopology&) = delete;
+        PendingVariableReplacementTopology& operator=(const PendingVariableReplacementTopology&) = delete;
+        ~PendingVariableReplacementTopology() {
+            // Scratch reset releases every original at the former inline-array lifetime boundary.
+            for (auto& node : nodes) node.original.Release();
+        }
         void ReturnOriginalLifetimes() noexcept {
             for (std::uint32_t index = 0; index < nodeCount; ++index) nodes[index].original.Release();
         }
@@ -4724,23 +4968,8 @@ struct EngineActionPlayScratch {
         2u * (kMaxActionVariableControlOwnerTokens + 1u);
     std::vector<PendingVariableReplacementControl> pendingVariableReplacementControls;
     std::uint32_t pendingVariableReplacementControlCount = 0;
-    struct PendingVariableReplacementLeaf {
-        PlayableRefV1 leaf{};
-        std::uint32_t authoredChildOrdinal = 0;
-        WeightSegmentV1 weight{};
-        VariableControlSide side = VariableControlSide::Discrete;
-        std::uint16_t memberOrdinal = 0;
-        std::uint32_t controlIndex = UINT32_MAX;
-        std::uint32_t controlChildOrdinal = 0;
-        std::uint32_t frontierPolicyIndex = UINT32_MAX;
-        std::uint16_t nativeMemberOrdinal = 0;
-        std::uint64_t authoredOffset = 0;
-        EnginePlayableMemberReference storageReference{};
-        TimelineSemanticTarget target{};
-        LogicCommitSequence sequence = 0;
-        TimelineTransactionProgramRef program{};
-    };
-    std::array<PendingVariableReplacementLeaf, kMaxKnownScheduleLeaves> pendingVariableReplacementLeaves{};
+    using PendingVariableReplacementLeaf = EnginePendingVariableReplacementLeaf;
+    std::vector<PendingVariableReplacementLeaf>& pendingVariableReplacementLeaves;
     std::uint32_t pendingVariableReplacementLeafCount = 0;
     std::uint64_t pendingVariableReplacementAnchorFrame = 0;
     ImmediateLaneHandle pendingVariableReplacementLane{};
@@ -4806,8 +5035,8 @@ struct EngineActionPlayScratch {
     DecisionToken queueFutureCurrentDecision{};
     EngineFrontierQueueCurrentOwnerContext* queueFutureCanonicalCurrent = nullptr;
     EngineFrontierAttemptToken queueFutureParent{};
-    std::array<std::size_t, kMaxKnownScheduleLeaves> queueFutureMemberSlots{};
-    std::array<EnginePlayableMemberReference, kMaxKnownScheduleLeaves> queueFuturePriorMemberReferences{};
+    EngineServiceArrayView<std::size_t, kMaxKnownScheduleLeaves> queueFutureMemberSlots{};
+    EngineServiceArrayView<EnginePlayableMemberReference, kMaxKnownScheduleLeaves> queueFuturePriorMemberReferences{};
     std::size_t queueFutureMemberBase = 0;
     std::uint32_t queueFutureMemberCount = 0;
     EnginePlayableServiceReference continuationService{};
@@ -4900,6 +5129,33 @@ struct EngineActionPlayScratch {
         CompletionOwnerRef* completionOwner = nullptr;
         std::uint64_t observedCompletionBlockSequence = 0;
     };
+    struct QueueScratchArrays {
+        std::array<std::size_t, kMaxKnownScheduleLeaves> queueFutureMemberSlots{};
+        std::array<EnginePlayableMemberReference, kMaxKnownScheduleLeaves> queueFuturePriorMemberReferences{};
+        std::array<OccurrenceToken, kMaxKnownScheduleLeaves> queueCurrentLeafOccurrences{};
+        std::array<OccurrenceToken, kMaxKnownScheduleLeaves> queueSuccessorLeafOccurrences{};
+        std::array<PreparedOccurrenceOwnerContext, kMaxKnownScheduleLeaves> queueCurrentLeafOccurrenceOwnerContexts{};
+        std::array<PreparedOccurrenceOwnerContext, kMaxKnownScheduleLeaves> queueSuccessorLeafOccurrenceOwnerContexts{};
+        std::array<CommandRecord, kMaxKnownScheduleLeaves> queueSourceCommands{};
+        std::array<TimelineArmTable::PreparedCommitInput, kMaxKnownScheduleLeaves> queueSourceArmPreparations{};
+    };
+    void PrepareQueueScratchArrays() noexcept {
+        assert(storage.containerStoragePrepared);
+        if (queueScratchArrays_.has_value()) return;
+        auto& arrays = queueScratchArrays_.emplace();
+        queueFutureMemberSlots.Bind(arrays.queueFutureMemberSlots);
+        queueFuturePriorMemberReferences.Bind(arrays.queueFuturePriorMemberReferences);
+        queueCurrentLeafOccurrences.Bind(arrays.queueCurrentLeafOccurrences);
+        queueSuccessorLeafOccurrences.Bind(arrays.queueSuccessorLeafOccurrences);
+        queueCurrentLeafOccurrenceOwnerContexts.Bind(arrays.queueCurrentLeafOccurrenceOwnerContexts);
+        queueSuccessorLeafOccurrenceOwnerContexts.Bind(arrays.queueSuccessorLeafOccurrenceOwnerContexts);
+        queueSourceCommands.Bind(arrays.queueSourceCommands);
+        queueSourceArmPreparations.Bind(arrays.queueSourceArmPreparations);
+    }
+private:
+    // Keep stable inline capacity without constructing unused Queue records.
+    std::optional<QueueScratchArrays> queueScratchArrays_;
+public:
     struct PreparedQueueInstanceOwnerContext {
         QueueInstanceTable* table = nullptr;
         PreparedQueueInstanceV1* prepared = nullptr;
@@ -4910,127 +5166,7 @@ struct EngineActionPlayScratch {
         EnginePlayableServiceRow* service = nullptr;
         PreparedActionResourceOwnerContext* resources = nullptr;
     };
-    struct PreparedVariableControlOwnerContext {
-        PreparedVariableControlOwnerContext() noexcept = default;
-        PreparedVariableControlOwnerContext(const PreparedVariableControlOwnerContext&) = delete;
-        PreparedVariableControlOwnerContext& operator=(const PreparedVariableControlOwnerContext&) = delete;
-        PreparedVariableControlOwnerContext(PreparedVariableControlOwnerContext&& other) noexcept {
-            *this = std::move(other);
-        }
-        PreparedVariableControlOwnerContext& operator=(PreparedVariableControlOwnerContext&& other) noexcept {
-            if (this == &other || serviceProofRequired_ || other.serviceProofRequired_ ||
-                serviceCommitProof.Valid() || other.serviceCommitProof.Valid()) return *this;
-            table = other.table;
-            prepared = other.prepared;
-            output = other.output;
-            discreteDecision = other.discreteDecision;
-            continuousDecision = other.continuousDecision;
-            activationDecision = other.activationDecision;
-            activationBank = other.activationBank;
-            activationSide = other.activationSide;
-            row = other.row;
-            nestedIndex = other.nestedIndex;
-            nestedCount = other.nestedCount;
-            activate = other.activate;
-            committed = other.committed;
-            activated = other.activated;
-            engine = other.engine;
-            service = other.service;
-            commitProof = std::move(other.commitProof);
-            commitProofRequired = other.commitProofRequired;
-            originalServiceInput_ = other.originalServiceInput_;
-            originalServiceEngine_ = other.originalServiceEngine_;
-            originalService_ = other.originalService_;
-            originalServiceReference_ = other.originalServiceReference_;
-            originalInvocation_ = other.originalInvocation_;
-            other.originalServiceInput_.Reset();
-            other.originalServiceEngine_ = nullptr;
-            other.originalService_ = nullptr;
-            other.originalServiceReference_ = {};
-            other.originalInvocation_ = nullptr;
-            return *this;
-        }
-        bool CanPrepareOriginalService() const noexcept {
-            return !serviceProofRequired_ && !serviceCommitProof.Valid() &&
-                !originalServiceInput_.Valid() && originalService_ == nullptr;
-        }
-        EnginePlayablePartitionToken ReserveOriginalService(EnginePlayablePartitionPool& pool,
-            Engine* originalEngine, EnginePlayableServiceRow& originalRow,
-            EnginePlayablePartitionPool::OriginalStoragePin* originalStorage = nullptr) noexcept {
-            if (!CanPrepareOriginalService()) return {};
-            const auto token = pool.Reserve(originalRow.identity, &originalServiceInput_, originalStorage);
-            if (token.Valid()) {
-                originalServiceEngine_ = originalEngine;
-                originalService_ = &originalRow;
-            }
-            return token;
-        }
-        void DiscardUnassociatedServiceReservation() noexcept {
-            assert(!originalServiceReference_.Valid() && !serviceProofRequired_);
-            const bool reset = originalServiceInput_.Reset();
-            assert(reset);
-            (void)reset;
-            originalServiceEngine_ = nullptr;
-            originalService_ = nullptr;
-        }
-        bool RecordOriginalServiceAssociation() noexcept {
-            if (originalService_ == nullptr || !originalServiceInput_.Valid() ||
-                originalServiceReference_.Valid() || serviceProofRequired_ ||
-                !originalService_->InvocationValid() || originalService_->ownerInstance == 0 ||
-                originalService_->ownerEpoch == 0) return false;
-            originalServiceReference_ = {originalService_->identity, originalService_->ownerInstance,
-                originalService_->ownerEpoch, originalService_->invocationGeneration};
-            originalInvocation_ = originalService_->invocation;
-            return true;
-        }
-        bool OriginalServiceAssociationMatches(Engine* expectedEngine,
-            const EnginePlayableServiceRow* expectedService) const noexcept {
-            return originalServiceEngine_ == expectedEngine && expectedService != nullptr &&
-                originalService_ == expectedService && originalServiceInput_.Valid() &&
-                originalServiceReference_.Valid() &&
-                expectedService->identity == originalServiceInput_.Owner() &&
-                expectedService->identity == originalServiceReference_.token &&
-                expectedService->partition.slot == originalServiceInput_.Token().slot &&
-                expectedService->partition.generation == originalServiceInput_.Token().generation &&
-                expectedService->ownerInstance == originalServiceReference_.owner &&
-                expectedService->ownerEpoch == originalServiceReference_.epoch &&
-                expectedService->invocationGeneration == originalServiceReference_.invocationGeneration &&
-                expectedService->invocation == originalInvocation_ && expectedService->InvocationValid() &&
-                originalServiceInput_.Pool()->Owns(originalServiceInput_.Token(), originalServiceInput_.Owner());
-        }
-        bool ServiceCommitProofRequired() const noexcept { return serviceProofRequired_; }
-        void SelectServiceCommitProof() noexcept { serviceProofRequired_ = true; }
-        const EnginePlayablePartitionPool::ReservationInput& OriginalServiceInput() const noexcept {
-            return originalServiceInput_;
-        }
-        const EnginePlayableServiceRow* OriginalService() const noexcept { return originalService_; }
-        VariableControlInstanceTable* table = nullptr;
-        PreparedVariableControlInstance* prepared = nullptr;
-        VariableControlInstanceToken* output = nullptr;
-        DecisionToken* discreteDecision = nullptr;
-        DecisionToken* continuousDecision = nullptr;
-        DecisionToken* activationDecision = nullptr;
-        BankVersionToken* activationBank = nullptr;
-        VariableControlSide activationSide = VariableControlSide::Discrete;
-        EnginePlayableServiceRow* row = nullptr;
-        std::uint32_t nestedIndex = UINT32_MAX;
-        std::uint32_t* nestedCount = nullptr;
-        bool activate = false;
-        bool committed = false;
-        bool activated = false;
-        Engine* engine = nullptr;
-        EnginePlayableServiceRow* service = nullptr;
-        VariableControlInstanceTable::PreparedCommitProof commitProof{};
-        bool commitProofRequired = false;
-        EnginePlayablePartitionPool::PreparedCommitProof serviceCommitProof{};
-    private:
-        EnginePlayablePartitionPool::ReservationInput originalServiceInput_{};
-        Engine* originalServiceEngine_ = nullptr;
-        EnginePlayableServiceRow* originalService_ = nullptr;
-        EnginePlayableServiceReference originalServiceReference_{};
-        EnginePlayableStartRow* originalInvocation_ = nullptr;
-        bool serviceProofRequired_ = false;
-    };
+    using PreparedVariableControlOwnerContext = EnginePreparedVariableControlOwnerContext;
     struct PreparedCompositeOwnerContext {
         CompositeCompletionOwnerPool* pool = nullptr;
         CompositeCompletionOwnerToken* token = nullptr;
@@ -5046,16 +5182,12 @@ struct EngineActionPlayScratch {
     PreparedContainerPlaybackRow variableControlControllerRow{};
     PreparedPlayableInstance variableControlOuterRoot{};
     PreparedContainerPlaybackRow variableControlOuterContainerRow{};
-    std::array<PreparedPlayableInstance, kSelectionPathNodeCapacity>
-        variableControlOuterPathChildren{};
-    std::array<PreparedContainerPlaybackRow, kSelectionPathNodeCapacity>
-        variableControlOuterPathContainerRows{};
+    std::vector<PreparedPlayableInstance>& variableControlOuterPathChildren;
+    std::vector<PreparedContainerPlaybackRow>& variableControlOuterPathContainerRows;
     std::uint32_t variableControlOuterPathChildCount = 0;
     std::uint32_t variableControlOuterPathContainerRowCount = 0;
-    std::array<std::uint32_t, kSelectionPathNodeCapacity>
-        variableControlNestedPrefixOrdinals{};
-    std::array<SelectionPathNodeV1, kSelectionPathNodeCapacity>
-        variableControlNestedPrefixPath{};
+    std::vector<std::uint32_t>& variableControlNestedPrefixOrdinals;
+    std::vector<SelectionPathNodeV1>& variableControlNestedPrefixPath;
     std::uint32_t variableControlNestedPrefixCount = 0;
     PlayableInstanceHandle variableControlParentInstance = 0;
     bool variableControlExternalRootOwned = false;
@@ -5072,26 +5204,17 @@ struct EngineActionPlayScratch {
     std::vector<std::uint16_t>& variableControlNestedParentIndices;
     std::vector<std::uint32_t>& variableControlNestedPathOrdinals;
     std::vector<std::uint8_t>& variableControlNestedModes;
-    std::array<PreparedVariableControlInstance,
-               kMaxKnownScheduleLeaves + 64u>
-        variableControlNestedVariableControls{};
-    std::array<EnginePlayableServiceReference, kMaxKnownScheduleLeaves + 64u>
-        variableControlNestedServices{};
+    std::vector<PreparedVariableControlInstance>& variableControlNestedVariableControls;
+    std::vector<EnginePlayableServiceReference>& variableControlNestedServices;
     std::uint32_t variableControlNestedVariableControlCount = 0;
-    std::array<PreparedDecisionReservation,
-               kMaxKnownScheduleLeaves + 64u>
-        variableControlNestedDecisions{};
+    std::vector<PreparedDecisionReservation>& variableControlNestedDecisions;
     std::array<bool, kMaxKnownScheduleLeaves + 64u>
         variableControlNestedDecisionContinuous{};
-    std::array<std::uint32_t, kMaxKnownScheduleLeaves + 64u>
-        variableControlNestedSelectedChildOrdinals{};
-    std::array<std::uint32_t, kMaxKnownScheduleLeaves + 64u>
-        variableControlNestedContinuationOrdinals{};
+    std::vector<std::uint32_t>& variableControlNestedSelectedChildOrdinals;
+    std::vector<std::uint32_t>& variableControlNestedContinuationOrdinals;
     std::uint32_t variableControlNestedQueueOwnerIndex = UINT32_MAX;
-    std::array<PlayableInstanceHandle, kMaxKnownScheduleLeaves>
-        variableControlLeafHandles{};
-    std::array<std::uint64_t, kMaxKnownScheduleLeaves>
-        variableControlLeafEpochs{};
+    std::vector<PlayableInstanceHandle>& variableControlLeafHandles;
+    std::vector<std::uint64_t>& variableControlLeafEpochs;
     PreparedPlayableInstance variableControlNestedQueueSuccessor{};
     std::uint32_t variableControlNestedQueueSuccessorOrdinal = 0;
     std::uint32_t variableControlLeafChildCount = 0;
@@ -5111,7 +5234,7 @@ struct EngineActionPlayScratch {
     PreparedDecisionReservation queueDecision{};
     PreparedDecisionReservation queueSuccessorDecision{};
     OccurrenceToken queueCurrentOccurrence{};
-    std::array<OccurrenceToken, kMaxKnownScheduleLeaves>
+    EngineServiceArrayView<OccurrenceToken, kMaxKnownScheduleLeaves>
         queueCurrentLeafOccurrences{};
     std::array<bool, kMaxKnownScheduleLeaves>
         queueCurrentLeafOccurrencesPrepared{};
@@ -5122,16 +5245,16 @@ struct EngineActionPlayScratch {
     OccurrenceToken queueSuccessorOccurrence{};
     CompletionOwnerRef queueSuccessorOwner{};
     NativeVoiceSide queueSuccessorVoiceStarts;
-    std::array<OccurrenceToken, kMaxKnownScheduleLeaves>
+    EngineServiceArrayView<OccurrenceToken, kMaxKnownScheduleLeaves>
         queueSuccessorLeafOccurrences{};
     std::array<bool, kMaxKnownScheduleLeaves>
         queueSuccessorLeafOccurrencesPrepared{};
     PreparedOccurrenceOwnerContext queueCurrentOccurrenceOwnerContext{};
     PreparedOccurrenceOwnerContext pendingScheduleOccurrenceOwnerContext{};
-    std::array<PreparedOccurrenceOwnerContext, kMaxKnownScheduleLeaves>
+    EngineServiceArrayView<PreparedOccurrenceOwnerContext, kMaxKnownScheduleLeaves>
         queueCurrentLeafOccurrenceOwnerContexts{};
     PreparedOccurrenceOwnerContext queueSuccessorOccurrenceOwnerContext{};
-    std::array<PreparedOccurrenceOwnerContext, kMaxKnownScheduleLeaves>
+    EngineServiceArrayView<PreparedOccurrenceOwnerContext, kMaxKnownScheduleLeaves>
         queueSuccessorLeafOccurrenceOwnerContexts{};
     CompositeCompletionOwnerToken queueSuccessorCompositeOwner{};
     PreparedTransactionBatch queueTransactions{};
@@ -5153,9 +5276,9 @@ struct EngineActionPlayScratch {
     ArmGroupToken queueArmGroup{};
     ArmGroupToken queueInitialLaneArmGroup{};
     TransitionInstanceToken queueTransition{};
-    std::array<CommandRecord, kMaxKnownScheduleLeaves>
+    EngineServiceArrayView<CommandRecord, kMaxKnownScheduleLeaves>
         queueSourceCommands{};
-    std::array<TimelineArmTable::PreparedCommitInput, kMaxKnownScheduleLeaves>
+    EngineServiceArrayView<TimelineArmTable::PreparedCommitInput, kMaxKnownScheduleLeaves>
         queueSourceArmPreparations{};
     const ContainerProgramViewV3* queueProgram = nullptr;
     std::uint32_t queueCurrentLeafOccurrenceCount = 0;
@@ -5191,13 +5314,9 @@ struct EngineActionPlayScratch {
     PreparedDecisionOwnerContext queueSuccessorDecisionOwnerContext{};
     PreparedDecisionOwnerContext variableControlDiscreteDecisionOwnerContext{};
     PreparedDecisionOwnerContext variableControlContinuousDecisionOwnerContext{};
-    std::array<PreparedDecisionOwnerContext,
-               kMaxActionVariableControlOwnerTokens>
-        variableControlNestedDecisionOwnerContexts{};
+    std::vector<PreparedDecisionOwnerContext>& variableControlNestedDecisionOwnerContexts;
     PreparedVariableControlOwnerContext variableControlOwnerContext{};
-    std::array<PreparedVariableControlOwnerContext,
-               kMaxActionVariableControlOwnerTokens>
-        variableControlNestedOwnerContexts{};
+    std::vector<PreparedVariableControlOwnerContext>& variableControlNestedOwnerContexts;
     PreparedActionResourceOwnerContext actionResourceOwnerContext{};
     std::uint32_t selectionPlayCount = 0;
     NativeVoiceSide voiceStarts;
@@ -5255,6 +5374,9 @@ struct EngineActionPlayScratch {
         selectionPlayCount = 0;
     }
 };
+
+static_assert(std::is_nothrow_default_constructible_v<EngineActionPlayScratch::QueueScratchArrays>);
+static_assert(std::is_trivially_destructible_v<EngineActionPlayScratch::QueueScratchArrays>);
 
 // Logic-thread retarget frontier storage. Buffers are sized once during
 // Engine construction and reset in place so retarget preparation never grows
@@ -7850,7 +7972,10 @@ public:
     bool EnsureActionPlaySlot(std::uint32_t slot, bool needsContainerState = true) noexcept {
         needsContainerState |= actionPlayScratch.HasPreparedBacking();
         if (actionPlayScratch.IsConstructed(slot) &&
-            (!needsContainerState || actionPlayStorage[slot].containerStoragePrepared)) return true;
+            (!needsContainerState || actionPlayStorage[slot].containerStoragePrepared)) {
+            if (needsContainerState) actionPlayScratch[slot].PrepareQueueScratchArrays();
+            return true;
+        }
         if (slot >= actionPlayScratch.size() || memguard::IsAudioTagged() ||
             actionPlayScratch.PreparedUseActive()) return false;
         if (!actionPlayStorage.Emplace(slot, config.maxPlayableInstances, playableStorage.memberStride,
@@ -7858,7 +7983,9 @@ public:
                 &actionPlayOwnerLimits, false)) return false;
         if (needsContainerState && !actionPlayStorage[slot].PrepareContainerStorage()) return false;
         if (!pendingOrdinarySelections.Emplace(slot) || !preparedPendingVariableGroups.Emplace(slot)) return false;
-        return actionPlayScratch.Emplace(slot, actionPlayStorage[slot]);
+        if (!actionPlayScratch.Emplace(slot, actionPlayStorage[slot])) return false;
+        if (needsContainerState) actionPlayScratch[slot].PrepareQueueScratchArrays();
+        return true;
     }
     bool PreparePrivateInitialVcLaneStorage(EngineActionPlayScratch& scratch) noexcept {
         auto& held = scratch.privateInitialVcPageCohort;
@@ -7893,8 +8020,10 @@ public:
             actionPlayScratch.PreparedUseActive()) return false;
         // Generic allowances promise full storage, including existing Sound rows
         // that can become reusable while the allowance remains outstanding.
-        for (auto& scratch : actionPlayScratch)
+        for (auto& scratch : actionPlayScratch) {
             if (!scratch.storage.PrepareContainerStorage()) return false;
+            scratch.PrepareQueueScratchArrays();
+        }
         return actionPlayScratch.PrepareBacking(low, high, ActionPlaySlotReusable,
             [this](std::uint32_t slot) noexcept { return EnsureActionPlaySlot(slot); }, out);
     }
@@ -7968,7 +8097,8 @@ public:
         PlayableInstanceHandle owner, std::uint64_t epoch, EnginePlayableStartRow& invocation,
         bool rootService, EngineActionPlayScratch::PreparedVariableControlOwnerContext* context,
         EngineActionPlayStorage* preparingStorage = nullptr,
-        const EnginePlayableServiceRow* preparingParent = nullptr) noexcept {
+        const EnginePlayableServiceRow* preparingParent = nullptr,
+        bool requireMemberOnsets = true) noexcept {
         if (owner == 0 || epoch == 0 || row.phase != EnginePlayableStartPhase::Free ||
             row.actionPrepared || row.partition.Valid() || row.quarantined || invocation.quarantined ||
             invocation.generation == 0 || invocation.serviceCount == UINT32_MAX ||
@@ -8027,17 +8157,21 @@ public:
             if (playablePartitions.OriginalStorageIssuerExhausted()) runtimeRecreateRequired = true;
             return false;
         }
-        const auto memberBase = playableStorage.MemberBase(partition.slot);
-        const auto memberEnd = memberBase + playableStorage.memberStride;
-        for (auto slot = memberBase; slot < memberEnd;
-             slot = (slot / 256u + 1u) * 256u) {
-            if (memberOnsets.Prepare({epoch, static_cast<std::uint32_t>(slot), 0})) continue;
-            original.baseline_.Return();
-            const bool cancelled = playablePartitions.Cancel(partition, row.identity);
-            assert(cancelled);
-            (void)cancelled;
-            if (context != nullptr) context->DiscardUnassociatedServiceReservation();
-            return false;
+        // Inline root Sounds have no member rows. Nested Sounds can still own
+        // member state through a variable-control ancestor.
+        if (requireMemberOnsets || !rootService) {
+            const auto memberBase = playableStorage.MemberBase(partition.slot);
+            const auto memberEnd = memberBase + playableStorage.memberStride;
+            for (auto slot = memberBase; slot < memberEnd;
+                 slot = (slot / 256u + 1u) * 256u) {
+                if (memberOnsets.Prepare({epoch, static_cast<std::uint32_t>(slot), 0})) continue;
+                original.baseline_.Return();
+                const bool cancelled = playablePartitions.Cancel(partition, row.identity);
+                assert(cancelled);
+                (void)cancelled;
+                if (context != nullptr) context->DiscardUnassociatedServiceReservation();
+                return false;
+            }
         }
         row.invocation = &invocation;
         row.invocationGeneration = invocation.generation;
@@ -9835,7 +9969,12 @@ public:
         for (const auto& storage : actionPlayStorage) {
             censusBytes += storage.privateInitialVcLaneMembers.capacity() * sizeof(ImmediateLaneMemberManifest) +
                 storage.privateInitialVcLaneGroups.capacity() * sizeof(ImmediateLaneAcceptedPrivateGroup) +
-                storage.privateInitialVcArmPreparations.capacity() * sizeof(EngineActionPlayStorage::PrivateInitialVcArmPreparation);
+                storage.privateInitialVcArmPreparations.capacity() * sizeof(EngineActionPlayStorage::PrivateInitialVcArmPreparation) +
+                storage.pendingVariableReplacementTops.capacity() * sizeof(EnginePendingVariableReplacementTop) +
+                storage.pendingVariableReplacementLeaves.capacity() * sizeof(EnginePendingVariableReplacementLeaf) +
+                storage.pendingVariableReplacementNodes.capacity() * sizeof(EnginePendingVariableReplacementTopologyNode) +
+                storage.pendingVariableReplacementLeafNodes.capacity() * sizeof(std::uint32_t) +
+                storage.pendingVariableReplacementLeafTops.capacity() * sizeof(std::uint32_t);
         }
         for (std::uint32_t index = 0; index < immediateEntryAttempts.size(); ++index) {
             const auto& attempt = immediateEntryAttempts[index];
@@ -9850,8 +9989,6 @@ public:
             pendingVariableFutureNodes.RequestedBytes() +
             pendingVariableQueueNativeOrigins.RequestedBytes() +
             actionPlayStorage.ConstructedCount() * sizeof(OriginalPendingVariableProducerRetention) +
-            actionPlayScratch.ConstructedCount() * kMaxKnownScheduleLeaves *
-                sizeof(EngineActionPlayScratch::PendingVariableReplacementLeaf) +
             actionPlayScratch.ConstructedCount() * (sizeof(ImmediateLaneHandle) + sizeof(ImmediateLaneDemand) +
                 sizeof(PreparedDecisionReservation) +
                 2u * sizeof(OriginalDecisionLifetimePin)) +
@@ -10494,15 +10631,17 @@ public:
     }
     bool PrepareOriginalSourceRowBacking(std::uint32_t count, bool fullSourceCommandBacking) noexcept {
         if (count > timelineArms.Capacity()) return false;
-        // Physical Arm allowances include every dependent column, without issuing an owner.
+        // Ordinary construction prepares the record; the actual private capture
+        // prepares only the holder it needs before issuing its original loans.
         for (; originalSourceBackingPrefix < count; ++originalSourceBackingPrefix)
-            if (!originalSourceSubmissions.PrepareRecordBacking(originalSourceBackingPrefix) ||
-                !originalSinglePreparationHolders.Emplace(originalSourceBackingPrefix) ||
-                !originalQueueSourcePreparationHolders.Emplace(originalSourceBackingPrefix)) return false;
-        // Full preparation covers old holes as well as the new physical suffix.
+            if (!originalSourceSubmissions.PrepareRecordBacking(originalSourceBackingPrefix)) return false;
+        // A full allowance still promises both capture paths without growth.
+        // Include old holes on every retry, not just the newly constructed suffix.
         if (fullSourceCommandBacking)
             for (std::uint32_t slot = 0; slot < count; ++slot)
-                if (!originalSourceSubmissions.PrepareSlotBacking(slot)) return false;
+                if (!originalSinglePreparationHolders.Emplace(slot) ||
+                    !originalQueueSourcePreparationHolders.Emplace(slot) ||
+                    !originalSourceSubmissions.PrepareSlotBacking(slot)) return false;
         return true;
     }
     OriginalSinglePreparationHolder* OriginalSinglePreparationForArm(TimelineArmToken arm) noexcept {
@@ -11333,7 +11472,8 @@ public:
     bool IssueOriginalPlayableLifetimes(
         const PlayableInstanceTable::PreparedParentLinksProof& original,
         bool needsCurrentHolders = true) noexcept {
-        return PrepareOriginalPlayableStorage(needsCurrentHolders) &&
+        return originalPlayableLifetimeHolders.ConstructThrough(playableInstances.ConstructedEntryCount()) &&
+            (!needsCurrentHolders || PrepareOriginalSingleCurrentStorage()) &&
             playableInstances.IssueOriginalPreparedLifetimeBaselines(original,
                 {originalPlayableLifetimeHolders.data(), originalPlayableLifetimeHolders.size()});
     }
@@ -13894,9 +14034,10 @@ public:
         assert(variableControlRetargetScratch != nullptr);
         return *variableControlRetargetScratch;
     }
-    bool PrepareTimelineStartStorage(bool complete = true) noexcept {
+    bool PrepareTimelineStartStorage(bool complete = true, std::uint32_t independentRoots = 1u) noexcept {
         auto& scratch = timelineStartScratch;
-        const auto starts = complete ? scratch.starts.Capacity() : 1u;
+        const auto starts = complete ? scratch.starts.Capacity() : independentRoots;
+        if (starts > scratch.starts.Capacity()) return false;
         if (scratch.starts.size() >= starts && (!complete ||
             (scratch.transactions.size() == scratch.transactions.Capacity() &&
              scratch.extraCommands.size() == scratch.extraCommands.Capacity() &&
@@ -13921,24 +14062,28 @@ public:
         }
         return true;
     }
-    bool PrepareOriginalPlayableStorage(bool needsCurrentHolders = true) noexcept {
-        return playableInstances.PrepareStorage() &&
-            originalPlayableLifetimeHolders.ConstructThrough(originalPlayableLifetimeHolders.Capacity()) &&
+    bool PrepareOriginalPlayableStorage(bool needsCurrentHolders = true,
+        std::uint32_t independentRoots = 1u) noexcept {
+        return (needsCurrentHolders ? playableInstances.PrepareStorage()
+                : playableInstances.PrepareStorageForAcquire(independentRoots)) &&
+            originalPlayableLifetimeHolders.ConstructThrough(playableInstances.ConstructedEntryCount()) &&
             (!needsCurrentHolders || PrepareOriginalSingleCurrentStorage());
     }
-    bool PreparePlayablePublicationStorage(bool needsContainerState = true) noexcept {
+    bool PreparePlayablePublicationStorage(bool needsContainerState = true,
+        std::uint32_t independentRoots = 1u) noexcept {
         const auto arms = timelineArms.Capacity();
-        const auto events = immediateActionLane.EventsPerAttempt();
+        const auto events = needsContainerState ? immediateActionLane.EventsPerAttempt() : independentRoots;
+        if (events > immediateActionLane.EventsPerAttempt()) return false;
         if ((!needsContainerState ||
              (initialFrontierArmPins.size() == arms && initialRootArmPublicationInputs.size() == arms)) &&
-            pendingImmediateLaneEventsScratch.size() == events) return true;
+            pendingImmediateLaneEventsScratch.size() >= events) return true;
         if (memguard::IsAudioTagged() || playableServices.PreparedUseActive()) return false;
         try {
             if (needsContainerState) {
                 initialFrontierArmPins.resize(arms);
                 initialRootArmPublicationInputs.resize(arms);
             }
-            pendingImmediateLaneEventsScratch.resize(events);
+            if (pendingImmediateLaneEventsScratch.size() < events) pendingImmediateLaneEventsScratch.resize(events);
         } catch (...) { return false; }
         return true;
     }
@@ -13949,17 +14094,18 @@ public:
         catch (...) { return false; }
         return true;
     }
-    bool PreparePlayableStateStorage(bool needsContainerState = true) noexcept {
-        return PrepareTimelineStartStorage(needsContainerState) &&
-            PrepareOriginalPlayableStorage(needsContainerState) &&
+    bool PreparePlayableStateStorage(bool needsContainerState = true,
+        std::uint32_t independentRoots = 1u) noexcept {
+        return PrepareTimelineStartStorage(needsContainerState, independentRoots) &&
+            PrepareOriginalPlayableStorage(needsContainerState, independentRoots) &&
             (!needsContainerState ||
                 (initialFrontierEvents.ConstructThrough(initialFrontierEvents.Capacity()) &&
                  initialFrontierRequests.ConstructThrough(initialFrontierRequests.Capacity()) &&
                  pendingVariableLeafSources.ConstructThrough(pendingVariableLeafSources.Capacity()) &&
                  pendingVariableFutureSources.ConstructThrough(pendingVariableFutureSources.Capacity()) &&
                  pendingVariableFutureNodes.ConstructThrough(pendingVariableFutureNodes.Capacity()))) &&
-            spatial.PrepareVoiceStorage(config.voiceCapacity.Render()) &&
-            PreparePlayablePublicationStorage(needsContainerState);
+            (!needsContainerState || spatial.PrepareVoiceStorage(config.voiceCapacity.Render())) &&
+            PreparePlayablePublicationStorage(needsContainerState, independentRoots);
     }
     bool PreparePlayableServiceDependencies(std::uint32_t required,
                                             bool requireQueueTiming = true) noexcept {

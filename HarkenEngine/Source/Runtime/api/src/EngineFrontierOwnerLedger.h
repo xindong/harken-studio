@@ -1,6 +1,9 @@
 #ifndef HARKEN_API_ENGINE_FRONTIER_OWNER_LEDGER_H
 #define HARKEN_API_ENGINE_FRONTIER_OWNER_LEDGER_H
 
+#include <harken/core/LogicAllocCheckpoint.h>
+#include <harken/core/AllocGuard.h>
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <limits>
@@ -46,22 +49,33 @@ public:
     EngineFrontierOwnerLedger(EngineFrontierOwnerLedger&& other) noexcept
         : entries_(std::move(other.entries_)), limits_(other.limits_),
           domainCounts_(other.domainCounts_), generation_(other.generation_),
-          count_(other.count_), unresolved_(other.unresolved_), phase_(other.phase_) {
+          count_(other.count_), unresolved_(other.unresolved_), phase_(other.phase_), capacity_(other.capacity_) {
         other.count_ = 0;
         other.unresolved_ = 0;
         other.generation_ = UINT64_MAX;
     }
     EngineFrontierOwnerLedger& operator=(EngineFrontierOwnerLedger&&) = delete;
 
-    void Initialize(const Limits& limits) {
+    void Initialize(const Limits& limits, std::uint32_t preparedCount = UINT32_MAX) {
         if (generation_ != 0 || !entries_.empty()) throw std::bad_alloc{};
         std::uint64_t count = 0;
         for (const auto limit : limits) count += limit;
         if (count > UINT32_MAX ||
             count > std::numeric_limits<std::size_t>::max() / sizeof(Entry))
             throw std::bad_alloc{};
-        entries_.resize(static_cast<std::size_t>(count));
         limits_ = limits;
+        capacity_ = static_cast<std::uint32_t>(count);
+        if (!PrepareStorage(std::min(preparedCount, capacity_))) throw std::bad_alloc{};
+    }
+
+    bool PrepareStorage(std::uint32_t count) noexcept {
+        if (count <= entries_.size()) return true;
+        if (count > capacity_ || memguard::IsAudioTagged()) return false;
+        try {
+            detail::CheckedGrow(entries_, count, detail::LogicAllocSite::FrontierOwnerLedgerStorage);
+            entries_.resize(count);
+            return true;
+        } catch (...) { return false; }
     }
 
     bool Begin(std::uint64_t generation) noexcept {
@@ -170,8 +184,9 @@ public:
         return domain < kDomainCount ? domainCounts_[domain] : UINT32_MAX;
     }
     std::uint32_t Capacity() const noexcept {
-        return static_cast<std::uint32_t>(entries_.size());
+        return capacity_;
     }
+    std::uint32_t PreparedCapacity() const noexcept { return static_cast<std::uint32_t>(entries_.size()); }
     std::size_t StorageBytes() const noexcept { return entries_.capacity() * sizeof(Entry); }
 
 private:
@@ -197,6 +212,7 @@ private:
     std::uint32_t count_ = 0;
     std::uint32_t unresolved_ = 0;
     Phase phase_ = Phase::Preparing;
+    std::uint32_t capacity_ = 0;
 };
 
 struct EngineFrontierOwnerBatch {

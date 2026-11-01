@@ -19,6 +19,7 @@
 #include "Common/TestUtil.h"
 
 #include "harken/core/LogRing.h"
+#include "harken/core/StableRowStorage.h"
 #include "harken/media/PackFormat.h"
 #include "harken/media/StreamManager.h"
 
@@ -262,46 +263,57 @@ TEST(HotReload, PCMOldVoiceKeepsOldDataNewPlaySoundsNewData) {
     EngineSession session(ReloadConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
-    // Old generation: DC 0.25 lasting exactly 4 blocks.
-    RegisterDc(harkentest::ObjectId(100), 0.25f, 4 * kBlock);
-    const harken::PCMView oldGeneration = engine->registry.Lookup(harkentest::ObjectId(100));
-    ASSERT_NE(0u, oldGeneration.contentRevision);
+    const auto pageBytes = harken::detail::StablePageReservation::SystemPageBytes();
+    ASSERT_NE(0u, pageBytes);
+    const auto largeBlocks = static_cast<std::uint32_t>(
+        17 * pageBytes / (kBlock * sizeof(float)) + 1);
+    for (const auto oldBlocks : {4u, largeBlocks, 2 * largeBlocks}) {
+        SCOPED_TRACE(oldBlocks);
+        // Keep heap, float page and compact page generations pinned by a real voice.
+        RegisterDc(harkentest::ObjectId(100), 0.25f, oldBlocks * kBlock);
+        const harken::PCMView oldGeneration = engine->registry.Lookup(harkentest::ObjectId(100));
+        ASSERT_NE(0u, oldGeneration.contentRevision);
+        if (oldBlocks == 2 * largeBlocks)
+            ASSERT_EQ(harken::PcmSampleFormat::ExactInt16, oldGeneration.sampleFormat);
 
-    VnPlayDesc play = MakePlayDesc(harkentest::ObjectId(100));
-    VnVoiceHandle voice = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
-    Capture before;
-    PumpAndCapture(engine, 2, before); // blocks 1-2: steady DC
-    HARKENTEST_ASSERT_NON_SILENT(before.left);
-    const float oldLevel = before.left[kBlock + kBlock / 2];
+        VnPlayDesc play = MakePlayDesc(harkentest::ObjectId(100));
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+        Capture before;
+        PumpAndCapture(engine, 2, before); // blocks 1-2: steady DC
+        HARKENTEST_ASSERT_NON_SILENT(before.left);
+        const float oldLevel = before.left[kBlock + kBlock / 2];
 
-    // Replace mid-play: the voice keeps consuming the OLD samples.
-    ASSERT_EQ(VN_OK, ReplaceDc(harkentest::ObjectId(100), 0.5f, 2 * kBlock));
-    EXPECT_EQ(1u, Snap().pinnedGenerationCount); // old generation pinned
-    const harken::PCMView currentGeneration = engine->registry.Lookup(harkentest::ObjectId(100));
-    EXPECT_NE(oldGeneration.contentRevision,
-              currentGeneration.contentRevision);
-    Capture after;
-    PumpAndCapture(engine, 1, after); // block 3: still the old data
-    EXPECT_EQ(oldLevel, after.left[kBlock / 2]); // DC: bit-equal continuation
+        // Replace mid-play: the voice keeps consuming the OLD samples.
+        ASSERT_EQ(VN_OK, ReplaceDc(harkentest::ObjectId(100), 0.5f, 2 * kBlock));
+        EXPECT_EQ(1u, Snap().pinnedGenerationCount); // old generation pinned
+        const harken::PCMView currentGeneration = engine->registry.Lookup(harkentest::ObjectId(100));
+        EXPECT_NE(oldGeneration.contentRevision,
+                  currentGeneration.contentRevision);
+        Capture after;
+        PumpAndCapture(engine, 1, after); // block 3: still the old data
+        EXPECT_EQ(oldLevel, after.left[kBlock / 2]); // DC: bit-equal continuation
 
-    // New resolution sees the new registration immediately.
-    EXPECT_EQ(2u * kBlock, engine->registry.Lookup(harkentest::ObjectId(100)).frames);
+        // New resolution sees the new registration immediately.
+        EXPECT_EQ(2u * kBlock, engine->registry.Lookup(harkentest::ObjectId(100)).frames);
 
-    // Old voice reaches its natural end (block 4), then the generation
-    // drains and retires on the update.
-    PumpAndUpdate(engine, 2);
-    EXPECT_EQ(0u, engine->voices.ActiveCount());
-    EXPECT_EQ(0u, Snap().pinnedGenerationCount);
-    EXPECT_EQ(1u, Snap().pinnedGenerationHighWater);
+        // Old voice reaches its natural end, then the generation
+        // drains and retires on the update.
+        PumpAndUpdate(engine, oldBlocks - 2);
+        EXPECT_EQ(0u, engine->voices.ActiveCount());
+        EXPECT_EQ(0u, Snap().pinnedGenerationCount);
+        EXPECT_EQ(1u, Snap().pinnedGenerationHighWater);
 
-    // A fresh play sounds the NEW data: DC 0.5 doubles the channel value.
-    VnVoiceHandle fresh = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &fresh));
-    Capture renewed;
-    PumpAndCapture(engine, 1, renewed);
-    HARKENTEST_ASSERT_NON_SILENT(renewed.left);
-    EXPECT_FLOAT_EQ(2.0f * oldLevel, renewed.left[kBlock / 2]);
+        // A fresh play sounds the NEW data: DC 0.5 doubles the channel value.
+        VnVoiceHandle fresh = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &fresh));
+        Capture renewed;
+        PumpAndCapture(engine, 1, renewed);
+        HARKENTEST_ASSERT_NON_SILENT(renewed.left);
+        EXPECT_FLOAT_EQ(2.0f * oldLevel, renewed.left[kBlock / 2]);
+        PumpAndUpdate(engine, 2);
+        ASSERT_EQ(VN_OK, Vn_UnregisterPCM(harkentest::ObjectId(100)));
+    }
 }
 
 TEST(HotReload, PCMSecondReplaceWhileDrainingRefusedThenAdmitted) {
@@ -380,7 +392,7 @@ TEST(HotReload, IndividuallyReplacedPcmKeepsOriginalPackBackingUntilVoiceDrains)
         ASSERT_EQ(VN_OK, Vn_UnloadPack(pack));
         EXPECT_EQ(0u, engine->packs.LoadedCount());
         EXPECT_EQ(replacementCookie, engine->registry.CookieOf(sound));
-        EXPECT_FLOAT_EQ(0.5f, engine->registry.Lookup(sound).channels[0][0]);
+        EXPECT_FLOAT_EQ(0.5f, engine->registry.Lookup(sound).ReadSample(0, 0));
         ASSERT_EQ(VN_OK, Vn_UnregisterPCM(sound));
         EXPECT_EQ(0u, engine->registry.Count());
     }

@@ -44,15 +44,27 @@ ResampleProfile SelectResampleProfile(std::uint32_t sourceRate,
 
 // Shared read-only polyphase coefficient tables. Init() runs on the logic
 // thread at engine creation; render only reads.
+struct ResamplerView;
+using FixedMonoKernel = std::uint32_t (*)(const ResamplerView&, float*,
+    std::uint32_t, std::uint64_t&, std::uint64_t&, std::uint64_t) noexcept;
+FixedMonoKernel SelectFixedMonoKernel() noexcept;
+using ExactInt16ExpandKernel = void (*)(float*, const std::int16_t*,
+                                        std::uint32_t) noexcept;
+ExactInt16ExpandKernel SelectExactInt16ExpandKernel() noexcept;
+
 struct ResampleTables {
     KaiserSincTable<8> sinc8;
     KaiserSincTable<16> sinc16;
+    FixedMonoKernel fixedMonoKernel = nullptr;
+    ExactInt16ExpandKernel exactInt16ExpandKernel = nullptr;
 
     void Init() {
         // Proven parameter pairs: 8 taps beta 5.0 (mid tier), 16 taps
         // beta 9.0 (highest tier, THD below -85 dB).
         sinc8.Init(5.0);
         sinc16.Init(9.0);
+        fixedMonoKernel = SelectFixedMonoKernel();
+        exactInt16ExpandKernel = SelectExactInt16ExpandKernel();
     }
 };
 
@@ -94,6 +106,7 @@ struct MultirateHalfbandSideTap {
 };
 
 struct MultirateResampleTables {
+    ExactInt16ExpandKernel exactInt16ExpandKernel = nullptr;
     float halfband[kMultirateHalfbandTaps] = {};
     MultirateHalfbandSideTap halfbandSide[
         kMultirateHalfbandSideTapCount] = {};

@@ -1649,6 +1649,28 @@ TEST(VoicePool, DeferredWeightPreparationFailsBeforePublicationAndKeepsFullOwner
     ASSERT_TRUE(engine.voices.CancelPreparedVoice(voice));
 }
 
+TEST(VoicePool, TimelineCurvePreparationRefusalKeepsVoiceAdmissionAtomic) {
+    EngineSession session(VoicePoolConfig(1, kBlockFrames, kSampleRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const auto samples = harkentest::MakeDC(8192, 0.25f);
+    const auto desc = MonoDesc(samples, kSampleRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
+    auto& engine = *session.Engine();
+    engine.voices.SetTimelineEnvelopeCurveCommitPageLimitForTests(0);
+    VnVoiceHandle voice = 0;
+    EXPECT_EQ(VN_NO_VOICE, ClaimObserverVoice(engine, &voice, true));
+    EXPECT_EQ(0u, voice);
+    EXPECT_EQ(0u, engine.voices.ActiveCount());
+    EXPECT_TRUE(engine.voices.HasFreeSlot());
+    engine.voices.SetTimelineEnvelopeCurveCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &voice, true));
+    auto* context = engine.voices.Resolve(voice);
+    ASSERT_NE(nullptr, context);
+    ASSERT_NE(nullptr, context->timelineEnvelopes[0].curve);
+    ASSERT_NE(nullptr, context->timelineEnvelopes[1].curve);
+    ASSERT_TRUE(engine.voices.CancelPreparedVoice(voice));
+}
+
 TEST(VoicePool, GenericFutureBackingFillsSparseWeightHolesBeforePreparedUse) {
     EngineSession session(VoicePoolConfig(4, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1667,6 +1689,9 @@ TEST(VoicePool, GenericFutureBackingFillsSparseWeightHolesBeforePreparedUse) {
     const auto* highContext = engine.voices.Resolve(high);
     ASSERT_NE(nullptr, highContext);
     auto* const backing = highContext->variableWeightControls.data();
+    auto* const retainedCurve = highContext->timelineEnvelopes[0].curve;
+    ASSERT_NE(nullptr, retainedCurve);
+    retainedCurve->values[0] = 0.375f;
     harken::StableStoragePreparation held;
     for (std::uint32_t slot = 0; slot < 4; ++slot)
         EXPECT_TRUE(engine.voices.PendingTimelineVariableEvents(slot).empty());
@@ -1715,6 +1740,10 @@ TEST(VoicePool, GenericFutureBackingFillsSparseWeightHolesBeforePreparedUse) {
         ASSERT_EQ(harken::kSelectionPathNodeCapacity,
             engine.voices.Resolve(low)->variableWeightControls.size());
         EXPECT_EQ(harken::kMaxChannels, engine.voices.Resolve(low)->pcm.channelCount);
+        ASSERT_NE(nullptr, engine.voices.Resolve(low)->timelineEnvelopes[0].curve);
+        ASSERT_NE(nullptr, engine.voices.Resolve(low)->timelineEnvelopes[1].curve);
+        EXPECT_EQ(retainedCurve, highContext->timelineEnvelopes[0].curve);
+        EXPECT_FLOAT_EQ(0.375f, retainedCurve->values[0]);
         ASSERT_TRUE(engine.voices.PrepareVariableWeightControls(low, &first, 1));
         ASSERT_TRUE(engine.voices.CancelPreparedVoice(low));
         EXPECT_EQ(pendingEvents, engine.voices.PendingTimelineVariableEvents(3).data());

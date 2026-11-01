@@ -8209,6 +8209,8 @@ std::size_t ScheduledTransactionPool::CaptureLivePlan03Groups(
     std::size_t needed = 0;
     std::size_t written = 0;
     for (std::uint32_t ring = 0; ring < pageCount_; ++ring) {
+        if (pagePlan03GroupCount_[ring] == 0 &&
+            pagePreparedPlan03GroupCount_[ring] == 0) continue;
         const std::size_t rowBase =
             static_cast<std::size_t>(ring) *
             config_.maxPlan03GroupHeadersPerPage;

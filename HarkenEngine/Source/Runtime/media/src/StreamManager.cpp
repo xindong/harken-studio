@@ -4,6 +4,7 @@
 #include "harken/core/Utf8Path.h"
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <chrono>
 #include <cstring>
@@ -42,6 +43,7 @@ constexpr std::chrono::milliseconds kServiceInterval{2};
 // real recording exceeds 1 MHz, and bounding it keeps downstream frame
 // math (prebuffer spans, resample ratios) inside 64-bit headroom.
 constexpr std::uint32_t kMaxSaneSampleRate = 1'000'000;
+
 
 std::uint64_t RoundUpPow2(std::uint64_t v) {
     std::uint64_t p = 1;
@@ -149,6 +151,7 @@ std::size_t StreamManager::PendingRequestCountForTest() const {
 StreamManager::StreamManager(const EngineConfig& config)
     : m_ringFrames(static_cast<std::uint32_t>(
           RoundUpPow2(config.streamRingFrames))),
+      m_prebufferMs(config.prebufferMs),
       m_slots(config.maxStreams) {
     const auto channelSamples = static_cast<std::uint64_t>(config.maxStreams) * m_ringFrames;
     if (channelSamples > UINT32_MAX) throw std::bad_alloc();
@@ -893,6 +896,13 @@ VnResult StreamManager::OpenAndValidate(Request& request,
     if (!record.file) {
         return VN_BAD_STREAM_FILE;
     }
+#if defined(_MSVC_STL_VERSION)
+    // MSVC filebuf splits byte reads into 4095-byte fread calls. Configure
+    // its existing CRT-owned buffer before the first read so those calls
+    // share a larger fill. A refused hint keeps the normal reader usable.
+    // The buffer belongs to this open file generation, not to each voice.
+    (void)record.file.rdbuf()->pubsetbuf(nullptr, 16 * 1024);
+#endif
 
     std::uint8_t headerBytes[kStreamHeaderBytes];
     record.file.read(reinterpret_cast<char*>(headerBytes),
@@ -1117,16 +1127,41 @@ void StreamManager::DetachRetiredSlots() {
 }
 
 void StreamManager::ServeSlots() {
-    for (StreamSlot& slot : m_slots) {
-        if (slot.ring.state.load(std::memory_order_acquire) ==
-            StreamSlotState::Active) {
-            ServeOneSlot(slot);
+    for (std::size_t i = 0; i < m_slots.size(); i += 2) {
+        if (i + 1 < m_slots.size() &&
+            m_slots[i].ring.state.load(std::memory_order_acquire) ==
+                StreamSlotState::Active &&
+            m_slots[i + 1].ring.state.load(std::memory_order_acquire) ==
+                StreamSlotState::Active) {
+            ServiceCursor first = BeginSlotService(m_slots[i]);
+            ServiceCursor second = BeginSlotService(m_slots[i + 1]);
+            if (first.scalarOnly || second.scalarOnly) {
+                DrainSlot(first);
+                DrainSlot(second);
+            } else {
+                ServeSlotPair(first, second);
+            }
+        } else {
+            const std::size_t end = std::min(i + 2, m_slots.size());
+            for (std::size_t slot = i; slot < end; ++slot) {
+                if (m_slots[slot].ring.state.load(std::memory_order_acquire) ==
+                    StreamSlotState::Active) {
+                    ServeOneSlot(m_slots[slot]);
+                }
+            }
         }
     }
 }
 
 bool StreamManager::RunChunkJob(const ChunkJob& job,
                                 std::vector<float>& staging) {
+    return ReadChunk(job, staging) &&
+        ValidateChunk(job, staging,
+            Fnv1a64(staging.data(), static_cast<std::size_t>(job.chunkBytes)));
+}
+
+bool StreamManager::ReadChunk(const ChunkJob& job,
+                              std::vector<float>& staging) {
     StreamFile& file = *job.file;
     staging.resize(static_cast<std::size_t>(job.chunkFrames) * job.channels);
     file.file.clear();
@@ -1135,11 +1170,14 @@ bool StreamManager::RunChunkJob(const ChunkJob& job,
                               job.chunkBytes)));
     file.file.read(reinterpret_cast<char*>(staging.data()),
                    static_cast<std::streamsize>(job.chunkBytes));
-    if (file.file.gcount() != static_cast<std::streamsize>(job.chunkBytes)) {
-        return false;
-    }
-    if (Fnv1a64(staging.data(), static_cast<std::size_t>(job.chunkBytes)) !=
-        file.chunkChecksums[job.chunkIndex]) {
+    return file.file.gcount() == static_cast<std::streamsize>(job.chunkBytes);
+}
+
+bool StreamManager::ValidateChunk(const ChunkJob& job,
+                                  const std::vector<float>& staging,
+                                  std::uint64_t checksum) {
+    const StreamFile& file = *job.file;
+    if (checksum != file.chunkChecksums[job.chunkIndex]) {
         return false;
     }
     // A valid checksum does not make NaN/Infinity safe for persistent DSP.
@@ -1162,8 +1200,132 @@ bool StreamManager::RunChunkJob(const ChunkJob& job,
 }
 
 void StreamManager::ServeOneSlot(StreamSlot& slot) {
-    if (slot.feedStopped) {
+    ServiceCursor cursor = BeginSlotService(slot);
+    DrainSlot(cursor);
+}
+
+StreamManager::ServiceCursor StreamManager::BeginSlotService(
+    StreamSlot& slot) const {
+    const std::uint32_t testLimit =
+        m_maxServeFramesForTest.load(std::memory_order_relaxed);
+    const std::uint32_t availableAtEntry = slot.ring.WriteAvailable();
+    const std::uint32_t maxServeFrames = testLimit == 0
+        ? availableAtEntry : std::min(availableAtEntry, testLimit);
+    ServiceCursor cursor{&slot, maxServeFrames, 0,
+        slot.ring.writeIndex.load(std::memory_order_relaxed) == 0};
+    LatchScalarService(cursor);
+    return cursor;
+}
+
+bool StreamManager::LatchScalarService(ServiceCursor& cursor) const {
+    if (!cursor.scalarOnly) {
+        const StreamSlot& slot = *cursor.slot;
+        const StreamFile& file = *m_files[slot.fileIndex];
+        const std::uint64_t target =
+            (static_cast<std::uint64_t>(m_prebufferMs) * file.toc.sampleRate +
+             999) / 1000;
+        const std::uint32_t occupancy =
+            slot.ring.capacity - slot.ring.WriteAvailable();
+        cursor.scalarOnly = occupancy == 0 ||
+            occupancy < std::min<std::uint64_t>(slot.ring.capacity, target);
+    }
+    return cursor.scalarOnly;
+}
+
+void StreamManager::CompleteChunk(StreamSlot& slot, const ChunkJob& job,
+                                   bool valid) {
+    if (valid) {
+        slot.stagedChunk = job.chunkIndex;
+    } else {
+        // Already published material was verified and drains normally.
+        slot.ring.MarkEndOfData(StreamTerminalReason::IntegrityAbort);
+        slot.feedStopped = true;
+    }
+}
+
+void StreamManager::DrainSlot(ServiceCursor& cursor, const ChunkJob* pending) {
+    ChunkJob job;
+    if (pending != nullptr) {
+        job = *pending;
+    } else if (!AdvanceSlot(cursor, &job)) {
         return;
+    }
+    do {
+        StreamSlot& slot = *cursor.slot;
+        // A read can overwrite staging and then throw. Do not leave its old
+        // verified identity available to a later service pass.
+        slot.stagedChunk = kNoChunk;
+        CompleteChunk(slot, job, RunChunkJob(job, slot.staging));
+    } while (AdvanceSlot(cursor, &job));
+}
+
+void StreamManager::ServeSlotPair(ServiceCursor& first, ServiceCursor& second) {
+    for (;;) {
+        ChunkJob firstJob;
+        if (!AdvanceSlot(first, &firstJob)) {
+            DrainSlot(second);
+            return;
+        }
+        if (LatchScalarService(first)) {
+            DrainSlot(first, &firstJob);
+            DrainSlot(second);
+            return;
+        }
+
+        ChunkJob secondJob;
+        if (!AdvanceSlot(second, &secondJob)) {
+            DrainSlot(first, &firstJob);
+            return;
+        }
+        if (LatchScalarService(first) || LatchScalarService(second)) {
+            DrainSlot(first, &firstJob);
+            DrainSlot(second, &secondJob);
+            return;
+        }
+
+        StreamSlot& firstSlot = *first.slot;
+        StreamSlot& secondSlot = *second.slot;
+        firstSlot.stagedChunk = kNoChunk;
+        if (!ReadChunk(firstJob, firstSlot.staging)) {
+            CompleteChunk(firstSlot, firstJob, false);
+            DrainSlot(second, &secondJob);
+            return;
+        }
+        if (LatchScalarService(first) || LatchScalarService(second)) {
+            CompleteChunk(firstSlot, firstJob,
+                ValidateChunk(firstJob, firstSlot.staging,
+                    Fnv1a64(firstSlot.staging.data(),
+                        static_cast<std::size_t>(firstJob.chunkBytes))));
+            DrainSlot(first);
+            DrainSlot(second, &secondJob);
+            return;
+        }
+
+        secondSlot.stagedChunk = kNoChunk;
+        if (!ReadChunk(secondJob, secondSlot.staging)) {
+            CompleteChunk(firstSlot, firstJob,
+                ValidateChunk(firstJob, firstSlot.staging,
+                    Fnv1a64(firstSlot.staging.data(),
+                        static_cast<std::size_t>(firstJob.chunkBytes))));
+            CompleteChunk(secondSlot, secondJob, false);
+            DrainSlot(first);
+            return;
+        }
+
+        const auto hashes = Fnv1a64Pair(
+            firstSlot.staging.data(), static_cast<std::size_t>(firstJob.chunkBytes),
+            secondSlot.staging.data(), static_cast<std::size_t>(secondJob.chunkBytes));
+        CompleteChunk(firstSlot, firstJob,
+            ValidateChunk(firstJob, firstSlot.staging, hashes[0]));
+        CompleteChunk(secondSlot, secondJob,
+            ValidateChunk(secondJob, secondSlot.staging, hashes[1]));
+    }
+}
+
+bool StreamManager::AdvanceSlot(ServiceCursor& cursor, ChunkJob* job) {
+    StreamSlot& slot = *cursor.slot;
+    if (slot.feedStopped) {
+        return false;
     }
     StreamRing& ring = slot.ring;
     StreamFile& file = *m_files[slot.fileIndex];
@@ -1172,12 +1334,6 @@ void StreamManager::ServeOneSlot(StreamSlot& slot) {
     const std::uint64_t frameCount = file.toc.frameCount;
     const std::uint64_t chunkBytes =
         StreamChunkBytes(chunkFrames, file.toc.channelCount);
-    std::uint32_t framesServed = 0;
-    const std::uint32_t testLimit =
-        m_maxServeFramesForTest.load(std::memory_order_relaxed);
-    const std::uint32_t availableAtEntry = ring.WriteAvailable();
-    const std::uint32_t maxServeFrames = testLimit == 0
-        ? availableAtEntry : std::min(availableAtEntry, testLimit);
 
     for (;;) {
         const bool wrapAtLimit =
@@ -1200,26 +1356,17 @@ void StreamManager::ServeOneSlot(StreamSlot& slot) {
             // remainder and the source ends.
             ring.MarkEndOfData(StreamTerminalReason::NaturalEnd);
             slot.feedStopped = true;
-            return;
+            return false;
         }
-        if (framesServed >= maxServeFrames) return;
+        if (cursor.framesServed >= cursor.maxServeFrames) return false;
         const StreamSeek seek =
             StreamSeekToFrame(slot.nextFrame, chunkFrames);
         if (slot.stagedChunk != seek.chunkIndex) {
             // Stage and verify the whole chunk before any of it becomes
             // eligible for the ring: frames the audio thread can see have
             // always passed their checksum and finite-sample validation.
-            const ChunkJob job{&file, seek.chunkIndex, chunkFrames, channels,
-                               chunkBytes};
-            if (!RunChunkJob(job, slot.staging)) {
-                // Mid-stream integrity failure: stop feeding; what is
-                // already buffered was verified and drains normally, then
-                // the source ends.
-                ring.MarkEndOfData(StreamTerminalReason::IntegrityAbort);
-                slot.feedStopped = true;
-                return;
-            }
-            slot.stagedChunk = seek.chunkIndex;
+            *job = {&file, seek.chunkIndex, chunkFrames, channels, chunkBytes};
+            return true;
         }
         const std::uint32_t valid = StreamChunkValidFrames(
             seek.chunkIndex, chunkFrames, frameCount);
@@ -1229,10 +1376,10 @@ void StreamManager::ServeOneSlot(StreamSlot& slot) {
         float* dst[kMaxChannels];
         const std::uint32_t span = ring.ContiguousWrite(dst);
         if (span == 0) {
-            return; // ring full; the next pass resumes here
+            return false; // ring full; the next pass resumes here
         }
         const std::uint32_t serveBudget =
-            std::min(span, maxServeFrames - framesServed);
+            std::min(span, cursor.maxServeFrames - cursor.framesServed);
         const std::uint32_t n =
             std::min({serveBudget, remainInChunk, remainToLimit});
         for (std::uint32_t ch = 0; ch < channels; ++ch) {
@@ -1244,7 +1391,7 @@ void StreamManager::ServeOneSlot(StreamSlot& slot) {
         }
         ring.PublishWrite(n);
         slot.nextFrame += n;
-        framesServed += n;
+        cursor.framesServed += n;
 
         const std::uint64_t occupancy =
             ring.writeIndex.load(std::memory_order_relaxed) -

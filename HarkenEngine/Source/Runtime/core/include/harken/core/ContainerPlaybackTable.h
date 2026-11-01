@@ -4,6 +4,7 @@
 #include <harken/ObjectId.h>
 #include "harken/core/PlayableInstanceTable.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstddef>
 #include <vector>
@@ -193,7 +194,8 @@ private:
 class PreparedPlayableTreeStep {
 public:
     static constexpr std::size_t kAdoptedReservationCapacity = 512;
-    explicit PreparedPlayableTreeStep(std::uint32_t capacity = 0);
+    explicit PreparedPlayableTreeStep(std::uint32_t capacity = 0, bool prepareFullStorage = true);
+    bool PrepareStorage() noexcept;
     PreparedPlayableTreeStep(const PreparedPlayableTreeStep&) = delete;
     PreparedPlayableTreeStep& operator=(const PreparedPlayableTreeStep&) = delete;
     PreparedPlayableTreeStep(PreparedPlayableTreeStep&& other) noexcept;
@@ -293,14 +295,10 @@ private:
     std::vector<PreparedContainerPlaybackRow> containers_;
     std::vector<PlayableInstanceTable::PreparedCommitProof> instanceCommitProofs_;
     std::vector<ContainerPlaybackTable::PreparedCommitProof> containerCommitProofs_;
-    std::array<PreparedPlayableInstance*, kAdoptedReservationCapacity>
-        adoptedInstances_{};
-    std::array<PreparedContainerPlaybackRow*, kAdoptedReservationCapacity>
-        adoptedContainers_{};
-    std::array<ContainerPlaybackTable::PreparedCommitProof, kAdoptedReservationCapacity>
-        adoptedContainerCommitProofs_{};
-    std::array<PlayableInstanceTable::PreparedCommitProof, kAdoptedReservationCapacity>
-        adoptedInstanceCommitProofs_{};
+    StableRowStorage<PreparedPlayableInstance*> adoptedInstances_;
+    StableRowStorage<PreparedContainerPlaybackRow*> adoptedContainers_;
+    StableRowStorage<ContainerPlaybackTable::PreparedCommitProof> adoptedContainerCommitProofs_;
+    StableRowStorage<PlayableInstanceTable::PreparedCommitProof> adoptedInstanceCommitProofs_;
     std::uint32_t adoptedInstanceCount_ = 0;
     std::uint32_t adoptedContainerCount_ = 0;
     std::uint32_t maxReservations_ = 0;
@@ -336,8 +334,11 @@ public:
     // Runtime-internal store large enough for the complete transaction.
     static constexpr std::size_t kOwnerTokenCapacity = 640;
 
-    explicit PlayableTreeExecutor(std::uint32_t capacity = 0)
-        : step_(capacity) {}
+    explicit PlayableTreeExecutor(std::uint32_t capacity = 0, bool prepareFullStorage = true)
+        : step_(capacity, prepareFullStorage),
+          ownerTokens_(prepareFullStorage ? kOwnerTokenCapacity : 3u),
+          committedOwnerTokens_(prepareFullStorage ? kOwnerTokenCapacity : 3u) {}
+    bool PrepareStorage() noexcept;
 
     PlayableTreeExecutor(const PlayableTreeExecutor&) = delete;
     PlayableTreeExecutor& operator=(const PlayableTreeExecutor&) = delete;
@@ -392,7 +393,11 @@ public:
             step_.containers_.capacity() * sizeof(PreparedContainerPlaybackRow) +
             step_.instanceCommitProofs_.capacity() * sizeof(PlayableInstanceTable::PreparedCommitProof) +
             step_.containerCommitProofs_.capacity() * sizeof(ContainerPlaybackTable::PreparedCommitProof) +
-            step_.parentLinkRequests_.capacity() * sizeof(PlayableInstanceTable::ParentLinkRequest);
+            step_.adoptedInstances_.RequestedBytes() + step_.adoptedContainers_.RequestedBytes() +
+            step_.adoptedInstanceCommitProofs_.RequestedBytes() + step_.adoptedContainerCommitProofs_.RequestedBytes() +
+            ownerTokens_.capacity() * sizeof(OwnerToken) + committedOwnerTokens_.capacity() * sizeof(OwnerToken) +
+            step_.parentLinkRequests_.capacity() * sizeof(PlayableInstanceTable::ParentLinkRequest) +
+            step_.parentLinkProof_.StorageBytes();
     }
     const PreparedPlayableInstance* PreparedInstanceCensusToken(std::size_t index) const noexcept {
         if (index < step_.instances_.size()) return &step_.instances_[index];
@@ -528,11 +533,11 @@ public:
                                  OwnerCommitFn commit,
                                  OwnerCancelFn cancel) noexcept {
         if (step_.CommitProofsRequired() || context == nullptr || validate == nullptr || commit == nullptr ||
-            cancel == nullptr || ownerTokenCount_ >= kOwnerTokenCapacity ||
+            cancel == nullptr || ownerTokenCount_ >= ownerTokens_.size() ||
             step_.Committed() ||
             (retainPreparedOwnerRollback_ &&
              (!CanRetainPreparedOwners() ||
-              ownerTokenCount_ >= kOwnerTokenCapacity - committedOwnerTokenCount_))) {
+              ownerTokenCount_ >= committedOwnerTokens_.size() - committedOwnerTokenCount_))) {
             return false;
         }
         ownerTokens_[ownerTokenCount_++] = {context, validate, commit, cancel};
@@ -543,7 +548,7 @@ public:
     bool AdoptCommittedOwnerToken(void* context,
                                   OwnerCancelFn cancel) noexcept {
         if (context == nullptr || cancel == nullptr ||
-            committedOwnerTokenCount_ >= kOwnerTokenCapacity ||
+            committedOwnerTokenCount_ >= committedOwnerTokens_.size() ||
             !step_.Committed() ||
             (retainPreparedOwnerRollback_ && ownershipTransferred_)) {
             return false;
@@ -729,8 +734,8 @@ public:
                 (!published_ && externalInstance_->Handle() != 0))) ||
             (!published_ && (committedOwnerTokenCount_ != 0 || ExternalInstanceIsLive())) ||
             !step_.ResetForReuse(published_)) return false;
-        ownerTokens_.fill({});
-        committedOwnerTokens_.fill({});
+        std::fill(ownerTokens_.begin(), ownerTokens_.end(), OwnerToken{});
+        std::fill(committedOwnerTokens_.begin(), committedOwnerTokens_.end(), OwnerToken{});
         committedOwnerTokenCount_ = 0;
         ClearExternalInstanceContext();
         published_ = false;
@@ -921,8 +926,8 @@ private:
     bool CanRetainPreparedOwners() const noexcept {
         return !published_ && !ownershipTransferred_ && !step_.Committed() &&
                !ExternalInstanceIsLive() &&
-               committedOwnerTokenCount_ <= kOwnerTokenCapacity &&
-               ownerTokenCount_ <= kOwnerTokenCapacity - committedOwnerTokenCount_;
+               committedOwnerTokenCount_ <= committedOwnerTokens_.size() &&
+               ownerTokenCount_ <= committedOwnerTokens_.size() - committedOwnerTokenCount_;
     }
 
     void RetainPreparedOwnersAfterCommit() noexcept {
@@ -1012,9 +1017,9 @@ private:
 
     PreparedPlayableTreeStep step_;
     PlayableInstanceTable::PreparedCommitProof externalInstanceCommitProof_{};
-    std::array<OwnerToken, kOwnerTokenCapacity> ownerTokens_{};
+    std::vector<OwnerToken> ownerTokens_;
     std::uint32_t ownerTokenCount_ = 0;
-    std::array<OwnerToken, kOwnerTokenCapacity> committedOwnerTokens_{};
+    std::vector<OwnerToken> committedOwnerTokens_;
     std::uint32_t committedOwnerTokenCount_ = 0;
     PlayableInstanceTable* instanceTable_ = nullptr;
     PreparedPlayableInstance* externalInstance_ = nullptr;

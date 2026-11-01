@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstring>
 #include <new>
+#include <limits>
 #include <type_traits>
 #include <utility>
 
@@ -18,18 +19,20 @@ struct SetStorageMember {
     std::vector<harken::PackTocEntry> media;
     harken::PackRevisionKey key{};
 
-    SetStorageMember(std::uint64_t packId, VnSoundId soundId, float value) {
+    SetStorageMember(std::uint64_t packId, VnSoundId soundId, float value,
+                     std::size_t frames = 8) {
+        const auto byteCount = std::max(std::size_t{64}, frames * sizeof(float));
         bytes.reset(static_cast<std::uint8_t*>(::operator new[](
-            64, std::align_val_t{harken::kPackBlobAlign})));
-        std::memset(bytes.get(), 0, 64);
+            byteCount, std::align_val_t{harken::kPackBlobAlign})));
+        std::memset(bytes.get(), 0, byteCount);
         auto* samples = reinterpret_cast<float*>(bytes.get());
-        std::fill(samples, samples + 8, value);
+        std::fill(samples, samples + frames, value);
         harken::PackTocEntry row{};
         row.soundId = soundId;
         row.sampleRate = 48000;
         row.channelCount = 1;
-        row.frameCount = 8;
-        row.blobChecksum = harken::Fnv1a64(bytes.get(), 8 * sizeof(float));
+        row.frameCount = frames;
+        row.blobChecksum = harken::Fnv1a64(bytes.get(), frames * sizeof(float));
         media.push_back(row);
         key.packStableId = packId;
         key.contentRevision = 1;
@@ -41,6 +44,330 @@ struct SetStorageMember {
         return {handle, key, &bytes, &media};
     }
 };
+
+TEST(CanonicalPackSetStorage, CompactMediaSharesExactBitsAndDistinguishesSignedZero) {
+    const auto frames = 16 * harken::detail::StablePageReservation::SystemPageBytes() /
+                        sizeof(std::int16_t) + 1;
+    for (const int path : {0, 1, 2}) {
+        SCOPED_TRACE(path);
+        harken::PCMRegistry registry;
+        harken::PackTable packs(3, 4);
+        const auto sound = harkentest::ObjectId(100);
+        SetStorageMember a(21, sound, 0.0f, frames), b(22, sound, 0.0f, frames),
+                         negative(23, sound, -0.0f, frames);
+        const auto load = [&](SetStorageMember& member, VnPackHandle* handle) {
+            if (path != 0) {
+                std::vector<harken::PCMRegistry::PreparedPackSamples> samples(1);
+                auto input = member.Input();
+                const void* preparedAddress = nullptr;
+                if (path == 2) {
+                    const float* channel = reinterpret_cast<const float*>(member.bytes.get());
+                    VnPCMDesc desc{};
+                    desc.structSize = sizeof(desc);
+                    desc.sampleRate = 48000;
+                    desc.channels = 1;
+                    desc.frames = frames;
+                    desc.layout = VN_PCM_LAYOUT_PLANAR;
+                    desc.policy = VN_PCM_POLICY_COPY;
+                    desc.samplesPlanar = &channel;
+                    const auto result = registry.PreparePackSamples(sound, &desc, &samples[0]);
+                    if (result != VN_OK) return result;
+                    preparedAddress = samples[0].View().channels[0];
+                    input.bytes = nullptr;
+                    input.samples = &samples;
+                }
+                harken::PackTable::PreparedSetMutation prepared;
+                const bool alreadyRegistered = registry.CookieOf(sound) != 0;
+                const auto result = packs.PrepareCanonicalSet({input}, {}, registry, &prepared);
+                if (result == VN_OK) {
+                    *handle = prepared.HandleAt(0);
+                    packs.CommitPreparedSet(&prepared, registry);
+                    if (path == 2) {
+                        EXPECT_EQ(alreadyRegistered, samples[0].IsPrepared());
+                        if (!alreadyRegistered)
+                            EXPECT_EQ(preparedAddress, registry.Lookup(sound).channels[0]);
+                    }
+                }
+                return result;
+            }
+            harken::PackTable::PreparedLoadToken prepared;
+            const auto result = packs.PrepareLoad(&prepared);
+            if (result != VN_OK) return result;
+            member.key.handle = prepared.Handle();
+            member.key.slotGeneration = static_cast<std::uint32_t>(prepared.Handle() >> 32);
+            std::vector<harken::PackEntry> entries(1);
+            entries[0].soundId = sound;
+            entries[0].frameCount = frames;
+            return packs.LoadPrepared(&prepared, member.bytes, std::move(entries),
+                                      member.media, registry, handle, &member.key);
+        };
+        VnPackHandle handles[3]{};
+        ASSERT_EQ(VN_OK, load(a, &handles[0]));
+        const auto original = registry.Lookup(sound);
+        const auto cookie = registry.CookieOf(sound);
+        ASSERT_EQ(harken::PcmSampleFormat::ExactInt16, original.sampleFormat);
+        ASSERT_EQ(VN_OK, load(b, &handles[1]));
+        EXPECT_EQ(cookie, registry.CookieOf(sound));
+        EXPECT_EQ(original.channels[0], registry.Lookup(sound).channels[0]);
+        EXPECT_EQ(VN_IN_USE, load(negative, &handles[2]));
+        EXPECT_EQ(0u, handles[2]);
+        EXPECT_EQ(cookie, registry.CookieOf(sound));
+        ASSERT_EQ(VN_OK, packs.Unload(handles[0], registry));
+        EXPECT_EQ(original.channels[0], registry.Lookup(sound).channels[0]);
+        ASSERT_EQ(VN_OK, packs.Unload(handles[1], registry));
+        ASSERT_EQ(VN_OK, load(negative, &handles[2]));
+        const auto replaced = registry.Lookup(sound);
+        EXPECT_EQ(harken::PcmSampleFormat::Float32, replaced.sampleFormat);
+        EXPECT_EQ(original.contentRevision, replaced.contentRevision);
+        const float expected = -0.0f;
+        const float actual = replaced.ReadSample(0, frames - 1);
+        EXPECT_EQ(0, std::memcmp(&expected, &actual, sizeof(float)));
+        EXPECT_EQ(VN_OK, packs.Unload(handles[2], registry));
+        EXPECT_EQ(0u, registry.Count());
+    }
+}
+
+TEST(CanonicalPackSetStorage, PreparedSamplesKeepIdentityAcrossAdoptionAndLateRefusal) {
+    harken::PCMRegistry registry;
+    const auto first = harkentest::ObjectId(100), second = harkentest::ObjectId(101);
+    const float left[]{0.25f, -0.0f, 0.75f}, right[]{-0.5f, 0.0f, 0.125f};
+    const float* planes[]{left, right};
+    VnPCMDesc desc{};
+    desc.structSize = sizeof(desc);
+    desc.sampleRate = 48000;
+    desc.channels = 2;
+    desc.frames = 3;
+    desc.layout = VN_PCM_LAYOUT_PLANAR;
+    desc.policy = VN_PCM_POLICY_COPY;
+    desc.samplesPlanar = planes;
+    harken::PCMRegistry::PreparedPackSamples samples;
+    ASSERT_EQ(VN_OK, registry.PreparePackSamples(first, &desc, &samples, {1, 3}));
+    const auto view = samples.View();
+    EXPECT_EQ(VN_IN_USE, registry.PreparePackSamples(second, &desc, &samples));
+    harken::PCMRegistry::PackReferenceRegistration registrations[2]{};
+    registrations[0].soundId = first;
+    registrations[0].samples = &samples;
+    registrations[1].soundId = second;
+    harken::PCMRegistry::PreparedPackMutation refused;
+    EXPECT_EQ(VN_INVALID_ARG, registry.PreparePackMutation(registrations, 2, 0, &refused));
+    EXPECT_FALSE(samples.IsPrepared());
+    EXPECT_FALSE(refused.IsPrepared());
+    EXPECT_EQ(0u, registry.Count());
+
+    ASSERT_EQ(VN_OK, registry.PreparePackSamples(first, &desc, &samples, {1, 3}));
+    const auto adopted = samples.View();
+    harken::PCMRegistry::PreparedPackMutation prepared;
+    ASSERT_EQ(VN_OK, registry.PreparePackMutation(registrations, 1, 0, &prepared));
+    const auto held = prepared.ReferenceOf(first);
+    EXPECT_EQ(1u, held.Cookie());
+    EXPECT_EQ(adopted.channels[0], held.View().channels[0]);
+    EXPECT_EQ(adopted.useCount, held.View().useCount);
+    EXPECT_EQ(view.contentRevision, held.View().contentRevision);
+    registry.CommitPreparedPackMutation(&prepared);
+    EXPECT_EQ(adopted.channels[1], registry.Lookup(first).channels[1]);
+    EXPECT_EQ(1u, registry.Lookup(first).loop.startFrame);
+    EXPECT_EQ(3u, registry.Lookup(first).loop.endFrame);
+}
+
+TEST(CanonicalPackSetStorage, WindowedSamplesKeepPhysicalBitsAndFrameMajorRevision) {
+    const auto frames = 16 * harken::detail::StablePageReservation::SystemPageBytes() /
+                        sizeof(std::int16_t) + 3;
+    for (const auto layout : {VN_PCM_LAYOUT_PLANAR, VN_PCM_LAYOUT_INTERLEAVED}) {
+        for (const float last : {0.25f, -0.0f, std::numeric_limits<float>::denorm_min(), 0.1f, 1.0f}) {
+            SCOPED_TRACE(layout);
+            SCOPED_TRACE(last);
+            std::vector<float> physical(frames * 2);
+            for (std::size_t i = 0; i < physical.size(); ++i)
+                physical[i] = static_cast<float>(static_cast<int>(i % 32768) - 16384) * 0x1p-15f;
+            physical.back() = last;
+            const float* planes[]{physical.data(), physical.data() + frames};
+            VnPCMDesc shape{};
+            shape.structSize = sizeof(shape);
+            shape.sampleRate = 44100;
+            shape.channels = 2;
+            shape.frames = frames;
+            shape.layout = layout;
+            shape.policy = VN_PCM_POLICY_COPY;
+            harken::PCMRegistry registry;
+            const auto sound = harkentest::ObjectId(100);
+            harken::PCMRegistry::PackSampleBuilder builder;
+            ASSERT_EQ(VN_OK, registry.BeginPackSamples(sound, &shape, &builder, {7, frames - 3}));
+            for (std::size_t i = 0; i < physical.size();) {
+                const auto count = std::min(std::size_t{16128}, physical.size() - i);
+                ASSERT_EQ(VN_OK, builder.Append(physical.data() + i, count));
+                i += count;
+            }
+            harken::PCMRegistry::PreparedPackSamples prepared;
+            ASSERT_EQ(VN_OK, builder.Complete(&prepared));
+            shape.samplesInterleaved = physical.data();
+            shape.samplesPlanar = planes;
+            shape.policy = VN_PCM_POLICY_REFERENCE;
+            ASSERT_EQ(VN_OK, registry.RegisterPCM(sound, &shape, nullptr, {7, frames - 3}));
+            const auto expected = registry.Lookup(sound);
+            const auto actual = prepared.View();
+            EXPECT_EQ(expected.contentRevision, actual.contentRevision);
+            EXPECT_EQ(last == 0.25f ? harken::PcmSampleFormat::ExactInt16 :
+                      harken::PcmSampleFormat::Float32, actual.sampleFormat);
+            for (std::uint32_t ch = 0; ch < 2; ++ch) {
+                for (std::uint64_t frame = 0; frame < frames; ++frame) {
+                    const float a = actual.ReadSample(ch, frame), b = expected.ReadSample(ch, frame);
+                    ASSERT_EQ(0, std::memcmp(&a, &b, sizeof(float)));
+                }
+            }
+        }
+    }
+}
+
+TEST(CanonicalPackSetStorage, WindowedSamplePairsKeepEachCanonicalRevisionAndFinalOwner) {
+    const auto frames = 16 * harken::detail::StablePageReservation::SystemPageBytes() /
+                        sizeof(std::int16_t) + 3;
+    for (const auto layout : {VN_PCM_LAYOUT_PLANAR, VN_PCM_LAYOUT_INTERLEAVED}) {
+        for (const auto channels : {1u, 2u, harken::kMaxChannels}) {
+            for (unsigned formats = 0; formats < 4; ++formats) {
+                SCOPED_TRACE(layout);
+                SCOPED_TRACE(channels);
+                SCOPED_TRACE(formats);
+                harken::PCMRegistry registry;
+                std::vector<float> physical[2];
+                const float* planes[2][harken::kMaxChannels]{};
+                VnPCMDesc shape[2]{};
+                harken::PCMRegistry::PackSampleBuilder builders[2];
+                harken::PCMRegistry::PreparedPackSamples prepared[2];
+                for (unsigned side = 0; side < 2; ++side) {
+                    physical[side].resize(frames * channels);
+                    for (std::size_t i = 0; i < physical[side].size(); ++i)
+                        physical[side][i] = static_cast<float>(
+                            static_cast<int>((i * (side + 1) + side) % 32768) - 16384) * 0x1p-15f;
+                    if ((formats & (1u << side)) != 0)
+                        physical[side].back() = side == 0 ? -0.0f : std::numeric_limits<float>::denorm_min();
+                    for (unsigned ch = 0; ch < channels; ++ch)
+                        planes[side][ch] = physical[side].data() + ch * frames;
+                    auto& desc = shape[side];
+                    desc.structSize = sizeof(desc);
+                    desc.sampleRate = side == 0 ? 44100 : 48000;
+                    desc.channels = channels;
+                    desc.frames = frames;
+                    desc.layout = layout;
+                    desc.policy = VN_PCM_POLICY_COPY;
+                    ASSERT_EQ(VN_OK, registry.BeginPackSamples(harkentest::ObjectId(100 + side),
+                        &desc, &builders[side], {3 + side, frames - 2 + side}));
+                    const auto count = physical[side].size() - (side == 1 ? 1 : 0);
+                    ASSERT_EQ(VN_OK, builders[side].Append(physical[side].data(), count));
+                }
+                VnResult results[2]{VN_IN_USE, VN_BAD_PACK};
+                EXPECT_FALSE(builders[0].TryCompletePair(builders[1], &prepared[0], &prepared[1], results));
+                EXPECT_FALSE(prepared[0].IsPrepared());
+                EXPECT_FALSE(prepared[1].IsPrepared());
+                EXPECT_EQ(VN_IN_USE, results[0]);
+                EXPECT_EQ(VN_BAD_PACK, results[1]);
+                ASSERT_EQ(VN_OK, builders[1].Append(&physical[1].back(), 1));
+                ASSERT_TRUE(builders[0].TryCompletePair(builders[1], &prepared[0], &prepared[1], results));
+                ASSERT_EQ(VN_OK, results[0]);
+                ASSERT_EQ(VN_OK, results[1]);
+                for (unsigned side = 0; side < 2; ++side) {
+                    shape[side].samplesPlanar = planes[side];
+                    shape[side].samplesInterleaved = physical[side].data();
+                    shape[side].policy = VN_PCM_POLICY_REFERENCE;
+                    const auto id = harkentest::ObjectId(100 + side);
+                    ASSERT_EQ(VN_OK, registry.RegisterPCM(id, &shape[side], nullptr,
+                        {3 + side, frames - 2 + side}));
+                    const auto actual = prepared[side].View(), expected = registry.Lookup(id);
+                    EXPECT_EQ(expected.contentRevision, actual.contentRevision);
+                    EXPECT_EQ((formats & (1u << side)) == 0 ? harken::PcmSampleFormat::ExactInt16 :
+                        harken::PcmSampleFormat::Float32, actual.sampleFormat);
+                    for (unsigned ch = 0; ch < channels; ++ch) {
+                        for (std::uint64_t frame = 0; frame < frames; ++frame) {
+                            const float a = actual.ReadSample(ch, frame), b = expected.ReadSample(ch, frame);
+                            ASSERT_EQ(0, std::memcmp(&a, &b, sizeof(float)));
+                        }
+                    }
+                }
+                const auto firstPointer = prepared[0].View().channels[0];
+                EXPECT_FALSE(builders[0].TryCompletePair(builders[1], &prepared[0], &prepared[1], results));
+                EXPECT_EQ(firstPointer, prepared[0].View().channels[0]);
+            }
+        }
+    }
+}
+
+TEST(CanonicalPackSetStorage, WindowedDuplicateSharesOnlyExactUnpublishedSamples) {
+    const auto frames = 16 * harken::detail::StablePageReservation::SystemPageBytes() /
+                        sizeof(std::int16_t) + 3;
+    std::vector<float> physical(frames, 0.25f);
+    harken::PCMRegistry registry;
+    const auto sound = harkentest::ObjectId(100);
+    VnPCMDesc shape{};
+    shape.structSize = sizeof(shape);
+    shape.sampleRate = 48000;
+    shape.channels = 1;
+    shape.frames = frames;
+    shape.layout = VN_PCM_LAYOUT_PLANAR;
+    shape.policy = VN_PCM_POLICY_COPY;
+    harken::PCMRegistry::PackSampleBuilder first;
+    ASSERT_EQ(VN_OK, registry.BeginPackSamples(sound, &shape, &first));
+    ASSERT_EQ(VN_OK, first.Append(physical.data(), frames));
+    harken::PCMRegistry::PreparedPackSamples source;
+    ASSERT_EQ(VN_OK, first.Complete(&source));
+    for (const bool equal : {true, false}) {
+        harken::PCMRegistry::PackSampleBuilder duplicate;
+        ASSERT_EQ(VN_OK, registry.BeginPackSamples(sound, &shape, &duplicate, {}, &source));
+        ASSERT_EQ(VN_OK, duplicate.Append(physical.data(), frames - 1));
+        const float last = equal ? 0.25f : -0.0f;
+        ASSERT_EQ(VN_OK, duplicate.Append(&last, 1));
+        harken::PCMRegistry::PreparedPackSamples result;
+        ASSERT_EQ(VN_OK, duplicate.Complete(&result));
+        EXPECT_EQ(equal, result.View().channels[0] == source.View().channels[0]);
+        EXPECT_EQ(0.25f, result.View().ReadSample(0, frames - 2));
+        const float actual = result.View().ReadSample(0, frames - 1);
+        EXPECT_EQ(0, std::memcmp(&last, &actual, sizeof(float)));
+    }
+    harken::detail::StablePageReservation::FailNextReservationForTests();
+    harken::PCMRegistry::PackSampleBuilder refused;
+    EXPECT_EQ(VN_BACKPRESSURE, registry.BeginPackSamples(sound, &shape, &refused));
+    ASSERT_EQ(VN_OK, registry.BeginPackSamples(sound, &shape, &refused));
+    refused.SetCommitPageLimitForTests(0);
+    EXPECT_EQ(VN_BACKPRESSURE, refused.Append(physical.data(), 1));
+    EXPECT_FALSE(refused.ReservationUnavailable());
+    harken::PCMRegistry::PreparedPackSamples result;
+    EXPECT_NE(VN_OK, refused.Complete(&result));
+    EXPECT_FALSE(result.IsPrepared());
+
+    harken::PCMRegistry::PackSampleBuilder promotion;
+    ASSERT_EQ(VN_OK, registry.BeginPackSamples(sound, &shape, &promotion));
+    ASSERT_EQ(VN_OK, promotion.Append(physical.data(), 1));
+    promotion.SetCommitPageLimitForTests(0);
+    const float negativeZero = -0.0f;
+    EXPECT_EQ(VN_BACKPRESSURE, promotion.Append(&negativeZero, 1));
+    EXPECT_FALSE(promotion.ReservationUnavailable());
+    EXPECT_NE(VN_OK, promotion.Complete(&result));
+    EXPECT_FALSE(result.IsPrepared());
+    EXPECT_EQ(0u, registry.CookieOf(sound));
+    EXPECT_EQ(0.25f, source.View().ReadSample(0, frames - 1));
+
+    harken::PCMRegistry::PackSampleBuilder aliasBuilder;
+    ASSERT_EQ(VN_OK, registry.BeginPackSamples(sound, &shape, &aliasBuilder, {}, &source));
+    ASSERT_EQ(VN_OK, aliasBuilder.Append(physical.data(), frames));
+    harken::PCMRegistry::PreparedPackSamples alias;
+    ASSERT_EQ(VN_OK, aliasBuilder.Complete(&alias));
+    harken::PCMRegistry::PackReferenceRegistration registration{};
+    registration.soundId = sound;
+    registration.samples = &source;
+    harken::PCMRegistry::PreparedPackMutation prepared;
+    ASSERT_EQ(VN_OK, registry.PreparePackMutation(&registration, 1, 0, &prepared));
+    const auto held = prepared.ReferenceOf(sound);
+    const auto cookie = held.Cookie();
+    registry.CommitPreparedPackMutation(&prepared);
+    registration.samples = &alias;
+    harken::PCMRegistry::PreparedPackMutation repeated;
+    EXPECT_EQ(VN_INVALID_ARG, registry.PreparePackMutation(&registration, 1, 0, &repeated));
+    EXPECT_FALSE(repeated.IsPrepared());
+    EXPECT_TRUE(alias.IsPrepared());
+    EXPECT_EQ(cookie, held.Cookie());
+    EXPECT_EQ(cookie, registry.CookieOf(sound));
+    EXPECT_EQ(held.View().channels[0], registry.Lookup(sound).channels[0]);
+    EXPECT_EQ(held.View().useCount, registry.Lookup(sound).useCount);
+    EXPECT_EQ(1u, registry.Count());
+}
 
 TEST(CanonicalPackSetStorage, DistinctHandlesAndTokensShareEqualMedia) {
     harken::PCMRegistry registry;
@@ -89,7 +416,7 @@ TEST(CanonicalPackSetStorage, EqualMediaRevisionsDoNotPinOldRowsForCurrentReader
         packs.SweepRetiring(+[](void*, harken::PackResourceRevisionToken) { return false; });
         EXPECT_EQ(0u, packs.RetiringCount());
         EXPECT_EQ(current.useCount, registry.Lookup(sound).useCount);
-        EXPECT_FLOAT_EQ(0.25f, current.channels[0][0]);
+        EXPECT_FLOAT_EQ(0.25f, current.ReadSample(0, 0));
         if (packs.RetiringCount() != 0u) break;
     }
     current.useCount->fetch_sub(1, std::memory_order_acq_rel);
@@ -124,19 +451,19 @@ TEST(CanonicalPackSetStorage, KeptOwnerSurvivesSharedOwnerRemovalAndOldReaderRep
     EXPECT_EQ(cookie, registry.CookieOf(sound));
     harken::PCMView old{};
     ASSERT_EQ(VN_OK, packs.LookupExactClosure(reader, sound, registry, &old));
-    EXPECT_FLOAT_EQ(0.25f, old.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, old.ReadSample(0, 0));
 
     SetStorageMember changed(21, sound, 0.75f);
     harken::PackTable::PreparedSetMutation replacement;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({changed.Input(handleA)}, {}, registry, &replacement));
     packs.CommitPreparedSet(&replacement, registry);
     EXPECT_NE(tokenA, replacement.ResourceTokenAt(0));
-    EXPECT_FLOAT_EQ(0.75f, registry.Lookup(sound).channels[0][0]);
+    EXPECT_FLOAT_EQ(0.75f, registry.Lookup(sound).ReadSample(0, 0));
     packs.SweepRetiring(+[](void*, harken::PackResourceRevisionToken) { return false; });
     std::uint64_t checksum = 0;
     bool known = false;
     ASSERT_EQ(VN_OK, packs.LookupExactClosure(reader, sound, registry, &old, &checksum, &known));
-    EXPECT_FLOAT_EQ(0.25f, old.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, old.ReadSample(0, 0));
     EXPECT_TRUE(known);
     EXPECT_EQ(b.media.front().blobChecksum, checksum);
     harken::PCMView current{};
@@ -186,13 +513,13 @@ TEST(CanonicalPackSetStorage, MixedKeepMutationsPreserveDistinctTokensAndOldRead
     EXPECT_NE(tokenB, replacement.ResourceTokenAt(1));
     EXPECT_EQ(tokenB, replacement.ResourceTokenAt(2));
     packs.CommitPreparedSet(&replacement, registry);
-    EXPECT_FLOAT_EQ(0.75f, registry.Lookup(soundA).channels[0][0]);
+    EXPECT_FLOAT_EQ(0.75f, registry.Lookup(soundA).ReadSample(0, 0));
     packs.SweepRetiring(+[](void*, harken::PackResourceRevisionToken) { return false; });
     harken::PCMView oldA{}, oldB{};
     ASSERT_EQ(VN_OK, packs.LookupExactClosure(reader, soundA, registry, &oldA));
     ASSERT_EQ(VN_OK, packs.LookupExactClosure(reader, soundB, registry, &oldB));
-    EXPECT_FLOAT_EQ(0.25f, oldA.channels[0][0]);
-    EXPECT_FLOAT_EQ(0.5f, oldB.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, oldA.ReadSample(0, 0));
+    EXPECT_FLOAT_EQ(0.5f, oldB.ReadSample(0, 0));
     ASSERT_EQ(VN_OK, packs.ReleaseResourceClosure(reader));
     packs.SweepRetiring(+[](void*, harken::PackResourceRevisionToken) { return false; });
     EXPECT_EQ(0u, packs.RetiringCount());
@@ -255,22 +582,22 @@ TEST(CanonicalPackSetStorage, SharedRevisionRequiresAllOwnersAndKeepsOldClosure)
     EXPECT_EQ(VN_BACKPRESSURE, packs.PrepareCanonicalSet(
         {changedA.Input(handleA), changedB.Input(handleB)}, {}, registry, &next));
     EXPECT_FALSE(next.IsPrepared());
-    EXPECT_FLOAT_EQ(0.25f, registry.Lookup(harkentest::ObjectId(100)).channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, registry.Lookup(harkentest::ObjectId(100)).ReadSample(0, 0));
     packs.SetStorageCommitPageLimitsForTests(0, 0, SIZE_MAX);
     harken::PackTable::PreparedSetMutation partial;
     EXPECT_EQ(VN_IN_USE, packs.PrepareCanonicalSet({changedA.Input(handleA)}, {}, registry, &partial));
-    EXPECT_FLOAT_EQ(0.25f, registry.Lookup(harkentest::ObjectId(100)).channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, registry.Lookup(harkentest::ObjectId(100)).ReadSample(0, 0));
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet(
         {changedA.Input(handleA), changedB.Input(handleB)}, {}, registry, &next));
     packs.SetStorageCommitPageLimitsForTests(0, 0, 0);
     EXPECT_EQ(handleA, next.HandleAt(0));
     EXPECT_EQ(handleB, next.HandleAt(1));
-    EXPECT_FLOAT_EQ(0.25f, registry.Lookup(harkentest::ObjectId(100)).channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, registry.Lookup(harkentest::ObjectId(100)).ReadSample(0, 0));
     packs.CommitPreparedSet(&next, registry);
-    EXPECT_FLOAT_EQ(0.75f, registry.Lookup(harkentest::ObjectId(100)).channels[0][0]);
+    EXPECT_FLOAT_EQ(0.75f, registry.Lookup(harkentest::ObjectId(100)).ReadSample(0, 0));
     harken::PCMView old{};
     ASSERT_EQ(VN_OK, packs.LookupExactClosure(closure, harkentest::ObjectId(100), registry, &old));
-    EXPECT_FLOAT_EQ(0.25f, old.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, old.ReadSample(0, 0));
     EXPECT_EQ(2u, packs.RetiringCount());
     ASSERT_EQ(VN_OK, packs.ReleaseResourceClosure(closure));
     packs.SweepRetiring(+[](void*, harken::PackResourceRevisionToken) { return false; });
@@ -342,7 +669,7 @@ TEST(CanonicalPackSetStorage, PcmAllocationFailureRestoresAllReservations) {
     EXPECT_EQ(0u, packs.RetiringCount());
     EXPECT_EQ(2u, packs.LoadedCount());
     EXPECT_EQ(cookie, registry.CookieOf(harkentest::ObjectId(100)));
-    EXPECT_FLOAT_EQ(0.25f, registry.Lookup(harkentest::ObjectId(100)).channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, registry.Lookup(harkentest::ObjectId(100)).ReadSample(0, 0));
     harken::PackTable::PreparedSetMutation retry;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet(
         {changedA.Input(handleA), changedB.Input(handleB)}, {}, registry, &retry));
@@ -355,7 +682,7 @@ TEST(CanonicalPackSetStorage, PcmAllocationFailureRestoresAllReservations) {
     EXPECT_EQ(2u, packs.RetiringCount());
     harken::PCMView old{};
     ASSERT_EQ(VN_OK, packs.LookupExactClosure(closure, harkentest::ObjectId(100), registry, &old));
-    EXPECT_FLOAT_EQ(0.25f, old.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, old.ReadSample(0, 0));
     ASSERT_EQ(VN_OK, packs.ReleaseResourceClosure(closure));
     packs.SweepRetiring(+[](void*, harken::PackResourceRevisionToken) { return false; });
     EXPECT_EQ(0u, packs.RetiringCount());
@@ -412,7 +739,7 @@ TEST(CanonicalPackSetStorage, CommitHasNoAllocationsWithReplacementAndSharedFano
     EXPECT_EQ(packs.Entries(handleA)->front().registrationCookie, packs.Entries(handleB)->front().registrationCookie);
     harken::PCMView old{};
     ASSERT_EQ(VN_OK, packs.LookupExactClosure(closure, harkentest::ObjectId(100), registry, &old));
-    EXPECT_FLOAT_EQ(0.25f, old.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, old.ReadSample(0, 0));
     EXPECT_EQ(VN_OK, packs.ReleaseResourceClosure(closure));
 }
 
@@ -494,13 +821,38 @@ TEST(CanonicalPackSetStorage, SinglePackEofLoopLoadsSharesAndReplaces) {
     }
     VnPackHandle handles[2]{};
     unsigned index = 0;
+    const auto prepareSamples = [&](SetStorageMember& member,
+        std::vector<harken::PCMRegistry::PreparedPackSamples>* prepared) {
+        const float* plane = reinterpret_cast<const float*>(member.bytes.get());
+        VnPCMDesc desc{};
+        desc.structSize = sizeof(desc);
+        desc.sampleRate = member.media[0].sampleRate;
+        desc.channels = 1;
+        desc.frames = member.media[0].frameCount;
+        desc.layout = VN_PCM_LAYOUT_PLANAR;
+        desc.policy = VN_PCM_POLICY_COPY;
+        desc.samplesPlanar = &plane;
+        prepared->resize(1);
+        const auto result = registry.PreparePackSamples(sound, &desc, &prepared->front(),
+            {member.media[0].loopStartFrame, member.media[0].frameCount});
+        if (result == VN_OK) member.bytes.reset();
+        return result;
+    };
     for (auto* member : {&a, &b}) {
         harken::PackTable::PreparedLoadToken load;
         ASSERT_EQ(VN_OK, packs.PrepareLoad(&load));
         member->key.handle = load.Handle();
         member->key.slotGeneration = static_cast<std::uint32_t>(load.Handle() >> 32);
+        std::vector<harken::PCMRegistry::PreparedPackSamples> prepared;
+        const bool adopt = member == &a;
+        if (adopt) ASSERT_EQ(VN_OK, prepareSamples(*member, &prepared));
+        const auto view = adopt ? prepared.front().View() : harken::PCMView{};
         ASSERT_EQ(VN_OK, packs.LoadPrepared(&load, member->bytes, entriesFor(*member),
-            member->media, registry, &handles[index++], &member->key));
+            member->media, registry, &handles[index++], &member->key, adopt ? &prepared : nullptr));
+        if (adopt) {
+            EXPECT_EQ(view.channels[0], registry.Lookup(sound).channels[0]);
+            EXPECT_EQ(view.useCount, registry.Lookup(sound).useCount);
+        }
     }
     EXPECT_EQ(packs.Entries(handles[0])->front().registrationCookie,
               packs.Entries(handles[1])->front().registrationCookie);
@@ -511,14 +863,19 @@ TEST(CanonicalPackSetStorage, SinglePackEofLoopLoadsSharesAndReplaces) {
     next.key.slotGeneration = static_cast<std::uint32_t>(handles[0] >> 32);
     next.key.contentRevision = 2;
     auto entries = entriesFor(next);
+    std::vector<harken::PCMRegistry::PreparedPackSamples> prepared;
+    ASSERT_EQ(VN_OK, prepareSamples(next, &prepared));
+    const auto nextView = prepared.front().View();
     harken::PackTable::PreparedMutation replacement;
     ASSERT_EQ(VN_OK, packs.PrepareRevisionMutation(handles[0], next.bytes, entries,
-        next.media, registry, &replacement, &next.key));
+        next.media, registry, &replacement, &next.key, &prepared));
     packs.CommitPreparedMutation(&replacement, registry);
+    EXPECT_EQ(nextView.channels[0], registry.Lookup(sound).channels[0]);
+    EXPECT_EQ(nextView.useCount, registry.Lookup(sound).useCount);
     EXPECT_EQ(2u, registry.Lookup(sound).loop.startFrame);
     EXPECT_EQ(8u, registry.Lookup(sound).LoopEndFrame());
-    EXPECT_FLOAT_EQ(0.5f, registry.Lookup(sound).channels[0][0]);
-    EXPECT_FLOAT_EQ(0.25f, old.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.5f, registry.Lookup(sound).ReadSample(0, 0));
+    EXPECT_FLOAT_EQ(0.25f, old.ReadSample(0, 0));
     old.useCount->fetch_sub(1, std::memory_order_acq_rel);
     packs.SweepRetiring(+[](void*, harken::PackResourceRevisionToken) { return false; });
     ASSERT_EQ(VN_OK, packs.Unload(handles[0], registry));
@@ -627,7 +984,7 @@ TEST(CanonicalPackSetStorage, RemovalOnlyPreservesSharedMediaUntilLastOwner) {
     EXPECT_EQ(0u, packs.LoadedCount());
     harken::PCMView old{};
     ASSERT_EQ(VN_OK, packs.LookupExactClosure(closure, harkentest::ObjectId(100), registry, &old));
-    EXPECT_FLOAT_EQ(0.25f, old.channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, old.ReadSample(0, 0));
     EXPECT_EQ(VN_OK, packs.ReleaseResourceClosure(closure));
     packs.SweepRetiring(+[](void*, harken::PackResourceRevisionToken) { return false; });
     EXPECT_EQ(0u, packs.RetiringCount());
@@ -648,12 +1005,12 @@ TEST(CanonicalPackSetStorage, SampleBackingFailurePreservesPublishedGeneration) 
     EXPECT_EQ(VN_BACKPRESSURE, result);
     EXPECT_FALSE(refused.IsPrepared());
     EXPECT_EQ(cookie, registry.CookieOf(harkentest::ObjectId(100)));
-    EXPECT_FLOAT_EQ(0.25f, registry.Lookup(harkentest::ObjectId(100)).channels[0][0]);
+    EXPECT_FLOAT_EQ(0.25f, registry.Lookup(harkentest::ObjectId(100)).ReadSample(0, 0));
     harken::PackTable::PreparedSetMutation retry;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({b.Input(first.HandleAt(0))}, {}, registry, &retry));
     EXPECT_EQ(2u, retry.ResourceTokenAt(0));
     packs.CommitPreparedSet(&retry, registry);
-    EXPECT_FLOAT_EQ(0.75f, registry.Lookup(harkentest::ObjectId(100)).channels[0][0]);
+    EXPECT_FLOAT_EQ(0.75f, registry.Lookup(harkentest::ObjectId(100)).ReadSample(0, 0));
 }
 
 TEST(CanonicalPackSetStorage, DuplicateIdentityAndInvalidHandlesDoNotPublish) {

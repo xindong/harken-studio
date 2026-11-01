@@ -16,6 +16,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <initializer_list>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -130,11 +133,12 @@ private:
     std::vector<std::uint64_t> payloadOffsets_;
 };
 
-void RecomputeChecksums(std::vector<std::uint8_t>* bytes) {
+void RecomputeChecksums(std::vector<std::uint8_t>* bytes,
+                        bool includePayloadChecksums = true) {
     PackV2Header header;
     ASSERT_TRUE(ParsePackV2Header(bytes->data(), &header));
     const std::size_t dir = static_cast<std::size_t>(header.directoryOffset);
-    for (std::uint32_t i = 0; i < header.entryCount; ++i) {
+    for (std::uint32_t i = 0; includePayloadChecksums && i < header.entryCount; ++i) {
         std::uint8_t* record =
             bytes->data() + dir + i * kPackV2DirectoryEntryBytes;
         PackV2DirectoryEntry entry = ParsePackV2DirectoryEntry(record);
@@ -701,6 +705,410 @@ std::vector<std::uint8_t> BuildCanonicalContentWithKind27(
                      std::move(requirement));
     builder.AddEntry(kPackEntryKindVariableRequirements, 0, std::move(payload));
     return builder.Build();
+}
+
+std::vector<std::uint8_t> BuildCanonicalMediaFixture(
+    std::initializer_list<std::size_t> frameCounts) {
+    harkentest::packfoundation::ImageBuilder builder(kPackKindCanonicalContent);
+    auto requirement = RequirementPayload(22, 1, 0);
+    StampRequirementCoverage(&requirement);
+    builder.AddEntry(kPackEntryKindPackRequirementBlock, std::uint64_t{22},
+                     std::move(requirement));
+    std::uint64_t soundId = 101;
+    for (const auto frames : frameCounts) {
+        builder.AddMedia(harkentest::ObjectId(soundId),
+                         std::vector<float>(frames,
+                                            static_cast<float>(soundId) / 1024.0f));
+        ++soundId;
+    }
+    return builder.Build();
+}
+
+void ExpectCanonicalMediaRefusal(const std::vector<std::uint8_t>& bytes,
+                                 VnResult expected) {
+    const auto expectedHash = Fnv1a64(bytes.data(), bytes.size());
+    for (const bool includeArtifactHash : {false, true}) {
+        SCOPED_TRACE(includeArtifactHash);
+        PackCanonicalImage image;
+        image.packStableId = 77;
+        image.hasPartition = true;
+        image.partitionBody = {1, 2, 3};
+        std::uint64_t artifactHash = 0;
+        const auto result = includeArtifactHash
+            ? ParsePackCanonicalImage(bytes.data(), bytes.size(), &image, &artifactHash)
+            : ParsePackCanonicalImage(bytes.data(), bytes.size(), &image);
+        EXPECT_EQ(expected, result);
+        if (includeArtifactHash) EXPECT_EQ(expectedHash, artifactHash);
+        EXPECT_EQ(77u, image.packStableId);
+        EXPECT_TRUE(image.hasPartition);
+        EXPECT_EQ((std::vector<std::uint8_t>{1, 2, 3}), image.partitionBody);
+        EXPECT_TRUE(image.media.empty());
+    }
+}
+
+std::filesystem::path CanonicalReadTestPath(const char* filename) {
+    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-bounded-reader";
+    std::filesystem::create_directories(directory);
+    return directory / filename;
+}
+
+TEST(PackCanonicalFormat, BoundedFileKeepsDirectoryOrderAndFinalSampleIdentity) {
+    auto bytes = BuildCanonicalMediaFixture({40006, 17000, 90001});
+    PackV2Header header;
+    ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
+    auto* firstRecord = bytes.data() + header.directoryOffset + kPackV2DirectoryEntryBytes;
+    auto* lastRecord = firstRecord + 2 * kPackV2DirectoryEntryBytes;
+    const auto first = ParsePackV2DirectoryEntry(firstRecord);
+    const auto last = ParsePackV2DirectoryEntry(lastRecord);
+    auto media = ParsePackTocEntry(bytes.data() + first.offset);
+    media.channelCount = 2;
+    media.frameCount /= 2;
+    for (std::size_t i = 0; i < media.blobBytes / sizeof(float); ++i) {
+        const float sample = static_cast<float>(static_cast<int>(i % 32768) - 16384) * 0x1p-15f;
+        std::memcpy(bytes.data() + media.blobOffset + i * sizeof(float), &sample, sizeof(sample));
+    }
+    media.blobChecksum = Fnv1a64(bytes.data() + media.blobOffset, media.blobBytes);
+    SerializePackTocEntry(media, bytes.data() + first.offset);
+    auto finalMedia = ParsePackTocEntry(bytes.data() + last.offset);
+    const float negativeZero = -0.0f;
+    std::memcpy(bytes.data() + finalMedia.blobOffset + finalMedia.blobBytes - sizeof(float),
+                &negativeZero, sizeof(float));
+    finalMedia.blobChecksum = Fnv1a64(bytes.data() + finalMedia.blobOffset, finalMedia.blobBytes);
+    SerializePackTocEntry(finalMedia, bytes.data() + last.offset);
+    SerializePackV2DirectoryEntry(last, firstRecord);
+    SerializePackV2DirectoryEntry(first, lastRecord);
+    RecomputeChecksums(&bytes);
+    PackCanonicalImage expected;
+    ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &expected));
+    const auto path = CanonicalReadTestPath("directory-and-bits.pack");
+    ASSERT_TRUE(harkentest::packfoundation::WriteFile(path, bytes));
+    PCMRegistry registry;
+    PackCanonicalImage actual;
+    std::vector<PCMRegistry::PreparedPackSamples> samples;
+    std::uint64_t count = 0, hash = 0;
+    ASSERT_EQ(VN_OK, ReadPackCanonicalFile(path.string().c_str(), registry, &actual,
+                                          &samples, &count, &hash, bytes.size()));
+    EXPECT_EQ(bytes.size(), count);
+    EXPECT_EQ(Fnv1a64(bytes.data(), bytes.size()), hash);
+    ASSERT_EQ(expected.media.size(), samples.size());
+    std::vector<const PCMRegistry::PreparedPackSamples*> candidates;
+    for (std::size_t i = 0; i < samples.size(); ++i) {
+        const auto& row = expected.media[i];
+        EXPECT_EQ(row.soundId, actual.media[i].soundId);
+        const float* planes[kMaxChannels]{};
+        for (std::uint32_t ch = 0; ch < row.channelCount; ++ch)
+            planes[ch] = reinterpret_cast<const float*>(bytes.data() + row.blobOffset) + ch * row.frameCount;
+        VnPCMDesc desc{};
+        desc.structSize = sizeof(desc);
+        desc.sampleRate = row.sampleRate;
+        desc.channels = row.channelCount;
+        desc.frames = row.frameCount;
+        desc.layout = VN_PCM_LAYOUT_PLANAR;
+        desc.policy = VN_PCM_POLICY_REFERENCE;
+        desc.samplesPlanar = planes;
+        ASSERT_EQ(VN_OK, registry.RegisterPCM(row.soundId, &desc));
+        EXPECT_EQ(registry.Lookup(row.soundId).contentRevision, samples[i].View().contentRevision);
+        for (std::uint32_t ch = 0; ch < row.channelCount; ++ch) {
+            for (std::uint64_t frame = 0; frame < row.frameCount; ++frame) {
+                const float value = samples[i].View().ReadSample(ch, frame);
+                ASSERT_EQ(0, std::memcmp(&value, planes[ch] + frame, sizeof(float)));
+            }
+        }
+        candidates.push_back(&samples[i]);
+    }
+    std::vector<PCMRegistry::PreparedPackSamples> duplicate;
+    ASSERT_EQ(VN_OK, ReadPackCanonicalFile(path.string().c_str(), registry, &actual,
+        &duplicate, &count, &hash, bytes.size(), candidates));
+    for (std::size_t i = 0; i < samples.size(); ++i)
+        EXPECT_EQ(samples[i].View().channels[0], duplicate[i].View().channels[0]);
+    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, ReadPackCanonicalFile(path.string().c_str(), registry,
+        &actual, &duplicate, &count, &hash, bytes.size() - 1));
+    EXPECT_EQ(samples[0].View().channels[0], duplicate[0].View().channels[0]);
+    const float changedLast = 0.125f;
+    std::memcpy(bytes.data() + finalMedia.blobOffset + finalMedia.blobBytes - sizeof(float),
+                &changedLast, sizeof(float));
+    finalMedia.blobChecksum = Fnv1a64(bytes.data() + finalMedia.blobOffset, finalMedia.blobBytes);
+    SerializePackTocEntry(finalMedia, bytes.data() + last.offset);
+    RecomputeChecksums(&bytes);
+    ASSERT_TRUE(harkentest::packfoundation::WriteFile(path, bytes));
+    bool retry = false;
+    detail::StablePageReservation::FailNextReservationForTests();
+    EXPECT_EQ(VN_BACKPRESSURE, ReadPackCanonicalFile(path.string().c_str(), registry, &actual,
+        &duplicate, &count, &hash, bytes.size(), candidates, &retry));
+    EXPECT_TRUE(retry);
+    EXPECT_EQ(samples[0].View().channels[0], duplicate[0].View().channels[0]);
+}
+
+TEST(PackCanonicalFormat, BoundedFileSharesOnlyExactDuplicateMediaWithinFile) {
+    for (const bool equal : {true, false}) {
+        SCOPED_TRACE(equal);
+        auto bytes = BuildCanonicalMediaFixture({90001, 90001});
+        PackV2Header header;
+        ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
+        auto* firstRecord = bytes.data() + header.directoryOffset + kPackV2DirectoryEntryBytes;
+        auto* secondRecord = firstRecord + kPackV2DirectoryEntryBytes;
+        const auto first = ParsePackV2DirectoryEntry(firstRecord);
+        auto second = ParsePackV2DirectoryEntry(secondRecord);
+        const auto firstMedia = ParsePackTocEntry(bytes.data() + first.offset);
+        auto secondMedia = ParsePackTocEntry(bytes.data() + second.offset);
+        second.id = first.id;
+        secondMedia.soundId = firstMedia.soundId;
+        std::memcpy(bytes.data() + secondMedia.blobOffset,
+                    bytes.data() + firstMedia.blobOffset, firstMedia.blobBytes);
+        const float last = equal ? 101.0f / 1024.0f : -0.0f;
+        std::memcpy(bytes.data() + secondMedia.blobOffset + secondMedia.blobBytes - sizeof(float),
+                    &last, sizeof(last));
+        secondMedia.blobChecksum = Fnv1a64(bytes.data() + secondMedia.blobOffset, secondMedia.blobBytes);
+        SerializePackTocEntry(secondMedia, bytes.data() + second.offset);
+        SerializePackV2DirectoryEntry(second, firstRecord);
+        SerializePackV2DirectoryEntry(first, secondRecord);
+        RecomputeChecksums(&bytes);
+        PackCanonicalImage image;
+        ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
+        const auto path = CanonicalReadTestPath("same-file-duplicate.pack");
+        ASSERT_TRUE(harkentest::packfoundation::WriteFile(path, bytes));
+        PCMRegistry registry;
+        std::vector<PCMRegistry::PreparedPackSamples> samples;
+        std::uint64_t count = 0, hash = 0;
+        bool retry = true;
+        ASSERT_EQ(VN_OK, ReadPackCanonicalFile(path.string().c_str(), registry, &image,
+            &samples, &count, &hash, bytes.size(), {}, &retry));
+        EXPECT_FALSE(retry);
+        ASSERT_EQ(2u, samples.size());
+        EXPECT_EQ(equal, samples[0].View().channels[0] == samples[1].View().channels[0]);
+        const float actual = samples[0].View().ReadSample(0, secondMedia.frameCount - 1);
+        EXPECT_EQ(0, std::memcmp(&last, &actual, sizeof(last)));
+        EXPECT_EQ(101.0f / 1024.0f, samples[1].View().ReadSample(0, firstMedia.frameCount - 1));
+        EXPECT_EQ(bytes.size(), count);
+        EXPECT_EQ(Fnv1a64(bytes.data(), bytes.size()), hash);
+        EXPECT_EQ(0u, registry.Count());
+    }
+}
+
+TEST(PackCanonicalFormat, BoundedFileRejectsCorruptionMetadataChangeAndShortRead) {
+    const auto original = BuildCanonicalMediaFixture({90001});
+    for (const int fault : {0, 1, 2, 3, 4}) {
+        SCOPED_TRACE(fault);
+        auto bytes = original;
+        if (fault == 0) bytes.back() ^= 1;
+        if (fault == 1) bytes.pop_back();
+        const auto path = CanonicalReadTestPath("refusal.pack");
+        ASSERT_TRUE(harkentest::packfoundation::WriteFile(path, bytes));
+        struct Change { std::filesystem::path path; int fault; bool applied = false; } change{path, fault};
+        PackCanonicalReadHooksForTests hooks;
+        hooks.userData = &change;
+        hooks.beforeSequentialRead = [](void* context, std::uint64_t offset) {
+            auto& change = *static_cast<Change*>(context);
+            if (change.applied || change.fault < 2 || (change.fault == 4 && offset == 0)) return;
+            change.applied = true;
+            if (change.fault == 4) {
+                std::filesystem::resize_file(change.path, offset + 16);
+            } else if (change.fault == 3) {
+                std::ofstream append(change.path, std::ios::binary | std::ios::app);
+                append.put(0);
+            } else {
+                std::fstream edit(change.path, std::ios::binary | std::ios::in | std::ios::out);
+                edit.seekp(0);
+                edit.put('X');
+            }
+        };
+        PCMRegistry registry;
+        PackCanonicalImage image;
+        image.packStableId = 77;
+        std::vector<PCMRegistry::PreparedPackSamples> samples;
+        std::uint64_t count = 19, hash = 23;
+        bool retry = true;
+        EXPECT_EQ(VN_BAD_PACK, ReadPackCanonicalFile(path.string().c_str(), registry, &image,
+            &samples, &count, &hash, SIZE_MAX, {}, &retry, &hooks));
+        EXPECT_EQ(77u, image.packStableId);
+        EXPECT_TRUE(samples.empty());
+        EXPECT_FALSE(retry);
+        EXPECT_EQ(19u, count);
+        EXPECT_EQ(23u, hash);
+        EXPECT_EQ(0u, registry.Count());
+    }
+}
+
+TEST(PackCanonicalFormat, BoundedFileValidatesInitSelfHashWithoutWholeImageCopy) {
+    auto bytes = BuildMinimalInit();
+    PackCanonicalImage parsed;
+    ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &parsed));
+    const auto path = CanonicalReadTestPath("init-self-hash.pack");
+    PCMRegistry registry;
+    std::vector<PCMRegistry::PreparedPackSamples> samples;
+    std::uint64_t count = 0, hash = 0;
+    ASSERT_TRUE(harkentest::packfoundation::WriteFile(path, bytes));
+    ASSERT_EQ(VN_OK, ReadPackCanonicalFile(path.string().c_str(), registry, &parsed,
+        &samples, &count, &hash, bytes.size()));
+    EXPECT_EQ(Fnv1a64(bytes.data(), bytes.size()), hash);
+    ASSERT_TRUE(samples.empty());
+    bool changed = false;
+    for (std::size_t i = 0; i < parsed.catalogRows.size(); ++i) {
+        const auto& row = parsed.catalogRows[i];
+        if (row.ownerPackStableId != parsed.packStableId) continue;
+        StoreLE64(bytes.data() + parsed.catalogPayloadOffset + kInitCatalogHeaderBytes +
+            i * kInitCatalogRowBytes + kInitCatalogContentHashOffset, row.expectedContentHash ^ 1);
+        changed = true;
+    }
+    ASSERT_TRUE(changed);
+    ASSERT_TRUE(harkentest::packfoundation::WriteFile(path, bytes));
+    EXPECT_EQ(VN_PACK_HASH_MISMATCH, ReadPackCanonicalFile(path.string().c_str(), registry,
+        &parsed, &samples, &count, &hash, bytes.size()));
+    EXPECT_TRUE(samples.empty());
+}
+
+TEST(PackCanonicalFormat, AdjacentMediaWithLongerFirstBlobPreserveOddTail) {
+    const auto bytes = BuildCanonicalMediaFixture({7, 3, 5});
+    const auto expectedHash = Fnv1a64(bytes.data(), bytes.size());
+    const std::array<std::uint64_t, 3> frames{7, 3, 5};
+    for (const bool includeArtifactHash : {false, true}) {
+        SCOPED_TRACE(includeArtifactHash);
+        PackCanonicalImage image;
+        std::uint64_t artifactHash = 0;
+        const auto result = includeArtifactHash
+            ? ParsePackCanonicalImage(bytes.data(), bytes.size(), &image, &artifactHash)
+            : ParsePackCanonicalImage(bytes.data(), bytes.size(), &image);
+        ASSERT_EQ(VN_OK, result);
+        if (includeArtifactHash) EXPECT_EQ(expectedHash, artifactHash);
+        ASSERT_EQ(frames.size(), image.media.size());
+        for (std::size_t i = 0; i < frames.size(); ++i) {
+            EXPECT_EQ(harkentest::ObjectId(101 + i), image.media[i].soundId);
+            EXPECT_EQ(frames[i], image.media[i].frameCount);
+            EXPECT_EQ(frames[i] * sizeof(float), image.media[i].blobBytes);
+        }
+    }
+}
+
+TEST(PackCanonicalFormat, MediaDirectoryOrderCanReversePhysicalBlobOrder) {
+    auto bytes = BuildCanonicalMediaFixture({7, 3, 5});
+    PackV2Header header;
+    ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
+    ASSERT_EQ(4u, header.entryCount);
+    auto* firstRecord = bytes.data() + header.directoryOffset + kPackV2DirectoryEntryBytes;
+    auto* lastRecord = bytes.data() + header.directoryOffset + 3 * kPackV2DirectoryEntryBytes;
+    const auto first = ParsePackV2DirectoryEntry(firstRecord);
+    const auto last = ParsePackV2DirectoryEntry(lastRecord);
+    ASSERT_EQ(kPackEntryKindMedia, first.kind);
+    ASSERT_EQ(kPackEntryKindMedia, last.kind);
+    SerializePackV2DirectoryEntry(last, firstRecord);
+    SerializePackV2DirectoryEntry(first, lastRecord);
+    RecomputeChecksums(&bytes, false);
+    const auto expectedHash = Fnv1a64(bytes.data(), bytes.size());
+    const std::array<std::uint64_t, 3> frames{5, 3, 7};
+    for (const bool includeArtifactHash : {false, true}) {
+        SCOPED_TRACE(includeArtifactHash);
+        PackCanonicalImage image;
+        std::uint64_t artifactHash = 0;
+        const auto result = includeArtifactHash
+            ? ParsePackCanonicalImage(bytes.data(), bytes.size(), &image, &artifactHash)
+            : ParsePackCanonicalImage(bytes.data(), bytes.size(), &image);
+        ASSERT_EQ(VN_OK, result);
+        if (includeArtifactHash) EXPECT_EQ(expectedHash, artifactHash);
+        ASSERT_EQ(frames.size(), image.media.size());
+        EXPECT_GT(image.media[0].blobOffset, image.media[1].blobOffset);
+        EXPECT_GT(image.media[1].blobOffset, image.media[2].blobOffset);
+        for (std::size_t i = 0; i < frames.size(); ++i) {
+            EXPECT_EQ(harkentest::ObjectId(103 - i), image.media[i].soundId);
+            EXPECT_EQ(frames[i], image.media[i].frameCount);
+            EXPECT_EQ(frames[i] * sizeof(float), image.media[i].blobBytes);
+        }
+    }
+}
+
+TEST(PackCanonicalFormat, AdjacentMediaCorruptionKeepsOutputUnchanged) {
+    const auto original = BuildCanonicalMediaFixture({7, 3, 5});
+    PackCanonicalImage valid;
+    ASSERT_EQ(VN_OK,
+              ParsePackCanonicalImage(original.data(), original.size(), &valid));
+    ASSERT_EQ(3u, valid.media.size());
+    for (std::size_t i = 0; i < valid.media.size(); ++i) {
+        SCOPED_TRACE(i);
+        auto bytes = original;
+        const auto& media = valid.media[i];
+        bytes[static_cast<std::size_t>(media.blobOffset + media.blobBytes - 1)] ^= 1u;
+        ExpectCanonicalMediaRefusal(bytes, VN_BAD_PACK);
+    }
+}
+
+TEST(PackCanonicalFormat, AdjacentMediaRejectNextPayloadAndBlobBounds) {
+    const auto original = BuildCanonicalMediaFixture({3, 7});
+    PackCanonicalImage valid;
+    ASSERT_EQ(VN_OK,
+              ParsePackCanonicalImage(original.data(), original.size(), &valid));
+    for (unsigned invalid = 0; invalid < 9; ++invalid) {
+        SCOPED_TRACE(invalid);
+        auto bytes = original;
+        PackV2Header header;
+        ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
+        auto* record = bytes.data() + header.directoryOffset +
+                       2 * kPackV2DirectoryEntryBytes;
+        auto next = ParsePackV2DirectoryEntry(record);
+        switch (invalid) {
+        case 0:
+            --next.size;
+            next.payloadChecksum = Fnv1a64(bytes.data() + next.offset, next.size);
+            break;
+        case 1:
+            next.offset = header.directoryOffset;
+            break;
+        case 2:
+            next.offset = UINT64_MAX - (kPackV2PayloadAlign - 1);
+            break;
+        case 3:
+            next.offset = bytes.size() - bytes.size() % kPackV2PayloadAlign -
+                          kPackV2PayloadAlign;
+            break;
+        case 4:
+            ++next.offset;
+            break;
+        default: {
+            auto media = ParsePackTocEntry(bytes.data() + next.offset);
+            if (invalid == 5) media.blobOffset = 0;
+            if (invalid == 6)
+                media.blobOffset = AlignUp(bytes.size(), kPackBlobAlign);
+            if (invalid == 7) {
+                ++media.frameCount;
+                media.blobBytes += sizeof(float);
+            }
+            if (invalid == 8) ++media.blobOffset;
+            SerializePackTocEntry(media, bytes.data() + next.offset);
+            next.payloadChecksum = Fnv1a64(bytes.data() + next.offset, next.size);
+            break;
+        }
+        }
+        SerializePackV2DirectoryEntry(next, record);
+        // Deliberately invalid spans must not be followed while restamping.
+        RecomputeChecksums(&bytes, false);
+        ExpectCanonicalMediaRefusal(bytes, VN_BAD_PACK);
+    }
+}
+
+TEST(PackCanonicalFormat, AdjacentMediaKeepOriginalValidationOrder) {
+    const auto original = BuildCanonicalMediaFixture({3, 7});
+    PackCanonicalImage valid;
+    ASSERT_EQ(VN_OK,
+              ParsePackCanonicalImage(original.data(), original.size(), &valid));
+    ASSERT_EQ(2u, valid.media.size());
+    for (unsigned invalid = 0; invalid < 3; ++invalid) {
+        SCOPED_TRACE(invalid);
+        auto bytes = original;
+        PackV2Header header;
+        ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
+        auto* record = bytes.data() + header.directoryOffset +
+                       2 * kPackV2DirectoryEntryBytes;
+        auto next = ParsePackV2DirectoryEntry(record);
+        if (invalid == 0) {
+            next.payloadChecksum ^= 1u;
+        } else {
+            next.vintage = kPackV2SchemaVintage + 1;
+            if (invalid == 2)
+                bytes[static_cast<std::size_t>(valid.media[0].blobOffset)] ^= 1u;
+        }
+        SerializePackV2DirectoryEntry(next, record);
+        RecomputeChecksums(&bytes, false);
+        ExpectCanonicalMediaRefusal(
+            bytes, invalid == 1 ? VN_PACK_INCOMPATIBLE : VN_BAD_PACK);
+    }
 }
 
 TEST(PackCanonicalFormat, StrictInitDependencyAcceptsExactRequiredPairing) {

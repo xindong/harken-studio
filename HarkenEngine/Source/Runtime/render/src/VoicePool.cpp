@@ -72,7 +72,8 @@ bool VoicePool::PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t chan
     if (firstOutput) {
         if (!PrepareFirstOutputBacking(count)) return false;
         for (std::uint32_t slot = 0; slot < count; ++slot)
-            if (!PrepareVariableWeightBacking(slot)) return false;
+            if (!PrepareVariableWeightBacking(slot) ||
+                !PrepareTimelineEnvelopeCurveBacking(slot)) return false;
     }
     for (auto* registration = m_slotStorageRegistrations; registration != nullptr; registration = registration->next_)
         if (!registration->prepare_(registration->context_, count)) return false;
@@ -126,6 +127,20 @@ void VoicePool::BindMonitorPreChainBacking(std::uint32_t slot) noexcept {
     }
 }
 
+bool VoicePool::PrepareTimelineEnvelopeCurveBacking(std::uint32_t slot) noexcept {
+    if (m_timelineEnvelopeCurves.IsConstructed(slot)) return true;
+    if (memguard::IsAudioTagged() || m_slots.PreparedUseActive()) return false;
+    return m_timelineEnvelopeCurves.Emplace(slot);
+}
+
+void VoicePool::BindTimelineEnvelopeCurveBacking(std::uint32_t slot) noexcept {
+    if (!m_timelineEnvelopeCurves.IsConstructed(slot)) return;
+    auto& curves = m_timelineEnvelopeCurves[slot];
+    auto& envelopes = m_slots[slot].render.timelineEnvelopes;
+    for (std::size_t index = 0; index < curves.size(); ++index)
+        envelopes[index].curve = &curves[index];
+}
+
 bool VoicePool::PrepareVariableWeightBacking(std::uint32_t slot) noexcept {
     if (m_variableWeightStorage.IsConstructed(slot)) return true;
     if (memguard::IsAudioTagged() || m_slots.PreparedUseActive()) return false;
@@ -140,7 +155,8 @@ void VoicePool::BindVariableWeightBacking(std::uint32_t slot) noexcept {
 }
 
 bool VoicePool::PrepareSlotWorkingSet(std::uint32_t renderSlot, std::uint32_t channelCount,
-    ResampleProfile profile, bool prepareOwnedWeights, std::uint32_t highRatioChannels) noexcept {
+    ResampleProfile profile, bool prepareOwnedWeights, std::uint32_t highRatioChannels,
+    bool prepareTimelineCurves) noexcept {
     if (renderSlot >= m_slots.Capacity() || channelCount == 0 || channelCount > kMaxChannels ||
         highRatioChannels > kMaxChannels) return false;
     if (profile != ResampleProfile::LegacyCompatibility &&
@@ -153,6 +169,7 @@ bool VoicePool::PrepareSlotWorkingSet(std::uint32_t renderSlot, std::uint32_t ch
     })) return false;
     return RenderSlotBackingReady(renderSlot + 1u, channelCount, highRatioChannels) &&
         (!prepareOwnedWeights || PrepareVariableWeightBacking(renderSlot)) &&
+        (!prepareTimelineCurves || PrepareTimelineEnvelopeCurveBacking(renderSlot)) &&
         (profile != ResampleProfile::Professional44148 || m_professionalStorage.Emplace(renderSlot));
 }
 
@@ -229,6 +246,7 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
     if (!m_slots.Reserve(config.voiceCapacity.Render()) ||
         !m_professionalStorage.Reserve(config.voiceCapacity.Render()) ||
         !m_variableWeightStorage.Reserve(config.voiceCapacity.Render()) ||
+        !m_timelineEnvelopeCurves.Reserve(config.voiceCapacity.Render()) ||
         !m_streamParkTokens.Reserve(config.voiceCapacity.Virtual())) throw std::bad_alloc{};
     m_firstOutputStride = kFirstOutputBuiltinEndpoints + config.fxSlotsPerVoice * kMaxEffectParamCount;
     const auto monitorCapacity = static_cast<std::uint64_t>(config.voiceCapacity.Render()) * m_blockFrames;
@@ -284,7 +302,8 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
                          std::uint32_t requestedSlot,
                          std::uint32_t expectedGeneration,
                          bool prepared, float outputBusVolumeDb,
-                         float spatializationMix, bool prepareOwnedWeights) {
+                         float spatializationMix, bool prepareOwnedWeights,
+                         bool prepareTimelineCurves) {
     float linearGain = 0.0f;
     float outputLinearGain = 0.0f;
     if (!TryVolumeGainFromDb(volumeDb, &linearGain) ||
@@ -308,7 +327,8 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
     }
     if (slotIndex >= m_slots.Capacity() ||
         (slotIndex >= m_slots.ConstructedCount() && expectedGeneration > 1u) ||
-        !PrepareSlotWorkingSet(slotIndex, view.channelCount, resampleProfile, prepareOwnedWeights) ||
+        !PrepareSlotWorkingSet(slotIndex, view.channelCount, resampleProfile,
+            prepareOwnedWeights, 0, prepareTimelineCurves) ||
         !CanClaimSlot(m_slots[slotIndex]) ||
         (expectedGeneration != 0 &&
          m_slots[slotIndex].generation.load(std::memory_order_relaxed) !=
@@ -335,6 +355,7 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
     slot.render = VoiceRenderContext{};
     BindHighRatioBacking(slotIndex);
     BindVariableWeightBacking(slotIndex);
+    BindTimelineEnvelopeCurveBacking(slotIndex);
     ClearFirstOutput(slot);
     slot.render.biquadTrig = m_biquadTrig;
     slot.render.engineSampleRate = m_sampleRate;
@@ -495,6 +516,7 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
     slot.render = VoiceRenderContext{};
     BindHighRatioBacking(slotIndex);
     BindVariableWeightBacking(slotIndex);
+    BindTimelineEnvelopeCurveBacking(slotIndex);
     ClearFirstOutput(slot);
     slot.render.biquadTrig = m_biquadTrig;
     slot.render.engineSampleRate = m_sampleRate;

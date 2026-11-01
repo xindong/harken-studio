@@ -1,4 +1,5 @@
 #include "harken/core/ContainerPlaybackTable.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/CurrentWorld.h"
 
 #include <utility>
@@ -422,14 +423,41 @@ ContainerPlaybackTable::ConsumeNaturalSelectionOutcome(
     return ChildOutcomeStatus::Accepted;
 }
 
-PreparedPlayableTreeStep::PreparedPlayableTreeStep(std::uint32_t capacity)
-    : instanceCommitProofs_(capacity == 0 ? 1u : capacity),
-      containerCommitProofs_(capacity == 0 ? 1u : capacity),
-      maxReservations_(capacity == 0 ? 1u : capacity),
-      parentLinkRequests_(ParentLinkReservationCapacity(capacity)),
-      parentLinkProof_(ParentLinkReservationCapacity(capacity)) {
-    instances_.reserve(maxReservations_);
-    containers_.reserve(maxReservations_);
+PreparedPlayableTreeStep::PreparedPlayableTreeStep(std::uint32_t capacity, bool prepareFullStorage)
+    : maxReservations_(capacity == 0 ? 1u : capacity), parentLinkProof_(0u) {
+    if (prepareFullStorage && !PrepareStorage()) throw std::bad_alloc{};
+}
+
+bool PreparedPlayableTreeStep::PrepareStorage() noexcept {
+    if (memguard::IsAudioTagged()) return false;
+    // A root-only transaction has no internal token addresses to preserve.
+    // Generic backing is retained, so later calls never move borrowed tokens.
+    if ((instances_.capacity() < maxReservations_ && !instances_.empty()) ||
+        (containers_.capacity() < maxReservations_ && !containers_.empty())) return false;
+    try {
+        const auto reserve = [](auto& column, std::size_t count) {
+            detail::CheckedGrow(column, count, detail::LogicAllocSite::PlayableTreeStorage);
+            column.reserve(count);
+        };
+        reserve(instances_, maxReservations_);
+        reserve(containers_, maxReservations_);
+        reserve(instanceCommitProofs_, maxReservations_);
+        instanceCommitProofs_.resize(maxReservations_);
+        reserve(containerCommitProofs_, maxReservations_);
+        containerCommitProofs_.resize(maxReservations_);
+        const auto prepareStable = [](auto& column) {
+            if (column.size() == kAdoptedReservationCapacity) return true;
+            detail::LogicAllocCheckpoint(detail::LogicAllocSite::PlayableTreeStorage);
+            return (column.Capacity() != 0 || column.Reserve(kAdoptedReservationCapacity)) &&
+                column.ConstructThrough(kAdoptedReservationCapacity);
+        };
+        if (!prepareStable(adoptedInstances_) || !prepareStable(adoptedContainers_) ||
+            !prepareStable(adoptedInstanceCommitProofs_) || !prepareStable(adoptedContainerCommitProofs_)) return false;
+        const auto links = ParentLinkReservationCapacity(maxReservations_);
+        reserve(parentLinkRequests_, links);
+        parentLinkRequests_.resize(links);
+        return parentLinkProof_.PrepareStorage(links);
+    } catch (...) { return false; }
 }
 
 PreparedPlayableTreeStep::PreparedPlayableTreeStep(
@@ -445,15 +473,15 @@ PreparedPlayableTreeStep& PreparedPlayableTreeStep::operator=(
         containers_ = std::move(other.containers_);
         instanceCommitProofs_ = std::move(other.instanceCommitProofs_);
         containerCommitProofs_ = std::move(other.containerCommitProofs_);
-        adoptedInstanceCommitProofs_ = std::move(other.adoptedInstanceCommitProofs_);
+        adoptedInstanceCommitProofs_.Swap(other.adoptedInstanceCommitProofs_);
         parentLinkRequests_ = std::move(other.parentLinkRequests_);
         parentLinkProof_ = std::move(other.parentLinkProof_);
         parentLinkOwner_ = other.parentLinkOwner_;
         parentLinkAnchor_ = other.parentLinkAnchor_;
         parentLinkRequestCount_ = other.parentLinkRequestCount_;
-        adoptedContainerCommitProofs_ = std::move(other.adoptedContainerCommitProofs_);
-        adoptedInstances_ = other.adoptedInstances_;
-        adoptedContainers_ = other.adoptedContainers_;
+        adoptedContainerCommitProofs_.Swap(other.adoptedContainerCommitProofs_);
+        adoptedInstances_.Swap(other.adoptedInstances_);
+        adoptedContainers_.Swap(other.adoptedContainers_);
         adoptedInstanceCount_ = other.adoptedInstanceCount_;
         adoptedContainerCount_ = other.adoptedContainerCount_;
         maxReservations_ = other.maxReservations_;
@@ -463,8 +491,8 @@ PreparedPlayableTreeStep& PreparedPlayableTreeStep::operator=(
         externalTable_ = other.externalTable_;
         externalInstance_ = other.externalInstance_;
         other.maxReservations_ = 0;
-        other.adoptedInstances_.fill(nullptr);
-        other.adoptedContainers_.fill(nullptr);
+        std::fill(other.adoptedInstances_.begin(), other.adoptedInstances_.end(), nullptr);
+        std::fill(other.adoptedContainers_.begin(), other.adoptedContainers_.end(), nullptr);
         other.adoptedInstanceCount_ = 0;
         other.adoptedContainerCount_ = 0;
         other.committed_ = false;
@@ -485,8 +513,8 @@ bool PreparedPlayableTreeStep::ResetForReuse(bool published) noexcept {
         adoptedInstanceCount_ != 0 || adoptedContainerCount_ != 0)) return false;
     instances_.clear();
     containers_.clear();
-    adoptedInstances_.fill(nullptr);
-    adoptedContainers_.fill(nullptr);
+    std::fill(adoptedInstances_.begin(), adoptedInstances_.end(), nullptr);
+    std::fill(adoptedContainers_.begin(), adoptedContainers_.end(), nullptr);
     adoptedInstanceCount_ = 0;
     adoptedContainerCount_ = 0;
     committed_ = false;
@@ -504,7 +532,8 @@ bool PreparedPlayableTreeStep::PrepareInstance(
     PlayableInstanceTable& table, PlayableKind kind,
     PlayableInstanceHandle parent, const MonitorRequestContext& request,
     const MonitorEmitterOrigin& emitterOrigin) noexcept {
-    if (committed_ || CommitProofsRequired() || instances_.size() >= maxReservations_) {
+    if (committed_ || CommitProofsRequired() || instances_.size() >= maxReservations_ ||
+        instances_.size() >= instances_.capacity()) {
         return false;
     }
     PreparedPlayableInstance prepared;
@@ -521,7 +550,8 @@ bool PreparedPlayableTreeStep::PrepareContainer(
     std::uint64_t scheduleEpoch, VnObjectId containerStableId,
     std::uint64_t programSemanticFingerprint, std::uint8_t mode,
     std::uint32_t loopLimit) noexcept {
-    if (committed_ || CommitProofsRequired() || containers_.size() >= maxReservations_) {
+    if (committed_ || CommitProofsRequired() || containers_.size() >= maxReservations_ ||
+        containers_.size() >= containers_.capacity()) {
         return false;
     }
     PreparedContainerPlaybackRow prepared;
@@ -1180,8 +1210,8 @@ bool PreparedPlayableTreeStep::RollbackCommitted() noexcept {
     if (ok && instancesResolved && containersResolved) {
         instances_.clear();
         containers_.clear();
-        adoptedInstances_.fill(nullptr);
-        adoptedContainers_.fill(nullptr);
+        std::fill(adoptedInstances_.begin(), adoptedInstances_.end(), nullptr);
+        std::fill(adoptedContainers_.begin(), adoptedContainers_.end(), nullptr);
         adoptedInstanceCount_ = 0;
         adoptedContainerCount_ = 0;
         committed_ = false;
@@ -1223,8 +1253,8 @@ bool PreparedPlayableTreeStep::TryCancel() noexcept {
     if (!resolved) return false;
     instances_.clear();
     containers_.clear();
-    adoptedInstances_.fill(nullptr);
-    adoptedContainers_.fill(nullptr);
+    std::fill(adoptedInstances_.begin(), adoptedInstances_.end(), nullptr);
+    std::fill(adoptedContainers_.begin(), adoptedContainers_.end(), nullptr);
     adoptedInstanceCount_ = 0;
     adoptedContainerCount_ = 0;
     containerCommitProofsRequired_ = false;
@@ -1274,7 +1304,7 @@ bool PlayableTreeExecutor::IssueOriginalPreparedInstanceLifetimes(
     const auto stepCount = step_.instances_.size() + step_.adoptedInstanceCount_;
     const auto count = stepCount + (externalInstance_ == nullptr ? 0u : 1u);
     if (step_.Committed() || !step_.instanceCommitProofsRequired_ || !Validate() ||
-        count == 0 || originals.size() != count || stableBaselines.size() != expectedOwner.Capacity() ||
+        count == 0 || originals.size() != count || stableBaselines.size() > expectedOwner.Capacity() ||
         (externalInstance_ != nullptr && (instanceTable_ != &expectedOwner ||
             !externalInstanceCommitProof_.AssociatedWith(*externalInstance_)))) return false;
     const auto originalAt = [&](std::size_t index) -> const PreparedPlayableInstance* {
@@ -1307,22 +1337,34 @@ bool PlayableTreeExecutor::IssueOriginalPreparedInstanceLifetimes(
     return false;
 }
 
+bool PlayableTreeExecutor::PrepareStorage() noexcept {
+    if (memguard::IsAudioTagged() || !step_.PrepareStorage()) return false;
+    try {
+        // Tokens are value records; only their stable external contexts are borrowed.
+        detail::CheckedGrow(ownerTokens_, kOwnerTokenCapacity, detail::LogicAllocSite::PlayableTreeStorage);
+        ownerTokens_.resize(kOwnerTokenCapacity);
+        detail::CheckedGrow(committedOwnerTokens_, kOwnerTokenCapacity, detail::LogicAllocSite::PlayableTreeStorage);
+        committedOwnerTokens_.resize(kOwnerTokenCapacity);
+        return true;
+    } catch (...) { return false; }
+}
+
 PlayableTreeExecutor::PlayableTreeExecutor(PlayableTreeExecutor&& other) noexcept
     : step_(std::move(other.step_)) {
     if (other.step_.CommitProofsRequired()) return;
     externalInstanceCommitProof_ = std::move(other.externalInstanceCommitProof_);
-    ownerTokens_ = other.ownerTokens_;
+    ownerTokens_ = std::move(other.ownerTokens_);
     ownerTokenCount_ = other.ownerTokenCount_;
-    committedOwnerTokens_ = other.committedOwnerTokens_;
+    committedOwnerTokens_ = std::move(other.committedOwnerTokens_);
     committedOwnerTokenCount_ = other.committedOwnerTokenCount_;
     instanceTable_ = other.instanceTable_;
     externalInstance_ = other.externalInstance_;
     published_ = other.published_;
     ownershipTransferred_ = other.ownershipTransferred_;
     retainPreparedOwnerRollback_ = other.retainPreparedOwnerRollback_;
-    other.ownerTokens_.fill({});
+    std::fill(other.ownerTokens_.begin(), other.ownerTokens_.end(), OwnerToken{});
     other.ownerTokenCount_ = 0;
-    other.committedOwnerTokens_.fill({});
+    std::fill(other.committedOwnerTokens_.begin(), other.committedOwnerTokens_.end(), OwnerToken{});
     other.committedOwnerTokenCount_ = 0;
     other.instanceTable_ = nullptr;
     other.externalInstance_ = nullptr;
@@ -1343,18 +1385,18 @@ PlayableTreeExecutor& PlayableTreeExecutor::operator=(PlayableTreeExecutor&& oth
     }
     step_ = std::move(other.step_);
     externalInstanceCommitProof_ = std::move(other.externalInstanceCommitProof_);
-    ownerTokens_ = other.ownerTokens_;
+    ownerTokens_ = std::move(other.ownerTokens_);
     ownerTokenCount_ = other.ownerTokenCount_;
-    committedOwnerTokens_ = other.committedOwnerTokens_;
+    committedOwnerTokens_ = std::move(other.committedOwnerTokens_);
     committedOwnerTokenCount_ = other.committedOwnerTokenCount_;
     instanceTable_ = other.instanceTable_;
     externalInstance_ = other.externalInstance_;
     published_ = other.published_;
     ownershipTransferred_ = other.ownershipTransferred_;
     retainPreparedOwnerRollback_ = other.retainPreparedOwnerRollback_;
-    other.ownerTokens_.fill({});
+    std::fill(other.ownerTokens_.begin(), other.ownerTokens_.end(), OwnerToken{});
     other.ownerTokenCount_ = 0;
-    other.committedOwnerTokens_.fill({});
+    std::fill(other.committedOwnerTokens_.begin(), other.committedOwnerTokens_.end(), OwnerToken{});
     other.committedOwnerTokenCount_ = 0;
     other.instanceTable_ = nullptr;
     other.externalInstance_ = nullptr;

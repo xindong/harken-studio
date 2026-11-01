@@ -13,6 +13,7 @@
 #include <harken/Harken.h>
 
 #include "harken/core/PcmView.h"
+#include "harken/core/StableRowStorage.h"
 
 #include <atomic>
 #include <cstdint>
@@ -21,6 +22,23 @@
 #include <vector>
 
 namespace harken {
+
+namespace detail {
+
+struct PcmSampleDeleter {
+    PcmSampleDeleter() noexcept = default;
+    PcmSampleDeleter(const PcmSampleDeleter&) = delete;
+    PcmSampleDeleter& operator=(const PcmSampleDeleter&) = delete;
+    PcmSampleDeleter(PcmSampleDeleter&&) noexcept = default;
+    PcmSampleDeleter& operator=(PcmSampleDeleter&&) noexcept = default;
+    void operator()(void* p) noexcept;
+    PcmSampleFormat format = PcmSampleFormat::Float32;
+    std::unique_ptr<StablePageReservation> pages;
+};
+
+using PcmSampleBuffer = std::unique_ptr<void, PcmSampleDeleter>;
+
+} // namespace detail
 
 // Deterministic allocation failures for internal registration tests.
 // Production leaves the fault at None.
@@ -37,8 +55,8 @@ class PCMRegistry {
 private:
     struct Entry {
         PCMView view;                     // useCount wired to `uses` below
-        std::vector<float> ownedSamples;  // copy policy backing; empty for
-                                          // reference policy
+        detail::PcmSampleBuffer ownedSamples; // copy policy backing; null for
+                                                // reference policy
         std::atomic<std::uint32_t> uses{0};
         std::uint64_t cookie = 0;         // provenance stamp of this
                                           // registration (see RegisterPCM)
@@ -50,7 +68,7 @@ public:
     public:
         bool Valid() const noexcept { return entry_ != nullptr; }
         bool OwnsSamples() const noexcept {
-            return entry_ != nullptr && !entry_->ownedSamples.empty();
+            return entry_ != nullptr && entry_->ownedSamples != nullptr;
         }
         PCMView View() const noexcept { return entry_ != nullptr ? entry_->view : PCMView{}; }
         std::uint64_t Cookie() const noexcept { return entry_ != nullptr ? entry_->cookie : 0; }
@@ -60,10 +78,70 @@ public:
         std::shared_ptr<const Entry> entry_;
     };
 
+    class PackSampleBuilder;
+
+    // Only registry preparation can produce an immutable, owned sample record.
+    // Its entry stays at the same address when a pack transaction adopts it.
+    class PreparedPackSamples {
+    public:
+        PreparedPackSamples() = default;
+        PreparedPackSamples(const PreparedPackSamples&) = delete;
+        PreparedPackSamples& operator=(const PreparedPackSamples&) = delete;
+        PreparedPackSamples(PreparedPackSamples&&) noexcept = default;
+        PreparedPackSamples& operator=(PreparedPackSamples&&) noexcept = default;
+
+        bool IsPrepared() const noexcept { return m_entry != nullptr; }
+        VnSoundId SoundId() const noexcept { return m_soundId; }
+        PCMView View() const noexcept { return m_entry != nullptr ? m_entry->view : PCMView{}; }
+
+    private:
+        friend class PCMRegistry;
+        friend class PackSampleBuilder;
+        VnSoundId m_soundId{};
+        std::shared_ptr<Entry> m_entry;
+    };
+
+    // Accepts samples in the descriptor's physical order. Only Complete can
+    // publish a record, after all frames and the canonical revision validate.
+    class PackSampleBuilder {
+    public:
+        PackSampleBuilder() = default;
+        PackSampleBuilder(const PackSampleBuilder&) = delete;
+        PackSampleBuilder& operator=(const PackSampleBuilder&) = delete;
+        PackSampleBuilder(PackSampleBuilder&&) noexcept = default;
+        PackSampleBuilder& operator=(PackSampleBuilder&&) noexcept = default;
+        VnResult Append(const float* samples, std::size_t count);
+        VnResult Complete(PreparedPackSamples* out);
+        // False preserves both builders and outputs for their single-record path.
+        bool TryCompletePair(PackSampleBuilder& following,
+            PreparedPackSamples* firstOut, PreparedPackSamples* followingOut,
+            VnResult (&results)[2]);
+        bool ReservationUnavailable() const noexcept { return m_reservationUnavailable; }
+        void SetCommitPageLimitForTests(std::size_t pages) noexcept {
+            if (m_entry != nullptr && m_entry->ownedSamples.get_deleter().pages != nullptr)
+                m_entry->ownedSamples.get_deleter().pages->SetCommitPageLimitForTests(pages);
+        }
+
+    private:
+        friend class PCMRegistry;
+        VnResult PrepareStorage();
+        VnResult Store(const float* samples, std::size_t count);
+        void PrepareSampleView() noexcept;
+        void MoveCompleted(PreparedPackSamples* out) noexcept;
+        VnSoundId m_soundId{};
+        std::shared_ptr<Entry> m_entry;
+        std::shared_ptr<Entry> m_equalCandidate;
+        std::size_t m_count = 0;
+        std::size_t m_written = 0;
+        VnResult m_status = VN_OK;
+        bool m_reservationUnavailable = false;
+    };
+
     struct PackReferenceRegistration {
         VnSoundId soundId{};
         VnPCMDesc desc{};
         PcmLoopRegion loop{};
+        PreparedPackSamples* samples = nullptr;
     };
 
     class PreparedPackMutation {
@@ -175,6 +253,17 @@ public:
     bool ExtractRetiring(VnSoundId soundId, std::uint64_t expectedCookie,
                          RetiredGeneration* out);
 
+    // Copy-policy input only. A nonempty output is refused without changing it.
+    VnResult PreparePackSamples(VnSoundId soundId, const VnPCMDesc* desc,
+                               PreparedPackSamples* out, PcmLoopRegion loop = {});
+    // Shape validation does not access the descriptor's sample pointers.
+    VnResult BeginPackSamples(VnSoundId soundId, const VnPCMDesc* shape,
+                             PackSampleBuilder* out, PcmLoopRegion loop = {},
+                             const PreparedPackSamples* equalCandidate = nullptr);
+
+    // A completed record is consumed when its staged map entry is inserted.
+    // Later refusal destroys consumed entries; unconsumed records stay owned
+    // by the caller. Publication and cookie advancement occur only at commit.
     VnResult PreparePackMutation(
         const PackReferenceRegistration* registrations,
         std::size_t registrationCount, std::size_t retiringCount,
@@ -216,7 +305,7 @@ public:
 
 private:
     VnResult CommitPCM(VnSoundId soundId, const VnPCMDesc* desc,
-                       std::vector<float>&& stagedSamples,
+                       detail::PcmSampleBuffer&& stagedSamples,
                        std::uint64_t contentRevision,
                        std::uint64_t* outCookie, PcmLoopRegion loop);
 

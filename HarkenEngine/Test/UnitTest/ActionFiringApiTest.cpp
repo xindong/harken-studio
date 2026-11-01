@@ -6418,7 +6418,7 @@ TEST(ActionFiringApi, PostResolvesOnlyCanonicalCurrentWorldActions) {
 }
 
 TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCanRecover) {
-    for (unsigned refusedStorage = 0; refusedStorage < 23u; ++refusedStorage) {
+    for (unsigned refusedStorage = 0; refusedStorage < 26u; ++refusedStorage) {
         SCOPED_TRACE(refusedStorage);
         harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -6429,7 +6429,11 @@ TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCan
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &pcm));
         CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
             engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
-        if ((refusedStorage >= 18u && refusedStorage <= 20u) || refusedStorage == 22u)
+        // Exercise the actual Engine capture wrappers: a selected Single,
+        // a Queue holder refusal, and a Single refusal inside Queue+Single.
+        const bool holderRefusal = refusedStorage >= 23u;
+        if (refusedStorage == 23u) image.MakeImmediateSequenceContainerPlayAction();
+        else if ((refusedStorage >= 18u && refusedStorage <= 20u) || refusedStorage == 22u)
             image.MakeImmediateMixedVariableControlPlayAction();
         else if (refusedStorage == 3u || refusedStorage == 15u || refusedStorage == 16u)
             image.MakeImmediateVariableControlPlayAction();
@@ -6438,7 +6442,48 @@ TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCan
         auto desc = ValidPostDesc();
         desc.actionId = image.actions[9].actionStableId;
         ASSERT_EQ(VN_OK, Vn_CreateEmitter(&desc.emitter));
+        harken::SelectionDeltaRefV1 selectionPredecessor{};
+        harken::SelectionMemoryKeyV1 selectionKey{};
+        if (refusedStorage == 23u) {
+            // A fresh ordinary Sequence uses Legacy selection and bypasses the
+            // Single holder. A real pending predecessor selects PendingInitial.
+            const auto& program = image.containers[0];
+            selectionKey = {engine.variables.CurrentWorldGeneration(), program.containerStableId,
+                program.programSemanticFingerprint, program.memoryScope};
+            if (selectionKey.memoryScope == harken::MemoryScopeV1::Emitter) {
+                selectionKey.emitterSlot = static_cast<std::uint32_t>(desc.emitter);
+                selectionKey.emitterGeneration = static_cast<std::uint32_t>(desc.emitter >> 32);
+            }
+            harken::SelectionPlayRequestV1 request{};
+            request.key = selectionKey;
+            request.program = &program;
+            request.worldSemanticFingerprint = image.world.identity.runtimeSemanticFingerprint;
+            request.rootStableId = program.containerStableId;
+            ASSERT_EQ(harken::LogicCommitCoordinator::IssueStatus::Issued,
+                engine.logicCommits.TryIssue(&request.ticket));
+            request.acceptedPostOrdinal = request.ticket;
+            const auto appended = engine.selectionMemory.AppendPlay(request);
+            ASSERT_EQ(harken::SelectionMemoryStatusV1::Ok, appended.status);
+            selectionPredecessor = appended.delta;
+            ASSERT_EQ(1u, engine.selectionMemory.Snapshot(selectionKey).pendingCount);
+        }
         const auto baseline = CaptureActionReclaimableOwners(engine);
+        auto reclaimedOwners = baseline;
+        // Committing the fixture's predecessor releases exactly its own delta.
+        if (refusedStorage == 23u) ++reclaimedOwners.back();
+        const auto availableVoices = engine.voices.AvailableSlotCount();
+        const auto sourceTerminals = engine.sourceTerminals.OccupiedCount();
+        const auto commandHead = engine.commands.PublishedHead();
+        const auto initialHead = engine.commands.CaptureBlockInputCut().initialHead;
+        if (holderRefusal) {
+            ASSERT_EQ(0u, engine.timelineArms.ConstructedRowCount());
+            ASSERT_EQ(0u, engine.originalSinglePreparationHolders.ConstructedCount());
+            ASSERT_EQ(0u, engine.originalQueueSourcePreparationHolders.ConstructedCount());
+            if (refusedStorage == 24u)
+                engine.originalQueueSourcePreparationHolders.SetCommitPageLimitForTests(0);
+            else
+                engine.originalSinglePreparationHolders.SetCommitPageLimitForTests(0);
+        }
         if (refusedStorage == 0) engine.timelineGroupCaptureScratch.SetCommitPageLimitForTests(0);
         if (refusedStorage == 1) engine.initialQueueLaneGroupsScratch.SetCommitPageLimitForTests(0);
         if (refusedStorage == 2) engine.originalQueueGroupHolders.SetCommitPageLimitForTests(0);
@@ -6459,11 +6504,11 @@ TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCan
         if (refusedStorage == 16) engine.queueFutureRecords.SetCommitPageLimitForTests(0);
         if (refusedStorage >= 18 && refusedStorage <= 20) harken::detail::ArmLogicAllocFaultForTests(
             refusedStorage - 17u, harken::detail::LogicAllocSite::PrivateVcLaneStorage);
-        if (refusedStorage >= 21) harken::detail::ArmLogicAllocFaultForTests(
+        if (refusedStorage >= 21u && refusedStorage <= 22u) harken::detail::ArmLogicAllocFaultForTests(
             1, harken::detail::LogicAllocSite::PlaybackPathStorage);
         VnActionFiringHandle firing = 99;
         const auto refused = Vn_PostAction(&desc, &firing);
-        if (refusedStorage == 14 || refusedStorage >= 17) {
+        if (refusedStorage == 14 || (refusedStorage >= 17u && refusedStorage <= 22u)) {
             EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
             harken::detail::DisarmLogicAllocFaultForTests();
         }
@@ -6483,12 +6528,99 @@ TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCan
         engine.initialQueueSuccessorCompositeProofsScratch.SetCommitPageLimitForTests(SIZE_MAX);
         engine.actionQueueReplacementScratch.SetCommitPageLimitForTests(SIZE_MAX);
         engine.originalPlayableServiceLifetimeHolders.SetCommitPageLimitForTests(SIZE_MAX);
-        ASSERT_EQ((refusedStorage <= 3u || refusedStorage >= 14u) && refusedStorage != 22u
+        engine.originalSinglePreparationHolders.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.originalQueueSourcePreparationHolders.SetCommitPageLimitForTests(SIZE_MAX);
+        ASSERT_EQ((refusedStorage <= 3u || (refusedStorage >= 14u && refusedStorage <= 21u))
                 ? VN_BACKPRESSURE : VN_NO_VOICE, refused);
         EXPECT_EQ(0u, firing);
         EXPECT_EQ(baseline, CaptureActionReclaimableOwners(engine));
-        ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+        if (holderRefusal) {
+            // Ordinary Arm preparation succeeded. Refusal occurred later at
+            // the wrapper's missing holder, before any original loan issuance.
+            ASSERT_GT(engine.timelineArms.ConstructedRowCount(), 0u);
+            EXPECT_EQ(refusedStorage == 25u ? 1u : 0u,
+                      engine.originalQueueSourcePreparationHolders.ConstructedCount());
+            EXPECT_EQ(0u, engine.originalSinglePreparationHolders.ConstructedCount());
+            EXPECT_EQ(availableVoices, engine.voices.AvailableSlotCount());
+            EXPECT_EQ(sourceTerminals, engine.sourceTerminals.OccupiedCount());
+            EXPECT_EQ(commandHead, engine.commands.PublishedHead());
+            EXPECT_EQ(initialHead, engine.commands.CaptureBlockInputCut().initialHead);
+            EXPECT_FALSE(engine.runtimeRecreateRequired);
+            for (std::uint32_t slot = 0; slot < engine.timelineArms.ConstructedRowCount(); ++slot) {
+                const auto* row = engine.timelineArms.RowAt(slot);
+                EXPECT_FALSE(row->originalLifetimePinned.load());
+                EXPECT_EQ(0u, row->originalSourceEpisode);
+                EXPECT_EQ(nullptr, row->originalSourceSubmission);
+            }
+            for (const auto& original : engine.originalQueueSourcePreparationHolders) {
+                EXPECT_FALSE(original.OriginalSource().Valid());
+                EXPECT_FALSE(original.OriginalBody().Valid());
+                EXPECT_FALSE(original.OriginalCompositeLedger().Valid());
+            }
+            for (const auto& original : engine.originalSinglePreparationHolders) {
+                EXPECT_FALSE(original.OriginalSource().Valid());
+                EXPECT_FALSE(original.OriginalBody().Valid());
+                EXPECT_FALSE(original.OriginalLedger().Valid());
+                EXPECT_FALSE(original.OriginalLedgerPreparation().Valid());
+            }
+        }
+        struct CaptureObservation {
+            bool queue = false;
+            unsigned count = 0;
+        } capture{refusedStorage != 23u};
+        if (holderRefusal) {
+            engine.timelineVoicePreparedContextForTest = &capture;
+            engine.timelineVoicePreparedHookForTest = [](
+                harken::Engine& actual, const harken::EnginePreparedTimelineVoiceStart& voice, void* opaque) {
+                auto& observed = *static_cast<CaptureObservation*>(opaque);
+                const auto* queue = voice.originalQueueSource;
+                // Queue continuation also prepares a voice here, without an
+                // original-current capture. Observe the actual Queue issuer.
+                if (observed.queue && queue == nullptr) return;
+                EXPECT_EQ(observed.queue, queue != nullptr);
+                const auto originalArm = queue != nullptr ? queue->OriginalArm() : voice.arm;
+                if (queue != nullptr) {
+                    EXPECT_EQ(queue, actual.OriginalQueueSourcePreparationForArm(originalArm));
+                    EXPECT_TRUE(queue->OriginalSource().Valid());
+                    EXPECT_TRUE(queue->OriginalBody().Valid());
+                }
+                const auto* single = actual.OriginalSinglePreparationForArm(originalArm);
+                ASSERT_NE(nullptr, single);
+                EXPECT_TRUE(single->OriginalSource().Valid());
+                EXPECT_TRUE(single->OriginalBody().Valid());
+                if (queue != nullptr)
+                    EXPECT_EQ(queue->OriginalSourceIdentity(), single->OriginalSourceIdentity());
+                ++observed.count;
+            };
+        }
+        const auto retried = Vn_PostAction(&desc, &firing);
+        engine.timelineVoicePreparedHookForTest = nullptr;
+        engine.timelineVoicePreparedContextForTest = nullptr;
+        ASSERT_EQ(VN_OK, retried);
         ASSERT_NE(0u, firing);
+        if (refusedStorage == 23u) {
+            ASSERT_EQ(harken::SelectionMemoryStatusV1::Ok,
+                engine.selectionMemory.CommitHead(selectionPredecessor));
+        }
+        if (holderRefusal) {
+            ASSERT_GT(capture.count, 0u);
+            ASSERT_GT(engine.originalSinglePreparationHolders.ConstructedCount(), 0u);
+            if (refusedStorage == 23u)
+                EXPECT_EQ(0u, engine.originalQueueSourcePreparationHolders.ConstructedCount());
+            else
+                EXPECT_GT(engine.originalQueueSourcePreparationHolders.ConstructedCount(), 0u);
+            bool producedAudio = false;
+            for (unsigned block = 0; block < 128u && !producedAudio; ++block) {
+                ASSERT_EQ(VN_OK, Vn_Update());
+                const auto previousBlock = engine.mixer.BlocksRendered();
+                engine.nullBackend.Pump(1);
+                ASSERT_EQ(previousBlock + 1u, engine.mixer.BlocksRendered());
+                EXPECT_FALSE(engine.runtimeRecreateRequired);
+                producedAudio = harkentest::Peak(engine.nullBackend.LastBlock(),
+                    64u * engine.nullBackend.Channels()) > 0.001f;
+            }
+            EXPECT_TRUE(producedAudio);
+        }
         ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
         VnActionFiringInfo info{};
         info.structSize = sizeof(info);
@@ -6500,11 +6632,26 @@ TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCan
         }
         ASSERT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
         ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
-        for (unsigned block = 0; block < 128u && CaptureActionReclaimableOwners(engine) != baseline; ++block) {
+        for (unsigned block = 0; block < 128u && CaptureActionReclaimableOwners(engine) != reclaimedOwners; ++block) {
             engine.nullBackend.Pump(1);
             ASSERT_EQ(VN_OK, Vn_Update());
         }
-        EXPECT_EQ(baseline, CaptureActionReclaimableOwners(engine));
+        EXPECT_EQ(reclaimedOwners, CaptureActionReclaimableOwners(engine));
+        if (holderRefusal) {
+            EXPECT_EQ(availableVoices, engine.voices.AvailableSlotCount());
+            EXPECT_EQ(sourceTerminals, engine.sourceTerminals.OccupiedCount());
+            for (const auto& original : engine.originalQueueSourcePreparationHolders) {
+                EXPECT_FALSE(original.OriginalSource().Valid());
+                EXPECT_FALSE(original.OriginalBody().Valid());
+                EXPECT_FALSE(original.OriginalCompositeLedger().Valid());
+            }
+            for (const auto& original : engine.originalSinglePreparationHolders) {
+                EXPECT_FALSE(original.OriginalSource().Valid());
+                EXPECT_FALSE(original.OriginalBody().Valid());
+                EXPECT_FALSE(original.OriginalLedger().Valid());
+                EXPECT_FALSE(original.OriginalLedgerPreparation().Valid());
+            }
+        }
         EXPECT_FALSE(engine.runtimeRecreateRequired);
         EXPECT_EQ(0u, engine.mixer.CommandProtocolViolationCount());
     }
@@ -6535,6 +6682,19 @@ TEST(ActionFiringApi, FrontierAttemptSparseBackingKeepsHighSlotAndCompetingAllow
     EXPECT_TRUE(minimal.variableControlRollbackEdges.empty());
     EXPECT_TRUE(minimal.initialFrontierSides.empty());
     EXPECT_TRUE(minimal.variableControlNestedModes.empty());
+    EXPECT_TRUE(original->variableControlOuterPathChildren.empty());
+    EXPECT_TRUE(original->variableControlOuterPathContainerRows.empty());
+    EXPECT_TRUE(original->variableControlNestedPrefixOrdinals.empty());
+    EXPECT_TRUE(original->variableControlNestedPrefixPath.empty());
+    EXPECT_TRUE(original->variableControlNestedVariableControls.empty());
+    EXPECT_TRUE(original->variableControlNestedServices.empty());
+    EXPECT_TRUE(original->variableControlNestedDecisions.empty());
+    EXPECT_TRUE(original->variableControlNestedSelectedChildOrdinals.empty());
+    EXPECT_TRUE(original->variableControlNestedContinuationOrdinals.empty());
+    EXPECT_TRUE(original->variableControlLeafHandles.empty());
+    EXPECT_TRUE(original->variableControlLeafEpochs.empty());
+    EXPECT_TRUE(original->variableControlNestedDecisionOwnerContexts.empty());
+    EXPECT_TRUE(original->variableControlNestedOwnerContexts.empty());
     // A full allowance must also cover an active Sound row's later reuse.
     minimal.phase = harken::EngineFrontierAttemptPhase::Preparing;
     harken::detail::ArmLogicAllocFaultForTests(8,
@@ -6552,9 +6712,26 @@ TEST(ActionFiringApi, FrontierAttemptSparseBackingKeepsHighSlotAndCompetingAllow
     auto* preparedColumn = minimal.queueFutureOwners.data();
     ASSERT_TRUE(engine.PrepareActionPlayBacking(2, 1, &backing));
     EXPECT_TRUE(minimal.containerStoragePrepared);
+    EXPECT_EQ(harken::kMaxKnownScheduleLeaves, original->queueSourceCommands.size());
+    ASSERT_EQ(harken::kMaxKnownScheduleLeaves, original->queueFutureMemberSlots.size());
+    auto* queueMemberSlots = original->queueFutureMemberSlots.data();
+    queueMemberSlots[0] = 17u;
     EXPECT_EQ(preparedColumn, minimal.queueFutureOwners.data());
     EXPECT_EQ(engine.config.maxPlayableInstances, minimal.variableControlNestedModes.size());
     EXPECT_EQ(2u * engine.config.maxPlayableInstances, minimal.initialFrontierSides.size());
+    EXPECT_EQ(harken::kSelectionPathNodeCapacity, original->variableControlOuterPathChildren.size());
+    EXPECT_EQ(harken::kSelectionPathNodeCapacity, original->variableControlOuterPathContainerRows.size());
+    EXPECT_EQ(harken::kSelectionPathNodeCapacity, original->variableControlNestedPrefixOrdinals.size());
+    EXPECT_EQ(harken::kSelectionPathNodeCapacity, original->variableControlNestedPrefixPath.size());
+    EXPECT_EQ(harken::kMaxKnownScheduleLeaves + 64u, original->variableControlNestedVariableControls.size());
+    EXPECT_EQ(harken::kMaxKnownScheduleLeaves + 64u, original->variableControlNestedServices.size());
+    EXPECT_EQ(harken::kMaxKnownScheduleLeaves + 64u, original->variableControlNestedDecisions.size());
+    EXPECT_EQ(harken::kMaxKnownScheduleLeaves + 64u, original->variableControlNestedSelectedChildOrdinals.size());
+    EXPECT_EQ(harken::kMaxKnownScheduleLeaves + 64u, original->variableControlNestedContinuationOrdinals.size());
+    EXPECT_EQ(harken::kMaxKnownScheduleLeaves, original->variableControlLeafHandles.size());
+    EXPECT_EQ(harken::kMaxKnownScheduleLeaves, original->variableControlLeafEpochs.size());
+    EXPECT_EQ(harken::kMaxActionVariableControlOwnerTokens, original->variableControlNestedDecisionOwnerContexts.size());
+    EXPECT_EQ(harken::kMaxActionVariableControlOwnerTokens, original->variableControlNestedOwnerContexts.size());
     EXPECT_EQ(harken::EngineFrontierAttemptPhase::Preparing, minimal.phase);
     minimal.phase = harken::EngineFrontierAttemptPhase::Free;
     ASSERT_TRUE(engine.EnsureActionPlaySlot(high / 2u, false));
@@ -6570,6 +6747,9 @@ TEST(ActionFiringApi, FrontierAttemptSparseBackingKeepsHighSlotAndCompetingAllow
     engine.actionPlayScratch.SetCommitPageLimitForTests(0);
     {
         const auto use = backing.Use();
+        ASSERT_TRUE(engine.EnsureActionPlaySlot(high));
+        EXPECT_EQ(queueMemberSlots, original->queueFutureMemberSlots.data());
+        EXPECT_EQ(17u, original->queueFutureMemberSlots[0]);
         EXPECT_FALSE(engine.EnsureActionPlaySlot(high / 2u + 1u));
         ASSERT_TRUE(engine.EnsureActionPlaySlot(1));
         ASSERT_TRUE(engine.EnsureActionPlaySlot(2));
@@ -6812,43 +6992,49 @@ TEST(ActionFiringApi, FrontierAttemptSkipsRetainedOwnerAndReusesOnlyTransferredS
 }
 
 TEST(ActionFiringApi, FrontierAttemptOneShortRollsBackWholeActionAndQuarantinesExhaustedGeneration) {
-    for (const bool exhausted : {false, true}) {
-        SCOPED_TRACE(exhausted);
-        harkentest::EngineSession session(harkentest::MakeNullConfig(4, 64, 48000));
-        ASSERT_EQ(VN_OK, session.InitResult());
-        auto& engine = *session.Engine();
-        std::vector<float> samples(4096, 0.25f);
-        const auto pcm = harkentest::MonoDesc(samples, 48000);
-        ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
-        CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision);
-        image.MakeNestedImmediateTwoSoundPlayAction();
-        ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
-        for (std::uint32_t slot = 1; slot < engine.actionPlayStorage.size(); ++slot) {
-            ASSERT_TRUE(engine.EnsureActionPlaySlot(slot));
-            auto& storage = engine.actionPlayStorage[slot];
-            storage.phase = exhausted ? harken::EngineFrontierAttemptPhase::Free
-                                      : harken::EngineFrontierAttemptPhase::Preparing;
-            storage.generation = exhausted ? UINT64_MAX : 11;
-        }
-        const auto freeInstances = engine.playableInstances.FreeCount();
-        const auto freeDeltas = engine.selectionMemory.FreeDeltaCount();
-        const auto arms = engine.timelineArms.LiveCount();
-        auto desc = ValidPostDesc();
-        desc.actionId = image.actions[8].actionStableId;
-        VnActionFiringHandle firing = 99;
-        EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &firing));
-        EXPECT_EQ(0u, firing);
-        EXPECT_EQ(freeInstances, engine.playableInstances.FreeCount());
-        EXPECT_EQ(freeDeltas, engine.selectionMemory.FreeDeltaCount());
-        EXPECT_EQ(arms, engine.timelineArms.LiveCount());
-        EXPECT_EQ(0u, engine.voices.ActiveCount());
-        EXPECT_FALSE(engine.runtimeRecreateRequired);
-        EXPECT_EQ(harken::EngineFrontierAttemptPhase::Free, engine.actionPlayStorage[0].phase);
-        for (std::uint32_t slot = 1; slot < engine.actionPlayStorage.size(); ++slot) {
-            EXPECT_EQ(exhausted ? harken::EngineFrontierAttemptPhase::Quarantined
-                                : harken::EngineFrontierAttemptPhase::Preparing,
-                      engine.actionPlayStorage[slot].phase);
-            EXPECT_EQ(exhausted ? UINT64_MAX : 11u, engine.actionPlayStorage[slot].generation);
+    for (const std::size_t actionIndex : {8u, 9u}) {
+        for (const bool exhausted : {false, true}) {
+            SCOPED_TRACE(exhausted);
+            SCOPED_TRACE(actionIndex);
+            harkentest::EngineSession session(harkentest::MakeNullConfig(4, 64, 48000));
+            ASSERT_EQ(VN_OK, session.InitResult());
+            auto& engine = *session.Engine();
+            std::vector<float> samples(4096, 0.25f);
+            const auto pcm = harkentest::MonoDesc(samples, 48000);
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+            CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision);
+            image.MakeNestedImmediateTwoSoundPlayAction();
+            ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+            for (std::uint32_t slot = 1; slot < engine.actionPlayStorage.size(); ++slot) {
+                ASSERT_TRUE(engine.EnsureActionPlaySlot(slot, actionIndex == 8));
+                auto& storage = engine.actionPlayStorage[slot];
+                storage.phase = exhausted ? harken::EngineFrontierAttemptPhase::Free
+                                          : harken::EngineFrontierAttemptPhase::Preparing;
+                storage.generation = exhausted ? UINT64_MAX : 11;
+            }
+            const auto freeInstances = engine.playableInstances.FreeCount();
+            const auto freeDeltas = engine.selectionMemory.FreeDeltaCount();
+            const auto arms = engine.timelineArms.LiveCount();
+            auto desc = ValidPostDesc();
+            desc.actionId = image.actions[actionIndex].actionStableId;
+            VnActionFiringHandle firing = 99;
+            EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &firing));
+            EXPECT_EQ(0u, firing);
+            EXPECT_EQ(freeInstances, engine.playableInstances.FreeCount());
+            EXPECT_EQ(freeDeltas, engine.selectionMemory.FreeDeltaCount());
+            EXPECT_EQ(arms, engine.timelineArms.LiveCount());
+            EXPECT_EQ(0u, engine.voices.ActiveCount());
+            EXPECT_FALSE(engine.runtimeRecreateRequired);
+            ASSERT_TRUE(engine.actionPlayStorage.IsConstructed(0));
+            EXPECT_GT(engine.actionPlayStorage[0].generation, 0u);
+            EXPECT_EQ(harken::EngineFrontierAttemptPhase::Free, engine.actionPlayStorage[0].phase);
+            if (actionIndex == 9) EXPECT_FALSE(engine.actionPlayStorage[0].containerStoragePrepared);
+            for (std::uint32_t slot = 1; slot < engine.actionPlayStorage.size(); ++slot) {
+                EXPECT_EQ(exhausted ? harken::EngineFrontierAttemptPhase::Quarantined
+                                    : harken::EngineFrontierAttemptPhase::Preparing,
+                          engine.actionPlayStorage[slot].phase);
+                EXPECT_EQ(exhausted ? UINT64_MAX : 11u, engine.actionPlayStorage[slot].generation);
+            }
         }
     }
 }
@@ -23165,6 +23351,7 @@ static void CheckVariableControlRetargetFromSoundCompletesNestedQueueTree(
         ASSERT_EQ(1u, engine->actionPlayScratch.ConstructedCount());
         primingScratch = &*engine->actionPlayScratch.begin();
         ASSERT_FALSE(primingScratch->storage.containerStoragePrepared);
+        EXPECT_EQ(0u, engine->memberOnsets.CommittedBytes());
         if (prime == IndependentSoundPrime::Drained) {
             VnActionFiringInfo info{};
             info.structSize = sizeof(info);
@@ -23710,7 +23897,7 @@ TEST(ActionFiringApi, DrainedIndependentSoundStorageSupportsNestedContainerUseAn
 }
 
 TEST(ActionFiringApi, LiveSoundSurvivesEachContainerColumnFailureAndRetry) {
-    for (std::size_t allocation = 1; allocation <= 19; ++allocation) {
+    for (std::size_t allocation = 1; allocation <= 39; ++allocation) {
         SCOPED_TRACE(allocation);
         ASSERT_NO_FATAL_FAILURE(CheckVariableControlRetargetFromSoundCompletesNestedQueueTree(
             false, false, false, false, false, false, false, false, false, 0,
@@ -51518,7 +51705,7 @@ static void CheckPendingVariableControlMultiPlaySequencePcm(PendingMultiPlaySequ
                         installation.releaseObserver.targetSequence);
                     EXPECT_EQ(captured.submission, engine.originalSourceSubmissions.Find(installation.startArm));
                 }
-                const float sample = voice->pcm.channels[0][0];
+                const float sample = voice->pcm.ReadSample(0, 0);
                 ASSERT_TRUE(sample == first[0] || sample == second[0]);
                 ++sourcePcmCounts[captured.ordinal][sample == first[0] ? 0u : 1u];
                 captured.checked = true;
@@ -59520,6 +59707,10 @@ TEST(EngineNativeSelectionOwnership, SharedKeyInstallCertifiesUnchangedRealTreeB
 static bool RegisterDormantInitialSelectionOwner(harken::EngineActionPlayScratch& scratch,
     harken::SelectionMemoryTableV1& table) {
     auto& storage = scratch.storage;
+    // This injection adds one owner beyond the authored transaction's demand.
+    const auto prepared = storage.ownerLedger.PreparedCapacity();
+    if (prepared < storage.ownerLedger.Capacity() &&
+        !storage.ownerLedger.PrepareStorage(prepared + 1u)) return false;
     auto& context = scratch.pendingSelectionOwnerContext;
     context = {&storage, storage.generation, &table};
     if (!scratch.frontierOwnerBatchRegistered) {
@@ -72868,16 +73059,28 @@ TEST(ActionFiringApi, OriginalSingleProductionRealOwnerCommitRefusalKeepsSourceH
     for (const auto& original : engine.originalSingleOccurrenceCommitProofs) EXPECT_FALSE(original.Valid());
 }
 
-TEST(ActionFiringApi, OriginalSingleProducerDefaultPureSoundNeverIssuesQueueCurrentOutputs) {
+static void CheckIndependentSoundPreparedRetry(std::uint32_t roots) {
     (void)Vn_Term();
     std::vector<float> samples(512, 0.25f);
-    harkentest::EngineSession session(harkentest::MakeNullConfig(4, 64, 48000));
+    harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     const auto pcm = harkentest::MonoDesc(samples, 48000);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
     CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision);
     image.MakeImmediateSoundPlayAction();
+    for (std::uint32_t index = 1; index < roots; ++index) {
+        image.steps[11 + index] = image.steps[11];
+        image.steps[11 + index].authoredEventIndex = index;
+    }
+    image.actions[9].stepCount = image.actions[9].expandedStepOccurrenceCount = roots;
+    image.actions[9].programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(image.actions[9]);
+    image.world.capacity.maxActionStepsPerDefinition =
+        (std::max)(image.world.capacity.maxActionStepsPerDefinition, roots);
+    image.world.capacity.maxActionExpandedWork =
+        (std::max)(image.world.capacity.maxActionExpandedWork, roots);
+    image.world.capacity.maxActionStepsTotal += roots - 1u;
+    image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
         harken::InstallContainerWorldV1(engine, image.world).status);
     auto desc = ValidPostDesc();
@@ -72903,23 +73106,41 @@ TEST(ActionFiringApi, OriginalSingleProducerDefaultPureSoundNeverIssuesQueueCurr
     EXPECT_FALSE(engine.runtimeRecreateRequired);
     timeline.starts.SetCommitPageLimitForTests(SIZE_MAX);
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
-    ASSERT_EQ(1u, timeline.starts.size());
+    ASSERT_EQ(roots, timeline.starts.size());
     auto service = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
         [firing](const auto& row) { return row.PendingImmediateCohortRoot() == firing; });
     ASSERT_NE(engine.playableServices.end(), service);
-    ASSERT_EQ(1u, engine.actionPlayScratch.ConstructedCount());
+    ASSERT_EQ(roots, engine.actionPlayScratch.ConstructedCount());
     auto* originalScratch = &*engine.actionPlayScratch.begin();
     auto& storage = originalScratch->storage;
     const auto expectMinimal = [&] {
         EXPECT_FALSE(storage.containerStoragePrepared);
+        EXPECT_TRUE(originalScratch->pendingVariableReplacementTops.empty());
+        EXPECT_TRUE(originalScratch->pendingVariableReplacementLeaves.empty());
+        EXPECT_TRUE(storage.pendingVariableReplacementNodes.empty());
+        EXPECT_TRUE(storage.pendingVariableReplacementLeafNodes.empty());
+        EXPECT_TRUE(storage.pendingVariableReplacementLeafTops.empty());
         EXPECT_TRUE(storage.variableControlRollbackEdges.empty());
         EXPECT_TRUE(storage.initialControlSlices.empty());
         EXPECT_TRUE(storage.queueFutureOwners.empty());
         EXPECT_TRUE(storage.variableControlNestedModes.empty());
     };
     expectMinimal();
+    EXPECT_EQ(roots, engine.playableInstances.ConstructedEntryCount());
+    EXPECT_EQ(roots, engine.originalPlayableLifetimeHolders.size());
+    EXPECT_EQ(roots, engine.pendingImmediateLaneEventsScratch.size());
+    EXPECT_EQ(2u, storage.ownerLedger.PreparedCapacity());
+    const auto minimalTreeBytes = originalScratch->playableTreeExecutor.StorageBytes();
     const auto originalRender = service->renderHandle;
     const auto originalArm = service->arm;
+    std::array<VnVoiceHandle, 4> originalRenders{};
+    std::size_t originalCount = 0;
+    for (const auto& member : engine.playableServices)
+        if (member.PendingImmediateCohortRoot() == firing) {
+            ASSERT_LT(originalCount, originalRenders.size());
+            originalRenders[originalCount++] = member.renderHandle;
+        }
+    ASSERT_EQ(roots, originalCount);
     for (const auto& original : engine.originalQueueSourcePreparationHolders) {
         EXPECT_FALSE(original.OriginalSource().Valid());
         EXPECT_FALSE(original.OriginalBody().Valid());
@@ -72972,10 +73193,17 @@ TEST(ActionFiringApi, OriginalSingleProducerDefaultPureSoundNeverIssuesQueueCurr
         heard = harkentest::Peak(engine.nullBackend.LastBlock(), 128u) > 0.001f;
     }
     ASSERT_TRUE(heard);
+    std::size_t replacementCount = 0;
+    for (const auto& member : engine.playableServices)
+        if (member.PendingImmediateCohortRoot() == firing) {
+            ASSERT_LT(replacementCount, originalCount);
+            EXPECT_NE(originalRenders[replacementCount++], member.renderHandle);
+        }
+    EXPECT_EQ(roots, replacementCount);
     EXPECT_NE(originalRender, service->renderHandle);
     EXPECT_TRUE(originalArm.slot != service->arm.slot || originalArm.generation != service->arm.generation);
     EXPECT_FALSE(engine.runtimeRecreateRequired);
-    EXPECT_EQ(1u, timeline.starts.size());
+    EXPECT_EQ(roots, timeline.starts.size());
     EXPECT_EQ(0u, timeline.transactions.size());
     EXPECT_EQ(0u, timeline.extraCommands.size());
     EXPECT_EQ(0u, timeline.queueEvents.size());
@@ -72994,8 +73222,28 @@ TEST(ActionFiringApi, OriginalSingleProducerDefaultPureSoundNeverIssuesQueueCurr
     EXPECT_TRUE(fullRefused);
     EXPECT_FALSE(fullBacking.Valid());
     EXPECT_FALSE(storage.containerStoragePrepared);
+    const auto playingRender = service->renderHandle;
+    for (const auto site : {harken::detail::LogicAllocSite::PlayableTreeStorage,
+                            harken::detail::LogicAllocSite::FrontierOwnerLedgerStorage}) {
+        harken::detail::ArmLogicAllocFaultForTests(1, site);
+        const bool refused = !engine.PrepareActionPlayBacking(1, 0, &fullBacking);
+        harken::detail::DisarmLogicAllocFaultForTests();
+        EXPECT_TRUE(refused);
+        EXPECT_FALSE(fullBacking.Valid());
+        EXPECT_FALSE(storage.containerStoragePrepared);
+        EXPECT_EQ(originalScratch, &*engine.actionPlayScratch.begin());
+        EXPECT_EQ(playingRender, service->renderHandle);
+        EXPECT_FALSE(engine.runtimeRecreateRequired);
+    }
     ASSERT_TRUE(engine.PrepareActionPlayBacking(1, 0, &fullBacking));
+    EXPECT_GT(originalScratch->playableTreeExecutor.StorageBytes(), minimalTreeBytes);
+    EXPECT_EQ(storage.ownerLedger.Capacity(), storage.ownerLedger.PreparedCapacity());
     EXPECT_TRUE(storage.containerStoragePrepared);
+    EXPECT_EQ(harken::kMaxKnownScheduleLeaves, originalScratch->pendingVariableReplacementTops.size());
+    EXPECT_EQ(harken::kMaxKnownScheduleLeaves, originalScratch->pendingVariableReplacementLeaves.size());
+    EXPECT_EQ(2u * harken::kMaxKnownScheduleLeaves + 1u, storage.pendingVariableReplacementNodes.size());
+    EXPECT_EQ(harken::kMaxKnownScheduleLeaves, storage.pendingVariableReplacementLeafNodes.size());
+    EXPECT_EQ(harken::kMaxKnownScheduleLeaves, storage.pendingVariableReplacementLeafTops.size());
     EXPECT_EQ(originalScratch, &*engine.actionPlayScratch.begin());
     EXPECT_EQ(engine.config.maxPlayableInstances, storage.variableControlNestedModes.size());
     EXPECT_EQ(retainedRender, firstStart->renderHandle);
@@ -73029,6 +73277,15 @@ TEST(ActionFiringApi, OriginalSingleProducerDefaultPureSoundNeverIssuesQueueCurr
     EXPECT_GT(harkentest::Peak(engine.nullBackend.LastBlock(), 128u), 0.001f);
     ASSERT_EQ(VN_OK, Vn_Term());
 }
+
+TEST(ActionFiringApi, OriginalSingleProducerDefaultPureSoundNeverIssuesQueueCurrentOutputs) {
+    ASSERT_NO_FATAL_FAILURE(CheckIndependentSoundPreparedRetry(1));
+}
+
+TEST(ActionFiringApi, IndependentFourSoundRetryPreservesPreparedStorageAndGenericUpgrade) {
+    ASSERT_NO_FATAL_FAILURE(CheckIndependentSoundPreparedRetry(4));
+}
+
 
 
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE) && !defined(HARKEN_RT_QUALIFICATION)
@@ -75446,7 +75703,7 @@ TEST(ActionFiringApi, AuthoredContainerCandidatesUsePreparedStorageAcrossPlaybac
     }
 }
 
-TEST(ActionFiringApi, SingleSoundReachesConfiguredRenderCapacity) {
+static void CheckIndependentSoundsReachConfiguredRenderCapacity(std::uint32_t stepsPerFiring) {
     constexpr std::uint32_t voices = 512, frames = 256, rate = 48000;
     const std::vector<float> source(rate * 60, 0.001f);
     auto config = harkentest::MakeNullConfig(voices, frames, rate);
@@ -75463,33 +75720,72 @@ TEST(ActionFiringApi, SingleSoundReachesConfiguredRenderCapacity) {
     ASSERT_NE(nullptr, view.useCount);
     CanonicalActionWorld image(view.contentRevision, view.contentRevision);
     image.MakeImmediateSoundPlayAction();
+    for (std::uint32_t step = 1; step < stepsPerFiring; ++step) {
+        image.steps[11 + step] = image.steps[11];
+        image.steps[11 + step].authoredEventIndex = step;
+    }
+    image.actions[9].stepCount = stepsPerFiring;
+    image.actions[9].expandedStepOccurrenceCount = stepsPerFiring;
+    image.actions[9].programSemanticFingerprint =
+        harken::ComputeActionProgramFingerprintV1(image.actions[9]);
+    image.world.capacity.maxActionStepsPerDefinition =
+        (std::max)(image.world.capacity.maxActionStepsPerDefinition, stepsPerFiring);
+    image.world.capacity.maxActionExpandedWork =
+        (std::max)(image.world.capacity.maxActionExpandedWork, stepsPerFiring);
+    image.world.capacity.maxActionStepsTotal += stepsPerFiring - 1u;
+    image.world.identity.runtimeSemanticFingerprint =
+        harken::ComputeCurrentWorldFingerprintV4(image.world);
     ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
     auto desc = ValidPostDesc();
     desc.actionId = image.actions[9].actionStableId;
     std::vector<VnActionFiringHandle> firings;
-    firings.reserve(voices);
+    firings.reserve(voices / stepsPerFiring);
+    const auto postWithoutContainerBacking = [&](VnActionFiringHandle* firing) {
+        harken::detail::ArmLogicAllocFaultForTests(1,
+            harken::detail::LogicAllocSite::ActionPlayContainerStorage);
+        const auto result = Vn_PostAction(&desc, firing);
+        const auto remaining = harken::detail::g_logicAllocFault.remaining;
+        harken::detail::DisarmLogicAllocFaultForTests();
+        EXPECT_EQ(1u, remaining);
+        return result;
+    };
     const auto hits = harken::memguard::HitCount();
-    for (std::uint32_t i = 0; i < voices; ++i) {
+    for (std::uint32_t i = 0; i < voices / stepsPerFiring; ++i) {
         VnActionFiringHandle firing = 0;
-        ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing))
+        ASSERT_EQ(VN_OK, postWithoutContainerBacking(&firing))
             << "index=" << i << " instances=" << engine.playableInstances.LiveCount()
             << " voices=" << engine.voices.ActiveCount() << " firings=" << engine.actionFirings.LiveCount()
             << " pcm=" << view.useCount->load();
         for (unsigned block = 0; block < 8; ++block) {
             ASSERT_EQ(VN_OK, Vn_Update());
+            const auto before = engine.mixer.BlocksRendered();
             engine.nullBackend.Pump(1);
+            ASSERT_EQ(before + 1u, engine.mixer.BlocksRendered());
         }
-        ASSERT_EQ(i + 1, engine.voices.ActiveCount()) << "index=" << i;
-        ASSERT_EQ(i + 1, engine.playableInstances.LiveCount());
-        ASSERT_EQ(i + 1, view.useCount->load());
+        const auto active = (i + 1u) * stepsPerFiring;
+        ASSERT_EQ(active, engine.voices.ActiveCount()) << "index=" << i;
+        ASSERT_EQ(active, engine.playableInstances.LiveCount());
+        EXPECT_EQ(active, engine.playableInstances.ConstructedEntryCount());
+        EXPECT_EQ(active, engine.originalPlayableLifetimeHolders.size());
+        ASSERT_EQ(active, view.useCount->load());
+        EXPECT_GT(harkentest::Peak(engine.nullBackend.LastBlock(), 2u * frames), 0.0001f);
+        for (std::uint32_t step = 0; step < stepsPerFiring; ++step) {
+            VnActionStepResult result{};
+            result.structSize = sizeof(result);
+            ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, step, &result));
+            EXPECT_EQ(VN_ACTION_STEP_ACTIVE, result.state);
+            EXPECT_NE(0u, result.producedPlayableInstance);
+        }
         firings.push_back(firing);
     }
     VnActionFiringHandle refused = 0;
-    EXPECT_EQ(VN_NO_VOICE, Vn_PostAction(&desc, &refused));
+    EXPECT_EQ(VN_NO_VOICE, postWithoutContainerBacking(&refused));
+    EXPECT_EQ(0u, refused);
     EXPECT_EQ(voices, engine.playableInstances.LiveCount());
     EXPECT_EQ(voices, engine.voices.ActiveCount());
-    EXPECT_EQ(voices, engine.actionFirings.LiveCount());
+    EXPECT_EQ(voices / stepsPerFiring, engine.actionFirings.LiveCount());
     EXPECT_EQ(voices, view.useCount->load());
+    EXPECT_EQ(0u, engine.memberOnsets.CommittedBytes());
     for (auto firing : firings) ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
     for (unsigned block = 0; block < 32 && engine.playableInstances.LiveCount() != 0; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
@@ -75498,16 +75794,32 @@ TEST(ActionFiringApi, SingleSoundReachesConfiguredRenderCapacity) {
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(0u, engine.playableInstances.LiveCount());
     EXPECT_EQ(0u, view.useCount->load());
+    EXPECT_EQ(0u, engine.voices.ActiveCount());
+    const auto stoppedBlock = engine.mixer.BlocksRendered();
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(stoppedBlock + 1u, engine.mixer.BlocksRendered());
+    EXPECT_EQ(0.0f, harkentest::Peak(engine.nullBackend.LastBlock(), 2u * frames));
     for (auto firing : firings) ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
     VnActionFiringHandle reused = 0;
-    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &reused));
-    for (unsigned block = 0; block < 8 && engine.voices.ActiveCount() == 0; ++block) {
+    ASSERT_EQ(VN_OK, postWithoutContainerBacking(&reused));
+    for (unsigned block = 0; block < 8; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
+        const auto before = engine.mixer.BlocksRendered();
         engine.nullBackend.Pump(1);
+        ASSERT_EQ(before + 1u, engine.mixer.BlocksRendered());
     }
-    EXPECT_EQ(1u, engine.voices.ActiveCount());
-    EXPECT_EQ(1u, engine.playableInstances.LiveCount());
+    EXPECT_GT(harkentest::Peak(engine.nullBackend.LastBlock(), 2u * frames), 0.0001f);
+    EXPECT_EQ(stepsPerFiring, engine.voices.ActiveCount());
+    EXPECT_EQ(stepsPerFiring, engine.playableInstances.LiveCount());
     EXPECT_EQ(hits, harken::memguard::HitCount());
+}
+
+TEST(ActionFiringApi, SingleSoundReachesConfiguredRenderCapacity) {
+    ASSERT_NO_FATAL_FAILURE(CheckIndependentSoundsReachConfiguredRenderCapacity(1));
+}
+
+TEST(ActionFiringApi, FourImmediateSoundsReachRenderCapacityWithoutContainerBacking) {
+    ASSERT_NO_FATAL_FAILURE(CheckIndependentSoundsReachConfiguredRenderCapacity(4));
 }
 
 TEST(ActionFiringApi,

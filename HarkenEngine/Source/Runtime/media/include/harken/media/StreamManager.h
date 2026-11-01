@@ -394,8 +394,27 @@ private:
     // only the caller knows the slot. Static: the job depends on nothing but its
     // arguments, which is what makes it relocatable.
     static bool RunChunkJob(const ChunkJob& job, std::vector<float>& staging);
+    static bool ReadChunk(const ChunkJob& job, std::vector<float>& staging);
+    static bool ValidateChunk(const ChunkJob& job,
+                              const std::vector<float>& staging,
+                              std::uint64_t checksum);
+    static void CompleteChunk(StreamSlot& slot, const ChunkJob& job,
+                              bool valid);
+
+    struct ServiceCursor {
+        StreamSlot* slot = nullptr;
+        std::uint32_t maxServeFrames = 0;
+        std::uint32_t framesServed = 0;
+        bool scalarOnly = false;
+    };
+    ServiceCursor BeginSlotService(StreamSlot& slot) const;
+    bool LatchScalarService(ServiceCursor& cursor) const;
+    bool AdvanceSlot(ServiceCursor& cursor, ChunkJob* job);
+    void DrainSlot(ServiceCursor& cursor, const ChunkJob* pending = nullptr);
+    void ServeSlotPair(ServiceCursor& first, ServiceCursor& second);
 
     std::uint32_t m_ringFrames = 0; // per-slot capacity, power of two
+    const std::uint32_t m_prebufferMs;
 
     // Registered files. Mutated only by the streaming thread (under the
     // mutex); the logic thread reads under the mutex (FindFile). Stable

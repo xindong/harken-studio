@@ -526,7 +526,7 @@ struct VoiceRenderContext {
         std::uint64_t startFrame = 0;
         std::uint64_t endFrame = 0;
         bool useCurve = false;
-        CurveLUT curve{};
+        CurveLUT* curve = nullptr;
     };
     TimelineEnvelopeState timelineEnvelopes[2]{};
     bool timelineFadeOutCoveredSample = false;
