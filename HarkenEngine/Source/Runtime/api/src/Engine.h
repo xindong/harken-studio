@@ -5130,6 +5130,7 @@ struct EngineActionPlayScratch {
         std::uint64_t observedCompletionBlockSequence = 0;
     };
     struct QueueScratchArrays {
+        QueueScratchArrays() noexcept {}
         std::array<std::size_t, kMaxKnownScheduleLeaves> queueFutureMemberSlots{};
         std::array<EnginePlayableMemberReference, kMaxKnownScheduleLeaves> queueFuturePriorMemberReferences{};
         std::array<OccurrenceToken, kMaxKnownScheduleLeaves> queueCurrentLeafOccurrences{};
