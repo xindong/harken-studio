@@ -151,7 +151,7 @@ void TableItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opt
             const auto state = static_cast<TableRowProgressState>(row.data(TableRowProgressStateRole).toInt());
             QColor fill = state == TableRowProgressState::Failed ? colors.error
                 : state == TableRowProgressState::Canceled ? colors.textMuted : colors.accent;
-            fill.setAlpha(state == TableRowProgressState::Complete ? 28 : 40);
+            fill.setAlphaF(fill.alphaF() * (state == TableRowProgressState::Complete ? 28 : 40) / 255.0);
             painter->fillRect(tree->rowProgressRect(option.rect, progress.toInt()).intersected(option.rect), fill);
         }
     } else if (tree && tree->cellContentsRect(option.rect, index) != option.rect) {
@@ -162,7 +162,7 @@ void TableItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opt
     }
     paintContents(painter, styled, index);
     painter->save();
-    painter->setPen(colors.borderPrimary);
+    painter->setPen(colors.borderSecondary);
     const auto* table = qobject_cast<const QTableView*>(option.widget);
     if (!table || !table->showGrid())
         painter->drawLine(option.rect.bottomLeft(), option.rect.bottomRight());

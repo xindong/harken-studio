@@ -14,10 +14,6 @@ add_library(harken_editor_meter STATIC
     MeterInteractionRenderer.h
     PeakMeterRenderer.cpp
     PeakMeterRenderer.h
-    LoudnessMeterRenderer.cpp
-    LoudnessMeterRenderer.h
-    VUMeterRenderer.cpp
-    VUMeterRenderer.h
     SpectrumMeterRenderer.cpp
     SpectrumMeterRenderer.h
     SpectrogramMeterRenderer.cpp

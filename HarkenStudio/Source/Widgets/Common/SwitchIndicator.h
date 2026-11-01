@@ -20,7 +20,7 @@ inline void draw(QPainter* painter, const QRect& rect, Qt::CheckState state, boo
     QColor fill = highlightedText.isValid() ? QColor(Qt::transparent) : colors.bgPrimary;
     if (on) {
         fill = activeColor;
-        fill.setAlpha(26);
+        fill.setAlphaF(fill.alphaF() * 26 / 255.0);
     }
     QColor border = (on || hover) ? activeColor : inactiveColor;
     if (partial && !hover && !highlightedText.isValid())

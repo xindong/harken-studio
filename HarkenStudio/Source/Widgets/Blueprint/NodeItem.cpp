@@ -77,10 +77,10 @@ public:
         const QColor accent = node_->dropFeedback() == NodeItem::DropFeedback::Invalid
             ? theme->ui.colors.error : theme->ui.colors.accent;
         QColor veil = theme->domains.nodeGraphNode.bodyNormal;
-        veil.setAlpha(230);
+        veil.setAlphaF(veil.alphaF() * 230 / 255.0);
         painter->fillRect(rect(), veil);
         QColor tint = accent;
-        tint.setAlpha(20);
+        tint.setAlphaF(tint.alphaF() * 20 / 255.0);
         painter->setBrush(tint);
         painter->setPen(QPen(accent, 1.0, Qt::DashLine, Qt::SquareCap, Qt::MiterJoin));
         const auto zone = rect().adjusted(2.0, 2.0, -2.0, -2.0);
@@ -345,7 +345,7 @@ NodeItem::~NodeItem()
 QRectF NodeItem::titleRect() const
 {
     if (routeGainMode_) return {};
-    QFont font = FontManager::instance().getFont(FontRole::Caption, 10, QFont::Bold);
+    QFont font = FontManager::instance().getFont(FontRole::Caption, 10, QFont::Normal);
     font.setItalic(titleDirty_);
     const QFontMetricsF metrics(font);
     const qreal x = kBodyPadX + 20.0 + 9.0;
@@ -382,7 +382,7 @@ void NodeItem::beginTitleEditing()
     if (!titleProxy_) {
         auto* editor = new InlineRenameEdit(title_, titleRenameHandler_);
         editor->setObjectName(QStringLiteral("nodeTitleEditor"));
-        editor->setFont(FontManager::instance().getFont(FontRole::Caption, 10, QFont::Bold));
+        editor->setFont(FontManager::instance().getFont(FontRole::Caption, 10, QFont::Normal));
         editor->setProperty("fieldRole", QStringLiteral("inspectorValue"));
         QObject::connect(editor, &InlineRenameEdit::finished, editor, [this, editor](bool committed) {
             titleEditing_ = false;
@@ -735,7 +735,8 @@ static QColor blendColors(const QColor& base, const QColor& tint, float ratio)
     return QColor(
         base.red()   + int((tint.red()   - base.red())   * ratio),
         base.green() + int((tint.green() - base.green()) * ratio),
-        base.blue()  + int((tint.blue()  - base.blue())  * ratio));
+        base.blue()  + int((tint.blue()  - base.blue())  * ratio),
+        base.alpha() + int((tint.alpha() - base.alpha()) * ratio));
 }
 
 void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget)
@@ -823,7 +824,7 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
     const float textW = width_ - textX - headPad;
 
     painter->setPen(titleColor);
-    QFont nameFont = FontManager::instance().getFont(FontRole::Caption, 10, QFont::Bold);
+    QFont nameFont = FontManager::instance().getFont(FontRole::Caption, 10, QFont::Normal);
     nameFont.setItalic(titleDirty_);
     painter->setFont(nameFont);
     QFontMetricsF nameFm(nameFont);
@@ -839,7 +840,7 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
         painter->setFont(subFont);
         QFontMetricsF subFm(subFont);
         QString elided = subFm.elidedText(subtitle_, Qt::ElideMiddle, width_ - padX * 2);
-        painter->setPen(ngn.contentLabel);
+        painter->setPen(theme->ui.colors.textSecondary);
         painter->drawText(QRectF(padX, bodyTop, width_ - padX * 2, kSubtitleRowHeight),
                           Qt::AlignVCenter | Qt::AlignLeft, elided);
         bodyTop += kSubtitleRowHeight;
@@ -1005,7 +1006,7 @@ void NodeItem::paintWaveform(QPainter* painter, const QRectF& rect) const
     painter->drawRoundedRect(rect, 2, 2);
     QColor waveColor = ngnWf.blueprintWaveform;
     if (!blueprintWaveformMode_)
-        waveColor.setAlpha(isSelected() ? 255 : 140);
+        waveColor.setAlphaF(waveColor.alphaF() * (isSelected() ? 1.0 : 140 / 255.0));
 
     if (waveformPeakData_ && waveformPeakData_->isValid()) {
         QRect intRect(static_cast<int>(rect.x()), static_cast<int>(rect.y()),

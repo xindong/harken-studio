@@ -55,7 +55,7 @@ void drawCurve(QPainter& painter,
     painter.setBrush(Qt::NoBrush);
     if (data.discretePath) {
         QColor guide = color;
-        guide.setAlpha(style.metrics.discreteGuideAlpha);
+        guide.setAlphaF(guide.alphaF() * style.metrics.discreteGuideAlpha / 255.0);
         painter.setPen(QPen(guide,
                             style.metrics.discreteGuideLineWidth,
                             Qt::DashLine,
@@ -156,10 +156,10 @@ void drawOverlays(QPainter& painter,
     for (const CurveRenderOverlay& overlay : data.overlays) {
         QColor color = overlay.color.isValid() ? overlay.color : curveColor(style.colors, overlay.colorRole);
         if (!overlay.selectable)
-            color.setAlpha(style.metrics.discreteGuideAlpha);
+            color.setAlphaF(color.alphaF() * style.metrics.discreteGuideAlpha / 255.0);
         QColor guide = color;
-        if (overlay.discretePath)
-            guide.setAlpha(style.metrics.discreteGuideAlpha);
+        if (overlay.discretePath && overlay.selectable)
+            guide.setAlphaF(guide.alphaF() * style.metrics.discreteGuideAlpha / 255.0);
         painter.setPen(QPen(guide,
                             style.metrics.discreteGuideLineWidth,
                             overlay.selectable && !overlay.discretePath ? Qt::SolidLine : Qt::DashLine,

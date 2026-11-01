@@ -204,7 +204,7 @@ void DropZoneWidget::paintEvent(QPaintEvent* event)
     if (isDragging_)
     {
         QColor fill = colors.info;
-        fill.setAlpha(30);
+        fill.setAlphaF(fill.alphaF() * 30 / 255.0);
         painter.fillRect(rect(), fill);
     }
 }

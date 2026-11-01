@@ -882,6 +882,7 @@ void MeterPanel::paintCanvas(QPainter& painter)
             painter.save();
             painter.setClipRect(bar.bounds, Qt::IntersectClip);
             painter.setRenderHint(QPainter::Antialiasing);
+            painter.setOpacity(painter.opacity() * (compact ? 0.5 : 1.0));
             if (mode_ == Mode::Loudness ? measurementAvailable() : (levelAvailable() && bar.showHold))
                 painter.fillPath(value, snapshot->ui.colors.accentText);
             painter.restore();

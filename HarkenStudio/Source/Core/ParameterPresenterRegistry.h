@@ -12,8 +12,7 @@ enum class ParameterPresenterId
 {
     SliderWithValue,
     HorizontalSlider,
-    VerticalFader,
-    RotaryKnob
+    VerticalFader
 };
 
 enum class ParameterPresenterContext
@@ -27,7 +26,6 @@ enum class ParameterPresenterCapability : unsigned int
     None = 0,
     Horizontal = 1U << 0U,
     Vertical = 1U << 1U,
-    Rotary = 1U << 2U,
     ValueEditor = 1U << 3U,
     Label = 1U << 4U,
     Compact = 1U << 5U

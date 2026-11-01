@@ -37,12 +37,14 @@ struct ThemeColors
 
     QColor borderPrimary;
     QColor borderSecondary;
+    QColor borderTick;
     QColor viewBorder;
     QColor dropHighlight;
     QColor dropAccent;
 
     QColor textPrimary;
     QColor textSecondary;
+    QColor textTitle;
     QColor textMuted;
     QColor textDisabled;
 
@@ -57,7 +59,6 @@ struct ThemeColors
     QColor busBackgroundActive;
 
     QColor sliderTrack;
-    QColor knobIndicator;
 
     QColor panelBackground;
     QColor sectionSeparator;
@@ -144,7 +145,6 @@ struct ThemeMetrics
     } inspector;
 
     struct Parameter {
-        int knobExtent = 0;
         int faderMinimumHeight = 0;
         int labelMinimumWidth = 0;
         int valueMinimumWidth = 0;
@@ -206,7 +206,7 @@ struct ParameterPresentationStyle
     ParameterPresenterId inspectorFloat =
         ParameterPresenterId::SliderWithValue;
     ParameterPresenterId effectParameter =
-        ParameterPresenterId::RotaryKnob;
+        ParameterPresenterId::SliderWithValue;
 
     ParameterPresenterId presenterFor(
         ParameterPresenterContext context) const
@@ -279,6 +279,7 @@ struct QtPaletteColors
     QColor toolTipBase;
     QColor toolTipText;
     QColor text;
+    QColor placeholderText;
     QColor button;
     QColor buttonText;
     QColor brightText;
@@ -522,9 +523,6 @@ struct MeterStyle
     QColor clipOff;
     QColor background;
 
-    QColor lufsMomentary;
-    QColor lufsShortTerm;
-    QColor lufsIntegrated;
     QColor oscilloscopeGrid;
     QColor oscilloscopeGlow;
     QColor waveformFill;
@@ -627,125 +625,6 @@ struct MeterStyle
         } metrics;
         bool operator==(const Peak&) const = default;
     } peakMeter;
-
-    struct Loudness {
-        struct Colors {
-            QColor canvasBackground;
-            QColor trackBackground;
-            QColor targetLine;
-            QColor targetText;
-            QColor labelText;
-            QColor valueText;
-            bool operator==(const Colors&) const = default;
-        } colors;
-
-        struct Metrics {
-            int outerInsetLeft = 0;
-            int outerInsetTop = 0;
-            int outerInsetRight = 0;
-            int outerInsetBottom = 0;
-            int reservedWidth = 0;
-            int barGap = 0;
-            int minimumBarWidth = 0;
-            qreal gradientTopStop = 0.0;
-            qreal gradientBottomStop = 0.0;
-            int gradientTopLighterFactor = 0;
-            int gradientBottomDarkerFactor = 0;
-            int highlightLighterFactor = 0;
-            int highlightAlpha = 0;
-            qreal highlightMinimumBarHeight = 0.0;
-            qreal highlightHeight = 0.0;
-            qreal targetLineWidth = 0.0;
-            qreal targetLabelHorizontalInset = 0.0;
-            qreal targetLabelTopOffset = 0.0;
-            qreal targetLabelHeight = 0.0;
-            qreal channelLabelHeight = 0.0;
-            qreal valueLabelBottomOffset = 0.0;
-            qreal valueLabelHeight = 0.0;
-            bool operator==(const Metrics&) const = default;
-        } metrics;
-        bool operator==(const Loudness&) const = default;
-    } loudnessMeter;
-
-    struct VU {
-        struct Colors {
-            QColor canvasBackground;
-            QColor titleText;
-            QColor trackBackground;
-            QColor analogArc;
-            QColor analogNegativeTick;
-            QColor analogPositiveTick;
-            QColor analogOverloadArc;
-            QColor analogNeedleGlow;
-            QColor analogNeedle;
-            QColor analogPivot;
-            QColor analogValueText;
-            QColor analogLabelText;
-            QColor barWarning;
-            QColor barGrid;
-            QColor barLabelText;
-            QColor barValueText;
-            bool operator==(const Colors&) const = default;
-        } colors;
-
-        struct Metrics {
-            int outerInsetLeft = 0;
-            int outerInsetTop = 0;
-            int outerInsetRight = 0;
-            int outerInsetBottom = 0;
-            int titleHeight = 0;
-            int contentTopInset = 0;
-            int analogGap = 0;
-            qreal analogCornerRadius = 0.0;
-            int analogInnerInsetLeft = 0;
-            int analogInnerInsetTop = 0;
-            int analogInnerInsetRight = 0;
-            int analogInnerInsetBottom = 0;
-            int analogLabelStripBottomOffset = 0;
-            int analogLabelStripHeight = 0;
-            qreal analogPivotBottomOffset = 0.0;
-            qreal analogRadiusScale = 0.0;
-            qreal analogArcStartPiFactor = 0.0;
-            qreal analogArcEndPiFactor = 0.0;
-            int analogArcSegments = 0;
-            qreal analogArcLineWidth = 0.0;
-            qreal analogTickInnerRadiusScale = 0.0;
-            qreal analogTickOuterRadiusScale = 0.0;
-            qreal analogTickLineWidth = 0.0;
-            qreal analogTickLabelRadiusScale = 0.0;
-            qreal analogTickLabelHalfWidth = 0.0;
-            qreal analogTickLabelTopOffset = 0.0;
-            qreal analogTickLabelWidth = 0.0;
-            qreal analogTickLabelHeight = 0.0;
-            qreal analogOverloadRadiusScale = 0.0;
-            int analogOverloadSegments = 0;
-            qreal analogOverloadLineWidth = 0.0;
-            qreal analogNeedleLengthScale = 0.0;
-            qreal analogNeedleGlowWidth = 0.0;
-            qreal analogNeedleWidth = 0.0;
-            qreal analogPivotRadius = 0.0;
-            int analogValueHeight = 0;
-            int analogLabelTopOffset = 0;
-            int analogLabelHeight = 0;
-            int barGap = 0;
-            qreal barCornerRadius = 0.0;
-            qreal barHorizontalInset = 0.0;
-            qreal barOverloadStop = 0.0;
-            qreal barWarningStop = 0.0;
-            qreal barYellowStop = 0.0;
-            qreal barBrightGreenStop = 0.0;
-            qreal barGreenStop = 0.0;
-            int barOverloadAlpha = 0;
-            int barGreenLighterFactor = 0;
-            qreal barGridLineWidth = 0.0;
-            int barChannelLabelBottomOffset = 0;
-            int barChannelLabelHeight = 0;
-            int barValueLabelBottomOffset = 0;
-            int barValueLabelHeight = 0;
-            bool operator==(const Metrics&) const = default;
-        } metrics;
-        bool operator==(const VU&) const = default;
-    } vuMeter;
 
     struct Spectrum {
         struct Colors {

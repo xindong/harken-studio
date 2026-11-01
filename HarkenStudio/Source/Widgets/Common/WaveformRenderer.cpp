@@ -47,7 +47,9 @@ QColor WaveformRenderer::bandToColor(float low, float mid, float high,
         std::clamp(r, 0.0f, 1.0f),
         std::clamp(g, 0.0f, 1.0f),
         std::clamp(b, 0.0f, 1.0f),
-        style.alpha
+        style.alpha * (style.colors[0].alphaF() * wL
+            + style.colors[1].alphaF() * wM
+            + style.colors[2].alphaF() * wH) / (wL + wM + wH)
     );
 }
 
@@ -265,8 +267,8 @@ void WaveformRenderer::render(QPainter& painter,
                     const auto& sm = style.staticMode;
                     int a = sm.accentQuietAlpha
                         + static_cast<int>(amp * (sm.accentPeakAlpha - sm.accentQuietAlpha));
-                    col = QColor(options.accentColor.red(), options.accentColor.green(),
-                                 options.accentColor.blue(), a);
+                    col = options.accentColor;
+                    col.setAlphaF(col.alphaF() * a / 255.0);
                 } else {
                     const QColor& quiet = style.staticMode.quiet;
                     const QColor& peak = style.staticMode.peak;

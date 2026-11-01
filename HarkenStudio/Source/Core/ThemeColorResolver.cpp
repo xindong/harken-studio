@@ -19,7 +19,7 @@ bool resolveThemeColors(ThemeSnapshot& theme, const QVector<ThemeColorRole>& rol
             {
                 if (*binding.alpha < 0 || *binding.alpha > 255)
                     return false;
-                color.setAlpha(*binding.alpha);
+                color.setAlphaF(color.alphaF() * *binding.alpha / 255.0);
             }
             if (!applyThemeColor(theme, binding.target, color))
                 return false;

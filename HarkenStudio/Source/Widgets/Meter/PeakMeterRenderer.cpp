@@ -17,7 +17,8 @@ void renderBar(QPainter& painter,
                const PeakMeterBarFrame& frame,
                const QFont& labelFont,
                const ThemeImageResourcePtr& peakCap,
-               qreal horizontalInset)
+               qreal horizontalInset,
+               qreal annotationOpacity)
 {
     const auto& colors = style.colors;
     const auto& metrics = style.metrics;
@@ -81,6 +82,8 @@ void renderBar(QPainter& painter,
     }
 
     painter.restore();
+    painter.save();
+    painter.setOpacity(painter.opacity() * annotationOpacity);
     painter.setPen(colors.label);
     painter.setFont(labelFont);
     painter.drawText(QRect(area.left(),
@@ -95,6 +98,7 @@ void renderBar(QPainter& painter,
                            metrics.labelHeight),
                      Qt::AlignCenter,
                      frame.valueLabel);
+    painter.restore();
 }
 
 }
@@ -135,21 +139,20 @@ void PeakMeterRenderer::render(QPainter& painter,
     const auto& colors = style.peakMeter.colors;
     const auto& metrics = style.peakMeter.metrics;
     const bool inlineScale = frame.layoutMode == PeakMeterLayoutMode::Inline;
+    const qreal annotationOpacity = inlineScale ? 0.5 : 1.0;
     painter.fillRect(frame.canvasBounds, colors.canvasBackground);
     QRect plot;
     for (int index = 0; index < frame.barCount; ++index) {
         plot = plot.united(frame.bars[index].bounds);
         painter.fillRect(frame.bars[index].bounds, colors.trackBackground);
     }
+    painter.save();
+    painter.setOpacity(painter.opacity() * annotationOpacity);
     painter.setFont(FontManager::instance().getFont(FontRole::Axis));
     const QFontMetrics font(painter.font());
     const QStringList labels = meterTickLabels(frame.ticks);
-    QColor tickText = colors.tickText;
-    if (inlineScale)
-        tickText.setAlphaF(0.5);
     for (int index = 0; index < frame.ticks.size(); ++index) {
         const auto& tick = frame.ticks[index];
-        const QColor grid = meterGridColor(colors.grid, tick.major);
         const int width = font.horizontalAdvance(labels[index]);
         const QRectF label = inlineScale
             ? QRectF(plot.left() + (plot.width() - width) / 2.0,
@@ -157,7 +160,7 @@ void PeakMeterRenderer::render(QPainter& painter,
                      width, font.height())
             : QRectF(frame.scaleBounds.left(), tick.y - font.height() / 2.0,
                      frame.scaleBounds.width() - 6, font.height());
-        painter.setPen(QPen(grid, metrics.gridLineWidth));
+        painter.setPen(QPen(colors.grid, metrics.gridLineWidth));
         if (inlineScale) {
             const qreal left = plot.left() + 2.0;
             const qreal right = plot.right() - 2.0;
@@ -174,14 +177,15 @@ void PeakMeterRenderer::render(QPainter& painter,
         }
         if (labels[index].isEmpty())
             continue;
-        painter.setPen(tickText);
+        painter.setPen(colors.tickText);
         painter.drawText(label, Qt::AlignRight | Qt::AlignVCenter, labels[index]);
     }
+    painter.restore();
     for (int index = 0; index < frame.barCount; ++index)
         renderBar(painter, style.peakMeter, frame.bars[index], frame.labelFont, frame.peakCap,
-            inlineScale ? 0.0 : metrics.barHorizontalInset);
+            inlineScale ? 0.0 : metrics.barHorizontalInset, annotationOpacity);
     if (!inlineScale && plot.isValid()) {
-        painter.setPen(QPen(meterGridColor(colors.grid, false), metrics.gridLineWidth));
+        painter.setPen(QPen(colors.grid, metrics.gridLineWidth));
         painter.drawLine(plot.topLeft(), plot.bottomLeft());
         painter.drawLine(plot.topRight(), plot.bottomRight());
     }

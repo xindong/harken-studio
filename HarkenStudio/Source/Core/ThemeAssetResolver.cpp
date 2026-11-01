@@ -18,6 +18,8 @@
 #include <QSet>
 #include <QThread>
 #include <QSvgRenderer>
+#include <QXmlStreamReader>
+#include <QXmlStreamWriter>
 
 #include <algorithm>
 #include <atomic>
@@ -219,8 +221,32 @@ public:
         if (QFileInfo(sourcePath).suffix().compare(
                 QStringLiteral("svg"), Qt::CaseInsensitive) == 0)
         {
-            if (variant.tint.isValid())
+            if (variant.tint.isValid()) {
                 bytes.replace("currentColor", variant.tint.name(QColor::HexRgb).toLatin1());
+                if (variant.tint.alpha() < 255) {
+                    QByteArray composed;
+                    QXmlStreamReader reader(bytes);
+                    QXmlStreamWriter writer(&composed);
+                    int depth = 0;
+                    while (!reader.atEnd()) {
+                        reader.readNext();
+                        if (reader.isEndElement() && --depth == 0)
+                            writer.writeEndElement();
+                        writer.writeCurrentToken(reader);
+                        if (reader.isStartElement() && depth++ == 0) {
+                            writer.writeStartElement(QStringLiteral("g"));
+                            writer.writeAttribute(QStringLiteral("opacity"),
+                                QString::number(variant.tint.alphaF(), 'g', 8));
+                        }
+                    }
+                    if (reader.hasError()) {
+                        diagnostics.append(diagnostic(ThemePackageErrorCode::AssetDecodeFailed,
+                            sourcePath, QStringLiteral("$"), reader.errorString()));
+                        return std::nullopt;
+                    }
+                    bytes = std::move(composed);
+                }
+            }
             QSvgRenderer renderer(bytes);
             if (!renderer.isValid())
             {

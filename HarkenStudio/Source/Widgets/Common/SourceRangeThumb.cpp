@@ -94,7 +94,7 @@ void SourceRangeThumb::paintEvent(QPaintEvent*)
     const uint64_t trimStart = source_.trimStartFrame;
     const uint64_t trimEnd = source_.trimEndFrame.value_or(total);
     QColor dim = colors.bgPrimary;
-    dim.setAlpha(160);
+    dim.setAlphaF(dim.alphaF() * 160 / 255.0);
     const int trimStartX = frameX(trimStart, total, r);
     const int trimEndX = frameX(trimEnd, total, r);
     if (trimStartX > r.left())
@@ -106,7 +106,7 @@ void SourceRangeThumb::paintEvent(QPaintEvent*)
         const int loopStartX = frameX(source_.loopRegion->startFrame, total, r);
         const int loopEndX = frameX(source_.loopRegion->endFrame, total, r);
         QColor loopFill = style.loopHandle;
-        loopFill.setAlpha(70);
+        loopFill.setAlphaF(loopFill.alphaF() * 70 / 255.0);
         painter.fillRect(QRect(loopStartX, inner.top(),
                                std::max(1, loopEndX - loopStartX), inner.height()),
                          loopFill);

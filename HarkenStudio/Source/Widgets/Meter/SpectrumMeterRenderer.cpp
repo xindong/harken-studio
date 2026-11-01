@@ -73,9 +73,8 @@ void SpectrumMeterRenderer::render(QPainter& painter,
     const QStringList dbLabels = meterTickLabels(frame.dbTicks);
     for (int i = 0; i < frame.dbTicks.size(); ++i) {
         const auto& tick = frame.dbTicks[i];
-        const QColor grid = meterGridColor(colors.horizontalGrid, tick.major);
         if (tick.y != frame.plotBounds.top()) {
-            painter.setPen(QPen(grid, metrics.gridLineWidth));
+            painter.setPen(QPen(colors.horizontalGrid, metrics.gridLineWidth));
             painter.drawLine(QPointF(frame.plotBounds.left(), tick.y),
                              QPointF(frame.plotBounds.right(), tick.y));
         }
@@ -91,8 +90,7 @@ void SpectrumMeterRenderer::render(QPainter& painter,
         const auto& tick = frame.frequencyTicks[i];
         const qreal x = frame.plotBounds.left()
             + tick.normalizedPosition * (frame.plotBounds.width() - 1);
-        const QColor grid = meterGridColor(colors.verticalGrid, tick.major);
-        painter.setPen(QPen(grid, metrics.gridLineWidth));
+        painter.setPen(QPen(colors.verticalGrid, metrics.gridLineWidth));
         painter.drawLine(QPointF(x, frame.plotBounds.top()), QPointF(x, frame.plotBounds.bottom()));
         if (frequencyLabels[i].isEmpty())
             continue;
@@ -151,7 +149,7 @@ void SpectrumMeterRenderer::render(QPainter& painter,
     painter.drawPath(peakPath);
     painter.restore();
 
-    painter.setPen(QPen(meterGridColor(colors.horizontalGrid, false), metrics.gridLineWidth));
+    painter.setPen(QPen(colors.horizontalGrid, metrics.gridLineWidth));
     painter.drawLine(frame.plotBounds.topLeft(), frame.plotBounds.topRight());
 
     MeterInteractionRenderer::render(painter,

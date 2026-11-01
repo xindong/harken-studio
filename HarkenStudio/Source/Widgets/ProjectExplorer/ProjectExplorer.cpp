@@ -308,7 +308,7 @@ QIcon ProjectExplorer::iconWithColorChip(const QIcon& base, uint32_t color) cons
     QPainter p(&px);
     p.setRenderHint(QPainter::Antialiasing, true);
     QColor outline = ThemeManager::instance().colors().bgPrimary;
-    outline.setAlpha(160);
+    outline.setAlphaF(outline.alphaF() * 160 / 255.0);
     p.setPen(outline);
     p.setBrush(QColor::fromRgba(color));
     p.drawRoundedRect(chipRect, 1.5, 1.5);

@@ -7,6 +7,7 @@
 #include "../../Core/HarkenStyle.h"
 #include <QPropertyAnimation>
 #include <QMargins>
+#include <QMoveEvent>
 #include <QShowEvent>
 #include <QHBoxLayout>
 #include <utility>
@@ -200,6 +201,17 @@ void CollapsibleSection::showEvent(QShowEvent* event)
     }
 }
 
+void CollapsibleSection::moveEvent(QMoveEvent* event)
+{
+    QWidget::moveEvent(event);
+    const auto* parentLayout = parentWidget() ? parentWidget()->layout() : nullptr;
+    const bool topSeparator = parentLayout && y() > parentLayout->contentsMargins().top();
+    if (hasTopSeparator_ == topSeparator)
+        return;
+    hasTopSeparator_ = topSeparator;
+    refreshAppearance();
+}
+
 void CollapsibleSection::applyTheme()
 {
     auto& theme = ThemeManager::instance();
@@ -241,16 +253,15 @@ void CollapsibleSection::refreshAppearance()
         widget->update();
     };
     QString headerStyle = skin.collapsibleHeaderStyle(
-        indicatorColor_, expanded_, hasCustomIndicator_, lvl);
+        indicatorColor_, hasCustomIndicator_, lvl, hasTopSeparator_);
     if (headerWidget_)
         headerStyle += QStringLiteral("QToolButton { padding-right: %1px; }")
             .arg(headerWidget_->sizeHint().width() + 2 * theme.metrics().spacingSmall);
     applyStyle(toggleButton_, std::move(headerStyle));
     applyStyle(headerLine_, skin.collapsibleIndicatorStyle(indicatorColor_, 180, false));
     if (railFrame_ && lvl >= 1) {
-        QColor color = hasCustomIndicator_ ? indicatorColor_ : colors.accent;
-        color.setAlpha(lvl == 1 ? 150 : 100);
-        applyStyle(railFrame_, skin.collapsibleIndicatorStyle(color, color.alpha(), true));
+        const QColor color = hasCustomIndicator_ ? indicatorColor_ : colors.accent;
+        applyStyle(railFrame_, skin.collapsibleIndicatorStyle(color, lvl == 1 ? 150 : 100, true));
     }
     const QColor caretColor = hasCustomIndicator_ ? indicatorColor_
                             : (lvl == 0 ? colors.textSecondary : colors.textMuted);

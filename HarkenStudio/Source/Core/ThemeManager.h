@@ -108,12 +108,12 @@ public:
     const ThemeColors& colors() const { return snapshot_->ui.colors; }
     const ThemeMetrics& metrics() const { return snapshot_->ui.metrics; }
 
-    QString accent() const { return colors().accent.name(); }
-    QString accentHover() const { return colors().accentHover.name(); }
-    QString bgPrimary() const { return colors().bgPrimary.name(); }
-    QString bgSecondary() const { return colors().bgSecondary.name(); }
-    QString bgTertiary() const { return colors().bgTertiary.name(); }
-    QString bgHover() const { return colors().bgHover.name(); }
+    QString accent() const { return colors().accent.name(QColor::HexArgb); }
+    QString accentHover() const { return colors().accentHover.name(QColor::HexArgb); }
+    QString bgPrimary() const { return colors().bgPrimary.name(QColor::HexArgb); }
+    QString bgSecondary() const { return colors().bgSecondary.name(QColor::HexArgb); }
+    QString bgTertiary() const { return colors().bgTertiary.name(QColor::HexArgb); }
+    QString bgHover() const { return colors().bgHover.name(QColor::HexArgb); }
     QString bgSelected() const
     {
         const QColor& color = colors().bgSelected;
@@ -123,13 +123,13 @@ public:
             .arg(color.blue())
             .arg(color.alpha());
     }
-    QString borderPrimary() const { return colors().borderPrimary.name(); }
-    QString borderSecondary() const { return colors().borderSecondary.name(); }
-    QString viewBorder() const { return colors().viewBorder.name(); }
-    QString textPrimary() const { return colors().textPrimary.name(); }
-    QString textSecondary() const { return colors().textSecondary.name(); }
-    QString textMuted() const { return colors().textMuted.name(); }
-    QString textDisabled() const { return colors().textDisabled.name(); }
+    QString borderPrimary() const { return colors().borderPrimary.name(QColor::HexArgb); }
+    QString borderSecondary() const { return colors().borderSecondary.name(QColor::HexArgb); }
+    QString viewBorder() const { return colors().viewBorder.name(QColor::HexArgb); }
+    QString textPrimary() const { return colors().textPrimary.name(QColor::HexArgb); }
+    QString textSecondary() const { return colors().textSecondary.name(QColor::HexArgb); }
+    QString textMuted() const { return colors().textMuted.name(QColor::HexArgb); }
+    QString textDisabled() const { return colors().textDisabled.name(QColor::HexArgb); }
     enum class BindGlyph { StateLayers = 1 };
     void paintBindAffordance(QPainter& p, const QRect& rect, BindGlyph glyph,
                              bool active, bool hover, bool enabled) const;

@@ -331,7 +331,7 @@ QString renderBlocks(const QString& text, const QColor& tableBorderColor)
             out += QLatin1String(
                 "<table border=\"1\" cellspacing=\"0\" cellpadding=\"4\" "
                 "style=\"border-collapse:collapse;border-color:");
-            out += tableBorderColor.name(QColor::HexRgb);
+            out += tableBorderColor.name(QColor::HexArgb);
             out += QLatin1String(";border-style:solid\"><tr>");
             for (const QString& cell : headerCells)
             {

@@ -28,9 +28,10 @@ void SpectrogramMeterRenderer::render(
     if (!frame.hasPlot)
         return;
 
-    painter.fillRect(frame.plotBounds, colors.emptyHistory);
     if (!frame.waterfallImage.isNull())
         painter.drawImage(frame.plotBounds, frame.waterfallImage);
+    else
+        painter.fillRect(frame.plotBounds, colors.emptyHistory);
 
     painter.setFont(FontManager::instance().getFont(FontRole::Axis));
     const QFontMetrics font(painter.font());
@@ -38,8 +39,7 @@ void SpectrogramMeterRenderer::render(
     for (int i = 0; i < frame.frequencyTicks.size(); ++i)
     {
         const auto& tick = frame.frequencyTicks[i];
-        const QColor grid = meterGridColor(colors.grid, tick.major);
-        painter.setPen(QPen(grid, metrics.gridLineWidth));
+        painter.setPen(QPen(colors.grid, metrics.gridLineWidth));
         painter.drawLine(QPointF(frame.plotBounds.left(), tick.y),
                          QPointF(frame.plotBounds.right(), tick.y));
         painter.setPen(colors.axisText);
@@ -52,7 +52,7 @@ void SpectrogramMeterRenderer::render(
             labels[i]);
     }
 
-    painter.setPen(QPen(meterGridColor(colors.grid, false), metrics.gridLineWidth));
+    painter.setPen(QPen(colors.grid, metrics.gridLineWidth));
     painter.drawLine(frame.plotBounds.topLeft(), frame.plotBounds.bottomLeft());
     painter.drawLine(frame.plotBounds.topRight(), frame.plotBounds.bottomRight());
 

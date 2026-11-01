@@ -1,6 +1,6 @@
 # Studio 主题色卡与颜色职责
 
-最近核对：2026-10-30。
+最近核对：2026-11-01。
 
 主题拥有自己的颜色职责、职责到绘制位置的绑定和一个或多个色卡。色卡提供该主题各职责的颜色值及明暗模式，用户修改按主题和色卡隔离。不同主题可以使用不同的职责清单；一个主题可以让网格复用边界色，另一个主题可以提供独立网格色。Renderer 继续消费完整、不可变的样式快照。
 
@@ -12,31 +12,71 @@
 
 | 职责 | 主题键 | 使用边界 |
 |---|---|---|
-| 主要文字 | `text.primary` | 普通字段值、只读有效值、普通正文；单行、多行输入与节点字段值一致 |
-| 次要文字 | `text.secondary` | 字段名、坐标刻度、辅助标签、节点字段名与连线说明 |
-| 弱化文字 | `text.muted` | 提示、空状态、占位和弱化元信息；不因字段只读就使用此色 |
+| 首要文字 | `text.primary` | 字段名与字段值、只读有效值、普通正文、菜单文字、顶部项目名称、蓝图对象名称；节点字段名与值一致 |
+| 次要文字 | `text.secondary` | 注释说明、表格列头、输入占位提示、空状态、坐标刻度、单位、状态栏摘要、继承引用和面包屑 |
+| 标题文字 | `text.title` | 已加粗的分节与分组标题，包括 Inspector section、Explorer 的 Assets / Sources、设置与偏好标题、GroupBox、模板标题和表格内部的分组条目 |
 | 禁用文字 | `text.disabled` | 控件不可用时的文字，独立于只读状态 |
-| 强调 | `accent.primary` | 控件激活、焦点与强调边框、滑条填充、旋钮有效弧线、曲线编辑点与手柄激活 |
+| 强调 | `accent.primary` | 控件激活、焦点与强调边框、滑条填充、曲线编辑点与手柄激活 |
 | 强调悬停 | `accent.hover` | 强调元素自身的悬停变化 |
 | 强调底上的文字 | `accent.text` | 高亮菜单和选择背景上的文字，不能直接用普通字段文字替代 |
 | 基础表面 | `background.primary/secondary/tertiary` | 保留既有表面层级，节点普通主体使用 tertiary |
 | 交互表面 | `background.hover/selected` | 悬停与选中；节点选中主体沿用 hover 的既有视觉 |
-| 普通边界 | `border.primary/secondary/view` | 控件与面板边框、较强边框、画布外框和网格的基础色 |
+| 首要边界 | `border.primary` | 界面框架排布分割、面板边界和内容分隔线；包括 Dock 面板、画布外框、声道分隔及面板滚动条 |
+| 次要边界 | `border.secondary` | 控件与按钮描边、表格完整外框、网格及行列分隔、控件内滚动条；禁用态控件描边仍属此类 |
+| 刻度线 | `border.tick` | 时间轴、曲线、波形与 Meter 的刻度短线和坐标网格；刻度文字仍使用次要文字 |
 | 面板与轨道表面 | `panel.background`、`header.background`、`track.background`、`track.backgroundAlternate`、`bus.background` | 保留既有较暗的工作区层次，不因 RGB 接近而合并为一个背景 |
 | 反馈 | `status.success/warning/error/info` | 操作反馈；领域 feedback 同义槽位由这里解析 |
 | 分类色板 | `palette.categorical0` 至 `palette.categorical6` | 区分多个条目，不承担固定对象类型或强度数值语义 |
 
-字段名统一声明 `textRole=formLabel`。普通文本标签可声明 `textRole=primary/secondary/muted`；节点内容保留 `nodeContentRole=label/value` 以适配现有绘制入口，但不再拥有独立颜色来源。`roValue` 只读值使用主要文字。禁用状态覆盖这些文字角色。
+字段名统一声明 `textRole=formLabel`，使用首要文字。普通文本标签可声明 `textRole=primary/secondary/title`；节点内容保留 `nodeContentRole=label/value`，两个绘制位置均绑定首要文字，节点辅助副标题使用次要文字。`roValue` 只读值使用首要文字。禁用状态覆盖这些文字角色。
+
+Studio Default 不再开放 `text.muted` 作为独立编辑职责。既有 `text.muted` 渲染位置和 `textRole=muted` 消费者保留，统一由 `text.secondary` 提供颜色；其他主题仍可为这些位置定义自己的职责。Dark / Light 的标题默认色分别沿用各自首要文字的默认色，标题职责可独立编辑，没有另行指定新的 RGB 值。
+
+2026-11-01 将边界职责收束为首要、次要和刻度线。首要与次要默认值保持，刻度线沿用原 `border.view` 的 Dark `#272E3C` / Light `#B9C5D1`，保留已有网格与主次刻度的透明度层次。`border.view` 和 `section.separator` 渲染位置保留并绑定首要边界；Studio Default 的旧 `border.view` 覆盖值迁移到 `border.tick`，已有 `border.tick` 覆盖优先，其他主题的同名职责不迁移。表格属于控件，外框与内部表头、分组、行列分隔统一使用次要边界，覆盖原生表格、组合表格和矩阵表格。Dock、主窗口与 Inspector 内嵌分割器的缝隙使用原有背景色。
+
+本次补正按用户决定只重新归类表格描边。GroupBox、菜单、弹出层和独立列表/树视图的边界保持现有绑定，语义归属留待后续确认。
+
+顶层 `CollapsibleSection` 分节标题保留首要色下边线，上边线按布局中的实际位置决定。位于布局内容起点的标题不重复画上边线，Inspector 首个可见标题与容器共用外框；后续标题绘制首要色上边线，与前一节内容分隔。筛选隐藏或恢复前面的分节后，标题随布局移动重新判断边界。普通标题与带自定义指示色的标题共用此规则。Dark / Light 的实际组件高对比离屏检查覆盖展开、收起、筛选后首节变化、重新显示、连续预览、取消恢复及预览/确认一致性，并联合检查容器外框与首个标题交接处只有一像素边线，166 项通过；记录位于 `.temp/section-joined-border-review/`。此前 `.temp/section-border-review/` 仅检查标题自身边线，未覆盖其与容器外框的叠加。
+
+参数 Slider 的横向、纵向和紧凑样式统一使用已有 `slider.track` 提供未填充轨道颜色；禁用态轨道也使用该职责，滑块与紧凑禁用态填充保留禁用色。启用态填充和滑块保留强调色。Toggle 的颜色绑定本轮不改。
+
+滚动条滑块按所属区域复用边界职责：面板滚动区域、Explorer 项目树、Log 日志区、会话内容区以及 Timeline / 波形 / Blueprint 画布使用首要边界；表格、Notes、普通文本编辑器、下拉选项和弹窗列表内使用次要边界。共享 QSS 按滚动条的直接所属区域及既有 `scrollRole` 匹配，避免外层面板或控件影响嵌套区域。横纵方向、常态、悬停和拖动保持同一职责，移除原纵向悬停从首要切到次要的规则；原有禁用时隐藏滑块的规则保留，不新增颜色职责或默认值。
+
+滚动条调整后编辑器与测试目标构建通过，15 项现有样式与表格测试通过。Dark / Light 下对 16 类代表性滚动区域完成 360 项离屏核对，覆盖实际绘制缓冲区中的预览颜色、原生绘制入口的常态/悬停/拖动、嵌套 Notes 与面板的归属，以及确认、重复预览和取消恢复。记录及高对比样张位于 `.temp/scrollbar-role-review/`；该核对不代表完整工程和原生输入验收。
+
+旋钮没有实际业务页面入口，已删除 `RotaryKnobPresenter`、`RotaryKnobRenderer`、注册与构建项、`knob.indicator` 颜色职责和 `parameter.knobExtent` 尺寸配置。原 EffectParameter 默认展示器改用已有 `SliderWithValue`；恢复 Studio Default 已保存设置时移除旧旋钮职责覆盖，其他主题的同名职责保留。
+
+本轮范围为分割线、border 与刻度线，不将控制柄、十字参考线、播放头、连接线、定位网点和其他辅助图形重新收纳到三类边界职责。十字参考线退出原先共用的 `border.view` 绑定，保留其 Dark / Light 预设色及独立渲染位置，不新增编辑职责。经用户确认，`timeline.clipBorder` 与 `timeline.clipSelectedBorder` 两项暂时保留；它们控制 clip 自身完整描边，不是额外的裁剪边线。
+
+补正后 `harken_editor` 与 `harken_editor_tests` 构建通过，64 项主题、设置、控件、表格和时间刻度相关测试通过。新增通用回归检查：已有不透明子控件在连续纯颜色预览和取消时收到重绘，保持布局、编辑内容、选区与原生样式不变。Dark / Light 的实际 Preferences 调色器、三种表格和 Dock 离屏核对共 166 项通过；直接读取窗口绘制缓冲区检查点击 OK 前的边界像素，没有调用强制重绘来掩盖刷新遗漏。较早的 112 项静态核对未覆盖这类连续预览问题，也沿用了错误的表格外框分类。此次核对未改写用户配色，不覆盖完整工程和原生输入。QSS 归属检查与 `git diff --check` 通过，记录和样张位于 `.temp/border-preview-fix/`。
+
+表格列头使用次要文字；表格内部加粗的分组条目使用标题文字。蓝图对象名称使用常规字重和首要色，绘制、宽度测量与重命名输入框保持一致。蓝图底部栏目的文字，包括 Reset Layout 和缩放比例，使用首要色。Inspector 分类 Tab 的常态文字使用首要色，选中时保留强调色。面包屑当前项与可点击祖先项均使用次要色。
 
 对象引用的有效只读值同样使用主要文字；关闭选择入口不等同于禁用整个控件。继承引用保留次要文字，失效引用保留错误色，真正禁用时统一使用禁用文字。分段控件进入数值编辑时使用主要文字，普通分段选项保持原有层次。
+
+菜单栏常态与悬停文字的绘制位置 `shell.menuText`、`shell.menuHoverText` 均绑定首要文字；下拉菜单普通文字同样使用首要文字。菜单栏与下拉菜单不可用时使用禁用文字，强调背景上的文字使用 `accent.text`。
 
 同一颜色可能由 QSS、QPainter 或 QPalette 消费；绘制技术和所在面板都不构成新增颜色角色的理由。透明度、渐变与交互几何可以不同，颜色来源仍可共享。
 
 ## 解析与发布
 
-`ThemeColorResolver` 接受当前主题的职责绑定与当前色卡值，将它们写入固定的渲染颜色位置。绑定可指定独立 Alpha。原有共享文字、网格、节点背景等派生关系已成为 Studio Default 的绑定声明，解析器不再为所有主题强制建立相同关系。
+`ThemeColorResolver` 接受当前主题的职责绑定与当前色卡值，将它们写入固定的渲染颜色位置。绑定的 `alpha` 表示 0 至 255 的透明度乘数，实际 Alpha 为职责颜色 Alpha × `alpha / 255`；省略时完整保留 RGBA。原有共享文字、网格、节点背景等派生关系已成为 Studio Default 的绑定声明，解析器不再为所有主题强制建立相同关系。
+
+业务绘制与样式层同样保留源 RGBA，再乘透明度系数；最终 Alpha 为职责 Alpha × 绑定系数 × 业务系数。2026-10-31 的叠乘修正保留了既有系数，后续视觉取舍以各领域记录为准。颜色插值保留 Alpha，多频段波形按频段权重混合源 Alpha 后再乘波形系数。Dock 和样式颜色字符串传递完整 RGBA；SVG 的着色 Alpha 与图形自身透明度相乘，并保持栅格图像与导出的 SVG 一致。
+
+2026-10-31 Alpha 修正后，`harken_editor` 与 `harken_editor_tests` 构建通过，56 项主题、资产、样式及相关测试通过，QSS 归属检查与 `git diff --check` 通过。本地对照图 `.temp/palette-alpha-review/palette-alpha-comparison.png` 使用当前保存的 Studio Default / Dark 配色，17 组实际组件及生产 Renderer 配合静态示例数据绘制，列出源职责 RGBA、现有业务系数与实际效果；未强制修改职责 Alpha，也未改写用户设置。图中包含收起与展开的 Meter、曲线、Timeline、Inspector、Dock、SVG、蓝图及音源范围等样本，不代表完整工程或所有动态状态的截图。渲染记录与测试结果同存于 `.temp/palette-alpha-review/`。
 
 Studio Default 将 Qt 原生窗口、输入框、提示框和按钮背景绑定到对应表面职责，并同步原生文字与辅助颜色；色卡默认值、用户预览和取消恢复共用这些绑定。其他主题可以定义自己的对应关系。
+
+主题发布与取消预览均向所有控件安排重绘。只更新顶层窗口会被 Qt 的不透明子控件优化截断；即使纯描边颜色变化没有改变 QPalette 或原生 QSS，已有子控件也必须重绘。调色仍复用原生样式与匹配缓存，无需重新安装样式或重建控件。
+
+`HarkenStyle` 刷新控件调色板时，统一以当前主题快照生成的应用调色板为基础，再应用控件自己的样式声明。旧实现从控件已有调色板开始，部分颜色需要等待 Qt 后续传播，导致预览过程中生成的色块读取旧底色，而确认时读取新底色。预览、确认与取消共用这一发布路径。
+
+输入占位提示通过 `qtPalette.placeholderText` 绑定到次要文字，样式层直接使用该绘制位置，不再从首要文字生成半透明颜色。
+
+启动画面底部的项目名、进度百分比和状态文字统一使用首要文字，包括失败与取消状态；版本号使用次要文字。失败进度条仍使用错误色。
+
+2026-10-31 文字职责调整后，`harken_editor` 与 `harken_editor_tests` 编译通过，58 项主题、设置、表格及蓝图控件合同测试通过。隔离设置下的 Dark / Light 高对比离屏渲染共 86 项检查通过，覆盖真实折叠标题、Explorer、设置分节、顶部项目名、表格内部的分组条目与普通列头，以及字段、禁用、输入框与下拉框占位提示；蓝图对象名称的首要色与常规字重、重命名输入框，以及同一下拉框从占位到选值再回空的颜色恢复也已核对，预览未改变已提交设置。该检查使用代表性组件，不代表完整工程与原生输入操作验收。记录位于 `.temp/text-role-review/followup/`。
 
 `ThemeSnapshot` 中保留领域 Renderer 所需的已解析颜色槽位。主题职责可以绑定这些槽位，Renderer 只依赖自身样式，不需要读取任意主题职责名或全局主题管理器。快照发布后保持不可变，重新加载产生新快照。
 
@@ -44,7 +84,7 @@ Studio Default 将 Qt 原生窗口、输入框、提示框和按钮背景绑定�
 
 主题加载校验角色、色卡和绘制目标的唯一性，检查职责引用、颜色值、Alpha 及色卡完整性。未知目标不会静默忽略。职责可使用主题自己的名称，但必须绑定到实际渲染位置。
 
-声明 `entries.colors` 的继承层以该文档中的色卡值为准，同层 `tokens` 或 `visuals` 再赋值任何已绑定目标会报告冲突。未声明颜色定义的继承层可通过任意不带固定 Alpha 的绑定目标更新所属职责，绑定顺序不改变语义；同层多个目标对同一职责给出不同颜色会报告冲突，给出相同颜色则允许。带固定 Alpha 的目标不能直接反向覆盖职责值。未绑定的绘制位置可继续使用 `tokens` 或 `visuals` 中的字面颜色。
+声明 `entries.colors` 的继承层以该文档中的色卡值为准，同层 `tokens` 或 `visuals` 再赋值任何已绑定目标会报告冲突。未声明颜色定义的继承层可通过任意不带 Alpha 乘数的绑定目标更新所属职责，绑定顺序不改变语义；同层多个目标对同一职责给出不同颜色会报告冲突，给出相同颜色则允许。带 Alpha 乘数的目标不能直接反向覆盖职责值。未绑定的绘制位置可继续使用 `tokens` 或 `visuals` 中的字面颜色。
 
 ### 控件样式缓存与启动边界
 
@@ -64,31 +104,35 @@ PR 集成复验基于已含 #194 的主线 `9235952a`：编辑器与测试目标
 
 ## 用户颜色定制
 
-Studio Default 提供 76 个可编辑源颜色角色，共 11 类。每项包含职责名称、用途说明、主题职责键和绘制绑定。外部主题可声明自己的目录，Appearance 按当前主题生成分类与颜色行。窗口壳层按钮细节、Logo 扫光和声谱图固定热力色阶未加入 Studio Default 的用户定制目录；启动波浪的四档色阶单独表达动画配色，Logo 底板复用 `panel.background`。
+Studio Default 提供 72 个可编辑源颜色角色，共 11 类。每项包含职责名称、用途说明、主题职责键和绘制绑定。外部主题可声明自己的目录，Appearance 按当前主题生成分类与颜色行。窗口壳层按钮细节、Logo 扫光和声谱图固定热力色阶未加入 Studio Default 的用户定制目录；启动波浪的四档色阶单独表达动画配色，Logo 底板复用 `panel.background`。
 
 | 分类 | 数量 | 开放范围 |
 |---|---|---|
-| Text | 4 | 主文字、次文字、弱化文字、禁用文字 |
+| Text | 4 | 首要文字、次要文字、标题文字、禁用文字 |
 | Surfaces | 8 | 主背景、控件背景、抬升背景、面板、标题、轨道、交替轨道、Bus 背景 |
-| Interaction | 10 | 强调及悬停、强调底文字、悬停/选中背景、三类边界、滑条底轨、旋钮指示 |
+| Interaction | 9 | 强调及悬停、强调底文字、悬停/选中背景、三类边界、滑条底轨 |
 | Feedback | 4 | 成功、警告、错误、信息 |
 | Categorical palette | 7 | 区分多个条目的七个分类色 |
 | Waveform | 7 | 静态波形低/高幅度、三段频率贡献、裁剪及循环标记 |
 | Curves | 4 | 音量衰减、音高衰减、参数绑定、Grid 淡变 |
-| Meters | 11 | Peak 四段渐变、RMS、峰值保持、频谱主线/峰值线、三种 LUFS 读数 |
+| Meters | 8 | Peak 四段渐变、RMS、峰值保持、频谱主线/峰值线 |
 | Timeline | 8 | Clip 背景、上下文范围高亮、Clip 文字及普通/选中边界、进入/退出/过渡标记 |
 | Blueprint | 9 | 画布、网格点、三类端口、三类关系连线、节点波形 |
 | Startup | 4 | 启动波浪的暗部、低色阶、高色阶和高光 |
 
 入口为可停靠的 **Preferences → Appearance** 面板。上方 Appearance 分组保留 `Theme` 和 Information Language。`Theme` 下拉字段切换完整主题，包括字体、图标及控件尺寸。下方 **Theme Colors** 分组包含 Color Palette、分类与搜索、详细颜色表格及重置操作。切换主题时选中目标主题的默认色卡，Color Palette 仅列出该主题提供的色卡。字段沿用标准表单列比例；色卡选择不改变主题身份或非颜色属性。下拉框左侧显示色卡名称，右侧色条按顺序展示主背景、控件背景、选中背景、强调色、主要文字、次要文字、成功、警告、错误、信息十种渲染颜色。色条通过当前主题绑定生成，不依赖主题使用固定的职责名称。
 
-Theme Colors 编辑当前主题的当前色卡。即使另一个主题使用相同色卡 ID，颜色修改也彼此隔离。分类和搜索共同过滤颜色列表，搜索覆盖职责名称、分类、用途说明及颜色键。列表并列展示当前颜色与 `Palette Default`，两列均使用 44 像素宽的色块，下方等宽的 3 像素细条与色块紧贴、共用外边框，中间仅以一条边框线分隔。细条按 Alpha 值显示不透明度：0 为空条，255 为满条；填充固定白色、背景固定黑色，不参与色卡管理。选中项在下方显示用途说明。双击表格行打开 `ColorEditorDialog`：上方是 SV 二维选色区域和窄 H 色相条，下方分别排列 H/S/V、R/G/B 数值，底部通过公有 `LinearSliderPresenter` 提供共用的 A 透明度滑条与数值。H 为 0–359，S/V 为 0–100，R/G/B/A 为 0–255，数值不显示单位后缀；A 独立于两种色彩坐标，修改透明度不重算 RGB。底部操作行左侧的 20×20 吸管图标用于屏幕拾色；拾色保留当前 A 值；拾色时按 Esc 取消此次拾取并恢复拾色前的颜色。
+Theme Colors 编辑当前主题的当前色卡。即使另一个主题使用相同色卡 ID，颜色修改也彼此隔离。分类和搜索共同过滤颜色列表，搜索覆盖职责名称、分类、用途说明及颜色键。列表并列展示当前颜色与 `Palette Default`，两列均使用 44 像素宽的色块，下方等宽的 3 像素细条与色块紧贴、共用外边框，中间仅以一条边框线分隔。色块外框与内部横线使用次要边界 `border.secondary`，两列均随实时预览刷新。细条按 Alpha 值显示不透明度：0 为空条，255 为满条；填充固定白色、背景固定黑色，不参与色卡管理。选中项在下方显示用途说明。双击表格行打开 `ColorEditorDialog`：上方是 SV 二维选色区域和窄 H 色相条，下方分别排列 H/S/V、R/G/B 数值，底部通过公有 `LinearSliderPresenter` 提供共用的 A 透明度滑条与数值。H 为 0–359，S/V 为 0–100，R/G/B/A 为 0–255，数值不显示单位后缀；A 独立于两种色彩坐标，修改透明度不重算 RGB。底部操作行左侧的 20×20 吸管图标用于屏幕拾色；拾色保留当前 A 值；拾色时按 Esc 取消此次拾取并恢复拾色前的颜色。
 
 底部右侧并排保留 `Reset Selected` 和 `Reset All`，分别恢复当前主题所选色卡中的选中角色和全部颜色覆盖。默认值来自该色卡，恢复操作立即保存，其他主题和色卡的修改保持不变。
+
+选色器的 SV 二维颜色区域与 H 色相条都是输入控件，两者外框统一使用次要边界 `border.secondary`，每次绘制读取当前主题颜色，并随主题统一发布实时重绘。
 
 主题选择、色卡选择、完成颜色编辑、恢复默认及 Information Language 均即时保存。切换主题选择目标主题的默认色卡，重新加载主题和程序重启则保留已保存的主题与所选色卡。颜色对话框支持 Alpha 与实时预览：预览只发布临时快照，OK 后保存，Cancel、Esc 或关闭选色器恢复已提交外观。关闭或停靠 Preferences 不撤销已保存设置；AI 连接配置仍使用独立的 Save Connection 事务。
 
 主题选择保存在 `Appearance/ThemeId`，色卡选择保存在 `Appearance/PaletteId`。颜色覆盖以主题 ID、色卡 ID、职责键分层保存在 `Appearance/ThemePaletteColors`，不修改主题包或项目。旧设置在读取时迁移到所属主题的默认色卡；测试 Amber 不再作为可选配色保留。暂不可用主题的旧默认覆盖以空色卡键暂存，主题恢复后再迁入其声明的默认色卡；已有明确色卡覆盖优先。活动职责失效导致恢复失败时，仍保留其他主题与色卡的覆盖，避免随后保存时丢失。
+
+Studio Default 已保存的 `text.muted` 覆盖迁入同一色卡的 `text.secondary`；已有 `text.secondary` 覆盖优先，并移除旧职责键。该迁移仅作用于内置主题，不改写其他主题的同名职责。
 
 读取当前及旧版存储格式时跳过无法解析的色值，保留所有有效覆盖，包括未安装主题的私有职责。损坏的存储值不阻断后续切换、预览或保存；新提交的非法颜色仍被拒绝。
 
@@ -96,7 +140,9 @@ Theme Colors 编辑当前主题的当前色卡。即使另一个主题使用相�
 
 连续预览同一主题和色板时复用首次加载的基础候选与色板，每次都从未应用用户覆盖的颜色生成结果，避免反复扫描主题清单及解析继承链，也避免移除覆盖后残留上一次预览的颜色。取消、成功提交、成功切换或重新加载主题后结束该缓存的生命周期；提交和显式重新加载继续读取基础主题和色板。
 
-选色器立即更新自身颜色，Appearance 页面在连续输入期间以 16 ms 周期合并输入，只发布最新颜色；没有待发值时停止定时器。已有定时器不因新输入反复延后，也不在每次绘制完成后重新等待完整周期。确认直接保存选色器的最后值，不依赖待发定时器；取消、隐藏、销毁或外部提交会清除待发输入，避免结束编辑后重新出现预览。颜色表只更新正在编辑的行与当前色板缩略图。
+选色器立即更新自身颜色，Appearance 页面在连续输入期间以 16 ms 周期合并输入，只发布最新颜色；没有待发值时停止定时器。已有定时器不因新输入反复延后，也不在每次绘制完成后重新等待完整周期。确认直接保存选色器的最后值，不依赖待发定时器；取消、隐藏、销毁或外部提交会清除待发输入，避免结束编辑后重新出现预览。颜色表的预览、确认与取消共用完整刷新：更新所有行的当前值与默认值色块、色卡缩略图及关联展示。移除预览只更新当前行的分支，避免边框和透明棋盘底色变化时漏掉其他色块。
+
+2026-11-01 的一致性修复后，`harken_editor` 与 `harken_editor_tests` 构建通过，65 项主题、设置、控件、表格和时间刻度相关测试通过。通用回归逐一编辑 Dark / Light 的全部 72 项职责，核对预览与确认的完整主题快照、所有当前/默认色块和色卡缩略图一致，以及重复预览、取消恢复和预览不持久化。参数 Slider 的六种方向/样式/禁用组合另有 36 项窗口绘制缓冲区检查通过，覆盖两张色卡下的 border 独立性、轨道颜色、预览/确认一致和取消恢复。检查使用隔离设置与 offscreen 平台，不代表完整工程和原生输入验收；记录分别位于 `.temp/theme-preview-contract/` 与 `.temp/parameter-slider-review/`。
 
 每次外观发布都发送 `appearanceChanged`；`themeChanged` 只用于主题、资源及非颜色结构变化。字体按实际排版值比较，纯色发布不发送 `fontChanged`。颜色消费者更新绘图、图标或失效缓存，保留树模型、参数 presenter、组件布局和正在进行的编辑。Blueprint 将 Qt `PaletteChange` 与外观通知合并为绘图缓存刷新，保留隐藏的节点编辑器；渲染器内数值未变时复用尺寸，增益节点列宽仅在渲染编辑器创建时测量，颜色变化重新记录绘图。数据变化仍更新值与尺寸，字体、样式及完整主题变化仍走结构刷新并重新测量。资源版本与快照版本分离，同一套资源跨调色快照复用；显式重新加载主题仍更新资源版本，旧快照的资源句柄保持有效。相同应用调色板、字体和 QSS 不重复安装，不再全局清空 QPixmapCache。
 
@@ -144,24 +190,27 @@ Theme Colors 编辑当前主题的当前色卡。即使另一个主题使用相�
 | `shell.menuHover`、`shell.buttonHover` | `background.hover` |
 | `shell.menuPressedText` | `accent.text` |
 
-以上 10 个 UI 字段连同独立配置键均已删除，消费者直接使用共同来源。旋钮指示线、窗口关闭按钮、标题栏文字等仍保留其视觉职责。
+以上 10 个 UI 字段连同独立配置键均已删除，保留的消费者直接使用共同来源。表中的旋钮绑定是历史收束记录，旋钮实现与剩余的指示线职责已在 2026-11-01 清理。窗口关闭按钮、标题栏文字等仍保留其视觉职责。
 
 ## Studio Default 的领域绑定
 
-下表记录 Studio Default 的领域绘制位置与角色绑定。其他主题可以为这些位置声明不同的来源。未写透明度时保留源颜色，写明透明度时在解析结果上应用固定 Alpha，范围为 0 至 255。
+下表记录 Studio Default 的领域绘制位置与角色绑定。其他主题可以为这些位置声明不同的来源。未写透明度时保留源颜色；表中的 Alpha 数值均表示乘数的分子，实际系数为该值 / 255，不覆盖源颜色的 Alpha。
 
 | 曲线与波形绘制位置 | Studio Default 来源 |
 |---|---|
 | `curve.canvasBackground` | `panel.background` |
-| `curve.canvasBorder` | `border.view` |
+| `curve.canvasBorder` | `border.primary` |
 | `curve.plotBackground`、`curve.handleFill` | `background.primary` |
-| `curve.grid`、`waveform.dbScale.grid` | `border.view`，Alpha 100 |
+| `curve.grid`、`waveform.dbScale.grid` | `border.tick`，Alpha 100 |
 | `curve.plotBorder` | `border.primary` |
+| `waveform.splitStereo.divider` | `border.primary` |
+| `music.beatGridMajor`、`music.beatGridMinor` | `border.tick`，Alpha 分别为 48、18 |
 | `curve.axisText`、`curve.handleBorder`、`waveform.dbScale.label` | `text.secondary` |
 | `curve.handleLine` | `text.secondary`，Alpha 110 |
 | `curve.handleActiveBorder`、`curve.handleActiveFill`、`curve.pointBorder`、`curve.pointSelectedFill` | `accent.primary` |
 | `curve.pointSelectedBorder`、`curve.readoutText` | `text.primary` |
-| `curve.crosshairContrast` | `background.primary`，Alpha 153 |
+| `curve.crosshair` | 色卡预设值，不绑定边界职责 |
+| `curve.crosshairContrast` | `background.primary` |
 | `curve.readoutBackground` | `background.secondary` |
 | `waveform.previewPlayhead` | `status.success`，与 Timeline 的播放头沿用同一来源；字段与独立配置键均删除 |
 
@@ -169,32 +218,40 @@ Theme Colors 编辑当前主题的当前色卡。即使另一个主题使用相�
 
 | 仪表绘制位置 | Studio Default 来源 |
 |---|---|
-| `meter.interaction.crosshair` | `text.primary`，Alpha 89 |
-| `meter.interaction.readoutBackground` | `background.primary`，Alpha 221 |
-| `meter.interaction.readoutText` | `text.primary`，Alpha 229 |
+| `meter.interaction.crosshair` | 色卡预设值，不绑定边界职责 |
+| `meter.interaction.readoutBackground` | `background.primary` |
+| `meter.interaction.readoutText` | `text.primary` |
 | `meter.peakMeter.canvasBackground`、`meter.peakMeter.trackBackground`、`meter.spectrum.canvasBackground`、`meter.spectrogram.canvasBackground` | `background.primary` |
-| `meter.peakMeter.grid`、`meter.spectrum.horizontalGrid`、`meter.spectrum.verticalGrid`、`meter.spectrogram.grid` | `border.view` |
-| `meter.peakMeter.tickText`、`meter.loudness.targetText`、`meter.vu.analogNegativeTick`、`meter.spectrum.axisText`、`meter.spectrogram.axisText`、`meter.spectrogram.timeText` | `text.secondary` |
-| `meter.peakMeter.label`、`meter.loudness.labelText`、`meter.loudness.valueText` | `text.primary`，Alpha 204 |
-| `meter.loudness.canvasBackground`、`meter.vu.canvasBackground` | `panel.background` |
-| `meter.loudness.trackBackground`、`meter.vu.trackBackground` | `track.background` |
-| `meter.vu.titleText`、`meter.vu.analogLabelText`、`meter.vu.barLabelText` | `text.primary` |
-| `meter.vu.analogArc`、`meter.vu.barGrid` | `border.primary` |
-| `meter.vu.analogValueText`、`meter.vu.barValueText` | `text.muted`，保留 VU 读数原有的弱化层级 |
+| `meter.peakMeter.grid`、`meter.spectrum.horizontalGrid`、`meter.spectrum.verticalGrid`、`meter.spectrogram.grid` | `border.tick` |
+| `meter.peakMeter.tickText`、`meter.spectrum.axisText`、`meter.spectrogram.axisText`、`meter.spectrogram.timeText` | `text.secondary` |
+| `meter.peakMeter.label` | `text.primary` |
+
+2026-11-01 的 Meter 调整取消零刻度与普通刻度的网格强度差异。Peak 和 Loudness 共用的电平柱在展开时，刻度、读数与网格按源 RGBA 的 100% 绘制；收起时统一乘 50%。柱体与峰值保持标记保留原有绘制。Spectrum 和 Spectrogram 的网格按 100% 绘制。相关职责的 Dark / Light 默认 Alpha 均为 255，用户自定义 Alpha 仍与业务比例相乘。
+
+声谱图历史图像使用保留 Alpha 的 ARGB32 格式，与色表的 RGBA 数据一致。存在历史图像时直接合成到画布，只有图像不存在时才单独填充空历史色，避免半透明 `meter.spectrogram.emptyHistory` 叠加两次。回归覆盖色表 Alpha 0/64/128/255 的连续变化、未采样及已采样像素，以及图像存在与不存在时的单次合成结果；修复前两项新增检查失败，修复后相关 17 项主题与仪表测试通过。编辑器与全部 CI 测试目标构建通过，记录位于 `.temp/pr208-spectrogram-alpha/`。
+
+当前 Meter、曲线和音源编辑器使用共用的 `AxisCrosshair` 绘制交错虚线。前景保留原 Dark `#272E3C` / Light `#B9C5D1` 预设色，对比底线继承 `background.primary`，不新增可编辑职责，默认 Alpha 为 255，业务按 100% 绘制；浮动读数的文字继承 `text.primary`，底色继承 `background.secondary`，同样不额外衰减。旧 `meter.interaction` 渲染位置也保留完整源 RGBA。
+
+当前前端的 Loudness（RMS / LUFS）由 `MeterPanel` 调用 `PeakMeterRenderer`，与 Peak 共用色柱。旧 `LoudnessMeterRenderer` 的蓝、绿、橙三柱没有产品调用入口；已删除该绘制器、专属帧与样式、`meter.lufsMomentary/lufsShortTerm/lufsIntegrated` 三项职责及 `meter.loudness.*` 配置键。恢复 Studio Default 已保存设置时只移除这三项旧职责覆盖，其他配色与其他主题同名职责保留。音频测量能力不受影响。
+
+VU 已退出产品入口。按用户要求删除遗留 `VUMeterRenderer`、专属渲染帧、`MeterStyle::VU`、默认值、色卡复制、职责绑定和全部 `meter.vu.*` 颜色及指标配置入口，并移除构建清单中的对应文件。
+
+此前 `.temp/palette-alpha-review/palette-alpha-comparison.png` 的 03 使用了该旧绘制器，02 的浮动读数使用了旧渲染帧入口，不能代表当前前端的对应画面。本轮改用当前 `MeterPanel` 和 `CurveCanvas` 的实际渲染入口与示例数据核对，更新图为 `.temp/meter-color-review/meter-color-comparison.png`，沿用当前保存的 Dark 配色。`harken_editor` 与 `harken_editor_tests` 构建通过，58 项主题、资产、样式、仪表数据及历史图像测试通过；Dark / Light Alpha、交错虚线像素及当前组件样本共 44 项临时检查通过。QSS 归属检查与 `git diff --check` 通过，未改写用户设置。
 
 | 节点与反馈绘制位置 | Studio Default 来源 |
 |---|---|
 | `nodeGraph.node.bodyNormal` | `background.tertiary` |
 | `nodeGraph.node.bodySelected` | `background.hover` |
-| `nodeGraph.node.contentLabel`、`blueprint.edgeLabelText` | `text.secondary` |
-| `nodeGraph.node.contentValue`、`nodeGraph.node.titleText` | `text.primary` |
+| `nodeGraph.node.contentLabel`、`nodeGraph.node.contentValue` | `text.primary` |
+| `nodeGraph.node.titleText` | `text.primary` |
+| `blueprint.edgeLabelText` | `text.secondary` |
 | `feedback.success/warning/error/info` | 对应的 `status.success/warning/error/info` |
-| `feedback.neutral` | `text.muted` |
+| `feedback.neutral` | `text.secondary` |
 | `feedback.overlayHighlight` | `accent.primary` |
 
 ## 对象颜色职责
 
-对象默认使用共同界面角色，不按 Sound、Audio Layer、Bus、Receive Bus、Attenuation、Action 等类型分配颜色。Blueprint 节点标题底统一使用 `header.background`，标题文字和图标默认使用 `text.primary`；节点波形统一使用 `nodeGraph.node.blueprintWaveform`，不再按 Source、Self、Parent、Bus、ReceiveBus 角色着色。普通波形仍以透明度表达选择状态。
+对象默认使用共同界面角色，不按 Sound、Audio Layer、Bus、Receive Bus、Attenuation、Action 等类型分配颜色。Blueprint 节点标题底统一使用 `header.background`，对象名称使用常规字重，名称文字和图标默认使用 `text.primary`；节点波形统一使用 `nodeGraph.node.blueprintWaveform`，不再按 Source、Self、Parent、Bus、ReceiveBus 角色着色。普通波形仍以透明度表达选择状态。
 
 下列 18 个配置键及对应快照成员、内置值一并删除，不保留旧键兼容：
 
@@ -225,6 +282,8 @@ Theme Colors 编辑当前主题的当前色卡。即使另一个主题使用相�
 Alpha 验证使用隔离设置加载实际启动 Renderer，读回默认四色、四槽统一 Alpha 0/128/255，以及四槽分别为 0/64/128/255 的五组画面。Logo 外像素的默认 RGB 与原四档一致，透明度合成符合前景与 `background.primary` 的混合值（允许 1 级量化误差），最终窗口表面保持不透明。14 项像素检查通过，临时设置已恢复；截图为 `startup-alpha-*.png`，记录为 `startup-alpha-report.json`。
 
 ## 默认视觉变化边界
+
+以下记录颜色收束阶段的历史变化。2026-10-31 的文字职责调整以本文前述 Studio Default 职责与领域绑定表为准。
 
 共同来源保持现有四级文字、青色强调和深色工作区的值。Settings、Source Editor、Publisher 等字段名统一至次要文字；多行输入与只读有效值统一至主要文字。普通滑条、旋钮及被收束的曲线、仪表背景和边框保持原默认色。
 

@@ -63,9 +63,9 @@ protected:
         p.setRenderHint(QPainter::Antialiasing);
         const QColor accent = ThemeManager::instance().colors().accent;
         QColor fill = accent;
-        fill.setAlphaF(0.22 * fade * pop);
+        fill.setAlphaF(fill.alphaF() * 0.22 * fade * pop);
         QColor edge = accent;
-        edge.setAlphaF(fade);
+        edge.setAlphaF(edge.alphaF() * fade);
         p.setPen(QPen(edge, 2));
         p.setBrush(fill);
         const qreal radius = r.height() / 2.0;

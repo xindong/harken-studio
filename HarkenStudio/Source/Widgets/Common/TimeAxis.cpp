@@ -167,7 +167,7 @@ void drawTimeAxisRuler(QPainter& painter, const ThemeColors& colors,
     int lastLabelRight = bounds.left();
     for (const auto& tick : ticks.ticks) {
         const int x = bounds.left() + tick.pixel;
-        painter.setPen(tick.major ? colors.textSecondary : colors.textMuted);
+        painter.setPen(colors.borderTick);
         painter.drawLine(x, bounds.bottom() + 1 - (tick.major ? 4 : 2), x, bounds.bottom());
         if (tick.label.isEmpty())
             continue;

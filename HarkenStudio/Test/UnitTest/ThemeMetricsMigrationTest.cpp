@@ -13,6 +13,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
 #include <QFocusEvent>
@@ -35,6 +36,7 @@
 #include <QToolBar>
 #include <QVBoxLayout>
 #include <QTemporaryDir>
+#include <QTimer>
 
 #include <memory>
 
@@ -236,21 +238,21 @@ TEST(ThemeMetricsMigration, ColorPreviewPreservesMetricsAndSynchronizesNativePal
     const auto comboMaximum = fixedCombo->maximumSize();
     const QColor primary(QStringLiteral("#ffc8a0e0"));
     const QColor secondary(QStringLiteral("#ffb0c9df"));
-    const QColor muted(QStringLiteral("#ff73b493"));
+    const QColor title(QStringLiteral("#ff73b493"));
     const QColor mainBackground(QStringLiteral("#ff263040"));
     const QColor controlBackground(QStringLiteral("#ff354152"));
     const QColor raisedBackground(QStringLiteral("#ff465668"));
     auto preview = manager->appearance();
     preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("text.primary"), primary);
     preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("text.secondary"), secondary);
-    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("text.muted"), muted);
+    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("text.title"), title);
     preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("background.primary"), mainBackground);
     preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("background.secondary"), controlBackground);
     preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("background.tertiary"), raisedBackground);
     ASSERT_TRUE(manager->previewAppearance(preview).ok());
     QCoreApplication::processEvents();
     EXPECT_EQ(label->palette().color(QPalette::WindowText), primary);
-    EXPECT_EQ(headerLabel->palette().color(QPalette::WindowText), muted);
+    EXPECT_EQ(headerLabel->palette().color(QPalette::WindowText), secondary);
     EXPECT_EQ(localLabel->palette().color(QPalette::WindowText), QColor(QStringLiteral("#ccee77")));
     EXPECT_EQ(qApp->palette().color(QPalette::Window), mainBackground);
     EXPECT_EQ(qApp->palette().color(QPalette::Base), controlBackground);
@@ -258,9 +260,11 @@ TEST(ThemeMetricsMigration, ColorPreviewPreservesMetricsAndSynchronizesNativePal
     EXPECT_EQ(qApp->palette().color(QPalette::AlternateBase), raisedBackground);
     EXPECT_EQ(qApp->palette().color(QPalette::Button), raisedBackground);
     EXPECT_EQ(qApp->palette().color(QPalette::Text), primary);
+    EXPECT_EQ(qApp->palette().color(QPalette::PlaceholderText), secondary);
+    EXPECT_EQ(editor->palette().color(QPalette::PlaceholderText), secondary);
     EXPECT_EQ(qApp->palette().color(QPalette::ToolTipText), primary);
     EXPECT_EQ(qApp->palette().color(QPalette::Mid), secondary);
-    EXPECT_EQ(qApp->palette().color(QPalette::Dark), muted);
+    EXPECT_EQ(qApp->palette().color(QPalette::Dark), secondary);
     EXPECT_EQ(editor->geometry(), geometry);
     EXPECT_EQ(editor->font(), font);
     EXPECT_EQ(editor->selectedText(), QStringLiteral("finish"));
@@ -268,12 +272,13 @@ TEST(ThemeMetricsMigration, ColorPreviewPreservesMetricsAndSynchronizesNativePal
     EXPECT_EQ(fixedCombo->minimumSize(), comboMinimum);
     EXPECT_EQ(fixedCombo->maximumSize(), comboMaximum);
     EXPECT_EQ(fixedCombo->currentText(), QStringLiteral("Second"));
-    VNX::QtControlSkin::setSemanticProperty(label, "textRole", QStringLiteral("muted"));
-    EXPECT_EQ(label->palette().color(QPalette::WindowText), muted);
+    VNX::QtControlSkin::setSemanticProperty(label, "textRole", QStringLiteral("title"));
+    EXPECT_EQ(label->palette().color(QPalette::WindowText), title);
     manager->cancelAppearancePreview();
     EXPECT_EQ(qApp->palette(), originalPalette);
-    EXPECT_EQ(label->palette().color(QPalette::WindowText), original->ui.colors.textMuted);
-    EXPECT_EQ(headerLabel->palette().color(QPalette::WindowText), original->ui.colors.textMuted);
+    EXPECT_EQ(label->palette().color(QPalette::WindowText), original->ui.colors.textTitle);
+    EXPECT_EQ(headerLabel->palette().color(QPalette::WindowText), original->ui.colors.textSecondary);
+    EXPECT_EQ(editor->palette().color(QPalette::PlaceholderText), original->qtPalette.placeholderText);
     EXPECT_EQ(localLabel->palette().color(QPalette::WindowText), QColor(QStringLiteral("#ccee77")));
     EXPECT_EQ(editor->text(), QStringLiteral("unfinished input"));
     EXPECT_EQ(editor->selectedText(), QStringLiteral("finish"));
@@ -281,6 +286,84 @@ TEST(ThemeMetricsMigration, ColorPreviewPreservesMetricsAndSynchronizesNativePal
     EXPECT_EQ(fixedCombo->minimumSize(), comboMinimum);
     EXPECT_EQ(fixedCombo->maximumSize(), comboMaximum);
     EXPECT_EQ(fixedCombo->currentText(), QStringLiteral("Second"));
+}
+
+TEST(ThemeMetricsMigration, BorderPreviewRepaintsOpaqueDescendantsWithoutRepolish)
+{
+    ensureApp();
+    QTemporaryDir root;
+    auto manager = makeManager(root.path());
+    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    QWidget window;
+    window.setStyle(&style);
+    auto* layout = new QVBoxLayout(&window);
+    auto* panel = new QFrame(&window);
+    panel->setProperty("surfaceRole", QStringLiteral("panel"));
+    panel->setStyle(&style);
+    layout->addWidget(panel);
+    auto* fields = new QVBoxLayout(panel);
+    auto* editor = new QLineEdit(QStringLiteral("unfinished input"), panel);
+    editor->setStyle(&style);
+    fields->addWidget(editor);
+    panel->setAttribute(Qt::WA_OpaquePaintEvent);
+    editor->setAttribute(Qt::WA_OpaquePaintEvent);
+    class AppearanceEvents final : public QObject {
+    public:
+        QHash<QObject*, int> paints;
+        int styleChanges = 0;
+        bool eventFilter(QObject* watched, QEvent* event) override
+        {
+            if (event->type() == QEvent::Paint) ++paints[watched];
+            if (event->type() == QEvent::StyleChange) ++styleChanges;
+            return false;
+        }
+    } events;
+    panel->installEventFilter(&events);
+    editor->installEventFilter(&events);
+    const auto settle = [] {
+        QEventLoop loop;
+        QTimer::singleShot(30, &loop, &QEventLoop::quit);
+        loop.exec();
+    };
+    window.resize(400, 200);
+    window.show();
+    editor->setFocus();
+    editor->setSelection(2, 6);
+    settle();
+    ASSERT_GT(events.paints.value(panel), 0);
+    ASSERT_GT(events.paints.value(editor), 0);
+    const auto geometry = editor->geometry();
+    const auto palette = editor->palette();
+    const auto nativeStyle = qApp->styleSheet();
+    const auto committed = manager->appearance();
+    const auto check = [&] {
+        settle();
+        EXPECT_GT(events.paints.value(panel), 0);
+        EXPECT_GT(events.paints.value(editor), 0);
+        EXPECT_EQ(events.styleChanges, 0);
+        EXPECT_EQ(qApp->styleSheet(), nativeStyle);
+        EXPECT_EQ(editor->palette(), palette);
+        EXPECT_EQ(editor->geometry(), geometry);
+        EXPECT_EQ(editor->selectedText(), QStringLiteral("finish"));
+        EXPECT_EQ(editor->text(), QStringLiteral("unfinished input"));
+        EXPECT_EQ(manager->appearance(), committed);
+    };
+    for (const QString role : {QStringLiteral("border.primary"), QStringLiteral("border.secondary"),
+                               QStringLiteral("timeline.clipBorder")}) {
+        SCOPED_TRACE(role.toStdString());
+        for (const QColor color : {QColor("#e74f31"), QColor("#358bd4")}) {
+            events.paints.clear();
+            events.styleChanges = 0;
+            auto preview = committed;
+            preview.colors[preview.themeId][preview.paletteId].insert(role, color);
+            ASSERT_TRUE(manager->previewAppearance(preview).ok());
+            check();
+        }
+    }
+    events.paints.clear();
+    events.styleChanges = 0;
+    manager->cancelAppearancePreview();
+    check();
 }
 
 TEST(ThemeMetricsMigration, PolishedDescendantsFollowAncestorChangesAcrossMoveDestroyAndShow)
@@ -583,7 +666,8 @@ TEST(ThemeMetricsMigration, ProgressContentsPreserveOuterBorderAcrossDirectionsA
                     progress.setValue(value);
                     const auto image = renderWidget(progress);
                     const QPoint center = image.rect().center();
-                    const auto border = manager->colors().borderPrimary;
+                    const auto border = manager->widgetAppearance().visual(&progress,
+                        QStyle::State_Enabled).borderColors[0];
                     EXPECT_EQ(image.pixelColor(center.x(), 0), border);
                     EXPECT_EQ(image.pixelColor(center.x(), image.height() - 1), border);
                     EXPECT_EQ(image.pixelColor(0, center.y()), border);
@@ -599,7 +683,7 @@ TEST(ThemeMetricsMigration, ProgressContentsPreserveOuterBorderAcrossDirectionsA
     };
     checkBoundary();
     auto preview = manager->appearance();
-    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("border.primary"), QColor(QStringLiteral("#ffb68442")));
+    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("border.secondary"), QColor(QStringLiteral("#ffb68442")));
     preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("accent.primary"), QColor(QStringLiteral("#ff327f95")));
     ASSERT_TRUE(manager->previewAppearance(preview).ok());
     QCoreApplication::processEvents();

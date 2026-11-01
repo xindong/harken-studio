@@ -122,7 +122,7 @@ void ProportionalTreeWidget::paintEvent(QPaintEvent* event)
     }
     if (drawSeparator) {
         painter.setClipRegion(region);
-        painter.fillRect(viewport()->rect(), themeManager_->colors().borderPrimary);
+        painter.fillRect(viewport()->rect(), themeManager_->colors().borderSecondary);
     }
 }
 

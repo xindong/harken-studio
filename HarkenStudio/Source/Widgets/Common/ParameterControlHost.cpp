@@ -3,7 +3,6 @@
 #include "LinearSliderPresenter.h"
 #include "ParameterBinding.h"
 #include "ParameterPresenter.h"
-#include "RotaryKnobPresenter.h"
 #include "VerticalFaderPresenter.h"
 #include "Core/NumericFormat.h"
 #include "Core/ThemeManager.h"
@@ -246,10 +245,6 @@ void ParameterControlHost::installPresenter(FocusRole focusRole)
             break;
         case ParameterPresenterId::VerticalFader:
             presenter_ = new VerticalFaderPresenter(
-                binding_, themeManager_, this);
-            break;
-        case ParameterPresenterId::RotaryKnob:
-            presenter_ = new RotaryKnobPresenter(
                 binding_, themeManager_, this);
             break;
     }

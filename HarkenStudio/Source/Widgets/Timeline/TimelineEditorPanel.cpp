@@ -2263,7 +2263,7 @@ void TimelineEditorPanel::refreshBreadcrumbs()
             label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
             label->setToolTip(crumb.name);
             QtControlSkin::setSemanticProperty(label, "textRole",
-                                               QStringLiteral("primary"));
+                                               QStringLiteral("secondary"));
             breadcrumbLayout_->addWidget(label, 1);
             titleLabel_ = label;
             return;
@@ -2277,7 +2277,7 @@ void TimelineEditorPanel::refreshBreadcrumbs()
         button->setCursor(Qt::PointingHandCursor);
         button->setProperty("drillDepth", crumb.depth);
         QtControlSkin::setSemanticProperty(button, "textRole",
-                                           QStringLiteral("accent"));
+                                           QStringLiteral("secondary"));
         connect(button, &QToolButton::clicked, this, [this, depth = crumb.depth] {
             drillToDepth(depth);
         });

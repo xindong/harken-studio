@@ -74,7 +74,7 @@ protected:
         for (int i = 0; i <= 6; ++i)
             spectrum.setColorAt(i / 6.0, QColor::fromHsvF(i / 6.0, 1.0, 1.0));
         painter.fillRect(hue, spectrum);
-        painter.setPen(palette().color(QPalette::Mid));
+        painter.setPen(ThemeManager::instance().colors().borderSecondary);
         painter.drawRect(plane.adjusted(0, 0, -1, -1));
         painter.drawRect(hue.adjusted(0, 0, -1, -1));
 

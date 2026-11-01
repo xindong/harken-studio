@@ -34,11 +34,13 @@ ThemeSnapshot createBuiltinDarkTheme()
     colors.borderPrimary = QColor("#313848");
     colors.borderSecondary = QColor("#3D4554");
     colors.viewBorder = QColor("#272E3C");
+    colors.borderTick = colors.viewBorder;
     colors.dropHighlight = QColor(0x30, 0x90, 0xFF, 0x60);
     colors.dropAccent = QColor(0x00, 0xF0, 0xFF, 0xC0);
 
     colors.textPrimary = QColor("#E0E0E0");
     colors.textSecondary = QColor("#AAAAAA");
+    colors.textTitle = colors.textPrimary;
     colors.textMuted = QColor("#666666");
     colors.textDisabled = QColor("#555555");
 
@@ -53,7 +55,6 @@ ThemeSnapshot createBuiltinDarkTheme()
     colors.busBackgroundActive = QColor(0, 240, 255, 25);
 
     colors.sliderTrack = QColor("#2A3140");
-    colors.knobIndicator = QColor("#FFFFFF");
 
     colors.panelBackground = QColor("#10151F");
     colors.sectionSeparator = QColor("#2A3140");
@@ -110,7 +111,6 @@ ThemeSnapshot createBuiltinDarkTheme()
     metrics.inspector.slotSpacing = 2;
     metrics.inspector.separatorHeight = 1;
     metrics.inspector.rangeSeparatorWidth = 12;
-    metrics.parameter.knobExtent = 64;
     metrics.parameter.faderMinimumHeight = 96;
     metrics.parameter.labelMinimumWidth = 100;
     metrics.parameter.valueMinimumWidth = 72;
@@ -263,9 +263,6 @@ ThemeSnapshot createBuiltinDarkTheme()
     domains.meter.clipOn = QColor(0xFF, 0x00, 0x00);
     domains.meter.clipOff = QColor(0x66, 0x33, 0x33);
     domains.meter.background = QColor(0x1A, 0x1A, 0x1A);
-    domains.meter.lufsMomentary = QColor(0x44, 0x88, 0xFF);
-    domains.meter.lufsShortTerm = QColor(0x44, 0xCC, 0x88);
-    domains.meter.lufsIntegrated = QColor(0xFF, 0xAA, 0x44);
     domains.meter.oscilloscopeGrid = QColor(
         colors.textPrimary.red(), colors.textPrimary.green(),
         colors.textPrimary.blue(), 15);
@@ -350,96 +347,6 @@ ThemeSnapshot createBuiltinDarkTheme()
     peakMetrics.channelLabelBottomOffset = 30;
     peakMetrics.valueLabelBottomOffset = 16;
     peakMetrics.labelHeight = 14;
-
-    auto& loudnessColors = domains.meter.loudnessMeter.colors;
-    loudnessColors.targetLine = QColor(0xFF, 0xAA, 0x00, 0xA0);
-
-    auto& loudnessMetrics = domains.meter.loudnessMeter.metrics;
-    loudnessMetrics.outerInsetLeft = 4;
-    loudnessMetrics.outerInsetTop = 3;
-    loudnessMetrics.outerInsetRight = 4;
-    loudnessMetrics.outerInsetBottom = 3;
-    loudnessMetrics.reservedWidth = 40;
-    loudnessMetrics.barGap = 10;
-    loudnessMetrics.minimumBarWidth = 1;
-    loudnessMetrics.gradientTopStop = 0.0;
-    loudnessMetrics.gradientBottomStop = 1.0;
-    loudnessMetrics.gradientTopLighterFactor = 130;
-    loudnessMetrics.gradientBottomDarkerFactor = 120;
-    loudnessMetrics.highlightLighterFactor = 150;
-    loudnessMetrics.highlightAlpha = 64;
-    loudnessMetrics.highlightMinimumBarHeight = 4.0;
-    loudnessMetrics.highlightHeight = 4.0;
-    loudnessMetrics.targetLineWidth = 1.5;
-    loudnessMetrics.targetLabelHorizontalInset = 2.0;
-    loudnessMetrics.targetLabelTopOffset = 11.0;
-    loudnessMetrics.targetLabelHeight = 10.0;
-    loudnessMetrics.channelLabelHeight = 20.0;
-    loudnessMetrics.valueLabelBottomOffset = 24.0;
-    loudnessMetrics.valueLabelHeight = 24.0;
-
-    auto& vuColors = domains.meter.vuMeter.colors;
-    vuColors.analogPositiveTick = QColor(0xF4, 0x43, 0x36, 0xB2);
-    vuColors.analogOverloadArc = QColor(0xF4, 0x43, 0x36, 0x66);
-    vuColors.analogNeedleGlow = QColor(0x00, 0xF0, 0xFF, 0x26);
-    vuColors.analogNeedle = QColor(0xE0, 0xE0, 0xE0, 0xE5);
-    vuColors.analogPivot = colors.accent;
-    vuColors.barWarning = colors.warning;
-
-    auto& vuMetrics = domains.meter.vuMeter.metrics;
-    vuMetrics.outerInsetLeft = 4;
-    vuMetrics.outerInsetTop = 3;
-    vuMetrics.outerInsetRight = 4;
-    vuMetrics.outerInsetBottom = 3;
-    vuMetrics.titleHeight = 18;
-    vuMetrics.contentTopInset = 20;
-    vuMetrics.analogGap = 6;
-    vuMetrics.analogCornerRadius = 6.0;
-    vuMetrics.analogInnerInsetLeft = 6;
-    vuMetrics.analogInnerInsetTop = 4;
-    vuMetrics.analogInnerInsetRight = 6;
-    vuMetrics.analogInnerInsetBottom = 34;
-    vuMetrics.analogLabelStripBottomOffset = 30;
-    vuMetrics.analogLabelStripHeight = 30;
-    vuMetrics.analogPivotBottomOffset = 10.0;
-    vuMetrics.analogRadiusScale = 0.62;
-    vuMetrics.analogArcStartPiFactor = 0.78;
-    vuMetrics.analogArcEndPiFactor = 0.22;
-    vuMetrics.analogArcSegments = 48;
-    vuMetrics.analogArcLineWidth = 2.0;
-    vuMetrics.analogTickInnerRadiusScale = 0.85;
-    vuMetrics.analogTickOuterRadiusScale = 0.95;
-    vuMetrics.analogTickLineWidth = 1.0;
-    vuMetrics.analogTickLabelRadiusScale = 0.75;
-    vuMetrics.analogTickLabelHalfWidth = 12.0;
-    vuMetrics.analogTickLabelTopOffset = 5.0;
-    vuMetrics.analogTickLabelWidth = 24.0;
-    vuMetrics.analogTickLabelHeight = 10.0;
-    vuMetrics.analogOverloadRadiusScale = 0.92;
-    vuMetrics.analogOverloadSegments = 12;
-    vuMetrics.analogOverloadLineWidth = 3.0;
-    vuMetrics.analogNeedleLengthScale = 0.88;
-    vuMetrics.analogNeedleGlowWidth = 3.5;
-    vuMetrics.analogNeedleWidth = 1.5;
-    vuMetrics.analogPivotRadius = 4.0;
-    vuMetrics.analogValueHeight = 14;
-    vuMetrics.analogLabelTopOffset = 14;
-    vuMetrics.analogLabelHeight = 16;
-    vuMetrics.barGap = 8;
-    vuMetrics.barCornerRadius = 3.0;
-    vuMetrics.barHorizontalInset = 3.0;
-    vuMetrics.barOverloadStop = 0.0;
-    vuMetrics.barWarningStop = 0.2;
-    vuMetrics.barYellowStop = 0.4;
-    vuMetrics.barBrightGreenStop = 0.6;
-    vuMetrics.barGreenStop = 1.0;
-    vuMetrics.barOverloadAlpha = 229;
-    vuMetrics.barGreenLighterFactor = 115;
-    vuMetrics.barGridLineWidth = 1.0;
-    vuMetrics.barChannelLabelBottomOffset = 14;
-    vuMetrics.barChannelLabelHeight = 14;
-    vuMetrics.barValueLabelBottomOffset = 26;
-    vuMetrics.barValueLabelHeight = 12;
 
     auto& spectrumColors = domains.meter.spectrumMeter.colors;
     spectrumColors.fillTop = colors.accent;
@@ -547,10 +454,11 @@ ThemeSnapshot createBuiltinDarkTheme()
     curveColors.attenuationPitch = QColor(0x4A, 0x9D, 0xE0);
     curveColors.parameterBinding = colors.accent;
     curveColors.gridFade = colors.accent;
+    curveColors.crosshair = colors.borderTick;
+    domains.meter.interaction.colors.crosshair = colors.borderTick;
     curveColors.ghost = QColor(0xFF, 0xFF, 0xFF, 90);
     curveColors.lassoBorder = QColor(0xFF, 0xFF, 0xFF, 150);
     curveColors.lassoFill = QColor(0xFF, 0xFF, 0xFF, 28);
-    curveColors.crosshair = QColor(0xC8, 0xD2, 0xDC, 153);
     curveColors.playhead = QColor(0xC8, 0xD2, 0xDC, 90);
 
     auto& curveMetrics = domains.curve.metrics;
@@ -770,10 +678,12 @@ ThemeSnapshot createBuiltinLightTheme()
     colors.borderPrimary = QColor("#BCC7D3");
     colors.borderSecondary = QColor("#8D9EAF");
     colors.viewBorder = QColor("#B9C5D1");
+    colors.borderTick = colors.viewBorder;
     colors.dropHighlight = QColor("#40326EB4");
     colors.dropAccent = QColor("#C0007B8B");
     colors.textPrimary = QColor("#202B38");
     colors.textSecondary = QColor("#506174");
+    colors.textTitle = colors.textPrimary;
     colors.textMuted = QColor("#697889");
     colors.textDisabled = QColor("#98A4B1");
     colors.success = QColor("#217A45");
@@ -785,7 +695,6 @@ ThemeSnapshot createBuiltinLightTheme()
     colors.busBackground = QColor("#E7EEF4");
     colors.busBackgroundActive = QColor("#20007B8B");
     colors.sliderTrack = QColor("#B7C5D3");
-    colors.knobIndicator = QColor("#293C50");
     colors.panelBackground = QColor("#EEF2F6");
     colors.sectionSeparator = QColor("#C5CFDA");
     colors.headerBackground = QColor("#E2E8EF");
@@ -837,9 +746,6 @@ ThemeSnapshot createBuiltinLightTheme()
     meter.clipOn = QColor("#C3263C");
     meter.clipOff = QColor("#D8B4BA");
     meter.background = QColor("#E8EEF4");
-    meter.lufsMomentary = QColor("#326EB4");
-    meter.lufsShortTerm = QColor("#278250");
-    meter.lufsIntegrated = QColor("#A96A12");
     meter.oscilloscopeGrid = QColor("#28202B38");
     meter.oscilloscopeGlow = QColor("#50202B38");
     meter.waveformFill = QColor("#B4202B38");
@@ -871,15 +777,6 @@ ThemeSnapshot createBuiltinLightTheme()
     peak.holdLine = QColor("#E0334557");
     peak.clipBackground = colors.error;
     peak.clipText = QColor("#FFFFFF");
-    meter.loudnessMeter.colors.targetLine = QColor("#C09B6100");
-
-    auto& vu = meter.vuMeter.colors;
-    vu.analogPositiveTick = QColor("#C0C53642");
-    vu.analogOverloadArc = QColor("#80C53642");
-    vu.analogNeedleGlow = QColor("#30007B8B");
-    vu.analogNeedle = QColor("#ED293C50");
-    vu.analogPivot = colors.accent;
-    vu.barWarning = colors.warning;
 
     auto& spectrum = meter.spectrumMeter.colors;
     spectrum.fillTop = QColor("#80007B8B");
@@ -921,10 +818,11 @@ ThemeSnapshot createBuiltinLightTheme()
     curve.attenuationPitch = QColor("#326EB4");
     curve.parameterBinding = QColor("#7753B8");
     curve.gridFade = colors.accent;
+    curve.crosshair = colors.borderTick;
+    meter.interaction.colors.crosshair = colors.borderTick;
     curve.ghost = QColor("#70506174");
     curve.lassoBorder = QColor("#A0326EB4");
     curve.lassoFill = QColor("#20326EB4");
-    curve.crosshair = QColor("#99506174");
     curve.playhead = QColor("#80202B38");
 
     domains.pinDomain.audio = colors.accent;

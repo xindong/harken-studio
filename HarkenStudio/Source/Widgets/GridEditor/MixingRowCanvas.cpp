@@ -122,7 +122,7 @@ void MixingRowCanvas::paintEvent(QPaintEvent*)
             fill.closeSubpath();
             QLinearGradient gradient(0.0, data.graphRect.top(), 0.0, data.graphRect.bottom());
             QColor top = color;
-            top.setAlpha(selected ? 85 : 55);
+            top.setAlphaF(top.alphaF() * (selected ? 85 : 55) / 255.0);
             QColor bottom = color;
             bottom.setAlpha(0);
             gradient.setColorAt(0.0, top);
@@ -134,7 +134,7 @@ void MixingRowCanvas::paintEvent(QPaintEvent*)
                 painter.drawLine(endpoint, QPointF(endpoint.x(), data.graphRect.bottom()));
         }
         QColor header = color;
-        header.setAlpha(selected ? 65 : 35);
+        header.setAlphaF(header.alphaF() * (selected ? 65 : 35) / 255.0);
         painter.fillRect(title, style.colors.canvasBackground);
         painter.fillRect(title, header);
         painter.setFont(FontManager::instance().getFont(FontRole::Caption));
