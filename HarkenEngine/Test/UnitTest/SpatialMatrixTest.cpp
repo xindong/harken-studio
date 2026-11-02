@@ -1,5 +1,6 @@
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
+#include "harken/core/FloatMode.h"
 #include "harken/core/StreamRing.h"
 #include "harken/render/SpatialMatrix.h"
 #include "harken/param/PropertyPublisher.h"
@@ -44,6 +45,84 @@ std::array<std::array<double, 8>, 2> ReferenceStereo(
     for (auto& column : columns)
         for (double& gain : column) gain *= scale;
     return columns;
+}
+
+TEST(SpatialMatrix, ExtremeOutputGainKeepsBorrowedAndMaterializedMixEquivalent) {
+    harken::floatmode::ScopedFlushDenormals denormals;
+    harken::BiquadTrigTable trig;
+    constexpr std::uint32_t offset = 2, frames = 9;
+    for (const bool overflow : {false, true}) {
+        const float sample = overflow ? 1.0e-4f : 1.0e36f;
+        const float outputGain = overflow ? 3.0e38f : 1.0e-37f;
+        const float pan = overflow ? -.5f : .9999999f;
+        const auto matrix = harken::MakeSpatialMatrix(1, VN_CHANNEL_LAYOUT_STEREO,
+            pan, 0, 0, 0, trig);
+        for (const auto path : {0u, 1u, 2u}) {
+            SCOPED_TRACE(::testing::Message() << overflow << " " << path);
+            harken::VoiceRenderContext ctx;
+            ctx.biquadTrig = &trig;
+            ctx.pcm.channelCount = 1;
+            ctx.pan2d = pan;
+            ctx.spatialMatrix.Set(matrix, 1);
+            ctx.spatialMatrixDirty = path == 0;
+            ctx.gain.Set(1.0f, 0);
+            ctx.outputGain.Set(outputGain, 0);
+            std::array<float, 16> source{}, left{}, right{}, tapLeft{}, tapRight{};
+            std::array<float, harken::kResampleFifoFrames> ring{};
+            for (std::uint32_t i = 0; i < frames; ++i) {
+                const float value = i % 3 == 0 ? 0.0f : i % 3 == 1 ? sample : -sample;
+                source[offset + i] = value;
+                ring[(ring.size() - 3 + i) % ring.size()] = value;
+            }
+            ctx.cascade.offset = offset;
+            ctx.cascade.produced = frames;
+            ctx.cascade.scratch[0] = source.data();
+            ctx.cascade.tap[0] = tapLeft.data();
+            ctx.cascade.tap[1] = tapRight.data();
+            ctx.cascade.tapReady = path == 2;
+            if (path == 1) {
+                ctx.resampler.ring[0] = ring.data();
+                ctx.cascade.borrowed = {harken::kResampleFifoFrames - 3, 3, frames};
+            }
+            float* buses[] = {left.data(), right.data()};
+            harken::FoldVoiceIntoBuses(ctx, buses, 16, 2, VN_CHANNEL_LAYOUT_STEREO, 0);
+            for (std::uint32_t ch = 0; ch < 2; ++ch) {
+                EXPECT_FLOAT_EQ(0.0f, buses[ch][offset - 1]);
+                EXPECT_FLOAT_EQ(0.0f, buses[ch][offset + frames]);
+                for (std::uint32_t i = 0; i < frames; ++i) {
+                    const float expected = (source[offset + i] * matrix.gain[0][ch]) * outputGain;
+                    ASSERT_TRUE(std::isfinite(expected));
+                    if (source[offset + i] != 0.0f) ASSERT_GT(std::fabs(expected), 0.0f);
+                    EXPECT_FLOAT_EQ(expected, buses[ch][offset + i]) << ch << " " << i;
+                }
+            }
+        }
+    }
+}
+
+TEST(SpatialMatrix, AcceptedOutputGainAndPanRemainAudibleThroughBusAttenuation) {
+    auto config = harkentest::MakeNullConfig(1, 64, 48000);
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const auto sound = harkentest::ObjectId(1103);
+    const auto pcm = harkentest::MakeDC(4096, 1.0e-4f);
+    const auto desc = harkentest::MonoDesc(pcm, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &desc));
+    auto play = harkentest::MakePlayDesc(sound, 0.0f);
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    ASSERT_EQ(VN_OK, Vn_SetVoicePan(voice, -.5f));
+    ASSERT_EQ(VN_OK, Vn_SetVoiceOutputVolume(voice, 770.0f, 0));
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, -700.0f, 0));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    session.Engine()->nullBackend.Pump(12);
+    const auto* block = session.Engine()->nullBackend.LastBlock();
+    const double gain = static_cast<double>(std::pow(10.0f, 770.0f / 20.0f)) *
+                        std::pow(10.0f, -700.0f / 20.0f);
+    const auto pan = ReferencePan(VN_CHANNEL_LAYOUT_STEREO, -.5);
+    for (std::uint32_t frame = 0; frame < 64; ++frame)
+        for (std::uint32_t ch = 0; ch < 2; ++ch)
+            EXPECT_NEAR(1.0e-4 * pan[ch] / kCenter * gain, block[frame * 2 + ch], 2.0e-6);
 }
 
 TEST(SpatialMatrix, CompleteMatricesMatchIndependentDoubleReference) {

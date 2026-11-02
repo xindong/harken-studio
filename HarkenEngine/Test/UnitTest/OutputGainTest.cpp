@@ -425,6 +425,33 @@ TEST(OutputGain, FillTwentyMsAt48kFrame960Exact) {
     EXPECT_EQ(960u, gain.remainingFrames);
 }
 
+TEST(OutputGain, MixAddPreservesFiniteSamplesWhenCombinedScaleIsNotNormal) {
+    harken::floatmode::ScopedFlushDenormals denormals;
+    for (const bool overflow : {false, true}) {
+        const float target = overflow ? 3.0e38f : 1.0e-37f;
+        const float scale = overflow ? 1.3f : 1.0e-7f;
+        const float sample = overflow ? 1.0e-4f : 1.0e36f;
+        for (const auto rampFrames : {0u, 4u}) {
+            for (const auto startFrame : {0u, 5u}) {
+                SCOPED_TRACE(::testing::Message() << overflow << " " << rampFrames << " " << startFrame);
+                OutputGain gain;
+                gain.Set(target * .5f, 0);
+                gain.Set(target, rampFrames);
+                std::array<float, 9> src{}, dst{};
+                for (std::uint32_t i = 0; i < src.size(); ++i)
+                    src[i] = i % 3 == 0 ? 0.0f : i % 3 == 1 ? sample : -sample;
+                gain.MixAdd(src.data(), dst.data(), static_cast<std::uint32_t>(src.size()), startFrame, scale);
+                for (std::uint32_t i = 0; i < src.size(); ++i) {
+                    const float expected = (src[i] * scale) * gain.At(startFrame + i);
+                    ASSERT_TRUE(std::isfinite(expected));
+                    if (src[i] != 0.0f) ASSERT_GT(std::fabs(expected), 0.0f);
+                    EXPECT_FLOAT_EQ(expected, dst[i]) << i;
+                }
+            }
+        }
+    }
+}
+
 TEST(OutputGain, MixAddZeroKeepsMultiply) {
     OutputGain gain;
     gain.Set(0.0f, 0);

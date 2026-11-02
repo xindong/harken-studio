@@ -544,6 +544,16 @@ void MixPlainPcm(const float* src, float* dst, std::uint32_t frames,
     }
 }
 
+bool CanCombineSpatialOutput(const VoiceRenderContext& ctx,
+                             std::uint32_t mixChannels) noexcept {
+    for (std::uint32_t source = 0; source < ctx.pcm.channelCount; ++source)
+        for (std::uint32_t ch = 0; ch < mixChannels; ++ch)
+            if (!output_gain_detail::CanCombineMixGains(
+                    ctx.spatialMatrix.target.gain[source][ch], ctx.outputGain.target))
+                return false;
+    return true;
+}
+
 void FoldPlainPcm(VoiceRenderContext& ctx, float* const* busPlanes,
                   std::uint32_t mixChannels,
                   output_gain_detail::MonoStereoMixKernel monoStereoMix) {
@@ -1413,7 +1423,10 @@ void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
     const std::uint32_t offset = ctx.cascade.offset;
     const std::uint32_t produced = ctx.cascade.produced;
     const bool monitorArmed = produced > 0 && harken::monitor::AudioLiveArmed();
-    if (monitorArmed && ctx.cascade.borrowed.frames != 0) MaterializePlainPcm(ctx);
+    if (ctx.cascade.borrowed.frames != 0 &&
+        (monitorArmed || !CanCombineSpatialOutput(ctx, mixChannels))) {
+        MaterializePlainPcm(ctx);
+    }
     if (monitorArmed) {
         const std::uint64_t voiceHandle = ctx.dynamicSourceIdentity;
         if (voiceHandle != 0) {
@@ -1462,7 +1475,8 @@ void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
                 if (channels == 1 && mixChannels == 2 && !haveTap &&
                     ctx.outputGain.remainingFrames == 0 &&
                     ctx.spatialMatrix.target.gain[0][0] != 0.0f &&
-                    ctx.spatialMatrix.target.gain[0][1] != 0.0f) {
+                    ctx.spatialMatrix.target.gain[0][1] != 0.0f &&
+                    CanCombineSpatialOutput(ctx, mixChannels)) {
                     monoStereoMix(src0, dry[0] + offset, dry[1] + offset,
                         produced, 1.0f,
                         ctx.spatialMatrix.target.gain[0][0] * ctx.outputGain.target,
