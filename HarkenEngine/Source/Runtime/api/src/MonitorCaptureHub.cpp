@@ -519,7 +519,7 @@ struct ProcessOwner {
     std::uint64_t nextGeneration = 1;
     std::uint64_t nextEpoch = 1;
     std::array<Session, VN_MONITOR_HARD_SESSIONS_PER_ENGINE> sessions{};
-    std::vector<std::unique_ptr<RetiredSession>> retired;
+    std::array<RetiredSession, VN_MONITOR_HARD_PROCESS_SESSION_SLOTS> retired{};
     std::atomic<bool> pollStall{false};
     std::atomic<std::uint32_t> pollEntered{0};
     MonitorProducerRing producerRing;
@@ -748,13 +748,14 @@ struct ProcessOwner {
     }
 
     std::uint32_t RetiredSlotsLocked() const {
-        return static_cast<std::uint32_t>(retired.size());
+        return static_cast<std::uint32_t>(std::count_if(retired.begin(), retired.end(),
+            [](const RetiredSession& session) { return session.generation != 0; }));
     }
 
     std::uint64_t RetiredQueueBytesLocked() const {
         std::uint64_t bytes = 0;
         for (const auto& session : retired) {
-            bytes += session->consumerQueueBytes;
+            bytes += session.consumerQueueBytes;
         }
         return bytes;
     }
@@ -771,12 +772,14 @@ struct ProcessOwner {
     }
 
     void SweepRetiredLocked() {
-        retired.erase(std::remove_if(retired.begin(), retired.end(),
-                                     [](const std::unique_ptr<RetiredSession>& session) {
-                                         return session->pollInFlight.load(
-                                                    std::memory_order_acquire) == 0;
-                                     }),
-                      retired.end());
+        for (auto& session : retired) {
+            if (session.generation != 0 &&
+                session.pollInFlight.load(std::memory_order_acquire) == 0) {
+                session.queue.reset();
+                session.generation = 0;
+                session.consumerQueueBytes = 0;
+            }
+        }
     }
 
     bool WouldExceedLocked(std::uint32_t extraSlots,
@@ -801,14 +804,19 @@ struct ProcessOwner {
             }
             return;
         }
-        auto item = std::make_unique<RetiredSession>();
-        item->generation = session.generation;
-        item->consumerQueueBytes = session.consumerQueueBytes;
-        item->pollInFlight.store(
-            session.pollInFlight.load(std::memory_order_relaxed),
-            std::memory_order_relaxed);
-        item->queue = std::move(session.queue);
-        retired.push_back(std::move(item));
+        // Open admission counts live and retired sessions against this same cap.
+        // Transferring one live session therefore always has a retirement slot.
+        for (auto& item : retired) {
+            if (item.generation != 0) continue;
+            item.generation = session.generation;
+            item.consumerQueueBytes = session.consumerQueueBytes;
+            item.pollInFlight.store(
+                session.pollInFlight.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+            item.queue = std::move(session.queue);
+            return;
+        }
+        std::terminate();
     }
 
     void WakeDrain() {
@@ -1871,6 +1879,23 @@ bool StampDelivery(std::uint8_t* bytes, std::uint32_t size, std::uint64_t delive
     return true;
 }
 
+void NoteConsumerDropLocked(ConsumerQueue& queue, const std::uint8_t* bytes,
+                            std::uint32_t size, std::uint64_t sourceSequence,
+                            std::uint32_t recordKind, std::uint32_t dropStage) {
+    const auto stream = ReadPackedU64(bytes, 24);
+    unsigned index = 0;
+    if (recordKind == VN_MONITOR_RECORD_EXECUTION_FACT)
+        index = stream == kExecutionLogicStream ? 1u : (stream == kExecutionAudioStream ? 2u : 0u);
+    else if (IsIdentityRecord(recordKind))
+        index = stream == kIdentityDeltaStream ? 3u : (stream == kIdentityBaselineStream ? 4u :
+            (stream == kHostSymbolStream ? 5u : 0u));
+    auto& drop = queue.drops[index];
+    drop.stage = dropStage;
+    drop.Note(sourceSequence, size, VN_MONITOR_EVENT_DROP);
+    ++queue.droppedRecords;
+    ++queue.cumulativeDrops[index];
+}
+
 bool EnqueueRecord(ConsumerQueue& queue, const std::uint8_t* bytes,
                    std::uint32_t size, std::uint64_t sourceSequence,
                    std::uint32_t recordKind, std::uint32_t dropStage,
@@ -1887,35 +1912,30 @@ bool EnqueueRecord(ConsumerQueue& queue, const std::uint8_t* bytes,
     if (queue.budgetBytes > 0 &&
         queue.usedBytes + size > queue.budgetBytes) {
         if (countDropOnFull) {
-            const auto stream = ReadPackedU64(bytes, 24);
-            unsigned index = 0;
-            if (recordKind == VN_MONITOR_RECORD_EXECUTION_FACT)
-                index = stream == kExecutionLogicStream ? 1u : (stream == kExecutionAudioStream ? 2u : 0u);
-            else if (IsIdentityRecord(recordKind))
-                index = stream == kIdentityDeltaStream ? 3u : (stream == kIdentityBaselineStream ? 4u :
-                    (stream == kHostSymbolStream ? 5u : 0u));
-            auto& drop = queue.drops[index];
-            drop.stage = dropStage;
-            drop.Note(sourceSequence, size, VN_MONITOR_EVENT_DROP);
-            ++queue.droppedRecords;
-            ++queue.cumulativeDrops[index];
+            NoteConsumerDropLocked(queue, bytes, size, sourceSequence, recordKind, dropStage);
         }
         return false;
     }
-    PackedRecord record;
-    record.bytes.assign(bytes, bytes + size);
-    record.sourceSequence = sourceSequence;
-    record.recordKind = recordKind;
-    record.origin = origin;
-    const std::uint64_t delivery = deferSymbol ? 0 : queue.nextDelivery++;
-    StampDelivery(record.bytes.data(), size, delivery);
-    if (recordKind == VN_MONITOR_RECORD_EVENT_DETAIL || queue.recordingReceiver ||
-        (recordKind >= VN_MONITOR_RECORD_EXECUTION_FACT && recordKind <= VN_MONITOR_RECORD_HOST_OBJECT_SYMBOL)) {
-        WriteU64(record.bytes.data() + kPackedSessionEpochOffset, queue.epoch);
+    try {
+        PackedRecord record;
+        record.bytes.assign(bytes, bytes + size);
+        record.sourceSequence = sourceSequence;
+        record.recordKind = recordKind;
+        record.origin = origin;
+        StampDelivery(record.bytes.data(), size, deferSymbol ? 0 : queue.nextDelivery);
+        if (recordKind == VN_MONITOR_RECORD_EVENT_DETAIL || queue.recordingReceiver ||
+            (recordKind >= VN_MONITOR_RECORD_EXECUTION_FACT && recordKind <= VN_MONITOR_RECORD_HOST_OBJECT_SYMBOL)) {
+            WriteU64(record.bytes.data() + kPackedSessionEpochOffset, queue.epoch);
+        }
+        if (deferSymbol) queue.deferredSymbols.push_back(std::move(record));
+        else queue.records.push_back(std::move(record));
+    } catch (const std::bad_alloc&) {
+        if (countDropOnFull)
+            NoteConsumerDropLocked(queue, bytes, size, sourceSequence, recordKind, dropStage);
+        return false;
     }
     queue.usedBytes += size;
-    if (deferSymbol) queue.deferredSymbols.push_back(std::move(record));
-    else queue.records.push_back(std::move(record));
+    if (!deferSymbol) ++queue.nextDelivery;
     return true;
 }
 
@@ -2048,12 +2068,6 @@ Session* LiveSessionMatching(ProcessOwner& owner, ConsumerQueue* queue,
         }
     }
     return nullptr;
-}
-
-bool TargetStillLive(ProcessOwner& owner, ConsumerQueue* queue,
-                     std::uint64_t epoch, std::uint64_t generation) {
-    std::lock_guard<std::mutex> lock(owner.mutex);
-    return LiveSessionMatching(owner, queue, epoch, generation) != nullptr;
 }
 
 // owner.mutex is held across eligibility, enqueue and verification. Cut freeze
@@ -2250,6 +2264,9 @@ void FanoutOne(ProcessOwner& owner, const std::uint8_t* bytes, std::uint32_t siz
                          (VN_MONITOR_STREAM_EVENT | VN_MONITOR_STREAM_STATE)) == 0) {
                         continue;
                     }
+                    std::lock_guard<std::mutex> lock(owner.mutex);
+                    if (LiveSessionMatching(owner, targets[i].queue,
+                            targets[i].epoch, targets[i].generation) == nullptr) continue;
                     EnqueueRecord(*targets[i].queue, packedGap, gapSize, gapSequence,
                                   VN_MONITOR_RECORD_DROP_SUMMARY,
                                   VN_MONITOR_DROP_HUB_FANOUT, true,
@@ -2285,17 +2302,16 @@ void FanoutOne(ProcessOwner& owner, const std::uint8_t* bytes, std::uint32_t siz
         ConsumerQueue* queue = targets[i].queue;
         const std::uint64_t epoch = targets[i].epoch;
         const std::uint64_t generation = targets[i].generation;
-        if (!TargetStillLive(owner, queue, epoch, generation)) {
-            continue;
-        }
-        FlushDropSummary(owner, *queue, VN_MONITOR_DROP_HUB_FANOUT, epoch,
-                         generation);
-        const bool delivered =
-            EnqueueRecord(*queue, bytes, size, sourceSequence, recordKind,
-                          VN_MONITOR_DROP_HUB_FANOUT, true, epoch, generation, false, origin);
-        if (requiredUnknown) {
+        bool delivered = false;
+        {
             std::lock_guard<std::mutex> lock(owner.mutex);
-            if (Session* live = LiveSessionMatching(owner, queue, epoch, generation)) {
+            Session* live = LiveSessionMatching(owner, queue, epoch, generation);
+            if (live == nullptr) continue;
+            FlushDropSummary(owner, *queue, VN_MONITOR_DROP_HUB_FANOUT, epoch,
+                             generation);
+            delivered = EnqueueRecord(*queue, bytes, size, sourceSequence, recordKind,
+                VN_MONITOR_DROP_HUB_FANOUT, true, epoch, generation, false, origin);
+            if (requiredUnknown) {
                 live->streamTerminated.store(true, std::memory_order_release);
             }
         }
@@ -2680,10 +2696,19 @@ bool DrainDeferredSymbols(ProcessOwner& owner) {
         auto& queue = *session.queue;
         std::lock_guard<std::mutex> queueLock(queue.mutex);
         if (queue.deferredSymbols.empty()) continue;
-        auto record = std::move(queue.deferredSymbols.front());
+        auto& record = queue.deferredSymbols.front();
+        StampDelivery(record.bytes.data(), static_cast<std::uint32_t>(record.bytes.size()), queue.nextDelivery);
+        try {
+            queue.records.push_back(std::move(record));
+            ++queue.nextDelivery;
+        } catch (const std::bad_alloc&) {
+            NoteConsumerDropLocked(queue, record.bytes.data(),
+                static_cast<std::uint32_t>(record.bytes.size()), record.sourceSequence,
+                record.recordKind, VN_MONITOR_DROP_HUB_FANOUT);
+            queue.usedBytes -= record.bytes.size();
+            MarkSymbolIncomplete(session);
+        }
         queue.deferredSymbols.pop_front();
-        StampDelivery(record.bytes.data(), static_cast<std::uint32_t>(record.bytes.size()), queue.nextDelivery++);
-        queue.records.push_back(std::move(record));
         moved = true;
     }
     return moved;
@@ -3059,39 +3084,43 @@ void PumpRecorder(ProcessOwner& owner) {
         }
         ownerLock.unlock();
         bool written = true;
-        if (!record.bytes.empty()) {
-            if (recorder.typed) {
-                recorder.frameBuffer.resize(kRecordingPositionBytes + record.bytes.size());
-                PackRecordingPosition(recorder.frameBuffer.data(), {static_cast<RecordingSource>(record.origin.source),
-                    0, record.origin.ticket, record.bytes.size()});
-                std::memcpy(recorder.frameBuffer.data() + kRecordingPositionBytes, record.bytes.data(), record.bytes.size());
-                written = recorder.verifier.Record(recorder.frameBuffer.data(), recorder.frameBuffer.size()) &&
-                    WriteRecorderChunkLocked(recorder, VN_MONITOR_CHUNK_EXECUTION_RECORD, VN_MONITOR_CHUNK_REQUIRED,
-                        recorder.frameBuffer.data(), recorder.frameBuffer.size());
-            } else written = WriteRecorderChunkLocked(recorder, VN_MONITOR_CHUNK_EVENTS, VN_MONITOR_CHUNK_REQUIRED,
-                record.bytes.data(), record.bytes.size());
-        } else if (finish) {
-            if (recorder.typed) {
-                std::uint8_t packed[kRecordingEndBytes]{};
-                ExecutionPayloadWriter write{packed};
-                VisitRecordingEnd(write, recorder.end);
-                written = recorder.verifier.End(recorder.end) && WriteRecorderChunkLocked(recorder,
-                    VN_MONITOR_CHUNK_EXECUTION_END, VN_MONITOR_CHUNK_REQUIRED, packed, sizeof(packed));
+        try {
+            if (!record.bytes.empty()) {
+                if (recorder.typed) {
+                    recorder.frameBuffer.resize(kRecordingPositionBytes + record.bytes.size());
+                    PackRecordingPosition(recorder.frameBuffer.data(), {static_cast<RecordingSource>(record.origin.source),
+                        0, record.origin.ticket, record.bytes.size()});
+                    std::memcpy(recorder.frameBuffer.data() + kRecordingPositionBytes, record.bytes.data(), record.bytes.size());
+                    written = recorder.verifier.Record(recorder.frameBuffer.data(), recorder.frameBuffer.size()) &&
+                        WriteRecorderChunkLocked(recorder, VN_MONITOR_CHUNK_EXECUTION_RECORD, VN_MONITOR_CHUNK_REQUIRED,
+                            recorder.frameBuffer.data(), recorder.frameBuffer.size());
+                } else written = WriteRecorderChunkLocked(recorder, VN_MONITOR_CHUNK_EVENTS, VN_MONITOR_CHUNK_REQUIRED,
+                    record.bytes.data(), record.bytes.size());
+            } else if (finish) {
+                if (recorder.typed) {
+                    std::uint8_t packed[kRecordingEndBytes]{};
+                    ExecutionPayloadWriter write{packed};
+                    VisitRecordingEnd(write, recorder.end);
+                    written = recorder.verifier.End(recorder.end) && WriteRecorderChunkLocked(recorder,
+                        VN_MONITOR_CHUNK_EXECUTION_END, VN_MONITOR_CHUNK_REQUIRED, packed, sizeof(packed));
+                }
+                if (written) {
+                    recorder.file.flush();
+                    written = recorder.file.good();
+                }
+                if (written) {
+                    recorder.file.close();
+                    recorder.unflushedBytes = 0;
+                    recorder.state = VN_MONITOR_RECORDING_STATE_STOPPED;
+                    recorder.errorReason = 0;
+                    recorder.recoveryNeeded = recorder.typed && !recorder.verifier.Complete() ? 1u : 0u;
+                    owner.internalEnabledMask.fetch_and(~(1u << kInternalRecorder), std::memory_order_release);
+                    if (recorder.typed) owner.recorderLogicPending.store(true, std::memory_order_release);
+                    return;
+                }
             }
-            if (written) {
-                recorder.file.flush();
-                written = recorder.file.good();
-            }
-            if (written) {
-                recorder.file.close();
-                recorder.unflushedBytes = 0;
-                recorder.state = VN_MONITOR_RECORDING_STATE_STOPPED;
-                recorder.errorReason = 0;
-                recorder.recoveryNeeded = recorder.typed && !recorder.verifier.Complete() ? 1u : 0u;
-                owner.internalEnabledMask.fetch_and(~(1u << kInternalRecorder), std::memory_order_release);
-                if (recorder.typed) owner.recorderLogicPending.store(true, std::memory_order_release);
-                return;
-            }
+        } catch (const std::bad_alloc&) {
+            written = false;
         }
         if (!written) {
             if (recorder.state != VN_MONITOR_RECORDING_STATE_FAILED) FailRecorderLocked(recorder, VN_MONITOR_RECORDING_FAILED);
@@ -4777,9 +4806,10 @@ VnResult Poll(VnMonitorSessionHandle handle, const VnMonitorPollDesc* desc,
     if (desc == nullptr || outResult == nullptr) {
         return VN_INVALID_ARG;
     }
-    const VnResult gate = RequireEngineAndLogicThread(true);
-    if (gate != VN_OK) {
-        return gate;
+    ProcessOwner& owner = Owner();
+    {
+        std::lock_guard<std::mutex> lock(owner.mutex);
+        if (owner.engine == nullptr) return VN_NOT_INITIALIZED;
     }
     if (!ValidStructSize(desc->structSize, sizeof(VnMonitorPollDesc)) ||
         !ValidStructSize(outResult->structSize, sizeof(VnMonitorPollResult))) {
@@ -4792,10 +4822,10 @@ VnResult Poll(VnMonitorSessionHandle handle, const VnMonitorPollDesc* desc,
         return VN_INVALID_ARG;
     }
 
-    ProcessOwner& owner = Owner();
     Session* session = nullptr;
     {
         std::lock_guard<std::mutex> lock(owner.mutex);
+        if (owner.engine == nullptr) return VN_NOT_INITIALIZED;
         session = FindLive(owner, handle);
         if (session == nullptr) {
             return VN_MONITOR_STALE_SESSION;
@@ -4828,8 +4858,8 @@ VnResult Poll(VnMonitorSessionHandle handle, const VnMonitorPollDesc* desc,
             queue = session->queuePtr.load(std::memory_order_acquire);
         } else {
             for (auto& item : owner.retired) {
-                if (item->generation == generation) {
-                    queue = item->queue.get();
+                if (item.generation == generation) {
+                    queue = item.queue.get();
                     break;
                 }
             }
@@ -4838,62 +4868,26 @@ VnResult Poll(VnMonitorSessionHandle handle, const VnMonitorPollDesc* desc,
 
     VnResult pollStatus = VN_OK;
     if (queue != nullptr) {
-        std::vector<PackedRecord> copied;
-        std::uint64_t remaining = 0;
-        std::uint64_t nextBytes = 0;
-        {
-            std::lock_guard<std::mutex> queueLock(queue->mutex);
-            remaining = queue->records.size();
-            if (remaining > 0) {
-                nextBytes = queue->records.front().bytes.size();
+        std::lock_guard<std::mutex> queueLock(queue->mutex);
+        auto* out = static_cast<std::uint8_t*>(desc->buffer);
+        while (!queue->records.empty()) {
+            const auto& record = queue->records.front();
+            const auto recordBytes = record.bytes.size();
+            if (out == nullptr || recordBytes > desc->bufferBytes - outResult->bytesWritten) {
+                outResult->nextRecordBytes = recordBytes;
+                if (outResult->recordsWritten == 0) pollStatus = VN_MONITOR_BUFFER_TOO_SMALL;
+                break;
             }
-            std::uint64_t written = 0;
-            auto cursor = queue->records.begin();
-            while (cursor != queue->records.end()) {
-                const std::uint64_t recordBytes = cursor->bytes.size();
-                if (desc->buffer == nullptr ||
-                    written + recordBytes > desc->bufferBytes) {
-                    nextBytes = recordBytes;
-                    break;
-                }
-                copied.push_back(*cursor);
-                written += recordBytes;
-                ++cursor;
-            }
-            if (!copied.empty()) {
-                queue->records.erase(queue->records.begin(),
-                                     queue->records.begin() +
-                                         static_cast<std::ptrdiff_t>(copied.size()));
-                remaining = queue->records.size();
-                queue->usedBytes -= written;
-            }
+            const auto sequence = ReadPackedU64(record.bytes.data(), kPackedDeliverySequenceOffset);
+            std::memcpy(out + outResult->bytesWritten, record.bytes.data(), recordBytes);
+            if (outResult->recordsWritten == 0) outResult->firstDeliverySequence = sequence;
+            outResult->lastDeliverySequence = sequence;
+            ++outResult->recordsWritten;
+            outResult->bytesWritten += recordBytes;
+            queue->usedBytes -= recordBytes;
+            queue->records.pop_front();
         }
-        if (copied.empty() && nextBytes > 0) {
-            pollStatus = VN_MONITOR_BUFFER_TOO_SMALL;
-            outResult->nextRecordBytes = nextBytes;
-            outResult->recordsRemaining = remaining;
-        } else if (!copied.empty()) {
-            std::uint8_t* out = static_cast<std::uint8_t*>(desc->buffer);
-            std::uint64_t written = 0;
-            outResult->firstDeliverySequence =
-                ReadPackedU64(copied.front().bytes.data(),
-                              kPackedDeliverySequenceOffset);
-            for (const PackedRecord& record : copied) {
-                std::memcpy(out + written, record.bytes.data(),
-                            record.bytes.size());
-                written += record.bytes.size();
-                outResult->lastDeliverySequence =
-                    ReadPackedU64(record.bytes.data(),
-                                  kPackedDeliverySequenceOffset);
-            }
-            outResult->recordsWritten =
-                static_cast<std::uint32_t>(copied.size());
-            outResult->bytesWritten = written;
-            outResult->recordsRemaining = remaining;
-            if (remaining > 0) {
-                outResult->nextRecordBytes = nextBytes;
-            }
-        }
+        outResult->recordsRemaining = queue->records.size();
     }
 
     {
@@ -4905,8 +4899,8 @@ VnResult Poll(VnMonitorSessionHandle handle, const VnMonitorPollDesc* desc,
             session->pollInFlight.fetch_sub(1, std::memory_order_acq_rel);
         } else {
             for (auto& item : owner.retired) {
-                if (item->generation == generation) {
-                    item->pollInFlight.fetch_sub(1, std::memory_order_acq_rel);
+                if (item.generation == generation) {
+                    item.pollInFlight.fetch_sub(1, std::memory_order_acq_rel);
                     break;
                 }
             }
@@ -5728,6 +5722,13 @@ void DrainRoundForTests() {
 }
 
 void PumpRecorderForTests() { PumpRecorder(Owner()); }
+
+void ReleaseRecorderScratchForTests() {
+    auto& recorder = Owner().recorder;
+    std::lock_guard<std::mutex> lock(recorder.mutex);
+    decltype(recorder.frameBuffer){}.swap(recorder.frameBuffer);
+    decltype(recorder.packBuffer){}.swap(recorder.packBuffer);
+}
 
 VnMonitorSessionHandle RecordingReceiverForTests() {
     auto& owner = Owner();

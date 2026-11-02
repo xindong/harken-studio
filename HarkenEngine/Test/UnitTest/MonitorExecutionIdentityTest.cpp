@@ -1,3 +1,5 @@
+#include "AllocationProbe.h"
+#include <new>
 #include "MonitorIdentityCut.h"
 #include "MonitorIdentitySnapshot.h"
 #include "MonitorIdentityCodec.h"
@@ -2150,6 +2152,81 @@ TEST(MonitorHostSymbolHub, DeferredRecordsKeepTheirBudgetAfterPollingAndLossIsSt
     EXPECT_EQ(0u, DeferredSymbolBytesForTests(state));
     EXPECT_EQ(VN_MONITOR_OBSERVATION_INCOMPLETE, StateStatus(state).symbolAvailability);
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(state));
+}
+
+TEST(MonitorHostSymbolHub, DeferredPromotionAllocationFailureDropsAndReleasesItsBudget) {
+    auto config = harkentest::MakeNullConfig();
+    config.maxEmitters = 64;
+    harkentest::EngineSession engine(config);
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    const auto host = BeginHost();
+    VnMonitorHostRegistrationV2 registration{};
+    for (unsigned i = 0; i != 64; ++i) {
+        VnEmitterHandle emitter = 0;
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+        registration = HostDescription(host, emitter);
+        registration.localSequence = i + 1;
+        ASSERT_EQ(VN_OK, Vn_MonitorRegisterHostV2(&registration));
+    }
+    const auto state = OpenSymbols(VN_MONITOR_STREAM_STATE, true, true, 1024 * 1024);
+    // Keep an immutable baseline active while preparing a deferred symbol tail.
+    // Its size crosses deque block boundaries without assuming an STL block size.
+    constexpr unsigned kDeferredRecords = 64 * 3;
+    for (unsigned i = 0; i != 64; ++i) {
+        ++registration.registrationRevision;
+        ASSERT_EQ(VN_OK, Vn_MonitorRegisterHostV2(&registration));
+        for (unsigned field = 0; field != 3; ++field) DrainOneTypedForTests();
+    }
+    ASSERT_EQ(kDeferredRecords * kHostSymbolRecordBytes, DeferredSymbolBytesForTests(state));
+    for (unsigned i = 0; i != 1024; ++i) DrainOneIdentityForTests();
+    ASSERT_EQ(VN_MONITOR_OBSERVATION_AVAILABLE, StateStatus(state).baselineAvailability);
+    ASSERT_EQ(VN_MONITOR_OBSERVATION_AVAILABLE, StateStatus(state).symbolAvailability);
+    ASSERT_TRUE(SymbolDrops(state).empty());
+    const auto before = ConsumerUsedBytesForTests(state);
+
+    // Only deferred promotion remains; no payload construction or test assertion
+    // runs while the next allocation is rejected.
+    allocation_probe::count = 0;
+    allocation_probe::failAt = 1;
+    allocation_probe::enabled = true;
+    bool escaped = false;
+    try {
+        for (unsigned i = 0; i != kDeferredRecords && allocation_probe::failAt != 0; ++i)
+            DrainOneTypedForTests();
+    } catch (const std::bad_alloc&) {
+        escaped = true;
+    }
+    allocation_probe::enabled = false;
+    const bool faultReached = allocation_probe::failAt == 0;
+    allocation_probe::failAt = 0;
+    EXPECT_TRUE(faultReached);
+    EXPECT_FALSE(escaped);
+    EXPECT_EQ(before - kHostSymbolRecordBytes, ConsumerUsedBytesForTests(state));
+    EXPECT_EQ(VN_MONITOR_OBSERVATION_INCOMPLETE, StateStatus(state).symbolAvailability);
+    const auto drops = SymbolDrops(state);
+    const auto drop = std::find_if(drops.begin(), drops.end(), [](const auto& row) {
+        return row.streamId == kHostSymbolStream && row.stage == VN_MONITOR_DROP_HUB_FANOUT;
+    });
+    EXPECT_NE(drops.end(), drop);
+    if (drop != drops.end()) {
+        EXPECT_EQ(1u, drop->recordCount);
+        EXPECT_EQ(kHostSymbolRecordBytes, drop->byteCount);
+        EXPECT_EQ(drop->firstSourceSequence, drop->lastSourceSequence);
+    }
+
+    DrainOnceForTests();
+    EXPECT_EQ(0u, DeferredSymbolBytesForTests(state));
+    for (unsigned i = 0; i != 32 && ConsumerUsedBytesForTests(state) != 0; ++i) PollState(state);
+    EXPECT_EQ(0u, ConsumerUsedBytesForTests(state));
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(state));
+    const auto reopened = OpenSymbols(VN_MONITOR_STREAM_STATE, true, true, 1024 * 1024);
+    DrainOnceForTests();
+    for (unsigned i = 0; i != 32 && ConsumerUsedBytesForTests(reopened) != 0; ++i) PollState(reopened);
+    EXPECT_EQ(0u, ConsumerUsedBytesForTests(reopened));
+    EXPECT_EQ(0u, DeferredSymbolBytesForTests(reopened));
+    EXPECT_EQ(VN_MONITOR_OBSERVATION_AVAILABLE, StateStatus(reopened).symbolAvailability);
+    EXPECT_TRUE(SymbolDrops(reopened).empty());
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(reopened));
 }
 
 TEST(MonitorHostSymbolHub, MissingBaselineSymbolCharges204AndActualPackedBytes) {

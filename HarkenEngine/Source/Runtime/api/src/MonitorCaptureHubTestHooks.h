@@ -17,6 +17,7 @@ bool PublishSyntheticTimeSeriesForTests(std::uint32_t count);
 void DrainOnceForTests();
 void DrainRoundForTests();
 void PumpRecorderForTests();
+void ReleaseRecorderScratchForTests();
 VnMonitorSessionHandle RecordingReceiverForTests();
 void SetRecordingQueueBudgetForTests(std::uint64_t bytes);
 void DrainOneProducerForTests(bool audioProducer);

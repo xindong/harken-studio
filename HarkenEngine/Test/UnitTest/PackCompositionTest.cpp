@@ -5591,6 +5591,190 @@ TEST(PackCompositionContract, ProviderSpanReleasedAfterAllocationException) {
     EXPECT_EQ(2u, provider.released);
 }
 
+TEST(PackCompositionContract, TraceOffReplacementTailCannotFailAfterCommit) {
+    const auto oldBytes = BuildContentPack(
+        22, 1, 7, harkentest::ObjectId(2002), harkentest::ObjectId(7), 33);
+    const auto providerBytes = BuildContentPack(
+        33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
+    const auto initBytes = BuildKeepIdentityInit(
+        Fnv1a64(oldBytes.data(), oldBytes.size()),
+        Fnv1a64(providerBytes.data(), providerBytes.size()));
+    const std::string paths[] = {
+        WriteTemp("trace-tail-init.pack", initBytes),
+        WriteTemp("trace-tail-consumer.pack", oldBytes),
+        WriteTemp("trace-tail-provider.pack", providerBytes)};
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    ASSERT_EQ(nullptr, session.Engine()->trace);
+    VnCanonicalPackSetMemberV1 members[3]{};
+    VnCanonicalPackSetMemberResultV1 rows[3]{};
+    const std::uint64_t stableIds[] = {11, 22, 33};
+    for (std::size_t i = 0; i < 3; ++i) {
+        members[i].structSize = sizeof(members[i]);
+        members[i].packStableId = stableIds[i];
+        members[i].packKind = i == 0 ? VN_CANONICAL_PACK_SET_MEMBER_INIT
+                                    : VN_CANONICAL_PACK_SET_MEMBER_CONTENT;
+        members[i].utf8Path = paths[i].c_str();
+        rows[i].structSize = sizeof(rows[i]);
+    }
+    VnCanonicalPackSetActivationReportV1 report{};
+    ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(
+                          members, 3, rows, report));
+    const auto before = session.Engine()->packComposition.Lookup(
+        harkentest::ObjectId(2002));
+    ASSERT_EQ(1u, before.lease.contentRevision);
+    ASSERT_EQ(7u, before.lease.partitionRevision);
+
+    struct Provider {
+        std::vector<std::uint8_t> bytes;
+        unsigned released = 0;
+    } provider{BuildContentPack(
+        22, 2, 8, harkentest::ObjectId(2002), harkentest::ObjectId(7), 33)};
+    VnPackLoadDesc desc{};
+    desc.structSize = sizeof(desc);
+    desc.flags = VN_PACK_LOAD_FLAG_PROVIDER;
+    desc.packStableId = 22;
+    desc.providerUserData = &provider;
+    desc.provide = +[](void* data, std::uint64_t, const char*, std::uint32_t,
+                       std::uint64_t, VnPackByteSpan* span) -> VnResult {
+        const auto& p = *static_cast<Provider*>(data);
+        *span = {};
+        span->structSize = sizeof(*span);
+        span->bytes = p.bytes.data();
+        span->byteCount = p.bytes.size();
+        return VN_OK;
+    };
+    desc.release = +[](void* data, std::uint64_t, VnPackByteSpan) {
+        ++static_cast<Provider*>(data)->released;
+        // The provider span is released after the replacement commits.
+        // Trace-off bookkeeping must not allocate or overturn that result.
+        allocation_probe::count = 0;
+        allocation_probe::bytes = 0;
+        allocation_probe::failAt = 1;
+        allocation_probe::enabled = true;
+    };
+    const auto replaced = Vn_ReplacePack(
+        rows[1].handle, reinterpret_cast<const VnPackDesc*>(&desc));
+    allocation_probe::enabled = false;
+    const auto tailAllocations = allocation_probe::count;
+    const auto pendingFault = allocation_probe::failAt;
+    allocation_probe::failAt = 0;
+
+    EXPECT_EQ(VN_OK, replaced);
+    EXPECT_EQ(1u, provider.released);
+    EXPECT_EQ(0u, tailAllocations);
+    EXPECT_EQ(1u, pendingFault);
+    const auto after = session.Engine()->packComposition.Lookup(
+        harkentest::ObjectId(2002));
+    EXPECT_EQ(2u, after.lease.contentRevision);
+    EXPECT_EQ(8u, after.lease.partitionRevision);
+}
+
+TEST(PackCompositionContract, TraceOnReplacementPreservesRequiredClosureOrder) {
+    const auto consumer = [](std::uint64_t revision) {
+        ImageBuilder builder(kPackKindCanonicalContent);
+        builder.AddEntry(kPackEntryKindPackRequirementBlock, 22,
+                         RequirementPayload(22, revision, revision + 6));
+        builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, 22,
+                         ActionPartitionPayload(22, revision + 6,
+                             harkentest::ObjectId(2002), harkentest::ObjectId(7)));
+        // Deliberately retain the source order rather than sorting by ID.
+        builder.AddEntry(kPackEntryKindPackDependencyEdge, 0, RequiredEdgePayload(44));
+        builder.AddEntry(kPackEntryKindPackDependencyEdge, 1, RequiredEdgePayload(33));
+        return builder.Build();
+    };
+    const auto oldBytes = consumer(1);
+    const auto nextBytes = consumer(2);
+    const auto b = BuildContentPack(
+        33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
+    const auto c = BuildContentPack(
+        44, 1, 10, harkentest::ObjectId(4004), harkentest::ObjectId(9));
+    const auto hashB = Fnv1a64(b.data(), b.size());
+    const auto hashC = Fnv1a64(c.data(), c.size());
+    const auto init = BuildThreeIdentityInit(
+        Fnv1a64(oldBytes.data(), oldBytes.size()), hashB, hashC);
+    const std::string paths[] = {
+        WriteTemp("trace-closure-init.pack", init),
+        WriteTemp("trace-closure-a.pack", oldBytes),
+        WriteTemp("trace-closure-b.pack", b),
+        WriteTemp("trace-closure-c.pack", c)};
+    const auto nextPath = WriteTemp("trace-closure-next.pack", nextBytes);
+    const auto tracePath = (std::filesystem::path(HARKEN_TEMP_DIR) /
+                            "trace-replace-closure.vtrc").string();
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    ASSERT_EQ(VN_OK, Vn_TraceStart(tracePath.c_str()));
+    VnCanonicalPackSetMemberV1 members[4]{};
+    VnCanonicalPackSetMemberResultV1 rows[4]{};
+    const std::uint64_t stableIds[] = {11, 22, 33, 44};
+    for (std::size_t i = 0; i < 4; ++i) {
+        members[i].structSize = sizeof(members[i]);
+        members[i].packStableId = stableIds[i];
+        members[i].packKind = i == 0 ? VN_CANONICAL_PACK_SET_MEMBER_INIT
+                                    : VN_CANONICAL_PACK_SET_MEMBER_CONTENT;
+        members[i].utf8Path = paths[i].c_str();
+        rows[i].structSize = sizeof(rows[i]);
+    }
+    VnCanonicalPackSetActivationReportV1 report{};
+    ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(
+                          members, 4, rows, report));
+    VnPackLoadDesc desc{};
+    desc.structSize = sizeof(desc);
+    desc.utf8Path = nextPath.c_str();
+    ASSERT_EQ(VN_OK, Vn_ReplacePack(
+        rows[1].handle, reinterpret_cast<const VnPackDesc*>(&desc)));
+    const auto generation = session.Engine()->packComposition.CompositeGeneration();
+    EXPECT_EQ(2u, session.Engine()->packComposition.Lookup(
+                      harkentest::ObjectId(2002)).lease.contentRevision);
+    ASSERT_EQ(VN_OK, Vn_TraceStop());
+
+    // Use the same length-prefixed record walk as the existing trace tests.
+    std::ifstream input(tracePath, std::ios::binary);
+    const std::vector<std::uint8_t> bytes(
+        (std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    ASSERT_GE(bytes.size(), kTraceFixedHeaderBytes);
+    const auto read = [&](std::size_t at, std::size_t width) {
+        std::uint64_t value = 0;
+        for (std::size_t i = 0; i < width; ++i) {
+            value |= static_cast<std::uint64_t>(bytes[at + i]) << (8 * i);
+        }
+        return value;
+    };
+    std::size_t offset = static_cast<std::size_t>(read(8, 4));
+    ASSERT_LE(offset, bytes.size());
+    unsigned replacements = 0;
+    while (offset + kTraceRecordHeaderBytes <= bytes.size()) {
+        const auto payloadBytes = static_cast<std::size_t>(read(offset, 4));
+        const auto type = read(offset + 4, 2);
+        offset += kTraceRecordHeaderBytes;
+        ASSERT_LE(payloadBytes, bytes.size() - offset);
+        if (type == kTraceRecordApiCall && payloadBytes >= 4 &&
+            read(offset, 2) == kTraceCallReplacePack) {
+            ++replacements;
+            // Vintage 2 ends with its fixed fields, two closures and world facts.
+            constexpr std::size_t tailBytes = 4 + 3 * 8 + 3 * 4 + 2 * 16 + 8 + 4;
+            ASSERT_GE(payloadBytes, tailBytes);
+            const auto tail = offset + payloadBytes - tailBytes;
+            EXPECT_EQ(2u, read(tail, 4));
+            EXPECT_EQ(22u, read(tail + 4, 8));
+            EXPECT_EQ(2u, read(tail + 12, 8));
+            EXPECT_EQ(Fnv1a64(nextBytes.data(), nextBytes.size()), read(tail + 20, 8));
+            EXPECT_EQ(0u, read(tail + 28, 4));
+            EXPECT_EQ(0u, read(tail + 32, 4));
+            EXPECT_EQ(2u, read(tail + 36, 4));
+            EXPECT_EQ(44u, read(tail + 40, 8));
+            EXPECT_EQ(hashC, read(tail + 48, 8));
+            EXPECT_EQ(33u, read(tail + 56, 8));
+            EXPECT_EQ(hashB, read(tail + 64, 8));
+            EXPECT_EQ(generation, read(tail + 72, 8));
+            EXPECT_EQ(4u, read(tail + 80, 4));
+        }
+        offset += payloadBytes;
+    }
+    EXPECT_EQ(bytes.size(), offset);
+    EXPECT_EQ(1u, replacements);
+}
+
 TEST(PackComposition, InjectedComposeFaultsKeepPriorGeneration) {
     const std::vector<std::uint8_t> packABytes = BuildContentPack(22, 1, 7, harkentest::ObjectId(2002));
     const std::vector<std::uint8_t> packBBytes =

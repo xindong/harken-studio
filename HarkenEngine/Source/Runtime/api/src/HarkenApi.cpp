@@ -75186,7 +75186,13 @@ void JournalCanonicalPackVintage2(
         .U64(expectedContentHash)
         .U32(providerTag)
         .U32(0);
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> closures;
+    std::uint32_t closureCount = 0;
+    if (incomingEdges != nullptr) {
+        for (const auto& edge : *incomingEdges) {
+            if (edge.required01 != 0 && edge.prerequisitePackStableId != 0) ++closureCount;
+        }
+    }
+    trace.U32(closureCount);
     if (incomingEdges != nullptr) {
         const auto* published = engine.packComposition.Published();
         const harken::PackCanonicalImage* catalog =
@@ -75205,13 +75211,8 @@ void JournalCanonicalPackVintage2(
                     }
                 }
             }
-            closures.emplace_back(edge.prerequisitePackStableId,
-                                  prerequisiteHash);
+            trace.U64(edge.prerequisitePackStableId).U64(prerequisiteHash);
         }
-    }
-    trace.U32(static_cast<std::uint32_t>(closures.size()));
-    for (const auto& closure : closures) {
-        trace.U64(closure.first).U64(closure.second);
     }
     if (recordReturnedHandle) {
         trace.U64(returnedHandle);
@@ -102723,17 +102724,18 @@ static VnResult LoadPackObserved(const VnPackDesc* desc,
         if (outHandle != nullptr) {
             *outHandle = handle;
         }
+        if (engine->trace == nullptr || !engine->trace->Active()) return result;
         std::uint64_t packStableId = load->packStableId;
         std::uint64_t contentRevision = 0;
         std::uint64_t expectedHash = 0;
-        std::vector<harken::PackDependencyEdge> incomingEdges;
+        const std::vector<harken::PackDependencyEdge>* incomingEdges = nullptr;
         if (result == VN_OK && handle != 0) {
             if (const auto* published = engine->packComposition.Published()) {
                 for (const auto& owner : published->owners) {
                     if (owner.handle == handle) {
                         packStableId = owner.packStableId;
                         contentRevision = owner.contentRevision;
-                        incomingEdges = owner.dependencyEdges;
+                        incomingEdges = &owner.dependencyEdges;
                         break;
                     }
                 }
@@ -102749,7 +102751,7 @@ static VnResult LoadPackObserved(const VnPackDesc* desc,
         }
         JournalCanonicalPackVintage2(
             trace, *engine, packStableId, contentRevision, expectedHash,
-            providerTag, incomingEdges.empty() ? nullptr : &incomingEdges,
+            providerTag, incomingEdges,
             handle, true);
         return result;
     }
@@ -112651,16 +112653,17 @@ VnResult Vn_ReplacePack(VnPackHandle handle, const VnPackDesc* desc) {
                 *engine,
                 harken::ReplaceCanonicalPack(*engine, handle, load),
                 harken::kHotReloadClassPack, handle);
+            if (engine->trace == nullptr || !engine->trace->Active()) return result;
             std::uint64_t packStableId = load->packStableId;
             std::uint64_t contentRevision = 0;
             std::uint64_t expectedHash = 0;
-            std::vector<harken::PackDependencyEdge> incomingEdges;
+            const std::vector<harken::PackDependencyEdge>* incomingEdges = nullptr;
             if (const auto* published = engine->packComposition.Published()) {
                 for (const auto& owner : published->owners) {
                     if (owner.handle == handle) {
                         packStableId = owner.packStableId;
                         contentRevision = owner.contentRevision;
-                        incomingEdges = owner.dependencyEdges;
+                        incomingEdges = &owner.dependencyEdges;
                         break;
                     }
                 }
@@ -112676,7 +112679,7 @@ VnResult Vn_ReplacePack(VnPackHandle handle, const VnPackDesc* desc) {
             JournalCanonicalPackVintage2(
                 replaceTrace, *engine, packStableId, contentRevision,
                 expectedHash, provider ? 2u : (root ? 1u : 0u),
-                incomingEdges.empty() ? nullptr : &incomingEdges, handle,
+                incomingEdges, handle,
                 false);
             return result;
         }

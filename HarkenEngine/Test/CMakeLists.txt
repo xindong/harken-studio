@@ -43,6 +43,7 @@ target_include_directories(harken_remote_runtime_tests PRIVATE
 gtest_discover_tests(harken_remote_runtime_tests)
 
 add_executable(harken_monitor_runtime_tests
+    UnitTest/AllocationProbe.cpp
     UnitTest/MonitorExecutionCodecTest.cpp
     UnitTest/MonitorExecutionProducerTest.cpp
     UnitTest/MonitorExecutionIdentityTest.cpp

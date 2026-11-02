@@ -1,6 +1,7 @@
 #include <harken/Harken.h>
 #include <harken/core/VoiceLedger.h>
 
+#include "AllocationProbe.h"
 #include "MonitorCaptureHubTestHooks.h"
 #include "MonitorCaptureHub.h"
 #include "MonitorDerivedDispatch.h"
@@ -22,6 +23,7 @@
 #include <fstream>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -1027,8 +1029,12 @@ TEST(MonitorTypedRecording, FiniteWriterBatchContinuesWithoutAnotherProducerWake
 }
 
 TEST(MonitorTypedRecording, FailedWriterCleanupCannotDetachAnImmediatelyRestartedQueue) {
-    for (const bool typed : {false, true}) {
+    // Cover write failure, frame growth failure, and chunk growth failure.
+    for (const auto scenario : std::array<std::pair<bool, unsigned>, 5>{{
+             {false, 0}, {true, 0}, {false, 1}, {true, 1}, {true, 2}}}) {
+        const auto [typed, failedAllocation] = scenario;
         SCOPED_TRACE(typed);
+        SCOPED_TRACE(failedAllocation);
         harkentest::EngineSession engine(harkentest::MakeNullConfig());
         ASSERT_EQ(VN_OK, engine.InitResult());
         ASSERT_EQ(VN_OK, Vn_Update());
@@ -1055,14 +1061,30 @@ TEST(MonitorTypedRecording, FailedWriterCleanupCannotDetachAnImmediatelyRestarte
             bool invoked = false;
         } restart{owner, lease.leaseGeneration, &newDesc};
         SetBeforeRecorderFailureCleanupForTests([](void* raw) {
+            allocation_probe::enabled = false;
             auto& context = *static_cast<Restart*>(raw);
             context.invoked = true;
+            auto failedStatus = MakeStatus();
+            ASSERT_EQ(VN_OK, Vn_MonitorGetRecordingStatus(context.owner, &failedStatus));
+            EXPECT_EQ(VN_MONITOR_RECORDING_STATE_FAILED, failedStatus.state);
+            EXPECT_TRUE(failedStatus.recoveryNeeded);
             ASSERT_EQ(VN_OK, Vn_MonitorStartRecording(context.owner, context.lease, context.desc));
             ASSERT_TRUE(PublishSyntheticTimeSeriesForTests(1));
             DrainOnceForTests();
         }, &restart);
-        SetRecorderWriteFailureForTests(true);
-        PumpRecorderForTests();
+        if (failedAllocation != 0) {
+            ReleaseRecorderScratchForTests();
+            allocation_probe::failAt = allocation_probe::count + failedAllocation;
+            allocation_probe::enabled = true;
+        } else SetRecorderWriteFailureForTests(true);
+        bool threw = false;
+        try { PumpRecorderForTests(); }
+        catch (const std::bad_alloc&) { threw = true; }
+        allocation_probe::enabled = false;
+        const bool injected = allocation_probe::failAt == 0;
+        allocation_probe::failAt = 0;
+        EXPECT_FALSE(threw);
+        if (failedAllocation != 0) EXPECT_TRUE(injected);
         ASSERT_TRUE(restart.invoked);
         ASSERT_EQ(VN_OK, Vn_MonitorStopRecording(owner, lease.leaseGeneration));
         EXPECT_EQ(VN_MONITOR_RECORDING_STATE_STOPPED, PumpTypedRecording(owner).state);

@@ -3,6 +3,7 @@
 #include "MonitorCaptureHubTestHooks.h"
 #include "MonitorCaptureHub.h"
 #include "Common/TestUtil.h"
+#include "AllocationProbe.h"
 
 #include <gtest/gtest.h>
 
@@ -254,6 +255,48 @@ TEST(MonitorHubSession, RecordingWrongThreadBeforeInvalidArg) {
     EXPECT_EQ(VN_MONITOR_WRONG_THREAD, statusResult.load());
 }
 
+TEST(MonitorHubSession, PollDeliversQueuedRecordsWhenAllocationFails) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    auto desc = MakeSessionDesc();
+    desc.requestedStreamKindMask = VN_MONITOR_STREAM_TIME_SERIES;
+    desc.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_MEASUREMENTS;
+    VnMonitorSessionHandle handle = 0;
+    ASSERT_EQ(VN_OK, Vn_MonitorOpenSession(&desc, &handle));
+    harken::monitor::StopDrainForTests();
+    ASSERT_TRUE(harken::monitor::PublishSyntheticTimeSeriesForTests(2));
+    harken::monitor::DrainOnceForTests();
+    std::array<unsigned char, 4096> buffer{};
+    PollArgs poll;
+    poll.desc.buffer = buffer.data();
+    poll.desc.bufferBytes = harken::monitor::PackedTimeSeriesBytesForTests();
+
+    const auto allocationCount = allocation_probe::count;
+    allocation_probe::failAt = allocationCount + 1;
+    allocation_probe::enabled = true;
+    VnResult result = VN_IN_USE;
+    bool threw = false;
+    try { result = Vn_MonitorPoll(handle, &poll.desc, &poll.result); }
+    catch (const std::bad_alloc&) { threw = true; }
+    allocation_probe::enabled = false;
+    allocation_probe::failAt = 0;
+    EXPECT_FALSE(threw);
+    EXPECT_EQ(allocationCount, allocation_probe::count);
+    EXPECT_EQ(VN_OK, result);
+    EXPECT_EQ(1u, poll.result.recordsWritten);
+    EXPECT_EQ(1u, poll.result.recordsRemaining);
+    EXPECT_EQ(poll.desc.bufferBytes, poll.result.bytesWritten);
+    EXPECT_EQ(poll.desc.bufferBytes, poll.result.nextRecordBytes);
+    const auto sequence = poll.result.lastDeliverySequence;
+    EXPECT_EQ(VN_OK, Vn_MonitorPoll(handle, &poll.desc, &poll.result));
+    if (!threw) {
+        EXPECT_EQ(1u, poll.result.recordsWritten);
+        EXPECT_EQ(0u, poll.result.recordsRemaining);
+        EXPECT_GT(poll.result.firstDeliverySequence, sequence);
+    }
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
+}
+
 TEST(MonitorHubSession, ConcurrentPollRejected) {
     harkentest::EngineSession engine(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
@@ -315,7 +358,19 @@ TEST(MonitorHubSession, CloseWhilePollInFlightChargesCapabilities) {
     });
     WaitPollEntered(1);
 
-    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
+    const auto allocationCount = allocation_probe::count;
+    allocation_probe::failAt = allocationCount + 1;
+    allocation_probe::enabled = true;
+    VnResult closeResult = VN_IN_USE;
+    bool closeThrew = false;
+    try { closeResult = Vn_MonitorCloseSession(handle); }
+    catch (const std::bad_alloc&) { closeThrew = true; }
+    allocation_probe::enabled = false;
+    allocation_probe::failAt = 0;
+    EXPECT_FALSE(closeThrew);
+    EXPECT_EQ(allocationCount, allocation_probe::count);
+    EXPECT_EQ(VN_OK, closeResult);
+    if (closeThrew) EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
     EXPECT_EQ(VN_MONITOR_STALE_SESSION, Vn_MonitorCloseSession(handle));
     PollArgs stale;
     EXPECT_EQ(VN_MONITOR_STALE_SESSION,

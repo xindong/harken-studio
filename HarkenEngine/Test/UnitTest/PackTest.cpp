@@ -291,6 +291,15 @@ static void RunMediaProviderProbe(MediaProviderProbeOperation operation) {
     EXPECT_EQ(0u, engine.bindings.DefinitionCount());
 }
 
+TEST(Pack, TocOffsetsStayWideAcrossFourGiB) {
+    // Independent byte offsets for the fixed 76-byte serialized layout.
+    EXPECT_EQ(0ull, harken::PackTocByteOffset(0));
+    EXPECT_EQ(4294967252ull, harken::PackTocByteOffset(56512727u));
+    EXPECT_EQ(4294967328ull, harken::PackTocByteOffset(56512728u));
+    EXPECT_EQ(4294967404ull, harken::PackTocByteOffset(56512729u));
+    EXPECT_EQ(326417514420ull, harken::PackTocByteOffset(UINT32_MAX));
+}
+
 TEST(Pack, CompactProviderUnloadRefusesWhileSectionedConsumerIsLoaded) {
     RunMediaProviderProbe(MediaProviderProbeOperation::CompactUnload);
 }
