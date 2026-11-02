@@ -21,6 +21,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 namespace harken {
 
@@ -35,7 +36,17 @@ inline float InterpLinear(float s0, float s1, float frac)
     // equal infinities into NaN through inf - inf.
     if (frac == 0.0f)
         return s0;
-    return s0 + frac * (s1 - s0);
+    const float result = s0 + frac * (s1 - s0);
+    if (!std::isfinite(result)) {
+        // Finite opposite extremes can overflow the difference even when
+        // the interpolated sample is representable. Keep ordinary rounding
+        // and leave genuinely non-finite signals for the output sanitizer.
+        const double wide = static_cast<double>(s0) +
+            static_cast<double>(frac) * (static_cast<double>(s1) - s0);
+        if (std::fabs(wide) <= std::numeric_limits<float>::max())
+            return static_cast<float>(wide);
+    }
+    return result;
 }
 
 // ---------------------------------------------------------------------------
