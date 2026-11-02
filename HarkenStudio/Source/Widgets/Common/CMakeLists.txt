@@ -83,6 +83,8 @@ add_library(harken_editor_common STATIC
     StatusTip.h
     SwitchIndicator.h
     SourceRangeThumb.cpp
+    PreviewField.cpp
+    PreviewField.h
     SourceRangeThumb.h
     ToggleSwitch.cpp
     ToggleSwitch.h

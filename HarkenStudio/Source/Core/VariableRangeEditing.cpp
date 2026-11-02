@@ -69,9 +69,7 @@ bool fixBinding(ParameterBindingDef& binding, const VVariable& current, const VV
     if (!validCurve(binding.curve, binding.handles)) return false;
     const float outsideValue = binding.curve.front().x >= 1.0f
         ? binding.curve.front().value : binding.curve.back().value;
-    const auto hostType = binding.address.hostClass == BindingHostClass::Bus
-        ? ProjectItemType::Bus : ProjectItemType::Sound;
-    const auto contract = BindingContractSemantics::derive(binding.address.slotId, hostType);
+    const auto contract = BindingContractSemantics::derive(binding.address);
     curveClipX(0.0f, 1.0f, binding.curve, binding.handles,
         contract.outputUnit == BindingOutputUnit::Decibel
             ? CurveAxisScale::MirroredAmplitudeDb : CurveAxisScale::LinearValue);

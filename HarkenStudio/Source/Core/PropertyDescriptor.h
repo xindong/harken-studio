@@ -24,7 +24,8 @@ enum class PropertyCategory : uint8_t { Basic, Route, Spatial, Limitation };
 
 enum class PropertySection : uint8_t {
     None, Playback, Status, Advanced, Source, Selection, Step, Dimension,
-    Label, Clip, Custom, Output, Input, Send, Receive, Rating, PlaybackPriority, Effect
+    Label, Clip, Custom, Output, Input, Send, Receive, Rating, PlaybackPriority, Effect,
+    FilterLowPass, FilterHighPass, FilterLowShelf, FilterHighShelf
 };
 
 struct EnumOption { QString text; QVariant value; };
