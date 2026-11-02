@@ -596,7 +596,7 @@ void TimelineEditorPanel::applyThemeMetrics()
 void TimelineEditorPanel::refreshThemeIcons()
 {
     const ThemeAssetVariant variant{addTrackButton_->iconSize(), devicePixelRatioF(), 0,
-        themeManager_->colors().textSecondary};
+        themeManager_->colors().textPrimary};
     addTrackButton_->setIcon(themeManager_->resolveIcon(
         QString::fromLatin1(ThemeAssetIds::TableAdd), variant).icon);
     zoomInButton_->setIcon(addTrackButton_->icon());

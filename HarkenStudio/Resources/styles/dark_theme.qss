@@ -1872,7 +1872,7 @@ VNX--ObjectRefWidget[inputInvalid="true"][dimmed="false"]:enabled {
     max-height: 1px;
     border: none;
 }
-#AssistantPanel QLabel#aiEmptyState,
+#AssistantPanel QLabel#aiEmptyState { color: @textPrimary@; }
 #AssistantPanel QLabel#aiStepStatus { color: @textMuted@; }
 #AssistantPanel QLabel#aiStepStatus { padding: 0 8px; }
 #AssistantPanel QFrame#aiInputFrame {

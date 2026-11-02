@@ -879,7 +879,7 @@ void HarkenStyle::drawPrimitive(PrimitiveElement element,
     const QColor tint = !(option->state & State_Enabled) ? colors.textDisabled
         : (option->state & State_Selected)
             ? option->palette.color(QPalette::HighlightedText)
-            : (option->state & State_Sunken) && !iconButton ? colors.accentText : colors.textSecondary;
+            : (option->state & State_Sunken) && !iconButton ? colors.accentText : colors.textPrimary;
     const QIcon icon = theme().resolveIcon(
         QString::fromLatin1(asset), ThemeAssetVariant{QSize(), 1.0, 0, tint}).icon;
     const QRect rect = alignedRect(option->direction, Qt::AlignCenter,

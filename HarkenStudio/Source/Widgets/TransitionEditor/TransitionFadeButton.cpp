@@ -302,7 +302,7 @@ void TransitionFadePopup::refreshResetState()
 {
     auto& manager = ThemeManager::instance();
     const ThemeAssetVariant variant{resetButton_->iconSize(), devicePixelRatioF(), 0,
-                                    manager.colors().textSecondary};
+                                    manager.colors().textPrimary};
     resetButton_->setIcon(manager.resolveIcon(QString::fromLatin1(ThemeAssetIds::AuditionReset), variant).icon);
     const bool isDefault = currentFade() == canonicalTransitionFade();
     resetButton_->setEnabled(!isDefault);

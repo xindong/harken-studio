@@ -411,7 +411,7 @@ void QtControlSkin::paintDragHandle(QPainter& painter, const QRect& rect, bool e
     if (rect.width() < 6) return;
     painter.save();
     painter.setPen(Qt::NoPen);
-    painter.setBrush(enabled ? colors().textMuted : colors().textDisabled);
+    painter.setBrush(enabled ? colors().textPrimary : colors().textDisabled);
     const auto center = rect.center();
     for (int x : {-2, 2})
         for (int y : {-4, 0, 4})
@@ -457,7 +457,7 @@ QString QtControlSkin::applicationStyleSheet() const
     };
     replace(QStringLiteral("@chevronDown@"),
             imagePath(ThemeAssetIds::NavigationChevronDown,
-                      metrics().navigationChevronExtent, colors().textSecondary));
+                      metrics().navigationChevronExtent, colors().textPrimary));
     replace(QStringLiteral("@chevronDownDisabled@"),
             imagePath(ThemeAssetIds::NavigationChevronDown,
                       metrics().navigationChevronExtent, colors().textDisabled));
