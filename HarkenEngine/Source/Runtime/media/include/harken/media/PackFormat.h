@@ -42,6 +42,11 @@ inline constexpr bool SupportedPackFormatVersion(std::uint32_t version) noexcept
 inline constexpr std::uint32_t kPackHeaderBytes = 36;
 inline constexpr std::uint32_t kPackTocEntryBytes = 76;
 
+// The end offset at entryCount is also the complete TOC byte length.
+inline constexpr std::uint64_t PackTocByteOffset(std::uint32_t index) noexcept {
+    return static_cast<std::uint64_t>(index) * kPackTocEntryBytes;
+}
+
 // Every blob offset is a multiple of this within the file.
 inline constexpr std::uint64_t kPackBlobAlign = 64;
 
