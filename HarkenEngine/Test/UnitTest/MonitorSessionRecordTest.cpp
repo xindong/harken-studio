@@ -1522,3 +1522,98 @@ TEST(MonitorTypedRecordingCodec, AcceptsProductionGainReductionAndRejectsItsMalf
         static_cast<std::uint32_t>(candidate.record.size()));
     EXPECT_EQ(VN_MONITOR_INCOMPATIBLE, candidate.Scan().status);
 }
+
+TEST(MonitorTypedRecording, StartAllocationFailureReleasesPrivateReceiverAndCanRetry) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    ASSERT_EQ(VN_OK, Vn_Update());
+    const auto owner = OpenTypedRecordingOwner(VN_MONITOR_STREAM_TIME_SERIES);
+    VnMonitorCaptureControlStatus lease{};
+    ASSERT_EQ(VN_OK, Acquire(owner, &lease));
+    const auto path = TempSessionPath("start-allocation-failure-retry.vnmon");
+    RemoveIfExists(path);
+    auto desc = MakeRecordingDesc(path.c_str(), 1024 * 1024);
+    for (unsigned attempt = 0; attempt <= VN_MONITOR_HARD_SESSIONS_PER_ENGINE; ++attempt) {
+        SCOPED_TRACE(attempt);
+        ReleaseRecorderScratchForTests();
+        SetAfterRecordingReceiverOpenForTests([](void*) {
+            allocation_probe::failAt = allocation_probe::count + 1;
+            allocation_probe::enabled = true;
+        }, nullptr);
+        bool threw = false;
+        VnResult result = VN_OK;
+        try { result = harken::monitor::StartRecording(owner, lease.leaseGeneration, &desc); }
+        catch (const std::bad_alloc&) { threw = true; }
+        allocation_probe::enabled = false;
+        const bool injected = allocation_probe::failAt == 0;
+        allocation_probe::failAt = 0;
+        EXPECT_TRUE(injected);
+        EXPECT_FALSE(threw);
+        EXPECT_EQ(VN_MONITOR_BUDGET_EXCEEDED, result);
+        EXPECT_EQ(0u, RecordingReceiverForTests());
+        EXPECT_FALSE(std::filesystem::exists(path));
+        ASSERT_EQ(VN_OK, Vn_MonitorStartRecording(owner, lease.leaseGeneration, &desc));
+        ASSERT_EQ(VN_OK, Vn_MonitorStopRecording(owner, lease.leaseGeneration));
+        EXPECT_EQ(VN_MONITOR_RECORDING_STATE_STOPPED, PumpTypedRecording(owner).state);
+        RemoveIfExists(path);
+    }
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(owner));
+}
+
+
+TEST(MonitorSession, RecordingStartAllocationFailuresAreRetryableWithoutCapacityLoss) {
+    for (const auto version : {0u, 1u, 2u, 3u}) {
+        SCOPED_TRACE(version);
+        harkentest::EngineSession engine(harkentest::MakeNullConfig());
+        ASSERT_EQ(VN_OK, engine.InitResult());
+        ASSERT_EQ(VN_OK, Vn_Update());
+        VnMonitorSessionDescV2 open{};
+        const auto legacy = MakeRecordDesc();
+        std::memcpy(&open, &legacy, sizeof(legacy));
+        open.structSize = version == 0 ? sizeof(legacy) : sizeof(open);
+        open.requestedExecutionFactVersion = version;
+        VnMonitorSessionHandle owner = 0;
+        ASSERT_EQ(VN_OK, Vn_MonitorOpenSession(
+            reinterpret_cast<const VnMonitorSessionDesc*>(&open), &owner));
+        StopDrainForTests();
+        VnMonitorCaptureControlStatus lease{};
+        ASSERT_EQ(VN_OK, Acquire(owner, &lease));
+        const auto path = TempSessionPath("start-allocation-sweep.vnmon");
+        auto desc = MakeRecordingDesc(path.c_str(), 1024 * 1024);
+        unsigned failures = 0;
+        bool exhausted = false;
+        for (unsigned nth = 1; nth <= 32; ++nth) {
+            SCOPED_TRACE(nth);
+            RemoveIfExists(path);
+            ReleaseRecorderScratchForTests();
+            allocation_probe::failAt = allocation_probe::count + nth;
+            allocation_probe::enabled = true;
+            bool threw = false;
+            VnResult result = VN_OK;
+            // The C++ entry permits observing a broken C ABI under /EHsc.
+            try { result = harken::monitor::StartRecording(owner, lease.leaseGeneration, &desc); }
+            catch (...) { threw = true; }
+            allocation_probe::enabled = false;
+            const bool injected = allocation_probe::failAt == 0;
+            allocation_probe::failAt = 0;
+            ASSERT_FALSE(threw);
+            if (result != VN_OK) {
+                ++failures;
+                EXPECT_TRUE(injected);
+                EXPECT_TRUE(result == VN_INVALID_ARG || result == VN_MONITOR_BUDGET_EXCEEDED ||
+                            result == VN_MONITOR_RECORDING_FAILED);
+                EXPECT_EQ(0u, RecordingReceiverForTests());
+                EXPECT_FALSE(RecorderConsumerEnabledForTests());
+                EXPECT_FALSE(std::filesystem::exists(path));
+                ASSERT_EQ(VN_OK, Vn_MonitorStartRecording(owner, lease.leaseGeneration, &desc));
+            }
+            ASSERT_EQ(VN_OK, Vn_MonitorStopRecording(owner, lease.leaseGeneration));
+            EXPECT_EQ(VN_MONITOR_RECORDING_STATE_STOPPED, PumpTypedRecording(owner).state);
+            RemoveIfExists(path);
+            if (!injected) { exhausted = true; break; }
+        }
+        EXPECT_TRUE(exhausted);
+        EXPECT_GE(failures, 3u);
+        EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(owner));
+    }
+}

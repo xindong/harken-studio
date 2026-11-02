@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <new>
+#include <limits>
 
 namespace harken {
 
@@ -140,7 +141,17 @@ void DelayProcess(void* state, float* const* channels,
             float* s = channels[ch] + offset;
             const float x = s[i];
             const float delayed = line[r];
-            s[i] = d->dry * x + d->wet * delayed;
+            float mixed = d->dry * x + d->wet * delayed;
+            if (!std::isfinite(mixed)) {
+                // Opposite finite products can overflow before cancellation.
+                // Preserve ordinary rounding and genuinely unrepresentable sums.
+                const double wide = static_cast<double>(d->dry) * x +
+                                    static_cast<double>(d->wet) * delayed;
+                if (std::fabs(wide) <= (std::numeric_limits<float>::max)()) {
+                    mixed = static_cast<float>(wide);
+                }
+            }
+            s[i] = mixed;
             // Soft-saturated feedback: an analog-style waveshaper in the loop
             // keeps it bounded even near unity feedback and, being non-linear,
             // makes chain order relative to the linear tone effect audible.
