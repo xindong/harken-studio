@@ -525,6 +525,16 @@ bool VolumeStagesConvertible(float voiceDb, float outputDb) noexcept {
            harken::TryVolumeGainFromDb(voiceDb + outputDb);
 }
 
+bool VoiceOutputTargetConvertible(const harken::Engine& engine,
+                                 VnVoiceHandle render, float outputDb) noexcept {
+    // A dirty reduction can precede its wire command. Both the last published
+    // volume and the current logical target must be safe with the new output.
+    return VolumeStagesConvertible(
+               engine.params.LastCommitted(render, harken::kTargetVoiceVolume), outputDb) &&
+           VolumeStagesConvertible(
+               engine.params.ResolvedValue(render, harken::kTargetVoiceVolume), outputDb);
+}
+
 bool TryVoiceVolumeBindingContribution(harken::Engine& engine,
                                      VnEmitterHandle emitter,
                                      VnBindingId bindingId,
@@ -69260,6 +69270,10 @@ namespace harken {
 
 bool VoiceVolumeTargetConvertible(const Engine& engine, VnVoiceHandle render,
                                   float voiceDb) noexcept {
+    if (!TryVolumeGainFromDb(voiceDb)) return false;
+    // Retired withdrawal snapshots still carry their original generation.
+    // Their eventual commands are stale; never pair them with a new occupant.
+    if (!engine.voices.IsAlive(render)) return true;
     const auto slot = static_cast<std::uint32_t>(render);
     return slot < engine.voicePlayFacts.size() &&
         VolumeStagesConvertible(voiceDb, engine.voicePlayFacts[slot].outputBusVolumeDb);
@@ -77305,8 +77319,7 @@ VnResult SetPreviewVoiceProperty(std::uint64_t render,
         if (value < 0.0f || value > 1.0f) return VN_INVALID_ARG;
         break;
     case Property::OutputBusVolume:
-        if (!VolumeStagesConvertible(
-                engine->params.ResolvedValue(render, kTargetVoiceVolume), value))
+        if (!VoiceOutputTargetConvertible(*engine, render, value))
             return VN_INVALID_ARG;
         if (engine->params.ForeignClaim(render, kTargetVoiceVolume))
             return VN_BACKPRESSURE;
@@ -108469,8 +108482,7 @@ VnResult Vn_SetVoiceOutputVolume(VnVoiceHandle handle, float volumeDb,
             ? resolved.renderHandle : 0;
     const VnResult live = engine->voices.CheckLive(render);
     if (live != VN_OK) return live;
-    if (!VolumeStagesConvertible(
-            engine->params.ResolvedValue(render, harken::kTargetVoiceVolume), volumeDb))
+    if (!VoiceOutputTargetConvertible(*engine, render, volumeDb))
         return VN_INVALID_ARG;
     if (engine->params.ForeignClaim(render, harken::kTargetVoiceVolume)) {
         engine->commands.NoteBackpressure();

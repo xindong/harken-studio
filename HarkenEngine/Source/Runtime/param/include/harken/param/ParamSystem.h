@@ -273,6 +273,8 @@ public:
     bool PendingPublication(VnVoiceHandle handle,
                             std::uint32_t targetId) const;
     float AuthoredBase(VnVoiceHandle handle, std::uint32_t targetId) const noexcept;
+    // Volume retains the last published value when a candidate is dropped;
+    // output-gain admission must not mistake a consumed candidate for a command.
     float LastCommitted(VnVoiceHandle handle,
                         std::uint32_t targetId) const noexcept;
 
@@ -634,7 +636,9 @@ public:
                 ++m_commits;
                 break;
             case FlushOutcome::Dropped:
-                RecordPublishedValue(state, t, resolved, pan2d);
+                // A refused gain never replaces the published gain authority.
+                if (t != kTargetVoiceVolume)
+                    RecordPublishedValue(state, t, resolved, pan2d);
                 SetTargetClean(target);
                 target.pendingRampMs = 0;
                 break;
