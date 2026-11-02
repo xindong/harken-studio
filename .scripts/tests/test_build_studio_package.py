@@ -155,6 +155,9 @@ class BuildStudioPackageTest(unittest.TestCase):
                 self.assertEqual(archive.read(relative), (self.input_dir / relative).read_bytes())
 
             manifest_content = archive.read("package-manifest.json")
+            self.assertEqual(Path(summary["packageManifest"]).read_bytes(), manifest_content)
+            self.assertIn(Path(summary["packageManifest"]).name,
+                          [path.name for path in self.evidence.finalize.call_args.args[1]])
             reference = self.evidence.prepare.call_args.kwargs["payload_manifest"]
             self.assertEqual(reference["artifact"], package.name)
             self.assertEqual(reference["path"], "package-manifest.json")

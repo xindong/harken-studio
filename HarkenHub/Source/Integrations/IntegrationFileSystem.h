@@ -10,5 +10,6 @@ bool renameIntegrationDirectory(const QString& source, const QString& target, QS
 bool writeIntegrationFile(const QString& path, const QByteArray& contents, QString* error);
 bool checkIntegrationFilesWritable(const QStringList& paths, QString* error);
 bool checkIntegrationDirectoryChanges(const QStringList& destinations, const QStringList& sources, QString* error);
+bool removeVerifiedIntegrationFile(const QString& path, const QByteArray& expectedHash, QString* error);
 
 }

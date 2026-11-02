@@ -8,7 +8,9 @@ import base64
 import hashlib
 import json
 import os
+import re
 import sys
+import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -74,7 +76,7 @@ def build_payload(args: argparse.Namespace) -> dict:
         raise SystemExit(f"error: package not found: {package_path}")
     published_at = datetime.now(timezone.utc)
     expires_at = published_at + timedelta(days=args.expires_days)
-    return {
+    payload = {
         "product": args.product,
         "version": args.version,
         "buildId": args.build_id,
@@ -88,6 +90,27 @@ def build_payload(args: argparse.Namespace) -> dict:
         "publishedAt": published_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "expiresAt": expires_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
+    if args.package_manifest:
+        manifest_path = Path(args.package_manifest).resolve()
+        name = f"{args.version}-{args.build_id}.files.json"
+        if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,255}", name)
+                or ".." in name or manifest_path.name != name):
+            raise SystemExit("error: package manifest filename does not match release identity")
+        if not manifest_path.is_file() or not 0 < manifest_path.stat().st_size <= 16 * 1024 * 1024:
+            raise SystemExit("error: invalid package manifest size")
+        data = manifest_path.read_bytes()
+        with zipfile.ZipFile(package_path) as archive:
+            entries = [entry for entry in archive.infolist() if entry.filename == "package-manifest.json"]
+            if len(entries) != 1 or entries[0].file_size != len(data) or archive.read(entries[0]) != data:
+                raise SystemExit("error: package manifest differs from the archive")
+        inventory = json.loads(data)
+        if any(inventory.get(field) != payload[field] for field in ("product", "version", "buildId", "channel")):
+            raise SystemExit("error: package manifest identity differs from the release")
+        payload["packageManifest"] = {
+            "fileName": name, "size": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
+    return payload
 
 
 def sign_manifest(args: argparse.Namespace) -> dict:
@@ -136,6 +159,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     sign = commands.add_parser("sign")
     sign.add_argument("--private-key", required=True)
     sign.add_argument("--package", required=True)
+    sign.add_argument("--package-manifest")
     sign.add_argument("--output", required=True)
     sign.add_argument("--product", default="HarkenStudio")
     sign.add_argument("--version", required=True)

@@ -718,7 +718,10 @@ TEST(UnityIntegrationService, CustomLocationSupportsCheckInstallUpdateBackupAndR
     EXPECT_EQ(readFile(QDir(target).filePath(QStringLiteral("UserContent.txt"))), "keep");
     EXPECT_TRUE(QFileInfo::exists(QDir(request.removalBackupPath).filePath(
         QStringLiteral("UnityProject/") + relative + QStringLiteral("/.harken-integration-state.json"))));
-    EXPECT_TRUE(VNX::UnityInstallation::discover(project).installations.isEmpty());
+    VNH::UnityIntegrationRequest verification;
+    verification.unityProjectPath = project;
+    verification.verifyInstalledOnly = true;
+    EXPECT_FALSE(VNH::HubUnityIntegrationService::run(verification).targetInstalled);
 }
 
 TEST(UnityIntegrationService, RejectsUnsafeCustomLocationsAndNonemptyDirectories)
@@ -1856,8 +1859,12 @@ TEST(UnityIntegrationService, RemovesManagedIntegrationAndPreservesProjectFiles)
         QStringLiteral("package.json"))));
     EXPECT_FALSE(QFileInfo::exists(QDir(targetRoot).filePath(
         QStringLiteral("Runtime/Plugins/x86_64/HarkenCore.dll"))));
-    EXPECT_FALSE(QFileInfo::exists(QDir(targetRoot).filePath(
-        QStringLiteral(".harken-integration-state.json"))));
+    VNH::EngineTargetRecord target;
+    target.engineKind = VNH::EngineKind::Unity;
+    target.canonicalRoot = unityRoot;
+    const auto removed = VNH::EngineTargetProbe::observe(target);
+    EXPECT_EQ(removed.health, VNH::EngineTargetHealth::NotInstalled);
+    EXPECT_TRUE(removed.canChangeSdk);
     EXPECT_FALSE(QFileInfo::exists(legacyRuntime));
     EXPECT_FALSE(QFileInfo::exists(legacyRuntimeMeta));
     EXPECT_FALSE(QFileInfo::exists(finderMetadata));
@@ -1902,16 +1909,17 @@ TEST(UnityIntegrationService, RemovesManagedIntegrationAndPreservesProjectFiles)
     VNX::UnityIntegrationService::Request reinstallRequest;
     reinstallRequest.unityProjectPath = unityRoot;
     reinstallRequest.sdkSourcePath = reintegrationSdk;
+    reinstallRequest.checkOnly = true;
     auto reinstallResult = service.run(reinstallRequest);
-    ASSERT_FALSE(reinstallResult.success);
-    EXPECT_TRUE(reinstallResult.steps[0].cause.contains(QStringLiteral("unrelated files")));
-    const QString preservedRoot = QDir(dir.path()).filePath(QStringLiteral("PreservedProjectFiles"));
-    ASSERT_TRUE(QDir().rename(targetRoot, preservedRoot));
+    ASSERT_TRUE(reinstallResult.success);
+    reinstallRequest.checkOnly = false;
+    reinstallRequest.confirmTargetChanges = true;
+    reinstallRequest.approvedPlanHash = reinstallResult.planHash;
     reinstallResult = service.run(reinstallRequest);
     ASSERT_TRUE(reinstallResult.success);
     EXPECT_TRUE(reinstallResult.targetCurrent);
-    EXPECT_EQ(readFile(QDir(preservedRoot).filePath(QStringLiteral("Runtime/ProjectOnly.cs"))), QByteArrayLiteral("project-owned"));
-    EXPECT_EQ(readFile(QDir(preservedRoot).filePath(QStringLiteral(".cache/project-note.txt"))), QByteArrayLiteral("project-note"));
+    EXPECT_EQ(readFile(projectFile), QByteArrayLiteral("project-owned"));
+    EXPECT_EQ(readFile(hiddenProjectFile), QByteArrayLiteral("project-note"));
     EXPECT_FALSE(QFileInfo::exists(legacyRuntime));
 }
 
@@ -1949,6 +1957,199 @@ TEST(UnityIntegrationService, RefusesRemovalWithoutOwnershipRecord)
     EXPECT_EQ(readFile(projectFile), QByteArrayLiteral("project-owned"));
     EXPECT_TRUE(result.steps[1].summary.contains(
         QStringLiteral("ownership record")));
+}
+
+TEST(UnityIntegrationService, RemovalToleratesMissingOwnedFilesAndPreservesUnownedContent)
+{
+    for (const QString& damaged : {QStringLiteral("package.json"), QStringLiteral("harken-integration.json"),
+                                  QStringLiteral("Runtime/Generated/HarkenAbi.g.cs"), QStringLiteral("README.md")}) {
+        SCOPED_TRACE(damaged.toStdString());
+        QTemporaryDir dir;
+        ASSERT_TRUE(dir.isValid());
+        const QString project = makeUnityProject(dir.filePath("Game"));
+        const QString source = makeCompleteSdk(dir.filePath("Source"));
+        writeFile(source + "/README.md", "documentation");
+        const QString target = project + "/Packages/com.harken.core";
+        VNX::UnityIntegrationService service;
+        VNX::UnityIntegrationService::Request request;
+        request.unityProjectPath = project;
+        request.sdkSourcePath = source;
+        ASSERT_TRUE(service.run(request).success);
+        ASSERT_TRUE(QFile::remove(target + "/" + damaged));
+        writeFile(target + "/Project.txt", "project content");
+        writeFile(target + "/Old.cs.meta", "orphan metadata");
+        ASSERT_TRUE(QDir().mkpath(target + "/EmptyProjectDirectory"));
+        VNH::EngineTargetRecord record;
+        record.engineKind = VNH::EngineKind::Unity;
+        record.canonicalRoot = project;
+        EXPECT_TRUE(VNH::EngineTargetProbe::observe(record).canRemoveSdk);
+        request.removeIntegration = true;
+        request.removalBackupPath = dir.filePath("Backup");
+        const auto review = service.run(request);
+        ASSERT_TRUE(review.requiresConfirmation);
+        request.confirmRemoval = true;
+        request.approvedPlanHash = review.planHash;
+        const auto removed = service.run(request);
+        ASSERT_TRUE(removed.success);
+        EXPECT_TRUE(removed.integrationRemoved);
+        EXPECT_EQ(readFile(target + "/Project.txt"), "project content");
+        EXPECT_EQ(readFile(target + "/Old.cs.meta"), "orphan metadata");
+        EXPECT_TRUE(QDir(target + "/EmptyProjectDirectory").exists());
+        EXPECT_TRUE(readFile(request.removalBackupPath + "/backup.json").contains(damaged.toUtf8()));
+        EXPECT_FALSE(QFileInfo::exists(request.removalBackupPath + "/UnityProject/Packages/com.harken.core/" + damaged));
+        EXPECT_EQ(VNH::EngineTargetProbe::observe(record).health, VNH::EngineTargetHealth::NotInstalled);
+        request.removeIntegration = false;
+        request.approvedPlanHash.clear();
+        request.checkOnly = true;
+        const auto reinstall = service.run(request);
+        ASSERT_TRUE(reinstall.success);
+        request.checkOnly = false;
+        request.confirmTargetChanges = true;
+        request.approvedPlanHash = reinstall.planHash;
+        ASSERT_TRUE(service.run(request).success);
+        EXPECT_EQ(readFile(target + "/Project.txt"), "project content");
+        EXPECT_TRUE(QDir(target + "/EmptyProjectDirectory").exists());
+    }
+}
+
+TEST(UnityIntegrationService, RemovalRejectsStaleReviewsAndResumesWithoutLosingChangedOrNewFiles)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString project = makeUnityProject(dir.filePath("Game"));
+    const QString source = makeCompleteSdk(dir.filePath("Source"));
+    const QString target = project + "/Packages/com.harken.core";
+    VNX::UnityIntegrationService service;
+    VNX::UnityIntegrationService::Request request;
+    request.unityProjectPath = project;
+    request.sdkSourcePath = source;
+    ASSERT_TRUE(service.run(request).success);
+    request.removeIntegration = true;
+    request.removalBackupPath = dir.filePath("Backup");
+    const auto initial = service.run(request);
+    ASSERT_TRUE(initial.requiresConfirmation);
+    writeFile(target + "/Project.txt", "created after review");
+    request.confirmRemoval = true;
+    request.approvedPlanHash = initial.planHash;
+    const auto stale = service.run(request);
+    EXPECT_FALSE(stale.success);
+    EXPECT_TRUE(stale.requiresConfirmation);
+    EXPECT_FALSE(QFileInfo::exists(request.removalBackupPath));
+    EXPECT_TRUE(QFileInfo::exists(target + "/package.json"));
+    request.confirmRemoval = false;
+    request.approvedPlanHash.clear();
+    const auto reviewed = service.run(request);
+    ASSERT_TRUE(reviewed.requiresConfirmation);
+    request.confirmRemoval = true;
+    request.approvedPlanHash = reviewed.planHash;
+    bool injected = false;
+    const auto connection = QObject::connect(&service, &VNX::UnityIntegrationService::stepUpdated,
+        &service, [&](int, const auto&) {
+            if (injected || !VNX::UnityInstallation::hasPendingRemoval(project)) return;
+            injected = true;
+            writeFile(target + "/package.json", "changed while removing");
+            writeFile(target + "/Late.txt", "created while removing");
+        });
+    const auto interrupted = service.run(request);
+    QObject::disconnect(connection);
+    EXPECT_TRUE(injected);
+    EXPECT_FALSE(interrupted.success);
+    EXPECT_GT(interrupted.filesRemoved, 0);
+    EXPECT_TRUE(VNX::UnityInstallation::hasPendingRemoval(project));
+    EXPECT_EQ(readFile(target + "/package.json"), "changed while removing");
+    EXPECT_EQ(readFile(target + "/Late.txt"), "created while removing");
+    const QString originalBackup = request.removalBackupPath + "/UnityProject/Packages/com.harken.core";
+    EXPECT_EQ(readFile(originalBackup + "/package.json"), readFile(source + "/package.json"));
+    VNH::EngineTargetRecord record;
+    record.engineKind = VNH::EngineKind::Unity;
+    record.canonicalRoot = project;
+    const auto pending = VNH::EngineTargetProbe::observe(record);
+    EXPECT_TRUE(pending.canRemoveSdk);
+    EXPECT_FALSE(pending.canChangeSdk);
+    EXPECT_FALSE(pending.canMoveSdk);
+    request.approvedPlanHash.clear();
+    EXPECT_FALSE(service.run(request).success);
+    EXPECT_EQ(readFile(target + "/package.json"), "changed while removing");
+    writeFile(target + "/package.json", readFile(source + "/package.json"));
+    request.confirmRemoval = false;
+    const auto retry = service.run(request);
+    ASSERT_TRUE(retry.requiresConfirmation);
+    EXPECT_EQ(retry.removalBackupPath, request.removalBackupPath);
+    request.confirmRemoval = true;
+    request.approvedPlanHash = retry.planHash;
+    const auto completed = service.run(request);
+    ASSERT_TRUE(completed.success);
+    EXPECT_FALSE(VNX::UnityInstallation::hasPendingRemoval(project));
+    EXPECT_EQ(readFile(target + "/Project.txt"), "created after review");
+    EXPECT_EQ(readFile(target + "/Late.txt"), "created while removing");
+    EXPECT_EQ(readFile(originalBackup + "/package.json"), readFile(source + "/package.json"));
+}
+
+TEST(UnityIntegrationService, InstallationIntoUnownedFilesRequiresAnUnchangedReviewAndPreservesConflictsInBackup)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString project = makeUnityProject(dir.filePath("Game"));
+    const QString source = makeCompleteSdk(dir.filePath("Source"));
+    const QString target = project + "/Packages/com.harken.core";
+    writeFile(target + "/Runtime/Generated/HarkenAbi.g.cs", "existing project implementation");
+    writeFile(target + "/Project.txt", "project content");
+    VNX::UnityIntegrationService service;
+    VNX::UnityIntegrationService::Request request;
+    request.unityProjectPath = project;
+    request.sdkSourcePath = source;
+    EXPECT_FALSE(service.run(request).success);
+    request.preserveUnownedTarget = true;
+    request.confirmTargetChanges = true;
+    EXPECT_TRUE(service.run(request).requiresConfirmation);
+    EXPECT_EQ(readFile(target + "/Runtime/Generated/HarkenAbi.g.cs"), "existing project implementation");
+    request.checkOnly = true;
+    const auto review = service.run(request);
+    ASSERT_TRUE(review.success);
+    request.checkOnly = false;
+    request.approvedPlanHash = review.planHash;
+    const auto installed = service.run(request);
+    ASSERT_TRUE(installed.success);
+    EXPECT_EQ(readFile(target + "/Runtime/Generated/HarkenAbi.g.cs"), readFile(source + "/Runtime/Generated/HarkenAbi.g.cs"));
+    EXPECT_EQ(readFile(target + "/Project.txt"), "project content");
+    QString backup;
+    for (const auto& step : installed.steps)
+        for (const auto& artifact : step.artifacts)
+            if (QFileInfo::exists(artifact + "/backup.json")) backup = artifact;
+    ASSERT_FALSE(backup.isEmpty());
+    EXPECT_EQ(readFile(backup + "/UnityProject/Packages/com.harken.core/Runtime/Generated/HarkenAbi.g.cs"), "existing project implementation");
+    EXPECT_TRUE(QDir(backup).removeRecursively());
+}
+
+TEST(UnityIntegrationService, PreservedFilesDoNotMasqueradeAsAnActiveInstallation)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString project = makeUnityProject(dir.filePath("Game"));
+    const QString source = makeCompleteSdk(dir.filePath("Source"));
+    const QString original = project + "/Packages/com.harken.core";
+    VNX::UnityIntegrationService service;
+    VNX::UnityIntegrationService::Request request;
+    request.unityProjectPath = project;
+    request.sdkSourcePath = source;
+    ASSERT_TRUE(service.run(request).success);
+    writeFile(original + "/Project.txt", "keep in place");
+    request.removeIntegration = true;
+    request.confirmRemoval = true;
+    request.removalBackupPath = dir.filePath("Backup");
+    ASSERT_TRUE(service.run(request).success);
+    EXPECT_TRUE(VNX::UnityInstallation::discover(project).installations.isEmpty());
+    request.removeIntegration = false;
+    request.sdkInstallPath = "Assets/Audio/Harken";
+    ASSERT_TRUE(service.run(request).success);
+    const auto discovery = VNX::UnityInstallation::discover(project);
+    EXPECT_EQ(discovery.installations.size(), 1);
+    EXPECT_TRUE(discovery.errors.isEmpty());
+    EXPECT_EQ(readFile(original + "/Project.txt"), "keep in place");
+    VNH::UnityIntegrationRequest verify;
+    verify.unityProjectPath = project;
+    verify.verifyInstalledOnly = true;
+    EXPECT_TRUE(VNH::HubUnityIntegrationService::run(verify).success);
 }
 
 TEST(UnityIntegrationService, RemovesAssetsIntegrationWithAssetsBackupPaths)
@@ -3034,4 +3235,195 @@ TEST(UnityIntegrationService, RetriesAnSdkRenameThatIsBrieflyLocked)
     EXPECT_TRUE(result.success);
     EXPECT_EQ(readFile(QDir(unityRoot).filePath(QStringLiteral(
         "Packages/com.harken.core/Runtime/Harken.Core.asmdef"))), updated);
+}
+
+namespace {
+
+class UnityRestorationTest : public ::testing::Test
+{
+protected:
+    QTemporaryDir dir;
+    VNX::UnityIntegrationService service;
+    VNX::UnityIntegrationService::Request request;
+    QString project;
+    QString source;
+    QString installed;
+
+    void SetUp() override
+    {
+        ASSERT_TRUE(dir.isValid());
+        project = makeUnityProject(dir.filePath(QStringLiteral("Project")));
+        source = makeCompleteSdk(dir.filePath(QStringLiteral("Source")));
+        installed = QDir(project).filePath(QStringLiteral("Packages/com.harken.core"));
+        request.unityProjectPath = project;
+        request.sdkSourcePath = source;
+        ASSERT_TRUE(service.run(request).success);
+        const auto receipt = QJsonDocument::fromJson(readFile(installed + "/.harken-integration-state.json")).object();
+        const auto hashes = receipt.value(QStringLiteral("sha256")).toObject();
+        for (auto it = hashes.begin(); it != hashes.end(); ++it)
+            request.officialFileHashes.insert(it.key(), it.value().toString().toLatin1());
+        request.officialRelease = QJsonObject{{QStringLiteral("buildId"), QStringLiteral("fixture-build")}};
+        request.restoreIntegration = true;
+        request.checkOnly = true;
+        request.restorationBackupPath = dir.filePath(QStringLiteral("Backup"));
+    }
+
+    VNX::UnityIntegrationService::Result apply()
+    {
+        const auto preview = service.run(request);
+        if (!preview.success) return preview;
+        request.approvedPlanHash = preview.planHash;
+        request.checkOnly = false;
+        request.confirmTargetChanges = true;
+        return service.run(request);
+    }
+};
+
+TEST_F(UnityRestorationTest, RepairsMissingAndChangedManagedFilesWhileKeepingCustomFilesAndPermanentBackup)
+{
+    writeFile(installed + "/Runtime/Harken.Core.asmdef", "damaged");
+    ASSERT_TRUE(QFile::remove(installed + "/package.json"));
+    writeFile(installed + "/Custom.cs", "user implementation");
+    writeFile(installed + "/Custom.cs.meta", "user guid");
+    writeFile(installed + ".meta", "package root guid");
+    ASSERT_TRUE(QDir().mkpath(installed + "/EmptyUserFolder"));
+    const QStringList protectedFiles{QStringLiteral("Runtime/Generated/HarkenAbi.g.cs"), QStringLiteral("Custom.cs")};
+    const auto originalPermissions = QFile::permissions(installed + "/Custom.cs");
+    const auto restorePermissions = qScopeGuard([&]() {
+        for (const auto& relative : protectedFiles) QFile::setPermissions(installed + '/' + relative, originalPermissions);
+    });
+    QMap<QString, QFileDevice::Permissions> protectedPermissions;
+    for (const auto& relative : protectedFiles) {
+        ASSERT_TRUE(QFile::setPermissions(installed + '/' + relative, QFile::ReadOwner | QFile::ReadUser));
+        protectedPermissions.insert(relative, QFile::permissions(installed + '/' + relative));
+    }
+    const auto result = apply();
+    ASSERT_TRUE(result.success) << result.steps.back().summary.toStdString() << result.steps.back().cause.toStdString();
+    EXPECT_EQ(readFile(installed + "/Runtime/Harken.Core.asmdef"), readFile(source + "/Runtime/Harken.Core.asmdef"));
+    EXPECT_EQ(readFile(installed + "/package.json"), readFile(source + "/package.json"));
+    EXPECT_EQ(readFile(installed + "/Custom.cs"), "user implementation");
+    EXPECT_EQ(readFile(installed + "/Custom.cs.meta"), "user guid");
+    EXPECT_EQ(readFile(installed + ".meta"), "package root guid");
+    for (const auto& relative : protectedFiles) {
+        EXPECT_EQ(QFile::permissions(installed + '/' + relative), protectedPermissions.value(relative));
+        EXPECT_EQ(QFile::permissions(dir.filePath("Backup/IntegrationPackage/") + relative), protectedPermissions.value(relative));
+    }
+    EXPECT_TRUE(QDir(installed + "/EmptyUserFolder").exists());
+    EXPECT_EQ(readFile(dir.filePath("Backup/IntegrationPackage/Runtime/Harken.Core.asmdef")), "damaged");
+    EXPECT_FALSE(QFileInfo::exists(dir.filePath("Backup/IntegrationPackage/package.json")));
+    EXPECT_EQ(readFile(dir.filePath("Backup/IntegrationPackage.meta")), "package root guid");
+    EXPECT_FALSE(VNX::UnityInstallation::hasPendingRestore(project));
+    VNH::UnityIntegrationRequest verify;
+    verify.unityProjectPath = project;
+    verify.verifyInstalledOnly = true;
+    EXPECT_TRUE(VNH::HubUnityIntegrationService::run(verify).success);
+}
+
+TEST_F(UnityRestorationTest, SourceAndTargetChangesInvalidateApprovalBeforeCreatingABackup)
+{
+    writeFile(installed + "/Runtime/Harken.Core.asmdef", "damaged");
+    auto preview = service.run(request);
+    ASSERT_TRUE(preview.success);
+    request.approvedPlanHash = preview.planHash;
+    request.checkOnly = false;
+    request.confirmTargetChanges = true;
+    writeFile(installed + "/custom.txt", "new user file");
+    EXPECT_FALSE(service.run(request).success);
+    EXPECT_FALSE(QFileInfo::exists(request.restorationBackupPath));
+    EXPECT_EQ(readFile(installed + "/Runtime/Harken.Core.asmdef"), "damaged");
+    request.checkOnly = true;
+    preview = service.run(request);
+    ASSERT_TRUE(preview.success);
+    request.approvedPlanHash = preview.planHash;
+    request.checkOnly = false;
+    writeFile(source + "/Runtime/Harken.Core.asmdef", "source replaced after verification");
+    EXPECT_FALSE(service.run(request).success);
+    EXPECT_FALSE(QFileInfo::exists(request.restorationBackupPath));
+}
+
+TEST_F(UnityRestorationTest, APackageWithDifferentOriginalHashesCannotBePresentedAsTheInstalledVersion)
+{
+    writeFile(source + "/Runtime/Harken.Core.asmdef", "different official build");
+    request.officialFileHashes[QStringLiteral("Runtime/Harken.Core.asmdef")] =
+        QCryptographicHash::hash("different official build", QCryptographicHash::Sha256).toHex();
+    const auto result = service.run(request);
+    EXPECT_FALSE(result.success);
+    EXPECT_FALSE(QFileInfo::exists(request.restorationBackupPath));
+    EXPECT_TRUE(result.steps.back().summary.contains(QStringLiteral("original version")));
+}
+
+TEST_F(UnityRestorationTest, UnownedNameConflictsRequireTheirOwnApprovalAndRetainOriginalBytes)
+{
+    const QString path = QStringLiteral("Runtime/Harken.Core.asmdef");
+    const QString receiptPath = installed + "/.harken-integration-state.json";
+    auto receipt = QJsonDocument::fromJson(readFile(receiptPath)).object();
+    auto files = receipt.value(QStringLiteral("managed_files")).toArray();
+    for (qsizetype index = files.size(); index > 0; --index)
+        if (files[index - 1].toString() == path) files.removeAt(index - 1);
+    receipt[QStringLiteral("managed_files")] = files;
+    writeFile(receiptPath, QJsonDocument(receipt).toJson());
+    writeFile(installed + '/' + path, "unowned bytes");
+    const auto plan = service.run(request);
+    ASSERT_TRUE(plan.success);
+    EXPECT_EQ(plan.conflictingFiles, QStringList{path});
+    request.approvedPlanHash = plan.planHash;
+    request.checkOnly = false;
+    request.confirmTargetChanges = true;
+    EXPECT_FALSE(service.run(request).success);
+    EXPECT_EQ(readFile(installed + '/' + path), "unowned bytes");
+    EXPECT_FALSE(QFileInfo::exists(request.restorationBackupPath));
+    request.confirmUnownedConflicts = true;
+    const auto restored = service.run(request);
+    ASSERT_TRUE(restored.success) << restored.steps.back().cause.toStdString();
+    EXPECT_EQ(readFile(dir.filePath("Backup/IntegrationPackage/") + path), "unowned bytes");
+}
+
+TEST_F(UnityRestorationTest, ReadOnlyManagedFilesBlockRestorationWithoutChangingPermissions)
+{
+    const QString path = installed + "/Runtime/Harken.Core.asmdef";
+    writeFile(path, "damaged");
+    const auto permissions = QFile::permissions(path);
+    const auto restore = qScopeGuard([&]() { QFile::setPermissions(path, permissions); });
+    ASSERT_TRUE(QFile::setPermissions(path, QFile::ReadOwner | QFile::ReadUser));
+    const auto result = apply();
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(readFile(path), "damaged");
+    EXPECT_FALSE(QFileInfo::exists(request.restorationBackupPath));
+    EXPECT_FALSE(VNX::UnityInstallation::hasPendingRestore(project));
+}
+
+TEST_F(UnityRestorationTest, RecoversBothRenameBoundariesAndBlocksOtherMutationsWhilePending)
+{
+    writeFile(installed + "/Runtime/Harken.Core.asmdef", "original damaged bytes");
+    const auto restored = apply();
+    ASSERT_TRUE(restored.success) << restored.steps.back().cause.toStdString();
+    const auto recordBytes = readFile(dir.filePath("Backup/backup.json"));
+    const auto record = QJsonDocument::fromJson(recordBytes).object();
+    const QString work = QDir(project).filePath("Library/HarkenIntegration/Restore/" + record.value(QStringLiteral("token")).toString());
+    const QString original = work + "/original";
+    const QString staged = work + "/staged";
+    for (int boundary = 0; boundary < 3; ++boundary) {
+        if (boundary == 1) ASSERT_TRUE(QDir().rename(installed, staged));
+        writeFile(VNX::UnityInstallation::restoreJournalPath(project), recordBytes);
+        VNX::UnityIntegrationService::Request other;
+        other.unityProjectPath = project;
+        other.sdkSourcePath = source;
+        other.checkOnly = true;
+        EXPECT_FALSE(service.run(other).success);
+        other.removeIntegration = true;
+        EXPECT_FALSE(service.run(other).success);
+        request.recoverRestore = true;
+        request.checkOnly = true;
+        auto plan = service.run(request);
+        ASSERT_TRUE(plan.success) << boundary << plan.steps.back().summary.toStdString() << plan.steps.back().cause.toStdString();
+        request.approvedPlanHash = plan.planHash;
+        request.checkOnly = false;
+        const auto recovered = service.run(request);
+        ASSERT_TRUE(recovered.success) << recovered.steps.back().cause.toStdString();
+        EXPECT_FALSE(VNX::UnityInstallation::hasPendingRestore(project));
+        EXPECT_EQ(readFile(installed + "/Runtime/Harken.Core.asmdef"), boundary == 0
+            ? readFile(source + "/Runtime/Harken.Core.asmdef") : QByteArray("original damaged bytes"));
+    }
+}
+
 }

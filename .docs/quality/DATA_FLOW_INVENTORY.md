@@ -86,6 +86,8 @@ Hub 和 Studio 更新下载失败后会清除内存中的清单缓存标记，�
 
 请求使用无上传请求体的 GET，遵循与 DF-2 一致的来源切换、受限重定向与签名验证。返回结果用于界面展示或匹配本地包，包下载继续走同一下载器。
 
+用户点击还原当前 Unity 集成包时，`HarkenHub/Source/Integrations/OfficialUnitySource.cpp` 查询官方目录中的确切构建，并从相同分发源获取签名绑定的独立文件清单。本地候选文件的路径、大小和哈希只在本机比较，不上传工程文件、安装路径或比较结果；候选不完整或旧发布没有独立清单时，再下载完整发布包。清单及完整包按发布包哈希缓存在用户数据目录，每次使用前重新核验；临时还原来源使用独立暂存目录。
+
 `HarkenHub/Source/ReleaseNotes/VersionReleaseNotes.cpp` 在已安装版本列表刷新、用户打开版本菜单或服务器版本列表时，按正式 Studio 版本请求对象存储的 `document/<version>/manifest.json`，默认基址及 `HARKEN_CONTENT_BASE_URL` 覆盖规则沿用 DF-2。本地构建不触发此请求。请求是无上传请求体的 GET，不附带工程、安装路径、账号或设备标识，不自动跟随重定向；清单按 `studioReleaseNotesPageId` 和 `unityIntegrationReleaseNotesPageId` 分别提取 Studio、Unity 集成包的更新日志页面链接，不参与软件安装或包校验。中英文链接仅缓存在当前 Hub 版本页对象的内存中，不写入本机文件；缺失、无效或请求失败时禁用入口。
 
 ## DF-4：系统浏览器访问

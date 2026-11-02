@@ -3,6 +3,8 @@
 #include <QString>
 #include <QStringList>
 #include <QVector>
+#include <QMap>
+#include <QJsonObject>
 
 namespace VNH {
 
@@ -39,6 +41,13 @@ struct UnityIntegrationRequest
     bool verifyInstalledOnly = false;
     bool confirmTargetChanges = false;
     QByteArray approvedPlanHash;
+    bool preserveUnownedTarget = false;
+    bool restoreIntegration = false;
+    bool confirmUnownedConflicts = false;
+    bool recoverRestore = false;
+    QJsonObject officialRelease;
+    QMap<QString, QByteArray> officialFileHashes;
+    QString restorationBackupPath;
     bool removeIntegration = false;
     bool confirmRemoval = false;
     QString removalBackupPath;
@@ -71,6 +80,7 @@ struct UnityIntegrationResult
     bool changesDetected = false;
     QByteArray planHash;
     QStringList modifiedFiles;
+    QStringList conflictingFiles;
     QStringList lineEndingFiles;
     QStringList encodingFiles;
     QStringList missingFiles;
@@ -87,6 +97,7 @@ struct UnityIntegrationResult
     QString sdkSourcePath;
     QString sdkInstallPath;
     QString removalBackupPath;
+    QString restorationBackupPath;
     QString jsonReportPath;
     QString textReportPath;
     int sdkFilesCopied = 0;

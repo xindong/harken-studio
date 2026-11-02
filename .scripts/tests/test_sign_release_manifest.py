@@ -3,6 +3,7 @@ import importlib.util
 import json
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -46,7 +47,7 @@ class SignReleaseManifestTest(unittest.TestCase):
             return self.module.sign_manifest(args)
         return self.module.verify_manifest(args)
 
-    def generate_and_sign(self):
+    def generate_and_sign(self, extra_args=()):
         keys = self.run_command(
             ["generate-keypair", "--output-dir", str(self.root / "keys")]
         )
@@ -61,7 +62,7 @@ class SignReleaseManifestTest(unittest.TestCase):
                 "--build-id", "run12.abcd1234",
                 "--package-url", "https://releases.example/studio.zip",
                 "--release-sequence", "7",
-            ]
+            ] + list(extra_args)
         )
         return keys, manifest_path
 
@@ -120,6 +121,30 @@ class SignReleaseManifestTest(unittest.TestCase):
             self.run_command(
                 ["generate-keypair", "--output-dir", str(self.root / "keys")]
             )
+
+    def test_independent_inventory_is_bound_to_the_archive_and_signature(self):
+        data = json.dumps({"product": "HarkenStudio", "version": "1.4.0",
+                           "buildId": "run12.abcd1234", "channel": "stable"}).encode()
+        sidecar = self.root / "1.4.0-run12.abcd1234.files.json"
+        sidecar.write_bytes(data)
+        with zipfile.ZipFile(self.package, "w") as archive:
+            archive.writestr("package-manifest.json", data)
+        keys, path = self.generate_and_sign(["--package-manifest", str(sidecar)])
+        payload = self.run_command(["verify", "--public-key", keys["publicKey"], "--manifest", str(path)])
+        self.assertEqual(payload["packageManifest"]["sha256"], self.module.sha256_file(sidecar))
+        envelope = json.loads(path.read_bytes())
+        payload["packageManifest"]["sha256"] = "0" * 64
+        envelope["payloadBase64"] = base64.b64encode(json.dumps(payload).encode()).decode()
+        path.write_text(json.dumps(envelope))
+        with self.assertRaisesRegex(SystemExit, "signature verification failed"):
+            self.run_command(["verify", "--public-key", keys["publicKey"], "--manifest", str(path)])
+        sidecar.write_bytes(data + b" ")
+        args = self.module.parse_args(["sign", "--private-key", keys["privateKey"],
+            "--package", str(self.package), "--package-manifest", str(sidecar),
+            "--output", str(path), "--version", "1.4.0", "--build-id", "run12.abcd1234",
+            "--package-url", "https://releases.example/studio.zip", "--release-sequence", "7"])
+        with self.assertRaisesRegex(SystemExit, "differs from the archive"):
+            self.module.sign_manifest(args)
 
 
 if __name__ == "__main__":

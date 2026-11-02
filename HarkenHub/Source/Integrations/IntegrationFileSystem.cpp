@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QSaveFile>
+#include <QScopeGuard>
 #include <QThread>
 
 #include <filesystem>
@@ -123,7 +124,7 @@ bool checkIntegrationFilesWritable(const QStringList& paths, QString* error)
     }
     if (readOnlyFiles.isEmpty() && inaccessibleFiles.isEmpty()) return true;
     QStringList sections{QCoreApplication::translate("HarkenHub",
-        "Some files required for this Integration Package operation cannot be changed. No Integration Package files were changed.")};
+        "Some files required for this Integration Package operation cannot be changed.")};
     if (!readOnlyFiles.isEmpty())
         sections.append(QCoreApplication::translate("HarkenHub", "Read-only files:\n%1")
             .arg(readOnlyFiles.join(QLatin1Char('\n'))));
@@ -180,6 +181,65 @@ bool renameIntegrationDirectory(const QString& source, const QString& target, QS
         if (attempt < retries) QThread::msleep(retryDelayMs);
     }
     return false;
+}
+
+bool removeVerifiedIntegrationFile(const QString& path, const QByteArray& expectedHash, QString* error)
+{
+    const auto changed = [&]() {
+        *error = QCoreApplication::translate("HarkenHub", "A file changed after backup and was preserved:")
+            + QLatin1Char('\n') + path;
+        return false;
+    };
+    const auto failed = [&](const QString& reason) {
+        *error = QCoreApplication::translate("HarkenHub", "Cannot remove file:")
+            + QLatin1Char('\n') + path + QLatin1Char('\n') + reason;
+        return false;
+    };
+#ifdef Q_OS_WIN
+    QString native = QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath());
+    if (!native.startsWith(QStringLiteral("\\\\?\\")))
+        native = native.startsWith(QStringLiteral("\\\\"))
+            ? QStringLiteral("\\\\?\\UNC\\") + native.mid(2) : QStringLiteral("\\\\?\\") + native;
+    const auto systemFailure = [&]() {
+        const DWORD code = GetLastError();
+        wchar_t message[1024] = {};
+        FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+            nullptr, code, 0, message, 1024, nullptr);
+        return failed(QString::fromWCharArray(message).trimmed());
+    };
+    const HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(native.utf16()), GENERIC_READ | DELETE,
+        FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        const DWORD code = GetLastError();
+        if (code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND) return true;
+        return systemFailure();
+    }
+    const auto close = qScopeGuard([&]() { CloseHandle(handle); });
+    BY_HANDLE_FILE_INFORMATION info{};
+    if (!GetFileInformationByHandle(handle, &info)) return systemFailure();
+    if (info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)) return changed();
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    QByteArray bytes(1024 * 1024, Qt::Uninitialized);
+    for (;;) {
+        IntegrationProgress::checkpoint();
+        DWORD count = 0;
+        if (!ReadFile(handle, bytes.data(), static_cast<DWORD>(bytes.size()), &count, nullptr)) return systemFailure();
+        if (count == 0) break;
+        hash.addData(QByteArrayView(bytes.constData(), count));
+    }
+    if (hash.result().toHex() != expectedHash) return changed();
+    FILE_DISPOSITION_INFO disposition{TRUE};
+    return SetFileInformationByHandle(handle, FileDispositionInfo, &disposition, sizeof(disposition))
+        ? true : systemFailure();
+#else
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return !QFileInfo::exists(path) || failed(file.errorString());
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!IntegrationProgress::addFileData(file, hash)) return failed(file.errorString());
+    if (hash.result().toHex() != expectedHash) return changed();
+    return file.remove() || failed(file.errorString());
+#endif
 }
 
 bool writeIntegrationFile(const QString& path, const QByteArray& contents, QString* error)

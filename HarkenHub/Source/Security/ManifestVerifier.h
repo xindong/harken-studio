@@ -8,6 +8,13 @@ namespace VNH {
 
 struct ReleaseManifest
 {
+    struct PackageManifest
+    {
+        QString fileName;
+        QString sha256Hex;
+        qint64 size = -1;
+    };
+
     QString product;
     QString version;
     QString buildId;
@@ -19,6 +26,7 @@ struct ReleaseManifest
     qint64 releaseSequence = -1;
     QDateTime publishedAt;
     QDateTime expiresAt;
+    PackageManifest packageManifest;
 };
 
 struct ManifestVerifyResult

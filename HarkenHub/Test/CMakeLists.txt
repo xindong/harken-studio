@@ -37,6 +37,7 @@ add_executable(harken_hub_tests
     UnitTest/HubSettingsTest.cpp
     UnitTest/MaintenanceTest.cpp
     UnitTest/ManifestVerifierTest.cpp
+    UnitTest/OfficialUnitySourceTest.cpp
     UnitTest/PackageReaderTest.cpp
     UnitTest/PackageVerifierTest.cpp
     UnitTest/SelfUpdateHealthCheckTest.cpp

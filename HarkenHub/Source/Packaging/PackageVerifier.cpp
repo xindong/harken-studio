@@ -1,6 +1,7 @@
 #include "Packaging/PackageVerifier.h"
 
 #include "Packaging/PackageReader.h"
+#include "Packaging/PackageInventory.h"
 #include "Platform/PlatformPaths.h"
 #include "Versions/StudioCapabilities.h"
 
@@ -130,62 +131,20 @@ PackageVerifyResult PackageVerifier::verify(const QString& archivePath,
         result.error = readError;
         return result;
     }
-    QJsonObject manifest;
-    if (!parseJsonObject(manifestData, &manifest, &result.error, kPackageManifestName))
-        return result;
-
-    if (manifest[QStringLiteral("buildId")].toString() != expected.buildId) {
-        result.error = QStringLiteral("Manifest buildId mismatch: expected %1, got %2")
-                           .arg(expected.buildId,
-                                manifest[QStringLiteral("buildId")].toString());
+    const auto inventory = PackageInventory::parse(manifestData, expected.semanticVersion, expected.buildId);
+    if (!inventory.ok) {
+        result.error = inventory.error;
         return result;
     }
-    if (manifest[QStringLiteral("version")].toString() != expected.semanticVersion) {
-        result.error = QStringLiteral("Manifest version mismatch: expected %1, got %2")
-                           .arg(expected.semanticVersion,
-                                manifest[QStringLiteral("version")].toString());
-        return result;
-    }
-
-    if (manifest.value(QStringLiteral("product")).toString() != QStringLiteral("HarkenStudio")) {
-        result.error = QStringLiteral("Package product is not HarkenStudio");
-        return result;
-    }
-
-    const QJsonArray files = manifest[QStringLiteral("files")].toArray();
-    if (files.isEmpty()) {
-        result.error = QStringLiteral("Manifest lists no files");
-        return result;
-    }
-    static const QRegularExpression sha256Pattern(QStringLiteral("^[0-9a-fA-F]{64}$"));
     QSet<QString> manifestPaths;
     QHash<QString, QString> fileSha256ByPath;
-    for (const auto& value : files) {
-        const QJsonObject record = value.toObject();
-        const QString path = record[QStringLiteral("path")].toString();
-        if (path.isEmpty()) {
-            result.error = QStringLiteral("Manifest entry with empty path");
+    for (auto entry = inventory.files.cbegin(); entry != inventory.files.cend(); ++entry) {
+        if (entrySizeByPath.contains(entry.key()) && entrySizeByPath.value(entry.key()) != entry->size) {
+            result.error = QStringLiteral("Manifest size disagrees with the archive for: %1").arg(entry.key());
             return result;
         }
-
-        const QString sha256 = record[QStringLiteral("sha256")].toString();
-        if (!sha256Pattern.match(sha256).hasMatch()) {
-            result.error =
-                QStringLiteral("Manifest entry with invalid sha256: %1").arg(path);
-            return result;
-        }
-
-        const auto sizeIt = entrySizeByPath.constFind(path);
-        if (sizeIt != entrySizeByPath.constEnd() &&
-            record[QStringLiteral("size")].toInteger(-1) != sizeIt.value()) {
-            result.error =
-                QStringLiteral("Manifest size disagrees with the archive for: %1")
-                    .arg(path);
-            return result;
-        }
-
-        manifestPaths.insert(path);
-        fileSha256ByPath.insert(path, sha256.toLower());
+        manifestPaths.insert(entry.key());
+        fileSha256ByPath.insert(entry.key(), entry->sha256);
     }
 
     QSet<QString> payloadPaths = filePaths;
@@ -216,7 +175,7 @@ PackageVerifyResult PackageVerifier::verify(const QString& archivePath,
                                     expected.buildId, &result.error,
                                     &result.capabilitiesVersion))
         return result;
-    result.channel = manifest[QStringLiteral("channel")].toString();
+    result.channel = inventory.channel;
     result.fileSha256ByPath = fileSha256ByPath;
     result.ok = true;
     return result;

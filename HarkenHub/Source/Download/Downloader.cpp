@@ -180,6 +180,7 @@ void Downloader::beginAttempt()
     responseUsable_ = false;
     restartRequested_ = false;
     writeFailed_ = false;
+    sizeExceeded_ = false;
     httpStatus_ = 0;
     resumeOffset_ = 0;
     metaLastModified_.clear();
@@ -364,22 +365,32 @@ void Downloader::handleReadyRead()
         handleResponseHeader();
     if (!reply_)
         return;
-    const QByteArray chunk = reply_->readAll();
-    if (responseUsable_ && !writeFailed_ && file_.write(chunk) != chunk.size()) {
-        writeFailed_ = true;
+    if (!writeReplyData())
         reply_->abort();
+}
+
+bool Downloader::writeReplyData()
+{
+    while (reply_->bytesAvailable() > 0) {
+        const QByteArray chunk = reply_->read(64 * 1024);
+        if (!responseUsable_ || writeFailed_ || sizeExceeded_) continue;
+        if (request_.expectedSizeBytes >= 0 && chunk.size() > request_.expectedSizeBytes - file_.size()) {
+            sizeExceeded_ = true;
+            return false;
+        }
+        if (file_.write(chunk) != chunk.size()) {
+            writeFailed_ = true;
+            return false;
+        }
     }
+    return true;
 }
 
 void Downloader::handleReplyFinished()
 {
     if (!headerHandled_ && !restartRequested_)
         handleResponseHeader();
-    if (responseUsable_ && !writeFailed_ && reply_->bytesAvailable() > 0) {
-        const QByteArray chunk = reply_->readAll();
-        if (file_.write(chunk) != chunk.size())
-            writeFailed_ = true;
-    }
+    writeReplyData();
 
     const auto networkError = reply_->error();
     const QString networkErrorText = reply_->errorString();
@@ -395,9 +406,10 @@ void Downloader::handleReplyFinished()
     reply_->deleteLater();
     reply_ = nullptr;
 
-    if (writeFailed_) {
+    if (writeFailed_ || sizeExceeded_) {
         discardPartialFiles();
-        failPermanently(QStringLiteral("Failed writing the download to disk"));
+        failPermanently(sizeExceeded_ ? QStringLiteral("Download exceeds the signed size limit")
+                                     : QStringLiteral("Failed writing the download to disk"));
         return;
     }
 

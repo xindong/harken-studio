@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QJsonObject>
+#include <QMap>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -51,6 +52,13 @@ public:
         bool checkOnly = false;
         bool confirmTargetChanges = false;
         QByteArray approvedPlanHash;
+        bool preserveUnownedTarget = false;
+        bool restoreIntegration = false;
+        bool confirmUnownedConflicts = false;
+        bool recoverRestore = false;
+        QJsonObject officialRelease;
+        QMap<QString, QByteArray> officialFileHashes;
+        QString restorationBackupPath;
         bool removeIntegration = false;
         bool confirmRemoval = false;
         QString removalBackupPath;
@@ -76,6 +84,7 @@ public:
         bool changesDetected = false;
         QByteArray planHash;
         QStringList modifiedFiles;
+        QStringList conflictingFiles;
         QStringList lineEndingFiles;
         QStringList encodingFiles;
         QStringList missingFiles;
@@ -92,6 +101,7 @@ public:
         QString sdkSourcePath;
         QString sdkInstallPath;
         QString removalBackupPath;
+        QString restorationBackupPath;
         QString jsonReportPath;
         QString textReportPath;
         int sdkFilesCopied = 0;
@@ -113,6 +123,7 @@ signals:
     void stepUpdated(int index, const VNX::UnityIntegrationService::StepResult& step);
 
 private:
+    Result restoreIntegration(const Request& request);
     Result migrateIntegration(const Request& request);
     Result removeIntegration(const Request& request);
     static QJsonObject stepToJson(const StepResult& step);

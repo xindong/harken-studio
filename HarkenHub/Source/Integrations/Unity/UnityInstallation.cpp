@@ -478,9 +478,31 @@ bool hasPendingMigration(const QString& projectRoot)
     return journal.exists() || journal.isSymLink() || journal.isJunction();
 }
 
+QString removalJournalPath(const QString& projectRoot)
+{
+    return QDir(projectRoot).filePath(QStringLiteral("Library/HarkenIntegration/pending-removal.json"));
+}
+
+bool hasPendingRemoval(const QString& projectRoot)
+{
+    const QFileInfo journal(removalJournalPath(projectRoot));
+    return journal.exists() || journal.isSymLink() || journal.isJunction();
+}
+
 bool samePath(const QString& left, const QString& right)
 {
     return pathKey(left) == pathKey(right);
+}
+
+QString restoreJournalPath(const QString& projectRoot)
+{
+    return QDir(projectRoot).filePath(QStringLiteral("Library/HarkenIntegration/pending-restore.json"));
+}
+
+bool hasPendingRestore(const QString& projectRoot)
+{
+    const QFileInfo journal(restoreJournalPath(projectRoot));
+    return journal.exists() || journal.isSymLink() || journal.isJunction();
 }
 
 bool containsPath(const QString& parent, const QString& child)
@@ -744,6 +766,22 @@ Discovery discover(const QString& projectRoot)
             && !state.value(QStringLiteral("managed_files")).toArray().isEmpty();
         for (const QJsonValue& value : state.value(QStringLiteral("managed_files")).toArray())
             item.managed &= value.isString() && safeRelativePath(value.toString());
+        item.removed = state.value(QStringLiteral("schema_version")).toInt() == 1
+            && state.value(QStringLiteral("package_name")).toString() == QStringLiteral("com.harken.core")
+            && state.value(QStringLiteral("installation_state")).toString() == QStringLiteral("removed")
+            && state.value(QStringLiteral("managed_files")).isArray()
+            && state.value(QStringLiteral("managed_files")).toArray().isEmpty();
+        if (item.removed) {
+            item.removed = !QFileInfo::exists(QDir(item.path).filePath(QStringLiteral("package.json")))
+                && !QFileInfo::exists(QDir(item.path).filePath(QStringLiteral("harken-integration.json")))
+                && std::none_of(footprints.cbegin(), footprints.cend(), [&](const QString& file) {
+                    return containsPath(item.path, file);
+                });
+        }
+    }
+    for (qsizetype i = result.installations.size(); i > 0; --i) {
+        if (!result.installations[i - 1].removed) continue;
+        result.preservedInstallations.prepend(result.installations.takeAt(i - 1));
     }
     if (!budget.error.isEmpty()) result.errors << budget.error;
     result.errors.removeDuplicates();
@@ -753,13 +791,25 @@ Discovery discover(const QString& projectRoot)
 }
 
 bool validateTarget(const QString& projectRoot, const QString& target,
-                    QString* error, bool removing)
+                    QString* error, bool removing, bool preserveUnowned, bool restoring)
 {
+    if (!restoring && hasPendingRestore(projectRoot)) {
+        *error = QStringLiteral("An unfinished Integration Package restoration must be recovered before continuing.");
+        return false;
+    }
+    if (!removing && hasPendingRemoval(projectRoot)) {
+        *error = QStringLiteral("An unfinished Integration Package removal must be completed before continuing. Use Uninstall Integration Package to retry.");
+        return false;
+    }
     if (hasPendingMigration(projectRoot)) {
         *error = QStringLiteral("An unfinished Integration Package migration must be recovered before continuing.");
         return false;
     }
     const Discovery discovery = discover(projectRoot);
+    const bool retained = std::any_of(discovery.preservedInstallations.cbegin(), discovery.preservedInstallations.cend(),
+        [&](const Installation& item) { return samePath(item.path, target); });
+    const bool preserveFiles = retained || (preserveUnowned
+        && (removing || !QFileInfo::exists(QDir(target).filePath(QStringLiteral("package.json")))));
     if (!discovery.errors.isEmpty()) {
         *error = discovery.errors.join(QLatin1Char('\n'));
         return false;
@@ -782,7 +832,7 @@ bool validateTarget(const QString& projectRoot, const QString& target,
             *error = QStringLiteral("An Integration Package is already installed at %1. Use that location or remove it before installing elsewhere.").arg(item.path);
             return false;
         }
-    } else if (QDir(target).exists()
+    } else if (!preserveFiles && QDir(target).exists()
                && !QDir(target).entryList(QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot).isEmpty()) {
         *error = QStringLiteral("The installation directory contains unrelated files: %1").arg(target);
         return false;
