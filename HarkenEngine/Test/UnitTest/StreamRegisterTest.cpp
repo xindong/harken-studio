@@ -706,6 +706,64 @@ TEST(StreamRegister, ContentRevisionUsesSemanticHeaderAndChunkChecksums) {
     EXPECT_NE(changed.contentRevision, rechunked.contentRevision);
 }
 
+TEST(StreamRegister, LoopReplacementChangesRevisionAndPreservesPinnedGeneration) {
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& streams = session.Engine()->streams;
+    StreamSpec spec;
+    spec.soundId = harkentest::ObjectId(7205);
+    spec.sampleRate = kRate;
+    spec.channelCount = 1;
+    spec.chunkFrames = 128;
+    const auto samples = harkentest::MakeSine(600, 500.0, kRate, 0.5f);
+    const auto firstPath = TempPath("stream_loop_revision_first.stream");
+    WriteFileBytes(firstPath, BuildStreamBytes(spec, samples));
+    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(spec.soundId, firstPath.c_str()));
+    harken::StreamManager::StreamFacts original{};
+    ASSERT_TRUE(streams.FindFile(spec.soundId, &original));
+    ASSERT_TRUE(streams.AcquirePendingRef(original.fileIndex));
+
+    spec.loopable = true;
+    spec.loopStartFrame = 128;
+    spec.loopEndFrame = 512;
+    const auto replacementPath = TempPath("stream_loop_revision_next.stream");
+    WriteFileBytes(replacementPath, BuildStreamBytes(spec, samples));
+    ASSERT_EQ(VN_OK, Vn_ReplaceStreamFile(spec.soundId, replacementPath.c_str()));
+    harken::StreamManager::StreamFacts current{}, pinned{};
+    ASSERT_TRUE(streams.FindFile(spec.soundId, &current));
+    EXPECT_NE(original.contentRevision, current.contentRevision);
+    ASSERT_TRUE(streams.FactsForFileIndex(original.fileIndex, &pinned));
+    EXPECT_EQ(original.contentRevision, pinned.contentRevision);
+    EXPECT_EQ(original.flags, pinned.flags);
+    EXPECT_EQ(original.loopStartFrame, pinned.loopStartFrame);
+    EXPECT_EQ(original.loopEndFrame, pinned.loopEndFrame);
+    streams.ReleasePendingRef(original.fileIndex);
+    streams.SyncServe();
+    EXPECT_EQ(0u, streams.RetiringFileCount());
+
+    auto previousRevision = current.contentRevision;
+    for (const auto region : {std::pair{192u, 512u}, std::pair{192u, 576u},
+                              std::pair{0u, 600u}, std::pair{0u, 0u}}) {
+        spec.loopStartFrame = region.first;
+        spec.loopEndFrame = region.second;
+        const auto path = TempPath("stream_loop_revision_" +
+            std::to_string(region.first) + "_" + std::to_string(region.second) + ".stream");
+        WriteFileBytes(path, BuildStreamBytes(spec, samples));
+        ASSERT_EQ(VN_OK, Vn_ReplaceStreamFile(spec.soundId, path.c_str()));
+        ASSERT_TRUE(streams.FindFile(spec.soundId, &current));
+        if (region.second == 0) EXPECT_EQ(previousRevision, current.contentRevision);
+        else EXPECT_NE(previousRevision, current.contentRevision);
+        previousRevision = current.contentRevision;
+        streams.SyncServe();
+    }
+    EXPECT_EQ(VN_BAD_STREAM_FILE,
+              Vn_ReplaceStreamFile(spec.soundId, "missing_loop_revision.stream"));
+    ASSERT_TRUE(streams.FindFile(spec.soundId, &current));
+    EXPECT_EQ(previousRevision, current.contentRevision);
+    EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(spec.soundId));
+    EXPECT_EQ(0u, streams.RetiringFileCount());
+}
+
 TEST(StreamRegister, EnqueueFailureReturnsBadFileAndCanRetry) {
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());

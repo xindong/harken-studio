@@ -217,6 +217,9 @@ TEST(ClockKernel, CheckedSpanConversionRejectsInvalidAndPreservesEndpoints) {
     ASSERT_TRUE(clock.TryTickSpanToFrames(harken::MusicalTick{0}, 960,
                                           &frames));
     EXPECT_EQ(frames, 24000u);
+    ASSERT_TRUE(clock.TryTickSpanToFrames(
+        harken::MusicalTick{-300000000000000000LL}, 600000000000000000LL, &frames));
+    EXPECT_EQ(15000000000000000000ULL, frames);
     EXPECT_FALSE(clock.TryTimeSpanToFrames(
         harken::AbsoluteTime{INT64_MAX - 1}, 2, &frames));
     EXPECT_FALSE(clock.TryTickSpanToFrames(

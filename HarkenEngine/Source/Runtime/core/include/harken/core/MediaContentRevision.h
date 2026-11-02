@@ -225,6 +225,8 @@ struct MediaStreamSemanticHeaderV1 {
     std::uint32_t formatVintage = 0;
     std::uint32_t chunkFrames = 0;
     std::uint32_t chunkCount = 0;
+    std::uint64_t loopStartFrame = 0;
+    std::uint64_t loopEndFrame = 0;
 };
 
 inline bool ComputeMediaStreamContentRevisionV1(
@@ -236,6 +238,12 @@ inline bool ComputeMediaStreamContentRevisionV1(
         header.chunkFrames == 0 ||
         header.chunkCount == 0 || chunkChecksums == nullptr ||
         outRevision == nullptr) {
+        return false;
+    }
+    if ((header.loopEndFrame == 0 && header.loopStartFrame != 0) ||
+        (header.loopEndFrame != 0 &&
+         (header.loopStartFrame >= header.loopEndFrame ||
+          header.loopEndFrame > header.frameCount))) {
         return false;
     }
 
@@ -250,6 +258,12 @@ inline bool ComputeMediaStreamContentRevisionV1(
     hash.AddU32(header.chunkCount);
     for (std::uint32_t i = 0; i < header.chunkCount; ++i) {
         hash.AddU64(chunkChecksums[i]);
+    }
+    // As with resident PCM, preserve the non-loop identity and append only
+    // effective loop metadata. File-format sentinels are resolved by the owner.
+    if (header.loopEndFrame != 0) {
+        hash.AddU64(header.loopStartFrame);
+        hash.AddU64(header.loopEndFrame);
     }
 
     *outRevision = hash.Finish();

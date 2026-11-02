@@ -983,6 +983,10 @@ VnResult StreamManager::OpenAndValidate(Request& request,
         header.formatVersion,
         header.chunkFrames,
         entry.chunkCount,
+        (entry.flags & kStreamFlagLoopable) != 0 ? entry.loopStartFrame : 0,
+        (entry.flags & kStreamFlagLoopable) != 0
+            ? (entry.loopEndFrame == 0 ? entry.frameCount : entry.loopEndFrame)
+            : 0,
     };
     if (!ComputeMediaStreamContentRevisionV1(
             semanticHeader, record.chunkChecksums.data(),

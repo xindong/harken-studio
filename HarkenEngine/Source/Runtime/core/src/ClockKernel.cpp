@@ -407,7 +407,8 @@ bool ClockKernel::TryTimeSpanToFrames(AbsoluteTime start,
           last.value == INT64_MIN || last.value == INT64_MAX))) {
         return false;
     }
-    *outFrames = static_cast<std::uint64_t>(last.value - first.value);
+    *outFrames = static_cast<std::uint64_t>(last.value) -
+                 static_cast<std::uint64_t>(first.value);
     return true;
 }
 
@@ -426,7 +427,8 @@ bool ClockKernel::TryTickSpanToFrames(MusicalTick start,
           last.value == INT64_MIN || last.value == INT64_MAX))) {
         return false;
     }
-    *outFrames = static_cast<std::uint64_t>(last.value - first.value);
+    *outFrames = static_cast<std::uint64_t>(last.value) -
+                 static_cast<std::uint64_t>(first.value);
     return true;
 }
 

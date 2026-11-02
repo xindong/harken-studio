@@ -71233,9 +71233,12 @@ struct NativeReadCutPreparation {
 bool TryPendingStartVoiceDb(harken::Engine& engine,
                           const harken::PendingStartRecord& rec,
                           float* result,
-                          const harken::VariableReadCutReader* reader = nullptr) {
+                          const harken::VariableReadCutReader* reader = nullptr,
+                          const float* directOverride = nullptr) {
     float voiceDb = rec.baseVolumeDb;
-    if (rec.hasVolume) {
+    if (directOverride != nullptr) {
+        voiceDb += *directOverride;
+    } else if (rec.hasVolume) {
         voiceDb += rec.volumeDb;
     }
     const VnEmitterHandle emitter =
@@ -108427,11 +108430,18 @@ VnResult Vn_SetVoiceOutputVolume(VnVoiceHandle handle, float volumeDb,
     if (!harken::TryVolumeGainFromDb(volumeDb)) return VN_INVALID_ARG;
     const auto resolved = engine->ledger.Classify(handle);
     if (resolved.kind == harken::VoiceLedger::HandleKind::Pending) {
-        engine->pendingStarts[resolved.ledgerSlot].outputBusVolumeDb = volumeDb;
+        auto& rec = engine->pendingStarts[resolved.ledgerSlot];
+        float voiceDb = 0.0f;
+        if (!TryPendingStartVoiceDb(*engine, rec, &voiceDb)) return VN_BACKPRESSURE;
+        if (!VolumeStagesConvertible(voiceDb, volumeDb)) return VN_INVALID_ARG;
+        rec.outputBusVolumeDb = volumeDb;
         return VN_OK;
     }
     if (resolved.kind == harken::VoiceLedger::HandleKind::Parked) {
-        engine->parkRecords[resolved.ledgerSlot].facts.outputBusVolumeDb = volumeDb;
+        auto& rec = engine->parkRecords[resolved.ledgerSlot];
+        if (!VolumeStagesConvertible(rec.frozenNonSpatialDb + rec.instanceVolumeDb,
+                                     volumeDb)) return VN_INVALID_ARG;
+        rec.facts.outputBusVolumeDb = volumeDb;
         return VN_OK;
     }
     const VnVoiceHandle render =
@@ -108485,7 +108495,11 @@ VnResult Vn_SetVoiceVolume(VnVoiceHandle handle, float volumeDb,
         }
         harken::PendingStartRecord& rec =
             engine->pendingStarts[resolved.ledgerSlot];
-        if (!harken::TryVolumeGainFromDb(rec.baseVolumeDb + volumeDb)) {
+        float voiceDb = 0.0f;
+        if (!TryPendingStartVoiceDb(*engine, rec, &voiceDb, nullptr, &volumeDb)) {
+            return VN_BACKPRESSURE;
+        }
+        if (!VolumeStagesConvertible(voiceDb, rec.outputBusVolumeDb)) {
             return VN_INVALID_ARG;
         }
         rec.hasVolume = true;
@@ -108509,13 +108523,13 @@ VnResult Vn_SetVoiceVolume(VnVoiceHandle handle, float volumeDb,
                 break;
             }
         }
-        if (rec.bindings.empty() &&
-            !harken::TryVolumeGainFromDb(rec.facts.baseVolumeDb + volumeDb +
-                                        rec.instanceVolumeDb)) {
+        const float prospective = rec.frozenNonSpatialDb + (volumeDb - previous);
+        if (!VolumeStagesConvertible(prospective + rec.instanceVolumeDb,
+                                     rec.facts.outputBusVolumeDb)) {
             return VN_INVALID_ARG;
         }
         SetParkedApiDirect(rec, harken::kTargetVoiceVolume, volumeDb);
-        rec.frozenNonSpatialDb += (volumeDb - previous);
+        rec.frozenNonSpatialDb = prospective;
         return VN_OK;
     }
     const VnVoiceHandle render =
