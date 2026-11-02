@@ -195,7 +195,8 @@ class PlayableInstanceTable {
 public:
     // Capacity is the number of concurrently live instances. Reservation
     // fixes every row's address before any original lifetime can name it.
-    explicit PlayableInstanceTable(std::uint32_t capacity);
+    explicit PlayableInstanceTable(std::uint32_t capacity, std::uint32_t generationFloor = 0);
+    std::uint32_t GenerationHighWater() const noexcept;
     bool PrepareStorage() noexcept {
         return m_entries.ConstructThrough(m_entries.Capacity());
     }
@@ -690,6 +691,7 @@ private:
     void ReturnOriginalLifetime(OriginalLifetimePin& original) noexcept;
     void ReturnOriginalLifetimeRetirementHold(OriginalLifetimeRetirementHold& original) noexcept;
     StableRowStorage<Entry> m_entries;
+    std::uint32_t m_initialGeneration = 1;
     std::uint32_t m_originalDispositionCount = 0;
     std::uint64_t m_nextOriginalLifetimeMarker = 1;
     bool m_originalLifetimeMarkerExhausted = false;

@@ -131,6 +131,34 @@ void RetireFully(PlayableInstanceTable& table, PlayableInstanceHandle handle)
     table.AdvanceLifecycle(handle, PlayableLifecycle::Retired);
 }
 
+TEST(PlayableInstanceTable, GenerationFloorCoversPreparedAndDirectLazyRows) {
+    PlayableInstanceTable table(3, 41);
+    ASSERT_TRUE(table.PrepareStorageForAcquire(1));
+    harken::PreparedPlayableInstance first;
+    ASSERT_TRUE(table.PrepareAcquireFromPreparedStorage(PlayableKind::Sound, 0, &first));
+    EXPECT_EQ(42u, first.Handle() >> 32);
+    ASSERT_TRUE(table.CommitPrepared(&first));
+    ASSERT_TRUE(table.PrepareStorageForAcquire(1));
+    harken::PreparedPlayableInstance second;
+    ASSERT_TRUE(table.PrepareAcquireFromPreparedStorage(PlayableKind::Sound, 0, &second));
+    EXPECT_EQ(42u, second.Handle() >> 32);
+    ASSERT_TRUE(table.CancelPrepared(&second));
+    EXPECT_EQ(43u, table.GenerationHighWater());
+    const auto direct = table.Acquire(PlayableKind::Sound, 0);
+    ASSERT_NE(0u, direct);
+    EXPECT_EQ(43u, direct >> 32);
+    const auto late = table.Acquire(PlayableKind::Sound, 0);
+    ASSERT_NE(0u, late);
+    EXPECT_EQ(42u, late >> 32);
+    EXPECT_THROW((PlayableInstanceTable(1, 0x7fffffffu)), std::invalid_argument);
+    PlayableInstanceTable last(1, 0x7ffffffeu);
+    const auto final = last.Acquire(PlayableKind::Sound, 0);
+    ASSERT_NE(0u, final);
+    RetireFully(last, final);
+    EXPECT_EQ(0u, last.Acquire(PlayableKind::Sound, 0));
+    EXPECT_EQ(0x7fffffffu, last.GenerationHighWater());
+}
+
 struct FailingOwnerProbe {
     bool committed = false;
     bool cancelled = false;

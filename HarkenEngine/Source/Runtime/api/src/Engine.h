@@ -5669,6 +5669,13 @@ struct ProjectGenerationReservationDomainV1 {
 };
 
 
+struct EngineHandleGenerationFloors {
+    std::uint32_t voice = 0;
+    std::uint32_t emitter = 0;
+    std::uint32_t pack = 0;
+    std::uint32_t playable = 0;
+};
+
 struct Engine {
     // Outlives every preparation that holds physical relation backing.
     StableRowStorage<EnginePlayableMemberRelation> memberRelations;
@@ -6710,7 +6717,8 @@ public:
     };
 
     explicit Engine(const EngineConfig& resolved, std::uint64_t packGenerationFloor = 0,
-                    std::uint32_t originalConditionalCapacity = 0)
+                    std::uint32_t originalConditionalCapacity = 0,
+                    const EngineHandleGenerationFloors& handleFloors = {})
         : config(resolved),
           playableStorage(resolved),
           logicPacks(resolved.maxPacks),
@@ -6719,7 +6727,7 @@ public:
                           resolved.maxPlayableInstances, resolved.maxPacks,
                           packGenerationFloor),
           packs(resolved.maxPacks, PackRetirementCapacity(resolved),
-                PackIdentityLeaseCapacity(resolved)),
+                PackIdentityLeaseCapacity(resolved), handleFloors.pack),
           streams(resolved),
           effectBank(resolved),
           decisions(resolved.maxDecisionRows,
@@ -6759,7 +6767,7 @@ public:
           buses(resolved, topologyPlans, effectBank, dynamicRoutes,
                 &biquadTrig),
           actionCommitBundle(16),
-          playableInstances(resolved.maxPlayableInstances),
+          playableInstances(resolved.maxPlayableInstances, handleFloors.playable),
           authoredStopRoots(resolved.maxPlayableInstances),
           params(resolved, 0),
           variables(resolved.maxEmitters + 1u, resolved.emitterVariableSlots,
@@ -6791,7 +6799,7 @@ public:
                  [](void* context, std::uint32_t slot) noexcept {
                      auto& engine = *static_cast<Engine*>(context);
                      return engine.pendingStarts.Emplace(slot) && engine.parkRecords.Emplace(slot);
-                 }, this),
+                 }, this, handleFloors.voice),
           playablePartitions(resolved.maxPlayableInstances),
            actionPlayAttemptTokens(1),
            initialPendingVariableOwnerScratch(1),
@@ -6842,7 +6850,7 @@ public:
                       resolved.maxPropertiesPerCurrentSlice),
           meterRing(resolved.meterRingBlocks, resolved.maxBuses),
           spatial(resolved, 0),
-          emitters(resolved),
+          emitters(resolved, handleFloors.emitter),
           monitorEmitters(emitters, resolved.maxEmitters, monitorRequests.EngineInstance()),
           rng(resolved.randomSeed == 0 ? harken::SplitMix64::kDefaultSeed
                                        : resolved.randomSeed),

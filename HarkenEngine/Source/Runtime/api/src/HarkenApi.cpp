@@ -6224,6 +6224,7 @@ EnginePageOwner* g_engineOwner = nullptr;
 
 // Survives Term/Init so checked tokens cannot revive after reloading the same Packs.
 std::uint64_t g_lastPackGeneration = 0;
+EngineHandleGenerationFloors g_lastHandleGenerations{};
 #if !defined(HARKEN_RT_QUALIFICATION)
 thread_local std::uint32_t g_testPlayableCapacity = 0;
 thread_local std::uint32_t g_testModeCapacity = 0;
@@ -6355,6 +6356,14 @@ void TeardownEngine(Engine* engine) {
     }
     g_lastPackGeneration = std::max(g_lastPackGeneration,
         engine->packComposition.CompositeGeneration());
+    g_lastHandleGenerations.voice = std::max(g_lastHandleGenerations.voice,
+        engine->ledger.GenerationHighWater());
+    g_lastHandleGenerations.emitter = std::max(g_lastHandleGenerations.emitter,
+        engine->emitters.GenerationHighWater());
+    g_lastHandleGenerations.pack = std::max(g_lastHandleGenerations.pack,
+        engine->packs.GenerationHighWater());
+    g_lastHandleGenerations.playable = std::max(g_lastHandleGenerations.playable,
+        engine->playableInstances.GenerationHighWater());
     assert(g_engineOwner != nullptr && g_engineOwner->instance == engine);
     delete g_engineOwner;
     g_engineOwner = nullptr;
@@ -101384,7 +101393,8 @@ VnResult Vn_Init(const VnConfig* config) {
             throw std::bad_alloc();
         }
         engine = std::construct_at(static_cast<harken::Engine*>(engineOwner->pages.Address()),
-            resolved, harken::detail::g_lastPackGeneration, originalConditionalRows);
+            resolved, harken::detail::g_lastPackGeneration, originalConditionalRows,
+            harken::detail::g_lastHandleGenerations);
         engineOwner->instance = engine;
     } catch (...) {
         engineOwner.reset();

@@ -141,6 +141,42 @@ TEST(MonitorSession, RecordRejectsWithoutPermissionOrLease) {
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
 }
 
+TEST(MonitorSession, RecordingOpenFailurePreservesExistingDirectoryAndCanRetry) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    for (const auto version : {0u, 1u, 2u, 3u}) {
+        SCOPED_TRACE(version);
+        VnMonitorSessionDescV2 openDesc{};
+        const auto legacy = MakeRecordDesc();
+        std::memcpy(&openDesc, &legacy, sizeof(legacy));
+        openDesc.structSize = version == 0 ? sizeof(legacy) : sizeof(openDesc);
+        openDesc.requestedExecutionFactVersion = version;
+        VnMonitorSessionHandle handle = 0;
+        ASSERT_EQ(VN_OK, Vn_MonitorOpenSession(
+            reinterpret_cast<const VnMonitorSessionDesc*>(&openDesc), &handle));
+        VnMonitorCaptureControlStatus lease{};
+        ASSERT_EQ(VN_OK, Acquire(handle, &lease));
+        const auto path = TempSessionPath("open-failure-directory");
+        RemoveIfExists(path);
+        ASSERT_TRUE(std::filesystem::create_directory(path));
+        auto desc = MakeRecordingDesc(path.c_str(), 1024 * 1024);
+        for (unsigned attempt = 0; attempt <= VN_MONITOR_HARD_SESSIONS_PER_ENGINE; ++attempt) {
+            EXPECT_EQ(VN_MONITOR_RECORDING_FAILED,
+                Vn_MonitorStartRecording(handle, lease.leaseGeneration, &desc));
+            EXPECT_TRUE(std::filesystem::is_directory(path));
+            EXPECT_FALSE(harken::monitor::RecorderConsumerEnabledForTests());
+            EXPECT_EQ(0u, harken::monitor::RecordingReceiverForTests());
+            if (!std::filesystem::is_directory(path)) break;
+        }
+        RemoveIfExists(path);
+        ASSERT_EQ(VN_OK, Vn_MonitorStartRecording(handle, lease.leaseGeneration, &desc));
+        EXPECT_EQ(VN_MONITOR_RECORDING_STATE_STOPPED,
+            StopAndWait(handle, lease.leaseGeneration).state);
+        EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
+        RemoveIfExists(path);
+    }
+}
+
 TEST(MonitorSession, RecordStartPollStopWritesCommittedFile) {
     harkentest::EngineSession engine(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());

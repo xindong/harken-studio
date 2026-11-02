@@ -4699,9 +4699,7 @@ TEST(PackComposition, PreparedMutationMovesKeepOneReservationOwner) {
 
 TEST(PackComposition, UnloadPrepareRefusesSlotGenerationWrap) {
     PCMRegistry registry;
-    PackTable packs(1);
-    ASSERT_EQ(VN_OK, packs.SetSlotGenerationForTests(
-                         0, std::numeric_limits<std::uint32_t>::max()));
+    PackTable packs(1, 0, 0, UINT32_MAX - 1u);
     PackTable::PreparedLoadToken load;
     ASSERT_EQ(VN_OK, packs.PrepareLoad(&load));
     ASSERT_EQ(static_cast<std::uint32_t>(load.Handle() >> 32),
@@ -4717,6 +4715,11 @@ TEST(PackComposition, UnloadPrepareRefusesSlotGenerationWrap) {
               packs.PrepareUnloadMutation(handle, registry, &mutation));
     EXPECT_FALSE(mutation.IsPrepared());
     EXPECT_EQ(1u, packs.LoadedCount());
+    EXPECT_EQ(VN_RUNTIME_RECREATE_REQUIRED, packs.CanUnload(handle, registry));
+    EXPECT_EQ(VN_RUNTIME_RECREATE_REQUIRED, packs.Unload(handle, registry));
+    EXPECT_EQ(1u, packs.LoadedCount());
+    EXPECT_EQ(UINT32_MAX, packs.GenerationHighWater());
+    EXPECT_THROW((PackTable(1, 0, 0, packs.GenerationHighWater())), std::invalid_argument);
 }
 
 TEST(PackCompositionContract, CanonicalUnloadExRefusesOwnedPcmInUse) {
