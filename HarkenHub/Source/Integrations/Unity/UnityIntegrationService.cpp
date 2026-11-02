@@ -242,6 +242,19 @@ bool copyFiles(const QString& sourceRoot,
     return true;
 }
 
+bool copyFilePermissions(const QString& sourceRoot, const QString& targetRoot,
+                         const QStringList& relativePaths, QString* error)
+{
+    for (const auto& relative : relativePaths) {
+        if (!QFile::setPermissions(QDir(targetRoot).filePath(relative),
+                                  QFile::permissions(QDir(sourceRoot).filePath(relative)))) {
+            *error = relative;
+            return false;
+        }
+    }
+    return true;
+}
+
 FileDigest sha256File(const QString& path);
 
 bool verifyCopiedFiles(const QString& sourceRoot,
@@ -414,7 +427,17 @@ bool prepareInstallation(const UnityIntegrationService::Request& request,
     result.sdkInstallPath = QDir(root).relativeFilePath(*target);
     if (!UnityInstallation::validatePath(*target + QStringLiteral(".meta"), error)
         || !lockUnityProject(root, lock, error)) return false;
-    if (!UnityInstallation::validateTarget(root, *target, error, request.removeIntegration,
+    if (request.recoverRestore) {
+        if (UnityInstallation::hasPendingRemoval(root)) {
+            *error = QStringLiteral("An unfinished Integration Package removal must be completed before continuing. Use Uninstall Integration Package to retry.");
+            return false;
+        }
+        if (UnityInstallation::hasPendingMigration(root)) {
+            *error = QStringLiteral("An unfinished Integration Package migration must be recovered before continuing.");
+            return false;
+        }
+        if (QFileInfo::exists(*target) && !UnityInstallation::validateTree(*target, error)) return false;
+    } else if (!UnityInstallation::validateTarget(root, *target, error, request.removeIntegration,
                                            request.preserveUnownedTarget || pendingRemoval,
                                            request.restoreIntegration || request.recoverRestore)) return false;
     if ((!request.checkOnly || request.removeIntegration)
@@ -2104,14 +2127,9 @@ UnityIntegrationService::Result UnityIntegrationService::restoreIntegration(cons
         || !copyFiles(result.sdkSourcePath, staged, expectedFiles.keys(), &error)
         || !writeInstalledState(staged, version, expectedFiles.keys(), request.officialFileHashes, textHashes, &error, request.officialRelease))
         return finish(false, QStringLiteral("Could not stage or back up the restoration. No project files were changed."));
-    for (auto it = existingFiles.begin(); it != existingFiles.end(); ++it) {
-        const auto permissions = QFile::permissions(QDir(target).filePath(it.key()));
-        if (!QFile::setPermissions(QDir(backupPackage).filePath(it.key()), permissions)
-            || !QFile::setPermissions(QDir(staged).filePath(it.key()), permissions)) {
-            error = it.key();
-            return finish(false, QStringLiteral("Could not preserve existing file permissions. No project files were changed."));
-        }
-    }
+    if (!copyFilePermissions(target, backupPackage, existingFiles.keys(), &error)
+        || !copyFilePermissions(target, staged, existingFiles.keys(), &error))
+        return finish(false, QStringLiteral("Could not preserve existing file permissions. No project files were changed."));
     const QString rootMeta = target + QStringLiteral(".meta");
     if (QFileInfo::exists(rootMeta) && !copyFileAtomically(rootMeta, backupPackage + QStringLiteral(".meta"), &error))
         return finish(false, QStringLiteral("Could not back up Unity metadata. No project files were changed."));
@@ -2839,6 +2857,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                 if (backedUp) backedUp = QDir().mkpath(QDir(snapshot).filePath(directory.toString()));
             backedUp = backedUp
                 && copyFiles(targetSdk, snapshot, retainedSnapshot.value(QStringLiteral("files")).toObject().keys(), &error)
+                && copyFilePermissions(targetSdk, snapshot, retainedSnapshot.value(QStringLiteral("files")).toObject().keys(), &error)
                 && (retainedSnapshot.value(QStringLiteral("root_meta")).toString().isEmpty()
                     || copyFileAtomically(targetSdk + QStringLiteral(".meta"), snapshot + QStringLiteral(".meta"), &error))
                 && removalSnapshot(snapshot, &copied, &error) && copied == retainedSnapshot
@@ -2868,6 +2887,13 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             step.summary = QStringLiteral("Failed to stage the Unity Integration Package update.");
             step.cause = error;
             step.remediation = QStringLiteral("Check file locks, permissions, and disk space, then retry.");
+            return;
+        }
+        if (retainedTarget && !copyFilePermissions(targetSdk, stageRoot, preservedFiles, &error)) {
+            QDir(stageRoot).removeRecursively();
+            step.status = StepStatus::Failed;
+            step.summary = QStringLiteral("Could not preserve existing file permissions. No project files were changed.");
+            step.cause = error;
             return;
         }
         QStringList stagingMismatches;

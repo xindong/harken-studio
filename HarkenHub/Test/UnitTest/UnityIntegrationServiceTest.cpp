@@ -1978,6 +1978,10 @@ TEST(UnityIntegrationService, RemovalToleratesMissingOwnedFilesAndPreservesUnown
         ASSERT_TRUE(QFile::remove(target + "/" + damaged));
         writeFile(target + "/Project.txt", "project content");
         writeFile(target + "/Old.cs.meta", "orphan metadata");
+        const auto initialPermissions = QFile::permissions(target + "/Project.txt");
+        const auto restorePermissions = qScopeGuard([&]() { QFile::setPermissions(target + "/Project.txt", initialPermissions); });
+        ASSERT_TRUE(QFile::setPermissions(target + "/Project.txt", QFile::ReadOwner | QFile::ReadUser));
+        const auto protectedPermissions = QFile::permissions(target + "/Project.txt");
         ASSERT_TRUE(QDir().mkpath(target + "/EmptyProjectDirectory"));
         VNH::EngineTargetRecord record;
         record.engineKind = VNH::EngineKind::Unity;
@@ -2009,6 +2013,7 @@ TEST(UnityIntegrationService, RemovalToleratesMissingOwnedFilesAndPreservesUnown
         ASSERT_TRUE(service.run(request).success);
         EXPECT_EQ(readFile(target + "/Project.txt"), "project content");
         EXPECT_TRUE(QDir(target + "/EmptyProjectDirectory").exists());
+        EXPECT_EQ(QFile::permissions(target + "/Project.txt"), protectedPermissions);
     }
 }
 
@@ -3394,6 +3399,7 @@ TEST_F(UnityRestorationTest, ReadOnlyManagedFilesBlockRestorationWithoutChanging
 
 TEST_F(UnityRestorationTest, RecoversBothRenameBoundariesAndBlocksOtherMutationsWhilePending)
 {
+    writeFile(project + "/Packages/manifest.json", R"({"dependencies":{"com.harken.core":"1.0.0"}})");
     writeFile(installed + "/Runtime/Harken.Core.asmdef", "original damaged bytes");
     const auto restored = apply();
     ASSERT_TRUE(restored.success) << restored.steps.back().cause.toStdString();
