@@ -1,9 +1,10 @@
 #include "Tooling/Harkenizer/Core/ProjectBuildSnapshot.h"
 
 #include "AssetPipeline/AssetRegistry.h"
-#include "AssetPipeline/FileContentCache.h"
+#include "AssetPipeline/SourceContentCache.h"
 #include "AssetPipeline/PathUtils.h"
 #include "ProjectSerializer.h"
+#include "SoundSourceSemantics.h"
 #include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
 #include "Tooling/Harkenizer/ResourceCompiler/ResourceCompiler.h"
 
@@ -23,6 +24,7 @@ std::optional<QJsonObject> projectIdentity(const ProjectBuildSnapshot& snapshot,
     ProjectSerializer serializer;
     if (!serializer.prepareReferenceWrite(project)) return std::nullopt;
     QJsonArray items;
+    QSet<uint32_t> sourceIds;
     QSet<const ProjectItem*> visited;
     const auto visit = [&](const auto& self, const ProjectItem* item) -> bool {
         if (!item || visited.contains(item)) return true;
@@ -30,9 +32,11 @@ std::optional<QJsonObject> projectIdentity(const ProjectBuildSnapshot& snapshot,
         visited.insert(item);
         auto object = serializer.projectItemToJson(*item, false);
         if (object.isEmpty()) return false;
-        object.insert(QStringLiteral("documentHeader"), item->documentHeader);
-        object.insert(QStringLiteral("physicalPath"), project.itemPath(item));
-        object.insert(QStringLiteral("documentPath"), project.objectFilePath(item));
+        object.remove(QStringLiteral("notes"));
+        object.remove(QStringLiteral("color"));
+        if (const auto* sound = item->comp<VSound>())
+            for (const auto* set : SoundSourceSemantics::sourceSets(sound->sources))
+                for (const auto& source : set->entries) sourceIds.insert(source.sourceId);
         object.insert(QStringLiteral("treeParent"), item->parent
             ? item->parent->guid.toString(QUuid::WithoutBraces) : QString());
         QJsonArray children;
@@ -47,55 +51,58 @@ std::optional<QJsonObject> projectIdentity(const ProjectBuildSnapshot& snapshot,
         return true;
     };
     if (!visit(visit, project.root.get())) return std::nullopt;
-    QJsonArray bindings;
     for (const auto* binding : project.allFileBindings()) {
         if (!binding || !binding->rootItem || !visit(visit, binding->rootItem.get())) return std::nullopt;
-        bindings.append(QJsonObject{
-            {QStringLiteral("root"), binding->rootItem->guid.toString(QUuid::WithoutBraces)},
-            {QStringLiteral("bucket"), binding->parentFolder}});
     }
     QJsonObject media;
-    for (auto it = snapshot.media.assets.cbegin(); it != snapshot.media.assets.cend(); ++it) {
-        const auto& asset = it.value();
-        media.insert(QString::number(it.key()), QJsonObject{
-            {QStringLiteral("path"), asset.absolutePath},
-            {QStringLiteral("relativePath"), asset.relativePath},
-            {QStringLiteral("settings"), asset.settings.toJson()}});
+    for (const auto id : sourceIds) {
+        const auto asset = snapshot.media.assets.constFind(id);
+        if (asset == snapshot.media.assets.cend()) continue;
+        const auto override = snapshot.media.fileOverrides.constFind(id);
+        QJsonObject source{{QStringLiteral("path"), asset->absolutePath}};
+        if (override != snapshot.media.fileOverrides.cend())
+            source.insert(QStringLiteral("override"), override->toJson());
+        else if (asset->settings.hash() != ConversionSettings{}.hash())
+            source.insert(QStringLiteral("override"), asset->settings.toJson());
+        media.insert(QString::number(id), source);
     }
-    QJsonObject overrides;
-    for (auto it = snapshot.media.fileOverrides.cbegin(); it != snapshot.media.fileOverrides.cend(); ++it)
-        overrides.insert(QString::number(it.key()), it.value().toJson());
-    return QJsonObject{
+    QJsonObject identity{
         {QStringLiteral("projectId"), project.projectId},
-        {QStringLiteral("name"), project.name},
-        {QStringLiteral("header"), project.documentHeader},
-        {QStringLiteral("projectPath"), project.projectPath},
         {QStringLiteral("languages"), QJsonArray::fromStringList(project.projectLanguages)},
         {QStringLiteral("defaultLanguage"), project.defaultLanguage},
-        {QStringLiteral("platforms"), ProjectPlatformSemantics::platformsToJson(project.platforms)},
         {QStringLiteral("sampleRate"), project.sampleRate},
         {QStringLiteral("channelConfig"), static_cast<int>(project.channelConfig)},
-        {QStringLiteral("exportProjectData"), project.buildExportProjectData},
         {QStringLiteral("exportPackMetadata"), project.buildExportPackMetadata},
         {QStringLiteral("exportWaveforms"), project.buildExportWaveforms},
-        {QStringLiteral("waveformOutputDirectory"), project.buildWaveformOutputDir},
-        {QStringLiteral("bindings"), bindings},
         {QStringLiteral("items"), items},
-        {QStringLiteral("media"), media},
-        {QStringLiteral("mediaOverrides"), overrides}};
+        {QStringLiteral("media"), media}};
+    if (project.buildExportWaveforms)
+        identity.insert(QStringLiteral("waveformOutputDirectory"), project.buildWaveformOutputDir);
+    return identity;
 }
 
 }
 
 std::optional<ProjectBuildIdentity> ProjectBuildSnapshot::buildIdentity(
+    const QString& platform, std::optional<ProjectBuildIdentity>& sharedIdentity,
     const std::function<bool()>& canceled) const
 {
     if (canceled && canceled()) return std::nullopt;
-    ProjectBuildIdentity identity;
-    const auto object = projectIdentity(*this, &identity.objectGuids, canceled);
-    if (!object) return std::nullopt;
-    identity.fingerprint = QString::fromLatin1(QCryptographicHash::hash(
-        QJsonDocument(*object).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256).toHex());
+    const auto* definition = ProjectPlatformSemantics::find(project.platforms, QUuid(platform));
+    if (!definition) return std::nullopt;
+    if (!sharedIdentity) {
+        ProjectBuildIdentity shared;
+        const auto object = projectIdentity(*this, &shared.objectGuids, canceled);
+        if (!object) return std::nullopt;
+        shared.fingerprint = QString::fromLatin1(QCryptographicHash::hash(
+            QJsonDocument(*object).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256).toHex());
+        sharedIdentity = std::move(shared);
+    }
+    auto identity = *sharedIdentity;
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    hash.addData(identity.fingerprint.toLatin1());
+    hash.addData(QJsonDocument(definition->toJson()).toJson(QJsonDocument::Compact));
+    identity.fingerprint = QString::fromLatin1(hash.result().toHex());
     if (canceled && canceled()) return std::nullopt;
     return identity;
 }
@@ -109,10 +116,10 @@ std::shared_ptr<const ProjectBuildSnapshot> ProjectBuildSnapshot::capture(
     snapshot->mediaCache = std::make_shared<harkenizer::resourcecompiler::MediaCache>();
     snapshot->media = AssetRegistry::instance().buildSnapshot(
         QFileInfo(source.projectPath).absolutePath(), source.platforms, false);
-    snapshot->fileContentCache = std::make_shared<FileContentCache>(
+    snapshot->sourceContentCache = std::make_shared<SourceContentCache>(
         QDir(PathUtils::getDotCacheDir(snapshot->media.projectRoot))
-            .filePath(QStringLiteral("pack-build/file-content.json")));
-    snapshot->media.sourceInputs = std::make_shared<BuildSourceInputs>(snapshot->fileContentCache);
+            .filePath(QStringLiteral("pack/sources.json")));
+    snapshot->media.sourceInputs = std::make_shared<BuildSourceInputs>(snapshot->sourceContentCache);
     for (const auto& sourceAsset : source.audioSources) {
         if (snapshot->media.assets.contains(sourceAsset.sourceID)) continue;
         AssetInfo asset;
@@ -122,6 +129,9 @@ std::shared_ptr<const ProjectBuildSnapshot> ProjectBuildSnapshot::capture(
             .filePath(asset.relativePath);
         snapshot->media.assets.insert(asset.sourceID, asset);
     }
+    QStringList sources;
+    for (const auto& asset : snapshot->media.assets) sources.append(asset.absolutePath);
+    snapshot->sourceContentCache->retainSources(sources);
     return snapshot;
 }
 

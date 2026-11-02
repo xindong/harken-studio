@@ -8,6 +8,7 @@
 #include <QMutex>
 #include <QString>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -24,23 +25,6 @@ struct FrameRange
     uint64_t end = 0;
 };
 
-struct DerivativeKey
-{
-    uint32_t sourceId = 0;
-    QString inputFingerprint;
-    ProjectPlatformId platform;
-    uint64_t trimStartFrame = 0;
-    uint64_t trimEndFrame = 0;
-    std::optional<SoundLoopRegion> loopRegion;
-    double scheduleOffsetSec = 0.0;
-    uint32_t processingHash = 0;
-    uint16_t sourceChannels = 0;
-    QString processingFingerprint;
-    QString compilerIdentity;
-
-    bool operator==(const DerivativeKey&) const = default;
-};
-
 struct MaterializedArtifact
 {
     QString path;
@@ -53,6 +37,7 @@ struct MaterializedArtifact
     bool cacheHit = false;
     QString contentHash;
     std::shared_ptr<const std::vector<float>> samples;
+    uint64_t revision = 0;
 };
 
 class MaterializationCache
@@ -66,7 +51,6 @@ public:
 private:
     QMutex mutex_;
     QHash<QByteArray, MaterializedArtifact> artifacts_;
-    QHash<QByteArray, uint64_t> contentRevisions_;
 };
 
 struct PreparedMedia
@@ -81,7 +65,6 @@ struct PreparedMedia
 
 std::optional<FrameRange> mapFrameRange(const SoundSourceDef& source,
                                         uint64_t totalFrames);
-QString cacheKey(const DerivativeKey& key);
 std::optional<PreparedMedia> prepare(const QString& inputPath,
                                      const SoundSourceDef& source,
                                      double scheduleOffsetSec,
@@ -95,6 +78,8 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
                                                 const ConversionSettings& settings,
                                                 QString* error = nullptr,
                                                 MaterializationCache* cache = nullptr,
-                                                const BuildSourceInput* input = nullptr);
+                                                const BuildSourceInput* input = nullptr,
+                                                const std::function<std::shared_ptr<const BuildSourceInput>(QString*)>&
+                                                    captureSource = {});
 
 }

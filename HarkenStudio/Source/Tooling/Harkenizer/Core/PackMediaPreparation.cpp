@@ -127,11 +127,8 @@ struct PackMediaPreparation::Impl
             return result;
         }
         result.conversion = conversion;
-        if (!conversion || !conversion->sourceMatches()) {
-            result.error = conversion
-                ? QStringLiteral("Source file changed or is unavailable for Sound %1")
-                    .arg(VNX::objectIdString(work.soundId))
-                : captureError;
+        if (!conversion) {
+            result.error = captureError;
             return result;
         }
         result.source = SoundSourceSemantics::authoredView(work.source, &conversion->asset);
@@ -142,31 +139,41 @@ struct PackMediaPreparation::Impl
         }
         const auto releaseBudget = qScopeGuard([&] { release(bytes); });
         QString derivativeError;
+        bool captureFailed = false;
+        const auto capture = [&](QString* error) -> std::shared_ptr<const BuildSourceInput> {
+            const auto captured = snapshot.request(work.source.sourceId, platform, error);
+            if (!captured) {
+                captureFailed = true;
+                return {};
+            }
+            result.conversion = captured;
+            return captured->sourceInput;
+        };
         result.artifact = SoundSourceDerivative::materialize(
             conversion->inputPath(), result.source, work.scheduleOffsetSec,
             platform, derivativeDir, conversion->settings, &derivativeError,
-            cache.get(), conversion->sourceInput.get());
-        if (stopped.load(std::memory_order_acquire)) {
-            result.error = QStringLiteral("Export canceled");
+            cache.get(), conversion->sourceInput.get(), capture);
+        if (captureFailed) {
+            result.error = derivativeError;
             return result;
         }
-        if (!conversion->sourceMatches()) {
-            result.error = QStringLiteral("Source file changed during Sound conversion");
+        if (stopped.load(std::memory_order_acquire)) {
+            result.error = QStringLiteral("Export canceled");
             return result;
         }
         result.conversionError = derivativeError;
         if (!result.artifact) {
             result.artifact = SoundSourceDerivative::materialize(
-                conversion->inputPath(), result.source, work.scheduleOffsetSec,
+                result.conversion->inputPath(), result.source, work.scheduleOffsetSec,
                 platform, derivativeDir, ConversionSettings{}, &derivativeError,
-                cache.get(), conversion->sourceInput.get());
+                cache.get(), result.conversion->sourceInput.get());
             if (stopped.load(std::memory_order_acquire)) {
                 result.error = QStringLiteral("Export canceled");
                 return result;
             }
             result.fallback = result.artifact.has_value();
         }
-        if (!result.artifact || !conversion->sourceMatches())
+        if (!result.artifact)
             result.error = QStringLiteral("Derivative media failed for Sound %1: %2")
                 .arg(VNX::objectIdString(work.soundId)).arg(derivativeError);
         return result;
@@ -179,7 +186,7 @@ struct PackMediaPreparation::Impl
         std::exception_ptr captureException;
         try {
             if (!stopped.load(std::memory_order_acquire))
-                conversion = snapshot.request(group.sourceId, platform, &captureError);
+                conversion = snapshot.inspectRequest(group.sourceId, platform, &captureError);
         } catch (...) {
             captureException = std::current_exception();
         }
@@ -251,8 +258,6 @@ PackMediaPreparation::Result PackMediaPreparation::take(
     auto result = future.get();
     found->second.pop_front();
     if (canceled()) return cancel();
-    if (result.error.isEmpty() && result.conversion && !result.conversion->sourceMatches())
-        result.error = QStringLiteral("Source file changed during Sound conversion");
     return result;
 }
 

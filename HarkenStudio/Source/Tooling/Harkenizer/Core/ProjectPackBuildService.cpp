@@ -2,15 +2,16 @@
 
 #include "Tooling/Harkenizer/Core/ProjectBuildSnapshot.h"
 #include "Tooling/Harkenizer/Core/CanonicalPackSetExport.h"
-#include "Tooling/Harkenizer/Core/PackBuildReceipt.h"
+#include "Tooling/Harkenizer/Core/PackBuildState.h"
 #include "Tooling/Harkenizer/BuildIdentity.h"
 #include "AssetPipeline/BuildSourceInputs.h"
-#include "AssetPipeline/FileContentCache.h"
+#include "AssetPipeline/SourceContentCache.h"
 #include "AssetPipeline/PathUtils.h"
 
 #include <QDir>
 #include <QLockFile>
 #include <QMap>
+#include <QScopeGuard>
 
 #include <utility>
 
@@ -42,16 +43,33 @@ Result run(const Request& request)
         : ProjectPackExporter::LockPackOutputRoot(request.outputRoot, &result.preflightError);
     result.outputLocked = static_cast<bool>(outputLock);
     if (!result.outputLocked) return result;
+    const auto cacheDirectory = QDir(PathUtils::getDotCacheDir(request.options.snapshot->media.projectRoot))
+        .filePath(QStringLiteral("pack"));
+    if (!QDir().mkpath(cacheDirectory)) {
+        result.preflightError = QStringLiteral("Cannot create the Pack cache directory: %1").arg(cacheDirectory);
+        return result;
+    }
+    QLockFile cacheLock(QDir(cacheDirectory).filePath(QStringLiteral(".build.lock")));
+    cacheLock.setStaleLockTime(0);
+    if (!cacheLock.tryLock()) {
+        result.preflightError = QStringLiteral("This project's Packs are being built by another request");
+        return result;
+    }
+    bool cacheUsed = false;
+    const auto pruneCache = qScopeGuard([&] {
+        if (cacheUsed) PackBuildState::prune(*request.options.snapshot);
+    });
     const auto canceled = [&] {
         return request.options.cancelCheck && request.options.cancelCheck();
     };
     if (request.options.observationCallback)
         request.options.observationCallback({{}, {}, {}, PackBuildObservationStage::Preflight});
     auto options = request.options;
-    std::map<QString, PackBuildReceipt> receipts;
+    options.outputPreparation = CreatePackOutputPreparation();
+    QMap<QString, std::shared_ptr<PackBuildState>> states;
     std::map<QString, PlatformResult> restored;
     QSet<QString> reusablePlatforms;
-    std::optional<ProjectBuildIdentity> projectIdentity;
+    std::optional<ProjectBuildIdentity> sharedIdentity;
     for (const auto& platform : request.platforms) {
         if (canceled()) {
             result.canceled = true;
@@ -70,15 +88,15 @@ Result run(const Request& request)
         options.platformLocks.insert(platform, std::move(lock));
         if (!RecoverPackOutput(directory.path(), &result.preflightError)) return result;
         options.platform = platform;
-        auto receipt = PackBuildReceipt::prepare(options.snapshot, options, directory.path(),
-            QByteArray(Harkenizer::projectBuildIdentity()), projectIdentity);
-        if (!receipt) continue;
+        auto state = PackBuildState::prepare(options.snapshot, options, directory.path(),
+            QByteArray(Harkenizer::projectBuildIdentity()), sharedIdentity);
+        if (!state) continue;
         PlatformResult cached;
-        if (receipt->restore(&cached.result, &cached.records)) {
+        if (!options.forceReexport && state->restore(&cached.result, &cached.records)) {
             reusablePlatforms.insert(platform);
             restored.emplace(platform, std::move(cached));
         }
-        receipts.emplace(platform, std::move(*receipt));
+        states.insert(platform, std::move(state));
     }
     if (reusablePlatforms.size() != request.platforms.size())
         options.buildContext = ProjectPackExporter::createBuildContext(project);
@@ -102,6 +120,7 @@ Result run(const Request& request)
             break;
         }
         options.platform = platform;
+        options.packBuildState = states.value(platform);
         PlatformResult built;
         built.platform = platform;
         built.timer.start();
@@ -116,6 +135,7 @@ Result run(const Request& request)
                     options.progressCallback({platform, record.language, record.unitKey,
                         100, PackGenerationStage::Skipped});
         } else {
+            cacheUsed = true;
             if (options.snapshot->media.sourceInputs)
                 options.snapshot->media.sourceInputs->beginDependencyScope();
             built.result = exporter.ExportAllPacks(project, built.outputDir, options, &built.records);
@@ -173,13 +193,11 @@ Result run(const Request& request)
     if (result.finalizationResult.success && !result.canceled) {
         for (const auto& built : result.platforms) {
             if (reusablePlatforms.contains(built.platform)) continue;
-            const auto receipt = receipts.find(built.platform);
-            if (receipt != receipts.end())
-                receipt->second.save(built.result, built.records,
-                    built.result.reusableBuild && built.result.mediaFallbacks == 0,
-                    sourceDependencies.value(built.platform));
+            const auto state = states.value(built.platform);
+            if (state)
+                state->save(built.result, built.records, sourceDependencies.value(built.platform));
         }
-        if (options.snapshot->fileContentCache) options.snapshot->fileContentCache->save();
+        if (options.snapshot->sourceContentCache) options.snapshot->sourceContentCache->save();
     }
     return result;
 }

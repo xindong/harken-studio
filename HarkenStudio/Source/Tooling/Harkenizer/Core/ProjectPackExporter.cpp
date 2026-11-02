@@ -294,6 +294,7 @@ void ProjectPackExporter::ApplyMediaCollectionStats(ExportResult& result,
     result.mediaConversions += stats.conversions;
     result.mediaFallbacks += stats.fallbacks;
     result.warnings.append(stats.warnings);
+    result.mediaArtifacts.append(stats.mediaArtifacts);
     result.soundContentRevisions.insert(
         stats.soundContentRevisions.begin(), stats.soundContentRevisions.end());
 }
@@ -1366,8 +1367,9 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
         if (!preparation) {
             localPreparation = std::make_unique<PackMediaPreparation>(mediaSnapshot,
                 options.snapshot->derivativeCache, platform,
-                QDir(PathUtils::getCacheDir(projectDir))
-                    .filePath(QStringLiteral("pack-derivatives/%1").arg(options.platform)));
+                options.packBuildState
+                    ? QDir(PathUtils::getDotCacheDir(projectDir)).filePath(QStringLiteral("pack/media"))
+                    : QString());
             preparation = localPreparation.get();
         }
         auto inputs = closure->media;
@@ -1422,6 +1424,7 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
             }
             const auto& artifact = result.artifact;
             if (stats) {
+                if (!artifact->path.isEmpty()) stats->mediaArtifacts.append(artifact->cacheKey);
                 if (result.fallback) {
                     ++stats->fallbacks;
                     stats->warnings.append(QStringLiteral("Sound %1 used unprocessed media after conversion failed: %2")

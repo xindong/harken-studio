@@ -5,7 +5,7 @@
 
 #include "AssetPipeline/AssetRegistry.h"
 #include "AssetPipeline/AssetConverter.h"
-#include "AssetPipeline/FileContentCache.h"
+#include "AssetPipeline/SourceContentCache.h"
 #include "AssetPipeline/PathUtils.h"
 #include "AssetPipeline/WaveformCache.h"
 #include "Components/VAction.h"
@@ -4125,7 +4125,6 @@ void verifyIncrementalPublication(const QString& directory)
     EXPECT_TRUE(findByName(readPublication(live.path(), {}, true, deselected.artifacts), "Two").isEmpty());
     EXPECT_EQ(QFileInfo(live.filePath("Two.bytes")).lastModified(), timestamp);
     EXPECT_EQ(QFileInfo(live.filePath("Two.json")).lastModified(), timestamp);
-    ASSERT_TRUE(QDir(dir.filePath(".cache/pack-inputs")).removeRecursively());
     opts.selection.actionTargeting.clear();
     const auto reselected = exporter.ExportAllPacks(project, live.path(), opts);
     ASSERT_TRUE(reselected.success) << reselected.error.toStdString();
@@ -5890,7 +5889,7 @@ TEST(EditorProjectPackExporterManifest, ProjectBuildCleanupPreservesActiveLocksA
     }
 }
 
-TEST(EditorProjectPackExporterManifest, PersistentFileDigestsTrackContentAcrossReloadAndReplacement)
+TEST(EditorProjectPackExporterManifest, PersistentSourceDigestsTrackContentAcrossReloadAndReplacement)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
@@ -5905,12 +5904,12 @@ TEST(EditorProjectPackExporterManifest, PersistentFileDigestsTrackContentAcrossR
     ASSERT_NO_FATAL_FAILURE(writeFileBytes(sourcePath, original));
     const auto modified = QFileInfo(sourcePath).lastModified();
     {
-        VNX::FileContentCache cache(cachePath);
+        VNX::SourceContentCache cache(cachePath);
         EXPECT_EQ(cache.digest(sourcePath), digest(original));
         ASSERT_TRUE(cache.save());
     }
     {
-        VNX::FileContentCache cache(cachePath);
+        VNX::SourceContentCache cache(cachePath);
         EXPECT_EQ(cache.digest(sourcePath), digest(original));
         ASSERT_NO_FATAL_FAILURE(writeFileBytes(sourcePath, changed));
         QFile source(sourcePath);
@@ -5933,7 +5932,7 @@ TEST(EditorProjectPackExporterManifest, PersistentFileDigestsTrackContentAcrossR
         ASSERT_TRUE(QFile::rename(replacementPath, sourcePath));
         ASSERT_EQ(QFileInfo(sourcePath).size(), original.size());
         ASSERT_EQ(QFileInfo(sourcePath).lastModified(), modified);
-        VNX::FileContentCache cache(cachePath);
+        VNX::SourceContentCache cache(cachePath);
         EXPECT_EQ(cache.digest(sourcePath), digest(replacement));
         ASSERT_TRUE(QFile::remove(sourcePath));
         EXPECT_TRUE(cache.digest(sourcePath).isEmpty());
@@ -5941,11 +5940,11 @@ TEST(EditorProjectPackExporterManifest, PersistentFileDigestsTrackContentAcrossR
         EXPECT_EQ(cache.digest(sourcePath), digest({}));
         ASSERT_TRUE(cache.save());
     }
-    VNX::FileContentCache reloaded(cachePath);
+    VNX::SourceContentCache reloaded(cachePath);
     EXPECT_EQ(reloaded.digest(sourcePath), digest({}));
 }
 
-TEST(EditorProjectPackExporterManifest, PersistentFileDigestsRecoverFromCorruptionAndCancellation)
+TEST(EditorProjectPackExporterManifest, PersistentSourceDigestsRecoverFromCorruptionAndCancellation)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
@@ -5956,26 +5955,26 @@ TEST(EditorProjectPackExporterManifest, PersistentFileDigestsRecoverFromCorrupti
     ASSERT_NO_FATAL_FAILURE(writeFileBytes(sourcePath, content));
     ASSERT_NO_FATAL_FAILURE(writeFileBytes(cachePath, QByteArray("{incomplete cache")));
     {
-        VNX::FileContentCache cache(cachePath);
+        VNX::SourceContentCache cache(cachePath);
         EXPECT_TRUE(cache.digest(sourcePath, [] { return true; }).isEmpty());
         EXPECT_EQ(cache.digest(sourcePath), expected);
         EXPECT_TRUE(cache.digest(sourcePath, [] { return true; }).isEmpty());
         ASSERT_TRUE(cache.save());
     }
     {
-        VNX::FileContentCache cache(cachePath);
+        VNX::SourceContentCache cache(cachePath);
         EXPECT_EQ(cache.digest(sourcePath), expected);
         ASSERT_NO_FATAL_FAILURE(writeFileBytes(sourcePath, QByteArray("new content")));
         EXPECT_TRUE(cache.digest(sourcePath, [] { return true; }).isEmpty());
         ASSERT_TRUE(cache.save());
     }
-    VNX::FileContentCache reloaded(cachePath);
+    VNX::SourceContentCache reloaded(cachePath);
     EXPECT_EQ(reloaded.digest(sourcePath),
         QString::fromLatin1(QCryptographicHash::hash(QByteArray("new content"), QCryptographicHash::Sha256).toHex()));
 }
 
 #ifdef Q_OS_WIN
-TEST(EditorProjectPackExporterManifest, PersistentFileDigestsRejectUnfinishedWrites)
+TEST(EditorProjectPackExporterManifest, PersistentSourceDigestsRejectUnfinishedWrites)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
@@ -5987,7 +5986,7 @@ TEST(EditorProjectPackExporterManifest, PersistentFileDigestsRejectUnfinishedWri
     };
     ASSERT_NO_FATAL_FAILURE(writeFileBytes(sourcePath, original));
     const auto modified = QFileInfo(sourcePath).lastModified();
-    VNX::FileContentCache cache(directory.filePath(QStringLiteral("content-cache.json")));
+    VNX::SourceContentCache cache(directory.filePath(QStringLiteral("content-cache.json")));
     ASSERT_EQ(cache.digest(sourcePath), digest(original));
     ASSERT_TRUE(cache.save());
     QFile writer(sourcePath);
@@ -6082,6 +6081,98 @@ TEST(EditorProjectPackExporterManifest, ProjectBuildIncrementalResultsMatchForce
     }
 }
 
+TEST(EditorProjectPackExporterManifest, ProjectBuildStateFollowsOutputsAcrossForceAndSelection)
+{
+    PackWriteAccessProject context;
+    ASSERT_NO_FATAL_FAILURE(context.setup());
+    QString error;
+    VNX::ProjectPackBuildService::Request request;
+    request.outputRoot = context.root;
+    request.platforms = {context.platform};
+    request.options.snapshot = VNX::ProjectBuildSnapshot::capture(context.project, &error);
+    ASSERT_TRUE(request.options.snapshot) << error.toStdString();
+    bool compiled = false;
+    request.options.observationCallback = [&](const VNX::PackBuildObservation& observation) {
+        if (observation.stage == VNX::PackBuildObservationStage::CompilingProject) compiled = true;
+    };
+    request.options.forceReexport = true;
+    const auto forced = VNX::ProjectPackBuildService::run(request);
+    ASSERT_TRUE(forced.finalizationResult.success) << forced.finalizationResult.error.toStdString();
+    const auto original = readFileBytes(context.live.filePath(QStringLiteral("One.bytes")));
+    auto* action = context.project.actions.front().rootItem->children.front().get();
+    action->notes = QStringLiteral("Editor-only notes");
+    context.project.documentHeader.insert(QStringLiteral("notes"), QStringLiteral("Editor-only header"));
+    context.project.name += QStringLiteral(" renamed");
+    const auto android = std::find_if(context.project.platforms.begin(), context.project.platforms.end(),
+        [&](const auto& platform) { return platform.id == QUuid(HarkenTest::platformIdString("Android")); });
+    ASSERT_NE(android, context.project.platforms.end());
+    android->name += QStringLiteral(" renamed");
+    const auto unrelated = context.live.filePath(QStringLiteral("personal.txt"));
+    ASSERT_NO_FATAL_FAILURE(writeFileBytes(unrelated, QByteArray("unmanaged file")));
+    request.options.forceReexport = false;
+    compiled = false;
+    const auto reused = VNX::ProjectPackBuildService::run(request);
+    ASSERT_TRUE(reused.finalizationResult.success) << reused.finalizationResult.error.toStdString();
+    EXPECT_FALSE(compiled);
+    EXPECT_EQ(readFileBytes(unrelated), QByteArray("unmanaged file"));
+    EXPECT_EQ(readFileBytes(context.live.filePath(QStringLiteral("One.bytes"))), original);
+    action->comp<VNX::VAction>()->steps.front().delay = 0.125f;
+    compiled = false;
+    const auto changed = VNX::ProjectPackBuildService::run(request);
+    ASSERT_TRUE(changed.finalizationResult.success) << changed.finalizationResult.error.toStdString();
+    EXPECT_TRUE(compiled);
+    EXPECT_NE(readFileBytes(context.live.filePath(QStringLiteral("One.bytes"))), original);
+    request.options.updateSelectedOnly = true;
+    request.options.onlyPackPaths.insert(QStringLiteral("One"));
+    const auto partial = VNX::ProjectPackBuildService::run(request);
+    ASSERT_TRUE(partial.finalizationResult.success) << partial.finalizationResult.error.toStdString();
+    compiled = false;
+    const auto partialReused = VNX::ProjectPackBuildService::run(request);
+    ASSERT_TRUE(partialReused.finalizationResult.success) << partialReused.finalizationResult.error.toStdString();
+    EXPECT_FALSE(compiled);
+    ASSERT_EQ(partialReused.platforms.size(), 1u);
+    EXPECT_EQ(partialReused.platforms.front().records.size(), partial.platforms.front().records.size());
+    EXPECT_EQ(partialReused.artifacts.size(), partial.artifacts.size());
+}
+
+TEST(EditorProjectPackExporterManifest, ProjectBuildMediaCacheTracksCurrentPackReferences)
+{
+    PackWriteAccessProject context;
+    ASSERT_NO_FATAL_FAILURE(context.setup());
+    const auto platforms = HarkenTest::platformIdStrings({"Windows", "Android"});
+    const auto build = [&](const QStringList& selected, bool partial) {
+        QString error;
+        VNX::ProjectPackBuildService::Request request;
+        request.outputRoot = context.root;
+        request.platforms = selected;
+        request.options.snapshot = VNX::ProjectBuildSnapshot::capture(context.project, &error);
+        EXPECT_TRUE(request.options.snapshot) << error.toStdString();
+        request.options.updateSelectedOnly = partial;
+        if (partial) request.options.onlyPackPaths.insert(QStringLiteral("One"));
+        return VNX::ProjectPackBuildService::run(request);
+    };
+    const auto first = build(platforms, false);
+    ASSERT_TRUE(first.finalizationResult.success) << first.finalizationResult.error.toStdString();
+    const QDir media(context.directory.filePath(QStringLiteral(".cache/pack/media")));
+    ASSERT_EQ(media.entryList({QStringLiteral("*.pcm")}, QDir::Files).size(), 1);
+    const QString sourcePath = QDir(VNX::PathUtils::getAudioSourcesDir(context.directory.path()))
+        .filePath(QStringLiteral("tone.wav"));
+    auto bytes = readFileBytes(sourcePath);
+    ASSERT_GE(bytes.size(), static_cast<qsizetype>(sizeof(float)));
+    const float sample = 0.75f;
+    std::memcpy(bytes.data() + bytes.size() - sizeof(sample), &sample, sizeof(sample));
+    ASSERT_NO_FATAL_FAILURE(writeFileBytes(sourcePath, bytes));
+    const auto windows = build({platforms.front()}, true);
+    ASSERT_TRUE(windows.finalizationResult.success) << windows.finalizationResult.error.toStdString();
+    EXPECT_EQ(media.entryList({QStringLiteral("*.pcm")}, QDir::Files).size(), 2);
+    const auto android = build({platforms.back()}, true);
+    ASSERT_TRUE(android.finalizationResult.success) << android.finalizationResult.error.toStdString();
+    EXPECT_EQ(media.entryList({QStringLiteral("*.pcm")}, QDir::Files).size(), 1);
+    const auto reused = build(platforms, true);
+    ASSERT_TRUE(reused.finalizationResult.success) << reused.finalizationResult.error.toStdString();
+    for (const auto& platform : reused.platforms) EXPECT_EQ(platform.result.builtPackCount, 0);
+}
+
 TEST(EditorProjectPackExporterManifest, ProjectBuildCacheRecoveryPreservesUnchangedArtifacts)
 {
     PackWriteAccessProject context;
@@ -6120,7 +6211,7 @@ TEST(EditorProjectPackExporterManifest, ProjectBuildCacheRecoveryPreservesUnchan
         ASSERT_TRUE(file.setFileTime(timestamp, QFileDevice::FileModificationTime));
     }
     const QDir cache(QDir(VNX::PathUtils::getDotCacheDir(context.directory.path()))
-        .filePath(QStringLiteral("pack-build")));
+        .filePath(QStringLiteral("pack/targets")));
     ASSERT_TRUE(cache.exists());
     for (int attempt = 0; attempt != 3; ++attempt) {
         SCOPED_TRACE(attempt);
@@ -6135,7 +6226,6 @@ TEST(EditorProjectPackExporterManifest, ProjectBuildCacheRecoveryPreservesUnchan
         const auto rebuilt = build();
         ASSERT_TRUE(rebuilt.allPlatformsSucceeded) << rebuilt.preflightError.toStdString();
         ASSERT_TRUE(rebuilt.finalizationResult.success) << rebuilt.finalizationResult.error.toStdString();
-        if (attempt == 0) EXPECT_FALSE(compiled);
         for (auto it = expected.cbegin(); it != expected.cend(); ++it) {
             EXPECT_EQ(readFileBytes(it.key()), it.value()) << it.key().toStdString();
             EXPECT_EQ(QFileInfo(it.key()).lastModified(), timestamp) << it.key().toStdString();

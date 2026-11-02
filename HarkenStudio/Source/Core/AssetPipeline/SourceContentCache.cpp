@@ -1,4 +1,4 @@
-#include "FileContentCache.h"
+#include "SourceContentCache.h"
 
 #include <QCryptographicHash>
 #include <QDataStream>
@@ -11,6 +11,7 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include <QSaveFile>
+#include <QSet>
 #include <atomic>
 
 #if defined(Q_OS_WIN)
@@ -35,11 +36,13 @@ struct FileState
     bool reusable = false;
 };
 
-bool openReadOnly(QFile& file)
+bool openReadOnly(QFile& file, bool attributesOnly = false)
 {
 #if defined(Q_OS_WIN)
     const auto handle = CreateFileW(reinterpret_cast<LPCWSTR>(file.fileName().utf16()),
-        GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        attributesOnly ? FILE_READ_ATTRIBUTES : GENERIC_READ,
+        FILE_SHARE_READ,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (handle == INVALID_HANDLE_VALUE) return false;
     const auto descriptor = _open_osfhandle(reinterpret_cast<intptr_t>(handle), _O_RDONLY | _O_BINARY);
     if (descriptor == -1) {
@@ -50,6 +53,7 @@ bool openReadOnly(QFile& file)
     _close(descriptor);
     return false;
 #else
+    Q_UNUSED(attributesOnly);
     return file.open(QIODevice::ReadOnly);
 #endif
 }
@@ -123,12 +127,24 @@ bool validDigest(const QString& digest)
 
 QString fileKey(const QString& path)
 {
-    return QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+    auto key = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+#ifdef Q_OS_WIN
+    key = key.toCaseFolded();
+#endif
+    return key;
 }
 
 }
 
-struct FileContentCache::Impl
+QByteArray packFileState(const QString& path)
+{
+    QFile file(path);
+    if (!openReadOnly(file, true)) return {};
+    const auto state = fileState(file);
+    return state.reusable ? state.identity : QByteArray();
+}
+
+struct SourceContentCache::Impl
 {
     struct Entry
     {
@@ -152,16 +168,13 @@ struct FileContentCache::Impl
         const auto document = QJsonDocument::fromJson(file.readAll());
         const auto root = document.object();
         if (root.value(QStringLiteral("version")).toInt() != 1
-            || !root.value(QStringLiteral("files")).isObject())
+            || !root.value(QStringLiteral("sources")).isObject())
             return;
-        const auto files = root.value(QStringLiteral("files")).toObject();
-        const auto checksum = QCryptographicHash::hash(QJsonDocument(files).toJson(QJsonDocument::Compact),
-                                                     QCryptographicHash::Sha256).toHex();
-        if (root.value(QStringLiteral("checksum")).toString().toLatin1() != checksum) return;
+        const auto files = root.value(QStringLiteral("sources")).toObject();
         QMap<QString, std::shared_ptr<Entry>> loaded;
         for (auto it = files.begin(); it != files.end(); ++it) {
             const auto record = it.value().toObject();
-            const auto identity = record.value(QStringLiteral("identity")).toString().toLatin1();
+            const auto identity = record.value(QStringLiteral("state")).toString().toLatin1();
             const auto digest = record.value(QStringLiteral("digest")).toString();
             if (it.key().isEmpty() || identity.isEmpty()
                 || QByteArray::fromHex(identity).toHex() != identity || !validDigest(digest))
@@ -175,16 +188,18 @@ struct FileContentCache::Impl
     }
 };
 
-FileContentCache::FileContentCache(QString cachePath) : impl_(std::make_unique<Impl>())
+SourceContentCache::SourceContentCache(QString cachePath) : impl_(std::make_unique<Impl>())
 {
     impl_->cachePath = std::move(cachePath);
     impl_->load();
 }
 
-FileContentCache::~FileContentCache() = default;
+SourceContentCache::~SourceContentCache() = default;
 
-QString FileContentCache::digest(const QString& path, const std::function<bool()>& canceled)
+QString SourceContentCache::digest(const QString& path, const std::function<bool()>& canceled,
+                                   QByteArray* state)
 {
+    if (state) state->clear();
     if (path.isEmpty() || (canceled && canceled())) return {};
     const auto key = fileKey(path);
     std::shared_ptr<Impl::Entry> entry;
@@ -198,8 +213,11 @@ QString FileContentCache::digest(const QString& path, const std::function<bool()
     QFile file(path);
     if (!openReadOnly(file)) return {};
     const auto before = fileState(file);
-    if (before.reusable && before.identity == entry->identity && !entry->digest.isEmpty())
-        return canceled && canceled() ? QString() : entry->digest;
+    if (before.reusable && before.identity == entry->identity && !entry->digest.isEmpty()) {
+        if (canceled && canceled()) return {};
+        if (state) *state = before.identity;
+        return entry->digest;
+    }
     QCryptographicHash hash(QCryptographicHash::Sha256);
     QByteArray buffer(1024 * 1024, Qt::Uninitialized);
     for (;;) {
@@ -218,10 +236,26 @@ QString FileContentCache::digest(const QString& path, const std::function<bool()
         entry->digest = digest;
         ++impl_->revision;
     }
+    if (state) *state = identity;
     return digest;
 }
 
-bool FileContentCache::save()
+void SourceContentCache::retainSources(const QStringList& paths)
+{
+    QSet<QString> retained;
+    for (const auto& path : paths) retained.insert(fileKey(path));
+    QMutexLocker lock(&impl_->mutex);
+    for (auto it = impl_->entries.begin(); it != impl_->entries.end();) {
+        if (retained.contains(it.key())) {
+            ++it;
+        } else {
+            it = impl_->entries.erase(it);
+            ++impl_->revision;
+        }
+    }
+}
+
+bool SourceContentCache::save()
 {
     if (impl_->cachePath.isEmpty()) return true;
     QMutexLocker saveLock(&impl_->saveMutex);
@@ -238,15 +272,12 @@ bool FileContentCache::save()
         const auto& entry = *it.value();
         if (!entry.identity.isEmpty() && !entry.digest.isEmpty()) {
             files.insert(it.key(), QJsonObject{
-                {QStringLiteral("identity"), QString::fromLatin1(entry.identity.toHex())},
+                {QStringLiteral("state"), QString::fromLatin1(entry.identity.toHex())},
                 {QStringLiteral("digest"), entry.digest}});
         }
     }
-    const auto checksum = QCryptographicHash::hash(QJsonDocument(files).toJson(QJsonDocument::Compact),
-                                                 QCryptographicHash::Sha256).toHex();
     const auto bytes = QJsonDocument(QJsonObject{
-        {QStringLiteral("version"), 1}, {QStringLiteral("files"), files},
-        {QStringLiteral("checksum"), QString::fromLatin1(checksum)}}).toJson(QJsonDocument::Compact);
+        {QStringLiteral("version"), 1}, {QStringLiteral("sources"), files}}).toJson(QJsonDocument::Compact);
     if (!QDir().mkpath(QFileInfo(impl_->cachePath).absolutePath())) return false;
     QSaveFile file(impl_->cachePath);
     if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit())

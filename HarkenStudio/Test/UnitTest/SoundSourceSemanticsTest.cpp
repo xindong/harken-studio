@@ -459,20 +459,14 @@ TEST(SoundSourceSemanticsTest, DerivativeCacheRecoversCorruptArtifactsAndPreserv
     ASSERT_TRUE(restored) << error.toStdString();
     EXPECT_FALSE(restored->cacheHit);
     EXPECT_EQ(restored->contentHash, expectedHash);
-    EXPECT_EQ(AssetImporter::computeContentHash(restored->path), expectedHash);
-    const auto receipts = QDir(outputDir).entryList({QStringLiteral("*.json")}, QDir::Files);
-    ASSERT_EQ(receipts.size(), 1);
-    QFile receipt(QDir(outputDir).filePath(receipts.front()));
-    ASSERT_TRUE(receipt.open(QIODevice::ReadOnly));
-    auto body = QJsonDocument::fromJson(receipt.readAll()).object();
-    receipt.close();
-    auto artifact = body.value(QStringLiteral("artifact")).toObject();
-    artifact.insert(QStringLiteral("loopEnd"), QStringLiteral("32"));
-    body.insert(QStringLiteral("artifact"), artifact);
-    ASSERT_TRUE(receipt.open(QIODevice::WriteOnly | QIODevice::Truncate));
-    const auto corruptedReceipt = QJsonDocument(body).toJson();
-    ASSERT_EQ(receipt.write(corruptedReceipt), corruptedReceipt.size());
-    receipt.close();
+    EXPECT_EQ(*restored->samples, *initial->samples);
+    ASSERT_TRUE(corrupted.open(QIODevice::ReadWrite));
+    ASSERT_TRUE(corrupted.seek(8));
+    const auto sampleRateByte = corrupted.read(1);
+    ASSERT_EQ(sampleRateByte.size(), 1);
+    ASSERT_TRUE(corrupted.seek(8));
+    ASSERT_EQ(corrupted.write(QByteArray(1, sampleRateByte.front() ^ 1)), 1);
+    corrupted.close();
     SoundSourceDerivative::MaterializationCache restartedCache;
     const auto rebuilt = SoundSourceDerivative::materialize(
         inputPath, definition, 0.0, platform, outputDir, {}, &error, &restartedCache);
@@ -560,4 +554,83 @@ TEST(SoundSourceSemanticsTest, DerivativeCachePreservesInvalidRequestErrors)
         EXPECT_TRUE(valid->cacheHit);
         EXPECT_EQ(error, QStringLiteral("Retained diagnostic"));
     }
+}
+
+TEST(SoundSourceSemanticsTest, EquivalentMediaTransformsShareOneArtifactAcrossPlatforms)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const auto inputPath = directory.filePath(QStringLiteral("source.wav"));
+    const auto outputDir = directory.filePath(QStringLiteral("media"));
+    ASSERT_TRUE(AssetConverter::writeFloatWav(inputPath, std::vector<float>(257, 0.25f), 1, 44100));
+    SoundSourceDerivative::MaterializationCache cache;
+    const auto definition = source(1);
+    QString error;
+    const auto first = SoundSourceDerivative::materialize(
+        inputPath, definition, 0.0, QUuid::createUuid(), outputDir, {}, &error, &cache);
+    ASSERT_TRUE(first) << error.toStdString();
+    auto equivalent = source(2);
+    equivalent.trimEndFrame = 5000;
+    ConversionSettings encoding;
+    encoding.format = ConversionParameters::Codec::Vorbis;
+    encoding.vorbisQuality = 0.2f;
+    encoding.targetSampleRate = 22050;
+    cache.clear();
+    const auto shared = SoundSourceDerivative::materialize(
+        inputPath, equivalent, 0.0, QUuid::createUuid(), outputDir, encoding, &error, &cache);
+    ASSERT_TRUE(shared) << error.toStdString();
+    EXPECT_TRUE(shared->cacheHit);
+    EXPECT_EQ(shared->path, first->path);
+    EXPECT_EQ(*shared->samples, *first->samples);
+    EXPECT_EQ(cache.contentRevision(*shared), cache.contentRevision(*first));
+    auto unchangedRate = encoding;
+    unchangedRate.performResample = true;
+    unchangedRate.targetSampleRate = 44100;
+    const auto normalized = SoundSourceDerivative::materialize(
+        inputPath, equivalent, 0.1 / 44100.0, QUuid::createUuid(), outputDir,
+        unchangedRate, &error, &cache);
+    ASSERT_TRUE(normalized) << error.toStdString();
+    EXPECT_TRUE(normalized->cacheHit);
+    EXPECT_EQ(normalized->path, first->path);
+    BuildSourceInputs inputs;
+    AssetInfo asset;
+    asset.sourceID = 1;
+    asset.absolutePath = inputPath;
+    const auto inspected = inputs.inspect(asset, &error);
+    ASSERT_TRUE(inspected) << error.toStdString();
+    bool captured = false;
+    const auto lazy = SoundSourceDerivative::materialize(
+        inputPath, definition, 0.0, QUuid::createUuid(), outputDir, {}, &error, nullptr,
+        inspected.get(), [&](QString*) -> std::shared_ptr<const BuildSourceInput> {
+            captured = true;
+            return {};
+        });
+    ASSERT_TRUE(lazy) << error.toStdString();
+    EXPECT_FALSE(captured);
+    EXPECT_EQ(*lazy->samples, *first->samples);
+    SoundSourceDerivative::MaterializationCache memory;
+    const auto resident = SoundSourceDerivative::materialize(
+        inputPath, definition, 0.0, QUuid::createUuid(), {}, {}, &error, &memory);
+    ASSERT_TRUE(resident) << error.toStdString();
+    EXPECT_TRUE(resident->path.isEmpty());
+    EXPECT_EQ(*resident->samples, *first->samples);
+    EXPECT_EQ(memory.contentRevision(*resident), cache.contentRevision(*first));
+    encoding.performResample = true;
+    const auto converted = SoundSourceDerivative::materialize(
+        inputPath, equivalent, 0.0, QUuid::createUuid(), outputDir, encoding, &error, &cache);
+    ASSERT_TRUE(converted) << error.toStdString();
+    EXPECT_FALSE(converted->cacheHit);
+    EXPECT_NE(converted->path, first->path);
+    EXPECT_EQ(converted->sampleRate, 22050);
+    EXPECT_EQ(QDir(outputDir).entryList(QDir::Files).size(), 2);
+    QFile truncated(converted->path);
+    ASSERT_TRUE(truncated.open(QIODevice::ReadWrite));
+    ASSERT_TRUE(truncated.resize(truncated.size() - 1));
+    truncated.close();
+    cache.clear();
+    const auto recovered = SoundSourceDerivative::materialize(
+        inputPath, equivalent, 0.0, QUuid::createUuid(), outputDir, encoding, &error, &cache);
+    ASSERT_TRUE(recovered) << error.toStdString();
+    EXPECT_FALSE(recovered->cacheHit);
+    EXPECT_EQ(*recovered->samples, *converted->samples);
 }

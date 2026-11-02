@@ -37,6 +37,8 @@ namespace VNX {
     struct ProjectBuildSnapshot;
     struct MediaBuildSnapshot;
     class PackMediaPreparation;
+    class PackBuildState;
+    struct PackOutputPreparation;
 }
 
 namespace VNX {
@@ -65,6 +67,8 @@ namespace ProjectPackExporterInternal {
         PackExportSelection selection;
         std::shared_ptr<const ProjectBuildSnapshot> snapshot;
         std::shared_ptr<PackBuildContext> buildContext;
+        std::shared_ptr<PackBuildState> packBuildState;
+        std::shared_ptr<PackOutputPreparation> outputPreparation;
         std::shared_ptr<const PackBuildPlan> buildPlan;
         PackMediaPreparation* mediaPreparation = nullptr;
         QMap<QString, std::shared_ptr<QLockFile>> platformLocks;
@@ -124,6 +128,7 @@ public:
         int     mediaCacheHits = 0;
         int     mediaConversions = 0;
         int     mediaFallbacks = 0;
+        QStringList mediaArtifacts;
         uint64_t currentWorldSemanticFingerprint = 0;
         std::map<harkenstudio::ObjectId, uint64_t> soundContentRevisions;
         QString resourceFingerprint;
@@ -317,6 +322,7 @@ private:
         int conversions = 0;
         int fallbacks = 0;
         QStringList warnings;
+        QStringList mediaArtifacts;
     };
 
     ExportResult exportSingleActionPack(

@@ -41,6 +41,8 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
 
 bool RecoverPackOutput(const QString& outputDir, QString* error);
 
+std::shared_ptr<PackOutputPreparation> CreatePackOutputPreparation();
+
 bool ReadValidatedPackPublication(const QString& directory, const QString& projectId,
                                  const QString& platformId, QJsonArray* packs,
                                  QStringList* managedFiles, QString* error,

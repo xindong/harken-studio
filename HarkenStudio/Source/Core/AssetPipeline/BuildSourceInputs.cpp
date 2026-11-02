@@ -1,7 +1,7 @@
 #include "BuildSourceInputs.h"
 
 #include "AssetImporter.h"
-#include "FileContentCache.h"
+#include "SourceContentCache.h"
 #include "Utils/AudioFileReader.h"
 
 #include <QCryptographicHash>
@@ -49,7 +49,9 @@ struct BuildSourceInputs::Impl
         QString key;
         QMutex mutex;
         QString contentHash;
+        QByteArray fileState;
         QSet<QString> paths;
+        std::shared_ptr<const BuildSourceInput> inspection;
         std::shared_ptr<const BuildSourceInput> input;
     };
 
@@ -60,7 +62,7 @@ struct BuildSourceInputs::Impl
     QMap<uint32_t, QString> fingerprints;
     std::once_flag storageInitialization;
     std::shared_ptr<QTemporaryDir> storage;
-    std::shared_ptr<FileContentCache> cache;
+    std::shared_ptr<SourceContentCache> cache;
 
     std::shared_ptr<Entry> find(const AssetInfo& asset, QString* error)
     {
@@ -93,7 +95,7 @@ struct BuildSourceInputs::Impl
     {
         const auto path = sourcePath(asset);
         if (entry.contentHash.isEmpty()) {
-            const auto hash = cache->digest(path);
+            const auto hash = cache->digest(path, {}, &entry.fileState);
             if (hash.isEmpty()) {
                 fail(error, QStringLiteral("Cannot read audio source: %1").arg(path));
                 return false;
@@ -107,10 +109,10 @@ struct BuildSourceInputs::Impl
     }
 };
 
-BuildSourceInputs::BuildSourceInputs(std::shared_ptr<FileContentCache> cache)
+BuildSourceInputs::BuildSourceInputs(std::shared_ptr<SourceContentCache> cache)
     : impl_(std::make_unique<Impl>())
 {
-    impl_->cache = cache ? std::move(cache) : std::make_shared<FileContentCache>();
+    impl_->cache = cache ? std::move(cache) : std::make_shared<SourceContentCache>();
 }
 BuildSourceInputs::~BuildSourceInputs() = default;
 
@@ -164,7 +166,9 @@ bool BuildSourceInputs::adopt(BuildSourceInputs& probes, QString* error)
         }
         auto& entry = **existing;
         entry.contentHash = probe.contentHash;
+        entry.fileState = probe.fileState;
         entry.paths.unite(probe.paths);
+        if (!entry.inspection) entry.inspection = probe.inspection;
         if (!entry.input) entry.input = probe.input;
     }
     impl_->aliases.insert(probes.impl_->aliases);
@@ -176,6 +180,39 @@ QMap<uint32_t, QString> BuildSourceInputs::fingerprints() const
 {
     std::unique_lock operation(impl_->operations);
     return impl_->fingerprints;
+}
+
+std::shared_ptr<const BuildSourceInput> BuildSourceInputs::inspect(const AssetInfo& asset, QString* error)
+{
+    std::shared_lock operation(impl_->operations);
+    const auto entry = impl_->find(asset, error);
+    if (!entry) return {};
+    QMutexLocker lock(&entry->mutex);
+    if (!impl_->identify(*entry, asset, error)) return {};
+    if (entry->input) return entry->input;
+    if (entry->inspection) return entry->inspection;
+    if (entry->fileState.isEmpty()) {
+        lock.unlock();
+        operation.unlock();
+        return capture(asset, error);
+    }
+    AssetImporter importer;
+    auto input = std::make_shared<BuildSourceInput>();
+    input->originalPath = sourcePath(asset);
+    input->inputPath = input->originalPath;
+    input->contentHash = entry->contentHash;
+    input->metadata = importer.readMetadata(input->originalPath);
+    if (packFileState(input->originalPath) != entry->fileState) {
+        fail(error, QStringLiteral("Source file changed during the build: %1").arg(input->originalPath));
+        return {};
+    }
+    if (input->metadata.sampleRate == 0 || input->metadata.channels == 0
+        || input->metadata.totalSamples == 0) {
+        fail(error, QStringLiteral("Cannot analyze audio source: %1").arg(input->originalPath));
+        return {};
+    }
+    entry->inspection = input;
+    return input;
 }
 
 std::shared_ptr<const BuildSourceInput> BuildSourceInputs::capture(const AssetInfo& asset, QString* error)
