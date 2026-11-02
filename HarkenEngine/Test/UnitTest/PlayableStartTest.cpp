@@ -14790,7 +14790,7 @@ TEST(PlayableStart, RandomQueueOncePlaysOneDeterministicWeightedPermutation) {
     seed.callerSeed = request.callerSeed;
     seed.acceptedPostOrdinal = engine->logicCommits.Current() + 1u;
     seed.emitterSlot = static_cast<std::uint32_t>(emitter);
-    seed.emitterGeneration = static_cast<std::uint32_t>(emitter >> 32);
+    seed.emitterGeneration = 1; // First emitter incarnation in this engine.
     seed.resetEpoch = 1;
     harken::EffectiveQueueState initial{};
     initial.version = 1;
@@ -14919,7 +14919,7 @@ TEST(PlayableStart, RandomQueueLoopCarriesPreviousTailIntoNextCycle) {
     seed.callerSeed = request.callerSeed;
     seed.acceptedPostOrdinal = engine->logicCommits.Current() + 1u;
     seed.emitterSlot = static_cast<std::uint32_t>(emitter);
-    seed.emitterGeneration = static_cast<std::uint32_t>(emitter >> 32);
+    seed.emitterGeneration = 1; // First emitter incarnation in this engine.
     seed.resetEpoch = 1;
     harken::EffectiveQueueState state{};
     state.version = 1;
@@ -15017,7 +15017,7 @@ TEST(PlayableStart, RandomQueueResumeUsesOriginalSeedAndExactCurrent) {
     seed.callerSeed = 77;
     seed.acceptedPostOrdinal = 101;
     seed.emitterSlot = static_cast<std::uint32_t>(emitter);
-    seed.emitterGeneration = static_cast<std::uint32_t>(emitter >> 32);
+    seed.emitterGeneration = 1; // First emitter incarnation in this engine.
     seed.resetEpoch = 1;
     harken::EffectiveQueueState state{};
     state.version = 19;
@@ -15038,7 +15038,7 @@ TEST(PlayableStart, RandomQueueResumeUsesOriginalSeedAndExactCurrent) {
         image.container.programSemanticFingerprint;
     key.resetEpoch = 1;
     key.emitterSlot = seed.emitterSlot;
-    key.emitterGeneration = seed.emitterGeneration;
+    key.emitterGeneration = static_cast<std::uint32_t>(emitter >> 32);
     harken::QueueCheckpointImage checkpoint{};
     checkpoint.effective = state;
     checkpoint.randomSeed = seed;
@@ -15120,7 +15120,7 @@ TEST(PlayableStart, RandomQueuePreparationFailureConsumesNoPermutationState) {
     seed.callerSeed = request.callerSeed;
     seed.acceptedPostOrdinal = engine->logicCommits.Current() + 1u;
     seed.emitterSlot = static_cast<std::uint32_t>(emitter);
-    seed.emitterGeneration = static_cast<std::uint32_t>(emitter >> 32);
+    seed.emitterGeneration = 1; // First emitter incarnation in this engine.
     seed.resetEpoch = 1;
     harken::EffectiveQueueState initial{};
     initial.version = 1;
@@ -22324,8 +22324,8 @@ TEST(PlayableStart,
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&fillerPlay, &fillers[0]));
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&fillerPlay, &fillers[1]));
     engine->nullBackend.Pump(1);
-    ASSERT_NE(nullptr, engine->voices.Resolve(fillers[0]));
-    ASSERT_NE(nullptr, engine->voices.Resolve(fillers[1]));
+    ASSERT_NE(nullptr, engine->voices.Resolve(harkentest::RenderHandle(engine, fillers[0])));
+    ASSERT_NE(nullptr, engine->voices.Resolve(harkentest::RenderHandle(engine, fillers[1])));
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 3.0f));
     bool shrunk = false;

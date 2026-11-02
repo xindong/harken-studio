@@ -1392,8 +1392,8 @@ QueueRootPlanStatus PrepareSharedQueueRootPlan(
         out->randomSeed.callerSeed = request.callerSeed;
         out->randomSeed.acceptedPostOrdinal = request.acceptedPostOrdinal;
         out->randomSeed.emitterSlot = out->checkpointKey.emitterSlot;
-        out->randomSeed.emitterGeneration =
-            out->checkpointKey.emitterGeneration;
+        out->randomSeed.emitterGeneration = engine.selectionMemory.SeedEmitterGeneration(
+            out->checkpointKey.emitterSlot, out->checkpointKey.emitterGeneration);
         out->randomSeed.resetEpoch = out->checkpointKey.resetEpoch;
     }
 

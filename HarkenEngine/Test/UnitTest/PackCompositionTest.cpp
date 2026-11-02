@@ -27169,8 +27169,7 @@ SharedQueueTrace RunRootQueuePackTrace(
         expectedSeed.callerSeed = effectiveCallerSeed;
         expectedSeed.acceptedPostOrdinal = engine->logicCommits.Current() + 1u;
         expectedSeed.emitterSlot = static_cast<std::uint32_t>(emitter);
-        expectedSeed.emitterGeneration =
-            static_cast<std::uint32_t>(emitter >> 32);
+        expectedSeed.emitterGeneration = 1; // First emitter incarnation in this engine.
         expectedSeed.resetEpoch = engine->transportEpochOwner.Current();
         EffectiveQueueState initial{};
         initial.version = 1;
