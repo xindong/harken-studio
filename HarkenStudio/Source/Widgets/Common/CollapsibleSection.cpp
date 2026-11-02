@@ -263,12 +263,10 @@ void CollapsibleSection::refreshAppearance()
         const QColor color = hasCustomIndicator_ ? indicatorColor_ : colors.accent;
         applyStyle(railFrame_, skin.collapsibleIndicatorStyle(color, lvl == 1 ? 150 : 100, true));
     }
-    const QColor caretColor = hasCustomIndicator_ ? indicatorColor_
-                            : (lvl == 0 ? colors.textSecondary : colors.textMuted);
     toggleButton_->setIcon(theme.resolveIcon(
         QString::fromLatin1(expanded_ ? ThemeAssetIds::NavigationChevronDown
                                      : ThemeAssetIds::NavigationChevronRight),
-        ThemeAssetVariant{QSize(), 1.0, 0, caretColor}).icon);
+        ThemeAssetVariant{QSize(), 1.0, 0, colors.textPrimary}).icon);
 }
 
 }

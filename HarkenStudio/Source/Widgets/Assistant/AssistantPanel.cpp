@@ -480,7 +480,7 @@ void AssistantPanel::applyEmptyLabelStyle()
     const auto& tc = ThemeManager::instance().colors();
     emptyIcon_->setPixmap(ThemeManager::instance().resolveIcon(
         QString::fromLatin1(ThemeAssetIds::AssistantEmpty),
-        ThemeAssetVariant{QSize(), 1.0, 0, tc.textMuted}).icon.pixmap(30, 30));
+        ThemeAssetVariant{QSize(), 1.0, 0, tc.textPrimary}).icon.pixmap(30, 30));
     emptyLabel_->setProperty("textScale", QStringLiteral("body"));
     emptyLabel_->setText(tr("Chat with Harken AI..."));
 }
@@ -910,7 +910,7 @@ void AssistantPanel::applyNewConversationButtonStyle()
     const auto& tc = ThemeManager::instance().colors();
     newConversationBtn_->setIcon(ThemeManager::instance().resolveIcon(
         QString::fromLatin1(ThemeAssetIds::AssistantNewConversation),
-        ThemeAssetVariant{QSize(), 1.0, 0, tc.textSecondary}).icon);
+        ThemeAssetVariant{QSize(), 1.0, 0, tc.textPrimary}).icon);
 }
 
 void AssistantPanel::refreshMessages()

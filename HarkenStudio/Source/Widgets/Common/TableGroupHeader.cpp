@@ -119,7 +119,7 @@ QIcon TableGroupHeader::chevronIcon(bool expanded, ThemeManager* themeManager)
     return themeManager->resolveIcon(
         QString::fromLatin1(expanded ? ThemeAssetIds::NavigationChevronDown
                                     : ThemeAssetIds::NavigationChevronRight),
-        ThemeAssetVariant{QSize(), 1.0, 0, themeManager->colors().textMuted}).icon;
+        ThemeAssetVariant{QSize(), 1.0, 0, themeManager->colors().textPrimary}).icon;
 }
 
 void TableGroupHeader::paint(QPainter& painter, const QRect& rect, const QString& text,

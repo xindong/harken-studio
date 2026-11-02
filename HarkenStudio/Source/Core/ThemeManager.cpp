@@ -495,9 +495,9 @@ void ThemeManager::paintBindAffordance(QPainter& p, const QRect& rect, BindGlyph
 
     const auto& themeColors = colors();
     QColor fg = !enabled ? themeColors.textDisabled
-                         : (active ? themeColors.accent : themeColors.textMuted);
+                         : (active ? themeColors.accent : themeColors.textPrimary);
     if (hover && enabled)
-        fg = active ? themeColors.accentHover : themeColors.textSecondary;
+        fg = active ? themeColors.accentHover : themeColors.textPrimary;
 
     if (hover && enabled) {
         QColor bg = themeColors.accent;

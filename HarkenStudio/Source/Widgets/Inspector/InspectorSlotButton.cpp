@@ -34,7 +34,7 @@ void InspectorSlotButton::paintEvent(QPaintEvent* event)
 {
     QToolButton::paintEvent(event);
     const auto& colors = ThemeManager::instance().colors();
-    const QColor color = isEnabled() ? colors.textSecondary : colors.textDisabled;
+    const QColor color = isEnabled() ? colors.textPrimary : colors.textDisabled;
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
     painter.translate((width() - 14) / 2.0, (height() - 20) / 2.0);

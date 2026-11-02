@@ -7,7 +7,7 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
     static const QVector<ThemeColorRole> roles{
         {QStringLiteral("text.primary"), QStringLiteral("Text"),
          QStringLiteral("Primary text"),
-         QStringLiteral("Field labels and values, valid read-only values, body text, menu items, project names and Blueprint object names."),
+         QStringLiteral("Field labels and values, valid read-only values, body text, menu items, project names, Blueprint object names and normal interactive icons."),
          {
              {QStringLiteral("text.primary"), std::nullopt},
              {QStringLiteral("qtPalette.windowText"), std::nullopt},

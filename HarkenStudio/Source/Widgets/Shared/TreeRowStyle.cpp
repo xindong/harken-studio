@@ -48,7 +48,7 @@ void paintBucketCaret(QPainter* p, const QRect& box, bool expanded)
     const QRect iconRect(box.left() + (box.width() - chevronExtent) / 2,
                          box.top() + (box.height() - chevronExtent) / 2,
                          chevronExtent, chevronExtent);
-    chevronIcon(expanded, ThemeManager::instance().colors().textSecondary)
+    chevronIcon(expanded, ThemeManager::instance().colors().textPrimary)
         .paint(p, iconRect);
 }
 
@@ -259,7 +259,7 @@ void paintBranches(QPainter* painter, const QRect& rect, const QModelIndex& inde
 
     const auto& tc = ThemeManager::instance().colors();
     const QColor guideColor = tc.borderSecondary;
-    const QColor chevronColor = tc.textSecondary;
+    const QColor chevronColor = tc.textPrimary;
 
     int depth = rootIsDecorated ? 1 : 0;
     for (QModelIndex p = index.parent(); p.isValid(); p = p.parent())

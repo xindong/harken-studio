@@ -338,7 +338,7 @@ void SourceEditorWaveformView::refreshTimelineAppearance()
         return;
     auto& manager = ThemeManager::instance();
     const auto theme = manager.snapshot();
-    const ThemeAssetVariant variant{zoomIn_->iconSize(), devicePixelRatioF(), 0, theme->ui.colors.textSecondary};
+    const ThemeAssetVariant variant{zoomIn_->iconSize(), devicePixelRatioF(), 0, theme->ui.colors.textPrimary};
     zoomOut_->setIcon(manager.resolveIcon(QString::fromLatin1(ThemeAssetIds::TableRemove), variant).icon);
     zoomIn_->setIcon(manager.resolveIcon(QString::fromLatin1(ThemeAssetIds::TableAdd), variant).icon);
     verticalZoomIn_->setIcon(zoomIn_->icon());
