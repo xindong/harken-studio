@@ -393,7 +393,8 @@ bool MeterProbeSystem::CaptureAndScheduleWithdrawalChunk(
                     target->locator.targetId, probe.withdrawalSlice,
                     &resolved, &rampMs, &revision);
                 if (valid && target->locator.targetId == kTargetVoiceVolume &&
-                    !TryVolumeGainFromDb(resolved)) {
+                    !VoiceVolumeTargetConvertible(engine,
+                        static_cast<VnVoiceHandle>(target->locator.object), resolved)) {
                     engine.params.DropClaimedPublication(
                         static_cast<VnVoiceHandle>(target->locator.object),
                         target->locator.targetId, probe.withdrawalSlice);

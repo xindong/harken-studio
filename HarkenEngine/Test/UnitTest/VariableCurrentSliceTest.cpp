@@ -5276,6 +5276,11 @@ TEST(VariableCurrentSlice, PublicationRefusesPhysicalAndUnreclaimedSlicesWithout
     const auto slice = engine->variables.SliceForTicketForTests(ticket);
     ASSERT_TRUE(slice.Valid());
     ASSERT_TRUE(engine->params.ForeignClaim(render, harken::kTargetVoiceVolume));
+    const auto commandHead = engine->commands.PublishedHead();
+    EXPECT_EQ(VN_BACKPRESSURE, Vn_SetVoiceOutputVolume(voice, -3.0f, 0));
+    EXPECT_EQ(commandHead, engine->commands.PublishedHead());
+    EXPECT_FLOAT_EQ(0.0f,
+        engine->voicePlayFacts[static_cast<std::uint32_t>(render)].outputBusVolumeDb);
     const auto state = engine->variableSlices.State(slice);
     const auto freeTargets = engine->variableSlices.FreeTargetCapacity();
     const auto world = engine->variables.CurrentWorldGeneration();
@@ -6121,61 +6126,65 @@ float QueryCurrentValue(VnVariableId variable) {
 }
 
 TEST(VariableCurrentSlice, FiniteOverflowWriteRowIsTargetRejected) {
-    VnConfig config = CurrentSliceConfig(4, kBlockFrames, kSampleRate);
-    config.maxBuses = 4;
-    config.maxBindings = 4;
-    config.maxBindingAttachments = 4;
-    EngineSession session(config);
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
-    InstallVariable(engine);
-    ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(9), VN_BUS_MASTER));
-    const VnVoiceHandle voice = PlayDc(engine, harkentest::ObjectId(1), harkentest::ObjectId(9));
-    const VnVoiceHandle render = harkentest::RenderHandle(engine, voice);
-    ASSERT_TRUE(engine->params.BindVoiceTarget(
-        kVariable, render, harken::kTargetVoiceVolume,
-        LinearCurve(0.0f, 0.0f, 1.0f, 772.0f)));
-    RegisterBusVolumeBinding(harkentest::ObjectId(1), harkentest::ObjectId(9), 0.0f, 0.0f, 1.0f, -12.0f);
-    ASSERT_EQ(VN_OK, Vn_Update());
-    engine->nullBackend.Pump(2);
+    for (const float outputDb : {0.0f, 400.0f}) {
+        SCOPED_TRACE(outputDb);
+        VnConfig config = CurrentSliceConfig(4, kBlockFrames, kSampleRate);
+        config.maxBuses = 4;
+        config.maxBindings = 4;
+        config.maxBindingAttachments = 4;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        harken::Engine* engine = session.Engine();
+        InstallVariable(engine);
+        ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(9), VN_BUS_MASTER));
+        const VnVoiceHandle voice = PlayDc(engine, harkentest::ObjectId(1), harkentest::ObjectId(9));
+        const VnVoiceHandle render = harkentest::RenderHandle(engine, voice);
+        ASSERT_EQ(VN_OK, Vn_SetVoiceOutputVolume(voice, outputDb, 0));
+        ASSERT_TRUE(engine->params.BindVoiceTarget(
+            kVariable, render, harken::kTargetVoiceVolume,
+            LinearCurve(0.0f, 0.0f, 1.0f, outputDb == 0.0f ? 772.0f : 400.0f)));
+        RegisterBusVolumeBinding(harkentest::ObjectId(1), harkentest::ObjectId(9), 0.0f, 0.0f, 1.0f, -12.0f);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(2);
 
-    harken::VoiceRenderContext* voiceState = engine->voices.Resolve(render);
-    harken::BusTree::Bus* busState =
-        engine->buses.BusState(engine->buses.FindIndex(harkentest::ObjectId(9)));
-    ASSERT_NE(nullptr, voiceState);
-    ASSERT_NE(nullptr, busState);
-    ASSERT_FLOAT_EQ(1.0f, voiceState->gain.target);
-    ASSERT_FLOAT_EQ(1.0f, busState->gain.target);
-    const std::uint64_t invalidBefore =
-        engine->voices.InvalidVolumeApplyCount();
-    const std::uint64_t commandHead = engine->commands.PublishedHead();
+        harken::VoiceRenderContext* voiceState = engine->voices.Resolve(render);
+        harken::BusTree::Bus* busState =
+            engine->buses.BusState(engine->buses.FindIndex(harkentest::ObjectId(9)));
+        ASSERT_NE(nullptr, voiceState);
+        ASSERT_NE(nullptr, busState);
+        ASSERT_FLOAT_EQ(1.0f, voiceState->gain.target);
+        ASSERT_FLOAT_EQ(1.0f, busState->gain.target);
+        const std::uint64_t invalidBefore =
+            engine->voices.InvalidVolumeApplyCount();
+        const std::uint64_t commandHead = engine->commands.PublishedHead();
 
-    const VnVariableTicketV1 rejectedTicket = AcceptGlobalWrite(kVariable, 1.0f);
-    ASSERT_NE(0u, rejectedTicket.sequence);
-    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(engine));
-    const auto rejected = QueryTicket(rejectedTicket);
-    EXPECT_EQ(VN_VARIABLE_TICKET_FOUND, rejected.status);
-    EXPECT_EQ(VN_VARIABLE_OUTCOME_REJECTED_TARGET, rejected.outcome);
-    EXPECT_FLOAT_EQ(0.0f, QueryCurrentValue(kVariable));
-    EXPECT_FLOAT_EQ(1.0f, voiceState->gain.target);
-    EXPECT_FLOAT_EQ(1.0f, busState->gain.target);
-    EXPECT_EQ(invalidBefore, engine->voices.InvalidVolumeApplyCount());
-    EXPECT_EQ(commandHead, engine->commands.PublishedHead());
-    EXPECT_EQ(1u, engine->paramDropCount);
-    EXPECT_FALSE(engine->params.ForeignClaim(render,
-                                             harken::kTargetVoiceVolume));
-    EXPECT_FALSE(engine->busTargets.ForeignClaim(
-        engine->buses.FindIndex(harkentest::ObjectId(9)), harken::kBusTargetBusVolume));
+        const VnVariableTicketV1 rejectedTicket = AcceptGlobalWrite(kVariable, 1.0f);
+        ASSERT_NE(0u, rejectedTicket.sequence);
+        ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(engine));
+        const auto rejected = QueryTicket(rejectedTicket);
+        EXPECT_EQ(VN_VARIABLE_TICKET_FOUND, rejected.status);
+        EXPECT_EQ(VN_VARIABLE_OUTCOME_REJECTED_TARGET, rejected.outcome);
+        EXPECT_FLOAT_EQ(0.0f, QueryCurrentValue(kVariable));
+        EXPECT_FLOAT_EQ(1.0f, voiceState->gain.target);
+        EXPECT_FLOAT_EQ(1.0f, busState->gain.target);
+        EXPECT_EQ(invalidBefore, engine->voices.InvalidVolumeApplyCount());
+        EXPECT_EQ(commandHead, engine->commands.PublishedHead());
+        EXPECT_EQ(1u, engine->paramDropCount);
+        EXPECT_FALSE(engine->params.ForeignClaim(render,
+                                                 harken::kTargetVoiceVolume));
+        EXPECT_FALSE(engine->busTargets.ForeignClaim(
+            engine->buses.FindIndex(harkentest::ObjectId(9)), harken::kBusTargetBusVolume));
 
-    const VnVariableTicketV1 legalTicket = AcceptGlobalWrite(kVariable, 0.1f);
-    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(engine));
-    const auto applied = QueryTicket(legalTicket);
-    EXPECT_EQ(VN_VARIABLE_TICKET_FOUND, applied.status);
-    EXPECT_EQ(VN_VARIABLE_OUTCOME_APPLIED, applied.outcome);
-    EXPECT_FLOAT_EQ(0.1f, QueryCurrentValue(kVariable));
-    EXPECT_FLOAT_EQ(1.0f / 0.9f, voiceState->gain.target);
-    EXPECT_FLOAT_EQ(0.9f + 0.1f * DbToLinear(-12.0f), busState->gain.target);
-    EXPECT_EQ(1u, engine->paramDropCount);
+        const VnVariableTicketV1 legalTicket = AcceptGlobalWrite(kVariable, 0.1f);
+        ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(engine));
+        const auto applied = QueryTicket(legalTicket);
+        EXPECT_EQ(VN_VARIABLE_TICKET_FOUND, applied.status);
+        EXPECT_EQ(VN_VARIABLE_OUTCOME_APPLIED, applied.outcome);
+        EXPECT_FLOAT_EQ(0.1f, QueryCurrentValue(kVariable));
+        EXPECT_FLOAT_EQ(1.0f / 0.9f, voiceState->gain.target);
+        EXPECT_FLOAT_EQ(0.9f + 0.1f * DbToLinear(-12.0f), busState->gain.target);
+        EXPECT_EQ(1u, engine->paramDropCount);
+    }
 }
 
 TEST(VariableCurrentSlice, RejectedVolumeCandidatesCountEachPhysicalTargetOnce) {

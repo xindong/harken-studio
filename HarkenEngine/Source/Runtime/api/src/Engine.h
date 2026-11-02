@@ -3410,6 +3410,10 @@ private:
 
 struct Engine;
 
+// Logic-side target admission; output targets share the existing per-slot facts
+// lifecycle and are seeded before the first parameter publication.
+bool VoiceVolumeTargetConvertible(const Engine& engine, VnVoiceHandle render,
+                                  float voiceDb) noexcept;
 bool MakeVariableParamCommand(const Engine& engine,
                               const ParamCommit& commit,
                               CommandRecord* out);
@@ -14899,7 +14903,8 @@ public:
     StableRowStorage<VnSoundId> voiceOriginPlayable;
 
     // Per-render-slot Play facts retained for audibility parking (see
-    // VoicePlayFacts), written at play. Logic thread only.
+    // VoicePlayFacts), written at play. The output target is seeded for every
+    // live voice, including timeline voices without parking facts. Logic thread only.
     StableRowStorage<VoicePlayFacts> voicePlayFacts;
     StableRowStorage<EnginePlaybackPathStorage> playbackPaths;
 
