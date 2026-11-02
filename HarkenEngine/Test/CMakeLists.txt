@@ -26,6 +26,7 @@ endif()
 gtest_discover_tests(harken_object_identity_tests)
 
 add_executable(harken_remote_runtime_tests
+    UnitTest/AllocationProbe.cpp
     UnitTest/RuntimeRemoteTest.cpp
     UnitTest/monitor_fixture_decode.cpp)
 target_link_libraries(harken_remote_runtime_tests PRIVATE harken_core harken_buildinfo harken_remote_protocol harken_preview GTest::gtest_main)
