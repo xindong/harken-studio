@@ -12,6 +12,7 @@
 #include "harken/dsp/Biquad.h"
 #include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/render/BuiltinEffects.h"
+#include "harken/render/EffectChain.h"
 
 #include <cmath>
 #include <cstdint>
@@ -1000,3 +1001,73 @@ TEST(BuiltinEffectValidation, TonePreparationRejectsUnitCirclePole) {
 }
 
 } // namespace
+
+
+TEST(BuiltinDelay, FiniteCancellationPreservesFollowingFilterRecovery) {
+    std::vector<float> line(harken::kMaxChannels, 0.0f);
+    harken::DelayEffectState state;
+    state.lineBase = line.data();
+    state.lineFrames = 1;
+    state.sampleRate = kRate;
+    auto effect = harken::BuildEffect(VN_EFFECT_FEEDBACK_DELAY, &state);
+    effect.reset(&state);
+    effect.setParam(&state, harken::kDelayParamWet, 2.0f);
+    effect.setParam(&state, harken::kDelayParamDry, 2.0f);
+    std::vector<float> samples(kBlock), scratch(kBlock);
+    float* channels[] = {samples.data()};
+    float* dry[] = {scratch.data()};
+    const auto fillExtreme = [&] {
+        for (unsigned i = 0; i < kBlock; ++i)
+            samples[i] = i % 2 ? -2.0e38f : 2.0e38f;
+    };
+    // Bypass selects dry output while the actual chain helper advances history.
+    fillExtreme();
+    bool ramping = false;
+    float mix = 1.0f;
+    harken::ProcessChainSlot(effect, ramping, mix, 1.0f, channels, dry, 1, 0, kBlock);
+    for (float value : samples) ASSERT_TRUE(std::isfinite(value));
+    fillExtreme();
+    ramping = true;
+    harken::ProcessChainSlot(effect, ramping, mix, 0.0f, channels, dry, 1, 0, kBlock);
+    for (float value : samples) EXPECT_TRUE(std::isfinite(value));
+    EXPECT_EQ(0.0f, samples.back());
+    const auto coefficients = harken::MakeLowpass(float(kRate), 2000.0f, 0.707f);
+    harken::BiquadState filter{};
+    harken::BiquadProcess(coefficients, filter, samples.data(), kBlock);
+    // The final delayed extreme must also stay representable during recovery.
+    effect.setParam(&state, harken::kDelayParamWet, 0.5f);
+    effect.setParam(&state, harken::kDelayParamDry, 0.75f);
+    for (unsigned block = 0; block < 128; ++block) {
+        std::fill(samples.begin(), samples.end(), 0.125f);
+        effect.process(&state, channels, 1, 0, kBlock);
+        harken::BiquadProcess(coefficients, filter, samples.data(), kBlock);
+    }
+    for (float value : samples) EXPECT_NEAR(0.15625f, value, 1.0e-5f);
+}
+
+TEST(BuiltinDelay, CancellationFallbackKeepsOffsetsChannelsAndTrueOverflow) {
+    std::vector<float> line(harken::kMaxChannels, 0.0f);
+    harken::DelayEffectState state;
+    state.lineBase = line.data();
+    state.lineFrames = 1;
+    state.sampleRate = kRate;
+    auto effect = harken::BuildEffect(VN_EFFECT_FEEDBACK_DELAY, &state);
+    effect.reset(&state);
+    effect.setParam(&state, harken::kDelayParamWet, 2.0f);
+    effect.setParam(&state, harken::kDelayParamDry, 2.0f);
+    float left[] = {17.0f, 2.0e38f, 19.0f};
+    float right[] = {23.0f, -2.0e38f, 29.0f};
+    float* channels[] = {left, right};
+    line[0] = -left[1];
+    line[1] = -right[1];
+    effect.process(&state, channels, 2, 1, 1);
+    EXPECT_EQ(0.0f, left[1]);
+    EXPECT_EQ(0.0f, right[1]);
+    EXPECT_EQ(17.0f, left[0]);
+    EXPECT_EQ(19.0f, left[2]);
+    EXPECT_EQ(23.0f, right[0]);
+    EXPECT_EQ(29.0f, right[2]);
+    left[1] = line[0] = 2.0e38f;
+    effect.process(&state, channels, 1, 1, 1);
+    EXPECT_TRUE(std::isinf(left[1]));
+}

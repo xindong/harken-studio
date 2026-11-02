@@ -5432,62 +5432,72 @@ VnResult StartLegacyRecording(VnMonitorSessionHandle handle, uint64_t leaseGener
         desc->fileByteBudget > VN_MONITOR_HARD_SESSION_FILE_BYTES) {
         return VN_MONITOR_BUDGET_EXCEEDED;
     }
-    owner.recorder.ResetStopped();
-    owner.recorder.path = path;
-    owner.recorder.fileByteBudget =
-        desc->fileByteBudget == 0 ? VN_MONITOR_DEFAULT_SESSION_FILE_BYTES
-                                  : desc->fileByteBudget;
-    owner.recorder.file.open(path, std::ios::binary | std::ios::trunc);
-    if (!owner.recorder.file.is_open()) {
-        FailRecorderLocked(owner.recorder, VN_MONITOR_RECORDING_FAILED);
-        return VN_MONITOR_RECORDING_FAILED;
-    }
-    std::uint8_t header[kSessionFileHeaderPackedBytes];
-    PackSessionFileHeader(header, 1, 1, 0, 0);
-    owner.recorder.file.write(reinterpret_cast<const char*>(header),
-                              sizeof(header));
-    if (!owner.recorder.file.good()) {
-        return FailAndRemoveStartFileLocked(owner.recorder,
-                                            VN_MONITOR_RECORDING_FAILED);
-    }
-    if (!owner.internals[kInternalRecorder]) {
-        return FailAndRemoveStartFileLocked(owner.recorder,
-                                            VN_MONITOR_RECORDING_FAILED);
-    }
-    owner.recorder.queueEpoch = owner.nextEpoch++;
-    owner.internals[kInternalRecorder]->Reset(
-        owner.recorder.fileByteBudget, VN_MONITOR_DROP_RECORDER_QUEUE,
-        owner.recorder.queueEpoch, 0);
-    owner.recorder.fileBytes = sizeof(header);
-    owner.recorder.state = VN_MONITOR_RECORDING_STATE_ACTIVE;
-    if (!WriteRecorderChunkLocked(owner.recorder, VN_MONITOR_CHUNK_SESSION_HEADER,
-                                  VN_MONITOR_CHUNK_REQUIRED, nullptr, 0)) {
-        const VnResult failed = RecorderFailureResult(owner.recorder);
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-        return failed;
-    }
-    if (owner.engine != nullptr && owner.engine->trace &&
-        owner.engine->trace->Active()) {
-        std::uint8_t correlation[kTraceCorrelationPackedBytes];
-        const std::uint64_t executeFrame =
-            owner.executeFrame.load(std::memory_order_relaxed);
-        const std::uint64_t logicCommit = owner.engine->logicCommits.Current();
-        PackTraceCorrelationPayload(correlation, 1, session->epoch, executeFrame,
-                                    logicCommit, 0, 0, session->epoch);
-        (void)TryWriteOptionalRecorderChunkLocked(
-            owner.recorder, VN_MONITOR_CHUNK_TRACE_CORRELATION,
-            VN_MONITOR_CHUNK_OPTIONAL, correlation, kTraceCorrelationPackedBytes);
-        if (owner.recorder.state == VN_MONITOR_RECORDING_STATE_FAILED) {
-            const VnResult failed = RecorderFailureResult(owner.recorder);
-            std::error_code ec;
-            std::filesystem::remove(path, ec);
-            return failed;
+    bool openedOutput = false;
+    const auto fail = [&](VnResult reason) {
+        owner.internalEnabledMask.fetch_and(~(1u << kInternalRecorder),
+                                            std::memory_order_release);
+        if (owner.internals[kInternalRecorder]) owner.internals[kInternalRecorder]->Detach();
+        if (openedOutput || owner.recorder.file.is_open())
+            return FailAndRemoveStartFileLocked(owner.recorder, reason);
+        FailRecorderLocked(owner.recorder, reason);
+        return reason;
+    };
+    try {
+        owner.recorder.ResetStopped();
+        owner.recorder.path = path;
+        owner.recorder.fileByteBudget =
+            desc->fileByteBudget == 0 ? VN_MONITOR_DEFAULT_SESSION_FILE_BYTES
+                                      : desc->fileByteBudget;
+        owner.recorder.file.open(path, std::ios::binary | std::ios::trunc);
+        if (!owner.recorder.file.is_open()) {
+            return fail(VN_MONITOR_RECORDING_FAILED);
         }
+        openedOutput = true;
+        std::uint8_t header[kSessionFileHeaderPackedBytes];
+        PackSessionFileHeader(header, 1, 1, 0, 0);
+        owner.recorder.file.write(reinterpret_cast<const char*>(header),
+                                  sizeof(header));
+        if (!owner.recorder.file.good()) {
+            return fail(VN_MONITOR_RECORDING_FAILED);
+        }
+        if (!owner.internals[kInternalRecorder]) {
+            return fail(VN_MONITOR_RECORDING_FAILED);
+        }
+        owner.recorder.queueEpoch = owner.nextEpoch++;
+        owner.internals[kInternalRecorder]->Reset(
+            owner.recorder.fileByteBudget, VN_MONITOR_DROP_RECORDER_QUEUE,
+            owner.recorder.queueEpoch, 0);
+        owner.recorder.fileBytes = sizeof(header);
+        owner.recorder.state = VN_MONITOR_RECORDING_STATE_ACTIVE;
+        if (!WriteRecorderChunkLocked(owner.recorder, VN_MONITOR_CHUNK_SESSION_HEADER,
+                                      VN_MONITOR_CHUNK_REQUIRED, nullptr, 0)) {
+            return fail(RecorderFailureResult(owner.recorder));
+        }
+        if (owner.engine != nullptr && owner.engine->trace &&
+            owner.engine->trace->Active()) {
+            std::uint8_t correlation[kTraceCorrelationPackedBytes];
+            const std::uint64_t executeFrame =
+                owner.executeFrame.load(std::memory_order_relaxed);
+            const std::uint64_t logicCommit = owner.engine->logicCommits.Current();
+            PackTraceCorrelationPayload(correlation, 1, session->epoch, executeFrame,
+                                        logicCommit, 0, 0, session->epoch);
+            (void)TryWriteOptionalRecorderChunkLocked(
+                owner.recorder, VN_MONITOR_CHUNK_TRACE_CORRELATION,
+                VN_MONITOR_CHUNK_OPTIONAL, correlation, kTraceCorrelationPackedBytes);
+            if (owner.recorder.state == VN_MONITOR_RECORDING_STATE_FAILED) {
+                return fail(RecorderFailureResult(owner.recorder));
+            }
+        }
+        owner.internalEnabledMask.fetch_or(1u << kInternalRecorder,
+                                           std::memory_order_release);
+        return VN_OK;
+    } catch (const std::bad_alloc&) {
+        return fail(VN_MONITOR_BUDGET_EXCEEDED);
+    } catch (const std::ios_base::failure&) {
+        return fail(VN_MONITOR_RECORDING_FAILED);
+    } catch (const std::filesystem::filesystem_error&) {
+        return fail(VN_MONITOR_RECORDING_FAILED);
     }
-    owner.internalEnabledMask.fetch_or(1u << kInternalRecorder,
-                                       std::memory_order_release);
-    return VN_OK;
 }
 
 VnResult StartRecording(VnMonitorSessionHandle handle, uint64_t leaseGeneration,
@@ -5564,55 +5574,65 @@ VnResult StartRecording(VnMonitorSessionHandle handle, uint64_t leaseGeneration,
         subscription->executionFactVersion != descriptor.schema) return discard(VN_MONITOR_PERMISSION_DENIED);
     std::lock_guard<std::mutex> recorderLock(owner.recorder.mutex);
     auto& recorder = owner.recorder;
-    recorder.ResetStopped();
-    recorder.typed = true;
-    recorder.receiver = receiver;
-    descriptor.epoch = subscription->epoch;
-    descriptor.startedNs = subscription->eventStartedNs;
-    std::copy(subscription->supportedFactKinds.begin(), subscription->supportedFactKinds.end(), descriptor.supported);
-    descriptor.controlStart = subscription->controlStart;
-    std::copy(subscription->executionStarts.begin(), subscription->executionStarts.end(), descriptor.starts);
-    descriptor.starts[2] = subscription->identityStart;
-    descriptor.starts[3] = subscription->symbolStart;
-    std::copy(subscription->ringStarts.begin(), subscription->ringStarts.end(), descriptor.ringStarts);
-    std::copy(subscription->logStarts.begin(), subscription->logStarts.end(), descriptor.logStarts);
-    std::copy(subscription->rawDropStarts.begin(), subscription->rawDropStarts.end(), descriptor.rawDropStarts);
-    std::copy(subscription->unavailableStarts.begin(), subscription->unavailableStarts.end(), descriptor.unavailableStarts);
-    if ((descriptor.streams & VN_MONITOR_STREAM_STATE) != 0) {
-        descriptor.cutId = subscription->cut.id;
-        descriptor.cutRevision = subscription->identity.begin.identityRevision;
-        descriptor.cutFirst = subscription->cut.beginSourceSequence;
-        descriptor.cutLast = subscription->cut.endSourceSequence;
-    }
-    recorder.descriptor = descriptor;
-    recorder.fileByteBudget = desc->fileByteBudget == 0 ? VN_MONITOR_DEFAULT_SESSION_FILE_BYTES : desc->fileByteBudget;
+    bool openedOutput = false;
     const auto fail = [&](VnResult reason) {
-        FailAndRemoveStartFileLocked(recorder, reason);
+        // A copied path is not an acquired output: preserve it until open succeeds.
+        if (openedOutput || recorder.file.is_open()) FailAndRemoveStartFileLocked(recorder, reason);
+        else FailRecorderLocked(recorder, reason);
         recorder.receiver = 0;
         return discard(reason);
     };
-    if (!recorder.verifier.Begin(descriptor)) return fail(VN_MONITOR_INCOMPATIBLE);
-    recorder.path = path;
-    recorder.file.open(path, std::ios::binary | std::ios::trunc);
-    if (!recorder.file.is_open()) {
-        FailRecorderLocked(recorder, VN_MONITOR_RECORDING_FAILED);
-        recorder.receiver = 0;
-        return discard(VN_MONITOR_RECORDING_FAILED);
+    try {
+        recorder.ResetStopped();
+        recorder.typed = true;
+        recorder.receiver = receiver;
+        descriptor.epoch = subscription->epoch;
+        descriptor.startedNs = subscription->eventStartedNs;
+        std::copy(subscription->supportedFactKinds.begin(), subscription->supportedFactKinds.end(), descriptor.supported);
+        descriptor.controlStart = subscription->controlStart;
+        std::copy(subscription->executionStarts.begin(), subscription->executionStarts.end(), descriptor.starts);
+        descriptor.starts[2] = subscription->identityStart;
+        descriptor.starts[3] = subscription->symbolStart;
+        std::copy(subscription->ringStarts.begin(), subscription->ringStarts.end(), descriptor.ringStarts);
+        std::copy(subscription->logStarts.begin(), subscription->logStarts.end(), descriptor.logStarts);
+        std::copy(subscription->rawDropStarts.begin(), subscription->rawDropStarts.end(), descriptor.rawDropStarts);
+        std::copy(subscription->unavailableStarts.begin(), subscription->unavailableStarts.end(), descriptor.unavailableStarts);
+        if ((descriptor.streams & VN_MONITOR_STREAM_STATE) != 0) {
+            descriptor.cutId = subscription->cut.id;
+            descriptor.cutRevision = subscription->identity.begin.identityRevision;
+            descriptor.cutFirst = subscription->cut.beginSourceSequence;
+            descriptor.cutLast = subscription->cut.endSourceSequence;
+        }
+        recorder.descriptor = descriptor;
+        recorder.fileByteBudget = desc->fileByteBudget == 0 ? VN_MONITOR_DEFAULT_SESSION_FILE_BYTES : desc->fileByteBudget;
+        if (!recorder.verifier.Begin(descriptor)) return fail(VN_MONITOR_INCOMPATIBLE);
+        recorder.path = path;
+        recorder.file.open(path, std::ios::binary | std::ios::trunc);
+        if (!recorder.file.is_open()) {
+            return fail(VN_MONITOR_RECORDING_FAILED);
+        }
+        openedOutput = true;
+        std::uint8_t header[kSessionFileHeaderPackedBytes];
+        PackSessionFileHeader(header, 1, descriptor.engine, 0, 0);
+        recorder.file.write(reinterpret_cast<const char*>(header), sizeof(header));
+        if (!recorder.file.good()) return fail(VN_MONITOR_RECORDING_FAILED);
+        recorder.fileBytes = sizeof(header);
+        recorder.queueEpoch = descriptor.epoch;
+        recorder.state = VN_MONITOR_RECORDING_STATE_ACTIVE;
+        std::uint8_t packed[kRecordingDescriptorBytes]{};
+        ExecutionPayloadWriter write{packed};
+        VisitRecordingDescriptor(write, descriptor);
+        if (!WriteRecorderChunkLocked(recorder, VN_MONITOR_CHUNK_EXECUTION_DESCRIPTOR, VN_MONITOR_CHUNK_REQUIRED, packed, sizeof(packed)))
+            return fail(RecorderFailureResult(recorder));
+        owner.WakeDrain();
+        return VN_OK;
+    } catch (const std::bad_alloc&) {
+        return fail(VN_MONITOR_BUDGET_EXCEEDED);
+    } catch (const std::ios_base::failure&) {
+        return fail(VN_MONITOR_RECORDING_FAILED);
+    } catch (const std::filesystem::filesystem_error&) {
+        return fail(VN_MONITOR_RECORDING_FAILED);
     }
-    std::uint8_t header[kSessionFileHeaderPackedBytes];
-    PackSessionFileHeader(header, 1, descriptor.engine, 0, 0);
-    recorder.file.write(reinterpret_cast<const char*>(header), sizeof(header));
-    if (!recorder.file.good()) return fail(VN_MONITOR_RECORDING_FAILED);
-    recorder.fileBytes = sizeof(header);
-    recorder.queueEpoch = descriptor.epoch;
-    recorder.state = VN_MONITOR_RECORDING_STATE_ACTIVE;
-    std::uint8_t packed[kRecordingDescriptorBytes]{};
-    ExecutionPayloadWriter write{packed};
-    VisitRecordingDescriptor(write, descriptor);
-    if (!WriteRecorderChunkLocked(recorder, VN_MONITOR_CHUNK_EXECUTION_DESCRIPTOR, VN_MONITOR_CHUNK_REQUIRED, packed, sizeof(packed)))
-        return fail(RecorderFailureResult(recorder));
-    owner.WakeDrain();
-    return VN_OK;
 }
 
 VnResult StopRecording(VnMonitorSessionHandle handle, uint64_t leaseGeneration) {
