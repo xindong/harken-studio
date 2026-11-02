@@ -356,10 +356,7 @@ class Server {
                 std::lock_guard<std::mutex> lock(mutex);
                 status.lastResult = VN_DEVICE_ERROR;
                 status.state = VN_REMOTE_FAILED;
-                epoch = 0;
-                welcomed = false;
-                inbound.clear();
-                inboundBytes = 0;
+                DisconnectLocked();
             }
         });
         return true;
@@ -436,6 +433,10 @@ class Server {
 
     void Disconnect() {
         std::lock_guard<std::mutex> lock(mutex);
+        DisconnectLocked();
+    }
+
+    void DisconnectLocked() {
         epoch = 0;
         welcomed = false;
         closeRequested = false;

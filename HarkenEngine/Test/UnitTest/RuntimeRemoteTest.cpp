@@ -1378,7 +1378,10 @@ TEST(RuntimeRemote, BusyReplyAllocationFailuresClosePeersAndAllowRestart) {
             Client second;
             ASSERT_TRUE(second.Connect(Status().tcpPort));
             ASSERT_TRUE(WaitUntil([] { return Status().state == VN_REMOTE_FAILED; }, false));
-            EXPECT_EQ(VN_DEVICE_ERROR, Status().lastResult);
+            const auto failed = Status();
+            EXPECT_EQ(VN_DEVICE_ERROR, failed.lastResult);
+            EXPECT_EQ(0u, failed.clientCount);
+            EXPECT_EQ(0u, failed.sessionId);
             EXPECT_TRUE(WaitUntil([&] { return peerClosed(first); }, false));
             EXPECT_TRUE(WaitUntil([&] { return peerClosed(second); }, false));
         }
