@@ -83,7 +83,7 @@ QString BindingAddMenu::addBinding(uint32_t objectId, QUndoCommand* undoParent)
         return tr("The binding target is no longer available.");
     auto binding = BindingSemantics::defaultBinding(address_, variable->guid);
     binding.guid = QUuid::createUuid();
-    QString label = BindingSemantics::slotName(address_.slotId);
+    QString label = BindingSemantics::slotName(address_);
     if (!label.isEmpty())
         label[0] = label[0].toUpper();
     const auto generation = generation_;

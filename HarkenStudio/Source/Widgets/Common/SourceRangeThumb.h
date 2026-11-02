@@ -4,13 +4,13 @@
 #include "Core/AssetPipeline/WaveformCache.h"
 #include "Core/Components/VSound.h"
 
-#include <QWidget>
+#include "PreviewField.h"
 
 #include <optional>
 
 namespace VNX {
 
-class SourceRangeThumb : public QWidget
+class SourceRangeThumb : public PreviewField
 {
     Q_OBJECT
 
@@ -20,12 +20,8 @@ public:
     void setSource(const SoundSourceDef& source, const AssetInfo* asset);
     void clearSource(const QString& text = {});
 
-signals:
-    void clicked();
-
 protected:
-    void paintEvent(QPaintEvent* event) override;
-    void mousePressEvent(QMouseEvent* event) override;
+    void paintPreview(QPainter& painter, const QRectF& bounds) override;
 
 private:
     SoundSourceDef source_;

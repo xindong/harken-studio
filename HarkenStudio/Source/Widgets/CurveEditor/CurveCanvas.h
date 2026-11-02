@@ -2,6 +2,7 @@
 
 #include "Core/CurveSemantics.h"
 #include "CurveRenderer.h"
+#include "CurvePlotGeometry.h"
 #include "Core/VariableSemantics.h"
 
 #include <QPointF>
@@ -36,38 +37,16 @@ bool curveHandlesMirrorAligned(const QPointF& anchor, const QPointF& handleA,
 // Caller pre-clamps t into [0.05, 0.95] so the denominator never degenerates.
 void curveDistributeBodyDelta(double t, const QPointF& delta, QPointF* d1, QPointF* d2);
 
-struct CurveCanvasProfile
+struct CurveCanvasProfile : CurvePlotProfile
 {
     void setVariableAxis(VariableKind kind, const std::vector<VariableLabel>& labels);
 
-    CurveAxisScale axisScale = CurveAxisScale::AmplitudeDb;
-    float yMin = -96.0f;
-    float yMax = 0.0f;
-    std::optional<float> valueMinimum;
-    std::optional<float> valueMaximum;
     float defaultEndValue = -96.0f;
     CurveColorRole colorRole = CurveColorRole::ParameterBinding;
     QColor color;
-    QString xAxisLabel;
-    QString yAxisLabel;
-    bool xAxisVisible = true;
-    QString valueUnit{QStringLiteral("dB")};
-    int valueDecimals = 1;
     QString clipboardFamily{QStringLiteral("volume")};
-    bool discretePreview = false;
-    bool xMaxEditable = false;
     bool endpointsFollowDomain = true;
     bool preserveOutOfRangeValues = false;
-    float xMaxMinimum = 1.0f;
-    float xMaxMaximum = 100000.0f;
-    int xDecimals = 2;
-    std::optional<float> xMaxEditValue;
-    bool yRangeEditable = false;
-    float yRangeMinimum = 0.0f;
-    float yRangeMaximum = 1.0f;
-    bool xTicksUseLabels = false;
-    std::vector<VariableLabel> xTickLabels;
-    bool clampYToPlot = true;
 };
 
 struct CurveOverlay
@@ -151,6 +130,7 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
 
 private:
+    CurvePlotGeometry plotGeometry(bool useVirtualGraph = true) const;
     CurveAxisScale axisScale() const { return profile_.axisScale; }
     void beginAxisBoundEdit(CurveAxisBound bound, const QRectF& labelRect);
     QDialog* createValueEditor();

@@ -41,16 +41,10 @@ bool validCurveTupleArray(const QJsonValue& value, int tupleSize, int maxSize)
     return true;
 }
 
-ProjectItemType hostTypeOf(BindingHostClass hostClass)
-{
-    return hostClass == BindingHostClass::Bus
-        ? ProjectItemType::Bus : ProjectItemType::Sound;
-}
-
 bool isBindableAddress(const BindingAddress& address)
 {
     return BindingContractSemantics::isBindable(
-        BindingContractSemantics::derive(address.slotId, hostTypeOf(address.hostClass)));
+        BindingContractSemantics::derive(address));
 }
 
 bool validBindingJson(ProjectManager* projectManager, const QJsonValue& value)

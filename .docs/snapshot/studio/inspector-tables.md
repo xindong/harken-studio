@@ -42,6 +42,7 @@
 | Sources / Active | 同一平台与语言只选一个来源；多平台不一致时显示半勾选 |
 | Sources / Waveform | 展示音频裁剪与循环范围，可打开范围编辑；文件缺失时留空且不可编辑 |
 | Sources / 缺失引用 | 保留引用及 Active；Audio 标红，仅当前平台与语言的 Active 来源缺失使 Sound 标红 |
+| Playback / Filter | Sound、Container、Layer、Track、Segment、Bus 的 MixNode 属性；标签加共享预览窗，点击进入 External Editor；全默认时淡化，有非默认值时激活，均可编辑 |
 | Steps / Set Variable | 详情含 Value 与 Scope；Scope 为 Global／Emitter，默认 Emitter，随步骤保存，更换 Target 不重置 |
 | Steps / PostAction | 拒绝直接或间接循环；候选显示循环路径，拒绝不产生修改或撤销记录；重复引用和无环菱形依赖允许 |
 | Labels / 索引编辑 | 双击 # 编辑；仅接受当前范围内未占用的整数，空名称行也占用索引 |
@@ -54,6 +55,10 @@
 
 表注：语言分组、导入、缺失恢复与文件操作见[音频源业务结果表](audio-source-lifecycle.md)。
 
+Filter 编辑器上方使用共享曲线画布和刻度，下方沿用 Inspector 的 Low Pass、High Pass、Low Shelf、High Shelf 折叠分节、参数 Slider 和右侧变量绑定插槽。图表与字段共用面板外框，中间 1px 分隔边界可拖动调整高度，悬停只将边界颜色切为主题 accent，拖动命中范围另行扩展。四节依次使用 categorical 0–3 的标题背景、曲线和点。没有 Enable 字段；只有非默认分节显示控制点。大小预览均按工程输出采样率计算频响，横轴固定为 Frequency 的 20–20000 Hz。
+
+Frequency 范围为 20–20000 Hz，四节默认值依次为 20000、20、200、6000 Hz；Q Value 范围为 0.1–10，默认 0.70710678；两个 Shelf 的 Gain 范围为 −48–48 dB，默认 0。预览显示编写值，不跟随 Variable Rehearsal 或叠加绑定贡献。保存及平台覆盖跟随对象定义的 Volume/Pitch 编辑范围，图上多参数拖动合为一次撤销。当前仅实现 Studio 编写、保存和可视预览；Engine 的 CurrentWorld、实时播放和 Pack Filter 合同尚未接入。
+
 ## 新建变量绑定
 
 | 项目 | 当前行为 |
@@ -64,6 +69,7 @@
 | 创建 | Create 确认后同时创建变量与绑定；名称非法或冲突时原地报错 |
 | 取消与失败 | 取消、关闭或改绑不创建对象；绑定失败撤回新变量 |
 | 撤销 | 创建及绑定合为一次撤销；失败不增加撤销记录 |
+| Filter 贡献 | 使用原字段单位和上下限作为纵轴；新建绑定为 0 中性平线，Frequency/Q 的 0 保留在可视轴外；前端不合成或限制原值与贡献之和 |
 | Pitch 贡献 | 绑定纵轴统一为 −4800–4800 cent，新建绑定初始为 0 中性平线；保留已有曲线点值，超范围部分位于可视轴外，新编辑限制在 ±4800 |
 
 ## 可继承字段

@@ -5,6 +5,7 @@
 #include "Components/VBus.h"
 #include "Components/VMixNode.h"
 #include "Components/VVariable.h"
+#include "FilterAuthoring.h"
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -55,6 +56,7 @@ PropertyEditSession::PropertyEditSession(ProjectItem* item, QString propertyName
     , platforms_(std::move(platforms))
 {
     currentValue_ = startValue_;
+    if (item_ && FilterAuthoring::isField(propertyName_)) captureFilterStart();
     if (item_) {
         const auto* field = PlayablePropertyAuthoringV1::fieldByName(propertyName_);
         if (isBusOutputVolumeField(item_, field)) {
@@ -143,6 +145,64 @@ void PropertyEditSession::cancelActiveFor(
             continue;
         session->cancel();
     }
+}
+
+void PropertyEditSession::cancelActiveFor(ProjectItem* owner, const QString& field)
+{
+    const auto sessions = sessionRegistry();
+    for (auto* session : sessions) {
+        if (session->isActive() && session->item_ == owner && session->filterStartState_
+            && (session->propertyName_ == field || field == QLatin1String("filter")
+                || session->propertyName_ == QLatin1String("filter"))) session->cancel();
+    }
+}
+
+void PropertyEditSession::captureFilterStart()
+{
+    const auto base = FilterAuthoring::readProperty(*item_, propertyName_);
+    if (!base) return;
+    PlayableStartSnapshot snapshot;
+    snapshot.base = *base;
+    snapshot.writesSharedBase = !platforms_;
+    const auto targets = platforms_.value_or(occupiedTargetPlatforms(
+        ProjectManager::instance().getTargetPlatforms()));
+    for (const auto& platform : targets) {
+        if (platform == ProjectPlatformId{}) continue;
+        const auto state = FilterAuthoring::readProperty(*item_, propertyName_, platform, true);
+        if (state) snapshot.overlays.append({platform, *state});
+    }
+    filterStartState_ = std::move(snapshot);
+}
+
+void PropertyEditSession::restoreFilterStart()
+{
+    for (const auto& [platform, state] : filterStartState_->overlays)
+        FilterAuthoring::restoreProperty(*item_, propertyName_, state, platform);
+    if (filterStartState_->writesSharedBase)
+        FilterAuthoring::restoreProperty(*item_, propertyName_, filterStartState_->base, std::nullopt);
+}
+
+bool PropertyEditSession::previewFilter(const QJsonValue& value)
+{
+    if (filterStartState_->writesSharedBase) {
+        if (!FilterAuthoring::setOverride(*item_, propertyName_, value, std::nullopt)) return false;
+        for (const auto& [platform, state] : filterStartState_->overlays)
+            FilterAuthoring::clearOverride(*item_, propertyName_, platform);
+        return true;
+    }
+    for (const auto& [platform, state] : filterStartState_->overlays) {
+        if (!FilterAuthoring::setOverride(*item_, propertyName_, value, platform)) return false;
+    }
+    return true;
+}
+
+bool PropertyEditSession::filterStateChanged() const
+{
+    if (filterStartState_->writesSharedBase
+        && FilterAuthoring::readProperty(*item_, propertyName_) != filterStartState_->base) return true;
+    for (const auto& [platform, state] : filterStartState_->overlays)
+        if (FilterAuthoring::readProperty(*item_, propertyName_, platform, true) != state) return true;
+    return false;
 }
 
 bool PropertyEditSession::isBusEdit() const
@@ -264,6 +324,13 @@ bool PropertyEditSession::playableStateChanged() const
 void PropertyEditSession::preview(const QVariant& newValue)
 {
     if (state_ != State::Active || !item_) return;
+    if (filterStartState_) {
+        if (previewFilter(QJsonValue::fromVariant(newValue))) {
+            currentValue_ = newValue;
+            emit ProjectManager::instance().itemPropertyPreviewed(item_, propertyName_, originator_);
+        }
+        return;
+    }
     if (playableLocator_ && playableStartState_) {
         const auto json = PlayablePropertyAuthoringV1::wireValueFromVariant(
             playablePropertyId_, newValue);
@@ -292,6 +359,15 @@ void PropertyEditSession::commit()
     if (state_ != State::Active) return;
     state_ = State::Committed;
     if (!item_) return;
+
+    if (filterStartState_) {
+        if (!filterStateChanged()) return;
+        restoreFilterStart();
+        ActionManager::instance().execute(QStringLiteral("set_item_property"),
+            playableActionArgs(QStringLiteral("set_override"), QJsonValue::fromVariant(currentValue_)),
+            ActionSource::Internal, originator_);
+        return;
+    }
 
     if (playableLocator_ && playableStartState_) {
         if (!playableStateChanged()) return;
@@ -329,6 +405,13 @@ void PropertyEditSession::cancel()
     if (state_ != State::Active) return;
     state_ = State::Cancelled;
     if (!item_) return;
+    if (filterStartState_) {
+        if (!filterStateChanged()) return;
+        restoreFilterStart();
+        currentValue_ = startValue_;
+        emit ProjectManager::instance().itemPropertyPreviewed(item_, propertyName_, originator_);
+        return;
+    }
     if (playableLocator_ && playableStartState_) {
         restorePlayableStart();
         currentValue_ = startValue_;

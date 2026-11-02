@@ -2,6 +2,7 @@
 #pragma once
 
 #include "Core/BindingContract.h"
+#include "Core/ExternalEditorSelection.h"
 #include "Core/ContextInfo.h"
 #include "Core/PropertyDescriptor.h"
 #include "Core/PlayablePropertyAuthoringV1.h"
@@ -80,6 +81,7 @@ signals:
     void launchRequested(const QString& slot);
 
     void fieldGroupChanged();
+    void externalEditorRequested(const ExternalEditorSelection& selection);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;

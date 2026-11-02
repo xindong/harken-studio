@@ -152,6 +152,7 @@ target_link_libraries(harken_editor_inspector PUBLIC
 # U4 S5: Sources range popup reuses SourceEditorWaveformView.
 target_link_libraries(harken_editor_inspector PRIVATE
     harken_editor_source_editor
+    harken_editor_curve_editor
 )
 
 if(MSVC)

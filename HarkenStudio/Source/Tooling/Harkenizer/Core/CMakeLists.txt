@@ -31,6 +31,8 @@ add_library(harkenizer_core STATIC
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FieldGroupJson.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FieldGroupProjectAdapter.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FieldGroups.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FilterSemantics.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FilterAuthoring.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FolderSaveState.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/GridSemantics.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/IntegrityScanner.cpp

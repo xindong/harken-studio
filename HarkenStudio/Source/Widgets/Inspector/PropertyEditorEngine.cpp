@@ -5,6 +5,7 @@
 #include "InspectorTabContainer.h"
 #include "InspectorLayout.h"
 #include "InspectorSlotStrip.h"
+#include "BindingFieldDecorator.h"
 #include "Widgets/Shared/InspectorFormRow.h"
 #include "Widgets/Shared/PlatformFieldMerge.h"
 #include "Drawers/ListFieldDrawer.h"
@@ -18,7 +19,10 @@
 #include "Widgets/Common/ValueSegmentedControl.h"
 #include "Core/ProjectTypes.h"
 #include "Core/PropertyEditSession.h"
+#include "Core/FilterAuthoring.h"
+#include "Widgets/FilterEditor/FilterPreviewField.h"
 #include "Core/BindingContract.h"
+#include "Core/BindingEditing.h"
 #include "Core/ProjectManager.h"
 #include "Core/Component.h"
 #include "Core/Components/VAction.h"
@@ -81,6 +85,24 @@ std::optional<QVector<ProjectPlatformId>> currentAuthoringPlatforms()
     if (PlatformContextService::instance().context().all || selected.isEmpty())
         return std::nullopt;
     return selected;
+}
+
+PlatformFieldView filterFieldView(const ProjectItem& item, const QString& field)
+{
+    PlatformFieldView view;
+    const auto& context = PlatformContextService::instance().context();
+    if (context.selected.isEmpty()) {
+        view.value = FilterAuthoring::readProperty(item, field).value_or(PlayablePropertyStateV1{});
+        return view;
+    }
+    for (const auto& platform : context.selected) {
+        const auto state = FilterAuthoring::readProperty(item, field, platform);
+        if (!state) continue;
+        if (view.perPlatform.isEmpty()) view.value = *state;
+        else if (view.value.value != state->value) view.uniform = false;
+        view.perPlatform.append({platform, *state});
+    }
+    return view;
 }
 
 class MixedAcrossPlatformsCheckBox final : public QCheckBox
@@ -582,7 +604,20 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
     QWidget* control = nullptr;
     QString  type;
     IFieldDrawer* drawer = reg.fieldDrawer(d.type);
-    if (drawer)
+    if (d.field == QLatin1String("filter") && d.ownerComponent == ComponentType::MixNode)
+    {
+        auto* preview = new FilterPreviewField(parent);
+        preview->setObjectName(QStringLiteral("prop_filter"));
+        preview->setToolTip(tr("Open Filter Editor"));
+        control = preview;
+        type = QStringLiteral("filter_preview");
+        drawer = nullptr;
+        connect(preview, &PreviewField::clicked, this, [this] {
+            if (currentItem_)
+                emit externalEditorRequested(ExternalEditorSelection::filter(currentItem_->guid));
+        });
+    }
+    else if (drawer)
     {
         auto descriptor = d;
         if (fieldGroup(d.field)) {
@@ -636,7 +671,12 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
         QWidget* widget = perPageBinding_
             ? perPageBinding_(d)
             : reg.makeSlotDecorator(InspectorSlotKind::Binding, d);
-        if (widget) strip->addSlot(InspectorSlotKind::Binding, widget);
+        if (widget) {
+            strip->addSlot(InspectorSlotKind::Binding, widget);
+            if (auto* binding = qobject_cast<BindingFieldDecorator*>(widget))
+                connect(binding, &BindingFieldDecorator::externalEditorRequested,
+                        this, &PropertyEditorEngine::externalEditorRequested);
+        }
     }
     if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(itemType_)) {
         if (auto* widget = reg.makeSlotDecorator(InspectorSlotKind::Attenuation, d))
@@ -1006,7 +1046,8 @@ void PropertyEditorEngine::connectWidgetSignal(QWidget* widget, const QString& w
                         currentAuthoringPlatforms());
                 } else {
                     entry.editSession = std::make_unique<PropertyEditSession>(
-                        currentItem_, field, QVariant(startValue), this);
+                        currentItem_, field, QVariant(startValue), this,
+                        FilterAuthoring::isField(field) ? currentAuthoringPlatforms() : std::nullopt);
                 }
                 return;
             }
@@ -1193,6 +1234,22 @@ bool PropertyEditorEngine::eventFilter(QObject* watched, QEvent* event)
 bool PropertyEditorEngine::applyPlayableFieldView(const FieldBinding& binding)
 {
     if (!binding.widget || binding.drawer) return false;
+    if (currentItem_ && FilterAuthoring::isField(binding.field)) {
+        const auto view = filterFieldView(*currentItem_, binding.field);
+        if (view.uniform) {
+            setWidgetValue(binding.widget, binding.widgetType, view.value.value.toVariant());
+            binding.widget->setToolTip(binding.field == QLatin1String("filter")
+                ? tr("Open Filter Editor") : QString());
+        } else {
+            if (auto* slider = qobject_cast<ParameterSlider*>(binding.widget.data()))
+                slider->setMixedValue(true);
+            if (auto* preview = qobject_cast<FilterPreviewField*>(binding.widget.data()))
+                preview->setMixed(true);
+            if (const auto* project = ProjectManager::instance().currentProject())
+                binding.widget->setToolTip(platformFieldMixedTooltip(view, project->platforms));
+        }
+        return true;
+    }
     ProjectItem* owner = nullptr;
     const auto* property = PlayablePropertyAuthoringV1::fieldByName(binding.field);
     const auto locator = property
@@ -1281,6 +1338,17 @@ bool PropertyEditorEngine::applyPlayableFieldView(const FieldBinding& binding)
 
 void PropertyEditorEngine::setWidgetValue(QWidget* widget, const QString& widgetType, const QVariant& value)
 {
+    if (widgetType == QLatin1String("filter_preview")) {
+        if (auto* preview = qobject_cast<FilterPreviewField*>(widget)) {
+            const auto filter = FilterSemantics::fromJson(QJsonObject::fromVariantMap(value.toMap()));
+            if (filter) {
+                preview->setMixed(false);
+                const auto* project = ProjectManager::instance().currentProject();
+                preview->setFilter(*filter, project ? project->sampleRate : 48000.0);
+            }
+        }
+        return;
+    }
     if (widgetType == QStringLiteral("slider"))
     {
         // No blockSignals here: ParameterSlider::setValue is already silent, and
@@ -1434,6 +1502,10 @@ IComponent* PropertyEditorEngine::resolveComponentTyped(ProjectItem* item, Compo
 
 QVariant PropertyEditorEngine::readField(const QString& field) const
 {
+    if (currentItem_ && FilterAuthoring::isField(field)) {
+        const auto view = filterFieldView(*currentItem_, field);
+        return view.uniform ? view.value.value.toVariant() : QVariant{};
+    }
     if (fieldGroup(field)) return groupFieldValue(field);
     if (const auto* property = PlayablePropertyAuthoringV1::fieldByName(field)) {
         ProjectItem* owner = nullptr;
@@ -1518,6 +1590,8 @@ void PropertyEditorEngine::bindItem(ProjectItem* item)
     for (auto& b : bindings_)
     {
         tagFieldTopic(b, item);
+        if (item && b.bindingAddress)
+            b.bindingAddress->hostClass = BindingContractSemantics::hostClassOf(item->type);
         if (!b.widget) continue;
         if (fieldGroup(b.field)) continue;
         if (b.drawer) {
@@ -1553,7 +1627,7 @@ void PropertyEditorEngine::bindItem(ProjectItem* item)
                 seg->setContext(item
                     ? item->guid.toString(QUuid::WithoutBraces) + QLatin1Char('/') + b.field
                     : QString());
-            const bool handled = PlayablePropertyAuthoringV1::fieldByName(b.field)
+            const bool handled = (PlayablePropertyAuthoringV1::fieldByName(b.field) || FilterAuthoring::isField(b.field))
                 && !preserveActiveEdit
                 && applyPlayableFieldView(b);
             if (!handled && v.isValid() && !preserveActiveEdit)
@@ -1622,34 +1696,15 @@ bool PropertyEditorEngine::refreshField(const QString& field)
 
     bool handled = false;
     QString fieldName = field;
-    std::optional<BindingAddress> addressFilter;
     const bool coarseBindings = field == QLatin1String("bindings");
-    if (field.startsWith(QLatin1String("bindings."))) {
-        const QStringList parts = field.split(QLatin1Char('.'));
-        if (parts.size() >= 3) {
-            const auto hostClass = BindingContractSemantics::parseHostClass(parts.at(1));
-            bool ok = false;
-            const int slotId = parts.at(2).toInt(&ok);
-            if (hostClass && ok && slotId >= 1 && slotId <= 16) {
-                BindingAddress address;
-                address.hostClass = *hostClass;
-                address.slotId = static_cast<uint8_t>(slotId);
-                if (parts.size() >= 4) {
-                    bool pathOk = false;
-                    const int pathIndex = parts.at(3).toInt(&pathOk);
-                    if (pathOk && pathIndex >= 0)
-                        address.path = BindingPath{static_cast<uint32_t>(pathIndex)};
-                }
-                addressFilter = address;
-            }
-        }
-        fieldName.clear();
-    }
+    const bool addressFilter = field.startsWith(QLatin1String("bindings."));
+    if (addressFilter) fieldName.clear();
     for (auto& b : bindings_)
     {
-        const bool fieldMatch = !fieldName.isEmpty() && b.field == fieldName;
+        const bool fieldMatch = !fieldName.isEmpty() && (b.field == fieldName
+            || (FilterAuthoring::isField(fieldName) && FilterAuthoring::isField(b.field)));
         const bool addressMatch = addressFilter && b.bindingAddress
-            && *b.bindingAddress == *addressFilter;
+            && BindingEditing::changeKey(*b.bindingAddress) == field;
         const bool coarseHang = coarseBindings && b.bindingAddress.has_value();
         if ((!fieldMatch && !addressMatch && !coarseHang) || !b.widget) continue;
         updating_ = true;
@@ -1677,7 +1732,7 @@ bool PropertyEditorEngine::refreshField(const QString& field)
             auto* multilineEdit = b.widgetType == QLatin1String("multiline_text")
                 ? qobject_cast<QPlainTextEdit*>(b.widget.data())
                 : nullptr;
-            const bool playableHandled = PlayablePropertyAuthoringV1::fieldByName(b.field)
+            const bool playableHandled = (PlayablePropertyAuthoringV1::fieldByName(b.field) || FilterAuthoring::isField(b.field))
                 && (!multilineEdit || !multilineEdit->hasFocus())
                 && applyPlayableFieldView(b);
             if (!playableHandled && v.isValid()
@@ -1691,7 +1746,7 @@ bool PropertyEditorEngine::refreshField(const QString& field)
                 decorator->bind(currentItem_);
         updating_ = false;
         handled = true;
-        if (!addressFilter && !coarseBindings) break;
+        if (!addressFilter && !coarseBindings && !FilterAuthoring::isField(field)) break;
     }
 
     for (const auto& s : sectionBindings_) {

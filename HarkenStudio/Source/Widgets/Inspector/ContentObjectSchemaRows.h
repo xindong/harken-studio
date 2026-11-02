@@ -56,6 +56,12 @@ inline PropertySchema contentObjectInspectorRows(ProjectItem::Type type)
         }
         out.insert(position, std::move(descriptor));
     }
+    if (const auto* filter = pickSchemaField(VMixNode::schema(), QLatin1String("filter"))) {
+        auto afterPitch = std::find_if(out.begin(), out.end(), [](const PropertyDescriptor& d) {
+            return d.field == QLatin1String("pitch");
+        });
+        out.insert(afterPitch == out.end() ? out.end() : std::next(afterPitch), *filter);
+    }
     out.push_back(notesInspectorDescriptor());
     return out;
 }

@@ -4,6 +4,7 @@
 #include "../Component.h"
 #include "../BindingSemantics.h"
 #include "../EffectChainSemantics.h"
+#include "../FilterSemantics.h"
 #include "../PropertyDescriptor.h"
 #include "../ProjectTypes.h"
 
@@ -47,6 +48,7 @@ public:
     float volume = 0.0f;
     float pitch  = 0.0f;
     float makeUpGain = 0.0f;
+    FilterState filter;
 
     uint32_t outputBusId     = 0;
     float    outputBusVolume = 0.0f;
@@ -56,6 +58,14 @@ public:
 
     BindingLedger bindings;
     EffectChainLedger effects;
+
+    bool fromJson(const QJsonObject& json) override
+    {
+        const auto value = json.value(QStringLiteral("filter"));
+        if (!value.isUndefined()
+            && (!value.isObject() || !FilterSemantics::fromJson(value.toObject()))) return false;
+        return ReflectedComponent<VMixNode>::fromJson(json);
+    }
 
     void toJsonExtra(QJsonObject& j) const override
     {
@@ -77,13 +87,27 @@ public:
 #endif
 inline const PropertySchema& VMixNode::schema()
 {
-    static const PropertySchema s = withOwner<VMixNode>({
+    static const PropertySchema s = [] {
+        auto schema = withOwner<VMixNode>({
         { .field="volume", .type=PropType::Float, .label="Volume", .section=PropertySection::Playback,
           .unit=" dB", .min=-96.0, .max=24.0, .decimals=1, .flags={.sourceIndicator=true},
           .get=VNX_PROP_GET(VMixNode, volume), .set=VNX_PROP_SET_F(VMixNode, volume) },
         { .field="pitch", .type=PropType::Float, .label="Pitch", .section=PropertySection::Playback,
           .unit=" cent", .min=-4800.0, .max=4800.0, .decimals=0, .flags={.sourceIndicator=true},
           .get=VNX_PROP_GET(VMixNode, pitch), .set=VNX_PROP_SET_F(VMixNode, pitch) },
+        { .field="filter", .type=PropType::Struct, .label="Filter", .section=PropertySection::Playback,
+          .def=FilterSemantics::toJson(FilterState{}).toVariantMap(),
+          .get=[](const IComponent* component) {
+              return FilterSemantics::toJson(static_cast<const VMixNode*>(component)->filter).toVariantMap();
+          },
+          .set=[](IComponent* component, const QVariant& value) {
+              const auto json = QJsonValue::fromVariant(value);
+              if (!json.isObject()) return false;
+              const auto parsed = FilterSemantics::fromJson(json.toObject());
+              if (!parsed) return false;
+              static_cast<VMixNode*>(component)->filter = *parsed;
+              return true;
+          } },
         { .field="makeUpGain", .type=PropType::Float, .label="Make-Up Gain", .section=PropertySection::Playback,
           .unit=" dB", .min=-24.0, .max=24.0, .decimals=1, .flags={.sourceIndicator=true}, .aliases={"makeupgain"},
           .get=VNX_PROP_GET(VMixNode, makeUpGain), .set=VNX_PROP_SET_F(VMixNode, makeUpGain) },
@@ -156,7 +180,38 @@ inline const PropertySchema& VMixNode::schema()
               return true;
           },
           .serializeWhen=[](const VNX::IComponent* c){ return !static_cast<const VMixNode*>(c)->sends.empty(); } },
-    });
+        });
+        constexpr std::array<PropertySection, 4> sections{
+            PropertySection::FilterLowPass, PropertySection::FilterHighPass,
+            PropertySection::FilterLowShelf, PropertySection::FilterHighShelf};
+        for (const auto& field : FilterSemantics::fields()) {
+            PropertyDescriptor descriptor;
+            descriptor.field = QLatin1String(field.field);
+            descriptor.ownerComponent = ComponentType::MixNode;
+            descriptor.type = PropType::Float;
+            descriptor.section = sections[static_cast<std::size_t>(field.kind)];
+            descriptor.label = field.parameter == FilterParameter::Frequency ? QStringLiteral("Frequency")
+                : field.parameter == FilterParameter::Q ? QStringLiteral("Q Value") : QStringLiteral("Gain");
+            descriptor.unit = field.parameter == FilterParameter::Frequency ? QStringLiteral(" Hz")
+                : field.parameter == FilterParameter::Gain ? QStringLiteral(" dB") : QString{};
+            descriptor.min = field.minimum;
+            descriptor.max = field.maximum;
+            descriptor.def = field.defaultValue;
+            descriptor.decimals = field.parameter == FilterParameter::Frequency ? 0
+                : field.parameter == FilterParameter::Q ? 3 : 1;
+            descriptor.flags.serialize = false;
+            descriptor.get = [field](const IComponent* component) {
+                return FilterSemantics::value(static_cast<const VMixNode*>(component)->filter, field);
+            };
+            descriptor.set = [field](IComponent* component, const QVariant& value) {
+                const auto number = QJsonValue::fromVariant(value);
+                return number.isDouble() && FilterSemantics::setValue(
+                    static_cast<VMixNode*>(component)->filter, field, number.toDouble());
+            };
+            schema.push_back(std::move(descriptor));
+        }
+        return schema;
+    }();
     return s;
 }
 #if defined(__clang__)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlayablePropertyAuthoringV1.h"
+#include "FilterSemantics.h"
 #include "harken_playable_property_studio.g.h"
 
 #include <QJsonArray>
@@ -16,13 +17,15 @@ inline QJsonObject setItemPropertySchema()
         QStringLiteral("scheduleOffsetSec"), QStringLiteral("distinguishLanguage"),
         QStringLiteral("clips"), QStringLiteral("segmentTime"),
         QStringLiteral("dimensions"), QStringLiteral("maxDistance"),
-        QStringLiteral("transitions")};
+        QStringLiteral("transitions"), QStringLiteral("filter")};
+    for (const auto& field : FilterSemantics::fields())
+        propertyNames.append(QLatin1String(field.field));
     for (const auto& field : VNX::PlayablePropertyAuthoringV1::fields()) {
         if (!PlayablePropertyAuthoringV1::isEditorExposed(field.id)) continue;
         const QString name = QString::fromLatin1(field.fieldName);
         if (!propertyNames.contains(name)) propertyNames.append(name);
     }
-    return QJsonObject{
+    QJsonObject schema{
         {QStringLiteral("type"), QStringLiteral("object")},
         {QStringLiteral("properties"), QJsonObject{
             {QStringLiteral("path"), QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}, {QStringLiteral("minLength"), 1}}},
@@ -109,6 +112,19 @@ inline QJsonObject setItemPropertySchema()
                     QStringLiteral("rangeContentHash")}}}}
         }}
     };
+    auto values = schema.value(QStringLiteral("propertyValues")).toObject();
+    values.insert(QStringLiteral("filter"), QJsonObject{
+        {QStringLiteral("type"), QStringLiteral("object")},
+        {QStringLiteral("required"), QJsonArray{
+            QStringLiteral("lowPass"), QStringLiteral("highPass"),
+            QStringLiteral("lowShelf"), QStringLiteral("highShelf")}}});
+    for (const auto& field : FilterSemantics::fields())
+        values.insert(QLatin1String(field.field), QJsonObject{
+            {QStringLiteral("type"), QStringLiteral("number")},
+            {QStringLiteral("minimum"), field.minimum},
+            {QStringLiteral("maximum"), field.maximum}});
+    schema.insert(QStringLiteral("propertyValues"), values);
+    return schema;
 }
 
 }

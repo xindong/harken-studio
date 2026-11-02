@@ -92,7 +92,8 @@ void drawCurve(QPainter& painter,
     }
 
     for (const CurveRenderPoint& point : data.points) {
-        painter.setPen(QPen(point.selected ? style.colors.pointSelectedBorder : style.colors.pointBorder,
+        painter.setPen(QPen(point.color.isValid() ? point.color
+                            : point.selected ? style.colors.pointSelectedBorder : style.colors.pointBorder,
                             style.metrics.pointBorderWidth));
         painter.setBrush(point.selected ? style.colors.pointSelectedFill : style.colors.plotBackground);
         const qreal radius = point.selected || point.hovered ? style.metrics.pointSelectedRadius

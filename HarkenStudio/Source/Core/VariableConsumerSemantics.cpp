@@ -296,6 +296,8 @@ AuditionVariableDependencies dependenciesForAudition(
                 return compareItems(byGuid.value(a.consumer.hostGuid), byGuid.value(b.consumer.hostGuid));
             if (a.consumer.kind != b.consumer.kind)
                 return a.consumer.kind < b.consumer.kind;
+            if (a.consumer.address.family != b.consumer.address.family)
+                return a.consumer.address.family < b.consumer.address.family;
             return a.consumer.address.slotId < b.consumer.address.slotId;
         });
     return result;
