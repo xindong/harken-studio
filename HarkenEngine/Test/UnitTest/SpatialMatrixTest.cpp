@@ -65,13 +65,15 @@ TEST(SpatialMatrix, ExtremeOutputGainKeepsBorrowedAndMaterializedMixEquivalent) 
             ctx.pan2d = pan;
             ctx.spatialMatrix.Set(matrix, 1);
             ctx.spatialMatrixDirty = path == 0;
-            ctx.gain.Set(1.0f, 0);
+            ctx.gain.Set(.5f, 0);
             ctx.outputGain.Set(outputGain, 0);
             std::array<float, 16> source{}, left{}, right{}, tapLeft{}, tapRight{};
+            std::array<float, frames> original{};
             std::array<float, harken::kResampleFifoFrames> ring{};
             for (std::uint32_t i = 0; i < frames; ++i) {
                 const float value = i % 3 == 0 ? 0.0f : i % 3 == 1 ? sample : -sample;
-                source[offset + i] = value;
+                original[i] = value;
+                source[offset + i] = path == 1 ? 1234.5f : value * .5f;
                 ring[(ring.size() - 3 + i) % ring.size()] = value;
             }
             ctx.cascade.offset = offset;
@@ -90,9 +92,9 @@ TEST(SpatialMatrix, ExtremeOutputGainKeepsBorrowedAndMaterializedMixEquivalent) 
                 EXPECT_FLOAT_EQ(0.0f, buses[ch][offset - 1]);
                 EXPECT_FLOAT_EQ(0.0f, buses[ch][offset + frames]);
                 for (std::uint32_t i = 0; i < frames; ++i) {
-                    const float expected = (source[offset + i] * matrix.gain[0][ch]) * outputGain;
+                    const float expected = ((original[i] * .5f) * matrix.gain[0][ch]) * outputGain;
                     ASSERT_TRUE(std::isfinite(expected));
-                    if (source[offset + i] != 0.0f) ASSERT_GT(std::fabs(expected), 0.0f);
+                    if (original[i] != 0.0f) ASSERT_GT(std::fabs(expected), 0.0f);
                     EXPECT_FLOAT_EQ(expected, buses[ch][offset + i]) << ch << " " << i;
                 }
             }
