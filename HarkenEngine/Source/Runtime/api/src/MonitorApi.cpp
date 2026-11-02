@@ -135,8 +135,6 @@ VnResult Vn_MonitorGetEffectiveCapturePlan(
 VnResult Vn_MonitorPoll(VnMonitorSessionHandle handle,
                         const VnMonitorPollDesc* desc,
                         VnMonitorPollResult* outResult) {
-    if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
-
     return harken::monitor::Poll(handle, desc, outResult);
 }
 

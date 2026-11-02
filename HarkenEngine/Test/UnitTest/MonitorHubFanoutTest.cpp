@@ -3,6 +3,7 @@
 
 #include "MonitorCaptureHubTestHooks.h"
 #include "Common/TestUtil.h"
+#include "AllocationProbe.h"
 #include <gtest/gtest.h>
 
 #include <array>
@@ -291,6 +292,35 @@ TEST(MonitorHubFanout, InternalRecorderAndRemoteAreIndependent) {
                 recorder.stage == VN_MONITOR_DROP_RECORDER_QUEUE);
 }
 
+TEST(MonitorHubFanout, AllocationFailureDropsRecordAndPreservesQueueBudget) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    auto desc = MakeTimeSeriesDesc(4096);
+    VnMonitorSessionHandle handle = 0;
+    ASSERT_EQ(VN_OK, Vn_MonitorOpenSession(&desc, &handle));
+    harken::monitor::StopDrainForTests();
+    ASSERT_TRUE(harken::monitor::PublishSyntheticTimeSeriesForTests(1));
+    allocation_probe::failAt = allocation_probe::count + 1;
+    allocation_probe::enabled = true;
+    bool threw = false;
+    try { harken::monitor::DrainOnceForTests(); }
+    catch (const std::bad_alloc&) { threw = true; }
+    allocation_probe::enabled = false;
+    const bool injected = allocation_probe::failAt == 0;
+    allocation_probe::failAt = 0;
+    EXPECT_TRUE(injected);
+    EXPECT_FALSE(threw);
+    EXPECT_EQ(0u, harken::monitor::ConsumerUsedBytesForTests(handle));
+    EXPECT_EQ(1u, HubFanoutDropCount(handle));
+    ASSERT_TRUE(harken::monitor::PublishSyntheticTimeSeriesForTests(1));
+    harken::monitor::DrainOnceForTests();
+    PollArgs poll;
+    EXPECT_EQ(VN_OK, Vn_MonitorPoll(handle, &poll.desc, &poll.result));
+    EXPECT_EQ(2u, poll.result.recordsWritten);
+    EXPECT_EQ(0u, harken::monitor::ConsumerUsedBytesForTests(handle));
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
+}
+
 TEST(MonitorHubFanout, ProducerRingDropUsesSourceStage) {
     harkentest::EngineSession engine(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
@@ -338,15 +368,30 @@ TEST(MonitorHubFanout, CloseThenOpenSameSlotDoesNotReceiveStaleFanout) {
     VnMonitorSessionHandle first = 0;
     ASSERT_EQ(VN_OK, Vn_MonitorOpenSession(&desc, &first));
 
+    harken::monitor::ResetPollEnteredForTests();
+    harken::monitor::SetPollStallForTests(true);
+    std::atomic<VnResult> firstPollResult{VN_IN_USE};
+    std::thread poller([&] {
+        PollArgs poll;
+        firstPollResult.store(Vn_MonitorPoll(first, &poll.desc, &poll.result));
+    });
+    const auto pollStart = std::chrono::steady_clock::now();
+    while (harken::monitor::PollEnteredForTests() == 0 &&
+           std::chrono::steady_clock::now() - pollStart < std::chrono::seconds(2))
+        std::this_thread::yield();
+
     harken::monitor::StopDrainForTests();
     harken::monitor::ResetFanoutEnteredForTests();
     FanoutHoldGuard hold;
     harken::monitor::StartDrainForTests();
-    ASSERT_TRUE(harken::monitor::PublishSyntheticTimeSeriesForTests(1));
+    EXPECT_TRUE(harken::monitor::PublishSyntheticTimeSeriesForTests(1));
     WaitFanoutEntered(1);
-    ASSERT_GE(harken::monitor::FanoutEnteredForTests(), 1u);
+    EXPECT_GE(harken::monitor::FanoutEnteredForTests(), 1u);
 
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(first));
+    harken::monitor::SetPollStallForTests(false);
+    poller.join();
+    EXPECT_EQ(VN_OK, firstPollResult.load());
     VnMonitorSessionHandle second = 0;
     ASSERT_EQ(VN_OK, Vn_MonitorOpenSession(&desc, &second));
     EXPECT_NE(first, second);
