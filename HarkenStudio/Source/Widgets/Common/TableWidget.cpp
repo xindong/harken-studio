@@ -6,6 +6,7 @@
 #include "LayoutDebugTint.h"
 #include "ListFooter.h"
 #include "ProportionalTreeWidget.h"
+#include "HeaderResizeHighlight.h"
 #include "TableGroupHeader.h"
 #include "TableItemDelegate.h"
 #include "ElidedLabel.h"
@@ -17,6 +18,7 @@
 #include <QDragLeaveEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
+#include <QEnterEvent>
 #include <QEvent>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -198,7 +200,10 @@ void TableWidget::ensureRows()
     headerLayout->setSpacing(0);
     DebugTint::tint(header_, DebugTint::Role::Head);
     connect(scroll_->horizontalScrollBar(), &QScrollBar::valueChanged, this,
-        [this](int value) { header_->move(-value, 0); });
+        [this](int value) {
+            header_->move(-value, 0);
+            refreshResizeHighlight();
+        });
     scroll_->viewport()->installEventFilter(this);
     rows_ = new QWidget(scroll_);
     rows_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -219,6 +224,7 @@ void TableWidget::setColumns(const QString& key, const QList<TableColumn>& colum
 {
     ensureRows();
     Q_ASSERT(rowBindings_.isEmpty());
+    highlightResizeColumn(-1);
     qDeleteAll(labels_);
     labels_.clear();
     columns_ = columns;
@@ -251,6 +257,7 @@ QLabel* TableWidget::headerCell(int column) const
 void TableWidget::setColumnWeights(const QString& key, const QList<int>& weights)
 {
     Q_ASSERT(weights.size() == columns_.size());
+    highlightResizeColumn(-1);
     QStringList keys;
     for (int i = 0; i < columns_.size(); ++i) {
         columns_[i].weight = weights[i];
@@ -269,6 +276,7 @@ void TableWidget::setColumnMinimumWidth(int column, int width)
 
 void TableWidget::setColumnVisible(int column, bool visible)
 {
+    highlightResizeColumn(-1);
     hiddenColumns_[column] = !visible;
     labels_[column]->setVisible(visible);
     for (const auto& row : rowBindings_)
@@ -432,6 +440,8 @@ void TableWidget::attachView(QAbstractItemView* view)
     } else if (!navigation_)
         view->setItemDelegate(new TableItemDelegate(view, themeManager_));
     if (auto* header = viewHeader()) {
+        if (!qobject_cast<ProportionalTreeWidget*>(view))
+            new HeaderResizeHighlight(header, themeManager_);
         header->installEventFilter(this);
         header->setStretchLastSection(false);
         header->setSectionResizeMode(QHeaderView::Interactive);
@@ -1066,6 +1076,7 @@ void TableWidget::moveColumn(int logicalColumn, int visualIndex)
     if (!options_.columnsMovable) return;
     const auto order = columnOrder();
     if (!order.contains(logicalColumn) || visualIndex < 0 || visualIndex >= order.size()) return;
+    highlightResizeColumn(-1);
     if (auto* header = viewHeader())
         header->moveSection(header->visualIndex(logicalColumn), visualIndex);
     else {
@@ -1353,6 +1364,7 @@ void TableWidget::refreshLayout()
         scroll_->setMinimumHeight(bodyHeightForContent(0));
     else
         scroll_->setFixedHeight(bodyHeightForContent(rowHeight));
+    refreshResizeHighlight();
     updateGeometry();
 }
 
@@ -1368,6 +1380,25 @@ int TableWidget::resizeColumnAt(int x) const
         if (std::abs(x - labels_[i]->geometry().right() - 1) <= radius) return i;
     }
     return -1;
+}
+
+void TableWidget::highlightResizeColumn(int column)
+{
+    if (column == hoveredResizeColumn_) return;
+    if (hoveredResizeColumn_ >= 0)
+        QtControlSkin::setSemanticProperty(labels_[hoveredResizeColumn_], "resizeHovered", false);
+    hoveredResizeColumn_ = column;
+    if (hoveredResizeColumn_ >= 0)
+        QtControlSkin::setSemanticProperty(labels_[hoveredResizeColumn_], "resizeHovered", true);
+}
+
+void TableWidget::refreshResizeHighlight()
+{
+    const int column = dragColumn_ >= 0 ? dragColumn_
+        : movingColumn_ < 0 && headerClip_->rect().contains(resizeHoverPosition_)
+            ? resizeColumnAt(header_->mapFrom(headerClip_, resizeHoverPosition_).x()) : -1;
+    highlightResizeColumn(isEnabled() ? column : -1);
+    header_->setCursor(hoveredResizeColumn_ >= 0 ? Qt::SplitHCursor : Qt::ArrowCursor);
 }
 
 bool TableWidget::eventFilter(QObject* watched, QEvent* event)
@@ -1563,11 +1594,16 @@ bool TableWidget::eventFilter(QObject* watched, QEvent* event)
         }
     }
     if (watched == header_) {
+        if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseMove
+            || event->type() == QEvent::MouseButtonRelease)
+            resizeHoverPosition_ = header_->mapTo(headerClip_,
+                static_cast<QMouseEvent*>(event)->position().toPoint());
         if (event->type() == QEvent::MouseButtonPress) {
             auto* mouse = static_cast<QMouseEvent*>(event);
             if (mouse->button() == Qt::LeftButton) {
                 dragColumn_ = resizeColumnAt(mouse->position().toPoint().x());
                 if (dragColumn_ >= 0) {
+                    refreshResizeHighlight();
                     dragX_ = mouse->position().toPoint().x();
                     dragWidths_ = widths_;
                     return true;
@@ -1590,7 +1626,7 @@ bool TableWidget::eventFilter(QObject* watched, QEvent* event)
                 refreshLayout();
                 return true;
             }
-            header_->setCursor(resizeColumnAt(x) >= 0 ? Qt::SplitHCursor : Qt::ArrowCursor);
+            refreshResizeHighlight();
         } else if (event->type() == QEvent::MouseButtonRelease && movingColumn_ >= 0) {
             const int moving = movingColumn_;
             movingColumn_ = -1;
@@ -1606,10 +1642,22 @@ bool TableWidget::eventFilter(QObject* watched, QEvent* event)
                     }
                 moveColumn(moving, target);
             }
+            refreshResizeHighlight();
             return true;
         } else if (event->type() == QEvent::MouseButtonRelease && dragColumn_ >= 0) {
             dragColumn_ = -1;
+            refreshResizeHighlight();
             return true;
+        } else if (event->type() == QEvent::Enter) {
+            resizeHoverPosition_ = header_->mapTo(headerClip_,
+                static_cast<QEnterEvent*>(event)->position().toPoint());
+            refreshResizeHighlight();
+        } else if (event->type() == QEvent::Leave) {
+            resizeHoverPosition_ = QPoint(-1, -1);
+            refreshResizeHighlight();
+        } else if (event->type() == QEvent::Hide) {
+            resizeHoverPosition_ = QPoint(-1, -1);
+            highlightResizeColumn(-1);
         } else if (event->type() == QEvent::MouseButtonDblClick) {
             if (resizeColumnAt(static_cast<QMouseEvent*>(event)->position().toPoint().x()) >= 0) {
                 dragColumn_ = -1;
@@ -1634,8 +1682,10 @@ bool TableWidget::eventFilter(QObject* watched, QEvent* event)
 void TableWidget::changeEvent(QEvent* event)
 {
     QFrame::changeEvent(event);
-    if (event->type() == QEvent::EnabledChange && !isEnabled())
+    if (event->type() == QEvent::EnabledChange && !isEnabled()) {
         QtControlSkin::setSemanticProperty(this, "dropActive", false);
+        highlightResizeColumn(-1);
+    }
     if (event->type() == QEvent::FontChange || event->type() == QEvent::StyleChange) applyTheme();
 }
 

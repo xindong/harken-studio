@@ -463,7 +463,8 @@ QWidget[explorerRole="sectionHeader"] {
     border-bottom: 1px solid @borderPrimary@;
 }
 
-QWidget#projectAssetsSection QWidget[explorerRole="sectionHeader"] {
+QWidget#projectAssetsSection QWidget[explorerRole="sectionHeader"],
+QWidget#projectSourcesSection QWidget[explorerRole="sectionHeader"] {
     border-top: none;
 }
 
@@ -490,13 +491,6 @@ QToolButton[explorerRole="sectionToggle"]:hover {
 
 QToolButton[explorerRole="sectionToggle"]:disabled {
     color: @textDisabled@;
-}
-
-QSplitter#projectExplorerSplitter::handle,
-QSplitter#projectExplorerSplitter::handle:hover,
-QSplitter#projectExplorerSplitter::handle:disabled {
-    background: transparent;
-    border: none;
 }
 
 QTreeWidget#projectSourcesTree,
@@ -1750,6 +1744,9 @@ QWidget#listHead QLabel {
 QWidget#listHead QLabel[lastColumn="false"] {
     border-right: 1px solid @borderSecondary@;
 }
+QWidget#listHead QLabel[lastColumn="false"][resizeHovered="true"]:enabled {
+    border-right-color: @accent@;
+}
 QFrame#listBox QWidget#listRow,
 QFrame#listBox QWidget[listRow="true"] {
     background: @bgPrimary@;
@@ -2130,6 +2127,16 @@ QSplitter#inspectorEmbeddedSplitter::handle {
 }
 
 QSplitter#inspectorEmbeddedSplitter::handle:hover {
+    background-color: @accent@;
+}
+
+QSplitter[splitterRole="border"]::handle {
+    background-color: @borderPrimary@;
+    height: 1px;
+    width: 1px;
+}
+
+QSplitter[splitterRole="border"]::handle:enabled:hover {
     background-color: @accent@;
 }
 
