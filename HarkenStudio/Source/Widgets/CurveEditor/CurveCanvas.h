@@ -57,6 +57,7 @@ struct CurveCanvasProfile
     bool discretePreview = false;
     bool xMaxEditable = false;
     bool endpointsFollowDomain = true;
+    bool preserveOutOfRangeValues = false;
     float xMaxMinimum = 1.0f;
     float xMaxMaximum = 100000.0f;
     int xDecimals = 2;
@@ -66,6 +67,7 @@ struct CurveCanvasProfile
     float yRangeMaximum = 1.0f;
     bool xTicksUseLabels = false;
     std::vector<VariableLabel> xTickLabels;
+    bool clampYToPlot = true;
 };
 
 struct CurveOverlay

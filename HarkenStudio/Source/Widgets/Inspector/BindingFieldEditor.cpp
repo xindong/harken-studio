@@ -24,6 +24,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <limits>
 
 namespace VNX {
 
@@ -68,11 +69,13 @@ public:
         yMax_ = std::max(binding.outputMin, binding.outputMax);
         const ProjectItemType hostType = binding.address.hostClass == BindingHostClass::Bus
             ? ProjectItemType::Bus : ProjectItemType::Sound;
-        volume_ = BindingContractSemantics::derive(binding.address.slotId, hostType).outputUnit
+        const auto contract = BindingContractSemantics::derive(binding.address.slotId, hostType);
+        clipToPlot_ = contract.outputUnit == BindingOutputUnit::Cent;
+        volume_ = contract.outputUnit
             == BindingOutputUnit::Decibel;
-        if (volume_) {
-            yMin_ = -96.0f;
-            yMax_ = 24.0f;
+        if (volume_ || clipToPlot_) {
+            yMin_ = contract.legalOutputRange.min;
+            yMax_ = contract.legalOutputRange.max;
         }
         if (yMin_ == yMax_) {
             yMin_ -= 1.0f;
@@ -92,18 +95,26 @@ protected:
         if (binding_.curve.size() < 2) return;
         const QRectF area = frame.adjusted(2.0, 2.5, -2.0, -2.5);
         QPolygonF points;
+        float lowest = std::numeric_limits<float>::max();
+        float highest = std::numeric_limits<float>::lowest();
         constexpr int samples = 32;
         for (int i = 0; i <= samples; ++i) {
             const float nx = static_cast<float>(i) / samples;
             const float x = inputMin_ + nx * (inputMax_ - inputMin_);
             const float y = BindingSemantics::contribution(
                 binding_, kind_, x, inputMin_, inputMax_);
-            const double ny = qBound(0.0,
-                curveAxisNormalizedY(volume_ ? CurveAxisScale::MirroredAmplitudeDb
-                                             : CurveAxisScale::LinearValue,
-                                     yMin_, yMax_, y), 1.0);
+            lowest = std::min(lowest, y);
+            highest = std::max(highest, y);
+            const double normalized = curveAxisNormalizedY(
+                volume_ ? CurveAxisScale::MirroredAmplitudeDb : CurveAxisScale::LinearValue,
+                yMin_, yMax_, y);
+            const double ny = clipToPlot_ ? normalized : qBound(0.0, normalized, 1.0);
             points.append(QPointF(area.left() + nx * area.width(),
                                   area.bottom() - ny * area.height()));
+        }
+        if (clipToPlot_) {
+            if (highest < yMin_ || lowest > yMax_) return;
+            painter.setClipRect(area);
         }
         painter.setPen(QPen(
             theme.snapshot()->domains.curve.colors.parameterBinding, 1.2));
@@ -114,6 +125,7 @@ private:
     ParameterBindingDef binding_;
     VariableKind kind_ = VariableKind::Smooth;
     bool volume_ = false;
+    bool clipToPlot_ = false;
     float inputMin_ = 0.0f;
     float inputMax_ = 1.0f;
     float yMin_ = 0.0f;

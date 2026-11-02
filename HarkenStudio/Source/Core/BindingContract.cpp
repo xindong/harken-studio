@@ -44,7 +44,7 @@ BindingOutputRange defaultRangeFor(BindingOutputUnit unit)
 {
     switch (unit) {
     case BindingOutputUnit::Decibel:      return {-96.0f, 24.0f};
-    case BindingOutputUnit::Cent:          return {0.0f, 1200.0f};
+    case BindingOutputUnit::Cent:          return {-4800.0f, 4800.0f};
     case BindingOutputUnit::Normalized:    return {0.0f, 1.0f};
     case BindingOutputUnit::Percent:       return {0.0f, 100.0f};
     case BindingOutputUnit::Dimensionless: return {0.0f, 1.0f};
@@ -57,7 +57,7 @@ BindingOutputRange legalRangeFor(BindingOutputUnit unit)
 {
     switch (unit) {
     case BindingOutputUnit::Decibel:      return {-96.0f, 24.0f};
-    case BindingOutputUnit::Cent:          return {-7200.0f, 7200.0f};
+    case BindingOutputUnit::Cent:          return {-4800.0f, 4800.0f};
     case BindingOutputUnit::Normalized:    return {0.0f, 1.0f};
     case BindingOutputUnit::Percent:       return {0.0f, 100.0f};
     case BindingOutputUnit::Dimensionless: return {0.0f, 1.0f};
