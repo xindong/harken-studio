@@ -492,7 +492,7 @@ VnResult PackTable::ReadAndValidate(
     std::vector<PackTocEntry> parsed(header.entryCount);
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
         parsed[i] =
-            ParsePackTocEntry(toc + i * kPackTocEntryBytes);
+            ParsePackTocEntry(toc + static_cast<std::size_t>(i) * kPackTocEntryBytes);
         if (!ValidateTocEntry(parsed[i], fileBytes, blobRegionStart)) {
             return VN_BAD_PACK;
         }
