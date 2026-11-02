@@ -2678,7 +2678,8 @@ VariableServiceV1::CaptureCandidateSlice(Engine& engine, WriteRow& row, WorkSpan
                 target.locator.targetId, row.publicationOwner, &resolved, &rampMs,
                 &revision, &pan2d);
             if (valid && target.locator.targetId == kTargetVoiceVolume &&
-                !TryVolumeGainFromDb(resolved)) {
+                !VoiceVolumeTargetConvertible(engine,
+                    static_cast<VnVoiceHandle>(target.locator.object), resolved)) {
                 poisoned = true;
                 break;
             }
@@ -2767,11 +2768,16 @@ VariableServiceV1::CaptureCandidateSlice(Engine& engine, WriteRow& row, WorkSpan
         engine.paramDropCount += rejectedTargets;
         for (std::uint32_t i = 0; i < count; ++i) {
             const auto& target = *slices_.Target(row.slice, i);
-            if (TryVolumeGainFromDb(target.resolvedValue)) continue;
+            const bool voiceVolume = target.locator.scope == VariableTargetScope::Voice &&
+                target.locator.targetId == kTargetVoiceVolume;
+            if (voiceVolume ? VoiceVolumeTargetConvertible(engine,
+                    static_cast<VnVoiceHandle>(target.locator.object), target.resolvedValue)
+                : TryVolumeGainFromDb(target.resolvedValue)) continue;
             if (target.locator.scope == VariableTargetScope::Voice &&
                 target.locator.targetId == kTargetVoiceVolume) {
                 const auto handle = static_cast<VnVoiceHandle>(target.locator.object);
-                if (!TryVolumeGainFromDb(engine.params.ResolvedValue(handle, target.locator.targetId)))
+                if (!VoiceVolumeTargetConvertible(engine, handle,
+                        engine.params.ResolvedValue(handle, target.locator.targetId)))
                     engine.params.DropClaimedBaseline(handle, target.locator.targetId, row.publicationOwner);
             } else if (target.locator.scope == VariableTargetScope::Bus &&
                 (target.locator.targetId == kBusTargetBusVolume ||

@@ -1210,6 +1210,47 @@ TEST(MeterProbe, SourceBusDestroyRetiresProbeAndWithdraws) {
     EXPECT_GT(reborn, generation);
 }
 
+TEST(MeterProbe, VoiceWithdrawalDropsIllegalStagePairAndReleasesClaims) {
+    EngineSession session(ProbeConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    ASSERT_EQ(VN_OK, Vn_CreateBus(kSourceBus, VN_BUS_MASTER));
+    const auto samples = MakeDC(48000, 0.5f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(kDcSound, &pcm));
+    auto play = MakePlayDesc(kDcSound, 400.0f);
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    const auto render = harkentest::RenderHandle(engine, voice);
+    std::uint32_t generation = 0;
+    ASSERT_EQ(VN_OK, harken::InstallMeterProbe(*engine, kProbe, kSourceBus,
+        VN_BUS_METER_TAP_POST_EFFECTS, 0, 0, &generation));
+    DefineConstantProbeBinding(engine, kSidechain, kProbe, generation,
+        VN_TARGET_SCOPE_VOICE, harken::kTargetVoiceVolume, -400.0f, 0);
+    ASSERT_EQ(VN_OK, harken::AttachMeterProbeBinding(*engine, kSidechain,
+        VN_TARGET_SCOPE_VOICE, {}, voice, static_cast<std::uint32_t>(render >> 32)));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine->nullBackend.Pump(2);
+    ASSERT_FLOAT_EQ(1.0f, engine->voices.Resolve(render)->gain.target);
+    ASSERT_EQ(VN_OK, Vn_SetVoiceOutputVolume(voice, 400.0f, 0));
+    engine->nullBackend.Pump(1);
+    const auto drops = engine->paramDropCount;
+    ASSERT_EQ(VN_OK, harken::UninstallMeterProbe(*engine, kProbe, generation));
+    for (unsigned step = 0; step < 16; ++step) {
+        engine->nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(0u, engine->meterProbes.AttachmentCount(*engine));
+    EXPECT_EQ(0u, engine->meterProbeWithdrawalCount);
+    EXPECT_FALSE(engine->params.ForeignClaim(render, harken::kTargetVoiceVolume));
+    EXPECT_EQ(drops + 1, engine->paramDropCount);
+    EXPECT_FLOAT_EQ(1.0f, engine->voices.Resolve(render)->gain.target);
+    ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(voice, -400.0f, 0));
+    ASSERT_EQ(VN_OK, Vn_SetVoiceOutputVolume(voice, 0.0f, 0));
+    engine->nullBackend.Pump(1);
+    EXPECT_FLOAT_EQ(1.0f, engine->voices.Resolve(render)->gain.target);
+}
+
 TEST(MeterProbe, MixedWithdrawalChunkDropsIllegalVolumeWithoutCandidateRollback) {
     EngineSession session(ProbeConfig());
     ASSERT_EQ(VN_OK, session.InitResult());

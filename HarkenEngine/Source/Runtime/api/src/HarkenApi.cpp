@@ -518,11 +518,21 @@ private:
 namespace {
 
 // Voice gain and output gain are separate linear stages. Either overflowing,
-// or their dB-sum overflowing, is an illegal initial volume.
+// or their dB-sum overflowing, is an illegal volume target.
 bool VolumeStagesConvertible(float voiceDb, float outputDb) noexcept {
     return harken::TryVolumeGainFromDb(voiceDb) &&
            harken::TryVolumeGainFromDb(outputDb) &&
            harken::TryVolumeGainFromDb(voiceDb + outputDb);
+}
+
+bool VoiceOutputTargetConvertible(const harken::Engine& engine,
+                                 VnVoiceHandle render, float outputDb) noexcept {
+    // A dirty reduction can precede its wire command. Both the last published
+    // volume and the current logical target must be safe with the new output.
+    return VolumeStagesConvertible(
+               engine.params.LastCommitted(render, harken::kTargetVoiceVolume), outputDb) &&
+           VolumeStagesConvertible(
+               engine.params.ResolvedValue(render, harken::kTargetVoiceVolume), outputDb);
 }
 
 bool TryVoiceVolumeBindingContribution(harken::Engine& engine,
@@ -6837,7 +6847,7 @@ bool MakeParamCommand(const harken::Engine& engine,
         return false;
     }
     if (commit.targetId == harken::kTargetVoiceVolume &&
-        !harken::TryVolumeGainFromDb(commit.resolved)) {
+        !harken::VoiceVolumeTargetConvertible(engine, commit.handle, commit.resolved)) {
         return false;
     }
     const std::uint32_t toneSection = ToneSectionOfTarget(commit.targetId);
@@ -8307,6 +8317,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         }
     }
     engine.params.OnVoiceStarted(render, install.volumeDb, install.pitchRatio, emitter);
+    engine.voicePlayFacts[renderSlot].outputBusVolumeDb = install.outputBusVolumeDb;
     engine.params.SetApiDirect(render, harken::kTargetVoicePan, install.pan);
     engine.params.SetApiDirect(render, harken::kTargetVoiceWidth, install.spread);
     for (const auto& binding : input.bindings) {
@@ -69257,6 +69268,17 @@ bool PushPropertyCommit(void* ctx, const harken::PropertyCommit& commit) {
 
 namespace harken {
 
+bool VoiceVolumeTargetConvertible(const Engine& engine, VnVoiceHandle render,
+                                  float voiceDb) noexcept {
+    if (!TryVolumeGainFromDb(voiceDb)) return false;
+    // Retired withdrawal snapshots still carry their original generation.
+    // Their eventual commands are stale; never pair them with a new occupant.
+    if (!engine.voices.IsAlive(render)) return true;
+    const auto slot = static_cast<std::uint32_t>(render);
+    return slot < engine.voicePlayFacts.size() &&
+        VolumeStagesConvertible(voiceDb, engine.voicePlayFacts[slot].outputBusVolumeDb);
+}
+
 bool MakeVariableParamCommand(const Engine& engine, const ParamCommit& commit,
                               CommandRecord* out) {
     return ::MakeParamCommand(engine, commit, out);
@@ -69572,7 +69594,7 @@ bool PushPrimedParamCommandsWith(
     Writer& writer) {
     for (std::uint32_t i = 0; i < count; ++i) {
         if (primed[i].targetId == harken::kTargetVoiceVolume &&
-            !harken::TryVolumeGainFromDb(primed[i].resolved)) {
+            !harken::VoiceVolumeTargetConvertible(engine, render, primed[i].resolved)) {
             return false;
         }
     }
@@ -69615,7 +69637,7 @@ bool PushPrimedInitialValuesWith(harken::Engine& engine, VnVoiceHandle render,
     float voiceDb = 0.0f;
     if (!engine.params.TryPeekResolvedVolume(
             render, &engine.emitters, &voiceDb, reader) ||
-        !harken::TryVolumeGainFromDb(voiceDb)) {
+        !harken::VoiceVolumeTargetConvertible(engine, render, voiceDb)) {
         return false;
     }
     harken::ParamSystem::PrimedValue primed[harken::kBuiltinTargetCount];
@@ -71441,6 +71463,8 @@ PendingStartOutcome StartDeferredVoice(
     // rule for a voice that had not yet claimed its slot.
     engine.params.OnVoiceStarted(render, rec.baseVolumeDb, rec.ratio,
                                  startEmitter);
+    engine.voicePlayFacts[static_cast<std::uint32_t>(render)].outputBusVolumeDb =
+        rec.outputBusVolumeDb;
     if (rec.hasTonePreset) {
         ApplyTonePresetAndPrime(engine, render, rec.tonePreset, commands);
     }
@@ -73203,6 +73227,8 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
     engine.params.OnVoiceStarted(newRender,
                                  static_cast<float>(rec.facts.baseVolumeDb),
                                  rec.facts.basePitchRatio, em);
+    engine.voicePlayFacts[static_cast<std::uint32_t>(newRender)].outputBusVolumeDb =
+        rec.facts.outputBusVolumeDb;
     // OnVoiceStarted reset the tone bases to defaults; a returning recipe
     // voice re-installs its authored preset into this same admitted batch
     // (the "+4 tone" reservation above), exactly as a fresh start does.
@@ -77267,7 +77293,8 @@ VnResult SetPreviewVoiceProperty(std::uint64_t render,
     case Property::Volume:
         target = kTargetVoiceVolume;
         direct -= engine->params.AuthoredBase(render, target);
-        if (!TryVolumeGainFromDb(engine->params.ReduceWithSlot(render, target, kSlotApiDirect, direct)))
+        if (!VoiceVolumeTargetConvertible(*engine, render,
+                engine->params.ReduceWithSlot(render, target, kSlotApiDirect, direct)))
             return VN_INVALID_ARG;
         break;
     case Property::Pitch: {
@@ -77292,7 +77319,10 @@ VnResult SetPreviewVoiceProperty(std::uint64_t render,
         if (value < 0.0f || value > 1.0f) return VN_INVALID_ARG;
         break;
     case Property::OutputBusVolume:
-        if (!TryVolumeGainFromDb(value)) return VN_INVALID_ARG;
+        if (!VoiceOutputTargetConvertible(*engine, render, value))
+            return VN_INVALID_ARG;
+        if (engine->params.ForeignClaim(render, kTargetVoiceVolume))
+            return VN_BACKPRESSURE;
         break;
     case Property::SpatialAttenuationDistanceScaling:
         if (value < 0.01f || value > 100.0f) return VN_INVALID_ARG;
@@ -77368,6 +77398,8 @@ VnResult SetPreviewVoiceProperty(std::uint64_t render,
         return VN_INVALID_ARG;
     }
     (void)engine->commands.TryPush(command);
+    if (property == Property::OutputBusVolume)
+        engine->voicePlayFacts[static_cast<std::uint32_t>(render)].outputBusVolumeDb = value;
     return VN_OK;
 }
 
@@ -104051,6 +104083,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     // The logic-side maps key on the render-slot handle, not the public one.
     engine->params.OnVoiceStarted(renderHandle, desc->volumeDb, ratio,
                                   emitterHandle);
+    engine->voicePlayFacts[static_cast<std::uint32_t>(renderHandle)].outputBusVolumeDb = 0.0f;
     harken::VoiceTonePreset recipeTonePreset;
     const bool hasRecipeTonePreset =
         RecipeTonePreset(voiceRecipe, &recipeTonePreset);
@@ -108449,6 +108482,12 @@ VnResult Vn_SetVoiceOutputVolume(VnVoiceHandle handle, float volumeDb,
             ? resolved.renderHandle : 0;
     const VnResult live = engine->voices.CheckLive(render);
     if (live != VN_OK) return live;
+    if (!VoiceOutputTargetConvertible(*engine, render, volumeDb))
+        return VN_INVALID_ARG;
+    if (engine->params.ForeignClaim(render, harken::kTargetVoiceVolume)) {
+        engine->commands.NoteBackpressure();
+        return VN_BACKPRESSURE;
+    }
     if (!AdmitSingleCommand(*engine)) {
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
@@ -108542,7 +108581,7 @@ VnResult Vn_SetVoiceVolume(VnVoiceHandle handle, float volumeDb,
     }
     const float prospective = engine->params.ReduceWithSlot(
         render, harken::kTargetVoiceVolume, harken::kSlotApiDirect, volumeDb);
-    if (!harken::TryVolumeGainFromDb(prospective)) {
+    if (!harken::VoiceVolumeTargetConvertible(*engine, render, prospective)) {
         return VN_INVALID_ARG;
     }
     // A target claimed by a prepared Variable bank cut cannot be overwritten

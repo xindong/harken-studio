@@ -538,6 +538,31 @@ TEST_F(VoiceSetter, FiniteOverflowingBindingVolumeIsDroppedNotRetried) {
     EXPECT_EQ(invalidBefore, engine->voices.InvalidVolumeApplyCount());
 }
 
+TEST_F(VoiceSetter, BindingStagePairOverflowDropsOnceAndCanRecover) {
+    auto* engine = session->Engine();
+    const auto render = harkentest::RenderHandle(engine, handle);
+    ASSERT_EQ(VN_OK, Vn_SetVoiceOutputVolume(handle, 400.0f, 0));
+    harken::Curve curve;
+    const harken::CurvePoint point[] = {{0.0f, 400.0f}};
+    ASSERT_TRUE(curve.SetPoints(point, nullptr, 1));
+    ASSERT_TRUE(engine->params.BindVoiceTarget(harkentest::ObjectId(81),
+        render, harken::kTargetVoiceVolume, curve));
+    Pump(1);
+    const auto gain = engine->voices.Resolve(render)->gain.target;
+    const auto drops = engine->paramDropCount;
+    ASSERT_EQ(VN_OK, Vn_Update());
+    Pump(1);
+    EXPECT_EQ(drops + 1, engine->paramDropCount);
+    EXPECT_FLOAT_EQ(gain, engine->voices.Resolve(render)->gain.target);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(drops + 1, engine->paramDropCount);
+
+    ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(handle, -400.0f, 0));
+    ASSERT_EQ(VN_OK, Vn_SetVoiceOutputVolume(handle, 0.0f, 0));
+    Pump(2);
+    EXPECT_FLOAT_EQ(gain, engine->voices.Resolve(render)->gain.target);
+}
+
 TEST_F(VoiceSetter, OverflowingVolumeTargetsAreRefusedWithZeroSideEffects) {
     float gain = 1.0f;
     EXPECT_TRUE(harken::TryVolumeGainFromDb(600.0f, &gain));
@@ -660,6 +685,87 @@ TEST_F(VoiceSetter, PendingAndParkedOverflowingVolumeDoesNotWriteRecords) {
     }
     EXPECT_EQ(VN_INVALID_ARG, Vn_SetVoiceOutputVolume(parked, 800.0f, 0));
     EXPECT_FLOAT_EQ(parkedOutput, parkRec.facts.outputBusVolumeDb);
+}
+
+TEST_F(VoiceSetter, OutputRefusesAStillPublishedGainAfterBindingRemoval) {
+    auto* engine = session->Engine();
+    const auto render = harkentest::RenderHandle(engine, handle);
+    const auto binding = harkentest::ObjectId(10);
+    ASSERT_EQ(VN_OK, RegisterConstVoiceVolumeBinding(engine, binding,
+        harkentest::ObjectId(81), 406.0f));
+    ASSERT_EQ(VN_OK, Vn_ApplyVoiceBinding(handle, binding));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    Pump(1);
+    ASSERT_FLOAT_EQ(400.0f,
+        engine->params.LastCommitted(render, harken::kTargetVoiceVolume));
+    ASSERT_EQ(VN_OK, Vn_ClearVoiceBinding(handle, binding));
+    ASSERT_EQ(VN_OK, Vn_UnregisterBinding(binding));
+    ASSERT_FLOAT_EQ(-6.0f,
+        engine->params.ResolvedValue(render, harken::kTargetVoiceVolume));
+    const auto head = engine->commands.PublishedHead();
+    EXPECT_EQ(VN_INVALID_ARG, Vn_SetVoiceOutputVolume(handle, 400.0f, 0));
+    EXPECT_EQ(head, engine->commands.PublishedHead());
+    EXPECT_FLOAT_EQ(0.0f,
+        engine->voicePlayFacts[static_cast<std::uint32_t>(render)].outputBusVolumeDb);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_EQ(VN_OK, Vn_SetVoiceOutputVolume(handle, 400.0f, 0));
+    Pump(1);
+    EXPECT_NEAR(std::pow(10.0f, -6.0f / 20.0f),
+        engine->voices.Resolve(render)->gain.target, 1e-6f);
+}
+
+TEST_F(VoiceSetter, DroppedStagePairPreservesThePublishedVolumeAuthority) {
+    auto* engine = session->Engine();
+    const auto render = harkentest::RenderHandle(engine, handle);
+    ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(handle, 406.0f, 0));
+    const float floor = -std::numeric_limits<float>::max();
+    ASSERT_EQ(VN_OK, Vn_SetVoiceOutputVolume(handle, floor, 0));
+    const auto binding = harkentest::ObjectId(10);
+    ASSERT_EQ(VN_OK, RegisterConstVoiceVolumeBinding(engine, binding,
+        harkentest::ObjectId(81), floor));
+    ASSERT_EQ(VN_OK, Vn_ApplyVoiceBinding(handle, binding));
+    const auto drops = engine->paramDropCount;
+    ASSERT_EQ(VN_OK, Vn_Update());
+    Pump(1);
+    ASSERT_EQ(drops + 1, engine->paramDropCount);
+    EXPECT_FLOAT_EQ(400.0f,
+        engine->params.LastCommitted(render, harken::kTargetVoiceVolume));
+    const auto head = engine->commands.PublishedHead();
+    EXPECT_EQ(VN_INVALID_ARG, Vn_SetVoiceOutputVolume(handle, 400.0f, 0));
+    EXPECT_EQ(head, engine->commands.PublishedHead());
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(drops + 1, engine->paramDropCount);
+}
+
+TEST_F(VoiceSetter, LiveStagePairRefusalsPreserveTargetsAndLaterAudio) {
+    auto* engine = session->Engine();
+    const auto render = harkentest::RenderHandle(engine, handle);
+    ASSERT_EQ(VN_OK, Vn_SetBusFilter(VN_BUS_MASTER,
+        harken::kFilterKindLowpass, 1000.0f, 0.707f, 1, 0));
+    Pump(4);
+    ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(handle, 406.0f, 0));
+    auto head = engine->commands.PublishedHead();
+    EXPECT_EQ(VN_INVALID_ARG, Vn_SetVoiceOutputVolume(handle, 400.0f, 0));
+    EXPECT_EQ(head, engine->commands.PublishedHead());
+    EXPECT_FLOAT_EQ(0.0f,
+        engine->voicePlayFacts[static_cast<std::uint32_t>(render)].outputBusVolumeDb);
+    Pump(2);
+
+    ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(handle, 6.0f, 0));
+    ASSERT_EQ(VN_OK, Vn_SetVoiceOutputVolume(handle, 400.0f, 0));
+    head = engine->commands.PublishedHead();
+    EXPECT_EQ(VN_INVALID_ARG, Vn_SetVoiceVolume(handle, 406.0f, 0));
+    EXPECT_EQ(head, engine->commands.PublishedHead());
+    EXPECT_FLOAT_EQ(0.0f,
+        engine->params.ResolvedValue(render, harken::kTargetVoiceVolume));
+    Pump(2);
+
+    ASSERT_EQ(VN_OK, Vn_SetVoiceOutputVolume(handle, 0.0f, 0));
+    ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(handle, 6.0f, 0));
+    Pump(16);
+    const auto* output = engine->nullBackend.LastBlock();
+    EXPECT_NEAR(1.0f, output[(kBlockFrames - 1) * 2], 0.001f);
+    EXPECT_NEAR(1.0f, output[(kBlockFrames - 1) * 2 + 1], 0.001f);
 }
 
 TEST_F(VoiceSetter, PendingStagePairRefusalsPreserveAcceptedStart) {

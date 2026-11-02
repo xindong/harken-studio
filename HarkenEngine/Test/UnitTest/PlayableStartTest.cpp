@@ -4750,50 +4750,72 @@ TEST(PlayableStart, AuthoredSpatializationMixStartsUpdatesAndReplays) {
 TEST(PlayableStartContract, OutputVolumeReachesOnlyTheMainRouteFromResolvedCuts) {
     for (bool direct : {false, true}) {
         SCOPED_TRACE(direct);
-        auto config = harkentest::MakeNullConfig(4, 64, 48000);
-        harkentest::EngineSession session(config);
-        ASSERT_EQ(VN_OK, session.InitResult());
-        auto* engine = session.Engine();
-        ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(2), VN_BUS_MASTER));
-        ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(3), VN_BUS_MASTER));
-        std::vector<float> samples(4096, 0.25f);
-        const auto pcm = harkentest::MonoDesc(samples, 48000);
-        ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
-        const auto media = engine->registry.Lookup(kSound);
-        PlayableWorldImage image(media.contentRevision, harken::ContainerModeV1::Random);
-        auto& output = image.properties[0].payload;
-        output.presentMask |= UINT64_C(1) << 5;
-        output.values[5].bits = std::bit_cast<std::uint32_t>(-6.0206f);
-        const harken::SendV1 send{0, 0, harkentest::ObjectId(3), 0.0f, 0};
-        auto& sound = image.properties[0].payload;
-        sound.presentMask |= (UINT64_C(1) << 6) | (UINT64_C(1) << 7);
-        sound.values[6].objectId = harkentest::ObjectId(2);
-        sound.sendCount = 1;
-        sound.sends = &send;
-        for (auto& property : image.properties)
-            property.programSemanticFingerprint =
-                harken::ComputePlayablePropertyFingerprintV1(property);
-        image.child.playable = image.SoundRoot();
-        image.occurrence.childPlayable = image.child.playable;
-        image.occurrence.parentProgramSemanticFingerprint =
-            image.properties[1].programSemanticFingerprint;
-        image.occurrence.occurrenceSemanticFingerprint =
-            harken::ComputePlayableOccurrenceFingerprintV1(image.occurrence);
-        image.container.programSemanticFingerprint =
-            image.properties[1].programSemanticFingerprint;
-        image.world.identity.runtimeSemanticFingerprint =
-            harken::ComputeCurrentWorldFingerprintV4(image.world);
-        ASSERT_EQ(harken::WorldInstallStatus::Ok,
-                  harken::InstallContainerWorldV1(*engine, image.world).status);
-        harken::PlayableStartRequest request{};
-        request.root = direct ? image.SoundRoot() : image.Root();
-        ASSERT_EQ(harken::PlayableStartStatus::Accepted,
-                  harken::StartPlayable(*engine, request).status);
-        ASSERT_TRUE(PumpUntilAudible(*engine));
-        harkentest::Capture out;
-        harkentest::PumpAndCapture(engine, 1, out);
-        for (float sample : out.left) EXPECT_NEAR(0.375f, sample, 1e-5f);
-        for (float sample : out.right) EXPECT_NEAR(0.375f, sample, 1e-5f);
+        for (const float outputDb : {-6.0206f, 6.0206f}) {
+            SCOPED_TRACE(outputDb);
+            auto config = harkentest::MakeNullConfig(4, 64, 48000);
+            harkentest::EngineSession session(config);
+            ASSERT_EQ(VN_OK, session.InitResult());
+            auto* engine = session.Engine();
+            ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(2), VN_BUS_MASTER));
+            ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(3), VN_BUS_MASTER));
+            std::vector<float> samples(4096, 0.25f);
+            const auto pcm = harkentest::MonoDesc(samples, 48000);
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
+            const auto media = engine->registry.Lookup(kSound);
+            PlayableWorldImage image(media.contentRevision, harken::ContainerModeV1::Random);
+            auto& output = image.properties[0].payload;
+            output.presentMask |= UINT64_C(1) << 5;
+            output.values[5].bits = std::bit_cast<std::uint32_t>(outputDb);
+            const harken::SendV1 send{0, 0, harkentest::ObjectId(3), 0.0f, 0};
+            auto& sound = image.properties[0].payload;
+            sound.presentMask |= (UINT64_C(1) << 6) | (UINT64_C(1) << 7);
+            sound.values[6].objectId = harkentest::ObjectId(2);
+            sound.sendCount = 1;
+            sound.sends = &send;
+            for (auto& property : image.properties)
+                property.programSemanticFingerprint =
+                    harken::ComputePlayablePropertyFingerprintV1(property);
+            image.child.playable = image.SoundRoot();
+            image.occurrence.childPlayable = image.child.playable;
+            image.occurrence.parentProgramSemanticFingerprint =
+                image.properties[1].programSemanticFingerprint;
+            image.occurrence.occurrenceSemanticFingerprint =
+                harken::ComputePlayableOccurrenceFingerprintV1(image.occurrence);
+            image.container.programSemanticFingerprint =
+                image.properties[1].programSemanticFingerprint;
+            image.world.identity.runtimeSemanticFingerprint =
+                harken::ComputeCurrentWorldFingerprintV4(image.world);
+            ASSERT_EQ(harken::WorldInstallStatus::Ok,
+                      harken::InstallContainerWorldV1(*engine, image.world).status);
+            harken::PlayableStartRequest request{};
+            request.root = direct ? image.SoundRoot() : image.Root();
+            const auto started = harken::StartPlayable(*engine, request);
+            ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
+            ASSERT_TRUE(PumpUntilAudible(*engine));
+            harkentest::Capture out;
+            harkentest::PumpAndCapture(engine, 1, out);
+            for (float sample : out.left) EXPECT_NEAR(outputDb < 0.0f ? 0.375f : 0.75f, sample, 1e-5f);
+            for (float sample : out.right) EXPECT_NEAR(outputDb < 0.0f ? 0.375f : 0.75f, sample, 1e-5f);
+            const auto service = std::find_if(engine->playableServices.begin(),
+                engine->playableServices.end(), [&](const auto& row) {
+                    return row.rootInstance == started.instance;
+                });
+            ASSERT_NE(service, engine->playableServices.end());
+            const auto render = service->renderHandle;
+            using Property = harken::playableproperties::PlayablePropertyIdV1;
+            if (outputDb > 0.0f) {
+                const auto head = engine->commands.PublishedHead();
+                EXPECT_EQ(VN_INVALID_ARG,
+                    harken::SetPreviewVoiceProperty(render, Property::Volume, 768.0f));
+                EXPECT_EQ(head, engine->commands.PublishedHead());
+            }
+            ASSERT_EQ(VN_OK,
+                harken::SetPreviewVoiceProperty(render, Property::OutputBusVolume, 400.0f));
+            const auto head = engine->commands.PublishedHead();
+            EXPECT_EQ(VN_INVALID_ARG,
+                harken::SetPreviewVoiceProperty(render, Property::Volume, 400.0f));
+            EXPECT_EQ(head, engine->commands.PublishedHead());
+        }
     }
 }
 
