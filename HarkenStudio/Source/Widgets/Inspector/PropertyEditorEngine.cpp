@@ -169,7 +169,7 @@ private:
             setFixedSize(14, 14);
             setCursor(Qt::SizeFDiagCursor);
             setAttribute(Qt::WA_TranslucentBackground);
-            connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
+            connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
                     this, qOverload<>(&QWidget::update));
         }
 

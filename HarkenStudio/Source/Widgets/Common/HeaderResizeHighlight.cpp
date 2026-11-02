@@ -26,7 +26,7 @@ HeaderResizeHighlight::HeaderResizeHighlight(QHeaderView* header, ThemeManager* 
     connect(header_, &QHeaderView::sectionMoved, this, [this] { refresh(); });
     connect(header_, &QHeaderView::sectionCountChanged, this, [this] { refresh(); });
     connect(header_, &QHeaderView::geometriesChanged, this, [this] { refresh(); });
-    connect(theme_, &ThemeManager::appearanceChanged, this, qOverload<>(&QWidget::update));
+    connect(theme_, &ThemeManager::themeChanged, this, qOverload<>(&QWidget::update));
 }
 
 bool HeaderResizeHighlight::canResize(int column) const

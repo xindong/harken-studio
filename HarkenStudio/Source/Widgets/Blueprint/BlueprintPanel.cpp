@@ -213,7 +213,7 @@ BlueprintPanel::BlueprintPanel(QWidget* parent)
     meterResizeHandle_->setCursor(Qt::SplitHCursor);
     meterResizeHandle_->hide();
     meterResizeHandle_->installEventFilter(this);
-    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
             meterResizeHandle_, qOverload<>(&QWidget::update));
     meter_->installEventFilter(this);
     connect(meter_, &MeterPanel::expandedChanged, this, [this](bool expanded) {
