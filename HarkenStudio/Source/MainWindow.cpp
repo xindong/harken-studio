@@ -236,7 +236,7 @@ public:
         setAttribute(Qt::WA_DeleteOnClose);
         setMinimumWidth(460);
         auto* layout = new QVBoxLayout(this);
-        stage_ = new QLabel(MainWindow::tr("Checking existing packs and output permissions..."), this);
+        stage_ = new QLabel(MainWindow::tr("Starting pack build..."), this);
         stage_->setObjectName(QStringLiteral("packExportStage"));
         stage_->setTextFormat(Qt::PlainText);
         stage_->setWordWrap(true);
@@ -262,11 +262,9 @@ public:
             if (observation.unitKey.isEmpty()) {
                 QString stage;
                 switch (observation.stage) {
-                case PackBuildObservationStage::Preflight: stage = MainWindow::tr("Checking outputs"); break;
                 case PackBuildObservationStage::PreparingMedia: stage = MainWindow::tr("Preparing media"); break;
                 case PackBuildObservationStage::CompilingProject: stage = MainWindow::tr("Compiling project"); break;
                 case PackBuildObservationStage::WritingPacks: stage = MainWindow::tr("Writing packs"); break;
-                case PackBuildObservationStage::Publishing: stage = MainWindow::tr("Validating and publishing"); break;
                 case PackBuildObservationStage::Finalizing: stage = MainWindow::tr("Finalizing outputs"); break;
                 default: return;
                 }
@@ -284,8 +282,7 @@ public:
             unitKey_ = observation.unitKey;
             unit_->setText(language_.isEmpty() ? observation.packName
                 : MainWindow::tr("%1 (%2)").arg(observation.packName, language_));
-            if (observation.stage == PackBuildObservationStage::Prepared
-                || observation.stage == PackBuildObservationStage::ReadyToPublish)
+            if (observation.stage == PackBuildObservationStage::Prepared)
                 progress_->setRange(0, 0);
             else
                 refreshProgress();
@@ -4561,13 +4558,6 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
         return;
     }
 
-    for (const auto& id : genPlatforms) {
-        const auto* definition = ProjectPlatformSemantics::find(pmProject->platforms, QUuid::fromString(id));
-        if (!definition) {
-            LogPanel::logError(LogCategory::Pack, tr("Unknown project platform ID: %1").arg(id));
-            return;
-        }
-    }
     const QString baseDir = PathUtils::packBuildOutputRoot(
         pmProject->projectPath, pmProject->packBuildOutputDir);
     if (PathUtils::isProtectedPackOutputPath(baseDir, pmProject->projectPath)) {
@@ -4580,35 +4570,6 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
     if (!outputLock) {
         LogPanel::logError(LogCategory::Pack, outputLockError);
         return;
-    }
-    {
-        const auto readiness =
-            ProjectPackExporter::ValidatePackBuildReadiness(*pmProject, baseDir);
-        for (const auto& issue : readiness.issues) {
-            if (issue.severity == ProjectPackExporter::ValidationIssue::Info)
-                continue;
-            const QString line =
-                issue.message
-                + (issue.objectID != 0
-                       ? QStringLiteral(" (object 0x%1)")
-                             .arg(issue.objectID, 8, 16, QChar('0'))
-                       : QString());
-            if (issue.severity == ProjectPackExporter::ValidationIssue::Error)
-                LogPanel::logError(LogCategory::Pack, line);
-            else
-                LogPanel::logWarning(LogCategory::Pack, line);
-        }
-        if (readiness.errorCount > 0) {
-            QString indexError;
-            if (!ProjectPackExporter::FinalizePackOutputs(baseDir, projectLease->platforms, genPlatforms, {}, &indexError))
-                LogPanel::logError(LogCategory::Pack, indexError);
-            QMessageBox::critical(
-                this, tr("Export Readiness"),
-                tr("%1 error(s) found in the project pack configuration. "
-                   "See the Log panel and fix them before exporting.")
-                    .arg(readiness.errorCount));
-            return;
-        }
     }
 
     LogPanel::logInfo(LogCategory::Pack,
@@ -4698,8 +4659,9 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
                 if (!store->isCurrentRun(runId)
                     || ProjectManager::instance().currentProject() != projectLease.get())
                     return;
-                if (result.success)
-                    PackArtifactCache::instance().publish(platform, result.artifacts, updateSelectedOnly);
+                if (result.success || !result.artifacts.isEmpty())
+                    PackArtifactCache::instance().publish(platform, result.artifacts,
+                        updateSelectedOnly || !result.success);
                 if (!window) return;
                 for (const auto& rec : records) {
                     window->recordPackGenerationResult(rec.packName, rec.objectID, rec.success,
@@ -4733,10 +4695,9 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
         };
         const auto build = ProjectPackBuildService::run(buildRequest);
         if (!build.preflightSucceeded) {
-            const QString writeAccessError = build.preflightError;
-            const QString writeAccessSummary = build.preflightSummary;
+            const QString initializationError = build.preflightError;
             QMetaObject::invokeMethod(store,
-                [window, store, projectLease, runId, cancel, writeAccessError, writeAccessSummary,
+                [window, store, projectLease, runId, cancel, initializationError,
                  platformActivity, outputLock] {
                 if (!store->isCurrentRun(runId)) return;
                 const bool canceled = cancel->load(std::memory_order_relaxed);
@@ -4745,9 +4706,8 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
                 if (canceled) {
                     LogPanel::logWarning(LogCategory::Pack, tr("Pack export canceled"));
                 } else {
-                    LogPanel::logError(LogCategory::Pack, writeAccessError);
-                    QMessageBox::warning(window, tr("Export Readiness"),
-                        tr("%1\n\nSee the Log panel for affected paths and details.").arg(writeAccessSummary));
+                    LogPanel::logError(LogCategory::Pack, initializationError);
+                    QMessageBox::warning(window, tr("Pack Export"), initializationError);
                 }
             }, Qt::QueuedConnection);
             return;
@@ -4762,16 +4722,11 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
             warningCount += publicationWarnings.size();
             if (publication.success) {
                 removedCount += publication.removedPackCount;
-                cleanedOutput = selfCleaning && packPaths.isEmpty();
+                cleanedOutput = selfCleaning && packPaths.isEmpty() && build.allPlatformsSucceeded;
             } else if (!canceled) {
                 ++failedCount;
                 publicationError = publication.error;
             }
-        } else if (build.finalization == ProjectPackBuildService::Finalization::Partial
-                   && !build.finalizationResult.success) {
-            publicationError = build.finalizationResult.error;
-            if (canceled) publicationError.clear();
-            else ++failedCount;
         }
         QMetaObject::invokeMethod(store,
             [window, store, projectLease, runId, canceled, failedCount, builtCount,

@@ -204,6 +204,9 @@ static QString actionClosureExportError(const ActionClosurePlan& closure,
         closure.diagnostics.begin(), closure.diagnostics.end(),
         [rejectExcludedDependency](const ActionClosureDiagnostic& candidate) {
             return candidate.code == ActionClosureDiagnosticCode::AmbiguousSourceSelection
+                || candidate.code == ActionClosureDiagnosticCode::DanglingReference
+                || candidate.code == ActionClosureDiagnosticCode::InvalidReferenceType
+                || candidate.code == ActionClosureDiagnosticCode::SchemaMismatch
                 || (rejectExcludedDependency
                     && candidate.code == ActionClosureDiagnosticCode::ExcludedDependency);
         });
@@ -292,9 +295,7 @@ void ProjectPackExporter::ApplyMediaCollectionStats(ExportResult& result,
 {
     result.mediaCacheHits += stats.cacheHits;
     result.mediaConversions += stats.conversions;
-    result.mediaFallbacks += stats.fallbacks;
     result.warnings.append(stats.warnings);
-    result.mediaArtifacts.append(stats.mediaArtifacts);
     result.soundContentRevisions.insert(
         stats.soundContentRevisions.begin(), stats.soundContentRevisions.end());
 }
@@ -315,26 +316,6 @@ QString ProjectPackExporter::platformOutputDir(const QString& baseDir,
                                                const ProjectPlatform& platform)
 {
     return QDir(baseDir).filePath(platform.name);
-}
-
-bool ProjectPackExporter::ValidatePackBuildPlatforms(const QVector<ProjectPlatform>& captured,
-                                                     const QVector<ProjectPlatform>& current,
-                                                     const QStringList& succeededIds,
-                                                     QString* errorOut)
-{
-    for (const auto& id : succeededIds) {
-        const auto* before = ProjectPlatformSemantics::find(captured, QUuid(id));
-        const auto* after = ProjectPlatformSemantics::find(current, QUuid(id));
-        if (!after) {
-            if (errorOut) *errorOut = QStringLiteral("Pack platform was deleted during the build: %1").arg(id);
-            return false;
-        }
-        if (!before || before->toJson() != after->toJson()) {
-            if (errorOut) *errorOut = QStringLiteral("Pack platform changed during the build: %1").arg(id);
-            return false;
-        }
-    }
-    return true;
 }
 
 QStringList ProjectPackExporter::resolveExportPlatforms(const ProjectData& project,
@@ -484,25 +465,12 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
             }
             const auto outputLock = LockPackOutputRoot(root, &failure.error);
             if (!outputLock) return failure;
-            auto writeOptions = prepared;
-            writeOptions.selfCleaning = false;
-            if (!ValidatePackBuildWriteAccess(captured, root, {prepared.platform}, writeOptions, &failure.error)) {
-                failure.canceled = prepared.cancelCheck && prepared.cancelCheck();
-                return failure;
-            }
             const auto& platform = *ProjectPlatformSemantics::find(captured.platforms, QUuid(prepared.platform));
             auto result = ExportAllPacks(captured, platformOutputDir(root, platform), prepared, outRecords);
             if (!result.success)
                 return result;
-            QString indexError;
-            if (!ValidatePackBuildPlatforms(captured.platforms, project.platforms,
-                    {prepared.platform}, &indexError)) {
-                result.success = false;
-                result.error = indexError;
-                return result;
-            }
             const auto publication = FinalizePackExport(root, captured, {prepared.platform},
-                false, result.artifacts, prepared.cancelCheck);
+                false, {{prepared.platform, result.outputs}}, prepared.cancelCheck);
             result.success = publication.success;
             result.canceled = publication.canceled;
             result.error = publication.error;
@@ -514,11 +482,6 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
 
     const auto platformActivity = ProjectPlatformActivity::acquire();
     ExportResult result;
-    PlaybackReferenceError referenceError;
-    const bool referencesValid = options.buildContext->validatePlayback(&result.error, &referenceError);
-    if (!referencesValid && referenceError == PlaybackReferenceError::InvalidStructure)
-        return result;
-
     if (!isSupportedExportPlatform(project, options.platform, &result.error))
         return result;
 
@@ -531,7 +494,7 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
     for (const ProjectItem* evt : allActions)
         actionsByStableId.emplace(actionIdentity(evt), evt);
 
-    effectiveOpts.buildPlan = createBuildPlan(project, effectiveOpts);
+    if (!effectiveOpts.buildPlan) effectiveOpts.buildPlan = createBuildPlan(project, effectiveOpts);
     const PackBuildPlan& buildPlan = *effectiveOpts.buildPlan;
     std::map<std::pair<QString, QString>, PackGenerationProgress> unitProgress;
     if (options.progressCallback) {
@@ -586,89 +549,89 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
         queueUnit(unit.variant.language, unit.grouped ? QStringLiteral("g:") + unit.artifactKey
             : QStringLiteral("a:") + objectIdString(unit.actionStableIds.front()));
     }
-    if (!referencesValid) return result;
     const auto unsupported = Bridge::validateBusPublicationSupport(
         project, QUuid(options.platform));
     if (!unsupported.empty()) {
         result.error = unsupported.front().message;
         return result;
     }
-    if (!options.updateSelectedOnly) {
-        const ValidationResult readiness =
-            ValidatePackBuildReadiness(project, outputDir, options.buildContext.get());
-        if (readiness.errorCount > 0) {
-            QStringList errors;
-            for (const ValidationIssue& issue : readiness.issues)
-                if (issue.severity == ValidationIssue::Error)
-                    errors.append(issue.message);
-            result.error = QStringLiteral("Pack build readiness failed: %1")
-                               .arg(errors.join(QStringLiteral("; ")));
-            return result;
-        }
-    }
     if (!dir.exists())
         dir.mkpath(".");
     if (effectiveOpts.updateSelectedOnly)
         effectiveOpts.selfCleaning = false;
+    std::map<std::pair<harkenstudio::ObjectId, QString>, QString> actionErrors;
     for (const auto& diagnostic : buildPlan.diagnostics) {
         if (diagnostic.code != ActionClosureDiagnosticCode::LocalizedWithoutLanguages
             && diagnostic.code != ActionClosureDiagnosticCode::InvalidBuildLanguage
-            && diagnostic.code != ActionClosureDiagnosticCode::InvalidPackName)
-            continue;
+            && diagnostic.code != ActionClosureDiagnosticCode::InvalidPackName) continue;
         const auto action = actionsByStableId.find(diagnostic.actionStableId);
-        if (action != actionsByStableId.end() && actionRequested(project, effectiveOpts, action->first, action->second->name)) {
-            result.error = diagnostic.message;
-            return result;
+        if (action != actionsByStableId.end()
+            && actionRequested(project, effectiveOpts, action->first, action->second->name)) {
+            bool hasVariant = false;
+            for (const auto& variant : buildPlan.variants) {
+                if (variant.actionStableId != action->first) continue;
+                actionErrors.emplace(std::make_pair(action->first, variant.variant.language), diagnostic.message);
+                hasVariant = true;
+            }
+            if (!hasVariant)
+                actionErrors.emplace(std::make_pair(action->first, QString()), diagnostic.message);
         }
     }
     std::set<harkenstudio::ObjectId> buildActionIds;
-    for (const auto& variant : buildPlan.variants) buildActionIds.insert(variant.actionStableId);
-
-    for (const PackBuildVariant& variant : buildPlan.variants) {
+    for (const auto& variant : buildPlan.variants) {
         const auto action = actionsByStableId.find(variant.actionStableId);
-        if (action == actionsByStableId.end()
-            || buildActionIds.count(variant.actionStableId) == 0)
-            continue;
-        const auto cycle = std::find_if(
-            variant.closure.diagnostics.begin(), variant.closure.diagnostics.end(),
-            [](const ActionClosureDiagnostic& diagnostic) {
-                return diagnostic.code == ActionClosureDiagnosticCode::PostActionCycle;
-            });
-        if (cycle != variant.closure.diagnostics.end()) {
-            result.error = QStringLiteral("PostAction dependency cycle for '%1': %2")
-                               .arg(action->second->name, cycle->message);
-            return result;
-        }
-        if (const QString sourceError = actionClosureExportError(variant.closure, true);
-            !sourceError.isEmpty()) {
-            result.error = QStringLiteral("Action '%1' cannot be exported: %2")
-                               .arg(action->second->name, sourceError);
-            return result;
-        }
-        for (harkenstudio::ObjectId dependencyId : variant.dependencyOrder) {
+        if (action == actionsByStableId.end()) continue;
+        const auto reject = [&](const QString& error) {
+            actionErrors.emplace(std::make_pair(variant.actionStableId, variant.variant.language), error);
+        };
+        const auto cycle = std::find_if(variant.closure.diagnostics.begin(), variant.closure.diagnostics.end(),
+            [](const auto& diagnostic) { return diagnostic.code == ActionClosureDiagnosticCode::PostActionCycle; });
+        if (cycle != variant.closure.diagnostics.end())
+            reject(QStringLiteral("PostAction dependency cycle for '%1': %2").arg(action->second->name, cycle->message));
+        if (const QString error = actionClosureExportError(variant.closure, true); !error.isEmpty())
+            reject(QStringLiteral("Action '%1' cannot be exported: %2").arg(action->second->name, error));
+        for (auto dependencyId : variant.dependencyOrder) {
             const auto dependency = actionsByStableId.find(dependencyId);
-            if (dependency == actionsByStableId.end()) {
-                result.error = QStringLiteral(
-                    "PostAction dependency %1 for '%2' does not resolve to an Action")
-                                   .arg(VNX::objectIdString(dependencyId))
-                                   .arg(action->second->name);
-                return result;
-            }
-            if (dependencyId != variant.actionStableId
-                && !actionHasSteps(dependency->second)) {
-                result.error = QStringLiteral(
-                    "PostAction dependency '%1' for '%2' has no steps")
-                                   .arg(dependency->second->name,
-                                        action->second->name);
-                return result;
-            }
-            buildActionIds.insert(dependencyId);
+            if (dependency == actionsByStableId.end())
+                reject(QStringLiteral("PostAction dependency %1 for '%2' does not resolve to an Action")
+                    .arg(VNX::objectIdString(dependencyId), action->second->name));
+            else if (dependencyId != variant.actionStableId && !actionHasSteps(dependency->second))
+                reject(QStringLiteral("PostAction dependency '%1' for '%2' has no steps")
+                    .arg(dependency->second->name, action->second->name));
         }
-        if (actionHasSteps(action->second) && !variant.capability.permitted()) {
-            result.error = actionCapabilityError(
-                *action->second, variant.capability);
-            return result;
+        if (actionHasSteps(action->second) && !variant.capability.permitted())
+            reject(actionCapabilityError(*action->second, variant.capability));
+    }
+    for (const auto& variant : buildPlan.variants) {
+        for (const auto& dependency : variant.closure.actions) {
+            auto error = actionErrors.find({dependency.stableId, variant.variant.language});
+            if (error == actionErrors.end() && !variant.variant.language.isEmpty())
+                error = actionErrors.find({dependency.stableId, QString()});
+            if (error != actionErrors.end()) {
+                actionErrors.emplace(std::make_pair(variant.actionStableId, variant.variant.language), error->second);
+                break;
+            }
         }
+        if (actionErrors.count({variant.actionStableId, variant.variant.language}) == 0) {
+            buildActionIds.insert(variant.actionStableId);
+            buildActionIds.insert(variant.dependencyOrder.begin(), variant.dependencyOrder.end());
+        }
+    }
+    QStringList unitErrors;
+    for (const auto& [variant, error] : actionErrors) {
+        const auto& [id, language] = variant;
+        const auto action = actionsByStableId.find(id);
+        if (action == actionsByStableId.end()) continue;
+        unitErrors.append(error);
+        const QString key = QStringLiteral("a:") + objectIdString(id);
+        if (effectiveOpts.progressCallback)
+            effectiveOpts.progressCallback({effectiveOpts.platform, language, key, 100, PackGenerationStage::Failed});
+        if (!outRecords) continue;
+        const auto& platform = *ProjectPlatformSemantics::find(project.platforms, QUuid(effectiveOpts.platform));
+        outRecords->push_back({action->second->name, action->second->objectID, PackBuildRecord::Source::Action,
+            false, dir.filePath(PackBuildPlanning::packFileName(language, action->second->name, packExt)),
+            error, 0, effectiveOpts.platform, {}, -1, language, platform.name, platform.basePlatform,
+            platform.toJson(), false, key, false});
     }
 
     std::set<harkenstudio::ObjectId> packableActionIds = buildActionIds;
@@ -717,10 +680,16 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
     setRequest.outputDir = outputDir;
     setRequest.options = effectiveOpts;
     setRequest.includedActionIds = buildActionIds;
+    for (const auto& [variant, error] : actionErrors) setRequest.failedActionVariants.insert(variant);
     setRequest.plan = &buildPlan;
     const QStringList orchestrationWarnings = result.warnings;
     result = ExportCanonicalPackSet(*this, setRequest, outRecords);
     result.warnings = orchestrationWarnings + result.warnings;
+    if (!unitErrors.isEmpty()) {
+        result.success = false;
+        if (!result.error.isEmpty()) unitErrors.append(result.error);
+        result.error = unitErrors.join(QLatin1Char('\n'));
+    }
     if (!result.success)
         return result;
 
@@ -754,7 +723,6 @@ ProjectPackExporter::ExportInitPack(const ProjectData& project,
 
     const auto platformActivity = ProjectPlatformActivity::acquire();
     ExportResult result;
-    if (!options.buildContext->validatePlayback(&result.error)) return result;
     if (!isSupportedExportPlatform(project, options.platform, &result.error))
         return result;
 
@@ -957,9 +925,6 @@ ProjectPackExporter::exportSingleActionPack(
             requiredMedia.erase(sharedId);
     result.objectCount = static_cast<int>(visitedObjects.size());
 
-    for (const auto& member : closure.actions)
-        builder.addStringMapping(member.stableId, member.name);
-
     MediaCollectionStats mediaStats;
     if (!CollectMedia(project, builder, requiredMedia, &visitedObjects,
                       variantOptions, &mediaStats, &result.error, &closure,
@@ -975,14 +940,6 @@ ProjectPackExporter::exportSingleActionPack(
     ApplyMediaCollectionStats(result, mediaStats);
     result.mediaCount = static_cast<int>(requiredMedia.size());
     result.actionCount = static_cast<int>(closure.actions.size());
-
-    if (options.debugStrings)
-    {
-        for (uint32_t id : visitedObjects) {
-            const auto item = globalIndex.find(id);
-            if (item != globalIndex.end()) builder.addStringMapping(item->second->runtimeId(), item->second->name);
-        }
-    }
 
     if (!buildPackResources(builder, outputPath, options, result, resourceEntries))
     {
@@ -1227,8 +1184,6 @@ void ProjectPackExporter::CollectContentInputsFromItem(const ProjectItem* item,
             requiredMedia.insert(sourceId);
     }
 
-    builder.addStringMapping(objectId, item->name);
-
     const auto* mix = item->comp<VMixNode>();
     if (mix && !mix->bindings.isEmpty())
     {
@@ -1424,12 +1379,7 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
             }
             const auto& artifact = result.artifact;
             if (stats) {
-                if (!artifact->path.isEmpty()) stats->mediaArtifacts.append(artifact->cacheKey);
-                if (result.fallback) {
-                    ++stats->fallbacks;
-                    stats->warnings.append(QStringLiteral("Sound %1 used unprocessed media after conversion failed: %2")
-                        .arg(VNX::objectIdString(input.soundId)).arg(result.conversionError));
-                } else if (artifact->cacheHit) ++stats->cacheHits;
+                if (artifact->cacheHit) ++stats->cacheHits;
                 else ++stats->conversions;
             }
             Bridge::PackMediaDesc desc;
@@ -1549,26 +1499,12 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
                     else ++stats->conversions;
                 }
             } else {
-                packInputPath = filePath;
-                loopInfo = assetInfo->metadata.loopInfo;
-                if (stats) {
-                    ++stats->fallbacks;
-                    stats->warnings.append(QStringLiteral("sourceID %1 fell back to source file after conversion failed: %2")
-                        .arg(sourceID).arg(conversion.errorMessage));
-                }
+                if (errorOut) *errorOut = conversion.errorMessage;
+                return false;
             }
-        }
-
-        if (packInputPath.isEmpty()) {
-            packInputPath = filePath;
-            if (assetInfo)
-                loopInfo = assetInfo->metadata.loopInfo;
-            if (stats) {
-                ++stats->fallbacks;
-                stats->warnings.append(
-                    QStringLiteral("sourceID %1 used source file because no registry cache entry was available")
-                        .arg(sourceID));
-            }
+        } else {
+            if (errorOut) *errorOut = QStringLiteral("No registered source for sourceID %1").arg(sourceID);
+            return false;
         }
 
         packInputPath = QFileInfo(packInputPath).absoluteFilePath();

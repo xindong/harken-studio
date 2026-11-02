@@ -1013,17 +1013,6 @@ CanonicalRuntimeProjectContextV1 canonicalRuntimeProjectContext(
             nullptr, {}, QStringLiteral("sampleRate/channelConfig"));
         return context;
     }
-    QString referenceError;
-    PlaybackReferenceError referenceCode;
-    if (!validatePlaybackReferences(project, &referenceError, &referenceCode)) {
-        appendDiagnostic(context.diagnostics,
-                         referenceCode == PlaybackReferenceError::InvalidTargetType
-                             ? ProjectInputDiagnosticCode::InvalidReferenceType
-                             : ProjectInputDiagnosticCode::MissingReference,
-                         referenceError, nullptr, {}, QStringLiteral("playbackReferences"));
-        return context;
-    }
-
     std::vector<const ProjectItem*> busPointers(
         sourceIndex->buses.begin(), sourceIndex->buses.end());
     const auto identityOutcome = buildRuntimeIdentityIndex(
@@ -1082,6 +1071,16 @@ ProjectInputCompileResult compileStudioProjectInputForContext(
                   });
     }
     if (!context.ok()) return result;
+    QString referenceError;
+    PlaybackReferenceError referenceCode;
+    if (!validatePlaybackReferences(project, &referenceError, &referenceCode)) {
+        appendDiagnostic(result.diagnostics,
+                         referenceCode == PlaybackReferenceError::InvalidTargetType
+                             ? ProjectInputDiagnosticCode::InvalidReferenceType
+                             : ProjectInputDiagnosticCode::MissingReference,
+                         referenceError, nullptr, {}, QStringLiteral("playbackReferences"));
+        return result;
+    }
     const auto& index = *context.sourceIndex;
     const auto groups = buildFieldGroupEffectiveSnapshot(project, toFieldGroupScope(scope));
     if (!groups.ok()) {

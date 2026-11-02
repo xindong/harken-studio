@@ -793,6 +793,23 @@ bool appendBasicTransitionProgram(
     return true;
 }
 
+harkencurrentworldcompiler::ContainerAuthoringV1 structuralContainerAuthoring(
+    harkenstudio::ObjectId stableId, std::uint32_t authoredOrder,
+    const harkenprojectschema::InputNode& node)
+{
+    harkencurrentworldcompiler::ContainerAuthoringV1 row;
+    row.containerStableId = stableId;
+    row.authoredStableOrder = authoredOrder;
+    row.mode = harkenstudiobuild::ContainerModeV1::Sequence;
+    for (const auto& occurrence : node.containerChildOccurrences) {
+        harkencurrentworldcompiler::ContainerChildAuthoringV1 child;
+        child.stableOccurrenceOrdinal = occurrence.stableOccurrenceOrdinal;
+        child.authoredStableOrder = static_cast<std::uint32_t>(row.children.size());
+        row.children.push_back(std::move(child));
+    }
+    return row;
+}
+
 bool buildContainerAuthoring(ProjectItem& item, const ProjectIndex& index,
                              const std::unordered_set<ProjectItem*>& included,
                              uint32_t authoredOrder, std::uint32_t sampleRate,
@@ -800,9 +817,12 @@ bool buildContainerAuthoring(ProjectItem& item, const ProjectIndex& index,
                              QString* error,
                              CurrentWorldBuildStatus* status, bool execute)
 {
-    VSelection inheritedSelection;
-    inheritedSelection.mode = SelectionMode::Sequence;
-    const auto* selection = execute ? item.comp<VSelection>() : &inheritedSelection;
+    if (!execute) {
+        request->containers.push_back(structuralContainerAuthoring(
+            item.runtimeId(), authoredOrder, request->project.nodes.back()));
+        return true;
+    }
+    const auto* selection = item.comp<VSelection>();
     if (selection == nullptr || request == nullptr) {
         setError(error, QStringLiteral("Container selection is unavailable"));
         return false;
@@ -1309,139 +1329,148 @@ bool appendActionPrograms(
         if (item && options && options->includedActionIds
             && options->includedActionIds->count(item->runtimeId()) == 0)
             continue;
-        const auto* source = item != nullptr ? item->comp<VAction>() : nullptr;
-        if (source == nullptr || harkenstudio::IsNull(item->runtimeId())) {
-            setError(error, QStringLiteral("Action definition is invalid"));
-            return false;
-        }
-        harkencurrentworldcompiler::ActionProgramAuthoringV1 action;
-        action.actionStableId = item->runtimeId();
-        action.steps.reserve(source->steps.size());
-        for (std::size_t stepIndex = 0; stepIndex < source->steps.size();
-             ++stepIndex) {
-            const VActionStep& sourceStep = source->steps[stepIndex];
-            const auto opcode = actionOpcode(sourceStep.type);
-            if (!opcode || stepIndex > UINT32_MAX) {
-                setError(error, QStringLiteral("Action step is invalid"));
+        const auto lowerAction = [&]() {
+            const auto* source = item != nullptr ? item->comp<VAction>() : nullptr;
+            if (source == nullptr || harkenstudio::IsNull(item->runtimeId())) {
+                setError(error, QStringLiteral("Action definition is invalid"));
                 return false;
             }
-            harkencurrentworldcompiler::ActionStepAuthoringV1 step;
-            step.opcode = *opcode;
-            step.delayMilliseconds = sourceStep.delay;
-            step.fadeMilliseconds = sourceStep.fadeTime;
-            step.value = sourceStep.value;
-            const ActionTargetResolution targetResolution = resolveActionTarget(
-                sourceStep, *item, index, included, languageUnavailable, lookup,
-                &step.target, error, options);
-            if (targetResolution == ActionTargetResolution::Skipped)
-                continue;
-            if (targetResolution == ActionTargetResolution::Invalid) {
-                const QString reason = error && !error->isEmpty()
-                    ? *error : QStringLiteral("target is invalid");
-                const QString target = !sourceStep.targetName.isEmpty()
-                    ? sourceStep.targetName
-                    : QString::number(sourceStep.targetObjectID);
-                setError(error, QStringLiteral(
-                    "Action '%1' step %2 (%3 target '%4'): %5")
-                    .arg(item->name).arg(stepIndex)
-                    .arg(sourceStep.typeString(), target, reason));
-                if (options && options->isolateUnavailable) {
-                    unavailableActions.insert(action.actionStableId);
-                    break;
-                }
-                return false;
-            }
-
-            const bool hasQuantize = sourceStep.type == VActionStep::Type::Play
-                || sourceStep.type == VActionStep::Type::Stop
-                || sourceStep.type == VActionStep::Type::PostAction;
-            if (hasQuantize && sourceStep.quantize.timing != QuantizeTiming::Immediate) {
-                const QString target = !sourceStep.targetName.isEmpty()
-                    ? sourceStep.targetName
-                    : QString::number(sourceStep.targetObjectID);
-                if (sourceStep.quantize.timing == QuantizeTiming::EntryMarker
-                    || (sourceStep.type == VActionStep::Type::Play
-                        && sourceStep.quantize.timing == QuantizeTiming::ExitMarker)) {
-                    setStatus(status, CurrentWorldBuildStatus::CapabilityUnavailable);
-                    setError(error, QStringLiteral(
-                        "Action '%1' step %2 (%3 target '%4'): %5 requires an updated Engine marker scheduling contract")
-                        .arg(item->name).arg(stepIndex)
-                        .arg(sourceStep.typeString(), target)
-                        .arg(sourceStep.quantize.timing == QuantizeTiming::EntryMarker
-                                 ? QStringLiteral("Entry Marker") : QStringLiteral("Exit Marker")));
+            harkencurrentworldcompiler::ActionProgramAuthoringV1 action;
+            action.actionStableId = item->runtimeId();
+            action.steps.reserve(source->steps.size());
+            for (std::size_t stepIndex = 0; stepIndex < source->steps.size();
+                 ++stepIndex) {
+                const VActionStep& sourceStep = source->steps[stepIndex];
+                const auto opcode = actionOpcode(sourceStep.type);
+                if (!opcode || stepIndex > UINT32_MAX) {
+                    setError(error, QStringLiteral("Action step is invalid"));
                     return false;
                 }
-                const auto timing = actionQuantizeTiming(
-                    sourceStep.quantize.timing);
-                const auto ifSilent = actionIfSilent(
-                    sourceStep.quantize.ifSilent);
-                if (!timing || !ifSilent) {
-                    setError(error, QStringLiteral("Action timing is invalid"));
-                    return false;
-                }
-                if (!harkenstudiobuild::ActionQuantizeTimingSupportedV1(
-                        *opcode, *timing)) {
-                    setStatus(status, CurrentWorldBuildStatus::CapabilityUnavailable);
-                    setError(error, QStringLiteral(
-                        "Action '%1' step %2 (%3 target '%4', timing %5): timing is not supported for this opcode")
-                        .arg(item->name).arg(stepIndex)
-                        .arg(sourceStep.typeString(), target)
-                        .arg(static_cast<std::uint32_t>(*timing)));
-                    return false;
-                }
-                step.quantizeTiming = *timing;
-                step.ifSilent = *ifSilent;
-                const auto referenceResolution = resolveActionQuantizeReference(
-                    sourceStep, index, included, languageUnavailable, lookup,
-                    &step.quantizeReference, error);
-                if (referenceResolution == ActionTargetResolution::Skipped)
+                harkencurrentworldcompiler::ActionStepAuthoringV1 step;
+                step.opcode = *opcode;
+                step.delayMilliseconds = sourceStep.delay;
+                step.fadeMilliseconds = sourceStep.fadeTime;
+                step.value = sourceStep.value;
+                const ActionTargetResolution targetResolution = resolveActionTarget(
+                    sourceStep, *item, index, included, languageUnavailable, lookup,
+                    &step.target, error, options);
+                if (targetResolution == ActionTargetResolution::Skipped)
                     continue;
-                if (referenceResolution == ActionTargetResolution::Invalid) {
+                if (targetResolution == ActionTargetResolution::Invalid) {
                     const QString reason = error && !error->isEmpty()
-                        ? *error : QStringLiteral("quantize reference is invalid");
-                    const QString reference = !sourceStep.quantize.referenceName.isEmpty()
-                        ? sourceStep.quantize.referenceName
-                        : QString::number(sourceStep.quantize.referenceObjectID);
+                        ? *error : QStringLiteral("target is invalid");
+                    const QString target = !sourceStep.targetName.isEmpty()
+                        ? sourceStep.targetName
+                        : QString::number(sourceStep.targetObjectID);
                     setError(error, QStringLiteral(
-                        "Action '%1' step %2 (%3 quantize reference '%4'): %5")
+                        "Action '%1' step %2 (%3 target '%4'): %5")
                         .arg(item->name).arg(stepIndex)
-                        .arg(sourceStep.typeString(), reference, reason));
+                        .arg(sourceStep.typeString(), target, reason));
                     if (options && options->isolateUnavailable) {
                         unavailableActions.insert(action.actionStableId);
                         break;
                     }
                     return false;
                 }
-            }
-            if (sourceStep.type == VActionStep::Type::SetVariable) {
-                const auto scope = variableWriteScope(sourceStep.scope);
-                if (!scope) {
-                    setError(error, QStringLiteral("Action variable scope is invalid"));
-                    return false;
+
+                const bool hasQuantize = sourceStep.type == VActionStep::Type::Play
+                    || sourceStep.type == VActionStep::Type::Stop
+                    || sourceStep.type == VActionStep::Type::PostAction;
+                if (hasQuantize && sourceStep.quantize.timing != QuantizeTiming::Immediate) {
+                    const QString target = !sourceStep.targetName.isEmpty()
+                        ? sourceStep.targetName
+                        : QString::number(sourceStep.targetObjectID);
+                    if (sourceStep.quantize.timing == QuantizeTiming::EntryMarker
+                        || (sourceStep.type == VActionStep::Type::Play
+                            && sourceStep.quantize.timing == QuantizeTiming::ExitMarker)) {
+                        setStatus(status, CurrentWorldBuildStatus::CapabilityUnavailable);
+                        setError(error, QStringLiteral(
+                            "Action '%1' step %2 (%3 target '%4'): %5 requires an updated Engine marker scheduling contract")
+                            .arg(item->name).arg(stepIndex)
+                            .arg(sourceStep.typeString(), target)
+                            .arg(sourceStep.quantize.timing == QuantizeTiming::EntryMarker
+                                     ? QStringLiteral("Entry Marker") : QStringLiteral("Exit Marker")));
+                        return false;
+                    }
+                    const auto timing = actionQuantizeTiming(
+                        sourceStep.quantize.timing);
+                    const auto ifSilent = actionIfSilent(
+                        sourceStep.quantize.ifSilent);
+                    if (!timing || !ifSilent) {
+                        setError(error, QStringLiteral("Action timing is invalid"));
+                        return false;
+                    }
+                    if (!harkenstudiobuild::ActionQuantizeTimingSupportedV1(
+                            *opcode, *timing)) {
+                        setStatus(status, CurrentWorldBuildStatus::CapabilityUnavailable);
+                        setError(error, QStringLiteral(
+                            "Action '%1' step %2 (%3 target '%4', timing %5): timing is not supported for this opcode")
+                            .arg(item->name).arg(stepIndex)
+                            .arg(sourceStep.typeString(), target)
+                            .arg(static_cast<std::uint32_t>(*timing)));
+                        return false;
+                    }
+                    step.quantizeTiming = *timing;
+                    step.ifSilent = *ifSilent;
+                    const auto referenceResolution = resolveActionQuantizeReference(
+                        sourceStep, index, included, languageUnavailable, lookup,
+                        &step.quantizeReference, error);
+                    if (referenceResolution == ActionTargetResolution::Skipped)
+                        continue;
+                    if (referenceResolution == ActionTargetResolution::Invalid) {
+                        const QString reason = error && !error->isEmpty()
+                            ? *error : QStringLiteral("quantize reference is invalid");
+                        const QString reference = !sourceStep.quantize.referenceName.isEmpty()
+                            ? sourceStep.quantize.referenceName
+                            : QString::number(sourceStep.quantize.referenceObjectID);
+                        setError(error, QStringLiteral(
+                            "Action '%1' step %2 (%3 quantize reference '%4'): %5")
+                            .arg(item->name).arg(stepIndex)
+                            .arg(sourceStep.typeString(), reference, reason));
+                        if (options && options->isolateUnavailable) {
+                            unavailableActions.insert(action.actionStableId);
+                            break;
+                        }
+                        return false;
+                    }
                 }
-                step.scope = *scope;
-            }
-            if (sourceStep.type == VActionStep::Type::Reset) {
-                const auto scope = actionResetScope(sourceStep.resetScope);
-                if (!scope) {
-                    setError(error,
-                             QStringLiteral("Action reset scope is invalid"));
-                    return false;
+                if (sourceStep.type == VActionStep::Type::SetVariable) {
+                    const auto scope = variableWriteScope(sourceStep.scope);
+                    if (!scope) {
+                        setError(error, QStringLiteral("Action variable scope is invalid"));
+                        return false;
+                    }
+                    step.scope = *scope;
                 }
-                step.resetScope = *scope;
+                if (sourceStep.type == VActionStep::Type::Reset) {
+                    const auto scope = actionResetScope(sourceStep.resetScope);
+                    if (!scope) {
+                        setError(error,
+                                 QStringLiteral("Action reset scope is invalid"));
+                        return false;
+                    }
+                    step.resetScope = *scope;
+                }
+                step.authoredEventIndex =
+                    static_cast<std::uint32_t>(action.steps.size());
+                action.steps.push_back(step);
             }
-            step.authoredEventIndex =
-                static_cast<std::uint32_t>(action.steps.size());
-            action.steps.push_back(step);
+            if (unavailableActions.count(action.actionStableId) != 0
+                || (action.steps.empty()
+                    && ((options && options->isolateUnavailable)
+                        || (!source->steps.empty() && !languageUnavailable.empty())))) {
+                unavailableActions.insert(action.actionStableId);
+                return true;
+            }
+            request->actions.push_back(std::move(action));
+            return true;
+        };
+        if (!lowerAction()) {
+            if (!options || !options->loweringDiagnostics || !item)
+                return false;
+            options->loweringDiagnostics->push_back({item->runtimeId(),
+                CurrentWorldBuildDiagnosticKind::Action, error ? *error : QString()});
         }
-        if (unavailableActions.count(action.actionStableId) != 0
-            || (action.steps.empty()
-                && ((options && options->isolateUnavailable)
-                    || (!source->steps.empty() && !languageUnavailable.empty())))) {
-            unavailableActions.insert(action.actionStableId);
-            continue;
-        }
-        request->actions.push_back(std::move(action));
     }
     bool changed = !unavailableActions.empty();
     while (changed) {
@@ -1565,25 +1594,51 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
     for (ProjectItem* item : index.definitions) {
         if (included.find(item) == included.end())
             continue;
-        if (options && options->validatePackResources) {
-            RuntimeCapabilityContext resourceContext;
-            resourceContext.deferCurrentWorldCompilation = true;
-            for (const auto feature : {RuntimeCapabilityFeature::TypedBinding,
-                                       RuntimeCapabilityFeature::TypedEffect}) {
-                const auto capability = RuntimeCapabilityMatrix::evaluateForContext(
-                    *item, project, RuntimeCapabilityOperation::PackBuild,
-                    feature, std::nullopt, resourceContext);
-                if (capability.state != RuntimeCapabilityState::Ready) {
-                    setStatus(status, capability.state == RuntimeCapabilityState::UnavailableEngineContract
-                        ? CurrentWorldBuildStatus::CapabilityUnavailable : CurrentWorldBuildStatus::InvalidAuthoring);
-                    setError(error, capability.diagnostic);
-                    return {};
+        const auto recordDiagnostic = [&](CurrentWorldBuildDiagnosticKind kind) {
+            if (!options || !options->loweringDiagnostics)
+                return false;
+            options->loweringDiagnostics->push_back({item->runtimeId(), kind,
+                error ? *error : QString()});
+            return true;
+        };
+        const auto lowerDefinition = [&]() {
+            if (options && options->validatePackResources) {
+                RuntimeCapabilityContext resourceContext;
+                resourceContext.deferCurrentWorldCompilation = true;
+                for (const auto feature : {RuntimeCapabilityFeature::TypedBinding,
+                                           RuntimeCapabilityFeature::TypedEffect}) {
+                    const auto capability = [&]() {
+                        if (feature != RuntimeCapabilityFeature::TypedBinding)
+                            return RuntimeCapabilityMatrix::evaluateForContext(
+                                *item, project, RuntimeCapabilityOperation::PackBuild,
+                                feature, std::nullopt, resourceContext);
+                        if (!options->bindingCapabilities)
+                            return RuntimeCapabilityMatrix::lowerBindings(*item, project,
+                                RuntimeCapabilityOperation::PackBuild, options->bindingLowering);
+                        const auto [entry, inserted] = options->bindingCapabilities->try_emplace(item->runtimeId());
+                        if (inserted)
+                            entry->second = RuntimeCapabilityMatrix::lowerBindings(*item, project,
+                                RuntimeCapabilityOperation::PackBuild, options->bindingLowering);
+                        return entry->second;
+                    }();
+                    if (capability.state != RuntimeCapabilityState::Ready) {
+                        setStatus(status, capability.state == RuntimeCapabilityState::UnavailableEngineContract
+                            ? CurrentWorldBuildStatus::CapabilityUnavailable : CurrentWorldBuildStatus::InvalidAuthoring);
+                        setError(error, capability.diagnostic);
+                        return false;
+                    }
                 }
             }
+            if (!buildDefinitionNode(*item, index, included, groups, editorOrder++,
+                                     scope, request.get(), error))
+                return false;
+            return true;
+        };
+        if (!lowerDefinition()) {
+            if (!recordDiagnostic(CurrentWorldBuildDiagnosticKind::Definition))
+                return {};
+            continue;
         }
-        if (!buildDefinitionNode(*item, index, included, groups, editorOrder++,
-                                 scope, request.get(), error))
-            return {};
         const auto kind = contentKind(item->type);
         if (*kind != ContentKind::Layer) {
             harkencurrentworldcompiler::DefinitionMaterializationV1 materialized;
@@ -1606,8 +1661,10 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
                                          request.get(), error, status,
                                          !options || !options->includedDefinitionIds
                                              || options->includedDefinitionIds->count(
-                                                 item->runtimeId()) != 0))
-            return {};
+                                                 item->runtimeId()) != 0)) {
+            if (!recordDiagnostic(CurrentWorldBuildDiagnosticKind::Container))
+                return {};
+        }
         auto parentIt = index.parentDefinition.find(item);
         ProjectItem* parent = parentIt == index.parentDefinition.end()
             ? nullptr : parentIt->second;
@@ -1668,6 +1725,94 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
     if (error)
         error->clear();
     return request;
+}
+
+void retainCurrentWorldSyncRequestInputs(
+    HarkenEditor::Bridge::CurrentWorldSyncRequest& request,
+    const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1& sourceIndex,
+    const std::set<harkenstudio::ObjectId>& actionIds,
+    const std::set<harkenstudio::ObjectId>& definitionIds)
+{
+    std::set<harkenstudio::ObjectId> retainedIds = definitionIds;
+    for (ProjectItem* item : sourceIndex.definitions) {
+        if (definitionIds.count(item->runtimeId()) == 0)
+            continue;
+        for (auto parent = sourceIndex.parentDefinition.find(item);
+             parent != sourceIndex.parentDefinition.end() && parent->second;
+             parent = sourceIndex.parentDefinition.find(parent->second))
+            retainedIds.insert(parent->second->runtimeId());
+    }
+    const auto stableId = [&](const harkenprojectschema::AuthoringGuid& guid) {
+        return sourceIndex.byGuid.at(guid)->runtimeId();
+    };
+    const auto retainedGuid = [&](const harkenprojectschema::AuthoringGuid& guid) {
+        const auto item = sourceIndex.byGuid.find(guid);
+        return item != sourceIndex.byGuid.end()
+            && retainedIds.count(item->second->runtimeId()) != 0;
+    };
+    std::erase_if(request.project.nodes, [&](const auto& node) {
+        return !retainedGuid(node.guid);
+    });
+    std::set<harkenprojectschema::AuthoringGuid> childGuids;
+    std::map<harkenstudio::ObjectId, const harkenprojectschema::InputNode*> nodes;
+    std::int64_t editorOrder = 0;
+    for (auto& node : request.project.nodes) {
+        node.editorOrder = editorOrder++;
+        std::erase_if(node.ownedChildren, [&](const auto& edge) {
+            return !retainedGuid(edge.childGuid);
+        });
+        std::erase_if(node.containerChildOccurrences, [&](const auto& occurrence) {
+            return !retainedGuid(occurrence.childGuid);
+        });
+        std::erase_if(node.clips, [&](const auto& clip) {
+            return !retainedGuid(clip.targetGuid);
+        });
+        for (const auto& edge : node.ownedChildren)
+            childGuids.insert(edge.childGuid);
+        nodes.emplace(stableId(node.guid), &node);
+    }
+    request.project.roots.clear();
+    for (const auto& node : request.project.nodes)
+        if (childGuids.count(node.guid) == 0)
+            request.project.roots.push_back(node.guid);
+    std::erase_if(request.materializations, [&](const auto& row) {
+        return retainedIds.count(row.stableId) == 0;
+    });
+    std::erase_if(request.soundSources, [&](const auto& row) {
+        return retainedIds.count(row.stableId) == 0;
+    });
+    std::erase_if(request.soundContentRevisions, [&](const auto& row) {
+        return retainedIds.count(row.first) == 0;
+    });
+    std::erase_if(request.actions, [&](const auto& row) {
+        return actionIds.count(row.actionStableId) == 0;
+    });
+    std::erase_if(request.containers, [&](const auto& row) {
+        return definitionIds.count(row.containerStableId) == 0;
+    });
+    for (const auto& node : request.project.nodes) {
+        const auto id = stableId(node.guid);
+        if (node.kind == ContentKind::Container && definitionIds.count(id) == 0)
+            request.containers.push_back(structuralContainerAuthoring(id, 0, node));
+    }
+    std::sort(request.containers.begin(), request.containers.end(),
+        [&](const auto& a, const auto& b) {
+            return nodes.at(a.containerStableId)->editorOrder
+                < nodes.at(b.containerStableId)->editorOrder;
+        });
+    std::erase_if(request.transitions, [&](const auto& row) {
+        return definitionIds.count(row.ownerContainerStableId) == 0;
+    });
+    std::map<harkenstudio::ObjectId, std::uint32_t> transitionIndices;
+    for (std::uint32_t i = 0; i < request.transitions.size(); ++i)
+        transitionIndices.emplace(request.transitions[i].ownerContainerStableId, i);
+    std::uint32_t containerOrder = 0;
+    for (auto& container : request.containers) {
+        container.authoredStableOrder = containerOrder++;
+        const auto transition = transitionIndices.find(container.containerStableId);
+        container.transitionProgramIndex = transition == transitionIndices.end()
+            ? UINT32_MAX : transition->second;
+    }
 }
 
 bool isCurrentWorldPlayableForContext(ProjectData& project, const ProjectItem& item,

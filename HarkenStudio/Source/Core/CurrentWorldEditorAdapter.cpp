@@ -4,6 +4,7 @@
 #include "Tooling/Harkenizer/Core/CurrentWorldArtifactWriter.h"
 #include "LanguageContextService.h"
 #include "PlatformContextService.h"
+#include "PlaybackReferenceValidation.h"
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
 
 namespace HarkenEditor::Bridge {
@@ -49,6 +50,10 @@ buildCurrentWorldSyncRequest(ProjectData& project, PlatformScope scope,
                              const CurrentWorldBuildOptions* options,
                              std::uint64_t projectGeneration)
 {
+    if (!validatePlaybackReferences(project, error)) {
+        if (status) *status = CurrentWorldBuildStatus::InvalidAuthoring;
+        return {};
+    }
     return buildCurrentWorldSyncRequestForContext(project, scope, error, status,
         options, projectGeneration, LanguageContextService::instance().language());
 }

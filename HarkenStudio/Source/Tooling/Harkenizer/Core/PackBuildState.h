@@ -8,34 +8,53 @@ namespace VNX {
 class PackBuildState
 {
 public:
-    static std::shared_ptr<PackBuildState> prepare(
-        std::shared_ptr<const ProjectBuildSnapshot> snapshot,
-        const ProjectPackExporter::ExportOptions& options,
-        const QString& outputDirectory, const QByteArray& buildIdentity,
-        std::optional<ProjectBuildIdentity>& sharedIdentity);
-
+    PackBuildState(std::shared_ptr<const ProjectBuildSnapshot> snapshot, const QByteArray& compiler);
+    void select(const ProjectPackExporter::ExportOptions& options, const QString& outputDirectory);
     bool restore(ProjectPackExporter::ExportResult* result,
                  std::vector<ProjectPackExporter::PackBuildRecord>* records) const;
-    bool save(const ProjectPackExporter::ExportResult& result,
-              const std::vector<ProjectPackExporter::PackBuildRecord>& records,
-              const QMap<uint32_t, QString>& sourceDependencies);
-    QString resourceFingerprint(const QString& relativePackPath, const QString& contentHash) const;
-    void setResourceFingerprint(const QString& relativePackPath, const QString& contentHash,
-                                const QString& fingerprint);
-    void setMediaArtifacts(const QString& relativePackPath, QStringList artifacts);
-    static void prune(const ProjectBuildSnapshot& snapshot);
+    void applyCounts(ProjectPackExporter::ExportResult& result) const;
+    bool isCurrent(const QString& relativePackPath) const;
+    bool isWaveformCurrent(const QString& relativePackPath, const QString& relativeWaveformPath) const;
+    void recordWaveformOutput(const QString& absolutePath);
+    void save(const ProjectPackExporter::ExportResult& result,
+              const std::vector<ProjectPackExporter::PackBuildRecord>& records);
+    bool flush();
+    void retainOutputs(const QString& outputRoot, const QMap<QString, QJsonArray>& outputs);
+    QStringList outputPaths() const;
+    QString resourceFingerprint(const QString& relativePackPath) const;
+    void setResourceFingerprint(const QString& relativePackPath, const QString& fingerprint);
+    void prune() const;
 
 private:
+    void deriveInputs(const QSet<QString>* successfulPaths = nullptr);
+    bool savedPackMatches(const QString& relativePackPath) const;
+    bool savedCompanionMatches(const QString& relativePackPath) const;
+
     std::shared_ptr<const ProjectBuildSnapshot> snapshot_;
-    std::function<bool()> canceled_;
-    QString outputDirectory_;
-    ProjectPlatform platform_;
+    QString compiler_;
     QString cachePath_;
-    QString fingerprint_;
-    QMap<uint32_t, QString> objectGuids_;
-    std::weak_ptr<QLockFile> platformLock_;
-    QJsonObject saved_;
-    QJsonObject resources_;
+    QString outputDirectory_;
+    ProjectPackExporter::ExportOptions options_;
+    QJsonObject targets_;
+    QJsonObject persisted_;
+    QJsonObject waveforms_;
+    QJsonObject persistedWaveforms_;
+    QJsonObject packs_;
+    QMap<QString, QString> inputs_;
+    QMap<QString, QString> resources_;
+    mutable QHash<QString, bool> packMatches_;
+    mutable QHash<QString, bool> companionMatches_;
+    mutable QHash<QString, bool> current_;
+    mutable QHash<QString, QString> waveformStates_;
+    std::vector<ProjectPackExporter::PackBuildRecord> records_;
+    QHash<const ProjectItem*, QString> objectDigests_;
+    int objectCount_ = 0;
+    int mediaCount_ = 0;
+    int actionCount_ = 0;
+    int emptyActionCount_ = 0;
+    bool reusable_ = false;
+    bool inputsReady_ = false;
+    bool legacyCleanup_ = true;
 };
 
 }

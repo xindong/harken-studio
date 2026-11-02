@@ -58,17 +58,6 @@ bool MediaConversionRequest::cacheValid() const
         && QFileInfo::exists(QDir(PathUtils::getCacheDir(projectRoot)).filePath(it->cachePath));
 }
 
-QString MediaBuildSnapshot::sourceFingerprint(uint32_t sourceID, QString* error) const
-{
-    const auto asset = assets.constFind(sourceID);
-    if (asset == assets.cend()) {
-        if (error) *error = QStringLiteral("Asset not found in media snapshot: %1").arg(sourceID);
-        return {};
-    }
-    return sourceInputs ? sourceInputs->sourceFingerprint(*asset, error)
-        : AssetImporter::computeContentHash(asset->absolutePath);
-}
-
 namespace {
 
 std::optional<MediaConversionRequest> buildRequest(const MediaBuildSnapshot& snapshot,

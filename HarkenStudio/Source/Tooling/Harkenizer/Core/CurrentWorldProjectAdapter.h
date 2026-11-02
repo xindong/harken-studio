@@ -7,10 +7,12 @@
 #include <QStringView>
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <unordered_map>
+#include <vector>
 
 namespace HarkenEditor::Bridge {
 struct CanonicalRuntimeProjectSourceIndexV1;
@@ -25,6 +27,8 @@ class ActionTargetLookup;
 }
 
 struct FieldGroupEffectiveSnapshot;
+struct BindingRuntimeLowering;
+struct RuntimeCapabilityEntry;
 struct ProjectData;
 struct ProjectItem;
 enum class ProjectItemType;
@@ -42,6 +46,20 @@ enum class CurrentWorldBuildStatus : std::uint8_t
     CapabilityUnavailable,
 };
 
+enum class CurrentWorldBuildDiagnosticKind
+{
+    Definition,
+    Container,
+    Action,
+};
+
+struct CurrentWorldBuildDiagnostic
+{
+    harkenstudio::ObjectId stableId = {};
+    CurrentWorldBuildDiagnosticKind kind = CurrentWorldBuildDiagnosticKind::Definition;
+    QString error;
+};
+
 struct CurrentWorldBuildOptions
 {
     const std::set<harkenstudio::ObjectId>* includedActionIds = nullptr;
@@ -57,6 +75,9 @@ struct CurrentWorldBuildOptions
     const FieldGroupEffectiveSnapshot* fieldGroups = nullptr;
     const EditorUtils::ActionTargetLookup* actionLookup = nullptr;
     bool validatePackResources = false;
+    BindingRuntimeLowering* bindingLowering = nullptr;
+    std::map<harkenstudio::ObjectId, RuntimeCapabilityEntry>* bindingCapabilities = nullptr;
+    std::vector<CurrentWorldBuildDiagnostic>* loweringDiagnostics = nullptr;
 };
 
 HarkenEditor::Bridge::CurrentWorldSyncRequestPtr
@@ -72,6 +93,11 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
                                        const CurrentWorldBuildOptions* options,
                                        std::uint64_t projectGeneration,
                                        const QString& languageFallback);
+void retainCurrentWorldSyncRequestInputs(
+    HarkenEditor::Bridge::CurrentWorldSyncRequest& request,
+    const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1& sourceIndex,
+    const std::set<harkenstudio::ObjectId>& actionIds,
+    const std::set<harkenstudio::ObjectId>& definitionIds);
 bool isCurrentWorldPlayableForContext(ProjectData& project, const ProjectItem& item,
                                       PlatformScope scope, const QString& languageFallback);
 bool isCurrentWorldPlayable(ProjectData& project, const ProjectItem& item);

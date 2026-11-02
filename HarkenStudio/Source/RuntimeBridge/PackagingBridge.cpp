@@ -1287,8 +1287,12 @@ bool writeCanonicalPack(const QString& outputPath,
         return false;
     }
     const auto writeFailed = [&] {
+        file.close();
+        const bool removed = file.remove();
         if (error)
-            *error = QStringLiteral("Failed writing pack '%1'").arg(outputPath);
+            *error = removed ? QStringLiteral("Failed writing pack '%1'").arg(outputPath)
+                : QStringLiteral("Failed writing pack '%1'; could not remove the incomplete file")
+                    .arg(outputPath);
         return false;
     };
     const std::array<char, harkenstudiobuild::kPackBlobAlign> padding{};

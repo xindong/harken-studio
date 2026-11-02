@@ -6,11 +6,8 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QSaveFile>
-#include <QDebug>
 
 #include <algorithm>
 
@@ -25,30 +22,38 @@ PackArtifactCache& PackArtifactCache::instance()
 void PackArtifactCache::openProject(const ProjectData& project)
 {
     artifacts_.clear();
-    cachePath_ = QDir(PathUtils::getDotCacheDir(QFileInfo(project.projectPath).absolutePath()))
-        .filePath(QStringLiteral("pack-artifacts.json"));
-    QFile file(cachePath_);
+    projectOpen_ = true;
+    const QDir cache(PathUtils::getDotCacheDir(QFileInfo(project.projectPath).absolutePath()));
+    QFile::remove(cache.filePath(QStringLiteral("pack-artifacts.json")));
+    QFile file(cache.filePath(QStringLiteral("pack/builds.json")));
     if (file.open(QIODevice::ReadOnly)) {
         const auto root = QJsonDocument::fromJson(file.readAll()).object();
-        if (root.value(QStringLiteral("version")).toInt() == 1) {
+        if (root.value(QStringLiteral("version")).toInt() == 2) {
             const auto platforms = project.platformIds();
-            for (const auto& value : root.value(QStringLiteral("artifacts")).toArray()) {
-                const auto row = value.toObject();
-                PackArtifactMetadata artifact;
-                artifact.unitKey = row.value(QStringLiteral("unitKey")).toString();
-                artifact.platform = row.value(QStringLiteral("platform")).toString();
-                artifact.language = row.value(QStringLiteral("language")).toString();
-                artifact.packName = row.value(QStringLiteral("packName")).toString();
-                artifact.outputPath = row.value(QStringLiteral("outputPath")).toString();
-                artifact.bytes = row.value(QStringLiteral("bytes")).toInteger(-1);
-                artifact.version = row.value(QStringLiteral("formatVersion")).toInt();
-                const auto modified = row.value(QStringLiteral("modified"));
-                if (!platforms.contains(artifact.platform) || artifact.unitKey.isEmpty()
-                    || artifact.packName.isEmpty() || !QDir::isAbsolutePath(artifact.outputPath)
-                    || artifact.bytes < 0 || artifact.version == 0 || !modified.isDouble())
-                    continue;
-                artifact.modified = QDateTime::fromMSecsSinceEpoch(modified.toInteger());
-                artifacts_.append(std::move(artifact));
+            const auto targets = root.value(QStringLiteral("targets")).toObject();
+            for (auto target = targets.begin(); target != targets.end(); ++target) {
+                const auto value = target.value().toObject();
+                const auto platform = value.value(QStringLiteral("platform")).toString();
+                if (!platforms.contains(platform) || !QDir::isAbsolutePath(target.key())) continue;
+                const auto packs = value.value(QStringLiteral("packs")).toObject();
+                for (auto pack = packs.begin(); pack != packs.end(); ++pack) {
+                    const auto row = pack.value().toObject();
+                    const auto key = row.value(QStringLiteral("key")).toString();
+                    const QFileInfo relative(pack.key());
+                    const QFileInfo output(QDir(target.key()).filePath(pack.key()));
+                    if (key.isEmpty() || row.value(QStringLiteral("state")).toString().isEmpty()
+                        || !output.isFile()) continue;
+                    PackArtifactMetadata artifact;
+                    artifact.unitKey = key;
+                    artifact.platform = platform;
+                    artifact.language = relative.path() == QStringLiteral(".") ? QString() : relative.path();
+                    artifact.packName = relative.completeBaseName();
+                    artifact.outputPath = output.absoluteFilePath();
+                    artifact.bytes = output.size();
+                    artifact.modified = output.lastModified();
+                    artifact.version = HARKEN_PACK_SCHEMA_VERSION;
+                    artifacts_.append(std::move(artifact));
+                }
             }
         }
     }
@@ -57,7 +62,7 @@ void PackArtifactCache::openProject(const ProjectData& project)
 
 void PackArtifactCache::closeProject()
 {
-    cachePath_.clear();
+    projectOpen_ = false;
     artifacts_.clear();
     emit changed();
 }
@@ -66,7 +71,7 @@ void PackArtifactCache::publish(const QString& platform,
                                const QVector<PackArtifactMetadata>& artifacts,
                                bool updateSelectedOnly)
 {
-    if (cachePath_.isEmpty()) return;
+    if (!projectOpen_) return;
     artifacts_.removeIf([&](const auto& artifact) {
         if (artifact.platform != platform) return false;
         if (!updateSelectedOnly) return true;
@@ -77,7 +82,6 @@ void PackArtifactCache::publish(const QString& platform,
     });
     for (const auto& artifact : artifacts)
         if (artifact.platform == platform) artifacts_.append(artifact);
-    save();
     emit changed();
 }
 
@@ -91,32 +95,7 @@ void PackArtifactCache::removeUnselectedPlatforms(const QString& outputRoot,
             && !relative.startsWith(QStringLiteral("../"));
     });
     if (removed == 0) return;
-    save();
     emit changed();
-}
-
-void PackArtifactCache::save() const
-{
-    if (cachePath_.isEmpty()) return;
-    QJsonArray rows;
-    for (const auto& artifact : artifacts_) {
-        rows.append(QJsonObject{
-            {QStringLiteral("unitKey"), artifact.unitKey},
-            {QStringLiteral("platform"), artifact.platform},
-            {QStringLiteral("language"), artifact.language},
-            {QStringLiteral("packName"), artifact.packName},
-            {QStringLiteral("outputPath"), artifact.outputPath},
-            {QStringLiteral("bytes"), artifact.bytes},
-            {QStringLiteral("modified"), artifact.modified.toMSecsSinceEpoch()},
-            {QStringLiteral("formatVersion"), static_cast<qint64>(artifact.version)}});
-    }
-    const QByteArray content = QJsonDocument(QJsonObject{
-        {QStringLiteral("version"), 1}, {QStringLiteral("artifacts"), rows}}).toJson(QJsonDocument::Compact);
-    QSaveFile file(cachePath_);
-    if (!QDir().mkpath(QFileInfo(cachePath_).absolutePath())
-        || !file.open(QIODevice::WriteOnly) || file.write(content) != content.size()
-        || !file.commit())
-        qWarning() << "Could not save pack artifact cache:" << cachePath_ << file.errorString();
 }
 
 const PackArtifactMetadata* PackArtifactCache::find(

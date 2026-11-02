@@ -1,17 +1,15 @@
 #include "Tooling/Harkenizer/Core/ProjectPackBuildService.h"
 
 #include "Tooling/Harkenizer/Core/ProjectBuildSnapshot.h"
-#include "Tooling/Harkenizer/Core/CanonicalPackSetExport.h"
 #include "Tooling/Harkenizer/Core/PackBuildState.h"
+#include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
 #include "Tooling/Harkenizer/BuildIdentity.h"
 #include "AssetPipeline/BuildSourceInputs.h"
-#include "AssetPipeline/SourceContentCache.h"
 #include "AssetPipeline/PathUtils.h"
 
 #include <QDir>
 #include <QLockFile>
 #include <QMap>
-#include <QScopeGuard>
 
 #include <utility>
 
@@ -28,12 +26,6 @@ Result run(const Request& request)
     if (request.platforms.isEmpty()) {
         result.preflightError = QStringLiteral("Select at least one platform to export");
         return result;
-    }
-    for (const auto& platform : request.platforms) {
-        if (!ProjectPlatformSemantics::find(project.platforms, QUuid(platform))) {
-            result.preflightError = QStringLiteral("Unknown project platform ID: %1").arg(platform);
-            return result;
-        }
     }
     if (PathUtils::isProtectedPackOutputPath(request.outputRoot, project.projectPath)) {
         result.preflightError = PathUtils::packBuildOutputLocationError();
@@ -55,150 +47,107 @@ Result run(const Request& request)
         result.preflightError = QStringLiteral("This project's Packs are being built by another request");
         return result;
     }
-    bool cacheUsed = false;
-    const auto pruneCache = qScopeGuard([&] {
-        if (cacheUsed) PackBuildState::prune(*request.options.snapshot);
-    });
     const auto canceled = [&] {
         return request.options.cancelCheck && request.options.cancelCheck();
     };
-    if (request.options.observationCallback)
-        request.options.observationCallback({{}, {}, {}, PackBuildObservationStage::Preflight});
+    if (request.options.snapshot->media.sourceInputs)
+        request.options.snapshot->media.sourceInputs->beginRequest();
+    if (request.options.snapshot->derivativeCache)
+        request.options.snapshot->derivativeCache->clear();
     auto options = request.options;
-    options.outputPreparation = CreatePackOutputPreparation();
-    QMap<QString, std::shared_ptr<PackBuildState>> states;
-    std::map<QString, PlatformResult> restored;
-    QSet<QString> reusablePlatforms;
-    std::optional<ProjectBuildIdentity> sharedIdentity;
-    for (const auto& platform : request.platforms) {
-        if (canceled()) {
-            result.canceled = true;
-            return result;
-        }
-        const auto& definition = *ProjectPlatformSemantics::find(project.platforms, QUuid(platform));
-        const QDir directory(ProjectPackExporter::platformOutputDir(request.outputRoot, definition));
-        if (!ProjectPackExporter::PreparePackOutputDirectory(request.outputRoot, definition,
-                &result.preflightError)) return result;
-        auto lock = std::make_shared<QLockFile>(directory.filePath(QStringLiteral(".harken-pack-platform.lock")));
-        lock->setStaleLockTime(0);
-        if (!lock->tryLock()) {
-            result.preflightError = QStringLiteral("Platform output is being built by another request: %1").arg(directory.path());
-            return result;
-        }
-        options.platformLocks.insert(platform, std::move(lock));
-        if (!RecoverPackOutput(directory.path(), &result.preflightError)) return result;
-        options.platform = platform;
-        auto state = PackBuildState::prepare(options.snapshot, options, directory.path(),
-            QByteArray(Harkenizer::projectBuildIdentity()), sharedIdentity);
-        if (!state) continue;
-        PlatformResult cached;
-        if (!options.forceReexport && state->restore(&cached.result, &cached.records)) {
-            reusablePlatforms.insert(platform);
-            restored.emplace(platform, std::move(cached));
-        }
-        states.insert(platform, std::move(state));
-    }
-    if (reusablePlatforms.size() != request.platforms.size())
-        options.buildContext = ProjectPackExporter::createBuildContext(project);
-    result.preflightSucceeded = ProjectPackExporter::ValidatePackBuildWriteAccess(
-        project, request.outputRoot, request.platforms, options,
-        &result.preflightError, &result.preflightSummary, reusablePlatforms);
-    result.allPlatformsSucceeded = result.preflightSucceeded;
-    if (!result.preflightSucceeded) {
-        result.canceled = canceled();
-        return result;
-    }
+    options.buildContext = ProjectPackExporter::createBuildContext(project);
+    options.packBuildState = std::make_shared<PackBuildState>(
+        options.snapshot, QByteArray(Harkenizer::projectBuildIdentity()));
+    options.selfCleaning = false;
+    result.preflightSucceeded = true;
+    result.allPlatformsSucceeded = true;
     if (request.preflightFinished) request.preflightFinished();
     ProjectPackExporter exporter;
-    options.selfCleaning = false;
     QMap<QString, QVector<PackArtifactMetadata>> artifactsByPlatform;
-    QMap<QString, PackPublicationProof> publications;
-    QMap<QString, QMap<uint32_t, QString>> sourceDependencies;
+    QMap<QString, QJsonArray> outputs;
+    QStringList knownPlatforms;
+    bool cacheUsed = false;
     for (const auto& platform : request.platforms) {
         if (canceled()) {
             result.canceled = true;
             break;
         }
-        options.platform = platform;
-        options.packBuildState = states.value(platform);
         PlatformResult built;
         built.platform = platform;
         built.timer.start();
-        built.definition = *ProjectPlatformSemantics::find(project.platforms, QUuid(platform));
-        built.outputDir = ProjectPackExporter::platformOutputDir(request.outputRoot, built.definition);
-        const auto cached = restored.find(platform);
-        if (cached != restored.end()) {
-            built.result = std::move(cached->second.result);
-            built.records = std::move(cached->second.records);
-            if (options.progressCallback)
-                for (const auto& record : built.records)
-                    options.progressCallback({platform, record.language, record.unitKey,
-                        100, PackGenerationStage::Skipped});
+        const auto* definition = ProjectPlatformSemantics::find(project.platforms, QUuid(platform));
+        if (!definition) {
+            built.result.error = QStringLiteral("Unknown project platform ID: %1").arg(platform);
         } else {
-            cacheUsed = true;
-            if (options.snapshot->media.sourceInputs)
-                options.snapshot->media.sourceInputs->beginDependencyScope();
-            built.result = exporter.ExportAllPacks(project, built.outputDir, options, &built.records);
-            if (options.snapshot->media.sourceInputs)
-                sourceDependencies.insert(platform, options.snapshot->media.sourceInputs->fingerprints());
+            knownPlatforms.append(platform);
+            built.definition = *definition;
+            built.outputDir = ProjectPackExporter::platformOutputDir(request.outputRoot, *definition);
+            built.result.outputPath = built.outputDir;
+            if (ProjectPackExporter::PreparePackOutputDirectory(request.outputRoot, *definition,
+                    &built.result.error)) {
+                auto lock = std::make_shared<QLockFile>(
+                    QDir(built.outputDir).filePath(QStringLiteral(".harken-pack-platform.lock")));
+                lock->setStaleLockTime(0);
+                if (!lock->tryLock()) {
+                    built.result.error = QStringLiteral("Platform output is being built by another request: %1")
+                        .arg(built.outputDir);
+                } else {
+                    options.platform = platform;
+                    options.platformLocks.insert(platform, std::move(lock));
+                    options.buildPlan = ProjectPackExporter::createBuildPlan(project, options);
+                    options.packBuildState->select(options, built.outputDir);
+                    if (!options.forceReexport
+                        && options.packBuildState->restore(&built.result, &built.records)) {
+                        if (options.progressCallback)
+                            for (const auto& record : built.records)
+                                options.progressCallback({platform, record.language, record.unitKey,
+                                    100, PackGenerationStage::Skipped});
+                    } else {
+                        cacheUsed = true;
+                        built.result = exporter.ExportAllPacks(project, built.outputDir, options, &built.records);
+                        options.packBuildState->save(built.result, built.records);
+                    }
+                    if (built.result.success) options.packBuildState->applyCounts(built.result);
+                }
+            }
         }
-        if (built.result.success) {
-            if (built.result.publication)
-                publications.insert(platform, *built.result.publication);
-            result.succeededPlatforms.append(platform);
-            if (request.artifactOrder == ArtifactOrder::PlatformId)
-                artifactsByPlatform.insert(platform, built.result.artifacts);
-            else
-                result.artifacts.append(built.result.artifacts);
-        }
+        if (built.result.success) result.succeededPlatforms.append(platform);
+        if (request.artifactOrder == ArtifactOrder::PlatformId)
+            artifactsByPlatform.insert(platform, built.result.artifacts);
+        else
+            result.artifacts.append(built.result.artifacts);
+        outputs.insert(platform, built.result.outputs);
         result.allPlatformsSucceeded = result.allPlatformsSucceeded && built.result.success;
+        result.canceled = built.result.canceled || canceled();
         if (request.platformFinished) request.platformFinished(built);
-        const bool platformCanceled = built.result.canceled;
         result.platforms.push_back(std::move(built));
-        if (request.stopOnCanceledPlatform) {
-            result.canceled = platformCanceled || canceled();
-            if (result.canceled) break;
-        }
+        if (result.canceled) break;
     }
-    result.canceled = result.canceled || canceled();
+    result.allPlatformsSucceeded = result.allPlatformsSucceeded && !result.canceled;
     if (request.artifactOrder == ArtifactOrder::PlatformId)
         for (const auto& artifacts : artifactsByPlatform) result.artifacts.append(artifacts);
-    if (result.canceled) return result;
-    if (options.snapshot->media.sourceInputs
-        && !options.snapshot->media.sourceInputs->verifyUnchanged(&result.preflightError, canceled)) {
-        result.allPlatformsSucceeded = false;
-        result.canceled = canceled();
-        result.finalization = Finalization::Complete;
-        result.finalizationResult.error = result.preflightError;
-        result.finalizationResult.canceled = result.canceled;
-        return result;
-    }
-    const auto& finalizationCanceled = request.finalizationCancelCheck
-        ? request.finalizationCancelCheck : request.options.cancelCheck;
-    if (request.options.observationCallback)
-        request.options.observationCallback({{}, {}, {}, PackBuildObservationStage::Finalizing});
-    if (result.allPlatformsSucceeded) {
+    if (!result.canceled) {
+        if (request.options.observationCallback)
+            request.options.observationCallback({{}, {}, {}, PackBuildObservationStage::Finalizing});
+        const bool selfCleaning = request.options.selfCleaning
+            && !request.options.updateSelectedOnly && result.allPlatformsSucceeded;
         result.finalization = Finalization::Complete;
         result.finalizationResult = ProjectPackExporter::FinalizePackExport(
-            request.outputRoot, project, request.platforms, request.options.selfCleaning,
-            result.artifacts, finalizationCanceled, publications);
-        result.canceled = result.finalizationResult.canceled && canceled();
-    } else {
-        result.finalization = Finalization::Partial;
-        result.finalizationResult.success = ProjectPackExporter::FinalizePackOutputs(
-            request.outputRoot, project.platforms, request.platforms, result.succeededPlatforms,
-            &result.finalizationResult.error, result.artifacts, finalizationCanceled, publications);
-        result.canceled = !result.finalizationResult.success && canceled();
-    }
-    if (result.finalizationResult.success && !result.canceled) {
-        for (const auto& built : result.platforms) {
-            if (reusablePlatforms.contains(built.platform)) continue;
-            const auto state = states.value(built.platform);
-            if (state)
-                state->save(built.result, built.records, sourceDependencies.value(built.platform));
+            request.outputRoot, project, knownPlatforms, selfCleaning,
+            outputs, request.options.cancelCheck);
+        if (selfCleaning && result.finalizationResult.success) {
+            QMap<QString, QJsonArray> retained;
+            for (const auto& built : result.platforms)
+                retained.insert(QDir(built.outputDir).absolutePath(), built.result.outputs);
+            options.packBuildState->retainOutputs(request.outputRoot, retained);
         }
-        if (options.snapshot->sourceContentCache) options.snapshot->sourceContentCache->save();
+        result.canceled = result.finalizationResult.canceled || canceled();
     }
+    if (cacheUsed) options.packBuildState->prune();
+    if (!options.packBuildState->flush())
+        result.finalizationResult.warnings.append(QStringLiteral("Could not save Pack build state"));
+    if (options.snapshot->media.sourceInputs && !options.snapshot->media.sourceInputs->save())
+        result.finalizationResult.warnings.append(QStringLiteral("Could not save source build state"));
     return result;
 }
 

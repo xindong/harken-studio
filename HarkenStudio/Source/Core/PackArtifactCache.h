@@ -41,9 +41,7 @@ signals:
     void changed();
 
 private:
-    void save() const;
-
-    QString cachePath_;
+    bool projectOpen_ = false;
     QVector<PackArtifactMetadata> artifacts_;
 };
 

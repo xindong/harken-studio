@@ -47,8 +47,6 @@ QString progressMessage(const VNX::PackBuildObservation& observation, const VNX:
     const QString unit = observation.language.isEmpty() ? observation.packName
         : observation.language + QLatin1Char('/') + observation.packName;
     switch (observation.stage) {
-    case VNX::PackBuildObservationStage::Preflight:
-        return QStringLiteral("Checking outputs");
     case VNX::PackBuildObservationStage::PreparingMedia:
         return prefix + QStringLiteral("Preparing media");
     case VNX::PackBuildObservationStage::Preparing:
@@ -59,8 +57,6 @@ QString progressMessage(const VNX::PackBuildObservation& observation, const VNX:
         return prefix + QStringLiteral("Writing packs");
     case VNX::PackBuildObservationStage::Writing:
         return prefix + QStringLiteral("Writing pack: ") + unit;
-    case VNX::PackBuildObservationStage::Publishing:
-        return prefix + QStringLiteral("Validating and publishing");
     case VNX::PackBuildObservationStage::Finalizing:
         return QStringLiteral("Finalizing outputs");
     default:
@@ -196,10 +192,6 @@ int main(int argc, char* argv[])
     QString lockError;
     request.outputLock = VNX::ProjectPackExporter::LockPackOutputRoot(outputRoot, &lockError);
     if (!request.outputLock) return error(lockError);
-    const auto readiness = VNX::ProjectPackExporter::ValidatePackBuildReadiness(snapshot->project, outputRoot);
-    for (const auto& issue : readiness.issues)
-        QTextStream(stderr) << issue.message << Qt::endl;
-    if (readiness.errorCount > 0) return 1;
     QString lastProgress;
     request.options.observationCallback = [&lastProgress, &project](const VNX::PackBuildObservation& observation) {
         const auto message = progressMessage(observation, project);

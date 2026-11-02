@@ -4,6 +4,7 @@
 #include "AssetPipeline/MediaPool.h"
 #include "AssetPipeline/PathUtils.h"
 #include "AssetPipeline/SourceFileSystem.h"
+#include "AssetPipeline/SourceFileState.h"
 #include "AssetPipeline/WaveformCache.h"
 
 #include <gtest/gtest.h>
@@ -128,14 +129,14 @@ TEST(MediaPoolRefreshTest, CapturedWaveformsShareCacheAndRejectStaleContentWithU
     ASSERT_NE(original, nullptr);
     const auto cacheTime = QFileInfo(WaveformCache::cachePath(path)).lastModified();
     QByteArray bytes;
+    QByteArray waveformState = packFileState(WaveformCache::cachePath(path));
     ASSERT_TRUE(WaveformCache::readForBuild(captured, path,
-        AssetImporter::computeContentHash(captured), bytes));
+        AssetImporter::computeContentHash(captured), bytes, waveformState, &waveformState));
     EXPECT_EQ(QFileInfo(WaveformCache::cachePath(path)).lastModified(), cacheTime);
     EXPECT_FALSE(QFileInfo::exists(WaveformCache::cachePath(captured)));
     const auto originalBytes = bytes;
     const auto originalHash = AssetImporter::computeContentHash(captured);
-    ASSERT_TRUE(QFile::remove(WaveformCache::cachePath(path) + QStringLiteral(".source.json")));
-    ASSERT_TRUE(WaveformCache::readForBuild(captured, path, originalHash, bytes));
+    ASSERT_TRUE(WaveformCache::readForBuild(captured, path, originalHash, bytes, waveformState));
     EXPECT_EQ(bytes, originalBytes);
 
     writeWav(path, 480, 0.6f, 2);
@@ -146,7 +147,7 @@ TEST(MediaPoolRefreshTest, CapturedWaveformsShareCacheAndRejectStaleContentWithU
     ASSERT_TRUE(capture());
     const auto updatedHash = AssetImporter::computeContentHash(captured);
     ASSERT_NE(updatedHash, originalHash);
-    ASSERT_TRUE(WaveformCache::readForBuild(captured, path, updatedHash, bytes));
+    ASSERT_TRUE(WaveformCache::readForBuild(captured, path, updatedHash, bytes, {}, &waveformState));
     EXPECT_NE(bytes, originalBytes);
     const auto updated = WaveformCache::loadShared(path);
     ASSERT_NE(updated, nullptr);
@@ -160,7 +161,7 @@ TEST(MediaPoolRefreshTest, CapturedWaveformsShareCacheAndRejectStaleContentWithU
     ASSERT_EQ(cache.write(originalBytes), originalBytes.size());
     cache.close();
     const auto updatedBytes = bytes;
-    ASSERT_TRUE(WaveformCache::readForBuild(captured, path, updatedHash, bytes));
+    ASSERT_TRUE(WaveformCache::readForBuild(captured, path, updatedHash, bytes, waveformState));
     EXPECT_EQ(bytes, updatedBytes);
     ASSERT_TRUE(cache.open(QIODevice::ReadOnly));
     EXPECT_EQ(cache.readAll(), bytes);

@@ -3,6 +3,7 @@
 #include "AudioFormatCatalog.h"
 #include "AssetRegistry.h"
 #include "CacheArtifactWriter.h"
+#include "SourceFileState.h"
 #include "PathUtils.h"
 #include "WaveformAnalysis.h"
 #include "Utils/AudioFileReader.h"
@@ -162,11 +163,6 @@ QString waveformCachePathForAudio(const QString& audioFilePath)
     return vkdPath;
 }
 
-QString waveformSourcePath(const QString& vkdPath)
-{
-    return vkdPath + QStringLiteral(".source.json");
-}
-
 QString waveformSourceHash(const QString& audioFilePath,
                            const QString& identityPath,
                            quint64 revision)
@@ -200,24 +196,14 @@ QString waveformSourceHash(const QString& audioFilePath,
     return QString::fromLatin1(hash.result().toHex());
 }
 
-bool readVerifiedWaveform(const QString& vkdPath, const QString& sourceHash, QByteArray& bytes)
+bool readVerifiedWaveform(const QString& vkdPath, const QByteArray& expectedState, QByteArray& bytes)
 {
-    QFile identity(waveformSourcePath(vkdPath));
-    if (sourceHash.isEmpty() || !identity.open(QIODevice::ReadOnly))
-        return false;
-    const auto stored = QJsonDocument::fromJson(identity.readAll()).object();
-    if (stored.value(QStringLiteral("sourceHash")).toString() != sourceHash)
-        return false;
     QFile waveform(vkdPath);
-    if (!waveform.open(QIODevice::ReadOnly))
+    if (expectedState.isEmpty() || !openSourceFile(waveform)
+        || outputFileState(waveform) != expectedState)
         return false;
-    const QByteArray cached = waveform.readAll();
-    if (waveform.error() != QFileDevice::NoError
-        || QString::fromLatin1(QCryptographicHash::hash(cached, QCryptographicHash::Sha256).toHex())
-            != stored.value(QStringLiteral("waveformHash")).toString())
-        return false;
-    bytes = cached;
-    return true;
+    bytes = waveform.readAll();
+    return waveform.error() == QFileDevice::NoError;
 }
 
 } // namespace
@@ -334,7 +320,7 @@ bool WaveformCache::remove(const QString& audioFilePath)
     deferredWaveforms.remove(normalizedAudioPath(audioFilePath));
     sharedWaveforms().remove(normalizedAudioPath(audioFilePath));
     QString path = cachePath(audioFilePath);
-    QFile::remove(waveformSourcePath(path));
+    QFile::remove(path + QStringLiteral(".source.json"));
     if (QFile::exists(path)) {
         return QFile::remove(path);
     }
@@ -379,8 +365,9 @@ bool WaveformCache::generateForRevision(const QString& audioFilePath,
         return false;
     }
 
-    const QString sourceHash = waveformSourceHash(audioFilePath, identityPath, revision);
-    if (sourceHash.isEmpty() || (!sourceContentHash.isEmpty() && sourceHash != sourceContentHash))
+    const QString sourceHash = sourceContentHash.isEmpty()
+        ? waveformSourceHash(audioFilePath, identityPath, revision) : sourceContentHash;
+    if (sourceHash.isEmpty())
         return false;
 
     const uint64_t sourceFileSize = static_cast<uint64_t>(fileInfo.size());
@@ -500,24 +487,34 @@ bool WaveformCache::generateForRevision(const QString& audioFilePath,
     file.close();
 
     return writeVKD(cachePath(identityPath), identityPath, data,
-                    sourceFileSize, sourceMtime, revision, sourceHash);
+                    sourceFileSize, sourceMtime, revision, sourceHash, audioFilePath != identityPath);
 }
 
 bool WaveformCache::readForBuild(const QString& inputPath,
                                 const QString& originalPath,
                                 const QString& sourceContentHash,
-                                QByteArray& bytes)
+                                QByteArray& bytes,
+                                const QByteArray& expectedWaveformState,
+                                QByteArray* actualWaveformState)
 {
     bytes.clear();
     const QFileInfo input(inputPath);
     if (!input.isFile() || originalPath.isEmpty() || sourceContentHash.isEmpty())
         return false;
     const QString vkdPath = cachePath(originalPath);
-    const auto readCached = [&] {
+    QByteArray waveformState = expectedWaveformState;
+    const auto readCached = [&](bool generated) {
         QMutexLocker lock(&waveformWriteMutex());
         QByteArray cached;
-        if (waveformChangeDepth != 0 || !readVerifiedWaveform(vkdPath, sourceContentHash, cached))
+        if (waveformChangeDepth != 0) return false;
+        if (generated) {
+            QFile file(vkdPath);
+            if (!file.open(QIODevice::ReadOnly)) return false;
+            cached = file.readAll();
+            if (file.error() != QFileDevice::NoError) return false;
+        } else if (!readVerifiedWaveform(vkdPath, waveformState, cached)) {
             return false;
+        }
         QDataStream stream(cached);
         stream.setByteOrder(QDataStream::LittleEndian);
         uint32_t sectionCount = 0;
@@ -525,9 +522,10 @@ bool WaveformCache::readForBuild(const QString& inputPath,
                                    input.lastModified().toMSecsSinceEpoch(), sectionCount))
             return false;
         bytes = std::move(cached);
+        if (actualWaveformState) *actualWaveformState = waveformState;
         return true;
     };
-    if (readCached())
+    if (readCached(false))
         return true;
     uint32_t targetPeaks = VKD::DEFAULT_NUM_PEAKS;
     bool hasMidSide = false;
@@ -543,9 +541,10 @@ bool WaveformCache::readForBuild(const QString& inputPath,
     if (!generateForRevision(inputPath, targetPeaks, revision, originalPath, sourceContentHash))
         return false;
     WaveformPeakData data;
-    if (hasMidSide && !generateMidSideForRevision(inputPath, data, revision, originalPath))
+    if (hasMidSide && !generateMidSideForRevision(inputPath, data, revision, originalPath, sourceContentHash))
         return false;
-    return readCached();
+    waveformState = packFileState(vkdPath);
+    return readCached(true);
 }
 
 
@@ -834,7 +833,8 @@ bool WaveformCache::writeVKD(const QString& vkdPath,
                                uint64_t sourceFileSize,
                                int64_t sourceMtime,
                                quint64 revision,
-                               const QString& sourceContentHash)
+                               const QString& sourceContentHash,
+                               bool capturedSource)
 {
     QByteArray bytes;
     QDataStream stream(&bytes, QIODevice::WriteOnly);
@@ -924,16 +924,12 @@ bool WaveformCache::writeVKD(const QString& vkdPath,
 
     if (stream.status() != QDataStream::Ok)
         return false;
-    if (!sourceContentHash.isEmpty()
-        && waveformSourceHash(audioFilePath, audioFilePath, revision) != sourceContentHash)
-        return false;
-
     QMutexLocker lock(&waveformWriteMutex());
     const QFileInfo currentSource(audioFilePath);
     if (!isCurrentWaveformGeneration(audioFilePath, revision)
-        || !currentSource.exists()
-        || static_cast<uint64_t>(currentSource.size()) != sourceFileSize
-        || currentSource.lastModified().toMSecsSinceEpoch() != sourceMtime) {
+        || (!capturedSource && (!currentSource.exists()
+            || static_cast<uint64_t>(currentSource.size()) != sourceFileSize
+            || currentSource.lastModified().toMSecsSinceEpoch() != sourceMtime))) {
         return false;
     }
     sharedWaveforms().remove(normalizedAudioPath(audioFilePath));
@@ -941,19 +937,9 @@ bool WaveformCache::writeVKD(const QString& vkdPath,
         qWarning() << "[WaveformCache] Failed to publish VKD:" << vkdPath;
         return false;
     }
-    if (sourceContentHash.isEmpty()) {
-        QFile::remove(waveformSourcePath(vkdPath));
-    } else {
-        const auto identity = QJsonDocument(QJsonObject{
-            {QStringLiteral("sourceHash"), sourceContentHash},
-            {QStringLiteral("waveformHash"), QString::fromLatin1(
-                QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex())}
-        }).toJson(QJsonDocument::Compact);
-        if (!writeCacheArtifact(waveformSourcePath(vkdPath), [&](QIODevice& file) {
-                return file.write(identity) == identity.size();
-            }))
-            QFile::remove(waveformSourcePath(vkdPath));
-    }
+    QFile::remove(vkdPath + QStringLiteral(".source.json"));
+    if (!capturedSource)
+        AssetRegistry::instance().updateWaveformState(audioFilePath, sourceContentHash, packFileState(vkdPath));
     lock.unlock();
     emit instance().cacheReady(audioFilePath);
 
@@ -1098,7 +1084,7 @@ bool WaveformCache::generateFromDecoded(const QString& audioFilePath, const QStr
     }
 
     return writeVKD(cachePath(originalPath), originalPath, data, sourceFileSize, sourceMtime,
-                    revision, sourceContentHash);
+                    revision, sourceContentHash, audioFilePath != originalPath);
 }
 
 
@@ -1111,20 +1097,19 @@ bool WaveformCache::generateMidSide(const QString& audioFilePath, WaveformPeakDa
 bool WaveformCache::generateMidSideForRevision(const QString& audioFilePath,
                                                 WaveformPeakData& outData,
                                                 quint64 revision,
-                                                const QString& originalPath)
+                                                const QString& originalPath,
+                                                const QString& capturedContentHash)
 {
     const QString identityPath = originalPath.isEmpty() ? audioFilePath : originalPath;
     const WaveformReadScope reading(identityPath, revision);
     if (!reading.active())
         return false;
-    QString sourceContentHash = waveformSourceHash(audioFilePath, identityPath, revision);
+    const QString sourceContentHash = capturedContentHash.isEmpty()
+        ? waveformSourceHash(audioFilePath, identityPath, revision) : capturedContentHash;
     if (sourceContentHash.isEmpty())
         return false;
     {
         QMutexLocker lock(&waveformWriteMutex());
-        QByteArray bytes;
-        if (!readVerifiedWaveform(cachePath(identityPath), sourceContentHash, bytes))
-            sourceContentHash.clear();
         if (!load(identityPath, outData)) {
             qWarning() << "[WaveformCache] generateMidSide: failed to load existing VKD for" << identityPath;
             return false;
@@ -1264,7 +1249,8 @@ bool WaveformCache::generateMidSideForRevision(const QString& audioFilePath,
     const QFileInfo sourceInfo(audioFilePath);
     if (!writeVKD(vkdPath, identityPath, outData,
                   static_cast<uint64_t>(sourceInfo.size()),
-                  sourceInfo.lastModified().toMSecsSinceEpoch(), revision, sourceContentHash)) {
+                  sourceInfo.lastModified().toMSecsSinceEpoch(), revision, sourceContentHash,
+                  audioFilePath != identityPath)) {
         qWarning() << "[WaveformCache] generateMidSide: failed to rewrite VKD:" << vkdPath;
         outData.midSidePeaks.clear();
         return false;

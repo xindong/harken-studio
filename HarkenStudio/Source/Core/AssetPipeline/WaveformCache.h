@@ -91,7 +91,9 @@ public:
     static bool readForBuild(const QString& inputPath,
                             const QString& originalPath,
                             const QString& sourceContentHash,
-                            QByteArray& bytes);
+                            QByteArray& bytes,
+                            const QByteArray& expectedWaveformState = {},
+                            QByteArray* actualWaveformState = nullptr);
 
     static std::shared_ptr<const WaveformPeakData> loadShared(const QString& audioFilePath);
 
@@ -127,14 +129,16 @@ private:
     static bool generateMidSideForRevision(const QString& audioFilePath,
                                            WaveformPeakData& outData,
                                            quint64 revision,
-                                           const QString& originalPath = {});
+                                           const QString& originalPath = {},
+                                           const QString& sourceContentHash = {});
     static bool writeVKD(const QString& vkdPath,
                           const QString& audioFilePath,
                           const WaveformPeakData& data,
                           uint64_t sourceFileSize,
                           int64_t sourceMtime,
                           quint64 revision,
-                          const QString& sourceContentHash);
+                          const QString& sourceContentHash,
+                          bool capturedSource);
 
     static bool readAndValidateHeader(QDataStream& stream,
                                        uint64_t expectedFileSize,

@@ -7,7 +7,7 @@
 namespace VNX::ProjectPackBuildService {
 
 enum class ArtifactOrder { Requested, PlatformId };
-enum class Finalization { None, Complete, Partial };
+enum class Finalization { None, Complete };
 
 struct PlatformResult
 {
@@ -25,9 +25,7 @@ struct Request
     QStringList platforms;
     ProjectPackExporter::ExportOptions options;
     std::shared_ptr<QLockFile> outputLock;
-    bool stopOnCanceledPlatform = true;
     ArtifactOrder artifactOrder = ArtifactOrder::Requested;
-    std::function<bool()> finalizationCancelCheck;
     std::function<void()> preflightFinished;
     std::function<void(const PlatformResult&)> platformFinished;
 };
@@ -39,7 +37,6 @@ struct Result
     bool canceled = false;
     bool allPlatformsSucceeded = false;
     QString preflightError;
-    QString preflightSummary;
     QStringList succeededPlatforms;
     std::vector<PlatformResult> platforms;
     QVector<PackArtifactMetadata> artifacts;

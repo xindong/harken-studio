@@ -132,6 +132,13 @@ std::optional<MaterializedArtifact> loadArtifact(const QString& outputDir, const
 
 }
 
+QString cacheKey(const QString& inputFingerprint, const SoundSourceDef& source,
+                 double scheduleOffsetSec, const ConversionSettings& settings,
+                 const AudioMetadata& metadata)
+{
+    return QString::fromLatin1(requestKey(inputFingerprint, source, scheduleOffsetSec, settings, metadata));
+}
+
 std::optional<MaterializedArtifact> MaterializationCache::find(const QByteArray& request)
 {
     QMutexLocker lock(&mutex_);
@@ -271,8 +278,18 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
         fail(error, QStringLiteral("Platform ID is required for derivative media"));
         return std::nullopt;
     }
-    const QString inputRevision = input ? input->contentHash : AssetImporter::computeContentHash(inputPath);
-    const auto metadata = input ? input->metadata : AssetImporter().readMetadata(inputPath);
+    std::shared_ptr<const BuildSourceInput> directInput;
+    if (!input) {
+        BuildSourceInputs directInputs;
+        AssetInfo asset;
+        asset.sourceID = source.sourceId;
+        asset.absolutePath = inputPath;
+        directInput = directInputs.capture(asset, error);
+        if (!directInput) return std::nullopt;
+        input = directInput.get();
+    }
+    const QString inputRevision = input->contentHash;
+    const auto metadata = input->metadata;
     const auto key = requestKey(inputRevision, source, scheduleOffsetSec, settings, metadata);
     if (auto cached = findCached(key, outputDir, cache))
         return cached;
@@ -282,14 +299,10 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
         if (!captured) return std::nullopt;
         input = captured.get();
     }
-    auto media = prepare(input ? input->inputPath : inputPath, source, scheduleOffsetSec, settings, error);
+    auto media = prepare(input->inputPath, source, scheduleOffsetSec, settings, error);
     if (!media) return std::nullopt;
     if (key.isEmpty()) {
         fail(error, QStringLiteral("Cannot identify converted media input"));
-        return std::nullopt;
-    }
-    if (inputRevision.isEmpty() || (!input && AssetImporter::computeContentHash(inputPath) != inputRevision)) {
-        fail(error, QStringLiteral("Source file changed during derivative conversion"));
         return std::nullopt;
     }
     MaterializedArtifact artifact;

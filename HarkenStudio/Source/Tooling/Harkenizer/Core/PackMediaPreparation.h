@@ -20,8 +20,6 @@ public:
         SoundSourceDef source;
         std::optional<SoundSourceDerivative::MaterializedArtifact> artifact;
         QString error;
-        QString conversionError;
-        bool fallback = false;
     };
 
     PackMediaPreparation(const MediaBuildSnapshot& snapshot,

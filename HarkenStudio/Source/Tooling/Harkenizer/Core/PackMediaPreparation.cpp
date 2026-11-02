@@ -161,18 +161,6 @@ struct PackMediaPreparation::Impl
             result.error = QStringLiteral("Export canceled");
             return result;
         }
-        result.conversionError = derivativeError;
-        if (!result.artifact) {
-            result.artifact = SoundSourceDerivative::materialize(
-                result.conversion->inputPath(), result.source, work.scheduleOffsetSec,
-                platform, derivativeDir, ConversionSettings{}, &derivativeError,
-                cache.get(), result.conversion->sourceInput.get());
-            if (stopped.load(std::memory_order_acquire)) {
-                result.error = QStringLiteral("Export canceled");
-                return result;
-            }
-            result.fallback = result.artifact.has_value();
-        }
         if (!result.artifact)
             result.error = QStringLiteral("Derivative media failed for Sound %1: %2")
                 .arg(VNX::objectIdString(work.soundId)).arg(derivativeError);

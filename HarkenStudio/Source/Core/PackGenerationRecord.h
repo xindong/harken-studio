@@ -17,7 +17,6 @@ enum class PackGenerationStage {
     Preparing,
     Compiling,
     Writing,
-    Publishing,
     Complete,
     Failed,
     Canceled,
@@ -34,16 +33,13 @@ struct PackGenerationProgress
 };
 
 enum class PackBuildObservationStage {
-    Preflight,
     PreparingMedia,
     CompilingProject,
     WritingPacks,
-    Publishing,
     Finalizing,
     Preparing,
     Prepared,
-    Writing,
-    ReadyToPublish
+    Writing
 };
 
 struct PackBuildObservation
@@ -51,7 +47,7 @@ struct PackBuildObservation
     QString platform;
     QString language;
     QString unitKey;
-    PackBuildObservationStage stage = PackBuildObservationStage::Preflight;
+    PackBuildObservationStage stage = PackBuildObservationStage::PreparingMedia;
     QString packName;
 };
 

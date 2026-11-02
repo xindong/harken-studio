@@ -15,6 +15,7 @@
 
 namespace VNX {
 class BuildSourceInput;
+struct AudioMetadata;
 }
 
 namespace VNX::SoundSourceDerivative {
@@ -62,6 +63,10 @@ struct PreparedMedia
     uint64_t loopStartFrame = 0;
     uint64_t loopEndFrame = 0;
 };
+
+QString cacheKey(const QString& inputFingerprint, const SoundSourceDef& source,
+                 double scheduleOffsetSec, const ConversionSettings& settings,
+                 const AudioMetadata& metadata);
 
 std::optional<FrameRange> mapFrameRange(const SoundSourceDef& source,
                                         uint64_t totalFrames);

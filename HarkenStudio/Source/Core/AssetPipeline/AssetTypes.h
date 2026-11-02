@@ -313,6 +313,8 @@ struct AssetInfo {
     QString absolutePath;
 
     QString contentHash;
+    QByteArray sourceState;
+    QByteArray waveformState;
 
     QString ownerObjectGuid;
 
@@ -329,6 +331,8 @@ struct AssetInfo {
         obj["sourceID"] = static_cast<qint64>(sourceID);
         obj["relativePath"] = relativePath;
         obj["contentHash"] = contentHash;
+        if (!sourceState.isEmpty()) obj["sourceState"] = QString::fromLatin1(sourceState.toHex());
+        if (!waveformState.isEmpty()) obj["waveformState"] = QString::fromLatin1(waveformState.toHex());
         obj["lastModified"] = static_cast<qint64>(lastModified);
         obj["metadata"] = metadata.toJson();
         obj["settings"] = settings.toJson();
@@ -349,6 +353,8 @@ struct AssetInfo {
         info.sourceID = static_cast<uint32_t>(obj["sourceID"].toInteger());
         info.relativePath = obj["relativePath"].toString();
         info.contentHash = obj["contentHash"].toString();
+        info.sourceState = QByteArray::fromHex(obj["sourceState"].toString().toLatin1());
+        info.waveformState = QByteArray::fromHex(obj["waveformState"].toString().toLatin1());
         info.lastModified = static_cast<uint64_t>(obj["lastModified"].toInteger());
         info.metadata = AudioMetadata::fromJson(obj["metadata"].toObject());
         info.settings = ConversionSettings::fromJson(obj["settings"].toObject());

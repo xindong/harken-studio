@@ -313,6 +313,20 @@ QList<uint32_t> AssetRegistry::getMissingAssets() const
 }
 
 
+void AssetRegistry::updateWaveformState(const QString& path, const QString& sourceHash,
+                                        const QByteArray& waveformState)
+{
+    QMutexLocker lock(&mutex_);
+    if (projectRoot_.isEmpty()) return;
+    const auto relative = PathUtils::normalizeToUnix(
+        QDir(PathUtils::getAudioSourcesDir(projectRoot_)).relativeFilePath(path));
+    const auto source = pathToID_.constFind(relative);
+    if (source == pathToID_.cend()) return;
+    auto asset = assets_.find(*source);
+    if (asset != assets_.end() && asset->contentHash == sourceHash)
+        asset->waveformState = waveformState;
+}
+
 bool AssetRegistry::updateSourceFile(uint32_t sourceID, const AudioMetadata& metadata,
                                      const QString& absolutePath,
                                      const QString& contentHash,
@@ -325,6 +339,8 @@ bool AssetRegistry::updateSourceFile(uint32_t sourceID, const AudioMetadata& met
     AssetInfo& asset = it.value();
     const bool changed = !audioMetadataEqual(asset.metadata, metadata)
         || asset.contentHash != contentHash;
+    if (asset.contentHash != contentHash) asset.waveformState.clear();
+    asset.sourceState.clear();
     asset.metadata = metadata;
     asset.absolutePath = absolutePath;
     asset.contentHash = contentHash;
@@ -778,6 +794,38 @@ bool AssetRegistry::saveSnapshotToFile(const QString& projectRoot,
     }
     const QByteArray bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
     return file.write(bytes) == bytes.size() && file.commit();
+}
+
+
+bool AssetRegistry::saveBuildSources(const QString& projectRoot,
+                                     const QHash<uint32_t, AssetInfo>& assets,
+                                     const QHash<uint32_t, AssetInfo>& changed)
+{
+    auto& registry = instance();
+    QMutexLocker lock(&registry.mutex_);
+    const bool live = QDir::cleanPath(registry.projectRoot_) == QDir::cleanPath(projectRoot);
+    QHash<uint32_t, AssetInfo> current = live ? registry.assets_ : assets;
+    for (auto it = changed.cbegin(); it != changed.cend(); ++it) {
+        auto found = current.find(it.key());
+        if (found == current.end()) {
+            current.insert(it.key(), *it);
+            continue;
+        }
+        if (found->relativePath != it->relativePath) continue;
+        found->sourceState = it->sourceState;
+        found->contentHash = it->contentHash;
+        found->metadata = it->metadata;
+        found->lastModified = it->lastModified;
+        found->waveformState = it->waveformState;
+    }
+    if (live) {
+        registry.assets_ = current;
+        for (auto it = changed.cbegin(); it != changed.cend(); ++it) {
+            const auto asset = current.constFind(it.key());
+            if (asset != current.cend()) registry.updatePathIndex(*asset);
+        }
+    }
+    return saveSnapshotToFile(projectRoot, current.values());
 }
 
 

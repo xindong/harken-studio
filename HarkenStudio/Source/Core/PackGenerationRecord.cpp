@@ -136,8 +136,7 @@ void PackGenerationRecordStore::updateProgress(quint64 runId, const PackGenerati
                 return;
             next.percent = std::max(next.percent, existing->progress.percent);
         }
-        if (newRun || (next.stage != PackGenerationStage::Compiling
-                       && next.stage != PackGenerationStage::Publishing))
+        if (newRun || next.stage != PackGenerationStage::Compiling)
             existing->observation.reset();
         existing->progress = next;
         existing->runId = runId;
@@ -157,11 +156,9 @@ void PackGenerationRecordStore::updateObservation(quint64 runId, const PackBuild
     emit observationChanged(observation);
     if (observation.unitKey.isEmpty()) {
         switch (observation.stage) {
-        case PackBuildObservationStage::Preflight:
         case PackBuildObservationStage::PreparingMedia:
         case PackBuildObservationStage::CompilingProject:
         case PackBuildObservationStage::WritingPacks:
-        case PackBuildObservationStage::Publishing:
         case PackBuildObservationStage::Finalizing:
             globalObservation_ = observation;
             emit globalObservationChanged();
@@ -171,8 +168,7 @@ void PackGenerationRecordStore::updateObservation(quint64 runId, const PackBuild
         }
         return;
     }
-    if (observation.stage != PackBuildObservationStage::Prepared
-        && observation.stage != PackBuildObservationStage::ReadyToPublish)
+    if (observation.stage != PackBuildObservationStage::Prepared)
         return;
     const auto existing = std::find_if(progress_.begin(), progress_.end(), [&](const auto& entry) {
         return entry.runId == runId && entry.progress.platform == observation.platform
