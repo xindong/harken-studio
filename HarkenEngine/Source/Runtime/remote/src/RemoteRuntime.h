@@ -5,6 +5,7 @@ namespace harken::remote {
 void Pump();
 void Shutdown(bool engineTerminating = false);
 void SetBeforeCommandDispatchForTests(void (*hook)(void*), void* context);
+void SetBeforeBusyReplyForTests(void (*hook)());
 unsigned PendingCommandsForTests();
 }
 

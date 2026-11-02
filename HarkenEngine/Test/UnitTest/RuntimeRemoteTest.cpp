@@ -8,6 +8,7 @@
 #endif
 
 #include "Common/TestUtil.h"
+#include "AllocationProbe.h"
 #include "MonitorCaptureHubTestHooks.h"
 #include "MonitorCaptureHub.h"
 #include "MonitorIdentityCut.h"
@@ -20,6 +21,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <chrono>
 #include <functional>
@@ -1328,6 +1330,70 @@ TEST(RuntimeRemote, SecondControllerReceivesBusyWithoutDisturbingFirst) {
     ASSERT_TRUE(first.Send({Message::SnapshotRequest, 2, {}}));
     ASSERT_TRUE(WaitUntil([&] { return first.Read(frame); }));
     EXPECT_EQ(Message::Snapshot, frame.type);
+}
+
+TEST(RuntimeRemote, BusyReplyAllocationFailuresClosePeersAndAllowRestart) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    static std::atomic<std::size_t> failureAt{0};
+    struct ResetHook {
+        ~ResetHook() {
+            SetBeforeBusyReplyForTests(nullptr);
+            Vn_RemoteStop();
+        }
+    } reset;
+    allocation_probe::count = 0;
+    allocation_probe::failAt = 0;
+    allocation_probe::enabled = true;
+    {
+        Writer payload;
+        payload.I32(VN_IN_USE);
+    }
+    allocation_probe::enabled = false;
+    const std::size_t firstEncodingAllocation = allocation_probe::count + 1;
+    const auto peerClosed = [](Client& client) {
+        char byte = 0;
+        const int count = recv(client.socket, &byte, 1, 0);
+        if (count == 0) return true;
+        if (count != SOCKET_ERROR) return false;
+        const int error = WSAGetLastError();
+        return error == WSAECONNRESET || error == WSAECONNABORTED;
+    };
+    const auto config = RemoteConfig();
+    for (const std::size_t allocation : {std::size_t{1}, firstEncodingAllocation,
+                                         std::size_t{1}, firstEncodingAllocation}) {
+        SCOPED_TRACE(allocation);
+        failureAt.store(allocation, std::memory_order_relaxed);
+        ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
+        {
+            Client first;
+            ASSERT_TRUE(first.Connect(Status().tcpPort));
+            Identity identity;
+            ASSERT_TRUE(first.Welcome(identity));
+            SetBeforeBusyReplyForTests([] {
+                allocation_probe::count = 0;
+                allocation_probe::failAt = failureAt.load(std::memory_order_relaxed);
+                allocation_probe::enabled = true;
+            });
+            Client second;
+            ASSERT_TRUE(second.Connect(Status().tcpPort));
+            ASSERT_TRUE(WaitUntil([] { return Status().state == VN_REMOTE_FAILED; }, false));
+            const auto failed = Status();
+            EXPECT_EQ(VN_DEVICE_ERROR, failed.lastResult);
+            EXPECT_EQ(0u, failed.clientCount);
+            EXPECT_EQ(0u, failed.sessionId);
+            EXPECT_TRUE(WaitUntil([&] { return peerClosed(first); }, false));
+            EXPECT_TRUE(WaitUntil([&] { return peerClosed(second); }, false));
+        }
+        EXPECT_EQ(VN_OK, Vn_RemoteStop());
+        EXPECT_EQ(VN_REMOTE_STOPPED, Status().state);
+    }
+    SetBeforeBusyReplyForTests(nullptr);
+    ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
+    Client healthy;
+    ASSERT_TRUE(healthy.Connect(Status().tcpPort));
+    Identity identity;
+    EXPECT_TRUE(healthy.Welcome(identity));
 }
 
 TEST(RuntimeRemote, ImmediateReconnectProcessesOldFinBeforeNewHello) {

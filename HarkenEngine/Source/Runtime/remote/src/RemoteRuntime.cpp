@@ -272,6 +272,7 @@ void ReapFirings() {
 
 void (*g_beforeCommandDispatchForTests)(void*) = nullptr;
 void* g_beforeCommandDispatchContextForTests = nullptr;
+std::atomic<void (*)()> g_beforeBusyReplyForTests{nullptr};
 
 class Server {
   public:
@@ -355,10 +356,7 @@ class Server {
                 std::lock_guard<std::mutex> lock(mutex);
                 status.lastResult = VN_DEVICE_ERROR;
                 status.state = VN_REMOTE_FAILED;
-                epoch = 0;
-                welcomed = false;
-                inbound.clear();
-                inboundBytes = 0;
+                DisconnectLocked();
             }
         });
         return true;
@@ -435,6 +433,10 @@ class Server {
 
     void Disconnect() {
         std::lock_guard<std::mutex> lock(mutex);
+        DisconnectLocked();
+    }
+
+    void DisconnectLocked() {
         epoch = 0;
         welcomed = false;
         closeRequested = false;
@@ -730,6 +732,9 @@ class Server {
                         if (rejecting != kInvalidSocket)
                             CloseSocket(accepted);
                         else {
+                            rejecting = accepted;
+                            if (const auto hook = g_beforeBusyReplyForTests.exchange(nullptr, std::memory_order_acq_rel))
+                                hook();
                             Writer busy;
                             busy.I32(VN_IN_USE);
                             rejectionBytes =
@@ -737,7 +742,6 @@ class Server {
                             rejectionOffset = 0;
                             rejectionDeadline = NowMs() + 250;
                             rejectionShutdown = false;
-                            rejecting = accepted;
                         }
                     } else {
                         client = accepted;
@@ -1325,6 +1329,10 @@ void Pump() {
 void SetBeforeCommandDispatchForTests(void (*hook)(void*), void* context) {
     g_beforeCommandDispatchForTests = hook;
     g_beforeCommandDispatchContextForTests = context;
+}
+
+void SetBeforeBusyReplyForTests(void (*hook)()) {
+    g_beforeBusyReplyForTests.store(hook, std::memory_order_release);
 }
 
 unsigned PendingCommandsForTests() {
