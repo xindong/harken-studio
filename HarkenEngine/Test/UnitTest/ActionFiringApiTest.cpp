@@ -42118,8 +42118,7 @@ void ExpectImmediateQueueNestedContainerPlay(bool randomQueue) {
                 engine->logicCommits.Current() + 1u;
             expectedSeed.emitterSlot =
                 static_cast<std::uint32_t>(desc.emitter);
-            expectedSeed.emitterGeneration =
-                static_cast<std::uint32_t>(desc.emitter >> 32);
+            expectedSeed.emitterGeneration = 1u; // First emitter incarnation in this session.
             expectedSeed.resetEpoch = engine->transportEpochOwner.Current();
             harken::EffectiveQueueState expectedInitial{};
             expectedInitial.version = 1;
@@ -46276,8 +46275,7 @@ TEST(ActionFiringApi,
     expectedSeed.acceptedPostOrdinal =
         engine->logicCommits.Current() + 1u;
     expectedSeed.emitterSlot = static_cast<std::uint32_t>(desc.emitter);
-    expectedSeed.emitterGeneration =
-        static_cast<std::uint32_t>(desc.emitter >> 32);
+    expectedSeed.emitterGeneration = 1u; // First emitter incarnation in this session.
     expectedSeed.resetEpoch = engine->transportEpochOwner.Current();
     harken::EffectiveQueueState expectedInitial{};
     expectedInitial.version = 1;
