@@ -164,7 +164,11 @@ void PackTable::AlignedDeleter::operator()(std::uint8_t* p) const {
 
 PackTable::PackTable(std::uint32_t capacity,
                      std::size_t retirementCapacity,
-                     std::size_t resourceClosureCapacity) {
+                     std::size_t resourceClosureCapacity,
+                     std::uint32_t generationFloor) {
+    if (generationFloor == UINT32_MAX)
+        throw std::invalid_argument("pack handle generation exhausted");
+    m_initialGeneration = generationFloor + 1;
     if (resourceClosureCapacity > UINT32_MAX)
         throw std::length_error("pack resource closure capacity overflow");
     if (!m_slots.Reserve(capacity) ||
@@ -174,8 +178,18 @@ PackTable::PackTable(std::uint32_t capacity,
 }
 
 bool PackTable::PrepareContentStorage() noexcept {
-    return m_resourceClosures.ConstructThrough(m_resourceClosures.Capacity()) &&
+    const auto previous = m_slots.size();
+    const bool ready = m_resourceClosures.ConstructThrough(m_resourceClosures.Capacity()) &&
         m_slots.ConstructThrough(m_slots.Capacity());
+    for (auto i = previous; i < m_slots.size(); ++i)
+        m_slots[i].generation = m_initialGeneration;
+    return ready;
+}
+
+std::uint32_t PackTable::GenerationHighWater() const noexcept {
+    auto maximum = m_initialGeneration - 1;
+    for (const auto& slot : m_slots) maximum = std::max(maximum, slot.generation);
+    return maximum;
 }
 
 VnResult PackTable::PrepareRetiringRow(
@@ -681,12 +695,7 @@ VnResult PackTable::Unload(VnPackHandle handle,
     slot->resourceToken = 0;
     slot->closureRefCount = 0;
     slot->loaded = false;
-    // Same wraparound rule as voice slots: generation 0 would let slot 0
-    // mint handle 0, and zero is structurally never a valid handle.
     ++slot->generation;
-    if (slot->generation == 0) {
-        slot->generation = 1;
-    }
     return VN_OK;
 }
 
@@ -1750,6 +1759,7 @@ VnResult PackTable::CanUnload(VnPackHandle handle,
     if (slot == nullptr) {
         return VN_STALE_HANDLE;
     }
+    if (slot->generation == UINT32_MAX) return VN_RUNTIME_RECREATE_REQUIRED;
     if (slot->closureRefCount != 0) {
         return VN_IN_USE;
     }
@@ -1780,7 +1790,8 @@ void PackTable::CommitUnloadEmptyResident(VnPackHandle handle) noexcept {
            "prepared Resident unload must retain a live Pack handle");
     assert(slot == nullptr || slot->entries.empty());
     assert(slot == nullptr || slot->closureRefCount == 0);
-    if (slot == nullptr) {
+    assert(slot == nullptr || slot->generation != UINT32_MAX);
+    if (slot == nullptr || slot->generation == UINT32_MAX) {
         return;
     }
     slot->entries.clear();
@@ -1790,9 +1801,6 @@ void PackTable::CommitUnloadEmptyResident(VnPackHandle handle) noexcept {
     slot->closureRefCount = 0;
     slot->loaded = false;
     ++slot->generation;
-    if (slot->generation == 0) {
-        slot->generation = 1;
-    }
 }
 
 VnResult PackTable::CanReplacePreparedV2(

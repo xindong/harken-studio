@@ -100,7 +100,8 @@ TEST(SpatialApi, DistanceReferenceValidatesFullHandleAndResetsAtInit) {
     ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(9), &profile));
     VnEmitterHandle replacement = 0;
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&replacement));
-    EXPECT_EQ(selectedBeforeRestart, replacement);
+    EXPECT_NE(selectedBeforeRestart, replacement);
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_SetListenerDistanceReference(selectedBeforeRestart));
     ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(replacement, Vec3(99, 0, 0)));
     EXPECT_LT(next.Engine()->spatial.AttenuationVolumeDb(
         next.Engine()->emitters, harkentest::ObjectId(9), 100, 0, 0, 1), -30.0f);

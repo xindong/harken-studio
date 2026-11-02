@@ -5267,6 +5267,14 @@ TEST(TraceReplayE2E,
 }
 
 TEST(TraceReplayE2E, StateOnlyAndDefaultActionContextsReplayExactly) {
+    // Make recording use a public generation that a fresh replay process never issued.
+    {
+        EngineSession warm(MakeNullConfig(8, kBlockFrames));
+        ASSERT_EQ(VN_OK, warm.InitResult());
+        VnEmitterHandle emitter = 0;
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+        ASSERT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+    }
     const auto tracePath = TempPath("state_only_context.vtrc");
     const auto outPath = TempPath("state_only_context.f32");
     std::filesystem::remove(tracePath);

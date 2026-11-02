@@ -77,7 +77,9 @@ public:
     // engine's life like every other pool.
     explicit PackTable(std::uint32_t capacity,
                        std::size_t retirementCapacity = 0,
-                       std::size_t resourceClosureCapacity = 0);
+                       std::size_t resourceClosureCapacity = 0,
+                       std::uint32_t generationFloor = 0);
+    std::uint32_t GenerationHighWater() const noexcept;
 
     // Pack buffers hold reference-mode sample data, so blob addresses must
     // honor the container's 64-byte alignment guarantee in memory too.
@@ -580,6 +582,7 @@ private:
                              std::vector<PackTocEntry>* outParsed) const;
 
     StableRowStorage<Slot> m_slots;
+    std::uint32_t m_initialGeneration = 1;
     StableRowStorage<RetiringGeneration, std::size_t> m_retiring;
     StableRowStorage<ResourceClosureRow> m_resourceClosures;
     std::uint64_t m_staleHandleHits = 0;

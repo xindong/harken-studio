@@ -84,6 +84,8 @@ struct SelectionMemoryConfigV1 {
     std::uint32_t maxChildren = 64;
     std::uint32_t maxAvoidLastN = 8;
     std::uint32_t maxPathNodes = 64;
+    // Public emitter identity offset for this engine; the last slot is private.
+    std::uint32_t emitterGenerationFloor = 0;
 };
 
 struct SelectionMemoryKeyV1 {
@@ -438,6 +440,16 @@ public:
         batches_.SetCommitPageLimitForTests(pages);
     }
     bool Reset(const SelectionMemoryConfigV1& config) noexcept;
+    // Lifecycle keys retain public generations; deterministic seeds use session identity.
+    std::uint32_t SeedEmitterGeneration(std::uint32_t slot,
+                                        std::uint32_t generation) const noexcept {
+        if (slot == UINT32_MAX ||
+            (config_.maxEmitters != 0 && slot == config_.maxEmitters - 1u)) {
+            return generation;
+        }
+        return generation > config_.emitterGenerationFloor
+            ? generation - config_.emitterGenerationFloor : 0u;
+    }
     SelectionAppendResultV1 AppendPlay(
         const SelectionPlayRequestV1& request) noexcept;
     SelectionAppendResultV1 AppendReset(

@@ -40,7 +40,8 @@ struct SpatialSourceState {
 
 class EmitterTable {
 public:
-    explicit EmitterTable(const EngineConfig& config);
+    explicit EmitterTable(const EngineConfig& config, std::uint32_t generationFloor = 0);
+    std::uint32_t GenerationHighWater() const noexcept;
     bool BeginVariableProjection() noexcept;
     void RestoreVariableProjection() noexcept;
     std::uint64_t VariableProjectionStorageBytes() const noexcept;

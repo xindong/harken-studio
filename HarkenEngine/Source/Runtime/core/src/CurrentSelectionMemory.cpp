@@ -622,7 +622,8 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::ComputePlay(
     seedInput.programSemanticFingerprint = row.key.programSemanticFingerprint;
     seedInput.memoryScope = row.key.memoryScope;
     seedInput.emitterSlot = row.key.emitterSlot;
-    seedInput.emitterGeneration = row.key.emitterGeneration;
+    seedInput.emitterGeneration = SeedEmitterGeneration(
+        row.key.emitterSlot, row.key.emitterGeneration);
     seedInput.resetEpoch = before.resetEpoch;
     seedInput.rootStableId = request.rootStableId;
     seedInput.callerSeed = request.callerSeed;

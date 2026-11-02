@@ -607,9 +607,8 @@ TEST(VoiceLedger, PlayableOwnedVoiceKeepsExactParentButHasNoPublicVoice) {
 }
 
 TEST(VoiceLedger, MaximumGenerationRetiresIntoQuarantineWithoutSettingBit63) {
-    harken::VoiceLedger ledger(1);
-    ASSERT_TRUE(ledger.SetGenerationForTests(
-        0, harken::VoiceLedger::kMaxGeneration));
+    harken::VoiceLedger ledger(1, 0, 0, nullptr, nullptr,
+                              harken::VoiceLedger::kMaxGeneration - 1);
     VnVoiceHandle handle = 0;
     std::uint32_t slot = UINT32_MAX;
     ASSERT_TRUE(ledger.Acquire(&handle, &slot));
@@ -620,6 +619,33 @@ TEST(VoiceLedger, MaximumGenerationRetiresIntoQuarantineWithoutSettingBit63) {
     VnVoiceHandle next = 0;
     std::uint32_t nextSlot = UINT32_MAX;
     EXPECT_FALSE(ledger.Acquire(&next, &nextSlot));
+    EXPECT_EQ(harken::VoiceLedger::kMaxGeneration, ledger.GenerationHighWater());
+    EXPECT_THROW((harken::VoiceLedger(1, 0, 0, nullptr, nullptr,
+        ledger.GenerationHighWater())), std::invalid_argument);
+}
+
+TEST(VoiceLedger, GenerationFloorCoversEveryIssuancePathAndLazyRows) {
+    harken::VoiceLedger ledger(4, 0, 0, nullptr, nullptr, 41);
+    VnVoiceHandle direct = 0, pending = 0;
+    std::uint32_t slots[4]{};
+    ASSERT_TRUE(ledger.Acquire(&direct, &slots[0]));
+    ASSERT_TRUE(ledger.AcquirePending(&pending, &slots[1], 128));
+    const harken::VoiceLedger::PlayableParentRef parent{UINT64_C(0x8000000100000000), UINT64_C(0x100000000)};
+    ASSERT_TRUE(ledger.AcquirePlayableOwned(parent, &slots[2]));
+    ASSERT_TRUE(ledger.PreparePlayableOwned(parent, &slots[3]));
+    for (const auto slot : slots) {
+        harken::VoiceLedger::MonitorIdentity identity{};
+        ASSERT_TRUE(ledger.CaptureMonitorIdentity(slot, &identity));
+        EXPECT_EQ(42u, identity.generation);
+    }
+    ASSERT_TRUE(ledger.CancelPreparedPlayableOwned(slots[3]));
+    for (unsigned i = 0; i != 3; ++i) ledger.Release(slots[i]);
+    EXPECT_EQ(43u, ledger.GenerationHighWater());
+    harken::VoiceLedger next(2, 0, 0, nullptr, nullptr, ledger.GenerationHighWater());
+    ASSERT_TRUE(next.Acquire(&direct, &slots[0]));
+    ASSERT_TRUE(next.Acquire(&pending, &slots[1]));
+    EXPECT_EQ(44u, direct >> 32);
+    EXPECT_EQ(44u, pending >> 32);
 }
 
 TEST(VoiceLedger, FillPublicHandlesSelectsTheLiveOwnerPerRenderSlot) {
@@ -648,6 +674,64 @@ TEST(VoiceLedger, FillPublicHandlesSelectsTheLiveOwnerPerRenderSlot) {
 }
 
 // --- public-handle semantics through the C API ---
+
+TEST(VoiceLedger, PublicHandlesStayStaleAcrossEngineRecreation) {
+    std::vector<VnVoiceHandle> oldVoices;
+    std::vector<VnEmitterHandle> oldEmitters;
+    std::vector<VnPackHandle> oldPacks;
+    std::vector<harken::PlayableInstanceHandle> oldPlayables;
+    for (unsigned run = 0; run != 3; ++run) {
+        EngineSession session(MakeNullConfig(4, kBlock, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        const auto samples = harkentest::MakeDC(48000, 0.25f);
+        const auto pcm = MonoDesc(samples, 48000);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &pcm));
+        const auto play = MakePlayDesc(harkentest::ObjectId(1));
+        std::vector<VnVoiceHandle> voices;
+        std::vector<VnEmitterHandle> emitters;
+        std::vector<VnPackHandle> packs;
+        std::vector<harken::PlayableInstanceHandle> playables;
+        for (unsigned slot = 0; slot != 2; ++slot) {
+            VnVoiceHandle voice = 0;
+            ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+            voices.push_back(voice);
+            VnEmitterHandle emitter = 0;
+            ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+            emitters.push_back(emitter);
+            harken::PackTable::PreparedLoadToken load;
+            ASSERT_EQ(VN_OK, engine.packs.PrepareLoad(&load));
+            harken::PackTable::AlignedBuffer bytes;
+            std::vector<harken::PackEntry> entries;
+            std::vector<harken::PackTocEntry> media;
+            VnPackHandle pack = 0;
+            ASSERT_EQ(VN_OK, engine.packs.LoadPrepared(&load, bytes,
+                std::move(entries), media, engine.registry, &pack));
+            packs.push_back(pack);
+            const auto playable = engine.playableInstances.Acquire(harken::PlayableKind::Sound, 0);
+            ASSERT_NE(0u, playable);
+            playables.push_back(playable);
+        }
+        engine.nullBackend.Pump(1);
+        for (const auto old : oldVoices) EXPECT_EQ(VN_STALE_HANDLE, Vn_Stop(old, 0));
+        for (const auto old : oldEmitters) EXPECT_EQ(VN_STALE_HANDLE, Vn_DestroyEmitter(old));
+        for (const auto old : oldPacks) EXPECT_EQ(VN_STALE_HANDLE, engine.packs.CanUnload(old, engine.registry));
+        for (const auto old : oldPlayables) EXPECT_FALSE(engine.playableInstances.Classify(old).live);
+        for (const auto voice : voices) EXPECT_EQ(VN_OK, Vn_SetVoiceVolume(voice, -3.0f, 0));
+        for (const auto emitter : emitters) EXPECT_TRUE(engine.emitters.IsPublicLive(emitter));
+        for (const auto pack : packs) EXPECT_EQ(VN_OK, engine.packs.CanUnload(pack, engine.registry));
+        for (const auto playable : playables) EXPECT_TRUE(engine.playableInstances.Classify(playable).live);
+        oldVoices.insert(oldVoices.end(), voices.begin(), voices.end());
+        oldEmitters.insert(oldEmitters.end(), emitters.begin(), emitters.end());
+        oldPacks.insert(oldPacks.end(), packs.begin(), packs.end());
+        oldPlayables.insert(oldPlayables.end(), playables.begin(), playables.end());
+        for (unsigned reuse = 0; reuse != 3; ++reuse) {
+            ASSERT_EQ(VN_OK, Vn_DestroyEmitter(emitters[0]));
+            ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitters[0]));
+            oldEmitters.push_back(emitters[0]);
+        }
+    }
+}
 
 TEST(VoiceLedger, PublicHandleGoesStaleOnRenderEndAndAfterReap) {
     EngineSession session(MakeNullConfig(2, kBlock, 48000));

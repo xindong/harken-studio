@@ -371,7 +371,7 @@ TEST(MonitorExecutionIdentity, CapabilitiesNameRealEmitterProducersAndRestartUse
         snapshots[i] = records[0];
         EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(session));
     }
-    EXPECT_EQ(snapshots[0].header.instanceHandle, snapshots[1].header.instanceHandle);
+    EXPECT_NE(snapshots[0].header.instanceHandle, snapshots[1].header.instanceHandle);
     EXPECT_NE(snapshots[0].header.engineMonitorInstanceId, snapshots[1].header.engineMonitorInstanceId);
 }
 

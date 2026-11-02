@@ -320,10 +320,11 @@ TEST(BusDestroy, PublishedTimelineIdentityMigratesWithFactsAndDoesNotHoldAfterAu
     ASSERT_EQ(VN_OK, Vn_Update());
     const auto doomed = engine->buses.FindRef(kBusA);
     ASSERT_TRUE(doomed.Valid());
-    const auto slot = static_cast<std::uint32_t>(handle);
+    const auto renderHandle = harkentest::RenderHandle(engine, handle);
+    const auto slot = static_cast<std::uint32_t>(renderHandle);
     ASSERT_LT(slot, engine->timelineVoiceInstallIdentities.size());
     auto& identity = engine->timelineVoiceInstallIdentities[slot];
-    identity.renderHandle = handle;
+    identity.renderHandle = renderHandle;
     identity.busIndex = doomed.index;
     identity.busGeneration = doomed.generation;
     identity.voiceSends[0] = {true, doomed.index, -3.0f, doomed.generation};
@@ -362,10 +363,11 @@ TEST(BusDestroy, StalePublishedIdentityPinsHoldUntilMigratedOffDeadSlot) {
     ASSERT_TRUE(doomed.Valid());
     ASSERT_EQ(VN_OK, Vn_DestroyBus(kBusA));
     (void)PumpBlock(engine);
-    const auto slot = static_cast<std::uint32_t>(handle);
+    const auto renderHandle = harkentest::RenderHandle(engine, handle);
+    const auto slot = static_cast<std::uint32_t>(renderHandle);
     ASSERT_LT(slot, engine->timelineVoiceInstallIdentities.size());
     auto& identity = engine->timelineVoiceInstallIdentities[slot];
-    identity.renderHandle = handle;
+    identity.renderHandle = renderHandle;
     identity.busIndex = doomed.index;
     identity.busGeneration = doomed.generation;
     ASSERT_NE(nullptr, engine->voices.Resolve(identity.renderHandle));

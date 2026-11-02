@@ -218,7 +218,9 @@ public:
                          std::uint32_t renderCapacity = 0,
                          std::size_t monitorSelectionCapacity = 0,
                          DirectVoiceStoragePreparation prepareDirectVoiceStorage = nullptr,
-                         void* directVoiceStorageContext = nullptr);
+                         void* directVoiceStorageContext = nullptr,
+                         std::uint32_t generationFloor = 0);
+    std::uint32_t GenerationHighWater() const noexcept;
     ~VoiceLedger();
     VoiceLedger(const VoiceLedger&) = delete;
     VoiceLedger& operator=(const VoiceLedger&) = delete;
@@ -778,6 +780,7 @@ private:
     static void InvalidateMonitorControl(Entry& entry) noexcept;
 
     StableRowStorage<Entry> m_entries;
+    std::uint32_t m_initialGeneration = 1;
     StableRowStorage<MonitorVoiceControlReceipt> m_monitorControlReceipts;
     std::uint64_t m_monitorControlTicket = 0;
     std::uint64_t m_monitorControlUnavailable = 0;

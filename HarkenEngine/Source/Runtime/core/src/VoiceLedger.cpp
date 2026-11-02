@@ -188,7 +188,8 @@ VoiceLedger::VoiceLedger(std::uint32_t capacity,
                          std::uint32_t renderCapacity,
                          std::size_t monitorSelectionCapacity,
                          DirectVoiceStoragePreparation prepareDirectVoiceStorage,
-                         void* directVoiceStorageContext)
+                         void* directVoiceStorageContext,
+                         std::uint32_t generationFloor)
     : m_renderOwners(renderCapacity == 0
                          ? (capacity == 0 ? 1 : capacity)
                          : renderCapacity),
@@ -196,6 +197,9 @@ VoiceLedger::VoiceLedger(std::uint32_t capacity,
           ? 2 * static_cast<std::size_t>(capacity == 0 ? 1 : capacity) : monitorSelectionCapacity)),
       m_prepareDirectVoiceStorage(prepareDirectVoiceStorage),
       m_directVoiceStorageContext(directVoiceStorageContext) {
+    if (generationFloor >= kMaxGeneration)
+        throw std::invalid_argument("voice handle generation exhausted");
+    m_initialGeneration = generationFloor + 1;
     const auto logicalCapacity = capacity == 0 ? 1 : capacity;
     if (!m_monitorControlReceipts.Reserve(logicalCapacity) || !m_entries.Reserve(logicalCapacity))
         throw std::bad_alloc();
@@ -207,6 +211,13 @@ VoiceLedger::~VoiceLedger() {
     // does not fabricate a VoiceEnd or a physical completion fence.
     for (std::uint32_t i = 0; i < m_entries.ConstructedCount(); ++i)
         assert(m_entries[i].originalCompletion.externalCount == 0);
+}
+
+std::uint32_t VoiceLedger::GenerationHighWater() const noexcept {
+    auto maximum = m_initialGeneration - 1;
+    for (std::uint32_t i = 0; i < m_entries.ConstructedCount(); ++i)
+        maximum = std::max(maximum, m_entries[i].generation);
+    return maximum;
 }
 
 bool VoiceLedger::PrepareBacking(std::uint32_t count, BackingPreparation* out) noexcept {
@@ -232,7 +243,9 @@ std::uint32_t VoiceLedger::FindReusableSlot() noexcept {
     if (occupied == m_entries.Capacity() ||
         !m_monitorControlReceipts.ConstructThrough(occupied + 1) ||
         !m_entries.ConstructThrough(occupied + 1)) return UINT32_MAX;
-    return reusable == UINT32_MAX ? constructed : reusable;
+    const auto selected = reusable == UINT32_MAX ? constructed : reusable;
+    m_entries[selected].generation = std::max(m_entries[selected].generation, m_initialGeneration);
+    return selected;
 }
 
 bool VoiceLedger::OriginalCompletionMutationOwner::Valid() const noexcept {

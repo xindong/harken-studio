@@ -27737,9 +27737,11 @@ void CheckInitialOuterVariableControlSelectionProducer(bool outerSequence, bool 
         std::uint64_t storageGeneration = 0;
     } trace;
     harken::SelectionMemoryTableV1 reference;
-    ASSERT_TRUE(reference.Reset(harken::SelectionMemoryConfigV1{}));
     VnEmitterHandle emitter = 0;
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    harken::SelectionMemoryConfigV1 referenceConfig{};
+    referenceConfig.emitterGenerationFloor = static_cast<std::uint32_t>(emitter >> 32) - 1u;
+    ASSERT_TRUE(reference.Reset(referenceConfig));
     harken::SelectionMemoryKeyV1 innerKey{engine.variables.CurrentWorldGeneration(),
         image.containers[1].containerStableId, image.containers[1].programSemanticFingerprint,
         image.containers[1].memoryScope, static_cast<std::uint32_t>(emitter),
@@ -46343,7 +46345,7 @@ TEST(ActionFiringApi,
     checkpoint.randomSeed.callerSeed = 0xa1a2a3a4a5a6a7a8ULL;
     checkpoint.randomSeed.acceptedPostOrdinal = 17;
     checkpoint.randomSeed.emitterSlot = key.emitterSlot;
-    checkpoint.randomSeed.emitterGeneration = key.emitterGeneration;
+    checkpoint.randomSeed.emitterGeneration = 1; // First emitter incarnation in this engine.
     checkpoint.randomSeed.resetEpoch = key.resetEpoch;
     checkpoint.randomSeedValid = true;
     checkpoint.replayCurrent = true;
@@ -46655,7 +46657,7 @@ TEST(ActionFiringApi,
     checkpoint.randomSeed.callerSeed = 0x1122334455667788ULL;
     checkpoint.randomSeed.acceptedPostOrdinal = 23;
     checkpoint.randomSeed.emitterSlot = key.emitterSlot;
-    checkpoint.randomSeed.emitterGeneration = key.emitterGeneration;
+    checkpoint.randomSeed.emitterGeneration = 1; // First emitter incarnation in this engine.
     checkpoint.randomSeed.resetEpoch = key.resetEpoch;
     checkpoint.randomSeedValid = true;
     checkpoint.replayCurrent = true;

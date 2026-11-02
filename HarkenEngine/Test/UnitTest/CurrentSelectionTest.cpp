@@ -124,6 +124,39 @@ harken::SelectionPlayRequestV1 MemoryRequest(
     return request;
 }
 
+TEST(CurrentSelectionMemory, RestartIdentityOffsetPreservesRandomSequencesAndLifecycleKeys) {
+    using Status = harken::SelectionMemoryStatusV1;
+    for (auto discipline : {harken::RandomDisciplineV1::Draw,
+                            harken::RandomDisciplineV1::Rotation}) {
+        for (auto incarnation : {1u, 2u, 7u}) {
+            MemoryProgram program(harken::ContainerModeV1::Random, discipline);
+            harken::SelectionMemoryTableV1 original, restarted;
+            auto config = MemoryConfig();
+            ASSERT_TRUE(original.Reset(config));
+            config.emitterGenerationFloor = 83;
+            ASSERT_TRUE(restarted.Reset(config));
+            const auto beforeKey = MemoryKey(harken::MemoryScopeV1::Emitter, incarnation);
+            const auto afterKey = MemoryKey(harken::MemoryScopeV1::Emitter, incarnation + 83);
+            for (std::uint64_t ticket = 1; ticket <= 32; ++ticket) {
+                const auto before = original.AppendPlay(MemoryRequest(program, ticket, beforeKey));
+                const auto after = restarted.AppendPlay(MemoryRequest(program, ticket, afterKey));
+                ASSERT_EQ(Status::Ok, before.status);
+                ASSERT_EQ(Status::Ok, after.status);
+                EXPECT_EQ(original.Delta(before.delta).selectedChildOrdinal,
+                          restarted.Delta(after.delta).selectedChildOrdinal);
+                ASSERT_EQ(Status::Ok, original.CommitHead(before.delta));
+                ASSERT_EQ(Status::Ok, restarted.CommitHead(after.delta));
+            }
+            EXPECT_TRUE(restarted.Snapshot(afterKey).found);
+            EXPECT_FALSE(restarted.Snapshot(beforeKey).found);
+            EXPECT_EQ(incarnation, restarted.SeedEmitterGeneration(0, incarnation + 83));
+            EXPECT_EQ(incarnation + 1, restarted.SeedEmitterGeneration(0, incarnation + 84));
+            EXPECT_EQ(1u, restarted.SeedEmitterGeneration(config.maxEmitters - 1, 1));
+            EXPECT_EQ(0u, restarted.SeedEmitterGeneration(UINT32_MAX, 0));
+        }
+    }
+}
+
 TEST(CurrentSelection, CanonicalSeedBytesAndHashArePinned) {
     const auto input = GoldenInput();
     std::array<std::uint8_t, 300> bytes{};

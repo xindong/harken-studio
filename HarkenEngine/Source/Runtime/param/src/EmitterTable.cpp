@@ -1,18 +1,30 @@
 #include "harken/param/EmitterTable.h"
 
 #include <algorithm>
+#include <stdexcept>
 
 namespace harken {
 
-EmitterTable::EmitterTable(const EngineConfig& config)
+EmitterTable::EmitterTable(const EngineConfig& config, std::uint32_t generationFloor)
     : m_emitters(static_cast<std::size_t>(config.maxEmitters) + 1u) {
+    if (generationFloor >= UINT32_MAX - 1u)
+        throw std::invalid_argument("emitter handle generation exhausted");
     for (Emitter& emitter : m_emitters) {
+        emitter.generation = generationFloor + 1;
         emitter.locals.assign(config.emitterVariableSlots, LocalVar{});
     }
+    m_emitters.back().generation = 1;
     m_emitters.back().live = true;
     m_emitters.back().stateOnly = true;
     m_projectionStride = config.emitterVariableSlots;
     m_projectionLocals.resize(m_emitters.size() * m_projectionStride);
+}
+
+std::uint32_t EmitterTable::GenerationHighWater() const noexcept {
+    std::uint32_t maximum = 0;
+    for (std::size_t i = 0; i + 1 < m_emitters.size(); ++i)
+        maximum = std::max(maximum, m_emitters[i].generation);
+    return maximum;
 }
 
 bool EmitterTable::BeginVariableProjection() noexcept {

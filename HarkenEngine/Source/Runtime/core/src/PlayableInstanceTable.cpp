@@ -779,9 +779,18 @@ bool DelayedPlayableCancellation::Valid() const noexcept {
     return owner_ != nullptr && owner_->OwnsDelayedCancellation(*this);
 }
 
-PlayableInstanceTable::PlayableInstanceTable(std::uint32_t capacity)
+PlayableInstanceTable::PlayableInstanceTable(std::uint32_t capacity, std::uint32_t generationFloor)
 {
+    if (generationFloor >= kMaximumTaggedGeneration)
+        throw std::invalid_argument("playable handle generation exhausted");
+    m_initialGeneration = generationFloor + 1;
     if (!m_entries.Reserve(capacity)) throw std::bad_alloc{};
+}
+
+std::uint32_t PlayableInstanceTable::GenerationHighWater() const noexcept {
+    auto maximum = m_initialGeneration - 1;
+    for (const auto& entry : m_entries) maximum = std::max(maximum, entry.generation);
+    return maximum;
 }
 
 PlayableInstanceTable::~PlayableInstanceTable() {
@@ -935,6 +944,7 @@ PlayableInstanceHandle PlayableInstanceTable::Acquire(
         }
         entry.kind = kind;
         entry.lifecycle = PlayableLifecycle::Active;
+        entry.generation = std::max(entry.generation, m_initialGeneration);
         entry.preparationCommitHeld = false;
         entry.preparingCommitOwned = false;
         entry.privateLinksHeld = false;
@@ -1038,6 +1048,7 @@ bool PlayableInstanceTable::PrepareAcquireInternal(
             return false;
         }
         entry.prepared = true;
+        entry.generation = std::max(entry.generation, m_initialGeneration);
         entry.preparationCommitHeld = false;
         entry.preparingCommitOwned = true;
         entry.privateLinksHeld = false;

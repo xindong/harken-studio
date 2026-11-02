@@ -21,6 +21,23 @@
 
 namespace {
 
+TEST(Emitter, GenerationFloorPreservesPrivateDefaultAndRefusesExhaustion) {
+    harken::EngineConfig config{};
+    config.maxEmitters = 2;
+    harken::EmitterTable table(config, UINT32_MAX - 2u);
+    EXPECT_TRUE(table.IsLive(table.DefaultState()));
+    EXPECT_FALSE(table.IsPublicLive(table.DefaultState()));
+    VnEmitterHandle first = 0, second = 0;
+    ASSERT_TRUE(table.Create(&first));
+    ASSERT_TRUE(table.Create(&second));
+    EXPECT_EQ(UINT32_MAX - 1u, first >> 32);
+    EXPECT_EQ(UINT32_MAX - 1u, second >> 32);
+    ASSERT_TRUE(table.Destroy(first));
+    EXPECT_FALSE(table.Create(&first));
+    EXPECT_EQ(UINT32_MAX, table.GenerationHighWater());
+    EXPECT_THROW((harken::EmitterTable(config, UINT32_MAX - 1u)), std::invalid_argument);
+}
+
 TEST(MonitorEmitterIdentity, CaptureOffPreservesOriginAcrossDestroyAndSlotReuse) {
     harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());

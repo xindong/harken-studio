@@ -5439,8 +5439,8 @@ VnResult StartLegacyRecording(VnMonitorSessionHandle handle, uint64_t leaseGener
                                   : desc->fileByteBudget;
     owner.recorder.file.open(path, std::ios::binary | std::ios::trunc);
     if (!owner.recorder.file.is_open()) {
-        return FailAndRemoveStartFileLocked(owner.recorder,
-                                            VN_MONITOR_RECORDING_FAILED);
+        FailRecorderLocked(owner.recorder, VN_MONITOR_RECORDING_FAILED);
+        return VN_MONITOR_RECORDING_FAILED;
     }
     std::uint8_t header[kSessionFileHeaderPackedBytes];
     PackSessionFileHeader(header, 1, 1, 0, 0);
@@ -5594,7 +5594,11 @@ VnResult StartRecording(VnMonitorSessionHandle handle, uint64_t leaseGeneration,
     if (!recorder.verifier.Begin(descriptor)) return fail(VN_MONITOR_INCOMPATIBLE);
     recorder.path = path;
     recorder.file.open(path, std::ios::binary | std::ios::trunc);
-    if (!recorder.file.is_open()) return fail(VN_MONITOR_RECORDING_FAILED);
+    if (!recorder.file.is_open()) {
+        FailRecorderLocked(recorder, VN_MONITOR_RECORDING_FAILED);
+        recorder.receiver = 0;
+        return discard(VN_MONITOR_RECORDING_FAILED);
+    }
     std::uint8_t header[kSessionFileHeaderPackedBytes];
     PackSessionFileHeader(header, 1, descriptor.engine, 0, 0);
     recorder.file.write(reinterpret_cast<const char*>(header), sizeof(header));
