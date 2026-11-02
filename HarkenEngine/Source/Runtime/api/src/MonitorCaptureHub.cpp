@@ -5723,6 +5723,13 @@ void DrainRoundForTests() {
 
 void PumpRecorderForTests() { PumpRecorder(Owner()); }
 
+void ReleaseRecorderScratchForTests() {
+    auto& recorder = Owner().recorder;
+    std::lock_guard<std::mutex> lock(recorder.mutex);
+    decltype(recorder.frameBuffer){}.swap(recorder.frameBuffer);
+    decltype(recorder.packBuffer){}.swap(recorder.packBuffer);
+}
+
 VnMonitorSessionHandle RecordingReceiverForTests() {
     auto& owner = Owner();
     std::lock_guard<std::mutex> lock(owner.recorder.mutex);
