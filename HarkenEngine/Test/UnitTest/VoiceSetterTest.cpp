@@ -662,6 +662,69 @@ TEST_F(VoiceSetter, PendingAndParkedOverflowingVolumeDoesNotWriteRecords) {
     EXPECT_FLOAT_EQ(parkedOutput, parkRec.facts.outputBusVolumeDb);
 }
 
+TEST_F(VoiceSetter, PendingStagePairRefusalsPreserveAcceptedStart) {
+    auto* engine = session->Engine();
+    ASSERT_EQ(VN_OK, RegisterConstVoiceVolumeBinding(
+        engine, harkentest::ObjectId(10), harkentest::ObjectId(81), 200.0f));
+    ASSERT_EQ(VN_OK, harken::AttachBinding(*engine, harkentest::ObjectId(10),
+        harken::kTargetScopeVoice, harkentest::ObjectId(1)));
+    auto play = MakePlayDesc(harkentest::ObjectId(1), 200.0f);
+    play.reserved0 = VN_PLAY_FLAG_STAGED_INSTALL;
+    VnVoiceHandle pending = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &pending));
+    const auto resolved = engine->ledger.Classify(pending);
+    ASSERT_EQ(harken::VoiceLedger::HandleKind::Pending, resolved.kind);
+    auto& rec = engine->pendingStarts[resolved.ledgerSlot];
+    const auto commandHead = engine->commands.PublishedHead();
+    EXPECT_EQ(VN_INVALID_ARG, Vn_SetVoiceOutputVolume(pending, 400.0f, 0));
+    EXPECT_FLOAT_EQ(0.0f, rec.outputBusVolumeDb);
+    ASSERT_EQ(VN_OK, Vn_SetVoiceOutputVolume(pending, 200.0f, 0));
+    EXPECT_EQ(VN_INVALID_ARG, Vn_SetVoiceVolume(pending, 200.0f, 0));
+    EXPECT_FALSE(rec.hasVolume);
+    EXPECT_EQ(commandHead, engine->commands.PublishedHead());
+    ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(pending, -600.0f, 0));
+    ASSERT_EQ(VN_OK, Vn_CommitVoiceStart(pending));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    Pump(2);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(harken::VoiceLedger::HandleKind::Live,
+              engine->ledger.Classify(pending).kind);
+}
+
+TEST_F(VoiceSetter, ParkedStagePairRefusalsPreserveReturn) {
+    session.reset();
+    auto config = MakeNullConfig(1, kBlockFrames, kSampleRate);
+    config.maxParkedVoices = 1;
+    config.audibilityParkEnabled = 1;
+    config.parkThresholdDb = -40.0f;
+    session = std::make_unique<EngineSession>(config);
+    ASSERT_EQ(VN_OK, session->InitResult());
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
+    auto quiet = MakePlayDesc(harkentest::ObjectId(1), -80.0f);
+    quiet.loopCount = 0;
+    VnVoiceHandle parked = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&quiet, &parked));
+    auto* engine = session->Engine();
+    const auto resolved = engine->ledger.Classify(parked);
+    ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked, resolved.kind);
+    auto& rec = engine->parkRecords[resolved.ledgerSlot];
+    ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(parked, 480.0f, 0));
+    EXPECT_EQ(VN_INVALID_ARG, Vn_SetVoiceOutputVolume(parked, 400.0f, 0));
+    EXPECT_FLOAT_EQ(0.0f, rec.facts.outputBusVolumeDb);
+    ASSERT_EQ(VN_OK, Vn_SetVoiceOutputVolume(parked, 200.0f, 0));
+    const auto frozen = rec.frozenNonSpatialDb;
+    EXPECT_EQ(VN_INVALID_ARG, Vn_SetVoiceVolume(parked, 680.0f, 0));
+    EXPECT_FLOAT_EQ(frozen, rec.frozenNonSpatialDb);
+    for (const auto& value : rec.apiDirect)
+        if (value.targetId == harken::kTargetVoiceVolume) EXPECT_FLOAT_EQ(480.0f, value.value);
+    ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(parked, 80.0f, 0));
+    ASSERT_EQ(VN_OK, Vn_SetVoiceOutputVolume(parked, 0.0f, 0));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(harken::VoiceLedger::HandleKind::Live,
+              engine->ledger.Classify(parked).kind);
+    Pump(1);
+}
+
 TEST_F(VoiceSetter, InitialOverflowingVolumeRefusesStart) {
     session.reset();
     VnConfig config = MakeNullConfig(4, kBlockFrames, kSampleRate);

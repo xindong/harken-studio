@@ -178,6 +178,19 @@ TEST(MediaContentRevision, StreamCanonicalBytesHaveStableGolden) {
     ASSERT_TRUE(harken::ComputeMediaStreamContentRevisionV1(
         header, checksums, &revision));
     EXPECT_EQ(0x2c21bdf8be9e69bfull, revision);
+
+    auto invalid = header;
+    for (const auto loop : {harken::PcmLoopRegion{128, 0},
+                            harken::PcmLoopRegion{512, 128},
+                            harken::PcmLoopRegion{128, 128},
+                            harken::PcmLoopRegion{0, 1001}}) {
+        invalid.loopStartFrame = loop.startFrame;
+        invalid.loopEndFrame = loop.endFrame;
+        auto untouched = revision;
+        EXPECT_FALSE(harken::ComputeMediaStreamContentRevisionV1(
+            invalid, checksums, &untouched));
+        EXPECT_EQ(revision, untouched);
+    }
 }
 
 TEST(PCMRegistry, LoopRegionParticipatesInContentRevisionAndReplacement) {
