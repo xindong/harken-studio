@@ -125,7 +125,18 @@ private slots:
         QCOMPARE(observation.status, "Integration Package metadata needs repair");
         QVERIFY(observation.canChangeSdk);
         QVERIFY(!observation.canMoveSdk);
-        QVERIFY(!observation.canRemoveSdk);
+        QVERIFY(observation.canRemoveSdk);
+        auto removal = request();
+        removal.removeIntegration = true;
+        removal.checkOnly = true;
+        removal.removalBackupPath = dir->filePath("RemovalBackup");
+        const auto removalPlan = VNH::HubUnityIntegrationService::run(removal);
+        QVERIFY(removalPlan.integrationFound && removalPlan.requiresConfirmation);
+        QVERIFY(!removalPlan.planHash.isEmpty());
+        for (const auto& step : removalPlan.steps)
+            QVERIFY2(step.status != VNH::UnityIntegrationStepStatus::Failed, qPrintable(step.cause));
+        QVERIFY(QFileInfo::exists(installed + "/Custom.txt"));
+        QVERIFY(!QFileInfo::exists(removal.removalBackupPath));
         auto check = request();
         check.verifyInstalledOnly = true;
         QVERIFY(!VNH::HubUnityIntegrationService::run(check).success);

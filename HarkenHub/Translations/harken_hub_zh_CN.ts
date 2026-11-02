@@ -160,6 +160,22 @@
 <context>
     <name>HubReleaseNotes</name>
     <message>
+        <source>Restore the current Unity Integration Package from verified official files, with a change preview and permanent safety backup.</source>
+        <translation>新增还原当前 Unity 集成包功能：从经过验证的官方文件恢复，操作前预览差异并建立永久安全备份。</translation>
+    </message>
+    <message>
+        <source>Preserve project-specific files when uninstalling the Unity Integration Package and allow reinstallation without manually clearing the remaining folder.</source>
+        <translation>卸载 Unity 集成包时保留工程自有文件，支持直接重新安装，无需手动清空保留目录。</translation>
+    </message>
+    <message>
+        <source>Report files requiring P4 checkout or unlocking, preserve existing read-only protection, and recover interrupted uninstallation or restoration.</source>
+        <translation>明确提示需要 P4 签出或解锁的文件，保留原有只读保护，并支持恢复中断的卸载或还原操作。</translation>
+    </message>
+    <message>
+        <source>Verify local restoration sources against signed official file manifests and avoid downloading the complete release when supported.</source>
+        <translation>通过签名绑定的官方文件清单核验本地还原来源，支持时无需下载完整发布包。</translation>
+    </message>
+    <message>
         <source>View separate Studio and Unity Integration Package changelogs from the version menu or server list, and copy either link from the server list.</source>
         <translation>&#x53EF;&#x4ECE;&#x7248;&#x672C;&#x83DC;&#x5355;&#x6216;&#x670D;&#x52A1;&#x5668;&#x5217;&#x8868;&#x5206;&#x522B;&#x67E5;&#x770B; Studio&#x3001;Unity &#x96C6;&#x6210;&#x5305;&#x7684;&#x66F4;&#x65B0;&#x65E5;&#x5FD7;&#xFF0C;&#x5E76;&#x4ECE;&#x670D;&#x52A1;&#x5668;&#x5217;&#x8868;&#x590D;&#x5236;&#x5BF9;&#x5E94;&#x7F51;&#x9875;&#x94FE;&#x63A5;&#x3002;</translation>
     </message>
@@ -5255,5 +5271,360 @@ Integration Package installation location:
     <message><source>Files added</source><translation>已新增文件</translation></message>
     <message><source>Files updated</source><translation>已更新文件</translation></message>
     <message><source>Files removed</source><translation>已移除文件</translation></message>
+    <message><source>An unfinished Integration Package removal must be completed before continuing. Use Uninstall Integration Package to retry.</source><translation>集成包卸载尚未完成。请点击“继续卸载集成包”完成卸载后再进行其他操作。</translation></message>
+    <message><source>The unfinished removal record is invalid or its backup is unavailable. No files were changed.</source><translation>未完成的卸载记录无效，或其备份不可用。未修改任何文件。</translation></message>
+    <message><source>The Integration Package is removed. Remaining project files are preserved and can be used with a new installation.</source><translation>集成包已卸载，其余工程文件保留在原位，可直接检查并重新安装集成包。</translation></message>
+    <message><source>Restore this installation's ownership record from its own backup before removing files.</source><translation>请从此次安装自身的备份中恢复文件归属记录，再卸载文件。</translation></message>
+    <message><source>Missing files will be recorded in the backup and do not prevent removal:</source><translation>以下缺失文件会记录在备份中，不影响卸载：</translation></message>
+    <message><source>The backup preserves the current files, including any damage. Use a complete trusted Integration Package source to install again.</source><translation>备份保留当前文件，包括已损坏的内容。重新安装时，请选择完整且可信的集成包来源。</translation></message>
+    <message><source>Integration Package removal is unfinished. The verified backup and removal record have been kept.</source><translation>集成包卸载尚未完成，已保留核验通过的备份和卸载记录。</translation></message>
+    <message><source>Integration Package removal stopped before changing project files.</source><translation>集成包卸载已停止，尚未修改工程文件。</translation></message>
+    <message><source>Resolve the reported file access or content changes, then use Uninstall Integration Package to retry.</source><translation>请处理所列文件的访问问题或内容变化，再点击卸载按钮继续。</translation></message>
+    <message><source>Choose a new backup directory outside the Unity project.</source><translation>请选择 Unity 工程之外尚不存在的备份目录。</translation></message>
+    <message><source>Backup verification failed. No project files were changed.</source><translation>备份核验失败，未修改任何工程文件。</translation></message>
+    <message><source>The safety backup is verified. Removing the approved files.</source><translation>安全备份已通过核验，正在移除已确认的文件。</translation></message>
+    <message><source>A file changed after backup and was preserved:</source><translation>以下文件在备份后发生变化，已保留，未删除：</translation></message>
+    <message><source>Cannot remove file:</source><translation>无法移除文件：</translation></message>
+    <message><source>The installation directory changed during removal. Its remaining files were preserved.</source><translation>安装目录在卸载期间发生变化，已保留其中的剩余文件。</translation></message>
+    <message><source>The removal record could not be cleared. Retry Uninstall Integration Package to finish.</source><translation>无法清除卸载记录。请再次点击卸载按钮完成收尾。</translation></message>
+    <message><source>Existing files are outside Integration Package ownership. Files absent from the selected source will be preserved.</source><translation>目录中有不属于集成包管理范围的文件；所选来源未包含的文件将保留原位。</translation></message>
+    <message><source>Files also present in the selected source will become managed Integration Package files. Approval is required, and a permanent backup of the existing files will be created first.</source><translation>与所选来源同名的文件将纳入集成包管理。确认后，将先永久备份原文件，再执行安装。</translation></message>
+    <message><source>Could not preserve project directories. No project files were changed.</source><translation>无法保留工程目录，未修改任何工程文件。</translation></message>
+    <message><source>Existing project files could not be backed up. No project files were changed.</source><translation>无法备份现有工程文件，未修改任何工程文件。</translation></message>
+    <message><source>A permanent backup of the existing project files was created before installation:</source><translation>安装前已为现有工程文件创建永久备份：</translation></message>
+    <message><source>Integration Package removal unfinished</source><translation>集成包卸载未完成</translation></message>
+    <message><source>No Integration Package identified; existing files need review</source><translation>未识别到集成包；现有文件需要确认</translation></message>
+    <message><source>Select a complete Integration Package source to review installation. Existing files will be preserved; conflicting files require approval and a backup.</source><translation>请选择完整的集成包来源并检查安装计划。现有文件将保留，同名冲突需要确认并备份。</translation></message>
+    <message><source>Integration Package removed; project files preserved</source><translation>集成包已卸载；工程文件已保留</translation></message>
+    <message><source>Use Change Integration Package with a complete source to repair it, or Uninstall Integration Package to back up and remove the recorded files. Repair the package metadata before moving it.</source><translation>可选择完整来源更换集成包以修复，也可卸载集成包，备份并移除有归属记录的文件。迁移前需先修复包描述。</translation></message>
+    <message><source>Resume Integration Package Removal...</source><translation>继续卸载集成包...</translation></message>
+    <message><source>The safety backup was created, but removal stopped before changing project files. Backup: %1</source><translation>已创建安全备份，但卸载在修改工程文件前停止。备份：%1</translation></message>
+    <message><source>Some files required for this Integration Package operation cannot be changed.</source><translation>此次集成包操作需要修改的部分文件无法修改。</translation></message>
+    <message>
+        <source>Restore Current Version...</source>
+        <translation>还原当前版本…</translation>
+    </message>
+    <message>
+        <source>Restore Current Version</source>
+        <translation>还原当前版本</translation>
+    </message>
+    <message>
+        <source>Recover Restoration...</source>
+        <translation>恢复未完成的还原…</translation>
+    </message>
+    <message>
+        <source>Recover Restoration</source>
+        <translation>恢复未完成的还原</translation>
+    </message>
+    <message>
+        <source>Restore current Integration Package</source>
+        <translation>还原当前集成包</translation>
+    </message>
+    <message>
+        <source>Verify official Integration Package source</source>
+        <translation>核验官方集成包来源</translation>
+    </message>
+    <message>
+        <source>Restoration unfinished</source>
+        <translation>还原未完成</translation>
+    </message>
+    <message>
+        <source>An unfinished Integration Package restoration must be recovered before continuing.</source>
+        <translation>存在未完成的集成包还原，请先恢复该操作。</translation>
+    </message>
+    <message>
+        <source>Use Recover Restoration to reconcile the saved operation and preserve the safety backup.</source>
+        <translation>请使用“恢复未完成的还原”处理已保存的操作，并保留安全备份。</translation>
+    </message>
+    <message>
+        <source>The restoration record cannot be accessed safely.</source>
+        <translation>无法安全访问还原记录。</translation>
+    </message>
+    <message>
+        <source>The unfinished restoration record is missing or invalid.</source>
+        <translation>未完成的还原记录缺失或无效。</translation>
+    </message>
+    <message>
+        <source>Recover the unfinished Integration Package restoration before continuing.</source>
+        <translation>请先恢复未完成的集成包还原，再继续操作。</translation>
+    </message>
+    <message>
+        <source>The Integration Package cannot be restored safely.</source>
+        <translation>当前无法安全还原集成包。</translation>
+    </message>
+    <message>
+        <source>The restoration record or safety backup is inconsistent. No files were changed.</source>
+        <translation>还原记录与安全备份不一致，未修改文件。</translation>
+    </message>
+    <message>
+        <source>The safety backup failed verification. No files were changed.</source>
+        <translation>安全备份未通过核验，未修改文件。</translation>
+    </message>
+    <message>
+        <source>The interrupted restoration could not be inspected.</source>
+        <translation>无法检查中断的还原操作。</translation>
+    </message>
+    <message>
+        <source>Files changed after the restoration stopped. Preserve the listed folders and resolve the conflict before recovery.</source>
+        <translation>还原中断后文件发生了变化。请保留所列文件夹，处理冲突后再恢复操作。</translation>
+    </message>
+    <message>
+        <source>The interrupted restoration is ready to recover. Existing files will be preserved.</source>
+        <translation>已完成中断现场检查，可以恢复操作。现有文件将予以保留。</translation>
+    </message>
+    <message>
+        <source>Review and confirm the restoration recovery plan.</source>
+        <translation>请检查并确认还原恢复方案。</translation>
+    </message>
+    <message>
+        <source>The original Integration Package could not be put back. Its backup is retained.</source>
+        <translation>无法将原集成包放回安装位置，备份已保留。</translation>
+    </message>
+    <message>
+        <source>Recovery finished, but the restoration record could not be cleared.</source>
+        <translation>恢复已完成，但无法清除还原记录。</translation>
+    </message>
+    <message>
+        <source>The restored Integration Package was verified. The original files remain backed up.</source>
+        <translation>已核验还原后的集成包，原文件备份已保留。</translation>
+    </message>
+    <message>
+        <source>The original Integration Package is in place. Run Restore Current Version again to prepare a new plan.</source>
+        <translation>原集成包已回到安装位置。请再次使用“还原当前版本”生成新的还原方案。</translation>
+    </message>
+    <message>
+        <source>The installed version or verified official source could not be established. No files were changed.</source>
+        <translation>无法确定已安装版本或已核验的官方来源，未修改文件。</translation>
+    </message>
+    <message>
+        <source>The selected release is a different build from the installed Integration Package.</source>
+        <translation>所选发布包与已安装集成包的构建不同。</translation>
+    </message>
+    <message>
+        <source>The Integration Package files could not be inspected.</source>
+        <translation>无法检查集成包文件。</translation>
+    </message>
+    <message>
+        <source>The official file inventory is invalid.</source>
+        <translation>官方文件清单无效。</translation>
+    </message>
+    <message>
+        <source>The official source changed after verification. No project files were changed.</source>
+        <translation>官方来源在核验后发生了变化，未修改项目文件。</translation>
+    </message>
+    <message>
+        <source>The installation record does not identify this official package as the original version. No files were changed.</source>
+        <translation>安装记录无法证明该官方包就是原安装版本，未修改文件。</translation>
+    </message>
+    <message>
+        <source>Could not read Unity metadata. No project files were changed.</source>
+        <translation>无法读取 Unity 元数据，未修改项目文件。</translation>
+    </message>
+    <message>
+        <source>All managed files already match the official package. No files were changed.</source>
+        <translation>所有受管文件均已与官方包一致，未修改文件。</translation>
+    </message>
+    <message>
+        <source>The safety backup location is invalid or already exists.</source>
+        <translation>安全备份位置无效或已存在。</translation>
+    </message>
+    <message>
+        <source>These unowned files conflict with official package paths and will be backed up before replacement:</source>
+        <translation>以下非受管文件与官方包路径重名，将在备份后被替换：</translation>
+    </message>
+    <message>
+        <source>Checkout or unlock the listed files before restoration. No files were changed.</source>
+        <translation>请先签出或解除所列文件的锁定，再执行还原。未修改文件。</translation>
+    </message>
+    <message>
+        <source>Review the official file restoration plan. A permanent backup will be created first.</source>
+        <translation>请检查按官方文件生成的还原方案。执行前将创建永久备份。</translation>
+    </message>
+    <message>
+        <source>The files or restoration plan changed. Review and confirm again.</source>
+        <translation>文件或还原方案发生了变化，请重新检查并确认。</translation>
+    </message>
+    <message>
+        <source>Could not create restoration staging and backup folders.</source>
+        <translation>无法创建还原暂存目录和备份目录。</translation>
+    </message>
+    <message>
+        <source>Could not preserve existing directories. No files were changed.</source>
+        <translation>无法保留现有目录，未修改文件。</translation>
+    </message>
+    <message>
+        <source>Could not preserve existing file permissions. No project files were changed.</source>
+        <translation>无法保留原有文件权限。工程文件未改动。</translation>
+    </message>
+    <message>
+        <source>Could not stage or back up the restoration. No project files were changed.</source>
+        <translation>无法完成还原暂存或备份，未修改项目文件。</translation>
+    </message>
+    <message>
+        <source>Could not back up Unity metadata. No project files were changed.</source>
+        <translation>无法备份 Unity 元数据，未修改项目文件。</translation>
+    </message>
+    <message>
+        <source>Files changed while preparing the backup. No project files were changed.</source>
+        <translation>准备备份时文件发生了变化，未修改项目文件。</translation>
+    </message>
+    <message>
+        <source>Staged files do not match the restoration plan. No project files were changed.</source>
+        <translation>暂存文件与还原方案不一致，未修改项目文件。</translation>
+    </message>
+    <message>
+        <source>Could not save the restoration recovery record. No project files were changed.</source>
+        <translation>无法保存还原恢复记录，未修改项目文件。</translation>
+    </message>
+    <message>
+        <source>Restoration stopped before activation. Use Recover Restoration to reconcile the saved operation.</source>
+        <translation>还原在启用新文件前停止。请使用“恢复未完成的还原”处理已保存的操作。</translation>
+    </message>
+    <message>
+        <source>The staged package could not be activated. All original files and recovery records were retained.</source>
+        <translation>无法启用暂存集成包，所有原文件和恢复记录均已保留。</translation>
+    </message>
+    <message>
+        <source>Restored files failed verification. Preserve the backup and use Recover Restoration.</source>
+        <translation>还原后的文件未通过核验。请保留备份，并使用“恢复未完成的还原”。</translation>
+    </message>
+    <message>
+        <source>Restoration finished, but the recovery record could not be cleared.</source>
+        <translation>还原已完成，但无法清除恢复记录。</translation>
+    </message>
+    <message>
+        <source>The current Integration Package was restored from verified official files. Custom files and safety backups were preserved.</source>
+        <translation>已使用核验通过的官方文件还原当前集成包，自定义文件和安全备份均已保留。</translation>
+    </message>
+    <message>
+        <source>A single managed Integration Package installation must be identified before restoration.</source>
+        <translation>还原前必须确定唯一的受管集成包安装位置。</translation>
+    </message>
+    <message>
+        <source>The installation record could not be read safely. Restore the record from backup before continuing.</source>
+        <translation>无法安全读取安装记录，请先从备份恢复该记录。</translation>
+    </message>
+    <message>
+        <source>The original release build could not be identified. Select the original release through Change Integration Package.</source>
+        <translation>无法确定原安装包的具体构建。请通过“更换集成包”明确选择原发布包。</translation>
+    </message>
+    <message>
+        <source>The original official package could not be verified. No project files were changed.</source>
+        <translation>无法核验原官方包，未修改项目文件。</translation>
+    </message>
+    <message>
+        <source>Review the restoration plan before continuing.</source>
+        <translation>请检查还原方案后再继续。</translation>
+    </message>
+    <message>
+        <source>Reconcile the interrupted restoration using its verified backup. Existing files and backup folders will be preserved.</source>
+        <translation>使用已核验的备份恢复中断的还原操作，现有文件和备份目录均予以保留。</translation>
+    </message>
+    <message>
+        <source>Restore files from the official package for the installed version. Local changes to these files, including managed Unity metadata, will be replaced. Custom files outside these paths will be preserved. Review any conflicting files listed below.
+
+Official build: %1
+Backup: %2
+
+Close Unity and complete any required P4 checkout before continuing.</source>
+        <translation>使用已安装版本的官方包还原文件。这些文件的本地修改（包括受管 Unity 元数据）将被替换，其他路径的自定义文件会被保留。请检查下方列出的重名冲突。
+
+官方构建：%1
+备份：%2
+
+继续前请关闭 Unity，并完成所需的 P4 签出。</translation>
+    </message>
+    <message>
+        <source>Restoration completed. The safety backup has been retained.</source>
+        <translation>还原操作已完成，安全备份已保留。</translation>
+    </message>
+    <message>
+        <source>Restoration did not complete. Review the results and preserve the listed backup folders.</source>
+        <translation>还原未完成。请检查结果，并保留所列备份目录。</translation>
+    </message>
+    <message>
+        <source>The exact release has no approved download location</source>
+        <translation>该构建没有可用的受信下载位置。</translation>
+    </message>
+    <message>
+        <source>Downloaded release content failed verification</source>
+        <translation>下载的发布内容未通过核验。</translation>
+    </message>
+    <message>
+        <source>The official Unity component identity is inconsistent</source>
+        <translation>官方 Unity 组件身份不一致。</translation>
+    </message>
+    <message>
+        <source>The official release catalog could not be requested</source>
+        <translation>无法获取官方发布目录。</translation>
+    </message>
+    <message>
+        <source>The release catalog contains conflicting packages for this build</source>
+        <translation>发布目录中该构建对应的包存在冲突。</translation>
+    </message>
+    <message>
+        <source>The exact installed build is not available in the official release catalog. No newer build was selected.</source>
+        <translation>官方发布目录中找不到已安装的具体构建，未选择任何更新版本。</translation>
+    </message>
+    <message>
+        <source>The official release does not match the requested build</source>
+        <translation>官方发布包与请求的构建不一致。</translation>
+    </message>
+    <message>
+        <source>This release is already being prepared</source>
+        <translation>另一个操作正在准备此发布包。</translation>
+    </message>
+    <message>
+        <source>Cannot read the verified package file manifest</source>
+        <translation>无法读取已核验的包文件清单。</translation>
+    </message>
+    <message>
+        <source>Package file manifest changed after verification</source>
+        <translation>包文件清单在核验后发生了变化。</translation>
+    </message>
+    <message>
+        <source>The release does not identify the installed Unity Integration Package version</source>
+        <translation>该发布包无法确定已安装 Unity 集成包的版本。</translation>
+    </message>
+    <message>
+        <source>Cannot create a verified Integration Package staging directory</source>
+        <translation>无法创建集成包核验暂存目录。</translation>
+    </message>
+    <message>
+        <source>The release archive and signed file manifest disagree</source>
+        <translation>发布压缩包与签名文件清单不一致。</translation>
+    </message>
+    <message>
+        <source>Package file manifest is invalid or does not match the release</source>
+        <translation>包文件清单无效或与发布身份不匹配。</translation>
+    </message>
+    <message>
+        <source>Package file manifest has an invalid Unity component</source>
+        <translation>包文件清单中的 Unity 组件信息无效。</translation>
+    </message>
+    <message>
+        <source>Manifest packageManifest is invalid</source>
+        <translation>签名中的独立文件清单声明无效。</translation>
+    </message>
+    <message>
+        <source>Download exceeds the signed size limit</source>
+        <translation>下载内容超出签名声明的长度上限。</translation>
+    </message>
+    <message>
+        <source>Conflicting Project Files</source>
+        <translation>项目文件重名冲突</translation>
+    </message>
+    <message>
+        <source>These files are outside the installation record but occupy official package paths. Back them up and replace them during this restoration?</source>
+        <translation>以下文件不在安装记录中，但与官方包路径重名。是否在本次还原时先备份，再替换这些文件？</translation>
+    </message>
+    <message>
+        <source>Back Up and Replace</source>
+        <translation>备份并替换</translation>
+    </message>
+    <message>
+        <source>Conflicting unowned files require separate approval before restoration.</source>
+        <translation>非受管文件存在重名冲突，还原前需要单独确认。</translation>
+    </message>
 </context>
 </TS>

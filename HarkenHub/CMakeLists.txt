@@ -84,6 +84,7 @@ set(HARKEN_HUB_SOURCES
     Source/Download/SourceProbe.cpp
     Source/Download/DownloadLease.cpp
     Source/Packaging/PackageReader.cpp
+    Source/Packaging/PackageInventory.cpp
     Source/Packaging/PackageVerifier.cpp
     Source/Security/BinaryTrustPolicy.cpp
     Source/Security/ManifestVerifier.cpp
@@ -124,6 +125,7 @@ set(HARKEN_HUB_SOURCES
     Source/Integrations/EngineTargetProbe.cpp
     Source/Integrations/ProjectIntegrationExecutor.cpp
     Source/Integrations/HubUnityIntegrationService.cpp
+    Source/Integrations/OfficialUnitySource.cpp
     Source/Integrations/Unity/UnityInstallation.cpp
     Source/Integrations/Unity/UnityInstallation.h
     Source/Integrations/Unity/UnityIntegrationService.cpp

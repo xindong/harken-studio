@@ -58,6 +58,14 @@ VNX::UnityIntegrationService::Result verifyInstalled(
     projectStep.artifacts << result.unityProjectPath;
     auto& inspection = result.steps[1];
     inspection.status = StepStatus::Failed;
+    if (VNX::UnityInstallation::hasPendingRestore(result.unityProjectPath)) {
+        inspection.summary = QStringLiteral("An unfinished Integration Package restoration must be recovered before continuing.");
+        return finish();
+    }
+    if (VNX::UnityInstallation::hasPendingRemoval(result.unityProjectPath)) {
+        inspection.summary = QStringLiteral("An unfinished Integration Package removal must be completed before continuing. Use Uninstall Integration Package to retry.");
+        return finish();
+    }
     if (VNX::UnityInstallation::hasPendingMigration(result.unityProjectPath)) {
         inspection.summary = QStringLiteral("An unfinished Integration Package migration must be recovered before continuing.");
         return finish();
@@ -76,6 +84,14 @@ VNX::UnityIntegrationService::Result verifyInstalled(
         return finish();
     }
     if (discovery.installations.isEmpty()) {
+        if (!discovery.preservedInstallations.isEmpty() && discovery.sdkReferences.isEmpty()) {
+            inspection.status = StepStatus::Succeeded;
+            inspection.summary = QStringLiteral("The Integration Package is removed. Remaining project files are preserved and can be used with a new installation.");
+            for (const auto& retained : discovery.preservedInstallations) inspection.artifacts << retained.path;
+            result.steps[2].status = StepStatus::Succeeded;
+            result.steps[2].summary = QStringLiteral("No installed Unity Integration Package exists to verify.");
+            return finish();
+        }
         inspection.summary = discovery.sdkReferences.isEmpty()
             ? QStringLiteral("No Harken Unity Integration Package is installed in this project.")
             : QStringLiteral("Integration Package references could not be verified.");
@@ -653,6 +669,13 @@ UnityIntegrationResult HubUnityIntegrationService::run(
     studioRequest.checkOnly = request.checkOnly;
     studioRequest.confirmTargetChanges = request.confirmTargetChanges;
     studioRequest.approvedPlanHash = request.approvedPlanHash;
+    studioRequest.preserveUnownedTarget = request.preserveUnownedTarget;
+    studioRequest.restoreIntegration = request.restoreIntegration;
+    studioRequest.confirmUnownedConflicts = request.confirmUnownedConflicts;
+    studioRequest.recoverRestore = request.recoverRestore;
+    studioRequest.officialRelease = request.officialRelease;
+    studioRequest.officialFileHashes = request.officialFileHashes;
+    studioRequest.restorationBackupPath = request.restorationBackupPath;
     studioRequest.removeIntegration = request.removeIntegration;
     studioRequest.confirmRemoval = request.confirmRemoval;
     studioRequest.removalBackupPath = request.removalBackupPath;
@@ -677,6 +700,7 @@ UnityIntegrationResult HubUnityIntegrationService::run(
     result.changesDetected = source.changesDetected;
     result.planHash = source.planHash;
     result.modifiedFiles = source.modifiedFiles;
+    result.conflictingFiles = source.conflictingFiles;
     result.lineEndingFiles = source.lineEndingFiles;
     result.encodingFiles = source.encodingFiles;
     result.missingFiles = source.missingFiles;
@@ -691,6 +715,7 @@ UnityIntegrationResult HubUnityIntegrationService::run(
     result.sdkSourcePath = source.sdkSourcePath;
     result.sdkInstallPath = source.sdkInstallPath;
     result.removalBackupPath = source.removalBackupPath;
+    result.restorationBackupPath = source.restorationBackupPath;
     result.jsonReportPath = source.jsonReportPath;
     result.textReportPath = source.textReportPath;
     result.sdkFilesCopied = source.sdkFilesCopied;

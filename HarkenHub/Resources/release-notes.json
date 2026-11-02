@@ -7,6 +7,32 @@
   },
   "releases": [
     {
+      "version": "0.2.3",
+      "date": "2026-11-02",
+      "pullRequests": [218],
+      "contributors": [
+        "liuxin2-sys"
+      ],
+      "changes": [
+        {
+          "category": "added",
+          "text": "Restore the current Unity Integration Package from verified official files, with a change preview and permanent safety backup."
+        },
+        {
+          "category": "improved",
+          "text": "Preserve project-specific files when uninstalling the Unity Integration Package and allow reinstallation without manually clearing the remaining folder."
+        },
+        {
+          "category": "improved",
+          "text": "Report files requiring P4 checkout or unlocking, preserve existing read-only protection, and recover interrupted uninstallation or restoration."
+        },
+        {
+          "category": "improved",
+          "text": "Verify local restoration sources against signed official file manifests and avoid downloading the complete release when supported."
+        }
+      ]
+    },
+    {
       "version": "0.2.2",
       "date": "2026-10-29",
       "pullRequests": [

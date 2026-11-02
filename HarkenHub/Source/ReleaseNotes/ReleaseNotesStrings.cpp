@@ -1,6 +1,10 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Restore the current Unity Integration Package from verified official files, with a change preview and permanent safety backup."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Preserve project-specific files when uninstalling the Unity Integration Package and allow reinstallation without manually clearing the remaining folder."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Report files requiring P4 checkout or unlocking, preserve existing read-only protection, and recover interrupted uninstallation or restoration."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Verify local restoration sources against signed official file manifests and avoid downloading the complete release when supported."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "View separate Studio and Unity Integration Package changelogs from the version menu or server list, and copy either link from the server list."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Restore changelog links using the updated documentation manifest."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Choose whether to launch Harken Hub when the Windows installer closes, with the option checked by default."),

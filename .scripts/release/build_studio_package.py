@@ -260,6 +260,8 @@ def build_package(args: argparse.Namespace) -> dict:
     manifest_content = json.dumps(package_manifest, indent=2).encode("utf-8")
     with release_evidence.package_output(output_dir) as staging:
         staged_package = staging / package_path.name
+        staged_manifest = staging / f"{args.version}-{args.build_id}.files.json"
+        staged_manifest.write_bytes(manifest_content)
         evidence = release_evidence.prepare(
             "studio", input_dir, Path(args.build_dir).resolve(), staging,
             args.version, args.build_id, binary_identity=self_test, payload_records=file_records,
@@ -279,9 +281,10 @@ def build_package(args: argparse.Namespace) -> dict:
             )
 
         artifacts = release_evidence.finalize(
-            evidence, [staged_package] + [Path(path).resolve() for path in args.additional_artifact], input_dir)
+            evidence, [staged_package, staged_manifest] + [Path(path).resolve() for path in args.additional_artifact], input_dir)
     return {
         "package": str(package_path),
+        "packageManifest": str(output_dir / staged_manifest.name),
         "evidence": str(output_dir / evidence.name),
         "sha256": artifacts[0]["sha256"],
         "size": artifacts[0]["size"],

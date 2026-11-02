@@ -134,6 +134,7 @@ private:
     void beginSdkSelection();
     void cancelSdkSelection();
     void runUnityRemoval();
+    void runUnityRestoration();
     void runSdkRemoval();
     void runUnrealRemoval(const EngineTargetRecord& target);
     void runSdkMigration(bool recover);
@@ -226,6 +227,7 @@ private:
     QPushButton* harkenBrowseButton_ = nullptr;
     QPushButton* engineBrowseButton_ = nullptr;
     QPushButton* checkButton_ = nullptr;
+    QPushButton* restoreSdkButton_ = nullptr;
     QPushButton* sdkCheckButton_ = nullptr;
     QDialog* sdkSelectionDialog_ = nullptr;
     DialogTextView* sdkSelectionContext_ = nullptr;

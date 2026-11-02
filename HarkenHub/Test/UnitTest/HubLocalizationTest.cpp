@@ -53,6 +53,11 @@ TEST(HubLocalizationTest, CustomSdkSafetyMessagesTranslateWithoutChangingPaths)
         QStringLiteral("All Harken-managed files match Integration Package 1.2.3; 1 project-specific file(s) need review, while 12 Unity metadata and 2 optional runtime file(s) are retained normally."),
         QStringLiteral("The project-specific files are outside Harken Integration Package ownership, so the check cannot determine whether they are still needed."),
         QStringLiteral("Review only the project-specific files listed below. Unity-generated metadata requires no action."),
+        QStringLiteral("Integration Package removal is unfinished. The verified backup and removal record have been kept."),
+        QStringLiteral("The Integration Package is removed. Remaining project files are preserved and can be used with a new installation."),
+        QStringLiteral("A file changed after backup and was preserved:\n%1").arg(path),
+        QStringLiteral("Cannot remove file:\n%1").arg(path),
+        QStringLiteral("Files also present in the selected source will become managed Integration Package files. Approval is required, and a permanent backup of the existing files will be created first."),
     };
     for (const QString& message : messages)
         EXPECT_EQ(VNH::HubUnityIntegrationService::localizeText(message), message);
@@ -71,6 +76,7 @@ TEST(HubLocalizationTest, CustomSdkSafetyMessagesTranslateWithoutChangingPaths)
                               "Integration Package check failed. Review the check log for details.",
                               "Check completed. Review is recommended for the highlighted steps.",
                               "Select Game Project", "Select a Unity project", "Uninstall Integration Package...",
+                              "Resume Integration Package Removal...",
                               "Choose a directory inside this project's Plugins folder, for example Plugins/Audio/Harken.",
                               "The Integration Package cannot be placed inside another Unreal plugin. Choose a separate directory under Plugins.",
                               "Multiple Harken plugins were found. Keep one installation under Plugins and move the others outside Plugins before checking again.\n%1",

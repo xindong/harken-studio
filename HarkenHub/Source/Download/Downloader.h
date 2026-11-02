@@ -69,6 +69,7 @@ private:
     bool followRedirect(const QUrl& redirect, bool headRequest);
     void handleResponseHeader();
     void handleReadyRead();
+    bool writeReplyData();
     void handleReplyFinished();
     void finishSuccess();
     void failPermanently(const QString& error);
@@ -107,6 +108,7 @@ private:
     bool headerHandled_ = false;
     bool responseUsable_ = false;
     bool writeFailed_ = false;
+    bool sizeExceeded_ = false;
 };
 
 }

@@ -156,6 +156,23 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
             result.engineVersion = text.section(QStringLiteral("m_EditorVersion:"),
                                                 1).trimmed();
         }
+        if (VNX::UnityInstallation::hasPendingRemoval(record.canonicalRoot)) {
+            result.health = EngineTargetHealth::Incomplete;
+            result.status = hubTranslate(QStringLiteral("Integration Package removal unfinished"));
+            result.remediation = hubTranslate(QStringLiteral("Resolve the reported file access or content changes, then use Uninstall Integration Package to retry."));
+            result.canRemoveSdk = true;
+            bool pendingOk = false;
+            const auto pending = jsonObject(VNX::UnityInstallation::removalJournalPath(record.canonicalRoot), &pendingOk);
+            result.sdkInstallPath = pending.value(QStringLiteral("install_path")).toString();
+            return result;
+        }
+        if (VNX::UnityInstallation::hasPendingRestore(record.canonicalRoot)) {
+            result.health = EngineTargetHealth::Incomplete;
+            result.status = hubTranslate(QStringLiteral("Restoration unfinished"));
+            result.error = hubTranslate(QStringLiteral("An unfinished Integration Package restoration must be recovered before continuing."));
+            result.remediation = hubTranslate(QStringLiteral("Use Recover Restoration to reconcile the saved operation and preserve the safety backup."));
+            return result;
+        }
         if (VNX::UnityInstallation::hasPendingMigration(record.canonicalRoot)) {
             result.health = EngineTargetHealth::Incomplete;
             result.status = hubTranslate(QStringLiteral("Migration unfinished"));
@@ -164,7 +181,17 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
             result.canMoveSdk = true;
             return result;
         }
-        const auto discovery = VNX::UnityInstallation::discover(record.canonicalRoot);
+        auto discovery = VNX::UnityInstallation::discover(record.canonicalRoot);
+        if (discovery.installations.isEmpty()) {
+            const QString expected = root.filePath(record.sdkInstallPath.isEmpty()
+                ? VNX::UnityInstallation::defaultRelativePath() : record.sdkInstallPath);
+            for (const auto& retained : discovery.preservedInstallations) {
+                if (VNX::UnityInstallation::samePath(retained.path, expected) || discovery.preservedInstallations.size() == 1) {
+                    discovery.installations << retained;
+                    break;
+                }
+            }
+        }
         if (discovery.installations.size() == 1)
             result.sdkInstallPath = root.relativeFilePath(discovery.installations.front().path);
         if (!discovery.errors.isEmpty() || discovery.installations.size() > 1) {
@@ -190,6 +217,16 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
             result.health = EngineTargetHealth::NotInstalled;
             result.canChangeSdk = true;
             result.remediation = hubTranslate(QStringLiteral("No Integration Package is installed. Use Install Integration Package and select a complete Integration Package source. Moving and uninstalling require an existing installation."));
+            const QString candidate = record.sdkInstallPath.isEmpty()
+                ? VNX::UnityInstallation::defaultRelativePath() : record.sdkInstallPath;
+            QString path;
+            QString error;
+            if (VNX::UnityInstallation::resolveTarget(record.canonicalRoot, candidate, &path, &error)
+                && QDir(path).exists() && !QDir(path).isEmpty(QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot)) {
+                result.sdkInstallPath = candidate;
+                result.status = hubTranslate(QStringLiteral("No Integration Package identified; existing files need review"));
+                result.remediation = hubTranslate(QStringLiteral("Select a complete Integration Package source to review installation. Existing files will be preserved; conflicting files require approval and a backup."));
+            }
             return result;
         }
         const auto& installation = discovery.installations.front();
@@ -208,6 +245,14 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
             result.remediation = hubTranslate(QStringLiteral("Resolve the reported path or permission problem. Integration Package folders must be real directories in the supported project locations, without symbolic links or junctions. Check again after correcting the path."));
             return result;
         }
+        if (installation.removed) {
+            result.health = EngineTargetHealth::NotInstalled;
+            result.integrationVersion.clear();
+            result.canChangeSdk = true;
+            result.status = hubTranslate(QStringLiteral("Integration Package removed; project files preserved"));
+            result.remediation = hubTranslate(QStringLiteral("The Integration Package is removed. Remaining project files are preserved and can be used with a new installation."));
+            return result;
+        }
         if (!installation.managed) {
             result.health = EngineTargetHealth::Unmanaged;
             const bool hasRecord = QFileInfo::exists(QDir(packageRoot).filePath(QStringLiteral(".harken-integration-state.json")));
@@ -220,13 +265,14 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
         bool manifestOk = false;
         const auto manifest = jsonObject(QDir(packageRoot).filePath(QStringLiteral("harken-integration.json")), &manifestOk);
         result.canChangeSdk = true;
+        result.canRemoveSdk = discovery.sdkReferences.isEmpty();
         if (!packageOk || package.value(QStringLiteral("name")).toString() != QStringLiteral("com.harken.core")
             || !manifestOk || manifest.value(QStringLiteral("schema_version")).toInt() != 3
             || manifest.value(QStringLiteral("package_name")).toString() != QStringLiteral("com.harken.core")) {
             result.health = EngineTargetHealth::Incomplete;
             result.status = hubTranslate(QStringLiteral("Integration Package metadata needs repair"));
             result.error = hubTranslate(QStringLiteral("The installation record is available, but package.json or harken-integration.json is missing or invalid."));
-            result.remediation = hubTranslate(QStringLiteral("Use Change Integration Package with a complete Integration Package source to repair the managed files. Move and uninstall require readable package metadata, so repair it first. Existing safety checks still run before applying any change."));
+            result.remediation = hubTranslate(QStringLiteral("Use Change Integration Package with a complete source to repair it, or Uninstall Integration Package to back up and remove the recorded files. Repair the package metadata before moving it."));
             return result;
         }
         result.health = EngineTargetHealth::Managed;
@@ -326,7 +372,7 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
 EngineTargetObservation EngineTargetProbe::observe(const EngineTargetRecord& record, bool verifyContent)
 {
     auto result = observeLayout(record);
-    if (!verifyContent || result.sdkInstallPath.isEmpty()) return result;
+    if (!verifyContent || result.sdkInstallPath.isEmpty() || result.health == EngineTargetHealth::NotInstalled) return result;
     result.sdkContentState = SdkContentState::Unverified;
     if (result.health != EngineTargetHealth::Managed && !result.canChangeSdk) {
         result.sdkContentDetails = result.error;

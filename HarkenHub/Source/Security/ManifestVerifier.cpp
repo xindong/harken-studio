@@ -170,6 +170,23 @@ ManifestVerifyResult ManifestVerifier::verify(const QByteArray& envelopeJson,
         return result;
     }
 
+    if (payloadObject.contains(QStringLiteral("packageManifest"))) {
+        const QJsonObject inventory = payloadObject.value(QStringLiteral("packageManifest")).toObject();
+        auto& reference = manifest.packageManifest;
+        reference.fileName = inventory.value(QStringLiteral("fileName")).toString();
+        reference.sha256Hex = inventory.value(QStringLiteral("sha256")).toString();
+        reference.size = inventory.value(QStringLiteral("size")).toInteger(-1);
+        if (manifest.product != QStringLiteral("HarkenStudio")
+            || reference.fileName != manifest.version + QLatin1Char('-') + manifest.buildId + QStringLiteral(".files.json")
+            || reference.fileName.size() > 256
+            || !sha256Pattern.match(reference.sha256Hex).hasMatch()
+            || reference.size <= 0 || reference.size > 16 * 1024 * 1024) {
+            result.error = QStringLiteral("Manifest packageManifest is invalid");
+            return result;
+        }
+        reference.sha256Hex = reference.sha256Hex.toLower();
+    }
+
     manifest.packageSize =
         payloadObject[QStringLiteral("packageSize")].toInteger(-1);
     if (manifest.packageSize <= 0) {
