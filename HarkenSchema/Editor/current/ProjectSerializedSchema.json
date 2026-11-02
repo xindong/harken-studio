@@ -199,6 +199,9 @@
     "busPlayableOverrideRow": {
       "additionalProperties": false,
       "properties": {
+        "filter": {
+          "$ref": "#/$defs/filterOverlay"
+        },
         "loopCount": {
           "maximum": 4294967295,
           "minimum": 0,
@@ -500,6 +503,9 @@
           },
           "type": "array"
         },
+        "filter": {
+          "$ref": "#/$defs/filter"
+        },
         "makeUpGain": {
           "type": "number"
         },
@@ -519,6 +525,161 @@
           "type": "number"
         }
       },
+      "type": "object"
+    },
+    "filter": {
+      "additionalProperties": false,
+      "properties": {
+        "highPass": {
+          "$ref": "#/$defs/filterPassSection"
+        },
+        "highShelf": {
+          "$ref": "#/$defs/filterShelfSection"
+        },
+        "lowPass": {
+          "$ref": "#/$defs/filterPassSection"
+        },
+        "lowShelf": {
+          "$ref": "#/$defs/filterShelfSection"
+        }
+      },
+      "required": [
+        "highPass",
+        "highShelf",
+        "lowPass",
+        "lowShelf"
+      ],
+      "type": "object"
+    },
+    "filterOverlay": {
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "highPass": {
+          "additionalProperties": false,
+          "properties": {
+            "frequency": {
+              "maximum": 20000,
+              "minimum": 20,
+              "type": "number"
+            },
+            "q": {
+              "maximum": 10,
+              "minimum": 0.1,
+              "type": "number"
+            }
+          },
+          "type": "object",
+          "minProperties": 1
+        },
+        "highShelf": {
+          "additionalProperties": false,
+          "properties": {
+            "frequency": {
+              "maximum": 20000,
+              "minimum": 20,
+              "type": "number"
+            },
+            "gain": {
+              "maximum": 48,
+              "minimum": -48,
+              "type": "number"
+            },
+            "q": {
+              "maximum": 10,
+              "minimum": 0.1,
+              "type": "number"
+            }
+          },
+          "type": "object",
+          "minProperties": 1
+        },
+        "lowPass": {
+          "additionalProperties": false,
+          "properties": {
+            "frequency": {
+              "maximum": 20000,
+              "minimum": 20,
+              "type": "number"
+            },
+            "q": {
+              "maximum": 10,
+              "minimum": 0.1,
+              "type": "number"
+            }
+          },
+          "type": "object",
+          "minProperties": 1
+        },
+        "lowShelf": {
+          "additionalProperties": false,
+          "properties": {
+            "frequency": {
+              "maximum": 20000,
+              "minimum": 20,
+              "type": "number"
+            },
+            "gain": {
+              "maximum": 48,
+              "minimum": -48,
+              "type": "number"
+            },
+            "q": {
+              "maximum": 10,
+              "minimum": 0.1,
+              "type": "number"
+            }
+          },
+          "type": "object",
+          "minProperties": 1
+        }
+      },
+      "type": "object"
+    },
+    "filterPassSection": {
+      "additionalProperties": false,
+      "properties": {
+        "frequency": {
+          "maximum": 20000,
+          "minimum": 20,
+          "type": "number"
+        },
+        "q": {
+          "maximum": 10,
+          "minimum": 0.1,
+          "type": "number"
+        }
+      },
+      "required": [
+        "frequency",
+        "q"
+      ],
+      "type": "object"
+    },
+    "filterShelfSection": {
+      "additionalProperties": false,
+      "properties": {
+        "frequency": {
+          "maximum": 20000,
+          "minimum": 20,
+          "type": "number"
+        },
+        "gain": {
+          "maximum": 48,
+          "minimum": -48,
+          "type": "number"
+        },
+        "q": {
+          "maximum": 10,
+          "minimum": 0.1,
+          "type": "number"
+        }
+      },
+      "required": [
+        "frequency",
+        "gain",
+        "q"
+      ],
       "type": "object"
     },
     "gridAxis": {
@@ -596,6 +757,9 @@
             "type": "object"
           },
           "type": "array"
+        },
+        "filter": {
+          "$ref": "#/$defs/filter"
         },
         "makeUpGain": {
           "type": "number"
@@ -801,6 +965,9 @@
     "playableOverrideRow": {
       "additionalProperties": false,
       "properties": {
+        "filter": {
+          "$ref": "#/$defs/filterOverlay"
+        },
         "loopCount": {
           "maximum": 4294967295,
           "minimum": 0,

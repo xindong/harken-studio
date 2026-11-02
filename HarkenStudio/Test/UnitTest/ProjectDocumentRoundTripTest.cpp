@@ -330,6 +330,13 @@ TEST_F(ProjectDocumentRoundTripTest, SupportedDocumentVersionsPreserveContentThr
             document.insert(QStringLiteral("harkenDocument"), header);
             auto content = HarkenTest::projectContent(document);
             if (version < ProjectSchema::kProjectSchemaVersion) {
+                auto components = content.value(QStringLiteral("components")).toObject();
+                if (components.contains(QStringLiteral("mixnode"))) {
+                    auto mixnode = components.value(QStringLiteral("mixnode")).toObject();
+                    mixnode.remove(QStringLiteral("filter"));
+                    components.insert(QStringLiteral("mixnode"), mixnode);
+                    content.insert(QStringLiteral("components"), components);
+                }
                 if (header.value(QStringLiteral("type")) == QStringLiteral("project.root")) {
                     content.insert(QStringLiteral("paths"), QJsonObject{
                         {QStringLiteral("audioFolder"), QStringLiteral("Layers")},

@@ -276,6 +276,8 @@ bool InspectorPanelPrivate::currentContextContains(ProjectItem* item) const
 
 void InspectorPanelPrivate::wireAuthoringCommit(PropertyEditorEngine* engine)
 {
+    QObject::connect(engine, &PropertyEditorEngine::externalEditorRequested, q_ptr,
+        [this](const ExternalEditorSelection& selection) { q_ptr->requestExternalEditor(selection); });
     QObject::connect(engine, &PropertyEditorEngine::fieldGroupChanged,
                      q_ptr, &InspectorPanel::propertyChanged);
     QObject::connect(engine, &PropertyEditorEngine::fieldChanged, q_ptr,

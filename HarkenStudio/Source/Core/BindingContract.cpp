@@ -3,6 +3,7 @@
 
 #include "Components/VMixNode.h"
 #include "PlayablePropertyAuthoringV1.h"
+#include "FilterSemantics.h"
 
 #include <harken_studio_build/BindingTargets.h>
 
@@ -48,6 +49,7 @@ BindingOutputRange defaultRangeFor(BindingOutputUnit unit)
     case BindingOutputUnit::Normalized:    return {0.0f, 1.0f};
     case BindingOutputUnit::Percent:       return {0.0f, 100.0f};
     case BindingOutputUnit::Dimensionless: return {0.0f, 1.0f};
+    case BindingOutputUnit::Hertz:         return {20.0f, 20000.0f};
     case BindingOutputUnit::None:          return {};
     }
     return {};
@@ -61,6 +63,7 @@ BindingOutputRange legalRangeFor(BindingOutputUnit unit)
     case BindingOutputUnit::Normalized:    return {0.0f, 1.0f};
     case BindingOutputUnit::Percent:       return {0.0f, 100.0f};
     case BindingOutputUnit::Dimensionless: return {0.0f, 1.0f};
+    case BindingOutputUnit::Hertz:         return {20.0f, 20000.0f};
     case BindingOutputUnit::None:          return {};
     }
     return {};
@@ -164,14 +167,39 @@ BindingContract derive(uint8_t slotId, ProjectItemType hostType)
 BindingContract derive(const PropertyDescriptor& descriptor,
                        ProjectItemType hostType)
 {
-    const auto slotId = slotIdFromDescriptor(descriptor);
-    if (slotId) return derive(*slotId, hostType);
+    const auto address = addressFromDescriptor(descriptor, hostType);
+    if (address) return derive(*address);
 
     BindingContract contract;
     contract.hostClass = hostClassOf(hostType);
     if (descriptor.field == QLatin1String("spatializationMix")) {
         contract.runtimeUnimplemented = true;
     }
+    return contract;
+}
+
+BindingContract derive(const BindingAddress& address)
+{
+    const auto hostType = address.hostClass == BindingHostClass::Bus
+        ? ProjectItemType::Bus : ProjectItemType::Sound;
+    if (address.family == BindingTargetFamily::Playable)
+        return derive(address.slotId, hostType);
+    if (address.path || (address.hostClass != BindingHostClass::Voice
+                        && address.hostClass != BindingHostClass::Bus))
+        return {};
+    const auto fields = FilterSemantics::fields();
+    if (address.slotId < 1 || address.slotId > fields.size()) return {};
+    const auto& field = fields[address.slotId - 1];
+    BindingContract contract;
+    contract.hostClass = address.hostClass;
+    contract.bindRole = BindingBindRole::LiveOffset;
+    contract.runtimeUnimplemented = true;
+    contract.outputUnit = field.parameter == FilterParameter::Gain
+        ? BindingOutputUnit::Decibel : field.parameter == FilterParameter::Frequency
+        ? BindingOutputUnit::Hertz : BindingOutputUnit::Dimensionless;
+    contract.combine = BindingCombine::Add;
+    contract.legalOutputRange = {static_cast<float>(field.minimum), static_cast<float>(field.maximum)};
+    contract.defaultOutputRange = contract.legalOutputRange;
     return contract;
 }
 
@@ -185,9 +213,22 @@ BindingAddress addressOf(uint8_t slotId, ProjectItemType hostType)
     return address;
 }
 
+BindingAddress filterAddress(uint8_t slotId, ProjectItemType hostType)
+{
+    BindingAddress address;
+    address.hostClass = hostClassOf(hostType);
+    address.slotId = slotId;
+    address.family = BindingTargetFamily::Filter;
+    return address;
+}
+
 std::optional<BindingAddress> addressFromDescriptor(
     const PropertyDescriptor& descriptor, ProjectItemType hostType)
 {
+    const auto fields = FilterSemantics::fields();
+    for (size_t i = 0; i < fields.size(); ++i)
+        if (descriptor.field == QLatin1String(fields[i].field))
+            return filterAddress(static_cast<uint8_t>(i + 1), hostType);
     const auto slotId = slotIdFromDescriptor(descriptor);
     if (!slotId) return std::nullopt;
     return addressOf(*slotId, hostType);
@@ -220,6 +261,7 @@ QString outputUnitName(BindingOutputUnit unit)
     case BindingOutputUnit::Cent:          return QStringLiteral("cent");
     case BindingOutputUnit::Normalized:    return QStringLiteral("normalized");
     case BindingOutputUnit::Percent:       return QStringLiteral("%");
+    case BindingOutputUnit::Hertz:         return QStringLiteral("Hz");
     case BindingOutputUnit::Dimensionless: return {};
     case BindingOutputUnit::None:          return {};
     }
@@ -257,6 +299,7 @@ const IComponent* resolveHostComponent(const ProjectItem* item,
 
 std::optional<uint32_t> engineTargetId(const BindingAddress& address)
 {
+    if (address.family != BindingTargetFamily::Playable) return std::nullopt;
     if (address.path.has_value()) return std::nullopt;
     switch (address.hostClass) {
     case BindingHostClass::Voice:

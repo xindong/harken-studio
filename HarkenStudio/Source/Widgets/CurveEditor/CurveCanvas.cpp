@@ -41,15 +41,6 @@ namespace {
 constexpr const char* kCurveClipboardFormat = "Harken.Curve.v3";
 constexpr double kMinCurveXInterval = 0.001;
 
-double tickStep(double minimum)
-{
-    const double magnitude = std::pow(10.0, std::floor(std::log10(minimum)));
-    for (double multiple : {1.0, 2.0, 5.0, 10.0}) {
-        if (multiple * magnitude >= minimum)
-            return multiple * magnitude;
-    }
-    return 10.0 * magnitude;
-}
 
 struct ClipboardPoint
 {
@@ -1074,34 +1065,21 @@ void CurveCanvas::beginAxisBoundEdit(CurveAxisBound bound, const QRectF& labelRe
     spin->selectAll();
 }
 
+CurvePlotGeometry CurveCanvas::plotGeometry(bool useVirtualGraph) const
+{
+    return {rect(), profile_, xMin_, xMax_, ThemeManager::instance().snapshot()->domains.curve,
+        FontManager::instance().getFont(FontRole::Axis), font(),
+        useVirtualGraph ? std::optional<QRectF>{graphRect()} : std::nullopt};
+}
+
 QRectF CurveCanvas::graphRect() const
 {
-    const auto& metrics = ThemeManager::instance().snapshot()->domains.curve.metrics;
-    const int minimumLeft = axisScale() != CurveAxisScale::LinearValue
-        ? metrics.amplitudeGraphLeftInset
-        : metrics.linearGraphLeftInset;
-    const QFontMetrics fm(FontManager::instance().getFont(FontRole::Axis));
-    const int labelWidth = std::max(fm.horizontalAdvance(formatDecimal(yMin(), profile_.valueDecimals)),
-                                    fm.horizontalAdvance(formatDecimal(yMax(), profile_.valueDecimals)));
-    const qreal left = std::min<qreal>(std::max(minimumLeft, labelWidth + 12), width() * 0.4);
-    const qreal right = std::min<qreal>(metrics.graphRightInset, width() * 0.1);
-    const qreal top = std::min<qreal>(std::max(metrics.graphTopInset, fm.height() / 2 + 2), height() * 0.2);
-    const qreal bottom = std::min<qreal>(std::max(metrics.graphBottomInset, fm.height() + 8), height() * 0.3);
-    return QRectF(left, top, std::max(1.0, width() - left - right),
-                   std::max(1.0, height() - top - bottom));
+    return plotGeometry(false).graphRect();
 }
 
 QPointF CurveCanvas::pointToScreen(const CurvePointDef& point) const
 {
-    const QRectF graph = graphRect();
-    const double nx = std::clamp((static_cast<double>(point.x) - xMin_)
-                                     / (static_cast<double>(xMax_) - xMin_),
-                                 0.0, 1.0);
-    double ny = yMin() == yMax() ? 0.5
-        : curveAxisNormalizedY(axisScale(), yMin(), yMax(), point.value);
-    if (profile_.clampYToPlot) ny = std::clamp(ny, 0.0, 1.0);
-    return QPointF(graph.left() + nx * graph.width(),
-                   graph.bottom() - ny * graph.height());
+    return plotGeometry().toScreen(point.x, point.value);
 }
 
 CurvePointDef CurveCanvas::screenToPoint(const QPoint& pos) const
@@ -1111,13 +1089,8 @@ CurvePointDef CurveCanvas::screenToPoint(const QPoint& pos) const
 
 CurvePointDef CurveCanvas::screenToPoint(const QPointF& pos) const
 {
-    const QRectF graph = graphRect();
-    const double nx = std::clamp((pos.x() - graph.left()) / graph.width(), 0.0, 1.0);
-    const double ny = std::clamp((graph.bottom() - pos.y()) / graph.height(), 0.0, 1.0);
-    CurvePointDef p;
-    p.x = static_cast<float>(xMin_ + nx * (static_cast<double>(xMax_) - xMin_));
-    p.value = curveAxisValueFromNormalizedY(axisScale(), yMin(), yMax(), ny);
-    return p;
+    const auto value = plotGeometry().fromScreen(pos);
+    return {static_cast<float>(value.x()), static_cast<float>(value.y())};
 }
 
 float CurveCanvas::curveValueAtX(float x) const
@@ -1958,132 +1931,13 @@ void CurveCanvasProfile::setVariableAxis(VariableKind kind, const std::vector<Va
 
 CurveRenderData CurveCanvas::renderData() const
 {
-    const auto& style = ThemeManager::instance().snapshot()->domains.curve;
-    CurveRenderData data;
-    data.tickFont = FontManager::instance().getFont(FontRole::Axis);
-    const QFontMetrics fontMetrics(data.tickFont);
-    data.canvasRect = rect();
-    data.graphRect = graphRect();
-    data.xAxisLabel = profile_.xAxisVisible ? profile_.xAxisLabel : QString{};
-    data.yAxisLabel = profile_.yAxisLabel;
-
-    const auto& metrics = style.metrics;
+    const auto geometry = plotGeometry();
+    auto axes = geometry.renderData();
+    auto data = std::move(axes.render);
     const QRectF& graph = data.graphRect;
-    const qreal textHeight = fontMetrics.height();
-    const qreal gap = metrics.amplitudeTickLabelRightGap;
-    const qreal inset = metrics.xAxisLabelTopOffset;
-    const qreal titleHeight = QFontMetrics(font()).height();
-    data.yAxisLabelRect = QRectF(graph.left() + inset, graph.top() + inset,
-        std::max(0.0, graph.width() - inset * 2.0), titleHeight);
-    data.xAxisLabelRect = QRectF(graph.left() + inset, graph.bottom() - inset - titleHeight,
-        std::max(0.0, graph.width() - inset * 2.0), titleHeight);
-    if (!graph.contains(data.yAxisLabelRect))
-        data.yAxisLabel.clear();
-    if (!graph.contains(data.xAxisLabelRect) || data.yAxisLabelRect.intersects(data.xAxisLabelRect))
-        data.xAxisLabel.clear();
-    const CurveAxisScale scale = axisScale();
-    const bool amplitudeAxis = scale != CurveAxisScale::LinearValue;
-    const auto addTick = [&](const QRectF& rect, Qt::Alignment alignment,
-                             const QString& text, CurveAxisBound bound = CurveAxisBound::None) {
-        if (rect.width() < fontMetrics.horizontalAdvance(QStringLiteral("0"))
-            || rect.top() < 0.0 || rect.bottom() > height())
-            return;
-        for (const auto& existing : data.textTicks) {
-            if (existing.rect.adjusted(-gap / 2.0, -2.0, gap / 2.0, 2.0).intersects(rect))
-                return;
-        }
-        CurveRenderTextTick tick;
-        tick.placement = CurveRenderTextTick::Placement::Rect;
-        tick.rect = rect;
-        tick.alignment = alignment;
-        tick.text = fontMetrics.elidedText(text, Qt::ElideRight, static_cast<int>(rect.width()));
-        tick.bound = bound;
-        tick.editable = (bound == CurveAxisBound::XMax && profile_.xMaxEditable)
-            || ((bound == CurveAxisBound::YMin || bound == CurveAxisBound::YMax)
-                && profile_.yRangeEditable);
-        data.textTicks.append(tick);
-    };
-    QVector<double> yValues{yMax(), yMin()};
-    const int rows = std::clamp(static_cast<int>(std::round(graph.height()
-        / std::max(metrics.amplitudeGridTargetRowSpacing, textHeight + 8.0))),
-        amplitudeAxis ? metrics.amplitudeGridMinimumRows : 1, metrics.amplitudeGridMaximumRows);
-    const double ySpan = static_cast<double>(yMax()) - yMin();
-    const double yStep = ySpan > 0.0 ? tickStep(ySpan / rows) : 1.0;
-    const double firstY = std::ceil(yMin() / yStep) * yStep;
-    const bool mirrored = scale == CurveAxisScale::MirroredAmplitudeDb;
-    const double zeroY = mirrored ? curveAxisNormalizedY(scale, yMin(), yMax(), 0.0f) : 0.0;
-    if (mirrored) {
-        const qreal y = pointToScreen({xMin_, 0.0f}).y();
-        data.gridLines.append(QLineF(graph.left(), y, graph.right(), y));
-        yValues.append(0.0);
-    }
-    for (int i = mirrored ? -rows : 0; i <= rows; ++i) {
-        const double normalizedY = zeroY + double(i) / rows;
-        if (mirrored && (i == 0 || normalizedY <= 0.0 || normalizedY >= 1.0))
-            continue;
-        const float value = amplitudeAxis
-            ? curveAxisValueFromNormalizedY(scale, yMin(), yMax(), normalizedY)
-            : static_cast<float>(firstY + i * yStep);
-        if (value <= yMin() || value >= yMax())
-            continue;
-        const qreal y = pointToScreen({xMin_, value}).y();
-        data.gridLines.append(QLineF(graph.left(), y, graph.right(), y));
-        yValues.append(value);
-    }
-    const QStringList yLabels = formatAxisValues(yValues, profile_.valueDecimals);
-    for (int i = 0; i < yValues.size(); ++i) {
-        const qreal y = pointToScreen({xMin_, static_cast<float>(yValues[i])}).y();
-        const auto bound = i == 0 ? CurveAxisBound::YMax
-            : i == 1 ? CurveAxisBound::YMin : CurveAxisBound::None;
-        addTick(QRectF(0.0, y - textHeight / 2.0, std::max(0.0, graph.left() - gap), textHeight),
-            Qt::AlignRight | Qt::AlignVCenter, yLabels[i], bound);
-    }
-
-    const auto xTickText = [this](float x) {
-        return profile_.xTicksUseLabels
-            ? BindingSemantics::axisTickLabel(x, profile_.xTickLabels)
-            : QString::number(x, 'f', profile_.xDecimals);
-    };
-    QVector<float> xValues;
-    if (profile_.xAxisVisible) xValues = {xMin_, xMax_};
-    const qreal columnSpacing = std::max<qreal>(48.0,
-        std::max(fontMetrics.horizontalAdvance(xTickText(xMin_)),
-                  fontMetrics.horizontalAdvance(xTickText(xMax_))) + gap * 2.0);
-    const int columns = std::max(1, static_cast<int>(graph.width() / columnSpacing));
-    double xStep = tickStep((static_cast<double>(xMax_) - xMin_) / columns);
-    if (profile_.discretePreview)
-        xStep = std::max(1.0, xStep);
-    const double firstX = std::ceil(xMin_ / xStep) * xStep;
-    for (int i = 0; profile_.xAxisVisible && i <= columns; ++i) {
-        const float value = static_cast<float>(firstX + i * xStep);
-        if (value <= xMin_ || value >= xMax_)
-            continue;
-        const qreal x = pointToScreen({value, yMin()}).x();
-        data.gridLines.append(QLineF(x, graph.top(), x, graph.bottom()));
-        if (profile_.xMaxEditValue.value_or(xMax_) != xMin_)
-            xValues.append(value);
-    }
-    if (profile_.xAxisVisible && profile_.xTicksUseLabels) {
-        for (const auto& label : profile_.xTickLabels) {
-            if (label.anchor > xMin_ && label.anchor < xMax_)
-                xValues.append(static_cast<float>(label.anchor));
-        }
-    }
-    QStringList xLabels;
-    for (int i = 0; i < xValues.size(); ++i)
-        xLabels.append(xTickText(i == 1 ? profile_.xMaxEditValue.value_or(xValues[i]) : xValues[i]));
-    if (!profile_.xTicksUseLabels)
-        xLabels = compactAxisLabels(std::move(xLabels));
-    for (int i = 0; i < xValues.size(); ++i) {
-        const auto bound = i == 0 ? CurveAxisBound::XMin
-            : i == 1 ? CurveAxisBound::XMax : CurveAxisBound::None;
-        const qreal w = std::min<qreal>(fontMetrics.horizontalAdvance(xLabels[i]) + 4.0,
-            std::max(0.0, graph.width() / 2.0 - gap));
-        const qreal x = pointToScreen({xValues[i], yMin()}).x();
-        const qreal left = i == 0 ? x : i == 1 ? x - w : x - w / 2.0;
-        addTick(QRectF(left, graph.bottom() + metrics.xMaxLabelTopOffset, w, textHeight),
-            Qt::AlignCenter, xLabels[i], bound);
-    }
+    const bool amplitudeAxis = axisScale() != CurveAxisScale::LinearValue;
+    const double xStep = axes.xStep;
+    const double yStep = axes.yStep;
 
     const auto discretePath = [&](const QVector<CurvePointDef>& points,
                                   const QVector<CurveHandlePairDef>& handles) {

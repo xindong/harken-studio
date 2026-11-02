@@ -36,6 +36,36 @@ TEST(BindingSemantics, TypedLedgerRoundtripsCurveAndExtensions)
               QStringLiteral("future"));
 }
 
+TEST(BindingSemantics, AddressFamiliesRoundtripWithoutAliasing)
+{
+    const auto playable = VNX::BindingSemantics::volumeAddress();
+    const auto filter = VNX::BindingContractSemantics::filterAddress(
+        playable.slotId, VNX::ProjectItemType::Sound);
+    ASSERT_NE(playable, filter);
+    EXPECT_NE(VNX::BindingSemantics::addressKey(playable),
+              VNX::BindingSemantics::addressKey(filter));
+    VNX::BindingLedger ledger;
+    auto volume = VNX::BindingSemantics::defaultBinding(playable, guid(3));
+    volume.guid = guid(4);
+    auto frequency = VNX::BindingSemantics::defaultBinding(filter, guid(3));
+    frequency.guid = guid(5);
+    ASSERT_TRUE(ledger.upsert(volume));
+    ASSERT_TRUE(ledger.upsert(frequency));
+
+    const auto loaded = VNX::BindingLedger::fromJson(ledger.toJson());
+    ASSERT_EQ(loaded.size(), 2);
+    ASSERT_NE(loaded.findFirst(playable), nullptr);
+    ASSERT_NE(loaded.findFirst(filter), nullptr);
+    EXPECT_EQ(loaded.findFirst(playable)->guid, volume.guid);
+    EXPECT_EQ(loaded.findFirst(filter)->guid, frequency.guid);
+    EXPECT_EQ(loaded.toJson(), ledger.toJson());
+    for (float input : {0.0f, 0.5f, 1.0f})
+        EXPECT_FLOAT_EQ(VNX::BindingSemantics::contribution(
+            *loaded.findFirst(filter), VNX::VariableKind::Smooth, input, 0.0f, 1.0f), 0.0f);
+    EXPECT_EQ(VNX::BindingContractSemantics::engineTargetId(filter), std::nullopt);
+    EXPECT_NE(VNX::BindingContractSemantics::engineTargetId(playable), std::nullopt);
+}
+
 TEST(BindingSemantics, FixedAuthoringRangePreservesAbsoluteCurveValues)
 {
     const auto address = VNX::BindingSemantics::pitchAddress();
@@ -45,7 +75,7 @@ TEST(BindingSemantics, FixedAuthoringRangePreservesAbsoluteCurveValues)
     original.outputMax = 7200.0f;
     original.curve = {{0.0f, -6000.0f}, {1.0f, 6500.0f}};
     original.handles = {{0.25f, -7000.0f, 0.75f, 7000.0f}};
-    const auto contract = VNX::BindingContractSemantics::derive(address.slotId, VNX::ProjectItemType::Sound);
+    const auto contract = VNX::BindingContractSemantics::derive(address);
 
     auto loaded = VNX::ParameterBindingDef::fromJson(original.toJson());
     ASSERT_TRUE(loaded.typed);

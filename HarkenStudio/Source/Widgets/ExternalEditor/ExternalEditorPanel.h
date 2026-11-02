@@ -12,6 +12,7 @@ namespace VNX {
 class BindingFieldEditor;
 class CurveEditorWidget;
 class SourceRangeEditor;
+class FilterEditorWidget;
 
 class ExternalEditorPanel final : public QWidget
 {
@@ -39,6 +40,7 @@ signals:
     void panelFocused(int panelId);
     void pinToggled(bool pinned);
     void navigateRequested(const QUuid& guid);
+    void externalEditorRequested(const ExternalEditorSelection& selection);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -60,6 +62,7 @@ private:
     BindingFieldEditor* bindings_ = nullptr;
     CurveEditorWidget* curve_ = nullptr;
     SourceRangeEditor* source_ = nullptr;
+    FilterEditorWidget* filter_ = nullptr;
 };
 
 }

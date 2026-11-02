@@ -540,6 +540,9 @@ void MainWindow::initializeStructure(
             connect(ed, &ExternalEditorPanel::panelFocused, this, [this](int panelId) {
                 panelRegistry_->setLastFocusedPanelId(QStringLiteral("ExternalEditor"), panelId);
             });
+            connect(ed, &ExternalEditorPanel::externalEditorRequested, this,
+                [this](const ExternalEditorSelection& selection) { openExternalEditor(selection); },
+                Qt::QueuedConnection);
             connect(ed, &ExternalEditorPanel::navigateRequested, this, [this](const QUuid& guid) {
                 if (auto* item = ProjectManager::instance().findItemByGuid(guid))
                     selectionRouter_->selectItem(item, true);

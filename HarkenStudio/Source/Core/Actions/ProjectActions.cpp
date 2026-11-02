@@ -11,6 +11,7 @@
 #include "Tooling/Harkenizer/Core/ProjectPackExporter.h"
 #include "../PlayablePropertyAuthoringV1.h"
 #include "../FieldGroups.h"
+#include "../FilterAuthoring.h"
 #include "../LanguageContextService.h"
 #include "../PlatformContext.h"
 #include "../PlatformContextService.h"
@@ -839,6 +840,86 @@ ActionResult handleAudioItemProperty(ProjectManager* projectManager, ProjectItem
 
     r.authoringWriteSet = QSet<QUuid>{item->guid};
     return r;
+}
+
+bool claimsFilterItemProperty(ProjectItem* item, const QString& propertyName)
+{
+    return item->comp<VMixNode>() && FilterAuthoring::isField(propertyName);
+}
+
+ActionResult handleFilterItemProperty(ProjectManager* projectManager, ProjectItem* item,
+                                      const QString& propertyName, const QJsonObject& args,
+                                      const QObject* originator)
+{
+    if (!args.value(QStringLiteral("occurrence_kind")).toString().isEmpty())
+        return {false, {}, "UNKNOWN_PROPERTY", "Playback properties belong to the child object"};
+    const QString operation = args.value(QStringLiteral("override_operation"))
+        .toString(QStringLiteral("set_override"));
+    if (operation != QLatin1String("set_override")
+        && operation != QLatin1String("clear_override")
+        && operation != QLatin1String("clear_platform_override"))
+        return {false, {}, "INVALID_ARGS", "Unknown filter property operation"};
+    const auto plan = parsePlayableLandingPlan(args, projectManager->getTargetPlatforms());
+    if (!plan.error.isEmpty()) return {false, {}, "INVALID_ARGS", plan.error};
+    if (operation == QLatin1String("clear_platform_override")
+        && !args.contains(QStringLiteral("platform_ids")))
+        return {false, {}, "INVALID_ARGS", "clear_platform_override requires platform_ids"};
+    if (operation != QLatin1String("set_override"))
+        PropertyEditSession::cancelActiveFor(item, propertyName);
+    const auto scopes = playableLandingScopes(plan, operation);
+    if (scopes.isEmpty()) return {false, {}, "INVALID_ARGS", "Filter property landing is empty"};
+    struct Snapshot {
+        PlatformScope scope;
+        PlayablePropertyStateV1 before;
+        PlayablePropertyStateV1 after;
+    };
+    std::vector<Snapshot> snapshots;
+    for (const auto& scope : scopes) {
+        const auto before = FilterAuthoring::readProperty(*item, propertyName, scope, true);
+        if (!before) return {false, {}, "INVALID_ARGS", "Filter property target is unavailable"};
+        snapshots.push_back({scope, *before, {}});
+    }
+    for (auto& snapshot : snapshots) {
+        const bool write = operation == QLatin1String("set_override")
+            && (!snapshot.scope || plan.kind == PlayableLandingKind::Overlay);
+        const bool applied = write
+            ? FilterAuthoring::setOverride(*item, propertyName, args.value(QStringLiteral("value")), snapshot.scope)
+            : FilterAuthoring::clearOverride(*item, propertyName, snapshot.scope);
+        if (!applied) {
+            for (auto it = snapshots.rbegin(); it != snapshots.rend(); ++it)
+                FilterAuthoring::restoreProperty(*item, propertyName, it->before, it->scope);
+            return {false, {}, "INVALID_ARGS", "Filter value has an invalid type or range"};
+        }
+        snapshot.after = *FilterAuthoring::readProperty(*item, propertyName, snapshot.scope, true);
+    }
+    ActionResult result;
+    result.success = true;
+    result.data = QJsonObject{
+        {QStringLiteral("authoring_handle"), static_cast<qint64>(item->objectID)},
+        {QStringLiteral("property"), propertyName},
+        {QStringLiteral("override_operation"), operation},
+        {QStringLiteral("value"), snapshots.front().after.value},
+        {QStringLiteral("present"), snapshots.front().after.present}};
+    if (std::all_of(snapshots.begin(), snapshots.end(), [](const Snapshot& snapshot) {
+            return snapshot.before == snapshot.after;
+        })) return result;
+    item->markDirty();
+    emit projectManager->itemPropertyChanged(item, propertyName, originator);
+    const auto restore = [guid = item->guid, propertyName, snapshots](bool before) {
+        auto& manager = ProjectManager::instance();
+        auto* target = manager.findItemByGuid(guid);
+        if (!target) return;
+        for (auto it = snapshots.rbegin(); it != snapshots.rend(); ++it)
+            FilterAuthoring::restoreProperty(*target, propertyName, before ? it->before : it->after, it->scope);
+        target->markDirty();
+        emit manager.itemPropertyChanged(target, propertyName);
+    };
+    result.undoFn = [restore]() { restore(true); };
+    result.redoFn = [restore]() { restore(false); };
+    result.undoText = operation == QLatin1String("set_override")
+        ? QObject::tr("Set Property Override") : QObject::tr("Clear Property Override");
+    result.authoringWriteSet = QSet<QUuid>{item->guid};
+    return result;
 }
 
 bool claimsSoundItemProperty(ProjectItem* item, const QString& propertyName)
@@ -1818,6 +1899,7 @@ struct ItemPropertyRoute {
 
 const ItemPropertyRoute kItemPropertyRoutes[] = {
     {claimsPlayableItemProperty,      handlePlayableItemProperty},
+    {claimsFilterItemProperty,        handleFilterItemProperty},
     {claimsSoundItemProperty,       handleSoundItemProperty},
     {claimsColorItemProperty,         handleColorItemProperty},
     {claimsNotesItemProperty,         handleNotesItemProperty},
@@ -2677,7 +2759,8 @@ void registerProjectActions(ActionManager& mgr,
             if (claimsFieldGroupItemProperty(*item, propertyName))
                 return {false, {}, "FIELD_GROUP_COMMAND_REQUIRED",
                         "Use field group commands to edit Main Output, Send, or Spatial Rating"};
-            if (clearOverride && !claimsPlayableItemProperty(item, propertyName)) {
+            if (clearOverride && !claimsPlayableItemProperty(item, propertyName)
+                && !claimsFilterItemProperty(item, propertyName)) {
                 const bool busOutputVolume =
                     item->comp<VBus>() != nullptr
                     && propertyName == QStringLiteral("outputBusVolume");

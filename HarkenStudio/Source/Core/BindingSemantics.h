@@ -69,6 +69,7 @@ private:
 namespace BindingSemantics {
 
 QString slotName(uint8_t slotId);
+QString slotName(const BindingAddress& address);
 BindingAddress volumeAddress(ProjectItemType hostType = ProjectItemType::Sound);
 BindingAddress pitchAddress(ProjectItemType hostType = ProjectItemType::Sound);
 QString addressKey(const BindingAddress& address);

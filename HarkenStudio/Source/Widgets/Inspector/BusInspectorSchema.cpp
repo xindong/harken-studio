@@ -80,6 +80,7 @@ const PropertySchema& busInspectorSchema()
         const Entry entries[] = {
             { VMixNode::schema(), QLatin1String("volume") },
             { VMixNode::schema(), QLatin1String("pitch") },
+            { VMixNode::schema(), QLatin1String("filter") },
             { VBus::schema(),     QLatin1String("pan") },
             { VMixNode::schema(), QLatin1String("outputBusId") },
             { VMixNode::schema(), QLatin1String("outputBusVolume") },

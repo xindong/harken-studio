@@ -1,5 +1,6 @@
 #include <harken_studio_build/BindingTransition.h>
 #include "BindingSemantics.h"
+#include "FilterSemantics.h"
 
 #include <algorithm>
 #include <cmath>
@@ -71,22 +72,15 @@ bool validTypedBinding(const ParameterBindingDef& binding)
         && binding.curve.size() <= kCurveMaxPoints;
 }
 
-ProjectItemType hostTypeOf(BindingHostClass hostClass)
-{
-    return hostClass == BindingHostClass::Bus
-        ? ProjectItemType::Bus : ProjectItemType::Sound;
-}
-
 bool isBindableAddress(const BindingAddress& address)
 {
     return BindingContractSemantics::isBindable(
-        BindingContractSemantics::derive(address.slotId, hostTypeOf(address.hostClass)));
+        BindingContractSemantics::derive(address));
 }
 
 void normalizeTypedBinding(ParameterBindingDef& binding)
 {
-    const auto contract = BindingContractSemantics::derive(
-        binding.address.slotId, hostTypeOf(binding.address.hostClass));
+    const auto contract = BindingContractSemantics::derive(binding.address);
     if (contract.outputUnit == BindingOutputUnit::Cent) {
         const bool reversed = binding.outputMin > binding.outputMax;
         binding.outputMin = reversed ? contract.legalOutputRange.max : contract.legalOutputRange.min;
@@ -100,7 +94,9 @@ void normalizeTypedBinding(ParameterBindingDef& binding)
         });
     binding.curve.front().x = 0.0f;
     binding.curve.back().x = 1.0f;
-    float yMin = std::min(binding.outputMin, binding.outputMax);
+    float yMin = binding.address.family == BindingTargetFamily::Filter
+        ? std::min(0.0f, std::min(binding.outputMin, binding.outputMax))
+        : std::min(binding.outputMin, binding.outputMax);
     float yMax = std::max(binding.outputMin, binding.outputMax);
     if (contract.outputUnit == BindingOutputUnit::Cent) {
         for (const auto& point : binding.curve) {
@@ -161,6 +157,7 @@ ParameterBindingDef ParameterBindingDef::fromJson(const QJsonValue& value)
     binding.addressExtensions.remove(QStringLiteral("hostClass"));
     binding.addressExtensions.remove(QStringLiteral("slotId"));
     binding.addressExtensions.remove(QStringLiteral("path"));
+    binding.addressExtensions.remove(QStringLiteral("targetFamily"));
     binding.variable = variable;
     const QJsonArray range = obj.value(QStringLiteral("range")).toArray();
     const QJsonObject curve = obj.value(QStringLiteral("curve")).toObject();
@@ -369,6 +366,18 @@ QString slotName(uint8_t slotId)
     return meta ? QString::fromUtf8(meta->name) : QString();
 }
 
+QString slotName(const BindingAddress& address)
+{
+    if (address.family == BindingTargetFamily::Playable) return slotName(address.slotId);
+    const auto fields = FilterSemantics::fields();
+    if (address.slotId < 1 || address.slotId > fields.size()) return {};
+    const auto& field = fields[address.slotId - 1];
+    const std::array<const char*, 4> sections{"Low Pass", "High Pass", "Low Shelf", "High Shelf"};
+    const std::array<const char*, 3> parameters{"Frequency", "Q Value", "Gain"};
+    return QString::fromLatin1(sections[static_cast<size_t>(field.kind)])
+        + QLatin1Char(' ') + QLatin1String(parameters[static_cast<size_t>(field.parameter)]);
+}
+
 BindingAddress volumeAddress(ProjectItemType hostType)
 {
     return BindingContractSemantics::addressOf(
@@ -386,8 +395,10 @@ BindingAddress pitchAddress(ProjectItemType hostType)
 QString addressKey(const BindingAddress& address)
 {
     QString key = BindingContractSemantics::hostClassName(address.hostClass)
-        + QLatin1Char('.')
-        + QString::number(address.slotId);
+        + QLatin1Char('.');
+    if (address.family == BindingTargetFamily::Filter)
+        key += QStringLiteral("filter.");
+    key += QString::number(address.slotId);
     if (address.path)
         key += QLatin1Char('.') + QString::number(address.path->index);
     return key;
@@ -399,6 +410,8 @@ QJsonObject addressToJson(const BindingAddress& address)
     object[QStringLiteral("hostClass")] =
         BindingContractSemantics::hostClassName(address.hostClass);
     object[QStringLiteral("slotId")] = address.slotId;
+    if (address.family == BindingTargetFamily::Filter)
+        object[QStringLiteral("targetFamily")] = QStringLiteral("filter");
     if (address.path)
         object[QStringLiteral("path")] = static_cast<int>(address.path->index);
     return object;
@@ -410,16 +423,28 @@ std::optional<BindingAddress> parseAddress(const QJsonObject& object)
     if (addressObject.isEmpty()) return std::nullopt;
     const auto hostClass = BindingContractSemantics::parseHostClass(
         addressObject.value(QStringLiteral("hostClass")).toString());
+    const auto familyValue = addressObject.value(QStringLiteral("targetFamily"));
+    BindingTargetFamily family = BindingTargetFamily::Playable;
+    if (!familyValue.isUndefined()) {
+        if (familyValue == QLatin1String("filter")) family = BindingTargetFamily::Filter;
+        else if (familyValue != QLatin1String("playable")) return std::nullopt;
+    }
     const int slotId = addressObject.value(QStringLiteral("slotId")).toInt();
-    if (!hostClass || slotId < 1 || slotId > 16) return std::nullopt;
+    const int maxSlot = family == BindingTargetFamily::Filter
+        ? static_cast<int>(FilterSemantics::fields().size()) : 16;
+    if (!hostClass || slotId < 1 || slotId > maxSlot) return std::nullopt;
     BindingAddress address;
     address.hostClass = *hostClass;
     address.slotId = static_cast<uint8_t>(slotId);
+    address.family = family;
     if (addressObject.contains(QStringLiteral("path"))) {
         const int index = addressObject.value(QStringLiteral("path")).toInt(-1);
         if (index < 0) return std::nullopt;
         address.path = BindingPath{static_cast<uint32_t>(index)};
     }
+    if (family == BindingTargetFamily::Filter
+        && (address.path || (*hostClass != BindingHostClass::Voice && *hostClass != BindingHostClass::Bus)))
+        return std::nullopt;
     return address;
 }
 
@@ -430,9 +455,7 @@ QString targetUnit(const BindingContract& contract)
 
 QString targetUnit(const BindingAddress& address)
 {
-    const ProjectItemType hostType = address.hostClass == BindingHostClass::Bus
-        ? ProjectItemType::Bus : ProjectItemType::Sound;
-    return targetUnit(BindingContractSemantics::derive(address.slotId, hostType));
+    return targetUnit(BindingContractSemantics::derive(address));
 }
 
 ParameterBindingDef defaultBinding(const BindingAddress& address, const QUuid& variable)
@@ -440,7 +463,7 @@ ParameterBindingDef defaultBinding(const BindingAddress& address, const QUuid& v
     const ProjectItemType hostType = address.hostClass == BindingHostClass::Bus
         ? ProjectItemType::Bus : ProjectItemType::Sound;
     const BindingContract contract =
-        BindingContractSemantics::derive(address.slotId, hostType);
+        BindingContractSemantics::derive(address);
     ParameterBindingDef binding;
     binding.address = address;
     binding.variable = variable;
@@ -451,7 +474,7 @@ ParameterBindingDef defaultBinding(const BindingAddress& address, const QUuid& v
     if (address == volumeAddress(hostType)) {
         binding.curve = {{0.0f, 0.0f}, {1.0f, -96.0f}};
     }
-    if (address == pitchAddress(hostType))
+    if (address.family == BindingTargetFamily::Filter || address == pitchAddress(hostType))
         binding.curve = {{0.0f, 0.0f}, {1.0f, 0.0f}};
     normalizeTypedBinding(binding);
     return binding;
@@ -481,8 +504,7 @@ float contribution(const ParameterBindingDef& binding, VariableKind kind,
         : variableValue;
     const float normalized = inputMax == inputMin
         ? 0.0f : (x - inputMin) / (inputMax - inputMin);
-    const ProjectItemType hostType = hostTypeOf(binding.address.hostClass);
-    const auto contract = BindingContractSemantics::derive(binding.address.slotId, hostType);
+    const auto contract = BindingContractSemantics::derive(binding.address);
     return curveBezierValueAt(binding.curve, binding.handles, normalized,
         contract.outputUnit == BindingOutputUnit::Decibel
             ? CurveAxisScale::MirroredAmplitudeDb : CurveAxisScale::LinearValue);

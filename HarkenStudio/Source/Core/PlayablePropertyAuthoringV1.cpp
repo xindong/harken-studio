@@ -2,6 +2,7 @@
 #include "PlayablePropertyAuthoringV1.h"
 
 #include "ComponentCatalog.h"
+#include "FilterSemantics.h"
 #include "ItemTypeCatalog.h"
 #include "PlacementContext.h"
 #include "PlaybackReferenceValidation.h"
@@ -1073,7 +1074,7 @@ bool PlayablePropertyAuthoringV1::definitionFromJson(const QJsonObject& envelope
     if (!platformOverridesFromJson(
             envelope.value(QLatin1String(PlayablePropertyAuthoringV1::kPlatformOverridesJsonKey)),
             &overlays,
-            error, item.type == ProjectItem::Type::Bus))
+            error, item.type == ProjectItem::Type::Bus, true))
         return false;
 
     for (const PendingValue& value : pending) {
@@ -1170,6 +1171,7 @@ QJsonArray PlayablePropertyAuthoringV1::platformOverridesToJson(
     QJsonArray rows;
     for (const auto& row : ledger.rows) {
         QJsonObject json = occurrenceToJson(row.properties, allowFieldGroupFields);
+        if (!row.filter.isEmpty()) json.insert(QStringLiteral("filter"), row.filter);
         json[QLatin1String(kPlatformJsonKey)] = ProjectPlatformSemantics::idString(row.platformId);
         rows.append(json);
     }
@@ -1179,7 +1181,7 @@ QJsonArray PlayablePropertyAuthoringV1::platformOverridesToJson(
 bool PlayablePropertyAuthoringV1::platformOverridesFromJson(
     const QJsonValue& value,
     PlatformOverrideLedgerV1* ledger,
-    QString* error, bool allowFieldGroupFields)
+    QString* error, bool allowFieldGroupFields, bool allowFilter)
 {
     if (!ledger) return false;
     if (value.isUndefined() || value.isNull()) {
@@ -1212,9 +1214,18 @@ bool PlayablePropertyAuthoringV1::platformOverridesFromJson(
         }
         QJsonObject propertiesJson = json;
         propertiesJson.remove(QLatin1String(kPlatformJsonKey));
+        const auto filter = propertiesJson.take(QStringLiteral("filter"));
+        if (!filter.isUndefined()
+            && (!allowFilter || !filter.isObject() || filter.toObject().isEmpty()
+                || !FilterSemantics::applyOverlay(FilterState{}, filter.toObject()))) {
+            setError(error, QStringLiteral("platformOverrides filter is invalid"));
+            return false;
+        }
         auto properties = occurrenceFromJson(propertiesJson, error, allowFieldGroupFields);
         if (!properties) return false;
-        parsed.ensure(platform)->properties = std::move(*properties);
+        auto* row = parsed.ensure(platform);
+        row->properties = std::move(*properties);
+        row->filter = filter.toObject();
     }
     *ledger = std::move(parsed);
     return true;

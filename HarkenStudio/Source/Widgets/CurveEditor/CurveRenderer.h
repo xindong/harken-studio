@@ -40,6 +40,7 @@ struct CurveRenderPoint
     QPointF position;
     bool selected = false;
     bool hovered = false;
+    QColor color;
 };
 
 struct CurveRenderHandle

@@ -591,7 +591,7 @@ QString QtControlSkin::collapsibleIndicatorStyle(const QColor& color, int alpha,
 }
 
 QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool custom, int level,
-                                             bool topSeparator) const
+                                             bool topSeparator, const QColor& backgroundTint) const
 {
     const QString indicatorColor = indicator.isValid() ? indicator.name(QColor::HexArgb) : accent();
 
@@ -629,6 +629,10 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
         hoverBg  = QStringLiteral("transparent");
         pad      = "padding: 1px 8px 1px 6px;";
         minH     = 18;
+    }
+
+    if (backgroundTint.isValid()) {
+        bg = rgba(backgroundTint, level >= 2 ? 16 : 20);
     }
 
     return QString(R"(

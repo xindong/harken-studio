@@ -33,6 +33,7 @@ public:
     QString title() const { return toggleButton_->text(); }
 
     void setIndicatorColor(const QColor& color);
+    void setHeaderTintColor(const QColor& color);
 
 public slots:
     void toggle();
@@ -62,6 +63,7 @@ private:
     QParallelAnimationGroup* toggleAnimation_;
 
     QColor indicatorColor_;
+    QColor headerTintColor_;
     int animationDuration_;
     bool expanded_ = false;
     bool dynamicContent_ = false;
