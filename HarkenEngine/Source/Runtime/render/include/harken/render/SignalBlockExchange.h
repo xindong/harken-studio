@@ -3,6 +3,7 @@
 
 #include "harken/core/ChannelLayout.h"
 #include "harken/dsp/GainRamp.h"
+#include <harken/ObjectId.h>
 
 #include <algorithm>
 #include <cmath>
@@ -34,6 +35,7 @@ struct SignalConnectionInput {
     std::uint32_t source = 0;
     std::uint32_t target = 0;
     float level = 1.0f;
+    VnObjectId stableId{};
 };
 
 // Owned by a prepared relation plan. Logic prepares unpublished storage; the
@@ -204,6 +206,7 @@ public:
     void Invalidate() noexcept { AbortBlock(); }
 
 private:
+    friend class SignalRenderPlan;
     void Swap(SignalBlockExchange& other) noexcept {
         using std::swap;
         swap(m_format, other.m_format);

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 
@@ -55,6 +56,17 @@ public:
         m_mainEnvelope = m_preReference = m_postReference = 0;
         m_gain = 1;
         m_channels = 0;
+    }
+
+    // Audio-boundary adoption keeps the newly prepared parameter values.
+    void AdoptStateFrom(const DuckingReceiver& previous) noexcept {
+        assert(m_parameters.sampleRate == previous.m_parameters.sampleRate);
+        m_energy = previous.m_energy;
+        m_mainEnvelope = previous.m_mainEnvelope;
+        m_preReference = previous.m_preReference;
+        m_postReference = previous.m_postReference;
+        m_gain = previous.m_gain;
+        m_channels = previous.m_channels;
     }
 
     // References are admitted members' absolute sums at pre/post Out Vol,

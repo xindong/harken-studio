@@ -578,6 +578,10 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
                                 std::uint32_t connectFrom,
                                 std::uint32_t connectTo, float connectLevelDb,
                                 std::uint64_t acceptedGraphRevision) {
+    const TopologyPlanView plan = m_plans.View(planIndex);
+    auto* previousSignals = InstalledSignals();
+    if (plan.signals != nullptr && previousSignals != nullptr && plan.signals != previousSignals)
+        plan.signals->AdoptContinuityFrom(*previousSignals);
     // Swap: retire whatever plan was installed (the logic side reclaims it) and
     // adopt the new one. A single command record is inherently atomic, so this
     // whole apply is the block-boundary swap.
@@ -585,7 +589,6 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
         m_plans.Retire(m_currentPlanIndex);
     }
     m_currentPlanIndex = planIndex;
-    const TopologyPlanView plan = m_plans.View(planIndex);
     if (!plan.valid) {
         return;
     }

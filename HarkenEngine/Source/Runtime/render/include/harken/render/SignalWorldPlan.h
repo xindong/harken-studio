@@ -43,6 +43,7 @@ inline std::unique_ptr<SignalRenderPlan> PrepareSignalWorldPlan(
             nodes[i].busIndex = i;
             nodes[i].busId = buses[i].id;
             nodes[i].busGeneration = buses[i].generation;
+            nodes[i].stableId = buses[i].id;
         }
         std::vector<std::uint32_t> indices;
         indices.reserve(endpoints.size());
@@ -56,6 +57,7 @@ inline std::unique_ptr<SignalRenderPlan> PrepareSignalWorldPlan(
                     endpoint.kind != SignalEndpointKindV1::Container)) return {};
                 indices.push_back(static_cast<std::uint32_t>(nodes.size()));
                 nodes.push_back({endpoint.kind});
+                nodes.back().stableId = endpoint.stableId;
             }
         }
         const auto resolve = [&](const SignalEndpointRefV1& ref) {
@@ -134,7 +136,7 @@ inline std::unique_ptr<SignalRenderPlan> PrepareSignalWorldPlan(
             const auto source = resolve(relation.source), target = resolve(relation.target);
             if (!validGain || source == UINT32_MAX || target == UINT32_MAX ||
                 relation.consumer != SignalConsumerKindV1::Ducking || !nodes[target].receiver) return {};
-            connections.push_back({source, target, gain});
+            connections.push_back({source, target, gain, relation.stableId});
             paths.push_back({source, target, gain, true});
         }
         auto result = SignalRenderPlan::Prepare(format, nodes, connections, paths, proofs);

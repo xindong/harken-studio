@@ -1756,7 +1756,7 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
     if (signals != nullptr && !m_renderDeferred) {
         // The plan lifetime is fenced by the installed topology. Mixer and
         // device format are immutable for this engine incarnation.
-        signalOk = signals->BeginBlock({1, m_timelinePool != nullptr ? m_timelinePool->Epoch() : 1, 1, blockIndex,
+        signalOk = signals->BeginBlock({signals->WorldIdentity(), m_timelinePool != nullptr ? m_timelinePool->Epoch() : 1, 1, blockIndex,
             static_cast<std::uint64_t>(blockIndex) * frames, frames});
     }
     planesOk = planesOk && signalOk;

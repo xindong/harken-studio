@@ -22,6 +22,7 @@ struct SignalRenderNodeInput {
     std::uint32_t busIndex = UINT32_MAX;
     VnBusId busId{};
     std::uint32_t busGeneration = 0;
+    VnObjectId stableId{};
 };
 
 struct SignalMemberProof {
@@ -67,6 +68,7 @@ public:
                 node.kind = input.kind;
                 node.busId = input.busId;
                 node.busGeneration = input.busGeneration;
+                node.stableId = input.stableId;
                 if (input.kind == SignalEndpointKindV1::Bus && input.busIndex != UINT32_MAX)
                     next->busNodes_.push_back({input.busIndex, static_cast<std::uint32_t>(i)});
                 if (input.kind != SignalEndpointKindV1::Bus &&
@@ -159,6 +161,45 @@ public:
             ? it->second : UINT32_MAX;
     }
     std::size_t RelationCount() const noexcept { return relations_.size(); }
+    // Logic compares immutable prepared definitions only. The content identity
+    // excludes signal parameters but includes the authoritative content world.
+    bool ConfigurePublication(std::uint64_t identity, std::uint64_t contentIdentity,
+                              const SignalRenderPlan* predecessor,
+                              std::uint64_t rampFrames) noexcept {
+        if (publicationIdentity_ != 0 || identity == 0 || contentIdentity == 0 || open_ || committed_)
+            return false;
+        publicationIdentity_ = worldIdentity_ = identity;
+        contentIdentity_ = contentIdentity;
+        updateRampFrames_ = rampFrames;
+        if (predecessor != nullptr && predecessor->publicationIdentity_ != 0 &&
+            contentIdentity_ == predecessor->contentIdentity_ && SameStructure(*predecessor)) {
+            predecessorIdentity_ = predecessor->publicationIdentity_;
+            worldIdentity_ = predecessor->worldIdentity_;
+        }
+        return true;
+    }
+    std::uint64_t WorldIdentity() const noexcept { return worldIdentity_; }
+
+    // Run before retiring the old topology slot. Swapping transfers storage to
+    // the retired owner, so neither allocation nor destruction occurs on audio.
+    bool AdoptContinuityFrom(SignalRenderPlan& previous) noexcept {
+        if (&previous == this || adopted_ || open_ || previous.open_ ||
+            predecessorIdentity_ == 0 || predecessorIdentity_ != previous.publicationIdentity_)
+            return false;
+        exchange_.Swap(previous.exchange_);
+        for (std::size_t i = 0; i < nodes_.size(); ++i)
+            nodes_[i].receiver.AdoptStateFrom(previous.nodes_[i].receiver);
+        for (std::uint32_t i = 0; i < relations_.size(); ++i)
+            if (relations_[i].level != previous.relations_[i].level) {
+                const bool changed = exchange_.SetLevel(i, relations_[i].level, updateRampFrames_);
+                assert(changed);
+                (void)changed;
+            }
+        previous_ = previous.previous_;
+        committed_ = previous.committed_;
+        adopted_ = true;
+        return true;
+    }
     std::uint32_t NodeCount() const noexcept { return static_cast<std::uint32_t>(nodes_.size()); }
     // A candidate graph is borrowed only for this quantum. Its slab must not
     // alias a live prior graph; failed compilation is never a usable fallback.
@@ -341,6 +382,22 @@ public:
     }
 
 private:
+    bool SameStructure(const SignalRenderPlan& other) const noexcept {
+        if (format_.channels != other.format_.channels || format_.capacityFrames != other.format_.capacityFrames ||
+            format_.sampleRate != other.format_.sampleRate || format_.layout != other.format_.layout ||
+            actualRouting_ != other.actualRouting_ || busNodes_ != other.busNodes_ ||
+            nodes_.size() != other.nodes_.size() || relations_.size() != other.relations_.size()) return false;
+        for (std::size_t i = 0; i < nodes_.size(); ++i) {
+            const auto& a = nodes_[i]; const auto& b = other.nodes_[i];
+            if (a.kind != b.kind || a.stableId != b.stableId || a.busId != b.busId ||
+                a.busGeneration != b.busGeneration || a.source != b.source || a.target != b.target) return false;
+        }
+        for (std::size_t i = 0; i < relations_.size(); ++i) {
+            const auto& a = relations_[i]; const auto& b = other.relations_[i];
+            if (a.stableId != b.stableId || a.source != b.source || a.target != b.target) return false;
+        }
+        return true;
+    }
     static bool SameDefinitionSource(const ProgramSourceIdentityV1& a,
                                      const ProgramSourceIdentityV1& b) noexcept {
         return a.ownerStableId == b.ownerStableId && a.ownerRevision == b.ownerRevision &&
@@ -349,6 +406,7 @@ private:
     }
     struct Node {
         SignalEndpointKindV1 kind = SignalEndpointKindV1::Bus;
+        VnObjectId stableId{};
         VnBusId busId{};
         std::uint32_t busGeneration = 0;
         std::uint32_t source = UINT32_MAX, target = UINT32_MAX;
@@ -413,6 +471,9 @@ private:
     std::vector<double> sum_, absolutePre_, absolutePost_, gain_, pre_, post_;
     std::vector<float> main_;
     bool open_ = false, committed_ = false, contentProcessed_ = false;
+    std::uint64_t publicationIdentity_ = 0, contentIdentity_ = 0, worldIdentity_ = 1;
+    std::uint64_t predecessorIdentity_ = 0, updateRampFrames_ = 0;
+    bool adopted_ = false;
 };
 
 } // namespace harken
