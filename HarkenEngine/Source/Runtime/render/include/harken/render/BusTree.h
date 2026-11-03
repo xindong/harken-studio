@@ -37,6 +37,8 @@
 #include <vector>
 
 namespace harken {
+struct SignalFeedbackEdge;
+struct SignalBusRoutingInfo;
 
 inline constexpr std::uint32_t kInvalidBusIndex = 0xFFFFFFFFu;
 
@@ -286,6 +288,11 @@ public:
     bool MixDown(float* const* busPlanes, std::uint32_t blockFrames,
                  std::uint64_t blockEpoch, std::uint64_t sourceFrameBegin = 0,
                  SignalRenderPlan* signals = nullptr);
+    std::size_t SignalRoutingEdgeCapacity() const noexcept {
+        return static_cast<std::size_t>(m_audioCount) * (static_cast<std::size_t>(m_sendSlots) + 1);
+    }
+    std::uint32_t SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> buses,
+        std::span<SignalFeedbackEdge> edges, std::uint32_t frames) noexcept;
     SignalRenderPlan* InstalledSignals() const {
         return m_plans.View(m_currentPlanIndex).signals;
     }

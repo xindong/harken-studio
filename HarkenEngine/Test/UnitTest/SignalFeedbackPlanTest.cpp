@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "harken/render/SignalFeedbackPlan.h"
+#include "harken/render/SignalPathBounds.h"
 
 #include <array>
 #include <limits>
@@ -152,4 +153,27 @@ TEST(SignalFeedbackPlan, AdmittedMisalignedScratchSupportsCurrentGraphAndFailure
     ASSERT_TRUE(SignalFeedbackPlan::Compile(3, next, scratch, view));
     EXPECT_DOUBLE_EQ(view.nodes[0].slope, 0);
     EXPECT_DOUBLE_EQ(view.nodes[2].slope, kDuckingBaselineSlope);
+}
+
+TEST(SignalFeedbackPlan, MovingFilterBoundCoversRealFilterStateAcrossCoefficientChanges) {
+    for (float q : {.499f, .5f, .501f, 1.0f, 4.0f}) {
+        SCOPED_TRACE(q);
+        SignalBiquadBound bound;
+        BiquadState state{};
+        std::uint32_t random = 17;
+        for (std::uint32_t block = 0; block < 400; ++block) {
+            const float frequency = block < 200 ? 10000 - 9980 * (block / 199.0f)
+                                                : 20 + 9980 * ((block - 200) / 199.0f);
+            const auto coefficients = MakeLowpass(48000, frequency, q);
+            const double maximum = bound.Advance(coefficients, 16);
+            ASSERT_TRUE(std::isfinite(maximum));
+            std::array<float, 16> samples;
+            for (auto& sample : samples) {
+                random = random * 1664525u + 1013904223u;
+                sample = (random & 0x80000000u) ? 1.0f : -1.0f;
+            }
+            BiquadProcess(coefficients, state, samples.data(), samples.size());
+            for (auto sample : samples) EXPECT_LE(std::abs(static_cast<double>(sample)), maximum);
+        }
+    }
 }

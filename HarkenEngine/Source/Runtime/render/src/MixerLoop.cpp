@@ -1,3 +1,4 @@
+#include "harken/render/SignalRoutingTypes.h"
 #include "harken/render/SignalRenderPlan.h"
 #include "harken/render/MixerLoop.h"
 
@@ -123,6 +124,7 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
       m_arena(config.arenaBytes, BlockArena::BackingMode::OnDemand),
       m_arenaLowBytes(static_cast<std::uint64_t>(config.maxBuses) *
                       config.mixChannelCount * config.blockFrames * sizeof(float)),
+      m_busSendSlots(config.busSendSlotsPerBus),
       m_arenaBytesPerSlot(std::min<std::uint64_t>(config.arenaBytes,
           static_cast<std::uint64_t>(kMaxChannels +
               std::max<std::uint32_t>(kMaxChannels, config.mixChannelCount)) *
@@ -198,7 +200,34 @@ bool MixerLoop::PrepareVoiceBacking(std::uint32_t count) noexcept {
     if (count > m_voices.Capacity()) return false;
     // A timed-out worker batch keeps its span; subsequent blocks use the second allowance.
     const auto highBytes = count == 0 ? 0u : m_arenaBytesPerSlot * count + alignof(float) - 1u;
-    return m_arena.PrepareBacking(m_arenaLowBytes, highBytes);
+    const auto signalBytes = SignalScratchBytes(std::max(count, m_voices.ConstructedSlotCount()),
+                                                m_signalNodes, m_signalRelations);
+    if (m_signalNodes != 0 && (signalBytes > m_arena.CapacityBytes() ||
+        m_arenaLowBytes + signalBytes + highBytes > m_arena.CapacityBytes())) return false;
+    return m_arena.PrepareBacking(m_arenaLowBytes + signalBytes, highBytes);
+}
+
+std::uint64_t MixerLoop::SignalScratchBytes(std::uint32_t slots, std::uint32_t nodes,
+                                           std::size_t relations) const noexcept {
+    if (nodes == 0) return 0;
+    const std::uint64_t edges = static_cast<std::uint64_t>(m_maxBuses) * (m_busSendSlots + 1ull) +
+        relations + m_voices.PreparedSignalPathRows(slots) +
+        static_cast<std::uint64_t>(slots) * (kMaxVoiceSendSlots + 1ull);
+    return SignalRenderPlan::RoutingScratchBytes(nodes, m_maxBuses, edges);
+}
+
+bool MixerLoop::PrepareSignalBacking(const SignalRenderPlan& plan) noexcept {
+    const auto slots = m_voices.ConstructedSlotCount();
+    const auto scratch = SignalScratchBytes(slots, plan.NodeCount(), plan.RelationCount());
+    const auto high = m_voices.PreparedCascadeChannelRows(m_mixChannels, slots) *
+        m_voices.BlockFrames() * sizeof(float) * m_arenaBatchAllowance + alignof(float) - 1u;
+    if (scratch > m_arena.CapacityBytes() || m_arenaLowBytes + scratch + high > m_arena.CapacityBytes()) return false;
+    return m_arena.PrepareBacking(m_arenaLowBytes + scratch, high);
+}
+
+void MixerLoop::CommitSignalBacking(const SignalRenderPlan* plan) noexcept {
+    m_signalNodes = plan == nullptr ? 0 : plan->NodeCount();
+    m_signalRelations = plan == nullptr ? 0 : plan->RelationCount();
 }
 
 bool MixerLoop::PreparePreparedChannelBacking(std::uint32_t count) noexcept {
@@ -209,7 +238,10 @@ bool MixerLoop::PreparePreparedChannelBacking(std::uint32_t count) noexcept {
     const auto planes = m_voices.PreparedCascadeChannelRows(m_mixChannels, slots);
     const auto highBytes = slots == 0 ? 0u : planes * m_voices.BlockFrames() *
         sizeof(float) * m_arenaBatchAllowance + alignof(float) - 1u;
-    return m_arena.PrepareBacking(m_arenaLowBytes, highBytes);
+    const auto signalBytes = SignalScratchBytes(slots, m_signalNodes, m_signalRelations);
+    if (m_signalNodes != 0 && (signalBytes > m_arena.CapacityBytes() ||
+        m_arenaLowBytes + signalBytes + highBytes > m_arena.CapacityBytes())) return false;
+    return m_arena.PrepareBacking(m_arenaLowBytes + signalBytes, highBytes);
 }
 
 namespace {
@@ -1730,7 +1762,7 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
             m_voices.RenderAll(m_arena, m_busPlanes.data(), frames,
                                m_notifications, blockIndex,
                                ticksEntry + m_jobDeadlineTicks,
-                               static_cast<std::uint64_t>(blockIndex) * frames, signals);
+                               static_cast<std::uint64_t>(blockIndex) * frames, signals, &m_buses);
         signalOk = !voicesOutcome.signalFailed;
         if (voicesOutcome.batchDeferred) {
             m_renderDeferred = true;

@@ -15,7 +15,6 @@
 #ifndef HARKEN_RENDER_VOICE_POOL_H
 #define HARKEN_RENDER_VOICE_POOL_H
 
-#include "harken/render/SignalRenderPlan.h"
 #include <harken/Harken.h>
 
 #include "harken/core/BlockArena.h"
@@ -49,6 +48,9 @@
 
 namespace harken {
 
+class SignalRenderPlan;
+class BusTree;
+struct SignalMemberImage;
 class DecisionTable;
 class OccurrenceStatePool;
 class OriginalSourceSubmissionRegistry;
@@ -219,6 +221,7 @@ public:
     void FinishTimelineVariableSourceRead(std::uint32_t renderSlot,
         std::uint32_t renderGeneration) noexcept;
     // Logic binds only while the voice is private; the audio side owns it after Play.
+    std::size_t PreparedSignalPathRows(std::uint32_t count) const noexcept;
     bool BindPreparedSignalPath(VnVoiceHandle handle,
                                 std::span<const PlaybackPathRow> rows) noexcept;
     bool BindPreparedNativeReadCut(VnVoiceHandle handle,
@@ -667,7 +670,7 @@ public:
                               std::uint64_t blockIndex,
                               std::uint64_t jobDeadlineAt,
                               std::uint64_t sourceFrameBegin = 0,
-                              SignalRenderPlan* signals = nullptr);
+                              SignalRenderPlan* signals = nullptr, BusTree* signalBuses = nullptr);
 
     // Publishes a valid all-zero current block for every live Voice tap when
     // the mixer cannot allocate the Bus planes and therefore cannot enter

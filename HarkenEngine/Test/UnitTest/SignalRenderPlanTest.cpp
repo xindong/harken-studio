@@ -1,4 +1,5 @@
 #include "harken/render/SignalRenderPlan.h"
+#include "harken/render/SignalWorldPlan.h"
 
 #include <gtest/gtest.h>
 #include <array>
@@ -138,3 +139,46 @@ TEST(SignalRenderPlan, SourceCaptureUsesActualMemberOutputRoundingBeforeSignedSu
     }
 }
 } // namespace
+
+TEST(SignalRenderPlan, FormalDefinitionProofUsesCarrierOwnershipAndBusIdentity) {
+    const VnObjectId sound{0, 1}, parent{0, 2}, bus{0, 3};
+    const ProgramSourceIdentityV1 source{5, 10, 20, 30, kCurrentWorldBodyVintageV20};
+    StructuralAncestorRefV1 ancestor;
+    ancestor.contentPropertyKind = playableproperties::ContentPropertyKindV1::Container;
+    ancestor.stableId = parent;
+    ancestor.programSemanticFingerprint = 22;
+    PlayablePropertyProgramViewV1 property;
+    property.stableId = sound;
+    property.programSemanticFingerprint = 11;
+    property.structuralAncestorCount = 1;
+    property.structuralAncestors = &ancestor;
+    const std::array properties{SignalPropertyInput{&property, source}};
+    SignalRelationV1 relation;
+    relation.stableId = {0, 4};
+    relation.source = {SignalEndpointKindV1::Container, 0, parent, 22, 33};
+    relation.target = {SignalEndpointKindV1::Bus, 0, bus};
+    SignalReceiverV1 receiver;
+    receiver.target = relation.target;
+    const std::array buses{SignalBusInput{bus, 7}};
+    auto plan = PrepareSignalWorldPlan(kFormat, {&relation, 1}, {&receiver, 1}, properties, buses);
+    ASSERT_NE(plan, nullptr);
+    EXPECT_EQ(plan->NodeForBus(0, bus, 7), 0u);
+    EXPECT_EQ(plan->NodeForBus(0, bus, 8), UINT32_MAX);
+    EXPECT_EQ(plan->NodeForBus(0, {0, 99}, 7), UINT32_MAX);
+    PlaybackPathRow row;
+    row.stableId = parent;
+    row.rowKind = ResolvedPlayablePathRowKindV1::Definition;
+    row.contentPropertyKind = playableproperties::ContentPropertyKindV1::Container;
+    row.propertyFingerprint = 22;
+    row.source = source;
+    std::array<std::uint32_t, 1> matched{};
+    EXPECT_EQ(plan->MatchMember({&row, 1}, matched), 1u);
+    ++row.source.leaseIdentity;
+    ++row.source.worldGeneration;
+    EXPECT_EQ(plan->MatchMember({&row, 1}, matched), 1u);
+    ++row.source.ownerRevision;
+    EXPECT_EQ(plan->MatchMember({&row, 1}, matched), 0u);
+    relation.target.stableId = {0, 99};
+    receiver.target = relation.target;
+    EXPECT_EQ(PrepareSignalWorldPlan(kFormat, {&relation, 1}, {&receiver, 1}, properties, buses), nullptr);
+}

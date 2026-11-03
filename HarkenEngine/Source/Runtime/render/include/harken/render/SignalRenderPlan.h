@@ -10,6 +10,9 @@
 #include <memory>
 
 namespace harken {
+class BusTree;
+class BlockArena;
+struct VoiceRenderContext;
 
 struct SignalRenderNodeInput {
     SignalEndpointKindV1 kind = SignalEndpointKindV1::Bus;
@@ -17,6 +20,8 @@ struct SignalRenderNodeInput {
     float attackMs = kDuckingDefaultAttackMs;
     float releaseMs = kDuckingDefaultReleaseMs;
     std::uint32_t busIndex = UINT32_MAX;
+    VnBusId busId{};
+    std::uint32_t busGeneration = 0;
 };
 
 struct SignalMemberProof {
@@ -35,6 +40,7 @@ struct SignalMemberImage {
     std::span<const std::uint32_t> nodes{};
     std::uint32_t offset = 0;
     std::uint32_t frames = 0;
+    const VoiceRenderContext* voice = nullptr;
 };
 
 // Prepared off audio and exclusively executed by the audio coordinator.
@@ -59,6 +65,8 @@ public:
                 const auto& input = nodes[i];
                 auto& node = next->nodes_[i];
                 node.kind = input.kind;
+                node.busId = input.busId;
+                node.busGeneration = input.busGeneration;
                 if (input.kind == SignalEndpointKindV1::Bus && input.busIndex != UINT32_MAX)
                     next->busNodes_.push_back({input.busIndex, static_cast<std::uint32_t>(i)});
                 if (input.kind != SignalEndpointKindV1::Bus &&
@@ -100,6 +108,8 @@ public:
                 if (source.source == UINT32_MAX) source.source = sources++;
                 connections.push_back({source.source, target, relation.level});
             }
+            next->relations_.assign(relations.begin(), relations.end());
+            next->levelBounds_.resize(relations.size());
             if (!next->exchange_.Prepare(format, sources, targets, connections)) return {};
             next->format_ = format;
             const auto samples = static_cast<std::size_t>(format.channels) * format.capacityFrames;
@@ -139,11 +149,33 @@ public:
         }
         return count;
     }
-    std::uint32_t NodeForBus(std::uint32_t bus) const noexcept {
+    std::uint32_t NodeForBus(std::uint32_t bus, VnBusId id = {},
+                             std::uint32_t generation = 0) const noexcept {
         const auto it = std::lower_bound(busNodes_.begin(), busNodes_.end(), bus,
             [](const auto& entry, std::uint32_t value) { return entry.first < value; });
-        return it != busNodes_.end() && it->first == bus ? it->second : UINT32_MAX;
+        if (it == busNodes_.end() || it->first != bus) return UINT32_MAX;
+        const auto& node = nodes_[it->second];
+        return node.busId == VnBusId{} || (node.busId == id && node.busGeneration == generation)
+            ? it->second : UINT32_MAX;
     }
+    std::size_t RelationCount() const noexcept { return relations_.size(); }
+    std::uint32_t NodeCount() const noexcept { return static_cast<std::uint32_t>(nodes_.size()); }
+    // A candidate graph is borrowed only for this quantum. Its slab must not
+    // alias a live prior graph; failed compilation is never a usable fallback.
+    bool SetBlockRouting(const SignalFeedbackView& routing) noexcept {
+        if (!open_ || contentProcessed_ || routing.nodes.size() != nodes_.size() ||
+            routing.order.size() != nodes_.size()) return false;
+        for (const auto& node : nodes_) if (node.processed) return false;
+        blockRouting_ = routing;
+        return true;
+    }
+    void EnableActualRouting() noexcept { actualRouting_ = true; }
+    bool UsesActualRouting() const noexcept { return actualRouting_; }
+    static std::uint64_t RoutingScratchBytes(std::uint32_t nodes, std::uint32_t buses,
+                                             std::uint64_t edges) noexcept;
+    bool ReserveRouting(BusTree& buses, BlockArena& arena, std::uint32_t members,
+                        std::size_t pathRows) noexcept;
+    bool BuildRouting(std::span<const SignalMemberImage> members, BusTree& buses) noexcept;
     bool HasContent() const noexcept { return !membership_.empty(); }
     bool SetConnectionLevel(std::uint32_t connection, float level, std::uint64_t frames) noexcept {
         return !open_ && exchange_.SetLevel(connection, level, frames);
@@ -153,7 +185,10 @@ public:
     }
 
     bool BeginBlock(const SignalBlockIdentity& identity) noexcept {
-        if (open_ || !exchange_.BeginBlock(identity)) return false;
+        if (open_ || identity.frames > format_.capacityFrames) return false;
+        for (std::uint32_t i = 0; i < relations_.size(); ++i)
+            levelBounds_[i] = exchange_.ConnectionBound(i, identity.frames);
+        if (!exchange_.BeginBlock(identity)) return false;
         const bool continuous = committed_ && identity.world == previous_.world &&
             identity.transport == previous_.transport && identity.deviceFormat == previous_.deviceFormat &&
             previous_.epoch != UINT64_MAX && identity.epoch == previous_.epoch + 1 &&
@@ -162,6 +197,8 @@ public:
         if (!continuous) for (auto& node : nodes_) node.receiver.Reset();
         for (auto& node : nodes_) node.processed = false;
         contentProcessed_ = false;
+        blockRouting_ = {};
+        routingStorage_ = {};
         current_ = identity;
         open_ = true;
         return true;
@@ -187,7 +224,7 @@ public:
                 if (node >= nodes_.size() || nodes_[node].kind == SignalEndpointKindV1::Bus)
                     return false;
         }
-        for (const auto index : feedback_.NormalOrder()) {
+        for (const auto index : blockRouting_.nodes.empty() ? feedback_.NormalOrder() : blockRouting_.order) {
             auto& node = nodes_[index];
             if (node.kind == SignalEndpointKindV1::Bus || node.processed) continue;
             ClearSums();
@@ -271,8 +308,17 @@ public:
 
     bool CommitBlock() noexcept {
         if (!open_) return false;
-        for (const auto& node : nodes_)
+        for (std::uint32_t index = 0; index < nodes_.size(); ++index) {
+            auto& node = nodes_[index];
+            if (!node.processed && node.kind == SignalEndpointKindV1::Bus) {
+                // A removed or reincarnated Bus contributes fresh silence;
+                // it never binds an old endpoint to a reused dense slot.
+                ClearSums();
+                Receive(index);
+                node.processed = true;
+            }
             if (node.target != UINT32_MAX && !node.processed) return false;
+        }
         if (!exchange_.CommitBlock()) return false;
         previous_ = current_;
         committed_ = true;
@@ -294,6 +340,8 @@ private:
     }
     struct Node {
         SignalEndpointKindV1 kind = SignalEndpointKindV1::Bus;
+        VnBusId busId{};
+        std::uint32_t busGeneration = 0;
         std::uint32_t source = UINT32_MAX, target = UINT32_MAX;
         DuckingReceiver receiver;
         bool processed = false;
@@ -333,7 +381,7 @@ private:
                 post_[n] = std::max(post_[n], absolutePost_[p]);
             }
         }
-        const auto& feedback = feedback_.Nodes()[index];
+        const auto& feedback = blockRouting_.nodes.empty() ? feedback_.Nodes()[index] : blockRouting_.nodes[index];
         const bool processed = node.receiver.Process(main, side, format_.channels, current_.frames,
             feedback.feedbackInput ? pre_.data() : nullptr,
             feedback.feedbackInput ? post_.data() : nullptr, feedback.slope, gain_.data());
@@ -343,7 +391,12 @@ private:
     SignalBlockFormat format_{};
     SignalBlockIdentity previous_{}, current_{};
     SignalBlockExchange exchange_;
+    std::vector<SignalConnectionInput> relations_;
+    std::vector<double> levelBounds_;
+    bool actualRouting_ = false;
     SignalFeedbackPlan feedback_;
+    SignalFeedbackView blockRouting_{};
+    std::span<std::byte> routingStorage_{};
     std::vector<Node> nodes_;
     std::vector<SignalMemberProof> membership_;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> busNodes_;

@@ -1,4 +1,6 @@
 #include "harken/render/VoicePool.h"
+#include "harken/render/SignalRenderPlan.h"
+#include "harken/render/BusTree.h"
 #include "harken/render/OriginalSourceSubmission.h"
 
 #include "MonitorCaptureHub.h"
@@ -1917,6 +1919,13 @@ bool VoicePool::CommitPreparedVoice(VnVoiceHandle handle) noexcept {
     return true;
 }
 
+std::size_t VoicePool::PreparedSignalPathRows(std::uint32_t count) const noexcept {
+    std::size_t rows = 0;
+    for (std::uint32_t i = 0; i < std::min(count, m_slots.ConstructedCount()); ++i)
+        rows += m_slots[i].signalPathStorage.size();
+    return rows;
+}
+
 bool VoicePool::BindPreparedSignalPath(VnVoiceHandle handle,
     std::span<const PlaybackPathRow> rows) noexcept {
     if (memguard::IsAudioTagged()) return false;
@@ -1947,6 +1956,8 @@ bool VoicePool::BindPreparedSignalPath(VnVoiceHandle handle,
         std::copy_if(rows.begin(), rows.end(), slot->signalPathStorage.begin(), member);
         slot->render.signalPath = slot->signalPathStorage;
         slot->render.signalNodeStorage = slot->signalNodeStorage;
+        for (auto* registration = m_slotStorageRegistrations; registration != nullptr; registration = registration->next_)
+            if (!registration->prepare_(registration->context_, m_slots.ConstructedCount())) return false;
         return true;
     } catch (...) { return false; }
 }
@@ -4311,10 +4322,12 @@ void VoicePool::ApplySetVoiceSendLevel(VnVoiceHandle handle,
 VoicePool::RenderAllResult VoicePool::RenderAll(
     BlockArena& arena, float* const* busPlanes, std::uint32_t blockFrames,
     NotificationQueue& notifications, std::uint64_t blockIndex,
-    std::uint64_t jobDeadlineAt, std::uint64_t sourceFrameBegin, SignalRenderPlan* signals) {
+    std::uint64_t jobDeadlineAt, std::uint64_t sourceFrameBegin, SignalRenderPlan* signals, BusTree* signalBuses) {
     RenderAllResult outcome;
-    const bool collective = signals != nullptr && signals->HasContent();
+    const bool collective = signals != nullptr && (signals->HasContent() || signals->UsesActualRouting());
     if (m_deferredJobCount == 0) {
+        std::size_t pathRows = 0;
+        std::uint32_t members = 0;
         for (auto& slot : m_slots) {
             if (!IsAudioRenderingState(slot.state.load(std::memory_order_relaxed))) continue;
             auto& render = slot.render;
@@ -4323,6 +4336,14 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             assert(render.signalNodeCount != UINT32_MAX);
             if (render.signalNodeCount == UINT32_MAX) render.signalNodeCount = 0;
             render.signalMemberActive = render.signalNodeCount != 0;
+            pathRows += render.signalNodeCount;
+            members += render.signalMemberActive;
+        }
+        if (signals != nullptr && signals->UsesActualRouting() &&
+            (signalBuses == nullptr || !signals->ReserveRouting(*signalBuses, arena, members, pathRows))) {
+            outcome.signalFailed = true;
+            signals->Invalidate();
+            return outcome;
         }
     }
     const auto beginCompressors = [](VoiceRenderContext& render) {
@@ -4543,8 +4564,11 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             }
             m_signalMemberImages[members++] = {render.cascade.tap, &render.outputGain,
                 render.signalNodeStorage.first(render.signalNodeCount),
-                render.cascade.offset, render.cascade.produced};
+                render.cascade.offset, render.cascade.produced, &render};
         }
+        if (!outcome.signalFailed && signals->UsesActualRouting())
+            outcome.signalFailed = signalBuses == nullptr || !signals->BuildRouting(
+                {m_signalMemberImages.data(), members}, *signalBuses);
         if (outcome.signalFailed || !signals->ProcessContent({m_signalMemberImages.data(), members})) {
             outcome.signalFailed = true;
             signals->Invalidate();

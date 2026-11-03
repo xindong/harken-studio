@@ -107,6 +107,14 @@ public:
         return true;
     }
 
+    double ConnectionBound(std::uint32_t connection, std::uint32_t frames) const noexcept {
+        if (connection >= m_connections.size()) return std::numeric_limits<double>::infinity();
+        double result = 0;
+        for (std::uint32_t n = 0; n < frames; ++n)
+            result = std::max(result, std::abs(static_cast<double>(m_connections[connection].gain.At(n))));
+        return result;
+    }
+
     bool BeginBlock(const SignalBlockIdentity& identity) noexcept {
         if (!m_prepared || m_open || identity.frames == 0 ||
             identity.frames > m_format.capacityFrames ||

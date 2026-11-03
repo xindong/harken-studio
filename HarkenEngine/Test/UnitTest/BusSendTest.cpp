@@ -1071,3 +1071,46 @@ TEST_F(BusSendSlotReconcile, SignalFeedbackRunsThroughMixerAndPostOutputVolume) 
     PumpAndCapture(engine, 1, after);
     EXPECT_NEAR(muted.left.back(), after.left.back(), 1e-5);
 }
+
+TEST_F(BusSendSlotReconcile, ActualOrdinaryRoutingClosesSingleSignalRelation) {
+    const auto plan = BuildPlan(harken::kEmptySendTarget, harken::kEmptySendTarget);
+    std::array<harken::SignalRenderNodeInput, 4> nodes{};
+    for (std::uint32_t i = 0; i < nodes.size(); ++i) nodes[i].busIndex = i;
+    nodes[1].receiver = true;
+    const std::array relations{harken::SignalConnectionInput{0, 1, 1}};
+    const std::array paths{harken::SignalFeedbackEdge{0, 1, 1, true}};
+    auto signals = harken::SignalRenderPlan::Prepare({2, kBlockFrames, 48000,
+        VN_CHANNEL_LAYOUT_STEREO}, nodes, relations, paths);
+    ASSERT_NE(signals, nullptr);
+    signals->EnableActualRouting();
+    ASSERT_TRUE(engine->mixer.PrepareSignalBacking(*signals));
+    engine->mixer.CommitSignalBacking(signals.get());
+    engine->topologyPlans.SetSignals(plan, std::move(signals));
+    engine->buses.ApplyTopologyPlan(plan, harken::kInvalidBusIndex,
+        harken::kInvalidBusIndex, 0);
+    const auto samples = MakeDC(kBlockFrames * 500, .1f);
+    const auto pcm = MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &pcm));
+    auto play = MakePlayDesc(harkentest::ObjectId(1));
+    play.busId = kBusA;
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    Capture settled;
+    PumpAndCapture(engine, 160, settled);
+    const double slope = 1 / (1 / harken::kDuckingBaselineSlope + 1);
+    ASSERT_FALSE(settled.left.empty());
+    EXPECT_NEAR(.1 / (1 + slope), settled.left.back(), 1e-5);
+
+    // Change the ordinary route while the previous source block is live.
+    engine->buses.ApplyVolume(2, 6.0205999f, 0);
+    const auto replacement = BuildPlan(harken::kEmptySendTarget, harken::kEmptySendTarget);
+    engine->topologyPlans.ParentsData(replacement)[1] = 2;
+    engine->topologyPlans.SetSignals(replacement, engine->topologyPlans.Signals(plan));
+    engine->buses.ApplyTopologyPlan(replacement, harken::kInvalidBusIndex, harken::kInvalidBusIndex, 0);
+    engine->topologyPlans.DrainRetire();
+    Capture rerouted;
+    PumpAndCapture(engine, 160, rerouted);
+    const double changedSlope = 1 / (1 / harken::kDuckingBaselineSlope + 2);
+    EXPECT_NEAR(.2 / (1 + 2 * changedSlope), rerouted.left.back(), 1e-5);
+}

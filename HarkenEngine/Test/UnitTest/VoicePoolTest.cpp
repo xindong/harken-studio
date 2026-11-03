@@ -1,3 +1,4 @@
+#include "harken/render/SignalRenderPlan.h"
 // Voice pool capacity and handle behavior: VN_NO_VOICE on exhaustion,
 // generational stale-handle detection with its counter, slot recycling,
 // play argument validation, and the Debug allocation guard over a real

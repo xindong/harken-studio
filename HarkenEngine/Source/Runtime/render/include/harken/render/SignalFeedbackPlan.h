@@ -76,7 +76,7 @@ class SignalFeedbackPlan {
 public:
     static std::size_t ScratchBytes(std::uint32_t count, std::size_t edgeCount) noexcept {
         if (edgeCount > UINT32_MAX) return 0;
-        // Four offsets/cursors; six node-index arrays; two edge-index arrays;
+        // Four offsets/cursors; four node-index arrays; two edge-index arrays;
         // visited, node results, and three numeric arrays. Include per-array
         // alignment so a float-aligned slab is a valid backing allocation.
         const std::uint64_t bytes = (static_cast<std::uint64_t>(count) + 1) *

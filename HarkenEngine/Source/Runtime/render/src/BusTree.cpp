@@ -1,3 +1,5 @@
+#include "harken/render/SignalRoutingTypes.h"
+#include "harken/render/SignalPathBounds.h"
 #include "harken/render/SignalRenderPlan.h"
 #include "harken/render/BusTree.h"
 
@@ -1084,6 +1086,80 @@ void BusTree::ScatterSend(const float* const* src, float* const* dst,
     }
 }
 
+std::uint32_t BusTree::SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> info,
+    std::span<SignalFeedbackEdge> edges, std::uint32_t frames) noexcept {
+    if (info.size() < m_audioCount || edges.size() < SignalRoutingEdgeCapacity()) return UINT32_MAX;
+    const auto plan = m_plans.View(m_currentPlanIndex);
+    const auto infinity = std::numeric_limits<double>::infinity();
+    for (std::uint32_t i = 0; i < m_audioCount; ++i) {
+        const auto& bus = m_buses[i];
+        if (plan.valid && plan.alive != nullptr && plan.alive[i] == 0) continue;
+        auto& result = info[i];
+        result.id = bus.id;
+        result.generation = bus.generation;
+        result.outputGainBound = SignalOutputGainBound(bus.outputGain, frames);
+        double input = SignalOutputGainBound(bus.gain, frames);
+        bool memory = ToneSectionActive(bus.busLpf) || ToneSectionActive(bus.busHpf);
+        for (std::uint32_t slot = 0; slot < m_fxSlots; ++slot) {
+            const auto& effect = bus.fxSlots[slot];
+            if (effect.process == nullptr) continue;
+            if (!bus.fxBypassRamping[slot] && bus.fxBypassMix[slot] >= 1) continue;
+            if (bus.fxSlotEffectRef[slot].type == VN_EFFECT_GAIN) {
+                const auto& gain = *static_cast<const GainState*>(effect.state);
+                const double value = SignalIncrementBound(gain.gainLinear, gain.targetGainLinear,
+                    gain.gainIncrement, gain.transitionFramesRemaining, frames);
+                input = SignalBoundProduct(input, bus.fxBypassRamping[slot] ? std::max(1.0, value) : value);
+            } else memory = true;
+        }
+        // Stateful transfer certificates are supplied by their owning DSP.
+        // Until one is available, localize the conservative limit to this
+        // return path rather than reusing a stale finite coefficient.
+        if (memory) input = infinity;
+        double layout = 1;
+        if (i != 0 && IsConcreteLayout(bus.outputLayout) &&
+            LayoutChannelCount(bus.outputLayout) < m_mixChannels) {
+            layout = 0;
+            ChannelRole roles[kMaxChannels];
+            LayoutRoles(bus.outputLayout, roles);
+            for (std::uint32_t row = 0; row < LayoutChannelCount(bus.outputLayout); ++row) {
+                if (ChannelOfRole(m_mixLayout, roles[row]) < 0) continue;
+                double sum = 0;
+                for (std::uint32_t ch = 0; ch < m_mixChannels; ++ch)
+                    sum += std::abs(static_cast<double>(bus.downmixCoeffs[row * 8 + ch]));
+                layout = std::max(layout, sum);
+            }
+        }
+        result.inputBound = SignalBoundProduct(SignalBoundProduct(input, layout),
+            std::max(1.0, result.outputGainBound));
+        result.outputFilterBound = ToneSectionActive(bus.outputLpf) || ToneSectionActive(bus.outputHpf)
+            ? infinity : 1;
+    }
+    std::uint32_t used = 0;
+    for (std::uint32_t from = 0; from < m_audioCount; ++from) {
+        if (info[from].id == VnBusId{}) continue;
+        const auto& bus = m_buses[from];
+        if (from != 0 && bus.parentIndex < m_audioCount && info[bus.parentIndex].id != VnBusId{})
+            edges[used++] = {from, bus.parentIndex,
+                SignalBoundProduct(info[from].outputFilterBound,
+                    info[bus.parentIndex].inputBound), false};
+        if (!plan.valid) continue;
+        const auto* membership = plan.sendTargets + static_cast<std::size_t>(from) * plan.slotsPerBus;
+        for (std::uint32_t slot = 0; slot < plan.slotsPerBus; ++slot) {
+            const auto to = membership[slot];
+            if (to == kEmptySendTarget || to >= m_audioCount || info[to].id == VnBusId{}) continue;
+            const auto* edge = FindEdge(from, to);
+            if (edge == nullptr) continue;
+            auto gain = edge->gain;
+            if (edge->ramping) gain.SetBlockTarget(edge->rampStartGain, edge->rampEndGain,
+                edge->rampBlocksDone, edge->rampBlocksTotal);
+            const double level = std::max(std::abs(static_cast<double>(gain.current)),
+                std::abs(static_cast<double>(gain.target)));
+            edges[used++] = {from, to, SignalBoundProduct(level, info[to].inputBound), false};
+        }
+    }
+    return used;
+}
+
 bool BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
                       std::uint64_t blockEpoch, std::uint64_t sourceFrameBegin,
                       SignalRenderPlan* signals) {
@@ -1109,7 +1185,7 @@ bool BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
         Bus& bus = m_buses[i];
         float* const* planes = busPlanes + i * m_mixChannels;
         FinalizeBus(bus, planes, blockFrames, blockEpoch, sourceFrameBegin);
-        const auto signalNode = signals == nullptr ? UINT32_MAX : signals->NodeForBus(i);
+        const auto signalNode = signals == nullptr ? UINT32_MAX : signals->NodeForBus(i, bus.id, bus.generation);
         // Per-bus output fold (non-master): a bus configured to present a
         // narrower output layout than the mix folds through its own matrix and
         // name-places the result back into these mix-width planes, so the
