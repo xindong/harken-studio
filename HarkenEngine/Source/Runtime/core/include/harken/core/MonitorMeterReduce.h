@@ -40,8 +40,9 @@ struct MonitorMeterState {
     std::uint32_t rmsWindowSamples = 0;
     std::uint32_t holdSamples = 0;
     float samplePeak = 0.0f;
-    float truePeak = 0.0f;
+    double truePeak = 0.0;
     double rmsSumSquares = 0.0;
+    double rmsSumError = 0.0;
     std::uint32_t rmsCount = 0;
     std::uint32_t rmsWrite = 0;
     float holdLinear = 0.0f;
@@ -53,7 +54,7 @@ struct MonitorMeterState {
     bool rmsReady = false;
     bool truePeakReady = false;
     bool holdReady = false;
-    std::unique_ptr<float[]> rmsSquares;
+    std::unique_ptr<double[]> rmsSquares;
     std::array<float, kMeterTruePeakTaps> truePeakHistory{};
 };
 
@@ -64,7 +65,7 @@ struct MonitorMeterChunkResult {
     bool loudnessWarmup = false;
     bool invalid = false;
     float samplePeak = 0.0f;
-    float truePeak = 0.0f;
+    double truePeak = 0.0;
     float rmsLinear = 0.0f;
     float holdLinear = 0.0f;
     float loudnessMomentary = 0.0f;
@@ -93,14 +94,15 @@ MonitorMeterChunkResult ReduceMeterChunk(MonitorMeterState* state,
                                          const float* interleaved,
                                          std::uint32_t frames,
                                          std::uint32_t channels,
-                                         std::uint32_t channelMode);
+                                         std::uint32_t channelMode,
+                                         bool collectRms = true);
 void ResetLoudnessState(MonitorLoudnessState* state, std::uint32_t sampleRate,
                         std::uint32_t layout, std::uint64_t generation);
 MonitorMeterChunkResult ReduceLoudnessChunk(MonitorLoudnessState* state,
                                             const float* interleaved,
                                             std::uint32_t frames,
                                             std::uint32_t channels);
-float MeterLinearToDb(float linear);
+float MeterLinearToDb(double linear);
 std::uint32_t MeterFloatBits(float value);
 bool MeterHasIdentity(const VnMonitorTapDescriptor& tap);
 MonitorMeterGainReductionSample ResolveMeterGainReduction(

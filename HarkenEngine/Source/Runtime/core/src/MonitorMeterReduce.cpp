@@ -50,13 +50,14 @@ float MixSample(const float* interleaved, std::uint32_t frame,
     return peak;
 }
 
-float ConvolvePhase(const MonitorMeterState& state, std::uint32_t phase) {
-    float acc = 0.0f;
+double ConvolvePhase(const MonitorMeterState& state, std::uint32_t phase) {
+    double acc = 0.0;
     for (std::uint32_t tap = 0; tap < kMeterTruePeakTaps; ++tap) {
         const std::uint32_t index =
             (state.truePeakWrite + kMeterTruePeakTaps - 1u - tap) %
             kMeterTruePeakTaps;
-        acc += state.truePeakHistory[index] * kTruePeakPhase[phase][tap];
+        acc += static_cast<double>(state.truePeakHistory[index]) *
+               kTruePeakPhase[phase][tap];
     }
     return acc;
 }
@@ -65,22 +66,45 @@ void EnsureRmsBuffer(MonitorMeterState* state) {
     if (state->rmsSquares != nullptr || state->rmsWindowSamples == 0) {
         return;
     }
-    state->rmsSquares.reset(new float[kMeterMaxRmsSamples]());
+    state->rmsSquares.reset(new double[kMeterMaxRmsSamples]());
 }
 
-void PushRms(MonitorMeterState* state, float square) {
+void AddRmsEnergy(MonitorMeterState* state, double energy) {
+    // Track cancellation error across both insertion and eviction. All finite
+    // Float32 squares and the bounded window sum fit in double.
+    state->rmsSumError += 2.0 * std::numeric_limits<double>::epsilon() *
+                         (std::fabs(state->rmsSumSquares) + std::fabs(energy));
+    state->rmsSumSquares += energy;
+}
+
+void RefreshRmsSum(MonitorMeterState* state) {
+    constexpr double relativeTolerance =
+        static_cast<double>(std::numeric_limits<float>::epsilon()) / 8.0;
+    if (state->rmsSumSquares >= 0.0 && std::isfinite(state->rmsSumSquares) &&
+        std::isfinite(state->rmsSumError) &&
+        state->rmsSumError <= state->rmsSumSquares * relativeTolerance) {
+        return;
+    }
+    // Rebuild at most once per published chunk, after a large expired sample
+    // or accumulated rounding makes the sliding sum unreliable. Sum positive
+    // current-window energies; retain the new sum's own rounding bound.
+    state->rmsSumSquares = 0.0;
+    state->rmsSumError = 0.0;
+    for (std::uint32_t i = 0; i < state->rmsCount; ++i) {
+        AddRmsEnergy(state, state->rmsSquares[i]);
+    }
+}
+
+void PushRms(MonitorMeterState* state, double square) {
     EnsureRmsBuffer(state);
     if (state->rmsSquares == nullptr || state->rmsWindowSamples == 0) {
         return;
     }
     if (state->rmsCount == state->rmsWindowSamples) {
-        const float old = state->rmsSquares[state->rmsWrite];
-        state->rmsSumSquares -= static_cast<double>(old);
+        const double old = state->rmsSquares[state->rmsWrite];
+        AddRmsEnergy(state, -old);
         state->rmsSquares[state->rmsWrite] = square;
-        state->rmsSumSquares += static_cast<double>(square);
-        if (state->rmsSumSquares < 0.0) {
-            state->rmsSumSquares = 0.0;
-        }
+        AddRmsEnergy(state, square);
         ++state->rmsWrite;
         if (state->rmsWrite == state->rmsWindowSamples) {
             state->rmsWrite = 0;
@@ -89,7 +113,7 @@ void PushRms(MonitorMeterState* state, float square) {
         return;
     }
     state->rmsSquares[state->rmsCount] = square;
-    state->rmsSumSquares += static_cast<double>(square);
+    AddRmsEnergy(state, square);
     ++state->rmsCount;
     if (state->rmsCount == state->rmsWindowSamples) {
         state->rmsWrite = 0;
@@ -161,6 +185,7 @@ void ResetMeterState(MonitorMeterState* state, std::uint32_t sampleRate,
     state->samplePeak = 0.0f;
     state->truePeak = 0.0f;
     state->rmsSumSquares = 0.0;
+    state->rmsSumError = 0.0;
     state->rmsCount = 0;
     state->rmsWrite = 0;
     state->holdLinear = 0.0f;
@@ -190,7 +215,7 @@ void ResetMeterState(MonitorMeterState* state, std::uint32_t sampleRate,
         }
         if (state->rmsSquares != nullptr) {
             std::memset(state->rmsSquares.get(), 0,
-                        sizeof(float) * kMeterMaxRmsSamples);
+                        sizeof(double) * kMeterMaxRmsSamples);
         }
     }
 }
@@ -206,7 +231,8 @@ MonitorMeterChunkResult ReduceMeterChunk(MonitorMeterState* state,
                                          const float* interleaved,
                                          std::uint32_t frames,
                                          std::uint32_t channels,
-                                         std::uint32_t channelMode) {
+                                         std::uint32_t channelMode,
+                                         bool collectRms) {
     MonitorMeterChunkResult result{};
     if (state == nullptr || interleaved == nullptr || frames == 0 ||
         channels == 0) {
@@ -235,17 +261,19 @@ MonitorMeterChunkResult ReduceMeterChunk(MonitorMeterState* state,
         if (absSample > state->samplePeak) {
             state->samplePeak = absSample;
         }
-        double rmsSquare = 0.0;
-        if (channelMode == VN_MONITOR_CHANNEL_MONO_AVERAGE) {
-            rmsSquare = static_cast<double>(mixed) * mixed;
-        } else {
-            for (std::uint32_t channel = 0; channel < channels; ++channel) {
-                const double sample = interleaved[i * channels + channel];
-                rmsSquare += sample * sample;
+        if (collectRms) {
+            double rmsSquare = 0.0;
+            if (channelMode == VN_MONITOR_CHANNEL_MONO_AVERAGE) {
+                rmsSquare = static_cast<double>(mixed) * mixed;
+            } else {
+                for (std::uint32_t channel = 0; channel < channels; ++channel) {
+                    const double sample = interleaved[i * channels + channel];
+                    rmsSquare += sample * sample;
+                }
+                rmsSquare /= channels;
             }
-            rmsSquare /= channels;
+            PushRms(state, rmsSquare);
         }
-        PushRms(state, static_cast<float>(rmsSquare));
         if (!state->holdReady || absSample >= state->holdLinear) {
             state->holdLinear = absSample;
             state->holdRemain = state->holdSamples;
@@ -261,7 +289,7 @@ MonitorMeterChunkResult ReduceMeterChunk(MonitorMeterState* state,
         if (state->truePeakFilled >= kMeterTruePeakWarmup) {
             state->truePeakReady = true;
             for (std::uint32_t phase = 0; phase < kMeterTruePeakPhases; ++phase) {
-                const float phasePeak = std::fabs(ConvolvePhase(*state, phase));
+                const double phasePeak = std::fabs(ConvolvePhase(*state, phase));
                 if (phasePeak > state->truePeak) {
                     state->truePeak = phasePeak;
                 }
@@ -275,9 +303,10 @@ MonitorMeterChunkResult ReduceMeterChunk(MonitorMeterState* state,
     }
     result.samplePeak = state->samplePeak;
     result.truePeak = state->truePeakReady ? state->truePeak : 0.0f;
+    if (collectRms) RefreshRmsSum(state);
     result.rmsLinear =
-        state->rmsReady
-            ? std::sqrt(static_cast<float>(
+        collectRms && state->rmsReady
+            ? static_cast<float>(std::sqrt(
                   state->rmsSumSquares /
                   static_cast<double>(state->rmsWindowSamples)))
             : 0.0f;
@@ -383,11 +412,11 @@ MonitorMeterChunkResult ReduceLoudnessChunk(MonitorLoudnessState* state,
     return result;
 }
 
-float MeterLinearToDb(float linear) {
+float MeterLinearToDb(double linear) {
     if (!(linear > 0.0f) || !std::isfinite(linear)) {
         return kMeterMinus160Db;
     }
-    return 20.0f * std::log10(linear);
+    return static_cast<float>(20.0 * std::log10(linear));
 }
 
 std::uint32_t MeterFloatBits(float value) {

@@ -138,6 +138,56 @@ TEST(MonitorMeasure, MeterRmsAveragesChannelEnergyWithoutPhaseCancellation) {
     }
 }
 
+TEST(MonitorMeasure, MeterRmsPreservesFiniteRangeAndRecoversCurrentWindow) {
+    for (const auto mode : {VN_MONITOR_CHANNEL_PER_CHANNEL, VN_MONITOR_CHANNEL_MONO_AVERAGE}) {
+        for (const auto chunkFrames : {1u, 73u, 300u}) {
+            SCOPED_TRACE(mode);
+            SCOPED_TRACE(chunkFrames);
+            harken::core::MonitorMeterState state{};
+            harken::core::ResetMeterState(&state, 1000, 1);
+            std::array<float, 600> samples{};
+            const auto feed = [&](float value) {
+                samples.fill(value);
+                harken::core::MonitorMeterChunkResult item{};
+                for (std::uint32_t begin = 0; begin < 300; begin += chunkFrames) {
+                    item = harken::core::ReduceMeterChunk(&state, samples.data() + begin * 2,
+                        std::min(chunkFrames, 300u - begin), 2, mode);
+                }
+                EXPECT_TRUE(item.numeric);
+                EXPECT_FALSE(item.invalid);
+                EXPECT_FALSE(item.rmsWarmup);
+                EXPECT_TRUE(std::isfinite(item.rmsLinear));
+                if (value == 0.0f) EXPECT_EQ(0.0f, item.rmsLinear);
+                else EXPECT_NEAR(1.0, static_cast<double>(item.rmsLinear) / value, 2.0e-6);
+            };
+            for (float value : {(std::numeric_limits<float>::max)(), 1.0e20f,
+                                0.5f, 1.0e-30f, 0.0f}) feed(value);
+            harken::core::NoteMeterSegment(&state, 2);
+            feed(0.25f);
+            harken::core::ResetMeterState(&state, 500, 3);
+            feed(0.75f);
+        }
+    }
+}
+
+TEST(MonitorMeasure, MeterRmsRecoversAfterMixedMagnitudeHistoryExpires) {
+    harken::core::MonitorMeterState state{};
+    harken::core::ResetMeterState(&state, 1000, 1);
+    std::array<float, 300> samples{};
+    samples.fill(0.5f);
+    samples[0] = (std::numeric_limits<float>::max)();
+    samples[1] = 1.0e20f;
+    (void)harken::core::ReduceMeterChunk(&state, samples.data(), 300, 1,
+        VN_MONITOR_CHANNEL_PER_CHANNEL);
+    const float normal = 0.5f;
+    const auto first = harken::core::ReduceMeterChunk(&state, &normal, 1, 1,
+        VN_MONITOR_CHANNEL_PER_CHANNEL);
+    EXPECT_NEAR(1.0, static_cast<double>(first.rmsLinear) / (1.0e20f / std::sqrt(300.0)), 2.0e-6);
+    const auto second = harken::core::ReduceMeterChunk(&state, &normal, 1, 1,
+        VN_MONITOR_CHANNEL_PER_CHANNEL);
+    EXPECT_FLOAT_EQ(0.5f, second.rmsLinear);
+}
+
 TEST(MonitorMeasure, MomentaryLoudnessMatchesKWeightedReferenceTones) {
     for (const auto sampleRate : {44100u, 48000u, 96000u}) {
         for (const auto frequency : {50.0, 1000.0, 10000.0}) {
@@ -380,6 +430,67 @@ TEST(MonitorMeasure, MeterDispatchTruePeakNumericBeforeRmsWindow) {
     ASSERT_EQ(1u, collected.validity.size());
     EXPECT_NE(0u, collected.validity[0] & VN_MONITOR_VALID_NUMERIC);
     EXPECT_EQ(0u, collected.validity[0] & VN_MONITOR_VALID_WARMUP);
+}
+
+TEST(MonitorMeasure, MeterDispatchExtremeReadingsRemainNumeric) {
+  for (const auto kind : {VN_MONITOR_MEASURE_RMS, VN_MONITOR_MEASURE_TRUE_PEAK}) {
+    SCOPED_TRACE(kind);
+    VnMonitorTapDescriptor tap{};
+    tap.structSize = sizeof(tap);
+    tap.tapDescriptorId = 21;
+    tap.tapDescriptorGeneration = 5;
+    auto request = MakeMeter(kind);
+    std::array<float, 300> samples{};
+    // A step has intersample overshoot. Scale invariance supplies a reference
+    // without duplicating the interpolation kernel in the test.
+    std::fill_n(samples.begin(), 150, 1.0f);
+    std::fill(samples.begin() + 150, samples.end(), -1.0f);
+    harken::core::MonitorMeterState reference{};
+    harken::core::ResetMeterState(&reference, 1000, 1);
+    const auto unit = harken::core::ReduceMeterChunk(&reference, samples.data(),
+        300, 1, VN_MONITOR_CHANNEL_PER_CHANNEL);
+    ASSERT_GT(unit.truePeak, 1.0);
+    const float maximum = (std::numeric_limits<float>::max)();
+    for (auto& sample : samples) sample *= maximum;
+    std::array<std::uint8_t, 2048> packed{};
+    const auto bytes = harken::monitor::PackAudioChunkRecord(
+        packed.data(), static_cast<std::uint32_t>(packed.size()), 42, 7, 19, 21, 5,
+        0, 1000, 1, 0, 0, 300, samples.data(), 300);
+    ASSERT_NE(0u, bytes);
+    struct Reading {
+        VnMonitorMeterPayload payload{};
+        std::uint32_t validity = 0;
+        std::uint32_t count = 0;
+        std::uint64_t sourceSequence = 0;
+    } reading;
+    harken::monitor::DerivedDrainState derived;
+    ASSERT_TRUE(derived.Prepare(&request, 1, 1000));
+    derived.Dispatch(&request, 1, &tap, 1, packed.data(), bytes,
+        [](void* raw, const harken::monitor::DerivedEmit& emit) {
+            auto& out = *static_cast<Reading*>(raw);
+            VnMonitorDecodedRecord decoded[1]{};
+            std::uint8_t skip[8]{};
+            const auto result = vn_monitor_decode_records(
+                emit.bytes, emit.size, decoded, 1, skip, sizeof(skip));
+            if (result.status != VN_OK || result.recordsWritten != 1 ||
+                decoded[0].payloadBytes != sizeof(out.payload)) return false;
+            out.validity = decoded[0].header.validityFlags;
+            out.sourceSequence = decoded[0].header.sourceSequence;
+            std::memcpy(&out.payload, decoded[0].payload, sizeof(out.payload));
+            ++out.count;
+            return true;
+        }, &reading);
+    ASSERT_EQ(1u, reading.count);
+    EXPECT_EQ(42u, reading.sourceSequence);
+    EXPECT_NE(0u, reading.validity & VN_MONITOR_VALID_NUMERIC);
+    if (kind == VN_MONITOR_MEASURE_RMS) {
+        EXPECT_FLOAT_EQ(maximum, std::bit_cast<float>(reading.payload.rmsBits));
+    } else {
+        const float db = std::bit_cast<float>(reading.payload.truePeakBits);
+        EXPECT_TRUE(std::isfinite(db));
+        EXPECT_NEAR(20.0 * std::log10(static_cast<double>(unit.truePeak) * maximum), db, 0.001);
+    }
+  }
 }
 
 TEST(MonitorMeasure, MomentaryDispatchPublishesWarmupNumericAndRearmsAfterDiscontinuities) {
