@@ -160,6 +160,7 @@ TEST(MediaPoolRefreshTest, CapturedWaveformsShareCacheAndRejectStaleContentWithU
     const auto changedCacheTime = QFileInfo(cache).lastModified().addSecs(1);
     ASSERT_TRUE(cache.open(QIODevice::WriteOnly));
     ASSERT_EQ(cache.write(originalBytes), originalBytes.size());
+    ASSERT_TRUE(cache.flush());
     ASSERT_TRUE(cache.setFileTime(changedCacheTime, QFileDevice::FileModificationTime));
     cache.close();
     const auto updatedBytes = bytes;
