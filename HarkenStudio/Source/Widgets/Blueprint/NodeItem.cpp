@@ -45,13 +45,17 @@ namespace {
 class NodeContentProxy final : public QGraphicsProxyWidget
 {
 public:
-    explicit NodeContentProxy(NodeItem* node) : QGraphicsProxyWidget(node), node_(node) {}
+    explicit NodeContentProxy(NodeItem* node) : QGraphicsProxyWidget(node), node_(node)
+    {
+        setFocusPolicy(Qt::StrongFocus);
+    }
 
 protected:
     void focusInEvent(QFocusEvent* event) override
     {
-        node_->ensureContentWidget();
         QGraphicsProxyWidget::focusInEvent(event);
+        if (auto* widget = node_->ensureContentWidget())
+            widget->graphicsProxyWidget()->setFocus(event->reason());
     }
 
 private:
@@ -336,6 +340,7 @@ NodeItem::NodeItem(const QString& title, QGraphicsItem* parent)
 
 NodeItem::~NodeItem()
 {
+    retireContentProxy_();
     if (auto* editor = qobject_cast<InlineRenameEdit*>(titleEditor())) {
         editor->blockSignals(true);
         editor->finish(false);
@@ -344,7 +349,7 @@ NodeItem::~NodeItem()
 
 QRectF NodeItem::titleRect() const
 {
-    if (routeGainMode_) return {};
+    if (routeGainMode_ || (effectiveDetailLevel() == BlueprintDetailLevel::Overview && !titleEditing_)) return {};
     QFont font = FontManager::instance().getFont(FontRole::Caption, 10, QFont::Normal);
     font.setItalic(titleDirty_);
     const QFontMetricsF metrics(font);
@@ -387,6 +392,7 @@ void NodeItem::beginTitleEditing()
         QObject::connect(editor, &InlineRenameEdit::finished, editor, [this, editor](bool committed) {
             titleEditing_ = false;
             titleProxy_->hide();
+            refreshContentVisibility_();
             update();
             if (titleEditFinishedCallback_) titleEditFinishedCallback_(editor->text(), committed);
         });
@@ -395,6 +401,7 @@ void NodeItem::beginTitleEditing()
         titleProxy_->setZValue(2.0);
     }
     titleEditing_ = true;
+    refreshContentVisibility_();
     titleProxy_->setGeometry(titleEditorRect());
     auto* editor = qobject_cast<InlineRenameEdit*>(titleEditor());
     titleProxy_->show();
@@ -496,6 +503,19 @@ void NodeItem::setCanvasFlowDirection(CanvasFlowDirection dir)
 }
 
 
+void NodeItem::setDetailLevel(BlueprintDetailLevel level)
+{
+    detailLevel_ = level;
+    if (level != BlueprintDetailLevel::Full) releaseContentWidget();
+    refreshContentVisibility_();
+    update();
+}
+
+BlueprintDetailLevel NodeItem::effectiveDetailLevel() const
+{
+    return titleEditing_ || editorProxy_ ? BlueprintDetailLevel::Full : detailLevel_;
+}
+
 void NodeItem::setContentInfo(const NodeContentInfo& info)
 {
     if (contentInfo_ == info) return;
@@ -509,41 +529,17 @@ void NodeItem::setContentInfo(const NodeContentInfo& info)
     update();
 }
 
-void NodeItem::setContentWidget(QWidget* widget)
-{
-    if (contentProxy_) {
-        auto* previous = contentProxy_->widget();
-        contentProxy_->setWidget(nullptr);
-        contentProxy_->setMinimumSize(0, 0);
-        contentProxy_->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
-        delete previous;
-    }
-    if (widget) {
-        if (!contentProxy_) contentProxy_ = new NodeContentProxy(this);
-        contentProxy_->setWidget(widget);
-        if (auto* editor = qobject_cast<NodeContentEditor*>(widget)) {
-            editor->setRouteGainMode(routeGainMode_);
-            QObject::connect(editor, &NodeContentEditor::contentSizeChanged, contentProxy_, [this] {
-                updateContentHeight();
-                repositionAllPins_();
-                update();
-            });
-        }
-    }
-    updateContentHeight();
-    repositionAllPins_();
-    update();
-}
-
 QWidget* NodeItem::contentWidget() const
 {
-    return contentProxy_ ? contentProxy_->widget() : nullptr;
+    return editorProxy_ ? editorProxy_->widget() : nullptr;
 }
 
-void NodeItem::setContentFactory(std::function<QWidget*()> factory,
+void NodeItem::setContentFactory(std::function<QGraphicsProxyWidget*()> acquire,
+    std::function<void(QGraphicsProxyWidget*)> release,
     std::function<NodeContentPresentation()> presentation)
 {
-    contentFactory_ = std::move(factory);
+    contentFactory_ = std::move(acquire);
+    contentRelease_ = std::move(release);
     contentPresentationFactory_ = std::move(presentation);
     if (!contentProxy_) contentProxy_ = new NodeContentProxy(this);
     refreshContentPresentation();
@@ -551,8 +547,37 @@ void NodeItem::setContentFactory(std::function<QWidget*()> factory,
 
 QWidget* NodeItem::ensureContentWidget()
 {
-    if (!contentWidget() && contentFactory_) setContentWidget(contentFactory_());
+    if (effectiveDetailLevel() != BlueprintDetailLevel::Full) return nullptr;
+    if (!editorProxy_ && contentFactory_) {
+        editorProxy_ = contentFactory_();
+        editorProxy_->setParentItem(contentProxy_);
+        editorProxy_->setPos(0, 0);
+        QGraphicsWidget::setTabOrder(contentProxy_, editorProxy_);
+        refreshContentVisibility_();
+        if (auto* editor = qobject_cast<NodeContentEditor*>(contentWidget())) {
+            editor->setRouteGainMode(routeGainMode_);
+            contentSizeConnection_ = QObject::connect(editor, &NodeContentEditor::contentSizeChanged,
+                contentProxy_, [this] {
+                    updateContentHeight();
+                    repositionAllPins_();
+                    update();
+                });
+        }
+        updateContentHeight();
+        repositionAllPins_();
+        update();
+    }
     return contentWidget();
+}
+
+void NodeItem::refreshContentVisibility_()
+{
+    if (!contentProxy_) return;
+    const bool visible = effectiveDetailLevel() == BlueprintDetailLevel::Full
+        && contentProxy_->size().height() > 0;
+    contentProxy_->setVisible(visible);
+    contentProxy_->setFocusPolicy(visible && !editorProxy_ ? Qt::StrongFocus : Qt::NoFocus);
+    if (editorProxy_) editorProxy_->setVisible(visible);
 }
 
 bool NodeItem::releaseContentWidget()
@@ -564,7 +589,8 @@ bool NodeItem::releaseContentWidget()
     const auto owns = [widget](const QWidget* candidate) {
         return candidate && (candidate == widget || widget->isAncestorOf(candidate));
     };
-    if (owns(QApplication::focusWidget()) || owns(QWidget::mouseGrabber())) return false;
+    if (owns(QApplication::focusWidget()) || owns(QWidget::mouseGrabber())
+        || owns(QApplication::activePopupWidget())) return false;
     if (scene()) {
         auto* focused = scene()->focusItem();
         if (focused && (focused == contentProxy_ || contentProxy_->isAncestorOf(focused))) return false;
@@ -572,8 +598,25 @@ bool NodeItem::releaseContentWidget()
         if (grabber && (grabber == contentProxy_ || contentProxy_->isAncestorOf(grabber))) return false;
     }
     contentPresentation_ = contentPresentationFactory_();
-    setContentWidget(nullptr);
+    retireContentProxy_();
+    updateContentHeight();
+    repositionAllPins_();
+    update();
     return true;
+}
+
+void NodeItem::retireContentProxy_()
+{
+    if (!editorProxy_) return;
+    QObject::disconnect(contentSizeConnection_);
+    contentSizeConnection_ = {};
+    auto* proxy = editorProxy_;
+    proxy->hide();
+    editorProxy_ = nullptr;
+    refreshContentVisibility_();
+    proxy->setParentItem(nullptr);
+    if (auto* currentScene = proxy->scene()) currentScene->removeItem(proxy);
+    contentRelease_(proxy);
 }
 
 void NodeItem::refreshContentPresentation()
@@ -626,41 +669,50 @@ void NodeItem::setWaveformPeakData(std::shared_ptr<const WaveformPeakData> data,
 
 void NodeItem::updateContentHeight()
 {
-    prepareGeometryChange();
     if (routeGainMode_) {
         const auto* widget = contentWidget();
         const float contentWidth = widget ? widget->width() : contentPresentation_
             ? contentPresentation_->size.width() : kDefaultWidth - 2 * kBodyPadX;
         const float contentHeight = widget ? widget->height() : contentPresentation_
             ? contentPresentation_->size.height() : 20.0f;
-        width_ = contentWidth + 2 * kBodyPadX;
-        height_ = std::max(kRouteGainMinimumHeight, contentHeight + 2 * kRouteGainPadY);
-        if (contentProxy_) {
-            contentProxy_->setVisible(contentHeight > 0);
-            contentProxy_->setPos(kBodyPadX, (height_ - contentHeight) * 0.5f);
-            if (!widget) contentProxy_->resize(contentWidth, contentHeight);
+        const float width = contentWidth + 2 * kBodyPadX;
+        const float height = std::max(kRouteGainMinimumHeight, contentHeight + 2 * kRouteGainPadY);
+        if (width_ != width || height_ != height) {
+            prepareGeometryChange();
+            width_ = width;
+            height_ = height;
         }
+        if (contentProxy_) {
+            contentProxy_->setPos(kBodyPadX, (height_ - contentHeight) * 0.5f);
+            contentProxy_->resize(contentWidth, contentHeight);
+        }
+        refreshContentVisibility_();
         dropOverlay_->setRect(QRectF(6.0, 6.0, width_ - 12.0, height_ - 12.0));
         return;
     }
     const int count = std::max(inputs_.size(), outputs_.size());
     const bool vertical = flowDir_ == CanvasFlowDirection::TB || flowDir_ == CanvasFlowDirection::BT;
-    width_ = vertical ? std::max(kDefaultWidth, 2 * kPinColumnPad + (count - 1) * kPortPairSpacing) : kDefaultWidth;
-    height_ = heightForContent(contentInfo_, !subtitle_.isEmpty(),
-                               blueprintWaveformMode_ || (waveformPeakData_ && waveformPeakData_->isValid()) || !waveformPeaks_.empty(),
-                               blueprintWaveformMode_, count, contentFields_);
+    float width = vertical ? std::max(kDefaultWidth, 2 * kPinColumnPad + (count - 1) * kPortPairSpacing) : kDefaultWidth;
+    float height = heightForContent(contentInfo_, !subtitle_.isEmpty(),
+                                  blueprintWaveformMode_ || (waveformPeakData_ && waveformPeakData_->isValid()) || !waveformPeaks_.empty(),
+                                  blueprintWaveformMode_, count, contentFields_);
     if (contentWidget() || contentPresentation_) {
         const QSize size = contentWidget() ? contentWidget()->size() : contentPresentation_->size;
-        contentProxy_->setVisible(size.height() > 0);
         if (size.height() > 0)
-            width_ = std::max(width_, static_cast<float>(size.width()) + 2 * kBodyPadX);
+            width = std::max(width, static_cast<float>(size.width()) + 2 * kBodyPadX);
         const auto rows = std::popcount(static_cast<unsigned int>(
             (contentInfo_.fields() & contentFields_).toInt()));
-        height_ += size.height() - rows * kRowHeight;
+        height += size.height() - rows * kRowHeight;
         contentProxy_->setPos(kBodyPadX, kHeaderHeight + kBodyPadTop
             + (subtitle_.isEmpty() ? 0.0f : kSubtitleRowHeight));
-        if (!contentWidget()) contentProxy_->resize(size);
+        contentProxy_->resize(size);
     }
+    if (width_ != width || height_ != height) {
+        prepareGeometryChange();
+        width_ = width;
+        height_ = height;
+    }
+    refreshContentVisibility_();
     dropOverlay_->setRect(QRectF(6.0, 6.0, width_ - 12.0, height_ - 12.0));
 }
 
@@ -745,6 +797,49 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
 
     const auto theme = ThemeManager::instance().snapshot();
     const auto& ngn = theme->domains.nodeGraphNode;
+    if (effectiveDetailLevel() == BlueprintDetailLevel::Overview) {
+        const qreal scale = QStyleOptionGraphicsItem::levelOfDetailFromTransform(painter->worldTransform());
+        const qreal lineWidth = std::clamp(1.0 / scale, 1.0, 10.0);
+        QColor borderColor = ngn.borderNormal;
+        if (isSelected()) borderColor = theme->ui.colors.accent;
+        else if (hovered_) borderColor = blendColors(ngn.borderNormal, ngn.borderHoverMix, 0.35f);
+        painter->setBrush(isSelected() ? ngn.bodySelected : ngn.bodyNormal);
+        painter->setPen(QPen(borderColor, lineWidth * (isSelected() ? 2.0 : 1.0),
+            Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
+        painter->drawRect(QRectF(0, 0, width_, height_));
+        if (playbackActive_) {
+            painter->setBrush(Qt::NoBrush);
+            painter->setPen(QPen(theme->ui.colors.success, lineWidth * 2.0,
+                Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
+            painter->drawRect(QRectF(3, 3, width_ - 6, height_ - 6));
+        }
+        if (itemType_) {
+            const qreal side = std::min({48.0, width_ - 24.0, height_ - 12.0});
+            const QRectF iconRect((width_ - side) * 0.5, (height_ - side) * 0.5, side, side);
+            const QColor color = titleColor_.isValid() ? titleColor_ : ngn.titleText;
+            const qreal dpr = painter->device() ? painter->device()->devicePixelRatioF() : 1.0;
+            const QPixmap icon = iconForItemType(*itemType_, color)
+                .pixmap(iconRect.size().toSize(), scale * dpr);
+            const bool smooth = painter->testRenderHint(QPainter::SmoothPixmapTransform);
+            painter->setRenderHint(QPainter::SmoothPixmapTransform, true);
+            painter->drawPixmap(iconRect, icon, QRectF(icon.rect()));
+            painter->setRenderHint(QPainter::SmoothPixmapTransform, smooth);
+        }
+        painter->setPen(QPen(theme->domains.blueprint.canvasBackground, 2.0));
+        if (sandboxBypassed_) {
+            painter->setBrush(ngn.sandboxBadgeBg);
+            painter->drawEllipse(QPointF(width_ - 12.0, 12.0), 6.0, 6.0);
+        }
+        if (overrideBadge_) {
+            painter->setBrush(ngn.badgeOverride);
+            painter->drawEllipse(QPointF(width_, 0.0), 11.0, 11.0);
+        }
+        if (receiveBadge_ > 0) {
+            painter->setBrush(ngn.badgeReceive);
+            painter->drawEllipse(QPointF(0.0, 0.0), 11.0, 11.0);
+        }
+        return;
+    }
 
     if (routeGainMode_) {
         QColor borderColor = ngn.borderNormal;
@@ -890,11 +985,12 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
 
 std::optional<NodeContentField> NodeItem::contentFieldAt(const QPointF& localPos) const
 {
+    if (effectiveDetailLevel() != BlueprintDetailLevel::Full) return std::nullopt;
     if (contentWidget()) {
-        auto* editor = qobject_cast<NodeContentEditor*>(contentProxy_->widget());
+        auto* editor = qobject_cast<NodeContentEditor*>(contentWidget());
         if (!editor)
             return std::nullopt;
-        return editor->fieldAt(contentProxy_->mapFromItem(this, localPos).toPoint());
+        return editor->fieldAt(editorProxy_->mapFromItem(this, localPos).toPoint());
     }
     if (contentPresentation_) {
         const auto point = contentProxy_->mapFromItem(this, localPos).toPoint();
@@ -960,7 +1056,7 @@ void NodeItem::paintContentBody(QPainter* painter, float bodyTop) const
 
     const auto fields = contentFields_ & contentInfo_.fields();
     if (contentWidget()) {
-        y += contentProxy_->widget()->height();
+        y += contentWidget()->height();
     } else if (contentPresentation_) {
         painter->save();
         painter->drawPicture(contentProxy_->pos(), contentPresentation_->drawing);

@@ -3,6 +3,7 @@
 
 #include <QGraphicsItem>
 #include <QList>
+#include <QMetaObject>
 #include <QSizeF>
 #include <QString>
 #include <functional>
@@ -11,6 +12,7 @@
 #include <vector>
 
 #include "../Common/WaveformRenderer.h"
+#include "BlueprintDetailLevel.h"
 #include "NodeContentInfo.h"
 #include "NodeContentEditor.h"
 #include "Core/AssetPipeline/WaveformCache.h"
@@ -166,13 +168,16 @@ public:
 
     void setDragCompleteCallback(DragCompleteCallback cb);
 
+    void setDetailLevel(BlueprintDetailLevel level);
+    BlueprintDetailLevel detailLevel() const { return detailLevel_; }
+    BlueprintDetailLevel effectiveDetailLevel() const;
 
     void setContentInfo(const NodeContentInfo& info);
     const NodeContentInfo& contentInfo() const { return contentInfo_; }
-    void setContentWidget(QWidget* widget);
     QWidget* contentWidget() const;
     QGraphicsProxyWidget* contentProxy() const { return contentProxy_; }
-    void setContentFactory(std::function<QWidget*()> factory,
+    void setContentFactory(std::function<QGraphicsProxyWidget*()> acquire,
+                           std::function<void(QGraphicsProxyWidget*)> release,
                            std::function<NodeContentPresentation()> presentation);
     QWidget* ensureContentWidget();
     bool releaseContentWidget();
@@ -246,8 +251,12 @@ private:
 
     NodeContentInfo contentInfo_;
     NodeContentFields contentFields_ = kAllNodeContentFields;
+    BlueprintDetailLevel detailLevel_ = BlueprintDetailLevel::Full;
     QGraphicsProxyWidget* contentProxy_ = nullptr;
-    std::function<QWidget*()> contentFactory_;
+    QGraphicsProxyWidget* editorProxy_ = nullptr;
+    QMetaObject::Connection contentSizeConnection_;
+    std::function<QGraphicsProxyWidget*()> contentFactory_;
+    std::function<void(QGraphicsProxyWidget*)> contentRelease_;
     std::function<NodeContentPresentation()> contentPresentationFactory_;
     std::optional<NodeContentPresentation> contentPresentation_;
 
@@ -257,6 +266,8 @@ private:
     std::optional<WaveformFrameRange> waveformRange_;
 
     void updateContentHeight();
+    void refreshContentVisibility_();
+    void retireContentProxy_();
     QRectF titleEditorRect() const;
 
     void paintContentBody(QPainter* painter, float bodyTop) const;

@@ -179,7 +179,7 @@ BlueprintPanel::BlueprintPanel(QWidget* parent)
     connect(fitAct, &QAction::triggered,
             canvas_, &BlueprintCanvasWidget::zoomToFit);
     zoomMenu->addSeparator();
-    for (int pct : {10, 25, 50, 75, 100, 125, 150, 200, 400}) {
+    for (int pct : {10, 20, 25, 40, 50, 75, 100, 125, 150, 200, 400}) {
         QAction* act = zoomMenu->addAction(QStringLiteral("%1%").arg(pct));
         connect(act, &QAction::triggered, canvas_, [this, pct]() {
             canvas_->setZoomFactor(pct / 100.0);

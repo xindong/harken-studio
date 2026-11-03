@@ -7,6 +7,7 @@ add_library(harken_editor_blueprint STATIC
     BlueprintEdgeKind.h
     BlueprintEdgeKind.cpp
     BlueprintCanvasView.h
+    BlueprintDetailLevel.h
     BlueprintCanvasView.cpp
     NodeItem.h
     NodeItem.cpp
@@ -14,6 +15,8 @@ add_library(harken_editor_blueprint STATIC
     ConnectionPath.cpp
     NodeContentEditor.h
     NodeContentEditor.cpp
+    NodeContentEditorPool.h
+    NodeContentEditorPool.cpp
     NodeContentInfo.h
     NodeGraphLayer.h
     BlueprintCanvasWidget.h

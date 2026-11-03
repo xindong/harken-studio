@@ -10,6 +10,7 @@
 #include "BlueprintConnectCommand.h"
 #include "Core/PropertyEditSession.h"
 #include "NodeContentEditor.h"
+#include "NodeContentEditorPool.h"
 #include "BlueprintImportUtils.h"
 #include "SignalChainSource.h"
 #include "Core/ActionManager.h"
@@ -62,6 +63,7 @@
 #include <QLabel>
 #include <QLineF>
 #include <QToolTip>
+#include <QTextDocument>
 #include <QPainter>
 #include <QPointer>
 #include <QColor>
@@ -616,6 +618,7 @@ void BlueprintCanvasWidget::clearScene()
         const QSignalBlocker blocker(scene_);
         scene_->clear();
     }
+    contentEditorPool_->clear();
 }
 
 void BlueprintCanvasWidget::materializeFromSource_()
@@ -971,11 +974,16 @@ void BlueprintCanvasWidget::materializeFromSource_()
             if (!proxy) return;
             if (previous) QGraphicsWidget::setTabOrder(previous, proxy);
             previous = proxy;
+            if (auto* editor = node->contentWidget()) {
+                previous = editor->graphicsProxyWidget();
+                QGraphicsWidget::setTabOrder(proxy, previous);
+            }
         };
         for (size_t index = 0; index < pathSource_->graph().nodes.size(); ++index)
             linkFocus(signalPathNode(index));
         for (auto* node : gainNodes_) linkFocus(node);
     }
+    applyDetailLevel_();
     pathContentRefreshNodes_.clear();
     sceneBlocker.unblock();
     emit signalChainViewChanged();
@@ -1634,12 +1642,11 @@ ContextTopic BlueprintCanvasWidget::contextTopicAt(const QPoint& pos) const
         const QPointF local = node->mapFromScene(mapToScene(viewPos));
         if (const auto field = node->contentFieldAt(local))
             return contentFieldTopic_(*field, item);
+        if (node->routeGainMode())
+            return contentFieldTopic_(node->contentInfo().sendVolume
+                ? NodeContentField::SendVolume : NodeContentField::OutputVolume, item);
         if (item)
             return ContextTopic::forObject(item->guid, item->type, item->name);
-        if (node->routeGainMode())
-            return ContextTopic::forField(ComponentType::MixNode, QStringLiteral("outputBusVolume"),
-                                           QStringLiteral("Output Volume"), QUuid(),
-                                           ProjectItem::Type::Sound, QString());
     }
 
     if (auto* edge = dynamic_cast<ConnectionPath*>(hit)) {
@@ -2167,9 +2174,29 @@ bool BlueprintCanvasWidget::viewportEvent(QEvent* event)
     case QEvent::Wheel:
         activateNodeEditorAt_(static_cast<QWheelEvent*>(event)->position().toPoint());
         break;
-    case QEvent::ToolTip:
-        activateNodeEditorAt_(static_cast<QHelpEvent*>(event)->pos());
+    case QEvent::ToolTip: {
+        auto* help = static_cast<QHelpEvent*>(event);
+        activateNodeEditorAt_(help->pos());
+        auto* hit = itemAt(help->pos());
+        auto* node = findOwningNodeItem(hit);
+        if (!dragSourcePin_ && node && !dynamic_cast<NodePin*>(hit)
+            && node->effectiveDetailLevel() != BlueprintDetailLevel::Full) {
+            QStringList lines;
+            if (!node->displayTitle().isEmpty()) lines.append(node->displayTitle());
+            if (node->itemType()) lines.append(ItemTypeCatalog::displayName(*node->itemType()));
+            if (!node->subtitle().isEmpty()) lines.append(node->subtitle());
+            const auto content = nodeContentToolTip(node->contentInfo(), node->contentFields());
+            if (!content.isEmpty()) lines.append(content);
+            if (node->isSandboxBypassed()) lines.append(tr("Bypassed"));
+            if (node->overrideBadge()) lines.append(tr("Override active"));
+            if (node->receiveBadge() > 0) lines.append(tr("Receives: %1").arg(node->receiveBadge()));
+            QToolTip::showText(help->globalPos(), Qt::convertFromPlainText(lines.join(QLatin1Char('\n'))),
+                viewport(), mapFromScene(node->sceneBoundingRect()).boundingRect());
+            event->accept();
+            return true;
+        }
         break;
+    }
     case QEvent::MouseButtonRelease:
     case QEvent::Leave:
     case QEvent::Hide:
