@@ -53,12 +53,6 @@ struct PlayableWorldViewV1 {
     }
 };
 
-enum class ResolvedPlayablePathRowKindV1 : std::uint8_t {
-    OrganizationLayer = 0,
-    Definition = 1,
-    Occurrence = 2,
-};
-
 struct ResolvedPlayablePathRowV1 {
     ResolvedPlayablePathRowKindV1 rowKind =
         ResolvedPlayablePathRowKindV1::Definition;

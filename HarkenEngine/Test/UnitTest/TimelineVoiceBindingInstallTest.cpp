@@ -480,6 +480,12 @@ TEST(TimelineVoiceInstall, NoLeaseCopySurvivesCatalogChange) {
     ASSERT_EQ(1u, frozen.bindings.size());
     ASSERT_EQ(cut.pathCount, frozen.pathRows.size());
     EXPECT_EQ(target, frozen.facts->target);
+    const auto originalPath = frozen.pathRows[0];
+    EXPECT_EQ(cut.path[0].rowKind, originalPath.rowKind);
+    EXPECT_EQ(cut.path[0].contentPropertyKind, originalPath.contentPropertyKind);
+    EXPECT_EQ(cut.path[0].programSemanticFingerprint, originalPath.propertyFingerprint);
+    EXPECT_EQ(cut.path[0].source, originalPath.source);
+    EXPECT_EQ(voice.playbackPath.rows[0].source, originalPath.source);
     harken::CapturedTimelineVoiceInstall moved(std::move(captured));
     EXPECT_FALSE(captured.Valid());
     EXPECT_EQ(frozen.facts, moved.Input().facts);
@@ -498,6 +504,9 @@ TEST(TimelineVoiceInstall, NoLeaseCopySurvivesCatalogChange) {
     EXPECT_TRUE(storage.Reset({}));
     EXPECT_EQ(kBinding, moved.Input().bindings[0].bindingId);
     EXPECT_EQ(kSound, moved.Input().pathRows[0].stableId);
+    EXPECT_EQ(originalPath.propertyFingerprint, moved.Input().pathRows[0].propertyFingerprint);
+    EXPECT_EQ(originalPath.source, moved.Input().pathRows[0].source);
+    EXPECT_EQ(originalPath.rowKind, moved.Input().pathRows[0].rowKind);
     EXPECT_FLOAT_EQ(-6.0f, moved.Input().bindings[0].curve.points[0].y);
     EXPECT_EQ(target, moved.Input().facts->target);
 }

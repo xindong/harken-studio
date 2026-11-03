@@ -2683,3 +2683,29 @@ TEST(Trace, TracingOffLeavesSnapshotTraceFieldsZeroUnderLoad) {
         EXPECT_EQ(0u, snapshot.traceFailed);
     }
 }
+
+TEST(TraceCodec, CurrentWorldV20RetainsSignalTables) {
+    harken::SignalRelationV1 relation{};
+    relation.stableId = harkentest::ObjectId(10);
+    relation.source.stableId = harkentest::ObjectId(1);
+    relation.target.stableId = harkentest::ObjectId(2);
+    harken::SignalReceiverV1 receiver{};
+    receiver.target = relation.target;
+    harken::ContainerWorldInstallViewV1 world{};
+    world.sourceBodyVintage = harken::kCurrentWorldBodyVintageV20;
+    world.signalRelations = &relation;
+    world.signalRelationCount = 1;
+    world.signalReceivers = &receiver;
+    world.signalReceiverCount = 1;
+    world.identity.capabilityMask = harken::kWorldCapabilitySignalRelations;
+    world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV7(world);
+    std::vector<std::uint8_t> bytes;
+    ASSERT_TRUE(harken::EncodeTraceCurrentWorldBody(world, bytes));
+    harken::CurrentWorldBodyImage decoded;
+    ASSERT_TRUE(decoded.Decode(bytes.data(), bytes.size(), world.sourceBodyVintage,
+                               harken::CurrentWorldDecodeMode::ReplayCurrentAttempt));
+    ASSERT_EQ(decoded.ProductionView()->signalRelationCount, 1u);
+    EXPECT_EQ(decoded.ProductionView()->signalRelations[0].stableId, relation.stableId);
+    EXPECT_EQ(decoded.ProductionView()->identity.runtimeSemanticFingerprint,
+              world.identity.runtimeSemanticFingerprint);
+}

@@ -382,6 +382,10 @@ bool DecodeTraceConfig(const std::uint8_t* bytes, std::size_t byteCount,
 bool EncodeTraceCurrentWorldBody(
     const ContainerWorldInstallViewV1& world,
     std::vector<std::uint8_t>& out) noexcept {
+    if (world.sourceBodyVintage == kCurrentWorldBodyVintageV20)
+        return EncodeCurrentWorldBodyV20(world, out);
+    if (world.sourceBodyVintage == kCurrentWorldBodyVintageV19)
+        return EncodeCurrentWorldBodyV19(world, out);
     return EncodeCurrentWorldShippingBodyRawAttempt(world, out);
 }
 

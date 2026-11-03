@@ -634,7 +634,7 @@ std::uint64_t VoiceCascadeScratchBytes(
     const bool needsBlendScratch = NeedsBlendScratch(ctx);
     const std::uint32_t planes = ctx.pcm.channelCount + std::max(
         needsBlendScratch ? ctx.pcm.channelCount : 0u,
-        ctx.voiceSendActiveCount > 0 ? mixChannels : 0u);
+        (ctx.voiceSendActiveCount > 0 || ctx.signalMemberActive) ? mixChannels : 0u);
     return static_cast<std::uint64_t>(planes) * blockFrames * sizeof(float);
 }
 
@@ -642,6 +642,7 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
                          std::uint32_t blockFrames, std::uint32_t mixChannels) {
     const std::uint32_t channels = ctx.pcm.channelCount;
     ctx.cascade.runnable = false;
+    ctx.cascade.signalImageReady = false;
     ctx.cascade.borrowed = {};
     ctx.cascade.plainPcmCandidate = false;
     ctx.logicalSourceOutputFramesThisBlock = 0;
@@ -882,7 +883,7 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     // semantics), so tapReady gates the scatter, never the cascade.
     float* tap[kMaxChannels] = {};
     bool tapReady = false;
-    if (ctx.voiceSendActiveCount > 0) {
+    if (ctx.voiceSendActiveCount > 0 || ctx.signalMemberActive) {
         tapReady = true;
         for (std::uint32_t ch = 0; ch < mixChannels; ++ch) {
             tap[ch] = needsBlendScratch && ch < channels
@@ -892,6 +893,12 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
                 break;
             }
         }
+    }
+    if (ctx.signalMemberActive && !tapReady) {
+        // Collective receiving cannot silently bypass a member whose image
+        // could not be reserved. Keep this block silent and retry next time.
+        ctx.lastResult = StageResult{0, ctx.phase};
+        return false;
     }
     ctx.firstBlock = false;
 
@@ -1418,16 +1425,16 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
     ctx.lastResult = StageResult{produced, phase};
 }
 
-void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
+static void FoldVoiceIntoBusesImpl(VoiceRenderContext& ctx, float* const* busPlanes,
                         std::uint32_t blockFrames, std::uint32_t mixChannels,
                         std::uint32_t mixLayout, std::uint64_t sourceFrameBegin,
-                        output_gain_detail::MonoStereoMixKernel monoStereoMix) {
+                        output_gain_detail::MonoStereoMixKernel monoStereoMix, bool imageOnly) {
     const std::uint32_t channels = ctx.pcm.channelCount;
     const std::uint32_t offset = ctx.cascade.offset;
     const std::uint32_t produced = ctx.cascade.produced;
     const bool monitorArmed = produced > 0 && harken::monitor::AudioLiveArmed();
     if (ctx.cascade.borrowed.frames != 0 &&
-        (monitorArmed || !CanCombineSpatialOutput(ctx, mixChannels))) {
+        (imageOnly || monitorArmed || !CanCombineSpatialOutput(ctx, mixChannels))) {
         MaterializePlainPcm(ctx);
     }
     if (monitorArmed) {
@@ -1459,7 +1466,7 @@ void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
     // One post-matrix image feeds both the dry bus and every send. Matrix
     // state advances only for actual output frames, including worker folds.
     if (produced > 0) {
-        float* const* dry = busPlanes + ctx.busIndex * mixChannels;
+        float* const* dry = imageOnly ? nullptr : busPlanes + ctx.busIndex * mixChannels;
         float** tap = ctx.cascade.tap;
         const bool haveTap = ctx.cascade.tapReady;
         if (channels <= 2) {
@@ -1488,12 +1495,12 @@ void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
                     for (std::uint32_t ch = 0; ch < mixChannels; ++ch) {
                         const float a = ctx.spatialMatrix.target.gain[0][ch];
                         const float b = ctx.spatialMatrix.target.gain[1][ch];
-                        float* dst = dry[ch] + offset;
+                        float* dst = imageOnly ? nullptr : dry[ch] + offset;
                         float* image = haveTap ? tap[ch] + offset : nullptr;
                         if (image != nullptr) {
                             for (std::uint32_t i = 0; i < produced; ++i)
                                 image[i] = src0[i] * a + (src1 != nullptr ? src1[i] * b : 0.0f);
-                            ctx.outputGain.MixAdd(image, dst, produced, 0);
+                            if (!imageOnly) ctx.outputGain.MixAdd(image, dst, produced, 0);
                         } else if (b == 0.0f) {
                             if (a != 0.0f) ctx.outputGain.MixAdd(src0, dst, produced, 0, a);
                         } else if (a == 0.0f) {
@@ -1538,7 +1545,7 @@ void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
                                 image[i] = src0[begin + i] * ga;
                             }
                         }
-                        ctx.outputGain.MixAdd(image, dry[ch] + offset + begin,
+                        if (!imageOnly) ctx.outputGain.MixAdd(image, dry[ch] + offset + begin,
                                               count, begin);
                     }
                 }
@@ -1563,16 +1570,17 @@ void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
                     auto& balance = ch == 0 ? ctx.balanceLeftTransition : ctx.balanceRightTransition;
                     for (std::uint32_t i = 0; i < produced; ++i) {
                         const float value = src[i] * balance.Value();
-                        dry[ch][offset + i] += value * ctx.outputGain.At(i);
+                        if (!imageOnly) dry[ch][offset + i] += value * ctx.outputGain.At(i);
                         if (haveTap) tap[ch][offset + i] = value;
                         balance.AdvanceFrame();
                     }
                 } else {
-                    ctx.outputGain.MixAdd(src, dry[ch] + offset, produced, 0);
+                    if (!imageOnly) ctx.outputGain.MixAdd(src, dry[ch] + offset, produced, 0);
                     if (haveTap) std::memcpy(tap[ch] + offset, src, produced * sizeof(float));
                 }
             }
         }
+        if (imageOnly) return;
         ctx.outputGain.Advance(produced);
         if (haveTap) {
             ScatterVoiceSends(ctx, busPlanes, tap, offset, produced,
@@ -1580,6 +1588,37 @@ void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
         }
     }
 
+}
+
+bool PrepareVoiceSignalImage(VoiceRenderContext& ctx, std::uint32_t blockFrames,
+                             std::uint32_t mixChannels, std::uint32_t mixLayout,
+                             std::uint64_t sourceFrameBegin) {
+    if (!ctx.cascade.runnable || !ctx.cascade.tapReady) return false;
+    if (!ctx.cascade.signalImageReady) {
+        FoldVoiceIntoBusesImpl(ctx, nullptr, blockFrames, mixChannels, mixLayout,
+                              sourceFrameBegin, &output_gain_detail::MixMonoToStereoScaled, true);
+        ctx.cascade.signalImageReady = true;
+    }
+    return true;
+}
+
+void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
+                        std::uint32_t blockFrames, std::uint32_t mixChannels,
+                        std::uint32_t mixLayout, std::uint64_t sourceFrameBegin,
+                        output_gain_detail::MonoStereoMixKernel monoStereoMix) {
+    if (!ctx.cascade.signalImageReady) {
+        FoldVoiceIntoBusesImpl(ctx, busPlanes, blockFrames, mixChannels, mixLayout,
+                              sourceFrameBegin, monoStereoMix, false);
+        return;
+    }
+    const auto offset = ctx.cascade.offset;
+    const auto produced = ctx.cascade.produced;
+    if (produced == 0) return;
+    float* const* dry = busPlanes + ctx.busIndex * mixChannels;
+    for (std::uint32_t ch = 0; ch < mixChannels; ++ch)
+        ctx.outputGain.MixAdd(ctx.cascade.tap[ch] + offset, dry[ch] + offset, produced, 0);
+    ctx.outputGain.Advance(produced);
+    ScatterVoiceSends(ctx, busPlanes, ctx.cascade.tap, offset, produced, mixChannels);
 }
 
 #if (defined(_M_X64) || defined(__x86_64__)) && (defined(__clang__) || defined(__GNUC__))

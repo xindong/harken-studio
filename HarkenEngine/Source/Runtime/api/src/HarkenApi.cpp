@@ -20798,8 +20798,12 @@ harken::PlayableStartStatus PopulateTimelineVoiceInstallColumns(
         row.targetId = binding.descriptor.targetId;
         row.variableId = binding.descriptor.variableId;
     }
-    for (std::uint32_t index = 0; index < cut.pathCount; ++index)
-        path[index] = {cut.path[index].stableId, cut.path[index].stableOccurrenceOrdinal};
+    for (std::uint32_t index = 0; index < cut.pathCount; ++index) {
+        const auto& resolved = cut.path[index];
+        path[index] = {resolved.stableId, resolved.stableOccurrenceOrdinal,
+                      resolved.rowKind, resolved.contentPropertyKind,
+                      resolved.programSemanticFingerprint, resolved.source};
+    }
     for (std::uint32_t index = 0; index < cut.sendCount; ++index) {
         sends[index].targetBusId = cut.sends[index].targetBusId;
         sends[index].levelDb = cut.sends[index].sendLevel;
@@ -102615,12 +102619,22 @@ VnResult Vn_LoadCurrentWorld(const VnCurrentWorldLoadDesc* desc,
         const auto finishCanonical =
             [&](harken::CurrentWorldLoadStatusV1 status) {
                 const VnResult result = mapArtifactStatus(status);
-                RecordCurrentWorldLoadTrace(
-                    engine, desc->utf8Path, result, *outReport,
-                    harken::TraceCurrentWorldImageTagV1::CanonicalV6Body,
-                    harken::TraceCurrentWorldCaptureDispositionV1::CanonicalBody,
-                    true, true, static_cast<std::uint64_t>(fileBytes),
-                    wholeArtifactHash, body.data(), body.size());
+                if (header.bodyVintage == harken::kCurrentWorldShippingBodyVintage) {
+                    RecordCurrentWorldLoadTrace(
+                        engine, desc->utf8Path, result, *outReport,
+                        harken::TraceCurrentWorldImageTagV1::CanonicalV6Body,
+                        harken::TraceCurrentWorldCaptureDispositionV1::CanonicalBody,
+                        true, true, static_cast<std::uint64_t>(fileBytes),
+                        wholeArtifactHash, body.data(), body.size());
+                } else {
+                    RecordCurrentWorldLoadTrace(
+                        engine, desc->utf8Path, result, *outReport,
+                        harken::TraceCurrentWorldImageTagV1::CanonicalArtifact,
+                        harken::TraceCurrentWorldCaptureDispositionV1::CompleteArtifact,
+                        true, true, static_cast<std::uint64_t>(fileBytes),
+                        wholeArtifactHash, artifactHeader.data(), artifactHeader.size(),
+                        body.data(), body.size());
+                }
                 return result;
             };
 

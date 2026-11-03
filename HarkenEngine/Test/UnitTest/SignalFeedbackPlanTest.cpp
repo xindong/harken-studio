@@ -98,3 +98,32 @@ TEST(SignalFeedbackPlan, DeepSparseGraphDoesNotRequireRecursiveTraversal) {
     ASSERT_TRUE(plan.Prepare(0, {}));
     EXPECT_TRUE(plan.Nodes().empty());
 }
+
+TEST(SignalFeedbackPlan, NumericUpdatesPreserveStructureAndRejectInvalidVectorsAtomically) {
+    SignalFeedbackPlan plan;
+    const std::array edges{SignalFeedbackEdge{0, 1, 1, false},
+                          SignalFeedbackEdge{1, 0, 1, true},
+                          SignalFeedbackEdge{1, 2, 1, true}};
+    ASSERT_TRUE(plan.Prepare(3, edges));
+    const auto component = plan.Nodes()[0].component;
+    const std::array<double, 3> loud{4, 2, 100};
+    ASSERT_TRUE(plan.UpdateBounds(loud));
+    EXPECT_EQ(component, plan.Nodes()[0].component);
+    EXPECT_DOUBLE_EQ(plan.Nodes()[0].slope, 1.0 / (1.0 / kDuckingBaselineSlope + 8));
+    EXPECT_DOUBLE_EQ(plan.Nodes()[2].slope, kDuckingBaselineSlope);
+    const double previous = plan.Nodes()[0].slope;
+    auto invalid = loud;
+    invalid[1] = std::numeric_limits<double>::quiet_NaN();
+    EXPECT_FALSE(plan.UpdateBounds(invalid));
+    EXPECT_DOUBLE_EQ(plan.Nodes()[0].slope, previous);
+    EXPECT_FALSE(plan.UpdateBounds({}));
+    const double infinity = std::numeric_limits<double>::infinity();
+    const std::array<double, 3> unbounded{infinity, 1, infinity};
+    ASSERT_TRUE(plan.UpdateBounds(unbounded));
+    EXPECT_DOUBLE_EQ(plan.Nodes()[0].slope, 0);
+    EXPECT_DOUBLE_EQ(plan.Nodes()[2].slope, kDuckingBaselineSlope);
+    const std::array<double, 3> muted{infinity, 0, infinity};
+    ASSERT_TRUE(plan.UpdateBounds(muted));
+    EXPECT_TRUE(plan.Nodes()[0].feedbackInput);
+    EXPECT_DOUBLE_EQ(plan.Nodes()[0].slope, kDuckingBaselineSlope);
+}

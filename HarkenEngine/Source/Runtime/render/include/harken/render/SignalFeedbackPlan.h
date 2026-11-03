@@ -26,7 +26,7 @@ struct SignalFeedbackNode {
     double slope = kDuckingBaselineSlope;
 };
 
-// Control-side compilation only. Zero-weight edges retain structural identity;
+// Control-side structural compilation. Zero-weight edges retain structural identity;
 // same-block cycles fail, but a cycle crossing a delayed edge is supported.
 // Sparse storage and iterative traversals avoid quadratic memory and recursion
 // proportional to the authored graph depth. Failure preserves the old plan.
@@ -118,41 +118,78 @@ public:
                 ++components;
             }
 
-            // m = Q*1 + P*m in normal DAG order, within each structural SCC.
-            // Parallel paths add. A stage traversed only by ordinary audio
-            // retains its original external-input response.
-            std::vector<double> sensitivity(count, 0), maximum(components, 0);
+            SignalFeedbackPlan next;
+            next.m_nodes = std::move(nodes);
+            next.m_normalOrder = std::move(normalOrder);
+            next.m_offsets = std::move(offsets);
+            next.m_outgoing = std::move(outgoing);
+            next.m_edges.assign(edges.begin(), edges.end());
+            next.m_sensitivity.resize(count);
+            next.m_maximum.resize(components);
+            std::vector<double> bounds;
+            bounds.reserve(edges.size());
             for (const auto& edge : edges) {
-                if (edge.delayed && nodes[edge.source].component == nodes[edge.target].component) {
-                    nodes[edge.target].feedbackInput = true;
-                    sensitivity[edge.target] += edge.bound;
-                }
+                bounds.push_back(edge.bound);
+                if (edge.delayed && next.m_nodes[edge.source].component ==
+                                    next.m_nodes[edge.target].component)
+                    next.m_nodes[edge.target].feedbackInput = true;
             }
-            for (auto node : normalOrder) {
-                if (!std::isfinite(sensitivity[node])) return false;
-                const auto component = nodes[node].component;
-                maximum[component] = std::max(maximum[component], sensitivity[node]);
-                for (auto p = offsets[node]; p < offsets[node + 1]; ++p) {
-                    const auto& edge = edges[outgoing[p]];
-                    if (!edge.delayed && nodes[edge.target].component == component)
-                        sensitivity[edge.target] += edge.bound * sensitivity[node];
-                }
-            }
-            for (auto& node : nodes)
-                if (node.feedbackInput)
-                    node.slope = 1.0 / (1.0 / kDuckingBaselineSlope + maximum[node.component]);
-            m_nodes.swap(nodes);
-            m_normalOrder.swap(normalOrder);
+            if (!next.UpdateBounds(bounds)) return false;
+            // Preserve preparation's finite-input contract. Audio updates may
+            // use a conservative positive infinity for a known bound overflow.
+            for (const auto maximum : next.m_maximum)
+                if (!std::isfinite(maximum)) return false;
+            *this = std::move(next);
             return true;
         } catch (...) {
             return false;
         }
     }
 
+    // Audio coordinator only, before receiver processing. Structural identity
+    // and edge order stay fixed; all work and storage are O(V+E). Validate the
+    // entire vector before changing published slopes. A failed update leaves
+    // the previous coefficients intact and the owner must retain sufficient
+    // bounds or retry with conservative infinities for unknown path factors.
+    bool UpdateBounds(std::span<const double> bounds) noexcept {
+        if (bounds.size() != m_edges.size()) return false;
+        for (double bound : bounds)
+            if (std::isnan(bound) || bound < 0) return false;
+        std::fill(m_sensitivity.begin(), m_sensitivity.end(), 0.0);
+        std::fill(m_maximum.begin(), m_maximum.end(), 0.0);
+        for (std::size_t i = 0; i < m_edges.size(); ++i) {
+            const auto& edge = m_edges[i];
+            if (edge.delayed && m_nodes[edge.source].component == m_nodes[edge.target].component)
+                m_sensitivity[edge.target] += bounds[i];
+        }
+        // m = Q*1 + P*m, within each structural SCC. Exact-zero factors
+        // annihilate even unbounded paths without evaluating 0*infinity.
+        for (const auto node : m_normalOrder) {
+            const auto component = m_nodes[node].component;
+            m_maximum[component] = std::max(m_maximum[component], m_sensitivity[node]);
+            for (auto p = m_offsets[node]; p < m_offsets[node + 1]; ++p) {
+                const auto index = m_outgoing[p];
+                const auto& edge = m_edges[index];
+                if (!edge.delayed && m_nodes[edge.target].component == component &&
+                    bounds[index] != 0 && m_sensitivity[node] != 0)
+                    m_sensitivity[edge.target] += bounds[index] * m_sensitivity[node];
+            }
+        }
+        for (auto& node : m_nodes)
+            node.slope = node.feedbackInput
+                ? 1.0 / (1.0 / kDuckingBaselineSlope + m_maximum[node.component])
+                : kDuckingBaselineSlope;
+        return true;
+    }
+
     std::span<const SignalFeedbackNode> Nodes() const noexcept { return m_nodes; }
     std::span<const std::uint32_t> NormalOrder() const noexcept { return m_normalOrder; }
 
 private:
+    std::vector<SignalFeedbackEdge> m_edges;
+    std::vector<std::size_t> m_offsets;
+    std::vector<std::uint32_t> m_outgoing;
+    std::vector<double> m_sensitivity, m_maximum;
     std::vector<SignalFeedbackNode> m_nodes;
     std::vector<std::uint32_t> m_normalOrder;
 };

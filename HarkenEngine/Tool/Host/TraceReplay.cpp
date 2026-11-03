@@ -1479,37 +1479,48 @@ int ExecuteCall(std::uint16_t callId, ByteReader& r, BlobStore& blobs,
             result = expected;
             break;
         }
-        if (imageTag !=
-                harken::TraceCurrentWorldImageTagV1::CanonicalV6Body ||
-            disposition !=
-                harken::TraceCurrentWorldCaptureDispositionV1::CanonicalBody ||
-            observedLengthKnown != 1 || wholeArtifactHashKnown != 1 ||
-            capturedBytes > harken::kCurrentWorldArtifactMaxBodyBytes ||
-            report.bodyBytes != capturedBytes ||
-            observedFileBytes !=
-                harken::kCurrentWorldArtifactHeaderBytes + capturedBytes) {
+        harken::CurrentWorldArtifactHeaderV1 header{};
+        const std::uint8_t* body = captured;
+        std::size_t bodyBytes = static_cast<std::size_t>(capturedBytes);
+        if (imageTag == harken::TraceCurrentWorldImageTagV1::CanonicalArtifact) {
+            if (disposition != harken::TraceCurrentWorldCaptureDispositionV1::CompleteArtifact ||
+                capturedBytes != observedFileBytes ||
+                harken::InspectCurrentWorldArtifactHeaderV1(
+                    captured, bodyBytes, observedFileBytes, header) !=
+                    harken::CurrentWorldLoadStatusV1::Ok) {
+                return 1;
+            }
+            body += harken::kCurrentWorldArtifactHeaderBytes;
+            bodyBytes -= harken::kCurrentWorldArtifactHeaderBytes;
+        } else if (imageTag == harken::TraceCurrentWorldImageTagV1::CanonicalV6Body &&
+                   disposition == harken::TraceCurrentWorldCaptureDispositionV1::CanonicalBody) {
+            header.bodyBytes = report.bodyBytes;
+            header.bodyChecksum = report.bodyChecksum;
+            header.runtimeSemanticFingerprint = report.runtimeSemanticFingerprint;
+            header.capabilityMask = report.capabilityMask;
+        } else {
             return 1;
         }
-        harken::CurrentWorldArtifactHeaderV1 header{};
-        header.bodyBytes = report.bodyBytes;
-        header.bodyChecksum = report.bodyChecksum;
-        header.runtimeSemanticFingerprint =
-            report.runtimeSemanticFingerprint;
-        header.capabilityMask = report.capabilityMask;
+        if (observedLengthKnown != 1 || wholeArtifactHashKnown != 1 ||
+            bodyBytes > harken::kCurrentWorldArtifactMaxBodyBytes ||
+            report.bodyBytes != bodyBytes || report.bodyBytes != header.bodyBytes ||
+            report.bodyChecksum != header.bodyChecksum ||
+            report.runtimeSemanticFingerprint != header.runtimeSemanticFingerprint ||
+            report.capabilityMask != header.capabilityMask ||
+            observedFileBytes != harken::kCurrentWorldArtifactHeaderBytes + bodyBytes) {
+            return 1;
+        }
         harken::CurrentWorldBodyImage image;
         if (harken::DecodeCurrentWorldArtifactBodyV1(
-                header, captured, static_cast<std::size_t>(capturedBytes),
-                image) != harken::CurrentWorldLoadStatusV1::Ok) {
+                header, body, bodyBytes, image) != harken::CurrentWorldLoadStatusV1::Ok) {
             return 1;
         }
         std::vector<std::uint8_t> artifact;
         if (!harken::EncodeCurrentWorldArtifactV1(*image.ProductionView(), artifact) ||
             artifact.size() != observedFileBytes ||
-            std::memcmp(
-                artifact.data() + harken::kCurrentWorldArtifactHeaderBytes,
-                captured, static_cast<std::size_t>(capturedBytes)) != 0 ||
-            harken::Fnv1a64(artifact.data(), artifact.size()) !=
-                wholeArtifactHash) {
+            std::memcmp(artifact.data() + harken::kCurrentWorldArtifactHeaderBytes,
+                        body, bodyBytes) != 0 ||
+            harken::Fnv1a64(artifact.data(), artifact.size()) != wholeArtifactHash) {
             return 1;
         }
         const harken::WorldInstallResult replayed =
@@ -4005,7 +4016,7 @@ int RunTraceReplay(int argc, char** argv) {
                         rec.failed = true;
                     }
                 }
-            } else if (worldVintage == harken::kCurrentWorldShippingBodyVintage) {
+            } else if (harken::IsReadableCurrentWorldBodyVintage(worldVintage)) {
                 const std::size_t rest = rec.Remaining();
                 const std::uint8_t* restBytes = rec.Bytes(rest);
                 const auto mode = encoding == 0
@@ -4067,7 +4078,7 @@ int RunTraceReplay(int argc, char** argv) {
                 exitCode = 1;
                 break;
             }
-            if (worldVintage != harken::kCurrentWorldShippingBodyVintage) {
+            if (!harken::IsReadableCurrentWorldBodyVintage(worldVintage)) {
                 if (replay == nullptr) {
                     exitCode = 1;
                     break;
