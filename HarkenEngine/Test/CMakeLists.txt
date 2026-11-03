@@ -193,6 +193,7 @@ add_executable(harken_runtime_tests
     UnitTest/SignalBlockExchangeTest.cpp
     UnitTest/DuckingReceiverTest.cpp
     UnitTest/SignalFeedbackPlanTest.cpp
+    UnitTest/SignalRenderPlanTest.cpp
     UnitTest/CurrentWorldSignalTest.cpp
     UnitTest/PackSignalRelationTest.cpp
     UnitTest/BusFilterTest.cpp
