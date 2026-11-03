@@ -94,13 +94,17 @@ public:
             m_mainEnvelope = std::max(mainPeak, m_mainEnvelope * m_parameters.mainFall);
             double denominator = std::max(m_mainEnvelope, 1e-9);
             double effectiveSlope = kDuckingBaselineSlope;
+            // A temporary feedforward interval still consumes audio time.
+            // Do not resurrect a frozen reference when a return path reopens.
+            m_preReference *= m_parameters.mainFall;
+            m_postReference *= m_parameters.mainFall;
             if (feedback) {
                 const double pre = std::isfinite(preReference[n])
                     ? std::max(0.0, preReference[n]) : 0;
                 const double post = std::isfinite(postReference[n])
                     ? std::max(0.0, postReference[n]) : 0;
-                m_preReference = std::max(pre, m_preReference * m_parameters.mainFall);
-                m_postReference = std::max(post, m_postReference * m_parameters.mainFall);
+                m_preReference = std::max(pre, m_preReference);
+                m_postReference = std::max(post, m_postReference);
                 denominator = std::max({denominator, m_preReference, m_postReference});
                 effectiveSlope = slope;
             }

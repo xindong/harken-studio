@@ -87,6 +87,28 @@ TEST(DuckingReceiver, ParametersRetainTimeConstantsAndRejectInvalidUpdates) {
     EXPECT_EQ(output.sampleRate, p48.sampleRate);
 }
 
+TEST(DuckingReceiver, FeedbackReferenceAgesWhileReturnPathIsAbsent) {
+    harken::DuckingReceiver switched, fresh;
+    switched.SetParameters(Parameters());
+    fresh.SetParameters(Parameters());
+    std::array<float, 256> samples;
+    samples.fill(1);
+    const float* planes[]{samples.data()};
+    std::array<double, 256> references, switchedGains, freshGains;
+    references.fill(1e10);
+    ASSERT_TRUE(switched.Process(planes, nullptr, 1, 256,
+        references.data(), references.data(), 1, switchedGains.data()));
+    for (int block = 0; block < 40; ++block)
+        ASSERT_TRUE(switched.Process(planes, nullptr, 1, 256,
+            nullptr, nullptr, 0, switchedGains.data()));
+    references.fill(1);
+    ASSERT_TRUE(switched.Process(planes, planes, 1, 256,
+        references.data(), references.data(), 1, switchedGains.data()));
+    ASSERT_TRUE(fresh.Process(planes, planes, 1, 256,
+        references.data(), references.data(), 1, freshGains.data()));
+    EXPECT_EQ(switchedGains, freshGains);
+}
+
 TEST(DuckingReceiver, ExtremeFiniteSamplesRetainDeepGainAndIntermediateHeadroom) {
     float left[]{std::numeric_limits<float>::max(), 4};
     float* output[]{left};
