@@ -27,6 +27,7 @@
 #include <QProcess>
 #include <QScopeGuard>
 #include <QSettings>
+#include <QTcpServer>
 #include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QThread>
@@ -72,6 +73,10 @@ TEST(StudioPackageIntegration, InstallsRepairsRegistersCreatesAndOpensRealStudio
     const auto package = qEnvironmentVariable("HARKEN_HUB_STUDIO_PACKAGE");
     if (package.isEmpty())
         GTEST_SKIP() << "Set HARKEN_HUB_STUDIO_PACKAGE to a freshly built Studio package";
+    QTcpServer portProbe;
+    if (!portProbe.listen(QHostAddress::LocalHost, 9527))
+        GTEST_SKIP() << "Studio inspection port 9527 is already in use; close the other Studio instance before running this test";
+    portProbe.close();
     const auto retainedRoot = qEnvironmentVariable("HARKEN_HUB_STUDIO_TEST_ROOT");
     QTemporaryDir directory(QDir(retainedRoot.isEmpty() ? QDir::tempPath() : retainedRoot)
                                .filePath("hub-studio-XXXXXX"));
