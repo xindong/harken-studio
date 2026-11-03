@@ -213,7 +213,7 @@ std::uint64_t MixerLoop::SignalScratchBytes(std::uint32_t slots, std::uint32_t n
     const std::uint64_t edges = static_cast<std::uint64_t>(m_maxBuses) * (m_busSendSlots + 1ull) +
         relations + m_voices.PreparedSignalPathRows(slots) +
         static_cast<std::uint64_t>(slots) * (kMaxVoiceSendSlots + 1ull);
-    return SignalRenderPlan::RoutingScratchBytes(nodes, m_maxBuses, edges);
+    return SignalRenderPlan::RoutingScratchBytes(nodes, m_maxBuses, edges, m_blockFrames);
 }
 
 bool MixerLoop::PrepareSignalBacking(const SignalRenderPlan& plan) noexcept {

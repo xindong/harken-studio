@@ -397,53 +397,65 @@ namespace {
 
 enum class BusToneKind : std::uint8_t { Lowpass, Highpass };
 
-void ProcessBusToneSection(BusTree::Bus::ToneSection& section,
+double ProcessBusToneSection(BusTree::Bus::ToneSection& section,
                            BusToneKind kind, const BiquadTrigTable* trig,
                            std::uint32_t sampleRate, float* const* channels,
-                           std::uint32_t channelCount,
-                           std::uint32_t frames) {
-    if (!section.enabled && !section.transition.transitioning &&
-        !section.glide.active) {
-        return;
+                           std::uint32_t channelCount, std::uint32_t frames,
+                           std::span<SignalBiquadSegment> prepare = {}) {
+    if (!section.enabled && !section.transition.transitioning && !section.glide.active) {
+        section.signalSchedule = {};
+        return 1;
     }
-    if (section.transition.transitioning || !section.glide.active ||
-        trig == nullptr) {
-        BiquadProcessSmoothed(section.transition, section.enabled,
-                              section.coeffs, section.state,
-                              section.tailFrames, channels, channelCount, 0,
-                              frames);
-        return;
+    if (section.transition.transitioning || !section.glide.active || trig == nullptr) {
+        const auto bound = section.signalBound.Advance(section.enabled, section.coeffs,
+            section.transition, frames);
+        section.signalHighWater = std::max(section.signalHighWater, bound);
+        BiquadProcessSmoothed(section.transition, section.enabled, section.coeffs,
+            section.state, section.tailFrames, channels, channelCount, 0, frames);
+        section.signalSchedule = {};
+        return bound;
     }
     constexpr std::uint32_t kControlFrames = 16;
-    std::uint32_t consumed = 0;
+    std::uint32_t consumed = 0, segment = 0;
+    double bound = 1;
     while (consumed < frames) {
-        const std::uint32_t controlOffset =
-            section.glide.progress % kControlFrames;
-        const std::uint32_t count =
-            std::min(kControlFrames - controlOffset, frames - consumed);
-        BiquadProcessSmoothed(section.transition, section.enabled,
-                              section.coeffs, section.state,
-                              section.tailFrames, channels, channelCount,
-                              consumed, count);
+        const std::uint32_t controlOffset = section.glide.progress % kControlFrames;
+        const std::uint32_t count = std::min(kControlFrames - controlOffset, frames - consumed);
+        bound = std::max(bound, section.signalBound.Advance(section.enabled,
+            section.coeffs, section.transition, count, true));
+        BiquadProcessSmoothed(section.transition, section.enabled, section.coeffs,
+            section.state, section.tailFrames, channels, channelCount, consumed, count);
         consumed += count;
         section.glide.Advance(count);
-        const BiquadTrigPoint point =
-            trig->Lookup(static_cast<float>(sampleRate),
-                         section.glide.FrequencyHz());
-        const BiquadCoeffs candidate =
-            kind == BusToneKind::Lowpass
-                ? MakeLowpassFromTrig(point, section.glide.Q())
-                : MakeHighpassFromTrig(point, section.glide.Q());
-        if (IsBiquadStable(candidate)) {
-            section.coeffs = candidate;
-            section.tailFrames = EstimateBiquadTailFrames(candidate);
+        if (!section.signalSchedule.empty()) {
+            // The certificate and audio consume exactly the same prepared tuples.
+            assert(segment < section.signalSchedule.size());
+            const auto& next = section.signalSchedule[segment];
+            assert(next.frames == count);
+            section.coeffs = next.nextCoefficients;
+            section.tailFrames = next.nextTailFrames;
+        } else {
+            const auto point = trig->Lookup(static_cast<float>(sampleRate), section.glide.FrequencyHz());
+            const auto candidate = kind == BusToneKind::Lowpass
+                ? MakeLowpassFromTrig(point, section.glide.Q()) : MakeHighpassFromTrig(point, section.glide.Q());
+            if (IsBiquadStable(candidate)) {
+                section.coeffs = candidate;
+                section.tailFrames = EstimateBiquadTailFrames(candidate);
+            }
+            if (!section.glide.active && IsBiquadStable(section.transition.targetCoeffs)) {
+                section.coeffs = section.transition.targetCoeffs;
+                section.tailFrames = section.transition.targetTailFrames;
+            }
         }
-        if (!section.glide.active &&
-            IsBiquadStable(section.transition.targetCoeffs)) {
-            section.coeffs = section.transition.targetCoeffs;
-            section.tailFrames = section.transition.targetTailFrames;
+        if (!prepare.empty()) {
+            assert(segment < prepare.size());
+            prepare[segment] = {section.coeffs, section.tailFrames, count};
         }
+        ++segment;
     }
+    section.signalSchedule = {};
+    section.signalHighWater = std::max(section.signalHighWater, bound);
+    return bound;
 }
 
 bool ToneSectionActive(const BusTree::Bus::ToneSection& section) {
@@ -946,6 +958,9 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
                 bus.fxSlotEffectRef[slot], payload);
         }
     };
+    if (!bus.signalBoundsPrepared)
+        (void)SignalBusBounds(static_cast<std::uint32_t>(&bus - m_buses.data()), blockFrames, {});
+    bus.signalBoundsPrepared = false;
     // Pre-fader chain: fx slots [0, faderAfterSlot) before the gain.
     for (std::uint32_t s = 0; s < fader; ++s) {
         processSlot(s);
@@ -1086,53 +1101,109 @@ void BusTree::ScatterSend(const float* const* src, float* const* dst,
     }
 }
 
-std::uint32_t BusTree::SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> info,
-    std::span<SignalFeedbackEdge> edges, std::uint32_t frames) noexcept {
-    if (info.size() < m_audioCount || edges.size() < SignalRoutingEdgeCapacity()) return UINT32_MAX;
-    const auto plan = m_plans.View(m_currentPlanIndex);
-    const auto infinity = std::numeric_limits<double>::infinity();
-    for (std::uint32_t i = 0; i < m_audioCount; ++i) {
-        const auto& bus = m_buses[i];
-        if (plan.valid && plan.alive != nullptr && plan.alive[i] == 0) continue;
-        auto& result = info[i];
-        result.id = bus.id;
-        result.generation = bus.generation;
-        result.outputGainBound = SignalOutputGainBound(bus.outputGain, frames);
-        double input = SignalOutputGainBound(bus.gain, frames);
-        bool memory = ToneSectionActive(bus.busLpf) || ToneSectionActive(bus.busHpf);
-        for (std::uint32_t slot = 0; slot < m_fxSlots; ++slot) {
-            const auto& effect = bus.fxSlots[slot];
-            if (effect.process == nullptr) continue;
-            if (!bus.fxBypassRamping[slot] && bus.fxBypassMix[slot] >= 1) continue;
-            if (bus.fxSlotEffectRef[slot].type == VN_EFFECT_GAIN) {
-                const auto& gain = *static_cast<const GainState*>(effect.state);
-                const double value = SignalIncrementBound(gain.gainLinear, gain.targetGainLinear,
-                    gain.gainIncrement, gain.transitionFramesRemaining, frames);
-                input = SignalBoundProduct(input, bus.fxBypassRamping[slot] ? std::max(1.0, value) : value);
-            } else memory = true;
-        }
-        // Stateful transfer certificates are supplied by their owning DSP.
-        // Until one is available, localize the conservative limit to this
-        // return path rather than reusing a stale finite coefficient.
-        if (memory) input = infinity;
-        double layout = 1;
-        if (i != 0 && IsConcreteLayout(bus.outputLayout) &&
-            LayoutChannelCount(bus.outputLayout) < m_mixChannels) {
-            layout = 0;
-            ChannelRole roles[kMaxChannels];
-            LayoutRoles(bus.outputLayout, roles);
-            for (std::uint32_t row = 0; row < LayoutChannelCount(bus.outputLayout); ++row) {
-                if (ChannelOfRole(m_mixLayout, roles[row]) < 0) continue;
-                double sum = 0;
-                for (std::uint32_t ch = 0; ch < m_mixChannels; ++ch)
-                    sum += std::abs(static_cast<double>(bus.downmixCoeffs[row * 8 + ch]));
-                layout = std::max(layout, sum);
+SignalBusRoutingInfo BusTree::SignalBusBounds(std::uint32_t index, std::uint32_t frames,
+    std::span<SignalBiquadSegment> schedules) noexcept {
+    auto& bus = m_buses[index];
+    SignalBusRoutingInfo result{};
+    result.id = bus.id;
+    result.generation = bus.generation;
+    result.outputGainBound = SignalOutputGainBound(bus.outputGain, frames);
+    bus.signalGainHistory = std::max(bus.signalGainHistory, SignalOutputGainBound(bus.gain, frames));
+    bus.signalOutputHistory = std::max(bus.signalOutputHistory, result.outputGainBound);
+    double input = bus.signalGainHistory;
+    for (std::uint32_t slot = 0; slot < m_fxSlots; ++slot) {
+        const auto& effect = bus.fxSlots[slot];
+        double value = 1;
+        if (effect.process != nullptr && effect.state != nullptr) {
+            switch (bus.fxSlotEffectRef[slot].type) {
+            case VN_EFFECT_GAIN: {
+                const auto& state = *static_cast<const GainState*>(effect.state);
+                value = SignalIncrementBound(state.gainLinear, state.targetGainLinear,
+                    state.gainIncrement, state.transitionFramesRemaining, frames);
+                break;
             }
+            case VN_EFFECT_FEEDBACK_DELAY: {
+                const auto& state = *static_cast<const DelayEffectState*>(effect.state);
+                const double wet = SignalIncrementBound(state.wet, state.targetWet,
+                    state.wetIncrement, state.transitionFramesRemaining, frames);
+                const double dry = SignalIncrementBound(state.dry, state.targetDry,
+                    state.dryIncrement, state.transitionFramesRemaining, frames);
+                value = dry + wet / (1.0 - std::max(state.feedback, state.maxFeedbackSinceReset));
+                break;
+            }
+            case VN_EFFECT_THREE_BAND_TONE: {
+                const auto& state = *static_cast<const ToneEffectState*>(effect.state);
+                for (std::size_t band = 0; band < 3; ++band) {
+                    auto& history = bus.signalToneHistory[slot][band];
+                    history = std::max({1.0, history, state.signalBandHistory[band]});
+                    value = SignalBoundProduct(value, history);
+                }
+                break;
+            }
+            case VN_EFFECT_LIMITER: value = 2; break;
+            case VN_EFFECT_COMPRESSOR: {
+                const auto& state = *static_cast<const CompressorState*>(effect.state);
+                value = 2 * std::max({1.0, state.resetBridgeStartGain,
+                    SignalIncrementBound(state.parameters.makeupLinear, state.targetParameters.makeupLinear,
+                        state.parameterIncrements.makeupLinear, state.parameterTransitionFramesRemaining, frames)});
+                break;
+            }
+            default: value = std::numeric_limits<double>::infinity(); break;
+            }
+            if (!bus.fxBypassRamping[slot] && bus.fxBypassMix[slot] >= 1) value = 1;
+            else if (bus.fxBypassRamping[slot] || bus.fxBypassMix[slot] > 0) value = std::max(1.0, value);
         }
-        result.inputBound = SignalBoundProduct(SignalBoundProduct(input, layout),
-            std::max(1.0, result.outputGainBound));
-        result.outputFilterBound = ToneSectionActive(bus.outputLpf) || ToneSectionActive(bus.outputHpf)
-            ? infinity : 1;
+        // A replaced upstream effect does not reset surviving downstream memory.
+        bus.signalSlotHistory[slot] = std::max({1.0, bus.signalSlotHistory[slot], value});
+        input = SignalBoundProduct(input, bus.signalSlotHistory[slot]);
+    }
+    const auto sectionBound = [&](Bus::ToneSection& section, BusToneKind kind, std::size_t slot) {
+        section.signalSchedule = {};
+        if (!schedules.empty()) {
+            auto storage = schedules.subspan(slot * (frames / 16u + 2u), frames / 16u + 2u);
+            auto copy = section;
+            const auto bound = ProcessBusToneSection(copy, kind, m_biquadTrig,
+                m_sampleRate, nullptr, 0, frames, storage);
+            section.signalHighWater = std::max(section.signalHighWater, bound);
+            if (section.glide.active && !section.transition.transitioning && m_biquadTrig != nullptr)
+                section.signalSchedule = storage;
+        }
+        return section.signalHighWater;
+    };
+    input = SignalBoundProduct(input, sectionBound(bus.busLpf, BusToneKind::Lowpass, 0));
+    input = SignalBoundProduct(input, sectionBound(bus.busHpf, BusToneKind::Highpass, 1));
+    result.outputFilterBound = SignalBoundProduct(
+        sectionBound(bus.outputLpf, BusToneKind::Lowpass, 2),
+        sectionBound(bus.outputHpf, BusToneKind::Highpass, 3));
+    double layout = 1;
+    if (index != 0 && IsConcreteLayout(bus.outputLayout) && LayoutChannelCount(bus.outputLayout) < m_mixChannels) {
+        layout = 0;
+        ChannelRole roles[kMaxChannels];
+        LayoutRoles(bus.outputLayout, roles);
+        for (std::uint32_t row = 0; row < LayoutChannelCount(bus.outputLayout); ++row) {
+            if (ChannelOfRole(m_mixLayout, roles[row]) < 0) continue;
+            double sum = 0;
+            for (std::uint32_t ch = 0; ch < m_mixChannels; ++ch)
+                sum += std::abs(static_cast<double>(bus.downmixCoeffs[row * 8 + ch]));
+            layout = std::max(layout, sum);
+        }
+    }
+    bus.signalLayoutHistory = std::max(bus.signalLayoutHistory, layout);
+    result.inputBound = SignalBoundProduct(SignalBoundProduct(input, bus.signalLayoutHistory), bus.signalOutputHistory);
+    return result;
+}
+
+std::uint32_t BusTree::SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> info,
+    std::span<SignalFeedbackEdge> edges, std::uint32_t frames,
+    std::span<SignalBiquadSegment> schedules) noexcept {
+    const auto perBus = static_cast<std::size_t>(4) * (frames / 16u + 2u);
+    if (info.size() < m_audioCount || edges.size() < SignalRoutingEdgeCapacity() ||
+        schedules.size() < m_audioCount * perBus) return UINT32_MAX;
+    const auto plan = m_plans.View(m_currentPlanIndex);
+    for (std::uint32_t i = 0; i < m_audioCount; ++i) {
+        if (plan.valid && plan.alive != nullptr && plan.alive[i] == 0) continue;
+        info[i] = SignalBusBounds(i, frames, schedules.subspan(i * perBus, perBus));
+        m_buses[i].signalBoundsPrepared = true;
     }
     std::uint32_t used = 0;
     for (std::uint32_t from = 0; from < m_audioCount; ++from) {
@@ -1184,6 +1255,7 @@ bool BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
         const std::uint32_t i = usePlan ? plan.order[k] : (n - 1 - k);
         Bus& bus = m_buses[i];
         float* const* planes = busPlanes + i * m_mixChannels;
+        if (signals == nullptr) bus.signalBoundsPrepared = false;
         FinalizeBus(bus, planes, blockFrames, blockEpoch, sourceFrameBegin);
         const auto signalNode = signals == nullptr ? UINT32_MAX : signals->NodeForBus(i, bus.id, bus.generation);
         // Per-bus output fold (non-master): a bus configured to present a

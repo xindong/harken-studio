@@ -1,4 +1,5 @@
 #include "harken/render/SignalRenderPlan.h"
+#include "harken/render/SignalRoutingTypes.h"
 // Bus-graph sends and the topology plan: bus->bus and voice->bus send mixing,
 // the post-pan voice-send tap, cycle refusal over the combined tree+send graph,
 // feeds-first plan order (a send source created before its receiver still
@@ -1113,4 +1114,88 @@ TEST_F(BusSendSlotReconcile, ActualOrdinaryRoutingClosesSingleSignalRelation) {
     PumpAndCapture(engine, 160, rerouted);
     const double changedSlope = 1 / (1 / harken::kDuckingBaselineSlope + 2);
     EXPECT_NEAR(.2 / (1 + 2 * changedSlope), rerouted.left.back(), 1e-5);
+}
+
+TEST_F(BusSendSlotReconcile, LateSignalInstallKeepsFiniteWarmFilterAndDelayBounds) {
+    const auto first = BuildPlan(harken::kEmptySendTarget, harken::kEmptySendTarget);
+    engine->buses.ApplyTopologyPlan(first, harken::kInvalidBusIndex, harken::kInvalidBusIndex, 0);
+    VnFeedbackDelayDesc delay{};
+    delay.structSize = sizeof(delay);
+    delay.delayMs = 1;
+    delay.feedback = .8f;
+    delay.wet = .5f;
+    delay.dry = 1;
+    ASSERT_EQ(VN_OK, Vn_SetBusEffect(kBusB, 0, VN_EFFECT_FEEDBACK_DELAY,
+        reinterpret_cast<const VnEffectDesc*>(&delay)));
+    Capture empty;
+    PumpAndCapture(engine, 1, empty);
+    ASSERT_NE(engine->buses.BusState(2)->fxSlots[0].state, nullptr);
+    const auto initial = BuildPlan(harken::kEmptySendTarget, harken::kEmptySendTarget);
+    engine->topologyPlans.ParentsData(initial)[1] = 2;
+    engine->buses.ApplyTopologyPlan(initial, harken::kInvalidBusIndex, harken::kInvalidBusIndex, 0);
+    const auto samples = MakeDC(kBlockFrames * 600, .1f);
+    const auto pcm = MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &pcm));
+    auto play = MakePlayDesc(harkentest::ObjectId(1));
+    play.busId = kBusA;
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    ASSERT_EQ(VN_OK, Vn_SetBusFilter(kBusB, harken::kFilterKindLowpass, 1000, .707f, 1, 0));
+    Capture warm;
+    PumpAndCapture(engine, 50, warm);
+    ASSERT_EQ(VN_OK, Vn_SetBusEffectParam(kBusB, 0, harken::kDelayParamFeedback, .2f));
+    Capture baseline;
+    PumpAndCapture(engine, 50, baseline);
+    ASSERT_EQ(VN_OK, Vn_SetBusFilter(kBusB, harken::kFilterKindLowpass, 4000, .707f, 1, 100));
+    Capture partial;
+    PumpAndCapture(engine, 3, partial);
+    ASSERT_TRUE(engine->buses.BusState(2)->busLpf.glide.active);
+
+    const auto plan = BuildPlan(harken::kEmptySendTarget, harken::kEmptySendTarget);
+    engine->topologyPlans.ParentsData(plan)[1] = 2;
+    std::array<harken::SignalRenderNodeInput, 4> nodes{};
+    for (std::uint32_t i = 0; i < nodes.size(); ++i) nodes[i].busIndex = i;
+    nodes[1].receiver = true;
+    const std::array relations{harken::SignalConnectionInput{0, 1, 1}};
+    const std::array paths{harken::SignalFeedbackEdge{0, 1, 1, true}};
+    auto signals = harken::SignalRenderPlan::Prepare({2, kBlockFrames, 48000,
+        VN_CHANNEL_LAYOUT_STEREO}, nodes, relations, paths);
+    ASSERT_NE(signals, nullptr);
+    signals->EnableActualRouting();
+    ASSERT_TRUE(engine->mixer.PrepareSignalBacking(*signals));
+    engine->mixer.CommitSignalBacking(signals.get());
+    engine->topologyPlans.SetSignals(plan, std::move(signals));
+    engine->buses.ApplyTopologyPlan(plan, harken::kInvalidBusIndex, harken::kInvalidBusIndex, 0);
+    Capture ducked;
+    PumpAndCapture(engine, 250, ducked);
+    for (float sample : ducked.left) ASSERT_TRUE(std::isfinite(sample));
+    EXPECT_GT(ducked.left.back(), .01f);
+    EXPECT_LT(ducked.left.back(), baseline.left.back() * .999f);
+    const auto* state = static_cast<const harken::DelayEffectState*>(engine->buses.BusState(2)->fxSlots[0].state);
+    ASSERT_NE(state, nullptr);
+    EXPECT_FLOAT_EQ(state->feedback, .2f);
+    EXPECT_FLOAT_EQ(state->maxFeedbackSinceReset, .8f);
+    EXPECT_TRUE(std::isfinite(engine->buses.BusState(2)->busLpf.signalHighWater));
+}
+
+TEST_F(BusSendSlotReconcile, NewBusCannotAliasContentNodeInOlderSignalPlan) {
+    const auto topology = BuildPlan(harken::kEmptySendTarget, harken::kEmptySendTarget);
+    engine->buses.ApplyTopologyPlan(topology, harken::kInvalidBusIndex, harken::kInvalidBusIndex, 0);
+    std::array<harken::SignalRenderNodeInput, 4> nodes{};
+    nodes[0].busIndex = 0;
+    nodes[1].busIndex = 1;
+    nodes[1].receiver = true;
+    nodes[2].kind = harken::SignalEndpointKindV1::Sound;
+    nodes[3].kind = harken::SignalEndpointKindV1::Container;
+    const std::array relations{harken::SignalConnectionInput{0, 1, 1}};
+    const std::array paths{harken::SignalFeedbackEdge{0, 1, 1, true}};
+    auto signals = harken::SignalRenderPlan::Prepare({2, kBlockFrames, 48000,
+        VN_CHANNEL_LAYOUT_STEREO}, nodes, relations, paths);
+    ASSERT_NE(signals, nullptr);
+    signals->EnableActualRouting();
+    ASSERT_TRUE(signals->BeginBlock({1, 1, 1, 1, 0, kBlockFrames}));
+    harken::BlockArena arena(128 * 1024);
+    EXPECT_FALSE(signals->ReserveRouting(engine->buses, arena, 0, 0));
+    EXPECT_EQ(arena.UsedBytes(), 0u);
+    EXPECT_FALSE(signals->BuildRouting({}, engine->buses));
 }

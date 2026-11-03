@@ -31,6 +31,7 @@
 #include "harken/render/DynamicRoute.h"
 #include "harken/render/InsertEffect.h"
 #include "harken/render/TopologyPlan.h"
+#include "harken/render/SignalPathBounds.h"
 
 #include <cstdint>
 #include <atomic>
@@ -292,7 +293,8 @@ public:
         return static_cast<std::size_t>(m_audioCount) * (static_cast<std::size_t>(m_sendSlots) + 1);
     }
     std::uint32_t SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> buses,
-        std::span<SignalFeedbackEdge> edges, std::uint32_t frames) noexcept;
+        std::span<SignalFeedbackEdge> edges, std::uint32_t frames,
+        std::span<SignalBiquadSegment> schedules) noexcept;
     SignalRenderPlan* InstalledSignals() const {
         return m_plans.View(m_currentPlanIndex).signals;
     }
@@ -375,6 +377,10 @@ public:
         float fxBypassTarget[kMaxFxSlotsPerBus] = {};
         bool fxBypassRamping[kMaxFxSlotsPerBus] = {};
         EffectInstanceRef fxSlotEffectRef[kMaxFxSlotsPerBus];
+        double signalSlotHistory[kMaxFxSlotsPerBus] = {};
+        double signalToneHistory[kMaxFxSlotsPerBus][3] = {};
+        double signalGainHistory = 1, signalOutputHistory = 1, signalLayoutHistory = 1;
+        bool signalBoundsPrepared = false;
 
         // Chain split around BusVolume: fx slots [0, faderAfterSlot) run
         // pre-fader (before the gain), the rest post-fader. Set to m_fxSlots
@@ -408,6 +414,9 @@ public:
             BiquadState state[kMaxChannels];
             BiquadTransitionState<kMaxChannels> transition;
             BiquadParameterGlide glide;
+            SignalSmoothedBiquadBound signalBound;
+            double signalHighWater = 1;
+            std::span<const SignalBiquadSegment> signalSchedule{};
         };
         ToneSection busLpf;
         ToneSection busHpf;
@@ -422,6 +431,8 @@ public:
     Bus* BusState(std::uint32_t busIndex);
 
 private:
+    SignalBusRoutingInfo SignalBusBounds(std::uint32_t bus, std::uint32_t frames,
+                                        std::span<SignalBiquadSegment> schedules) noexcept;
     void InitializeBusSlot(std::uint32_t busIndex, VnBusId id,
                            std::uint32_t parentIndex,
                            std::uint32_t generation) noexcept;

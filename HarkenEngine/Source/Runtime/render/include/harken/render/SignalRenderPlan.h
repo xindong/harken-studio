@@ -169,10 +169,18 @@ public:
         blockRouting_ = routing;
         return true;
     }
-    void EnableActualRouting() noexcept { actualRouting_ = true; }
+    void EnableActualRouting() noexcept {
+        actualRouting_ = true;
+        routingBusCount_ = 0;
+        while (routingBusCount_ < nodes_.size() &&
+               nodes_[routingBusCount_].kind == SignalEndpointKindV1::Bus &&
+               routingBusCount_ < busNodes_.size() &&
+               busNodes_[routingBusCount_] == std::pair(routingBusCount_, routingBusCount_))
+            ++routingBusCount_;
+    }
     bool UsesActualRouting() const noexcept { return actualRouting_; }
     static std::uint64_t RoutingScratchBytes(std::uint32_t nodes, std::uint32_t buses,
-                                             std::uint64_t edges) noexcept;
+                                             std::uint64_t edges, std::uint32_t frames) noexcept;
     bool ReserveRouting(BusTree& buses, BlockArena& arena, std::uint32_t members,
                         std::size_t pathRows) noexcept;
     bool BuildRouting(std::span<const SignalMemberImage> members, BusTree& buses) noexcept;
@@ -394,6 +402,7 @@ private:
     std::vector<SignalConnectionInput> relations_;
     std::vector<double> levelBounds_;
     bool actualRouting_ = false;
+    std::uint32_t routingBusCount_ = 0;
     SignalFeedbackPlan feedback_;
     SignalFeedbackView blockRouting_{};
     std::span<std::byte> routingStorage_{};

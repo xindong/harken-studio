@@ -29,19 +29,23 @@ double SendBound(const VoiceSendSlot& send) noexcept {
 }
 
 std::uint64_t SignalRenderPlan::RoutingScratchBytes(std::uint32_t nodes, std::uint32_t buses,
-                                                  std::uint64_t edges) noexcept {
+                                                  std::uint64_t edges, std::uint32_t frames) noexcept {
     if (edges > UINT32_MAX) return UINT64_MAX;
     const auto compiled = SignalFeedbackPlan::ScratchBytes(nodes, static_cast<std::size_t>(edges));
     if (compiled == 0) return UINT64_MAX;
-    return compiled + edges * sizeof(SignalFeedbackEdge) +
-        static_cast<std::uint64_t>(buses) * sizeof(SignalBusRoutingInfo) + 64;
+    const auto fixed = static_cast<std::uint64_t>(compiled) + edges * sizeof(SignalFeedbackEdge) + 64;
+    const auto perBus = sizeof(SignalBusRoutingInfo) +
+        4ull * (frames / 16u + 2u) * sizeof(SignalBiquadSegment);
+    if (buses > (UINT64_MAX - fixed) / perBus) return UINT64_MAX;
+    return fixed + static_cast<std::uint64_t>(buses) * perBus;
 }
 
 bool SignalRenderPlan::ReserveRouting(BusTree& buses, BlockArena& arena,
                                      std::uint32_t members, std::size_t pathRows) noexcept {
+    if (buses.AudioBusCount() > routingBusCount_) return false;
     const auto edges = static_cast<std::uint64_t>(buses.SignalRoutingEdgeCapacity()) +
         relations_.size() + pathRows + static_cast<std::uint64_t>(members) * (kMaxVoiceSendSlots + 1ull);
-    const auto bytes = RoutingScratchBytes(NodeCount(), buses.AudioBusCount(), edges);
+    const auto bytes = RoutingScratchBytes(NodeCount(), buses.AudioBusCount(), edges, current_.frames);
     if (bytes > arena.CapacityBytes()) return false;
     auto* data = arena.AllocFloats((static_cast<std::size_t>(bytes) + sizeof(float) - 1) / sizeof(float));
     if (data == nullptr) return false;
@@ -53,7 +57,7 @@ bool SignalRenderPlan::BuildRouting(std::span<const SignalMemberImage> members,
                                     BusTree& buses) noexcept {
     if (!open_ || contentProcessed_) return false;
     const auto busCount = buses.AudioBusCount();
-    if (busCount > nodes_.size()) return false;
+    if (busCount > routingBusCount_) return false;
     std::size_t capacity = buses.SignalRoutingEdgeCapacity() + relations_.size();
     for (const auto& member : members) {
         if (member.voice == nullptr || member.nodes.empty()) return false;
@@ -65,8 +69,10 @@ bool SignalRenderPlan::BuildRouting(std::span<const SignalMemberImage> members,
     auto storage = routingStorage_;
     auto info = Reserve<SignalBusRoutingInfo>(storage, busCount);
     auto edges = Reserve<SignalFeedbackEdge>(storage, capacity);
+    auto schedules = Reserve<SignalBiquadSegment>(storage,
+        static_cast<std::size_t>(busCount) * 4 * (current_.frames / 16u + 2u));
     if (info.size() != busCount || edges.size() != capacity) return false;
-    auto used = buses.SignalRoutingSnapshot(info, edges, current_.frames);
+    auto used = buses.SignalRoutingSnapshot(info, edges, current_.frames, schedules);
     if (used == UINT32_MAX) return false;
     const auto append = [&](std::uint32_t from, std::uint32_t to, double bound, bool delayed) {
         if (from >= nodes_.size() || to >= nodes_.size() || used == edges.size() ||
