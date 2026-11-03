@@ -1345,6 +1345,8 @@ bool BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
         const bool folded =
             i != 0 && IsConcreteLayout(bus.outputLayout) &&
             LayoutChannelCount(bus.outputLayout) < m_mixChannels;
+        // Existing Compressor taps end at the ordinary effects/layout stage.
+        // Formal signal sources are captured below after receiving and Out Vol.
         if (folded) {
             FoldBusOutput(bus, planes, blockFrames);
         } else {
@@ -1356,8 +1358,6 @@ bool BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
             if (!signals->ProcessBus(signalNode, planes, bus.outputGain)) return false;
             bus.outputPeak = StageTapPeak(planes, m_mixChannels, 0, blockFrames,
                 bus.outputChannelPeaks);
-            m_dynamicRoutes.CaptureBus(i, VN_DYNAMIC_TAP_BUS_POST_EFFECTS,
-                planes, m_mixChannels, blockFrames);
         }
         if (i != 0) {
             float* const* parent = busPlanes + bus.parentIndex * m_mixChannels;
