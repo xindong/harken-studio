@@ -4,6 +4,9 @@
 #include "harken/render/DuckingReceiver.h"
 
 #include <cmath>
+#include <cstddef>
+#include <memory>
+#include <limits>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -26,166 +29,209 @@ struct SignalFeedbackNode {
     double slope = kDuckingBaselineSlope;
 };
 
-// Control-side structural compilation. Zero-weight edges retain structural identity;
-// same-block cycles fail, but a cycle crossing a delayed edge is supported.
-// Sparse storage and iterative traversals avoid quadratic memory and recursion
-// proportional to the authored graph depth. Failure preserves the old plan.
-class SignalFeedbackPlan {
-public:
-    bool Prepare(std::uint32_t count,
-                 std::span<const SignalFeedbackEdge> edges) noexcept {
-        if (edges.size() > UINT32_MAX) return false;
-        for (const auto& e : edges)
-            if (e.source >= count || e.target >= count ||
-                !std::isfinite(e.bound) || e.bound < 0) return false;
-        try {
-            std::vector<std::size_t> offsets(static_cast<std::size_t>(count) + 1, 0);
-            auto reverseOffsets = offsets;
-            std::vector<std::uint32_t> indegree(count, 0);
-            for (const auto& e : edges) {
-                ++offsets[e.source + 1];
-                ++reverseOffsets[e.target + 1];
-                if (!e.delayed) ++indegree[e.target];
-            }
-            for (std::size_t i = 1; i < offsets.size(); ++i) {
-                offsets[i] += offsets[i - 1];
-                reverseOffsets[i] += reverseOffsets[i - 1];
-            }
-            std::vector<std::uint32_t> outgoing(edges.size()), incoming(edges.size());
-            auto cursor = offsets;
-            auto reverseCursor = reverseOffsets;
-            for (std::size_t i = 0; i < edges.size(); ++i) {
-                outgoing[cursor[edges[i].source]++] = static_cast<std::uint32_t>(i);
-                incoming[reverseCursor[edges[i].target]++] = static_cast<std::uint32_t>(i);
-            }
+// A borrowed compilation result. The workspace owner fences it through the
+// complete quantum; no allocation, recursion, or container growth occurs here.
+struct SignalFeedbackView {
+    std::span<SignalFeedbackNode> nodes;
+    std::span<std::uint32_t> order;
+    std::span<std::size_t> offsets;
+    std::span<std::uint32_t> outgoing;
+    std::span<double> sensitivity, maximum;
+    std::span<const SignalFeedbackEdge> edges;
 
-            std::vector<std::uint32_t> normalOrder;
-            normalOrder.reserve(count);
-            for (std::uint32_t i = 0; i < count; ++i)
-                if (indegree[i] == 0) normalOrder.push_back(i);
-            for (std::size_t i = 0; i < normalOrder.size(); ++i) {
-                const auto node = normalOrder[i];
-                for (auto p = offsets[node]; p < offsets[node + 1]; ++p) {
-                    const auto& edge = edges[outgoing[p]];
-                    if (!edge.delayed && --indegree[edge.target] == 0)
-                        normalOrder.push_back(edge.target);
-                }
-            }
-            if (normalOrder.size() != count) return false;
-
-            std::vector<std::uint8_t> visited(count, 0);
-            std::vector<std::uint32_t> stack, finished;
-            stack.reserve(count);
-            finished.reserve(count);
-            cursor = offsets;
-            for (std::uint32_t root = 0; root < count; ++root) {
-                if (visited[root]) continue;
-                stack.push_back(root);
-                visited[root] = 1;
-                while (!stack.empty()) {
-                    const auto node = stack.back();
-                    if (cursor[node] == offsets[node + 1]) {
-                        finished.push_back(node);
-                        stack.pop_back();
-                        continue;
-                    }
-                    const auto target = edges[outgoing[cursor[node]++]].target;
-                    if (!visited[target]) {
-                        visited[target] = 1;
-                        stack.push_back(target);
-                    }
-                }
-            }
-            std::vector<SignalFeedbackNode> nodes(count);
-            std::fill(visited.begin(), visited.end(), 0);
-            std::uint32_t components = 0;
-            for (auto it = finished.rbegin(); it != finished.rend(); ++it) {
-                if (visited[*it]) continue;
-                stack.push_back(*it);
-                visited[*it] = 1;
-                while (!stack.empty()) {
-                    const auto node = stack.back();
-                    stack.pop_back();
-                    nodes[node].component = components;
-                    for (auto p = reverseOffsets[node]; p < reverseOffsets[node + 1]; ++p) {
-                        const auto source = edges[incoming[p]].source;
-                        if (!visited[source]) {
-                            visited[source] = 1;
-                            stack.push_back(source);
-                        }
-                    }
-                }
-                ++components;
-            }
-
-            SignalFeedbackPlan next;
-            next.m_nodes = std::move(nodes);
-            next.m_normalOrder = std::move(normalOrder);
-            next.m_offsets = std::move(offsets);
-            next.m_outgoing = std::move(outgoing);
-            next.m_edges.assign(edges.begin(), edges.end());
-            next.m_sensitivity.resize(count);
-            next.m_maximum.resize(components);
-            std::vector<double> bounds;
-            bounds.reserve(edges.size());
-            for (const auto& edge : edges) {
-                bounds.push_back(edge.bound);
-                if (edge.delayed && next.m_nodes[edge.source].component ==
-                                    next.m_nodes[edge.target].component)
-                    next.m_nodes[edge.target].feedbackInput = true;
-            }
-            if (!next.UpdateBounds(bounds)) return false;
-            // Preserve preparation's finite-input contract. Audio updates may
-            // use a conservative positive infinity for a known bound overflow.
-            for (const auto maximum : next.m_maximum)
-                if (!std::isfinite(maximum)) return false;
-            *this = std::move(next);
-            return true;
-        } catch (...) {
-            return false;
-        }
-    }
-
-    // Audio coordinator only, before receiver processing. Structural identity
-    // and edge order stay fixed; all work and storage are O(V+E). Validate the
-    // entire vector before changing published slopes. A failed update leaves
-    // the previous coefficients intact and the owner must retain sufficient
-    // bounds or retry with conservative infinities for unknown path factors.
     bool UpdateBounds(std::span<const double> bounds) noexcept {
-        if (bounds.size() != m_edges.size()) return false;
+        if (bounds.size() != edges.size()) return false;
         for (double bound : bounds)
             if (std::isnan(bound) || bound < 0) return false;
-        std::fill(m_sensitivity.begin(), m_sensitivity.end(), 0.0);
-        std::fill(m_maximum.begin(), m_maximum.end(), 0.0);
-        for (std::size_t i = 0; i < m_edges.size(); ++i) {
-            const auto& edge = m_edges[i];
-            if (edge.delayed && m_nodes[edge.source].component == m_nodes[edge.target].component)
-                m_sensitivity[edge.target] += bounds[i];
+        std::fill(sensitivity.begin(), sensitivity.end(), 0.0);
+        std::fill(maximum.begin(), maximum.end(), 0.0);
+        for (std::size_t i = 0; i < edges.size(); ++i) {
+            const auto& edge = edges[i];
+            if (edge.delayed && nodes[edge.source].component == nodes[edge.target].component)
+                sensitivity[edge.target] += bounds[i];
         }
-        // m = Q*1 + P*m, within each structural SCC. Exact-zero factors
-        // annihilate even unbounded paths without evaluating 0*infinity.
-        for (const auto node : m_normalOrder) {
-            const auto component = m_nodes[node].component;
-            m_maximum[component] = std::max(m_maximum[component], m_sensitivity[node]);
-            for (auto p = m_offsets[node]; p < m_offsets[node + 1]; ++p) {
-                const auto index = m_outgoing[p];
-                const auto& edge = m_edges[index];
-                if (!edge.delayed && m_nodes[edge.target].component == component &&
-                    bounds[index] != 0 && m_sensitivity[node] != 0)
-                    m_sensitivity[edge.target] += bounds[index] * m_sensitivity[node];
+        for (const auto node : order) {
+            const auto component = nodes[node].component;
+            maximum[component] = std::max(maximum[component], sensitivity[node]);
+            for (auto p = offsets[node]; p < offsets[node + 1]; ++p) {
+                const auto index = outgoing[p];
+                const auto& edge = edges[index];
+                if (!edge.delayed && nodes[edge.target].component == component &&
+                    bounds[index] != 0 && sensitivity[node] != 0)
+                    sensitivity[edge.target] += bounds[index] * sensitivity[node];
             }
         }
-        for (auto& node : m_nodes)
+        for (auto& node : nodes)
             node.slope = node.feedbackInput
-                ? 1.0 / (1.0 / kDuckingBaselineSlope + m_maximum[node.component])
+                ? 1.0 / (1.0 / kDuckingBaselineSlope + maximum[node.component])
                 : kDuckingBaselineSlope;
         return true;
     }
+};
 
+// The same sparse compiler serves control-side prepared graphs and coordinator
+// graphs whose workspace has already been admitted. Zero-weight edges retain
+// structural identity; only the ordinary subgraph must be acyclic.
+class SignalFeedbackPlan {
+public:
+    static std::size_t ScratchBytes(std::uint32_t count, std::size_t edgeCount) noexcept {
+        if (edgeCount > UINT32_MAX) return 0;
+        // Four offsets/cursors; six node-index arrays; two edge-index arrays;
+        // visited, node results, and three numeric arrays. Include per-array
+        // alignment so a float-aligned slab is a valid backing allocation.
+        const std::uint64_t bytes = (static_cast<std::uint64_t>(count) + 1) *
+            sizeof(std::size_t) * 4 + static_cast<std::uint64_t>(count) *
+            (sizeof(std::uint32_t) * 4 + sizeof(std::uint8_t) +
+             sizeof(SignalFeedbackNode) + sizeof(double) * 2) +
+            static_cast<std::uint64_t>(edgeCount) * (sizeof(std::uint32_t) * 2 + sizeof(double)) +
+            16 * alignof(std::max_align_t);
+        return bytes <= std::numeric_limits<std::size_t>::max() ? static_cast<std::size_t>(bytes) : 0;
+    }
+
+    static bool Compile(std::uint32_t count, std::span<const SignalFeedbackEdge> edges,
+                        std::span<std::byte> storage, SignalFeedbackView& out) noexcept {
+        const auto required = ScratchBytes(count, edges.size());
+        if (required == 0 || storage.size() < required) return false;
+        for (const auto& edge : edges)
+            if (edge.source >= count || edge.target >= count ||
+                std::isnan(edge.bound) || edge.bound < 0) return false;
+        Scratch cursor(storage);
+        auto offsets = cursor.Take<std::size_t>(static_cast<std::size_t>(count) + 1);
+        auto reverseOffsets = cursor.Take<std::size_t>(static_cast<std::size_t>(count) + 1);
+        auto forwardCursor = cursor.Take<std::size_t>(static_cast<std::size_t>(count) + 1);
+        auto reverseCursor = cursor.Take<std::size_t>(static_cast<std::size_t>(count) + 1);
+        auto indegree = cursor.Take<std::uint32_t>(count);
+        auto order = cursor.Take<std::uint32_t>(count);
+        auto stack = cursor.Take<std::uint32_t>(count);
+        auto finished = cursor.Take<std::uint32_t>(count);
+        auto outgoing = cursor.Take<std::uint32_t>(edges.size());
+        auto incoming = cursor.Take<std::uint32_t>(edges.size());
+        auto visited = cursor.Take<std::uint8_t>(count);
+        auto nodes = cursor.Take<SignalFeedbackNode>(count);
+        auto sensitivity = cursor.Take<double>(count);
+        auto maximum = cursor.Take<double>(count);
+        auto bounds = cursor.Take<double>(edges.size());
+        if (!cursor.Valid()) return false;
+        for (const auto& edge : edges) {
+            ++offsets[edge.source + 1];
+            ++reverseOffsets[edge.target + 1];
+            if (!edge.delayed) ++indegree[edge.target];
+        }
+        for (std::size_t i = 1; i < offsets.size(); ++i) {
+            offsets[i] += offsets[i - 1];
+            reverseOffsets[i] += reverseOffsets[i - 1];
+        }
+        std::copy(offsets.begin(), offsets.end(), forwardCursor.begin());
+        std::copy(reverseOffsets.begin(), reverseOffsets.end(), reverseCursor.begin());
+        for (std::size_t i = 0; i < edges.size(); ++i) {
+            outgoing[forwardCursor[edges[i].source]++] = static_cast<std::uint32_t>(i);
+            incoming[reverseCursor[edges[i].target]++] = static_cast<std::uint32_t>(i);
+            bounds[i] = edges[i].bound;
+        }
+        std::size_t ordered = 0;
+        for (std::uint32_t i = 0; i < count; ++i)
+            if (indegree[i] == 0) order[ordered++] = i;
+        for (std::size_t i = 0; i < ordered; ++i) {
+            const auto node = order[i];
+            for (auto p = offsets[node]; p < offsets[node + 1]; ++p) {
+                const auto& edge = edges[outgoing[p]];
+                if (!edge.delayed && --indegree[edge.target] == 0) order[ordered++] = edge.target;
+            }
+        }
+        if (ordered != count) return false;
+        std::copy(offsets.begin(), offsets.end(), forwardCursor.begin());
+        std::size_t depth = 0, finishedCount = 0;
+        for (std::uint32_t root = 0; root < count; ++root) {
+            if (visited[root]) continue;
+            stack[depth++] = root;
+            visited[root] = 1;
+            while (depth != 0) {
+                const auto node = stack[depth - 1];
+                if (forwardCursor[node] == offsets[node + 1]) {
+                    finished[finishedCount++] = node;
+                    --depth;
+                    continue;
+                }
+                const auto target = edges[outgoing[forwardCursor[node]++]].target;
+                if (!visited[target]) { visited[target] = 1; stack[depth++] = target; }
+            }
+        }
+        std::fill(visited.begin(), visited.end(), 0);
+        std::uint32_t components = 0;
+        for (auto position = finishedCount; position != 0;) {
+            const auto root = finished[--position];
+            if (visited[root]) continue;
+            stack[depth++] = root;
+            visited[root] = 1;
+            while (depth != 0) {
+                const auto node = stack[--depth];
+                nodes[node].component = components;
+                for (auto p = reverseOffsets[node]; p < reverseOffsets[node + 1]; ++p) {
+                    const auto source = edges[incoming[p]].source;
+                    if (!visited[source]) { visited[source] = 1; stack[depth++] = source; }
+                }
+            }
+            ++components;
+        }
+        for (const auto& edge : edges)
+            if (edge.delayed && nodes[edge.source].component == nodes[edge.target].component)
+                nodes[edge.target].feedbackInput = true;
+        SignalFeedbackView result{nodes, order, offsets, outgoing, sensitivity,
+            maximum.first(components), edges};
+        if (!result.UpdateBounds(bounds)) return false;
+        out = result;
+        return true;
+    }
+
+    bool Prepare(std::uint32_t count, std::span<const SignalFeedbackEdge> edges) noexcept {
+        for (const auto& edge : edges) if (!std::isfinite(edge.bound)) return false;
+        try {
+            const auto size = ScratchBytes(count, edges.size());
+            if (size == 0) return false;
+            std::vector<std::byte> scratch(size);
+            SignalFeedbackView compiled;
+            if (!Compile(count, edges, scratch, compiled)) return false;
+            for (const auto bound : compiled.maximum) if (!std::isfinite(bound)) return false;
+            SignalFeedbackPlan next;
+            next.m_edges.assign(edges.begin(), edges.end());
+            next.m_nodes.assign(compiled.nodes.begin(), compiled.nodes.end());
+            next.m_normalOrder.assign(compiled.order.begin(), compiled.order.end());
+            next.m_offsets.assign(compiled.offsets.begin(), compiled.offsets.end());
+            next.m_outgoing.assign(compiled.outgoing.begin(), compiled.outgoing.end());
+            next.m_sensitivity.assign(compiled.sensitivity.begin(), compiled.sensitivity.end());
+            next.m_maximum.assign(compiled.maximum.begin(), compiled.maximum.end());
+            *this = std::move(next);
+            return true;
+        } catch (...) { return false; }
+    }
+    bool UpdateBounds(std::span<const double> bounds) noexcept {
+        return SignalFeedbackView{m_nodes, m_normalOrder, m_offsets, m_outgoing,
+            m_sensitivity, m_maximum, m_edges}.UpdateBounds(bounds);
+    }
     std::span<const SignalFeedbackNode> Nodes() const noexcept { return m_nodes; }
     std::span<const std::uint32_t> NormalOrder() const noexcept { return m_normalOrder; }
-
 private:
+    class Scratch {
+    public:
+        explicit Scratch(std::span<std::byte> bytes) : data_(bytes.data()), size_(bytes.size()) {}
+        template<class T> std::span<T> Take(std::size_t count) noexcept {
+            if (!valid_ || count > std::numeric_limits<std::size_t>::max() / sizeof(T)) {
+                valid_ = false; return {};
+            }
+            const auto bytes = count * sizeof(T);
+            if (std::align(alignof(T), bytes, data_, size_) == nullptr) { valid_ = false; return {}; }
+            auto* result = static_cast<T*>(data_);
+            for (std::size_t i = 0; i < count; ++i) std::construct_at(result + i);
+            data_ = static_cast<std::byte*>(data_) + bytes;
+            size_ -= bytes;
+            return {result, count};
+        }
+        bool Valid() const noexcept { return valid_; }
+    private:
+        void* data_;
+        std::size_t size_;
+        bool valid_ = true;
+    };
     std::vector<SignalFeedbackEdge> m_edges;
     std::vector<std::size_t> m_offsets;
     std::vector<std::uint32_t> m_outgoing;
@@ -195,5 +241,4 @@ private:
 };
 
 } // namespace harken
-
-#endif // HARKEN_RENDER_SIGNAL_FEEDBACK_PLAN_H
+#endif

@@ -127,3 +127,29 @@ TEST(SignalFeedbackPlan, NumericUpdatesPreserveStructureAndRejectInvalidVectorsA
     EXPECT_TRUE(plan.Nodes()[0].feedbackInput);
     EXPECT_DOUBLE_EQ(plan.Nodes()[0].slope, kDuckingBaselineSlope);
 }
+
+TEST(SignalFeedbackPlan, AdmittedMisalignedScratchSupportsCurrentGraphAndFailureIsUnpublished) {
+    const std::array edges{SignalFeedbackEdge{0, 1, 2, false},
+        SignalFeedbackEdge{1, 0, 1, true}, SignalFeedbackEdge{1, 2, 1, true}};
+    const auto required = SignalFeedbackPlan::ScratchBytes(3, edges.size());
+    std::vector<std::byte> storage(required + 1);
+    // A float arena slab need not satisfy double/size_t alignment. Exercise
+    // an even less aligned address, without changing the arena's allocation rule.
+    auto scratch = std::span(storage).subspan(1);
+    SignalFeedbackView view;
+    ASSERT_TRUE(SignalFeedbackPlan::Compile(3, edges, scratch, view));
+    EXPECT_DOUBLE_EQ(view.nodes[0].slope, 1 / (1 / kDuckingBaselineSlope + 2));
+    EXPECT_DOUBLE_EQ(view.nodes[2].slope, kDuckingBaselineSlope);
+    auto* published = view.nodes.data();
+    EXPECT_FALSE(SignalFeedbackPlan::Compile(3, edges, scratch.first(required - 1), view));
+    EXPECT_EQ(view.nodes.data(), published);
+    auto next = edges;
+    next[0].target = 2;
+    ASSERT_TRUE(SignalFeedbackPlan::Compile(3, next, scratch, view));
+    EXPECT_FALSE(view.nodes[0].feedbackInput);
+    EXPECT_DOUBLE_EQ(view.nodes[0].slope, kDuckingBaselineSlope);
+    next[0] = {0, 1, std::numeric_limits<double>::infinity(), false};
+    ASSERT_TRUE(SignalFeedbackPlan::Compile(3, next, scratch, view));
+    EXPECT_DOUBLE_EQ(view.nodes[0].slope, 0);
+    EXPECT_DOUBLE_EQ(view.nodes[2].slope, kDuckingBaselineSlope);
+}

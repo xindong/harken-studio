@@ -4519,7 +4519,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             outcome.batchDeferred = batch.deferred && batch.unfinishedJobs != 0;
             outcome.overrunTicks = batch.overrunTicks;
             outcome.pendingVoices = batch.unfinishedJobs;
-        } else {
+        } else if (workerReserved) {
             m_workers.CancelReservedBatch();
         }
 

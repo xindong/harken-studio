@@ -3486,5 +3486,14 @@ TEST(VoicePool, CollectiveSignalStagesShareActualInstancesAcrossSerialAndWorkerR
         for (const auto& lane : output) result.insert(result.end(), lane.begin(), lane.end());
         if (workers == 0) serial = std::move(result);
         else EXPECT_EQ(serial, result);
+        for (const auto handle : handles)
+            engine.voices.ApplyStop(handle, 0, 0, engine.notifications, 100);
+        arena.Reset();
+        ASSERT_TRUE(signals->BeginBlock({1, 1, 1, 100, 100u * kBlockFrames, kBlockFrames}));
+        const auto empty = engine.voices.RenderAll(arena, planes.data(), kBlockFrames,
+            engine.notifications, 100, 0, 100u * kBlockFrames, signals.get());
+        EXPECT_FALSE(empty.batchDeferred);
+        EXPECT_FALSE(empty.signalFailed);
+        EXPECT_TRUE(signals->CommitBlock());
     }
 }
