@@ -279,6 +279,9 @@ private:
     void refreshPathFocus_();
     void updateNodeGridSnap_();
     bool nodeFieldEditing_() const;
+    BlueprintDetailLevel detailLevel_ = BlueprintDetailLevel::Full;
+    void updateDetailLevel_();
+    void applyDetailLevel_();
     std::unique_ptr<NodeContentRenderer> contentRenderer_;
     std::unique_ptr<NodeContentEditorPool> contentEditorPool_;
     QHash<NodeItem*, QPointer<NodeContentEditor>> liveNodeEditors_;

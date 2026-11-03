@@ -25,6 +25,7 @@
 #include <QScopedValueRollback>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QStringList>
 #include <QStackedWidget>
 #include <QStyleOptionSpinBox>
 #include <QToolButton>
@@ -91,6 +92,23 @@ PropertyDescriptor nodeContentProperty(NodeContentField field)
         : QStringLiteral("outputBusVolume");
     return *std::find_if(schema.begin(), schema.end(),
         [&](const auto& descriptor) { return descriptor.field == name; });
+}
+
+QString nodeContentToolTip(const NodeContentInfo& info, NodeContentFields fields)
+{
+    QStringList lines;
+    for (const auto field : kFields) {
+        if (!(info.fields() & fields).testFlag(field)) continue;
+        const auto property = nodeContentProperty(field);
+        const auto value = fieldValue(info, field);
+        const auto unit = property.unit.trimmed();
+        const QString text = field == NodeContentField::Loop
+            ? (value == 0.0 ? QString(QChar(0x221E)) : QString::number(*info.loopCount))
+            : unit == QLatin1String("dB") && value <= -96.0
+                ? QStringLiteral("-inf") : formatDecimal(value, property.decimals);
+        lines.append(QStringLiteral("%1: %2 %3").arg(property.label, text, unit).trimmed());
+    }
+    return lines.join(QLatin1Char('\n'));
 }
 
 struct NodeContentEditor::Row

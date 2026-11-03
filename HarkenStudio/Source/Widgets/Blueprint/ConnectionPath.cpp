@@ -7,6 +7,9 @@
 #include <QPainterPathStroker>
 #include <QFontMetricsF>
 #include <QStyleOptionGraphicsItem>
+#include <QTextDocument>
+#include <algorithm>
+#include <cmath>
 
 namespace VNX {
 
@@ -53,6 +56,29 @@ void ConnectionPath::setPlaybackActive(bool active)
     playbackActive_ = active;
     update();
     updatePins();
+}
+
+void ConnectionPath::setLabel(const QString& label)
+{
+    if (label_ == label) return;
+    prepareGeometryChange();
+    label_ = label;
+    updateLabelToolTip();
+    update();
+}
+
+void ConnectionPath::setDetailLevel(BlueprintDetailLevel level)
+{
+    if (detailLevel_ == level) return;
+    detailLevel_ = level;
+    updateLabelToolTip();
+    update();
+}
+
+void ConnectionPath::updateLabelToolTip()
+{
+    setToolTip(detailLevel_ == BlueprintDetailLevel::Full || label_.isEmpty()
+        ? QString() : Qt::convertFromPlainText(label_));
 }
 
 void ConnectionPath::updatePins()
@@ -133,7 +159,7 @@ QRectF ConnectionPath::boundingRect() const
 {
     constexpr qreal halo = 6.0;
     QRectF base = QGraphicsPathItem::boundingRect().adjusted(-halo, -halo, halo, halo);
-    if (!label_.isEmpty()) base = base.united(labelRect());
+    if (!label_.isEmpty()) base = base.united(labelRect().adjusted(-halo, -halo, halo, halo));
     return base;
 }
 
@@ -151,7 +177,7 @@ QPainterPath ConnectionPath::shape() const
     QPainterPathStroker stroker;
     stroker.setWidth(10.0);
     auto hit = stroker.createStroke(path());
-    if (!label_.isEmpty()) hit.addRect(labelRect());
+    if (detailLevel_ == BlueprintDetailLevel::Full && !label_.isEmpty()) hit.addRect(labelRect());
     return hit;
 }
 
@@ -160,7 +186,13 @@ void ConnectionPath::paint(QPainter* painter, const QStyleOptionGraphicsItem* op
     Q_UNUSED(option)
     Q_UNUSED(widget)
 
-    const qreal width = 2.0 + (playbackActive_ ? 1.0 : 0.0) + (isSelected() ? 1.0 : 0.0);
+    qreal width = 2.0 + (playbackActive_ ? 1.0 : 0.0) + (isSelected() ? 1.0 : 0.0);
+    if (detailLevel_ != BlueprintDetailLevel::Full) {
+        const auto transform = painter->worldTransform();
+        const qreal scale = std::hypot(transform.m11(), transform.m12());
+        const qreal minimumWidth = playbackActive_ || isSelected() ? 1.2 : 0.8;
+        if (scale > 0.0) width = std::max(width, std::min(qreal(12.0), minimumWidth / scale));
+    }
     if (blueprintKind_.has_value()) {
         Qt::PenStyle penStyle = Qt::SolidLine;
         QVector<qreal> dashPat;
@@ -214,7 +246,7 @@ void ConnectionPath::paint(QPainter* painter, const QStyleOptionGraphicsItem* op
     painter->drawPath(path());
     }
 
-    if (!label_.isEmpty()) {
+    if (detailLevel_ == BlueprintDetailLevel::Full && !label_.isEmpty()) {
         QFont labelFont = FontManager::instance().getFont(FontRole::Label, 8);
         painter->setFont(labelFont);
         const QRectF bg = labelRect();

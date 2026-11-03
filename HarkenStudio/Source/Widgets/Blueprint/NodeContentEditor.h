@@ -17,6 +17,7 @@ class ParameterBinding;
 struct ContextTopic;
 
 PropertyDescriptor nodeContentProperty(NodeContentField field);
+QString nodeContentToolTip(const NodeContentInfo& info, NodeContentFields fields);
 
 struct NodeContentPresentation {
     QPicture drawing;

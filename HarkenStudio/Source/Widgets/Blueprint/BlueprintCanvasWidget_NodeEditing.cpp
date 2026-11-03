@@ -7,6 +7,7 @@
 #include "Core/FieldGroupProjectAdapter.h"
 #include "NodeContentEditor.h"
 #include "NodeContentEditorPool.h"
+#include "ConnectionPath.h"
 #include "Core/ThemeManager.h"
 #include "Core/FontManager.h"
 
@@ -16,6 +17,7 @@
 #include <QGraphicsProxyWidget>
 #include <QScrollBar>
 #include <QTimer>
+#include <QToolTip>
 
 namespace VNX {
 
@@ -26,13 +28,39 @@ void BlueprintCanvasWidget::initializeNodeEditors_()
     connect(qApp, &QApplication::focusChanged, this, [this] { scheduleContentRetirement_(); });
     connect(horizontalScrollBar(), &QScrollBar::valueChanged, this, [this] { scheduleContentRetirement_(); });
     connect(verticalScrollBar(), &QScrollBar::valueChanged, this, [this] { scheduleContentRetirement_(); });
-    connect(this, &BlueprintCanvasView::zoomChanged, this, [this] { scheduleContentRetirement_(); });
+    connect(scene_, &QGraphicsScene::focusItemChanged, this, [this] { scheduleContentRetirement_(); });
+    connect(this, &BlueprintCanvasView::zoomChanged, this, [this] {
+        updateDetailLevel_();
+        scheduleContentRetirement_();
+    });
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
         this, &BlueprintCanvasWidget::scheduleContentPresentationRefresh_);
     connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
         this, &BlueprintCanvasWidget::scheduleContentAppearanceRefresh_);
     connect(&FontManager::instance(), &FontManager::fontChanged,
         this, &BlueprintCanvasWidget::scheduleContentPresentationRefresh_);
+}
+
+void BlueprintCanvasWidget::updateDetailLevel_()
+{
+    const auto scale = transform().m11();
+    const auto next = scale < 0.4 ? BlueprintDetailLevel::Overview : BlueprintDetailLevel::Full;
+    if (next == detailLevel_) return;
+    detailLevel_ = next;
+    QToolTip::hideText();
+    applyDetailLevel_();
+}
+
+void BlueprintCanvasWidget::applyDetailLevel_()
+{
+    for (const auto& [key, node] : nodeMap_) node->setDetailLevel(detailLevel_);
+    for (auto* node : gainNodes_)
+        if (node) node->setDetailLevel(detailLevel_);
+    for (auto* edge : edges_)
+        if (edge) edge->setDetailLevel(detailLevel_);
+    for (auto* edge : gainOutputEdges_)
+        if (edge) edge->setDetailLevel(detailLevel_);
+    viewport()->update();
 }
 
 void BlueprintCanvasWidget::scheduleContentPresentationRefresh_()
@@ -63,6 +91,7 @@ void BlueprintCanvasWidget::scheduleContentAppearanceRefresh_()
 
 void BlueprintCanvasWidget::refreshContentPresentations_()
 {
+    updateDetailLevel_();
     contentRenderer_->clear();
     NodeContentFields shownFields;
     for (const auto& [key, node] : nodeMap_)
@@ -87,6 +116,7 @@ void BlueprintCanvasWidget::activateNodeEditorAt_(const QPoint& position)
     auto* item = itemAt(position);
     while (item) {
         if (auto* node = dynamic_cast<NodeItem*>(item)) {
+            if (node->effectiveDetailLevel() != BlueprintDetailLevel::Full) break;
             const auto editors = liveNodeEditors_;
             for (auto it = editors.cbegin(); it != editors.cend(); ++it)
                 if (it.key() != node && it.value()) it.key()->releaseContentWidget();
@@ -108,7 +138,8 @@ void BlueprintCanvasWidget::scheduleContentRetirement_()
         for (auto it = editors.cbegin(); it != editors.cend(); ++it) {
             if (!it.value()) continue;
             auto* node = it.key();
-            if (node != hovered && (!hovered || !node->isAncestorOf(hovered)))
+            if (node->detailLevel() != BlueprintDetailLevel::Full
+                || (node != hovered && (!hovered || !node->isAncestorOf(hovered))))
                 node->releaseContentWidget();
         }
     });
@@ -118,6 +149,8 @@ void BlueprintCanvasWidget::trackNodeEditor_(NodeItem* node, NodeContentEditor* 
 {
     liveNodeEditors_.insert(node, editor);
     connect(editor, &QObject::destroyed, this, [this, node] { liveNodeEditors_.remove(node); });
+    connect(editor, &NodeContentEditor::editingClosed, this, &BlueprintCanvasWidget::scheduleContentRetirement_);
+    connect(editor, &NodeContentEditor::editEnded, this, &BlueprintCanvasWidget::scheduleContentRetirement_);
 }
 
 void BlueprintCanvasWidget::recycleNodeEditor_(NodeItem* node, QGraphicsProxyWidget* proxy)

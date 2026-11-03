@@ -5,6 +5,7 @@
 #include <optional>
 
 #include "BlueprintEdgeKind.h"
+#include "BlueprintDetailLevel.h"
 #include "NodeItem.h"
 
 namespace VNX {
@@ -39,7 +40,9 @@ public:
     bool playbackActive() const { return playbackActive_; }
     void setFocusDimmed(bool dimmed) { setOpacity(dimmed ? 0.35 : 1.0); }
 
-    void setLabel(const QString& label) { label_ = label; update(); }
+    void setLabel(const QString& label);
+    void setDetailLevel(BlueprintDetailLevel level);
+    BlueprintDetailLevel detailLevel() const { return detailLevel_; }
 
     void setBlueprintEdgeKind(BlueprintEdgeKind k) { blueprintKind_ = k; update(); }
     void clearBlueprintEdgeKind()                  { blueprintKind_.reset(); update(); }
@@ -61,11 +64,13 @@ private:
     ConnectionStyle style_ = ConnectionStyle::Solid;
     bool playbackActive_ = false;
     QString label_;
+    BlueprintDetailLevel detailLevel_ = BlueprintDetailLevel::Full;
     std::optional<BlueprintEdgeKind> blueprintKind_;
     CanvasFlowDirection blueprintFlowDir_ = CanvasFlowDirection::LR;
     qreal parallelOffset_ = 0.0;
 
     void updatePins();
+    void updateLabelToolTip();
     QRectF labelRect() const;
 };
 

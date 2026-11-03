@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "../Common/WaveformRenderer.h"
+#include "BlueprintDetailLevel.h"
 #include "NodeContentInfo.h"
 #include "NodeContentEditor.h"
 #include "Core/AssetPipeline/WaveformCache.h"
@@ -167,6 +168,9 @@ public:
 
     void setDragCompleteCallback(DragCompleteCallback cb);
 
+    void setDetailLevel(BlueprintDetailLevel level);
+    BlueprintDetailLevel detailLevel() const { return detailLevel_; }
+    BlueprintDetailLevel effectiveDetailLevel() const;
 
     void setContentInfo(const NodeContentInfo& info);
     const NodeContentInfo& contentInfo() const { return contentInfo_; }
@@ -247,6 +251,7 @@ private:
 
     NodeContentInfo contentInfo_;
     NodeContentFields contentFields_ = kAllNodeContentFields;
+    BlueprintDetailLevel detailLevel_ = BlueprintDetailLevel::Full;
     QGraphicsProxyWidget* contentProxy_ = nullptr;
     QGraphicsProxyWidget* editorProxy_ = nullptr;
     QMetaObject::Connection contentSizeConnection_;
@@ -261,6 +266,7 @@ private:
     std::optional<WaveformFrameRange> waveformRange_;
 
     void updateContentHeight();
+    void refreshContentVisibility_();
     void retireContentProxy_();
     QRectF titleEditorRect() const;
 
