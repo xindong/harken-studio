@@ -6157,19 +6157,10 @@ VnResult CaptureCompressorRuntimeInfo(
     for (std::uint32_t renderSlot = 0;
          renderSlot < engine.voiceEffectInstanceRefs.size();
          ++renderSlot) {
-        VnVoiceHandle renderHandle = 0;
-        VnVoiceHandle publicHandle = 0;
-        bool live = false;
-        engine.ledger.ForEachLive(
-            [&](VnVoiceHandle render, std::uint32_t, std::uint64_t,
-                std::uint32_t) {
-                if (static_cast<std::uint32_t>(render) == renderSlot) {
-                    renderHandle = render;
-                    publicHandle = engine.ledger.ToPublic(render);
-                    live = true;
-                }
-            });
-        if (!live) {
+        const VnVoiceHandle renderHandle =
+            engine.ledger.CurrentRenderHandle(renderSlot);
+        const VnVoiceHandle publicHandle = engine.ledger.ToPublic(renderHandle);
+        if (publicHandle == 0) {
             continue;
         }
         for (std::uint32_t effectSlot = 0;

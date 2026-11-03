@@ -437,7 +437,9 @@ TEST(VoiceLedger, PreparedProofReverseReservationSurvivesOldReapAndBlocksPending
     ASSERT_TRUE(PrepareLedgerCommitInput(ledger, MakeRenderHandle(0, 7), &input));
     harken::VoiceLedger::PreparedCommitProof proof;
     ASSERT_TRUE(ledger.ProvePreparedPlayableCommit(input, &proof));
+    EXPECT_EQ(oldRender, ledger.CurrentRenderHandle(0));
     ledger.Reap(oldRender);
+    EXPECT_EQ(0u, ledger.CurrentRenderHandle(0));
     EXPECT_FALSE(ledger.OwnerForRender(oldRender).live);
     ledger.StartPending(pendingSlot, input.renderHandle);
     ledger.ReturnPark(parkedSlot, input.renderHandle);
@@ -445,10 +447,14 @@ TEST(VoiceLedger, PreparedProofReverseReservationSurvivesOldReapAndBlocksPending
     EXPECT_EQ(harken::VoiceLedger::HandleKind::Parked, ledger.Classify(parkedPublic).kind);
     EXPECT_FALSE(ledger.OwnerForRender(input.renderHandle).live);
     harken::VoiceLedger::ConsumePreparedPlayableCommit(std::move(proof));
+    EXPECT_EQ(input.renderHandle, ledger.CurrentRenderHandle(0));
+    EXPECT_EQ(0u, ledger.ToPublic(ledger.CurrentRenderHandle(0)));
     ASSERT_TRUE(ledger.OwnerForRender(input.renderHandle).live);
     ledger.Reap(oldRender);
+    EXPECT_EQ(input.renderHandle, ledger.CurrentRenderHandle(0));
     EXPECT_TRUE(ledger.OwnerForRender(input.renderHandle).live);
     ledger.Release(input.identity.slot);
+    EXPECT_EQ(0u, ledger.CurrentRenderHandle(0));
     ledger.Release(pendingSlot);
     ledger.Release(parkedSlot);
     EXPECT_EQ(ledger.Capacity(), ledger.AvailableEntryCount());
@@ -544,6 +550,34 @@ TEST(VoiceLedger, ReapMakesHandleStaleAndAdvancesGeneration) {
     EXPECT_NE(pub, pub2);
     EXPECT_EQ(static_cast<std::uint32_t>(pub),
               static_cast<std::uint32_t>(pub2));
+}
+
+TEST(VoiceLedger, CurrentRenderBindingSurvivesOldReapAndTracksParkReturn) {
+    harken::VoiceLedger ledger(2, 1);
+    EXPECT_EQ(0u, ledger.CurrentRenderHandle(0));
+    EXPECT_EQ(0u, ledger.CurrentRenderHandle(UINT32_MAX));
+    VnVoiceHandle oldPublic = 0, currentPublic = 0;
+    std::uint32_t oldSlot = 0, currentSlot = 0;
+    ASSERT_TRUE(ledger.Acquire(&oldPublic, &oldSlot));
+    ASSERT_TRUE(ledger.Acquire(&currentPublic, &currentSlot));
+    const auto oldRender = MakeRenderHandle(0, 1);
+    const auto currentRender = MakeRenderHandle(0, 2);
+    ledger.BindRender(oldSlot, oldRender, 128);
+    ledger.BindRender(currentSlot, currentRender, 128);
+    EXPECT_EQ(currentRender, ledger.CurrentRenderHandle(0));
+    EXPECT_EQ(oldPublic, ledger.ToPublic(oldRender));
+    ledger.Reap(oldRender);
+    EXPECT_EQ(currentRender, ledger.CurrentRenderHandle(0));
+    EXPECT_EQ(currentPublic, ledger.ToPublic(ledger.CurrentRenderHandle(0)));
+    std::uint32_t parkedSlot = UINT32_MAX;
+    ASSERT_TRUE(ledger.Park(currentRender, &parkedSlot));
+    EXPECT_EQ(0u, ledger.CurrentRenderHandle(0));
+    const auto returnedRender = MakeRenderHandle(0, 3);
+    ledger.ReturnPark(parkedSlot, returnedRender);
+    EXPECT_EQ(returnedRender, ledger.CurrentRenderHandle(0));
+    EXPECT_EQ(currentPublic, ledger.ToPublic(ledger.CurrentRenderHandle(0)));
+    ledger.Reap(returnedRender);
+    EXPECT_EQ(0u, ledger.CurrentRenderHandle(0));
 }
 
 TEST(VoiceLedger, ReleaseUndoesAReservationSideEffectFree) {
