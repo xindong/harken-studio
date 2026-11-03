@@ -125,16 +125,17 @@ ProjectIntakeConsumer::applyRecord(const QJsonObject& record)
              && QUuid(project.projectId) != QUuid(probe.projectId))
             || timestamp <= QDateTime::fromString(project.lastOpenedAt, Qt::ISODateWithMs))
             return RecordAction::Drop;
-        break;
-    }
-    if (!buildId.isEmpty())
-        return store_->setLastKnownGood(probe.canonicalPath, buildId,
-                                        openedAt)
+        return store_->recordSuccessfulOpen(
+                   probe.canonicalPath,
+                   probe.projectId.isEmpty() ? project.projectId : probe.projectId,
+                   probe.metadataWarning.isEmpty() ? probe.displayName : project.displayName,
+                   probe.schemaVersion > 0 ? probe.schemaVersion : project.detectedSchema,
+                   buildId.isEmpty() ? project.lastKnownGoodStudioBuildId : buildId,
+                   openedAt)
                    ? RecordAction::Applied
                    : RecordAction::Keep;
-    return store_->setLastOpened(probe.canonicalPath, openedAt)
-               ? RecordAction::Applied
-               : RecordAction::Keep;
+    }
+    return RecordAction::Keep;
 }
 
 }

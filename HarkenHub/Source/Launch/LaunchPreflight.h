@@ -8,14 +8,6 @@
 
 namespace VNH {
 
-enum class LaunchIntent
-{
-    DirectOpenOnly,
-    UpgradeApprovedByHub,
-};
-
-QString launchIntentName(LaunchIntent intent);
-
 enum class LaunchVerdict
 {
     Ready,
@@ -28,7 +20,6 @@ struct LaunchDecision
     QString blockCode;
     QString reason;
     InstalledVersion version;
-    LaunchIntent intent = LaunchIntent::DirectOpenOnly;
     int projectSchema = 0;
 };
 
@@ -38,7 +29,6 @@ public:
     static LaunchDecision evaluate(const ProjectRecord& project,
                                    const std::vector<InstalledVersion>& versions,
                                    const InstallIndexSnapshot& index,
-                                   LaunchIntent intent = LaunchIntent::DirectOpenOnly,
                                    const QString& selectedBuildId = {});
 };
 

@@ -117,12 +117,6 @@ struct FutureUpgrade
     }
 };
 
-VNX::ProjectOpenApprovalBinding bindingFor(const VNX::ProjectUpgradeAnalysis& analysis)
-{
-    const QString requestId = QStringLiteral("bound-open-request");
-    return {requestId, VNX::projectOpenApprovalDigest(analysis, requestId), VNX::currentStudioBuildId()};
-}
-
 bool runInChild()
 {
     const auto* test = ::testing::UnitTest::GetInstance()->current_test_info();
@@ -178,7 +172,8 @@ TEST(ProjectOpenApproval, ChangedFilesAndPendingJournalDoNotConsumeApproval)
     FutureUpgrade future;
     const auto analysis = future.manager.analyze(path);
     ASSERT_TRUE(analysis.ok);
-    const auto approved = VNX::confirmProjectOpen(analysis, nullptr, bindingFor(analysis));
+    ModalResponder responder(true);
+    const auto approved = VNX::confirmProjectOpen(analysis, nullptr);
     ASSERT_TRUE(approved.upgradeApproval);
     QJsonObject changed = readObject(path);
     QJsonObject content = HarkenTest::projectContent(changed);
@@ -200,7 +195,7 @@ TEST(ProjectOpenApproval, ChangedFilesAndPendingJournalDoNotConsumeApproval)
     before = treeBytes(directory.path());
     const auto blocked = future.manager.analyzeForProjectOpen(path);
     EXPECT_FALSE(blocked.ok);
-    EXPECT_FALSE(VNX::confirmProjectOpen(blocked, nullptr, bindingFor(analysis)).proceed);
+    EXPECT_FALSE(VNX::confirmProjectOpen(blocked, nullptr).proceed);
     EXPECT_FALSE(future.manager.execute(blocked).ok);
     EXPECT_TRUE(VNX::ProjectTransaction::recoveryRequired(path));
     EXPECT_EQ(treeBytes(directory.path()), before);

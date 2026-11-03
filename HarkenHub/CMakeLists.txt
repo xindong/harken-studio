@@ -145,10 +145,8 @@ set(HARKEN_HUB_SOURCES
     Source/Versions/LaunchDiagnostics.cpp
     Source/Versions/SelfTestRunner.cpp
     Source/Launch/LaunchPreflight.cpp
-    Source/Launch/ProjectOpenAnalyzer.cpp
     Source/Launch/ProjectCreateFlow.cpp
     Source/Launch/ProjectOpenFlow.cpp
-    Source/Launch/StudioLaunchMonitor.cpp
     Source/Launch/StudioLauncher.cpp
     Source/Legal/ConsentStore.cpp
     Source/Maintenance/BuildPinRegistry.cpp
@@ -162,7 +160,6 @@ set(HARKEN_HUB_SOURCES
     Source/UI/ConsentDialog.cpp
     Source/UI/DialogLayout.cpp
     Source/UI/MessageDialog.cpp
-    Source/UI/ProgressDialog.cpp
     Source/UI/EngineIntegrationsPage.cpp
     Source/UI/HubIcons.cpp
     Source/UI/ServerVersionsDialog.cpp

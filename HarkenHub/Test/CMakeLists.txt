@@ -26,7 +26,6 @@ add_executable(harken_hub_tests
     UnitTest/LaunchDiagnosticsTest.cpp
     UnitTest/LocalBuildRegistryTest.cpp
     UnitTest/LaunchPreflightTest.cpp
-    UnitTest/ProjectOpenAnalyzerTest.cpp
     UnitTest/ProjectOpenFlowTest.cpp
     UnitTest/ProjectCreateFlowTest.cpp
     UnitTest/ProjectsPageTest.cpp
@@ -43,7 +42,6 @@ add_executable(harken_hub_tests
     UnitTest/SelfUpdateHealthCheckTest.cpp
     UnitTest/ServerEndpointsTest.cpp
     UnitTest/ServerVersionCatalogTest.cpp
-    UnitTest/StudioLaunchMonitorTest.cpp
     UnitTest/StudioLauncherTest.cpp
     UnitTest/TransactionReclaimerTest.cpp
     UnitTest/TrustAnchorsTest.cpp

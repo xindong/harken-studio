@@ -14,6 +14,13 @@ namespace VNX {
 
 namespace {
 
+struct ProjectOpenApprovalBinding
+{
+    QString requestId;
+    QString digest;
+    QString expectedBuildId;
+};
+
 QString text(const char* value)
 {
     return QCoreApplication::translate("ProjectOpenApproval", value);
@@ -71,8 +78,7 @@ bool confirmUpgrade(const ProjectUpgradeAnalysis& analysis, QWidget* parent)
 
 ProjectOpenDecision confirmProjectOpen(
     const ProjectUpgradeAnalysis& analysis,
-    QWidget* parent,
-    const std::optional<ProjectOpenApprovalBinding>& suppliedApproval)
+    QWidget* parent)
 {
     ProjectOpenDecision decision;
     if (!analysis.ok) {
@@ -80,27 +86,21 @@ ProjectOpenDecision confirmProjectOpen(
             ? ProjectIssue::InternalFailure : analysis.issue;
         return decision;
     }
-    if (suppliedApproval && !matches(analysis, *suppliedApproval)) {
-        decision.issue = ProjectIssue::ProjectChangedDuringUpgrade;
-        return decision;
-    }
     if (!analysis.upgradeRequired) {
         decision.proceed = true;
         return decision;
     }
-    ProjectOpenApprovalBinding binding = suppliedApproval.value_or(ProjectOpenApprovalBinding{});
-    if (!suppliedApproval) {
-        binding.requestId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        binding.expectedBuildId = currentStudioBuildId();
-        binding.digest = projectOpenApprovalDigest(analysis, binding.requestId);
-        if (!matches(analysis, binding)) {
-            decision.issue = ProjectIssue::ProjectChangedDuringUpgrade;
-            return decision;
-        }
-        if (!confirmUpgrade(analysis, parent)) {
-            decision.cancelled = true;
-            return decision;
-        }
+    ProjectOpenApprovalBinding binding;
+    binding.requestId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    binding.expectedBuildId = currentStudioBuildId();
+    binding.digest = projectOpenApprovalDigest(analysis, binding.requestId);
+    if (!matches(analysis, binding)) {
+        decision.issue = ProjectIssue::ProjectChangedDuringUpgrade;
+        return decision;
+    }
+    if (!confirmUpgrade(analysis, parent)) {
+        decision.cancelled = true;
+        return decision;
     }
     decision.proceed = true;
     decision.upgradeApproval = [binding](const ProjectUpgradeAnalysis& current) {

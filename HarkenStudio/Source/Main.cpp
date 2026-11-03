@@ -5,6 +5,7 @@
 #include <QIcon>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMessageBox>
 #include <QSettings>
 #include <QStyleFactory>
 #include <QSurfaceFormat>
@@ -17,7 +18,7 @@
 
 #include "harken_buildinfo.h"
 #include "Common/WheelGuard.h"
-#include "Core/HubClient/HubClient.h"
+#include "Core/StartupArguments.h"
 #include "Core/HubLauncher.h"
 #include "Core/MigrationManager.h"
 #include "Core/ProjectPreflight/ProjectPreflight.h"
@@ -196,21 +197,25 @@ int main(int argc, char* argv[])
 
     VNX::StartupLoadingWindow loading;
     loading.showAfterInitialFrame();
+    const auto failStartup = [&loading](const QString& message) {
+        loading.showFailure(message);
+        QMessageBox::critical(&loading, QObject::tr("Harken Studio"), message);
+        return 3;
+    };
 
     const QStringList args = app.arguments();
-    const VNX::HubClient::Arguments hubArguments =
-        VNX::HubClient::parseArguments(args);
-    if (hubArguments.createProject
-        && (hubArguments.projectName.isEmpty()
-            || hubArguments.projectLocation.isEmpty())) {
-        loading.showFailure(QObject::tr(
+    const VNX::StartupArguments startupArguments =
+        VNX::StartupArguments::parse(args);
+    if (startupArguments.createProject
+        && (startupArguments.projectName.isEmpty()
+            || startupArguments.projectLocation.isEmpty())) {
+        return failStartup(QObject::tr(
             "Project creation requires a project directory"));
-        return 3;
     }
 
     QString projectFile;
-    if (!hubArguments.createProject) {
-        QString requestedProject = hubArguments.projectPath;
+    if (!startupArguments.createProject) {
+        QString requestedProject = startupArguments.projectPath;
         if (requestedProject.isEmpty() && args.contains(QStringLiteral("--last"))) {
             QSettings settings(QSettings::defaultFormat(), QSettings::UserScope,
                                QStringLiteral("HarkenSound"),
@@ -232,27 +237,25 @@ int main(int argc, char* argv[])
         if (!requestedProject.isEmpty()) {
             projectFile = VNX::ProjectLocator::locate(requestedProject).projectFilePath;
             if (projectFile.isEmpty()) {
-                loading.showFailure(QObject::tr(
+                return failStartup(QObject::tr(
                     "Could not find a unique Harken project at: %1")
                                         .arg(requestedProject));
-                return 3;
             }
         }
         if (projectFile.isEmpty()) {
             QString error;
             if (!VNX::HubLauncher::open(VNX::HubPage::Projects, &error, true)) {
-                loading.showFailure(error);
-                return 3;
+                return failStartup(error);
             }
             return 0;
         }
     }
 
-    loading.setProjectName(hubArguments.createProject
-                               ? hubArguments.projectName
+    loading.setProjectName(startupArguments.createProject
+                               ? startupArguments.projectName
                                : QFileInfo(projectFile).completeBaseName());
     auto coordinator = std::make_unique<VNX::StartupCoordinator>(
-        app, loading, hubArguments, projectFile, &app);
+        app, loading, startupArguments, projectFile, &app);
     QTimer::singleShot(0, coordinator.get(), &VNX::StartupCoordinator::start);
     return app.exec();
 }

@@ -15,6 +15,10 @@
       ],
       "changes": [
         {
+          "category": "improved",
+          "text": "Open and create projects without Hub startup progress dialogs. Studio handles project checks, upgrade confirmation and startup errors, while Hub keeps the project list and opening history in sync."
+        },
+        {
           "category": "added",
           "text": "Restore the current Unity Integration Package from verified official files, with a change preview and permanent safety backup."
         },

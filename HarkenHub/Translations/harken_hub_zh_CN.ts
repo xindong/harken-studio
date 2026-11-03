@@ -160,6 +160,10 @@
 <context>
     <name>HubReleaseNotes</name>
     <message>
+        <source>Open and create projects without Hub startup progress dialogs. Studio handles project checks, upgrade confirmation and startup errors, while Hub keeps the project list and opening history in sync.</source>
+        <translation>打开和新建工程时，Hub 不再显示启动进度弹窗。工程检查、升级确认和启动错误由 Studio 自行处理，Hub 继续静默同步工程列表和打开记录。</translation>
+    </message>
+    <message>
         <source>Restore the current Unity Integration Package from verified official files, with a change preview and permanent safety backup.</source>
         <translation>新增还原当前 Unity 集成包功能：从经过验证的官方文件恢复，操作前预览差异并建立永久安全备份。</translation>
     </message>
@@ -4488,10 +4492,6 @@ To integrate again later, select or drop this Integration Package source: %2</so
         <translation>如果这是有意替换，请移除此条目后重新添加工程。</translation>
     </message>
     <message>
-        <source>Cannot open the launch progress channel.</source>
-        <translation>无法打开启动进度通道。</translation>
-    </message>
-    <message>
         <source>HarkenStudio exited before it finished opening the project</source>
         <translation>HarkenStudio 在完成打开工程前已退出</translation>
     </message>
@@ -4708,104 +4708,8 @@ The previous version association was kept. You can retry, select another version
         <translation>正在更新工程</translation>
     </message>
     <message>
-        <source>Connection to HarkenStudio was lost before launch finished</source>
-        <translation>HarkenStudio 在启动完成前断开了连接</translation>
-    </message>
-    <message>
-        <source>HarkenStudio disconnected before completing the launch handshake</source>
-        <translation>HarkenStudio 在完成启动握手前断开了连接</translation>
-    </message>
-    <message>
-        <source>Launch report exceeded the size limit</source>
-        <translation>启动回报超过大小限制</translation>
-    </message>
-    <message>
-        <source>Launch report is not valid JSON</source>
-        <translation>启动回报不是有效的 JSON</translation>
-    </message>
-    <message>
-        <source>Launch report token mismatch</source>
-        <translation>启动回报令牌不匹配</translation>
-    </message>
-    <message>
-        <source>Launch report arrived before hello</source>
-        <translation>启动回报在握手问候前到达</translation>
-    </message>
-    <message>
-        <source>Launch report protocol version mismatch</source>
-        <translation>启动回报协议版本不匹配</translation>
-    </message>
-    <message>
-        <source>HarkenStudio reported build id %1, expected %2</source>
-        <translation>HarkenStudio 回报的构建 ID 为 %1，但应为 %2</translation>
-    </message>
-    <message>
-        <source>This HarkenStudio version cannot create projects from Harken Hub. Update HarkenStudio and try again.</source>
-        <translation>此 HarkenStudio 版本无法从 Harken Hub 创建工程。请更新 HarkenStudio 后重试。</translation>
-    </message>
-    <message>
-        <source>HarkenStudio reported an unexpected launch operation</source>
-        <translation>HarkenStudio 回报了意外的启动操作</translation>
-    </message>
-    <message>
-        <source>HarkenStudio reported an invalid launch intent</source>
-        <translation>HarkenStudio 回报了无效的启动意图</translation>
-    </message>
-    <message>
-        <source>HarkenStudio process is not running from the selected version directory</source>
-        <translation>HarkenStudio 进程不是从所选版本目录运行的</translation>
-    </message>
-    <message>
-        <source>Unknown launch report message</source>
-        <translation>未知的启动回报消息</translation>
-    </message>
-    <message>
-        <source>HarkenStudio reported a failure without an error code</source>
-        <translation>HarkenStudio 回报失败，但没有提供错误代码</translation>
-    </message>
-    <message>
-        <source>HarkenStudio reported a failure</source>
-        <translation>HarkenStudio 回报启动失败</translation>
-    </message>
-    <message>
-        <source>Unknown launch stage: %1</source>
-        <translation>未知的启动阶段：%1</translation>
-    </message>
-    <message>
         <source>This local build changed and is being checked again. Try again shortly.</source>
         <translation>此本地构建已发生变化，正在重新检查。请稍后重试。</translation>
-    </message>
-    <message>
-        <source>Cannot open the project creation progress channel.</source>
-        <translation>无法打开工程创建进度通道。</translation>
-    </message>
-    <message>
-        <source>HarkenStudio exited before it finished creating the project</source>
-        <translation>HarkenStudio 在完成创建工程前退出了</translation>
-    </message>
-    <message>
-        <source>Studio is still creating the project. You can continue working in Hub.</source>
-        <translation>Studio 仍在创建工程，你可以继续使用 Hub。</translation>
-    </message>
-    <message>
-        <source>HarkenStudio reported success, but the project file was not found.</source>
-        <translation>HarkenStudio 已回报成功，但找不到工程文件。</translation>
-    </message>
-    <message>
-        <source>Studio is creating the project.</source>
-        <translation>Studio 正在创建工程。</translation>
-    </message>
-    <message>
-        <source>Studio has not connected to Hub. Continue in Studio; the creation result is not yet known.</source>
-        <translation>Studio 尚未连接到 Hub。请在 Studio 中继续操作；目前尚无法确认工程创建结果。</translation>
-    </message>
-    <message>
-        <source>%1
-
-The project creation result is unknown.</source>
-        <translation>%1
-
-目前无法确认工程创建结果。</translation>
     </message>
     <message>
         <source>HarkenStudio executable is missing: %1</source>
@@ -4820,123 +4724,9 @@ The project creation result is unknown.</source>
         <translation>Schema 不匹配</translation>
     </message>
     <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="34"/>
-        <source>The selected Harken Studio could not start the project safety check.</source>
-        <translation>所选 Harken Studio 无法启动工程安全检查。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="35"/>
-        <source>The selected Harken Studio did not finish the project safety check in time.</source>
-        <translation>所选 Harken Studio 未能及时完成工程安全检查。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="36"/>
-        <source>The selected Harken Studio closed while checking the project.</source>
-        <translation>所选 Harken Studio 在检查工程时意外退出。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="37"/>
-        <source>The selected Harken Studio returned an invalid project safety report.</source>
-        <translation>所选 Harken Studio 返回了无效的工程安全报告。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="39"/>
-        <source>The selected Harken Studio does not contain a complete migration path for this project.</source>
-        <translation>所选 Harken Studio 不包含此工程所需的完整迁移路径。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="40"/>
-        <source>There is not enough free space to upgrade and protect this project safely.</source>
-        <translation>可用空间不足，无法安全升级并保护此工程。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="41"/>
-        <source>This project is stored on a volume that cannot be upgraded safely.</source>
-        <translation>此工程所在的存储位置不支持安全升级。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="42"/>
-        <source>A safe recovery location is not available for this project upgrade.</source>
-        <translation>没有可用于此次工程升级的安全恢复位置。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="43"/>
-        <source>This project has an unfinished upgrade that must be recovered before it can open.</source>
-        <translation>此工程存在未完成的升级，必须先恢复才能打开。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="44"/>
-        <source>This project is currently in use by another process.</source>
-        <translation>此工程当前正被其他进程使用。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="45"/>
-        <source>The project data is incomplete or damaged and cannot be opened safely.</source>
-        <translation>工程数据不完整或已损坏，无法安全打开。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="46"/>
-        <source>The project changed after the safety check. Click Open Project to check it again.</source>
-        <translation>工程在安全检查后发生了变化。请重新点击“打开工程”进行检查。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="47"/>
-        <source>Harken Studio could not complete the project safety check.</source>
-        <translation>Harken Studio 无法完成工程安全检查。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="48"/>
-        <source>the selected version</source>
-        <translation>所选版本</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="49"/>
-        <source>Recovery data will be stored at: %1</source>
-        <translation>恢复数据将存储在：%1</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="50"/>
-        <source>The files that may change will be protected by a recoverable transaction.</source>
-        <translation>可能发生变化的文件将由可恢复事务保护。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="51"/>
-        <source>This project uses Schema %1.
-Harken Studio %2 uses Schema %3.
-
-Opening the project will upgrade its Schema. The migration has %4 step(s) and may change %5 file(s).
-%6
-Required free space: %7
-
-After the upgrade, older Harken Studio versions may no longer be able to open this project.</source>
-        <translation>此工程使用 Schema %1。
-Harken Studio %2 使用 Schema %3。
-
-打开工程时将升级其 Schema。迁移包含 %4 个步骤，可能修改 %5 个文件。
-%6
-所需可用空间：%7
-
-升级后，较旧的 Harken Studio 版本可能无法再打开此工程。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="52"/>
-        <source>Project Upgrade Required</source>
-        <translation>工程需要升级</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="53"/>
-        <source>Upgrade and Open</source>
-        <translation>升级并打开</translation>
-    </message>
-    <message>
         <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="54"/>
         <source>Cancel</source>
         <translation>取消</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="57"/>
-        <source>The project identity changed during the safety check. Add the project again before opening it.</source>
-        <translation>工程标识在安全检查期间发生了变化。请重新添加工程后再打开。</translation>
     </message>
     <message>
         <location filename="../Source/UI/ProjectsPage.cpp" line="1232"/>
@@ -4944,19 +4734,9 @@ Harken Studio %2 使用 Schema %3。
         <translation>使用工程推荐版本</translation>
     </message>
     <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="10"/>
-        <source>Checking the project with Studio...</source>
-        <translation>正在通过 Studio 检查工程…</translation>
-    </message>
-    <message>
         <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="11"/>
         <source>Choose a Studio version to open this project.</source>
         <translation>请选择用于打开此工程的 Studio 版本。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="13"/>
-        <source>Hide</source>
-        <translation>隐藏</translation>
     </message>
     <message>
         <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="14"/>
@@ -4967,16 +4747,6 @@ Harken Studio %2 使用 Schema %3。
         <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="15"/>
         <source>Last successful open</source>
         <translation>上次成功打开</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="17"/>
-        <source>Launch report does not match the selected Studio process</source>
-        <translation>启动回报与本次选中的 Studio 进程不一致</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="24"/>
-        <source>Opening Studio to continue the check...</source>
-        <translation>正在启动 Studio 继续检查…</translation>
     </message>
     <message>
         <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="29"/>
@@ -5002,31 +4772,6 @@ Harken Studio %2 使用 Schema %3。
         <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="35"/>
         <source>Studio capabilities version does not match the package.</source>
         <translation>Studio 能力报告中的软件版本与安装包不一致。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="36"/>
-        <source>Studio changed during the project check. Open the project again to check the new build.</source>
-        <translation>检查工程期间 Studio 已发生变化，请重新打开工程以检查新构建。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="37"/>
-        <source>Studio exited before reporting that the project opened.</source>
-        <translation>Studio 在回报工程打开成功之前已退出。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="38"/>
-        <source>Studio has not connected to Hub. Continue in Studio; its opening result is not yet known.</source>
-        <translation>Studio 尚未连接到 Hub，请在 Studio 中继续操作。当前打开结果尚不确定。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="39"/>
-        <source>Studio is opening the project. Complete any confirmation in Studio.</source>
-        <translation>Studio 正在打开工程。如需确认，请在 Studio 中完成。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="40"/>
-        <source>Studio is still opening the project. You can continue any confirmation there.</source>
-        <translation>Studio 仍在打开工程，请在 Studio 中继续可能尚未完成的确认。</translation>
     </message>
     <message>
         <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="44"/>
@@ -5062,27 +4807,6 @@ Harken Studio %2 使用 Schema %3。
         <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="63"/>
         <source>This local build changed and must be checked again.</source>
         <translation>此本地构建已发生变化，需要重新检查。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="67"/>
-        <source>The selected Harken Studio %1 does not support this project format.
-Project format version: Schema %2
-Current Studio format version: Schema %3
-
-Choose or install a Harken Studio version that supports this project format.</source>
-        <translation>当前选择的 Harken Studio %1 不支持此工程格式。
-工程格式版本：Schema %2
-当前 Studio 格式版本：Schema %3
-
-请选择或安装支持此工程格式的 Harken Studio 版本。</translation>
-    </message>
-    <message>
-        <source>The selected Harken Studio %1 does not support this project format.
-
-Choose or install a Harken Studio version that supports this project format.</source>
-        <translation>当前选择的 Harken Studio %1 不支持此工程格式。
-
-请选择或安装支持此工程格式的 Harken Studio 版本。</translation>
     </message>
     <message>
         <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="72"/>

@@ -398,6 +398,14 @@ ProjectsPage::ProjectsPage(ProjectStore* store, QWidget* parent)
 
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
+    launchError_ = new QLabel(this);
+    launchError_->setObjectName(QStringLiteral("projectLaunchError"));
+    launchError_->setWordWrap(true);
+    launchError_->setTextFormat(Qt::PlainText);
+    launchError_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    launchError_->setContentsMargins(24, 12, 24, 0);
+    launchError_->hide();
+    root->addWidget(launchError_);
     root->addWidget(viewStack_);
 
     refresh();
@@ -847,7 +855,7 @@ void ProjectsPage::updateNewProjectCreateEnabled()
     if (!createProjectButton_)
         return;
     createProjectButton_->setEnabled(
-        !creatingProject_ && !createTarget_.installPath.isEmpty() &&
+        !createTarget_.installPath.isEmpty() &&
         isValidProjectName(projectNameEdit_->text().trimmed()) &&
         !projectLocationEdit_->text().trimmed().isEmpty());
 }
@@ -867,11 +875,10 @@ void ProjectsPage::persistProjectLocation(const QString& path)
 
 void ProjectsPage::onNewProjectClicked()
 {
+    showLaunchError({});
     loadProjectVersions(pendingCreateBuildId_);
     if (createTarget_.installPath.isEmpty()) {
-        MessageDialog::warning(
-            this, QCoreApplication::translate("HarkenHub", "New Project"),
-            QCoreApplication::translate("HarkenHub", "Install or repair HarkenStudio before creating a "
+        showLaunchError(QCoreApplication::translate("HarkenHub", "Install or repair HarkenStudio before creating a "
                            "project."));
         return;
     }
@@ -891,6 +898,7 @@ void ProjectsPage::showNewProjectPage()
 
 void ProjectsPage::showProjectsList()
 {
+    showLaunchError({});
     pendingCreateBuildId_.clear();
     viewStack_->setCurrentWidget(projectsView_);
     refresh();
@@ -898,6 +906,7 @@ void ProjectsPage::showProjectsList()
 
 void ProjectsPage::onCreateProjectClicked()
 {
+    showLaunchError({});
     const QString name = projectNameEdit_->text().trimmed();
     const QString location = QDir::cleanPath(
         projectLocationEdit_->text().trimmed());
@@ -975,29 +984,35 @@ void ProjectsPage::onCreateProjectClicked()
     if (confirm.clickedButton() != create)
         return;
 
-    creatingProject_ = true;
-    updateNewProjectCreateEnabled();
-    const auto started = ProjectCreateFlow::create(request, this,
-        [this, buildId = request.version.buildId](const ProjectCreateOutcome& outcome) {
-            creatingProject_ = false;
-            updateNewProjectCreateEnabled();
-            if (outcome.result != ProjectCreateOutcome::Result::Created)
-                return;
-            if (!store_->contains(outcome.projectPath))
-                addProjectFromPath(outcome.projectPath);
-            store_->setPreferredBuild(outcome.projectPath, buildId);
-            refresh();
-            if (viewStack_->currentWidget() == newProjectView_)
-                viewStack_->setCurrentWidget(projectsView_);
-        });
-    if (started.result != ProjectCreateOutcome::Result::Started) {
-        creatingProject_ = false;
-        updateNewProjectCreateEnabled();
+    QString error;
+    if (!ProjectCreateFlow::create(request, &error)) {
+        showLaunchError(error);
+        return;
     }
+    const QString projectPath = QDir(location).absoluteFilePath(
+        name + QLatin1Char('/') + name + QStringLiteral(".hsp"));
+    pendingProjectBuilds_.insert(projectPath, request.version.buildId);
+    showProjectsList();
 }
 
 void ProjectsPage::refresh()
 {
+    const auto projects = store_->listProjects();
+    for (auto it = pendingProjectBuilds_.begin(); it != pendingProjectBuilds_.end();) {
+        const QString path = QFileInfo(it.key()).canonicalFilePath();
+        const auto project = std::find_if(projects.begin(), projects.end(),
+            [&path](const ProjectRecord& value) { return value.canonicalPath == path; });
+        if (project == projects.end()) {
+            ++it;
+            continue;
+        }
+        if (project->preferredStudioBuildId.isEmpty()
+            && !store_->setPreferredBuild(path, it.value())) {
+            ++it;
+            continue;
+        }
+        it = pendingProjectBuilds_.erase(it);
+    }
     renderProjects();
     refreshProjectMetadata();
     emit projectsChanged();
@@ -1242,14 +1257,22 @@ void ProjectsPage::revealProject(const QString& canonicalPath)
     }
 }
 
+void ProjectsPage::showLaunchError(const QString& error)
+{
+    launchError_->setText(error);
+    launchError_->setVisible(!error.isEmpty());
+}
+
 void ProjectsPage::openProject(const QString& canonicalPath)
 {
     if (canonicalPath.isEmpty())
         return;
     const std::vector<InstalledVersion> versions =
         versionsProvider_ ? versionsProvider_() : std::vector<InstalledVersion>{};
-    ProjectOpenFlow::open(store_, canonicalPath, versions, this, {},
-        [this](const ProjectOpenOutcome&) { refresh(); });
+    showLaunchError({});
+    const auto result = ProjectOpenFlow::open(store_, canonicalPath, versions, this);
+    showLaunchError(result.error);
+    refresh();
 }
 
 void ProjectsPage::showRowMenu(int row, const QPoint& globalPos)

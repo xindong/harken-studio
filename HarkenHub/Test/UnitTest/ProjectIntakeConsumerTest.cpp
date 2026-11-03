@@ -116,7 +116,8 @@ TEST_F(ProjectIntakeConsumerTest, UpdatesExistingProjectWithoutTouchingPreferred
     ASSERT_FALSE(projectPath.isEmpty());
     ProjectRecord seed;
     seed.canonicalPath = projectPath;
-    seed.displayName = QStringLiteral("Beta");
+    seed.displayName = QStringLiteral("Old project name");
+    seed.detectedSchema = 1;
     ASSERT_TRUE(store.addProject(seed));
     ASSERT_TRUE(store.setPreferredBuild(projectPath,
                                         QStringLiteral("run1.pinned")));
@@ -137,6 +138,8 @@ TEST_F(ProjectIntakeConsumerTest, UpdatesExistingProjectWithoutTouchingPreferred
               QStringLiteral("run1.pinned"));
     EXPECT_EQ(records.front().lastKnownGoodStudioBuildId,
               QStringLiteral("run2.bbbb2222"));
+    EXPECT_EQ(records.front().displayName, QStringLiteral("Beta"));
+    EXPECT_EQ(records.front().detectedSchema, 5);
     EXPECT_EQ(records.front().lastOpenedAt,
               QStringLiteral("2026-07-28T04:00:00.000Z"));
 }

@@ -1,7 +1,6 @@
 #include "Launch/LaunchPreflight.h"
-#include "Launch/ProjectOpenAnalyzer.h"
 #include "Launch/StudioLauncher.h"
-#include "Launch/StudioLaunchMonitor.h"
+#include "Projects/ProjectIntakeConsumer.h"
 #include "Packaging/PackageReader.h"
 #include "Platform/PlatformPaths.h"
 #include "Projects/ProjectProbe.h"
@@ -15,6 +14,7 @@
 #include "Versions/IntegrityChecker.h"
 #include "Versions/LocalBuildRegistry.h"
 #include "Versions/SelfTestRunner.h"
+#include "Versions/StudioCapabilities.h"
 
 #include <gtest/gtest.h>
 #include <algorithm>
@@ -116,47 +116,36 @@ TEST(StudioPackageIntegration, InstallsRepairsRegistersCreatesAndOpensRealStudio
         if (recent.removeAll(project) > 0)
             settings.setValue("RecentProjects", recent);
     });
+    VNH::ProjectStore store;
+    ASSERT_TRUE(store.open(directory.filePath("projects.db")));
+    VNH::ProjectIntakeConsumer intake(&store);
     const auto runStudio = [&](bool create) {
-        VNH::StudioLaunchMonitor monitor;
-        if (!monitor.listen())
-            return false;
-        monitor.setExpectedBuildId(build);
-        monitor.setExpectedOperation(create ? "createProject" : "openProject");
-        monitor.setExpectedLaunchIntent("DirectOpenOnly");
         VNH::StudioLaunchSpec launch;
         launch.installPath = installed.installPath;
         launch.executablePath = versions.front().executablePath;
         launch.projectPath = project;
-        launch.expectedBuildId = build;
-        launch.serverName = monitor.serverName();
-        launch.sessionToken = monitor.sessionToken();
-        launch.capabilitiesVersion = protocol;
         VNH::StudioCreateSpec creation;
         creation.launch = launch;
         creation.projectName = "Smoke";
         creation.projectLocation = directory.filePath("Projects");
-        bool ready = false;
-        QString failure;
-        QObject::connect(&monitor, &VNH::StudioLaunchMonitor::ready, [&]() { ready = true; });
-        QObject::connect(&monitor, &VNH::StudioLaunchMonitor::failed, [&](const QString& value) { failure = value; });
         QProcess process;
         process.setWorkingDirectory(installed.installPath);
         process.start(launch.executablePath, create ? VNH::StudioLauncher::argumentsForCreate(creation)
                                                     : VNH::StudioLauncher::argumentsFor(launch));
         if (!process.waitForStarted(10000))
             return false;
-        monitor.setExpectedProcess(process.processId(), launch.executablePath);
         QElapsedTimer elapsed;
         elapsed.start();
-        while (!ready && failure.isEmpty() && process.state() != QProcess::NotRunning && elapsed.elapsed() < 60000) {
+        bool synchronized = false;
+        while (!synchronized && process.state() != QProcess::NotRunning && elapsed.elapsed() < 60000) {
             QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+            synchronized = intake.consumeAll();
             QThread::msleep(5);
         }
-        monitor.close();
         process.kill();
         process.waitForFinished(5000);
-        EXPECT_TRUE(ready) << failure.toStdString() << process.readAllStandardError().toStdString();
-        return ready;
+        EXPECT_TRUE(synchronized) << process.readAllStandardError().toStdString();
+        return synchronized;
     };
     ASSERT_TRUE(runStudio(true));
     const auto probe = VNH::ProjectProbe::probe(project);
@@ -166,13 +155,8 @@ TEST(StudioPackageIntegration, InstallsRepairsRegistersCreatesAndOpensRealStudio
     VNH::ProjectRecord record;
     record.canonicalPath = probe.canonicalPath;
     record.projectId = probe.projectId;
-    const auto decision = VNH::LaunchPreflight::evaluate(record, versions, VNH::InstallIndex::snapshot(), VNH::LaunchIntent::DirectOpenOnly, build);
+    const auto decision = VNH::LaunchPreflight::evaluate(record, versions, VNH::InstallIndex::snapshot(), build);
     ASSERT_EQ(decision.verdict, VNH::LaunchVerdict::Ready) << decision.reason.toStdString();
-    if (protocol == VNH::kStudioCapabilitiesVersion) {
-        const auto analysis = VNH::ProjectOpenAnalyzer::run(decision.version, project, "real-package-open");
-        ASSERT_TRUE(analysis.reportValid && analysis.ok) << analysis.errorCode.toStdString() << analysis.technicalDetails.toStdString();
-        EXPECT_FALSE(analysis.upgradeRequired);
-    }
     ASSERT_TRUE(runStudio(false));
 
     QFile cached(VNH::InstallPackageCache::packagePath(build));

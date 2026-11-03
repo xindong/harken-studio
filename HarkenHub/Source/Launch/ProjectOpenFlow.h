@@ -6,7 +6,6 @@
 #include <QString>
 
 #include <vector>
-#include <functional>
 
 class QWidget;
 
@@ -18,18 +17,15 @@ struct ProjectOpenOutcome
 {
     enum class Result
     {
-        Launched,
-        Activated,
         Started,
-        Unknown,
         Declined,
         Failed,
         Blocked,
-        Busy
     };
 
     Result result = Result::Failed;
     QString blockCode;
+    QString error;
 };
 
 class ProjectOpenFlow
@@ -41,8 +37,7 @@ public:
                                    const QString& canonicalPath,
                                    const std::vector<InstalledVersion>& versions,
                                    QWidget* dialogParent,
-                                   const QString& selectedBuildId = {},
-                                   std::function<void(const ProjectOpenOutcome&)> onFinished = {});
+                                   const QString& selectedBuildId = {});
     static bool isVersionBlock(const QString& blockCode);
 };
 

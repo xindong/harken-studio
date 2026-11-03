@@ -54,20 +54,9 @@ const InstalledVersionRecord* installRecordFor(
 
 }
 
-QString launchIntentName(LaunchIntent intent)
-{
-    switch (intent) {
-    case LaunchIntent::DirectOpenOnly:
-        return QStringLiteral("DirectOpenOnly");
-    case LaunchIntent::UpgradeApprovedByHub:
-        return QStringLiteral("UpgradeApprovedByHub");
-    }
-    return QString();
-}
-
 LaunchDecision LaunchPreflight::evaluate(
     const ProjectRecord& project, const std::vector<InstalledVersion>& versions,
-    const InstallIndexSnapshot& index, LaunchIntent intent,
+    const InstallIndexSnapshot& index,
     const QString& selectedBuildId)
 {
     const QFileInfo projectInfo(project.canonicalPath);
@@ -151,7 +140,6 @@ LaunchDecision LaunchPreflight::evaluate(
 
     LaunchDecision decision;
     decision.version = *target;
-    decision.intent = intent;
     decision.projectSchema = probe.schemaVersion;
     decision.verdict = LaunchVerdict::Ready;
     return decision;
