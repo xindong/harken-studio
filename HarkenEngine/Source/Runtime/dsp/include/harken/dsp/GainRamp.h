@@ -92,6 +92,25 @@ inline void MixScaled(const float* src, float* dst, std::uint32_t frames,
     }
 }
 
+inline bool CanCombineMixGains(float scale, float gain) noexcept {
+    const float combined = scale * gain;
+    return std::isfinite(combined) &&
+           (std::isnormal(combined) || scale == 0.0f || gain == 0.0f);
+}
+
+inline void MixScaled(const float* src, float* dst, std::uint32_t frames,
+                      float scale, float gain) noexcept {
+    if (CanCombineMixGains(scale, gain)) {
+        MixScaled(src, dst, frames, scale * gain);
+        return;
+    }
+    // A combined coefficient can overflow or flush to zero even when both
+    // sample stages are representable. Keep the same order as the ramp path.
+    for (std::uint32_t i = 0; i < frames; ++i) {
+        dst[i] += (src[i] * scale) * gain;
+    }
+}
+
 // Reuse the rounded mono voice sample without combining either output scale.
 template<bool ApplyVoiceGain, bool EqualOutputScale>
 inline void MixMonoToStereoScaledImpl(const float* src, float* left, float* right,
@@ -280,7 +299,7 @@ struct OutputGain {
             return;
         }
         if (remainingFrames == 0 || startFrame >= remainingFrames) {
-            output_gain_detail::MixScaled(src, dst, frames, scale * target);
+            output_gain_detail::MixScaled(src, dst, frames, scale, target);
             return;
         }
         std::uint32_t i = 0;
@@ -299,7 +318,7 @@ struct OutputGain {
         }
         if (i < frames) {
             output_gain_detail::MixScaled(src + i, dst + i, frames - i,
-                                          scale * target);
+                                          scale, target);
         }
     }
 
