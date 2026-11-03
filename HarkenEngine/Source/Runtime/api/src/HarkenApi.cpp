@@ -58936,7 +58936,9 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
         if (!AllowNativeBackingAllocation()) return shortage();
         nativeCandidate->reprepareProducers.resize(producerCount);
         if (!AllowNativeBackingAllocation()) return shortage();
-        nativeCandidate->reprepareLeaves.resize(config.maxKnownScheduleLeaves);
+        // Preserve the selection workspace bound independently of the final
+        // PCM leaf limit: selected children may complete without a PCM leaf.
+        nativeCandidate->reprepareLeaves.resize(kMaxKnownScheduleLeaves);
         if (!AllowNativeBackingAllocation()) return shortage();
         nativeCandidate->selections.resize(producerCount);
         if (!AllowNativeBackingAllocation()) return shortage();
