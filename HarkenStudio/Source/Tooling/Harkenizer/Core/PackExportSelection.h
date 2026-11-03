@@ -77,9 +77,9 @@ public:
     void setSelection(const ProjectData& project, PackExportSelection selection);
 
 private:
-    void save() const;
+    bool save() const;
 
-    QString cachePath_;
+    QString settingsKey_;
     PackExportSelection selection_;
 };
 

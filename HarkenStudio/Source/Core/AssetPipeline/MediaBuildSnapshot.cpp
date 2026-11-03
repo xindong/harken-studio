@@ -58,43 +58,49 @@ bool MediaConversionRequest::cacheValid() const
         && QFileInfo::exists(QDir(PathUtils::getCacheDir(projectRoot)).filePath(it->cachePath));
 }
 
-QString MediaBuildSnapshot::sourceFingerprint(uint32_t sourceID, QString* error) const
-{
-    const auto asset = assets.constFind(sourceID);
-    if (asset == assets.cend()) {
-        if (error) *error = QStringLiteral("Asset not found in media snapshot: %1").arg(sourceID);
-        return {};
-    }
-    return sourceInputs ? sourceInputs->sourceFingerprint(*asset, error)
-        : AssetImporter::computeContentHash(asset->absolutePath);
-}
+namespace {
 
-std::optional<MediaConversionRequest> MediaBuildSnapshot::request(
-    uint32_t sourceID, ProjectPlatformId platformId, QString* error) const
+std::optional<MediaConversionRequest> buildRequest(const MediaBuildSnapshot& snapshot,
+    uint32_t sourceID, ProjectPlatformId platformId, bool capture, QString* error)
 {
-    const auto* definition = ProjectPlatformSemantics::find(platforms, platformId);
+    const auto* definition = ProjectPlatformSemantics::find(snapshot.platforms, platformId);
     if (!definition) {
         if (error) *error = QStringLiteral("Platform ID does not belong to this media snapshot");
         return std::nullopt;
     }
-    const auto asset = assets.constFind(sourceID);
-    if (asset == assets.cend()) {
+    const auto asset = snapshot.assets.constFind(sourceID);
+    if (asset == snapshot.assets.cend()) {
         if (error) *error = QStringLiteral("Asset not found in media snapshot");
         return std::nullopt;
     }
     AssetInfo current = *asset;
     std::shared_ptr<const BuildSourceInput> input;
-    if (sourceInputs) {
-        input = sourceInputs->capture(current, error);
+    if (snapshot.sourceInputs) {
+        input = capture ? snapshot.sourceInputs->capture(current, error)
+            : snapshot.sourceInputs->inspect(current, error);
         if (!input) return std::nullopt;
         current.contentHash = input->contentHash;
         current.metadata = input->metadata;
     }
-    const auto overrideIt = fileOverrides.constFind(sourceID);
+    const auto overrideIt = snapshot.fileOverrides.constFind(sourceID);
     const auto settings = PlatformProfileManager::effectiveSettingsForAsset(
-        current, *definition, overrideIt == fileOverrides.cend() ? nullptr : &*overrideIt);
-    return MediaConversionRequest{projectRoot, registrySession,
-        platformRevisions.value(platformId), *definition, std::move(current), settings, std::move(input)};
+        current, *definition, overrideIt == snapshot.fileOverrides.cend() ? nullptr : &*overrideIt);
+    return MediaConversionRequest{snapshot.projectRoot, snapshot.registrySession,
+        snapshot.platformRevisions.value(platformId), *definition, std::move(current), settings, std::move(input)};
+}
+
+}
+
+std::optional<MediaConversionRequest> MediaBuildSnapshot::inspectRequest(
+    uint32_t sourceID, ProjectPlatformId platformId, QString* error) const
+{
+    return buildRequest(*this, sourceID, platformId, false, error);
+}
+
+std::optional<MediaConversionRequest> MediaBuildSnapshot::request(
+    uint32_t sourceID, ProjectPlatformId platformId, QString* error) const
+{
+    return buildRequest(*this, sourceID, platformId, true, error);
 }
 
 }

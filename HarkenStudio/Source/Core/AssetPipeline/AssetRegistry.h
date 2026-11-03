@@ -69,6 +69,9 @@ public:
     QList<uint32_t> getMissingAssets() const;
 
     int count() const { return assets_.size(); }
+    void updateWaveformState(const QString& path, const QString& sourceHash,
+                             const QByteArray& waveformState);
+
     bool updateSourceFile(uint32_t sourceID, const AudioMetadata& metadata,
                           const QString& absolutePath, const QString& contentHash,
                           uint64_t lastModified);
@@ -105,6 +108,9 @@ public:
     void replaceSnapshot(const QString& projectRoot, const QList<AssetInfo>& assets);
     static bool saveSnapshotToFile(const QString& projectRoot,
                                    const QList<AssetInfo>& assets);
+    static bool saveBuildSources(const QString& projectRoot,
+                                  const QHash<uint32_t, AssetInfo>& assets,
+                                  const QHash<uint32_t, AssetInfo>& changed);
 
 
     void discardUncommittedCaches();

@@ -1,6 +1,7 @@
 #include "Tooling/Harkenizer/Core/ProjectBuildSnapshot.h"
 
 #include "AssetPipeline/AssetRegistry.h"
+#include "AssetPipeline/BuildSourceInputs.h"
 #include "AssetPipeline/PathUtils.h"
 #include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
 #include "Tooling/Harkenizer/ResourceCompiler/ResourceCompiler.h"
@@ -9,7 +10,6 @@
 #include <QDir>
 
 namespace VNX {
-
 std::shared_ptr<const ProjectBuildSnapshot> ProjectBuildSnapshot::capture(
     const ProjectData& source, QString* error)
 {
@@ -19,7 +19,6 @@ std::shared_ptr<const ProjectBuildSnapshot> ProjectBuildSnapshot::capture(
     snapshot->mediaCache = std::make_shared<harkenizer::resourcecompiler::MediaCache>();
     snapshot->media = AssetRegistry::instance().buildSnapshot(
         QFileInfo(source.projectPath).absolutePath(), source.platforms, false);
-    snapshot->media.sourceInputs = std::make_shared<BuildSourceInputs>();
     for (const auto& sourceAsset : source.audioSources) {
         if (snapshot->media.assets.contains(sourceAsset.sourceID)) continue;
         AssetInfo asset;
@@ -29,6 +28,8 @@ std::shared_ptr<const ProjectBuildSnapshot> ProjectBuildSnapshot::capture(
             .filePath(asset.relativePath);
         snapshot->media.assets.insert(asset.sourceID, asset);
     }
+    snapshot->media.sourceInputs = std::make_shared<BuildSourceInputs>(
+        snapshot->media.projectRoot, snapshot->media.assets);
     return snapshot;
 }
 

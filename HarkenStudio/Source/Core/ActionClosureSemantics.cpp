@@ -9,6 +9,7 @@
 #include "Components/VSpatial.h"
 #include "Components/VTrack.h"
 #include "ItemTypeCatalog.h"
+#include "PlaybackReferenceValidation.h"
 #include "ReferenceSlotResolution.h"
 
 #include <QJsonArray>
@@ -348,6 +349,13 @@ struct Builder
                                                QStringLiteral("clips.targetGuid"), path);
             if (!target)
                 continue;
+            QString referenceError;
+            if (!validateDirectPlaybackTarget(track, clip.targetGuid, target, &referenceError)) {
+                diagnostic(ActionClosureDiagnosticCode::SchemaMismatch, referenceError,
+                           plan.rootActionStableId, -1, track.runtimeId(),
+                           QStringLiteral("clips.targetGuid"), path);
+                continue;
+            }
             std::vector<harkenstudio::ObjectId> targetPath = path;
             targetPath.push_back(target->runtimeId());
             edge(track.runtimeId(), target->runtimeId(),
@@ -369,6 +377,13 @@ struct Builder
                 QStringLiteral("selections.childGuid"), path);
             if (!child)
                 continue;
+            QString referenceError;
+            if (!validateDirectPlaybackTarget(container, occurrence.childGuid, child, &referenceError)) {
+                diagnostic(ActionClosureDiagnosticCode::SchemaMismatch, referenceError,
+                           plan.rootActionStableId, -1, container.runtimeId(),
+                           QStringLiteral("selections.childGuid"), path);
+                continue;
+            }
             std::vector<harkenstudio::ObjectId> childPath = path;
             childPath.push_back(child->runtimeId());
             edge(container.runtimeId(), child->runtimeId(),

@@ -2,6 +2,7 @@
 #include "ProjectLanguageSemantics.h"
 
 #include "Tooling/Harkenizer/Core/ProjectBuildSnapshot.h"
+#include "Tooling/Harkenizer/Core/PackBuildState.h"
 #include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
 #include "Tooling/Harkenizer/ResourceCompiler/ResourceCompiler.h"
 #include <QScopeGuard>
@@ -21,11 +22,11 @@
 #include "ProjectSchemaValidator.h"
 #include "harken_buildinfo.h"
 #include "BindingRuntimeLowering.h"
+#include "RuntimeCapabilityMatrix.h"
 #include "SoundSourceEditing.h"
 #include "SoundSourceSemantics.h"
 #include "VariableConsumerSemantics.h"
 #include "AssetPipeline/PathUtils.h"
-#include "AssetPipeline/CacheArtifactWriter.h"
 #include "AssetPipeline/WaveformCache.h"
 
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
@@ -50,7 +51,6 @@
 #include <QCryptographicHash>
 #include <QLockFile>
 #include <QSaveFile>
-#include <QTemporaryDir>
 #include <QUuid>
 
 #ifdef Q_OS_WIN
@@ -80,10 +80,6 @@ namespace {
 
 namespace Bridge = HarkenEditor::Bridge;
 
-constexpr char kStagingPrefix[] = ".harken-pack-staging-";
-constexpr char kPreviousPrefix[] = ".harken-pack-previous-";
-constexpr char kNextPrefix[] = ".harken-pack-next-";
-constexpr char kPublishingMarker[] = ".harken-pack-publishing";
 constexpr char kWaveformLock[] = ".harken-pack-waveforms.lock";
 
 std::uint64_t fnvName(const QString& name)
@@ -253,62 +249,6 @@ bool collectEntries(const QByteArray& bytes, const QString& path,
     return true;
 }
 
-bool collectEntries(const QString& path,
-                    std::vector<Bridge::PackBuildSession::CanonicalPackEntry>* entries,
-                    QString* error, bool resourcesOnly = false, bool publicationMetadataOnly = false,
-                    harkenizer::resourcecompiler::MediaCache* mediaCache = nullptr)
-{
-    QByteArray bytes;
-    return readAll(path, &bytes, error)
-        && collectEntries(bytes, path, entries, error, resourcesOnly, publicationMetadataOnly, mediaCache);
-}
-
-QString entriesFingerprint(const std::vector<Bridge::PackBuildSession::CanonicalPackEntry>& entries,
-                           std::uint32_t kind)
-{
-    std::vector<const Bridge::PackBuildSession::CanonicalPackEntry*> sorted;
-    for (const auto& entry : entries) sorted.push_back(&entry);
-    std::sort(sorted.begin(), sorted.end(), [](const auto* a, const auto* b) {
-        if (a->kind != b->kind) return a->kind < b->kind;
-        if (a->id != b->id) return a->id < b->id;
-        return a->relationOrdinal < b->relationOrdinal;
-    });
-    QCryptographicHash hash(QCryptographicHash::Sha256);
-    std::array<std::uint8_t, 40> header{};
-    harkenstudiobuild::StoreLE32(header.data(), kind);
-    harkenstudiobuild::StoreLE32(header.data() + 4, harkenstudiobuild::kPackFormatVersion2);
-    hash.addData(QByteArrayView(reinterpret_cast<const char*>(header.data()), 8));
-    for (const auto* entry : sorted) {
-        harkenstudiobuild::StoreLE32(header.data(), entry->kind);
-        harkenstudiobuild::StoreLE32(header.data() + 4, entry->vintage);
-        harkenstudiobuild::StoreObjectId(header.data() + 8, entry->id);
-        harkenstudiobuild::StoreLE64(header.data() + 24, entry->relationOrdinal);
-        harkenstudiobuild::StoreLE64(header.data() + 32, entry->payloadBytes());
-        hash.addData(QByteArrayView(reinterpret_cast<const char*>(header.data()), header.size()));
-        const auto* bytes = reinterpret_cast<const char*>(entry->payload.data());
-        if (entry->kind == harkenstudiobuild::kPackEntryKindMedia && entry->payload.size() >= 40) {
-            hash.addData(QByteArrayView(bytes, 32));
-            hash.addData(QByteArray(8, '\0'));
-            hash.addData(QByteArrayView(bytes + 40, entry->payload.size() - 40));
-        } else {
-            hash.addData(QByteArrayView(bytes, entry->payload.size()));
-        }
-        if (entry->mediaBytes() != 0)
-            hash.addData(QByteArrayView(reinterpret_cast<const char*>(entry->mediaData()), entry->mediaBytes()));
-    }
-    return QString::fromLatin1(hash.result().toHex());
-}
-
-void removeMatchingDirs(const QDir& parent, const QString& prefix)
-{
-    const QFileInfoList entries =
-        parent.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden);
-    for (const QFileInfo& info : entries) {
-        if (info.fileName().startsWith(prefix))
-            QDir(info.absoluteFilePath()).removeRecursively();
-    }
-}
-
 bool safePublicationPath(const QDir& dir, const QString& relative)
 {
     if (QFileInfo(dir.absolutePath()).isSymLink() || relative.isEmpty() || QDir::isAbsolutePath(relative)
@@ -317,10 +257,8 @@ bool safePublicationPath(const QDir& dir, const QString& relative)
     QString current = dir.absolutePath();
     for (const QString& part : relative.split(QLatin1Char('/'))) {
         if (part.isEmpty() || part == QStringLiteral(".") || part == QStringLiteral("..")
-            || (current == dir.absolutePath() && part == QString::fromLatin1(kPublishingMarker))
             || part == QStringLiteral(".harken-pack-platform.lock")
             || part == QStringLiteral(".harken-pack-build.lock")
-            || part == QStringLiteral(".harken-pack-index.lock")
             || part == QString::fromLatin1(kWaveformLock)
             || part.endsWith(QLatin1Char('.')) || part.endsWith(QLatin1Char(' ')))
             return false;
@@ -397,8 +335,8 @@ bool preserveBusyWaveformOutputs(const QDir& root, const QStringList& liveNames,
 }
 
 bool scanOutputFiles(const QDir& dir, QStringList* names, QStringList* packs, QString* error,
-                     bool includeStagingDirectories = false,
-                     const std::function<bool()>& cancelCheck = {})
+                     const std::function<bool()>& cancelCheck = {},
+                     QStringList* directoryNames = nullptr)
 {
     if (exportCanceled(cancelCheck, error)) return false;
     if (QFileInfo(dir.absolutePath()).isSymLink()) {
@@ -418,9 +356,7 @@ bool scanOutputFiles(const QDir& dir, QStringList* names, QStringList* packs, QS
             }
             if (!safePublicationPath(dir, relative)) continue;
             if (entry.isDir()) {
-                if ((!includeStagingDirectories && entry.fileName().startsWith(QString::fromLatin1(kStagingPrefix)))
-                    || entry.fileName().startsWith(QString::fromLatin1(kPreviousPrefix))
-                    || entry.fileName().startsWith(QString::fromLatin1(kNextPrefix))) continue;
+                if (directoryNames) directoryNames->append(relative);
                 directories.append(relative);
                 continue;
             }
@@ -440,163 +376,31 @@ bool scanOutputFiles(const QDir& dir, QStringList* names, QStringList* packs, QS
     return true;
 }
 
-bool scanCleanupFiles(const QDir& root, const QStringList& selectedPlatforms,
-                      QStringList* names, QStringList* packs, QString* error,
-                      const std::function<bool()>& cancelCheck = {})
+bool preserveOutputFileSpelling(const QString& path, QString* error)
 {
-    if (!scanOutputFiles(root, names, packs, error, false, cancelCheck)) return false;
-    for (const auto& directory : root.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden)) {
-        if (directory.fileName().startsWith(QString::fromLatin1(kStagingPrefix))
-            || directory.fileName().startsWith(QString::fromLatin1(kPreviousPrefix))
-            || directory.fileName().startsWith(QString::fromLatin1(kNextPrefix))
-            || selectedPlatforms.contains(directory.fileName())) continue;
-        QStringList retiredFiles, retiredPacks;
-        if (!scanOutputFiles(QDir(directory.absoluteFilePath()), &retiredFiles,
-                packs ? &retiredPacks : nullptr, error, true, cancelCheck)) return false;
-        for (const auto& name : retiredFiles) names->append(directory.fileName() + QLatin1Char('/') + name);
-        if (packs)
-            for (const auto& name : retiredPacks) packs->append(directory.fileName() + QLatin1Char('/') + name);
-    }
-    names->removeDuplicates();
-    if (packs) packs->removeDuplicates();
-    return true;
-}
-
-bool copyRelativeFile(const QDir& fromDir, const QDir& toDir, const QString& relative)
-{
-    const QString source = fromDir.filePath(relative);
-    if (!QFile::exists(source))
+#ifdef Q_OS_WIN
+    const QString nativePath = QDir::toNativeSeparators(path);
+    WIN32_FIND_DATAW found;
+    const HANDLE handle = FindFirstFileW(reinterpret_cast<LPCWSTR>(nativePath.utf16()), &found);
+    if (handle == INVALID_HANDLE_VALUE) {
+        *error = QStringLiteral("Cannot inspect output file name: %1").arg(path);
         return false;
-    const QString destination = toDir.filePath(relative);
-    QDir().mkpath(QFileInfo(destination).absolutePath());
-    QFile::remove(destination);
-    return QFile::copy(source, destination);
-}
-
-bool restoreFiles(const QString& fromDir, const QDir& liveDir, const QStringList& names)
-{
-    for (const QString& name : names) {
-        if (!copyRelativeFile(QDir(fromDir), liveDir, name))
+    }
+    FindClose(handle);
+    const QFileInfo file(path);
+    const QString existingName = QString::fromWCharArray(found.cFileName);
+    if (existingName != file.fileName()) {
+        const QString existingPath = QDir::toNativeSeparators(file.dir().filePath(existingName));
+        if (!MoveFileExW(reinterpret_cast<LPCWSTR>(existingPath.utf16()),
+                         reinterpret_cast<LPCWSTR>(nativePath.utf16()), MOVEFILE_REPLACE_EXISTING)) {
+            *error = QStringLiteral("Cannot update output file name: %1").arg(path);
             return false;
-    }
-    return true;
-}
-
-void removeRelativeFile(const QDir& dir, const QString& relative)
-{
-    QFile::remove(dir.filePath(relative));
-    QDir parent(QFileInfo(dir.filePath(relative)).absolutePath());
-    while (parent.absolutePath() != dir.absolutePath()
-           && parent.absolutePath().startsWith(dir.absolutePath())
-           && parent.isEmpty()) {
-        const QString current = parent.absolutePath();
-        if (!parent.cdUp())
-            break;
-        QDir().rmdir(current);
-    }
-}
-
-void removeEmptyOutputDirs(const QDir& dir)
-{
-    for (const auto& entry : dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden | QDir::NoSymLinks)) {
-        const QDir child(entry.absoluteFilePath());
-        removeEmptyOutputDirs(child);
-        if (child.isEmpty(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System))
-            QDir().rmdir(child.absolutePath());
-    }
-}
-
-void removePublicationCopy(const QDir& dir, const QStringList& names)
-{
-    QStringList companions;
-    bool removed = true;
-    for (const QString& name : names) {
-        if (QFileInfo(name).suffix() == QStringLiteral("json")) {
-            companions.prepend(name);
-            continue;
-        }
-        removeRelativeFile(dir, name);
-        removed = removed && !QFileInfo::exists(dir.filePath(name));
-    }
-    if (!removed) return;
-    for (const QString& name : companions) {
-        removeRelativeFile(dir, name);
-        if (QFileInfo::exists(dir.filePath(name))) return;
-    }
-    QDir().rmdir(dir.absolutePath());
-}
-
-void cleanupPublicationCopies(const QDir& liveDir)
-{
-    for (const QFileInfo& info : liveDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden)) {
-        if (info.isSymLink() || (!info.fileName().startsWith(QString::fromLatin1(kPreviousPrefix))
-            && !info.fileName().startsWith(QString::fromLatin1(kNextPrefix)))) continue;
-        QStringList names;
-        QString error;
-        const QDir copy(info.absoluteFilePath());
-        if (scanOutputFiles(copy, &names, nullptr, &error)) {
-            removePublicationCopy(copy, names);
         }
     }
-}
-
-bool recoverInterruptedPublish(const QDir& liveDir, QString* error)
-{
-    const QString marker = liveDir.filePath(QString::fromLatin1(kPublishingMarker));
-    if (!QFile::exists(marker)) {
-        cleanupPublicationCopies(liveDir);
-        return true;
-    }
-    const auto reject = [&](const QString& detail) {
-        *error = QStringLiteral("Cannot recover interrupted pack publish: %1").arg(detail);
-        return false;
-    };
-    QFile markerFile(marker);
-    if (!markerFile.open(QIODevice::ReadOnly)) return reject(QStringLiteral("marker is unreadable"));
-    const QByteArray markerBytes = markerFile.readAll();
-    markerFile.close();
-    QStringList previousNames, nextNames;
-    const QJsonObject transaction = QJsonDocument::fromJson(markerBytes).object();
-    const QString previousName = transaction.value(QStringLiteral("previous")).toString();
-    const QString nextName = transaction.value(QStringLiteral("next")).toString();
-    if (transaction.value(QStringLiteral("version")).toInt() != 1
-        || !previousName.startsWith(QString::fromLatin1(kPreviousPrefix))
-        || previousName.contains(QLatin1Char('/')) || previousName.contains(QLatin1Char('\\')) || previousName.contains(QLatin1Char(':'))
-        || !nextName.startsWith(QString::fromLatin1(kNextPrefix))
-        || nextName.contains(QLatin1Char('/')) || nextName.contains(QLatin1Char('\\')) || nextName.contains(QLatin1Char(':')))
-        return reject(QStringLiteral("invalid transaction record"));
-    const QString previous = liveDir.filePath(previousName);
-    const QString next = liveDir.filePath(nextName);
-    const auto readNames = [&](const QString& key, QStringList* names) {
-        if (!transaction.value(key).isArray()) return false;
-        for (const QJsonValue& value : transaction.value(key).toArray()) {
-            const QString name = value.toString();
-            if (!safePublicationPath(liveDir, name)
-                || !safePublicationPath(QDir(previous), name)
-                || !safePublicationPath(QDir(next), name)) return false;
-            names->append(name);
-        }
-        names->removeDuplicates();
-        return true;
-    };
-    if (!readNames(QStringLiteral("previousFiles"), &previousNames)
-        || !readNames(QStringLiteral("nextFiles"), &nextNames))
-        return reject(QStringLiteral("unsafe transaction inventory"));
-    if (!QDir(previous).exists()) return reject(QStringLiteral("previous pack set is missing"));
-    for (const QString& name : previousNames) {
-        if (!QFileInfo(QDir(previous).filePath(name)).isFile())
-            return reject(QStringLiteral("previous file is missing: %1").arg(name));
-    }
-    for (const QString& name : nextNames) {
-        if (containsPublicationFile(liveDir, previousNames, name)) continue;
-        removeRelativeFile(liveDir, name);
-        if (QFileInfo::exists(liveDir.filePath(name)))
-            return reject(QStringLiteral("cannot remove incomplete file: %1").arg(name));
-    }
-    if (!restoreFiles(previous, liveDir, previousNames) || !QFile::remove(marker))
-        return reject(QStringLiteral("previous pack set could not be restored"));
-    removePublicationCopy(QDir(previous), previousNames);
-    if (!next.isEmpty()) removePublicationCopy(QDir(next), nextNames);
+#else
+    Q_UNUSED(path);
+    Q_UNUSED(error);
+#endif
     return true;
 }
 
@@ -614,175 +418,6 @@ bool writeJson(const QString& path, const QJsonObject& object, QString* error)
             *error = QStringLiteral("Failed to write '%1'").arg(path);
         return false;
     }
-    return true;
-}
-
-bool writeStagedJson(const QString& path, const QJsonObject& object, QString* error)
-{
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-        if (error)
-            *error = QStringLiteral("Failed to open '%1': %2").arg(path, file.errorString());
-        return false;
-    }
-    const QByteArray bytes = QJsonDocument(object).toJson(QJsonDocument::Indented);
-    if (file.write(bytes) != bytes.size() || !file.flush()) {
-        if (error)
-            *error = QStringLiteral("Failed to write '%1': %2").arg(path, file.errorString());
-        return false;
-    }
-    file.close();
-    if (file.error() != QFileDevice::NoError) {
-        if (error)
-            *error = QStringLiteral("Failed to close '%1': %2").arg(path, file.errorString());
-        return false;
-    }
-    return true;
-}
-
-bool validateWriteAccess(QStringList paths, QString* error,
-                         const std::function<bool()>& cancelCheck = {}, QString* summary = nullptr)
-{
-    paths.removeDuplicates();
-    paths.sort();
-    QStringList blocked;
-    QSet<QString> checkedDirectories;
-    for (const QString& path : paths) {
-        if (exportCanceled(cancelCheck, error)) return false;
-        const QFileInfo entry(path);
-        if (entry.isFile()) {
-            bool accessible = entry.isWritable();
-#ifdef Q_OS_WIN
-            const QString nativePath = QDir::toNativeSeparators(entry.absoluteFilePath());
-            const HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(nativePath.utf16()),
-                GENERIC_READ | DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-            accessible = accessible && handle != INVALID_HANDLE_VALUE;
-            if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
-#else
-            QFile file(entry.absoluteFilePath());
-            accessible = accessible && file.open(QIODevice::ReadOnly);
-            struct stat parentStat{};
-            if (::stat(QFile::encodeName(entry.absolutePath()).constData(), &parentStat) != 0
-                || ((parentStat.st_mode & S_ISVTX) && ::geteuid() != 0
-                    && ::geteuid() != parentStat.st_uid && ::geteuid() != entry.ownerId()))
-                accessible = false;
-#endif
-            if (!accessible)
-                blocked.append(QDir::toNativeSeparators(entry.absoluteFilePath()));
-        }
-        QFileInfo parent(entry.isDir() ? entry.absoluteFilePath() : entry.absolutePath());
-        while (!parent.exists() && parent.absoluteFilePath() != parent.absolutePath())
-            parent.setFile(parent.absolutePath());
-        if (checkedDirectories.contains(parent.absoluteFilePath())) continue;
-        checkedDirectories.insert(parent.absoluteFilePath());
-        bool accessible = parent.isDir() && parent.isWritable();
-#ifdef Q_OS_WIN
-        const QString nativePath = QDir::toNativeSeparators(parent.absoluteFilePath());
-        const HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(nativePath.utf16()),
-            FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
-        accessible = accessible && handle != INVALID_HANDLE_VALUE;
-        if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
-#else
-        accessible = accessible && ::access(QFile::encodeName(parent.absoluteFilePath()).constData(), W_OK | X_OK) == 0;
-#endif
-        if (!accessible)
-            blocked.append(QDir::toNativeSeparators(parent.absoluteFilePath()));
-    }
-    blocked.removeDuplicates();
-    if (blocked.isEmpty()) return true;
-    const QString message = ProjectPackExporter::tr(
-        "Some paths needed for Pack export are read-only, locked, or cannot be replaced.\n"
-        "Check file write protection, access permissions, and other programs using these files. If your version control workflow "
-        "requires checkout or unlocking, do that first, then retry.");
-    if (summary) *summary = message;
-    *error = message + ProjectPackExporter::tr("\n\nAffected paths:\n%1")
-        .arg(blocked.join(QLatin1Char('\n')));
-    return false;
-}
-
-bool commitPublication(const QDir& liveDir, const QString& nextDir,
-                       const QStringList& liveNames, const QStringList& publishedNames,
-                       const QStringList& preservedNames, QString* error,
-                       const std::function<bool()>& cancelCheck = {})
-{
-    const auto refuse = [&](const QString& message) {
-        *error = message;
-        return false;
-    };
-    for (const QString& name : publishedNames) {
-        if (exportCanceled(cancelCheck, error)) return false;
-        if (!safePublicationPath(liveDir, name)
-            || (QFileInfo::exists(liveDir.filePath(name)) && !containsPublicationFile(liveDir, liveNames, name)))
-            return refuse(QStringLiteral("Publication path conflicts with an unowned file: %1").arg(name));
-    }
-    QStringList previousNames;
-    for (const auto& name : liveNames)
-        if (!preservedNames.contains(name)) previousNames.append(name);
-    QStringList nextNames;
-    for (const auto& name : publishedNames)
-        if (!preservedNames.contains(name)) nextNames.append(name);
-    if (previousNames.isEmpty() && nextNames.isEmpty()) return true;
-    QStringList writePaths;
-    for (const auto& name : previousNames + nextNames)
-        writePaths.append(liveDir.filePath(name));
-    if (!validateWriteAccess(writePaths, error, cancelCheck)) return false;
-    QTemporaryDir previous(liveDir.filePath(QString::fromLatin1(kPreviousPrefix) + QStringLiteral("XXXXXX")));
-    const QString previousDir = previous.path();
-    if (!previous.isValid())
-        return refuse(QStringLiteral("Cannot retain previous pack set"));
-    for (const QString& name : previousNames) {
-        if (exportCanceled(cancelCheck, error)) return false;
-        if (!copyRelativeFile(liveDir, QDir(previousDir), name))
-            return refuse(QStringLiteral("Cannot retain previous '%1'").arg(name));
-    }
-    if (exportCanceled(cancelCheck, error)) return false;
-
-    const QString marker = liveDir.filePath(QString::fromLatin1(kPublishingMarker));
-    QJsonObject transaction;
-    transaction.insert(QStringLiteral("version"), 1);
-    transaction.insert(QStringLiteral("previous"), QFileInfo(previousDir).fileName());
-    transaction.insert(QStringLiteral("next"), QFileInfo(nextDir).fileName());
-    transaction.insert(QStringLiteral("previousFiles"), QJsonArray::fromStringList(previousNames));
-    transaction.insert(QStringLiteral("nextFiles"), QJsonArray::fromStringList(nextNames));
-    QString transactionError;
-    if (!writeJson(marker, transaction, &transactionError))
-        return refuse(QStringLiteral("Cannot start live-set publish: %1").arg(transactionError));
-    previous.setAutoRemove(false);
-
-    auto restorePrevious = [&]() -> bool {
-        bool orphansCleared = true;
-        for (const QString& published : nextNames) {
-            if (!containsPublicationFile(liveDir, previousNames, published)) {
-                removeRelativeFile(liveDir, published);
-                if (QFileInfo(liveDir.filePath(published)).isFile())
-                    orphansCleared = false;
-            }
-        }
-        return restoreFiles(previousDir, liveDir, previousNames) && orphansCleared;
-    };
-
-    for (const QString& name : previousNames) {
-        removeRelativeFile(liveDir, name);
-        if (QFile::exists(liveDir.filePath(name))) {
-            restorePrevious();
-            return refuse(QStringLiteral("Cannot retire previous '%1'").arg(name));
-        }
-    }
-    for (const QString& name : nextNames) {
-        if (!copyRelativeFile(QDir(nextDir), liveDir, name)) {
-            restorePrevious();
-            return refuse(QStringLiteral("Cannot publish '%1'").arg(name));
-        }
-    }
-
-    if (!QFile::remove(marker)) {
-        restorePrevious();
-        return refuse(QStringLiteral("Cannot commit live-set publish"));
-    }
-    previous.setAutoRemove(true);
     return true;
 }
 
@@ -813,15 +448,16 @@ struct PackMeta
     std::vector<Bridge::PackBuildSession::CanonicalPackEntry> resourceEntries;
     QJsonObject previousRow;
     std::vector<Bridge::PackBuildSession::CanonicalPackEntry> previousEntries;
-    QString previousEntriesFingerprint;
     QString resourceFingerprint;
     QString previousResourceFingerprint;
-    QString resourceCacheKey;
     bool previousValid = false;
     harkenstudiobuild::WorldCapacitySummaryV1 previousCapacity;
     bool retained = false;
     bool metadataUpdated = false;
     bool skipped = false;
+    bool failed = false;
+    bool current = false;
+    bool finished = false;
     qint64 elapsedNanoseconds = 0;
     quint32 formatVersion = 0;
     qint64 fileSize = 0;
@@ -1258,8 +894,7 @@ QStringList companionWaveformFiles(const QJsonObject& companion,
     return files;
 }
 
-std::set<harkenstudio::ObjectId> packMetadataObjectIds(
-    const harkenstudiobuild::PackCanonicalImage& image,
+std::set<harkenstudio::ObjectId> worldMetadataObjectIds(
     const harkenstudiobuild::ContainerWorldInstallViewV1& world)
 {
     std::set<harkenstudio::ObjectId> ids;
@@ -1303,6 +938,16 @@ std::set<harkenstudio::ObjectId> packMetadataObjectIds(
         for (std::uint32_t j = 0; j < container.continuousAxisCount; ++j)
             ids.insert(container.continuousAxes[j].variableId);
     }
+    ids.erase(harkenstudio::ObjectId{});
+    ids.erase(harkenstudio::kMasterBusObjectId);
+    return ids;
+}
+
+std::set<harkenstudio::ObjectId> packMetadataObjectIds(
+    const harkenstudiobuild::PackCanonicalImage& image,
+    const harkenstudiobuild::ContainerWorldInstallViewV1& world)
+{
+    auto ids = worldMetadataObjectIds(world);
     for (const auto& media : image.media)
         ids.insert(media.soundId);
     for (const auto& attenuation : image.attenuations)
@@ -1321,23 +966,17 @@ std::set<harkenstudio::ObjectId> packMetadataObjectIds(
 }
 
 bool fillPackMetadata(const ProjectData& project, const PackMeta& pack,
-                      const harkenstudiobuild::PackCanonicalImage& image,
+                      const std::set<harkenstudio::ObjectId>& ids,
                       const std::unordered_map<harkenstudio::ObjectId, const ProjectItem*>& items,
                       QJsonObject* companion, QString* error)
 {
-    harkenstudiobuild::CurrentWorldBodyImage body;
-    if (!body.Decode(image.partitionBody.data(), image.partitionBody.size(),
-            harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage)) {
-        *error = QStringLiteral("Cannot read Pack metadata from '%1'").arg(pack.fileName);
-        return false;
-    }
     const auto* platform = ProjectPlatformSemantics::find(project.platforms, QUuid(pack.platform));
     if (!platform) {
         *error = QStringLiteral("Pack metadata platform is unavailable: %1").arg(pack.platform);
         return false;
     }
     QJsonArray objects;
-    for (const auto id : packMetadataObjectIds(image, *body.ProductionView())) {
+    for (const auto id : ids) {
         const auto found = items.find(id);
         if (found == items.end() || !ItemTypeCatalog::factsOrNull(found->second->type)) {
             *error = QStringLiteral("Pack '%1' metadata object is unavailable: %2")
@@ -1352,7 +991,7 @@ bool fillPackMetadata(const ProjectData& project, const PackMeta& pack,
             {QStringLiteral("path"), item.objectPath()}});
     }
     companion->insert(QStringLiteral("metadata"), QJsonObject{
-        {QStringLiteral("packStableId"), QString::number(image.packStableId)},
+        {QStringLiteral("packStableId"), QString::number(pack.packStableId)},
         {QStringLiteral("platform"), platform->name},
         {QStringLiteral("language"), pack.language},
         {QStringLiteral("objects"), objects}});
@@ -1361,7 +1000,6 @@ bool fillPackMetadata(const ProjectData& project, const PackMeta& pack,
 
 bool fillWaveformCompanion(const CanonicalPackSetExportRequest& request,
                            const PackMeta& pack, const QString& outputRoot,
-                           const QString& stagingRoot,
                            QHash<uint32_t, QString>* exportedSources,
                            QJsonObject* companion, QString* error)
 {
@@ -1404,31 +1042,29 @@ bool fillWaveformCompanion(const CanonicalPackSetExportRequest& request,
             QString fileName = exportedSources->value(media.authoringSourceId);
             if (fileName.isEmpty()) {
                 const auto sourcePath = conversion->inputPath();
-                if (!conversion->sourceMatches()) {
-                    *error = QStringLiteral("Waveform source changed before export: %1").arg(sourcePath);
-                    return false;
-                }
                 QByteArray bytes;
+                QByteArray waveformState;
+                const auto& inputs = snapshot.media.sourceInputs;
                 if (!WaveformCache::readForBuild(sourcePath, conversion->asset.absolutePath,
-                                                 conversion->asset.contentHash, bytes)) {
+                        conversion->asset.contentHash, bytes,
+                        inputs->waveformState(media.authoringSourceId), &waveformState)) {
                     *error = QStringLiteral("Cannot generate waveform cache for '%1'").arg(sourcePath);
                     return false;
                 }
-                if (!conversion->sourceMatches()) {
-                    *error = QStringLiteral("Source changed while exporting waveform '%1'").arg(sourcePath);
-                    return false;
-                }
+                inputs->setWaveformState(media.authoringSourceId, waveformState);
                 fileName = QString::fromLatin1(QCryptographicHash::hash(bytes,
                     QCryptographicHash::Sha256).toHex()) + QStringLiteral(".vkd");
                 if (exportCanceled(request.options.cancelCheck, error)) return false;
-                if (!QDir().mkpath(stagingRoot)) {
-                    *error = QStringLiteral("Cannot stage waveform '%1'").arg(sourcePath);
-                    return false;
-                }
-                QSaveFile file(QDir(stagingRoot).filePath(fileName));
-                if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
-                    *error = QStringLiteral("Cannot stage waveform '%1'").arg(sourcePath);
-                    return false;
+                const QString path = waveformDir.filePath(fileName);
+                if (!request.options.packBuildState || !request.options.packBuildState->isWaveformCurrent(
+                        pack.fileName, companionDir.relativeFilePath(path))) {
+                    QSaveFile file(path);
+                    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
+                        *error = QStringLiteral("Cannot write waveform '%1'").arg(path);
+                        return false;
+                    }
+                    if (request.options.packBuildState)
+                        request.options.packBuildState->recordWaveformOutput(path);
                 }
                 exportedSources->insert(media.authoringSourceId, fileName);
             }
@@ -1445,44 +1081,6 @@ bool fillWaveformCompanion(const CanonicalPackSetExportRequest& request,
     }
     companion->insert(QStringLiteral("waveforms"), waveforms);
     return true;
-}
-
-bool publishWaveformCompanion(const QJsonObject& companion, const QString& companionPath,
-                              const QString& stagingRoot, const QString& outputRoot,
-                              QStringList* newFiles, QString* error,
-                              const std::function<bool()>& cancelCheck)
-{
-    const QDir output(outputRoot);
-    const QDir companionDir(QFileInfo(companionPath).absolutePath());
-    for (const auto& value : companion.value(QStringLiteral("waveforms")).toArray()) {
-        if (exportCanceled(cancelCheck, error)) return false;
-        const QString path = QDir::cleanPath(companionDir.absoluteFilePath(
-            value.toObject().value(QStringLiteral("file")).toString()));
-        const QString fileName = QFileInfo(path).fileName();
-        if (!safePublicationPath(output, fileName) || !QDir().mkpath(outputRoot)) {
-            *error = QStringLiteral("Cannot use waveform output directory '%1'").arg(outputRoot);
-            return false;
-        }
-        const QString staged = QDir(stagingRoot).filePath(fileName);
-        QByteArray expected;
-        if (!readAll(staged, &expected, error)) return false;
-        if (!QFileInfo::exists(path)) {
-            QSaveFile file(path);
-            if (!file.open(QIODevice::WriteOnly) || file.write(expected) != expected.size() || !file.commit()) {
-                *error = QStringLiteral("Cannot publish waveform '%1'").arg(path);
-                return false;
-            }
-            newFiles->append(path);
-            continue;
-        }
-        QByteArray existing;
-        if (!readAll(path, &existing, error)) return false;
-        if (existing != expected) {
-            *error = QStringLiteral("Waveform output content conflicts with '%1'").arg(path);
-            return false;
-        }
-    }
-    return !exportCanceled(cancelCheck, error);
 }
 
 std::vector<std::uint8_t> encodeVariableRequirements(
@@ -2103,25 +1701,17 @@ std::uint32_t ownedDefinitionCount(
     return count;
 }
 
-bool readPreviousPack(const QDir& output, PackMeta* pack, QByteArray* bytes,
-                      harkenstudiobuild::CurrentWorldBodyImage* body,
-                      bool publicationMetadataOnly = false)
+bool decodePreviousPack(const PackMeta& pack, harkenstudiobuild::CurrentWorldBodyImage* body)
 {
-    const auto path = pack->previousRow.value(QStringLiteral("path")).toString();
-    QString error;
-    harkenstudiobuild::PackCanonicalImage image;
-    return !path.isEmpty() && safePublicationPath(output, path)
-        && readAll(output.filePath(path), bytes, &error)
-        && (!pack->previousRow.contains(QStringLiteral("contentHash"))
-            || harkenstudiobuild::Fnv1a64(bytes->constData(), bytes->size())
-                == pack->previousRow.value(QStringLiteral("contentHash")).toString().toULongLong())
-        && harkenstudiobuild::ParsePackCanonicalImage(
-            reinterpret_cast<const std::uint8_t*>(bytes->constData()), bytes->size(), &image) == harkenstudiobuild::kPackOk
-        && image.packStableId == pack->packStableId && image.packKind == pack->packKind
-        && collectEntries(*bytes, output.filePath(path), &pack->previousEntries, &error,
-                          false, publicationMetadataOnly)
-        && body->Decode(image.partitionBody.data(), image.partitionBody.size(),
-            harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage);
+    const auto found = std::find_if(pack.previousEntries.begin(), pack.previousEntries.end(), [](const auto& entry) {
+        return entry.kind == harkenstudiobuild::kPackEntryKindCanonicalDefinitionPartition;
+    });
+    if (found == pack.previousEntries.end()) return false;
+    harkenstudiobuild::PackCanonicalPartitionHeader header;
+    return harkenstudiobuild::ParsePackCanonicalPartitionHeaderV2(
+            found->payload.data(), found->payload.size(), &header)
+        && body->Decode(found->payload.data() + header.headerBytes,
+            static_cast<std::size_t>(header.bodyBytes), header.bodyVintage);
 }
 
 struct PublicationAuthoredOrders
@@ -2132,20 +1722,14 @@ struct PublicationAuthoredOrders
 };
 
 std::vector<PublicationAuthoredOrders> readPublicationAuthoredOrders(
-    const QDir& output, const QJsonArray& publication,
+    const QMap<QString, PackMeta>& publication,
     std::set<std::uint32_t>* reservedProperties,
     std::set<std::uint32_t>* reservedContainers)
 {
     std::vector<PublicationAuthoredOrders> result;
-    for (const auto& value : publication) {
-        PackMeta pack;
-        pack.previousRow = value.toObject();
-        pack.language = pack.previousRow.value(QStringLiteral("language")).toString();
-        pack.packStableId = pack.previousRow.value(QStringLiteral("packStableId")).toString().toULongLong();
-        pack.packKind = pack.previousRow.value(QStringLiteral("packKind")).toInt();
-        QByteArray bytes;
+    for (const auto& pack : publication) {
         harkenstudiobuild::CurrentWorldBodyImage body;
-        if (!readPreviousPack(output, &pack, &bytes, &body, true)) continue;
+        if (!decodePreviousPack(pack, &body)) continue;
         PublicationAuthoredOrders orders;
         orders.language = pack.language;
         const auto& world = *body.ProductionView();
@@ -2233,7 +1817,7 @@ bool mergeCapacity(harkenstudiobuild::WorldCapacitySummaryV1* target,
 }
 
 bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
-                                  const QDir& liveDir, const QDir& resourceCacheDir,
+                                  PackBuildState* buildState,
                                   QString* error)
 {
     std::vector<std::unique_ptr<harkenstudiobuild::CurrentWorldBodyImage>> bodies;
@@ -2243,16 +1827,13 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
     for (auto& pack : *packs) {
         auto body = std::make_unique<harkenstudiobuild::CurrentWorldBodyImage>();
         if (pack.retained) {
-            QByteArray bytes;
-            if (!readPreviousPack(liveDir, &pack, &bytes, body.get(), true)) {
+            if (!decodePreviousPack(pack, body.get())) {
                 *error = QStringLiteral("Cannot read retained Pack '%1'").arg(pack.fileName);
                 return false;
             }
             pack.previousValid = true;
-            QFile cache(resourceCacheDir.filePath(QString::fromLatin1(
-                QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex())));
-            if (cache.open(QIODevice::ReadOnly))
-                pack.resourceFingerprint = QString::fromLatin1(cache.readAll());
+            if (buildState)
+                pack.resourceFingerprint = buildState->resourceFingerprint(pack.fileName);
             for (const auto& entry : pack.previousEntries) {
                 if (entry.kind == harkenstudiobuild::kPackEntryKindCanonicalDefinitionPartition)
                     pack.partitionPayload = entry.payload;
@@ -2377,193 +1958,82 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
     return true;
 }
 
-struct PreviousPackInspection
+bool readExistingPack(const QDir& output, const QString& path,
+                      const QString& projectId, const QString& platformId,
+                      PackMeta* pack, QString* error)
 {
-    std::uint64_t packStableId = 0;
-    std::uint32_t packKind = 0;
-    bool decoded = false;
-    bool valid = false;
-    harkenstudio::ObjectId projectId{};
-    harkenstudiobuild::WorldCapacitySummaryV1 capacity;
-    std::vector<harkenstudiobuild::PackDependencyEdge> dependencies;
-    std::set<harkenstudio::ObjectId> layerIds;
-    QString entriesFingerprint;
-    QString resourceCacheKey;
-};
-
-struct PublicationInspection
-{
-    QStringList files;
-    QStringList binaries;
-    QStringList managed;
-    QJsonArray publication;
-    QMap<QString, PreviousPackInspection> previous;
-    QSet<QString> buildPaths;
-};
+    QByteArray bytes;
+    harkenstudiobuild::PackCanonicalImage image;
+    harkenstudiobuild::CurrentWorldBodyImage body;
+    if (!safePublicationPath(output, path)
+        || !readAll(output.filePath(path), &bytes, error)) return false;
+    if (harkenstudiobuild::ParsePackCanonicalImage(
+            reinterpret_cast<const std::uint8_t*>(bytes.constData()), bytes.size(), &image)
+                != harkenstudiobuild::kPackOk
+        || !body.Decode(image.partitionBody.data(), image.partitionBody.size(),
+            harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage)) {
+        *error = QStringLiteral("Cannot read existing Pack '%1'").arg(path);
+        return false;
+    }
+    if (body.ProductionView()->identity.projectId != runtimeObjectId(QUuid(projectId))) {
+        *error = QStringLiteral("Pack '%1' belongs to another project").arg(path);
+        return false;
+    }
+    const QFileInfo file(path);
+    const QString companion = QDir::cleanPath(QDir(file.path()).filePath(file.completeBaseName() + QStringLiteral(".json")));
+    QByteArray companionBytes;
+    if (!readAll(output.filePath(companion), &companionBytes, error)) return false;
+    QJsonParseError parseError;
+    const auto document = QJsonDocument::fromJson(companionBytes, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        *error = QStringLiteral("Cannot read existing Pack companion '%1'").arg(companion);
+        return false;
+    }
+    if (!collectEntries(bytes, output.filePath(path), &pack->previousEntries, error, false, false)) return false;
+    pack->fileName = path;
+    pack->formatVersion = harkenstudiobuild::kPackFormatVersion2;
+    pack->fileSize = bytes.size();
+    pack->packStableId = image.packStableId;
+    pack->packKind = image.packKind;
+    pack->contentRevision = image.requirement.packContentRevision;
+    pack->language = file.path() == QStringLiteral(".") ? QString() : file.path();
+    pack->platform = platformId;
+    pack->companion = document.object();
+    pack->name = image.packKind == harkenstudiobuild::kPackKindInit
+        ? QStringLiteral("Init") : pack->companion.value(QStringLiteral("name")).toString();
+    pack->unitKey = image.packKind == harkenstudiobuild::kPackKindInit
+        ? QStringLiteral("Init") : QStringLiteral("a:") + pack->companion.value(QStringLiteral("guid")).toString();
+    if (image.packKind != harkenstudiobuild::kPackKindInit)
+        pack->actionStableIds.push_back(runtimeObjectId(QUuid(pack->companion.value(QStringLiteral("guid")).toString())));
+    QJsonArray dependencies;
+    for (const auto& edge : image.dependencyEdges) {
+        pack->dependencies.push_back(edge.prerequisitePackStableId);
+        dependencies.append(QString::number(edge.prerequisitePackStableId));
+    }
+    const auto& world = *body.ProductionView();
+    for (std::uint32_t i = 0; i < world.playablePropertyCount; ++i) {
+        const auto& property = world.playableProperties[i];
+        if (property.contentPropertyKind == harkenstudiobuild::playableproperties::ContentPropertyKindV1::Sound)
+            pack->soundContentRevisions.emplace(property.stableId, property.contentRevision);
+    }
+    pack->previousCapacity = body.ProductionView()->capacity;
+    pack->previousValid = true;
+    pack->previousRow = QJsonObject{
+        {QStringLiteral("path"), path}, {QStringLiteral("name"), pack->name},
+        {QStringLiteral("packStableId"), QString::number(pack->packStableId)},
+        {QStringLiteral("packKind"), static_cast<int>(pack->packKind)},
+        {QStringLiteral("contentRevision"), static_cast<qint64>(pack->contentRevision)},
+        {QStringLiteral("dependencies"), dependencies},
+        {QStringLiteral("language"), pack->language}, {QStringLiteral("companion"), pack->companion}};
+    return true;
+}
 
 bool inspectPackPublication(const QString& directory, const QString& projectId,
                             const QString& platformId, QJsonArray* packs,
                             QStringList* managedFiles, QString* error, bool requireComplete,
                             const QStringList& expectedPackPaths, bool allowPlatformReplacement,
-                            const std::function<bool()>& cancelCheck,
-                            PublicationInspection* inspection, bool captureBuildData,
-                            bool forceReexport);
+                            const std::function<bool()>& cancelCheck);
 
-bool collectPlatformWritePaths(const ProjectData& project, const QDir& output,
-                               const PackBuildPlan& plan,
-                               const ProjectPackExporter::ExportOptions& options,
-                               QStringList* paths, QString* error,
-                               PublicationInspection* captured = nullptr)
-{
-    paths->append(output.absolutePath());
-    PublicationInspection local;
-    auto& inspection = captured ? *captured : local;
-    inspection.buildPaths.insert(QStringLiteral("Init") + Bridge::packArtifactExtension());
-    for (const auto& unit : plan.units)
-        inspection.buildPaths.insert(PackBuildPlanning::packFileName(
-            unit.variant.language, unit.name, Bridge::packArtifactExtension()));
-    if (!inspectPackPublication(output.path(), project.projectId, options.platform,
-            &inspection.publication, &inspection.managed, error, false, {},
-            !options.updateSelectedOnly, options.cancelCheck, &inspection,
-            captured != nullptr, options.forceReexport)) return false;
-    const auto& files = inspection.files;
-    const auto& binaries = inspection.binaries;
-    const auto& managed = inspection.managed;
-    QMap<QString, QJsonObject> previous;
-    QStringList previousCompanions;
-    for (const auto& value : inspection.publication) {
-        const auto row = value.toObject();
-        const QString path = row.value(QStringLiteral("path")).toString();
-        previous.insert(path, row);
-        const QFileInfo file(path);
-        previousCompanions.append(QDir::cleanPath(QDir(file.path()).filePath(
-            file.completeBaseName() + QStringLiteral(".json"))));
-    }
-    QStringList plannedFiles;
-    const auto appendPack = [&](const QString& relative, std::uint64_t id, std::uint32_t kind) {
-        if (exportCanceled(options.cancelCheck, error)) return false;
-        if (!safePublicationPath(output, relative)) {
-            *error = QStringLiteral("Invalid Pack output path: %1").arg(output.filePath(relative));
-            return false;
-        }
-        const QFileInfo file(relative);
-        const auto companion = QDir::cleanPath(QDir(file.path()).filePath(
-            file.completeBaseName() + QStringLiteral(".json")));
-        plannedFiles.append(relative);
-        plannedFiles.append(companion);
-        paths->append(QFileInfo(output.filePath(relative)).absolutePath());
-        const auto inspected = inspection.previous.constFind(relative);
-        const bool valid = inspected != inspection.previous.cend()
-            && inspected->valid && inspected->packStableId == id
-            && inspected->packKind == kind;
-        const bool retained = options.updateSelectedOnly && kind == harkenstudiobuild::kPackKindInit
-            && valid && previous.contains(relative);
-        if (!retained && (options.forceReexport || !valid))
-            paths->append(output.filePath(relative));
-        if (!retained && QFileInfo(output.filePath(companion)).isFile()) {
-            QByteArray companionBytes;
-            if (!readAll(output.filePath(companion), &companionBytes, error)) return false;
-            const auto document = QJsonDocument::fromJson(companionBytes);
-            const auto object = document.object();
-            if (!document.isObject()
-                || !ProjectSchemaValidator::validatePackManifest(HARKEN_PACK_SCHEMA_VERSION, object, companion).isEmpty()
-                || object.contains(QStringLiteral("metadata")) != project.buildExportPackMetadata
-                || (!project.buildExportWaveforms && object.contains(QStringLiteral("waveforms"))))
-                paths->append(output.filePath(companion));
-        }
-        return true;
-    };
-    if (!appendPack(QStringLiteral("Init") + Bridge::packArtifactExtension(),
-            fnvName(options.platform + QStringLiteral("/Init")), harkenstudiobuild::kPackKindInit)) return false;
-    for (const auto& unit : plan.units) {
-        const bool hasContent = std::any_of(unit.actionStableIds.begin(), unit.actionStableIds.end(),
-            [&](auto id) {
-                const ProjectItem* action = findAction(project, id);
-                return action && action->comp<VAction>() && !action->comp<VAction>()->steps.empty();
-            });
-        if (hasContent && !appendPack(PackBuildPlanning::packFileName(
-                unit.variant.language, unit.name, Bridge::packArtifactExtension()),
-                fnvName(PackBuildPlanning::relativePackPath(unit.variant.platform,
-                    unit.variant.language, unit.artifactKey)), harkenstudiobuild::kPackKindCanonicalContent)) return false;
-    }
-    for (const auto& name : files) {
-        if (exportCanceled(options.cancelCheck, error)) return false;
-        if (containsPublicationFile(output, plannedFiles, name) || isWaveformOutputFile(QFileInfo(name)))
-            continue;
-        if ((options.selfCleaning && !options.updateSelectedOnly)
-            || (managed.contains(name) && !binaries.contains(name) && !previousCompanions.contains(name)))
-            paths->append(output.filePath(name));
-    }
-    return true;
-}
-
-} // namespace
-
-bool ProjectPackExporter::ValidatePackBuildWriteAccess(
-    const ProjectData& project, const QString& baseDir, const QStringList& platforms,
-    const ExportOptions& options, QString* error, QString* summary,
-    const QSet<QString>& reusablePlatforms)
-{
-    if (summary) summary->clear();
-    const auto reject = [&](const QString& message) {
-        if (summary) *summary = message;
-        return false;
-    };
-    if (PathUtils::isProtectedPackOutputPath(baseDir, project.projectPath)) {
-        if (error) *error = PathUtils::packBuildOutputLocationError();
-        return reject(PathUtils::packBuildOutputLocationError());
-    }
-    const QDir root(baseDir);
-    QStringList paths{root.absolutePath()};
-    QStringList platformNames;
-    for (const auto& id : platforms) {
-        const auto* platform = ProjectPlatformSemantics::find(project.platforms, QUuid(id));
-        if (!platform) {
-            *error = QStringLiteral("Unknown project platform ID: %1").arg(id);
-            return reject(tr("A selected export platform is no longer in the project. Check the platform selection, then retry."));
-        }
-        platformNames.append(platform->name);
-        if (reusablePlatforms.contains(id)) continue;
-        auto platformOptions = options;
-        platformOptions.platform = id;
-        const QDir output(platformOutputDir(baseDir, *platform));
-        auto platformLock = options.platformLocks.value(id);
-        if (output.exists()) {
-            if (!platformLock) {
-                platformLock = std::make_shared<QLockFile>(output.filePath(QStringLiteral(".harken-pack-platform.lock")));
-                platformLock->setStaleLockTime(0);
-                if (!platformLock->tryLock()) {
-                    *error = QStringLiteral("Platform output is being built by another request: %1").arg(output.path());
-                    return reject(tr("Another export is using a selected platform's output directory. Wait for it to finish, then retry."));
-                }
-            }
-            if (!recoverInterruptedPublish(output, error))
-                return reject(tr("Pack export could not recover an interrupted publication. Check the previous output and recovery files before retrying."));
-        }
-        if (!collectPlatformWritePaths(project, output,
-                *createBuildPlan(project, platformOptions), platformOptions, &paths, error))
-            return reject(tr("Pack export could not inspect the existing packs. Check the output files and publication metadata before retrying."));
-    }
-    if (options.selfCleaning && !options.updateSelectedOnly) {
-        QStringList files;
-        if (!scanCleanupFiles(root, platformNames, &files, nullptr, error, options.cancelCheck))
-            return reject(tr("Pack export could not inspect the output files for cleanup. Check the output directory and file access before retrying."));
-        for (const auto& name : files) {
-            if (std::any_of(platformNames.begin(), platformNames.end(), [&](const auto& platform) {
-                    return name.startsWith(platform + QLatin1Char('/'));
-                }) || isWaveformOutputFile(QFileInfo(name))) continue;
-            paths.append(root.filePath(name));
-        }
-    } else {
-        for (const auto& entry : root.entryInfoList(QDir::Files | QDir::Hidden | QDir::System)) {
-            if (entry.fileName().compare(QStringLiteral("Project.json"), Qt::CaseInsensitive) == 0
-                || entry.fileName().compare(QStringLiteral("ProjectData.json"), Qt::CaseInsensitive) == 0)
-                paths.append(entry.absoluteFilePath());
-        }
-    }
-    if (project.buildExportProjectData) paths.append(root.filePath(QStringLiteral("Project.json")));
-    return !exportCanceled(options.cancelCheck, error)
-        && validateWriteAccess(paths, error, options.cancelCheck, summary);
 }
 
 bool ReadPackPublication(const QString& directory, const QString& projectId,
@@ -2573,8 +2043,7 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
                          const std::function<bool()>& cancelCheck)
 {
     return inspectPackPublication(directory, projectId, platformId, packs, managedFiles,
-        error, requireComplete, expectedPackPaths, allowPlatformReplacement, cancelCheck,
-        nullptr, false, false);
+        error, requireComplete, expectedPackPaths, allowPlatformReplacement, cancelCheck);
 }
 
 namespace {
@@ -2583,9 +2052,7 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
                             const QString& platformId, QJsonArray* packs,
                             QStringList* managedFiles, QString* error, bool requireComplete,
                             const QStringList& expectedPackPaths, bool allowPlatformReplacement,
-                            const std::function<bool()>& cancelCheck,
-                            PublicationInspection* inspection, bool captureBuildData,
-                            bool forceReexport)
+                            const std::function<bool()>& cancelCheck)
 {
     *packs = {};
     managedFiles->clear();
@@ -2596,12 +2063,7 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
     };
     QStringList files, binaries;
     QString detail;
-    if (!scanOutputFiles(dir, &files, &binaries, &detail, false, cancelCheck)) return reject(detail);
-    if (inspection) {
-        inspection->files = files;
-        inspection->binaries = binaries;
-        inspection->previous.clear();
-    }
+    if (!scanOutputFiles(dir, &files, &binaries, &detail, cancelCheck)) return reject(detail);
     for (const auto& path : expectedPackPaths)
         if (!safePublicationPath(dir, path))
             return reject(QStringLiteral("Unsafe requested Pack path '%1'").arg(path));
@@ -2634,38 +2096,9 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
                 bytes.size(), &image) == harkenstudiobuild::kPackOk;
         const bool catalog = parsed && ((image.packKind == harkenstudiobuild::kPackKindInit && image.hasCatalog)
             || image.hasGameplayCatalog || image.hasVariableNameCatalog);
-        const bool decoded = parsed && (inspection || !catalog)
+        const bool decoded = parsed && !catalog
             && body.Decode(image.partitionBody.data(), image.partitionBody.size(),
                 harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage);
-        if (inspection && parsed) {
-            PreviousPackInspection previous;
-            previous.packStableId = image.packStableId;
-            previous.packKind = image.packKind;
-            previous.dependencies = image.dependencyEdges;
-            previous.decoded = decoded;
-            if (decoded) {
-                const auto& world = *body.ProductionView();
-                previous.projectId = world.identity.projectId;
-                previous.capacity = world.capacity;
-                std::vector<Bridge::PackBuildSession::CanonicalPackEntry> entries;
-                QString entryError;
-                previous.valid = inspection->buildPaths.contains(path)
-                    && collectEntries(bytes, dir.filePath(path), &entries, &entryError, false, false);
-                if (previous.valid && captureBuildData) {
-                    if (!forceReexport) {
-                        previous.entriesFingerprint = entriesFingerprint(entries, image.packKind);
-                        previous.resourceCacheKey = QString::fromLatin1(
-                            QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex());
-                    }
-                    if (image.packKind == harkenstudiobuild::kPackKindInit)
-                        for (std::uint32_t i = 0; i < world.playablePropertyCount; ++i)
-                            if (world.playableProperties[i].contentPropertyKind
-                                == harkenstudiobuild::playableproperties::ContentPropertyKindV1::Layer)
-                                previous.layerIds.insert(world.playableProperties[i].stableId);
-                }
-            }
-            inspection->previous.insert(path, std::move(previous));
-        }
         if (!decoded || catalog) {
             if (requireComplete && selected && hasCompanion)
                 return reject(QStringLiteral("Invalid published Pack '%1'").arg(path));
@@ -2914,18 +2347,6 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
             const QFileInfo info(path);
             const auto companion = QDir::cleanPath(QDir(info.path()).filePath(info.completeBaseName() + QStringLiteral(".json")));
             if (files.contains(companion)) continue;
-            if (inspection) {
-                const auto previous = inspection->previous.constFind(path);
-                if (previous != inspection->previous.cend() && previous->decoded
-                    && previous->projectId == expectedProject
-                    && ((previous->packKind == harkenstudiobuild::kPackKindCanonicalContent
-                            && harkenstudiobuild::ValidateCanonicalInitDependency(previous->dependencies, initId)
-                                == harkenstudiobuild::kPackOk)
-                        || (previous->packKind == harkenstudiobuild::kPackKindInit
-                            && previous->packStableId == initId)))
-                    managedFiles->append(path);
-                continue;
-            }
             QByteArray bytes;
             harkenstudiobuild::PackCanonicalImage image;
             harkenstudiobuild::CurrentWorldBodyImage body;
@@ -2981,13 +2402,16 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             && found->second->type == ProjectItem::Type::Action
             && found->second->comp<VAction>() ? found->second : nullptr;
     };
-    std::optional<BindingRuntimeLowering> ownedLowering;
-    const auto& lowering = request.options.buildContext
-        ? request.options.buildContext->bindingLowering()
-        : ownedLowering.emplace(BindingRuntimeLoweringSemantics::lowerProject(project));
-    if (lowering.failed) {
-        result.error = lowering.error;
-        return result;
+    BindingRuntimeLowering lowering;
+    std::map<harkenstudio::ObjectId, RuntimeCapabilityEntry> bindingCapabilities;
+    for (const auto* bus : sourceIndex->buses) {
+        const auto capability = RuntimeCapabilityMatrix::lowerBindings(
+            *bus, project, RuntimeCapabilityOperation::PackBuild, &lowering);
+        if (capability.state != RuntimeCapabilityState::Ready) {
+            result.error = capability.diagnostic;
+            return result;
+        }
+        bindingCapabilities.emplace(bus->runtimeId(), capability);
     }
     std::vector<Bridge::ProjectInputDiagnostic> busDiagnostics;
     const auto busProjection = [&] {
@@ -3034,204 +2458,9 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             return result;
         }
     }
-    if (!recoverInterruptedPublish(liveDir, &result.error))
-        return result;
-    QStringList writePaths;
-    PublicationInspection previousInspection;
-    if (!collectPlatformWritePaths(project, liveDir, *request.plan,
-            request.options, &writePaths, &result.error, &previousInspection)
-        || !validateWriteAccess(writePaths, &result.error, request.options.cancelCheck)) {
-        result.canceled = request.options.cancelCheck && request.options.cancelCheck();
-        return result;
-    }
-    QStringList liveNames = previousInspection.files;
-    const QStringList& allPackNames = previousInspection.binaries;
-    const QDir resourceCacheDir(QDir(PathUtils::getDotCacheDir(QFileInfo(project.projectPath).absolutePath()))
-        .filePath(QStringLiteral("pack-inputs")));
-    QMap<QString, QJsonObject> previousPacks;
-    QHash<qulonglong, QJsonObject> publishedPacks;
-    const QJsonArray& previousPublication = previousInspection.publication;
-    const QStringList& previousManaged = previousInspection.managed;
-    for (const auto& value : previousPublication) {
-        const auto row = value.toObject();
-        previousPacks.insert(row.value(QStringLiteral("path")).toString(), row);
-        publishedPacks.insert(row.value(QStringLiteral("packStableId")).toString().toULongLong(), row);
-    }
-    QStringList previousPackNames;
-    QStringList previousCompanionNames;
-    for (const auto& name : previousManaged)
-        if (allPackNames.contains(name)) previousPackNames.append(name);
-    for (const auto& value : previousPublication) {
-        const QFileInfo file(value.toObject().value(QStringLiteral("path")).toString());
-        previousCompanionNames.append(QDir::cleanPath(QDir(file.path()).filePath(
-            file.completeBaseName() + QStringLiteral(".json"))));
-    }
-
-    const QString stagingDir = liveDir.filePath(
-        QString::fromLatin1(kStagingPrefix) +
-        QUuid::createUuid().toString(QUuid::WithoutBraces));
-    if (!QDir().mkpath(stagingDir)) {
-        result.error = QStringLiteral("Cannot create staging directory");
-        return result;
-    }
-    QString nextDir;
-    QStringList newWaveformFiles;
-    std::unique_ptr<QLockFile> waveformLock;
-    std::vector<std::unique_ptr<QLockFile>> waveformCleanupLocks;
-    bool keepPreviousOnFail = false;
-    const std::size_t firstRecord = outRecords ? outRecords->size() : 0;
-
-    auto fail = [&](QString error) {
-        QDir(stagingDir).removeRecursively();
-        if (!nextDir.isEmpty() && !keepPreviousOnFail)
-            QDir(nextDir).removeRecursively();
-        removeMatchingDirs(liveDir, QString::fromLatin1(kStagingPrefix));
-
-        if (!keepPreviousOnFail)
-            QFile::remove(liveDir.filePath(QString::fromLatin1(kPublishingMarker)));
-        if (!keepPreviousOnFail)
-            for (const auto& path : newWaveformFiles) QFile::remove(path);
-        result.success = false;
-        result.canceled = result.canceled || error == QStringLiteral("Export canceled")
-            || (request.options.cancelCheck && request.options.cancelCheck());
-        result.error = std::move(error);
-        if (outRecords) {
-            for (std::size_t i = firstRecord; i < outRecords->size(); ++i) {
-                auto& record = (*outRecords)[i];
-                record.success = false;
-                record.error = result.error;
-            }
-        }
-        return result;
-    };
-
-    ProjectPackExporter::ExportOptions stagingOpts = request.options;
-    stagingOpts.deferBindings = true;
-    const std::uint64_t initId = fnvName(request.options.platform + QStringLiteral("/Init"));
-
     std::vector<PackMeta> packs;
-    {
-        PackMeta init;
-        init.name = QStringLiteral("Init");
-        init.unitKey = QStringLiteral("Init");
-        init.fileName = QStringLiteral("Init") + Bridge::packArtifactExtension();
-        init.platform = request.options.platform;
-        init.packStableId = initId;
-        init.packKind = harkenstudiobuild::kPackKindInit;
-        packs.push_back(std::move(init));
-    }
-    for (const PackBuildUnit& planned : request.plan->units) {
-        PackMeta content;
-        content.name = planned.name;
-        content.unitKey = planned.grouped ? QStringLiteral("g:") + planned.artifactKey
-            : QStringLiteral("a:") + objectIdString(planned.actionStableIds.front());
-        content.fileName = PackBuildPlanning::packFileName(
-            planned.variant.language, planned.name, Bridge::packArtifactExtension());
-        content.language = planned.variant.language;
-        content.platform = planned.variant.platform;
-        content.grouped = planned.grouped;
-        for (harkenstudio::ObjectId actionId : planned.actionStableIds) {
-            if (request.includedActionIds.count(actionId) == 0)
-                continue;
-            const ProjectItem* action = actionFor(actionId);
-            if (action && action->comp<VAction>() && !action->comp<VAction>()->steps.empty())
-                content.actionStableIds.push_back(actionId);
-        }
-        if (content.actionStableIds.empty())
-            continue;
-        content.packStableId = fnvName(PackBuildPlanning::relativePackPath(
-            planned.variant.platform, planned.variant.language, planned.artifactKey));
-        content.packKind = harkenstudiobuild::kPackKindCanonicalContent;
-        content.dependencies = {initId};
-        packs.push_back(std::move(content));
-    }
-    for (PackMeta& content : packs) {
-        for (const PackBuildVariant& variant : request.plan->variants) {
-            if (std::find(content.actionStableIds.begin(), content.actionStableIds.end(),
-                          variant.actionStableId) == content.actionStableIds.end()
-                || variant.variant.platform != content.platform
-                || variant.variant.language != content.language)
-                continue;
-            for (const ActionClosureDiagnostic& diagnostic : variant.closure.diagnostics) {
-                if (diagnostic.code != ActionClosureDiagnosticCode::AmbiguousSourceSelection)
-                    continue;
-                const ProjectItem* item = findItemByStableId(project, diagnostic.objectStableId);
-                const auto* sound = item ? item->comp<VSound>() : nullptr;
-                if (sound && sound->distinguishLanguage)
-                    return fail(QStringLiteral("Pack '%1' on %2/%3: %4")
-                        .arg(content.name, content.platform, content.language, diagnostic.message));
-            }
-        }
-    }
-
-    std::set<harkenstudio::ObjectId> previousInitLayerIds;
-    for (auto& pack : packs) {
-        pack.previousRow = previousPacks.value(pack.fileName);
-        if (pack.previousRow.isEmpty() && liveNames.contains(pack.fileName))
-            pack.previousRow.insert(QStringLiteral("path"), pack.fileName);
-        const auto inspected = previousInspection.previous.constFind(pack.fileName);
-        pack.previousValid = inspected != previousInspection.previous.cend()
-            && inspected->valid && inspected->packStableId == pack.packStableId
-            && inspected->packKind == pack.packKind;
-        if (pack.previousValid) {
-            pack.previousEntriesFingerprint = inspected->entriesFingerprint;
-            pack.previousCapacity = inspected->capacity;
-            if (request.options.updateSelectedOnly && pack.packKind == harkenstudiobuild::kPackKindInit)
-                previousInitLayerIds = inspected->layerIds;
-            if (!request.options.forceReexport) {
-                QFile cache(resourceCacheDir.filePath(inspected->resourceCacheKey));
-                if (cache.open(QIODevice::ReadOnly))
-                    pack.previousResourceFingerprint = QString::fromLatin1(cache.readAll());
-            }
-        }
-    }
-    previousInspection.previous.clear();
-
-    {
-        std::unordered_set<std::uint64_t> seenPackIds;
-        std::unordered_set<QString> seenLocators;
-        for (const PackMeta& pack : packs) {
-            if (!seenPackIds.insert(pack.packStableId).second)
-                return fail(QStringLiteral("Duplicate packStableId %1")
-                                .arg(pack.packStableId));
-            if (!seenLocators.insert(pack.fileName.toCaseFolded()).second)
-                return fail(QStringLiteral("Pack file name collision at '%1' (case-insensitive); rename the conflicting Actions.")
-                                .arg(pack.fileName));
-            const QFileInfo file(pack.fileName);
-            const auto companion = QDir::cleanPath(QDir(file.path()).filePath(file.completeBaseName() + QStringLiteral(".json")));
-            for (const auto& path : {pack.fileName, companion})
-                if (QFileInfo::exists(liveDir.filePath(path))
-                    && !containsPublicationFile(liveDir, liveNames, path))
-                    return fail(QStringLiteral("Pack output conflicts with an output directory: %1").arg(path));
-        }
-    }
-    {
-        std::unordered_map<std::uint64_t, const PackMeta*> packsById;
-        for (const PackMeta& pack : packs)
-            packsById.emplace(pack.packStableId, &pack);
-        std::set<std::uint64_t> visited;
-        std::set<std::uint64_t> active;
-        std::function<bool(std::uint64_t)> visit = [&](std::uint64_t id) {
-            if (active.count(id) != 0)
-                return false;
-            if (visited.count(id) != 0)
-                return true;
-            active.insert(id);
-            for (std::uint64_t dependency : packsById.at(id)->dependencies)
-                if (!visit(dependency))
-                    return false;
-            active.erase(id);
-            visited.insert(id);
-            return true;
-        };
-        for (const PackMeta& pack : packs)
-            if (!visit(pack.packStableId))
-                return fail(QStringLiteral("Pack dependency cycle involving '%1'; revise the Action dependencies")
-                                .arg(pack.name));
-    }
-
     auto recordUnit = [&](const PackMeta& pack, const ProjectPackExporter::ExportResult& unit) {
-        if (!outRecords || pack.retained) return;
+        if (!outRecords || (pack.retained && unit.success)) return;
         ProjectPackExporter::PackBuildRecord record;
         record.packName = pack.name;
         record.unitKey = pack.unitKey;
@@ -3273,29 +2502,218 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                 pack.unitKey, stage, pack.name});
     };
 
+    QMap<QString, PackMeta> previousPacks;
+    QStringList errors;
+    QSet<QString> failedPaths;
+    const auto recordFailure = [&](PackMeta& pack, const QString& error) {
+        if (pack.failed) return;
+        pack.failed = true;
+        failedPaths.insert(pack.fileName);
+        ProjectPackExporter::ExportResult unit;
+        unit.error = error;
+        recordUnit(pack, unit);
+        reportProgress(pack, 100, PackGenerationStage::Failed);
+        errors.append(QStringLiteral("%1: %2").arg(pack.name, error));
+    };
+    const auto fail = [&](const QString& error) {
+        result.success = false;
+        result.error = error;
+        result.canceled = request.options.cancelCheck && request.options.cancelCheck();
+        for (auto& pack : packs) {
+            if (pack.finished || pack.failed) continue;
+            ProjectPackExporter::ExportResult unit;
+            unit.error = error;
+            recordUnit(pack, unit);
+            reportProgress(pack, 100, result.canceled ? PackGenerationStage::Canceled : PackGenerationStage::Failed);
+            pack.failed = true;
+        }
+        return result;
+    };
+
+    ProjectPackExporter::ExportOptions buildOptions = request.options;
+    buildOptions.deferBindings = true;
+    const std::uint64_t initId = fnvName(request.options.platform + QStringLiteral("/Init"));
+
+    {
+        PackMeta init;
+        init.name = QStringLiteral("Init");
+        init.unitKey = QStringLiteral("Init");
+        init.fileName = QStringLiteral("Init") + Bridge::packArtifactExtension();
+        init.platform = request.options.platform;
+        init.packStableId = initId;
+        init.packKind = harkenstudiobuild::kPackKindInit;
+        packs.push_back(std::move(init));
+    }
+    for (const PackBuildUnit& planned : request.plan->units) {
+        PackMeta content;
+        content.name = planned.name;
+        content.unitKey = planned.grouped ? QStringLiteral("g:") + planned.artifactKey
+            : QStringLiteral("a:") + objectIdString(planned.actionStableIds.front());
+        content.fileName = PackBuildPlanning::packFileName(
+            planned.variant.language, planned.name, Bridge::packArtifactExtension());
+        content.language = planned.variant.language;
+        content.platform = planned.variant.platform;
+        content.grouped = planned.grouped;
+        for (harkenstudio::ObjectId actionId : planned.actionStableIds) {
+            if (request.includedActionIds.count(actionId) == 0
+                || request.failedActionVariants.count({actionId, planned.variant.language}) != 0)
+                continue;
+            const ProjectItem* action = actionFor(actionId);
+            if (action && action->comp<VAction>() && !action->comp<VAction>()->steps.empty())
+                content.actionStableIds.push_back(actionId);
+        }
+        if (content.actionStableIds.empty())
+            continue;
+        content.packStableId = fnvName(PackBuildPlanning::relativePackPath(
+            planned.variant.platform, planned.variant.language, planned.artifactKey));
+        content.packKind = harkenstudiobuild::kPackKindCanonicalContent;
+        content.dependencies = {initId};
+        packs.push_back(std::move(content));
+    }
+    for (PackMeta& content : packs) {
+        for (const PackBuildVariant& variant : request.plan->variants) {
+            if (std::find(content.actionStableIds.begin(), content.actionStableIds.end(),
+                          variant.actionStableId) == content.actionStableIds.end()
+                || variant.variant.platform != content.platform
+                || variant.variant.language != content.language)
+                continue;
+            for (const ActionClosureDiagnostic& diagnostic : variant.closure.diagnostics) {
+                if (diagnostic.code != ActionClosureDiagnosticCode::AmbiguousSourceSelection)
+                    continue;
+                const ProjectItem* item = findItemByStableId(project, diagnostic.objectStableId);
+                const auto* sound = item ? item->comp<VSound>() : nullptr;
+                if (sound && sound->distinguishLanguage)
+                    recordFailure(content, QStringLiteral("Pack '%1' on %2/%3: %4")
+                        .arg(content.name, content.platform, content.language, diagnostic.message));
+            }
+        }
+    }
+
+    QStringList previousPaths;
+    if (request.options.updateSelectedOnly) {
+        QStringList files;
+        QString scanError;
+        if (!scanOutputFiles(liveDir, &files, nullptr, &scanError, request.options.cancelCheck)) return fail(scanError);
+        for (const auto& path : files)
+            if (path.endsWith(Bridge::packArtifactExtension())) previousPaths.append(path);
+    } else if (!request.options.forceReexport) {
+        for (const auto& pack : packs)
+            if (request.options.packBuildState
+                && (request.options.packBuildState->isCurrent(pack.fileName)
+                    || !request.options.packBuildState->resourceFingerprint(pack.fileName).isEmpty()))
+                previousPaths.append(pack.fileName);
+    }
+    for (const auto& path : previousPaths) {
+        if (!QFileInfo::exists(liveDir.filePath(path))) continue;
+        PackMeta previous;
+        QString error;
+        if (!readExistingPack(liveDir, path, project.projectId, request.options.platform, &previous, &error)) {
+            const auto current = std::find_if(packs.begin(), packs.end(), [&](const auto& pack) { return pack.fileName == path; });
+            if (current != packs.end()) recordFailure(*current, error);
+            else {
+                previous.name = QFileInfo(path).completeBaseName();
+                previous.fileName = path;
+                previous.unitKey = path;
+                recordFailure(previous, error);
+            }
+            continue;
+        }
+        previousPacks.insert(path, std::move(previous));
+    }
+    std::set<harkenstudio::ObjectId> previousInitLayerIds;
+    for (auto& pack : packs) {
+        const auto previous = previousPacks.constFind(pack.fileName);
+        if (previous == previousPacks.cend() || previous->packStableId != pack.packStableId
+            || previous->packKind != pack.packKind) continue;
+        pack.previousRow = previous->previousRow;
+        pack.previousEntries = previous->previousEntries;
+        pack.previousCapacity = previous->previousCapacity;
+        pack.previousValid = true;
+        if (request.options.updateSelectedOnly && pack.packKind == harkenstudiobuild::kPackKindInit) {
+            harkenstudiobuild::CurrentWorldBodyImage body;
+            if (decodePreviousPack(pack, &body)) {
+                const auto& world = *body.ProductionView();
+                for (std::uint32_t i = 0; i < world.playablePropertyCount; ++i)
+                    if (world.playableProperties[i].contentPropertyKind
+                        == harkenstudiobuild::playableproperties::ContentPropertyKindV1::Layer)
+                        previousInitLayerIds.insert(world.playableProperties[i].stableId);
+            }
+        }
+        if (!request.options.forceReexport && request.options.packBuildState) {
+            pack.previousResourceFingerprint = request.options.packBuildState->resourceFingerprint(pack.fileName);
+            pack.current = request.options.packBuildState->isCurrent(pack.fileName);
+            for (const auto& variant : request.plan->variants) {
+                if (std::find(pack.actionStableIds.begin(), pack.actionStableIds.end(), variant.actionStableId)
+                    == pack.actionStableIds.end() || variant.variant.language != pack.language) continue;
+                for (const auto& media : variant.closure.controlMedia)
+                    if (!previous->soundContentRevisions.contains(media.soundStableId)) pack.current = false;
+            }
+            if (pack.current) pack.soundContentRevisions = previous->soundContentRevisions;
+        }
+    }
+
+    for (std::size_t i = 0; i < packs.size(); ++i) {
+        auto& pack = packs[i];
+        for (std::size_t j = 0; j < i; ++j) {
+            auto& previous = packs[j];
+            if (pack.packStableId != previous.packStableId
+                && pack.fileName.compare(previous.fileName, Qt::CaseInsensitive) != 0) continue;
+            const auto error = QStringLiteral("Pack output identity or file name collides at '%1'").arg(pack.fileName);
+            recordFailure(previous, error);
+            recordFailure(pack, error);
+        }
+        const QFileInfo file(pack.fileName);
+        const auto companion = QDir::cleanPath(QDir(file.path()).filePath(file.completeBaseName() + QStringLiteral(".json")));
+        for (const auto& path : {pack.fileName, companion})
+            if (!safePublicationPath(liveDir, path) || QFileInfo(liveDir.filePath(path)).isDir())
+                recordFailure(pack, QStringLiteral("Invalid Pack output path: %1").arg(path));
+    }
+
     auto prepareUnit = [&](PackMeta& meta) -> ProjectPackExporter::ExportResult {
-        const QString path = QDir(stagingDir).filePath(meta.fileName);
+        const QString path = liveDir.filePath(meta.fileName);
         QDir().mkpath(QFileInfo(path).absolutePath());
         ProjectPackExporter::ExportResult unit;
-        auto resourceOptions = stagingOpts;
+        auto resourceOptions = buildOptions;
         resourceOptions.forceReexport = request.options.forceReexport && !meta.retained;
-        resourceOptions.resourceReuse = ProjectPackExporterInternal::PackResourceReuse{
-            meta.previousValid && !meta.grouped
-                ? liveDir.filePath(meta.previousRow.value(QStringLiteral("path")).toString()) : QString(),
-            meta.previousResourceFingerprint};
+        resourceOptions.resourceReuse.reset();
+        if (request.options.packBuildState)
+            resourceOptions.resourceReuse = ProjectPackExporterInternal::PackResourceReuse{
+                meta.previousValid && !meta.grouped
+                    ? liveDir.filePath(meta.previousRow.value(QStringLiteral("path")).toString()) : QString(),
+                meta.previousResourceFingerprint};
         const auto appendResources = [&](const ProjectPackExporter::ExportResult& resource,
                                          std::vector<Bridge::PackBuildSession::CanonicalPackEntry> entries) {
             if (exportCanceled(request.options.cancelCheck, &unit.error)) {
                 unit.canceled = true;
                 return false;
             }
-            if (resource.reusedResources)
-                return collectEntries(resource.outputPath, &meta.resourceEntries, &unit.error, true, false,
-                    request.options.snapshot ? request.options.snapshot->mediaCache.get() : nullptr);
+            if (resource.reusedResources) {
+                for (const auto& entry : meta.previousEntries)
+                    if (entry.kind == harkenstudiobuild::kPackEntryKindMedia
+                        || entry.kind == harkenstudiobuild::kPackEntryKindBus
+                        || entry.kind == harkenstudiobuild::kPackEntryKindBusSend
+                        || entry.kind == harkenstudiobuild::kPackEntryKindAttenuation
+                        || entry.kind == harkenstudiobuild::kPackEntryKindBusEffect
+                        || entry.kind == harkenstudiobuild::kPackEntryKindEffectDynamicRoute)
+                        meta.resourceEntries.push_back(entry);
+                return true;
+            }
             for (auto& entry : entries)
                 if (!appendEntry(std::move(entry), path, &meta.resourceEntries, &unit.error)) return false;
             return true;
         };
+        if (meta.current) {
+            unit.success = true;
+            unit.reusedResources = true;
+            unit.outputPath = liveDir.filePath(meta.fileName);
+            if (!appendResources(unit, {})) unit.success = false;
+            meta.resourceFingerprint = meta.previousResourceFingerprint;
+            for (const auto& entry : meta.resourceEntries)
+                if (entry.kind == harkenstudiobuild::kPackEntryKindMedia) ++meta.ownedResources;
+            unit.mediaCount = static_cast<int>(meta.ownedResources);
+            unit.actionCount = static_cast<int>(meta.actionStableIds.size());
+            return unit;
+        }
         if (meta.packKind == harkenstudiobuild::kPackKindInit) {
             std::vector<Bridge::PackBuildSession::CanonicalPackEntry> entries;
             unit = exporter.ExportInitPack(project, path, resourceOptions, &entries);
@@ -3335,7 +2753,6 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                 unit.actionCount += member.actionCount;
                 unit.mediaCacheHits += member.mediaCacheHits;
                 unit.mediaConversions += member.mediaConversions;
-                unit.mediaFallbacks += member.mediaFallbacks;
                 if (!appendResources(member, std::move(entries))) return unit;
                 meta.resourceFingerprint = member.resourceFingerprint;
             }
@@ -3412,7 +2829,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     observeStage(PackBuildObservationStage::PreparingMedia);
     {
         const auto releaseMedia = qScopeGuard([&] {
-            stagingOpts.mediaPreparation = nullptr;
+            buildOptions.mediaPreparation = nullptr;
             if (request.options.snapshot && request.options.snapshot->derivativeCache)
                 request.options.snapshot->derivativeCache->clear();
             if (request.options.snapshot && request.options.snapshot->mediaCache)
@@ -3422,10 +2839,12 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         if (request.options.snapshot && request.options.buildContext) {
             mediaPreparation = std::make_unique<PackMediaPreparation>(request.options.snapshot->media,
                 request.options.snapshot->derivativeCache, QUuid(request.options.platform),
-                QDir(PathUtils::getCacheDir(QFileInfo(project.projectPath).absolutePath()))
-                    .filePath(QStringLiteral("pack-derivatives/%1").arg(request.options.platform)));
+                request.options.packBuildState
+                    ? QDir(PathUtils::getDotCacheDir(QFileInfo(project.projectPath).absolutePath()))
+                        .filePath(QStringLiteral("pack/media")) : QString());
             const auto& sourceIndex = *request.options.buildContext->capabilities->sourceIndex();
             for (const PackMeta& pack : packs) {
+                if (pack.current || pack.failed) continue;
                 for (const auto actionId : pack.actionStableIds) {
                     const auto planned = std::find_if(request.plan->variants.begin(), request.plan->variants.end(),
                         [&](const auto& variant) {
@@ -3451,9 +2870,10 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                 }
             }
             mediaPreparation->start();
-            stagingOpts.mediaPreparation = mediaPreparation.get();
+            buildOptions.mediaPreparation = mediaPreparation.get();
         }
         for (PackMeta& pack : packs) {
+            if (pack.failed) continue;
             reportProgress(pack, 5, PackGenerationStage::Preparing);
             if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
             observeUnit(pack, PackBuildObservationStage::Preparing);
@@ -3463,24 +2883,30 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             pack.elapsedNanoseconds += timer.nsecsElapsed();
             result.mediaCacheHits += pack.mediaResult.mediaCacheHits;
             result.mediaConversions += pack.mediaResult.mediaConversions;
-            result.mediaFallbacks += pack.mediaResult.mediaFallbacks;
             if (!pack.mediaResult.success) {
-                recordUnit(pack, pack.mediaResult);
-                return fail(pack.mediaResult.error);
+                recordFailure(pack, pack.mediaResult.error);
+                continue;
             }
             observeUnit(pack, PackBuildObservationStage::Prepared);
         }
     }
 
+    if (packs.front().failed) return fail(errors.join(QLatin1Char('\n')));
+    packs.erase(std::remove_if(packs.begin(), packs.end(), [](const auto& pack) { return pack.failed; }), packs.end());
     for (const auto& pack : packs)
         reportProgress(pack, 40, PackGenerationStage::Compiling);
     if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
     observeStage(PackBuildObservationStage::CompilingProject);
     QString compileError;
     std::set<harkenstudio::ObjectId> requiredDefinitions;
-    for (const auto& variant : request.plan->variants)
+    for (const auto& variant : request.plan->variants) {
+        if (std::none_of(packs.begin(), packs.end(), [&](const auto& pack) {
+                return std::find(pack.actionStableIds.begin(), pack.actionStableIds.end(), variant.actionStableId)
+                    != pack.actionStableIds.end();
+            })) continue;
         for (const auto* members : {&variant.closure.objects, &variant.closure.controlObjects})
             for (const auto& member : *members) requiredDefinitions.insert(member.stableId);
+    }
     std::set<harkenstudio::ObjectId> sharedLayerIds;
     std::function<bool(const ProjectItem*)> collectLayers = [&](const ProjectItem* item) {
         if (!item) return false;
@@ -3498,8 +2924,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         if (std::any_of(packs.begin(), packs.end(), [&](const auto& pack) { return pack.language == language; }))
             languages.append(language);
     if (languages.isEmpty()) languages.append(QString());
-    const QString preferredLanguage = stagingOpts.language.trimmed().isEmpty()
-        ? project.defaultLanguage : stagingOpts.language.trimmed();
+    const QString preferredLanguage = buildOptions.language.trimmed().isEmpty()
+        ? project.defaultLanguage : buildOptions.language.trimmed();
     const QString selectedLanguage = languages.contains(preferredLanguage)
         ? preferredLanguage : languages.front();
     std::map<harkenstudio::ObjectId, std::uint32_t> newPropertyOrders, newContainerOrders;
@@ -3512,26 +2938,30 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             for (const auto* members : {&variant.closure.objects, &variant.closure.controlObjects})
                 for (const auto& member : *members) neutralDefinitionIds.insert(member.stableId);
         }
-        publicationOrders = readPublicationAuthoredOrders(liveDir, previousPublication,
+        publicationOrders = readPublicationAuthoredOrders(previousPacks,
             &reservedPropertyOrders, &reservedContainerOrders);
     }
     for (const QString& language : languages) {
         if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
-        std::set<harkenstudio::ObjectId> packedRootActionIds;
         std::set<harkenstudio::ObjectId> packedActionIds;
-        std::set<harkenstudio::ObjectId> packedDefinitionIds = sharedLayerIds;
-        for (const PackMeta& pack : packs) {
-            if (!pack.language.isEmpty() && pack.language != language) continue;
-            packedRootActionIds.insert(pack.actionStableIds.begin(), pack.actionStableIds.end());
-        }
-        for (const auto& variant : request.plan->variants) {
-            if ((!variant.variant.language.isEmpty() && variant.variant.language != language)
-                || packedRootActionIds.count(variant.actionStableId) == 0)
-                continue;
-            for (const auto& member : variant.closure.actions) packedActionIds.insert(member.stableId);
-            for (const auto& member : variant.closure.objects) packedDefinitionIds.insert(member.stableId);
-            for (const auto& member : variant.closure.controlObjects) packedDefinitionIds.insert(member.stableId);
-        }
+        std::set<harkenstudio::ObjectId> packedDefinitionIds;
+        const auto collectPackedInputs = [&]() {
+            packedActionIds.clear();
+            packedDefinitionIds = sharedLayerIds;
+            for (const auto& variant : request.plan->variants) {
+                if ((!variant.variant.language.isEmpty() && variant.variant.language != language)
+                    || std::none_of(packs.begin(), packs.end(), [&](const auto& pack) {
+                        return pack.language == variant.variant.language
+                            && std::find(pack.actionStableIds.begin(), pack.actionStableIds.end(),
+                                         variant.actionStableId) != pack.actionStableIds.end();
+                    }))
+                    continue;
+                for (const auto& member : variant.closure.actions) packedActionIds.insert(member.stableId);
+                for (const auto& member : variant.closure.objects) packedDefinitionIds.insert(member.stableId);
+                for (const auto& member : variant.closure.controlObjects) packedDefinitionIds.insert(member.stableId);
+            }
+        };
+        collectPackedInputs();
         CurrentWorldBuildOptions buildOptions;
         const auto fieldGroups = request.options.buildContext
             ? request.options.buildContext->capabilities->fieldGroups(QUuid(request.options.platform))
@@ -3542,16 +2972,78 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             buildOptions.canonicalContext = request.options.buildContext->capabilities->canonicalContext(
                 QUuid(request.options.platform));
         }
+        if (!buildOptions.sourceIndex)
+            buildOptions.sourceIndex = Bridge::canonicalRuntimeProjectSourceIndex(project);
+        std::vector<CurrentWorldBuildDiagnostic> loweringDiagnostics;
+        buildOptions.loweringDiagnostics = &loweringDiagnostics;
         buildOptions.fieldGroups = fieldGroups.get();
         buildOptions.includedActionIds = &packedActionIds;
         buildOptions.includedDefinitionIds = &packedDefinitionIds;
         buildOptions.validatePackResources = true;
+        buildOptions.bindingLowering = &lowering;
+        buildOptions.bindingCapabilities = &bindingCapabilities;
         buildOptions.language = language;
         auto worldRequest = buildCurrentWorldSyncRequestForContext(
             project, QUuid::fromString(request.options.platform),
             &compileError, nullptr, &buildOptions, 0, QString());
         if (!worldRequest)
             return fail(compileError);
+        for (const auto& diagnostic : loweringDiagnostics) {
+            bool affected = false;
+            for (auto& pack : packs) {
+                if (diagnostic.kind != CurrentWorldBuildDiagnosticKind::Definition
+                    && !pack.language.isEmpty() && pack.language != language)
+                    continue;
+                const bool usesDefinition = std::any_of(request.plan->variants.begin(),
+                    request.plan->variants.end(), [&](const auto& variant) {
+                        if (variant.variant.language != pack.language
+                            || std::find(pack.actionStableIds.begin(), pack.actionStableIds.end(),
+                                         variant.actionStableId) == pack.actionStableIds.end())
+                            return false;
+                        for (const auto* members : {&variant.closure.actions, &variant.closure.objects,
+                                                    &variant.closure.controlObjects}) {
+                            for (const auto& member : *members) {
+                                if (member.stableId == diagnostic.stableId)
+                                    return true;
+                                if (diagnostic.kind != CurrentWorldBuildDiagnosticKind::Definition)
+                                    continue;
+                                const auto item = buildOptions.sourceIndex->byObjectId.find(member.objectId);
+                                for (const ProjectItem* ancestor = item == buildOptions.sourceIndex->byObjectId.end()
+                                         ? nullptr : item->second->parent;
+                                     ancestor; ancestor = ancestor->parent)
+                                    if (ancestor->runtimeId() == diagnostic.stableId)
+                                        return true;
+                            }
+                        }
+                        return false;
+                    });
+                if (!usesDefinition)
+                    continue;
+                affected = true;
+                recordFailure(pack, diagnostic.error);
+            }
+            if (!affected)
+                return fail(diagnostic.error);
+        }
+        if (!loweringDiagnostics.empty()) {
+            std::erase_if(packs, [](const auto& pack) { return pack.failed; });
+            requiredDefinitions.clear();
+            sharedLayerIds.clear();
+            for (const auto& variant : request.plan->variants) {
+                if (std::none_of(packs.begin(), packs.end(), [&](const auto& pack) {
+                        return pack.language == variant.variant.language
+                            && std::find(pack.actionStableIds.begin(), pack.actionStableIds.end(),
+                                         variant.actionStableId) != pack.actionStableIds.end();
+                    }))
+                    continue;
+                for (const auto* members : {&variant.closure.objects, &variant.closure.controlObjects})
+                    for (const auto& member : *members) requiredDefinitions.insert(member.stableId);
+            }
+            for (const auto* binding : project.allFileBindings()) collectLayers(binding->rootItem.get());
+            collectPackedInputs();
+            retainCurrentWorldSyncRequestInputs(*worldRequest, *buildOptions.sourceIndex,
+                                                packedActionIds, packedDefinitionIds);
+        }
         if (request.options.updateSelectedOnly) {
             std::map<harkenstudio::ObjectId, std::uint32_t> containerOrders;
             if (!mergePublicationAuthoredOrders(publicationOrders, language, neutralDefinitionIds,
@@ -3902,49 +3394,37 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                     [&](auto id) { return request.options.onlyActionStableIds.count(id) != 0; });
             return !request.options.onlyUnits.isEmpty() && !request.options.onlyUnits.contains(pack.name);
         }), packs.end());
-        for (auto it = publishedPacks.cbegin(); it != publishedPacks.cend(); ++it) {
-            if (it.key() != initId && std::any_of(packs.begin(), packs.end(),
-                    [&](const auto& pack) {
-                        return pack.packStableId == it.key()
-                            || pack.fileName.compare(it.value().value(QStringLiteral("path")).toString(),
-                                                     Qt::CaseInsensitive) == 0;
-                    }))
-                continue;
-            PackMeta retained;
+        for (auto it = previousPacks.begin(); it != previousPacks.end(); ++it) {
+            if (failedPaths.contains(it->fileName)
+                || std::any_of(it->actionStableIds.begin(), it->actionStableIds.end(),
+                    [&](auto id) { return request.failedActionVariants.count({id, it->language}) != 0; })) continue;
+            if (it->packStableId != initId && std::any_of(packs.begin(), packs.end(), [&](const auto& pack) {
+                    return pack.packStableId == it->packStableId
+                        || pack.fileName.compare(it->fileName, Qt::CaseInsensitive) == 0;
+                })) continue;
+            auto retained = std::move(it.value());
             retained.retained = true;
-            retained.previousRow = it.value();
-            retained.companion = it.value().value(QStringLiteral("companion")).toObject();
-            retained.packStableId = it.key();
-            retained.packKind = it.value().value(QStringLiteral("packKind")).toInt();
-            retained.name = it.value().value(QStringLiteral("name")).toString();
-            retained.fileName = it.value().value(QStringLiteral("path")).toString();
-            retained.language = it.value().value(QStringLiteral("language")).toString();
-            retained.platform = it.value().value(QStringLiteral("platformId")).toString();
-            retained.contentRevision = it.value().value(QStringLiteral("contentRevision")).toVariant().toULongLong();
-            for (const auto& dependency : it.value().value(QStringLiteral("dependencies")).toArray())
-                retained.dependencies.push_back(dependency.toString().toULongLong());
-            if (it.key() == initId) {
-                retained.unitKey = QStringLiteral("Init");
-                packs.front() = std::move(retained);
-            } else {
-                retained.actionStableIds.push_back(runtimeObjectId(QUuid(
-                    retained.companion.value(QStringLiteral("guid")).toString())));
-                if (!retained.actionStableIds.empty())
-                    retained.unitKey = QStringLiteral("a:") + objectIdString(retained.actionStableIds.front());
-                packs.push_back(std::move(retained));
-            }
+            if (retained.packStableId == initId) packs.front() = std::move(retained);
+            else packs.push_back(std::move(retained));
         }
     }
-    if (!harmonizePublicationCapacity(&packs, liveDir, resourceCacheDir, &compileError))
+    if (!harmonizePublicationCapacity(&packs, request.options.packBuildState.get(), &compileError))
         return fail(compileError);
+    std::set<harkenstudio::ObjectId> bindingIds;
+    std::erase_if(lowering.programs, [&](const auto& program) {
+        return !bindingIds.insert(program.bindingId).second;
+    });
+    std::set<std::pair<harkenstudio::ObjectId, harkenstudio::ObjectId>> bindingAttachments;
+    std::erase_if(lowering.attachments, [&](const auto& attachment) {
+        return !bindingAttachments.emplace(attachment.bindingId, attachment.objectId).second;
+    });
     for (PackMeta& pack : packs) {
         if (pack.retained && !pack.metadataUpdated) continue;
         std::vector<Bridge::PackBuildSession::CanonicalPackEntry> retainedGlobals;
         auto& globals = pack.retained ? retainedGlobals : pack.resourceEntries;
         if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
         if (pack.retained) {
-            if (!collectEntries(liveDir.filePath(pack.fileName), &globals, &compileError))
-                return fail(compileError);
+            globals = pack.previousEntries;
             std::erase_if(globals, [](const auto& entry) {
                 return entry.kind == harkenstudiobuild::kPackEntryKindCanonicalDefinitionPartition
                     || entry.kind == harkenstudiobuild::kPackEntryKindPackRequirementBlock
@@ -3955,6 +3435,25 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             });
         } else if (!appendCanonicalBindingEntries(lowering, pack, &globals, &compileError)) {
             return fail(compileError);
+        }
+        const auto samePayload = [&](std::uint32_t kind, const auto& payload) {
+            const auto previous = std::find_if(pack.previousEntries.begin(), pack.previousEntries.end(),
+                [&](const auto& entry) { return entry.kind == kind; });
+            return previous == pack.previousEntries.end() ? payload.empty() : previous->payload == payload;
+        };
+        if (pack.current
+            && samePayload(harkenstudiobuild::kPackEntryKindCanonicalDefinitionPartition, pack.partitionPayload)
+            && samePayload(harkenstudiobuild::kPackEntryKindVariablePolicyOverlay, pack.variablePolicyOverlayPayload)
+            && samePayload(harkenstudiobuild::kPackEntryKindVariableRequirements, pack.variableRequirementsPayload)
+            && std::all_of(globals.begin(), globals.end(), [&](const auto& entry) {
+                return std::any_of(pack.previousEntries.begin(), pack.previousEntries.end(), [&](const auto& previous) {
+                    return entry.kind == previous.kind && entry.vintage == previous.vintage
+                        && entry.id == previous.id && entry.relationOrdinal == previous.relationOrdinal
+                        && entry.payload == previous.payload && entry.media == previous.media;
+                });
+            })) {
+            pack.contentRevision = pack.previousRow.value(QStringLiteral("contentRevision")).toVariant().toULongLong();
+            continue;
         }
         auto contentRevision = harkenstudiobuild::Fnv1a64(
             pack.partitionPayload.data(), pack.partitionPayload.size());
@@ -3989,7 +3488,6 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         pack.contentRevision = contentRevision & INT64_MAX;
         if (pack.contentRevision == 0) pack.contentRevision = 1;
     }
-    QStringList capacityWritePaths;
     for (auto& pack : packs) {
         pack.requiredInitRevision = packs.front().contentRevision;
         if (pack.retained) {
@@ -4004,9 +3502,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                     pack.metadataUpdated = true;
             }
         }
-        if (pack.metadataUpdated) capacityWritePaths.append(liveDir.filePath(pack.fileName));
     }
-    if (!validateWriteAccess(capacityWritePaths, &compileError)) return fail(compileError);
     QSet<QString> currentPaths;
     for (const auto& pack : packs) {
         if (currentPaths.contains(pack.fileName.toCaseFolded()))
@@ -4015,22 +3511,18 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     }
 
     auto writeUnit = [&](PackMeta& meta) -> ProjectPackExporter::ExportResult {
-        const QString path = QDir(stagingDir).filePath(meta.fileName);
+        const QString path = liveDir.filePath(meta.fileName);
         auto unit = std::move(meta.mediaResult);
         const auto reuse = [&] {
-            const auto oldPath = liveDir.filePath(meta.previousRow.value(QStringLiteral("path")).toString());
-            QDir().mkpath(QFileInfo(path).absolutePath());
-            unit.success = QFile::copy(oldPath, path);
-            if (!unit.success) unit.error = QStringLiteral("Cannot stage existing pack: %1").arg(oldPath);
-            meta.skipped = unit.success;
+            unit.success = true;
+            meta.skipped = true;
             unit.outputPath = path;
             unit.fileSize = QFileInfo(path).size();
             return unit;
         };
         if (meta.retained && !meta.metadataUpdated) return reuse();
         if (meta.retained) {
-            std::vector<Bridge::PackBuildSession::CanonicalPackEntry> entries;
-            if (!collectEntries(liveDir.filePath(meta.fileName), &entries, &unit.error)) return unit;
+            auto entries = meta.previousEntries;
             for (auto& entry : entries) {
                 if (entry.kind == harkenstudiobuild::kPackEntryKindCanonicalDefinitionPartition) {
                     entry.payload = meta.partitionPayload;
@@ -4127,13 +3619,18 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             entries.push_back(std::move(snapshot));
         }
 
-        if (!request.options.forceReexport && meta.previousValid
-            && entriesFingerprint(entries, meta.packKind) == meta.previousEntriesFingerprint)
-            return reuse();
-        if (!validateWriteAccess({liveDir.filePath(meta.fileName)}, &unit.error)) {
-            unit.success = false;
-            return unit;
-        }
+        const auto sameEntry = [](const auto& first, const auto& second) {
+            return first.kind == second.kind && first.vintage == second.vintage
+                && first.id == second.id && first.relationOrdinal == second.relationOrdinal
+                && first.payload == second.payload && first.media == second.media;
+        };
+        if ((meta.current || (meta.previousValid && !request.options.forceReexport
+                && meta.packKind == harkenstudiobuild::kPackKindInit))
+            && entries.size() == meta.previousEntries.size()
+            && std::all_of(entries.begin(), entries.end(), [&](const auto& entry) {
+                return std::any_of(meta.previousEntries.begin(), meta.previousEntries.end(),
+                    [&](const auto& previous) { return sameEntry(entry, previous); });
+            })) return reuse();
         if (!Bridge::PackBuildSession::writeCanonicalPackFile(
                 path,
                 meta.packKind == harkenstudiobuild::kPackKindInit
@@ -4151,66 +3648,13 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         return unit;
     };
 
-    observeStage(PackBuildObservationStage::WritingPacks);
-    for (PackMeta& pack : packs) {
-        reportProgress(pack, 60, PackGenerationStage::Writing);
-        if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
-        observeUnit(pack, PackBuildObservationStage::Writing);
-        QElapsedTimer timer;
-        timer.start();
-        auto unit = writeUnit(pack);
-        pack.elapsedNanoseconds += timer.nsecsElapsed();
-        recordUnit(pack, unit);
-        if (!unit.success)
-            return fail(unit.error);
-        for (auto& entry : pack.resourceEntries) {
-            std::vector<std::uint8_t>().swap(entry.payload);
-            entry.media.reset();
-        }
-        pack.previousEntries.clear();
-        if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
-        observeUnit(pack, PackBuildObservationStage::ReadyToPublish);
-        result.warnings += unit.warnings;
-        if (!pack.retained || pack.packKind == harkenstudiobuild::kPackKindInit) {
-            result.fileSize += unit.fileSize;
-            result.mediaCount += unit.mediaCount;
-            result.objectCount += unit.objectCount;
-            result.actionCount += unit.actionCount;
-        }
-        if (!pack.retained) {
-            if (pack.skipped) ++result.skippedPackCount;
-            else ++result.builtPackCount;
-        }
-    }
-
-    for (const auto& pack : packs)
-        reportProgress(pack, 85, PackGenerationStage::Publishing);
-    observeStage(PackBuildObservationStage::Publishing);
-    std::vector<PackMeta*> allPacks;
-    QStringList companionNames;
-    QHash<uint32_t, QString> exportedWaveformSources;
-    const QString waveformStagingRoot = QDir(stagingDir).filePath(QStringLiteral(".waveforms"));
-    const auto warnWaveform = [&](PackMeta& pack, const QString& detail) {
-        result.reusableBuild = false;
-        const QString warning = QStringLiteral("Waveforms omitted for Pack '%1': %2").arg(pack.name, detail);
-        result.warnings.append(warning);
-        pack.companion.remove(QStringLiteral("waveforms"));
-        if (outRecords) {
-            for (std::size_t i = firstRecord; i < outRecords->size(); ++i) {
-                auto& record = (*outRecords)[i];
-                if (record.unitKey == pack.unitKey && record.language == pack.language)
-                    record.warnings.append(warning);
-            }
-        }
-    };
     std::unordered_map<harkenstudio::ObjectId, const ProjectItem*> metadataItems;
     if (project.buildExportPackMetadata) {
         std::unordered_set<const ProjectItem*> visited;
         const auto indexItem = [&](auto&& self, const ProjectItem* item) -> void {
             if (!item || !visited.insert(item).second) return;
             metadataItems.emplace(item->runtimeId(), item);
-            for (const auto& child : item->children)
-                self(self, child.get());
+            for (const auto& child : item->children) self(self, child.get());
         };
         indexItem(indexItem, project.root.get());
         for (const auto* binding : project.allFileBindings())
@@ -4218,433 +3662,207 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     }
     QString waveformOutputRoot;
     QString waveformOutputError;
+    std::unique_ptr<QLockFile> waveformLock;
+    QHash<uint32_t, QString> exportedWaveformSources;
     if (project.buildExportWaveforms) {
-        if (request.options.waveformOutputDir.isEmpty()) {
-            if (!PathUtils::isValidWaveformBuildOutputDir(project.buildWaveformOutputDir, project.projectPath))
-                waveformOutputError = QStringLiteral("Waveform output must use a valid directory outside the project root and object directories.");
-            waveformOutputRoot = PathUtils::waveformBuildOutputRoot(project.projectPath, project.buildWaveformOutputDir);
+        waveformOutputRoot = request.options.waveformOutputDir.isEmpty()
+            ? PathUtils::waveformBuildOutputRoot(project.projectPath, project.buildWaveformOutputDir)
+            : request.options.waveformOutputDir;
+        if (!QDir::isAbsolutePath(waveformOutputRoot)
+            || PathUtils::isProtectedPackOutputPath(waveformOutputRoot, project.projectPath)) {
+            waveformOutputError = PathUtils::packBuildOutputLocationError();
+        } else if (!QDir().mkpath(waveformOutputRoot)) {
+            waveformOutputError = QStringLiteral("Cannot create waveform output directory '%1'").arg(waveformOutputRoot);
         } else {
-            waveformOutputRoot = request.options.waveformOutputDir;
-            if (!QDir::isAbsolutePath(waveformOutputRoot))
-                waveformOutputError = QStringLiteral("Waveform output override must be an absolute directory");
-            else if (PathUtils::isProtectedPackOutputPath(waveformOutputRoot, project.projectPath))
-                waveformOutputError = PathUtils::packBuildOutputLocationError();
+            waveformLock = std::make_unique<QLockFile>(QDir(waveformOutputRoot).filePath(QString::fromLatin1(kWaveformLock)));
+            waveformLock->setStaleLockTime(0);
+            if (!waveformLock->tryLock())
+                waveformOutputError = QStringLiteral("Waveform output is in use: %1").arg(waveformOutputRoot);
         }
-        if (waveformOutputError.isEmpty()) {
-            if (!QDir().mkpath(waveformOutputRoot)) {
-                waveformOutputError = QStringLiteral("Cannot use waveform output directory '%1'")
-                    .arg(waveformOutputRoot);
-            } else {
-                waveformLock = std::make_unique<QLockFile>(QDir(waveformOutputRoot)
-                    .filePath(QString::fromLatin1(kWaveformLock)));
-                waveformLock->setStaleLockTime(0);
-                if (!waveformLock->tryLock())
-                    waveformOutputError = QStringLiteral("Waveform output is being used by another build or cannot be locked: %1")
-                        .arg(waveformOutputRoot);
+    }
+    observeStage(PackBuildObservationStage::WritingPacks);
+    QSet<qulonglong> completed;
+    for (PackMeta& pack : packs) {
+        if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
+        ProjectPackExporter::ExportResult unit;
+        const auto failedDependency = std::find_if(pack.dependencies.begin(), pack.dependencies.end(),
+            [&](auto dependency) { return !completed.contains(dependency); });
+        if (failedDependency != pack.dependencies.end()) {
+            unit.error = QStringLiteral("Pack '%1' cannot be built because dependency %2 failed")
+                .arg(pack.name).arg(*failedDependency);
+        } else {
+            reportProgress(pack, 60, PackGenerationStage::Writing);
+            observeUnit(pack, PackBuildObservationStage::Writing);
+            QElapsedTimer timer;
+            timer.start();
+            unit = writeUnit(pack);
+            pack.elapsedNanoseconds += timer.nsecsElapsed();
+        }
+        if (unit.success && !pack.retained) {
+            if (pack.packKind == harkenstudiobuild::kPackKindCanonicalContent) {
+                const auto* action = pack.actionStableIds.size() == 1 ? actionFor(pack.actionStableIds.front()) : nullptr;
+                if (!action) {
+                    unit.success = false;
+                    unit.error = QStringLiteral("Action publication identity is unavailable for '%1'").arg(pack.name);
+                } else {
+                    pack.companion = QJsonObject{{QStringLiteral("schemaVersion"), HARKEN_PACK_SCHEMA_VERSION},
+                        {QStringLiteral("name"), action->name}, {QStringLiteral("guid"), objectIdString(action->runtimeId())}};
+                }
+            }
+            if (unit.success && project.buildExportWaveforms) {
+                QString error = waveformOutputError;
+                if (!error.isEmpty() || !fillWaveformCompanion(request, pack, waveformOutputRoot,
+                        &exportedWaveformSources, &pack.companion, &error)) {
+                    unit.success = false;
+                    unit.error = QStringLiteral("Cannot export waveforms for Pack '%1': %2").arg(pack.name, error);
+                }
+            }
+            if (unit.success && project.buildExportPackMetadata) {
+                harkenstudiobuild::CurrentWorldBodyImage body;
+                harkenstudiobuild::PackCanonicalPartitionHeader header;
+                unit.success = harkenstudiobuild::ParsePackCanonicalPartitionHeaderV2(
+                        pack.partitionPayload.data(), pack.partitionPayload.size(), &header)
+                    && body.Decode(pack.partitionPayload.data() + header.headerBytes,
+                        static_cast<std::size_t>(header.bodyBytes), header.bodyVintage);
+                if (!unit.success) {
+                    unit.error = QStringLiteral("Cannot read Pack metadata for '%1'").arg(pack.name);
+                } else {
+                    auto ids = worldMetadataObjectIds(*body.ProductionView());
+                    for (const auto& entry : pack.resourceEntries) {
+                        if (entry.kind == harkenstudiobuild::kPackEntryKindMedia
+                            || entry.kind == harkenstudiobuild::kPackEntryKindAttenuation) ids.insert(entry.id);
+                        if (entry.kind == harkenstudiobuild::kPackEntryKindBindingDefinition) {
+                            harkenstudio::ObjectId id;
+                            harkenstudiobuild::BindingDefinition binding;
+                            if (!harkenstudiobuild::ParsePackV2BindingDefinition(
+                                    entry.payload.data(), entry.payload.size(), &id, &binding)) {
+                                unit.success = false;
+                                unit.error = QStringLiteral("Cannot read binding metadata for '%1'").arg(pack.name);
+                                break;
+                            }
+                            ids.insert(binding.variableId);
+                        }
+                    }
+                    if (!pack.variableRequirementsPayload.empty()) {
+                        const auto* data = pack.variableRequirementsPayload.data();
+                        const auto count = harkenstudiobuild::LoadLE32(data);
+                        for (std::uint32_t i = 0; i < count; ++i)
+                            ids.insert(harkenstudiobuild::LoadObjectId(data + 24 + i * 40));
+                    }
+                    if (pack.packKind == harkenstudiobuild::kPackKindInit)
+                        for (const auto& bus : busProjection.buses) ids.insert(bus.busId);
+                    ids.erase(harkenstudio::ObjectId{});
+                    ids.erase(harkenstudio::kMasterBusObjectId);
+                    if (unit.success)
+                        unit.success = fillPackMetadata(project, pack, ids, metadataItems, &pack.companion, &unit.error);
+                }
+            }
+            if (unit.success) {
+                const QFileInfo binary(pack.fileName);
+                const auto relative = QDir::cleanPath(QDir(binary.path()).filePath(binary.completeBaseName() + QStringLiteral(".json")));
+                const auto path = liveDir.filePath(relative);
+                const auto bytes = QJsonDocument(pack.companion).toJson(QJsonDocument::Indented);
+                QFile current(path);
+                const bool unchanged = current.open(QIODevice::ReadOnly | QIODevice::Text) && current.readAll() == bytes;
+                current.close();
+                if (!unchanged) unit.success = writeJson(path, pack.companion, &unit.error);
             }
         }
-    }
-    QString error;
-    for (auto& pack : packs) {
-        if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
-        allPacks.push_back(&pack);
-        if (!pack.retained && pack.packKind == harkenstudiobuild::kPackKindCanonicalContent) {
-            if (pack.actionStableIds.size() != 1)
-                return fail(QStringLiteral("An Action Pack must contain exactly one Action"));
-            const auto* action = actionFor(pack.actionStableIds.front());
-            if (!action) return fail(QStringLiteral("Action publication identity is unavailable"));
-            pack.companion = QJsonObject{{QStringLiteral("schemaVersion"), HARKEN_PACK_SCHEMA_VERSION},
-                {QStringLiteral("name"), action->name},
-                {QStringLiteral("guid"), objectIdString(action->runtimeId())}};
+        if (unit.success) {
+            const QFileInfo binary(pack.fileName);
+            const QString companion = QDir::cleanPath(
+                QDir(binary.path()).filePath(binary.completeBaseName() + QStringLiteral(".json")));
+            unit.success = preserveOutputFileSpelling(liveDir.filePath(pack.fileName), &unit.error)
+                && preserveOutputFileSpelling(liveDir.filePath(companion), &unit.error);
         }
-        if (!pack.retained && project.buildExportWaveforms) {
-            QString waveformError = waveformOutputError;
-            if (!waveformError.isEmpty()
-                || !fillWaveformCompanion(request, pack, waveformOutputRoot, waveformStagingRoot,
-                    &exportedWaveformSources, &pack.companion, &waveformError)) {
-                if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
-                warnWaveform(pack, waveformError);
-            }
+        recordUnit(pack, unit);
+        if (!unit.success) {
+            pack.failed = true;
+            errors.append(QStringLiteral("%1: %2").arg(pack.name, unit.error));
+            reportProgress(pack, 100, PackGenerationStage::Failed);
+            continue;
         }
-    }
-
-    for (PackMeta* item : allPacks) {
-        if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
-        PackMeta& pack = *item;
-        QByteArray stagedBytes;
-        QString stagedError;
-        const QString stagedPath = QDir(stagingDir).filePath(pack.fileName);
-        if (!readAll(stagedPath, &stagedBytes, &stagedError))
-            return fail(stagedError);
-        pack.resourceCacheKey = QString::fromLatin1(
-            QCryptographicHash::hash(stagedBytes, QCryptographicHash::Sha256).toHex());
-        if (!pack.retained && project.buildExportPackMetadata) {
-            harkenstudiobuild::PackCanonicalImage decoded;
-            if (harkenstudiobuild::ParsePackCanonicalImage(
-                    reinterpret_cast<const std::uint8_t*>(stagedBytes.constData()),
-                    static_cast<std::uint64_t>(stagedBytes.size()), &decoded)
-                != harkenstudiobuild::kPackOk)
-                return fail(QStringLiteral("Staged Pack '%1' failed validation").arg(pack.fileName));
-            if (!fillPackMetadata(project, pack, decoded, metadataItems, &pack.companion, &error))
-                return fail(error);
+        pack.finished = true;
+        completed.insert(pack.packStableId);
+        pack.fileSize = unit.fileSize;
+        pack.formatVersion = harkenstudiobuild::kPackFormatVersion2;
+        result.warnings.append(unit.warnings);
+        if (!pack.retained || pack.packKind == harkenstudiobuild::kPackKindInit) {
+            result.fileSize += unit.fileSize;
+            result.mediaCount += unit.mediaCount;
+            result.objectCount += unit.objectCount;
+            result.actionCount += unit.actionCount;
+            const auto path = liveDir.filePath(pack.fileName);
+            result.artifacts.append({pack.unitKey, request.options.platform, pack.language,
+                pack.name, path, unit.fileSize, QFileInfo(path).lastModified(), pack.formatVersion});
         }
-        if (!pack.retained && pack.companion.contains(QStringLiteral("waveforms"))) {
-            QString waveformError;
-            if (!publishWaveformCompanion(pack.companion, liveDir.filePath(pack.fileName),
-                    waveformStagingRoot, waveformOutputRoot, &newWaveformFiles,
-                    &waveformError, request.options.cancelCheck)) {
-                if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
-                warnWaveform(pack, waveformError);
-            }
+        if (!pack.retained) {
+            if (pack.skipped) ++result.skippedPackCount;
+            else ++result.builtPackCount;
         }
-        const QFileInfo file(pack.fileName);
-        const QString relative = QDir::cleanPath(QDir(file.path()).filePath(
-            file.completeBaseName() + QStringLiteral(".json")));
-        if (pack.retained) {
-            if (!copyRelativeFile(liveDir, QDir(stagingDir), relative))
-                return fail(QStringLiteral("Cannot retain Pack companion '%1'").arg(relative));
-        } else if (!writeStagedJson(QDir(stagingDir).filePath(relative), pack.companion, &error)) {
-            return fail(error);
-        }
-        companionNames.append(relative);
-        harkenstudiobuild::PackV2Header stagedHeader;
-        if (stagedBytes.size() < harkenstudiobuild::kPackV2HeaderBytes
-            || !harkenstudiobuild::ParsePackV2Header(
-                reinterpret_cast<const std::uint8_t*>(stagedBytes.constData()),
-                &stagedHeader))
-            return fail(QStringLiteral("Staged Pack '%1' is not a v2 container")
-                            .arg(pack.fileName));
-        pack.formatVersion = stagedHeader.formatVersion;
-        pack.fileSize = stagedBytes.size();
+        QJsonObject output{{QStringLiteral("key"), pack.unitKey},
+                           {QStringLiteral("path"), pack.fileName}};
+        if (pack.companion.contains(QStringLiteral("waveforms")))
+            output.insert(QStringLiteral("companion"), QJsonObject{
+                {QStringLiteral("waveforms"), pack.companion.value(QStringLiteral("waveforms"))}});
+        result.outputs.append(output);
+        if (request.options.packBuildState && !pack.resourceFingerprint.isEmpty())
+            request.options.packBuildState->setResourceFingerprint(pack.fileName, pack.resourceFingerprint);
+        pack.previousEntries.clear();
+        pack.resourceEntries.clear();
+        reportProgress(pack, 100, pack.skipped ? PackGenerationStage::Skipped : PackGenerationStage::Complete);
     }
-
-    QSet<QString> referencedWaveformFiles;
-    for (const auto* pack : allPacks) {
-        const QDir companionDir(QFileInfo(liveDir.filePath(pack->fileName)).absolutePath());
-        for (const auto& value : pack->companion.value(QStringLiteral("waveforms")).toArray())
-            referencedWaveformFiles.insert(QDir::cleanPath(companionDir.absoluteFilePath(
-                value.toObject().value(QStringLiteral("file")).toString())));
-    }
-    for (qsizetype i = newWaveformFiles.size(); i-- > 0;) {
-        if (referencedWaveformFiles.contains(newWaveformFiles.at(i))) continue;
-        QFile::remove(newWaveformFiles.at(i));
-        newWaveformFiles.removeAt(i);
-    }
-
-    if (request.options.cancelCheck && request.options.cancelCheck()) {
-        result.canceled = true;
-        return fail(QStringLiteral("Export canceled"));
-    }
-
-    QJsonArray stagedPublication;
-    QStringList stagedFiles;
-    if (!ReadPackPublication(stagingDir, project.projectId, request.options.platform,
-            &stagedPublication, &stagedFiles, &error, true, {}, false,
-            request.options.cancelCheck)) return fail(error);
-    QStringList publishedNames = companionNames;
-    for (const PackMeta* pack : allPacks)
-        publishedNames.append(pack->fileName);
-    QStringList preservedNames;
-    for (const auto* pack : allPacks) {
-        const auto waveforms = companionWaveformFiles(pack->companion,
-            liveDir.filePath(pack->fileName), liveDir);
-        for (const auto& path : waveforms) {
-            if (!liveNames.contains(path)) liveNames.append(path);
-            if (!publishedNames.contains(path)) publishedNames.append(path);
-            if (!preservedNames.contains(path)) preservedNames.append(path);
-        }
-    }
-    for (const auto& pack : packs) {
-        if (pack.skipped && pack.fileName == pack.previousRow.value(QStringLiteral("path")).toString())
-            preservedNames.append(pack.fileName);
-    }
-    for (const auto& name : liveNames) {
-        if (containsPublicationFile(liveDir, publishedNames, name)) continue;
-        if (!request.options.selfCleaning
-            && (!previousManaged.contains(name)
-                || previousPackNames.contains(name) || previousCompanionNames.contains(name))) {
-            publishedNames.append(name);
-            preservedNames.append(name);
-        }
-    }
-    for (const auto& name : companionNames) {
-        if (!liveNames.contains(name)) continue;
-        QByteArray before, after;
-        if (readAll(liveDir.filePath(name), &before, &error)
-            && readAll(QDir(stagingDir).filePath(name), &after, &error) && before == after)
-            preservedNames.append(name);
-    }
-    if (!preserveBusyWaveformOutputs(liveDir, liveNames, &publishedNames, &preservedNames,
-            &waveformCleanupLocks, &result.warnings, &error, request.options.cancelCheck,
-            waveformLock && waveformLock->isLocked() ? waveformOutputRoot : QString()))
-        return fail(error);
-
-    nextDir = liveDir.filePath(QString::fromLatin1(kNextPrefix)
-                               + QUuid::createUuid().toString(QUuid::WithoutBraces));
-    if (!QDir().mkpath(nextDir))
-        return fail(QStringLiteral("Cannot create next pack set"));
-    for (const QString& name : publishedNames) {
-        if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
-        if (preservedNames.contains(name)) continue;
-        const QString nextPath = QDir(nextDir).filePath(name);
-        if (!QDir().mkpath(QFileInfo(nextPath).absolutePath())
-            || !QFile::rename(QDir(stagingDir).filePath(name), nextPath))
-            return fail(QStringLiteral("Cannot stage next '%1'").arg(name));
-    }
-
-    if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
-    if (request.options.snapshot && request.options.snapshot->media.sourceInputs
-        && !request.options.snapshot->media.sourceInputs->verifyUnchanged(
-            &error, request.options.cancelCheck))
-        return fail(error);
-    if (!commitPublication(liveDir, nextDir, liveNames, publishedNames, preservedNames,
-            &error, request.options.cancelCheck)) {
-        QString recoveryError;
-        if (!recoverInterruptedPublish(liveDir, &recoveryError)) {
-            keepPreviousOnFail = true;
-            error += QLatin1Char('\n') + recoveryError;
-        }
-        return fail(error);
-    }
-    for (const auto& pack : packs) {
-        if (pack.retained && pack.packKind != harkenstudiobuild::kPackKindInit) continue;
-        const QString outputPath = liveDir.filePath(pack.fileName);
-        result.artifacts.append({pack.unitKey, request.options.platform, pack.language,
-            pack.name, outputPath, pack.fileSize, QFileInfo(outputPath).lastModified(),
-            pack.formatVersion});
-    }
-    const QSet<QString> publishedFiles(publishedNames.cbegin(), publishedNames.cend());
-    const QSet<QString> validatedFiles(stagedFiles.cbegin(), stagedFiles.cend());
-    if (!request.options.updateSelectedOnly && publishedFiles == validatedFiles
-        && std::none_of(packs.cbegin(), packs.cend(), [](const auto& pack) { return pack.retained; })) {
-        result.publication = PackPublicationProof{liveDir.absolutePath(), project.projectId,
-            request.options.platform, stagedPublication, stagedFiles, outputLock};
-    }
-    for (const auto& name : previousPackNames)
-        if (!QFileInfo::exists(liveDir.filePath(name)))
-            ++result.removedPackCount;
-    for (const auto& pack : packs) {
-        if (pack.grouped || (pack.retained && !pack.metadataUpdated)
-            || pack.resourceFingerprint.isEmpty()) continue;
-        const auto fingerprint = pack.resourceFingerprint.toLatin1();
-        QFile existing(resourceCacheDir.filePath(pack.resourceCacheKey));
-        if (existing.open(QIODevice::ReadOnly) && existing.readAll() == fingerprint) continue;
-        existing.close();
-        if (!writeCacheArtifact(resourceCacheDir.filePath(pack.resourceCacheKey),
-                [&](QIODevice& cache) { return cache.write(fingerprint) == fingerprint.size(); }))
-            result.warnings.append(QStringLiteral("Cannot cache pack build inputs for '%1'").arg(pack.name));
-    }
-    QDir(nextDir).removeRecursively();
-    nextDir.clear();
-    if (!QDir(stagingDir).removeRecursively())
-        QDir(stagingDir).removeRecursively();
-    removeMatchingDirs(liveDir, QString::fromLatin1(kStagingPrefix));
-
-    removeMatchingDirs(QDir(request.outputDir), QString::fromLatin1(kStagingPrefix));
-    if (request.options.selfCleaning) removeEmptyOutputDirs(liveDir);
-    result.success = true;
+    result.success = errors.isEmpty();
+    result.error = errors.join(QLatin1Char('\n'));
     result.outputPath = request.outputDir;
     return result;
-}
-
-bool RecoverPackOutput(const QString& outputDir, QString* error)
-{
-    QString detail;
-    const bool recovered = recoverInterruptedPublish(QDir(outputDir), &detail);
-    if (!recovered && error) *error = detail;
-    return recovered;
-}
-
-bool ReadValidatedPackPublication(const QString& directory, const QString& projectId,
-                                 const QString& platformId, QJsonArray* packs,
-                                 QStringList* managedFiles, QString* error,
-                                 const QStringList& expectedPackPaths,
-                                 const std::function<bool()>& cancelCheck,
-                                 const PackPublicationProof* publication)
-{
-    if (exportCanceled(cancelCheck, error)) return false;
-    const auto reuse = [&] {
-        if (!publication || expectedPackPaths.isEmpty()) return false;
-        const auto lock = publication->outputLock.lock();
-        const QDir directoryPath(directory);
-        const QUuid publishedProject(publication->projectId);
-        if (!lock || !lock->isLocked() || publishedProject.isNull()
-            || directoryPath.absolutePath() != QDir(publication->directory).absolutePath()
-            || publication->platformId != platformId
-            || (!projectId.isEmpty() && QUuid(projectId) != publishedProject)
-            || QFileInfo(directoryPath.absolutePath()).isSymLink()
-            || QFile::exists(directoryPath.filePath(QString::fromLatin1(kPublishingMarker)))) return false;
-        const QSet<QString> expected(expectedPackPaths.cbegin(), expectedPackPaths.cend());
-        for (const auto& path : expected)
-            if (!safePublicationPath(directoryPath, path)) return false;
-        const QSet<QString> files(publication->managedFiles.cbegin(), publication->managedFiles.cend());
-        for (const auto& path : files) {
-            if (exportCanceled(cancelCheck, error) || !safePublicationPath(directoryPath, path)
-                || !QFileInfo(directoryPath.filePath(path)).isFile()) return false;
-        }
-        QJsonArray selected;
-        QSet<QString> selectedPaths;
-        QSet<QString> selectedIds;
-        QSet<QString> coveredFiles;
-        QString initId;
-        for (const auto& value : publication->packs) {
-            if (exportCanceled(cancelCheck, error) || !value.isObject()) return false;
-            const auto row = value.toObject();
-            const QString path = row.value(QStringLiteral("path")).toString();
-            const QFileInfo file(path);
-            const QString companion = QDir::cleanPath(QDir(file.path()).filePath(
-                file.completeBaseName() + QStringLiteral(".json")));
-            if (!files.contains(path) || !files.contains(companion)
-                || QUuid(row.value(QStringLiteral("projectId")).toString()) != publishedProject
-                || row.value(QStringLiteral("platformId")).toString() != platformId) return false;
-            coveredFiles.insert(path);
-            coveredFiles.insert(companion);
-            if (!expected.contains(path)) continue;
-            const QString id = row.value(QStringLiteral("packStableId")).toString();
-            if (id.isEmpty() || selectedPaths.contains(path) || selectedIds.contains(id)) return false;
-            selectedPaths.insert(path);
-            selectedIds.insert(id);
-            if (row.value(QStringLiteral("packKind")).toInt() == harkenstudiobuild::kPackKindInit) {
-                if (!initId.isEmpty() || path != QStringLiteral("Init.bytes")) return false;
-                initId = id;
-            }
-            selected.append(row);
-        }
-        if (selectedPaths != expected || coveredFiles != files || initId.isEmpty()) return false;
-        for (const auto& value : selected) {
-            const auto row = value.toObject();
-            const auto dependencies = row.value(QStringLiteral("dependencies")).toArray();
-            if (row.value(QStringLiteral("packStableId")).toString() != initId
-                && !dependencies.contains(initId)) return false;
-            for (const auto& dependency : dependencies)
-                if (!selectedIds.contains(dependency.toString())) return false;
-        }
-        *packs = std::move(selected);
-        *managedFiles = publication->managedFiles;
-        return true;
-    };
-    return reuse() || ReadPackPublication(directory, projectId, platformId, packs,
-        managedFiles, error, true, expectedPackPaths, false, cancelCheck);
 }
 
 ProjectPackExporter::ExportResult ProjectPackExporter::FinalizePackExport(
     const QString& baseDir, const ProjectData& project,
     const QStringList& selectedPlatformIds, bool selfCleaning,
-    const QVector<PackArtifactMetadata>& artifacts,
-    const std::function<bool()>& cancelCheck,
-    const QMap<QString, PackPublicationProof>& publications)
+    const QMap<QString, QJsonArray>& outputs,
+    const std::function<bool()>& cancelCheck)
 {
     ExportResult result;
-    const auto isCanceled = [&] {
-        if (!exportCanceled(cancelCheck, &result.error)) return false;
+    if (exportCanceled(cancelCheck, &result.error)) {
         result.canceled = true;
-        return true;
-    };
-    if (isCanceled()) return result;
+        return result;
+    }
+    QStringList errors;
+    const QDir root(baseDir);
     if (PathUtils::isProtectedPackOutputPath(baseDir, project.projectPath)) {
         result.error = PathUtils::packBuildOutputLocationError();
         return result;
     }
-    const auto& platforms = project.platforms;
-    if (selectedPlatformIds.isEmpty()) {
-        result.error = QStringLiteral("Select at least one platform to export");
-        return result;
-    }
-    QVector<ProjectPlatform> selectedPlatforms;
-    for (const auto& id : selectedPlatformIds) {
-        if (isCanceled()) return result;
-        const auto* platform = ProjectPlatformSemantics::find(platforms, QUuid(id));
-        if (!platform) {
-            result.error = QStringLiteral("Unknown project platform ID: %1").arg(id);
-            return result;
-        }
-        selectedPlatforms.append(*platform);
-    }
-    if (!FinalizePackOutputs(baseDir, platforms, selectedPlatformIds, selectedPlatformIds,
-            &result.error, artifacts, isCanceled, publications)) return result;
-    const QDir liveDir(baseDir);
-    QLockFile publicationLock(liveDir.filePath(QStringLiteral(".harken-pack-index.lock")));
-    publicationLock.setStaleLockTime(0);
-    if (!publicationLock.tryLock(2000)) {
-        result.error = QStringLiteral("Pack output is being finalized by another build");
-        return result;
-    }
-    QString projectId = project.projectId;
-    QStringList selectedFiles;
-    for (const auto& platform : selectedPlatforms) {
-        if (isCanceled()) return result;
-        QJsonArray rows;
-        QStringList names;
-        const QString platformId = ProjectPlatformSemantics::idString(platform.id);
-        const QDir platformDir(platformOutputDir(baseDir, platform));
-        QStringList expectedPaths;
-        for (const auto& artifact : artifacts)
-            if (artifact.platform == platformId)
-                expectedPaths.append(platformDir.relativeFilePath(artifact.outputPath));
-        if (!artifacts.isEmpty() && expectedPaths.isEmpty()) {
-            result.error = QStringLiteral("No generated Pack artifacts for platform: %1").arg(platform.name);
-            return result;
-        }
-        const auto publication = publications.constFind(platformId);
-        if (!ReadValidatedPackPublication(platformDir.path(), projectId, platformId, &rows, &names,
-                &result.error, expectedPaths, isCanceled,
-                publication == publications.cend() ? nullptr : &*publication)) return result;
-        if (!rows.isEmpty()) projectId = rows.first().toObject().value(QStringLiteral("projectId")).toString();
-        for (const auto& value : rows) {
-            if (isCanceled()) return result;
-            const QString path = value.toObject().value(QStringLiteral("path")).toString();
-            selectedFiles.append(platform.name + QLatin1Char('/') + path);
-            const QFileInfo file(path);
-            selectedFiles.append(platform.name + QLatin1Char('/')
-                + QDir::cleanPath(QDir(file.path()).filePath(file.completeBaseName() + QStringLiteral(".json"))));
-            selectedFiles.append(companionWaveformFiles(value.toObject().value(QStringLiteral("companion")).toObject(),
-                platformDir.filePath(path), liveDir));
-        }
-    }
-    QStringList liveNames, previousPackNames;
-    const QString metadataName = QStringLiteral("Project.json");
-    const QStringList metadataNames{metadataName, QStringLiteral("ProjectData.json")};
+    QStringList keep;
     if (selfCleaning) {
-        QStringList platformNames;
-        for (const auto& platform : selectedPlatforms) platformNames.append(platform.name);
-        if (!scanCleanupFiles(liveDir, platformNames, &liveNames, &previousPackNames,
-                &result.error, isCanceled)) return result;
-    } else {
-        if (QFileInfo(liveDir.absolutePath()).isSymLink()) {
-            result.error = QStringLiteral("Output directory is a symbolic link: %1").arg(liveDir.absolutePath());
-            return result;
-        }
-        for (const auto& entry : liveDir.entryInfoList(QDir::Files | QDir::Hidden | QDir::System)) {
-            if (isCanceled()) return result;
-            if (!metadataNames.contains(entry.fileName(), Qt::CaseInsensitive)) continue;
-            if (entry.isSymLink()) {
-                result.error = QStringLiteral("Project data output is a symbolic link: %1").arg(entry.absoluteFilePath());
+        for (const auto& id : selectedPlatformIds) {
+            const auto* platform = ProjectPlatformSemantics::find(project.platforms, QUuid(id));
+            if (!platform) {
+                result.error = QStringLiteral("Unknown project platform ID: %1").arg(id);
                 return result;
             }
-            liveNames.append(entry.fileName());
+            const QDir directory(platformOutputDir(baseDir, *platform));
+            for (const auto& value : outputs.value(id)) {
+                const auto row = value.toObject();
+                const QString path = row.value(QStringLiteral("path")).toString();
+                const QFileInfo file(path);
+                keep.append(root.relativeFilePath(directory.filePath(path)));
+                keep.append(root.relativeFilePath(directory.filePath(QDir::cleanPath(
+                    QDir(file.path()).filePath(file.completeBaseName() + QStringLiteral(".json"))))));
+                keep.append(companionWaveformFiles(row.value(QStringLiteral("companion")).toObject(),
+                    directory.filePath(path), root));
+            }
         }
     }
-    QStringList publishedNames;
-    for (const auto& name : liveNames)
-        if (!metadataNames.contains(name, Qt::CaseInsensitive)
-            && (!selfCleaning || selectedFiles.contains(name))) publishedNames.append(name);
-    QStringList preservedNames = publishedNames;
-    std::vector<std::unique_ptr<QLockFile>> waveformCleanupLocks;
-    if (!preserveBusyWaveformOutputs(liveDir, liveNames, &publishedNames, &preservedNames,
-            &waveformCleanupLocks, &result.warnings, &result.error, isCanceled)) return result;
-    QTemporaryDir next(liveDir.filePath(QString::fromLatin1(kNextPrefix) + QStringLiteral("XXXXXX")));
-    if (!next.isValid()) {
-        result.error = QStringLiteral("Cannot stage the Pack output publication");
-        return result;
-    }
+    const QString metadataName = QStringLiteral("Project.json");
     if (project.buildExportProjectData) {
-        QJsonArray platformRows;
-        for (const auto& platform : platforms) {
-            platformRows.append(QJsonObject{
-                {QStringLiteral("guid"), ProjectPlatformSemantics::idString(platform.id)},
+        QJsonArray platforms;
+        for (const auto& platform : project.platforms)
+            platforms.append(QJsonObject{{QStringLiteral("guid"), ProjectPlatformSemantics::idString(platform.id)},
                 {QStringLiteral("name"), platform.name},
                 {QStringLiteral("basePlatform"), ProjectPlatformSemantics::basePlatformName(platform.basePlatform)}});
-        }
         const QJsonObject metadata{
             {QStringLiteral("schemaVersion"), HARKEN_PACK_SCHEMA_VERSION},
             {QStringLiteral("projectGuid"), QUuid(project.projectId).toString(QUuid::WithoutBraces)},
@@ -4652,33 +3870,66 @@ ProjectPackExporter::ExportResult ProjectPackExporter::FinalizePackExport(
             {QStringLiteral("studioVersion"), QString::fromUtf8(Harken::BuildInfo::Version.data(),
                 static_cast<qsizetype>(Harken::BuildInfo::Version.size()))},
             {QStringLiteral("studioSchemaVersion"), ProjectSchema::kProjectSchemaVersion},
-            {QStringLiteral("platforms"), platformRows},
+            {QStringLiteral("platforms"), platforms},
             {QStringLiteral("languages"), QJsonArray::fromStringList(ProjectLanguageSemantics::buildLanguages(project))}};
-        const auto errors = ProjectSchemaValidator::validatePackManifest(
-            HARKEN_PACK_SCHEMA_VERSION, metadata, metadataName);
-        if (!errors.isEmpty()) {
-            result.error = errors.join(QLatin1Char('\n'));
+        QFile current(root.filePath(metadataName));
+        const bool unchanged = current.open(QIODevice::ReadOnly | QIODevice::Text)
+            && current.readAll() == QJsonDocument(metadata).toJson(QJsonDocument::Indented);
+        current.close();
+        if (!unchanged && !writeJson(root.filePath(metadataName), metadata, &result.error)) return result;
+        keep.append(metadataName);
+    }
+    if (selfCleaning) {
+        QStringList files;
+        QStringList directories;
+        if (!scanOutputFiles(root, &files, nullptr, &result.error, cancelCheck, &directories)) {
+            result.canceled = cancelCheck && cancelCheck();
             return result;
         }
-        if (!writeStagedJson(QDir(next.path()).filePath(metadataName), metadata, &result.error)) return result;
-        publishedNames.append(metadataName);
-    }
-    if (isCanceled()) return result;
-    if (!commitPublication(liveDir, next.path(), liveNames, publishedNames, preservedNames,
-            &result.error, isCanceled)) {
-        QString detail;
-        if (!recoverInterruptedPublish(liveDir, &detail)) {
-            next.setAutoRemove(false);
-            result.error += QLatin1Char('\n') + detail;
+        QStringList preserved = keep;
+        std::vector<std::unique_ptr<QLockFile>> waveformLocks;
+        if (!preserveBusyWaveformOutputs(root, files, &keep, &preserved, &waveformLocks,
+                &result.warnings, &result.error, cancelCheck)) return result;
+        for (const auto& relative : files) {
+            if (exportCanceled(cancelCheck, &result.error)) {
+                result.canceled = true;
+                return result;
+            }
+            if (containsPublicationFile(root, keep, relative)) continue;
+            const auto path = root.filePath(relative);
+            if (!QFile::remove(path)) {
+                errors.append(QStringLiteral("Cannot remove obsolete output '%1'").arg(path));
+                continue;
+            }
+            if (relative.endsWith(Bridge::packArtifactExtension())) ++result.removedPackCount;
         }
-        return result;
+        std::sort(directories.begin(), directories.end(), [](const auto& a, const auto& b) {
+            const auto aDepth = a.count(QLatin1Char('/'));
+            const auto bDepth = b.count(QLatin1Char('/'));
+            return aDepth != bDepth ? aDepth > bDepth : a < b;
+        });
+        for (const auto& relative : directories) {
+            if (exportCanceled(cancelCheck, &result.error)) {
+                result.canceled = true;
+                return result;
+            }
+            const auto path = root.filePath(relative);
+            if (!QDir(path).isEmpty(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System))
+                continue;
+            if (!root.rmdir(relative))
+                errors.append(QStringLiteral("Cannot remove empty output directory '%1'").arg(path));
+        }
+    } else {
+        for (const auto& name : {metadataName, QStringLiteral("ProjectData.json")}) {
+            if (keep.contains(name) || !QFileInfo::exists(root.filePath(name))) continue;
+            if (!QFile::remove(root.filePath(name)))
+                errors.append(QStringLiteral("Cannot remove obsolete output '%1'").arg(root.filePath(name)));
+        }
     }
-    for (const auto& name : previousPackNames)
-        if (!QFileInfo::exists(liveDir.filePath(name))) ++result.removedPackCount;
-    if (selfCleaning) removeEmptyOutputDirs(liveDir);
     result.outputPath = baseDir;
-    result.success = true;
+    result.success = errors.isEmpty();
+    result.error = errors.join(QLatin1Char('\n'));
     return result;
 }
 
-} // namespace VNX
+}

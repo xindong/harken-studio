@@ -22,8 +22,6 @@ bool isCurrentMediaCacheFile(const QFileInfo& info)
     if (info.suffix().compare(QStringLiteral("wav"), Qt::CaseInsensitive) != 0)
         return false;
     if (!ProjectPlatformSemantics::parseId(info.dir().dirName())) return false;
-    if (QFileInfo(info.absolutePath()).dir().dirName() == QStringLiteral("pack-derivatives"))
-        return info.completeBaseName().size() == 64;
     const QStringList parts = info.completeBaseName().split(QLatin1Char('_'));
     bool ok = false;
     const uint32_t sourceID = parts.value(0).toUInt(&ok);

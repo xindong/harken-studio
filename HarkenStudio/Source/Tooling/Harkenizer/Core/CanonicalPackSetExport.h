@@ -7,6 +7,7 @@
 #include <QString>
 #include <set>
 #include <vector>
+#include <utility>
 
 namespace VNX {
 
@@ -18,6 +19,7 @@ struct CanonicalPackSetExportRequest
     QString outputDir;
     ProjectPackExporter::ExportOptions options;
     std::set<harkenstudio::ObjectId> includedActionIds;
+    std::set<std::pair<harkenstudio::ObjectId, QString>> failedActionVariants;
     const PackBuildPlan* plan = nullptr;
     harkenstudio::ObjectId snapshotBus = harkenstudio::kMasterBusObjectId;
     harkenstudio::ObjectId snapshotParent = {};
@@ -38,15 +40,6 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
                          const QStringList& expectedPackPaths = {},
                          bool allowPlatformReplacement = false,
                          const std::function<bool()>& cancelCheck = {});
-
-bool RecoverPackOutput(const QString& outputDir, QString* error);
-
-bool ReadValidatedPackPublication(const QString& directory, const QString& projectId,
-                                 const QString& platformId, QJsonArray* packs,
-                                 QStringList* managedFiles, QString* error,
-                                 const QStringList& expectedPackPaths,
-                                 const std::function<bool()>& cancelCheck,
-                                 const PackPublicationProof* publication);
 
 inline bool ValidateSnapshotBusIds(harkenstudio::ObjectId bus, harkenstudio::ObjectId parent,
                                    harkenstudio::ObjectId sendSource, harkenstudio::ObjectId sendTarget,

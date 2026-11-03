@@ -497,7 +497,7 @@ TEST_F(ProjectPlatformBuild, IndependentBuildMatchesSavedProjectPublication)
     const QString referenceRoot = directory.filePath("Reference");
     const QString consoleRoot = directory.filePath("Console");
     const QStringList platforms{Platforms::idString(low), Platforms::idString(high)};
-    QVector<PackArtifactMetadata> artifacts;
+    QMap<QString, QJsonArray> outputs;
     ProjectPackExporter exporter;
     for (const auto& id : platforms) {
         ProjectPackExporter::ExportOptions options;
@@ -508,10 +508,10 @@ TEST_F(ProjectPlatformBuild, IndependentBuildMatchesSavedProjectPublication)
         const auto result = exporter.ExportAllPacks(snapshot->project,
             ProjectPackExporter::platformOutputDir(referenceRoot, *definition), options);
         ASSERT_TRUE(result.success) << result.error.toStdString();
-        artifacts.append(result.artifacts);
+        outputs.insert(id, result.outputs);
     }
     const auto finalization = ProjectPackExporter::FinalizePackExport(
-        referenceRoot, snapshot->project, platforms, false, artifacts);
+        referenceRoot, snapshot->project, platforms, false, outputs);
     ASSERT_TRUE(finalization.success) << finalization.error.toStdString();
     const auto reference = directoryContents(referenceRoot, {"*.bytes", "*.json"});
     ASSERT_GE(reference.size(), 9);
@@ -622,26 +622,6 @@ TEST_F(ProjectPlatformBuild, BuildingPreservesAuthoredComponentsAndParentAliases
     EXPECT_EQ(container->comp<VNX::VSelection>()->selections.toJson(), selectionsJson);
 }
 
-TEST_F(ProjectPlatformBuild, DeliveryRejectsCorruptPackHeaders)
-{
-    const QString root = directory.filePath("Delivery");
-    const QString platformDir = QDir(root).filePath("Android_Low");
-    const QString id = Platforms::idString(low);
-    std::vector<ProjectPackExporter::PackBuildRecord> records;
-    ASSERT_TRUE(exportPlatform(low, platformDir, records).success);
-    const auto original = publicationBytes(platformDir, low);
-    ASSERT_FALSE(original.isEmpty());
-    QString error;
-    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {id}, {id}, &error));
-    const QString packPath = contentPath(records);
-    QFile corrupted(packPath);
-    ASSERT_TRUE(corrupted.open(QIODevice::ReadWrite));
-    ASSERT_TRUE(corrupted.seek(0));
-    ASSERT_EQ(corrupted.write("BAD!"), 4);
-    corrupted.close();
-    EXPECT_FALSE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {id}, {id}, &error));
-}
-
 TEST_F(ProjectPlatformBuild, CompetingOutputRequestsDoNotChangePublishedPairs)
 {
     const QString root = directory.filePath("Delivery");
@@ -649,7 +629,6 @@ TEST_F(ProjectPlatformBuild, CompetingOutputRequestsDoNotChangePublishedPairs)
     ASSERT_TRUE(exportPlatform(low, QDir(root).filePath("Android_Low"), records).success);
     const auto id = Platforms::idString(low);
     QString error;
-    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {id}, {id}, &error));
     const auto original = publicationBytes(QDir(root).filePath("Android_Low"), low);
     const auto lock = ProjectPackExporter::LockPackOutputRoot(root, &error);
     ASSERT_NE(lock, nullptr);

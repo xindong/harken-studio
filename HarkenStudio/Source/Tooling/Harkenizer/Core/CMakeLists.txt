@@ -9,6 +9,7 @@ add_library(harkenizer_core STATIC
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/AudioFormatCatalog.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/BuildSourceInputs.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/CacheArtifactWriter.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/SourceFileState.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/MediaBuildSnapshot.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/PathUtils.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/PlatformProfile.cpp
@@ -82,7 +83,7 @@ add_library(harkenizer_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/CurrentWorldArtifactWriter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/CurrentWorldProjectAdapter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/PackBuildPlan.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/PackBuildReceipt.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/PackBuildState.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/PackExportSelection.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/PackMediaPreparation.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/PackOutputIndex.cpp
@@ -100,6 +101,7 @@ add_library(harkenizer_core STATIC
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/AudioFormatCatalog.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/BuildSourceInputs.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/CacheArtifactWriter.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/SourceFileState.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/MediaBuildSnapshot.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/PathUtils.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/PlatformProfile.h
@@ -170,7 +172,7 @@ add_library(harkenizer_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/CurrentWorldArtifactWriter.h
     ${CMAKE_CURRENT_SOURCE_DIR}/CurrentWorldProjectAdapter.h
     ${CMAKE_CURRENT_SOURCE_DIR}/PackBuildPlan.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/PackBuildReceipt.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/PackBuildState.h
     ${CMAKE_CURRENT_SOURCE_DIR}/PackExportSelection.h
     ${CMAKE_CURRENT_SOURCE_DIR}/PackMediaPreparation.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ProjectBuildSnapshot.h

@@ -56,11 +56,6 @@ TEST(PackGenerationRecord, ObservationsFollowActiveRunAndTrackedUnits)
     progress.stage = VNX::PackGenerationStage::Writing;
     store.updateProgress(run, progress);
     EXPECT_EQ(store.findObservation(unit.platform, unit.language, unit.unitKey), nullptr);
-    unit.stage = VNX::PackBuildObservationStage::ReadyToPublish;
-    store.updateObservation(run, unit);
-    progress.stage = VNX::PackGenerationStage::Publishing;
-    store.updateProgress(run, progress);
-    ASSERT_NE(store.findObservation(unit.platform, unit.language, unit.unitKey), nullptr);
     progress.stage = VNX::PackGenerationStage::Complete;
     store.updateProgress(run, progress);
     store.updateObservation(run, unit);

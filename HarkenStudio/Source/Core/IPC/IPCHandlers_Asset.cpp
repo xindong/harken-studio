@@ -369,7 +369,7 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
     packBuildProject_ = project;
     packBuildInProgress_ = true;
     packBuildProgress_ = 0;
-    packBuildMessage_ = "Checking existing packs and output permissions...";
+    packBuildMessage_ = "Starting pack build...";
     packBuildResult_ = QJsonObject();
     packBuildCancel_ = cancel;
 
@@ -386,6 +386,7 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
         QVector<PackGenerationRecord> generationRecords;
         std::map<std::tuple<QString, QString, QString>, PackGenerationProgress> unitProgress;
         QMap<QString, QVector<PackArtifactMetadata>> publishedArtifacts;
+        QSet<QString> partialPlatforms;
         QString firstError;
         int done = 0;
         ProjectPackExporter::ExportOptions exportOpts;
@@ -416,7 +417,6 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
         buildRequest.platforms = platforms;
         buildRequest.options = exportOpts;
         buildRequest.outputLock = outputLock;
-        buildRequest.stopOnCanceledPlatform = false;
         buildRequest.artifactOrder = ProjectPackBuildService::ArtifactOrder::PlatformId;
         buildRequest.preflightFinished = [this, runId] {
             QMetaObject::invokeMethod(this, [this, runId] {
@@ -433,7 +433,9 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
             const auto& records = completed.records;
             const auto& result = completed.result;
             const auto& timer = completed.timer;
-            if (result.success) publishedArtifacts.insert(platform, result.artifacts);
+            if (result.success || !result.artifacts.isEmpty())
+                publishedArtifacts.insert(platform, result.artifacts);
+            if (!result.success) partialPlatforms.insert(platform);
             for (const auto& record : records) {
                 QString source;
                 switch (record.source) {
@@ -492,7 +494,6 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
                 {"media_count", result.mediaCount},
                 {"media_cache_hits", result.mediaCacheHits},
                 {"media_conversions", result.mediaConversions},
-                {"media_fallbacks", result.mediaFallbacks},
                 {"warnings", QJsonArray::fromStringList(result.warnings)}
             };
             if (!result.success)
@@ -519,19 +520,14 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
         QStringList publicationWarnings;
         if (build.finalization != ProjectPackBuildService::Finalization::None) {
             const bool finalized = build.finalizationResult.success;
-            if (build.finalization == ProjectPackBuildService::Finalization::Complete) {
-                const auto& publication = build.finalizationResult;
-                publicationWarnings = publication.warnings;
-                publicationError = publication.error;
-            } else {
-                publicationError = build.finalizationResult.error;
-            }
+            publicationWarnings = build.finalizationResult.warnings;
+            publicationError = build.finalizationResult.error;
             if (!finalized && !canceled) {
                 allSuccess = false;
                 firstError = publicationError;
             }
         }
-        packBuildCompletion_ = [this, platformResults, generationRecords, unitProgress, publishedArtifacts,
+        packBuildCompletion_ = [this, platformResults, generationRecords, unitProgress, publishedArtifacts, partialPlatforms,
                                          allSuccess, firstError, pmGuard, preflightSucceeded,
                                           canceled, runId, project, platformActivity,
                                           outputLock, actionStableId,
@@ -548,7 +544,8 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
                 return;
             }
             for (auto it = publishedArtifacts.cbegin(); it != publishedArtifacts.cend(); ++it)
-                PackArtifactCache::instance().publish(it.key(), it.value(), !harkenstudio::IsNull(actionStableId));
+                PackArtifactCache::instance().publish(it.key(), it.value(),
+                    !harkenstudio::IsNull(actionStableId) || partialPlatforms.contains(it.key()));
             for (const auto& [key, progress] : unitProgress) {
                 PackGenerationRecordStore::instance().updateProgress(runId,
                     {progress.platform, progress.language, progress.unitKey, 0, PackGenerationStage::Queued});

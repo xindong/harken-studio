@@ -2,8 +2,6 @@
 
 #include "AssetTypes.h"
 
-#include <QMap>
-#include <functional>
 #include <memory>
 
 class QTemporaryDir;
@@ -26,16 +24,16 @@ private:
 class BuildSourceInputs
 {
 public:
-    BuildSourceInputs();
+    explicit BuildSourceInputs(QString projectRoot = {}, QHash<uint32_t, AssetInfo> assets = {});
     ~BuildSourceInputs();
 
-    QString sourceFingerprint(const AssetInfo& asset, QString* error = nullptr);
-    void beginDependencyScope();
-    bool adopt(BuildSourceInputs& probes, QString* error = nullptr);
-    QMap<uint32_t, QString> fingerprints() const;
+    void beginRequest();
+    QHash<uint32_t, AssetInfo> assets() const;
+    std::shared_ptr<const BuildSourceInput> inspect(const AssetInfo& asset, QString* error = nullptr);
     std::shared_ptr<const BuildSourceInput> capture(const AssetInfo& asset, QString* error = nullptr);
-    bool verifyUnchanged(QString* error = nullptr,
-                         const std::function<bool()>& canceled = {}) const;
+    QByteArray waveformState(uint32_t sourceID) const;
+    void setWaveformState(uint32_t sourceID, const QByteArray& state);
+    bool save();
 
 private:
     struct Impl;

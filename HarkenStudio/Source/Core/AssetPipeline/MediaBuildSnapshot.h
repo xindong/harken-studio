@@ -33,7 +33,8 @@ struct MediaBuildSnapshot
     QHash<uint32_t, ConversionSettings> fileOverrides;
     std::shared_ptr<BuildSourceInputs> sourceInputs;
 
-    QString sourceFingerprint(uint32_t sourceID, QString* error = nullptr) const;
+    std::optional<MediaConversionRequest> inspectRequest(
+        uint32_t sourceID, ProjectPlatformId platformId, QString* error = nullptr) const;
     std::optional<MediaConversionRequest> request(
         uint32_t sourceID, ProjectPlatformId platformId, QString* error = nullptr) const;
 };

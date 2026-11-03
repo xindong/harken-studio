@@ -11,31 +11,6 @@
 namespace VNX {
 namespace {
 
-bool validOutput(const QString& baseDir, const ProjectPlatform& platform, QString* error,
-                 const QVector<PackArtifactMetadata>& artifacts,
-                 const std::function<bool()>& cancelCheck,
-                 const QMap<QString, PackPublicationProof>& publications)
-{
-    const QDir dir(ProjectPackExporter::platformOutputDir(baseDir, platform));
-    if (QFileInfo(dir.path()).isSymLink()
-        || QFile::exists(dir.filePath(QStringLiteral(".harken-pack-publishing")))) return false;
-    QJsonArray packs;
-    QStringList managedFiles;
-    const QString platformId = ProjectPlatformSemantics::idString(platform.id);
-    QStringList expectedPaths;
-    for (const auto& artifact : artifacts)
-        if (artifact.platform == platformId)
-            expectedPaths.append(dir.relativeFilePath(artifact.outputPath));
-    if (!artifacts.isEmpty() && expectedPaths.isEmpty()) {
-        if (error) *error = QStringLiteral("No generated Pack artifacts for platform: %1").arg(platform.name);
-        return false;
-    }
-    const auto publication = publications.constFind(platformId);
-    return ReadValidatedPackPublication(dir.path(), {}, platformId,
-        &packs, &managedFiles, error, expectedPaths, cancelCheck,
-        publication == publications.cend() ? nullptr : &*publication);
-}
-
 bool preserveDirectorySpelling(const QString& baseDir, const ProjectPlatform& platform)
 {
     QDir root(baseDir);
@@ -86,52 +61,7 @@ std::shared_ptr<QLockFile> ProjectPackExporter::LockPackOutputRoot(const QString
         if (error) *error = QStringLiteral("Pack output is being built by another request: %1").arg(baseDir);
         return {};
     }
-    if (!RecoverPackOutput(baseDir, error)) return {};
     return lock;
-}
-
-bool ProjectPackExporter::ValidatePackOutputs(const QString& baseDir,
-                                              const QVector<ProjectPlatform>& platforms, QString* error,
-                                              const QVector<PackArtifactMetadata>& artifacts,
-                                              const std::function<bool()>& cancelCheck,
-                                              const QMap<QString, PackPublicationProof>& publications)
-{
-    if (baseDir.isEmpty() || !ProjectPlatformSemantics::validatePlatforms(platforms, error)) return false;
-    for (const auto& platform : platforms) {
-        if (cancelCheck && cancelCheck()) {
-            if (error) *error = QStringLiteral("Export canceled");
-            return false;
-        }
-        if (!validOutput(baseDir, platform, error, artifacts, cancelCheck, publications)
-            || !preserveDirectorySpelling(baseDir, platform)) {
-            if (error && error->isEmpty())
-                *error = QStringLiteral("Pack output is incomplete or belongs to another platform: %1").arg(platform.name);
-            return false;
-        }
-    }
-    return true;
-}
-
-bool ProjectPackExporter::FinalizePackOutputs(const QString& baseDir,
-                                              const QVector<ProjectPlatform>& platforms,
-                                              const QStringList& requestedIds,
-                                              const QStringList& succeededIds, QString* error,
-                                              const QVector<PackArtifactMetadata>& artifacts,
-                                              const std::function<bool()>& cancelCheck,
-                                              const QMap<QString, PackPublicationProof>& publications)
-{
-    if (baseDir.isEmpty() || !ProjectPlatformSemantics::validatePlatforms(platforms, error)) return false;
-    QVector<ProjectPlatform> completed;
-    for (const auto& id : succeededIds) {
-        const auto* platform = ProjectPlatformSemantics::find(platforms, QUuid(id));
-        if (!platform || !requestedIds.contains(id)) {
-            if (error) *error = QStringLiteral("Pack platform changed during the build: %1").arg(id);
-            return false;
-        }
-        completed.append(*platform);
-    }
-    if (completed.isEmpty()) return true;
-    return ValidatePackOutputs(baseDir, completed, error, artifacts, cancelCheck, publications);
 }
 
 }

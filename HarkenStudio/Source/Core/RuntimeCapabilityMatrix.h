@@ -21,6 +21,7 @@ struct CanonicalRuntimeProjectContextV1;
 namespace VNX {
 
 struct FieldGroupEffectiveSnapshot;
+struct BindingRuntimeLowering;
 
 enum class RuntimeCapabilityState : uint8_t
 {
@@ -166,6 +167,10 @@ private:
 
 namespace RuntimeCapabilityMatrix {
 
+RuntimeCapabilityEntry lowerBindings(const ProjectItem& item,
+                                    const ProjectData& project,
+                                    RuntimeCapabilityOperation operation,
+                                    BindingRuntimeLowering* output);
 RuntimeCapabilityEntry evaluateForContext(const ProjectItem& item,
                                           const ProjectData& project,
                                           RuntimeCapabilityOperation operation,

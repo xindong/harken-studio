@@ -5,13 +5,11 @@
 #include "AssetPipeline/BuildSourceInputs.h"
 #include "AssetPipeline/CacheArtifactWriter.h"
 #include "RuntimeBridge/PackagingBridge.h"
-#include "Tooling/Harkenizer/BuildIdentity.h"
 
 #include <QCryptographicHash>
 #include <QDataStream>
 #include <QDir>
 #include <QFile>
-#include <QJsonDocument>
 #include <QMutexLocker>
 
 #include <algorithm>
@@ -21,107 +19,124 @@
 namespace VNX::SoundSourceDerivative {
 namespace {
 
-constexpr char kDerivativeCacheNamespace[] = "harken.sound-source-derivative/v4";
+constexpr quint32 kArtifactMagic = 0x4d435048;
+constexpr quint32 kArtifactVersion = 1;
+constexpr qint64 kHeaderBytes = 40;
+constexpr qint64 kDigestBytes = 32;
 
 void fail(QString* error, const QString& message)
 {
     if (error) *error = message;
 }
 
-QString inputFingerprint(const QString& path)
+std::optional<FrameRange> loopRange(const SoundSourceDef& source, const FrameRange& trim)
 {
-    return AssetImporter::computeContentHash(path);
+    if (!source.loopRegion) return std::nullopt;
+    const auto start = std::clamp(source.loopRegion->startFrame, trim.start, trim.end);
+    const auto end = std::clamp(source.loopRegion->endFrame, start, trim.end);
+    return end > start ? std::optional<FrameRange>(FrameRange{start - trim.start, end - trim.start})
+        : std::nullopt;
 }
 
-QString digest(const QByteArray& bytes)
+std::optional<uint64_t> scheduleFrames(double seconds, uint32_t sampleRate)
 {
-    return QString::fromLatin1(QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex());
+    const auto offset = seconds * sampleRate;
+    if (seconds < 0.0 || !std::isfinite(offset)
+        || offset >= static_cast<double>(std::numeric_limits<int64_t>::max())) return std::nullopt;
+    return static_cast<uint64_t>(std::llround(offset));
 }
 
-bool isDigest(const QString& value)
+QByteArray requestKey(const QString& inputFingerprint, const SoundSourceDef& source,
+                      double scheduleOffsetSec, const ConversionSettings& settings,
+                      const AudioMetadata& metadata)
 {
-    return value.size() == 64 && std::all_of(value.cbegin(), value.cend(), [](QChar c) {
-        return (c >= QLatin1Char('0') && c <= QLatin1Char('9'))
-            || (c >= QLatin1Char('a') && c <= QLatin1Char('f'));
-    });
+    if (inputFingerprint.isEmpty() || !std::isfinite(scheduleOffsetSec) || scheduleOffsetSec < 0.0
+        || (settings.performResample && settings.targetSampleRate == 0))
+        return {};
+    const auto range = mapFrameRange(source, metadata.totalSamples);
+    const auto outputRate = settings.performResample ? settings.targetSampleRate : metadata.sampleRate;
+    const auto offset = scheduleFrames(scheduleOffsetSec, outputRate);
+    if (!range || outputRate == 0 || !offset) return {};
+    const auto loop = loopRange(source, *range);
+    QByteArray request;
+    QDataStream stream(&request, QIODevice::WriteOnly);
+    stream.setVersion(QDataStream::Qt_6_0);
+    stream << kArtifactVersion << static_cast<quint32>(kMediaCacheArtifactVersion)
+           << inputFingerprint << static_cast<quint64>(range->start) << static_cast<quint64>(range->end)
+           << static_cast<quint64>(loop ? loop->start : 0) << static_cast<quint64>(loop ? loop->end : 0)
+           << static_cast<quint64>(*offset)
+           << static_cast<quint32>(outputRate == metadata.sampleRate ? 0 : outputRate);
+    return QCryptographicHash::hash(request, QCryptographicHash::Sha256).toHex();
 }
 
-bool loadArtifact(MaterializedArtifact& artifact)
+QByteArray artifactHeader(const MaterializedArtifact& artifact)
 {
-    if (!isDigest(artifact.cacheKey) || !isDigest(artifact.contentHash)
-        || artifact.sampleRate == 0 || artifact.channels == 0 || artifact.channels > 8)
-        return false;
-    QFile file(artifact.path);
-    if (!file.open(QIODevice::ReadOnly)) return false;
-    const qint64 bytes = file.size();
-    if (bytes <= 0 || bytes % (artifact.channels * sizeof(float)) != 0) return false;
-    const uint64_t frames = bytes / (artifact.channels * sizeof(float));
-    if (artifact.loopable != (artifact.loopEndFrame != 0)
-        || (artifact.loopable
-            ? artifact.loopStartFrame >= artifact.loopEndFrame || artifact.loopEndFrame > frames
-            : artifact.loopStartFrame != 0)) return false;
-    auto samples = std::make_shared<std::vector<float>>(bytes / sizeof(float));
-    if (file.read(reinterpret_cast<char*>(samples->data()), bytes) != bytes
-        || digest(QByteArray::fromRawData(reinterpret_cast<const char*>(samples->data()), bytes))
-            != artifact.contentHash) return false;
-    artifact.samples = std::move(samples);
-    return true;
+    QByteArray header;
+    QDataStream stream(&header, QIODevice::WriteOnly);
+    stream.setByteOrder(QDataStream::LittleEndian);
+    stream << kArtifactMagic << kArtifactVersion << static_cast<quint32>(artifact.sampleRate)
+           << static_cast<quint32>(artifact.channels)
+           << static_cast<quint64>(artifact.loopStartFrame)
+           << static_cast<quint64>(artifact.loopEndFrame) << static_cast<quint64>(artifact.revision);
+    return header;
 }
 
-QString receiptPath(const QString& outputDir, const QByteArray& request)
+QByteArray artifactDigest(const QByteArray& header, const std::vector<float>& samples)
 {
-    return QDir(outputDir).filePath(digest(request) + QStringLiteral(".json"));
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    hash.addData(header);
+    hash.addData(QByteArrayView(reinterpret_cast<const char*>(samples.data()),
+        static_cast<qsizetype>(samples.size() * sizeof(float))));
+    return hash.result();
 }
 
-std::optional<MaterializedArtifact> loadReceipt(const QString& outputDir, const QByteArray& request)
+std::optional<MaterializedArtifact> loadArtifact(const QString& outputDir, const QByteArray& key)
 {
-    QFile file(receiptPath(outputDir, request));
-    if (!file.open(QIODevice::ReadOnly) || file.size() > 65536) return std::nullopt;
-    const auto receipt = QJsonDocument::fromJson(file.readAll()).object();
-    const auto body = receipt.value(QStringLiteral("artifact")).toObject();
-    if (body.value(QStringLiteral("request")).toString() != digest(request)
-        || receipt.value(QStringLiteral("sha256")).toString()
-            != digest(QJsonDocument(body).toJson(QJsonDocument::Compact))) return std::nullopt;
+    if (outputDir.isEmpty()) return std::nullopt;
     MaterializedArtifact artifact;
-    artifact.cacheKey = body.value(QStringLiteral("key")).toString();
-    if (!isDigest(artifact.cacheKey)) return std::nullopt;
+    artifact.cacheKey = QString::fromLatin1(key);
     artifact.path = QDir(outputDir).filePath(artifact.cacheKey + QStringLiteral(".pcm"));
-    artifact.contentHash = body.value(QStringLiteral("content")).toString();
-    const int sampleRate = body.value(QStringLiteral("sampleRate")).toInt();
-    const int channels = body.value(QStringLiteral("channels")).toInt();
-    if (sampleRate <= 0 || channels < 1 || channels > 8) return std::nullopt;
-    artifact.sampleRate = static_cast<uint32_t>(sampleRate);
+    QFile file(artifact.path);
+    if (!file.open(QIODevice::ReadOnly)) return std::nullopt;
+    const auto header = file.read(kHeaderBytes);
+    const auto digest = file.read(kDigestBytes);
+    if (header.size() != kHeaderBytes || digest.size() != kDigestBytes) return std::nullopt;
+    QDataStream stream(header);
+    stream.setByteOrder(QDataStream::LittleEndian);
+    quint32 magic = 0, version = 0, sampleRate = 0, channels = 0;
+    quint64 loopStart = 0, loopEnd = 0, revision = 0;
+    stream >> magic >> version >> sampleRate >> channels >> loopStart >> loopEnd >> revision;
+    const auto payloadBytes = file.size() - kHeaderBytes - kDigestBytes;
+    if (stream.status() != QDataStream::Ok || magic != kArtifactMagic || version != kArtifactVersion
+        || sampleRate == 0 || channels == 0 || channels > 8 || payloadBytes <= 0
+        || payloadBytes % (channels * sizeof(float)) != 0)
+        return std::nullopt;
+    const auto frames = static_cast<quint64>(payloadBytes / (channels * sizeof(float)));
+    if (loopEnd == 0 ? loopStart != 0 : loopStart >= loopEnd || loopEnd > frames)
+        return std::nullopt;
+    auto samples = std::make_shared<std::vector<float>>(payloadBytes / sizeof(float));
+    if (file.read(reinterpret_cast<char*>(samples->data()), payloadBytes) != payloadBytes
+        || artifactDigest(header, *samples) != digest)
+        return std::nullopt;
+    artifact.sampleRate = sampleRate;
     artifact.channels = static_cast<uint16_t>(channels);
-    bool startValid = false;
-    bool endValid = false;
-    artifact.loopStartFrame = body.value(QStringLiteral("loopStart")).toString().toULongLong(&startValid);
-    artifact.loopEndFrame = body.value(QStringLiteral("loopEnd")).toString().toULongLong(&endValid);
-    artifact.loopable = body.value(QStringLiteral("loopable")).toBool();
-    if (!startValid || !endValid || !loadArtifact(artifact)) return std::nullopt;
+    artifact.loopStartFrame = loopStart;
+    artifact.loopEndFrame = loopEnd;
+    artifact.loopable = loopEnd != 0;
     artifact.cacheHit = true;
+    artifact.contentHash = QString::fromLatin1(digest.toHex());
+    artifact.samples = std::move(samples);
+    artifact.revision = revision;
     return artifact;
 }
 
-void saveReceipt(const QString& outputDir, const QByteArray& request, const MaterializedArtifact& artifact)
-{
-    const QJsonObject body{
-        {QStringLiteral("request"), digest(request)},
-        {QStringLiteral("key"), artifact.cacheKey},
-        {QStringLiteral("content"), artifact.contentHash},
-        {QStringLiteral("sampleRate"), static_cast<int>(artifact.sampleRate)},
-        {QStringLiteral("channels"), artifact.channels},
-        {QStringLiteral("loopStart"), QString::number(artifact.loopStartFrame)},
-        {QStringLiteral("loopEnd"), QString::number(artifact.loopEndFrame)},
-        {QStringLiteral("loopable"), artifact.loopable}};
-    const auto bytes = QJsonDocument(QJsonObject{
-        {QStringLiteral("artifact"), body},
-        {QStringLiteral("sha256"), digest(QJsonDocument(body).toJson(QJsonDocument::Compact))}})
-        .toJson(QJsonDocument::Compact);
-    writeCacheArtifact(receiptPath(outputDir, request), [&](QIODevice& file) {
-        return file.write(bytes) == bytes.size();
-    });
 }
 
+QString cacheKey(const QString& inputFingerprint, const SoundSourceDef& source,
+                 double scheduleOffsetSec, const ConversionSettings& settings,
+                 const AudioMetadata& metadata)
+{
+    return QString::fromLatin1(requestKey(inputFingerprint, source, scheduleOffsetSec, settings, metadata));
 }
 
 std::optional<MaterializedArtifact> MaterializationCache::find(const QByteArray& request)
@@ -142,63 +157,40 @@ void MaterializationCache::clear()
 {
     QMutexLocker lock(&mutex_);
     artifacts_.clear();
-    contentRevisions_.clear();
 }
 
 std::optional<uint64_t> MaterializationCache::contentRevision(const MaterializedArtifact& artifact)
 {
-    if (artifact.contentHash.isEmpty()) return std::nullopt;
-    QByteArray identity;
-    QDataStream stream(&identity, QIODevice::WriteOnly);
-    stream << artifact.contentHash << artifact.sampleRate << artifact.channels
-           << artifact.loopable << static_cast<quint64>(artifact.loopStartFrame)
-           << static_cast<quint64>(artifact.loopEndFrame);
-    QMutexLocker lock(&mutex_);
-    const auto found = contentRevisions_.constFind(identity);
-    if (found != contentRevisions_.cend()) return *found;
-    HarkenEditor::Bridge::PackMediaDesc media;
-    media.interleavedSamples = artifact.samples;
-    media.sampleRate = artifact.sampleRate;
-    media.channels = artifact.channels;
-    media.format = HarkenEditor::Bridge::PackMediaFormat::PcmFloat;
-    media.loopable = artifact.loopable;
-    media.loopStartFrame = artifact.loopStartFrame;
-    media.loopEndFrame = artifact.loopEndFrame;
-    uint64_t revision = 0;
-    if (!HarkenEditor::Bridge::computePackMediaContentRevision(media, &revision)) return std::nullopt;
-    contentRevisions_.insert(identity, revision);
-    return revision;
+    return artifact.samples ? std::optional<uint64_t>(artifact.revision) : std::nullopt;
 }
 
-std::optional<FrameRange> mapFrameRange(const SoundSourceDef& source,
-                                        uint64_t totalFrames)
+std::optional<FrameRange> mapFrameRange(const SoundSourceDef& source, uint64_t totalFrames)
 {
     if (totalFrames == 0) return std::nullopt;
     const uint64_t start = std::min(source.trimStartFrame, totalFrames);
-    const uint64_t end = std::clamp(source.trimEndFrame.value_or(totalFrames),
-                                    start, totalFrames);
+    const uint64_t end = std::clamp(source.trimEndFrame.value_or(totalFrames), start, totalFrames);
     if (end <= start) return std::nullopt;
     return FrameRange{start, end};
 }
 
-QString cacheKey(const DerivativeKey& key)
+static std::optional<MaterializedArtifact> findCached(const QByteArray& key,
+                                                     const QString& outputDir,
+                                                     MaterializationCache* cache)
 {
-    QByteArray value(kDerivativeCacheNamespace);
-    value += '\0';
-    value += QByteArray::number(key.sourceId) + '\0';
-    value += QByteArray::number(key.processingHash) + '\0';
-    value += key.processingFingerprint.toUtf8() + '\0';
-    value += key.compilerIdentity.toUtf8() + '\0';
-    value += QByteArray::number(key.sourceChannels) + '\0';
-    value += key.inputFingerprint.toUtf8() + '\0';
-    value += ProjectPlatformSemantics::idString(key.platform).toUtf8() + '\0';
-    value += QByteArray::number(static_cast<qulonglong>(key.trimStartFrame)) + '\0';
-    value += QByteArray::number(static_cast<qulonglong>(key.trimEndFrame)) + '\0';
-    value += QByteArray::number(key.scheduleOffsetSec, 'g', 17) + '\0';
-    if (key.loopRegion)
-        value += QByteArray::number(static_cast<qulonglong>(key.loopRegion->startFrame)) + ':'
-            + QByteArray::number(static_cast<qulonglong>(key.loopRegion->endFrame));
-    return QString::fromLatin1(QCryptographicHash::hash(value, QCryptographicHash::Sha256).toHex());
+    if (key.isEmpty()) return std::nullopt;
+    if (cache) {
+        auto artifact = cache->find(key);
+        if (artifact) {
+            artifact->cacheHit = true;
+            return artifact;
+        }
+    }
+    auto artifact = loadArtifact(outputDir, key);
+    if (artifact) {
+        artifact->cacheHit = true;
+        if (cache) cache->insert(key, *artifact);
+    }
+    return artifact;
 }
 
 std::optional<PreparedMedia> prepare(const QString& inputPath,
@@ -237,16 +229,12 @@ std::optional<PreparedMedia> prepare(const QString& inputPath,
         + static_cast<std::ptrdiff_t>(range->end * static_cast<uint64_t>(channels));
     std::vector<float> trimmed(begin, end);
     LoopInfo loop;
-    if (source.loopRegion) {
-        const uint64_t start = std::clamp(source.loopRegion->startFrame, range->start, range->end);
-        const uint64_t end = std::clamp(source.loopRegion->endFrame, start, range->end);
-        if (end > start) {
-            loop.enabled = true;
-            loop.loopStart = start - range->start;
-            loop.loopEnd = end - range->start - 1;
-        }
+    if (const auto region = loopRange(source, *range)) {
+        loop.enabled = true;
+        loop.loopStart = region->start;
+        loop.loopEnd = region->end - 1;
     }
-    if (settings.performResample) {
+    if (settings.performResample && settings.targetSampleRate != static_cast<uint32_t>(sampleRate)) {
         if (!AssetConverter::processSamples(trimmed, sampleRate, channels, settings, loop, error))
             return std::nullopt;
     } else if (loop.enabled) {
@@ -254,14 +242,14 @@ std::optional<PreparedMedia> prepare(const QString& inputPath,
     }
     const uint32_t outputRate = static_cast<uint32_t>(sampleRate);
     const double offset = scheduleOffsetSec * outputRate;
+    const auto mappedOffset = scheduleFrames(scheduleOffsetSec, outputRate);
     const size_t availableFrames = (trimmed.max_size() - trimmed.size())
         / static_cast<size_t>(channels);
-    if (!std::isfinite(offset) || offset >= static_cast<double>(availableFrames)
-        || offset >= static_cast<double>(std::numeric_limits<int64_t>::max())) {
+    if (!mappedOffset || offset >= static_cast<double>(availableFrames)) {
         fail(error, QStringLiteral("schedule offset is too large"));
         return std::nullopt;
     }
-    const uint64_t offsetFrames = static_cast<uint64_t>(std::llround(offset));
+    const uint64_t offsetFrames = *mappedOffset;
     if (offsetFrames > 0) {
         trimmed.insert(trimmed.begin(),
                        static_cast<size_t>(offsetFrames) * static_cast<size_t>(channels),
@@ -282,76 +270,75 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
                                                 const ConversionSettings& settings,
                                                 QString* error,
                                                 MaterializationCache* cache,
-                                                const BuildSourceInput* input)
+                                                const BuildSourceInput* input,
+                                                const std::function<std::shared_ptr<const BuildSourceInput>(QString*)>&
+                                                    captureSource)
 {
     if (platform.isNull()) {
         fail(error, QStringLiteral("Platform ID is required for derivative media"));
         return std::nullopt;
     }
-    const QString inputRevision = input ? input->contentHash : inputFingerprint(inputPath);
-    QByteArray request;
-    if (!inputRevision.isEmpty()) {
-        QDataStream stream(&request, QIODevice::WriteOnly);
-        stream.setVersion(QDataStream::Qt_6_0);
-        stream.setFloatingPointPrecision(QDataStream::DoublePrecision);
-        stream << QStringLiteral("harken.sound-source-materialization/v2")
-               << QString::fromLatin1(Harkenizer::projectBuildIdentity()) << inputRevision
-               << static_cast<quint32>(source.sourceId)
-               << static_cast<quint64>(source.trimStartFrame)
-               << source.trimEndFrame.has_value();
-        if (source.trimEndFrame)
-            stream << static_cast<quint64>(*source.trimEndFrame);
-        stream << source.loopRegion.has_value();
-        if (source.loopRegion)
-            stream << static_cast<quint64>(source.loopRegion->startFrame)
-                   << static_cast<quint64>(source.loopRegion->endFrame);
-        stream << scheduleOffsetSec << platform
-               << QJsonDocument(settings.toJson()).toJson(QJsonDocument::Compact);
-        auto cached = cache ? cache->find(request) : std::nullopt;
-        if (!cached) cached = loadReceipt(outputDir, request);
-        if (cached) {
-            if (!input && inputFingerprint(inputPath) != inputRevision) {
-                fail(error, QStringLiteral("Source file changed during derivative conversion"));
-                return std::nullopt;
-            }
-            cached->cacheHit = true;
-            if (cache) cache->insert(request, *cached);
-            return cached;
-        }
+    std::shared_ptr<const BuildSourceInput> directInput;
+    if (!input) {
+        BuildSourceInputs directInputs;
+        AssetInfo asset;
+        asset.sourceID = source.sourceId;
+        asset.absolutePath = inputPath;
+        directInput = directInputs.capture(asset, error);
+        if (!directInput) return std::nullopt;
+        input = directInput.get();
     }
-    auto media = prepare(inputPath, source, scheduleOffsetSec,
-                                settings, error);
-    if (!media)
-        return std::nullopt;
-
-    if (inputRevision.isEmpty() || (!input && inputFingerprint(inputPath) != inputRevision)) {
-        fail(error, QStringLiteral("Source file changed during derivative conversion"));
+    const QString inputRevision = input->contentHash;
+    const auto metadata = input->metadata;
+    const auto key = requestKey(inputRevision, source, scheduleOffsetSec, settings, metadata);
+    if (auto cached = findCached(key, outputDir, cache))
+        return cached;
+    std::shared_ptr<const BuildSourceInput> captured;
+    if (captureSource) {
+        captured = captureSource(error);
+        if (!captured) return std::nullopt;
+        input = captured.get();
+    }
+    auto media = prepare(input->inputPath, source, scheduleOffsetSec, settings, error);
+    if (!media) return std::nullopt;
+    if (key.isEmpty()) {
+        fail(error, QStringLiteral("Cannot identify converted media input"));
         return std::nullopt;
     }
-    DerivativeKey key{source.sourceId, inputRevision, platform,
-                      media->trimRange.start, media->trimRange.end,
-                      source.loopRegion, scheduleOffsetSec, settings.hash(), media->channels,
-                      digest(QJsonDocument(settings.toJson()).toJson(QJsonDocument::Compact)),
-                      QString::fromLatin1(Harkenizer::projectBuildIdentity())};
-    const QString id = cacheKey(key);
-    const QString path = QDir(outputDir).filePath(id + QStringLiteral(".pcm"));
-    const auto samples = std::make_shared<const std::vector<float>>(std::move(media->samples));
-    const auto bytes = QByteArray::fromRawData(reinterpret_cast<const char*>(samples->data()),
-        static_cast<qsizetype>(samples->size() * sizeof(float)));
-    const QString contentHash = digest(bytes);
-    const bool written = writeCacheArtifact(path, [&](QIODevice& file) {
-        return file.write(bytes) == bytes.size();
-    });
-    if (!written) {
+    MaterializedArtifact artifact;
+    artifact.cacheKey = QString::fromLatin1(key);
+    if (!outputDir.isEmpty())
+        artifact.path = QDir(outputDir).filePath(artifact.cacheKey + QStringLiteral(".pcm"));
+    artifact.sampleRate = media->sampleRate;
+    artifact.channels = media->channels;
+    artifact.loopStartFrame = media->loopStartFrame;
+    artifact.loopEndFrame = media->loopEndFrame;
+    artifact.loopable = media->loopEndFrame != 0;
+    artifact.samples = std::make_shared<const std::vector<float>>(std::move(media->samples));
+    HarkenEditor::Bridge::PackMediaDesc description;
+    description.interleavedSamples = artifact.samples;
+    description.sampleRate = artifact.sampleRate;
+    description.channels = artifact.channels;
+    description.format = HarkenEditor::Bridge::PackMediaFormat::PcmFloat;
+    description.loopable = artifact.loopable;
+    description.loopStartFrame = artifact.loopStartFrame;
+    description.loopEndFrame = artifact.loopEndFrame;
+    if (!HarkenEditor::Bridge::computePackMediaContentRevision(description, &artifact.revision)) {
+        fail(error, QStringLiteral("Cannot compute converted media revision"));
+        return std::nullopt;
+    }
+    const auto header = artifactHeader(artifact);
+    const auto digest = artifactDigest(header, *artifact.samples);
+    artifact.contentHash = QString::fromLatin1(digest.toHex());
+    const auto payloadBytes = static_cast<qint64>(artifact.samples->size() * sizeof(float));
+    if (!outputDir.isEmpty() && !writeCacheArtifact(artifact.path, [&](QIODevice& file) {
+            return file.write(header) == header.size() && file.write(digest) == digest.size()
+                && file.write(reinterpret_cast<const char*>(artifact.samples->data()), payloadBytes) == payloadBytes;
+        })) {
         fail(error, QStringLiteral("failed to write derivative media"));
         return std::nullopt;
     }
-    MaterializedArtifact artifact{path, id, media->sampleRate, media->channels,
-                                  media->loopStartFrame,
-                                  media->loopEndFrame,
-                                  media->loopEndFrame != 0, false, contentHash, samples};
-    saveReceipt(outputDir, request, artifact);
-    if (cache) cache->insert(request, artifact);
+    if (cache) cache->insert(key, artifact);
     return artifact;
 }
 

@@ -132,7 +132,8 @@ B backendFor(O operation, T type)
 
 RuntimeCapabilityEntry bindingCapability(const ProjectItem& item,
                                          const ProjectData& project,
-                                         O operation)
+                                         O operation,
+                                         BindingRuntimeLowering* output = nullptr)
 {
     RuntimeCapabilityEntry result{item.type, operation, F::TypedBinding, S::Ready, {}};
     const auto refuse = [&](S state, const QString& diagnostic) {
@@ -142,6 +143,7 @@ RuntimeCapabilityEntry bindingCapability(const ProjectItem& item,
     };
     const auto* mix = item.comp<VMixNode>();
     if (!mix || mix->bindings.isEmpty()) return result;
+    BindingRuntimeLowering lowered;
     for (const auto& binding : mix->bindings.entries()) {
         if (!binding.typed || harkenstudio::IsNull(binding.runtimeId()))
             return refuse(S::InvalidAuthoring,
@@ -150,7 +152,6 @@ RuntimeCapabilityEntry bindingCapability(const ProjectItem& item,
             || !BindingContractSemantics::engineTargetId(binding.address))
             return refuse(S::UnavailableEngineContract,
                           QStringLiteral("Binding target has no supported runtime lowering"));
-        BindingRuntimeLowering lowered;
         const auto status = BindingRuntimeLoweringSemantics::appendLoweredBinding(
             project, item, binding, &lowered);
         if (status == BindingLowerStatus::Fail)
@@ -159,10 +160,20 @@ RuntimeCapabilityEntry bindingCapability(const ProjectItem& item,
         if (status != BindingLowerStatus::Ok)
             return refuse(S::InvalidAuthoring,
                           QStringLiteral("Binding Variable or curve is invalid"));
+        if (operation == O::PackBuild
+            && lowered.programs.back().points.size() > harkenstudio::kCurveMaxPoints)
+            return refuse(S::InvalidAuthoring,
+                          QStringLiteral("Binding curve exceeds the runtime point limit"));
     }
     if (operation == O::ProjectInputCompile)
         return refuse(S::UnavailableEngineContract,
                       QStringLiteral("Current World input does not carry typed bindings; sync and Pack use the binding bridge"));
+    if (output) {
+        for (auto& program : lowered.programs)
+            output->programs.push_back(std::move(program));
+        for (const auto& attachment : lowered.attachments)
+            output->attachments.push_back(attachment);
+    }
     return result;
 }
 
@@ -430,6 +441,14 @@ QJsonObject RuntimeCapabilityEntry::toJson() const
 }
 
 namespace RuntimeCapabilityMatrix {
+
+RuntimeCapabilityEntry lowerBindings(const ProjectItem& item,
+                                    const ProjectData& project,
+                                    RuntimeCapabilityOperation operation,
+                                    BindingRuntimeLowering* output)
+{
+    return bindingCapability(item, project, operation, output);
+}
 
 std::optional<O> parseOperation(const QString& value)
 {

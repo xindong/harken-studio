@@ -37,19 +37,10 @@ namespace VNX {
     struct ProjectBuildSnapshot;
     struct MediaBuildSnapshot;
     class PackMediaPreparation;
+    class PackBuildState;
 }
 
 namespace VNX {
-
-struct PackPublicationProof
-{
-    QString directory;
-    QString projectId;
-    QString platformId;
-    QJsonArray packs;
-    QStringList managedFiles;
-    std::weak_ptr<QLockFile> outputLock;
-};
 
 namespace ProjectPackExporterInternal {
 
@@ -65,6 +56,7 @@ namespace ProjectPackExporterInternal {
         PackExportSelection selection;
         std::shared_ptr<const ProjectBuildSnapshot> snapshot;
         std::shared_ptr<PackBuildContext> buildContext;
+        std::shared_ptr<PackBuildState> packBuildState;
         std::shared_ptr<const PackBuildPlan> buildPlan;
         PackMediaPreparation* mediaPreparation = nullptr;
         QMap<QString, std::shared_ptr<QLockFile>> platformLocks;
@@ -109,11 +101,13 @@ public:
 
     static std::shared_ptr<PackBuildContext> createBuildContext(const ProjectData& project);
 
+    static std::shared_ptr<const PackBuildPlan> createBuildPlan(const ProjectData& project,
+                                                               const ExportOptions& options);
+
     struct ExportResult
     {
         bool    success = false;
         bool    canceled = false;
-        bool    reusableBuild = true;
         QString outputPath;
         qint64  fileSize  = 0;
         int     objectCount = 0;
@@ -123,7 +117,6 @@ public:
         QStringList warnings;
         int     mediaCacheHits = 0;
         int     mediaConversions = 0;
-        int     mediaFallbacks = 0;
         uint64_t currentWorldSemanticFingerprint = 0;
         std::map<harkenstudio::ObjectId, uint64_t> soundContentRevisions;
         QString resourceFingerprint;
@@ -132,7 +125,7 @@ public:
         int skippedPackCount = 0;
         int removedPackCount = 0;
         QVector<PackArtifactMetadata> artifacts;
-        std::optional<PackPublicationProof> publication;
+        QJsonArray outputs;
     };
 
     struct PackBuildRecord
@@ -188,34 +181,12 @@ public:
                                            const ProjectPlatform& platform,
                                            QString* errorOut = nullptr);
 
-    static bool ValidatePackOutputs(const QString& baseDir,
-                                    const QVector<ProjectPlatform>& platforms,
-                                    QString* errorOut = nullptr,
-                                    const QVector<PackArtifactMetadata>& artifacts = {},
-                                    const std::function<bool()>& cancelCheck = {},
-                                    const QMap<QString, PackPublicationProof>& publications = {});
-
-    static bool ValidatePackBuildPlatforms(const QVector<ProjectPlatform>& captured,
-                                           const QVector<ProjectPlatform>& current,
-                                           const QStringList& succeededIds,
-                                           QString* errorOut = nullptr);
-
     static ExportResult FinalizePackExport(const QString& baseDir,
                                            const ProjectData& project,
                                            const QStringList& selectedPlatformIds,
                                            bool selfCleaning,
-                                           const QVector<PackArtifactMetadata>& artifacts = {},
-                                           const std::function<bool()>& cancelCheck = {},
-                                           const QMap<QString, PackPublicationProof>& publications = {});
-
-    static bool FinalizePackOutputs(const QString& baseDir,
-                                 const QVector<ProjectPlatform>& platforms,
-                                 const QStringList& requestedIds,
-                                 const QStringList& succeededIds,
-                                 QString* errorOut = nullptr,
-                                 const QVector<PackArtifactMetadata>& artifacts = {},
-                                 const std::function<bool()>& cancelCheck = {},
-                                 const QMap<QString, PackPublicationProof>& publications = {});
+                                           const QMap<QString, QJsonArray>& outputs,
+                                           const std::function<bool()>& cancelCheck = {});
 
     static std::shared_ptr<QLockFile> LockPackOutputRoot(const QString& baseDir,
                                                        QString* errorOut = nullptr);
@@ -250,15 +221,6 @@ public:
     static ValidationResult ValidatePackBuildReadiness(const ProjectData& project,
                                                        const QString& outputDir,
                                                        PackBuildContext* buildContext = nullptr);
-
-    static bool ValidatePackBuildWriteAccess(const ProjectData& project,
-                                             const QString& baseDir,
-                                             const QStringList& platforms,
-                                             const ExportOptions& options,
-                                             QString* errorOut,
-                                             QString* summaryOut = nullptr,
-                                             const QSet<QString>& reusablePlatforms = {});
-
 
     struct DependencyNode
     {
@@ -307,15 +269,13 @@ private:
         ProjectPackExporter& exporter, const CanonicalPackSetExportRequest& request,
         std::vector<PackBuildRecord>* outRecords);
 
-    static std::shared_ptr<const PackBuildPlan> createBuildPlan(const ProjectData& project,
-                                                               const ExportOptions& options);
+
 
     struct MediaCollectionStats
     {
         std::map<harkenstudio::ObjectId, uint64_t> soundContentRevisions;
         int cacheHits = 0;
         int conversions = 0;
-        int fallbacks = 0;
         QStringList warnings;
     };
 
