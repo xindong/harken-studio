@@ -7,6 +7,7 @@
 #include "harken/abi/TimelineStopContract.h"
 #include "harken/core/ChannelLayout.h"
 #include "harken/core/SnapshotBuffer.h"
+#include "harken/dsp/InterpKernels.h"
 
 #include <algorithm>
 #include <cassert>
@@ -905,8 +906,8 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
     const std::uint32_t offset = ctx.cascade.offset;
     std::uint32_t target = blockFrames - offset;
     if (ctx.streamParkActive && ctx.fading) {
-        target = std::min(
-            target, ctx.fadeTotalFrames - ctx.fadeDoneFrames);
+        target = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+            target, ctx.fadeTotalFrames - ctx.fadeDoneFrames));
     }
     std::uint32_t sourceTarget = target;
     const std::uint64_t sourceBlockStart =
@@ -1241,9 +1242,8 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
                               : static_cast<float>(done) * reciprocal;
                 float envelopeGain = progress;
                 if (envelope.useCurve) {
-                    const float curveX = envelope.curve->xMin +
-                        (envelope.curve->xMax - envelope.curve->xMin) *
-                            progress;
+                    const float curveX = InterpLinear(
+                        envelope.curve->xMin, envelope.curve->xMax, progress);
                     envelopeGain = envelope.curve->Eval(curveX);
                 }
                 if (envelope.fadeOut) {
@@ -1307,15 +1307,16 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
         const auto elapsed = renderFrame > ctx.timelineFallbackStopFrame
             ? renderFrame - ctx.timelineFallbackStopFrame : 0;
         ctx.fadeDoneFrames = std::max(ctx.fadeDoneFrames,
-            static_cast<std::uint32_t>(std::min<std::uint64_t>(elapsed, ctx.fadeTotalFrames)));
+            std::min(elapsed, ctx.fadeTotalFrames));
     }
     const std::uint32_t fadeStartOffset = ctx.fadeStartOffsetInBlock;
     if (ctx.fading && produced > 0) {
         const std::uint32_t fadeBegin =
             std::min(ctx.fadeStartOffsetInBlock, produced);
         const std::uint32_t fadeSamples = produced - fadeBegin;
-        const std::uint32_t left = ctx.fadeTotalFrames - ctx.fadeDoneFrames;
-        const std::uint32_t n = std::min(fadeSamples, left);
+        const std::uint64_t left = ctx.fadeTotalFrames - ctx.fadeDoneFrames;
+        const std::uint32_t n = static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(fadeSamples, left));
         const float inv = 1.0f / static_cast<float>(ctx.fadeTotalFrames);
         for (std::uint32_t ch = 0; ch < channels; ++ch) {
             float* p = scratch[ch] + offset + fadeBegin;
@@ -1349,11 +1350,13 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
     if (ctx.fading && produced < target && phase == SourcePhase::Active) {
         const std::uint32_t silentFadeBegin =
             std::max(produced, std::min(fadeStartOffset, target));
-        const std::uint32_t left = ctx.fadeTotalFrames - ctx.fadeDoneFrames;
-        ctx.fadeDoneFrames += std::min(target - silentFadeBegin, left);
+        const std::uint64_t left = ctx.fadeTotalFrames - ctx.fadeDoneFrames;
+        const std::uint32_t advanced = static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(target - silentFadeBegin, left));
+        ctx.fadeDoneFrames += advanced;
         if (ctx.fadeDoneFrames >= ctx.fadeTotalFrames) {
             phase = SourcePhase::Done;
-            stopCutoff = offset + silentFadeBegin + left;
+            stopCutoff = offset + silentFadeBegin + advanced;
         }
     }
     ctx.fadeStartOffsetInBlock = 0;

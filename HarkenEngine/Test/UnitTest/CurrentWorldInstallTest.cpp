@@ -1997,6 +1997,12 @@ TEST(CurrentWorldInstall,
     image.container.curves = curves;
     expect(harken::WorldInstallStatus::Ok, "transition curve reference");
 
+    curves[0].curve.points[0].x = -3.0e38f;
+    curves[0].curve.points[1].x = 3.0e38f;
+    expect(harken::WorldInstallStatus::Ok, "wide finite transition curve domain");
+    curves[0].curve.points[0].x = 0.0f;
+    curves[0].curve.points[1].x = 10.0f;
+
     transitionRule.sourceFade.curveLocalId = UINT32_MAX;
     image.container.curveCount = 0;
     image.container.curves = nullptr;

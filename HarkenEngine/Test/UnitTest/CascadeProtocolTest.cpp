@@ -782,6 +782,30 @@ TEST(CascadeProtocol, OneFrameTimelineEnvelopeUsesTerminalGain) {
     EXPECT_FALSE(fadeOut.ctx.timelineEnvelopes[1].active);
 }
 
+TEST(CascadeProtocol, TimelineCurvePreservesWideFiniteHorizontalDomain) {
+    const auto dc = harkentest::MakeDC(2000, 1.0f);
+    const harken::CurvePoint points[] = {{-3.0e38f, 0.0f}, {3.0e38f, 1.0f}};
+    const harken::CurveHandlePair handles[] = {{-3.0e38f, 0.0f, 3.0e38f, 1.0f}};
+    harken::Curve curve;
+    ASSERT_TRUE(curve.SetPoints(points, handles, 2));
+    harken::CurveLUT lut;
+    lut.Bake(curve);
+    for (const bool fadeOut : {false, true}) {
+        CascadeHarness harness(dc);
+        auto& envelope = harness.ctx.timelineEnvelopes[fadeOut ? 1 : 0];
+        envelope = {true, fadeOut, 0, 129};
+        envelope.useCurve = true;
+        envelope.curve = &lut;
+        harness.RenderBlock();
+        for (unsigned i = 0; i <= 128; ++i) {
+            const float expected = fadeOut ? 1.0f - i / 128.0f : i / 128.0f;
+            ASSERT_TRUE(std::isfinite(harness.masterL[i])) << i;
+            EXPECT_NEAR(expected, harness.masterL[i], 1e-6f) << i;
+        }
+        EXPECT_FALSE(envelope.active);
+    }
+}
+
 TEST(CascadeProtocol, FadeStopRampsToZeroTruncatesAndFinishes) {
     const std::vector<float> dc = harkentest::MakeDC(2000, 1.0f);
     HARKENTEST_ASSERT_NON_SILENT(dc);
@@ -942,7 +966,7 @@ TEST(CascadeProtocol, HighRatioFadeStopReleasesStalledVoice) {
         << "fade completion did not emit stopped-by-fade";
 }
 
-TEST(CascadeProtocol, StarvedFadeNearUint32LimitCompletesWithoutWrap) {
+TEST(CascadeProtocol, StarvedFadeBeyondUint32LimitCompletesWithoutWrap) {
     const std::vector<float> dc = harkentest::MakeDC(kBlock, 1.0f);
     CascadeHarness harness(dc);
 
@@ -956,15 +980,52 @@ TEST(CascadeProtocol, StarvedFadeNearUint32LimitCompletesWithoutWrap) {
     harness.ctx.streamRing = &stream;
     harness.ctx.streamGateOpen = true;
     harness.ctx.fading = true;
-    harness.ctx.fadeTotalFrames =
-        std::numeric_limits<std::uint32_t>::max();
-    harness.ctx.fadeDoneFrames = harness.ctx.fadeTotalFrames - 5;
+    constexpr std::uint64_t total = (std::uint64_t{1} << 33) + 5;
+    harness.ctx.fadeTotalFrames = total;
+    harness.ctx.fadeDoneFrames = (std::uint64_t{1} << 32) - 3;
+
+    const StageResult ongoing = harness.RenderBlock();
+    EXPECT_EQ(0u, ongoing.framesProduced);
+    EXPECT_EQ(SourcePhase::Active, ongoing.phase);
+    EXPECT_EQ((std::uint64_t{1} << 32) - 3 + kBlock,
+              harness.ctx.fadeDoneFrames);
+    harness.ctx.fadeDoneFrames = total - 5;
 
     const StageResult result = harness.RenderBlock();
 
     EXPECT_EQ(0u, result.framesProduced);
     EXPECT_EQ(SourcePhase::Done, result.phase);
     EXPECT_EQ(harness.ctx.fadeTotalFrames, harness.ctx.fadeDoneFrames);
+}
+
+TEST(CascadeProtocol, LongFadePreservesAudibleClockAndExactEnd) {
+    const auto dc = harkentest::MakeDC(2000, 1.0f);
+    CascadeHarness harness(dc);
+    constexpr std::uint64_t total = (std::uint64_t{1} << 33) + 100;
+    harness.ctx.fading = true;
+    harness.ctx.fadeTotalFrames = total;
+    harness.ctx.fadeDoneFrames = (std::uint64_t{1} << 32) - 3;
+
+    const auto ongoing = harness.RenderBlock();
+    EXPECT_EQ(kBlock, ongoing.framesProduced);
+    EXPECT_EQ(SourcePhase::Active, ongoing.phase);
+    EXPECT_EQ((std::uint64_t{1} << 32) - 3 + kBlock,
+              harness.ctx.fadeDoneFrames);
+    EXPECT_NEAR(0.5f, harness.masterL[0], 1e-6f);
+
+    harness.ctx.fadeDoneFrames = total - 100;
+    const auto ended = harness.RenderBlock();
+    EXPECT_EQ(100u, ended.framesProduced);
+    EXPECT_EQ(SourcePhase::Done, ended.phase);
+    EXPECT_EQ(total, harness.ctx.fadeDoneFrames);
+    const float inverse = 1.0f / static_cast<float>(total);
+    for (std::uint32_t i = 0; i < 100; ++i) {
+        EXPECT_FLOAT_EQ(static_cast<float>(99 - i) * inverse,
+                        harness.masterL[i]);
+    }
+    for (std::uint32_t i = 100; i < kBlock; ++i) {
+        EXPECT_EQ(0.0f, harness.masterL[i]);
+    }
 }
 
 TEST(CascadeProtocol, StarvedTailControlsSurviveUntilSourceRecovers) {
