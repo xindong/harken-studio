@@ -157,8 +157,10 @@ TEST(MediaPoolRefreshTest, CapturedWaveformsShareCacheAndRejectStaleContentWithU
     EXPECT_FLOAT_EQ(original->peaks[1], 0.2f);
 
     QFile cache(WaveformCache::cachePath(path));
+    const auto changedCacheTime = QFileInfo(cache).lastModified().addSecs(1);
     ASSERT_TRUE(cache.open(QIODevice::WriteOnly));
     ASSERT_EQ(cache.write(originalBytes), originalBytes.size());
+    ASSERT_TRUE(cache.setFileTime(changedCacheTime, QFileDevice::FileModificationTime));
     cache.close();
     const auto updatedBytes = bytes;
     ASSERT_TRUE(WaveformCache::readForBuild(captured, path, updatedHash, bytes, waveformState));

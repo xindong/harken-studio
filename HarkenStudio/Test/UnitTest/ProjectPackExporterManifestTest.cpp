@@ -4475,11 +4475,11 @@ TEST(EditorProjectPackExporterManifest, CapacityGrowthPreservesUnselectedPublish
                         i == 0 ? kSoloSoundObjectId : kSharedSoundObjectId});
     auto project = HarkenTest::projectWithPlatforms({"Windows"});
     ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), shared, privateSource, specs));
-    VNX::ProjectPackExporter exporter;
     VNX::ProjectPackExporter::ExportOptions options;
     options.platform = HarkenTest::platformIdString("Windows");
-    const QDir output(QDir(dir.path()).filePath(QStringLiteral("exports")));
-    auto initial = exporter.ExportAllPacks(project, output.path(), options);
+    const auto root = dir.filePath(QStringLiteral("exports"));
+    const QDir output(QDir(root).filePath(QStringLiteral("Windows")));
+    const auto initial = buildPersistedPackSet(project, root, options);
     ASSERT_TRUE(initial.success) << initial.error.toStdString();
     QByteArray oldBytes;
     harken::PackCanonicalImage oldImage;
@@ -4499,21 +4499,18 @@ TEST(EditorProjectPackExporterManifest, CapacityGrowthPreservesUnselectedPublish
     addChild(project.actions.front().rootItem, added);
     options.updateSelectedOnly = true;
     options.onlyActionStableIds = {added->runtimeId()};
-    std::map<QString, QByteArray> before;
-    for (const auto& path : publicationFiles(output.path()))
-        before.emplace(path, readFileBytes(output.filePath(path)));
     const auto permissions = QFile::permissions(retainedPath);
     const auto restore = qScopeGuard([&] { QFile::setPermissions(retainedPath, permissions); });
     ASSERT_TRUE(QFile::setPermissions(retainedPath, permissions & ~(
         QFileDevice::WriteOwner | QFileDevice::WriteUser |
         QFileDevice::WriteGroup | QFileDevice::WriteOther)));
-    const auto blocked = exporter.ExportAllPacks(project, output.path(), options);
+    const auto blocked = buildPersistedPackSet(project, root, options);
     EXPECT_FALSE(blocked.success);
     EXPECT_EQ(oldBytes, readFileBytes(retainedPath));
     EXPECT_EQ(oldCompanion, readFileBytes(output.filePath(QStringLiteral("Action0.json"))));
     ASSERT_NO_FATAL_FAILURE(expectCanonicalPackParsesWithPartition(output.filePath(QStringLiteral("Action64.bytes"))));
     ASSERT_TRUE(QFile::setPermissions(retainedPath, permissions));
-    const auto grown = exporter.ExportAllPacks(project, output.path(), options);
+    const auto grown = buildPersistedPackSet(project, root, options);
     ASSERT_TRUE(grown.success) << grown.error.toStdString();
     EXPECT_EQ(oldCompanion, readFileBytes(output.filePath(QStringLiteral("Action0.json"))));
     QByteArray newBytes;
@@ -4550,7 +4547,7 @@ TEST(EditorProjectPackExporterManifest, CapacityGrowthPreservesUnselectedPublish
         ASSERT_EQ(VN_OK, session.InitResult());
         ASSERT_NO_FATAL_FAILURE(activateExportedNames(output.path(), names));
     }
-    const auto unchanged = exporter.ExportAllPacks(project, output.path(), options);
+    const auto unchanged = buildPersistedPackSet(project, root, options);
     ASSERT_TRUE(unchanged.success) << unchanged.error.toStdString();
     for (const auto& [path, bytes] : stable)
         EXPECT_EQ(bytes, readFileBytes(output.filePath(path))) << path.toStdString();

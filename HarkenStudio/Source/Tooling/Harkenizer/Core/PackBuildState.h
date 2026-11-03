@@ -20,7 +20,6 @@ public:
               const std::vector<ProjectPackExporter::PackBuildRecord>& records);
     bool flush();
     void retainOutputs(const QString& outputRoot, const QMap<QString, QJsonArray>& outputs);
-    QStringList outputPaths() const;
     QString resourceFingerprint(const QString& relativePackPath) const;
     void setResourceFingerprint(const QString& relativePackPath, const QString& fingerprint);
     void prune() const;

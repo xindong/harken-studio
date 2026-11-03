@@ -362,11 +362,6 @@ bool PackBuildState::restore(ExportResult* result, std::vector<BuildRecord>* rec
     return true;
 }
 
-QStringList PackBuildState::outputPaths() const
-{
-    return packs_.keys();
-}
-
 QString PackBuildState::resourceFingerprint(const QString& path) const
 {
     const auto row = packs_.value(path).toObject();

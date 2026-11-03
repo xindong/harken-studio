@@ -2591,14 +2591,11 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
 
     QStringList previousPaths;
     if (request.options.updateSelectedOnly) {
-        if (request.options.packBuildState) previousPaths = request.options.packBuildState->outputPaths();
-        if (previousPaths.isEmpty()) {
-            QStringList files;
-            QString scanError;
-            if (!scanOutputFiles(liveDir, &files, nullptr, &scanError, request.options.cancelCheck)) return fail(scanError);
-            for (const auto& path : files)
-                if (path.endsWith(Bridge::packArtifactExtension())) previousPaths.append(path);
-        }
+        QStringList files;
+        QString scanError;
+        if (!scanOutputFiles(liveDir, &files, nullptr, &scanError, request.options.cancelCheck)) return fail(scanError);
+        for (const auto& path : files)
+            if (path.endsWith(Bridge::packArtifactExtension())) previousPaths.append(path);
     } else if (!request.options.forceReexport) {
         for (const auto& pack : packs)
             if (request.options.packBuildState
