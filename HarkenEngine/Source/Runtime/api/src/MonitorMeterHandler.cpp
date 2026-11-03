@@ -264,7 +264,8 @@ void ConsumeMeter(void* state, void* workspace,
 
     const core::MonitorMeterChunkResult item = request.kind == VN_MONITOR_MEASURE_LUFS_MOMENTARY
         ? core::ReduceLoudnessChunk(&slot.loudness, samples, frames, chunk.channelCount)
-        : core::ReduceMeterChunk(&slot.state, samples, frames, chunk.channelCount, request.channelMode);
+        : core::ReduceMeterChunk(&slot.state, samples, frames, chunk.channelCount,
+                                 request.channelMode, request.kind == VN_MONITOR_MEASURE_RMS);
     EmitMeter(scratch, request.kind, item, tap, sourceSequence, capturePlanGeneration,
               executeFrame, emit, emitCtx);
 }
@@ -279,8 +280,8 @@ struct MeterAutoRegister {
             auto slot = std::make_shared<MeterSlot>();
             if (request.kind == VN_MONITOR_MEASURE_LUFS_MOMENTARY)
                 slot->loudness.squares.reserve(static_cast<std::size_t>(sampleRate) * 400u / 1000u);
-            else if (request.kind != VN_MONITOR_MEASURE_GAIN_REDUCTION)
-                slot->state.rmsSquares = std::make_unique<float[]>(core::kMeterMaxRmsSamples);
+            else if (request.kind == VN_MONITOR_MEASURE_RMS)
+                slot->state.rmsSquares = std::make_unique<double[]>(core::kMeterMaxRmsSamples);
             return slot;
         };
         handler.createScratch = []() -> std::shared_ptr<void> {
