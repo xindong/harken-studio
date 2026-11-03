@@ -191,6 +191,7 @@ add_executable(harken_runtime_tests
     UnitTest/HotReloadTest.cpp
     UnitTest/BusSendTest.cpp
     UnitTest/SignalBlockExchangeTest.cpp
+    UnitTest/DuckingReceiverTest.cpp
     UnitTest/BusFilterTest.cpp
     UnitTest/BusMuteSoloTest.cpp
     UnitTest/BusReparentTest.cpp
