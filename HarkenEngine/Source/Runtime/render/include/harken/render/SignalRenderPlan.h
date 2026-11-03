@@ -163,8 +163,8 @@ public:
     // A candidate graph is borrowed only for this quantum. Its slab must not
     // alias a live prior graph; failed compilation is never a usable fallback.
     bool SetBlockRouting(const SignalFeedbackView& routing) noexcept {
-        if (!open_ || contentProcessed_ || routing.nodes.size() != nodes_.size() ||
-            routing.order.size() != nodes_.size()) return false;
+        if (!open_ || contentProcessed_ || routing.nodes.size() < nodes_.size() ||
+            routing.order.size() != routing.nodes.size()) return false;
         for (const auto& node : nodes_) if (node.processed) return false;
         blockRouting_ = routing;
         return true;
@@ -233,6 +233,7 @@ public:
                     return false;
         }
         for (const auto index : blockRouting_.nodes.empty() ? feedback_.NormalOrder() : blockRouting_.order) {
+            if (index >= nodes_.size()) continue;
             auto& node = nodes_[index];
             if (node.kind == SignalEndpointKindV1::Bus || node.processed) continue;
             ClearSums();

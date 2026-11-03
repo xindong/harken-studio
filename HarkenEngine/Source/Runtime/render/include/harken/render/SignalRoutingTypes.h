@@ -5,6 +5,7 @@ namespace harken {
 struct SignalBusRoutingInfo {
     VnBusId id{};
     std::uint32_t generation = 0;
+    std::uint32_t inputNode = 0;
     double inputBound = 1;
     double outputFilterBound = 1;
     double outputGainBound = 1;

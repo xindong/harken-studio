@@ -1176,6 +1176,15 @@ TEST_F(BusSendSlotReconcile, LateSignalInstallKeepsFiniteWarmFilterAndDelayBound
     EXPECT_FLOAT_EQ(state->feedback, .2f);
     EXPECT_FLOAT_EQ(state->maxFeedbackSinceReset, .8f);
     EXPECT_TRUE(std::isfinite(engine->buses.BusState(2)->busLpf.signalHighWater));
+    // Finishing between 16-frame control ticks must not generate an unbounded
+    // number of one-frame schedule entries for the rest of this block.
+    const auto shortTarget = harken::MakeLowpass(48000, 500, .707f);
+    engine->buses.ApplySetBusFilter(2, harken::kFilterKindLowpass, true, 500, .707f,
+        shortTarget, harken::EstimateBiquadTailFrames(shortTarget), 15, false);
+    Capture shortGlide;
+    PumpAndCapture(engine, 1, shortGlide);
+    ASSERT_FALSE(shortGlide.left.empty());
+    for (float sample : shortGlide.left) EXPECT_TRUE(std::isfinite(sample));
 }
 
 TEST_F(BusSendSlotReconcile, NewBusCannotAliasContentNodeInOlderSignalPlan) {
@@ -1198,4 +1207,73 @@ TEST_F(BusSendSlotReconcile, NewBusCannotAliasContentNodeInOlderSignalPlan) {
     EXPECT_FALSE(signals->ReserveRouting(engine->buses, arena, 0, 0));
     EXPECT_EQ(arena.UsedBytes(), 0u);
     EXPECT_FALSE(signals->BuildRouting({}, engine->buses));
+}
+
+TEST_F(BusSendSlotReconcile, ExternalDetectorInjectionCannotInfluenceAnEarlierTap) {
+    session.reset();
+    auto config = MakeNullConfig(1, kBlockFrames, 48000);
+    config.maxBuses = 6;
+    config.fxSlotsPerBus = 2;
+    config.compressorEffectPoolCapacity = 2;
+    config.dynamicRouteCapacity = 4;
+    config.dynamicBusTapCapacity = 4;
+    config.topologyPlanPoolCapacity = 12;
+    session = std::make_unique<EngineSession>(config);
+    ASSERT_EQ(VN_OK, session->InitResult());
+    engine = session->Engine();
+    ASSERT_EQ(VN_OK, Vn_CreateBus(kBusA, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_CreateBus(kBusB, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_CreateBus(kBusD, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_CreateBus(kBusC, kBusD));
+    VnCompressorDesc compressor{};
+    compressor.structSize = sizeof(compressor);
+    compressor.thresholdDb = -24;
+    compressor.ratio = 4;
+    compressor.attackMs = 5;
+    compressor.releaseMs = 80;
+    compressor.kneeDb = 3;
+    ASSERT_EQ(VN_OK, Vn_SetBusEffect(kBusA, 1, VN_EFFECT_COMPRESSOR,
+        reinterpret_cast<const VnEffectDesc*>(&compressor)));
+    ASSERT_EQ(VN_OK, Vn_SetBusEffect(kBusB, 0, VN_EFFECT_COMPRESSOR,
+        reinterpret_cast<const VnEffectDesc*>(&compressor)));
+    ASSERT_EQ(VN_OK, Vn_SetBusFaderPoint(kBusA, 1));
+    Capture empty;
+    PumpAndCapture(engine, 1, empty);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    VnEffectDynamicRouteDesc route{};
+    route.structSize = sizeof(route);
+    route.signalForm = VN_DYNAMIC_SIGNAL_RAW_AUDIO;
+    route.sourceKind = VN_DYNAMIC_SOURCE_BUS;
+    route.expectedEffectType = VN_EFFECT_COMPRESSOR;
+    route.sourceId = kBusD;
+    route.tap = VN_DYNAMIC_TAP_BUS_POST_EFFECTS;
+    ASSERT_EQ(VN_OK, Vn_SetBusEffectDynamicRoute(kBusA, 1, 0, &route));
+    route.sourceId = kBusA;
+    route.tap = VN_DYNAMIC_TAP_BUS_PRE_FADER;
+    ASSERT_EQ(VN_OK, Vn_SetBusEffectDynamicRoute(kBusB, 0, 0, &route));
+    PumpAndCapture(engine, 1, empty);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    const auto check = [&](bool feedback) {
+        constexpr std::uint32_t endpointNodes = 6;
+        std::vector<harken::SignalBusRoutingInfo> buses(engine->buses.AudioBusCount());
+        std::vector<harken::SignalFeedbackEdge> edges(engine->buses.SignalRoutingEdgeCapacity() + 1);
+        std::vector<harken::SignalBiquadSegment> schedules(buses.size() * 4 * (kBlockFrames / 16 + 2));
+        const auto count = engine->buses.SignalRoutingSnapshot(buses, edges, kBlockFrames, schedules, endpointNodes);
+        ASSERT_NE(count, UINT32_MAX);
+        // B -> C is one-way while A's detector injection is after its outgoing tap.
+        edges[count] = {engine->buses.FindIndex(kBusB), engine->buses.FindIndex(kBusC), 1, true};
+        edges.resize(count + 1);
+        const auto nodeCount = endpointNodes + static_cast<std::uint32_t>(engine->buses.SignalRoutingExtraNodes());
+        std::vector<std::byte> scratch(harken::SignalFeedbackPlan::ScratchBytes(nodeCount, edges.size()));
+        harken::SignalFeedbackView graph;
+        ASSERT_TRUE(harken::SignalFeedbackPlan::Compile(nodeCount, edges, scratch, graph));
+        const auto& node = graph.nodes[engine->buses.FindIndex(kBusC)];
+        EXPECT_EQ(node.feedbackInput, feedback);
+        EXPECT_DOUBLE_EQ(node.slope, feedback ? 0 : harken::kDuckingBaselineSlope);
+    };
+    check(false);
+    route.tap = VN_DYNAMIC_TAP_BUS_POST_EFFECTS;
+    ASSERT_EQ(VN_OK, Vn_SetBusEffectDynamicRoute(kBusB, 0, 0, &route));
+    PumpAndCapture(engine, 1, empty);
+    check(true);
 }

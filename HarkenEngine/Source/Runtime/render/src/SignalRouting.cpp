@@ -43,9 +43,11 @@ std::uint64_t SignalRenderPlan::RoutingScratchBytes(std::uint32_t nodes, std::ui
 bool SignalRenderPlan::ReserveRouting(BusTree& buses, BlockArena& arena,
                                      std::uint32_t members, std::size_t pathRows) noexcept {
     if (buses.AudioBusCount() > routingBusCount_) return false;
+    const auto graphCount = static_cast<std::uint64_t>(NodeCount()) + buses.SignalRoutingExtraNodes();
+    if (graphCount > UINT32_MAX) return false;
     const auto edges = static_cast<std::uint64_t>(buses.SignalRoutingEdgeCapacity()) +
         relations_.size() + pathRows + static_cast<std::uint64_t>(members) * (kMaxVoiceSendSlots + 1ull);
-    const auto bytes = RoutingScratchBytes(NodeCount(), buses.AudioBusCount(), edges, current_.frames);
+    const auto bytes = RoutingScratchBytes(static_cast<std::uint32_t>(graphCount), buses.AudioBusCount(), edges, current_.frames);
     if (bytes > arena.CapacityBytes()) return false;
     auto* data = arena.AllocFloats((static_cast<std::size_t>(bytes) + sizeof(float) - 1) / sizeof(float));
     if (data == nullptr) return false;
@@ -58,6 +60,8 @@ bool SignalRenderPlan::BuildRouting(std::span<const SignalMemberImage> members,
     if (!open_ || contentProcessed_) return false;
     const auto busCount = buses.AudioBusCount();
     if (busCount > routingBusCount_) return false;
+    const auto graphCount = static_cast<std::uint64_t>(NodeCount()) + buses.SignalRoutingExtraNodes();
+    if (graphCount > UINT32_MAX) return false;
     std::size_t capacity = buses.SignalRoutingEdgeCapacity() + relations_.size();
     for (const auto& member : members) {
         if (member.voice == nullptr || member.nodes.empty()) return false;
@@ -72,10 +76,10 @@ bool SignalRenderPlan::BuildRouting(std::span<const SignalMemberImage> members,
     auto schedules = Reserve<SignalBiquadSegment>(storage,
         static_cast<std::size_t>(busCount) * 4 * (current_.frames / 16u + 2u));
     if (info.size() != busCount || edges.size() != capacity) return false;
-    auto used = buses.SignalRoutingSnapshot(info, edges, current_.frames, schedules);
+    auto used = buses.SignalRoutingSnapshot(info, edges, current_.frames, schedules, NodeCount());
     if (used == UINT32_MAX) return false;
     const auto append = [&](std::uint32_t from, std::uint32_t to, double bound, bool delayed) {
-        if (from >= nodes_.size() || to >= nodes_.size() || used == edges.size() ||
+        if (from >= graphCount || to >= graphCount || used == edges.size() ||
             std::isnan(bound) || bound < 0) return false;
         edges[used++] = {from, to, bound, delayed};
         return true;
@@ -95,7 +99,8 @@ bool SignalRenderPlan::BuildRouting(std::span<const SignalMemberImage> members,
                 if (send.active && send.targetBusIndex == destination &&
                     send.targetBusGeneration == info[destination].generation)
                     bound += SendBound(send);
-            return append(source, destination, SignalBoundProduct(bound, info[destination].inputBound), false);
+            return append(source, info[destination].inputNode, SignalBoundProduct(bound,
+                info[destination].inputNode == destination ? info[destination].inputBound : 1), false);
         };
         if (!route(voice.busIndex)) return false;
         for (std::size_t i = 0; i < std::size(voice.voiceSends); ++i) {
@@ -128,16 +133,16 @@ bool SignalRenderPlan::BuildRouting(std::span<const SignalMemberImage> members,
         if (merged != 0 && edges[merged - 1].source == edge.source &&
             edges[merged - 1].target == edge.target && edges[merged - 1].delayed == edge.delayed) {
             auto& prior = edges[merged - 1];
-            if (edge.delayed || nodes_[edge.source].kind == SignalEndpointKindV1::Bus)
+            if (edge.delayed || edge.source >= nodes_.size() || nodes_[edge.source].kind == SignalEndpointKindV1::Bus)
                 prior.bound += edge.bound;
             else prior.bound = std::max(prior.bound, edge.bound);
         } else edges[merged++] = edge;
     }
-    const auto bytes = SignalFeedbackPlan::ScratchBytes(NodeCount(), merged);
+    const auto bytes = SignalFeedbackPlan::ScratchBytes(static_cast<std::uint32_t>(graphCount), merged);
     auto scratch = Reserve<std::byte>(storage, bytes);
     if (scratch.size() != bytes) return false;
     SignalFeedbackView candidate;
-    return SignalFeedbackPlan::Compile(NodeCount(), edges.first(merged), scratch, candidate) &&
+    return SignalFeedbackPlan::Compile(static_cast<std::uint32_t>(graphCount), edges.first(merged), scratch, candidate) &&
         SetBlockRouting(candidate);
 }
 }

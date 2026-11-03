@@ -125,6 +125,8 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
       m_arenaLowBytes(static_cast<std::uint64_t>(config.maxBuses) *
                       config.mixChannelCount * config.blockFrames * sizeof(float)),
       m_busSendSlots(config.busSendSlotsPerBus),
+      m_busFxSlots(config.fxSlotsPerBus),
+      m_dynamicRouteCapacity(config.dynamicRouteCapacity),
       m_arenaBytesPerSlot(std::min<std::uint64_t>(config.arenaBytes,
           static_cast<std::uint64_t>(kMaxChannels +
               std::max<std::uint32_t>(kMaxChannels, config.mixChannelCount)) *
@@ -210,10 +212,15 @@ bool MixerLoop::PrepareVoiceBacking(std::uint32_t count) noexcept {
 std::uint64_t MixerLoop::SignalScratchBytes(std::uint32_t slots, std::uint32_t nodes,
                                            std::size_t relations) const noexcept {
     if (nodes == 0) return 0;
-    const std::uint64_t edges = static_cast<std::uint64_t>(m_maxBuses) * (m_busSendSlots + 1ull) +
+    const auto extra = m_dynamicRouteCapacity == 0 ? 0ull :
+        static_cast<std::uint64_t>(m_maxBuses) * (m_busFxSlots + 2ull);
+    const auto graphNodes = nodes + extra;
+    if (graphNodes > UINT32_MAX) return UINT64_MAX;
+    const std::uint64_t edges = extra + m_dynamicRouteCapacity +
+        static_cast<std::uint64_t>(m_maxBuses) * (m_busSendSlots + 1ull) +
         relations + m_voices.PreparedSignalPathRows(slots) +
         static_cast<std::uint64_t>(slots) * (kMaxVoiceSendSlots + 1ull);
-    return SignalRenderPlan::RoutingScratchBytes(nodes, m_maxBuses, edges, m_blockFrames);
+    return SignalRenderPlan::RoutingScratchBytes(static_cast<std::uint32_t>(graphNodes), m_maxBuses, edges, m_blockFrames);
 }
 
 bool MixerLoop::PrepareSignalBacking(const SignalRenderPlan& plan) noexcept {

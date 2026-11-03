@@ -290,11 +290,19 @@ public:
                  std::uint64_t blockEpoch, std::uint64_t sourceFrameBegin = 0,
                  SignalRenderPlan* signals = nullptr);
     std::size_t SignalRoutingEdgeCapacity() const noexcept {
-        return static_cast<std::size_t>(m_audioCount) * (static_cast<std::size_t>(m_sendSlots) + 1);
+        return static_cast<std::size_t>(m_audioCount) * (static_cast<std::size_t>(m_sendSlots) + 1) +
+            SignalRoutingExtraNodes() + m_dynamicRoutes.InstalledPlan().rowCount;
+    }
+    std::size_t SignalRoutingExtraNodes() const noexcept {
+        const auto plan = m_dynamicRoutes.InstalledPlan();
+        for (std::uint32_t i = 0; i < plan.rowCount; ++i)
+            if (plan.rows[i].sourceKind == VN_DYNAMIC_SOURCE_BUS)
+                return static_cast<std::size_t>(m_audioCount) * (m_fxSlots + 2ull);
+        return 0;
     }
     std::uint32_t SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> buses,
         std::span<SignalFeedbackEdge> edges, std::uint32_t frames,
-        std::span<SignalBiquadSegment> schedules) noexcept;
+        std::span<SignalBiquadSegment> schedules, std::uint32_t nodeOffset) noexcept;
     SignalRenderPlan* InstalledSignals() const {
         return m_plans.View(m_currentPlanIndex).signals;
     }

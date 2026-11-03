@@ -338,6 +338,7 @@ private:
     std::uint32_t m_signalNodes = 0;
     std::size_t m_signalRelations = 0;
     std::uint32_t m_busSendSlots = 0;
+    std::uint32_t m_busFxSlots = 0, m_dynamicRouteCapacity = 0;
     std::uint64_t SignalScratchBytes(std::uint32_t slots, std::uint32_t nodes,
                                     std::size_t relations) const noexcept;
     std::uint64_t m_arenaBytesPerSlot = 0;

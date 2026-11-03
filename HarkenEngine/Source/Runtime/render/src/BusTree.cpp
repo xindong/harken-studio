@@ -419,6 +419,16 @@ double ProcessBusToneSection(BusTree::Bus::ToneSection& section,
     std::uint32_t consumed = 0, segment = 0;
     double bound = 1;
     while (consumed < frames) {
+        if (!section.glide.active) {
+            // A glide can finish between control ticks. Its progress then
+            // stops, so consume the fixed-coefficient remainder once.
+            const auto remaining = frames - consumed;
+            bound = std::max(bound, section.signalBound.Advance(section.enabled,
+                section.coeffs, section.transition, remaining));
+            BiquadProcessSmoothed(section.transition, section.enabled, section.coeffs,
+                section.state, section.tailFrames, channels, channelCount, consumed, remaining);
+            break;
+        }
         const std::uint32_t controlOffset = section.glide.progress % kControlFrames;
         const std::uint32_t count = std::min(kControlFrames - controlOffset, frames - consumed);
         bound = std::max(bound, section.signalBound.Advance(section.enabled,
@@ -1195,24 +1205,72 @@ SignalBusRoutingInfo BusTree::SignalBusBounds(std::uint32_t index, std::uint32_t
 
 std::uint32_t BusTree::SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> info,
     std::span<SignalFeedbackEdge> edges, std::uint32_t frames,
-    std::span<SignalBiquadSegment> schedules) noexcept {
+    std::span<SignalBiquadSegment> schedules, std::uint32_t nodeOffset) noexcept {
     const auto perBus = static_cast<std::size_t>(4) * (frames / 16u + 2u);
     if (info.size() < m_audioCount || edges.size() < SignalRoutingEdgeCapacity() ||
         schedules.size() < m_audioCount * perBus) return UINT32_MAX;
     const auto plan = m_plans.View(m_currentPlanIndex);
+    const bool segmented = SignalRoutingExtraNodes() != 0;
+    if (SignalRoutingExtraNodes() > UINT32_MAX - static_cast<std::uint64_t>(nodeOffset)) return UINT32_MAX;
+    const auto inputNode = [&](std::uint32_t bus) {
+        return segmented ? nodeOffset + bus * (m_fxSlots + 2) : bus;
+    };
     for (std::uint32_t i = 0; i < m_audioCount; ++i) {
         if (plan.valid && plan.alive != nullptr && plan.alive[i] == 0) continue;
         info[i] = SignalBusBounds(i, frames, schedules.subspan(i * perBus, perBus));
+        info[i].inputNode = inputNode(i);
         m_buses[i].signalBoundsPrepared = true;
     }
     std::uint32_t used = 0;
+    if (segmented) {
+        for (std::uint32_t bus = 0; bus < m_audioCount; ++bus) {
+            if (info[bus].id == VnBusId{}) continue;
+            const auto base = inputNode(bus);
+            const auto fader = std::min(m_buses[bus].faderAfterSlot, m_fxSlots);
+            auto previous = base;
+            for (std::uint32_t slot = 0; slot <= m_fxSlots; ++slot) {
+                if (slot == fader) {
+                    edges[used++] = {previous, base + m_fxSlots + 1, 1, false};
+                    previous = base + m_fxSlots + 1;
+                }
+                if (slot < m_fxSlots) {
+                    edges[used++] = {previous, base + slot + 1, 1, false};
+                    previous = base + slot + 1;
+                }
+            }
+            edges[used++] = {previous, bus, info[bus].inputBound, false};
+        }
+        const auto routes = m_dynamicRoutes.InstalledPlan();
+        for (std::uint32_t i = 0; i < routes.rowCount; ++i) {
+            const auto& row = routes.rows[i];
+            if (!m_dynamicRoutes.InstalledBusTapMatches(row) || row.sourceIndex >= m_audioCount ||
+                row.targetBusIndex >= m_audioCount || row.effectSlot >= m_fxSlots ||
+                info[row.sourceIndex].id == VnBusId{} || info[row.targetBusIndex].id == VnBusId{} ||
+                m_buses[row.targetBusIndex].fxSlotEffectRef[row.effectSlot].type != VN_EFFECT_COMPRESSOR) continue;
+            const auto base = inputNode(row.sourceIndex);
+            const auto fader = std::min(m_buses[row.sourceIndex].faderAfterSlot, m_fxSlots);
+            std::uint32_t source = 0;
+            switch (row.tap) {
+            case VN_DYNAMIC_TAP_BUS_PRE_FADER: source = base + fader; break;
+            case VN_DYNAMIC_TAP_BUS_POST_FADER: source = base + m_fxSlots + 1; break;
+            case VN_DYNAMIC_TAP_BUS_POST_EFFECTS:
+                source = base + m_fxSlots + (fader == m_fxSlots ? 1u : 0u); break;
+            default: return UINT32_MAX;
+            }
+            // External detector sensitivity has no main-independent finite
+            // bound. Preserve its actual injection point and localize that
+            // limit to components that really return through this dependency.
+            edges[used++] = {source, inputNode(row.targetBusIndex) + row.effectSlot + 1,
+                row.levelLinear == 0 ? 0 : std::numeric_limits<double>::infinity(), false};
+        }
+    }
     for (std::uint32_t from = 0; from < m_audioCount; ++from) {
         if (info[from].id == VnBusId{}) continue;
         const auto& bus = m_buses[from];
         if (from != 0 && bus.parentIndex < m_audioCount && info[bus.parentIndex].id != VnBusId{})
-            edges[used++] = {from, bus.parentIndex,
+            edges[used++] = {from, inputNode(bus.parentIndex),
                 SignalBoundProduct(info[from].outputFilterBound,
-                    info[bus.parentIndex].inputBound), false};
+                    segmented ? 1 : info[bus.parentIndex].inputBound), false};
         if (!plan.valid) continue;
         const auto* membership = plan.sendTargets + static_cast<std::size_t>(from) * plan.slotsPerBus;
         for (std::uint32_t slot = 0; slot < plan.slotsPerBus; ++slot) {
@@ -1225,7 +1283,7 @@ std::uint32_t BusTree::SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> inf
                 edge->rampBlocksDone, edge->rampBlocksTotal);
             const double level = std::max(std::abs(static_cast<double>(gain.current)),
                 std::abs(static_cast<double>(gain.target)));
-            edges[used++] = {from, to, SignalBoundProduct(level, info[to].inputBound), false};
+            edges[used++] = {from, inputNode(to), SignalBoundProduct(level, segmented ? 1 : info[to].inputBound), false};
         }
     }
     return used;
