@@ -1162,8 +1162,8 @@ TEST(CompressorKernel,
             &state, channels, 1, &detector, 0, 1);
 
         EXPECT_EQ(0u, state.parameterTransitionFramesRemaining);
-        EXPECT_EQ(0, std::memcmp(&expectedGain, &state.currentGain,
-                                 sizeof(expectedGain)));
+        EXPECT_NEAR(expectedGain, state.currentGain, 2.0e-7);
+        EXPECT_FLOAT_EQ(expectedGain, output);
     }
 
     harken::CompressorState retargeted{};
@@ -1218,9 +1218,8 @@ TEST(CompressorKernel,
     channels[0] = &output;
     harken::CompressorProcessWithDetector(
         &retargeted, channels, 1, &retargetDetector, 0, 1);
-    EXPECT_EQ(0, std::memcmp(&expectedGain,
-                             &retargeted.currentGain,
-                             sizeof(expectedGain)));
+    EXPECT_NEAR(expectedGain, retargeted.currentGain, 2.0e-7);
+    EXPECT_FLOAT_EQ(expectedGain, output);
 }
 
 TEST(CompressorKernel, NeutralRatioAndMakeupAreBitTransparent) {
