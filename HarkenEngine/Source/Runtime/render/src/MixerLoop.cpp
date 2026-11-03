@@ -1004,6 +1004,27 @@ std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
             bool protocolValid = countValid && header.ticket != 0 &&
                                  (header.mode == VN_ACTION_SEEK_ABSOLUTE ||
                                   header.mode == VN_ACTION_SEEK_RELATIVE);
+            bool uniqueHandles = batchCount == 1;
+            if (protocolValid && batchCount > 1) {
+                // The published prefix stays immutable until consumption. Use
+                // the frame scratch before resolution to prove uniqueness once.
+                uniqueHandles = true;
+                for (std::uint32_t i = 0; i < batchCount; ++i) {
+                    CommandRecord item{};
+                    if (!m_commands.PeekAt(i, item) ||
+                        item.opcode != kOpcodeSeekVoice) {
+                        uniqueHandles = false;
+                        break;
+                    }
+                    m_seekResolvedFrames[i] = item.payload.seekVoice.handle;
+                }
+                if (uniqueHandles) {
+                    const auto end = m_seekResolvedFrames.begin() + batchCount;
+                    std::sort(m_seekResolvedFrames.begin(), end);
+                    uniqueHandles = std::adjacent_find(
+                        m_seekResolvedFrames.begin(), end) == end;
+                }
+            }
             for (std::uint32_t i = 0;
                  protocolValid && i < batchCount; ++i) {
                 CommandRecord item{};
@@ -1018,8 +1039,9 @@ std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
                                 seek.batchOrdinal == i &&
                                 (seek.mode == VN_ACTION_SEEK_ABSOLUTE ||
                                  seek.mode == VN_ACTION_SEEK_RELATIVE);
+                // Keep the original failure order for malformed batches.
                 for (std::uint32_t earlier = 0;
-                     protocolValid && earlier < i; ++earlier) {
+                     !uniqueHandles && protocolValid && earlier < i; ++earlier) {
                     CommandRecord previous{};
                     protocolValid = m_commands.PeekAt(earlier, previous) &&
                                     previous.payload.seekVoice.handle !=

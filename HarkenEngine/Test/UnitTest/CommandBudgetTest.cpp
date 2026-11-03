@@ -14,6 +14,7 @@
 // them whole; malformed batches are skipped without applying a prefix.
 #include "Common/ObjectIdTestSupport.h"
 #include "Engine.h"
+#include "AllocationProbe.h"
 #include "CommandQueueSubmissionTestAccess.h"
 #include "Common/TestUtil.h"
 
@@ -49,6 +50,94 @@ VnConfig BudgetConfig(std::uint32_t maxVoices = 2) {
     // measure backpressure instead.
     config.commandQueueDepth = 1024;
     return config;
+}
+
+TEST(CommandBudget, SeekBatchPreservesTargetOrderAtomicRefusalAndRetry) {
+    EngineSession session(BudgetConfig(4));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    const auto samples = harkentest::MakeDC(1024, 0.125f);
+    const auto sound = harkentest::ObjectId(0x5345454b);
+    const auto pcm = MonoDesc(samples, kRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+    auto play = MakePlayDesc(sound);
+    std::array<VnVoiceHandle, 4> handles{};
+    for (auto& handle : handles) {
+        VnVoiceHandle publicHandle = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &publicHandle));
+        engine->mixer.DrainCommandsForTest();
+        handle = harkentest::RenderHandle(engine, publicHandle);
+        ASSERT_NE(nullptr, engine->voices.Resolve(handle));
+    }
+    const std::array<VnVoiceHandle, 4> order{
+        handles[2], handles[0], handles[3], handles[1]};
+    // Each rejected batch is followed by a valid batch on the same voices.
+    for (unsigned round = 0; round < 9; ++round) {
+        SCOPED_TRACE(round);
+        const auto invalidCase = round % 2 == 0 ? 0u : (round + 1u) / 2u;
+        std::array<std::uint64_t, 4> before{};
+        for (std::size_t i = 0; i < order.size(); ++i)
+            before[i] = engine->voices.Resolve(order[i])->srcCursor;
+        VnActionSeekTicket ticket = 0;
+        ASSERT_TRUE(engine->actionSeeks.Prepare(1, 4, round + 1u, &ticket));
+        ASSERT_TRUE(engine->actionSeeks.Commit(ticket));
+        std::array<harken::CommandRecord, 4> commands{};
+        for (std::uint32_t i = 0; i < commands.size(); ++i) {
+            auto& command = commands[i];
+            command.opcode = harken::kOpcodeSeekVoice;
+            command.payload.seekVoice.ticket = ticket;
+            command.payload.seekVoice.handle = order[i];
+            command.payload.seekVoice.frameValue = 100 * (i + 1) + round;
+            command.payload.seekVoice.mode = VN_ACTION_SEEK_ABSOLUTE;
+            command.payload.seekVoice.batchCommandCount = 4;
+            command.payload.seekVoice.batchOrdinal = i;
+        }
+        VnResult expected = VN_OK;
+        if (invalidCase == 1 || invalidCase == 2) {
+            commands[2].payload.seekVoice.handle = order[1];
+            expected = VN_INVALID_ARG;
+            if (invalidCase == 2) {
+                commands[0].payload.seekVoice.handle = 0;
+                expected = VN_STALE_HANDLE;
+            }
+        } else if (invalidCase == 3) {
+            commands[1].payload.seekVoice.handle = order[0];
+            commands[3].payload.seekVoice.handle = 0;
+            expected = VN_INVALID_ARG;
+        } else if (invalidCase == 4) {
+            commands[1] = {};
+            commands[1].opcode = harken::kOpcodeSetVoicePan;
+            expected = VN_INVALID_ARG;
+        }
+        const auto violations = engine->mixer.CommandProtocolViolationCount();
+        ASSERT_TRUE(engine->commands.TryPushBatch(commands.data(), commands.size()));
+        ASSERT_FALSE(allocation_probe::enabled);
+        ASSERT_EQ(nullptr, allocation_probe::countIf);
+        const auto allocations = allocation_probe::count;
+        allocation_probe::enabled = true;
+        engine->mixer.DrainCommandsForTest();
+        allocation_probe::enabled = false;
+        EXPECT_EQ(allocations, allocation_probe::count);
+        VnActionSeekInfoV1 info{};
+        info.structSize = sizeof(info);
+        ASSERT_EQ(VN_OK, engine->actionSeeks.Query(ticket, &info));
+        EXPECT_EQ(expected, info.result);
+        EXPECT_EQ(expected == VN_OK ? VN_ACTION_SEEK_APPLIED : VN_ACTION_SEEK_CANCELLED,
+                  info.state);
+        EXPECT_EQ(expected == VN_OK ? 4u : 0u, info.appliedCount);
+        EXPECT_EQ(expected == VN_OK ? 0u : 4u, info.cancelledCount);
+        EXPECT_EQ(violations + (expected == VN_INVALID_ARG ? 1u : 0u),
+                  engine->mixer.CommandProtocolViolationCount());
+        for (std::size_t i = 0; i < order.size(); ++i) {
+            EXPECT_EQ(expected == VN_OK ? 100 * (i + 1) + round : before[i],
+                      engine->voices.Resolve(order[i])->srcCursor);
+        }
+        if (expected == VN_OK) {
+            EXPECT_EQ(100u + round, info.minimumAppliedSourceFrame);
+            EXPECT_EQ(400u + round, info.maximumAppliedSourceFrame);
+        }
+        EXPECT_EQ(VN_OK, engine->actionSeeks.Release(ticket));
+    }
 }
 
 // A looping DC voice, so every rendered block carries the same level and the
