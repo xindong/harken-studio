@@ -27,8 +27,45 @@
 #include <QProcess>
 #include <QScopeGuard>
 #include <QSettings>
+#include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QThread>
+
+namespace {
+
+bool editorIsVisible(const QString& project)
+{
+    QTcpSocket socket;
+    socket.connectToHost(QHostAddress::LocalHost, 9527);
+    if (!socket.waitForConnected(500))
+        return false;
+    const auto query = [&socket](const QString& command, const QJsonObject& arguments = QJsonObject{}) {
+        const QJsonObject request{{"cmd", command}, {"args", arguments}, {"request_id", command}};
+        socket.write(QJsonDocument(request).toJson(QJsonDocument::Compact) + '\n');
+        QElapsedTimer elapsed;
+        elapsed.start();
+        while (elapsed.elapsed() < 1000) {
+            while (socket.canReadLine()) {
+                const auto response = QJsonDocument::fromJson(socket.readLine()).object();
+                if (response.value("request_id").toString() == command)
+                    return response.value("result").toObject();
+            }
+            if (!socket.waitForReadyRead(100)
+                && socket.state() != QAbstractSocket::ConnectedState)
+                break;
+        }
+        return QJsonObject{};
+    };
+    const auto state = query(QStringLiteral("get_project_state"));
+    if (!state.value("project_loaded").toBool()
+        || QFileInfo(state.value("project_path").toString()).canonicalFilePath()
+            != QFileInfo(project).canonicalFilePath())
+        return false;
+    return query(QStringLiteral("get_ui_tree"), {{"root", "MainWindow"}, {"depth", 0}})
+        .value("visible").toBool();
+}
+
+}
 
 TEST(StudioPackageIntegration, InstallsRepairsRegistersCreatesAndOpensRealStudio)
 {
@@ -137,15 +174,20 @@ TEST(StudioPackageIntegration, InstallsRepairsRegistersCreatesAndOpensRealStudio
         QElapsedTimer elapsed;
         elapsed.start();
         bool synchronized = false;
-        while (!synchronized && process.state() != QProcess::NotRunning && elapsed.elapsed() < 60000) {
+        bool editorShown = false;
+        while ((!synchronized || !editorShown)
+               && process.state() != QProcess::NotRunning && elapsed.elapsed() < 60000) {
             QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-            synchronized = intake.consumeAll();
+            synchronized = intake.consumeAll() || synchronized;
+            if (synchronized)
+                editorShown = editorIsVisible(project);
             QThread::msleep(5);
         }
         process.kill();
         process.waitForFinished(5000);
         EXPECT_TRUE(synchronized) << process.readAllStandardError().toStdString();
-        return synchronized;
+        EXPECT_TRUE(editorShown);
+        return synchronized && editorShown;
     };
     ASSERT_TRUE(runStudio(true));
     const auto probe = VNH::ProjectProbe::probe(project);
