@@ -249,6 +249,11 @@ struct VoiceRenderContext {
     SourcePhase phase = SourcePhase::Done;
     bool dynamicVoiceTapActive = false;
     bool signalMemberActive = false;
+    // Immutable slot-owned copy, captured before the Play/Arm publication.
+    // It remains valid through physical tails; raw media has an empty path.
+    std::span<const PlaybackPathRow> signalPath{};
+    std::span<std::uint32_t> signalNodeStorage{};
+    std::uint32_t signalNodeCount = 0;
     bool streamParkActive = false;
     bool lpfEnabled = false;
     bool hpfEnabled = false;

@@ -8307,7 +8307,8 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         result.status = status;
         return result;
     };
-    if (!engine.playbackPaths[renderSlot].PreparePath(input.pathRows.size()))
+    if (!engine.voices.BindPreparedSignalPath(render, input.pathRows) ||
+        !engine.playbackPaths[renderSlot].PreparePath(input.pathRows.size()))
         return rollback(VN_BACKPRESSURE);
     VnEmitterHandle emitter = 0;
     for (const auto& start : engine.playableServices) {

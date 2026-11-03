@@ -890,3 +890,29 @@ TEST(SpatialMatrix, CollectiveImageSharesMappingAndAdvancesOutputAndSendsOnlyOnF
         }
     }
 }
+
+TEST(SpatialMatrix, RequiredCollectiveImageShortfallClearsOnlyBlockObservations) {
+    constexpr std::uint32_t frames = 64;
+    harken::VoiceRenderContext voice;
+    voice.pcm.channelCount = 1;
+    voice.phase = harken::SourcePhase::Active;
+    voice.signalMemberActive = true;
+    voice.starvedThisBlock = true;
+    voice.srcCursor = 19;
+#if HARKEN_STAGE_TAPS_ACTIVE
+    voice.tapPostResample = voice.tapPostFx = voice.tapPostFilter = voice.tapPostGain = .5f;
+#endif
+    // Fits the source scratch, but no complete stereo member image.
+    harken::BlockArena arena(frames * sizeof(float));
+    ASSERT_FALSE(harken::PrepareVoiceCascade(voice, arena, frames, 2));
+    EXPECT_FALSE(voice.starvedThisBlock);
+    EXPECT_FALSE(voice.cascade.runnable);
+    EXPECT_EQ(voice.lastResult.framesProduced, 0u);
+    EXPECT_EQ(voice.srcCursor, 19u);
+#if HARKEN_STAGE_TAPS_ACTIVE
+    EXPECT_FLOAT_EQ(voice.tapPostResample, 0);
+    EXPECT_FLOAT_EQ(voice.tapPostFx, 0);
+    EXPECT_FLOAT_EQ(voice.tapPostFilter, 0);
+    EXPECT_FLOAT_EQ(voice.tapPostGain, 0);
+#endif
+}

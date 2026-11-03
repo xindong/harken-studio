@@ -897,6 +897,13 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     if (ctx.signalMemberActive && !tapReady) {
         // Collective receiving cannot silently bypass a member whose image
         // could not be reserved. Keep this block silent and retry next time.
+        ctx.starvedThisBlock = false;
+#if HARKEN_STAGE_TAPS_ACTIVE
+        ctx.tapPostResample = 0.0f;
+        ctx.tapPostFx = 0.0f;
+        ctx.tapPostFilter = 0.0f;
+        ctx.tapPostGain = 0.0f;
+#endif
         ctx.lastResult = StageResult{0, ctx.phase};
         return false;
     }

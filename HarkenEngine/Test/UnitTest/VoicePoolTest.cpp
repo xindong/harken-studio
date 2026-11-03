@@ -3410,3 +3410,81 @@ TEST(MixerPitch, BindingRampIsNotSnap) {
 }
 
 } // namespace
+TEST(VoicePool, CollectiveSignalStagesShareActualInstancesAcrossSerialAndWorkerRenders) {
+    std::vector<float> serial;
+    for (const auto workers : {0u, 2u}) {
+        SCOPED_TRACE(workers);
+        auto config = VoicePoolConfig(4, kBlockFrames, kSampleRate);
+        config.renderWorkerCount = workers;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        engine.voices.DisableRenderWorkers();
+        ASSERT_TRUE(engine.voices.EnsureRenderWorkersReady());
+        ASSERT_TRUE(engine.voices.EnableOfflineRenderWorkers());
+        std::array<std::vector<float>, 4> pcm;
+        const float amplitudes[]{1, .4f, .8f, .4f};
+        std::array<VnVoiceHandle, 4> handles{};
+        const harken::ProgramSourceIdentityV1 source{1, 0, 0, 0, harken::kCurrentWorldBodyVintageV20};
+        for (std::uint32_t i = 0; i < 4; ++i) {
+            pcm[i] = harkentest::MakeDC(4096, amplitudes[i]);
+            const auto desc = MonoDesc(pcm[i], kSampleRate);
+            const auto mediaId = harkentest::ObjectId(100 + i);
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(mediaId, &desc));
+            const auto view = engine.registry.Lookup(mediaId);
+            ASSERT_EQ(VN_OK, engine.voices.Play(view, 0, 1, i, false, 0, 0, 0,
+                harken::ResolvePanGains(engine.config.mixChannelLayout, 0), 0, view.frames, 0,
+                harken::ResampleProfile::LegacyCompatibility, &handles[i]));
+            if (i != 3) {
+                harken::PlaybackPathRow row{};
+                row.stableId = harkentest::ObjectId(i == 0 ? 1 : 2);
+                row.rowKind = harken::ResolvedPlayablePathRowKindV1::Definition;
+                row.propertyFingerprint = i == 0 ? 111 : 222;
+                row.source = source;
+                ASSERT_TRUE(engine.voices.BindPreparedSignalPath(handles[i], {&row, 1}));
+            }
+            auto* render = engine.voices.Resolve(handles[i]);
+            ASSERT_NE(render, nullptr);
+            if (i == 2) render->outputGain.Set(.5f);
+            engine.voices.ApplyPlay(handles[i], handles[i], 0, 0);
+        }
+        EXPECT_TRUE(engine.voices.Resolve(handles[3])->signalPath.empty());
+        const std::array nodes{
+            harken::SignalRenderNodeInput{harken::SignalEndpointKindV1::Sound},
+            harken::SignalRenderNodeInput{harken::SignalEndpointKindV1::Sound, true}};
+        const std::array relations{harken::SignalConnectionInput{0, 1, .1f}};
+        const std::array paths{harken::SignalFeedbackEdge{0, 1, .1, true}};
+        const std::array proofs{
+            harken::SignalMemberProof{harkentest::ObjectId(1), 111, source, 0},
+            harken::SignalMemberProof{harkentest::ObjectId(2), 222, source, 1}};
+        auto signals = harken::SignalRenderPlan::Prepare({2, kBlockFrames, kSampleRate,
+            VN_CHANNEL_LAYOUT_STEREO}, nodes, relations, paths, proofs);
+        ASSERT_NE(signals, nullptr);
+        harken::BlockArena arena(4 * 8 * kBlockFrames * sizeof(float));
+        std::array<std::array<float, kBlockFrames>, 8> output{};
+        std::array<float*, 8> planes{};
+        for (std::size_t i = 0; i < planes.size(); ++i) planes[i] = output[i].data();
+        for (std::uint32_t epoch = 0; epoch < 100; ++epoch) {
+            arena.Reset();
+            for (auto& lane : output) lane.fill(0);
+            ASSERT_TRUE(signals->BeginBlock({1, 1, 1, epoch,
+                static_cast<std::uint64_t>(epoch) * kBlockFrames, kBlockFrames}));
+            const auto result = engine.voices.RenderAll(arena, planes.data(), kBlockFrames,
+                engine.notifications, epoch, 0, static_cast<std::uint64_t>(epoch) * kBlockFrames,
+                signals.get());
+            ASSERT_FALSE(result.batchDeferred);
+            ASSERT_FALSE(result.signalFailed);
+            ASSERT_TRUE(signals->CommitBlock());
+        }
+        const double expected = .4 * (1 - harken::kDuckingBaselineSlope * .1 / 1.2);
+        for (std::uint32_t n = 0; n < kBlockFrames; ++n) {
+            EXPECT_NEAR(output[2][n], expected, 1e-5);
+            EXPECT_FLOAT_EQ(output[2][n], output[4][n]);
+            EXPECT_FLOAT_EQ(output[6][n], .4f);
+        }
+        std::vector<float> result;
+        for (const auto& lane : output) result.insert(result.end(), lane.begin(), lane.end());
+        if (workers == 0) serial = std::move(result);
+        else EXPECT_EQ(serial, result);
+    }
+}

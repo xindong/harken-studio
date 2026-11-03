@@ -1,3 +1,4 @@
+#include "harken/render/SignalRenderPlan.h"
 #include "harken/render/BusTree.h"
 
 #include "MonitorCaptureHub.h"
@@ -1083,8 +1084,9 @@ void BusTree::ScatterSend(const float* const* src, float* const* dst,
     }
 }
 
-void BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
-                      std::uint64_t blockEpoch, std::uint64_t sourceFrameBegin) {
+bool BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
+                      std::uint64_t blockEpoch, std::uint64_t sourceFrameBegin,
+                      SignalRenderPlan* signals) {
     const TopologyPlanView plan = m_plans.View(m_currentPlanIndex);
     // Feeds-first order: with a plan, the published order (every bus after all
     // buses that feed it — tree children and send sources — master last).
@@ -1107,6 +1109,7 @@ void BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
         Bus& bus = m_buses[i];
         float* const* planes = busPlanes + i * m_mixChannels;
         FinalizeBus(bus, planes, blockFrames, blockEpoch, sourceFrameBegin);
+        const auto signalNode = signals == nullptr ? UINT32_MAX : signals->NodeForBus(i);
         // Per-bus output fold (non-master): a bus configured to present a
         // narrower output layout than the mix folds through its own matrix and
         // name-places the result back into these mix-width planes, so the
@@ -1124,12 +1127,19 @@ void BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
                 i, VN_DYNAMIC_TAP_BUS_POST_EFFECTS, planes, m_mixChannels,
                 blockFrames);
         }
+        if (signalNode != UINT32_MAX) {
+            if (!signals->ProcessBus(signalNode, planes, bus.outputGain)) return false;
+            bus.outputPeak = StageTapPeak(planes, m_mixChannels, 0, blockFrames,
+                bus.outputChannelPeaks);
+            m_dynamicRoutes.CaptureBus(i, VN_DYNAMIC_TAP_BUS_POST_EFFECTS,
+                planes, m_mixChannels, blockFrames);
+        }
         if (i != 0) {
             float* const* parent = busPlanes + bus.parentIndex * m_mixChannels;
             const bool outputFilter =
                 ToneSectionActive(bus.outputLpf) ||
                 ToneSectionActive(bus.outputHpf);
-            if (!outputFilter) {
+            if (!outputFilter && signalNode == UINT32_MAX) {
                 for (std::uint32_t ch = 0; ch < m_mixChannels; ++ch) {
                     bus.outputGain.MixAdd(planes[ch], parent[ch], blockFrames,
                                           0);
@@ -1152,6 +1162,8 @@ void BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
                                       m_biquadTrig, m_sampleRate,
                                       m_outputScratch.data(), m_mixChannels,
                                       blockFrames);
+                if (signalNode != UINT32_MAX && !signals->CaptureBus(signalNode,
+                    {m_outputScratch.data(), m_mixChannels})) return false;
                 for (std::uint32_t ch = 0; ch < m_mixChannels; ++ch) {
                     float* dst = parent[ch];
                     const float* src = m_outputScratch[ch];
@@ -1189,10 +1201,13 @@ void BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
             ProcessBusToneSection(bus.outputHpf, BusToneKind::Highpass,
                                   m_biquadTrig, m_sampleRate, planes,
                                   m_mixChannels, blockFrames);
+            if (signalNode != UINT32_MAX && !signals->CaptureBus(signalNode,
+                {planes, m_mixChannels})) return false;
         } else {
             bus.outputGain.Advance(blockFrames);
         }
     }
+    return true;
 }
 
 // The bus insert-effect apply methods below mirror VoicePool's effect apply

@@ -118,4 +118,23 @@ TEST(SignalRenderPlan, MutualDefinitionReceivingStaysSymmetricAndResetDropsOldPc
     EXPECT_FLOAT_EQ(a.pcm.front(), 1);
     EXPECT_FLOAT_EQ(b.pcm.front(), 1);
 }
+
+TEST(SignalRenderPlan, SourceCaptureUsesActualMemberOutputRoundingBeforeSignedSum) {
+    const std::array nodes{SignalRenderNodeInput{SignalEndpointKindV1::Container},
+                          SignalRenderNodeInput{SignalEndpointKindV1::Sound, true}};
+    const std::array connections{SignalConnectionInput{0, 1, 1}};
+    const std::array paths{SignalFeedbackEdge{0, 1, 1, true}};
+    auto plan = SignalRenderPlan::Prepare(kFormat, nodes, connections, paths);
+    ASSERT_NE(plan, nullptr);
+    Member a, b, target; a.nodes[0] = b.nodes[0] = 0; target.nodes[0] = 1;
+    a.out.Set(1.0f + 0x1p-23f);
+    const std::array members{a.Image(1), b.Image(1), target.Image(1)};
+    for (std::uint32_t epoch = 0; epoch < 16; ++epoch) {
+        a.pcm.fill(16777218.0f); b.pcm.fill(-16777220.0f); target.pcm.fill(1e-6f);
+        ASSERT_TRUE(plan->BeginBlock(Block(epoch)));
+        ASSERT_TRUE(plan->ProcessContent(members));
+        ASSERT_TRUE(plan->CommitBlock());
+        for (const auto sample : target.pcm) EXPECT_FLOAT_EQ(sample, 1e-6f);
+    }
+}
 } // namespace

@@ -1,4 +1,5 @@
 #include "harken/render/TopologyPlan.h"
+#include "harken/render/SignalRenderPlan.h"
 
 #include <algorithm>
 
@@ -41,6 +42,7 @@ TopologyPlanPool::TopologyPlanPool(std::uint32_t capacity,
           static_cast<std::size_t>(capacity) * busCapacity, 0),
       m_busVolumeApply(static_cast<std::size_t>(capacity) * busCapacity, 0),
       m_slotCount(capacity, 0),
+      m_signals(capacity),
       m_acquired(capacity, 0) {
     m_free.reserve(capacity);
     // Freelist stack: pop the lowest index first for deterministic slot reuse.
@@ -179,6 +181,7 @@ bool TopologyPlanPool::CopyPlanFrom(const TopologyPlanPool& source,
               source.m_downmixCoeffs.begin() + srcCoeff + coeffs,
               m_downmixCoeffs.begin() + dstCoeff);
     m_slotCount[destinationIndex] = source.m_slotCount[sourceIndex];
+    m_signals[destinationIndex] = source.m_signals[sourceIndex];
     return true;
 }
 
@@ -186,9 +189,18 @@ void TopologyPlanPool::Recycle(std::uint32_t planIndex) noexcept {
     if (!IsAcquired(planIndex) || m_free.size() >= m_free.capacity()) {
         return;
     }
+    m_signals[planIndex].reset();
     m_free.push_back(planIndex);
     m_acquired[planIndex] = 0;
     --m_inUse;
+}
+
+void TopologyPlanPool::SetSignals(std::uint32_t plan, std::shared_ptr<SignalRenderPlan> signals) {
+    if (IsAcquired(plan)) m_signals[plan] = std::move(signals);
+}
+
+std::shared_ptr<SignalRenderPlan> TopologyPlanPool::Signals(std::uint32_t plan) const {
+    return IsAcquired(plan) ? m_signals[plan] : nullptr;
 }
 
 void TopologyPlanPool::DrainRetire() {
@@ -322,6 +334,7 @@ TopologyPlanView TopologyPlanPool::View(std::uint32_t planIndex) const {
         m_preparedBusVolumeRampMs.data() + FoldBase(planIndex);
     v.busVolumeApply = m_busVolumeApply.data() + FoldBase(planIndex);
     v.slotCount = m_slotCount[planIndex];
+    v.signals = m_signals[planIndex].get();
     v.valid = true;
     return v;
 }

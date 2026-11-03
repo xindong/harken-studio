@@ -21,8 +21,11 @@
 #include <atomic>
 #include <cstdint>
 #include <vector>
+#include <memory>
 
 namespace harken {
+
+class SignalRenderPlan;
 
 inline constexpr std::uint32_t kInvalidTopologyPlanIndex = 0xFFFFFFFFu;
 inline constexpr std::uint8_t kApplyBusVolume = 1;
@@ -89,6 +92,7 @@ struct TopologyPlanView {
     const std::uint32_t* preparedBusVolumeRampMs = nullptr;
     const std::uint8_t* busVolumeApply = nullptr;
     std::uint32_t slotCount = 0;
+    SignalRenderPlan* signals = nullptr;
     bool valid = false;
 };
 
@@ -108,6 +112,10 @@ public:
     // the pool is exhausted. The slot's contents are cleared (order empty, every
     // send target kEmptySendTarget) so a builder only writes what it populates.
     std::uint32_t Acquire();
+    // Logic-owned references keep mutable audio state alive through ordinary
+    // topology swaps. No shared_ptr operation runs on the audio coordinator.
+    void SetSignals(std::uint32_t plan, std::shared_ptr<SignalRenderPlan> signals);
+    std::shared_ptr<SignalRenderPlan> Signals(std::uint32_t plan) const;
 
     // Returns a retired plan slot to the freelist. Bounds-checked; ignores
     // kInvalidTopologyPlanIndex.
@@ -216,6 +224,7 @@ private:
     std::vector<std::uint8_t> m_busVolumeApply;
     std::vector<std::uint32_t> m_slotCount;     // capacity
 
+    std::vector<std::shared_ptr<SignalRenderPlan>> m_signals;
     std::vector<std::uint8_t> m_acquired;
     std::vector<std::uint32_t> m_free; // freelist stack of plan indices
     std::uint32_t m_inUse = 0;

@@ -1,3 +1,4 @@
+#include "harken/render/SignalRenderPlan.h"
 #include "harken/render/MixerLoop.h"
 
 #include "MonitorCaptureHub.h"
@@ -1711,6 +1712,15 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
         m_voices.ActivatePendingNativeVariableStarts(m_notifications, blockIndex);
 
     }
+    auto* signals = m_buses.InstalledSignals();
+    bool signalOk = true;
+    if (signals != nullptr && !m_renderDeferred) {
+        // The plan lifetime is fenced by the installed topology. Mixer and
+        // device format are immutable for this engine incarnation.
+        signalOk = signals->BeginBlock({1, m_timelinePool != nullptr ? m_timelinePool->Epoch() : 1, 1, blockIndex,
+            static_cast<std::uint64_t>(blockIndex) * frames, frames});
+    }
+    planesOk = planesOk && signalOk;
     const auto overflowsBefore = m_deferredArenaOverflows;
 
     std::uint64_t ticksVoices = ticksDrained;
@@ -1720,7 +1730,8 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
             m_voices.RenderAll(m_arena, m_busPlanes.data(), frames,
                                m_notifications, blockIndex,
                                ticksEntry + m_jobDeadlineTicks,
-                               static_cast<std::uint64_t>(blockIndex) * frames);
+                               static_cast<std::uint64_t>(blockIndex) * frames, signals);
+        signalOk = !voicesOutcome.signalFailed;
         if (voicesOutcome.batchDeferred) {
             m_renderDeferred = true;
             m_audioCpuPeakUs = std::max(m_audioCpuPeakUs,
@@ -1742,8 +1753,8 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
 
         // Bottom-up bus fold; afterwards the master planes (m_busPlanes[0..
         // m_mixChannels)) hold the final mix at the mix layout.
-        m_buses.MixDown(m_busPlanes.data(), frames, blockIndex,
-                        static_cast<std::uint64_t>(blockIndex) * frames);
+        signalOk = signalOk && m_buses.MixDown(m_busPlanes.data(), frames, blockIndex,
+                        static_cast<std::uint64_t>(blockIndex) * frames, signals);
         // Lay the master's mix-width output into the device buffer at the
         // device boundary. Three cases; the first is the M4 path (stereo mix,
         // stereo device) and stays byte-identical.
@@ -1828,6 +1839,17 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
         publicationRecord->beginTicks = CpuClockTicks();
     }
 #endif
+    if (signals != nullptr) {
+        signalOk = signalOk && planesOk && signals->CommitBlock();
+        if (!signalOk) {
+            // No stale or partially captured source bank may escape a failed
+            // quantum. The next complete block starts with zero side input.
+            signals->Invalidate();
+            std::memset(interleavedOut, 0,
+                static_cast<std::size_t>(frames) * channels * sizeof(float));
+            planesOk = false;
+        }
+    }
     m_dynamicRoutes.EndBlock(blockIndex);
 
     if (m_arena.OverflowCount() != overflowsBefore) {

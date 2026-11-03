@@ -283,8 +283,12 @@ public:
     // result back into the mix-width planes before its parent sum and sends;
     // the master->device fold is applied downstream by the mixer at the device
     // boundary. Audio thread.
-    void MixDown(float* const* busPlanes, std::uint32_t blockFrames,
-                 std::uint64_t blockEpoch, std::uint64_t sourceFrameBegin = 0);
+    bool MixDown(float* const* busPlanes, std::uint32_t blockFrames,
+                 std::uint64_t blockEpoch, std::uint64_t sourceFrameBegin = 0,
+                 SignalRenderPlan* signals = nullptr);
+    SignalRenderPlan* InstalledSignals() const {
+        return m_plans.View(m_currentPlanIndex).signals;
+    }
 
     // The mix-layout channel count every bus renders at (resolved config).
     std::uint32_t MixChannels() const { return m_mixChannels; }

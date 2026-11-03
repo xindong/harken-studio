@@ -2,6 +2,7 @@
 #define HARKEN_RENDER_SIGNAL_RENDER_PLAN_H
 
 #include "harken/core/CurrentWorld.h"
+#include "harken/core/PlaybackPath.h"
 #include "harken/render/SignalBlockExchange.h"
 #include "harken/render/SignalFeedbackPlan.h"
 
@@ -15,6 +16,14 @@ struct SignalRenderNodeInput {
     bool receiver = false;
     float attackMs = kDuckingDefaultAttackMs;
     float releaseMs = kDuckingDefaultReleaseMs;
+    std::uint32_t busIndex = UINT32_MAX;
+};
+
+struct SignalMemberProof {
+    VnObjectId stableId{};
+    std::uint64_t propertyFingerprint = 0;
+    ProgramSourceIdentityV1 source{};
+    std::uint32_t node = 0;
 };
 
 // The selected definition membership is prepared with the Voice/Arm, not
@@ -38,7 +47,8 @@ public:
     static std::unique_ptr<SignalRenderPlan> Prepare(
         const SignalBlockFormat& format, std::span<const SignalRenderNodeInput> nodes,
         std::span<const SignalConnectionInput> relations,
-        std::span<const SignalFeedbackEdge> paths) noexcept {
+        std::span<const SignalFeedbackEdge> paths,
+        std::span<const SignalMemberProof> membership = {}) noexcept {
         if (nodes.size() > UINT32_MAX) return {};
         try {
             auto next = std::make_unique<SignalRenderPlan>();
@@ -49,6 +59,8 @@ public:
                 const auto& input = nodes[i];
                 auto& node = next->nodes_[i];
                 node.kind = input.kind;
+                if (input.kind == SignalEndpointKindV1::Bus && input.busIndex != UINT32_MAX)
+                    next->busNodes_.push_back({input.busIndex, static_cast<std::uint32_t>(i)});
                 if (input.kind != SignalEndpointKindV1::Bus &&
                     input.kind != SignalEndpointKindV1::Sound &&
                     input.kind != SignalEndpointKindV1::Container) return {};
@@ -60,6 +72,24 @@ public:
                     node.target = targets++;
                 }
             }
+            std::sort(next->busNodes_.begin(), next->busNodes_.end());
+            for (std::size_t i = 1; i < next->busNodes_.size(); ++i)
+                if (next->busNodes_[i - 1].first == next->busNodes_[i].first) return {};
+            next->membership_.assign(membership.begin(), membership.end());
+            std::sort(next->membership_.begin(), next->membership_.end(),
+                [](const auto& a, const auto& b) { return a.stableId < b.stableId; });
+            for (const auto& proof : next->membership_) {
+                if (proof.node >= nodes.size() || proof.propertyFingerprint == 0 ||
+                    nodes[proof.node].kind == SignalEndpointKindV1::Bus) return {};
+            }
+            // One formal endpoint per kind/ID, even when several carriers
+            // prove the same structural ancestor snapshot.
+            for (std::size_t i = 0; i < next->membership_.size(); ++i)
+                for (std::size_t j = i + 1; j < next->membership_.size() &&
+                     next->membership_[j].stableId == next->membership_[i].stableId; ++j)
+                    if (next->membership_[i].node != next->membership_[j].node &&
+                        nodes[next->membership_[i].node].kind == nodes[next->membership_[j].node].kind)
+                        return {};
             std::vector<SignalConnectionInput> connections;
             connections.reserve(relations.size());
             for (const auto& relation : relations) {
@@ -84,6 +114,40 @@ public:
         } catch (...) { return {}; }
     }
 
+    // Compare immutable prepared proofs, never query a world/lease on audio.
+    // A Pack's unchanged definition revision survives composition changes;
+    // a direct-world definition must match its exact installed generation.
+    std::uint32_t MatchMember(std::span<const PlaybackPathRow> path,
+                              std::span<std::uint32_t> result) const noexcept {
+        std::uint32_t count = 0;
+        for (const auto& row : path) {
+            if (row.rowKind != ResolvedPlayablePathRowKindV1::Definition) continue;
+            auto it = std::lower_bound(membership_.begin(), membership_.end(), row.stableId,
+                [](const auto& proof, VnObjectId id) { return proof.stableId < id; });
+            for (; it != membership_.end() && it->stableId == row.stableId; ++it) {
+                const auto kind = nodes_[it->node].kind;
+                if (row.propertyFingerprint != it->propertyFingerprint || !SameDefinitionSource(row.source, it->source) ||
+                    (kind == SignalEndpointKindV1::Sound && row.contentPropertyKind != playableproperties::ContentPropertyKindV1::Sound) ||
+                    (kind == SignalEndpointKindV1::Container && row.contentPropertyKind != playableproperties::ContentPropertyKindV1::Container))
+                    continue;
+                if (std::find(result.begin(), result.begin() + count, it->node) == result.begin() + count) {
+                    if (count == result.size()) return UINT32_MAX;
+                    result[count++] = it->node;
+                }
+                break;
+            }
+        }
+        return count;
+    }
+    std::uint32_t NodeForBus(std::uint32_t bus) const noexcept {
+        const auto it = std::lower_bound(busNodes_.begin(), busNodes_.end(), bus,
+            [](const auto& entry, std::uint32_t value) { return entry.first < value; });
+        return it != busNodes_.end() && it->first == bus ? it->second : UINT32_MAX;
+    }
+    bool HasContent() const noexcept { return !membership_.empty(); }
+    bool SetConnectionLevel(std::uint32_t connection, float level, std::uint64_t frames) noexcept {
+        return !open_ && exchange_.SetLevel(connection, level, frames);
+    }
     bool UpdateBounds(std::span<const double> bounds) noexcept {
         return !open_ && feedback_.UpdateBounds(bounds);
     }
@@ -97,6 +161,7 @@ public:
             identity.frameBegin == previous_.frameBegin + previous_.frames;
         if (!continuous) for (auto& node : nodes_) node.receiver.Reset();
         for (auto& node : nodes_) node.processed = false;
+        contentProcessed_ = false;
         current_ = identity;
         open_ = true;
         return true;
@@ -106,13 +171,18 @@ public:
     // mapping. A Sound receives before its ancestors. Container stages see
     // member output after deeper stages, without reapplying author properties.
     bool ProcessContent(std::span<const SignalMemberImage> members) noexcept {
-        if (!open_) return false;
+        if (!open_ || contentProcessed_) return false;
         for (const auto& member : members) {
             if (member.planes == nullptr || member.outputGain == nullptr ||
                 member.offset > current_.frames || member.frames > current_.frames - member.offset)
                 return false;
             for (std::uint32_t ch = 0; ch < format_.channels; ++ch)
                 if (member.planes[ch] == nullptr) return false;
+            for (std::uint32_t n = 0; n < member.frames; ++n) {
+                if (!std::isfinite(member.outputGain->At(n))) return false;
+                for (std::uint32_t ch = 0; ch < format_.channels; ++ch)
+                    if (!std::isfinite(member.planes[ch][member.offset + n])) return false;
+            }
             for (auto node : member.nodes)
                 if (node >= nodes_.size() || nodes_[node].kind == SignalEndpointKindV1::Bus)
                     return false;
@@ -128,7 +198,7 @@ public:
                     for (std::uint32_t n = 0; n < member.frames; ++n) {
                         const auto frame = member.offset + n;
                         const double pre = member.planes[ch][frame];
-                        const double post = pre * member.outputGain->At(n);
+                        const double post = Narrow(pre * member.outputGain->At(n));
                         sum_[base + frame] += node.kind == SignalEndpointKindV1::Sound ? pre : post;
                         absolutePre_[base + frame] += std::abs(pre);
                         absolutePost_[base + frame] += std::abs(post);
@@ -155,7 +225,7 @@ public:
                         const auto base = static_cast<std::size_t>(ch) * format_.capacityFrames;
                         for (std::uint32_t n = 0; n < member.frames; ++n)
                             sum_[base + member.offset + n] +=
-                                static_cast<double>(member.planes[ch][member.offset + n]) * member.outputGain->At(n);
+                                Narrow(static_cast<double>(member.planes[ch][member.offset + n]) * member.outputGain->At(n));
                     }
                 }
                 StoreMain();
@@ -165,6 +235,7 @@ public:
             }
             node.processed = true;
         }
+        contentProcessed_ = true;
         return true;
     }
 
@@ -199,7 +270,10 @@ public:
     }
 
     bool CommitBlock() noexcept {
-        if (!open_ || !exchange_.CommitBlock()) return false;
+        if (!open_) return false;
+        for (const auto& node : nodes_)
+            if (node.target != UINT32_MAX && !node.processed) return false;
+        if (!exchange_.CommitBlock()) return false;
         previous_ = current_;
         committed_ = true;
         open_ = false;
@@ -212,6 +286,12 @@ public:
     }
 
 private:
+    static bool SameDefinitionSource(const ProgramSourceIdentityV1& a,
+                                     const ProgramSourceIdentityV1& b) noexcept {
+        return a.ownerStableId == b.ownerStableId && a.ownerRevision == b.ownerRevision &&
+            a.sourceBodyVintage == b.sourceBodyVintage &&
+            (a.ownerStableId != 0 || a.worldGeneration == b.worldGeneration);
+    }
     struct Node {
         SignalEndpointKindV1 kind = SignalEndpointKindV1::Bus;
         std::uint32_t source = UINT32_MAX, target = UINT32_MAX;
@@ -265,9 +345,11 @@ private:
     SignalBlockExchange exchange_;
     SignalFeedbackPlan feedback_;
     std::vector<Node> nodes_;
+    std::vector<SignalMemberProof> membership_;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> busNodes_;
     std::vector<double> sum_, absolutePre_, absolutePost_, gain_, pre_, post_;
     std::vector<float> main_;
-    bool open_ = false, committed_ = false;
+    bool open_ = false, committed_ = false, contentProcessed_ = false;
 };
 
 } // namespace harken
