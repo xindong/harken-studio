@@ -248,7 +248,7 @@ GUI、IPC 与 Harkenizer 使用同一个 `ProjectPackBuildService`。一次请�
 
 | 项目 | 当前结果 |
 |---|---|
-| Studio 0.9.1 → 0.9.2 | Editor Schema 9、Pack Schema 4 不变；工程可直接打开保存，既有 Pack 可由随附运行库读取 |
+| Studio 0.9.1 → 0.9.4 | Editor Schema 9、Pack Schema 4 不变；工程可直接打开保存，既有 Pack 可由随附运行库读取 |
 | Pack 跨合同代 | 须重新打包，不提供迁移；旧二进制版本号不能证明与当前合同兼容 |
 | 未知版本或布局 | 读取端拒绝 |
 
@@ -283,3 +283,11 @@ GUI、IPC 与 Harkenizer 使用同一个 `ProjectPackBuildService`。一次请�
 三轮比较结束后，另在两个第 3 轮候选副本各启动一次完整 CLI 复用审计。单平台的 369 个缓存文件与 22 个输出、四平台的 369 个缓存文件与 88 个输出，前后路径、大小、SHA-256、mtime、文件 ID 全部一致；分别复用 11／44 包。这两次审计不计入上表。结论是持久文件未改写；不声称进程无写 I/O，构建期间仍有瞬时锁文件。
 
 本地证据位于 `.temp/pack-v3-20261102/`：`validation-verified/report.json`、`additional-verified.json`、`comparison-verified/comparison-summary.json`、`comparison-multiplatform-verified/comparison-summary.json` 与 `cache-audit-verified.json`。可选波形／元数据的正确性由回归测试覆盖，以上真实工程性能与持久写审计不覆盖这些开启选项。
+
+### 主干同步验证（2026-11-03）
+
+分支同步至主干 `8722319a`，保留 Studio 0.9.4、Hub 0.2.3、pitch binding 范围与旧曲线值修复，以及运行时包读取和媒体所有权优化。主干与分支没有同路径修改，语义复核未发现业务冲突。上述性能表仍为同步前的测量，不作为同步后耗时结论。
+
+同步后在 Windows x64、Qt 6.11.1、clang-cl、Ninja Multi-Config、RelWithDebInfo、local／dev 通道重新构建 Studio、Harkenizer 和编辑器测试目标。167 项打包回归及 15 项补充测试全部通过，后者包含主干新增的旧 pitch 曲线保留用例；22 个黄金产物与同步前逐字节一致。本地证据位于 `.temp/pack-v3-main-sync-20261103/validation/report.json` 和 `additional.json`。
+
+同时重新构建运行时与包存储测试目标：包格式／循环媒体加载替换 45 项、CanonicalPackSetStorage 37 项全部通过，分别记录于同目录 `runtime.json` 和 `pack-storage.json`。本地样式归属检查及包含 PR 正文、DCO 的合规审计通过。以上验证基于同步后代码 `5e476140`；随后只补充本段验证记录和兼容版本说明。
