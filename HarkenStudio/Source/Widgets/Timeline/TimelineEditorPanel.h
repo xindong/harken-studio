@@ -9,6 +9,7 @@
 
 #include <QSet>
 #include <QHash>
+#include <QFontMetrics>
 #include <QPointer>
 #include <QUuid>
 #include <QVariantMap>
@@ -44,6 +45,7 @@ class ThemeManager;
 class TimelineCanvas;
 class TimelineHeaderColumn;
 class TimelineRuler;
+namespace TimelineEditing { struct ClipMove; }
 
 class TimelineEditorPanel final : public QWidget
 {
@@ -74,14 +76,13 @@ public:
     int laneCount() const { return static_cast<int>(lanes_.size()); }
     QUuid laneGuid(int index) const;
     QString laneName(int index) const;
-    bool laneHasExternalReferences(int index) const;
     int clipCount(int laneIndex) const;
     QUuid clipGuid(int laneIndex, int clipIndex) const;
     QUuid clipTargetGuid(int laneIndex, int clipIndex) const;
+    ProjectItem* clipTarget(int laneIndex, int clipIndex) const;
     int64_t clipStart(int laneIndex, int clipIndex) const;
     int64_t clipDuration(int laneIndex, int clipIndex) const;
     std::optional<int64_t> clipSourceDuration(int laneIndex, int clipIndex) const;
-    bool clipIsExternal(int laneIndex, int clipIndex) const;
     QSet<QUuid> selectedClipGuids() const;
     QUuid selectedClipAnchor() const;
     int findLaneOfClip(const QUuid& guid) const;
@@ -190,6 +191,7 @@ public:
     void refreshStatusBar();
     void rejectInteraction(const QString& error);
     bool commitTimelineActions(std::vector<ActionResult> results, const QString& undoText);
+    bool commitClipMoves(const std::vector<TimelineEditing::ClipMove>& moves);
     void setStatusMessage(const QString& text, bool error = false);
     void publishClipSelection();
     static int minimumZoomPercent();
@@ -233,7 +235,15 @@ private:
         QUuid guid;
         uint32_t objectID = 0;
         QString name;
-        bool external = false;
+        ProjectItem* item = nullptr;
+    };
+
+    struct TimeTickCache {
+        NanosecondPosition start;
+        double span;
+        int width;
+        QFontMetrics fontMetrics;
+        TimeAxisTicks ticks;
     };
 
     struct CursorDrag {
@@ -267,9 +277,10 @@ private:
     void finishLaneResize(bool cancel);
     void refreshVerticalRange();
     int64_t contentEndCoordinate() const;
+    const TimelineSpan& contentBounds() const;
+    void invalidateModelCache();
     void showState(ViewKind kind, const QString& text);
     ProjectItem* laneItem(int index) const;
-    bool hasExternalReferences(const ProjectItem* track) const;
     int64_t authoredDuration(ProjectItem* target, int laneIndex) const;
     bool commitTimelineAction(ActionResult result);
     void applyThemeMetrics();
@@ -298,6 +309,9 @@ private:
     ProjectItem* boundItem_ = nullptr;
     ViewKind viewKind_ = ViewKind::Empty;
     std::vector<LaneView> lanes_;
+    mutable std::optional<TimelineSpan> contentBounds_;
+    mutable QHash<QUuid, ProjectItem*> clipTargets_;
+    mutable std::optional<TimeTickCache> timeTickCache_;
     std::vector<DrillFrame> drillPath_;
     QString lastInteractionError_;
     QString statusMessage_;

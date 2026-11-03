@@ -384,13 +384,13 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
          }},
         {QStringLiteral("timeline.clip"), QStringLiteral("Timeline"),
          QStringLiteral("Clip background"),
-         QStringLiteral("The default fill of timeline clips."),
+         QStringLiteral("The default fill of timeline clip bodies and unselected title tabs, unless an object color is assigned."),
          {
              {QStringLiteral("timeline.clip"), std::nullopt},
          }},
         {QStringLiteral("timeline.clipSelected"), QStringLiteral("Timeline"),
-         QStringLiteral("Context band highlight"),
-         QStringLiteral("The nominal range tint of timeline context bands."),
+         QStringLiteral("Clip selection and context highlight"),
+         QStringLiteral("Selected title tabs without an object color, and the nominal range tint of timeline context bands."),
          {
              {QStringLiteral("timeline.clipSelected"), std::nullopt},
          }},
@@ -402,13 +402,13 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
          }},
         {QStringLiteral("timeline.clipBorder"), QStringLiteral("Timeline"),
          QStringLiteral("Clip border"),
-         QStringLiteral("The outline of unselected timeline clips."),
+         QStringLiteral("Timeline clips no longer draw outlines; this color has no visual effect."),
          {
              {QStringLiteral("timeline.clipBorder"), std::nullopt},
          }},
         {QStringLiteral("timeline.clipSelectedBorder"), QStringLiteral("Timeline"),
          QStringLiteral("Selected clip border"),
-         QStringLiteral("The outline of selected timeline clips."),
+         QStringLiteral("Selected timeline clips no longer draw outlines; this color has no visual effect."),
          {
              {QStringLiteral("timeline.clipSelectedBorder"), std::nullopt},
          }},

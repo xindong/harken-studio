@@ -89,19 +89,18 @@ private:
     };
 
     TimelineStyleView styleView() const;
-    TimelineRenderData buildRenderData() const;
+    TimelineRenderData buildRenderData(const QRect& exposed) const;
     QRect laneRect(int laneIndex) const;
     QRect blankRect() const;
     QRect rangeRect(int laneIndex, int64_t start, int64_t duration) const;
+    QVector<int> clipDrawOrder(int laneIndex) const;
     Hit hitAt(const QPoint& point) const;
     bool hitsResizeEnd(const Hit& hit, const QPoint& point) const;
     bool hitsEditCursor(const QPoint& point) const;
     int laneAtY(int y) const;
     const ThemeMetrics::Timeline& timelineMetrics() const;
     const WaveformPeakData* waveformForPath(const QString& absolutePath) const;
-    void fillClipItem(TimelineClipItem& item, int laneIndex, int clipIndex,
-                      const QRect& area, const QUuid& guid, int64_t start,
-                      int64_t duration) const;
+    QString clipTooltip(int laneIndex, int clipIndex) const;
     void selectSingle(int laneIndex, const QUuid& guid);
     void toggleSelected(int laneIndex, const QUuid& guid);
     void selectRange(int laneIndex, const QUuid& guid);
@@ -142,7 +141,6 @@ private:
     int64_t previewStart_ = 0;
     int64_t previewDuration_ = 1;
     int previewLane_ = -1;
-    int64_t intendedStart_ = 0;
     std::vector<GestureClip> gestureClips_;
     bool lassoActive_ = false;
     QPoint lassoStart_;
@@ -155,8 +153,6 @@ private:
     bool dropLegal_ = false;
     bool snapGuideVisible_ = false;
     int snapGuideX_ = 0;
-    bool ghostVisible_ = false;
-    QRect ghostRect_;
     QPointer<QDialog> valueEditor_;
 };
 

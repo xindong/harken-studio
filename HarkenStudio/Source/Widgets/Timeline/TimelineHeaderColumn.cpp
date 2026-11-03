@@ -23,7 +23,6 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
-#include <QResizeEvent>
 #include <QScrollArea>
 #include <QStyle>
 #include <QUuid>
@@ -227,12 +226,6 @@ bool TimelineHeaderColumn::eventFilter(QObject* watched, QEvent* event)
             return true;
         }
     }
-    if (auto* name = qobject_cast<QLabel*>(watched);
-        name && name->objectName() == QLatin1String("timelineLaneName")
-        && event->type() == QEvent::Resize) {
-        if (auto* editor = name->findChild<InlineRenameEdit*>())
-            editor->setGeometry(name->rect());
-    }
     return QWidget::eventFilter(watched, event);
 }
 
@@ -248,12 +241,20 @@ void TimelineHeaderColumn::renameLane(const QUuid& guid)
     for (auto* name : findChildren<QLabel*>(QStringLiteral("timelineLaneName"))) {
         const int lane = laneIndexAt(panel_, name);
         if (lane < 0 || panel_->laneGuid(lane) != guid) continue;
-        auto* editor = name->findChild<InlineRenameEdit*>();
+        auto* cell = static_cast<TableCell*>(name->parentWidget());
+        auto* editor = cell->findChild<InlineRenameEdit*>();
         if (!editor) {
-            editor = new InlineRenameEdit(track->name, InlineRenameEdit::projectItemHandler(guid), name);
-            connect(editor, &InlineRenameEdit::finished, editor, &QObject::deleteLater);
+            editor = new InlineRenameEdit(track->name, InlineRenameEdit::projectItemHandler(guid), cell);
+            cell->addWidget(editor, 1, Qt::AlignVCenter);
+            connect(editor, &InlineRenameEdit::finished, name, [name, editor, cell] {
+                name->show();
+                cell->layout()->activate();
+                name->setText(name->fontMetrics().elidedText(
+                    name->toolTip(), Qt::ElideRight, name->contentsRect().width()));
+                editor->deleteLater();
+            });
         }
-        editor->setGeometry(name->rect());
+        name->hide();
         editor->begin(track->name);
         return;
     }

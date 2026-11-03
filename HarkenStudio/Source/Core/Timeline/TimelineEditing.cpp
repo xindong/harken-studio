@@ -7,9 +7,12 @@
 #include "../Components/VMixNode.h"
 #include "../Components/VTrack.h"
 #include "../ProjectManager.h"
+#include "../PhysicalFolderOperations.h"
+#include "../UndoCommands.h"
 
 #include <QHash>
 #include <QSet>
+#include <QSignalBlocker>
 
 #include <algorithm>
 #include <limits>
@@ -439,79 +442,250 @@ ActionResult resizeClip(ProjectManager* projectManager,
     return result;
 }
 
-ActionResult moveClipAcrossTracks(ProjectManager* projectManager,
-                                  ProjectItem* sourceTrack,
-                                  ProjectItem* destinationTrack,
-                                  const QUuid& clipGuid,
-                                  int64_t start,
-                                  const QObject* originator)
+namespace {
+
+struct ClipMoveTrackState {
+    ProjectItem* track = nullptr;
+    ClipLedger before;
+    ClipLedger after;
+};
+
+struct ClipMoveTargetState {
+    ProjectItem* target = nullptr;
+    ProjectItem* beforeParent = nullptr;
+    ProjectItem* afterParent = nullptr;
+    bool cloned = false;
+};
+
+class ClipMoveCommand final : public TransactionalUndoCommand
 {
-    auto* sourceTimeline = sourceTrack ? sourceTrack->comp<VTrack>() : nullptr;
-    auto* destinationTimeline = destinationTrack
-        ? destinationTrack->comp<VTrack>() : nullptr;
-    if (!projectManager || !sourceTimeline || !destinationTimeline
-        || sourceTrack == destinationTrack)
-        return failure(QStringLiteral("INVALID_TIMELINE_OWNER"),
-                       QStringLiteral("Cross-track movement requires two distinct Tracks"));
+public:
+    ClipMoveCommand(ProjectData* project, std::vector<ClipMoveTrackState> tracks,
+                    std::vector<ClipMoveTargetState> targets,
+                    std::unique_ptr<TransactionalUndoCommand> hierarchy)
+        : TransactionalUndoCommand(QStringLiteral("Move clips"), nullptr, false)
+        , project_(project), tracks_(std::move(tracks)), targets_(std::move(targets))
+        , hierarchy_(std::move(hierarchy))
+    {}
+
+private:
+    bool apply(bool redo) override
+    {
+        auto& manager = ProjectManager::instance();
+        if (blocked_ || manager.currentProject() != project_)
+            return false;
+        for (const auto& state : tracks_) {
+            const auto* track = manager.findItemByGuid(state.track->guid);
+            if (track != state.track || !track->comp<VTrack>()
+                || track->comp<VTrack>()->clips != (redo ? state.before : state.after)) {
+                emit manager.errorOccurred(QStringLiteral("The tracks changed after this clip move was prepared."));
+                return false;
+            }
+        }
+
+        QString error;
+        {
+            const QSignalBlocker blocker(&manager);
+            const auto bindings = project_->documentBindings;
+            QHash<ProjectItem*, bool> dirty;
+            auto pending = projectRoots(project_);
+            while (!pending.empty()) {
+                auto* item = pending.back();
+                pending.pop_back();
+                dirty.insert(item, item->dirtyBit);
+                for (const auto& child : item->children)
+                    pending.push_back(child.get());
+            }
+            const auto install = [&](bool after) {
+                for (const auto& state : tracks_)
+                    applyClips(state.track->guid, after ? state.after : state.before);
+            };
+            const bool hierarchyApplied = !hierarchy_ || hierarchy_->tryReplay(redo);
+            if (!hierarchyApplied) {
+                error = QStringLiteral("The clip objects could not be moved to their destination tracks.");
+            } else {
+                install(redo);
+                for (const auto& state : tracks_) {
+                    const auto validity = validateClipPlacement(&manager, state.track,
+                        state.track->comp<VTrack>()->clips);
+                    if (!validity) {
+                        error = validity.message;
+                        break;
+                    }
+                }
+                if (error.isEmpty()) {
+                    const auto identities = validateEntityIdentities(project_, nullptr, nullptr, nullptr);
+                    if (!identities) error = identities.message;
+                }
+            }
+            if (!error.isEmpty()) {
+                if (hierarchyApplied && hierarchy_ && !hierarchy_->tryReplay(!redo))
+                    blocked_ = true;
+                install(!redo);
+                project_->documentBindings = bindings;
+                for (auto it = dirty.cbegin(); it != dirty.cend(); ++it)
+                    it.key()->dirtyBit = it.value();
+            }
+        }
+        if (!error.isEmpty()) {
+            emit manager.errorOccurred(error);
+            return false;
+        }
+        for (const auto& target : targets_) {
+            if (target.cloned) {
+                if (redo) emit manager.itemCreated(target.target);
+                else emit manager.itemDeleted(target.target);
+            } else {
+                emit manager.itemMoved(target.target,
+                    redo ? target.beforeParent : target.afterParent,
+                    redo ? target.afterParent : target.beforeParent);
+            }
+        }
+        for (const auto& state : tracks_)
+            emit manager.itemPropertyChanged(state.track, QStringLiteral("clips"));
+        return true;
+    }
+
+    ProjectData* project_ = nullptr;
+    std::vector<ClipMoveTrackState> tracks_;
+    std::vector<ClipMoveTargetState> targets_;
+    std::unique_ptr<TransactionalUndoCommand> hierarchy_;
+    bool blocked_ = false;
+};
+
+}
+
+std::unique_ptr<TransactionalUndoCommand> makeClipMoveCommand(
+    ProjectManager* projectManager, const std::vector<ClipMove>& moves, QString* error)
+{
+    if (error) error->clear();
+    const auto fail = [error](const QString& message) -> std::unique_ptr<TransactionalUndoCommand> {
+        if (error) *error = message;
+        return {};
+    };
+    auto* project = projectManager ? projectManager->currentProject() : nullptr;
+    if (!project)
+        return fail(QStringLiteral("No project is currently open."));
+    std::vector<ClipMoveTrackState> tracks;
+    QHash<QUuid, size_t> trackIndices;
+    QSet<QUuid> requestedClips;
+    const auto includeTrack = [&](ProjectItem* track) {
+        if (trackIndices.contains(track->guid)) return;
+        trackIndices.insert(track->guid, tracks.size());
+        const auto& clips = track->comp<VTrack>()->clips;
+        tracks.push_back({track, clips, clips});
+    };
     const auto resolve = [projectManager](const QUuid& guid) {
         return projectManager->findItemByGuid(guid);
     };
-    for (const ProjectItem* track : {sourceTrack, destinationTrack}) {
-        const auto authoring = AuthoringPolicy::validateNewSubtree(
-            *track, track->parent, resolve);
-        if (!authoring)
-            return failure(QStringLiteral("AUTHORING_RESTRICTED"), authoring.message);
+    for (const auto& move : moves) {
+        auto* source = resolve(move.sourceTrackGuid);
+        auto* destination = resolve(move.destinationTrackGuid);
+        if (!source || !destination || !source->comp<VTrack>() || !destination->comp<VTrack>())
+            return fail(QStringLiteral("The clip or destination track is unavailable."));
+        if (requestedClips.contains(move.clipGuid))
+            return fail(QStringLiteral("A clip cannot be moved more than once in the same operation."));
+        requestedClips.insert(move.clipGuid);
+        includeTrack(source);
+        includeTrack(destination);
     }
-    ClipLedger source = sourceTimeline->clips;
-    ClipLedger destination = destinationTimeline->clips;
-    const auto it = std::find_if(source.items.begin(), source.items.end(),
-                                 [&clipGuid](const Clip& clip) {
-                                     return clip.clipGuid == clipGuid;
-                                 });
-    if (it == source.items.end())
-        return failure(QStringLiteral("CLIP_NOT_FOUND"),
-                       QStringLiteral("Clip does not exist"));
-    Clip moved = *it;
-    moved.start = start;
-    source.items.erase(it);
-    if (!destination.mintOccurrenceOrdinal(&moved))
-        return failure(QStringLiteral("OCCURRENCE_ORDINAL_OVERFLOW"),
-                       QStringLiteral("Track occurrence ordinal space is exhausted"));
-    destination.items.push_back(moved);
-    const TimelineValidation sourceValidity = validateClipPlacement(
-        projectManager, sourceTrack, source);
-    const TimelineValidation destinationValidity = validateClipPlacement(
-        projectManager, destinationTrack, destination);
-    if (!sourceValidity || !destinationValidity)
-        return failure(QStringLiteral("INVALID_ARGS"),
-                       !sourceValidity ? sourceValidity.message : destinationValidity.message);
+    for (const auto& state : tracks) {
+        const auto authoring = AuthoringPolicy::validateNewSubtree(
+            *state.track, state.track->parent, resolve);
+        if (!authoring) return fail(authoring.message);
+        const auto validity = validateClipPlacement(projectManager, state.track, state.before);
+        if (!validity) return fail(validity.message);
+    }
 
-    const ClipLedger oldSource = sourceTimeline->clips;
-    const ClipLedger oldDestination = destinationTimeline->clips;
-    const QUuid sourceGuid = sourceTrack->guid;
-    const QUuid destinationGuid = destinationTrack->guid;
-    applyClips(sourceGuid, source, originator);
-    applyClips(destinationGuid, destination, originator);
+    struct PreparedMove {
+        const ClipMove* move;
+        Clip clip;
+    };
+    std::vector<PreparedMove> prepared;
+    prepared.reserve(moves.size());
+    for (const auto& move : moves) {
+        const auto& source = tracks[trackIndices.value(move.sourceTrackGuid)];
+        const auto found = std::find_if(source.before.items.begin(), source.before.items.end(),
+            [&](const Clip& clip) { return clip.clipGuid == move.clipGuid; });
+        if (found == source.before.items.end())
+            return fail(QStringLiteral("The clip does not exist in its source track."));
+        prepared.push_back({&move, *found});
+    }
+    std::sort(prepared.begin(), prepared.end(), [](const auto& left, const auto& right) {
+        if (left.move->sourceTrackGuid != right.move->sourceTrackGuid)
+            return left.move->sourceTrackGuid < right.move->sourceTrackGuid;
+        return left.clip.stableOccurrenceOrdinal < right.clip.stableOccurrenceOrdinal;
+    });
 
-    ActionResult result;
-    result.success = true;
-    result.data = {
-        {QStringLiteral("clipGuid"), clipGuid.toString(QUuid::WithoutBraces)},
-        {QStringLiteral("source"), sourceGuid.toString(QUuid::WithoutBraces)},
-        {QStringLiteral("destination"), destinationGuid.toString(QUuid::WithoutBraces)}
-    };
-    result.undoFn = [sourceGuid, destinationGuid, oldSource, oldDestination] {
-        applyClips(sourceGuid, oldSource);
-        applyClips(destinationGuid, oldDestination);
-    };
-    result.redoFn = [sourceGuid, destinationGuid, source, destination] {
-        applyClips(sourceGuid, source);
-        applyClips(destinationGuid, destination);
-    };
-    result.undoText = QStringLiteral("Move clip across tracks");
-    result.mergeId = clipMergeId(clipGuid);
-    result.authoringWriteSet = QSet<QUuid>{sourceGuid, destinationGuid};
-    return result;
+    QHash<QUuid, QSet<QUuid>> targetDestinations;
+    for (const auto& entry : prepared) {
+        const auto& move = *entry.move;
+        auto& source = tracks[trackIndices.value(move.sourceTrackGuid)];
+        auto& destination = tracks[trackIndices.value(move.destinationTrackGuid)];
+        Clip moved = entry.clip;
+        moved.start = move.start;
+        auto existing = std::find_if(source.after.items.begin(), source.after.items.end(),
+            [&](const Clip& clip) { return clip.clipGuid == move.clipGuid; });
+        if (move.sourceTrackGuid == move.destinationTrackGuid) {
+            existing->start = move.start;
+        } else {
+            source.after.items.erase(existing);
+            if (!destination.after.mintOccurrenceOrdinal(&moved))
+                return fail(QStringLiteral("Track occurrence ordinal space is exhausted."));
+            destination.after.items.push_back(moved);
+            targetDestinations[moved.targetGuid].insert(move.destinationTrackGuid);
+        }
+    }
+
+    std::vector<ClipMoveTargetState> targets;
+    std::vector<std::unique_ptr<TransactionalUndoCommand>> commands;
+    std::vector<PhysicalItemMove> physicalMoves;
+    QHash<QUuid, QSet<QString>> reservedNames;
+    for (auto targetIt = targetDestinations.cbegin(); targetIt != targetDestinations.cend(); ++targetIt) {
+        auto* target = resolve(targetIt.key());
+        const auto& source = tracks[trackIndices.value(target->parent->guid)];
+        const bool remains = std::any_of(source.after.items.begin(), source.after.items.end(),
+            [&](const Clip& clip) { return clip.targetGuid == targetIt.key(); });
+        for (const auto& destinationGuid : targetIt.value()) {
+            auto* destination = resolve(destinationGuid);
+            QString reason;
+            if (remains || targetIt.value().size() > 1) {
+                ProjectItem* clone = nullptr;
+                auto command = projectManager->makeClipTargetCloneCommand(
+                    target, destination, &clone, &reason);
+                if (!command) return fail(reason);
+                auto& names = reservedNames[destinationGuid];
+                clone->name = projectManager->suggestUniqueName(target->type, target->name,
+                    nullptr, names, destination);
+                names.insert(clone->name);
+                auto& clips = tracks[trackIndices.value(destinationGuid)].after;
+                for (auto& clip : clips.items)
+                    if (clip.targetGuid == targetIt.key()) clip.targetGuid = clone->guid;
+                targets.push_back({clone, nullptr, destination, true});
+                commands.push_back(std::move(command));
+            } else {
+                if (!projectManager->validateMoveConstraints(target, destination, &reason))
+                    return fail(reason);
+                targets.push_back({target, target->parent, destination, false});
+                commands.push_back(std::make_unique<MoveItemCommand>(target, destination));
+                physicalMoves.push_back({target, project->objectFolder(destination)});
+            }
+        }
+    }
+    for (const auto& state : tracks) {
+        const auto validity = state.after.validateStructure();
+        if (!validity) return fail(validity.message);
+    }
+    if (std::all_of(tracks.begin(), tracks.end(), [](const auto& state) {
+            return state.before == state.after;
+        })) return {};
+    bool valid = false;
+    auto hierarchy = makePhysicalMoveCommand(physicalMoves, {}, valid,
+        makeMoveCommand(std::move(commands), QStringLiteral("Move clip objects")));
+    if (!valid)
+        return fail(QStringLiteral("The destination object folders are unavailable."));
+    return std::make_unique<ClipMoveCommand>(project, std::move(tracks), std::move(targets),
+        std::move(hierarchy));
 }
 
 ActionResult replaceMarkers(ProjectManager* projectManager,

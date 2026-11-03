@@ -54,9 +54,17 @@ Studio Default 不再开放 `text.muted` 作为独立编辑职责。既有 `text
 
 旋钮没有实际业务页面入口，已删除 `RotaryKnobPresenter`、`RotaryKnobRenderer`、注册与构建项、`knob.indicator` 颜色职责和 `parameter.knobExtent` 尺寸配置。原 EffectParameter 默认展示器改用已有 `SliderWithValue`；恢复 Studio Default 已保存设置时移除旧旋钮职责覆盖，其他主题的同名职责保留。
 
-本轮范围为分割线、border 与刻度线，不将控制柄、十字参考线、播放头、连接线、定位网点和其他辅助图形重新收纳到三类边界职责。十字参考线退出原先共用的 `border.view` 绑定，保留其 Dark / Light 预设色及独立渲染位置，不新增编辑职责。经用户确认，`timeline.clipBorder` 与 `timeline.clipSelectedBorder` 两项暂时保留；它们控制 clip 自身完整描边，不是额外的裁剪边线。
+本轮范围为分割线、border 与刻度线，不将控制柄、十字参考线、播放头、连接线、定位网点和其他辅助图形重新收纳到三类边界职责。十字参考线退出原先共用的 `border.view` 绑定，保留其 Dark / Light 预设色及独立渲染位置，不新增编辑职责。2026-11-01 曾按用户决定保留 clip 完整描边；2026-11-03 按新的 Timeline 绘制要求取消。`timeline.clipBorder` 与 `timeline.clipSelectedBorder` 的主题合同字段和既有色卡值继续保留，当前不参与 clip 绘制。
 
 补正后 `harken_editor` 与 `harken_editor_tests` 构建通过，64 项主题、设置、控件、表格和时间刻度相关测试通过。新增通用回归检查：已有不透明子控件在连续纯颜色预览和取消时收到重绘，保持布局、编辑内容、选区与原生样式不变。Dark / Light 的实际 Preferences 调色器、三种表格和 Dock 离屏核对共 166 项通过；直接读取窗口绘制缓冲区检查点击 OK 前的边界像素，没有调用强制重绘来掩盖刷新遗漏。较早的 112 项静态核对未覆盖这类连续预览问题，也沿用了错误的表格外框分类。此次核对未改写用户配色，不覆盖完整工程和原生输入。QSS 归属检查与 `git diff --check` 通过，记录和样张位于 `.temp/border-preview-fix/`。
+
+Timeline clip 当前无描边，与轨道上下边缘各留 1px；标题使用独立背景的 title tab。主体和普通标题优先使用对象颜色，否则使用 `timeline.clip`；选中或拖动标题无对象颜色时使用 `timeline.clipSelected`，该职责同时保留名义范围背景的用途。标题先填充画布基础表面，再按状态叠加颜色，保留源 RGBA 的 Alpha；波形位于标题下方。普通 clip 按开始时间由早到晚绘制，同起点保留存储顺序；鼠标按相反顺序命中，拖动预览保持置顶。重叠标题仅在左端连续可见区域内对名称做右侧省略，左端被遮挡时不绘制名称，不向右侧空白段避让；Blend 保留原有名称避让。画布轨道分界与左侧标题区对齐，使用 `border.primary`，不借用时间刻度的 `border.tick`。
+
+Timeline 不再显示遗留的 `EXT` 引用标记。clip 跨轨移动同步更新目标对象的树归属，多选保持相对轨道偏移；部分共用对象的 clip 换轨时，为迁移部分建立独立对象并共享原音频资源，其余 clip 留在原轨，整组换轨则迁移原对象。树归属、clip 数据和物理文件夹位置作为同一次撤销事务处理。
+
+Track 与 Segment 的拖动、拉伸吸附对齐线统一使用现有 Track 样式：`accent` 按 160/255 系数保留源 Alpha，1px 实线、关闭抗锯齿。Segment 不再将吸附线画成 `status.success` 的 2px 绿色虚线；编辑游标和播放头继续使用各自原有绘制规则。
+
+两种 Timeline 均取消 clip 的虚线预览轮廓，拖动和拉伸统一沿用 Segment 的选中态填充；移除 Track 专用的额外加亮状态。左侧区域的 Shift＋滚轮按 Segment 的轨道滚动路径处理，不再由 Track 的 dB 轴单独触发时间横移；画布和时间标尺上的 Shift＋滚轮仍横移。Track 的 dB 轴、振幅缩放与 Segment 的多轨管理保持各自用途。
 
 表格列头使用次要文字；表格内部加粗的分组条目使用标题文字。蓝图对象名称使用常规字重和首要色，绘制、宽度测量与重命名输入框保持一致。蓝图底部栏目的文字，包括 Reset Layout 和缩放比例，使用首要色。Inspector 分类 Tab 的常态文字使用首要色，选中时保留强调色。面包屑当前项与可点击祖先项均使用次要色。
 

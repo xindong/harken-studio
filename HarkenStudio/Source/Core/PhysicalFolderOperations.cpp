@@ -238,20 +238,23 @@ bool renamePhysicalFolder(PhysicalFolder* folder, const QString& name)
     return pushCommand(std::make_unique<RenameFolderCommand>(std::move(placement.folder), name));
 }
 
-bool executePhysicalMoves(const std::vector<PhysicalItemMove>& items,
-                          const std::vector<PhysicalFolderMove>& folders,
-                          std::unique_ptr<TransactionalUndoCommand> business)
+std::unique_ptr<TransactionalUndoCommand> makePhysicalMoveCommand(
+    const std::vector<PhysicalItemMove>& items,
+    const std::vector<PhysicalFolderMove>& folders,
+    bool& valid,
+    std::unique_ptr<TransactionalUndoCommand> business)
 {
+    valid = false;
     auto& manager = ProjectManager::instance();
     auto* project = manager.currentProject();
-    if (!project) return false;
+    if (!project) return {};
     QHash<ProjectItem*, PhysicalFolder*> itemTargets;
     for (const auto& move : items)
-        if (!collectItems(move.item, move.destination, itemTargets)) return false;
+        if (!collectItems(move.item, move.destination, itemTargets)) return {};
     std::vector<ItemPlacement> itemPlacements;
     for (auto it = itemTargets.cbegin(); it != itemTargets.cend(); ++it) {
         const QString bucket = ItemTypeCatalog::folderNameOf(ItemTypeCatalog::bucketOf(it.key()->type));
-        if (it.value() && project->folderBucket(it.value()) != bucket) return false;
+        if (it.value() && project->folderBucket(it.value()) != bucket) return {};
         if (project->objectFolder(it.key()) != it.value())
             itemPlacements.push_back({it.key(), project->objectFolder(it.key()), it.value()});
     }
@@ -260,34 +263,44 @@ bool executePhysicalMoves(const std::vector<PhysicalItemMove>& items,
     for (const auto& move : folders) {
         if (!move.folder || !ProjectManager::bucketAllowsFolder(move.bucket)
             || project->folderBucket(move.folder) != move.bucket
-            || (move.destination && project->folderBucket(move.destination) != move.bucket)) return false;
+            || (move.destination && project->folderBucket(move.destination) != move.bucket)) return {};
         if (move.folder->parent == move.destination || seen.contains(move.folder)) continue;
         for (auto* ancestor = move.destination; ancestor; ancestor = ancestor->parent)
-            if (ancestor == move.folder) return false;
+            if (ancestor == move.folder) return {};
         if (!manager.isFolderNameUniqueAmongSiblings(move.destination, move.bucket,
                                                      move.folder->name, move.folder)) {
             emit manager.errorOccurred(QObject::tr("A folder with this name already exists."));
-            return false;
+            return {};
         }
         for (const auto& placement : folderPlacements) {
             if (placement.after.parent == move.destination
                 && placement.after.bucket == move.bucket
                 && placement.after.folder->name.compare(move.folder->name, Qt::CaseInsensitive) == 0) {
                 emit manager.errorOccurred(QObject::tr("A folder with this name already exists."));
-                return false;
+                return {};
             }
         }
         auto before = folderPlacement(*project, move.folder);
-        if (!before.folder) return false;
+        if (!before.folder) return {};
         auto after = before;
         after.parent = move.destination;
         after.index = -1;
         folderPlacements.push_back({std::move(before), std::move(after)});
         seen.insert(move.folder);
     }
-    if (itemPlacements.empty() && folderPlacements.empty()) return pushCommand(std::move(business));
-    return pushCommand(std::make_unique<MoveFolderEntriesCommand>(
-        std::move(itemPlacements), std::move(folderPlacements), std::move(business)));
+    valid = true;
+    if (itemPlacements.empty() && folderPlacements.empty()) return business;
+    return std::make_unique<MoveFolderEntriesCommand>(
+        std::move(itemPlacements), std::move(folderPlacements), std::move(business));
+}
+
+bool executePhysicalMoves(const std::vector<PhysicalItemMove>& items,
+                          const std::vector<PhysicalFolderMove>& folders,
+                          std::unique_ptr<TransactionalUndoCommand> business)
+{
+    bool valid = false;
+    auto command = makePhysicalMoveCommand(items, folders, valid, std::move(business));
+    return valid && pushCommand(std::move(command));
 }
 
 }

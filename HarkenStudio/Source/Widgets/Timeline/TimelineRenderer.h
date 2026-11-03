@@ -75,35 +75,16 @@ enum class TimelineClipVisualState : uint8_t
 {
     Normal = 0,
     Hover,
-    Selected,
-    Dragging
-};
-
-enum class TimelineClipBadgeKind : uint8_t
-{
-    Mode = 0,
-    Clock,
-    Loop,
-    External
-};
-
-struct TimelineClipBadge
-{
-    TimelineClipBadgeKind kind = TimelineClipBadgeKind::Mode;
-    QString text;
-    bool accent = false;
+    Selected
 };
 
 struct TimelineClipItem
 {
     QRect rect;
     QString label;
-    QString tooltip;
     QIcon typeIcon;
-    QVector<TimelineClipBadge> badges;
     QColor objectColor;
     TimelineClipVisualState state = TimelineClipVisualState::Normal;
-    bool foreign = false;
     bool muted = false;
     bool residual = false;
     int laneIndex = -1;
@@ -182,14 +163,6 @@ struct TimelineLasso
     QRect rect;
 };
 
-struct TimelineGhost
-{
-    bool visible = false;
-    QRect rect;
-    int laneIndex = -1;
-    bool illegal = false;
-};
-
 struct TimelineRenderData
 {
     QRect viewport;
@@ -211,13 +184,13 @@ struct TimelineRenderData
     TimelineDropIndicator dropIndicator;
     TimelineSnapGuide snapGuide;
     TimelineLasso lasso;
-    QVector<TimelineGhost> ghosts;
     QString placeholder;
 };
 
 class TimelineRenderer
 {
 public:
+    static int clipTitleHeight(const ThemeMetrics& metrics);
     static void render(QPainter& painter,
                        const TimelineStyleView& style,
                        const TimelineRenderData& data);

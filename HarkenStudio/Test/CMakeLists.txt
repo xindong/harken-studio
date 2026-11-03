@@ -246,6 +246,32 @@ target_compile_definitions(harken_editor_tests PRIVATE
     HARKENIZER_PATH="$<TARGET_FILE:harkenizer>")
 add_dependencies(harken_editor_tests harkenizer)
 
+add_executable(harken_timeline_benchmark EXCLUDE_FROM_ALL
+    Benchmark/TimelineInteractionBenchmark.cpp
+    ${CMAKE_SOURCE_DIR}/HarkenStudio/resources.qrc
+)
+set_target_properties(harken_timeline_benchmark PROPERTIES AUTORCC ON)
+target_link_libraries(harken_timeline_benchmark PRIVATE harken_editor_lib)
+target_compile_definitions(harken_timeline_benchmark PRIVATE
+    HARKEN_BENCHMARK_CONFIGURATION="$<CONFIG>")
+add_dependencies(harken_timeline_benchmark harken_editor)
+add_custom_command(TARGET harken_timeline_benchmark POST_BUILD
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_SOURCE_DIR}/.scripts/schema_archive.py"
+        --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
+        --check-generated "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
+        --publish "$<TARGET_FILE_DIR:harken_timeline_benchmark>/schema"
+)
+if(TARGET Qt6::QOffscreenIntegrationPlugin)
+    add_custom_command(TARGET harken_timeline_benchmark POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_FILE_DIR:harken_timeline_benchmark>/platforms"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:Qt6::QOffscreenIntegrationPlugin>"
+            "$<TARGET_FILE_DIR:harken_timeline_benchmark>/platforms/"
+    )
+endif()
+
 add_executable(harken_pack_studio_qualification
     Benchmark/PackFoundationStudioQualification.cpp
 )

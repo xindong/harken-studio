@@ -7,9 +7,11 @@
 
 #include <QBrush>
 #include <QFontMetrics>
+#include <QHash>
 #include <QPainter>
 #include <QPen>
 #include <QPolygon>
+#include <QRegion>
 
 #include <algorithm>
 #include <cmath>
@@ -31,23 +33,18 @@ QColor clipFill(const TimelineClipItem& item, const TimelineStyleView& style)
         return withOpacity(base, 61 / 255.0);
     case TimelineClipVisualState::Selected:
         return withOpacity(base, 71 / 255.0);
-    case TimelineClipVisualState::Dragging:
-        return withOpacity(base, 100 / 255.0);
     case TimelineClipVisualState::Normal:
         break;
     }
     return withOpacity(base, 41 / 255.0);
 }
 
-QColor clipStroke(const TimelineClipItem& item, const TimelineStyleView& style)
+QColor clipTitleFill(const TimelineClipItem& item, const TimelineStyleView& style)
 {
-    const QColor base = item.objectColor.isValid() ? item.objectColor : style.timeline.clipBorder;
-    if (item.state == TimelineClipVisualState::Selected)
-        return style.timeline.clipSelectedBorder;
-    if (item.state == TimelineClipVisualState::Hover
-        || item.state == TimelineClipVisualState::Dragging)
-        return base;
-    return withOpacity(base, 140 / 255.0);
+    const bool selected = item.state == TimelineClipVisualState::Selected;
+    const QColor base = item.objectColor.isValid() ? item.objectColor
+        : selected ? style.timeline.clipSelected : style.timeline.clip;
+    return withOpacity(base, (selected ? 150 : item.state == TimelineClipVisualState::Hover ? 115 : 90) / 255.0);
 }
 
 void drawViewport(QPainter& painter,
@@ -161,115 +158,86 @@ void drawWaveform(QPainter& painter,
     painter.restore();
 }
 
-int drawBadge(QPainter& painter,
-              const TimelineClipBadge& badge,
-              const QRect& clipRect,
-              int right,
-              const TimelineStyleView& style)
-{
-    const QFont font = FontManager::instance().getFont(FontRole::Mono, 9);
-    const QFontMetrics metrics(font);
-    const int padding = style.metrics.spacingXSmall;
-    const int width = metrics.horizontalAdvance(badge.text) + padding * 2;
-    const int height = std::min(14, clipRect.height() - 4);
-    if (right - width < clipRect.left() + 2)
-        return right;
-    const QRect box(right - width, clipRect.top() + 2, width, height);
-    painter.setFont(font);
-    if (badge.kind == TimelineClipBadgeKind::External) {
-        painter.setPen(style.timeline.badge);
-        painter.setBrush(Qt::NoBrush);
-        painter.drawRoundedRect(box, 3, 3);
-        painter.drawText(box, Qt::AlignCenter, badge.text);
-    } else {
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(badge.accent ? style.accent : style.timeline.badge);
-        painter.drawRoundedRect(box, 3, 3);
-        painter.setPen(style.timeline.clipText);
-        painter.drawText(box, Qt::AlignCenter, badge.text);
-    }
-    return box.left() - padding;
-}
-
 void drawClipChrome(QPainter& painter,
                     const TimelineClipItem& item,
-                    const TimelineStyleView& style)
+                    const TimelineStyleView& style,
+                    const QRect& title,
+                    const QFontMetrics& metrics)
 {
+    if (title.isEmpty())
+        return;
+    painter.save();
+    painter.setClipRect(title, Qt::IntersectClip);
     const int gap = style.metrics.spacingXSmall;
-    int left = item.rect.left() + gap;
-    const int icon = 16;
-    if (!item.typeIcon.isNull() && item.rect.width() >= icon + gap * 2) {
-        const QRect iconRect(left, item.rect.top() + gap, icon, icon);
+    int left = title.left() + gap;
+    const int icon = std::min(16, title.height());
+    if (!item.typeIcon.isNull() && title.width() >= icon + gap * 2) {
+        const QRect iconRect(left, title.top() + (title.height() - icon) / 2, icon, icon);
         item.typeIcon.paint(&painter, iconRect);
         left = iconRect.right() + gap;
     }
 
-    int right = item.rect.right() - gap;
-    QVector<TimelineClipBadge> badges = item.badges;
-    std::reverse(badges.begin(), badges.end());
-    for (const TimelineClipBadge& badge : badges) {
-        const int next = drawBadge(painter, badge, item.rect, right, style);
-        if (next == right)
-            break;
-        right = next;
-    }
+    const int right = title.right() - gap;
 
-    if (left >= right || item.label.isEmpty())
+    if (left >= right || item.label.isEmpty()) {
+        painter.restore();
         return;
-    painter.setFont(FontManager::instance().getFont(FontRole::Caption));
+    }
     painter.setPen(style.timeline.clipText);
-    const QFontMetrics metrics(painter.font());
     const QString elided = metrics.elidedText(item.label, Qt::ElideRight,
                                               std::max(0, right - left));
-    painter.drawText(QRect(left, item.rect.top() + gap, right - left, metrics.height()),
+    painter.drawText(QRect(left, title.top(), right - left, title.height()),
                      Qt::AlignVCenter | Qt::AlignLeft, elided);
+    painter.restore();
 }
 
 void drawEmergence(QPainter& painter,
                    const TimelineClipItem& item,
-                   const TimelineStyleView& style)
+                   const TimelineStyleView& style,
+                   int titleHeight)
 {
     if (!item.emergencePixel)
+        return;
+    const QRect body = item.rect.adjusted(0, titleHeight, 0, 0);
+    if (body.isEmpty())
         return;
     const int x = std::clamp(*item.emergencePixel,
                              item.rect.left() + 3,
                              item.rect.right() - 3);
     if (item.emergenceClamped) {
         painter.setPen(QPen(style.timeline.emergenceMarker, 1, Qt::DotLine));
-        painter.drawLine(item.rect.left() + 2, item.rect.top() + 2,
-                         item.rect.right() - 2, item.rect.top() + 2);
+        painter.drawLine(body.left() + 2, body.top() + 2,
+                         body.right() - 2, body.top() + 2);
     }
     painter.setPen(QPen(withOpacity(style.timeline.emergenceMarker, 70 / 255.0), 6));
-    painter.drawLine(x, item.rect.top() + 1, x, item.rect.bottom() - 1);
+    painter.drawLine(x, body.top(), x, body.bottom());
     painter.setPen(QPen(style.timeline.emergenceMarker, 2));
-    painter.drawLine(x, item.rect.top() + 1, x, item.rect.bottom() - 1);
+    painter.drawLine(x, body.top(), x, body.bottom());
 }
 
 void drawClipItem(QPainter& painter,
                   const TimelineStyleView& style,
-                  const TimelineClipItem& item)
+                  const TimelineClipItem& item,
+                  const QRect& labelRect,
+                  const QFontMetrics& metrics,
+                  int titleHeight)
 {
     if (item.rect.isEmpty())
         return;
     painter.save();
+    painter.setClipRect(item.rect, Qt::IntersectClip);
     if (item.residual)
         painter.setOpacity(0.35);
     else if (item.muted)
         painter.setOpacity(0.3);
-    painter.setBrush(clipFill(item, style));
-    painter.setPen(QPen(clipStroke(item, style),
-                        item.state == TimelineClipVisualState::Selected ? 2 : 1));
-    painter.drawRoundedRect(item.rect,
-                            style.metrics.timeline.clipRadius,
-                            style.metrics.timeline.clipRadius);
-    if (item.foreign) {
-        painter.setPen(QPen(clipStroke(item, style), 2, Qt::DashLine));
-        painter.drawLine(item.rect.left() + 1, item.rect.top() + 2,
-                         item.rect.left() + 1, item.rect.bottom() - 2);
-    }
+    painter.fillRect(item.rect, clipFill(item, style));
     drawWaveform(painter, item, style);
-    drawClipChrome(painter, item, style);
-    drawEmergence(painter, item, style);
+    drawEmergence(painter, item, style, titleHeight);
+    const QRect title(item.rect.topLeft(), QSize(item.rect.width(),
+        std::min(item.rect.height(), titleHeight)));
+    painter.fillRect(title, style.canvasBackground);
+    painter.fillRect(title, clipTitleFill(item, style));
+    drawClipChrome(painter, item, style, labelRect, metrics);
     painter.restore();
 }
 
@@ -277,8 +245,32 @@ void drawClips(QPainter& painter,
                const TimelineStyleView& style,
                const TimelineRenderData& data)
 {
-    for (const TimelineClipItem& item : data.clipItems)
-        drawClipItem(painter, style, item);
+    if (data.clipItems.isEmpty())
+        return;
+    const QFont font = FontManager::instance().getFont(FontRole::Caption);
+    const QFontMetrics metrics(font);
+    QVector<QRect> labels(data.clipItems.size());
+    QHash<int, QRegion> coveredRows;
+    const int titleHeight = metrics.height() + style.metrics.table.cellPaddingY * 2;
+    for (qsizetype i = data.clipItems.size(); i-- > 0;) {
+        const auto& rect = data.clipItems[i].rect;
+        const QRect title(rect.topLeft(), QSize(rect.width(), std::min(rect.height(), titleHeight)));
+        const QRect visibleTitle = data.viewport.isEmpty() ? title : title.intersected(data.viewport);
+        QRegion visible(visibleTitle);
+        QRegion& covered = coveredRows[title.top()];
+        visible -= covered;
+        for (const QRect& part : visible)
+            if (part.topLeft() == visibleTitle.topLeft()) {
+                labels[i] = part;
+                break;
+            }
+        covered += title;
+    }
+    painter.save();
+    painter.setFont(font);
+    for (qsizetype i = 0; i < data.clipItems.size(); ++i)
+        drawClipItem(painter, style, data.clipItems[i], labels[i], metrics, titleHeight);
+    painter.restore();
 }
 
 void drawCrossfades(QPainter& painter,
@@ -401,6 +393,12 @@ void TimelineRenderer::drawVerticalLine(QPainter& painter, const QColor& color, 
     painter.restore();
 }
 
+int TimelineRenderer::clipTitleHeight(const ThemeMetrics& metrics)
+{
+    return QFontMetrics(FontManager::instance().getFont(FontRole::Caption)).height()
+        + metrics.table.cellPaddingY * 2;
+}
+
 void TimelineRenderer::render(QPainter& painter,
                               const TimelineStyleView& style,
                               const TimelineRenderData& data)
@@ -411,6 +409,10 @@ void TimelineRenderer::render(QPainter& painter,
             drawLaneRects(painter, style, data);
         drawGrid(painter, style, data);
         drawSemanticBands(painter, style, data);
+        if (!data.frameless)
+            for (const TimelineLaneRect& lane : data.laneRects)
+                painter.fillRect(QRect(lane.rect.left(), lane.rect.bottom(), lane.rect.width(), 1),
+                    style.canvasBorder);
         if (data.clipItems.isEmpty() && !data.placeholder.isEmpty())
             drawPlaceholder(painter, style, data);
         else {
@@ -432,11 +434,8 @@ void TimelineRenderer::render(QPainter& painter,
         drawVerticalLine(painter, style.canvasBorder, data.dropIndicator.x, data.viewport);
     if (data.snapGuide.visible) {
         painter.save();
-        if (data.frameless)
-            painter.setRenderHint(QPainter::Antialiasing, false);
-        QPen snapPen(data.frameless ? withOpacity(style.accent, 160 / 255.0) : style.music.cursor,
-            data.frameless ? 1 : 2, data.frameless ? Qt::SolidLine : Qt::DashLine);
-        painter.setPen(snapPen);
+        painter.setRenderHint(QPainter::Antialiasing, false);
+        painter.setPen(QPen(withOpacity(style.accent, 160 / 255.0), 1));
         painter.drawLine(data.snapGuide.x, data.viewport.top(),
                          data.snapGuide.x, data.viewport.bottom());
         painter.restore();
@@ -445,15 +444,6 @@ void TimelineRenderer::render(QPainter& painter,
         painter.setPen(QPen(style.canvasBorder, 1, Qt::DashLine));
         painter.setBrush(Qt::NoBrush);
         painter.drawRect(data.lasso.rect.normalized());
-    }
-    for (const TimelineGhost& ghost : data.ghosts) {
-        if (!ghost.visible || ghost.rect.isEmpty())
-            continue;
-        painter.setPen(QPen(ghost.illegal ? style.timeline.unavailableText
-                                          : style.canvasBorder,
-                            1, Qt::DashLine));
-        painter.setBrush(Qt::NoBrush);
-        painter.drawRect(ghost.rect);
     }
 }
 

@@ -4261,6 +4261,102 @@ std::shared_ptr<ProjectItem> ProjectManager::cloneSubtreeDetached(
     return clone;
 }
 
+class CloneClipTargetCommand final : public TransactionalUndoCommand
+{
+public:
+    CloneClipTargetCommand(ProjectManager& manager, ProjectItem* parent,
+                           std::shared_ptr<ProjectItem> item,
+                           QHash<QUuid, ProjectDocumentBinding> locations)
+        : TransactionalUndoCommand(QObject::tr("Copy clip target"), nullptr, false)
+        , manager_(manager)
+        , projectId_(manager.currentProject()->projectId)
+        , parentGuid_(parent->guid)
+        , item_(std::move(item))
+        , locations_(std::move(locations))
+    {}
+
+private:
+    bool apply(bool redo) override
+    {
+        auto* project = manager_.currentProject();
+        if (!project || project->projectId != projectId_)
+            return false;
+        auto* parent = manager_.findItemByGuid(parentGuid_);
+        if (!parent || parent->type != ProjectItem::Type::Track)
+            return false;
+        if (redo) {
+            if (manager_.findItemByGuid(item_->guid))
+                return false;
+            std::vector<QUuid> installed;
+            for (auto it = locations_.cbegin(); it != locations_.cend(); ++it) {
+                if (project->documentBindings.contains(it.key())) continue;
+                project->documentBindings.insert(it.key(), it.value());
+                installed.push_back(it.key());
+            }
+            if (!manager_.restoreItemInternal(parent, item_, index_, std::nullopt, nullptr, false)) {
+                for (const auto& guid : installed) project->documentBindings.remove(guid);
+                return false;
+            }
+            ProjectManager::restoreReferencesFromLog(references_, project);
+            emit manager_.itemCreated(item_.get());
+        } else {
+            if (manager_.findItemByGuid(item_->guid) != item_.get()
+                || item_->parent != parent
+                || !manager_.deleteItemInternal(parent, item_, &index_, &references_))
+                return false;
+            emit manager_.itemDeleted(item_.get());
+        }
+        return true;
+    }
+
+    ProjectManager& manager_;
+    QString projectId_;
+    QUuid parentGuid_;
+    std::shared_ptr<ProjectItem> item_;
+    QHash<QUuid, ProjectDocumentBinding> locations_;
+    int index_ = -1;
+    DeletedSubtreeRefLog references_;
+};
+
+std::unique_ptr<TransactionalUndoCommand> ProjectManager::makeClipTargetCloneCommand(
+    const ProjectItem* source, ProjectItem* destinationTrack,
+    ProjectItem** clone, QString* error)
+{
+    if (clone) *clone = nullptr;
+    if (error) error->clear();
+    if (!m_currentProject || !source || !destinationTrack
+        || destinationTrack->type != ProjectItem::Type::Track
+        || !ItemTypeCatalog::isTimelineClipTarget(source->type)
+        || findItemByGuid(source->guid) != source
+        || findItemByGuid(destinationTrack->guid) != destinationTrack) {
+        if (error) *error = tr("The clip target or destination Track is unavailable.");
+        return {};
+    }
+    const auto authoring = validateNewAuthoring(*this, *source, destinationTrack);
+    if (!authoring) {
+        if (error) *error = authoring.message;
+        return {};
+    }
+    auto identityGuard = guardFieldGroupIdentities(m_currentProject, source->type);
+    auto copy = cloneSubtreeDetached(source, destinationTrack);
+    if (!copy) {
+        if (error) *error = tr("The clip target could not be copied.");
+        return {};
+    }
+    identityGuard.dismiss();
+    QHash<QUuid, ProjectDocumentBinding> locations;
+    std::vector<ProjectItem*> pending{copy.get()};
+    while (!pending.empty()) {
+        auto* item = pending.back();
+        pending.pop_back();
+        locations.insert(item->guid, m_currentProject->documentBindings.take(item->guid));
+        for (const auto& child : item->children) pending.push_back(child.get());
+    }
+    if (clone) *clone = copy.get();
+    return std::make_unique<CloneClipTargetCommand>(
+        *this, destinationTrack, std::move(copy), std::move(locations));
+}
+
 bool ProjectManager::canPasteClipboard(ProjectItem* target) const
 {
     if (!m_currentProject || !target || clipboardEmpty())

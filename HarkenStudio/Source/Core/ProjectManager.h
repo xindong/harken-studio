@@ -60,6 +60,8 @@ class ProjectExplorer;
 class CreateProjectItemCommand;
 class DeleteProjectItemCommand;
 class MoveItemCommand;
+class CloneClipTargetCommand;
+class TransactionalUndoCommand;
 class SequenceReorderCommand;
 class IPCServer;
 class PropertyEditSession;
@@ -83,6 +85,7 @@ public:
     friend class CreateProjectItemCommand;
     friend class DeleteProjectItemCommand;
     friend class MoveItemCommand;
+    friend class CloneClipTargetCommand;
     friend class SequenceReorderCommand;
     friend class BlueprintSendConnectCommand;
     friend class BlueprintSendDisconnectCommand;
@@ -267,6 +270,9 @@ public:
     bool moveItem(ProjectItem* item, ProjectItem* newParent);
     bool moveItems(const QList<ProjectItem*>& items, ProjectItem* newParent);
     bool moveItemToBucketRoot(ProjectItem* item, const QString& bucketFolder);
+    std::unique_ptr<TransactionalUndoCommand> makeClipTargetCloneCommand(
+        const ProjectItem* source, ProjectItem* destinationTrack,
+        ProjectItem** clone, QString* error = nullptr);
     ProjectItem* duplicateItem(ProjectItem* src);
     std::vector<ProjectItem*> duplicateItems(const QList<ProjectItem*>& items);
     static bool isDuplicable(const ProjectItem* item);
