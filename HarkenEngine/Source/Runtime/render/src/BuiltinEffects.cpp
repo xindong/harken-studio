@@ -814,7 +814,7 @@ void LimiterProcess(void* state, float* const* channels,
                     std::uint32_t channelCount, std::uint32_t offset,
                     std::uint32_t frames) {
     auto* limiter = static_cast<LimiterState*>(state);
-    float gain = limiter->currentGain;
+    double gain = limiter->currentGain;
     for (std::uint32_t i = 0; i < frames; ++i) {
         if (limiter->transitionFramesRemaining != 0) {
             if (limiter->transitionFramesRemaining == 1) {
@@ -841,20 +841,20 @@ void LimiterProcess(void* state, float* const* channels,
             }
         }
 
-        float nextGain =
+        double nextGain =
             gain < 1.0f
-                ? limiter->releaseCoeff * gain + limiter->releaseAdd
-                : 1.0f;
+                ? 1.0 + limiter->releaseCoeff * (gain - 1.0)
+                : 1.0;
         if (nextGain > 1.0f) {
             nextGain = 1.0f;
         }
         if (linkedPeak > limiter->ceilingLinear) {
-            float required = limiter->ceilingLinear / linkedPeak;
-            // A float divide followed by a multiply can round one ULP above
-            // the Ceiling. Correct that rare case with one conservative
-            // multiply while retaining one linked gain for every channel.
+            // Keep the quotient normal under FTZ even for finite float peaks
+            // near FLT_MAX; convert only the final sample product to float.
+            double required = static_cast<double>(limiter->ceilingLinear) / linkedPeak;
+            // Round conservatively without changing the linked-channel ratio.
             if (linkedPeak * required > limiter->ceilingLinear) {
-                required *= 0.99999988f;
+                required *= 1.0 - std::numeric_limits<double>::epsilon();
             }
             if (required < nextGain) {
                 nextGain = required;
@@ -863,7 +863,7 @@ void LimiterProcess(void* state, float* const* channels,
         gain = nextGain;
         if (gain != 1.0f) {
             for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
-                channels[ch][offset + i] *= gain;
+                channels[ch][offset + i] = static_cast<float>(channels[ch][offset + i] * gain);
             }
         }
     }
@@ -1151,7 +1151,7 @@ void CompressorBeginBlock(CompressorState* state) {
     state->telemetry.blockMinimumLinearGain = 1.0f;
     state->telemetry.endGainReductionDb =
         state->currentGain < 1.0f
-            ? -20.0f * std::log10(state->currentGain)
+            ? static_cast<float>(-20.0 * std::log10(state->currentGain))
             : 0.0f;
     state->telemetry.detectorNonFiniteCount = 0;
     state->telemetry.detectorSaturationCount = 0;
@@ -1210,7 +1210,7 @@ static float CompressorLegacyTargetGain(
     return targetGain;
 }
 
-static float CompressorTargetGain(
+static double CompressorTargetGain(
     const CompressorPreparedParameters& p, float detectorMagnitude,
     bool steadyParameters) {
     if (p.reciprocalRatio >= 1.0f) {
@@ -1219,20 +1219,30 @@ static float CompressorTargetGain(
     if (!(detectorMagnitude > 0.0f)) {
         return 1.0f;
     }
-    if (!steadyParameters || !std::isfinite(detectorMagnitude)) {
-        return CompressorLegacyTargetGain(p, detectorMagnitude);
-    }
-    if (detectorMagnitude < p.lowerKneeLinear) {
+    if (steadyParameters && detectorMagnitude < p.lowerKneeLinear) {
         return 1.0f;
     }
-    if (detectorMagnitude > p.upperKneeLinear) {
-        const float targetGain =
+    float targetGain;
+    if (steadyParameters && std::isfinite(detectorMagnitude) &&
+        detectorMagnitude > p.upperKneeLinear) {
+        targetGain =
             p.hardKneeScale *
             std::pow(detectorMagnitude,
                      p.reciprocalRatio - 1.0f);
-        return std::clamp(targetGain, 0.0f, 1.0f);
+        targetGain = std::clamp(targetGain, 0.0f, 1.0f);
+    } else {
+        targetGain = CompressorLegacyTargetGain(p, detectorMagnitude);
     }
-    return CompressorLegacyTargetGain(p, detectorMagnitude);
+    // Such deep attenuation is necessarily above the hard knee for the
+    // supported threshold/ratio range. Re-evaluate before float subnormal
+    // rounding or FTZ destroys it, including while parameters are moving.
+    if (targetGain < 0x1p-64f && std::isfinite(detectorMagnitude)) {
+        const double inputDb = 20.0 * std::log10(static_cast<double>(detectorMagnitude));
+        const double reductionDb =
+            (static_cast<double>(p.thresholdDb) - inputDb) * (1.0 - p.reciprocalRatio);
+        return std::pow(10.0, reductionDb / 20.0);
+    }
+    return targetGain;
 }
 
 void CompressorProcessWithDetector(
@@ -1243,7 +1253,7 @@ void CompressorProcessWithDetector(
         return;
     }
 
-    float gain = state->currentGain;
+    double gain = state->currentGain;
     for (std::uint32_t i = 0; i < frames; ++i) {
         const bool steadyParameters =
             state->parameterTransitionFramesRemaining == 0;
@@ -1279,14 +1289,13 @@ void CompressorProcessWithDetector(
             state->telemetry.detectorPeak = linkedPeak;
         }
 
-        const float targetGain =
+        const double targetGain =
             CompressorTargetGain(p, linkedPeak, steadyParameters);
 
-        if (targetGain < gain) {
-            gain = p.attackCoeff * gain + p.attackAdd * targetGain;
-        } else {
-            gain = p.releaseCoeff * gain + p.releaseAdd * targetGain;
-        }
+        const double coefficient = targetGain < gain ? p.attackCoeff : p.releaseCoeff;
+        // The normalized recurrence preserves unity exactly and retains tiny
+        // attenuation across blocks without float weighted-product underflow.
+        gain = targetGain + coefficient * (gain - targetGain);
         if (gain > 1.0f) {
             gain = 1.0f;
         } else if (gain < 0.0f) {
@@ -1296,17 +1305,17 @@ void CompressorProcessWithDetector(
             state->telemetry.blockMinimumLinearGain = gain;
         }
 
-        const float freshWetGain = gain * p.makeupLinear;
-        float appliedGain = freshWetGain;
+        const double freshWetGain = gain * p.makeupLinear;
+        double appliedGain = freshWetGain;
         if (state->resetBridgeFramesRemaining != 0) {
             const std::uint32_t bridgeFrame =
                 state->resetBridgeTotalFrames -
                 state->resetBridgeFramesRemaining;
-            const float weight =
+            const double weight =
                 state->resetBridgeTotalFrames <= 1
-                    ? 1.0f
-                    : static_cast<float>(bridgeFrame) /
-                          static_cast<float>(
+                    ? 1.0
+                    : static_cast<double>(bridgeFrame) /
+                          static_cast<double>(
                               state->resetBridgeTotalFrames - 1u);
             appliedGain =
                 state->resetBridgeStartGain * (1.0f - weight) +
@@ -1317,7 +1326,7 @@ void CompressorProcessWithDetector(
         for (std::uint32_t channel = 0; channel < channelCount; ++channel) {
             float& output = channels[channel][offset + i];
             if (appliedGain != 1.0f) {
-                output *= appliedGain;
+                output = static_cast<float>(output * appliedGain);
             }
             const float magnitude = output >= 0.0f ? output : -output;
             if (std::isfinite(magnitude) &&
@@ -1331,12 +1340,12 @@ void CompressorProcessWithDetector(
     if (frames != 0) {
         state->telemetry.maxGainReductionDb =
             state->telemetry.blockMinimumLinearGain < 1.0f
-                ? -20.0f *
+                ? static_cast<float>(-20.0 *
                       std::log10(
-                          state->telemetry.blockMinimumLinearGain)
+                          state->telemetry.blockMinimumLinearGain))
                 : 0.0f;
         state->telemetry.endGainReductionDb =
-            gain < 1.0f ? -20.0f * std::log10(gain) : 0.0f;
+            gain < 1.0f ? static_cast<float>(-20.0 * std::log10(gain)) : 0.0f;
     }
     state->hasRendered = state->hasRendered || frames != 0;
 }
