@@ -1,4 +1,5 @@
 #include "harken/param/Curve.h"
+#include "harken/dsp/InterpKernels.h"
 
 #include <algorithm>
 #include <cmath>
@@ -178,15 +179,19 @@ float CurveLUT::Eval(float x) const {
     if (x >= xMax) {
         return values[kCurveLutEntries];
     }
-    const float u = (x - xMin) / (xMax - xMin) *
-                    static_cast<float>(kCurveLutEntries);
+    const float span = xMax - xMin;
+    // Finite authored endpoints can have a difference outside float range.
+    // Preserve ordinary rounding, matching the wide domain used by Bake.
+    const float u = std::isfinite(span)
+        ? (x - xMin) / span * static_cast<float>(kCurveLutEntries)
+        : static_cast<float>((static_cast<double>(x) - xMin) /
+              (static_cast<double>(xMax) - xMin) * kCurveLutEntries);
     std::uint32_t index = static_cast<std::uint32_t>(u);
     if (index >= kCurveLutEntries) {
         index = kCurveLutEntries - 1;
     }
     const float fraction = u - static_cast<float>(index);
-    return values[index] +
-           (values[index + 1] - values[index]) * fraction;
+    return InterpLinear(values[index], values[index + 1], fraction);
 }
 
 } // namespace harken

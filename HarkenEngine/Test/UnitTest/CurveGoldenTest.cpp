@@ -317,6 +317,42 @@ TEST(CurveGolden, LutChordErrorIsTightForBoundedSlopeCurve) {
     EXPECT_LT(maxChordError, 2.4e-4f);
 }
 
+TEST(CurveGolden, LutPreservesWideFiniteHorizontalDomain) {
+    const CurvePoint points[] = {{-3.0e38f, 0.0f}, {3.0e38f, 1.0f}};
+    const CurveHandlePair handles[] = {Endpoints(points[0], points[1])};
+    Curve curve;
+    ASSERT_TRUE(curve.SetPoints(points, handles, 2));
+    CurveLUT lut;
+    lut.Bake(curve);
+    for (unsigned i = 0; i <= 16; ++i) {
+        const double progress = i / 16.0;
+        const float x = static_cast<float>(static_cast<double>(lut.xMin) +
+            (static_cast<double>(lut.xMax) - lut.xMin) * progress);
+        const float value = lut.Eval(x);
+        ASSERT_TRUE(std::isfinite(value)) << i;
+        EXPECT_NEAR(progress, value, 1e-6) << i;
+    }
+}
+
+TEST(CurveGolden, LutPreservesFiniteOppositeExtremeValues) {
+    const CurvePoint points[] = {
+        {0.0f, -3.0e38f}, {0.5f, -3.0e38f},
+        {0.5f + 1.0f / 128.0f, 3.0e38f}, {1.0f, 3.0e38f}};
+    const CurveHandlePair handles[] = {
+        Endpoints(points[0], points[1]), Endpoints(points[1], points[2]),
+        Endpoints(points[2], points[3])};
+    Curve curve;
+    ASSERT_TRUE(curve.SetPoints(points, handles, 4));
+    CurveLUT lut;
+    lut.Bake(curve);
+    for (unsigned i = 0; i <= 4; ++i) {
+        const float fraction = i / 4.0f;
+        const float value = lut.Eval(0.5f + fraction / 128.0f);
+        ASSERT_TRUE(std::isfinite(value)) << i;
+        EXPECT_NEAR(-1.0f + 2.0f * fraction, value / 3.0e38f, 1e-6f) << i;
+    }
+}
+
 TEST(CurveGolden, LutExtremeVerticalTangentHasKnownChordErrorBand) {
     const CurvePoint points[] = {{0.0f, 0.0f}, {1.0f, 1.0f}};
     const CurveHandlePair handles[] = {{1.0f, 0.0f, 0.0f, 1.0f}};

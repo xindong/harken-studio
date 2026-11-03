@@ -2219,13 +2219,12 @@ TEST(VoicePool, ZeroAndGarbageHandlesAreStale) {
     EXPECT_EQ(2u, session.Engine()->voices.StaleHandleCount());
 }
 
-TEST(VoicePool, OversizedFadeStopSaturatesWithoutEndingVoice) {
+TEST(VoicePool, LongFadeStopPreservesRequestedDuration) {
     constexpr std::uint32_t kSampleRate = 48000;
     constexpr std::uint32_t kFadeMs = 89478486u;
     constexpr std::uint64_t kExactFrames =
         (static_cast<std::uint64_t>(kFadeMs) * kSampleRate + 999u) / 1000u;
-    // The exact ceiling is 2^32 + 32 frames, so narrowing must saturate
-    // instead of wrapping the fade to 32 frames.
+    // The accepted duration must neither wrap to 32 frames nor saturate.
     static_assert(kExactFrames == (std::uint64_t{1} << 32) + 32u);
 
     EngineSession session(
@@ -2247,9 +2246,22 @@ TEST(VoicePool, OversizedFadeStopSaturatesWithoutEndingVoice) {
         harkentest::RenderHandle(session.Engine(), handle));
     ASSERT_NE(nullptr, context);
     EXPECT_TRUE(context->fading);
-    EXPECT_EQ(std::numeric_limits<std::uint32_t>::max(),
-              context->fadeTotalFrames);
+    EXPECT_EQ(kExactFrames, context->fadeTotalFrames);
     EXPECT_EQ(kBlockFrames, context->fadeDoneFrames);
+
+    ASSERT_EQ(VN_OK, Vn_Stop(handle, 0));
+    session.Engine()->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
+    constexpr auto kMaximumMs = std::numeric_limits<std::uint32_t>::max();
+    ASSERT_EQ(VN_OK, Vn_Stop(handle, kMaximumMs));
+    session.Engine()->nullBackend.Pump(1);
+    const auto* maximum = session.Engine()->voices.Resolve(
+        harkentest::RenderHandle(session.Engine(), handle));
+    ASSERT_NE(nullptr, maximum);
+    EXPECT_EQ((std::uint64_t{kMaximumMs} * kSampleRate + 999u) / 1000u,
+              maximum->fadeTotalFrames);
+    EXPECT_EQ(kBlockFrames, maximum->fadeDoneFrames);
 }
 
 TEST(VoicePool, PlayValidatesArgumentsAndIdentity) {

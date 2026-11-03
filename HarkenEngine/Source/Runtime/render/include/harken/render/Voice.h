@@ -479,8 +479,8 @@ struct VoiceRenderContext {
     SpatialScalarTransition balanceRightTransition{1.0f, 1.0f, 1, 1, 1.0f};
 
     // Fade-stop: linear ramp to zero over fadeTotalFrames, then truncate.
-    std::uint32_t fadeTotalFrames = 0;
-    std::uint32_t fadeDoneFrames = 0;
+    std::uint64_t fadeTotalFrames = 0;
+    std::uint64_t fadeDoneFrames = 0;
     std::uint32_t fadeStartOffsetInBlock = 0;
 
     // Effect and tone tail drain bookkeeping. tailRemaining is the serial

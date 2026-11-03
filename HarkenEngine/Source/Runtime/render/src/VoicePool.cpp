@@ -3091,7 +3091,6 @@ void VoicePool::ApplyStop(VnVoiceHandle handle, std::uint32_t fadeMs,
     if (fadeFrames == 0 && fadeMs != 0) {
         frames =
             (static_cast<std::uint64_t>(fadeMs) * m_sampleRate + 999) / 1000;
-        frames = std::min<std::uint64_t>(frames, UINT32_MAX);
     }
     if (frames == 0) {
         // An API stop cannot replace a previously adopted timeline cause.
@@ -3136,8 +3135,7 @@ void VoicePool::ApplyStop(VnVoiceHandle handle, std::uint32_t fadeMs,
         // An API stop cannot replace a previously adopted timeline cause.
         slot->render.monitorControlAdopted = true;
         slot->render.fading = true;
-        slot->render.fadeTotalFrames =
-            static_cast<std::uint32_t>(frames > 0 ? frames : 1);
+        slot->render.fadeTotalFrames = frames;
         slot->render.fadeDoneFrames = 0;
     }
     // A second stop while fading keeps the first ramp: deterministic and
@@ -4842,9 +4840,9 @@ void VoicePool::AdvanceStreamParkDeadline(std::uint32_t slotIndex, Slot& slot,
     if (!render.streamParkActive || !render.fading) {
         return;
     }
-    const std::uint32_t left =
+    const std::uint64_t left =
         render.fadeTotalFrames - render.fadeDoneFrames;
-    render.fadeDoneFrames += std::min(left, silentFrames);
+    render.fadeDoneFrames += std::min<std::uint64_t>(left, silentFrames);
     if (render.fadeDoneFrames >= render.fadeTotalFrames) {
         FinishStreamPark(slotIndex, &slot,
                          StreamParkDisposition::ResumeReady);
