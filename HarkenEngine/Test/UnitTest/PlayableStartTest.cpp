@@ -29863,6 +29863,7 @@ TEST(PlayableStart, FormalSignalReceiversShareSoundAndContainerMembersAcrossWork
                 if (sound == kSecondSound) play.busId = sourceBus;
                 VnVoiceHandle voice = 0;
                 ASSERT_EQ(harkentest::PlayRaw(&play, &voice), VN_OK);
+                if (sound == kSound) ASSERT_EQ(Vn_SetVoicePan(voice, 1.0f), VN_OK);
             }
             ASSERT_EQ(Vn_Update(), VN_OK);
             harkentest::Capture output;
@@ -29871,8 +29872,11 @@ TEST(PlayableStart, FormalSignalReceiversShareSoundAndContainerMembersAcrossWork
                 ASSERT_EQ(Vn_Update(), VN_OK);
             }
             ASSERT_FALSE(output.left.empty());
-            const double expected = .11 + .2 * (1 - harken::kDuckingBaselineSlope * .01 / .2);
+            const double expected = .01 + .2 * (1 - harken::kDuckingBaselineSlope * .01 / .2);
             EXPECT_NEAR(output.left.back(), expected, 1e-5);
+            // Isolate the raw voice contribution; aggregate amplitude alone
+            // cannot distinguish accidental membership with this ducking law.
+            EXPECT_NEAR(output.right.back() - output.left.back(), .1 * std::sqrt(2.0), 1e-5);
             auto oppositePlay = harkentest::MakePlayDesc(oppositeSound);
             oppositePlay.busId = oppositeBus;
             VnVoiceHandle oppositeVoice = 0;
@@ -29882,7 +29886,8 @@ TEST(PlayableStart, FormalSignalReceiversShareSoundAndContainerMembersAcrossWork
                 ASSERT_EQ(Vn_Update(), VN_OK);
             }
             // Signed PCM cancels across two distinct connections before RMS.
-            EXPECT_NEAR(output.left.back(), .3, 2e-6);
+            EXPECT_NEAR(output.left.back(), .2, 2e-6);
+            EXPECT_NEAR(output.right.back() - output.left.back(), .1 * std::sqrt(2.0), 1e-5);
             EXPECT_EQ(engine->mixer.Arena().OverflowCount(), 0u);
             if (workers == 0) serial = output.left;
             else EXPECT_EQ(output.left, serial);

@@ -1650,7 +1650,9 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
     if (!strictArtifact && !replayRawAttempt && !replayCurrentAttempt) {
         return CurrentWorldBodyDecodeResult::Invalid;
     }
-    if (!IsReadableCurrentWorldBodyVintage(worldTraceVintage) || replayRawAttempt) {
+    if (!IsReadableCurrentWorldBodyVintage(worldTraceVintage) || replayRawAttempt ||
+        (replayCurrentAttempt && worldTraceVintage != kCurrentWorldShippingBodyVintage &&
+         worldTraceVintage != kCurrentWorldBodyVintageV20)) {
         return CurrentWorldBodyDecodeResult::Invalid;
     }
     const bool allowRawInvalid = false;

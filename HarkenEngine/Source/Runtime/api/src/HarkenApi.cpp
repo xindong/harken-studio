@@ -312,6 +312,7 @@ std::size_t Engine::PendingSelectionStorageBytes() const noexcept {
                 const auto& backing = *group.nativeRuntimeBacking;
                 bytes += sizeof(NativeRuntimeBacking) + backing.groups.DirectoryBytes() +
                     backing.laneGroups.DirectoryBytes() + column(backing.reprepareProducers) +
+                    column(backing.reprepareLeaves) +
                     column(backing.selections) + column(backing.publicationProducers) +
                     column(backing.publicationChildren) + column(backing.publicationOwners) +
                     column(backing.rootMemberWeights) + column(backing.memberWeights) +
@@ -45227,7 +45228,7 @@ bool PreparePendingVariableGroupSelection(harken::Engine& engine,
     harken::EnginePlayableServiceRow& row, const harken::ContainerProgramViewV3& program,
     const harken::VariableReadCutReader& reader, std::uint64_t anchor,
     SharedVariableControlDecisionPlan& decision,
-    std::array<harken::Engine::PendingVariableGroupChild, harken::kMaxKnownScheduleLeaves>& leaves,
+    std::span<harken::Engine::PendingVariableGroupChild> leaves,
     std::uint32_t& leafCount,
     std::array<harken::Engine::PendingVariableGroupTop, harken::kMaxKnownScheduleLeaves>* tops = nullptr,
     std::uint32_t* topCount = nullptr,
@@ -45380,7 +45381,7 @@ PendingVariableGroupSelectionResult ServicePendingVariableGroupSelectionReplacem
     const auto anchor = std::max(ActionImmediateStartFrame(engine), group->nextSelectionFrame);
     harken::VariableReadCutReader reader;
     SharedVariableControlDecisionPlan decision;
-    std::array<harken::Engine::PendingVariableGroupChild, harken::kMaxKnownScheduleLeaves> leaves{};
+    auto& leaves = backingOwner->nativeRuntimeBacking->reprepareLeaves;
     std::array<harken::Engine::PendingVariableGroupTop, harken::kMaxKnownScheduleLeaves> tops{};
     std::uint32_t leafCount = 0;
     std::uint32_t topCount = 0;
@@ -45508,7 +45509,7 @@ PendingVariableGroupSelectionResult ServiceRegisteredPendingVariableGroupSelecti
         const auto* program = ResolveVariableControlProgram(engine, row);
         harken::VariableReadCutReader reader;
         SharedVariableControlDecisionPlan selected;
-        std::array<harken::Engine::PendingVariableGroupChild, harken::kMaxKnownScheduleLeaves> leaves{};
+        auto& leaves = backingOwner.nativeRuntimeBacking->reprepareLeaves;
         std::array<harken::Engine::PendingVariableGroupTop, harken::kMaxKnownScheduleLeaves> tops{};
         std::uint32_t leafCount = 0;
         std::uint32_t topCount = 0;
@@ -58934,6 +58935,8 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
         }
         if (!AllowNativeBackingAllocation()) return shortage();
         nativeCandidate->reprepareProducers.resize(producerCount);
+        if (!AllowNativeBackingAllocation()) return shortage();
+        nativeCandidate->reprepareLeaves.resize(config.maxKnownScheduleLeaves);
         if (!AllowNativeBackingAllocation()) return shortage();
         nativeCandidate->selections.resize(producerCount);
         if (!AllowNativeBackingAllocation()) return shortage();

@@ -1495,6 +1495,10 @@ TEST(BusSend, FormalFeedbackRecoversThroughActiveEffectsAndParameterTransitions)
                 ASSERT_EQ(Vn_SetBusEffectParam(kBusB, 0, parameters[effect], values[effect]), VN_OK);
                 if (effect == 0) ASSERT_EQ(Vn_SetBusFilter(kBusB, harken::kFilterKindLowpass, 4000, .707f, 1, 10), VN_OK);
             }
+            if (enabled && effect == 4 && block == 120)
+                ASSERT_EQ(Vn_ResetBusEffect(kBusB, 0, VN_EFFECT_COMPRESSOR), VN_OK);
+            if (enabled && effect == 3 && (block == 120 || block == 140))
+                ASSERT_EQ(Vn_SetBusEffectBypass(kBusB, 0, block == 120 ? 1u : 0u), VN_OK);
             PumpAndCapture(engine, 1, output);
         }
         for (float value : output.left) ASSERT_TRUE(std::isfinite(value));

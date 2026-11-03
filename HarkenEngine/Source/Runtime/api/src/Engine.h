@@ -5881,6 +5881,16 @@ struct Engine {
         std::uint32_t weightCount = 0;
         bool discreteMatched = false;
     };
+    struct PendingVariableGroupChild {
+        TimelineVoiceInstallDesc voice{};
+        PlayableRefV1 leaf{};
+        std::uint32_t frontierPolicyIndex = UINT32_MAX;
+        std::uint32_t authoredChildOrdinal = 0;
+        WeightSegmentV1 weight{};
+        std::uint64_t authoredOffset = 0;
+        VariableControlSide side = VariableControlSide::Discrete;
+        std::uint32_t topIndex = UINT32_MAX;
+    };
     struct NativeRuntimeBacking {
         struct RootInitialArms {
             EnginePlayableServiceToken service{};
@@ -5895,6 +5905,9 @@ struct Engine {
         std::vector<RootInitialArms> rootInitialArms;
         std::vector<EngineVariableInitialArms> initialArms;
         std::vector<EngineActionPlayScratch*> reprepareProducers;
+        // Producers are reselected serially. Retain one prepared workspace so
+        // captured playback paths never multiply on nested service stacks.
+        std::vector<PendingVariableGroupChild> reprepareLeaves;
         std::vector<PendingVariableSelectionSnapshot> selections;
         std::vector<EngineActionPlayScratch*> publicationProducers;
         std::vector<EngineActionPlayScratch*> publicationChildren;
@@ -6337,16 +6350,6 @@ struct Engine {
                     members.capacity() * sizeof(MemberStorage);
             }
         } reprepare_;
-    };
-    struct PendingVariableGroupChild {
-        TimelineVoiceInstallDesc voice{};
-        PlayableRefV1 leaf{};
-        std::uint32_t frontierPolicyIndex = UINT32_MAX;
-        std::uint32_t authoredChildOrdinal = 0;
-        WeightSegmentV1 weight{};
-        std::uint64_t authoredOffset = 0;
-        VariableControlSide side = VariableControlSide::Discrete;
-        std::uint32_t topIndex = UINT32_MAX;
     };
     using PendingVariableGroupTop = EngineActionPlayScratch::PendingVariableReplacementTop;
 
