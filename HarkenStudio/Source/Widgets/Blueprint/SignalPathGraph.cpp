@@ -134,18 +134,18 @@ private:
 
     void edge(SignalPathEndpoint from, SignalPathEndpoint to,
               SignalPathEdgeKind kind, std::optional<size_t> pathIndex, float sendLevel = 0.0f,
-              std::optional<SignalPathRoutingSource> routingSource = {})
+              std::optional<SignalPathRoutingSource> routingSource = {}, SendMode mode = SendMode::Mix)
     {
         size_t index = 0;
         for (; index < graph_.edges.size(); ++index) {
             const auto& candidate = graph_.edges[index];
             if (candidate.from == from && candidate.to == to
                 && candidate.kind == kind && candidate.sendLevel == sendLevel
-                && candidate.routingSource == routingSource)
+                && candidate.routingSource == routingSource && candidate.mode == mode)
                 break;
         }
         if (index == graph_.edges.size())
-            graph_.edges.push_back({from, to, kind, sendLevel, {}, std::move(routingSource)});
+            graph_.edges.push_back({from, to, kind, sendLevel, {}, std::move(routingSource), mode});
         if (pathIndex) {
             appendUnique(graph_.edges[index].pathIndices, *pathIndex);
             appendUnique(graph_.paths[*pathIndex].edgeIndices, index);
@@ -203,7 +203,7 @@ private:
             Slots::buildResolutionScope(bus, groups_));
         for (const auto& send : sends.sends) {
             edge(from, busEndpoint(send.targetBusID, pathIndex),
-                 SignalPathEdgeKind::Send, pathIndex, send.sendLevel, routingSource);
+                 SignalPathEdgeKind::Send, pathIndex, send.sendLevel, routingSource, send.mode);
             appendBus(send.targetBusID, pathIndex, visited);
         }
     }
@@ -226,9 +226,9 @@ private:
         SignalPathRouting routing;
         routing.outputBusID = Slots::resolveEffectiveOutputBusId(scope);
         for (const auto& send : sends.sends)
-            routing.sends.push_back({send.targetBusID, send.sendLevel});
+            routing.sends.push_back({send.targetBusID, send.sendLevel, send.mode});
         std::sort(routing.sends.begin(), routing.sends.end(), [](const auto& a, const auto& b) {
-            return a.targetBusID < b.targetBusID;
+            return a.targetBusID != b.targetBusID ? a.targetBusID < b.targetBusID : a.mode < b.mode;
         });
         std::set<uint32_t> active;
         if (!validateBus(routing.outputBusID, identity, active)) return;
@@ -259,7 +259,7 @@ private:
         appendBus(routing.outputBusID, pathIndex, visited);
         for (const auto& send : routing.sends) {
             edge(terminal, busEndpoint(send.targetBusID, pathIndex),
-                 SignalPathEdgeKind::Send, pathIndex, send.sendLevel, sendSource);
+                 SignalPathEdgeKind::Send, pathIndex, send.sendLevel, sendSource, send.mode);
             appendBus(send.targetBusID, pathIndex, visited);
         }
     }

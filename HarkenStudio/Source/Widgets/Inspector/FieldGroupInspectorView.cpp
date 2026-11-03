@@ -28,7 +28,8 @@ QVariant payloadField(const FieldGroupPayload& payload, Property field)
         for (const auto& row : std::get<SendFieldGroup>(payload).sends)
             rows.append(QVariantMap{
                 {QStringLiteral("targetBusID"), fromFieldGroupGuid(row.targetBusID)},
-                {QStringLiteral("sendLevel"), row.sendLevel}});
+                {QStringLiteral("sendLevel"), row.sendLevel},
+                {QStringLiteral("mode"), static_cast<int>(row.mode)}});
         return rows;
     }
     case Property::SpatialPanning:

@@ -46,7 +46,8 @@ protected:
         output(c1, b1);
         output(s5, b3);
         output(l2, b1);
-        send(c1, {{toFieldGroupGuid(b2->guid), -6.0f}});
+        send(c1, {{toFieldGroupGuid(b2->guid), -6.0f, SendMode::Mix},
+                  {toFieldGroupGuid(b2->guid), -12.0f, SendMode::Sidechain}});
     }
 
     ProjectItem* create(const char* name, T type, ProjectItem* parent = nullptr)

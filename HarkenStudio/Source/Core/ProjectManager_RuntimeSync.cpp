@@ -348,9 +348,11 @@ static void syncGeneralAudioProperties(ProjectItem* item, harkenstudio::ObjectId
     engine.setVoiceOutputVolumeByName(item->name, groups.mainOutput.outputBusVolume);
     if (item->type == ProjectItem::Type::Sound) {
         std::vector<std::pair<harkenstudio::ObjectId, float>> sends;
-        for (const auto& send : groups.send.sends)
+        for (const auto& send : groups.send.sends) {
+            if (send.mode != SendMode::Mix) continue;
             sends.emplace_back(manager.busRuntimeHandleForId(
                 snapshot.objects.at(send.targetBusID)->objectID), send.sendLevel);
+        }
         engine.setVoiceSendsByName(item->name, sends);
     }
 

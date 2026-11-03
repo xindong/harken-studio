@@ -135,12 +135,23 @@ bool ReadFieldValue(const JsonValue& value, std::vector<SendFieldGroupRow>& rows
     for (std::size_t index = 0; index < value.items.size(); ++index) {
         const auto& entry = value.items[index];
         const auto rowPath = path + "[" + std::to_string(index) + "]";
-        if (!CheckMembers(entry, rowPath, {"targetBusID", "sendLevel"},
+        if (!CheckMembers(entry, rowPath, {"targetBusID", "sendLevel", "mode"},
                           {"targetBusID", "sendLevel"}, error)) return false;
         SendFieldGroupRow row;
         if (!ReadGuid(*entry.Find("targetBusID"), row.targetBusID, rowPath + ".targetBusID", error)
             || !ReadFloat(*entry.Find("sendLevel"), row.sendLevel, rowPath + ".sendLevel", error))
             return false;
+        if (const auto* mode = entry.Find("mode")) {
+            unsigned parsed = 0;
+            const char* end = mode->text.data() + mode->text.size();
+            const auto converted = std::from_chars(mode->text.data(), end, parsed);
+            if (mode->kind != JsonValue::Kind::Number || converted.ec != std::errc{}
+                || converted.ptr != end
+                || (parsed != static_cast<unsigned>(harkenprojectschema::SendMode::Mix)
+                    && parsed != static_cast<unsigned>(harkenprojectschema::SendMode::Sidechain)))
+                return Fail(error, rowPath + ".mode", "expected a send mode");
+            row.mode = static_cast<harkenprojectschema::SendMode>(parsed);
+        }
         rows.push_back(row);
     }
     return true;
@@ -159,6 +170,8 @@ void WriteFieldValue(JsonWriter& writer, const std::vector<SendFieldGroupRow>& r
         writer.ValueString(WriteGuid(row.targetBusID));
         writer.Key("sendLevel");
         WriteFloat(writer, row.sendLevel);
+        writer.Key("mode");
+        writer.ValueRawNumber(std::to_string(static_cast<unsigned>(row.mode)));
         writer.EndObject();
     }
     writer.EndArray();

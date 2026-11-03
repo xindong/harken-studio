@@ -130,15 +130,20 @@ inline const PropertySchema& VMixNode::schema()
           .serializeWhen=[](const VNX::IComponent* c){ return static_cast<const VMixNode*>(c)->outputBusVolume != 0.0f; } },
         { .field="sends", .type=PropType::List, .label="Sends", .section=PropertySection::Send,
           .elementSchema={
+              { .field="mode", .type=PropType::Enum, .label="Mode", .def=0,
+                .options={{"Mix", 0}, {"Sidechain", 2}},
+                .toolTip="Mix adds audio to the target bus. Sidechain supplies an auxiliary signal to sidechain receivers." },
               { .field="targetBusID", .type=PropType::ObjectRef, .label="Target", .def=0u,
                 .refFilter=static_cast<int>(ProjectItem::Type::Bus) },
               { .field="sendLevel", .type=PropType::Float, .label="Volume", .unit=" dB",
-                .min=-96.0, .max=24.0, .def=0.0, .decimals=1 },
+                .min=-96.0, .max=24.0, .def=0.0, .decimals=1,
+                .toolTip="Gain applied to the sent signal." },
           },
           .get=[](const VNX::IComponent* c){
               QVariantList out;
               for (const Send& s : static_cast<const VMixNode*>(c)->sends)
                   out.push_back(QVariantMap{
+                      { QStringLiteral("mode"), static_cast<int>(s.mode) },
                       { QStringLiteral("targetBusID"), s.targetBusID },
                       { QStringLiteral("sendLevel"),   linearToDb(s.sendLevel) } });
               return QVariant(out);
@@ -151,7 +156,8 @@ inline const PropertySchema& VMixNode::schema()
               for (const QVariant& e : v.toList()) {
                   const QVariantMap m = e.toMap();
                   sends.push_back(Send{ m.value(QStringLiteral("targetBusID")).toUInt(),
-                                        dbToLinear(m.value(QStringLiteral("sendLevel")).toFloat()) });
+                                        dbToLinear(m.value(QStringLiteral("sendLevel")).toFloat()),
+                                        static_cast<SendMode>(m.value(QStringLiteral("mode")).toInt()) });
               }
               return true;
           },

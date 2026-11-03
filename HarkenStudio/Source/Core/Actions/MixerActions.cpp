@@ -452,7 +452,10 @@ void registerMixerActions(ActionManager& mgr,
             bool existingSend = false;
             if (const auto* srcMix = srcBusItem->comp<VMixNode>())
                 for (const auto& send : srcMix->sends)
-                    if (send.targetBusID == targetBusId) { existingSend = true; break; }
+                    if (send.targetBusID == targetBusId && send.mode == SendMode::Mix) {
+                        existingSend = true;
+                        break;
+                    }
             if (!existingSend && !ProjectManager::instance().sendTargetSelectable(srcBusId, targetBusId))
                 return {false, {}, "SEND_REJECTED",
                         QString("Send %1 -> %2 rejected: invalid target, send loop, or main output conflict")
@@ -512,7 +515,7 @@ void registerMixerActions(ActionManager& mgr,
             float oldLevel = 1.0f;
             bool foundSend = false;
             for (const auto& send : srcMix->sends) {
-                if (send.targetBusID == targetBusId) {
+                if (send.targetBusID == targetBusId && send.mode == SendMode::Mix) {
                     foundSend = true;
                     oldLevel = send.sendLevel;
                     break;
@@ -575,7 +578,7 @@ void registerMixerActions(ActionManager& mgr,
             float oldLevel = 1.0f;
             bool foundSend = false;
             for (const auto& send : srcMix->sends) {
-                if (send.targetBusID == targetBusId) {
+                if (send.targetBusID == targetBusId && send.mode == SendMode::Mix) {
                     foundSend = true;
                     oldLevel = send.sendLevel;
                     break;

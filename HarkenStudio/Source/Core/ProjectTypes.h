@@ -94,15 +94,19 @@ enum class ProjectItemType {
     Attenuation = 9
 };
 
+using SendMode = harkenprojectschema::SendMode;
+
 struct Send
 {
     uint32_t targetBusID = 0;
     float sendLevel = 0.0f;
+    SendMode mode = SendMode::Mix;
 
     QJsonObject toJson() const {
         QJsonObject obj;
         obj["targetBusID"] = static_cast<qint64>(targetBusID);
         obj["sendLevel"] = sendLevel;
+        obj["mode"] = static_cast<int>(mode);
         return obj;
     }
 
@@ -110,6 +114,7 @@ struct Send
         Send send;
         send.targetBusID = static_cast<uint32_t>(obj["targetBusID"].toInteger());
         send.sendLevel = static_cast<float>(obj["sendLevel"].toDouble());
+        send.mode = static_cast<SendMode>(obj["mode"].toInt());
         return send;
     }
 };
@@ -209,12 +214,14 @@ struct SendViewInfo
     uint32_t targetBusID = 0;
     QString  targetBusName;
     float    sendLevel = 0.0f;
+    SendMode mode = SendMode::Mix;
 
     QJsonObject toJson() const {
         QJsonObject obj;
         obj["targetBusID"] = static_cast<qint64>(targetBusID);
         obj["targetBusName"] = targetBusName;
         obj["sendLevel"] = sendLevel;
+        obj["mode"] = static_cast<int>(mode);
         return obj;
     }
 };
@@ -230,6 +237,7 @@ struct IncomingSendInfo
     uint32_t fromBusID = 0;
     QString  fromName;
     float    level = 0.0f;
+    SendMode mode = SendMode::Mix;
 };
 
 struct BusChainNode

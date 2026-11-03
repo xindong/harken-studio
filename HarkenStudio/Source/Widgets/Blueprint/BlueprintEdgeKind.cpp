@@ -96,6 +96,7 @@ void appendBusSendEdges(const VMixNode& mix,
         e.toItemId   = send.targetBusID;
         e.kind       = BlueprintEdgeKind::Send;
         e.sendIndex  = static_cast<uint32_t>(i);
+        e.sendMode   = send.mode;
         out.push_back(e);
     }
 }

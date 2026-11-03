@@ -220,7 +220,7 @@ QByteArray pathEdgeIdentity(const SignalPathGraph& graph, size_t index)
         << static_cast<quint64>(edge.from.portPairIndex)
         << graph.nodes[edge.to.occurrenceIndex].key.objectGuid
         << static_cast<quint64>(edge.to.portPairIndex) << static_cast<int>(edge.kind)
-        << edge.routingSource.has_value();
+        << static_cast<int>(edge.mode) << edge.routingSource.has_value();
     if (edge.routingSource) {
         stream << edge.routingSource->objectGuid << edge.routingSource->scope.has_value();
         if (edge.routingSource->scope) stream << fromFieldGroupGuid(*edge.routingSource->scope);
@@ -838,6 +838,7 @@ void BlueprintCanvasWidget::materializeFromSource_()
             stream << pathProjectId_ << QString::fromLatin1(flowDirectionToString(flowDir_))
                 << key.from << key.to << static_cast<int>(key.kind)
                 << key.routingSource.value_or(QUuid());
+            if (key.mode != SendMode::Mix) stream << static_cast<int>(key.mode);
             gainPositionKeys_[index] = QStringLiteral("Blueprint/RouteGainLayout/Gains/")
                 + QString::fromLatin1(QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex());
         }
@@ -1723,7 +1724,7 @@ BlueprintCanvasWidget::PathEdgeKey BlueprintCanvasWidget::signalPathEdgeKey_(siz
     const auto& edge = graph.edges[index];
     return {graph.nodes[edge.from.occurrenceIndex].key.objectGuid,
         graph.nodes[edge.to.occurrenceIndex].key.objectGuid, edge.kind,
-        edge.routingSource ? std::make_optional(edge.routingSource->objectGuid) : std::nullopt};
+        edge.routingSource ? std::make_optional(edge.routingSource->objectGuid) : std::nullopt, edge.mode};
 }
 
 void BlueprintCanvasWidget::setSignalPathEdgeSelected_(size_t index, bool selected)

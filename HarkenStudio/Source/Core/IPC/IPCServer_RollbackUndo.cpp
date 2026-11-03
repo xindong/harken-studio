@@ -161,7 +161,7 @@ bool IPCServer::prepareRollbackStepForAction(const QString& cmd,
         const auto& srcSends = srcMix->sends;
         for (const auto& send : srcSends)
         {
-            if (send.targetBusID == targetBusID)
+            if (send.targetBusID == targetBusID && send.mode == SendMode::Mix)
             {
                 sendExists = true;
                 oldSend = send;

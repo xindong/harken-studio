@@ -912,7 +912,7 @@ MoveItemCommand::MoveItemCommand(
         && newParent->type == ProjectItem::Type::Bus) {
         if (const auto* mix = item->comp<VMixNode>()) {
             for (const auto& send : mix->sends) {
-                if (send.targetBusID == newParent->objectID) {
+                if (send.mode == SendMode::Mix && send.targetBusID == newParent->objectID) {
                     conflictSendTargetBusId_ = send.targetBusID;
                     conflictSendLevel_ = send.sendLevel;
                     break;

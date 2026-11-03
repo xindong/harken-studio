@@ -73,7 +73,8 @@ FieldGroupEditResult prepareRouteEdit(ProjectItem& item, uint32_t targetBusId)
     return prepareFieldGroupEdit(*ProjectManager::instance().currentProject(), request);
 }
 
-FieldGroupEditResult prepareSendEdit(ProjectItem& item, uint32_t targetBusId, bool connect)
+FieldGroupEditResult prepareSendEdit(ProjectItem& item, uint32_t targetBusId, bool connect,
+                                    SendMode mode = SendMode::Mix)
 {
     const auto* bus = ProjectManager::instance().findBusItem(targetBusId);
     if (!bus) {
@@ -85,9 +86,9 @@ FieldGroupEditResult prepareSendEdit(ProjectItem& item, uint32_t targetBusId, bo
     auto sends = item.fieldGroups.send.shared.localHistory.value_or(SendFieldGroup{});
     const auto target = authoringGuid(bus->guid);
     const auto existing = std::find_if(sends.sends.begin(), sends.sends.end(),
-        [&](const auto& row) { return row.targetBusID == target; });
+        [&](const auto& row) { return row.targetBusID == target && row.mode == mode; });
     if (connect && existing == sends.sends.end())
-        sends.sends.push_back({target, 0.0f});
+        sends.sends.push_back({target, 0.0f, mode});
     else if (!connect && existing != sends.sends.end())
         sends.sends.erase(existing);
     FieldGroupEditRequest request;
@@ -379,22 +380,24 @@ void BlueprintSendConnectCommand::undo()
 
 BlueprintSendDisconnectCommand::BlueprintSendDisconnectCommand(uint32_t fromBusId,
                                                                uint32_t targetBusId,
-                                                               QUndoCommand* parent)
+                                                               QUndoCommand* parent,
+                                                               SendMode mode)
     : QUndoCommand(QObject::tr("Blueprint Send Disconnect"), parent)
     , fromBusId_(fromBusId)
     , targetBusId_(targetBusId)
+    , mode_(mode)
 {
     auto* item = findItem(fromBusId_);
     if (item && PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type)) {
         groupDefinition_ = item->guid;
-        groupEdit_ = prepareSendEdit(*item, targetBusId_, false);
+        groupEdit_ = prepareSendEdit(*item, targetBusId_, false, mode_);
         if (!groupEdit_->ok() || !groupEdit_->changed) setObsolete(true);
         return;
     }
     ProjectItem* fromItem = ProjectManager::instance().findBusItem(fromBusId_);
     if (const auto* mix = fromItem ? fromItem->comp<VMixNode>() : nullptr) {
         for (auto const& s : mix->sends) {
-            if (s.targetBusID == targetBusId_) {
+            if (s.targetBusID == targetBusId_ && s.mode == mode_) {
                 hadSend_   = true;
                 sendLevel_ = s.sendLevel;
                 break;
@@ -411,7 +414,7 @@ void BlueprintSendDisconnectCommand::redo()
         return;
     }
     if (firstRedo_) firstRedo_ = false;
-    ProjectManager::instance().removeSendInternal(fromBusId_, targetBusId_);
+    ProjectManager::instance().removeSendInternal(fromBusId_, targetBusId_, mode_);
 }
 
 void BlueprintSendDisconnectCommand::undo()
@@ -423,7 +426,7 @@ void BlueprintSendDisconnectCommand::undo()
     }
     if (!hadSend_) return;
     ProjectManager::instance().upsertSendInternal(
-        fromBusId_, targetBusId_, sendLevel_);
+        fromBusId_, targetBusId_, sendLevel_, mode_);
 }
 
 }

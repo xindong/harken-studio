@@ -118,7 +118,8 @@ class BlueprintSendDisconnectCommand : public QUndoCommand
 public:
     BlueprintSendDisconnectCommand(uint32_t fromBusId,
                                    uint32_t targetBusId,
-                                   QUndoCommand* parent = nullptr);
+                                   QUndoCommand* parent = nullptr,
+                                   SendMode mode = SendMode::Mix);
 
     void undo() override;
     void redo() override;
@@ -130,6 +131,7 @@ private:
     uint32_t targetBusId_ = 0;
 
     float sendLevel_ = 0.0f;
+    SendMode mode_ = SendMode::Mix;
     bool  hadSend_   = false;
 
     bool firstRedo_ = true;

@@ -54,7 +54,8 @@ bool refreshFieldGroupDerivedViews(ProjectData& project)
             const auto target = source->byGuid.find(authored.targetBusID);
             if (target == source->byGuid.end() || target->second->type != ProjectItem::Type::Bus)
                 return false;
-            row.sends.push_back({target->second->objectID, VMixNode::dbToLinear(authored.sendLevel)});
+            row.sends.push_back({target->second->objectID,
+                                VMixNode::dbToLinear(authored.sendLevel), authored.mode});
         }
         pending.push_back(std::move(row));
     }

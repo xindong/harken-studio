@@ -5339,7 +5339,7 @@ void ProjectManager::restoreReferencesFromLog(const DeletedSubtreeRefLog& log,
 
     for (const auto& ref : log.sends) {
         self.upsertSendInternal(ref.ownerObjectID, ref.send.targetBusID,
-                                   ref.send.sendLevel);
+                                   ref.send.sendLevel, ref.send.mode);
     }
 
     for (const auto& ref : log.selections) {
@@ -5905,7 +5905,7 @@ std::vector<Send> ProjectManager::aggregateVoiceSendsForItem(
         return out;
     for (const auto& send : effective->second.send.sends) {
         out.push_back({snapshot.objects.at(send.targetBusID)->objectID,
-                       VMixNode::dbToLinear(send.sendLevel)});
+                       VMixNode::dbToLinear(send.sendLevel), send.mode});
     }
     return out;
 }
@@ -5922,6 +5922,7 @@ void ProjectManager::pushItemSendsLive(
     if (!item || item->type != ProjectItem::Type::Sound) return;
     std::vector<std::pair<harkenstudio::ObjectId, float>> runtimeSends;
     for (const Send& s : aggregateVoiceSendsForItem(item, snapshot)) {
+        if (s.mode != SendMode::Mix) continue;
         if (!findVBus(s.targetBusID)) continue;
         runtimeSends.emplace_back(busRuntimeHandleForId(s.targetBusID),
                                   VMixNode::linearToDb(s.sendLevel));
@@ -6216,7 +6217,7 @@ std::vector<IncomingSendInfo> ProjectManager::collectIncomingSends(uint32_t busI
         if (item->comp<VBus>()) {
             for (const auto& send : mix->sends) {
                 if (send.targetBusID == busId)
-                    out.push_back({item->objectID, item->name, send.sendLevel});
+                    out.push_back({item->objectID, item->name, send.sendLevel, send.mode});
             }
             return;
         }
@@ -6227,7 +6228,7 @@ std::vector<IncomingSendInfo> ProjectManager::collectIncomingSends(uint32_t busI
             return;
         for (const auto& send : effective->second.send.sends) {
             if (snapshot.objects.at(send.targetBusID)->objectID == busId)
-                out.push_back({item->objectID, item->name, VMixNode::dbToLinear(send.sendLevel)});
+                out.push_back({item->objectID, item->name, VMixNode::dbToLinear(send.sendLevel), send.mode});
         }
     });
     return out;
@@ -6459,6 +6460,7 @@ bool replaceSends(ProjectItem& owner, VMixNode& mix, std::vector<Send> next)
                  static_cast<qint64>(send.targetBusID)},
                 {QStringLiteral("sendLevel"),
                  VMixNode::linearToDb(send.sendLevel)},
+                {QStringLiteral("mode"), static_cast<int>(send.mode)},
             });
         }
         return PlayablePropertyAuthoringV1::setOverride(
@@ -6642,20 +6644,20 @@ ProjectItem* ProjectManager::findSendOwnerItem(uint32_t objectID) const
     return findItemByObjectIDInProject(m_currentProject.get(), objectID);
 }
 
-bool ProjectManager::sendTargetSelectable(uint32_t srcObjectID, uint32_t targetBusID) const
+bool ProjectManager::sendTargetSelectable(uint32_t srcObjectID, uint32_t targetBusID, SendMode mode) const
 {
-    if (!sendTargetStructurallySelectable(srcObjectID, targetBusID)) return false;
+    if (!sendTargetStructurallySelectable(srcObjectID, targetBusID, mode)) return false;
     ProjectItem* src = findSendOwnerItem(srcObjectID);
     const auto* mix = src ? src->comp<VMixNode>() : nullptr;
 
     for (const auto& send : mix->sends)
-        if (send.targetBusID == targetBusID) return false;
+        if (send.targetBusID == targetBusID && send.mode == mode) return false;
 
     return true;
 }
 
 bool ProjectManager::sendTargetStructurallySelectable(
-    uint32_t srcObjectID, uint32_t targetBusID) const
+    uint32_t srcObjectID, uint32_t targetBusID, SendMode mode) const
 {
     if (targetBusID == 0 || targetBusID == srcObjectID) return false;
     if (!findVBus(targetBusID)) return false;
@@ -6667,7 +6669,7 @@ bool ProjectManager::sendTargetStructurallySelectable(
     const ProjectItem* mainOut = src->type == ProjectItem::Type::Bus
         ? src->parent
         : findBusItem(resolveEffectiveOutputBusId(src));
-    if (mainOut && mainOut->objectID == targetBusID) return false;
+    if (mode != SendMode::Sidechain && mainOut && mainOut->objectID == targetBusID) return false;
 
     if (src->type == ProjectItem::Type::Bus && sendWouldCycle(srcObjectID, targetBusID))
         return false;
@@ -6684,11 +6686,12 @@ bool ProjectManager::outputBusSelectable(uint32_t srcObjectID, uint32_t candidat
     if (!mix) return true;
 
     for (const auto& send : mix->sends)
-        if (send.targetBusID == candidateBusID) return false;
+        if (send.mode != SendMode::Sidechain && send.targetBusID == candidateBusID) return false;
     return true;
 }
 
-bool ProjectManager::upsertSendInternal(uint32_t srcObjectID, uint32_t targetBusID, float sendLevel)
+bool ProjectManager::upsertSendInternal(uint32_t srcObjectID, uint32_t targetBusID, float sendLevel,
+                                       SendMode mode)
 {
     ProjectItem* srcItem = findSendOwnerItem(srcObjectID);
     auto* srcMix = srcItem ? srcItem->comp<VMixNode>() : nullptr;
@@ -6699,7 +6702,7 @@ bool ProjectManager::upsertSendInternal(uint32_t srcObjectID, uint32_t targetBus
     std::vector<Send> next = srcMix->sends;
     bool existed = false;
     for (auto& send : next) {
-        if (send.targetBusID == targetBusID) {
+        if (send.targetBusID == targetBusID && send.mode == mode) {
             send.sendLevel = sendLevel;
             existed = true;
             break;
@@ -6712,7 +6715,7 @@ bool ProjectManager::upsertSendInternal(uint32_t srcObjectID, uint32_t targetBus
                        << ": would close a send loop";
             return false;
         }
-        next.push_back(Send{targetBusID, sendLevel});
+        next.push_back(Send{targetBusID, sendLevel, mode});
     }
 
     if (!replaceSends(*srcItem, *srcMix, std::move(next)))
@@ -6729,7 +6732,7 @@ bool ProjectManager::upsertSendInternal(uint32_t srcObjectID, uint32_t targetBus
     return true;
 }
 
-bool ProjectManager::removeSendInternal(uint32_t srcObjectID, uint32_t targetBusID)
+bool ProjectManager::removeSendInternal(uint32_t srcObjectID, uint32_t targetBusID, SendMode mode)
 {
     ProjectItem* srcItem = findSendOwnerItem(srcObjectID);
     auto* srcMix = srcItem ? srcItem->comp<VMixNode>() : nullptr;
@@ -6738,7 +6741,7 @@ bool ProjectManager::removeSendInternal(uint32_t srcObjectID, uint32_t targetBus
     std::vector<Send> next = srcMix->sends;
     const auto erased = std::remove_if(
         next.begin(), next.end(),
-        [targetBusID](const Send& s) { return s.targetBusID == targetBusID; });
+        [targetBusID, mode](const Send& s) { return s.targetBusID == targetBusID && s.mode == mode; });
     if (erased == next.end()) return false;
     next.erase(erased, next.end());
 
@@ -6851,6 +6854,7 @@ void appendBusChain(const ProjectData* project, const ProjectItem* busItem,
             SendViewInfo info;
             info.targetBusID = send.targetBusID;
             info.sendLevel   = send.sendLevel;
+            info.mode        = send.mode;
             const ProjectItem* targetItem = findBusItemInProject(project, send.targetBusID);
             info.targetBusName = targetItem ? targetItem->name : QStringLiteral("(unknown)");
             bNode.sends.push_back(info);

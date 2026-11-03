@@ -99,6 +99,9 @@ struct PropertyDescriptor
     std::function<QVariant(const ProjectItem*)>        getItem;
     std::function<std::optional<FieldDomain>(const IComponent*)> domain;
     std::function<QString(const QVariantList&, int, const QString&)> validateElement;
+    QString listAddChoiceField;
+    std::function<bool(uint32_t, const QVariantMap&, uint32_t)> refSelectableForElement;
+    QString toolTip;
 };
 
 using PropertySchema = std::vector<PropertyDescriptor>;

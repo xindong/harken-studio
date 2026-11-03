@@ -62,14 +62,14 @@ const FieldGroupSource& routingSource(
 }
 
 std::optional<float> contentGain(const EffectiveDefinitionFieldGroups& groups,
-                                SignalPathEdgeKind kind, const QUuid& target)
+                                SignalPathEdgeKind kind, const QUuid& target, SendMode mode)
 {
     const auto targetGuid = toFieldGroupGuid(target);
     if (kind == SignalPathEdgeKind::Output)
         return groups.mainOutput.mainOutputBusRef == targetGuid
             ? std::optional(groups.mainOutput.outputBusVolume) : std::nullopt;
     for (const auto& send : groups.send.sends)
-        if (send.targetBusID == targetGuid) return VMixNode::dbToLinear(send.sendLevel);
+        if (send.targetBusID == targetGuid && send.mode == mode) return VMixNode::dbToLinear(send.sendLevel);
     return {};
 }
 
@@ -86,12 +86,13 @@ std::optional<PropertySnapshot> readBusProperty(
     return PropertySnapshot{scope, *stored, effective->value};
 }
 
-std::optional<QJsonArray> replaceSendGain(const QJsonValue& value, uint32_t target, float db)
+std::optional<QJsonArray> replaceSendGain(const QJsonValue& value, uint32_t target, SendMode mode, float db)
 {
     auto rows = value.toArray();
     for (qsizetype index = 0; index < rows.size(); ++index) {
         auto row = rows[index].toObject();
-        if (row.value(QStringLiteral("targetBusID")).toInteger() != target) continue;
+        if (row.value(QStringLiteral("targetBusID")).toInteger() != target
+            || static_cast<SendMode>(row.value(QStringLiteral("mode")).toInt()) != mode) continue;
         row[QStringLiteral("sendLevel")] = db;
         rows[index] = row;
         return rows;
@@ -316,7 +317,8 @@ std::optional<float> signalPathGainValue(
         if (edge.kind == SignalPathEdgeKind::Output) return static_cast<float>(value->effective.toDouble());
         for (const auto& entry : value->effective.toArray()) {
             const auto row = entry.toObject();
-            if (row.value(QStringLiteral("targetBusID")).toInteger() == bus->objectID)
+            if (row.value(QStringLiteral("targetBusID")).toInteger() == bus->objectID
+                && static_cast<SendMode>(row.value(QStringLiteral("mode")).toInt()) == edge.mode)
                 return VMixNode::dbToLinear(static_cast<float>(row.value(QStringLiteral("sendLevel")).toDouble()));
         }
         return {};
@@ -330,7 +332,7 @@ std::optional<float> signalPathGainValue(
         const auto& source = routingSource(*groups, edge.kind);
         if (source.isDefault || fromFieldGroupGuid(source.definition) != edge.routingSource->objectGuid
             || (!previewing && source.scope != edge.routingSource->scope)) return {};
-        const auto current = contentGain(*groups, edge.kind, target);
+        const auto current = contentGain(*groups, edge.kind, target, edge.mode);
         if (!current || (value && *value != *current)) return {};
         value = current;
     }
@@ -344,6 +346,7 @@ struct SignalPathGainEditSession::State {
     PlatformContext context;
     QPointer<const QObject> originator;
     SignalPathEdgeKind kind = SignalPathEdgeKind::Through;
+    SendMode mode = SendMode::Mix;
     QUuid target;
     QUuid bus;
     uint32_t targetBusID = 0;
@@ -387,6 +390,7 @@ SignalPathGainEditSession::SignalPathGainEditSession(
     state.context = PlatformContextService::instance().context();
     state.originator = originator;
     state.kind = edge.kind;
+    state.mode = edge.mode;
     state.target = graph.nodes[edge.to.occurrenceIndex].key.objectGuid;
     auto* target = manager.findItemByGuid(state.target);
     auto* provider = manager.findItemByGuid(edge.routingSource->objectGuid);
@@ -425,7 +429,7 @@ SignalPathGainEditSession::SignalPathGainEditSession(
                 observe(item);
                 const auto& source = routingSource(*groups, state.kind);
                 if (source.isDefault) continue;
-                const bool editsGain = contentGain(*groups, state.kind, state.target).has_value();
+                const bool editsGain = contentGain(*groups, state.kind, state.target, state.mode).has_value();
                 if (!editsGain && ((!state.context.all && !state.context.selected.isEmpty()) || !scope)) continue;
                 const auto guid = fromFieldGroupGuid(source.definition);
                 observe(snapshotItem(snapshot, guid));
@@ -483,7 +487,7 @@ void SignalPathGainEditSession::preview(double value)
         for (auto& entry : next) {
             QJsonValue replacement = db;
             if (state.kind == SignalPathEdgeKind::Send) {
-                const auto sends = replaceSendGain(entry.effective, state.targetBusID, db);
+                const auto sends = replaceSendGain(entry.effective, state.targetBusID, state.mode, db);
                 if (!sends) continue;
                 replacement = *sends;
             }
@@ -523,7 +527,8 @@ void SignalPathGainEditSession::preview(double value)
         } else {
             auto sends = std::get<SendFieldGroup>(entry.payload);
             for (auto& send : sends.sends)
-                if (entry.editGain && send.targetBusID == toFieldGroupGuid(state.target)) send.sendLevel = db;
+                if (entry.editGain && send.targetBusID == toFieldGroupGuid(state.target)
+                    && send.mode == state.mode) send.sendLevel = db;
             writeGainField(groups.send, entry.scope, sends, Property::Sends);
         }
     }

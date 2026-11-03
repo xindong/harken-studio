@@ -16,9 +16,9 @@
 | Action | Steps | Basic > Step | # / Type / Target / Delay / 无标题展开列 | 动作步骤配置，末列展开详情 |
 | Attenuation | Dimensions | Basic > Dimension | # / Property / Curve | 衰减维度配置 |
 | Variable | Labels | Basic > Label | # / Name | 标签配置，# 显示实际整数索引 |
-| Sound、Container、Layer、Track、Segment、Bus | Sends | Route > Send | # / Target / Volume | 发送路由配置；除 Bus 外可继承 |
+| Sound、Container、Layer、Track、Segment、Bus | Sends | Route > Send | # / Mode / Target / Volume | Mix、Sidechain 路由配置；除 Bus 外可继承 |
 | Bus | Inputs | Route > Input | Source / Volume | 主输出路由的反向查询，只读 |
-| Bus | Receives | Route > Receive | Source / Volume | Send 路由的反向查询，只读 |
+| Bus | Receives | Route > Receive | Mode / Source / Volume | Send 路由的反向查询，只读 |
 
 表注：Volume 以 dB 显示。Container 的 Selections 位于独立 Selection Editor，Inspector 保留 Mode、Play Type 及对应行为字段；独立表格见[表格快照](tables.md)。
 
@@ -38,6 +38,11 @@
 
 | 表格／字段 | 当前行为 |
 |---|---|
+| Sends / 新增 | 加号先选择 Mix 或 Sidechain，再选择目标 Bus；取消任一步不新增行 |
+| Sends / Mode | 可编辑并参与保存、继承和撤销；旧数据缺失 Mode 时按 Mix 解释；同一目标按 Mode 区分，单个 Mode 内目标唯一 |
+| Sends / Volume | 两种 Mode 均表示发送的源信号增益，范围 −96～+24 dB；切换 Mode 保留数值 |
+| Sends / Main Output | Mix 与 Main Output 目标互斥；Sidechain 可指向 Main Output 的目标；沿用自连与成环限制 |
+| Sends / 显示与发布 | Receives 和信号图显示 Mode；图中按 Mode 区分增益编辑、删除与撤销；本阶段试听与打包仅发布 Mix，Sidechain 保留编辑配置 |
 | Sources / Language | 关闭时显示普通组，开启时仅显示 Toolbar 当前语言组；两类数据分别保留 |
 | Sources / Active | 同一平台与语言只选一个来源；多平台不一致时显示半勾选 |
 | Sources / Waveform | 展示音频裁剪与循环范围，可打开范围编辑；文件缺失时留空且不可编辑 |

@@ -38,6 +38,7 @@ struct SignalPathBusSendRemoval
     QUuid from;
     QUuid to;
     float level = 0.0f;
+    SendMode mode = SendMode::Mix;
 };
 
 struct SignalPathClipSnapshot

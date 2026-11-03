@@ -116,33 +116,36 @@ bool validBusRouting(const SignalPathConnectPlan& plan, bool redo)
         const auto output = item == master ? 0u : parent->objectID;
         routes.parentOf.insert(item->objectID, output);
         auto& targets = routes.sendTargets[item->objectID];
+        std::set<std::pair<uint32_t, SendMode>> identities;
         for (const auto& send : mix->sends) {
             if (plan.busSend && !redo && item->guid == plan.from) {
                 const auto* target = manager.findItemByGuid(plan.to);
-                if (target && target->objectID == send.targetBusID) continue;
+                if (target && target->objectID == send.targetBusID && send.mode == SendMode::Mix) continue;
             }
             const bool removed = std::any_of(plan.busSendRemovals.begin(), plan.busSendRemovals.end(),
                 [&](const auto& entry) {
                     const auto* target = manager.findItemByGuid(entry.to);
-                    return entry.from == item->guid && target && target->objectID == send.targetBusID;
+                    return entry.from == item->guid && target && target->objectID == send.targetBusID
+                        && entry.mode == send.mode;
                 });
             if (redo && removed) continue;
-            if (send.targetBusID == output || std::find(targets.begin(), targets.end(), send.targetBusID) != targets.end())
+            if ((send.mode != SendMode::Sidechain && send.targetBusID == output)
+                || !identities.emplace(send.targetBusID, send.mode).second)
                 return false;
             targets.push_back(send.targetBusID);
         }
         if (plan.busSend && redo && item->guid == plan.from) {
             const auto* target = manager.findItemByGuid(plan.to);
             if (!target || target->objectID == output
-                || std::find(targets.begin(), targets.end(), target->objectID) != targets.end()) return false;
+                || !identities.emplace(target->objectID, SendMode::Mix).second) return false;
             targets.push_back(target->objectID);
         }
         if (!redo) {
             for (const auto& removal : plan.busSendRemovals) {
                 if (removal.from != item->guid) continue;
                 const auto* target = manager.findItemByGuid(removal.to);
-                if (!target || target->objectID == output
-                    || std::find(targets.begin(), targets.end(), target->objectID) != targets.end()) return false;
+                if (!target || (removal.mode != SendMode::Sidechain && target->objectID == output)
+                    || !identities.emplace(target->objectID, removal.mode).second) return false;
                 targets.push_back(target->objectID);
             }
         }
@@ -217,7 +220,7 @@ protected:
             const auto* mix = from->comp<VMixNode>();
             if (!mix) return false;
             const auto send = std::find_if(mix->sends.begin(), mix->sends.end(),
-                [&](const auto& entry) { return entry.targetBusID == to->objectID; });
+                [&](const auto& entry) { return entry.targetBusID == to->objectID && entry.mode == SendMode::Mix; });
             if (redo ? send != mix->sends.end()
                      : send == mix->sends.end() || send->sendLevel != 1.0f) return false;
         }
@@ -274,7 +277,7 @@ protected:
             else send_->undo();
             const auto& sends = from->comp<VMixNode>()->sends;
             const bool exists = std::any_of(sends.begin(), sends.end(),
-                [&](const auto& entry) { return entry.targetBusID == to->objectID; });
+                [&](const auto& entry) { return entry.targetBusID == to->objectID && entry.mode == SendMode::Mix; });
             if (exists != redo) return false;
         }
         if (redo) {
@@ -314,7 +317,7 @@ public:
         for (const auto& removal : plan_.busSendRemovals)
             sends_.push_back(std::make_unique<BlueprintSendDisconnectCommand>(
                 manager.findItemByGuid(removal.from)->objectID,
-                manager.findItemByGuid(removal.to)->objectID));
+                manager.findItemByGuid(removal.to)->objectID, nullptr, removal.mode));
     }
 
 protected:
@@ -394,7 +397,7 @@ protected:
             if (!mix || !to || from->type != ProjectItemType::Bus
                 || to->type != ProjectItemType::Bus) return false;
             const auto send = std::find_if(mix->sends.begin(), mix->sends.end(),
-                [&](const auto& entry) { return entry.targetBusID == to->objectID; });
+                [&](const auto& entry) { return entry.targetBusID == to->objectID && entry.mode == removal.mode; });
             if (redo ? send == mix->sends.end() || !qFuzzyCompare(send->sendLevel, removal.level)
                      : send != mix->sends.end()) return false;
         }
@@ -423,7 +426,7 @@ protected:
                 const auto* to = manager.findItemByGuid(removal.to);
                 const auto& sends = from->comp<VMixNode>()->sends;
                 const auto send = std::find_if(sends.begin(), sends.end(),
-                    [&](const auto& entry) { return entry.targetBusID == to->objectID; });
+                    [&](const auto& entry) { return entry.targetBusID == to->objectID && entry.mode == removal.mode; });
                 if (remove ? send != sends.end()
                            : send == sends.end() || !qFuzzyCompare(send->sendLevel, removal.level)) return false;
             }
@@ -605,7 +608,7 @@ SignalPathConnectPlan prepareObjectConnections(const SignalPathGraph& graph,
                 if (!resolved.ok()) return fail(QObject::tr("The inherited Send configuration cannot be resolved"));
                 auto sends = std::get<SendFieldGroup>(resolved.value->payload);
                 if (std::any_of(sends.sends.begin(), sends.sends.end(),
-                        [&](const auto& send) { return send.targetBusID == bus; }))
+                        [&](const auto& send) { return send.targetBusID == bus && send.mode == SendMode::Mix; }))
                     return fail(QObject::tr("Send already exists on this object"));
                 sends.sends.push_back({bus, 0.0f});
                 writeLocal(groups.send, scope, sends);
@@ -696,12 +699,12 @@ SignalPathConnectPlan prepareSignalPathDisconnect(const SignalPathGraph& graph,
     const FieldGroupResolver resolver(view.definitions, toFieldGroupGuid(master->guid));
     const auto scopes = editScopes(*project);
     using ProviderScope = std::pair<QUuid, FieldGroupScope>;
-    std::map<ProviderScope, std::set<QUuid>> removedSends;
+    std::map<ProviderScope, std::set<std::pair<QUuid, SendMode>>> removedSends;
     std::map<ProviderScope, MainOutputFieldGroup> resetOutputs;
     std::set<QUuid> playbackOwners;
     std::set<QUuid> detachments;
     std::set<QUuid> resetBuses;
-    std::set<std::pair<QUuid, QUuid>> busSends;
+    std::set<std::pair<std::pair<QUuid, QUuid>, SendMode>> busSends;
     std::set<QUuid> observed;
     SignalPathPortPair affectedPaths;
     for (const auto index : std::set<size_t>(edgeIndices.begin(), edgeIndices.end())) {
@@ -750,11 +753,11 @@ SignalPathConnectPlan prepareSignalPathDisconnect(const SignalPathGraph& graph,
                     plan.busOutputResets.push_back({fromGuid, toGuid});
             } else {
                 const auto send = std::find_if(mix->sends.begin(), mix->sends.end(),
-                    [&](const auto& entry) { return entry.targetBusID == to->objectID; });
+                    [&](const auto& entry) { return entry.targetBusID == to->objectID && entry.mode == edge.mode; });
                 if (send == mix->sends.end() || !qFuzzyCompare(send->sendLevel, edge.sendLevel))
                     return fail(QObject::tr("The Send connection has changed"));
-                if (busSends.emplace(fromGuid, toGuid).second)
-                    plan.busSendRemovals.push_back({fromGuid, toGuid, send->sendLevel});
+                if (busSends.emplace(std::make_pair(fromGuid, toGuid), edge.mode).second)
+                    plan.busSendRemovals.push_back({fromGuid, toGuid, send->sendLevel, send->mode});
             }
             continue;
         }
@@ -784,8 +787,10 @@ SignalPathConnectPlan prepareSignalPathDisconnect(const SignalPathGraph& graph,
                 } else {
                     const auto& sends = std::get<SendFieldGroup>(resolved.value->payload).sends;
                     if (std::any_of(sends.begin(), sends.end(),
-                            [&](const auto& send) { return send.targetBusID == toFieldGroupGuid(toGuid); }))
-                        removedSends[{provider, scope}].insert(toGuid);
+                            [&](const auto& send) {
+                                return send.targetBusID == toFieldGroupGuid(toGuid) && send.mode == edge.mode;
+                            }))
+                        removedSends[{provider, scope}].emplace(toGuid, edge.mode);
                 }
             }
         }
@@ -815,7 +820,7 @@ SignalPathConnectPlan prepareSignalPathDisconnect(const SignalPathGraph& graph,
         if (!resolved.ok()) return fail(QObject::tr("The Send configuration cannot be resolved"));
         auto sends = std::get<SendFieldGroup>(resolved.value->payload);
         std::erase_if(sends.sends, [&](const auto& send) {
-            return targets.contains(fromFieldGroupGuid(send.targetBusID));
+            return targets.contains({fromFieldGroupGuid(send.targetBusID), send.mode});
         });
         auto& groups = candidates.try_emplace(guid, provider->fieldGroups).first->second;
         writeLocal(groups.send, scope, sends);

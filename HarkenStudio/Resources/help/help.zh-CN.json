@@ -74,7 +74,7 @@
     },
     "mixnode.sends": {
       "title": "Sends",
-      "body": "在主输出之外增加发送路由。每条发送指定 Target 总线和 Volume（-96～+24 dB），同一目标只能出现一次。"
+      "body": "点击加号先选择 Mix 或 Sidechain，再选择 Target 总线。Mix 合并音频，Sidechain 定义通往侧链接收端的辅助信号路由。两种模式的 Volume（-96～+24 dB）均控制发送的源信号增益。同一目标在每个 Mode 中只能出现一次。Mix 不能与 Main Output 指向同一目标，Sidechain 可以。本阶段试听与导出仅包含 Mix，Sidechain 保留为编辑配置。"
     },
     "audio.loopCount": {
       "title": "Loop",

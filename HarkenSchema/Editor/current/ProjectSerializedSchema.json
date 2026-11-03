@@ -1167,6 +1167,13 @@
     "fieldGroupSendRow": {
       "additionalProperties": false,
       "properties": {
+        "mode": {
+          "enum": [
+            0,
+            2
+          ],
+          "type": "integer"
+        },
         "sendLevel": {
           "maximum": 24,
           "minimum": -96,
@@ -1398,6 +1405,13 @@
     "send": {
       "additionalProperties": false,
       "properties": {
+        "mode": {
+          "enum": [
+            0,
+            2
+          ],
+          "type": "integer"
+        },
         "sendLevel": {
           "type": "number"
         },
