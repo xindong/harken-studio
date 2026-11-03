@@ -4,6 +4,7 @@
 #include "harken/core/EngineConfig.h"
 #include "harken/core/PlayablePropertyCut.h"
 #include "harken/core/VariableExecutionFingerprint.h"
+#include "harken/core/detail/CurrentWorldValidation.h"
 #include "harken/param/ParamTargetTable.h"
 #include "harken/param/VariableService.h"
 
@@ -1395,10 +1396,70 @@ VnResult ValidateScheduleKeyInClosure(
     return VN_OK;
 }
 
+VnResult ValidateSignalEndpointInClosure(
+    const PackComposition::PublishedView& published,
+    const std::vector<std::uint8_t>& member, const SignalEndpointRefV1& ref) noexcept {
+    // Bus identities are resolved against the actual/prospective slot plan at
+    // render-plan preparation, not against the playable definition catalog.
+    if (ref.kind == SignalEndpointKindV1::Bus) return VN_OK;
+    const PackComposition::IdentityIndexEntry* hit = nullptr;
+    const PackComposition::PublishedOwner* owner = nullptr;
+    const auto resolved = ResolveInDeclaredClosure(published, member, ref.stableId,
+        kInitCatalogIdentityClassPlayable, &hit, &owner);
+    if (resolved != VN_OK) return resolved;
+    const auto* property = PropertyAtHit(*owner, *hit);
+    const auto kind = ref.kind == SignalEndpointKindV1::Sound
+        ? playableproperties::ContentPropertyKindV1::Sound
+        : playableproperties::ContentPropertyKindV1::Container;
+    if (property == nullptr || property->contentPropertyKind != kind ||
+        property->programSemanticFingerprint != ref.expectedPropertyFingerprint)
+        return VN_BAD_PACK;
+    if (ref.kind == SignalEndpointKindV1::Container) {
+        const auto* program = FindContainerProgram(owner->view, ref.stableId);
+        if (program == nullptr || program->programSemanticFingerprint != ref.expectedProgramFingerprint)
+            return VN_BAD_PACK;
+    }
+    return VN_OK;
+}
+
+VnResult ValidateSignalReceiverInClosure(
+    const PackComposition::PublishedView& published,
+    const std::vector<std::uint8_t>& member, const SignalEndpointRefV1& target) noexcept {
+    const auto key = std::pair(target.kind, target.stableId);
+    for (std::size_t slot = 0; slot < published.owners.size(); ++slot) {
+        if (slot >= member.size() || !member[slot]) continue;
+        const auto& owner = published.owners[slot];
+        if (owner.readiness != PackOwnerReadiness::Active || !owner.view.signalReceiverCount)
+            continue;
+        const auto* end = owner.view.signalReceivers + owner.view.signalReceiverCount;
+        const auto* row = std::lower_bound(owner.view.signalReceivers, end, key,
+            [](const SignalReceiverV1& value, const auto& k) {
+                return std::pair(value.target.kind, value.target.stableId) < k;
+            });
+        if (row != end && std::pair(row->target.kind, row->target.stableId) == key)
+            return row->target == target ? VN_OK : VN_BAD_PACK;
+    }
+    return VN_BAD_PACK;
+}
+
 VnResult ValidateOwnerExternalRefs(
     const PackComposition::PublishedView& published, std::uint32_t slot,
     const std::vector<std::uint8_t>& member) noexcept {
     const ContainerWorldInstallViewV1& view = published.owners[slot].view;
+    for (std::uint32_t i = 0; i < view.signalRelationCount; ++i) {
+        const auto& row = view.signalRelations[i];
+        auto result = ValidateSignalEndpointInClosure(published, member, row.source);
+        if (result != VN_OK) return result;
+        result = ValidateSignalEndpointInClosure(published, member, row.target);
+        if (result != VN_OK) return result;
+        result = ValidateSignalReceiverInClosure(published, member, row.target);
+        if (result != VN_OK) return result;
+    }
+    for (std::uint32_t i = 0; i < view.signalReceiverCount; ++i) {
+        const auto result = ValidateSignalEndpointInClosure(published, member,
+            view.signalReceivers[i].target);
+        if (result != VN_OK) return result;
+    }
     if (const auto& bindings = published.owners[slot].voiceBindings) {
         for (const auto& binding : *bindings) {
             if (!IdentityOwnedInSlot(published, slot, binding.objectId)) {
@@ -1727,6 +1788,8 @@ struct CompositeWorldScratch {
     std::vector<ContainerProgramViewV3> containers;
     std::vector<TransitionProgramViewV1> transitions;
     std::vector<ActionProgramViewV1> actions;
+    std::vector<SignalRelationV1> signalRelations;
+    std::vector<SignalReceiverV1> signalReceivers;
 };
 
 bool EncodeIdentityDefinition(const PackComposition::PublishedOwner& owner,
@@ -1908,7 +1971,7 @@ CompositeActionStatus ValidateCompositeActions(
 }
 
 VnResult ValidateCompositeWorld(
-    const PackComposition::PublishedView& published,
+    PackComposition::PublishedView& published,
     std::uint64_t& worldSemanticFingerprint) {
     worldSemanticFingerprint = 0;
     const PackComposition::PublishedOwner* first = nullptr;
@@ -1920,6 +1983,8 @@ VnResult ValidateCompositeWorld(
     std::uint64_t containerCount = 0;
     std::uint64_t transitionCount = 0;
     std::uint64_t actionCount = 0;
+    std::uint64_t signalRelationCount = 0, signalReceiverCount = 0;
+    bool signalsVintage = false;
     for (const PackComposition::PublishedOwner& owner : published.owners) {
         if (owner.readiness != PackOwnerReadiness::Active) {
             continue;
@@ -1928,6 +1993,7 @@ VnResult ValidateCompositeWorld(
         if (owner.view.sourceBodyVintage == kCurrentWorldBodyVintageV19) {
             return VN_CAPABILITY_UNAVAILABLE;
         }
+        signalsVintage |= owner.view.sourceBodyVintage == kCurrentWorldBodyVintageV20;
         if (first == nullptr) {
             first = &owner;
         } else if (first->view.identity.projectId != owner.view.identity.projectId ||
@@ -1953,6 +2019,10 @@ VnResult ValidateCompositeWorld(
                                    owner.view.transitionCount,
                                    UINT32_MAX) ||
             !CheckedCompositeCount(&actionCount, owner.view.actionCount,
+                                   UINT32_MAX) ||
+            !CheckedCompositeCount(&signalRelationCount, owner.view.signalRelationCount,
+                                   UINT32_MAX) ||
+            !CheckedCompositeCount(&signalReceiverCount, owner.view.signalReceiverCount,
                                    UINT32_MAX)) {
             return VN_PACK_RESIDENT_CAPACITY;
         }
@@ -1970,6 +2040,9 @@ VnResult ValidateCompositeWorld(
     scratch.containers.reserve(static_cast<std::size_t>(containerCount));
     scratch.transitions.reserve(static_cast<std::size_t>(transitionCount));
     scratch.actions.reserve(static_cast<std::size_t>(actionCount));
+    scratch.signalRelations.reserve(static_cast<std::size_t>(signalRelationCount));
+    scratch.signalReceivers.reserve(static_cast<std::size_t>(signalReceiverCount));
+    if (signalsVintage) scratch.view.sourceBodyVintage = kCurrentWorldBodyVintageV20;
     scratch.view.identity.format = first->view.identity.format;
     scratch.view.identity.projectId = first->view.identity.projectId;
     scratch.view.capacity = first->view.capacity;
@@ -1994,7 +2067,11 @@ VnResult ValidateCompositeWorld(
             !AppendRows(&scratch.transitions, owner.view.transitions,
                         owner.view.transitionCount) ||
             !AppendRows(&scratch.actions, owner.view.actions,
-                        owner.view.actionCount)) {
+                        owner.view.actionCount) ||
+            !AppendRows(&scratch.signalRelations, owner.view.signalRelations,
+                        owner.view.signalRelationCount) ||
+            !AppendRows(&scratch.signalReceivers, owner.view.signalReceivers,
+                        owner.view.signalReceiverCount)) {
             return VN_BAD_PACK;
         }
     }
@@ -2057,6 +2134,15 @@ VnResult ValidateCompositeWorld(
                   return left.actionStableId < right.actionStableId;
               });
 
+    std::sort(scratch.signalRelations.begin(), scratch.signalRelations.end(),
+        [](const auto& a, const auto& b) { return a.stableId < b.stableId; });
+    std::sort(scratch.signalReceivers.begin(), scratch.signalReceivers.end(),
+        [](const auto& a, const auto& b) {
+            return std::pair(a.target.kind, a.target.stableId) <
+                   std::pair(b.target.kind, b.target.stableId);
+        });
+    // Unlike replicated definition bodies, a relation and a receiver each
+    // have one owner. Final world validation rejects duplicates, even equal ones.
     DeduplicateRows(scratch.variables, [](const auto& row) { return row.variableId; });
     DeduplicateRows(scratch.properties, [](const auto& row) { return row.stableId; });
     DeduplicateRows(scratch.occurrences, [](const auto& row) {
@@ -2141,8 +2227,15 @@ VnResult ValidateCompositeWorld(
         scratch.actions.empty() ? nullptr : scratch.actions.data();
     scratch.view.actionCount =
         static_cast<std::uint32_t>(scratch.actions.size());
+    scratch.view.signalRelations = scratch.signalRelations.empty()
+        ? nullptr : scratch.signalRelations.data();
+    scratch.view.signalRelationCount = static_cast<std::uint32_t>(scratch.signalRelations.size());
+    scratch.view.signalReceivers = scratch.signalReceivers.empty()
+        ? nullptr : scratch.signalReceivers.data();
+    scratch.view.signalReceiverCount = static_cast<std::uint32_t>(scratch.signalReceivers.size());
     scratch.view.identity.runtimeSemanticFingerprint =
-        ComputeCurrentWorldFingerprintV5(scratch.view);
+        signalsVintage ? ComputeCurrentWorldFingerprintV7(scratch.view)
+                       : ComputeCurrentWorldFingerprintV5(scratch.view);
 
     const CompositeActionStatus actions =
         ValidateCompositeActions(scratch.view);
@@ -2157,6 +2250,8 @@ VnResult ValidateCompositeWorld(
     case WorldInstallStatus::Ok:
         worldSemanticFingerprint =
             scratch.view.identity.runtimeSemanticFingerprint;
+        published.signalRelations.swap(scratch.signalRelations);
+        published.signalReceivers.swap(scratch.signalReceivers);
         return VN_OK;
     case WorldInstallStatus::InvalidFormat:
         return VN_PACK_INCOMPATIBLE;
@@ -2820,6 +2915,14 @@ VnResult PackComposition::BuildIndex(PublishedView& view,
         PublishedOwner& owner = view.owners[slot];
         if (owner.readiness != PackOwnerReadiness::Active) {
             continue;
+        }
+        // Native candidates and decoded partitions have the same obligation.
+        // Validate new tables before closure lookups rely on their ordering.
+        if (owner.view.sourceBodyVintage == kCurrentWorldBodyVintageV20) {
+            const auto status = detail::ValidateCurrentWorldPartitionLocalV1(owner.view);
+            if (status != WorldInstallStatus::Ok)
+                return status == WorldInstallStatus::Capacity
+                    ? VN_PACK_RESIDENT_CAPACITY : VN_BAD_PACK;
         }
         if (!CompanionTablesSorted(owner.view) ||
             !PointerCountOk(owner.view.variableCount, owner.view.variables) ||

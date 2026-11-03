@@ -396,6 +396,10 @@ public:
         view.actionCount =
             static_cast<std::uint32_t>(actionProgramViews_.size());
         view.capacity = capacity_;
+        view.signalRelations = signalRelations_.empty() ? nullptr : signalRelations_.data();
+        view.signalRelationCount = static_cast<std::uint32_t>(signalRelations_.size());
+        view.signalReceivers = signalReceivers_.empty() ? nullptr : signalReceivers_.data();
+        view.signalReceiverCount = static_cast<std::uint32_t>(signalReceivers_.size());
         return view;
     }
     PlayableWorldViewV1 CurrentPlayableWorld() const noexcept {
@@ -993,6 +997,8 @@ public:
         std::vector<TransitionProgramViewV1> transitionProgramViews_;
         std::vector<OwnedActionProgram> actionPrograms_;
         std::vector<ActionProgramViewV1> actionProgramViews_;
+        std::vector<SignalRelationV1> signalRelations_;
+        std::vector<SignalReceiverV1> signalReceivers_;
     };
 
     class PreparedWorldProjectionV1 {
@@ -1495,6 +1501,8 @@ private:
     std::vector<TransitionProgramViewV1> transitionProgramViews_;
     std::vector<OwnedActionProgram> actionPrograms_;
     std::vector<ActionProgramViewV1> actionProgramViews_;
+    std::vector<SignalRelationV1> signalRelations_;
+    std::vector<SignalReceiverV1> signalReceivers_;
     std::vector<EmitterBank> emitterBanks_;
     std::vector<std::uint32_t> emitterBankVersionGenerations_;
     // History reuse requires outcome delivery, zero observers and an audio fence.

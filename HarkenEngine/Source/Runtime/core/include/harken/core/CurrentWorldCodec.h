@@ -4,7 +4,7 @@
 // write table is kCurrentWorldShippingBodyVintage, also named
 // kCanonicalDefinitionPartitionBodyVintage. Shipping pack readers
 // (Vn_LoadPack / ParsePackCanonicalImage) and the DirectWorld preview
-// envelope read V18 and V19. New playback capability remains gated at install.
+// envelope read V18, V19 and V20. New capability remains gated at install.
 // Decode of 2-8 remains for
 // Tooling/Host trace replay and historical fixtures; it is not a
 // shipping program contract. Do not register this integer in schema
@@ -69,6 +69,12 @@ bool EncodeCurrentWorldBodyV9(
     std::vector<std::uint8_t>& out) noexcept;
 
 bool EncodeCurrentWorldBodyV19(
+    const ContainerWorldInstallViewV1& world,
+    std::vector<std::uint8_t>& out) noexcept;
+
+// V20 extends the V18 body with signal relations and target configurations.
+// It does not enable V19 entry scheduling or change the existing writer table.
+bool EncodeCurrentWorldBodyV20(
     const ContainerWorldInstallViewV1& world,
     std::vector<std::uint8_t>& out) noexcept;
 

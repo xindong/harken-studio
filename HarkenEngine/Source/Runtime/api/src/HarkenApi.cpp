@@ -118698,7 +118698,7 @@ VnResult CheckContentAgainstGameplayCatalog(
         CurrentWorldBodyImage body;
         const CurrentWorldBodyDecodeResult decoded = body.DecodeWithResult(
             image.partitionBody.data(), image.partitionBody.size(),
-            kCanonicalDefinitionPartitionBodyVintage,
+            image.partitionHeader.bodyVintage,
             CurrentWorldDecodeMode::StrictArtifact);
         if (decoded != CurrentWorldBodyDecodeResult::Ok ||
             body.ProductionView() == nullptr) {
@@ -118745,7 +118745,7 @@ void ReportCanonicalMediaConflict(Engine& engine, const PackCanonicalImage& cand
     if (candidate.hasPartition) {
         CurrentWorldBodyImage body;
         if (body.DecodeWithResult(candidate.partitionBody.data(), candidate.partitionBody.size(),
-                kCanonicalDefinitionPartitionBodyVintage, CurrentWorldDecodeMode::StrictArtifact) ==
+                candidate.partitionHeader.bodyVintage, CurrentWorldDecodeMode::StrictArtifact) ==
                 CurrentWorldBodyDecodeResult::Ok && body.ProductionView() != nullptr)
             candidateProject = body.ProductionView()->identity.projectId;
     }
@@ -118811,7 +118811,10 @@ VnResult PrepareCanonicalOwners(
         for (const auto& owner : next->owners) {
             if (!engine.PrepareQueueSelectionStorage(owner.view)) return VN_BACKPRESSURE;
         }
-        const std::uint64_t indexBytes = next->index.size() * sizeof(PackComposition::IdentityIndexEntry);
+        const std::uint64_t indexBytes =
+            next->index.size() * sizeof(PackComposition::IdentityIndexEntry) +
+            next->signalRelations.size() * sizeof(SignalRelationV1) +
+            next->signalReceivers.size() * sizeof(SignalReceiverV1);
         if (indexBytes > engine.config.maxCompositeIndexBytes) {
             engine.packComposition.NoteRefusal(
                 indexBytes, engine.config.maxCompositeIndexBytes,
@@ -119256,7 +119259,7 @@ VnResult ValidateCanonicalPackSetVoiceRecipes(
         if (viewPtr == nullptr) {
             const auto decoded = body.DecodeWithResult(
                 image.partitionBody.data(), image.partitionBody.size(),
-                kCanonicalDefinitionPartitionBodyVintage,
+                image.partitionHeader.bodyVintage,
                 CurrentWorldDecodeMode::StrictArtifact);
             if (decoded != CurrentWorldBodyDecodeResult::Ok || body.ProductionView() == nullptr)
                 return decoded == CurrentWorldBodyDecodeResult::Capacity

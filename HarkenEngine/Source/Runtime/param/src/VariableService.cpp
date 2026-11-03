@@ -556,6 +556,13 @@ void VariableServiceV1::BuildCurrentWorldImageV1(
     out.sourceWorld_ = worldGeneration_;
     out.sourceBankOrdinal_ = nextBankOrdinal_;
 
+    if (install.signalRelationCount)
+        out.signalRelations_.assign(install.signalRelations,
+            install.signalRelations + install.signalRelationCount);
+    if (install.signalReceiverCount)
+        out.signalReceivers_.assign(install.signalReceivers,
+            install.signalReceivers + install.signalReceiverCount);
+
     std::vector<DefinitionRow> next;
     next.reserve(install.variableCount);
     for (std::uint32_t i = 0; i < install.variableCount; ++i) {
@@ -839,6 +846,12 @@ ContainerWorldInstallViewV1 VariableServiceV1::PreparedWorldInstallViewV1(
     view.transitionCount = static_cast<std::uint32_t>(prepared.transitionProgramViews_.size());
     view.actions = prepared.actionProgramViews_.data();
     view.actionCount = static_cast<std::uint32_t>(prepared.actionProgramViews_.size());
+    view.signalRelations = prepared.signalRelations_.empty()
+        ? nullptr : prepared.signalRelations_.data();
+    view.signalRelationCount = static_cast<std::uint32_t>(prepared.signalRelations_.size());
+    view.signalReceivers = prepared.signalReceivers_.empty()
+        ? nullptr : prepared.signalReceivers_.data();
+    view.signalReceiverCount = static_cast<std::uint32_t>(prepared.signalReceivers_.size());
     return view;
 }
 
@@ -971,6 +984,8 @@ WorldGeneration VariableServiceV1::CommitPreparedCurrentWorldImageV1(
     transitionProgramViews_.swap(prepared.transitionProgramViews_);
     actionPrograms_.swap(prepared.actionPrograms_);
     actionProgramViews_.swap(prepared.actionProgramViews_);
+    signalRelations_.swap(prepared.signalRelations_);
+    signalReceivers_.swap(prepared.signalReceivers_);
     identity_ = prepared.identity_;
     sourceBodyVintage_ = prepared.sourceBodyVintage_;
     capacity_ = prepared.capacity_;

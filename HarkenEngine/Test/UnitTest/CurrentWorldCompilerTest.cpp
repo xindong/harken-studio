@@ -315,7 +315,9 @@ TEST(CurrentWorldCompiler, RuntimeActionTimingWireTableIsVersionedAndRejectsUnkn
                       harken::ActionQuantizeTimingReadableV1(opcode, value, 18));
             EXPECT_EQ(op < 5 && timing < 10 && entry[op][timing],
                       harken::ActionQuantizeTimingReadableV1(opcode, value, 19));
-            EXPECT_FALSE(harken::ActionQuantizeTimingReadableV1(opcode, value, 20));
+            EXPECT_EQ(op < 5 && timing < 10 && legacy[op][timing],
+                      harken::ActionQuantizeTimingReadableV1(opcode, value, 20));
+            EXPECT_FALSE(harken::ActionQuantizeTimingReadableV1(opcode, value, 21));
         }
     }
 }
@@ -1080,7 +1082,7 @@ TEST(CurrentWorldCompiler, ArtifactEnvelopeRefusesRetiredBodyVintage) {
     for (const auto vintage : {harken::kCurrentWorldBodyVintageV6,
                                 harken::kCurrentWorldBodyVintageV7,
                                 harken::kCurrentWorldBodyVintageV8,
-                                harken::kCurrentWorldBodyVintageV19 + 1}) {
+                                harken::kCurrentWorldBodyVintageV20 + 1}) {
         auto hostile = artifact;
         WriteU32(hostile, 20, vintage);
         EXPECT_EQ(harken::CurrentWorldLoadStatusV1::UnsupportedBody,

@@ -183,6 +183,8 @@ public:
         std::uint64_t compositeGeneration = 0;
         std::vector<PublishedOwner> owners;
         std::vector<IdentityIndexEntry> index;
+        std::vector<SignalRelationV1> signalRelations;
+        std::vector<SignalReceiverV1> signalReceivers;
         PackCanonicalImage catalog;
         bool hasCatalog = false;
         std::uint64_t initPackStableId = 0;
