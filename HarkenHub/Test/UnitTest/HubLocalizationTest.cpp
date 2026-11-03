@@ -254,21 +254,6 @@ TEST(HubLocalizationTest, SimplifiedChineseCatalogIsCompleteAndLoadable)
     EXPECT_EQ(QCoreApplication::translate(
                   "HarkenHub", "Install finished · self-test issue"),
               QString::fromUtf8("安装完成 · 自检发现问题"));
-    EXPECT_EQ(QCoreApplication::translate(
-                  "HarkenHub", "Launch report protocol version mismatch"),
-              QStringLiteral("\u542f\u52a8\u56de\u62a5\u534f\u8bae\u7248\u672c\u4e0d\u5339\u914d"));
-    EXPECT_EQ(QCoreApplication::translate(
-                  "HarkenHub", "Project Upgrade Required"),
-              QStringLiteral("\u5de5\u7a0b\u9700\u8981\u5347\u7ea7"));
-    EXPECT_EQ(QCoreApplication::translate(
-                  "HarkenHub", "Upgrade and Open"),
-              QStringLiteral("\u5347\u7ea7\u5e76\u6253\u5f00"));
-    EXPECT_EQ(QCoreApplication::translate(
-                  "HarkenHub", "The project changed after the safety check. Click Open Project to check it again."),
-              QStringLiteral("\u5de5\u7a0b\u5728\u5b89\u5168\u68c0\u67e5\u540e\u53d1\u751f\u4e86\u53d8\u5316\u3002\u8bf7\u91cd\u65b0\u70b9\u51fb\u201c\u6253\u5f00\u5de5\u7a0b\u201d\u8fdb\u884c\u68c0\u67e5\u3002"));
-    EXPECT_EQ(QCoreApplication::translate(
-                  "HarkenHub", "Cannot open the project creation progress channel."),
-              QStringLiteral("\u65e0\u6cd5\u6253\u5f00\u5de5\u7a0b\u521b\u5efa\u8fdb\u5ea6\u901a\u9053\u3002"));
     EXPECT_EQ(VNH::LogConsoleDialog::localizeLine(
                   QStringLiteral("[INFO] HarkenHub 0.1.36-dev state -> "
                                  "AwaitingBridge")),

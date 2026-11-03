@@ -19,7 +19,6 @@
 using VNH::InstalledVersion;
 using VNH::InstalledVersionRecord;
 using VNH::InstallIndexSnapshot;
-using VNH::LaunchIntent;
 using VNH::LaunchPreflight;
 using VNH::LaunchVerdict;
 using VNH::ProjectRecord;
@@ -109,7 +108,6 @@ TEST_F(LaunchPreflightTest, DirectOpenUsesLockedCompatibleVersion)
     const auto decision = LaunchPreflight::evaluate(record, {version}, index);
     EXPECT_EQ(decision.verdict, LaunchVerdict::Ready);
     EXPECT_EQ(decision.version.buildId, version.buildId);
-    EXPECT_EQ(decision.intent, LaunchIntent::DirectOpenOnly);
 }
 
 TEST_F(LaunchPreflightTest, LocalBuildDoesNotRequirePackageMetadata)
@@ -164,41 +162,21 @@ TEST_F(LaunchPreflightTest, SameSizeReplacementWithPreservedTimestampRequiresRec
     EXPECT_EQ(decision.blockCode, QStringLiteral("VersionUnavailable"));
 }
 
-TEST_F(LaunchPreflightTest, DefaultOpenNeverAuthorizesUpgrade)
-{
-    const auto version = makeVersion(QStringLiteral("run2.bbbb2222"));
-    const auto decision = LaunchPreflight::evaluate(record, {version}, index);
-    EXPECT_EQ(decision.verdict, LaunchVerdict::Ready);
-    EXPECT_EQ(decision.intent, LaunchIntent::DirectOpenOnly);
-}
-
-TEST_F(LaunchPreflightTest, SelectedVersionCanBeAnalyzedWithoutAuthorizingUpgrade)
+TEST_F(LaunchPreflightTest, SelectedVersionOverridesProjectPreference)
 {
     const auto version = makeVersion(QStringLiteral("run2.bbbb2222"));
     const auto decision = LaunchPreflight::evaluate(
         record, {version}, index,
-        LaunchIntent::DirectOpenOnly, version.buildId);
+        version.buildId);
     EXPECT_EQ(decision.verdict, LaunchVerdict::Ready);
-    EXPECT_EQ(decision.intent, LaunchIntent::DirectOpenOnly);
 }
 
-TEST_F(LaunchPreflightTest, HubApprovalKeepsTheAnalyzedVersion)
-{
-    const auto version = makeVersion(QStringLiteral("run2.bbbb2222"));
-    const auto decision = LaunchPreflight::evaluate(
-        record, {version}, index,
-        LaunchIntent::UpgradeApprovedByHub, version.buildId);
-    EXPECT_EQ(decision.verdict, LaunchVerdict::Ready);
-    EXPECT_EQ(decision.intent, LaunchIntent::UpgradeApprovedByHub);
-}
-
-TEST_F(LaunchPreflightTest, FixedVersionDoesNotAuthorizeAnUpgrade)
+TEST_F(LaunchPreflightTest, FixedVersionIsAvailableForLaunch)
 {
     const auto version = makeVersion(QStringLiteral("run2.bbbb2222"));
     record.preferredStudioBuildId = version.buildId;
     const auto decision = LaunchPreflight::evaluate(record, {version}, index);
     EXPECT_EQ(decision.verdict, LaunchVerdict::Ready);
-    EXPECT_EQ(decision.intent, LaunchIntent::DirectOpenOnly);
 }
 
 TEST_F(LaunchPreflightTest, MultipleMatchingInstallationsRequireSelection)
@@ -294,7 +272,7 @@ TEST_F(LaunchPreflightTest, ExplicitChoiceOverridesTheSavedSoftwareVersion)
     const auto selected = makeVersion(QStringLiteral("selected"), QStringLiteral("0.9.0"));
     record.preferredStudioBuildId = saved.buildId;
     const auto decision = LaunchPreflight::evaluate(record, {saved, selected}, index,
-        LaunchIntent::DirectOpenOnly, selected.buildId);
+        selected.buildId);
     EXPECT_EQ(decision.verdict, LaunchVerdict::Ready);
     EXPECT_EQ(decision.version.buildId, selected.buildId);
 }
@@ -304,7 +282,7 @@ TEST_F(LaunchPreflightTest, UnknownProjectDetailsDoNotBlockAnExplicitInstallatio
     writeFile(projectPath, QByteArrayLiteral("unrecognized project contents"));
     const auto version = makeVersion(QStringLiteral("selected"));
     const auto decision = LaunchPreflight::evaluate(record, {version}, index,
-        LaunchIntent::DirectOpenOnly, version.buildId);
+        version.buildId);
     EXPECT_EQ(decision.verdict, LaunchVerdict::Ready);
 }
 

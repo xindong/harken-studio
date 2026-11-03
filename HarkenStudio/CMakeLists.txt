@@ -160,8 +160,8 @@ set(HARKEN_EDITOR_LIB_SOURCES
     Source/Core/WorkspaceWindowRegistry.h
     Source/Core/WorkspaceDockFactory.cpp
     Source/Core/WorkspaceDockFactory.h
-    Source/Core/HubClient/HubClient.cpp
-    Source/Core/HubClient/HubClient.h
+    Source/Core/StartupArguments.cpp
+    Source/Core/StartupArguments.h
     Source/Core/HubClient/HubIntake.cpp
     Source/Core/HubClient/HubIntake.h
     Source/Core/HubLauncher.cpp

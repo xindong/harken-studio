@@ -1,6 +1,5 @@
 #include "UI/DialogLayout.h"
 #include "UI/MessageDialog.h"
-#include "UI/ProgressDialog.h"
 
 #include <gtest/gtest.h>
 
@@ -62,22 +61,23 @@ TEST(DialogLayoutTest, MessagesPreserveLongTextWithoutGrowingBeyondTheScreen)
 
 TEST(DialogLayoutTest, DynamicTextScrollsWithoutMovingActionsOrResizingTheWindow)
 {
-    VNH::ProgressDialog dialog(QStringLiteral("Starting..."), QStringLiteral("Cancel"), nullptr);
-    QSignalSpy cancelled(&dialog, &VNH::ProgressDialog::canceled);
+    VNH::MessageDialog dialog(QMessageBox::Information, QStringLiteral("Status"),
+                              QStringLiteral("Starting..."), QMessageBox::Cancel, nullptr);
+    QSignalSpy finished(&dialog, &QDialog::finished);
     dialog.show();
     QCoreApplication::processEvents();
     const QSize initialSize = dialog.size();
     const QString content = QStringLiteral("A long diagnostic status\n").repeated(1000);
-    dialog.setLabelText(content);
+    dialog.setInformativeText(content);
     QCoreApplication::processEvents();
     EXPECT_EQ(dialog.size(), initialSize);
-    auto* text = dialog.findChild<VNH::DialogTextView*>();
+    auto* text = dialog.findChild<QPlainTextEdit*>();
     ASSERT_NE(text, nullptr);
-    EXPECT_EQ(text->toPlainText(), content);
+    EXPECT_TRUE(text->toPlainText().endsWith(content));
     EXPECT_GT(text->verticalScrollBar()->maximum(), 0);
     expectContainedActions(dialog);
     QTest::keyClick(&dialog, Qt::Key_Escape);
-    EXPECT_EQ(cancelled.count(), 1);
+    EXPECT_EQ(finished.count(), 1);
 }
 
 TEST(DialogLayoutTest, OversizedDefaultsAndMinimumsFitTheAvailableScreen)

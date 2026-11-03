@@ -21,13 +21,13 @@ namespace VNX {
 StartupCoordinator::StartupCoordinator(
     QApplication& application,
     StartupLoadingWindow& loading,
-    HubClient::Arguments hubArguments,
+    StartupArguments startupArguments,
     QString projectFile,
     QObject* parent)
     : QObject(parent),
       application_(application),
       loading_(loading),
-      hubArguments_(std::move(hubArguments)),
+      startupArguments_(std::move(startupArguments)),
       projectFile_(std::move(projectFile))
 {
     connect(&loading_, &StartupLoadingWindow::cancelRequested,
@@ -65,31 +65,11 @@ void StartupCoordinator::start()
     if (terminal_)
         return;
     loading_.setPhase(StartupPhase::PreparingApplication);
-    if (hubArguments_.present) {
-        hubClient_ = std::make_unique<HubClient>(hubArguments_);
-        connect(hubClient_.get(), &HubClient::helloCompleted,
-                this, [this](bool connected) {
-            if (terminal_)
-                return;
-            if (connected)
-                hubClient_->reportStage(QStringLiteral("processStarted"));
-            startAfterHubConnection();
-        });
-        hubClient_->connectAndHelloAsync();
-        return;
-    }
-    startAfterHubConnection();
-}
-
-void StartupCoordinator::startAfterHubConnection()
-{
-    if (terminal_)
-        return;
     ProjectInstance::setActivationWindow(&loading_);
-    const QString instancePath = hubArguments_.createProject
-        ? QDir(QDir(hubArguments_.projectLocation.trimmed())
-                   .filePath(hubArguments_.projectName.trimmed()))
-              .filePath(hubArguments_.projectName.trimmed() + QStringLiteral(".hsp"))
+    const QString instancePath = startupArguments_.createProject
+        ? QDir(QDir(startupArguments_.projectLocation.trimmed())
+                   .filePath(startupArguments_.projectName.trimmed()))
+              .filePath(startupArguments_.projectName.trimmed() + QStringLiteral(".hsp"))
         : projectFile_;
     auto acquisition = ProjectInstance::acquire(instancePath);
     if (acquisition.status == ProjectInstance::Status::Failed) {
@@ -97,31 +77,14 @@ void StartupCoordinator::startAfterHubConnection()
         return;
     }
     if (acquisition.status == ProjectInstance::Status::Forwarded) {
-        if (hubArguments_.createProject) {
+        if (startupArguments_.createProject) {
             fail(tr("This project is already open in another Studio window."),
                  3, QStringLiteral("PROJECT_ALREADY_OPEN"));
             return;
         }
-        if (hubClient_) {
-            connect(hubClient_.get(), &HubClient::forwardedCompleted,
-                    this, [this](bool acknowledged) {
-                if (terminal_)
-                    return;
-                if (!acknowledged) {
-                    fail(tr("The project window was activated, but Harken Hub did not confirm the request."),
-                         3, QStringLiteral("PROJECT_FORWARD_UNCONFIRMED"));
-                    return;
-                }
-                terminal_ = true;
-                loading_.dismiss();
-                application_.exit(0);
-            });
-            hubClient_->reportForwarded();
-        } else {
-            terminal_ = true;
-            loading_.dismiss();
-            application_.exit(0);
-        }
+        terminal_ = true;
+        loading_.dismiss();
+        application_.exit(0);
         return;
     }
     projectInstance_ = std::move(acquisition.instance);
@@ -132,24 +95,24 @@ void StartupCoordinator::startAfterHubConnection()
 
 void StartupCoordinator::startProjectPreparation()
 {
-    loading_.setPhase(hubArguments_.createProject
+    loading_.setPhase(startupArguments_.createProject
                           ? StartupPhase::CreatingWorkspace
                           : StartupPhase::ReadingProject);
-    if (hubArguments_.createProject) {
+    if (startupArguments_.createProject) {
         ProjectConfig config;
-        config.name = hubArguments_.projectName.trimmed();
-        config.location = hubArguments_.projectLocation.trimmed();
-        if (!hubArguments_.projectTemplatePath.isEmpty()) {
+        config.name = startupArguments_.projectName.trimmed();
+        config.location = startupArguments_.projectLocation.trimmed();
+        if (!startupArguments_.projectTemplatePath.isEmpty()) {
             ValidationResult validation;
             const auto projectTemplate = ProjectTemplateLoader::loadFile(
-                hubArguments_.projectTemplatePath, &validation);
+                startupArguments_.projectTemplatePath, &validation);
             if (!projectTemplate) {
                 fail(validation.toUserText());
                 return;
             }
-            config.templateId = hubArguments_.projectTemplateId.isEmpty()
+            config.templateId = startupArguments_.projectTemplateId.isEmpty()
                                     ? projectTemplate->id
-                                    : hubArguments_.projectTemplateId;
+                                    : startupArguments_.projectTemplateId;
             config.templateData = projectTemplate->toJson();
         }
         preparationWatcher_.setFuture(QtConcurrent::run(
@@ -173,16 +136,11 @@ void StartupCoordinator::startProjectPreparation()
     }
 
     const QString projectFile = projectFile_;
-    const bool upgradeApprovedByHub =
-        hubArguments_.launchIntent == QStringLiteral("UpgradeApprovedByHub");
     const ProjectUpgradeProgressCallback progress = upgradeProgressCallback();
     projectReadContext_ = std::make_shared<ProjectContractReadContext>();
     analysisWatcher_.setFuture(QtConcurrent::run(
-        [projectFile, upgradeApprovedByHub, progress, context = projectReadContext_]() {
-            ProjectUpgradeManager manager;
-            return upgradeApprovedByHub
-                ? manager.analyzeForProjectOpen(projectFile, progress, context.get())
-                : manager.analyze(projectFile, progress, context.get());
+        [projectFile, progress, context = projectReadContext_]() {
+            return ProjectUpgradeManager().analyze(projectFile, progress, context.get());
         }));
 }
 
@@ -199,12 +157,7 @@ void StartupCoordinator::finishProjectAnalysis()
              analysis_.blockingErrors.join(QLatin1Char('\n')));
         return;
     }
-    std::optional<ProjectOpenApprovalBinding> suppliedApproval;
-    if (hubArguments_.launchIntent == QStringLiteral("UpgradeApprovedByHub"))
-        suppliedApproval = ProjectOpenApprovalBinding{
-            hubArguments_.projectOpenRequestId, hubArguments_.projectOpenApproval,
-            hubArguments_.expectedBuildId};
-    const ProjectOpenDecision decision = confirmProjectOpen(analysis_, &loading_, suppliedApproval);
+    const ProjectOpenDecision decision = confirmProjectOpen(analysis_, &loading_);
     if (terminal_)
         return;
     if (decision.cancelled) {
@@ -290,7 +243,7 @@ void StartupCoordinator::tryCommit()
             fail(tr("Harken Studio could not open the project"));
         } else {
             const QString message = ProjectUpgradeMessages::userMessage(
-                prepared_->error, !hubArguments_.createProject);
+                prepared_->error, !startupArguments_.createProject);
             const QString writeAccessCode = projectIssueCode(ProjectIssue::ProjectUpgradeFilesNotWritable);
             if (prepared_->error.startsWith(writeAccessCode + QLatin1Char(':')))
                 fail(message, 3, writeAccessCode, prepared_->error.mid(writeAccessCode.size() + 1));
@@ -314,7 +267,7 @@ void StartupCoordinator::tryCommit()
         ProjectManager& manager = ProjectManager::instance();
         projectFile_ = manager.currentProject()->projectPath;
         mainWindow_->finishPreparedProject(
-            projectFile_, hubArguments_.createProject,
+            projectFile_, startupArguments_.createProject,
             [this](StartupPhase phase) { loading_.setPhase(phase); });
         beginRuntimeSync();
     });
@@ -357,12 +310,6 @@ void StartupCoordinator::finish()
         ProjectInstance::setActivationWindow(mainWindow_.get());
         loading_.setPhase(StartupPhase::Ready);
         loading_.dismiss();
-        if (hubClient_) {
-            hubClient_->reportStage(hubArguments_.createProject
-                                        ? QStringLiteral("projectCreated")
-                                        : QStringLiteral("projectRead"));
-            hubClient_->reportStage(QStringLiteral("ready"));
-        }
     });
 }
 
@@ -377,9 +324,6 @@ void StartupCoordinator::cancelProjectOpen()
     runtimeSyncContext_.reset();
     if (mainWindow_)
         mainWindow_->hide();
-    if (hubClient_)
-        hubClient_->reportFailed(QStringLiteral("PROJECT_OPEN_CANCELLED"),
-                                 tr("Project opening was cancelled."));
     finishCancellation();
 }
 
@@ -411,24 +355,14 @@ void StartupCoordinator::fail(const QString& message, int exitCode,
         return;
     terminal_ = true;
     const QString userMessage = ProjectUpgradeMessages::userMessage(message);
-    const bool hubConnected = hubClient_ && hubClient_->isConnected();
-    if (hubConnected)
-        hubClient_->reportFailed(errorCode,
-            errorCode == projectIssueCode(ProjectIssue::ProjectUpgradeFilesNotWritable)
-                ? ProjectUpgradeMessages::userMessage(ProjectIssue::ProjectUpgradeFilesNotWritable)
-                : userMessage, technicalDetails);
-    if (hubConnected) {
-        loading_.dismiss();
-    } else {
-        loading_.showFailure(userMessage);
-        QMessageBox box(QMessageBox::Critical, tr("Harken Studio"),
-                        userMessage, QMessageBox::Ok, &loading_);
-        const QString details = technicalDetails.trimmed().isEmpty()
-            ? errorCode : errorCode + QLatin1Char('\n') + technicalDetails;
-        if (!details.trimmed().isEmpty())
-            box.setDetailedText(details);
-        box.exec();
-    }
+    loading_.showFailure(userMessage);
+    QMessageBox box(QMessageBox::Critical, tr("Harken Studio"),
+                    userMessage, QMessageBox::Ok, &loading_);
+    const QString details = technicalDetails.trimmed().isEmpty()
+        ? errorCode : errorCode + QLatin1Char('\n') + technicalDetails;
+    if (!details.trimmed().isEmpty())
+        box.setDetailedText(details);
+    box.exec();
     QTimer::singleShot(0, &application_, [this, exitCode]() {
         application_.exit(exitCode);
     });

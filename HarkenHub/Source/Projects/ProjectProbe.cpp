@@ -56,7 +56,8 @@ ProjectProbeResult ProjectProbe::probe(const QString& inputPath)
     const QUuid projectId(header.value(QStringLiteral("projectId")).toString());
     if (!id.isNull() && id == projectId)
         result.projectId = id.toString(QUuid::WithoutBraces);
-    result.savedStudioVersion = header.value(QStringLiteral("savedStudioVersion")).toString().trimmed();
+    result.savedStudioVersion = header.value(QStringLiteral("studioVersion"))
+        .toString(header.value(QStringLiteral("savedStudioVersion")).toString()).trimmed();
     result.schemaVersion = header.value(QStringLiteral("schemaVersion")).toInt(0);
     const QString name = root.value(QStringLiteral("content")).toObject()
                              .value(QStringLiteral("metadata")).toObject()

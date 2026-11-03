@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Core/HubClient/HubClient.h"
+#include "Core/StartupArguments.h"
 #include "Core/ProjectManager.h"
 
 #include <QObject>
@@ -22,7 +22,7 @@ class StartupCoordinator final : public QObject
 public:
     StartupCoordinator(QApplication& application,
                        StartupLoadingWindow& loading,
-                       HubClient::Arguments hubArguments,
+                       StartupArguments startupArguments,
                        QString projectFile,
                        QObject* parent = nullptr);
     ~StartupCoordinator() override;
@@ -30,7 +30,6 @@ public:
     void start();
 
 private:
-    void startAfterHubConnection();
     void startProjectPreparation();
     void finishProjectAnalysis();
     void startExistingProjectPreparation();
@@ -48,10 +47,9 @@ private:
 
     QApplication& application_;
     StartupLoadingWindow& loading_;
-    HubClient::Arguments hubArguments_;
+    StartupArguments startupArguments_;
     QString projectFile_;
     std::shared_ptr<ProjectInstance> projectInstance_;
-    std::unique_ptr<HubClient> hubClient_;
     std::unique_ptr<MainWindow> mainWindow_;
     std::unique_ptr<QObject> runtimeSyncContext_;
     QFutureWatcher<ProjectUpgradeAnalysis> analysisWatcher_;

@@ -44,7 +44,6 @@ add_executable(harken_editor_tests
     UnitTest/ProjectPlatformBuildTest.cpp
     UnitTest/PlatformFieldMergeTest.cpp
     UnitTest/PlayablePropertyOccurrenceLifecycleTest.cpp
-    UnitTest/HubClientArgumentsTest.cpp
     UnitTest/ProjectInstanceTest.cpp
     UnitTest/ProjectUpgradeManagerTest.cpp
     UnitTest/ProjectOpenApprovalTest.cpp

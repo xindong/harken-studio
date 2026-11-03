@@ -80,6 +80,7 @@ private:
     void clearProjectLaunchGuidance();
     void showRowMenu(int row, const QPoint& globalPos);
     void openProject(const QString& canonicalPath);
+    void showLaunchError(const QString& error);
 
     ProjectStore* store_ = nullptr;
     QStackedWidget* viewStack_ = nullptr;
@@ -88,6 +89,7 @@ private:
     QTableWidget* table_ = nullptr;
     TableSorting* sorting_ = nullptr;
     QLabel* countLabel_ = nullptr;
+    QLabel* launchError_ = nullptr;
     QLineEdit* projectNameEdit_ = nullptr;
     QLineEdit* projectLocationEdit_ = nullptr;
     QComboBox* projectVersionCombo_ = nullptr;
@@ -105,7 +107,7 @@ private:
     QString projectLaunchGuidanceBuildId_;
     QString pendingCreateBuildId_;
     InstalledVersion createTarget_;
-    bool creatingProject_ = false;
+    QHash<QString, QString> pendingProjectBuilds_;
     std::vector<InstalledVersion> createVersions_;
     VersionsProvider versionsProvider_;
     QHash<QString, ProjectMetadata> projectMetadata_;

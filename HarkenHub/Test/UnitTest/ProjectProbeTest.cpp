@@ -25,7 +25,9 @@ QString writeProjectFile(const QString& path, int schemaVersion,
         {QStringLiteral("schemaVersion"), schemaVersion},
     };
     if (schemaVersion >= 2)
-        header.insert(QStringLiteral("savedStudioVersion"), QStringLiteral("1.4.0"));
+        header.insert(schemaVersion >= 9 ? QStringLiteral("studioVersion")
+                                         : QStringLiteral("savedStudioVersion"),
+                      QStringLiteral("1.4.0"));
     const QJsonObject root{
         {QStringLiteral("harkenDocument"), header},
         {QStringLiteral("content"), QJsonObject{
@@ -49,17 +51,19 @@ TEST(ProjectProbe, ReadsSchemaNameAndCanonicalPath)
 {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
-    const QString path = writeProjectFile(dir.filePath(QStringLiteral("Demo.hsp")), 5,
-                                          QStringLiteral("Demo Project"));
-    ASSERT_FALSE(path.isEmpty());
+    for (const int schemaVersion : {5, 9}) {
+        const QString path = writeProjectFile(dir.filePath(QStringLiteral("Demo.hsp")), schemaVersion,
+                                              QStringLiteral("Demo Project"));
+        ASSERT_FALSE(path.isEmpty());
 
-    const ProjectProbeResult result = ProjectProbe::probe(path);
-    EXPECT_TRUE(result.ok);
-    EXPECT_EQ(result.schemaVersion, 5);
-    EXPECT_EQ(result.savedStudioVersion, QStringLiteral("1.4.0"));
-    EXPECT_EQ(result.displayName, QStringLiteral("Demo Project"));
-    EXPECT_FALSE(result.projectId.isEmpty());
-    EXPECT_FALSE(result.canonicalPath.isEmpty());
+        const ProjectProbeResult result = ProjectProbe::probe(path);
+        EXPECT_TRUE(result.ok);
+        EXPECT_EQ(result.schemaVersion, schemaVersion);
+        EXPECT_EQ(result.savedStudioVersion, QStringLiteral("1.4.0"));
+        EXPECT_EQ(result.displayName, QStringLiteral("Demo Project"));
+        EXPECT_FALSE(result.projectId.isEmpty());
+        EXPECT_FALSE(result.canonicalPath.isEmpty());
+    }
 }
 
 TEST(ProjectProbe, ReadsProjectIdWhenPresent)

@@ -1,7 +1,6 @@
 #include "Launch/LaunchPreflight.h"
-#include "Launch/ProjectOpenAnalyzer.h"
 #include "Launch/StudioLauncher.h"
-#include "Launch/StudioLaunchMonitor.h"
+#include "Projects/ProjectIntakeConsumer.h"
 #include "Packaging/PackageReader.h"
 #include "Platform/PlatformPaths.h"
 #include "Projects/ProjectProbe.h"
@@ -15,6 +14,7 @@
 #include "Versions/IntegrityChecker.h"
 #include "Versions/LocalBuildRegistry.h"
 #include "Versions/SelfTestRunner.h"
+#include "Versions/StudioCapabilities.h"
 
 #include <gtest/gtest.h>
 #include <algorithm>
@@ -27,14 +27,56 @@
 #include <QProcess>
 #include <QScopeGuard>
 #include <QSettings>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QThread>
+
+namespace {
+
+bool editorIsVisible(const QString& project)
+{
+    QTcpSocket socket;
+    socket.connectToHost(QHostAddress::LocalHost, 9527);
+    if (!socket.waitForConnected(500))
+        return false;
+    const auto query = [&socket](const QString& command, const QJsonObject& arguments = QJsonObject{}) {
+        const QJsonObject request{{"cmd", command}, {"args", arguments}, {"request_id", command}};
+        socket.write(QJsonDocument(request).toJson(QJsonDocument::Compact) + '\n');
+        QElapsedTimer elapsed;
+        elapsed.start();
+        while (elapsed.elapsed() < 1000) {
+            while (socket.canReadLine()) {
+                const auto response = QJsonDocument::fromJson(socket.readLine()).object();
+                if (response.value("request_id").toString() == command)
+                    return response.value("result").toObject();
+            }
+            if (!socket.waitForReadyRead(100)
+                && socket.state() != QAbstractSocket::ConnectedState)
+                break;
+        }
+        return QJsonObject{};
+    };
+    const auto state = query(QStringLiteral("get_project_state"));
+    if (!state.value("project_loaded").toBool()
+        || QFileInfo(state.value("project_path").toString()).canonicalFilePath()
+            != QFileInfo(project).canonicalFilePath())
+        return false;
+    return query(QStringLiteral("get_ui_tree"), {{"root", "MainWindow"}, {"depth", 0}})
+        .value("visible").toBool();
+}
+
+}
 
 TEST(StudioPackageIntegration, InstallsRepairsRegistersCreatesAndOpensRealStudio)
 {
     const auto package = qEnvironmentVariable("HARKEN_HUB_STUDIO_PACKAGE");
     if (package.isEmpty())
         GTEST_SKIP() << "Set HARKEN_HUB_STUDIO_PACKAGE to a freshly built Studio package";
+    QTcpServer portProbe;
+    if (!portProbe.listen(QHostAddress::LocalHost, 9527))
+        GTEST_SKIP() << "Studio inspection port 9527 is already in use; close the other Studio instance before running this test";
+    portProbe.close();
     const auto retainedRoot = qEnvironmentVariable("HARKEN_HUB_STUDIO_TEST_ROOT");
     QTemporaryDir directory(QDir(retainedRoot.isEmpty() ? QDir::tempPath() : retainedRoot)
                                .filePath("hub-studio-XXXXXX"));
@@ -116,47 +158,41 @@ TEST(StudioPackageIntegration, InstallsRepairsRegistersCreatesAndOpensRealStudio
         if (recent.removeAll(project) > 0)
             settings.setValue("RecentProjects", recent);
     });
+    VNH::ProjectStore store;
+    ASSERT_TRUE(store.open(directory.filePath("projects.db")));
+    VNH::ProjectIntakeConsumer intake(&store);
     const auto runStudio = [&](bool create) {
-        VNH::StudioLaunchMonitor monitor;
-        if (!monitor.listen())
-            return false;
-        monitor.setExpectedBuildId(build);
-        monitor.setExpectedOperation(create ? "createProject" : "openProject");
-        monitor.setExpectedLaunchIntent("DirectOpenOnly");
         VNH::StudioLaunchSpec launch;
         launch.installPath = installed.installPath;
         launch.executablePath = versions.front().executablePath;
         launch.projectPath = project;
-        launch.expectedBuildId = build;
-        launch.serverName = monitor.serverName();
-        launch.sessionToken = monitor.sessionToken();
-        launch.capabilitiesVersion = protocol;
         VNH::StudioCreateSpec creation;
         creation.launch = launch;
         creation.projectName = "Smoke";
         creation.projectLocation = directory.filePath("Projects");
-        bool ready = false;
-        QString failure;
-        QObject::connect(&monitor, &VNH::StudioLaunchMonitor::ready, [&]() { ready = true; });
-        QObject::connect(&monitor, &VNH::StudioLaunchMonitor::failed, [&](const QString& value) { failure = value; });
         QProcess process;
         process.setWorkingDirectory(installed.installPath);
         process.start(launch.executablePath, create ? VNH::StudioLauncher::argumentsForCreate(creation)
                                                     : VNH::StudioLauncher::argumentsFor(launch));
         if (!process.waitForStarted(10000))
             return false;
-        monitor.setExpectedProcess(process.processId(), launch.executablePath);
         QElapsedTimer elapsed;
         elapsed.start();
-        while (!ready && failure.isEmpty() && process.state() != QProcess::NotRunning && elapsed.elapsed() < 60000) {
+        bool synchronized = false;
+        bool editorShown = false;
+        while ((!synchronized || !editorShown)
+               && process.state() != QProcess::NotRunning && elapsed.elapsed() < 60000) {
             QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+            synchronized = intake.consumeAll() || synchronized;
+            if (synchronized)
+                editorShown = editorIsVisible(project);
             QThread::msleep(5);
         }
-        monitor.close();
         process.kill();
         process.waitForFinished(5000);
-        EXPECT_TRUE(ready) << failure.toStdString() << process.readAllStandardError().toStdString();
-        return ready;
+        EXPECT_TRUE(synchronized) << process.readAllStandardError().toStdString();
+        EXPECT_TRUE(editorShown);
+        return synchronized && editorShown;
     };
     ASSERT_TRUE(runStudio(true));
     const auto probe = VNH::ProjectProbe::probe(project);
@@ -166,13 +202,8 @@ TEST(StudioPackageIntegration, InstallsRepairsRegistersCreatesAndOpensRealStudio
     VNH::ProjectRecord record;
     record.canonicalPath = probe.canonicalPath;
     record.projectId = probe.projectId;
-    const auto decision = VNH::LaunchPreflight::evaluate(record, versions, VNH::InstallIndex::snapshot(), VNH::LaunchIntent::DirectOpenOnly, build);
+    const auto decision = VNH::LaunchPreflight::evaluate(record, versions, VNH::InstallIndex::snapshot(), build);
     ASSERT_EQ(decision.verdict, VNH::LaunchVerdict::Ready) << decision.reason.toStdString();
-    if (protocol == VNH::kStudioCapabilitiesVersion) {
-        const auto analysis = VNH::ProjectOpenAnalyzer::run(decision.version, project, "real-package-open");
-        ASSERT_TRUE(analysis.reportValid && analysis.ok) << analysis.errorCode.toStdString() << analysis.technicalDetails.toStdString();
-        EXPECT_FALSE(analysis.upgradeRequired);
-    }
     ASSERT_TRUE(runStudio(false));
 
     QFile cached(VNH::InstallPackageCache::packagePath(build));

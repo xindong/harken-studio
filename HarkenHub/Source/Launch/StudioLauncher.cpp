@@ -1,7 +1,6 @@
 #include "Launch/StudioLauncher.h"
 
 #include "Platform/PlatformPaths.h"
-#include "Platform/ProcessScan.h"
 
 #include <QCoreApplication>
 #include <QFileInfo>
@@ -20,24 +19,7 @@ QString hubText(const char* source)
 
 QStringList StudioLauncher::argumentsFor(const StudioLaunchSpec& spec)
 {
-    if (spec.capabilitiesVersion != 1 && spec.capabilitiesVersion != kStudioCapabilitiesVersion)
-        return {QStringLiteral("--project"), spec.projectPath};
-    QStringList arguments{
-        QStringLiteral("--project"),           spec.projectPath,
-        QStringLiteral("--hub-session"),  spec.serverName,
-        QStringLiteral("--hub-token"),    spec.sessionToken,
-        QStringLiteral("--expected-build-id"), spec.expectedBuildId,
-        QStringLiteral("--launch-intent"), launchIntentName(spec.intent),
-    };
-    if (spec.capabilitiesVersion == kStudioCapabilitiesVersion
-        && spec.intent == LaunchIntent::UpgradeApprovedByHub
-        && !spec.projectOpenRequestId.isEmpty() && !spec.projectOpenApproval.isEmpty()) {
-        arguments << QStringLiteral("--project-open-request-id")
-                  << spec.projectOpenRequestId;
-        arguments << QStringLiteral("--project-open-approval")
-                  << spec.projectOpenApproval;
-    }
-    return arguments;
+    return {QStringLiteral("--project"), spec.projectPath};
 }
 
 QStringList StudioLauncher::argumentsForCreate(const StudioCreateSpec& spec)
@@ -46,10 +28,6 @@ QStringList StudioLauncher::argumentsForCreate(const StudioCreateSpec& spec)
         QStringLiteral("--create-project"),
         QStringLiteral("--project-name"), spec.projectName,
         QStringLiteral("--project-location"), spec.projectLocation,
-        QStringLiteral("--hub-session"), spec.launch.serverName,
-        QStringLiteral("--hub-token"), spec.launch.sessionToken,
-        QStringLiteral("--expected-build-id"), spec.launch.expectedBuildId,
-        QStringLiteral("--launch-intent"), launchIntentName(LaunchIntent::DirectOpenOnly),
     };
     if (!spec.templatePath.isEmpty()) {
         arguments << QStringLiteral("--project-template-id") << spec.templateId
@@ -70,7 +48,7 @@ bool StudioLauncher::start(const StudioLaunchSpec& spec, QString* error)
         return false;
     }
     if (!QProcess::startDetached(program, argumentsFor(spec),
-                                 spec.installPath, &pid_)) {
+                                 spec.installPath)) {
         *error = hubText("HarkenStudio did not start");
         return false;
     }
@@ -89,21 +67,11 @@ bool StudioLauncher::startCreate(const StudioCreateSpec& spec, QString* error)
         return false;
     }
     if (!QProcess::startDetached(program, argumentsForCreate(spec),
-                                 spec.launch.installPath, &pid_)) {
+                                 spec.launch.installPath)) {
         *error = hubText("HarkenStudio did not start");
         return false;
     }
     return true;
-}
-
-bool StudioLauncher::stillRunning() const
-{
-    return pid_ > 0 && !executablePathForPid(pid_).isEmpty();
-}
-
-bool StudioLauncher::terminate()
-{
-    return terminateProcessById(pid_);
 }
 
 }

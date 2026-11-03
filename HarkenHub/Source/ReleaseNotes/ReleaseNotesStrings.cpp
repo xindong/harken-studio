@@ -1,6 +1,7 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Open and create projects without Hub startup progress dialogs. Studio handles project checks, upgrade confirmation and startup errors, while Hub keeps the project list and opening history in sync."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Restore the current Unity Integration Package from verified official files, with a change preview and permanent safety backup."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Preserve project-specific files when uninstalling the Unity Integration Package and allow reinstallation without manually clearing the remaining folder."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Report files requiring P4 checkout or unlocking, preserve existing read-only protection, and recover interrupted uninstallation or restoration."),
