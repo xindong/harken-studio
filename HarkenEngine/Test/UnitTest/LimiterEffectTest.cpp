@@ -14,6 +14,7 @@
 #include <harken/Harken.h>
 
 #include "Common/TestUtil.h"
+#include "harken/core/FloatMode.h"
 #include "harken/render/BuiltinEffects.h"
 #include "harken/render/generated/harken_effect_registry.g.h"
 
@@ -53,35 +54,6 @@ struct ReferenceLimiter {
         gain = std::min(required, released);
         return gain;
     }
-};
-
-struct CompressorBlockTelemetryBeforeLinearMinimum {
-    float mainInputPeak = 0.0f;
-    float detectorPeak = 0.0f;
-    float outputPeak = 0.0f;
-    float maxGainReductionDb = 0.0f;
-    float endGainReductionDb = 0.0f;
-    std::uint64_t detectorNonFiniteCount = 0;
-    std::uint64_t detectorSaturationCount = 0;
-    bool resetThisBlock = false;
-    bool resetBridgeActive = false;
-};
-
-struct CompressorStateBeforeLinearMinimum {
-    std::uint32_t sampleRate = 0;
-    harken::CompressorParameters authoredParameters{};
-    harken::CompressorPreparedParameters parameters{};
-    harken::CompressorPreparedParameters targetParameters{};
-    harken::CompressorPreparedParameters parameterIncrements{};
-    std::uint32_t parameterTransitionFramesRemaining = 0;
-    float currentGain = 1.0f;
-    float lastAppliedWetGain = 1.0f;
-    float resetBridgeStartGain = 1.0f;
-    std::uint32_t resetBridgeTotalFrames = 0;
-    std::uint32_t resetBridgeFramesRemaining = 0;
-    bool hasRendered = false;
-    bool resetPending = false;
-    CompressorBlockTelemetryBeforeLinearMinimum telemetry{};
 };
 
 double ReferenceCompressorTargetGain(
@@ -280,6 +252,164 @@ TEST(LimiterEffect, CurrentFrameCeilingLinkedBalanceAndZeroLatency) {
     // One linked gain is applied to both channels, preserving their 4:1 ratio.
     EXPECT_FLOAT_EQ(left[0], right[0] * 4.0f);
     EXPECT_FLOAT_EQ(left[2], right[2] * 4.0f);
+}
+
+TEST(LimiterEffect, FiniteExtremeFramesRetainLinkedOutputWithFlushToZero) {
+    harken::floatmode::ScopedFlushDenormals flush;
+    Kernel whole(-24.0f, 100.0f);
+    Kernel split(-24.0f, 100.0f);
+    ReferenceLimiter reference(-24.0, 100.0);
+    const std::vector<float> input = {
+        0.25f, 1.0e38f, -(std::numeric_limits<float>::max)(),
+        1.0e20f, 0.01f, 0.0f};
+    auto left = input;
+    auto splitLeft = input;
+    std::vector<float> right(input.size());
+    for (std::size_t i = 0; i < input.size(); ++i)
+        right[i] = -0.5f * input[i];
+    auto splitRight = right;
+    float* channels[] = {left.data(), right.data()};
+    float* splitChannels[] = {splitLeft.data(), splitRight.data()};
+    whole.effect.process(&whole.state, channels, 2, 0,
+                         static_cast<std::uint32_t>(input.size()));
+    for (std::uint32_t i = 0; i < input.size(); ++i)
+        split.effect.process(&split.state, splitChannels, 2, i, 1);
+    EXPECT_EQ(left, splitLeft);
+    EXPECT_EQ(right, splitRight);
+    for (std::size_t i = 0; i < input.size(); ++i) {
+        const double expected = static_cast<double>(input[i]) *
+            reference.Step(std::abs(static_cast<double>(input[i])));
+        EXPECT_NEAR(expected, left[i], 2.0e-6) << i;
+        EXPECT_NEAR(-0.5 * expected, right[i], 2.0e-6) << i;
+        EXPECT_LE(std::abs(left[i]), whole.state.ceilingLinear);
+    }
+}
+
+TEST(CompressorKernel, FiniteExtremeEnvelopeSurvivesRetargetResetAndBlockSplit) {
+    harken::floatmode::ScopedFlushDenormals flush;
+    harken::CompressorParameters parameters{};
+    parameters.thresholdDb = -96.0f;
+    parameters.ratio = 20.0f;
+    parameters.attackMs = 0.1f;
+    parameters.kneeDb = 0.0f;
+    harken::CompressorPreparedParameters prepared{};
+    ASSERT_TRUE(harken::PrepareCompressorParameters(parameters, kRate, &prepared));
+    for (bool externalDetector : {false, true}) {
+        SCOPED_TRACE(externalDetector);
+        harken::CompressorState whole{}, split{};
+        harken::CompressorInit(&whole, kRate);
+        harken::CompressorApplyPreparedParameters(&whole, prepared);
+        split = whole;
+        constexpr float input = 1.0e38f;
+        std::vector<float> left(2048, input), right(2048, -0.5f * input);
+        auto splitLeft = left;
+        auto splitRight = right;
+        std::vector<float> detector(left.size(), input);
+        const float* detectorData = externalDetector ? detector.data() : nullptr;
+        float* channels[] = {left.data(), right.data()};
+        float* splitChannels[] = {splitLeft.data(), splitRight.data()};
+        harken::CompressorBeginBlock(&whole);
+        harken::CompressorBeginBlock(&split);
+        harken::CompressorProcessWithDetector(&whole, channels, 2, detectorData, 0, 2048);
+        harken::CompressorProcessWithDetector(&split, splitChannels, 2, detectorData, 0, 1001);
+        harken::CompressorBeginBlock(&split);
+        harken::CompressorProcessWithDetector(&split, splitChannels, 2, detectorData, 1001, 1047);
+        EXPECT_EQ(left, splitLeft);
+        EXPECT_EQ(right, splitRight);
+        const double target = ReferenceCompressorTargetGain(prepared, input);
+        EXPECT_NEAR(input * target, left.back(), input * target * 2.0e-5);
+        EXPECT_NEAR(-0.5 * input * target, right.back(), input * target * 2.0e-5);
+        EXPECT_GT(whole.currentGain, 0.0);
+        EXPECT_NEAR(-20.0 * std::log10(target), whole.telemetry.endGainReductionDb, 0.002);
+        EXPECT_TRUE(std::isfinite(whole.telemetry.maxGainReductionDb));
+
+        parameters.thresholdDb = -90.0f;
+        harken::CompressorPreparedParameters retarget{};
+        ASSERT_TRUE(harken::PrepareCompressorParameters(parameters, kRate, &retarget));
+        harken::CompressorRequestPreparedParameters(&whole, retarget, 17);
+        double expectedGain = whole.currentGain;
+        for (unsigned i = 0; i < 32; ++i) {
+            float l = input, r = -0.5f * input;
+            float* frame[] = {&l, &r};
+            harken::CompressorProcessWithDetector(&whole, frame, 2,
+                externalDetector ? &input : nullptr, 0, 1);
+            const double nextTarget = ReferenceCompressorTargetGain(whole.parameters, input);
+            const double coeff = nextTarget < expectedGain ? whole.parameters.attackCoeff
+                                                         : whole.parameters.releaseCoeff;
+            expectedGain = coeff * expectedGain + (1.0 - coeff) * nextTarget;
+            EXPECT_NEAR(input * expectedGain, l, input * expectedGain * 2.0e-5) << i;
+        }
+        const double previousOutput = input * whole.lastAppliedWetGain;
+        harken::CompressorRequestReset(&whole, 8);
+        float l = input, r = -0.5f * input;
+        float* frame[] = {&l, &r};
+        harken::CompressorProcess(&whole, frame, 2, 0, 1);
+        EXPECT_GT(l, 0.0f);
+        EXPECT_NEAR(previousOutput, l, previousOutput * 2.0e-5);
+        EXPECT_TRUE(std::isfinite(whole.telemetry.endGainReductionDb));
+    }
+}
+
+TEST(CompressorKernel, LowRateUnityAndTinyTargetBoundaryRemainAccurate) {
+    harken::floatmode::ScopedFlushDenormals flush;
+    for (float peak : {0.125f, 1.0e14f, 1.0e16f, 1.0e35f}) {
+        harken::CompressorParameters parameters{};
+        parameters.thresholdDb = -96.0f;
+        parameters.ratio = peak < 1.0f ? 1.0f : 20.0f;
+        parameters.attackMs = 0.1f;
+        parameters.kneeDb = 0.0f;
+        harken::CompressorPreparedParameters prepared{};
+        ASSERT_TRUE(harken::PrepareCompressorParameters(parameters, 8000, &prepared));
+        harken::CompressorState state{};
+        harken::CompressorInit(&state, 8000);
+        harken::CompressorApplyPreparedParameters(&state, prepared);
+        std::vector<float> signal(2048, peak);
+        float* channels[] = {signal.data()};
+        harken::CompressorProcess(&state, channels, 1, 0, 2048);
+        const double expected = peak * ReferenceCompressorTargetGain(prepared, peak);
+        EXPECT_NEAR(expected, signal.back(), expected * 2.0e-5) << peak;
+        if (peak < 1.0f) {
+            for (float sample : signal) EXPECT_EQ(peak, sample);
+        }
+    }
+}
+
+TEST(DynamicsEffect, PublicVoiceAndBusPreserveFiniteExtremePcm) {
+    for (bool bus : {false, true}) {
+        for (bool compressor : {false, true}) {
+            SCOPED_TRACE(::testing::Message() << bus << '/' << compressor);
+            VnConfig config = harkentest::MakeNullConfig(1, kBlock, kRate);
+            config.fxSlotsPerVoice = 1;
+            config.fxSlotsPerBus = 1;
+            config.limiterEffectPoolCapacity = 1;
+            config.compressorEffectPoolCapacity = 1;
+            EngineSession session(config);
+            ASSERT_EQ(VN_OK, session.InitResult());
+            constexpr float input = 1.0e38f;
+            const auto source = harkentest::MakeDC(kBlock * 10, input);
+            const auto pcm = harkentest::MonoDesc(source, kRate);
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(42), &pcm));
+            const auto play = harkentest::MakePlayDesc(harkentest::ObjectId(42));
+            VnVoiceHandle voice = 0;
+            ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+            const auto limiterDesc = LimiterDesc(-24.0f, 100.0f);
+            const auto compressorDesc = CompressorDesc(-96.0f, 20.0f, 0.1f, 100.0f, 0.0f, 0.0f);
+            const auto type = compressor ? VN_EFFECT_COMPRESSOR : VN_EFFECT_LIMITER;
+            const auto* desc = compressor ? AsBase(&compressorDesc) : AsBase(&limiterDesc);
+            ASSERT_EQ(VN_OK, bus ? Vn_SetBusEffect(VN_BUS_MASTER, 0, type, desc)
+                                 : Vn_SetVoiceEffect(voice, 0, type, desc));
+            Capture capture;
+            harkentest::PumpAndCapture(session.Engine(), 8, capture);
+            ASSERT_FALSE(capture.left.empty());
+            const double inputDb = 20.0 * std::log10(static_cast<double>(input));
+            const double expected = compressor
+                ? std::pow(10.0, (-96.0 + (inputDb + 96.0) / 20.0) / 20.0)
+                : std::pow(10.0, -24.0 / 20.0);
+            EXPECT_NEAR(expected, capture.left.back(), expected * 3.0e-5);
+            EXPECT_NEAR(expected, capture.right.back(), expected * 3.0e-5);
+            EXPECT_EQ(0u, harken::memguard::HitCount());
+        }
+    }
 }
 
 TEST(LimiterEffect, LinkedDetectorScansEveryChannelNotOnlyChannelZero) {
@@ -737,21 +867,9 @@ TEST(LimiterEffect, ValidationRefusalsHaveNoPoolOrRenderSideEffects) {
     EXPECT_EQ(0u, harken::memguard::HitCount());
 }
 
-TEST(CompressorKernel, LinearGainAccumulatorReusesTelemetryPadding) {
-    EXPECT_EQ(sizeof(CompressorBlockTelemetryBeforeLinearMinimum),
-              sizeof(harken::CompressorBlockTelemetry));
-    EXPECT_EQ(alignof(CompressorBlockTelemetryBeforeLinearMinimum),
-              alignof(harken::CompressorBlockTelemetry));
-    EXPECT_EQ(sizeof(CompressorStateBeforeLinearMinimum),
-              sizeof(harken::CompressorState));
-    EXPECT_EQ(alignof(CompressorStateBeforeLinearMinimum),
-              alignof(harken::CompressorState));
-}
-
-TEST(CompressorKernel, PreparedCacheLayoutAndRegistryPoolStrideArePinned) {
+TEST(CompressorKernel, PreparedCacheAndRegistryMatchInternalState) {
     EXPECT_EQ(44u, sizeof(harken::CompressorPreparedParameters));
     EXPECT_EQ(4u, alignof(harken::CompressorPreparedParameters));
-    EXPECT_EQ(240u, sizeof(harken::CompressorState));
     EXPECT_EQ(8u, alignof(harken::CompressorState));
 
     const harken::EffectRegistryRow* row =
@@ -760,13 +878,7 @@ TEST(CompressorKernel, PreparedCacheLayoutAndRegistryPoolStrideArePinned) {
     EXPECT_EQ(sizeof(harken::CompressorState), row->stateSize);
     EXPECT_EQ(alignof(harken::CompressorState), row->stateAlign);
 
-    constexpr std::size_t kPoolCapacity = 64;
-    constexpr std::size_t kPoolUnit = sizeof(std::max_align_t);
-    const std::size_t poolBytes =
-        kPoolCapacity *
-        ((sizeof(harken::CompressorState) + kPoolUnit - 1) / kPoolUnit) *
-        kPoolUnit;
-    EXPECT_EQ(15360u, poolBytes);
+
 }
 
 TEST(CompressorKernel, SteadyTargetGainMatchesLegacyOracleMatrix) {
@@ -1050,8 +1162,8 @@ TEST(CompressorKernel,
             &state, channels, 1, &detector, 0, 1);
 
         EXPECT_EQ(0u, state.parameterTransitionFramesRemaining);
-        EXPECT_EQ(0, std::memcmp(&expectedGain, &state.currentGain,
-                                 sizeof(expectedGain)));
+        EXPECT_NEAR(expectedGain, state.currentGain, 2.0e-7);
+        EXPECT_FLOAT_EQ(expectedGain, output);
     }
 
     harken::CompressorState retargeted{};
@@ -1106,9 +1218,8 @@ TEST(CompressorKernel,
     channels[0] = &output;
     harken::CompressorProcessWithDetector(
         &retargeted, channels, 1, &retargetDetector, 0, 1);
-    EXPECT_EQ(0, std::memcmp(&expectedGain,
-                             &retargeted.currentGain,
-                             sizeof(expectedGain)));
+    EXPECT_NEAR(expectedGain, retargeted.currentGain, 2.0e-7);
+    EXPECT_FLOAT_EQ(expectedGain, output);
 }
 
 TEST(CompressorKernel, NeutralRatioAndMakeupAreBitTransparent) {

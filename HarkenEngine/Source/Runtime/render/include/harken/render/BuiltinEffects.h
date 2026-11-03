@@ -193,7 +193,8 @@ struct LimiterState {
     float ceilingLinear = 1.0f;
     float releaseCoeff = 0.0f;
     float releaseAdd = 1.0f;
-    float currentGain = 1.0f;
+    // A finite float peak can require a gain below the float normal range.
+    double currentGain = 1.0;
     float targetCeilingLinear = 1.0f;
     float targetReleaseCoeff = 0.0f;
     float ceilingIncrement = 0.0f;
@@ -233,7 +234,7 @@ struct CompressorBlockTelemetry {
     float outputPeak = 0.0f;
     float maxGainReductionDb = 0.0f;
     float endGainReductionDb = 0.0f;
-    float blockMinimumLinearGain = 1.0f;
+    double blockMinimumLinearGain = 1.0;
     std::uint64_t detectorNonFiniteCount = 0;
     std::uint64_t detectorSaturationCount = 0;
     bool resetThisBlock = false;
@@ -247,9 +248,10 @@ struct CompressorState {
     CompressorPreparedParameters targetParameters{};
     CompressorPreparedParameters parameterIncrements{};
     std::uint32_t parameterTransitionFramesRemaining = 0;
-    float currentGain = 1.0f;
-    float lastAppliedWetGain = 1.0f;
-    float resetBridgeStartGain = 1.0f;
+    // Keep attenuation through its final sample product, including resets.
+    double currentGain = 1.0;
+    double lastAppliedWetGain = 1.0;
+    double resetBridgeStartGain = 1.0;
     std::uint32_t resetBridgeTotalFrames = 0;
     std::uint32_t resetBridgeFramesRemaining = 0;
     bool hasRendered = false;
