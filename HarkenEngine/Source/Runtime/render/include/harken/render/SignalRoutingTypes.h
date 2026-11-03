@@ -1,6 +1,7 @@
 #ifndef HARKEN_RENDER_SIGNAL_ROUTING_TYPES_H
 #define HARKEN_RENDER_SIGNAL_ROUTING_TYPES_H
 #include <harken/Harken.h>
+#include <cstdint>
 namespace harken {
 struct SignalBusRoutingInfo {
     VnBusId id{};
