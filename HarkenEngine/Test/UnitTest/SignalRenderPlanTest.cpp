@@ -233,5 +233,14 @@ TEST(SignalRenderPlan, QueuedParameterPublicationPreservesPcmEnvelopeAndRunningS
     connections[0].stableId = {0, 4};
     auto differentRelation = SignalRenderPlan::Prepare(kFormat, nodes, connections, paths);
     ASSERT_TRUE(differentRelation->ConfigurePublication(14, 100, queued.get(), 256));
-    EXPECT_FALSE(differentRelation->AdoptContinuityFrom(*queued));
+    EXPECT_TRUE(differentRelation->AdoptContinuityFrom(*queued));
+    // Changing relation identity invalidates its PCM, but a surviving target
+    // must release from its current gain rather than snap back to unity.
+    source.pcm.fill(1); target.pcm.fill(1);
+    auto block = Block(12); block.world = differentRelation->WorldIdentity();
+    ASSERT_TRUE(differentRelation->BeginBlock(block));
+    ASSERT_TRUE(differentRelation->ProcessContent(members));
+    ASSERT_TRUE(differentRelation->CommitBlock());
+    EXPECT_LT(target.pcm.front(), .9f);
+    EXPECT_GT(target.pcm.back(), target.pcm.front());
 }

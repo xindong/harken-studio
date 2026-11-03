@@ -56,7 +56,11 @@ TEST(DuckingReceiver, MissingSourceReleasesAndResetClearsDetectionHistory) {
     for (int block = 0; block < 20; ++block)
         ASSERT_TRUE(receiver.Process(planes, planes, 1, 256, nullptr, nullptr, 0, gains.data()));
     EXPECT_LT(gains.back(), 1e-10);
-    for (int block = 0; block < 20; ++block)
+    const double before = gains.back();
+    ASSERT_TRUE(receiver.Process(planes, nullptr, 1, 256, nullptr, nullptr, 0, gains.data()));
+    for (std::uint32_t n = 0; n < 256; ++n)
+        EXPECT_NEAR(gains[n], 1 + (before - 1) * std::pow(Parameters().release, n + 1), 2e-14);
+    for (int block = 0; block < 19; ++block)
         ASSERT_TRUE(receiver.Process(planes, nullptr, 1, 256, nullptr, nullptr, 0, gains.data()));
     EXPECT_NEAR(gains.back(), 1, 1e-12);
     ASSERT_TRUE(receiver.Process(planes, planes, 1, 256, nullptr, nullptr, 0, gains.data()));

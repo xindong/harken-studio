@@ -4377,8 +4377,9 @@ WorldInstallStatus ValidateCurrentWorldImpl(
         ? kWorldCapabilityUnit2Mask
         : replayVintageThree ? kWorldCapabilityUnit4Mask
                              : kWorldCapabilityUnit1ActionMask;
+    supportedMask |= kWorldCapabilitySignalRelations;
     if (readableOnly)
-        supportedMask |= kWorldCapabilityEntryScheduling | kWorldCapabilitySignalRelations;
+        supportedMask |= kWorldCapabilityEntryScheduling;
     if ((requiredMask & ~supportedMask) != 0) {
         return WorldInstallStatus::CapabilityUnavailable;
     }

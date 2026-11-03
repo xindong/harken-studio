@@ -168,17 +168,47 @@ public:
                               std::uint64_t rampFrames) noexcept {
         if (publicationIdentity_ != 0 || identity == 0 || contentIdentity == 0 || open_ || committed_)
             return false;
-        publicationIdentity_ = worldIdentity_ = identity;
-        contentIdentity_ = contentIdentity;
-        updateRampFrames_ = rampFrames;
-        if (predecessor != nullptr && predecessor->publicationIdentity_ != 0 &&
-            contentIdentity_ == predecessor->contentIdentity_ && SameStructure(*predecessor)) {
-            predecessorIdentity_ = predecessor->publicationIdentity_;
-            worldIdentity_ = predecessor->worldIdentity_;
-        }
+        try {
+            std::vector<std::uint32_t> receivers;
+            const bool continuous = predecessor != nullptr && predecessor->publicationIdentity_ != 0 &&
+                contentIdentity == predecessor->contentIdentity_ && SameFormat(*predecessor);
+            if (continuous) {
+                receivers.assign(nodes_.size(), UINT32_MAX);
+                for (std::size_t i = 0; i < nodes_.size(); ++i) {
+                    const auto& next = nodes_[i];
+                    if (next.target == UINT32_MAX || next.stableId == VnObjectId{}) continue;
+                    for (std::uint32_t j = 0; j < predecessor->nodes_.size(); ++j) {
+                        const auto& old = predecessor->nodes_[j];
+                        if (old.target != UINT32_MAX && old.kind == next.kind && old.stableId == next.stableId &&
+                            old.busId == next.busId && old.busGeneration == next.busGeneration) {
+                            receivers[i] = j;
+                            break;
+                        }
+                    }
+                }
+            }
+            receiverPredecessors_ = std::move(receivers);
+            publicationIdentity_ = worldIdentity_ = identity;
+            contentIdentity_ = contentIdentity;
+            updateRampFrames_ = rampFrames;
+            if (continuous) {
+                predecessorIdentity_ = predecessor->publicationIdentity_;
+                worldIdentity_ = predecessor->worldIdentity_;
+                exchangeContinuous_ = SameStructure(*predecessor);
+            }
+        } catch (...) { return false; }
         return true;
     }
     std::uint64_t WorldIdentity() const noexcept { return worldIdentity_; }
+    bool SameMembership(const SignalRenderPlan& other) const noexcept {
+        if (membership_.size() != other.membership_.size()) return false;
+        for (std::size_t i = 0; i < membership_.size(); ++i) {
+            const auto& a = membership_[i]; const auto& b = other.membership_[i];
+            if (a.stableId != b.stableId || a.node != b.node || a.propertyFingerprint != b.propertyFingerprint ||
+                !SameDefinitionSource(a.source, b.source)) return false;
+        }
+        return true;
+    }
 
     // Run before retiring the old topology slot. Swapping transfers storage to
     // the retired owner, so neither allocation nor destruction occurs on audio.
@@ -186,10 +216,11 @@ public:
         if (&previous == this || adopted_ || open_ || previous.open_ ||
             predecessorIdentity_ == 0 || predecessorIdentity_ != previous.publicationIdentity_)
             return false;
-        exchange_.Swap(previous.exchange_);
-        for (std::size_t i = 0; i < nodes_.size(); ++i)
-            nodes_[i].receiver.AdoptStateFrom(previous.nodes_[i].receiver);
-        for (std::uint32_t i = 0; i < relations_.size(); ++i)
+        if (exchangeContinuous_) exchange_.Swap(previous.exchange_);
+        for (std::size_t i = 0; i < receiverPredecessors_.size(); ++i)
+            if (receiverPredecessors_[i] != UINT32_MAX)
+                nodes_[i].receiver.AdoptStateFrom(previous.nodes_[receiverPredecessors_[i]].receiver);
+        for (std::uint32_t i = 0; exchangeContinuous_ && i < relations_.size(); ++i)
             if (relations_[i].level != previous.relations_[i].level) {
                 const bool changed = exchange_.SetLevel(i, relations_[i].level, updateRampFrames_);
                 assert(changed);
@@ -382,9 +413,12 @@ public:
     }
 
 private:
+    bool SameFormat(const SignalRenderPlan& other) const noexcept {
+        return format_.channels == other.format_.channels && format_.capacityFrames == other.format_.capacityFrames &&
+            format_.sampleRate == other.format_.sampleRate && format_.layout == other.format_.layout;
+    }
     bool SameStructure(const SignalRenderPlan& other) const noexcept {
-        if (format_.channels != other.format_.channels || format_.capacityFrames != other.format_.capacityFrames ||
-            format_.sampleRate != other.format_.sampleRate || format_.layout != other.format_.layout ||
+        if (!SameFormat(other) ||
             actualRouting_ != other.actualRouting_ || busNodes_ != other.busNodes_ ||
             nodes_.size() != other.nodes_.size() || relations_.size() != other.relations_.size()) return false;
         for (std::size_t i = 0; i < nodes_.size(); ++i) {
@@ -449,7 +483,8 @@ private:
             }
         }
         const auto& feedback = blockRouting_.nodes.empty() ? feedback_.Nodes()[index] : blockRouting_.nodes[index];
-        const bool processed = node.receiver.Process(main, side, format_.channels, current_.frames,
+        const bool processed = node.receiver.Process(main, exchange_.HasTargetInput(node.target) ? side : nullptr,
+            format_.channels, current_.frames,
             feedback.feedbackInput ? pre_.data() : nullptr,
             feedback.feedbackInput ? post_.data() : nullptr, feedback.slope, gain_.data());
         assert(processed);
@@ -474,6 +509,8 @@ private:
     std::uint64_t publicationIdentity_ = 0, contentIdentity_ = 0, worldIdentity_ = 1;
     std::uint64_t predecessorIdentity_ = 0, updateRampFrames_ = 0;
     bool adopted_ = false;
+    bool exchangeContinuous_ = false;
+    std::vector<std::uint32_t> receiverPredecessors_;
 };
 
 } // namespace harken

@@ -120,7 +120,10 @@ public:
                 denominator = std::max({denominator, m_preReference, m_postReference});
                 effectiveSlope = slope;
             }
-            const double desired = std::max(0.0,
+            // A removed input is distinct from a still-connected zero signal.
+            // Consume detector time above, but do not re-attack stale energy
+            // when leaving a feedback component after its last input is gone.
+            const double desired = sidechain == nullptr ? 1.0 : std::max(0.0,
                 1.0 - effectiveSlope * std::sqrt(sideEnergy) / denominator);
             const double coefficient = desired < m_gain
                 ? m_parameters.attack : m_parameters.release;

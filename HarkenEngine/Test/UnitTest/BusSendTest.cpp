@@ -1010,6 +1010,57 @@ TEST(BusSend, ClearVoiceSendStopsContribution) {
 
 } // namespace
 
+TEST(BusSend, FormalSignalInstallReachesMixerAndRemovedInputsReleaseSmoothly) {
+    auto config = MakeNullConfig(2, kBlockFrames, 48000);
+    config.maxBuses = 4;
+    config.topologyPlanPoolCapacity = 8;
+    EngineSession session(config);
+    ASSERT_EQ(session.InitResult(), VN_OK);
+    auto* engine = session.Engine();
+    ASSERT_EQ(Vn_CreateBus(kBusA, VN_BUS_MASTER), VN_OK);
+    ASSERT_EQ(Vn_CreateBus(kBusB, VN_BUS_MASTER), VN_OK);
+    std::array<harken::SignalReceiverV1, 2> receivers{};
+    receivers[0].target.stableId = kBusA;
+    receivers[1].target.stableId = kBusB;
+    std::array<harken::SignalRelationV1, 2> relations{};
+    for (std::uint32_t i = 0; i < 2; ++i) {
+        relations[i].stableId = harkentest::ObjectId(10000 + i);
+        relations[i].source = receivers[1 - i].target;
+        relations[i].target = receivers[i].target;
+    }
+    harken::ContainerWorldInstallViewV1 world;
+    world.sourceBodyVintage = harken::kCurrentWorldBodyVintageV20;
+    world.signalRelations = relations.data(); world.signalRelationCount = 2;
+    world.signalReceivers = receivers.data(); world.signalReceiverCount = 2;
+    world.identity.capabilityMask = harken::kWorldCapabilitySignalRelations;
+    world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV7(world);
+    ASSERT_EQ(harken::InstallContainerWorldV1(*engine, world).status, harken::WorldInstallStatus::Ok);
+    const auto samples = MakeDC(kBlockFrames * 400, .1f);
+    const auto pcm = MonoDesc(samples, 48000);
+    ASSERT_EQ(Vn_RegisterPCM(harkentest::ObjectId(1), &pcm), VN_OK);
+    for (auto bus : {kBusA, kBusB}) {
+        auto play = MakePlayDesc(harkentest::ObjectId(1));
+        play.busId = bus;
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(harkentest::PlayRaw(&play, &voice), VN_OK);
+    }
+    ASSERT_EQ(Vn_Update(), VN_OK);
+    Capture settled;
+    PumpAndCapture(engine, 150, settled);
+    const double slope = 1 / (1 / harken::kDuckingBaselineSlope + 1);
+    ASSERT_NEAR(settled.left.back(), .2 / (1 + slope), 1e-5);
+    world.signalRelations = nullptr; world.signalRelationCount = 0;
+    world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV7(world);
+    ASSERT_EQ(harken::InstallContainerWorldV1(*engine, world).status, harken::WorldInstallStatus::Ok);
+    Capture releasing;
+    PumpAndCapture(engine, 1, releasing);
+    EXPECT_LT(releasing.left.front(), .199f);
+    EXPECT_GT(releasing.left.front(), settled.left.back() - 1e-5f);
+    Capture released;
+    PumpAndCapture(engine, 100, released);
+    EXPECT_NEAR(released.left.back(), .2f, 1e-5);
+}
+
 TEST_F(BusSendSlotReconcile, SignalFeedbackRunsThroughMixerAndPostOutputVolume) {
     session.reset();
     auto config = MakeNullConfig(2, kBlockFrames, 48000);

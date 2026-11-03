@@ -3,6 +3,7 @@
 
 #include <harken/ObjectId.h>
 #include "PlayableRuntime.h"
+#include "SignalPublication.h"
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/EngineConfig.h"
 #include "harken/param/VariableService.h"
@@ -243,6 +244,7 @@ private:
         publicationVintage_ = 0;
         compiledWorld_ = {};
         worldImage_.Clear();
+        signals_ = {};
         livePlanIndex_ = UINT32_MAX;
         slotPlan_ = SlotPlanV1{};
         authoredMixDb_.clear();
@@ -276,6 +278,7 @@ private:
         publicationVintage_ = other.publicationVintage_;
         compiledWorld_ = other.compiledWorld_;
         worldImage_ = std::move(other.worldImage_);
+        signals_ = std::move(other.signals_);
         livePlanIndex_ = other.livePlanIndex_;
         slotPlan_ = std::move(other.slotPlan_);
         authoredMixDb_ = std::move(other.authoredMixDb_);
@@ -309,6 +312,7 @@ private:
     std::uint32_t publicationVintage_ = 0;
     ContainerWorldInstallViewV1 compiledWorld_{};
     VariableServiceV1::PreparedCurrentWorldImageV1 worldImage_{};
+    PreparedSignalPublication signals_{};
     std::uint32_t livePlanIndex_ = UINT32_MAX;
     SlotPlanV1 slotPlan_{};
     std::vector<float> authoredMixDb_;

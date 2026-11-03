@@ -74615,6 +74615,7 @@ void FillPlan(harken::Engine& engine, std::uint32_t planIndex,
         }
     }
     plans.SetSlotCount(planIndex, n);
+    plans.SetSignals(planIndex, engine.acceptedSignalPlan);
 }
 
 // Reserves the two resources a structural change needs: one free plan slot and
@@ -75375,6 +75376,10 @@ void FillLiveOrPreparedPlan(Engine& engine, TopologyPlanPool& plans,
         volumeRampMs[i] = 0;
         volumeApply[i] = 0;
     }
+}
+
+void FillLiveSignalTopology(Engine& engine, std::uint32_t planIndex) {
+    FillPlan(engine, planIndex);
 }
 
 bool AdmitSingleLiveCommand(Engine& engine) {
@@ -101659,6 +101664,7 @@ VnResult Vn_Update(void) {
      * writes — is honest update cost. */
     const std::uint64_t updateBeginTicks = harken::CpuClockTicks();
     engine->variables.AcknowledgeFinishedTimelineReadUses(engine->mixer.BlocksRendered());
+    harken::RefreshRetainedPackSignals(*engine);
     harken::remote::Pump();
     /* Session-trace barrier: block barriers observed since the last record,
      * then the update-begin marker. Replay pumps those blocks and then
@@ -118694,6 +118700,9 @@ bool RequiredCycle(const PackComposition& composition,
 struct PreparedCanonicalPublication {
     PackComposition::PreparedCommit composition;
     VariableServiceV1::PreparedPackDefinitions variables;
+    PreparedSignalPublication signals;
+    std::unique_ptr<PrivateSignalTopology> signalTopology;
+    bool signalsReady = false;
 };
 
 void ReportCanonicalConflict(Engine& engine, VnObjectId objectId,
@@ -118856,15 +118865,40 @@ VnResult PrepareCanonicalOwners(
     return VN_OK;
 }
 
+VnResult PrepareCanonicalSignals(Engine& engine, PreparedCanonicalPublication& prepared,
+    std::uint32_t planIndex = kInvalidTopologyPlanIndex) {
+    if (prepared.composition.NamesOnly()) {
+        prepared.signals.predecessor = engine.acceptedSignalRevision;
+        prepared.signalsReady = true;
+        return VN_OK;
+    }
+    const auto topology = engine.topologyPlans.View(planIndex);
+    const auto result = PreparePackSignals(engine, prepared.composition.Published(),
+        planIndex == kInvalidTopologyPlanIndex ? nullptr : &topology, prepared.signals);
+    if (result != WorldInstallStatus::Ok)
+        return result == WorldInstallStatus::Capacity ? VN_PACK_RESIDENT_CAPACITY : VN_BAD_PACK;
+    if (planIndex != kInvalidTopologyPlanIndex) {
+        AttachPreparedSignals(engine.topologyPlans, planIndex, prepared.signals);
+    } else if (prepared.signals.changed) {
+        prepared.signalTopology = std::make_unique<PrivateSignalTopology>(engine);
+        if (!prepared.signalTopology->Prepare(prepared.signals)) return VN_BACKPRESSURE;
+    }
+    prepared.signalsReady = true;
+    return VN_OK;
+}
+
 void CommitCanonicalOwners(Engine& engine,
                            PreparedCanonicalPublication* prepared) noexcept {
     assert(prepared != nullptr);
     if (prepared == nullptr || !prepared->composition.IsPrepared()) {
         return;
     }
+    assert(prepared->signalsReady && CanCommitSignals(engine, prepared->signals));
     if (!prepared->composition.NamesOnly())
         CommitPackVariables(engine, &prepared->variables);
     engine.packComposition.CommitPrepared(&prepared->composition);
+    CommitSignals(engine, prepared->signals);
+    if (prepared->signalTopology) prepared->signalTopology->Commit();
 }
 
 VnResult PublishCanonicalOwners(Engine& engine,
@@ -118878,6 +118912,8 @@ VnResult PublishCanonicalOwners(Engine& engine,
     if (result != VN_OK) {
         return result;
     }
+    const auto signalResult = PrepareCanonicalSignals(engine, prepared);
+    if (signalResult != VN_OK) return signalResult;
     CommitCanonicalOwners(engine, &prepared);
     return VN_OK;
 }
@@ -121477,6 +121513,8 @@ VnResult SetGameplayCatalog(Engine& engine, VnPackHandle expectedInitHandle,
         expectedInitHandle, PackVariablePublicationReason::ContentMutation,
         &prepared, nullptr, &published->ledger, &image);
     if (result != VN_OK) return result;
+    const auto signals = PrepareCanonicalSignals(engine, prepared);
+    if (signals != VN_OK) return signals;
     CommitCanonicalOwners(engine, &prepared);
     auto trace = ::TraceStateful(&engine, kTraceCallSetGameplayCatalog);
     trace.U64(expectedInitHandle).U64(catalog->byteCount)
@@ -121648,10 +121686,13 @@ VnResult ActivateCanonicalPackSetImpl(
                 if (preparedResult != VN_OK) {
                     return preparedResult;
                 }
+                const auto signals = PrepareCanonicalSignals(engine, prepared.publication, prepared.planIndex);
+                if (signals != VN_OK) return signals;
                 if (PackFault(PackStagingFault::AfterAllPreparedBeforeCommit)) {
                     return VN_PACK_RESIDENT_CAPACITY;
                 }
                 if (!CanCommitCanonicalVolumesV2(engine, prepared) ||
+                    !CanCommitSignals(engine, prepared.publication.signals) ||
                     engine.packComposition.Published() != prepared.basePublication ||
                     engine.packComposition.CompositeGeneration() !=
                         prepared.baseGeneration) {
@@ -121920,6 +121961,8 @@ VnResult UnloadCanonicalPackSetV1(Engine& engine,
             if (bindings != VN_OK) {
                 return bindings;
             }
+            const auto signals = PrepareCanonicalSignals(engine, prepared.publication, prepared.planIndex);
+            if (signals != VN_OK) return signals;
             if (PackFault(PackStagingFault::AfterAllPreparedBeforeCommit)) {
                 return VN_PACK_RESIDENT_CAPACITY;
             }
@@ -122175,6 +122218,8 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
             return applied;
         }
     }
+    const auto signals = PrepareCanonicalSignals(engine, publication);
+    if (signals != VN_OK) return signals;
     CommitCanonicalOwners(engine, &publication);
     *outHandle = handle;
     guard.committed = true;
@@ -122311,6 +122356,12 @@ VnResult UnloadCanonicalPack(Engine& engine, VnPackHandle handle,
     PackTable::RetiredReplace predecessor;
     const PackResourceRevisionToken predecessorResourceToken =
         owner->resourceToken;
+    const auto signals = PrepareCanonicalSignals(engine, publication);
+    if (signals != VN_OK) {
+        engine.packs.CancelPreparedMutation(&media);
+        CancelCanonicalBindingPlan(engine, bindingPlan);
+        return signals;
+    }
     engine.packs.CommitPreparedMutation(&media, engine.registry,
                                         &predecessor);
     CommitCanonicalOwners(engine, &publication);
@@ -122492,6 +122543,12 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
         return preparedBindings;
     }
     PackTable::RetiredReplace predecessor;
+    const auto signals = PrepareCanonicalSignals(engine, publication);
+    if (signals != VN_OK) {
+        engine.packs.CancelPreparedMutation(&media);
+        CancelCanonicalBindingPlan(engine, bindingPlan);
+        return signals;
+    }
     engine.packs.CommitPreparedMutation(&media, engine.registry,
                                         &predecessor);
     CommitCanonicalOwners(engine, &publication);

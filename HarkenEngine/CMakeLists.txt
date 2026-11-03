@@ -25,6 +25,7 @@ set(HARKEN_RUNTIME_SOURCES
     ${HARKEN_RUNTIME_DIR}/api/src/HarkenApi.cpp
     ${HARKEN_RUNTIME_DIR}/api/src/PackInspection.cpp
     ${HARKEN_RUNTIME_DIR}/api/src/ProjectGenerationTransaction.cpp
+    ${HARKEN_RUNTIME_DIR}/api/src/SignalPublication.cpp
     ${HARKEN_RUNTIME_DIR}/api/src/PackVariablePublication.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/AllocGuard.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/StableRowStorage.cpp

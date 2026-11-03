@@ -13332,6 +13332,9 @@ public:
     // superseded ones into it.
     TopologyPlanPool topologyPlans;
     TopologyPlanPool preparedTopologyPlans;
+    // Logic acceptance may lead audio consumption by several queued plans.
+    std::shared_ptr<SignalRenderPlan> acceptedSignalPlan;
+    std::uint64_t acceptedSignalRevision = 0;
     std::shared_ptr<ProjectGenerationReservationDomainV1>
         projectGenerationReservationDomain =
             std::make_shared<ProjectGenerationReservationDomainV1>(

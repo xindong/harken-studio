@@ -1,4 +1,6 @@
 #include "Common/ObjectIdTestSupport.h"
+#include "Common/TestUtil.h"
+#include "Engine.h"
 #include "harken/core/CurrentWorldCodec.h"
 #include "harken/core/CurrentWorldArtifact.h"
 #include "harken/core/detail/CurrentWorldValidation.h"
@@ -162,5 +164,81 @@ TEST(CurrentWorldSignal, MissingContentAndReceiverRequireFinalClosureValidation)
     f.Refresh();
     EXPECT_EQ(detail::ValidateCurrentWorldPartitionLocalV1(f.world), WorldInstallStatus::Ok);
     EXPECT_EQ(ValidateCurrentWorldV1(f.world), WorldInstallStatus::InvalidWorld);
+}
+
+TEST(CurrentWorldSignal, DirectInstallIsAtomicIdempotentAndPreservesLiveTopology) {
+    auto config = harkentest::MakeNullConfig(2, 64, 48000);
+    config.maxBuses = 4;
+    config.topologyPlanPoolCapacity = 8;
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(session.InitResult(), VN_OK);
+    auto& engine = *session.Engine();
+    SignalWorld fixture;
+    for (const auto& receiver : fixture.receivers)
+        ASSERT_EQ(Vn_CreateBus(receiver.target.stableId, VN_BUS_MASTER), VN_OK);
+    const auto source = fixture.receivers[0].target.stableId;
+    ASSERT_EQ(Vn_SetBusOutputLayout(source, VN_CHANNEL_LAYOUT_MONO), VN_OK);
+    engine.nullBackend.Pump(1);
+    const auto before = engine.commands.FreeSlots();
+    const auto installed = InstallContainerWorldV1(engine, fixture.world);
+    ASSERT_EQ(installed.status, WorldInstallStatus::Ok);
+    EXPECT_EQ(engine.commands.FreeSlots(), before - 1);
+    ASSERT_NE(engine.acceptedSignalPlan, nullptr);
+    auto* first = engine.acceptedSignalPlan.get();
+    const auto generation = engine.variables.CurrentWorldGeneration();
+    CommandRecord filler{};
+    filler.opcode = kOpcodeSetBusVolume;
+    filler.payload.setBusVolume.busIndex = 0;
+    while (engine.commands.TryPush(filler)) {}
+    const auto retry = InstallContainerWorldV1(engine, fixture.world);
+    EXPECT_EQ(retry.status, WorldInstallStatus::Ok);
+    EXPECT_TRUE(retry.idempotent);
+    fixture.relations[0].sendGainDb = -6;
+    fixture.Refresh();
+    EXPECT_EQ(InstallContainerWorldV1(engine, fixture.world).status, WorldInstallStatus::Backpressure);
+    EXPECT_EQ(engine.variables.CurrentWorldGeneration(), generation);
+    EXPECT_EQ(engine.acceptedSignalPlan.get(), first);
+    engine.nullBackend.Pump(8);
+    EXPECT_EQ(engine.buses.InstalledSignals(), first);
+    const auto bus = engine.buses.FindIndex(source);
+    EXPECT_EQ(engine.buses.BusOutputLayout(bus), static_cast<std::uint32_t>(VN_CHANNEL_LAYOUT_MONO));
+    ASSERT_EQ(InstallContainerWorldV1(engine, fixture.world).status, WorldInstallStatus::Ok);
+    auto* second = engine.acceptedSignalPlan.get();
+    ASSERT_NE(first, second);
+    EXPECT_EQ(second->WorldIdentity(), first->WorldIdentity());
+    ASSERT_EQ(Vn_CreateBus(harkentest::ObjectId(99), VN_BUS_MASTER), VN_OK);
+    engine.nullBackend.Pump(2);
+    EXPECT_EQ(engine.buses.InstalledSignals(), second);
+    const auto current = engine.variables.CurrentWorldGeneration();
+    fixture.relations[0].source.stableId = harkentest::ObjectId(999);
+    fixture.Refresh();
+    EXPECT_EQ(InstallContainerWorldV1(engine, fixture.world).status, WorldInstallStatus::InvalidWorld);
+    EXPECT_EQ(engine.variables.CurrentWorldGeneration(), current);
+    EXPECT_EQ(engine.acceptedSignalPlan.get(), second);
+}
+
+TEST(CurrentWorldSignal, PairedPublicationCarriesSignalsInItsSingleTopologyCommand) {
+    auto config = harkentest::MakeNullConfig(2, 64, 48000);
+    config.maxBuses = 4;
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(session.InitResult(), VN_OK);
+    auto& engine = *session.Engine();
+    SignalWorld fixture;
+    for (const auto& receiver : fixture.receivers)
+        ASSERT_EQ(Vn_CreateBus(receiver.target.stableId, VN_BUS_MASTER), VN_OK);
+    engine.nullBackend.Pump(1);
+    ProjectGenerationInstallViewV1 view;
+    view.token = {11, 2, 3, 4};
+    view.ownerId = 77; view.ownerRevision = 1;
+    view.compiledWorld = fixture.world;
+    PreparedProjectGenerationV1 prepared;
+    ASSERT_EQ(PrepareProjectGenerationV1(engine, view, prepared).status, ProjectGenerationPrepareStatusV1::Ok);
+    EXPECT_EQ(engine.acceptedSignalPlan, nullptr);
+    const auto free = engine.commands.FreeSlots();
+    ASSERT_EQ(CommitPreparedProjectGenerationV1(engine, prepared).status, ProjectGenerationCommitStatusV1::Ok);
+    ASSERT_NE(engine.acceptedSignalPlan, nullptr);
+    EXPECT_EQ(engine.commands.FreeSlots(), free - 1);
+    engine.nullBackend.Pump(1);
+    EXPECT_EQ(engine.buses.InstalledSignals(), engine.acceptedSignalPlan.get());
 }
 } // namespace

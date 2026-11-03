@@ -3468,6 +3468,7 @@ std::size_t& PackComposition::SliceOccupied(PackLeaseSlice slice) const noexcept
 }
 
 void PackComposition::ClearLeaseRow(LeaseRow& row) const noexcept {
+    if (row.state != LeaseState::Free) retainedDefinitionsChanged_ = true;
     const auto index = LeaseIndex(row);
     if (index < originalLeaseRecords_.size() && originalLeaseRecords_[index].active) {
         FrozenClosure(row) = PackFrozenClosure{};
@@ -3565,6 +3566,7 @@ VnResult PackComposition::PrepareLease(const PublishedOwner& owner,
         ++nextLeaseToken_;
     }
     available.state = LeaseState::Prepared;
+    retainedDefinitionsChanged_ = true;
     available.tag = slice;
     available.lease = lease;
     FrozenClosure(available).leaseIdentity = lease.leaseToken;
@@ -4100,6 +4102,24 @@ bool PackComposition::PlaybackViewAtLease(const PackPartitionLease& lease,
                     out->ownerStore_->owners.size());
     }
     return false;
+}
+
+void PackComposition::ForEachRetainedDefinition(void* context,
+    void (*visit)(void*, const PackPlaybackView&, const PackClosureOwnerSnapshot&,
+                  const ProgramSourceIdentityV1&)) const {
+    for (const auto& row : leases_) {
+        if (row.state != LeaseState::Prepared && (row.state != LeaseState::Live || row.refs == 0)) continue;
+        const auto& closure = FrozenClosure(row);
+        if (!closure.ownerStore || closure.rootOwnerIndex >= closure.ownerStore->owners.size()) continue;
+        PackPlaybackView view;
+        view.closure_ = &closure;
+        view.ownerStore_ = closure.ownerStore.get();
+        const auto& slots = closure.ownerStore->owners[closure.rootOwnerIndex].closureOwnerSlots;
+        for (const auto index : slots) {
+            const auto& owner = closure.ownerStore->owners[index].snapshot;
+            if (owner.definitionBody) visit(context, view, owner, view.SourceOf(owner));
+        }
+    }
 }
 
 VnObjectId PackComposition::ProjectIdAtLease(const PackPartitionLease& lease) const noexcept {

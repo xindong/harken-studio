@@ -1339,6 +1339,7 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
     ProspectiveTopologyView remapped{};
     const ProspectiveTopologyView* fillView = view.prospective;
     VariableServiceV1::PreparedCurrentWorldImageV1 image;
+    PreparedSignalPublication signals;
     WorldInstallStatus imageStatus = WorldInstallStatus::InvalidWorld;
     std::vector<float> authoredMixDb, authoredOutputDb, effectiveMixDb, effectiveOutputDb;
     std::vector<float> sourceMixDb, sourceOutputDb;
@@ -1456,6 +1457,18 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
         }
         imageStatus = engine.variables.PrepareCurrentWorldImageV1(
             view.compiledWorld, image);
+        if (imageStatus == WorldInstallStatus::Ok) {
+            const auto current = engine.variables.CurrentWorldGeneration();
+            if (current == UINT64_MAX && !image.Idempotent()) {
+                imageStatus = WorldInstallStatus::Capacity;
+            } else {
+                const auto topology = engine.preparedTopologyPlans.View(planIndex);
+                imageStatus = PrepareWorldSignals(engine, view.compiledWorld,
+                    current + (image.Idempotent() ? 0 : 1), &topology, signals);
+                if (imageStatus == WorldInstallStatus::Ok)
+                    AttachPreparedSignals(engine.preparedTopologyPlans, planIndex, signals);
+            }
+        }
         if (imageStatus == WorldInstallStatus::Ok &&
             (!engine.params.PrepareVariableStorage(view.compiledWorld.variableCount) ||
              !engine.PrepareQueueSelectionStorage(view.compiledWorld)))
@@ -1510,6 +1523,7 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
     out.engine_ = &engine;
     out.occupied_ = true;
     out.idempotent_ = image.Idempotent();
+    out.signals_ = std::move(signals);
     out.preparedPlanIndex_ = planIndex;
     out.preparedOwnerSlot_ = ownerSlot;
     out.preparedSerial_ = owner.preparedSerial;
@@ -1570,6 +1584,7 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
         return result;
     }
     if (!prepared.worldImage_.Valid() ||
+        !CanCommitSignals(engine, prepared.signals_) ||
         !engine.variables.CanCommitPreparedCurrentWorldImageV1(prepared.worldImage_)) {
         result.status = ProjectGenerationCommitStatusV1::InvalidPrepared;
         return result;
@@ -1703,6 +1718,7 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
         }
     }
     if (!ProjectCheckpoint(detail::LogicAllocSite::ProjectFinalPreflight) || !retirementReady ||
+        !CanCommitSignals(engine, prepared.signals_) ||
         !volumeOverlayReady || !volumeSourceReady() ||
         !prepared.Valid() || !ownerReady() ||
         CurrentWorldCommitBlocked(engine, prepared.publicationVintage_, prepared.worldImage_) ||
@@ -1761,6 +1777,7 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
 
     const WorldGeneration installed =
         engine.variables.CommitPreparedCurrentWorldImageV1(prepared.worldImage_);
+    CommitSignals(engine, prepared.signals_);
     if (!prepared.idempotent_) ReclaimRetiredSelectionMemory(engine);
     engine.variables.CommitWorldProjectionV1(&projection, engine.params, engine.emitters,
                                               engine.bindings, engine.busTargets);

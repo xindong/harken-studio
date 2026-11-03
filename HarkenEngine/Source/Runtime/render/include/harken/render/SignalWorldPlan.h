@@ -16,12 +16,19 @@ struct SignalBusInput {
     VnBusId id{};
     std::uint32_t generation = 0;
 };
+struct SignalRetainedDefinitionInput {
+    SignalEndpointKindV1 kind = SignalEndpointKindV1::Sound;
+    VnObjectId stableId{};
+    std::uint64_t propertyFingerprint = 0;
+    ProgramSourceIdentityV1 source{};
+};
 
 inline std::unique_ptr<SignalRenderPlan> PrepareSignalWorldPlan(
     const SignalBlockFormat& format, std::span<const SignalRelationV1> relations,
     std::span<const SignalReceiverV1> receivers,
     std::span<const SignalPropertyInput> properties,
-    std::span<const SignalBusInput> buses) noexcept {
+    std::span<const SignalBusInput> buses,
+    std::span<const SignalRetainedDefinitionInput> retained = {}) noexcept {
     try {
         if (buses.size() > UINT32_MAX) return {};
         std::vector<SignalEndpointRefV1> endpoints;
@@ -109,6 +116,11 @@ inline std::unique_ptr<SignalRenderPlan> PrepareSignalWorldPlan(
             for (std::size_t i = 1; i < ancestry.size(); ++i)
                 if (ancestry[i] != ancestry[i - 1]) paths.push_back({ancestry[i], ancestry[i - 1], 1, false});
         }
+        for (const auto& definition : retained) {
+            const auto kind = definition.kind == SignalEndpointKindV1::Sound
+                ? playableproperties::ContentPropertyKindV1::Sound : playableproperties::ContentPropertyKindV1::Container;
+            member(kind, definition.stableId, definition.propertyFingerprint, definition.source);
+        }
         for (std::size_t i = 0; i < endpoints.size(); ++i)
             if (endpoints[i].kind != SignalEndpointKindV1::Bus &&
                 std::none_of(proofs.begin(), proofs.end(), [&](const auto& proof) { return proof.node == indices[i]; })) return {};
@@ -116,7 +128,8 @@ inline std::unique_ptr<SignalRenderPlan> PrepareSignalWorldPlan(
         // becomes duplicated by that repetition.
         const auto proofKey = [](const SignalMemberProof& proof) {
             return std::tuple(proof.node, proof.propertyFingerprint, proof.source.ownerStableId,
-                proof.source.ownerRevision, proof.source.worldGeneration, proof.source.sourceBodyVintage);
+                proof.source.ownerRevision, proof.source.ownerStableId == 0 ? proof.source.worldGeneration : 0,
+                proof.source.sourceBodyVintage);
         };
         std::sort(proofs.begin(), proofs.end(), [&](const auto& a, const auto& b) { return proofKey(a) < proofKey(b); });
         proofs.erase(std::unique(proofs.begin(), proofs.end(), [&](const auto& a, const auto& b) {

@@ -1,6 +1,7 @@
 #include "harken/param/VariableService.h"
 
 #include "Engine.h"
+#include "SignalPublication.h"
 #include "MonitorCaptureHub.h"
 #include "harken/core/CommandQueue.h"
 #include "harken/core/LogicAllocCheckpoint.h"
@@ -76,9 +77,32 @@ WorldInstallResult InstallContainerWorldV1(
         }
         const bool hasCurrentConsumers =
             HasCurrentWorldPlayableConsumers(engine);
+        const auto attemptInstall = [&](bool replacementAdmitted) {
+            if (!replacementAdmitted || ValidateCurrentWorldV1(install) != WorldInstallStatus::Ok ||
+                engine.variables.SemanticIdenticalWorld(install))
+                return engine.variables.InstallWithReplacementAdmission(install, replacementAdmitted);
+            WorldInstallResult failed{};
+            failed.priorGeneration = engine.variables.CurrentWorldGeneration();
+            failed.status = WorldInstallStatus::Capacity;
+            if (failed.priorGeneration == UINT64_MAX) return failed;
+            PreparedSignalPublication signals;
+            failed.status = PrepareWorldSignals(engine, install, failed.priorGeneration + 1, nullptr, signals);
+            if (failed.status != WorldInstallStatus::Ok) return failed;
+            PrivateSignalTopology topology(engine);
+            if (!topology.Prepare(signals)) {
+                failed.status = WorldInstallStatus::Backpressure;
+                return failed;
+            }
+            auto installed = engine.variables.InstallWithReplacementAdmission(install, true);
+            if (installed.status == WorldInstallStatus::Ok && !installed.idempotent) {
+                assert(installed.resultGeneration == failed.priorGeneration + 1);
+                CommitSignals(engine, signals);
+                topology.Commit();
+            }
+            return installed;
+        };
         WorldInstallResult result =
-            engine.variables.InstallWithReplacementAdmission(
-                install, !hasCurrentConsumers);
+            attemptInstall(!hasCurrentConsumers);
         if (hasCurrentConsumers &&
             result.status == WorldInstallStatus::Backpressure) {
             AdvanceCurrentWorldReplacementDrain(engine);
@@ -88,8 +112,7 @@ WorldInstallResult InstallContainerWorldV1(
                 engine.currentWorldReplacementAdmissionClosed = true;
                 engine.variables.SetEngineAdmissionClosed(true);
             } else {
-                result = engine.variables.InstallWithReplacementAdmission(
-                    install, true);
+                result = attemptInstall(true);
                 if (result.status == WorldInstallStatus::Ok &&
                     !result.idempotent) {
                     (void)CancelActionDeferredForWorldReplacement(

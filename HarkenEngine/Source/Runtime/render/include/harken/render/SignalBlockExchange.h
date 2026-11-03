@@ -188,6 +188,9 @@ public:
         return m_targetPcm.data() + target * m_planeSamples +
             static_cast<std::size_t>(channel) * m_format.capacityFrames;
     }
+    bool HasTargetInput(std::uint32_t target) const noexcept {
+        return target < m_targets && m_targetOffsets[target] != m_targetOffsets[target + 1];
+    }
 
     bool CommitBlock() noexcept {
         if (!m_open) return false;
