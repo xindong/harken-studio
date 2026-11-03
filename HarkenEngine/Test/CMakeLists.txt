@@ -190,6 +190,7 @@ add_executable(harken_runtime_tests
     UnitTest/ParkTest.cpp
     UnitTest/HotReloadTest.cpp
     UnitTest/BusSendTest.cpp
+    UnitTest/SignalBlockExchangeTest.cpp
     UnitTest/BusFilterTest.cpp
     UnitTest/BusMuteSoloTest.cpp
     UnitTest/BusReparentTest.cpp
