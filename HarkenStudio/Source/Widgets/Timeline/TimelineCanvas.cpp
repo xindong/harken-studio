@@ -39,6 +39,7 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPaintEvent>
 #include <QSet>
 #include <QScreen>
 #include <QShortcut>
@@ -91,6 +92,11 @@ TimelineCanvas::TimelineCanvas(TimelineEditorPanel* panel, QWidget* parent)
     ShortcutManager::instance().bindWidgetAction(Shortcuts::Delete, this, [this]() {
         panel_->deleteSelectedClips();
     });
+    connect(&WaveformCache::instance(), &WaveformCache::cacheReady, this,
+        [this](const QString& path) {
+            if (waveformCache_.remove(path) > 0)
+                update();
+        });
 }
 
 QUuid TimelineCanvas::selectedClipGuid() const
@@ -197,8 +203,7 @@ QRect TimelineCanvas::rangeRect(int laneIndex, int64_t start, int64_t duration) 
     const int minWidth = metrics.clipMinimumWidth;
     const int visibleLeft = std::max(-minWidth, left);
     const int visibleRight = std::min(width() + minWidth, right);
-    const int inset = panel_->viewKind() == TimelineEditorPanel::ViewKind::Track
-        ? 0 : metrics.clipVerticalInset;
+    const int inset = metrics.clipVerticalInset;
     return {visibleLeft, lane.top() + inset,
             std::max(minWidth, visibleRight - visibleLeft),
             lane.height() - inset * 2};
@@ -212,85 +217,17 @@ const WaveformPeakData* TimelineCanvas::waveformForPath(const QString& absoluteP
     if (it != waveformCache_.constEnd())
         return it->isValid() ? &*it : nullptr;
     WaveformPeakData peaks;
-    if (WaveformCache::load(absolutePath, peaks) && peaks.isValid()) {
-        auto inserted = waveformCache_.insert(absolutePath, peaks);
-        return &*inserted;
-    }
-    return nullptr;
+    if (!WaveformCache::load(absolutePath, peaks))
+        peaks = {};
+    const auto inserted = waveformCache_.insert(absolutePath, std::move(peaks));
+    return inserted->isValid() ? &*inserted : nullptr;
 }
 
-void TimelineCanvas::fillClipItem(TimelineClipItem& item, int laneIndex, int clipIndex,
-                                  const QRect& area, const QUuid& guid, int64_t start,
-                                  int64_t duration) const
+QString TimelineCanvas::clipTooltip(int laneIndex, int clipIndex) const
 {
-    item.rect = area;
-    item.laneIndex = laneIndex;
-    item.clipIndex = clipIndex;
-    item.guid = guid;
-    item.foreign = panel_->clipIsExternal(laneIndex, clipIndex);
-    if (clipSelected(guid))
-        item.state = TimelineClipVisualState::Selected;
-    else if (laneIndex == hoveredLane_ && clipIndex == hoveredClip_)
-        item.state = TimelineClipVisualState::Hover;
-
-    ProjectItem* target = ProjectManager::instance().findItemByGuid(
-        panel_->clipTargetGuid(laneIndex, clipIndex));
-    item.label = target ? target->name : tr("Missing");
-    if (target && target->color != 0)
-        item.objectColor = QColor::fromRgba(target->color);
-    if (target)
-        item.typeIcon = iconForItem(*target);
-    if (target && target->type == ProjectItem::Type::Sound) {
-        const uint32_t sourceId = SoundSourceEditing::activeSourceId(
-            *target, PlatformContextService::instance().context().primary,
-            SoundSourceEditing::previewLanguage(
-                *target, LanguageContextService::instance().language()));
-        if (sourceId != 0) {
-            if (const AssetInfo* asset = AssetRegistry::instance().getAsset(sourceId)) {
-                item.waveformPath = asset->absolutePath;
-                if (panel_->hasTimeline()) {
-                    const auto* source = SoundSourceEditing::activeSource(*target,
-                        PlatformContextService::instance().context().primary,
-                        SoundSourceEditing::previewLanguage(*target, LanguageContextService::instance().language()));
-                    const auto range = source ? SoundSourceSemantics::effectiveRange(*source, asset) : std::nullopt;
-                    const auto sourceDuration =
-                        panel_->clipSourceDuration(laneIndex, clipIndex);
-                    if (range && sourceDuration && *sourceDuration > 0) {
-                        const double left = panel_->viewportPositionAtCoordinate(laneIndex, start);
-                        const int64_t contributionDuration = std::min(
-                            duration, *sourceDuration);
-                        const double right = panel_->viewportPositionAtCoordinate(
-                            laneIndex, saturatingAdd(start, contributionDuration));
-                        const double sourceRight = panel_->viewportPositionAtCoordinate(
-                            laneIndex, saturatingAdd(start, *sourceDuration));
-                        const double visibleLeft = std::clamp(left, 0.0, double(width()));
-                        const double visibleRight = std::clamp(right, 0.0, double(width()));
-                        if (visibleRight > visibleLeft && sourceRight > left) {
-                            const int labelHeight = QFontMetrics(FontManager::instance().getFont(FontRole::Caption)).height();
-                            if (panel_->viewKind() == TimelineEditorPanel::ViewKind::Track) {
-                                item.waveformViewport = panel_->trackWaveformRect();
-                                item.waveformRect = waveformAmplitudeBounds(item.waveformViewport,
-                                    int(std::lround(item.waveformViewport.height() * panel_->verticalZoom())),
-                                    panel_->verticalScroll(), QFontMetrics(FontManager::instance().getFont(FontRole::Axis)));
-                            } else {
-                                item.waveformViewport = area.adjusted(1, labelHeight + 3, -1, -2);
-                                item.waveformRect = item.waveformViewport;
-                            }
-                            item.waveformRect.setLeft(int(std::lround(visibleLeft)));
-                            item.waveformRect.setWidth(int(std::lround(visibleRight)) - int(std::lround(visibleLeft)));
-                            const double frames = double(range->trimEndFrame - range->trimStartFrame);
-                            item.waveformStartFrame = range->trimStartFrame
-                                + frames * (visibleLeft - left) / (sourceRight - left);
-                            item.waveformFrameCount = frames * (visibleRight - visibleLeft) / (sourceRight - left);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
+    const auto* target = panel_->clipTarget(laneIndex, clipIndex);
     QStringList tooltip;
-    tooltip << item.label;
+    tooltip << (target ? target->name : tr("Missing"));
     tooltip << tr("Scheduled start: %1").arg(
         panel_->formatCoordinate(laneIndex, panel_->clipStart(laneIndex, clipIndex)));
     tooltip << tr("Authored duration: %1").arg(
@@ -301,22 +238,26 @@ void TimelineCanvas::fillClipItem(TimelineClipItem& item, int laneIndex, int cli
     else
         tooltip << tr("Source reference span varies or is unavailable.");
     tooltip << tr("Playback ends at the authored Clip boundary or an earlier natural source end. Overlapping Clips play together without an automatic crossfade.");
-    if (item.foreign && target) {
-        const QString home = target->parent ? target->parent->name : tr("unparented");
-        tooltip << tr("Placement only — its home in the tree is %1").arg(home);
-        TimelineClipBadge badge;
-        badge.kind = TimelineClipBadgeKind::External;
-        badge.text = QStringLiteral("EXT");
-        item.badges.append(badge);
-    }
-    if (const auto emergence = panel_->emergenceCoordinate(laneIndex, clipIndex)) {
-        const int realX = panel_->viewportPixelAtCoordinate(laneIndex, *emergence);
-        item.emergenceCoordinate = *emergence;
-        item.emergencePixel = realX;
-        item.emergenceClamped = realX != std::clamp(realX, area.left(), area.right());
+    if (const auto emergence = panel_->emergenceCoordinate(laneIndex, clipIndex))
         tooltip << tr("Emerges at %1").arg(panel_->formatCoordinate(laneIndex, *emergence));
+    return tooltip.join(QStringLiteral("\n"));
+}
+
+QVector<int> TimelineCanvas::clipDrawOrder(int laneIndex) const
+{
+    QVector<int> order;
+    const int count = panel_->clipCount(laneIndex);
+    QVector<int64_t> starts;
+    order.reserve(count);
+    starts.reserve(count);
+    for (int i = 0; i < count; ++i) {
+        order.append(i);
+        starts.append(panel_->clipStart(laneIndex, i));
     }
-    item.tooltip = tooltip.join(QStringLiteral("\n"));
+    std::stable_sort(order.begin(), order.end(), [&starts](int left, int right) {
+        return starts[left] < starts[right];
+    });
+    return order;
 }
 
 TimelineCanvas::Hit TimelineCanvas::hitAt(const QPoint& point) const
@@ -331,7 +272,9 @@ TimelineCanvas::Hit TimelineCanvas::hitAt(const QPoint& point) const
     if (lane < 0)
         return hit;
     hit.laneIndex = lane;
-    for (int i = panel_->clipCount(lane) - 1; i >= 0; --i) {
+    const auto order = clipDrawOrder(lane);
+    for (auto it = order.crbegin(); it != order.crend(); ++it) {
+        const int i = *it;
         if (rangeRect(lane, panel_->clipStart(lane, i),
                       panel_->clipDuration(lane, i)).contains(point)) {
             hit.clipIndex = i;
@@ -380,7 +323,7 @@ TimelineStyleView TimelineCanvas::styleView() const
     return style;
 }
 
-TimelineRenderData TimelineCanvas::buildRenderData() const
+TimelineRenderData TimelineCanvas::buildRenderData(const QRect& exposed) const
 {
     TimelineRenderData data;
     data.viewport = rect();
@@ -397,9 +340,105 @@ TimelineRenderData TimelineCanvas::buildRenderData() const
     data.pxPerUnit = panel_->pixelsPerUnit();
     data.timeAxis = panel_->timeTicks();
     data.domain = panel_->timelineDomain();
+    const auto theme = ThemeManager::instance().snapshot();
+    const int titleHeight = TimelineRenderer::clipTitleHeight(theme->ui.metrics);
+    const QRect trackViewport = data.frameless ? panel_->trackWaveformRect() : QRect();
+    const QRect trackWaveform = data.frameless
+        ? waveformAmplitudeBounds(trackViewport,
+            int(std::lround(trackViewport.height() * panel_->verticalZoom())),
+            panel_->verticalScroll(), QFontMetrics(FontManager::instance().getFont(FontRole::Axis)))
+        : QRect();
+    struct ClipContent {
+        QString label;
+        QColor color;
+        QIcon icon;
+        QString waveformPath;
+        int64_t sourceDuration = 0;
+        double firstFrame = 0.0;
+        double frameCount = 0.0;
+        double emergenceOffsetSec = 0.0;
+    };
+    QHash<QUuid, ClipContent> contents;
+    const auto fillClipItem = [&](TimelineClipItem& item, int laneIndex, int clipIndex,
+                                  const QRect& area, const QUuid& guid, int64_t start,
+                                  int64_t duration) {
+        const QUuid targetGuid = panel_->clipTargetGuid(laneIndex, clipIndex);
+        auto entry = contents.constFind(targetGuid);
+        if (entry == contents.cend()) {
+            ClipContent content;
+            const auto* target = panel_->clipTarget(laneIndex, clipIndex);
+            content.label = target ? target->name : tr("Missing");
+            if (target && target->color != 0)
+                content.color = QColor::fromRgba(target->color);
+            if (target)
+                content.icon = iconForItem(*target);
+            const auto* sound = target ? target->comp<VSound>() : nullptr;
+            if (sound) {
+                content.emergenceOffsetSec = sound->scheduleOffsetSec;
+                const auto* source = SoundSourceEditing::activeSource(*target,
+                    PlatformContextService::instance().context().primary,
+                    SoundSourceEditing::previewLanguage(*target, LanguageContextService::instance().language()));
+                const auto* asset = source ? AssetRegistry::instance().getAsset(source->sourceId) : nullptr;
+                if (asset) {
+                    content.waveformPath = asset->absolutePath;
+                    const auto range = SoundSourceSemantics::effectiveRange(*source, asset);
+                    if (range) {
+                        content.sourceDuration = panel_->clipSourceDuration(laneIndex, clipIndex).value_or(0);
+                        content.firstFrame = range->trimStartFrame;
+                        content.frameCount = double(range->trimEndFrame - range->trimStartFrame);
+                    }
+                }
+            }
+            entry = contents.insert(targetGuid, std::move(content));
+        }
+        const ClipContent& content = *entry;
+        item.rect = area;
+        item.laneIndex = laneIndex;
+        item.clipIndex = clipIndex;
+        item.guid = guid;
+        item.label = content.label;
+        item.objectColor = content.color;
+        item.typeIcon = content.icon;
+        item.waveformPath = content.waveformPath;
+        if (clipSelected(guid))
+            item.state = TimelineClipVisualState::Selected;
+        else if (laneIndex == hoveredLane_ && clipIndex == hoveredClip_)
+            item.state = TimelineClipVisualState::Hover;
+        if (content.sourceDuration > 0) {
+            const double left = panel_->viewportPositionAtCoordinate(laneIndex, start);
+            const double right = panel_->viewportPositionAtCoordinate(laneIndex,
+                saturatingAdd(start, std::min(duration, content.sourceDuration)));
+            const double sourceRight = panel_->viewportPositionAtCoordinate(laneIndex,
+                saturatingAdd(start, content.sourceDuration));
+            const double visibleLeft = std::clamp(left, 0.0, double(width()));
+            const double visibleRight = std::clamp(right, 0.0, double(width()));
+            if (visibleRight > visibleLeft && sourceRight > left) {
+                item.waveformViewport = data.frameless ? trackViewport : area.adjusted(0, titleHeight, 0, 0);
+                item.waveformRect = data.frameless ? trackWaveform : item.waveformViewport;
+                item.waveformRect.setLeft(int(std::lround(visibleLeft)));
+                item.waveformRect.setWidth(int(std::lround(visibleRight)) - int(std::lround(visibleLeft)));
+                item.waveformStartFrame = content.firstFrame
+                    + content.frameCount * (visibleLeft - left) / (sourceRight - left);
+                item.waveformFrameCount = content.frameCount * (visibleRight - visibleLeft) / (sourceRight - left);
+            }
+        }
+        if (content.emergenceOffsetSec > 0.0) {
+            const auto offset = TimelineCoordinates::fromSeconds(content.emergenceOffsetSec,
+                panel_->effectiveTimeSpec(laneIndex));
+            if (offset) {
+                const int64_t emergence = saturatingAdd(panel_->clipStart(laneIndex, clipIndex), offset.value);
+                const int realX = panel_->viewportPixelAtCoordinate(laneIndex, emergence);
+                item.emergenceCoordinate = emergence;
+                item.emergencePixel = realX;
+                item.emergenceClamped = realX != std::clamp(realX, area.left(), area.right());
+            }
+        }
+    };
     for (int lane = 0; lane < panel_->laneCount(); ++lane) {
         TimelineLaneRect rect;
         rect.rect = laneRect(lane);
+        if (rect.rect.bottom() < exposed.top() || rect.rect.top() > exposed.bottom())
+            continue;
         rect.alternate = lane % 2 == 1;
         rect.highlighted = !data.frameless && ((dropVisible_ && dropLegal_ && dropLane_ == lane)
             || (dragMode_ == DragMode::Move && previewLane_ == lane));
@@ -411,8 +450,10 @@ TimelineRenderData TimelineCanvas::buildRenderData() const
         data.laneRects.append(rect);
     }
     for (int lane = 0; lane < panel_->laneCount(); ++lane) {
-        const int count = panel_->clipCount(lane);
-        for (int i = 0; i < count; ++i) {
+        const QRect laneArea = laneRect(lane);
+        if (laneArea.bottom() < exposed.top() || laneArea.top() > exposed.bottom())
+            continue;
+        for (int i : clipDrawOrder(lane)) {
             const QUuid guid = panel_->clipGuid(lane, i);
             int64_t start = panel_->clipStart(lane, i);
             int64_t duration = panel_->clipDuration(lane, i);
@@ -422,7 +463,7 @@ TimelineRenderData TimelineCanvas::buildRenderData() const
             if (dragging)
                 continue;
             const QRect area = rangeRect(lane, start, duration);
-            if (area.isEmpty())
+            if (area.isEmpty() || area.bottom() < exposed.top() || area.top() > exposed.bottom())
                 continue;
             TimelineClipItem item;
             fillClipItem(item, lane, i, area, guid, start, duration);
@@ -431,47 +472,36 @@ TimelineRenderData TimelineCanvas::buildRenderData() const
 
     }
     if (dragMoved_ && dragMode_ == DragMode::Move && previewLane_ >= 0) {
-        const int laneDelta = previewLane_ - activeLane_;
         for (const GestureClip& clip : gestureClips_) {
             const int64_t start = saturatingAdd(previewStart_,
                                                 saturatingSubtract(clip.start, originalStart_));
-            const int destLane = clip.laneIndex + laneDelta;
+            const int destLane = previewLaneForClip(clip);
             const bool illegal = destLane < 0 || destLane >= panel_->laneCount();
             const int clipIndex = panel_->findClipIndex(clip.laneIndex, clip.guid);
             if (clipIndex < 0)
                 continue;
             const int drawLane = illegal ? clip.laneIndex : destLane;
             const QRect area = rangeRect(drawLane, start, clip.duration);
-            if (area.isEmpty())
+            if (area.isEmpty() || area.bottom() < exposed.top() || area.top() > exposed.bottom())
                 continue;
             TimelineClipItem item;
             fillClipItem(item, clip.laneIndex, clipIndex, area, clip.guid, start,
                          clip.duration);
             item.residual = false;
-            item.state = data.frameless ? TimelineClipVisualState::Dragging : TimelineClipVisualState::Selected;
-            item.foreign = item.foreign || illegal;
+            item.state = TimelineClipVisualState::Selected;
             data.clipItems.append(item);
-            if (!data.frameless) {
-                TimelineGhost ghost;
-                ghost.visible = true;
-                ghost.rect = area;
-                ghost.laneIndex = destLane;
-                ghost.illegal = illegal;
-                data.ghosts.append(ghost);
-            }
         }
     }
     if (dragMoved_ && dragMode_ == DragMode::ResizeEnd && activeLane_ >= 0) {
         const int clipIndex = panel_->findClipIndex(activeLane_, activeGuid_);
         const QRect area = rangeRect(
             activeLane_, originalStart_, previewDuration_);
-        if (clipIndex >= 0 && !area.isEmpty()) {
+        if (clipIndex >= 0 && !area.isEmpty()
+            && area.bottom() >= exposed.top() && area.top() <= exposed.bottom()) {
             TimelineClipItem item;
             fillClipItem(item, activeLane_, clipIndex, area, activeGuid_,
                          originalStart_, previewDuration_);
-            item.state = data.frameless
-                ? TimelineClipVisualState::Dragging
-                : TimelineClipVisualState::Selected;
+            item.state = TimelineClipVisualState::Selected;
             data.clipItems.append(item);
         }
     }
@@ -498,20 +528,14 @@ TimelineRenderData TimelineCanvas::buildRenderData() const
     data.snapGuide.x = snapGuideX_;
     data.lasso.visible = lassoActive_ && !lassoRect_.isNull();
     data.lasso.rect = lassoRect_;
-    if (!data.frameless && ghostVisible_ && !ghostRect_.isEmpty() && data.ghosts.isEmpty()) {
-        TimelineGhost ghost;
-        ghost.visible = true;
-        ghost.rect = ghostRect_;
-        data.ghosts.append(ghost);
-    }
     return data;
 }
 
-void TimelineCanvas::paintEvent(QPaintEvent*)
+void TimelineCanvas::paintEvent(QPaintEvent* event)
 {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
-    lastRenderData_ = buildRenderData();
+    lastRenderData_ = buildRenderData(event->rect());
     TimelineRenderer::render(painter, styleView(), lastRenderData_);
     for (TimelineClipItem& item : lastRenderData_.clipItems)
         item.waveform = nullptr;
@@ -632,19 +656,11 @@ void TimelineCanvas::mouseMoveEvent(QMouseEvent* event)
         if (panel_->hasTimeline())
             return;
         if (hit.clipIndex >= 0) {
-            QString tip;
-            QString target;
-            for (const TimelineClipItem& item : lastRenderData_.clipItems) {
-                if (item.rect.contains(event->position().toPoint())
-                    && !item.tooltip.isEmpty() && !item.residual) {
-                    tip = item.tooltip;
-                    target = item.guid.toString(QUuid::WithoutBraces);
-                    break;
-                }
-            }
-            if (!tip.isEmpty() && hoverTipTarget_ != target) {
+            const QString target = panel_->clipGuid(hit.laneIndex, hit.clipIndex).toString(QUuid::WithoutBraces);
+            if (hoverTipTarget_ != target) {
                 hoverTipTarget_ = target;
-                QToolTip::showText(event->globalPosition().toPoint(), tip, this);
+                QToolTip::showText(event->globalPosition().toPoint(),
+                    clipTooltip(hit.laneIndex, hit.clipIndex), this);
             }
         } else if (!hoverTipTarget_.isEmpty()) {
             hoverTipTarget_.clear();
@@ -943,7 +959,6 @@ void TimelineCanvas::armDrag(const Hit& hit, const QPoint& pos)
     previewStart_ = originalStart_;
     previewDuration_ = originalDuration_;
     previewLane_ = hit.laneIndex;
-    intendedStart_ = originalStart_;
     pressCoordinate_ = panel_->coordinateAtViewportPixel(hit.laneIndex, pos.x());
     pressPos_ = pos;
     dragMoved_ = false;
@@ -959,14 +974,28 @@ void TimelineCanvas::armDrag(const Hit& hit, const QPoint& pos)
     dragMode_ = DragMode::Move;
 }
 
-int TimelineCanvas::destinationLaneAt(int) const
+int TimelineCanvas::destinationLaneAt(int y) const
 {
-    return activeLane_;
+    if (panel_->laneCount() == 0)
+        return -1;
+    int destination = laneAtY(y);
+    if (destination < 0)
+        destination = y < laneRect(0).top() ? 0 : panel_->laneCount() - 1;
+    int firstLane = activeLane_;
+    int lastLane = activeLane_;
+    for (const GestureClip& clip : gestureClips_) {
+        firstLane = std::min(firstLane, clip.laneIndex);
+        lastLane = std::max(lastLane, clip.laneIndex);
+    }
+    if (firstLane < 0 || lastLane >= panel_->laneCount())
+        return -1;
+    return activeLane_ + std::clamp(destination - activeLane_,
+        -firstLane, panel_->laneCount() - 1 - lastLane);
 }
 
 int TimelineCanvas::previewLaneForClip(const GestureClip& clip) const
 {
-    return clip.laneIndex;
+    return clip.laneIndex + previewLane_ - activeLane_;
 }
 
 bool TimelineCanvas::applyDragPreview(const QPoint& pos, bool disableSnap)
@@ -975,27 +1004,20 @@ bool TimelineCanvas::applyDragPreview(const QPoint& pos, bool disableSnap)
     const int64_t current = panel_->coordinateAtViewportPixel(std::max(0, destLane), pos.x());
     const int64_t delta = saturatingSubtract(current, pressCoordinate_);
     snapGuideVisible_ = false;
-    ghostVisible_ = false;
     if (dragMode_ == DragMode::Move) {
-        intendedStart_ = saturatingAdd(originalStart_, delta);
+        const int64_t intendedStart = saturatingAdd(originalStart_, delta);
         previewLane_ = destLane;
-        int64_t applied = intendedStart_;
+        int64_t applied = intendedStart;
         if (!disableSnap)
-            applied = magnetSnap(destLane, intendedStart_, originalStart_,
+            applied = magnetSnap(destLane, intendedStart, originalStart_,
                                  saturatingAdd(originalStart_, originalDuration_));
         previewStart_ = applied;
         previewDuration_ = originalDuration_;
-        if (applied != intendedStart_) {
-            ghostVisible_ = true;
-            ghostRect_ = rangeRect(destLane, intendedStart_, originalDuration_);
-        }
         const int snappedPixel = panel_->viewportPixelAtCoordinate(destLane, applied);
-        snapGuideVisible_ = !disableSnap && applied != intendedStart_;
+        snapGuideVisible_ = !disableSnap && applied != intendedStart;
         snapGuideX_ = snappedPixel;
         panel_->setStatusMessage(
             tr("Move to %1").arg(panel_->formatCoordinate(destLane, applied)), false);
-        if (panel_->hasTimeline())
-            QToolTip::showText(mapToGlobal(pos), tr("Start: %1").arg(panel_->formatCoordinate(destLane, applied)), this);
         return true;
     }
     if (dragMode_ == DragMode::ResizeEnd) {
@@ -1031,37 +1053,29 @@ void TimelineCanvas::commitDrag(bool disableSnap)
 {
     Q_UNUSED(disableSnap);
     if (dragMode_ == DragMode::Move) {
-        if (gestureClips_.size() == 1) {
-            panel_->moveClip(activeLane_, activeGuid_, previewLane_, previewStart_, true);
-            return;
-        }
-        std::vector<ActionResult> results;
-        results.reserve(gestureClips_.size());
-        auto& manager = ProjectManager::instance();
-        for (const GestureClip& clip : gestureClips_) {
-            const int destLane = previewLaneForClip(clip);
-            if (destLane < 0 || destLane >= panel_->laneCount()) {
+        const auto clips = gestureClips_;
+        const int laneDelta = previewLane_ - activeLane_;
+        const int64_t start = previewStart_;
+        const int64_t originalStart = originalStart_;
+        QVector<QUuid> lanes;
+        lanes.reserve(panel_->laneCount());
+        for (int lane = 0; lane < panel_->laneCount(); ++lane)
+            lanes.append(panel_->laneGuid(lane));
+        cancelGesture();
+        std::vector<TimelineEditing::ClipMove> moves;
+        moves.reserve(clips.size());
+        for (const GestureClip& clip : clips) {
+            const int destLane = clip.laneIndex + laneDelta;
+            if (clip.laneIndex < 0 || clip.laneIndex >= lanes.size()
+                || destLane < 0 || destLane >= lanes.size()) {
                 panel_->rejectInteraction(tr("The selection cannot move outside the timeline."));
                 return;
             }
+            const int64_t clipStart = saturatingAdd(
+                start, saturatingSubtract(clip.start, originalStart));
+            moves.push_back({lanes[clip.laneIndex], lanes[destLane], clip.guid, clipStart});
         }
-        for (const GestureClip& clip : gestureClips_) {
-            const int64_t start = saturatingAdd(
-                previewStart_, saturatingSubtract(clip.start, originalStart_));
-            const int destLane = previewLaneForClip(clip);
-            ProjectItem* source = manager.findItemByGuid(panel_->laneGuid(clip.laneIndex));
-            ProjectItem* destination = manager.findItemByGuid(panel_->laneGuid(destLane));
-            if (!source || !destination) {
-                panel_->rejectInteraction(tr("The Clip or destination Track is unavailable."));
-                return;
-            }
-            ActionResult result = source == destination
-                ? TimelineEditing::moveClip(&manager, source, clip.guid, start, panel_)
-                : TimelineEditing::moveClipAcrossTracks(&manager, source, destination,
-                                                        clip.guid, start, panel_);
-            results.push_back(std::move(result));
-        }
-        panel_->commitTimelineActions(std::move(results), tr("Move Clips"));
+        panel_->commitClipMoves(moves);
         return;
     }
     if (dragMode_ == DragMode::ResizeEnd) {
@@ -1089,7 +1103,6 @@ void TimelineCanvas::cancelGesture()
     activeLane_ = -1;
     previewLane_ = -1;
     snapGuideVisible_ = false;
-    ghostVisible_ = false;
     dropVisible_ = false;
     unsetCursor();
 }

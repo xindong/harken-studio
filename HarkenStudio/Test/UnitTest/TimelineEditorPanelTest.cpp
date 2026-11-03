@@ -160,6 +160,154 @@ TEST_P(TimelineTrackHostTest, TrackCursorDragEndsBeforePanelDestruction)
     }
 }
 
+TEST_P(TimelineTrackHostTest, CoordinateSpaceTracksModelNotificationsAndUndoRedo)
+{
+    auto& manager = VNX::ProjectManager::instance();
+    auto& undo = VNX::UndoRedoManager::instance();
+    VNX::TimelineEditorPanel panel;
+    panel.resize(900, 360);
+    panel.bindItem(track_);
+    panel.show();
+    ASSERT_TRUE(panel.placeItem(sound_, 0, 0, true));
+    drainEvents();
+    undo.clear();
+
+    const int right = panel.timelineViewportWidth() - 1;
+    const int64_t initialEnd = panel.coordinateAtPixel(0, right);
+    const QUuid guid = panel.clipGuid(0, 0);
+    const QUuid targetGuid = panel.clipTargetGuid(0, 0);
+    EXPECT_EQ(panel.clipTarget(0, 0), manager.findItemByGuid(targetGuid));
+    const int64_t duration = panel.clipDuration(0, 0);
+    const int64_t distantStart = initialEnd * 2 + 123456789;
+    panel.timeTicks();
+    track_->comp<VNX::VTrack>()->clips.items.front().start = distantStart;
+    emit manager.itemPropertyChanged(track_, QStringLiteral("clips"));
+
+    EXPECT_EQ(panel.coordinateAtPixel(0, right), distantStart + duration);
+    EXPECT_EQ(panel.snapCoordinate(0, distantStart + 1, false), distantStart);
+    const int64_t negativeStart = -initialEnd / 2;
+    ASSERT_TRUE(panel.moveClip(0, guid, 0, negativeStart, true));
+    EXPECT_LE(panel.viewOriginCoordinate(), negativeStart);
+    EXPECT_EQ(panel.coordinateAtPixel(0, panel.pixelAtCoordinate(0, negativeStart)), negativeStart);
+
+    ASSERT_TRUE(undo.undo());
+    EXPECT_EQ(panel.viewOriginCoordinate(), 0);
+    EXPECT_EQ(panel.coordinateAtPixel(0, right), distantStart + duration);
+    EXPECT_EQ(panel.snapCoordinate(0, distantStart + 1, false), distantStart);
+    ASSERT_TRUE(undo.redo());
+    EXPECT_LE(panel.viewOriginCoordinate(), negativeStart);
+    EXPECT_EQ(panel.clipStart(0, 0), negativeStart);
+
+    ASSERT_TRUE(panel.deleteClip(0, guid));
+    EXPECT_EQ(panel.viewOriginCoordinate(), 0);
+    EXPECT_EQ(panel.coordinateAtPixel(0, right), initialEnd);
+    ASSERT_TRUE(undo.undo());
+    EXPECT_LE(panel.viewOriginCoordinate(), negativeStart);
+    EXPECT_EQ(panel.snapCoordinate(0, negativeStart + 1, false), negativeStart);
+    EXPECT_EQ(panel.clipTarget(0, 0), manager.findItemByGuid(targetGuid));
+
+    ASSERT_TRUE(manager.deleteItem(sound_));
+    EXPECT_EQ(manager.findItemByGuid(targetGuid), nullptr);
+    EXPECT_EQ(panel.clipCount(0), 0);
+    EXPECT_EQ(panel.clipTarget(0, 0), nullptr);
+    ASSERT_TRUE(undo.undo());
+    const int restoredClip = panel.findClipIndex(0, guid);
+    ASSERT_GE(restoredClip, 0);
+    ASSERT_NE(manager.findItemByGuid(targetGuid), nullptr);
+    EXPECT_EQ(panel.clipTargetGuid(0, restoredClip), targetGuid);
+    EXPECT_EQ(panel.clipTarget(0, restoredClip), manager.findItemByGuid(targetGuid));
+}
+
+TEST_F(TimelineEditorPanelTest, TrackReorderingAndDeletionPreserveLiveCoordinateMapping)
+{
+    auto& manager = VNX::ProjectManager::instance();
+    VNX::registerContainerActions(VNX::ActionManager::instance(), &manager);
+    auto* otherTrack = manager.createItem(track_->parent, QStringLiteral("OtherTrack"),
+        VNX::ProjectItem::Type::Track);
+    ASSERT_NE(otherTrack, nullptr);
+    auto* otherSound = manager.createItem(otherTrack, QStringLiteral("OtherSound"),
+        VNX::ProjectItem::Type::Sound);
+    ASSERT_NE(otherSound, nullptr);
+    otherTrack->comp<VNX::VTrack>()->clips = {};
+    const QUuid firstTrackGuid = track_->guid;
+    const QUuid otherTrackGuid = otherTrack->guid;
+
+    VNX::TimelineEditorPanel panel;
+    panel.resize(900, 360);
+    panel.bindItem(track_->parent);
+    panel.show();
+    ASSERT_TRUE(panel.placeItem(sound_, 0, 0, true));
+    drainEvents();
+    const int right = panel.timelineViewportWidth() - 1;
+    const int64_t initialEnd = panel.coordinateAtPixel(0, right);
+    const int64_t distantStart = initialEnd * 2 + 123456789;
+    ASSERT_TRUE(panel.placeItem(otherSound, 1, distantStart, true));
+    const QUuid distantClip = panel.clipGuid(1, 0);
+    const int64_t distantEnd = distantStart + panel.clipDuration(1, 0);
+    EXPECT_EQ(panel.coordinateAtPixel(0, right), distantEnd);
+
+    ASSERT_TRUE(panel.reorderLane(1, 0)) << panel.lastInteractionError().toStdString();
+    EXPECT_EQ(panel.laneGuid(0), otherTrackGuid);
+    EXPECT_EQ(panel.findLaneOfClip(distantClip), 0);
+    EXPECT_EQ(panel.clipStart(0, 0), distantStart);
+    EXPECT_EQ(panel.coordinateAtPixel(0, right), distantEnd);
+    drainEvents();
+
+    ASSERT_TRUE(manager.deleteItem(otherTrack));
+    ASSERT_EQ(panel.laneCount(), 1);
+    EXPECT_EQ(panel.laneGuid(0), firstTrackGuid);
+    EXPECT_EQ(panel.findLaneOfClip(distantClip), -1);
+    EXPECT_EQ(panel.coordinateAtPixel(0, right), initialEnd);
+}
+
+TEST_P(TimelineTrackHostTest, DragPreviewPreservesAuthoredStateUntilUndoableCommit)
+{
+    auto& undo = VNX::UndoRedoManager::instance();
+    VNX::TimelineEditorPanel panel;
+    panel.resize(900, 360);
+    panel.bindItem(track_);
+    panel.setEditCursorVisible(false);
+    panel.show();
+    ASSERT_TRUE(panel.placeItem(sound_, 0, 1000000000LL, true));
+    drainEvents();
+    undo.clear();
+    auto* canvas = panel.findChild<VNX::TimelineCanvas*>("timelineLaneViewport");
+    ASSERT_NE(canvas, nullptr);
+    const auto authored = track_->comp<VNX::VTrack>()->clips;
+    const QUuid guid = panel.clipGuid(0, 0);
+    const int64_t start = panel.clipStart(0, 0);
+    const int64_t duration = panel.clipDuration(0, 0);
+    const QPoint from(panel.viewportPixelAtCoordinate(0, start + duration / 2),
+        panel.laneRect(0).center().y());
+    const QPoint to = from + QPoint(canvas->width() / 5, 0);
+    QMouseEvent press(QEvent::MouseButtonPress, from, canvas->mapToGlobal(from),
+        Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(canvas, &press);
+    QMouseEvent move(QEvent::MouseMove, to, canvas->mapToGlobal(to),
+        Qt::NoButton, Qt::LeftButton, Qt::AltModifier);
+    QApplication::sendEvent(canvas, &move);
+
+    ASSERT_TRUE(canvas->isGestureActive());
+    const int64_t preview = canvas->previewStart();
+    EXPECT_NE(preview, start);
+    EXPECT_EQ(track_->comp<VNX::VTrack>()->clips, authored);
+    EXPECT_EQ(undo.undoStack()->count(), 0);
+    QMouseEvent release(QEvent::MouseButtonRelease, to, canvas->mapToGlobal(to),
+        Qt::LeftButton, Qt::NoButton, Qt::AltModifier);
+    QApplication::sendEvent(canvas, &release);
+
+    EXPECT_FALSE(canvas->isGestureActive());
+    EXPECT_EQ(panel.clipGuid(0, 0), guid);
+    EXPECT_EQ(panel.clipStart(0, 0), preview);
+    EXPECT_EQ(panel.clipDuration(0, 0), duration);
+    EXPECT_EQ(undo.undoStack()->count(), 1);
+    const auto committed = track_->comp<VNX::VTrack>()->clips;
+    ASSERT_TRUE(undo.undo());
+    EXPECT_EQ(track_->comp<VNX::VTrack>()->clips, authored);
+    ASSERT_TRUE(undo.redo());
+    EXPECT_EQ(track_->comp<VNX::VTrack>()->clips, committed);
+}
+
 TEST_F(TimelineEditorPanelTest, BatchCommitFailureRollsBackWithoutUndoStep)
 {
     VNX::TimelineEditorPanel panel;

@@ -358,13 +358,18 @@ TimelineEditorPanel::TimelineEditorPanel(QWidget* parent,
     refreshStatusBar();
 
     auto& manager = ProjectManager::instance();
+    connect(&manager, &ProjectManager::itemPropertyChanged, this,
+        [this] { invalidateModelCache(); });
+    connect(&manager, &ProjectManager::itemMoved, this,
+        [this] { invalidateModelCache(); });
     connect(&manager, &ProjectManager::itemCreated, this, [this](ProjectItem*) {
+        invalidateModelCache();
         if (suppressSelectionPush_)
             return;
         rebuild();
     });
     connect(&manager, &ProjectManager::itemMoved, this,
-            [this](ProjectItem*, ProjectItem*, ProjectItem*) { rebuild(); });
+            [this](ProjectItem*, ProjectItem*, ProjectItem*) { rebuild(); }, Qt::QueuedConnection);
     connect(&manager, &ProjectManager::itemRenamed, this,
             [this](ProjectItem*, const QString&) { refreshLaneChrome(); });
     connect(&manager, &ProjectManager::itemPropertyChanged, this,
@@ -373,6 +378,7 @@ TimelineEditorPanel::TimelineEditorPanel(QWidget* parent,
         else refreshLaneChrome();
     }, Qt::QueuedConnection);
     connect(&manager, &ProjectManager::itemDeleted, this, [this](ProjectItem* item) {
+        invalidateModelCache();
         if (item && isOrDescendsFrom(boundItem_, item)) {
             clearEditor();
             return;
@@ -639,11 +645,6 @@ QString TimelineEditorPanel::laneName(int index) const
     return index >= 0 && index < laneCount() ? lanes_[index].name : QString();
 }
 
-bool TimelineEditorPanel::laneHasExternalReferences(int index) const
-{
-    return index >= 0 && index < laneCount() && lanes_[index].external;
-}
-
 int TimelineEditorPanel::clipCount(int laneIndex) const
 {
     const ProjectItem* track = laneItem(laneIndex);
@@ -667,6 +668,17 @@ QUuid TimelineEditorPanel::clipTargetGuid(int laneIndex, int clipIndex) const
         ? timeline->clips.items[clipIndex].targetGuid : QUuid();
 }
 
+ProjectItem* TimelineEditorPanel::clipTarget(int laneIndex, int clipIndex) const
+{
+    const QUuid guid = clipTargetGuid(laneIndex, clipIndex);
+    const auto found = clipTargets_.constFind(guid);
+    if (found != clipTargets_.cend())
+        return *found;
+    auto* item = ProjectManager::instance().findItemByGuid(guid);
+    clipTargets_.insert(guid, item);
+    return item;
+}
+
 int64_t TimelineEditorPanel::clipStart(int laneIndex, int clipIndex) const
 {
     const ProjectItem* track = laneItem(laneIndex);
@@ -686,16 +698,7 @@ int64_t TimelineEditorPanel::clipDuration(int laneIndex, int clipIndex) const
 std::optional<int64_t> TimelineEditorPanel::clipSourceDuration(int laneIndex, int clipIndex) const
 {
     QSet<QUuid> visiting;
-    return sourceSpan(ProjectManager::instance().findItemByGuid(
-        clipTargetGuid(laneIndex, clipIndex)), visiting);
-}
-
-bool TimelineEditorPanel::clipIsExternal(int laneIndex, int clipIndex) const
-{
-    const ProjectItem* track = laneItem(laneIndex);
-    ProjectItem* target = ProjectManager::instance().findItemByGuid(
-        clipTargetGuid(laneIndex, clipIndex));
-    return track && target && target->parent != track;
+    return sourceSpan(clipTarget(laneIndex, clipIndex), visiting);
 }
 
 QSet<QUuid> TimelineEditorPanel::selectedClipGuids() const
@@ -825,8 +828,17 @@ double TimelineEditorPanel::horizontalScroll() const
 
 TimeAxisTicks TimelineEditorPanel::timeTicks() const
 {
-    return buildNanosecondTimeAxisTicks(viewStart_, viewSpan(), canvas_->width(),
-        QFontMetrics(FontManager::instance().getFont(FontRole::Axis), canvas_));
+    const double span = viewSpan();
+    const int width = canvas_->width();
+    const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Axis), canvas_);
+    if (!timeTickCache_ || timeTickCache_->start.nanoseconds != viewStart_.nanoseconds
+        || timeTickCache_->start.fraction != viewStart_.fraction
+        || timeTickCache_->span != span || timeTickCache_->width != width
+        || timeTickCache_->fontMetrics != metrics) {
+        timeTickCache_ = TimeTickCache{viewStart_, span, width, metrics,
+            buildNanosecondTimeAxisTicks(viewStart_, span, width, metrics)};
+    }
+    return timeTickCache_->ticks;
 }
 
 void TimelineEditorPanel::resetView()
@@ -969,7 +981,10 @@ void TimelineEditorPanel::scrollTracks(QWheelEvent* event)
 
 QRect TimelineEditorPanel::trackWaveformRect() const
 {
-    return canvas_->rect();
+    const auto& metrics = themeManager_->metrics();
+    const int inset = metrics.timeline.clipVerticalInset;
+    const int top = inset + TimelineRenderer::clipTitleHeight(metrics);
+    return QRect(0, top, canvas_->width(), std::max(0, canvas_->height() - top - inset));
 }
 
 int TimelineEditorPanel::verticalScroll() const
@@ -1345,8 +1360,7 @@ int TimelineEditorPanel::viewportPixelAtCoordinate(int laneIndex, int64_t coordi
 std::optional<int64_t> TimelineEditorPanel::emergenceCoordinate(
     int laneIndex, int clipIndex) const
 {
-    ProjectItem* target = ProjectManager::instance().findItemByGuid(
-        clipTargetGuid(laneIndex, clipIndex));
+    ProjectItem* target = clipTarget(laneIndex, clipIndex);
     const auto* sound = target ? target->comp<VSound>() : nullptr;
     if (!sound || sound->scheduleOffsetSec <= 0.0) return std::nullopt;
     const SegmentTimeSpec spec = effectiveTimeSpec(laneIndex);
@@ -1527,9 +1541,11 @@ int64_t TimelineEditorPanel::snapCoordinate(int laneIndex, int64_t coordinate,
         return candidate > coordinate ? uint64_t(candidate) - uint64_t(coordinate)
             : uint64_t(coordinate) - uint64_t(candidate);
     };
+    const double span = viewSpan();
+    const int viewportWidth = std::max(1, timelineViewportWidth() - 1);
     const auto consider = [&](int64_t candidate) {
         const double pixels = std::abs(NanosecondPosition{coordinate}.distanceTo(candidate))
-            / viewSpan() * std::max(1, timelineViewportWidth() - 1);
+            / span * viewportWidth;
         if (pixels <= 6.0 && (distance(candidate) < distance(best)
             || (distance(candidate) == distance(best) && candidate < best))) best = candidate;
     };
@@ -1559,19 +1575,7 @@ int64_t TimelineEditorPanel::viewOriginCoordinate() const
 {
     if (viewKind_ == ViewKind::Unsupported)
         return 0;
-    int64_t earliest = 0;
-    for (int lane = 0; lane < laneCount(); ++lane)
-        for (int clip = 0; clip < clipCount(lane); ++clip)
-            earliest = std::min(earliest, clipStart(lane, clip));
-    if (earliest >= 0)
-        return 0;
-    ProjectItem* track = laneItem(0);
-    const SegmentTimeSpec spec = TimelineEditing::timeSpecForTrackParent(
-        track ? track->parent : boundItem_);
-    const int64_t remainder = earliest % coordinateUnit(spec);
-    const int64_t offset = remainder < 0 ? coordinateUnit(spec) + remainder : 0;
-    return earliest < std::numeric_limits<int64_t>::min() + offset
-        ? std::numeric_limits<int64_t>::min() : earliest - offset;
+    return contentBounds().start;
 }
 
 bool TimelineEditorPanel::validateClipTarget(ProjectItem* target, int laneIndex,
@@ -1579,7 +1583,7 @@ bool TimelineEditorPanel::validateClipTarget(ProjectItem* target, int laneIndex,
 {
     ProjectItem* track = laneItem(laneIndex);
     if (!track) {
-        if (error) *error = tr("Drop onto the object's owning Track lane.");
+        if (error) *error = tr("Drop onto a Track lane.");
         return false;
     }
     if (!target || ProjectManager::instance().findItemByGuid(target->guid) != target) {
@@ -1680,6 +1684,28 @@ void TimelineEditorPanel::rejectInteraction(const QString& error)
     setStatusMessage(lastInteractionError_, true);
 }
 
+bool TimelineEditorPanel::commitClipMoves(const std::vector<TimelineEditing::ClipMove>& moves)
+{
+    const auto selection = canvas_->selectedClipGuids();
+    const auto anchor = canvas_->selectedClipAnchor();
+    QScopedValueRollback<bool> selectionGuard(suppressSelectionPush_, true);
+    QString error;
+    auto command = TimelineEditing::makeClipMoveCommand(&ProjectManager::instance(), moves, &error);
+    const bool success = command ? command->tryReplay(true) : error.isEmpty();
+    if (success && command)
+        UndoRedoManager::instance().push(command.release());
+    canvas_->restoreSelectedClips(selection, anchor);
+    publishClipSelection();
+    if (!success) {
+        rejectInteraction(error.isEmpty() ? tr("The Clips could not be moved.") : error);
+        return false;
+    }
+    lastInteractionError_.clear();
+    setStatusMessage({}, false);
+    refreshTimelinePaint();
+    return true;
+}
+
 bool TimelineEditorPanel::placeItem(ProjectItem* target, int laneIndex, int64_t start,
                                     bool disableSnap)
 {
@@ -1716,11 +1742,7 @@ bool TimelineEditorPanel::moveClip(int sourceLaneIndex, const QUuid& guid,
         rejectInteraction(tr("The Clip position cannot be represented in the destination Track."));
         return false;
     }
-    ActionResult result = source == destination
-        ? TimelineEditing::moveClip(&ProjectManager::instance(), source, guid, start, this)
-        : TimelineEditing::moveClipAcrossTracks(&ProjectManager::instance(), source,
-                                                destination, guid, start, this);
-    return commitTimelineAction(std::move(result));
+    return commitClipMoves({{source->guid, destination->guid, guid, start}});
 }
 
 bool TimelineEditorPanel::resizeClip(int laneIndex, const QUuid& guid,
@@ -2463,7 +2485,11 @@ bool TimelineEditorPanel::eventFilter(QObject* watched, QEvent* event)
             || watched == verticalScrollBar_ || watched == verticalTools_
             || watched == verticalZoomInButton_ || watched == verticalZoomOutButton_));
     if (hasTimeline() && navigationControl && event->type() == QEvent::Wheel) {
-        const auto* source = static_cast<QWheelEvent*>(event);
+        auto* source = static_cast<QWheelEvent*>(event);
+        if (watched == headerColumn_ && source->modifiers().testFlag(Qt::ShiftModifier)) {
+            scrollTracks(source);
+            return true;
+        }
         QWheelEvent wheel(canvas_->mapFromGlobal(source->globalPosition()), source->globalPosition(),
             source->pixelDelta(), source->angleDelta(), source->buttons(), source->modifiers(),
             source->phase(), source->inverted(), source->source());
@@ -2536,8 +2562,7 @@ void TimelineEditorPanel::rebuild()
     }
 
     if (boundItem_->type == ProjectItem::Type::Track) {
-        lanes_.push_back({boundItem_->guid, boundItem_->objectID, boundItem_->name,
-                          hasExternalReferences(boundItem_)});
+        lanes_.push_back({boundItem_->guid, boundItem_->objectID, boundItem_->name, boundItem_});
         viewKind_ = ViewKind::Track;
         rebuildTimelinePage();
         return;
@@ -2546,8 +2571,7 @@ void TimelineEditorPanel::rebuild()
     if (boundItem_->type == ProjectItem::Type::Segment) {
         for (const auto& child : boundItem_->children) {
             if (child && child->type == ProjectItem::Type::Track)
-                lanes_.push_back({child->guid, child->objectID, child->name,
-                                  hasExternalReferences(child.get())});
+                lanes_.push_back({child->guid, child->objectID, child->name, child.get()});
         }
         viewKind_ = ViewKind::Segment;
         rebuildTimelinePage();
@@ -2561,6 +2585,7 @@ void TimelineEditorPanel::rebuild()
 
 void TimelineEditorPanel::rebuildTimelinePage()
 {
+    invalidateModelCache();
     if (!hasTimeline()) return;
     applyPresentation();
     refreshBreadcrumbs();
@@ -2601,6 +2626,7 @@ void TimelineEditorPanel::refreshTimelinePaint()
 
 void TimelineEditorPanel::refreshLaneChrome()
 {
+    invalidateModelCache();
     if (ProjectManager::instance().isClosing())
         return;
     if (boundItem_) {
@@ -2617,7 +2643,6 @@ void TimelineEditorPanel::refreshLaneChrome()
         if (index < static_cast<int>(lanes_.size()) && laneItem(index)) {
             ProjectItem* track = laneItem(index);
             lanes_[index].name = track->name;
-            lanes_[index].external = hasExternalReferences(track);
         }
     }
     if (hasTimeline())
@@ -2674,17 +2699,40 @@ void TimelineEditorPanel::finishLaneResize(bool cancel)
 
 int64_t TimelineEditorPanel::contentEndCoordinate() const
 {
-    int64_t end = 10 * TimelineCoordinates::kNanosecondsPerSecond;
-    for (int lane = 0; lane < laneCount(); ++lane) {
-        for (int clip = 0; clip < clipCount(lane); ++clip) {
-            const int64_t start = clipStart(lane, clip);
-            const int64_t duration = clipDuration(lane, clip);
-            if (start > std::numeric_limits<int64_t>::max() - duration)
-                return std::numeric_limits<int64_t>::max();
-            end = std::max(end, start + duration);
+    return contentBounds().end;
+}
+
+void TimelineEditorPanel::invalidateModelCache()
+{
+    contentBounds_.reset();
+    clipTargets_.clear();
+}
+
+const TimelineSpan& TimelineEditorPanel::contentBounds() const
+{
+    if (contentBounds_)
+        return *contentBounds_;
+    TimelineSpan bounds{0, 10 * TimelineCoordinates::kNanosecondsPerSecond};
+    for (const auto& lane : lanes_) {
+        const auto* track = lane.item ? lane.item->comp<VTrack>() : nullptr;
+        if (!track)
+            continue;
+        for (const auto& clip : track->clips.items) {
+            bounds.start = std::min(bounds.start, clip.start);
+            const int64_t end = clip.start > std::numeric_limits<int64_t>::max() - clip.duration
+                ? std::numeric_limits<int64_t>::max() : clip.start + clip.duration;
+            bounds.end = std::max(bounds.end, end);
         }
     }
-    return end;
+    if (bounds.start < 0) {
+        const int64_t unit = coordinateUnit(effectiveTimeSpec(0));
+        const int64_t remainder = bounds.start % unit;
+        const int64_t offset = remainder < 0 ? unit + remainder : 0;
+        bounds.start = bounds.start < std::numeric_limits<int64_t>::min() + offset
+            ? std::numeric_limits<int64_t>::min() : bounds.start - offset;
+    }
+    contentBounds_ = bounds;
+    return *contentBounds_;
 }
 
 void TimelineEditorPanel::refreshHorizontalRange()
@@ -2713,6 +2761,7 @@ void TimelineEditorPanel::refreshHorizontalRange()
 
 void TimelineEditorPanel::showState(ViewKind kind, const QString& text)
 {
+    invalidateModelCache();
     finishLaneResize(true);
     qDeleteAll(laneResizeBars_);
     laneResizeBars_.clear();
@@ -2734,20 +2783,7 @@ void TimelineEditorPanel::showState(ViewKind kind, const QString& text)
 ProjectItem* TimelineEditorPanel::laneItem(int index) const
 {
     return index >= 0 && index < laneCount()
-        ? ProjectManager::instance().findItemByGuid(lanes_[index].guid) : nullptr;
-}
-
-bool TimelineEditorPanel::hasExternalReferences(const ProjectItem* track) const
-{
-    const auto* timeline = track ? track->comp<VTrack>() : nullptr;
-    if (!timeline)
-        return false;
-    auto& manager = ProjectManager::instance();
-    return std::any_of(timeline->clips.items.begin(), timeline->clips.items.end(),
-                       [track, &manager](const Clip& clip) {
-        ProjectItem* target = manager.findItemByGuid(clip.targetGuid);
-        return target && target->parent != track;
-    });
+        ? lanes_[index].item : nullptr;
 }
 
 }

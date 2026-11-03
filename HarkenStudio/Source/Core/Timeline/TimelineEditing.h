@@ -4,10 +4,13 @@
 #include "../ActionManager.h"
 
 #include <optional>
+#include <memory>
+#include <vector>
 
 namespace VNX {
 
 class ProjectManager;
+class TransactionalUndoCommand;
 
 namespace TimelineEditing {
 
@@ -44,12 +47,17 @@ ActionResult resizeClip(ProjectManager* projectManager,
                         int64_t start,
                         int64_t duration,
                         const QObject* originator = nullptr);
-ActionResult moveClipAcrossTracks(ProjectManager* projectManager,
-                                  ProjectItem* sourceTrack,
-                                  ProjectItem* destinationTrack,
-                                  const QUuid& clipGuid,
-                                  int64_t start,
-                                  const QObject* originator = nullptr);
+struct ClipMove {
+    QUuid sourceTrackGuid;
+    QUuid destinationTrackGuid;
+    QUuid clipGuid;
+    int64_t start = 0;
+};
+
+std::unique_ptr<TransactionalUndoCommand> makeClipMoveCommand(
+    ProjectManager* projectManager,
+    const std::vector<ClipMove>& moves,
+    QString* error = nullptr);
 
 ActionResult replaceMarkers(ProjectManager* projectManager,
                          ProjectItem* segment,

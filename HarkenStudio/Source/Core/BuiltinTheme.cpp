@@ -129,7 +129,7 @@ ThemeSnapshot createBuiltinDarkTheme()
     metrics.timeline.majorTickLength = 10;
     metrics.timeline.minLabelSpacing = 48;
     metrics.timeline.minTickSpacing = 8;
-    metrics.timeline.clipVerticalInset = 4;
+    metrics.timeline.clipVerticalInset = 1;
     metrics.timeline.clipRadius = 2;
     metrics.timeline.clipMinimumWidth = 14;
     metrics.timeline.resizeHandleWidth = 7;
