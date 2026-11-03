@@ -35,6 +35,7 @@
 int RunCurveUpdateBenchmark(int argc, char* argv[]);
 int RunLimiterReleaseBenchmark(int argc, char* argv[]);
 int RunCompressorReleaseBenchmark(int argc, char* argv[]);
+int RunSignalRoutingBenchmark(int argc);
 
 namespace {
 
@@ -2431,7 +2432,7 @@ int main(int argc, char* argv[]) {
             std::printf(
                 "Usage: harken_benchmarks [--filter "
                 "render-worker|curve-update|limiter-release|"
-                "compressor-release|compressor-matrix|phase1 "
+                "compressor-release|compressor-matrix|phase1|signal-routing "
                 "[options]]\n");
             return 0;
         }
@@ -2441,6 +2442,9 @@ int main(int argc, char* argv[]) {
         }
         if (std::strcmp(argv[2], "curve-update") == 0) {
             return RunCurveUpdateBenchmark(argc - 3, argv + 3);
+        }
+        if (std::strcmp(argv[2], "signal-routing") == 0) {
+            return RunSignalRoutingBenchmark(argc - 3);
         }
         if (std::strcmp(argv[2], "limiter-release") == 0) {
             return RunLimiterReleaseBenchmark(argc - 3, argv + 3);

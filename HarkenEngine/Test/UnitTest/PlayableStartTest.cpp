@@ -29804,3 +29804,194 @@ TEST(PlayableStart, StopOuterSequencePreservesCauseAcrossNestedVariableControl) 
     ExpectVariableControlNestedCompletion(harken::ContainerModeV1::Sequence,
         harken::ContainerModeV1::VariableControl, true);
 }
+
+TEST(PlayableStart, FormalSignalReceiversShareSoundAndContainerMembersAcrossWorkers) {
+    std::vector<float> serial;
+    for (const auto kind : {harken::SignalEndpointKindV1::Sound, harken::SignalEndpointKindV1::Container}) {
+        for (const auto workers : {0u, 2u}) {
+            SCOPED_TRACE(static_cast<unsigned>(kind));
+            SCOPED_TRACE(workers);
+            auto config = harkentest::MakeNullConfig(5, 64, 48000);
+            config.renderWorkerCount = workers;
+            config.maxBuses = 4;
+            harkentest::EngineSession session(config);
+            ASSERT_EQ(session.InitResult(), VN_OK);
+            auto* engine = session.Engine();
+            const auto sourceBus = harkentest::ObjectId(901);
+            const auto oppositeBus = harkentest::ObjectId(903);
+            const auto oppositeSound = harkentest::ObjectId(904);
+            ASSERT_EQ(Vn_CreateBus(sourceBus, VN_BUS_MASTER), VN_OK);
+            ASSERT_EQ(Vn_CreateBus(oppositeBus, VN_BUS_MASTER), VN_OK);
+            const auto targetSamples = harkentest::MakeDC(64 * 700, .1f);
+            const auto sourceSamples = harkentest::MakeDC(64 * 700, .01f);
+            const auto oppositeSamples = harkentest::MakeDC(64 * 700, -.01f);
+            const auto targetPcm = harkentest::MonoDesc(targetSamples, 48000);
+            const auto sourcePcm = harkentest::MonoDesc(sourceSamples, 48000);
+            ASSERT_EQ(Vn_RegisterPCM(kSound, &targetPcm), VN_OK);
+            ASSERT_EQ(Vn_RegisterPCM(kSecondSound, &sourcePcm), VN_OK);
+            const auto oppositePcm = harkentest::MonoDesc(oppositeSamples, 48000);
+            ASSERT_EQ(Vn_RegisterPCM(oppositeSound, &oppositePcm), VN_OK);
+            PlayableWorldImage image(engine->registry.Lookup(kSound).contentRevision,
+                harken::ContainerModeV1::Random);
+            const auto propertyIndex = kind == harken::SignalEndpointKindV1::Sound ? 0u : 1u;
+            harken::SignalReceiverV1 receiver;
+            receiver.target.kind = kind;
+            receiver.target.stableId = image.properties[propertyIndex].stableId;
+            receiver.target.expectedPropertyFingerprint = image.properties[propertyIndex].programSemanticFingerprint;
+            if (kind == harken::SignalEndpointKindV1::Container)
+                receiver.target.expectedProgramFingerprint = image.container.programSemanticFingerprint;
+            harken::SignalRelationV1 relation;
+            relation.stableId = harkentest::ObjectId(902);
+            relation.source.stableId = sourceBus;
+            relation.target = receiver.target;
+            std::array relations{relation, relation};
+            relations[1].stableId = harkentest::ObjectId(905);
+            relations[1].source.stableId = oppositeBus;
+            image.world.sourceBodyVintage = harken::kCurrentWorldBodyVintageV20;
+            image.world.signalRelations = relations.data(); image.world.signalRelationCount = 2;
+            image.world.signalReceivers = &receiver; image.world.signalReceiverCount = 1;
+            image.world.identity.capabilityMask |= harken::kWorldCapabilitySignalRelations;
+            image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV7(image.world);
+            ASSERT_EQ(harken::InstallContainerWorldV1(*engine, image.world).status, harken::WorldInstallStatus::Ok);
+            harken::PlayableStartRequest request;
+            request.root = image.Root();
+            for (unsigned i = 0; i < 2; ++i)
+                ASSERT_EQ(harken::StartPlayable(*engine, request).status, harken::PlayableStartStatus::Accepted);
+            // A raw voice with the same media ID is not a definition member.
+            for (const auto sound : {kSound, kSecondSound}) {
+                auto play = harkentest::MakePlayDesc(sound);
+                if (sound == kSecondSound) play.busId = sourceBus;
+                VnVoiceHandle voice = 0;
+                ASSERT_EQ(harkentest::PlayRaw(&play, &voice), VN_OK);
+            }
+            ASSERT_EQ(Vn_Update(), VN_OK);
+            harkentest::Capture output;
+            for (unsigned block = 0; block < 180; ++block) {
+                harkentest::PumpAndCapture(engine, 1, output);
+                ASSERT_EQ(Vn_Update(), VN_OK);
+            }
+            ASSERT_FALSE(output.left.empty());
+            const double expected = .11 + .2 * (1 - harken::kDuckingBaselineSlope * .01 / .2);
+            EXPECT_NEAR(output.left.back(), expected, 1e-5);
+            auto oppositePlay = harkentest::MakePlayDesc(oppositeSound);
+            oppositePlay.busId = oppositeBus;
+            VnVoiceHandle oppositeVoice = 0;
+            ASSERT_EQ(harkentest::PlayRaw(&oppositePlay, &oppositeVoice), VN_OK);
+            for (unsigned block = 0; block < 180; ++block) {
+                harkentest::PumpAndCapture(engine, 1, output);
+                ASSERT_EQ(Vn_Update(), VN_OK);
+            }
+            // Signed PCM cancels across two distinct connections before RMS.
+            EXPECT_NEAR(output.left.back(), .3, 2e-6);
+            EXPECT_EQ(engine->mixer.Arena().OverflowCount(), 0u);
+            if (workers == 0) serial = output.left;
+            else EXPECT_EQ(output.left, serial);
+        }
+    }
+}
+
+TEST(PlayableStart, FormalSignalFeedbackPreservesOpposingMembersWithDifferentOutputVolumes) {
+    std::array<harkentest::Capture, 2> captures;
+    for (unsigned perturb = 0; perturb < 2; ++perturb) {
+        auto config = harkentest::MakeNullConfig(4, 64, 48000);
+        config.maxBuses = 4;
+        config.topologyPlanPoolCapacity = 16;
+        config.mixChannelLayout = VN_CHANNEL_LAYOUT_5_1;
+        harkentest::EngineSession session(config);
+        ASSERT_EQ(session.InitResult(), VN_OK);
+        auto* engine = session.Engine();
+        constexpr unsigned half = 2200 * 64;
+        std::vector<float> pcm(half * 2, -.0999f);
+        std::fill_n(pcm.begin(), half, .1f);
+        auto desc = harkentest::MonoDesc(pcm, 48000);
+        std::array<harken::PlayablePropertyProgramViewV1, 2> properties;
+        std::array<harken::SignalReceiverV1, 2> receivers;
+        std::array<harken::SignalRelationV1, 2> relations;
+        for (unsigned i = 0; i < 2; ++i) {
+            const auto sound = harkentest::ObjectId(1100 + i);
+            const auto bus = harkentest::ObjectId(1200 + i);
+            ASSERT_EQ(Vn_CreateBus(bus, VN_BUS_MASTER), VN_OK);
+            ASSERT_EQ(Vn_SetBusOutputLayout(bus, VN_CHANNEL_LAYOUT_STEREO), VN_OK);
+            VnDownmixMatrixDesc matrix{};
+            matrix.structSize = sizeof(matrix);
+            matrix.srcLayout = VN_CHANNEL_LAYOUT_5_1;
+            matrix.dstLayout = VN_CHANNEL_LAYOUT_STEREO;
+            matrix.coeffs[i * 8 + i] = 1;
+            ASSERT_EQ(Vn_SetBusDownmixMatrix(bus, &matrix), VN_OK);
+            if (perturb && i == 0)
+                std::fill(pcm.begin() + 400 * 64, pcm.begin() + 460 * 64, .2f);
+            else std::fill_n(pcm.begin(), half, .1f);
+            ASSERT_EQ(Vn_RegisterPCM(sound, &desc), VN_OK);
+            auto& property = properties[i];
+            property.contentPropertyKind = harken::playableproperties::ContentPropertyKindV1::Sound;
+            property.stableId = sound;
+            property.authoredStableOrder = i;
+            property.contentRevision = engine->registry.Lookup(sound).contentRevision;
+            property.routeStableId = bus;
+            property.compatibilityFingerprint = i + 1;
+            property.payload = ResolvedPayload();
+            property.payload.values[6].objectId = bus;
+            property.programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(property);
+            receivers[i].target.kind = harken::SignalEndpointKindV1::Sound;
+            receivers[i].target.stableId = sound;
+            receivers[i].target.expectedPropertyFingerprint = property.programSemanticFingerprint;
+        }
+        for (unsigned i = 0; i < 2; ++i) {
+            relations[i].stableId = harkentest::ObjectId(1300 + i);
+            relations[i].source = receivers[i].target;
+            relations[i].target = receivers[1 - i].target;
+        }
+        harken::ContainerWorldInstallViewV1 world;
+        world.sourceBodyVintage = harken::kCurrentWorldBodyVintageV20;
+        world.playableProperties = properties.data(); world.playablePropertyCount = 2;
+        world.signalRelations = relations.data(); world.signalRelationCount = 2;
+        world.signalReceivers = receivers.data(); world.signalReceiverCount = 2;
+        world.identity.capabilityMask = harken::kWorldCapabilityPlayableProperties | harken::kWorldCapabilitySignalRelations;
+        world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV7(world);
+        ASSERT_EQ(harken::InstallContainerWorldV1(*engine, world).status, harken::WorldInstallStatus::Ok);
+        std::array<harken::PlayableInstanceHandle, 2> negativeInstances{};
+        for (unsigned i = 0; i < 2; ++i) {
+            harken::PlayableStartRequest request;
+            request.root.kind = harken::PlayableKindV1::Sound;
+            request.root.stableId = properties[i].stableId;
+            request.root.expectedProgramSemanticFingerprint = properties[i].programSemanticFingerprint;
+            request.root.contentRevision = properties[i].contentRevision;
+            request.root.routeStableId = properties[i].routeStableId;
+            request.root.compatibilityFingerprint = properties[i].compatibilityFingerprint;
+            for (unsigned member = 0; member < 2; ++member) {
+                const auto started = harken::StartPlayable(*engine, request);
+                ASSERT_EQ(started.status, harken::PlayableStartStatus::Accepted);
+                if (member == 1) negativeInstances[i] = started.instance;
+            }
+        }
+        for (unsigned i = 0; i < 8; ++i) {
+            engine->nullBackend.Pump(1);
+            ASSERT_EQ(Vn_Update(), VN_OK);
+        }
+        for (auto instance : negativeInstances) {
+            const auto row = std::find_if(engine->playableServices.begin(), engine->playableServices.end(),
+                [&](const auto& candidate) { return candidate.rootInstance == instance; });
+            ASSERT_NE(row, engine->playableServices.end());
+            ASSERT_NE(row->renderHandle, 0u);
+            std::uint64_t position = 0;
+            ASSERT_EQ(engine->voices.CanApplySeek(row->renderHandle, VN_ACTION_SEEK_ABSOLUTE, half, &position), VN_OK);
+            engine->voices.CommitSeek(row->renderHandle, position);
+            // Native playable render handles use the audio command apply path,
+            // not the public raw-voice handle facade.
+            engine->voices.ApplySetVolume(row->renderHandle, -6.0205999f, 0, true);
+        }
+        for (unsigned block = 0; block < 1800; ++block) {
+            harkentest::PumpAndCapture(engine, 1, captures[perturb]);
+            ASSERT_EQ(Vn_Update(), VN_OK);
+        }
+        const auto& output = captures[perturb];
+        EXPECT_NEAR(output.left.back(), .0412693801589711, 2e-5);
+        EXPECT_NEAR(output.right.back(), .0412693801589711, 2e-5);
+        for (const auto* channel : {&output.left, &output.right})
+            for (float sample : *channel) ASSERT_TRUE(std::isfinite(sample));
+    }
+    for (std::size_t i = captures[0].left.size() - 12000; i < captures[0].left.size(); ++i) {
+        ASSERT_NEAR(captures[0].left[i], captures[1].left[i], 1e-5);
+        ASSERT_NEAR(captures[0].right[i], captures[1].right[i], 1e-5);
+    }
+}

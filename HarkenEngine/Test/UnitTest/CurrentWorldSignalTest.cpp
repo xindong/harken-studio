@@ -235,10 +235,43 @@ TEST(CurrentWorldSignal, PairedPublicationCarriesSignalsInItsSingleTopologyComma
     ASSERT_EQ(PrepareProjectGenerationV1(engine, view, prepared).status, ProjectGenerationPrepareStatusV1::Ok);
     EXPECT_EQ(engine.acceptedSignalPlan, nullptr);
     const auto free = engine.commands.FreeSlots();
+    // A prepared world must recheck backing at promotion, not rely on the
+    // capacity observed when it was prepared.
+    engine.mixer.ArenaForTests().SetCapacityForTests(1);
+    EXPECT_EQ(CommitPreparedProjectGenerationV1(engine, prepared).status, ProjectGenerationCommitStatusV1::Backpressure);
+    EXPECT_EQ(engine.commands.FreeSlots(), free);
+    EXPECT_EQ(engine.acceptedSignalPlan, nullptr);
+    engine.mixer.ArenaForTests().RestoreCapacityForTests();
     ASSERT_EQ(CommitPreparedProjectGenerationV1(engine, prepared).status, ProjectGenerationCommitStatusV1::Ok);
     ASSERT_NE(engine.acceptedSignalPlan, nullptr);
     EXPECT_EQ(engine.commands.FreeSlots(), free - 1);
     engine.nullBackend.Pump(1);
     EXPECT_EQ(engine.buses.InstalledSignals(), engine.acceptedSignalPlan.get());
+}
+
+TEST(CurrentWorldSignal, PendingPlanBackingIsReleasedOnlyAfterRetirementDrain) {
+    auto config = harkentest::MakeNullConfig(64, 64, 48000);
+    config.maxBuses = 4;
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(session.InitResult(), VN_OK);
+    auto& engine = *session.Engine();
+    std::array<SignalRenderNodeInput, 64> nodes{};
+    auto owner = SignalRenderPlan::Prepare({2, 64, 48000, VN_CHANNEL_LAYOUT_STEREO}, nodes, {}, {});
+    ASSERT_NE(owner, nullptr);
+    ASSERT_TRUE(engine.mixer.PrepareSignalBacking(*owner));
+    const auto old = engine.topologyPlans.Acquire();
+    ASSERT_NE(old, kInvalidTopologyPlanIndex);
+    engine.topologyPlans.SetSignals(old, std::move(owner));
+    const auto newer = engine.topologyPlans.Acquire();
+    ASSERT_NE(newer, kInvalidTopologyPlanIndex);
+    // The latest empty plan does not make an older queued plan disappear.
+    engine.mixer.ArenaForTests().SetCapacityForTests(4096);
+    EXPECT_FALSE(engine.mixer.PrepareVoiceBacking(64));
+    engine.topologyPlans.Retire(old);
+    EXPECT_FALSE(engine.mixer.PrepareVoiceBacking(64));
+    engine.topologyPlans.DrainRetire();
+    EXPECT_TRUE(engine.mixer.PrepareVoiceBacking(64));
+    engine.mixer.ArenaForTests().RestoreCapacityForTests();
+    engine.topologyPlans.Recycle(newer);
 }
 } // namespace

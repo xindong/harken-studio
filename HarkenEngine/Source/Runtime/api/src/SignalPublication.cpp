@@ -165,7 +165,6 @@ void CommitSignals(Engine& engine, PreparedSignalPublication& prepared) noexcept
     if (!prepared.changed) return;
     engine.acceptedSignalPlan = std::move(prepared.owner);
     ++engine.acceptedSignalRevision;
-    engine.mixer.CommitSignalBacking(engine.acceptedSignalPlan.get());
 }
 
 PrivateSignalTopology::~PrivateSignalTopology() {

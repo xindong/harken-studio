@@ -71,7 +71,6 @@ public:
     BlockArena& ArenaForTests() { return m_arena; }
     bool PrepareVoiceBacking(std::uint32_t count) noexcept;
     bool PrepareSignalBacking(const SignalRenderPlan& plan) noexcept;
-    void CommitSignalBacking(const SignalRenderPlan* plan) noexcept;
 
     // The audio-published observability payload: RenderBlock publishes
     // into it at the end of every block; Vn_CaptureSnapshot reads the
@@ -335,12 +334,11 @@ private:
     SnapshotBuffer m_snapshots;
     BlockArena m_arena;
     std::uint64_t m_arenaLowBytes = 0;
-    std::uint32_t m_signalNodes = 0;
-    std::size_t m_signalRelations = 0;
     std::uint32_t m_busSendSlots = 0;
     std::uint32_t m_busFxSlots = 0, m_dynamicRouteCapacity = 0;
     std::uint64_t SignalScratchBytes(std::uint32_t slots, std::uint32_t nodes,
                                     std::size_t relations) const noexcept;
+    std::uint64_t RetainedSignalScratchBytes(std::uint32_t slots) const noexcept;
     std::uint64_t m_arenaBytesPerSlot = 0;
     std::uint32_t m_arenaBatchAllowance = 1;
     VoicePool::SlotStorageRegistration m_arenaStorageRegistration;

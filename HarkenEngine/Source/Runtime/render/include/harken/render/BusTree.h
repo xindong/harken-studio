@@ -210,6 +210,9 @@ public:
     void ApplyTopologyPlan(std::uint32_t planIndex, std::uint32_t connectFrom,
                            std::uint32_t connectTo, float connectLevelDb,
                            std::uint64_t acceptedGraphRevision = 0);
+    // Logic thread: include every plan that can still be consumed on audio.
+    std::uint64_t RetainedSignalScratchBytes(std::uint64_t extraNodes,
+        std::uint64_t extraEdges, std::uint32_t frames) const noexcept;
     std::uint64_t InstalledGraphRevision() const noexcept {
         return m_installedGraphRevision.load(std::memory_order_acquire);
     }

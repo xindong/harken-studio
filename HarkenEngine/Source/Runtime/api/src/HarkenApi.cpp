@@ -118880,8 +118880,8 @@ VnResult PrepareCanonicalSignals(Engine& engine, PreparedCanonicalPublication& p
     if (planIndex != kInvalidTopologyPlanIndex) {
         AttachPreparedSignals(engine.topologyPlans, planIndex, prepared.signals);
     } else if (prepared.signals.changed) {
-        prepared.signalTopology = std::make_unique<PrivateSignalTopology>(engine);
-        if (!prepared.signalTopology->Prepare(prepared.signals)) return VN_BACKPRESSURE;
+        prepared.signalTopology.reset(new (std::nothrow) PrivateSignalTopology(engine));
+        if (!prepared.signalTopology || !prepared.signalTopology->Prepare(prepared.signals)) return VN_BACKPRESSURE;
     }
     prepared.signalsReady = true;
     return VN_OK;

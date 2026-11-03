@@ -758,6 +758,7 @@ add_executable(harken_benchmarks
     Benchmark/CurveUpdateBenchmark.cpp
     Benchmark/LimiterReleaseBenchmark.cpp
     Benchmark/RenderWorkerScalingBenchmark.cpp
+    Benchmark/SignalRoutingBenchmark.cpp
 )
 target_link_libraries(harken_benchmarks PRIVATE harken_core harken_buildinfo)
 # Same library/consumer macro agreement as harken_runtime_tests (the benchmark's

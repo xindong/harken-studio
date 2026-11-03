@@ -202,9 +202,8 @@ bool MixerLoop::PrepareVoiceBacking(std::uint32_t count) noexcept {
     if (count > m_voices.Capacity()) return false;
     // A timed-out worker batch keeps its span; subsequent blocks use the second allowance.
     const auto highBytes = count == 0 ? 0u : m_arenaBytesPerSlot * count + alignof(float) - 1u;
-    const auto signalBytes = SignalScratchBytes(std::max(count, m_voices.ConstructedSlotCount()),
-                                                m_signalNodes, m_signalRelations);
-    if (m_signalNodes != 0 && (signalBytes > m_arena.CapacityBytes() ||
+    const auto signalBytes = RetainedSignalScratchBytes(std::max(count, m_voices.ConstructedSlotCount()));
+    if (signalBytes != 0 && (signalBytes > m_arena.CapacityBytes() ||
         m_arenaLowBytes + signalBytes + highBytes > m_arena.CapacityBytes())) return false;
     return m_arena.PrepareBacking(m_arenaLowBytes + signalBytes, highBytes);
 }
@@ -225,16 +224,22 @@ std::uint64_t MixerLoop::SignalScratchBytes(std::uint32_t slots, std::uint32_t n
 
 bool MixerLoop::PrepareSignalBacking(const SignalRenderPlan& plan) noexcept {
     const auto slots = m_voices.ConstructedSlotCount();
-    const auto scratch = SignalScratchBytes(slots, plan.NodeCount(), plan.RelationCount());
+    const auto scratch = std::max(RetainedSignalScratchBytes(slots),
+        SignalScratchBytes(slots, plan.NodeCount(), plan.RelationCount()));
     const auto high = m_voices.PreparedCascadeChannelRows(m_mixChannels, slots) *
         m_voices.BlockFrames() * sizeof(float) * m_arenaBatchAllowance + alignof(float) - 1u;
     if (scratch > m_arena.CapacityBytes() || m_arenaLowBytes + scratch + high > m_arena.CapacityBytes()) return false;
     return m_arena.PrepareBacking(m_arenaLowBytes + scratch, high);
 }
 
-void MixerLoop::CommitSignalBacking(const SignalRenderPlan* plan) noexcept {
-    m_signalNodes = plan == nullptr ? 0 : plan->NodeCount();
-    m_signalRelations = plan == nullptr ? 0 : plan->RelationCount();
+std::uint64_t MixerLoop::RetainedSignalScratchBytes(std::uint32_t slots) const noexcept {
+    const auto extra = m_dynamicRouteCapacity == 0 ? 0ull :
+        static_cast<std::uint64_t>(m_maxBuses) * (m_busFxSlots + 2ull);
+    const auto edges = extra + m_dynamicRouteCapacity +
+        static_cast<std::uint64_t>(m_maxBuses) * (m_busSendSlots + 1ull) +
+        m_voices.PreparedSignalPathRows(slots) +
+        static_cast<std::uint64_t>(slots) * (kMaxVoiceSendSlots + 1ull);
+    return m_buses.RetainedSignalScratchBytes(extra, edges, m_blockFrames);
 }
 
 bool MixerLoop::PreparePreparedChannelBacking(std::uint32_t count) noexcept {
@@ -245,8 +250,8 @@ bool MixerLoop::PreparePreparedChannelBacking(std::uint32_t count) noexcept {
     const auto planes = m_voices.PreparedCascadeChannelRows(m_mixChannels, slots);
     const auto highBytes = slots == 0 ? 0u : planes * m_voices.BlockFrames() *
         sizeof(float) * m_arenaBatchAllowance + alignof(float) - 1u;
-    const auto signalBytes = SignalScratchBytes(slots, m_signalNodes, m_signalRelations);
-    if (m_signalNodes != 0 && (signalBytes > m_arena.CapacityBytes() ||
+    const auto signalBytes = RetainedSignalScratchBytes(slots);
+    if (signalBytes != 0 && (signalBytes > m_arena.CapacityBytes() ||
         m_arenaLowBytes + signalBytes + highBytes > m_arena.CapacityBytes())) return false;
     return m_arena.PrepareBacking(m_arenaLowBytes + signalBytes, highBytes);
 }

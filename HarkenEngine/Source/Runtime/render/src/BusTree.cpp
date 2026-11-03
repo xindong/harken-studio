@@ -17,6 +17,22 @@
 #include <limits>
 
 namespace harken {
+std::uint64_t BusTree::RetainedSignalScratchBytes(std::uint64_t extraNodes,
+    std::uint64_t extraEdges, std::uint32_t frames) const noexcept {
+    std::uint64_t result = 0;
+    for (std::uint32_t i = 0; i < m_plans.Capacity(); ++i) {
+        if (!m_plans.IsAcquired(i)) continue;
+        const auto* signals = m_plans.View(i).signals;
+        if (signals == nullptr || signals->NodeCount() == 0) continue;
+        const auto nodes = extraNodes + signals->NodeCount();
+        if (nodes > UINT32_MAX || extraEdges > UINT32_MAX ||
+            signals->RelationCount() > UINT32_MAX - extraEdges) return UINT64_MAX;
+        result = std::max(result, SignalRenderPlan::RoutingScratchBytes(
+            static_cast<std::uint32_t>(nodes), m_capacity,
+            extraEdges + signals->RelationCount(), frames));
+    }
+    return result;
+}
 
 BusTree::BusTree(const EngineConfig& config, TopologyPlanPool& plans,
                  EffectPoolBank& effects, DynamicRouteSystem& dynamicRoutes,

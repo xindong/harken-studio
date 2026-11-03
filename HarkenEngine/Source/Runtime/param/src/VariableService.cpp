@@ -83,7 +83,7 @@ WorldInstallResult InstallContainerWorldV1(
                 return engine.variables.InstallWithReplacementAdmission(install, replacementAdmitted);
             WorldInstallResult failed{};
             failed.priorGeneration = engine.variables.CurrentWorldGeneration();
-            failed.status = WorldInstallStatus::Capacity;
+            failed.status = WorldInstallStatus::GenerationExhausted;
             if (failed.priorGeneration == UINT64_MAX) return failed;
             PreparedSignalPublication signals;
             failed.status = PrepareWorldSignals(engine, install, failed.priorGeneration + 1, nullptr, signals);

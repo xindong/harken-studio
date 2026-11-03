@@ -1012,6 +1012,7 @@ TEST(BusSend, ClearVoiceSendStopsContribution) {
 
 TEST(BusSend, FormalSignalInstallReachesMixerAndRemovedInputsReleaseSmoothly) {
     auto config = MakeNullConfig(2, kBlockFrames, 48000);
+    config.mixChannelLayout = VN_CHANNEL_LAYOUT_5_1;
     config.maxBuses = 4;
     config.topologyPlanPoolCapacity = 8;
     EngineSession session(config);
@@ -1035,11 +1036,13 @@ TEST(BusSend, FormalSignalInstallReachesMixerAndRemovedInputsReleaseSmoothly) {
     world.identity.capabilityMask = harken::kWorldCapabilitySignalRelations;
     world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV7(world);
     ASSERT_EQ(harken::InstallContainerWorldV1(*engine, world).status, harken::WorldInstallStatus::Ok);
-    const auto samples = MakeDC(kBlockFrames * 400, .1f);
-    const auto pcm = MonoDesc(samples, 48000);
+    auto samples = MakeDC(kBlockFrames * 1400, .1f);
+    auto pcm = MonoDesc(samples, 48000);
+    ASSERT_EQ(Vn_RegisterPCM(harkentest::ObjectId(2), &pcm), VN_OK);
+    std::fill(samples.begin() + kBlockFrames * 300, samples.begin() + kBlockFrames * 420, .2f);
     ASSERT_EQ(Vn_RegisterPCM(harkentest::ObjectId(1), &pcm), VN_OK);
     for (auto bus : {kBusA, kBusB}) {
-        auto play = MakePlayDesc(harkentest::ObjectId(1));
+        auto play = MakePlayDesc(harkentest::ObjectId(bus == kBusA ? 1 : 2));
         play.busId = bus;
         VnVoiceHandle voice = 0;
         ASSERT_EQ(harkentest::PlayRaw(&play, &voice), VN_OK);
@@ -1049,6 +1052,43 @@ TEST(BusSend, FormalSignalInstallReachesMixerAndRemovedInputsReleaseSmoothly) {
     PumpAndCapture(engine, 150, settled);
     const double slope = 1 / (1 / harken::kDuckingBaselineSlope + 1);
     ASSERT_NEAR(settled.left.back(), .2 / (1 + slope), 1e-5);
+    // Observe both receivers separately so opposite oscillations cannot cancel
+    // in the master sum. Neither feedback relation is removed or muted.
+    for (unsigned i = 0; i < 2; ++i) {
+        VnDownmixMatrixDesc matrix{};
+        matrix.structSize = sizeof(matrix);
+        matrix.srcLayout = VN_CHANNEL_LAYOUT_5_1;
+        matrix.dstLayout = VN_CHANNEL_LAYOUT_STEREO;
+        matrix.coeffs[i * 8 + i] = 1;
+        ASSERT_EQ(Vn_SetBusOutputLayout(i == 0 ? kBusA : kBusB, VN_CHANNEL_LAYOUT_STEREO), VN_OK);
+        ASSERT_EQ(Vn_SetBusDownmixMatrix(i == 0 ? kBusA : kBusB, &matrix), VN_OK);
+    }
+    Capture separated;
+    PumpAndCapture(engine, 150, separated);
+    const float steady = static_cast<float>(.1 / (1 + slope));
+    ASSERT_NEAR(separated.left.back(), steady, 1e-5);
+    ASSERT_NEAR(separated.right.back(), steady, 1e-5);
+    Capture perturbed;
+    PumpAndCapture(engine, 120, perturbed);
+    Capture restored;
+    PumpAndCapture(engine, 500, restored);
+    for (const auto* channel : {&perturbed.left, &perturbed.right, &restored.left, &restored.right})
+        for (const auto sample : *channel) ASSERT_TRUE(std::isfinite(sample));
+    for (std::size_t i = restored.left.size() - 64; i < restored.left.size(); ++i) {
+        EXPECT_NEAR(restored.left[i], steady, 1e-5);
+        EXPECT_NEAR(restored.right[i], steady, 1e-5);
+    }
+    // Restore the ordinary stereo output before checking the Release edge.
+    for (const auto bus : {kBusA, kBusB}) {
+        VnDownmixMatrixDesc matrix{};
+        matrix.structSize = sizeof(matrix);
+        matrix.srcLayout = VN_CHANNEL_LAYOUT_5_1;
+        matrix.dstLayout = VN_CHANNEL_LAYOUT_STEREO;
+        matrix.coeffs[0] = matrix.coeffs[9] = 1;
+        ASSERT_EQ(Vn_SetBusDownmixMatrix(bus, &matrix), VN_OK);
+    }
+    Capture resettled;
+    PumpAndCapture(engine, 150, resettled);
     world.signalRelations = nullptr; world.signalRelationCount = 0;
     world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV7(world);
     ASSERT_EQ(harken::InstallContainerWorldV1(*engine, world).status, harken::WorldInstallStatus::Ok);
@@ -1136,7 +1176,6 @@ TEST_F(BusSendSlotReconcile, ActualOrdinaryRoutingClosesSingleSignalRelation) {
     ASSERT_NE(signals, nullptr);
     signals->EnableActualRouting();
     ASSERT_TRUE(engine->mixer.PrepareSignalBacking(*signals));
-    engine->mixer.CommitSignalBacking(signals.get());
     engine->topologyPlans.SetSignals(plan, std::move(signals));
     engine->buses.ApplyTopologyPlan(plan, harken::kInvalidBusIndex,
         harken::kInvalidBusIndex, 0);
@@ -1214,7 +1253,6 @@ TEST_F(BusSendSlotReconcile, LateSignalInstallKeepsFiniteWarmFilterAndDelayBound
     ASSERT_NE(signals, nullptr);
     signals->EnableActualRouting();
     ASSERT_TRUE(engine->mixer.PrepareSignalBacking(*signals));
-    engine->mixer.CommitSignalBacking(signals.get());
     engine->topologyPlans.SetSignals(plan, std::move(signals));
     engine->buses.ApplyTopologyPlan(plan, harken::kInvalidBusIndex, harken::kInvalidBusIndex, 0);
     Capture ducked;
@@ -1327,4 +1365,164 @@ TEST_F(BusSendSlotReconcile, ExternalDetectorInjectionCannotInfluenceAnEarlierTa
     ASSERT_EQ(VN_OK, Vn_SetBusEffectDynamicRoute(kBusB, 0, 0, &route));
     PumpAndCapture(engine, 1, empty);
     check(true);
+}
+
+TEST(BusSend, FormalNestedSignalReturnKeepsOrdinarySendWhenOutputIsZero) {
+    std::array<Capture, 2> output;
+    for (unsigned perturb = 0; perturb < 2; ++perturb) {
+        auto config = MakeNullConfig(2, kBlockFrames, 48000);
+        config.maxBuses = 4;
+        config.topologyPlanPoolCapacity = 16;
+        config.mixChannelLayout = VN_CHANNEL_LAYOUT_5_1;
+        EngineSession session(config);
+        ASSERT_EQ(session.InitResult(), VN_OK);
+        auto* engine = session.Engine();
+        for (const auto bus : {kBusA, kBusB, kBusC}) ASSERT_EQ(Vn_CreateBus(bus, VN_BUS_MASTER), VN_OK);
+        ASSERT_EQ(Vn_ConnectBusSend(kBusA, kBusB, 0), VN_OK);
+        ASSERT_EQ(Vn_SetBusOutputVolume(kBusA, -1000, 0), VN_OK);
+        for (unsigned i = 0; i < 2; ++i) {
+            const auto bus = i == 0 ? kBusB : kBusC;
+            ASSERT_EQ(Vn_SetBusOutputLayout(bus, VN_CHANNEL_LAYOUT_STEREO), VN_OK);
+            VnDownmixMatrixDesc matrix{};
+            matrix.structSize = sizeof(matrix);
+            matrix.srcLayout = VN_CHANNEL_LAYOUT_5_1; matrix.dstLayout = VN_CHANNEL_LAYOUT_STEREO;
+            matrix.coeffs[i * 8 + i] = 1;
+            ASSERT_EQ(Vn_SetBusDownmixMatrix(bus, &matrix), VN_OK);
+        }
+        std::array<harken::SignalReceiverV1, 3> receivers{};
+        receivers[0].target.stableId = kBusA;
+        receivers[1].target.stableId = kBusB;
+        receivers[2].target.stableId = kBusC;
+        std::array<harken::SignalRelationV1, 3> relations{};
+        relations[0].source = relations[1].source = receivers[2].target;
+        relations[0].target = receivers[0].target;
+        relations[1].target = receivers[1].target;
+        relations[2].source = receivers[1].target;
+        relations[2].target = receivers[2].target;
+        for (unsigned i = 0; i < 3; ++i) relations[i].stableId = harkentest::ObjectId(1400 + i);
+        harken::ContainerWorldInstallViewV1 world;
+        world.sourceBodyVintage = harken::kCurrentWorldBodyVintageV20;
+        world.signalRelations = relations.data(); world.signalRelationCount = 3;
+        world.signalReceivers = receivers.data(); world.signalReceiverCount = 3;
+        world.identity.capabilityMask = harken::kWorldCapabilitySignalRelations;
+        world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV7(world);
+        ASSERT_EQ(harken::InstallContainerWorldV1(*engine, world).status, harken::WorldInstallStatus::Ok);
+        for (unsigned i = 0; i < 2; ++i) {
+            auto samples = MakeDC(64 * 2000, .1f);
+            if (perturb && i == 0) std::fill(samples.begin() + 400 * 64, samples.begin() + 460 * 64, .2f);
+            const auto desc = MonoDesc(samples, 48000);
+            const auto sound = harkentest::ObjectId(1500 + i);
+            ASSERT_EQ(Vn_RegisterPCM(sound, &desc), VN_OK);
+            auto play = MakePlayDesc(sound); play.busId = i == 0 ? kBusA : kBusC;
+            VnVoiceHandle voice = 0;
+            ASSERT_EQ(harkentest::PlayRaw(&play, &voice), VN_OK);
+        }
+        ASSERT_EQ(Vn_Update(), VN_OK);
+        PumpAndCapture(engine, 1800, output[perturb]);
+        EXPECT_NEAR(output[perturb].left.back(), .0140523467663895, 2e-5);
+        EXPECT_NEAR(output[perturb].right.back(), .0935444242871800, 2e-5);
+    }
+    for (std::size_t i = output[0].left.size() - 12000; i < output[0].left.size(); ++i) {
+        ASSERT_NEAR(output[0].left[i], output[1].left[i], 1e-5);
+        ASSERT_NEAR(output[0].right[i], output[1].right[i], 1e-5);
+    }
+}
+
+TEST(BusSend, FormalFeedbackRecoversThroughActiveEffectsAndParameterTransitions) {
+    const auto run = [&](unsigned effect, bool perturb, bool enabled, Capture& output) {
+        auto config = MakeNullConfig(1, kBlockFrames, 48000);
+        config.maxBuses = 4;
+        config.fxSlotsPerBus = 1;
+        config.delayEffectPoolCapacity = config.toneEffectPoolCapacity = 1;
+        config.gainEffectPoolCapacity = config.limiterEffectPoolCapacity = config.compressorEffectPoolCapacity = 1;
+        EngineSession session(config);
+        ASSERT_EQ(session.InitResult(), VN_OK);
+        auto* engine = session.Engine();
+        ASSERT_EQ(Vn_CreateBus(kBusB, VN_BUS_MASTER), VN_OK);
+        ASSERT_EQ(Vn_CreateBus(kBusA, kBusB), VN_OK);
+        if (enabled) {
+            VnFeedbackDelayDesc delay{};
+            delay.structSize = sizeof(delay); delay.delayMs = 1; delay.feedback = .8f; delay.wet = .5f; delay.dry = 1;
+            VnGainDesc gain{};
+            gain.structSize = sizeof(gain); gain.gainDb = 3;
+            VnThreeBandToneDesc tone{};
+            tone.structSize = sizeof(tone); tone.lowShelfGainDb = 6; tone.lowShelfFreqHz = 200;
+            tone.peakFreqHz = 1000; tone.peakQ = .707f; tone.highShelfFreqHz = 6000;
+            VnLimiterDesc limiter{};
+            limiter.structSize = sizeof(limiter); limiter.ceilingDb = -18; limiter.releaseMs = 80;
+            VnCompressorDesc compressor{};
+            compressor.structSize = sizeof(compressor); compressor.thresholdDb = -24; compressor.ratio = 4;
+            compressor.attackMs = 5; compressor.releaseMs = 80; compressor.kneeDb = 3; compressor.makeupDb = 3;
+            const VnEffectDesc* descriptors[] = {reinterpret_cast<const VnEffectDesc*>(&delay),
+                reinterpret_cast<const VnEffectDesc*>(&gain), reinterpret_cast<const VnEffectDesc*>(&tone),
+                reinterpret_cast<const VnEffectDesc*>(&limiter), reinterpret_cast<const VnEffectDesc*>(&compressor)};
+            const unsigned types[] = {VN_EFFECT_FEEDBACK_DELAY, VN_EFFECT_GAIN, VN_EFFECT_THREE_BAND_TONE,
+                VN_EFFECT_LIMITER, VN_EFFECT_COMPRESSOR};
+            ASSERT_EQ(Vn_SetBusEffect(kBusB, 0, types[effect], descriptors[effect]), VN_OK);
+            if (effect == 0) {
+                ASSERT_EQ(Vn_SetBusFilter(kBusB, harken::kFilterKindLowpass, 1000, .707f, 1, 0), VN_OK);
+                ASSERT_EQ(Vn_SetBusOutputFilter(kBusB, harken::kFilterKindLowpass, 2000, .707f, 1, 0), VN_OK);
+            }
+        }
+        auto samples = MakeDC(64 * 3000, .3f);
+        if (effect == 2) for (std::size_t i = 0; i < samples.size(); ++i)
+            samples[i] = .1f * static_cast<float>(std::sin(2 * 3.14159265358979323846 * 50 * i / 48000));
+        if (perturb) for (unsigned i = 400 * 64; i < 460 * 64; ++i) samples[i] *= 1.5f;
+        const auto pcm = MonoDesc(samples, 48000);
+        ASSERT_EQ(Vn_RegisterPCM(harkentest::ObjectId(1600), &pcm), VN_OK);
+        auto play = MakePlayDesc(harkentest::ObjectId(1600)); play.busId = kBusA;
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(harkentest::PlayRaw(&play, &voice), VN_OK);
+        ASSERT_EQ(Vn_Update(), VN_OK);
+        engine->nullBackend.Pump(64);
+        harken::SignalReceiverV1 receiver;
+        receiver.target.stableId = kBusA;
+        harken::SignalRelationV1 relation;
+        relation.stableId = harkentest::ObjectId(1601);
+        relation.source.stableId = VN_BUS_MASTER; relation.target = receiver.target;
+        harken::ContainerWorldInstallViewV1 world;
+        world.sourceBodyVintage = harken::kCurrentWorldBodyVintageV20;
+        world.signalRelations = &relation; world.signalRelationCount = 1;
+        world.signalReceivers = &receiver; world.signalReceiverCount = 1;
+        world.identity.capabilityMask = harken::kWorldCapabilitySignalRelations;
+        world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV7(world);
+        ASSERT_EQ(harken::InstallContainerWorldV1(*engine, world).status, harken::WorldInstallStatus::Ok);
+        for (unsigned block = 0; block < 1900; ++block) {
+            if (enabled && block == 80) {
+                const unsigned parameters[] = {harken::kDelayParamFeedback, harken::kGainParamGainDb,
+                    harken::kToneParamLowShelfGainDb, harken::kLimiterParamCeilingDb, harken::kCompressorParamMakeupDb};
+                const float values[] = {.2f, 6.0205999f, 3, -12, 6};
+                ASSERT_EQ(Vn_SetBusEffectParam(kBusB, 0, parameters[effect], values[effect]), VN_OK);
+                if (effect == 0) ASSERT_EQ(Vn_SetBusFilter(kBusB, harken::kFilterKindLowpass, 4000, .707f, 1, 10), VN_OK);
+            }
+            PumpAndCapture(engine, 1, output);
+        }
+        for (float value : output.left) ASSERT_TRUE(std::isfinite(value));
+        ASSERT_EQ(engine->mixer.Arena().OverflowCount(), 0u);
+        if (effect == 0) {
+            ASSERT_EQ(Vn_Stop(voice, 0), VN_OK);
+            Capture tail;
+            PumpAndCapture(engine, 1000, tail);
+            for (std::size_t i = tail.left.size() - 12000; i < tail.left.size(); ++i)
+                ASSERT_NEAR(tail.left[i], 0, 1e-5);
+        }
+    };
+    for (unsigned effect = 0; effect < 5; ++effect) {
+        SCOPED_TRACE(effect);
+        Capture reference, perturbed, noEffect;
+        ASSERT_NO_FATAL_FAILURE(run(effect, false, true, reference));
+        ASSERT_NO_FATAL_FAILURE(run(effect, true, true, perturbed));
+        ASSERT_NO_FATAL_FAILURE(run(effect, false, false, noEffect));
+        ASSERT_EQ(reference.left.size(), perturbed.left.size());
+        ASSERT_EQ(reference.left.size(), noEffect.left.size());
+        double squared = 0, activeDifference = 0;
+        for (std::size_t i = reference.left.size() - 12000; i < reference.left.size(); ++i) {
+            const auto difference = static_cast<double>(reference.left[i]) - perturbed.left[i];
+            ASSERT_LE(std::abs(difference), 1e-5);
+            squared += difference * difference;
+            activeDifference = std::max(activeDifference, std::abs(static_cast<double>(reference.left[i]) - noEffect.left[i]));
+        }
+        EXPECT_LE(std::sqrt(squared / 12000), 2e-6);
+        EXPECT_GT(activeDifference, 1e-4);
+    }
 }

@@ -1719,6 +1719,7 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
     }
     if (!ProjectCheckpoint(detail::LogicAllocSite::ProjectFinalPreflight) || !retirementReady ||
         !CanCommitSignals(engine, prepared.signals_) ||
+        (prepared.signals_.owner && !engine.mixer.PrepareSignalBacking(*prepared.signals_.owner)) ||
         !volumeOverlayReady || !volumeSourceReady() ||
         !prepared.Valid() || !ownerReady() ||
         CurrentWorldCommitBlocked(engine, prepared.publicationVintage_, prepared.worldImage_) ||
