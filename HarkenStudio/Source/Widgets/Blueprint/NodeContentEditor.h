@@ -42,6 +42,8 @@ public:
     void setFields(NodeContentFields fields);
     void setContext(const QString& context);
     void setRouteGainMode(bool enabled);
+    void prepareForReuse(const NodeContentInfo& info, NodeContentFields fields,
+                         int labelWidth, bool routeGain, const QString& context);
     bool routeGainMode() const { return routeGainMode_; }
     bool isDragHandleAt(const QPoint& position) const;
     bool beginValueEditingAt(const QPoint& position);
@@ -76,6 +78,7 @@ private:
     int labelColumnWidth_;
     int valueColumnWidth_ = kValueWidth;
     bool routeGainMode_ = false;
+    bool metricsSuspended_ = false;
 };
 
 class NodeContentRenderer

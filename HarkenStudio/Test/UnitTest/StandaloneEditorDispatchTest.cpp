@@ -2,6 +2,8 @@
 #include "Core/AuditionManager.h"
 #include "Core/IPC/IPCServer.h"
 #include "Core/LayoutController.h"
+#include "Core/PlatformContextService.h"
+#include "Core/PlayablePropertyAuthoringV1.h"
 #include "Core/SelectionRouter.h"
 #include "Core/ThemeManager.h"
 #include "Core/UndoCommands.h"
@@ -12,6 +14,7 @@
 #include "ProjectTypes.h"
 #include "Widgets/Blueprint/BlueprintCanvasWidget.h"
 #include "Widgets/Blueprint/NodeContentEditor.h"
+#include "Widgets/Common/ParameterBinding.h"
 #include "Widgets/GridEditor/GridEditorPanel.h"
 #include "Widgets/GridEditor/DiscreteGridWidget.h"
 #include "Widgets/GridEditor/SelectionListWidget.h"
@@ -225,6 +228,119 @@ TEST_F(EditorDockLayoutTest, ColorRefreshPreservesBlueprintEditorsAndStructureRe
     QApplication::sendEvent(blueprint->viewport(), &styleChange);
     drainEvents();
     for (const auto& editor : editors) EXPECT_TRUE(editor.isNull());
+}
+
+TEST_F(EditorDockLayoutTest, BlueprintEditingKeepsTransactionsIsolatedAcrossNodeActivation)
+{
+    using Authoring = VNX::PlayablePropertyAuthoringV1;
+    auto& manager = VNX::ProjectManager::instance();
+    auto& undo = VNX::UndoRedoManager::instance();
+    auto& platforms = VNX::PlatformContextService::instance();
+    const auto originalContext = platforms.context();
+    const auto restore = qScopeGuard([&] {
+        platforms.setSelected(originalContext.selected, originalContext.primary, originalContext.all);
+    });
+    platforms.setAll(true);
+    auto* first = manager.createItem(nullptr, QStringLiteral("FirstEditTarget"), VNX::ProjectItem::Type::Sound);
+    auto* second = manager.createItem(nullptr, QStringLiteral("SecondEditTarget"), VNX::ProjectItem::Type::Sound);
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    const auto firstLocator = Authoring::definitionLocator(*first);
+    const auto secondLocator = Authoring::definitionLocator(*second);
+    ASSERT_TRUE(firstLocator);
+    ASSERT_TRUE(secondLocator);
+    const auto* volume = Authoring::fieldByName(QStringLiteral("volume"));
+    ASSERT_NE(volume, nullptr);
+    const auto firstState = [&] {
+        return Authoring::readProperty(*first, *firstLocator, volume->id, std::nullopt);
+    };
+    const auto secondState = [&] {
+        return Authoring::readProperty(*second, *secondLocator, volume->id, std::nullopt);
+    };
+    const auto initialFirst = firstState();
+    const auto initialSecond = secondState();
+    ASSERT_TRUE(initialFirst);
+    ASSERT_TRUE(initialSecond);
+    undo.clearHistory();
+
+    auto canvas = std::make_unique<VNX::BlueprintCanvasWidget>();
+    canvas->setSoundsFiltered(false);
+    canvas->rebuildFromProject();
+    drainEvents();
+    const auto findNode = [&](const VNX::ProjectItem* target) -> VNX::NodeItem* {
+        for (auto* item : canvas->scene()->items())
+            if (auto* node = dynamic_cast<VNX::NodeItem*>(item); node && node->objectID() == target->objectID)
+                return node;
+        return nullptr;
+    };
+    auto* firstNode = findNode(first);
+    auto* secondNode = findNode(second);
+    ASSERT_NE(firstNode, nullptr);
+    ASSERT_NE(secondNode, nullptr);
+    auto* editor = qobject_cast<VNX::NodeContentEditor*>(firstNode->ensureContentWidget());
+    ASSERT_NE(editor, nullptr);
+    auto* binding = editor->binding(VNX::NodeContentField::Volume);
+    ASSERT_NE(binding, nullptr);
+    binding->beginEdit();
+    binding->previewEdit(-6.0);
+    EXPECT_DOUBLE_EQ(firstState()->value.toDouble(), -6.0);
+    EXPECT_EQ(secondState(), initialSecond);
+    EXPECT_FALSE(firstNode->releaseContentWidget());
+    editor->finishEditing(false);
+    EXPECT_EQ(firstState(), initialFirst);
+    EXPECT_FALSE(undo.canUndo());
+
+    binding->beginEdit();
+    binding->previewEdit(-6.0);
+    editor->finishEditing(true);
+    ASSERT_TRUE(firstNode->releaseContentWidget());
+    drainEvents();
+    EXPECT_DOUBLE_EQ(firstState()->value.toDouble(), -6.0);
+    EXPECT_EQ(secondState(), initialSecond);
+
+    editor = qobject_cast<VNX::NodeContentEditor*>(secondNode->ensureContentWidget());
+    ASSERT_NE(editor, nullptr);
+    binding = editor->binding(VNX::NodeContentField::Volume);
+    ASSERT_NE(binding, nullptr);
+    EXPECT_DOUBLE_EQ(binding->value(), initialSecond->value.toDouble());
+    binding->beginEdit();
+    binding->previewEdit(-12.0);
+    EXPECT_DOUBLE_EQ(firstState()->value.toDouble(), -6.0);
+    EXPECT_DOUBLE_EQ(secondState()->value.toDouble(), -12.0);
+    editor->finishEditing(true);
+    ASSERT_TRUE(secondNode->releaseContentWidget());
+    drainEvents();
+
+    ASSERT_TRUE(undo.undo());
+    EXPECT_DOUBLE_EQ(firstState()->value.toDouble(), -6.0);
+    EXPECT_EQ(secondState(), initialSecond);
+    ASSERT_TRUE(undo.undo());
+    EXPECT_EQ(firstState(), initialFirst);
+    EXPECT_EQ(secondState(), initialSecond);
+    EXPECT_FALSE(undo.canUndo());
+    ASSERT_TRUE(undo.redo());
+    EXPECT_DOUBLE_EQ(firstState()->value.toDouble(), -6.0);
+    EXPECT_EQ(secondState(), initialSecond);
+    ASSERT_TRUE(undo.redo());
+    EXPECT_DOUBLE_EQ(firstState()->value.toDouble(), -6.0);
+    EXPECT_DOUBLE_EQ(secondState()->value.toDouble(), -12.0);
+    drainEvents();
+
+    editor = qobject_cast<VNX::NodeContentEditor*>(findNode(first)->ensureContentWidget());
+    ASSERT_NE(editor, nullptr);
+    binding = editor->binding(VNX::NodeContentField::Volume);
+    ASSERT_NE(binding, nullptr);
+    EXPECT_DOUBLE_EQ(binding->value(), -6.0);
+    binding->beginEdit();
+    binding->previewEdit(-3.0);
+    EXPECT_DOUBLE_EQ(firstState()->value.toDouble(), -3.0);
+    EXPECT_DOUBLE_EQ(secondState()->value.toDouble(), -12.0);
+    QPointer<VNX::NodeContentEditor> activeEditor = editor;
+    canvas.reset();
+    drainEvents();
+    EXPECT_TRUE(activeEditor.isNull());
+    EXPECT_DOUBLE_EQ(firstState()->value.toDouble(), -6.0);
+    EXPECT_DOUBLE_EQ(secondState()->value.toDouble(), -12.0);
 }
 
 TEST_F(EditorDockLayoutTest, LocalBlueprintLayoutPreservesProjectSavePointsAcrossUndoAndReopen)

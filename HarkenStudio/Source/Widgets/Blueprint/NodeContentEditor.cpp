@@ -22,6 +22,7 @@
 #include <QMouseEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QScopedValueRollback>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStackedWidget>
@@ -109,7 +110,7 @@ struct NodeContentEditor::Row
 
 NodeContentEditor::NodeContentEditor(const NodeContentInfo& info, NodeContentFields fields,
                                      int columnWidth, QWidget* parent)
-    : QWidget(parent), fields_(fields), labelColumnWidth_(columnWidth)
+    : QWidget(parent), fields_(fields), labelColumnWidth_(columnWidth), metricsSuspended_(true)
 {
     setObjectName(QStringLiteral("NodeContentEditor"));
     setProperty("sliderStyle", QStringLiteral("compact"));
@@ -236,12 +237,15 @@ NodeContentEditor::NodeContentEditor(const NodeContentInfo& info, NodeContentFie
             finishEditing(true);
     });
     setFields(fields);
+    metricsSuspended_ = false;
+    updateMetrics();
 }
 
 NodeContentEditor::~NodeContentEditor() = default;
 
 void NodeContentEditor::setLabelWidth(int width)
 {
+    if (labelColumnWidth_ == width) return;
     labelColumnWidth_ = width;
     refreshFonts();
 }
@@ -361,34 +365,41 @@ void NodeContentEditor::setFieldTopic(NodeContentField field, const ContextTopic
 
 void NodeContentEditor::setFields(NodeContentFields fields)
 {
-    finishEditing(true);
-    fields_ = fields;
-    for (size_t index = 0; index < rows_.size(); ++index) {
-        const auto& row = rows_[index];
-        const bool visible = fields.testFlag(row->field);
-        row->label->setVisible(visible);
-        row->valueStack->setVisible(visible);
-        if (row->slider) row->slider->setVisible(visible);
+    {
+        const QScopedValueRollback guard(metricsSuspended_, true);
+        finishEditing(true);
+        fields_ = fields;
+        for (size_t index = 0; index < rows_.size(); ++index) {
+            const auto& row = rows_[index];
+            const bool visible = fields.testFlag(row->field);
+            row->label->setVisible(visible);
+            row->valueStack->setVisible(visible);
+            if (row->slider) row->slider->setVisible(visible);
+        }
     }
     updateMetrics();
 }
 
 void NodeContentEditor::setValues(const NodeContentInfo& info)
 {
-    for (auto& row : rows_) {
-        if (row->binding) {
-            if (!row->binding->isEditing()) row->binding->setValue(fieldValue(info, row->field));
-        } else if (row->field == NodeContentField::Loop) {
-            const auto count = info.loopCount.value_or(1);
-            row->value->setText(count == 0 ? QString(QChar(0x221E)) : QString::number(count));
-            if (row->loop && !row->loop->isEditing()) row->loop->setValue(count);
-        } else {
-            const double value = fieldValue(info, row->field);
-            row->value->setText(value <= -96.0 ? QStringLiteral("-inf")
-                : formatDecimal(value, row->property.decimals));
+    {
+        const QScopedValueRollback guard(metricsSuspended_, true);
+        for (auto& row : rows_) {
+            if (row->binding) {
+                if (!row->binding->isEditing()) row->binding->setValue(fieldValue(info, row->field));
+            } else if (row->field == NodeContentField::Loop) {
+                const auto count = info.loopCount.value_or(1);
+                row->value->setText(count == 0 ? QString(QChar(0x221E)) : QString::number(count));
+                if (row->loop && !row->loop->isEditing()) row->loop->setValue(count);
+            } else {
+                const double value = fieldValue(info, row->field);
+                row->value->setText(value <= -96.0 ? QStringLiteral("-inf")
+                    : formatDecimal(value, row->property.decimals));
+            }
+            refreshValue(*row);
         }
-        refreshValue(*row);
     }
+    updateMetrics();
 }
 
 void NodeContentEditor::setContext(const QString& context)
@@ -400,18 +411,35 @@ void NodeContentEditor::setContext(const QString& context)
 void NodeContentEditor::setRouteGainMode(bool enabled)
 {
     if (routeGainMode_ == enabled) return;
-    finishEditing(true);
-    routeGainMode_ = enabled;
-    auto* grid = qobject_cast<QGridLayout*>(layout());
-    for (int row = 0; row < grid->rowCount(); ++row) grid->setRowMinimumHeight(row, 0);
-    for (size_t index = 0; index < rows_.size(); ++index) {
-        const auto& row = rows_[index];
-        const int position = static_cast<int>(index) * (enabled ? 2 : 1);
-        grid->addWidget(row->label, position, 0);
-        grid->addWidget(row->valueStack, position, 2);
-        if (row->slider)
-            grid->addWidget(row->slider, position + (enabled ? 1 : 0), enabled ? 0 : 1, 1, enabled ? 3 : 1);
-        if (row->loopHost) grid->addWidget(row->loopHost, position, 1, 1, 2);
+    {
+        const QScopedValueRollback guard(metricsSuspended_, true);
+        finishEditing(true);
+        routeGainMode_ = enabled;
+        auto* grid = qobject_cast<QGridLayout*>(layout());
+        for (int row = 0; row < grid->rowCount(); ++row) grid->setRowMinimumHeight(row, 0);
+        for (size_t index = 0; index < rows_.size(); ++index) {
+            const auto& row = rows_[index];
+            const int position = static_cast<int>(index) * (enabled ? 2 : 1);
+            grid->addWidget(row->label, position, 0);
+            grid->addWidget(row->valueStack, position, 2);
+            if (row->slider)
+                grid->addWidget(row->slider, position + (enabled ? 1 : 0), enabled ? 0 : 1, 1, enabled ? 3 : 1);
+            if (row->loopHost) grid->addWidget(row->loopHost, position, 1, 1, 2);
+        }
+    }
+    updateMetrics();
+}
+
+void NodeContentEditor::prepareForReuse(const NodeContentInfo& info, NodeContentFields fields,
+                                      int columnWidth, bool routeGain, const QString& context)
+{
+    {
+        const QScopedValueRollback guard(metricsSuspended_, true);
+        setContext(context);
+        setValues(info);
+        if (fields_ != fields) setFields(fields);
+        setLabelWidth(columnWidth);
+        setRouteGainMode(routeGain);
     }
     updateMetrics();
 }
@@ -465,6 +493,7 @@ void NodeContentEditor::refreshValue(Row& row)
 
 void NodeContentEditor::updateMetrics()
 {
+    if (metricsSuspended_) return;
     int valueWidth = kValueWidth;
     int rowHeight = 20;
     int visibleRows = 0;
@@ -558,18 +587,21 @@ bool NodeContentEditor::isEditing() const
 void NodeContentEditor::finishEditing(bool committed, std::optional<NodeContentField> except)
 {
     const bool wasEditing = isEditing();
-    for (auto& row : rows_) {
-        if (except == row->field) continue;
-        if (row->editingValue) finishValueEdit(*row, committed);
-        else if (row->binding && row->binding->isEditing()) {
-            if (committed) row->binding->commitEdit();
-            else row->binding->cancelEdit();
-        }
-        if (row->loopHost) {
-            if (committed) row->loop->commitNumericEdit();
-            else row->loop->cancelNumericEdit();
-            row->loopHost->hide();
-            row->valueStack->show();
+    {
+        const QScopedValueRollback guard(metricsSuspended_, true);
+        for (auto& row : rows_) {
+            if (except == row->field) continue;
+            if (row->editingValue) finishValueEdit(*row, committed);
+            else if (row->binding && row->binding->isEditing()) {
+                if (committed) row->binding->commitEdit();
+                else row->binding->cancelEdit();
+            }
+            if (row->loopHost) {
+                if (committed) row->loop->commitNumericEdit();
+                else row->loop->cancelNumericEdit();
+                row->loopHost->hide();
+                row->valueStack->setVisible(fields_.testFlag(row->field));
+            }
         }
     }
     updateMetrics();

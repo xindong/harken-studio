@@ -52,6 +52,7 @@ class  NodeItem;
 class  NodePin;
 class  ConnectionPath;
 class NodeContentEditor;
+class NodeContentEditorPool;
 class NodeContentRenderer;
 class PropertyEditSession;
 
@@ -279,6 +280,7 @@ private:
     void updateNodeGridSnap_();
     bool nodeFieldEditing_() const;
     std::unique_ptr<NodeContentRenderer> contentRenderer_;
+    std::unique_ptr<NodeContentEditorPool> contentEditorPool_;
     QHash<NodeItem*, QPointer<NodeContentEditor>> liveNodeEditors_;
     int nodeContentLabelWidth_ = 0;
     bool contentRetirementScheduled_ = false;
@@ -286,6 +288,7 @@ private:
     bool contentStructureRefreshNeeded_ = false;
     void initializeNodeEditors_();
     void trackNodeEditor_(NodeItem* node, NodeContentEditor* editor);
+    void recycleNodeEditor_(NodeItem* node, QGraphicsProxyWidget* proxy);
     void activateNodeEditorAt_(const QPoint& position);
     void scheduleContentRetirement_();
     void scheduleContentPresentationRefresh_();

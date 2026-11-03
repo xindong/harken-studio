@@ -10,6 +10,7 @@
 #include "BlueprintConnectCommand.h"
 #include "Core/PropertyEditSession.h"
 #include "NodeContentEditor.h"
+#include "NodeContentEditorPool.h"
 #include "BlueprintImportUtils.h"
 #include "SignalChainSource.h"
 #include "Core/ActionManager.h"
@@ -616,6 +617,7 @@ void BlueprintCanvasWidget::clearScene()
         const QSignalBlocker blocker(scene_);
         scene_->clear();
     }
+    contentEditorPool_->clear();
 }
 
 void BlueprintCanvasWidget::materializeFromSource_()
@@ -971,6 +973,10 @@ void BlueprintCanvasWidget::materializeFromSource_()
             if (!proxy) return;
             if (previous) QGraphicsWidget::setTabOrder(previous, proxy);
             previous = proxy;
+            if (auto* editor = node->contentWidget()) {
+                previous = editor->graphicsProxyWidget();
+                QGraphicsWidget::setTabOrder(proxy, previous);
+            }
         };
         for (size_t index = 0; index < pathSource_->graph().nodes.size(); ++index)
             linkFocus(signalPathNode(index));

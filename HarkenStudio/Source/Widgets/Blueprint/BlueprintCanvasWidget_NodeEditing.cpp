@@ -6,12 +6,14 @@
 #include "Core/ProjectManager.h"
 #include "Core/FieldGroupProjectAdapter.h"
 #include "NodeContentEditor.h"
+#include "NodeContentEditorPool.h"
 #include "Core/ThemeManager.h"
 #include "Core/FontManager.h"
 
 #include <QApplication>
 #include <QCursor>
 #include <QGraphicsScene>
+#include <QGraphicsProxyWidget>
 #include <QScrollBar>
 #include <QTimer>
 
@@ -20,6 +22,7 @@ namespace VNX {
 void BlueprintCanvasWidget::initializeNodeEditors_()
 {
     contentRenderer_ = std::make_unique<NodeContentRenderer>();
+    contentEditorPool_ = std::make_unique<NodeContentEditorPool>();
     connect(qApp, &QApplication::focusChanged, this, [this] { scheduleContentRetirement_(); });
     connect(horizontalScrollBar(), &QScrollBar::valueChanged, this, [this] { scheduleContentRetirement_(); });
     connect(verticalScrollBar(), &QScrollBar::valueChanged, this, [this] { scheduleContentRetirement_(); });
@@ -84,6 +87,9 @@ void BlueprintCanvasWidget::activateNodeEditorAt_(const QPoint& position)
     auto* item = itemAt(position);
     while (item) {
         if (auto* node = dynamic_cast<NodeItem*>(item)) {
+            const auto editors = liveNodeEditors_;
+            for (auto it = editors.cbegin(); it != editors.cend(); ++it)
+                if (it.key() != node && it.value()) it.key()->releaseContentWidget();
             node->ensureContentWidget();
             break;
         }
@@ -114,12 +120,22 @@ void BlueprintCanvasWidget::trackNodeEditor_(NodeItem* node, NodeContentEditor* 
     connect(editor, &QObject::destroyed, this, [this, node] { liveNodeEditors_.remove(node); });
 }
 
+void BlueprintCanvasWidget::recycleNodeEditor_(NodeItem* node, QGraphicsProxyWidget* proxy)
+{
+    auto* editor = static_cast<NodeContentEditor*>(proxy->widget());
+    liveNodeEditors_.remove(node);
+    disconnect(editor, nullptr, this, nullptr);
+    contentEditorPool_->release(proxy);
+}
+
 void BlueprintCanvasWidget::installNodeEditor_(NodeItem* node, const BlueprintNodeDesc& desc)
 {
     const auto definition = pathSource_->graph().nodes[*desc.occurrenceIndex].key.objectGuid;
+    contentEditorPool_->prepare(node->contentInfo(), node->contentFields(), nodeContentLabelWidth_, false);
     node->setContentFactory([this, node, definition]() {
-        auto* editor = new NodeContentEditor(node->contentInfo(), node->contentFields(), nodeContentLabelWidth_);
-        editor->setContext(definition.toString(QUuid::WithoutBraces));
+        auto* proxy = contentEditorPool_->acquire(node->contentInfo(), node->contentFields(),
+            nodeContentLabelWidth_, false, definition.toString(QUuid::WithoutBraces));
+        auto* editor = static_cast<NodeContentEditor*>(proxy->widget());
         tagContentEditor_(editor, ProjectManager::instance().findItemByGuid(definition));
         const auto begin = [this, editor, node, definition](NodeContentField field) {
             for (const auto& [key, candidate] : nodeMap_)
@@ -175,7 +191,9 @@ void BlueprintCanvasWidget::installNodeEditor_(NodeItem* node, const BlueprintNo
                 finish(field, true);
             });
         trackNodeEditor_(node, editor);
-        return editor;
+        return proxy;
+    }, [this, node](QGraphicsProxyWidget* proxy) {
+        recycleNodeEditor_(node, proxy);
     }, [this, node]() {
         return contentRenderer_->presentation(node->contentInfo(), node->contentFields(),
             nodeContentLabelWidth_, false);
@@ -184,11 +202,15 @@ void BlueprintCanvasWidget::installNodeEditor_(NodeItem* node, const BlueprintNo
 
 void BlueprintCanvasWidget::installGainEditor_(NodeItem* node)
 {
+    contentEditorPool_->prepare(node->contentInfo(), node->contentFields(),
+        NodeContentEditor::labelWidth(node->contentFields()), true);
     node->setContentFactory([this, node]() {
         const auto found = std::find(gainNodes_.begin(), gainNodes_.end(), node);
         const auto edgeIndex = static_cast<size_t>(found - gainNodes_.begin());
         const auto fields = node->contentInfo().fields();
-        auto* editor = new NodeContentEditor(node->contentInfo(), fields, NodeContentEditor::labelWidth(fields));
+        auto* proxy = contentEditorPool_->acquire(node->contentInfo(), fields,
+            NodeContentEditor::labelWidth(fields), true, {});
+        auto* editor = static_cast<NodeContentEditor*>(proxy->widget());
         tagContentEditor_(editor, routeGainTopicItem_(edgeIndex));
         const auto begin = [this, editor](NodeContentField field) {
             for (const auto& [key, candidate] : nodeMap_)
@@ -233,7 +255,9 @@ void BlueprintCanvasWidget::installGainEditor_(NodeItem* node)
             queuePathRefresh_(pathContentOnlyRefresh_);
         });
         trackNodeEditor_(node, editor);
-        return editor;
+        return proxy;
+    }, [this, node](QGraphicsProxyWidget* proxy) {
+        recycleNodeEditor_(node, proxy);
     }, [this, node]() {
         return contentRenderer_->presentation(node->contentInfo(), node->contentFields(),
             std::nullopt, true);
