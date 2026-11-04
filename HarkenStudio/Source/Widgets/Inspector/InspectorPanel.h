@@ -30,6 +30,7 @@ public:
     void showItemInspector(ProjectItem* item, const PlacementContext& placement);
     void selectCurveDimension(AttenuationDimension dimension);
     void requestEditorLaunch(const QString& slot);
+    void requestEffectEditor(const QUuid& effectGuid);
     void showEmpty();
     ProjectItem* currentContextItem() const;
     QString contextType() const;
@@ -63,6 +64,7 @@ signals:
     void navigateToAttenuationByGuid(const QUuid& attenuationGuid, const QString& fallbackName);
     void curveSelectionRequested(const CurveSelection& selection);
     void externalEditorRequested(const ExternalEditorSelection& selection, bool addBinding);
+    void effectEditorRequested(const QUuid& ownerGuid, const QUuid& effectGuid);
 
     void panelFocused(int panelId);
 

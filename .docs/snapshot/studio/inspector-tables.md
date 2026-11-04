@@ -5,9 +5,9 @@
 | 统计项 | 当前范围 |
 |---|---|
 | Inspector 主面板 | Sound、Container、Layer、Track、Segment、Bus、Action、Attenuation、Variable，共 9 类对象 |
-| 表格种类 | 8 类：6 类配置表、2 类只读展示表 |
-| 对象展示位置 | 13 处：Sound 2、Container 1、Layer 1、Track 2、Segment 1、Bus 3、Action 1、Attenuation 1、Variable 1 |
-| 范围外 | Selection Editor、External Editor、Timeline、Grid 等独立编辑面 |
+| 表格种类 | 9 类：7 类配置表、2 类只读展示表 |
+| 对象展示位置 | 19 处：Sound 3、Container 2、Layer 2、Track 3、Segment 2、Bus 4、Action 1、Attenuation 1、Variable 1 |
+| 范围外 | Selection Editor、External Editor、Effect Editor、Timeline、Grid 等独立编辑面 |
 
 | 对象 | 表格 | Tab > Section | 列名 | 数据与编辑性质 |
 |---|---|---|---|---|
@@ -16,6 +16,7 @@
 | Action | Steps | Basic > Step | # / Type / Target / Delay / 无标题展开列 | 动作步骤配置，末列展开详情 |
 | Attenuation | Dimensions | Basic > Dimension | # / Property / Curve | 衰减维度配置 |
 | Variable | Labels | Basic > Label | # / Name | 标签配置，# 显示实际整数索引 |
+| Sound、Container、Layer、Track、Segment、Bus | Effects | Basic > Effect | # / Effect / Level / Active | 当前对象的效果器链配置，不提供 Inherit 或平台覆盖编辑 |
 | Sound、Container、Layer、Track、Segment、Bus | Sends | Route > Send | # / Target / Volume / Mode | Mix、Ducking、Sidechain 路由配置；除 Bus 外可继承 |
 | Bus | Inputs | Route > Input | Source / Volume | 输出路由的反向查询，只读 |
 | Bus | Receives | Route > Receive | # / Mode / Source / Volume | Send 路由的反向查询，只读 |
@@ -38,6 +39,12 @@
 
 | 表格／字段 | 当前行为 |
 |---|---|
+| Effects / 类型与增删 | 加号选择 Feedback Delay、Three Band Tone、Gain、Limiter 或 Compressor；减号删除选中行；增删与排序支持撤销和重做 |
+| Effects / Effect | 左侧显示效果器名称，右侧为下拉箭头；单击选中行，双击名称或单元格打开对应 Effect Editor，箭头通过标准 QMenu 替换效果器类型 |
+| Effects / 替换 | 保留行位置、效果器 GUID、Active 和 Level；参数重置为新类型默认值 |
+| Effects / Level | 干湿比范围 0～100%，默认 100%；0% 全干、100% 全湿；随工程保存并支持撤销，本阶段仅作为编辑配置，不参与试听或 Pack 运行时处理 |
+| Effects / Active | 新增默认开启，映射现有旁通配置；Bus 沿用既有支持，非 Bus 含关闭项时仍受现有试听／发布能力检查限制 |
+| Effects / Effect Editor | 加入 View > Editors；本阶段内容留空，窗口标题显示所属对象与效果器；按对象和效果器 GUID 定位，支持多实例、固定及布局恢复 |
 | Sends / 新增 | 加号先选择 Mix、Ducking 或 Sidechain，再选择目标 Bus；取消任一步不新增行 |
 | Sends / Mode | 可编辑并参与保存、继承和撤销；旧数据缺失 Mode 时按 Mix 解释；同一目标按 Mode 区分，单个 Mode 内目标唯一；与 Output 冲突或重复的 Mode 选项禁用 |
 | Sends / Volume | 三种 Mode 均表示发送的源信号增益，范围 −96～+24 dB；Ducking 中用于调节送入避让检测端的信号强度，并非指定目标衰减量；同一行各 Mode 分别记忆 Volume，Target 共用；首次进入未配置 Mode 沿用当前值，切回恢复上次值，记忆随工程保存并参与撤销 |

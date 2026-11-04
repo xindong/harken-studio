@@ -28,6 +28,7 @@ struct EffectEntry
     EffectType type = EffectType::Gain;
     std::vector<float> parameters;
     bool bypass = false;
+    float wetDry = 1.0f;
     QJsonObject extensions;
     QJsonValue opaqueValue;
     bool typed = true;
@@ -72,6 +73,7 @@ private:
 namespace EffectChainSemantics {
 
 QString typeName(EffectType type);
+QString displayName(EffectType type);
 std::optional<EffectType> parseType(const QString& value);
 int parameterCount(EffectType type);
 std::vector<float> defaultParameters(EffectType type);

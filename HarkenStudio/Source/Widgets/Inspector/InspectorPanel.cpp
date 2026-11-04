@@ -652,6 +652,12 @@ void InspectorPanel::requestEditorLaunch(const QString& slot)
         panelId_, slot, currentContextItem(), placementContext());
 }
 
+void InspectorPanel::requestEffectEditor(const QUuid& effectGuid)
+{
+    if (auto* item = currentContextItem())
+        emit effectEditorRequested(item->guid, effectGuid);
+}
+
 void InspectorPanel::onSearchTextChanged(const QString& text)
 {
     QWidget* current = d->stack_->currentWidget();
@@ -715,8 +721,8 @@ void InspectorPanel::onSearchTextChanged(const QString& text)
     
     if (isEmpty)
     {
-        for (auto child : current->findChildren<QWidget*>())
-            child->setVisible(true);
+        for (auto* section : current->findChildren<CollapsibleSection*>())
+            section->setVisible(true);
     }
     else
     {

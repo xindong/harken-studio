@@ -1,6 +1,7 @@
 
 #include "BusInspectorSchema.h"
 #include "SendsFieldSchema.h"
+#include "EffectsFieldSchema.h"
 #include "ProjectItemInspectorRows.h"
 #include "Core/Components/VBus.h"
 #include "Core/Components/VMixNode.h"
@@ -96,6 +97,7 @@ const PropertySchema& busInspectorSchema()
         for (auto& d : out)
             if (d.field == QLatin1String("outputBusId"))
                 d.flags.readOnly = true;
+        out.push_back(effectsInspectorDescriptor());
         out.push_back(inputsDescriptor());
         out.push_back(sendsInspectorDescriptor());
         out.push_back(receivesDescriptor());

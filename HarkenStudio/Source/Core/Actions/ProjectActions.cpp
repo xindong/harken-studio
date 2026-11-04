@@ -1799,19 +1799,19 @@ ActionResult handleEffectsItemProperty(ProjectManager* projectManager, ProjectIt
                               {"value", newValue}};
     if (oldValue == newValue) return result;
     const QUuid guid = item->guid;
-    auto apply = [guid, originator](const QJsonArray& value) {
+    auto apply = [guid](const QJsonArray& value, const QObject* origin) {
         ProjectItem* target = ProjectManager::instance().findItemByGuid(guid);
         auto* targetMix = target ? target->comp<VMixNode>() : nullptr;
         if (!targetMix) return;
         targetMix->effects = EffectChainLedger::fromJson(value);
         target->markDirty();
         emit ProjectManager::instance().itemPropertyChanged(
-            target, QStringLiteral("effects"), originator);
+            target, QStringLiteral("effects"), origin);
         ProjectManager::instance().requestResync(target);
     };
-    apply(newValue);
-    result.undoFn = [apply, oldValue]() { apply(oldValue); };
-    result.redoFn = [apply, newValue]() { apply(newValue); };
+    apply(newValue, originator);
+    result.undoFn = [apply, oldValue]() { apply(oldValue, nullptr); };
+    result.redoFn = [apply, newValue]() { apply(newValue, nullptr); };
     result.undoText = QStringLiteral("Set effects");
     result.authoringWriteSet = QSet<QUuid>{item->guid};
     return result;

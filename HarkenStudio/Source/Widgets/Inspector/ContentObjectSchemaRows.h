@@ -7,6 +7,7 @@
 #include "Core/PlayablePropertyAuthoringV1.h"
 #include "Core/FieldGroups.h"
 #include "SendsFieldSchema.h"
+#include "EffectsFieldSchema.h"
 #include "ProjectItemInspectorRows.h"
 #include "Shared/SchemaFieldPick.h"
 
@@ -56,6 +57,7 @@ inline PropertySchema contentObjectInspectorRows(ProjectItem::Type type)
         }
         out.insert(position, std::move(descriptor));
     }
+    out.push_back(effectsInspectorDescriptor());
     out.push_back(notesInspectorDescriptor());
     return out;
 }

@@ -45,6 +45,7 @@ QJsonValue EffectEntry::toJson() const
     for (float parameter : parameters) values.append(parameter);
     object[QStringLiteral("parameters")] = values;
     if (bypass) object[QStringLiteral("bypass")] = true;
+    if (wetDry != 1.0f) object[QStringLiteral("wetDry")] = wetDry;
     return object;
 }
 
@@ -59,7 +60,11 @@ EffectEntry EffectEntry::fromJson(const QJsonValue& value)
     const QJsonObject object = value.toObject();
     const auto type = EffectChainSemantics::parseType(
         object.value(QStringLiteral("type")).toString());
-    if (!type || !object.value(QStringLiteral("parameters")).isArray()) {
+    const QJsonValue wetDry = object.value(QStringLiteral("wetDry"));
+    if (!type || !object.value(QStringLiteral("parameters")).isArray()
+        || (!wetDry.isUndefined() && (!wetDry.isDouble()
+            || !std::isfinite(wetDry.toDouble())
+            || wetDry.toDouble() < 0.0 || wetDry.toDouble() > 1.0))) {
         entry.typed = false;
         entry.opaqueValue = value;
         return entry;
@@ -67,11 +72,13 @@ EffectEntry EffectEntry::fromJson(const QJsonValue& value)
     entry.guid = QUuid::fromString(object.value(QStringLiteral("guid")).toString());
     entry.type = *type;
     entry.bypass = object.value(QStringLiteral("bypass")).toBool();
+    entry.wetDry = static_cast<float>(wetDry.toDouble(1.0));
     entry.extensions = object;
     entry.extensions.remove(QStringLiteral("guid"));
     entry.extensions.remove(QStringLiteral("type"));
     entry.extensions.remove(QStringLiteral("parameters"));
     entry.extensions.remove(QStringLiteral("bypass"));
+    entry.extensions.remove(QStringLiteral("wetDry"));
     for (const QJsonValue& parameter :
          object.value(QStringLiteral("parameters")).toArray()) {
         if (!parameter.isDouble()) {
@@ -133,6 +140,18 @@ QString typeName(EffectType type)
     return {};
 }
 
+QString displayName(EffectType type)
+{
+    switch (type) {
+    case EffectType::FeedbackDelay: return QStringLiteral("Feedback Delay");
+    case EffectType::ThreeBandTone: return QStringLiteral("Three Band Tone");
+    case EffectType::Gain: return QStringLiteral("Gain");
+    case EffectType::Limiter: return QStringLiteral("Limiter");
+    case EffectType::Compressor: return QStringLiteral("Compressor");
+    }
+    return {};
+}
+
 std::optional<EffectType> parseType(const QString& value)
 {
     if (value == QLatin1String("feedbackDelay")) return EffectType::FeedbackDelay;
@@ -165,6 +184,10 @@ bool validate(const EffectEntry& entry, QString* diagnostic)
 {
     if (!entry.typed) {
         if (diagnostic) *diagnostic = QStringLiteral("Effect entry is opaque");
+        return false;
+    }
+    if (!std::isfinite(entry.wetDry) || entry.wetDry < 0.0f || entry.wetDry > 1.0f) {
+        if (diagnostic) *diagnostic = QStringLiteral("Effect wet/dry level is out of range");
         return false;
     }
     const auto& ranges = parameterRanges(entry.type);

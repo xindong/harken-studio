@@ -4,12 +4,12 @@
 
 | 类别 | 去重用途数 | 页面 / 对象类型位置数 |
 |---|---:|---:|
-| 配置表 | 10 | 15 |
+| 配置表 | 11 | 21 |
 | 展示表 | 13 | 13 |
-| 普通表格合计 | 23 | 28 |
+| 普通表格合计 | 24 | 34 |
 | 导航配置（不计入普通表格） | 2 | 2 |
 
-注：Sends 在六类对象中使用，按用途计一项、按对象类型计六处。对象实例、Binding 字段及同一对话框的不同打开位置不重复计数；Match、Blend 等专用编辑面另列。
+注：Sends、Effects 各自在六类对象中使用，各按用途计一项、按对象类型计六处。对象实例、Binding 字段及同一对话框的不同打开位置不重复计数；Match、Blend 等专用编辑面另列。
 
 ## 普通表格清单
 
@@ -25,6 +25,7 @@
 | C08 | 配置 | External Editor / Binding | 仅编辑本地贡献 |
 | C09 | 配置 | Transition Editor / Rules | 按匹配具体程度排序，默认规则最后 |
 | C12 | 配置 | Project Platform / Resample Policies | 按阈值排序，保留 Infinite 行 |
+| C13 | 配置 | Sound、Container、Layer、Track、Segment、Bus / Effects | Basic > Effect；# / Effect / Level / Active；本地效果器链配置 |
 | D01 | 展示 | Bus Inspector / Inputs | 路由反向查询，无序号列 |
 | D02 | 展示 | Bus Inspector / Receives | 路由反向查询，# 仅展示行号，不提供行移动 |
 | D03 | 展示 | Control / Variables | 变量试听值及作用域 |
@@ -134,6 +135,18 @@
 | 选择与试听 | Child 与曲线选择联动；试听游标使用 Control 覆盖值，Child 提示显示各行增益及跨行结果 |
 | 合成关系 | 同行同一 Child 仅一条曲线；跨行引用共用播放且增益相乘，成员不自动归一化 |
 
+## Effects 表格与 Effect Editor
+
+| 项目 | 当前表现 |
+|---|---|
+| 位置与列 | Sound、Container、Layer、Track、Segment、Bus 的 Basic > Effect；# / Effect / Level / Active |
+| 类型与增删 | 加号选择 Feedback Delay、Three Band Tone、Gain、Limiter 或 Compressor；减号删除所选行，支持排序及撤销重做 |
+| Effect | 左侧名称、右侧下拉箭头；单击选中行，双击名称或单元格打开 Effect Editor，箭头通过标准 QMenu 替换类型；保留行位置、效果器 GUID、Active、Level，参数重置为新类型默认值 |
+| Level | 干湿比 0～100%，默认 100%；0% 全干、100% 全湿；仅保存编辑配置并支持撤销，本阶段不参与试听或 Pack 运行时处理 |
+| Active | 新增默认开启，映射现有旁通配置；Bus 沿用既有支持，非 Bus 含关闭项时仍受现有试听／发布能力检查限制 |
+| 配置范围 | 直接编辑当前对象的效果器链，不提供 Inherit 或平台覆盖编辑 |
+| Effect Editor | View > Editors 成员；内容留空，标题显示所属对象与效果器；通过稳定 GUID 绑定，支持多实例、固定及布局恢复 |
+
 ## Publisher 表格
 
 | 项目 | 当前表现 |
@@ -153,5 +166,6 @@
 | 视图 | 范围注解 |
 |---|---|
 | Curve Editor、Timeline | 领域画布，不计入普通表格 |
+| Effect Editor | 效果器独立窗口，本阶段内容留空，不计入普通表格 |
 | Hierarchy、Explorer、Sources、Selector、Template Chooser 预览 | 导航或选择树，不计入普通表格 |
 | Log | 文本视图，不计为 Monitor 表格 |
