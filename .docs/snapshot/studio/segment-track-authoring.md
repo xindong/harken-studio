@@ -22,7 +22,7 @@
 
 Time 与 Clock 两行按同一主刻度成组显示，两值均存在时绘制短横线。时间使用 `MM:SS`，按刻度精度附加 0–3 位小数；Clock 只显示整数小节号，不显示拍号或小数。默认 Time 为主轴；主轴位于下行，使用 Body 字体及 textPrimary 颜色，画布网格及吸附随主轴排布；上行显示该位置对应的另一种数值，使用较小的 Axis 字体及 textMuted 颜色，不绘制次轴刻度线。Time 主刻度只有精确落在小节起点时才显示 Clock 次值，其余只显示时间，避免重复小节号或将小节号放在错误位置；Clock 主轴上方显示小节起点的准确时间。上下行按各自字体高度紧凑排布，次轴不预留刻度线空间。两行数字均从主刻度右侧开始，按较宽数字成组避让；右边缘空间不足时省略整组，不将文字左移。固定精度下不重复绘制同一时间标签，仍保留细分刻度与吸附。切换不改写 Clip／Marker 坐标、Tempo 或 Time Signature，保留缩放、滚动与 Cursor，并随面板视图快照保存。加号左对齐，与轴左侧 chevron 均使用 Studio 的 20px 标准。轴左侧不显示 Time／Clock 标题，Marker 行不显示标题或手柄旁的 Entry／Exit 文字；颜色和手柄表达标记类型，悬停时显示名称及 Time／Clock 读数。
 
-Marker 与 Cursor 的交互对齐 Source Editor：整根可见竖杆使用水平拖动指针并联动高亮，覆盖 Clip 和下部空白画布的部分同样可抓取；按下保持抓取偏移并显示实时读数浮窗，双击或右键 `Enter Value...` 可输入位置。Cursor 的刻度区、Marker 带与画布共用状态；重叠时 Cursor 优先，Marker 高于 Clip，零点 Entry 仍可从手柄右侧抓取。Marker 拖动期间只改预览，松手一次提交，Esc 取消；Entry／Exit 的交互边界遵循非负起点及 Entry 不晚于 Exit。
+Marker 与 Cursor 的交互对齐 Source Editor：整根可见竖杆使用水平拖动指针并联动高亮，覆盖 Clip 和下部空白画布的部分同样可抓取；按下保持抓取偏移并显示实时读数浮窗，双击或右键 `Enter Value...` 可输入位置。Cursor 的刻度区、Marker 带与画布共用状态；重叠时 Cursor 优先，Marker 高于 Clip，零点 Entry 仍可从手柄右侧抓取。Marker 拖动期间只改预览，松手一次提交，Esc 取消；Entry／Exit 的交互边界遵循非负起点及 Entry 不晚于 Exit。Exit 精确输入可超出已有内容末尾，提交后扩展时间轴范围并将 Marker 移入视图，不要求预先添加更长的 Clip。
 
 Clock 刻度及网格区分小节、拍、拍内细分三档。细分只能从单拍长度二分，最小为十六分音符（960 PPQ 下为 240 tick），继续放大也不再细分。Clock 的刻度间距阈值为原阈值的两倍，默认从 8px 提到 16px；Time 模式保持原来的生成规则。缩小至无法辨认单拍时使用完整小节倍数，不二分整个小节，避免奇数拍号生成偏离拍点的网格；拍长短于十六分音符时同样使用满足下限的小节倍数。标尺、画布网格和吸附使用同一组音乐坐标。
 
@@ -71,3 +71,5 @@ Marker 手柄带重新对齐 Source Editor，并加入时间标签自适应精�
 补齐 Marker／Cursor 整杆交互与 Source Editor 风格的提示后，RelWithDebInfo 已重建，32 项 Timeline／Source Editor 回归测试通过。测试覆盖 Marker 的手柄带、Clip 上方和下部空白画布，以及 Cursor 的刻度区、Marker 带和画布；验证共享预览、单次提交撤销、Esc 取消、精确输入及零点重叠命中。隔离检查的 12 张明暗主题截图确认悬停提示、拖动浮窗和精确输入完整可读。记录位于 `.temp/segment-handle-interaction-tests.xml` 及 `.temp/segment-interaction-review/`。
 
 2026-11-05 将剩余创作能力整理为正式 PR，基于包含 Tooltip 修复的 `main`（`6ca194a7`）合并验证，保留主分支的 Effect 与 Blueprint 更新。`windows-ninja-clang-dev` / `RelWithDebInfo` 的 Studio 与测试程序构建成功；Timeline、Transition、Inspector、自动化命令、主题、保存往返及 Queue Sound／Track／Segment 导出播放相关 99 项回归全部通过，无跳过。本地 QSS 归属检查及其 6 项脚本测试通过。缺少音乐时钟时的提示改为引导选择可访问音乐时钟的 Source，不再要求使用已移除的时钟域切换。记录位于 `.temp/segment-track-pr-build.log`、`.temp/segment-track-pr-tests.log` 和 `.temp/segment-track-pr-tests.xml`。
+
+同日修复 PR 审查发现的 Exit 精确输入上限，并修正旧 Piece 测试夹具的字段重命名及完整 Marker 集合校验。RelWithDebInfo 的 Studio 与全部 Studio CI 测试目标构建成功；完整 PR 测试分组共 145 组、501 项，500 项通过，1 项符号链接检查因环境限制跳过。新增回归覆盖两种时钟域下空 Segment 的末尾延长、放大后的可见性、撤销重做及输入边界，当前 schema 9 的文档往返用例也通过。额外执行的历史 schema 7／8 资格用例仍在 Main Layer 的 `fieldGroups.shared.mainOutput` 迁移验证处失败；相关迁移代码与主分支相同，旧项目迁移继续不纳入本轮修复。记录位于 `.temp/pr251-review-build.log`、`.temp/pr251-review-focused.xml` 和 `.temp/pr251-review-gate/summary.json`。

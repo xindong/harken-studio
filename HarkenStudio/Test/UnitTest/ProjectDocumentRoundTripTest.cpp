@@ -30,6 +30,7 @@
 #include <windows.h>
 #endif
 
+#include <algorithm>
 #include <utility>
 
 namespace {
@@ -378,7 +379,7 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
             auto components = content.value(QStringLiteral("components")).toObject();
             auto timeline = components.take(QStringLiteral("segmenttimeline")).toObject();
             timeline.insert(QStringLiteral("pieceTime"),
-                            QJsonObject{{QStringLiteral("domain"), QStringLiteral("Absolute")}});
+                            timeline.take(QStringLiteral("segmentTime")));
             components.insert(QStringLiteral("piecetimeline"), timeline);
             content.insert(QStringLiteral("components"), components);
         }
@@ -408,8 +409,16 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
     EXPECT_EQ(segment->type, ProjectItem::Type::Segment);
     EXPECT_EQ(segment->name, QStringLiteral("Piece"));
     ASSERT_NE(segment->comp<VSegment>(), nullptr);
-    ASSERT_EQ(segment->comp<VSegment>()->markers.items.size(), 1u);
-    EXPECT_EQ(segment->comp<VSegment>()->markers.items.front().name, QStringLiteral("pieceTime"));
+    const auto originalSegment = HarkenTest::projectContent(
+        documentsById_.value(segmentGuid_.toString(QUuid::WithoutBraces)))
+        .value(QStringLiteral("components")).toObject()
+        .value(QStringLiteral("segmenttimeline")).toObject();
+    const auto& markers = segment->comp<VSegment>()->markers;
+    EXPECT_EQ(markers.toJson(), originalSegment.value(QStringLiteral("markers")).toArray());
+    const auto custom = std::find_if(markers.items.begin(), markers.items.end(),
+        [](const Marker& marker) { return marker.kind == MarkerKind::Custom; });
+    ASSERT_NE(custom, markers.items.end());
+    EXPECT_EQ(custom->name, QStringLiteral("pieceTime"));
     if (!analysis.upgradeRequired)
         for (auto it = beforeOpen.cbegin(); it != beforeOpen.cend(); ++it)
             EXPECT_EQ(readFile(it.key()), it.value());

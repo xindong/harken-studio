@@ -1902,8 +1902,9 @@ void TimelineEditorPanel::editMarkerValue(const QUuid& guid)
     spin->setDecimals(9);
     const bool musical = timelineDomain() == TimelineDomain::Musical;
     const double divisor = musical ? TimelineCoordinates::kPpq : TimelineCoordinates::kNanosecondsPerSecond;
+    const double limit = std::nextafter(double(std::numeric_limits<int64_t>::max()) / divisor, 0.0);
     spin->setRange(double(clampMarkerPosition(guid, 0)) / divisor,
-        double(clampMarkerPosition(guid, std::max(initial, contentEndCoordinate()))) / divisor);
+        std::min(limit, double(clampMarkerPosition(guid, std::numeric_limits<int64_t>::max())) / divisor));
     spin->setSingleStep(musical ? 1.0 / TimelineCoordinates::kPpq : 0.001);
     spin->setSuffix(musical ? tr(" beats") : QStringLiteral(" s"));
     spin->setValue(double(initial) / divisor);
@@ -1924,8 +1925,8 @@ void TimelineEditorPanel::editMarkerValue(const QUuid& guid)
             return;
         const auto coordinate = musical ? TimelineCoordinates::beatsToTicks(spin->value())
             : TimelineCoordinates::fromSeconds(spin->value(), {});
-        if (coordinate)
-            moveMarker(guid, clampMarkerPosition(guid, coordinate.value), true);
+        if (coordinate && moveMarker(guid, clampMarkerPosition(guid, coordinate.value), true))
+            revealMarker(guid);
     });
     connect(dialog, &QDialog::finished, this, [this, dialog] {
         if (markerValueEditor_ == dialog)

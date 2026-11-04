@@ -600,6 +600,83 @@ TEST_P(TimelineDomainTest, CursorAndViewportStayWithinEditableRange)
     }
 }
 
+TEST_P(TimelineDomainTest, MarkerValueEditsExtendContentAndPreserveUndo)
+{
+    auto& manager = VNX::ProjectManager::instance();
+    auto& undo = VNX::UndoRedoManager::instance();
+    auto* segment = manager.createItem(nullptr, QStringLiteral("EmptySegment"),
+        VNX::ProjectItem::Type::Segment);
+    ASSERT_NE(segment, nullptr);
+    VNX::TimelineEditorPanel panel;
+    panel.resize(900, 480);
+    panel.bindItem(segment);
+    panel.show();
+    ASSERT_TRUE(panel.setTimelineDomain(GetParam()));
+    drainEvents();
+    auto* timeline = segment->comp<VNX::VSegment>();
+    const auto before = timeline->markers;
+    const auto* entry = before.find(VNX::MarkerKind::Entry);
+    const auto* exit = before.find(VNX::MarkerKind::Exit);
+    ASSERT_NE(entry, nullptr);
+    ASSERT_NE(exit, nullptr);
+    const auto target = VNX::TimelineCoordinates::fromSeconds(20.0, timeline->segmentTime);
+    ASSERT_TRUE(target);
+    ASSERT_GT(target.value, exit->position);
+    const bool musical = GetParam() == VNX::TimelineDomain::Musical;
+    const double divisor = musical ? VNX::TimelineCoordinates::kPpq
+        : VNX::TimelineCoordinates::kNanosecondsPerSecond;
+
+    for (const double zoom : {100.0, 200.0}) {
+        SCOPED_TRACE(zoom);
+        panel.setZoomPercent(zoom);
+        panel.setHorizontalScroll(0.0);
+        undo.clear();
+        panel.editMarkerValue(exit->markerGuid);
+        auto* editor = panel.findChild<QDialog*>("timelineMarkerEditor");
+        ASSERT_NE(editor, nullptr);
+        auto* spin = editor->findChild<QDoubleSpinBox*>("timelineMarkerPositionSpin");
+        ASSERT_NE(spin, nullptr);
+        const auto maximum = musical ? VNX::TimelineCoordinates::beatsToTicks(spin->maximum())
+            : VNX::TimelineCoordinates::fromSeconds(spin->maximum(), {});
+        EXPECT_TRUE(maximum);
+        spin->setValue(double(target.value) / divisor);
+        editor->accept();
+        drainEvents();
+        EXPECT_EQ(timeline->markers.find(VNX::MarkerKind::Exit)->position, target.value);
+        EXPECT_EQ(*timeline->markers.find(VNX::MarkerKind::Entry), *entry);
+        EXPECT_TRUE(segment->children.empty());
+        EXPECT_DOUBLE_EQ(panel.zoomPercent(), zoom);
+        const int pixel = panel.viewportPixelAtCoordinate(0, target.value);
+        EXPECT_GE(pixel, 0);
+        EXPECT_LT(pixel, panel.timelineViewportWidth());
+        EXPECT_EQ(undo.undoStack()->count(), 1);
+        const auto extended = timeline->markers;
+        ASSERT_TRUE(undo.undo());
+        drainEvents();
+        EXPECT_EQ(timeline->markers, before);
+        panel.setZoomPercent(100.0);
+        EXPECT_EQ(panel.coordinateAtViewportPixel(0, panel.timelineViewportWidth() - 1), exit->position);
+        ASSERT_TRUE(undo.redo());
+        drainEvents();
+        EXPECT_EQ(timeline->markers, extended);
+        EXPECT_EQ(panel.coordinateAtViewportPixel(0, panel.timelineViewportWidth() - 1), target.value);
+        ASSERT_TRUE(undo.undo());
+        drainEvents();
+    }
+    undo.clear();
+    panel.editMarkerValue(entry->markerGuid);
+    auto* editor = panel.findChild<QDialog*>("timelineMarkerEditor");
+    ASSERT_NE(editor, nullptr);
+    auto* spin = editor->findChild<QDoubleSpinBox*>("timelineMarkerPositionSpin");
+    ASSERT_NE(spin, nullptr);
+    spin->setValue(double(target.value) / divisor);
+    EXPECT_DOUBLE_EQ(spin->value(), double(exit->position) / divisor);
+    editor->reject();
+    drainEvents();
+    EXPECT_EQ(timeline->markers, before);
+    EXPECT_EQ(undo.undoStack()->count(), 0);
+}
+
 TEST_P(TimelineDomainTest, MarkerDragPreviewCommitsOnceAndSharesViewportCoordinates)
 {
     auto& undo = VNX::UndoRedoManager::instance();
