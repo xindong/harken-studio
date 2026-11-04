@@ -2293,7 +2293,21 @@ TEST(Trace, VoiceTapReturnRearmsEverySharedRouteBeforeSilentPublication) {
     EXPECT_FLOAT_EQ(1.0f, detector[0]);
     routes.EndBlock(2);
 
+    // A stale generation must not clear the installed source's history.
+    routes.InvalidateVoiceTap(kIdentity + (UINT64_C(1) << 32));
+    detector = routes.BuildDetector(2, 0, 4, &detectorStatus);
+    ASSERT_NE(nullptr, detector);
+    EXPECT_TRUE(detectorStatus.active);
+    EXPECT_FLOAT_EQ(1.0f, detector[0]);
+
+    // A pending plan shares the same pinned tap; invalidation before its
+    // installation must not allow either route to replay the old history.
+    routes.DrainAudioMessages();
+    const auto pending = routes.AcquirePlan();
+    ASSERT_NE(harken::kInvalidDynamicRoutePlanIndex, pending);
+    ASSERT_TRUE(routes.BuildPlan(pending, nullptr, false));
     routes.InvalidateVoiceTap(kIdentity);
+    routes.InstallPlan(pending);
     routes.BeginBlock();
     routes.PublishVoiceTap(kIdentity, nullptr, 0, 0, 0);
     detector = routes.BuildDetector(2, 0, 4, &detectorStatus);

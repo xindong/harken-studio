@@ -1029,19 +1029,25 @@ public:
             static_cast<std::uint32_t>(sourceIdentity);
         const std::uint32_t sourceGeneration =
             static_cast<std::uint32_t>(sourceIdentity >> 32);
-        for (std::uint32_t i = 0; i < m_voiceTapCapacity; ++i) {
-            const TapSlot& tap = m_voiceTaps[i];
-            if (!tap.active ||
-                tap.sourceKind != VN_DYNAMIC_SOURCE_VOICE ||
-                tap.sourceIndex != sourceIndex ||
-                tap.sourceGeneration != sourceGeneration) {
+        // Current plan pins keep these taps alive while logic creates or
+        // retires unrelated slots. The mutable tap table is logic-owned.
+        const DynamicRoutePlanView plan = View(m_currentPlanIndex);
+        for (std::uint32_t i = 0; i < plan.rowCount; ++i) {
+            const DynamicRoutePlanRow& row = plan.rows[i];
+            if (row.sourceKind != VN_DYNAMIC_SOURCE_VOICE ||
+                row.sourceIndex != sourceIndex ||
+                row.sourceGeneration != sourceGeneration ||
+                row.tapSlot >= m_voiceTapCapacity) {
                 continue;
             }
-            m_voiceReadValid[i] = 0;
-            m_voiceWriteValid[i] = 0;
-            std::memset(VoiceTapBase(i, 0), 0,
+            m_voiceReadValid[row.tapSlot] = 0;
+            m_voiceWriteValid[row.tapSlot] = 0;
+            std::memset(VoiceTapBase(row.tapSlot, 0), 0,
                         static_cast<std::size_t>(2) * kMaxChannels *
                             m_blockFrames * sizeof(float));
+            // The sole supported voice tap is shared by every route from this
+            // source identity; clear its banks only once.
+            return;
         }
     }
 

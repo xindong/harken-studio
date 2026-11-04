@@ -16,6 +16,7 @@
 #include "harken/media/PackFormat.h"
 #include "harken/media/PackTable.h"
 
+#include <bit>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -372,6 +373,107 @@ TEST(Pack, LoopMetadataCarriedThroughLoad) {
     EXPECT_EQ(10u, bySound->loopStartFrame);
     EXPECT_EQ(nullptr, session.Engine()->packs.FindEntryBySound(
                            harkentest::ObjectId(999), session.Engine()->registry));
+}
+
+TEST(Pack, LoopRegionReachesCurrentActionAndLoopOnlyReplacement) {
+    for (const bool sectioned : {false, true}) {
+        SCOPED_TRACE(sectioned ? "sectioned" : "compact");
+        EngineSession session(MakeNullConfig(0, kBlockFrames));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        auto media = MakeSineEntry(harkentest::ObjectId(23), 2048);
+        media.loopable = true;
+        media.loopStart = 256;
+        media.loopEnd = 1024;
+        const auto path = TempPath("pack_current_action_loop.pack");
+        const auto writePack = [&] {
+            if (sectioned) {
+                harkentest::packfoundation::ImageBuilder image(harken::kPackKindContent);
+                image.AddMedia(media.id, media.planar, {media.loopStart, media.loopEnd});
+                WriteFileBytes(path, image.Build());
+            } else {
+                WriteFileBytes(path, BuildPackBytes({media}));
+            }
+        };
+        writePack();
+        VnPackHandle pack = 0;
+        ASSERT_EQ(VN_OK, LoadPack(path, &pack));
+        const auto original = engine.registry.Lookup(media.id);
+        ASSERT_TRUE(original.Valid());
+        EXPECT_EQ(256u, original.loop.startFrame);
+        EXPECT_EQ(1024u, original.LoopEndFrame());
+
+        harken::PlayablePropertyProgramViewV1 property{};
+        property.contentPropertyKind = harken::playableproperties::ContentPropertyKindV1::Sound;
+        property.stableId = media.id;
+        property.contentRevision = original.contentRevision;
+        property.routeStableId = VN_BUS_MASTER;
+        property.compatibilityFingerprint = 1;
+        property.payload.presentMask = harken::kResolvedSectionGroupPropertyMaskV1 |
+                                       (UINT64_C(1) << 3);
+        property.payload.values[3].bits = 2;
+        property.payload.values[6].objectId = VN_BUS_MASTER;
+        property.payload.values[11].bits = std::bit_cast<std::uint32_t>(1.0f);
+        property.payload.values[16].bits = std::bit_cast<std::uint32_t>(1.0f);
+        property.programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(property);
+        harken::ActionStepProgramViewV1 step{};
+        step.target.stableId = media.id;
+        step.target.expectedProgramSemanticFingerprint = property.programSemanticFingerprint;
+        step.delay = step.fade = step.cooldown = {harken::AuthoredTimeDomainV1::AbsoluteNanoseconds, 0, 1};
+        harken::ActionProgramViewV1 action{};
+        action.actionStableId = harkentest::ObjectId(24);
+        action.steps = &step;
+        action.stepCount = action.expandedStepOccurrenceCount = action.expandedFiringCount = 1;
+        action.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(action);
+        harken::ContainerWorldInstallViewV1 world{};
+        world.playableProperties = &property;
+        world.playablePropertyCount = 1;
+        world.actions = &action;
+        world.actionCount = 1;
+        world.identity.capabilityMask = harken::kWorldCapabilityPlayableProperties |
+                                        harken::kWorldCapabilityActionDefinitions;
+        world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(world);
+        ASSERT_EQ(harken::WorldInstallStatus::Ok,
+                  harken::InstallContainerWorldV1(engine, world).status);
+        VnPostActionDesc post{};
+        post.structSize = sizeof(post);
+        post.actionId = action.actionStableId;
+        VnActionFiringHandle firing = 0;
+        ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+        const auto block = engine.mixer.BlocksRendered();
+        engine.nullBackend.Pump(1);
+        ASSERT_GT(engine.mixer.BlocksRendered(), block);
+        const auto* voice = engine.voices.Resolve(engine.playableServices[0].renderHandle);
+        ASSERT_NE(nullptr, voice);
+        EXPECT_EQ(256u, voice->loopStartFrame);
+        EXPECT_EQ(1024u, voice->loopEndFrame);
+        for (unsigned i = 0; i < 12; ++i) {
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        EXPECT_EQ(0u, engine.voices.ActiveCount());
+        VnActionFiringInfo info{};
+        info.structSize = sizeof(info);
+        ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+        EXPECT_EQ(0u, info.livePlayableCount);
+        ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+
+        media.loopStart = 512;
+        media.loopEnd = 0;
+        writePack();
+        VnPackDesc replacement{};
+        replacement.structSize = sizeof(replacement);
+        replacement.utf8Path = path.c_str();
+        ASSERT_EQ(VN_OK, Vn_ReplacePack(pack, &replacement));
+        const auto replaced = engine.registry.Lookup(media.id);
+        ASSERT_TRUE(replaced.Valid());
+        EXPECT_EQ(512u, replaced.loop.startFrame);
+        EXPECT_EQ(2048u, replaced.LoopEndFrame());
+        EXPECT_NE(original.contentRevision, replaced.contentRevision);
+        ASSERT_EQ(VN_OK, Vn_UnloadPack(pack));
+        EXPECT_EQ(0u, engine.registry.Count());
+        EXPECT_EQ(0u, engine.packs.LoadedCount());
+    }
 }
 
 TEST(Pack, UnloadRefusedWhileEntryVoicePlays) {
