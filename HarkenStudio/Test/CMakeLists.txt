@@ -345,7 +345,8 @@ set(_harken_editor_daily_suites
 list(JOIN _harken_editor_daily_suites ":" _harken_editor_daily_filter)
 set(_harken_editor_qualification_tests
     ExportedPackLifecycle.WasapiImmediateSoundHarness
-    ExportedPackLifecycle.RelWithDebInfoQualificationReport)
+    ExportedPackLifecycle.RelWithDebInfoQualificationReport
+    Historical/ProjectDocumentVersionRoundTripTest.*)
 list(JOIN _harken_editor_qualification_tests ":" _harken_editor_qualification_filter)
 
 gtest_discover_tests(harken_editor_tests

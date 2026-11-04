@@ -312,120 +312,130 @@ TEST_F(ProjectDocumentRoundTripTest, AllDocumentMetadataSurvivesEditingSavingAnd
     EXPECT_TRUE(manager.currentProject()->projectLanguages.isEmpty());
 }
 
-TEST_F(ProjectDocumentRoundTripTest, SupportedDocumentVersionsPreserveContentThroughOpenSave)
+class ProjectDocumentVersionRoundTripTest : public ProjectDocumentRoundTripTest,
+                                          public ::testing::WithParamInterface<int>
+{
+};
+
+TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveContentThroughOpenSave)
 {
     auto& manager = ProjectManager::instance();
-    for (const int version : {7, 8, ProjectSchema::kProjectSchemaVersion}) {
-        SCOPED_TRACE(version);
-        QMap<QString, QByteArray> beforeOpen;
-        for (auto it = documentsById_.cbegin(); it != documentsById_.cend(); ++it) {
-            auto document = it.value();
-            auto header = HarkenTest::projectHeader(document);
-            header.insert(QStringLiteral("schemaVersion"), version);
-            if (version < ProjectSchema::kProjectSchemaVersion) {
-                header.insert(QStringLiteral("savedStudioVersion"), QStringLiteral("1.0.0"));
-                header.insert(QStringLiteral("propertyModel"), QStringLiteral("fieldGroupsV1"));
-                header.remove(QStringLiteral("studioVersion"));
-                header.remove(QStringLiteral("packSchemaVersion"));
-            }
-            document.insert(QStringLiteral("harkenDocument"), header);
-            auto content = HarkenTest::projectContent(document);
-            if (version < ProjectSchema::kProjectSchemaVersion) {
-                if (header.value(QStringLiteral("type")) == QStringLiteral("project.root")) {
-                    content.insert(QStringLiteral("paths"), QJsonObject{
-                        {QStringLiteral("audioFolder"), QStringLiteral("Layers")},
-                    });
-                    auto metadata = content.value(QStringLiteral("metadata")).toObject();
-                    const auto audio = content.take(QStringLiteral("audio")).toObject();
-                    metadata.insert(QStringLiteral("sampleRate"), audio.value(QStringLiteral("renderSampleRate")));
-                    metadata.insert(QStringLiteral("channelConfig"), audio.value(QStringLiteral("channelConfig")));
-                    metadata.insert(QStringLiteral("platforms"), content.take(QStringLiteral("deployPlatforms")));
-                    content.insert(QStringLiteral("projectLanguages"), content.take(QStringLiteral("deployLanguages")));
-                    metadata.insert(QStringLiteral("createdDate"), QStringLiteral("2001-02-03T04:05:06Z"));
-                    metadata.insert(QStringLiteral("modifiedDate"), QStringLiteral("2001-02-03T04:05:06Z"));
-                    metadata.insert(QStringLiteral("toolVersion"), QStringLiteral("HarkenStudio 1.0.0"));
-                    content.insert(QStringLiteral("metadata"), metadata);
-                } else if (header.value(QStringLiteral("type")) == QStringLiteral("project.bus")) {
-                    content.insert(QStringLiteral("componentData"),
-                                   content.value(QStringLiteral("components")).toObject().value(QStringLiteral("bus")));
-                } else if (header.value(QStringLiteral("type")) != QStringLiteral("project.action")) {
-                    content.insert(QStringLiteral("expanded"), true);
-                }
-            }
-            if (version == 7 && header.value(QStringLiteral("type")) == QStringLiteral("project.root")) {
-                const auto platform = content.value(QStringLiteral("metadata")).toObject()
-                    .value(QStringLiteral("platforms")).toArray().first().toObject()
-                    .value(QStringLiteral("id"));
-                content.insert(QStringLiteral("packExportCurrentPlatformId"), platform);
-                content.insert(QStringLiteral("packExportSelectedPlatformIds"), QJsonArray{platform});
-            }
-            if (content.value(QStringLiteral("type")) == QStringLiteral("Segment")) {
-                content.insert(QStringLiteral("type"), QStringLiteral("Piece"));
-                auto components = content.value(QStringLiteral("components")).toObject();
-                auto timeline = components.take(QStringLiteral("segmenttimeline")).toObject();
-                timeline.insert(QStringLiteral("pieceTime"),
-                                QJsonObject{{QStringLiteral("domain"), QStringLiteral("Absolute")}});
-                components.insert(QStringLiteral("piecetimeline"), timeline);
-                content.insert(QStringLiteral("components"), components);
-            }
-            document.insert(QStringLiteral("content"), content);
-            const QString path = pathsById_.value(it.key());
-            writeObject(path, document);
-            beforeOpen.insert(path, readFile(path));
+    const int version = GetParam();
+    SCOPED_TRACE(version);
+    QMap<QString, QByteArray> beforeOpen;
+    for (auto it = documentsById_.cbegin(); it != documentsById_.cend(); ++it) {
+        auto document = it.value();
+        auto header = HarkenTest::projectHeader(document);
+        header.insert(QStringLiteral("schemaVersion"), version);
+        if (version < ProjectSchema::kProjectSchemaVersion) {
+            header.insert(QStringLiteral("savedStudioVersion"), QStringLiteral("1.0.0"));
+            header.insert(QStringLiteral("propertyModel"), QStringLiteral("fieldGroupsV1"));
+            header.remove(QStringLiteral("studioVersion"));
+            header.remove(QStringLiteral("packSchemaVersion"));
         }
-        ProjectUpgradeManager upgrades;
-        const auto analysis = upgrades.analyze(projectPath_);
-        ASSERT_TRUE(analysis.ok) << analysis.blockingErrors.join(QLatin1Char('\n')).toStdString();
-        EXPECT_EQ(analysis.upgradeRequired, version < ProjectSchema::kProjectSchemaVersion);
+        document.insert(QStringLiteral("harkenDocument"), header);
+        auto content = HarkenTest::projectContent(document);
+        if (version < ProjectSchema::kProjectSchemaVersion) {
+            if (header.value(QStringLiteral("type")) == QStringLiteral("project.root")) {
+                content.insert(QStringLiteral("paths"), QJsonObject{
+                    {QStringLiteral("audioFolder"), QStringLiteral("Layers")},
+                });
+                auto metadata = content.value(QStringLiteral("metadata")).toObject();
+                const auto audio = content.take(QStringLiteral("audio")).toObject();
+                metadata.insert(QStringLiteral("sampleRate"), audio.value(QStringLiteral("renderSampleRate")));
+                metadata.insert(QStringLiteral("channelConfig"), audio.value(QStringLiteral("channelConfig")));
+                metadata.insert(QStringLiteral("platforms"), content.take(QStringLiteral("deployPlatforms")));
+                content.insert(QStringLiteral("projectLanguages"), content.take(QStringLiteral("deployLanguages")));
+                metadata.insert(QStringLiteral("createdDate"), QStringLiteral("2001-02-03T04:05:06Z"));
+                metadata.insert(QStringLiteral("modifiedDate"), QStringLiteral("2001-02-03T04:05:06Z"));
+                metadata.insert(QStringLiteral("toolVersion"), QStringLiteral("HarkenStudio 1.0.0"));
+                content.insert(QStringLiteral("metadata"), metadata);
+            } else if (header.value(QStringLiteral("type")) == QStringLiteral("project.bus")) {
+                content.insert(QStringLiteral("componentData"),
+                               content.value(QStringLiteral("components")).toObject().value(QStringLiteral("bus")));
+            } else if (header.value(QStringLiteral("type")) != QStringLiteral("project.action")) {
+                content.insert(QStringLiteral("expanded"), true);
+            }
+        }
+        if (version == 7 && header.value(QStringLiteral("type")) == QStringLiteral("project.root")) {
+            const auto platform = content.value(QStringLiteral("metadata")).toObject()
+                .value(QStringLiteral("platforms")).toArray().first().toObject()
+                .value(QStringLiteral("id"));
+            content.insert(QStringLiteral("packExportCurrentPlatformId"), platform);
+            content.insert(QStringLiteral("packExportSelectedPlatformIds"), QJsonArray{platform});
+        }
+        if (content.value(QStringLiteral("type")) == QStringLiteral("Segment")) {
+            content.insert(QStringLiteral("type"), QStringLiteral("Piece"));
+            auto components = content.value(QStringLiteral("components")).toObject();
+            auto timeline = components.take(QStringLiteral("segmenttimeline")).toObject();
+            timeline.insert(QStringLiteral("pieceTime"),
+                            QJsonObject{{QStringLiteral("domain"), QStringLiteral("Absolute")}});
+            components.insert(QStringLiteral("piecetimeline"), timeline);
+            content.insert(QStringLiteral("components"), components);
+        }
+        document.insert(QStringLiteral("content"), content);
+        const QString path = pathsById_.value(it.key());
+        writeObject(path, document);
+        beforeOpen.insert(path, readFile(path));
+    }
+    ProjectUpgradeManager upgrades;
+    const auto analysis = upgrades.analyze(projectPath_);
+    ASSERT_TRUE(analysis.ok) << analysis.blockingErrors.join(QLatin1Char('\n')).toStdString();
+    EXPECT_EQ(analysis.upgradeRequired, version < ProjectSchema::kProjectSchemaVersion);
+    for (auto it = beforeOpen.cbegin(); it != beforeOpen.cend(); ++it)
+        EXPECT_EQ(readFile(it.key()), it.value());
+    if (analysis.upgradeRequired) {
+        auto result = upgrades.execute(analysis);
+        ASSERT_TRUE(result.ok) << result.error.toStdString();
+        QString error;
+        ASSERT_TRUE(upgrades.finalize(result, &error)) << error.toStdString();
+    }
+    QString error;
+    ASSERT_TRUE(manager.loadProject(projectPath_, false, &error)) << error.toStdString();
+    UndoRedoManager::instance().clearHistory();
+    expectModelMetadata(*manager.currentProject());
+    auto* segment = manager.findItemByGuid(segmentGuid_);
+    ASSERT_NE(segment, nullptr);
+    EXPECT_EQ(segment->type, ProjectItem::Type::Segment);
+    EXPECT_EQ(segment->name, QStringLiteral("Piece"));
+    ASSERT_NE(segment->comp<VSegment>(), nullptr);
+    ASSERT_EQ(segment->comp<VSegment>()->markers.items.size(), 1u);
+    EXPECT_EQ(segment->comp<VSegment>()->markers.items.front().name, QStringLiteral("pieceTime"));
+    if (!analysis.upgradeRequired)
         for (auto it = beforeOpen.cbegin(); it != beforeOpen.cend(); ++it)
             EXPECT_EQ(readFile(it.key()), it.value());
-        if (analysis.upgradeRequired) {
-            auto result = upgrades.execute(analysis);
-            ASSERT_TRUE(result.ok) << result.error.toStdString();
-            QString error;
-            ASSERT_TRUE(upgrades.finalize(result, &error)) << error.toStdString();
-        }
-        QString error;
-        ASSERT_TRUE(manager.loadProject(projectPath_, false, &error)) << error.toStdString();
-        UndoRedoManager::instance().clearHistory();
-        expectModelMetadata(*manager.currentProject());
-        auto* segment = manager.findItemByGuid(segmentGuid_);
-        ASSERT_NE(segment, nullptr);
-        EXPECT_EQ(segment->type, ProjectItem::Type::Segment);
-        EXPECT_EQ(segment->name, QStringLiteral("Piece"));
-        ASSERT_NE(segment->comp<VSegment>(), nullptr);
-        ASSERT_EQ(segment->comp<VSegment>()->markers.items.size(), 1u);
-        EXPECT_EQ(segment->comp<VSegment>()->markers.items.front().name, QStringLiteral("pieceTime"));
-        if (!analysis.upgradeRequired)
-            for (auto it = beforeOpen.cbegin(); it != beforeOpen.cend(); ++it)
-                EXPECT_EQ(readFile(it.key()), it.value());
-        ASSERT_TRUE(manager.saveProject());
-        ASSERT_TRUE(manager.closeProject());
-        const auto savedPaths = documentPathsById(projectDirectory_);
-        EXPECT_EQ(savedPaths.keys(), documentsById_.keys());
-        for (auto it = savedPaths.cbegin(); it != savedPaths.cend(); ++it) {
-            const auto document = readObject(it.value());
-            EXPECT_EQ(HarkenTest::projectHeader(document).value(QStringLiteral("schemaVersion")),
-                      ProjectSchema::kProjectSchemaVersion);
-            const auto content = HarkenTest::projectContent(document);
-            const auto original = HarkenTest::projectContent(documentsById_.value(it.key()));
-            for (const auto* key : {"type", "name", "guid", "parentRef"})
+    ASSERT_TRUE(manager.saveProject());
+    ASSERT_TRUE(manager.closeProject());
+    const auto savedPaths = documentPathsById(projectDirectory_);
+    EXPECT_EQ(savedPaths.keys(), documentsById_.keys());
+    for (auto it = savedPaths.cbegin(); it != savedPaths.cend(); ++it) {
+        const auto document = readObject(it.value());
+        EXPECT_EQ(HarkenTest::projectHeader(document).value(QStringLiteral("schemaVersion")),
+                  ProjectSchema::kProjectSchemaVersion);
+        const auto content = HarkenTest::projectContent(document);
+        const auto original = HarkenTest::projectContent(documentsById_.value(it.key()));
+        for (const auto* key : {"type", "name", "guid", "parentRef"})
+            EXPECT_EQ(content.value(QLatin1String(key)), original.value(QLatin1String(key)));
+        if (HarkenTest::projectHeader(document).value(QStringLiteral("type")) == QStringLiteral("project.root"))
+            for (const auto* key : {"metadata", "audio", "deployPlatforms", "deployLanguages"})
                 EXPECT_EQ(content.value(QLatin1String(key)), original.value(QLatin1String(key)));
-            if (HarkenTest::projectHeader(document).value(QStringLiteral("type")) == QStringLiteral("project.root"))
-                for (const auto* key : {"metadata", "audio", "deployPlatforms", "deployLanguages"})
-                    EXPECT_EQ(content.value(QLatin1String(key)), original.value(QLatin1String(key)));
-            if (it.key() == segmentGuid_.toString(QUuid::WithoutBraces))
-                EXPECT_EQ(content.value(QStringLiteral("components")),
-                          original.value(QStringLiteral("components")));
-        }
-        const auto normalized = savedDocumentContent();
-        ASSERT_TRUE(manager.loadProject(projectPath_));
-        UndoRedoManager::instance().clearHistory();
-        ASSERT_TRUE(manager.saveProject());
-        EXPECT_EQ(savedDocumentContent(), normalized);
-        ASSERT_TRUE(manager.closeProject());
+        if (it.key() == segmentGuid_.toString(QUuid::WithoutBraces))
+            EXPECT_EQ(content.value(QStringLiteral("components")),
+                      original.value(QStringLiteral("components")));
     }
+    const auto normalized = savedDocumentContent();
+    ASSERT_TRUE(manager.loadProject(projectPath_));
+    UndoRedoManager::instance().clearHistory();
+    ASSERT_TRUE(manager.saveProject());
+    EXPECT_EQ(savedDocumentContent(), normalized);
+    ASSERT_TRUE(manager.closeProject());
 }
+
+INSTANTIATE_TEST_SUITE_P(Current, ProjectDocumentVersionRoundTripTest,
+                         ::testing::Values(ProjectSchema::kProjectSchemaVersion));
+
+INSTANTIATE_TEST_SUITE_P(Historical, ProjectDocumentVersionRoundTripTest,
+                         ::testing::Values(7, 8));
 
 TEST_F(ProjectDocumentRoundTripTest, RenamingAnAncestorDoesNotRewriteDescendantDocuments)
 {
