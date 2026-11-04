@@ -17838,6 +17838,10 @@ TEST(PlayableStart, MusicSegmentNestedCountsRespectSourceAgeAndParentClip) {
 }
 
 TEST(PlayableStart, MusicSegmentZeroWidthBoundsKeepSingleNaturalDurationClip) {
+    for (const auto placementStart : {0, 16})
+    for (const auto count : {1u, 2u, 0u}) {
+    SCOPED_TRACE(placementStart);
+    SCOPED_TRACE(count);
     harkentest::EngineSession session(harkentest::MakeNullConfig(4, 64, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto* engine = session.Engine();
@@ -17845,13 +17849,19 @@ TEST(PlayableStart, MusicSegmentZeroWidthBoundsKeepSingleNaturalDurationClip) {
     const auto pcm = harkentest::MonoDesc(samples, 48000);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
     DirectSegmentWorldImage image(engine->registry.Lookup(kSound).contentRevision,
-        harken::ScheduleTimeKindV1::MusicalTicks, 16, 0);
+        harken::ScheduleTimeKindV1::MusicalTicks, placementStart, 0);
+    const auto loopIndex = static_cast<std::size_t>(
+        harken::playableproperties::PlayablePropertyIdV1::LoopCount) - 1u;
+    image.properties[2].payload.presentMask |= UINT64_C(1) << loopIndex;
+    image.properties[2].payload.values[loopIndex].bits = count;
+    image.properties[2].programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(image.properties[2]);
+    image.segment.rootDefinition.expectedProgramSemanticFingerprint = image.properties[2].programSemanticFingerprint;
     image.segment.startPointKind = 0;
     image.segment.startMarkerId = 0;
     image.segment.markerCount = 0;
     image.segment.markers = nullptr;
-    image.segment.bounds.contentStart = image.segment.bounds.contentEnd = 16;
-    image.segment.bounds.nominalStart = image.segment.bounds.nominalEnd = 16;
+    image.segment.bounds.contentStart = image.segment.bounds.contentEnd = placementStart;
+    image.segment.bounds.nominalStart = image.segment.bounds.nominalEnd = placementStart;
     image.segment.scheduleSemanticFingerprint = harken::ComputeSegmentScheduleFingerprintV2(image.segment);
     auto install = PlayableWorldInstall(image.world);
     install.sourceBodyVintage = harken::kCurrentWorldBodyVintageV19;
@@ -17865,11 +17875,22 @@ TEST(PlayableStart, MusicSegmentZeroWidthBoundsKeepSingleNaturalDurationClip) {
     harken::PlayableStartRequest request{};
     request.root = image.Root();
     const auto started = harken::StartPlayable(*engine, request);
+    if (count != 1) {
+        EXPECT_NE(harken::PlayableStartStatus::Accepted, started.status);
+        EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+        EXPECT_EQ(0u, engine->playablePartitions.OccupiedCount());
+        EXPECT_EQ(0u, engine->timelineArms.LiveCount());
+        EXPECT_EQ(0u, engine->timelineOccurrences.OccupiedCount());
+        EXPECT_EQ(0u, engine->voices.ActiveCount());
+        EXPECT_TRUE(PlayableRowsFree(*engine));
+        EXPECT_FALSE(engine->runtimeRecreateRequired);
+        continue;
+    }
     ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
     const auto row = std::find_if(engine->playableServices.begin(), engine->playableServices.end(),
         [&](const auto& candidate) { return candidate.rootInstance == started.instance; });
     ASSERT_NE(engine->playableServices.end(), row);
-    const auto onset = row->startFrame + 400;
+    const auto onset = row->startFrame + static_cast<std::uint64_t>(placementStart) * 25;
     for (unsigned block = 0; block < 128; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
         const auto frame = engine->mixer.BlocksRendered() * 64;
@@ -17883,6 +17904,7 @@ TEST(PlayableStart, MusicSegmentZeroWidthBoundsKeepSingleNaturalDurationClip) {
     EXPECT_EQ(0u, engine->voices.ActiveCount());
     EXPECT_TRUE(PlayableRowsFree(*engine));
     EXPECT_FALSE(engine->runtimeRecreateRequired);
+    }
 }
 
 TEST(PlayableStart, DirectMusicalSegmentSubtractsStartMarkerBeforeScheduling) {

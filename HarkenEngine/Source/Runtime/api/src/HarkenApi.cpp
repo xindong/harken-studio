@@ -17732,10 +17732,19 @@ bool ActionQuantizeClockFromSegment(const harken::SegmentScheduleProgramViewV1& 
     std::int64_t sampleRate, harken::TempoSegment* outTempo,
     harken::ClockKernel* outClock, harken::MarkerIndex* outIndex) noexcept;
 
-bool UsesMusicTimeline(const harken::SegmentScheduleProgramViewV1& segment) noexcept {
+template<class World>
+std::uint32_t ReadSegmentPlayCount(const World& world, VnObjectId id) noexcept {
+    if constexpr (std::is_same_v<World, harken::PackPlaybackView>)
+        return ReadPlayableLoopCount(world, id, harken::playableproperties::ContentPropertyKindV1::Segment);
+    else return ReadPlayableLoopCount(world, id);
+}
+
+template<class World>
+bool UsesMusicTimeline(const World& world, const harken::SegmentScheduleProgramViewV1& segment) noexcept {
     return segment.entryMarker.stableMarkerId != VnObjectId{} ||
         segment.bounds.nominalStart != 0 || segment.bounds.nominalEnd != 0 ||
-        segment.bounds.contentStart != 0 || segment.bounds.contentEnd != 0;
+        segment.bounds.contentStart != 0 || segment.bounds.contentEnd != 0 ||
+        ReadSegmentPlayCount(world, segment.rootDefinition.stableId) != 1;
 }
 
 std::uint32_t MaterializedScheduleTerminalCount(const MaterializedScheduleSet& schedule) noexcept {
@@ -17831,7 +17840,7 @@ ScheduleMaterializeStatus MaterializeScheduleNode(
         const auto segment =
             FindSegmentSchedule(world, current);
         if constexpr (!std::is_same_v<ScheduleOutput, harken::EngineScheduleAggregateState>) {
-            if (segment != nullptr && UsesMusicTimeline(*segment))
+            if (segment != nullptr && UsesMusicTimeline(world, *segment))
                 return ScheduleMaterializeStatus::Dynamic;
         }
         if (segment == nullptr || segment->trackRefCount == 0 ||
@@ -18419,16 +18428,11 @@ ScheduleMaterializeStatus PrepareMixedSchedulePlan(
         candidate->children.reserve(maxTerminals);
         const auto segment = root.kind == harken::PlayableKindV1::Segment
             ? FindSegmentSchedule(world, root) : harken::SegmentProgramHandleV1{};
-        const auto playCount = [&]() noexcept {
-            if constexpr (std::is_same_v<World, harken::PackPlaybackView>)
-                return ReadPlayableLoopCount(world, root.stableId,
-                    harken::playableproperties::ContentPropertyKindV1::Segment);
-            else return ReadPlayableLoopCount(world, root.stableId);
-        }();
+        const auto playCount = segment != nullptr ? ReadSegmentPlayCount(world, root.stableId) : 1u;
         // A single natural-duration clip can have zero-width authored bounds.
         // Preserve its ordinary completion; repeating an unlocatable body must
         // still fail preparation instead of silently discarding the requested count.
-        if (segment != nullptr && UsesMusicTimeline(*segment) &&
+        if (segment != nullptr && UsesMusicTimeline(world, *segment) &&
             (segment->bounds.nominalEnd > segment->bounds.nominalStart || playCount != 1)) {
             candidate->music = std::make_unique<harken::EngineMusicScheduleState>();
             auto& music = *candidate->music;
