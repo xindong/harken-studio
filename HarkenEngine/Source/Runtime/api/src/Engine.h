@@ -2056,6 +2056,7 @@ struct EngineScheduleAggregateChild {
     std::uint32_t loopIteration = 0;
     std::uint64_t sourceOffsetFrames = 0;
     EnginePlayableServiceReference service{};
+    std::optional<VariableControlSide> variableControlSide;
     EngineScheduleChildPropertyContext properties;
     EngineNaturalClipDeadline naturalClipDeadline{};
     PlayableTerminalOutcome outcome{};
