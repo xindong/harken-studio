@@ -34,6 +34,7 @@
 #include "harken/core/VariableReadCut.h"
 #include "harken/core/VariableSliceTable.h"
 #include "harken/param/Curve.h"
+#include "harken/param/ParamTargetTable.h"
 #include "harken/param/ParamTargets.h"
 #include "harken/param/PropertyPublisher.h"
 
