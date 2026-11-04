@@ -1,6 +1,7 @@
 
 #include "../ActionManager.h"
 #include "../AudioEngine.h"
+#include "../BusRouteGraph.h"
 #include "../PlayablePropertyAuthoringV1.h"
 #include "../ProjectManager.h"
 #include "../NameValidator.h"
@@ -19,6 +20,21 @@
 #include <optional>
 
 namespace VNX {
+
+namespace {
+
+void restoreSendState(const BusSendState& state)
+{
+    auto& manager = ProjectManager::instance();
+    auto* item = manager.findItemByGuid(state.bus);
+    if (!item || !restoreBusSendState(*item, state)) return;
+    item->markDirty();
+    ProjectManager::syncPlayablePropertyToRuntime(item, static_cast<uint8_t>(
+        harkenplayableproperties::PlayablePropertyIdV1::Sends));
+    emit manager.busChanged(item->objectID, QStringLiteral("send"));
+}
+
+}
 
 QString unsupportedBusPropertiesKey(const QJsonObject& args)
 {
@@ -448,22 +464,13 @@ void registerMixerActions(ActionManager& mgr,
 
             const float level = static_cast<float>(args.value("level").toDouble(1.0));
             const uint32_t srcBusId = srcBusItem->objectID;
-
-            bool existingSend = false;
-            if (const auto* srcMix = srcBusItem->comp<VMixNode>())
-                for (const auto& send : srcMix->sends)
-                    if (send.targetBusID == targetBusId && send.mode == SendMode::Mix) {
-                        existingSend = true;
-                        break;
-                    }
-            if (!existingSend && !ProjectManager::instance().sendTargetSelectable(srcBusId, targetBusId))
-                return {false, {}, "SEND_REJECTED",
-                        QString("Send %1 -> %2 rejected: invalid target, send loop, or main output conflict")
-                            .arg(srcBusName).arg(targetBusId)};
+            const auto before = captureBusSendState(*srcBusItem);
+            if (!before)
+                return {false, {}, "INVALID_SEND_STATE", "Unable to read Send configuration"};
 
             if (!ProjectManager::instance().upsertSendInternal(srcBusId, targetBusId, level))
-                return {false, {}, "SEND_CYCLE",
-                        QString("Send %1 -> %2 rejected: it would close a send loop")
+                return {false, {}, "SEND_REJECTED",
+                        QString("Send %1 -> %2 rejected: invalid volume, target, main output conflict, or routing cycle")
                             .arg(srcBusName).arg(targetBusId)};
 
             ActionResult r;
@@ -475,12 +482,8 @@ void registerMixerActions(ActionManager& mgr,
                 {"target_bus_id", static_cast<qint64>(targetBusId)},
                 {"level", level}
             };
-            r.undoFn = [srcBusId, targetBusId]() {
-                ProjectManager::instance().removeSendInternal(srcBusId, targetBusId);
-            };
-            r.redoFn = [srcBusId, targetBusId, level]() {
-                ProjectManager::instance().upsertSendInternal(srcBusId, targetBusId, level);
-            };
+            r.undoFn = [state = *before]() { restoreSendState(state); };
+            r.redoFn = [state = *captureBusSendState(*srcBusItem)]() { restoreSendState(state); };
             r.undoText = QObject::tr("Add Send");
             return r;
         };
@@ -512,12 +515,10 @@ void registerMixerActions(ActionManager& mgr,
 
             const uint32_t targetBusId = static_cast<uint32_t>(args.value("target_bus_id").toInteger());
 
-            float oldLevel = 1.0f;
             bool foundSend = false;
             for (const auto& send : srcMix->sends) {
                 if (send.targetBusID == targetBusId && send.mode == SendMode::Mix) {
                     foundSend = true;
-                    oldLevel = send.sendLevel;
                     break;
                 }
             }
@@ -526,7 +527,11 @@ void registerMixerActions(ActionManager& mgr,
                         QString("Send %1 -> %2 not found").arg(srcBusName).arg(targetBusId)};
 
             const uint32_t srcBusId = srcBusItem->objectID;
-            ProjectManager::instance().removeSendInternal(srcBusId, targetBusId);
+            const auto before = captureBusSendState(*srcBusItem);
+            if (!before)
+                return {false, {}, "INVALID_SEND_STATE", "Unable to read Send configuration"};
+            if (!ProjectManager::instance().removeSendInternal(srcBusId, targetBusId))
+                return {false, {}, "SEND_REJECTED", "Unable to remove Send"};
 
             ActionResult r;
             r.success = true;
@@ -537,12 +542,8 @@ void registerMixerActions(ActionManager& mgr,
                 {"target_bus_id", static_cast<qint64>(targetBusId)},
                 {"removed", true}
             };
-            r.undoFn = [srcBusId, targetBusId, oldLevel]() {
-                ProjectManager::instance().upsertSendInternal(srcBusId, targetBusId, oldLevel);
-            };
-            r.redoFn = [srcBusId, targetBusId]() {
-                ProjectManager::instance().removeSendInternal(srcBusId, targetBusId);
-            };
+            r.undoFn = [state = *before]() { restoreSendState(state); };
+            r.redoFn = [state = *captureBusSendState(*srcBusItem)]() { restoreSendState(state); };
             r.undoText = QObject::tr("Remove Send");
             return r;
         };
@@ -589,7 +590,8 @@ void registerMixerActions(ActionManager& mgr,
                         QString("Send %1 -> %2 not found").arg(srcBusName).arg(targetBusId)};
 
             const uint32_t srcBusId = srcBusItem->objectID;
-            ProjectManager::instance().upsertSendInternal(srcBusId, targetBusId, level);
+            if (!ProjectManager::instance().upsertSendInternal(srcBusId, targetBusId, level))
+                return {false, {}, "SEND_REJECTED", "Unable to update Send"};
 
             UndoRedoManager::instance().push(
                 new BusPropertyChangeCommand(srcBusId,

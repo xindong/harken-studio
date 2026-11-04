@@ -59,8 +59,17 @@ public:
 
     void toJsonExtra(QJsonObject& j) const override
     {
+        if (!sends.empty()) j[QStringLiteral("sends")] = QJsonArray::fromVariantList(getField(QStringLiteral("sends")).toList());
         if (!bindings.isEmpty()) j[QStringLiteral("bindings")] = bindings.toJson();
         if (!effects.isEmpty())  j[QStringLiteral("effects")]  = effects.toJson();
+    }
+
+    bool fromJson(const QJsonObject& j) override
+    {
+        if (!ReflectedComponent<VMixNode>::fromJson(j)) return false;
+        return !j.contains(QStringLiteral("sends"))
+            || (j.value(QStringLiteral("sends")).isArray()
+                && setField(QStringLiteral("sends"), j.value(QStringLiteral("sends")).toVariant()));
     }
 
     void fromJsonExtra(const QJsonObject& j) override
@@ -130,35 +139,46 @@ inline const PropertySchema& VMixNode::schema()
           .serializeWhen=[](const VNX::IComponent* c){ return static_cast<const VMixNode*>(c)->outputBusVolume != 0.0f; } },
         { .field="sends", .type=PropType::List, .label="Sends", .section=PropertySection::Send,
           .elementSchema={
-              { .field="mode", .type=PropType::Enum, .label="Mode", .def=0,
-                .options={{"Mix", 0}, {"Ducking", 1}, {"Sidechain", 2}},
-                .toolTip="Mix adds audio to the target bus. Ducking drives built-in ducking on the target bus. Sidechain supplies an auxiliary signal to sidechain receivers." },
               { .field="targetBusID", .type=PropType::ObjectRef, .label="Target", .def=0u,
                 .refFilter=static_cast<int>(ProjectItem::Type::Bus) },
               { .field="sendLevel", .type=PropType::Float, .label="Volume", .unit=" dB",
                 .min=-96.0, .max=24.0, .def=0.0, .decimals=1,
                 .toolTip="Gain applied to the sent signal. In Ducking mode, this controls the detector input level, not the target bus attenuation." },
+              { .field="mode", .type=PropType::Enum, .label="Mode", .def=0,
+                .options={{"Mix", 0}, {"Ducking", 1}, {"Sidechain", 2}},
+                .toolTip="Mix adds audio to the target bus. Ducking drives built-in ducking on the target bus. Sidechain supplies an auxiliary signal to sidechain receivers." },
           },
           .get=[](const VNX::IComponent* c){
               QVariantList out;
-              for (const Send& s : static_cast<const VMixNode*>(c)->sends)
-                  out.push_back(QVariantMap{
+              for (const Send& s : static_cast<const VMixNode*>(c)->sends) {
+                  QVariantMap row{
                       { QStringLiteral("mode"), static_cast<int>(s.mode) },
                       { QStringLiteral("targetBusID"), s.targetBusID },
-                      { QStringLiteral("sendLevel"),   linearToDb(s.sendLevel) } });
+                      { QStringLiteral("sendLevel"),   linearToDb(s.sendLevel) } };
+                  if (!s.modeVolumesDb.empty())
+                      row.insert(QStringLiteral("modeVolumes"), sendModeVolumesJson(s.modeVolumesDb).toVariantMap());
+                  out.push_back(row);
+              }
               return QVariant(out);
           },
           .set=[](VNX::IComponent* c, const QVariant& v) -> bool {
               auto* m = static_cast<VMixNode*>(c);
               if (m->hostItem() && PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(m->hostItem()->type)) return false;
-              auto& sends = m->sends;
-              sends.clear();
+              std::vector<Send> sends;
               for (const QVariant& e : v.toList()) {
-                  const QVariantMap m = e.toMap();
-                  sends.push_back(Send{ m.value(QStringLiteral("targetBusID")).toUInt(),
-                                        dbToLinear(m.value(QStringLiteral("sendLevel")).toFloat()),
-                                        static_cast<SendMode>(m.value(QStringLiteral("mode")).toInt()) });
+                  const QVariantMap row = e.toMap();
+                  const auto modeValue = QJsonValue::fromVariant(row.value(QStringLiteral("mode")));
+                  const int mode = modeValue.toInt(-1);
+                  if (row.contains(QStringLiteral("mode")) && (!modeValue.isDouble()
+                      || modeValue.toDouble() != mode || mode < 0 || mode > 2)) return false;
+                  Send send{row.value(QStringLiteral("targetBusID")).toUInt(),
+                            dbToLinear(row.value(QStringLiteral("sendLevel")).toFloat()),
+                            static_cast<SendMode>(row.value(QStringLiteral("mode")).toInt())};
+                  if (!readSendModeVolumes(QJsonObject::fromVariantMap(row).value(QStringLiteral("modeVolumes")),
+                                           send.mode, send.modeVolumesDb)) return false;
+                  sends.push_back(std::move(send));
               }
+              m->sends = std::move(sends);
               return true;
           },
           .serializeWhen=[](const VNX::IComponent* c){ return !static_cast<const VMixNode*>(c)->sends.empty(); } },

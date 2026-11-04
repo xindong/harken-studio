@@ -135,7 +135,7 @@ bool ReadFieldValue(const JsonValue& value, std::vector<SendFieldGroupRow>& rows
     for (std::size_t index = 0; index < value.items.size(); ++index) {
         const auto& entry = value.items[index];
         const auto rowPath = path + "[" + std::to_string(index) + "]";
-        if (!CheckMembers(entry, rowPath, {"targetBusID", "sendLevel", "mode"},
+        if (!CheckMembers(entry, rowPath, {"targetBusID", "sendLevel", "mode", "modeVolumes"},
                           {"targetBusID", "sendLevel"}, error)) return false;
         SendFieldGroupRow row;
         if (!ReadGuid(*entry.Find("targetBusID"), row.targetBusID, rowPath + ".targetBusID", error)
@@ -152,6 +152,20 @@ bool ReadFieldValue(const JsonValue& value, std::vector<SendFieldGroupRow>& rows
                     && parsed != static_cast<unsigned>(harkenprojectschema::SendMode::Sidechain)))
                 return Fail(error, rowPath + ".mode", "expected a send mode");
             row.mode = static_cast<harkenprojectschema::SendMode>(parsed);
+        }
+        if (const auto* volumes = entry.Find("modeVolumes")) {
+            if (!CheckMembers(*volumes, rowPath + ".modeVolumes", {"0", "1", "2"}, {}, error))
+                return false;
+            for (const auto& [key, value] : volumes->members) {
+                const auto mode = static_cast<harkenprojectschema::SendMode>(key.front() - '0');
+                float volume = 0.0f;
+                if (mode == row.mode)
+                    return Fail(error, rowPath + ".modeVolumes." + key, "active mode uses sendLevel");
+                if (!ReadFloat(value, volume, rowPath + ".modeVolumes." + key, error)) return false;
+                if (volume < -96.0f || volume > 24.0f)
+                    return Fail(error, rowPath + ".modeVolumes." + key, "volume is outside [-96, 24]");
+                row.modeVolumesDb.emplace(mode, volume);
+            }
         }
         rows.push_back(row);
     }
@@ -173,6 +187,15 @@ void WriteFieldValue(JsonWriter& writer, const std::vector<SendFieldGroupRow>& r
         WriteFloat(writer, row.sendLevel);
         writer.Key("mode");
         writer.ValueRawNumber(std::to_string(static_cast<unsigned>(row.mode)));
+        if (!row.modeVolumesDb.empty()) {
+            writer.Key("modeVolumes");
+            writer.BeginObject();
+            for (const auto& [mode, volume] : row.modeVolumesDb) {
+                writer.Key(std::to_string(static_cast<unsigned>(mode)).c_str());
+                WriteFloat(writer, volume);
+            }
+            writer.EndObject();
+        }
         writer.EndObject();
     }
     writer.EndArray();

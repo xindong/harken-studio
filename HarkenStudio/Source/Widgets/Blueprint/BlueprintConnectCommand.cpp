@@ -118,6 +118,19 @@ bool restoreGroupEdit(ProjectItem* item, const QUuid& definition,
         forward ? edit.before : edit.after);
 }
 
+bool restoreSendState(const std::optional<BusSendState>& state)
+{
+    if (!state) return false;
+    auto& manager = ProjectManager::instance();
+    auto* item = manager.findItemByGuid(state->bus);
+    if (!item || !restoreBusSendState(*item, *state)) return false;
+    item->markDirty();
+    ProjectManager::syncPlayablePropertyToRuntime(item, static_cast<uint8_t>(
+        harkenplayableproperties::PlayablePropertyIdV1::Sends));
+    emit manager.busChanged(item->objectID, QStringLiteral("send"));
+    return true;
+}
+
 }
 
 BlueprintConnectCommand::BlueprintConnectCommand(uint32_t fromItemId,
@@ -352,7 +365,10 @@ BlueprintSendConnectCommand::BlueprintSendConnectCommand(uint32_t fromBusId,
         groupDefinition_ = item->guid;
         groupEdit_ = prepareSendEdit(*item, targetBusId_, true);
         if (!groupEdit_->ok() || !groupEdit_->changed) setObsolete(true);
+        return;
     }
+    if (item) before_ = captureBusSendState(*item);
+    if (!before_) setObsolete(true);
 }
 
 void BlueprintSendConnectCommand::redo()
@@ -362,9 +378,17 @@ void BlueprintSendConnectCommand::redo()
             setObsolete(true);
         return;
     }
-    if (firstRedo_) firstRedo_ = false;
-    applied_ = ProjectManager::instance().upsertSendInternal(
-        fromBusId_, targetBusId_, 1.0f);
+    if (!firstRedo_) {
+        if (!restoreSendState(after_)) setObsolete(true);
+        return;
+    }
+    firstRedo_ = false;
+    if (!before_ || !ProjectManager::instance().upsertSendInternal(
+            fromBusId_, targetBusId_, 1.0f)) {
+        setObsolete(true);
+        return;
+    }
+    after_ = captureBusSendState(*findItem(fromBusId_));
 }
 
 void BlueprintSendConnectCommand::undo()
@@ -374,8 +398,7 @@ void BlueprintSendConnectCommand::undo()
             setObsolete(true);
         return;
     }
-    if (!applied_) return;
-    ProjectManager::instance().removeSendInternal(fromBusId_, targetBusId_);
+    if (!restoreSendState(before_)) setObsolete(true);
 }
 
 BlueprintSendDisconnectCommand::BlueprintSendDisconnectCommand(uint32_t fromBusId,
@@ -394,16 +417,8 @@ BlueprintSendDisconnectCommand::BlueprintSendDisconnectCommand(uint32_t fromBusI
         if (!groupEdit_->ok() || !groupEdit_->changed) setObsolete(true);
         return;
     }
-    ProjectItem* fromItem = ProjectManager::instance().findBusItem(fromBusId_);
-    if (const auto* mix = fromItem ? fromItem->comp<VMixNode>() : nullptr) {
-        for (auto const& s : mix->sends) {
-            if (s.targetBusID == targetBusId_ && s.mode == mode_) {
-                hadSend_   = true;
-                sendLevel_ = s.sendLevel;
-                break;
-            }
-        }
-    }
+    if (item) before_ = captureBusSendState(*item);
+    if (!before_) setObsolete(true);
 }
 
 void BlueprintSendDisconnectCommand::redo()
@@ -413,8 +428,17 @@ void BlueprintSendDisconnectCommand::redo()
             setObsolete(true);
         return;
     }
-    if (firstRedo_) firstRedo_ = false;
-    ProjectManager::instance().removeSendInternal(fromBusId_, targetBusId_, mode_);
+    if (!firstRedo_) {
+        if (!restoreSendState(after_)) setObsolete(true);
+        return;
+    }
+    firstRedo_ = false;
+    if (!before_ || !ProjectManager::instance().removeSendInternal(
+            fromBusId_, targetBusId_, mode_)) {
+        setObsolete(true);
+        return;
+    }
+    after_ = captureBusSendState(*findItem(fromBusId_));
 }
 
 void BlueprintSendDisconnectCommand::undo()
@@ -424,9 +448,7 @@ void BlueprintSendDisconnectCommand::undo()
             setObsolete(true);
         return;
     }
-    if (!hadSend_) return;
-    ProjectManager::instance().upsertSendInternal(
-        fromBusId_, targetBusId_, sendLevel_, mode_);
+    if (!restoreSendState(before_)) setObsolete(true);
 }
 
 }

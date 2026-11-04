@@ -8,6 +8,7 @@
 
 #include "../../Core/ProjectTypes.h"
 #include "../../Core/FieldGroupEditing.h"
+#include "../../Core/BusRouteGraph.h"
 
 namespace VNX {
 
@@ -108,7 +109,8 @@ private:
     std::optional<FieldGroupEditResult> groupEdit_;
     uint32_t fromBusId_   = 0;
     uint32_t targetBusId_ = 0;
-    bool     applied_     = false;
+    std::optional<BusSendState> before_;
+    std::optional<BusSendState> after_;
 
     bool firstRedo_ = true;
 };
@@ -130,9 +132,9 @@ private:
     uint32_t fromBusId_   = 0;
     uint32_t targetBusId_ = 0;
 
-    float sendLevel_ = 0.0f;
     SendMode mode_ = SendMode::Mix;
-    bool  hadSend_   = false;
+    std::optional<BusSendState> before_;
+    std::optional<BusSendState> after_;
 
     bool firstRedo_ = true;
 };

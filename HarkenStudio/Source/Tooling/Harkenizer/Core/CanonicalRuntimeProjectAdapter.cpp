@@ -583,6 +583,7 @@ compileBusResult(
                 const auto targetValue = row.value(QStringLiteral("targetBusID"));
                 const auto levelValue = row.value(QStringLiteral("sendLevel"));
                 const auto modeValue = row.value(QStringLiteral("mode"));
+                std::map<SendMode, float> modeVolumes;
                 const double targetNumber = targetValue.toDouble(-1.0);
                 const double levelNumber = levelValue.toDouble(
                     std::numeric_limits<double>::quiet_NaN());
@@ -597,7 +598,9 @@ compileBusResult(
                      modeValue.toDouble() != modeValue.toInt(-1) ||
                      (modeValue.toInt(-1) != static_cast<int>(SendMode::Mix) &&
                       modeValue.toInt(-1) != static_cast<int>(SendMode::Ducking) &&
-                      modeValue.toInt(-1) != static_cast<int>(SendMode::Sidechain))))) {
+                      modeValue.toInt(-1) != static_cast<int>(SendMode::Sidechain)))) ||
+                    !readSendModeVolumes(row.value(QStringLiteral("modeVolumes")),
+                                         static_cast<SendMode>(modeValue.toInt()), modeVolumes)) {
                     appendDiagnostic(diagnostics, ProjectInputDiagnosticCode::UnsupportedField,
                         QStringLiteral("Bus send row %1 is invalid for target platform")
                             .arg(sendIndex), item, {}, QStringLiteral("sends"));

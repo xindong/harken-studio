@@ -910,10 +910,20 @@ MoveItemCommand::MoveItemCommand(
 
     if (item->type == ProjectItem::Type::Bus && newParent
         && newParent->type == ProjectItem::Type::Bus) {
-        if (const auto* mix = item->comp<VMixNode>()) {
-            for (const auto& send : mix->sends) {
-                if (send.mode != SendMode::Sidechain && send.targetBusID == newParent->objectID)
-                    conflictSends_.push_back(send);
+        if (const auto* project = ProjectManager::instance().currentProject()) {
+            for (const auto& scope : busRoutingScopes(*project)) {
+                const auto before = captureBusSendState(*item, scope);
+                if (!before || !before->value.present) continue;
+                QJsonArray rows;
+                for (const auto& value : before->value.value.toArray()) {
+                    const auto row = value.toObject();
+                    if (row.value(QStringLiteral("targetBusID")).toInteger() != newParent->objectID
+                        || static_cast<SendMode>(row.value(QStringLiteral("mode")).toInt()) == SendMode::Sidechain)
+                        rows.append(value);
+                }
+                if (rows == before->value.value.toArray()) continue;
+                sendsBeforeMove_.push_back(*before);
+                sendsAfterMove_.push_back({item->guid, scope, {true, rows}});
             }
         }
     }
@@ -964,6 +974,17 @@ bool MoveItemCommand::apply(bool redo)
     }
     const bool firstRedo = firstRedo_;
     ProjectItem* previousParent = item_->parent;
+    const auto& expectedSends = redo ? sendsBeforeMove_ : sendsAfterMove_;
+    const auto& replacementSends = redo ? sendsAfterMove_ : sendsBeforeMove_;
+    for (const auto& expected : expectedSends) {
+        const auto current = captureBusSendState(*item_, expected.scope);
+        if (!current || *current != expected) return false;
+    }
+    if (item_->type == ProjectItemType::Bus) {
+        const auto* parent = redo ? newParent_ : oldParent_;
+        if (!validateBusRouting(*project, replacementSends,
+                {{item_->guid, parent ? parent->guid : QUuid{}}}).isEmpty()) return false;
+    }
     if (redo && firstRedo_ && oldParent_) {
         const auto position = std::find_if(oldParent_->children.begin(), oldParent_->children.end(),
             [&](const auto& child) { return child.get() == item_; });
@@ -977,6 +998,19 @@ bool MoveItemCommand::apply(bool redo)
         firstRedo_ = firstRedo;
         restoreDirtyState(dirty);
         return false;
+    }
+    for (const auto& replacement : replacementSends) {
+        if (restoreBusSendState(*item_, replacement)) continue;
+        for (const auto& expected : expectedSends) restoreBusSendState(*item_, expected);
+        if (!(redo ? undoHierarchy() : redoHierarchy())) blocked_ = true;
+        firstRedo_ = firstRedo;
+        restoreDirtyState(dirty);
+        return false;
+    }
+    if (!replacementSends.empty()) {
+        item_->markDirty();
+        manager.applyBusRuntimeState(item_);
+        emit manager.busChanged(item_->objectID, QStringLiteral("sends"));
     }
     emit manager.itemMoved(item_, previousParent, item_->parent);
     return true;
@@ -1158,10 +1192,6 @@ bool MoveItemCommand::undoHierarchy()
         applyTrackTimeline(oldTrackClips_);
         item_->markDirty();
 
-        for (const auto& send : conflictSends_) {
-            ProjectManager::instance().upsertSendInternal(
-                item_->objectID, send.targetBusID, send.sendLevel, send.mode);
-        }
         return true;
     }
     return false;
@@ -1310,14 +1340,6 @@ bool MoveItemCommand::redoHierarchy()
         applyTrackTimeline(newTrackClips_);
         item_->markDirty();
 
-        for (const auto& send : conflictSends_) {
-            if (ProjectManager::instance().removeSendInternal(
-                    item_->objectID, send.targetBusID, send.mode)) {
-                qWarning() << "[MoveItemCommand] Removed send" << item_->objectID << "->"
-                           << send.targetBusID
-                           << "because the reparent made the target its main output";
-            }
-        }
         return true;
     }
     return false;

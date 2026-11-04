@@ -48,7 +48,7 @@ PropertyDescriptor receivesDescriptor()
     const auto& sendColumns = pickSchemaField(VMixNode::schema(), QLatin1String("sends"))->elementSchema;
     auto level = *pickSchemaField(sendColumns, QLatin1String("sendLevel"));
     level.field = QStringLiteral("level");
-    return {
+    return withInspectorRowOrder({
         .field="receives", .ownerComponent=ComponentType::Bus,
         .type=PropType::List, .label="Receives", .section=PropertySection::Receive,
         .flags={.readOnly=true, .serialize=false, .settableByName=false},
@@ -69,7 +69,7 @@ PropertyDescriptor receivesDescriptor()
                     { QStringLiteral("level"),  VMixNode::linearToDb(in.level) } });
             return QVariant(out);
         },
-    };
+    });
 }
 #if defined(__clang__)
 #  pragma clang diagnostic pop

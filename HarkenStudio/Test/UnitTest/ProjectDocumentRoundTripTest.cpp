@@ -4,6 +4,7 @@
 #include "Core/ActionStepEditing.h"
 #include "Core/EffectChainSemantics.h"
 #include "Core/Components/VBus.h"
+#include "Core/Components/VMixNode.h"
 #include "Core/Components/VSegment.h"
 #include "Core/ProjectManager.h"
 #include "Core/ProjectSerializer.h"
@@ -559,6 +560,13 @@ TEST_F(ProjectDocumentRoundTripTest, OrdinaryEditsAndUndoPreserveTheSameDocument
             {QStringLiteral("notes"), QStringLiteral("Edited after opening\n") + item->name}};
         if (item->type == ProjectItem::Type::Bus) {
             properties.append({QStringLiteral("volume"), -6.0});
+            if (item != manager.getMasterBusItem())
+                properties.append({QStringLiteral("sends"), QJsonArray{QJsonObject{
+                    {QStringLiteral("targetBusID"), static_cast<qint64>(manager.getMasterBusItem()->objectID)},
+                    {QStringLiteral("mode"), static_cast<int>(SendMode::Sidechain)},
+                    {QStringLiteral("sendLevel"), -6.0},
+                    {QStringLiteral("modeVolumes"), QJsonObject{
+                        {QStringLiteral("0"), -18.0}, {QStringLiteral("1"), -12.0}}}}}});
         } else if (item->type == ProjectItem::Type::Action) {
             const auto* target = manager.findItemByGuid(segmentGuid_);
             ASSERT_NE(target, nullptr);
@@ -593,7 +601,13 @@ TEST_F(ProjectDocumentRoundTripTest, OrdinaryEditsAndUndoPreserveTheSameDocument
         for (const auto& guid : edited) {
             const auto* item = manager.findItemByGuid(guid);
             EXPECT_NE(item, nullptr);
-            if (item) states.insert(guid, serializer.projectItemToJson(*item, false));
+            if (item) {
+                auto state = serializer.projectItemToJson(*item, false);
+                if (const auto* mix = item->comp<VMixNode>())
+                    state.insert(QStringLiteral("authoredSends"),
+                                 QJsonValue::fromVariant(mix->getField(QStringLiteral("sends"))));
+                states.insert(guid, state);
+            }
         }
         return states;
     };

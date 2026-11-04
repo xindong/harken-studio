@@ -1,4 +1,5 @@
 #include "ReferenceSlotResolution.h"
+#include "BusRouteGraph.h"
 
 #include "Components/VMixNode.h"
 #include "Components/VSpatial.h"
@@ -364,13 +365,28 @@ SendSlot resolveEffectiveSends(const ResolutionScope& scope)
         applySource(scope, effective->sendSource, result);
         for (const auto& row : effective->send.sends) {
             const auto* target = scope.effectiveGroups->objects.at(row.targetBusID);
-            result.sends.push_back({target->objectID, VMixNode::dbToLinear(row.sendLevel), row.mode});
+            result.sends.push_back({target->objectID, VMixNode::dbToLinear(row.sendLevel), row.mode, row.modeVolumesDb});
         }
     } else if (const auto* mix = scope.subject ? scope.subject->comp<VMixNode>() : nullptr) {
         result.owner = scope.subject;
         result.source = ResolutionSource::Self;
         result.via = viaText(result.source, result.owner);
-        result.sends = mix->sends;
+        if (scope.subject->type == ProjectItemType::Bus) {
+            const auto platform = scope.effectiveGroups && scope.effectiveGroups->scope
+                ? PlatformScope{fromFieldGroupGuid(*scope.effectiveGroups->scope)} : PlatformScope{};
+            const auto sends = effectiveBusSends(*scope.subject, platform);
+            if (!sends) {
+                result.valid = false;
+                result.error = QStringLiteral("Bus Send configuration is unavailable");
+                return result;
+            }
+            result.sends = *sends;
+            const auto authored = captureBusSendState(*scope.subject, platform);
+            if (platform && authored && authored->value.present)
+                result.authoringScope = toFieldGroupGuid(*platform);
+        } else {
+            result.sends = mix->sends;
+        }
     }
     return result;
 }

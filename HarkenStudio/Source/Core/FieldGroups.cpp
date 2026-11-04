@@ -266,6 +266,11 @@ std::vector<FieldGroupDiagnostic> ValidateFieldGroupPayload(
             if (!InRange(row.sendLevel, -96.0f, 24.0f))
                 AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue,
                               group, "sendLevel", i);
+            for (const auto& [mode, volume] : row.modeVolumesDb)
+                if (!harkenprojectschema::IsValidSendMode(mode) || mode == row.mode
+                    || !InRange(volume, -96.0f, 24.0f))
+                    AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue,
+                                  group, "modeVolumes", i);
         }
         break;
     }

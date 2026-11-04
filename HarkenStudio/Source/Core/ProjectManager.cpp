@@ -5238,33 +5238,30 @@ DeletedSubtreeRefLog ProjectManager::cleanupReferencesToDeletedSubtree(ProjectIt
 
     // Surviving mix nodes' sends targeting any deleted bus become dangling;
     // strip them and record for undo.
-    self.forEachMixNodeItem([&](ProjectItem* owner, VMixNode* mix) {
+    self.forEachMixNodeItem([&](ProjectItem* owner, VMixNode*) {
         if (deletedObjects.contains(owner->objectID)
             || PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(owner->type)) return;
-        const bool ownerIsBus = owner->type == ProjectItem::Type::Bus;
-        std::vector<Send> kept;
-        std::vector<Send> stripped;
-        kept.reserve(mix->sends.size());
-        for (const auto& s : mix->sends) {
-            if (deletedObjects.contains(s.targetBusID))
-                stripped.push_back(s);
-            else
-                kept.push_back(s);
+        if (owner->type != ProjectItem::Type::Bus) return;
+        bool changed = false;
+        for (const auto& scope : busRoutingScopes(*project)) {
+            const auto before = captureBusSendState(*owner, scope);
+            if (!before || !before->value.present) continue;
+            QJsonArray kept;
+            for (const auto& value : before->value.value.toArray()) {
+                const auto target = static_cast<uint32_t>(value.toObject().value(QStringLiteral("targetBusID")).toInteger());
+                if (!deletedObjects.contains(target)) kept.append(value);
+            }
+            if (kept == before->value.value.toArray()) continue;
+            auto after = *before;
+            after.value.value = kept;
+            if (!restoreBusSendState(*owner, after)) continue;
+            log.sends.push_back({owner->objectID, scope, before->value, after.value});
+            changed = true;
         }
-        if (stripped.empty()) return;
-        if (!replaceSends(*owner, *mix, std::move(kept)))
-            return;
-        for (const auto& s : stripped) {
-            log.sends.push_back({owner->objectID, s});
-        }
+        if (!changed) return;
         owner->markDirty();
-        if (ownerIsBus) {
-            AudioEngine::instance().runtimeSyncCoordinator().markCurrentWorldMutation();
-            emit self.busChanged(owner->objectID, QStringLiteral("send"));
-        } else {
-            self.propagateItemSendsLive(owner);
-            emit self.itemPropertyChanged(owner, QStringLiteral("send"));
-        }
+        AudioEngine::instance().runtimeSyncCoordinator().markCurrentWorldMutation();
+        emit self.busChanged(owner->objectID, QStringLiteral("sends"));
     });
 
     DeletedSubtreeRefLog playback = cleanupIllegalPlaybackReferences(project);
@@ -5338,8 +5335,13 @@ void ProjectManager::restoreReferencesFromLog(const DeletedSubtreeRefLog& log,
     }
 
     for (const auto& ref : log.sends) {
-        self.upsertSendInternal(ref.ownerObjectID, ref.send.targetBusID,
-                                   ref.send.sendLevel, ref.send.mode);
+        auto* owner = findById(ref.ownerObjectID);
+        const auto current = owner ? captureBusSendState(*owner, ref.scope) : std::nullopt;
+        if (!current || current->value != ref.after
+            || !restoreBusSendState(*owner, {owner->guid, ref.scope, ref.before})) continue;
+        owner->markDirty();
+        self.applyBusRuntimeState(owner);
+        emit self.busChanged(owner->objectID, QStringLiteral("sends"));
     }
 
     for (const auto& ref : log.selections) {
@@ -5905,7 +5907,7 @@ std::vector<Send> ProjectManager::aggregateVoiceSendsForItem(
         return out;
     for (const auto& send : effective->second.send.sends) {
         out.push_back({snapshot.objects.at(send.targetBusID)->objectID,
-                       VMixNode::dbToLinear(send.sendLevel), send.mode});
+                       VMixNode::dbToLinear(send.sendLevel), send.mode, send.modeVolumesDb});
     }
     return out;
 }
@@ -6210,12 +6212,13 @@ std::vector<IncomingSendInfo> ProjectManager::collectIncomingSends(uint32_t busI
 {
     std::vector<IncomingSendInfo> out;
     if (!m_currentProject) return out;
-    const auto snapshot = buildFieldGroupEffectiveSnapshot(
-        *m_currentProject,
-        toFieldGroupScope(currentWorldPlatformScope(PlatformContextService::instance().context())));
+    const auto scope = currentWorldPlatformScope(PlatformContextService::instance().context());
+    const auto snapshot = buildFieldGroupEffectiveSnapshot(*m_currentProject, toFieldGroupScope(scope));
     forEachMixNodeItem([&](ProjectItem* item, VMixNode* mix) {
         if (item->comp<VBus>()) {
-            for (const auto& send : mix->sends) {
+            const auto sends = effectiveBusSends(*item, scope);
+            if (!sends) return;
+            for (const auto& send : *sends) {
                 if (send.targetBusID == busId)
                     out.push_back({item->objectID, item->name, send.sendLevel, send.mode});
             }
@@ -6284,7 +6287,7 @@ bool ProjectManager::isDescendantOfBus(uint32_t busID, uint32_t ancestorID) cons
 
 namespace {
 
-BusRouteSnapshot buildBusRouteSnapshot(const ProjectManager& pm)
+BusRouteSnapshot buildBusRouteSnapshot(const ProjectManager& pm, PlatformScope scope)
 {
     BusRouteSnapshot g;
     const std::vector<ProjectItem*> buses = pm.collectBusItems();
@@ -6301,10 +6304,10 @@ BusRouteSnapshot buildBusRouteSnapshot(const ProjectManager& pm)
             item != master && item->parent && busIDs.contains(item->parent->objectID);
         g.parentOf.insert(item->objectID, hasBusParent ? item->parent->objectID : 0u);
 
-        const auto* mix = item->comp<VMixNode>();
-        if (!mix) continue;
+        const auto sends = effectiveBusSends(*item, scope);
+        if (!sends) continue;
         QVector<uint32_t> targets;
-        for (const auto& send : mix->sends) {
+        for (const auto& send : *sends) {
             if (send.targetBusID != 0 && busIDs.contains(send.targetBusID))
                 targets.push_back(send.targetBusID);
         }
@@ -6319,7 +6322,14 @@ bool ProjectManager::sendWouldCycle(uint32_t fromBusID, uint32_t toBusID) const
 {
     if (fromBusID == 0 || toBusID == 0) return false;
     if (fromBusID == toBusID) return true;
-    return busFlowReaches(buildBusRouteSnapshot(*this), toBusID, fromBusID);
+    if (!m_currentProject) return false;
+    const auto& context = PlatformContextService::instance().context();
+    const auto scopes = context.all || context.selected.isEmpty()
+        ? busRoutingScopes(*m_currentProject)
+        : std::vector<PlatformScope>(context.selected.begin(), context.selected.end());
+    for (const auto& scope : scopes)
+        if (busFlowReaches(buildBusRouteSnapshot(*this, scope), toBusID, fromBusID)) return true;
+    return false;
 }
 
 bool ProjectManager::busMoveWouldCycle(const ProjectItem* moved, const ProjectItem* newParent) const
@@ -6330,7 +6340,10 @@ bool ProjectManager::busMoveWouldCycle(const ProjectItem* moved, const ProjectIt
     // back into moved. Reaching moved terminates the search, so moved's own
     // (replaced) parent edge is never traversed and the current snapshot is
     // sufficient.
-    return busFlowReaches(buildBusRouteSnapshot(*this), newParent->objectID, moved->objectID);
+    if (!m_currentProject) return false;
+    for (const auto& scope : busRoutingScopes(*m_currentProject))
+        if (busFlowReaches(buildBusRouteSnapshot(*this, scope), newParent->objectID, moved->objectID)) return true;
+    return false;
 }
 
 bool ProjectManager::validateStructuralPlacement(ProjectItem::Type type,
@@ -6455,13 +6468,9 @@ bool replaceSends(ProjectItem& owner, VMixNode& mix, std::vector<Send> next)
             return false;
         QJsonArray rows;
         for (const Send& send : next) {
-            rows.append(QJsonObject{
-                {QStringLiteral("targetBusID"),
-                 static_cast<qint64>(send.targetBusID)},
-                {QStringLiteral("sendLevel"),
-                 VMixNode::linearToDb(send.sendLevel)},
-                {QStringLiteral("mode"), static_cast<int>(send.mode)},
-            });
+            auto row = send.toJson();
+            row[QStringLiteral("sendLevel")] = VMixNode::linearToDb(send.sendLevel);
+            rows.append(row);
         }
         return PlayablePropertyAuthoringV1::setOverride(
             owner, *locator, id, rows, std::nullopt);
@@ -6709,13 +6718,17 @@ bool ProjectManager::upsertSendInternal(uint32_t srcObjectID, uint32_t targetBus
         }
     }
 
-    if (!existed) {
-        if (srcIsBus && sendWouldCycle(srcObjectID, targetBusID)) {
-            qWarning() << "[ProjectManager] Rejected send" << srcObjectID << "->" << targetBusID
-                       << ": would close a send loop";
-            return false;
+    if (!existed) next.push_back(Send{targetBusID, sendLevel, mode});
+    if (srcIsBus) {
+        if (!m_currentProject) return false;
+        QJsonArray rows;
+        for (const auto& send : next) {
+            auto row = send.toJson();
+            row[QStringLiteral("sendLevel")] = VMixNode::linearToDb(send.sendLevel);
+            rows.append(row);
         }
-        next.push_back(Send{targetBusID, sendLevel, mode});
+        if (!validateBusRouting(*m_currentProject, {{srcItem->guid, {}, {true, rows}}}).isEmpty())
+            return false;
     }
 
     if (!replaceSends(*srcItem, *srcMix, std::move(next)))
@@ -6850,7 +6863,10 @@ void appendBusChain(const ProjectData* project, const ProjectItem* busItem,
         else
             bNode.type = QStringLiteral("Standard");
 
-        for (const auto& send : mix->sends) {
+        const auto sends = effectiveBusSends(*busItem,
+            currentWorldPlatformScope(PlatformContextService::instance().context()));
+        if (!sends) break;
+        for (const auto& send : *sends) {
             SendViewInfo info;
             info.targetBusID = send.targetBusID;
             info.sendLevel   = send.sendLevel;

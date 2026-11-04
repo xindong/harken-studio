@@ -102,6 +102,7 @@ struct PropertyDescriptor
     QString listAddChoiceField;
     std::function<bool(uint32_t, const QVariantMap&, uint32_t)> refSelectableForElement;
     QString toolTip;
+    std::function<QVariantMap(const QVariantMap&, const QString&, const QVariant&)> editElement;
 };
 
 using PropertySchema = std::vector<PropertyDescriptor>;

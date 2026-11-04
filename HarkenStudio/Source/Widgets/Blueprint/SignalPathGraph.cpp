@@ -173,6 +173,10 @@ private:
             return false;
         const auto sends = Slots::resolveEffectiveSends(
             Slots::buildResolutionScope(bus, groups_));
+        if (!sends.valid) {
+            graph_.diagnostics.push_back({path, sends.error});
+            return false;
+        }
         for (const auto& send : sends.sends) {
             if (!validateBus(send.targetBusID, path, active)) return false;
         }
@@ -203,7 +207,8 @@ private:
             Slots::buildResolutionScope(bus, groups_));
         for (const auto& send : sends.sends) {
             edge(from, busEndpoint(send.targetBusID, pathIndex),
-                 SignalPathEdgeKind::Send, pathIndex, send.sendLevel, routingSource, send.mode);
+                 SignalPathEdgeKind::Send, pathIndex, send.sendLevel,
+                 SignalPathRoutingSource{bus->guid, sends.authoringScope}, send.mode);
             appendBus(send.targetBusID, pathIndex, visited);
         }
     }

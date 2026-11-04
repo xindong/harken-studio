@@ -14,6 +14,19 @@ inline PropertyDescriptor sendsInspectorDescriptor()
     if (const auto* src = pickSchemaField(VMixNode::schema(), QLatin1String("sends")))
         d = *src;
     d.listAddChoiceField = QStringLiteral("mode");
+    d.editElement = [](const QVariantMap& current, const QString& field, const QVariant& value) {
+        auto row = current;
+        if (field == QLatin1String("mode") && current.value(field).toInt() != value.toInt()) {
+            auto volumes = current.value(QStringLiteral("modeVolumes")).toMap();
+            volumes.insert(QString::number(current.value(field).toInt()),
+                           current.value(QStringLiteral("sendLevel")));
+            const auto next = QString::number(value.toInt());
+            if (volumes.contains(next)) row[QStringLiteral("sendLevel")] = volumes.take(next);
+            row[QStringLiteral("modeVolumes")] = volumes;
+        }
+        row[field] = value;
+        return row;
+    };
     for (auto& ed : d.elementSchema)
         if (ed.field == QLatin1String("targetBusID"))
             ed.refSelectableForElement = [](uint32_t hostObjectID, const QVariantMap& row, uint32_t candidateID) {

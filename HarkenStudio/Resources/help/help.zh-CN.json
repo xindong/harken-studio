@@ -74,7 +74,7 @@
     },
     "mixnode.sends": {
       "title": "Sends",
-      "body": "点击加号先选择 Mix、Ducking 或 Sidechain，再选择 Target 总线。Mix 合并音频，Ducking 定义通往避让检测端的路由，Sidechain 定义通往侧链接收端的辅助信号路由。三种模式的 Volume（-96～+24 dB）均控制发送的源信号增益；Ducking 中调节的是检测输入增益，并非目标衰减量。同一目标在每个 Mode 中只能出现一次。Mix、Ducking 不能与 Main Output 指向同一目标，Sidechain 可以。本阶段试听与导出仅包含 Mix，Ducking、Sidechain 保留为编辑配置。"
+      "body": "点击加号先选择 Mix、Ducking 或 Sidechain，再选择 Target 总线。Mix 合并音频，Ducking 定义通往避让检测端的路由，Sidechain 定义通往侧链接收端的辅助信号路由。三种模式的 Volume（-96～+24 dB）均控制发送的源信号增益；Ducking 中调节的是检测输入增益，并非目标衰减量。同一行的各 Mode 分别记忆 Volume，Target 共用；首次进入未配置的 Mode 沿用当前 Volume，切回时恢复上次值。同一目标在每个 Mode 中只能出现一次，冲突的 Mode 选项会禁用。Mix、Ducking 不能与 Main Output 指向同一目标，Sidechain 可以。本阶段试听与导出仅包含 Mix，Ducking、Sidechain 保留为编辑配置。"
     },
     "audio.loopCount": {
       "title": "Loop",

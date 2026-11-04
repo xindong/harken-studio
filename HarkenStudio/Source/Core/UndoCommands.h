@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "ProjectTypes.h"
+#include "BusRouteGraph.h"
 #include "Components/VBus.h"
 
 namespace VNX {
@@ -308,7 +309,8 @@ private:
     QString oldParentGuid_;
     QString newParentGuid_;
 
-    std::vector<Send> conflictSends_;
+    std::vector<BusSendState> sendsBeforeMove_;
+    std::vector<BusSendState> sendsAfterMove_;
 
     bool wasTopLevelBinding_ = false;
     RootBindingSlot savedBindingSlot_;

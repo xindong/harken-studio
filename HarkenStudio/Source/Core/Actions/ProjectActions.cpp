@@ -2,6 +2,7 @@
 #include "../ActionManager.h"
 #include "../AttenuationStore.h"
 #include "../AuthoringPolicy.h"
+#include "../BusRouteGraph.h"
 #include "../ItemTypeCatalog.h"
 #include "../ItemPropertySchema.h"
 #include "../ProjectManager.h"
@@ -328,8 +329,12 @@ bool validatePlayableSends(ProjectManager& manager,
             return false;
         const uint32_t target = static_cast<uint32_t>(targetNumber);
         const auto key = qMakePair(target, static_cast<int>(sendMode));
+        const auto* targetBus = manager.findBusItem(target);
+        std::map<SendMode, float> modeVolumes;
         if (targets.contains(key)
-            || !manager.sendTargetStructurallySelectable(owner.objectID, target, sendMode))
+            || !targetBus || targetBus->type != ProjectItem::Type::Bus || targetBus == &owner
+            || (sendMode != SendMode::Sidechain && targetBus == owner.parent)
+            || !readSendModeVolumes(row.value(QStringLiteral("modeVolumes")), sendMode, modeVolumes))
             return false;
         targets.insert(key);
     }
@@ -629,6 +634,15 @@ ActionResult handlePlayableItemProperty(ProjectManager* projectManager,
                     "Playable property state is unavailable"};
         }
         snap.newState = *newState;
+    }
+
+    if (item->type == ProjectItem::Type::Bus
+        && field->wire == harkenplayableproperties::PlayablePropertyWireV1::RowSpan) {
+        const QString error = validateBusRouting(*projectManager->currentProject());
+        if (!error.isEmpty()) {
+            restoreSnapshots(snapshots);
+            return {false, {}, "INVALID_ARGS", error};
+        }
     }
 
     bool changed = false;

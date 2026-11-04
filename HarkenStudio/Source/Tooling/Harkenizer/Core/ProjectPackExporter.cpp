@@ -1626,6 +1626,7 @@ bool ProjectPackExporter::CollectSends(const ProjectData& project,
             const auto targetValue = row.value(QStringLiteral("targetBusID"));
             const auto levelValue = row.value(QStringLiteral("sendLevel"));
             const auto modeValue = row.value(QStringLiteral("mode"));
+            std::map<SendMode, float> modeVolumes;
             const double targetNumber = targetValue.toDouble(-1.0);
             const double levelNumber = levelValue.toDouble(
                 std::numeric_limits<double>::quiet_NaN());
@@ -1640,7 +1641,9 @@ bool ProjectPackExporter::CollectSends(const ProjectData& project,
                  modeValue.toDouble() == modeValue.toInt(-1) &&
                  (modeValue.toInt(-1) == static_cast<int>(SendMode::Mix) ||
                   modeValue.toInt(-1) == static_cast<int>(SendMode::Ducking) ||
-                  modeValue.toInt(-1) == static_cast<int>(SendMode::Sidechain))));
+                  modeValue.toInt(-1) == static_cast<int>(SendMode::Sidechain)))) &&
+                readSendModeVolumes(row.value(QStringLiteral("modeVolumes")),
+                                    static_cast<SendMode>(modeValue.toInt()), modeVolumes);
             const harkenstudio::ObjectId to = wellFormed
                 ? busIdentityForHandle(project, static_cast<uint32_t>(targetNumber))
                 : harkenstudio::ObjectId{};

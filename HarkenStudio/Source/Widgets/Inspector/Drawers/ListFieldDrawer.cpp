@@ -32,6 +32,7 @@
 #include <QSet>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QStandardItemModel>
 #include <QStyle>
 #include <QToolButton>
 #include <QToolTip>
@@ -124,7 +125,7 @@ public:
         v->addWidget(box_);
         buildHeader();
         rows_ = box_->rowsWidget();
-        if (hasRowOrder_)
+        if (hasRowOrder_ && !d.flags.readOnly)
             box_->setRowMoveHandler([this](int from, int to) {
                 finishPreview();
                 if (anchored() && anchorCol_ == 0 && hasRowOrder_) {
@@ -627,8 +628,7 @@ private:
             if (id == 0 || !adapter.exists(id) || !adapter.matchesFilter(id, {filter, {}})
                 || (predicate && !predicate(id)))
                 return;
-            QVariantMap elem = initialElement;
-            elem[field] = id;
+            const auto elem = self->editedElement(initialElement, field, id);
             self->value_.append(elem);
             self->rebuildRows();
             self->notify();
@@ -657,10 +657,16 @@ private:
             return;
         }
         selectRow(row);
-        QVariantMap elem = value_[row].toMap();
-        elem[field] = v;
-        value_[row] = elem;
+        value_[row] = editedElement(value_[row].toMap(), field, v);
+        refreshRows();
         notify();
+    }
+
+    QVariantMap editedElement(QVariantMap element, const QString& field, const QVariant& value) const
+    {
+        if (desc_.editElement) return desc_.editElement(element, field, value);
+        element[field] = value;
+        return element;
     }
 
     QString elementError(int row, const QString& field, const QVariant& value,
@@ -670,7 +676,7 @@ private:
         auto candidate = value_;
         auto element = row == candidate.size()
             ? (initialElement.isEmpty() ? defaultElement() : initialElement) : candidate[row].toMap();
-        element[field] = value;
+        element = editedElement(std::move(element), field, value);
         for (const auto& descriptor : desc_.elementSchema)
             if (descriptor.type == PropType::ObjectRef && descriptor.refSelectableForElement
                 && (boundObjectID_ == 0 || !descriptor.refSelectableForElement(boundObjectID_, element,
@@ -681,6 +687,20 @@ private:
         else
             candidate[row] = element;
         return desc_.validateElement ? desc_.validateElement(candidate, row, field) : QString{};
+    }
+
+    void refreshEnumOptions(QComboBox* combo, int row, const QString& field)
+    {
+        const QSignalBlocker blocker(combo);
+        auto* model = qobject_cast<QStandardItemModel*>(combo->model());
+        if (!model) return;
+        for (int index = 0; index < combo->count(); ++index) {
+            const QString error = elementError(row, field, combo->itemData(index));
+            auto* item = model->item(index);
+            item->setEnabled(error.isEmpty());
+            item->setSelectable(error.isEmpty());
+            item->setToolTip(error);
+        }
     }
 
     void refreshInputValidation(QLineEdit* edit, int row, const QString& field)
@@ -695,9 +715,7 @@ private:
         if (!onPreview_ || generation != rowGeneration_ || !canEdit()
             || row < 0 || row >= value_.size()) return;
         auto preview = value_;
-        auto entry = preview[row].toMap();
-        entry[field] = value;
-        preview[row] = entry;
+        preview[row] = editedElement(preview[row].toMap(), field, value);
         previewActive_ = true;
         const auto callback = onPreview_;
         callback(preview);
@@ -750,9 +768,10 @@ private:
                     intSpin->setValue(v.toInt());
                 else if (auto* check = qobject_cast<QCheckBox*>(editor))
                     check->setChecked(v.toBool());
-                else if (auto* combo = qobject_cast<QComboBox*>(editor))
+                else if (auto* combo = qobject_cast<QComboBox*>(editor)) {
                     combo->setCurrentIndex(combo->findData(v));
-                else if (auto* edit = qobject_cast<QLineEdit*>(editor)) {
+                    refreshEnumOptions(combo, visibleRows[i], ed.field);
+                } else if (auto* edit = qobject_cast<QLineEdit*>(editor)) {
                     if (edit->text() != v.toString()
                         && !(edit->hasFocus() && edit->property("inputInvalid").toBool()))
                         edit->setText(v.toString());
@@ -840,6 +859,12 @@ private:
                     auto* number = box_->createRowNumber(row, i, anchorCol_ == 0
                         ? std::optional<int>(elem.value(anchorField()).toInt()) : std::nullopt);
                     number->setEnabled(canEdit() || desc_.flags.readOnly);
+                    if (desc_.flags.readOnly) {
+                        number->setProperty("dragHandleRow", QVariant());
+                        number->unsetCursor();
+                        number->setFocusPolicy(Qt::NoFocus);
+                        number->setToolTip(QString());
+                    }
                     if (anchored() && anchorCol_ == 0 && canEdit())
                         number->setToolTip(tr("Double-click to edit index; drag to move row"));
                     h->addWidget(number);
@@ -969,9 +994,10 @@ private:
                     const int idx = combo->findData(v);
                     if (idx >= 0) combo->setCurrentIndex(idx);
                 }
+                refreshEnumOptions(combo, row, ed.field);
                 QObject::connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
                     [this, generation, row, field = ed.field, combo](int idx) {
-                        if (idx < 0) return;
+                        if (idx < 0 || !combo->isEnabled()) return;
                         applyElementChange(generation, row, field, combo->itemData(idx));
                     });
                 return finalize(combo);
