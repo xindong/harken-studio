@@ -12,7 +12,7 @@ inline PropertyDescriptor effectsInspectorDescriptor()
     effects.field = QStringLiteral("effects");
     effects.ownerComponent = ComponentType::MixNode;
     effects.type = PropType::List;
-    effects.label = QStringLiteral("Effects");
+    effects.label = QStringLiteral("FXs");
     effects.section = PropertySection::Effect;
     effects.flags.serialize = false;
 
@@ -49,9 +49,13 @@ inline PropertyDescriptor effectsInspectorDescriptor()
         if (!mix) return rows;
         for (const auto& entry : mix->effects.entries()) {
             QVariantMap row;
-            const auto* target = ProjectManager::instance().findItemByGuid(entry.effectGuid);
-            row.insert(QStringLiteral("effectGuid"), target && target->type == ProjectItem::Type::Effect
-                ? QVariant(target->objectID) : QVariant(entry.effectGuid.toString(QUuid::WithoutBraces)));
+            if (entry.mode == EffectMode::Custom) {
+                row.insert(QStringLiteral("effectGuid"), EffectChainSemantics::displayName(entry.custom.type));
+            } else {
+                const auto* target = ProjectManager::instance().findItemByGuid(entry.effectGuid);
+                row.insert(QStringLiteral("effectGuid"), target && target->type == ProjectItem::Type::Effect
+                    ? QVariant(target->objectID) : QVariant(entry.effectGuid.toString(QUuid::WithoutBraces)));
+            }
             row.insert(QStringLiteral("wetDry"), entry.wetDry * 100.0);
             row.insert(QStringLiteral("active"), !entry.bypass);
             rows.push_back(row);

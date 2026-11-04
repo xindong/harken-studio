@@ -564,12 +564,16 @@ compileBusResult(
                 effectSource.fieldPath = "/effects/" + std::to_string(slot);
                 const uint32_t parameterFirst =
                     static_cast<uint32_t>(input.effectParameters.size());
-                const auto& assetPath = index.documentPaths.at(
-                    index.byQtGuid.at(effect.effectGuid));
+                const bool preset = effect.mode == EffectMode::Preset;
+                const QUuid definitionGuid = preset ? effect.effectGuid : item->guid;
+                const auto& definitionPath = preset
+                    ? index.documentPaths.at(index.byQtGuid.at(effect.effectGuid)) : documentPath;
+                const auto parameterPath = preset ? std::string("/parameters/")
+                    : effectSource.fieldPath + "/custom/parameters/";
                 for (uint32_t i = 0; i < asset->parameters.size(); ++i) {
                     harkenbuscompiler::BusSourceLocationV1 parameterSource{
-                        toAuthoringGuid(effect.effectGuid), assetPath,
-                        "/parameters/" + std::to_string(i)};
+                        toAuthoringGuid(definitionGuid), definitionPath,
+                        parameterPath + std::to_string(i)};
                     input.effectParameters.push_back({effect.runtimeId(), i,
                                                       asset->parameters[i],
                                                       parameterSource});
@@ -883,9 +887,11 @@ bool copyStudioDefinitionPayload(
             if (!effect.typed || harkenstudio::IsNull(effect.runtimeId()))
                 return fail(QStringLiteral("Effect chain contains an untyped entry"));
             const auto target = index.byQtGuid.find(effect.effectGuid);
-            const auto* asset = target != index.byQtGuid.end()
+            const auto* preset = target != index.byQtGuid.end()
                     && target->second->type == ProjectItem::Type::Effect
                 ? target->second->comp<VEffect>() : nullptr;
+            const auto* asset = effect.mode == EffectMode::Custom ? &effect.custom
+                : preset ? &preset->definition : nullptr;
             QString effectError;
             if (!EffectChainSemantics::validate(effect, &effectError)
                 || !asset || !EffectChainSemantics::validate(*asset, &effectError))

@@ -287,6 +287,7 @@ struct Builder
         }
         if (const auto* mix = item.comp<VMixNode>()) {
             for (const auto& effect : mix->effects.entries()) {
+                if (effect.mode == EffectMode::Custom) continue;
                 const auto* target = byGuid(effect.effectGuid, item.runtimeId(),
                                             QStringLiteral("effects.effectGuid"), path);
                 if (!target) continue;

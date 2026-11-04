@@ -74,9 +74,11 @@ ProjectObjectIndex ProjectObjectIndex::fromProject(const ProjectData* project,
             for (const auto& effect : mix->effects.entries()) {
                 if (!effect.typed) continue;
                 const auto* target = items.value(effect.effectGuid);
+                const QString label = effect.mode == EffectMode::Custom
+                    ? EffectChainSemantics::displayName(effect.custom.type)
+                    : target ? target->name : effect.effectGuid.toString(QUuid::WithoutBraces);
                 add(effect.runtimeId(), *item, ProjectObjectLocation::Kind::Effect,
-                    item->name + QStringLiteral(" / ") +
-                    (target ? target->name : effect.effectGuid.toString(QUuid::WithoutBraces)));
+                    item->name + QStringLiteral(" / ") + label);
             }
         }
         if (const auto* timeline = item->comp<VTrack>()) {

@@ -514,7 +514,7 @@ RuntimeCapabilityEntry evaluateForContext(const ProjectItem& item,
                           QStringLiteral("Effect exposes its resource capability only"));
         const auto* effect = item.comp<VEffect>();
         QString diagnostic;
-        if (!effect || !EffectChainSemantics::validate(*effect, &diagnostic))
+        if (!effect || !EffectChainSemantics::validate(effect->definition, &diagnostic))
             return refuse(S::InvalidAuthoring, diagnostic.isEmpty()
                 ? QStringLiteral("Effect asset data is missing") : diagnostic);
         return result;

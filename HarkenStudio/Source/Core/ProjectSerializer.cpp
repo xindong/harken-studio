@@ -682,6 +682,15 @@ bool ProjectSerializer::encodeComponentReferences(QJsonObject* components) const
             for (const QJsonValue& value : mix.value(QStringLiteral("effects")).toArray()) {
                 if (!value.isObject()) return false;
                 QJsonObject effect = value.toObject();
+                const auto parsed = EffectEntry::fromJson(effect);
+                if (!EffectChainSemantics::validate(parsed)) {
+                    lastError_ = QStringLiteral("Project contains an invalid Effect entry");
+                    return false;
+                }
+                if (parsed.mode == EffectMode::Custom) {
+                    effects.append(effect);
+                    continue;
+                }
                 const QUuid guid = QUuid::fromString(
                     effect.value(QStringLiteral("effectGuid")).toString());
                 const auto target = referencesByGuid_.constFind(guid);
@@ -773,6 +782,18 @@ bool ProjectSerializer::decodeComponentReferences(QJsonObject* components) const
             for (const QJsonValue& value : mix.value(QStringLiteral("effects")).toArray()) {
                 if (!value.isObject()) return false;
                 QJsonObject effect = value.toObject();
+                if (effect.value(QStringLiteral("mode")) == QStringLiteral("custom")) {
+                    if (!EffectChainSemantics::validate(EffectEntry::fromJson(effect))) {
+                        lastError_ = QStringLiteral("Project contains an invalid custom Effect");
+                        return false;
+                    }
+                    effects.append(effect);
+                    continue;
+                }
+                if (effect.contains(QStringLiteral("effectGuid"))) {
+                    lastError_ = QStringLiteral("Project contains an invalid serialized Effect reference");
+                    return false;
+                }
                 const QJsonValue reference = effect.value(QStringLiteral("effectRef"));
                 uint32_t id = 0;
                 if (!transientReference(reference, ProjectItem::Type::Effect, &id))
@@ -780,6 +801,10 @@ bool ProjectSerializer::decodeComponentReferences(QJsonObject* components) const
                 effect.remove(QStringLiteral("effectRef"));
                 effect[QStringLiteral("effectGuid")] =
                     reference.toObject().value(QStringLiteral("id"));
+                if (!EffectChainSemantics::validate(EffectEntry::fromJson(effect))) {
+                    lastError_ = QStringLiteral("Project contains an invalid preset Effect");
+                    return false;
+                }
                 effects.append(effect);
             }
             mix[QStringLiteral("effects")] = effects;

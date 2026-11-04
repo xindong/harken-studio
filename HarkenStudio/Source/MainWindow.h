@@ -63,6 +63,7 @@ namespace VNX {
     class ProjectSerializer;
     class SourceEditorPanel;
     class ExternalEditorPanel;
+    class EffectEditorPanel;
     class TimelineEditorPanel;
     class TransitionEditorPanel;
     class GridEditorPanel;
@@ -229,6 +230,7 @@ public:
 
     ExternalEditorPanel* openCurveEditor(const CurveSelection& selection);
     ExternalEditorPanel* openExternalEditor(const ExternalEditorSelection& selection);
+    EffectEditorPanel* openEffectEditor(const QUuid& ownerGuid, const QUuid& rowGuid = {});
 
     Hierarchy* createHierarchyPanel();
     void closeHierarchyPanel(int panelId);

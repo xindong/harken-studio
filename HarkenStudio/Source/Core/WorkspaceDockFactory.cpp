@@ -6,6 +6,7 @@
 #include "ThemeAssetCatalog.h"
 #include "ThemeManager.h"
 #include "Widgets/ExternalEditor/ExternalEditorPanel.h"
+#include "Widgets/EffectEditor/EffectEditorPanel.h"
 #include "Widgets/GridEditor/GridEditorPanel.h"
 #include "Widgets/Information/InformationPanel.h"
 #include "Widgets/Inspector/InspectorPanel.h"
@@ -84,6 +85,8 @@ QAction* pinActionFor(QWidget* content)
     if (auto* panel = qobject_cast<TimelineEditorPanel*>(content))
         return bindPinAction(panel);
     if (auto* panel = qobject_cast<ExternalEditorPanel*>(content))
+        return bindPinAction(panel);
+    if (auto* panel = qobject_cast<EffectEditorPanel*>(content))
         return bindPinAction(panel);
     if (auto* panel = qobject_cast<SourceEditorPanel*>(content))
         return bindPinAction(panel);

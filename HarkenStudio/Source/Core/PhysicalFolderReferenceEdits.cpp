@@ -272,6 +272,7 @@ QJsonObject PhysicalFolderReferenceEdits::removeReferences(QJsonObject content,
             if (mix.contains(QStringLiteral("effects")))
                 mix.insert(QStringLiteral("effects"), filtered(mix.value(QStringLiteral("effects")).toArray(), [&](const auto& row) {
                     const auto effect = row.toObject();
+                    if (effect.value(QStringLiteral("mode")) == QStringLiteral("custom")) return false;
                     return deleted(effect.value(QStringLiteral("effectGuid")), guids)
                         || deleted(effect.value(QStringLiteral("effectRef")), guids);
                 }));

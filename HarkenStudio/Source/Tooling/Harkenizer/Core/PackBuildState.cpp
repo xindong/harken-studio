@@ -111,11 +111,12 @@ void PackBuildState::deriveInputs(const QSet<QString>* successfulPaths)
         if (const auto* mix = item->comp<VMixNode>(); mix && !mix->effects.isEmpty()) {
             QJsonObject effects;
             for (const auto& entry : mix->effects.entries()) {
+                if (entry.mode == EffectMode::Custom) continue;
                 const auto* effect = EffectChainSemantics::resolve(entry, project);
                 if (!effect) return QString();
                 effects.insert(entry.effectGuid.toString(QUuid::WithoutBraces), effect->toJson());
             }
-            json.insert(QStringLiteral("effectAssets"), effects);
+            if (!effects.isEmpty()) json.insert(QStringLiteral("effectAssets"), effects);
         }
         json.remove(QStringLiteral("notes"));
         json.remove(QStringLiteral("color"));

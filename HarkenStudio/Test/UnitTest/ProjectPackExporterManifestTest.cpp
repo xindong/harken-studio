@@ -4600,6 +4600,8 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationCombinesScheduleAndEff
                 effect.guid = QUuid::createUuid();
                 effect.effectGuid = effectAsset->guid;
             }
+            effects.back().mode = VNX::EffectMode::Custom;
+            effects.back().effectGuid = QUuid{};
             EXPECT_TRUE(track->comp<VNX::VMixNode>()->effects.replace(std::move(effects)));
         }
         return segment;

@@ -161,19 +161,25 @@ TEST_F(ActionIdentityTest, DuplicateMintsNestedUuidsAndSaveReloadKeepsThem)
     effect.effectGuid = effectAsset->guid;
     auto binding = BindingSemantics::defaultBinding(BindingSemantics::volumeAddress(), variable->guid);
     binding.guid = QUuid::createUuid();
-    ASSERT_TRUE(sound->comp<VMixNode>()->effects.replace({effect}));
+    EffectEntry custom;
+    custom.guid = QUuid::createUuid();
+    custom.mode = EffectMode::Custom;
+    ASSERT_TRUE(sound->comp<VMixNode>()->effects.replace({effect, custom}));
     ASSERT_TRUE(sound->comp<VMixNode>()->bindings.upsert(binding));
     auto* copy = manager.duplicateItem(sound);
     ASSERT_NE(copy, nullptr);
     auto* copiedMix = copy->comp<VMixNode>();
-    ASSERT_EQ(copiedMix->effects.size(), 1u);
+    ASSERT_EQ(copiedMix->effects.size(), 2u);
     ASSERT_EQ(copiedMix->bindings.size(), 1u);
     const auto copiedEffect = copiedMix->effects.entries().front().runtimeId();
+    const auto copiedCustom = copiedMix->effects.entries().back();
     const auto copiedBinding = copiedMix->bindings.entries().front().runtimeId();
     const auto copiedGuid = copy->guid;
     EXPECT_NE(copy->guid, sound->guid);
     EXPECT_NE(copiedEffect, effect.runtimeId());
     EXPECT_EQ(copiedMix->effects.entries().front().effectGuid, effect.effectGuid);
+    EXPECT_NE(copiedCustom.guid, custom.guid);
+    EXPECT_EQ(copiedCustom.custom.toJson(), custom.custom.toJson());
     EXPECT_NE(copiedBinding, binding.runtimeId());
     EXPECT_EQ(copiedMix->bindings.entries().front().variable, variable->guid);
     ASSERT_TRUE(manager.saveProject());
@@ -184,5 +190,6 @@ TEST_F(ActionIdentityTest, DuplicateMintsNestedUuidsAndSaveReloadKeepsThem)
     ASSERT_NE(copiedMix, nullptr);
     EXPECT_EQ(copiedMix->effects.entries().front().runtimeId(), copiedEffect);
     EXPECT_EQ(copiedMix->effects.entries().front().effectGuid, effect.effectGuid);
+    EXPECT_EQ(copiedMix->effects.entries().back().toJson(), copiedCustom.toJson());
     EXPECT_EQ(copiedMix->bindings.entries().front().runtimeId(), copiedBinding);
 }

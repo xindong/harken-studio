@@ -13,8 +13,7 @@ public:
 
     static const PropertySchema& schema();
 
-    EffectType type = EffectType::Limiter;
-    std::vector<float> parameters = EffectChainSemantics::defaultParameters(EffectType::Limiter);
+    EffectDefinition definition;
 
     QJsonObject toJson() const override;
     bool fromJson(const QJsonObject& json) override;

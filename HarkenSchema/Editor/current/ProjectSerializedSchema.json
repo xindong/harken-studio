@@ -399,28 +399,71 @@
       "type": "object"
     },
     "effectEntry": {
-      "additionalProperties": true,
-      "properties": {
-        "guid": {
-          "$ref": "#/$defs/uuid"
+      "oneOf": [
+        {
+          "additionalProperties": true,
+          "properties": {
+            "guid": {
+              "$ref": "#/$defs/uuid"
+            },
+            "bypass": {
+              "type": "boolean"
+            },
+            "wetDry": {
+              "minimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            "mode": {
+              "const": "custom",
+              "type": "string"
+            },
+            "custom": {
+              "$ref": "#/$defs/effectComponent"
+            }
+          },
+          "required": [
+            "guid",
+            "mode",
+            "custom"
+          ],
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^(?!(effectRef|effectGuid|type|parameters)$)"
+          }
         },
-        "effectRef": {
-          "$ref": "#/$defs/objectReference"
-        },
-        "bypass": {
-          "type": "boolean"
-        },
-        "wetDry": {
-          "minimum": 0,
-          "maximum": 1,
-          "type": "number"
+        {
+          "additionalProperties": true,
+          "properties": {
+            "guid": {
+              "$ref": "#/$defs/uuid"
+            },
+            "effectRef": {
+              "$ref": "#/$defs/objectReference"
+            },
+            "bypass": {
+              "type": "boolean"
+            },
+            "wetDry": {
+              "minimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            "mode": {
+              "const": "preset",
+              "type": "string"
+            }
+          },
+          "required": [
+            "guid",
+            "effectRef"
+          ],
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^(?!(custom|effectGuid|type|parameters)$)"
+          }
         }
-      },
-      "required": [
-        "guid",
-        "effectRef"
-      ],
-      "type": "object"
+      ]
     },
     "effectComponent": {
       "additionalProperties": false,

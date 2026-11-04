@@ -1,11 +1,14 @@
 #include "EffectsSectionProvider.h"
 
 #include "Core/ActionManager.h"
+#include "Core/Components/VEffect.h"
 #include "Core/Components/VMixNode.h"
 #include "Core/ItemTypeCatalog.h"
 #include "Core/ProjectManager.h"
 #include "Core/QtControlSkin.h"
+#include "Core/ThemeAssetCatalog.h"
 #include "Core/ThemeManager.h"
+#include "Core/UndoCommands.h"
 #include "Widgets/Common/ListFooter.h"
 #include "Widgets/Common/ParameterBinding.h"
 #include "Widgets/Common/ParameterSlider.h"
@@ -21,12 +24,16 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QHBoxLayout>
+#include <QLabel>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPointer>
 #include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <iterator>
+#include <memory>
 
 namespace VNX {
 namespace {
@@ -80,7 +87,17 @@ public:
         remove_ = footer->removeButton();
         remove_->setObjectName(QStringLiteral("listRemoveSelected_effects"));
         remove_->setToolTip(tr("Remove Effect"));
-        connect(add_, &QToolButton::clicked, this, [this] { showAddSelector(); });
+        addMenu_ = new QMenu(add_);
+        addMenu_->setObjectName(QStringLiteral("effectAddMenu"));
+        addMenu_->addAction(tr("Limiter"), this, [this] { replaceCustom({}); });
+        addMenu_->addSeparator();
+        addMenu_->addAction(tr("Select Preset..."), this, [this] {
+            queuePresetSelector({});
+        });
+        connect(add_, &QToolButton::clicked, this, [this] {
+            if (canEdit() && isCurrentContext())
+                addMenu_->popup(add_->mapToGlobal(QPoint(0, add_->height())));
+        });
         connect(remove_, &QToolButton::clicked, this, [this] {
             if (!canEdit() || !isCurrentContext()) return;
             table_->removeSelectedRow([this] {
@@ -132,7 +149,9 @@ protected:
     bool event(QEvent* event) override
     {
         if (event->type() == QEvent::Hide) {
+            addMenu_->close();
             SelectorWindow::dismiss(add_);
+            SelectorWindow::dismiss(this);
             cancelPendingEdits();
         }
         return QWidget::event(event);
@@ -140,6 +159,15 @@ protected:
 
     bool eventFilter(QObject* watched, QEvent* event) override
     {
+        if (auto* menu = qobject_cast<QMenu*>(watched);
+            menu && menu->objectName() == QStringLiteral("effectReplaceMenu")
+            && event->type() == QEvent::MouseButtonPress && isAncestorOf(menu)) {
+            const auto* mouse = static_cast<QMouseEvent*>(event);
+            auto* chevron = menu->parentWidget();
+            if (!menu->rect().contains(mouse->position().toPoint()))
+                menu->setAttribute(Qt::WA_NoMouseReplay, chevron->rect().contains(
+                    chevron->mapFromGlobal(mouse->globalPosition().toPoint())));
+        }
         if ((event->type() != QEvent::MouseButtonPress
              && event->type() != QEvent::MouseButtonDblClick) || !watched->isWidgetType())
             return QWidget::eventFilter(watched, event);
@@ -148,6 +176,13 @@ protected:
         if (auto* row = table_->rowForWidget(widget)) {
             selected_ = row->property("effectGuid").toUuid();
             refreshSelection();
+            if (event->type() == QEvent::MouseButtonDblClick
+                && widget->objectName() == QStringLiteral("effectContent")
+                && qobject_cast<QLabel*>(widget) && widget->isEnabled()
+                && isCurrentContext() && inspector_) {
+                inspector_->requestEffectEditorSelection(boundGuid_, selected_);
+                return true;
+            }
         } else if (!isAncestorOf(widget) && !widget->isAncestorOf(this)
                    && widget->window() == window()) {
             selected_ = QUuid{};
@@ -178,7 +213,7 @@ private:
         return !inspector_ || inspector_->currentContextItem() == boundItem();
     }
 
-    bool commit(std::vector<EffectEntry> effects)
+    bool commit(std::vector<EffectEntry> effects, QUndoCommand* undoParent = nullptr)
     {
         if (!canEdit() || !isCurrentContext()) return false;
         EffectChainLedger ledger;
@@ -187,7 +222,7 @@ private:
         const bool success = ActionManager::instance().execute(QStringLiteral("set_item_property"),
             {{QStringLiteral("authoring_handle"), static_cast<qint64>(item->objectID)},
              {QStringLiteral("property"), QStringLiteral("effects")},
-             {QStringLiteral("value"), ledger.toJson()}}, ActionSource::GUI, this).success;
+             {QStringLiteral("value"), ledger.toJson()}}, ActionSource::GUI, this, undoParent).success;
         if (success) bind(boundItem());
         return success;
     }
@@ -199,23 +234,35 @@ private:
             && target->type == ProjectItem::Type::Effect;
     }
 
-    void showAddSelector()
+    void queuePresetSelector(const QUuid& guid)
+    {
+        QMetaObject::invokeMethod(this, [this, generation = generation_, guid] {
+            if (generation == generation_) showPresetSelector(guid);
+        }, Qt::QueuedConnection);
+    }
+
+    void showPresetSelector(const QUuid& guid)
     {
         if (!canEdit() || !isCurrentContext()) return;
         const QPointer<EffectsListWidget> self(this);
         const uint64_t generation = generation_;
         SelectorRequest request;
-        request.title = tr("Add Effect");
+        request.title = tr("Select Effect");
         request.filterType = ProjectItem::Type::Effect;
         request.isSelectable = [self, generation](uint32_t objectID) {
             return self && self->generation_ == generation && self->canSelect(objectID);
         };
-        request.onSelected = [self, generation](uint32_t objectID) {
+        request.onSelected = [self, generation, guid](uint32_t objectID) {
             if (!self || self->generation_ != generation || !self->canSelect(objectID)) return;
+            if (!guid.isNull()) {
+                self->replaceEffect(guid, objectID);
+                return;
+            }
             const auto* target = ProjectManager::instance().findItemByObjectID(objectID);
             auto effects = self->boundItem()->comp<VMixNode>()->effects.entries();
             EffectEntry effect;
             effect.guid = QUuid::createUuid();
+            effect.mode = EffectMode::Preset;
             effect.effectGuid = target->guid;
             effects.push_back(effect);
             if (self->commit(std::move(effects))) {
@@ -223,7 +270,7 @@ private:
                 self->refreshSelection();
             }
         };
-        SelectorWindow::open(request, add_);
+        SelectorWindow::open(request, guid.isNull() ? static_cast<QWidget*>(add_) : this);
     }
 
     void replaceEffect(const QUuid& guid, uint32_t objectID)
@@ -233,9 +280,91 @@ private:
         auto effects = boundItem()->comp<VMixNode>()->effects.entries();
         const auto found = std::find_if(effects.begin(), effects.end(),
             [&guid](const EffectEntry& effect) { return effect.guid == guid; });
-        if (found == effects.end() || found->effectGuid == target->guid) return;
+        if (found == effects.end()
+            || (found->mode == EffectMode::Preset && found->effectGuid == target->guid)) return;
+        found->mode = EffectMode::Preset;
+        found->custom = EffectDefinition{};
         found->effectGuid = target->guid;
         if (!commit(std::move(effects))) rebuild();
+    }
+
+    void replaceCustom(const QUuid& guid)
+    {
+        if (!canEdit() || !isCurrentContext()) return;
+        auto effects = boundItem()->comp<VMixNode>()->effects.entries();
+        auto found = std::find_if(effects.begin(), effects.end(),
+            [&guid](const EffectEntry& effect) { return effect.guid == guid; });
+        if (guid.isNull()) {
+            effects.emplace_back();
+            found = std::prev(effects.end());
+            found->guid = QUuid::createUuid();
+        } else if (found == effects.end()) {
+            return;
+        }
+        found->mode = EffectMode::Custom;
+        found->custom = EffectDefinition{};
+        found->effectGuid = QUuid{};
+        const QUuid selected = found->guid;
+        if (commit(std::move(effects))) {
+            selected_ = selected;
+            refreshSelection();
+        }
+    }
+
+    void convertToCustom(const QUuid& guid)
+    {
+        if (!canEdit() || !isCurrentContext()) return;
+        auto effects = boundItem()->comp<VMixNode>()->effects.entries();
+        const auto found = std::find_if(effects.begin(), effects.end(),
+            [&guid](const EffectEntry& effect) { return effect.guid == guid; });
+        if (found == effects.end() || found->mode != EffectMode::Preset) return;
+        const auto* project = ProjectManager::instance().currentProject();
+        const auto* definition = project ? EffectChainSemantics::resolve(*found, *project) : nullptr;
+        if (!definition) return;
+        found->custom = *definition;
+        found->mode = EffectMode::Custom;
+        found->effectGuid = QUuid{};
+        if (!commit(std::move(effects))) rebuild();
+    }
+
+    void saveAsPreset(const QUuid& guid)
+    {
+        if (!canEdit() || !isCurrentContext()) return;
+        const QPointer<EffectsListWidget> self(this);
+        const uint64_t generation = generation_;
+        SelectorRequest request;
+        request.title = tr("Save As Preset...");
+        request.creation = SelectorCreationRequest{
+            ProjectItem::Type::Effect,
+            ProjectManager::instance().suggestUniqueName(ProjectItem::Type::Effect, tr("Limiter")),
+            [self, generation, guid](const QString& folderPath, const QString& name) -> QString {
+                if (!self || self->generation_ != generation
+                    || !self->canEdit() || !self->isCurrentContext())
+                    return tr("The effect slot is no longer available.");
+                auto effects = self->boundItem()->comp<VMixNode>()->effects.entries();
+                const auto found = std::find_if(effects.begin(), effects.end(),
+                    [&guid](const EffectEntry& effect) { return effect.guid == guid; });
+                if (found == effects.end() || found->mode != EffectMode::Custom)
+                    return tr("The effect slot is no longer available.");
+                auto command = std::make_unique<QUndoCommand>(tr("Save Effect As Preset"));
+                auto& manager = ProjectManager::instance();
+                auto* created = manager.createItem(
+                    nullptr, name, ProjectItem::Type::Effect, folderPath, {}, command.get());
+                if (!created) return tr("Failed to create the Effect preset.");
+                created->comp<VEffect>()->definition = found->custom;
+                created->markDirty();
+                emit manager.itemPropertyChanged(created, QStringLiteral("parameters"));
+                found->mode = EffectMode::Preset;
+                found->effectGuid = created->guid;
+                found->custom = EffectDefinition{};
+                if (!self || self->generation_ != generation || !self->commit(std::move(effects), command.get())) {
+                    command->undo();
+                    return tr("Failed to update the effect slot.");
+                }
+                UndoRedoManager::instance().push(command.release());
+                return {};
+            }};
+        SelectorWindow::open(request, this);
     }
 
     void setActive(const QUuid& guid, bool active)
@@ -261,6 +390,8 @@ private:
     void cancelPendingEdits()
     {
         for (auto* row : rows_) {
+            for (auto* menu : row->findChildren<QMenu*>())
+                menu->close();
             for (auto* reference : row->findChildren<ObjectRefWidget*>())
                 reference->cancelPendingSelection();
             for (auto* value : row->findChildren<ParameterValueEditor*>())
@@ -273,7 +404,9 @@ private:
     void rebuild()
     {
         ++generation_;
+        addMenu_->close();
         SelectorWindow::dismiss(add_);
+        SelectorWindow::dismiss(this);
         cancelPendingEdits();
         auto* layout = table_->rowsLayout();
         while (auto* entry = layout->takeAt(0)) {
@@ -294,14 +427,16 @@ private:
                 const auto& effect = effects[index];
                 const QUuid guid = effect.guid;
                 const uint64_t generation = generation_;
-                auto* target = ProjectManager::instance().findItemByGuid(effect.effectGuid);
+                const bool custom = effect.mode == EffectMode::Custom;
+                auto* target = custom ? nullptr : ProjectManager::instance().findItemByGuid(effect.effectGuid);
                 if (target && target->type != ProjectItem::Type::Effect) target = nullptr;
-                const QString name = target ? target->name : tr("Missing");
+                const QString name = custom ? EffectChainSemantics::displayName(effect.custom.type)
+                    : target ? target->name : tr("Missing");
                 auto* row = new QWidget(table_->rowsWidget());
                 row->setObjectName(QStringLiteral("effectRow"));
                 row->setProperty("effectGuid", guid);
                 row->setProperty("lastRow", index + 1 == effects.size());
-                row->setProperty("searchText", tr("Effects Level Active") + QLatin1Char(' ') + name);
+                row->setProperty("searchText", tr("FXs Level Active") + QLatin1Char(' ') + name);
                 auto* rowLayout = new QHBoxLayout(row);
                 rowLayout->setContentsMargins(0, 0, 0, 0);
                 rowLayout->setSpacing(0);
@@ -312,24 +447,94 @@ private:
                 auto* effectCell = table_->createCell(row);
                 effectCell->setObjectName(QStringLiteral("effectCell"));
                 effectCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-                auto* reference = new ObjectRefWidget(effectCell);
-                reference->setObjectName(QStringLiteral("effectObject"));
-                reference->setCompact(true);
-                reference->setCompactPickable(true);
-                reference->setReadOnly(!editable);
-                reference->setFilterType(ProjectItem::Type::Effect);
-                reference->setSelectorTitle(tr("Select Effect"));
-                reference->setEditGuard([this, generation] {
-                    return generation == generation_ && canEdit() && isCurrentContext();
+                auto* chevron = new QToolButton(effectCell);
+                chevron->setObjectName(QStringLiteral("effectChevron"));
+                chevron->setAutoRaise(true);
+                chevron->setArrowType(Qt::DownArrow);
+                chevron->setAccessibleName(tr("Effect actions"));
+                chevron->setToolTip(tr("Effect actions"));
+                QtControlSkin::setSemanticProperty(chevron, "flatIconButton", true);
+                QtControlSkin::setSemanticProperty(chevron, "navigationRole", QStringLiteral("chevron"));
+                chevron->setEnabled(editable);
+                auto* menu = new QMenu(chevron);
+                menu->setObjectName(QStringLiteral("effectReplaceMenu"));
+                connect(chevron, &QToolButton::clicked, this, [chevron, menu] {
+                    if (menu->isVisible()) menu->close();
+                    else menu->popup(chevron->mapToGlobal(QPoint(0, chevron->height())));
                 });
-                reference->setIsSelectable([this](uint32_t id) { return canSelect(id); });
-                if (target) reference->setCurrentObjectID(target->objectID);
-                else reference->setUnresolvedReference(effect.effectGuid.toString(QUuid::WithoutBraces));
-                connect(reference, &ObjectRefWidget::objectChanged, this,
-                    [this, generation, guid](uint32_t objectID) {
-                        if (generation == generation_) replaceEffect(guid, objectID);
+                effectCell->addWidget(chevron, 0);
+                if (custom) {
+                    auto* content = new QLabel(name, effectCell);
+                    content->setObjectName(QStringLiteral("effectContent"));
+                    content->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+                    effectCell->addWidget(content);
+                    auto* detach = new QToolButton(effectCell);
+                    detach->setObjectName(QStringLiteral("effectDetach"));
+                    detach->setAutoRaise(true);
+                    detach->setToolButtonStyle(Qt::ToolButtonIconOnly);
+                    QtControlSkin::setSemanticProperty(detach, "flatIconButton", true);
+                    detach->setToolTip(tr("Open Effect Editor"));
+                    detach->setAccessibleName(tr("Open Effect Editor"));
+                    const auto refreshIcon = [detach] {
+                        auto& theme = ThemeManager::instance();
+                        const int extent = theme.metrics().objectIconExtent;
+                        detach->setIconSize(QSize(extent, extent));
+                        detach->setFixedSize(extent, extent);
+                        detach->setIcon(theme.resolveIcon(
+                            QString::fromLatin1(ThemeAssetIds::InspectorDetach)).icon);
+                    };
+                    refreshIcon();
+                    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
+                            detach, refreshIcon);
+                    connect(detach, &QToolButton::clicked, this, [this, generation, guid] {
+                        if (generation != generation_ || !isCurrentContext() || !inspector_) return;
+                        selected_ = guid;
+                        refreshSelection();
+                        inspector_->requestEffectEditorSelection(boundGuid_, guid);
                     });
-                effectCell->addWidget(reference);
+                    effectCell->addWidget(detach, 0, Qt::AlignRight | Qt::AlignVCenter);
+                } else {
+                    auto* reference = new ObjectRefWidget(effectCell);
+                    reference->setObjectName(QStringLiteral("effectObject"));
+                    reference->setCompact(true);
+                    reference->setCompactPickable(true);
+                    reference->setReadOnly(!editable);
+                    reference->setFilterType(ProjectItem::Type::Effect);
+                    reference->setSelectorTitle(tr("Select Effect"));
+                    reference->setEditGuard([this, generation] {
+                        return generation == generation_ && canEdit() && isCurrentContext();
+                    });
+                    reference->setIsSelectable([this](uint32_t id) { return canSelect(id); });
+                    if (target) reference->setCurrentObjectID(target->objectID);
+                    else reference->setUnresolvedReference(effect.effectGuid.toString(QUuid::WithoutBraces));
+                    connect(reference, &ObjectRefWidget::objectChanged, this,
+                        [this, generation, guid](uint32_t objectID) {
+                            if (generation == generation_) replaceEffect(guid, objectID);
+                        });
+                    effectCell->addWidget(reference);
+                }
+                auto* replace = menu->addMenu(tr("Replace"));
+                replace->addAction(tr("Limiter"), this, [this, generation, guid] {
+                    if (generation == generation_) replaceCustom(guid);
+                });
+                menu->addSeparator();
+                if (custom) {
+                    replace->addSeparator();
+                    replace->addAction(tr("Select Preset..."), this, [this, generation, guid] {
+                        if (generation == generation_) queuePresetSelector(guid);
+                    });
+                    menu->addAction(tr("Save As Preset..."), this, [this, generation, guid] {
+                        QMetaObject::invokeMethod(this, [this, generation, guid] {
+                            if (generation == generation_) saveAsPreset(guid);
+                        }, Qt::QueuedConnection);
+                    });
+                } else {
+                    auto* convert = menu->addAction(tr("Convert to Custom"), this,
+                        [this, generation, guid] {
+                            if (generation == generation_) convertToCustom(guid);
+                        });
+                    convert->setEnabled(target != nullptr);
+                }
                 rowLayout->addWidget(effectCell);
 
                 auto* levelCell = table_->createCell(row);
@@ -410,6 +615,7 @@ private:
     QPointer<InspectorPanel> inspector_;
     TableWidget* table_ = nullptr;
     QToolButton* add_ = nullptr;
+    QMenu* addMenu_ = nullptr;
     QToolButton* remove_ = nullptr;
     std::vector<QWidget*> rows_;
     uint64_t generation_ = 0;

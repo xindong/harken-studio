@@ -658,6 +658,11 @@ void InspectorPanel::requestEditorLaunch(const QString& slot)
         panelId_, slot, currentContextItem(), placementContext());
 }
 
+void InspectorPanel::requestEffectEditorSelection(const QUuid& ownerGuid, const QUuid& rowGuid)
+{
+    emit effectEditorRequested(ownerGuid, rowGuid);
+}
+
 void InspectorPanel::onSearchTextChanged(const QString& text)
 {
     QWidget* current = d->stack_->currentWidget();
