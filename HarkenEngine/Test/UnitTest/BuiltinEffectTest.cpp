@@ -980,13 +980,12 @@ TEST(BuiltinEffectReset, ToneResetRestoresDefaultsAndClearsMemory) {
         harken::BuildEffect(VN_EFFECT_THREE_BAND_TONE, &st);
     ASSERT_NE(nullptr, fx.reset);
     fx.setParam(&st, harken::kToneParamPeakGainDb, 12.0f);
-    st.peakState[0].z1 = 5.0f;
-    st.peakState[0].z2 = -3.0f;
+    st.peakState[0].SetFloat(5.0f, -3.0f);
 
     fx.reset(&st);
     EXPECT_EQ(0.0f, st.peakGainDb);
-    EXPECT_EQ(0.0f, st.peakState[0].z1);
-    EXPECT_EQ(0.0f, st.peakState[0].z2);
+    EXPECT_EQ(0.0f, st.peakState[0].Z1());
+    EXPECT_EQ(0.0f, st.peakState[0].Z2());
 }
 
 TEST(BuiltinEffectValidation, TonePreparationRejectsUnitCirclePole) {
@@ -1070,4 +1069,48 @@ TEST(BuiltinDelay, CancellationFallbackKeepsOffsetsChannelsAndTrueOverflow) {
     left[1] = line[0] = 2.0e38f;
     effect.process(&state, channels, 1, 1, 1);
     EXPECT_TRUE(std::isinf(left[1]));
+}
+
+TEST(BuiltinDelay, InvalidFramesPreserveValidTailAndAutomaticallyRecover) {
+    constexpr unsigned delay = 4;
+    const float faults[] = {std::numeric_limits<float>::quiet_NaN(),
+        std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity()};
+    for (float feedback : {0.0f, 0.5f}) {
+        for (float fault : faults) {
+            std::vector<float> line(delay * harken::kMaxChannels, 0.25f);
+            std::vector<float> referenceLine = line;
+            harken::DelayEffectState state, reference;
+            state.lineBase = line.data();
+            reference.lineBase = referenceLine.data();
+            state.lineFrames = reference.lineFrames = delay;
+            state.delaySamples = reference.delaySamples = delay;
+            state.feedback = reference.feedback = feedback;
+            state.dry = reference.dry = 0.75f;
+            state.wet = reference.wet = 0.5f;
+            auto effect = harken::BuildEffect(VN_EFFECT_FEEDBACK_DELAY, &state);
+            // One stale invalid cell must not erase other cells or channels.
+            line[1] = fault;
+            referenceLine[1] = 0.0f;
+            for (unsigned frame = 0; frame < 32; ++frame) {
+                float left[] = {17.0f, frame == 0 ? fault : 0.125f, 19.0f};
+                float right[] = {23.0f, 0.375f, 29.0f};
+                float cleanLeft[] = {17.0f, frame == 0 ? 0.0f : 0.125f, 19.0f};
+                float cleanRight[] = {23.0f, 0.375f, 29.0f};
+                float* channels[] = {left, right};
+                float* clean[] = {cleanLeft, cleanRight};
+                effect.process(&state, channels, 2, 1, 1);
+                effect.process(&reference, clean, 2, 1, 1);
+                ASSERT_TRUE(std::isfinite(left[1]));
+                EXPECT_FLOAT_EQ(cleanLeft[1], left[1]);
+                EXPECT_FLOAT_EQ(cleanRight[1], right[1]);
+                if (frame == 0) EXPECT_FLOAT_EQ(0.125f, left[1]);
+                EXPECT_EQ(17.0f, left[0]);
+                EXPECT_EQ(19.0f, left[2]);
+                EXPECT_EQ(23.0f, right[0]);
+                EXPECT_EQ(29.0f, right[2]);
+            }
+            for (unsigned i = 0; i < delay * 2; ++i)
+                EXPECT_FLOAT_EQ(referenceLine[i], line[i]);
+        }
+    }
 }

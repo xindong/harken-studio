@@ -549,6 +549,8 @@ TEST(BusTargetStore, FiniteExtremeGroupsCancelBeforePublicationAndRollback) {
     store.InitializeBusGeneration(0, 1);
     auto variable = CombineValue(CombineDomain::AddDb, maximum, maximum);
     store.SetSlot(0, target, BusTargetStore::kSlotVariableIndex, variable);
+    EXPECT_EQ(std::numeric_limits<float>::infinity(),
+              store.SlotValue(0, target, BusTargetStore::kSlotVariableIndex));
     store.BeginMeterProbeSweep();
     store.AccumulateMeterProbe(0, 1, target, -maximum, true, 0);
     store.AccumulateMeterProbe(0, 1, target, -maximum, true, 0);

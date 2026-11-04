@@ -1145,9 +1145,9 @@ TEST(BusEffect, PreparedToneUpdatePreservesStateAndOtherSections) {
     auto* tone =
         static_cast<harken::ToneEffectState*>(bus->fxSlots[0].state);
     ASSERT_NE(nullptr, tone);
-    tone->lowShelfState[0] = {1.0f, -1.0f};
-    tone->peakState[0] = {2.0f, -2.0f};
-    tone->highShelfState[0] = {3.0f, -3.0f};
+    tone->lowShelfState[0].SetFloat(1.0f, -1.0f);
+    tone->peakState[0].SetFloat(2.0f, -2.0f);
+    tone->highShelfState[0].SetFloat(3.0f, -3.0f);
     const harken::BiquadCoeffs lowBefore = tone->lowShelf;
     const harken::BiquadCoeffs peakBefore = tone->peak;
     const harken::BiquadCoeffs highBefore = tone->highShelf;
@@ -1178,12 +1178,12 @@ TEST(BusEffect, PreparedToneUpdatePreservesStateAndOtherSections) {
     ExpectCoeffsEqual(peakBefore, tone->peak);
     EXPECT_EQ(lowTailBefore, tone->lowShelfTailFrames);
     EXPECT_EQ(peakTailBefore, tone->peakTailFrames);
-    EXPECT_FLOAT_EQ(1.0f, tone->lowShelfState[0].z1);
-    EXPECT_FLOAT_EQ(-1.0f, tone->lowShelfState[0].z2);
-    EXPECT_FLOAT_EQ(2.0f, tone->peakState[0].z1);
-    EXPECT_FLOAT_EQ(-2.0f, tone->peakState[0].z2);
-    EXPECT_FLOAT_EQ(3.0f, tone->highShelfState[0].z1);
-    EXPECT_FLOAT_EQ(-3.0f, tone->highShelfState[0].z2);
+    EXPECT_FLOAT_EQ(1.0f, tone->lowShelfState[0].Z1());
+    EXPECT_FLOAT_EQ(-1.0f, tone->lowShelfState[0].Z2());
+    EXPECT_FLOAT_EQ(2.0f, tone->peakState[0].Z1());
+    EXPECT_FLOAT_EQ(-2.0f, tone->peakState[0].Z2());
+    EXPECT_FLOAT_EQ(3.0f, tone->highShelfState[0].Z1());
+    EXPECT_FLOAT_EQ(-3.0f, tone->highShelfState[0].Z2());
     session.Engine()->nullBackend.Pump(3);
     EXPECT_FALSE(tone->highShelfTransition.transitioning);
     ExpectCoeffsEqual(prepared, tone->highShelf);

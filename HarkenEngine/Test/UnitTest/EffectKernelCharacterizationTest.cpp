@@ -433,19 +433,19 @@ TEST(ToneKernelCharacterization, NeutralizedSectionRetainsTailUntilReset) {
     fx.process(state, channels, 1, 0, kBlockFrames);
 
     auto* tone = static_cast<harken::ToneEffectState*>(state);
-    ASSERT_TRUE(tone->lowShelfState[0].z1 != 0.0f ||
-                tone->lowShelfState[0].z2 != 0.0f);
+    ASSERT_TRUE(tone->lowShelfState[0].Z1() != 0.0f ||
+                tone->lowShelfState[0].Z2() != 0.0f);
     const harken::BiquadState retained = tone->lowShelfState[0];
     fx.setParam(state, harken::kToneParamLowShelfGainDb, 0.0f);
-    EXPECT_EQ(retained.z1, tone->lowShelfState[0].z1);
-    EXPECT_EQ(retained.z2, tone->lowShelfState[0].z2);
+    EXPECT_EQ(retained.Z1(), tone->lowShelfState[0].Z1());
+    EXPECT_EQ(retained.Z2(), tone->lowShelfState[0].Z2());
     ASSERT_GT(tone->lowShelfTailFrames, 0u);
     EXPECT_EQ(tone->lowShelfTailFrames, fx.tailFrames(state));
 
     fx.reset(state);
     EXPECT_EQ(0u, fx.tailFrames(state));
-    EXPECT_EQ(0.0f, tone->lowShelfState[0].z1);
-    EXPECT_EQ(0.0f, tone->lowShelfState[0].z2);
+    EXPECT_EQ(0.0f, tone->lowShelfState[0].Z1());
+    EXPECT_EQ(0.0f, tone->lowShelfState[0].Z2());
     bank.Recycle(ref);
 }
 

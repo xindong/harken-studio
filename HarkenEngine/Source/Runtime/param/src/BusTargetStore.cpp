@@ -910,7 +910,7 @@ float BusTargetStore::SlotValue(std::uint32_t busIndex,
         return 0.0f;
     }
     const Slot& s = m_slots[IndexOf(busIndex, targetId, slot)];
-    return s.active ? s.value : 0.0f;
+    return s.active ? NarrowResolvedValue(s.value) : 0.0f;
 }
 
 bool BusTargetStore::PendingPublication(std::uint32_t busIndex,
