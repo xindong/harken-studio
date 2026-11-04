@@ -22,6 +22,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <limits>
 #include <vector>
 
 namespace {
@@ -195,6 +196,91 @@ TEST(MeterBallisticsGolden, PumpRatioEquivalenceOneThreeSeven) {
     // And the envelope really was still moving between the checkpoints —
     // equal values from a settled envelope would prove nothing.
     EXPECT_NE(valuesA[0], valuesB[0]);
+}
+
+TEST(MeterBallisticsGolden, NonFinitePeaksPreserveStateAcrossTransportPaths) {
+    for (const bool overflow : {false, true}) {
+        for (const auto smoothingMs : {0u, 20u}) {
+            for (const auto tap : {VN_BUS_METER_TAP_POST_EFFECTS,
+                                   VN_BUS_METER_TAP_PRE_FADER,
+                                   VN_BUS_METER_TAP_POST_FADER}) {
+                SCOPED_TRACE(::testing::Message() << overflow << ", "
+                    << smoothingMs << ", " << tap);
+                harken::MeterSystem meters(1, kBlock, kRate);
+                harken::MeterBlockRing ring(2, 1);
+                constexpr std::uint32_t generation = 1;
+                ASSERT_EQ(VN_OK, meters.Install(kProbe, VN_BUS_MASTER, 0,
+                    generation, tap, smoothingMs, smoothingMs, 0));
+                std::uint64_t block = 0;
+                const auto push = [&](float peak) {
+                    ring.PushTaps(block++, &peak, &peak, &peak, 1, &generation);
+                };
+                push(0.25f);
+                ASSERT_EQ(1u, meters.Drain(ring));
+                const float held = meters.Find(kProbe)->envelope;
+                ASSERT_GT(held, 0.0f);
+                if (overflow) {
+                    push(held);
+                    push(held);
+                }
+                push(std::numeric_limits<float>::infinity());
+                ASSERT_EQ(overflow ? 3u : 1u, meters.Drain(ring));
+                EXPECT_EQ(overflow ? 1u : 0u, ring.OverflowCount());
+                EXPECT_FLOAT_EQ(held, meters.Find(kProbe)->envelope);
+                EXPECT_FLOAT_EQ(EnvToDb(held), meters.ValueDb(kProbe));
+
+                float expected = held;
+                for (const float peak : {0.5f, 0.0f}) {
+                    push(peak);
+                    ASSERT_EQ(1u, meters.Drain(ring));
+                    expected = peak + (expected - peak) * BlockCoeff(smoothingMs);
+                    EXPECT_FLOAT_EQ(expected, meters.Find(kProbe)->envelope);
+                    EXPECT_FLOAT_EQ(EnvToDb(expected), meters.ValueDb(kProbe));
+                }
+            }
+        }
+    }
+}
+
+TEST(MeterBallisticsGolden, FiniteAudioRecoversAfterBusOverflow) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig(0, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    harken::Engine* engine = session.Engine();
+    ASSERT_EQ(VN_OK, harken::InstallMeterProbe(*engine, kProbe, VN_BUS_MASTER,
+        VN_BUS_METER_TAP_POST_EFFECTS, 0, 0));
+    RegisterLongDc(4.0f);
+    VnPlayDesc play = harkentest::MakePlayDesc(kDcSound);
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, -24.0f, 0));
+    engine->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    VnSnapshot snapshot{};
+    snapshot.structSize = sizeof(snapshot);
+    ASSERT_EQ(VN_OK, Vn_CaptureSnapshot(&snapshot));
+    const float priorLevel = ReadProbe(engine);
+    ASSERT_GT(priorLevel, harken::kMeterFloorDb);
+    const auto priorBlock = snapshot.blockIndex;
+
+    // Both PCM and the requested gain are finite; their product overflows.
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, 760.0f, 0));
+    engine->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_EQ(VN_OK, Vn_CaptureSnapshot(&snapshot));
+    ASSERT_GT(snapshot.blockIndex, priorBlock);
+    ASSERT_TRUE(std::isinf(snapshot.busPeaks[0]));
+    EXPECT_FLOAT_EQ(priorLevel, ReadProbe(engine));
+    const auto overflowBlock = snapshot.blockIndex;
+
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, -30.0f, 0));
+    engine->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_EQ(VN_OK, Vn_CaptureSnapshot(&snapshot));
+    ASSERT_GT(snapshot.blockIndex, overflowBlock);
+    ASSERT_TRUE(std::isfinite(snapshot.busPeaks[0]));
+    ASSERT_GT(snapshot.busPeaks[0], 0.0f);
+    EXPECT_FLOAT_EQ(EnvToDb(snapshot.busPeaks[0]), ReadProbe(engine));
+    EXPECT_LT(ReadProbe(engine), priorLevel);
 }
 
 } // namespace
