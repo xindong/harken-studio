@@ -62,6 +62,8 @@ public:
     std::vector<harkencurrentworldcompiler::TransitionProgramAuthoringV1>
         transitions;
     std::vector<harkencurrentworldcompiler::ActionProgramAuthoringV1> actions;
+    std::vector<harkencurrentworldcompiler::DuckingSendAuthoringV1> duckingSends;
+    bool includePreviewDucking = false;
     std::vector<SoundSource> soundSources;
     std::unordered_map<harkenstudio::ObjectId, std::uint64_t> soundContentRevisions;
     std::shared_ptr<const CurrentWorldSoundPreparation> soundPreparation;

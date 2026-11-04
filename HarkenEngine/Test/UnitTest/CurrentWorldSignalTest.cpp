@@ -202,7 +202,15 @@ TEST(CurrentWorldSignal, DirectInstallIsAtomicIdempotentAndPreservesLiveTopology
     EXPECT_EQ(engine.buses.InstalledSignals(), first);
     const auto bus = engine.buses.FindIndex(source);
     EXPECT_EQ(engine.buses.BusOutputLayout(bus), static_cast<std::uint32_t>(VN_CHANNEL_LAYOUT_MONO));
-    ASSERT_EQ(InstallContainerWorldV1(engine, fixture.world).status, WorldInstallStatus::Ok);
+    VariableServiceV1::PreparedCurrentWorldImageV1 stale;
+    ASSERT_EQ(engine.variables.PrepareCurrentWorldImageV1(fixture.world, stale), WorldInstallStatus::Ok);
+    EXPECT_TRUE(stale.PreservesContent());
+    EXPECT_FALSE(stale.Idempotent());
+    const auto changed = InstallContainerWorldV1(engine, fixture.world);
+    ASSERT_EQ(changed.status, WorldInstallStatus::Ok);
+    EXPECT_FALSE(changed.idempotent);
+    EXPECT_EQ(changed.resultGeneration, generation);
+    EXPECT_FALSE(engine.variables.CanCommitPreparedCurrentWorldImageV1(stale));
     auto* second = engine.acceptedSignalPlan.get();
     ASSERT_NE(first, second);
     EXPECT_EQ(second->WorldIdentity(), first->WorldIdentity());
@@ -215,6 +223,27 @@ TEST(CurrentWorldSignal, DirectInstallIsAtomicIdempotentAndPreservesLiveTopology
     EXPECT_EQ(InstallContainerWorldV1(engine, fixture.world).status, WorldInstallStatus::InvalidWorld);
     EXPECT_EQ(engine.variables.CurrentWorldGeneration(), current);
     EXPECT_EQ(engine.acceptedSignalPlan.get(), second);
+    fixture.relations[0].source.stableId = fixture.receivers[1].target.stableId;
+    fixture.world.signalRelations = nullptr;
+    fixture.world.signalRelationCount = 0;
+    fixture.world.signalReceivers = nullptr;
+    fixture.world.signalReceiverCount = 0;
+    fixture.Refresh();
+    ASSERT_EQ(InstallContainerWorldV1(engine, fixture.world).status, WorldInstallStatus::Ok);
+    EXPECT_EQ(engine.variables.CurrentWorldGeneration(), generation);
+    engine.nullBackend.Pump(2);
+    EXPECT_EQ(engine.buses.InstalledSignals(), nullptr);
+    fixture.world.signalRelations = fixture.relations.data();
+    fixture.world.signalRelationCount = 2;
+    fixture.world.signalReceivers = fixture.receivers.data();
+    fixture.world.signalReceiverCount = 2;
+    fixture.Refresh();
+    ASSERT_EQ(InstallContainerWorldV1(engine, fixture.world).status, WorldInstallStatus::Ok);
+    EXPECT_EQ(engine.variables.CurrentWorldGeneration(), generation);
+    auto changedContent = fixture.world;
+    changedContent.identity.projectId = harkentest::ObjectId(700);
+    changedContent.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV7(changedContent);
+    EXPECT_FALSE(engine.variables.SignalOnlyWorld(changedContent));
 }
 
 TEST(CurrentWorldSignal, PairedPublicationCarriesSignalsInItsSingleTopologyCommand) {

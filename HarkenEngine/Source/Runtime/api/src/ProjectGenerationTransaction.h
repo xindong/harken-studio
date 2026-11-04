@@ -229,6 +229,7 @@ private:
         engine_ = nullptr;
         occupied_ = false;
         idempotent_ = false;
+        preservesContent_ = false;
         preparedPlanIndex_ = UINT32_MAX;
         preparedOwnerSlot_ = UINT32_MAX;
         preparedSerial_ = 0;
@@ -263,6 +264,7 @@ private:
         engine_ = other.engine_;
         occupied_ = other.occupied_;
         idempotent_ = other.idempotent_;
+        preservesContent_ = other.preservesContent_;
         preparedPlanIndex_ = other.preparedPlanIndex_;
         preparedOwnerSlot_ = other.preparedOwnerSlot_;
         preparedSerial_ = other.preparedSerial_;
@@ -297,6 +299,7 @@ private:
     Engine* engine_ = nullptr;
     bool occupied_ = false;
     bool idempotent_ = false;
+    bool preservesContent_ = false;
     std::uint32_t preparedPlanIndex_ = UINT32_MAX;
     std::uint32_t preparedOwnerSlot_ = UINT32_MAX;
     std::uint64_t preparedSerial_ = 0;

@@ -42,7 +42,7 @@
 | Sends / Mode | 可编辑并参与保存、继承和撤销；旧数据缺失 Mode 时按 Mix 解释；同一目标按 Mode 区分，单个 Mode 内目标唯一；与 Output 冲突或重复的 Mode 选项禁用 |
 | Sends / Volume | 三种 Mode 均表示发送的源信号增益，范围 −96～+24 dB；Ducking 中用于调节送入避让检测端的信号强度，并非指定目标衰减量；同一行各 Mode 分别记忆 Volume，Target 共用；首次进入未配置 Mode 沿用当前值，切回恢复上次值，记忆随工程保存并参与撤销 |
 | Sends / Output | Mix、Ducking 与 Output 目标互斥；Sidechain 可指向 Output 的目标；沿用自连与成环限制 |
-| Sends / 显示与发布 | Receives 和信号图显示 Mode；图中按 Mode 区分增益编辑、删除与撤销；本阶段试听与打包仅发布 Mix，Ducking、Sidechain 保留编辑配置 |
+| Sends / 显示与发布 | Receives 和信号图显示 Mode；图中按 Mode 区分增益编辑、删除与撤销；试听发布 Mix 和 Ducking，Ducking 继承配置按最终 Sound 生效，Bus 可直接发送；打包仍仅发布 Mix；Sidechain 保留编辑配置，尚未接入插件辅助输入 |
 | Sends / 平台范围 | Bus 的 Receives 和信号图读取当前平台生效路由；图上删除仅修改对应范围；移动、删除目标及撤销覆盖共享值和平台覆盖，循环校验覆盖所有受影响的平台 |
 | Sources / Language | 关闭时显示普通组，开启时仅显示 Toolbar 当前语言组；两类数据分别保留 |
 | Sources / Active | 同一平台与语言只选一个来源；多平台不一致时显示半勾选 |

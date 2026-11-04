@@ -297,6 +297,7 @@ AudioEngine::AudioEngine(QObject* parent)
                 return result;
             }
             CurrentWorldBuildOptions options;
+            options.includePreviewDucking = true;
             options.isolateUnavailable = true;
             options.soundContentRevisions = &sounds->contentRevisions;
             options.sourceIndex = sourceIndex;

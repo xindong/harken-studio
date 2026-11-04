@@ -376,7 +376,7 @@ bool CurrentWorldProtectedStateBlocked(const Engine& engine) noexcept {
 bool CurrentWorldCommitBlocked(const Engine& engine, std::uint32_t vintage,
     const VariableServiceV1::PreparedCurrentWorldImageV1& image) noexcept {
     const bool liveBusUpdate = (vintage == 3 || vintage == 4) &&
-        image.Valid() && image.Idempotent();
+        image.Valid() && image.PreservesContent();
     return CurrentWorldProtectedStateBlocked(engine) ||
         (HasCurrentWorldPublicationConsumers(engine) && !liveBusUpdate);
 }
@@ -1269,12 +1269,10 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
         result.status = ProjectGenerationPrepareStatusV1::InvalidView;
         return result;
     }
-    if (CurrentWorldProtectedStateBlocked(engine) || HasPredecessorDirectWorldPublication(engine)) {
+    if (CurrentWorldProtectedStateBlocked(engine) ||
+        (HasPredecessorDirectWorldPublication(engine) &&
+         !engine.variables.SignalOnlyWorld(view.compiledWorld))) {
         result.status = ProjectGenerationPrepareStatusV1::Backpressure;
-        return result;
-    }
-    if (engine.variables.CurrentWorldGeneration() == UINT64_MAX) {
-        result.status = ProjectGenerationPrepareStatusV1::DeviceError;
         return result;
     }
     const auto destination = SelectPreviewOwnerDestination(engine, view.ownerId);
@@ -1459,12 +1457,12 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
             view.compiledWorld, image);
         if (imageStatus == WorldInstallStatus::Ok) {
             const auto current = engine.variables.CurrentWorldGeneration();
-            if (current == UINT64_MAX && !image.Idempotent()) {
+            if (current == UINT64_MAX && !image.PreservesContent()) {
                 imageStatus = WorldInstallStatus::Capacity;
             } else {
                 const auto topology = engine.preparedTopologyPlans.View(planIndex);
                 imageStatus = PrepareWorldSignals(engine, view.compiledWorld,
-                    current + (image.Idempotent() ? 0 : 1), &topology, signals);
+                    current + (image.PreservesContent() ? 0 : 1), &topology, signals);
                 if (imageStatus == WorldInstallStatus::Ok)
                     AttachPreparedSignals(engine.preparedTopologyPlans, planIndex, signals);
             }
@@ -1506,7 +1504,7 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
         return result;
     }
     if (CurrentWorldCommitBlocked(engine, view.publicationVintage, image) ||
-        HasPredecessorDirectWorldPublication(engine)) {
+        (HasPredecessorDirectWorldPublication(engine) && !image.PreservesContent())) {
         ReleasePreparedSlot(engine, planIndex, ownerSlot);
         result.status = ProjectGenerationPrepareStatusV1::Backpressure;
         return result;
@@ -1523,6 +1521,7 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
     out.engine_ = &engine;
     out.occupied_ = true;
     out.idempotent_ = image.Idempotent();
+    out.preservesContent_ = image.PreservesContent();
     out.signals_ = std::move(signals);
     out.preparedPlanIndex_ = planIndex;
     out.preparedOwnerSlot_ = ownerSlot;
@@ -1574,12 +1573,12 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
         return result;
     }
     if (CurrentWorldCommitBlocked(engine, prepared.publicationVintage_, prepared.worldImage_) ||
-        HasPredecessorDirectWorldPublication(engine)) {
+        (HasPredecessorDirectWorldPublication(engine) && !prepared.preservesContent_)) {
         result.status = ProjectGenerationCommitStatusV1::Backpressure;
         return result;
     }
     if (engine.variables.CurrentWorldGeneration() == UINT64_MAX &&
-        !prepared.worldImage_.Idempotent()) {
+        !prepared.worldImage_.PreservesContent()) {
         result.status = ProjectGenerationCommitStatusV1::DeviceError;
         return result;
     }
@@ -1624,7 +1623,7 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
         return result;
     }
     const WorldGeneration priorGeneration = engine.variables.CurrentWorldGeneration();
-    const WorldGeneration predictedGeneration = prepared.idempotent_ ? priorGeneration : priorGeneration + 1;
+    const WorldGeneration predictedGeneration = prepared.preservesContent_ ? priorGeneration : priorGeneration + 1;
     VariableServiceV1::PreparedWorldProjectionV1 projection;
     PreparedAdmissionWriteV1 admission;
     PreparedProjectGenerationTraceV1 trace;
@@ -1723,7 +1722,7 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
         !volumeOverlayReady || !volumeSourceReady() ||
         !prepared.Valid() || !ownerReady() ||
         CurrentWorldCommitBlocked(engine, prepared.publicationVintage_, prepared.worldImage_) ||
-        HasPredecessorDirectWorldPublication(engine) ||
+        (HasPredecessorDirectWorldPublication(engine) && !prepared.preservesContent_) ||
         !SlotPlanMatchesLive(engine, prepared.slotPlan_) ||
         !CanApplyPreviewProperties(engine, prepared.slotPlan_,
             (prepared.publicationVintage_ == 3 || prepared.publicationVintage_ == 4)) ||
@@ -1779,7 +1778,7 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
     const WorldGeneration installed =
         engine.variables.CommitPreparedCurrentWorldImageV1(prepared.worldImage_);
     CommitSignals(engine, prepared.signals_);
-    if (!prepared.idempotent_) ReclaimRetiredSelectionMemory(engine);
+    if (!prepared.preservesContent_) ReclaimRetiredSelectionMemory(engine);
     engine.variables.CommitWorldProjectionV1(&projection, engine.params, engine.emitters,
                                               engine.bindings, engine.busTargets);
     if (prepared.publicationVintage_ == 3 || prepared.publicationVintage_ == 4) {
@@ -1803,7 +1802,7 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
             }
         }
     }
-    if (!prepared.idempotent_) {
+    if (!prepared.preservesContent_) {
         (void)CancelActionDeferredForWorldReplacement(engine, priorGeneration);
         engine.queueCheckpoints.ClearWorld(priorGeneration);
         ObserveMonitorCurrentWorld(installed);

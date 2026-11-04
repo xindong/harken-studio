@@ -102641,7 +102641,7 @@ VnResult Vn_LoadCurrentWorld(const VnCurrentWorldLoadDesc* desc,
         switch (install.status) {
         case harken::WorldInstallStatus::Ok:
             outReport->resultGeneration = install.resultGeneration;
-            if (!install.idempotent) {
+            if (install.resultGeneration != install.priorGeneration) {
                 const VnResult authority =
                     engine->packComposition.EnterDirectWorldAuthority();
                 if (authority != VN_OK) {

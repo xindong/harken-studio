@@ -534,6 +534,7 @@ public:
         const ContainerWorldInstallViewV1& install) const {
         return SemanticIdentical(install);
     }
+    bool SignalOnlyWorld(const ContainerWorldInstallViewV1& install) const;
     bool AdmissionClosed() const noexcept {
         return engineAdmissionClosed_ || DrainingWorld() ||
                DrainingTransport();
@@ -969,14 +970,17 @@ public:
 
         bool Valid() const noexcept { return valid_; }
         bool Idempotent() const noexcept { return idempotent_; }
+        bool PreservesContent() const noexcept { return idempotent_ || signalOnly_; }
         void Clear() noexcept { *this = PreparedCurrentWorldImageV1{}; }
 
     private:
         friend class VariableServiceV1;
         bool valid_ = false;
         bool idempotent_ = false;
+        bool signalOnly_ = false;
         const VariableServiceV1* source_ = nullptr;
         WorldGeneration sourceWorld_ = 0;
+        std::uint64_t sourceFingerprint_ = 0;
         std::uint64_t sourceBankOrdinal_ = 0;
         WorldIdentityV1 identity_{};
         std::uint32_t sourceBodyVintage_ = kCurrentWorldShippingBodyVintage;

@@ -24,6 +24,10 @@ enum class CurrentWorldBodyDecodeResult : std::uint8_t {
     Invalid = 1,
     Capacity = 2,
 };
+// Preview alone can publish V20 signal tables; shipping remains V18.
+bool EncodeCurrentWorldPreviewBody(
+    const ContainerWorldInstallViewV1& world, std::vector<std::uint8_t>& out) noexcept;
+
 bool EncodeCurrentWorldShippingBody(
     const ContainerWorldInstallViewV1& world,
     std::vector<std::uint8_t>& out) noexcept;
