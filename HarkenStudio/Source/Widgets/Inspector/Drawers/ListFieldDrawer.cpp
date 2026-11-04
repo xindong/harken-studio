@@ -26,13 +26,16 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPointer>
 #include <QSet>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QStandardItemModel>
 #include <QStyle>
 #include <QToolButton>
+#include <QToolTip>
 #include <QVBoxLayout>
 #include <QValidator>
 
@@ -122,7 +125,7 @@ public:
         v->addWidget(box_);
         buildHeader();
         rows_ = box_->rowsWidget();
-        if (hasRowOrder_)
+        if (hasRowOrder_ && !d.flags.readOnly)
             box_->setRowMoveHandler([this](int from, int to) {
                 finishPreview();
                 if (anchored() && anchorCol_ == 0 && hasRowOrder_) {
@@ -211,6 +214,7 @@ public:
         finishPreview();
         ++selectionGeneration_;
         SelectorWindow::dismiss(this);
+        if (addMenu_) addMenu_->close();
         if (preserveRows)
             cancelRowEdits();
         else
@@ -254,6 +258,7 @@ public:
             cancelAnchorEdit();
             ++selectionGeneration_;
             SelectorWindow::dismiss(this);
+            if (addMenu_) addMenu_->close();
         }
         value_ = next;
         if (desc_.flags.readOnly)
@@ -352,6 +357,8 @@ private:
         }
         box_->setColumns(desc_.field, columns);
         applyInspectorTableDescriptor(box_, desc_);
+        for (size_t i = 0; i < desc_.elementSchema.size(); ++i)
+            box_->headerCell(static_cast<int>(i))->setToolTip(desc_.elementSchema[i].toolTip);
         return box_->header();
     }
 
@@ -373,6 +380,8 @@ private:
                 weight = ((ed.flags.readOnly || desc_.flags.readOnly)
                               ? kFloatReadOnlyWidth : kFloatEditorWidth)
                     + 2 * ThemeManager::instance().metrics().table.cellPaddingX;
+            else if (ed.type == PropType::Enum || ed.type == PropType::ObjectRef)
+                weight = kTailColWeight;
             defaultShares_[ci] = weight;
             sum += weight;
         }
@@ -389,7 +398,7 @@ private:
         removeBtn_ = foot->removeButton();
         removeBtn_->setObjectName(QStringLiteral("listRemoveSelected_") + desc_.field);
 
-        QObject::connect(addBtn_, &QToolButton::clicked, this, [this]() { addElement(); });
+        QObject::connect(addBtn_, &QToolButton::clicked, this, [this]() { beginAddElement(); });
         QObject::connect(removeBtn_, &QToolButton::clicked, this, [this]() {
             if (!canEdit() || selected_ < 0 || selected_ >= value_.size()) return;
             box_->removeSelectedRow([this] {
@@ -547,7 +556,38 @@ private:
         return elem;
     }
 
-    void addElement()
+    void beginAddElement()
+    {
+        if (!canEdit() || (anchored() && !freeAnchor())) return;
+        if (desc_.listAddChoiceField.isEmpty()) {
+            addElement(defaultElement());
+            return;
+        }
+        const auto choice = std::find_if(desc_.elementSchema.begin(), desc_.elementSchema.end(),
+            [this](const auto& field) { return field.field == desc_.listAddChoiceField; });
+        if (choice == desc_.elementSchema.end() || choice->type != PropType::Enum) return;
+        if (addMenu_) addMenu_->close();
+        addMenu_ = new QMenu(this);
+        addMenu_->setObjectName(QStringLiteral("listAddMenu_") + desc_.field);
+        addMenu_->setAttribute(Qt::WA_DeleteOnClose);
+        const uint64_t generation = ++selectionGeneration_;
+        for (const auto& option : choice->options) {
+            auto* action = addMenu_->addAction(option.text);
+            action->setData(option.value);
+            QObject::connect(action, &QAction::triggered, this,
+                [this, generation, ownerAtOpen = boundObjectID_, field = choice->field, value = option.value] {
+                    QMetaObject::invokeMethod(this, [this, generation, ownerAtOpen, field, value] {
+                        if (generation != selectionGeneration_ || ownerAtOpen != boundObjectID_ || !canEdit()) return;
+                        auto element = defaultElement();
+                        element[field] = value;
+                        addElement(element);
+                    }, Qt::QueuedConnection);
+                });
+        }
+        addMenu_->popup(addBtn_->mapToGlobal(QPoint(0, addBtn_->height())));
+    }
+
+    void addElement(const QVariantMap& initialElement)
     {
         if (!canEdit() || (anchored() && !freeAnchor()))
             return;
@@ -557,7 +597,7 @@ private:
 
         if (!refEd)
         {
-            value_.append(defaultElement());
+            value_.append(initialElement);
             if (anchored() && anchorCol_ == 0 && hasRowOrder_)
                 std::stable_sort(value_.begin(), value_.end(), [this](const auto& a, const auto& b) {
                     return a.toMap().value(anchorField()).toInt() < b.toMap().value(anchorField()).toInt();
@@ -571,15 +611,16 @@ private:
         SelectorRequest req;
         req.title = QObject::tr("Add %1").arg(desc_.label.isEmpty() ? desc_.field : desc_.label);
         req.filterType = static_cast<ProjectItem::Type>(refEd->refFilter);
-        if (refEd->refSelectable || desc_.validateElement)
-            req.isSelectable = [self, pred = refEd->refSelectable, field = refEd->field](uint32_t id) {
+        if (refEd->refSelectable || refEd->refSelectableForElement || desc_.validateElement)
+            req.isSelectable = [self, pred = refEd->refSelectable, field = refEd->field,
+                                initialElement](uint32_t id) {
                 return self && (!pred || (self->boundObjectID_ != 0 && pred(self->boundObjectID_, id)))
-                    && self->elementError(self->value_.size(), field, id).isEmpty();
+                    && self->elementError(self->value_.size(), field, id, initialElement).isEmpty();
             };
         const uint64_t generation = ++selectionGeneration_;
         req.onSelected = [self, generation, ownerAtOpen = boundObjectID_,
                           filter = req.filterType, predicate = req.isSelectable,
-                          field = refEd->field](uint32_t id) {
+                          field = refEd->field, initialElement](uint32_t id) {
             if (!self || self->boundObjectID_ != ownerAtOpen
                 || self->selectionGeneration_ != generation || !self->canEdit())
                 return;
@@ -587,8 +628,7 @@ private:
             if (id == 0 || !adapter.exists(id) || !adapter.matchesFilter(id, {filter, {}})
                 || (predicate && !predicate(id)))
                 return;
-            QVariantMap elem = self->defaultElement();
-            elem[field] = id;
+            const auto elem = self->editedElement(initialElement, field, id);
             self->value_.append(elem);
             self->rebuildRows();
             self->notify();
@@ -610,24 +650,57 @@ private:
     {
         if (generation != rowGeneration_ || !canEdit()
             || row < 0 || row >= value_.size()) return;
+        const QString error = elementError(row, field, v);
+        if (!error.isEmpty()) {
+            refreshRows();
+            QToolTip::showText(QCursor::pos(), error, this);
+            return;
+        }
         selectRow(row);
-        QVariantMap elem = value_[row].toMap();
-        elem[field] = v;
-        value_[row] = elem;
+        value_[row] = editedElement(value_[row].toMap(), field, v);
+        refreshRows();
         notify();
     }
 
-    QString elementError(int row, const QString& field, const QVariant& value) const
+    QVariantMap editedElement(QVariantMap element, const QString& field, const QVariant& value) const
     {
-        if (!desc_.validateElement || row < 0 || row > value_.size()) return {};
-        auto candidate = value_;
-        auto element = row == candidate.size() ? defaultElement() : candidate[row].toMap();
+        if (desc_.editElement) return desc_.editElement(element, field, value);
         element[field] = value;
+        return element;
+    }
+
+    QString elementError(int row, const QString& field, const QVariant& value,
+                         const QVariantMap& initialElement = {}) const
+    {
+        if (row < 0 || row > value_.size()) return {};
+        auto candidate = value_;
+        auto element = row == candidate.size()
+            ? (initialElement.isEmpty() ? defaultElement() : initialElement) : candidate[row].toMap();
+        element = editedElement(std::move(element), field, value);
+        for (const auto& descriptor : desc_.elementSchema)
+            if (descriptor.type == PropType::ObjectRef && descriptor.refSelectableForElement
+                && (boundObjectID_ == 0 || !descriptor.refSelectableForElement(boundObjectID_, element,
+                    element.value(descriptor.field).toUInt())))
+                return QObject::tr("The selected target is not available for these row settings.");
         if (row == candidate.size())
             candidate.append(element);
         else
             candidate[row] = element;
-        return desc_.validateElement(candidate, row, field);
+        return desc_.validateElement ? desc_.validateElement(candidate, row, field) : QString{};
+    }
+
+    void refreshEnumOptions(QComboBox* combo, int row, const QString& field)
+    {
+        const QSignalBlocker blocker(combo);
+        auto* model = qobject_cast<QStandardItemModel*>(combo->model());
+        if (!model) return;
+        for (int index = 0; index < combo->count(); ++index) {
+            const QString error = elementError(row, field, combo->itemData(index));
+            auto* item = model->item(index);
+            item->setEnabled(error.isEmpty());
+            item->setSelectable(error.isEmpty());
+            item->setToolTip(error);
+        }
     }
 
     void refreshInputValidation(QLineEdit* edit, int row, const QString& field)
@@ -642,9 +715,7 @@ private:
         if (!onPreview_ || generation != rowGeneration_ || !canEdit()
             || row < 0 || row >= value_.size()) return;
         auto preview = value_;
-        auto entry = preview[row].toMap();
-        entry[field] = value;
-        preview[row] = entry;
+        preview[row] = editedElement(preview[row].toMap(), field, value);
         previewActive_ = true;
         const auto callback = onPreview_;
         callback(preview);
@@ -697,9 +768,10 @@ private:
                     intSpin->setValue(v.toInt());
                 else if (auto* check = qobject_cast<QCheckBox*>(editor))
                     check->setChecked(v.toBool());
-                else if (auto* combo = qobject_cast<QComboBox*>(editor))
+                else if (auto* combo = qobject_cast<QComboBox*>(editor)) {
                     combo->setCurrentIndex(combo->findData(v));
-                else if (auto* edit = qobject_cast<QLineEdit*>(editor)) {
+                    refreshEnumOptions(combo, visibleRows[i], ed.field);
+                } else if (auto* edit = qobject_cast<QLineEdit*>(editor)) {
                     if (edit->text() != v.toString()
                         && !(edit->hasFocus() && edit->property("inputInvalid").toBool()))
                         edit->setText(v.toString());
@@ -787,6 +859,12 @@ private:
                     auto* number = box_->createRowNumber(row, i, anchorCol_ == 0
                         ? std::optional<int>(elem.value(anchorField()).toInt()) : std::nullopt);
                     number->setEnabled(canEdit() || desc_.flags.readOnly);
+                    if (desc_.flags.readOnly) {
+                        number->setProperty("dragHandleRow", QVariant());
+                        number->unsetCursor();
+                        number->setFocusPolicy(Qt::NoFocus);
+                        number->setToolTip(QString());
+                    }
                     if (anchored() && anchorCol_ == 0 && canEdit())
                         number->setToolTip(tr("Double-click to edit index; drag to move row"));
                     h->addWidget(number);
@@ -862,7 +940,7 @@ private:
                     orw->setEditGuard([self, generation] {
                         return self && self->rowGeneration_ == generation && self->canEdit();
                     });
-                    if (ed.refSelectable || desc_.validateElement)
+                    if (ed.refSelectable || ed.refSelectableForElement || desc_.validateElement)
                         orw->setIsSelectable([self, pred = ed.refSelectable, row, field = ed.field](uint32_t id) {
                             return self && (!pred || (self->boundObjectID_ != 0 && pred(self->boundObjectID_, id)))
                                 && self->elementError(row, field, id).isEmpty();
@@ -916,9 +994,10 @@ private:
                     const int idx = combo->findData(v);
                     if (idx >= 0) combo->setCurrentIndex(idx);
                 }
+                refreshEnumOptions(combo, row, ed.field);
                 QObject::connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
                     [this, generation, row, field = ed.field, combo](int idx) {
-                        if (idx < 0) return;
+                        if (idx < 0 || !combo->isEnabled()) return;
                         applyElementChange(generation, row, field, combo->itemData(idx));
                     });
                 return finalize(combo);
@@ -1020,6 +1099,7 @@ private:
     QLabel* mixedLabel_ = nullptr;
     QWidget* footer_ = nullptr;
     QToolButton* addBtn_ = nullptr;
+    QPointer<QMenu> addMenu_;
     QToolButton* removeBtn_ = nullptr;
     std::vector<QWidget*> rowWidgets_;
     std::vector<std::vector<QWidget*>> rowEditors_;

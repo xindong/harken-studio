@@ -686,11 +686,11 @@ TEST(BiquadGolden, LargeFiniteInputPreservesRepresentableFeedback) {
     const double expectedZ2 = static_cast<double>(c.b2) * input - c.a2 * expectedY;
     const float output = harken::BiquadTick(c, state, input);
     ASSERT_TRUE(std::isfinite(output));
-    ASSERT_TRUE(std::isfinite(state.z1));
-    ASSERT_TRUE(std::isfinite(state.z2));
+    ASSERT_TRUE(std::isfinite(state.Z1()));
+    ASSERT_TRUE(std::isfinite(state.Z2()));
     EXPECT_NEAR(expectedY, output, std::abs(expectedY) * 1e-6);
-    EXPECT_NEAR(expectedZ1, state.z1, std::abs(expectedZ1) * 1e-6);
-    EXPECT_NEAR(expectedZ2, state.z2, std::abs(expectedZ2) * 1e-6);
+    EXPECT_NEAR(expectedZ1, state.Z1(), std::abs(expectedZ1) * 1e-6);
+    EXPECT_NEAR(expectedZ2, state.Z2(), std::abs(expectedZ2) * 1e-6);
     for (unsigned i = 0; i < 4096; ++i) {
         ASSERT_TRUE(std::isfinite(harken::BiquadTick(c, state, 1.0f)));
     }
@@ -704,8 +704,8 @@ TEST(BiquadGolden, LargeFiniteDcSeedRetainsSteadyState) {
     harken::SeedBiquadStateForDc(state, c, input);
     const double expectedZ2 = static_cast<double>(c.b2) * input;
     const double expectedZ1 = static_cast<double>(c.b1) * input + expectedZ2;
-    EXPECT_NEAR(expectedZ1, state.z1, std::abs(expectedZ1) * 1e-6);
-    EXPECT_NEAR(expectedZ2, state.z2, std::abs(expectedZ2) * 1e-6);
+    EXPECT_NEAR(expectedZ1, state.Z1(), std::abs(expectedZ1) * 1e-6);
+    EXPECT_NEAR(expectedZ2, state.Z2(), std::abs(expectedZ2) * 1e-6);
     EXPECT_NEAR(0.0, harken::BiquadTick(c, state, input),
                 static_cast<double>(input) * 1e-6);
 }
@@ -735,6 +735,98 @@ TEST(BiquadGolden, DisableTransitionPreservesLargeFiniteEndpoints) {
         ASSERT_TRUE(std::isfinite(sample));
         EXPECT_NEAR(expected, sample, std::abs(expected) * 1e-6);
     }
+}
+
+TEST(BiquadGolden, FiniteOverflowRetainsHistoryAndEventuallyRecovers) {
+    const float maximum = (std::numeric_limits<float>::max)();
+    for (float gain : {24.0f, 48.0f}) {
+        SCOPED_TRACE(gain);
+        const auto c = harken::MakePeaking(kRate, 1000.0f, 1.0f, gain);
+        BiquadState state;
+        double y = static_cast<double>(c.b0) * maximum;
+        double z1 = static_cast<double>(c.b1) * maximum - c.a1 * y;
+        double z2 = static_cast<double>(c.b2) * maximum - c.a2 * y;
+        EXPECT_TRUE(std::isinf(harken::BiquadTick(c, state, maximum)));
+        EXPECT_NEAR(z1, state.Z1(), std::abs(z1) * 1e-6);
+        EXPECT_NEAR(z2, state.Z2(), std::abs(z2) * 1e-6);
+        if (gain == 48.0f) ASSERT_GT(std::abs(state.Z1()), maximum);
+        // Compare the retained transient against an independent wide recurrence.
+        // Float rounding resumes once the feedback fits, so allow that error.
+        float output = 0.0f;
+        for (unsigned i = 0; i < 65536; ++i) {
+            y = static_cast<double>(c.b0) * 0.125 + z1;
+            z1 = static_cast<double>(c.b1) * 0.125 - c.a1 * y + z2;
+            z2 = static_cast<double>(c.b2) * 0.125 - c.a2 * y;
+            output = harken::BiquadTick(c, state, 0.125f);
+            ASSERT_FALSE(std::isnan(output));
+            ASSERT_TRUE(std::isfinite(state.Z1()));
+            ASSERT_TRUE(std::isfinite(state.Z2()));
+            if (i < 256 && std::isfinite(output))
+                EXPECT_NEAR(y, output, static_cast<double>(maximum) * 1e-4);
+            if (i >= 2048) ASSERT_TRUE(std::isfinite(output));
+        }
+        EXPECT_NEAR(0.125f, output, 1e-3f);
+    }
+}
+
+TEST(BiquadGolden, InvalidInnovationsPreserveFiniteHistory) {
+    const auto c = harken::MakeLowShelf(kRate, 1000.0f, 1.0f, 48.0f);
+    const float faults[] = {std::numeric_limits<float>::quiet_NaN(),
+        std::numeric_limits<float>::infinity(),
+        -std::numeric_limits<float>::infinity()};
+    for (float seed : {0.125f, (std::numeric_limits<float>::max)()}) {
+        for (float fault : faults) {
+            BiquadState state;
+            harken::SeedBiquadStateForDc(state, c, seed);
+            ASSERT_NE(0.0, state.Z1());
+            auto reference = state;
+            (void)harken::BiquadTick(c, reference, 0.0f);
+            const float output = harken::BiquadTick(c, state, fault);
+            if (std::isnan(fault)) EXPECT_TRUE(std::isnan(output));
+            else EXPECT_EQ(fault, output);
+            ASSERT_TRUE(std::isfinite(state.Z1()));
+            ASSERT_TRUE(std::isfinite(state.Z2()));
+            EXPECT_DOUBLE_EQ(reference.Z1(), state.Z1());
+            EXPECT_DOUBLE_EQ(reference.Z2(), state.Z2());
+            for (unsigned i = 0; i < 32; ++i) {
+                EXPECT_EQ(harken::BiquadTick(c, reference, 0.125f),
+                          harken::BiquadTick(c, state, 0.125f));
+            }
+        }
+    }
+}
+
+TEST(BiquadGolden, WideDcSeedSurvivesTransitionCopyAndReset) {
+    const auto c = harken::MakeLowShelf(kRate, 1000.0f, 1.0f, 48.0f);
+    const float input = (std::numeric_limits<float>::max)();
+    const float denominator = 1.0f + c.a1 + c.a2;
+    const double y = (static_cast<double>(c.b0) + c.b1 + c.b2) / denominator * input;
+    const double z2 = static_cast<double>(c.b2) * input - c.a2 * y;
+    const double z1 = static_cast<double>(c.b1) * input - c.a1 * y + z2;
+    BiquadState expected;
+    harken::SeedBiquadStateForDc(expected, c, input);
+    ASSERT_GT(std::abs(expected.Z1()), input);
+    EXPECT_DOUBLE_EQ(z1, expected.Z1());
+    EXPECT_DOUBLE_EQ(z2, expected.Z2());
+    harken::BiquadTransitionState<1> transition;
+    transition.lastInput[0] = input;
+    harken::StartBiquadTransition(transition, true, c, 0, 1);
+    BiquadState active[1];
+    BiquadCoeffs activeCoeffs;
+    bool enabled = false;
+    std::uint32_t tail = 0;
+    float sample = 0;
+    float* channels[] = {&sample};
+    harken::BiquadTick(c, expected, sample);
+    harken::BiquadProcessSmoothed(transition, enabled, activeCoeffs, active,
+                                 tail, channels, 1, 0, 1);
+    EXPECT_TRUE(enabled);
+    EXPECT_DOUBLE_EQ(expected.Z1(), active[0].Z1());
+    EXPECT_DOUBLE_EQ(expected.Z2(), active[0].Z2());
+    active[0].Reset();
+    EXPECT_EQ(0.0, active[0].Z1());
+    EXPECT_EQ(0.0, active[0].Z2());
+    EXPECT_EQ(0.0f, harken::BiquadTick(c, active[0], 0.0f));
 }
 
 } // namespace

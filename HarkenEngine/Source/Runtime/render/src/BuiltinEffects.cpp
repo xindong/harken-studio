@@ -142,8 +142,9 @@ void DelayProcess(void* state, float* const* channels,
         for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
             float* line = d->lineBase + static_cast<std::size_t>(ch) * lineFrames;
             float* s = channels[ch] + offset;
-            const float x = s[i];
-            const float delayed = line[r];
+            // Isolate invalid innovations without erasing valid echo history.
+            const float x = std::isfinite(s[i]) ? s[i] : 0.0f;
+            const float delayed = std::isfinite(line[r]) ? line[r] : 0.0f;
             float mixed = d->dry * x + d->wet * delayed;
             if (!std::isfinite(mixed)) {
                 // Opposite finite products can overflow before cancellation.
@@ -158,7 +159,7 @@ void DelayProcess(void* state, float* const* channels,
             // Soft-saturated feedback: an analog-style waveshaper in the loop
             // keeps it bounded even near unity feedback and, being non-linear,
             // makes chain order relative to the linear tone effect audible.
-            line[w] = x + fb * std::tanh(delayed);
+            line[w] = fb == 0.0f ? x : x + fb * std::tanh(delayed);
         }
         w = (w + 1 == lineFrames) ? 0u : w + 1;
     }

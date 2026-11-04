@@ -121,11 +121,20 @@ void WaveformRenderer::render(QPainter& painter,
     uint32_t numPeaks = data.numPeaks;
     uint32_t numCh = data.numChannels;
     const double dataFrames = std::round(data.durationSec * data.sampleRate);
+    double startFrame = options.startFrame;
+    double frameCount = options.frameCount;
+    if (frameCount <= 0.0 && options.sourceView
+        && options.sourceExtent == WaveformSourceExtent::Trimmed) {
+        startFrame = double(options.sourceView->startFrame()) - options.dataFrameOrigin;
+        frameCount = double(options.sourceView->endFrame() - options.sourceView->startFrame());
+        if (frameCount <= 0.0)
+            return;
+    }
     if (options.sampleCurve && data.samplesPerPeak == 1 && dataFrames == numPeaks
-        && options.frameCount > 0.0 && options.frameCount < w) {
-        const int first = std::max(0, static_cast<int>(std::floor(options.startFrame)));
+        && frameCount > 0.0 && frameCount < w) {
+        const int first = std::max(0, static_cast<int>(std::floor(startFrame)));
         const int last = std::min(static_cast<int>(numPeaks) - 1,
-            static_cast<int>(std::ceil(options.startFrame + options.frameCount)));
+            static_cast<int>(std::ceil(startFrame + frameCount)));
         const uint32_t channel = static_cast<uint32_t>(std::max(0, rc.ch));
         const QColor color = options.accentColor.isValid()
             ? options.accentColor : style.staticMode.peak;
@@ -141,14 +150,16 @@ void WaveformRenderer::render(QPainter& painter,
                     sample += data.peaks[ch * numPeaks * 2 + frame * 2];
                 sample /= numCh;
             }
-            const QPointF point(rect.left() + (frame - options.startFrame)
-                                    / options.frameCount * std::max(1, w - 1),
-                                centerY - offset(sample));
+            const double gain = options.sourceView
+                ? options.sourceView->gainAtFrame(options.dataFrameOrigin + frame) : 1.0;
+            const QPointF point(rect.left() + (frame - startFrame)
+                                    / frameCount * std::max(1, w - 1),
+                                centerY - offset(sample * gain));
             if (frame == first)
                 path.moveTo(point);
             else
                 path.lineTo(point);
-            if (options.frameCount * 5 < w) {
+            if (frameCount * 5 < w) {
                 painter.setBrush(color);
                 painter.drawEllipse(point, 2.0, 2.0);
             }
@@ -172,11 +183,11 @@ void WaveformRenderer::render(QPainter& painter,
         effectiveMode = WaveColorMode::Static;
 
     for (int x = 0; x < w; ++x) {
-        const double peakStartF = options.frameCount > 0.0
-            ? peakAtFrame(options.startFrame + double(x) / w * options.frameCount)
+        const double peakStartF = frameCount > 0.0
+            ? peakAtFrame(startFrame + double(x) / w * frameCount)
             : static_cast<float>(x) / w * numPeaks;
-        const double peakEndF = options.frameCount > 0.0
-            ? peakAtFrame(options.startFrame + double(x + 1) / w * options.frameCount)
+        const double peakEndF = frameCount > 0.0
+            ? peakAtFrame(startFrame + double(x + 1) / w * frameCount)
             : static_cast<float>(x + 1) / w * numPeaks;
         int peakStart = std::max(0, static_cast<int>(peakStartF));
         int peakEnd = std::clamp(static_cast<int>(std::ceil(peakEndF)), 1, static_cast<int>(numPeaks));
@@ -255,8 +266,13 @@ void WaveformRenderer::render(QPainter& painter,
             }
         }
 
-        int yMax = centerY - static_cast<int>(offset(pixelMax));
-        int yMin = centerY - static_cast<int>(offset(pixelMin));
+        const double frame = frameCount > 0.0
+            ? startFrame + double(x) / std::max(1, w - 1) * frameCount
+            : double(x) / std::max(1, w - 1) * dataFrames;
+        const double gain = options.sourceView
+            ? options.sourceView->gainAtFrame(options.dataFrameOrigin + frame) : 1.0;
+        int yMax = centerY - static_cast<int>(offset(pixelMax * gain));
+        int yMin = centerY - static_cast<int>(offset(pixelMin * gain));
         int barH = std::max(1, yMin - yMax);
 
         QColor col;
@@ -285,8 +301,10 @@ void WaveformRenderer::render(QPainter& painter,
                 break;
 
             case WaveColorMode::ColorMap: {
-                float normTop = static_cast<float>(yMax - rect.y()) / static_cast<float>(h);
-                float normBot = static_cast<float>(yMin - rect.y()) / static_cast<float>(h);
+                float normTop = static_cast<float>(centerY - static_cast<int>(offset(pixelMax)) - rect.y())
+                    / static_cast<float>(h);
+                float normBot = static_cast<float>(centerY - static_cast<int>(offset(pixelMin)) - rect.y())
+                    / static_cast<float>(h);
                 float normMid = (normTop + normBot) * 0.5f;
                 float distFromCenter = std::abs(normMid - 0.5f) * 2.0f;
                 const auto& cm = style.colorMapMode;

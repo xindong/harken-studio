@@ -19,16 +19,21 @@ using Property = harkenplayableproperties::PlayablePropertyIdV1;
 QVariant payloadField(const FieldGroupPayload& payload, Property field)
 {
     switch (field) {
-    case Property::MainOutputBusRef:
-        return fromFieldGroupGuid(std::get<MainOutputFieldGroup>(payload).mainOutputBusRef);
+    case Property::OutputBusRef:
+        return fromFieldGroupGuid(std::get<OutputFieldGroup>(payload).outputBusRef);
     case Property::OutputBusVolume:
-        return std::get<MainOutputFieldGroup>(payload).outputBusVolume;
+        return std::get<OutputFieldGroup>(payload).outputBusVolume;
     case Property::Sends: {
         QVariantList rows;
-        for (const auto& row : std::get<SendFieldGroup>(payload).sends)
-            rows.append(QVariantMap{
+        for (const auto& row : std::get<SendFieldGroup>(payload).sends) {
+            QVariantMap entry{
                 {QStringLiteral("targetBusID"), fromFieldGroupGuid(row.targetBusID)},
-                {QStringLiteral("sendLevel"), row.sendLevel}});
+                {QStringLiteral("sendLevel"), row.sendLevel},
+                {QStringLiteral("mode"), static_cast<int>(row.mode)}};
+            if (!row.modeVolumesDb.empty())
+                entry.insert(QStringLiteral("modeVolumes"), sendModeVolumesJson(row.modeVolumesDb).toVariantMap());
+            rows.append(entry);
+        }
         return rows;
     }
     case Property::SpatialPanning:

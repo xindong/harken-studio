@@ -390,9 +390,25 @@ struct BiquadParameterGlide {
 
 // Per-channel filter memory (transposed direct form II).
 struct BiquadState {
-    float z1 = 0.0f, z2 = 0.0f;
+    struct FloatMemory { float z1, z2; };
+    struct WideMemory { double z1, z2; };
+    // Exactly one representation is alive. Keep both alternatives trivial so
+    // assignment starts the selected union member's lifetime when switching.
+    union Memory { FloatMemory normal{}; WideMemory extended; } memory;
+    bool wide = false;
 
-    void Reset() { z1 = z2 = 0.0f; }
+    double Z1() const { return wide ? memory.extended.z1 : memory.normal.z1; }
+    double Z2() const { return wide ? memory.extended.z2 : memory.normal.z2; }
+    void SetFloat(float z1, float z2) { memory.normal = {z1, z2}; wide = false; }
+    void Set(double z1, double z2) {
+        if (std::fabs(z1) <= (std::numeric_limits<float>::max)() &&
+            std::fabs(z2) <= (std::numeric_limits<float>::max)()) {
+            SetFloat(static_cast<float>(z1), static_cast<float>(z2));
+        } else {
+            memory.extended = {z1, z2}; wide = true;
+        }
+    }
+    void Reset() { SetFloat(0.0f, 0.0f); }
 };
 
 inline float BiquadTick(const BiquadCoeffs& c, BiquadState& s, float x);
@@ -421,6 +437,14 @@ inline bool BiquadResultFitsFloat(double value) {
     return std::fabs(value) <= (std::numeric_limits<float>::max)();
 }
 
+inline float BiquadOutput(double value) {
+    if (value > (std::numeric_limits<float>::max)())
+        return std::numeric_limits<float>::infinity();
+    if (value < -(std::numeric_limits<float>::max)())
+        return -std::numeric_limits<float>::infinity();
+    return static_cast<float>(value);
+}
+
 inline void SeedBiquadStateForDc(BiquadState& state,
                                  const BiquadCoeffs& coeffs, float input) {
     const float denominator = 1.0f + coeffs.a1 + coeffs.a2;
@@ -435,7 +459,8 @@ inline void SeedBiquadStateForDc(BiquadState& state,
     const float z1 = coeffs.b1 * input - coeffs.a1 * output + z2;
     if (!std::isfinite(output) || !std::isfinite(z1) || !std::isfinite(z2)) {
         // Large products can overflow before cancellation even when the
-        // steady-state output and both feedback values fit in float.
+        // steady-state history remains finite. Preserve wider feedback when
+        // its magnitude cannot yet be represented by float.
         const double wideOutput =
             (static_cast<double>(coeffs.b0) + coeffs.b1 + coeffs.b2) /
             denominator * input;
@@ -443,17 +468,15 @@ inline void SeedBiquadStateForDc(BiquadState& state,
                               coeffs.a2 * wideOutput;
         const double wideZ1 = static_cast<double>(coeffs.b1) * input -
                               coeffs.a1 * wideOutput + wideZ2;
-        if (BiquadResultFitsFloat(wideOutput) && BiquadResultFitsFloat(wideZ1) &&
-            BiquadResultFitsFloat(wideZ2)) {
-            state.z1 = static_cast<float>(wideZ1);
-            state.z2 = static_cast<float>(wideZ2);
+        if (std::isfinite(wideOutput) && std::isfinite(wideZ1) &&
+            std::isfinite(wideZ2)) {
+            state.Set(wideZ1, wideZ2);
             return;
         }
         state.Reset();
         return;
     }
-    state.z1 = z1;
-    state.z2 = z2;
+    state.SetFloat(z1, z2);
 }
 
 inline std::uint32_t BiquadSmoothingFrames(std::uint32_t sampleRate) {
@@ -695,26 +718,37 @@ inline void BiquadProcessSmoothed(
     }
 }
 
+// Keep the exceptional recurrence out of the ordinary per-sample loop.
+#if defined(_MSC_VER)
+__declspec(noinline)
+#elif defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+inline float BiquadTickWide(const BiquadCoeffs& c, BiquadState& s, float x) {
+    if (!std::isfinite(x)) {
+        // Advance the valid history without admitting an invalid innovation.
+        // Keep this sample visible to the existing output-boundary protection.
+        (void)BiquadTick(c, s, 0.0f);
+        return x;
+    }
+    const double y = static_cast<double>(c.b0) * x + s.Z1();
+    const double z1 = static_cast<double>(c.b1) * x - c.a1 * y + s.Z2();
+    const double z2 = static_cast<double>(c.b2) * x - c.a2 * y;
+    s.Set(z1, z2);
+    return BiquadOutput(y);
+}
+
 inline float BiquadTick(const BiquadCoeffs& c, BiquadState& s, float x) {
-    float y = c.b0 * x + s.z1;
-    float z1 = c.b1 * x - c.a1 * y + s.z2;
-    float z2 = c.b2 * x - c.a2 * y;
-    if (!std::isfinite(y) || !std::isfinite(z1) || !std::isfinite(z2)) {
-        // Retry from the original state, preserving the normal float path's
-        // rounding. Do not clamp or reset genuinely unrepresentable signals.
-        const double wideY = static_cast<double>(c.b0) * x + s.z1;
-        const double wideZ1 = static_cast<double>(c.b1) * x - c.a1 * wideY + s.z2;
-        const double wideZ2 = static_cast<double>(c.b2) * x - c.a2 * wideY;
-        if (BiquadResultFitsFloat(wideY) && BiquadResultFitsFloat(wideZ1) &&
-            BiquadResultFitsFloat(wideZ2)) {
-            y = static_cast<float>(wideY);
-            z1 = static_cast<float>(wideZ1);
-            z2 = static_cast<float>(wideZ2);
+    if (!s.wide) {
+        const float y = c.b0 * x + s.memory.normal.z1;
+        const float z1 = c.b1 * x - c.a1 * y + s.memory.normal.z2;
+        const float z2 = c.b2 * x - c.a2 * y;
+        if (std::isfinite(y) && std::isfinite(z1) && std::isfinite(z2)) {
+            s.memory.normal = {z1, z2};
+            return y;
         }
     }
-    s.z1 = z1;
-    s.z2 = z2;
-    return y;
+    return BiquadTickWide(c, s, x);
 }
 
 inline void BiquadProcess(const BiquadCoeffs& c, BiquadState& s, float* buffer,

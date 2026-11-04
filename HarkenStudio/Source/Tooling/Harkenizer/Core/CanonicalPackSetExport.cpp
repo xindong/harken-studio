@@ -1191,10 +1191,10 @@ bool prepareOwnedPayload(harkenstudiobuild::PlayablePropertyPayloadViewV1* paylo
 {
     if (payload == nullptr)
         return true;
-    constexpr auto kMainOutputSlot =
-        static_cast<std::size_t>(harkenstudiobuild::playableproperties::PlayablePropertyIdV1::MainOutputBusRef)
+    constexpr auto kOutputSlot =
+        static_cast<std::size_t>(harkenstudiobuild::playableproperties::PlayablePropertyIdV1::OutputBusRef)
         - 1;
-    const auto mainOutput = payload->values[kMainOutputSlot].objectId;
+    const auto output = payload->values[kOutputSlot].objectId;
     if (payload->sendCount == 0 || payload->sends == nullptr)
         return true;
     if (ownedSends == nullptr) {
@@ -1204,11 +1204,11 @@ bool prepareOwnedPayload(harkenstudiobuild::PlayablePropertyPayloadViewV1* paylo
     }
     ownedSends->assign(payload->sends, payload->sends + payload->sendCount);
     for (auto& send : *ownedSends) {
-        if (send.targetBusId == mainOutput) {
+        if (send.targetBusId == output) {
             if (error) {
                 *error = QStringLiteral(
-                    "Send target equals MainOutput (%1); export refuses send==MainOutput")
-                    .arg(VNX::objectIdString(mainOutput));
+                    "Send target equals Output (%1); export refuses send==Output")
+                    .arg(VNX::objectIdString(output));
             }
             return false;
         }

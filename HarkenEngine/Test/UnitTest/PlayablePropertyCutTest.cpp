@@ -31,7 +31,7 @@ void SetU64(harken::PlayablePropertyPayloadViewV1& payload,
             PropertyId id, std::uint64_t value) {
     payload.presentMask |= UINT64_C(1) << Slot(id);
     payload.values[Slot(id)].objectId =
-        id == PropertyId::MainOutputBusRef && value == 1
+        id == PropertyId::OutputBusRef && value == 1
             ? VN_BUS_MASTER : harkentest::ObjectId(value);
 }
 
@@ -142,7 +142,7 @@ struct WorldFixture {
         properties[3].organizationLayerAncestors = rootLayers.data();
         SetF32(properties[3].payload, PropertyId::Volume, 3.0f);
         SetF32(properties[3].payload, PropertyId::Pitch, 2000.0f);
-        SetU64(properties[3].payload, PropertyId::MainOutputBusRef, 100);
+        SetU64(properties[3].payload, PropertyId::OutputBusRef, 100);
         SetF32(properties[3].payload, PropertyId::SpatialPanning, 0.1f);
         properties[3].payload.presentMask |=
             UINT64_C(1) << Slot(PropertyId::Sends);
@@ -168,7 +168,7 @@ struct WorldFixture {
         SetF32(properties[5].payload, PropertyId::Pitch, 6000.0f);
         SetF32(properties[5].payload, PropertyId::SpatialPanning, 0.0f);
         SetU32(properties[5].payload, PropertyId::StreamingMode, 1);
-        SetU64(properties[5].payload, PropertyId::MainOutputBusRef, 200);
+        SetU64(properties[5].payload, PropertyId::OutputBusRef, 200);
 
         occurrences[0].parentKind =
             harken::playableproperties::ContentPropertyKindV1::Container;
@@ -247,7 +247,7 @@ TEST(PlayablePropertyCut, FoldsTheActualPathAndAppliesRootLayersOnce) {
     EXPECT_FLOAT_EQ(2.0f, cut.makeUpGainDb);
     EXPECT_EQ(cut.loopCount, 1u);
     EXPECT_EQ(1u, cut.streamingMode);
-    EXPECT_EQ(harkentest::ObjectId(200u), cut.mainOutputBusRef);
+    EXPECT_EQ(harkentest::ObjectId(200u), cut.outputBusRef);
     EXPECT_FLOAT_EQ(0.0f, cut.spatial.panning);
     EXPECT_FLOAT_EQ(0.75f, cut.spatial.spread);
     EXPECT_TRUE(cut.spatial.is3DEnabled);
@@ -259,7 +259,7 @@ TEST(PlayablePropertyCut, FoldsTheActualPathAndAppliesRootLayersOnce) {
     EXPECT_EQ(0u, cut.effectNodeCount);
 }
 
-TEST(PlayablePropertyCut, MainOutputComesFromTheCompleteLeafSnapshot) {
+TEST(PlayablePropertyCut, OutputComesFromTheCompleteLeafSnapshot) {
     WorldFixture fixture;
     SetF32(fixture.properties[0].payload, PropertyId::OutputBusVolume, -12.0f);
     SetF32(fixture.properties[3].payload, PropertyId::OutputBusVolume, -6.0f);
@@ -273,12 +273,12 @@ TEST(PlayablePropertyCut, MainOutputComesFromTheCompleteLeafSnapshot) {
     ASSERT_EQ(harken::ResolvedPlayablePropertyCutStatusV1::Ok, resolve());
     EXPECT_FLOAT_EQ(-3.0f, storage.View().outputBusVolumeDb);
     EXPECT_FLOAT_EQ(28.0f, storage.View().volumeDb);
-    EXPECT_EQ(harkentest::ObjectId(200u), storage.View().mainOutputBusRef);
+    EXPECT_EQ(harkentest::ObjectId(200u), storage.View().outputBusRef);
 
     fixture.properties[5].payload.presentMask &=
         ~(UINT64_C(1) << Slot(PropertyId::OutputBusVolume));
     EXPECT_EQ(harken::ResolvedPlayablePropertyCutStatusV1::InvalidInput, resolve());
-    EXPECT_EQ(harkentest::ObjectId(200u), storage.View().mainOutputBusRef);
+    EXPECT_EQ(harkentest::ObjectId(200u), storage.View().outputBusRef);
     EXPECT_FLOAT_EQ(-3.0f, storage.View().outputBusVolumeDb);
 }
 
@@ -412,7 +412,7 @@ TEST(PlayablePropertyCut, GroupsStreamingAndEffectsUseOnlyTheLeafDefinition) {
     SetF32(parent.payload, PropertyId::Volume, -6.0f);
     SetU32(parent.payload, PropertyId::LoopCount, 4);
     SetU32(parent.payload, PropertyId::StreamingMode, 1);
-    SetU64(parent.payload, PropertyId::MainOutputBusRef, 20);
+    SetU64(parent.payload, PropertyId::OutputBusRef, 20);
     SetF32(parent.payload, PropertyId::SpatialPanning, 0.5f);
     SetF32(parent.payload, PropertyId::SpatialSpread, 25.0f);
     SetU32(parent.payload, PropertyId::SpatialIs3DEnabled, 1);
@@ -435,7 +435,7 @@ TEST(PlayablePropertyCut, GroupsStreamingAndEffectsUseOnlyTheLeafDefinition) {
     ASSERT_TRUE(storage.Reset({}));
     ASSERT_EQ(harken::ResolvedPlayablePropertyCutStatusV1::Ok,
               storage.Resolve(world, childRef, nullptr, 0));
-    EXPECT_EQ(VN_BUS_MASTER, storage.View().mainOutputBusRef);
+    EXPECT_EQ(VN_BUS_MASTER, storage.View().outputBusRef);
     EXPECT_FLOAT_EQ(0.0f, storage.View().spatial.panning);
     EXPECT_FLOAT_EQ(0.0f, storage.View().spatial.spread);
     EXPECT_FALSE(storage.View().spatial.is3DEnabled);
@@ -447,7 +447,7 @@ TEST(PlayablePropertyCut, GroupsStreamingAndEffectsUseOnlyTheLeafDefinition) {
 
     SetF32(child.payload, PropertyId::Volume, -3.0f);
     SetU32(child.payload, PropertyId::StreamingMode, 0);
-    SetU64(child.payload, PropertyId::MainOutputBusRef, 1);
+    SetU64(child.payload, PropertyId::OutputBusRef, 1);
     SetF32(child.payload, PropertyId::SpatialPanning, 0.0f);
     SetF32(child.payload, PropertyId::SpatialSpread, 0.0f);
     SetU32(child.payload, PropertyId::SpatialIs3DEnabled, 0);
@@ -460,7 +460,7 @@ TEST(PlayablePropertyCut, GroupsStreamingAndEffectsUseOnlyTheLeafDefinition) {
               storage.Resolve(world, childRef, nullptr, 0));
     EXPECT_FLOAT_EQ(-9.0f, storage.View().volumeDb);
     EXPECT_EQ(0u, storage.View().streamingMode);
-    EXPECT_EQ(VN_BUS_MASTER, storage.View().mainOutputBusRef);
+    EXPECT_EQ(VN_BUS_MASTER, storage.View().outputBusRef);
     EXPECT_FLOAT_EQ(0.0f, storage.View().spatial.panning);
     EXPECT_FLOAT_EQ(0.0f, storage.View().spatial.spread);
     EXPECT_FALSE(storage.View().spatial.is3DEnabled);
@@ -544,11 +544,11 @@ TEST(PlayablePropertyCut, SegmentTracksWithTheSameOrdinalResolveDistinctLeafSnap
         Property(Kind::Sound, firstSound), Property(Kind::Sound, secondSound),
         Property(Kind::Track, firstTrack), Property(Kind::Track, secondTrack),
         Property(Kind::Segment, root)};
-    SetU64(properties[0].payload, PropertyId::MainOutputBusRef, 100);
+    SetU64(properties[0].payload, PropertyId::OutputBusRef, 100);
     SetF32(properties[0].payload, PropertyId::OutputBusVolume, -3.0f);
     SetF32(properties[0].payload, PropertyId::SpatialPanning, -0.5f);
     SetU64(properties[0].payload, PropertyId::SpatialAttenuationRef, 300);
-    SetU64(properties[1].payload, PropertyId::MainOutputBusRef, 200);
+    SetU64(properties[1].payload, PropertyId::OutputBusRef, 200);
     SetF32(properties[1].payload, PropertyId::OutputBusVolume, -9.0f);
     SetF32(properties[1].payload, PropertyId::SpatialPanning, 0.5f);
     SetU64(properties[1].payload, PropertyId::SpatialAttenuationRef, 400);
@@ -602,7 +602,7 @@ TEST(PlayablePropertyCut, SegmentTracksWithTheSameOrdinalResolveDistinctLeafSnap
     ASSERT_EQ(harken::ResolvedPlayablePropertyCutStatusV1::Ok,
               storage.Resolve(world, root, &ordinal, 1, &trackId));
     EXPECT_EQ(firstSound.stableId, storage.View().leaf.stableId);
-    EXPECT_EQ(harkentest::ObjectId(100u), storage.View().mainOutputBusRef);
+    EXPECT_EQ(harkentest::ObjectId(100u), storage.View().outputBusRef);
     EXPECT_FLOAT_EQ(-3.0f, storage.View().outputBusVolumeDb);
     EXPECT_FLOAT_EQ(-0.5f, storage.View().spatial.panning);
     EXPECT_EQ(harkentest::ObjectId(300u), storage.View().spatial.attenuationRef);
@@ -611,7 +611,7 @@ TEST(PlayablePropertyCut, SegmentTracksWithTheSameOrdinalResolveDistinctLeafSnap
     ASSERT_EQ(harken::ResolvedPlayablePropertyCutStatusV1::Ok,
               storage.Resolve(world, root, &ordinal, 1, &trackId));
     EXPECT_EQ(secondSound.stableId, storage.View().leaf.stableId);
-    EXPECT_EQ(harkentest::ObjectId(200u), storage.View().mainOutputBusRef);
+    EXPECT_EQ(harkentest::ObjectId(200u), storage.View().outputBusRef);
     EXPECT_FLOAT_EQ(-9.0f, storage.View().outputBusVolumeDb);
     EXPECT_FLOAT_EQ(0.5f, storage.View().spatial.panning);
     EXPECT_EQ(harkentest::ObjectId(400u), storage.View().spatial.attenuationRef);

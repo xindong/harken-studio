@@ -29,6 +29,19 @@ float BlockCoeff(std::uint32_t blockFrames, std::uint32_t sampleRate,
         std::exp(-static_cast<double>(blockFrames) / tauFrames));
 }
 
+void AdvanceEnvelope(MeterSystem::Probe& probe, float peak) noexcept {
+    // Bus taps precede device sanitization. An overflowing audio block must
+    // not poison the detector history or its binding consumers with NaN.
+    // Retain the last valid level until a finite measurement arrives.
+    if (!std::isfinite(peak)) {
+        return;
+    }
+    const float coeff = peak > probe.envelope ? probe.attackCoeff
+                                              : probe.releaseCoeff;
+    // Keep the finite trajectory's float arithmetic and rounding unchanged.
+    probe.envelope = peak + (probe.envelope - peak) * coeff;
+}
+
 } // namespace
 
 MeterSystem::MeterSystem(std::uint32_t maxProbes, std::uint32_t blockFrames,
@@ -217,13 +230,7 @@ std::uint32_t MeterSystem::DrainUpTo(MeterBlockRing& ring,
                 generations[bus] != probe.identity.sourceBusGeneration) {
                 continue;
             }
-            const float peak = tapRows[probe.identity.tap][bus];
-            const float coeff = peak > probe.envelope ? probe.attackCoeff
-                                                      : probe.releaseCoeff;
-            // env moves toward the peak, keeping coeff of its distance —
-            // float arithmetic throughout so the closed-form goldens
-            // reproduce the trajectory bit-exactly.
-            probe.envelope = peak + (probe.envelope - peak) * coeff;
+            AdvanceEnvelope(probe, tapRows[probe.identity.tap][bus]);
         }
         ring.PopFront();
         ++drained;
@@ -277,11 +284,7 @@ std::uint32_t MeterSystem::DrainUpTo(MeterBlockRing& ring,
                         probe.identity.sourceBusGeneration) {
                     continue;
                 }
-                const float peak = overflowScratch_[lane];
-                const float coeff = peak > probe.envelope
-                                        ? probe.attackCoeff
-                                        : probe.releaseCoeff;
-                probe.envelope = peak + (probe.envelope - peak) * coeff;
+                AdvanceEnvelope(probe, overflowScratch_[lane]);
             }
             ++drained;
             // The watermark takes the PRE-take counter read: a merge

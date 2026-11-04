@@ -67,7 +67,11 @@ inline float RolloffGain(std::uint32_t rolloff, float d, float dmin,
         break;
     }
     case VN_ROLLOFF_LOGARITHMIC:
-        g = 1.0f - std::log(d / dmin) / std::log(dmax / dmin);
+        if (d <= dmin) return 1.0f;
+        if (d >= dmax) return 0.0f;
+        g = static_cast<float>(1.0 -
+            std::log(static_cast<double>(d) / dmin) /
+            std::log(static_cast<double>(dmax) / dmin));
         break;
     default:
         break;

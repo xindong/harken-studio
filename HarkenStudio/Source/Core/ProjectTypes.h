@@ -94,22 +94,58 @@ enum class ProjectItemType {
     Attenuation = 9
 };
 
+using SendMode = harkenprojectschema::SendMode;
+
+inline QJsonObject sendModeVolumesJson(const std::map<SendMode, float>& volumes)
+{
+    QJsonObject result;
+    for (const auto& [mode, volume] : volumes)
+        result.insert(QString::number(static_cast<int>(mode)), volume);
+    return result;
+}
+
+inline bool readSendModeVolumes(const QJsonValue& value, SendMode activeMode,
+                                std::map<SendMode, float>& volumes)
+{
+    if (!value.isUndefined() && !value.isObject()) return false;
+    std::map<SendMode, float> parsed;
+    const auto object = value.toObject();
+    for (auto it = object.begin(); it != object.end(); ++it) {
+        if (it.key() != QLatin1String("0") && it.key() != QLatin1String("1")
+            && it.key() != QLatin1String("2")) return false;
+        const auto mode = static_cast<SendMode>(it.key().toInt());
+        const double volume = it.value().toDouble();
+        if (mode == activeMode || !it.value().isDouble() || !std::isfinite(volume)
+            || volume < -96.0 || volume > 24.0) return false;
+        parsed.emplace(mode, static_cast<float>(volume));
+    }
+    volumes = std::move(parsed);
+    return true;
+}
+
 struct Send
 {
     uint32_t targetBusID = 0;
     float sendLevel = 0.0f;
+    SendMode mode = SendMode::Mix;
+    std::map<SendMode, float> modeVolumesDb{};
 
     QJsonObject toJson() const {
         QJsonObject obj;
         obj["targetBusID"] = static_cast<qint64>(targetBusID);
         obj["sendLevel"] = sendLevel;
+        obj["mode"] = static_cast<int>(mode);
+        if (!modeVolumesDb.empty()) obj["modeVolumes"] = sendModeVolumesJson(modeVolumesDb);
         return obj;
     }
 
-    static Send fromJson(const QJsonObject& obj) {
+    static std::optional<Send> fromJson(const QJsonObject& obj) {
         Send send;
         send.targetBusID = static_cast<uint32_t>(obj["targetBusID"].toInteger());
         send.sendLevel = static_cast<float>(obj["sendLevel"].toDouble());
+        send.mode = static_cast<SendMode>(obj["mode"].toInt());
+        if (!readSendModeVolumes(obj.value(QStringLiteral("modeVolumes")), send.mode, send.modeVolumesDb))
+            return std::nullopt;
         return send;
     }
 };
@@ -142,7 +178,9 @@ struct DeletedSubtreeRefLog {
     };
     struct SendRef {
         uint32_t ownerObjectID = 0;
-        Send  send;
+        PlatformScope scope;
+        PlayablePropertyStateV1 before;
+        PlayablePropertyStateV1 after;
     };
     struct OutputBusRef {
         uint32_t itemObjectID = 0;
@@ -209,12 +247,14 @@ struct SendViewInfo
     uint32_t targetBusID = 0;
     QString  targetBusName;
     float    sendLevel = 0.0f;
+    SendMode mode = SendMode::Mix;
 
     QJsonObject toJson() const {
         QJsonObject obj;
         obj["targetBusID"] = static_cast<qint64>(targetBusID);
         obj["targetBusName"] = targetBusName;
         obj["sendLevel"] = sendLevel;
+        obj["mode"] = static_cast<int>(mode);
         return obj;
     }
 };
@@ -230,6 +270,7 @@ struct IncomingSendInfo
     uint32_t fromBusID = 0;
     QString  fromName;
     float    level = 0.0f;
+    SendMode mode = SendMode::Mix;
 };
 
 struct BusChainNode
@@ -270,7 +311,7 @@ struct SignalChainView
 
     std::vector<QString> breadcrumb;
 
-    // Object that actually declares the main-output bus for `self`, resolved by
+    // Object that actually declares the output bus for `self`, resolved by
     // ReferenceSlotResolution; 0 when nothing along the chain declares one.
     uint32_t busSlotOwnerObjectID = 0;
 

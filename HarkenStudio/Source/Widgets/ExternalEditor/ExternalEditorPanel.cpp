@@ -220,6 +220,8 @@ void ExternalEditorPanel::commitSource(const SoundSourceDef& replacement)
     if (!source) return;
     source->trimStartFrame = replacement.trimStartFrame;
     source->trimEndFrame = replacement.trimEndFrame;
+    source->fadeIn = replacement.fadeIn;
+    source->fadeOut = replacement.fadeOut;
     source->rangeContentHash = replacement.rangeContentHash;
     ActionManager::instance().execute(QStringLiteral("set_item_property"),
         {{QStringLiteral("authoring_handle"), static_cast<qint64>(item->objectID)},

@@ -42,7 +42,7 @@
         "expanded": false,
         "fieldGroups": {
             "shared": {
-                "mainOutput": {
+                "output": {
                     "inherit": true
                 },
                 "send": {

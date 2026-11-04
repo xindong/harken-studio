@@ -265,7 +265,7 @@ private:
 
 bool objectReferenceRole(PlayablePropertyReferenceRoleV1 role)
 {
-    return role == PlayablePropertyReferenceRoleV1::MainOutputBus
+    return role == PlayablePropertyReferenceRoleV1::OutputBus
         || role == PlayablePropertyReferenceRoleV1::Attenuation;
 }
 
@@ -306,7 +306,7 @@ void applyDrawerMixedTooltip(QWidget* widget,
 bool itemMatchesReferenceRole(const ProjectItem& item,
                               PlayablePropertyReferenceRoleV1 role)
 {
-    return (role == PlayablePropertyReferenceRoleV1::MainOutputBus
+    return (role == PlayablePropertyReferenceRoleV1::OutputBus
             && item.type == ProjectItem::Type::Bus)
         || (role == PlayablePropertyReferenceRoleV1::Attenuation
             && item.type == ProjectItem::Type::Attenuation);
@@ -579,8 +579,20 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
                 return self && self->groupReferenceSelectable(field, candidate);
             };
             if (d.type == PropType::ObjectRef) descriptor.refSelectable = selectable;
-            for (auto& element : descriptor.elementSchema)
-                if (element.type == PropType::ObjectRef) element.refSelectable = selectable;
+            for (auto& element : descriptor.elementSchema) {
+                if (element.type != PropType::ObjectRef) continue;
+                if (d.field == QLatin1String("sends")) {
+                    element.refSelectable = {};
+                    element.refSelectableForElement =
+                        [self = QPointer<PropertyEditorEngine>(this), field = d.field]
+                        (uint32_t, const QVariantMap& row, uint32_t candidate) {
+                            return self && self->groupReferenceSelectable(field, candidate,
+                                static_cast<SendMode>(row.value(QStringLiteral("mode")).toInt()));
+                        };
+                } else {
+                    element.refSelectable = selectable;
+                }
+            }
         }
         control = drawer->build(descriptor, parent);
     }

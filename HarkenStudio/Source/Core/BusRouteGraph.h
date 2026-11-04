@@ -1,12 +1,30 @@
 
 #pragma once
 
+#include "ProjectTypes.h"
 #include <QHash>
 #include <QVector>
 
 #include <cstdint>
 
 namespace VNX {
+
+struct BusSendState
+{
+    QUuid bus;
+    PlatformScope scope;
+    PlayablePropertyStateV1 value;
+    bool operator==(const BusSendState&) const = default;
+};
+
+std::optional<BusSendState> captureBusSendState(const ProjectItem& bus, PlatformScope scope = {});
+bool restoreBusSendState(ProjectItem& bus, const BusSendState& state);
+std::optional<QJsonArray> busSendRows(const ProjectItem& bus, PlatformScope scope = {});
+std::optional<std::vector<Send>> effectiveBusSends(const ProjectItem& bus, PlatformScope scope = {});
+std::vector<PlatformScope> busRoutingScopes(const ProjectData& project);
+QString validateBusRouting(const ProjectData& project,
+    const std::vector<BusSendState>& replacements = {},
+    const QHash<QUuid, QUuid>& parentOverrides = {});
 
 // Snapshot of the bus flow graph: tree edges (child -> parent, the dry signal
 // path) plus send edges (from -> target, post-fader taps). Pure data, no

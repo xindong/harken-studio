@@ -414,8 +414,9 @@ public:
     // Cycle checks on the merged bus flow graph (parent chain + send edges).
     bool sendWouldCycle(uint32_t fromBusID, uint32_t toBusID) const;
     bool sendTargetStructurallySelectable(uint32_t srcObjectID,
-                                          uint32_t targetBusID) const;
-    bool sendTargetSelectable(uint32_t srcObjectID, uint32_t targetBusID) const;
+                                         uint32_t targetBusID, SendMode mode = SendMode::Mix) const;
+    bool sendTargetSelectable(uint32_t srcObjectID, uint32_t targetBusID,
+                              SendMode mode = SendMode::Mix) const;
     bool outputBusSelectable(uint32_t srcObjectID, uint32_t candidateBusID) const;
     bool busMoveWouldCycle(const ProjectItem* moved, const ProjectItem* newParent) const;
     bool validateMoveConstraints(const ProjectItem* item, const ProjectItem* newParent,
@@ -519,8 +520,10 @@ private:
     void propagateBusPitchLive(ProjectItem* busItem);
     bool setBusOutputBusVolumeInternal(uint32_t busID, float outputBusVolumeDb, const QObject* originator = nullptr);
 
-    bool upsertSendInternal(uint32_t srcObjectID, uint32_t targetBusID, float sendLevel);
-    bool removeSendInternal(uint32_t srcObjectID, uint32_t targetBusID);
+    bool upsertSendInternal(uint32_t srcObjectID, uint32_t targetBusID, float sendLevel,
+                            SendMode mode = SendMode::Mix);
+    bool removeSendInternal(uint32_t srcObjectID, uint32_t targetBusID,
+                            SendMode mode = SendMode::Mix);
     ProjectItem* findSendOwnerItem(uint32_t objectID) const;
     void forEachMixNodeItem(const std::function<void(ProjectItem*, VMixNode*)>& fn) const;
 

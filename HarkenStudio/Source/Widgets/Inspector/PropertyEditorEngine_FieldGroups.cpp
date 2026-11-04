@@ -95,7 +95,7 @@ void PropertyEditorEngine::buildGroupHeader(FieldGroupId group, CollapsibleSecti
     QString label = tr("Inherit");
     if (showRangeName) {
         switch (group) {
-        case FieldGroupId::MainOutput: label = tr("Inherit Main Output"); break;
+        case FieldGroupId::Output: label = tr("Inherit Output"); break;
         case FieldGroupId::Send: label = tr("Inherit Sends"); break;
         case FieldGroupId::SpatialRating: label = tr("Inherit Spatial Rating"); break;
         }
@@ -196,7 +196,11 @@ void PropertyEditorEngine::previewGroupSends(FieldBinding& binding, const QVaria
         const auto id = row.value(QStringLiteral("targetBusID")).toUInt(&valid);
         const auto* target = valid ? manager.findItemByObjectID(id) : nullptr;
         if (!target || target->type != ProjectItem::Type::Bus) return;
-        sends.sends.push_back({toFieldGroupGuid(target->guid), row.value(QStringLiteral("sendLevel")).toFloat()});
+        SendFieldGroupRow send{toFieldGroupGuid(target->guid), row.value(QStringLiteral("sendLevel")).toFloat(),
+            static_cast<SendMode>(row.value(QStringLiteral("mode")).toInt())};
+        if (!readSendModeVolumes(QJsonObject::fromVariantMap(row).value(QStringLiteral("modeVolumes")),
+                                 send.mode, send.modeVolumesDb)) return;
+        sends.sends.push_back(std::move(send));
     }
     const auto prepared = prepareFieldGroupEdit(*manager.currentProject(), {
         currentItem_->guid, FieldGroupId::Send, view.editScopes,
@@ -266,7 +270,7 @@ void PropertyEditorEngine::refreshFieldGroupPreview(
     if (updating_) return;
     std::map<FieldGroupScope, FieldGroupEffectiveSnapshot> snapshots;
     for (const auto& [group, binding] : groupBindings_) {
-        if (group != FieldGroupId::MainOutput && group != FieldGroupId::Send) continue;
+        if (group != FieldGroupId::Output && group != FieldGroupId::Send) continue;
         if (!binding.view.valid) continue;
         for (const auto& entry : binding.view.perScope) {
             if (snapshots.contains(entry.scope)) continue;
@@ -298,8 +302,8 @@ void PropertyEditorEngine::refreshFieldGroupPreview(
             const auto& definitions = snapshots.at(entry.scope).definitions;
             const auto effective = definitions.find(toFieldGroupGuid(currentItem_->guid));
             if (effective == definitions.end()) return;
-            entry.resolved.payload = *group == FieldGroupId::MainOutput
-                ? FieldGroupPayload(effective->second.mainOutput) : FieldGroupPayload(effective->second.send);
+            entry.resolved.payload = *group == FieldGroupId::Output
+                ? FieldGroupPayload(effective->second.output) : FieldGroupPayload(effective->second.send);
         }
         const auto value = groupFieldValue(binding.field, &view);
         const bool mixed = !value.isValid();
@@ -327,9 +331,14 @@ QVariant PropertyEditorEngine::groupFieldValue(
     if (*group == FieldGroupId::Send && view.editScopes.shared && view.fieldsEditable) {
         QVariantList rows;
         if (view.expectedBefore.send.shared.localHistory)
-            for (const auto& row : view.expectedBefore.send.shared.localHistory->sends)
-                rows.append(QVariantMap{{QStringLiteral("targetBusID"), fromFieldGroupGuid(row.targetBusID)},
-                    {QStringLiteral("sendLevel"), row.sendLevel}});
+            for (const auto& row : view.expectedBefore.send.shared.localHistory->sends) {
+                QVariantMap entry{{QStringLiteral("targetBusID"), fromFieldGroupGuid(row.targetBusID)},
+                    {QStringLiteral("sendLevel"), row.sendLevel},
+                    {QStringLiteral("mode"), static_cast<int>(row.mode)}};
+                if (!row.modeVolumesDb.empty())
+                    entry.insert(QStringLiteral("modeVolumes"), sendModeVolumesJson(row.modeVolumesDb).toVariantMap());
+                rows.append(entry);
+            }
         value.value = rows;
         value.uniform = true;
     }
@@ -346,7 +355,7 @@ QVariant PropertyEditorEngine::groupFieldValue(
     return rows;
 }
 
-bool PropertyEditorEngine::groupReferenceSelectable(const QString& field, uint32_t candidate) const
+bool PropertyEditorEngine::groupReferenceSelectable(const QString& field, uint32_t candidate, SendMode mode) const
 {
     const auto group = fieldGroup(field);
     const auto* target = ProjectManager::instance().findItemByObjectID(candidate);
@@ -354,18 +363,19 @@ bool PropertyEditorEngine::groupReferenceSelectable(const QString& field, uint32
     if (*group == FieldGroupId::SpatialRating)
         return target->type == ProjectItem::Type::Attenuation;
     if (target->type != ProjectItem::Type::Bus) return false;
-    const auto peer = groupBindings_.find(*group == FieldGroupId::MainOutput
-        ? FieldGroupId::Send : FieldGroupId::MainOutput);
+    const auto peer = groupBindings_.find(*group == FieldGroupId::Output
+        ? FieldGroupId::Send : FieldGroupId::Output);
     if (peer == groupBindings_.end() || !peer->second.view.valid) return false;
-    if (*group == FieldGroupId::Send) {
-        const auto mainOutput = peer->second.view.field(QStringLiteral("mainOutputBusRef"));
-        for (const auto& scope : mainOutput.perScope)
+    if (*group == FieldGroupId::Send && mode != SendMode::Sidechain) {
+        const auto output = peer->second.view.field(QStringLiteral("outputBusRef"));
+        for (const auto& scope : output.perScope)
             if (scope.second.toUuid() == target->guid) return false;
-    } else {
+    } else if (*group == FieldGroupId::Output) {
         const auto sends = peer->second.view.field(QStringLiteral("sends"));
         for (const auto& scope : sends.perScope)
             for (const auto& row : scope.second.toList())
-                if (row.toMap().value(QStringLiteral("targetBusID")).toUuid() == target->guid)
+                if (row.toMap().value(QStringLiteral("mode")).toInt() != static_cast<int>(SendMode::Sidechain)
+                    && row.toMap().value(QStringLiteral("targetBusID")).toUuid() == target->guid)
                     return false;
     }
     return true;
@@ -492,14 +502,18 @@ void PropertyEditorEngine::commitFieldChange(
             const auto row = entry.toMap();
             const auto ref = referenceActionValue(row.value(QStringLiteral("targetBusID")));
             if (!ref) return;
-            rows.append(QJsonObject{{QStringLiteral("targetBusID"), *ref},
-                {QStringLiteral("sendLevel"), QJsonValue::fromVariant(row.value(QStringLiteral("sendLevel")))}});
+            QJsonObject send{{QStringLiteral("targetBusID"), *ref},
+                {QStringLiteral("sendLevel"), QJsonValue::fromVariant(row.value(QStringLiteral("sendLevel")))},
+                {QStringLiteral("mode"), row.value(QStringLiteral("mode")).toInt()}};
+            if (row.contains(QStringLiteral("modeVolumes")))
+                send.insert(QStringLiteral("modeVolumes"), QJsonValue::fromVariant(row.value(QStringLiteral("modeVolumes"))));
+            rows.append(send);
         }
         action = QStringLiteral("replace_field_group_sends");
         args.insert(QStringLiteral("sends"), rows);
     } else {
         args.insert(QStringLiteral("field"), QString::fromLatin1(property->jsonKey));
-        if (property->referenceRole == harkenplayableproperties::PlayablePropertyReferenceRoleV1::MainOutputBus
+        if (property->referenceRole == harkenplayableproperties::PlayablePropertyReferenceRoleV1::OutputBus
             || property->referenceRole == harkenplayableproperties::PlayablePropertyReferenceRoleV1::Attenuation) {
             const auto ref = referenceActionValue(value);
             if (!ref) return;

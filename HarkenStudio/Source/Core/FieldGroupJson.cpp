@@ -135,12 +135,38 @@ bool ReadFieldValue(const JsonValue& value, std::vector<SendFieldGroupRow>& rows
     for (std::size_t index = 0; index < value.items.size(); ++index) {
         const auto& entry = value.items[index];
         const auto rowPath = path + "[" + std::to_string(index) + "]";
-        if (!CheckMembers(entry, rowPath, {"targetBusID", "sendLevel"},
+        if (!CheckMembers(entry, rowPath, {"targetBusID", "sendLevel", "mode", "modeVolumes"},
                           {"targetBusID", "sendLevel"}, error)) return false;
         SendFieldGroupRow row;
         if (!ReadGuid(*entry.Find("targetBusID"), row.targetBusID, rowPath + ".targetBusID", error)
             || !ReadFloat(*entry.Find("sendLevel"), row.sendLevel, rowPath + ".sendLevel", error))
             return false;
+        if (const auto* mode = entry.Find("mode")) {
+            unsigned parsed = 0;
+            const char* end = mode->text.data() + mode->text.size();
+            const auto converted = std::from_chars(mode->text.data(), end, parsed);
+            if (mode->kind != JsonValue::Kind::Number || converted.ec != std::errc{}
+                || converted.ptr != end
+                || (parsed != static_cast<unsigned>(harkenprojectschema::SendMode::Mix)
+                    && parsed != static_cast<unsigned>(harkenprojectschema::SendMode::Ducking)
+                    && parsed != static_cast<unsigned>(harkenprojectschema::SendMode::Sidechain)))
+                return Fail(error, rowPath + ".mode", "expected a send mode");
+            row.mode = static_cast<harkenprojectschema::SendMode>(parsed);
+        }
+        if (const auto* volumes = entry.Find("modeVolumes")) {
+            if (!CheckMembers(*volumes, rowPath + ".modeVolumes", {"0", "1", "2"}, {}, error))
+                return false;
+            for (const auto& [key, value] : volumes->members) {
+                const auto mode = static_cast<harkenprojectschema::SendMode>(key.front() - '0');
+                float volume = 0.0f;
+                if (mode == row.mode)
+                    return Fail(error, rowPath + ".modeVolumes." + key, "active mode uses sendLevel");
+                if (!ReadFloat(value, volume, rowPath + ".modeVolumes." + key, error)) return false;
+                if (volume < -96.0f || volume > 24.0f)
+                    return Fail(error, rowPath + ".modeVolumes." + key, "volume is outside [-96, 24]");
+                row.modeVolumesDb.emplace(mode, volume);
+            }
+        }
         rows.push_back(row);
     }
     return true;
@@ -159,6 +185,17 @@ void WriteFieldValue(JsonWriter& writer, const std::vector<SendFieldGroupRow>& r
         writer.ValueString(WriteGuid(row.targetBusID));
         writer.Key("sendLevel");
         WriteFloat(writer, row.sendLevel);
+        writer.Key("mode");
+        writer.ValueRawNumber(std::to_string(static_cast<unsigned>(row.mode)));
+        if (!row.modeVolumesDb.empty()) {
+            writer.Key("modeVolumes");
+            writer.BeginObject();
+            for (const auto& [mode, volume] : row.modeVolumesDb) {
+                writer.Key(std::to_string(static_cast<unsigned>(mode)).c_str());
+                WriteFloat(writer, volume);
+            }
+            writer.EndObject();
+        }
         writer.EndObject();
     }
     writer.EndArray();
@@ -325,7 +362,7 @@ bool CheckOccurrence(const JsonValue& value, const std::string& path,
         return Fail(error, path, "expected an object");
     for (const auto& [name, member] : value.members) {
         const std::string memberPath = path + "." + name;
-        if (name == "fieldGroups" || name == "sectionGroups" || name == "mainOutput" || name == "send"
+        if (name == "fieldGroups" || name == "sectionGroups" || name == "output" || name == "send"
             || name == "spatialRating"
             || name == "outputBusId" || name == "outputBusRef"
             || name == "outputBusOverride" || name == "overrideBits"
@@ -362,12 +399,12 @@ bool ReadFieldGroupsJson(const std::string& text,
     if (!CheckMembers(root, "fieldGroups", {"shared", "platforms"}, {"shared"}, error))
         return false;
     const auto& shared = *root.Find("shared");
-    if (!CheckMembers(shared, "fieldGroups.shared", {"mainOutput", "send", "spatialRating"},
-                      {"mainOutput", "send", "spatialRating"}, error))
+    if (!CheckMembers(shared, "fieldGroups.shared", {"output", "send", "spatialRating"},
+                      {"output", "send", "spatialRating"}, error))
         return false;
     DefinitionFieldGroups parsed;
-    if (!ReadState(*shared.Find("mainOutput"), parsed.mainOutput.shared,
-                   "fieldGroups.shared.mainOutput", error, true)
+    if (!ReadState(*shared.Find("output"), parsed.output.shared,
+                   "fieldGroups.shared.output", error, true)
         || !ReadState(*shared.Find("send"), parsed.send.shared,
                       "fieldGroups.shared.send", error, true)
         || !ReadState(*shared.Find("spatialRating"), parsed.spatialRating.shared,
@@ -385,8 +422,8 @@ bool ReadFieldGroupsJson(const std::string& text,
             if (!ReadGuid(identity, platform, path, error)) return false;
             if (harkenprojectschema::IsNull(platform) || WriteGuid(platform) != name)
                 return Fail(error, path, "expected a canonical non-null platform UUID");
-            if (!CheckMembers(value, path, {"mainOutput", "send", "spatialRating"}, {}, error)
-                || !ReadPlatformState(value, "mainOutput", platform, parsed.mainOutput, path, error)
+            if (!CheckMembers(value, path, {"output", "send", "spatialRating"}, {}, error)
+                || !ReadPlatformState(value, "output", platform, parsed.output, path, error)
                 || !ReadPlatformState(value, "send", platform, parsed.send, path, error)
                 || !ReadPlatformState(value, "spatialRating", platform, parsed.spatialRating, path, error))
                 return false;
@@ -407,25 +444,25 @@ bool WriteFieldGroupsJson(const DefinitionFieldGroups& groups,
     writer.BeginObject();
     writer.Key("shared");
     writer.BeginObject();
-    writer.Key("mainOutput");
-    WriteState(writer, groups.mainOutput.shared);
+    writer.Key("output");
+    WriteState(writer, groups.output.shared);
     writer.Key("send");
     WriteState(writer, groups.send.shared);
     writer.Key("spatialRating");
     WriteState(writer, groups.spatialRating.shared);
     writer.EndObject();
-    if (!groups.mainOutput.platforms.empty() || !groups.send.platforms.empty()
+    if (!groups.output.platforms.empty() || !groups.send.platforms.empty()
         || !groups.spatialRating.platforms.empty()) {
         writer.Key("platforms");
         writer.BeginObject();
         std::set<AuthoringGuid> platforms;
-        for (const auto& [platform, state] : groups.mainOutput.platforms) platforms.insert(platform);
+        for (const auto& [platform, state] : groups.output.platforms) platforms.insert(platform);
         for (const auto& [platform, state] : groups.send.platforms) platforms.insert(platform);
         for (const auto& [platform, state] : groups.spatialRating.platforms) platforms.insert(platform);
         for (const auto platform : platforms) {
             writer.Key(WriteGuid(platform).c_str());
             writer.BeginObject();
-            WritePlatformState(writer, "mainOutput", platform, groups.mainOutput);
+            WritePlatformState(writer, "output", platform, groups.output);
             WritePlatformState(writer, "send", platform, groups.send);
             WritePlatformState(writer, "spatialRating", platform, groups.spatialRating);
             writer.EndObject();

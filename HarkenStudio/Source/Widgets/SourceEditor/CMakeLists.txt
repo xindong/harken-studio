@@ -2,6 +2,7 @@ add_library(harken_editor_source_editor STATIC
     SourceEditorPanel.cpp
     SourceEditorPanel.h
     SourceEditorWaveformView.cpp
+    SourceEditorWaveformView_Fades.cpp
     SourceEditorWaveformView_Timeline.cpp
     SourceEditorWaveformView.h
     SourceEditorWidget.cpp
@@ -22,6 +23,7 @@ target_include_directories(harken_editor_source_editor PUBLIC
 target_link_libraries(harken_editor_source_editor PUBLIC
     harken_editor_foundation
     harken_editor_common
+    harken_editor_curve_editor
 )
 
 if(MSVC)

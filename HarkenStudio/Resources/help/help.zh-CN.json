@@ -58,23 +58,23 @@
       }
     },
     "mixnode.outputBusId": {
-      "title": "Main Output",
+      "title": "Target",
       "body": "接收当前总线输出的父总线。此处只读；在树中移动总线可更换父总线。"
     },
-    "mixnode.mainOutputBusRef": {
-      "title": "Output Bus",
-      "body": "接收此对象主输出的总线。勾选 Inherit 时，Output Bus 和 Output Volume 一起继承父级；取消后自行选择总线，不可留空。"
+    "mixnode.outputBusRef": {
+      "title": "Target",
+      "body": "接收此对象输出的总线。勾选 Inherit 时，Target 和 Volume 一起继承父级；取消后自行选择总线，不可留空。"
     },
     "mixnode.outputBusVolume": {
-      "title": "Output Volume",
-      "body": "主输出路由的增益，范围 -96～+24 dB，不影响 Sends。内容对象将此值与 Output Bus 一起继承，不与父级数值相加。",
+      "title": "Volume",
+      "body": "输出路由的增益，范围 -96～+24 dB，不影响 Sends。内容对象将此值与 Target 一起继承，不与父级数值相加。",
       "byType": {
         "Bus": "在 Bus 上，此值调整送往父总线的电平。"
       }
     },
     "mixnode.sends": {
       "title": "Sends",
-      "body": "在主输出之外增加发送路由。每条发送指定 Target 总线和 Volume（-96～+24 dB），同一目标只能出现一次。"
+      "body": "点击加号先选择 Mix、Ducking 或 Sidechain，再选择 Target 总线。Mix 合并音频，Ducking 定义通往避让检测端的路由，Sidechain 定义通往侧链接收端的辅助信号路由。三种模式的 Volume（-96～+24 dB）均控制发送的源信号增益；Ducking 中调节的是检测输入增益，并非目标衰减量。同一行的各 Mode 分别记忆 Volume，Target 共用；首次进入未配置的 Mode 沿用当前 Volume，切回时恢复上次值。同一目标在每个 Mode 中只能出现一次，冲突的 Mode 选项会禁用。Mix、Ducking 不能与 Output 指向同一目标，Sidechain 可以。本阶段试听与导出仅包含 Mix，Ducking、Sidechain 保留为编辑配置。"
     },
     "audio.loopCount": {
       "title": "Loop",
@@ -109,7 +109,7 @@
     },
     "bus.inputs": {
       "title": "Inputs",
-      "body": "进入此总线的主输出路由及其电平，只读。修改来源对象的 Output Bus 或 Output Volume；子总线的路由需通过在树中移动来调整。"
+      "body": "进入此总线的输出路由及其电平，只读。修改来源对象的 Target 或 Volume；子总线的路由需通过在树中移动来调整。"
     },
     "bus.receives": {
       "title": "Receives",

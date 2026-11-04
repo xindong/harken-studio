@@ -209,13 +209,14 @@ private:
         QUuid to;
         SignalPathEdgeKind kind;
         std::optional<QUuid> routingSource;
+        SendMode mode = SendMode::Mix;
         bool operator==(const PathEdgeKey&) const = default;
     };
 
     std::unordered_map<NodeKey, NodeItem*, NodeKeyHash> nodeMap_;
     struct WaveformNode {
         NodeItem* item = nullptr;
-        std::optional<WaveformFrameRange> range;
+        std::optional<SourceWaveformView> view;
     };
     QHash<QString, std::vector<WaveformNode>> waveformNodes_;
     std::vector<ConnectionPath*> edges_;
@@ -352,6 +353,7 @@ private:
     std::vector<SignalPathEndpoint> nodeDragSources_;
 
     bool evaluateConnect_(NodePin* source, NodePin* target, QString& reason, bool addSend = false) const;
+    std::optional<SignalPathEndpoint> pathEndpoint_(NodeItem* node) const;
     std::optional<SignalPathEndpoint> pathEndpoint_(NodePin* pin) const;
     NodeItem* connectTargetAt_(const QPoint& position, NodePin*& pin, bool nodeDrop = false) const;
     SignalPathConnectPlan prepareConnect_(NodePin* source, NodeItem* target, NodePin* targetPin, bool addSend) const;

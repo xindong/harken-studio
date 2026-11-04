@@ -17,6 +17,8 @@
 #include "harken/param/PropertyPublisher.h"
 
 #include <cstdint>
+#include <cmath>
+#include <limits>
 
 namespace harken {
 
@@ -170,20 +172,49 @@ inline CombineDomain DomainOfTarget(std::uint32_t targetId) {
     return CombineDomain::AddDb;
 }
 
+
+// Preserve ordinary float-step rounding, retaining a wider subtotal only when
+// finite contributions overflow float. The carrier must survive group storage
+// until final composition; this is not an arbitrary-precision summation.
+inline double AddFiniteContributions(double accumulated, double contribution) {
+    constexpr double maximum = std::numeric_limits<float>::max();
+    if (std::abs(accumulated) <= maximum && std::abs(contribution) <= maximum) {
+        const float sum = static_cast<float>(accumulated) + static_cast<float>(contribution);
+        if (std::isfinite(sum)) return sum;
+    }
+    const double sum = accumulated + contribution;
+    return std::abs(sum) <= maximum ? static_cast<double>(static_cast<float>(sum)) : sum;
+}
+
+// Unbounded targets retain their existing non-finite publication rejection.
+inline float NarrowResolvedValue(double value) {
+    constexpr double maximum = std::numeric_limits<float>::max();
+    if (value > maximum) return std::numeric_limits<float>::infinity();
+    if (value < -maximum) return -std::numeric_limits<float>::infinity();
+    return static_cast<float>(value);
+}
+
+// Keep the established float exp2 and product on ordinary contributions.
+inline double ScaleByOctaves(float base, double octaves) {
+    if (std::abs(octaves) <= std::numeric_limits<float>::max())
+        return base * std::exp2(static_cast<float>(octaves));
+    return static_cast<double>(base) * std::exp2(octaves);
+}
+
 // Clamps a RESOLVED per-voice value into the target's table-declared span
 // (contributions themselves stay unclamped, so a later opposing
 // contribution resolves normally). Rows without a clamp pass through
 // unchanged, as do unknown ids.
-inline float ClampResolvedTarget(std::uint32_t targetId, float value) {
+inline float ClampResolvedTarget(std::uint32_t targetId, double value) {
     if (targetId < kBuiltinTargetCount) {
         const TargetMeta& row = kTargetMetaTable[targetId];
         if (row.clamped) {
             return (value < row.clampMin)   ? row.clampMin
                    : (value > row.clampMax) ? row.clampMax
-                                            : value;
+                                            : NarrowResolvedValue(value);
         }
     }
-    return value;
+    return NarrowResolvedValue(value);
 }
 
 // Folds one more contribution into an accumulated value in the given
@@ -191,16 +222,16 @@ inline float ClampResolvedTarget(std::uint32_t targetId, float value) {
 // the more-restrictive (filters) or larger (width) value — commutative and
 // order-free by construction, which is what lets multiple bindings on one
 // target accumulate without arbitration.
-inline constexpr float CombineValue(CombineDomain domain, float accumulated,
-                                    float contribution) {
+inline double CombineValue(CombineDomain domain, double accumulated,
+                           double contribution) {
     switch (domain) {
     case CombineDomain::AddDb:
     case CombineDomain::AddCents:
     case CombineDomain::Add:
-        return accumulated + contribution;
+        return AddFiniteContributions(accumulated, contribution);
     case CombineDomain::AddLogHz:
     case CombineDomain::AddLogQ:
-        return accumulated + contribution;
+        return AddFiniteContributions(accumulated, contribution);
     case CombineDomain::MinHz:
         return contribution < accumulated ? contribution : accumulated;
     case CombineDomain::MaxHz:

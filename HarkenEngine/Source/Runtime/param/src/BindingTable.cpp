@@ -1502,7 +1502,7 @@ void BindingTable::EvaluateDirtyBusAttachments(const ParamSystem& params, BusTar
             if (m_projectionActive || !m_dependencies.CommitTarget(target, version)) ++cursor;
             continue;
         }
-        float accumulation = 0.0f;
+        double accumulation = 0.0;
         bool active = false;
         const auto* meta = FindTargetMeta(kTargetScopeBus, identity.target);
         for (auto token = m_dependencies.FirstContribution(target); token.Valid();

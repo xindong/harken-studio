@@ -3,6 +3,7 @@
 #include "Platform/PlatformPaths.h"
 
 #include <QDir>
+#include <QDebug>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
@@ -33,14 +34,21 @@ bool TransactionJournal::append(const QString& transactionId,
     entry[QStringLiteral("at")] = at.toUTC().toString(Qt::ISODateWithMs);
 
     const QString path = filePath();
-    if (!QDir().mkpath(QFileInfo(path).dir().path()))
+    const auto fail = [&](const QString& detail) {
+        qWarning().noquote() << "Cannot write transaction journal:" << path
+                            << transactionId << state << detail;
         return false;
+    };
+    if (!QDir().mkpath(QFileInfo(path).dir().path()))
+        return fail(QStringLiteral("Cannot create the journal directory"));
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Append))
-        return false;
+        return fail(file.errorString());
     const QByteArray line =
         QJsonDocument(entry).toJson(QJsonDocument::Compact) + QByteArrayLiteral("\n");
-    return file.write(line) == line.size();
+    if (file.write(line) != line.size() || !file.flush())
+        return fail(file.errorString());
+    return true;
 }
 
 QHash<QString, QString> TransactionJournal::lastStateByTransaction()

@@ -23,6 +23,7 @@ struct SignalPathSend
 {
     uint32_t targetBusID = 0;
     float sendLevel = 0.0f;
+    SendMode mode = SendMode::Mix;
 
     bool operator==(const SignalPathSend&) const = default;
 };
@@ -88,6 +89,7 @@ struct SignalPathEdge
     float sendLevel = 0.0f;
     std::vector<size_t> pathIndices;
     std::optional<SignalPathRoutingSource> routingSource;
+    SendMode mode = SendMode::Mix;
 };
 
 struct SignalPath

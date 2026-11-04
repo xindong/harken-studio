@@ -30,7 +30,7 @@ GroupState<Payload> Local(Payload payload)
 DefinitionFieldGroups LocalGroups(std::uint64_t bus, float volume)
 {
     DefinitionFieldGroups groups;
-    groups.mainOutput.shared = Local(MainOutputFieldGroup{G(bus), volume});
+    groups.output.shared = Local(OutputFieldGroup{G(bus), volume});
     groups.send.shared = Local(SendFieldGroup{{{G(bus + 1), volume}}});
     groups.spatialRating.shared = Local(
         SpatialRatingFieldGroup{0.5f, true, G(bus + 2), 2.0f});
@@ -60,7 +60,7 @@ TEST(FieldGroupResolution, CompleteTreeValidationRejectsMissingParentsAndDuplica
     const FieldGroupResolver duplicate(duplicateOwnership, kMaster);
     EXPECT_FALSE(duplicate.ok());
     EXPECT_TRUE(HasCode(duplicate.diagnostics(), Code::DuplicateDefinitionGuid));
-    EXPECT_FALSE(duplicate.Resolve(G(3), {}, Group::MainOutput).value);
+    EXPECT_FALSE(duplicate.Resolve(G(3), {}, Group::Output).value);
 }
 
 TEST(FieldGroupResolution, CyclesInvalidateTheWholeContextEvenWhenQueriedElsewhere)
@@ -78,7 +78,7 @@ TEST(FieldGroupResolution, CyclesInvalidateTheWholeContextEvenWhenQueriedElsewhe
         FieldGroupDefinitionView{G(1), ContentKind::Layer, G(1), &groups}};
     const FieldGroupResolver selfCycle(self, kMaster);
     EXPECT_TRUE(HasCode(selfCycle.diagnostics(), Code::ParentCycle));
-    EXPECT_FALSE(selfCycle.Resolve(G(1), {}, Group::MainOutput).value);
+    EXPECT_FALSE(selfCycle.Resolve(G(1), {}, Group::Output).value);
 }
 
 }

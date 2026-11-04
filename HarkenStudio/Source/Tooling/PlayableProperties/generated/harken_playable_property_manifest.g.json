@@ -112,12 +112,12 @@
       "combineRole": "nearestExplicit",
       "component": "mixnode",
       "id": 7,
-      "jsonKey": "mainOutputBusRef",
-      "name": "mainOutputBusRef",
+      "jsonKey": "outputBusRef",
+      "name": "outputBusRef",
       "phaseRole": "route",
       "present": "maskBit",
-      "referenceRole": "mainOutputBus",
-      "storageField": "mainOutputBusRef",
+      "referenceRole": "outputBus",
+      "storageField": "outputBusRef",
       "wire": "objectid"
     },
     {

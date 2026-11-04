@@ -26,6 +26,9 @@ namespace VNX {
 QPointF curveHandleRayIntoRect(const QPointF& anchor, const QPointF& direction,
                                double length, const QRectF& box);
 
+QPointF curveSnapHandleToAngle(const QPointF& anchor, const QPointF& desired,
+                              const QRectF& box);
+
 // Smooth-anchor predicate: both handle vectors longer than 1px and opposed
 // within 3 degrees. Derived from geometry only, never persisted.
 bool curveHandlesMirrorAligned(const QPointF& anchor, const QPointF& handleA,

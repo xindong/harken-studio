@@ -24,7 +24,7 @@ enum class PropertyCategory : uint8_t { Basic, Route, Spatial, Limitation };
 
 enum class PropertySection : uint8_t {
     None, Playback, Identity, Advanced, Source, Selection, Step, Dimension,
-    Label, Clip, Custom, MainOutput, Input, Send, Receive, Rating, PlaybackPriority
+    Label, Clip, Custom, Output, Input, Send, Receive, Rating, PlaybackPriority
 };
 
 struct EnumOption { QString text; QVariant value; };
@@ -99,6 +99,10 @@ struct PropertyDescriptor
     std::function<QVariant(const ProjectItem*)>        getItem;
     std::function<std::optional<FieldDomain>(const IComponent*)> domain;
     std::function<QString(const QVariantList&, int, const QString&)> validateElement;
+    QString listAddChoiceField;
+    std::function<bool(uint32_t, const QVariantMap&, uint32_t)> refSelectableForElement;
+    QString toolTip;
+    std::function<QVariantMap(const QVariantMap&, const QString&, const QVariant&)> editElement;
 };
 
 using PropertySchema = std::vector<PropertyDescriptor>;

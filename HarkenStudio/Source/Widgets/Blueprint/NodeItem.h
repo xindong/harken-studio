@@ -192,7 +192,7 @@ public:
     void setWaveformPeaks(const std::vector<float>& peaks);
 
     void setWaveformPeakData(std::shared_ptr<const WaveformPeakData> data,
-                             std::optional<WaveformFrameRange> range = {});
+                             std::optional<SourceWaveformView> view = {});
 
     float contentHeight() const { return height_; }
 
@@ -263,7 +263,7 @@ private:
     std::vector<float> waveformPeaks_;
 
     std::shared_ptr<const WaveformPeakData> waveformPeakData_;
-    std::optional<WaveformFrameRange> waveformRange_;
+    std::optional<SourceWaveformView> waveformView_;
 
     void updateContentHeight();
     void refreshContentVisibility_();

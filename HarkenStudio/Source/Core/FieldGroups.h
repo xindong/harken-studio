@@ -17,7 +17,7 @@ namespace VNX {
 using FieldGroupScope = std::optional<harkenprojectschema::AuthoringGuid>;
 
 enum class FieldGroupId : std::uint8_t {
-    MainOutput,
+    Output,
     Send,
     SpatialRating
 };
@@ -37,17 +37,19 @@ constexpr std::uint64_t FieldGroupFieldMask(harkenplayableproperties::PlayablePr
     return fields.bits;
 }
 
-struct MainOutputFieldGroup {
-    static constexpr auto groupId = FieldGroupId::MainOutput;
-    harkenprojectschema::AuthoringGuid mainOutputBusRef{};
+struct OutputFieldGroup {
+    static constexpr auto groupId = FieldGroupId::Output;
+    harkenprojectschema::AuthoringGuid outputBusRef{};
     float outputBusVolume = 0.0f;
 
-    bool operator==(const MainOutputFieldGroup&) const = default;
+    bool operator==(const OutputFieldGroup&) const = default;
 };
 
 struct SendFieldGroupRow {
     harkenprojectschema::AuthoringGuid targetBusID{};
     float sendLevel = 0.0f;
+    harkenprojectschema::SendMode mode = harkenprojectschema::SendMode::Mix;
+    std::map<harkenprojectschema::SendMode, float> modeVolumesDb{};
 
     bool operator==(const SendFieldGroupRow&) const = default;
 };
@@ -91,8 +93,8 @@ void VisitFieldGroupFields(Payload& payload, Visitor&& visit)
 {
     using Property = harkenplayableproperties::PlayablePropertyIdV1;
     using Type = std::remove_cv_t<Payload>;
-    if constexpr (std::is_same_v<Type, MainOutputFieldGroup>) {
-        visit(Property::MainOutputBusRef, "mainOutputBusRef", payload.mainOutputBusRef);
+    if constexpr (std::is_same_v<Type, OutputFieldGroup>) {
+        visit(Property::OutputBusRef, "outputBusRef", payload.outputBusRef);
         visit(Property::OutputBusVolume, "outputBusVolume", payload.outputBusVolume);
     } else if constexpr (std::is_same_v<Type, SendFieldGroup>) {
         visit(Property::Sends, "sends", payload.sends);
@@ -152,7 +154,7 @@ GroupState<Payload> ResolveFieldGroupLocal(const AuthoredGroup<Payload>& authore
 }
 
 struct DefinitionFieldGroups {
-    AuthoredGroup<MainOutputFieldGroup> mainOutput;
+    AuthoredGroup<OutputFieldGroup> output;
     AuthoredGroup<SendFieldGroup> send;
     AuthoredGroup<SpatialRatingFieldGroup> spatialRating;
 
@@ -167,11 +169,11 @@ inline std::uint64_t FieldGroupOverrideMask(const DefinitionFieldGroups& groups,
         return state != group.platforms.end() && state->second.localHistory
             ? state->second.localFields : UINT64_C(0);
     };
-    return mask(groups.mainOutput) | mask(groups.send) | mask(groups.spatialRating);
+    return mask(groups.output) | mask(groups.send) | mask(groups.spatialRating);
 }
 
 using FieldGroupPayload = std::variant<
-    MainOutputFieldGroup, SendFieldGroup, SpatialRatingFieldGroup>;
+    OutputFieldGroup, SendFieldGroup, SpatialRatingFieldGroup>;
 
 enum class FieldGroupDiagnosticCode : std::uint8_t {
     InvalidDefinitionGuid,
@@ -221,7 +223,7 @@ struct FieldGroupSource {
 };
 
 struct ResolvedFieldGroup {
-    FieldGroupId group = FieldGroupId::MainOutput;
+    FieldGroupId group = FieldGroupId::Output;
     FieldGroupPayload payload;
     FieldGroupSource source;
     FieldGroupMode requestedMode = FieldGroupMode::Inherit;

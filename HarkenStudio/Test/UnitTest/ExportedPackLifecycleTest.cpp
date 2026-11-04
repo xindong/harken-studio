@@ -2017,8 +2017,8 @@ TEST_F(AuthoredPackLifecycle, SavedWindowsProjectPreviewAndPackRenderSameBusSend
         QJsonValue(0), std::nullopt));
     const QUuid soundGuid = sound->guid;
     sound->compOrCreate<VNX::VMixNode>()->outputBusId = 801;
-    sound->fieldGroups.mainOutput.shared = {VNX::FieldGroupMode::Local,
-        VNX::MainOutputFieldGroup{VNX::toFieldGroupGuid(sourceGuid), 0.0f}};
+    sound->fieldGroups.output.shared = {VNX::FieldGroupMode::Local,
+        VNX::OutputFieldGroup{VNX::toFieldGroupGuid(sourceGuid), 0.0f}};
     auto& layer = project_.layers.front().rootItem;
     const auto soundChild = std::find_if(layer->children.begin(), layer->children.end(),
         [](const auto& child) { return child->objectID == kContentSoundObjectId; });
@@ -4894,8 +4894,8 @@ TEST_F(AuthoredPackLifecycle, CanonicalV2RejectsLegacyBusMismatchAndKeepsPublish
     const auto soundRow = std::find_if(layerChildren.begin(), layerChildren.end(),
         [](const auto& item) { return item->objectID == kContentSoundObjectId; });
     ASSERT_NE(layerChildren.end(), soundRow);
-    (*soundRow)->fieldGroups.mainOutput.shared = {VNX::FieldGroupMode::Local,
-        VNX::MainOutputFieldGroup{VNX::toFieldGroupGuid(source->guid), 0.0f}};
+    (*soundRow)->fieldGroups.output.shared = {VNX::FieldGroupMode::Local,
+        VNX::OutputFieldGroup{VNX::toFieldGroupGuid(source->guid), 0.0f}};
     (*soundRow)->compOrCreate<VNX::VMixNode>()->outputBusId = 811;
     const QString firstDir = QDir(dir_.path()).filePath(QStringLiteral("volume-before"));
     const QString nextDir = QDir(dir_.path()).filePath(QStringLiteral("volume-mismatched"));

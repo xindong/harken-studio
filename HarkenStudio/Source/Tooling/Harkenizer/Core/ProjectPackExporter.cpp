@@ -1625,6 +1625,8 @@ bool ProjectPackExporter::CollectSends(const ProjectData& project,
             const QJsonObject row = rowValue.toObject();
             const auto targetValue = row.value(QStringLiteral("targetBusID"));
             const auto levelValue = row.value(QStringLiteral("sendLevel"));
+            const auto modeValue = row.value(QStringLiteral("mode"));
+            std::map<SendMode, float> modeVolumes;
             const double targetNumber = targetValue.toDouble(-1.0);
             const double levelNumber = levelValue.toDouble(
                 std::numeric_limits<double>::quiet_NaN());
@@ -1634,7 +1636,14 @@ bool ProjectPackExporter::CollectSends(const ProjectData& project,
                 std::trunc(targetNumber) == targetNumber && levelValue.isDouble() &&
                 std::isfinite(levelNumber) && std::isfinite(levelDb) &&
                 levelDb >= -96.0f && levelDb <= 24.0f &&
-                std::isfinite(VMixNode::dbToLinear(levelDb));
+                std::isfinite(VMixNode::dbToLinear(levelDb)) &&
+                (modeValue.isUndefined() || (modeValue.isDouble() &&
+                 modeValue.toDouble() == modeValue.toInt(-1) &&
+                 (modeValue.toInt(-1) == static_cast<int>(SendMode::Mix) ||
+                  modeValue.toInt(-1) == static_cast<int>(SendMode::Ducking) ||
+                  modeValue.toInt(-1) == static_cast<int>(SendMode::Sidechain)))) &&
+                readSendModeVolumes(row.value(QStringLiteral("modeVolumes")),
+                                    static_cast<SendMode>(modeValue.toInt()), modeVolumes);
             const harkenstudio::ObjectId to = wellFormed
                 ? busIdentityForHandle(project, static_cast<uint32_t>(targetNumber))
                 : harkenstudio::ObjectId{};
@@ -1644,6 +1653,7 @@ bool ProjectPackExporter::CollectSends(const ProjectData& project,
                 valid = false;
                 return;
             }
+            if (static_cast<SendMode>(modeValue.toInt()) != SendMode::Mix) continue;
             Bridge::PackBusSend edge;
             edge.fromBusId = from;
             edge.toBusId = to;

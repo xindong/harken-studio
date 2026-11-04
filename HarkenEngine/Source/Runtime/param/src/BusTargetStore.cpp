@@ -136,7 +136,7 @@ std::size_t BusTargetStore::IndexOf(std::uint32_t busIndex,
 }
 
 void BusTargetStore::SetSlot(std::uint32_t busIndex, std::uint32_t targetId,
-                             std::uint32_t slot, float domainValue) {
+                             std::uint32_t slot, double domainValue) {
     if (!InRange(busIndex, targetId, slot)) {
         return;
     }
@@ -256,7 +256,7 @@ float BusTargetStore::Reduce(std::uint32_t busIndex,
     if (meta == nullptr || busIndex >= m_maxBuses) {
         return 0.0f;
     }
-    float accumulated = meta->neutral;
+    double accumulated = meta->neutral;
     for (std::uint32_t slot = 0; slot < kSlotCountPerTarget; ++slot) {
         const Slot& s = m_slots[IndexOf(busIndex, targetId, slot)];
         if (s.active) {
@@ -268,18 +268,18 @@ float BusTargetStore::Reduce(std::uint32_t busIndex,
                       : accumulated > meta->clampMax ? meta->clampMax
                                                      : accumulated;
     }
-    return accumulated;
+    return NarrowResolvedValue(accumulated);
 }
 
 float BusTargetStore::ReduceWithSlot(std::uint32_t busIndex,
                                      std::uint32_t targetId,
                                      std::uint32_t slot,
-                                     float domainValue) const {
+                                     double domainValue) const {
     const TargetMeta* meta = FindTargetMeta(kTargetScopeBus, targetId);
     if (meta == nullptr || !InRange(busIndex, targetId, slot)) {
         return 0.0f;
     }
-    float accumulated = meta->neutral;
+    double accumulated = meta->neutral;
     for (std::uint32_t candidate = 0; candidate < kSlotCountPerTarget;
          ++candidate) {
         if (candidate == slot) {
@@ -297,7 +297,7 @@ float BusTargetStore::ReduceWithSlot(std::uint32_t busIndex,
                       : accumulated > meta->clampMax ? meta->clampMax
                                                      : accumulated;
     }
-    return accumulated;
+    return NarrowResolvedValue(accumulated);
 }
 
 void BusTargetStore::ResetActiveRows(std::uint32_t busIndex) noexcept {
@@ -910,7 +910,7 @@ float BusTargetStore::SlotValue(std::uint32_t busIndex,
         return 0.0f;
     }
     const Slot& s = m_slots[IndexOf(busIndex, targetId, slot)];
-    return s.active ? s.value : 0.0f;
+    return s.active ? NarrowResolvedValue(s.value) : 0.0f;
 }
 
 bool BusTargetStore::PendingPublication(std::uint32_t busIndex,

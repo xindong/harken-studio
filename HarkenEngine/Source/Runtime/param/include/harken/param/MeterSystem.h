@@ -23,6 +23,8 @@
 // Processing" (envelope followers) — a public textbook formula, not an
 // in-house invention. A zero time constant selects an instant coefficient
 // of 0 (the envelope lands on the peak in one block).
+// Non-finite tap measurements retain the last valid envelope; the next finite
+// block resumes the same recurrence without resetting the probe.
 //
 // A probe's level is the ballistics output in dBFS, floored at -96 (never
 // -inf), of the bus tap its identity selects. Logic thread only; fixed

@@ -559,7 +559,7 @@ bool EffectParamTargetStore::ReplacePreparedInstalledEffectSeed(
 
 bool EffectParamTargetStore::PrimeContribution(
     Scope scope, std::uint64_t objectId, std::uint32_t slot,
-    std::uint32_t paramIndex, std::uint32_t effectType, float contribution,
+    std::uint32_t paramIndex, std::uint32_t effectType, double contribution,
     float* outResolved) {
     Record* r = Find(scope, objectId, slot, paramIndex);
     if (r == nullptr || r->effectType != effectType ||
@@ -710,11 +710,11 @@ void EffectParamTargetStore::AccumulateBinding(Scope scope,
         r->foldedThisSweep = true;
     }
     if (r->combine == EffectParamCombine::Multiply) {
-        r->rebuildAccum *= curveOutput;
+        r->rebuildAccum = static_cast<float>(r->rebuildAccum) * curveOutput;
     } else {
         // AddDb / AddLogHz / AddLogQ / AddLogTime all sum in their own units;
         // None never reaches here (a binding on it is refused at attach).
-        r->rebuildAccum += curveOutput;
+        r->rebuildAccum = AddFiniteContributions(r->rebuildAccum, curveOutput);
     }
 }
 
@@ -739,9 +739,9 @@ void EffectParamTargetStore::AccumulateMeterProbe(
         r->meterProbeFoldedThisSweep = true;
     }
     if (r->combine == EffectParamCombine::Multiply) {
-        r->meterProbeRebuild *= value;
+        r->meterProbeRebuild = static_cast<float>(r->meterProbeRebuild) * value;
     } else {
-        r->meterProbeRebuild += value;
+        r->meterProbeRebuild = AddFiniteContributions(r->meterProbeRebuild, value);
     }
 }
 
@@ -750,7 +750,7 @@ void EffectParamTargetStore::EndMeterProbeSweep() {
         if (r.lifecycle != Lifecycle::Live) {
             continue;
         }
-        const float folded = r.meterProbeFoldedThisSweep
+        const double folded = r.meterProbeFoldedThisSweep
                                  ? r.meterProbeRebuild
                                  : NeutralOf(r.combine);
         r.meterProbeActive = r.meterProbeFoldedThisSweep;
@@ -795,7 +795,7 @@ void EffectParamTargetStore::EndTargetContribution(
 }
 
 void EffectParamTargetStore::EndRecordContribution(Record& r) {
-    const float folded =
+    const double folded =
         r.foldedThisSweep ? r.rebuildAccum : NeutralOf(r.combine);
     r.bindingActive = r.foldedThisSweep;
     if (r.contribution != folded) {
@@ -805,19 +805,21 @@ void EffectParamTargetStore::EndRecordContribution(Record& r) {
 }
 
 float EffectParamTargetStore::ReduceRecord(const Record& r) const {
-    float value = r.base;
+    double value = r.base;
     switch (r.combine) {
     case EffectParamCombine::AddDb:
-        value = r.base + r.contribution + r.meterProbeContribution;
+        value = AddFiniteContributions(AddFiniteContributions(r.base, r.contribution),
+                                       r.meterProbeContribution);
         break;
     case EffectParamCombine::Multiply:
-        value = r.base * r.contribution * r.meterProbeContribution;
+        value = r.base * static_cast<float>(r.contribution) *
+                static_cast<float>(r.meterProbeContribution);
         break;
     case EffectParamCombine::AddLogHz:
     case EffectParamCombine::AddLogQ:
     case EffectParamCombine::AddLogTime:
-        value = r.base *
-                std::exp2(r.contribution + r.meterProbeContribution);
+        value = ScaleByOctaves(r.base,
+            AddFiniteContributions(r.contribution, r.meterProbeContribution));
         break;
     case EffectParamCombine::None:
     default:
@@ -843,8 +845,9 @@ float EffectParamTargetStore::ReduceRecord(const Record& r) const {
         // unity so every finite value accepted by "value < 1" remains valid.
         clampMax = std::nextafter(1.0f, 0.0f);
     }
-    value = std::max(clampMin, std::min(clampMax, value));
-    return value;
+    value = std::max(static_cast<double>(clampMin),
+                     std::min(static_cast<double>(clampMax), value));
+    return NarrowResolvedValue(value);
 }
 
 float EffectParamTargetStore::Reduce(Scope scope, std::uint64_t objectId,

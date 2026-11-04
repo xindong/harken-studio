@@ -172,6 +172,8 @@ add_library(harken_editor_foundation STATIC
     AssetPipeline/AssetImport.cpp
     AssetPipeline/SourceFileSystem.cpp
     AssetPipeline/SourceFileSystem.h
+    AssetPipeline/SourceWaveformView.cpp
+    AssetPipeline/SourceWaveformView.h
     AssetPipeline/AssetTypes.h
     AssetPipeline/AudioImportGate.cpp
     AssetPipeline/AudioImportGate.h
@@ -282,7 +284,6 @@ target_include_directories(harken_editor_foundation PRIVATE
 
 target_link_libraries(harken_editor_foundation PUBLIC
     harkenizer_build
-    harken_integration_tooling
     Qt6::Widgets
     Qt6::Concurrent
     Qt6::Svg

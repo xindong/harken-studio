@@ -117,8 +117,8 @@ void remapTree(ProjectItem* item, const TemplateIdentityMap& identities)
         for (auto& [platform, state] : group.platforms)
             if (state.localHistory) remap(*state.localHistory);
     };
-    remapHistory(item->fieldGroups.mainOutput, [&](MainOutputFieldGroup& value) {
-        remapGuid(value.mainOutputBusRef);
+    remapHistory(item->fieldGroups.output, [&](OutputFieldGroup& value) {
+        remapGuid(value.outputBusRef);
     });
     remapHistory(item->fieldGroups.send, [&](SendFieldGroup& value) {
         for (auto& row : value.sends) remapGuid(row.targetBusID);

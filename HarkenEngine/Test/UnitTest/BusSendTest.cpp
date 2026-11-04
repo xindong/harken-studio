@@ -262,7 +262,7 @@ TEST(BusSend, BusSendLevelScalesTheCopy) {
     }
 }
 
-TEST(BusSend, VoiceOutputVolumeRampsOnlyTheMainOutput) {
+TEST(BusSend, VoiceOutputVolumeRampsOnlyTheOutput) {
     VnConfig config = MakeNullConfig(2, kBlockFrames);
     config.maxBuses = 4;
     EngineSession session(config);

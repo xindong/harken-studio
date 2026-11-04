@@ -1,6 +1,7 @@
 
 #include "IPCServerInternal.h"
 #include "../Actions/MixerActions.h"
+#include "../BusRouteGraph.h"
 
 #include "ItemTypeCatalog.h"
 #include "Components/VMixNode.h"
@@ -161,7 +162,7 @@ bool IPCServer::prepareRollbackStepForAction(const QString& cmd,
         const auto& srcSends = srcMix->sends;
         for (const auto& send : srcSends)
         {
-            if (send.targetBusID == targetBusID)
+            if (send.targetBusID == targetBusID && send.mode == SendMode::Mix)
             {
                 sendExists = true;
                 oldSend = send;
@@ -169,33 +170,21 @@ bool IPCServer::prepareRollbackStepForAction(const QString& cmd,
             }
         }
 
+        const auto before = captureBusSendState(*srcItem);
+        if (!before) {
+            if (error) *error = "Unable to read Send configuration.";
+            return false;
+        }
+        *rollbackStep = QJsonObject{
+            {"kind", "restore_sends"},
+            {"bus_guid", srcSelector},
+            {"present", before->value.present},
+            {"value", before->value.value}
+        };
+
         if (cmd == QLatin1String("set_send"))
         {
             const float newLevel = static_cast<float>(args.value("level").toDouble(1.0));
-
-            if (sendExists)
-            {
-                *rollbackStep = QJsonObject{
-                    {"kind", "command"},
-                    {"cmd", "set_send"},
-                    {"args", QJsonObject{
-                        {"src_bus", srcSelector},
-                        {"target_bus_id", static_cast<qint64>(targetBusID)},
-                        {"level", oldSend.sendLevel}
-                    }}
-                };
-            }
-            else
-            {
-                *rollbackStep = QJsonObject{
-                    {"kind", "command"},
-                    {"cmd", "remove_send"},
-                    {"args", QJsonObject{
-                        {"src_bus", srcSelector},
-                        {"target_bus_id", static_cast<qint64>(targetBusID)}
-                    }}
-                };
-            }
 
             (*previewEntry)["src_bus"] = srcName;
             (*previewEntry)["src_bus_id"] = static_cast<qint64>(srcID);
@@ -221,16 +210,6 @@ bool IPCServer::prepareRollbackStepForAction(const QString& cmd,
 
         if (cmd == QLatin1String("remove_send"))
         {
-            *rollbackStep = QJsonObject{
-                {"kind", "command"},
-                {"cmd", "set_send"},
-                {"args", QJsonObject{
-                        {"src_bus", srcSelector},
-                    {"target_bus_id", static_cast<qint64>(targetBusID)},
-                    {"level", oldSend.sendLevel}
-                }}
-            };
-
             (*previewEntry)["src_bus"] = srcName;
             (*previewEntry)["src_bus_id"] = static_cast<qint64>(srcID);
             (*previewEntry)["target_bus_id"] = static_cast<qint64>(targetBusID);
@@ -242,15 +221,6 @@ bool IPCServer::prepareRollbackStepForAction(const QString& cmd,
         }
 
         const float newLevel = static_cast<float>(args.value("level").toDouble(1.0));
-        *rollbackStep = QJsonObject{
-            {"kind", "command"},
-            {"cmd", "set_send_level"},
-            {"args", QJsonObject{
-                        {"src_bus", srcSelector},
-                {"target_bus_id", static_cast<qint64>(targetBusID)},
-                {"level", oldSend.sendLevel}
-            }}
-        };
 
         (*previewEntry)["src_bus"] = srcName;
         (*previewEntry)["src_bus_id"] = static_cast<qint64>(srcID);
@@ -601,6 +571,23 @@ bool IPCServer::prepareRollbackStepForAction(const QString& cmd,
 bool IPCServer::executeRollbackStep(const QJsonObject& step, QString* error)
 {
     const QString kind = step.value("kind").toString();
+
+    if (kind == QLatin1String("restore_sends")) {
+        auto& manager = ProjectManager::instance();
+        const QUuid guid(step.value("bus_guid").toString());
+        auto* item = manager.findItemByGuid(guid);
+        const BusSendState state{guid, {}, {
+            step.value("present").toBool(), step.value("value")}};
+        if (!item || !restoreBusSendState(*item, state)) {
+            if (error) *error = "Unable to restore Send configuration.";
+            return false;
+        }
+        item->markDirty();
+        ProjectManager::syncPlayablePropertyToRuntime(item, static_cast<uint8_t>(
+            harkenplayableproperties::PlayablePropertyIdV1::Sends));
+        emit manager.busChanged(item->objectID, QStringLiteral("send"));
+        return true;
+    }
 
     if (kind == QLatin1String("command"))
     {

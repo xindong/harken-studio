@@ -45,14 +45,17 @@ PropertyDescriptor inputsDescriptor()
 
 PropertyDescriptor receivesDescriptor()
 {
-    return {
+    const auto& sendColumns = pickSchemaField(VMixNode::schema(), QLatin1String("sends"))->elementSchema;
+    auto level = *pickSchemaField(sendColumns, QLatin1String("sendLevel"));
+    level.field = QStringLiteral("level");
+    return withInspectorRowOrder({
         .field="receives", .ownerComponent=ComponentType::Bus,
         .type=PropType::List, .label="Receives", .section=PropertySection::Receive,
         .flags={.readOnly=true, .serialize=false, .settableByName=false},
         .elementSchema={
+            *pickSchemaField(sendColumns, QLatin1String("mode")),
             { .field="source", .type=PropType::ObjectRef, .label="Source" },
-            { .field="level", .type=PropType::Float, .label="Volume", .unit=" dB",
-              .min=-96.0, .max=24.0, .decimals=1 },
+            level,
         },
         .listPresentation=ListPresentation::Display,
         .get=[](const IComponent* c) -> QVariant {
@@ -61,11 +64,12 @@ PropertyDescriptor receivesDescriptor()
             QVariantList out;
             for (const auto& in : ProjectManager::instance().collectIncomingSends(host->objectID))
                 out.push_back(QVariantMap{
+                    { QStringLiteral("mode"), static_cast<int>(in.mode) },
                     { QStringLiteral("source"), in.fromBusID },
                     { QStringLiteral("level"),  VMixNode::linearToDb(in.level) } });
             return QVariant(out);
         },
-    };
+    });
 }
 #if defined(__clang__)
 #  pragma clang diagnostic pop

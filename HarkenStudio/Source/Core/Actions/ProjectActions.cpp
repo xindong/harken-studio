@@ -2,6 +2,7 @@
 #include "../ActionManager.h"
 #include "../AttenuationStore.h"
 #include "../AuthoringPolicy.h"
+#include "../BusRouteGraph.h"
 #include "../ItemTypeCatalog.h"
 #include "../ItemPropertySchema.h"
 #include "../ProjectManager.h"
@@ -279,7 +280,7 @@ bool itemMatchesReferenceRole(
     harkenplayableproperties::PlayablePropertyReferenceRoleV1 role)
 {
     using Role = harkenplayableproperties::PlayablePropertyReferenceRoleV1;
-    return (role == Role::MainOutputBus && item.type == ProjectItem::Type::Bus)
+    return (role == Role::OutputBus && item.type == ProjectItem::Type::Bus)
         || (role == Role::Attenuation
             && item.type == ProjectItem::Type::Attenuation);
 }
@@ -304,12 +305,20 @@ bool validatePlayableSends(ProjectManager& manager,
                            const QJsonValue& value)
 {
     if (!value.isArray()) return false;
-    QSet<uint32_t> targets;
+    QSet<QPair<uint32_t, int>> targets;
     for (const QJsonValue& rowValue : value.toArray()) {
         if (!rowValue.isObject()) return false;
         const QJsonObject row = rowValue.toObject();
         const QJsonValue targetValue = row.value(QStringLiteral("targetBusID"));
         const QJsonValue levelValue = row.value(QStringLiteral("sendLevel"));
+        const QJsonValue modeValue = row.value(QStringLiteral("mode"));
+        const int mode = modeValue.toInt(-1);
+        if (!modeValue.isUndefined() && (!modeValue.isDouble()
+            || modeValue.toDouble() != mode
+            || (mode != static_cast<int>(SendMode::Mix)
+                && mode != static_cast<int>(SendMode::Ducking)
+                && mode != static_cast<int>(SendMode::Sidechain)))) return false;
+        const auto sendMode = static_cast<SendMode>(modeValue.toInt());
         if (!targetValue.isDouble() || !levelValue.isDouble()) return false;
         const double targetNumber = targetValue.toDouble(-1.0);
         const double level = levelValue.toDouble();
@@ -319,10 +328,15 @@ bool validatePlayableSends(ProjectManager& manager,
             || !std::isfinite(level) || level < -96.0 || level > 24.0)
             return false;
         const uint32_t target = static_cast<uint32_t>(targetNumber);
-        if (targets.contains(target)
-            || !manager.sendTargetStructurallySelectable(owner.objectID, target))
+        const auto key = qMakePair(target, static_cast<int>(sendMode));
+        const auto* targetBus = manager.findBusItem(target);
+        std::map<SendMode, float> modeVolumes;
+        if (targets.contains(key)
+            || !targetBus || targetBus->type != ProjectItem::Type::Bus || targetBus == &owner
+            || (sendMode != SendMode::Sidechain && targetBus == owner.parent)
+            || !readSendModeVolumes(row.value(QStringLiteral("modeVolumes")), sendMode, modeVolumes))
             return false;
-        targets.insert(target);
+        targets.insert(key);
     }
     return true;
 }
@@ -515,8 +529,8 @@ ActionResult handleBusItemProperty(ProjectManager* projectManager, ProjectItem* 
     if (propertyName == QStringLiteral("outputBusId")
         || propertyName == QStringLiteral("outputBus")
         || propertyName == QStringLiteral("output_bus")) {
-        return {false, {}, "BUS_MAIN_OUTPUT_READONLY",
-                QString("Main Output of bus '%1' derives from its parent bus; use move_item instead")
+        return {false, {}, "BUS_OUTPUT_READONLY",
+                QString("Output of bus '%1' derives from its parent bus; use move_item instead")
                     .arg(item->name)};
     }
     QJsonObject busArgs;
@@ -620,6 +634,15 @@ ActionResult handlePlayableItemProperty(ProjectManager* projectManager,
                     "Playable property state is unavailable"};
         }
         snap.newState = *newState;
+    }
+
+    if (item->type == ProjectItem::Type::Bus
+        && field->wire == harkenplayableproperties::PlayablePropertyWireV1::RowSpan) {
+        const QString error = validateBusRouting(*projectManager->currentProject());
+        if (!error.isEmpty()) {
+            restoreSnapshots(snapshots);
+            return {false, {}, "INVALID_ARGS", error};
+        }
     }
 
     bool changed = false;
@@ -870,6 +893,10 @@ void applySoundAuthoringState(uint32_t objectID, const SoundAuthoringState& stat
     auto* sound = item ? item->comp<VSound>() : nullptr;
     if (!sound) return;
     sound->sources = state.sources;
+    for (auto* set : SoundSourceSemantics::sourceSets(sound->sources))
+        for (auto& source : set->entries)
+            SoundSourceSemantics::clampFadesToAsset(
+                source, AssetRegistry::instance().getAsset(source.sourceId));
     sound->scheduleOffsetSec = state.scheduleOffsetSec;
     sound->distinguishLanguage = state.distinguishLanguage;
     SoundSourceEditing::syncActiveProjection(
@@ -941,6 +968,8 @@ ActionResult handleSoundItemProperty(ProjectManager* projectManager, ProjectItem
         for (const auto* set : SoundSourceSemantics::sourceSets(oldState.sources))
             previous.insert(previous.end(), set->entries.begin(), set->entries.end());
         const auto prepareSet = [&](SoundSourceSet& set, const SoundSourceSet& before) {
+            for (auto& source : set.entries)
+                SoundSourceSemantics::clampFadesToAsset(source, resolveAsset(source.sourceId));
             if (set.entries == before.entries) return;
             SoundSourceSemantics::settleLoopProvenance(set.entries, resolveAsset);
             SoundSourceSemantics::stampAuthoringAnchors(set.entries, previous, resolveAsset);
@@ -2676,7 +2705,7 @@ void registerProjectActions(ActionManager& mgr,
                         QString("Item '%1' (id=%2) not found").arg(path).arg(objectID)};
             if (claimsFieldGroupItemProperty(*item, propertyName))
                 return {false, {}, "FIELD_GROUP_COMMAND_REQUIRED",
-                        "Use field group commands to edit Main Output, Send, or Spatial Rating"};
+                        "Use field group commands to edit Output, Send, or Spatial Rating"};
             if (clearOverride && !claimsPlayableItemProperty(item, propertyName)) {
                 const bool busOutputVolume =
                     item->comp<VBus>() != nullptr

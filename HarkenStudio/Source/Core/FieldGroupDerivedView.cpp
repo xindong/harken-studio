@@ -30,13 +30,13 @@ bool refreshFieldGroupDerivedViews(ProjectData& project)
     };
     std::vector<Pending> pending;
     for (const auto& definition : view.definitions) {
-        const auto output = resolver.Resolve(definition.guid, {}, FieldGroupId::MainOutput);
+        const auto output = resolver.Resolve(definition.guid, {}, FieldGroupId::Output);
         const auto send = resolver.Resolve(definition.guid, {}, FieldGroupId::Send);
         const auto spatial = resolver.Resolve(definition.guid, {}, FieldGroupId::SpatialRating);
         if (!output.ok() || !send.ok() || !spatial.ok()) return false;
-        const auto& main = std::get<MainOutputFieldGroup>(output.value->payload);
+        const auto& outputFields = std::get<OutputFieldGroup>(output.value->payload);
         const auto& rating = std::get<SpatialRatingFieldGroup>(spatial.value->payload);
-        const auto bus = source->byGuid.find(main.mainOutputBusRef);
+        const auto bus = source->byGuid.find(outputFields.outputBusRef);
         if (bus == source->byGuid.end() || bus->second->type != ProjectItem::Type::Bus)
             return false;
         harkenstudio::ObjectId attenuationRef{};
@@ -48,20 +48,22 @@ bool refreshFieldGroupDerivedViews(ProjectData& project)
             attenuationRef = attenuation->second->runtimeId();
         }
         Pending row{source->byGuid.at(definition.guid), bus->second->objectID,
-                    bus->second->runtimeId(), main.outputBusVolume, {}, rating,
+                    bus->second->runtimeId(), outputFields.outputBusVolume, {}, rating,
                     attenuationRef};
         for (const auto& authored : std::get<SendFieldGroup>(send.value->payload).sends) {
             const auto target = source->byGuid.find(authored.targetBusID);
             if (target == source->byGuid.end() || target->second->type != ProjectItem::Type::Bus)
                 return false;
-            row.sends.push_back({target->second->objectID, VMixNode::dbToLinear(authored.sendLevel)});
+            row.sends.push_back({target->second->objectID,
+                                VMixNode::dbToLinear(authored.sendLevel), authored.mode,
+                                authored.modeVolumesDb});
         }
         pending.push_back(std::move(row));
     }
     for (auto& row : pending) {
         if (auto* mix = row.item->comp<VMixNode>()) {
             mix->outputBusId = row.busId;
-            mix->mainOutputBusRef = row.busRef;
+            mix->outputBusRef = row.busRef;
             mix->outputBusVolume = row.outputVolume;
             mix->sends = std::move(row.sends);
         }

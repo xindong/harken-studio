@@ -204,7 +204,7 @@
           "minimum": 0,
           "type": "integer"
         },
-        "mainOutputBusRef": {
+        "outputBusRef": {
           "$ref": "#/$defs/nullableObjectReference"
         },
         "makeUpGain": {
@@ -283,7 +283,7 @@
           "minimum": 0,
           "type": "integer"
         },
-        "mainOutputBusRef": {
+        "outputBusRef": {
           "$ref": "#/$defs/nullableObjectReference"
         },
         "makeUpGain": {
@@ -1081,10 +1081,10 @@
       ],
       "type": "object"
     },
-    "fieldGroupMainOutputPayload": {
+    "fieldGroupOutputPayload": {
       "additionalProperties": false,
       "properties": {
-        "mainOutputBusRef": {
+        "outputBusRef": {
           "$ref": "#/$defs/uuid"
         },
         "outputBusVolume": {
@@ -1092,7 +1092,7 @@
         }
       },
       "required": [
-        "mainOutputBusRef",
+        "outputBusRef",
         "outputBusVolume"
       ],
       "type": "object"
@@ -1100,8 +1100,8 @@
     "fieldGroupPlatformGroups": {
       "additionalProperties": false,
       "properties": {
-        "mainOutput": {
-          "$ref": "#/$defs/fieldGroupPlatformMainOutput"
+        "output": {
+          "$ref": "#/$defs/fieldGroupPlatformOutput"
         },
         "send": {
           "$ref": "#/$defs/fieldGroupPlatformSend"
@@ -1113,14 +1113,14 @@
       "required": [],
       "type": "object"
     },
-    "fieldGroupPlatformMainOutput": {
+    "fieldGroupPlatformOutput": {
       "additionalProperties": false,
       "properties": {
         "inherit": {
           "type": "boolean"
         },
         "values": {
-          "$ref": "#/$defs/fieldGroupMainOutputFields"
+          "$ref": "#/$defs/fieldGroupOutputFields"
         }
       },
       "type": "object"
@@ -1167,6 +1167,17 @@
     "fieldGroupSendRow": {
       "additionalProperties": false,
       "properties": {
+        "mode": {
+          "enum": [
+            0,
+            1,
+            2
+          ],
+          "type": "integer"
+        },
+        "modeVolumes": {
+          "$ref": "#/$defs/sendModeVolumes"
+        },
         "sendLevel": {
           "maximum": 24,
           "minimum": -96,
@@ -1185,8 +1196,8 @@
     "fieldGroupSharedGroups": {
       "additionalProperties": false,
       "properties": {
-        "mainOutput": {
-          "$ref": "#/$defs/fieldGroupSharedMainOutput"
+        "output": {
+          "$ref": "#/$defs/fieldGroupSharedOutput"
         },
         "send": {
           "$ref": "#/$defs/fieldGroupSharedSend"
@@ -1196,20 +1207,20 @@
         }
       },
       "required": [
-        "mainOutput",
+        "output",
         "send",
         "spatialRating"
       ],
       "type": "object"
     },
-    "fieldGroupSharedMainOutput": {
+    "fieldGroupSharedOutput": {
       "additionalProperties": false,
       "properties": {
         "inherit": {
           "type": "boolean"
         },
         "values": {
-          "$ref": "#/$defs/fieldGroupMainOutputPayload"
+          "$ref": "#/$defs/fieldGroupOutputPayload"
         }
       },
       "type": "object",
@@ -1398,6 +1409,17 @@
     "send": {
       "additionalProperties": false,
       "properties": {
+        "mode": {
+          "enum": [
+            0,
+            1,
+            2
+          ],
+          "type": "integer"
+        },
+        "modeVolumes": {
+          "$ref": "#/$defs/sendModeVolumes"
+        },
         "sendLevel": {
           "type": "number"
         },
@@ -1409,6 +1431,27 @@
         "sendLevel",
         "targetBusRef"
       ],
+      "type": "object"
+    },
+    "sendModeVolumes": {
+      "additionalProperties": false,
+      "properties": {
+        "0": {
+          "maximum": 24,
+          "minimum": -96,
+          "type": "number"
+        },
+        "1": {
+          "maximum": 24,
+          "minimum": -96,
+          "type": "number"
+        },
+        "2": {
+          "maximum": 24,
+          "minimum": -96,
+          "type": "number"
+        }
+      },
       "type": "object"
     },
     "soundComponent": {
@@ -1432,6 +1475,12 @@
       "properties": {
         "entryId": {
           "$ref": "#/$defs/uuid"
+        },
+        "fadeIn": {
+          "$ref": "#/$defs/soundSourceFadeIn"
+        },
+        "fadeOut": {
+          "$ref": "#/$defs/soundSourceFadeOut"
         },
         "loopProvenance": {
           "enum": [
@@ -1476,6 +1525,76 @@
       "required": [
         "entryId",
         "sourceId"
+      ],
+      "type": "object"
+    },
+    "soundSourceFadeIn": {
+      "additionalProperties": false,
+      "properties": {
+        "durationFrames": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "curve": {
+          "const": [{"x": 0, "value": 0}, {"x": 1, "value": 1}],
+          "type": "array"
+        },
+        "handles": {
+          "items": {
+            "items": {
+              "minimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            "minItems": 4,
+            "maxItems": 4,
+            "type": "array"
+          },
+          "minItems": 1,
+          "maxItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "durationFrames",
+        "curve",
+        "handles"
+      ],
+      "type": "object"
+    },
+    "soundSourceFadeOut": {
+      "additionalProperties": false,
+      "properties": {
+        "durationFrames": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "curve": {
+          "const": [{"x": 0, "value": 1}, {"x": 1, "value": 0}],
+          "type": "array"
+        },
+        "handles": {
+          "items": {
+            "items": {
+              "minimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            "minItems": 4,
+            "maxItems": 4,
+            "type": "array"
+          },
+          "minItems": 1,
+          "maxItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "durationFrames",
+        "curve",
+        "handles"
       ],
       "type": "object"
     },
@@ -1839,10 +1958,10 @@
       },
       "type": "object"
     },
-    "fieldGroupMainOutputFields": {
+    "fieldGroupOutputFields": {
       "additionalProperties": false,
       "properties": {
-        "mainOutputBusRef": {
+        "outputBusRef": {
           "$ref": "#/$defs/uuid"
         },
         "outputBusVolume": {
@@ -2849,7 +2968,7 @@
           "kind": "object",
           "path": [
             "playableProperties",
-            "mainOutputBusRef"
+            "outputBusRef"
           ],
           "targetTypes": [
             "Bus"
@@ -2939,7 +3058,7 @@
             "clips",
             "*",
             "playableProperties",
-            "mainOutputBusRef"
+            "outputBusRef"
           ],
           "targetTypes": [
             "Bus"

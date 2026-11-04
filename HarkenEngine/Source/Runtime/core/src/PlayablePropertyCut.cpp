@@ -633,7 +633,7 @@ ResolvedPlayablePropertyCutStorageV1::ResolveInto(
         return ResolvedPlayablePropertyCutStatusV1::Capacity;
     if (!ValidateResolvedSectionGroupPayloadV1(payload))
         return ResolvedPlayablePropertyCutStatusV1::InvalidInput;
-    output.view.mainOutputBusRef = ObjectId(payload, PropertyId::MainOutputBusRef);
+    output.view.outputBusRef = ObjectId(payload, PropertyId::OutputBusRef);
     output.view.outputBusVolumeDb = F32(payload, PropertyId::OutputBusVolume);
     output.view.spatial.panning = F32(payload, PropertyId::SpatialPanning);
     output.view.spatial.spread = F32(payload, PropertyId::SpatialSpread);

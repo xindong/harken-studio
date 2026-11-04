@@ -170,13 +170,14 @@ void AudioEngine::applyLivePropertyPreview()
             auto& definition = preview.definitions[item->runtimeId()];
             definition.refreshMix(*item, *locator, scope);
             definition.fields = {
-                {{static_cast<uint8_t>(LiveProperty::OutputBusVolume), {}}, groups.mainOutput.outputBusVolume},
+                {{static_cast<uint8_t>(LiveProperty::OutputBusVolume), {}}, groups.output.outputBusVolume},
                 {{static_cast<uint8_t>(LiveProperty::SpatialPanning), {}}, groups.spatialRating.spatialPanning},
                 {{static_cast<uint8_t>(LiveProperty::SpatializationMix), {}},
                     HarkenEditor::Bridge::resolvedStudioSpatializationMix(*item, *sourceIndex)},
                 {{static_cast<uint8_t>(LiveProperty::SpatialAttenuationDistanceScaling), {}},
                     groups.spatialRating.spatialAttenuationDistanceScaling}};
             for (const auto& send : groups.send.sends) {
+                if (send.mode != SendMode::Mix) continue;
                 const auto target = snapshot.objects.find(send.targetBusID);
                 if (target != snapshot.objects.end())
                     definition.fields[{static_cast<uint8_t>(LiveProperty::Sends), target->second->runtimeId()}]

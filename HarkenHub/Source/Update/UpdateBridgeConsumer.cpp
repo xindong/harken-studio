@@ -444,6 +444,17 @@ BridgeConsumeReport UpdateBridgeConsumer::run(
     const Hooks& hooks)
 {
     BridgeConsumeReport report;
+    report.details = UpdateQueue::retryStudioResults();
+    const auto completeStudio = [&](const UpdateQueueEntry& entry, const InstallOutcome& outcome) {
+        QString error;
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            if (UpdateQueue::writeStudioResult(entry.transactionId, outcome, entry.userId, &error))
+                return;
+            if (attempt < 2)
+                hooks.wait(1000);
+        }
+        report.details.append(error);
+    };
 
     const auto entries = UpdateQueue::pendingEntries();
     for (const UpdateQueueEntry& entry : entries) {
@@ -454,6 +465,10 @@ BridgeConsumeReport UpdateBridgeConsumer::run(
                 HandoffArea::manifestPath(entry.transactionId);
             if (!QFileInfo::exists(handoffPackage) ||
                 !QFileInfo::exists(handoffManifest)) {
+                InstallOutcome outcome;
+                outcome.failureCode = QStringLiteral("HandoffRejected");
+                outcome.error = QStringLiteral("Queue entry without handoff files: %1").arg(entry.transactionId);
+                completeStudio(entry, outcome);
                 HandoffArea::discard(entry.transactionId);
                 TransactionJournal::append(
                     entry.transactionId, QStringLiteral("HarkenStudio"),
@@ -467,6 +482,8 @@ BridgeConsumeReport UpdateBridgeConsumer::run(
             }
             const InstallOutcome outcome = InstallExecutor::run(
                 entry.transactionId, manifestPublicKey, now);
+            if (outcome.failureCode != QStringLiteral("InstallBusy"))
+                completeStudio(entry, outcome);
             if (outcome.ok) {
                 ++report.installed;
             } else if (outcome.failureCode ==

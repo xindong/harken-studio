@@ -13,7 +13,6 @@
 #include "Core/ProjectManager.h"
 #include "Core/ShortcutManager.h"
 #include "Core/SoundSourceEditing.h"
-#include "Core/SoundSourceSemantics.h"
 #include "Core/ThemeManager.h"
 #include "Core/FontManager.h"
 #include "Core/Timeline/TimelineCoordinates.h"
@@ -354,8 +353,7 @@ TimelineRenderData TimelineCanvas::buildRenderData(const QRect& exposed) const
         QIcon icon;
         QString waveformPath;
         int64_t sourceDuration = 0;
-        double firstFrame = 0.0;
-        double frameCount = 0.0;
+        std::optional<SourceWaveformView> waveformView;
         double emergenceOffsetSec = 0.0;
     };
     QHash<QUuid, ClipContent> contents;
@@ -379,14 +377,10 @@ TimelineRenderData TimelineCanvas::buildRenderData(const QRect& exposed) const
                     PlatformContextService::instance().context().primary,
                     SoundSourceEditing::previewLanguage(*target, LanguageContextService::instance().language()));
                 const auto* asset = source ? AssetRegistry::instance().getAsset(source->sourceId) : nullptr;
-                if (asset) {
+                if (asset && !asset->absolutePath.isEmpty() && asset->metadata.totalSamples > 0) {
                     content.waveformPath = asset->absolutePath;
-                    const auto range = SoundSourceSemantics::effectiveRange(*source, asset);
-                    if (range) {
-                        content.sourceDuration = panel_->clipSourceDuration(laneIndex, clipIndex).value_or(0);
-                        content.firstFrame = range->trimStartFrame;
-                        content.frameCount = double(range->trimEndFrame - range->trimStartFrame);
-                    }
+                    content.waveformView.emplace(*source, asset->metadata.totalSamples);
+                    content.sourceDuration = panel_->clipSourceDuration(laneIndex, clipIndex).value_or(0);
                 }
             }
             entry = contents.insert(targetGuid, std::move(content));
@@ -400,11 +394,12 @@ TimelineRenderData TimelineCanvas::buildRenderData(const QRect& exposed) const
         item.objectColor = content.color;
         item.typeIcon = content.icon;
         item.waveformPath = content.waveformPath;
+        item.waveformView = content.waveformView;
         if (clipSelected(guid))
             item.state = TimelineClipVisualState::Selected;
         else if (laneIndex == hoveredLane_ && clipIndex == hoveredClip_)
             item.state = TimelineClipVisualState::Hover;
-        if (content.sourceDuration > 0) {
+        if (content.sourceDuration > 0 && content.waveformView) {
             const double left = panel_->viewportPositionAtCoordinate(laneIndex, start);
             const double right = panel_->viewportPositionAtCoordinate(laneIndex,
                 saturatingAdd(start, std::min(duration, content.sourceDuration)));
@@ -417,9 +412,10 @@ TimelineRenderData TimelineCanvas::buildRenderData(const QRect& exposed) const
                 item.waveformRect = data.frameless ? trackWaveform : item.waveformViewport;
                 item.waveformRect.setLeft(int(std::lround(visibleLeft)));
                 item.waveformRect.setWidth(int(std::lround(visibleRight)) - int(std::lround(visibleLeft)));
-                item.waveformStartFrame = content.firstFrame
-                    + content.frameCount * (visibleLeft - left) / (sourceRight - left);
-                item.waveformFrameCount = content.frameCount * (visibleRight - visibleLeft) / (sourceRight - left);
+                const double sourceFrames = double(content.waveformView->endFrame() - content.waveformView->startFrame());
+                item.waveformStartFrame = double(content.waveformView->startFrame())
+                    + sourceFrames * (visibleLeft - left) / (sourceRight - left);
+                item.waveformFrameCount = sourceFrames * (visibleRight - visibleLeft) / (sourceRight - left);
             }
         }
         if (content.emergenceOffsetSec > 0.0) {

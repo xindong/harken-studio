@@ -10,7 +10,6 @@
 #include "Core/PlatformContextService.h"
 #include "Core/FieldGroupProjectAdapter.h"
 #include "Core/SoundSourceEditing.h"
-#include "Core/SoundSourceSemantics.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -95,11 +94,10 @@ void SignalPathSource::loadGraph(const ProjectData& project, SignalPathGraph gra
             const auto previewLanguage = SoundSourceEditing::previewLanguage(*item, language);
             auto path = SoundSourceEditing::activeRelativePath(*item, platform, previewLanguage);
             if (const auto* source = SoundSourceEditing::activeSource(*item, platform, previewLanguage)) {
-                const auto range = SoundSourceSemantics::effectiveRange(
-                    *source, AssetRegistry::instance().getAsset(source->sourceId));
-                if (range && range->trimEndFrame > range->trimStartFrame)
-                    desc.waveformRange = WaveformFrameRange{range->trimStartFrame, range->trimEndFrame};
-                else
+                const auto* asset = AssetRegistry::instance().getAsset(source->sourceId);
+                if (asset && !asset->absolutePath.isEmpty() && asset->metadata.totalSamples > 0)
+                    desc.waveformView.emplace(*source, asset->metadata.totalSamples);
+                if (!desc.waveformView || desc.waveformView->endFrame() <= desc.waveformView->startFrame())
                     path.clear();
             }
             if (!path.isEmpty()) {
@@ -139,6 +137,8 @@ void SignalPathSource::loadGraph(const ProjectData& project, SignalPathGraph gra
         case SignalPathEdgeKind::Send:
             desc.edgeKind = static_cast<uint8_t>(BlueprintEdgeKind::Send);
             desc.gainContent.sendVolume = signalPathGainValue(*groups, graph_, edgeIndex);
+            desc.sendMode = edge.mode;
+            desc.label = QString::fromLatin1(sendModeLabel(edge.mode));
             break;
         }
         edges_.push_back(std::move(desc));

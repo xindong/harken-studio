@@ -33,6 +33,14 @@
         {
           "category": "improved",
           "text": "Verify local restoration sources against signed official file manifests and avoid downloading the complete release when supported."
+        },
+        {
+          "category": "improved",
+          "text": "Preserve damaged installation records and report invalid fields instead of silently losing registered versions during installation, repair or removal."
+        },
+        {
+          "category": "improved",
+          "text": "Report background Studio installation failures even when diagnostic logs cannot be written, and retain the result across Hub restarts."
         }
       ]
     },

@@ -235,6 +235,18 @@ QPointF curveHandleRayIntoRect(const QPointF& anchor, const QPointF& direction,
     return anchor + dir * std::max(limit, 0.0);
 }
 
+QPointF curveSnapHandleToAngle(const QPointF& anchor, const QPointF& desired,
+                              const QRectF& box)
+{
+    const QPointF v = desired - anchor;
+    if (std::hypot(v.x(), v.y()) == 0.0)
+        return desired;
+    constexpr double kSnapStep = kPi / 4.0;
+    const double snapped = std::round(std::atan2(v.y(), v.x()) / kSnapStep) * kSnapStep;
+    const QPointF dir(std::cos(snapped), std::sin(snapped));
+    return curveHandleRayIntoRect(anchor, dir, v.x() * dir.x() + v.y() * dir.y(), box);
+}
+
 bool curveHandlesMirrorAligned(const QPointF& anchor, const QPointF& handleA,
                                const QPointF& handleB)
 {
@@ -1467,17 +1479,8 @@ void CurveCanvas::moveDraggedHandle(QMouseEvent* event)
 
     const QPointF anchorScreen = pointToScreen(points_.at(draggedHandleIsH1_ ? seg : seg + 1));
     QPointF desired = QPointF(event->pos()) + dragHandleGrabOffset_;
-    if ((event->modifiers() & Qt::ShiftModifier) != 0) {
-        const QPointF v = desired - anchorScreen;
-        if (std::hypot(v.x(), v.y()) > 0.0) {
-            constexpr double kSnapStep = kPi / 4.0;
-            const double snapped = std::round(std::atan2(v.y(), v.x()) / kSnapStep) * kSnapStep;
-            const QPointF dir(std::cos(snapped), std::sin(snapped));
-            desired = curveHandleRayIntoRect(anchorScreen, dir,
-                                             v.x() * dir.x() + v.y() * dir.y(),
-                                             handleConstraintBoxScreen(seg));
-        }
-    }
+    if ((event->modifiers() & Qt::ShiftModifier) != 0)
+        desired = curveSnapHandleToAngle(anchorScreen, desired, handleConstraintBoxScreen(seg));
 
     const CurvePointDef mapped = screenToPoint(desired);
     CurveHandlePairDef next = handles_.at(seg);

@@ -107,6 +107,8 @@ bool hasDeepSourceSemantics(const VSound& sound);
 bool hasDeepSourceSemantics(
     const VSound& sound,
     const std::function<const AssetInfo*(uint32_t)>& resolve);
+void clampFadeDurations(SoundSourceDef& source, uint64_t frameCount);
+bool clampFadesToAsset(SoundSourceDef& source, const AssetInfo* asset);
 SoundSourceDef canonicalized(const SoundSourceDef& source, uint64_t totalFrames);
 void stampAuthoringAnchors(std::vector<SoundSourceDef>& sources,
                            const std::vector<SoundSourceDef>& previous,

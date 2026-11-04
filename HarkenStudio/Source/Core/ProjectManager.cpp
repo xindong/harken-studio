@@ -174,6 +174,25 @@ QString normalizedFolderName(const QString& name)
     return normalized;
 }
 
+void clampProjectSourceFades(ProjectData& project, uint32_t sourceId = 0)
+{
+    for (auto* item : ProjectPlatformSemantics::referenceOwners(project)) {
+        auto* sound = item->comp<VSound>();
+        if (!sound) continue;
+        bool changed = false;
+        for (auto* set : SoundSourceSemantics::sourceSets(sound->sources)) {
+            for (auto& source : set->entries) {
+                if (sourceId != 0 && source.sourceId != sourceId) continue;
+                changed |= SoundSourceSemantics::clampFadesToAsset(
+                    source, AssetRegistry::instance().getAsset(source.sourceId));
+            }
+        }
+        if (!changed) continue;
+        item->markDirty();
+        emit ProjectManager::instance().itemPropertyChanged(item, QStringLiteral("sources"));
+    }
+}
+
 QString folderNameKey(const QString& name)
 {
     return normalizedFolderName(name).toCaseFolded();
@@ -826,6 +845,12 @@ ProjectManager& ProjectManager::instance()
 ProjectManager::ProjectManager(QObject* parent)
     : QObject(parent)
 {
+    const auto clampSourceFades = [this](uint32_t sourceId) {
+        if (m_currentProject && !m_closing)
+            clampProjectSourceFades(*m_currentProject, sourceId);
+    };
+    connect(&AssetRegistry::instance(), &AssetRegistry::assetModified, this, clampSourceFades);
+    connect(&AssetRegistry::instance(), &AssetRegistry::assetRegistered, this, clampSourceFades);
     connect(&PackGenerationRecordStore::instance(), &PackGenerationRecordStore::exportActivityChanged,
             &m_fileWatcher, &FileWatcher::deferChanges);
     connect(&m_fileWatcher, &FileWatcher::filesAdded, this, &ProjectManager::externalFilesAdded);
@@ -1888,6 +1913,7 @@ bool ProjectManager::commitPreparedProject(PreparedProject&& prepared)
     assetRegistry.replaceSnapshot(projectRoot, prepared.assets);
     assetRegistry.setPlatforms(m_currentProject->platforms);
     assetRegistry.markAllCommitted();
+    clampProjectSourceFades(*m_currentProject);
 
     if (!prepared.integrityReport.issues.empty()) {
         LogPanel::logWarning(LogCategory::File,
@@ -4663,7 +4689,7 @@ std::optional<DefinitionFieldGroups> ProjectManager::captureRootFieldGroups(
         }
         return true;
     };
-    if (!capture(authored.mainOutput, result.mainOutput, FieldGroupId::MainOutput)
+    if (!capture(authored.output, result.output, FieldGroupId::Output)
         || !capture(authored.send, result.send, FieldGroupId::Send)
         || !capture(authored.spatialRating, result.spatialRating, FieldGroupId::SpatialRating))
         return fail(QStringLiteral("Cannot preserve the current field group values"));
@@ -4883,8 +4909,8 @@ std::vector<DeletedSubtreeRefLog::FieldGroupRef> fieldGroupReferenceRemovals(
         if (deleted.contains(toFieldGroupGuid(item->guid))) continue;
         const bool root = source->parentDefinition.at(item) == nullptr;
         auto after = item->fieldGroups;
-        editActive(after.mainOutput, root, [&](MainOutputFieldGroup& output) {
-            if (deleted.contains(output.mainOutputBusRef)) output.mainOutputBusRef = fallbackGuid;
+        editActive(after.output, root, [&](OutputFieldGroup& output) {
+            if (deleted.contains(output.outputBusRef)) output.outputBusRef = fallbackGuid;
         });
         editActive(after.send, root, [&](SendFieldGroup& send) {
             std::erase_if(send.sends, [&](const auto& row) { return deleted.contains(row.targetBusID); });
@@ -5238,33 +5264,30 @@ DeletedSubtreeRefLog ProjectManager::cleanupReferencesToDeletedSubtree(ProjectIt
 
     // Surviving mix nodes' sends targeting any deleted bus become dangling;
     // strip them and record for undo.
-    self.forEachMixNodeItem([&](ProjectItem* owner, VMixNode* mix) {
+    self.forEachMixNodeItem([&](ProjectItem* owner, VMixNode*) {
         if (deletedObjects.contains(owner->objectID)
             || PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(owner->type)) return;
-        const bool ownerIsBus = owner->type == ProjectItem::Type::Bus;
-        std::vector<Send> kept;
-        std::vector<Send> stripped;
-        kept.reserve(mix->sends.size());
-        for (const auto& s : mix->sends) {
-            if (deletedObjects.contains(s.targetBusID))
-                stripped.push_back(s);
-            else
-                kept.push_back(s);
+        if (owner->type != ProjectItem::Type::Bus) return;
+        bool changed = false;
+        for (const auto& scope : busRoutingScopes(*project)) {
+            const auto before = captureBusSendState(*owner, scope);
+            if (!before || !before->value.present) continue;
+            QJsonArray kept;
+            for (const auto& value : before->value.value.toArray()) {
+                const auto target = static_cast<uint32_t>(value.toObject().value(QStringLiteral("targetBusID")).toInteger());
+                if (!deletedObjects.contains(target)) kept.append(value);
+            }
+            if (kept == before->value.value.toArray()) continue;
+            auto after = *before;
+            after.value.value = kept;
+            if (!restoreBusSendState(*owner, after)) continue;
+            log.sends.push_back({owner->objectID, scope, before->value, after.value});
+            changed = true;
         }
-        if (stripped.empty()) return;
-        if (!replaceSends(*owner, *mix, std::move(kept)))
-            return;
-        for (const auto& s : stripped) {
-            log.sends.push_back({owner->objectID, s});
-        }
+        if (!changed) return;
         owner->markDirty();
-        if (ownerIsBus) {
-            AudioEngine::instance().runtimeSyncCoordinator().markCurrentWorldMutation();
-            emit self.busChanged(owner->objectID, QStringLiteral("send"));
-        } else {
-            self.propagateItemSendsLive(owner);
-            emit self.itemPropertyChanged(owner, QStringLiteral("send"));
-        }
+        AudioEngine::instance().runtimeSyncCoordinator().markCurrentWorldMutation();
+        emit self.busChanged(owner->objectID, QStringLiteral("sends"));
     });
 
     DeletedSubtreeRefLog playback = cleanupIllegalPlaybackReferences(project);
@@ -5338,8 +5361,13 @@ void ProjectManager::restoreReferencesFromLog(const DeletedSubtreeRefLog& log,
     }
 
     for (const auto& ref : log.sends) {
-        self.upsertSendInternal(ref.ownerObjectID, ref.send.targetBusID,
-                                   ref.send.sendLevel);
+        auto* owner = findById(ref.ownerObjectID);
+        const auto current = owner ? captureBusSendState(*owner, ref.scope) : std::nullopt;
+        if (!current || current->value != ref.after
+            || !restoreBusSendState(*owner, {owner->guid, ref.scope, ref.before})) continue;
+        owner->markDirty();
+        self.applyBusRuntimeState(owner);
+        emit self.busChanged(owner->objectID, QStringLiteral("sends"));
     }
 
     for (const auto& ref : log.selections) {
@@ -5760,7 +5788,7 @@ uint32_t outputBusIdFromSnapshot(
     if (owner == snapshot.objects.end() || owner->second != item
         || effective == snapshot.definitions.end())
         return 0;
-    return snapshot.objects.at(effective->second.mainOutput.mainOutputBusRef)->objectID;
+    return snapshot.objects.at(effective->second.output.outputBusRef)->objectID;
 }
 
 }
@@ -5846,7 +5874,7 @@ float ProjectManager::effectiveOutputVolumeDbForItem(
     if (!snapshot.ok() || owner == snapshot.objects.end() || owner->second != item
         || effective == snapshot.definitions.end())
         return 0.0f;
-    return effective->second.mainOutput.outputBusVolume;
+    return effective->second.output.outputBusVolume;
 }
 
 float ProjectManager::effectiveBusVolumeDb(const ProjectItem* busItem) const
@@ -5905,7 +5933,7 @@ std::vector<Send> ProjectManager::aggregateVoiceSendsForItem(
         return out;
     for (const auto& send : effective->second.send.sends) {
         out.push_back({snapshot.objects.at(send.targetBusID)->objectID,
-                       VMixNode::dbToLinear(send.sendLevel)});
+                       VMixNode::dbToLinear(send.sendLevel), send.mode, send.modeVolumesDb});
     }
     return out;
 }
@@ -5922,6 +5950,7 @@ void ProjectManager::pushItemSendsLive(
     if (!item || item->type != ProjectItem::Type::Sound) return;
     std::vector<std::pair<harkenstudio::ObjectId, float>> runtimeSends;
     for (const Send& s : aggregateVoiceSendsForItem(item, snapshot)) {
+        if (s.mode != SendMode::Mix) continue;
         if (!findVBus(s.targetBusID)) continue;
         runtimeSends.emplace_back(busRuntimeHandleForId(s.targetBusID),
                                   VMixNode::linearToDb(s.sendLevel));
@@ -6209,14 +6238,15 @@ std::vector<IncomingSendInfo> ProjectManager::collectIncomingSends(uint32_t busI
 {
     std::vector<IncomingSendInfo> out;
     if (!m_currentProject) return out;
-    const auto snapshot = buildFieldGroupEffectiveSnapshot(
-        *m_currentProject,
-        toFieldGroupScope(currentWorldPlatformScope(PlatformContextService::instance().context())));
+    const auto scope = currentWorldPlatformScope(PlatformContextService::instance().context());
+    const auto snapshot = buildFieldGroupEffectiveSnapshot(*m_currentProject, toFieldGroupScope(scope));
     forEachMixNodeItem([&](ProjectItem* item, VMixNode* mix) {
         if (item->comp<VBus>()) {
-            for (const auto& send : mix->sends) {
+            const auto sends = effectiveBusSends(*item, scope);
+            if (!sends) return;
+            for (const auto& send : *sends) {
                 if (send.targetBusID == busId)
-                    out.push_back({item->objectID, item->name, send.sendLevel});
+                    out.push_back({item->objectID, item->name, send.sendLevel, send.mode});
             }
             return;
         }
@@ -6227,7 +6257,7 @@ std::vector<IncomingSendInfo> ProjectManager::collectIncomingSends(uint32_t busI
             return;
         for (const auto& send : effective->second.send.sends) {
             if (snapshot.objects.at(send.targetBusID)->objectID == busId)
-                out.push_back({item->objectID, item->name, VMixNode::dbToLinear(send.sendLevel)});
+                out.push_back({item->objectID, item->name, VMixNode::dbToLinear(send.sendLevel), send.mode});
         }
     });
     return out;
@@ -6248,10 +6278,10 @@ std::vector<MainInputInfo> ProjectManager::collectMainInputs(uint32_t busId) con
         const auto guid = toFieldGroupGuid(item->guid);
         const auto effective = snapshot.definitions.find(guid);
         if (effective == snapshot.definitions.end()
-            || effective->second.mainOutputSource.definition != guid)
+            || effective->second.outputSource.definition != guid)
             return;
-        const auto& output = effective->second.mainOutput;
-        if (snapshot.objects.at(output.mainOutputBusRef)->objectID == busId)
+        const auto& output = effective->second.output;
+        if (snapshot.objects.at(output.outputBusRef)->objectID == busId)
             out.push_back({item->objectID, output.outputBusVolume});
     });
     return out;
@@ -6283,7 +6313,7 @@ bool ProjectManager::isDescendantOfBus(uint32_t busID, uint32_t ancestorID) cons
 
 namespace {
 
-BusRouteSnapshot buildBusRouteSnapshot(const ProjectManager& pm)
+BusRouteSnapshot buildBusRouteSnapshot(const ProjectManager& pm, PlatformScope scope)
 {
     BusRouteSnapshot g;
     const std::vector<ProjectItem*> buses = pm.collectBusItems();
@@ -6300,10 +6330,10 @@ BusRouteSnapshot buildBusRouteSnapshot(const ProjectManager& pm)
             item != master && item->parent && busIDs.contains(item->parent->objectID);
         g.parentOf.insert(item->objectID, hasBusParent ? item->parent->objectID : 0u);
 
-        const auto* mix = item->comp<VMixNode>();
-        if (!mix) continue;
+        const auto sends = effectiveBusSends(*item, scope);
+        if (!sends) continue;
         QVector<uint32_t> targets;
-        for (const auto& send : mix->sends) {
+        for (const auto& send : *sends) {
             if (send.targetBusID != 0 && busIDs.contains(send.targetBusID))
                 targets.push_back(send.targetBusID);
         }
@@ -6318,7 +6348,14 @@ bool ProjectManager::sendWouldCycle(uint32_t fromBusID, uint32_t toBusID) const
 {
     if (fromBusID == 0 || toBusID == 0) return false;
     if (fromBusID == toBusID) return true;
-    return busFlowReaches(buildBusRouteSnapshot(*this), toBusID, fromBusID);
+    if (!m_currentProject) return false;
+    const auto& context = PlatformContextService::instance().context();
+    const auto scopes = context.all || context.selected.isEmpty()
+        ? busRoutingScopes(*m_currentProject)
+        : std::vector<PlatformScope>(context.selected.begin(), context.selected.end());
+    for (const auto& scope : scopes)
+        if (busFlowReaches(buildBusRouteSnapshot(*this, scope), toBusID, fromBusID)) return true;
+    return false;
 }
 
 bool ProjectManager::busMoveWouldCycle(const ProjectItem* moved, const ProjectItem* newParent) const
@@ -6329,7 +6366,10 @@ bool ProjectManager::busMoveWouldCycle(const ProjectItem* moved, const ProjectIt
     // back into moved. Reaching moved terminates the search, so moved's own
     // (replaced) parent edge is never traversed and the current snapshot is
     // sufficient.
-    return busFlowReaches(buildBusRouteSnapshot(*this), newParent->objectID, moved->objectID);
+    if (!m_currentProject) return false;
+    for (const auto& scope : busRoutingScopes(*m_currentProject))
+        if (busFlowReaches(buildBusRouteSnapshot(*this, scope), newParent->objectID, moved->objectID)) return true;
+    return false;
 }
 
 bool ProjectManager::validateStructuralPlacement(ProjectItem::Type type,
@@ -6454,12 +6494,9 @@ bool replaceSends(ProjectItem& owner, VMixNode& mix, std::vector<Send> next)
             return false;
         QJsonArray rows;
         for (const Send& send : next) {
-            rows.append(QJsonObject{
-                {QStringLiteral("targetBusID"),
-                 static_cast<qint64>(send.targetBusID)},
-                {QStringLiteral("sendLevel"),
-                 VMixNode::linearToDb(send.sendLevel)},
-            });
+            auto row = send.toJson();
+            row[QStringLiteral("sendLevel")] = VMixNode::linearToDb(send.sendLevel);
+            rows.append(row);
         }
         return PlayablePropertyAuthoringV1::setOverride(
             owner, *locator, id, rows, std::nullopt);
@@ -6642,20 +6679,20 @@ ProjectItem* ProjectManager::findSendOwnerItem(uint32_t objectID) const
     return findItemByObjectIDInProject(m_currentProject.get(), objectID);
 }
 
-bool ProjectManager::sendTargetSelectable(uint32_t srcObjectID, uint32_t targetBusID) const
+bool ProjectManager::sendTargetSelectable(uint32_t srcObjectID, uint32_t targetBusID, SendMode mode) const
 {
-    if (!sendTargetStructurallySelectable(srcObjectID, targetBusID)) return false;
+    if (!sendTargetStructurallySelectable(srcObjectID, targetBusID, mode)) return false;
     ProjectItem* src = findSendOwnerItem(srcObjectID);
     const auto* mix = src ? src->comp<VMixNode>() : nullptr;
 
     for (const auto& send : mix->sends)
-        if (send.targetBusID == targetBusID) return false;
+        if (send.targetBusID == targetBusID && send.mode == mode) return false;
 
     return true;
 }
 
 bool ProjectManager::sendTargetStructurallySelectable(
-    uint32_t srcObjectID, uint32_t targetBusID) const
+    uint32_t srcObjectID, uint32_t targetBusID, SendMode mode) const
 {
     if (targetBusID == 0 || targetBusID == srcObjectID) return false;
     if (!findVBus(targetBusID)) return false;
@@ -6667,7 +6704,7 @@ bool ProjectManager::sendTargetStructurallySelectable(
     const ProjectItem* mainOut = src->type == ProjectItem::Type::Bus
         ? src->parent
         : findBusItem(resolveEffectiveOutputBusId(src));
-    if (mainOut && mainOut->objectID == targetBusID) return false;
+    if (mode != SendMode::Sidechain && mainOut && mainOut->objectID == targetBusID) return false;
 
     if (src->type == ProjectItem::Type::Bus && sendWouldCycle(srcObjectID, targetBusID))
         return false;
@@ -6684,11 +6721,12 @@ bool ProjectManager::outputBusSelectable(uint32_t srcObjectID, uint32_t candidat
     if (!mix) return true;
 
     for (const auto& send : mix->sends)
-        if (send.targetBusID == candidateBusID) return false;
+        if (send.mode != SendMode::Sidechain && send.targetBusID == candidateBusID) return false;
     return true;
 }
 
-bool ProjectManager::upsertSendInternal(uint32_t srcObjectID, uint32_t targetBusID, float sendLevel)
+bool ProjectManager::upsertSendInternal(uint32_t srcObjectID, uint32_t targetBusID, float sendLevel,
+                                       SendMode mode)
 {
     ProjectItem* srcItem = findSendOwnerItem(srcObjectID);
     auto* srcMix = srcItem ? srcItem->comp<VMixNode>() : nullptr;
@@ -6699,20 +6737,24 @@ bool ProjectManager::upsertSendInternal(uint32_t srcObjectID, uint32_t targetBus
     std::vector<Send> next = srcMix->sends;
     bool existed = false;
     for (auto& send : next) {
-        if (send.targetBusID == targetBusID) {
+        if (send.targetBusID == targetBusID && send.mode == mode) {
             send.sendLevel = sendLevel;
             existed = true;
             break;
         }
     }
 
-    if (!existed) {
-        if (srcIsBus && sendWouldCycle(srcObjectID, targetBusID)) {
-            qWarning() << "[ProjectManager] Rejected send" << srcObjectID << "->" << targetBusID
-                       << ": would close a send loop";
-            return false;
+    if (!existed) next.push_back(Send{targetBusID, sendLevel, mode});
+    if (srcIsBus) {
+        if (!m_currentProject) return false;
+        QJsonArray rows;
+        for (const auto& send : next) {
+            auto row = send.toJson();
+            row[QStringLiteral("sendLevel")] = VMixNode::linearToDb(send.sendLevel);
+            rows.append(row);
         }
-        next.push_back(Send{targetBusID, sendLevel});
+        if (!validateBusRouting(*m_currentProject, {{srcItem->guid, {}, {true, rows}}}).isEmpty())
+            return false;
     }
 
     if (!replaceSends(*srcItem, *srcMix, std::move(next)))
@@ -6729,7 +6771,7 @@ bool ProjectManager::upsertSendInternal(uint32_t srcObjectID, uint32_t targetBus
     return true;
 }
 
-bool ProjectManager::removeSendInternal(uint32_t srcObjectID, uint32_t targetBusID)
+bool ProjectManager::removeSendInternal(uint32_t srcObjectID, uint32_t targetBusID, SendMode mode)
 {
     ProjectItem* srcItem = findSendOwnerItem(srcObjectID);
     auto* srcMix = srcItem ? srcItem->comp<VMixNode>() : nullptr;
@@ -6738,7 +6780,7 @@ bool ProjectManager::removeSendInternal(uint32_t srcObjectID, uint32_t targetBus
     std::vector<Send> next = srcMix->sends;
     const auto erased = std::remove_if(
         next.begin(), next.end(),
-        [targetBusID](const Send& s) { return s.targetBusID == targetBusID; });
+        [targetBusID, mode](const Send& s) { return s.targetBusID == targetBusID && s.mode == mode; });
     if (erased == next.end()) return false;
     next.erase(erased, next.end());
 
@@ -6782,7 +6824,7 @@ SignalChainNode itemToChainNode(const ProjectItem* item,
             const auto definition = groups->definitions.find(guid);
             if (owner != groups->objects.end() && owner->second == item
                 && definition != groups->definitions.end()) {
-                const auto& source = definition->second.mainOutputSource;
+                const auto& source = definition->second.outputSource;
                 node.outputBusOverride = !source.isDefault && source.definition == guid;
             }
         }
@@ -6847,10 +6889,14 @@ void appendBusChain(const ProjectData* project, const ProjectItem* busItem,
         else
             bNode.type = QStringLiteral("Standard");
 
-        for (const auto& send : mix->sends) {
+        const auto sends = effectiveBusSends(*busItem,
+            currentWorldPlatformScope(PlatformContextService::instance().context()));
+        if (!sends) break;
+        for (const auto& send : *sends) {
             SendViewInfo info;
             info.targetBusID = send.targetBusID;
             info.sendLevel   = send.sendLevel;
+            info.mode        = send.mode;
             const ProjectItem* targetItem = findBusItemInProject(project, send.targetBusID);
             info.targetBusName = targetItem ? targetItem->name : QStringLiteral("(unknown)");
             bNode.sends.push_back(info);

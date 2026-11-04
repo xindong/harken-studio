@@ -52,6 +52,8 @@ void CaptureRolloff(const VnAttenuationDesc& desc, float d, float* outLeft,
     *outResolvedDb =
         engine->params.ResolvedValue(harkentest::RenderHandle(engine, handle),
             harken::kTargetVoiceVolume);
+    EXPECT_FLOAT_EQ(*outResolvedDb, engine->spatial.AttenuationVolumeDb(
+        engine->emitters, kProfile, 0.0f, 0.0f, -d, 1.0f));
 
     Capture captured;
     harkentest::PumpAndCapture(engine, 2, captured);
@@ -90,6 +92,38 @@ TEST(AttenuationRolloffGolden, LogarithmicAtLogMidpoint) {
     // d = 10 is the logarithmic midpoint of [1, 100]: g = 0.5 exactly.
     EXPECT_NEAR(20.0f * std::log10(0.5f), resolvedDb, 1e-3f);
     EXPECT_NEAR(kAmp * 0.5f, left, 1e-4f);
+}
+
+TEST(AttenuationRolloffGolden, LogarithmicFiniteDistanceRanges) {
+    struct Case {
+        float minimum;
+        float maximum;
+        float distance;
+        float gain;
+    };
+    const Case cases[] = {
+        {1e-20f, 1e20f, 0.0f, 1.0f},
+        {1e-20f, 1e20f, 1e-20f, 1.0f},
+        {1e-20f, 1e20f, 1.0f, 0.5f},
+        {1e-20f, 1e20f, 1e20f, 0.0f},
+        {1e-20f, 1e20f, 2e20f, 0.0f},
+        {0x1.fffffap0f, 2.0f, 0x1.fffffcp0f, 2.0f / 3.0f},
+    };
+    for (const auto& test : cases) {
+        SCOPED_TRACE(::testing::Message()
+            << "minimum=" << test.minimum << " maximum=" << test.maximum
+            << " distance=" << test.distance);
+        const auto desc = MakeAttenuationDesc(
+            test.minimum, test.maximum, VN_ROLLOFF_LOGARITHMIC);
+        float left = 0.0f, resolvedDb = 0.0f;
+        CaptureRolloff(desc, test.distance, &left, &resolvedDb);
+        const float expectedDb = test.gain == 0.0f
+            ? -96.0f : 20.0f * std::log10(test.gain);
+        EXPECT_TRUE(std::isfinite(resolvedDb));
+        EXPECT_NEAR(expectedDb, resolvedDb, 1e-4f);
+        EXPECT_TRUE(std::isfinite(left));
+        EXPECT_NEAR(kAmp * test.gain, left, 1e-4f);
+    }
 }
 
 TEST(AttenuationRolloffGolden, LinearBeyondMaxLandsOnFloor) {
