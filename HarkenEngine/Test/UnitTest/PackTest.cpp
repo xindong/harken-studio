@@ -443,10 +443,22 @@ TEST(Pack, LoopRegionReachesCurrentActionAndLoopOnlyReplacement) {
         const auto block = engine.mixer.BlocksRendered();
         engine.nullBackend.Pump(1);
         ASSERT_GT(engine.mixer.BlocksRendered(), block);
-        const auto* voice = engine.voices.Resolve(engine.playableServices[0].renderHandle);
+        const auto renderHandle = engine.playableServices[0].renderHandle;
+        const auto* voice = engine.voices.Resolve(renderHandle);
         ASSERT_NE(nullptr, voice);
         EXPECT_EQ(256u, voice->loopStartFrame);
         EXPECT_EQ(1024u, voice->loopEndFrame);
+        // Acceptance precedes the timeline Start; measure duration only after
+        // the source actually begins, independently of scheduling lookahead.
+        for (unsigned i = 0; i < 32 && voice->timelineGated; ++i) {
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+            voice = engine.voices.Resolve(renderHandle);
+            ASSERT_NE(nullptr, voice);
+        }
+        ASSERT_FALSE(voice->timelineGated);
+        ASSERT_GT(voice->srcCursor, 0u);
+        // 2048 + (1024 - 256) source frames fit; two whole-file passes do not.
         for (unsigned i = 0; i < 12; ++i) {
             engine.nullBackend.Pump(1);
             ASSERT_EQ(VN_OK, Vn_Update());
@@ -465,6 +477,7 @@ TEST(Pack, LoopRegionReachesCurrentActionAndLoopOnlyReplacement) {
         replacement.structSize = sizeof(replacement);
         replacement.utf8Path = path.c_str();
         ASSERT_EQ(VN_OK, Vn_ReplacePack(pack, &replacement));
+        ASSERT_EQ(VN_OK, Vn_Update()); // Activate a staged sectioned revision.
         const auto replaced = engine.registry.Lookup(media.id);
         ASSERT_TRUE(replaced.Valid());
         EXPECT_EQ(512u, replaced.loop.startFrame);
