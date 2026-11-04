@@ -37735,17 +37735,6 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
     }
     std::array<VnVoiceHandle, harken::kMaxKnownScheduleLeaves>
         exitingHandles{};
-    const bool sourceAudioRetired = std::all_of(
-        sourceSlots.begin(), sourceSlots.begin() + sourceMemberCount,
-        [&](const auto slot) { return engine.ReadPlayableMember(slot).completion.resourcesRetired; });
-    if (sourceAudioRetired) sourceMemberCount = 0;
-    for (std::uint32_t index = 0; index < sourceMemberCount; ++index) {
-        exitingHandles[index] =
-            engine.ReadPlayableMember(sourceSlots[index]).render;
-        if (engine.voices.Resolve(exitingHandles[index]) == nullptr) {
-            return VariableRetargetPrepareStatus::Retry;
-        }
-    }
 
     MaterializedScheduleSet targetSchedule{};
     auto preparation = BorrowServicePreparation(engine);
@@ -37844,6 +37833,41 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
         }
     }
 
+    // The selected native owner, not the first pass's leaf snapshot, owns
+    // music completion. Resolve its exact service generation and parent link.
+    harken::EnginePlayableServiceRow* musicSource = nullptr;
+    if (transitionRule != nullptr && transitionRule->sourceExit == harken::TransitionSourceExitV1::NaturalEnd &&
+        row.variableControlChildCount != 0) {
+        const auto* child = FindDirectScheduleAggregateChild(row,
+            row.variableControlChildInstances[0], row.variableControlChildEpochs[0]);
+        if (child != nullptr && child->lifecycleOwned && !child->resourcesReleased) {
+            auto* source = engine.ResolvePlayableService(child->service);
+            if (source == nullptr || !harken::Engine::SameSelectionServiceReference(
+                    source->parentService, PlayableServiceReference(row))) return VariableRetargetPrepareStatus::Retry;
+            const auto actual = engine.playableInstances.Classify(source->ownerInstance);
+            if (!actual.live || actual.scheduleEpoch != source->ownerEpoch || actual.parent != row.ownerInstance ||
+                source->invocation != row.invocation || source->invocationGeneration != row.invocationGeneration)
+                return VariableRetargetPrepareStatus::Retry;
+            if (source->scheduleAggregate != nullptr && source->scheduleAggregate->committed &&
+                source->scheduleAggregate->music != nullptr) musicSource = source;
+        }
+    }
+    if (musicSource != nullptr) {
+        // Source fades require a branch-wide envelope for later passes too.
+        // Until that path is prepared, retain the source without partial fades.
+        if (transitionRule->sourceFade.active != 0) return VariableRetargetPrepareStatus::Retry;
+        sourceMemberCount = 0;
+    } else {
+        const bool sourceAudioRetired = std::all_of(
+            sourceSlots.begin(), sourceSlots.begin() + sourceMemberCount,
+            [&](const auto slot) { return engine.ReadPlayableMember(slot).completion.resourcesRetired; });
+        if (sourceAudioRetired) sourceMemberCount = 0;
+        for (std::uint32_t index = 0; index < sourceMemberCount; ++index) {
+            exitingHandles[index] = engine.ReadPlayableMember(sourceSlots[index]).render;
+            if (engine.voices.Resolve(exitingHandles[index]) == nullptr) return VariableRetargetPrepareStatus::Retry;
+        }
+    }
+
     const std::uint64_t blockFrames = engine.config.blockFrames;
     const std::uint64_t observedFrame =
         observedAudioSequence > UINT64_MAX / blockFrames
@@ -37909,7 +37933,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
     std::uint64_t audibleFrame = decisionFrame;
     std::uint64_t sourceStopFrame = 0;
     std::uint64_t targetStartFrame = decisionFrame;
-    const bool naturalEnd = sourceMemberCount != 0 && transitionRule != nullptr &&
+    const bool naturalEnd = (sourceMemberCount != 0 || musicSource != nullptr) && transitionRule != nullptr &&
         transitionRule->sourceExit ==
             harken::TransitionSourceExitV1::NaturalEnd;
     if (naturalEnd) {
@@ -37944,6 +37968,29 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
             }
             sourceStopFrame = std::max(
                 sourceStopFrame, currentStartFrame + remainingFrames);
+        }
+        if (musicSource != nullptr) {
+            const auto& music = *musicSource->scheduleAggregate->music;
+            const auto toElapsed = [&](std::uint64_t frame, std::uint64_t& elapsed) noexcept {
+                const auto age = frame > musicSource->startFrame ? frame - musicSource->startFrame : 0;
+                if (age > UINT64_MAX - music.sourceOffsetFrames) return false;
+                elapsed = music.sourceOffsetFrames + age;
+                return true;
+            };
+            std::uint64_t current = 0, floor = 0;
+            if (!toElapsed(observedFrame, current) || !toElapsed(decisionFrame, floor))
+                return VariableRetargetPrepareStatus::Fatal;
+            const auto boundary = harken::ResolveMusicPlaybackBoundary(music.timeline, music.clock, music.markers,
+                harken::MusicBoundaryKind::NaturalEnd, 0, current, floor);
+            if (boundary.status != harken::MusicTimelineStatus::Ok)
+                return boundary.status == harken::MusicTimelineStatus::NoCandidate ||
+                    boundary.status == harken::MusicTimelineStatus::Missed
+                    ? VariableRetargetPrepareStatus::Retry : VariableRetargetPrepareStatus::Fatal;
+            if (boundary.frame < music.sourceOffsetFrames) return VariableRetargetPrepareStatus::Fatal;
+            const auto offset = boundary.frame - music.sourceOffsetFrames;
+            if (offset > music.inheritedEndOffsetFrames) return VariableRetargetPrepareStatus::Retry;
+            if (offset > UINT64_MAX - musicSource->startFrame) return VariableRetargetPrepareStatus::Fatal;
+            sourceStopFrame = musicSource->startFrame + offset;
         }
         targetStartFrame = sourceStopFrame;
         if (sourceFadeActive) {
@@ -53795,7 +53842,8 @@ engine.runtimeRecreateRequired = true;
         auto requirePublication = [&](std::uint64_t frame) {
             if (requiredPublicationFrame != nullptr) {
                 *requiredPublicationFrame =
-                    std::max(*requiredPublicationFrame, hasScheduleAggregateAncestor
+                    std::max(*requiredPublicationFrame,
+                        hasScheduleAggregateAncestor || row.scheduleVariableChildren != nullptr
                         ? RollingPlayablePublicationFrame(engine, observedAudioSequence, frame) : frame);
             }
         };

@@ -18066,9 +18066,16 @@ TEST(PlayableStart, MusicSegmentCropsVariableControlSelectedSourcesAndPreservesW
     }
 }
 
-TEST(PlayableStart, MusicTransitionFromEntrySkipsIntroAndPreservesBodyCount) {
-    for (const auto count : {1u, 3u})
+TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
+    for (const auto mode : {0u, 1u, 2u, 3u, 4u, 5u})
+    for (const auto count : {1u, 3u, 0u})
     for (const auto workers : {0u, 2u}) {
+        if ((mode == 4) != (count == 0)) continue;
+        const bool musicSource = mode != 0;
+        const bool silenceBeforeOut = mode == 2;
+        const bool cancelled = mode == 3;
+        const bool nativeTarget = mode == 5;
+        SCOPED_TRACE(mode);
         SCOPED_TRACE(count);
         SCOPED_TRACE(workers);
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
@@ -18076,7 +18083,7 @@ TEST(PlayableStart, MusicTransitionFromEntrySkipsIntroAndPreservesBodyCount) {
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto* engine = session.Engine();
-        std::vector<float> samples(16384, 0.4f);
+        std::vector<float> samples(musicSource ? 1600 : 16384, 0.4f);
         std::fill_n(samples.begin(), 400, 0.1f);
         std::fill(samples.begin() + 400, samples.begin() + 1200, 0.2f);
         std::fill(samples.begin() + 1200, samples.begin() + 1600, 0.3f);
@@ -18090,17 +18097,17 @@ TEST(PlayableStart, MusicTransitionFromEntrySkipsIntroAndPreservesBodyCount) {
         target.properties[2].payload.values[loopIndex].bits = count;
         target.properties[2].programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(target.properties[2]);
         target.segment.rootDefinition.expectedProgramSemanticFingerprint = target.properties[2].programSemanticFingerprint;
-        target.placement.authoredDuration = 64;
+        target.placement.authoredDuration = silenceBeforeOut ? 48 : 64;
         target.track.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(target.track);
         target.trackRef.trackScheduleSemanticFingerprint = target.track.scheduleSemanticFingerprint;
         target.segment.startPointKind = 0;
         target.segment.startMarkerId = 0;
         target.segment.entryMarker = {harkentest::ObjectId(10002), 16};
-        target.segment.bounds.contentEnd = 64;
+        target.segment.bounds.contentEnd = silenceBeforeOut ? 48 : 64;
         target.segment.bounds.nominalStart = 16;
-        target.segment.bounds.nominalEnd = 48;
+        target.segment.bounds.nominalEnd = silenceBeforeOut ? 64 : 48;
         target.marker.markerKind = 1;
-        target.marker.position = 48;
+        target.marker.position = target.segment.bounds.nominalEnd;
         target.segment.scheduleSemanticFingerprint = harken::ComputeSegmentScheduleFingerprintV2(target.segment);
         VariableControlWorldImage control(revision, target.world.generation);
         control.properties[1].authoredStableOrder = 3;
@@ -18111,7 +18118,8 @@ TEST(PlayableStart, MusicTransitionFromEntrySkipsIntroAndPreservesBodyCount) {
         std::array<harken::ContainerChildProgramViewV2, 2> children{control.child, control.child};
         children[1].stableChildOrdinal = 8;
         children[1].authoredStableOrder = 1;
-        children[1].playable = target.Root();
+        children[musicSource ? 0 : 1].playable = target.Root();
+        if (nativeTarget) children[1].playable = target.Root();
         std::array<harken::DiscreteGridCellV1, 2> cells{control.cell, {harken::DiscreteCellKindV1::Exact, 1}};
         std::array<harken::DiscreteGridRowViewV1, 2> rows{control.row, control.row};
         rows[0].cells = &cells[0];
@@ -18127,7 +18135,8 @@ TEST(PlayableStart, MusicTransitionFromEntrySkipsIntroAndPreservesBodyCount) {
         harken::TransitionRuleViewV1 rule{};
         rule.stableRuleOrdinal = 1;
         rule.sourceAny = rule.targetAny = 1;
-        rule.sourceExit = harken::TransitionSourceExitV1::Immediate;
+        rule.sourceExit = musicSource ? harken::TransitionSourceExitV1::NaturalEnd
+            : harken::TransitionSourceExitV1::Immediate;
         rule.targetEntry = harken::TransitionTargetEntryV1::FromEntryMarker;
         harken::CurveV1 fadeCurve{};
         fadeCurve.curveLocalId = 1;
@@ -18135,11 +18144,11 @@ TEST(PlayableStart, MusicTransitionFromEntrySkipsIntroAndPreservesBodyCount) {
         fadeCurve.curve.points[0] = {0.0f, 0.0f};
         fadeCurve.curve.points[1] = {1.0f, 1.0f};
         fadeCurve.curve.handles[0] = {1.0f / 3.0f, 1.0f / 3.0f, 2.0f / 3.0f, 2.0f / 3.0f};
-        control.container.curves = &fadeCurve;
-        control.container.curveCount = 1;
-        rule.sourceFade.active = 1;
-        rule.sourceFade.durationFrames = 64;
-        rule.sourceFade.curveLocalId = fadeCurve.curveLocalId;
+        control.container.curves = musicSource ? nullptr : &fadeCurve;
+        control.container.curveCount = musicSource ? 0 : 1;
+        rule.sourceFade.active = musicSource ? 0 : 1;
+        rule.sourceFade.durationFrames = musicSource ? 0 : 64;
+        rule.sourceFade.curveLocalId = musicSource ? UINT32_MAX : fadeCurve.curveLocalId;
         harken::TransitionProgramViewV1 transition{};
         transition.ownerContainerStableId = control.container.containerStableId;
         transition.rules = &rule;
@@ -18189,21 +18198,32 @@ TEST(PlayableStart, MusicTransitionFromEntrySkipsIntroAndPreservesBodyCount) {
             [&](const auto& service) { return service.ownerInstance == started.instance; });
         ASSERT_NE(engine->playableServices.end(), controller);
         const auto originalStart = controller->startFrame;
-        for (unsigned block = 0; block < 12; ++block) {
+        for (unsigned block = 0; block < (musicSource && count != 1 ? 32u : 12u); ++block) {
             ASSERT_EQ(VN_OK, Vn_Update());
             engine->nullBackend.Pump(1);
         }
         ASSERT_EQ(VN_OK, Vn_SetValue(variable.variableId, 1.0f));
         std::uint64_t targetStart = UINT64_MAX;
-        for (unsigned block = 0; block < 32 && targetStart == UINT64_MAX; ++block) {
+        for (unsigned block = 0; block < 64 && targetStart == UINT64_MAX; ++block) {
             ASSERT_EQ(VN_OK, Vn_Update()) << OccupancyDump(*engine);
-            for (const auto& service : engine->playableServices)
-                if (service.root.stableId == target.Root().stableId && service.parentService.owner == started.instance)
-                    targetStart = service.startFrame;
+            if (musicSource) {
+                if (controller->variableControlDiscreteRetargetDecisionCommitted)
+                    targetStart = controller->VariableControlDiscreteRetargetEnteringSchedule().entryAnchorFrame;
+            } else {
+                for (const auto& service : engine->playableServices)
+                    if (service.root.stableId == target.Root().stableId && service.parentService.owner == started.instance)
+                        targetStart = service.startFrame;
+            }
             if (targetStart == UINT64_MAX) engine->nullBackend.Pump(1);
         }
-        ASSERT_NE(UINT64_MAX, targetStart) << OccupancyDump(*engine);
-        const auto bodyFrames = count * 800u;
+        if (count == 0) EXPECT_EQ(UINT64_MAX, targetStart);
+        else ASSERT_NE(UINT64_MAX, targetStart) << OccupancyDump(*engine);
+        const auto bodyFrames = count == 0 ? UINT64_MAX - 800u : count * (silenceBeforeOut ? 1200u : 800u);
+        if (musicSource && count != 0) EXPECT_EQ(originalStart + (silenceBeforeOut ? 400u : 800u) + bodyFrames, targetStart);
+        if (cancelled) {
+            ASSERT_LT(engine->mixer.BlocksRendered() * 64u + 256u, targetStart);
+            ASSERT_EQ(VN_OK, Vn_SetValue(variable.variableId, 3.0f));
+        }
         for (unsigned block = 0; block < 120; ++block) {
             ASSERT_EQ(VN_OK, Vn_Update()) << OccupancyDump(*engine);
             ASSERT_FALSE(engine->runtimeRecreateRequired);
@@ -18212,11 +18232,24 @@ TEST(PlayableStart, MusicTransitionFromEntrySkipsIntroAndPreservesBodyCount) {
             for (unsigned sample = 0; sample < 64; ++sample) {
                 const auto frame = before * 64 + sample;
                 const auto age = frame >= targetStart ? frame - targetStart : UINT64_MAX;
-                const auto source = frame < targetStart ? samples[frame - originalStart]
-                    : age < 64u ? samples[frame - originalStart] * (1.0f - static_cast<float>(age) / 63.0f) : 0.0f;
-                const auto expected = source + (age < bodyFrames ? 0.2f : age < bodyFrames + 400u ? 0.3f : 0.0f);
+                const auto sourceAge = frame >= originalStart ? frame - originalStart : UINT64_MAX;
+                const auto source = musicSource
+                    ? (sourceAge < 400u ? 0.1f : sourceAge < 400u + bodyFrames ? (silenceBeforeOut && (sourceAge - 400u) % 1200u >= 800u ? 0.0f : 0.2f)
+                        : sourceAge < 800u + bodyFrames && !silenceBeforeOut ? 0.3f : 0.0f)
+                    : frame < targetStart ? samples[sourceAge]
+                        : age < 64u ? samples[sourceAge] * (1.0f - static_cast<float>(age) / 63.0f) : 0.0f;
+                const auto expected = source + (cancelled ? 0.0f : musicSource && !nativeTarget ? (age < samples.size() ? samples[age] : 0.0f)
+                    : age < bodyFrames ? 0.2f : age < bodyFrames + 400u ? 0.3f : 0.0f);
                 ASSERT_NEAR(expected, engine->nullBackend.LastBlock()[sample * 2], 0.001f)
                     << "frame=" << frame << " target=" << targetStart << OccupancyDump(*engine);
+            }
+        }
+        if (count == 0) {
+            EXPECT_FALSE(controller->variableControlDiscreteRetargetPrepared);
+            ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(*engine, started.instance, 0));
+            for (unsigned block = 0; block < 128; ++block) {
+                ASSERT_EQ(VN_OK, Vn_Update());
+                engine->nullBackend.Pump(1);
             }
         }
         EXPECT_EQ(0u, engine->playableInstances.LiveCount());
