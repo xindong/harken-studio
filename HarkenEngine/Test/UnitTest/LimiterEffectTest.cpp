@@ -3158,6 +3158,81 @@ TEST(CompressorEffect,
               rows[1].stateFlags & VN_COMPRESSOR_RUNTIME_RESET_BRIDGE);
 }
 
+TEST(CompressorEffect, RuntimeTelemetryUsesCurrentGenerationBeforeOldVoiceIsReaped) {
+    VnConfig config = harkentest::MakeNullConfig(1, kBlock, kRate);
+    config.fxSlotsPerVoice = 1;
+    config.fxSlotsPerBus = 1;
+    config.compressorEffectPoolCapacity = 2;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    const auto sound = harkentest::ObjectId(232);
+    const auto source = harkentest::MakeDC(kBlock * 2, 0.5f);
+    const VnPCMDesc pcm = harkentest::MonoDesc(source, kRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+    VnPlayDesc play = harkentest::MakePlayDesc(sound);
+
+    VnVoiceHandle first = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &first));
+    engine->nullBackend.Pump(4);
+    VnVoiceHandle old = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &old));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    const auto oldRender = engine->ledger.ToRender(old);
+    engine->nullBackend.Pump(4);
+    ASSERT_FALSE(engine->voices.IsAlive(oldRender));
+
+    // Reuse the lower ledger row while the higher row still awaits Update.
+    play.loopCount = 0;
+    VnVoiceHandle current = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &current));
+    const auto currentRender = engine->ledger.ToRender(current);
+    ASSERT_LT(static_cast<std::uint32_t>(current), static_cast<std::uint32_t>(old));
+    ASSERT_EQ(static_cast<std::uint32_t>(oldRender),
+              static_cast<std::uint32_t>(currentRender));
+    ASSERT_NE(oldRender, currentRender);
+    ASSERT_EQ(old, engine->ledger.ToPublic(oldRender));
+    const VnCompressorDesc compressor =
+        CompressorDesc(-18.0f, 1.0f, 10.0f, 100.0f, 6.0f, 0.0f);
+    ASSERT_EQ(VN_OK, Vn_SetVoiceEffect(current, 0, VN_EFFECT_COMPRESSOR,
+                                      AsBase(&compressor)));
+    ASSERT_EQ(VN_OK, Vn_SetBusEffect(VN_BUS_MASTER, 0, VN_EFFECT_COMPRESSOR,
+                                    AsBase(&compressor)));
+    std::uint32_t required = 0;
+    VnCompressorRuntimeInfo before{};
+    before.structSize = sizeof before;
+    ASSERT_EQ(VN_OK, Vn_CaptureCompressorRuntimeInfo(&before, 1, &required));
+    EXPECT_EQ(current, before.instanceHandle);
+    EXPECT_NE(0u, before.stateFlags & VN_COMPRESSOR_RUNTIME_STALE);
+    engine->nullBackend.Pump(1);
+
+    ASSERT_EQ(VN_OK, Vn_CaptureCompressorRuntimeInfo(nullptr, 0, &required));
+    ASSERT_EQ(2u, required);
+    VnCompressorRuntimeInfo truncated{};
+    truncated.structSize = sizeof truncated;
+    ASSERT_EQ(VN_OK, Vn_CaptureCompressorRuntimeInfo(&truncated, 1, &required));
+    EXPECT_EQ(2u, required);
+    EXPECT_EQ(current, truncated.instanceHandle);
+    EXPECT_EQ(0u, truncated.stateFlags & VN_COMPRESSOR_RUNTIME_STALE);
+
+    std::array<VnCompressorRuntimeInfo, 2> rows{};
+    rows[0].structSize = sizeof rows[0];
+    ASSERT_EQ(VN_OK, Vn_CaptureCompressorRuntimeInfo(rows.data(), 2, &required));
+    EXPECT_EQ(current, rows[0].instanceHandle);
+    EXPECT_EQ(VN_EFFECT_HOST_SCOPE_VOICE, rows[0].hostScope);
+    EXPECT_EQ(VN_EFFECT_HOST_SCOPE_BUS, rows[1].hostScope);
+    EXPECT_EQ(0u, rows[0].stateFlags & VN_COMPRESSOR_RUNTIME_STALE);
+    EXPECT_GT(rows[0].blockEpoch, before.blockEpoch);
+    EXPECT_EQ(rows[1].blockEpoch, rows[0].blockEpoch);
+    EXPECT_NEAR(-6.0206f, rows[0].mainInputPeakDb, 1.0e-3f);
+
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(0u, engine->ledger.ToPublic(oldRender));
+    ASSERT_EQ(VN_OK, Vn_CaptureCompressorRuntimeInfo(rows.data(), 2, &required));
+    EXPECT_EQ(current, rows[0].instanceHandle);
+    EXPECT_EQ(0u, rows[0].stateFlags & VN_COMPRESSOR_RUNTIME_STALE);
+}
+
 TEST(EffectDynamicTransition,
      GainDelayAndLimiterUseRetargetablePreparedTenMillisecondSeams) {
     {

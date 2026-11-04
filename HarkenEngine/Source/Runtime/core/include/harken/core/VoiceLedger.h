@@ -574,6 +574,11 @@ public:
     // the older entry still awaiting its end notification.
     VnVoiceHandle ToPublic(VnVoiceHandle renderHandle) const;
 
+    // Current Live ledger binding for a render slot, including its generation.
+    // Older unreaped bindings cannot shadow this owner. This is a logic-thread
+    // association query, not audio liveness; ToPublic still filters visibility.
+    VnVoiceHandle CurrentRenderHandle(std::uint32_t renderSlot) const noexcept;
+
     // Ends the Live entry that owns this render-slot handle: it becomes Ended
     // and its generation advances, so the public handle is now stale and the
     // slot is reusable. Called after an end notification is translated and

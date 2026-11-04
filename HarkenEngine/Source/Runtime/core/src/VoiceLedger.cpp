@@ -1453,6 +1453,18 @@ VnVoiceHandle VoiceLedger::ToRender(VnVoiceHandle publicHandle) const {
     return entry->renderHandle;
 }
 
+VnVoiceHandle VoiceLedger::CurrentRenderHandle(std::uint32_t renderSlot) const noexcept {
+    if (renderSlot >= m_renderOwners.size()) {
+        return 0;
+    }
+    const auto generation = m_renderOwners[renderSlot].renderGeneration;
+    if (generation == 0) {
+        return 0;
+    }
+    const auto handle = MakeHandle(renderSlot, generation);
+    return EntryForRender(handle) != nullptr ? handle : 0;
+}
+
 VnVoiceHandle VoiceLedger::ToPublic(VnVoiceHandle renderHandle) const {
     const Entry* entry = EntryForRender(renderHandle);
     if (entry == nullptr && renderHandle != 0) {
