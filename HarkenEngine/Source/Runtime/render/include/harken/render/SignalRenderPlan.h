@@ -7,6 +7,7 @@
 #include "harken/render/SignalFeedbackPlan.h"
 
 #include <cassert>
+#include <cstring>
 #include <memory>
 
 namespace harken {
