@@ -18418,7 +18418,7 @@ ScheduleMaterializeStatus PrepareMixedSchedulePlan(
     std::uint32_t maxTrackSegmentScheduleDepth,
     harken::EngineActionPlayScratch& attempt,
     const harken::EngineScheduleChildPropertyContext* prefix = nullptr,
-    std::uint64_t sourceOffsetFrames = 0) noexcept {
+    std::uint64_t sourceOffsetFrames = 0, bool fromEntry = false) noexcept {
     if (harken::memguard::IsAudioTagged() || attempt.storage.scheduleAggregatePlan != nullptr ||
         sampleRate == 0 || maxTerminals == 0 || maxTerminals > harken::kMaxKnownScheduleLeaves ||
         maxTrackSegmentScheduleDepth == 0 ||
@@ -18469,6 +18469,7 @@ ScheduleMaterializeStatus PrepareMixedSchedulePlan(
             music.timeline.contentEnd = segment->bounds.contentEnd;
             music.timeline.hasExitCue = music.markers.ExitMarker().present;
             music.timeline.playCount = playCount;
+            music.timeline.fromEntry = fromEntry;
             music.sourceOffsetFrames = sourceOffsetFrames;
             const auto position = harken::ResolveMusicPlaybackPosition(music.timeline, music.clock, sourceOffsetFrames);
             if (position.status != harken::MusicTimelineStatus::Ok)
@@ -37664,7 +37665,7 @@ struct NativeVariableScheduleRetargetPreparation {
 bool PrepareNativeVariableScheduleRetarget(harken::Engine&,
     harken::EnginePlayableServiceRow&, const harken::ContainerProgramViewV3&,
     const harken::ContainerChildProgramViewV2&, std::uint32_t, std::uint32_t,
-    std::uint64_t, harken::DecisionToken, MaterializedScheduleSet&,
+    std::uint64_t, harken::DecisionToken, bool, MaterializedScheduleSet&,
     NativeVariableScheduleRetargetPreparation&) noexcept;
 bool CommitNativeVariableScheduleRetarget(NativeVariableScheduleRetargetPreparation&,
     harken::LogicCommitSequence) noexcept;
@@ -37980,7 +37981,8 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
         if (desired == nullptr || !ReserveQueueDecision(engine, row, &decision, &ticket, transition,
                 naturalEnd && audibleFrame < sourceStopFrame ? 2u : 1u, ticket) ||
             !PrepareNativeVariableScheduleRetarget(engine, row, program, *desired, selected.childStableOrdinal,
-                sourceMemberCount, targetStartFrame, decision, targetSchedule, native))
+                sourceMemberCount, targetStartFrame, decision, transitionRule != nullptr &&
+                    transitionRule->targetEntry == harken::TransitionTargetEntryV1::FromEntryMarker, targetSchedule, native))
             return VariableRetargetPrepareStatus::Retry;
     } else {
         const auto clipStatus = BoundScheduleToNaturalClip(engine, row, targetStartFrame, targetSchedule);
@@ -87203,6 +87205,7 @@ struct ContainerPreparationContext {
     std::uint64_t startFrame = 0;
     std::uint64_t endFrame = UINT64_MAX;
     std::uint64_t sourceOffsetFrames = 0;
+    bool musicFromEntry = false;
     std::optional<std::uint64_t> originalReadFrame{};
     std::uint32_t selectionEventBegin = UINT32_MAX;
     std::uint32_t* initialSelectionEventCursor = nullptr;
@@ -87472,6 +87475,7 @@ void BindScheduleChildPreparation(ContainerPreparationContext& context,
     context.typedPrefix = record.properties.typedPrefix;
     context.scheduleChild = &record;
     context.sourceOffsetFrames = record.sourceOffsetFrames;
+    context.musicFromEntry = false;
     context.directRoot = false;
 }
 
@@ -92292,10 +92296,10 @@ bool PrepareMixedScheduleExecution(ContainerPreparationContext& context,
     const auto status = pack
         ? PrepareMixedSchedulePlan(scratch.packPlaybackView, context.root, engine.config.mixRate.SampleRate(),
             engine.config.maxKnownScheduleLeaves, harken::WorldCapacitySummaryV1{}.maxTrackSegmentScheduleDepth,
-            scratch, &prefix, context.sourceOffsetFrames)
+            scratch, &prefix, context.sourceOffsetFrames, context.musicFromEntry)
         : PrepareMixedSchedulePlan(context.world, context.root, engine.config.mixRate.SampleRate(),
             engine.config.maxKnownScheduleLeaves, harken::WorldCapacitySummaryV1{}.maxTrackSegmentScheduleDepth,
-            scratch, &prefix, context.sourceOffsetFrames);
+            scratch, &prefix, context.sourceOffsetFrames, context.musicFromEntry);
     if ((status != ScheduleMaterializeStatus::Ok && status != ScheduleMaterializeStatus::ZeroWork) ||
         scratch.storage.scheduleAggregatePlan == nullptr) {
         context.result = status == ScheduleMaterializeStatus::Capacity ? VN_BACKPRESSURE : VN_CAPABILITY_UNAVAILABLE;
@@ -92697,7 +92701,7 @@ PendingScheduleEntryStatus PreparePendingScheduleVariableEntry(harken::Engine& e
 bool PrepareNativeVariableScheduleRetarget(harken::Engine& engine,
     harken::EnginePlayableServiceRow& parent, const harken::ContainerProgramViewV3& program,
     const harken::ContainerChildProgramViewV2& desired, std::uint32_t ordinal,
-    std::uint32_t firstMember, std::uint64_t startFrame, harken::DecisionToken decision,
+    std::uint32_t firstMember, std::uint64_t startFrame, harken::DecisionToken decision, bool fromEntry,
     MaterializedScheduleSet& schedule, NativeVariableScheduleRetargetPreparation& native) noexcept {
     if (!engine.logicCommits.IsOriginalPreparedIssueFor(native.issue) || !decision.Valid() ||
         native.scratch != nullptr || !parent.variableControlInstance.Valid()) return false;
@@ -92761,6 +92765,7 @@ bool PrepareNativeVariableScheduleRetarget(harken::Engine& engine,
     bool queueCapacity = false;
     auto context = MakeScheduleContinuationPreparationContext(
         engine, world, native.issue, noChild, failure, queueCapacity, parent, record, startFrame);
+    context.musicFromEntry = fromEntry && desired.playable.kind == harken::PlayableKindV1::Segment;
     context.privateScheduleOwner = &scratch;
     context.initialForestReadCutOwner = &scratch.storage;
     context.initialAdmissionGroup = harken::ParentAudioGroupRef{decision};
