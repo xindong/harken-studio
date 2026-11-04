@@ -14,6 +14,7 @@
 #include "harken/core/ChannelLayout.h"
 #include "harken/dsp/DownmixSum.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -164,7 +165,8 @@ TEST(BusDownmix, MonoOutputBusDroppedWhenMixHasNoCenter) {
            "absent voice";
 }
 
-void CheckFiniteCancellation(bool masterFold) {
+void CheckFiniteCancellation(bool masterFold, bool middleTerm = false) {
+    SCOPED_TRACE(middleTerm);
     EngineSession session(MakeNullConfigLayout(2, kBlockFrames, 48000,
         VN_CHANNEL_LAYOUT_5_1,
         masterFold ? VN_CHANNEL_LAYOUT_STEREO : VN_CHANNEL_LAYOUT_5_1));
@@ -182,11 +184,16 @@ void CheckFiniteCancellation(bool masterFold) {
     matrix.coeffs[3] = -maximum;
     matrix.coeffs[4] = 1.0f;
     matrix.coeffs[8 + 5] = 1.0f;
+    if (middleTerm) {
+        matrix.coeffs[1] = 1.0f;
+        matrix.coeffs[2] = -maximum;
+        matrix.coeffs[3] = matrix.coeffs[4] = 0.0f;
+    }
     ASSERT_EQ(VN_OK, Vn_SetBusDownmixMatrix(bus, &matrix));
 
     // Product overflow, partial-sum overflow with finite products, ordinary
     // audio, true positive/negative overload, then ordinary audio again.
-    const float samples[][6] = {
+    float samples[][6] = {
         {2.0f, 2.0f, 0.0f, 0.0f, 0.25f, 0.125f},
         {0.75f, -0.75f, -0.75f, 0.75f, 0.25f, 0.125f},
         {0.0f, 0.0f, 0.0f, 0.0f, 0.25f, 0.125f},
@@ -194,9 +201,16 @@ void CheckFiniteCancellation(bool masterFold) {
         {-2.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.125f},
         {0.0f, 0.0f, 0.0f, 0.0f, 0.25f, 0.125f}
     };
+    if (middleTerm) {
+        samples[0][1] = 0.25f;
+        samples[0][2] = 2.0f;
+        samples[0][4] = 0.0f;
+    }
+    const std::size_t scenarioCount = middleTerm ? 1 : 6;
     const float expected[] = {0.25f, 0.25f, 0.25f, 1.0f, -1.0f, 0.25f};
     std::vector<float> pcm;
-    for (const auto& frame : samples) {
+    for (std::size_t scenario = 0; scenario < scenarioCount; ++scenario) {
+        const auto& frame = samples[scenario];
         for (std::uint32_t n = 0; n < 2 * kBlockFrames; ++n)
             pcm.insert(pcm.end(), frame, frame + 6);
     }
@@ -214,8 +228,9 @@ void CheckFiniteCancellation(bool masterFold) {
     VnVoiceHandle voice = 0;
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
     CaptureMulti capture;
-    harkentest::PumpAndCaptureMulti(session.Engine(), 12, capture);
-    for (std::size_t scenario = 0; scenario < 6; ++scenario) {
+    harkentest::PumpAndCaptureMulti(session.Engine(),
+        static_cast<std::uint32_t>(2 * scenarioCount), capture);
+    for (std::size_t scenario = 0; scenario < scenarioCount; ++scenario) {
         SCOPED_TRACE(scenario);
         const auto frame = (2 * scenario + 1) * kBlockFrames + kBlockFrames / 2;
         EXPECT_FLOAT_EQ(expected[scenario], capture.channels[0][frame]);
@@ -225,10 +240,36 @@ void CheckFiniteCancellation(bool masterFold) {
 
 TEST(BusDownmix, PerBusFoldPreservesFiniteCancellation) {
     CheckFiniteCancellation(false);
+    CheckFiniteCancellation(false, true);
 }
 
 TEST(BusDownmix, DeviceFoldPreservesFiniteCancellation) {
     CheckFiniteCancellation(true);
+    CheckFiniteCancellation(true, true);
+}
+
+TEST(BusDownmix, RecoveryRetainsResidualAcrossTermOrderings) {
+    const float maximum = std::numeric_limits<float>::max();
+    float samples[] = {2.0f, 2.0f, 1.0f, 1.0f, 0.25f, 1.0f, 1.0f, 0.125f};
+    const float gains[] = {maximum, -maximum, 0x1p100f, -0x1p100f,
+                           1.0f, 0x1p-50f, -0x1p-50f, 1.0f};
+    unsigned order[] = {0, 1, 2, 3, 4, 5, 6, 7};
+    unsigned recovered = 0;
+    do {
+        float* planes[8];
+        float coefficients[8];
+        float sum = 0.0f;
+        for (unsigned i = 0; i < 8; ++i) {
+            planes[i] = samples + order[i];
+            coefficients[i] = gains[order[i]];
+            sum += *planes[i] * coefficients[i];
+        }
+        ASSERT_FALSE(std::isfinite(sum));
+        EXPECT_FLOAT_EQ(0.375f,
+            harken::RecoverFiniteDownmixSum(sum, coefficients, planes, 8, 0));
+        ++recovered;
+    } while (std::next_permutation(order, order + 8));
+    EXPECT_EQ(40320u, recovered);
 }
 
 TEST(BusDownmix, RecoveryPreservesOrdinarySumsAndNonFiniteInput) {
