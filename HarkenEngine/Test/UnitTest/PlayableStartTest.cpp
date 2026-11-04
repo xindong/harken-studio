@@ -17838,13 +17838,16 @@ TEST(PlayableStart, MusicSegmentNestedCountsRespectSourceAgeAndParentClip) {
 }
 
 TEST(PlayableStart, MusicSegmentCropsVariableControlSelectedSourcesAndPreservesWeights) {
-    for (const auto ordinaryMode : {0u, 1u, 2u, 3u, 4u, 5u})
+    for (const auto ordinaryMode : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u})
     for (const auto selectedKind : {0u, 1u, 2u})
     for (const auto stopDuringBody : {false, true})
     for (const auto mediaFrames : {200u, 1600u})
     for (const auto continuous : {false, true})
     for (const auto workers : {0u, 2u}) {
         if (ordinaryMode == 3 && (selectedKind != 0 || mediaFrames != 1600 || continuous)) continue;
+        if (ordinaryMode >= 6 && (selectedKind != 0 || continuous ||
+            mediaFrames != (ordinaryMode == 8 || ordinaryMode == 9 ? 200u : 1600u))) continue;
+        if (ordinaryMode >= 8 && stopDuringBody) continue;
         SCOPED_TRACE(selectedKind);
         SCOPED_TRACE(ordinaryMode);
         SCOPED_TRACE(stopDuringBody);
@@ -17900,14 +17903,20 @@ TEST(PlayableStart, MusicSegmentCropsVariableControlSelectedSourcesAndPreservesW
         inner.marker.position = 64;
         inner.segment.scheduleSemanticFingerprint = harken::ComputeSegmentScheduleFingerprintV2(inner.segment);
         if (selectedKind != 0) control.child.playable = selectedKind == 1 ? inner.track.rootDefinition : inner.Root();
-        PlayableWorldImage ordinary(revision, ordinaryMode == 2 ? harken::ContainerModeV1::Random
+        PlayableWorldImage ordinary(revision, ordinaryMode == 2 || ordinaryMode == 7 || ordinaryMode == 9
+                                                               ? harken::ContainerModeV1::Random
                                                                : harken::ContainerModeV1::Sequence);
         ordinary.properties[1].stableId = harkentest::ObjectId(2002);
         ordinary.properties[1].authoredStableOrder = 4 + (selectedKind != 0) + (selectedKind == 2);
+        if (ordinaryMode >= 6) {
+            const auto index = static_cast<std::size_t>(harken::playableproperties::PlayablePropertyIdV1::LoopCount) - 1u;
+            ordinary.properties[1].payload.presentMask |= UINT64_C(1) << index;
+            ordinary.properties[1].payload.values[index].bits = 3;
+        }
         ordinary.properties[1].programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(ordinary.properties[1]);
         VariableControlWorldImage nestedControl(revision, image.world.generation, ordinaryMode == 5, ordinaryMode == 5);
         nestedControl.container.envelopeFrames = 0;
-        if (ordinaryMode >= 4) {
+        if (ordinaryMode == 4 || ordinaryMode == 5) {
             ordinary.container = nestedControl.container;
             ordinary.container.children = &ordinary.child;
         }
@@ -17927,6 +17936,15 @@ TEST(PlayableStart, MusicSegmentCropsVariableControlSelectedSourcesAndPreservesW
         queue.occurrence.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(queue.occurrence);
         ordinary.child.playable = ordinaryMode == 3 ? queue.Root() : control.child.playable;
         if (ordinaryMode == 3) ordinary.child.playable.stableId = queue.container.containerStableId;
+        std::array<harken::ContainerChildProgramViewV2, 2> mixedChildren = {ordinary.child, ordinary.child};
+        if (ordinaryMode == 10) {
+            mixedChildren[1].stableChildOrdinal = 8;
+            mixedChildren[1].authoredStableOrder = 1;
+            mixedChildren[1].playable = queue.Root();
+            mixedChildren[1].playable.stableId = queue.container.containerStableId;
+            ordinary.container.children = mixedChildren.data();
+            ordinary.container.childCount = mixedChildren.size();
+        }
         ordinary.occurrence.parentStableId = ordinary.container.containerStableId;
         ordinary.occurrence.parentProgramSemanticFingerprint = ordinary.container.programSemanticFingerprint;
         ordinary.occurrence.childPlayable = ordinary.child.playable;
@@ -17946,10 +17964,21 @@ TEST(PlayableStart, MusicSegmentCropsVariableControlSelectedSourcesAndPreservesW
         const auto loopIndex = static_cast<std::size_t>(
             harken::playableproperties::PlayablePropertyIdV1::LoopCount) - 1u;
         image.properties[2].payload.presentMask |= UINT64_C(1) << loopIndex;
-        image.properties[2].payload.values[loopIndex].bits = ordinaryMode == 3 ? 1 : 3;
+        image.properties[2].payload.values[loopIndex].bits = ordinaryMode == 3 || ordinaryMode >= 8 ? 1 : 3;
+        if (ordinaryMode == 8 || ordinaryMode == 9) {
+            image.properties[2].payload.presentMask |= 3u;
+            image.properties[2].payload.values[0].bits = std::bit_cast<std::uint32_t>(-6.0206f);
+            image.properties[2].payload.values[1].bits = std::bit_cast<std::uint32_t>(1200.0f);
+        }
         image.properties[2].programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(image.properties[2]);
         image.segment.rootDefinition.expectedProgramSemanticFingerprint = image.properties[2].programSemanticFingerprint;
         image.placement.content = control.Root();
+        if (ordinaryMode == 10) {
+            image.placement.content = ordinary.Root();
+            image.placement.content.stableId = ordinary.container.containerStableId;
+            image.placement.authoredStart = -16;
+            image.segment.bounds.contentStart = -16;
+        }
         image.placement.authoredDuration = 64;
         image.occurrence.childPlayable = image.placement.content;
         image.occurrence.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(image.occurrence);
@@ -17958,7 +17987,7 @@ TEST(PlayableStart, MusicSegmentCropsVariableControlSelectedSourcesAndPreservesW
         image.segment.startPointKind = 0;
         image.segment.startMarkerId = 0;
         image.segment.entryMarker = {harkentest::ObjectId(10002), 16};
-        image.segment.bounds.contentEnd = 64;
+        image.segment.bounds.contentEnd = ordinaryMode == 10 ? 48 : 64;
         image.segment.bounds.nominalStart = 16;
         image.segment.bounds.nominalEnd = 48;
         image.marker.markerKind = 1;
@@ -17969,13 +17998,20 @@ TEST(PlayableStart, MusicSegmentCropsVariableControlSelectedSourcesAndPreservesW
         if (selectedKind != 0) properties.push_back(inner.properties[1]);
         if (selectedKind == 2) properties.push_back(inner.properties[2]);
         if (ordinaryMode != 0) properties.push_back(ordinary.properties[1]);
-        if (ordinaryMode == 3) properties.push_back(queue.properties[1]);
+        if (ordinaryMode == 3 || ordinaryMode == 10) properties.push_back(queue.properties[1]);
         std::sort(properties.begin(), properties.end(), [](const auto& a, const auto& b) {
             return std::pair{a.contentPropertyKind, a.stableId} < std::pair{b.contentPropertyKind, b.stableId};
         });
         std::vector<harken::PlayableOccurrencePropertyViewV1> occurrences = {control.occurrence, image.occurrence};
         if (ordinaryMode != 0) occurrences.push_back(ordinary.occurrence);
-        if (ordinaryMode == 3) occurrences.push_back(queue.occurrence);
+        if (ordinaryMode == 3 || ordinaryMode == 10) occurrences.push_back(queue.occurrence);
+        if (ordinaryMode == 10) {
+            auto nested = ordinary.occurrence;
+            nested.stableOccurrenceOrdinal = mixedChildren[1].stableChildOrdinal;
+            nested.childPlayable = mixedChildren[1].playable;
+            nested.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(nested);
+            occurrences.push_back(nested);
+        }
         if (selectedKind != 0) for (const auto& clip : innerClips) {
             auto occurrence = inner.occurrence;
             occurrence.parentStableId = inner.track.rootDefinition.stableId;
@@ -17991,9 +18027,10 @@ TEST(PlayableStart, MusicSegmentCropsVariableControlSelectedSourcesAndPreservesW
         auto install = PlayableWorldInstall(control.world);
         std::array<harken::ContainerProgramViewV3, 3> containers = {control.container, ordinary.container, queue.container};
         install.containers = containers.data();
-        install.containerCount = ordinaryMode == 3 ? 3 : ordinaryMode != 0 ? 2 : 1;
-        if (ordinaryMode == 3) install.identity.capabilityMask |= harken::kWorldCapabilitySequenceQueue;
-        if (ordinaryMode != 0 && ordinaryMode < 4) install.identity.capabilityMask |= ordinary.world.identity.capabilityMask;
+        install.containerCount = ordinaryMode == 3 || ordinaryMode == 10 ? 3 : ordinaryMode != 0 ? 2 : 1;
+        if (ordinaryMode == 3 || ordinaryMode == 10) install.identity.capabilityMask |= harken::kWorldCapabilitySequenceQueue;
+        if ((ordinaryMode != 0 && ordinaryMode < 4) || ordinaryMode >= 6)
+            install.identity.capabilityMask |= ordinary.world.identity.capabilityMask;
         install.playableProperties = properties.data();
         install.playablePropertyCount = properties.size();
         install.playableOccurrences = occurrences.data();
@@ -18016,12 +18053,22 @@ TEST(PlayableStart, MusicSegmentCropsVariableControlSelectedSourcesAndPreservesW
         ASSERT_NE(0u, capture);
         std::vector<harkentest::monitor::IdentityRecord> records;
         const auto started = harken::StartPlayable(*engine, request);
+        if (ordinaryMode == 10) {
+            EXPECT_EQ(harken::PlayableStartStatus::CapabilityUnavailable, started.status);
+            EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+            EXPECT_EQ(0u, engine->voices.ActiveCount());
+            EXPECT_EQ(0u, engine->selectionMemory.PendingCount());
+            EXPECT_FALSE(engine->runtimeRecreateRequired);
+            EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
+            continue;
+        }
         ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
         const auto row = std::find_if(engine->playableServices.begin(), engine->playableServices.end(),
             [&](const auto& candidate) { return candidate.rootInstance == started.instance; });
         ASSERT_NE(engine->playableServices.end(), row);
         const auto start = row->startFrame;
         const unsigned stopBlock = ordinaryMode == 3 ? 12 : 28;
+        std::uint64_t repeatedSamples = 0;
         for (unsigned block = 0; block < 160; ++block) {
             if (stopDuringBody && block == stopBlock)
                 ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(*engine, started.instance, 0));
@@ -18034,6 +18081,14 @@ TEST(PlayableStart, MusicSegmentCropsVariableControlSelectedSourcesAndPreservesW
             for (unsigned sample = 0; sample < 64; ++sample) {
                 const auto frame = before * 64 + sample;
                 const auto offset = frame >= start ? frame - start : UINT64_MAX;
+                if (ordinaryMode >= 8) {
+                    const auto actual = engine->nullBackend.LastBlock()[2 * sample];
+                    if (std::abs(actual) > 0.0001f) {
+                        ++repeatedSamples;
+                        EXPECT_NEAR(0.05f, actual, 0.001f) << "frame=" << frame;
+                    }
+                    continue;
+                }
                 if (stopDuringBody && block >= stopBlock && block < stopBlock + 32) continue;
                 const auto expected = stopDuringBody && block >= stopBlock ? 0.0f :
                     (mediaFrames == 200 ? (offset < 200 ? 0.1f : 0.0f)
@@ -18045,6 +18100,7 @@ TEST(PlayableStart, MusicSegmentCropsVariableControlSelectedSourcesAndPreservesW
                     << "frame=" << frame << " start=" << start << OccupancyDump(*engine);
             }
         }
+        if (ordinaryMode >= 8) EXPECT_EQ(300u, repeatedSamples);
         EXPECT_EQ(0u, engine->playableInstances.LiveCount());
         EXPECT_EQ(0u, engine->playablePartitions.OccupiedCount());
         EXPECT_EQ(0u, engine->timelineArms.LiveCount());

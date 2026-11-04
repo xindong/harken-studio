@@ -78,6 +78,10 @@ struct KnownCompletionQuantumProof {
 CompletionPredictability ResolveKnownCompletionDuration(
     const KnownCompletionFactsV1& facts, std::uint64_t* out) noexcept;
 
+// Pure source positioning arithmetic, independent of completion delivery.
+CompletionPredictability ResolveFixedSourceDuration(
+    const KnownCompletionFactsV1& facts, std::uint64_t* out) noexcept;
+
 CompletionPredictability MaterializeKnownCompletion(
     const KnownCompletionFactsV1& facts,
     KnownCompletionPredicateV1* out) noexcept;
