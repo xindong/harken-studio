@@ -241,6 +241,47 @@ TEST_F(UpdateBridgeConsumerTest, StudioInstallCannotReclaimAnActiveHubInstaller)
     EXPECT_EQ(report.failed, 0);
 }
 
+TEST_F(UpdateBridgeConsumerTest, RetriesUnpublishedResultsWithoutRepeatingTheInstallation)
+{
+    ASSERT_TRUE(QDir().mkpath(VNH::TransactionJournal::filePath()));
+    for (const bool damaged : {true, false}) {
+        const auto transaction = queueStudioTransaction();
+        if (damaged) {
+            QFile package(HandoffArea::packagePath(transaction));
+            ASSERT_TRUE(package.open(QIODevice::Append));
+            ASSERT_GT(package.write("damaged"), 0);
+        }
+        const auto resultPath = HandoffArea::rootDir() + QLatin1Char('/') + transaction + ".result";
+        QFile blocked(resultPath);
+        ASSERT_TRUE(blocked.open(QIODevice::WriteOnly));
+        ASSERT_GT(blocked.write("occupied"), 0);
+        blocked.close();
+        const auto first = UpdateBridgeConsumer::run(keys.publicKey, kNow, hooks);
+        EXPECT_EQ(first.installed, damaged ? 0 : 1);
+        EXPECT_EQ(first.failed, damaged ? 1 : 0);
+        ASSERT_FALSE(first.details.isEmpty());
+        EXPECT_TRUE(UpdateQueue::pendingEntries().empty());
+        ASSERT_TRUE(QFile::remove(resultPath));
+
+        const auto retried = UpdateBridgeConsumer::run(keys.publicKey, kNow, hooks);
+        EXPECT_EQ(retried.installed, 0);
+        EXPECT_EQ(retried.failed, 0);
+        EXPECT_TRUE(retried.details.isEmpty());
+        QString error;
+        const auto result = UpdateQueue::studioResult(transaction, &error);
+        ASSERT_TRUE(result.has_value()) << error.toStdString();
+        EXPECT_EQ(result->ok, !damaged);
+        EXPECT_EQ(result->buildId, "run12.abcd1234");
+        if (damaged) {
+            EXPECT_EQ(result->failureCode, "PackageRejected");
+            EXPECT_FALSE(result->error.isEmpty());
+        }
+        ASSERT_TRUE(UpdateQueue::discardStudioResult(transaction));
+        EXPECT_TRUE(UpdateBridgeConsumer::run(keys.publicKey, kNow, hooks).details.isEmpty());
+        EXPECT_FALSE(UpdateQueue::studioResult(transaction, &error).has_value());
+    }
+}
+
 TEST_F(UpdateBridgeConsumerTest, DiscardsOrphanedQueueMarker)
 {
     const QString transactionId = HandoffArea::newTransactionId();

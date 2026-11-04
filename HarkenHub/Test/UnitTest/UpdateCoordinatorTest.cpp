@@ -281,9 +281,17 @@ TEST_F(UpdateCoordinatorTest, QueuesVerifiedBuildForBridgeInstall)
     EXPECT_EQ(entries[0].transactionId, state.transactionId);
     EXPECT_EQ(entries[0].product, QStringLiteral("HarkenStudio"));
 
-    const auto outcome = VNH::InstallExecutor::run(state.transactionId,
-                                                   keys.publicKey, kNow);
-    ASSERT_TRUE(outcome.ok) << outcome.error.toStdString();
+    QLockFile lock(UpdateStateStore::filePath() + QStringLiteral(".lock"));
+    ASSERT_TRUE(lock.tryLock());
+    const auto report = VNH::UpdateBridgeConsumer::run(
+        keys.publicKey, kNow, VNH::UpdateBridgeConsumer::defaultHooks());
+    ASSERT_EQ(report.installed, 1);
+    EXPECT_FALSE(spinUntil([&]() { return coordinator.currentState().state == "Installed"; }, 100));
+    QString error;
+    const auto outcome = VNH::UpdateQueue::studioResult(state.transactionId, &error);
+    ASSERT_TRUE(outcome.has_value()) << error.toStdString();
+    EXPECT_TRUE(outcome->ok);
+    lock.unlock();
 
     ASSERT_TRUE(spinUntil([&]() {
         return coordinator.currentState().state ==
@@ -292,6 +300,7 @@ TEST_F(UpdateCoordinatorTest, QueuesVerifiedBuildForBridgeInstall)
     state = coordinator.currentState();
     EXPECT_EQ(state.state, QStringLiteral("Installed"));
     EXPECT_TRUE(state.downloadPath.isEmpty());
+    EXPECT_FALSE(VNH::UpdateQueue::studioResult(state.transactionId, &error).has_value());
 }
 
 TEST_F(UpdateCoordinatorTest, FailedInstallSurvivesMissingJournalRestartAndBlockedStateWrite)

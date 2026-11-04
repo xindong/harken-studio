@@ -578,6 +578,9 @@ void UpdateCoordinator::pollBridgeOutcome()
         return;
     }
 
+    QString resultError;
+    const auto outcome = record.transactionId.isEmpty()
+        ? std::nullopt : UpdateQueue::studioResult(record.transactionId, &resultError);
     if (isBuildInstalled(record.buildId)) {
         record.state = QStringLiteral("Installed");
         record.failureCode.clear();
@@ -596,8 +599,6 @@ void UpdateCoordinator::pollBridgeOutcome()
     }
 
     if (!record.transactionId.isEmpty()) {
-        QString resultError;
-        const auto outcome = UpdateQueue::studioResult(record.transactionId, &resultError);
         if (outcome || !resultError.isEmpty()) {
             record.state = QStringLiteral("InstallFailed");
             if (!resultError.isEmpty()) {

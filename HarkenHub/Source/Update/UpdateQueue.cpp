@@ -2,6 +2,8 @@
 
 #include "Transactions/HandoffArea.h"
 #include "Platform/AclHardening.h"
+#include "Platform/PlatformPaths.h"
+#include "Platform/UserSession.h"
 
 #include <QDateTime>
 #include <QDebug>
@@ -23,6 +25,38 @@ constexpr qint64 kQueueMarkerMaxBytes = 4 * 1024;
 QString studioResultPath(const QString& transactionId)
 {
     return HandoffArea::rootDir() + QLatin1Char('/') + transactionId + QStringLiteral(".result");
+}
+
+QString pendingResultPath(const QString& transactionId)
+{
+    return machineDataDir() + QStringLiteral("/pending-results/") + transactionId + QStringLiteral(".json");
+}
+
+bool writeResultFile(const QString& path, const QByteArray& bytes,
+                     const QString& userId, QString* error)
+{
+    if (!QDir().mkpath(QFileInfo(path).path())) {
+        *error = QStringLiteral("Cannot create the installation result directory");
+        return false;
+    }
+    QFile existing(path);
+    if (existing.open(QIODevice::ReadOnly) && existing.readAll() == bytes)
+        return true;
+    existing.close();
+    QTemporaryFile file(path + QStringLiteral(".XXXXXX"));
+    if (!file.open() || file.write(bytes) != bytes.size() || !file.flush()) {
+        *error = QStringLiteral("Cannot write installation result: %1 (%2)").arg(path, file.errorString());
+        return false;
+    }
+    file.close();
+    if (!grantFileReadAndDelete(file.fileName(), userId, error))
+        return false;
+    if (!file.rename(path)) {
+        *error = QStringLiteral("Cannot commit installation result: %1 (%2)").arg(path, file.errorString());
+        return false;
+    }
+    file.setAutoRemove(false);
+    return true;
 }
 
 bool writeMarker(const QString& transactionId, const QJsonObject& body,
@@ -153,27 +187,50 @@ bool UpdateQueue::writeStudioResult(const QString& transactionId,
         {QStringLiteral("installPath"), outcome.installPath},
         {QStringLiteral("failureCode"), outcome.failureCode},
         {QStringLiteral("failureDetail"), outcome.error},
+        {QStringLiteral("userId"), userId},
     };
-    if (!QDir().mkpath(HandoffArea::rootDir())) {
-        *error = QStringLiteral("Cannot create the installation result directory");
-        return false;
-    }
-    const QString path = studioResultPath(transactionId);
-    QTemporaryFile file(path + QStringLiteral(".XXXXXX"));
     const auto bytes = QJsonDocument(result).toJson(QJsonDocument::Compact);
-    if (!file.open() || file.write(bytes) != bytes.size() || !file.flush()) {
-        *error = QStringLiteral("Cannot write installation result: %1 (%2)").arg(path, file.errorString());
+    const auto pendingPath = pendingResultPath(transactionId);
+    if (!writeResultFile(pendingPath, bytes, currentUserId(), error))
         return false;
-    }
-    file.close();
-    if (!grantFileReadAndDelete(file.fileName(), userId, error))
+    if (!writeResultFile(studioResultPath(transactionId), bytes, userId, error))
         return false;
-    if (!file.rename(path)) {
-        *error = QStringLiteral("Cannot commit installation result: %1 (%2)").arg(path, file.errorString());
-        return false;
-    }
-    file.setAutoRemove(false);
+    if (!QFile::remove(pendingPath))
+        qWarning().noquote() << "Cannot remove published installation result:" << pendingPath;
     return true;
+}
+
+QStringList UpdateQueue::retryStudioResults()
+{
+    QStringList errors;
+    const QDir pending(QFileInfo(pendingResultPath(QString())).path());
+    for (const auto& info : pending.entryInfoList({QStringLiteral("*.json")}, QDir::Files | QDir::NoSymLinks)) {
+        const auto transactionId = info.completeBaseName();
+        if (!HandoffArea::isValidTransactionId(transactionId))
+            continue;
+        QFile file(info.filePath());
+        if (!file.open(QIODevice::ReadOnly)) {
+            errors.append(QStringLiteral("Cannot read pending installation result: %1").arg(info.filePath()));
+            continue;
+        }
+        const auto bytes = file.readAll();
+        const auto result = QJsonDocument::fromJson(bytes).object();
+        if (file.error() != QFileDevice::NoError
+            || result.value(QStringLiteral("transactionId")).toString() != transactionId
+            || result.value(QStringLiteral("product")).toString() != QStringLiteral("HarkenStudio")
+            || result.value(QStringLiteral("userId")).toString().isEmpty()) {
+            errors.append(QStringLiteral("Invalid pending installation result: %1").arg(info.filePath()));
+            continue;
+        }
+        file.close();
+        QString error;
+        if (!writeResultFile(studioResultPath(transactionId), bytes, result.value(QStringLiteral("userId")).toString(), &error)) {
+            errors.append(error);
+        } else if (!QFile::remove(info.filePath())) {
+            errors.append(QStringLiteral("Cannot remove published installation result: %1").arg(info.filePath()));
+        }
+    }
+    return errors;
 }
 
 std::optional<InstallOutcome> UpdateQueue::studioResult(const QString& transactionId,
