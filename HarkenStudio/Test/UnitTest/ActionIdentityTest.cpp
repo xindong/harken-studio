@@ -2,6 +2,7 @@
 #include "ProjectManager.h"
 #include "ProjectTypes.h"
 #include "ProjectObjectIndex.h"
+#include "FieldGroupProjectAdapter.h"
 #include "Components/VMixNode.h"
 #include "Components/VTrack.h"
 #include "Components/VSegment.h"
@@ -108,7 +109,7 @@ TEST_F(ActionIdentityTest, NestedObjectIndexRejectsAmbiguousOwners)
     effect.guid = QUuid::createUuid();
     effect.effectGuid = effectAsset->guid;
     auto* mix = sound->comp<VMixNode>();
-    ASSERT_TRUE(mix->effects.replace({effect}));
+    ASSERT_TRUE(sound->fieldGroups.effects.shared.localHistory->effects.replace({effect}));
     auto binding = BindingSemantics::defaultBinding(BindingSemantics::volumeAddress(), QUuid::createUuid());
     binding.guid = QUuid::createUuid();
     ASSERT_TRUE(mix->bindings.upsert(binding));
@@ -164,20 +165,24 @@ TEST_F(ActionIdentityTest, DuplicateMintsNestedUuidsAndSaveReloadKeepsThem)
     EffectEntry custom;
     custom.guid = QUuid::createUuid();
     custom.mode = EffectMode::Custom;
-    ASSERT_TRUE(sound->comp<VMixNode>()->effects.replace({effect, custom}));
+    ASSERT_TRUE(sound->fieldGroups.effects.shared.localHistory->effects.replace({effect, custom}));
+    const auto platform = toFieldGroupGuid(manager.currentProject()->platforms.front().id);
+    sound->fieldGroups.effects.platforms[platform] = sound->fieldGroups.effects.shared;
     ASSERT_TRUE(sound->comp<VMixNode>()->bindings.upsert(binding));
     auto* copy = manager.duplicateItem(sound);
     ASSERT_NE(copy, nullptr);
     auto* copiedMix = copy->comp<VMixNode>();
-    ASSERT_EQ(copiedMix->effects.size(), 2u);
+    ASSERT_EQ(copy->fieldGroups.effects.shared.localHistory->effects.size(), 2u);
     ASSERT_EQ(copiedMix->bindings.size(), 1u);
-    const auto copiedEffect = copiedMix->effects.entries().front().runtimeId();
-    const auto copiedCustom = copiedMix->effects.entries().back();
+    const auto copiedEffect = copy->fieldGroups.effects.shared.localHistory->effects.entries().front().runtimeId();
+    const auto copiedCustom = copy->fieldGroups.effects.shared.localHistory->effects.entries().back();
     const auto copiedBinding = copiedMix->bindings.entries().front().runtimeId();
     const auto copiedGuid = copy->guid;
     EXPECT_NE(copy->guid, sound->guid);
     EXPECT_NE(copiedEffect, effect.runtimeId());
-    EXPECT_EQ(copiedMix->effects.entries().front().effectGuid, effect.effectGuid);
+    EXPECT_EQ(copy->fieldGroups.effects.platforms.at(platform).localHistory->effects.entries().front().runtimeId(), copiedEffect);
+    EXPECT_TRUE(validateProjectObjectIdentities(*manager.currentProject()));
+    EXPECT_EQ(copy->fieldGroups.effects.shared.localHistory->effects.entries().front().effectGuid, effect.effectGuid);
     EXPECT_NE(copiedCustom.guid, custom.guid);
     EXPECT_EQ(copiedCustom.custom.toJson(), custom.custom.toJson());
     EXPECT_NE(copiedBinding, binding.runtimeId());
@@ -188,8 +193,10 @@ TEST_F(ActionIdentityTest, DuplicateMintsNestedUuidsAndSaveReloadKeepsThem)
     ASSERT_NE(copy, nullptr);
     copiedMix = copy->comp<VMixNode>();
     ASSERT_NE(copiedMix, nullptr);
-    EXPECT_EQ(copiedMix->effects.entries().front().runtimeId(), copiedEffect);
-    EXPECT_EQ(copiedMix->effects.entries().front().effectGuid, effect.effectGuid);
-    EXPECT_EQ(copiedMix->effects.entries().back().toJson(), copiedCustom.toJson());
+    EXPECT_EQ(copy->fieldGroups.effects.shared.localHistory->effects.entries().front().runtimeId(), copiedEffect);
+    EXPECT_EQ(copy->fieldGroups.effects.shared.localHistory->effects.entries().front().effectGuid, effect.effectGuid);
+    EXPECT_EQ(copy->fieldGroups.effects.shared.localHistory->effects.entries().back().toJson(), copiedCustom.toJson());
+    EXPECT_EQ(copy->fieldGroups.effects.platforms.at(platform).localHistory->effects.entries().front().runtimeId(), copiedEffect);
+    EXPECT_TRUE(validateProjectObjectIdentities(*manager.currentProject()));
     EXPECT_EQ(copiedMix->bindings.entries().front().runtimeId(), copiedBinding);
 }

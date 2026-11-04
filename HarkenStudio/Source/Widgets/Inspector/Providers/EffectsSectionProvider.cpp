@@ -4,6 +4,7 @@
 #include "Core/Components/VEffect.h"
 #include "Core/Components/VMixNode.h"
 #include "Core/ItemTypeCatalog.h"
+#include "Core/PlatformContextService.h"
 #include "Core/ProjectManager.h"
 #include "Core/QtControlSkin.h"
 #include "Core/ThemeAssetCatalog.h"
@@ -15,6 +16,7 @@
 #include "Widgets/Common/ParameterValueEditor.h"
 #include "Widgets/Common/TableWidget.h"
 #include "Widgets/Inspector/EffectsFieldSchema.h"
+#include "Widgets/Inspector/FieldGroupInspectorView.h"
 #include "Widgets/Inspector/InspectorLayout.h"
 #include "Widgets/Inspector/InspectorPanel.h"
 #include "Widgets/Selector/ObjectRefWidget.h"
@@ -65,7 +67,7 @@ public:
             refreshSelection();
         });
         table_->setRowMoveHandler([this](int from, int to) {
-            auto effects = boundItem()->comp<VMixNode>()->effects.entries();
+            auto effects = effects_.entries();
             const auto effect = effects[from];
             effects.erase(effects.begin() + from);
             effects.insert(effects.begin() + to, effect);
@@ -74,8 +76,7 @@ public:
                 refreshSelection();
             }
         }, [this](int from, int to) {
-            const auto* item = boundItem();
-            const int count = item ? static_cast<int>(item->comp<VMixNode>()->effects.size()) : 0;
+            const int count = static_cast<int>(effects_.size());
             return canEdit() && isCurrentContext()
                 && from >= 0 && from < count && to >= 0 && to < count;
         });
@@ -101,7 +102,7 @@ public:
         connect(remove_, &QToolButton::clicked, this, [this] {
             if (!canEdit() || !isCurrentContext()) return;
             table_->removeSelectedRow([this] {
-                auto effects = boundItem()->comp<VMixNode>()->effects.entries();
+                auto effects = effects_.entries();
                 if (std::erase_if(effects, [this](const EffectEntry& effect) {
                         return effect.guid == selected_;
                     }) == 0)
@@ -113,9 +114,9 @@ public:
         connect(&ProjectManager::instance(), &ProjectManager::itemRenamed,
                 this, [this] { rebuild(); });
         connect(&ProjectManager::instance(), &ProjectManager::itemDeleted,
-                this, [this] { rebuild(); }, Qt::QueuedConnection);
+                this, [this] { bind(boundItem()); }, Qt::QueuedConnection);
         connect(&ProjectManager::instance(), &ProjectManager::itemCreated,
-                this, [this] { rebuild(); }, Qt::QueuedConnection);
+                this, [this] { bind(boundItem()); }, Qt::QueuedConnection);
         connect(&ProjectManager::instance(), &ProjectManager::projectClosed,
                 this, [this] { bind(nullptr); });
     }
@@ -124,7 +125,21 @@ public:
     {
         const QUuid guid = item ? item->guid : QUuid{};
         const auto* mix = item ? item->comp<VMixNode>() : nullptr;
-        const QJsonArray effects = mix ? mix->effects.toJson() : QJsonArray{};
+        const auto* project = ProjectManager::instance().currentProject();
+        const bool grouped = item && PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type);
+        const auto view = grouped && project ? buildFieldGroupInspectorView(*project, guid,
+            FieldGroupId::Effect, PlatformContextService::instance().context()) : FieldGroupInspectorView{};
+        const auto& context = PlatformContextService::instance().context();
+        auto effects = mix ? mix->effectsForPlatform(context.all ? std::nullopt
+            : currentWorldPlatformScope(context)) : EffectChainLedger{};
+        bool mixed = false;
+        QString tooltip;
+        if (grouped) {
+            const auto effective = view.effectChain();
+            effects = effective.value_or(EffectChainLedger{});
+            mixed = view.valid && !effective;
+            tooltip = project ? view.sourceTooltip(*project) : QString{};
+        }
         if (!inspector_) {
             for (auto* current = parentWidget(); current; current = current->parentWidget()) {
                 inspector_ = qobject_cast<InspectorPanel*>(current);
@@ -137,10 +152,19 @@ public:
                 break;
             }
         }
-        if (boundGuid_ == guid && snapshot_ == effects && initialized_) return;
+        if (boundGuid_ == guid && effects_ == effects && initialized_
+            && grouped_ == grouped && mixed_ == mixed && toolTip() == tooltip
+            && groupView_.context == view.context && groupView_.expectedBefore == view.expectedBefore
+            && context_ == context
+            && groupView_.valid == view.valid && groupView_.fieldsEditable == view.fieldsEditable) return;
         if (boundGuid_ != guid) table_->clearSelection();
         boundGuid_ = guid;
-        snapshot_ = effects;
+        effects_ = std::move(effects);
+        grouped_ = grouped;
+        groupView_ = view;
+        mixed_ = mixed;
+        context_ = context;
+        setToolTip(tooltip);
         initialized_ = true;
         rebuild();
     }
@@ -202,7 +226,11 @@ private:
     {
         const auto* item = boundItem();
         if (!item || !isEnabled()) return false;
-        const auto& effects = item->comp<VMixNode>()->effects.entries();
+        if (context_ != PlatformContextService::instance().context()) return false;
+        if (grouped_ && (!groupView_.valid || !groupView_.fieldsEditable || mixed_
+            || groupView_.expectedBefore != item->fieldGroups
+            || groupView_.context != PlatformContextService::instance().context())) return false;
+        const auto& effects = effects_.entries();
         return std::all_of(effects.begin(), effects.end(), [](const EffectEntry& effect) {
             return !effect.guid.isNull() && EffectChainSemantics::validate(effect);
         });
@@ -219,10 +247,21 @@ private:
         EffectChainLedger ledger;
         if (!ledger.replace(std::move(effects))) return false;
         auto* item = boundItem();
-        const bool success = ActionManager::instance().execute(QStringLiteral("set_item_property"),
-            {{QStringLiteral("authoring_handle"), static_cast<qint64>(item->objectID)},
-             {QStringLiteral("property"), QStringLiteral("effects")},
-             {QStringLiteral("value"), ledger.toJson()}}, ActionSource::GUI, this, undoParent).success;
+        auto args = grouped_ ? groupView_.actionArgs() : QJsonObject{
+            {QStringLiteral("authoring_handle"), static_cast<qint64>(item->objectID)},
+            {QStringLiteral("property"), QStringLiteral("effects")}};
+        args.insert(grouped_ ? QStringLiteral("effects") : QStringLiteral("value"), ledger.toJson());
+        if (!grouped_ && !context_.all && !context_.selected.isEmpty()) {
+            QJsonArray platforms;
+            for (const auto& platform : context_.selected)
+                platforms.append(ProjectPlatformSemantics::idString(platform));
+            args.insert(QStringLiteral("platform_ids"), platforms);
+        }
+        const auto result = ActionManager::instance().execute(grouped_
+            ? QStringLiteral("replace_field_group_effects") : QStringLiteral("set_item_property"),
+            args, ActionSource::GUI, this, undoParent);
+        const bool success = result.success;
+        if (!success) setToolTip(result.errorMessage);
         if (success) bind(boundItem());
         return success;
     }
@@ -259,7 +298,7 @@ private:
                 return;
             }
             const auto* target = ProjectManager::instance().findItemByObjectID(objectID);
-            auto effects = self->boundItem()->comp<VMixNode>()->effects.entries();
+            auto effects = self->effects_.entries();
             EffectEntry effect;
             effect.guid = QUuid::createUuid();
             effect.mode = EffectMode::Preset;
@@ -277,7 +316,7 @@ private:
     {
         if (!canSelect(objectID)) return;
         const auto* target = ProjectManager::instance().findItemByObjectID(objectID);
-        auto effects = boundItem()->comp<VMixNode>()->effects.entries();
+        auto effects = effects_.entries();
         const auto found = std::find_if(effects.begin(), effects.end(),
             [&guid](const EffectEntry& effect) { return effect.guid == guid; });
         if (found == effects.end()
@@ -291,7 +330,7 @@ private:
     void replaceCustom(const QUuid& guid)
     {
         if (!canEdit() || !isCurrentContext()) return;
-        auto effects = boundItem()->comp<VMixNode>()->effects.entries();
+        auto effects = effects_.entries();
         auto found = std::find_if(effects.begin(), effects.end(),
             [&guid](const EffectEntry& effect) { return effect.guid == guid; });
         if (guid.isNull()) {
@@ -314,7 +353,7 @@ private:
     void convertToCustom(const QUuid& guid)
     {
         if (!canEdit() || !isCurrentContext()) return;
-        auto effects = boundItem()->comp<VMixNode>()->effects.entries();
+        auto effects = effects_.entries();
         const auto found = std::find_if(effects.begin(), effects.end(),
             [&guid](const EffectEntry& effect) { return effect.guid == guid; });
         if (found == effects.end() || found->mode != EffectMode::Preset) return;
@@ -341,7 +380,7 @@ private:
                 if (!self || self->generation_ != generation
                     || !self->canEdit() || !self->isCurrentContext())
                     return tr("The effect slot is no longer available.");
-                auto effects = self->boundItem()->comp<VMixNode>()->effects.entries();
+                auto effects = self->effects_.entries();
                 const auto found = std::find_if(effects.begin(), effects.end(),
                     [&guid](const EffectEntry& effect) { return effect.guid == guid; });
                 if (found == effects.end() || found->mode != EffectMode::Custom)
@@ -369,7 +408,7 @@ private:
 
     void setActive(const QUuid& guid, bool active)
     {
-        auto effects = boundItem()->comp<VMixNode>()->effects.entries();
+        auto effects = effects_.entries();
         const auto found = std::find_if(effects.begin(), effects.end(),
             [&guid](const EffectEntry& effect) { return effect.guid == guid; });
         if (found == effects.end()) return;
@@ -379,7 +418,7 @@ private:
 
     void setLevel(const QUuid& guid, double value)
     {
-        auto effects = boundItem()->comp<VMixNode>()->effects.entries();
+        auto effects = effects_.entries();
         const auto found = std::find_if(effects.begin(), effects.end(),
             [&guid](const EffectEntry& effect) { return effect.guid == guid; });
         if (found == effects.end()) return;
@@ -420,9 +459,13 @@ private:
         rows_.clear();
         const bool editable = canEdit();
         add_->setEnabled(editable);
+        table_->footer()->setVisible(editable);
+        table_->bodyMessage()->setText(mixed_ ? tr("Mixed table\nSelect a single platform to edit")
+            : groupView_.diagnostics.join(QLatin1Char('\n')));
+        table_->bodyMessage()->setVisible(mixed_ || (grouped_ && !groupView_.valid));
         auto* item = boundItem();
         if (item) {
-            const auto& effects = item->comp<VMixNode>()->effects.entries();
+            const auto& effects = effects_.entries();
             for (size_t index = 0; index < effects.size(); ++index) {
                 const auto& effect = effects[index];
                 const QUuid guid = effect.guid;
@@ -466,6 +509,7 @@ private:
                 if (custom) {
                     auto* content = new QLabel(name, effectCell);
                     content->setObjectName(QStringLiteral("effectContent"));
+                    QtControlSkin::setSemanticProperty(content, "dimmed", !editable);
                     content->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
                     effectCell->addWidget(content);
                     auto* detach = new QToolButton(effectCell);
@@ -610,7 +654,11 @@ private:
 
     QUuid boundGuid_;
     QUuid selected_;
-    QJsonArray snapshot_;
+    EffectChainLedger effects_;
+    FieldGroupInspectorView groupView_;
+    PlatformContext context_;
+    bool grouped_ = false;
+    bool mixed_ = false;
     QString search_;
     QPointer<InspectorPanel> inspector_;
     TableWidget* table_ = nullptr;
@@ -636,7 +684,7 @@ void EffectsSectionProvider::bind(QWidget* widget, ProjectItem* item)
 
 bool EffectsSectionProvider::refresh(QWidget* widget, ProjectItem* item, const QString& field)
 {
-    if (field != QLatin1String("effects")) return false;
+    if (field != QLatin1String("effects") && field != QLatin1String("fieldGroups")) return false;
     bind(widget, item);
     return true;
 }

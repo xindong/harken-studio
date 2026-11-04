@@ -2568,6 +2568,26 @@ bool ProjectManager::closeProject()
 
 
 namespace {
+void remintEffectIdentities(ProjectItem& item)
+{
+    QHash<QUuid, QUuid> effectGuids;
+    const auto remintEffects = [&](EffectChainLedger& ledger, FieldGroupScope) {
+        auto effects = ledger.entries();
+        for (auto& effect : effects) {
+            if (!effectGuids.contains(effect.guid))
+                effectGuids.insert(effect.guid, QUuid::createUuid());
+            effect.guid = effectGuids.value(effect.guid);
+        }
+        ledger.replace(std::move(effects));
+    };
+    if (auto* mix = item.comp<VMixNode>()) {
+        remintEffects(mix->effects, {});
+        for (auto& [platform, effects] : mix->effectPlatforms)
+            remintEffects(effects, {});
+    }
+    VisitAuthoredEffectChains(item.fieldGroups, remintEffects);
+}
+
 bool initializeRootFieldGroups(ProjectData& project, ProjectItem& item)
 {
     if (!PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item.type))
@@ -4251,9 +4271,7 @@ std::shared_ptr<ProjectItem> ProjectManager::cloneSubtreeDetached(
             auto bindings = mix->bindings.entries();
             for (auto& binding : bindings) binding.guid = QUuid::createUuid();
             mix->bindings.replace(std::move(bindings));
-            auto effects = mix->effects.entries();
-            for (auto& effect : effects) effect.guid = QUuid::createUuid();
-            mix->effects.replace(std::move(effects));
+            remintEffectIdentities(*node);
         }
         if (auto* timeline = node->comp<VTrack>()) {
             for (Clip& clip : timeline->clips.items) {
@@ -4593,7 +4611,10 @@ std::vector<ProjectItem*> ProjectManager::pasteClipboardAtBucketRoot(const QStri
             emit errorOccurred(QString("Failed to paste '%1'; the batch was stopped.").arg(src->name));
             break;
         }
-        if (copy.rootGroups) clone->fieldGroups = *copy.rootGroups;
+        if (copy.rootGroups) {
+            clone->fieldGroups = *copy.rootGroups;
+            remintEffectIdentities(*clone);
+        }
 
         if (ProjectLoaderInternal::isLayersBucketRootType(clone->type)) {
             clone->parentRef = ParentRef{};
@@ -4662,6 +4683,7 @@ std::optional<DefinitionFieldGroups> ProjectManager::captureRootFieldGroups(
         scopes.push_back(toFieldGroupGuid(platform.id));
     const auto& authored = *groupsFor(*item);
     auto result = authored;
+    QHash<QUuid, QUuid> copiedEffects;
     const auto capture = [&]<typename Payload>(const AuthoredGroup<Payload>& before,
                                                AuthoredGroup<Payload>& after,
                                                FieldGroupId group) {
@@ -4670,6 +4692,17 @@ std::optional<DefinitionFieldGroups> ProjectManager::captureRootFieldGroups(
             const auto resolved = resolver.Resolve(identity, scopes[i], group);
             if (!resolved.ok()) return false;
             values[i] = std::get<Payload>(resolved.value->payload);
+            if constexpr (std::is_same_v<Payload, EffectFieldGroup>) {
+                if (resolved.value->source.definition != identity) {
+                    auto entries = values[i].effects.entries();
+                    for (auto& entry : entries) {
+                        if (!copiedEffects.contains(entry.guid))
+                            copiedEffects.insert(entry.guid, QUuid::createUuid());
+                        entry.guid = copiedEffects.value(entry.guid);
+                    }
+                    values[i].effects.replace(std::move(entries));
+                }
+            }
         }
         after.shared.localHistory = values[0];
         after.shared.localFields = FieldGroupPropertyMask(Payload::groupId);
@@ -4693,7 +4726,8 @@ std::optional<DefinitionFieldGroups> ProjectManager::captureRootFieldGroups(
     };
     if (!capture(authored.output, result.output, FieldGroupId::Output)
         || !capture(authored.send, result.send, FieldGroupId::Send)
-        || !capture(authored.spatialRating, result.spatialRating, FieldGroupId::SpatialRating))
+        || !capture(authored.spatialRating, result.spatialRating, FieldGroupId::SpatialRating)
+        || !capture(authored.effects, result.effects, FieldGroupId::Effect))
         return fail(QStringLiteral("Cannot preserve the current field group values"));
     return result;
 }
@@ -4924,6 +4958,14 @@ std::vector<DeletedSubtreeRefLog::FieldGroupRef> fieldGroupReferenceRemovals(
         clearSpatialReference(after.spatialRating.shared);
         for (auto& [platform, state] : after.spatialRating.platforms)
             clearSpatialReference(state);
+        VisitAuthoredEffectChains(after, [&](EffectChainLedger& ledger, FieldGroupScope) {
+            auto effects = ledger.entries();
+            std::erase_if(effects, [&](const auto& row) {
+                return row.mode == EffectMode::Preset
+                    && deleted.contains(toFieldGroupGuid(row.effectGuid));
+            });
+            ledger.replace(std::move(effects));
+        });
         if (after != item->fieldGroups)
             result.push_back({item->guid, item->fieldGroups, std::move(after)});
     }
@@ -5086,10 +5128,15 @@ namespace {
 QJsonObject folderComponentReferences(const ProjectItem& item)
 {
     QJsonObject components;
-    if (const auto* mix = item.comp<VMixNode>())
+    if (const auto* mix = item.comp<VMixNode>()) {
+        QJsonObject platforms;
+        for (const auto& [platform, effects] : mix->effectPlatforms)
+            platforms.insert(ProjectPlatformSemantics::idString(platform), effects.toJson());
         components.insert(QStringLiteral("mixnode"), QJsonObject{
             {QStringLiteral("bindings"), mix->bindings.toJson()},
-            {QStringLiteral("effects"), mix->effects.toJson()}});
+            {QStringLiteral("effects"), mix->effects.toJson()},
+            {QStringLiteral("effectsPlatforms"), platforms}});
+    }
     if (const auto* selection = item.comp<VSelection>())
         components.insert(QStringLiteral("selection"), QJsonObject{
             {QStringLiteral("selections"), selection->selections.toJson()},
@@ -5112,6 +5159,15 @@ void applyFolderComponentReferences(ProjectItem& item, const QJsonObject& state)
         if (mix->effects.toJson() != effects) {
             mix->effects = EffectChainLedger::fromJson(effects);
             changedProperties.append(QStringLiteral("effects"));
+        }
+        std::map<ProjectPlatformId, EffectChainLedger> effectPlatforms;
+        const auto platforms = value.value(QStringLiteral("effectsPlatforms")).toObject();
+        for (auto it = platforms.begin(); it != platforms.end(); ++it)
+            effectPlatforms.emplace(QUuid(it.key()), EffectChainLedger::fromJson(it.value().toArray()));
+        if (mix->effectPlatforms != effectPlatforms) {
+            mix->effectPlatforms = std::move(effectPlatforms);
+            if (!changedProperties.contains(QStringLiteral("effects")))
+                changedProperties.append(QStringLiteral("effects"));
         }
     }
     if (auto* selection = item.comp<VSelection>()) {

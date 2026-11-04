@@ -3,6 +3,9 @@
 #include "JsonReader.h"
 #include "JsonWriter.h"
 
+#include <QJsonDocument>
+#include <QJsonParseError>
+
 #include <algorithm>
 #include <array>
 #include <charconv>
@@ -172,6 +175,80 @@ bool ReadFieldValue(const JsonValue& value, std::vector<SendFieldGroupRow>& rows
     return true;
 }
 
+bool ReadEffectJson(const JsonValue& value, QJsonValue& result,
+                    const std::string& path, std::string& error)
+{
+    switch (value.kind) {
+    case JsonValue::Kind::Null: result = QJsonValue::Null; return true;
+    case JsonValue::Kind::Bool: result = value.boolean; return true;
+    case JsonValue::Kind::String: result = QString::fromStdString(value.text); return true;
+    case JsonValue::Kind::Number: {
+        QJsonParseError detail;
+        const auto number = QJsonDocument::fromJson(
+            QByteArray::fromStdString("[" + value.text + "]"), &detail);
+        if (detail.error != QJsonParseError::NoError)
+            return Fail(error, path, detail.errorString().toStdString());
+        result = number.array().at(0);
+        return true;
+    }
+    case JsonValue::Kind::Array: {
+        QJsonArray array;
+        for (std::size_t index = 0; index < value.items.size(); ++index) {
+            QJsonValue entry;
+            if (!ReadEffectJson(value.items[index], entry,
+                    path + "[" + std::to_string(index) + "]", error)) return false;
+            array.append(entry);
+        }
+        result = array;
+        return true;
+    }
+    case JsonValue::Kind::Object: {
+        QJsonObject object;
+        for (const auto& [name, value] : value.members) {
+            QJsonValue entry;
+            if (!ReadEffectJson(value, entry, path + "." + name, error)) return false;
+            object.insert(QString::fromStdString(name), entry);
+        }
+        result = object;
+        return true;
+    }
+    }
+    return false;
+}
+
+bool ReadFieldValue(const JsonValue& value, EffectChainLedger& effects,
+                    const std::string& path, std::string& error)
+{
+    if (value.kind != JsonValue::Kind::Array)
+        return Fail(error, path, "expected an array");
+    QJsonValue converted;
+    if (!ReadEffectJson(value, converted, path, error)) return false;
+    auto array = converted.toArray();
+    for (std::size_t index = 0; index < value.items.size(); ++index) {
+        const auto& entry = value.items[index];
+        const auto* reference = entry.Find("effectRef");
+        if (!reference) continue;
+        const auto rowPath = path + "[" + std::to_string(index) + "]";
+        if (entry.Find("effectGuid")
+            || !CheckMembers(*reference, rowPath + ".effectRef", {"id", "documentId"},
+                {"id", "documentId"}, error))
+            return Fail(error, rowPath, "expected an exclusive effect reference");
+        AuthoringGuid document;
+        AuthoringGuid guid;
+        if (!ReadGuid(*reference->Find("documentId"), document,
+                rowPath + ".effectRef.documentId", error) || harkenstudio::IsNull(document))
+            return Fail(error, rowPath + ".effectRef.documentId", "expected a non-null document UUID");
+        if (!ReadGuid(*reference->Find("id"), guid, rowPath + ".effectRef.id", error)) return false;
+        auto object = array.at(static_cast<qsizetype>(index)).toObject();
+        object.remove(QStringLiteral("effectRef"));
+        object.insert(QStringLiteral("effectGuid"), QString::fromStdString(WriteGuid(guid)));
+        array[static_cast<qsizetype>(index)] = object;
+    }
+    const auto parsed = EffectChainLedger::fromJson(array);
+    if (!effects.replace(parsed.entries())) return Fail(error, path, "invalid effect chain");
+    return true;
+}
+
 void WriteFieldValue(JsonWriter& writer, float value) { WriteFloat(writer, value); }
 void WriteFieldValue(JsonWriter& writer, bool value) { writer.ValueBool(value); }
 void WriteFieldValue(JsonWriter& writer, AuthoringGuid value) { writer.ValueString(WriteGuid(value)); }
@@ -199,6 +276,11 @@ void WriteFieldValue(JsonWriter& writer, const std::vector<SendFieldGroupRow>& r
         writer.EndObject();
     }
     writer.EndArray();
+}
+
+void WriteFieldValue(JsonWriter& writer, const EffectChainLedger& effects)
+{
+    writer.ValueRawJson(QJsonDocument(effects.toJson()).toJson(QJsonDocument::Compact).toStdString());
 }
 
 template <typename Payload>
@@ -363,7 +445,7 @@ bool CheckOccurrence(const JsonValue& value, const std::string& path,
     for (const auto& [name, member] : value.members) {
         const std::string memberPath = path + "." + name;
         if (name == "fieldGroups" || name == "sectionGroups" || name == "output" || name == "send"
-            || name == "spatialRating"
+            || name == "spatialRating" || name == "effect" || name == "effects"
             || name == "outputBusId" || name == "outputBusRef"
             || name == "outputBusOverride" || name == "overrideBits"
             || IsFieldGroupPropertyJsonKey(name))
@@ -395,12 +477,12 @@ bool ReadFieldGroupsJson(const std::string& text,
                            std::string& error)
 {
     JsonValue root;
-    if (!harkenstudiojson::ParseJson(text, &root, &error)) return false;
+    if (!harkenstudiojson::ParseJson(text, &root, &error, true)) return false;
     if (!CheckMembers(root, "fieldGroups", {"shared", "platforms"}, {"shared"}, error))
         return false;
     const auto& shared = *root.Find("shared");
-    if (!CheckMembers(shared, "fieldGroups.shared", {"output", "send", "spatialRating"},
-                      {"output", "send", "spatialRating"}, error))
+    if (!CheckMembers(shared, "fieldGroups.shared", {"output", "send", "spatialRating", "effect"},
+                      {"output", "send", "spatialRating", "effect"}, error))
         return false;
     DefinitionFieldGroups parsed;
     if (!ReadState(*shared.Find("output"), parsed.output.shared,
@@ -408,7 +490,9 @@ bool ReadFieldGroupsJson(const std::string& text,
         || !ReadState(*shared.Find("send"), parsed.send.shared,
                       "fieldGroups.shared.send", error, true)
         || !ReadState(*shared.Find("spatialRating"), parsed.spatialRating.shared,
-                      "fieldGroups.shared.spatialRating", error, true))
+                      "fieldGroups.shared.spatialRating", error, true)
+        || !ReadState(*shared.Find("effect"), parsed.effects.shared,
+                      "fieldGroups.shared.effect", error, true))
         return false;
     if (const auto* platforms = root.Find("platforms")) {
         if (platforms->kind != JsonValue::Kind::Object)
@@ -422,10 +506,11 @@ bool ReadFieldGroupsJson(const std::string& text,
             if (!ReadGuid(identity, platform, path, error)) return false;
             if (harkenprojectschema::IsNull(platform) || WriteGuid(platform) != name)
                 return Fail(error, path, "expected a canonical non-null platform UUID");
-            if (!CheckMembers(value, path, {"output", "send", "spatialRating"}, {}, error)
+            if (!CheckMembers(value, path, {"output", "send", "spatialRating", "effect"}, {}, error)
                 || !ReadPlatformState(value, "output", platform, parsed.output, path, error)
                 || !ReadPlatformState(value, "send", platform, parsed.send, path, error)
-                || !ReadPlatformState(value, "spatialRating", platform, parsed.spatialRating, path, error))
+                || !ReadPlatformState(value, "spatialRating", platform, parsed.spatialRating, path, error)
+                || !ReadPlatformState(value, "effect", platform, parsed.effects, path, error))
                 return false;
         }
     }
@@ -450,21 +535,25 @@ bool WriteFieldGroupsJson(const DefinitionFieldGroups& groups,
     WriteState(writer, groups.send.shared);
     writer.Key("spatialRating");
     WriteState(writer, groups.spatialRating.shared);
+    writer.Key("effect");
+    WriteState(writer, groups.effects.shared);
     writer.EndObject();
     if (!groups.output.platforms.empty() || !groups.send.platforms.empty()
-        || !groups.spatialRating.platforms.empty()) {
+        || !groups.spatialRating.platforms.empty() || !groups.effects.platforms.empty()) {
         writer.Key("platforms");
         writer.BeginObject();
         std::set<AuthoringGuid> platforms;
         for (const auto& [platform, state] : groups.output.platforms) platforms.insert(platform);
         for (const auto& [platform, state] : groups.send.platforms) platforms.insert(platform);
         for (const auto& [platform, state] : groups.spatialRating.platforms) platforms.insert(platform);
+        for (const auto& [platform, state] : groups.effects.platforms) platforms.insert(platform);
         for (const auto platform : platforms) {
             writer.Key(WriteGuid(platform).c_str());
             writer.BeginObject();
             WritePlatformState(writer, "output", platform, groups.output);
             WritePlatformState(writer, "send", platform, groups.send);
             WritePlatformState(writer, "spatialRating", platform, groups.spatialRating);
+            WritePlatformState(writer, "effect", platform, groups.effects);
             writer.EndObject();
         }
         writer.EndObject();

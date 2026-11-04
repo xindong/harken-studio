@@ -4602,7 +4602,9 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationCombinesScheduleAndEff
             }
             effects.back().mode = VNX::EffectMode::Custom;
             effects.back().effectGuid = QUuid{};
-            EXPECT_TRUE(track->comp<VNX::VMixNode>()->effects.replace(std::move(effects)));
+            VNX::EffectFieldGroup effectGroup;
+            EXPECT_TRUE(effectGroup.effects.replace(std::move(effects)));
+            track->fieldGroups.effects.shared = {VNX::FieldGroupMode::Local, effectGroup};
         }
         return segment;
     };
@@ -4668,7 +4670,7 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationCombinesScheduleAndEff
     retained->children.front()->comp<VNX::VSegment>()->markers.items.front().position = 50;
     auto* draftTrack = retained->children.front()->children.front().get();
     draftTrack->comp<VNX::VTrack>()->clips.items.front().duration = 2000000;
-    ASSERT_TRUE(draftTrack->comp<VNX::VMixNode>()->effects.replace({}));
+    draftTrack->fieldGroups.effects.shared = {VNX::FieldGroupMode::Local, VNX::EffectFieldGroup{}};
     const auto* privateAsset = registry.getAsset(privateSource);
     ASSERT_NE(nullptr, privateAsset);
     ASSERT_TRUE(QFile::remove(privateAsset->absolutePath));

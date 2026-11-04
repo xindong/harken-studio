@@ -1799,7 +1799,11 @@ QToolButton[listFootBtn="true"][tableCompactAction="true"] { padding: 0px; }
 QToolButton[listFootBtn="true"][tableCompactAction="false"]:hover { background-color: @bgHover@; color: @accent@; }
 QToolButton[listFootBtn="true"]:disabled { color: @textDisabled@; }
 QLabel[roValue="true"] { color: @textPrimary@; background: transparent; }
+QLabel:disabled,
+QLabel[dimmed="true"],
 QLabel[textRole]:disabled,
+QWidget#listHead QLabel:disabled,
+QLabel[bindingUnit]:disabled,
 QLabel[settingsRole="subtitle"]:disabled,
 QLabel[templateRole="sectionTitle"]:disabled,
 QLabel[templateRole="cardTitle"]:disabled,

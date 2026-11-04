@@ -34,6 +34,7 @@ DefinitionFieldGroups LocalGroups(std::uint64_t bus, float volume)
     groups.send.shared = Local(SendFieldGroup{{{G(bus + 1), volume}}});
     groups.spatialRating.shared = Local(
         SpatialRatingFieldGroup{0.5f, true, G(bus + 2), 2.0f});
+    groups.effects.shared = Local(EffectFieldGroup{});
     return groups;
 }
 
@@ -79,6 +80,37 @@ TEST(FieldGroupResolution, CyclesInvalidateTheWholeContextEvenWhenQueriedElsewhe
     const FieldGroupResolver selfCycle(self, kMaster);
     EXPECT_TRUE(HasCode(selfCycle.diagnostics(), Code::ParentCycle));
     EXPECT_FALSE(selfCycle.Resolve(G(1), {}, Group::Output).value);
+}
+
+TEST(FieldGroupResolution, EveryGroupSelectsOneOwnershipSourceAndRespectsPlatformMode)
+{
+    const auto root = MakeRootFieldGroups(kMaster);
+    auto parent = LocalGroups(101, -3.0f);
+    DefinitionFieldGroups child;
+    const auto platform = G(200);
+    parent.output.platforms[platform] = {Mode::Inherit, {}};
+    parent.send.platforms[platform] = {Mode::Inherit, {}};
+    parent.spatialRating.platforms[platform] = {Mode::Inherit, {}};
+    parent.effects.platforms[platform] = {Mode::Inherit, {}};
+    const std::array definitions{
+        FieldGroupDefinitionView{G(1), ContentKind::Layer, {}, &root},
+        FieldGroupDefinitionView{G(2), ContentKind::Container, G(1), &parent},
+        FieldGroupDefinitionView{G(3), ContentKind::Sound, G(2), &child}};
+    const FieldGroupResolver resolver(definitions, kMaster);
+    ASSERT_TRUE(resolver.ok());
+    for (const auto group : {Group::Output, Group::Send, Group::SpatialRating, Group::Effect}) {
+        SCOPED_TRACE(FieldGroupName(group));
+        const auto shared = resolver.Resolve(G(3), {}, group);
+        const auto overridden = resolver.Resolve(G(3), platform, group);
+        ASSERT_TRUE(shared.ok());
+        ASSERT_TRUE(overridden.ok());
+        EXPECT_EQ(shared.value->source.definition, G(2));
+        EXPECT_EQ(overridden.value->source.definition, G(1));
+        EXPECT_TRUE(shared.value->effectiveInherit);
+        EXPECT_TRUE(overridden.value->effectiveInherit);
+        EXPECT_EQ(shared.value->payload, resolver.Resolve(G(2), {}, group).value->payload);
+        EXPECT_EQ(overridden.value->payload, resolver.Resolve(G(1), platform, group).value->payload);
+    }
 }
 
 }

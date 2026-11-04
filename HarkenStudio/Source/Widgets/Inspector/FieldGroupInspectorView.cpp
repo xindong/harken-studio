@@ -36,6 +36,8 @@ QVariant payloadField(const FieldGroupPayload& payload, Property field)
         }
         return rows;
     }
+    case Property::SignalGraph:
+        return std::get<EffectFieldGroup>(payload).effects.toJson().toVariantList();
     case Property::SpatialPanning:
         return std::get<SpatialRatingFieldGroup>(payload).spatialPanning;
     case Property::SpatialIs3DEnabled:
@@ -78,8 +80,9 @@ FieldGroupInspectorFieldView FieldGroupInspectorView::field(const QString& field
     FieldGroupInspectorFieldView result;
     if (!valid || perScope.empty()) return result;
     const auto* descriptor = PlayablePropertyAuthoringV1::fieldByName(fieldName);
-    if (!descriptor) return result;
-    const auto property = static_cast<Property>(descriptor->id);
+    if (!descriptor && fieldName != QLatin1String("effects")) return result;
+    const auto property = fieldName == QLatin1String("effects")
+        ? Property::SignalGraph : static_cast<Property>(descriptor->id);
     if (FieldGroupForProperty(property) != group) return result;
     result.uniform = true;
     result.perScope.reserve(static_cast<qsizetype>(perScope.size()));
@@ -113,6 +116,17 @@ QJsonObject FieldGroupInspectorView::actionArgs() const
         result.insert(QStringLiteral("platform_ids"), platforms);
     }
     return result;
+}
+
+std::optional<EffectChainLedger> FieldGroupInspectorView::effectChain() const
+{
+    if (!valid || group != FieldGroupId::Effect) return {};
+    if (editScopes.shared && fieldsEditable)
+        return expectedBefore.effects.shared.localHistory
+            ? expectedBefore.effects.shared.localHistory->effects : EffectChainLedger{};
+    const auto value = field(QStringLiteral("effects"));
+    if (!value.uniform) return {};
+    return EffectChainLedger::fromJson(QJsonArray::fromVariantList(value.value.toList()));
 }
 
 QString FieldGroupInspectorView::sourceTooltip(const ProjectData& project, const QString& fieldName) const

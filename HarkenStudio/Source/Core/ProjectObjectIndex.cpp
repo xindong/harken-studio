@@ -71,15 +71,23 @@ ProjectObjectIndex ProjectObjectIndex::fromProject(const ProjectData* project,
                 add(binding.runtimeId(), *item, ProjectObjectLocation::Kind::Binding,
                     item->name + QStringLiteral(" / ") + BindingSemantics::addressKey(binding.address));
             }
-            for (const auto& effect : mix->effects.entries()) {
-                if (!effect.typed) continue;
-                const auto* target = items.value(effect.effectGuid);
-                const QString label = effect.mode == EffectMode::Custom
-                    ? EffectChainSemantics::displayName(effect.custom.type)
-                    : target ? target->name : effect.effectGuid.toString(QUuid::WithoutBraces);
-                add(effect.runtimeId(), *item, ProjectObjectLocation::Kind::Effect,
-                    item->name + QStringLiteral(" / ") + label);
-            }
+            QSet<QUuid> effectGuids;
+            const auto addEffects = [&](const EffectChainLedger& effects, FieldGroupScope) {
+                for (const auto& effect : effects.entries()) {
+                    if (!effect.typed || effectGuids.contains(effect.guid)) continue;
+                    effectGuids.insert(effect.guid);
+                    const auto* target = items.value(effect.effectGuid);
+                    const QString label = effect.mode == EffectMode::Custom
+                        ? EffectChainSemantics::displayName(effect.custom.type)
+                        : target ? target->name : effect.effectGuid.toString(QUuid::WithoutBraces);
+                    add(effect.runtimeId(), *item, ProjectObjectLocation::Kind::Effect,
+                        item->name + QStringLiteral(" / ") + label);
+                }
+            };
+            addEffects(mix->effects, {});
+            for (const auto& [platform, effects] : mix->effectPlatforms)
+                addEffects(effects, {});
+            VisitAuthoredEffectChains(item->fieldGroups, addEffects);
         }
         if (const auto* timeline = item->comp<VTrack>()) {
             for (const auto& clip : timeline->clips.items) {

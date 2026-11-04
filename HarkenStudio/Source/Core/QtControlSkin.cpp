@@ -364,6 +364,7 @@ QPalette QtControlSkin::applicationPalette() const
     palette.setColor(QPalette::Light, p.light);
     palette.setColor(QPalette::Dark, p.dark);
     palette.setColor(QPalette::Mid, p.mid);
+    palette.setColor(QPalette::Disabled, QPalette::WindowText, p.disabledText);
     palette.setColor(QPalette::Disabled, QPalette::Text, p.disabledText);
     palette.setColor(QPalette::Disabled, QPalette::PlaceholderText, p.disabledText);
     palette.setColor(QPalette::Disabled, QPalette::ButtonText, p.disabledButtonText);

@@ -45,6 +45,7 @@ ActionResult executeGroupEdit(ProjectManager* manager, const QString& action,
     if (groupName == QStringLiteral("output")) request.group = FieldGroupId::Output;
     else if (groupName == QStringLiteral("send")) request.group = FieldGroupId::Send;
     else if (groupName == QStringLiteral("spatialRating")) request.group = FieldGroupId::SpatialRating;
+    else if (groupName == QStringLiteral("effect")) request.group = FieldGroupId::Effect;
     else return invalid(QStringLiteral("Unknown field group"));
     if (args.value(QStringLiteral("scope")) == QJsonValue(QStringLiteral("Shared"))) {
         if (args.contains(QStringLiteral("platform_ids")))
@@ -108,10 +109,18 @@ ActionResult executeGroupEdit(ProjectManager* manager, const QString& action,
             sends.sends.push_back(send);
         }
         request.operation = ReplaceFieldGroupSends{std::move(sends)};
+    } else if (action == QStringLiteral("replace_field_group_effects")) {
+        if (!args.value(QStringLiteral("effects")).isArray())
+            return invalid(QStringLiteral("effects must be a complete array"));
+        EffectFieldGroup effects{EffectChainLedger::fromJson(args.value(QStringLiteral("effects")).toArray())};
+        if (!ValidateFieldGroupPayload(FieldGroupId::Effect, effects).empty())
+            return invalid(QStringLiteral("Invalid effect chain"));
+        request.operation = ReplaceFieldGroupEffects{std::move(effects)};
     } else {
-        const auto* field = PlayablePropertyAuthoringV1::fieldByJsonKey(args.value(QStringLiteral("field")).toString());
-        if (!field) return invalid(QStringLiteral("Unknown group field"));
-        SetFieldGroupField edit{static_cast<Property>(field->id), 0.0f};
+        const auto name = args.value(QStringLiteral("field")).toString();
+        const auto* field = PlayablePropertyAuthoringV1::fieldByJsonKey(name);
+        if (!field && name != QStringLiteral("effects")) return invalid(QStringLiteral("Unknown group field"));
+        SetFieldGroupField edit{field ? static_cast<Property>(field->id) : Property::SignalGraph, 0.0f};
         if (action == QStringLiteral("clear_field_group_field_override")) {
             request.operation = ClearFieldGroupFieldOverride{edit.property};
         } else {
@@ -181,7 +190,7 @@ ActionResult executeGroupEdit(ProjectManager* manager, const QString& action,
 void registerFieldGroupActions(ActionManager& manager, ProjectManager* projectManager)
 {
     for (const auto* name : {"set_field_group_mode", "set_field_group_field",
-                             "replace_field_group_sends", "rebuild_field_group_local",
+                             "replace_field_group_sends", "replace_field_group_effects", "rebuild_field_group_local",
                              "clear_field_group_field_override"}) {
         ActionDef action;
         action.id = QLatin1String(name);
@@ -199,6 +208,8 @@ void registerFieldGroupActions(ActionManager& manager, ProjectManager* projectMa
             action.paramSchema.insert(QStringLiteral("value"), QStringLiteral("any"));
         } else if (action.id == QStringLiteral("replace_field_group_sends"))
             action.paramSchema.insert(QStringLiteral("sends"), QStringLiteral("array"));
+        else if (action.id == QStringLiteral("replace_field_group_effects"))
+            action.paramSchema.insert(QStringLiteral("effects"), QStringLiteral("array"));
         action.handler = [projectManager, id = action.id](const QJsonObject& args) {
             return executeGroupEdit(projectManager, id, args);
         };

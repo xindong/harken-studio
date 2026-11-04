@@ -23,6 +23,7 @@ public:
     QUuid rowGuid() const { return rowGuid_; }
     ProjectItem* boundItem() const;
     bool hasEffect() const;
+    static bool canOpen(const ProjectItem* item, const QUuid& rowGuid);
     void bindEffect(const QUuid& ownerGuid, const QUuid& rowGuid = {});
     void clearEditor();
     QVariantMap snapshotState() const;

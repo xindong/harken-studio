@@ -1591,6 +1591,10 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
 
     int64_t editorOrder = 0;
     uint32_t containerOrder = 0;
+    RuntimeCapabilityContext resourceContext;
+    resourceContext.platform = scope;
+    resourceContext.deferCurrentWorldCompilation = true;
+    resourceContext.fieldGroups = &groups;
     for (ProjectItem* item : index.definitions) {
         if (included.find(item) == included.end())
             continue;
@@ -1603,8 +1607,6 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
         };
         const auto lowerDefinition = [&]() {
             if (options && options->validatePackResources) {
-                RuntimeCapabilityContext resourceContext;
-                resourceContext.deferCurrentWorldCompilation = true;
                 for (const auto feature : {RuntimeCapabilityFeature::TypedBinding,
                                            RuntimeCapabilityFeature::TypedEffect}) {
                     const auto capability = [&]() {

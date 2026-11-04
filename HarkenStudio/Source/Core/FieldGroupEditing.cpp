@@ -3,6 +3,8 @@
 
 #include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "Components/VTrack.h"
+#include "Components/VSegment.h"
+#include "Components/VMixNode.h"
 #include "PlayablePropertyAuthoringV1.h"
 #include "ProjectTypes.h"
 #include "FieldGroupProjectAdapter.h"
@@ -42,6 +44,7 @@ void addDiagnostic(Diagnostics& diagnostics, EditCode code, const QString& messa
 
 QString fieldName(Property property)
 {
+    if (property == Property::SignalGraph) return QStringLiteral("effects");
     for (const auto& entry : harkenplayableproperties::kPlayablePropertyRegistryV1)
         if (entry.id == property) return QString::fromLatin1(entry.name);
     return {};
@@ -219,6 +222,45 @@ Diagnostics validateView(const EditingContext& context,
                          std::span<const FieldGroupDefinitionView> definitions)
 {
     Diagnostics diagnostics;
+    std::map<Guid, std::optional<Guid>> identities;
+    const auto claimObject = [&](const QUuid& identity) {
+        identities.emplace(toFieldGroupGuid(identity), std::nullopt);
+    };
+    for (const auto& [guid, item] : context.source->byGuid) {
+        claimObject(item->guid);
+        if (const auto* mix = item->comp<VMixNode>())
+            for (const auto& binding : mix->bindings.entries()) claimObject(binding.guid);
+        if (const auto* track = item->comp<VTrack>())
+            for (const auto& clip : track->clips.items) claimObject(clip.clipGuid);
+        if (const auto* segment = item->comp<VSegment>())
+            for (const auto& marker : segment->markers.items) claimObject(marker.markerGuid);
+    }
+    const auto claimEffects = [&](const EffectChainLedger& effects, Guid owner, FieldGroupScope scope) {
+        for (const auto& row : effects.entries()) {
+            const auto identity = toFieldGroupGuid(row.guid);
+            const auto [found, inserted] = identities.emplace(identity, owner);
+            if (harkenstudio::IsNull(identity) || row.runtimeId() == harkenstudio::kMasterBusObjectId
+                || (!inserted && found->second != owner))
+                addDiagnostic(diagnostics, EditCode::InvalidProject,
+                    QStringLiteral("Effect identity conflicts with another project object"),
+                    fromFieldGroupGuid(owner), FieldGroupId::Effect, scope, QStringLiteral("effects"), {}, identity);
+        }
+    };
+    for (const auto& [guid, item] : context.source->byGuid) {
+        if (item->type != ProjectItem::Type::Bus) continue;
+        const auto* mix = item->comp<VMixNode>();
+        if (!mix) continue;
+        claimEffects(mix->effects, guid, {});
+        for (const auto& [platform, effects] : mix->effectPlatforms)
+            claimEffects(effects, guid, toFieldGroupGuid(platform));
+    }
+    for (const auto& definition : definitions)
+        if (definition.groups)
+            VisitAuthoredEffectChains(*definition.groups,
+                [&](const EffectChainLedger& effects, FieldGroupScope scope) {
+                    claimEffects(effects, definition.guid, scope);
+                });
+    if (!diagnostics.empty()) return diagnostics;
     const FieldGroupResolver resolver(definitions, context.masterBus);
     if (!resolver.ok()) {
         appendGroupDiagnostics(diagnostics, context, resolver.diagnostics());
@@ -233,7 +275,8 @@ Diagnostics validateView(const EditingContext& context,
             const auto output = resolver.Resolve(definition.guid, scope, FieldGroupId::Output);
             const auto send = resolver.Resolve(definition.guid, scope, FieldGroupId::Send);
             const auto spatial = resolver.Resolve(definition.guid, scope, FieldGroupId::SpatialRating);
-            for (const auto* result : {&output, &send, &spatial}) {
+            const auto effects = resolver.Resolve(definition.guid, scope, FieldGroupId::Effect);
+            for (const auto* result : {&output, &send, &spatial, &effects}) {
                 appendGroupDiagnostics(diagnostics, context, result->diagnostics);
                 if (result->value)
                     appendGroupDiagnostics(diagnostics, context,
@@ -345,6 +388,30 @@ bool setField(SendFieldGroup&, const SetFieldGroupField&, Guid)
     return false;
 }
 
+bool setField(EffectFieldGroup&, const SetFieldGroupField&, Guid)
+{
+    return false;
+}
+
+template <typename Payload>
+Payload localPayload(const ResolvedFieldGroup& resolved, Guid definition,
+                     std::map<QUuid, QUuid>& copiedIdentities)
+{
+    auto payload = std::get<Payload>(resolved.payload);
+    if constexpr (std::is_same_v<Payload, EffectFieldGroup>) {
+        if (resolved.source.definition != definition) {
+            auto entries = payload.effects.entries();
+            for (auto& entry : entries) {
+                const auto [identity, inserted] = copiedIdentities.try_emplace(entry.guid);
+                if (inserted) identity->second = QUuid::createUuid();
+                entry.guid = identity->second;
+            }
+            payload.effects.replace(std::move(entries));
+        }
+    }
+    return payload;
+}
+
 template <typename Payload>
 void normalizeGroup(AuthoredGroup<Payload>& group)
 {
@@ -378,7 +445,8 @@ void editGroup(const EditingContext& context, const FieldGroupResolver& resolver
     const auto* field = std::get_if<SetFieldGroupField>(&request.operation);
     const auto* clear = std::get_if<ClearFieldGroupFieldOverride>(&request.operation);
     const bool sendsEdit = std::holds_alternative<ReplaceFieldGroupSends>(request.operation);
-    if (field || sendsEdit || clear) {
+    const bool effectsEdit = std::holds_alternative<ReplaceFieldGroupEffects>(request.operation);
+    if (field || sendsEdit || effectsEdit || clear) {
         auto inspected = scopes;
         if (request.scopes.shared) {
             inspected.clear();
@@ -394,6 +462,7 @@ void editGroup(const EditingContext& context, const FieldGroupResolver& resolver
         }
     }
     if (!diagnostics.empty()) return;
+    std::map<QUuid, QUuid> copiedIdentities;
     for (const auto scope : scopes) {
         auto& next = writableState(after, scope);
         const auto initializeLocal = [&]() {
@@ -403,7 +472,7 @@ void editGroup(const EditingContext& context, const FieldGroupResolver& resolver
             const auto current = resolver.Resolve(definition, scope, request.group);
             appendGroupDiagnostics(diagnostics, context, current.diagnostics);
             if (!current.ok()) return false;
-            auto payload = std::get<Payload>(current.value->payload);
+            auto payload = localPayload<Payload>(*current.value, definition, copiedIdentities);
             if (next.localHistory)
                 CopyFieldGroupFields(payload, *next.localHistory, next.localFields);
             next.localHistory = std::move(payload);
@@ -425,7 +494,7 @@ void editGroup(const EditingContext& context, const FieldGroupResolver& resolver
             const auto current = resolver.Resolve(definition, scope, request.group);
             appendGroupDiagnostics(diagnostics, context, current.diagnostics);
             if (!current.ok()) continue;
-            next.localHistory = std::get<Payload>(current.value->payload);
+            next.localHistory = localPayload<Payload>(*current.value, definition, copiedIdentities);
             next.localFields = FieldGroupPropertyMask(request.group);
             next.mode = FieldGroupMode::Local;
             if (!scope) after.platforms.clear();
@@ -438,7 +507,8 @@ void editGroup(const EditingContext& context, const FieldGroupResolver& resolver
                 next.localHistory.emplace();
                 next.localFields = 0;
             }
-            const auto property = field ? field->property : Property::Sends;
+            const auto property = field ? field->property
+                : effectsEdit ? Property::SignalGraph : Property::Sends;
             const auto bit = FieldGroupFieldMask(property);
             if (field) {
                 if (!setField(*next.localHistory, *field, context.masterBus)) {
@@ -449,6 +519,8 @@ void editGroup(const EditingContext& context, const FieldGroupResolver& resolver
                 }
             } else if constexpr (std::is_same_v<Payload, SendFieldGroup>) {
                 *next.localHistory = std::get<ReplaceFieldGroupSends>(request.operation).value;
+            } else if constexpr (std::is_same_v<Payload, EffectFieldGroup>) {
+                *next.localHistory = std::get<ReplaceFieldGroupEffects>(request.operation).value;
             }
             next.localFields |= bit;
             if (!scope)
@@ -501,7 +573,7 @@ FieldGroupEditResult prepareFieldGroupEdit(
                       QStringLiteral("Unknown field group"), request.definition, request.group);
     if (const auto* field = std::get_if<SetFieldGroupField>(&request.operation)) {
         if (FieldGroupForProperty(field->property) != request.group ||
-            field->property == Property::Sends)
+            field->property == Property::Sends || field->property == Property::SignalGraph)
             addDiagnostic(result.diagnostics, EditCode::InvalidOperation,
                           QStringLiteral("Field does not belong to this editable field group"),
                           request.definition, request.group, {}, fieldName(field->property));
@@ -511,6 +583,11 @@ FieldGroupEditResult prepareFieldGroupEdit(
         addDiagnostic(result.diagnostics, EditCode::InvalidOperation,
                       QStringLiteral("A Send replacement requires the Send group"),
                       request.definition, request.group, {}, QStringLiteral("sends"));
+    if (std::holds_alternative<ReplaceFieldGroupEffects>(request.operation) &&
+        request.group != FieldGroupId::Effect)
+        addDiagnostic(result.diagnostics, EditCode::InvalidOperation,
+                      QStringLiteral("An Effect replacement requires the Effect group"),
+                      request.definition, request.group, {}, QStringLiteral("effects"));
     if (!result.diagnostics.empty()) return result;
     const auto context = buildContext(project);
     result.diagnostics = context.diagnostics;
@@ -552,6 +629,10 @@ FieldGroupEditResult prepareFieldGroupEdit(
         editGroup(context, resolver, definition, canInherit, request, scopes,
                   result.before->spatialRating, candidate.spatialRating, result.diagnostics);
         break;
+    case FieldGroupId::Effect:
+        editGroup(context, resolver, definition, canInherit, request, scopes,
+                  result.before->effects, candidate.effects, result.diagnostics);
+        break;
     }
     if (result.diagnostics.empty())
         finishCandidate(context, definition, std::move(candidate), result);
@@ -585,6 +666,7 @@ FieldGroupProjectValidation validateFieldGroupProject(
     if (!context.diagnostics.empty()) return {context.diagnostics};
     if (copies.empty()) return {validateView(context, context.view.definitions)};
     auto definitions = context.view.definitions;
+    std::map<Guid, DefinitionFieldGroups> copiedGroups;
     Diagnostics diagnostics;
     for (const auto& copy : copies) {
         const auto collect = [&](auto&& self, const ProjectItem& item, Guid parent) -> void {
@@ -594,6 +676,18 @@ FieldGroupProjectValidation validateFieldGroupProject(
             definition.parentGuid = parent;
             if (&item == copy.root && copy.rootGroups)
                 definition.groups = copy.rootGroups;
+            auto& groups = copiedGroups.emplace(definition.guid, *definition.groups).first->second;
+            std::map<QUuid, QUuid> identities;
+            VisitAuthoredEffectChains(groups, [&](EffectChainLedger& effects, FieldGroupScope) {
+                auto entries = effects.entries();
+                for (auto& entry : entries) {
+                    const auto [identity, inserted] = identities.try_emplace(entry.guid);
+                    if (inserted) identity->second = QUuid::createUuid();
+                    entry.guid = identity->second;
+                }
+                effects.replace(std::move(entries));
+            });
+            definition.groups = &groups;
             const auto validatePlatforms = [&](const auto& group) {
                 for (const auto& [platform, state] : group.platforms)
                     if (std::find(context.platforms.begin(), context.platforms.end(), platform)
@@ -605,6 +699,7 @@ FieldGroupProjectValidation validateFieldGroupProject(
             validatePlatforms(definition.groups->output);
             validatePlatforms(definition.groups->send);
             validatePlatforms(definition.groups->spatialRating);
+            validatePlatforms(definition.groups->effects);
             definitions.push_back(definition);
             for (const auto& child : item.children)
                 self(self, *child, definition.guid);

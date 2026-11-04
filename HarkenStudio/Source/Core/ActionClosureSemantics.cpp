@@ -142,6 +142,7 @@ struct Builder
                 ? PlatformScope{} : PlatformScope{QUuid::fromString(variant.platform)})
             : std::make_shared<FieldGroupEffectiveSnapshot>(
                 buildFieldGroupEffectiveSnapshot(project, scope));
+        capabilityContext.fieldGroups = effectiveGroups.get();
         for (const auto& error : effectiveGroups->diagnostics) {
             const auto object = index.guid.find(error.itemGuid);
             diagnostic(ActionClosureDiagnosticCode::SchemaMismatch, error.message,
@@ -286,7 +287,12 @@ struct Builder
             }
         }
         if (const auto* mix = item.comp<VMixNode>()) {
-            for (const auto& effect : mix->effects.entries()) {
+            const auto definition = effectiveGroups->definitions.find(toFieldGroupGuid(item.guid));
+            const auto platform = effectiveGroups->scope
+                ? PlatformScope{fromFieldGroupGuid(*effectiveGroups->scope)} : PlatformScope{};
+            const auto& effects = definition == effectiveGroups->definitions.end()
+                ? mix->effectsForPlatform(platform) : definition->second.effects.effects;
+            for (const auto& effect : effects.entries()) {
                 if (effect.mode == EffectMode::Custom) continue;
                 const auto* target = byGuid(effect.effectGuid, item.runtimeId(),
                                             QStringLiteral("effects.effectGuid"), path);

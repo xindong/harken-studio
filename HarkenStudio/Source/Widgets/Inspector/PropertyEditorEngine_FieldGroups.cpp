@@ -75,6 +75,7 @@ std::optional<FieldGroupId> PropertyEditorEngine::fieldGroup(const QString& fiel
     default:
         return {};
     }
+    if (field == QLatin1String("effects")) return FieldGroupId::Effect;
     const auto* property = PlayablePropertyAuthoringV1::fieldByName(field);
     return property ? FieldGroupForProperty(
         static_cast<harkenplayableproperties::PlayablePropertyIdV1>(property->id))
@@ -97,6 +98,7 @@ void PropertyEditorEngine::buildGroupHeader(FieldGroupId group, CollapsibleSecti
         switch (group) {
         case FieldGroupId::Output: label = tr("Inherit Output"); break;
         case FieldGroupId::Send: label = tr("Inherit Sends"); break;
+        case FieldGroupId::Effect: label = tr("Inherit FX"); break;
         case FieldGroupId::SpatialRating: label = tr("Inherit Spatial Rating"); break;
         }
     }
@@ -256,6 +258,9 @@ void PropertyEditorEngine::refreshFieldGroups()
     }
     for (auto& binding : bindings_)
         if (fieldGroup(binding.field)) applyGroupFieldView(binding);
+    for (const auto& section : sectionBindings_)
+        if (section.provider && section.widget)
+            section.provider->refresh(section.widget, currentItem_, QStringLiteral("fieldGroups"));
     updating_ = wasUpdating;
     evalEditConditions();
 }

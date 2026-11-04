@@ -2,7 +2,9 @@
 
 #include "Core/Components/VEffect.h"
 #include "Core/Components/VMixNode.h"
+#include "Core/PlatformContextService.h"
 #include "Core/ProjectManager.h"
+#include "Widgets/Inspector/FieldGroupInspectorView.h"
 
 #include <QChildEvent>
 #include <QFocusEvent>
@@ -12,15 +14,26 @@
 namespace VNX {
 namespace {
 
-const EffectEntry* findRow(const ProjectItem* item, const QUuid& rowGuid)
+std::optional<EffectEntry> findRow(const ProjectItem* item, const QUuid& rowGuid)
 {
     const auto* mix = item ? item->comp<VMixNode>() : nullptr;
-    if (!mix || rowGuid.isNull()) return nullptr;
-    const auto& entries = mix->effects.entries();
+    if (!mix || rowGuid.isNull()) return {};
+    const auto& context = PlatformContextService::instance().context();
+    auto chain = mix->effectsForPlatform(context.all ? std::nullopt : currentWorldPlatformScope(context));
+    if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type)) {
+        const auto* project = ProjectManager::instance().currentProject();
+        if (!project) return {};
+        const auto view = buildFieldGroupInspectorView(*project, item->guid,
+            FieldGroupId::Effect, PlatformContextService::instance().context());
+        const auto effective = view.effectChain();
+        if (!effective) return {};
+        chain = *effective;
+    }
+    const auto& entries = chain.entries();
     const auto row = std::find_if(entries.begin(), entries.end(), [&rowGuid](const EffectEntry& entry) {
         return entry.guid == rowGuid;
     });
-    return row != entries.end() ? &*row : nullptr;
+    return row != entries.end() ? std::optional(*row) : std::nullopt;
 }
 
 }
@@ -43,10 +56,14 @@ EffectEditorPanel::EffectEditorPanel(QWidget* parent)
     connect(&project, &ProjectManager::itemRenamed, this, [this] { refreshEffect(); });
     connect(&project, &ProjectManager::itemPropertyChanged, this,
             [this](ProjectItem* item, const QString& property, const QObject*) {
-        if (item && ((item->guid == ownerGuid_ && property == QLatin1String("effects"))
+        if (item && (property == QLatin1String("fieldGroups")
+            || (item->guid == ownerGuid_ && property == QLatin1String("effects"))
             || item->type == ProjectItem::Type::Effect))
             QMetaObject::invokeMethod(this, &EffectEditorPanel::refreshEffect, Qt::QueuedConnection);
     });
+    connect(&project, &ProjectManager::itemMoved, this, &EffectEditorPanel::refreshEffect);
+    connect(&PlatformContextService::instance(), &PlatformContextService::contextChanged,
+            this, &EffectEditorPanel::refreshEffect);
 
     refreshEffect();
     installFocusFilterRecursively(this);
@@ -59,10 +76,14 @@ ProjectItem* EffectEditorPanel::boundItem() const
 
 bool EffectEditorPanel::hasEffect() const
 {
-    const auto* item = boundItem();
-    if (rowGuid_.isNull())
+    return canOpen(boundItem(), rowGuid_);
+}
+
+bool EffectEditorPanel::canOpen(const ProjectItem* item, const QUuid& rowGuid)
+{
+    if (rowGuid.isNull())
         return item && item->type == ProjectItem::Type::Effect && item->comp<VEffect>();
-    const auto* row = findRow(item, rowGuid_);
+    const auto row = findRow(item, rowGuid);
     const auto* project = ProjectManager::instance().currentProject();
     return row && row->typed && project && EffectChainSemantics::resolve(*row, *project);
 }
@@ -96,7 +117,7 @@ void EffectEditorPanel::refreshEffect()
         if (const auto* effect = item->comp<VEffect>())
             title += QStringLiteral(" - %1/%2").arg(
                 item->name, EffectChainSemantics::displayName(effect->definition.type));
-    } else if (const auto* row = findRow(item, rowGuid_); row && row->typed) {
+    } else if (const auto row = findRow(item, rowGuid_); row && row->typed) {
         const auto* project = ProjectManager::instance().currentProject();
         if (const auto* effect = project ? EffectChainSemantics::resolve(*row, *project) : nullptr) {
             const auto* preset = ProjectManager::instance().findItemByGuid(row->effectGuid);

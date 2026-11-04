@@ -6,6 +6,7 @@
 #include "Components/VSelection.h"
 #include "EffectChainSemantics.h"
 #include "ItemTypeCatalog.h"
+#include "PlayablePropertyAuthoringV1.h"
 #include "Tooling/Harkenizer/Core/CurrentWorldProjectAdapter.h"
 #include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "BindingRuntimeLowering.h"
@@ -224,8 +225,17 @@ RuntimeCapabilityEntry compileCurrentWorldCapability(const ProjectItem& item,
     if (context.buildSession) {
         options.sourceIndex = context.buildSession->sourceIndex();
         options.canonicalContext = context.buildSession->canonicalContext(scope);
-        options.fieldGroups = context.buildSession->fieldGroups(scope).get();
     }
+    std::shared_ptr<const FieldGroupEffectiveSnapshot> ownedGroups;
+    const auto* effectiveGroups = context.fieldGroups;
+    if (!effectiveGroups || effectiveGroups->scope != toFieldGroupScope(scope)) {
+        ownedGroups = context.buildSession
+            ? context.buildSession->fieldGroups(scope)
+            : std::make_shared<FieldGroupEffectiveSnapshot>(
+                buildFieldGroupEffectiveSnapshot(project, toFieldGroupScope(scope)));
+        effectiveGroups = ownedGroups.get();
+    }
+    options.fieldGroups = effectiveGroups;
     QString diagnostic;
     CurrentWorldBuildStatus status = CurrentWorldBuildStatus::InvalidAuthoring;
     auto request = buildCurrentWorldSyncRequestForContext(
@@ -251,7 +261,11 @@ RuntimeCapabilityEntry compileCurrentWorldCapability(const ProjectItem& item,
             if (dependencyFeature == F::TypedEffect) {
                 const auto* mix = dependency->comp<VMixNode>();
                 if (!mix) continue;
-                for (const auto& effect : mix->effects.entries()) {
+                const auto definition = effectiveGroups->definitions.find(toFieldGroupGuid(dependency->guid));
+                if (definition == effectiveGroups->definitions.end())
+                    return refuse(S::InvalidAuthoring,
+                                  QStringLiteral("Effect field group is unavailable"));
+                for (const auto& effect : definition->second.effects.effects.entries()) {
                     if (!EffectChainSemantics::validate(effect, &diagnostic))
                         return refuse(S::InvalidAuthoring, diagnostic);
                     const auto* asset = EffectChainSemantics::resolve(effect, project);
@@ -571,8 +585,33 @@ RuntimeCapabilityEntry evaluateForContext(const ProjectItem& item,
         return bindingCapability(item, project, operation);
     if (feature == F::TypedEffect) {
         const auto* mix = item.comp<VMixNode>();
-        if (!mix || mix->effects.isEmpty()) return result;
-        for (const auto& effect : mix->effects.entries()) {
+        if (!mix) return result;
+        std::shared_ptr<const FieldGroupEffectiveSnapshot> ownedGroups;
+        PlatformScope scope = context.platform;
+        if (variant && !variant->platform.isEmpty()) {
+            const auto platform = ProjectPlatformSemantics::parseId(variant->platform);
+            if (!platform)
+                return refuse(S::InvalidAuthoring, QStringLiteral("Build platform ID is invalid"));
+            scope = *platform;
+        }
+        const EffectChainLedger* effects = &mix->effectsForPlatform(scope);
+        if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item.type)) {
+            const auto* effectiveGroups = context.fieldGroups;
+            if (!effectiveGroups || effectiveGroups->scope != toFieldGroupScope(scope)) {
+                ownedGroups = context.buildSession
+                    ? context.buildSession->fieldGroups(scope)
+                    : std::make_shared<FieldGroupEffectiveSnapshot>(
+                        buildFieldGroupEffectiveSnapshot(project, toFieldGroupScope(scope)));
+                effectiveGroups = ownedGroups.get();
+            }
+            const auto definition = effectiveGroups->definitions.find(toFieldGroupGuid(item.guid));
+            if (!effectiveGroups->ok() || definition == effectiveGroups->definitions.end())
+                return refuse(S::InvalidAuthoring,
+                              QStringLiteral("Effect field group is unavailable"));
+            effects = &definition->second.effects.effects;
+        }
+        if (effects->isEmpty()) return result;
+        for (const auto& effect : effects->entries()) {
             QString diagnostic;
             if (!effect.typed || harkenstudio::IsNull(effect.runtimeId())
                 || !EffectChainSemantics::validate(effect, &diagnostic))

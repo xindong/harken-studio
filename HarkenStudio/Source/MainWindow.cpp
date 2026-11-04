@@ -4997,20 +4997,7 @@ EffectEditorPanel* MainWindow::openEffectEditor(const QUuid& ownerGuid, const QU
 {
     auto& manager = ProjectManager::instance();
     const auto* owner = manager.findItemByGuid(ownerGuid);
-    const auto* project = manager.currentProject();
-    if (!owner || !project) return nullptr;
-    if (rowGuid.isNull()) {
-        if (owner->type != ProjectItem::Type::Effect) return nullptr;
-    } else {
-        const auto* mix = owner->comp<VMixNode>();
-        if (!mix) return nullptr;
-        const auto& entries = mix->effects.entries();
-        const auto row = std::find_if(entries.begin(), entries.end(), [&rowGuid](const EffectEntry& entry) {
-            return entry.guid == rowGuid;
-        });
-        if (row == entries.end() || !row->typed || !EffectChainSemantics::resolve(*row, *project))
-            return nullptr;
-    }
+    if (!EffectEditorPanel::canOpen(owner, rowGuid)) return nullptr;
 
     const QString type = QStringLiteral("EffectEditor");
     EffectEditorPanel* editor = nullptr;

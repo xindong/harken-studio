@@ -2,6 +2,8 @@
 
 #include "Core/Components/VMixNode.h"
 #include "Core/ProjectManager.h"
+#include "Core/PlatformContextService.h"
+#include "FieldGroupInspectorView.h"
 #include "InspectorLayout.h"
 
 namespace VNX {
@@ -47,7 +49,18 @@ inline PropertyDescriptor effectsInspectorDescriptor()
         const auto* mix = item ? item->comp<VMixNode>() : nullptr;
         QVariantList rows;
         if (!mix) return rows;
-        for (const auto& entry : mix->effects.entries()) {
+        const auto& context = PlatformContextService::instance().context();
+        auto chain = mix->effectsForPlatform(context.all ? std::nullopt : currentWorldPlatformScope(context));
+        if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type)) {
+            const auto* project = ProjectManager::instance().currentProject();
+            if (!project) return rows;
+            const auto view = buildFieldGroupInspectorView(*project, item->guid,
+                FieldGroupId::Effect, PlatformContextService::instance().context());
+            const auto effective = view.effectChain();
+            if (!effective) return rows;
+            chain = *effective;
+        }
+        for (const auto& entry : chain.entries()) {
             QVariantMap row;
             if (entry.mode == EffectMode::Custom) {
                 row.insert(QStringLiteral("effectGuid"), EffectChainSemantics::displayName(entry.custom.type));

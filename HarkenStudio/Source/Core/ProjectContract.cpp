@@ -170,13 +170,19 @@ QList<LocatedValue> locatedValues(const QJsonObject& root,
         }
         const QString& segment = segments.at(index);
         if (segment == QLatin1String("*")) {
-            if (!current.isArray()) return;
-            const QJsonArray array = current.toArray();
-            for (qsizetype itemIndex = 0; itemIndex < array.size(); ++itemIndex) {
-                const QJsonValue item = array.at(itemIndex);
-                visit(item, index + 1,
-                      path + QStringLiteral("[%1]").arg(itemIndex),
-                      item.toObject());
+            if (current.isArray()) {
+                const QJsonArray array = current.toArray();
+                for (qsizetype itemIndex = 0; itemIndex < array.size(); ++itemIndex) {
+                    const QJsonValue item = array.at(itemIndex);
+                    visit(item, index + 1,
+                          path + QStringLiteral("[%1]").arg(itemIndex),
+                          item.toObject());
+                }
+            } else if (current.isObject()) {
+                const QJsonObject object = current.toObject();
+                for (auto item = object.begin(); item != object.end(); ++item)
+                    visit(item.value(), index + 1, path + QLatin1Char('.') + item.key(),
+                          item.value().toObject());
             }
             return;
         }

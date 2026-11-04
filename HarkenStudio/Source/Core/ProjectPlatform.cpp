@@ -1,5 +1,6 @@
 #include "Core/Components/VSelection.h"
 #include "ProjectPlatform.h"
+#include "Components/VMixNode.h"
 #include "FieldGroupProjectAdapter.h"
 
 #include "ProjectTypes.h"
@@ -196,6 +197,14 @@ public:
                 }
                 for (auto p = selections->platforms.cbegin(); p != selections->platforms.cend(); ++p)
                     reference(p.key(), childPath + QChar('/') + p.key());
+            } else if (it.key() == QStringLiteral("effectsPlatforms")) {
+                if (!it.value().isObject()) {
+                    errors.append(QStringLiteral("Effect platforms must be an object at %1").arg(childPath));
+                    continue;
+                }
+                const auto rows = it.value().toObject();
+                for (auto row = rows.begin(); row != rows.end(); ++row)
+                    reference(row.key(), childPath + QChar('/') + row.key());
             } else if (it.key() == QStringLiteral("fieldGroups")) {
                 const auto groups = it.value().toObject();
                 const auto platforms = groups.value(QStringLiteral("platforms"));
@@ -411,7 +420,14 @@ bool validateProject(const ProjectData& project, QString* error)
         addGroups(item->fieldGroups.output);
         addGroups(item->fieldGroups.send);
         addGroups(item->fieldGroups.spatialRating);
+        addGroups(item->fieldGroups.effects);
         json.insert(QStringLiteral("fieldGroups"), QJsonObject{{QStringLiteral("platforms"), fieldGroupPlatforms}});
+        if (const auto* mix = item->comp<VMixNode>()) {
+            QJsonObject platforms;
+            for (const auto& [platform, effects] : mix->effectPlatforms)
+                platforms.insert(idString(platform), QJsonArray{});
+            json.insert(QStringLiteral("effectsPlatforms"), platforms);
+        }
         QJsonArray occurrences;
         if (const auto* selection = item->comp<VSelection>())
             json.insert(QStringLiteral("selections"), selection->selections.toJson());

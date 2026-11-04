@@ -7,6 +7,7 @@
 #include "../PropertyEditSession.h"
 #include "../FieldGroupProjectAdapter.h"
 #include "../Components/VTrack.h"
+#include "../Components/VMixNode.h"
 #include "../SoundSourceSemantics.h"
 
 namespace VNX {
@@ -30,6 +31,7 @@ struct OwnerState
     QUuid guid;
     PlatformOverrideLedgerV1 definition;
     DefinitionFieldGroups fieldGroups;
+    std::map<ProjectPlatformId, EffectChainLedger> effectPlatforms;
     QMap<QUuid, PlatformOverrideLedgerV1> clips;
     std::optional<SelectionData> selections;
     std::optional<SoundSources> sources;
@@ -57,6 +59,7 @@ OwnerState captureOwner(const ProjectItem& item)
     state.guid = item.guid;
     state.definition = item.platformOverrides;
     state.fieldGroups = item.fieldGroups;
+    if (const auto* mix = item.comp<VMixNode>()) state.effectPlatforms = mix->effectPlatforms;
     if (const auto* selection = item.comp<VSelection>()) state.selections = selection->selections;
     if (const auto* track = item.comp<VTrack>()) {
         for (const auto& clip : track->clips.items)
@@ -73,6 +76,8 @@ void removeReferences(OwnerState& owner, const ProjectPlatformId& id)
     owner.fieldGroups.output.platforms.erase(scope);
     owner.fieldGroups.send.platforms.erase(scope);
     owner.fieldGroups.spatialRating.platforms.erase(scope);
+    owner.fieldGroups.effects.platforms.erase(scope);
+    owner.effectPlatforms.erase(id);
     for (auto& ledger : owner.clips) ledger.erase(id);
     if (owner.selections) owner.selections->platforms.remove(Platforms::idString(id));
     if (owner.sources)
@@ -166,6 +171,7 @@ void apply(ProjectManager& manager, const EditState& state, const QStringList& p
         auto* item = manager.findItemByGuid(owner.guid);
         item->platformOverrides = owner.definition;
         item->fieldGroups = owner.fieldGroups;
+        if (auto* mix = item->comp<VMixNode>()) mix->effectPlatforms = owner.effectPlatforms;
         if (owner.selections) item->comp<VSelection>()->selections = *owner.selections;
         if (auto* track = item->comp<VTrack>()) {
             for (auto& clip : track->clips.items) {
