@@ -313,6 +313,7 @@ add_executable(harken_runtime_tests
     UnitTest/ClockKernelTest.cpp
     UnitTest/ScheduledTransactionPoolTest.cpp
     UnitTest/MarkerIndexTest.cpp
+    UnitTest/MusicPlaybackTimelineTest.cpp
     UnitTest/SamePositionResolverTest.cpp
     UnitTest/TimelinePlannerTest.cpp
     UnitTest/TimelineExecutorTest.cpp

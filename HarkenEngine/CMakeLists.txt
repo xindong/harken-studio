@@ -59,6 +59,7 @@ set(HARKEN_RUNTIME_SOURCES
     ${HARKEN_RUNTIME_DIR}/core/src/BlockArena.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/ClockKernel.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/MarkerIndex.cpp
+    ${HARKEN_RUNTIME_DIR}/core/src/MusicPlaybackTimeline.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/DeferredIntentPool.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/EngineConfig.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/LogicCommitCoordinator.cpp
