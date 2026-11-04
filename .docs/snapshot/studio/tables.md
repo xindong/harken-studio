@@ -135,17 +135,18 @@
 | 选择与试听 | Child 与曲线选择联动；试听游标使用 Control 覆盖值，Child 提示显示各行增益及跨行结果 |
 | 合成关系 | 同行同一 Child 仅一条曲线；跨行引用共用播放且增益相乘，成员不自动归一化 |
 
-## Effects 表格与 Effect Editor
+## Effects 表格与共享资产
 
 | 项目 | 当前表现 |
 |---|---|
 | 位置与列 | Sound、Container、Layer、Track、Segment、Bus 的 Basic > Effect；# / Effect / Level / Active |
-| 类型与增删 | 加号选择 Feedback Delay、Three Band Tone、Gain、Limiter 或 Compressor；减号删除所选行，支持排序及撤销重做 |
-| Effect | 公用 MenuActionButton，主按钮名称左对齐，单击选中行并打开 Effect Editor，右侧下拉箭头通过标准 QMenu 替换类型；保留行位置、效果器 GUID、Active、Level，参数重置为新类型默认值 |
+| 引用与增删 | 加号通过标准对象选择器引用已有 Effect，允许跨对象及同链重复引用；减号删除所选行，支持排序及撤销重做 |
+| Effect | 公用 ObjectRefWidget；单击定位 Assets，双击选择对象并显示 Inspector；替换引用保留行位置、引用行 GUID、Active、Level |
 | Level | 干湿比 0～100%，默认 100%；0% 全干、100% 全湿；仅保存编辑配置并支持撤销，本阶段不参与试听或 Pack 运行时处理 |
 | Active | 新增默认开启，映射现有旁通配置；Bus 沿用既有支持，非 Bus 含关闭项时仍受现有试听／发布能力检查限制 |
 | 配置范围 | 直接编辑当前对象的效果器链，不提供 Inherit 或平台覆盖编辑 |
-| Effect Editor | View > Editors 成员；内容留空，标题显示所属对象与效果器；通过稳定 GUID 绑定，支持多实例、固定及布局恢复 |
+| 共享资产 | Assets 的 Effect 桶保存类型与全部参数，New Effect > Limiter 为当前唯一类型入口；Effect Inspector 仅显示只读 Type 和 Notes，无独立 Effect Editor |
+| 删除资产 | 移除所有对应引用行，撤销一并恢复原顺序、Level 和 Active |
 
 ## Publisher 表格
 
@@ -166,6 +167,5 @@
 | 视图 | 范围注解 |
 |---|---|
 | Curve Editor、Timeline | 领域画布，不计入普通表格 |
-| Effect Editor | 效果器独立窗口，本阶段内容留空，不计入普通表格 |
 | Hierarchy、Explorer、Sources、Selector、Template Chooser 预览 | 导航或选择树，不计入普通表格 |
 | Log | 文本视图，不计为 Monitor 表格 |

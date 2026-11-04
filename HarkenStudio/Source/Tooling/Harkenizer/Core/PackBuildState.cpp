@@ -6,6 +6,8 @@
 #include "AssetPipeline/PlatformProfile.h"
 #include "ProjectSerializer.h"
 #include "Components/VAction.h"
+#include "Components/VEffect.h"
+#include "Components/VMixNode.h"
 #include "SoundSourceSemantics.h"
 #include "Tooling/Harkenizer/Core/PackBuildPlan.h"
 #include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
@@ -106,6 +108,15 @@ void PackBuildState::deriveInputs(const QSet<QString>* successfulPaths)
         if (cached != objectDigests_.cend()) return *cached;
         auto json = serializer.projectItemToJson(*item, false);
         if (json.isEmpty()) return QString();
+        if (const auto* mix = item->comp<VMixNode>(); mix && !mix->effects.isEmpty()) {
+            QJsonObject effects;
+            for (const auto& entry : mix->effects.entries()) {
+                const auto* effect = EffectChainSemantics::resolve(entry, project);
+                if (!effect) return QString();
+                effects.insert(entry.effectGuid.toString(QUuid::WithoutBraces), effect->toJson());
+            }
+            json.insert(QStringLiteral("effectAssets"), effects);
+        }
         json.remove(QStringLiteral("notes"));
         json.remove(QStringLiteral("color"));
         QJsonArray children;

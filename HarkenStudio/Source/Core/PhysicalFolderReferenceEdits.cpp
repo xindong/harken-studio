@@ -269,6 +269,12 @@ QJsonObject PhysicalFolderReferenceEdits::removeReferences(QJsonObject content,
             cleanActions(action, QStringLiteral("steps"), guids);
         });
         editObject(components, QStringLiteral("mixnode"), [&](QJsonObject& mix) {
+            if (mix.contains(QStringLiteral("effects")))
+                mix.insert(QStringLiteral("effects"), filtered(mix.value(QStringLiteral("effects")).toArray(), [&](const auto& row) {
+                    const auto effect = row.toObject();
+                    return deleted(effect.value(QStringLiteral("effectGuid")), guids)
+                        || deleted(effect.value(QStringLiteral("effectRef")), guids);
+                }));
             if (mix.contains(QStringLiteral("bindings")))
                 mix.insert(QStringLiteral("bindings"), filtered(mix.value(QStringLiteral("bindings")).toArray(), [&](const auto& row) {
                     return deleted(row.toObject().value(QStringLiteral("variable")), guids);

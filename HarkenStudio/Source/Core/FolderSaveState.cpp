@@ -17,7 +17,8 @@ namespace {
 const QStringList& managedBuckets()
 {
     static const QStringList buckets{QStringLiteral("Actions"), QStringLiteral("Layers"),
-        QStringLiteral("Attenuations"), QStringLiteral("Variables"), QStringLiteral("Busses")};
+        QStringLiteral("Attenuations"), QStringLiteral("Variables"), QStringLiteral("Busses"),
+        QStringLiteral("Effects")};
     return buckets;
 }
 

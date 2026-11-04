@@ -4,6 +4,7 @@
 #include "Widgets/Inspector/AttenuationInspectorSchema.h"
 #include "Widgets/Inspector/BusInspectorSchema.h"
 #include "Widgets/Inspector/ContainerInspectorSchema.h"
+#include "Widgets/Inspector/EffectInspectorSchema.h"
 #include "Widgets/Inspector/InspectorLayout.h"
 #include "Widgets/Inspector/LayerInspectorSchema.h"
 #include "Widgets/Inspector/SegmentInspectorSchema.h"
@@ -21,7 +22,7 @@ using VNX::ProjectItem;
 
 namespace {
 
-const std::vector<std::pair<ProjectItem::Type, const VNX::PropertySchema*>>& nineTypeSchemas()
+const std::vector<std::pair<ProjectItem::Type, const VNX::PropertySchema*>>& itemTypeSchemas()
 {
     static const std::vector<std::pair<ProjectItem::Type, const VNX::PropertySchema*>> rows = {
         {ProjectItem::Type::Sound, &VNX::soundInspectorSchema()},
@@ -33,6 +34,7 @@ const std::vector<std::pair<ProjectItem::Type, const VNX::PropertySchema*>>& nin
         {ProjectItem::Type::Action, &VNX::actionInspectorSchema()},
         {ProjectItem::Type::Variable, &VNX::variableInspectorSchema()},
         {ProjectItem::Type::Attenuation, &VNX::attenuationInspectorSchema()},
+        {ProjectItem::Type::Effect, &VNX::effectInspectorSchema()},
     };
     return rows;
 }
@@ -41,7 +43,7 @@ const std::vector<std::pair<ProjectItem::Type, const VNX::PropertySchema*>>& nin
 
 TEST(InspectorRowSetGold, EveryRootFieldHasOneRegisteredSectionAndAUniqueIdentity)
 {
-    for (const auto& row : nineTypeSchemas()) {
+    for (const auto& row : itemTypeSchemas()) {
         SCOPED_TRACE(VNX::ItemTypeCatalog::canonicalName(row.first).toStdString());
         EXPECT_NO_THROW(VNX::validateInspectorSchema(*row.second));
     }

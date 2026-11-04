@@ -4571,6 +4571,9 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationCombinesScheduleAndEff
     auto retained = makeItem(QStringLiteral("Alternatives"), VNX::ProjectItem::Type::Container, 1000);
     addChild(project.layers.front().rootItem, retained);
     std::uint32_t nextObjectId = 2000;
+    auto effectAsset = makeItem(QStringLiteral("Limiter"),
+        VNX::ProjectItem::Type::Effect, nextObjectId++);
+    project.effectItems.push_back({effectAsset, QStringLiteral("Effects")});
     const auto appendSegment = [&](const std::shared_ptr<VNX::ProjectItem>& parent, std::uint32_t source) {
         auto segment = makeItem(QStringLiteral("Segment%1").arg(nextObjectId),
             VNX::ProjectItem::Type::Segment, nextObjectId++);
@@ -4595,8 +4598,7 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationCombinesScheduleAndEff
             std::vector<VNX::EffectEntry> effects(3);
             for (auto& effect : effects) {
                 effect.guid = QUuid::createUuid();
-                effect.type = VNX::EffectType::Compressor;
-                effect.parameters = VNX::EffectChainSemantics::defaultParameters(effect.type);
+                effect.effectGuid = effectAsset->guid;
             }
             EXPECT_TRUE(track->comp<VNX::VMixNode>()->effects.replace(std::move(effects)));
         }

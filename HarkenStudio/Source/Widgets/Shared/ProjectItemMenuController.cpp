@@ -119,6 +119,12 @@ void ProjectItemMenuController::buildCreationMenu(QMenu* menu, const std::vector
                 createFromSpec(specs()[i], kind);
             });
             action = sub->menuAction();
+        } else if (spec.type == ProjectItem::Type::Effect) {
+            QMenu* sub = menu->addMenu(typeDisplayName(spec.type));
+            sub->addAction(tr("Limiter"), this, [this, i] {
+                createFromSpec(specs()[i]);
+            });
+            action = sub->menuAction();
         } else {
             action = menu->addAction(typeDisplayName(spec.type), this, [this, i]() {
                 createFromSpec(specs()[i]);

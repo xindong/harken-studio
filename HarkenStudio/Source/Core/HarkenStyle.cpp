@@ -7,6 +7,7 @@
 
 #include <QAbstractSpinBox>
 #include <QAbstractItemView>
+#include <QAccessible>
 #include <QAction>
 #include <QApplication>
 #include <QDialog>
@@ -28,6 +29,7 @@
 #include <QStyleOptionSlider>
 #include <QTabWidget>
 #include <QToolBar>
+#include <QTreeView>
 #include <QTimer>
 #include <algorithm>
 #include <utility>
@@ -415,6 +417,11 @@ void HarkenStyle::polish(QWidget* widget)
         if (auto* combo = qobject_cast<QComboBox*>(widget))
             connect(combo, &QComboBox::currentIndexChanged, this, [this, widget] {
                 refreshWidgetAppearance(widget, theme());
+            });
+        if (auto* tree = qobject_cast<QTreeView*>(widget))
+            connect(tree, &QTreeView::collapsed, this, [tree] {
+                QAccessibleTableModelChangeEvent event(tree, QAccessibleTableModelChangeEvent::ModelReset);
+                QAccessible::updateAccessibility(&event);
             });
     }
     refreshWidgetAppearance(widget, theme());

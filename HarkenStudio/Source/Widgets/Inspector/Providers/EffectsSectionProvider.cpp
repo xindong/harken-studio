@@ -7,7 +7,6 @@
 #include "Core/QtControlSkin.h"
 #include "Core/ThemeManager.h"
 #include "Widgets/Common/ListFooter.h"
-#include "Widgets/Common/MenuActionButton.h"
 #include "Widgets/Common/ParameterBinding.h"
 #include "Widgets/Common/ParameterSlider.h"
 #include "Widgets/Common/ParameterValueEditor.h"
@@ -15,29 +14,22 @@
 #include "Widgets/Inspector/EffectsFieldSchema.h"
 #include "Widgets/Inspector/InspectorLayout.h"
 #include "Widgets/Inspector/InspectorPanel.h"
+#include "Widgets/Selector/ObjectRefWidget.h"
+#include "Widgets/Selector/SelectorWindow.h"
 #include "Widgets/Shared/InspectorFormRow.h"
 
-#include <QAction>
 #include <QApplication>
 #include <QCheckBox>
 #include <QHBoxLayout>
-#include <QMenu>
 #include <QMouseEvent>
 #include <QPointer>
-#include <QPushButton>
 #include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
-#include <array>
 
 namespace VNX {
 namespace {
-
-constexpr std::array effectTypes{
-    EffectType::FeedbackDelay, EffectType::ThreeBandTone, EffectType::Gain,
-    EffectType::Limiter, EffectType::Compressor
-};
 
 class EffectsListWidget final : public QWidget
 {
@@ -88,7 +80,7 @@ public:
         remove_ = footer->removeButton();
         remove_->setObjectName(QStringLiteral("listRemoveSelected_effects"));
         remove_->setToolTip(tr("Remove Effect"));
-        connect(add_, &QToolButton::clicked, this, [this] { showAddMenu(); });
+        connect(add_, &QToolButton::clicked, this, [this] { showAddSelector(); });
         connect(remove_, &QToolButton::clicked, this, [this] {
             if (!canEdit() || !isCurrentContext()) return;
             table_->removeSelectedRow([this] {
@@ -101,6 +93,12 @@ public:
             });
         });
         qApp->installEventFilter(this);
+        connect(&ProjectManager::instance(), &ProjectManager::itemRenamed,
+                this, [this] { rebuild(); });
+        connect(&ProjectManager::instance(), &ProjectManager::itemDeleted,
+                this, [this] { rebuild(); }, Qt::QueuedConnection);
+        connect(&ProjectManager::instance(), &ProjectManager::itemCreated,
+                this, [this] { rebuild(); }, Qt::QueuedConnection);
         connect(&ProjectManager::instance(), &ProjectManager::projectClosed,
                 this, [this] { bind(nullptr); });
     }
@@ -134,7 +132,7 @@ protected:
     bool event(QEvent* event) override
     {
         if (event->type() == QEvent::Hide) {
-            if (effectMenu_) effectMenu_->close();
+            SelectorWindow::dismiss(add_);
             cancelPendingEdits();
         }
         return QWidget::event(event);
@@ -194,41 +192,50 @@ private:
         return success;
     }
 
-    void showAddMenu()
+    bool canSelect(uint32_t objectID) const
     {
-        if (!canEdit() || !isCurrentContext()) return;
-        auto* menu = new QMenu(this);
-        effectMenu_ = menu;
-        menu->setAttribute(Qt::WA_DeleteOnClose);
-        const uint64_t generation = generation_;
-        for (EffectType type : effectTypes) {
-            auto* action = menu->addAction(EffectChainSemantics::displayName(type));
-            connect(action, &QAction::triggered, this, [this, generation, type] {
-                if (generation != generation_ || !canEdit()) return;
-                auto effects = boundItem()->comp<VMixNode>()->effects.entries();
-                EffectEntry effect;
-                effect.guid = QUuid::createUuid();
-                effect.type = type;
-                effect.parameters = EffectChainSemantics::defaultParameters(type);
-                effects.push_back(effect);
-                if (commit(std::move(effects))) {
-                    selected_ = effect.guid;
-                    refreshSelection();
-                }
-            });
-        }
-        menu->popup(add_->mapToGlobal(QPoint(0, add_->height())));
+        const auto* target = ProjectManager::instance().findItemByObjectID(objectID);
+        return canEdit() && isCurrentContext() && target
+            && target->type == ProjectItem::Type::Effect;
     }
 
-    void replaceEffect(const QUuid& guid, EffectType type)
+    void showAddSelector()
     {
+        if (!canEdit() || !isCurrentContext()) return;
+        const QPointer<EffectsListWidget> self(this);
+        const uint64_t generation = generation_;
+        SelectorRequest request;
+        request.title = tr("Add Effect");
+        request.filterType = ProjectItem::Type::Effect;
+        request.isSelectable = [self, generation](uint32_t objectID) {
+            return self && self->generation_ == generation && self->canSelect(objectID);
+        };
+        request.onSelected = [self, generation](uint32_t objectID) {
+            if (!self || self->generation_ != generation || !self->canSelect(objectID)) return;
+            const auto* target = ProjectManager::instance().findItemByObjectID(objectID);
+            auto effects = self->boundItem()->comp<VMixNode>()->effects.entries();
+            EffectEntry effect;
+            effect.guid = QUuid::createUuid();
+            effect.effectGuid = target->guid;
+            effects.push_back(effect);
+            if (self->commit(std::move(effects))) {
+                self->selected_ = effect.guid;
+                self->refreshSelection();
+            }
+        };
+        SelectorWindow::open(request, add_);
+    }
+
+    void replaceEffect(const QUuid& guid, uint32_t objectID)
+    {
+        if (!canSelect(objectID)) return;
+        const auto* target = ProjectManager::instance().findItemByObjectID(objectID);
         auto effects = boundItem()->comp<VMixNode>()->effects.entries();
         const auto found = std::find_if(effects.begin(), effects.end(),
             [&guid](const EffectEntry& effect) { return effect.guid == guid; });
-        if (found == effects.end() || found->type == type) return;
-        found->type = type;
-        found->parameters = EffectChainSemantics::defaultParameters(type);
-        commit(std::move(effects));
+        if (found == effects.end() || found->effectGuid == target->guid) return;
+        found->effectGuid = target->guid;
+        if (!commit(std::move(effects))) rebuild();
     }
 
     void setActive(const QUuid& guid, bool active)
@@ -254,6 +261,8 @@ private:
     void cancelPendingEdits()
     {
         for (auto* row : rows_) {
+            for (auto* reference : row->findChildren<ObjectRefWidget*>())
+                reference->cancelPendingSelection();
             for (auto* value : row->findChildren<ParameterValueEditor*>())
                 value->cancelPendingInput();
             for (auto* slider : row->findChildren<ParameterSlider*>())
@@ -264,7 +273,7 @@ private:
     void rebuild()
     {
         ++generation_;
-        if (effectMenu_) effectMenu_->close();
+        SelectorWindow::dismiss(add_);
         cancelPendingEdits();
         auto* layout = table_->rowsLayout();
         while (auto* entry = layout->takeAt(0)) {
@@ -285,8 +294,9 @@ private:
                 const auto& effect = effects[index];
                 const QUuid guid = effect.guid;
                 const uint64_t generation = generation_;
-                const QString name = effect.typed ? EffectChainSemantics::displayName(effect.type)
-                                                 : tr("Unsupported Effect");
+                auto* target = ProjectManager::instance().findItemByGuid(effect.effectGuid);
+                if (target && target->type != ProjectItem::Type::Effect) target = nullptr;
+                const QString name = target ? target->name : tr("Missing");
                 auto* row = new QWidget(table_->rowsWidget());
                 row->setObjectName(QStringLiteral("effectRow"));
                 row->setProperty("effectGuid", guid);
@@ -302,32 +312,24 @@ private:
                 auto* effectCell = table_->createCell(row);
                 effectCell->setObjectName(QStringLiteral("effectCell"));
                 effectCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-                auto* button = new MenuActionButton(effectCell);
-                auto* primary = button->primaryButton();
-                primary->setObjectName(QStringLiteral("effectType"));
-                primary->setText(name);
-                primary->setToolTip(tr("%1\nOpen Effect Editor").arg(name));
-                primary->setEnabled(effect.typed && !guid.isNull());
-                connect(primary, &QPushButton::clicked, this, [this, generation, guid] {
-                    if (generation == generation_ && inspector_ && isCurrentContext())
-                        inspector_->requestEffectEditor(guid);
+                auto* reference = new ObjectRefWidget(effectCell);
+                reference->setObjectName(QStringLiteral("effectObject"));
+                reference->setCompact(true);
+                reference->setCompactPickable(true);
+                reference->setReadOnly(!editable);
+                reference->setFilterType(ProjectItem::Type::Effect);
+                reference->setSelectorTitle(tr("Select Effect"));
+                reference->setEditGuard([this, generation] {
+                    return generation == generation_ && canEdit() && isCurrentContext();
                 });
-                auto* chevron = button->dropdownButton();
-                chevron->setObjectName(QStringLiteral("effectReplace"));
-                chevron->setToolTip(tr("Replace Effect"));
-                chevron->setAccessibleName(tr("Replace Effect"));
-                chevron->setEnabled(editable);
-                auto* menu = button->menu();
-                menu->setObjectName(QStringLiteral("effectReplaceMenu"));
-                for (EffectType type : effectTypes) {
-                    auto* action = menu->addAction(EffectChainSemantics::displayName(type));
-                    action->setEnabled(type != effect.type);
-                    connect(action, &QAction::triggered, this, [this, generation, guid, type] {
-                        if (generation == generation_ && canEdit() && isCurrentContext())
-                            replaceEffect(guid, type);
+                reference->setIsSelectable([this](uint32_t id) { return canSelect(id); });
+                if (target) reference->setCurrentObjectID(target->objectID);
+                else reference->setUnresolvedReference(effect.effectGuid.toString(QUuid::WithoutBraces));
+                connect(reference, &ObjectRefWidget::objectChanged, this,
+                    [this, generation, guid](uint32_t objectID) {
+                        if (generation == generation_) replaceEffect(guid, objectID);
                     });
-                }
-                effectCell->addWidget(button);
+                effectCell->addWidget(reference);
                 rowLayout->addWidget(effectCell);
 
                 auto* levelCell = table_->createCell(row);
@@ -363,7 +365,7 @@ private:
                 auto* activeCell = table_->createCell(row);
                 auto* active = new QCheckBox(activeCell);
                 active->setObjectName(QStringLiteral("effectActive"));
-                active->setChecked(effect.typed && !effect.bypass);
+                active->setChecked(!effect.bypass);
                 active->setEnabled(editable);
                 active->setToolTip(tr("Active"));
                 connect(active, &QCheckBox::toggled, this, [this, generation, guid](bool checked) {
@@ -406,7 +408,6 @@ private:
     QJsonArray snapshot_;
     QString search_;
     QPointer<InspectorPanel> inspector_;
-    QPointer<QMenu> effectMenu_;
     TableWidget* table_ = nullptr;
     QToolButton* add_ = nullptr;
     QToolButton* remove_ = nullptr;

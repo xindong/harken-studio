@@ -46,6 +46,8 @@ add_library(harken_editor_inspector STATIC
     SoundInspectorSchema.h
     ContentObjectSchemaRows.h
     EffectsFieldSchema.h
+    EffectInspectorSchema.cpp
+    EffectInspectorSchema.h
     # Action inspector S2: empty scalar schema (Action page = single
     # "steps" section provider on the Basic tab, no scalar fields).
     ActionInspectorSchema.cpp

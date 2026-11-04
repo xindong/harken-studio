@@ -91,7 +91,8 @@ enum class ProjectItemType {
     Bus = 6,
     Action = 7,
     Variable = 8,
-    Attenuation = 9
+    Attenuation = 9,
+    Effect = 10
 };
 
 using SendMode = harkenprojectschema::SendMode;
@@ -827,6 +828,7 @@ struct ProjectData
     std::vector<ProjectFileBinding> layers;
     std::vector<ProjectFileBinding> actions;
     std::vector<ProjectFileBinding> attenuationItems;
+    std::vector<ProjectFileBinding> effectItems;
     std::vector<ProjectFileBinding> busses;
     std::vector<ProjectFileBinding> variables;
     std::vector<ProjectFolderBinding> folders;
@@ -990,7 +992,7 @@ inline ObjectIdRepairResult ensureUniqueObjectIds(ProjectData& project)
         if (project.root) fn(project.root.get());
         std::vector<ProjectFileBinding>* buckets[] = {
             &project.busses, &project.actions,
-            &project.attenuationItems, &project.variables,
+            &project.attenuationItems, &project.effectItems, &project.variables,
             &project.layers };
         for (auto* bucket : buckets)
             for (auto& binding : *bucket) {

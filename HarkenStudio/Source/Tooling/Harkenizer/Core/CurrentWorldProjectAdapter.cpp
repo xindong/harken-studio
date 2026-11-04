@@ -1863,6 +1863,7 @@ bool affectsCurrentWorld(ProjectItemType itemType,
         || itemType == ProjectItemType::Segment
         || itemType == ProjectItemType::Variable
         || itemType == ProjectItemType::Action
+        || itemType == ProjectItemType::Effect
         || itemType == ProjectItemType::Bus;
     if (!contributesDefinition)
         return false;
@@ -1902,6 +1903,10 @@ bool affectsCurrentWorld(ProjectItemType itemType,
                 || name == QStringLiteral("defaultValue");
         case ProjectItemType::Action:
             return name == QStringLiteral("steps");
+        case ProjectItemType::Effect:
+            return name == QStringLiteral("type")
+                || name == QStringLiteral("parameters")
+                || name == QStringLiteral("pasteProperties");
         default:
             return false;
     }

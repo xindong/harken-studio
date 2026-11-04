@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/Components/VMixNode.h"
+#include "Core/ProjectManager.h"
 #include "InspectorLayout.h"
 
 namespace VNX {
@@ -16,13 +17,10 @@ inline PropertyDescriptor effectsInspectorDescriptor()
     effects.flags.serialize = false;
 
     PropertyDescriptor effect;
-    effect.field = QStringLiteral("type");
-    effect.type = PropType::Enum;
+    effect.field = QStringLiteral("effectGuid");
+    effect.type = PropType::ObjectRef;
     effect.label = QStringLiteral("Effect");
-    for (EffectType type : {EffectType::FeedbackDelay, EffectType::ThreeBandTone,
-                           EffectType::Gain, EffectType::Limiter, EffectType::Compressor})
-        effect.options.push_back({EffectChainSemantics::displayName(type),
-                                  EffectChainSemantics::typeName(type)});
+    effect.refFilter = static_cast<int>(ProjectItem::Type::Effect);
 
     PropertyDescriptor level;
     level.field = QStringLiteral("wetDry");
@@ -51,11 +49,11 @@ inline PropertyDescriptor effectsInspectorDescriptor()
         if (!mix) return rows;
         for (const auto& entry : mix->effects.entries()) {
             QVariantMap row;
-            if (entry.typed) {
-                row.insert(QStringLiteral("type"), EffectChainSemantics::typeName(entry.type));
-                row.insert(QStringLiteral("wetDry"), entry.wetDry * 100.0);
-                row.insert(QStringLiteral("active"), !entry.bypass);
-            }
+            const auto* target = ProjectManager::instance().findItemByGuid(entry.effectGuid);
+            row.insert(QStringLiteral("effectGuid"), target && target->type == ProjectItem::Type::Effect
+                ? QVariant(target->objectID) : QVariant(entry.effectGuid.toString(QUuid::WithoutBraces)));
+            row.insert(QStringLiteral("wetDry"), entry.wetDry * 100.0);
+            row.insert(QStringLiteral("active"), !entry.bypass);
             rows.push_back(row);
         }
         return rows;

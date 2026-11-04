@@ -83,6 +83,7 @@ inline constexpr char ProjectItemVariable[] = "projectItem.variable";
 inline constexpr char ProjectItemVariableSmooth[] = "projectItem.variable.smooth";
 inline constexpr char ProjectItemVariableStep[] = "projectItem.variable.step";
 inline constexpr char ProjectItemAttenuation[] = "projectItem.attenuation";
+inline constexpr char ProjectItemEffect[] = "projectItem.effect";
 inline constexpr char MeterPeakCap[] = "meter.peak.cap";
 }
 

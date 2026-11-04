@@ -95,7 +95,8 @@ std::vector<ProjectItem*> ProjectData::findItemsBySelector(
         ? QDir::fromNativeSeparators(key).split(QLatin1Char('/'), Qt::SkipEmptyParts) : QStringList{};
     const auto visit = [&](auto&& self, ProjectItem* item, qsizetype depth, bool parentMatches) -> void {
         if (!item) return;
-        const auto sensitivity = item->type == ProjectItem::Type::Attenuation ? Qt::CaseInsensitive : Qt::CaseSensitive;
+        const auto sensitivity = (item->type == ProjectItem::Type::Attenuation
+            || item->type == ProjectItem::Type::Effect) ? Qt::CaseInsensitive : Qt::CaseSensitive;
         const QString name = item->name.normalized(QString::NormalizationForm_C);
         const bool pathMatches = parentMatches && depth < segments.size()
             && name.compare(segments[depth], sensitivity) == 0;

@@ -406,6 +406,7 @@ QJsonObject writeS3PayloadByType(const ProjectItem& top, ProjectSerializer& seri
 {
     switch (top.type) {
     case ProjectItem::Type::Attenuation: return serializer.attenuationPackToJson(top);
+    case ProjectItem::Type::Effect:      return serializer.effectPackToJson(top);
     case ProjectItem::Type::Variable:    return serializer.variablePackToJson(top);
     default:
         qWarning() << "[S3Saver] Unhandled top type in dispatch:"
@@ -1033,7 +1034,8 @@ QString ProjectManager::suggestUniqueName(ProjectItem::Type type,
     const auto ns = namespaceForType(type);
     if (ns == NameNamespace::None) return baseName;
     const bool bucketUnique = ns == NameNamespace::Action || ns == NameNamespace::Variable;
-    const auto sensitivity = ns == NameNamespace::Attenuation ? Qt::CaseInsensitive : Qt::CaseSensitive;
+    const auto sensitivity = ns == NameNamespace::Attenuation || ns == NameNamespace::Effect
+        ? Qt::CaseInsensitive : Qt::CaseSensitive;
     const auto siblingConflict = [&](const QString& candidate) {
         const auto conflicts = [&](const ProjectItem* item) {
             return item && item != excludeItem && namespaceForType(item->type) == ns
@@ -1054,7 +1056,7 @@ QString ProjectManager::suggestUniqueName(ProjectItem::Type type,
         });
     };
     return NameValidator::makeUniqueName(baseName.normalized(QString::NormalizationForm_C), [&](const QString& candidate) {
-        const QString key = type == ProjectItem::Type::Attenuation ? candidate.toCaseFolded() : candidate;
+        const QString key = sensitivity == Qt::CaseInsensitive ? candidate.toCaseFolded() : candidate;
         return !reservedNames.contains(key)
             && (bucketUnique ? isNameUnique(candidate, type, excludeItem) : !siblingConflict(candidate));
     });
@@ -5085,7 +5087,9 @@ QJsonObject folderComponentReferences(const ProjectItem& item)
 {
     QJsonObject components;
     if (const auto* mix = item.comp<VMixNode>())
-        components.insert(QStringLiteral("mixnode"), QJsonObject{{QStringLiteral("bindings"), mix->bindings.toJson()}});
+        components.insert(QStringLiteral("mixnode"), QJsonObject{
+            {QStringLiteral("bindings"), mix->bindings.toJson()},
+            {QStringLiteral("effects"), mix->effects.toJson()}});
     if (const auto* selection = item.comp<VSelection>())
         components.insert(QStringLiteral("selection"), QJsonObject{
             {QStringLiteral("selections"), selection->selections.toJson()},
@@ -5098,11 +5102,16 @@ void applyFolderComponentReferences(ProjectItem& item, const QJsonObject& state)
     const auto components = state.value(QStringLiteral("components")).toObject();
     QStringList changedProperties;
     if (auto* mix = item.comp<VMixNode>()) {
-        const auto bindings = components.value(QStringLiteral("mixnode"))
-            .toObject().value(QStringLiteral("bindings")).toArray();
+        const auto value = components.value(QStringLiteral("mixnode")).toObject();
+        const auto bindings = value.value(QStringLiteral("bindings")).toArray();
         if (mix->bindings.toJson() != bindings) {
             mix->bindings = BindingLedger::fromJson(bindings);
             changedProperties.append(QStringLiteral("bindings"));
+        }
+        const auto effects = value.value(QStringLiteral("effects")).toArray();
+        if (mix->effects.toJson() != effects) {
+            mix->effects = EffectChainLedger::fromJson(effects);
+            changedProperties.append(QStringLiteral("effects"));
         }
     }
     if (auto* selection = item.comp<VSelection>()) {
@@ -5442,7 +5451,7 @@ ProjectFileBinding* ProjectManager::findRootBinding(ProjectData* project, const 
     // inferring ownership from the root type.
     std::vector<ProjectFileBinding>* buckets[] = {
         &project->layers, &project->actions, &project->attenuationItems,
-        &project->busses, &project->variables };
+        &project->busses, &project->variables, &project->effectItems };
     for (auto* bucket : buckets) {
         for (auto& binding : *bucket) {
             if (binding.rootItem.get() == item) return &binding;
@@ -5456,7 +5465,7 @@ bool ProjectManager::detachRootBinding(ProjectData* project, const ProjectItem* 
     if (!project || !item || !out) return false;
     std::vector<ProjectFileBinding>* buckets[] = {
         &project->layers, &project->actions, &project->attenuationItems,
-        &project->busses, &project->variables };
+        &project->busses, &project->variables, &project->effectItems };
     for (auto* bucket : buckets) {
         for (size_t i = 0; i < bucket->size(); ++i) {
             if ((*bucket)[i].rootItem.get() == item) {

@@ -285,10 +285,23 @@ struct Builder
                            QStringLiteral("bindings"));
             }
         }
-        if (const auto* mix = item.comp<VMixNode>(); mix && !mix->effects.isEmpty())
-            edge(item.runtimeId(), item.runtimeId(),
-                 ActionClosureEdgeReason::EffectDependency,
-                 QStringLiteral("effects"), path);
+        if (const auto* mix = item.comp<VMixNode>()) {
+            for (const auto& effect : mix->effects.entries()) {
+                const auto* target = byGuid(effect.effectGuid, item.runtimeId(),
+                                            QStringLiteral("effects.effectGuid"), path);
+                if (!target) continue;
+                if (target->type != ProjectItem::Type::Effect) {
+                    diagnostic(ActionClosureDiagnosticCode::SchemaMismatch,
+                        QStringLiteral("Effect reference must target an Effect asset"),
+                        plan.rootActionStableId, -1, item.runtimeId(),
+                        QStringLiteral("effects.effectGuid"), path);
+                    continue;
+                }
+                edge(item.runtimeId(), target->runtimeId(),
+                     ActionClosureEdgeReason::EffectDependency,
+                     QStringLiteral("effects"), path);
+            }
+        }
     }
 
     void addSoundMedia(const ProjectItem& item, bool control)

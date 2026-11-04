@@ -89,7 +89,7 @@ bool PathUtils::isProtectedPackOutputPath(const QString& path, const QString& pr
     if (projectFilePath.isEmpty()) return false;
     const QDir project(QFileInfo(projectFilePath).absolutePath());
     if (directoryContainsPath(path, project.absolutePath())) return true;
-    for (const auto* name : {AUDIO_SOURCES_DIR, "Actions", "Layers", "Busses", "Variables", "Attenuations"}) {
+    for (const auto* name : {AUDIO_SOURCES_DIR, "Actions", "Layers", "Busses", "Variables", "Attenuations", "Effects"}) {
         const QString bucket = project.filePath(QLatin1String(name));
         if (directoryContainsPath(bucket, path) || directoryContainsPath(path, bucket))
             return true;
@@ -101,7 +101,7 @@ bool PathUtils::isProjectObjectDirectory(const QString& path, const QString& pro
 {
     if (projectFilePath.isEmpty()) return false;
     const QDir project(QFileInfo(projectFilePath).absolutePath());
-    for (const auto* name : {"Actions", "Layers", "Busses", "Variables", "Attenuations"}) {
+    for (const auto* name : {"Actions", "Layers", "Busses", "Variables", "Attenuations", "Effects"}) {
         if (directoryContainsPath(project.filePath(QLatin1String(name)), path)) return true;
     }
     return false;
@@ -110,7 +110,7 @@ bool PathUtils::isProjectObjectDirectory(const QString& path, const QString& pro
 QString PathUtils::packBuildOutputLocationError()
 {
     return QObject::tr("Build output cannot use the project root, its parent directories, AudioSources, "
-        "or object bucket directories (Actions, Layers, Busses, Variables, Attenuations). "
+        "or object bucket directories (Actions, Layers, Busses, Variables, Attenuations, Effects). "
         "Choose a separate output directory, such as BuildPacks.");
 }
 

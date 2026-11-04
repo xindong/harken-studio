@@ -1,6 +1,7 @@
 #include "ProjectManager.h"
 #include "ProjectTypes.h"
 #include "Components/VSelection.h"
+#include "Core/HarkenStyle.h"
 #include "ThemeManager.h"
 #include "UndoCommands.h"
 #include "Widgets/Hierarchy/Hierarchy.h"
@@ -9,6 +10,7 @@
 
 #include <gtest/gtest.h>
 
+#include <QAccessible>
 #include <QApplication>
 #include <QColorDialog>
 #include <QDirIterator>
@@ -16,11 +18,13 @@
 #include <QImage>
 #include <QLineEdit>
 #include <QKeyEvent>
+#include <QMouseEvent>
 #include <QPixmap>
 #include <QPointer>
 #include <QScopeGuard>
 #include <QScrollBar>
 #include <QSettings>
+#include <QStyleFactory>
 #include <QTemporaryDir>
 #include <QTimer>
 
@@ -388,4 +392,78 @@ TEST_F(ProjectTreePanelAnchorTest, KeyboardCurrentFolderAndCategoryClearObjectCo
     EXPECT_FALSE(panel_->selectedItems().isEmpty());
     ASSERT_EQ(activations.size(), 2);
     EXPECT_EQ(activations.back(), nullptr);
+}
+
+TEST_F(ProjectTreePanelAnchorTest, CollapsedBucketsPreserveAccessibleChildAndSiblingIdentity)
+{
+    HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")));
+    const auto previousHandler = QAccessible::installUpdateHandler([](QAccessibleEvent* event) {
+        if (!QAccessible::isActive() && event->type() == QAccessible::TableModelChanged) {
+            auto* interface = event->accessibleInterface();
+            if (auto* table = interface ? interface->tableInterface() : nullptr)
+                table->modelChange(static_cast<QAccessibleTableModelChangeEvent*>(event));
+        }
+    });
+    const auto restoreHandler = qScopeGuard([previousHandler] {
+        QAccessible::installUpdateHandler(previousHandler);
+    });
+    PresentationProbeExplorer explorer;
+    explorer.treeWidget()->setStyle(&style);
+    explorer.resize(420, 900);
+    explorer.show();
+    QApplication::processEvents();
+    auto* tree = explorer.treeWidget();
+    auto* interface = QAccessible::queryAccessibleInterface(tree);
+    ASSERT_NE(interface, nullptr);
+    ASSERT_NE(interface->tableInterface(), nullptr);
+    const auto verifyChildren = [&] {
+        QSet<QAccessible::Id> identities;
+        for (int index = 0; index < interface->childCount(); ++index) {
+            auto* child = interface->child(index);
+            ASSERT_NE(child, nullptr);
+            ASSERT_TRUE(child->isValid());
+            EXPECT_EQ(child->parent(), interface);
+            EXPECT_EQ(interface->indexOfChild(child), index);
+            const auto identity = QAccessible::uniqueId(child);
+            EXPECT_FALSE(identities.contains(identity));
+            identities.insert(identity);
+            if (index + 1 < interface->childCount())
+                EXPECT_NE(interface->child(interface->indexOfChild(child) + 1), child);
+        }
+    };
+    int checkedBuckets = 0;
+    for (int index = 0; index < tree->topLevelItemCount(); ++index) {
+        auto* bucket = tree->topLevelItem(index);
+        if (!bucket->childCount()) continue;
+        SCOPED_TRACE(bucket->text(0).toStdString());
+        for (int input = 0; input < 3; ++input) {
+            SCOPED_TRACE(input);
+            bucket->setExpanded(true);
+            tree->doItemsLayout();
+            QAccessibleTableModelChangeEvent reset(tree, QAccessibleTableModelChangeEvent::ModelReset);
+            interface->tableInterface()->modelChange(&reset);
+            verifyChildren();
+            if (input == 2) {
+                bucket->setExpanded(false);
+            } else {
+                tree->scrollToItem(bucket);
+                const QRect rect = tree->visualItemRect(bucket);
+                const int caretExtent = ThemeManager::instance().metrics().navigationChevronExtent;
+                const QPoint local(input == 0 ? rect.right() - caretExtent / 2
+                                               : rect.left() + rect.width() / 2,
+                                   rect.center().y());
+                const QPoint global = tree->viewport()->mapToGlobal(local);
+                QMouseEvent press(QEvent::MouseButtonPress, local, global,
+                                  Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+                QMouseEvent release(QEvent::MouseButtonRelease, local, global,
+                                    Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+                QApplication::sendEvent(tree->viewport(), &press);
+                QApplication::sendEvent(tree->viewport(), &release);
+            }
+            ASSERT_FALSE(bucket->isExpanded());
+            verifyChildren();
+        }
+        ++checkedBuckets;
+    }
+    EXPECT_GE(checkedBuckets, 2);
 }

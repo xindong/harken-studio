@@ -193,6 +193,7 @@ void SelectionRouter::routeSelection(ProjectItem* item, bool reveal,
             {
                 case ProjectItem::Type::Action:
                 case ProjectItem::Type::Attenuation:
+                case ProjectItem::Type::Effect:
                 case ProjectItem::Type::Variable:
                 {
                     if (ip) ip->showItemInspector(item);

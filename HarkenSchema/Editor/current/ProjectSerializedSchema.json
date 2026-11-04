@@ -365,6 +365,9 @@
         "attenuation": {
           "$ref": "#/$defs/attenuationComponent"
         },
+        "effect": {
+          "$ref": "#/$defs/effectComponent"
+        },
         "audio": {
           "$ref": "#/$defs/audioComponent"
         },
@@ -393,6 +396,50 @@
           "$ref": "#/$defs/variableComponent"
         }
       },
+      "type": "object"
+    },
+    "effectEntry": {
+      "additionalProperties": true,
+      "properties": {
+        "guid": {
+          "$ref": "#/$defs/uuid"
+        },
+        "effectRef": {
+          "$ref": "#/$defs/objectReference"
+        },
+        "bypass": {
+          "type": "boolean"
+        },
+        "wetDry": {
+          "minimum": 0,
+          "maximum": 1,
+          "type": "number"
+        }
+      },
+      "required": [
+        "guid",
+        "effectRef"
+      ],
+      "type": "object"
+    },
+    "effectComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "limiter",
+          "type": "string"
+        },
+        "parameters": {
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "parameters"
+      ],
       "type": "object"
     },
     "marker": {
@@ -453,6 +500,9 @@
         "attenuation": {
           "$ref": "#/$defs/attenuationComponent"
         },
+        "effect": {
+          "$ref": "#/$defs/effectComponent"
+        },
         "audio": {
           "$ref": "#/$defs/definitionAudioComponent"
         },
@@ -495,8 +545,7 @@
         },
         "effects": {
           "items": {
-            "additionalProperties": true,
-            "type": "object"
+            "$ref": "#/$defs/effectEntry"
           },
           "type": "array"
         },
@@ -592,8 +641,7 @@
         },
         "effects": {
           "items": {
-            "additionalProperties": true,
-            "type": "object"
+            "$ref": "#/$defs/effectEntry"
           },
           "type": "array"
         },
@@ -1043,7 +1091,8 @@
         "type": {
           "enum": [
             "Variable",
-            "Attenuation"
+            "Attenuation",
+            "Effect"
           ]
         }
       },
@@ -2599,6 +2648,57 @@
     },
     {
       "pathPatterns": [
+        "Effects/**/*.vp"
+      ],
+      "required": false,
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/$defs/s3Pack",
+            "$schema": "https://json-schema.org/draft/2020-12/schema"
+          },
+          "harkenDocument": {
+            "additionalProperties": true,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "projectId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "schemaVersion": {
+                "type": "integer"
+              },
+              "type": {
+                "const": "project.effect",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id",
+              "projectId",
+              "schemaVersion"
+            ],
+            "type": "object",
+            "propertyNames": {
+              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
+            }
+          }
+        },
+        "required": [
+          "harkenDocument",
+          "content"
+        ],
+        "type": "object"
+      },
+      "type": "project.effect"
+    },
+    {
+      "pathPatterns": [
         "Busses/**/*.vp"
       ],
       "required": false,
@@ -2903,7 +3003,7 @@
     "headerAdditionalProperties": "ignorable metadata, preserved on save",
     "preservedModulePayloads": {
       "mixNodeComponent.bindings": "unknown object fields and opaque entries preserved; known values parsed by module",
-      "mixNodeComponent.effects": "unknown object fields and opaque entries preserved; known values parsed by module",
+      "mixNodeComponent.effects": "unknown object fields preserved; known values parsed by module",
       "playableOverrideRow.signalGraph": "retired input; discarded with its presence bit when loading",
       "playableProperties.signalGraph": "retired input; discarded with its presence bit when loading"
     },
@@ -2924,7 +3024,8 @@
         "project.bus",
         "project.action",
         "project.variable",
-        "project.attenuation"
+        "project.attenuation",
+        "project.effect"
       ],
       "rule": "documentIdMirrorsRoot"
     },
@@ -2961,6 +3062,19 @@
           ],
           "targetTypes": [
             "Bus"
+          ]
+        },
+        {
+          "kind": "object",
+          "path": [
+            "components",
+            "mixnode",
+            "effects",
+            "*",
+            "effectRef"
+          ],
+          "targetTypes": [
+            "Effect"
           ]
         },
         {

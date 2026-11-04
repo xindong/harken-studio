@@ -31,6 +31,7 @@
 #include "Widgets/Inspector/SoundInspectorSchema.h"
 #include "Widgets/Inspector/ActionInspectorSchema.h"
 #include "Widgets/Inspector/AttenuationInspectorSchema.h"
+#include "Widgets/Inspector/EffectInspectorSchema.h"
 #include "Widgets/Inspector/BusInspectorSchema.h"
 #include "Widgets/Inspector/ContainerInspectorSchema.h"
 #include "Widgets/Inspector/LayerInspectorSchema.h"
@@ -80,6 +81,23 @@ void InspectorPanelPrivate::setupAttenuationPage()
     stack_->addWidget(page);
 }
 
+
+void InspectorPanelPrivate::setupEffectPage()
+{
+    if (!effectEngine_) {
+        effectEngine_ = new PropertyEditorEngine(q_ptr);
+        q_ptr->wireEngineLaunch(effectEngine_);
+        wireAuthoringCommit(effectEngine_);
+    }
+    effectCustomization_.tabbedLayout = true;
+
+    effectEngine_->setSchema(effectInspectorSchema(), ComponentType::Effect);
+    effectEngine_->setItemType(ProjectItem::Type::Effect);
+    effectEngine_->setCustomization(&effectCustomization_);
+
+    QWidget* page = effectEngine_->buildPage();
+    stack_->addWidget(page);
+}
 
 void InspectorPanel::selectCurveDimension(AttenuationDimension dimension)
 {
@@ -132,6 +150,8 @@ QJsonObject InspectorPanel::getInspectorSchema(const QString& schemaId) const
             schema = &variableInspectorSchema();    component = ComponentType::Variable;    break;
         case ProjectItem::Type::Attenuation:
             schema = &attenuationInspectorSchema(); component = ComponentType::Attenuation; break;
+        case ProjectItem::Type::Effect:
+            schema = &effectInspectorSchema();      component = ComponentType::Effect;      break;
         default:
             return {};
     }

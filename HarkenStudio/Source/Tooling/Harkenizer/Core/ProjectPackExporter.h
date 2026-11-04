@@ -311,9 +311,9 @@ private:
                        const ActionClosurePlan* closure = nullptr,
                        const std::set<uint32_t>* excludedClosureMediaIds = nullptr);
 
-    void CollectBuses(const ProjectData& project,
+    bool CollectBuses(const ProjectData& project,
                       HarkenEditor::Bridge::PackBuildSession& builder,
-                      PlatformScope scope);
+                      PlatformScope scope, QString* errorOut);
     bool CollectSends(const ProjectData& project,
                       HarkenEditor::Bridge::PackBuildSession& builder,
                        PlatformScope scope, QString* errorOut);

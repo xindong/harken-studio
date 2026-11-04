@@ -76,7 +76,7 @@ QStringList managedPackDirectories()
 {
     return {QStringLiteral("Actions"), QStringLiteral("Attenuations"),
             QStringLiteral("Busses"), QStringLiteral("Layers"),
-            QStringLiteral("Variables")};
+            QStringLiteral("Variables"), QStringLiteral("Effects")};
 }
 
 QString domainForFolder(const QString& folder)
@@ -91,6 +91,8 @@ QString domainForFolder(const QString& folder)
         return QStringLiteral("pack.variable");
     if (folder.compare(QStringLiteral("Attenuations"), Qt::CaseInsensitive) == 0)
         return QStringLiteral("pack.attenuation");
+    if (folder.compare(QStringLiteral("Effects"), Qt::CaseInsensitive) == 0)
+        return QStringLiteral("pack.effect");
     return {};
 }
 
@@ -106,6 +108,8 @@ QString documentTypeForFolder(const QString& folder)
         return QStringLiteral("project.variable");
     if (folder.compare(QStringLiteral("Attenuations"), Qt::CaseInsensitive) == 0)
         return QStringLiteral("project.attenuation");
+    if (folder.compare(QStringLiteral("Effects"), Qt::CaseInsensitive) == 0)
+        return QStringLiteral("project.effect");
     return {};
 }
 
@@ -128,6 +132,8 @@ QString packDomain(const QJsonObject& object, int schemaVersion)
         return QStringLiteral("pack.variable");
     if (type.compare(QStringLiteral("Attenuation"), Qt::CaseInsensitive) == 0)
         return QStringLiteral("pack.attenuation");
+    if (type.compare(QStringLiteral("Effect"), Qt::CaseInsensitive) == 0)
+        return QStringLiteral("pack.effect");
     return {};
 }
 
@@ -318,7 +324,7 @@ QSet<QString> inheritedDocumentPaths(const QSet<QString>& references)
     for (const QString& path : references) {
         const QString domain = domainForFolder(path.section(QLatin1Char('/'), 0, 0));
         if (domain == QLatin1String("pack.bus") || domain == QLatin1String("pack.attenuation")
-            || domain == QLatin1String("pack.variable"))
+            || domain == QLatin1String("pack.variable") || domain == QLatin1String("pack.effect"))
             result.insert(path);
     }
     return result;

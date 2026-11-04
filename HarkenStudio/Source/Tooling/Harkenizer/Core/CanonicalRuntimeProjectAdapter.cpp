@@ -7,6 +7,7 @@
 #include "Components/VAudio.h"
 #include "Components/VMixNode.h"
 #include "Components/VBus.h"
+#include "Components/VEffect.h"
 #include "Components/VSegment.h"
 #include "Components/VSpatial.h"
 #include "Components/VSelection.h"
@@ -548,22 +549,35 @@ compileBusResult(
         if (mix) {
             for (uint32_t slot = 0; slot < mix->effects.entries().size(); ++slot) {
                 const auto& effect = mix->effects.entries()[slot];
+                const auto* asset = EffectChainSemantics::resolve(effect, project);
+                QString effectError;
+                if (!EffectChainSemantics::validate(effect, &effectError)
+                    || !asset || !EffectChainSemantics::validate(*asset, &effectError)) {
+                    appendDiagnostic(diagnostics, ProjectInputDiagnosticCode::UnsupportedField,
+                        effectError.isEmpty() ? QStringLiteral("Effect reference does not resolve")
+                                              : effectError,
+                        item, effect.effectGuid, QStringLiteral("effects"));
+                    invalidBusProperty = true;
+                    continue;
+                }
                 auto effectSource = bus.source;
                 effectSource.fieldPath = "/effects/" + std::to_string(slot);
                 const uint32_t parameterFirst =
                     static_cast<uint32_t>(input.effectParameters.size());
-                for (uint32_t i = 0; i < effect.parameters.size(); ++i) {
-                    auto parameterSource = effectSource;
-                    parameterSource.fieldPath += "/parameters/"
-                        + std::to_string(i);
+                const auto& assetPath = index.documentPaths.at(
+                    index.byQtGuid.at(effect.effectGuid));
+                for (uint32_t i = 0; i < asset->parameters.size(); ++i) {
+                    harkenbuscompiler::BusSourceLocationV1 parameterSource{
+                        toAuthoringGuid(effect.effectGuid), assetPath,
+                        "/parameters/" + std::to_string(i)};
                     input.effectParameters.push_back({effect.runtimeId(), i,
-                                                      effect.parameters[i],
+                                                      asset->parameters[i],
                                                       parameterSource});
                 }
                 input.effects.push_back({id, effect.runtimeId(), slot,
-                                         static_cast<uint32_t>(effect.type), 2,
+                                         static_cast<uint32_t>(asset->type), 2,
                                          effect.bypass, parameterFirst,
-                                         static_cast<uint32_t>(effect.parameters.size()),
+                                         static_cast<uint32_t>(asset->parameters.size()),
                                          effectSource});
             }
             const auto sendState = locator ? PlayablePropertyAuthoringV1::readProperty(
@@ -868,14 +882,23 @@ bool copyStudioDefinitionPayload(
         for (const EffectEntry& effect : mix->effects.entries()) {
             if (!effect.typed || harkenstudio::IsNull(effect.runtimeId()))
                 return fail(QStringLiteral("Effect chain contains an untyped entry"));
+            const auto target = index.byQtGuid.find(effect.effectGuid);
+            const auto* asset = target != index.byQtGuid.end()
+                    && target->second->type == ProjectItem::Type::Effect
+                ? target->second->comp<VEffect>() : nullptr;
+            QString effectError;
+            if (!EffectChainSemantics::validate(effect, &effectError)
+                || !asset || !EffectChainSemantics::validate(*asset, &effectError))
+                return fail(effectError.isEmpty()
+                    ? QStringLiteral("Effect reference does not resolve") : effectError);
             const auto id = static_cast<uint32_t>(node.signalGraph.nodes.size() + 1);
             EffectNode graphNode;
             graphNode.nodeId = id;
-            graphNode.effectType = static_cast<uint32_t>(effect.type);
+            graphNode.effectType = static_cast<uint32_t>(asset->type);
             graphNode.effectId = effect.runtimeId();
-            for (size_t i = 0; i < effect.parameters.size(); ++i)
+            for (size_t i = 0; i < asset->parameters.size(); ++i)
                 graphNode.params.push_back({static_cast<uint32_t>(i),
-                    std::bit_cast<uint32_t>(effect.parameters[i])});
+                    std::bit_cast<uint32_t>(asset->parameters[i])});
             node.signalGraph.nodes.push_back(std::move(graphNode));
             if (previous != 0) node.signalGraph.edges.push_back({previous, id});
             previous = id;

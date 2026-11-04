@@ -1,6 +1,6 @@
 #include "EffectChainSemantics.h"
-
-#include <QJsonDocument>
+#include "Components/VEffect.h"
+#include "ProjectTypes.h"
 
 #include <algorithm>
 #include <cmath>
@@ -40,10 +40,7 @@ QJsonValue EffectEntry::toJson() const
     if (!typed) return opaqueValue;
     QJsonObject object = extensions;
     object[QStringLiteral("guid")] = guid.toString(QUuid::WithoutBraces);
-    object[QStringLiteral("type")] = EffectChainSemantics::typeName(type);
-    QJsonArray values;
-    for (float parameter : parameters) values.append(parameter);
-    object[QStringLiteral("parameters")] = values;
+    object[QStringLiteral("effectGuid")] = effectGuid.toString(QUuid::WithoutBraces);
     if (bypass) object[QStringLiteral("bypass")] = true;
     if (wetDry != 1.0f) object[QStringLiteral("wetDry")] = wetDry;
     return object;
@@ -58,10 +55,12 @@ EffectEntry EffectEntry::fromJson(const QJsonValue& value)
         return entry;
     }
     const QJsonObject object = value.toObject();
-    const auto type = EffectChainSemantics::parseType(
-        object.value(QStringLiteral("type")).toString());
+    const QUuid effectGuid = QUuid::fromString(
+        object.value(QStringLiteral("effectGuid")).toString());
     const QJsonValue wetDry = object.value(QStringLiteral("wetDry"));
-    if (!type || !object.value(QStringLiteral("parameters")).isArray()
+    const QJsonValue bypass = object.value(QStringLiteral("bypass"));
+    if (effectGuid.isNull()
+        || (!bypass.isUndefined() && !bypass.isBool())
         || (!wetDry.isUndefined() && (!wetDry.isDouble()
             || !std::isfinite(wetDry.toDouble())
             || wetDry.toDouble() < 0.0 || wetDry.toDouble() > 1.0))) {
@@ -70,29 +69,17 @@ EffectEntry EffectEntry::fromJson(const QJsonValue& value)
         return entry;
     }
     entry.guid = QUuid::fromString(object.value(QStringLiteral("guid")).toString());
-    entry.type = *type;
-    entry.bypass = object.value(QStringLiteral("bypass")).toBool();
+    entry.effectGuid = effectGuid;
+    entry.bypass = bypass.toBool();
     entry.wetDry = static_cast<float>(wetDry.toDouble(1.0));
     entry.extensions = object;
     entry.extensions.remove(QStringLiteral("guid"));
-    entry.extensions.remove(QStringLiteral("type"));
-    entry.extensions.remove(QStringLiteral("parameters"));
+    entry.extensions.remove(QStringLiteral("effectGuid"));
     entry.extensions.remove(QStringLiteral("bypass"));
     entry.extensions.remove(QStringLiteral("wetDry"));
-    for (const QJsonValue& parameter :
-         object.value(QStringLiteral("parameters")).toArray()) {
-        if (!parameter.isDouble()) {
-            entry.typed = false;
-            entry.opaqueValue = value;
-            entry.parameters.clear();
-            return entry;
-        }
-        entry.parameters.push_back(static_cast<float>(parameter.toDouble()));
-    }
     if (!EffectChainSemantics::validate(entry)) {
         entry.typed = false;
         entry.opaqueValue = value;
-        entry.parameters.clear();
     }
     return entry;
 }
@@ -186,17 +173,30 @@ bool validate(const EffectEntry& entry, QString* diagnostic)
         if (diagnostic) *diagnostic = QStringLiteral("Effect entry is opaque");
         return false;
     }
+    if (entry.effectGuid.isNull()) {
+        if (diagnostic) *diagnostic = QStringLiteral("Effect reference is missing");
+        return false;
+    }
     if (!std::isfinite(entry.wetDry) || entry.wetDry < 0.0f || entry.wetDry > 1.0f) {
         if (diagnostic) *diagnostic = QStringLiteral("Effect wet/dry level is out of range");
         return false;
     }
-    const auto& ranges = parameterRanges(entry.type);
-    if (entry.parameters.size() != ranges.size()) {
+    return true;
+}
+
+bool validate(const VEffect& effect, QString* diagnostic)
+{
+    if (effect.type != EffectType::Limiter) {
+        if (diagnostic) *diagnostic = QStringLiteral("Effect type is unavailable");
+        return false;
+    }
+    const auto& ranges = parameterRanges(effect.type);
+    if (effect.parameters.size() != ranges.size()) {
         if (diagnostic) *diagnostic = QStringLiteral("Effect parameter count is invalid");
         return false;
     }
     for (size_t i = 0; i < ranges.size(); ++i) {
-        const float value = entry.parameters[i];
+        const float value = effect.parameters[i];
         if (!std::isfinite(value) || value < ranges[i].first
             || value > ranges[i].second) {
             if (diagnostic) *diagnostic = QStringLiteral("Effect parameter is out of range");
@@ -204,6 +204,19 @@ bool validate(const EffectEntry& entry, QString* diagnostic)
         }
     }
     return true;
+}
+
+const VEffect* resolve(const EffectEntry& entry, const ProjectData& project)
+{
+    if (entry.effectGuid.isNull()) return nullptr;
+    const VEffect* result = nullptr;
+    for (const auto& binding : project.effectItems) {
+        const auto* item = binding.rootItem.get();
+        if (!item || item->guid != entry.effectGuid) continue;
+        if (result || item->type != ProjectItem::Type::Effect) return nullptr;
+        result = item->comp<VEffect>();
+    }
+    return result;
 }
 
 }

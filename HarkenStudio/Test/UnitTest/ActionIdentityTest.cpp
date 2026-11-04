@@ -99,12 +99,14 @@ TEST_F(ActionIdentityTest, NestedObjectIndexRejectsAmbiguousOwners)
     auto* sound = manager.createItem(nullptr, QStringLiteral("Tone"), ProjectItem::Type::Sound);
     auto* track = manager.createItem(nullptr, QStringLiteral("Track"), ProjectItem::Type::Track);
     auto* segment = manager.createItem(nullptr, QStringLiteral("Segment"), ProjectItem::Type::Segment);
+    auto* effectAsset = manager.createItem(nullptr, QStringLiteral("Limiter"), ProjectItem::Type::Effect);
     ASSERT_NE(sound, nullptr);
     ASSERT_NE(track, nullptr);
     ASSERT_NE(segment, nullptr);
+    ASSERT_NE(effectAsset, nullptr);
     EffectEntry effect;
     effect.guid = QUuid::createUuid();
-    effect.parameters = {0.0f};
+    effect.effectGuid = effectAsset->guid;
     auto* mix = sound->comp<VMixNode>();
     ASSERT_TRUE(mix->effects.replace({effect}));
     auto binding = BindingSemantics::defaultBinding(BindingSemantics::volumeAddress(), QUuid::createUuid());
@@ -150,11 +152,13 @@ TEST_F(ActionIdentityTest, DuplicateMintsNestedUuidsAndSaveReloadKeepsThem)
     auto& manager = ProjectManager::instance();
     auto* sound = manager.createItem(nullptr, QStringLiteral("Tone"), ProjectItem::Type::Sound);
     auto* variable = manager.createItem(nullptr, QStringLiteral("Intensity"), ProjectItem::Type::Variable);
+    auto* effectAsset = manager.createItem(nullptr, QStringLiteral("Limiter"), ProjectItem::Type::Effect);
     ASSERT_NE(sound, nullptr);
     ASSERT_NE(variable, nullptr);
+    ASSERT_NE(effectAsset, nullptr);
     EffectEntry effect;
     effect.guid = QUuid::createUuid();
-    effect.parameters = {-3.0f};
+    effect.effectGuid = effectAsset->guid;
     auto binding = BindingSemantics::defaultBinding(BindingSemantics::volumeAddress(), variable->guid);
     binding.guid = QUuid::createUuid();
     ASSERT_TRUE(sound->comp<VMixNode>()->effects.replace({effect}));
@@ -169,6 +173,7 @@ TEST_F(ActionIdentityTest, DuplicateMintsNestedUuidsAndSaveReloadKeepsThem)
     const auto copiedGuid = copy->guid;
     EXPECT_NE(copy->guid, sound->guid);
     EXPECT_NE(copiedEffect, effect.runtimeId());
+    EXPECT_EQ(copiedMix->effects.entries().front().effectGuid, effect.effectGuid);
     EXPECT_NE(copiedBinding, binding.runtimeId());
     EXPECT_EQ(copiedMix->bindings.entries().front().variable, variable->guid);
     ASSERT_TRUE(manager.saveProject());
@@ -178,5 +183,6 @@ TEST_F(ActionIdentityTest, DuplicateMintsNestedUuidsAndSaveReloadKeepsThem)
     copiedMix = copy->comp<VMixNode>();
     ASSERT_NE(copiedMix, nullptr);
     EXPECT_EQ(copiedMix->effects.entries().front().runtimeId(), copiedEffect);
+    EXPECT_EQ(copiedMix->effects.entries().front().effectGuid, effect.effectGuid);
     EXPECT_EQ(copiedMix->bindings.entries().front().runtimeId(), copiedBinding);
 }

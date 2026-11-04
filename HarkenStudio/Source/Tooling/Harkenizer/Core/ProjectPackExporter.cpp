@@ -6,6 +6,7 @@
 #include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapter.h"
 #include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "AttenuationStore.h"
+#include "Components/VEffect.h"
 #include "FieldGroupProjectAdapter.h"
 #include "ItemTypeCatalog.h"
 #include "ProjectTypes.h"
@@ -738,7 +739,7 @@ ProjectPackExporter::ExportInitPack(const ProjectData& project,
     builder.setInitPack(true);
 
     emit progressChanged(10, "Collecting bus hierarchy...");
-    CollectBuses(project, builder, exportScope);
+    if (!CollectBuses(project, builder, exportScope, &result.error)) return result;
     if (!CollectSends(project, builder, exportScope, &result.error)) return result;
     CollectAttenuations(project, builder);
     if (!options.deferBindings
@@ -1540,11 +1541,13 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
 }
 
 
-void ProjectPackExporter::CollectBuses(const ProjectData& project,
+bool ProjectPackExporter::CollectBuses(const ProjectData& project,
                                        Bridge::PackBuildSession& builder,
-                                       PlatformScope scope)
+                                       PlatformScope scope, QString* errorOut)
 {
+    bool valid = true;
     forEachBusItem(project, [&](const ProjectItem* item) {
+        if (!valid) return;
         Bridge::PackBus bd;
         bd.id = item->runtimeId();
         bd.parentId = (item->parent && item->parent->type == ProjectItem::Type::Bus)
@@ -1552,8 +1555,18 @@ void ProjectPackExporter::CollectBuses(const ProjectData& project,
         bd.name     = item->name;
         if (const auto* mix = item->comp<VMixNode>()) {
             for (const auto& effect : mix->effects.entries()) {
-                bd.effects.push_back({effect.runtimeId(), static_cast<uint32_t>(effect.type),
-                    effect.bypass, effect.parameters});
+                const auto* asset = EffectChainSemantics::resolve(effect, project);
+                QString diagnostic;
+                if (!EffectChainSemantics::validate(effect, &diagnostic)
+                    || !asset || !EffectChainSemantics::validate(*asset, &diagnostic)) {
+                    valid = false;
+                    if (errorOut) *errorOut = QStringLiteral("Bus '%1': %2").arg(item->name,
+                        diagnostic.isEmpty() ? QStringLiteral("Effect reference does not resolve")
+                                             : diagnostic);
+                    return;
+                }
+                bd.effects.push_back({effect.runtimeId(), static_cast<uint32_t>(asset->type),
+                    effect.bypass, asset->parameters});
             }
         }
         const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*item);
@@ -1592,6 +1605,7 @@ void ProjectPackExporter::CollectBuses(const ProjectData& project,
                     &bd.makeUpGain, "makeUpGain");
         builder.addBus(bd);
     });
+    return valid;
 }
 
 bool ProjectPackExporter::CollectSends(const ProjectData& project,

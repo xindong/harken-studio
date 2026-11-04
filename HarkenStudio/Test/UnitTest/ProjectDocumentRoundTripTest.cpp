@@ -129,15 +129,14 @@ TEST(ProjectDocumentModuleData, KnownBindingAndEffectEditsPreserveRawModuleField
               futureData);
 
     const QJsonObject effectJson{
-        {QStringLiteral("runtimeStableId"), 42},
-        {QStringLiteral("type"), QStringLiteral("gain")},
-        {QStringLiteral("parameters"), QJsonArray{-3.0}},
+        {QStringLiteral("guid"), QUuid::createUuid().toString(QUuid::WithoutBraces)},
+        {QStringLiteral("effectGuid"), QUuid::createUuid().toString(QUuid::WithoutBraces)},
         {QStringLiteral("bypass"), true},
         {QStringLiteral("futureEffectData"), futureData},
     };
     EffectEntry effect = EffectEntry::fromJson(effectJson);
     ASSERT_TRUE(effect.typed);
-    effect.parameters[0] = -6.0f;
+    effect.wetDry = 0.5f;
     effect.bypass = false;
     const QJsonObject savedEffect = effect.toJson().toObject();
     EXPECT_EQ(savedEffect.value(QStringLiteral("futureEffectData")), futureData);
@@ -187,6 +186,9 @@ protected:
              }) {
             ASSERT_NE(manager.createItem(nullptr, name, type), nullptr);
         }
+        if (includeEffectDocuments_)
+            ASSERT_NE(manager.createItem(nullptr, QStringLiteral("Limiter"),
+                                         ProjectItem::Type::Effect), nullptr);
         auto* bus = manager.createItem(manager.getMasterBusItem(),
                                        QStringLiteral("Music"), ProjectItem::Type::Bus);
         ASSERT_NE(bus, nullptr);
@@ -257,6 +259,7 @@ protected:
     QUuid segmentGuid_;
     QMap<QString, QJsonObject> documentsById_;
     QMap<QString, QString> pathsById_;
+    bool includeEffectDocuments_ = true;
 };
 
 TEST_F(ProjectDocumentRoundTripTest, AllDocumentMetadataSurvivesEditingSavingAndReopening)
@@ -315,6 +318,12 @@ TEST_F(ProjectDocumentRoundTripTest, AllDocumentMetadataSurvivesEditingSavingAnd
 class ProjectDocumentVersionRoundTripTest : public ProjectDocumentRoundTripTest,
                                           public ::testing::WithParamInterface<int>
 {
+protected:
+    void SetUp() override
+    {
+        includeEffectDocuments_ = GetParam() >= ProjectSchema::kProjectSchemaVersion;
+        ProjectDocumentRoundTripTest::SetUp();
+    }
 };
 
 TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveContentThroughOpenSave)

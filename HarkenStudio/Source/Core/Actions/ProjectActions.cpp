@@ -1784,9 +1784,13 @@ ActionResult handleEffectsItemProperty(ProjectManager* projectManager, ProjectIt
     EffectChainLedger parsed = EffectChainLedger::fromJson(
         args.value(QStringLiteral("value")).toArray());
     std::vector<EffectEntry> entries = parsed.entries();
-    for (EffectEntry& effect : entries)
+    const auto* project = projectManager->currentProject();
+    for (EffectEntry& effect : entries) {
         if (effect.typed && harkenstudio::IsNull(effect.runtimeId()))
             effect.guid = QUuid::createUuid();
+        if (!project || !EffectChainSemantics::resolve(effect, *project))
+            return {false, {}, "INVALID_ARGS", "Effect reference does not resolve"};
+    }
     EffectChainLedger checked;
     if (!checked.replace(std::move(entries)))
         return {false, {}, "INVALID_ARGS", "Invalid typed effect chain"};
