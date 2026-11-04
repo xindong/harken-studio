@@ -362,7 +362,7 @@ bool CheckOccurrence(const JsonValue& value, const std::string& path,
         return Fail(error, path, "expected an object");
     for (const auto& [name, member] : value.members) {
         const std::string memberPath = path + "." + name;
-        if (name == "fieldGroups" || name == "sectionGroups" || name == "mainOutput" || name == "send"
+        if (name == "fieldGroups" || name == "sectionGroups" || name == "output" || name == "send"
             || name == "spatialRating"
             || name == "outputBusId" || name == "outputBusRef"
             || name == "outputBusOverride" || name == "overrideBits"
@@ -399,12 +399,12 @@ bool ReadFieldGroupsJson(const std::string& text,
     if (!CheckMembers(root, "fieldGroups", {"shared", "platforms"}, {"shared"}, error))
         return false;
     const auto& shared = *root.Find("shared");
-    if (!CheckMembers(shared, "fieldGroups.shared", {"mainOutput", "send", "spatialRating"},
-                      {"mainOutput", "send", "spatialRating"}, error))
+    if (!CheckMembers(shared, "fieldGroups.shared", {"output", "send", "spatialRating"},
+                      {"output", "send", "spatialRating"}, error))
         return false;
     DefinitionFieldGroups parsed;
-    if (!ReadState(*shared.Find("mainOutput"), parsed.mainOutput.shared,
-                   "fieldGroups.shared.mainOutput", error, true)
+    if (!ReadState(*shared.Find("output"), parsed.output.shared,
+                   "fieldGroups.shared.output", error, true)
         || !ReadState(*shared.Find("send"), parsed.send.shared,
                       "fieldGroups.shared.send", error, true)
         || !ReadState(*shared.Find("spatialRating"), parsed.spatialRating.shared,
@@ -422,8 +422,8 @@ bool ReadFieldGroupsJson(const std::string& text,
             if (!ReadGuid(identity, platform, path, error)) return false;
             if (harkenprojectschema::IsNull(platform) || WriteGuid(platform) != name)
                 return Fail(error, path, "expected a canonical non-null platform UUID");
-            if (!CheckMembers(value, path, {"mainOutput", "send", "spatialRating"}, {}, error)
-                || !ReadPlatformState(value, "mainOutput", platform, parsed.mainOutput, path, error)
+            if (!CheckMembers(value, path, {"output", "send", "spatialRating"}, {}, error)
+                || !ReadPlatformState(value, "output", platform, parsed.output, path, error)
                 || !ReadPlatformState(value, "send", platform, parsed.send, path, error)
                 || !ReadPlatformState(value, "spatialRating", platform, parsed.spatialRating, path, error))
                 return false;
@@ -444,25 +444,25 @@ bool WriteFieldGroupsJson(const DefinitionFieldGroups& groups,
     writer.BeginObject();
     writer.Key("shared");
     writer.BeginObject();
-    writer.Key("mainOutput");
-    WriteState(writer, groups.mainOutput.shared);
+    writer.Key("output");
+    WriteState(writer, groups.output.shared);
     writer.Key("send");
     WriteState(writer, groups.send.shared);
     writer.Key("spatialRating");
     WriteState(writer, groups.spatialRating.shared);
     writer.EndObject();
-    if (!groups.mainOutput.platforms.empty() || !groups.send.platforms.empty()
+    if (!groups.output.platforms.empty() || !groups.send.platforms.empty()
         || !groups.spatialRating.platforms.empty()) {
         writer.Key("platforms");
         writer.BeginObject();
         std::set<AuthoringGuid> platforms;
-        for (const auto& [platform, state] : groups.mainOutput.platforms) platforms.insert(platform);
+        for (const auto& [platform, state] : groups.output.platforms) platforms.insert(platform);
         for (const auto& [platform, state] : groups.send.platforms) platforms.insert(platform);
         for (const auto& [platform, state] : groups.spatialRating.platforms) platforms.insert(platform);
         for (const auto platform : platforms) {
             writer.Key(WriteGuid(platform).c_str());
             writer.BeginObject();
-            WritePlatformState(writer, "mainOutput", platform, groups.mainOutput);
+            WritePlatformState(writer, "output", platform, groups.output);
             WritePlatformState(writer, "send", platform, groups.send);
             WritePlatformState(writer, "spatialRating", platform, groups.spatialRating);
             writer.EndObject();

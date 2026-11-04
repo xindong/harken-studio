@@ -79,8 +79,8 @@ protected:
 
     void output(ProjectItem* item, ProjectItem* bus)
     {
-        item->fieldGroups.mainOutput.shared = {FieldGroupMode::Local,
-            MainOutputFieldGroup{toFieldGroupGuid(bus->guid), 0.0f}};
+        item->fieldGroups.output.shared = {FieldGroupMode::Local,
+            OutputFieldGroup{toFieldGroupGuid(bus->guid), 0.0f}};
     }
 
     void send(ProjectItem* item, std::vector<SendFieldGroupRow> rows)

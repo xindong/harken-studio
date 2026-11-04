@@ -230,7 +230,7 @@ Diagnostics validateView(const EditingContext& context,
         scopes.push_back(platform);
     for (const auto& definition : definitions) {
         for (const auto scope : scopes) {
-            const auto output = resolver.Resolve(definition.guid, scope, FieldGroupId::MainOutput);
+            const auto output = resolver.Resolve(definition.guid, scope, FieldGroupId::Output);
             const auto send = resolver.Resolve(definition.guid, scope, FieldGroupId::Send);
             const auto spatial = resolver.Resolve(definition.guid, scope, FieldGroupId::SpatialRating);
             for (const auto* result : {&output, &send, &spatial}) {
@@ -242,13 +242,13 @@ Diagnostics validateView(const EditingContext& context,
                         definition.guid, scope);
             }
             if (!output.ok() || !send.ok()) continue;
-            const auto outputBus = std::get<MainOutputFieldGroup>(output.value->payload).mainOutputBusRef;
+            const auto outputBus = std::get<OutputFieldGroup>(output.value->payload).outputBusRef;
             const auto& sends = std::get<SendFieldGroup>(send.value->payload).sends;
             for (std::size_t row = 0; row < sends.size(); ++row) {
                 if (sends[row].mode != harkenprojectschema::SendMode::Sidechain
                     && sends[row].targetBusID == outputBus)
-                    addDiagnostic(diagnostics, EditCode::MainOutputSendConflict,
-                        QStringLiteral("Only a Sidechain Send can target the effective Main Output"),
+                    addDiagnostic(diagnostics, EditCode::OutputSendConflict,
+                        QStringLiteral("Only a Sidechain Send can target the effective Output"),
                         fromFieldGroupGuid(definition.guid),
                         FieldGroupId::Send, scope, QStringLiteral("targetBusID"), row, outputBus);
             }
@@ -298,12 +298,12 @@ GroupState<Payload>& writableState(AuthoredGroup<Payload>& group, FieldGroupScop
         GroupState<Payload>{FieldGroupMode::UseShared, {}}).first->second;
 }
 
-bool setField(MainOutputFieldGroup& payload, const SetFieldGroupField& edit, Guid master)
+bool setField(OutputFieldGroup& payload, const SetFieldGroupField& edit, Guid master)
 {
-    if (edit.property == Property::MainOutputBusRef) {
+    if (edit.property == Property::OutputBusRef) {
         const auto* value = std::get_if<Guid>(&edit.value);
         if (!value) return false;
-        payload.mainOutputBusRef = harkenprojectschema::IsNull(*value) ? master : *value;
+        payload.outputBusRef = harkenprojectschema::IsNull(*value) ? master : *value;
         return true;
     }
     if (edit.property == Property::OutputBusVolume) {
@@ -540,9 +540,9 @@ FieldGroupEditResult prepareFieldGroupEdit(
     }
     auto candidate = *result.before;
     switch (request.group) {
-    case FieldGroupId::MainOutput:
+    case FieldGroupId::Output:
         editGroup(context, resolver, definition, canInherit, request, scopes,
-                  result.before->mainOutput, candidate.mainOutput, result.diagnostics);
+                  result.before->output, candidate.output, result.diagnostics);
         break;
     case FieldGroupId::Send:
         editGroup(context, resolver, definition, canInherit, request, scopes,
@@ -602,7 +602,7 @@ FieldGroupProjectValidation validateFieldGroupProject(
                             QStringLiteral("Copied field group platform does not belong to the project"),
                             item.guid);
             };
-            validatePlatforms(definition.groups->mainOutput);
+            validatePlatforms(definition.groups->output);
             validatePlatforms(definition.groups->send);
             validatePlatforms(definition.groups->spatialRating);
             definitions.push_back(definition);

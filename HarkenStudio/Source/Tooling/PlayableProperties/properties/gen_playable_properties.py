@@ -20,7 +20,7 @@ WIRES = ["f32", "u8", "u32", "objectid", "rowSpan", "effectProgram"]
 COMBINES = ["dbSum", "centSumClamp", "objectLocal",
             "leafMaterialization", "nearestExplicit", "sendResolution",
             "effectSelection"]
-REFERENCES = ["none", "mainOutputBus", "attenuation"]
+REFERENCES = ["none", "outputBus", "attenuation"]
 CAPABILITIES = ["common", "playback", "streaming", "route", "send",
                 "spatial", "reserved", "effect"]
 PHASES = ["firstAudible", "playbackMaterialization", "leafMaterialization",

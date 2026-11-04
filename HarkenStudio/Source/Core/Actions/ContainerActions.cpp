@@ -402,7 +402,7 @@ void registerContainerActions(ActionManager& mgr,
                     || propertyName == QStringLiteral("outputBus")
                     || propertyName == QStringLiteral("output_bus"))
                     return {false, {}, "FIELD_GROUP_COMMAND_REQUIRED",
-                            "Use field group commands to edit Main Output, Send, or Spatial Rating"};
+                            "Use field group commands to edit Output, Send, or Spatial Rating"};
             }
 
             QString stringValue = args["string_value"].toString();

@@ -821,13 +821,13 @@ bool copyStudioDefinitionPayload(
         }
     }
     const auto& effective = found->second;
-    const auto* bus = identity.find(effective.mainOutput.mainOutputBusRef);
+    const auto* bus = identity.find(effective.output.outputBusRef);
     if (!bus || bus->kind != RuntimeIdentityKindV1::Bus)
-        return fail(QStringLiteral("Main Output Bus identity is missing"));
+        return fail(QStringLiteral("Output Bus identity is missing"));
     node.presence.bits |= kFieldGroupPropertyMask;
     node.presence.Set(Property::SpatializationMix);
-    node.mainOutputBusRef = bus->stableId;
-    node.outputBusVolume = effective.mainOutput.outputBusVolume;
+    node.outputBusRef = bus->stableId;
+    node.outputBusVolume = effective.output.outputBusVolume;
     node.sends.clear();
     for (const auto& send : effective.send.sends) {
         if (send.mode != SendMode::Mix) continue;
@@ -1259,7 +1259,7 @@ ProjectInputCompileResult compileStudioProjectInputForContext(
         wrapper.kind = ContentKind::Segment;
         wrapper.guid = context.previewRootGuid;
         wrapper.presence.bits = kFieldGroupPropertyMask;
-        wrapper.mainOutputBusRef = project.busses.front().rootItem->runtimeId();
+        wrapper.outputBusRef = project.busses.front().rootItem->runtimeId();
         wrapper.hasSignalGraph = true;
         const AuthoringGuid trackGuid = toAuthoringGuid(track->guid);
         for (InputNode& node : input.nodes) {

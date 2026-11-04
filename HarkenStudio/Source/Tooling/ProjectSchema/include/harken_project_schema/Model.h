@@ -227,7 +227,7 @@ inline constexpr bool IsValidSendMode(SendMode mode) {
 }
 
 // One entry in a content object's send list: a level dispatched to a target bus
-// in parallel with the object's main output. targetBusId names the destination
+// in parallel with the object's output. targetBusId names the destination
 // and is never the reserved id 0 on a valid entry; sendLevel is carried
 // verbatim. This candidate model stores the level without interpreting it — the
 // same discipline the time and tempo values follow — so equality compares its
@@ -394,7 +394,7 @@ struct PlayablePropertyPayloadV1 {
     std::uint32_t streamingMode = 0;
     float outputBusVolume = 0.0f;
     std::vector<Send> sends;
-    harkenstudio::ObjectId mainOutputBusRef{};
+    harkenstudio::ObjectId outputBusRef{};
     SpatialSpec spatial;
     SignalGraph signalGraph;
 };

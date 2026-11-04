@@ -22,7 +22,7 @@ through `Actions` or its owning `HarkenAction`.
 | `Voice` signature | Value and effect |
 | --- | --- |
 | `VnResult SetVolume(float volumeDb, uint rampMs)` | API contribution to authored voice volume, in dB; composes with Variable contributions. A positive ramp interpolates linear amplitude; zero snaps at the next block. |
-| `VnResult SetOutputVolume(float volumeDb, uint rampMs)` | Independent main-output gain in dB. Voice sends bypass it. Pending/parked voices stage a value without ramping. |
+| `VnResult SetOutputVolume(float volumeDb, uint rampMs)` | Independent output gain in dB. Voice sends bypass it. Pending/parked voices stage a value without ramping. |
 | `VnResult SetFilter(uint filterKind, float cutoffHz, float q, uint enable01, uint rampMs)` | Tone-stage lowpass (`0`) or highpass (`1`). `enable01` is `0`/`1`; enabled Q must be positive, cutoff and Q finite. It composes with Variable contributions. |
 | `VnResult SetPitch(float ratio)` | Positive, finite playback-rate ratio at most `64`; preserves playback position. |
 | `VnResult SetPosition(VnVec3 position)` | Finite right-handed world position in meters. A live attached Emitter owns position and causes `VN_EMITTER_ATTACHED`. |
@@ -31,7 +31,7 @@ through `Actions` or its owning `HarkenAction`.
 | `VnResult SetWidth(float width)` | Finite `[0, 1]`. Spatialized mono blends toward the front-center image; stereo spreads its two input columns along the front arc. Contributions combine by taking the widest, so `0` cannot narrow a wider contribution from another source. Stored without an image change on authored 2D voices. |
 | `VnResult SetSpatializationMix(float mix)` | Finite `[0, 1]`; linearly blends the original 2D matrix at `0` with the point/spread matrix at `1` for spatialized mono or stereo. Stored without an image change on authored 2D voices. Sources wider than stereo are rejected for 3D. |
 | `VnResult SetDistanceScale(float scale)` | Finite `[0.01, 100]`; distance attenuation uses pair distance divided by scale. |
-| `VnResult SetSend(uint sendSlot, VnObjectId toBus, float levelDb)` | Set or replace a zero-based voice send slot. Sends carry the post-spatial-matrix image in the mix layout, before the independent main-output gain. Slot must be below configured `voiceSendSlots`; target bus must exist. |
+| `VnResult SetSend(uint sendSlot, VnObjectId toBus, float levelDb)` | Set or replace a zero-based voice send slot. Sends carry the post-spatial-matrix image in the mix layout, before the independent output gain. Slot must be below configured `voiceSendSlots`; target bus must exist. |
 | `VnResult SetSendLevel(uint sendSlot, float levelDb, uint rampMs)` | Change an occupied send's level in dB. Empty or out-of-range slots return `VN_INVALID_ARG`. |
 | `VnResult ClearSend(uint sendSlot)` | Clear a slot; an already empty valid slot succeeds. |
 | `VnResult Stop(uint fadeMs)` | Request a fade to stop this voice. A successful request does not mean the voice is already terminal. |
@@ -80,7 +80,7 @@ topology and filters are not public Unity game-code mutation APIs.
 | Signature | Contract |
 | --- | --- |
 | `VnResult SetBusVolume(VnObjectId busId, float volumeDb, uint rampMs)` | Mix-wide gain in dB; affects direct output and post-fader sends. The first volume assignment snaps regardless of `rampMs`. |
-| `VnResult SetBusOutputVolume(VnObjectId busId, float volumeDb, uint rampMs)` | Independent gain on the main output toward the parent/final mix; sourced sends are unchanged. |
+| `VnResult SetBusOutputVolume(VnObjectId busId, float volumeDb, uint rampMs)` | Independent gain on the output toward the parent/final mix; sourced sends are unchanged. |
 | `VnResult SetBusMute(VnObjectId busId, uint mute01, uint fadeMs)` | Mute/unmute without replacing the bus's authored or API volume. Uses the ordinary Bus Volume ramp rules, including the first-assignment snap. |
 
 Volumes must be finite; `mute01` is `0` or `1`. Invalid values return

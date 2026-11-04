@@ -490,9 +490,9 @@ bool PlayablePropertyAuthoringV1::isSlotApplicable(ProjectItemType type,
         return ItemTypeCatalog::hasMixingCapability(type);
     case PlayablePropertyCapabilityRoleV1::Route:
         if (propertyId == static_cast<uint8_t>(
-                harkenplayableproperties::PlayablePropertyIdV1::MainOutputBusRef)
+                harkenplayableproperties::PlayablePropertyIdV1::OutputBusRef)
             && type == ProjectItemType::Bus)
-            return false; // Bus main output is its tree parent.
+            return false; // Bus output is its tree parent.
         return ItemTypeCatalog::hasMixingCapability(type);
     case PlayablePropertyCapabilityRoleV1::Spatial:
         return ItemTypeCatalog::hasSpatialCapability(type);

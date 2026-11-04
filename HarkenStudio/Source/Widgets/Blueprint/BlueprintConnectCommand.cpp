@@ -54,7 +54,7 @@ FieldGroupEditResult prepareRouteEdit(ProjectItem& item, uint32_t targetBusId)
 {
     FieldGroupEditRequest request;
     request.definition = item.guid;
-    request.group = FieldGroupId::MainOutput;
+    request.group = FieldGroupId::Output;
     request.scopes.shared = true;
     request.expectedBefore = item.fieldGroups;
     harkenprojectschema::AuthoringGuid target{};
@@ -69,7 +69,7 @@ FieldGroupEditResult prepareRouteEdit(ProjectItem& item, uint32_t targetBusId)
         target = authoringGuid(bus->guid);
     }
     request.operation = SetFieldGroupField{
-        harkenplayableproperties::PlayablePropertyIdV1::MainOutputBusRef, target};
+        harkenplayableproperties::PlayablePropertyIdV1::OutputBusRef, target};
     return prepareFieldGroupEdit(*ProjectManager::instance().currentProject(), request);
 }
 
@@ -233,11 +233,11 @@ BlueprintDisconnectCommand::BlueprintDisconnectCommand(uint32_t fromItemId,
             ? FieldGroupEditResult{} : prepareRouteEdit(*item, 0);
         if (groupEdit_->ok()) {
             const auto* bus = ProjectManager::instance().findBusItem(toId_);
-            const auto& output = groupEdit_->before->mainOutput.shared.localHistory;
-            if (!bus || !output || output->mainOutputBusRef != authoringGuid(bus->guid)) {
+            const auto& output = groupEdit_->before->output.shared.localHistory;
+            if (!bus || !output || output->outputBusRef != authoringGuid(bus->guid)) {
                 groupEdit_->after.reset();
                 groupEdit_->diagnostics.push_back({FieldGroupEditDiagnosticCode::StaleState,
-                    QStringLiteral("Main Output no longer targets this Bus")});
+                    QStringLiteral("Output no longer targets this Bus")});
             }
         }
         if (!groupEdit_->ok() || !groupEdit_->changed) setObsolete(true);

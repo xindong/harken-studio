@@ -42,7 +42,7 @@ ActionResult executeGroupEdit(ProjectManager* manager, const QString& action,
         return invalid(QStringLiteral("definition_guid must identify an object definition"));
     request.definition = fromFieldGroupGuid(definition);
     const auto groupName = args.value(QStringLiteral("group")).toString();
-    if (groupName == QStringLiteral("mainOutput")) request.group = FieldGroupId::MainOutput;
+    if (groupName == QStringLiteral("output")) request.group = FieldGroupId::Output;
     else if (groupName == QStringLiteral("send")) request.group = FieldGroupId::Send;
     else if (groupName == QStringLiteral("spatialRating")) request.group = FieldGroupId::SpatialRating;
     else return invalid(QStringLiteral("Unknown field group"));
@@ -116,9 +116,9 @@ ActionResult executeGroupEdit(ProjectManager* manager, const QString& action,
             request.operation = ClearFieldGroupFieldOverride{edit.property};
         } else {
             const auto value = args.value(QStringLiteral("value"));
-            if (edit.property == Property::MainOutputBusRef || edit.property == Property::SpatialAttenuationRef) {
+            if (edit.property == Property::OutputBusRef || edit.property == Property::SpatialAttenuationRef) {
                 Guid ref{};
-                if (!(value.isNull() && edit.property == Property::MainOutputBusRef) && !parseGuid(value, ref))
+                if (!(value.isNull() && edit.property == Property::OutputBusRef) && !parseGuid(value, ref))
                     return invalid(QStringLiteral("Group reference must be a GUID"));
                 edit.value = ref;
             } else if (edit.property == Property::SpatialIs3DEnabled) {

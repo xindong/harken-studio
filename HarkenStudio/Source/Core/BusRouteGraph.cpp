@@ -126,7 +126,7 @@ QString validateBusRouting(const ProjectData& project, const std::vector<BusSend
                     || !readSendModeVolumes(row.value(QStringLiteral("modeVolumes")), mode, volumes)
                     || (mode != SendMode::Sidechain && target == output)
                     || !identities.emplace(target, mode).second)
-                    return QStringLiteral("Bus Send has an invalid target, mode, volume, or main output conflict");
+                    return QStringLiteral("Bus Send has an invalid target, mode, volume, or output conflict");
                 routes.sendTargets[bus->objectID].push_back(target);
             }
         }

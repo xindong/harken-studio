@@ -95,7 +95,7 @@ void PropertyEditorEngine::buildGroupHeader(FieldGroupId group, CollapsibleSecti
     QString label = tr("Inherit");
     if (showRangeName) {
         switch (group) {
-        case FieldGroupId::MainOutput: label = tr("Inherit Main Output"); break;
+        case FieldGroupId::Output: label = tr("Inherit Output"); break;
         case FieldGroupId::Send: label = tr("Inherit Sends"); break;
         case FieldGroupId::SpatialRating: label = tr("Inherit Spatial Rating"); break;
         }
@@ -270,7 +270,7 @@ void PropertyEditorEngine::refreshFieldGroupPreview(
     if (updating_) return;
     std::map<FieldGroupScope, FieldGroupEffectiveSnapshot> snapshots;
     for (const auto& [group, binding] : groupBindings_) {
-        if (group != FieldGroupId::MainOutput && group != FieldGroupId::Send) continue;
+        if (group != FieldGroupId::Output && group != FieldGroupId::Send) continue;
         if (!binding.view.valid) continue;
         for (const auto& entry : binding.view.perScope) {
             if (snapshots.contains(entry.scope)) continue;
@@ -302,8 +302,8 @@ void PropertyEditorEngine::refreshFieldGroupPreview(
             const auto& definitions = snapshots.at(entry.scope).definitions;
             const auto effective = definitions.find(toFieldGroupGuid(currentItem_->guid));
             if (effective == definitions.end()) return;
-            entry.resolved.payload = *group == FieldGroupId::MainOutput
-                ? FieldGroupPayload(effective->second.mainOutput) : FieldGroupPayload(effective->second.send);
+            entry.resolved.payload = *group == FieldGroupId::Output
+                ? FieldGroupPayload(effective->second.output) : FieldGroupPayload(effective->second.send);
         }
         const auto value = groupFieldValue(binding.field, &view);
         const bool mixed = !value.isValid();
@@ -363,14 +363,14 @@ bool PropertyEditorEngine::groupReferenceSelectable(const QString& field, uint32
     if (*group == FieldGroupId::SpatialRating)
         return target->type == ProjectItem::Type::Attenuation;
     if (target->type != ProjectItem::Type::Bus) return false;
-    const auto peer = groupBindings_.find(*group == FieldGroupId::MainOutput
-        ? FieldGroupId::Send : FieldGroupId::MainOutput);
+    const auto peer = groupBindings_.find(*group == FieldGroupId::Output
+        ? FieldGroupId::Send : FieldGroupId::Output);
     if (peer == groupBindings_.end() || !peer->second.view.valid) return false;
     if (*group == FieldGroupId::Send && mode != SendMode::Sidechain) {
-        const auto mainOutput = peer->second.view.field(QStringLiteral("mainOutputBusRef"));
-        for (const auto& scope : mainOutput.perScope)
+        const auto output = peer->second.view.field(QStringLiteral("outputBusRef"));
+        for (const auto& scope : output.perScope)
             if (scope.second.toUuid() == target->guid) return false;
-    } else if (*group == FieldGroupId::MainOutput) {
+    } else if (*group == FieldGroupId::Output) {
         const auto sends = peer->second.view.field(QStringLiteral("sends"));
         for (const auto& scope : sends.perScope)
             for (const auto& row : scope.second.toList())
@@ -513,7 +513,7 @@ void PropertyEditorEngine::commitFieldChange(
         args.insert(QStringLiteral("sends"), rows);
     } else {
         args.insert(QStringLiteral("field"), QString::fromLatin1(property->jsonKey));
-        if (property->referenceRole == harkenplayableproperties::PlayablePropertyReferenceRoleV1::MainOutputBus
+        if (property->referenceRole == harkenplayableproperties::PlayablePropertyReferenceRoleV1::OutputBus
             || property->referenceRole == harkenplayableproperties::PlayablePropertyReferenceRoleV1::Attenuation) {
             const auto ref = referenceActionValue(value);
             if (!ref) return;

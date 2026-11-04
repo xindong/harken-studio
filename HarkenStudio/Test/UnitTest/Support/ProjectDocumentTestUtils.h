@@ -38,7 +38,7 @@ inline QJsonObject projectDocument(const QString& type,
             const QJsonObject inherit{{QStringLiteral("inherit"), true}};
             authoredContent.insert(QStringLiteral("fieldGroups"), QJsonObject{
                 {QStringLiteral("shared"), QJsonObject{
-                    {QStringLiteral("mainOutput"), inherit},
+                    {QStringLiteral("output"), inherit},
                     {QStringLiteral("send"), inherit},
                     {QStringLiteral("spatialRating"), inherit},
                 }},

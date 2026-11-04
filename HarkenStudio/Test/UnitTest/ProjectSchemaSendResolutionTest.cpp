@@ -75,9 +75,9 @@ TEST(ProjectSchemaSendResolution, WideOutputBusIdentityReachesProgram) {
     constexpr harkenstudio::ObjectId kLowBus = harkentest::StudioObjectId(1);
     constexpr harkenstudio::ObjectId kHighBus = harkentest::StudioObjectId(0x1'0000'0001ull);
     ProjectInput lowInput = SendWorld();
-    lowInput.nodes[1].mainOutputBusRef = harkentest::StudioObjectId(kLowBus);
+    lowInput.nodes[1].outputBusRef = harkentest::StudioObjectId(kLowBus);
     ProjectInput highInput = SendWorld();
-    highInput.nodes[1].mainOutputBusRef = harkentest::StudioObjectId(kHighBus);
+    highInput.nodes[1].outputBusRef = harkentest::StudioObjectId(kHighBus);
 
     const std::optional<SegmentIR> lowIr = BuildRoutingIr(lowInput);
     const std::optional<SegmentIR> highIr = BuildRoutingIr(highInput);

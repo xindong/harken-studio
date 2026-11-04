@@ -204,7 +204,7 @@
           "minimum": 0,
           "type": "integer"
         },
-        "mainOutputBusRef": {
+        "outputBusRef": {
           "$ref": "#/$defs/nullableObjectReference"
         },
         "makeUpGain": {
@@ -283,7 +283,7 @@
           "minimum": 0,
           "type": "integer"
         },
-        "mainOutputBusRef": {
+        "outputBusRef": {
           "$ref": "#/$defs/nullableObjectReference"
         },
         "makeUpGain": {
@@ -1081,10 +1081,10 @@
       ],
       "type": "object"
     },
-    "fieldGroupMainOutputPayload": {
+    "fieldGroupOutputPayload": {
       "additionalProperties": false,
       "properties": {
-        "mainOutputBusRef": {
+        "outputBusRef": {
           "$ref": "#/$defs/uuid"
         },
         "outputBusVolume": {
@@ -1092,7 +1092,7 @@
         }
       },
       "required": [
-        "mainOutputBusRef",
+        "outputBusRef",
         "outputBusVolume"
       ],
       "type": "object"
@@ -1100,8 +1100,8 @@
     "fieldGroupPlatformGroups": {
       "additionalProperties": false,
       "properties": {
-        "mainOutput": {
-          "$ref": "#/$defs/fieldGroupPlatformMainOutput"
+        "output": {
+          "$ref": "#/$defs/fieldGroupPlatformOutput"
         },
         "send": {
           "$ref": "#/$defs/fieldGroupPlatformSend"
@@ -1113,14 +1113,14 @@
       "required": [],
       "type": "object"
     },
-    "fieldGroupPlatformMainOutput": {
+    "fieldGroupPlatformOutput": {
       "additionalProperties": false,
       "properties": {
         "inherit": {
           "type": "boolean"
         },
         "values": {
-          "$ref": "#/$defs/fieldGroupMainOutputFields"
+          "$ref": "#/$defs/fieldGroupOutputFields"
         }
       },
       "type": "object"
@@ -1196,8 +1196,8 @@
     "fieldGroupSharedGroups": {
       "additionalProperties": false,
       "properties": {
-        "mainOutput": {
-          "$ref": "#/$defs/fieldGroupSharedMainOutput"
+        "output": {
+          "$ref": "#/$defs/fieldGroupSharedOutput"
         },
         "send": {
           "$ref": "#/$defs/fieldGroupSharedSend"
@@ -1207,20 +1207,20 @@
         }
       },
       "required": [
-        "mainOutput",
+        "output",
         "send",
         "spatialRating"
       ],
       "type": "object"
     },
-    "fieldGroupSharedMainOutput": {
+    "fieldGroupSharedOutput": {
       "additionalProperties": false,
       "properties": {
         "inherit": {
           "type": "boolean"
         },
         "values": {
-          "$ref": "#/$defs/fieldGroupMainOutputPayload"
+          "$ref": "#/$defs/fieldGroupOutputPayload"
         }
       },
       "type": "object",
@@ -1882,10 +1882,10 @@
       },
       "type": "object"
     },
-    "fieldGroupMainOutputFields": {
+    "fieldGroupOutputFields": {
       "additionalProperties": false,
       "properties": {
-        "mainOutputBusRef": {
+        "outputBusRef": {
           "$ref": "#/$defs/uuid"
         },
         "outputBusVolume": {
@@ -2892,7 +2892,7 @@
           "kind": "object",
           "path": [
             "playableProperties",
-            "mainOutputBusRef"
+            "outputBusRef"
           ],
           "targetTypes": [
             "Bus"
@@ -2982,7 +2982,7 @@
             "clips",
             "*",
             "playableProperties",
-            "mainOutputBusRef"
+            "outputBusRef"
           ],
           "targetTypes": [
             "Bus"

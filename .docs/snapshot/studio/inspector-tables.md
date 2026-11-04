@@ -17,7 +17,7 @@
 | Attenuation | Dimensions | Basic > Dimension | # / Property / Curve | 衰减维度配置 |
 | Variable | Labels | Basic > Label | # / Name | 标签配置，# 显示实际整数索引 |
 | Sound、Container、Layer、Track、Segment、Bus | Sends | Route > Send | # / Target / Volume / Mode | Mix、Ducking、Sidechain 路由配置；除 Bus 外可继承 |
-| Bus | Inputs | Route > Input | Source / Volume | 主输出路由的反向查询，只读 |
+| Bus | Inputs | Route > Input | Source / Volume | 输出路由的反向查询，只读 |
 | Bus | Receives | Route > Receive | # / Mode / Source / Volume | Send 路由的反向查询，只读 |
 
 表注：Volume 以 dB 显示。Container 的 Selections 位于独立 Selection Editor，Inspector 保留 Mode、Play Type 及对应行为字段；独立表格见[表格快照](tables.md)。
@@ -39,9 +39,9 @@
 | 表格／字段 | 当前行为 |
 |---|---|
 | Sends / 新增 | 加号先选择 Mix、Ducking 或 Sidechain，再选择目标 Bus；取消任一步不新增行 |
-| Sends / Mode | 可编辑并参与保存、继承和撤销；旧数据缺失 Mode 时按 Mix 解释；同一目标按 Mode 区分，单个 Mode 内目标唯一；与 Main Output 冲突或重复的 Mode 选项禁用 |
+| Sends / Mode | 可编辑并参与保存、继承和撤销；旧数据缺失 Mode 时按 Mix 解释；同一目标按 Mode 区分，单个 Mode 内目标唯一；与 Output 冲突或重复的 Mode 选项禁用 |
 | Sends / Volume | 三种 Mode 均表示发送的源信号增益，范围 −96～+24 dB；Ducking 中用于调节送入避让检测端的信号强度，并非指定目标衰减量；同一行各 Mode 分别记忆 Volume，Target 共用；首次进入未配置 Mode 沿用当前值，切回恢复上次值，记忆随工程保存并参与撤销 |
-| Sends / Main Output | Mix、Ducking 与 Main Output 目标互斥；Sidechain 可指向 Main Output 的目标；沿用自连与成环限制 |
+| Sends / Output | Mix、Ducking 与 Output 目标互斥；Sidechain 可指向 Output 的目标；沿用自连与成环限制 |
 | Sends / 显示与发布 | Receives 和信号图显示 Mode；图中按 Mode 区分增益编辑、删除与撤销；本阶段试听与打包仅发布 Mix，Ducking、Sidechain 保留编辑配置 |
 | Sends / 平台范围 | Bus 的 Receives 和信号图读取当前平台生效路由；图上删除仅修改对应范围；移动、删除目标及撤销覆盖共享值和平台覆盖，循环校验覆盖所有受影响的平台 |
 | Sources / Language | 关闭时显示普通组，开启时仅显示 Toolbar 当前语言组；两类数据分别保留 |
@@ -76,6 +76,6 @@
 
 | 范围 | 包含内容 | Inherit 位置 |
 |---|---|---|
-| 主输出 | 输出 Bus、输出音量 | Route > Main Output |
+| 输出 | Target（目标 Bus）、Volume（输出音量） | Route > Output |
 | 发送 | Sends | Route > Send |
 | 空间属性 | 声像、3D 开关、衰减引用、衰减距离缩放 | Spatial > Rating |

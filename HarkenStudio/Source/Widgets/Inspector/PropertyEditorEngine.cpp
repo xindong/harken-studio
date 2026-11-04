@@ -265,7 +265,7 @@ private:
 
 bool objectReferenceRole(PlayablePropertyReferenceRoleV1 role)
 {
-    return role == PlayablePropertyReferenceRoleV1::MainOutputBus
+    return role == PlayablePropertyReferenceRoleV1::OutputBus
         || role == PlayablePropertyReferenceRoleV1::Attenuation;
 }
 
@@ -306,7 +306,7 @@ void applyDrawerMixedTooltip(QWidget* widget,
 bool itemMatchesReferenceRole(const ProjectItem& item,
                               PlayablePropertyReferenceRoleV1 role)
 {
-    return (role == PlayablePropertyReferenceRoleV1::MainOutputBus
+    return (role == PlayablePropertyReferenceRoleV1::OutputBus
             && item.type == ProjectItem::Type::Bus)
         || (role == PlayablePropertyReferenceRoleV1::Attenuation
             && item.type == ProjectItem::Type::Attenuation);

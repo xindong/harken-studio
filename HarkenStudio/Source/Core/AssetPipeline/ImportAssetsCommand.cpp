@@ -362,8 +362,8 @@ void ImportAssetsCommand::collectRootEntries()
 
         if (newItem && !rootOutputBusGuid_.isNull()) {
             auto groups = newItem->fieldGroups;
-            groups.mainOutput.shared = {FieldGroupMode::Inherit,
-                MainOutputFieldGroup{toFieldGroupGuid(rootOutputBusGuid_), 0.0f}};
+            groups.output.shared = {FieldGroupMode::Inherit,
+                OutputFieldGroup{toFieldGroupGuid(rootOutputBusGuid_), 0.0f}};
             if (!ProjectManager::instance().restoreFieldGroupsInternal(newItem, groups)) {
                 RootBindingSlot discarded;
                 if (ProjectManager::detachRootBinding(

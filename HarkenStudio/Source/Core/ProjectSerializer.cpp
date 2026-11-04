@@ -818,10 +818,10 @@ bool ProjectSerializer::rewritePlayableReferenceFields(QJsonObject* properties,
     for (const auto& field : VNX::PlayablePropertyAuthoringV1::fields()) {
         const QLatin1String key(field.jsonKey);
         if (!properties->contains(key)) continue;
-        if (field.referenceRole == Role::MainOutputBus
+        if (field.referenceRole == Role::OutputBus
             || field.referenceRole == Role::Attenuation) {
             const ProjectItem::Type expectedType =
-                field.referenceRole == Role::MainOutputBus
+                field.referenceRole == Role::OutputBus
                     ? ProjectItem::Type::Bus
                     : ProjectItem::Type::Attenuation;
             if (encode) {

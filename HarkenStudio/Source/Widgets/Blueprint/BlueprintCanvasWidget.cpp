@@ -2876,7 +2876,7 @@ QString BlueprintCanvasWidget::connectErrorText(const QString& code) const
         return tr("Send would create a cycle; connection rejected");
     }
     if (code == QLatin1String("send_rejected")) {
-        return tr("Send target is the main output bus; connection rejected");
+        return tr("Send target is the output bus; connection rejected");
     }
     if (code == QLatin1String("output_rejected")) {
         return tr("Target bus already receives a send from this item; connection rejected");

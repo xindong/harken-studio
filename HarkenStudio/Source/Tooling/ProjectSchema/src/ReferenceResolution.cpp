@@ -53,9 +53,9 @@ ReferenceResolutionContext::ReferenceResolutionContext(
     for (const ContentObject& obj : project.objects) {
         const Chassis& c = obj.chassis();
         std::array<std::optional<harkenstudio::ObjectId>, kReferenceSlotCount> values{};
-        if (c.mainOutputBusRef != harkenstudio::ObjectId{}) {
+        if (c.outputBusRef != harkenstudio::ObjectId{}) {
             values[static_cast<std::size_t>(ReferenceSlot::OutputBus)] =
-                c.mainOutputBusRef;
+                c.outputBusRef;
         }
         if (c.presence.Has(harkenplayableproperties::PlayablePropertyIdV1::SpatialAttenuationRef)) {
             values[static_cast<std::size_t>(ReferenceSlot::Attenuation)] =

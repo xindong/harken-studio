@@ -280,7 +280,7 @@ bool itemMatchesReferenceRole(
     harkenplayableproperties::PlayablePropertyReferenceRoleV1 role)
 {
     using Role = harkenplayableproperties::PlayablePropertyReferenceRoleV1;
-    return (role == Role::MainOutputBus && item.type == ProjectItem::Type::Bus)
+    return (role == Role::OutputBus && item.type == ProjectItem::Type::Bus)
         || (role == Role::Attenuation
             && item.type == ProjectItem::Type::Attenuation);
 }
@@ -529,8 +529,8 @@ ActionResult handleBusItemProperty(ProjectManager* projectManager, ProjectItem* 
     if (propertyName == QStringLiteral("outputBusId")
         || propertyName == QStringLiteral("outputBus")
         || propertyName == QStringLiteral("output_bus")) {
-        return {false, {}, "BUS_MAIN_OUTPUT_READONLY",
-                QString("Main Output of bus '%1' derives from its parent bus; use move_item instead")
+        return {false, {}, "BUS_OUTPUT_READONLY",
+                QString("Output of bus '%1' derives from its parent bus; use move_item instead")
                     .arg(item->name)};
     }
     QJsonObject busArgs;
@@ -2699,7 +2699,7 @@ void registerProjectActions(ActionManager& mgr,
                         QString("Item '%1' (id=%2) not found").arg(path).arg(objectID)};
             if (claimsFieldGroupItemProperty(*item, propertyName))
                 return {false, {}, "FIELD_GROUP_COMMAND_REQUIRED",
-                        "Use field group commands to edit Main Output, Send, or Spatial Rating"};
+                        "Use field group commands to edit Output, Send, or Spatial Rating"};
             if (clearOverride && !claimsPlayableItemProperty(item, propertyName)) {
                 const bool busOutputVolume =
                     item->comp<VBus>() != nullptr

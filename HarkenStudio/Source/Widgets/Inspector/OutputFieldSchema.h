@@ -7,7 +7,7 @@
 
 namespace VNX {
 
-inline PropertyDescriptor mainOutputInspectorDescriptor()
+inline PropertyDescriptor outputInspectorDescriptor()
 {
     PropertyDescriptor d;
     if (const auto* src = pickSchemaField(VMixNode::schema(), QLatin1String("outputBusId")))

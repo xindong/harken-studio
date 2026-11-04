@@ -4663,7 +4663,7 @@ std::optional<DefinitionFieldGroups> ProjectManager::captureRootFieldGroups(
         }
         return true;
     };
-    if (!capture(authored.mainOutput, result.mainOutput, FieldGroupId::MainOutput)
+    if (!capture(authored.output, result.output, FieldGroupId::Output)
         || !capture(authored.send, result.send, FieldGroupId::Send)
         || !capture(authored.spatialRating, result.spatialRating, FieldGroupId::SpatialRating))
         return fail(QStringLiteral("Cannot preserve the current field group values"));
@@ -4883,8 +4883,8 @@ std::vector<DeletedSubtreeRefLog::FieldGroupRef> fieldGroupReferenceRemovals(
         if (deleted.contains(toFieldGroupGuid(item->guid))) continue;
         const bool root = source->parentDefinition.at(item) == nullptr;
         auto after = item->fieldGroups;
-        editActive(after.mainOutput, root, [&](MainOutputFieldGroup& output) {
-            if (deleted.contains(output.mainOutputBusRef)) output.mainOutputBusRef = fallbackGuid;
+        editActive(after.output, root, [&](OutputFieldGroup& output) {
+            if (deleted.contains(output.outputBusRef)) output.outputBusRef = fallbackGuid;
         });
         editActive(after.send, root, [&](SendFieldGroup& send) {
             std::erase_if(send.sends, [&](const auto& row) { return deleted.contains(row.targetBusID); });
@@ -5762,7 +5762,7 @@ uint32_t outputBusIdFromSnapshot(
     if (owner == snapshot.objects.end() || owner->second != item
         || effective == snapshot.definitions.end())
         return 0;
-    return snapshot.objects.at(effective->second.mainOutput.mainOutputBusRef)->objectID;
+    return snapshot.objects.at(effective->second.output.outputBusRef)->objectID;
 }
 
 }
@@ -5848,7 +5848,7 @@ float ProjectManager::effectiveOutputVolumeDbForItem(
     if (!snapshot.ok() || owner == snapshot.objects.end() || owner->second != item
         || effective == snapshot.definitions.end())
         return 0.0f;
-    return effective->second.mainOutput.outputBusVolume;
+    return effective->second.output.outputBusVolume;
 }
 
 float ProjectManager::effectiveBusVolumeDb(const ProjectItem* busItem) const
@@ -6252,10 +6252,10 @@ std::vector<MainInputInfo> ProjectManager::collectMainInputs(uint32_t busId) con
         const auto guid = toFieldGroupGuid(item->guid);
         const auto effective = snapshot.definitions.find(guid);
         if (effective == snapshot.definitions.end()
-            || effective->second.mainOutputSource.definition != guid)
+            || effective->second.outputSource.definition != guid)
             return;
-        const auto& output = effective->second.mainOutput;
-        if (snapshot.objects.at(output.mainOutputBusRef)->objectID == busId)
+        const auto& output = effective->second.output;
+        if (snapshot.objects.at(output.outputBusRef)->objectID == busId)
             out.push_back({item->objectID, output.outputBusVolume});
     });
     return out;
@@ -6798,7 +6798,7 @@ SignalChainNode itemToChainNode(const ProjectItem* item,
             const auto definition = groups->definitions.find(guid);
             if (owner != groups->objects.end() && owner->second == item
                 && definition != groups->definitions.end()) {
-                const auto& source = definition->second.mainOutputSource;
+                const auto& source = definition->second.outputSource;
                 node.outputBusOverride = !source.isDefault && source.definition == guid;
             }
         }

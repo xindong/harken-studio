@@ -68,7 +68,7 @@ TEST(ProjectSchemaReferenceResolution,
     constexpr harkenstudio::ObjectId outputBus{0x1122334455664788ull, 0x100000001ull};
     constexpr harkenstudio::ObjectId attenuation{0x8877665544334211ull, 0x100000002ull};
     ProjectInput in = LayeredWorld();
-    in.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(outputBus);
+    in.nodes[2].outputBusRef = harkentest::StudioObjectId(outputBus);
     in.nodes[2].spatial.attenuationRef = harkentest::StudioObjectId(attenuation);
     in.nodes[2].presence.Set(harkenplayableproperties::PlayablePropertyIdV1::SpatialAttenuationRef);
 
@@ -78,7 +78,7 @@ TEST(ProjectSchemaReferenceResolution,
     ASSERT_TRUE(front.facts.has_value());
     const ContentObject* sound = FindObject(*front.project, harkentest::StudioObjectId(3));
     ASSERT_NE(sound, nullptr);
-    EXPECT_EQ(sound->chassis().mainOutputBusRef, outputBus);
+    EXPECT_EQ(sound->chassis().outputBusRef, outputBus);
     EXPECT_EQ(sound->chassis().spatial.attenuationRef, attenuation);
 
     const ReferenceResolutionResult resolution =

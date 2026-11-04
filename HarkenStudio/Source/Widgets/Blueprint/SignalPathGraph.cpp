@@ -255,7 +255,7 @@ private:
         const auto terminal = graph_.paths[pathIndex].computation.back();
         const auto& effective = groups_->definitions.at(toFieldGroupGuid(source->guid));
         const SignalPathRoutingSource outputSource{
-            fromFieldGroupGuid(effective.mainOutputSource.definition), effective.mainOutputSource.scope};
+            fromFieldGroupGuid(effective.outputSource.definition), effective.outputSource.scope};
         const SignalPathRoutingSource sendSource{
             fromFieldGroupGuid(effective.sendSource.definition), effective.sendSource.scope};
         edge(terminal, busEndpoint(routing.outputBusID, pathIndex),

@@ -137,7 +137,7 @@ bool stageBusSends(SignalPathConnectPlan& plan, const ProjectItem& bus, Platform
     return true;
 }
 
-bool stageBusMainOutput(SignalPathConnectPlan& plan, const ProjectData& project,
+bool stageBusOutput(SignalPathConnectPlan& plan, const ProjectData& project,
                         const ProjectItem& bus, uint32_t output)
 {
     for (const auto& scope : busRoutingScopes(project)) {
@@ -573,7 +573,7 @@ SignalPathConnectPlan prepareObjectConnections(const SignalPathGraph& graph,
         if (fromBus && !toBus) return fail(QObject::tr("A Bus must output to another Bus"));
         if (fromBus && addSend) {
             if (from->parent == to)
-                return fail(QObject::tr("Send rejected: main output conflict"));
+                return fail(QObject::tr("Send rejected: output conflict"));
             for (const auto& scope : scopes) {
                 const auto platform = scope ? PlatformScope{fromFieldGroupGuid(*scope)} : PlatformScope{};
                 bool duplicate = false;
@@ -612,7 +612,7 @@ SignalPathConnectPlan prepareObjectConnections(const SignalPathGraph& graph,
                 groups = *change.rootGroups;
             } else if (!manager.validateMoveConstraints(from, destination, &plan.error)) return plan;
             plan.moves.push_back(std::move(change));
-            if (fromBus && !stageBusMainOutput(plan, *project, *from, destination->objectID))
+            if (fromBus && !stageBusOutput(plan, *project, *from, destination->objectID))
                 return fail(QObject::tr("The Bus routing is unavailable"));
         }
         if (fromBus || !toBus) continue;
@@ -629,12 +629,12 @@ SignalPathConnectPlan prepareObjectConnections(const SignalPathGraph& graph,
                 sends.sends.push_back({bus, 0.0f});
                 writeLocal(groups.send, scope, sends);
             } else {
-                const auto resolved = resolver.Resolve(guid, scope, FieldGroupId::MainOutput);
+                const auto resolved = resolver.Resolve(guid, scope, FieldGroupId::Output);
                 if (!resolved.ok()) return fail(QObject::tr("The inherited Output configuration cannot be resolved"));
-                auto output = std::get<MainOutputFieldGroup>(resolved.value->payload);
-                if (output.mainOutputBusRef != bus) {
-                    output.mainOutputBusRef = bus;
-                    writeLocal(groups.mainOutput, scope, output);
+                auto output = std::get<OutputFieldGroup>(resolved.value->payload);
+                if (output.outputBusRef != bus) {
+                    output.outputBusRef = bus;
+                    writeLocal(groups.output, scope, output);
                 }
             }
         }
@@ -649,7 +649,7 @@ SignalPathConnectPlan prepareObjectConnections(const SignalPathGraph& graph,
             parents.push_back({move.object, move.afterParent});
     const auto validation = validateFieldGroupProject(*project, plan.after, parents);
     if (!validation.ok()) return fail(validation.diagnostics.front().message);
-    if (!validBusRouting(plan, true)) return fail(QObject::tr("Connection rejected: main output conflict or Bus cycle"));
+    if (!validBusRouting(plan, true)) return fail(QObject::tr("Connection rejected: output conflict or Bus cycle"));
     if (plan.moves.empty() && plan.after.empty() && !plan.busSend)
         return fail(QObject::tr("Connection already exists"));
     plan.description = addSend ? QObject::tr("Add Send")
@@ -717,7 +717,7 @@ SignalPathConnectPlan prepareSignalPathDisconnect(const SignalPathGraph& graph,
     const auto scopes = editScopes(*project);
     using ProviderScope = std::pair<QUuid, FieldGroupScope>;
     std::map<ProviderScope, std::set<std::pair<QUuid, SendMode>>> removedSends;
-    std::map<ProviderScope, MainOutputFieldGroup> resetOutputs;
+    std::map<ProviderScope, OutputFieldGroup> resetOutputs;
     std::set<QUuid> playbackOwners;
     std::set<QUuid> detachments;
     std::set<QUuid> resetBuses;
@@ -789,7 +789,7 @@ SignalPathConnectPlan prepareSignalPathDisconnect(const SignalPathGraph& graph,
         if (edge.pathIndices.empty() || !edge.routingSource)
             return fail(QObject::tr("The routing connection has no configuration source"));
         const auto group = edge.kind == SignalPathEdgeKind::Output
-            ? FieldGroupId::MainOutput : FieldGroupId::Send;
+            ? FieldGroupId::Output : FieldGroupId::Send;
         for (const auto pathIndex : edge.pathIndices) {
             if (pathIndex >= graph.paths.size())
                 return fail(QObject::tr("The signal path has changed"));
@@ -806,8 +806,8 @@ SignalPathConnectPlan prepareSignalPathDisconnect(const SignalPathGraph& graph,
                 const auto provider = fromFieldGroupGuid(resolved.value->source.definition);
                 observed.insert(provider);
                 if (edge.kind == SignalPathEdgeKind::Output) {
-                    auto output = std::get<MainOutputFieldGroup>(resolved.value->payload);
-                    output.mainOutputBusRef = toFieldGroupGuid(master->guid);
+                    auto output = std::get<OutputFieldGroup>(resolved.value->payload);
+                    output.outputBusRef = toFieldGroupGuid(master->guid);
                     resetOutputs[{provider, scope}] = output;
                 } else {
                     const auto& sends = std::get<SendFieldGroup>(resolved.value->payload).sends;
@@ -823,7 +823,7 @@ SignalPathConnectPlan prepareSignalPathDisconnect(const SignalPathGraph& graph,
     if (!pathsStillCurrent(*project, graph, affectedPaths, {}))
         return fail(QObject::tr("The signal path changed; select the connection again"));
     for (const auto& reset : plan.busOutputResets)
-        if (!stageBusMainOutput(plan, *project, *manager.findItemByGuid(reset.definition), master->objectID))
+        if (!stageBusOutput(plan, *project, *manager.findItemByGuid(reset.definition), master->objectID))
             return fail(QObject::tr("The Bus routing is unavailable"));
     for (const auto index : affectedPaths.pathIndices) {
         for (const auto& endpoint : graph.paths[index].computation)
@@ -838,7 +838,7 @@ SignalPathConnectPlan prepareSignalPathDisconnect(const SignalPathGraph& graph,
         const auto* provider = manager.findItemByGuid(guid);
         if (!provider) return fail(QObject::tr("The routing configuration source no longer exists"));
         auto& groups = candidates.try_emplace(guid, provider->fieldGroups).first->second;
-        writeLocal(groups.mainOutput, scope, output);
+        writeLocal(groups.output, scope, output);
     }
     for (const auto& [source, targets] : removedSends) {
         const auto& [guid, scope] = source;

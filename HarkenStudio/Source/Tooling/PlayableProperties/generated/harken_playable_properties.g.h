@@ -26,7 +26,7 @@ enum class PlayablePropertyIdV1 : std::uint8_t {
     LoopCount = 4,
     StreamingMode = 5,
     OutputBusVolume = 6,
-    MainOutputBusRef = 7,
+    OutputBusRef = 7,
     Sends = 8,
     SpatialPanning = 9,
     SpatialSpread = 10,
@@ -62,7 +62,7 @@ enum class PlayablePropertyCombineRoleV1 : std::uint8_t {
 
 enum class PlayablePropertyReferenceRoleV1 : std::uint8_t {
     None = 0,
-    MainOutputBus = 1,
+    OutputBus = 1,
     Attenuation = 2,
 };
 
@@ -131,7 +131,7 @@ inline constexpr PlayablePropertyMetaV1 kPlayablePropertyRegistryV1[] = {
     {PlayablePropertyIdV1::LoopCount, UINT64_C(0x0000000000000008), "loopCount", "loopCount", PlayablePropertyWireV1::U32, PlayablePropertyPresenceV1::MaskBit, PlayablePropertyCombineRoleV1::ObjectLocal, PlayablePropertyReferenceRoleV1::None, PlayablePropertyCapabilityRoleV1::Playback, PlayablePropertyPhaseRoleV1::PlaybackMaterialization, PlayablePropertyDefaultV1::IntegerOne},
     {PlayablePropertyIdV1::StreamingMode, UINT64_C(0x0000000000000010), "streamingMode", "streamingMode", PlayablePropertyWireV1::U32, PlayablePropertyPresenceV1::MaskBit, PlayablePropertyCombineRoleV1::NearestExplicit, PlayablePropertyReferenceRoleV1::None, PlayablePropertyCapabilityRoleV1::Streaming, PlayablePropertyPhaseRoleV1::LeafMaterialization, PlayablePropertyDefaultV1::Zero},
     {PlayablePropertyIdV1::OutputBusVolume, UINT64_C(0x0000000000000020), "outputBusVolume", "outputBusVolume", PlayablePropertyWireV1::F32, PlayablePropertyPresenceV1::MaskBit, PlayablePropertyCombineRoleV1::NearestExplicit, PlayablePropertyReferenceRoleV1::None, PlayablePropertyCapabilityRoleV1::Route, PlayablePropertyPhaseRoleV1::FirstAudible, PlayablePropertyDefaultV1::PositiveZero},
-    {PlayablePropertyIdV1::MainOutputBusRef, UINT64_C(0x0000000000000040), "mainOutputBusRef", "mainOutputBusRef", PlayablePropertyWireV1::ObjectId, PlayablePropertyPresenceV1::MaskBit, PlayablePropertyCombineRoleV1::NearestExplicit, PlayablePropertyReferenceRoleV1::MainOutputBus, PlayablePropertyCapabilityRoleV1::Route, PlayablePropertyPhaseRoleV1::Route, PlayablePropertyDefaultV1::Zero},
+    {PlayablePropertyIdV1::OutputBusRef, UINT64_C(0x0000000000000040), "outputBusRef", "outputBusRef", PlayablePropertyWireV1::ObjectId, PlayablePropertyPresenceV1::MaskBit, PlayablePropertyCombineRoleV1::NearestExplicit, PlayablePropertyReferenceRoleV1::OutputBus, PlayablePropertyCapabilityRoleV1::Route, PlayablePropertyPhaseRoleV1::Route, PlayablePropertyDefaultV1::Zero},
     {PlayablePropertyIdV1::Sends, UINT64_C(0x0000000000000080), "sends", "sends", PlayablePropertyWireV1::RowSpan, PlayablePropertyPresenceV1::MaskBit, PlayablePropertyCombineRoleV1::SendResolution, PlayablePropertyReferenceRoleV1::None, PlayablePropertyCapabilityRoleV1::Send, PlayablePropertyPhaseRoleV1::SameCutInstall, PlayablePropertyDefaultV1::Empty},
     {PlayablePropertyIdV1::SpatialPanning, UINT64_C(0x0000000000000100), "spatialPanning", "spatial.panning", PlayablePropertyWireV1::F32, PlayablePropertyPresenceV1::MaskBit, PlayablePropertyCombineRoleV1::NearestExplicit, PlayablePropertyReferenceRoleV1::None, PlayablePropertyCapabilityRoleV1::Spatial, PlayablePropertyPhaseRoleV1::FirstAudible, PlayablePropertyDefaultV1::PositiveZero},
     {PlayablePropertyIdV1::SpatialSpread, UINT64_C(0x0000000000000200), "spatialSpread", "spatial.spread", PlayablePropertyWireV1::F32, PlayablePropertyPresenceV1::MaskBit, PlayablePropertyCombineRoleV1::NearestExplicit, PlayablePropertyReferenceRoleV1::None, PlayablePropertyCapabilityRoleV1::Spatial, PlayablePropertyPhaseRoleV1::FirstAudible, PlayablePropertyDefaultV1::PositiveZero},

@@ -14,7 +14,7 @@ namespace {
 using namespace harkenprojectschema;
 
 constexpr char kInherit[] = R"({"inherit":true})";
-constexpr char kMainOutput[] = R"({"mainOutputBusRef":"12345678-9abc-def0-0123-456789abcdef","outputBusVolume":0})";
+constexpr char kOutput[] = R"({"outputBusRef":"12345678-9abc-def0-0123-456789abcdef","outputBusVolume":0})";
 constexpr char kSend[] = R"({"sends":[{"targetBusID":"fedcba98-7654-3210-ffff-ffffffffffff","sendLevel":-6}]})";
 constexpr char kRating[] = R"({"spatialPanning":0,"spatialIs3DEnabled":false,"spatialAttenuationRef":"00000000-0000-0000-0000-000000000000","spatialAttenuationDistanceScaling":1})";
 constexpr AuthoringGuid kBus{UINT64_C(0x123456789abcdef0), UINT64_C(0x0123456789abcdef)};
@@ -28,12 +28,12 @@ std::string State(std::string_view mode, std::string_view history)
     return "{" + inherit + "\"values\":" + std::string(history) + "}";
 }
 
-std::string Block(std::string_view mainOutput = kInherit,
+std::string Block(std::string_view output = kInherit,
                   std::string_view send = kInherit,
                   std::string_view rating = kInherit,
                   std::string_view platforms = {})
 {
-    std::string result = "{\"shared\":{\"mainOutput\":" + std::string(mainOutput)
+    std::string result = "{\"shared\":{\"output\":" + std::string(output)
         + ",\"send\":" + std::string(send) + ",\"spatialRating\":" + std::string(rating) + "}";
     if (!platforms.empty()) result += ",\"platforms\":" + std::string(platforms);
     return result + "}";
@@ -51,7 +51,7 @@ void ExpectRejected(const std::string& text)
 {
     SCOPED_TRACE(text);
     DefinitionFieldGroups groups;
-    groups.mainOutput.shared = {FieldGroupMode::Local, MainOutputFieldGroup{kBus, -12.0f}};
+    groups.output.shared = {FieldGroupMode::Local, OutputFieldGroup{kBus, -12.0f}};
     const auto before = groups;
     std::string error;
     EXPECT_FALSE(ReadFieldGroupsJson(text, groups, error));
@@ -74,7 +74,7 @@ TEST(FieldGroupJson, DormantReferencesPreserveAll128BitsWithoutTargetLookup)
                                "ffffffff-ffff-ffff-ffff-ffffffffffff");
     DefinitionFieldGroups groups;
     std::string error;
-    ASSERT_TRUE(ReadFieldGroupsJson(Block(State("Inherit", kMainOutput),
+    ASSERT_TRUE(ReadFieldGroupsJson(Block(State("Inherit", kOutput),
                                            State("Inherit", kSend),
                                            State("Inherit", rating)), groups, error)) << error;
     ASSERT_TRUE(groups.send.shared.localHistory);
@@ -92,18 +92,18 @@ TEST(FieldGroupJson, DormantReferencesPreserveAll128BitsWithoutTargetLookup)
 
 TEST(FieldGroupJson, UuidCaseNormalizesWithoutChangingIdentity)
 {
-    const auto mainOutput = Replace(kMainOutput, "12345678-9abc-def0-0123-456789abcdef",
+    const auto output = Replace(kOutput, "12345678-9abc-def0-0123-456789abcdef",
                                     "12345678-9ABC-DEF0-0123-456789ABCDEF");
     DefinitionFieldGroups groups;
     std::string error;
-    ASSERT_TRUE(ReadFieldGroupsJson(Block(State("Local", mainOutput)), groups, error)) << error;
-    EXPECT_EQ(groups.mainOutput.shared.localHistory->mainOutputBusRef, kBus);
+    ASSERT_TRUE(ReadFieldGroupsJson(Block(State("Local", output)), groups, error)) << error;
+    EXPECT_EQ(groups.output.shared.localHistory->outputBusRef, kBus);
 }
 
 TEST(FieldGroupJson, FiniteFloatBitsAndSendRowOrderRoundTripDeterministically)
 {
     DefinitionFieldGroups groups;
-    groups.mainOutput.shared = {FieldGroupMode::Local, MainOutputFieldGroup{kBus, -0.0f}};
+    groups.output.shared = {FieldGroupMode::Local, OutputFieldGroup{kBus, -0.0f}};
     groups.send.shared = {FieldGroupMode::Local,
                          SendFieldGroup{{{kSendBus, 0.1f, SendMode::Sidechain,
                                           {{SendMode::Mix, -12.0f}, {SendMode::Ducking, 3.0f}}},
@@ -119,7 +119,7 @@ TEST(FieldGroupJson, FiniteFloatBitsAndSendRowOrderRoundTripDeterministically)
     DefinitionFieldGroups roundTrip;
     ASSERT_TRUE(ReadFieldGroupsJson(text, roundTrip, error)) << error;
     EXPECT_EQ(roundTrip, groups);
-    EXPECT_EQ(std::bit_cast<std::uint32_t>(roundTrip.mainOutput.shared.localHistory->outputBusVolume),
+    EXPECT_EQ(std::bit_cast<std::uint32_t>(roundTrip.output.shared.localHistory->outputBusVolume),
               std::bit_cast<std::uint32_t>(-0.0f));
     EXPECT_EQ(std::bit_cast<std::uint32_t>(roundTrip.spatialRating.shared.localHistory->spatialPanning), 1u);
     ASSERT_EQ(roundTrip.send.shared.localHistory->sends.size(), 2u);
@@ -133,7 +133,7 @@ TEST(FieldGroupJson, FiniteFloatBitsAndSendRowOrderRoundTripDeterministically)
 TEST(FieldGroupJson, RejectsInvalidFloatTypesOverflowAndOutOfRangeDormantHistory)
 {
     for (const auto* value : {"null", "true", "\"0\"", "1e400", "1e-400", "1e39"}) {
-        ExpectRejected(Block(State("Inherit", Replace(kMainOutput, "\"outputBusVolume\":0",
+        ExpectRejected(Block(State("Inherit", Replace(kOutput, "\"outputBusVolume\":0",
             "\"outputBusVolume\":" + std::string(value)))));
         ExpectRejected(Block(kInherit, State("Inherit", Replace(kSend, "\"sendLevel\":-6",
             "\"sendLevel\":-6,\"modeVolumes\":{\"1\":" + std::string(value) + "}"))));
@@ -151,16 +151,16 @@ TEST(FieldGroupJson, RejectsDuplicateMembersAndMalformedJson)
     ExpectRejected(Block(kInherit, kInherit, kInherit, R"({"7e69e0e2-8d15-52df-a609-ab96fff38750":{},"7e69e0e2-8d15-52df-a609-ab96fff38750":{}})"));
     ExpectRejected(Replace(Block(), "\"shared\":", "\"shared\":{},\"shared\":"));
     ExpectRejected(Replace(Block(), "\"shared\":", "/*comment*/\"shared\":"));
-    ExpectRejected(Replace(Block(), "\"mainOutput\":", "\"mainOutput\":,"));
+    ExpectRejected(Replace(Block(), "\"output\":", "\"output\":,"));
     ExpectRejected("[]");
 }
 
 TEST(FieldGroupJson, WriterRejectsInvalidStatesWithoutChangingOutput)
 {
     DefinitionFieldGroups groups;
-    groups.mainOutput.shared.localHistory = MainOutputFieldGroup{kBus, std::numeric_limits<float>::quiet_NaN()};
+    groups.output.shared.localHistory = OutputFieldGroup{kBus, std::numeric_limits<float>::quiet_NaN()};
     ExpectWriteRejected(groups);
-    groups.mainOutput.shared.localHistory = MainOutputFieldGroup{kBus, std::numeric_limits<float>::infinity()};
+    groups.output.shared.localHistory = OutputFieldGroup{kBus, std::numeric_limits<float>::infinity()};
     ExpectWriteRejected(groups);
 }
 

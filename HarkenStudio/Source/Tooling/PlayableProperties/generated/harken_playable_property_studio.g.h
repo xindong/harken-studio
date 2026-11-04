@@ -25,7 +25,7 @@ inline constexpr JsonFieldV1 kJsonFieldsV1[] = {
     {4, UINT64_C(0x0000000000000008), PlayablePropertyWireV1::U32, PlayablePropertyDefaultV1::IntegerOne, PlayablePropertyReferenceRoleV1::None, "audio", "loopCount", "loopCount", "loopCount"},
     {5, UINT64_C(0x0000000000000010), PlayablePropertyWireV1::U32, PlayablePropertyDefaultV1::Zero, PlayablePropertyReferenceRoleV1::None, "audio", "streamingMode", "streamingMode", "streamingMode"},
     {6, UINT64_C(0x0000000000000020), PlayablePropertyWireV1::F32, PlayablePropertyDefaultV1::PositiveZero, PlayablePropertyReferenceRoleV1::None, "mixnode", "outputBusVolume", "outputBusVolume", "outputBusVolume"},
-    {7, UINT64_C(0x0000000000000040), PlayablePropertyWireV1::ObjectId, PlayablePropertyDefaultV1::Zero, PlayablePropertyReferenceRoleV1::MainOutputBus, "mixnode", "mainOutputBusRef", "mainOutputBusRef", "mainOutputBusRef"},
+    {7, UINT64_C(0x0000000000000040), PlayablePropertyWireV1::ObjectId, PlayablePropertyDefaultV1::Zero, PlayablePropertyReferenceRoleV1::OutputBus, "mixnode", "outputBusRef", "outputBusRef", "outputBusRef"},
     {8, UINT64_C(0x0000000000000080), PlayablePropertyWireV1::RowSpan, PlayablePropertyDefaultV1::Empty, PlayablePropertyReferenceRoleV1::None, "mixnode", "sends", "sends", "sends"},
     {9, UINT64_C(0x0000000000000100), PlayablePropertyWireV1::F32, PlayablePropertyDefaultV1::PositiveZero, PlayablePropertyReferenceRoleV1::None, "spatial", "panning", "spatialPanning", "spatial.panning"},
     {10, UINT64_C(0x0000000000000200), PlayablePropertyWireV1::F32, PlayablePropertyDefaultV1::PositiveZero, PlayablePropertyReferenceRoleV1::None, "spatial", "spread", "spatialSpread", "spatial.spread"},

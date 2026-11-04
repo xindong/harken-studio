@@ -20741,7 +20741,7 @@ harken::PlayableStartStatus ResolveTimelineVoiceInstallSource(
         }
     }
     voice.outputBusId =
-        cut.mainOutputBusRef == VnObjectId{} ? VN_BUS_MASTER : cut.mainOutputBusRef;
+        cut.outputBusRef == VnObjectId{} ? VN_BUS_MASTER : cut.outputBusRef;
     const float volume =
         cut.volumeDb + cut.makeUpGainDb;
     const double pitch = std::pow(
@@ -120285,7 +120285,7 @@ VnResult ValidateCanonicalSetReferences(const PackComposition::PublishedView& ne
     const PackComposition::PublishedView* previous) noexcept {
     using PropertyId = playableproperties::PlayablePropertyIdV1;
     constexpr auto attenuationSlot = static_cast<std::size_t>(PropertyId::SpatialAttenuationRef) - 1;
-    constexpr auto busSlot = static_cast<std::size_t>(PropertyId::MainOutputBusRef) - 1;
+    constexpr auto busSlot = static_cast<std::size_t>(PropertyId::OutputBusRef) - 1;
     const auto busExists = [&](VnBusId id) {
         if (id == VnObjectId{}) {
             return true;
