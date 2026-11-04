@@ -174,6 +174,25 @@ QString normalizedFolderName(const QString& name)
     return normalized;
 }
 
+void clampProjectSourceFades(ProjectData& project, uint32_t sourceId = 0)
+{
+    for (auto* item : ProjectPlatformSemantics::referenceOwners(project)) {
+        auto* sound = item->comp<VSound>();
+        if (!sound) continue;
+        bool changed = false;
+        for (auto* set : SoundSourceSemantics::sourceSets(sound->sources)) {
+            for (auto& source : set->entries) {
+                if (sourceId != 0 && source.sourceId != sourceId) continue;
+                changed |= SoundSourceSemantics::clampFadesToAsset(
+                    source, AssetRegistry::instance().getAsset(source.sourceId));
+            }
+        }
+        if (!changed) continue;
+        item->markDirty();
+        emit ProjectManager::instance().itemPropertyChanged(item, QStringLiteral("sources"));
+    }
+}
+
 QString folderNameKey(const QString& name)
 {
     return normalizedFolderName(name).toCaseFolded();
@@ -826,6 +845,12 @@ ProjectManager& ProjectManager::instance()
 ProjectManager::ProjectManager(QObject* parent)
     : QObject(parent)
 {
+    const auto clampSourceFades = [this](uint32_t sourceId) {
+        if (m_currentProject && !m_closing)
+            clampProjectSourceFades(*m_currentProject, sourceId);
+    };
+    connect(&AssetRegistry::instance(), &AssetRegistry::assetModified, this, clampSourceFades);
+    connect(&AssetRegistry::instance(), &AssetRegistry::assetRegistered, this, clampSourceFades);
     connect(&PackGenerationRecordStore::instance(), &PackGenerationRecordStore::exportActivityChanged,
             &m_fileWatcher, &FileWatcher::deferChanges);
     connect(&m_fileWatcher, &FileWatcher::filesAdded, this, &ProjectManager::externalFilesAdded);
@@ -1888,6 +1913,7 @@ bool ProjectManager::commitPreparedProject(PreparedProject&& prepared)
     assetRegistry.replaceSnapshot(projectRoot, prepared.assets);
     assetRegistry.setPlatforms(m_currentProject->platforms);
     assetRegistry.markAllCommitted();
+    clampProjectSourceFades(*m_currentProject);
 
     if (!prepared.integrityReport.issues.empty()) {
         LogPanel::logWarning(LogCategory::File,

@@ -12,6 +12,7 @@
 #include "../LanguageContextService.h"
 #include "../PlatformContextService.h"
 #include "../SoundSourceEditing.h"
+#include "../SoundSourceSemantics.h"
 #include "../UndoCommands.h"
 #include "../../Widgets/LogPanel/LogPanel.h"
 #include "Utils/FileOperationRetry.h"
@@ -30,11 +31,19 @@
 namespace VNX::SourceFileSystem {
 namespace {
 
+struct SourceFadeState {
+    QUuid ownerGuid;
+    QUuid entryId;
+    uint64_t fadeIn = 0;
+    uint64_t fadeOut = 0;
+};
+
 struct FileRevision {
     std::shared_ptr<QTemporaryDir> storage;
     QString file;
     AudioMetadata metadata;
     QString hash;
+    QList<SourceFadeState> fades;
 };
 
 struct Change {
@@ -135,6 +144,20 @@ void publishChanges(const QList<Change>& changes, bool record)
                 if (!registry.updateSourceFile(sourceID, change.after->metadata, path,
                     change.after->hash, QFileInfo(path).lastModified().toSecsSinceEpoch()))
                     emit registry.assetModified(sourceID);
+                auto& manager = ProjectManager::instance();
+                for (const auto& saved : change.after->fades) {
+                    auto* item = manager.findItemByGuid(saved.ownerGuid);
+                    auto* sound = item ? item->comp<VSound>() : nullptr;
+                    auto* source = sound ? SoundSourceSemantics::findEntry(sound->sources, saved.entryId) : nullptr;
+                    if (!source || source->sourceId != sourceID) continue;
+                    if (source->fadeIn.durationFrames == saved.fadeIn
+                        && source->fadeOut.durationFrames == saved.fadeOut) continue;
+                    source->fadeIn.durationFrames = saved.fadeIn;
+                    source->fadeOut.durationFrames = saved.fadeOut;
+                    SoundSourceSemantics::clampFadesToAsset(*source, registry.getAsset(sourceID));
+                    item->markDirty();
+                    emit manager.itemPropertyChanged(item, QStringLiteral("sources"));
+                }
                 HarkenEditor::Bridge::mediaRegistryRegister(sourceID, path);
                 emit MediaPool::instance().mediaHotSwapped(sourceID, path);
                 if (!change.after->file.isEmpty())
@@ -327,8 +350,11 @@ public:
             if (const auto* sound = item->comp<VSound>()) {
                 Reference reference{item->guid, sound->sources, sound->sources};
                 const auto replace = [&](SoundSourceSet& set) {
-                    for (auto& entry : set.entries)
-                        if (entry.sourceId == missing_.sourceID) entry.sourceId = source_.sourceID;
+                    for (auto& entry : set.entries) {
+                        if (entry.sourceId != missing_.sourceID) continue;
+                        entry.sourceId = source_.sourceID;
+                        SoundSourceSemantics::clampFadesToAsset(entry, &source_);
+                    }
                 };
                 replace(reference.after.plain);
                 for (auto& set : reference.after.localized) replace(set);
@@ -648,6 +674,27 @@ std::unique_ptr<TransactionalUndoCommand> replaceFiles(
         if (after->metadata.sampleRate == 0 || after->metadata.totalSamples == 0) {
             fail(error, QObject::tr("Could not read audio data from '%1'.").arg(it.value()));
             return {};
+        }
+        const auto* asset = AssetRegistry::instance().getAssetByPath(it.key());
+        const auto* project = ProjectManager::instance().currentProject();
+        if (asset && project) {
+            AssetInfo replacement = *asset;
+            replacement.metadata = after->metadata;
+            for (auto* item : ProjectPlatformSemantics::referenceOwners(*project)) {
+                const auto* sound = item->comp<VSound>();
+                if (!sound) continue;
+                for (const auto* set : SoundSourceSemantics::sourceSets(sound->sources)) {
+                    for (const auto& source : set->entries) {
+                        if (source.sourceId != asset->sourceID) continue;
+                        SoundSourceDef adjusted = source;
+                        if (!SoundSourceSemantics::clampFadesToAsset(adjusted, &replacement)) continue;
+                        before->fades.append({item->guid, source.entryId,
+                            source.fadeIn.durationFrames, source.fadeOut.durationFrames});
+                        after->fades.append({item->guid, source.entryId,
+                            adjusted.fadeIn.durationFrames, adjusted.fadeOut.durationFrames});
+                    }
+                }
+            }
         }
         changes.append({it.key(), it.key(), false, before, after});
     }

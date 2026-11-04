@@ -153,13 +153,16 @@ void SourceEditorWaveformView::setupTimeline()
         const int outside = dragPosition_.x() < plot.left()
             ? dragPosition_.x() - plot.left()
             : dragPosition_.x() > plot.right() ? dragPosition_.x() - plot.right() : 0;
-        if (activeHandle_ == Handle::None || outside == 0) {
+        if ((activeHandle_ == Handle::None && activeFade_.index < 0) || outside == 0) {
             edgeScroll_.stop();
             return;
         }
         const double step = std::clamp(double(outside) / std::max(1, plot.width()), -0.08, 0.08);
         setViewRange(viewStart_ + step * viewFrameCount(), viewFrameCount());
-        dragHandle(dragPosition_);
+        if (activeFade_.index >= 0)
+            dragFade(dragPosition_);
+        else
+            dragHandle(dragPosition_);
     });
     refreshTimelineControls();
     layoutTimeline();
@@ -401,6 +404,8 @@ void SourceEditorWaveformView::paintTimeline(QPainter& painter)
         options.frameCount = viewFrameCount();
         options.sampleCurve = true;
         options.amplitudeExponent = amplitudeExponent_;
+        options.sourceView = SourceWaveformView(previewSource_, totalFrames());
+        options.dataFrameOrigin = detailCovers ? double(detailStart_) : 0.0;
         painter.save();
         painter.setClipRect(wave, Qt::IntersectClip);
         WaveformRenderer::render(painter, wave, data, waveStyle, options);
@@ -443,6 +448,7 @@ void SourceEditorWaveformView::paintTimeline(QPainter& painter)
         }
     }
     painter.restore();
+    paintFades(painter);
     if (asset_ && state_ != State::Ready) {
         painter.setFont(FontManager::instance().getFont(FontRole::Caption));
         painter.setPen(colors.textMuted);
@@ -521,14 +527,20 @@ QString SourceEditorWaveformView::formatFrame(uint64_t frame) const
 
 void SourceEditorWaveformView::showHandleValue()
 {
-    if (!handleValue_ || activeHandle_ == Handle::None)
+    const bool editingFade = activeFade_.index >= 0;
+    if (!handleValue_ || (!editingFade && activeHandle_ == Handle::None))
         return;
-    handleValue_->setText(tr("%1: %2").arg(
-        activeHandle_ == Handle::TrimStart ? tr("Trim In") : tr("Trim Out"),
-        formatFrame(handleFrame(activeHandle_))));
+    if (editingFade && activeFade_.part != (activeFade_.index == 0 ? FadePart::End : FadePart::Start))
+        return;
+    const QString label = editingFade ? (activeFade_.index == 0 ? tr("Fade In") : tr("Fade Out"))
+        : (activeHandle_ == Handle::TrimStart ? tr("Trim In") : tr("Trim Out"));
+    const uint64_t frame = editingFade ? fade(activeFade_.index).durationFrames : handleFrame(activeHandle_);
+    const int x = editingFade ? qRound(fadeTargetPosition(activeFade_).x())
+        : handlePosition(static_cast<int>(activeHandle_));
+    handleValue_->setText(tr("%1: %2").arg(label, formatFrame(frame)));
     handleValue_->adjustSize();
     placeAbove(handleValue_, mapToGlobal(QPoint(
-        std::clamp(handlePosition(static_cast<int>(activeHandle_)), waveformRect().left(), waveformRect().right()),
+        std::clamp(x, waveformRect().left(), waveformRect().right()),
         waveformRect().top())));
     handleValue_->show();
 }
@@ -559,40 +571,48 @@ void SourceEditorWaveformView::cancelGesture()
         handleValue_->hide();
     if (valueEditor_)
         valueEditor_->reject();
-    if (activeHandle_ != Handle::None) {
+    if (activeHandle_ != Handle::None || activeFade_.index >= 0) {
         activeHandle_ = Handle::None;
+        activeFade_ = {};
         previewSource_ = originalSource_;
         emit previewChanged();
     }
     hoveredHandle_ = Handle::None;
+    hoveredFade_ = {};
     unsetCursor();
     update();
 }
 
-void SourceEditorWaveformView::editHandleValue(Handle handle)
+void SourceEditorWaveformView::editHandleValue(Handle handle, int fadeIndex)
 {
-    if (handle == Handle::None || !asset_ || asset_->metadata.sampleRate == 0)
+    if ((handle == Handle::None && fadeIndex < 0) || !asset_ || asset_->metadata.sampleRate == 0)
         return;
     cancelGesture();
+    selectedFade_ = fadeIndex;
     QToolTip::hideText();
     auto* dialog = new QDialog(this, Qt::Popup);
     valueEditor_ = dialog;
-    dialog->setObjectName(QStringLiteral("sourceTrimValueEditor"));
+    dialog->setObjectName(fadeIndex >= 0 ? QStringLiteral("sourceFadeValueEditor")
+                                       : QStringLiteral("sourceTrimValueEditor"));
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     auto* layout = new QHBoxLayout(dialog);
     layout->setContentsMargins(8, 6, 8, 6);
     layout->setSpacing(8);
-    auto* label = new QLabel(handle == Handle::TrimStart ? tr("Trim In") : tr("Trim Out"), dialog);
+    const QString caption = fadeIndex >= 0 ? (fadeIndex == 0 ? tr("Fade In") : tr("Fade Out"))
+        : (handle == Handle::TrimStart ? tr("Trim In") : tr("Trim Out"));
+    auto* label = new QLabel(caption, dialog);
     label->setProperty("textRole", QStringLiteral("formLabel"));
     layout->addWidget(label);
     auto* spin = new DecimalSpinBox(dialog);
-    spin->setObjectName(QStringLiteral("sourceTrimValueInput"));
+    spin->setObjectName(fadeIndex >= 0 ? QStringLiteral("sourceFadeValueInput")
+                                     : QStringLiteral("sourceTrimValueInput"));
     spin->setKeyboardTracking(false);
     spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
-    const uint64_t initial = handleFrame(handle);
+    const uint64_t initial = fadeIndex >= 0 ? fade(fadeIndex).durationFrames : handleFrame(handle);
     const double divisor = frameDisplay_ ? 1.0 : asset_->metadata.sampleRate;
     spin->setDecimals(frameDisplay_ ? 0 : secondsDecimals());
-    spin->setRange(0.0, double(std::max(totalFrames(), initial)) / divisor);
+    spin->setRange(0.0, double(fadeIndex >= 0 ? fadeDurationLimit(fadeIndex)
+                                           : std::max(totalFrames(), initial)) / divisor);
     spin->setSingleStep(1.0 / divisor);
     spin->setToolTip(frameDisplay_ ? tr("frames") : QStringLiteral("s"));
     spin->setValue(double(initial) / divisor);
@@ -606,7 +626,7 @@ void SourceEditorWaveformView::editHandleValue(Handle handle)
             dialog->accept();
         });
     }
-    connect(dialog, &QDialog::accepted, this, [this, handle, spin, initial, initialValue, divisor] {
+    connect(dialog, &QDialog::accepted, this, [this, handle, fadeIndex, spin, initial, initialValue, divisor] {
         valueEditor_.clear();
         if (spin->value() == initialValue)
             return;
@@ -614,9 +634,13 @@ void SourceEditorWaveformView::editHandleValue(Handle handle)
         if (frame == initial)
             return;
         originalSource_ = previewSource_;
-        activeHandle_ = handle;
-        updatePreview(frame);
-        activeHandle_ = Handle::None;
+        if (fadeIndex >= 0) {
+            setFadeDuration(fadeIndex, frame);
+        } else {
+            activeHandle_ = handle;
+            updatePreview(frame);
+            activeHandle_ = Handle::None;
+        }
         handleValue_->hide();
         update();
         if (previewSource_ == originalSource_)
@@ -626,7 +650,10 @@ void SourceEditorWaveformView::editHandleValue(Handle handle)
             commit_(previewSource_);
     });
     dialog->adjustSize();
-    placeAbove(dialog, mapToGlobal(handleHitPoint(static_cast<int>(handle))));
+    const QPoint anchor = fadeIndex >= 0
+        ? fadeTargetPosition({fadeIndex, fadeIndex == 0 ? FadePart::End : FadePart::Start}).toPoint()
+        : handleHitPoint(static_cast<int>(handle));
+    placeAbove(dialog, mapToGlobal(anchor));
     dialog->show();
     spin->setFocus();
     spin->selectAll();
@@ -658,9 +685,11 @@ void SourceEditorWaveformView::wheelEvent(QWheelEvent* event)
 
 bool SourceEditorWaveformView::eventFilter(QObject* watched, QEvent* event)
 {
-    if (event->type() == QEvent::Enter && !panOrigin_ && activeHandle_ == Handle::None) {
+    if (event->type() == QEvent::Enter && !panOrigin_ && activeHandle_ == Handle::None
+        && activeFade_.index < 0) {
         hoverPosition_.reset();
         hoveredHandle_ = Handle::None;
+        hoveredFade_ = {};
         unsetCursor();
         QToolTip::hideText();
         update();
@@ -680,6 +709,12 @@ bool SourceEditorWaveformView::eventFilter(QObject* watched, QEvent* event)
 void SourceEditorWaveformView::mouseDoubleClickEvent(QMouseEvent* event)
 {
     if (units_ && event->button() == Qt::LeftButton) {
+        const FadeHit fadeHit = hitTestFade(event->position().toPoint());
+        if (fadeHit.index >= 0) {
+            editHandleValue(Handle::None, fadeHit.index);
+            event->accept();
+            return;
+        }
         const Handle handle = hitTestHandle(event->position().toPoint());
         if (handle != Handle::None) {
             editHandleValue(handle);
@@ -714,6 +749,12 @@ void SourceEditorWaveformView::contextMenuEvent(QContextMenuEvent* event)
         return;
     }
     if (units_ && editable_) {
+        const FadeHit fadeHit = hitTestFade(event->pos());
+        if (fadeHit.index >= 0) {
+            showFadeMenu(fadeHit.index, event->globalPos());
+            event->accept();
+            return;
+        }
         const Handle handle = hitTestHandle(event->pos());
         if (handle != Handle::None) {
             cancelGesture();

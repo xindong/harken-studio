@@ -40,8 +40,11 @@ TEST(SoundSourceSemanticsTest, FrameLedgerRoundTripsSampleExact)
     sources[0].trimStartFrame = 1;
     sources[0].trimEndFrame = 4294967297ull;
     sources[0].loopRegion = SoundLoopRegion{2147483649ull, 4294967296ull};
+    sources[0].fadeIn.durationFrames = 2147483649ull;
+    sources[0].fadeOut.durationFrames = 2147483647ull;
     sources[1].trimStartFrame = 4409;
     sources[1].trimEndFrame = 4410;
+    sources[1].fadeIn.handles = {{0.1f, 0.7f, 0.8f, 1.0f}};
 
     const auto reloaded = SoundSourceSemantics::entriesFromJson(
         SoundSourceSemantics::entriesToJson(sources));
@@ -62,6 +65,10 @@ TEST(SoundSourceSemanticsTest, FrameLedgerSurvivesTheSerializedDocument)
     sources[0].trimStartFrame = 123456789;
     sources[0].trimEndFrame = 987654321;
     sources[0].loopRegion = SoundLoopRegion{234567890, 876543210};
+    sources[0].fadeIn.durationFrames = 123456789;
+    sources[0].fadeIn.handles = {{0.125f, 0.75f, 0.625f, 1.0f}};
+    sources[0].fadeOut.durationFrames = 34567890;
+    sources[0].fadeOut.handles = {{0.375f, 0.875f, 0.75f, 0.25f}};
 
     const QJsonDocument document(QJsonObject{
         {QStringLiteral("sources"), SoundSourceSemantics::entriesToJson(sources)}});

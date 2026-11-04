@@ -778,7 +778,7 @@ void BlueprintCanvasWidget::materializeFromSource_()
 
         item->setBlueprintWaveformMode(d.waveformMode);
         if (d.waveformMode)
-            waveformNodes_[d.mediaPath].push_back({item, d.waveformRange});
+            waveformNodes_[d.mediaPath].push_back({item, d.waveformView});
         else if (!created)
             item->setWaveformPeakData({});
 

@@ -3,6 +3,7 @@
 #include "TimelineTicks.h"
 
 #include "Core/AssetPipeline/WaveformCache.h"
+#include "Core/AssetPipeline/SourceWaveformView.h"
 #include "Core/ThemeSnapshot.h"
 #include "Core/Timeline/TimelineTypes.h"
 #include "Widgets/Common/TimeAxis.h"
@@ -94,6 +95,7 @@ struct TimelineClipItem
     std::optional<int64_t> emergenceCoordinate;
     bool emergenceClamped = false;
     const WaveformPeakData* waveform = nullptr;
+    std::optional<SourceWaveformView> waveformView;
     QString waveformPath;
     QRect waveformRect;
     QRect waveformViewport;

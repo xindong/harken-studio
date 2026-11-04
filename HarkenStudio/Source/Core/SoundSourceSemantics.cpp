@@ -30,6 +30,52 @@ std::optional<uint64_t> optionalFrame(const QJsonObject& json, const QString& ke
     return static_cast<uint64_t>(raw);
 }
 
+QJsonObject fadeToJson(const SoundSourceFadeDef& fade)
+{
+    QJsonArray curve;
+    for (const auto& point : fade.curve)
+        curve.append(QJsonObject{{QStringLiteral("x"), point.x},
+                                 {QStringLiteral("value"), point.value}});
+    QJsonArray handles;
+    for (const auto& pair : fade.handles)
+        handles.append(QJsonArray{pair.h1x, pair.h1y, pair.h2x, pair.h2y});
+    return {{QStringLiteral("durationFrames"), static_cast<qint64>(fade.durationFrames)},
+            {QStringLiteral("curve"), curve}, {QStringLiteral("handles"), handles}};
+}
+
+bool fadeFromJson(const QJsonValue& value, SoundSourceFadeDef& fade)
+{
+    if (!value.isObject()) return false;
+    const QJsonObject json = value.toObject();
+    const auto duration = optionalFrame(json, QStringLiteral("durationFrames"));
+    const QJsonArray curve = json.value(QStringLiteral("curve")).toArray();
+    const QJsonArray handles = json.value(QStringLiteral("handles")).toArray();
+    if (json.size() != 3 || !duration || curve.size() != 2 || handles.size() != 1)
+        return false;
+    for (qsizetype index = 0; index < curve.size(); ++index) {
+        const QJsonObject point = curve.at(index).toObject();
+        const QJsonValue x = point.value(QStringLiteral("x"));
+        const QJsonValue y = point.value(QStringLiteral("value"));
+        if (point.size() != 2 || !x.isDouble() || !y.isDouble()
+            || x.toDouble() != fade.curve.at(index).x
+            || y.toDouble() != fade.curve.at(index).value)
+            return false;
+    }
+    const QJsonArray pair = handles.first().toArray();
+    if (pair.size() != 4) return false;
+    for (const auto& coordinate : pair) {
+        const double number = coordinate.toDouble();
+        if (!coordinate.isDouble() || !std::isfinite(number) || number < 0.0 || number > 1.0)
+            return false;
+    }
+    fade.durationFrames = *duration;
+    fade.handles = {{static_cast<float>(pair.at(0).toDouble()),
+                     static_cast<float>(pair.at(1).toDouble()),
+                     static_cast<float>(pair.at(2).toDouble()),
+                     static_cast<float>(pair.at(3).toDouble())}};
+    return true;
+}
+
 bool rowHasDeepRangeSemantics(
     const SoundSourceDef& source,
     const std::function<const AssetInfo*(uint32_t)>& resolve)
@@ -233,6 +279,7 @@ std::optional<SoundSources> fromJson(const QJsonObject& json, QString* error)
 QJsonArray entriesToJson(const std::vector<SoundSourceDef>& sources)
 {
     QJsonArray array;
+    const SoundSourceDef defaults;
     for (const SoundSourceDef& source : sources) {
         QJsonObject json{
             {QStringLiteral("entryId"), source.entryId.toString(QUuid::WithoutBraces)},
@@ -241,6 +288,10 @@ QJsonArray entriesToJson(const std::vector<SoundSourceDef>& sources)
             json[QStringLiteral("trimStartFrame")] = static_cast<qint64>(source.trimStartFrame);
         if (source.trimEndFrame)
             json[QStringLiteral("trimEndFrame")] = static_cast<qint64>(*source.trimEndFrame);
+        if (source.fadeIn != defaults.fadeIn)
+            json[QStringLiteral("fadeIn")] = fadeToJson(source.fadeIn);
+        if (source.fadeOut != defaults.fadeOut)
+            json[QStringLiteral("fadeOut")] = fadeToJson(source.fadeOut);
         if (source.loopRegion) {
             json[QStringLiteral("loopRegion")] = QJsonObject{
                 {QStringLiteral("startFrame"), static_cast<qint64>(source.loopRegion->startFrame)},
@@ -271,6 +322,7 @@ std::optional<std::vector<SoundSourceDef>> entriesFromJson(const QJsonArray& jso
         static const QSet<QString> fields{
             QStringLiteral("entryId"), QStringLiteral("sourceId"),
             QStringLiteral("trimStartFrame"), QStringLiteral("trimEndFrame"),
+            QStringLiteral("fadeIn"), QStringLiteral("fadeOut"),
             QStringLiteral("loopRegion"), QStringLiteral("loopProvenance"),
             QStringLiteral("rangeContentHash")};
         for (auto it = row.begin(); it != row.end(); ++it)
@@ -297,6 +349,12 @@ std::optional<std::vector<SoundSourceDef>> entriesFromJson(const QJsonArray& jso
             if (!value) return fail(QStringLiteral("trimEndFrame is invalid"));
             source.trimEndFrame = *value;
         }
+        if (row.contains(QStringLiteral("fadeIn"))
+            && !fadeFromJson(row.value(QStringLiteral("fadeIn")), source.fadeIn))
+            return fail(QStringLiteral("fadeIn is invalid"));
+        if (row.contains(QStringLiteral("fadeOut"))
+            && !fadeFromJson(row.value(QStringLiteral("fadeOut")), source.fadeOut))
+            return fail(QStringLiteral("fadeOut is invalid"));
         if (row.contains(QStringLiteral("loopRegion"))) {
             if (!row.value(QStringLiteral("loopRegion")).isObject())
                 return fail(QStringLiteral("loopRegion is invalid"));
@@ -388,6 +446,28 @@ bool hasDeepSourceSemantics(
     return false;
 }
 
+void clampFadeDurations(SoundSourceDef& source, uint64_t frameCount)
+{
+    const uint64_t total = source.fadeIn.durationFrames + source.fadeOut.durationFrames;
+    if (total <= frameCount) return;
+    const double ratio = static_cast<double>(source.fadeIn.durationFrames) / total;
+    source.fadeIn.durationFrames = std::min(
+        static_cast<uint64_t>(std::round(frameCount * ratio)), frameCount);
+    source.fadeOut.durationFrames = frameCount - source.fadeIn.durationFrames;
+}
+
+bool clampFadesToAsset(SoundSourceDef& source, const AssetInfo* asset)
+{
+    if (!asset || asset->metadata.totalSamples == 0) return false;
+    const uint64_t total = asset->metadata.totalSamples;
+    const uint64_t start = std::min(source.trimStartFrame, total);
+    const uint64_t end = std::clamp(source.trimEndFrame.value_or(total), start, total);
+    const uint64_t fadeIn = source.fadeIn.durationFrames;
+    const uint64_t fadeOut = source.fadeOut.durationFrames;
+    clampFadeDurations(source, end - start);
+    return source.fadeIn.durationFrames != fadeIn || source.fadeOut.durationFrames != fadeOut;
+}
+
 SoundSourceDef canonicalized(const SoundSourceDef& source, uint64_t totalFrames)
 {
     SoundSourceDef result = source;
@@ -395,6 +475,7 @@ SoundSourceDef canonicalized(const SoundSourceDef& source, uint64_t totalFrames)
     const uint64_t trimEnd = std::clamp(result.trimEndFrame.value_or(totalFrames),
                                         result.trimStartFrame, totalFrames);
     result.trimEndFrame = trimEnd;
+    clampFadeDurations(result, trimEnd - result.trimStartFrame);
     if (result.loopRegion) {
         const uint64_t start = std::clamp(result.loopRegion->startFrame,
                                           result.trimStartFrame, trimEnd);

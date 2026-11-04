@@ -1476,6 +1476,12 @@
         "entryId": {
           "$ref": "#/$defs/uuid"
         },
+        "fadeIn": {
+          "$ref": "#/$defs/soundSourceFadeIn"
+        },
+        "fadeOut": {
+          "$ref": "#/$defs/soundSourceFadeOut"
+        },
         "loopProvenance": {
           "enum": [
             "file",
@@ -1519,6 +1525,76 @@
       "required": [
         "entryId",
         "sourceId"
+      ],
+      "type": "object"
+    },
+    "soundSourceFadeIn": {
+      "additionalProperties": false,
+      "properties": {
+        "durationFrames": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "curve": {
+          "const": [{"x": 0, "value": 0}, {"x": 1, "value": 1}],
+          "type": "array"
+        },
+        "handles": {
+          "items": {
+            "items": {
+              "minimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            "minItems": 4,
+            "maxItems": 4,
+            "type": "array"
+          },
+          "minItems": 1,
+          "maxItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "durationFrames",
+        "curve",
+        "handles"
+      ],
+      "type": "object"
+    },
+    "soundSourceFadeOut": {
+      "additionalProperties": false,
+      "properties": {
+        "durationFrames": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "curve": {
+          "const": [{"x": 0, "value": 1}, {"x": 1, "value": 0}],
+          "type": "array"
+        },
+        "handles": {
+          "items": {
+            "items": {
+              "minimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            "minItems": 4,
+            "maxItems": 4,
+            "type": "array"
+          },
+          "minItems": 1,
+          "maxItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "durationFrames",
+        "curve",
+        "handles"
       ],
       "type": "object"
     },

@@ -20,6 +20,8 @@ struct CurvePointDef
 {
     float x     = 0.0f;
     float value = 0.0f;
+
+    bool operator==(const CurvePointDef&) const = default;
 };
 
 // One segment's bezier control-handle pair in absolute coordinates, mirroring
@@ -31,6 +33,8 @@ struct CurveHandlePairDef
     float h1y = 0.0f;
     float h2x = 0.0f;
     float h2y = 0.0f;
+
+    bool operator==(const CurveHandlePairDef&) const = default;
 };
 
 // Single normalization authority for authored curves, shared by JSON load,
