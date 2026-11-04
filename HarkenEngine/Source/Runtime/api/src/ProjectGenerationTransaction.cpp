@@ -10,6 +10,7 @@
 #include "harken/BusDefinitionFingerprintValue.h"
 #include "harken/core/MonitorLifecycleSink.h"
 #include "harken/core/LogicAllocCheckpoint.h"
+#include "harken/media/CurrentWorldBodyVintage.h"
 #include "harken/render/BusTree.h"
 #include "harken/render/DynamicRoute.h"
 #include "harken/render/TopologyPlan.h"
@@ -1504,7 +1505,9 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
         return result;
     }
     if (CurrentWorldCommitBlocked(engine, view.publicationVintage, image) ||
-        (HasPredecessorDirectWorldPublication(engine) && !image.PreservesContent())) {
+        (HasPredecessorDirectWorldPublication(engine) &&
+         !(image.PreservesContent() &&
+           view.compiledWorld.sourceBodyVintage == kCurrentWorldBodyVintageV20))) {
         ReleasePreparedSlot(engine, planIndex, ownerSlot);
         result.status = ProjectGenerationPrepareStatusV1::Backpressure;
         return result;
@@ -1573,7 +1576,9 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
         return result;
     }
     if (CurrentWorldCommitBlocked(engine, prepared.publicationVintage_, prepared.worldImage_) ||
-        (HasPredecessorDirectWorldPublication(engine) && !prepared.preservesContent_)) {
+        (HasPredecessorDirectWorldPublication(engine) &&
+         !(prepared.preservesContent_ &&
+           prepared.compiledWorld_.sourceBodyVintage == kCurrentWorldBodyVintageV20))) {
         result.status = ProjectGenerationCommitStatusV1::Backpressure;
         return result;
     }
@@ -1722,7 +1727,9 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
         !volumeOverlayReady || !volumeSourceReady() ||
         !prepared.Valid() || !ownerReady() ||
         CurrentWorldCommitBlocked(engine, prepared.publicationVintage_, prepared.worldImage_) ||
-        (HasPredecessorDirectWorldPublication(engine) && !prepared.preservesContent_) ||
+        (HasPredecessorDirectWorldPublication(engine) &&
+         !(prepared.preservesContent_ &&
+           prepared.compiledWorld_.sourceBodyVintage == kCurrentWorldBodyVintageV20)) ||
         !SlotPlanMatchesLive(engine, prepared.slotPlan_) ||
         !CanApplyPreviewProperties(engine, prepared.slotPlan_,
             (prepared.publicationVintage_ == 3 || prepared.publicationVintage_ == 4)) ||

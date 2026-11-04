@@ -2838,6 +2838,98 @@ TEST(BusAdmissionStart, LiveBusProtectedStatesRejectPrepareAndConditionsAddedAft
     }
 }
 
+TEST(BusAdmissionStart, V20ContentPreservingPublicationRetainsDeferredDirectAction) {
+    for (const auto vintage : {3u, 4u}) {
+        for (const bool changeSignals : {false, true}) {
+            for (const bool afterPrepare : {false, true}) {
+                SCOPED_TRACE(vintage);
+                SCOPED_TRACE(changeSignals);
+                SCOPED_TRACE(afterPrepare);
+                AdmissionSession fixture;
+                auto& engine = *fixture.session.Engine();
+                SetAbsoluteTime(&fixture.image.playStep.delay, 1000000000);
+                fixture.image.action.directFeatureMask = 1;
+                fixture.image.action.transitiveFeatureMask = 1;
+                fixture.image.action.programSemanticFingerprint =
+                    harken::ComputeActionProgramFingerprintV1(fixture.image.action);
+                fixture.image.BindWorld();
+                fixture.image.world.sourceBodyVintage = harken::kCurrentWorldBodyVintageV20;
+                fixture.image.world.identity.runtimeSemanticFingerprint =
+                    harken::ComputeCurrentWorldFingerprintV7(fixture.image.world);
+                ASSERT_EQ(harken::WorldInstallStatus::Ok,
+                    harken::InstallContainerWorldV1(engine, fixture.image.world).status);
+                const auto generation = engine.variables.CurrentWorldGeneration();
+
+                harken::SignalRelationV1 signal{};
+                harken::SignalReceiverV1 receiver{};
+                if (changeSignals) {
+                    receiver.target.stableId = VN_BUS_MASTER;
+                    signal.stableId = harkentest::ObjectId(9103);
+                    signal.source.kind = harken::SignalEndpointKindV1::Sound;
+                    signal.source.stableId = kSound;
+                    signal.source.expectedPropertyFingerprint =
+                        fixture.image.properties[0].programSemanticFingerprint;
+                    signal.target = receiver.target;
+                    signal.sendGainDb = -6.0f;
+                    fixture.image.world.signalRelations = &signal;
+                    fixture.image.world.signalRelationCount = 1;
+                    fixture.image.world.signalReceivers = &receiver;
+                    fixture.image.world.signalReceiverCount = 1;
+                    fixture.image.world.identity.capabilityMask |= harken::kWorldCapabilitySignalRelations;
+                    fixture.image.world.identity.runtimeSemanticFingerprint =
+                        harken::ComputeCurrentWorldFingerprintV7(fixture.image.world);
+                }
+                EXPECT_EQ(!changeSignals, engine.variables.SemanticIdenticalWorld(fixture.image.world));
+                ASSERT_TRUE(engine.variables.SignalOnlyWorld(fixture.image.world));
+                LiveBusPublication publication(engine, fixture.image, vintage);
+                harken::PreparedProjectGenerationV1 prepared;
+                if (afterPrepare) {
+                    ASSERT_EQ(harken::ProjectGenerationPrepareStatusV1::Ok,
+                        harken::PrepareProjectGenerationV1(engine, publication.view, prepared).status);
+                }
+                IntroduceLiveBusProtection(engine, fixture.image, LiveBusProtection::DirectAction);
+                ASSERT_FALSE(HasFatalFailure());
+                harken::ActionDeferredRecordToken token{};
+                harken::ActionDeferredRecord before{};
+                harken::ActionDeferredRecordState beforeState{};
+                for (std::uint32_t slot = 0; slot < engine.actionDeferredRecords.Capacity(); ++slot) {
+                    if (engine.actionDeferredRecords.CapturePublicationAt(slot, &token, &before, &beforeState))
+                        break;
+                }
+                ASSERT_TRUE(token.Valid());
+                ASSERT_EQ(harken::ActionFiringOwnerKind::DirectWorld, before.owner.kind);
+                ASSERT_EQ(generation, before.owner.worldGeneration);
+                if (!afterPrepare) {
+                    ASSERT_EQ(harken::ProjectGenerationPrepareStatusV1::Ok,
+                        harken::PrepareProjectGenerationV1(engine, publication.view, prepared).status);
+                }
+                const auto committed = harken::CommitPreparedProjectGenerationV1(engine, prepared);
+                ASSERT_EQ(harken::ProjectGenerationCommitStatusV1::Ok, committed.status);
+                EXPECT_EQ(generation, committed.installedWorldGeneration);
+                EXPECT_EQ(generation, engine.variables.CurrentWorldGeneration());
+                EXPECT_EQ(fixture.image.world.identity.runtimeSemanticFingerprint,
+                    engine.variables.CurrentWorldInstallView().identity.runtimeSemanticFingerprint);
+                const auto block = engine.mixer.BlocksRendered();
+                engine.nullBackend.Pump(1);
+                ASSERT_GT(engine.mixer.BlocksRendered(), block);
+                ASSERT_EQ(VN_OK, Vn_Update());
+                harken::ActionDeferredRecordToken retainedToken{};
+                harken::ActionDeferredRecord retained{};
+                harken::ActionDeferredRecordState retainedState{};
+                ASSERT_TRUE(engine.actionDeferredRecords.CapturePublicationAt(
+                    token.slot, &retainedToken, &retained, &retainedState));
+                EXPECT_EQ(token.generation, retainedToken.generation);
+                EXPECT_EQ(beforeState, retainedState);
+                EXPECT_EQ(before.firing, retained.firing);
+                EXPECT_EQ(before.owner.worldGeneration, retained.owner.worldGeneration);
+                EXPECT_EQ(before.intendedBoundaryFrame, retained.intendedBoundaryFrame);
+                EXPECT_EQ(before.authoredExecutionFrame, retained.authoredExecutionFrame);
+                EXPECT_TRUE(harken::HasPredecessorDirectWorldPublication(engine));
+            }
+        }
+    }
+}
+
 TEST(BusAdmissionStart, ChangedWorldConsumerIntroducedAfterPrepareStillBlocksCommit) {
     AdmissionSession fixture;
     auto& engine = *fixture.session.Engine();
