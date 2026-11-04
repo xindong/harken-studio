@@ -64,7 +64,7 @@
 #include <QTimer>
 #include <QVariant>
 #include <QToolButton>
-#include <QToolTip>
+#include "Core/ToolTip.h"
 #include <QVBoxLayout>
 #include <QWheelEvent>
 
@@ -1135,7 +1135,7 @@ void TimelineEditorPanel::editCursorValue()
     endCursorDrag(true);
     if (cursorValueEditor_)
         cursorValueEditor_->reject();
-    QToolTip::hideText();
+    ToolTip::hideText();
     const int64_t initial = editCursor_;
     const QUuid owner = boundGuid_;
     auto* dialog = new QDialog(this, Qt::Popup);
@@ -1202,7 +1202,7 @@ void TimelineEditorPanel::showCursorContextMenu(const QPoint& position)
     endCursorDrag(true);
     if (cursorValueEditor_)
         cursorValueEditor_->reject();
-    QToolTip::hideText();
+    ToolTip::hideText();
     const QUuid owner = boundGuid_;
     auto* menu = new QMenu(this);
     menu->setObjectName(QStringLiteral("timelineCursorContextMenu"));

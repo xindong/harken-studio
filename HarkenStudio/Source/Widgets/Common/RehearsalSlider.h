@@ -37,6 +37,7 @@ private:
     void updateAnchorTooltip(QSlider* slider, QMouseEvent* event);
 
     QVector<VariableLabel> labels_;
+    int hoveredAnchor_ = -1;
     float lo_ = 0.0f;
     float hi_ = 0.0f;
 };

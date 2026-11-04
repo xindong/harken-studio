@@ -35,7 +35,7 @@
 #include <QStandardItemModel>
 #include <QStyle>
 #include <QToolButton>
-#include <QToolTip>
+#include "Core/ToolTip.h"
 #include <QVBoxLayout>
 #include <QValidator>
 
@@ -653,7 +653,7 @@ private:
         const QString error = elementError(row, field, v);
         if (!error.isEmpty()) {
             refreshRows();
-            QToolTip::showText(QCursor::pos(), error, this);
+            ToolTip::showText(QCursor::pos(), error, this);
             return;
         }
         selectRow(row);

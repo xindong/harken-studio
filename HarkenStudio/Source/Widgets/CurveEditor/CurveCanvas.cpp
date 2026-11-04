@@ -29,7 +29,7 @@
 #include <QSet>
 #include <QResizeEvent>
 #include <QShortcut>
-#include <QToolTip>
+#include "Core/ToolTip.h"
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -1000,7 +1000,7 @@ QDialog* CurveCanvas::createValueEditor()
     dragMoved_ = false;
     ghostActive_ = false;
     hoverActive_ = false;
-    QToolTip::hideText();
+    ToolTip::hideText();
     auto* dialog = new QDialog(this);
     dialog->setWindowFlags(Qt::Widget);
     valueEditor_ = dialog;
@@ -1919,7 +1919,7 @@ bool CurveCanvas::canPasteFromClipboard() const
 
 void CurveCanvas::showPointLimitToolTip(const QPoint& globalPos)
 {
-    QToolTip::showText(globalPos,
+    ToolTip::showText(globalPos,
                        tr("Curves carry at most %1 points").arg(kCurveMaxPoints),
                        this);
 }

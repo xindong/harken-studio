@@ -107,6 +107,8 @@ add_library(harken_editor_foundation STATIC
     ThemeManager.h
     QtControlSkin.cpp
     QtControlSkin.h
+    ToolTip.cpp
+    ToolTip.h
     HarkenStyle.cpp
     HarkenStyle.h
     WidgetAppearance.cpp

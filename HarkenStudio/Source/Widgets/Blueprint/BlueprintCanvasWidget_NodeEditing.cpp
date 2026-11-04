@@ -17,7 +17,7 @@
 #include <QGraphicsProxyWidget>
 #include <QScrollBar>
 #include <QTimer>
-#include <QToolTip>
+#include "Core/ToolTip.h"
 
 namespace VNX {
 
@@ -47,7 +47,7 @@ void BlueprintCanvasWidget::updateDetailLevel_()
     const auto next = scale < 0.4 ? BlueprintDetailLevel::Overview : BlueprintDetailLevel::Full;
     if (next == detailLevel_) return;
     detailLevel_ = next;
-    QToolTip::hideText();
+    ToolTip::hideText();
     applyDetailLevel_();
 }
 

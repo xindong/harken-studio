@@ -29,7 +29,7 @@
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QToolButton>
-#include <QToolTip>
+#include "Core/ToolTip.h"
 #include <QWheelEvent>
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -589,7 +589,7 @@ void SourceEditorWaveformView::editHandleValue(Handle handle, int fadeIndex)
         return;
     cancelGesture();
     selectedFade_ = fadeIndex;
-    QToolTip::hideText();
+    ToolTip::hideText();
     auto* dialog = new QDialog(this, Qt::Popup);
     valueEditor_ = dialog;
     dialog->setObjectName(fadeIndex >= 0 ? QStringLiteral("sourceFadeValueEditor")
@@ -691,7 +691,7 @@ bool SourceEditorWaveformView::eventFilter(QObject* watched, QEvent* event)
         hoveredHandle_ = Handle::None;
         hoveredFade_ = {};
         unsetCursor();
-        QToolTip::hideText();
+        ToolTip::hideText();
         update();
     }
     if (units_ && event->type() == QEvent::Wheel) {
@@ -742,7 +742,7 @@ void SourceEditorWaveformView::contextMenuEvent(QContextMenuEvent* event)
             plot.height());
     if (axis.contains(event->pos())) {
         cancelGesture();
-        QToolTip::hideText();
+        ToolTip::hideText();
         showAmplitudeCurveMenu(this, event->globalPos(), QRect(mapToGlobal(axis.topLeft()), axis.size()),
             amplitudeExponent_, [this](double exponent) { setAmplitudeExponent(exponent); });
         event->accept();
@@ -758,7 +758,7 @@ void SourceEditorWaveformView::contextMenuEvent(QContextMenuEvent* event)
         const Handle handle = hitTestHandle(event->pos());
         if (handle != Handle::None) {
             cancelGesture();
-            QToolTip::hideText();
+            ToolTip::hideText();
             auto* menu = new QMenu(this);
             menu->setObjectName(QStringLiteral("sourceTrimContextMenu"));
             menu->setAttribute(Qt::WA_DeleteOnClose);

@@ -9,7 +9,7 @@
 #include <QMenu>
 #include <QPainter>
 #include <QPainterPathStroker>
-#include <QToolTip>
+#include "Core/ToolTip.h"
 
 #include <algorithm>
 #include <cmath>
@@ -196,7 +196,7 @@ void SourceEditorWaveformView::beginFadeDrag(FadeHit target, const QPoint& posit
         }
         fadeDragT_ = std::clamp((lo + hi) * 0.5, 0.05, 0.95);
     }
-    QToolTip::hideText();
+    ToolTip::hideText();
     showHandleValue();
     update();
 }
@@ -285,7 +285,7 @@ void SourceEditorWaveformView::showFadeMenu(int index, const QPoint& position)
 {
     cancelGesture();
     selectedFade_ = index;
-    QToolTip::hideText();
+    ToolTip::hideText();
     auto* menu = new QMenu(this);
     menu->setObjectName(QStringLiteral("sourceFadeContextMenu"));
     menu->setAttribute(Qt::WA_DeleteOnClose);
