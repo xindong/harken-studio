@@ -748,6 +748,7 @@ TEST(TimelineVoiceInstall, BorrowedInputCopiesOnlyNativeFactsAndKeepsBindingSnap
             facts.pan = -0.25f;
             facts.spread = 0.4f;
             facts.sourceStartFrame = 11;
+            facts.sourcePhase = {UINT64_C(3) << 62, 0};
             facts.authoredDurationFrames = 4096;
             facts.target.programSemanticFingerprint = 101;
             facts.target.clipId = clipId;
@@ -803,6 +804,8 @@ TEST(TimelineVoiceInstall, BorrowedInputCopiesOnlyNativeFactsAndKeepsBindingSnap
             EXPECT_EQ(facts.target, arm->target);
             ASSERT_NE(nullptr, engine.voices.Resolve(render));
             EXPECT_EQ(4096u, engine.voices.Resolve(render)->authoredSourceDeadlineFrame);
+            EXPECT_EQ(facts.sourcePhase.high, engine.voices.Resolve(render)->resampler.phaseHigh);
+            EXPECT_DOUBLE_EQ(0.75, engine.voices.Resolve(render)->resampler.readFraction);
             EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
             std::fill(paths.begin(), paths.end(), harken::PlaybackPathRow{});
             sends = {};

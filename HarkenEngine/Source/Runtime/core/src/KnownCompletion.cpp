@@ -80,9 +80,9 @@ CompletionPredictability ResolveKnownCompletionDuration(
         return CompletionPredictability::Invalid;
     }
     if (facts.authoredDurationFrames != UINT64_MAX &&
-        JumpSourcePhase(step, {}, facts.authoredDurationFrames) < total) {
+        JumpSourcePhase(step, facts.sourcePhase, facts.authoredDurationFrames) < total) {
         total = facts.authoredDurationFrames;
-    } else if (!FixedSourceOutputFrames(total, ratio, &total)) {
+    } else if (!FixedSourceOutputFrames(total, ratio, &total, facts.sourcePhase)) {
         return CompletionPredictability::Invalid;
     }
     if (facts.authoredDurationFrames != UINT64_MAX) {

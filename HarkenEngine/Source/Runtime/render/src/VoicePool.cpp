@@ -306,7 +306,9 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
                          std::uint32_t expectedGeneration,
                          bool prepared, float outputBusVolumeDb,
                          float spatializationMix, bool prepareOwnedWeights,
-                         bool prepareTimelineCurves) {
+                         bool prepareTimelineCurves, ExactSourcePhase sourcePhase) {
+    if (resampleProfile != ResampleProfile::LegacyCompatibility &&
+        (sourcePhase.high != 0 || sourcePhase.low != 0)) return VN_INVALID_ARG;
     float linearGain = 0.0f;
     float outputLinearGain = 0.0f;
     if (!TryVolumeGainFromDb(volumeDb, &linearGain) ||
@@ -417,6 +419,13 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
                                 resampleProfile, m_multirateTables,
                                 resampleProfile == ResampleProfile::Professional44148
                                     ? &m_professionalStorage[slotIndex] : nullptr);
+    // Timeline crops use the same Linear source coordinates as uninterrupted
+    // playback. Its only neighbour is supplied by the normal PCM/loop feeder.
+    slot.render.resampler.phaseHigh = sourcePhase.high;
+    slot.render.resampler.phaseLow = sourcePhase.low;
+    slot.render.resampler.readFraction = SourcePhaseFraction(sourcePhase);
+    slot.render.resampler.readPos = static_cast<double>(kResampleHistoryPad) +
+        slot.render.resampler.readFraction;
 
     if (view.useCount != nullptr) {
         view.useCount->fetch_add(1, std::memory_order_relaxed);

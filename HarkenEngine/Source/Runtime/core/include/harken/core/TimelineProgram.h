@@ -1,6 +1,8 @@
 #ifndef HARKEN_CORE_TIMELINE_PROGRAM_H
 #define HARKEN_CORE_TIMELINE_PROGRAM_H
 
+#include "harken/core/SourcePhase.h"
+
 #include <harken/ObjectId.h>
 #include "harken/core/ProgramGenerationRegistry.h"
 #include "harken/core/AuthoredStopOperationIdentity.h"
@@ -197,6 +199,7 @@ struct TimelineVoiceInstallDesc {
     VnObjectId soundId{};
     VnObjectId outputBusId{};
     std::uint64_t sourceStartFrame = 0;
+    ExactSourcePhase sourcePhase{};
     std::uint64_t authoredDurationFrames = UINT64_MAX;
     float volumeDb = 0.0f;
     float outputBusVolumeDb = 0.0f;

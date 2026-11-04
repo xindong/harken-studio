@@ -4,6 +4,7 @@
 #include "harken/core/CompletionOwner.h"
 #include "harken/core/CompletionProgress.h"
 #include "harken/core/PlayableProgramKey.h"
+#include "harken/core/SourcePhase.h"
 
 #include <cstdint>
 
@@ -21,6 +22,7 @@ struct KnownCompletionFactsV1 {
     bool residentExactMedia = false;
     std::uint64_t pcmFrameCount = 0;
     std::uint64_t sourceStartFrame = 0;
+    ExactSourcePhase sourcePhase{};
     std::uint64_t loopStartFrame = 0;
     std::uint64_t loopEndFrame = 0;
     std::uint32_t loopCount = 0;

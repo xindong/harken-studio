@@ -153,7 +153,8 @@ public:
                   std::uint32_t expectedGeneration = 0,
                   bool prepared = false, float outputBusVolumeDb = 0.0f,
                   float spatializationMix = 1.0f, bool prepareOwnedWeights = true,
-                  bool prepareTimelineCurves = true);
+                  bool prepareTimelineCurves = true,
+                  ExactSourcePhase sourcePhase = {});
 
     // Claims a Render Voice slot for a streamed Logical Voice. The independent
     // stream slot is owned by StreamManager; the source decode stage feeds

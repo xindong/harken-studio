@@ -7455,6 +7455,9 @@ harken::EnginePlayableMemberRecord* RetainQueueProgramMemberAt(
 VnResult ValidateTimelineVoiceInstallInputShape(
     const harken::TimelineVoiceInstallInput& input) noexcept {
     if (input.facts == nullptr) return VN_INVALID_ARG;
+    if (input.facts->streamed &&
+        (input.facts->sourcePhase.high != 0 || input.facts->sourcePhase.low != 0))
+        return VN_INVALID_ARG;
     if (input.bindings.size() > harken::kMaxVoiceBindingInstanceSlots ||
         input.pathRows.size() > harken::kPlaybackPathRowCapacity ||
         input.sends.size() > harken::kTimelineMaxVoiceSends ||
@@ -7489,6 +7492,7 @@ Destination CopyTimelineVoiceInstallFacts(const Source& source) noexcept {
     facts.soundId = source.soundId;
     facts.outputBusId = source.outputBusId;
     facts.sourceStartFrame = source.sourceStartFrame;
+    facts.sourcePhase = source.sourcePhase;
     facts.authoredDurationFrames = source.authoredDurationFrames;
     facts.volumeDb = source.volumeDb;
     facts.outputBusVolumeDb = source.outputBusVolumeDb;
@@ -7706,6 +7710,7 @@ harken::KnownCompletionFactsV1 CompletionFactsForVoice(
     facts.residentExactMedia = !source.streamed && adopted.Valid();
     facts.pcmFrameCount = adopted.frames;
     facts.sourceStartFrame = source.sourceStartFrame;
+    facts.sourcePhase = source.sourcePhase;
     facts.loopStartFrame = adopted.loop.startFrame;
     facts.loopEndFrame = adopted.LoopEndFrame();
     facts.loopCount = source.loopCount;
@@ -8143,7 +8148,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
             harken::ResampleProfile::LegacyCompatibility, &render,
             bus.generation, ~std::uint32_t{0}, 0, true,
             install.outputBusVolumeDb, install.spatializationMix,
-            !ordinarySound, !ordinarySound || resourceService != nullptr);
+            !ordinarySound, !ordinarySound || resourceService != nullptr, install.sourcePhase);
     }
     if (play != VN_OK) {
         if (render != 0) {
@@ -78151,6 +78156,7 @@ VnResult ResolveStopLeafSilence(
         const auto& voice = *install.Input().facts;
         advance.sourceIntegerFrame = voice.sourceStartFrame;
         advance.sourceStartFrame = voice.sourceStartFrame;
+        advance.sourcePhase = voice.sourcePhase;
         advance.pcmFrameCount = media.frames;
         advance.loopStartFrame = media.loop.startFrame;
         advance.loopEndFrame = media.LoopEndFrame();

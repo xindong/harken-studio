@@ -10,6 +10,7 @@
 #include "VoicePoolReleaseTestAccess.h"
 #include "harken/core/CommandQueue.h"
 #include "harken/core/CpuClock.h"
+#include "harken/core/ResamplerAdvance.h"
 #include "harken/render/BuiltinEffects.h"
 #include "harken/render/VoicePool.h"
 
@@ -31,6 +32,72 @@ using harkentest::MonoDesc;
 
 constexpr std::uint32_t kBlockFrames = 256;
 constexpr std::uint32_t kSampleRate = 48000;
+
+TEST(VoicePool, CroppedResidentStartMatchesUninterruptedSamplesAndRemainingLoops) {
+    for (const auto workers : {0u, 2u}) {
+        auto config = harkentest::MakeNullConfig(2, 64, kSampleRate);
+        config.maxTriggerDepth = 2;
+        config.renderWorkerCount = workers;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        std::array<float, 257> samples{};
+        for (std::size_t i = 0; i < samples.size(); ++i)
+            samples[i] = 0.1f + static_cast<float>((i * 17) % 53) / 200.0f;
+        harken::PCMView pcm{};
+        pcm.channels[0] = samples.data();
+        pcm.channelCount = 1;
+        pcm.stride = 1;
+        pcm.frames = samples.size();
+        constexpr std::uint64_t loopStart = 31, loopEnd = 113;
+        for (const auto rate : {44100u, 48000u}) {
+            pcm.sampleRate = rate;
+            for (const float pitch : {0.015625f, 0.75f, 1.137f, 64.0f}) {
+                const double ratio = static_cast<double>(pitch) *
+                    (static_cast<double>(rate) / kSampleRate);
+                SCOPED_TRACE(::testing::Message() << workers << '/' << rate << '/' << pitch);
+                std::uint64_t total = 0;
+                ASSERT_TRUE(harken::FixedSourceOutputFrames(
+                    pcm.frames + 2 * (loopEnd - loopStart), ratio, &total));
+                const auto capture = [&](std::uint64_t start, std::uint32_t loops,
+                        harken::ExactSourcePhase phase, std::uint64_t duration,
+                        harkentest::Capture& output) {
+                    VnVoiceHandle handle = 0;
+                    ASSERT_EQ(VN_OK, engine.voices.Play(pcm, 0.0f, pitch, 0, false,
+                        0, 0, 0, harken::ResolvePanGains(config.mixChannelLayout, 0.0f),
+                        loopStart, loopEnd, loops, harken::ResampleProfile::LegacyCompatibility,
+                        &handle, 1, UINT32_MAX, 0, false, 0.0f, 1.0f, true, true, phase));
+                    engine.voices.ApplyPlay(handle, handle, start, engine.mixer.BlocksRendered());
+                    harkentest::PumpAndCapture(&engine,
+                        static_cast<std::uint32_t>((duration + 63) / 64 + 1), output);
+                    EXPECT_EQ(nullptr, engine.voices.Resolve(handle));
+                };
+                harkentest::Capture full;
+                ASSERT_NO_FATAL_FAILURE(capture(0, 3, {}, total, full));
+                // Include an interior crop, a loop crossing, and the last output.
+                for (const auto skip : {total / 5, total / 2, total - 1}) {
+                    harken::SourcePhaseStep step{};
+                    ASSERT_TRUE(harken::DecodeSourcePhaseStep(ratio, &step));
+                    harken::ExactSourcePhase phase{};
+                    std::uint64_t consumed = 0, start = 0;
+                    std::uint32_t loops = 0;
+                    ASSERT_TRUE(harken::TryJumpSourcePhase(step, {}, skip, &consumed, &phase));
+                    harken::MapLoopedSourceFrame(0, 3, consumed, pcm.frames,
+                        loopStart, loopEnd, &start, &loops);
+                    harkentest::Capture cropped;
+                    ASSERT_NO_FATAL_FAILURE(capture(start, loops, phase, total - skip, cropped));
+                    for (std::uint64_t i = 0; i < total - skip; ++i) {
+                        ASSERT_NEAR(full.left[skip + i], cropped.left[i], 2e-7f)
+                            << "skip=" << skip << " frame=" << i;
+                        ASSERT_NEAR(full.right[skip + i], cropped.right[i], 2e-7f);
+                    }
+                    for (auto i = total - skip; i < cropped.left.size(); ++i)
+                        ASSERT_EQ(0.0f, cropped.left[i]);
+                }
+            }
+        }
+    }
+}
 
 VnConfig VoicePoolConfig(std::uint32_t maxVoices = 0,
                          std::uint32_t blockFrames = 0,
