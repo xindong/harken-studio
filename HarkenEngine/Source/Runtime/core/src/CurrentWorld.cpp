@@ -2949,7 +2949,7 @@ template <class WorldView>
 WorldInstallStatus ValidateCurrentWorldImpl(
     const WorldView& world,
     std::uint32_t replayVintage,
-    ValidationScope scope, bool readableOnly = false) {
+    ValidationScope scope) {
     const bool replayVintageTwo = replayVintage == 2;
     const bool replayVintageThree = replayVintage == 3;
     const bool replayVintageFour = replayVintage == 4;
@@ -4378,8 +4378,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
         : replayVintageThree ? kWorldCapabilityUnit4Mask
                              : kWorldCapabilityUnit1ActionMask;
     supportedMask |= kWorldCapabilitySignalRelations;
-    if (readableOnly)
-        supportedMask |= kWorldCapabilityEntryScheduling;
+    supportedMask |= kWorldCapabilityEntryScheduling;
     if ((requiredMask & ~supportedMask) != 0) {
         return WorldInstallStatus::CapabilityUnavailable;
     }
@@ -4467,7 +4466,7 @@ WorldInstallStatus detail::ValidateCurrentWorldPartitionLocalV1(
         if (!ValidateCurrentWorldSectionGroupsV1(world))
             return WorldInstallStatus::InvalidWorld;
         return ValidateCurrentWorldImpl(
-            world, world.sourceBodyVintage, ValidationScope::PartitionLocal, true);
+            world, world.sourceBodyVintage, ValidationScope::PartitionLocal);
     } catch (...) {
         return WorldInstallStatus::Capacity;
     }

@@ -57,6 +57,12 @@ MusicTimelineStatus MusicPlaybackFrame(const MusicPlaybackTimeline& timeline,
     const ClockKernel& clock, std::int64_t position, std::uint64_t iteration,
     std::uint64_t* elapsedFrames) noexcept;
 
+// A clipped source may begin before the occurrence's playback origin. Measure
+// both native endpoints on the same unfolded pass before subtracting frames.
+MusicTimelineStatus MusicPlaybackFrameDistance(const MusicPlaybackTimeline& timeline,
+    const ClockKernel& clock, std::int64_t from, std::int64_t to,
+    std::uint64_t iteration, std::uint64_t* frames) noexcept;
+
 } // namespace harken
 
 #endif

@@ -107,7 +107,7 @@ TEST(CurrentWorldSignal, OldBodiesCannotSilentlyDiscardSignalTablesOrEnableMusic
     empty.sourceBodyVintage = 19;
     empty.identity.capabilityMask = kWorldCapabilityEntryScheduling;
     empty.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV6(empty);
-    EXPECT_EQ(ValidateCurrentWorldV1(empty), WorldInstallStatus::CapabilityUnavailable);
+    EXPECT_EQ(ValidateCurrentWorldV1(empty), WorldInstallStatus::Ok);
     ASSERT_TRUE(EncodeCurrentWorldBodyV19(empty, bytes));
     ASSERT_TRUE(image.Decode(bytes.data(), bytes.size(), 19, CurrentWorldDecodeMode::StrictArtifact));
     EXPECT_EQ(image.ProductionView()->signalReceiverCount, 0u);

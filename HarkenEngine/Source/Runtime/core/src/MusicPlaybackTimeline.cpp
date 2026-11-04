@@ -289,4 +289,23 @@ MusicBoundaryResult ResolveMusicPlaybackBoundary(const MusicPlaybackTimeline& ti
     return result;
 }
 
+MusicTimelineStatus MusicPlaybackFrameDistance(const MusicPlaybackTimeline& timeline,
+    const ClockKernel& clock, std::int64_t from, std::int64_t to,
+    std::uint64_t iteration, std::uint64_t* frames) noexcept {
+    if (frames == nullptr || to < from) return MusicTimelineStatus::Invalid;
+    const Mapping mapping{timeline, clock};
+    if (mapping.status != MusicTimelineStatus::Ok) return mapping.status;
+    const auto room = static_cast<std::uint64_t>(kMax) - static_cast<std::uint64_t>(to);
+    if (iteration > room / static_cast<std::uint64_t>(mapping.span))
+        return MusicTimelineStatus::Unrepresentable;
+    const auto offset = iteration * static_cast<std::uint64_t>(mapping.span);
+    if (!AddUnsigned(from, offset, from) || !AddUnsigned(to, offset, to))
+        return MusicTimelineStatus::Unrepresentable;
+    const auto begin = mapping.Convert(from), end = mapping.Convert(to);
+    if (begin == kMin || begin == kMax || end == kMin || end == kMax)
+        return MusicTimelineStatus::Unrepresentable;
+    *frames = static_cast<std::uint64_t>(end) - static_cast<std::uint64_t>(begin);
+    return MusicTimelineStatus::Ok;
+}
+
 } // namespace harken

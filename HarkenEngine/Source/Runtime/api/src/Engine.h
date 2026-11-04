@@ -37,6 +37,7 @@
 #include "harken/core/LogRing.h"
 #include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/KnownCompletion.h"
+#include "harken/core/MusicPlaybackTimeline.h"
 #include "harken/core/Random.h"
 #include "harken/core/SnapshotBuffer.h"
 #include "harken/core/SourceCursorMirror.h"
@@ -2052,6 +2053,8 @@ struct EngineScheduleAggregateChild {
     std::uint64_t startOffsetFrames = 0;
     std::uint64_t endOffsetFrames = UINT64_MAX;
     std::uint32_t stableLeafOrdinal = 0;
+    std::uint32_t loopIteration = 0;
+    std::uint64_t sourceOffsetFrames = 0;
     EnginePlayableServiceReference service{};
     EngineScheduleChildPropertyContext properties;
     EngineNaturalClipDeadline naturalClipDeadline{};
@@ -2063,9 +2066,31 @@ struct EngineScheduleAggregateChild {
     bool pendingEntry = false;
 };
 
+struct EngineMusicScheduleBatch {
+    // These records never move after a preparation owner borrows one.
+    std::vector<EngineScheduleAggregateChild> children;
+    std::uint64_t iteration = 0;
+};
+
+struct EngineMusicScheduleState {
+    MusicPlaybackTimeline timeline{};
+    TempoSegment tempo{};
+    ClockKernel clock;
+    MarkerIndex markers;
+    EngineScheduleChildPropertyContext prefix;
+    std::vector<std::unique_ptr<EngineMusicScheduleBatch>> batches;
+    std::uint64_t sourceOffsetFrames = 0;
+    std::uint64_t nextIteration = 1;
+    std::uint64_t nextPassOffsetFrames = 0;
+    std::uint64_t finalEndOffsetFrames = UINT64_MAX;
+    std::uint64_t inheritedEndOffsetFrames = UINT64_MAX;
+    bool finalPassMaterialized = false;
+};
+
 struct EngineScheduleAggregateState {
     // Prepared to the real clip count; membership is immutable after publication.
     std::vector<EngineScheduleAggregateChild> children;
+    std::unique_ptr<EngineMusicScheduleState> music;
     std::uint64_t zeroWorkCompletionOffsetFrames = 0;
     bool hasZeroWorkCompletion = false;
     std::uint64_t completionOrdinal = 0;
@@ -2074,11 +2099,28 @@ struct EngineScheduleAggregateState {
     bool parentNotified = false;
     bool cancellationRequested = false;
 
+    template<class Visitor>
+    bool VisitChildren(Visitor&& visitor) {
+        for (auto& child : children) if (!visitor(child)) return false;
+        if (music != nullptr)
+            for (auto& batch : music->batches)
+                for (auto& child : batch->children) if (!visitor(child)) return false;
+        return true;
+    }
+
+    template<class Visitor>
+    bool VisitChildren(Visitor&& visitor) const {
+        for (const auto& child : children) if (!visitor(child)) return false;
+        if (music != nullptr)
+            for (const auto& batch : music->batches)
+                for (const auto& child : batch->children) if (!visitor(child)) return false;
+        return true;
+    }
+
     bool ChildrenReleased() const noexcept {
-        return std::all_of(children.begin(), children.end(),
-            [](const auto& child) noexcept {
-                return child.resourcesReleased && child.naturalClipDeadline.Empty();
-            });
+        return VisitChildren([](const auto& child) noexcept {
+            return child.resourcesReleased && child.naturalClipDeadline.Empty();
+        });
     }
 };
 
