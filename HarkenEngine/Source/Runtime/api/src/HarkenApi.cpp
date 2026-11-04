@@ -23462,7 +23462,8 @@ bool CancelPreparedVariableControlInitial(
     }
     if (scratch->variableControlTreeTokensAdopted ||
         scratch->variableControlOuterTreeTokensAdopted ||
-        ((scratch->variableControlParentInstance == 0 || scratch->variableControlExternalRootOwned) && scratch->instance.Valid())) {
+        ((scratch->variableControlParentInstance == 0 || scratch->variableControlExternalRootOwned) &&
+         (scratch->storage.schedulePreparedRoot != nullptr ? scratch->storage.schedulePreparedRoot->Valid() : scratch->instance.Valid()))) {
         const bool treeCancelled = scratch->playableTreeExecutor.Cancel(engine.playableInstances);
         ok = treeCancelled && ok;
         if (treeCancelled) {
@@ -24275,6 +24276,8 @@ struct ScheduleContainerInitialContext {
     harken::EngineScheduleAggregateChild* child = nullptr;
     std::uint32_t parentChildOrdinal = 0;
     std::uint64_t sourceOffsetFrames = 0;
+    harken::PreparedPlayableInstance* preparedRoot = nullptr;
+    std::uint8_t* preparedRootOwnedFlag = nullptr;
 };
 
 template <typename WorldView>
@@ -24478,11 +24481,12 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
             [&](const auto& selected) { return isNestedContainer(selected.childStableOrdinal); }));
     const bool croppedNativeChildren = schedule != nullptr && schedule->sourceOffsetFrames != 0 &&
         schedulePreparation != nullptr && !pendingImmediateLane;
-    const auto nativeOrdinaryPathSupported = [&](auto&& self,
+    const auto nativeContainerPathSupported = [&](auto&& self,
         const harken::PlayableRefV1& ref, std::uint32_t depth) noexcept -> bool {
         const auto* nested = FindVariableControlNestedContainer(world, ref);
-        if (depth >= harken::kSelectionPathNodeCapacity || nested == nullptr ||
-            (nested->mode != harken::ContainerModeV1::Random && nested->mode != harken::ContainerModeV1::Sequence) ||
+        if (depth >= harken::kSelectionPathNodeCapacity || nested == nullptr) return false;
+        if (nested->mode == harken::ContainerModeV1::VariableControl) return true;
+        if ((nested->mode != harken::ContainerModeV1::Random && nested->mode != harken::ContainerModeV1::Sequence) ||
             ReadPlayableLoopCount(world, nested->containerStableId) != 1) return false;
         for (std::uint32_t index = 0; index < nested->childCount; ++index) {
             const auto& child = nested->children[index].playable;
@@ -24491,9 +24495,9 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         return true;
     };
     const auto nativeContainerSupported = [&](const harken::PlayableRefV1& ref) noexcept {
-        // Preserve the existing Queue/VC frontier path until its native root
-        // transaction supports the same prepared-parent ownership contract.
-        return nativeOrdinaryPathSupported(nativeOrdinaryPathSupported, ref, 0);
+        // Queue paths retain their existing zero-offset frontier transaction
+        // until clip-local positioning can preserve its current/retiring owners.
+        return nativeContainerPathSupported(nativeContainerPathSupported, ref, 0);
     };
     if (haveDiscrete) {
         const auto* selected =
@@ -24838,44 +24842,50 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
     }
 
     const bool executorOwnsRoot = (scratch->variableControlParentInstance == 0 || scratch->variableControlExternalRootOwned);
+    auto* borrowedRoot = schedule == nullptr ? nullptr : schedule->preparedRoot;
+    auto& preparedRoot = borrowedRoot != nullptr ? *borrowedRoot : scratch->instance;
+    const auto parentInstance = scratch->variableControlNested ? scratch->variableControlParentInstance :
+        schedule != nullptr ? schedule->parent->ownerInstance : scratch->variableControlParentInstance;
+    if (borrowedRoot != nullptr && (!executorOwnsRoot || schedule->preparedRootOwnedFlag == nullptr ||
+            *schedule->preparedRootOwnedFlag != 0 || !preparedRoot.Valid() ||
+            preparedRoot.Parent() != parentInstance || !engine.playableInstances.IsPrepared(preparedRoot.Handle()))) {
+        result.status = harken::PlayableStartStatus::InvalidInput;
+        return result;
+    }
+
     const auto cancelPreparedRoot = [&]() noexcept {
         if (scratch->variableControlControllerRow.Valid() &&
             !engine.containerPlayback.Cancel(&scratch->variableControlControllerRow)) return false;
-        if (executorOwnsRoot) {
-            return scratch->playableTreeExecutor.Cancel(
-                engine.playableInstances);
-        }
-        return engine.playableInstances.CancelPrepared(&scratch->instance);
+        if (executorOwnsRoot) return scratch->playableTreeExecutor.Cancel(engine.playableInstances);
+        return engine.playableInstances.CancelPrepared(&preparedRoot);
     };
-    if (!engine.playableInstances.PrepareAcquire(
-            harken::PlayableKind::Container,
-            scratch->variableControlNested ? scratch->variableControlParentInstance :
-                schedule != nullptr ? schedule->parent->ownerInstance : scratch->variableControlParentInstance,
-            &scratch->instance, request.playbackRequest, request.emitterOrigin) ||
-        (executorOwnsRoot &&
-         (!scratch->playableTreeExecutor.AdoptPreparedInstance(
-              engine.playableInstances, &scratch->instance) ||
-          !scratch->playableTreeExecutor.SetPreparedRootMetadata(
-              engine.playableInstances, rootMetadata))) ||
-        (!executorOwnsRoot &&
-         !engine.playableInstances.SetPreparedRootMetadata(
-             scratch->instance, rootMetadata))) {
-        if (scratch->instance.Valid()) {
-            if (executorOwnsRoot) {
-                (void)scratch->playableTreeExecutor.Cancel(
-                    engine.playableInstances);
-            } else {
-                (void)engine.playableInstances.CancelPrepared(
-                    &scratch->instance);
-            }
-        }
+    if (borrowedRoot == nullptr && !engine.playableInstances.PrepareAcquire(
+            harken::PlayableKind::Container, parentInstance, &preparedRoot,
+            request.playbackRequest, request.emitterOrigin)) {
         result.status = harken::PlayableStartStatus::Capacity;
         return result;
     }
-    ObservePreparedContent(engine, scratch->instance, MonitorContentFor(world, request.root));
-    const harken::PlayableInstanceHandle instance = scratch->instance.Handle();
+    if (executorOwnsRoot) {
+        if (!scratch->playableTreeExecutor.AdoptPreparedInstance(engine.playableInstances, &preparedRoot)) {
+            if (borrowedRoot == nullptr) (void)engine.playableInstances.CancelPrepared(&preparedRoot);
+            result.status = harken::PlayableStartStatus::Capacity;
+            return result;
+        }
+        if (borrowedRoot != nullptr) {
+            scratch->storage.schedulePreparedRoot = borrowedRoot;
+            *schedule->preparedRootOwnedFlag = 1;
+        }
+    }
+    if (!(executorOwnsRoot ? scratch->playableTreeExecutor.SetPreparedRootMetadata(engine.playableInstances, rootMetadata)
+                         : engine.playableInstances.SetPreparedRootMetadata(preparedRoot, rootMetadata))) {
+        (void)cancelPreparedRoot();
+        result.status = harken::PlayableStartStatus::Capacity;
+        return result;
+    }
+    ObservePreparedContent(engine, preparedRoot, MonitorContentFor(world, request.root));
+    const harken::PlayableInstanceHandle instance = preparedRoot.Handle();
     if (!engine.containerPlayback.Prepare(engine.playableInstances,
-            instance, scratch->instance.ScheduleEpoch(), program.containerStableId,
+            instance, preparedRoot.ScheduleEpoch(), program.containerStableId,
             program.programSemanticFingerprint, static_cast<std::uint8_t>(program.mode),
             1u, &scratch->variableControlControllerRow)) {
         (void)cancelPreparedRoot();
@@ -24888,7 +24898,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         return result;
     }
     auto* serviceParent = schedule == nullptr ? continuationParent : schedule->parent;
-    if (!PreparePlayableServiceRow(engine, row, instance, scratch->instance.ScheduleEpoch(),
+    if (!PreparePlayableServiceRow(engine, row, instance, preparedRoot.ScheduleEpoch(),
             serviceParent == nullptr ? nullptr : &serviceParent->Invocation(),
             &scratch->variableControlOwnerContext, &scratch->storage, serviceParent)) {
         (void)cancelPreparedRoot();
@@ -25025,7 +25035,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
                 if (ordinal == node.occurrenceOrdinal) { tokenIndex = childIndex; break; }
             }
             node.parent = instance;
-            node.parentEpoch = scratch->instance.ScheduleEpoch();
+            node.parentEpoch = preparedRoot.ScheduleEpoch();
         } else {
             if (node.parentIndex >= policyIndex) {
                 (void)CancelPreparedVariableControlInitial(engine, scratch);
@@ -25537,7 +25547,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         discreteSidePresent && !haveDiscrete;
     row.runtimeProgram = {};
     row.schedule.ownerInstance = instance;
-    row.schedule.ownerInstanceScheduleEpoch = scratch->instance.ScheduleEpoch();
+    row.schedule.ownerInstanceScheduleEpoch = preparedRoot.ScheduleEpoch();
     row.schedule.transactionId = provisionalTicket;
     row.schedule.entryAnchorFrame = startFrame;
     row.schedule.events = nullptr;
@@ -25644,7 +25654,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         return result;
     }
     row.variableControlInstance = scratch->variableControlInstance.Token();
-    row.variableControlAcceptedEpoch = scratch->instance.ScheduleEpoch();
+    row.variableControlAcceptedEpoch = preparedRoot.ScheduleEpoch();
     scratch->continuationTransportEpoch = engine.timelinePool.Epoch();
     const auto prepareDecision = [&](
         harken::PreparedDecisionReservation* preparedDecision,
@@ -25654,7 +25664,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         decision.world = row.Invocation().worldGeneration;
         decision.transport = scratch->continuationTransportEpoch;
         decision.expectedContinuationGeneration =
-            scratch->instance.ScheduleEpoch();
+            preparedRoot.ScheduleEpoch();
         decision.sliceCount = 1;
         if (!engine.PrepareOriginalDecisionReservation(decision, preparedDecision)) {
             return false;
@@ -25750,7 +25760,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         PreparedVariableControlLeafBinding binding{};
         auto* resource = ResolvePreparedResourceService(engine, row,
             row.variableControlLeafInstances[index], scratch->variableControlChildren,
-            scratch->variableControlLeafChildren, std::array{scratch->instance});
+            scratch->variableControlLeafChildren, std::array{preparedRoot});
         if (resource == nullptr || !ResolveVariableControlLeafBinding(engine, scratch->storage.frontierPolicies,
                 scratch->frontierPolicyCount, leaf.frontierPolicyIndex, startFrame, &binding, preparingBindingPack)) {
             (void)CancelPreparedVariableControlInitial(engine, scratch);
@@ -25881,7 +25891,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         const std::size_t logicalSlot = base + logicalOffset;
         auto* resourceService = ResolvePreparedResourceService(engine, row, childInstance,
             scratch->variableControlChildren, scratch->variableControlLeafChildren,
-            std::array{scratch->instance});
+            std::array{preparedRoot});
         std::size_t slot = 0;
         if (resourceService == nullptr || !PreparePlayableMemberStorage(engine, *resourceService,
                 logicalSlot, childInstance, row.variableControlLeafEpochs[installedCount], &slot)) break;
@@ -26098,7 +26108,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
     if (executorOwnsRoot || executorOwnsNestedTree) {
         if (executorOwnsNestedTree &&
             !scratch->playableTreeExecutor.AdoptPreparedInstanceReservation(
-                &scratch->instance)) {
+                &preparedRoot)) {
             (void)scratch->playableTreeExecutor.Cancel(
                 engine.playableInstances);
             (void)CancelPreparedVariableControlInitial(engine, scratch);
@@ -26467,7 +26477,8 @@ bool PrepareInitialVariableControlOwners(harken::Engine& engine,
     // is allowed. This keeps a stale tail from publishing a partial subtree;
     // the common cancellation path can then unwind all remaining reservations.
     const auto allPrepared = [&]() noexcept {
-        if (!scratch->instance.Valid() ||
+        if (!(scratch->storage.schedulePreparedRoot != nullptr ? scratch->storage.schedulePreparedRoot->Valid()
+                                                             : scratch->instance.Valid()) ||
             !scratch->variableControlControllerRow.Valid() ||
             !scratch->variableControlInstance.Valid()) {
             return false;
@@ -26848,11 +26859,13 @@ bool ProveInitialVariableControlInstanceCommit(harken::Engine& engine,
 
 bool ProveInitialVariableControlContainerCommits(harken::Engine& engine,
     harken::EngineActionPlayScratch& scratch) noexcept {
+    const auto& preparedRoot = scratch.storage.schedulePreparedRoot != nullptr
+        ? *scratch.storage.schedulePreparedRoot : scratch.instance;
     const auto& original = scratch.variableControlControllerRow;
     if (!scratch.variableControlTreeTokensAdopted ||
         original.InstanceOwner() != &engine.playableInstances ||
-        original.Instance() != scratch.instance.Handle() ||
-        original.ExpectedScheduleEpoch() != scratch.instance.ScheduleEpoch() ||
+        original.Instance() != preparedRoot.Handle() ||
+        original.ExpectedScheduleEpoch() != preparedRoot.ScheduleEpoch() ||
         !scratch.playableTreeExecutor.ProveContainerCommits(&engine.containerPlayback, &original)) {
         ReleasePreparedTimelineVoiceProofs(scratch);
         return false;
@@ -26862,14 +26875,16 @@ bool ProveInitialVariableControlContainerCommits(harken::Engine& engine,
 
 bool ProveInitialVariableControlPlayableInstanceCommits(harken::Engine& engine,
     harken::EngineActionPlayScratch& scratch) noexcept {
+    const auto& preparedRoot = scratch.storage.schedulePreparedRoot != nullptr
+        ? *scratch.storage.schedulePreparedRoot : scratch.instance;
     // A root VC uses an external reservation. Nested VC trees adopt their
     // inner root and complete outer path into the executor itself.
     const auto* externalRoot = (scratch.variableControlParentInstance == 0 || scratch.variableControlExternalRootOwned)
-        ? &scratch.instance : nullptr;
-    if (!scratch.variableControlTreeTokensAdopted || !scratch.instance.Valid() ||
+        ? &preparedRoot : nullptr;
+    if (!scratch.variableControlTreeTokensAdopted || !preparedRoot.Valid() ||
         scratch.variableControlControllerRow.InstanceOwner() != &engine.playableInstances ||
-        scratch.variableControlControllerRow.Instance() != scratch.instance.Handle() ||
-        scratch.variableControlControllerRow.ExpectedScheduleEpoch() != scratch.instance.ScheduleEpoch() ||
+        scratch.variableControlControllerRow.Instance() != preparedRoot.Handle() ||
+        scratch.variableControlControllerRow.ExpectedScheduleEpoch() != preparedRoot.ScheduleEpoch() ||
         !scratch.playableTreeExecutor.ProveInstanceCommits(externalRoot == nullptr ? nullptr : &engine.playableInstances, externalRoot) ||
         !scratch.playableTreeExecutor.ProveParentLinks(engine.playableInstances, externalRoot)) {
         ReleasePreparedTimelineVoiceProofs(scratch);
@@ -87937,6 +87952,8 @@ struct ScheduleContainerPreparationOperations {
             context.prefixOrdinals, context.prefixTrackIds, context.startFrame, context.endFrame, context.scheduleChild};
         schedule.parentChildOrdinal = context.parentChildOrdinal;
         schedule.sourceOffsetFrames = context.sourceOffsetFrames;
+        schedule.preparedRoot = context.preparedScheduleRoot;
+        schedule.preparedRootOwnedFlag = context.preparedScheduleRootOwnedFlag;
         if (&targetEngine != &engine || !HasPreparationAuthority(scratch) || pending ||
             scratch == nullptr || !context.originalReadFrame.has_value() ||
             order.frame != *context.originalReadFrame) {
@@ -87964,6 +87981,8 @@ struct ScheduleContainerPreparationOperations {
             context.prefixOrdinals, context.prefixTrackIds, context.startFrame, context.endFrame, context.scheduleChild};
         schedule.parentChildOrdinal = context.parentChildOrdinal;
         schedule.sourceOffsetFrames = context.sourceOffsetFrames;
+        schedule.preparedRoot = context.preparedScheduleRoot;
+        schedule.preparedRootOwnedFlag = context.preparedScheduleRootOwnedFlag;
         if (&targetEngine != &engine || !HasPreparationAuthority(scratch) || pending ||
             scratch == nullptr || !context.originalReadFrame.has_value() ||
             order.frame != *context.originalReadFrame) {
@@ -97217,11 +97236,13 @@ bool PrepareInitialAttemptProducer(harken::Engine& engine,
             // Tree-only Queue factories use the complete native VC tree.
             // They do not acquire the two-side Source-specific VC proof.
             const auto& container = scratch->variableControlControllerRow;
+            const auto& preparedRoot = scratch->storage.schedulePreparedRoot != nullptr
+                ? *scratch->storage.schedulePreparedRoot : scratch->instance;
             const auto* externalRoot = (scratch->variableControlParentInstance == 0 || scratch->variableControlExternalRootOwned)
-                ? &scratch->instance : nullptr;
-            if (!scratch->instance.Valid() || container.InstanceOwner() != &engine.playableInstances ||
-                container.Instance() != scratch->instance.Handle() ||
-                container.ExpectedScheduleEpoch() != scratch->instance.ScheduleEpoch() ||
+                ? &preparedRoot : nullptr;
+            if (!preparedRoot.Valid() || container.InstanceOwner() != &engine.playableInstances ||
+                container.Instance() != preparedRoot.Handle() ||
+                container.ExpectedScheduleEpoch() != preparedRoot.ScheduleEpoch() ||
                 !scratch->playableTreeExecutor.ProveContainerCommits(&engine.containerPlayback, &container) ||
                 !scratch->playableTreeExecutor.ProveInstanceCommits(
                     externalRoot == nullptr ? nullptr : &engine.playableInstances, externalRoot) ||

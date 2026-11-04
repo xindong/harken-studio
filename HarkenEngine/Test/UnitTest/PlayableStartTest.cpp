@@ -17838,7 +17838,7 @@ TEST(PlayableStart, MusicSegmentNestedCountsRespectSourceAgeAndParentClip) {
 }
 
 TEST(PlayableStart, MusicSegmentCropsVariableControlSelectedSourcesAndPreservesWeights) {
-    for (const auto ordinaryMode : {0u, 1u, 2u, 3u})
+    for (const auto ordinaryMode : {0u, 1u, 2u, 3u, 4u, 5u})
     for (const auto selectedKind : {0u, 1u, 2u})
     for (const auto stopDuringBody : {false, true})
     for (const auto mediaFrames : {200u, 1600u})
@@ -17859,6 +17859,7 @@ TEST(PlayableStart, MusicSegmentCropsVariableControlSelectedSourcesAndPreservesW
         std::vector<float> samples(mediaFrames, 0.2f);
         std::fill_n(samples.begin(), std::min(mediaFrames, 400u), 0.1f);
         if (mediaFrames > 1200) std::fill(samples.begin() + 1200, samples.end(), 0.3f);
+        if (ordinaryMode == 5) for (auto& sample : samples) sample *= 0.5f;
         const auto pcm = harkentest::MonoDesc(samples, 48000);
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
         const auto revision = engine->registry.Lookup(kSound).contentRevision;
@@ -17904,6 +17905,12 @@ TEST(PlayableStart, MusicSegmentCropsVariableControlSelectedSourcesAndPreservesW
         ordinary.properties[1].stableId = harkentest::ObjectId(2002);
         ordinary.properties[1].authoredStableOrder = 4 + (selectedKind != 0) + (selectedKind == 2);
         ordinary.properties[1].programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(ordinary.properties[1]);
+        VariableControlWorldImage nestedControl(revision, image.world.generation, ordinaryMode == 5, ordinaryMode == 5);
+        nestedControl.container.envelopeFrames = 0;
+        if (ordinaryMode >= 4) {
+            ordinary.container = nestedControl.container;
+            ordinary.container.children = &ordinary.child;
+        }
         ordinary.container.containerStableId = ordinary.properties[1].stableId;
         ordinary.container.authoredStableOrder = 1;
         ordinary.container.programSemanticFingerprint = ordinary.properties[1].programSemanticFingerprint;
@@ -17986,7 +17993,7 @@ TEST(PlayableStart, MusicSegmentCropsVariableControlSelectedSourcesAndPreservesW
         install.containers = containers.data();
         install.containerCount = ordinaryMode == 3 ? 3 : ordinaryMode != 0 ? 2 : 1;
         if (ordinaryMode == 3) install.identity.capabilityMask |= harken::kWorldCapabilitySequenceQueue;
-        if (ordinaryMode != 0) install.identity.capabilityMask |= ordinary.world.identity.capabilityMask;
+        if (ordinaryMode != 0 && ordinaryMode < 4) install.identity.capabilityMask |= ordinary.world.identity.capabilityMask;
         install.playableProperties = properties.data();
         install.playablePropertyCount = properties.size();
         install.playableOccurrences = occurrences.data();
@@ -18032,7 +18039,8 @@ TEST(PlayableStart, MusicSegmentCropsVariableControlSelectedSourcesAndPreservesW
                     (mediaFrames == 200 ? (offset < 200 ? 0.1f : 0.0f)
                     : offset < 400 ? 0.1f : offset < (ordinaryMode == 3 ? 1200u : 2800u) ? 0.2f
                     : offset < (ordinaryMode == 3 ? 1600u : 3200u) ? 0.3f : 0.0f)
-                    * (continuous ? 1.375f : 1.0f) * (selectedKind != 0 ? 2.0f : 1.0f);
+                    * (continuous ? 1.375f : 1.0f) * (ordinaryMode == 5 ? 0.6875f : 1.0f)
+                    * (selectedKind != 0 ? 2.0f : 1.0f);
                 ASSERT_NEAR(expected, engine->nullBackend.LastBlock()[2 * sample], 0.001f)
                     << "frame=" << frame << " start=" << start << OccupancyDump(*engine);
             }
