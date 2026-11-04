@@ -662,6 +662,7 @@ void BlueprintCanvasWidget::materializeFromSource_()
 
     auto nodes = activeSource_->buildNodes();
     auto* project = ProjectManager::instance().currentProject();
+    const auto* master = ProjectManager::instance().getMasterBusItem();
     QHash<uint32_t, ProjectItem*> objects;
     if (project) {
         const auto collect = [&](auto&& self, ProjectItem* item) -> void {
@@ -681,12 +682,15 @@ void BlueprintCanvasWidget::materializeFromSource_()
     int globalIndex = 0;
     const QSettings settings;
     for (auto const& d : nodes) {
+        const int inputCount = d.itemType == ProjectItemType::Sound ? 0 : d.portPairCount;
+        const int outputCount = d.itemType == ProjectItemType::Bus && master && d.id == master->objectID
+            ? 0 : d.portPairCount;
         NodeItem* item = nullptr;
         if (reusePathScene && d.occurrenceIndex) {
             const auto guid = pathSource_->graph().nodes[*d.occurrenceIndex].key.objectGuid;
             auto* previous = previousNodes.value(guid);
             if (previous && previous->objectID() == d.id && previous->itemType() == d.itemType
-                && previous->inputCount() == d.portPairCount && previous->outputCount() == d.portPairCount
+                && previous->inputCount() == inputCount && previous->outputCount() == outputCount
                 && previous->contentInfo().fields() == d.content.fields())
                 item = previousNodes.take(guid);
         }
@@ -701,11 +705,13 @@ void BlueprintCanvasWidget::materializeFromSource_()
         item->setSubtitle(d.subtitle);
 
         item->setItemType(d.itemType);
-        for (int pair = 0; created && pair < d.portPairCount; ++pair) {
+        for (int pair = 0; created && pair < inputCount; ++pair) {
             item->addInputPin();
-            item->addOutputPin();
             item->inputPin(pair)->setDomain(d.occurrenceIndex
                 ? NodePin::Domain::Audio : inputDomainForDesc(d));
+        }
+        for (int pair = 0; created && pair < outputCount; ++pair) {
+            item->addOutputPin();
             item->outputPin(pair)->setDomain(NodePin::Domain::Audio);
         }
 
@@ -1014,8 +1020,10 @@ void BlueprintCanvasWidget::refreshPlaybackActivity_()
     for (size_t index = 0; index < activity.portPairs.size(); ++index) {
         auto* node = signalPathNode(index);
         for (size_t pair = 0; pair < activity.portPairs[index].size(); ++pair) {
-            node->inputPin(static_cast<int>(pair))->setPlaybackActive(activity.portPairs[index][pair]);
-            node->outputPin(static_cast<int>(pair))->setPlaybackActive(activity.portPairs[index][pair]);
+            if (auto* input = node->inputPin(static_cast<int>(pair)))
+                input->setPlaybackActive(activity.portPairs[index][pair]);
+            if (auto* output = node->outputPin(static_cast<int>(pair)))
+                output->setPlaybackActive(activity.portPairs[index][pair]);
         }
         node->setPlaybackActive(std::any_of(activity.portPairs[index].begin(), activity.portPairs[index].end(),
             [](bool active) { return active; }));
@@ -1454,7 +1462,7 @@ SignalPathConnectPlan BlueprintCanvasWidget::prepareObjectDrop_(const QMimeData*
         plan.error = tr("Drop onto an object");
         return plan;
     }
-    const auto endpoint = pathEndpoint_(target->inputPin());
+    const auto endpoint = pathEndpoint_(target);
     if (!endpoint) {
         plan.error = tr("Gain nodes cannot receive objects");
         return plan;
@@ -2413,7 +2421,7 @@ void BlueprintCanvasWidget::mouseReleaseEvent(QMouseEvent* event)
         }
         if (target) {
             SignalPathConnectPlan plan;
-            const auto endpoint = pathEndpoint_(target->inputPin());
+            const auto endpoint = pathEndpoint_(target);
             if (pin) plan.error = tr("Drop onto the node body");
             else if (endpoint) plan = prepareSignalPathNodeDrop(pathSource_->graph(), nodeDragSources_, *endpoint);
             else plan.error = tr("Gain nodes cannot be used as connection targets");
@@ -2599,13 +2607,24 @@ bool BlueprintCanvasWidget::evaluateConnect_(NodePin* source, NodePin* target,
     return true;
 }
 
+std::optional<SignalPathEndpoint> BlueprintCanvasWidget::pathEndpoint_(NodeItem* node) const
+{
+    for (const auto& [key, item] : nodeMap_) {
+        if (key.occurrenceIndex && item == node)
+            return SignalPathEndpoint{*key.occurrenceIndex, 0};
+    }
+    return {};
+}
+
 std::optional<SignalPathEndpoint> BlueprintCanvasWidget::pathEndpoint_(NodePin* pin) const
 {
     if (!pin) return {};
     for (const auto& [key, node] : nodeMap_) {
         if (!key.occurrenceIndex || pin->parentItem() != node) continue;
-        for (int index = 0; index < node->inputCount(); ++index)
-            if (node->inputPin(index) == pin || node->outputPin(index) == pin)
+        const bool input = pin->pinType() == NodePin::Input;
+        const int count = input ? node->inputCount() : node->outputCount();
+        for (int index = 0; index < count; ++index)
+            if ((input ? node->inputPin(index) : node->outputPin(index)) == pin)
                 return SignalPathEndpoint{*key.occurrenceIndex, static_cast<size_t>(index)};
     }
     return {};
@@ -2632,7 +2651,7 @@ SignalPathConnectPlan BlueprintCanvasWidget::prepareConnect_(NodePin* source, No
         return plan;
     }
     const auto from = pathEndpoint_(source);
-    const auto to = pathEndpoint_(target->inputPin());
+    const auto to = targetPin ? pathEndpoint_(targetPin) : pathEndpoint_(target);
     if (!from || !to) {
         plan.error = tr("Gain nodes cannot be used as connection targets");
         return plan;
@@ -2747,7 +2766,7 @@ void BlueprintCanvasWidget::updateNodeDropPreview_(const QPoint& position)
         return;
     }
     SignalPathConnectPlan plan;
-    const auto endpoint = pathEndpoint_(target->inputPin());
+    const auto endpoint = pathEndpoint_(target);
     if (pin) plan.error = tr("Drop onto the node body");
     else if (endpoint) plan = prepareSignalPathNodeDrop(pathSource_->graph(), nodeDragSources_, *endpoint);
     else plan.error = tr("Gain nodes cannot be used as connection targets");
