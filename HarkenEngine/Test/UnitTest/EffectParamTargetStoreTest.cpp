@@ -1089,4 +1089,31 @@ TEST(EffectParamTargetStore, MaximumRevisionIsValidOnceThenExhaustsCleanly) {
     EXPECT_EQ(1u, store.LiveRecordCount());
 }
 
+
+TEST(EffectParamTargetStore, FiniteExtremeAdditiveGroupsCancelAndRestore) {
+    const float maximum = std::numeric_limits<float>::max();
+    for (bool logarithmic : {false, true}) {
+        EffectParamTargetStore store = MakeStore();
+        const auto type = logarithmic ? VN_EFFECT_LIMITER : VN_EFFECT_GAIN;
+        const auto parameter = logarithmic ? harken::kLimiterParamReleaseMs : harken::kGainParamGainDb;
+        const auto bases = logarithmic ? LimiterBases(-1, 100) : GainBases(0);
+        ASSERT_TRUE(store.SeedInstalledEffect(Scope::Voice, kVoice, kSlot,
+            type, bases.data(), static_cast<std::uint32_t>(bases.size())));
+        SweepAs(store, kVoice, kSlot, parameter, type,
+            {maximum, maximum, -maximum, -maximum});
+        EXPECT_FLOAT_EQ(bases[parameter], store.Reduce(Scope::Voice, kVoice, kSlot, parameter));
+        SweepAs(store, kVoice, kSlot, parameter, type, {maximum, maximum});
+        store.BeginMeterProbeSweep();
+        for (int i = 0; i < 2; ++i)
+            store.AccumulateMeterProbe(Scope::Voice, kVoice, kSlot, parameter,
+                type, harkentest::ObjectId(1), -maximum);
+        store.EndMeterProbeSweep();
+        EXPECT_FLOAT_EQ(bases[parameter], store.Reduce(Scope::Voice, kVoice, kSlot, parameter));
+        ASSERT_TRUE(store.BeginVariableProjection());
+        SweepAs(store, kVoice, kSlot, parameter, type, {0});
+        store.RestoreVariableProjection();
+        EXPECT_FLOAT_EQ(bases[parameter], store.Reduce(Scope::Voice, kVoice, kSlot, parameter));
+    }
+}
+
 } // namespace

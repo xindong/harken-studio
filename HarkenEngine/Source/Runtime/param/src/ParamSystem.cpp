@@ -747,7 +747,7 @@ void ParamSystem::SetMeterProbeContribution(
     }
     TargetState& target = state->targets[targetId];
     const TargetMeta* meta = FindTargetMeta(kTargetScopeVoice, targetId);
-    float accumulated = meta != nullptr ? meta->neutral : 0.0f;
+    double accumulated = meta != nullptr ? meta->neutral : 0.0f;
     bool active = false;
     for (const MeterProbeContribution& contribution :
          m_meterProbeContributions) {
@@ -788,7 +788,7 @@ void ParamSystem::ClearMeterProbeContribution(
     }
     TargetState& target = state->targets[targetId];
     const TargetMeta* meta = FindTargetMeta(kTargetScopeVoice, targetId);
-    float accumulated = meta != nullptr ? meta->neutral : 0.0f;
+    double accumulated = meta != nullptr ? meta->neutral : 0.0f;
     bool active = false;
     for (const MeterProbeContribution& contribution :
          m_meterProbeContributions) {
@@ -1584,14 +1584,14 @@ float ParamSystem::EvaluateBinding(const Binding& binding, float input) const {
     return curve.Eval(input, BindingCurveDomain(kTargetScopeVoice, binding.targetId));
 }
 
-float ParamSystem::InstanceContribution(VnVoiceHandle handle,
+double ParamSystem::InstanceContribution(VnVoiceHandle handle,
                                         std::uint32_t targetId,
                                         const EmitterTable* emitters) const {
     const VoiceState* state = StateFor(handle);
     if (state == nullptr || targetId >= kBuiltinTargetCount) {
         return 0.0f;
     }
-    float sum = 0.0f;
+    double sum = 0.0;
     for (std::uint32_t i = 0; i < m_bindingCount; ++i) {
         const Binding& b = m_bindings[i];
         if (b.handle != handle || b.definitionId == VnObjectId{} || b.neutralized ||
@@ -1601,7 +1601,7 @@ float ParamSystem::InstanceContribution(VnVoiceHandle handle,
         float input = 0.0f;
         if (ResolveScopedValue(emitters, state->emitterHandle, b.variableId,
                                &input)) {
-            sum += EvaluateBinding(b, input);
+            sum = AddFiniteContributions(sum, EvaluateBinding(b, input));
         }
     }
     return sum;
@@ -1619,7 +1619,7 @@ bool ParamSystem::TryPeekResolvedVolume(VnVoiceHandle handle,
         return false;
     }
     bool fed = false;
-    float slot = 0.0f;
+    double slot = 0.0;
     for (std::uint32_t i = 0; i < m_bindingCount; ++i) {
         const Binding& binding = m_bindings[i];
         if (binding.handle != handle ||
@@ -1641,7 +1641,7 @@ bool ParamSystem::TryPeekResolvedVolume(VnVoiceHandle handle,
             slot = contribution;
             fed = true;
         } else {
-            slot += contribution;
+            slot = AddFiniteContributions(slot, contribution);
         }
     }
     *outDb = (fed || reader != nullptr) ? Reduce(*state, kTargetVoiceVolume, kSlotVariableBindings,
@@ -2009,7 +2009,7 @@ float ParamSystem::ResolvedValue(VnVoiceHandle handle,
 float ParamSystem::ReduceWithSlot(VnVoiceHandle handle,
                                   std::uint32_t targetId,
                                   std::uint32_t slot,
-                                  float domainValue) const {
+                                  double domainValue) const {
     const VoiceState* state = StateFor(handle);
     if (state == nullptr || targetId >= kBuiltinTargetCount ||
         slot >= kCombineSlotCount) {
@@ -2044,7 +2044,7 @@ void ParamSystem::CaptureVoiceState(
             if (target.active[kSlotApiDirect]) {
                 ApiDirectState a;
                 a.targetId = t;
-                a.value = target.slots[kSlotApiDirect];
+                a.value = NarrowResolvedValue(target.slots[kSlotApiDirect]);
                 apiDirect->push_back(a);
             }
         }
@@ -2165,7 +2165,7 @@ std::uint32_t ParamSystem::PrimeVoiceBindingsImpl(VnVoiceHandle handle,
         const float contribution = EvaluateBinding(b, input);
         b.lastContribution = contribution;
         TargetState& target = state->targets[b.targetId];
-        float& slot = target.slots[kSlotVariableBindings];
+        double& slot = target.slots[kSlotVariableBindings];
         if (!target.active[kSlotVariableBindings]) {
             slot = contribution;
             target.active[kSlotVariableBindings] = true;
@@ -2177,7 +2177,7 @@ std::uint32_t ParamSystem::PrimeVoiceBindingsImpl(VnVoiceHandle handle,
         case CombineDomain::Add:
         case CombineDomain::AddLogHz:
         case CombineDomain::AddLogQ:
-            slot += contribution;
+            slot = AddFiniteContributions(slot, contribution);
             break;
         case CombineDomain::MinHz:
             slot = (contribution < slot) ? contribution : slot;
@@ -2399,11 +2399,11 @@ float ParamSystem::Reduce(const VoiceState& state,
 float ParamSystem::Reduce(const VoiceState& state,
                           std::uint32_t targetId,
                           std::uint32_t overrideSlot,
-                          float overrideValue) const {
+                          double overrideValue) const {
     const TargetState& target = state.targets[targetId];
     const CombineDomain domain = DomainOfTarget(targetId);
-    float value = state.base[targetId];
-    float logContribution = 0.0f;
+    double value = state.base[targetId];
+    double logContribution = 0.0;
     // Fixed slot order (API direct, Variable bindings, attenuation, fades)
     // keeps the reduction deterministic; inactive slots contribute the
     // domain's neutral element by being skipped. An override substitutes
@@ -2413,17 +2413,17 @@ float ParamSystem::Reduce(const VoiceState& state,
         if (!useOverride && !target.active[s]) {
             continue;
         }
-        const float contribution =
+        const double contribution =
             useOverride ? overrideValue : target.slots[s];
         switch (domain) {
         case CombineDomain::AddDb:
         case CombineDomain::AddCents:
         case CombineDomain::Add:
-            value += contribution;
+            value = AddFiniteContributions(value, contribution);
             break;
         case CombineDomain::AddLogHz:
         case CombineDomain::AddLogQ:
-            logContribution += contribution;
+            logContribution = AddFiniteContributions(logContribution, contribution);
             break;
         case CombineDomain::MinHz:
             value = (contribution < value) ? contribution : value;
@@ -2436,7 +2436,7 @@ float ParamSystem::Reduce(const VoiceState& state,
     }
     if (domain == CombineDomain::AddLogHz ||
         domain == CombineDomain::AddLogQ) {
-        value *= std::exp2(logContribution);
+        value = ScaleByOctaves(state.base[targetId], logContribution);
     }
     if (targetId == kTargetVoiceLowShelfFreqHz ||
         targetId == kTargetVoiceHighShelfFreqHz) {
@@ -2582,7 +2582,7 @@ void ParamSystem::EvalDirtyBindings(const EmitterTable* emitters) {
         }
         const float contribution = EvaluateBinding(binding, input);
         binding.lastContribution = contribution;
-        float& slot = target.slots[kSlotVariableBindings];
+        double& slot = target.slots[kSlotVariableBindings];
         if (!target.active[kSlotVariableBindings]) {
             slot = contribution;
             target.active[kSlotVariableBindings] = true;
@@ -2594,7 +2594,7 @@ void ParamSystem::EvalDirtyBindings(const EmitterTable* emitters) {
         case CombineDomain::Add:
         case CombineDomain::AddLogHz:
         case CombineDomain::AddLogQ:
-            slot += contribution;
+            slot = AddFiniteContributions(slot, contribution);
             break;
         case CombineDomain::MinHz:
             slot = (contribution < slot) ? contribution : slot;
@@ -2651,7 +2651,7 @@ void ParamSystem::EvalIndexedBindings(const EmitterTable* emitters) {
             TargetState& target = state->targets[identity.target];
             bool changed = target.rebuild;
             bool active = false;
-            float combined = 0.0f;
+            double combined = 0.0;
             for (auto token = m_dependencies->FirstContribution(dirty); token.Valid();
                  token = m_dependencies->NextContribution(token)) {
                 auto& binding = *const_cast<Binding*>(static_cast<const Binding*>(m_dependencies->Fact(token)));
@@ -2686,14 +2686,14 @@ void ParamSystem::EvalIndexedBindings(const EmitterTable* emitters) {
                 case CombineDomain::Add:
                 case CombineDomain::AddLogHz:
                 case CombineDomain::AddLogQ:
-                    combined += contribution;
+                    combined = AddFiniteContributions(combined, contribution);
                     break;
                 case CombineDomain::MinHz:
-                    combined = std::min(combined, contribution);
+                    combined = std::min(combined, static_cast<double>(contribution));
                     break;
                 case CombineDomain::MaxHz:
                 case CombineDomain::Max:
-                    combined = std::max(combined, contribution);
+                    combined = std::max(combined, static_cast<double>(contribution));
                     break;
                 }
             }

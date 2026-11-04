@@ -756,4 +756,41 @@ TEST(BindingLiveness, DirtyEffectTargetKeepsOtherContributorsAndReturnsToBase) {
     EXPECT_FLOAT_EQ(base, store.Reduce(harken::EffectParamTargetStore::Scope::Voice, 1, 0, harken::kGainParamGainDb));
 }
 
+
+TEST(BindingLiveness, FiniteExtremeVolumesAgreeAtAdmissionAndParkedReplay) {
+    EngineSession session(ParkConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    InstallBindingVariables(engine);
+    const auto sound = harkentest::ObjectId(1);
+    RegisterLeaf(sound);
+    const float maximum = std::numeric_limits<float>::max();
+    std::uint32_t id = 10;
+    for (float contribution : {maximum, maximum, -maximum, -maximum, -80.0f}) {
+        ASSERT_EQ(VN_OK, RegisterLinear(engine, harkentest::ObjectId(id),
+            harkentest::ObjectId(7), harken::kTargetVoiceVolume, contribution, contribution));
+        ASSERT_EQ(VN_OK, harken::AttachBinding(*engine, harkentest::ObjectId(id++),
+            harken::kTargetScopeVoice, sound));
+    }
+    ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(7), 1));
+    harkentest::AdvanceVariableWrite(engine);
+    VnPlayDesc play = MakePlayDesc(sound);
+    play.loopCount = 0;
+    VnVoiceHandle handle = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
+    const auto parked = engine->ledger.Classify(handle);
+    ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked, parked.kind);
+    EXPECT_EQ(-80, engine->parkRecords[parked.ledgerSlot].instanceVolumeDb);
+    engine->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(-80, engine->parkRecords[parked.ledgerSlot].instanceVolumeDb);
+    ASSERT_EQ(VN_OK, ReplaceLinear(engine, harkentest::ObjectId(14),
+        harkentest::ObjectId(7), harken::kTargetVoiceVolume, 0, 0));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    const auto render = RenderHandle(engine, handle);
+    ASSERT_NE(0u, render);
+    EXPECT_FLOAT_EQ(0, engine->params.ResolvedValue(render, harken::kTargetVoiceVolume));
+    EXPECT_GT(PumpBlockPeak(engine), 0.1f);
+}
+
 } // namespace

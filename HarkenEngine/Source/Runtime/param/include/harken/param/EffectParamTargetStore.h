@@ -131,7 +131,7 @@ public:
         const float* paramValues, std::uint32_t paramCount);
     bool PrimeContribution(Scope scope, std::uint64_t objectId,
                            std::uint32_t slot, std::uint32_t paramIndex,
-                           std::uint32_t effectType, float contribution,
+                           std::uint32_t effectType, double contribution,
                            float* outResolved);
     void SetSeedFailureForTests(bool enabled) {
         m_failSeedForTests = enabled;
@@ -360,8 +360,8 @@ public:
 
 private:
     struct VariableEvaluation {
-        float contribution = 0.0f;
-        float rebuildAccum = 0.0f;
+        double contribution = 0.0f;
+        double rebuildAccum = 0.0f;
         bool bindingActive = false;
         bool foldedThisSweep = false;
         bool dirty = false;
@@ -379,11 +379,11 @@ private:
         float clampMin = 0.0f;
         float clampMax = 0.0f; // kEffectParamClampNyquist => 0.5 * sampleRate
         float base = 0.0f;         // authored / last direct value
-        float contribution = 0.0f; // folded binding accumulation (in slot form)
-        float rebuildAccum = 0.0f; // in-progress fold during a sweep
+        double contribution = 0.0f; // folded binding accumulation (in slot form)
+        double rebuildAccum = 0.0f; // in-progress fold during a sweep
         float lastCommitted = 0.0f;
-        float meterProbeContribution = 0.0f;
-        float meterProbeRebuild = 0.0f;
+        double meterProbeContribution = 0.0f;
+        double meterProbeRebuild = 0.0f;
         bool meterProbeActive = false;
         bool meterProbeFoldedThisSweep = false;
         bool bindingActive = false;  // a binding folded a value last sweep

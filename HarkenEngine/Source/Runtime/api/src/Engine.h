@@ -608,14 +608,14 @@ struct ParkRecord {
                                         // virtual cursor advances at the
                                         // CURRENT resolved pitch (section 5.6)
     std::uint32_t loopsRemaining = 0;   // finite-loop passes left (0 = n/a)
-    float frozenNonSpatialDb = 0.0f;    // metricAtPark - attenuationAtPark -
+    double frozenNonSpatialDb = 0.0f;    // metricAtPark - attenuationAtPark -
                                         // instance volume term at park (the
                                         // frozen non-instance remainder)
     // Live definition-backed contribution terms, re-evaluated every tick
     // from bindingInstances against the current definition revisions and
     // current scoped Variable values (section 5.6): the volume term feeds
     // the parked audibility metric, the pitch term the virtual cursor.
-    float instanceVolumeDb = 0.0f;
+    double instanceVolumeDb = 0.0f;
     double instancePitchCents = 0.0;
     VnEmitterHandle stateEmitter = 0;
     Spatializer::SpatialVoiceState spatial;

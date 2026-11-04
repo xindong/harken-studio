@@ -1312,4 +1312,65 @@ TEST(ParamCombine, RejectCandidateRestoresApiDirectTickPair) {
     EXPECT_EQ(20u, params.PendingRampMs(kVoice0, kTarget));
 }
 
+
+TEST(ParamCombine, FiniteExtremeContributionsCancelAcrossEvaluationPaths) {
+    const float maximum = std::numeric_limits<float>::max();
+    for (bool indexed : {false, true}) {
+        for (const auto target : {harken::kTargetVoicePan, harken::kTargetVoiceVolume}) {
+            SCOPED_TRACE(indexed);
+            SCOPED_TRACE(target);
+            harken::BindingDependencyIndex index;
+            ParamSystem params(DefaultConfig());
+            if (indexed) AttachIndex(params, index);
+            params.OnVoiceStarted(kVoice0, 0, 1);
+            std::uint32_t id = 1;
+            for (float value : {maximum, maximum, -maximum, -maximum}) {
+                Curve curve;
+                const CurvePoint point{0, value};
+                ASSERT_TRUE(curve.SetPoints(&point, nullptr, 1));
+                const auto variable = harkentest::ObjectId(id++);
+                ASSERT_TRUE(params.BindVoiceTarget(variable, kVoice0, target, curve));
+                ASSERT_EQ(VN_OK, params.SetValue(variable, 0));
+            }
+            float volume = 1;
+            ASSERT_TRUE(params.TryPeekResolvedVolume(kVoice0, nullptr, &volume));
+            EXPECT_FLOAT_EQ(0, volume);
+            (void)FlushAll(params);
+            EXPECT_FLOAT_EQ(0, params.ResolvedValue(kVoice0, target));
+            ParamSystem::PrimedValue primed[harken::kBuiltinTargetCount]{};
+            params.PrimeVoiceBindings(kVoice0, nullptr, primed, std::size(primed));
+            EXPECT_FLOAT_EQ(0, params.ResolvedValue(kVoice0, target));
+        }
+    }
+}
+
+TEST(ParamCombine, WideVariableAndProbeGroupsSurviveProjectionRollback) {
+    const float maximum = std::numeric_limits<float>::max();
+    for (bool indexed : {false, true}) {
+        harken::BindingDependencyIndex index;
+        ParamSystem params(DefaultConfig());
+        if (indexed) AttachIndex(params, index);
+        params.OnVoiceStarted(kVoice0, 0, 1);
+        for (std::uint32_t id = 1; id <= 2; ++id) {
+            const auto variable = harkentest::ObjectId(id);
+            ASSERT_TRUE(params.BindVoiceTarget(variable, kVoice0, harken::kTargetVoicePan,
+                LinearCurve(0, 0, 1, maximum)));
+            ASSERT_EQ(VN_OK, params.SetValue(variable, 1));
+            params.SetMeterProbeContribution(kVoice0, harkentest::ObjectId(id + 10),
+                harken::kTargetVoicePan, -maximum, 0);
+        }
+        (void)FlushAll(params);
+        EXPECT_FLOAT_EQ(0, params.ResolvedValue(kVoice0, harken::kTargetVoicePan));
+        ASSERT_TRUE(params.BeginVariableProjection());
+        ASSERT_EQ(VN_OK, params.SetInstalledValue(harkentest::ObjectId(1), 0));
+        params.EvaluateDirtyBindings(nullptr);
+        EXPECT_FLOAT_EQ(-1, params.ResolvedValue(kVoice0, harken::kTargetVoicePan));
+        params.RestoreVariableProjection();
+        EXPECT_FLOAT_EQ(0, params.ResolvedValue(kVoice0, harken::kTargetVoicePan));
+        params.ClearMeterProbeContribution(kVoice0, harkentest::ObjectId(11),
+            harken::kTargetVoicePan, 0);
+        EXPECT_FLOAT_EQ(1, params.ResolvedValue(kVoice0, harken::kTargetVoicePan));
+    }
+}
+
 } // namespace

@@ -51,7 +51,7 @@ public:
     // index. Out-of-range indices are ignored (the callers own bus
     // validation; the store never invents state for unknown addresses).
     void SetSlot(std::uint32_t busIndex, std::uint32_t targetId,
-                 std::uint32_t slot, float domainValue);
+                 std::uint32_t slot, double domainValue);
     void ClearSlot(std::uint32_t busIndex, std::uint32_t targetId,
                    std::uint32_t slot);
 
@@ -80,7 +80,7 @@ public:
     // Inactive stored slots still contribute nothing; the override is
     // always treated as active. Unknown addresses reduce to 0.
     float ReduceWithSlot(std::uint32_t busIndex, std::uint32_t targetId,
-                         std::uint32_t slot, float domainValue) const;
+                         std::uint32_t slot, double domainValue) const;
 
     std::uint32_t MaxBuses() const { return m_maxBuses; }
     bool HasVariableContributions() const noexcept { return m_variableSlotCount != 0; }
@@ -300,7 +300,7 @@ public:
 
 private:
     struct Slot {
-        float value = 0.0f;
+        double value = 0.0;
         bool active = false;
     };
 
@@ -390,7 +390,7 @@ private:
     std::uint32_t m_projectionPendingInputMarks = 0;
     std::vector<std::uint32_t> m_activeGenerations;
     StableRowStorage<RetiringTarget> m_retiringTargets;
-    std::vector<float> m_meterProbeAccum;
+    std::vector<double> m_meterProbeAccum;
     std::vector<std::uint32_t> m_meterProbeRampMs;
     std::vector<std::uint32_t> m_meterProbeDepartureRampMs;
     std::vector<std::uint8_t> m_meterProbeSeen;
