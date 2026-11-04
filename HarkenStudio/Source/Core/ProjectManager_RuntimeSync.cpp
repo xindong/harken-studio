@@ -311,9 +311,10 @@ static constexpr RuntimePresenceEntry s_runtimePresence[] = {
     { ProjectItem::Type::Action,      nullptr,         RuntimeTeardown::RemoveActionName },
     { ProjectItem::Type::Variable,    nullptr,         RuntimeTeardown::None },
     { ProjectItem::Type::Attenuation, nullptr,         RuntimeTeardown::None },
+    { ProjectItem::Type::Effect,      nullptr,         RuntimeTeardown::None },
 };
 
-static_assert(std::size(s_runtimePresence) == 10,
+static_assert(std::size(s_runtimePresence) == 11,
               "runtime presence table must cover every ProjectItem::Type");
 static_assert([] {
     for (size_t i = 0; i < std::size(s_runtimePresence); ++i)

@@ -217,8 +217,8 @@ def validate_project_source(source: dict[str, Any]) -> None:
     documents = source.get("x-harken-documentTypes")
     defs = source.get("$defs")
     rules = source.get("x-harken-projectRules")
-    if not isinstance(documents, list) or len(documents) != 6:
-        raise ValueError("project schema must define exactly six document types")
+    if not isinstance(documents, list):
+        raise ValueError("project schema must define document types")
     if not isinstance(defs, dict) or not isinstance(rules, list):
         raise ValueError("project schema needs $defs and x-harken-projectRules")
     for name, schema in defs.items():
@@ -255,8 +255,8 @@ def validate_project_source(source: dict[str, Any]) -> None:
         "project.variable",
         "project.attenuation",
     }
-    if seen_types != expected:
-        raise ValueError("project schema document type set is incomplete")
+    if not expected.issubset(seen_types) or seen_types - expected - {"project.effect"}:
+        raise ValueError("project schema document type set is incomplete or unsupported")
     seen_rules: set[str] = set()
     for rule in rules:
         if not isinstance(rule, dict) or rule.get("rule") not in SUPPORTED_RULES:

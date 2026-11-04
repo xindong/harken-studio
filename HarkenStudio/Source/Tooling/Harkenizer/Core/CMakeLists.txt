@@ -22,6 +22,7 @@ add_library(harkenizer_core STATIC
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/CompileTargetProfileCatalog.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ComponentCatalog.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VAttenuation.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VEffect.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VSelection.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VSound.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ContainerBehaviorSemantics.cpp
@@ -114,6 +115,7 @@ add_library(harkenizer_core STATIC
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/CompileTargetProfileCatalog.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ComponentCatalog.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VAttenuation.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VEffect.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VSelection.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VSound.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ContainerBehaviorSemantics.h

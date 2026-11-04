@@ -6,6 +6,9 @@
 #include "AssetPipeline/PlatformProfile.h"
 #include "ProjectSerializer.h"
 #include "Components/VAction.h"
+#include "Components/VEffect.h"
+#include "Components/VMixNode.h"
+#include "PlayablePropertyAuthoringV1.h"
 #include "SoundSourceSemantics.h"
 #include "Tooling/Harkenizer/Core/PackBuildPlan.h"
 #include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
@@ -106,6 +109,29 @@ void PackBuildState::deriveInputs(const QSet<QString>* successfulPaths)
         if (cached != objectDigests_.cend()) return *cached;
         auto json = serializer.projectItemToJson(*item, false);
         if (json.isEmpty()) return QString();
+        if (const auto* mix = item->comp<VMixNode>()) {
+            QJsonObject effects;
+            bool valid = true;
+            const auto addEffects = [&](const EffectChainLedger& chain) {
+                for (const auto& entry : chain.entries()) {
+                    if (entry.mode == EffectMode::Custom) continue;
+                    const auto* effect = EffectChainSemantics::resolve(entry, project);
+                    if (!effect) { valid = false; continue; }
+                    effects.insert(entry.effectGuid.toString(QUuid::WithoutBraces), effect->toJson());
+                }
+            };
+            if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type)) {
+                VisitAuthoredEffectChains(item->fieldGroups, [&](const auto& chain, auto) {
+                    addEffects(chain);
+                });
+            } else {
+                addEffects(mix->effects);
+                for (const auto& [platform, chain] : mix->effectPlatforms)
+                    addEffects(chain);
+            }
+            if (!valid) return QString();
+            if (!effects.isEmpty()) json.insert(QStringLiteral("effectAssets"), effects);
+        }
         json.remove(QStringLiteral("notes"));
         json.remove(QStringLiteral("color"));
         QJsonArray children;

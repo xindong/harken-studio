@@ -1,6 +1,7 @@
 #pragma once
 
 #include "harken_project_schema/Model.h"
+#include "EffectChainSemantics.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -19,7 +20,8 @@ using FieldGroupScope = std::optional<harkenprojectschema::AuthoringGuid>;
 enum class FieldGroupId : std::uint8_t {
     Output,
     Send,
-    SpatialRating
+    SpatialRating,
+    Effect
 };
 
 enum class FieldGroupMode : std::uint8_t {
@@ -71,6 +73,13 @@ struct SpatialRatingFieldGroup {
     bool operator==(const SpatialRatingFieldGroup&) const = default;
 };
 
+struct EffectFieldGroup {
+    static constexpr auto groupId = FieldGroupId::Effect;
+    EffectChainLedger effects;
+
+    bool operator==(const EffectFieldGroup&) const = default;
+};
+
 template <typename Payload>
 struct GroupState {
     FieldGroupMode mode = FieldGroupMode::Inherit;
@@ -103,6 +112,8 @@ void VisitFieldGroupFields(Payload& payload, Visitor&& visit)
         visit(Property::SpatialIs3DEnabled, "spatialIs3DEnabled", payload.spatialIs3DEnabled);
         visit(Property::SpatialAttenuationRef, "spatialAttenuationRef", payload.spatialAttenuationRef);
         visit(Property::SpatialAttenuationDistanceScaling, "spatialAttenuationDistanceScaling", payload.spatialAttenuationDistanceScaling);
+    } else if constexpr (std::is_same_v<Type, EffectFieldGroup>) {
+        visit(Property::SignalGraph, "effects", payload.effects);
     }
 }
 
@@ -157,9 +168,20 @@ struct DefinitionFieldGroups {
     AuthoredGroup<OutputFieldGroup> output;
     AuthoredGroup<SendFieldGroup> send;
     AuthoredGroup<SpatialRatingFieldGroup> spatialRating;
+    AuthoredGroup<EffectFieldGroup> effects;
 
     bool operator==(const DefinitionFieldGroups&) const = default;
 };
+
+template <typename Groups, typename Visitor>
+void VisitAuthoredEffectChains(Groups& groups, Visitor&& visit)
+{
+    if (groups.effects.shared.localHistory)
+        visit(groups.effects.shared.localHistory->effects, FieldGroupScope{});
+    for (auto& [platform, state] : groups.effects.platforms)
+        if (state.localHistory)
+            visit(state.localHistory->effects, FieldGroupScope{platform});
+}
 
 inline std::uint64_t FieldGroupOverrideMask(const DefinitionFieldGroups& groups,
                                              harkenprojectschema::AuthoringGuid platform)
@@ -169,11 +191,11 @@ inline std::uint64_t FieldGroupOverrideMask(const DefinitionFieldGroups& groups,
         return state != group.platforms.end() && state->second.localHistory
             ? state->second.localFields : UINT64_C(0);
     };
-    return mask(groups.output) | mask(groups.send) | mask(groups.spatialRating);
+    return mask(groups.output) | mask(groups.send) | mask(groups.spatialRating) | mask(groups.effects);
 }
 
 using FieldGroupPayload = std::variant<
-    OutputFieldGroup, SendFieldGroup, SpatialRatingFieldGroup>;
+    OutputFieldGroup, SendFieldGroup, SpatialRatingFieldGroup, EffectFieldGroup>;
 
 enum class FieldGroupDiagnosticCode : std::uint8_t {
     InvalidDefinitionGuid,
@@ -240,6 +262,7 @@ struct FieldGroupResolutionResult {
 enum class FieldGroupReferenceKind : std::uint8_t {
     Bus,
     Attenuation,
+    Effect,
     Other
 };
 
@@ -268,7 +291,8 @@ std::optional<FieldGroupId> FieldGroupForField(std::string_view field) noexcept;
 std::optional<FieldGroupId> FieldGroupForProperty(
     harkenplayableproperties::PlayablePropertyIdV1 property) noexcept;
 std::uint64_t FieldGroupPropertyMask(FieldGroupId group) noexcept;
-inline constexpr std::uint64_t kFieldGroupPropertyMask = UINT64_C(0x2de0);
+inline constexpr std::uint64_t kFieldGroupPropertyMask = UINT64_C(0x2de0)
+    | FieldGroupFieldMask(harkenplayableproperties::PlayablePropertyIdV1::SignalGraph);
 
 std::vector<FieldGroupDiagnostic> ValidateFieldGroupPayload(
     FieldGroupId group, const FieldGroupPayload& payload);

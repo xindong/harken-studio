@@ -139,6 +139,7 @@ const std::vector<SingleObjHierarchySpec>& s3Specs()
 {
     static const std::vector<SingleObjHierarchySpec> specs = {
         { QStringLiteral("Attenuations"),    ProjectItem::Type::Attenuation },
+        { QLatin1String(ItemTypeCatalog::kEffectsFolderName), ProjectItem::Type::Effect },
         { QLatin1String(ItemTypeCatalog::kVariablesFolderName),
                                              ProjectItem::Type::Variable },
     };
@@ -152,9 +153,12 @@ QString s3RootDir(const QString& projectRoot, const SingleObjHierarchySpec& spec
 
 QString s3DocumentType(const SingleObjHierarchySpec& spec)
 {
-    return spec.topType == ProjectItem::Type::Attenuation
-               ? QStringLiteral("project.attenuation")
-               : QStringLiteral("project.variable");
+    switch (spec.topType) {
+    case ProjectItem::Type::Attenuation: return QStringLiteral("project.attenuation");
+    case ProjectItem::Type::Effect: return QStringLiteral("project.effect");
+    case ProjectItem::Type::Variable: return QStringLiteral("project.variable");
+    default: return {};
+    }
 }
 
 void rebindOwner(ProjectItem& node, ProjectItem* parent)
@@ -173,6 +177,8 @@ bool loadS3PayloadByType(const SingleObjHierarchySpec& spec,
     switch (spec.topType) {
     case ProjectItem::Type::Attenuation:
         return serializer.attenuationPackFromJson(obj, item);
+    case ProjectItem::Type::Effect:
+        return serializer.effectPackFromJson(obj, item);
     case ProjectItem::Type::Variable:
         return serializer.variablePackFromJson(obj, item);
     default:

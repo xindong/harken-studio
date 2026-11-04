@@ -131,7 +131,7 @@ TEST_P(BucketFolderPersistenceTest, NestedFolderPayloadFollowsItsOwnLocationAndR
 
 INSTANTIATE_TEST_SUITE_P(AllFolderBuckets,
                          BucketFolderPersistenceTest,
-                         ::testing::Values("Actions", "Variables", "Attenuations", "Layers"));
+                         ::testing::Values("Actions", "Variables", "Attenuations", "Effects", "Layers"));
 
 }
 }

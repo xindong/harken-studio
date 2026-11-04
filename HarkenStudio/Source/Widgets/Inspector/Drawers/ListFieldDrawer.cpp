@@ -1024,7 +1024,11 @@ private:
                 return finalize(edit);
             }
             default:
-                return new QLabel(v.toString(), parent);
+            {
+                auto* label = new QLabel(v.toString(), parent);
+                label->setEnabled(desc_.flags.readOnly || (!runtimeReadOnly_ && !mixed_));
+                return label;
+            }
         }
     }
 
@@ -1038,6 +1042,7 @@ private:
             label->setToolTip(QStringLiteral("%1 %2").arg(label->text(), ed.unit.trimmed()).trimmed());
             label->setProperty("roValue", true);
             label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+            label->setEnabled(desc_.flags.readOnly || (!runtimeReadOnly_ && !mixed_));
             return label;
         }
 

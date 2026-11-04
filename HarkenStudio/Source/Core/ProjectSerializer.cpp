@@ -30,6 +30,7 @@
 #include "Components/VSelection.h"
 #include "Components/VSound.h"
 #include "Components/VAttenuation.h"
+#include "Components/VEffect.h"
 
 #include <QFile>
 #include <QJsonDocument>
@@ -92,6 +93,8 @@ const QHash<QString, ComponentFields>& componentAuthorityFields()
         }
         for (const auto& entry : {std::pair{"mixnode", "outputBusId"},
                                   std::pair{"mixnode", "outputBusRef"},
+                                  std::pair{"mixnode", "effects"},
+                                  std::pair{"mixnode", "effectsPlatforms"},
                                   std::pair{"audio", "outputBusOverride"},
                                   std::pair{"audio", "overrideBits"},
                                   std::pair{"spatial", "attenuation"},
@@ -150,21 +153,6 @@ void stripPlayableDefinitionComponentAuthority(ProjectItem::Type type,
     }
 }
 
-
-bool readFieldGroups(const QJsonObject& json, ProjectItem& item, QString& error)
-{
-    if (!PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item.type)) {
-        item.fieldGroups = {};
-        return true;
-    }
-    std::string detail;
-    if (ReadFieldGroupsJson(QJsonDocument(json.value(QStringLiteral("fieldGroups")).toObject())
-            .toJson(QJsonDocument::Compact).toStdString(), item.fieldGroups, detail))
-        return true;
-    error = QString::fromStdString(detail);
-    return false;
-}
-
 bool hasPlayableDefinitionComponentAuthority(ProjectItem::Type type,
                                              const QJsonObject& components)
 {
@@ -180,6 +168,22 @@ bool hasPlayableDefinitionComponentAuthority(ProjectItem::Type type,
     return false;
 }
 
+}
+
+bool ProjectSerializer::readFieldGroups(const QJsonObject& json, ProjectItem& item) const
+{
+    if (!PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item.type)) {
+        item.fieldGroups = {};
+        return true;
+    }
+    auto groups = json.value(QStringLiteral("fieldGroups")).toObject();
+    if (!rewriteFieldGroupEffectReferences(&groups, false)) return false;
+    std::string detail;
+    if (ReadFieldGroupsJson(QJsonDocument(groups)
+            .toJson(QJsonDocument::Compact).toStdString(), item.fieldGroups, detail))
+        return true;
+    lastError_ = QString::fromStdString(detail);
+    return false;
 }
 
 bool ProjectSerializer::writeFieldGroups(const ProjectItem& item, QJsonObject& json) const
@@ -200,6 +204,7 @@ bool ProjectSerializer::writeFieldGroups(const ProjectItem& item, QJsonObject& j
         return false;
     }
     auto object = QJsonDocument::fromJson(QByteArray::fromStdString(text)).object();
+    if (!rewriteFieldGroupEffectReferences(&object, true)) return false;
     cachedFieldGroups_ = CachedFieldGroups{item.fieldGroups, object};
     json[QStringLiteral("fieldGroups")] = std::move(object);
     return true;
@@ -631,6 +636,103 @@ bool ProjectSerializer::loadParentReference(const QJsonObject& json,
     return true;
 }
 
+bool ProjectSerializer::rewriteEffectReferences(QJsonArray* effects, bool encode) const
+{
+    if (!effects) return false;
+    if (encode) {
+        QJsonArray result;
+        for (const QJsonValue& value : *effects) {
+            if (!value.isObject()) return false;
+            QJsonObject effect = value.toObject();
+            const auto parsed = EffectEntry::fromJson(effect);
+            if (!EffectChainSemantics::validate(parsed)) {
+                lastError_ = QStringLiteral("Project contains an invalid Effect entry");
+                return false;
+            }
+            if (parsed.mode == EffectMode::Custom) {
+                result.append(effect);
+                continue;
+            }
+            const QUuid guid = QUuid::fromString(
+                effect.value(QStringLiteral("effectGuid")).toString());
+            const auto target = referencesByGuid_.constFind(guid);
+            if (guid.isNull() || target == referencesByGuid_.cend()) {
+                lastError_ = QStringLiteral("Project contains a reference to a missing Effect");
+                return false;
+            }
+            const QJsonObject reference = persistentReference(
+                target->objectId, ProjectItem::Type::Effect);
+            if (reference.isEmpty()) return false;
+            effect.remove(QStringLiteral("effectGuid"));
+            effect[QStringLiteral("effectRef")] = reference;
+            result.append(effect);
+        }
+        *effects = result;
+    } else {
+        QJsonArray result;
+        for (const QJsonValue& value : *effects) {
+            if (!value.isObject()) return false;
+            QJsonObject effect = value.toObject();
+            if (effect.value(QStringLiteral("mode")) == QStringLiteral("custom")) {
+                if (!EffectChainSemantics::validate(EffectEntry::fromJson(effect))) {
+                    lastError_ = QStringLiteral("Project contains an invalid custom Effect");
+                    return false;
+                }
+                result.append(effect);
+                continue;
+            }
+            if (effect.contains(QStringLiteral("effectGuid"))) {
+                lastError_ = QStringLiteral("Project contains an invalid serialized Effect reference");
+                return false;
+            }
+            const QJsonValue reference = effect.value(QStringLiteral("effectRef"));
+            uint32_t id = 0;
+            if (!transientReference(reference, ProjectItem::Type::Effect, &id))
+                return false;
+            effect.remove(QStringLiteral("effectRef"));
+            effect[QStringLiteral("effectGuid")] =
+                reference.toObject().value(QStringLiteral("id"));
+            if (!EffectChainSemantics::validate(EffectEntry::fromJson(effect))) {
+                lastError_ = QStringLiteral("Project contains an invalid preset Effect");
+                return false;
+            }
+            result.append(effect);
+        }
+        *effects = result;
+    }
+    return true;
+}
+
+bool ProjectSerializer::rewriteFieldGroupEffectReferences(QJsonObject* groups, bool encode) const
+{
+    if (!groups) return false;
+    const auto rewrite = [&](QJsonObject& scoped) {
+        auto state = scoped.value(QStringLiteral("effect")).toObject();
+        auto values = state.value(QStringLiteral("values")).toObject();
+        if (!values.contains(QStringLiteral("effects"))) return true;
+        if (!values.value(QStringLiteral("effects")).isArray()) return false;
+        auto effects = values.value(QStringLiteral("effects")).toArray();
+        if (!rewriteEffectReferences(&effects, encode)) return false;
+        values[QStringLiteral("effects")] = effects;
+        state[QStringLiteral("values")] = values;
+        scoped[QStringLiteral("effect")] = state;
+        return true;
+    };
+    auto shared = groups->value(QStringLiteral("shared")).toObject();
+    if (!rewrite(shared)) return false;
+    (*groups)[QStringLiteral("shared")] = shared;
+    if (groups->contains(QStringLiteral("platforms"))) {
+        auto platforms = groups->value(QStringLiteral("platforms")).toObject();
+        for (const auto& key : platforms.keys()) {
+            auto scoped = platforms.value(key).toObject();
+            if (!rewrite(scoped)) return false;
+            platforms[key] = scoped;
+        }
+        (*groups)[QStringLiteral("platforms")] = platforms;
+    }
+    return true;
+}
+
 bool ProjectSerializer::encodeComponentReferences(QJsonObject* components) const
 {
     if (!components) return false;
@@ -674,6 +776,26 @@ bool ProjectSerializer::encodeComponentReferences(QJsonObject* components) const
                 sends.append(send);
             }
             mix[QStringLiteral("sends")] = sends;
+        }
+        if (mix.contains(QStringLiteral("effects"))) {
+            if (!mix.value(QStringLiteral("effects")).isArray()) return false;
+            auto effects = mix.value(QStringLiteral("effects")).toArray();
+            if (!rewriteEffectReferences(&effects, true)) return false;
+            mix[QStringLiteral("effects")] = effects;
+        }
+
+        if (mix.contains(QStringLiteral("effectsPlatforms"))) {
+            if (!mix.value(QStringLiteral("effectsPlatforms")).isObject()) return false;
+            auto platforms = mix.value(QStringLiteral("effectsPlatforms")).toObject();
+            for (const auto& key : platforms.keys()) {
+                if (!platforms.value(key).isArray()) return false;
+                const QUuid platform(key);
+                if (platform.isNull() || platform.toString(QUuid::WithoutBraces) != key) return false;
+                auto effects = platforms.value(key).toArray();
+                if (!rewriteEffectReferences(&effects, true)) return false;
+                platforms[key] = effects;
+            }
+            mix[QStringLiteral("effectsPlatforms")] = platforms;
         }
         (*components)[mixKey] = mix;
     }
@@ -743,6 +865,26 @@ bool ProjectSerializer::decodeComponentReferences(QJsonObject* components) const
                 sends.append(send);
             }
             mix[QStringLiteral("sends")] = sends;
+        }
+        if (mix.contains(QStringLiteral("effects"))) {
+            if (!mix.value(QStringLiteral("effects")).isArray()) return false;
+            auto effects = mix.value(QStringLiteral("effects")).toArray();
+            if (!rewriteEffectReferences(&effects, false)) return false;
+            mix[QStringLiteral("effects")] = effects;
+        }
+
+        if (mix.contains(QStringLiteral("effectsPlatforms"))) {
+            if (!mix.value(QStringLiteral("effectsPlatforms")).isObject()) return false;
+            auto platforms = mix.value(QStringLiteral("effectsPlatforms")).toObject();
+            for (const auto& key : platforms.keys()) {
+                if (!platforms.value(key).isArray()) return false;
+                const QUuid platform(key);
+                if (platform.isNull() || platform.toString(QUuid::WithoutBraces) != key) return false;
+                auto effects = platforms.value(key).toArray();
+                if (!rewriteEffectReferences(&effects, false)) return false;
+                platforms[key] = effects;
+            }
+            mix[QStringLiteral("effectsPlatforms")] = platforms;
         }
         (*components)[mixKey] = mix;
     }
@@ -1556,7 +1698,7 @@ bool ProjectSerializer::projectItemFromJson(const QJsonObject& json, ProjectItem
         lastError_ = QStringLiteral("Invalid object name: %1").arg(item.name);
         return false;
     }
-    if (!readFieldGroups(json, item, lastError_)) return false;
+    if (!readFieldGroups(json, item)) return false;
     item.sourcePath.clear();
 
     if (!json.value(QStringLiteral("guid")).isString()) return false;
@@ -1666,6 +1808,10 @@ QJsonObject ProjectSerializer::itemDocument(const ProjectItem& item,
         content = attenuationPackToJson(item);
         type = QStringLiteral("project.attenuation");
         break;
+    case ItemTypeCatalog::Bucket::Effects:
+        content = effectPackToJson(item);
+        type = QStringLiteral("project.effect");
+        break;
     case ItemTypeCatalog::Bucket::Variables:
         content = variablePackToJson(item);
         type = QStringLiteral("project.variable");
@@ -1748,7 +1894,7 @@ bool ProjectSerializer::audioBranchFromJson(
         lastError_ = QStringLiteral("Invalid object name: %1").arg(node.name);
         return false;
     }
-    if (!readFieldGroups(json, node, lastError_)) return false;
+    if (!readFieldGroups(json, node)) return false;
     node.sourcePath.clear();
 
     if (!json.value(QStringLiteral("guid")).isString())
@@ -2064,6 +2210,71 @@ bool ProjectSerializer::attenuationPackFromJson(const QJsonObject& json, Project
         if (components.contains(key)
             && !item.comp<VAttenuation>()->fromJson(components.value(key).toObject())) {
             lastError_ = QStringLiteral("Invalid Attenuation fields");
+            return false;
+        }
+    }
+
+    item.children.clear();
+    return true;
+}
+
+QJsonObject ProjectSerializer::effectPackToJson(const ProjectItem& item) const
+{
+    if (item.type != ProjectItem::Type::Effect)
+    {
+        qWarning() << "[EffectPack] called on non-Effect:"
+                   << item.name << "type=" << static_cast<int>(item.type);
+        return {};
+    }
+
+    QJsonObject obj;
+    if (!writeFieldGroups(item, obj)) return {};
+    writeS3RootIdentity(obj, item);
+    obj[QStringLiteral("parentRef")] = persistentParentReference(item);
+    if (obj.value(QStringLiteral("parentRef")).toObject().isEmpty()) return {};
+
+    QJsonObject compsObj = componentsToJsonDict(item);
+    if (!encodeComponentReferences(&compsObj)) return {};
+    if (!compsObj.isEmpty())
+        obj[QStringLiteral("components")] = compsObj;
+
+    return obj;
+}
+
+bool ProjectSerializer::effectPackFromJson(const QJsonObject& json, ProjectItem& item) const
+{
+    if (!ProjectDocument::validateFieldGroupAuthoring(json, &lastError_)) return false;
+    const QString storedType = json.value(QStringLiteral("type")).toString();
+    if (storedType != QStringLiteral("Effect"))
+    {
+        qWarning() << "[EffectPack] Skipping wrong-typed payload (type="
+                   << storedType << ")";
+        return false;
+    }
+    item.type = ProjectItem::Type::Effect;
+    if (!readS3RootIdentity(json, item, "Effect")) return false;
+    if (item.guid.isNull()) return false;
+    if (!referencesByGuid_.contains(item.guid)
+        && !registerReadGuid(item.guid, item.type, item.guid, item.name))
+        return false;
+    const auto registered = referencesByGuid_.constFind(item.guid);
+    if (registered == referencesByGuid_.cend() || registered->type != item.type)
+        return false;
+    item.objectID = registered->objectId;
+    if (!json.value(QStringLiteral("parentRef")).isObject()
+        || !loadParentReference(json.value(QStringLiteral("parentRef")).toObject(),
+                                &item.parentRef))
+        return false;
+
+    item.attachDefaultComponents();
+    if (json.contains(QStringLiteral("components")))
+    {
+        QJsonObject components = json.value(QStringLiteral("components")).toObject();
+        if (!decodeComponentReferences(&components)) return false;
+        const auto key = componentTypeName(ComponentType::Effect);
+        if (components.contains(key)
+            && !item.comp<VEffect>()->fromJson(components.value(key).toObject())) {
+            lastError_ = QStringLiteral("Invalid Effect fields");
             return false;
         }
     }

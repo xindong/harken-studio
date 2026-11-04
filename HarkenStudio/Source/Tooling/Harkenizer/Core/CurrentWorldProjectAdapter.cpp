@@ -1591,6 +1591,10 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
 
     int64_t editorOrder = 0;
     uint32_t containerOrder = 0;
+    RuntimeCapabilityContext resourceContext;
+    resourceContext.platform = scope;
+    resourceContext.deferCurrentWorldCompilation = true;
+    resourceContext.fieldGroups = &groups;
     for (ProjectItem* item : index.definitions) {
         if (included.find(item) == included.end())
             continue;
@@ -1603,8 +1607,6 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
         };
         const auto lowerDefinition = [&]() {
             if (options && options->validatePackResources) {
-                RuntimeCapabilityContext resourceContext;
-                resourceContext.deferCurrentWorldCompilation = true;
                 for (const auto feature : {RuntimeCapabilityFeature::TypedBinding,
                                            RuntimeCapabilityFeature::TypedEffect}) {
                     const auto capability = [&]() {
@@ -1917,6 +1919,7 @@ bool affectsCurrentWorld(ProjectItemType itemType,
         || itemType == ProjectItemType::Segment
         || itemType == ProjectItemType::Variable
         || itemType == ProjectItemType::Action
+        || itemType == ProjectItemType::Effect
         || itemType == ProjectItemType::Bus;
     if (!contributesDefinition)
         return false;
@@ -1956,6 +1959,10 @@ bool affectsCurrentWorld(ProjectItemType itemType,
                 || name == QStringLiteral("defaultValue");
         case ProjectItemType::Action:
             return name == QStringLiteral("steps");
+        case ProjectItemType::Effect:
+            return name == QStringLiteral("type")
+                || name == QStringLiteral("parameters")
+                || name == QStringLiteral("pasteProperties");
         default:
             return false;
     }

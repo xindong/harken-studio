@@ -50,6 +50,8 @@ add_library(harken_editor_common STATIC
     MatrixTableWidget.h
     MenuComboBox.cpp
     MenuComboBox.h
+    MenuActionButton.cpp
+    MenuActionButton.h
     MultiSelectComboBox.cpp
     MultiSelectComboBox.h
     VerticalFaderPresenter.cpp

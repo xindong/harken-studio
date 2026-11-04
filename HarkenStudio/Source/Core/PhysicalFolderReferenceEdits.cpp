@@ -57,6 +57,24 @@ void cleanActions(QJsonObject& object, const QString& key, const QSet<QUuid>& gu
     });
 }
 
+void cleanEffects(QJsonObject& object, const QSet<QUuid>& guids)
+{
+    const auto clean = [&](const QJsonArray& effects) {
+        return filtered(effects, [&](const auto& row) {
+            const auto effect = row.toObject();
+            if (effect.value(QStringLiteral("mode")) == QStringLiteral("custom")) return false;
+            return deleted(effect.value(QStringLiteral("effectGuid")), guids)
+                || deleted(effect.value(QStringLiteral("effectRef")), guids);
+        });
+    };
+    if (object.contains(QStringLiteral("effects")))
+        object.insert(QStringLiteral("effects"), clean(object.value(QStringLiteral("effects")).toArray()));
+    editObject(object, QStringLiteral("effectsPlatforms"), [&](QJsonObject& platforms) {
+        for (const auto& key : platforms.keys())
+            platforms.insert(key, clean(platforms.value(key).toArray()));
+    });
+}
+
 void cleanPlayable(QJsonObject& properties, const QSet<QUuid>& guids)
 {
     if (deleted(properties.value(QStringLiteral("spatial.attenuationRef")), guids))
@@ -239,6 +257,18 @@ QJsonObject PhysicalFolderReferenceEdits::removeReferences(QJsonObject content,
     cleanActions(content, QStringLiteral("actions"), guids);
     editObject(content, QStringLiteral("playableProperties"), [&](auto& properties) { cleanPlayable(properties, guids); });
     editObject(content, QStringLiteral("fieldGroups"), [&](QJsonObject& groups) {
+        const auto cleanEffectGroup = [&](QJsonObject& scoped) {
+            editObject(scoped, QStringLiteral("effect"), [&](QJsonObject& state) {
+                editObject(state, QStringLiteral("values"), [&](QJsonObject& values) {
+                    cleanEffects(values, guids);
+                });
+            });
+        };
+        editObject(groups, QStringLiteral("shared"), cleanEffectGroup);
+        editObject(groups, QStringLiteral("platforms"), [&](QJsonObject& platforms) {
+            for (const auto& key : platforms.keys())
+                editObject(platforms, key, cleanEffectGroup);
+        });
         const auto cleanGroups = [&](QJsonObject& row) {
             editObject(row, QStringLiteral("spatialRating"), [&](QJsonObject& spatial) {
                 editObject(spatial, QStringLiteral("values"), [&](QJsonObject& values) {
@@ -269,6 +299,7 @@ QJsonObject PhysicalFolderReferenceEdits::removeReferences(QJsonObject content,
             cleanActions(action, QStringLiteral("steps"), guids);
         });
         editObject(components, QStringLiteral("mixnode"), [&](QJsonObject& mix) {
+            cleanEffects(mix, guids);
             if (mix.contains(QStringLiteral("bindings")))
                 mix.insert(QStringLiteral("bindings"), filtered(mix.value(QStringLiteral("bindings")).toArray(), [&](const auto& row) {
                     return deleted(row.toObject().value(QStringLiteral("variable")), guids);

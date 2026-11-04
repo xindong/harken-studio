@@ -142,6 +142,7 @@ struct RuntimeCapabilityContext
     QString language;
     std::shared_ptr<RuntimeCapabilityBuildSession> buildSession;
     bool deferCurrentWorldCompilation = false;
+    const FieldGroupEffectiveSnapshot* fieldGroups = nullptr;
 };
 
 class RuntimeCapabilityBuildSession

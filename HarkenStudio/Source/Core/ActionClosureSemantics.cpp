@@ -142,6 +142,7 @@ struct Builder
                 ? PlatformScope{} : PlatformScope{QUuid::fromString(variant.platform)})
             : std::make_shared<FieldGroupEffectiveSnapshot>(
                 buildFieldGroupEffectiveSnapshot(project, scope));
+        capabilityContext.fieldGroups = effectiveGroups.get();
         for (const auto& error : effectiveGroups->diagnostics) {
             const auto object = index.guid.find(error.itemGuid);
             diagnostic(ActionClosureDiagnosticCode::SchemaMismatch, error.message,
@@ -285,10 +286,29 @@ struct Builder
                            QStringLiteral("bindings"));
             }
         }
-        if (const auto* mix = item.comp<VMixNode>(); mix && !mix->effects.isEmpty())
-            edge(item.runtimeId(), item.runtimeId(),
-                 ActionClosureEdgeReason::EffectDependency,
-                 QStringLiteral("effects"), path);
+        if (const auto* mix = item.comp<VMixNode>()) {
+            const auto definition = effectiveGroups->definitions.find(toFieldGroupGuid(item.guid));
+            const auto platform = effectiveGroups->scope
+                ? PlatformScope{fromFieldGroupGuid(*effectiveGroups->scope)} : PlatformScope{};
+            const auto& effects = definition == effectiveGroups->definitions.end()
+                ? mix->effectsForPlatform(platform) : definition->second.effects.effects;
+            for (const auto& effect : effects.entries()) {
+                if (effect.mode == EffectMode::Custom) continue;
+                const auto* target = byGuid(effect.effectGuid, item.runtimeId(),
+                                            QStringLiteral("effects.effectGuid"), path);
+                if (!target) continue;
+                if (target->type != ProjectItem::Type::Effect) {
+                    diagnostic(ActionClosureDiagnosticCode::SchemaMismatch,
+                        QStringLiteral("Effect reference must target an Effect asset"),
+                        plan.rootActionStableId, -1, item.runtimeId(),
+                        QStringLiteral("effects.effectGuid"), path);
+                    continue;
+                }
+                edge(item.runtimeId(), target->runtimeId(),
+                     ActionClosureEdgeReason::EffectDependency,
+                     QStringLiteral("effects"), path);
+            }
+        }
     }
 
     void addSoundMedia(const ProjectItem& item, bool control)

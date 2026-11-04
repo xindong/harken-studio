@@ -33,7 +33,8 @@ bool refreshFieldGroupDerivedViews(ProjectData& project)
         const auto output = resolver.Resolve(definition.guid, {}, FieldGroupId::Output);
         const auto send = resolver.Resolve(definition.guid, {}, FieldGroupId::Send);
         const auto spatial = resolver.Resolve(definition.guid, {}, FieldGroupId::SpatialRating);
-        if (!output.ok() || !send.ok() || !spatial.ok()) return false;
+        const auto effects = resolver.Resolve(definition.guid, {}, FieldGroupId::Effect);
+        if (!output.ok() || !send.ok() || !spatial.ok() || !effects.ok()) return false;
         const auto& outputFields = std::get<OutputFieldGroup>(output.value->payload);
         const auto& rating = std::get<SpatialRatingFieldGroup>(spatial.value->payload);
         const auto bus = source->byGuid.find(outputFields.outputBusRef);

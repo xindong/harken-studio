@@ -49,6 +49,7 @@ public:
         PageEmpty = 0,
         PageAction,
         PageAttenuation,
+        PageEffect,
         PageSound,
         PageLayer,
         PageBus,
@@ -73,6 +74,7 @@ public:
     void setupUI();
     void setupActionPage();
     void setupAttenuationPage();
+    void setupEffectPage();
     void setupSoundPageEngine();
     void setupLayerPage();
     void setupContainerPage();
@@ -134,13 +136,18 @@ public:
     PropertyEditorEngine* attenuationEngine_ = nullptr;
     InspectorCustomization attenuationCustomization_;
 
+    ProjectItem* currentEffectItem_ = nullptr;
+    PropertyEditorEngine* effectEngine_ = nullptr;
+    InspectorCustomization effectCustomization_;
+
     bool ownsEditorEngine(const QObject* origin) const
     {
         return origin == soundEngine_ || origin == layerEngine_
             || origin == containerEngine_ || origin == trackEngine_
             || origin == segmentEngine_ || origin == variableEngine_
             || origin == busEngine_
-            || origin == actionEngine_ || origin == attenuationEngine_;
+            || origin == actionEngine_ || origin == attenuationEngine_
+            || origin == effectEngine_;
     }
 };
 

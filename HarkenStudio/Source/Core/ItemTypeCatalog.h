@@ -20,7 +20,8 @@ enum class Bucket : uint8_t {
     Busses,
     Actions,
     Variables,
-    Attenuations
+    Attenuations,
+    Effects
 };
 
 enum class NameNamespace : uint8_t {
@@ -29,7 +30,8 @@ enum class NameNamespace : uint8_t {
     Action,
     Attenuation,
     Bus,
-    Variable
+    Variable,
+    Effect
 };
 
 enum class CreateParentPolicy { DefaultForType, SelectedItem, SelectedGuarded };
@@ -81,9 +83,10 @@ inline constexpr char kBussesFolderName[]       = "Busses";
 inline constexpr char kActionsFolderName[]      = "Actions";
 inline constexpr char kVariablesFolderName[]    = "Variables";
 inline constexpr char kAttenuationsFolderName[] = "Attenuations";
+inline constexpr char kEffectsFolderName[]      = "Effects";
 
 const TypeFacts* factsOrNull(ProjectItem::Type type);
-const std::array<ProjectItem::Type, 9>& allTypes();
+const std::array<ProjectItem::Type, 10>& allTypes();
 
 QString displayName(ProjectItem::Type type);
 QString canonicalName(ProjectItem::Type type);
@@ -114,7 +117,7 @@ const BucketFacts* bucketFacts(Bucket bucket);
 const BucketFacts* bucketFactsForFolder(const QString& folderName);
 Bucket bucketOf(ProjectItem::Type type);
 QString folderNameOf(Bucket bucket);
-const std::array<Bucket, 5>& allBuckets();
+const std::array<Bucket, 6>& allBuckets();
 QString bucketDisplayName(const QString& folderName);
 std::vector<ProjectItem::Type> allowedTopLevelTypesForBucket(const QString& folderName);
 bool bucketAllowsFolder(const QString& folderName);

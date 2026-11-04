@@ -12,6 +12,8 @@
 
 namespace VNX {
 
+struct ProjectData;
+
 enum class EffectType : uint32_t
 {
     FeedbackDelay = 0,
@@ -21,13 +23,28 @@ enum class EffectType : uint32_t
     Compressor = 4
 };
 
+struct EffectDefinition
+{
+    EffectDefinition();
+
+    EffectType type = EffectType::Limiter;
+    std::vector<float> parameters;
+
+    QJsonObject toJson() const;
+    static std::optional<EffectDefinition> fromJson(const QJsonObject& json);
+};
+
+enum class EffectMode { Custom, Preset };
+
 struct EffectEntry
 {
     QUuid guid;
     harkenstudio::ObjectId runtimeId() const { return runtimeObjectId(guid); }
-    EffectType type = EffectType::Gain;
-    std::vector<float> parameters;
+    EffectMode mode = EffectMode::Preset;
+    EffectDefinition custom;
+    QUuid effectGuid;
     bool bypass = false;
+    float wetDry = 1.0f;
     QJsonObject extensions;
     QJsonValue opaqueValue;
     bool typed = true;
@@ -72,10 +89,13 @@ private:
 namespace EffectChainSemantics {
 
 QString typeName(EffectType type);
+QString displayName(EffectType type);
 std::optional<EffectType> parseType(const QString& value);
 int parameterCount(EffectType type);
 std::vector<float> defaultParameters(EffectType type);
 bool validate(const EffectEntry& entry, QString* diagnostic = nullptr);
+bool validate(const EffectDefinition& effect, QString* diagnostic = nullptr);
+const EffectDefinition* resolve(const EffectEntry& entry, const ProjectData& project);
 
 }
 }

@@ -6,9 +6,11 @@
 #include "Widgets/Common/TableWidget.h"
 #include "Widgets/Common/MatrixTableWidget.h"
 #include "Widgets/ControlPanel/ControlPanel.h"
+#include "Widgets/Shared/TreeExpansionWidget.h"
 
 #include <gtest/gtest.h>
 
+#include <QAccessible>
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
@@ -29,6 +31,7 @@
 #include <QPushButton>
 #include <QTableWidget>
 #include <QScopeGuard>
+#include <QStandardItemModel>
 #include <QStyleFactory>
 #include <QStyleOptionButton>
 #include <QStyleOptionMenuItem>
@@ -37,6 +40,8 @@
 #include <QVBoxLayout>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QTreeView>
+#include <QTreeWidget>
 
 #include <memory>
 
@@ -188,6 +193,102 @@ TEST(ThemeControlValidation, ValidatorsAndMasksInstalledAfterPolishKeepAutomatic
     EXPECT_FALSE(masked.property("inputInvalid").toBool());
 }
 
+TEST(ThemeControlValidation, CollapsedTreesPreserveAccessibleIdentityAcrossPolishCycles)
+{
+    ensureApp();
+    QTemporaryDir root;
+    auto manager = makeManager(root.path());
+    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    static QTreeView* observedTree = nullptr;
+    static int resetCount = 0;
+    const auto previousHandler = QAccessible::installUpdateHandler([](QAccessibleEvent* event) {
+        if (event->type() != QAccessible::TableModelChanged) return;
+        auto* change = static_cast<QAccessibleTableModelChangeEvent*>(event);
+        if (event->object() == observedTree
+            && change->modelChangeType() == QAccessibleTableModelChangeEvent::ModelReset)
+            ++resetCount;
+        if (!QAccessible::isActive()) {
+            auto* interface = event->accessibleInterface();
+            if (auto* table = interface ? interface->tableInterface() : nullptr)
+                table->modelChange(change);
+        }
+    });
+    const auto restoreHandler = qScopeGuard([previousHandler] {
+        observedTree = nullptr;
+        QAccessible::installUpdateHandler(previousHandler);
+    });
+    for (int kind = 0; kind < 4; ++kind) {
+        SCOPED_TRACE(kind);
+        QStandardItemModel model;
+        std::unique_ptr<QTreeView> tree;
+        switch (kind) {
+        case 0: tree = std::make_unique<QTreeWidget>(); break;
+        case 1: tree = std::make_unique<VNX::ProportionalTreeWidget>(QList<int>{1, 1}, nullptr, manager.get()); break;
+        case 2: tree = std::make_unique<VNX::TreeExpansionWidget>(); break;
+        case 3: tree = std::make_unique<QTreeView>(); break;
+        }
+        if (auto* items = qobject_cast<QTreeWidget*>(tree.get())) {
+            items->setHeaderLabels({QStringLiteral("Name"), QStringLiteral("Value")});
+            auto* group = new QTreeWidgetItem(items, {QStringLiteral("Group"), QStringLiteral("group")});
+            new QTreeWidgetItem(group, {QStringLiteral("Child"), QStringLiteral("child")});
+            new QTreeWidgetItem(items, {QStringLiteral("Following"), QStringLiteral("following")});
+            new QTreeWidgetItem(items, {QStringLiteral("Last"), QStringLiteral("last")});
+        } else {
+            model.setHorizontalHeaderLabels({QStringLiteral("Name"), QStringLiteral("Value")});
+            auto* group = new QStandardItem(QStringLiteral("Group"));
+            group->appendRow({new QStandardItem(QStringLiteral("Child")), new QStandardItem(QStringLiteral("child"))});
+            model.appendRow({group, new QStandardItem(QStringLiteral("group"))});
+            model.appendRow({new QStandardItem(QStringLiteral("Following")), new QStandardItem(QStringLiteral("following"))});
+            model.appendRow({new QStandardItem(QStringLiteral("Last")), new QStandardItem(QStringLiteral("last"))});
+            tree->setModel(&model);
+        }
+        tree->setStyle(&style);
+        tree->resize(400, 300);
+        tree->show();
+        QCoreApplication::processEvents();
+        observedTree = tree.get();
+        auto* interface = QAccessible::queryAccessibleInterface(tree.get());
+        ASSERT_NE(interface, nullptr);
+        ASSERT_NE(interface->tableInterface(), nullptr);
+        const auto verifyChildren = [&] {
+            QSet<QAccessible::Id> identities;
+            for (int index = 0; index < interface->childCount(); ++index) {
+                auto* child = interface->child(index);
+                ASSERT_NE(child, nullptr);
+                ASSERT_TRUE(child->isValid());
+                EXPECT_EQ(child->parent(), interface);
+                EXPECT_EQ(interface->indexOfChild(child), index);
+                const auto identity = QAccessible::uniqueId(child);
+                EXPECT_FALSE(identities.contains(identity));
+                identities.insert(identity);
+                if (index + 1 < interface->childCount())
+                    EXPECT_NE(interface->child(interface->indexOfChild(child) + 1), child);
+            }
+        };
+        const QModelIndex group = tree->model()->index(0, 0);
+        for (int cycle = 0; cycle < 3; ++cycle) {
+            SCOPED_TRACE(cycle);
+            if (cycle > 0) {
+                style.unpolish(tree.get());
+                style.polish(tree.get());
+            }
+            tree->expand(group);
+            tree->doItemsLayout();
+            QAccessibleTableModelChangeEvent reset(tree.get(), QAccessibleTableModelChangeEvent::ModelReset);
+            interface->tableInterface()->modelChange(&reset);
+            ASSERT_EQ(interface->tableInterface()->rowCount(), 4);
+            verifyChildren();
+            resetCount = 0;
+            tree->collapse(group);
+            ASSERT_FALSE(tree->isExpanded(group));
+            EXPECT_EQ(resetCount, 1);
+            EXPECT_EQ(interface->tableInterface()->rowCount(), 3);
+            verifyChildren();
+        }
+        observedTree = nullptr;
+    }
+}
+
 TEST(ThemeMetricsMigration, ColorPreviewPreservesMetricsAndSynchronizesNativePalette)
 {
     ensureApp();
@@ -286,6 +387,84 @@ TEST(ThemeMetricsMigration, ColorPreviewPreservesMetricsAndSynchronizesNativePal
     EXPECT_EQ(fixedCombo->minimumSize(), comboMinimum);
     EXPECT_EQ(fixedCombo->maximumSize(), comboMaximum);
     EXPECT_EQ(fixedCombo->currentText(), QStringLiteral("Second"));
+}
+
+TEST(ThemeMetricsMigration, DisabledAndDimmedLabelsFollowColorPreviewAndRestore)
+{
+    ensureApp();
+    QTemporaryDir root;
+    auto manager = makeManager(root.path());
+    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    QWidget panel;
+    panel.setStyle(&style);
+    auto* layout = new QVBoxLayout(&panel);
+    const auto addLabel = [&](const QString& text) {
+        auto* label = new QLabel(text, &panel);
+        label->setStyle(&style);
+        layout->addWidget(label);
+        return label;
+    };
+    auto* plain = addLabel(QStringLiteral("Plain"));
+    auto* primary = addLabel(QStringLiteral("Primary"));
+    primary->setProperty("textRole", QStringLiteral("primary"));
+    auto* readOnly = addLabel(QStringLiteral("Read only"));
+    readOnly->setProperty("roValue", true);
+    auto* decibels = addLabel(QStringLiteral("dB"));
+    decibels->setProperty("bindingUnit", QStringLiteral("dB"));
+    auto* cents = addLabel(QStringLiteral("cent"));
+    cents->setProperty("bindingUnit", QStringLiteral("cent"));
+    auto* dimmed = addLabel(QStringLiteral("Navigable"));
+    dimmed->setProperty("textRole", QStringLiteral("primary"));
+    dimmed->setProperty("dimmed", true);
+    auto* table = new VNX::TableWidget(&panel, manager.get());
+    table->setStyle(&style);
+    table->setColumns(QStringLiteral("DisabledLabelTable"), {
+        {QStringLiteral("index"), QStringLiteral("#"), 1}
+    });
+    auto* row = new QWidget(table->rowsWidget());
+    auto* cells = new QHBoxLayout(row);
+    auto* number = table->createRowNumber(row, 0);
+    number->setStyle(&style);
+    cells->addWidget(number);
+    table->registerRow(row, {number});
+    table->rowsLayout()->addWidget(row);
+    auto* header = table->headerCell(0);
+    header->setStyle(&style);
+    layout->addWidget(table);
+    const QList<QLabel*> disabled{plain, primary, readOnly, decibels, cents, number, header};
+    for (auto* label : disabled) label->setEnabled(false);
+    panel.resize(400, 300);
+    panel.show();
+    QCoreApplication::processEvents();
+    const auto original = manager->snapshot();
+    const auto verify = [&](const QColor& color) {
+        QCoreApplication::processEvents();
+        for (const auto* label : disabled) {
+            SCOPED_TRACE(label->text().toStdString());
+            EXPECT_FALSE(label->isEnabled());
+            EXPECT_EQ(label->palette().color(QPalette::Disabled, QPalette::WindowText), color);
+        }
+        EXPECT_TRUE(dimmed->isEnabled());
+        EXPECT_EQ(dimmed->palette().color(QPalette::WindowText), color);
+        EXPECT_EQ(qApp->palette().color(QPalette::Disabled, QPalette::WindowText), color);
+    };
+    verify(original->ui.colors.textDisabled);
+    for (const QColor color : {QColor(QStringLiteral("#7c618f")), QColor(QStringLiteral("#52796f"))}) {
+        auto preview = manager->appearance();
+        preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("text.disabled"), color);
+        ASSERT_TRUE(manager->previewAppearance(preview).ok());
+        verify(color);
+    }
+    manager->cancelAppearancePreview();
+    verify(original->ui.colors.textDisabled);
+    for (auto* label : disabled) label->setEnabled(true);
+    VNX::QtControlSkin::setSemanticProperty(dimmed, "dimmed", false);
+    QCoreApplication::processEvents();
+    for (const auto* label : {plain, primary, readOnly, number, dimmed})
+        EXPECT_EQ(label->palette().color(QPalette::WindowText), original->ui.colors.textPrimary);
+    for (const auto* label : {decibels, cents})
+        EXPECT_EQ(label->palette().color(QPalette::WindowText), original->ui.colors.textMuted);
+    EXPECT_EQ(header->palette().color(QPalette::WindowText), original->ui.colors.textSecondary);
 }
 
 TEST(ThemeMetricsMigration, BorderPreviewRepaintsOpaqueDescendantsWithoutRepolish)

@@ -95,7 +95,8 @@ std::vector<ProjectItem*> ProjectData::findItemsBySelector(
         ? QDir::fromNativeSeparators(key).split(QLatin1Char('/'), Qt::SkipEmptyParts) : QStringList{};
     const auto visit = [&](auto&& self, ProjectItem* item, qsizetype depth, bool parentMatches) -> void {
         if (!item) return;
-        const auto sensitivity = item->type == ProjectItem::Type::Attenuation ? Qt::CaseInsensitive : Qt::CaseSensitive;
+        const auto sensitivity = (item->type == ProjectItem::Type::Attenuation
+            || item->type == ProjectItem::Type::Effect) ? Qt::CaseInsensitive : Qt::CaseSensitive;
         const QString name = item->name.normalized(QString::NormalizationForm_C);
         const bool pathMatches = parentMatches && depth < segments.size()
             && name.compare(segments[depth], sensitivity) == 0;
@@ -438,13 +439,28 @@ bool validateProjectObjectIdentities(const ProjectData& project, QString* error)
                 }
                 if (!claim(binding.guid)) return false;
             }
-            for (const auto& effect : mix->effects.entries()) {
-                if (!effect.typed) {
-                    if (error) *error = QStringLiteral("Project contains an invalid effect in %1").arg(item->name);
-                    return false;
+            QSet<QUuid> effectGuids;
+            bool validEffects = true;
+            const auto claimEffects = [&](const EffectChainLedger& effects, FieldGroupScope) {
+                QSet<QUuid> chainGuids;
+                for (const auto& effect : effects.entries()) {
+                    if (!validEffects) return;
+                    if (!effect.typed || chainGuids.contains(effect.guid)) {
+                        if (error) *error = QStringLiteral("Project contains an invalid effect in %1").arg(item->name);
+                        validEffects = false;
+                        return;
+                    }
+                    chainGuids.insert(effect.guid);
+                    if (effectGuids.contains(effect.guid)) continue;
+                    validEffects = claim(effect.guid);
+                    effectGuids.insert(effect.guid);
                 }
-                if (!claim(effect.guid)) return false;
-            }
+            };
+            claimEffects(mix->effects, {});
+            for (const auto& [platform, effects] : mix->effectPlatforms)
+                claimEffects(effects, {});
+            VisitAuthoredEffectChains(item->fieldGroups, claimEffects);
+            if (!validEffects) return false;
         }
         if (const auto* timeline = item->comp<VTrack>())
             for (const auto& clip : timeline->clips.items)

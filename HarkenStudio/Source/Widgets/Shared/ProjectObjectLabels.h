@@ -55,7 +55,8 @@ public:
 
     QString label(const ProjectItem& item) const
     {
-        const bool insensitive = item.type == ProjectItem::Type::Attenuation;
+        const bool insensitive = item.type == ProjectItem::Type::Attenuation
+            || item.type == ProjectItem::Type::Effect;
         const QString nameKey = item.name.normalized(QString::NormalizationForm_C);
         if ((insensitive ? foldedNames_.value(nameKey.toCaseFolded()) : names_.value(nameKey)) < 2)
             return item.name;

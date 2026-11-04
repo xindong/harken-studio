@@ -1,6 +1,6 @@
 #include "EffectChainSemantics.h"
-
-#include <QJsonDocument>
+#include "Components/VEffect.h"
+#include "ProjectTypes.h"
 
 #include <algorithm>
 #include <cmath>
@@ -35,16 +35,48 @@ const std::vector<std::pair<float, float>>& parameterRanges(EffectType type)
 
 }
 
+EffectDefinition::EffectDefinition()
+    : parameters(EffectChainSemantics::defaultParameters(type))
+{}
+
+QJsonObject EffectDefinition::toJson() const
+{
+    QJsonArray values;
+    for (const float parameter : parameters) values.append(parameter);
+    return {{QStringLiteral("type"), EffectChainSemantics::typeName(type)},
+            {QStringLiteral("parameters"), values}};
+}
+
+std::optional<EffectDefinition> EffectDefinition::fromJson(const QJsonObject& json)
+{
+    const auto parsedType = EffectChainSemantics::parseType(
+        json.value(QStringLiteral("type")).toString());
+    const auto values = json.value(QStringLiteral("parameters"));
+    if (!parsedType || !values.isArray()) return std::nullopt;
+    EffectDefinition definition;
+    definition.type = *parsedType;
+    definition.parameters.clear();
+    for (const auto& value : values.toArray()) {
+        if (!value.isDouble()) return std::nullopt;
+        definition.parameters.push_back(static_cast<float>(value.toDouble()));
+    }
+    if (!EffectChainSemantics::validate(definition)) return std::nullopt;
+    return definition;
+}
+
 QJsonValue EffectEntry::toJson() const
 {
     if (!typed) return opaqueValue;
     QJsonObject object = extensions;
     object[QStringLiteral("guid")] = guid.toString(QUuid::WithoutBraces);
-    object[QStringLiteral("type")] = EffectChainSemantics::typeName(type);
-    QJsonArray values;
-    for (float parameter : parameters) values.append(parameter);
-    object[QStringLiteral("parameters")] = values;
+    object[QStringLiteral("mode")] = mode == EffectMode::Custom
+        ? QStringLiteral("custom") : QStringLiteral("preset");
+    if (mode == EffectMode::Custom)
+        object[QStringLiteral("custom")] = custom.toJson();
+    else
+        object[QStringLiteral("effectGuid")] = effectGuid.toString(QUuid::WithoutBraces);
     if (bypass) object[QStringLiteral("bypass")] = true;
+    if (wetDry != 1.0f) object[QStringLiteral("wetDry")] = wetDry;
     return object;
 }
 
@@ -57,35 +89,50 @@ EffectEntry EffectEntry::fromJson(const QJsonValue& value)
         return entry;
     }
     const QJsonObject object = value.toObject();
-    const auto type = EffectChainSemantics::parseType(
-        object.value(QStringLiteral("type")).toString());
-    if (!type || !object.value(QStringLiteral("parameters")).isArray()) {
+    const auto mode = object.value(QStringLiteral("mode"));
+    const bool isCustom = mode == QStringLiteral("custom");
+    const QJsonValue wetDry = object.value(QStringLiteral("wetDry"));
+    const QJsonValue bypass = object.value(QStringLiteral("bypass"));
+    if ((!mode.isUndefined() && mode != QStringLiteral("custom") && mode != QStringLiteral("preset"))
+        || object.contains(QStringLiteral("type")) || object.contains(QStringLiteral("parameters"))
+        || object.contains(QStringLiteral("effectRef"))
+        || (isCustom ? object.contains(QStringLiteral("effectGuid"))
+                     : object.contains(QStringLiteral("custom")))
+        || (!bypass.isUndefined() && !bypass.isBool())
+        || (!wetDry.isUndefined() && (!wetDry.isDouble()
+            || !std::isfinite(wetDry.toDouble())
+            || wetDry.toDouble() < 0.0 || wetDry.toDouble() > 1.0))) {
         entry.typed = false;
         entry.opaqueValue = value;
         return entry;
     }
     entry.guid = QUuid::fromString(object.value(QStringLiteral("guid")).toString());
-    entry.type = *type;
-    entry.bypass = object.value(QStringLiteral("bypass")).toBool();
-    entry.extensions = object;
-    entry.extensions.remove(QStringLiteral("guid"));
-    entry.extensions.remove(QStringLiteral("type"));
-    entry.extensions.remove(QStringLiteral("parameters"));
-    entry.extensions.remove(QStringLiteral("bypass"));
-    for (const QJsonValue& parameter :
-         object.value(QStringLiteral("parameters")).toArray()) {
-        if (!parameter.isDouble()) {
+    entry.mode = isCustom ? EffectMode::Custom : EffectMode::Preset;
+    if (isCustom) {
+        const auto definition = object.value(QStringLiteral("custom"));
+        const auto parsed = definition.isObject()
+            ? EffectDefinition::fromJson(definition.toObject()) : std::nullopt;
+        if (!parsed) {
             entry.typed = false;
             entry.opaqueValue = value;
-            entry.parameters.clear();
             return entry;
         }
-        entry.parameters.push_back(static_cast<float>(parameter.toDouble()));
+        entry.custom = *parsed;
+    } else {
+        entry.effectGuid = QUuid::fromString(object.value(QStringLiteral("effectGuid")).toString());
     }
+    entry.bypass = bypass.toBool();
+    entry.wetDry = static_cast<float>(wetDry.toDouble(1.0));
+    entry.extensions = object;
+    entry.extensions.remove(QStringLiteral("guid"));
+    entry.extensions.remove(QStringLiteral("mode"));
+    entry.extensions.remove(QStringLiteral("custom"));
+    entry.extensions.remove(QStringLiteral("effectGuid"));
+    entry.extensions.remove(QStringLiteral("bypass"));
+    entry.extensions.remove(QStringLiteral("wetDry"));
     if (!EffectChainSemantics::validate(entry)) {
         entry.typed = false;
         entry.opaqueValue = value;
-        entry.parameters.clear();
     }
     return entry;
 }
@@ -133,6 +180,18 @@ QString typeName(EffectType type)
     return {};
 }
 
+QString displayName(EffectType type)
+{
+    switch (type) {
+    case EffectType::FeedbackDelay: return QStringLiteral("Feedback Delay");
+    case EffectType::ThreeBandTone: return QStringLiteral("Three Band Tone");
+    case EffectType::Gain: return QStringLiteral("Gain");
+    case EffectType::Limiter: return QStringLiteral("Limiter");
+    case EffectType::Compressor: return QStringLiteral("Compressor");
+    }
+    return {};
+}
+
 std::optional<EffectType> parseType(const QString& value)
 {
     if (value == QLatin1String("feedbackDelay")) return EffectType::FeedbackDelay;
@@ -167,13 +226,36 @@ bool validate(const EffectEntry& entry, QString* diagnostic)
         if (diagnostic) *diagnostic = QStringLiteral("Effect entry is opaque");
         return false;
     }
-    const auto& ranges = parameterRanges(entry.type);
-    if (entry.parameters.size() != ranges.size()) {
+    if (entry.mode == EffectMode::Custom) {
+        if (!entry.effectGuid.isNull()) {
+            if (diagnostic) *diagnostic = QStringLiteral("Custom effect cannot reference a preset");
+            return false;
+        }
+        if (!validate(entry.custom, diagnostic)) return false;
+    } else if (entry.mode != EffectMode::Preset || entry.effectGuid.isNull()) {
+        if (diagnostic) *diagnostic = QStringLiteral("Effect reference is missing");
+        return false;
+    }
+    if (!std::isfinite(entry.wetDry) || entry.wetDry < 0.0f || entry.wetDry > 1.0f) {
+        if (diagnostic) *diagnostic = QStringLiteral("Effect wet/dry level is out of range");
+        return false;
+    }
+    return true;
+}
+
+bool validate(const EffectDefinition& effect, QString* diagnostic)
+{
+    if (effect.type != EffectType::Limiter) {
+        if (diagnostic) *diagnostic = QStringLiteral("Effect type is unavailable");
+        return false;
+    }
+    const auto& ranges = parameterRanges(effect.type);
+    if (effect.parameters.size() != ranges.size()) {
         if (diagnostic) *diagnostic = QStringLiteral("Effect parameter count is invalid");
         return false;
     }
     for (size_t i = 0; i < ranges.size(); ++i) {
-        const float value = entry.parameters[i];
+        const float value = effect.parameters[i];
         if (!std::isfinite(value) || value < ranges[i].first
             || value > ranges[i].second) {
             if (diagnostic) *diagnostic = QStringLiteral("Effect parameter is out of range");
@@ -181,6 +263,22 @@ bool validate(const EffectEntry& entry, QString* diagnostic)
         }
     }
     return true;
+}
+
+const EffectDefinition* resolve(const EffectEntry& entry, const ProjectData& project)
+{
+    if (!validate(entry)) return nullptr;
+    if (entry.mode == EffectMode::Custom) return &entry.custom;
+    const EffectDefinition* result = nullptr;
+    for (const auto& binding : project.effectItems) {
+        const auto* item = binding.rootItem.get();
+        if (!item || item->guid != entry.effectGuid) continue;
+        if (result || item->type != ProjectItem::Type::Effect) return nullptr;
+        const auto* effect = item->comp<VEffect>();
+        if (!effect || !validate(effect->definition)) return nullptr;
+        result = &effect->definition;
+    }
+    return result;
 }
 
 }
