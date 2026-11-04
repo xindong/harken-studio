@@ -17592,10 +17592,15 @@ TEST(PlayableStart, AbsoluteClipDeadlineOverflowRefusesAtomically) {
     EXPECT_EQ(arms, engine->timelineArms.LiveCount());
 }
 
-TEST(PlayableStart, MusicSegmentPlaysIntroThreeBodyPassesAndOutroThenReclaims) {
-    for (const auto mediaFrames : {200u, 1600u}) {
-    SCOPED_TRACE(mediaFrames);
+TEST(PlayableStart, MusicSegmentHonorsLoopCountAndReclaimsNaturalStoppedOrFailedPlayback) {
+    for (const auto scenario : {std::pair{1u, false}, std::pair{3u, false},
+                               std::pair{0u, false}, std::pair{3u, true}})
+    for (const auto mediaFrames : {200u, 1600u})
     for (const auto workers : {0u, 2u}) {
+        const auto [playCount, failPreparation] = scenario;
+        SCOPED_TRACE(playCount);
+        SCOPED_TRACE(failPreparation);
+        SCOPED_TRACE(mediaFrames);
         SCOPED_TRACE(workers);
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
         config.renderWorkerCount = workers;
@@ -17612,7 +17617,7 @@ TEST(PlayableStart, MusicSegmentPlaysIntroThreeBodyPassesAndOutroThenReclaims) {
         const auto loopIndex = static_cast<std::size_t>(
             harken::playableproperties::PlayablePropertyIdV1::LoopCount) - 1u;
         image.properties[2].payload.presentMask |= UINT64_C(1) << loopIndex;
-        image.properties[2].payload.values[loopIndex].bits = 3;
+        image.properties[2].payload.values[loopIndex].bits = playCount;
         image.properties[2].programSemanticFingerprint =
             harken::ComputePlayablePropertyFingerprintV1(image.properties[2]);
         image.segment.rootDefinition.expectedProgramSemanticFingerprint =
@@ -17628,6 +17633,16 @@ TEST(PlayableStart, MusicSegmentPlaysIntroThreeBodyPassesAndOutroThenReclaims) {
         image.segment.startMarkerId = 0;
         image.marker.markerKind = 1;
         image.marker.position = 48;
+        std::array<harken::ScheduleMarkerV1, 17> markers{};
+        for (std::uint32_t i = 0; i < 16; ++i) {
+            markers[i].stableMarkerId = harkentest::ObjectId(11000 + i);
+            markers[i].markerId = 100 + i;
+            markers[i].position = i;
+        }
+        markers.back() = image.marker;
+        markers.back().markerId = 200;
+        image.segment.markers = markers.data();
+        image.segment.markerCount = static_cast<std::uint32_t>(markers.size());
         image.segment.scheduleSemanticFingerprint = harken::ComputeSegmentScheduleFingerprintV2(image.segment);
         auto install = PlayableWorldInstall(image.world);
         install.sourceBodyVintage = harken::kCurrentWorldBodyVintageV19;
@@ -17649,12 +17664,22 @@ TEST(PlayableStart, MusicSegmentPlaysIntroThreeBodyPassesAndOutroThenReclaims) {
             [&](const auto& candidate) { return candidate.rootInstance == started.instance; });
         ASSERT_NE(engine->playableServices.end(), row);
         const auto start = row->startFrame;
+        const auto endOffset = playCount == 0 ? UINT64_MAX : 800u + 800u * playCount;
+        const unsigned stopBlock = 512;
+        const auto totalBlocks = playCount == 0 ? stopBlock + 128 : 160;
         std::uint64_t audibleFrames = 0;
-        for (unsigned block = 0; block < 160; ++block) {
-            ASSERT_EQ(VN_OK, Vn_Update()) << OccupancyDump(*engine);
+        for (unsigned block = 0; block < totalBlocks; ++block) {
+            if (playCount == 0 && block == stopBlock)
+                ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(*engine, started.instance, 0));
+            if (failPreparation)
+                harken::detail::ArmLogicAllocFaultForTests(1,
+                    harken::detail::LogicAllocSite::ActionPlayContainerStorage);
+            const auto update = Vn_Update();
+            harken::detail::DisarmLogicAllocFaultForTests();
+            ASSERT_EQ(VN_OK, update) << OccupancyDump(*engine);
             harkentest::monitor::CollectIdentityEvents(capture, records);
             const auto before = engine->mixer.BlocksRendered();
-            if (before * 64 < start + 3200)
+            if (!failPreparation && (playCount == 0 ? block < stopBlock : before * 64 < start + endOffset))
                 ASSERT_TRUE(engine->playableInstances.Classify(started.instance).live);
             engine->nullBackend.Pump(1);
             ASSERT_EQ(before + 1, engine->mixer.BlocksRendered()) << OccupancyDump(*engine);
@@ -17662,16 +17687,136 @@ TEST(PlayableStart, MusicSegmentPlaysIntroThreeBodyPassesAndOutroThenReclaims) {
             for (std::uint64_t sample = 0; sample < 64; ++sample) {
                 const auto frame = before * 64 + sample;
                 const auto offset = frame >= start ? frame - start : UINT64_MAX;
-                const float expected = mediaFrames == 200 ? (offset < 200 ? 0.1f : 0.0f)
-                    : offset < 400 ? 0.1f : offset < 2800 ? 0.2f : offset < 3200 ? 0.3f : 0.0f;
+                if (failPreparation && offset >= 400 && block < totalBlocks - 32) continue;
+                if (playCount == 0 && block >= stopBlock && block < stopBlock + 64) continue;
+                const bool stopped = (playCount == 0 && block >= stopBlock) ||
+                    (failPreparation && block >= totalBlocks - 32);
+                const float expected = stopped || offset == UINT64_MAX ? 0.0f
+                    : mediaFrames == 200 ? (offset < 200 ? 0.1f : 0.0f)
+                    : offset < 400 ? 0.1f
+                    : playCount == 0 || offset < endOffset - 400 ? 0.2f
+                    : offset < endOffset ? 0.3f : 0.0f;
                 ASSERT_NEAR(expected, output[2 * sample], 0.001f)
                     << "frame=" << frame << " start=" << start << OccupancyDump(*engine);
                 ASSERT_NEAR(expected, output[2 * sample + 1], 0.001f);
                 if (output[2 * sample] != 0.0f) ++audibleFrames;
             }
         }
-        EXPECT_EQ(mediaFrames == 200 ? 200u : 3200u, audibleFrames);
+        if (!failPreparation)
+            EXPECT_EQ(mediaFrames == 200 ? 200u
+                : playCount == 0 ? stopBlock * 64u - start : endOffset, audibleFrames);
         EXPECT_FALSE(engine->playableInstances.Classify(started.instance).live);
+        EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+        EXPECT_EQ(0u, engine->playablePartitions.OccupiedCount());
+        EXPECT_EQ(0u, engine->timelineArms.LiveCount());
+        EXPECT_EQ(0u, engine->timelineOccurrences.OccupiedCount());
+        EXPECT_EQ(0u, engine->voices.ActiveCount());
+        EXPECT_TRUE(PlayableRowsFree(*engine));
+        EXPECT_FALSE(engine->runtimeRecreateRequired);
+        harkentest::monitor::CollectIdentityEvents(capture, records);
+        unsigned retired = 0;
+        for (const auto& record : records) {
+            if (record.fact.factKind != VN_MONITOR_FACT_PLAYABLE_RETIRED ||
+                record.header.instanceHandle != started.instance) continue;
+            ++retired;
+            EXPECT_EQ(failPreparation ? VN_MONITOR_TERMINAL_FAILURE
+                : playCount == 0 ? VN_MONITOR_TERMINAL_REQUESTED_STOP
+                : VN_MONITOR_TERMINAL_NATURAL_COMPLETION, record.fact.terminalKind);
+        }
+        EXPECT_EQ(1u, retired);
+        EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
+    }
+}
+
+TEST(PlayableStart, MusicSegmentNestedCountsRespectSourceAgeAndParentClip) {
+    for (const auto innerCount : {1u, 2u})
+    for (const auto workers : {0u, 2u}) {
+        SCOPED_TRACE(innerCount);
+        SCOPED_TRACE(workers);
+        auto config = harkentest::MakeNullConfig(16, 64, 48000);
+        config.renderWorkerCount = workers;
+        harkentest::EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        std::vector<float> samples(1600, 0.2f);
+        std::fill_n(samples.begin(), 400, 0.1f);
+        std::fill(samples.begin() + 1200, samples.end(), 0.3f);
+        const auto pcm = harkentest::MonoDesc(samples, 48000);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
+        NestedSegmentWorldImage image(engine->registry.Lookup(kSound).contentRevision);
+        const auto loopIndex = static_cast<std::size_t>(
+            harken::playableproperties::PlayablePropertyIdV1::LoopCount) - 1u;
+        for (unsigned i = 0; i < 2; ++i) {
+            auto& property = image.properties[2 + 2 * i];
+            property.payload.presentMask |= UINT64_C(1) << loopIndex;
+            property.payload.values[loopIndex].bits = i == 0 ? innerCount : 3;
+            property.programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(property);
+            image.segments[i].rootDefinition.expectedProgramSemanticFingerprint = property.programSemanticFingerprint;
+        }
+        image.placements[1].content = image.segments[0].rootDefinition;
+        for (unsigned i = 0; i < 2; ++i) {
+            image.placements[i].authoredStart = 0;
+            image.placements[i].authoredDuration = 64;
+            image.tracks[i].scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(image.tracks[i]);
+            image.trackRefs[i].trackScheduleSemanticFingerprint = image.tracks[i].scheduleSemanticFingerprint;
+            auto& segment = image.segments[i];
+            segment.timeKind = harken::ScheduleTimeKindV1::MusicalTicks;
+            segment.microsPerQuarter = 500000;
+            segment.meterNumerator = segment.meterDenominator = 4;
+            segment.startPointKind = 0;
+            segment.startMarkerId = 0;
+            segment.entryMarker = {harkentest::ObjectId(11000 + i), 16};
+            segment.bounds.contentStart = 0;
+            segment.bounds.contentEnd = 64;
+            segment.bounds.nominalStart = 16;
+            segment.bounds.nominalEnd = 48;
+            image.markers[i].markerKind = 1;
+            image.markers[i].position = 48;
+            segment.scheduleSemanticFingerprint = harken::ComputeSegmentScheduleFingerprintV2(segment);
+            image.occurrences[i].childPlayable = image.placements[i].content;
+            image.occurrences[i].occurrenceSemanticFingerprint =
+                harken::ComputePlayableOccurrenceFingerprintV1(image.occurrences[i]);
+        }
+        std::sort(image.properties.begin(), image.properties.end(), [](const auto& a, const auto& b) {
+            return std::pair{a.contentPropertyKind, a.stableId} < std::pair{b.contentPropertyKind, b.stableId};
+        });
+        auto install = PlayableWorldInstall(image.world);
+        install.sourceBodyVintage = harken::kCurrentWorldBodyVintageV19;
+        install.identity.capabilityMask |= harken::kWorldCapabilityEntryScheduling;
+        install.trackSchedules = image.tracks.data();
+        install.trackScheduleCount = image.tracks.size();
+        install.segmentSchedules = image.segments.data();
+        install.segmentScheduleCount = image.segments.size();
+        install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV6(install);
+        ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, install).status);
+        harken::PlayableStartRequest request{};
+        request.root = image.Root();
+        const auto capture = harkentest::monitor::OpenIdentityEvents();
+        ASSERT_NE(0u, capture);
+        std::vector<harkentest::monitor::IdentityRecord> records;
+        const auto started = harken::StartPlayable(*engine, request);
+        ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
+        const auto row = std::find_if(engine->playableServices.begin(), engine->playableServices.end(),
+            [&](const auto& candidate) { return candidate.rootInstance == started.instance; });
+        ASSERT_NE(engine->playableServices.end(), row);
+        const auto start = row->startFrame;
+        for (unsigned block = 0; block < 160; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update()) << OccupancyDump(*engine);
+            harkentest::monitor::CollectIdentityEvents(capture, records);
+            const auto before = engine->mixer.BlocksRendered();
+            engine->nullBackend.Pump(1);
+            ASSERT_EQ(before + 1, engine->mixer.BlocksRendered()) << OccupancyDump(*engine);
+            const auto* output = engine->nullBackend.LastBlock();
+            for (std::uint64_t sample = 0; sample < 64; ++sample) {
+                const auto frame = before * 64 + sample;
+                const auto offset = frame >= start ? frame - start : UINT64_MAX;
+                const auto expected = offset >= 3200 ? 0.0f : offset < 400 ? 0.1f
+                    : innerCount == 1 && offset >= 2800 ? 0.3f : 0.2f;
+                ASSERT_NEAR(expected, output[2 * sample], 0.001f)
+                    << "frame=" << frame << " start=" << start << OccupancyDump(*engine);
+                ASSERT_NEAR(expected, output[2 * sample + 1], 0.001f);
+            }
+        }
         EXPECT_EQ(0u, engine->playableInstances.LiveCount());
         EXPECT_EQ(0u, engine->playablePartitions.OccupiedCount());
         EXPECT_EQ(0u, engine->timelineArms.LiveCount());
@@ -17690,7 +17835,54 @@ TEST(PlayableStart, MusicSegmentPlaysIntroThreeBodyPassesAndOutroThenReclaims) {
         EXPECT_EQ(1u, retired);
         EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
     }
+}
+
+TEST(PlayableStart, MusicSegmentZeroWidthBoundsKeepSingleNaturalDurationClip) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig(4, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    std::vector<float> samples(200, 0.2f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
+    DirectSegmentWorldImage image(engine->registry.Lookup(kSound).contentRevision,
+        harken::ScheduleTimeKindV1::MusicalTicks, 16, 0);
+    image.segment.startPointKind = 0;
+    image.segment.startMarkerId = 0;
+    image.segment.markerCount = 0;
+    image.segment.markers = nullptr;
+    image.segment.bounds.contentStart = image.segment.bounds.contentEnd = 16;
+    image.segment.bounds.nominalStart = image.segment.bounds.nominalEnd = 16;
+    image.segment.scheduleSemanticFingerprint = harken::ComputeSegmentScheduleFingerprintV2(image.segment);
+    auto install = PlayableWorldInstall(image.world);
+    install.sourceBodyVintage = harken::kCurrentWorldBodyVintageV19;
+    install.identity.capabilityMask |= harken::kWorldCapabilityEntryScheduling;
+    install.trackSchedules = &image.track;
+    install.trackScheduleCount = 1;
+    install.segmentSchedules = &image.segment;
+    install.segmentScheduleCount = 1;
+    install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV6(install);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, install).status);
+    harken::PlayableStartRequest request{};
+    request.root = image.Root();
+    const auto started = harken::StartPlayable(*engine, request);
+    ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
+    const auto row = std::find_if(engine->playableServices.begin(), engine->playableServices.end(),
+        [&](const auto& candidate) { return candidate.rootInstance == started.instance; });
+    ASSERT_NE(engine->playableServices.end(), row);
+    const auto onset = row->startFrame + 400;
+    for (unsigned block = 0; block < 128; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        const auto frame = engine->mixer.BlocksRendered() * 64;
+        engine->nullBackend.Pump(1);
+        for (unsigned sample = 0; sample < 64; ++sample) {
+            const auto expected = frame + sample >= onset && frame + sample < onset + 200 ? 0.2f : 0.0f;
+            ASSERT_NEAR(expected, engine->nullBackend.LastBlock()[2 * sample], 0.001f);
+        }
     }
+    EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+    EXPECT_EQ(0u, engine->voices.ActiveCount());
+    EXPECT_TRUE(PlayableRowsFree(*engine));
+    EXPECT_FALSE(engine->runtimeRecreateRequired);
 }
 
 TEST(PlayableStart, DirectMusicalSegmentSubtractsStartMarkerBeforeScheduling) {

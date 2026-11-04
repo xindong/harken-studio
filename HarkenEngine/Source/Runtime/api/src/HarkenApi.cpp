@@ -18419,7 +18419,17 @@ ScheduleMaterializeStatus PrepareMixedSchedulePlan(
         candidate->children.reserve(maxTerminals);
         const auto segment = root.kind == harken::PlayableKindV1::Segment
             ? FindSegmentSchedule(world, root) : harken::SegmentProgramHandleV1{};
-        if (segment != nullptr && UsesMusicTimeline(*segment)) {
+        const auto playCount = [&]() noexcept {
+            if constexpr (std::is_same_v<World, harken::PackPlaybackView>)
+                return ReadPlayableLoopCount(world, root.stableId,
+                    harken::playableproperties::ContentPropertyKindV1::Segment);
+            else return ReadPlayableLoopCount(world, root.stableId);
+        }();
+        // A single natural-duration clip can have zero-width authored bounds.
+        // Preserve its ordinary completion; repeating an unlocatable body must
+        // still fail preparation instead of silently discarding the requested count.
+        if (segment != nullptr && UsesMusicTimeline(*segment) &&
+            (segment->bounds.nominalEnd > segment->bounds.nominalStart || playCount != 1)) {
             candidate->music = std::make_unique<harken::EngineMusicScheduleState>();
             auto& music = *candidate->music;
             if (!ActionQuantizeClockFromSegment(*segment, static_cast<std::int64_t>(sampleRate),
@@ -18429,10 +18439,7 @@ ScheduleMaterializeStatus PrepareMixedSchedulePlan(
             music.timeline.exit = segment->bounds.nominalEnd;
             music.timeline.contentEnd = segment->bounds.contentEnd;
             music.timeline.hasExitCue = music.markers.ExitMarker().present;
-            if constexpr (std::is_same_v<World, harken::PackPlaybackView>)
-                music.timeline.playCount = ReadPlayableLoopCount(world, root.stableId,
-                    harken::playableproperties::ContentPropertyKindV1::Segment);
-            else music.timeline.playCount = ReadPlayableLoopCount(world, root.stableId);
+            music.timeline.playCount = playCount;
             music.sourceOffsetFrames = sourceOffsetFrames;
             const auto position = harken::ResolveMusicPlaybackPosition(music.timeline, music.clock, sourceOffsetFrames);
             if (position.status != harken::MusicTimelineStatus::Ok)
@@ -35279,6 +35286,10 @@ bool ServiceScheduleAggregate(
         const auto prepareThrough = earliest > UINT64_MAX - block ? UINT64_MAX : earliest + block;
         while (!music.finalPassMaterialized && music.nextPassOffsetFrames <= UINT64_MAX - row.startFrame &&
             row.startFrame + music.nextPassOffsetFrames < prepareThrough) {
+            if (row.startFrame + music.nextPassOffsetFrames < earliest) {
+                aggregate.failureReason = harken::PlayableControlReason::StartRefused;
+                break;
+            }
             const auto status = row.Invocation().packLease.leaseToken != 0
                 ? AppendMusicSchedulePass(engine, row.Invocation().packPlaybackView, row)
                 : AppendMusicSchedulePass(engine, engine.variables.CurrentPlayableWorld(), row);
@@ -35289,6 +35300,8 @@ bool ServiceScheduleAggregate(
                 aggregate.failureReason = harken::PlayableControlReason::StartRefused;
             break;
         }
+        if (!music.finalPassMaterialized && music.nextPassOffsetFrames > UINT64_MAX - row.startFrame)
+            aggregate.failureReason = harken::PlayableControlReason::StartRefused;
     }
     bool allLogical = true;
     bool allNatural = true;
@@ -78827,9 +78840,10 @@ const harken::EnginePlayableServiceRow* SelectActionQuantizeReference(
 bool ActionQuantizeClockFromSegment(
     const harken::SegmentScheduleProgramViewV1& segment, std::int64_t sampleRate,
     harken::TempoSegment* outTempo, harken::ClockKernel* outClock,
-    harken::MarkerIndex* outIndex) noexcept {
+    harken::MarkerIndex* outIndex) noexcept try {
     if (outTempo == nullptr || outClock == nullptr || outIndex == nullptr ||
-        sampleRate <= 0) {
+        sampleRate <= 0 || harken::memguard::IsAudioTagged() ||
+        (segment.markerCount != 0 && segment.markers == nullptr)) {
         return false;
     }
     harken::SegmentTimeType timeType = harken::SegmentTimeType::Absolute;
@@ -78849,10 +78863,7 @@ bool ActionQuantizeClockFromSegment(
     harken::MeterSignature meter{
         static_cast<std::int32_t>(segment.meterNumerator),
         static_cast<std::int32_t>(segment.meterDenominator)};
-    std::array<harken::MarkerPoint, 16> markers{};
-    if (segment.markerCount > markers.size()) {
-        return false;
-    }
+    std::vector<harken::MarkerPoint> markers(segment.markerCount);
     for (std::uint32_t index = 0; index < segment.markerCount; ++index) {
         const auto& authored = segment.markers[index];
         markers[index].id = authored.stableMarkerId;
@@ -78863,6 +78874,8 @@ bool ActionQuantizeClockFromSegment(
     return outIndex->Reset(timeType, outClock, meter, markers.data(),
                            segment.markerCount,
                            std::max<std::size_t>(1, segment.markerCount));
+} catch (const std::bad_alloc&) {
+    return false;
 }
 
 bool ResolveActionQuantizeBoundaryFrame(
@@ -92169,6 +92182,12 @@ bool PrepareMixedScheduleExecution(ContainerPreparationContext& context,
         } else if (plan.hasZeroWorkCompletion) {
             plan.zeroWorkCompletionOffsetFrames = std::min(plan.zeroWorkCompletionOffsetFrames, duration);
         }
+    }
+    const auto& plan = *scratch.storage.scheduleAggregatePlan;
+    if (plan.music != nullptr && plan.music->timeline.playCount != 0 &&
+        plan.music->finalEndOffsetFrames > UINT64_MAX - context.startFrame) {
+        context.result = VN_CAPABILITY_UNAVAILABLE;
+        return false;
     }
     auto* row = engine.PrepareFreePlayableService();
     const auto kind = context.root.kind == harken::PlayableKindV1::Track
