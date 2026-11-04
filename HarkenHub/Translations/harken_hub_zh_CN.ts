@@ -159,6 +159,8 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message><source>Preserve damaged installation records and report invalid fields instead of silently losing registered versions during installation, repair or removal.</source><translation>安装记录损坏时保留原件并报告错误字段，避免安装、修复或卸载时静默丢失已登记的版本。</translation></message>
+    <message><source>Report background Studio installation failures even when diagnostic logs cannot be written, and retain the result across Hub restarts.</source><translation>即使诊断日志无法写入，也能报告 Studio 后台安装失败原因；重启 Hub 后仍可读取安装结果。</translation></message>
     <message>
         <source>Open and create projects without Hub startup progress dialogs. Studio handles project checks, upgrade confirmation and startup errors, while Hub keeps the project list and opening history in sync.</source>
         <translation>打开和新建工程时，Hub 不再显示启动进度弹窗。工程检查、升级确认和启动错误由 Studio 自行处理，Hub 继续静默同步工程列表和打开记录。</translation>
@@ -536,6 +538,8 @@ Continue?</source>
 </context>
 <context>
     <name>VNH::UpdateNotifier</name>
+    <message><source>HarkenStudio update could not be installed</source><translation>HarkenStudio 更新安装失败</translation></message>
+    <message><source>Open Harken Hub to retry the installation.</source><translation>打开 Harken Hub 重试安装。</translation></message>
     <message>
         <location filename="../Source/Update/UpdateNotifier.cpp" line="48"/>
         <source>HarkenStudio update installed</source>
@@ -750,6 +754,7 @@ Reason: %2</source><translation>%1
     <message><source>Cannot open the install index for reading: %1 (Qt error %2: %3)</source><translation>无法打开安装索引以供读取：%1（Qt 错误 %2：%3）</translation></message>
     <message><source>Cannot read the install index: %1 (Qt error %2: %3)</source><translation>无法读取安装索引：%1（Qt 错误 %2：%3）</translation></message>
     <message><source>Install index is corrupt: %1 (offset %2: %3)</source><translation>安装索引已损坏：%1（偏移 %2：%3）</translation></message>
+    <message><source>Install index is corrupt: %1 (field %2: %3)</source><translation>安装索引已损坏：%1（字段 %2：%3）</translation></message>
     <message><source>Cannot create file directory: %1</source><translation>无法创建文件所在目录：%1</translation></message>
     <message><source>Cannot open file for writing: %1 (Qt error %2: %3)</source><translation>无法打开文件以供写入：%1（Qt 错误 %2：%3）</translation></message>
     <message><source>Cannot write file: %1 (Qt error %2: %3)</source><translation>无法写入文件：%1（Qt 错误 %2：%3）</translation></message>

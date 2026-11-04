@@ -4,6 +4,9 @@
 
 #include <QDir>
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTemporaryDir>
 
 #if defined(Q_OS_WIN)
@@ -181,4 +184,126 @@ TEST(InstallIndex, CorruptIndexFileFailsClosed)
     EXPECT_FALSE(InstallIndex::setHealthState(QStringLiteral("run12.abcd1234"),
                                               QStringLiteral("Installed"),
                                               &error));
+}
+
+TEST(InstallIndex, MalformedSnapshotsNeverExposePartialRecordsOrAllowRewrites)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    MachineRootGuard guard(dir.path());
+    QString error;
+    ASSERT_TRUE(InstallIndex::commitInstallation(makeRecord("original"), 100, &error));
+    QFile file(InstallIndex::filePath());
+    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+    const auto valid = QJsonDocument::fromJson(file.readAll()).object();
+    file.close();
+    const auto record = valid["installed"].toArray().first().toObject();
+    QList<QJsonObject> invalid;
+    for (const auto& value : {QJsonValue(), QJsonValue(QJsonObject{}), QJsonValue("bad"),
+                              QJsonValue(QJsonValue::Undefined)}) {
+        auto root = valid;
+        root["installed"] = value;
+        invalid.append(root);
+    }
+    for (const auto& value : {QJsonValue(), QJsonValue("100"), QJsonValue(-1), QJsonValue(1.5),
+                              QJsonValue(1e30), QJsonValue(QJsonValue::Undefined)}) {
+        auto root = valid;
+        root["lastReleaseSequence"] = value;
+        invalid.append(root);
+    }
+    for (auto it = record.constBegin(); it != record.constEnd(); ++it) {
+        auto malformed = record;
+        malformed[it.key()] = 42;
+        auto root = valid;
+        root["installed"] = QJsonArray{record, malformed};
+        invalid.append(root);
+    }
+    for (const char* field : {"buildId", "semanticVersion", "installPath", "healthState"}) {
+        for (const auto& value : {QJsonValue(""), QJsonValue(QJsonValue::Undefined)}) {
+            auto malformed = record;
+            malformed[QLatin1String(field)] = value;
+            auto root = valid;
+            root["installed"] = QJsonArray{record, malformed};
+            invalid.append(root);
+        }
+    }
+    for (const auto& value : {QJsonValue(42), QJsonValue(record),
+                              QJsonValue(QJsonObject{{"buildId", "different"}, {"healthState", "Unknown"}})}) {
+        auto root = valid;
+        root["installed"] = QJsonArray{record, value};
+        invalid.append(root);
+    }
+    auto unknownState = record;
+    unknownState["buildId"] = "different";
+    unknownState["healthState"] = "Unknown";
+    auto root = valid;
+    root["installed"] = QJsonArray{record, unknownState};
+    invalid.append(root);
+    for (const auto& malformed : invalid) {
+        const auto original = QJsonDocument(malformed).toJson();
+        SCOPED_TRACE(original.toStdString());
+        ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+        ASSERT_EQ(file.write(original), original.size());
+        file.close();
+        const auto snapshot = InstallIndex::snapshot();
+        EXPECT_FALSE(snapshot.ok);
+        EXPECT_TRUE(snapshot.records.empty());
+        EXPECT_TRUE(snapshot.error.contains("field"));
+        EXPECT_FALSE(InstallIndex::commitInstallation(makeRecord("new"), 101, &error));
+        EXPECT_FALSE(InstallIndex::setHealthState("original", "NeedsRepair", &error));
+        EXPECT_FALSE(InstallIndex::removeRecord("original", &error));
+        ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+        EXPECT_EQ(file.readAll(), original);
+        file.close();
+    }
+}
+
+TEST(InstallIndex, InvalidMutationsPreserveTheLastValidSnapshot)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    MachineRootGuard guard(dir.path());
+    QString error;
+    const auto record = makeRecord("original");
+    ASSERT_TRUE(InstallIndex::commitInstallation(record, 100, &error));
+    QFile file(InstallIndex::filePath());
+    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+    const auto original = file.readAll();
+    file.close();
+    for (auto member : {&InstalledVersionRecord::buildId, &InstalledVersionRecord::semanticVersion,
+                        &InstalledVersionRecord::installPath, &InstalledVersionRecord::healthState}) {
+        auto invalid = record;
+        invalid.*member = QString();
+        EXPECT_FALSE(InstallIndex::commitInstallation(invalid, 101, &error));
+    }
+    EXPECT_FALSE(InstallIndex::commitInstallation(record, -1, &error));
+    EXPECT_FALSE(InstallIndex::setHealthState(record.buildId, "Unknown", &error));
+    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+    EXPECT_EQ(file.readAll(), original);
+}
+
+TEST(InstallIndex, MissingInstallationAndLegacyOptionalHashesRemainRepairable)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    MachineRootGuard guard(dir.path());
+    QString error;
+    auto record = makeRecord("legacy");
+    record.installPath = dir.filePath("missing-installation");
+    ASSERT_TRUE(InstallIndex::commitInstallation(record, 100, &error));
+    QFile file(InstallIndex::filePath());
+    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+    auto root = QJsonDocument::fromJson(file.readAll()).object();
+    file.close();
+    auto legacy = root["installed"].toArray().first().toObject();
+    legacy.remove("packageManifestHash");
+    legacy.remove("capabilitiesHash");
+    root["installed"] = QJsonArray{legacy};
+    ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+    file.write(QJsonDocument(root).toJson());
+    file.close();
+    ASSERT_TRUE(InstallIndex::snapshot().ok);
+    ASSERT_TRUE(InstallIndex::setHealthState(record.buildId, "NeedsRepair", &error));
+    EXPECT_EQ(InstallIndex::snapshot().records.front().installPath, record.installPath);
+    EXPECT_EQ(InstallIndex::snapshot().lastReleaseSequence, 100);
 }

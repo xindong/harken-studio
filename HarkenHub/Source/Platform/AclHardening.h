@@ -18,6 +18,9 @@ inline QString updaterAclSddl()
 
 bool applyHandoffAcl(const QString& directoryPath, QString* error);
 
+QString fileOwnerId(const QString& path);
+bool grantFileReadAndDelete(const QString& path, const QString& userId, QString* error);
+
 bool applyDirectoryAcl(const QString& directoryPath, const QString& sddl,
                        QString* error);
 

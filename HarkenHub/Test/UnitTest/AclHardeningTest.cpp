@@ -1,8 +1,11 @@
 #include "Platform/AclHardening.h"
+#include "Platform/UserSession.h"
 
 #include <gtest/gtest.h>
 
 #include <QDir>
+#include <QFile>
+#include <QScopeGuard>
 #include <QString>
 #include <QTemporaryDir>
 
@@ -100,6 +103,52 @@ TEST(AclHardeningTest, RejectsMissingDirectory)
     EXPECT_FALSE(VNH::applyHandoffAcl(
         dir.filePath(QStringLiteral("missing")), &error));
     EXPECT_FALSE(error.isEmpty());
+}
+
+TEST(AclHardeningTest, ResultRecipientCanReadAndAcknowledgeWithoutAdministratorRights)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    QString error;
+    ASSERT_TRUE(VNH::applyHandoffAcl(dir.path(), &error));
+    const auto path = dir.filePath("result");
+    QFile file(path);
+    ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+    file.write("completed");
+    file.close();
+    ASSERT_FALSE(VNH::fileOwnerId(path).isEmpty());
+    ASSERT_TRUE(VNH::grantFileReadAndDelete(path, VNH::currentUserId(), &error))
+        << error.toStdString();
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    const auto nativePath = QDir::toNativeSeparators(path).toStdWString();
+    ASSERT_EQ(GetNamedSecurityInfoW(nativePath.c_str(), SE_FILE_OBJECT,
+        OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+        nullptr, nullptr, nullptr, nullptr, &descriptor), DWORD(ERROR_SUCCESS));
+    const auto freeDescriptor = qScopeGuard([&] { LocalFree(descriptor); });
+    HANDLE token = nullptr;
+    ASSERT_TRUE(OpenProcessToken(GetCurrentProcess(), TOKEN_DUPLICATE | TOKEN_QUERY, &token));
+    const auto closeToken = qScopeGuard([&] { CloseHandle(token); });
+    BYTE adminSid[SECURITY_MAX_SID_SIZE];
+    DWORD sidSize = sizeof(adminSid);
+    ASSERT_TRUE(CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr, adminSid, &sidSize));
+    SID_AND_ATTRIBUTES disabled{adminSid, 0};
+    HANDLE restricted = nullptr;
+    ASSERT_TRUE(CreateRestrictedToken(token, DISABLE_MAX_PRIVILEGE, 1, &disabled,
+                                     0, nullptr, 0, nullptr, &restricted));
+    const auto closeRestricted = qScopeGuard([&] { CloseHandle(restricted); });
+    HANDLE impersonation = nullptr;
+    ASSERT_TRUE(DuplicateToken(restricted, SecurityImpersonation, &impersonation));
+    const auto closeImpersonation = qScopeGuard([&] { CloseHandle(impersonation); });
+    GENERIC_MAPPING mapping{FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_GENERIC_EXECUTE, FILE_ALL_ACCESS};
+    for (const DWORD access : {DWORD(FILE_READ_DATA), DWORD(DELETE), DWORD(FILE_WRITE_DATA)}) {
+        PRIVILEGE_SET privileges{};
+        DWORD privilegeBytes = sizeof(privileges);
+        DWORD granted = 0;
+        BOOL allowed = FALSE;
+        ASSERT_TRUE(AccessCheck(descriptor, impersonation, access, &mapping,
+                                &privileges, &privilegeBytes, &granted, &allowed));
+        EXPECT_EQ(allowed != FALSE, access != FILE_WRITE_DATA);
+    }
 }
 
 #elif defined(Q_OS_MACOS)

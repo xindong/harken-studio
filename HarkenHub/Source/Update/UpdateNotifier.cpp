@@ -1,6 +1,7 @@
 #include "Update/UpdateNotifier.h"
 
 #include "App/SingleInstanceGuard.h"
+#include "Transactions/TransactionDiagnostics.h"
 #include "Update/HubSelfUpdate.h"
 #include "Update/UpdateCoordinator.h"
 
@@ -51,6 +52,16 @@ UpdateNotifier::Notification UpdateNotifier::evaluate(
             tr("HarkenStudio %1 has been installed and is now available in "
                "Versions.")
                 .arg(record.version);
+    } else if (record.product == QStringLiteral("HarkenStudio") &&
+               record.state == QStringLiteral("InstallFailed")) {
+        notification.show = true;
+        notification.key = record.product + QLatin1Char('/') + record.transactionId
+                           + QStringLiteral("/failed");
+        notification.title = tr("HarkenStudio update could not be installed");
+        notification.message = tr("Open Harken Hub to retry the installation.");
+        if (!record.failureDetail.isEmpty())
+            notification.message += QLatin1Char('\n')
+                + TransactionDiagnostics::localizeDetail(record.failureDetail);
     } else if (record.product == QStringLiteral("HarkenStudio") &&
                record.state == QStringLiteral("AwaitingUserInstall")) {
         notification.show = true;

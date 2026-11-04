@@ -8,12 +8,79 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSet>
 
 #include <algorithm>
 
 namespace VNH {
 
 namespace {
+
+InstallIndexSnapshot parseIndex(const QJsonObject& root)
+{
+    const auto invalid = [](const QString& field, const QString& reason) {
+        InstallIndexSnapshot result;
+        result.error = QStringLiteral("Install index is corrupt: %1 (field %2: %3)")
+                           .arg(InstallIndex::filePath(), field, reason);
+        return result;
+    };
+    InstallIndexSnapshot data;
+    const auto sequence = root.value(QStringLiteral("lastReleaseSequence"));
+    if (!sequence.isDouble() || sequence.toInteger(-1) < 0)
+        return invalid(QStringLiteral("lastReleaseSequence"), QStringLiteral("Expected a non-negative integer"));
+    data.lastReleaseSequence = sequence.toInteger();
+    const auto installed = root.value(QStringLiteral("installed"));
+    if (!installed.isArray())
+        return invalid(QStringLiteral("installed"), QStringLiteral("Expected an array"));
+    QSet<QString> buildIds;
+    const auto records = installed.toArray();
+    for (qsizetype i = 0; i < records.size(); ++i) {
+        const QString prefix = QStringLiteral("installed[%1]").arg(i);
+        if (!records[i].isObject())
+            return invalid(prefix, QStringLiteral("Expected an object"));
+        const auto object = records[i].toObject();
+        InstalledVersionRecord record;
+        static const struct {
+            const char* name;
+            QString InstalledVersionRecord::*member;
+            bool optional;
+        } fields[] = {
+            {"buildId", &InstalledVersionRecord::buildId, false},
+            {"semanticVersion", &InstalledVersionRecord::semanticVersion, false},
+            {"channel", &InstalledVersionRecord::channel, false},
+            {"installPath", &InstalledVersionRecord::installPath, false},
+            {"packageHash", &InstalledVersionRecord::packageHash, false},
+            {"packageManifestHash", &InstalledVersionRecord::packageManifestHash, true},
+            {"capabilitiesHash", &InstalledVersionRecord::capabilitiesHash, true},
+            {"installedAt", &InstalledVersionRecord::installedAt, false},
+            {"healthState", &InstalledVersionRecord::healthState, false},
+        };
+        for (const auto& field : fields) {
+            const auto value = object.value(QLatin1String(field.name));
+            if (field.optional && value.isUndefined())
+                continue;
+            if (!value.isString())
+                return invalid(prefix + QLatin1Char('.') + QLatin1String(field.name),
+                               QStringLiteral("Expected a string"));
+            record.*field.member = value.toString();
+        }
+        for (const char* field : {"buildId", "semanticVersion", "installPath"}) {
+            if (object.value(QLatin1String(field)).toString().trimmed().isEmpty())
+                return invalid(prefix + QLatin1Char('.') + QLatin1String(field),
+                               QStringLiteral("Expected a non-empty string"));
+        }
+        if (buildIds.contains(record.buildId))
+            return invalid(prefix + QStringLiteral(".buildId"), QStringLiteral("Duplicate build identity"));
+        if (record.healthState != QStringLiteral("Installing")
+            && record.healthState != QStringLiteral("Installed")
+            && record.healthState != QStringLiteral("NeedsRepair"))
+            return invalid(prefix + QStringLiteral(".healthState"), QStringLiteral("Unknown installation state"));
+        buildIds.insert(record.buildId);
+        data.records.push_back(std::move(record));
+    }
+    data.ok = true;
+    return data;
+}
 
 InstallIndexSnapshot loadIndex()
 {
@@ -46,30 +113,7 @@ InstallIndexSnapshot loadIndex()
                                   : QStringLiteral("Expected a JSON object"));
         return data;
     }
-    const QJsonObject root = doc.object();
-    data.lastReleaseSequence =
-        root[QStringLiteral("lastReleaseSequence")].toInteger(0);
-    const QJsonArray installed = root[QStringLiteral("installed")].toArray();
-    for (const auto& value : installed) {
-        const QJsonObject object = value.toObject();
-        InstalledVersionRecord record;
-        record.buildId = object[QStringLiteral("buildId")].toString();
-        record.semanticVersion =
-            object[QStringLiteral("semanticVersion")].toString();
-        record.channel = object[QStringLiteral("channel")].toString();
-        record.installPath = object[QStringLiteral("installPath")].toString();
-        record.packageHash = object[QStringLiteral("packageHash")].toString();
-        record.packageManifestHash =
-            object[QStringLiteral("packageManifestHash")].toString();
-        record.capabilitiesHash =
-            object[QStringLiteral("capabilitiesHash")].toString();
-        record.installedAt = object[QStringLiteral("installedAt")].toString();
-        record.healthState = object[QStringLiteral("healthState")].toString();
-        if (!record.buildId.isEmpty())
-            data.records.push_back(record);
-    }
-    data.ok = true;
-    return data;
+    return parseIndex(doc.object());
 }
 
 bool saveIndex(const InstallIndexSnapshot& data, QString* error)
@@ -93,6 +137,11 @@ bool saveIndex(const InstallIndexSnapshot& data, QString* error)
     root[QStringLiteral("lastReleaseSequence")] = data.lastReleaseSequence;
     root[QStringLiteral("installed")] = installed;
 
+    const auto validated = parseIndex(root);
+    if (!validated.ok) {
+        *error = validated.error;
+        return false;
+    }
     return writeAtomicFile(InstallIndex::filePath(),
                            QJsonDocument(root).toJson(QJsonDocument::Indented), error);
 }
@@ -112,8 +161,8 @@ InstallIndexSnapshot InstallIndex::snapshot()
 bool InstallIndex::commitInstallation(const InstalledVersionRecord& record,
                                       qint64 releaseSequence, QString* error)
 {
-    if (record.buildId.isEmpty()) {
-        *error = QStringLiteral("Install record has no buildId");
+    if (releaseSequence < 0) {
+        *error = QStringLiteral("Install releaseSequence must be non-negative");
         return false;
     }
     InstallIndexSnapshot data = loadIndex();

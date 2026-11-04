@@ -56,6 +56,30 @@ bool appendEntry(acl_t& acl, acl_tag_t tag, const uuid_t qualifier,
 
 }
 
+QString fileOwnerId(const QString& path)
+{
+    struct stat info = {};
+    if (lstat(QFile::encodeName(path).constData(), &info) != 0 || !S_ISREG(info.st_mode))
+        return {};
+    return QString::number(info.st_uid);
+}
+
+bool grantFileReadAndDelete(const QString& path, const QString& userId, QString* error)
+{
+    bool valid = false;
+    const auto uid = userId.toUInt(&valid);
+    const auto nativePath = QFile::encodeName(path);
+    struct stat info = {};
+    if (!valid || uid == static_cast<uid_t>(-1)
+        || lstat(nativePath.constData(), &info) != 0 || !S_ISREG(info.st_mode)
+        || (info.st_uid != uid && chown(nativePath.constData(), uid, static_cast<gid_t>(-1)) != 0)
+        || chmod(nativePath.constData(), S_IRUSR) != 0) {
+        *error = QStringLiteral("Cannot grant installation result access: %1 (errno %2)").arg(path).arg(errno);
+        return false;
+    }
+    return true;
+}
+
 bool applyHandoffAcl(const QString& directoryPath, QString* error)
 {
     const QFileInfo info(directoryPath);

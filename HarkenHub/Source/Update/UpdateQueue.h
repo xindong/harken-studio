@@ -1,7 +1,11 @@
 #pragma once
 
-#include <QString>
+#include "Transactions/InstallExecutor.h"
 
+#include <QString>
+#include <QStringList>
+
+#include <optional>
 #include <vector>
 
 namespace VNH {
@@ -26,6 +30,13 @@ public:
                                     QString* error);
     static std::vector<UpdateQueueEntry> pendingEntries();
     static bool hasPendingHubUpdate();
+    static bool writeStudioResult(const QString& transactionId,
+                                  const InstallOutcome& outcome,
+                                  const QString& userId, QString* error);
+    static QStringList retryStudioResults();
+    static std::optional<InstallOutcome> studioResult(const QString& transactionId,
+                                                      QString* error);
+    static bool discardStudioResult(const QString& transactionId);
 };
 
 }

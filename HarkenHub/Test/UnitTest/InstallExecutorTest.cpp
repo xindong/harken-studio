@@ -352,6 +352,7 @@ TEST_F(InstallExecutorTest, ReplayedSequenceIsRejected)
     VNH::InstalledVersionRecord existing;
     existing.buildId = QStringLiteral("run99.99999999");
     existing.semanticVersion = QStringLiteral("2.0.0");
+    existing.installPath = dir.filePath("versions/existing");
     existing.healthState = QStringLiteral("Installed");
     ASSERT_TRUE(InstallIndex::commitInstallation(existing, 100, &error));
 
@@ -382,6 +383,7 @@ TEST_F(InstallExecutorTest, ExplicitInstallAcceptsOlderSequence)
     VNH::InstalledVersionRecord existing;
     existing.buildId = QStringLiteral("run99.99999999");
     existing.semanticVersion = QStringLiteral("2.0.0");
+    existing.installPath = dir.filePath("versions/existing");
     existing.healthState = QStringLiteral("Installed");
     ASSERT_TRUE(InstallIndex::commitInstallation(existing, 100, &error));
 

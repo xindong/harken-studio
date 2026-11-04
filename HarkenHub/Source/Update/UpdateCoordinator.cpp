@@ -6,7 +6,6 @@
 #include "Transactions/HandoffArea.h"
 #include "Transactions/InstallIndex.h"
 #include "Transactions/InstallRequest.h"
-#include "Transactions/TransactionJournal.h"
 #include "Update/BridgeDispatcher.h"
 #include "Update/ServerEndpoints.h"
 #include "Update/UpdateQueue.h"
@@ -159,7 +158,7 @@ bool UpdateCoordinator::isBuildInstalled(const QString& buildId) const
     if (!index.ok)
         return false;
     for (const auto& record : index.records) {
-        if (record.buildId == buildId)
+        if (record.buildId == buildId && record.healthState == QStringLiteral("Installed"))
             return true;
     }
     return false;
@@ -171,6 +170,8 @@ bool UpdateCoordinator::persist(UpdateStateRecord& record, const QDateTime& now,
     if (record.state == QStringLiteral("DownloadFailed"))
         checker_.invalidateCache();
     record.product = kProduct;
+    if (record.failureCode.isEmpty())
+        record.failureDetail.clear();
     if (UpdateStateStore::replace(expected, record, now) !=
         UpdateStateStore::WriteResult::Saved) {
         checker_.invalidateCache();
@@ -577,38 +578,53 @@ void UpdateCoordinator::pollBridgeOutcome()
         return;
     }
 
+    QString resultError;
+    const auto outcome = record.transactionId.isEmpty()
+        ? std::nullopt : UpdateQueue::studioResult(record.transactionId, &resultError);
     if (isBuildInstalled(record.buildId)) {
+        record.state = QStringLiteral("Installed");
+        record.failureCode.clear();
+        const QString downloadPath = record.downloadPath;
+        record.downloadPath.clear();
+        if (!persist(record, now, expected))
+            return;
         bridgePollTimer_.stop();
-        const auto lease = DownloadLease::acquire(record.downloadPath);
+        const auto lease = DownloadLease::acquire(downloadPath);
         if (lease) {
-            QFile::remove(record.downloadPath);
+            QFile::remove(downloadPath);
             QFile::remove(record.manifestEnvelopePath);
         }
-        record.state = QStringLiteral("Installed");
-        record.downloadPath.clear();
-        record.failureCode.clear();
-        persist(record, now, expected);
+        UpdateQueue::discardStudioResult(record.transactionId);
         return;
     }
 
     if (!record.transactionId.isEmpty()) {
-        const QString journalState =
-            TransactionJournal::lastStateByTransaction().value(
-                record.transactionId);
-        if (journalState == QStringLiteral("Failed")) {
-            bridgePollTimer_.stop();
+        if (outcome || !resultError.isEmpty()) {
             record.state = QStringLiteral("InstallFailed");
-            record.failureCode = QStringLiteral("BridgeInstallFailed");
-            persist(record, now, expected);
+            if (!resultError.isEmpty()) {
+                record.failureCode = QStringLiteral("BridgeResultInvalid");
+                record.failureDetail = resultError;
+            } else if ((!outcome->buildId.isEmpty() && outcome->buildId != record.buildId) || outcome->ok) {
+                record.failureCode = QStringLiteral("BridgeResultMismatch");
+                record.failureDetail = QStringLiteral("The installation result does not match a completed installation.");
+            } else {
+                record.failureCode = outcome->failureCode;
+                record.failureDetail = outcome->error;
+            }
+            if (persist(record, now, expected)) {
+                bridgePollTimer_.stop();
+                if (resultError.isEmpty())
+                    UpdateQueue::discardStudioResult(record.transactionId);
+            }
             return;
         }
     }
 
     if (bridgePollElapsedMs_ >= options_.bridgePollTimeoutMs) {
-        bridgePollTimer_.stop();
         record.state = QStringLiteral("AwaitingUserInstall");
         record.failureCode = QStringLiteral("BridgeTimeout");
-        persist(record, now, expected);
+        if (persist(record, now, expected))
+            bridgePollTimer_.stop();
     }
 }
 

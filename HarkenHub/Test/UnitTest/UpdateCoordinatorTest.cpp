@@ -2,11 +2,14 @@
 
 #include "Packaging/PackageReader.h"
 #include "Platform/PlatformPaths.h"
+#include "Platform/UserSession.h"
 #include "Support/ManifestTestUtils.h"
 #include "Support/RangeHttpServer.h"
 #include "Transactions/InstallExecutor.h"
 #include "Transactions/InstallIndex.h"
+#include "Transactions/HandoffArea.h"
 #include "Transactions/TransactionJournal.h"
+#include "Update/UpdateBridgeConsumer.h"
 #include "Update/UpdateQueue.h"
 #include "Update/UpdateStateStore.h"
 #include "ZipTestUtils.h"
@@ -21,6 +24,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLockFile>
 #include <QTemporaryDir>
 
 #include <functional>
@@ -277,9 +281,17 @@ TEST_F(UpdateCoordinatorTest, QueuesVerifiedBuildForBridgeInstall)
     EXPECT_EQ(entries[0].transactionId, state.transactionId);
     EXPECT_EQ(entries[0].product, QStringLiteral("HarkenStudio"));
 
-    const auto outcome = VNH::InstallExecutor::run(state.transactionId,
-                                                   keys.publicKey, kNow);
-    ASSERT_TRUE(outcome.ok) << outcome.error.toStdString();
+    QLockFile lock(UpdateStateStore::filePath() + QStringLiteral(".lock"));
+    ASSERT_TRUE(lock.tryLock());
+    const auto report = VNH::UpdateBridgeConsumer::run(
+        keys.publicKey, kNow, VNH::UpdateBridgeConsumer::defaultHooks());
+    ASSERT_EQ(report.installed, 1);
+    EXPECT_FALSE(spinUntil([&]() { return coordinator.currentState().state == "Installed"; }, 100));
+    QString error;
+    const auto outcome = VNH::UpdateQueue::studioResult(state.transactionId, &error);
+    ASSERT_TRUE(outcome.has_value()) << error.toStdString();
+    EXPECT_TRUE(outcome->ok);
+    lock.unlock();
 
     ASSERT_TRUE(spinUntil([&]() {
         return coordinator.currentState().state ==
@@ -288,9 +300,10 @@ TEST_F(UpdateCoordinatorTest, QueuesVerifiedBuildForBridgeInstall)
     state = coordinator.currentState();
     EXPECT_EQ(state.state, QStringLiteral("Installed"));
     EXPECT_TRUE(state.downloadPath.isEmpty());
+    EXPECT_FALSE(VNH::UpdateQueue::studioResult(state.transactionId, &error).has_value());
 }
 
-TEST_F(UpdateCoordinatorTest, FallsBackWhenBridgeReportsFailure)
+TEST_F(UpdateCoordinatorTest, FailedInstallSurvivesMissingJournalRestartAndBlockedStateWrite)
 {
     const EnvGuard versionsGuard(
         "HARKEN_HUB_VERSIONS_ROOT",
@@ -319,17 +332,39 @@ TEST_F(UpdateCoordinatorTest, FallsBackWhenBridgeReportsFailure)
                QStringLiteral("AwaitingBridge");
     }));
     const auto pending = coordinator.currentState();
-    VNH::TransactionJournal::append(
-        pending.transactionId, QStringLiteral("HarkenStudio"),
-        pending.buildId, QStringLiteral("Failed"),
-        QStringLiteral("PackageRejected"), kNow);
+    coordinator.stop();
+    ASSERT_TRUE(QDir().mkpath(VNH::TransactionJournal::filePath()));
+    QFile package(VNH::HandoffArea::packagePath(pending.transactionId));
+    ASSERT_TRUE(package.open(QIODevice::Append));
+    package.write("damaged");
+    package.close();
+    const auto report = VNH::UpdateBridgeConsumer::run(
+        keys.publicKey, kNow, VNH::UpdateBridgeConsumer::defaultHooks());
+    ASSERT_EQ(report.failed, 1);
+    QString error;
+    const auto outcome = VNH::UpdateQueue::studioResult(pending.transactionId, &error);
+    ASSERT_TRUE(outcome.has_value()) << error.toStdString();
+    ASSERT_FALSE(outcome->ok);
+    EXPECT_EQ(outcome->failureCode, QStringLiteral("PackageRejected"));
+    ASSERT_FALSE(outcome->error.isEmpty());
+
+    QLockFile lock(UpdateStateStore::filePath() + QStringLiteral(".lock"));
+    ASSERT_TRUE(lock.tryLock());
+    options.automaticDownloadEnabled = false;
+    UpdateCoordinator resumed;
+    ASSERT_TRUE(resumed.start(options));
+    EXPECT_FALSE(spinUntil([&]() { return resumed.currentState().state == "InstallFailed"; }, 100));
+    EXPECT_EQ(resumed.currentState(), pending);
+    EXPECT_TRUE(VNH::UpdateQueue::studioResult(pending.transactionId, &error).has_value());
+    lock.unlock();
 
     ASSERT_TRUE(spinUntil([&]() {
-        return coordinator.currentState().state ==
+        return resumed.currentState().state ==
                QStringLiteral("InstallFailed");
     }));
-    EXPECT_EQ(coordinator.currentState().failureCode,
-              QStringLiteral("BridgeInstallFailed"));
+    EXPECT_EQ(resumed.currentState().failureCode, outcome->failureCode);
+    EXPECT_EQ(resumed.currentState().failureDetail, outcome->error);
+    EXPECT_FALSE(VNH::UpdateQueue::studioResult(pending.transactionId, &error).has_value());
 }
 
 TEST_F(UpdateCoordinatorTest, InstallHandoffCannotBorrowAnotherPackagesOwnership)
@@ -356,6 +391,40 @@ TEST_F(UpdateCoordinatorTest, InstallHandoffCannotBorrowAnotherPackagesOwnership
     coordinator.beginAutoInstall(kNow, unrelated);
     EXPECT_EQ(coordinator.currentState(), expected);
     EXPECT_TRUE(VNH::UpdateQueue::pendingEntries().empty());
+}
+
+TEST_F(UpdateCoordinatorTest, IncompleteInstallationCannotOverrideAFailedCompletion)
+{
+    UpdateCoordinator::Options options;
+    options.serverBaseUrl = QUrl("https://unused.example");
+    options.automaticDownloadEnabled = false;
+    options.bridgePollIntervalMs = 10;
+    for (const QString& health : {QString("Installing"), QString("NeedsRepair")}) {
+        VNH::InstalledVersionRecord installed;
+        installed.buildId = "incomplete";
+        installed.semanticVersion = "1.5.0";
+        installed.installPath = dir.filePath("versions/incomplete");
+        installed.healthState = health;
+        QString error;
+        ASSERT_TRUE(VNH::InstallIndex::commitInstallation(installed, 9, &error));
+        VNH::UpdateStateRecord state;
+        state.product = "HarkenStudio";
+        state.state = "AwaitingBridge";
+        state.buildId = installed.buildId;
+        state.transactionId = VNH::HandoffArea::newTransactionId();
+        ASSERT_TRUE(UpdateStateStore::save(state, kNow));
+        VNH::InstallOutcome outcome;
+        outcome.buildId = installed.buildId;
+        outcome.failureCode = "IndexCommitFailed";
+        outcome.error = "Installation needs repair";
+        ASSERT_TRUE(VNH::UpdateQueue::writeStudioResult(state.transactionId, outcome,
+            VNH::currentUserId(), &error));
+        UpdateCoordinator coordinator;
+        ASSERT_TRUE(coordinator.start(options));
+        ASSERT_TRUE(spinUntil([&]() { return coordinator.currentState().state == "InstallFailed"; }));
+        EXPECT_EQ(coordinator.currentState().failureCode, outcome.failureCode);
+        EXPECT_EQ(VNH::InstallIndex::snapshot().records.front().healthState, health);
+    }
 }
 
 TEST_F(UpdateCoordinatorTest, QuarantinesTamperedPackage)
@@ -394,6 +463,7 @@ TEST_F(UpdateCoordinatorTest, ClearsStateWhenBuildAlreadyInstalled)
     VNH::InstalledVersionRecord record;
     record.buildId = QStringLiteral("run3.cccc3333");
     record.installPath = dir.filePath(QStringLiteral("versions/x"));
+    record.semanticVersion = QStringLiteral("1.5.0");
     record.healthState = QStringLiteral("Installed");
     QString error;
     ASSERT_TRUE(VNH::InstallIndex::commitInstallation(record, 1, &error));
@@ -461,6 +531,7 @@ TEST_F(UpdateCoordinatorTest, InstalledLatestBuildDoesNotProbeDownload)
     VNH::InstalledVersionRecord installed;
     installed.buildId = QStringLiteral("run3.cccc3333");
     installed.installPath = dir.filePath(QStringLiteral("versions/x"));
+    installed.semanticVersion = QStringLiteral("1.5.0");
     installed.healthState = QStringLiteral("Installed");
     QString error;
     ASSERT_TRUE(VNH::InstallIndex::commitInstallation(installed, 1, &error));
