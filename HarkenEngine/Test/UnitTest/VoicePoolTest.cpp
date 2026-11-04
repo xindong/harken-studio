@@ -2681,7 +2681,7 @@ TEST(VoicePool, PreparedFilterAndShelfStoreBitExactDesignAndTail) {
     // Retuning a live section carries filter memory: the control-rate apply
     // records the new design as the transition target and must not touch live
     // state — the render crossfade, not the apply, migrates the section.
-    context->highShelfState[0] = {1.0f, -1.0f};
+    context->highShelfState[0].SetFloat(1.0f, -1.0f);
     const harken::BiquadCoeffs retunedHighShelf = harken::MakeHighShelf(
         static_cast<float>(kSampleRate), 9000.0f, 2.0f, -3.0f);
     const std::uint32_t retunedHighShelfTail =
@@ -2694,8 +2694,8 @@ TEST(VoicePool, PreparedFilterAndShelfStoreBitExactDesignAndTail) {
                       context->highShelfTransition.targetCoeffs);
     EXPECT_EQ(retunedHighShelfTail,
               context->highShelfTransition.targetTailFrames);
-    EXPECT_FLOAT_EQ(1.0f, context->highShelfState[0].z1);
-    EXPECT_FLOAT_EQ(-1.0f, context->highShelfState[0].z2);
+    EXPECT_FLOAT_EQ(1.0f, context->highShelfState[0].Z1());
+    EXPECT_FLOAT_EQ(-1.0f, context->highShelfState[0].Z2());
 
     // Disabling preserves live memory for the tail render: the apply targets a
     // dry section and leaves the live state untouched by the control-rate call.
@@ -2710,8 +2710,8 @@ TEST(VoicePool, PreparedFilterAndShelfStoreBitExactDesignAndTail) {
         harken::BiquadCoeffs{}, 0, 0);
     EXPECT_TRUE(context->highShelfTransition.transitioning);
     EXPECT_FALSE(context->highShelfTransition.targetEnabled);
-    EXPECT_FLOAT_EQ(liveBeforeDisable.z1, context->highShelfState[0].z1);
-    EXPECT_FLOAT_EQ(liveBeforeDisable.z2, context->highShelfState[0].z2);
+    EXPECT_FLOAT_EQ(liveBeforeDisable.Z1(), context->highShelfState[0].Z1());
+    EXPECT_FLOAT_EQ(liveBeforeDisable.Z2(), context->highShelfState[0].Z2());
 
     // A disable followed by a re-enable seeds the section fresh: the enable
     // transition's target state is derived from the running DC input by the seed
@@ -2728,10 +2728,10 @@ TEST(VoicePool, PreparedFilterAndShelfStoreBitExactDesignAndTail) {
     harken::BiquadState expectedSeed;
     harken::SeedBiquadStateForDc(expectedSeed, retunedHighShelf,
                                 context->highShelfTransition.lastInput[0]);
-    EXPECT_FLOAT_EQ(expectedSeed.z1,
-                    context->highShelfTransition.targetState[0].z1);
-    EXPECT_FLOAT_EQ(expectedSeed.z2,
-                    context->highShelfTransition.targetState[0].z2);
+    EXPECT_FLOAT_EQ(expectedSeed.Z1(),
+                    context->highShelfTransition.targetState[0].Z1());
+    EXPECT_FLOAT_EQ(expectedSeed.Z2(),
+                    context->highShelfTransition.targetState[0].Z2());
 }
 
 // A disable crossfade keeps the section enabled until it completes. An enable
@@ -2956,9 +2956,9 @@ TEST(VoicePool, PreparedToneUpdatePreservesStateAndRejectsStaleType) {
         static_cast<harken::ToneEffectState*>(context->fxSlots[0].state);
     ASSERT_NE(nullptr, tone);
 
-    tone->lowShelfState[0] = {1.0f, -1.0f};
-    tone->peakState[0] = {2.0f, -2.0f};
-    tone->highShelfState[0] = {3.0f, -3.0f};
+    tone->lowShelfState[0].SetFloat(1.0f, -1.0f);
+    tone->peakState[0].SetFloat(2.0f, -2.0f);
+    tone->highShelfState[0].SetFloat(3.0f, -3.0f);
     const harken::BiquadCoeffs lowBefore = tone->lowShelf;
     const harken::BiquadCoeffs peakBefore = tone->peak;
     const harken::BiquadCoeffs highBefore = tone->highShelf;
@@ -2989,12 +2989,12 @@ TEST(VoicePool, PreparedToneUpdatePreservesStateAndRejectsStaleType) {
     ExpectCoeffsEqual(highBefore, tone->highShelf);
     EXPECT_EQ(lowTailBefore, tone->lowShelfTailFrames);
     EXPECT_EQ(highTailBefore, tone->highShelfTailFrames);
-    EXPECT_FLOAT_EQ(1.0f, tone->lowShelfState[0].z1);
-    EXPECT_FLOAT_EQ(-1.0f, tone->lowShelfState[0].z2);
-    EXPECT_FLOAT_EQ(2.0f, tone->peakState[0].z1);
-    EXPECT_FLOAT_EQ(-2.0f, tone->peakState[0].z2);
-    EXPECT_FLOAT_EQ(3.0f, tone->highShelfState[0].z1);
-    EXPECT_FLOAT_EQ(-3.0f, tone->highShelfState[0].z2);
+    EXPECT_FLOAT_EQ(1.0f, tone->lowShelfState[0].Z1());
+    EXPECT_FLOAT_EQ(-1.0f, tone->lowShelfState[0].Z2());
+    EXPECT_FLOAT_EQ(2.0f, tone->peakState[0].Z1());
+    EXPECT_FLOAT_EQ(-2.0f, tone->peakState[0].Z2());
+    EXPECT_FLOAT_EQ(3.0f, tone->highShelfState[0].Z1());
+    EXPECT_FLOAT_EQ(-3.0f, tone->highShelfState[0].Z2());
     session.Engine()->nullBackend.Pump(3);
     EXPECT_FALSE(tone->peakTransition.transitioning);
     ExpectCoeffsEqual(prepared, tone->peak);

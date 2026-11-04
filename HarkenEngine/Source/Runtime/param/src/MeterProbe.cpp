@@ -1096,7 +1096,7 @@ void MeterProbeSystem::Evaluate(Engine& engine) {
         if (identity.scope == VN_TARGET_SCOPE_BUS &&
             engine.busTargets.ActiveGeneration(static_cast<std::uint32_t>(identity.object)) == identity.generation) {
             const auto* meta = FindTargetMeta(kTargetScopeBus, identity.target);
-            float accumulated = 0.0f;
+            double accumulated = 0.0;
             bool active = false;
             for (auto token = dependencies.FirstContribution(target); token.Valid();
                  token = dependencies.NextContribution(token)) {

@@ -34,6 +34,7 @@
 #include "harken/core/VariableReadCut.h"
 #include "harken/core/VariableSliceTable.h"
 #include "harken/param/Curve.h"
+#include "harken/param/ParamTargetTable.h"
 #include "harken/param/ParamTargets.h"
 #include "harken/param/PropertyPublisher.h"
 
@@ -512,7 +513,7 @@ public:
     // scoped Variable values. The park path uses it to split the frozen
     // non-spatial term from the live instance term (volume) and the live
     // instance pitch cents; meaningful for add domains only.
-    float InstanceContribution(VnVoiceHandle handle, std::uint32_t targetId,
+    double InstanceContribution(VnVoiceHandle handle, std::uint32_t targetId,
                                const EmitterTable* emitters) const;
 
     // Binding+base volume a start would publish, evaluated now without
@@ -740,7 +741,7 @@ public:
     // nothing; the override is treated as active. Unknown voices, targets,
     // or slots reduce to 0.
     float ReduceWithSlot(VnVoiceHandle handle, std::uint32_t targetId,
-                         std::uint32_t slot, float domainValue) const;
+                         std::uint32_t slot, double domainValue) const;
     std::uint32_t PendingRampMs(VnVoiceHandle handle,
                                 std::uint32_t targetId) const;
     bool TryClaim(VnVoiceHandle handle, std::uint32_t targetId,
@@ -858,9 +859,9 @@ public:
                 row.targetId = t;
                 row.base = state.base[t];
                 row.apiActive = target.active[kSlotApiDirect];
-                row.apiValue = target.slots[kSlotApiDirect];
+                row.apiValue = NarrowResolvedValue(target.slots[kSlotApiDirect]);
                 row.variableActive = target.active[kSlotVariableBindings];
-                row.variableValue = target.slots[kSlotVariableBindings];
+                row.variableValue = NarrowResolvedValue(target.slots[kSlotVariableBindings]);
                 row.resolved = Reduce(state, t);
                 row.pendingPublication = target.dirty || target.pendingInput;
                 row.lastPublishedRampMs = target.lastPublishedRampMs;
@@ -932,7 +933,7 @@ private:
         bool neutralizePending = false;
     };
     struct TargetEvaluation {
-        float variableSlot = 0.0f;
+        double variableSlot = 0.0f;
         std::uint32_t pendingRampMs = 0;
         bool variableActive = false;
         bool suppressClaimRamp = false;
@@ -1006,7 +1007,7 @@ private:
     };
 
     struct TargetState {
-        float slots[kCombineSlotCount] = {};
+        double slots[kCombineSlotCount] = {};
         bool active[kCombineSlotCount] = {};
         bool suppressClaimRamp = false;
         bool claimSnapshotCaptured = false;
@@ -1102,7 +1103,7 @@ private:
                             VnVariableId variableId, float* out) const;
     float Reduce(const VoiceState& state, std::uint32_t targetId) const;
     float Reduce(const VoiceState& state, std::uint32_t targetId,
-                 std::uint32_t overrideSlot, float overrideValue) const;
+                 std::uint32_t overrideSlot, double overrideValue) const;
     float Pan2dOf(const VoiceState& state) const {
         return Reduce(state, kTargetVoicePan, kSlotAttenuation, 0.0f);
     }

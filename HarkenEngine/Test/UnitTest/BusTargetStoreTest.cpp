@@ -541,4 +541,31 @@ TEST(BusTargetStore, SharedPublicationKeepsLaterSnapshotsAndRampDemand) {
     store.ReleaseClaim(0, 4, target, probe);
 }
 
+
+TEST(BusTargetStore, FiniteExtremeGroupsCancelBeforePublicationAndRollback) {
+    BusTargetStore store(1);
+    constexpr auto target = harken::kBusTargetBusVolume;
+    const float maximum = std::numeric_limits<float>::max();
+    store.InitializeBusGeneration(0, 1);
+    auto variable = CombineValue(CombineDomain::AddDb, maximum, maximum);
+    store.SetSlot(0, target, BusTargetStore::kSlotVariableIndex, variable);
+    EXPECT_EQ(std::numeric_limits<float>::infinity(),
+              store.SlotValue(0, target, BusTargetStore::kSlotVariableIndex));
+    store.BeginMeterProbeSweep();
+    store.AccumulateMeterProbe(0, 1, target, -maximum, true, 0);
+    store.AccumulateMeterProbe(0, 1, target, -maximum, true, 0);
+    store.EndMeterProbeSweep();
+    EXPECT_TRUE(store.SlotActive(0, target, BusTargetStore::kSlotMeterProbeIndex));
+    EXPECT_FLOAT_EQ(0, store.Reduce(0, target));
+    ASSERT_TRUE(store.BeginVariableProjection());
+    store.SetSlot(0, target, BusTargetStore::kSlotVariableIndex, 0);
+    store.RestoreVariableProjection();
+    EXPECT_FLOAT_EQ(0, store.Reduce(0, target));
+    EXPECT_FLOAT_EQ(0, store.ReduceWithSlot(0, target,
+        BusTargetStore::kSlotVariableIndex, variable));
+    auto ordinary = CombineValue(CombineDomain::AddDb, 16777216.0f, 1.0f);
+    ordinary = CombineValue(CombineDomain::AddDb, ordinary, -16777216.0f);
+    EXPECT_EQ(0, ordinary);
+}
+
 } // namespace
