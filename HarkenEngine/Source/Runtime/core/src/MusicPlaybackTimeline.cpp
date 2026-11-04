@@ -149,6 +149,16 @@ struct Mapping {
                 result.position = std::max(timeline.exit, timeline.contentEnd);
                 return result;
             }
+        } else if (result.status == MusicTimelineStatus::Unrepresentable) {
+            // The last representable pass can still be playing even though its
+            // next Out lies beyond the native coordinate axis.
+            const auto outStatus = Frame(timeline.exit, result.iteration, outFrame);
+            if (outStatus == MusicTimelineStatus::Ok && outFrame <= elapsed) ++result.iteration;
+            std::uint64_t entryFrame = 0;
+            if (Frame(timeline.entry, result.iteration, entryFrame) != MusicTimelineStatus::Ok ||
+                entryFrame > elapsed) return result;
+            result.status = MusicTimelineStatus::Ok;
+            result.phase = MusicPlaybackPhase::Loop;
         } else if (result.status == MusicTimelineStatus::Ok) {
             std::uint64_t entryFrame = 0;
             const auto entryStatus = Frame(timeline.entry, result.iteration, entryFrame);
@@ -171,11 +181,13 @@ struct Mapping {
         auto unfolded = timeline.timeType == SegmentTimeType::Musical
             ? clock.FrameToTick({absolute}).value
             : clock.FrameToTime({absolute + 1}).value;
-        if (unfolded == kMin || unfolded == kMax) {
+        if (unfolded == kMin ||
+            (unfolded == kMax && (timeline.timeType != SegmentTimeType::Absolute ||
+                Convert(kMax) < absolute))) {
             result.status = MusicTimelineStatus::Unrepresentable;
             return result;
         }
-        if (timeline.timeType == SegmentTimeType::Absolute) --unfolded;
+        if (timeline.timeType == SegmentTimeType::Absolute && unfolded != kMax) --unfolded;
         if (unfolded == kMin ||
             !SubtractUnsigned(unfolded, result.iteration * static_cast<std::uint64_t>(span), result.position))
             result.status = MusicTimelineStatus::Unrepresentable;

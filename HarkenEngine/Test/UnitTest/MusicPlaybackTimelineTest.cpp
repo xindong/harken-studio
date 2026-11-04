@@ -183,4 +183,26 @@ TEST(MusicPlaybackTimeline, NegativeOriginOffsetsAnUnsignedIterationProduct) {
     EXPECT_GE(position.position, music.entry);
     EXPECT_LT(position.position, music.exit);
 }
+
+TEST(MusicPlaybackTimeline, LastRepresentablePassDoesNotRequireARepresentableFutureExit) {
+    MusicClock c;
+    MusicPlaybackTimeline music{SegmentTimeType::Absolute, 0, 1000000000,
+        1000000000, 0, false, true};
+    constexpr std::uint64_t iteration = 9223372036;
+    std::uint64_t frame = 0;
+    ASSERT_EQ(MusicTimelineStatus::Ok, MusicPlaybackFrame(music, c.clock, music.entry, iteration, &frame));
+    EXPECT_EQ(442721857728000u, frame);
+    for (const auto offset : {0u, 1u, 41029u}) {
+        const auto position = ResolveMusicPlaybackPosition(music, c.clock, frame + offset);
+        EXPECT_EQ(MusicTimelineStatus::Ok, position.status);
+        EXPECT_EQ(MusicPlaybackPhase::Loop, position.phase);
+        EXPECT_EQ(iteration, position.iteration);
+        EXPECT_GE(position.position, music.entry);
+        EXPECT_LT(position.position, music.exit);
+    }
+    EXPECT_EQ(MusicTimelineStatus::Unrepresentable,
+        ResolveMusicPlaybackPosition(music, c.clock, frame + 41030).status);
+    EXPECT_EQ(MusicTimelineStatus::Unrepresentable, ResolveMusicPlaybackBoundary(music, c.clock, c.markers,
+        MusicBoundaryKind::ExitCue, 0, frame, 0).status);
+}
 } // namespace
