@@ -627,7 +627,8 @@ VnResult PackTable::Load(const char* utf8Path, PCMRegistry& registry,
             desc.frames = e.frameCount;
             desc.samplesPlanar = planes;
             const VnResult result = registry.RegisterPCM(
-                e.soundId, &desc, &entries[i].registrationCookie);
+                e.soundId, &desc, &entries[i].registrationCookie,
+                CanonicalPcmLoop(e));
             if (result != VN_OK) {
                 for (std::uint32_t r = 0; r < i; ++r) {
                     (void)registry.UnregisterPCM(parsed[r].soundId);
@@ -847,7 +848,8 @@ VnResult PackTable::CommitPreparedReplace(PreparedReplaceToken* token,
             desc.frames = e.frameCount;
             desc.samplesPlanar = planes;
             const VnResult result = registry.RegisterPCM(
-                e.soundId, &desc, &entries[i].registrationCookie);
+                e.soundId, &desc, &entries[i].registrationCookie,
+                CanonicalPcmLoop(e));
             if (result != VN_OK) {
                 // Unreachable by the ownership screen; unwind defensively.
                 for (std::size_t r = 0; r < i; ++r) {
@@ -1707,7 +1709,8 @@ VnResult PackTable::LoadPrepared(PreparedLoadToken* token,
             desc.frames = e.frameCount;
             desc.samplesPlanar = planes;
             const VnResult result = registry.RegisterPCM(
-                e.soundId, &desc, &entries[i].registrationCookie);
+                e.soundId, &desc, &entries[i].registrationCookie,
+                CanonicalPcmLoop(e));
             if (result != VN_OK) {
                 for (std::size_t r = 0; r < i; ++r) {
                     (void)registry.UnregisterPCM(parsedMedia[r].soundId);
@@ -1931,6 +1934,7 @@ VnResult PackTable::PrepareRevisionMutation(
                 registration.desc.policy = VN_PCM_POLICY_REFERENCE;
                 registration.desc.frames = e.frameCount;
                 registration.desc.samplesPlanar = planes.data();
+                registration.loop = CanonicalPcmLoop(e);
                 registrations.push_back(registration);
             }
             const VnResult staged = registry.PreparePackMutation(
@@ -2150,7 +2154,8 @@ VnResult PackTable::ReplacePreparedV2(
             desc.frames = e.frameCount;
             desc.samplesPlanar = planes;
             const VnResult result = registry.RegisterPCM(
-                e.soundId, &desc, &entries[i].registrationCookie);
+                e.soundId, &desc, &entries[i].registrationCookie,
+                CanonicalPcmLoop(e));
             if (result != VN_OK) {
                 // Unreachable by the admission; unwind defensively.
                 unwind();

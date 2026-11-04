@@ -3625,6 +3625,12 @@ TEST(PackCompositionContract,
         PackTable packs(1, 1);
         auto original = MakeReferenceBackingRevision(soundId, 0.25f);
         ASSERT_EQ(1u, original.image.media.size());
+        original.image.media[0].flags = kPackFlagLoopable;
+        original.image.media[0].loopStartFrame = 2;
+        original.image.media[0].loopEndFrame = 6;
+        original.entries[0].flags = kPackFlagLoopable;
+        original.entries[0].loopStartFrame = 2;
+        original.entries[0].loopEndFrame = 6;
         VnPackHandle handle = 0;
         if (registrationPath == 0) {
             ASSERT_EQ(VN_OK, LoadReferenceBackingRevision(
@@ -3650,6 +3656,8 @@ TEST(PackCompositionContract,
 
         const PCMView old = registry.Lookup(soundId);
         ASSERT_TRUE(old.Valid());
+        EXPECT_EQ(2u, old.loop.startFrame);
+        EXPECT_EQ(6u, old.LoopEndFrame());
         ASSERT_NE(nullptr, old.useCount);
         const auto oldCookie = registry.CookieOf(soundId);
         old.useCount->store(1, std::memory_order_release);

@@ -19,12 +19,14 @@
 #include "harken/render/generated/harken_effect_registry.g.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <sstream>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -2241,6 +2243,48 @@ VnEffectDynamicRouteDesc RawVoiceRoute(VnVoiceHandle sourceVoice,
     desc.levelDb = levelDb;
     desc.expectedEffectType = VN_EFFECT_COMPRESSOR;
     return desc;
+}
+
+TEST(CompressorDynamicRoute, VoiceInvalidationWhileUnpublishedTapsAreRecycled) {
+    harken::EngineConfig config{};
+    config.blockFrames = 64;
+    config.dynamicRouteCapacity = 4;
+    config.dynamicRoutePlanPoolCapacity = 2;
+    config.dynamicBusTapCapacity = 1;
+    config.dynamicVoiceTapCapacity = 2;
+    harken::DynamicRouteSystem routes(config);
+    harken::DynamicRouteDefinition current{};
+    current.active = true;
+    current.sourceKind = VN_DYNAMIC_SOURCE_VOICE;
+    current.sourceIndex = 1;
+    current.sourceGeneration = 1;
+    current.tap = VN_DYNAMIC_TAP_VOICE_POST_GAIN_PRE_SPATIAL;
+    ASSERT_TRUE(routes.AcquireRouteTap(current));
+    auto staging = current;
+    staging.sourceIndex = 2;
+    EXPECT_TRUE(routes.AcquireRouteTap(staging));
+    routes.ReleaseRouteTap(staging);
+    const auto plan = routes.AcquirePlan();
+    ASSERT_TRUE(routes.BuildPlan(plan, &current, false));
+    routes.InstallPlan(plan);
+    routes.DrainAudioMessages();
+    std::atomic<bool> ready{false};
+    std::thread audio([&] {
+        ready.store(true, std::memory_order_release);
+        for (unsigned i = 0; i < 10000; ++i)
+            routes.InvalidateVoiceTap((std::uint64_t{1} << 32) | 1);
+    });
+    while (!ready.load(std::memory_order_acquire)) std::this_thread::yield();
+    for (unsigned i = 0; i < 10000; ++i) {
+        EXPECT_TRUE(routes.AcquireRouteTap(staging));
+        routes.ReleaseRouteTap(staging);
+    }
+    audio.join();
+    routes.InstallPlan(0);
+    routes.DrainAudioMessages();
+    routes.ReleaseRouteTap(current);
+    EXPECT_EQ(0u, routes.VoiceTapInUse());
+    EXPECT_EQ(0u, routes.PlanInUse());
 }
 
 TEST(CompressorDynamicRoute,

@@ -66,10 +66,11 @@ public:
         entries_[index].relationOrdinal = ordinal;
     }
 
-    void AddMedia(VnObjectId id, std::vector<float> samples) {
+    void AddMedia(VnObjectId id, std::vector<float> samples,
+                  harken::PcmLoopRegion loop = {}) {
         entries_.push_back({harken::kPackEntryKindMedia, id, 0,
                            std::vector<std::uint8_t>(harken::kPackV2MediaPayloadBytes),
-                           std::move(samples)});
+                           std::move(samples), 0, loop});
     }
 
     std::vector<std::uint8_t> Build() {
@@ -107,6 +108,11 @@ public:
                 media.channelCount = 1;
                 media.sampleFormat = harken::kPackSampleFormatF32Planar;
                 media.frameCount = entries_[i].samples.size();
+                media.flags = entries_[i].loop.endFrame != 0 ||
+                                      entries_[i].loop.startFrame != 0
+                                  ? harken::kPackFlagLoopable : 0;
+                media.loopStartFrame = entries_[i].loop.startFrame;
+                media.loopEndFrame = entries_[i].loop.endFrame;
                 media.blobOffset = mediaOffsets[i];
                 media.blobBytes = entries_[i].samples.size() * sizeof(float);
                 std::memcpy(bytes.data() + media.blobOffset,
@@ -161,6 +167,7 @@ private:
         std::vector<std::uint8_t> payload;
         std::vector<float> samples;
         std::uint32_t vintage = 0;
+        harken::PcmLoopRegion loop{};
     };
 
     std::uint32_t packKind_ = 0;

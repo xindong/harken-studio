@@ -1100,17 +1100,16 @@ TEST(CanonicalPackSetStorage, LegacyEmptyLoopRegistrationIsNotReusedForAuthoredL
     harken::PCMRegistry registry;
     harken::PackTable packs(2, 4);
     SetStorageMember legacy(21, harkentest::ObjectId(100), 0.25f), current(21, harkentest::ObjectId(100), 0.25f), shared(22, harkentest::ObjectId(100), 0.25f);
-    for (auto* member : {&legacy, &current, &shared}) {
+    // The predecessor has no authored loop; do not rely on registration
+    // discarding loop facts to construct the different content identity.
+    for (auto* member : {&current, &shared}) {
         member->media[0].flags = harken::kPackFlagLoopable;
         member->media[0].loopStartFrame = 2;
         member->media[0].loopEndFrame = 6;
     }
     std::vector<harken::PackEntry> entries(1);
     entries[0].soundId = harkentest::ObjectId(100);
-    entries[0].flags = harken::kPackFlagLoopable;
     entries[0].frameCount = 8;
-    entries[0].loopStartFrame = 2;
-    entries[0].loopEndFrame = 6;
     harken::PackTable::PreparedLoadToken load;
     ASSERT_EQ(VN_OK, packs.PrepareLoad(&load));
     VnPackHandle handle = 0;
