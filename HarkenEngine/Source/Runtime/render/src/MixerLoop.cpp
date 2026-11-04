@@ -6,6 +6,7 @@
 #include "harken/core/ChannelLayout.h"
 #include "harken/core/CpuClock.h"
 #include "harken/core/FloatMode.h"
+#include "harken/dsp/DownmixSum.h"
 
 #if defined(HARKEN_RT_PROBE_MIX_PUBLICATION)
 #include "harken/core/RtProbe.h"
@@ -1771,7 +1772,8 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
                         for (std::uint32_t c = 0; c < mixCh; ++c) {
                             acc += coeffs[r * 8 + c] * m_busPlanes[c][i];
                         }
-                        interleavedOut[i * channels + r] = acc;
+                        interleavedOut[i * channels + r] = RecoverFiniteDownmixSum(
+                            acc, coeffs + r * 8, m_busPlanes.data(), mixCh, i);
                     }
                 }
             }
