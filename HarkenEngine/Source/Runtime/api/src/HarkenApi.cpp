@@ -735,6 +735,9 @@ bool CaptureServiceNaturalClipDeadline(
     harken::EngineNaturalClipDeadline* out,
     harken::EnginePlayableServiceRow** outAggregate = nullptr,
     const harken::EngineActionPlayScratch* privateScheduleOwner = nullptr) noexcept;
+bool PrepareInheritedSourceExits(harken::Engine& engine, const harken::EnginePlayableServiceRow& service,
+    VnVoiceHandle voice, harken::VoiceReleaseObserver release,
+    const harken::EngineActionPlayScratch* privateScheduleOwner) noexcept;
 bool BindNaturalClipDeadline(
     harken::Engine& engine, harken::EnginePlayableServiceRow& service,
     harken::OccurrenceToken occurrence, std::uint64_t endFrame,
@@ -8632,6 +8635,8 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         auto* controller = engine.ResolvePlayableService(resourceService->identity,
             resourceService->ownerInstance, resourceService->ownerEpoch);
         if (controller == nullptr) return rollback(VN_RUNTIME_RECREATE_REQUIRED);
+        if (!PrepareInheritedSourceExits(engine, *controller, render, releaseObserver, privateScheduleOwner))
+            return rollback(VN_NO_VOICE);
         const auto epoch = engine.playableInstances.SourceRetirementEpoch(programGeneration);
         if (!engine.playableInstances.AcquireSourceRetirementHold(programGeneration, epoch))
             return rollback(VN_NO_VOICE);
@@ -11026,13 +11031,14 @@ public:
 
     bool PrepareVariableFrontier(harken::EnginePlayableServiceRow& row,
         harken::DecisionToken decision, harken::LogicCommitSequence sequence,
-        harken::TransitionInstanceToken transition = {}) noexcept {
+        harken::TransitionInstanceToken transition = {}, harken::EngineSourceExit* sourceExit = nullptr) noexcept {
         if (!row.frontierLifetimeEntry.Valid()) return true;
         if (!ownsScratch_ || frontierRow_ != nullptr || groupCount_ == 0 ||
             !row.frontierLifetimePin.Valid() || !decision.Valid()) return false;
         frontierRow_ = &row;
         frontierDecision_ = decision;
         frontierTransition_ = transition;
+        frontierSourceExit_ = sourceExit;
         const auto* program = engine_.decisions.PrepareFrontierControlProgram(decision, row.identity.generation);
         if (program == nullptr) return false;
         for (std::uint32_t index = 0; index < groupCount_; ++index) {
@@ -11152,6 +11158,12 @@ public:
                     &groups_[index], &committedGroups_[index], true)) return false;
         }
         if (!BindVariableFrontier()) return false;
+        if (frontierSourceExit_ != nullptr &&
+            (!engine_.decisions.AcquireFuturePin(frontierDecision_, &frontierSourceExit_->lifetime) ||
+             !engine_.timelinePool.AcquirePlan03GroupReader(frontierGroups_[0], &frontierSourceExit_->reader) ||
+             !engine_.decisions.CaptureFrontierSliceDependency(frontierSourceExit_->lifetime,
+                 frontierSourceExit_->reader, engine_.timelinePool, frontierSourceExit_->control.source,
+                 &frontierSourceExit_->control.dependency))) return false;
         for (std::uint32_t index = 0; index < transactionCount_; ++index) {
             if (!engine_.timelinePool.CommitPreparedTransactionBatch(
                     &transactions_[index], sequence, true)) {
@@ -11356,6 +11368,7 @@ private:
                 if (!engine_.transitionInstances.Capture(frontierTransition_, &transition)) return false;
                 binding.transition = {frontierTransition_.slot, frontierTransition_.generation, transition.audibleFrame};
             }
+            if (frontierSourceExit_ != nullptr) binding.sourceExit = &frontierSourceExit_->control;
             if (!engine_.timelinePool.BindPlan03GroupFrontier(frontierGroups_[index], binding)) return false;
             frontierBound_[index] = true;
             harken::Plan03PageGroupView group{};
@@ -11424,6 +11437,10 @@ private:
 
     bool ReleaseVariableFrontier() noexcept {
         if (frontierRow_ == nullptr) return true;
+        if (frontierSourceExit_ != nullptr) {
+            if (frontierSourceExit_->reader.Valid() && !frontierSourceExit_->reader.Release(0)) return false;
+            if (frontierSourceExit_->lifetime.Valid() && !frontierSourceExit_->lifetime.Release()) return false;
+        }
         for (std::uint32_t index = 0; index < groupCount_; ++index) {
             if (!frontierBound_[index]) continue;
             harken::Plan03PageGroupView group{};
@@ -11457,6 +11474,7 @@ private:
     harken::EnginePlayableServiceRow* frontierRow_ = nullptr;
     harken::DecisionToken frontierDecision_{};
     harken::TransitionInstanceToken frontierTransition_{};
+    harken::EngineSourceExit* frontierSourceExit_ = nullptr;
     bool frontierTransitionBound_ = false;
     std::array<std::uint64_t, 2> groupFrames_{};
     std::array<std::uint16_t, 2> groupSlices_{};
@@ -14948,11 +14966,13 @@ PlayableStartResetResult ResetPlayableStartRow(
     if (row.scheduleAggregate != nullptr && row.scheduleAggregate->committed &&
         !row.scheduleAggregate->ChildrenReleased()) return PlayableStartResetResult::Deferred;
     if (row.scheduleTerminalChild != nullptr && row.scheduleTerminalChild->lifecycleOwned &&
-        (!row.scheduleTerminalChild->resourcesReleased || !row.scheduleTerminalChild->naturalClipDeadline.Empty()))
+        (!row.scheduleTerminalChild->resourcesReleased || !row.scheduleTerminalChild->naturalClipDeadline.Empty() ||
+         !row.scheduleTerminalChild->sourceExits.empty()))
         return PlayableStartResetResult::Deferred;
     if (row.scheduleVariableChildren != nullptr) {
         for (const auto& child : *row.scheduleVariableChildren)
-            if (child.lifecycleOwned && (!child.resourcesReleased || !child.naturalClipDeadline.Empty()))
+            if (child.lifecycleOwned && (!child.resourcesReleased || !child.naturalClipDeadline.Empty() ||
+                !child.sourceExits.empty()))
                 return PlayableStartResetResult::Deferred;
     }
     if ((row.HasFeatureArrays() && (row.QueuePayload().queueRetiringChain != nullptr ||
@@ -16515,11 +16535,13 @@ bool RetirePlayableRoot(harken::Engine& engine,
     if (row.scheduleAggregate != nullptr && row.scheduleAggregate->committed &&
         !row.scheduleAggregate->ChildrenReleased()) return false;
     if (row.scheduleTerminalChild != nullptr && row.scheduleTerminalChild->lifecycleOwned &&
-        (!row.scheduleTerminalChild->resourcesReleased || !row.scheduleTerminalChild->naturalClipDeadline.Empty()))
+        (!row.scheduleTerminalChild->resourcesReleased || !row.scheduleTerminalChild->naturalClipDeadline.Empty() ||
+         !row.scheduleTerminalChild->sourceExits.empty()))
         return false;
     if (row.scheduleVariableChildren != nullptr) {
         for (const auto& child : *row.scheduleVariableChildren)
-            if (child.lifecycleOwned && (!child.resourcesReleased || !child.naturalClipDeadline.Empty()))
+            if (child.lifecycleOwned && (!child.resourcesReleased || !child.naturalClipDeadline.Empty() ||
+                !child.sourceExits.empty()))
                 return false;
     }
     if (!ObserveScheduleAggregateChildBeforeRetire(engine, row)) {
@@ -16704,6 +16726,96 @@ bool TryResolveScheduleAggregateChild(
         current = parent;
     }
     return false;
+}
+
+bool PrepareInheritedSourceExits(harken::Engine& engine, const harken::EnginePlayableServiceRow& service,
+    VnVoiceHandle voice, harken::VoiceReleaseObserver release,
+    const harken::EngineActionPlayScratch* privateScheduleOwner) noexcept {
+    const auto* current = &service;
+    try {
+        for (std::size_t depth = 0; current != nullptr && depth < engine.playableServices.size(); ++depth) {
+            harken::EngineScheduleAggregateChild* child = nullptr;
+            harken::EnginePlayableServiceRow* parent = nullptr;
+            if (!TryResolveScheduleAggregateChild(engine, *current, &child, &parent, privateScheduleOwner)) return false;
+            if (child == nullptr) return true;
+            for (auto& exit : child->sourceExits) {
+                if (engine.decisions.ReadFrontierSliceDependency(exit->control.dependency) ==
+                    harken::FrontierSliceDependencyStatus::Rejected) continue;
+                auto binding = std::make_unique<harken::EngineSourceExit::Voice>();
+                binding->binding.source = &exit->control;
+                binding->binding.renderSlot = static_cast<std::uint32_t>(voice);
+                binding->binding.renderGeneration = static_cast<std::uint32_t>(voice >> 32);
+                binding->release = release;
+                binding->binding.release = release;
+                exit->voices.push_back(std::move(binding));
+                if (!engine.voices.PrepareSourceExit(voice, exit->voices.back()->binding)) return false;
+            }
+            current = parent;
+        }
+    } catch (const std::bad_alloc&) { return false; }
+    return current == nullptr;
+}
+
+void ServiceSourceExits(harken::Engine& engine, harken::EngineScheduleAggregateChild& child) noexcept {
+    const auto completed = engine.mixer.BlocksRendered();
+    std::erase_if(child.sourceExits, [&](auto& exit) noexcept {
+        if (!exit->lifetime.Valid())
+            return !engine.runtimeRecreateRequired && !exit->reader.Valid();
+        const auto status = engine.decisions.ReadFrontierSliceDependency(exit->control.dependency);
+        if (status == harken::FrontierSliceDependencyStatus::Pending) return false;
+        if (exit->reader.Valid() && !exit->reader.Release(completed)) return false;
+        const auto token = exit->lifetime.Token();
+        if (engine.decisions.HasFrontierDecisionBinding(token)) return false;
+        harken::DecisionCommittedSnapshot snapshot{};
+        const bool retired = engine.decisions.CaptureCommitted(token, &snapshot) &&
+            snapshot.audioState == harken::AudioGroupState::Retired;
+        if (!retired && !engine.decisions.IsCancelled(token)) return false;
+        if (status == harken::FrontierSliceDependencyStatus::Applied && !child.resourcesReleased) return false;
+        for (const auto& voice : exit->voices) {
+            if (status == harken::FrontierSliceDependencyStatus::Rejected && voice->initial) continue;
+            const auto detached = voice->binding.detachedAudioSequence.load(std::memory_order_acquire);
+            if (!engine.voices.ReleaseObserved(voice->release) && (detached == 0 || completed <= detached)) return false;
+        }
+        return exit->lifetime.Release();
+    });
+}
+
+bool PrepareMusicSourceFade(harken::Engine& engine, const harken::EnginePlayableServiceRow& source,
+    const harken::EnginePlayableServiceRow& controller, std::uint64_t start, std::uint64_t end,
+    const harken::CurveLUT& curve, std::unique_ptr<harken::EngineSourceExit>& out) noexcept {
+    try {
+        auto exit = std::make_unique<harken::EngineSourceExit>();
+        const auto& entry = controller.frontierLifetimeEntry;
+        exit->control.decisions = &engine.decisions;
+        exit->control.source = {source.ownerInstance, source.ownerEpoch, controller.ownerInstance, controller.ownerEpoch,
+            entry.owner.invocation, entry.owner.invocationEpoch, source.identity.slot, source.identity.generation};
+        exit->control.fadeStartFrame = start;
+        exit->control.stopFrame = end;
+        exit->control.fade = true;
+        exit->control.curve = curve;
+        for (std::uint32_t index = 0; index < engine.sourceTerminals.Capacity(); ++index) {
+            const auto* terminal = engine.sourceTerminals.At(index);
+            if (terminal == nullptr || !terminal->occupied || engine.voices.ReleaseObserved(terminal->release)) continue;
+            const auto& resource = terminal->resourceOwner;
+            auto* owner = engine.ResolvePlayableService({resource.serviceSlot, resource.serviceGeneration},
+                resource.instance, resource.epoch);
+            if (owner == nullptr || owner->invocation != source.invocation ||
+                owner->invocationGeneration != source.invocationGeneration ||
+                !IsPlayableServiceDescendant(engine, *owner, source)) continue;
+            auto voice = std::make_unique<harken::EngineSourceExit::Voice>();
+            voice->initial = true;
+            voice->release = terminal->release;
+            voice->binding.release = terminal->release;
+            voice->binding.source = &exit->control;
+            voice->binding.renderSlot = static_cast<std::uint32_t>(terminal->render);
+            voice->binding.renderGeneration = static_cast<std::uint32_t>(terminal->render >> 32);
+            exit->initialVoices.push_back(&voice->binding);
+            exit->voices.push_back(std::move(voice));
+        }
+        exit->control.initialVoices = exit->initialVoices;
+        out = std::move(exit);
+        return true;
+    } catch (const std::bad_alloc&) { return false; }
 }
 
 std::uint64_t NaturalClipArrangingEpoch(
@@ -35061,6 +35173,7 @@ bool ServiceScheduleChildRecord(
             }
         }
     }
+    ServiceSourceExits(engine, child);
     return true;
 }
 
@@ -35268,7 +35381,7 @@ bool ServiceScheduleVariableChildren(
     }
     std::erase_if(*row.scheduleVariableChildren, [](const auto& child) noexcept {
         return child.lifecycleOwned && child.logicalComplete && child.resourcesReleased &&
-            child.naturalClipDeadline.Empty();
+            child.naturalClipDeadline.Empty() && child.sourceExits.empty();
     });
     return false;
 }
@@ -35294,7 +35407,7 @@ bool ServicePendingScheduleChild(harken::Engine& engine,
     std::uint64_t* blockingFrame) noexcept {
     if (!child.pendingEntry) return true;
     if (child.service.Valid() || child.lifecycleOwned || child.logicalComplete ||
-        child.resourcesReleased || !child.naturalClipDeadline.Empty()) return false;
+        child.resourcesReleased || !child.naturalClipDeadline.Empty() || !child.sourceExits.empty()) return false;
     std::uint64_t start = 0, end = UINT64_MAX;
     if (!ResolveScheduleAggregateChildFrames(child, parent.startFrame, &start, &end)) return false;
     for (auto& attempt : engine.actionPlayScratch) {
@@ -35410,7 +35523,7 @@ bool ServiceScheduleAggregate(
         allLogical = allLogical && child.logicalComplete;
         allNatural = allNatural && child.logicalComplete &&
             child.outcome.kind == harken::PlayableTerminalKind::NaturalCompletion;
-        allReleased = allReleased && child.resourcesReleased && child.naturalClipDeadline.Empty();
+        allReleased = allReleased && child.resourcesReleased && child.naturalClipDeadline.Empty() && child.sourceExits.empty();
         if (!child.logicalComplete) ++row.childLiveCount;
         else if (!child.resourcesReleased) ++row.childAudibleRetiringCount;
         aggregate.completionOrdinal = std::max(aggregate.completionOrdinal,
@@ -35431,7 +35544,7 @@ bool ServiceScheduleAggregate(
         std::erase_if(aggregate.music->batches, [&](const auto& batch) noexcept {
             for (const auto& child : batch->children) {
                 if (child.pendingEntry || !child.logicalComplete || !child.resourcesReleased ||
-                    !child.naturalClipDeadline.Empty()) return false;
+                    !child.naturalClipDeadline.Empty() || !child.sourceExits.empty()) return false;
                 for (const auto& attempt : engine.actionPlayScratch) {
                     if (attempt.pendingScheduleChild == &child) return false;
                     if (attempt.storage.scheduleChildren == nullptr) continue;
@@ -37836,6 +37949,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
     // The selected native owner, not the first pass's leaf snapshot, owns
     // music completion. Resolve its exact service generation and parent link.
     harken::EnginePlayableServiceRow* musicSource = nullptr;
+    std::unique_ptr<harken::EngineSourceExit> musicSourceFade;
     if (transitionRule != nullptr && transitionRule->sourceExit == harken::TransitionSourceExitV1::NaturalEnd &&
         row.variableControlChildCount != 0) {
         const auto* child = FindDirectScheduleAggregateChild(row,
@@ -37853,9 +37967,6 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
         }
     }
     if (musicSource != nullptr) {
-        // Source fades require a branch-wide envelope for later passes too.
-        // Until that path is prepared, retain the source without partial fades.
-        if (transitionRule->sourceFade.active != 0) return VariableRetargetPrepareStatus::Retry;
         sourceMemberCount = 0;
     } else {
         const bool sourceAudioRetired = std::all_of(
@@ -37908,7 +38019,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
         return VariableRetargetPrepareStatus::Fatal;
     }
     const std::uint32_t sourceFadeFrames =
-        sourceMemberCount != 0 && transitionRule != nullptr && transitionRule->sourceFade.active != 0
+        (sourceMemberCount != 0 || musicSource != nullptr) && transitionRule != nullptr && transitionRule->sourceFade.active != 0
             ? transitionRule->sourceFade.durationFrames
             : 0;
     const std::uint32_t targetFadeFrames =
@@ -37916,7 +38027,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
             ? transitionRule->targetFade.durationFrames
             : 0;
     const bool sourceFadeActive =
-        sourceMemberCount != 0 && transitionRule != nullptr && transitionRule->sourceFade.active != 0;
+        (sourceMemberCount != 0 || musicSource != nullptr) && transitionRule != nullptr && transitionRule->sourceFade.active != 0;
     const bool targetFadeActive =
         transitionRule != nullptr && transitionRule->targetFade.active != 0;
     if (transitionRule != nullptr &&
@@ -38796,7 +38907,17 @@ engine.runtimeRecreateRequired = true;
         rollbackBeforeInstall();
         return VariableRetargetPrepareStatus::Retry;
     }
-    if (!starts.PrepareVariableFrontier(row, decision, ticket, transition) ||
+    if (musicSource != nullptr && sourceFadeActive) {
+        auto* child = FindDirectScheduleAggregateChild(row, musicSource->ownerInstance, musicSource->ownerEpoch);
+        if (child == nullptr || !PrepareMusicSourceFade(engine, *musicSource, row, audibleFrame, sourceStopFrame,
+                row.TransitionSourceFadeCurve(), musicSourceFade)) {
+            rollbackBeforeInstall();
+            return VariableRetargetPrepareStatus::Retry;
+        }
+        try { child->sourceExits.reserve(child->sourceExits.size() + 1u); }
+        catch (const std::bad_alloc&) { rollbackBeforeInstall(); return VariableRetargetPrepareStatus::Retry; }
+    }
+    if (!starts.PrepareVariableFrontier(row, decision, ticket, transition, musicSourceFade.get()) ||
         !starts.ReserveCommands()) {
         rollbackBeforeInstall();
         return starts.PermanentFailure() ? VariableRetargetPrepareStatus::Fatal
@@ -38835,6 +38956,13 @@ engine.runtimeRecreateRequired = true;
             }
             ++incomingLeafCommittedCount;
         }
+    }
+    // Retain the descriptor before Commit can publish any consumer pointer.
+    // A fatal publication failure must not destroy borrowed audio state.
+    if (musicSourceFade != nullptr) {
+        auto* child = FindDirectScheduleAggregateChild(row, musicSource->ownerInstance, musicSource->ownerEpoch);
+        assert(child != nullptr && child->sourceExits.capacity() > child->sourceExits.size());
+        child->sourceExits.push_back(std::move(musicSourceFade));
     }
     if (!starts.Commit(ticket)) {
         rollbackBeforeInstall();
@@ -53977,7 +54105,8 @@ engine.runtimeRecreateRequired = true;
             }
             if (row.scheduleTerminalChild != nullptr) {
                 const auto& record = *row.scheduleTerminalChild;
-                if (!record.logicalComplete || !record.resourcesReleased || !record.naturalClipDeadline.Empty())
+                if (!record.logicalComplete || !record.resourcesReleased || !record.naturalClipDeadline.Empty() ||
+                    !record.sourceExits.empty())
                     continue;
                 if (!harken::Engine::SameSelectionServiceReference(record.service, row.frontierChildService) ||
                     record.outcome.kind != harken::PlayableTerminalKind::NaturalCompletion) {
@@ -92150,7 +92279,7 @@ bool CommitPreparedScheduleAggregate(harken::Engine& engine,
     for (const auto& child : row->scheduleAggregate->children) {
         if (!child.pendingEntry) continue;
         if (child.service.Valid() || child.lifecycleOwned || child.logicalComplete ||
-            child.resourcesReleased || !child.naturalClipDeadline.Empty()) return false;
+            child.resourcesReleased || !child.naturalClipDeadline.Empty() || !child.sourceExits.empty()) return false;
         ++pendingCount;
     }
     if (scratch.storage.scheduleChildren->count + pendingCount != row->scheduleAggregate->children.size() ||
@@ -92604,7 +92733,25 @@ PendingScheduleEntryStatus PreparePendingScheduleVariableEntry(harken::Engine& e
         return engine.runtimeRecreateRequired ? Status::Failed : status;
     };
     try {
-        scratch->continuationScheduleChild = std::make_unique<harken::EngineScheduleAggregateChild>(pending);
+        if (!pending.sourceExits.empty()) return fail(Status::Failed);
+        scratch->continuationScheduleChild = std::make_unique<harken::EngineScheduleAggregateChild>();
+        auto& copy = *scratch->continuationScheduleChild;
+        copy.content = pending.content;
+        copy.startOffsetFrames = pending.startOffsetFrames;
+        copy.endOffsetFrames = pending.endOffsetFrames;
+        copy.stableLeafOrdinal = pending.stableLeafOrdinal;
+        copy.loopIteration = pending.loopIteration;
+        copy.sourceOffsetFrames = pending.sourceOffsetFrames;
+        copy.service = pending.service;
+        copy.variableControlSide = pending.variableControlSide;
+        copy.properties = pending.properties;
+        copy.naturalClipDeadline = pending.naturalClipDeadline;
+        copy.outcome = pending.outcome;
+        copy.reason = pending.reason;
+        copy.logicalComplete = pending.logicalComplete;
+        copy.resourcesReleased = pending.resourcesReleased;
+        copy.lifecycleOwned = pending.lifecycleOwned;
+        copy.pendingEntry = pending.pendingEntry;
     } catch (const std::bad_alloc&) { return fail(Status::Waiting); }
     auto& record = *scratch->continuationScheduleChild;
     record.pendingEntry = false;
@@ -93099,7 +93246,7 @@ QueueContinuationPrepareStatus PrepareQueueScheduleSuccessor(
         if (parent.scheduleTerminalChild != nullptr) {
             const auto& previous = *parent.scheduleTerminalChild;
             if (!previous.logicalComplete || !previous.resourcesReleased ||
-                !previous.naturalClipDeadline.Empty() ||
+                !previous.naturalClipDeadline.Empty() || !previous.sourceExits.empty() ||
                 previous.outcome.kind != harken::PlayableTerminalKind::NaturalCompletion)
                 return Status::Failed;
             properties = previous.properties;

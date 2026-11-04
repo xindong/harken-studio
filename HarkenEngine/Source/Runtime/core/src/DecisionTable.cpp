@@ -1654,6 +1654,86 @@ bool DecisionTable::CloneFuturePin(const DecisionFuturePin& source, DecisionFutu
     return true;
 }
 
+bool DecisionTable::CaptureFrontierSliceDependency(const DecisionFuturePin& original,
+    const Plan03GroupReaderPin& reader, const ScheduledTransactionPool& pool,
+    const FrontierOwnerIdentity& dependent, FrontierSliceDependency* out) const noexcept {
+    if (out == nullptr || out->Valid() || !dependent.Valid() || original.Owner() != this ||
+        !original.Valid() || !pool.IsPlan03GroupReaderFor(reader, reader.Identity())) return false;
+    const auto identity = reader.Identity();
+    const auto token = original.Token();
+    if (PreparedTicketHeld(token) || FrontierPublicationHeld(token)) return false;
+    const auto* row = Resolve(token);
+    Plan03PageGroupView group{};
+    if (row == nullptr || identity.backing != Plan03GroupBacking::Page ||
+        identity.decision.slot != token.slot || identity.decision.generation != token.generation ||
+        row->futurePinCount.load(std::memory_order_acquire) == 0 ||
+        row->commit.load(std::memory_order_acquire) == DecisionCommitState::Cancelled ||
+        identity.sliceIndex >= row->sliceCount || !row->transitionGate.Valid() ||
+        !pool.ResolvePlan03GroupSliceProducer(identity, &group) || group.frontier == nullptr || group.lease == nullptr ||
+        group.frontier->role != FrontierGroupRole::Future ||
+        !IsFrontierDecisionBindingFor(token, *group.frontier, pool)) return false;
+    const auto& binding = *group.frontier;
+    const auto state = group.lease->Capture().state;
+    if (!(binding.operation.group == identity) || !binding.transition.Valid() ||
+        binding.transition.slot != row->transitionGate.slot || binding.transition.generation != row->transitionGate.generation ||
+        binding.operation.order.logicCommitSequence != row->ticket.sequence ||
+        binding.operation.order.executeFrame < binding.transition.audibleFrame ||
+        dependent.invocation != binding.operation.owner.invocation ||
+        dependent.invocationEpoch != binding.operation.owner.invocationEpoch ||
+        (state != AudioSliceState::Ready && state != AudioSliceState::SliceClaimed &&
+         state != AudioSliceState::SliceClaimedWithInvalidation && state != AudioSliceState::SliceApplied)) return false;
+    FrontierSliceDependency captured{};
+    captured.issuer_ = this;
+    captured.pool_ = &pool;
+    captured.original_ = binding.operation;
+    captured.dependent_ = dependent;
+    captured.transition_ = binding.transition;
+    *out = captured;
+    return true;
+}
+
+bool DecisionTable::IsFrontierSliceDependencyFor(const FrontierSliceDependency& dependency,
+    const FrontierGroupBinding& original, const FrontierOwnerIdentity& dependent) const noexcept {
+    return dependent == dependency.dependent_ && dependency.issuer_ == this && dependency.pool_ != nullptr && original.Valid() &&
+        original.role == FrontierGroupRole::Future && original.operation.group == dependency.original_.group &&
+        original.operation.order == dependency.original_.order && original.operation.owner == dependency.original_.owner &&
+        original.operation.world == dependency.original_.world && original.operation.transport == dependency.original_.transport &&
+        original.transition.slot == dependency.transition_.slot && original.transition.generation == dependency.transition_.generation;
+}
+
+FrontierSliceDependencyStatus DecisionTable::ReadFrontierSliceDependency(const FrontierSliceDependency& dependency) const noexcept {
+    using Status = FrontierSliceDependencyStatus;
+    const auto& original = dependency.original_;
+    if (dependency.issuer_ != this || dependency.pool_ == nullptr ||
+        dependency.pool_->Epoch() != original.transport) return Status::Rejected;
+    const auto* row = Resolve(original.group.decision);
+    if (row == nullptr || row->futurePinCount.load(std::memory_order_acquire) == 0 ||
+        row->world != original.world || row->transport != original.transport ||
+        row->ticket.sequence != original.order.logicCommitSequence || original.group.sliceIndex >= row->sliceCount ||
+        row->transitionGate.slot != dependency.transition_.slot ||
+        row->transitionGate.generation != dependency.transition_.generation) return Status::Rejected;
+    const auto commit = row->commit.load(std::memory_order_acquire);
+    if (commit == DecisionCommitState::Cancelled) return Status::Rejected;
+    // Consumption is the immutable receipt. Retirement updates lastAudioSequence
+    // and can release the frontier binding and original page before this reader.
+    if (commit == DecisionCommitState::Committed &&
+        row->consumedSlices.load(std::memory_order_acquire) > original.group.sliceIndex) return Status::Applied;
+    const auto audio = row->audioState.load(std::memory_order_acquire);
+    if (audio == AudioGroupState::Invalidated || audio == AudioGroupState::DeadlineInvalidated ||
+        audio == AudioGroupState::PostStartInvalidated || audio == AudioGroupState::PostStartDeadlineInvalidated ||
+        audio == AudioGroupState::Retired) return Status::Rejected;
+    // Open preparations have no audio-visible page yet.
+    if (commit == DecisionCommitState::Open) return Status::Pending;
+    Plan03PageGroupView group{};
+    // A committed preparation may not have reached the audio-visible page yet.
+    if (!dependency.pool_->ResolvePlan03GroupSliceRt(original.group, &group)) return Status::Pending;
+    if (group.lease == nullptr || group.frontier == nullptr || group.frontier->role != FrontierGroupRole::Future ||
+        !(group.frontier->operation.owner == original.owner) || group.frontier->operation.order != original.order)
+        return Status::Rejected;
+    const auto state = group.lease->Capture().state;
+    return state == AudioSliceState::SliceInvalidated ? Status::Rejected : Status::Pending;
+}
+
 bool DecisionTable::CaptureAppliedSignalDependency(const DecisionFuturePin& original,
     const Plan03GroupReaderPin& primaryPin, const Plan03GroupReaderPin& memberPin,
     const ScheduledTransactionPool& pool, std::uint64_t completedAudioSequence,

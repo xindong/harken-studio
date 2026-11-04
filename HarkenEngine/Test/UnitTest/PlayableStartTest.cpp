@@ -18067,14 +18067,16 @@ TEST(PlayableStart, MusicSegmentCropsVariableControlSelectedSourcesAndPreservesW
 }
 
 TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
-    for (const auto mode : {0u, 1u, 2u, 3u, 4u, 5u})
+    for (const auto mode : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u})
     for (const auto count : {1u, 3u, 0u})
     for (const auto workers : {0u, 2u}) {
         if ((mode == 4) != (count == 0)) continue;
         const bool musicSource = mode != 0;
-        const bool silenceBeforeOut = mode == 2;
-        const bool cancelled = mode == 3;
-        const bool nativeTarget = mode == 5;
+        const bool silenceBeforeOut = mode == 2 || mode == 9;
+        const bool cancelled = mode == 3 || mode == 7;
+        const bool nativeTarget = mode == 5 || mode == 8;
+        const bool musicFade = mode >= 6;
+        const auto fadeFrames = !musicFade ? 0u : count == 1 ? 640u : mode == 10 ? 512u : 2400u;
         SCOPED_TRACE(mode);
         SCOPED_TRACE(count);
         SCOPED_TRACE(workers);
@@ -18144,11 +18146,11 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
         fadeCurve.curve.points[0] = {0.0f, 0.0f};
         fadeCurve.curve.points[1] = {1.0f, 1.0f};
         fadeCurve.curve.handles[0] = {1.0f / 3.0f, 1.0f / 3.0f, 2.0f / 3.0f, 2.0f / 3.0f};
-        control.container.curves = musicSource ? nullptr : &fadeCurve;
-        control.container.curveCount = musicSource ? 0 : 1;
-        rule.sourceFade.active = musicSource ? 0 : 1;
-        rule.sourceFade.durationFrames = musicSource ? 0 : 64;
-        rule.sourceFade.curveLocalId = musicSource ? UINT32_MAX : fadeCurve.curveLocalId;
+        control.container.curves = musicSource && !musicFade ? nullptr : &fadeCurve;
+        control.container.curveCount = musicSource && !musicFade ? 0 : 1;
+        rule.sourceFade.active = musicSource && !musicFade ? 0 : 1;
+        rule.sourceFade.durationFrames = musicSource ? fadeFrames : 64;
+        rule.sourceFade.curveLocalId = rule.sourceFade.active ? fadeCurve.curveLocalId : UINT32_MAX;
         harken::TransitionProgramViewV1 transition{};
         transition.ownerContainerStableId = control.container.containerStableId;
         transition.rules = &rule;
@@ -18198,10 +18200,16 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
             [&](const auto& service) { return service.ownerInstance == started.instance; });
         ASSERT_NE(engine->playableServices.end(), controller);
         const auto originalStart = controller->startFrame;
-        for (unsigned block = 0; block < (musicSource && count != 1 ? 32u : 12u); ++block) {
+        for (unsigned block = 0; block < (musicSource && count != 1 && (!musicFade || mode == 10) ? 32u : musicFade ? 4u : 12u); ++block) {
             ASSERT_EQ(VN_OK, Vn_Update());
             engine->nullBackend.Pump(1);
         }
+        SCOPED_TRACE(::testing::Message() << "sourceStart=" << originalStart
+            << " request=" << engine->mixer.BlocksRendered() * 64u
+            << " cutoff=" << engine->timelinePool.PublishCutoffFrame()
+            << " lead=" << engine->timelinePool.PublishLeadQuanta()
+            << " frontier=" << engine->timelinePool.ConsumerFrontier().load()
+            << " evaluation=" << controller->variableControlDiscreteNextEvaluationFrame);
         ASSERT_EQ(VN_OK, Vn_SetValue(variable.variableId, 1.0f));
         std::uint64_t targetStart = UINT64_MAX;
         for (unsigned block = 0; block < 64 && targetStart == UINT64_MAX; ++block) {
@@ -18221,23 +18229,50 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
         const auto bodyFrames = count == 0 ? UINT64_MAX - 800u : count * (silenceBeforeOut ? 1200u : 800u);
         if (musicSource && count != 0) EXPECT_EQ(originalStart + (silenceBeforeOut ? 400u : 800u) + bodyFrames, targetStart);
         if (cancelled) {
-            ASSERT_LT(engine->mixer.BlocksRendered() * 64u + 256u, targetStart);
+            ASSERT_LT(engine->mixer.BlocksRendered() * 64u + 256u, targetStart - fadeFrames);
             ASSERT_EQ(VN_OK, Vn_SetValue(variable.variableId, 3.0f));
         }
+        const bool teardown = mode >= 11;
+        const bool afterPrelude = mode == 12 || mode == 14;
+        const auto transitionDecision = controller->VariablePayload().variableControlDiscreteRetargetDecision;
+        unsigned teardownBlock = UINT32_MAX;
         for (unsigned block = 0; block < 120; ++block) {
+            if (teardown && teardownBlock == UINT32_MAX &&
+                (!afterPrelude || engine->mixer.BlocksRendered() * 64u >= targetStart - fadeFrames + 128u)) {
+                harken::DecisionCommittedSnapshot snapshot{};
+                ASSERT_TRUE(engine->decisions.CaptureCommitted(transitionDecision, &snapshot));
+                EXPECT_EQ(afterPrelude ? 1u : 0u, snapshot.consumedSlices);
+                if (mode >= 13) {
+                    PlayableWorldImage replacement(revision, harken::ContainerModeV1::Random);
+                    EXPECT_EQ(harken::WorldInstallStatus::Backpressure,
+                        harken::InstallContainerWorldV1(*engine, replacement.world).status);
+                } else {
+                    ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(*engine, started.instance, 0));
+                }
+                teardownBlock = block;
+            }
             ASSERT_EQ(VN_OK, Vn_Update()) << OccupancyDump(*engine);
             ASSERT_FALSE(engine->runtimeRecreateRequired);
             const auto before = engine->mixer.BlocksRendered();
             engine->nullBackend.Pump(1);
             for (unsigned sample = 0; sample < 64; ++sample) {
+                if (teardownBlock != UINT32_MAX) {
+                    if (block >= teardownBlock + 32u)
+                        ASSERT_FLOAT_EQ(0.0f, engine->nullBackend.LastBlock()[sample * 2]);
+                    continue;
+                }
                 const auto frame = before * 64 + sample;
                 const auto age = frame >= targetStart ? frame - targetStart : UINT64_MAX;
                 const auto sourceAge = frame >= originalStart ? frame - originalStart : UINT64_MAX;
-                const auto source = musicSource
+                auto source = musicSource
                     ? (sourceAge < 400u ? 0.1f : sourceAge < 400u + bodyFrames ? (silenceBeforeOut && (sourceAge - 400u) % 1200u >= 800u ? 0.0f : 0.2f)
                         : sourceAge < 800u + bodyFrames && !silenceBeforeOut ? 0.3f : 0.0f)
                     : frame < targetStart ? samples[sourceAge]
                         : age < 64u ? samples[sourceAge] * (1.0f - static_cast<float>(age) / 63.0f) : 0.0f;
+                if (musicFade && !cancelled && frame >= targetStart - fadeFrames) {
+                    const auto done = frame - (targetStart - fadeFrames);
+                    source *= done >= fadeFrames - 1u ? 0.0f : 1.0f - static_cast<float>(done) / static_cast<float>(fadeFrames - 1u);
+                }
                 const auto expected = source + (cancelled ? 0.0f : musicSource && !nativeTarget ? (age < samples.size() ? samples[age] : 0.0f)
                     : age < bodyFrames ? 0.2f : age < bodyFrames + 400u ? 0.3f : 0.0f);
                 ASSERT_NEAR(expected, engine->nullBackend.LastBlock()[sample * 2], 0.001f)
@@ -18252,6 +18287,9 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
                 engine->nullBackend.Pump(1);
             }
         }
+        if (teardown) EXPECT_NE(UINT32_MAX, teardownBlock);
+        EXPECT_EQ(0u, engine->decisions.LiveCount());
+        EXPECT_EQ(0u, engine->transitionInstances.LiveCount());
         EXPECT_EQ(0u, engine->playableInstances.LiveCount());
         EXPECT_EQ(0u, engine->playablePartitions.OccupiedCount());
         EXPECT_EQ(0u, engine->timelineArms.LiveCount());

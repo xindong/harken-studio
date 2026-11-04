@@ -1032,6 +1032,38 @@ TEST(VoicePool, PreparedCommitConsumePreservesRealNaturalFinalProgressAndRelease
     EXPECT_TRUE(engine.sourceTerminals.Release(source.token));
 }
 
+TEST(VoicePool, SourceExitDoesNotAttachToCancelledPreparedSlotReuse) {
+    EngineSession session(VoicePoolConfig(1, kBlockFrames));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const auto samples = harkentest::MakeDC(64, 0.25f);
+    const auto desc = MonoDesc(samples, kSampleRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
+    auto& engine = *session.Engine();
+    VnVoiceHandle original = 0;
+    ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &original, true));
+    harken::FrontierSourceExit source{};
+    harken::FrontierSourceExitVoice binding{};
+    binding.source = &source;
+    binding.renderSlot = static_cast<std::uint32_t>(original);
+    binding.renderGeneration = static_cast<std::uint32_t>(original >> 32);
+    ASSERT_TRUE(engine.voices.CaptureReleaseObserver(original, &binding.release));
+    std::array<harken::FrontierSourceExitVoice*, 1> initial{&binding};
+    source.initialVoices = initial;
+    ASSERT_TRUE(engine.voices.CancelPreparedVoice(original));
+    VnVoiceHandle reused = 0;
+    ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &reused, true));
+    ASSERT_EQ(original, reused);
+    EXPECT_FALSE(engine.voices.PrepareSourceExit(reused, binding));
+    ASSERT_TRUE(engine.voices.CommitPreparedVoice(reused));
+    engine.voices.ApplyPlay(reused, reused, 0, 0);
+    engine.voices.ApplySourceExit(source);
+    EXPECT_FALSE(binding.attached);
+    engine.nullBackend.Pump(1);
+    const float* block = engine.nullBackend.LastBlock();
+    EXPECT_GT(*std::max_element(block, block + kBlockFrames * engine.config.mixChannelCount), 0.01f);
+    EXPECT_EQ(0u, engine.voices.ActiveCount());
+}
+
 TEST(VoicePool, PreparedCommitOriginalObserverRejectsSameHandleCancelReuseAndMaximum) {
     EngineSession session(VoicePoolConfig(1, kBlockFrames));
     ASSERT_EQ(VN_OK, session.InitResult());

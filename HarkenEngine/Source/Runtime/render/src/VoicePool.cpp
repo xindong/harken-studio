@@ -940,12 +940,77 @@ bool VoicePool::TimelineBindingValid(
            slot.generation.load(std::memory_order_relaxed) == renderGeneration;
 }
 
+bool VoicePool::PrepareSourceExit(VnVoiceHandle handle, FrontierSourceExitVoice& binding) noexcept {
+    auto* slot = SlotFor(handle);
+    if (slot == nullptr || slot->state.load(std::memory_order_acquire) != SlotState::Prepared ||
+        binding.source == nullptr || !binding.release.Valid() || binding.release.slot != binding.renderSlot ||
+        ReleaseObserved(binding.release) || binding.attached || binding.next != nullptr ||
+        binding.renderSlot != static_cast<std::uint32_t>(handle) ||
+        binding.renderGeneration != static_cast<std::uint32_t>(handle >> 32)) return false;
+    binding.next = slot->render.sourceExits;
+    slot->render.sourceExits = &binding;
+    binding.attached = true;
+    return true;
+}
+
+bool VoicePool::ValidateSourceExit(const FrontierSourceExit& source, const FrontierGroupBinding& group) const noexcept {
+    if (source.decisions == nullptr || !source.source.Valid() ||
+        source.stopFrame < source.fadeStartFrame || source.stopFrame == UINT64_MAX ||
+        source.fadeStartFrame != group.transition.audibleFrame ||
+        !source.decisions->IsFrontierSliceDependencyFor(source.dependency, group, source.source)) return false;
+    for (std::size_t index = 0; index < source.initialVoices.size(); ++index) {
+        const auto* binding = source.initialVoices[index];
+        if (binding == nullptr || binding->source != &source || binding->renderGeneration == 0 ||
+            binding->renderSlot >= m_slots.ConstructedCount() || !binding->release.Valid() ||
+            binding->release.slot != binding->renderSlot || binding->attached || binding->next != nullptr) return false;
+        for (std::size_t prior = 0; prior < index; ++prior)
+            if (source.initialVoices[prior]->renderSlot == binding->renderSlot &&
+                source.initialVoices[prior]->renderGeneration == binding->renderGeneration) return false;
+        const auto& slot = m_slots[binding->renderSlot];
+        if (ReleaseObserved(binding->release)) continue;
+        if (slot.generation.load(std::memory_order_acquire) != binding->renderGeneration) return false;
+        const auto state = slot.state.load(std::memory_order_acquire);
+        if (!IsAudioRenderingState(state) && state != SlotState::VariableStartWaiting &&
+            state != SlotState::Free && state != SlotState::Quarantined) return false;
+    }
+    return true;
+}
+
+void VoicePool::ApplySourceExit(const FrontierSourceExit& source) noexcept {
+    for (auto* binding : source.initialVoices) {
+        auto& slot = m_slots[binding->renderSlot];
+        const auto state = slot.state.load(std::memory_order_relaxed);
+        if (ReleaseObserved(binding->release) ||
+            slot.generation.load(std::memory_order_relaxed) != binding->renderGeneration ||
+            (!IsAudioRenderingState(state) && state != SlotState::VariableStartWaiting)) continue;
+        binding->next = slot.render.sourceExits;
+        slot.render.sourceExits = binding;
+        binding->attached = true;
+    }
+}
+
 void VoicePool::FinalizeTimelineQuantum(std::uint64_t quantumIndex) noexcept {
     for (Slot& slot : m_slots) {
         if (!IsAudioRenderingState(slot.state.load(std::memory_order_relaxed))) continue;
         assert(slot.timelineProvenMask == 0);
         auto& span = slot.render.timelineEvents;
         if (span.quantumIndex != quantumIndex) continue;
+        auto** link = &slot.render.sourceExits;
+        while (*link != nullptr) {
+            auto& binding = **link;
+            const auto& source = *binding.source;
+            const auto status = source.decisions == nullptr ? FrontierSliceDependencyStatus::Rejected :
+                source.decisions->ReadFrontierSliceDependency(source.dependency);
+            if (status == FrontierSliceDependencyStatus::Rejected) {
+                *link = binding.next;
+                binding.next = nullptr;
+                binding.active = false;
+                binding.detachedAudioSequence.store(quantumIndex + 1u, std::memory_order_release);
+                continue;
+            }
+            binding.active = status == FrontierSliceDependencyStatus::Applied;
+            link = &binding.next;
+        }
         // Fixed Page and lane slots share a stable sort without allocating.
         for (std::uint32_t current = 1; current < span.eventCount; ++current) {
             const auto event = span.events[current];

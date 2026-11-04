@@ -1577,6 +1577,10 @@ struct FrontierTimelineFinalizer::Impl {
 
     static bool ValidateEntry(void* opaque) noexcept {
         auto& group = *static_cast<Group*>(opaque);
+        const auto* exit = group.view.frontier->sourceExit;
+        if (exit != nullptr && group.view.identity.sliceIndex == 0 &&
+            !group.owner->voices.ValidateSourceExit(*exit, *group.view.frontier))
+            group.failure = FrontierReceiptReason::Dependency;
         if (!group.owner->GroupVariableSourcesReady(group.index))
             group.failure = FrontierReceiptReason::Dependency;
         const bool valid = group.failure == FrontierReceiptReason::None;
@@ -2020,10 +2024,10 @@ struct FrontierTimelineFinalizer::Impl {
             armGroup.memberCount != member.view.memberCount || armGroup.ackedCount != member.view.memberCount)
             return false;
         if (decision.transitionGate.Valid() != binding.transition.Valid()) return false;
-        if (variable && decision.sliceCount == 2 && member.view.sourceControlCount != 0) {
+        if (variable && decision.sliceCount == 2 &&
+            (member.view.sourceControlCount != 0 || binding.sourceExit != nullptr)) {
             if (!binding.transition.Valid() || binding.variableSide.side != 0 ||
-                member.view.sourceControlCount == 0 ||
-                member.view.sourceControlCount >= member.view.memberCount) return false;
+                (member.view.sourceControlCount != 0 && member.view.sourceControlCount >= member.view.memberCount)) return false;
             member.variablePrelude = member.view.identity.sliceIndex == 0;
             member.variableCompletion = member.view.identity.sliceIndex == 1;
             const auto frame = binding.operation.order.executeFrame;
@@ -3120,6 +3124,8 @@ struct FrontierTimelineFinalizer::Impl {
     static void ApplyFuture(void* opaque) noexcept {
         auto& group = *static_cast<Group*>(opaque);
         auto& self = *group.owner;
+        if (group.view.frontier->sourceExit != nullptr && group.view.identity.sliceIndex == 0)
+            self.voices.ApplySourceExit(*group.view.frontier->sourceExit);
         self.ApplyMode(group);
         for (std::uint32_t i = 0; i < self.eventCount; ++i) {
             auto& event = self.events[i];

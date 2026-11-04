@@ -478,6 +478,9 @@ public:
     std::uint64_t TimelineScratchBytes(std::uint32_t blockFrames) const noexcept;
     void BeginTimelineQuantum(std::uint64_t quantumIndex) noexcept;
     void FinalizeTimelineQuantum(std::uint64_t quantumIndex) noexcept;
+    bool PrepareSourceExit(VnVoiceHandle voice, FrontierSourceExitVoice& binding) noexcept;
+    bool ValidateSourceExit(const FrontierSourceExit& source, const FrontierGroupBinding& group) const noexcept;
+    void ApplySourceExit(const FrontierSourceExit& source) noexcept;
     bool AbortClaimedVoice(VnVoiceHandle handle) noexcept;
     bool CommitPreparedVoice(VnVoiceHandle handle) noexcept;
     bool CancelPreparedVoice(VnVoiceHandle handle) noexcept;

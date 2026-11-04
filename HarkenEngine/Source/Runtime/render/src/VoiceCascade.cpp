@@ -584,6 +584,7 @@ bool PreparePlainPcm(const VoiceRenderContext& ctx, std::uint32_t blockFrames,
         ctx.fading || ctx.timelineStopPending || ctx.timelineFallbackStopActive ||
         ctx.authoredRootStopApplied || ctx.timelineEvents.eventCount != 0 ||
         ctx.timelineEnvelopes[0].active || ctx.timelineEnvelopes[1].active ||
+        ctx.sourceExits != nullptr ||
         ctx.variableWeightActive || ctx.variableWeightControlCount != 0 ||
         ctx.gain.remainingFrames != 0 || ctx.outputGain.remainingFrames != 0 ||
         (ctx.pcm.channelCount <= 2 && (ctx.spatialMatrixDirty || !ctx.spatialMatrix.Settled())) ||
@@ -1472,6 +1473,23 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
             ctx.timelineEvents.quantumIndex * blockFrames + offset + produced;
         if (renderedEnd >= end) {
             envelope.active = false;
+        }
+    }
+    // Each source transition contributes independently, including an exit
+    // inherited by a later voice partway through its absolute fade interval.
+    for (auto* binding = ctx.sourceExits; binding != nullptr; binding = binding->next) {
+        if (!binding->active || !binding->source->fade) continue;
+        const auto& exit = *binding->source;
+        const auto length = exit.stopFrame - exit.fadeStartFrame;
+        const auto inverse = length > 1 ? 1.0f / static_cast<float>(length - 1u) : 0.0f;
+        for (std::uint32_t index = 0; index < produced; ++index) {
+            const auto frame = sourceBlockStart + index;
+            if (frame < exit.fadeStartFrame) continue;
+            const float progress = length <= 1 || frame >= exit.stopFrame - 1u ? 1.0f :
+                static_cast<float>(frame - exit.fadeStartFrame) * inverse;
+            const auto gain = 1.0f - exit.curve.Eval(InterpLinear(exit.curve.xMin, exit.curve.xMax, progress));
+            for (std::uint32_t channel = 0; channel < channels; ++channel)
+                scratch[channel][offset + index] *= gain;
         }
     }
     // Timeline controls follow the output clock even while a live stream is

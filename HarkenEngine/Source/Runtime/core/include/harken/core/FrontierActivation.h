@@ -14,6 +14,8 @@ namespace harken {
 
 class FrontierTimelineFinalizer;
 class DecisionTable;
+class ScheduledTransactionPool;
+struct FrontierSourceExit;
 
 struct FrontierOwnerIdentity {
     std::uint64_t child = 0;
@@ -286,6 +288,24 @@ struct FrontierTransitionIdentity {
     bool Valid() const noexcept { return slot != UINT32_MAX && generation != 0; }
 };
 
+enum class FrontierSliceDependencyStatus : std::uint8_t { Pending, Applied, Rejected };
+
+// The preparation owner retains the original group reader until application,
+// and its Decision lifetime until every dependent program's read fence returns.
+// Service ancestry is validated by the caller before binding this exact child.
+class FrontierSliceDependency {
+public:
+    bool Valid() const noexcept { return issuer_ != nullptr; }
+
+private:
+    friend class DecisionTable;
+    const DecisionTable* issuer_ = nullptr;
+    const ScheduledTransactionPool* pool_ = nullptr;
+    FrontierDueOperationRef original_{};
+    FrontierOwnerIdentity dependent_{};
+    FrontierTransitionIdentity transition_{};
+};
+
 struct FrontierGroupBinding {
     FrontierGroupRole role = FrontierGroupRole::Legacy;
     FrontierEntryReceiptRef entry{};
@@ -302,12 +322,15 @@ struct FrontierGroupBinding {
     FrontierQueueConditionalIdentity queueInitialCompletion{};
     bool canonicalInitialCompletion = false;
     FrontierTransitionIdentity transition{};
+    const FrontierSourceExit* sourceExit = nullptr;
     VariableReadCutRef initialVariables{};
 
     bool Valid() const noexcept {
         if (role == FrontierGroupRole::Legacy || !entry.Valid() || !operation.Valid() ||
             !operation.group.Exact()) return false;
         if (initialVariables.Valid() && role != FrontierGroupRole::Coordinator) return false;
+        if (sourceExit != nullptr && (role != FrontierGroupRole::Future || !transition.Valid() ||
+                !variableSide.Valid() || variableSide.side != 0)) return false;
         if (appliedPrerequisite != nullptr &&
             (role != FrontierGroupRole::Coordinator ||
              !prerequisite.Valid() || !prerequisiteMember.Exact())) return false;

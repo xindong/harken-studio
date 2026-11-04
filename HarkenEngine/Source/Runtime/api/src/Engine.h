@@ -2048,6 +2048,19 @@ struct EngineScheduleChildPropertyContext {
     std::vector<SelectionPathNodeV1> typedPrefix;
 };
 
+struct EngineSourceExit {
+    struct Voice {
+        FrontierSourceExitVoice binding{};
+        VoiceReleaseObserver release{};
+        bool initial = false;
+    };
+    FrontierSourceExit control{};
+    DecisionFuturePin lifetime{};
+    Plan03GroupReaderPin reader{};
+    std::vector<std::unique_ptr<Voice>> voices;
+    std::vector<FrontierSourceExitVoice*> initialVoices;
+};
+
 struct EngineScheduleAggregateChild {
     PlayableRefV1 content{};
     std::uint64_t startOffsetFrames = 0;
@@ -2059,6 +2072,7 @@ struct EngineScheduleAggregateChild {
     std::optional<VariableControlSide> variableControlSide;
     EngineScheduleChildPropertyContext properties;
     EngineNaturalClipDeadline naturalClipDeadline{};
+    std::vector<std::unique_ptr<EngineSourceExit>> sourceExits;
     PlayableTerminalOutcome outcome{};
     PlayableControlReason reason = PlayableControlReason::None;
     bool logicalComplete = false;
@@ -2120,7 +2134,7 @@ struct EngineScheduleAggregateState {
 
     bool ChildrenReleased() const noexcept {
         return VisitChildren([](const auto& child) noexcept {
-            return child.resourcesReleased && child.naturalClipDeadline.Empty();
+            return child.resourcesReleased && child.naturalClipDeadline.Empty() && child.sourceExits.empty();
         });
     }
 };
