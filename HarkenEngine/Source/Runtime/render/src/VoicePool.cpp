@@ -1,4 +1,6 @@
 #include "harken/render/VoicePool.h"
+#include "harken/render/SignalRenderPlan.h"
+#include "harken/render/BusTree.h"
 #include "harken/render/OriginalSourceSubmission.h"
 
 #include "MonitorCaptureHub.h"
@@ -241,6 +243,7 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
       m_timelineArms(timelineArms),
       m_originalCallbackStorage(config.voiceCapacity.Render()),
       m_streamParkMailboxes(config.voiceCapacity.Render()),
+      m_signalMemberImages(config.voiceCapacity.Render()),
       m_jobSlots(config.voiceCapacity.Render(), 0),
       m_jobGenerations(config.voiceCapacity.Render(), 0) {
     if (!m_slots.Reserve(config.voiceCapacity.Render()) ||
@@ -1914,6 +1917,49 @@ bool VoicePool::CommitPreparedVoice(VnVoiceHandle handle) noexcept {
         m_highWater = active;
     }
     return true;
+}
+
+std::size_t VoicePool::PreparedSignalPathRows(std::uint32_t count) const noexcept {
+    std::size_t rows = 0;
+    for (std::uint32_t i = 0; i < std::min(count, m_slots.ConstructedCount()); ++i)
+        rows += m_slots[i].signalPathStorage.size();
+    return rows;
+}
+
+bool VoicePool::BindPreparedSignalPath(VnVoiceHandle handle,
+    std::span<const PlaybackPathRow> rows) noexcept {
+    if (memguard::IsAudioTagged()) return false;
+    auto* slot = SlotFor(handle);
+    if (slot == nullptr || rows.size() > kPlaybackPathRowCapacity) return false;
+    const auto state = slot->state.load(std::memory_order_acquire);
+    if (state != SlotState::Prepared && state != SlotState::Claimed) return false;
+    const auto member = [](const PlaybackPathRow& row) {
+        return row.rowKind == ResolvedPlayablePathRowKindV1::Definition &&
+            row.propertyFingerprint != 0 &&
+            (row.contentPropertyKind == playableproperties::ContentPropertyKindV1::Sound ||
+             row.contentPropertyKind == playableproperties::ContentPropertyKindV1::Container);
+    };
+    const auto count = static_cast<std::size_t>(std::count_if(rows.begin(), rows.end(), member));
+    try {
+        if (slot->signalPathStorage.capacity() < count || slot->signalNodeStorage.capacity() < count) {
+            std::vector<PlaybackPathRow> path(count);
+            std::vector<std::uint32_t> nodes(count);
+            m_signalPathStorageBytes -= slot->signalPathStorage.capacity() * sizeof(PlaybackPathRow) +
+                slot->signalNodeStorage.capacity() * sizeof(std::uint32_t);
+            slot->signalPathStorage.swap(path);
+            slot->signalNodeStorage.swap(nodes);
+            m_signalPathStorageBytes += slot->signalPathStorage.capacity() * sizeof(PlaybackPathRow) +
+                slot->signalNodeStorage.capacity() * sizeof(std::uint32_t);
+        }
+        slot->signalPathStorage.resize(count);
+        slot->signalNodeStorage.resize(count);
+        std::copy_if(rows.begin(), rows.end(), slot->signalPathStorage.begin(), member);
+        slot->render.signalPath = slot->signalPathStorage;
+        slot->render.signalNodeStorage = slot->signalNodeStorage;
+        for (auto* registration = m_slotStorageRegistrations; registration != nullptr; registration = registration->next_)
+            if (!registration->prepare_(registration->context_, m_slots.ConstructedCount())) return false;
+        return true;
+    } catch (...) { return false; }
 }
 
 bool VoicePool::BindPreparedNativeReadCut(VnVoiceHandle handle,
@@ -4276,8 +4322,39 @@ void VoicePool::ApplySetVoiceSendLevel(VnVoiceHandle handle,
 VoicePool::RenderAllResult VoicePool::RenderAll(
     BlockArena& arena, float* const* busPlanes, std::uint32_t blockFrames,
     NotificationQueue& notifications, std::uint64_t blockIndex,
-    std::uint64_t jobDeadlineAt, std::uint64_t sourceFrameBegin) {
+    std::uint64_t jobDeadlineAt, std::uint64_t sourceFrameBegin, SignalRenderPlan* signals, BusTree* signalBuses) {
     RenderAllResult outcome;
+    const bool collective = signals != nullptr && (signals->HasContent() || signals->UsesActualRouting());
+    if (m_deferredJobCount == 0) {
+        std::size_t pathRows = 0;
+        std::uint32_t members = 0;
+        bool singleStageMembers = true;
+        for (auto& slot : m_slots) {
+            if (!IsAudioRenderingState(slot.state.load(std::memory_order_relaxed))) continue;
+            auto& render = slot.render;
+            render.signalNodeCount = collective
+                ? signals->MatchMember(render.signalPath, render.signalNodeStorage) : 0;
+            assert(render.signalNodeCount != UINT32_MAX);
+            if (render.signalNodeCount == UINT32_MAX) render.signalNodeCount = 0;
+            render.signalMemberActive = render.signalNodeCount != 0;
+            pathRows += render.signalNodeCount;
+            if (render.signalMemberActive)
+                m_signalMemberImages[members++] = {nullptr, &render.outputGain,
+                    render.signalNodeStorage.first(render.signalNodeCount), 0, 0, &render, 0};
+            singleStageMembers &= render.signalNodeCount <= 1;
+        }
+        if (signals != nullptr) {
+            signals->PrepareFinalOutputs({m_signalMemberImages.data(), members});
+            signals->SelectPreparedSoundRouting(singleStageMembers);
+        }
+        if (signals != nullptr && signalBuses != nullptr) signals->SelectPreparedBusRouting(*signalBuses);
+        if (signals != nullptr && signals->NeedsBlockRouting() &&
+            (signalBuses == nullptr || !signals->ReserveRouting(*signalBuses, arena, members, pathRows))) {
+            outcome.signalFailed = true;
+            signals->Invalidate();
+            return outcome;
+        }
+    }
     const auto beginCompressors = [](VoiceRenderContext& render) {
         for (std::uint32_t slot = 0; slot < render.fxSlotCount; ++slot) {
             render.compressorParamTransitionThisBlock[slot] = false;
@@ -4366,7 +4443,8 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
                 m_effectBank.PublishCompressorRuntime(ref, payload);
             }
         };
-    if (m_deferredJobCount == 0 && !m_workers.TryReserveBatch()) {
+    const bool workerReserved = m_deferredJobCount != 0 || m_workers.TryReserveBatch();
+    if (m_deferredJobCount == 0 && !workerReserved && !collective) {
         // Serial in-callback path (renderWorkerCount = 0), unchanged from M4:
         // each rendering voice runs its full cascade and folds as it goes.
         // This keeps every existing baseline byte-untouched at the default.
@@ -4448,7 +4526,10 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             slot.render.monitorPreChainFrames = 0;
             slot.render.dynamicVoiceTapActive =
                 m_dynamicRoutes.HasVoiceTap(slot.render.dynamicSourceIdentity);
-            PrepareVoiceCascade(slot.render, arena, blockFrames, m_mixChannels);
+            const SignalMemberImage preparedImage{nullptr, &slot.render.outputGain,
+                slot.render.signalNodeStorage.first(slot.render.signalNodeCount), 0, 0, &slot.render, 0};
+            const bool readOnlyImage = collective && slot.render.signalMemberActive && signals->ReadOnlyImage(preparedImage);
+            PrepareVoiceCascade(slot.render, arena, blockFrames, m_mixChannels, readOnlyImage, m_mixLayout);
             m_jobSlots[jobCount] = i;
             m_jobGenerations[jobCount] =
                 slot.generation.load(std::memory_order_relaxed);
@@ -4459,15 +4540,19 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             m_jobQuantumIndex = blockIndex;
             m_jobBlockFrames = blockFrames;
             m_jobSourceFrameBegin = sourceFrameBegin;
-            const RenderWorkerPool::RunResult batch = m_workers.RunUntil(
-                jobCount, &VoicePool::CascadeThunk, this, jobDeadlineAt);
+            RenderWorkerPool::RunResult batch{};
+            if (workerReserved) {
+                batch = m_workers.RunUntil(jobCount, &VoicePool::CascadeThunk, this, jobDeadlineAt);
+            } else {
+                for (std::uint32_t job = 0; job < jobCount; ++job) RunCascadeJob(job);
+            }
             if (batch.busyPeakTicks > m_workerBusyPeakTicks) {
                 m_workerBusyPeakTicks = batch.busyPeakTicks;
             }
             outcome.batchDeferred = batch.deferred && batch.unfinishedJobs != 0;
             outcome.overrunTicks = batch.overrunTicks;
             outcome.pendingVoices = batch.unfinishedJobs;
-        } else {
+        } else if (workerReserved) {
             m_workers.CancelReservedBatch();
         }
 
@@ -4480,6 +4565,45 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
     }
     m_deferredJobCount = 0;
 
+    if (collective) {
+        std::uint32_t members = 0;
+        for (std::uint32_t j = 0; j < jobCount; ++j) {
+            auto& render = m_slots[m_jobSlots[j]].render;
+            if (!render.signalMemberActive || !render.cascade.runnable) continue;
+            if (!PrepareVoiceSignalImage(render, blockFrames, m_mixChannels, m_mixLayout, sourceFrameBegin)) {
+                outcome.signalFailed = true;
+                break;
+            }
+            std::uint32_t silentChannels = 0;
+            if (m_mixChannels > 2) {
+                for (std::uint32_t ch = 0; ch < m_mixChannels; ++ch) {
+                    std::uint32_t prior = 0;
+                    for (; prior < ch; ++prior)
+                        if (render.cascade.tap[prior] == render.cascade.tap[ch]) break;
+                    if (prior < ch ? (silentChannels & (1u << prior)) != 0 :
+                        SignalPlaneIsSilent(render.cascade.tap[ch] + render.cascade.offset, render.cascade.produced))
+                        silentChannels |= 1u << ch;
+                }
+            }
+            m_signalMemberImages[members++] = {render.cascade.tap, &render.outputGain,
+                render.signalNodeStorage.first(render.signalNodeCount),
+                render.cascade.offset, render.cascade.produced, &render, silentChannels};
+        }
+        if (!outcome.signalFailed && signals->NeedsBlockRouting())
+            outcome.signalFailed = signalBuses == nullptr || !signals->BuildRouting(
+                {m_signalMemberImages.data(), members}, *signalBuses);
+        if (outcome.signalFailed || !signals->ProcessContent({m_signalMemberImages.data(), members})) {
+            outcome.signalFailed = true;
+            signals->Invalidate();
+            // Cascades already consumed time. Drop their output, retain their
+            // completion/tail facts, and never retry receiver state in this block.
+            for (std::uint32_t j = 0; j < jobCount; ++j)
+                m_slots[m_jobSlots[j]].render.cascade.produced = 0;
+        }
+    }
+
+    std::uint32_t signalMember = 0;
+    std::uint32_t foldedUntil = 0;
     for (std::uint32_t j = 0; j < jobCount; ++j) {
         const std::uint32_t i = m_jobSlots[j];
         Slot& slot = m_slots[i];
@@ -4500,8 +4624,46 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
                     : 0);
         }
         if (slot.render.cascade.runnable) {
-            FoldVoiceIntoBuses(slot.render, busPlanes, blockFrames,
-                               m_mixChannels, m_mixLayout, sourceFrameBegin, m_monoStereoMix);
+            std::uint32_t silentChannels = 0;
+            const double* signalGains = nullptr;
+            if (collective && !outcome.signalFailed && slot.render.signalMemberActive) {
+                assert(m_signalMemberImages[signalMember].voice == &slot.render);
+                const auto& member = m_signalMemberImages[signalMember++];
+                silentChannels = member.silentChannels;
+                signalGains = signals->FinalOutputGain(member);
+            }
+            if (j >= foldedUntil && collective && !outcome.signalFailed &&
+                slot.render.signalMemberActive && j + 4 <= jobCount) {
+                const auto first = signalMember - 1;
+                bool eligible = true;
+                const double* gains[4]{};
+                for (std::uint32_t n = 0; n < 4; ++n) {
+                    const auto& candidate = m_slots[m_jobSlots[j + n]].render;
+                    if (!candidate.cascade.runnable || !candidate.signalMemberActive ||
+                        !candidate.cascade.signalImageReady || candidate.cascade.produced == 0 ||
+                        candidate.voiceSendActiveCount != 0 ||
+                        candidate.busIndex != slot.render.busIndex ||
+                        candidate.cascade.offset != slot.render.cascade.offset ||
+                        candidate.cascade.produced != slot.render.cascade.produced) {
+                        eligible = false;
+                        break;
+                    }
+                    const auto& member = m_signalMemberImages[first + n];
+                    if (member.voice != &candidate || member.silentChannels != silentChannels) {
+                        eligible = false;
+                        break;
+                    }
+                    gains[n] = signals->FinalOutputGain(member);
+                }
+                if (eligible) {
+                    FoldFourSignalImages(std::span<const SignalMemberImage, 4>{m_signalMemberImages.data() + first, 4},
+                                         gains, busPlanes, m_mixChannels);
+                    foldedUntil = j + 4;
+                }
+            }
+            if (j < foldedUntil) slot.render.outputGain.Advance(slot.render.cascade.produced);
+            else FoldVoiceIntoBuses(slot.render, busPlanes, blockFrames,
+                                    m_mixChannels, m_mixLayout, sourceFrameBegin, m_monoStereoMix, silentChannels, signalGains);
             if (slot.firstOutputPhase == FirstOutputPhase::AwaitingFirstFold &&
                 slot.render.cascade.produced > 0) slot.firstOutputPhase = FirstOutputPhase::FirstFolded;
         }

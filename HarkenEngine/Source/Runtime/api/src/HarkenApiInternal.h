@@ -18,6 +18,7 @@ struct Engine;
 class PreparedQueueReplacementOrder;
 struct PackPartitionLease;
 class TopologyPlanPool;
+void FillLiveSignalTopology(Engine& engine, std::uint32_t planIndex);
 struct ProspectiveTopologyView;
 
 void FillLiveOrPreparedPlan(Engine& engine, TopologyPlanPool& plans,

@@ -25,6 +25,7 @@ set(HARKEN_RUNTIME_SOURCES
     ${HARKEN_RUNTIME_DIR}/api/src/HarkenApi.cpp
     ${HARKEN_RUNTIME_DIR}/api/src/PackInspection.cpp
     ${HARKEN_RUNTIME_DIR}/api/src/ProjectGenerationTransaction.cpp
+    ${HARKEN_RUNTIME_DIR}/api/src/SignalPublication.cpp
     ${HARKEN_RUNTIME_DIR}/api/src/PackVariablePublication.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/AllocGuard.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/StableRowStorage.cpp
@@ -114,6 +115,7 @@ set(HARKEN_RUNTIME_SOURCES
     ${HARKEN_RUNTIME_DIR}/render/src/TopologyPlan.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/VoiceCascade.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/VoicePool.cpp
+    ${HARKEN_RUNTIME_DIR}/render/src/SignalRouting.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/FrontierTimelineFinalizer.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/ImmediateLaneTimelineFinalizer.cpp
 )

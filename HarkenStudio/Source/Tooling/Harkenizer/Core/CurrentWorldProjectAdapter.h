@@ -74,6 +74,7 @@ struct CurrentWorldBuildOptions
     std::shared_ptr<const HarkenEditor::Bridge::CanonicalRuntimeProjectContextV1> canonicalContext;
     const FieldGroupEffectiveSnapshot* fieldGroups = nullptr;
     const EditorUtils::ActionTargetLookup* actionLookup = nullptr;
+    bool includePreviewDucking = false;
     bool validatePackResources = false;
     BindingRuntimeLowering* bindingLowering = nullptr;
     std::map<harkenstudio::ObjectId, RuntimeCapabilityEntry>* bindingCapabilities = nullptr;

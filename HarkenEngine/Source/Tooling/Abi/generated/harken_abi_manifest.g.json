@@ -23652,8 +23652,8 @@
       "size": 4323
     },
     "HarkenEngine/Source/Runtime/api/src/TraceFormat.h": {
-      "sha256": "d9c9fe83da077e1d3e9a530b0c73034e87aa6e8d710d04a749382a0a1f698069",
-      "size": 19575
+      "sha256": "8d2fd316812eff366bef7be21b4ef5a06b4140cd98fda75fbcd650a30b5b56b9",
+      "size": 19602
     },
     "HarkenEngine/Source/Tooling/Abi/gen_abi_manifest.py": {
       "sha256": "6b232dd009d7bbbacf38c502d82f016b4f11a8dcc69e257f01bac2a87a05d8cc",

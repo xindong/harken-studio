@@ -232,6 +232,11 @@ public:
         return m_activeRouteCount;
     }
     std::uint32_t RouteCapacity() const { return m_routeCapacity; }
+    DynamicRoutePlanView InstalledPlan() const { return View(m_currentPlanIndex); }
+    bool InstalledBusTapMatches(const DynamicRoutePlanRow& row) const {
+        return row.sourceKind == VN_DYNAMIC_SOURCE_BUS && row.tapSlot < m_busTapCapacity &&
+            TapMatches(m_busTaps[row.tapSlot], row);
+    }
     std::uint32_t RouteHighWater() const { return m_routeHighWater; }
     std::uint32_t PlanCapacity() const { return m_planCapacity - 1; }
     std::uint32_t PlanInUse() const { return m_planInUse; }

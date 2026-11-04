@@ -2,6 +2,7 @@
 #include <harken_project_schema/FrontEnd.h>
 #include <harken/core/CurrentWorldArtifact.h>
 #include <harken/core/CurrentWorldCodec.h>
+#include <harken_studio_build/WorldCodec.h>
 #include <harken/param/VariableService.h>
 
 #include "Tooling/Harkenizer/Core/CurrentWorldProjectAdapter.h"
@@ -153,6 +154,113 @@ struct ArtifactFileFactoryReset
     }
 };
 
+}
+
+TEST(CurrentWorldProjectAdapter, PreviewDuckingResolvesInheritanceAndKeepsShippingV18)
+{
+    std::shared_ptr<ProjectItem> container, sound;
+    auto project = makeRandomProject(&container, &sound);
+    auto target = makeItem(QStringLiteral("Ducked"), ProjectItem::Type::Bus,
+                           71, harkentest::StudioObjectId(71));
+    appendChild(project.busses.front().rootItem, target);
+    container->fieldGroups.send.shared = {FieldGroupMode::Local,
+        SendFieldGroup{{{toFieldGroupGuid(target->guid), -6.0f,
+                         harkenprojectschema::SendMode::Ducking}}}};
+    container->children[1]->fieldGroups.send.shared = {
+        FieldGroupMode::Local, SendFieldGroup{}};
+    std::unordered_map<harkenstudio::ObjectId, std::uint64_t> revisions;
+    for (const auto& child : container->children) revisions.emplace(child->runtimeId(), 100 + child->objectID);
+    CurrentWorldBuildOptions options;
+    options.soundContentRevisions = &revisions;
+    QString error;
+    auto shipping = buildCurrentWorldSyncRequest(project, std::nullopt, &error, nullptr, &options, 1);
+    ASSERT_NE(nullptr, shipping) << error.toStdString();
+    EXPECT_TRUE(shipping->duckingSends.empty());
+    auto shipped = HarkenEditor::Bridge::compileCurrentWorldRequest(*shipping);
+    ASSERT_TRUE(shipped.ok());
+    EXPECT_EQ(18u, shipped.world->View().sourceBodyVintage);
+    std::vector<std::uint8_t> bytes;
+    ASSERT_TRUE(harkenstudiobuild::EncodeCurrentWorldShippingBody(shipped.world->View(), bytes));
+
+    options.includePreviewDucking = true;
+    auto preview = buildCurrentWorldSyncRequest(project, std::nullopt, &error, nullptr, &options, 1);
+    ASSERT_NE(nullptr, preview) << error.toStdString();
+    ASSERT_EQ(1u, preview->duckingSends.size());
+    EXPECT_EQ(sound->runtimeId(), preview->duckingSends[0].sourceId);
+    EXPECT_EQ(harkenstudiobuild::SignalEndpointKindV1::Sound, preview->duckingSends[0].sourceKind);
+    EXPECT_EQ(target->runtimeId(), preview->duckingSends[0].targetBusId);
+    EXPECT_FLOAT_EQ(-6.0f, preview->duckingSends[0].sendGainDb);
+    const auto stableId = preview->duckingSends[0].stableId;
+    auto compiled = HarkenEditor::Bridge::compileCurrentWorldRequest(*preview);
+    ASSERT_TRUE(compiled.ok());
+    const auto& world = compiled.world->View();
+    EXPECT_EQ(20u, world.sourceBodyVintage);
+    ASSERT_EQ(1u, world.signalRelationCount);
+    ASSERT_EQ(1u, world.signalReceiverCount);
+    EXPECT_FALSE(harkenstudiobuild::EncodeCurrentWorldShippingBody(world, bytes));
+    ASSERT_TRUE(harkenstudiobuild::EncodeCurrentWorldPreviewBody(world, bytes));
+    harken::CurrentWorldBodyImage native;
+    ASSERT_TRUE(native.Decode(bytes.data(), bytes.size(), 20, harken::CurrentWorldDecodeMode::StrictArtifact));
+    ASSERT_NE(nullptr, native.ProductionView());
+    EXPECT_EQ(harken::WorldInstallStatus::Ok, harken::ValidateCurrentWorldV1(*native.ProductionView()));
+    EXPECT_EQ(world.identity.runtimeSemanticFingerprint,
+              harken::ComputeCurrentWorldFingerprintV7(*native.ProductionView()));
+    std::vector<std::uint8_t> nativeBytes;
+    ASSERT_TRUE(harken::EncodeCurrentWorldBodyV20(*native.ProductionView(), nativeBytes));
+    EXPECT_EQ(bytes, nativeBytes);
+    harkenstudiobuild::CurrentWorldBodyImage studio;
+    ASSERT_TRUE(studio.Decode(bytes.data(), bytes.size(), 20));
+    EXPECT_FALSE(studio.Decode(bytes.data(), bytes.size() - 1, 20));
+    EXPECT_FALSE(native.Decode(bytes.data(), bytes.size() - 1, 20, harken::CurrentWorldDecodeMode::StrictArtifact));
+
+    container->fieldGroups.send.shared.localHistory->sends[0].sendLevel = 0.0f;
+    auto edited = buildCurrentWorldSyncRequest(project, std::nullopt, &error, nullptr, &options, 2);
+    ASSERT_NE(nullptr, edited) << error.toStdString();
+    ASSERT_EQ(1u, edited->duckingSends.size());
+    EXPECT_EQ(stableId, edited->duckingSends[0].stableId);
+    EXPECT_FLOAT_EQ(0.0f, edited->duckingSends[0].sendGainDb);
+    container->fieldGroups.send.shared.localHistory->sends[0].mode = harkenprojectschema::SendMode::Sidechain;
+    auto pluginInput = buildCurrentWorldSyncRequest(project, std::nullopt, &error, nullptr, &options, 3);
+    ASSERT_NE(nullptr, pluginInput) << error.toStdString();
+    EXPECT_TRUE(pluginInput->duckingSends.empty());
+}
+
+TEST(CurrentWorldProjectAdapter, PreviewBusDuckingUsesSelectedPlatformAndFullWidthHandles)
+{
+    std::shared_ptr<ProjectItem> container, sound;
+    auto project = makeRandomProject(&container, &sound);
+    auto master = project.busses.front().rootItem;
+    auto source = makeItem(QStringLiteral("Source"), ProjectItem::Type::Bus,
+                           70, harkentest::StudioObjectId(70));
+    auto target = makeItem(QStringLiteral("Target"), ProjectItem::Type::Bus,
+                           0x80000001u, harkentest::StudioObjectId(71));
+    appendChild(master, source);
+    appendChild(master, target);
+    const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*source);
+    ASSERT_TRUE(locator);
+    const auto sendsId = static_cast<std::uint8_t>(harkenplayableproperties::PlayablePropertyIdV1::Sends);
+    const auto rows = [&](double gain) {
+        return QJsonArray{QJsonObject{{QStringLiteral("targetBusID"), static_cast<double>(target->objectID)},
+                                     {QStringLiteral("sendLevel"), gain}, {QStringLiteral("mode"), 1}}};
+    };
+    ASSERT_TRUE(PlayablePropertyAuthoringV1::setOverride(*source, *locator, sendsId, rows(-6), std::nullopt));
+    const auto windows = HarkenTest::PlatformIds::Windows;
+    ASSERT_TRUE(PlayablePropertyAuthoringV1::setOverride(*source, *locator, sendsId, rows(-12), windows));
+    CurrentWorldBuildOptions options;
+    options.includePreviewDucking = true;
+    QString error;
+    const auto shared = buildCurrentWorldSyncRequest(project, std::nullopt, &error, nullptr, &options, 1);
+    ASSERT_NE(nullptr, shared) << error.toStdString();
+    const auto selected = buildCurrentWorldSyncRequest(project, windows, &error, nullptr, &options, 2);
+    ASSERT_NE(nullptr, selected) << error.toStdString();
+    ASSERT_EQ(1u, shared->duckingSends.size());
+    ASSERT_EQ(1u, selected->duckingSends.size());
+    EXPECT_EQ(source->runtimeId(), selected->duckingSends[0].sourceId);
+    EXPECT_EQ(target->runtimeId(), selected->duckingSends[0].targetBusId);
+    EXPECT_EQ(harkenstudiobuild::SignalEndpointKindV1::Bus, selected->duckingSends[0].sourceKind);
+    EXPECT_EQ(shared->duckingSends[0].stableId, selected->duckingSends[0].stableId);
+    EXPECT_FLOAT_EQ(-6.0f, shared->duckingSends[0].sendGainDb);
+    EXPECT_FLOAT_EQ(-12.0f, selected->duckingSends[0].sendGainDb);
 }
 
 TEST(CurrentWorldProjectAdapter, BusIdentityIndexIgnoresHandleValueAndSiblingOrder)

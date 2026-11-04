@@ -131,7 +131,10 @@ bool EncodeCurrentWorldArtifactV1(
     std::vector<std::uint8_t>& out) noexcept {
     try {
         std::vector<std::uint8_t> body;
-        if (!EncodeCurrentWorldShippingBody(world, body) ||
+        const bool encoded = world.sourceBodyVintage == kCurrentWorldBodyVintageV20
+            ? EncodeCurrentWorldBodyV20(world, body)
+            : EncodeCurrentWorldShippingBody(world, body);
+        if (!encoded ||
             body.size() > kCurrentWorldArtifactMaxBodyBytes ||
             body.size() > std::numeric_limits<std::size_t>::max() -
                               kCurrentWorldArtifactHeaderBytes) {
@@ -147,7 +150,7 @@ bool EncodeCurrentWorldArtifactV1(
         AppendU16(out, 0);
         AppendU32(out, kCurrentWorldArtifactHeaderBytes);
         AppendU32(out, 1);
-        AppendU32(out, kCurrentWorldShippingBodyVintage);
+        AppendU32(out, world.sourceBodyVintage);
         AppendU64(out, body.size());
         AppendU64(out, Fnv1a64(body.data(), body.size()));
         AppendU64(out, world.identity.runtimeSemanticFingerprint);

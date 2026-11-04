@@ -26,8 +26,9 @@ inline constexpr std::uint64_t kWorldCapabilitySequenceQueue = UINT64_C(1) << 6;
 inline constexpr std::uint64_t kWorldCapabilityVariableControl = UINT64_C(1) << 7;
 inline constexpr std::uint64_t kWorldCapabilityTransition = UINT64_C(1) << 8;
 inline constexpr std::uint64_t kWorldCapabilityActionDefinitions = UINT64_C(1) << 9;
+inline constexpr std::uint64_t kWorldCapabilitySignalRelations = UINT64_C(1) << 11;
 inline constexpr std::uint64_t kWorldCapabilityKnownMask =
-    (UINT64_C(1) << 10) - 1;
+    ((UINT64_C(1) << 10) - 1) | kWorldCapabilitySignalRelations;
 inline constexpr std::uint64_t kWorldCapabilityUnit2Mask =
     kWorldCapabilityVariableDefinitions |
     kWorldCapabilityPlayableProperties |
@@ -704,6 +705,35 @@ void VisitWorldCapacitySummaryV1(Values& values, Visitor& visitor) {
     visitor.U32(values.maxActionExpandedWork);
 }
 
+enum class SignalEndpointKindV1 : std::uint32_t { Bus = 0, Sound = 1, Container = 2 };
+enum class SignalConsumerKindV1 : std::uint32_t { Ducking = 1 };
+
+struct SignalEndpointRefV1 {
+    SignalEndpointKindV1 kind = SignalEndpointKindV1::Bus;
+    std::uint32_t reserved = 0;
+    harkenstudio::ObjectId stableId{};
+    std::uint64_t expectedPropertyFingerprint = 0;
+    std::uint64_t expectedProgramFingerprint = 0;
+    bool operator==(const SignalEndpointRefV1&) const noexcept = default;
+};
+
+struct SignalRelationV1 {
+    harkenstudio::ObjectId stableId{};
+    SignalEndpointRefV1 source{};
+    SignalEndpointRefV1 target{};
+    SignalConsumerKindV1 consumer = SignalConsumerKindV1::Ducking;
+    float sendGainDb = 0;
+};
+
+// Target configuration is independent of connection count and playback count.
+struct SignalReceiverV1 {
+    SignalEndpointRefV1 target{};
+    std::uint32_t algorithm = 1;
+    float attackMs = 4.156241f;
+    float releaseMs = 1.031215f;
+    std::uint32_t reserved = 0;
+};
+
 struct ContainerWorldInstallViewV1 {
     WorldIdentityV1 identity{};
     const VariableDefinitionV1* variables = nullptr;
@@ -722,9 +752,15 @@ struct ContainerWorldInstallViewV1 {
     std::uint32_t transitionCount = 0;
     const ActionProgramViewV1* actions = nullptr;
     std::uint32_t actionCount = 0;
+    const SignalRelationV1* signalRelations = nullptr;
+    std::uint32_t signalRelationCount = 0;
+    const SignalReceiverV1* signalReceivers = nullptr;
+    std::uint32_t signalReceiverCount = 0;
     WorldCapacitySummaryV1 capacity{};
     std::uint32_t sourceBodyVintage = kCurrentWorldShippingBodyVintage;
 };
+
+std::uint64_t ComputeCurrentWorldFingerprintV7(const ContainerWorldInstallViewV1& world) noexcept;
 
 bool GrowAuthoredWorldCapacityV1(
     const ContainerWorldInstallViewV1& world,

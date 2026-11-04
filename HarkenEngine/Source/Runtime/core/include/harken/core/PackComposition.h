@@ -183,6 +183,8 @@ public:
         std::uint64_t compositeGeneration = 0;
         std::vector<PublishedOwner> owners;
         std::vector<IdentityIndexEntry> index;
+        std::vector<SignalRelationV1> signalRelations;
+        std::vector<SignalReceiverV1> signalReceivers;
         PackCanonicalImage catalog;
         bool hasCatalog = false;
         std::uint64_t initPackStableId = 0;
@@ -298,6 +300,13 @@ public:
         return published_ != nullptr ? published_->compositeGeneration : 0;
     }
     const PublishedView* Published() const noexcept { return published_.get(); }
+    // Logic-only traversal of actual frozen leases, including prepared starts.
+    // The borrowed views are valid only for the duration of the callback.
+    void ForEachRetainedDefinition(void* context,
+        void (*visit)(void*, const PackPlaybackView&, const PackClosureOwnerSnapshot&,
+                      const ProgramSourceIdentityV1&)) const;
+    bool RetainedDefinitionsChanged() const noexcept { return retainedDefinitionsChanged_; }
+    void AcknowledgeRetainedDefinitions() const noexcept { retainedDefinitionsChanged_ = false; }
     std::shared_ptr<const PublishedView> PublishedHandle() const noexcept {
         return published_;
     }
@@ -467,6 +476,7 @@ private:
     mutable std::size_t sharedOccupied_ = 0;
     mutable std::size_t playableOccupied_ = 0;
     mutable StableRowStorage<LeaseRow, std::size_t> leases_;
+    mutable bool retainedDefinitionsChanged_ = false;
     mutable StableRowStorage<OriginalLeaseRecord, std::size_t> originalLeaseRecords_;
     std::uint64_t originalLeaseIncarnation_ = 0;
     mutable bool originalLeasesQuiesced_ = false;

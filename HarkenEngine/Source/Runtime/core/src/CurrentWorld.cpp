@@ -1192,6 +1192,90 @@ bool SameRef(const PlayableRefV1& a, const PlayableRefV1& b) noexcept {
            a.compatibilityFingerprint == b.compatibilityFingerprint;
 }
 
+auto SignalEndpointKey(const SignalEndpointRefV1& ref) noexcept {
+    return std::pair(static_cast<std::uint32_t>(ref.kind), ref.stableId);
+}
+
+bool ValidSignalEndpoint(const ContainerWorldInstallViewV1& world,
+                         const SignalEndpointRefV1& ref,
+                         ValidationScope scope) noexcept {
+    if (ref.reserved != 0 || ref.stableId == VnObjectId{}) return false;
+    if (ref.kind == SignalEndpointKindV1::Bus)
+        return ref.expectedPropertyFingerprint == 0 && ref.expectedProgramFingerprint == 0;
+    if (ref.kind != SignalEndpointKindV1::Sound &&
+        ref.kind != SignalEndpointKindV1::Container) return false;
+    if (ref.expectedPropertyFingerprint == 0) return false;
+    const auto kind = ref.kind == SignalEndpointKindV1::Sound
+        ? playableproperties::ContentPropertyKindV1::Sound
+        : playableproperties::ContentPropertyKindV1::Container;
+    const auto* property = FindProperty(world, kind, ref.stableId);
+    if (property ? property->programSemanticFingerprint != ref.expectedPropertyFingerprint
+                 : !IsPartitionLocal(scope)) return false;
+    if (ref.kind == SignalEndpointKindV1::Sound)
+        return ref.expectedProgramFingerprint == 0;
+    if (ref.expectedProgramFingerprint == 0) return false;
+    if (world.containerCount == 0) return IsPartitionLocal(scope);
+    const auto* end = world.containers + world.containerCount;
+    const auto* program = std::lower_bound(world.containers, end, ref.stableId,
+        [](const ContainerProgramViewV3& row, VnObjectId id) {
+            return row.containerStableId < id;
+        });
+    return program != end && program->containerStableId == ref.stableId
+        ? program->programSemanticFingerprint == ref.expectedProgramFingerprint
+        : IsPartitionLocal(scope);
+}
+
+bool ValidateSignalTables(const ContainerWorldInstallViewV1& world,
+                          ValidationScope scope) noexcept {
+    if (!PointerMatches(world.signalRelationCount, world.signalRelations) ||
+        !PointerMatches(world.signalReceiverCount, world.signalReceivers)) return false;
+    if (world.sourceBodyVintage != kCurrentWorldBodyVintageV20)
+        return world.signalRelationCount == 0 && world.signalReceiverCount == 0;
+    for (std::uint32_t i = 0; i < world.signalReceiverCount; ++i) {
+        const auto& row = world.signalReceivers[i];
+        if (!ValidSignalEndpoint(world, row.target, scope) || row.algorithm != 1 ||
+            row.reserved != 0 || !std::isfinite(row.attackMs) ||
+            !std::isfinite(row.releaseMs) || row.attackMs < .1f || row.attackMs > 500 ||
+            row.releaseMs < .1f || row.releaseMs > 5000 ||
+            (i && SignalEndpointKey(world.signalReceivers[i - 1].target) >=
+                  SignalEndpointKey(row.target))) return false;
+    }
+    for (std::uint32_t i = 0; i < world.signalRelationCount; ++i) {
+        const auto& row = world.signalRelations[i];
+        if (row.stableId == VnObjectId{} ||
+            (i && world.signalRelations[i - 1].stableId >= row.stableId) ||
+            !ValidSignalEndpoint(world, row.source, scope) ||
+            !ValidSignalEndpoint(world, row.target, scope) ||
+            row.consumer != SignalConsumerKindV1::Ducking ||
+            !std::isfinite(row.sendGainDb) || row.sendGainDb < -96 || row.sendGainDb > 24)
+            return false;
+        // A partition may reference a receiver owned by its declared closure.
+        // Composite validation must resolve that configuration exactly once.
+        if (world.signalReceiverCount == 0) {
+            if (!IsPartitionLocal(scope)) return false;
+            continue;
+        }
+        const auto* end = world.signalReceivers + world.signalReceiverCount;
+        const auto key = SignalEndpointKey(row.target);
+        const auto* receiver = std::lower_bound(world.signalReceivers, end, key,
+            [](const SignalReceiverV1& value, const auto& target) {
+                return SignalEndpointKey(value.target) < target;
+            });
+        if (receiver == end || SignalEndpointKey(receiver->target) != key) {
+            if (!IsPartitionLocal(scope)) return false;
+        } else if (!(receiver->target == row.target)) return false;
+    }
+    return true;
+}
+
+void HashSignalEndpoint(Fnv64& hash, const SignalEndpointRefV1& ref) noexcept {
+    hash.U32(static_cast<std::uint32_t>(ref.kind));
+    hash.U32(ref.reserved);
+    hash.ObjectId(ref.stableId);
+    hash.U64(ref.expectedPropertyFingerprint);
+    hash.U64(ref.expectedProgramFingerprint);
+}
+
 template <class WorldView>
 bool AccumulateBoundedTransitionEndpointLeaves(
     const WorldView& world,
@@ -2831,6 +2915,36 @@ std::uint64_t ComputeCurrentWorldFingerprintV6(
     return hash.Finish();
 }
 
+std::uint64_t ComputeCurrentWorldFingerprintV7(
+    const ContainerWorldInstallViewV1& world) noexcept {
+    if (!PointerMatches(world.signalRelationCount, world.signalRelations) ||
+        !PointerMatches(world.signalReceiverCount, world.signalReceivers)) return 0;
+    const auto legacy = ComputeCurrentWorldFingerprintV5(world);
+    if (legacy == 0) return 0;
+    Fnv64 hash("HARKEN-WORLD-V7");
+    hash.U32(world.sourceBodyVintage);
+    hash.U64(legacy);
+    hash.U32(world.signalRelationCount);
+    hash.U32(world.signalReceiverCount);
+    for (std::uint32_t i = 0; i < world.signalRelationCount; ++i) {
+        const auto& row = world.signalRelations[i];
+        hash.ObjectId(row.stableId);
+        HashSignalEndpoint(hash, row.source);
+        HashSignalEndpoint(hash, row.target);
+        hash.U32(static_cast<std::uint32_t>(row.consumer));
+        hash.U32(std::bit_cast<std::uint32_t>(row.sendGainDb));
+    }
+    for (std::uint32_t i = 0; i < world.signalReceiverCount; ++i) {
+        const auto& row = world.signalReceivers[i];
+        HashSignalEndpoint(hash, row.target);
+        hash.U32(row.algorithm);
+        hash.U32(std::bit_cast<std::uint32_t>(row.attackMs));
+        hash.U32(std::bit_cast<std::uint32_t>(row.releaseMs));
+        hash.U32(row.reserved);
+    }
+    return hash.Finish();
+}
+
 template <class WorldView>
 WorldInstallStatus ValidateCurrentWorldImpl(
     const WorldView& world,
@@ -4238,8 +4352,11 @@ WorldInstallStatus ValidateCurrentWorldImpl(
     }
     std::uint64_t expectedFingerprint = 0;
     if constexpr (std::is_same_v<WorldView, ContainerWorldInstallViewV1>) {
-        expectedFingerprint = entryScheduling ? ComputeCurrentWorldFingerprintV6(world)
-                                              : ComputeCurrentWorldFingerprintV5(world);
+        if (!ValidateSignalTables(world, scope)) return WorldInstallStatus::InvalidWorld;
+        expectedFingerprint = world.sourceBodyVintage == kCurrentWorldBodyVintageV20
+            ? ComputeCurrentWorldFingerprintV7(world)
+            : entryScheduling ? ComputeCurrentWorldFingerprintV6(world)
+                              : ComputeCurrentWorldFingerprintV5(world);
     } else if (replayVintageTwo) {
         expectedFingerprint = ComputeCurrentWorldFingerprintV2(world);
     } else if (replayVintageThree) {
@@ -4260,7 +4377,9 @@ WorldInstallStatus ValidateCurrentWorldImpl(
         ? kWorldCapabilityUnit2Mask
         : replayVintageThree ? kWorldCapabilityUnit4Mask
                              : kWorldCapabilityUnit1ActionMask;
-    if (readableOnly) supportedMask |= kWorldCapabilityEntryScheduling;
+    supportedMask |= kWorldCapabilitySignalRelations;
+    if (readableOnly)
+        supportedMask |= kWorldCapabilityEntryScheduling;
     if ((requiredMask & ~supportedMask) != 0) {
         return WorldInstallStatus::CapabilityUnavailable;
     }
@@ -4310,6 +4429,8 @@ std::uint64_t ComputeCurrentWorldLocalCapabilityMaskImpl(
     if constexpr (std::is_same_v<WorldView, ContainerWorldInstallViewV1>) {
         if (world.sourceBodyVintage == kCurrentWorldBodyVintageV19)
             mask |= kWorldCapabilityEntryScheduling;
+        if (world.signalRelationCount != 0 || world.signalReceiverCount != 0)
+            mask |= kWorldCapabilitySignalRelations;
     }
     return mask;
 }

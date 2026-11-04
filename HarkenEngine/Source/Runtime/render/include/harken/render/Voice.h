@@ -248,6 +248,12 @@ struct VoiceRenderContext {
     std::uint32_t tailRearmPosition = kNoTailRearmPosition;
     SourcePhase phase = SourcePhase::Done;
     bool dynamicVoiceTapActive = false;
+    bool signalMemberActive = false;
+    // Immutable slot-owned copy, captured before the Play/Arm publication.
+    // It remains valid through physical tails; raw media has an empty path.
+    std::span<const PlaybackPathRow> signalPath{};
+    std::span<std::uint32_t> signalNodeStorage{};
+    std::uint32_t signalNodeCount = 0;
     bool streamParkActive = false;
     bool lpfEnabled = false;
     bool hpfEnabled = false;
@@ -566,7 +572,9 @@ struct VoiceRenderContext {
         // serial per-voice pass and thus independent of the worker count. The
         // cascade and fold phases never touch the arena.
         float* tap[kMaxChannels] = {};
-        bool tapReady = false; // sends active AND every tap plane reserved
+        bool tapReady = false; // every required mix-layout image plane reserved
+        bool signalImageReady = false;
+        bool signalImageReadOnly = false;
         bool runnable = false; // pre-pass verdict: run this block
         bool needBlend = false; // a slot is bypassed/crossfading
         std::uint32_t offset = 0;   // frames skipped at block front
@@ -712,7 +720,9 @@ std::uint64_t VoiceCascadeScratchBytes(
     std::uint32_t mixChannels) noexcept;
 
 bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
-                         std::uint32_t blockFrames, std::uint32_t mixChannels);
+                         std::uint32_t blockFrames, std::uint32_t mixChannels,
+                         bool readOnlySignalImage = false,
+                         std::uint32_t mixLayout = VN_CHANNEL_LAYOUT_DEFAULT);
 
 // Phase 2 (worker-safe): run the per-voice cascade — source decode / resample,
 // insert-effect chain, tone filter, gain, fade — into the scratch reserved by
@@ -729,12 +739,28 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames);
 // which worker produced the cascade — the determinism invariant (§8.2). Touches
 // no arena (all scratch was reserved in phase 1). Call only when
 // PrepareVoiceCascade returned true.
+// Collective receiving stages use the same spatial mapping as the final fold.
+// This prepares a pre-Out Vol image once, without advancing Out Vol or Sends.
+// The coordinator may apply shared gains to cascade.tap before the final fold.
+bool PrepareVoiceSignalImage(VoiceRenderContext& ctx, std::uint32_t blockFrames,
+                             std::uint32_t mixChannels, std::uint32_t mixLayout,
+                             std::uint64_t sourceFrameBegin = 0);
+
+struct SignalMemberImage;
+// The caller admits four consecutive images with common range and destination.
+// This only folds PCM; each original job retains its gain and lifecycle clock.
+void FoldFourSignalImages(std::span<const SignalMemberImage, 4> members,
+                          const double* const* gains, float* const* busPlanes,
+                          std::uint32_t mixChannels);
+
 void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
                         std::uint32_t blockFrames, std::uint32_t mixChannels,
                         std::uint32_t mixLayout,
                         std::uint64_t sourceFrameBegin = 0,
                              output_gain_detail::MonoStereoMixKernel monoStereoMix =
-                                 &output_gain_detail::MixMonoToStereoScaled);
+                                 &output_gain_detail::MixMonoToStereoScaled,
+                        std::uint32_t silentChannels = 0,
+                        const double* signalGains = nullptr);
 
 } // namespace harken
 

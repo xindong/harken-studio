@@ -397,7 +397,7 @@ bool TraceRecorder::PrepareProjectGenerationTraceV1(
             u32(plan.sendLevelApply != nullptr ? plan.sendLevelApply[i] : 0);
         }
         header(static_cast<std::uint32_t>(worldBytes), kTraceRecordCurrentWorldInstall, out->ordinal_ + 1);
-        u32(kCurrentWorldShippingBodyVintage);
+        u32(world.sourceBodyVintage);
         u32(0);
         u32(static_cast<std::uint32_t>(result.status));
         u32(0);
@@ -465,7 +465,7 @@ void TraceRecorder::RecordCurrentWorldInstall(
         return;
     }
     const std::size_t start = BeginRecord(kTraceRecordCurrentWorldInstall);
-    AppendU32(kCurrentWorldShippingBodyVintage);
+    AppendU32(install.sourceBodyVintage);
     AppendU32(encoding);
     AppendU32(static_cast<std::uint32_t>(result.status));
     AppendU32(0);

@@ -3,6 +3,7 @@
 
 #include <harken/ObjectId.h>
 #include "PlayableRuntime.h"
+#include "SignalPublication.h"
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/EngineConfig.h"
 #include "harken/param/VariableService.h"
@@ -228,6 +229,7 @@ private:
         engine_ = nullptr;
         occupied_ = false;
         idempotent_ = false;
+        preservesContent_ = false;
         preparedPlanIndex_ = UINT32_MAX;
         preparedOwnerSlot_ = UINT32_MAX;
         preparedSerial_ = 0;
@@ -243,6 +245,7 @@ private:
         publicationVintage_ = 0;
         compiledWorld_ = {};
         worldImage_.Clear();
+        signals_ = {};
         livePlanIndex_ = UINT32_MAX;
         slotPlan_ = SlotPlanV1{};
         authoredMixDb_.clear();
@@ -261,6 +264,7 @@ private:
         engine_ = other.engine_;
         occupied_ = other.occupied_;
         idempotent_ = other.idempotent_;
+        preservesContent_ = other.preservesContent_;
         preparedPlanIndex_ = other.preparedPlanIndex_;
         preparedOwnerSlot_ = other.preparedOwnerSlot_;
         preparedSerial_ = other.preparedSerial_;
@@ -276,6 +280,7 @@ private:
         publicationVintage_ = other.publicationVintage_;
         compiledWorld_ = other.compiledWorld_;
         worldImage_ = std::move(other.worldImage_);
+        signals_ = std::move(other.signals_);
         livePlanIndex_ = other.livePlanIndex_;
         slotPlan_ = std::move(other.slotPlan_);
         authoredMixDb_ = std::move(other.authoredMixDb_);
@@ -294,6 +299,7 @@ private:
     Engine* engine_ = nullptr;
     bool occupied_ = false;
     bool idempotent_ = false;
+    bool preservesContent_ = false;
     std::uint32_t preparedPlanIndex_ = UINT32_MAX;
     std::uint32_t preparedOwnerSlot_ = UINT32_MAX;
     std::uint64_t preparedSerial_ = 0;
@@ -309,6 +315,7 @@ private:
     std::uint32_t publicationVintage_ = 0;
     ContainerWorldInstallViewV1 compiledWorld_{};
     VariableServiceV1::PreparedCurrentWorldImageV1 worldImage_{};
+    PreparedSignalPublication signals_{};
     std::uint32_t livePlanIndex_ = UINT32_MAX;
     SlotPlanV1 slotPlan_{};
     std::vector<float> authoredMixDb_;

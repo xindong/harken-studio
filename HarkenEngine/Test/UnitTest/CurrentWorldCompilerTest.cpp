@@ -255,8 +255,11 @@ TEST(CurrentWorldCompiler, RuntimeEntry19RoundtripCannotEnableShippingOrInstalla
                              harken::CurrentWorldDecodeMode::StrictArtifact));
     EXPECT_FALSE(wrong.Decode(bytes.data(), bytes.size() - 1, 19,
                              harken::CurrentWorldDecodeMode::StrictArtifact));
-    EXPECT_FALSE(wrong.Decode(bytes.data(), bytes.size(), 19,
-                             harken::CurrentWorldDecodeMode::ReplayCurrentAttempt));
+    harken::CurrentWorldBodyImage attempt;
+    ASSERT_TRUE(attempt.Decode(bytes.data(), bytes.size(), 19,
+                               harken::CurrentWorldDecodeMode::ReplayCurrentAttempt));
+    EXPECT_EQ(harken::WorldInstallStatus::CapabilityUnavailable,
+              harken::ValidateCurrentWorldV1(*attempt.ProductionView()));
     auto disguised = decoded;
     disguised.sourceBodyVintage = 18;
     EXPECT_FALSE(harken::EncodeCurrentWorldShippingBody(disguised, again));
@@ -315,7 +318,9 @@ TEST(CurrentWorldCompiler, RuntimeActionTimingWireTableIsVersionedAndRejectsUnkn
                       harken::ActionQuantizeTimingReadableV1(opcode, value, 18));
             EXPECT_EQ(op < 5 && timing < 10 && entry[op][timing],
                       harken::ActionQuantizeTimingReadableV1(opcode, value, 19));
-            EXPECT_FALSE(harken::ActionQuantizeTimingReadableV1(opcode, value, 20));
+            EXPECT_EQ(op < 5 && timing < 10 && legacy[op][timing],
+                      harken::ActionQuantizeTimingReadableV1(opcode, value, 20));
+            EXPECT_FALSE(harken::ActionQuantizeTimingReadableV1(opcode, value, 21));
         }
     }
 }
@@ -1080,7 +1085,7 @@ TEST(CurrentWorldCompiler, ArtifactEnvelopeRefusesRetiredBodyVintage) {
     for (const auto vintage : {harken::kCurrentWorldBodyVintageV6,
                                 harken::kCurrentWorldBodyVintageV7,
                                 harken::kCurrentWorldBodyVintageV8,
-                                harken::kCurrentWorldBodyVintageV19 + 1}) {
+                                harken::kCurrentWorldBodyVintageV20 + 1}) {
         auto hostile = artifact;
         WriteU32(hostile, 20, vintage);
         EXPECT_EQ(harken::CurrentWorldLoadStatusV1::UnsupportedBody,

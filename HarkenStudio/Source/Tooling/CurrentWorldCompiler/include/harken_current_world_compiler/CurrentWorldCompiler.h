@@ -17,6 +17,14 @@ namespace harkencurrentworldcompiler {
 
 
 
+struct DuckingSendAuthoringV1 {
+    harkenstudio::ObjectId stableId{};
+    harkenstudiobuild::SignalEndpointKindV1 sourceKind = harkenstudiobuild::SignalEndpointKindV1::Sound;
+    harkenstudio::ObjectId sourceId{};
+    harkenstudio::ObjectId targetBusId{};
+    float sendGainDb = 0;
+};
+
 struct DefinitionMaterializationV1 {
     harkenplayableproperties::ContentPropertyKindV1 kind =
         harkenplayableproperties::ContentPropertyKindV1::Sound;
@@ -180,7 +188,8 @@ private:
         const harkenbuscompiler::CompiledBusIdSetV1*,
         CompileCapacityModeV1,
         const std::map<harkenstudio::ObjectId, std::uint32_t>&,
-        const std::set<std::uint32_t>&);
+        const std::set<std::uint32_t>&,
+        const std::vector<DuckingSendAuthoringV1>&, bool);
 
     struct OwnedPayload {
         harkenstudiobuild::PlayablePropertyPayloadViewV1 view{};
@@ -260,6 +269,8 @@ private:
     std::vector<harkenstudiobuild::ContainerProgramViewV3> containerViews_;
     std::vector<OwnedTransition> transitions_;
     std::vector<harkenstudiobuild::TransitionProgramViewV1> transitionViews_;
+    std::vector<harkenstudiobuild::SignalRelationV1> signalRelations_;
+    std::vector<harkenstudiobuild::SignalReceiverV1> signalReceivers_;
     std::vector<OwnedAction> actions_;
     std::vector<harkenstudiobuild::ActionProgramViewV1> actionViews_;
 };
@@ -283,7 +294,9 @@ CompileResultV1 CompileCurrentWorldV1(
     const harkenbuscompiler::CompiledBusIdSetV1* busIds = nullptr,
     CompileCapacityModeV1 capacityMode = CompileCapacityModeV1::ExplicitBudget,
     const std::map<harkenstudio::ObjectId, std::uint32_t>& propertyAuthoredOrders = {},
-    const std::set<std::uint32_t>& reservedPropertyAuthoredOrders = {});
+    const std::set<std::uint32_t>& reservedPropertyAuthoredOrders = {},
+    const std::vector<DuckingSendAuthoringV1>& duckingSends = {},
+    bool includePreviewDucking = false);
 
 } // namespace harkencurrentworldcompiler
 

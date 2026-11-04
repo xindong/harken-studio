@@ -1,6 +1,7 @@
 #include "harken/param/VariableService.h"
 
 #include "Engine.h"
+#include "SignalPublication.h"
 #include "MonitorCaptureHub.h"
 #include "harken/core/CommandQueue.h"
 #include "harken/core/LogicAllocCheckpoint.h"
@@ -25,6 +26,16 @@
 namespace harken {
 
 namespace {
+
+std::uint64_t PlaybackWorldFingerprint(const ContainerWorldInstallViewV1& world) noexcept {
+    if (world.sourceBodyVintage != kCurrentWorldBodyVintageV20)
+        return world.identity.runtimeSemanticFingerprint;
+    // Signal routing is published independently of playback selection state.
+    // Derive this value from content so trace origins can reproduce it too.
+    auto content = world;
+    content.identity.capabilityMask &= ~kWorldCapabilitySignalRelations;
+    return ComputeCurrentWorldFingerprintV5(content);
+}
 
 template <typename Rows>
 auto FindVariableDefinition(Rows& definitions, VnVariableId id) noexcept {
@@ -74,12 +85,36 @@ WorldInstallResult InstallContainerWorldV1(
              !engine.PrepareQueueSelectionStorage(install))) {
             throw std::bad_alloc{};
         }
+        const bool signalOnly = engine.variables.SignalOnlyWorld(install);
         const bool hasCurrentConsumers =
             HasCurrentWorldPlayableConsumers(engine);
+        const auto attemptInstall = [&](bool replacementAdmitted) {
+            if ((!replacementAdmitted && !signalOnly) || ValidateCurrentWorldV1(install) != WorldInstallStatus::Ok ||
+                engine.variables.SemanticIdenticalWorld(install))
+                return engine.variables.InstallWithReplacementAdmission(install, replacementAdmitted);
+            WorldInstallResult failed{};
+            failed.priorGeneration = engine.variables.CurrentWorldGeneration();
+            failed.status = WorldInstallStatus::GenerationExhausted;
+            if (failed.priorGeneration == UINT64_MAX && !signalOnly) return failed;
+            PreparedSignalPublication signals;
+            failed.status = PrepareWorldSignals(engine, install, failed.priorGeneration + (signalOnly ? 0 : 1), nullptr, signals);
+            if (failed.status != WorldInstallStatus::Ok) return failed;
+            PrivateSignalTopology topology(engine);
+            if (!topology.Prepare(signals)) {
+                failed.status = WorldInstallStatus::Backpressure;
+                return failed;
+            }
+            auto installed = engine.variables.InstallWithReplacementAdmission(install, true);
+            if (installed.status == WorldInstallStatus::Ok && !installed.idempotent) {
+                assert(installed.resultGeneration == failed.priorGeneration + (signalOnly ? 0 : 1));
+                CommitSignals(engine, signals);
+                topology.Commit();
+            }
+            return installed;
+        };
         WorldInstallResult result =
-            engine.variables.InstallWithReplacementAdmission(
-                install, !hasCurrentConsumers);
-        if (hasCurrentConsumers &&
+            attemptInstall(!hasCurrentConsumers);
+        if (hasCurrentConsumers && !signalOnly &&
             result.status == WorldInstallStatus::Backpressure) {
             AdvanceCurrentWorldReplacementDrain(engine);
             (void)CancelActionDeferredForWorldReplacement(
@@ -88,10 +123,9 @@ WorldInstallResult InstallContainerWorldV1(
                 engine.currentWorldReplacementAdmissionClosed = true;
                 engine.variables.SetEngineAdmissionClosed(true);
             } else {
-                result = engine.variables.InstallWithReplacementAdmission(
-                    install, true);
+                result = attemptInstall(true);
                 if (result.status == WorldInstallStatus::Ok &&
-                    !result.idempotent) {
+                    result.resultGeneration != result.priorGeneration) {
                     (void)CancelActionDeferredForWorldReplacement(
                         engine, result.priorGeneration);
                     engine.queueCheckpoints.ClearWorld(result.priorGeneration);
@@ -100,7 +134,7 @@ WorldInstallResult InstallContainerWorldV1(
                 engine.variables.SetEngineAdmissionClosed(false);
             }
         } else if (result.status == WorldInstallStatus::Ok &&
-                   !result.idempotent) {
+                   result.resultGeneration != result.priorGeneration) {
             (void)CancelActionDeferredForWorldReplacement(
                 engine, result.priorGeneration);
             engine.queueCheckpoints.ClearWorld(result.priorGeneration);
@@ -114,7 +148,7 @@ WorldInstallResult InstallContainerWorldV1(
                 engine.traceOriginWorldProbeOnly &&
                 result.status == WorldInstallStatus::Ok;
         }
-        if (result.status == WorldInstallStatus::Ok && !result.idempotent) {
+        if (result.status == WorldInstallStatus::Ok && result.resultGeneration != result.priorGeneration) {
             ReclaimRetiredSelectionMemory(engine);
             engine.variables.ProjectCurrentWorld(
                 engine.params, engine.emitters, engine.bindings,
@@ -303,6 +337,14 @@ bool VariableServiceV1::SemanticIdentical(
     return true;
 }
 
+bool VariableServiceV1::SignalOnlyWorld(const ContainerWorldInstallViewV1& install) const {
+    if (!hasWorld_ || sourceBodyVintage_ != kCurrentWorldBodyVintageV20 ||
+        install.sourceBodyVintage != sourceBodyVintage_ ||
+        !SameFormat(install.identity.format, identity_.format) ||
+        ValidateCurrentWorldV1(install) != WorldInstallStatus::Ok) return false;
+    return playbackFingerprint_ == PlaybackWorldFingerprint(install);
+}
+
 void VariableServiceV1::OwnedPayload::Refresh() noexcept {
     view.sendCount = static_cast<std::uint32_t>(sends.size());
     view.sends = sends.empty() ? nullptr : sends.data();
@@ -478,6 +520,17 @@ WorldInstallResult VariableServiceV1::InstallImpl(
         result.idempotent = true;
         return result;
     }
+    if (SignalOnlyWorld(install)) {
+        if (DrainingTransport() || DrainingWorld()) {
+            result.status = WorldInstallStatus::Backpressure;
+            return result;
+        }
+        PreparedCurrentWorldImageV1 next;
+        result.status = PrepareCurrentWorldImageV1(install, next);
+        if (result.status == WorldInstallStatus::Ok)
+            result.resultGeneration = CommitPreparedCurrentWorldImageV1(next);
+        return result;
+    }
     if (!replacementAdmitted) {
         result.status = WorldInstallStatus::Backpressure;
         return result;
@@ -537,9 +590,26 @@ WorldInstallStatus VariableServiceV1::PrepareCurrentWorldImageV1(
     if (SemanticIdentical(install)) {
         out.source_ = this;
         out.sourceWorld_ = worldGeneration_;
+        out.sourceFingerprint_ = identity_.runtimeSemanticFingerprint;
         out.sourceBankOrdinal_ = nextBankOrdinal_;
         out.valid_ = true;
         out.idempotent_ = true;
+        return WorldInstallStatus::Ok;
+    }
+
+    if (SignalOnlyWorld(install)) {
+        if (DrainingTransport() || DrainingWorld()) return WorldInstallStatus::Backpressure;
+        out.source_ = this;
+        out.sourceWorld_ = worldGeneration_;
+        out.sourceFingerprint_ = identity_.runtimeSemanticFingerprint;
+        out.sourceBankOrdinal_ = nextBankOrdinal_;
+        out.identity_ = install.identity;
+        if (install.signalRelationCount)
+            out.signalRelations_.assign(install.signalRelations, install.signalRelations + install.signalRelationCount);
+        if (install.signalReceiverCount)
+            out.signalReceivers_.assign(install.signalReceivers, install.signalReceivers + install.signalReceiverCount);
+        out.signalOnly_ = true;
+        out.valid_ = true;
         return WorldInstallStatus::Ok;
     }
 
@@ -554,7 +624,15 @@ void VariableServiceV1::BuildCurrentWorldImageV1(
     out.Clear();
     out.source_ = this;
     out.sourceWorld_ = worldGeneration_;
+    out.sourceFingerprint_ = identity_.runtimeSemanticFingerprint;
     out.sourceBankOrdinal_ = nextBankOrdinal_;
+
+    if (install.signalRelationCount)
+        out.signalRelations_.assign(install.signalRelations,
+            install.signalRelations + install.signalRelationCount);
+    if (install.signalReceiverCount)
+        out.signalReceivers_.assign(install.signalReceivers,
+            install.signalReceivers + install.signalReceiverCount);
 
     std::vector<DefinitionRow> next;
     next.reserve(install.variableCount);
@@ -793,6 +871,7 @@ void VariableServiceV1::BuildCurrentWorldImageV1(
     }
     out.identity_ = install.identity;
     out.sourceBodyVintage_ = install.sourceBodyVintage;
+    out.playbackFingerprint_ = PlaybackWorldFingerprint(install);
     out.capacity_ = install.capacity;
     out.valid_ = true;
     out.idempotent_ = false;
@@ -802,8 +881,9 @@ bool VariableServiceV1::CanCommitPreparedCurrentWorldImageV1(
     const PreparedCurrentWorldImageV1& prepared) const noexcept {
     if (!prepared.valid_ || prepared.source_ != this ||
         prepared.sourceWorld_ != worldGeneration_ ||
+        prepared.sourceFingerprint_ != identity_.runtimeSemanticFingerprint ||
         prepared.sourceBankOrdinal_ != nextBankOrdinal_) return false;
-    if (prepared.idempotent_) return true;
+    if (prepared.PreservesContent()) return true;
     if (worldGeneration_ == UINT64_MAX || !CanReplaceCurrentWorld()) return false;
     // A write accepted before prepare can finish without advancing the issue ordinal.
     for (const auto& next : prepared.definitions_) {
@@ -819,6 +899,15 @@ ContainerWorldInstallViewV1 VariableServiceV1::PreparedWorldInstallViewV1(
     const PreparedCurrentWorldImageV1& prepared) const noexcept {
     if (!CanCommitPreparedCurrentWorldImageV1(prepared)) return {};
     if (prepared.idempotent_) return CurrentWorldInstallView();
+    if (prepared.signalOnly_) {
+        auto view = CurrentWorldInstallView();
+        view.identity = prepared.identity_;
+        view.signalRelations = prepared.signalRelations_.empty() ? nullptr : prepared.signalRelations_.data();
+        view.signalRelationCount = static_cast<std::uint32_t>(prepared.signalRelations_.size());
+        view.signalReceivers = prepared.signalReceivers_.empty() ? nullptr : prepared.signalReceivers_.data();
+        view.signalReceiverCount = static_cast<std::uint32_t>(prepared.signalReceivers_.size());
+        return view;
+    }
     ContainerWorldInstallViewV1 view{};
     view.identity = prepared.identity_;
     view.sourceBodyVintage = prepared.sourceBodyVintage_;
@@ -839,6 +928,12 @@ ContainerWorldInstallViewV1 VariableServiceV1::PreparedWorldInstallViewV1(
     view.transitionCount = static_cast<std::uint32_t>(prepared.transitionProgramViews_.size());
     view.actions = prepared.actionProgramViews_.data();
     view.actionCount = static_cast<std::uint32_t>(prepared.actionProgramViews_.size());
+    view.signalRelations = prepared.signalRelations_.empty()
+        ? nullptr : prepared.signalRelations_.data();
+    view.signalRelationCount = static_cast<std::uint32_t>(prepared.signalRelations_.size());
+    view.signalReceivers = prepared.signalReceivers_.empty()
+        ? nullptr : prepared.signalReceivers_.data();
+    view.signalReceiverCount = static_cast<std::uint32_t>(prepared.signalReceivers_.size());
     return view;
 }
 
@@ -848,7 +943,7 @@ bool VariableServiceV1::PrepareWorldProjectionV1(
     if (out == nullptr || out->IsPrepared()) return false;
     out->Clear();
     if (!CanCommitPreparedCurrentWorldImageV1(image)) return false;
-    const auto& definitions = image.idempotent_ ? definitions_ : image.definitions_;
+    const auto& definitions = image.PreservesContent() ? definitions_ : image.definitions_;
     detail::LogicAllocCheckpoint(detail::LogicAllocSite::ProjectGlobalProjection);
     out->globals_.reserve(definitions.size());
     for (const auto& definition : definitions) {
@@ -875,7 +970,7 @@ bool VariableServiceV1::PrepareWorldProjectionV1(
         batch.emitterLive = emitters.IsLive(batch.handle);
         if (!batch.emitterLive) continue;
         for (const auto& current : bank.overrides) {
-            const auto value = image.idempotent_ ? current
+            const auto value = image.PreservesContent() ? current
                 : MigrateOverride(current, definitions, true);
             if (value.used && value.currentBankOrdinal != 0) {
                 batch.values.push_back({value.variableId, value.currentValue});
@@ -944,6 +1039,13 @@ WorldGeneration VariableServiceV1::CommitPreparedCurrentWorldImageV1(
         prepared.Clear();
         return worldGeneration_;
     }
+    if (prepared.signalOnly_) {
+        identity_ = prepared.identity_;
+        signalRelations_.swap(prepared.signalRelations_);
+        signalReceivers_.swap(prepared.signalReceivers_);
+        prepared.Clear();
+        return worldGeneration_;
+    }
     assert(CanReplaceCurrentWorld());
     for (WriteRow& row : history_) {
         if (row.used && row.state != RowState::Terminal &&
@@ -971,8 +1073,11 @@ WorldGeneration VariableServiceV1::CommitPreparedCurrentWorldImageV1(
     transitionProgramViews_.swap(prepared.transitionProgramViews_);
     actionPrograms_.swap(prepared.actionPrograms_);
     actionProgramViews_.swap(prepared.actionProgramViews_);
+    signalRelations_.swap(prepared.signalRelations_);
+    signalReceivers_.swap(prepared.signalReceivers_);
     identity_ = prepared.identity_;
     sourceBodyVintage_ = prepared.sourceBodyVintage_;
+    playbackFingerprint_ = prepared.playbackFingerprint_;
     capacity_ = prepared.capacity_;
     ++worldGeneration_;
     globalBankVersionGeneration_ = 1;

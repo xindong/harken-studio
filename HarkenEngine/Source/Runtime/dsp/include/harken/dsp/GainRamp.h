@@ -248,6 +248,32 @@ struct OutputGain {
         return frame >= remainingFrames ? target : EvaluateK(frame + 1);
     }
 
+    // The interpolated segment is monotone; its final snap to target can
+    // differ after a very long ramp. Include both sides of that boundary.
+    double AbsoluteBound(std::uint32_t frames) const {
+        if (frames == 0) return 0;
+        if (remainingFrames == 0) return std::abs(static_cast<double>(target));
+        // Signed interpolation can expose cancellation under differing
+        // compiler evaluation paths; retain the exact scan for that domain.
+        if (start < 0 || target < 0 || !std::isfinite(start) || !std::isfinite(target)) {
+            double result = 0;
+            for (std::uint32_t n = 0; n < frames; ++n) {
+                const double value = std::abs(static_cast<double>(At(n)));
+                if (value > result) result = value;
+            }
+            return result;
+        }
+        double result = 0;
+        const auto include = [&](std::uint64_t frame) {
+            const double value = std::abs(static_cast<double>(At(frame)));
+            if (value > result) result = value;
+        };
+        include(0);
+        include(frames - 1);
+        if (remainingFrames >= 2 && remainingFrames <= frames) include(remainingFrames - 2);
+        return result;
+    }
+
     void Advance(std::uint32_t frames) {
         if (frames == 0) {
             return;

@@ -325,7 +325,7 @@ CurrentWorldSyncResult installCompiledWorld(
                 TopologyVolumeAndSendNeutralOtherProperties);
     }
     if (hold.body.empty()
-        && !harkenstudiobuild::EncodeCurrentWorldShippingBody(hold.world->View(), hold.body)) {
+        && !harkenstudiobuild::EncodeCurrentWorldPreviewBody(hold.world->View(), hold.body)) {
         result.status = CurrentWorldSyncStatus::CompileFailed;
         return result;
     }
@@ -339,7 +339,7 @@ CurrentWorldSyncResult installCompiledWorld(
         hold.sendLevelsDb.push_back(send.sendLevelDb);
     }
     hold.view.structSize = sizeof(hold.view);
-    hold.view.bodyVintage = harkenstudiobuild::kCurrentWorldShippingBodyVintage;
+    hold.view.bodyVintage = hold.world->View().sourceBodyVintage;
     hold.view.projectSessionId = token.projectSessionId;
     hold.view.authoringRevision = token.authoringRevision;
     hold.view.runtimeEpoch = token.runtimeEpoch;
@@ -569,7 +569,7 @@ CurrentWorldCompileResult compileCurrentWorldRequest(
         request.containers, {}, request.transitions, request.actions,
         &request.busResult->idSet,
         harkencurrentworldcompiler::CompileCapacityModeV1::AuthoredContent,
-        request.propertyAuthoredOrders, request.reservedPropertyAuthoredOrders);
+        request.propertyAuthoredOrders, request.reservedPropertyAuthoredOrders, request.duckingSends, request.includePreviewDucking);
     if (!compiled.ok() || !compiled.world) {
         result.status = CurrentWorldSyncStatus::CompileFailed;
         result.relatedStableId = compiled.relatedStableId;
@@ -582,7 +582,7 @@ CurrentWorldCompileResult compileCurrentWorldRequest(
             *request.busResult,
             harkenbuscompiler::BusPublicationCapabilityVintageV1::
                 TopologyVolumeAndSendNeutralOtherProperties);
-        if (!harkenstudiobuild::EncodeCurrentWorldShippingBody(result.world->View(), result.body)) {
+        if (!harkenstudiobuild::EncodeCurrentWorldPreviewBody(result.world->View(), result.body)) {
             result.status = CurrentWorldSyncStatus::CompileFailed;
             result.world.reset();
         }

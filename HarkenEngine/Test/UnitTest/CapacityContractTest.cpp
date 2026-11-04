@@ -1359,7 +1359,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_EQ(264u + frontierEventBytes + monitorControlBytes, currentEventBytesPerSlot);
     EXPECT_EQ(192u + immediateEntryBytes + programFenceBytes, initialProgramBytesPerSlot);
     const auto playbackPathBytes = sizeof(harken::PlaybackPath);
-    EXPECT_EQ(1'544u, playbackPathBytes);
+    EXPECT_EQ(8u + harken::kPlaybackPathRowCapacity * sizeof(harken::PlaybackPathRow), playbackPathBytes);
     EXPECT_EQ(sizeof(harken::CapturedTimelineVoiceInstall),
               sizeof(engine->ReadPlayableMember(0).voice));
     EXPECT_EQ(48u, weightBytesPerSlot);
