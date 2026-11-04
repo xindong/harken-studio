@@ -42,7 +42,7 @@
 #include <QSet>
 #include <QScreen>
 #include <QShortcut>
-#include <QToolTip>
+#include "Core/ToolTip.h"
 #include <QTimer>
 #include <QWheelEvent>
 
@@ -113,7 +113,7 @@ void TimelineCanvas::clearHover()
     hoveredLane_ = -1;
     hoveredClip_ = -1;
     hoverTipTarget_.clear();
-    QToolTip::hideText();
+    ToolTip::hideText();
     update();
 }
 
@@ -655,12 +655,12 @@ void TimelineCanvas::mouseMoveEvent(QMouseEvent* event)
             const QString target = panel_->clipGuid(hit.laneIndex, hit.clipIndex).toString(QUuid::WithoutBraces);
             if (hoverTipTarget_ != target) {
                 hoverTipTarget_ = target;
-                QToolTip::showText(event->globalPosition().toPoint(),
+                ToolTip::showText(event->globalPosition().toPoint(),
                     clipTooltip(hit.laneIndex, hit.clipIndex), this);
             }
         } else if (!hoverTipTarget_.isEmpty()) {
             hoverTipTarget_.clear();
-            QToolTip::hideText();
+            ToolTip::hideText();
         }
         return;
     }
@@ -1161,9 +1161,9 @@ void TimelineCanvas::setDropFeedback(bool visible, int x, int lane,
         panel_->setStatusMessage({}, false);
     if (panel_->hasTimeline()) {
         if (visible)
-            QToolTip::showText(mapToGlobal(QPoint(std::clamp(x, 0, width()), 0)), message, this);
+            ToolTip::showText(mapToGlobal(QPoint(std::clamp(x, 0, width()), 0)), message, this);
         else
-            QToolTip::hideText();
+            ToolTip::hideText();
     }
     update();
 }

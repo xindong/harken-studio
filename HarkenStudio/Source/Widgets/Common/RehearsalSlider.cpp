@@ -12,7 +12,7 @@
 #include <QSlider>
 #include <QStyle>
 #include <QStyleOptionSlider>
-#include <QToolTip>
+#include "Core/ToolTip.h"
 
 #include <cmath>
 
@@ -40,6 +40,9 @@ void RehearsalSlider::attachInnerSlider()
 
 void RehearsalSlider::configure(const VVariable& variable)
 {
+    if (hoveredAnchor_ >= 0)
+        ToolTip::hideText();
+    hoveredAnchor_ = -1;
     const bool step = variable.kind == VariableKind::Step;
     const auto form = VariableSemantics::editFormForKind(variable.kind);
     lo_ = variable.rangeMin;
@@ -127,24 +130,30 @@ void RehearsalSlider::paintAnchors(QSlider* slider, QPaintEvent*)
 void RehearsalSlider::updateAnchorTooltip(QSlider* slider, QMouseEvent* event)
 {
     if (!slider || !event) return;
-    const VariableLabel* nearest = nullptr;
+    int nearest = -1;
     int distance = 7;
-    for (const VariableLabel& label : labels_) {
+    for (int index = 0; index < labels_.size(); ++index) {
+        const VariableLabel& label = labels_.at(index);
         if (label.name.isEmpty()) continue;
         const int x = anchorPosition(slider, static_cast<float>(label.anchor));
         if (x < 0) continue;
         const int delta = std::abs(event->position().toPoint().x() - x);
         if (delta < distance) {
             distance = delta;
-            nearest = &label;
+            nearest = index;
         }
     }
-    if (nearest) {
-        QToolTip::showText(event->globalPosition().toPoint(),
-                           tr("%1 (%2)").arg(nearest->name).arg(nearest->anchor),
-                           slider);
+    const QString tooltip = nearest >= 0
+        ? tr("%1 (%2)").arg(labels_.at(nearest).name).arg(labels_.at(nearest).anchor)
+        : QString();
+    if (nearest == hoveredAnchor_
+        && (nearest < 0 || (ToolTip::isVisible() && ToolTip::text() == tooltip)))
+        return;
+    hoveredAnchor_ = nearest;
+    if (nearest >= 0) {
+        ToolTip::showText(event->globalPosition().toPoint(), tooltip, slider);
     } else {
-        QToolTip::hideText();
+        ToolTip::hideText();
     }
 }
 
@@ -159,8 +168,11 @@ bool RehearsalSlider::eventFilter(QObject* watched, QEvent* event)
         }
         if (event->type() == QEvent::MouseMove)
             updateAnchorTooltip(slider, static_cast<QMouseEvent*>(event));
-        else if (event->type() == QEvent::Leave)
-            QToolTip::hideText();
+        else if (event->type() == QEvent::Leave) {
+            if (hoveredAnchor_ >= 0)
+                ToolTip::hideText();
+            hoveredAnchor_ = -1;
+        }
     }
     return ParameterSlider::eventFilter(watched, event);
 }

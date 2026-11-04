@@ -42,7 +42,7 @@
 #include <QStandardItemModel>
 #include <QStringList>
 #include <QToolButton>
-#include <QToolTip>
+#include "Core/ToolTip.h"
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -1155,13 +1155,13 @@ bool TransitionEditorWidget::eventFilter(QObject* watched, QEvent* event)
                     continue;
                 const QString tip = child->toolTip();
                 if (!tip.isEmpty()) {
-                    QToolTip::showText(help->globalPos(), tip, listHead_);
+                    ToolTip::showText(help->globalPos(), tip, listHead_);
                     return true;
                 }
                 break;
             }
         }
-        QToolTip::hideText();
+        ToolTip::hideText();
         return true;
     }
     if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::ContextMenu) {

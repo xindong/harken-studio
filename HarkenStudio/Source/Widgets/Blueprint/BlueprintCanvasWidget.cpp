@@ -62,7 +62,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineF>
-#include <QToolTip>
+#include "Core/ToolTip.h"
 #include <QTextDocument>
 #include <QPainter>
 #include <QPointer>
@@ -579,7 +579,7 @@ void BlueprintCanvasWidget::clearScene()
     locationPingObjectID_ = 0;
     chainRefreshPending_ = false;
     finishNodeEdits_(false);
-    QToolTip::hideText();
+    ToolTip::hideText();
     connectHint_->hide();
     connectHint_->clear();
     connectHintText_.clear();
@@ -2199,7 +2199,7 @@ bool BlueprintCanvasWidget::viewportEvent(QEvent* event)
             if (node->isSandboxBypassed()) lines.append(tr("Bypassed"));
             if (node->overrideBadge()) lines.append(tr("Override active"));
             if (node->receiveBadge() > 0) lines.append(tr("Receives: %1").arg(node->receiveBadge()));
-            QToolTip::showText(help->globalPos(), Qt::convertFromPlainText(lines.join(QLatin1Char('\n'))),
+            ToolTip::showText(help->globalPos(), Qt::convertFromPlainText(lines.join(QLatin1Char('\n'))),
                 viewport(), mapFromScene(node->sceneBoundingRect()).boundingRect());
             event->accept();
             return true;
@@ -2431,7 +2431,7 @@ void BlueprintCanvasWidget::mouseReleaseEvent(QMouseEvent* event)
             nodeDragSources_.clear();
             pathDragStartPositions_.clear();
             gainDragStartPositions_.clear();
-            QToolTip::hideText();
+            ToolTip::hideText();
             unsetCursor();
             viewport()->unsetCursor();
             if (!plan.ok()) toast_->showMessage(plan.error);
@@ -2443,7 +2443,7 @@ void BlueprintCanvasWidget::mouseReleaseEvent(QMouseEvent* event)
         }
         clearConnectTarget_();
         if (!nodeDragSources_.empty()) {
-            QToolTip::hideText();
+            ToolTip::hideText();
             unsetCursor();
             viewport()->unsetCursor();
         }
@@ -2736,7 +2736,7 @@ void BlueprintCanvasWidget::updateConnectPreview_(const QPoint& position)
     positionConnectHint_();
     connectHint_->setVisible(!connectHintText_.isEmpty());
     connectHint_->raise();
-    QToolTip::hideText();
+    ToolTip::hideText();
 }
 
 void BlueprintCanvasWidget::positionConnectHint_()
@@ -2761,7 +2761,7 @@ void BlueprintCanvasWidget::updateNodeDropPreview_(const QPoint& position)
     connectHoverNode_ = target;
     connectHoverPin_ = pin;
     if (!target) {
-        QToolTip::hideText();
+        ToolTip::hideText();
         viewport()->unsetCursor();
         return;
     }
@@ -2773,7 +2773,7 @@ void BlueprintCanvasWidget::updateNodeDropPreview_(const QPoint& position)
     if (!pin && !target->routeGainMode()) target->setDropFeedback(plan.ok()
         ? NodeItem::DropFeedback::Valid : NodeItem::DropFeedback::Invalid);
     viewport()->setCursor(plan.ok() ? Qt::DragMoveCursor : Qt::ForbiddenCursor);
-    QToolTip::hideText();
+    ToolTip::hideText();
 }
 
 void BlueprintCanvasWidget::restoreNodeDragPositions_()
@@ -2804,7 +2804,7 @@ void BlueprintCanvasWidget::cancelConnection_()
     }
     unsetCursor();
     viewport()->unsetCursor();
-    QToolTip::hideText();
+    ToolTip::hideText();
     if (pathRefreshPending_) {
         queuePathRefresh_(pathContentOnlyRefresh_);
     }

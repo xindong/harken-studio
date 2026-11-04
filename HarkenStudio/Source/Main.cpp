@@ -31,6 +31,7 @@
 #include "Core/SchemaCompatibilityProbe.h"
 #include "Core/StartupCoordinator.h"
 #include "Core/ThemeManager.h"
+#include "Core/ToolTip.h"
 #include "Core/HarkenStyle.h"
 #include "Dialogs/StartupLoadingWindow.h"
 #include "Widgets/TitleBar/FramelessChromeInstall.h"
@@ -182,6 +183,8 @@ int main(int argc, char* argv[])
     app.installEventFilter(VNX::WheelGuard::instance());
     if (QStyle* fusion = QStyleFactory::create(QStringLiteral("Fusion")))
         QApplication::setStyle(new VNX::HarkenStyle(fusion));
+    QApplication::setEffectEnabled(Qt::UI_AnimateTooltip, false);
+    QApplication::setEffectEnabled(Qt::UI_FadeTooltip, false);
 
     VNX::installFramelessChrome();
     app.setApplicationName(QStringLiteral("HarkenStudio"));
@@ -194,6 +197,7 @@ int main(int argc, char* argv[])
 
     VNX::ProjectTemplateLoader::ensureUserTemplatesSeeded();
     VNX::ThemeManager::instance();
+    VNX::ToolTip::initialize();
 
     VNX::StartupLoadingWindow loading;
     loading.showAfterInitialFrame();

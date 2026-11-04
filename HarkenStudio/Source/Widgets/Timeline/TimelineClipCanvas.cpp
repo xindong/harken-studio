@@ -16,7 +16,7 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
-#include <QToolTip>
+#include "Core/ToolTip.h"
 
 #include <algorithm>
 #include <cmath>
@@ -182,7 +182,7 @@ void TimelineMarkerRuler::mouseMoveEvent(QMouseEvent* event)
         const QString name = panel_->markerKind(index) == MarkerKind::Custom
             ? panel_->markerName(index) : markerKindName(panel_->markerKind(index));
         const QString label = name.isEmpty() ? tr("Marker") : name;
-        QToolTip::showText(event->globalPosition().toPoint(),
+        ToolTip::showText(event->globalPosition().toPoint(),
                            QStringLiteral("%1 — %2").arg(
                                label,
                                panel_->formatCoordinate(0, panel_->markerDisplayPosition(index))),

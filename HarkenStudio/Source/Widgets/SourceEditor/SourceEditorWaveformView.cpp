@@ -17,7 +17,7 @@
 #include <QScrollBar>
 #include <QSizePolicy>
 #include <QTimer>
-#include <QToolTip>
+#include "Core/ToolTip.h"
 
 #include <algorithm>
 #include <cmath>
@@ -396,7 +396,7 @@ void SourceEditorWaveformView::mousePressEvent(QMouseEvent* event)
         hoveredHandle_ = Handle::None;
         hoveredFade_ = {};
         selectedFade_ = -1;
-        QToolTip::hideText();
+        ToolTip::hideText();
         setCursor(isTimeRuler(position) ? Qt::ClosedHandCursor : Qt::ArrowCursor);
         update();
         event->accept();
@@ -418,7 +418,7 @@ void SourceEditorWaveformView::mousePressEvent(QMouseEvent* event)
                 dragOffset_ = event->position().toPoint().x() - handlePosition(static_cast<int>(hit));
                 dragPosition_ = event->position().toPoint();
                 dragMoved_ = false;
-                QToolTip::hideText();
+                ToolTip::hideText();
                 showHandleValue();
                 update();
             } else {
@@ -657,14 +657,14 @@ void SourceEditorWaveformView::updateHover(const QPoint& position)
     if (nextFade.index >= 0) {
         setCursor(nextFade.part == FadePart::Curve ? Qt::SizeVerCursor : Qt::PointingHandCursor);
         if (nextFade != hoveredFade_)
-            QToolTip::showText(mapToGlobal(position), fadeTooltip(nextFade), this);
+            ToolTip::showText(mapToGlobal(position), fadeTooltip(nextFade), this);
         hoveredFade_ = nextFade;
         hoveredHandle_ = Handle::None;
         return;
     }
     if (hoveredFade_.index >= 0) {
         hoveredFade_ = {};
-        QToolTip::hideText();
+        ToolTip::hideText();
     }
     const Handle next = hitTestHandle(position);
     if (next != Handle::None)
@@ -677,9 +677,9 @@ void SourceEditorWaveformView::updateHover(const QPoint& position)
         return;
     hoveredHandle_ = next;
     if (hoveredHandle_ == Handle::None) {
-        QToolTip::hideText();
+        ToolTip::hideText();
     } else {
-        QToolTip::showText(mapToGlobal(position), handleTooltip(hoveredHandle_), this);
+        ToolTip::showText(mapToGlobal(position), handleTooltip(hoveredHandle_), this);
     }
 }
 

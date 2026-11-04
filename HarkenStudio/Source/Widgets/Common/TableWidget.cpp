@@ -33,7 +33,7 @@
 #include <QTimer>
 #include <QTableView>
 #include <QTableWidget>
-#include <QToolTip>
+#include "Core/ToolTip.h"
 #include <QTreeView>
 #include <QVBoxLayout>
 
@@ -1417,7 +1417,7 @@ bool TableWidget::eventFilter(QObject* watched, QEvent* event)
             || !(viewNumber.flags() & Qt::ItemIsSelectable))
             viewNumber = {};
         if (viewNumber.isValid() && event->type() == QEvent::ToolTip) {
-            QToolTip::showText(static_cast<QHelpEvent*>(event)->globalPos(), tr("Move Row"), view_);
+            ToolTip::showText(static_cast<QHelpEvent*>(event)->globalPos(), tr("Move Row"), view_);
             return true;
         }
     }
