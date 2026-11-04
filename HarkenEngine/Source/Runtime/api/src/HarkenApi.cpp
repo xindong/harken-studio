@@ -58150,10 +58150,12 @@ TimelineVoiceInstallResult InstallTimelineVoiceStartForExport(
 TimelineVoiceInstallResult InstallTimelineVoiceStartForExport(
     harken::Engine& engine, const harken::TimelineVoiceInstallInput& input,
     harken::ProgramGeneration programGeneration, harken::PlayableInstanceHandle parentInstance,
-    harken::PlayableInstanceHandle playableRoot) {
-    return InstallTimelineVoiceStart(engine, input, programGeneration, 0,
+    harken::PlayableInstanceHandle playableRoot, bool publishOnInstallation, std::uint64_t startFrame) {
+    return InstallTimelineVoiceStart(engine, input, programGeneration, startFrame,
         parentInstance, playableRoot, nullptr, nullptr, {}, UINT16_MAX, nullptr,
-        nullptr, nullptr, nullptr, nullptr, false, false, false, false, nullptr, {}, false, 0);
+        nullptr, nullptr, nullptr, nullptr, false, false, false, false, nullptr, {}, false, 0,
+        nullptr, publishOnInstallation ? TimelineVoiceInstallPublication::OnInstallation
+                                      : TimelineVoiceInstallPublication::Default);
 }
 
 } // namespace
@@ -58236,9 +58238,10 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
 
 TimelineVoiceInstallResult InstallTimelineVoiceStart(
     Engine& engine, const TimelineVoiceInstallInput& input, ProgramGeneration programGeneration,
-    PlayableInstanceHandle parentInstance, PlayableInstanceHandle playableRoot) {
+    PlayableInstanceHandle parentInstance, PlayableInstanceHandle playableRoot, bool publishOnInstallation,
+    std::uint64_t startFrame) {
     const auto inner = InstallTimelineVoiceStartForExport(engine, input, programGeneration,
-        parentInstance, playableRoot);
+        parentInstance, playableRoot, publishOnInstallation, startFrame);
     TimelineVoiceInstallResult result;
     result.status = inner.status;
     result.renderHandle = inner.renderHandle;
@@ -78202,10 +78205,12 @@ VnResult ResolveStopLeafSilence(
             advance.absoluteStartFrame = installation.onsetFrame;
         }
     } else {
+        harken::EngineTimelineVoiceInstallIdentity installation{};
+        const bool installed = engine.CaptureTimelineVoiceInstallIdentity(row.renderHandle, &installation);
         const harken::PCMView media =
             engine.registry.Lookup(row.leaf.stableId != VnObjectId{} ? row.leaf.stableId
                                                           : row.root.stableId);
-        if (media.frames == 0 || media.sampleRate == 0 ||
+        if ((!installed && (media.frames == 0 || media.sampleRate == 0)) ||
             engine.config.mixRate.SampleRate() == 0) {
             *outMissing = true;
             return VN_OK;
@@ -78241,10 +78246,13 @@ VnResult ResolveStopLeafSilence(
                  static_cast<double>(engine.config.mixRate.SampleRate());
         advance.currentRatio = ratio;
         advance.targetRatio = ratio;
-        harken::EngineTimelineVoiceInstallIdentity installation{};
-        const bool installed = engine.CaptureTimelineVoiceInstallIdentity(row.renderHandle, &installation);
         if (voice.sourceOutputOffsetFrames != 0 && !installed) return VN_BACKPRESSURE;
         if (installed) {
+            advance.pcmFrameCount = installation.sourceFrameCount;
+            advance.loopStartFrame = installation.loopStartFrame;
+            advance.loopEndFrame = installation.loopEndFrame;
+            advance.hasExitMarker = installation.hasExitMarker;
+            advance.exitMarkerSourceFrame = installation.exitMarkerSourceFrame;
             advance.sourceIntegerFrame = installation.sourceStartFrame;
             advance.sourceStartFrame = installation.sourceStartFrame;
             advance.sourcePhase = installation.sourcePhase;

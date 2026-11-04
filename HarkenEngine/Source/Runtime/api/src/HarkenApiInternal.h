@@ -68,7 +68,8 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
 
 TimelineVoiceInstallResult InstallTimelineVoiceStart(
     Engine& engine, const TimelineVoiceInstallInput& input, ProgramGeneration programGeneration = 0,
-    PlayableInstanceHandle parentInstance = 0, PlayableInstanceHandle playableRoot = 0);
+    PlayableInstanceHandle parentInstance = 0, PlayableInstanceHandle playableRoot = 0,
+    bool publishOnInstallation = false, std::uint64_t startFrame = 0);
 
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
 bool PrepareNativeQueueResetResourcesForTest(Engine& engine, std::uint32_t serviceSlot,
