@@ -10,6 +10,16 @@ namespace VNX {
 
 struct ProjectData;
 
+inline const char* sendModeLabel(SendMode mode)
+{
+    switch (mode) {
+    case SendMode::Mix: return "Mix";
+    case SendMode::Ducking: return "Ducking";
+    case SendMode::Sidechain: return "Sidechain";
+    }
+    return "";
+}
+
 enum class BlueprintEdgeKind : uint8_t
 {
     Containment = 0,
@@ -28,6 +38,7 @@ struct BlueprintEdgeView
     BlueprintEdgeKind kind       = BlueprintEdgeKind::Containment;
 
     uint32_t          sendIndex  = 0;
+    SendMode          sendMode = SendMode::Mix;
 };
 
 std::vector<BlueprintEdgeView> deriveAllEdges(const ProjectItem& root);

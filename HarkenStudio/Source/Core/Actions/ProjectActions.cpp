@@ -2,6 +2,7 @@
 #include "../ActionManager.h"
 #include "../AttenuationStore.h"
 #include "../AuthoringPolicy.h"
+#include "../BusRouteGraph.h"
 #include "../ItemTypeCatalog.h"
 #include "../ItemPropertySchema.h"
 #include "../ProjectManager.h"
@@ -304,12 +305,20 @@ bool validatePlayableSends(ProjectManager& manager,
                            const QJsonValue& value)
 {
     if (!value.isArray()) return false;
-    QSet<uint32_t> targets;
+    QSet<QPair<uint32_t, int>> targets;
     for (const QJsonValue& rowValue : value.toArray()) {
         if (!rowValue.isObject()) return false;
         const QJsonObject row = rowValue.toObject();
         const QJsonValue targetValue = row.value(QStringLiteral("targetBusID"));
         const QJsonValue levelValue = row.value(QStringLiteral("sendLevel"));
+        const QJsonValue modeValue = row.value(QStringLiteral("mode"));
+        const int mode = modeValue.toInt(-1);
+        if (!modeValue.isUndefined() && (!modeValue.isDouble()
+            || modeValue.toDouble() != mode
+            || (mode != static_cast<int>(SendMode::Mix)
+                && mode != static_cast<int>(SendMode::Ducking)
+                && mode != static_cast<int>(SendMode::Sidechain)))) return false;
+        const auto sendMode = static_cast<SendMode>(modeValue.toInt());
         if (!targetValue.isDouble() || !levelValue.isDouble()) return false;
         const double targetNumber = targetValue.toDouble(-1.0);
         const double level = levelValue.toDouble();
@@ -319,10 +328,15 @@ bool validatePlayableSends(ProjectManager& manager,
             || !std::isfinite(level) || level < -96.0 || level > 24.0)
             return false;
         const uint32_t target = static_cast<uint32_t>(targetNumber);
-        if (targets.contains(target)
-            || !manager.sendTargetStructurallySelectable(owner.objectID, target))
+        const auto key = qMakePair(target, static_cast<int>(sendMode));
+        const auto* targetBus = manager.findBusItem(target);
+        std::map<SendMode, float> modeVolumes;
+        if (targets.contains(key)
+            || !targetBus || targetBus->type != ProjectItem::Type::Bus || targetBus == &owner
+            || (sendMode != SendMode::Sidechain && targetBus == owner.parent)
+            || !readSendModeVolumes(row.value(QStringLiteral("modeVolumes")), sendMode, modeVolumes))
             return false;
-        targets.insert(target);
+        targets.insert(key);
     }
     return true;
 }
@@ -620,6 +634,15 @@ ActionResult handlePlayableItemProperty(ProjectManager* projectManager,
                     "Playable property state is unavailable"};
         }
         snap.newState = *newState;
+    }
+
+    if (item->type == ProjectItem::Type::Bus
+        && field->wire == harkenplayableproperties::PlayablePropertyWireV1::RowSpan) {
+        const QString error = validateBusRouting(*projectManager->currentProject());
+        if (!error.isEmpty()) {
+            restoreSnapshots(snapshots);
+            return {false, {}, "INVALID_ARGS", error};
+        }
     }
 
     bool changed = false;

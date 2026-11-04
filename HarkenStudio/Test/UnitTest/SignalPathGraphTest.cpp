@@ -1,8 +1,12 @@
 #include "UnitTest/StudioObjectIdTestSupport.h"
 #include "Widgets/Blueprint/SignalPathGraph.h"
+#include "Widgets/Blueprint/SignalPathGainEditing.h"
 #include "Widgets/Blueprint/SignalPathSource.h"
 
+#include "Core/BusRouteGraph.h"
+#include "Core/Components/VMixNode.h"
 #include "Core/FieldGroupProjectAdapter.h"
+#include "Core/ReferenceSlotResolution.h"
 #include "Support/ProjectPlatformTestUtils.h"
 
 #include <gtest/gtest.h>
@@ -46,7 +50,9 @@ protected:
         output(c1, b1);
         output(s5, b3);
         output(l2, b1);
-        send(c1, {{toFieldGroupGuid(b2->guid), -6.0f}});
+        send(c1, {{toFieldGroupGuid(b2->guid), -6.0f, SendMode::Mix},
+                  {toFieldGroupGuid(b2->guid), 3.0f, SendMode::Ducking},
+                  {toFieldGroupGuid(b2->guid), -12.0f, SendMode::Sidechain}});
     }
 
     ProjectItem* create(const char* name, T type, ProjectItem* parent = nullptr)
@@ -172,6 +178,79 @@ TEST_F(SignalPathGraphTest, IncrementalContentsMatchReloadAcrossScopesAndGraphRe
         incremental.loadGraph(project, buildSignalPathGraph(project, replacement, fieldScope));
         incremental.refreshNodeContents(*s1, QStringLiteral("volume"));
         expectReloadEquivalent(replacement);
+    }
+}
+
+TEST_F(SignalPathGraphTest, BusRoutingProjectionsAgreeAcrossScopesWithoutChangingSharedState)
+{
+    const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*b1);
+    const auto* field = PlayablePropertyAuthoringV1::fieldByName(QStringLiteral("sends"));
+    ASSERT_TRUE(locator);
+    ASSERT_NE(field, nullptr);
+    const auto rows = [](const ProjectItem* target, SendMode mode, float gain) {
+        return QJsonArray{QJsonObject{
+            {QStringLiteral("targetBusID"), static_cast<qint64>(target->objectID)},
+            {QStringLiteral("mode"), static_cast<int>(mode)},
+            {QStringLiteral("sendLevel"), gain}}};
+    };
+    ASSERT_TRUE(PlayablePropertyAuthoringV1::setOverride(
+        *b1, *locator, field->id, rows(b2, SendMode::Mix, -6.0f), std::nullopt));
+    const auto shared = captureBusSendState(*b1);
+    ASSERT_TRUE(shared);
+    ASSERT_TRUE(PlayablePropertyAuthoringV1::setOverride(
+        *b1, *locator, field->id, rows(b3, SendMode::Ducking, 3.0f), HarkenTest::PlatformIds::Windows));
+
+    struct Expected {
+        PlatformScope scope;
+        ProjectItem* target;
+        SendMode mode;
+        float gain;
+    };
+    const Expected cases[] = {
+        {std::nullopt, b2, SendMode::Mix, -6.0f},
+        {HarkenTest::PlatformIds::Windows, b3, SendMode::Ducking, 3.0f},
+        {HarkenTest::PlatformIds::Android, b2, SendMode::Mix, -6.0f},
+        {std::nullopt, b2, SendMode::Mix, -6.0f},
+    };
+    for (const auto& expected : cases) {
+        const auto scope = toFieldGroupScope(expected.scope);
+        const float linear = VMixNode::dbToLinear(expected.gain);
+        const auto resolved = ReferenceSlotResolution::resolveEffectiveSends(
+            ReferenceSlotResolution::buildResolutionScope(project, b1, scope));
+        ASSERT_TRUE(resolved.valid);
+        ASSERT_EQ(resolved.sends.size(), 1);
+        EXPECT_EQ(resolved.sends.front().targetBusID, expected.target->objectID);
+        EXPECT_EQ(resolved.sends.front().mode, expected.mode);
+        EXPECT_FLOAT_EQ(resolved.sends.front().sendLevel, linear);
+        EXPECT_EQ(resolved.authoringScope,
+            expected.scope == PlatformScope{HarkenTest::PlatformIds::Windows} ? scope : FieldGroupScope{});
+
+        const auto graph = build(scope);
+        ASSERT_TRUE(graph.ok());
+        SignalPathSource source;
+        source.loadGraph(project, graph);
+        const auto described = source.buildEdges();
+        size_t matching = 0;
+        for (size_t index = 0; index < graph.edges.size(); ++index) {
+            const auto& edge = graph.edges[index];
+            if (edge.kind != SignalPathEdgeKind::Send
+                || graph.nodes[edge.from.occurrenceIndex].key.objectGuid != b1->guid) continue;
+            ++matching;
+            EXPECT_EQ(graph.nodes[edge.to.occurrenceIndex].key.objectGuid, expected.target->guid);
+            EXPECT_EQ(edge.mode, expected.mode);
+            EXPECT_FLOAT_EQ(edge.sendLevel, linear);
+            const auto gain = signalPathGainValue(project, graph, index);
+            ASSERT_TRUE(gain);
+            EXPECT_FLOAT_EQ(*gain, linear);
+            ASSERT_LT(index, described.size());
+            EXPECT_EQ(described[index].sendMode, expected.mode);
+            ASSERT_TRUE(described[index].gainContent.sendVolume);
+            EXPECT_FLOAT_EQ(*described[index].gainContent.sendVolume, linear);
+        }
+        EXPECT_EQ(matching, 1);
+        const auto unchanged = captureBusSendState(*b1);
+        ASSERT_TRUE(unchanged);
+        EXPECT_EQ(unchanged->value, shared->value);
     }
 }
 

@@ -582,6 +582,8 @@ compileBusResult(
                 const QJsonObject row = rowValue.toObject();
                 const auto targetValue = row.value(QStringLiteral("targetBusID"));
                 const auto levelValue = row.value(QStringLiteral("sendLevel"));
+                const auto modeValue = row.value(QStringLiteral("mode"));
+                std::map<SendMode, float> modeVolumes;
                 const double targetNumber = targetValue.toDouble(-1.0);
                 const double levelNumber = levelValue.toDouble(
                     std::numeric_limits<double>::quiet_NaN());
@@ -591,7 +593,14 @@ compileBusResult(
                     std::trunc(targetNumber) != targetNumber ||
                     !levelValue.isDouble() || !std::isfinite(levelNumber) ||
                     !std::isfinite(levelDb) || levelDb < -96.0f || levelDb > 24.0f ||
-                    !std::isfinite(VMixNode::dbToLinear(levelDb))) {
+                    !std::isfinite(VMixNode::dbToLinear(levelDb)) ||
+                    (!modeValue.isUndefined() && (!modeValue.isDouble() ||
+                     modeValue.toDouble() != modeValue.toInt(-1) ||
+                     (modeValue.toInt(-1) != static_cast<int>(SendMode::Mix) &&
+                      modeValue.toInt(-1) != static_cast<int>(SendMode::Ducking) &&
+                      modeValue.toInt(-1) != static_cast<int>(SendMode::Sidechain)))) ||
+                    !readSendModeVolumes(row.value(QStringLiteral("modeVolumes")),
+                                         static_cast<SendMode>(modeValue.toInt()), modeVolumes)) {
                     appendDiagnostic(diagnostics, ProjectInputDiagnosticCode::UnsupportedField,
                         QStringLiteral("Bus send row %1 is invalid for target platform")
                             .arg(sendIndex), item, {}, QStringLiteral("sends"));
@@ -609,6 +618,7 @@ compileBusResult(
                     invalidBusProperty = true;
                     continue;
                 }
+                if (static_cast<SendMode>(modeValue.toInt()) != SendMode::Mix) continue;
                 input.sends.push_back(
                     {id, target, levelDb == 0.0f ? 0.0f : levelDb, sendSource});
             }
@@ -820,6 +830,7 @@ bool copyStudioDefinitionPayload(
     node.outputBusVolume = effective.mainOutput.outputBusVolume;
     node.sends.clear();
     for (const auto& send : effective.send.sends) {
+        if (send.mode != SendMode::Mix) continue;
         const auto* target = identity.find(send.targetBusID);
         if (!target || target->kind != RuntimeIdentityKindV1::Bus)
             return fail(QStringLiteral("Send Bus identity is missing"));

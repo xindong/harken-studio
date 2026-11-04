@@ -257,12 +257,20 @@ std::vector<FieldGroupDiagnostic> ValidateFieldGroupPayload(
         }
         for (std::size_t i = 0; i < send->sends.size(); ++i) {
             const auto& row = send->sends[i];
+            if (!harkenprojectschema::IsValidSendMode(row.mode))
+                AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue,
+                              group, "mode", i);
             if (harkenstudio::IsNull(row.targetBusID))
                 AddDiagnostic(diagnostics, DiagnosticCode::EmptyRequiredReference,
                               group, "targetBusID", i);
             if (!InRange(row.sendLevel, -96.0f, 24.0f))
                 AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue,
                               group, "sendLevel", i);
+            for (const auto& [mode, volume] : row.modeVolumesDb)
+                if (!harkenprojectschema::IsValidSendMode(mode) || mode == row.mode
+                    || !InRange(volume, -96.0f, 24.0f))
+                    AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue,
+                                  group, "modeVolumes", i);
         }
         break;
     }
@@ -347,11 +355,11 @@ std::vector<FieldGroupDiagnostic> FieldGroupReferenceCatalog::Validate(
                           FieldGroupReferenceKind::Bus, "mainOutputBusRef");
         break;
     case FieldGroupId::Send: {
-        std::set<AuthoringGuid> seen;
+        std::set<std::pair<AuthoringGuid, harkenprojectschema::SendMode>> seen;
         const auto& sends = std::get<SendFieldGroup>(payload).sends;
         for (std::size_t i = 0; i < sends.size(); ++i) {
             const auto guid = sends[i].targetBusID;
-            if (!seen.insert(guid).second)
+            if (!seen.emplace(guid, sends[i].mode).second)
                 AddDiagnostic(diagnostics, DiagnosticCode::DuplicateSendTarget,
                               group, "targetBusID", i, guid);
             validateReference(guid, FieldGroupReferenceKind::Bus, "targetBusID", i);

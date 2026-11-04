@@ -26,7 +26,7 @@
 | C09 | 配置 | Transition Editor / Rules | 按匹配具体程度排序，默认规则最后 |
 | C12 | 配置 | Project Platform / Resample Policies | 按阈值排序，保留 Infinite 行 |
 | D01 | 展示 | Bus Inspector / Inputs | 路由反向查询，无序号列 |
-| D02 | 展示 | Bus Inspector / Receives | 路由反向查询，无序号列 |
+| D02 | 展示 | Bus Inspector / Receives | 路由反向查询，# 仅展示行号，不提供行移动 |
 | D03 | 展示 | Control / Variables | 变量试听值及作用域 |
 | D04 | 展示 | Control / Variable Bindings | 变量绑定与试听曲线 |
 | D05 | 展示 | Publisher / Pack | Init、General 与语言分区；以勾选确定导出范围 |

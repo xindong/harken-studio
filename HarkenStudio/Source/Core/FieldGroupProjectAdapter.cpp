@@ -252,8 +252,9 @@ FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
             std::get<SpatialRatingFieldGroup>(spatial.value->payload),
             output.value->source, send.value->source, spatial.value->source};
         for (const auto& row : groups.send.sends) {
-            if (row.targetBusID == groups.mainOutput.mainOutputBusRef)
-                fail(QStringLiteral("A Send target cannot also be the effective Main Output"),
+            if (row.mode != harkenprojectschema::SendMode::Sidechain
+                && row.targetBusID == groups.mainOutput.mainOutputBusRef)
+                fail(QStringLiteral("Only a Sidechain Send can target the effective Main Output"),
                      definition.guid, QStringLiteral("targetBusID"));
         }
         result.definitions.emplace(definition.guid, std::move(groups));

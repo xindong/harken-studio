@@ -209,6 +209,7 @@ private:
         QUuid to;
         SignalPathEdgeKind kind;
         std::optional<QUuid> routingSource;
+        SendMode mode = SendMode::Mix;
         bool operator==(const PathEdgeKey&) const = default;
     };
 

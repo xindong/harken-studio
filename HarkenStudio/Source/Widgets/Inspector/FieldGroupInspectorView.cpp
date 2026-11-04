@@ -25,10 +25,15 @@ QVariant payloadField(const FieldGroupPayload& payload, Property field)
         return std::get<MainOutputFieldGroup>(payload).outputBusVolume;
     case Property::Sends: {
         QVariantList rows;
-        for (const auto& row : std::get<SendFieldGroup>(payload).sends)
-            rows.append(QVariantMap{
+        for (const auto& row : std::get<SendFieldGroup>(payload).sends) {
+            QVariantMap entry{
                 {QStringLiteral("targetBusID"), fromFieldGroupGuid(row.targetBusID)},
-                {QStringLiteral("sendLevel"), row.sendLevel}});
+                {QStringLiteral("sendLevel"), row.sendLevel},
+                {QStringLiteral("mode"), static_cast<int>(row.mode)}};
+            if (!row.modeVolumesDb.empty())
+                entry.insert(QStringLiteral("modeVolumes"), sendModeVolumesJson(row.modeVolumesDb).toVariantMap());
+            rows.append(entry);
+        }
         return rows;
     }
     case Property::SpatialPanning:

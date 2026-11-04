@@ -245,9 +245,10 @@ Diagnostics validateView(const EditingContext& context,
             const auto outputBus = std::get<MainOutputFieldGroup>(output.value->payload).mainOutputBusRef;
             const auto& sends = std::get<SendFieldGroup>(send.value->payload).sends;
             for (std::size_t row = 0; row < sends.size(); ++row) {
-                if (sends[row].targetBusID == outputBus)
+                if (sends[row].mode != harkenprojectschema::SendMode::Sidechain
+                    && sends[row].targetBusID == outputBus)
                     addDiagnostic(diagnostics, EditCode::MainOutputSendConflict,
-                        QStringLiteral("A Send target cannot also be the effective Main Output"),
+                        QStringLiteral("Only a Sidechain Send can target the effective Main Output"),
                         fromFieldGroupGuid(definition.guid),
                         FieldGroupId::Send, scope, QStringLiteral("targetBusID"), row, outputBus);
             }

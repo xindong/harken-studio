@@ -624,10 +624,12 @@ SignalChainSource::edgesFromView(const SignalChainView& view,
                 e.toKind     = BlueprintNodeKind::Bus;
                 e.toId       = send.targetBusID;
                 e.edgeKind   = static_cast<uint8_t>(BlueprintEdgeKind::Send);
+                e.sendMode   = send.mode;
                 e.label      = (send.sendLevel != 0.0f)
-                                   ? QStringLiteral("Send (%1 dB)")
+                                   ? QStringLiteral("%1 (%2 dB)")
+                                         .arg(QString::fromLatin1(sendModeLabel(send.mode)))
                                          .arg(send.sendLevel, 0, 'f', 1)
-                                   : QStringLiteral("Send");
+                                   : QString::fromLatin1(sendModeLabel(send.mode));
                 e.styleRole  = BlueprintNodeRole::ReceiveBus;
                 out.push_back(e);
             }
@@ -643,8 +645,9 @@ SignalChainSource::edgesFromView(const SignalChainView& view,
                 e.toKind    = BlueprintNodeKind::Bus;
                 e.toId      = headID;
                 e.edgeKind  = static_cast<uint8_t>(BlueprintEdgeKind::Send);
-                e.label     = QStringLiteral("Send (%1)")
-                                  .arg(incomingLevelText(in.level));
+                e.sendMode  = in.mode;
+                e.label     = QStringLiteral("%1 (%2)")
+                                  .arg(QString::fromLatin1(sendModeLabel(in.mode)), incomingLevelText(in.level));
                 e.styleRole = BlueprintNodeRole::ReceiveBus;
                 out.push_back(e);
             }
@@ -746,7 +749,7 @@ SignalChainSource::doConnect(uint32_t fromId, uint32_t toId,
             const auto* fromMix = fromBus->comp<VMixNode>();
             const bool dupSend = fromMix && std::any_of(
                 fromMix->sends.begin(), fromMix->sends.end(),
-                [&](const VNX::Send& s) { return s.targetBusID == toId; });
+                [&](const VNX::Send& s) { return s.targetBusID == toId && s.mode == SendMode::Mix; });
             if (dupSend) {
                 r.error = QStringLiteral("duplicate");
                 r.effectiveType = QStringLiteral("send");
@@ -940,14 +943,17 @@ bool SignalChainSource::doDisconnect(uint32_t fromId, uint32_t toId,
     auto& undoMgr = UndoRedoManager::instance();
 
     if (fromBus != nullptr && fromItem == nullptr) {
-        if (kind.isEmpty() || kind == QStringLiteral("send")) {
+        if (kind.isEmpty() || kind == QStringLiteral("send") || kind == QStringLiteral("mix")
+            || kind == QStringLiteral("ducking") || kind == QStringLiteral("sidechain")) {
+            const auto mode = kind == QStringLiteral("ducking") ? SendMode::Ducking
+                : kind == QStringLiteral("sidechain") ? SendMode::Sidechain : SendMode::Mix;
             const auto* fromMix = fromBus->comp<VMixNode>();
             const bool hasSend = fromMix && std::any_of(
                 fromMix->sends.begin(), fromMix->sends.end(),
-                [&](const VNX::Send& s) { return s.targetBusID == toId; });
+                [&](const VNX::Send& s) { return s.targetBusID == toId && s.mode == mode; });
             if (hasSend) {
                 undoMgr.beginMacro(QStringLiteral("Blueprint Disconnect (Send)"));
-                undoMgr.push(new BlueprintSendDisconnectCommand(fromId, toId));
+                undoMgr.push(new BlueprintSendDisconnectCommand(fromId, toId, nullptr, mode));
                 undoMgr.endMacro();
                 return true;
             }

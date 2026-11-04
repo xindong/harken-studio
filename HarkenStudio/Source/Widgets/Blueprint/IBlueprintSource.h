@@ -68,6 +68,7 @@ struct BlueprintEdgeDesc {
     int               fromPortPairIndex = 0;
     int               toPortPairIndex = 0;
     NodeContentInfo   gainContent;
+    SendMode          sendMode = SendMode::Mix;
 };
 
 class IBlueprintSource : public QObject {

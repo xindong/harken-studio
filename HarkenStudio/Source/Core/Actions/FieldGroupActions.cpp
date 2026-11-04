@@ -89,11 +89,22 @@ ActionResult executeGroupEdit(ProjectManager* manager, const QString& action,
         for (const auto& entry : args.value(QStringLiteral("sends")).toArray()) {
             const auto row = entry.toObject();
             SendFieldGroupRow send;
-            if (!entry.isObject() || row.size() != 2
+            if (!entry.isObject() || row.size() != 2 + row.contains(QStringLiteral("mode"))
+                    + row.contains(QStringLiteral("modeVolumes"))
                 || !parseGuid(row.value(QStringLiteral("targetBusID")), send.targetBusID)
                 || !row.value(QStringLiteral("sendLevel")).isDouble())
                 return invalid(QStringLiteral("Invalid send row"));
+            const auto mode = row.value(QStringLiteral("mode"));
+            if (!mode.isUndefined() && (!mode.isDouble()
+                || mode.toDouble() != mode.toInt(-1)
+                || (mode.toInt(-1) != static_cast<int>(SendMode::Mix)
+                    && mode.toInt(-1) != static_cast<int>(SendMode::Ducking)
+                    && mode.toInt(-1) != static_cast<int>(SendMode::Sidechain))))
+                return invalid(QStringLiteral("Invalid send mode"));
             send.sendLevel = static_cast<float>(row.value(QStringLiteral("sendLevel")).toDouble());
+            send.mode = static_cast<SendMode>(mode.toInt());
+            if (!readSendModeVolumes(row.value(QStringLiteral("modeVolumes")), send.mode, send.modeVolumesDb))
+                return invalid(QStringLiteral("Invalid send mode volumes"));
             sends.sends.push_back(send);
         }
         request.operation = ReplaceFieldGroupSends{std::move(sends)};

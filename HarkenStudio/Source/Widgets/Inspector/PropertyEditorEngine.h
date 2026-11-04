@@ -152,7 +152,8 @@ private:
     bool applyGroupFieldView(FieldBinding& binding);
     void setGroupFieldWidgetValue(const FieldBinding& binding, const QVariant& value);
     QVariant groupFieldValue(const QString& field, const FieldGroupInspectorView* preview = nullptr) const;
-    bool groupReferenceSelectable(const QString& field, uint32_t candidate) const;
+    bool groupReferenceSelectable(const QString& field, uint32_t candidate,
+                                  harkenprojectschema::SendMode mode = harkenprojectschema::SendMode::Mix) const;
     bool canEditField(const FieldBinding& binding) const;
     bool groupContextMatches(const FieldGroupInspectorView& view, quint64 revision) const;
     void commitFieldChange(const QString& field, const QVariant& value,

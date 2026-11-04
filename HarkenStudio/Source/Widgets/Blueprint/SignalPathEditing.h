@@ -3,6 +3,7 @@
 #include "SignalPathGraph.h"
 #include "Core/FieldGroupEditing.h"
 #include "Core/Components/VSelection.h"
+#include "Core/BusRouteGraph.h"
 
 namespace VNX {
 
@@ -33,13 +34,6 @@ struct SignalPathDetach
     DefinitionFieldGroups rootGroups;
 };
 
-struct SignalPathBusSendRemoval
-{
-    QUuid from;
-    QUuid to;
-    float level = 0.0f;
-};
-
 struct SignalPathClipSnapshot
 {
     QUuid owner;
@@ -56,6 +50,7 @@ struct SignalPathSelectionSnapshot
 
 struct SignalPathConnectPlan
 {
+    QString projectId;
     QUuid from;
     QUuid to;
     bool busSend = false;
@@ -63,7 +58,9 @@ struct SignalPathConnectPlan
     std::vector<SignalPathReparent> moves;
     std::vector<SignalPathDetach> detachments;
     std::vector<FieldGroupParentSnapshot> busOutputResets;
-    std::vector<SignalPathBusSendRemoval> busSendRemovals;
+    std::vector<BusSendState> busSendsBefore;
+    std::vector<BusSendState> busSendsAfter;
+    std::vector<BusSendState> observedBusSends;
     std::vector<SignalPathClipSnapshot> observedClips;
     std::vector<SignalPathSelectionSnapshot> observedSelections;
     std::vector<FieldGroupDefinitionSnapshot> observedGroups;

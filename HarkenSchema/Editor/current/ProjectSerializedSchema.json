@@ -1167,6 +1167,17 @@
     "fieldGroupSendRow": {
       "additionalProperties": false,
       "properties": {
+        "mode": {
+          "enum": [
+            0,
+            1,
+            2
+          ],
+          "type": "integer"
+        },
+        "modeVolumes": {
+          "$ref": "#/$defs/sendModeVolumes"
+        },
         "sendLevel": {
           "maximum": 24,
           "minimum": -96,
@@ -1398,6 +1409,17 @@
     "send": {
       "additionalProperties": false,
       "properties": {
+        "mode": {
+          "enum": [
+            0,
+            1,
+            2
+          ],
+          "type": "integer"
+        },
+        "modeVolumes": {
+          "$ref": "#/$defs/sendModeVolumes"
+        },
         "sendLevel": {
           "type": "number"
         },
@@ -1409,6 +1431,27 @@
         "sendLevel",
         "targetBusRef"
       ],
+      "type": "object"
+    },
+    "sendModeVolumes": {
+      "additionalProperties": false,
+      "properties": {
+        "0": {
+          "maximum": 24,
+          "minimum": -96,
+          "type": "number"
+        },
+        "1": {
+          "maximum": 24,
+          "minimum": -96,
+          "type": "number"
+        },
+        "2": {
+          "maximum": 24,
+          "minimum": -96,
+          "type": "number"
+        }
+      },
       "type": "object"
     },
     "soundComponent": {

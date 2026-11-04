@@ -74,6 +74,7 @@ SignalPathActivity projectSignalPathActivity(
             for (size_t edgeIndex : path.edgeIndices) {
                 const auto& edge = graph.edges[edgeIndex];
                 if (visited[edgeIndex] || edge.from != pending[cursor]) continue;
+                if (edge.kind == SignalPathEdgeKind::Send && edge.mode != SendMode::Mix) continue;
                 if (cursor == 0) {
                     const auto target = nodeStableId(edge.to.occurrenceIndex);
                     if (edge.kind == SignalPathEdgeKind::Output && target != voice.outputBusId) continue;

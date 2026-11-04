@@ -139,6 +139,8 @@ void SignalPathSource::loadGraph(const ProjectData& project, SignalPathGraph gra
         case SignalPathEdgeKind::Send:
             desc.edgeKind = static_cast<uint8_t>(BlueprintEdgeKind::Send);
             desc.gainContent.sendVolume = signalPathGainValue(*groups, graph_, edgeIndex);
+            desc.sendMode = edge.mode;
+            desc.label = QString::fromLatin1(sendModeLabel(edge.mode));
             break;
         }
         edges_.push_back(std::move(desc));

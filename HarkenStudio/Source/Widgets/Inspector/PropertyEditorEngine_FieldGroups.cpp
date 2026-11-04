@@ -196,7 +196,11 @@ void PropertyEditorEngine::previewGroupSends(FieldBinding& binding, const QVaria
         const auto id = row.value(QStringLiteral("targetBusID")).toUInt(&valid);
         const auto* target = valid ? manager.findItemByObjectID(id) : nullptr;
         if (!target || target->type != ProjectItem::Type::Bus) return;
-        sends.sends.push_back({toFieldGroupGuid(target->guid), row.value(QStringLiteral("sendLevel")).toFloat()});
+        SendFieldGroupRow send{toFieldGroupGuid(target->guid), row.value(QStringLiteral("sendLevel")).toFloat(),
+            static_cast<SendMode>(row.value(QStringLiteral("mode")).toInt())};
+        if (!readSendModeVolumes(QJsonObject::fromVariantMap(row).value(QStringLiteral("modeVolumes")),
+                                 send.mode, send.modeVolumesDb)) return;
+        sends.sends.push_back(std::move(send));
     }
     const auto prepared = prepareFieldGroupEdit(*manager.currentProject(), {
         currentItem_->guid, FieldGroupId::Send, view.editScopes,
@@ -327,9 +331,14 @@ QVariant PropertyEditorEngine::groupFieldValue(
     if (*group == FieldGroupId::Send && view.editScopes.shared && view.fieldsEditable) {
         QVariantList rows;
         if (view.expectedBefore.send.shared.localHistory)
-            for (const auto& row : view.expectedBefore.send.shared.localHistory->sends)
-                rows.append(QVariantMap{{QStringLiteral("targetBusID"), fromFieldGroupGuid(row.targetBusID)},
-                    {QStringLiteral("sendLevel"), row.sendLevel}});
+            for (const auto& row : view.expectedBefore.send.shared.localHistory->sends) {
+                QVariantMap entry{{QStringLiteral("targetBusID"), fromFieldGroupGuid(row.targetBusID)},
+                    {QStringLiteral("sendLevel"), row.sendLevel},
+                    {QStringLiteral("mode"), static_cast<int>(row.mode)}};
+                if (!row.modeVolumesDb.empty())
+                    entry.insert(QStringLiteral("modeVolumes"), sendModeVolumesJson(row.modeVolumesDb).toVariantMap());
+                rows.append(entry);
+            }
         value.value = rows;
         value.uniform = true;
     }
@@ -346,7 +355,7 @@ QVariant PropertyEditorEngine::groupFieldValue(
     return rows;
 }
 
-bool PropertyEditorEngine::groupReferenceSelectable(const QString& field, uint32_t candidate) const
+bool PropertyEditorEngine::groupReferenceSelectable(const QString& field, uint32_t candidate, SendMode mode) const
 {
     const auto group = fieldGroup(field);
     const auto* target = ProjectManager::instance().findItemByObjectID(candidate);
@@ -357,15 +366,16 @@ bool PropertyEditorEngine::groupReferenceSelectable(const QString& field, uint32
     const auto peer = groupBindings_.find(*group == FieldGroupId::MainOutput
         ? FieldGroupId::Send : FieldGroupId::MainOutput);
     if (peer == groupBindings_.end() || !peer->second.view.valid) return false;
-    if (*group == FieldGroupId::Send) {
+    if (*group == FieldGroupId::Send && mode != SendMode::Sidechain) {
         const auto mainOutput = peer->second.view.field(QStringLiteral("mainOutputBusRef"));
         for (const auto& scope : mainOutput.perScope)
             if (scope.second.toUuid() == target->guid) return false;
-    } else {
+    } else if (*group == FieldGroupId::MainOutput) {
         const auto sends = peer->second.view.field(QStringLiteral("sends"));
         for (const auto& scope : sends.perScope)
             for (const auto& row : scope.second.toList())
-                if (row.toMap().value(QStringLiteral("targetBusID")).toUuid() == target->guid)
+                if (row.toMap().value(QStringLiteral("mode")).toInt() != static_cast<int>(SendMode::Sidechain)
+                    && row.toMap().value(QStringLiteral("targetBusID")).toUuid() == target->guid)
                     return false;
     }
     return true;
@@ -492,8 +502,12 @@ void PropertyEditorEngine::commitFieldChange(
             const auto row = entry.toMap();
             const auto ref = referenceActionValue(row.value(QStringLiteral("targetBusID")));
             if (!ref) return;
-            rows.append(QJsonObject{{QStringLiteral("targetBusID"), *ref},
-                {QStringLiteral("sendLevel"), QJsonValue::fromVariant(row.value(QStringLiteral("sendLevel")))}});
+            QJsonObject send{{QStringLiteral("targetBusID"), *ref},
+                {QStringLiteral("sendLevel"), QJsonValue::fromVariant(row.value(QStringLiteral("sendLevel")))},
+                {QStringLiteral("mode"), row.value(QStringLiteral("mode")).toInt()}};
+            if (row.contains(QStringLiteral("modeVolumes")))
+                send.insert(QStringLiteral("modeVolumes"), QJsonValue::fromVariant(row.value(QStringLiteral("modeVolumes"))));
+            rows.append(send);
         }
         action = QStringLiteral("replace_field_group_sends");
         args.insert(QStringLiteral("sends"), rows);

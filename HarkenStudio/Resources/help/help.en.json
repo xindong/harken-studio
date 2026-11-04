@@ -74,7 +74,7 @@
     },
     "mixnode.sends": {
       "title": "Sends",
-      "body": "Additional routes alongside the main output. Set a Target bus and Volume (-96 to +24 dB) for each send; each target can appear once."
+      "body": "Choose Mix, Ducking, or Sidechain with the add button, then select a Target bus. Mix adds audio, Ducking defines a route to a ducking detector, and Sidechain defines an auxiliary signal route for sidechain receivers. Volume (-96 to +24 dB) controls the source signal gain for all three modes; for Ducking, it controls detector input gain rather than target attenuation. Each row remembers Volume separately for each Mode while sharing Target. A mode used for the first time keeps the current Volume; returning to it restores its last value. Each target can appear once per mode. Conflicting Mode options are disabled. Mix and Ducking cannot share the Main Output target; Sidechain can. Currently, audition and export include only Mix; Ducking and Sidechain remain saved as editing configurations."
     },
     "audio.loopCount": {
       "title": "Loop",
