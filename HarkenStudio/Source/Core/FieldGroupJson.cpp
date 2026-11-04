@@ -148,6 +148,7 @@ bool ReadFieldValue(const JsonValue& value, std::vector<SendFieldGroupRow>& rows
             if (mode->kind != JsonValue::Kind::Number || converted.ec != std::errc{}
                 || converted.ptr != end
                 || (parsed != static_cast<unsigned>(harkenprojectschema::SendMode::Mix)
+                    && parsed != static_cast<unsigned>(harkenprojectschema::SendMode::Ducking)
                     && parsed != static_cast<unsigned>(harkenprojectschema::SendMode::Sidechain)))
                 return Fail(error, rowPath + ".mode", "expected a send mode");
             row.mode = static_cast<harkenprojectschema::SendMode>(parsed);

@@ -97,6 +97,7 @@ ActionResult executeGroupEdit(ProjectManager* manager, const QString& action,
             if (!mode.isUndefined() && (!mode.isDouble()
                 || mode.toDouble() != mode.toInt(-1)
                 || (mode.toInt(-1) != static_cast<int>(SendMode::Mix)
+                    && mode.toInt(-1) != static_cast<int>(SendMode::Ducking)
                     && mode.toInt(-1) != static_cast<int>(SendMode::Sidechain))))
                 return invalid(QStringLiteral("Invalid send mode"));
             send.sendLevel = static_cast<float>(row.value(QStringLiteral("sendLevel")).toDouble());

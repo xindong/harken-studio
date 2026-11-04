@@ -308,8 +308,7 @@ private:
     QString oldParentGuid_;
     QString newParentGuid_;
 
-    uint32_t conflictSendTargetBusId_ = 0;
-    float conflictSendLevel_ = 0.0f;
+    std::vector<Send> conflictSends_;
 
     bool wasTopLevelBinding_ = false;
     RootBindingSlot savedBindingSlot_;

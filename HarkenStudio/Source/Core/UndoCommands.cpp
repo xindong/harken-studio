@@ -912,11 +912,8 @@ MoveItemCommand::MoveItemCommand(
         && newParent->type == ProjectItem::Type::Bus) {
         if (const auto* mix = item->comp<VMixNode>()) {
             for (const auto& send : mix->sends) {
-                if (send.mode == SendMode::Mix && send.targetBusID == newParent->objectID) {
-                    conflictSendTargetBusId_ = send.targetBusID;
-                    conflictSendLevel_ = send.sendLevel;
-                    break;
-                }
+                if (send.mode != SendMode::Sidechain && send.targetBusID == newParent->objectID)
+                    conflictSends_.push_back(send);
             }
         }
     }
@@ -1161,9 +1158,9 @@ bool MoveItemCommand::undoHierarchy()
         applyTrackTimeline(oldTrackClips_);
         item_->markDirty();
 
-        if (conflictSendTargetBusId_ != 0) {
+        for (const auto& send : conflictSends_) {
             ProjectManager::instance().upsertSendInternal(
-                item_->objectID, conflictSendTargetBusId_, conflictSendLevel_);
+                item_->objectID, send.targetBusID, send.sendLevel, send.mode);
         }
         return true;
     }
@@ -1313,12 +1310,13 @@ bool MoveItemCommand::redoHierarchy()
         applyTrackTimeline(newTrackClips_);
         item_->markDirty();
 
-        if (conflictSendTargetBusId_ != 0
-            && ProjectManager::instance().removeSendInternal(
-                   item_->objectID, conflictSendTargetBusId_)) {
-            qWarning() << "[MoveItemCommand] Removed send" << item_->objectID << "->"
-                       << conflictSendTargetBusId_
-                       << "because the reparent made the target its main output";
+        for (const auto& send : conflictSends_) {
+            if (ProjectManager::instance().removeSendInternal(
+                    item_->objectID, send.targetBusID, send.mode)) {
+                qWarning() << "[MoveItemCommand] Removed send" << item_->objectID << "->"
+                           << send.targetBusID
+                           << "because the reparent made the target its main output";
+            }
         }
         return true;
     }

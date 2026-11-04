@@ -596,6 +596,7 @@ compileBusResult(
                     (!modeValue.isUndefined() && (!modeValue.isDouble() ||
                      modeValue.toDouble() != modeValue.toInt(-1) ||
                      (modeValue.toInt(-1) != static_cast<int>(SendMode::Mix) &&
+                      modeValue.toInt(-1) != static_cast<int>(SendMode::Ducking) &&
                       modeValue.toInt(-1) != static_cast<int>(SendMode::Sidechain))))) {
                     appendDiagnostic(diagnostics, ProjectInputDiagnosticCode::UnsupportedField,
                         QStringLiteral("Bus send row %1 is invalid for target platform")

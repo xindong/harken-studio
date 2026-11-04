@@ -131,13 +131,13 @@ inline const PropertySchema& VMixNode::schema()
         { .field="sends", .type=PropType::List, .label="Sends", .section=PropertySection::Send,
           .elementSchema={
               { .field="mode", .type=PropType::Enum, .label="Mode", .def=0,
-                .options={{"Mix", 0}, {"Sidechain", 2}},
-                .toolTip="Mix adds audio to the target bus. Sidechain supplies an auxiliary signal to sidechain receivers." },
+                .options={{"Mix", 0}, {"Ducking", 1}, {"Sidechain", 2}},
+                .toolTip="Mix adds audio to the target bus. Ducking drives built-in ducking on the target bus. Sidechain supplies an auxiliary signal to sidechain receivers." },
               { .field="targetBusID", .type=PropType::ObjectRef, .label="Target", .def=0u,
                 .refFilter=static_cast<int>(ProjectItem::Type::Bus) },
               { .field="sendLevel", .type=PropType::Float, .label="Volume", .unit=" dB",
                 .min=-96.0, .max=24.0, .def=0.0, .decimals=1,
-                .toolTip="Gain applied to the sent signal." },
+                .toolTip="Gain applied to the sent signal. In Ducking mode, this controls the detector input level, not the target bus attenuation." },
           },
           .get=[](const VNX::IComponent* c){
               QVariantList out;

@@ -1170,6 +1170,7 @@
         "mode": {
           "enum": [
             0,
+            1,
             2
           ],
           "type": "integer"
@@ -1408,6 +1409,7 @@
         "mode": {
           "enum": [
             0,
+            1,
             2
           ],
           "type": "integer"

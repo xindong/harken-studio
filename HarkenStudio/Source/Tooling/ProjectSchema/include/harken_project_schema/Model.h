@@ -217,11 +217,13 @@ inline constexpr BusId kReservedBusId{};
 
 enum class SendMode : std::uint8_t {
     Mix = 0,
+    Ducking = 1,
     Sidechain = 2
 };
 
 inline constexpr bool IsValidSendMode(SendMode mode) {
-    return mode == SendMode::Mix || mode == SendMode::Sidechain;
+    return mode == SendMode::Mix || mode == SendMode::Ducking
+        || mode == SendMode::Sidechain;
 }
 
 // One entry in a content object's send list: a level dispatched to a target bus

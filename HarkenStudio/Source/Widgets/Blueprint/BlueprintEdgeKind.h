@@ -14,6 +14,7 @@ inline const char* sendModeLabel(SendMode mode)
 {
     switch (mode) {
     case SendMode::Mix: return "Mix";
+    case SendMode::Ducking: return "Ducking";
     case SendMode::Sidechain: return "Sidechain";
     }
     return "";

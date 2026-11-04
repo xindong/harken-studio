@@ -106,7 +106,7 @@ TEST(FieldGroupJson, FiniteFloatBitsAndSendRowOrderRoundTripDeterministically)
     groups.mainOutput.shared = {FieldGroupMode::Local, MainOutputFieldGroup{kBus, -0.0f}};
     groups.send.shared = {FieldGroupMode::Local,
                          SendFieldGroup{{{kSendBus, 0.1f, SendMode::Sidechain},
-                                         {kBus, -0.0f, SendMode::Mix}}}};
+                                         {kBus, -0.0f, SendMode::Ducking}}}};
     SpatialRatingFieldGroup rating;
     rating.spatialPanning = std::numeric_limits<float>::denorm_min();
     rating.spatialAttenuationDistanceScaling = 3.333333f;

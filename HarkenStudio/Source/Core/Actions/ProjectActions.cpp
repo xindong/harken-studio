@@ -315,6 +315,7 @@ bool validatePlayableSends(ProjectManager& manager,
         if (!modeValue.isUndefined() && (!modeValue.isDouble()
             || modeValue.toDouble() != mode
             || (mode != static_cast<int>(SendMode::Mix)
+                && mode != static_cast<int>(SendMode::Ducking)
                 && mode != static_cast<int>(SendMode::Sidechain)))) return false;
         const auto sendMode = static_cast<SendMode>(modeValue.toInt());
         if (!targetValue.isDouble() || !levelValue.isDouble()) return false;

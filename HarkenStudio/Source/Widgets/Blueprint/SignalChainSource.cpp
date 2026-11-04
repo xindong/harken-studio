@@ -944,8 +944,9 @@ bool SignalChainSource::doDisconnect(uint32_t fromId, uint32_t toId,
 
     if (fromBus != nullptr && fromItem == nullptr) {
         if (kind.isEmpty() || kind == QStringLiteral("send") || kind == QStringLiteral("mix")
-            || kind == QStringLiteral("sidechain")) {
-            const auto mode = kind == QStringLiteral("sidechain") ? SendMode::Sidechain : SendMode::Mix;
+            || kind == QStringLiteral("ducking") || kind == QStringLiteral("sidechain")) {
+            const auto mode = kind == QStringLiteral("ducking") ? SendMode::Ducking
+                : kind == QStringLiteral("sidechain") ? SendMode::Sidechain : SendMode::Mix;
             const auto* fromMix = fromBus->comp<VMixNode>();
             const bool hasSend = fromMix && std::any_of(
                 fromMix->sends.begin(), fromMix->sends.end(),

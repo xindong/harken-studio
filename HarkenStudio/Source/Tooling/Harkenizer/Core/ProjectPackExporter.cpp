@@ -1639,6 +1639,7 @@ bool ProjectPackExporter::CollectSends(const ProjectData& project,
                 (modeValue.isUndefined() || (modeValue.isDouble() &&
                  modeValue.toDouble() == modeValue.toInt(-1) &&
                  (modeValue.toInt(-1) == static_cast<int>(SendMode::Mix) ||
+                  modeValue.toInt(-1) == static_cast<int>(SendMode::Ducking) ||
                   modeValue.toInt(-1) == static_cast<int>(SendMode::Sidechain))));
             const harkenstudio::ObjectId to = wellFormed
                 ? busIdentityForHandle(project, static_cast<uint32_t>(targetNumber))
