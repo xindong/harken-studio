@@ -23,7 +23,7 @@ enum class ListPresentation : uint8_t { Configuration, Display };
 enum class PropertyCategory : uint8_t { Basic, Route, Spatial, Limitation };
 
 enum class PropertySection : uint8_t {
-    None, Playback, Identity, Advanced, Source, Selection, Step, Dimension,
+    None, Playback, Status, Advanced, Source, Selection, Step, Dimension,
     Label, Clip, Custom, Output, Input, Send, Receive, Rating, PlaybackPriority, Effect
 };
 

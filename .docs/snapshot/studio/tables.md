@@ -145,7 +145,7 @@
 | Level | 干湿比 0～100%，默认 100%；0% 全干、100% 全湿；仅保存编辑配置并支持撤销，本阶段不参与试听或 Pack 运行时处理 |
 | Active | 新增默认开启，映射现有旁通配置；Bus 沿用既有支持，非 Bus 含关闭项时仍受现有试听／发布能力检查限制 |
 | 配置范围 | 直接编辑当前对象的效果器链，不提供 Inherit 或平台覆盖编辑 |
-| 共享资产 | Assets 的 Effect 桶保存类型与全部参数，New Effect > Limiter 为当前唯一类型入口；Effect Inspector 仅显示只读 Type 和 Notes，无独立 Effect Editor |
+| 共享资产 | Assets 的 Effect 桶保存类型与全部参数，New Effect > Limiter 为当前唯一类型入口；Effect Inspector 的 Basic > Status 显示只读 Type，Custom 显示 Notes，无独立 Effect Editor |
 | 删除资产 | 移除所有对应引用行，撤销一并恢复原顺序、Level 和 Active |
 
 ## Publisher 表格

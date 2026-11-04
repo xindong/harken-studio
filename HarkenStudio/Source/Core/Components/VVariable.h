@@ -82,7 +82,7 @@ public:
 inline const PropertySchema& VVariable::schema()
 {
     static const PropertySchema s = withOwner<VVariable>({
-        { .field="kind", .type=PropType::Enum, .label="Kind", .section=PropertySection::Identity,
+        { .field="kind", .type=PropType::Enum, .label="Kind", .section=PropertySection::Status,
           .def=1, .flags={ .segmented=true }, .options={{"Step",0},{"Smooth",1}},
           .get=[](const VNX::IComponent* c){
               return QVariant(static_cast<int>(static_cast<const VVariable*>(c)->kind));
@@ -96,7 +96,7 @@ inline const PropertySchema& VVariable::schema()
               var->normalizeDeclaration();
               return true;
           } },
-        { .field="writers", .type=PropType::Int, .label="Writers", .section=PropertySection::Identity,
+        { .field="writers", .type=PropType::Int, .label="Writers", .section=PropertySection::Status,
           .min=1, .max=3, .def=1, .flags={ .advanced=true },
           .get=[](const VNX::IComponent* c){
               return QVariant(static_cast<int>(static_cast<const VVariable*>(c)->writers));
@@ -110,7 +110,7 @@ inline const PropertySchema& VVariable::schema()
           .serializeWhen=[](const VNX::IComponent* c){
               return static_cast<const VVariable*>(c)->writers != 1;
           } },
-        { .field="unit", .type=PropType::String, .label="Unit", .section=PropertySection::Identity,
+        { .field="unit", .type=PropType::String, .label="Unit", .section=PropertySection::Status,
           .flags={ .advanced=true },
           .get=VNX_PROP_GET(VVariable, unit),
           .set=[](VNX::IComponent* c, const QVariant& v) -> bool {
@@ -120,14 +120,14 @@ inline const PropertySchema& VVariable::schema()
           .serializeWhen=[](const VNX::IComponent* c){
               return !static_cast<const VVariable*>(c)->unit.isEmpty();
           } },
-        { .field="precision", .type=PropType::Int, .label="Precision", .section=PropertySection::Identity,
+        { .field="precision", .type=PropType::Int, .label="Precision", .section=PropertySection::Status,
           .flags={ .advanced=true },
           .get=VNX_PROP_GETI(VVariable, precision),
           .set=VNX_PROP_SET_I(VVariable, precision),
           .serializeWhen=[](const VNX::IComponent* c){
               return static_cast<const VVariable*>(c)->precision != 0;
           } },
-        { .field="displayScale", .type=PropType::Int, .label="Display Scale", .section=PropertySection::Identity,
+        { .field="displayScale", .type=PropType::Int, .label="Display Scale", .section=PropertySection::Status,
           .min=0, .max=255, .def=0, .flags={ .advanced=true },
           .get=[](const VNX::IComponent* c){
               return QVariant(static_cast<int>(static_cast<const VVariable*>(c)->displayScale));
@@ -142,7 +142,7 @@ inline const PropertySchema& VVariable::schema()
           .serializeWhen=[](const VNX::IComponent* c){
               return static_cast<const VVariable*>(c)->displayScale != 0;
           } },
-        { .field="description", .type=PropType::String, .label="Description", .section=PropertySection::Identity,
+        { .field="description", .type=PropType::String, .label="Description", .section=PropertySection::Status,
           .flags={ .advanced=true },
           .get=VNX_PROP_GET(VVariable, description),
           .set=[](VNX::IComponent* c, const QVariant& v) -> bool {
@@ -155,7 +155,7 @@ inline const PropertySchema& VVariable::schema()
         // Storage rows: the serialized v6 keys and the by-name setters every
         // non-inspector writer (IPC, adapters, templates) reaches for. The page
         // edits the pair through the "range" row below instead.
-        { .field="rangeMin", .type=PropType::Float, .label="Range Min", .section=PropertySection::Identity,
+        { .field="rangeMin", .type=PropType::Float, .label="Range Min", .section=PropertySection::Status,
           .decimals=2,
           .get=VNX_PROP_GET(VVariable, rangeMin),
           .set=[](VNX::IComponent* c, const QVariant& v) -> bool {
@@ -167,7 +167,7 @@ inline const PropertySchema& VVariable::schema()
               var->normalizeDeclaration();
               return true;
           } },
-        { .field="rangeMax", .type=PropType::Float, .label="Range Max", .section=PropertySection::Identity,
+        { .field="rangeMax", .type=PropType::Float, .label="Range Max", .section=PropertySection::Status,
           .def=100.0, .decimals=2,
           .get=VNX_PROP_GET(VVariable, rangeMax),
           .set=[](VNX::IComponent* c, const QVariant& v) -> bool {
@@ -181,7 +181,7 @@ inline const PropertySchema& VVariable::schema()
           } },
         // The declared domain is one property: both bounds land in a single
         // write so no edit passes through an inverted or half-applied range.
-        { .field="range", .type=PropType::Range, .label="Range", .section=PropertySection::Identity,
+        { .field="range", .type=PropType::Range, .label="Range", .section=PropertySection::Status,
           .decimals=2, .flags={ .serialize=false },
           .get=[](const VNX::IComponent* c){
               const auto* var = static_cast<const VVariable*>(c);
@@ -209,7 +209,7 @@ inline const PropertySchema& VVariable::schema()
                                   kVariableRangeAuthoringBound,
                                   form.decimals, form.quantum, {} };
           } },
-        { .field="defaultValue", .type=PropType::Float, .label="Default Value", .section=PropertySection::Identity,
+        { .field="defaultValue", .type=PropType::Float, .label="Default Value", .section=PropertySection::Status,
           .decimals=2,
           .get=VNX_PROP_GET(VVariable, defaultValue),
           .set=[](VNX::IComponent* c, const QVariant& v) -> bool {

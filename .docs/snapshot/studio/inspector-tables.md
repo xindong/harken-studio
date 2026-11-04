@@ -44,7 +44,7 @@
 | Effects / 替换 | 保留行位置、引用行 GUID、Active 和 Level；类型与参数归被引用的共享 Effect 资产所有 |
 | Effects / Level | 干湿比范围 0～100%，默认 100%；0% 全干、100% 全湿；随工程保存并支持撤销，本阶段仅作为编辑配置，不参与试听或 Pack 运行时处理 |
 | Effects / Active | 新增默认开启，映射现有旁通配置；Bus 沿用既有支持，非 Bus 含关闭项时仍受现有试听／发布能力检查限制 |
-| Effects / 资产 | Assets 的 Effect 桶通过 New Effect > Limiter 新建；Effect Inspector 仅显示只读 Type 和 Notes，参数编辑暂不开放，无独立 Effect Editor |
+| Effects / 资产 | Assets 的 Effect 桶通过 New Effect > Limiter 新建；Effect Inspector 的 Basic > Status 显示只读 Type，Custom 显示 Notes，参数编辑暂不开放，无独立 Effect Editor |
 | Effects / 删除资产 | 删除 Effect 移除所有引用行；撤销一并恢复引用行及其原顺序、Level、Active |
 | Sends / 新增 | 加号先选择 Mix、Ducking 或 Sidechain，再选择目标 Bus；取消任一步不新增行 |
 | Sends / Mode | 可编辑并参与保存、继承和撤销；旧数据缺失 Mode 时按 Mix 解释；同一目标按 Mode 区分，单个 Mode 内目标唯一；与 Output 冲突或重复的 Mode 选项禁用 |
@@ -63,6 +63,7 @@
 | Labels / 编辑结果 | 保留标签身份与名称，按索引升序排列，选择跟随标签；支持一次撤销与重做，不自动填空或重编号 |
 | Labels / 新增 | 加号补当前范围内最低空闲索引 |
 | Labels / 编辑中切换 | 对象、范围、权限或外部数据变化取消草稿；相同数据刷新保留草稿 |
+| Variable / Status | Basic > Status 包含 Kind、Range、Default Value 等变量状态字段 |
 | Variable 曲线 / Step | 标签、整数刻度与阶梯预览 |
 | Variable 曲线 / Smooth | 浮点刻度与连续曲线；切换类型刷新显示但不改写曲线 |
 

@@ -13,7 +13,7 @@ const PropertySchema& effectInspectorSchema()
         type.ownerComponent = ComponentType::Effect;
         type.type = PropType::Enum;
         type.label = QStringLiteral("Type");
-        type.section = PropertySection::Effect;
+        type.section = PropertySection::Status;
         type.options = {{EffectChainSemantics::displayName(EffectType::Limiter),
                          EffectChainSemantics::typeName(EffectType::Limiter)}};
         type.flags.readOnly = true;

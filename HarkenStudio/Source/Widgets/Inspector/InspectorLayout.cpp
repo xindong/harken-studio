@@ -28,7 +28,7 @@ const std::vector<InspectorSectionInfo>& inspectorSections()
 {
     static const std::vector<InspectorSectionInfo> sections = {
         {PropertySection::Playback, PropertyCategory::Basic, "playback", "Playback"},
-        {PropertySection::Identity, PropertyCategory::Basic, "identity", "Identity"},
+        {PropertySection::Status, PropertyCategory::Basic, "status", "Status"},
         {PropertySection::Advanced, PropertyCategory::Basic, "advanced", "Advanced"},
         {PropertySection::Source, PropertyCategory::Basic, "sources", "Source"},
         {PropertySection::Selection, PropertyCategory::Basic, "selection", "Selection"},
