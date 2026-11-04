@@ -353,6 +353,7 @@ private:
     std::vector<SignalPathEndpoint> nodeDragSources_;
 
     bool evaluateConnect_(NodePin* source, NodePin* target, QString& reason, bool addSend = false) const;
+    std::optional<SignalPathEndpoint> pathEndpoint_(NodeItem* node) const;
     std::optional<SignalPathEndpoint> pathEndpoint_(NodePin* pin) const;
     NodeItem* connectTargetAt_(const QPoint& position, NodePin*& pin, bool nodeDrop = false) const;
     SignalPathConnectPlan prepareConnect_(NodePin* source, NodeItem* target, NodePin* targetPin, bool addSend) const;
