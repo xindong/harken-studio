@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Core/FontManager.h"
 #include "Core/ThemeSnapshot.h"
 
 #include <QRect>
@@ -32,6 +33,9 @@ struct TimeAxisTick
     int pixel = 0;
     bool major = false;
     QString label;
+    bool beat = false;
+    QString secondaryLabel{};
+    int64_t coordinate = 0;
 };
 
 struct TimeAxisTicks
@@ -41,15 +45,23 @@ struct TimeAxisTicks
     QVector<TimeAxisTick> ticks;
 };
 
+enum class TimeAxisLabelFormat { Seconds, MinutesSecondsMilliseconds };
+enum class TimeAxisLabelAlignment { Center, AfterTick };
+
 TimeAxisTicks buildTimeAxisTicks(double start, double span, int width,
     double minimumStep, int maximumDecimals, const QFontMetrics& metrics);
 TimeAxisTicks buildNanosecondTimeAxisTicks(NanosecondPosition start, double span,
-    int width, const QFontMetrics& metrics);
+    int width, const QFontMetrics& metrics, int64_t minimumStep = 1,
+    TimeAxisLabelFormat format = TimeAxisLabelFormat::Seconds);
 QString formatTimeNanoseconds(int64_t nanoseconds, int minimumDecimals = 0, int maximumDecimals = 9);
+QString formatTimeMinutesSecondsMilliseconds(int64_t nanoseconds,
+    int minimumDecimals = 3, int maximumDecimals = 3);
 void drawTimeAxisRuler(QPainter& painter, const ThemeColors& colors,
-    const QRect& bounds, const TimeAxisTicks& ticks);
+    const QRect& bounds, const TimeAxisTicks& ticks, FontRole role = FontRole::Axis,
+    TimeAxisLabelAlignment alignment = TimeAxisLabelAlignment::Center, bool pairedLabels = false);
 void drawTimeAxisGrid(QPainter& painter, const QColor& majorColor,
-    const QRect& bounds, const TimeAxisTicks& ticks, const QColor& minorColor = {});
+    const QRect& bounds, const TimeAxisTicks& ticks, const QColor& minorColor = {},
+    const QColor& beatColor = {});
 void drawTimeAxisHandle(QPainter& painter, const QColor& color,
     const QColor& grooveColor, const QRect& bounds);
 

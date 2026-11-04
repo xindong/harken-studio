@@ -169,7 +169,7 @@ QVector<WorkspaceWindowDescriptor> defaultWorkspaceWindowDescriptors()
             {DefaultDockArea::Floating, QString(), false},
             MaterializationPolicy::OnDemand,
             ClosePolicy::Destroy,
-            AvailabilityPolicy::FeatureDisabled
+            AvailabilityPolicy::Always
         },
         {
             QStringLiteral("MonitorPerformance"),

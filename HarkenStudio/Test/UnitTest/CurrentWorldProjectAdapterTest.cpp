@@ -341,6 +341,31 @@ TEST(CurrentWorldProjectAdapter, SelectionHistoryAndOccurrencesSurviveAuthoringB
     EXPECT_TRUE(HarkenEditor::Bridge::compileCurrentWorldRequest(*request, true).ok());
 }
 
+TEST(CurrentWorldProjectAdapter, UnsupportedTransitionTimingIsNeverSilentlyDiscarded)
+{
+    std::shared_ptr<ProjectItem> container;
+    auto project = makeRandomProject(&container, nullptr);
+    auto* selection = container->comp<VSelection>();
+    selection->playType = SelectionPlayType::Queue;
+    selection->transitions.rules.front().exitTiming = TransitionExitTiming::Immediate;
+    QString error;
+    CurrentWorldBuildStatus status = CurrentWorldBuildStatus::InvalidAuthoring;
+    ASSERT_NE(buildCurrentWorldSyncRequest(project, std::nullopt, &error, &status), nullptr)
+        << error.toStdString();
+    ASSERT_EQ(status, CurrentWorldBuildStatus::Ready);
+
+    for (const auto timing : {TransitionExitTiming::NextBeat, TransitionExitTiming::NextBar,
+                              TransitionExitTiming::NextMarker, TransitionExitTiming::ExitMarker}) {
+        SCOPED_TRACE(static_cast<int>(timing));
+        selection->transitions.rules.front().exitTiming = timing;
+        error.clear();
+        status = CurrentWorldBuildStatus::Ready;
+        EXPECT_EQ(buildCurrentWorldSyncRequest(project, std::nullopt, &error, &status), nullptr);
+        EXPECT_EQ(status, CurrentWorldBuildStatus::CapabilityUnavailable);
+        EXPECT_FALSE(error.isEmpty());
+    }
+}
+
 TEST(CurrentWorldProjectAdapter, ScalarUpdatesMatchFullCompilationAcrossPlatformsAndRestoration)
 {
     namespace Bridge = HarkenEditor::Bridge;

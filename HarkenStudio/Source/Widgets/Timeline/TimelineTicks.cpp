@@ -4,6 +4,7 @@
 #include "Core/NumericFormat.h"
 #include "Core/Timeline/TimelineCoordinates.h"
 #include "Core/Timeline/TimelineSemantics.h"
+#include "Widgets/Common/TimeAxis.h"
 
 #include <algorithm>
 #include <cmath>
@@ -41,17 +42,9 @@ int64_t floorDiv(int64_t value, int64_t divisor)
     return quotient;
 }
 
-int64_t coordinateAt(int pixel, int64_t origin, double zoom, int64_t unit, int pixelOrigin)
+int64_t coordinateAt(double pixel, int64_t origin, double zoom, int64_t unit, int pixelOrigin)
 {
-    const long double value = static_cast<long double>(origin)
-        + (static_cast<long double>(pixel) - pixelOrigin)
-            * static_cast<long double>(unit)
-            / static_cast<long double>(zoom);
-    if (value > static_cast<long double>(std::numeric_limits<int64_t>::max()))
-        return std::numeric_limits<int64_t>::max();
-    if (value < static_cast<long double>(std::numeric_limits<int64_t>::min()))
-        return std::numeric_limits<int64_t>::min();
-    return static_cast<int64_t>(std::llround(value));
+    return NanosecondPosition{origin}.shifted((pixel - pixelOrigin) * double(unit) / zoom).rounded();
 }
 
 TimelineTickSet buildAbsoluteTicks(int64_t origin,
@@ -119,7 +112,7 @@ TimelineTickSet buildAbsoluteTicks(int64_t origin,
     set.majorStep = majorStep;
     set.minorStep = minorStep;
     const int64_t visibleStart = coordinateAt(viewOffset, origin, zoom, unit, pixelOrigin);
-    const int64_t visibleEnd = coordinateAt(viewOffset + width, origin, zoom, unit, pixelOrigin);
+    const int64_t visibleEnd = coordinateAt(double(viewOffset) + width, origin, zoom, unit, pixelOrigin);
     const int64_t first = floorDiv(visibleStart, minorStep) * minorStep;
     for (int64_t coordinate = first; coordinate <= visibleEnd;
          coordinate = saturatingMul(floorDiv(coordinate, minorStep) + 1, minorStep)) {
@@ -145,6 +138,52 @@ TimelineTickSet buildAbsoluteTicks(int64_t origin,
     return set;
 }
 
+TimelineTickSet buildMusicalTicks(const SegmentTimeSpec& spec,
+                                  int64_t origin, int viewOffset, double zoom,
+                                  int width, int64_t unit,
+                                  const ThemeMetrics::Timeline& metrics, int pixelOrigin)
+{
+    constexpr int64_t minimumStep = TimelineCoordinates::kPpq / 4;
+    const int64_t bar = saturatingMul(unit, spec.meterMap.front().numerator);
+    const double pixelsPerTick = zoom / double(unit);
+    int64_t labelStep = bar;
+    while ((labelStep < minimumStep || double(labelStep) * pixelsPerTick < metrics.minLabelSpacing)
+        && labelStep <= std::numeric_limits<int64_t>::max() / 2)
+        labelStep *= 2;
+    int64_t minorStep = bar;
+    if (unit >= minimumStep && double(unit) * pixelsPerTick >= metrics.minTickSpacing) {
+        minorStep = unit;
+        while (minorStep / 2 >= minimumStep && minorStep % 2 == 0
+            && double(minorStep / 2) * pixelsPerTick >= metrics.minTickSpacing)
+            minorStep /= 2;
+    } else {
+        while ((minorStep < minimumStep || double(minorStep) * pixelsPerTick < metrics.minTickSpacing)
+            && minorStep <= std::numeric_limits<int64_t>::max() / 2)
+            minorStep *= 2;
+    }
+    TimelineTickSet set;
+    set.majorStep = labelStep;
+    set.minorStep = minorStep;
+    const int64_t visibleStart = coordinateAt(viewOffset, origin, zoom, unit, pixelOrigin);
+    const int64_t visibleEnd = coordinateAt(double(viewOffset) + width, origin, zoom, unit, pixelOrigin);
+    int64_t coordinate = visibleStart - visibleStart % minorStep;
+    if (coordinate > visibleStart && coordinate >= std::numeric_limits<int64_t>::min() + minorStep)
+        coordinate -= minorStep;
+    for (; coordinate <= visibleEnd;) {
+        TimelineTick tick;
+        tick.coordinate = coordinate;
+        tick.major = coordinate % bar == 0;
+        tick.beat = coordinate % unit == 0;
+        tick.labeled = coordinate % labelStep == 0;
+        if (tick.labeled)
+            tick.label = formatTimelineBar(coordinate, spec);
+        set.ticks.append(tick);
+        if (coordinate > std::numeric_limits<int64_t>::max() - minorStep) break;
+        coordinate += minorStep;
+    }
+    return set;
+}
+
 
 }
 
@@ -156,6 +195,13 @@ int64_t timelineCoordinateUnit(const SegmentTimeSpec& spec)
 int64_t timelineSnapGrid(const SegmentTimeSpec& spec)
 {
     return TimelineSemantics::snapGridFor(spec);
+}
+
+QString formatTimelineBar(int64_t coordinate, const SegmentTimeSpec& spec)
+{
+    const int64_t bar = saturatingMul(timelineCoordinateUnit(spec), spec.meterMap.front().numerator);
+    const int64_t index = floorDiv(coordinate, bar);
+    return index >= 0 ? QString::number(qulonglong(index) + 1) : QString::number(index + 1);
 }
 
 TimelineTickSet buildTimelineTicks(const SegmentTimeSpec& spec,
@@ -173,6 +219,9 @@ TimelineTickSet buildTimelineTicks(const SegmentTimeSpec& spec,
     if (!std::isfinite(pixelsPerUnit) || pixelsPerUnit <= 0.0)
         return {};
     const int span = std::max(1, width);
+    if (spec.domain == TimelineDomain::Musical)
+        return buildMusicalTicks(spec, viewOrigin, viewOffset, pixelsPerUnit, span,
+            unit, metrics, pixelOrigin);
     return buildAbsoluteTicks(viewOrigin, viewOffset, pixelsPerUnit, span,
                               unit, snapGrid, metrics, pixelOrigin);
 }

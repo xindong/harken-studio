@@ -6,6 +6,7 @@
 #include "Components/VSelection.h"
 #include "Components/VTrack.h"
 #include "ProjectTypes.h"
+#include "Timeline/TimelineCoordinates.h"
 
 #include <QSet>
 
@@ -101,12 +102,7 @@ bool supportsObjectColorEditing()
 
 bool supportsMusicalTime()
 {
-    return false;
-}
-
-QString musicalTimeRestriction()
-{
-    return QStringLiteral("This version supports absolute-time authoring only; musical time, tempo maps and meter maps are read-only.");
+    return true;
 }
 
 const std::vector<TransitionExitTiming>& allowedTransitionExitTimings()
@@ -114,6 +110,8 @@ const std::vector<TransitionExitTiming>& allowedTransitionExitTimings()
     static const std::vector<TransitionExitTiming> timings{
         TransitionExitTiming::Immediate,
         TransitionExitTiming::NaturalEnd,
+        TransitionExitTiming::NextBeat,
+        TransitionExitTiming::NextBar,
         TransitionExitTiming::NextMarker,
         TransitionExitTiming::ExitMarker};
     return timings;
@@ -139,20 +137,15 @@ TransitionTableDef defaultTransitionTable()
 
 TimelineValidation validateSegmentTime(const SegmentTimeSpec& time)
 {
-    if (time.domain != TimelineDomain::Absolute
-        || !time.tempoMap.empty() || !time.meterMap.empty())
-        return TimelineValidation::failure(
-            TimelineError::AuthoringRestricted, musicalTimeRestriction());
-    return TimelineValidation::success();
+    return TimelineCoordinates::validate(time);
 }
 
 TimelineValidation validateSegmentTime(const QJsonObject& time)
 {
-    if (time.value(QStringLiteral("domain")).toString() == QStringLiteral("Musical")
-        || !time.value(QStringLiteral("tempoMap")).toArray().isEmpty()
-        || !time.value(QStringLiteral("meterMap")).toArray().isEmpty())
+    QString error;
+    if (!SegmentTimeSpec::fromJson(time, &error))
         return TimelineValidation::failure(
-            TimelineError::AuthoringRestricted, musicalTimeRestriction());
+            TimelineError::InvalidTimeSpec, error);
     return TimelineValidation::success();
 }
 
@@ -167,20 +160,16 @@ TimelineValidation validateTemplate(const QJsonObject& templateData)
         pending.pop_back();
         const auto components = item.value(QStringLiteral("components")).toObject();
         const auto segment = components.value(QStringLiteral("segmenttimeline")).toObject();
-        const auto time = validateSegmentTime(segment.value(QStringLiteral("segmentTime")).toObject());
-        if (!time) return time;
+        if (segment.contains(QStringLiteral("segmentTime"))) {
+            const auto time = validateSegmentTime(segment.value(QStringLiteral("segmentTime")).toObject());
+            if (!time) return time;
+        }
         const auto selection = components.value(QStringLiteral("selection")).toObject();
-        if (item.value(QStringLiteral("type")).toString() == QStringLiteral("Container")
-            && !selection.contains(QStringLiteral("transitions")))
-            return validateTransitions(canonicalTransitionTable());
         if (selection.contains(QStringLiteral("transitions"))) {
-            const auto rules = selection.value(QStringLiteral("transitions")).toObject()
-                .value(QStringLiteral("rules")).toArray();
-            for (const auto& value : rules) {
-                const auto timing = value.toObject().value(QStringLiteral("exitTiming")).toString();
-                if (timing == QStringLiteral("NextBeat") || timing == QStringLiteral("NextBar"))
-                    return validateTransitions(canonicalTransitionTable());
-            }
+            QString error;
+            if (!TransitionTableDef::fromJson(
+                    selection.value(QStringLiteral("transitions")).toObject(), &error))
+                return TimelineValidation::failure(TimelineError::InvalidJson, error);
         }
         for (const auto& child : item.value(QStringLiteral("children")).toArray())
             pending.push_back(child.toObject());
@@ -210,16 +199,18 @@ TimelineValidation validateNewSubtree(const ProjectItem& item,
 }
 
 TimelineValidation validateTransitions(const TransitionTableDef& replacement,
-                                       const TransitionTableDef* previous)
+                                       const TransitionTableDef*)
 {
+    const auto validity = replacement.validate();
+    if (!validity)
+        return TimelineValidation::failure(
+            TimelineError::InvalidJson, validity.message, validity.index);
     for (size_t index = 0; index < replacement.rules.size(); ++index) {
         const auto& rule = replacement.rules[index];
         if (allowsTransitionExitTiming(rule.exitTiming)) continue;
-        if (previous && std::find(previous->rules.begin(), previous->rules.end(), rule)
-                != previous->rules.end()) continue;
         return TimelineValidation::failure(
-            TimelineError::AuthoringRestricted,
-            QStringLiteral("This version does not support authoring NextBeat or NextBar transitions."),
+            TimelineError::InvalidJson,
+            QStringLiteral("Unknown transition exit timing."),
             static_cast<int>(index));
     }
     return TimelineValidation::success();

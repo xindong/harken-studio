@@ -75,6 +75,27 @@ QString formatTimeNanoseconds(int64_t nanoseconds, int minimumDecimals, int maxi
         + (fraction.isEmpty() ? QString() : QLatin1Char('.') + fraction);
 }
 
+QString formatTimeMinutesSecondsMilliseconds(int64_t nanoseconds,
+    int minimumDecimals, int maximumDecimals)
+{
+    maximumDecimals = std::clamp(maximumDecimals, 0, 3);
+    minimumDecimals = std::clamp(minimumDecimals, 0, maximumDecimals);
+    uint64_t quantum = 1000000;
+    for (int i = maximumDecimals; i < 3; ++i)
+        quantum *= 10;
+    const uint64_t magnitude = nanoseconds < 0 ? uint64_t(0) - uint64_t(nanoseconds)
+                                              : uint64_t(nanoseconds);
+    const uint64_t milliseconds = (magnitude + quantum / 2) / quantum * (quantum / 1000000);
+    QString fraction = QString::number(milliseconds % 1000)
+        .rightJustified(3, QLatin1Char('0')).left(maximumDecimals);
+    while (fraction.size() > minimumDecimals && fraction.endsWith(QLatin1Char('0')))
+        fraction.chop(1);
+    return (nanoseconds < 0 && milliseconds > 0 ? QStringLiteral("-") : QString())
+        + QString::number(milliseconds / 60000).rightJustified(2, QLatin1Char('0'))
+        + QLatin1Char(':') + QString::number(milliseconds / 1000 % 60).rightJustified(2, QLatin1Char('0'))
+        + (fraction.isEmpty() ? QString() : QLatin1Char('.') + fraction);
+}
+
 TimeAxisTicks buildTimeAxisTicks(double start, double span, int width,
     double minimumStep, int maximumDecimals, const QFontMetrics& metrics)
 {
@@ -109,24 +130,40 @@ TimeAxisTicks buildTimeAxisTicks(double start, double span, int width,
 }
 
 TimeAxisTicks buildNanosecondTimeAxisTicks(NanosecondPosition start, double span,
-    int width, const QFontMetrics& metrics)
+    int width, const QFontMetrics& metrics, int64_t minimumStep, TimeAxisLabelFormat format)
 {
     TimeAxisTicks result;
     if (span <= 0.0 || !std::isfinite(span) || width <= 0)
         return result;
     const int estimatedDecimals = std::clamp(int(std::ceil(-std::log10(span / 1e9))) + 2, 0, 9);
-    const auto labelWidthAt = [&](int64_t coordinate) {
+    const auto labelWidthAt = [&](int64_t coordinate, int decimals) {
+        if (format == TimeAxisLabelFormat::MinutesSecondsMilliseconds)
+            return metrics.horizontalAdvance(
+                formatTimeMinutesSecondsMilliseconds(coordinate, decimals, decimals)) + 12;
         QString label = formatTimeNanoseconds(coordinate).section(QLatin1Char('.'), 0, 0);
         if (estimatedDecimals > 0)
             label += QLatin1Char('.') + QString(estimatedDecimals, QLatin1Char('0'));
         return metrics.horizontalAdvance(label) + 12;
     };
-    const int labelWidth = std::max({48, labelWidthAt(start.rounded()), labelWidthAt(start.shifted(span).rounded())});
-    const int64_t majorStep = static_cast<int64_t>(std::clamp(
-        tickStep(std::max(1.0, span * labelWidth / width)), 1.0, 5e18));
-    const int64_t minorStep = majorStep >= 5 ? majorStep / 5 : majorStep;
+    const auto stepForDecimals = [&](int decimals) {
+        const int labelWidth = std::max({48, labelWidthAt(start.rounded(), decimals),
+            labelWidthAt(start.shifted(span).rounded(), decimals)});
+        return static_cast<int64_t>(std::clamp(
+            tickStep(std::max(double(std::max<int64_t>(1, minimumStep)), span * labelWidth / width)), 1.0, 5e18));
+    };
+    int64_t majorStep = stepForDecimals(0);
+    if (format == TimeAxisLabelFormat::MinutesSecondsMilliseconds) {
+        for (;;) {
+            const int64_t nextStep = stepForDecimals(axisDecimalsForStep(double(majorStep) / 1e9, 3));
+            if (nextStep <= majorStep)
+                break;
+            majorStep = nextStep;
+        }
+    }
+    const int64_t minorStep = majorStep >= 5 && majorStep / 5 >= minimumStep ? majorStep / 5 : majorStep;
     result.majorStep = double(majorStep) / 1e9;
     result.minorStep = double(minorStep) / 1e9;
+    const int decimals = axisDecimalsForStep(result.majorStep, 3);
     const int64_t remainder = start.nanoseconds % minorStep;
     const int64_t offset = remainder < 0 ? -remainder
         : remainder > 0 ? minorStep - remainder : start.fraction > 0.0 ? minorStep : 0;
@@ -142,41 +179,65 @@ TimeAxisTicks buildNanosecondTimeAxisTicks(NanosecondPosition start, double span
         const int x = int(std::lround(distance / span * (width - 1)));
         const bool major = value % majorStep == 0;
         if (major) {
-            labels.append(formatTimeNanoseconds(value));
-            labelIndices.append(result.ticks.size());
+            const QString label = format == TimeAxisLabelFormat::MinutesSecondsMilliseconds
+                ? formatTimeMinutesSecondsMilliseconds(value, decimals, decimals) : formatTimeNanoseconds(value);
+            if (format == TimeAxisLabelFormat::Seconds || labels.isEmpty() || label != labels.back()) {
+                labels.append(label);
+                labelIndices.append(result.ticks.size());
+            }
         }
-        result.ticks.append({double(value) / 1e9, x, major, {}});
+        result.ticks.append({double(value) / 1e9, x, major, {}, false, {}, value});
         if (value > std::numeric_limits<int64_t>::max() - minorStep)
             break;
         value += minorStep;
     }
-    labels = compactAxisLabels(std::move(labels));
+    if (format == TimeAxisLabelFormat::Seconds)
+        labels = compactAxisLabels(std::move(labels));
     for (int i = 0; i < labels.size(); ++i)
         result.ticks[labelIndices[i]].label = labels[i];
     return result;
 }
 
 void drawTimeAxisRuler(QPainter& painter, const ThemeColors& colors,
-    const QRect& bounds, const TimeAxisTicks& ticks)
+    const QRect& bounds, const TimeAxisTicks& ticks, FontRole role,
+    TimeAxisLabelAlignment alignment, bool pairedLabels)
 {
     painter.save();
     painter.setClipRect(bounds, Qt::IntersectClip);
     painter.setRenderHint(QPainter::Antialiasing, false);
-    painter.setFont(FontManager::instance().getFont(FontRole::Axis));
-    const QFontMetrics metrics(painter.font(), painter.device());
+    const QFont primaryFont = FontManager::instance().getFont(role);
+    const QFont secondaryFont = FontManager::instance().getFont(FontRole::Axis);
+    const QFontMetrics metrics(primaryFont, painter.device());
+    const QFontMetrics secondaryMetrics(secondaryFont, painter.device());
+    const int secondaryHeight = pairedLabels ? secondaryMetrics.height() : 0;
     int lastLabelRight = bounds.left();
     for (const auto& tick : ticks.ticks) {
         const int x = bounds.left() + tick.pixel;
         painter.setPen(colors.borderTick);
-        painter.drawLine(x, bounds.bottom() + 1 - (tick.major ? 4 : 2), x, bounds.bottom());
+        const int tickHeight = tick.beat ? (tick.major ? 6 : 4) : (tick.major ? 4 : 2);
+        painter.drawLine(x, bounds.bottom() + 1 - tickHeight, x, bounds.bottom());
         if (tick.label.isEmpty())
             continue;
-        const int textWidth = metrics.horizontalAdvance(tick.label);
-        const int left = std::clamp(x - textWidth / 2, bounds.left() + 4,
-            std::max(bounds.left() + 4, bounds.right() - 4 - textWidth));
+        const int textWidth = std::max(metrics.horizontalAdvance(tick.label),
+            pairedLabels ? secondaryMetrics.horizontalAdvance(tick.secondaryLabel) : 0);
+        const int left = alignment == TimeAxisLabelAlignment::AfterTick ? x + 4
+            : std::clamp(x - textWidth / 2, bounds.left() + 4,
+                std::max(bounds.left() + 4, bounds.right() - 4 - textWidth));
         if (left >= lastLabelRight + 4 && left + textWidth <= bounds.right() - 4) {
+            if (pairedLabels && !tick.secondaryLabel.isEmpty()) {
+                painter.setFont(secondaryFont);
+                painter.setPen(colors.textMuted);
+                painter.drawText(QRect(left, bounds.top(), textWidth, secondaryHeight),
+                    Qt::AlignLeft | Qt::AlignVCenter, tick.secondaryLabel);
+                painter.setPen(colors.borderTick);
+                painter.drawLine(left, bounds.top() + secondaryHeight - 1,
+                    left + textWidth - 1, bounds.top() + secondaryHeight - 1);
+            }
+            painter.setFont(primaryFont);
             painter.setPen(colors.textSecondary);
-            painter.drawText(QRect(left, bounds.top(), textWidth, bounds.height() - 5), Qt::AlignCenter, tick.label);
+            painter.drawText(QRect(left, bounds.top() + secondaryHeight, textWidth,
+                    bounds.height() - secondaryHeight - 5),
+                Qt::AlignLeft | Qt::AlignVCenter, tick.label);
             lastLabelRight = left + textWidth;
         }
     }
@@ -184,15 +245,18 @@ void drawTimeAxisRuler(QPainter& painter, const ThemeColors& colors,
 }
 
 void drawTimeAxisGrid(QPainter& painter, const QColor& majorColor,
-    const QRect& bounds, const TimeAxisTicks& ticks, const QColor& minorColor)
+    const QRect& bounds, const TimeAxisTicks& ticks, const QColor& minorColor,
+    const QColor& beatColor)
 {
     painter.save();
     painter.setClipRect(bounds, Qt::IntersectClip);
     painter.setRenderHint(QPainter::Antialiasing, false);
     for (const auto& tick : ticks.ticks) {
-        if (!tick.major && !minorColor.isValid())
+        const QColor color = tick.major ? majorColor
+            : tick.beat && beatColor.isValid() ? beatColor : minorColor;
+        if (!color.isValid())
             continue;
-        painter.setPen(tick.major ? majorColor : minorColor);
+        painter.setPen(color);
         painter.drawLine(bounds.left() + tick.pixel, bounds.top(), bounds.left() + tick.pixel, bounds.bottom() + 1);
     }
     painter.restore();

@@ -295,6 +295,13 @@ TimelineValidation validateClipPlacement(ProjectManager* projectManager,
         });
     if (!targets)
         return targets;
+    for (size_t index = 0; index < clips.items.size(); ++index) {
+        if (clips.items[index].start < 0)
+            return TimelineValidation::failure(
+                TimelineError::AuthoringRestricted,
+                QStringLiteral("Clip start must be at or after zero"),
+                static_cast<int>(index));
+    }
     ProjectItem* hostSegment = track->parent && track->parent->type == ProjectItem::Type::Segment
         ? track->parent : nullptr;
     if (!hostSegment)
@@ -599,6 +606,8 @@ std::unique_ptr<TransactionalUndoCommand> makeClipMoveCommand(
         return projectManager->findItemByGuid(guid);
     };
     for (const auto& move : moves) {
+        if (move.start < 0)
+            return fail(QStringLiteral("Clip start must be at or after zero"));
         auto* source = resolve(move.sourceTrackGuid);
         auto* destination = resolve(move.destinationTrackGuid);
         if (!source || !destination || !source->comp<VTrack>() || !destination->comp<VTrack>())

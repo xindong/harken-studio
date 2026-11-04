@@ -3,6 +3,7 @@
 #include "Widgets/TransitionEditor/TransitionFadeButton.h"
 #include "ActionManager.h"
 #include "Components/VSelection.h"
+#include "Components/VSegment.h"
 #include "ProjectManager.h"
 #include "ProjectTypes.h"
 #include "UndoCommands.h"
@@ -10,7 +11,9 @@
 #include <gtest/gtest.h>
 
 #include <QApplication>
+#include <QAbstractItemModel>
 #include <QCoreApplication>
+#include <QComboBox>
 #include <QDialog>
 #include <QDoubleSpinBox>
 #include <QMouseEvent>
@@ -161,4 +164,63 @@ TEST_F(TransitionEditorPanelTest, FadePopupCommitFollowsRuleIdentityAfterReorder
     EXPECT_FLOAT_EQ(
         panel.ruleFade(updated, VNX::TransitionFadeSlot::SourceFadeOut).durationSeconds, 1.75f);
     popup->close();
+}
+
+TEST_F(TransitionEditorPanelTest, ReferenceEditsAndUndoRefreshTimingAvailability)
+{
+    auto& manager = VNX::ProjectManager::instance();
+    auto* segment = manager.createItem(container_, QStringLiteral("Segment"),
+                                      VNX::ProjectItem::Type::Segment);
+    ASSERT_NE(segment, nullptr);
+    segment->comp<VNX::VSegment>()->segmentTime = {};
+    segment->comp<VNX::VSegment>()->markers = {};
+    VNX::TransitionEditorPanel panel;
+    panel.bindItem(container_);
+    ASSERT_TRUE(panel.addRule(segment->guid, childB_->guid));
+    int selected = -1;
+    for (int i = 0; i < panel.ruleCount(); ++i)
+        if (panel.ruleSource(i) == std::optional<QUuid>(segment->guid)
+            && panel.ruleTarget(i) == std::optional<QUuid>(childB_->guid))
+            selected = i;
+    ASSERT_GE(selected, 0);
+    ASSERT_TRUE(panel.selectRuleDisplayIndex(selected));
+    drainEvents();
+
+    auto* combo = panel.findChild<QComboBox*>(QStringLiteral("transitionExitTiming"));
+    ASSERT_NE(combo, nullptr);
+    const auto available = [combo](VNX::TransitionExitTiming timing) {
+        const int index = combo->findData(static_cast<int>(timing));
+        return index >= 0 && combo->model()->flags(combo->model()->index(index, 0))
+            .testFlag(Qt::ItemIsEnabled);
+    };
+    EXPECT_FALSE(available(VNX::TransitionExitTiming::NextBeat));
+    EXPECT_FALSE(available(VNX::TransitionExitTiming::NextBar));
+    EXPECT_FALSE(available(VNX::TransitionExitTiming::NextMarker));
+
+    ASSERT_TRUE(VNX::ActionManager::instance().execute(
+        QStringLiteral("set_item_property"),
+        {{QStringLiteral("authoring_handle"), static_cast<qint64>(segment->objectID)},
+         {QStringLiteral("property"), QStringLiteral("segmentTime")},
+         {QStringLiteral("value"), VNX::SegmentTimeSpec::musical().toJson()}},
+        VNX::ActionSource::GUI).success);
+    drainEvents();
+    EXPECT_TRUE(available(VNX::TransitionExitTiming::NextBeat));
+    EXPECT_TRUE(available(VNX::TransitionExitTiming::NextBar));
+    VNX::UndoRedoManager::instance().undo();
+    drainEvents();
+    EXPECT_FALSE(available(VNX::TransitionExitTiming::NextBeat));
+    EXPECT_FALSE(available(VNX::TransitionExitTiming::NextBar));
+
+    VNX::Marker marker{QUuid::createUuid(), VNX::MarkerKind::Exit, {}, 0};
+    ASSERT_TRUE(VNX::ActionManager::instance().execute(
+        QStringLiteral("set_item_property"),
+        {{QStringLiteral("authoring_handle"), static_cast<qint64>(segment->objectID)},
+         {QStringLiteral("property"), QStringLiteral("markers")},
+         {QStringLiteral("value"), QJsonArray{marker.toJson()}}},
+        VNX::ActionSource::GUI).success);
+    drainEvents();
+    EXPECT_TRUE(available(VNX::TransitionExitTiming::NextMarker));
+    VNX::UndoRedoManager::instance().undo();
+    drainEvents();
+    EXPECT_FALSE(available(VNX::TransitionExitTiming::NextMarker));
 }

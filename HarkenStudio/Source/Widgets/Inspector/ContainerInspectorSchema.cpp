@@ -22,6 +22,19 @@ const PropertySchema& containerInspectorSchema()
         rows.push_back(*pickSchemaField(VSelection::schema(), QLatin1String("variableResponse")));
         rows.push_back(*pickSchemaField(VSelection::schema(), QLatin1String("playType")));
 
+        PropertyDescriptor splice;
+        splice.field = QStringLiteral("spliceByMarker");
+        splice.ownerComponent = ComponentType::Selection;
+        splice.type = PropType::Bool;
+        splice.label = QStringLiteral("Splice by Marker");
+        splice.section = PropertySection::Selection;
+        splice.flags.serialize = false;
+        splice.getItem = [](const ProjectItem* item) -> QVariant {
+            const auto* selection = item ? item->comp<VSelection>() : nullptr;
+            return selection ? QVariant(selection->spliceByMarker) : QVariant();
+        };
+        rows.push_back(std::move(splice));
+
         PropertyDescriptor behavior;
         behavior.field = QStringLiteral("behavior");
         behavior.ownerComponent = ComponentType::Selection;
@@ -40,6 +53,18 @@ const PropertySchema& containerInspectorSchema()
             return selection ? ContainerBehaviorSemantics::toJson(selection->behavior).toVariantMap() : QVariant();
         };
         rows.push_back(std::move(behavior));
+        PropertyDescriptor transitions;
+        transitions.field = QStringLiteral("transitions");
+        transitions.ownerComponent = ComponentType::Selection;
+        transitions.type = PropType::Struct;
+        transitions.label = QStringLiteral("Transitions");
+        transitions.section = PropertySection::Selection;
+        transitions.flags.serialize = false;
+        transitions.getItem = [](const ProjectItem* item) -> QVariant {
+            const auto* selection = item ? item->comp<VSelection>() : nullptr;
+            return selection ? selection->transitions.toJson().toVariantMap() : QVariant();
+        };
+        rows.push_back(std::move(transitions));
         return rows;
     }();
     return s;

@@ -4,12 +4,14 @@
 
 #include "Core/ActionManager.h"
 #include "Core/AuthoringPolicy.h"
+#include "Core/Components/VSegment.h"
 #include "Core/Components/VTrack.h"
 #include "Core/ItemTypeCatalog.h"
 #include "Core/ProjectManager.h"
 #include "Core/QtControlSkin.h"
 #include "Core/ThemeManager.h"
 #include "Core/Timeline/TimelineEditing.h"
+#include "Core/Timeline/TimelineCoordinates.h"
 #include "Widgets/Common/CollapsibleSection.h"
 #include "Widgets/Common/ListFooter.h"
 #include "Widgets/Common/TableWidget.h"
@@ -30,6 +32,15 @@
 
 namespace VNX {
 namespace {
+
+CoordinateResult initialClipDuration(const ProjectItem& track)
+{
+    const auto* segment = track.parent ? track.parent->comp<VSegment>() : nullptr;
+    auto duration = TimelineCoordinates::fromSeconds(
+        1.0, segment ? segment->segmentTime : SegmentTimeSpec{});
+    if (duration) duration.value = std::max<int64_t>(1, duration.value);
+    return duration;
+}
 
 class ClipsListWidget final : public QWidget
 {
@@ -157,7 +168,9 @@ private:
             || !AuthoringPolicy::validateNewSubtree(*target, nullptr, resolve)) return false;
         auto clips = track->comp<VTrack>()->clips;
         if (replacing.isNull()) {
-            Clip clip{QUuid::createUuid(), target->guid, 0, 1000000000LL};
+            const auto duration = initialClipDuration(*track);
+            if (!duration) return false;
+            Clip clip{QUuid::createUuid(), target->guid, 0, duration.value};
             if (!clips.mintOccurrenceOrdinal(&clip)) return false;
             clips.items.push_back(clip);
         } else {
@@ -194,8 +207,11 @@ private:
         request.onSelected = [self, owner](uint32_t objectID) {
             if (!self || self->boundGuid_ != owner || !self->canSelect(objectID)) return;
             auto* target = ProjectManager::instance().findItemByObjectID(objectID);
-            auto clips = self->boundItem()->comp<VTrack>()->clips;
-            Clip clip{QUuid::createUuid(), target->guid, 0, 1000000000LL};
+            auto* track = self->boundItem();
+            const auto duration = initialClipDuration(*track);
+            if (!duration) return;
+            auto clips = track->comp<VTrack>()->clips;
+            Clip clip{QUuid::createUuid(), target->guid, 0, duration.value};
             if (!clips.mintOccurrenceOrdinal(&clip)) return;
             clips.items.push_back(clip);
             if (self->commit(clips)) self->selected_ = clip.clipGuid;

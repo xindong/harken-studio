@@ -66,6 +66,7 @@
 #include "SoundSourceSemantics.h"
 #include "Components/VTrack.h"
 #include "Components/VSegment.h"
+#include "Timeline/TimelineCoordinates.h"
 #include "Timeline/TimelineEditing.h"
 #include "ActionStepUtils.h"
 #include "HarkenMath.h"
@@ -2844,6 +2845,15 @@ ProjectItem* ProjectManager::createItemImpl(ProjectItem* parent, const QString& 
         VariableSemantics::initializeNewVariable(*variable, variableKind);
     if (auto* selection = newItem->comp<VSelection>())
         selection->transitions = AuthoringPolicy::defaultTransitionTable();
+    if (auto* segment = newItem->comp<VSegment>()) {
+        segment->segmentTime = SegmentTimeSpec::musical();
+        const auto end = TimelineCoordinates::fromSeconds(
+            VSegment::kDefaultDurationSeconds, segment->segmentTime);
+        segment->markers.items = {
+            {QUuid::createUuid(), MarkerKind::Entry, {}, 0},
+            {QUuid::createUuid(), MarkerKind::Exit, {}, end.value}
+        };
+    }
     if (initialClip) {
         auto* timeline = newItem->comp<VTrack>();
         if (!timeline) return nullptr;
@@ -3912,10 +3922,16 @@ bool ProjectManager::ensureTrackChildClip(ProjectItem* track, ProjectItem* child
     if (!timeline || std::any_of(timeline->clips.items.begin(), timeline->clips.items.end(),
             [child](const Clip& clip) { return clip.targetGuid == child->guid; }))
         return true;
+    const auto duration = TimelineCoordinates::fromSeconds(
+        1.0, TimelineEditing::timeSpecForTrackParent(track->parent));
+    if (!duration) {
+        emit errorOccurred(duration.validation.message);
+        return false;
+    }
     Clip clip;
     clip.clipGuid = QUuid::createUuid();
     clip.targetGuid = child->guid;
-    clip.duration = 1000000000LL;
+    clip.duration = std::max<int64_t>(1, duration.value);
     const auto result = TimelineEditing::addClip(this, track, std::move(clip));
     if (!result.success)
         emit errorOccurred(result.errorMessage);

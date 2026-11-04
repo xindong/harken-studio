@@ -1,29 +1,29 @@
 #include "TimelineRuler.h"
 
 #include "TimelineEditorPanel.h"
+#include "TimelineClipCanvas.h"
 #include "TimelineRenderer.h"
 #include "Core/FontManager.h"
+#include "Core/QtControlSkin.h"
 #include "Core/ThemeManager.h"
 
+#include <QActionGroup>
 #include <QGuiApplication>
 #include <QContextMenuEvent>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QMenu>
+#include <QResizeEvent>
 #include <QHideEvent>
 #include <QKeyEvent>
 #include <QPainter>
-#include <QPolygon>
 #include <QScreen>
+#include <QToolButton>
+#include "Core/ToolTip.h"
 
 #include <algorithm>
 
 namespace VNX {
-
-namespace {
-
-constexpr int kCursorHandleHeight = 10;
-
-}
 
 TimelineRuler::TimelineRuler(TimelineEditorPanel* panel, QWidget* parent)
     : QWidget(parent)
@@ -32,6 +32,35 @@ TimelineRuler::TimelineRuler(TimelineEditorPanel* panel, QWidget* parent)
     setObjectName(QStringLiteral("timelineRuler"));
     setMouseTracking(true);
     setFocusPolicy(Qt::ClickFocus);
+    axisModeButton_ = new QToolButton(this);
+    axisModeButton_->setObjectName(QStringLiteral("timelineAxisMode"));
+    axisModeButton_->setAutoRaise(true);
+    axisModeButton_->setArrowType(Qt::DownArrow);
+    axisModeButton_->setCursor(Qt::PointingHandCursor);
+    axisModeButton_->setAccessibleName(tr("Timeline axis"));
+    QtControlSkin::setSemanticProperty(axisModeButton_, "flatIconButton", true);
+    QtControlSkin::setSemanticProperty(axisModeButton_, "navigationRole", QStringLiteral("chevron"));
+    auto* menu = new QMenu(axisModeButton_);
+    menu->setObjectName(QStringLiteral("timelineAxisModeMenu"));
+    auto* group = new QActionGroup(menu);
+    group->setExclusive(true);
+    timeAction_ = menu->addAction(tr("Time"));
+    timeAction_->setObjectName(QStringLiteral("timelineAxisTime"));
+    timeAction_->setData(static_cast<int>(TimelineEditorPanel::AxisMode::Time));
+    clockAction_ = menu->addAction(tr("Clock"));
+    clockAction_->setObjectName(QStringLiteral("timelineAxisClock"));
+    clockAction_->setData(static_cast<int>(TimelineEditorPanel::AxisMode::Clock));
+    for (auto* action : {timeAction_, clockAction_}) {
+        action->setCheckable(true);
+        group->addAction(action);
+    }
+    connect(axisModeButton_, &QToolButton::clicked, this, [this, menu] {
+        menu->popup(axisModeButton_->mapToGlobal(QPoint(0, axisModeButton_->height())));
+    });
+    connect(group, &QActionGroup::triggered, this, [this](QAction* action) {
+        panel_->setAxisMode(static_cast<TimelineEditorPanel::AxisMode>(action->data().toInt()));
+    });
+    markerLane_ = new TimelineMarkerRuler(panel_, this);
     connect(panel_, &TimelineEditorPanel::cursorDragFinished, this, [this] {
         if (dragMode_ == DragMode::Cursor)
             dragMode_ = DragMode::None;
@@ -49,7 +78,14 @@ TimelineRuler::TimelineRuler(TimelineEditorPanel* panel, QWidget* parent)
 void TimelineRuler::refresh()
 {
     const bool active = panel_->hasTimeline();
-    setFixedHeight(timeRulerHeight());
+    syncGeometry();
+    axisModeButton_->setVisible(active);
+    axisModeButton_->setEnabled(active);
+    const bool clock = panel_->axisMode() == TimelineEditorPanel::AxisMode::Clock;
+    timeAction_->setChecked(!clock);
+    clockAction_->setChecked(clock);
+    clockAction_->setEnabled(active && panel_->timelineDomain() == TimelineDomain::Musical);
+    markerLane_->update();
     if (!active) {
         dragMode_ = DragMode::None;
         cursorValue_->hide();
@@ -67,12 +103,41 @@ void TimelineRuler::refresh()
     update();
 }
 
+void TimelineRuler::syncGeometry()
+{
+    const bool segment = panel_->viewKind() == TimelineEditorPanel::ViewKind::Segment;
+    const int markerHeight = segment ? panel_->timelineMetrics().markerLaneHeight : 0;
+    setFixedHeight(timeRulerHeight());
+    markerLane_->setGeometry(panel_->laneHeaderWidth(), height() - markerHeight,
+        panel_->timelineViewportWidth(), markerHeight);
+    markerLane_->setVisible(segment);
+    const auto& metrics = ThemeManager::instance().metrics();
+    const int extent = metrics.navigationChevronExtent;
+    const int x = segment
+        ? panel_->laneHeaderWidth() - panel_->laneHeaderResizeWidth() - metrics.spacingXSmall - extent
+        : (panel_->laneHeaderWidth() - extent) / 2;
+    axisModeButton_->setGeometry(x, (timeRulerHeight() - extent) / 2, extent, extent);
+    axisModeButton_->setIconSize(QSize(extent, extent));
+}
+
+void TimelineRuler::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    syncGeometry();
+}
+
 int TimelineRuler::timeRulerHeight() const
 {
     if (!panel_->hasTimeline())
         return panel_->timelineMetrics().rulerHeight;
-    const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Axis), this);
-    return std::max(metrics.height() + 5, ThemeManager::instance().metrics().navigationChevronExtent);
+    const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Body), this);
+    const int primaryHeight = std::max(metrics.height() + 5,
+        ThemeManager::instance().metrics().navigationChevronExtent);
+    const int secondaryHeight = panel_->timelineDomain() == TimelineDomain::Musical
+        ? QFontMetrics(FontManager::instance().getFont(FontRole::Axis), this).height() : 0;
+    const int markerHeight = panel_->viewKind() == TimelineEditorPanel::ViewKind::Segment
+        ? panel_->timelineMetrics().markerLaneHeight : 0;
+    return primaryHeight + secondaryHeight + markerHeight;
 }
 
 QRect TimelineRuler::timeAxisRect() const
@@ -94,8 +159,6 @@ TimelineStyleView TimelineRuler::styleView() const
     style.trackBackgroundAlt = snapshot->ui.colors.trackBackgroundAlt;
     style.timeline = snapshot->domains.timeline;
     style.music = snapshot->domains.music;
-    if (panel_->hasTimeline())
-        style.music.cursor = snapshot->ui.colors.success;
     style.metrics = snapshot->ui.metrics;
     return style;
 }
@@ -112,28 +175,24 @@ void TimelineRuler::paintEvent(QPaintEvent*)
 
     const int canvasWidth = std::max(1, panel_->timelineViewportWidth());
     const auto theme = ThemeManager::instance().snapshot();
-    if (panel_->viewKind() == TimelineEditorPanel::ViewKind::Track) {
-        painter.setFont(FontManager::instance().getFont(FontRole::Axis));
-        painter.setPen(style.placeholderText);
-        painter.drawText(QRect(0, 0, headerWidth, rulerHeight), Qt::AlignCenter, tr("dB\\s"));
-    }
-    const auto ticks = panel_->timeTicks();
-    drawTimeAxisRuler(painter, theme->ui.colors,
-        QRect(headerWidth, 0, canvasWidth, rulerHeight), ticks);
+    const bool dualAxis = panel_->timelineDomain() == TimelineDomain::Musical;
+    const int labelHeight = markerLane_->isVisible() ? markerLane_->y() : rulerHeight;
+    auto primaryColors = theme->ui.colors;
+    primaryColors.textSecondary = primaryColors.textPrimary;
+    drawTimeAxisRuler(painter, primaryColors,
+        QRect(headerWidth, 0, canvasWidth, labelHeight),
+        panel_->timeTicks(), FontRole::Body, TimeAxisLabelAlignment::AfterTick, dualAxis);
     painter.setPen(style.canvasBorder);
     painter.drawLine(0, rulerHeight - 1, width(), rulerHeight - 1);
+    painter.drawLine(headerWidth - 1, 0, headerWidth - 1, rulerHeight - 1);
     painter.drawLine(headerWidth + canvasWidth, 0, headerWidth + canvasWidth, height());
     const QRect grip = cursorHandleRect();
     if (!grip.isEmpty()) {
-        painter.setClipRect(timeAxisRect());
         const int x = headerWidth + panel_->viewportPixelAtCoordinate(0, panel_->editCursor());
-        const bool highlighted = panel_->isCursorDragActive()
-            || grip.adjusted(-3, 0, 3, 2).contains(hoverPos_);
+        const bool highlighted = panel_->isCursorDragActive() || panel_->isCursorHovered();
         const QColor color = highlighted ? style.music.cursor.lighter(130) : style.music.cursor;
-        TimelineRenderer::drawVerticalLine(painter, style.music.cursor, x, timeAxisRect());
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(color);
-        painter.drawPolygon(QPolygon{grip.topLeft(), grip.topRight(), QPoint(x, grip.bottom())});
+        TimelineRenderer::drawCursorLine(painter, color, x, timeAxisRect());
+        TimelineRenderer::drawCursorHandle(painter, color, grip);
     }
 }
 
@@ -146,7 +205,29 @@ QRect TimelineRuler::cursorHandleRect() const
         + panel_->viewportPixelAtCoordinate(0, panel_->editCursor());
     if (axis.isEmpty() || x < axis.left() || x > axis.right())
         return {};
-    return QRect(x - 5, axis.top(), 11, kCursorHandleHeight);
+    const auto size = cursorHandleSize();
+    return QRect(QPoint(x - size.width() / 2, axis.top()), size);
+}
+
+bool TimelineRuler::hitsCursor(const QPoint& position) const
+{
+    const QRect handle = cursorHandleRect();
+    return (!handle.isEmpty() && handle.adjusted(-3, 0, 3, 2).contains(position))
+        || (timeAxisRect().contains(position)
+            && panel_->hitsEditCursor(position.x() - panel_->laneHeaderWidth()));
+}
+
+void TimelineRuler::updateHover(const QPoint& position)
+{
+    hoverPos_ = position;
+    const bool hovered = hitsCursor(position);
+    const bool wasHovered = panel_->isCursorHovered();
+    panel_->setCursorHovered(hovered);
+    if (hovered && !wasHovered)
+        ToolTip::showText(mapToGlobal(position), panel_->cursorTooltip(), this);
+    else if (!hovered)
+        ToolTip::hideText();
+    updateMouseCursor();
 }
 
 void TimelineRuler::updateMouseCursor()
@@ -156,18 +237,13 @@ void TimelineRuler::updateMouseCursor()
     } else if (dragMode_ == DragMode::Cursor) {
         setCursor(Qt::SizeHorCursor);
     } else {
-        const QRect handle = cursorHandleRect();
-        if (timeAxisRect().contains(hoverPos_))
-            setCursor(!handle.isEmpty() && handle.adjusted(-3, 0, 3, 2).contains(hoverPos_)
-                ? Qt::SizeHorCursor : Qt::ArrowCursor);
-        else
-            setCursor(Qt::ArrowCursor);
+        setCursor(hitsCursor(hoverPos_) ? Qt::SizeHorCursor : Qt::ArrowCursor);
     }
 }
 
 void TimelineRuler::showCursorValue()
 {
-    cursorValue_->setText(tr("Cursor: %1").arg(panel_->formatCoordinate(0, panel_->editCursor())));
+    cursorValue_->setText(panel_->cursorTooltip());
     cursorValue_->adjustSize();
     const QRect axis = timeAxisRect();
     const int x = axis.left() + panel_->viewportPixelAtCoordinate(0, panel_->editCursor());
@@ -185,24 +261,18 @@ void TimelineRuler::showCursorValue()
 
 void TimelineRuler::mousePressEvent(QMouseEvent* event)
 {
+    const bool onCursor = hitsCursor(event->position().toPoint());
     if (event->button() != Qt::LeftButton
-        || !rect().contains(event->position().toPoint())) {
+        || (!timeAxisRect().contains(event->position().toPoint()) && !onCursor)) {
         QWidget::mousePressEvent(event);
         return;
     }
     if (panel_->isEditCursorVisible()) {
         hoverPos_ = event->position().toPoint();
-        if (event->position().x() < panel_->laneHeaderWidth()
-            || event->position().x() >= panel_->laneHeaderWidth() + panel_->timelineViewportWidth()) {
-            event->ignore();
-            return;
-        }
         setFocus();
         dragMode_ = DragMode::Cursor;
-        const QRect handle = cursorHandleRect();
-        const bool onHandle = !handle.isEmpty() && handle.adjusted(-3, 0, 3, 2).contains(hoverPos_);
         panel_->beginCursorDrag(hoverPos_.x() - panel_->laneHeaderWidth(),
-            event->modifiers().testFlag(Qt::AltModifier), !onHandle);
+            event->modifiers().testFlag(Qt::AltModifier), !onCursor);
         updateMouseCursor();
         update();
         event->accept();
@@ -220,8 +290,7 @@ void TimelineRuler::mouseMoveEvent(QMouseEvent* event)
                 event->modifiers().testFlag(Qt::AltModifier));
             event->accept();
         } else {
-            updateMouseCursor();
-            update();
+            updateHover(hoverPos_);
             QWidget::mouseMoveEvent(event);
         }
         return;
@@ -238,6 +307,7 @@ void TimelineRuler::mouseReleaseEvent(QMouseEvent* event)
         panel_->endCursorDrag();
         cursorValue_->hide();
         dragMode_ = DragMode::None;
+        updateHover(hoverPos_);
         refresh();
         event->accept();
         return;
@@ -249,14 +319,11 @@ void TimelineRuler::mouseDoubleClickEvent(QMouseEvent* event)
 {
     if (event->button() == Qt::LeftButton
         && panel_->hasTimeline()) {
-        if (timeAxisRect().contains(event->position().toPoint())) {
-            const QRect handle = cursorHandleRect();
-            if (!handle.isEmpty() && handle.adjusted(-3, 0, 3, 2).contains(event->position().toPoint())) {
-                dragMode_ = DragMode::None;
-                panel_->editCursorValue();
-                event->accept();
-                return;
-            }
+        if (hitsCursor(event->position().toPoint())) {
+            dragMode_ = DragMode::None;
+            panel_->editCursorValue();
+            event->accept();
+            return;
         }
         dragMode_ = DragMode::None;
         cursorValue_->hide();
@@ -271,11 +338,18 @@ void TimelineRuler::mouseDoubleClickEvent(QMouseEvent* event)
 
 void TimelineRuler::contextMenuEvent(QContextMenuEvent* event)
 {
-    const QRect handle = cursorHandleRect();
-    if (timeAxisRect().contains(event->pos())
-        && !handle.isEmpty() && handle.adjusted(-3, 0, 3, 2).contains(event->pos())) {
+    if (hitsCursor(event->pos())) {
         dragMode_ = DragMode::None;
         panel_->showCursorContextMenu(event->globalPos());
+        event->accept();
+        return;
+    }
+    if (markerLane_->isVisible() && timeAxisRect().contains(event->pos())) {
+        QMenu* menu = markerLane_->createContextMenu(
+            QPoint(event->pos().x() - panel_->laneHeaderWidth(), 0));
+        if (!menu->isEmpty())
+            menu->exec(event->globalPos());
+        menu->deleteLater();
         event->accept();
         return;
     }
@@ -286,6 +360,7 @@ void TimelineRuler::keyPressEvent(QKeyEvent* event)
 {
     if (event->key() == Qt::Key_Escape && dragMode_ == DragMode::Cursor) {
         panel_->endCursorDrag(true);
+        updateHover(hoverPos_);
         event->accept();
         return;
     }
@@ -298,6 +373,8 @@ void TimelineRuler::hideEvent(QHideEvent* event)
         panel_->endCursorDrag();
     dragMode_ = DragMode::None;
     hoverPos_ = QPoint(-1, -1);
+    panel_->setCursorHovered(false);
+    ToolTip::hideText();
     updateMouseCursor();
     cursorValue_->hide();
     QWidget::hideEvent(event);
@@ -306,6 +383,8 @@ void TimelineRuler::hideEvent(QHideEvent* event)
 void TimelineRuler::leaveEvent(QEvent* event)
 {
     hoverPos_ = QPoint(-1, -1);
+    panel_->setCursorHovered(false);
+    ToolTip::hideText();
     updateMouseCursor();
     update();
     QWidget::leaveEvent(event);

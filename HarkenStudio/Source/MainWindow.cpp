@@ -3316,7 +3316,7 @@ void MainWindow::locateProjectItem(uint32_t objectID)
 }
 
 void MainWindow::openEditorForSlot(const QString& slot, ProjectItem* item,
-                                   const PlacementContext*)
+                                   const PlacementContext* placement)
 {
     if (EditorLaunchMap::isSlotDisabled(slot)) {
         if (statusBar())
@@ -3330,7 +3330,11 @@ void MainWindow::openEditorForSlot(const QString& slot, ProjectItem* item,
             statusBar()->showMessage(tr("The editor for this section is coming soon."), 4000);
         return;
     }
-    openStandaloneEditor(type, item);
+    const std::optional<PlacementContext> context = placement
+        ? std::optional<PlacementContext>(*placement) : std::nullopt;
+    QWidget* editor = openStandaloneEditor(type, item);
+    if (auto* transition = qobject_cast<TransitionEditorPanel*>(editor))
+        transition->setPlacementContext(context);
 }
 
 void MainWindow::showInspectorForItem(InspectorPanel* panel, ProjectItem* item)

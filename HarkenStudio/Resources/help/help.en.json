@@ -15,11 +15,11 @@
     },
     "Track": {
       "title": "Track",
-      "body": "Places Sound, Container, or Segment clips on one timeline. Each clip starts at its scheduled time and plays using the child's settings; overlapping clips play together."
+      "body": "Places Sound, Container, or Segment clips on one timeline using its parent Segment's time domain. Clip positions and durations use seconds or musical beats; overlapping clips play together."
     },
     "Segment": {
       "title": "Segment",
-      "body": "Aligns several Tracks on a shared timeline, with Entry, Exit, and Custom markers for playback timing. Editing uses absolute time; existing musical timelines are read-only."
+      "body": "Aligns several Tracks on a shared musical timeline with Tempo and Time Signature. Time and Clock rulers are shown together; choose the primary axis to switch the grid and snapping between seconds and beats. New Segments start with a ten-second timeline, an Entry marker at the start, and an Exit marker at the end."
     },
     "Layer": {
       "title": "Layer",

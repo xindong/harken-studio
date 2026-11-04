@@ -424,6 +424,12 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
          {
              {QStringLiteral("timeline.exit"), std::nullopt},
          }},
+        {QStringLiteral("music.cursor"), QStringLiteral("Timeline"),
+         QStringLiteral("Play cursor"),
+         QStringLiteral("Playback and edit cursor in the timeline."),
+         {
+             {QStringLiteral("music.cursor"), std::nullopt},
+         }},
         {QStringLiteral("timeline.transition"), QStringLiteral("Timeline"),
          QStringLiteral("Transition"),
          QStringLiteral("Transition markers and regions."),

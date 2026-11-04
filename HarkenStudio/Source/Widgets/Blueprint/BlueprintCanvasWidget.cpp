@@ -88,8 +88,6 @@ namespace VNX {
 
 namespace {
 
-constexpr bool kTransitionWatchVisible = false;
-
 ProjectItem* canvasFindItem(ProjectData* project, uint32_t id)
 {
     if (!project || id == 0) return nullptr;
@@ -3042,7 +3040,7 @@ void BlueprintCanvasWidget::paintLocationPing_(QPainter* painter)
 
 void BlueprintCanvasWidget::paintTransitionWatch_(QPainter* painter)
 {
-    if (!kTransitionWatchVisible || transitionWatch_.containerGuid.isNull()) return;
+    if (transitionWatch_.containerGuid.isNull()) return;
 
     auto* source = activeSignalChainSource();
     if (!source || !source->currentItem()) return;
@@ -3082,16 +3080,21 @@ void BlueprintCanvasWidget::paintTransitionWatch_(QPainter* painter)
         painter->save();
         painter->setRenderHint(QPainter::Antialiasing, true);
         painter->setBrush(Qt::NoBrush);
+        const bool overview = detailLevel_ == BlueprintDetailLevel::Overview;
+        QPen nodePen(accentColor, overview ? 1.5 : 2.0, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin);
+        nodePen.setCosmetic(overview);
+        QPen edgePen(accentColor, overview ? 1.5 : 3.0);
+        edgePen.setCosmetic(overview);
 
         for (NodeItem* node : pathNodes) {
-            if (!node) continue;
+            if (!node || !node->isVisible()) continue;
             const QRectF r = node->mapRectToScene(node->shape().boundingRect());
-            painter->setPen(QPen(accentColor, 2.0, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
+            painter->setPen(nodePen);
             painter->drawRect(r.adjusted(-2.0, -2.0, 2.0, 2.0));
         }
 
         for (ConnectionPath* edge : edges_) {
-            if (!edge->startPin() || !edge->endPin()) continue;
+            if (!edge->isVisible() || !edge->startPin() || !edge->endPin()) continue;
             auto* from = static_cast<NodeItem*>(edge->startPin()->parentItem());
             auto* to   = static_cast<NodeItem*>(edge->endPin()->parentItem());
             bool adjacent = false;
@@ -3103,17 +3106,18 @@ void BlueprintCanvasWidget::paintTransitionWatch_(QPainter* painter)
                 }
             }
             if (!adjacent) continue;
-            painter->setPen(QPen(accentColor, 3.0));
+            painter->setPen(edgePen);
             painter->drawPath(edge->path());
         }
 
-        if (transitionWatch_.referenceSegment) {
-            if (NodeItem* refNode = resolveNode(*transitionWatch_.referenceSegment)) {
+        if (transitionWatch_.referenceSegment && !overview) {
+            if (NodeItem* refNode = resolveNode(*transitionWatch_.referenceSegment);
+                refNode && refNode->isVisible()) {
                 const QRectF r = refNode->sceneBoundingRect();
                 const QFont chipFont = FontManager::instance().getFont(
                     FontRole::Caption, 9, QFont::Bold);
                 const QFontMetrics chipMetrics(chipFont);
-                const QString chipLabel = QStringLiteral("quantize ref");
+                const QString chipLabel = tr("Timing reference");
                 const QRectF chipRect(
                     r.right() - chipMetrics.horizontalAdvance(chipLabel) - 18.0,
                     r.bottom() - chipMetrics.height() - 10.0,
@@ -3137,14 +3141,18 @@ void BlueprintCanvasWidget::paintTransitionWatch_(QPainter* painter)
     painter->resetTransform();
     painter->setRenderHint(QPainter::Antialiasing, true);
 
-    const QRect vp = viewport()->rect();
+    const QRect vp = viewport()->rect().marginsRemoved(navigationViewportMargins_);
+    if (vp.width() <= 24 || vp.height() < 36) {
+        painter->restore();
+        return;
+    }
     QFont capFont = FontManager::instance().getFont(FontRole::Body, 10);
     painter->setFont(capFont);
     QFontMetrics fm(capFont);
     const int maxTextW = vp.width() - 24;
     const QString elided = fm.elidedText(transitionWatch_.caption, Qt::ElideRight, maxTextW);
     const int textW = qMin(maxTextW, fm.horizontalAdvance(elided) + 20);
-    const QRect textRect(vp.width() / 2 - textW / 2, vp.height() - 36, textW, 24);
+    const QRect textRect(vp.center().x() - textW / 2, vp.bottom() - 35, textW, 24);
 
     QColor bg = theme->domains.blueprint.canvasBackground;
     bg.setAlphaF(bg.alphaF() * 220 / 255.0);
@@ -3159,11 +3167,6 @@ void BlueprintCanvasWidget::paintTransitionWatch_(QPainter* painter)
 
 void BlueprintCanvasWidget::refreshTransitionWatch_()
 {
-    if (!kTransitionWatchVisible) {
-        setTransitionWatch({});
-        return;
-    }
-
     auto* source = activeSignalChainSource();
     if (!source || !source->currentItem()
         || source->currentItem()->type != ProjectItem::Type::Container) {

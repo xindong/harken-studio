@@ -9,6 +9,7 @@ class VSegment final : public IComponent
 {
 public:
     static constexpr ComponentType kType = ComponentType::Segment;
+    static constexpr int64_t kDefaultDurationSeconds = 10;
 
     ComponentType getType() const override { return kType; }
     QJsonObject toJson() const override;

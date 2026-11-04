@@ -952,6 +952,7 @@ TEST(EditorProjectPackExporterManifest, StopContainerAndQuantizeReferenceDoNotOw
         auto* selection = container->comp<VNX::VSelection>();
         selection->mode = queue ? VNX::SelectionMode::Sequence : VNX::SelectionMode::Random;
         selection->playType = queue ? VNX::SelectionPlayType::Queue : VNX::SelectionPlayType::Single;
+        selection->transitions.rules.front().exitTiming = VNX::TransitionExitTiming::Immediate;
         selection->behavior.memoryScope = queue ? VNX::SelectionMemoryScope::PerEmitter
                                                 : VNX::SelectionMemoryScope::Global;
         ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::addContainerChildOccurrence(*container, sound->guid));
@@ -2879,6 +2880,7 @@ TEST(EditorProjectPackExporterManifest, ExportsPlayableDemoSampleFixtures)
         selection->mode = modes[i];
         selection->playType = (i == 2 || i == 4)
             ? VNX::SelectionPlayType::Queue : VNX::SelectionPlayType::Single;
+        selection->transitions.rules.front().exitTiming = VNX::TransitionExitTiming::Immediate;
         selection->behavior.memoryScope = (i == 2 || i >= 4)
             ? VNX::SelectionMemoryScope::PerEmitter : VNX::SelectionMemoryScope::Global;
         if (i == 1) selection->behavior.discipline = VNX::RandomDiscipline::Shuffle;
