@@ -4,6 +4,7 @@
 
 #include "harken/core/ChannelLayout.h"
 #include "harken/core/SnapshotBuffer.h"
+#include "harken/dsp/DownmixSum.h"
 #include "harken/render/BuiltinEffects.h"
 #include "harken/render/EffectChain.h"
 
@@ -1033,6 +1034,10 @@ void BusTree::FoldBusOutput(Bus& bus, float* const* planes,
             for (std::uint32_t n = 0; n < blockFrames; ++n) {
                 out[n] += s[n] * g;
             }
+        }
+        for (std::uint32_t n = 0; n < blockFrames; ++n) {
+            out[n] = RecoverFiniteDownmixSum(out[n], bus.downmixCoeffs + r * 8,
+                                            planes, m_mixChannels, n);
         }
     }
     const std::uint32_t busIndex =

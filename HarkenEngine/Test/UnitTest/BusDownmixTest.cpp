@@ -12,6 +12,7 @@
 #include "Common/TestUtil.h"
 
 #include "harken/core/ChannelLayout.h"
+#include "harken/dsp/DownmixSum.h"
 
 #include <cmath>
 #include <cstddef>
@@ -161,6 +162,99 @@ TEST(BusDownmix, MonoOutputBusDroppedWhenMixHasNoCenter) {
     EXPECT_GE(snap.activeVoiceCount, 1u)
         << "the voice must be rendering — the silence is the drop, not an "
            "absent voice";
+}
+
+void CheckFiniteCancellation(bool masterFold) {
+    EngineSession session(MakeNullConfigLayout(2, kBlockFrames, 48000,
+        VN_CHANNEL_LAYOUT_5_1,
+        masterFold ? VN_CHANNEL_LAYOUT_STEREO : VN_CHANNEL_LAYOUT_5_1));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const VnBusId bus = masterFold ? VN_BUS_MASTER : kSubBus;
+    if (!masterFold) {
+        ASSERT_EQ(VN_OK, Vn_CreateBus(bus, VN_BUS_MASTER));
+        ASSERT_EQ(VN_OK, Vn_SetBusOutputLayout(bus, VN_CHANNEL_LAYOUT_STEREO));
+    }
+    VnDownmixMatrixDesc matrix = MakeStereoFold(0.0f, 0.0f);
+    const float maximum = std::numeric_limits<float>::max();
+    matrix.coeffs[0] = maximum;
+    matrix.coeffs[1] = -maximum;
+    matrix.coeffs[2] = maximum;
+    matrix.coeffs[3] = -maximum;
+    matrix.coeffs[4] = 1.0f;
+    matrix.coeffs[8 + 5] = 1.0f;
+    ASSERT_EQ(VN_OK, Vn_SetBusDownmixMatrix(bus, &matrix));
+
+    // Product overflow, partial-sum overflow with finite products, ordinary
+    // audio, true positive/negative overload, then ordinary audio again.
+    const float samples[][6] = {
+        {2.0f, 2.0f, 0.0f, 0.0f, 0.25f, 0.125f},
+        {0.75f, -0.75f, -0.75f, 0.75f, 0.25f, 0.125f},
+        {0.0f, 0.0f, 0.0f, 0.0f, 0.25f, 0.125f},
+        {2.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.125f},
+        {-2.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.125f},
+        {0.0f, 0.0f, 0.0f, 0.0f, 0.25f, 0.125f}
+    };
+    const float expected[] = {0.25f, 0.25f, 0.25f, 1.0f, -1.0f, 0.25f};
+    std::vector<float> pcm;
+    for (const auto& frame : samples) {
+        for (std::uint32_t n = 0; n < 2 * kBlockFrames; ++n)
+            pcm.insert(pcm.end(), frame, frame + 6);
+    }
+    VnPCMDesc desc{};
+    desc.structSize = sizeof(desc);
+    desc.sampleRate = 48000;
+    desc.channels = 6;
+    desc.layout = VN_PCM_LAYOUT_INTERLEAVED;
+    desc.policy = VN_PCM_POLICY_COPY;
+    desc.frames = pcm.size() / 6;
+    desc.samplesInterleaved = pcm.data();
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
+    auto play = harkentest::MakePlayDesc(harkentest::ObjectId(1));
+    play.busId = bus;
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    CaptureMulti capture;
+    harkentest::PumpAndCaptureMulti(session.Engine(), 12, capture);
+    for (std::size_t scenario = 0; scenario < 6; ++scenario) {
+        SCOPED_TRACE(scenario);
+        const auto frame = (2 * scenario + 1) * kBlockFrames + kBlockFrames / 2;
+        EXPECT_FLOAT_EQ(expected[scenario], capture.channels[0][frame]);
+        EXPECT_FLOAT_EQ(0.125f, capture.channels[1][frame]);
+    }
+}
+
+TEST(BusDownmix, PerBusFoldPreservesFiniteCancellation) {
+    CheckFiniteCancellation(false);
+}
+
+TEST(BusDownmix, DeviceFoldPreservesFiniteCancellation) {
+    CheckFiniteCancellation(true);
+}
+
+TEST(BusDownmix, RecoveryPreservesOrdinarySumsAndNonFiniteInput) {
+    float samples[] = {2.0f, 2.0f};
+    float* planes[] = {samples, samples + 1};
+    const float maximum = std::numeric_limits<float>::max();
+    float coefficients[] = {maximum, -maximum};
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    EXPECT_EQ(0.0f, harken::RecoverFiniteDownmixSum(nan, coefficients, planes, 2, 0));
+    EXPECT_TRUE(std::signbit(harken::RecoverFiniteDownmixSum(
+        -0.0f, coefficients, planes, 2, 0)));
+    EXPECT_EQ(0.125f, harken::RecoverFiniteDownmixSum(
+        0.125f, coefficients, planes, 2, 0));
+    coefficients[1] = 0.0f;
+    EXPECT_EQ(inf, harken::RecoverFiniteDownmixSum(inf, coefficients, planes, 2, 0));
+    samples[1] = inf;
+    EXPECT_TRUE(std::isnan(harken::RecoverFiniteDownmixSum(
+        nan, coefficients, planes, 2, 0)));
+    samples[1] = nan;
+    EXPECT_TRUE(std::isnan(harken::RecoverFiniteDownmixSum(
+        nan, coefficients, planes, 2, 0)));
+    samples[1] = 2.0f;
+    coefficients[1] = inf;
+    EXPECT_TRUE(std::isnan(harken::RecoverFiniteDownmixSum(
+        nan, coefficients, planes, 2, 0)));
 }
 
 // --- refusals (spec §6.3 / §11.3) ---
