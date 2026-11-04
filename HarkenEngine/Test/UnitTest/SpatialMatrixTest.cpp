@@ -821,3 +821,98 @@ TEST(SpatialMatrix, StreamGateAndFirstStarvationKeepLatestUnrenderedTarget) {
         }
 }
 } // namespace
+
+TEST(SpatialMatrix, CollectiveImageSharesMappingAndAdvancesOutputAndSendsOnlyOnFold) {
+    constexpr std::uint32_t block = 256, offset = 7, produced = 211;
+    harken::BiquadTrigTable trig;
+    for (const auto layout : {VN_CHANNEL_LAYOUT_STEREO, VN_CHANNEL_LAYOUT_QUAD,
+                              VN_CHANNEL_LAYOUT_5_1, VN_CHANNEL_LAYOUT_7_1}) {
+        const auto channels = harken::LayoutChannelCount(layout);
+        for (const auto sources : {1u, 2u, 4u}) {
+            for (const bool ramp : {false, true}) {
+                SCOPED_TRACE(::testing::Message() << layout << " " << sources << " " << ramp);
+                std::array<std::array<float, block>, 8> source{}, directTap{}, stagedTap{};
+                std::array<std::array<float, block>, 16> direct{}, staged{};
+                std::array<float*, 16> directPlanes{}, stagedPlanes{};
+                harken::VoiceRenderContext original;
+                original.biquadTrig = &trig;
+                original.engineSampleRate = 48000;
+                original.pcm.channelCount = sources;
+                original.phase = harken::SourcePhase::Done;
+                original.cascade.runnable = true;
+                original.cascade.tapReady = true;
+                original.cascade.offset = offset;
+                original.cascade.produced = produced;
+                original.spatialMatrixDirty = false;
+                original.spatialMatrix.Set(harken::MakeSpatialMatrix(
+                    sources, layout, -.6f, 0, .3f, 0, trig), 1);
+                if (ramp) original.spatialMatrix.Set(harken::MakeSpatialMatrix(
+                    sources, layout, .7f, 0, .9f, 0, trig), 400);
+                original.outputGain.Set(.25f);
+                if (ramp) original.outputGain.Set(2.0f, 330);
+                original.voiceSendActiveCount = 1;
+                original.voiceSends[0].active = true;
+                original.voiceSends[0].targetBusIndex = 1;
+                original.voiceSends[0].gain.SnapTo(.75f);
+                for (std::uint32_t ch = 0; ch < sources; ++ch) {
+                    for (std::uint32_t n = offset; n < offset + produced; ++n)
+                        source[ch][n] = (static_cast<int>((n + ch) % 13) - 6) * .03f;
+                    original.cascade.scratch[ch] = source[ch].data();
+                }
+                auto collective = original;
+                for (std::uint32_t ch = 0; ch < channels; ++ch) {
+                    original.cascade.tap[ch] = directTap[ch].data();
+                    collective.cascade.tap[ch] = stagedTap[ch].data();
+                }
+                for (std::uint32_t ch = 0; ch < 2 * channels; ++ch) {
+                    directPlanes[ch] = direct[ch].data();
+                    stagedPlanes[ch] = staged[ch].data();
+                }
+                const auto remaining = collective.outputGain.remainingFrames;
+                ASSERT_TRUE(harken::PrepareVoiceSignalImage(collective, block, channels, layout));
+                EXPECT_EQ(collective.outputGain.remainingFrames, remaining);
+                const auto progress = collective.spatialMatrix.progress;
+                ASSERT_TRUE(harken::PrepareVoiceSignalImage(collective, block, channels, layout));
+                EXPECT_EQ(collective.spatialMatrix.progress, progress);
+                // A common target gain is applied after mapping and before both
+                // normal routes. The Done phase still owns this final prefix.
+                for (std::uint32_t ch = 0; ch < channels; ++ch)
+                    for (std::uint32_t n = offset; n < offset + produced; ++n)
+                        stagedTap[ch][n] *= .5f;
+                harken::FoldVoiceIntoBuses(original, directPlanes.data(), block, channels, layout);
+                harken::FoldVoiceIntoBuses(collective, stagedPlanes.data(), block, channels, layout);
+                EXPECT_EQ(collective.outputGain.remainingFrames, original.outputGain.remainingFrames);
+                EXPECT_EQ(collective.spatialMatrix.progress, original.spatialMatrix.progress);
+                for (std::uint32_t ch = 0; ch < 2 * channels; ++ch)
+                    for (std::uint32_t n = 0; n < block; ++n)
+                        EXPECT_FLOAT_EQ(staged[ch][n], direct[ch][n] * .5f) << ch << " " << n;
+            }
+        }
+    }
+}
+
+TEST(SpatialMatrix, RequiredCollectiveImageShortfallClearsOnlyBlockObservations) {
+    constexpr std::uint32_t frames = 64;
+    harken::VoiceRenderContext voice;
+    voice.pcm.channelCount = 1;
+    voice.phase = harken::SourcePhase::Active;
+    voice.signalMemberActive = true;
+    voice.starvedThisBlock = true;
+    voice.srcCursor = 19;
+#if HARKEN_STAGE_TAPS_ACTIVE
+    voice.tapPostResample = voice.tapPostFx = voice.tapPostFilter = voice.tapPostGain = .5f;
+#endif
+    // Fits the source scratch, but no complete stereo member image.
+    harken::BlockArena arena(frames * sizeof(float));
+    ASSERT_FALSE(harken::PrepareVoiceCascade(voice, arena, frames, 2));
+    EXPECT_FALSE(voice.starvedThisBlock);
+    EXPECT_FALSE(voice.cascade.runnable);
+    EXPECT_EQ(voice.lastResult.framesProduced, 0u);
+    EXPECT_EQ(voice.srcCursor, 19u);
+#if HARKEN_STAGE_TAPS_ACTIVE
+    EXPECT_FLOAT_EQ(voice.tapPostResample, 0);
+    EXPECT_FLOAT_EQ(voice.tapPostFx, 0);
+    EXPECT_FLOAT_EQ(voice.tapPostFilter, 0);
+    EXPECT_FLOAT_EQ(voice.tapPostGain, 0);
+#endif
+}

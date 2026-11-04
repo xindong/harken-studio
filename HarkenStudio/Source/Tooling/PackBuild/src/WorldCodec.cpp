@@ -106,6 +106,25 @@ struct Reader {
     }
 };
 
+void EncodeSignalEndpoint(const SignalEndpointRefV1& ref,
+                          std::vector<std::uint8_t>& out) {
+    AppendU32(out, static_cast<std::uint32_t>(ref.kind));
+    AppendU32(out, ref.reserved);
+    AppendObjectId(out, ref.stableId);
+    AppendU64(out, ref.expectedPropertyFingerprint);
+    AppendU64(out, ref.expectedProgramFingerprint);
+}
+
+SignalEndpointRefV1 DecodeSignalEndpoint(Reader& reader) noexcept {
+    SignalEndpointRefV1 ref;
+    ref.kind = static_cast<SignalEndpointKindV1>(reader.U32());
+    ref.reserved = reader.U32();
+    ref.stableId = reader.ObjectId();
+    ref.expectedPropertyFingerprint = reader.U64();
+    ref.expectedProgramFingerprint = reader.U64();
+    return ref;
+}
+
 struct PrefixEncodeVisitor {
     std::vector<std::uint8_t> &out;
     void U32(std::uint32_t value) {
@@ -603,6 +622,8 @@ struct CurrentWorldBodyImage::Impl {
     std::vector<TransitionProgramViewV1> transitionViews;
     std::vector<OwnedAction> actions;
     std::vector<ActionProgramViewV1> actionViews;
+    std::vector<SignalRelationV1> signalRelations;
+    std::vector<SignalReceiverV1> signalReceivers;
 
     void Refresh() noexcept {
         propertyViews.clear();
@@ -663,6 +684,10 @@ struct CurrentWorldBodyImage::Impl {
         }
         view.actions = actionViews.empty() ? nullptr : actionViews.data();
         view.actionCount = static_cast<std::uint32_t>(actionViews.size());
+        view.signalRelations = signalRelations.empty() ? nullptr : signalRelations.data();
+        view.signalRelationCount = static_cast<std::uint32_t>(signalRelations.size());
+        view.signalReceivers = signalReceivers.empty() ? nullptr : signalReceivers.data();
+        view.signalReceiverCount = static_cast<std::uint32_t>(signalReceivers.size());
     }
 };
 
@@ -1123,11 +1148,44 @@ bool EncodeCurrentWorldBodyImpl(const ContainerWorldInstallViewV1 &world,
 }
 bool EncodeCurrentWorldShippingBody(const ContainerWorldInstallViewV1 &world,
                                     std::vector<std::uint8_t> &out) noexcept {
-    if (!ValidateCurrentWorldSectionGroupsV1(world)) {
+    if (world.sourceBodyVintage != kCurrentWorldShippingBodyVintage || world.signalRelationCount ||
+        world.signalReceiverCount || !ValidateCurrentWorldSectionGroupsV1(world)) {
         out.clear();
         return false;
     }
     return EncodeCurrentWorldBodyImpl(world, out);
+}
+
+bool EncodeCurrentWorldPreviewBody(const ContainerWorldInstallViewV1& world,
+                                   std::vector<std::uint8_t>& out) noexcept {
+    if (world.sourceBodyVintage == kCurrentWorldShippingBodyVintage)
+        return EncodeCurrentWorldShippingBody(world, out);
+    if (world.sourceBodyVintage != kCurrentWorldBodyVintageV20 ||
+        ValidateCurrentWorldV1(world) != WorldInstallStatus::Ok || !EncodeCurrentWorldBodyImpl(world, out)) {
+        out.clear();
+        return false;
+    }
+    try {
+        AppendU32(out, world.signalRelationCount);
+        AppendU32(out, world.signalReceiverCount);
+        for (std::uint32_t i = 0; i < world.signalRelationCount; ++i) {
+            const auto& row = world.signalRelations[i];
+            AppendObjectId(out, row.stableId);
+            EncodeSignalEndpoint(row.source, out);
+            EncodeSignalEndpoint(row.target, out);
+            AppendU32(out, static_cast<std::uint32_t>(row.consumer));
+            AppendF32(out, row.sendGainDb);
+        }
+        for (std::uint32_t i = 0; i < world.signalReceiverCount; ++i) {
+            const auto& row = world.signalReceivers[i];
+            EncodeSignalEndpoint(row.target, out);
+            AppendU32(out, row.algorithm);
+            AppendF32(out, row.attackMs);
+            AppendF32(out, row.releaseMs);
+            AppendU32(out, row.reserved);
+        }
+        return true;
+    } catch (...) { out.clear(); return false; }
 }
 
 CurrentWorldBodyImage::CurrentWorldBodyImage() noexcept = default;
@@ -1136,7 +1194,7 @@ CurrentWorldBodyImage::~CurrentWorldBodyImage() = default;
 
 CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
     const std::uint8_t *bytes, std::size_t byteCount, std::uint32_t worldTraceVintage) noexcept {
-    if (worldTraceVintage != kCurrentWorldShippingBodyVintage)
+    if (worldTraceVintage != kCurrentWorldShippingBodyVintage && worldTraceVintage != kCurrentWorldBodyVintageV20)
         return CurrentWorldBodyDecodeResult::Invalid;
     constexpr bool allowRawInvalid = false;
     if (bytes == nullptr && byteCount != 0) {
@@ -1646,6 +1704,27 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 step.cooldown = DecodeActionTime(reader);
                 step.valueBits = reader.U32();
                 step.reserved0 = reader.U32();
+            }
+        }
+        if (worldTraceVintage == kCurrentWorldBodyVintageV20) {
+            const auto relations = reader.U32(), receivers = reader.U32();
+            const std::uint64_t bytesNeeded = std::uint64_t{relations} * 104 + std::uint64_t{receivers} * 56;
+            if (reader.failed || bytesNeeded != reader.size - reader.offset ||
+                relations > decoded->signalRelations.max_size() || receivers > decoded->signalReceivers.max_size())
+                return CurrentWorldBodyDecodeResult::Invalid;
+            decoded->signalRelations.resize(relations);
+            decoded->signalReceivers.resize(receivers);
+            for (auto& row : decoded->signalRelations) {
+                row.stableId = reader.ObjectId();
+                row.source = DecodeSignalEndpoint(reader);
+                row.target = DecodeSignalEndpoint(reader);
+                row.consumer = static_cast<SignalConsumerKindV1>(reader.U32());
+                row.sendGainDb = reader.F32();
+            }
+            for (auto& row : decoded->signalReceivers) {
+                row.target = DecodeSignalEndpoint(reader);
+                row.algorithm = reader.U32();
+                row.attackMs = reader.F32(); row.releaseMs = reader.F32(); row.reserved = reader.U32();
             }
         }
         const std::array<std::uint32_t, 7> actualTotals = {

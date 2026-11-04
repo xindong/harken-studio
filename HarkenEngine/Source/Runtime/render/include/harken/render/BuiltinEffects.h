@@ -127,6 +127,7 @@ struct DelayEffectState {
     std::uint32_t delaySamples = 1;
     std::uint32_t writeIndex = 0;
     float feedback = 0.0f;
+    float maxFeedbackSinceReset = 0.0f;
     float wet = 0.0f;
     float dry = 1.0f;
     float targetWet = 0.0f;
@@ -141,6 +142,7 @@ struct DelayEffectState {
 // peaking -> high shelf) with per-channel filter memory. Parameter values are
 // held so a single-band update changes only that band's coefficients.
 struct ToneEffectState {
+    double signalBandHistory[3] = {1, 1, 1};
     std::uint32_t sampleRate = 0;
     float lowShelfGainDb = 0.0f;
     float lowShelfFreqHz = 200.0f;

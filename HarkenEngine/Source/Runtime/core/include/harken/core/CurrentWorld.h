@@ -27,8 +27,9 @@ inline constexpr std::uint64_t kWorldCapabilityVariableControl = UINT64_C(1) << 
 inline constexpr std::uint64_t kWorldCapabilityTransition = UINT64_C(1) << 8;
 inline constexpr std::uint64_t kWorldCapabilityActionDefinitions = UINT64_C(1) << 9;
 inline constexpr std::uint64_t kWorldCapabilityEntryScheduling = UINT64_C(1) << 10;
+inline constexpr std::uint64_t kWorldCapabilitySignalRelations = UINT64_C(1) << 11;
 inline constexpr std::uint64_t kWorldCapabilityKnownMask =
-    (UINT64_C(1) << 11) - 1;
+    (UINT64_C(1) << 12) - 1;
 inline constexpr std::uint64_t kWorldCapabilityUnit2Mask =
     kWorldCapabilityVariableDefinitions |
     kWorldCapabilityPlayableProperties |
@@ -351,7 +352,8 @@ constexpr bool ActionQuantizeTimingReadableV1(
         case ActionQuantizeTimingV1::NextBeat:
         case ActionQuantizeTimingV1::NextBar:
         case ActionQuantizeTimingV1::NextMarker:
-            return bodyVintage == kCurrentWorldBodyVintageV18;
+            return bodyVintage == kCurrentWorldBodyVintageV18 ||
+                   bodyVintage == kCurrentWorldBodyVintageV20;
         default: return false;
         }
     case ActionOpcodeV1::SetVariable:
@@ -844,6 +846,35 @@ void VisitWorldCapacitySummaryV1(Values& values, Visitor& visitor) {
     visitor.U32(values.maxActionExpandedWork);
 }
 
+enum class SignalEndpointKindV1 : std::uint32_t { Bus = 0, Sound = 1, Container = 2 };
+enum class SignalConsumerKindV1 : std::uint32_t { Ducking = 1 };
+
+struct SignalEndpointRefV1 {
+    SignalEndpointKindV1 kind = SignalEndpointKindV1::Bus;
+    std::uint32_t reserved = 0;
+    VnObjectId stableId{};
+    std::uint64_t expectedPropertyFingerprint = 0;
+    std::uint64_t expectedProgramFingerprint = 0;
+    bool operator==(const SignalEndpointRefV1&) const noexcept = default;
+};
+
+struct SignalRelationV1 {
+    VnObjectId stableId{};
+    SignalEndpointRefV1 source{};
+    SignalEndpointRefV1 target{};
+    SignalConsumerKindV1 consumer = SignalConsumerKindV1::Ducking;
+    float sendGainDb = 0;
+};
+
+// Target configuration is independent of connection count and playback count.
+struct SignalReceiverV1 {
+    SignalEndpointRefV1 target{};
+    std::uint32_t algorithm = 1;
+    float attackMs = 4.156241f;
+    float releaseMs = 1.031215f;
+    std::uint32_t reserved = 0;
+};
+
 struct ContainerWorldInstallViewV1 {
     WorldIdentityV1 identity{};
     const VariableDefinitionV1* variables = nullptr;
@@ -864,6 +895,10 @@ struct ContainerWorldInstallViewV1 {
     std::uint32_t actionCount = 0;
     WorldCapacitySummaryV1 capacity{};
     std::uint32_t sourceBodyVintage = kCurrentWorldShippingBodyVintage;
+    const SignalRelationV1* signalRelations = nullptr;
+    std::uint32_t signalRelationCount = 0;
+    const SignalReceiverV1* signalReceivers = nullptr;
+    std::uint32_t signalReceiverCount = 0;
 };
 
 struct HistoricalContainerWorldViewV1 {
@@ -1049,6 +1084,8 @@ std::uint64_t ComputeCurrentWorldFingerprintV4(
 std::uint64_t ComputeCurrentWorldFingerprintV5(
     const ContainerWorldInstallViewV1& world) noexcept;
 std::uint64_t ComputeCurrentWorldFingerprintV6(
+    const ContainerWorldInstallViewV1& world) noexcept;
+std::uint64_t ComputeCurrentWorldFingerprintV7(
     const ContainerWorldInstallViewV1& world) noexcept;
 TransitionProgramClassV1 ClassifyTransitionProgramV1(
     const TransitionProgramViewV1& program) noexcept;

@@ -190,6 +190,12 @@ add_executable(harken_runtime_tests
     UnitTest/ParkTest.cpp
     UnitTest/HotReloadTest.cpp
     UnitTest/BusSendTest.cpp
+    UnitTest/SignalBlockExchangeTest.cpp
+    UnitTest/DuckingReceiverTest.cpp
+    UnitTest/SignalFeedbackPlanTest.cpp
+    UnitTest/SignalRenderPlanTest.cpp
+    UnitTest/CurrentWorldSignalTest.cpp
+    UnitTest/PackSignalRelationTest.cpp
     UnitTest/BusFilterTest.cpp
     UnitTest/BusMuteSoloTest.cpp
     UnitTest/BusReparentTest.cpp
@@ -752,6 +758,7 @@ add_executable(harken_benchmarks
     Benchmark/CurveUpdateBenchmark.cpp
     Benchmark/LimiterReleaseBenchmark.cpp
     Benchmark/RenderWorkerScalingBenchmark.cpp
+    Benchmark/SignalRoutingBenchmark.cpp
 )
 target_link_libraries(harken_benchmarks PRIVATE harken_core harken_buildinfo)
 # Same library/consumer macro agreement as harken_runtime_tests (the benchmark's

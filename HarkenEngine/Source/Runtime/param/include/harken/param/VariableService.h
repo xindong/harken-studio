@@ -396,6 +396,10 @@ public:
         view.actionCount =
             static_cast<std::uint32_t>(actionProgramViews_.size());
         view.capacity = capacity_;
+        view.signalRelations = signalRelations_.empty() ? nullptr : signalRelations_.data();
+        view.signalRelationCount = static_cast<std::uint32_t>(signalRelations_.size());
+        view.signalReceivers = signalReceivers_.empty() ? nullptr : signalReceivers_.data();
+        view.signalReceiverCount = static_cast<std::uint32_t>(signalReceivers_.size());
         return view;
     }
     PlayableWorldViewV1 CurrentPlayableWorld() const noexcept {
@@ -403,6 +407,7 @@ public:
         if (!hasWorld_) return view;
         view.generation = worldGeneration_;
         view.identity = identity_;
+        view.identity.runtimeSemanticFingerprint = playbackFingerprint_;
         view.sourceBodyVintage = sourceBodyVintage_;
         view.properties = playablePropertyViews_.empty()
                               ? nullptr
@@ -530,6 +535,7 @@ public:
         const ContainerWorldInstallViewV1& install) const {
         return SemanticIdentical(install);
     }
+    bool SignalOnlyWorld(const ContainerWorldInstallViewV1& install) const;
     bool AdmissionClosed() const noexcept {
         return engineAdmissionClosed_ || DrainingWorld() ||
                DrainingTransport();
@@ -965,16 +971,20 @@ public:
 
         bool Valid() const noexcept { return valid_; }
         bool Idempotent() const noexcept { return idempotent_; }
+        bool PreservesContent() const noexcept { return idempotent_ || signalOnly_; }
         void Clear() noexcept { *this = PreparedCurrentWorldImageV1{}; }
 
     private:
         friend class VariableServiceV1;
         bool valid_ = false;
         bool idempotent_ = false;
+        bool signalOnly_ = false;
         const VariableServiceV1* source_ = nullptr;
         WorldGeneration sourceWorld_ = 0;
+        std::uint64_t sourceFingerprint_ = 0;
         std::uint64_t sourceBankOrdinal_ = 0;
         WorldIdentityV1 identity_{};
+        std::uint64_t playbackFingerprint_ = 0;
         std::uint32_t sourceBodyVintage_ = kCurrentWorldShippingBodyVintage;
         WorldCapacitySummaryV1 capacity_{};
         std::vector<DefinitionRow> definitions_;
@@ -993,6 +1003,8 @@ public:
         std::vector<TransitionProgramViewV1> transitionProgramViews_;
         std::vector<OwnedActionProgram> actionPrograms_;
         std::vector<ActionProgramViewV1> actionProgramViews_;
+        std::vector<SignalRelationV1> signalRelations_;
+        std::vector<SignalReceiverV1> signalReceivers_;
     };
 
     class PreparedWorldProjectionV1 {
@@ -1470,6 +1482,7 @@ private:
     std::vector<GatheredTarget> censusScratch_;
     bool hasWorld_ = false;
     WorldIdentityV1 identity_{};
+    std::uint64_t playbackFingerprint_ = 0;
     std::uint32_t sourceBodyVintage_ = kCurrentWorldShippingBodyVintage;
     WorldCapacitySummaryV1 capacity_{};
     WorldGeneration worldGeneration_ = 0;
@@ -1495,6 +1508,8 @@ private:
     std::vector<TransitionProgramViewV1> transitionProgramViews_;
     std::vector<OwnedActionProgram> actionPrograms_;
     std::vector<ActionProgramViewV1> actionProgramViews_;
+    std::vector<SignalRelationV1> signalRelations_;
+    std::vector<SignalReceiverV1> signalReceivers_;
     std::vector<EmitterBank> emitterBanks_;
     std::vector<std::uint32_t> emitterBankVersionGenerations_;
     // History reuse requires outcome delivery, zero observers and an audio fence.

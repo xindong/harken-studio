@@ -48,6 +48,9 @@
 
 namespace harken {
 
+class SignalRenderPlan;
+class BusTree;
+struct SignalMemberImage;
 class DecisionTable;
 class OccurrenceStatePool;
 class OriginalSourceSubmissionRegistry;
@@ -218,6 +221,9 @@ public:
     void FinishTimelineVariableSourceRead(std::uint32_t renderSlot,
         std::uint32_t renderGeneration) noexcept;
     // Logic binds only while the voice is private; the audio side owns it after Play.
+    std::size_t PreparedSignalPathRows(std::uint32_t count) const noexcept;
+    bool BindPreparedSignalPath(VnVoiceHandle handle,
+                                std::span<const PlaybackPathRow> rows) noexcept;
     bool BindPreparedNativeReadCut(VnVoiceHandle handle,
                                    const VariableNativeStartIdentity& identity) noexcept;
     bool FinishNativeVariableStartInstallation(VnVoiceHandle handle) noexcept;
@@ -315,7 +321,7 @@ public:
         std::size_t bytes = m_firstOutputEndpoints.RequestedBytes() + m_firstOutputWeights.RequestedBytes() +
             m_pendingTimelineVariableEvents.RequestedBytes() +
             m_professionalStorage.RequestedBytes() + m_variableWeightStorage.RequestedBytes() +
-            m_timelineEnvelopeCurves.RequestedBytes();
+            m_timelineEnvelopeCurves.RequestedBytes() + m_signalPathStorageBytes;
         for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
             bytes += m_ringStorage[ch].RequestedBytes() + m_monitorPreChainStorage[ch].RequestedBytes() +
                 m_highRatioStorage[ch].RequestedBytes();
@@ -325,7 +331,7 @@ public:
         std::size_t bytes = m_firstOutputEndpoints.CommittedBytes() + m_firstOutputWeights.CommittedBytes() +
             m_pendingTimelineVariableEvents.CommittedBytes() +
             m_professionalStorage.CommittedBytes() + m_variableWeightStorage.CommittedBytes() +
-            m_timelineEnvelopeCurves.CommittedBytes();
+            m_timelineEnvelopeCurves.CommittedBytes() + m_signalPathStorageBytes;
         for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
             bytes += m_ringStorage[ch].CommittedBytes() + m_monitorPreChainStorage[ch].CommittedBytes() +
                 m_highRatioStorage[ch].CommittedBytes();
@@ -335,7 +341,7 @@ public:
         std::size_t bytes = m_firstOutputEndpoints.ReservedBytes() + m_firstOutputWeights.ReservedBytes() +
             m_pendingTimelineVariableEvents.ReservedBytes() +
             m_professionalStorage.ReservedBytes() + m_variableWeightStorage.ReservedBytes() +
-            m_timelineEnvelopeCurves.ReservedBytes();
+            m_timelineEnvelopeCurves.ReservedBytes() + m_signalPathStorageBytes;
         for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
             bytes += m_ringStorage[ch].ReservedBytes() + m_monitorPreChainStorage[ch].ReservedBytes() +
                 m_highRatioStorage[ch].ReservedBytes();
@@ -641,6 +647,7 @@ public:
         std::uint64_t overrunTicks = 0;
         std::uint32_t pendingVoices = 0;
         bool batchDeferred = false;
+        bool signalFailed = false;
     };
 
     // A deferred quantum owns all its original payload until the last writer
@@ -662,7 +669,8 @@ public:
                               NotificationQueue& notifications,
                               std::uint64_t blockIndex,
                               std::uint64_t jobDeadlineAt,
-                              std::uint64_t sourceFrameBegin = 0);
+                              std::uint64_t sourceFrameBegin = 0,
+                              SignalRenderPlan* signals = nullptr, BusTree* signalBuses = nullptr);
 
     // Publishes a valid all-zero current block for every live Voice tap when
     // the mixer cannot allocate the Bus planes and therefore cannot enter
@@ -1019,6 +1027,10 @@ private:
         std::atomic<std::uint64_t> streamRingToken{0};
         mutable std::atomic<std::uint64_t> renderedState{0};
         VoiceRenderContext render;
+        // Only logic resizes this storage while the slot is private. Physical
+        // release leaves capacity available for reuse; audio never frees it.
+        std::vector<PlaybackPathRow> signalPathStorage;
+        std::vector<std::uint32_t> signalNodeStorage;
         VariableNativeStartIdentity nativeVariableStart{};
         VariableTimelineReadUseRef timelineVariableReadUse{};
         bool firstOutputOrderFinal = true;
@@ -1038,6 +1050,7 @@ private:
         // An odd cache-line stride spreads hot fields across cache sets.
         std::uint64_t cacheSetSpacer[7] = {};
     };
+    std::size_t m_signalPathStorageBytes = 0;
     VariableNativeStartAuthority m_nativeVariableStartAuthority{};
     VariableTimelineStartAuthority m_timelineVariableStartAuthority{};
     bool m_timelineQuantumOpen = false;
@@ -1261,6 +1274,7 @@ private:
     // serial pre-pass: m_jobSlots[j] is the voice slot of job j. Sized once at
     // construction (Render capacity) so dispatch allocates nothing on the audio
     // path.
+    std::vector<SignalMemberImage> m_signalMemberImages;
     std::vector<std::uint32_t> m_jobSlots;
     std::vector<std::uint32_t> m_jobGenerations;
     std::uint32_t m_deferredJobCount = 0;

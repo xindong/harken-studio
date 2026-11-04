@@ -312,6 +312,7 @@ std::size_t Engine::PendingSelectionStorageBytes() const noexcept {
                 const auto& backing = *group.nativeRuntimeBacking;
                 bytes += sizeof(NativeRuntimeBacking) + backing.groups.DirectoryBytes() +
                     backing.laneGroups.DirectoryBytes() + column(backing.reprepareProducers) +
+                    column(backing.reprepareLeaves) +
                     column(backing.selections) + column(backing.publicationProducers) +
                     column(backing.publicationChildren) + column(backing.publicationOwners) +
                     column(backing.rootMemberWeights) + column(backing.memberWeights) +
@@ -8299,7 +8300,8 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         result.status = status;
         return result;
     };
-    if (!engine.playbackPaths[renderSlot].PreparePath(input.pathRows.size()))
+    if (!engine.voices.BindPreparedSignalPath(render, input.pathRows) ||
+        !engine.playbackPaths[renderSlot].PreparePath(input.pathRows.size()))
         return rollback(VN_BACKPRESSURE);
     VnEmitterHandle emitter = 0;
     for (const auto& start : engine.playableServices) {
@@ -20790,8 +20792,12 @@ harken::PlayableStartStatus PopulateTimelineVoiceInstallColumns(
         row.targetId = binding.descriptor.targetId;
         row.variableId = binding.descriptor.variableId;
     }
-    for (std::uint32_t index = 0; index < cut.pathCount; ++index)
-        path[index] = {cut.path[index].stableId, cut.path[index].stableOccurrenceOrdinal};
+    for (std::uint32_t index = 0; index < cut.pathCount; ++index) {
+        const auto& resolved = cut.path[index];
+        path[index] = {resolved.stableId, resolved.stableOccurrenceOrdinal,
+                      resolved.rowKind, resolved.contentPropertyKind,
+                      resolved.programSemanticFingerprint, resolved.source};
+    }
     for (std::uint32_t index = 0; index < cut.sendCount; ++index) {
         sends[index].targetBusId = cut.sends[index].targetBusId;
         sends[index].levelDb = cut.sends[index].sendLevel;
@@ -45214,7 +45220,7 @@ bool PreparePendingVariableGroupSelection(harken::Engine& engine,
     harken::EnginePlayableServiceRow& row, const harken::ContainerProgramViewV3& program,
     const harken::VariableReadCutReader& reader, std::uint64_t anchor,
     SharedVariableControlDecisionPlan& decision,
-    std::array<harken::Engine::PendingVariableGroupChild, harken::kMaxKnownScheduleLeaves>& leaves,
+    std::span<harken::Engine::PendingVariableGroupChild> leaves,
     std::uint32_t& leafCount,
     std::array<harken::Engine::PendingVariableGroupTop, harken::kMaxKnownScheduleLeaves>* tops = nullptr,
     std::uint32_t* topCount = nullptr,
@@ -45367,7 +45373,7 @@ PendingVariableGroupSelectionResult ServicePendingVariableGroupSelectionReplacem
     const auto anchor = std::max(ActionImmediateStartFrame(engine), group->nextSelectionFrame);
     harken::VariableReadCutReader reader;
     SharedVariableControlDecisionPlan decision;
-    std::array<harken::Engine::PendingVariableGroupChild, harken::kMaxKnownScheduleLeaves> leaves{};
+    auto& leaves = backingOwner->nativeRuntimeBacking->reprepareLeaves;
     std::array<harken::Engine::PendingVariableGroupTop, harken::kMaxKnownScheduleLeaves> tops{};
     std::uint32_t leafCount = 0;
     std::uint32_t topCount = 0;
@@ -45495,7 +45501,7 @@ PendingVariableGroupSelectionResult ServiceRegisteredPendingVariableGroupSelecti
         const auto* program = ResolveVariableControlProgram(engine, row);
         harken::VariableReadCutReader reader;
         SharedVariableControlDecisionPlan selected;
-        std::array<harken::Engine::PendingVariableGroupChild, harken::kMaxKnownScheduleLeaves> leaves{};
+        auto& leaves = backingOwner.nativeRuntimeBacking->reprepareLeaves;
         std::array<harken::Engine::PendingVariableGroupTop, harken::kMaxKnownScheduleLeaves> tops{};
         std::uint32_t leafCount = 0;
         std::uint32_t topCount = 0;
@@ -58921,6 +58927,10 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
         }
         if (!AllowNativeBackingAllocation()) return shortage();
         nativeCandidate->reprepareProducers.resize(producerCount);
+        if (!AllowNativeBackingAllocation()) return shortage();
+        // Preserve the selection workspace bound independently of the final
+        // PCM leaf limit: selected children may complete without a PCM leaf.
+        nativeCandidate->reprepareLeaves.resize(kMaxKnownScheduleLeaves);
         if (!AllowNativeBackingAllocation()) return shortage();
         nativeCandidate->selections.resize(producerCount);
         if (!AllowNativeBackingAllocation()) return shortage();
@@ -74594,6 +74604,7 @@ void FillPlan(harken::Engine& engine, std::uint32_t planIndex,
         }
     }
     plans.SetSlotCount(planIndex, n);
+    plans.SetSignals(planIndex, engine.acceptedSignalPlan);
 }
 
 // Reserves the two resources a structural change needs: one free plan slot and
@@ -75354,6 +75365,10 @@ void FillLiveOrPreparedPlan(Engine& engine, TopologyPlanPool& plans,
         volumeRampMs[i] = 0;
         volumeApply[i] = 0;
     }
+}
+
+void FillLiveSignalTopology(Engine& engine, std::uint32_t planIndex) {
+    FillPlan(engine, planIndex);
 }
 
 bool AdmitSingleLiveCommand(Engine& engine) {
@@ -101638,6 +101653,7 @@ VnResult Vn_Update(void) {
      * writes — is honest update cost. */
     const std::uint64_t updateBeginTicks = harken::CpuClockTicks();
     engine->variables.AcknowledgeFinishedTimelineReadUses(engine->mixer.BlocksRendered());
+    harken::RefreshRetainedPackSignals(*engine);
     harken::remote::Pump();
     /* Session-trace barrier: block barriers observed since the last record,
      * then the update-begin marker. Replay pumps those blocks and then
@@ -102599,12 +102615,22 @@ VnResult Vn_LoadCurrentWorld(const VnCurrentWorldLoadDesc* desc,
         const auto finishCanonical =
             [&](harken::CurrentWorldLoadStatusV1 status) {
                 const VnResult result = mapArtifactStatus(status);
-                RecordCurrentWorldLoadTrace(
-                    engine, desc->utf8Path, result, *outReport,
-                    harken::TraceCurrentWorldImageTagV1::CanonicalV6Body,
-                    harken::TraceCurrentWorldCaptureDispositionV1::CanonicalBody,
-                    true, true, static_cast<std::uint64_t>(fileBytes),
-                    wholeArtifactHash, body.data(), body.size());
+                if (header.bodyVintage == harken::kCurrentWorldShippingBodyVintage) {
+                    RecordCurrentWorldLoadTrace(
+                        engine, desc->utf8Path, result, *outReport,
+                        harken::TraceCurrentWorldImageTagV1::CanonicalV6Body,
+                        harken::TraceCurrentWorldCaptureDispositionV1::CanonicalBody,
+                        true, true, static_cast<std::uint64_t>(fileBytes),
+                        wholeArtifactHash, body.data(), body.size());
+                } else {
+                    RecordCurrentWorldLoadTrace(
+                        engine, desc->utf8Path, result, *outReport,
+                        harken::TraceCurrentWorldImageTagV1::CanonicalArtifact,
+                        harken::TraceCurrentWorldCaptureDispositionV1::CompleteArtifact,
+                        true, true, static_cast<std::uint64_t>(fileBytes),
+                        wholeArtifactHash, artifactHeader.data(), artifactHeader.size(),
+                        body.data(), body.size());
+                }
                 return result;
             };
 
@@ -102615,7 +102641,7 @@ VnResult Vn_LoadCurrentWorld(const VnCurrentWorldLoadDesc* desc,
         switch (install.status) {
         case harken::WorldInstallStatus::Ok:
             outReport->resultGeneration = install.resultGeneration;
-            if (!install.idempotent) {
+            if (install.resultGeneration != install.priorGeneration) {
                 const VnResult authority =
                     engine->packComposition.EnterDirectWorldAuthority();
                 if (authority != VN_OK) {
@@ -118658,6 +118684,9 @@ bool RequiredCycle(const PackComposition& composition,
 struct PreparedCanonicalPublication {
     PackComposition::PreparedCommit composition;
     VariableServiceV1::PreparedPackDefinitions variables;
+    PreparedSignalPublication signals;
+    std::unique_ptr<PrivateSignalTopology> signalTopology;
+    bool signalsReady = false;
 };
 
 void ReportCanonicalConflict(Engine& engine, VnObjectId objectId,
@@ -118677,7 +118706,7 @@ VnResult CheckContentAgainstGameplayCatalog(
         CurrentWorldBodyImage body;
         const CurrentWorldBodyDecodeResult decoded = body.DecodeWithResult(
             image.partitionBody.data(), image.partitionBody.size(),
-            kCanonicalDefinitionPartitionBodyVintage,
+            image.partitionHeader.bodyVintage,
             CurrentWorldDecodeMode::StrictArtifact);
         if (decoded != CurrentWorldBodyDecodeResult::Ok ||
             body.ProductionView() == nullptr) {
@@ -118724,7 +118753,7 @@ void ReportCanonicalMediaConflict(Engine& engine, const PackCanonicalImage& cand
     if (candidate.hasPartition) {
         CurrentWorldBodyImage body;
         if (body.DecodeWithResult(candidate.partitionBody.data(), candidate.partitionBody.size(),
-                kCanonicalDefinitionPartitionBodyVintage, CurrentWorldDecodeMode::StrictArtifact) ==
+                candidate.partitionHeader.bodyVintage, CurrentWorldDecodeMode::StrictArtifact) ==
                 CurrentWorldBodyDecodeResult::Ok && body.ProductionView() != nullptr)
             candidateProject = body.ProductionView()->identity.projectId;
     }
@@ -118790,7 +118819,10 @@ VnResult PrepareCanonicalOwners(
         for (const auto& owner : next->owners) {
             if (!engine.PrepareQueueSelectionStorage(owner.view)) return VN_BACKPRESSURE;
         }
-        const std::uint64_t indexBytes = next->index.size() * sizeof(PackComposition::IdentityIndexEntry);
+        const std::uint64_t indexBytes =
+            next->index.size() * sizeof(PackComposition::IdentityIndexEntry) +
+            next->signalRelations.size() * sizeof(SignalRelationV1) +
+            next->signalReceivers.size() * sizeof(SignalReceiverV1);
         if (indexBytes > engine.config.maxCompositeIndexBytes) {
             engine.packComposition.NoteRefusal(
                 indexBytes, engine.config.maxCompositeIndexBytes,
@@ -118817,15 +118849,40 @@ VnResult PrepareCanonicalOwners(
     return VN_OK;
 }
 
+VnResult PrepareCanonicalSignals(Engine& engine, PreparedCanonicalPublication& prepared,
+    std::uint32_t planIndex = kInvalidTopologyPlanIndex) {
+    if (prepared.composition.NamesOnly()) {
+        prepared.signals.predecessor = engine.acceptedSignalRevision;
+        prepared.signalsReady = true;
+        return VN_OK;
+    }
+    const auto topology = engine.topologyPlans.View(planIndex);
+    const auto result = PreparePackSignals(engine, prepared.composition.Published(),
+        planIndex == kInvalidTopologyPlanIndex ? nullptr : &topology, prepared.signals);
+    if (result != WorldInstallStatus::Ok)
+        return result == WorldInstallStatus::Capacity ? VN_PACK_RESIDENT_CAPACITY : VN_BAD_PACK;
+    if (planIndex != kInvalidTopologyPlanIndex) {
+        AttachPreparedSignals(engine.topologyPlans, planIndex, prepared.signals);
+    } else if (prepared.signals.changed) {
+        prepared.signalTopology.reset(new (std::nothrow) PrivateSignalTopology(engine));
+        if (!prepared.signalTopology || !prepared.signalTopology->Prepare(prepared.signals)) return VN_BACKPRESSURE;
+    }
+    prepared.signalsReady = true;
+    return VN_OK;
+}
+
 void CommitCanonicalOwners(Engine& engine,
                            PreparedCanonicalPublication* prepared) noexcept {
     assert(prepared != nullptr);
     if (prepared == nullptr || !prepared->composition.IsPrepared()) {
         return;
     }
+    assert(prepared->signalsReady && CanCommitSignals(engine, prepared->signals));
     if (!prepared->composition.NamesOnly())
         CommitPackVariables(engine, &prepared->variables);
     engine.packComposition.CommitPrepared(&prepared->composition);
+    CommitSignals(engine, prepared->signals);
+    if (prepared->signalTopology) prepared->signalTopology->Commit();
 }
 
 VnResult PublishCanonicalOwners(Engine& engine,
@@ -118839,6 +118896,8 @@ VnResult PublishCanonicalOwners(Engine& engine,
     if (result != VN_OK) {
         return result;
     }
+    const auto signalResult = PrepareCanonicalSignals(engine, prepared);
+    if (signalResult != VN_OK) return signalResult;
     CommitCanonicalOwners(engine, &prepared);
     return VN_OK;
 }
@@ -119235,7 +119294,7 @@ VnResult ValidateCanonicalPackSetVoiceRecipes(
         if (viewPtr == nullptr) {
             const auto decoded = body.DecodeWithResult(
                 image.partitionBody.data(), image.partitionBody.size(),
-                kCanonicalDefinitionPartitionBodyVintage,
+                image.partitionHeader.bodyVintage,
                 CurrentWorldDecodeMode::StrictArtifact);
             if (decoded != CurrentWorldBodyDecodeResult::Ok || body.ProductionView() == nullptr)
                 return decoded == CurrentWorldBodyDecodeResult::Capacity
@@ -121438,6 +121497,8 @@ VnResult SetGameplayCatalog(Engine& engine, VnPackHandle expectedInitHandle,
         expectedInitHandle, PackVariablePublicationReason::ContentMutation,
         &prepared, nullptr, &published->ledger, &image);
     if (result != VN_OK) return result;
+    const auto signals = PrepareCanonicalSignals(engine, prepared);
+    if (signals != VN_OK) return signals;
     CommitCanonicalOwners(engine, &prepared);
     auto trace = ::TraceStateful(&engine, kTraceCallSetGameplayCatalog);
     trace.U64(expectedInitHandle).U64(catalog->byteCount)
@@ -121609,10 +121670,13 @@ VnResult ActivateCanonicalPackSetImpl(
                 if (preparedResult != VN_OK) {
                     return preparedResult;
                 }
+                const auto signals = PrepareCanonicalSignals(engine, prepared.publication, prepared.planIndex);
+                if (signals != VN_OK) return signals;
                 if (PackFault(PackStagingFault::AfterAllPreparedBeforeCommit)) {
                     return VN_PACK_RESIDENT_CAPACITY;
                 }
                 if (!CanCommitCanonicalVolumesV2(engine, prepared) ||
+                    !CanCommitSignals(engine, prepared.publication.signals) ||
                     engine.packComposition.Published() != prepared.basePublication ||
                     engine.packComposition.CompositeGeneration() !=
                         prepared.baseGeneration) {
@@ -121881,6 +121945,8 @@ VnResult UnloadCanonicalPackSetV1(Engine& engine,
             if (bindings != VN_OK) {
                 return bindings;
             }
+            const auto signals = PrepareCanonicalSignals(engine, prepared.publication, prepared.planIndex);
+            if (signals != VN_OK) return signals;
             if (PackFault(PackStagingFault::AfterAllPreparedBeforeCommit)) {
                 return VN_PACK_RESIDENT_CAPACITY;
             }
@@ -122136,6 +122202,8 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
             return applied;
         }
     }
+    const auto signals = PrepareCanonicalSignals(engine, publication);
+    if (signals != VN_OK) return signals;
     CommitCanonicalOwners(engine, &publication);
     *outHandle = handle;
     guard.committed = true;
@@ -122272,6 +122340,12 @@ VnResult UnloadCanonicalPack(Engine& engine, VnPackHandle handle,
     PackTable::RetiredReplace predecessor;
     const PackResourceRevisionToken predecessorResourceToken =
         owner->resourceToken;
+    const auto signals = PrepareCanonicalSignals(engine, publication);
+    if (signals != VN_OK) {
+        engine.packs.CancelPreparedMutation(&media);
+        CancelCanonicalBindingPlan(engine, bindingPlan);
+        return signals;
+    }
     engine.packs.CommitPreparedMutation(&media, engine.registry,
                                         &predecessor);
     CommitCanonicalOwners(engine, &publication);
@@ -122453,6 +122527,12 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
         return preparedBindings;
     }
     PackTable::RetiredReplace predecessor;
+    const auto signals = PrepareCanonicalSignals(engine, publication);
+    if (signals != VN_OK) {
+        engine.packs.CancelPreparedMutation(&media);
+        CancelCanonicalBindingPlan(engine, bindingPlan);
+        return signals;
+    }
     engine.packs.CommitPreparedMutation(&media, engine.registry,
                                         &predecessor);
     CommitCanonicalOwners(engine, &publication);

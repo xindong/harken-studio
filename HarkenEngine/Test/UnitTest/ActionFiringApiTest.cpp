@@ -46358,8 +46358,7 @@ TEST(ActionFiringApi,
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
 
-TEST(ActionFiringApi,
-     ImmediateRandomQueuePlayResumesTheStoredPermutationPosition) {
+static void CheckRandomQueueResumeAfterSignalEdit(bool editSignals) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(8, 64, 48000);
     harkentest::EngineSession session(config);
@@ -46383,6 +46382,12 @@ TEST(ActionFiringApi,
     image.containers[2].resumePosition = 1;
     image.world.identity.runtimeSemanticFingerprint =
         harken::ComputeCurrentWorldFingerprintV4(image.world);
+    if (editSignals) {
+        image.world.sourceBodyVintage = harken::kCurrentWorldBodyVintageV20;
+        image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV7(image.world);
+        ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(880), VN_BUS_MASTER));
+        engine->nullBackend.Pump(1);
+    }
     const harken::WorldInstallResult installed =
         harken::InstallContainerWorldV1(*engine, image.world);
     ASSERT_EQ(harken::WorldInstallStatus::Ok, installed.status);
@@ -46402,7 +46407,7 @@ TEST(ActionFiringApi,
         static_cast<std::uint32_t>(desc.emitter >> 32);
     harken::QueueCheckpointImage checkpoint{};
     checkpoint.randomSeed.worldSemanticFingerprint =
-        image.world.identity.runtimeSemanticFingerprint;
+        engine->variables.CurrentPlayableWorld().identity.runtimeSemanticFingerprint;
     checkpoint.randomSeed.rootStableId =
         image.containers[2].containerStableId;
     checkpoint.randomSeed.callerSeed = 0xa1a2a3a4a5a6a7a8ULL;
@@ -46427,6 +46432,25 @@ TEST(ActionFiringApi,
     checkpoint.effective.currentChildOrdinal = permutation[1];
     ASSERT_TRUE(engine->queueCheckpoints.Store(key, checkpoint));
 
+    harken::SignalRelationV1 signal;
+    harken::SignalReceiverV1 receiver;
+    if (editSignals) {
+        receiver.target.stableId = harkentest::ObjectId(880);
+        signal.stableId = harkentest::ObjectId(881);
+        signal.source.stableId = VN_BUS_MASTER;
+        signal.target = receiver.target;
+        signal.sendGainDb = -6;
+        image.world.signalRelations = &signal;
+        image.world.signalRelationCount = 1;
+        image.world.signalReceivers = &receiver;
+        image.world.signalReceiverCount = 1;
+        image.world.identity.capabilityMask |= harken::kWorldCapabilitySignalRelations;
+        image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV7(image.world);
+        const auto updated = harken::InstallContainerWorldV1(*engine, image.world);
+        ASSERT_EQ(harken::WorldInstallStatus::Ok, updated.status);
+        ASSERT_EQ(installed.resultGeneration, updated.resultGeneration);
+        engine->nullBackend.Pump(1);
+    }
     VnActionFiringHandle firing = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
     VnActionStepResult play{};
@@ -46501,6 +46525,14 @@ TEST(ActionFiringApi,
     EXPECT_FALSE(engine->playableInstances.Classify(play.producedPlayableInstance).live);
     EXPECT_EQ(0u, engine->playableInstances.LiveCount());
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+}
+
+TEST(ActionFiringApi, ImmediateRandomQueuePlayResumesTheStoredPermutationPosition) {
+    CheckRandomQueueResumeAfterSignalEdit(false);
+}
+
+TEST(ActionFiringApi, RandomQueueResumeSurvivesSignalOnlyPublication) {
+    CheckRandomQueueResumeAfterSignalEdit(true);
 }
 
 TEST(ActionFiringApi,

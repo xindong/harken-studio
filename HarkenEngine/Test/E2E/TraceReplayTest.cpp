@@ -835,6 +835,8 @@ TEST(TraceReplayE2E,
 
 TEST(TraceReplayE2E,
      CurrentWorldSuccessRecordsOneSelfContainedReplayableCall) {
+    for (const auto vintage : {harken::kCurrentWorldBodyVintageV18, harken::kCurrentWorldBodyVintageV20}) {
+    SCOPED_TRACE(vintage);
     const std::string tracePath =
         TempPath("current_world_success.vtrc");
     const std::string worldPath =
@@ -846,12 +848,15 @@ TEST(TraceReplayE2E,
         harkentest::MakeVariableDefinition(
             harkentest::ObjectId(0x9801), harken::VariableKindV1::Smooth, 0.0f, 1.0f, 0.5f);
     harken::ContainerWorldInstallViewV1 world{};
+    world.sourceBodyVintage = vintage;
     world.variables = &definition;
     world.variableCount = 1;
     world.identity.capabilityMask =
         harken::kWorldCapabilityVariableDefinitions;
     world.identity.runtimeSemanticFingerprint =
-        harken::ComputeCurrentWorldFingerprintV4(world);
+        vintage == harken::kCurrentWorldBodyVintageV20
+            ? harken::ComputeCurrentWorldFingerprintV7(world)
+            : harken::ComputeCurrentWorldFingerprintV4(world);
     std::vector<std::uint8_t> artifact;
     ASSERT_TRUE(harken::EncodeCurrentWorldArtifactV1(world, artifact));
     ASSERT_NO_FATAL_FAILURE(WriteFileBytes(worldPath, artifact));
@@ -899,6 +904,37 @@ TEST(TraceReplayE2E,
     ASSERT_TRUE(std::filesystem::remove(worldPath));
     const HostRun replay = RunHost("trace-replay " + tracePath);
     EXPECT_EQ(0, replay.exitCode) << replay.output;
+    }
+}
+
+TEST(TraceReplayE2E, CurrentWorldInternalInstallAndRefusalPreserveVintage) {
+    for (const auto vintage : {harken::kCurrentWorldBodyVintageV19, harken::kCurrentWorldBodyVintageV20}) {
+    SCOPED_TRACE(vintage);
+    const std::string tracePath = TempPath("current_world_v20_internal.vtrc");
+    std::filesystem::remove(tracePath);
+    {
+        EngineSession session(MakeNullConfig());
+        ASSERT_EQ(VN_OK, session.InitResult());
+        ASSERT_EQ(VN_OK, Vn_TraceStart(tracePath.c_str()));
+        harken::ContainerWorldInstallViewV1 world{};
+        world.sourceBodyVintage = vintage;
+        if (vintage == harken::kCurrentWorldBodyVintageV19)
+            world.identity.capabilityMask = harken::kWorldCapabilityEntryScheduling;
+        world.identity.runtimeSemanticFingerprint = vintage == harken::kCurrentWorldBodyVintageV20
+            ? harken::ComputeCurrentWorldFingerprintV7(world)
+            : harken::ComputeCurrentWorldFingerprintV6(world);
+        ASSERT_EQ(vintage == harken::kCurrentWorldBodyVintageV19
+                      ? harken::WorldInstallStatus::CapabilityUnavailable
+                      : harken::WorldInstallStatus::Ok,
+                  harken::InstallContainerWorldV1(*session.Engine(), world).status);
+        ++world.identity.runtimeSemanticFingerprint;
+        ASSERT_EQ(harken::WorldInstallStatus::InvalidWorld,
+                  harken::InstallContainerWorldV1(*session.Engine(), world).status);
+        ASSERT_EQ(VN_OK, Vn_TraceStop());
+    }
+    const HostRun replay = RunHost("trace-replay " + tracePath);
+    EXPECT_EQ(0, replay.exitCode) << replay.output;
+    }
 }
 
 TEST(TraceReplayE2E,

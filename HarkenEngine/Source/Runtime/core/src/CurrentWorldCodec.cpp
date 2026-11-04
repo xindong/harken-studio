@@ -126,6 +126,25 @@ struct PrefixDecodeVisitor {
     void U64(std::uint64_t& value) noexcept { value = reader.U64(); }
     void ObjectId(VnObjectId& value) noexcept { value = reader.ObjectId(); }
 };
+
+void EncodeSignalEndpoint(const SignalEndpointRefV1& ref,
+                          std::vector<std::uint8_t>& out) {
+    AppendU32(out, static_cast<std::uint32_t>(ref.kind));
+    AppendU32(out, ref.reserved);
+    AppendObjectId(out, ref.stableId);
+    AppendU64(out, ref.expectedPropertyFingerprint);
+    AppendU64(out, ref.expectedProgramFingerprint);
+}
+
+SignalEndpointRefV1 DecodeSignalEndpoint(Reader& reader) noexcept {
+    SignalEndpointRefV1 ref;
+    ref.kind = static_cast<SignalEndpointKindV1>(reader.U32());
+    ref.reserved = reader.U32();
+    ref.stableId = reader.ObjectId();
+    ref.expectedPropertyFingerprint = reader.U64();
+    ref.expectedProgramFingerprint = reader.U64();
+    return ref;
+}
 } // namespace
 
 namespace {
@@ -767,6 +786,8 @@ struct CurrentWorldBodyImage::Impl {
     bool useTransitionSentinel = false;
     std::vector<OwnedAction> actions;
     std::vector<ActionProgramViewV1> actionViews;
+    std::vector<SignalRelationV1> signalRelations;
+    std::vector<SignalReceiverV1> signalReceivers;
 
     void Refresh() noexcept {
         propertyViews.clear();
@@ -852,6 +873,10 @@ struct CurrentWorldBodyImage::Impl {
         }
         view.actions = actionViews.empty() ? nullptr : actionViews.data();
         view.actionCount = static_cast<std::uint32_t>(actionViews.size());
+        view.signalRelations = signalRelations.empty() ? nullptr : signalRelations.data();
+        view.signalRelationCount = static_cast<std::uint32_t>(signalRelations.size());
+        view.signalReceivers = signalReceivers.empty() ? nullptr : signalReceivers.data();
+        view.signalReceiverCount = static_cast<std::uint32_t>(signalReceivers.size());
         historicalView.identity = view.identity;
         historicalView.variables = view.variables;
         historicalView.variableCount = view.variableCount;
@@ -978,9 +1003,15 @@ bool EncodeCurrentWorldBodyImpl(
     std::vector<std::uint8_t>& out,
     bool includeActions, bool includeStructuralAncestors,
     bool useV9ContainerLayout, bool includeSpatializationMix,
-    bool includeEntryTimeline = false) noexcept {
+    bool includeEntryTimeline = false, bool includeSignals = false) noexcept {
     try {
         out.clear();
+        if constexpr (std::is_same_v<World, ContainerWorldInstallViewV1>) {
+            if (!CountPointer(world.signalRelationCount, world.signalRelations, UINT32_MAX) ||
+                !CountPointer(world.signalReceiverCount, world.signalReceivers, UINT32_MAX) ||
+                (!includeSignals && (world.signalRelationCount || world.signalReceiverCount)))
+                return false;
+        }
         if (!CountPointer(world.variableCount, world.variables,
                           kHardVariableDefinitionCapacity) ||
             !CountPointer(world.playablePropertyCount,
@@ -1568,6 +1599,41 @@ bool EncodeCurrentWorldBodyV19(
     return EncodeCurrentWorldBodyImpl(world, out, true, true, true, true, true);
 }
 
+bool EncodeCurrentWorldBodyV20(
+    const ContainerWorldInstallViewV1& world,
+    std::vector<std::uint8_t>& out) noexcept {
+    if (world.sourceBodyVintage != kCurrentWorldBodyVintageV20 ||
+        !ValidateCurrentWorldSectionGroupsV1(world) ||
+        !EncodeCurrentWorldBodyImpl(world, out, true, true, true, true, false, true)) {
+        out.clear();
+        return false;
+    }
+    try {
+        AppendU32(out, world.signalRelationCount);
+        AppendU32(out, world.signalReceiverCount);
+        for (std::uint32_t i = 0; i < world.signalRelationCount; ++i) {
+            const auto& row = world.signalRelations[i];
+            AppendObjectId(out, row.stableId);
+            EncodeSignalEndpoint(row.source, out);
+            EncodeSignalEndpoint(row.target, out);
+            AppendU32(out, static_cast<std::uint32_t>(row.consumer));
+            AppendF32(out, row.sendGainDb);
+        }
+        for (std::uint32_t i = 0; i < world.signalReceiverCount; ++i) {
+            const auto& row = world.signalReceivers[i];
+            EncodeSignalEndpoint(row.target, out);
+            AppendU32(out, row.algorithm);
+            AppendF32(out, row.attackMs);
+            AppendF32(out, row.releaseMs);
+            AppendU32(out, row.reserved);
+        }
+        return true;
+    } catch (...) {
+        out.clear();
+        return false;
+    }
+}
+
 CurrentWorldBodyImage::CurrentWorldBodyImage() noexcept = default;
 
 CurrentWorldBodyImage::~CurrentWorldBodyImage() = default;
@@ -1585,7 +1651,9 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
         return CurrentWorldBodyDecodeResult::Invalid;
     }
     if (!IsReadableCurrentWorldBodyVintage(worldTraceVintage) || replayRawAttempt ||
-        (replayCurrentAttempt && worldTraceVintage != kCurrentWorldShippingBodyVintage)) {
+        (replayCurrentAttempt && worldTraceVintage != kCurrentWorldShippingBodyVintage &&
+         worldTraceVintage != kCurrentWorldBodyVintageV19 &&
+         worldTraceVintage != kCurrentWorldBodyVintageV20)) {
         return CurrentWorldBodyDecodeResult::Invalid;
     }
     const bool allowRawInvalid = false;
@@ -2401,6 +2469,32 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                     step.valueBits = reader.U32();
                     step.reserved0 = reader.U32();
                 }
+            }
+        }
+        if (worldTraceVintage == kCurrentWorldBodyVintageV20) {
+            const auto relations = reader.U32();
+            const auto receivers = reader.U32();
+            constexpr std::uint64_t relationBytes = 104, receiverBytes = 56;
+            const auto tableBytes = relations * relationBytes + receivers * receiverBytes;
+            if (reader.failed || tableBytes != reader.size - reader.offset ||
+                relations > decoded->signalRelations.max_size() ||
+                receivers > decoded->signalReceivers.max_size())
+                return CurrentWorldBodyDecodeResult::Invalid;
+            decoded->signalRelations.resize(relations);
+            decoded->signalReceivers.resize(receivers);
+            for (auto& row : decoded->signalRelations) {
+                row.stableId = reader.ObjectId();
+                row.source = DecodeSignalEndpoint(reader);
+                row.target = DecodeSignalEndpoint(reader);
+                row.consumer = static_cast<SignalConsumerKindV1>(reader.U32());
+                row.sendGainDb = reader.F32();
+            }
+            for (auto& row : decoded->signalReceivers) {
+                row.target = DecodeSignalEndpoint(reader);
+                row.algorithm = reader.U32();
+                row.attackMs = reader.F32();
+                row.releaseMs = reader.F32();
+                row.reserved = reader.U32();
             }
         }
         const std::array<std::uint32_t, 7> actualTotals = {

@@ -1,3 +1,6 @@
+#include "harken/render/SignalRoutingTypes.h"
+#include "harken/render/SignalPathBounds.h"
+#include "harken/render/SignalRenderPlan.h"
 #include "harken/render/BusTree.h"
 
 #include "MonitorCaptureHub.h"
@@ -15,6 +18,22 @@
 #include <limits>
 
 namespace harken {
+std::uint64_t BusTree::RetainedSignalScratchBytes(std::uint64_t extraNodes,
+    std::uint64_t extraEdges, std::uint32_t frames) const noexcept {
+    std::uint64_t result = 0;
+    for (std::uint32_t i = 0; i < m_plans.Capacity(); ++i) {
+        if (!m_plans.IsAcquired(i)) continue;
+        const auto* signals = m_plans.View(i).signals;
+        if (signals == nullptr || signals->NodeCount() == 0) continue;
+        const auto nodes = extraNodes + signals->NodeCount();
+        if (nodes > UINT32_MAX || extraEdges > UINT32_MAX ||
+            signals->RelationCount() > UINT32_MAX - extraEdges) return UINT64_MAX;
+        result = std::max(result, SignalRenderPlan::RoutingScratchBytes(
+            static_cast<std::uint32_t>(nodes), m_capacity,
+            extraEdges + signals->RelationCount(), frames));
+    }
+    return result;
+}
 
 BusTree::BusTree(const EngineConfig& config, TopologyPlanPool& plans,
                  EffectPoolBank& effects, DynamicRouteSystem& dynamicRoutes,
@@ -395,53 +414,75 @@ namespace {
 
 enum class BusToneKind : std::uint8_t { Lowpass, Highpass };
 
-void ProcessBusToneSection(BusTree::Bus::ToneSection& section,
+double ProcessBusToneSection(BusTree::Bus::ToneSection& section,
                            BusToneKind kind, const BiquadTrigTable* trig,
                            std::uint32_t sampleRate, float* const* channels,
-                           std::uint32_t channelCount,
-                           std::uint32_t frames) {
-    if (!section.enabled && !section.transition.transitioning &&
-        !section.glide.active) {
-        return;
+                           std::uint32_t channelCount, std::uint32_t frames,
+                           std::span<SignalBiquadSegment> prepare = {}) {
+    if (!section.enabled && !section.transition.transitioning && !section.glide.active) {
+        section.signalSchedule = {};
+        return 1;
     }
-    if (section.transition.transitioning || !section.glide.active ||
-        trig == nullptr) {
-        BiquadProcessSmoothed(section.transition, section.enabled,
-                              section.coeffs, section.state,
-                              section.tailFrames, channels, channelCount, 0,
-                              frames);
-        return;
+    if (section.transition.transitioning || !section.glide.active || trig == nullptr) {
+        const auto bound = section.signalBound.Advance(section.enabled, section.coeffs,
+            section.transition, frames);
+        section.signalHighWater = std::max(section.signalHighWater, bound);
+        BiquadProcessSmoothed(section.transition, section.enabled, section.coeffs,
+            section.state, section.tailFrames, channels, channelCount, 0, frames);
+        section.signalSchedule = {};
+        return bound;
     }
     constexpr std::uint32_t kControlFrames = 16;
-    std::uint32_t consumed = 0;
+    std::uint32_t consumed = 0, segment = 0;
+    double bound = 1;
     while (consumed < frames) {
-        const std::uint32_t controlOffset =
-            section.glide.progress % kControlFrames;
-        const std::uint32_t count =
-            std::min(kControlFrames - controlOffset, frames - consumed);
-        BiquadProcessSmoothed(section.transition, section.enabled,
-                              section.coeffs, section.state,
-                              section.tailFrames, channels, channelCount,
-                              consumed, count);
+        if (!section.glide.active) {
+            // A glide can finish between control ticks. Its progress then
+            // stops, so consume the fixed-coefficient remainder once.
+            const auto remaining = frames - consumed;
+            bound = std::max(bound, section.signalBound.Advance(section.enabled,
+                section.coeffs, section.transition, remaining));
+            BiquadProcessSmoothed(section.transition, section.enabled, section.coeffs,
+                section.state, section.tailFrames, channels, channelCount, consumed, remaining);
+            break;
+        }
+        const std::uint32_t controlOffset = section.glide.progress % kControlFrames;
+        const std::uint32_t count = std::min(kControlFrames - controlOffset, frames - consumed);
+        bound = std::max(bound, section.signalBound.Advance(section.enabled,
+            section.coeffs, section.transition, count, true));
+        BiquadProcessSmoothed(section.transition, section.enabled, section.coeffs,
+            section.state, section.tailFrames, channels, channelCount, consumed, count);
         consumed += count;
         section.glide.Advance(count);
-        const BiquadTrigPoint point =
-            trig->Lookup(static_cast<float>(sampleRate),
-                         section.glide.FrequencyHz());
-        const BiquadCoeffs candidate =
-            kind == BusToneKind::Lowpass
-                ? MakeLowpassFromTrig(point, section.glide.Q())
-                : MakeHighpassFromTrig(point, section.glide.Q());
-        if (IsBiquadStable(candidate)) {
-            section.coeffs = candidate;
-            section.tailFrames = EstimateBiquadTailFrames(candidate);
+        if (!section.signalSchedule.empty()) {
+            // The certificate and audio consume exactly the same prepared tuples.
+            assert(segment < section.signalSchedule.size());
+            const auto& next = section.signalSchedule[segment];
+            assert(next.frames == count);
+            section.coeffs = next.nextCoefficients;
+            section.tailFrames = next.nextTailFrames;
+        } else {
+            const auto point = trig->Lookup(static_cast<float>(sampleRate), section.glide.FrequencyHz());
+            const auto candidate = kind == BusToneKind::Lowpass
+                ? MakeLowpassFromTrig(point, section.glide.Q()) : MakeHighpassFromTrig(point, section.glide.Q());
+            if (IsBiquadStable(candidate)) {
+                section.coeffs = candidate;
+                section.tailFrames = EstimateBiquadTailFrames(candidate);
+            }
+            if (!section.glide.active && IsBiquadStable(section.transition.targetCoeffs)) {
+                section.coeffs = section.transition.targetCoeffs;
+                section.tailFrames = section.transition.targetTailFrames;
+            }
         }
-        if (!section.glide.active &&
-            IsBiquadStable(section.transition.targetCoeffs)) {
-            section.coeffs = section.transition.targetCoeffs;
-            section.tailFrames = section.transition.targetTailFrames;
+        if (!prepare.empty()) {
+            assert(segment < prepare.size());
+            prepare[segment] = {section.coeffs, section.tailFrames, count};
         }
+        ++segment;
     }
+    section.signalSchedule = {};
+    section.signalHighWater = std::max(section.signalHighWater, bound);
+    return bound;
 }
 
 bool ToneSectionActive(const BusTree::Bus::ToneSection& section) {
@@ -554,6 +595,10 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
                                 std::uint32_t connectFrom,
                                 std::uint32_t connectTo, float connectLevelDb,
                                 std::uint64_t acceptedGraphRevision) {
+    const TopologyPlanView plan = m_plans.View(planIndex);
+    auto* previousSignals = InstalledSignals();
+    if (plan.signals != nullptr && previousSignals != nullptr && plan.signals != previousSignals)
+        plan.signals->AdoptContinuityFrom(*previousSignals);
     // Swap: retire whatever plan was installed (the logic side reclaims it) and
     // adopt the new one. A single command record is inherently atomic, so this
     // whole apply is the block-boundary swap.
@@ -561,7 +606,6 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
         m_plans.Retire(m_currentPlanIndex);
     }
     m_currentPlanIndex = planIndex;
-    const TopologyPlanView plan = m_plans.View(planIndex);
     if (!plan.valid) {
         return;
     }
@@ -944,6 +988,9 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
                 bus.fxSlotEffectRef[slot], payload);
         }
     };
+    if (!bus.signalBoundsPrepared)
+        (void)SignalBusBounds(static_cast<std::uint32_t>(&bus - m_buses.data()), blockFrames, {});
+    bus.signalBoundsPrepared = false;
     // Pre-fader chain: fx slots [0, faderAfterSlot) before the gain.
     for (std::uint32_t s = 0; s < fader; ++s) {
         processSlot(s);
@@ -1088,8 +1135,208 @@ void BusTree::ScatterSend(const float* const* src, float* const* dst,
     }
 }
 
-void BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
-                      std::uint64_t blockEpoch, std::uint64_t sourceFrameBegin) {
+SignalBusRoutingInfo BusTree::SignalBusBounds(std::uint32_t index, std::uint32_t frames,
+    std::span<SignalBiquadSegment> schedules) noexcept {
+    auto& bus = m_buses[index];
+    SignalBusRoutingInfo result{};
+    result.id = bus.id;
+    result.generation = bus.generation;
+    result.outputGainBound = SignalOutputGainBound(bus.outputGain, frames);
+    bus.signalGainHistory = std::max(bus.signalGainHistory, SignalOutputGainBound(bus.gain, frames));
+    bus.signalOutputHistory = std::max(bus.signalOutputHistory, result.outputGainBound);
+    double input = bus.signalGainHistory;
+    for (std::uint32_t slot = 0; slot < m_fxSlots; ++slot) {
+        const auto& effect = bus.fxSlots[slot];
+        double value = 1;
+        if (effect.process != nullptr && effect.state != nullptr) {
+            switch (bus.fxSlotEffectRef[slot].type) {
+            case VN_EFFECT_GAIN: {
+                const auto& state = *static_cast<const GainState*>(effect.state);
+                value = SignalIncrementBound(state.gainLinear, state.targetGainLinear,
+                    state.gainIncrement, state.transitionFramesRemaining, frames);
+                break;
+            }
+            case VN_EFFECT_FEEDBACK_DELAY: {
+                const auto& state = *static_cast<const DelayEffectState*>(effect.state);
+                const double wet = SignalIncrementBound(state.wet, state.targetWet,
+                    state.wetIncrement, state.transitionFramesRemaining, frames);
+                const double dry = SignalIncrementBound(state.dry, state.targetDry,
+                    state.dryIncrement, state.transitionFramesRemaining, frames);
+                value = dry + wet / (1.0 - std::max(state.feedback, state.maxFeedbackSinceReset));
+                break;
+            }
+            case VN_EFFECT_THREE_BAND_TONE: {
+                const auto& state = *static_cast<const ToneEffectState*>(effect.state);
+                for (std::size_t band = 0; band < 3; ++band) {
+                    auto& history = bus.signalToneHistory[slot][band];
+                    history = std::max({1.0, history, state.signalBandHistory[band]});
+                    value = SignalBoundProduct(value, history);
+                }
+                break;
+            }
+            case VN_EFFECT_LIMITER: value = 2; break;
+            case VN_EFFECT_COMPRESSOR: {
+                const auto& state = *static_cast<const CompressorState*>(effect.state);
+                value = 2 * std::max({1.0, state.resetBridgeStartGain,
+                    SignalIncrementBound(state.parameters.makeupLinear, state.targetParameters.makeupLinear,
+                        state.parameterIncrements.makeupLinear, state.parameterTransitionFramesRemaining, frames)});
+                break;
+            }
+            default: value = std::numeric_limits<double>::infinity(); break;
+            }
+            if (!bus.fxBypassRamping[slot] && bus.fxBypassMix[slot] >= 1) value = 1;
+            else if (bus.fxBypassRamping[slot] || bus.fxBypassMix[slot] > 0) value = std::max(1.0, value);
+        }
+        // A replaced upstream effect does not reset surviving downstream memory.
+        bus.signalSlotHistory[slot] = std::max({1.0, bus.signalSlotHistory[slot], value});
+        input = SignalBoundProduct(input, bus.signalSlotHistory[slot]);
+    }
+    const auto sectionBound = [&](Bus::ToneSection& section, BusToneKind kind, std::size_t slot) {
+        section.signalSchedule = {};
+        if (!schedules.empty()) {
+            auto storage = schedules.subspan(slot * (frames / 16u + 2u), frames / 16u + 2u);
+            auto copy = section;
+            const auto bound = ProcessBusToneSection(copy, kind, m_biquadTrig,
+                m_sampleRate, nullptr, 0, frames, storage);
+            section.signalHighWater = std::max(section.signalHighWater, bound);
+            if (section.glide.active && !section.transition.transitioning && m_biquadTrig != nullptr)
+                section.signalSchedule = storage;
+        }
+        return section.signalHighWater;
+    };
+    input = SignalBoundProduct(input, sectionBound(bus.busLpf, BusToneKind::Lowpass, 0));
+    input = SignalBoundProduct(input, sectionBound(bus.busHpf, BusToneKind::Highpass, 1));
+    result.outputFilterBound = SignalBoundProduct(
+        sectionBound(bus.outputLpf, BusToneKind::Lowpass, 2),
+        sectionBound(bus.outputHpf, BusToneKind::Highpass, 3));
+    double layout = 1;
+    if (index != 0 && IsConcreteLayout(bus.outputLayout) && LayoutChannelCount(bus.outputLayout) < m_mixChannels) {
+        layout = 0;
+        ChannelRole roles[kMaxChannels];
+        LayoutRoles(bus.outputLayout, roles);
+        for (std::uint32_t row = 0; row < LayoutChannelCount(bus.outputLayout); ++row) {
+            if (ChannelOfRole(m_mixLayout, roles[row]) < 0) continue;
+            double sum = 0;
+            for (std::uint32_t ch = 0; ch < m_mixChannels; ++ch)
+                sum += std::abs(static_cast<double>(bus.downmixCoeffs[row * 8 + ch]));
+            layout = std::max(layout, sum);
+        }
+    }
+    bus.signalLayoutHistory = std::max(bus.signalLayoutHistory, layout);
+    result.inputBound = SignalBoundProduct(SignalBoundProduct(input, bus.signalLayoutHistory), bus.signalOutputHistory);
+    return result;
+}
+
+std::uint32_t BusTree::SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> info,
+    std::span<SignalFeedbackEdge> edges, std::uint32_t frames,
+    std::span<SignalBiquadSegment> schedules, std::uint32_t nodeOffset) noexcept {
+    const auto perBus = static_cast<std::size_t>(4) * (frames / 16u + 2u);
+    if (info.size() < m_audioCount || edges.size() < SignalRoutingEdgeCapacity() ||
+        schedules.size() < m_audioCount * perBus) return UINT32_MAX;
+    const auto plan = m_plans.View(m_currentPlanIndex);
+    const bool segmented = SignalRoutingExtraNodes() != 0;
+    if (SignalRoutingExtraNodes() > UINT32_MAX - static_cast<std::uint64_t>(nodeOffset)) return UINT32_MAX;
+    const auto inputNode = [&](std::uint32_t bus) {
+        return segmented ? nodeOffset + bus * (m_fxSlots + 2) : bus;
+    };
+    for (std::uint32_t i = 0; i < m_audioCount; ++i) {
+        if (plan.valid && plan.alive != nullptr && plan.alive[i] == 0) continue;
+        info[i] = SignalBusBounds(i, frames, schedules.subspan(i * perBus, perBus));
+        info[i].inputNode = inputNode(i);
+        m_buses[i].signalBoundsPrepared = true;
+    }
+    std::uint32_t used = 0;
+    if (segmented) {
+        for (std::uint32_t bus = 0; bus < m_audioCount; ++bus) {
+            if (info[bus].id == VnBusId{}) continue;
+            const auto base = inputNode(bus);
+            const auto fader = std::min(m_buses[bus].faderAfterSlot, m_fxSlots);
+            auto previous = base;
+            for (std::uint32_t slot = 0; slot <= m_fxSlots; ++slot) {
+                if (slot == fader) {
+                    edges[used++] = {previous, base + m_fxSlots + 1, 1, false};
+                    previous = base + m_fxSlots + 1;
+                }
+                if (slot < m_fxSlots) {
+                    edges[used++] = {previous, base + slot + 1, 1, false};
+                    previous = base + slot + 1;
+                }
+            }
+            edges[used++] = {previous, bus, info[bus].inputBound, false};
+        }
+        const auto routes = m_dynamicRoutes.InstalledPlan();
+        for (std::uint32_t i = 0; i < routes.rowCount; ++i) {
+            const auto& row = routes.rows[i];
+            if (!m_dynamicRoutes.InstalledBusTapMatches(row) || row.sourceIndex >= m_audioCount ||
+                row.targetBusIndex >= m_audioCount || row.effectSlot >= m_fxSlots ||
+                info[row.sourceIndex].id == VnBusId{} || info[row.targetBusIndex].id == VnBusId{} ||
+                m_buses[row.targetBusIndex].fxSlotEffectRef[row.effectSlot].type != VN_EFFECT_COMPRESSOR) continue;
+            const auto base = inputNode(row.sourceIndex);
+            const auto fader = std::min(m_buses[row.sourceIndex].faderAfterSlot, m_fxSlots);
+            std::uint32_t source = 0;
+            switch (row.tap) {
+            case VN_DYNAMIC_TAP_BUS_PRE_FADER: source = base + fader; break;
+            case VN_DYNAMIC_TAP_BUS_POST_FADER: source = base + m_fxSlots + 1; break;
+            case VN_DYNAMIC_TAP_BUS_POST_EFFECTS:
+                source = base + m_fxSlots + (fader == m_fxSlots ? 1u : 0u); break;
+            default: return UINT32_MAX;
+            }
+            // External detector sensitivity has no main-independent finite
+            // bound. Preserve its actual injection point and localize that
+            // limit to components that really return through this dependency.
+            edges[used++] = {source, inputNode(row.targetBusIndex) + row.effectSlot + 1,
+                row.levelLinear == 0 ? 0 : std::numeric_limits<double>::infinity(), false};
+        }
+    }
+    for (std::uint32_t from = 0; from < m_audioCount; ++from) {
+        if (info[from].id == VnBusId{}) continue;
+        const auto& bus = m_buses[from];
+        if (from != 0 && bus.parentIndex < m_audioCount && info[bus.parentIndex].id != VnBusId{})
+            edges[used++] = {from, inputNode(bus.parentIndex),
+                SignalBoundProduct(info[from].outputFilterBound,
+                    segmented ? 1 : info[bus.parentIndex].inputBound), false};
+        if (!plan.valid) continue;
+        const auto* membership = plan.sendTargets + static_cast<std::size_t>(from) * plan.slotsPerBus;
+        for (std::uint32_t slot = 0; slot < plan.slotsPerBus; ++slot) {
+            const auto to = membership[slot];
+            if (to == kEmptySendTarget || to >= m_audioCount || info[to].id == VnBusId{}) continue;
+            const auto* edge = FindEdge(from, to);
+            if (edge == nullptr) continue;
+            auto gain = edge->gain;
+            if (edge->ramping) gain.SetBlockTarget(edge->rampStartGain, edge->rampEndGain,
+                edge->rampBlocksDone, edge->rampBlocksTotal);
+            const double level = std::max(std::abs(static_cast<double>(gain.current)),
+                std::abs(static_cast<double>(gain.target)));
+            edges[used++] = {from, inputNode(to), SignalBoundProduct(level, segmented ? 1 : info[to].inputBound), false};
+        }
+    }
+    return used;
+}
+
+bool BusTree::SignalReceiversCannotReachSources(std::span<std::uint8_t> roles) const noexcept {
+    if (roles.size() < m_audioCount || SignalRoutingExtraNodes() != 0) return false;
+    const auto plan = m_plans.View(m_currentPlanIndex);
+    const auto count = plan.valid ? plan.orderCount : m_audioCount;
+    // Reverse the existing feeds-first ordinary order. Bit 1 propagates from
+    // sources to every input that can reach them; bit 2 identifies receivers.
+    for (std::uint32_t k = count; k != 0; --k) {
+        const auto from = plan.valid ? plan.order[k - 1] : count - k;
+        if (from >= m_audioCount) return false;
+        const auto parent = m_buses[from].parentIndex;
+        if (from != 0 && parent < m_audioCount) roles[from] |= roles[parent] & 1u;
+        if (plan.valid) {
+            const auto* targets = plan.sendTargets + static_cast<std::size_t>(from) * plan.slotsPerBus;
+            for (std::uint32_t slot = 0; slot < plan.slotsPerBus; ++slot)
+                if (targets[slot] < m_audioCount) roles[from] |= roles[targets[slot]] & 1u;
+        }
+        if ((roles[from] & 3u) == 3u) return false;
+    }
+    return true;
+}
+
+bool BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
+                      std::uint64_t blockEpoch, std::uint64_t sourceFrameBegin,
+                      SignalRenderPlan* signals) {
     const TopologyPlanView plan = m_plans.View(m_currentPlanIndex);
     // Feeds-first order: with a plan, the published order (every bus after all
     // buses that feed it — tree children and send sources — master last).
@@ -1111,7 +1358,9 @@ void BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
         const std::uint32_t i = usePlan ? plan.order[k] : (n - 1 - k);
         Bus& bus = m_buses[i];
         float* const* planes = busPlanes + i * m_mixChannels;
+        if (signals == nullptr || !signals->NeedsBlockRouting()) bus.signalBoundsPrepared = false;
         FinalizeBus(bus, planes, blockFrames, blockEpoch, sourceFrameBegin);
+        const auto signalNode = signals == nullptr ? UINT32_MAX : signals->NodeForBus(i, bus.id, bus.generation);
         // Per-bus output fold (non-master): a bus configured to present a
         // narrower output layout than the mix folds through its own matrix and
         // name-places the result back into these mix-width planes, so the
@@ -1122,6 +1371,8 @@ void BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
         const bool folded =
             i != 0 && IsConcreteLayout(bus.outputLayout) &&
             LayoutChannelCount(bus.outputLayout) < m_mixChannels;
+        // Existing Compressor taps end at the ordinary effects/layout stage.
+        // Formal signal sources are captured below after receiving and Out Vol.
         if (folded) {
             FoldBusOutput(bus, planes, blockFrames);
         } else {
@@ -1129,12 +1380,19 @@ void BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
                 i, VN_DYNAMIC_TAP_BUS_POST_EFFECTS, planes, m_mixChannels,
                 blockFrames);
         }
+        if (signalNode != UINT32_MAX) {
+            if (!signals->ProcessBus(signalNode, planes, bus.outputGain)) return false;
+            bus.outputPeak = StageTapPeak(planes, m_mixChannels, 0, blockFrames,
+                bus.outputChannelPeaks);
+        }
         if (i != 0) {
             float* const* parent = busPlanes + bus.parentIndex * m_mixChannels;
             const bool outputFilter =
                 ToneSectionActive(bus.outputLpf) ||
                 ToneSectionActive(bus.outputHpf);
-            if (!outputFilter) {
+            const bool captureSignal = signalNode != UINT32_MAX &&
+                                       signals->RequiresSourceCapture(signalNode);
+            if (!outputFilter && !captureSignal) {
                 for (std::uint32_t ch = 0; ch < m_mixChannels; ++ch) {
                     bus.outputGain.MixAdd(planes[ch], parent[ch], blockFrames,
                                           0);
@@ -1157,6 +1415,8 @@ void BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
                                       m_biquadTrig, m_sampleRate,
                                       m_outputScratch.data(), m_mixChannels,
                                       blockFrames);
+                if (signalNode != UINT32_MAX && !signals->CaptureBus(signalNode,
+                    {m_outputScratch.data(), m_mixChannels})) return false;
                 for (std::uint32_t ch = 0; ch < m_mixChannels; ++ch) {
                     float* dst = parent[ch];
                     const float* src = m_outputScratch[ch];
@@ -1194,10 +1454,13 @@ void BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
             ProcessBusToneSection(bus.outputHpf, BusToneKind::Highpass,
                                   m_biquadTrig, m_sampleRate, planes,
                                   m_mixChannels, blockFrames);
+            if (signalNode != UINT32_MAX && !signals->CaptureBus(signalNode,
+                {planes, m_mixChannels})) return false;
         } else {
             bus.outputGain.Advance(blockFrames);
         }
     }
+    return true;
 }
 
 // The bus insert-effect apply methods below mirror VoicePool's effect apply

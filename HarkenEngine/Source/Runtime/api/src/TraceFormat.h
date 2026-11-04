@@ -339,6 +339,7 @@ enum class TraceCurrentWorldImageTagV1 : std::uint32_t {
     Unavailable = 0,
     RawAttempt = 1,
     CanonicalV6Body = 2,
+    CanonicalArtifact = 3,
 };
 
 enum class TraceCurrentWorldCaptureDispositionV1 : std::uint32_t {

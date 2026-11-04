@@ -480,6 +480,12 @@ TEST(TimelineVoiceInstall, NoLeaseCopySurvivesCatalogChange) {
     ASSERT_EQ(1u, frozen.bindings.size());
     ASSERT_EQ(cut.pathCount, frozen.pathRows.size());
     EXPECT_EQ(target, frozen.facts->target);
+    const auto originalPath = frozen.pathRows[0];
+    EXPECT_EQ(cut.path[0].rowKind, originalPath.rowKind);
+    EXPECT_EQ(cut.path[0].contentPropertyKind, originalPath.contentPropertyKind);
+    EXPECT_EQ(cut.path[0].programSemanticFingerprint, originalPath.propertyFingerprint);
+    EXPECT_EQ(cut.path[0].source, originalPath.source);
+    EXPECT_EQ(voice.playbackPath.rows[0].source, originalPath.source);
     harken::CapturedTimelineVoiceInstall moved(std::move(captured));
     EXPECT_FALSE(captured.Valid());
     EXPECT_EQ(frozen.facts, moved.Input().facts);
@@ -498,6 +504,9 @@ TEST(TimelineVoiceInstall, NoLeaseCopySurvivesCatalogChange) {
     EXPECT_TRUE(storage.Reset({}));
     EXPECT_EQ(kBinding, moved.Input().bindings[0].bindingId);
     EXPECT_EQ(kSound, moved.Input().pathRows[0].stableId);
+    EXPECT_EQ(originalPath.propertyFingerprint, moved.Input().pathRows[0].propertyFingerprint);
+    EXPECT_EQ(originalPath.source, moved.Input().pathRows[0].source);
+    EXPECT_EQ(originalPath.rowKind, moved.Input().pathRows[0].rowKind);
     EXPECT_FLOAT_EQ(-6.0f, moved.Input().bindings[0].curve.points[0].y);
     EXPECT_EQ(target, moved.Input().facts->target);
 }
@@ -757,8 +766,12 @@ TEST(TimelineVoiceInstall, BorrowedInputCopiesOnlyNativeFactsAndKeepsBindingSnap
                 {points[0].x, points[0].y, points[1].x, points[1].y}};
             ASSERT_TRUE(binding.curve.SetPoints(points, handles, 2));
             std::vector<harken::PlaybackPathRow> paths(pathCount);
-            for (std::uint32_t row = 0; row < pathCount; ++row)
+            for (std::uint32_t row = 0; row < pathCount; ++row) {
                 paths[row] = {harkentest::ObjectId(1234 + row), 7 + row};
+                paths[row].rowKind = harken::ResolvedPlayablePathRowKindV1::Definition;
+                paths[row].propertyFingerprint = 100 + row;
+                paths[row].source = {1, 2, 3, 4, harken::kCurrentWorldBodyVintageV20};
+            }
             std::array<harken::TimelineVoiceSendInstall, 1> sends{{{VN_BUS_MASTER, -9.0f}}};
             std::array<harken::TimelineVoiceEffectInstall, 1> effects{};
             auto& effect = effects.front();
@@ -799,7 +812,14 @@ TEST(TimelineVoiceInstall, BorrowedInputCopiesOnlyNativeFactsAndKeepsBindingSnap
         }
         const auto observation = engine.playbackPaths[static_cast<std::uint32_t>(render)].Capture();
         ASSERT_EQ(pathCount, observation.path.rowCount);
+        const auto signalPath = engine.voices.Resolve(render)->signalPath;
+        ASSERT_EQ(pathCount, signalPath.size());
+        ASSERT_NE(signalPath.data(), observation.path.rows);
         for (std::uint32_t row = 0; row < pathCount; ++row) {
+            EXPECT_EQ(100u + row, signalPath[row].propertyFingerprint);
+            EXPECT_EQ(3u, signalPath[row].source.ownerRevision);
+            EXPECT_EQ(4u, signalPath[row].source.leaseIdentity);
+            EXPECT_EQ(harkentest::ObjectId(1234 + row), signalPath[row].stableId);
             EXPECT_EQ(harkentest::ObjectId(1234 + row), observation.path.rows[row].stableId);
             EXPECT_EQ(7u + row, observation.path.rows[row].occurrenceOrdinal);
         }

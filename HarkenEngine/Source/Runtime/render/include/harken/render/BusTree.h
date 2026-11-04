@@ -31,12 +31,15 @@
 #include "harken/render/DynamicRoute.h"
 #include "harken/render/InsertEffect.h"
 #include "harken/render/TopologyPlan.h"
+#include "harken/render/SignalPathBounds.h"
 
 #include <cstdint>
 #include <atomic>
 #include <vector>
 
 namespace harken {
+struct SignalFeedbackEdge;
+struct SignalBusRoutingInfo;
 
 inline constexpr std::uint32_t kInvalidBusIndex = 0xFFFFFFFFu;
 
@@ -207,6 +210,9 @@ public:
     void ApplyTopologyPlan(std::uint32_t planIndex, std::uint32_t connectFrom,
                            std::uint32_t connectTo, float connectLevelDb,
                            std::uint64_t acceptedGraphRevision = 0);
+    // Logic thread: include every plan that can still be consumed on audio.
+    std::uint64_t RetainedSignalScratchBytes(std::uint64_t extraNodes,
+        std::uint64_t extraEdges, std::uint32_t frames) const noexcept;
     std::uint64_t InstalledGraphRevision() const noexcept {
         return m_installedGraphRevision.load(std::memory_order_acquire);
     }
@@ -283,8 +289,27 @@ public:
     // result back into the mix-width planes before its parent sum and sends;
     // the master->device fold is applied downstream by the mixer at the device
     // boundary. Audio thread.
-    void MixDown(float* const* busPlanes, std::uint32_t blockFrames,
-                 std::uint64_t blockEpoch, std::uint64_t sourceFrameBegin = 0);
+    bool MixDown(float* const* busPlanes, std::uint32_t blockFrames,
+                 std::uint64_t blockEpoch, std::uint64_t sourceFrameBegin = 0,
+                 SignalRenderPlan* signals = nullptr);
+    std::size_t SignalRoutingEdgeCapacity() const noexcept {
+        return static_cast<std::size_t>(m_audioCount) * (static_cast<std::size_t>(m_sendSlots) + 1) +
+            SignalRoutingExtraNodes() + m_dynamicRoutes.InstalledPlan().rowCount;
+    }
+    std::size_t SignalRoutingExtraNodes() const noexcept {
+        const auto plan = m_dynamicRoutes.InstalledPlan();
+        for (std::uint32_t i = 0; i < plan.rowCount; ++i)
+            if (plan.rows[i].sourceKind == VN_DYNAMIC_SOURCE_BUS)
+                return static_cast<std::size_t>(m_audioCount) * (m_fxSlots + 2ull);
+        return 0;
+    }
+    std::uint32_t SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> buses,
+        std::span<SignalFeedbackEdge> edges, std::uint32_t frames,
+        std::span<SignalBiquadSegment> schedules, std::uint32_t nodeOffset) noexcept;
+    bool SignalReceiversCannotReachSources(std::span<std::uint8_t> roles) const noexcept;
+    SignalRenderPlan* InstalledSignals() const {
+        return m_plans.View(m_currentPlanIndex).signals;
+    }
 
     // The mix-layout channel count every bus renders at (resolved config).
     std::uint32_t MixChannels() const { return m_mixChannels; }
@@ -364,6 +389,10 @@ public:
         float fxBypassTarget[kMaxFxSlotsPerBus] = {};
         bool fxBypassRamping[kMaxFxSlotsPerBus] = {};
         EffectInstanceRef fxSlotEffectRef[kMaxFxSlotsPerBus];
+        double signalSlotHistory[kMaxFxSlotsPerBus] = {};
+        double signalToneHistory[kMaxFxSlotsPerBus][3] = {};
+        double signalGainHistory = 1, signalOutputHistory = 1, signalLayoutHistory = 1;
+        bool signalBoundsPrepared = false;
 
         // Chain split around BusVolume: fx slots [0, faderAfterSlot) run
         // pre-fader (before the gain), the rest post-fader. Set to m_fxSlots
@@ -397,6 +426,9 @@ public:
             BiquadState state[kMaxChannels];
             BiquadTransitionState<kMaxChannels> transition;
             BiquadParameterGlide glide;
+            SignalSmoothedBiquadBound signalBound;
+            double signalHighWater = 1;
+            std::span<const SignalBiquadSegment> signalSchedule{};
         };
         ToneSection busLpf;
         ToneSection busHpf;
@@ -411,6 +443,8 @@ public:
     Bus* BusState(std::uint32_t busIndex);
 
 private:
+    SignalBusRoutingInfo SignalBusBounds(std::uint32_t bus, std::uint32_t frames,
+                                        std::span<SignalBiquadSegment> schedules) noexcept;
     void InitializeBusSlot(std::uint32_t busIndex, VnBusId id,
                            std::uint32_t parentIndex,
                            std::uint32_t generation) noexcept;

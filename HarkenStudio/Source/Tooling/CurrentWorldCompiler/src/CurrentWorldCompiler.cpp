@@ -274,6 +274,10 @@ void OwningCurrentWorldV1::Refresh() noexcept {
         static_cast<std::uint32_t>(transitionViews_.size());
     view_.actions = actionViews_.empty() ? nullptr : actionViews_.data();
     view_.actionCount = static_cast<std::uint32_t>(actionViews_.size());
+    view_.signalRelations = signalRelations_.empty() ? nullptr : signalRelations_.data();
+    view_.signalRelationCount = static_cast<std::uint32_t>(signalRelations_.size());
+    view_.signalReceivers = signalReceivers_.empty() ? nullptr : signalReceivers_.data();
+    view_.signalReceiverCount = static_cast<std::uint32_t>(signalReceivers_.size());
 }
 
 CompileResultV1 CompileCurrentWorldV1(
@@ -287,7 +291,8 @@ CompileResultV1 CompileCurrentWorldV1(
     const harkenbuscompiler::CompiledBusIdSetV1* busIds,
     CompileCapacityModeV1 capacityMode,
     const std::map<harkenstudio::ObjectId, std::uint32_t>& propertyAuthoredOrders,
-    const std::set<std::uint32_t>& reservedPropertyAuthoredOrders) {
+    const std::set<std::uint32_t>& reservedPropertyAuthoredOrders,
+    const std::vector<DuckingSendAuthoringV1>& duckingSends, bool includePreviewDucking) {
     CompileResultV1 result{};
     std::set<std::uint32_t> occupiedPropertyOrders;
     for (const auto& [id, order] : propertyAuthoredOrders) {
@@ -1702,10 +1707,70 @@ CompileResultV1 CompileCurrentWorldV1(
     }
 
     world->Refresh();
+    if (includePreviewDucking)
+        world->view_.sourceBodyVintage = harkenstudiobuild::kCurrentWorldBodyVintageV20;
+    if (!duckingSends.empty()) {
+        if (duckingSends.size() > UINT32_MAX || busIds == nullptr) {
+            result.status = CompileStatusV1::InvalidProject;
+            return result;
+        }
+        world->view_.sourceBodyVintage = harkenstudiobuild::kCurrentWorldBodyVintageV20;
+        std::map<harkenstudio::ObjectId, harkenstudiobuild::SignalReceiverV1> receivers;
+        for (const auto& send : duckingSends) {
+            harkenstudiobuild::SignalRelationV1 row;
+            row.stableId = send.stableId;
+            row.source.kind = send.sourceKind;
+            row.source.stableId = send.sourceId;
+            row.target.stableId = send.targetBusId;
+            row.sendGainDb = send.sendGainDb;
+            if (!std::binary_search(busIds->ids.begin(), busIds->ids.end(), send.targetBusId)) {
+                result.status = CompileStatusV1::InvalidProject;
+                result.relatedStableId = send.targetBusId;
+                return result;
+            }
+            if (send.sourceKind == harkenstudiobuild::SignalEndpointKindV1::Bus) {
+                if (!std::binary_search(busIds->ids.begin(), busIds->ids.end(), send.sourceId)) {
+                    result.status = CompileStatusV1::InvalidProject;
+                    result.relatedStableId = send.sourceId;
+                    return result;
+                }
+            } else {
+                const auto kind = send.sourceKind == harkenstudiobuild::SignalEndpointKindV1::Sound
+                    ? harkenstudiobuild::playableproperties::ContentPropertyKindV1::Sound
+                    : harkenstudiobuild::playableproperties::ContentPropertyKindV1::Container;
+                const auto property = std::find_if(world->propertyViews_.begin(), world->propertyViews_.end(),
+                    [&](const auto& p) { return p.stableId == send.sourceId && p.contentPropertyKind == kind; });
+                if (property == world->propertyViews_.end()) {
+                    result.status = CompileStatusV1::InvalidProject;
+                    result.relatedStableId = send.sourceId;
+                    return result;
+                }
+                row.source.expectedPropertyFingerprint = property->programSemanticFingerprint;
+                if (send.sourceKind == harkenstudiobuild::SignalEndpointKindV1::Container) {
+                    const auto program = std::find_if(world->containerViews_.begin(), world->containerViews_.end(),
+                        [&](const auto& p) { return p.containerStableId == send.sourceId; });
+                    if (program == world->containerViews_.end()) {
+                        result.status = CompileStatusV1::InvalidProject;
+                        result.relatedStableId = send.sourceId;
+                        return result;
+                    }
+                    row.source.expectedProgramFingerprint = program->programSemanticFingerprint;
+                }
+            }
+            world->signalRelations_.push_back(row);
+            receivers.try_emplace(row.target.stableId, harkenstudiobuild::SignalReceiverV1{row.target});
+        }
+        std::sort(world->signalRelations_.begin(), world->signalRelations_.end(),
+            [](const auto& a, const auto& b) { return a.stableId < b.stableId; });
+        for (const auto& [id, receiver] : receivers) world->signalReceivers_.push_back(receiver);
+        world->Refresh();
+    }
     world->view_.identity.capabilityMask =
         harkenstudiobuild::detail::ComputeCurrentWorldLocalCapabilityMaskV1(world->view_);
     world->view_.identity.runtimeSemanticFingerprint =
-        harkenstudiobuild::ComputeCurrentWorldFingerprintV5(world->view_);
+        world->view_.sourceBodyVintage == harkenstudiobuild::kCurrentWorldBodyVintageV20
+            ? harkenstudiobuild::ComputeCurrentWorldFingerprintV7(world->view_)
+            : harkenstudiobuild::ComputeCurrentWorldFingerprintV5(world->view_);
     const harkenstudiobuild::WorldInstallStatus validation =
         harkenstudiobuild::ValidateCurrentWorldV1(world->view_);
     if (validation == harkenstudiobuild::WorldInstallStatus::Capacity) {

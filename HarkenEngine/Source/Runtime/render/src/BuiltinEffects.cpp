@@ -1,4 +1,5 @@
 #include "harken/render/BuiltinEffects.h"
+#include "harken/render/SignalPathBounds.h"
 #include "harken/dsp/GainRamp.h"
 
 #include "harken/render/generated/harken_effect_registry.g.h"
@@ -26,6 +27,7 @@ void DelayReset(void* state) {
     d->writeIndex = 0;
     d->delaySamples = 1;
     d->feedback = 0.0f;
+    d->maxFeedbackSinceReset = 0.0f;
     d->wet = 0.0f;
     d->dry = 1.0f;
     d->targetWet = 0.0f;
@@ -66,6 +68,7 @@ void DelaySetParam(void* state, std::uint32_t paramIndex, float value) {
     }
     case kDelayParamFeedback:
         d->feedback = value;
+        d->maxFeedbackSinceReset = std::max(d->maxFeedbackSinceReset, value);
         break;
     case kDelayParamWet:
         d->wet = value;
@@ -273,17 +276,20 @@ void ToneRecomputeLowShelf(ToneEffectState* t) {
                                t->lowShelfFreqHz, kToneShelfQ,
                                t->lowShelfGainDb);
     t->lowShelfTailFrames = EstimateBiquadTailFrames(t->lowShelf);
+    t->signalBandHistory[0] = std::max(t->signalBandHistory[0], SignalFixedBiquadBound(t->lowShelf));
 }
 void ToneRecomputePeak(ToneEffectState* t) {
     t->peak = MakePeaking(static_cast<float>(t->sampleRate), t->peakFreqHz,
                           t->peakQ, t->peakGainDb);
     t->peakTailFrames = EstimateBiquadTailFrames(t->peak);
+    t->signalBandHistory[1] = std::max(t->signalBandHistory[1], SignalFixedBiquadBound(t->peak));
 }
 void ToneRecomputeHighShelf(ToneEffectState* t) {
     t->highShelf = MakeHighShelf(static_cast<float>(t->sampleRate),
                                  t->highShelfFreqHz, kToneShelfQ,
                                  t->highShelfGainDb);
     t->highShelfTailFrames = EstimateBiquadTailFrames(t->highShelf);
+    t->signalBandHistory[2] = std::max(t->signalBandHistory[2], SignalFixedBiquadBound(t->highShelf));
 }
 
 } // namespace
@@ -329,6 +335,7 @@ bool PrepareToneSection(std::uint32_t paramIndex, const float* params,
 
 void ToneReset(void* state) {
     auto* t = static_cast<ToneEffectState*>(state);
+    std::fill_n(t->signalBandHistory, 3, 1.0);
     t->lowShelfGainDb = 0.0f;
     t->lowShelfFreqHz = 200.0f;
     t->peakGainDb = 0.0f;
@@ -396,6 +403,10 @@ void ToneApplyPreparedParam(void* state, std::uint32_t paramIndex, float value,
                             const BiquadCoeffs& coeffs,
                             std::uint32_t tailFrames) {
     auto* t = static_cast<ToneEffectState*>(state);
+    const std::size_t band = paramIndex <= kToneParamLowShelfFreqHz ? 0 :
+        (paramIndex <= kToneParamPeakQ ? 1 : 2);
+    if (paramIndex < kToneParamCount)
+        t->signalBandHistory[band] = std::max(t->signalBandHistory[band], SignalFixedBiquadBound(coeffs));
     const auto apply = [t](BiquadCoeffs& activeCoeffs,
                            std::uint32_t& activeTail,
                            BiquadTransitionState<kMaxChannels>& transition,

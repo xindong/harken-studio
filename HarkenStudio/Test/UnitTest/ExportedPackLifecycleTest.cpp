@@ -19,6 +19,7 @@
 #include "Tooling/Harkenizer/Core/CurrentWorldProjectAdapter.h"
 #include "PlayablePropertyAuthoringV1.h"
 #include "AudioEngine.h"
+#include "ActionManager.h"
 #include "PlatformContextService.h"
 #include "ProjectManager.h"
 #include "FolderSaveState.h"
@@ -1954,6 +1955,188 @@ TEST_F(AuthoredPackLifecycle, SavedWindowsProjectPreviewAndPackRenderSameBusVolu
     EXPECT_NEAR(basePack, basePreview, 0.003f);
     EXPECT_NEAR(zeroPreview, kToneAmplitude * std::pow(10.0f, -1.0f / 20.0f), 0.003f);
     EXPECT_NEAR(zeroPack, zeroPreview, 0.003f);
+}
+
+TEST_F(AuthoredPackLifecycle, PreviewDuckingSoundAndBusUpdatesAffectOnlyReceiverAudio)
+{
+    if (!qApp) {
+        static int argc = 1;
+        static char arg0[] = "harken_editor_tests";
+        static char* argv[] = {arg0, nullptr};
+        static QApplication app(argc, argv);
+    }
+    auto& editor = VNX::AudioEngine::instance();
+    auto& projects = VNX::ProjectManager::instance();
+    auto& platforms = VNX::PlatformContextService::instance();
+    const auto previousPlatform = platforms.context();
+    const auto cleanup = qScopeGuard([&]() {
+        editor.shutdown();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+        if (projects.currentProject()) projects.closeProject();
+        platforms.setSelected(previousPlatform.selected, previousPlatform.primary, previousPlatform.all);
+    });
+    editor.shutdown();
+    if (projects.currentProject()) ASSERT_TRUE(projects.closeProject());
+    const auto platform = HarkenTest::PlatformIds::Windows;
+    platforms.setSelected({platform}, platform, false);
+    project_.projectPath = dir_.filePath(QStringLiteral("Ducking.hsp"));
+    auto sourceBus = makeItem(QStringLiteral("Source"), VNX::ProjectItem::Type::Bus, 801);
+    auto targetBus = makeItem(QStringLiteral("Receiver"), VNX::ProjectItem::Type::Bus, 802);
+    addChild(project_.busses.front().rootItem, sourceBus);
+    addChild(project_.busses.front().rootItem, targetBus);
+    auto layer = project_.layers.front().rootItem;
+    const auto findSound = [&](uint32_t id) {
+        return *std::find_if(layer->children.begin(), layer->children.end(),
+                            [&](const auto& item) { return item->objectID == id; });
+    };
+    auto source = findSound(kContentSoundObjectId);
+    auto receiver = findSound(kDelayedSoundObjectId);
+    layer->children = {source, receiver};
+    for (const auto& pair : {std::make_pair(source, sourceBus), std::make_pair(receiver, targetBus)}) {
+        pair.first->fieldGroups.output.shared = {VNX::FieldGroupMode::Local,
+            VNX::OutputFieldGroup{VNX::toFieldGroupGuid(pair.second->guid), 0.0f}};
+        const auto locator = VNX::PlayablePropertyAuthoringV1::definitionLocator(*pair.first);
+        ASSERT_TRUE(locator);
+        ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::setOverride(*pair.first, *locator,
+            static_cast<uint8_t>(harkenplayableproperties::PlayablePropertyIdV1::LoopCount), 0, std::nullopt));
+    }
+    source->fieldGroups.send.shared = {VNX::FieldGroupMode::Local,
+        VNX::SendFieldGroup{{{VNX::toFieldGroupGuid(targetBus->guid), 0.0f,
+                             harkenprojectschema::SendMode::Ducking}}}};
+    project_.actions.clear();
+    project_.variables.clear();
+    project_.attenuationItems.clear();
+    project_.nextObjectID = 1000;
+    const auto sourceGuid = source->guid;
+    const auto receiverGuid = receiver->guid;
+    const auto sourceBusGuid = sourceBus->guid;
+    const auto targetBusGuid = targetBus->guid;
+    VNX::PreparedProject prepared;
+    prepared.project = std::make_unique<VNX::ProjectData>(project_);
+    prepared.folderSaveState = VNX::FolderSaveState::capture(*prepared.project, &prepared.error);
+    ASSERT_NE(nullptr, prepared.folderSaveState) << prepared.error.toStdString();
+    for (const auto& audio : project_.audioSources) {
+        const auto* asset = VNX::AssetRegistry::instance().getAsset(audio.sourceID);
+        ASSERT_NE(nullptr, asset);
+        auto info = *asset;
+        if (audio.sourceID == kContentSourceId || audio.sourceID == kDelayedSourceId) {
+            std::vector<float> stereo(kToneFrames * 2, 0.0f);
+            const bool isSource = audio.sourceID == kContentSourceId;
+            for (uint32_t frame = 0; frame < kToneFrames; ++frame)
+                stereo[frame * 2 + (isSource ? 0 : 1)] = isSource ? 0.01f : kToneAmplitude;
+            writeWavF32(info.absolutePath, stereo, 2, kSampleRate);
+            info.metadata.channels = 2;
+            info.metadata.fileSize = static_cast<uint64_t>(QFileInfo(info.absolutePath).size());
+        }
+        prepared.assets.append(info);
+    }
+    ASSERT_TRUE(projects.commitPreparedProject(std::move(prepared)));
+    ASSERT_TRUE(projects.saveProject());
+    ASSERT_TRUE(projects.closeProject());
+    HarkenEditor::Bridge::EngineSessionConfig config;
+    config.sampleRate = 48000;
+    config.bufferSize = 256;
+    config.maxVoices = 8;
+    config.deviceMode = HarkenEditor::Bridge::EngineDeviceMode::Null;
+    ASSERT_TRUE(editor.initialize(config));
+    ASSERT_TRUE(editor.startOutput());
+    QString error;
+    ASSERT_TRUE(projects.loadProject(project_.projectPath, false, &error)) << error.toStdString();
+    VNX::ProjectManager::syncProjectToRuntime(projects.currentProject());
+    auto& coordinator = editor.runtimeSyncCoordinator();
+    const auto waitReady = [&]() {
+        for (int attempt = 0; attempt < 128; ++attempt) {
+            ASSERT_TRUE(QMetaObject::invokeMethod(&editor, "onRuntimeServiceTimer", Qt::DirectConnection));
+            ASSERT_EQ(VN_OK, Vn_Update());
+            auto* runtime = harken::detail::ActiveEngine();
+            ASSERT_NE(nullptr, runtime);
+            runtime->nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+            if (coordinator.installedWorld() &&
+                coordinator.barrier(coordinator.currentAuthoringRevision()).state ==
+                    VNX::RuntimeSyncCoordinator::RevisionBarrierState::Ready) return;
+        }
+        const auto barrier = coordinator.barrier(coordinator.currentAuthoringRevision());
+        FAIL() << "Preview publication did not reach Ready: state=" << static_cast<int>(barrier.state)
+               << " failure=" << static_cast<int>(barrier.failure)
+               << " draining=" << harken::detail::ActiveEngine()->variables.DrainingWorld();
+    };
+    ASSERT_NO_FATAL_FAILURE(waitReady());
+    auto* liveSource = projects.findItemByGuid(sourceGuid);
+    auto* liveReceiver = projects.findItemByGuid(receiverGuid);
+    auto* liveBus = projects.findItemByGuid(sourceBusGuid);
+    auto* liveTarget = projects.findItemByGuid(targetBusGuid);
+    ASSERT_NE(nullptr, liveSource);
+    ASSERT_NE(nullptr, liveReceiver);
+    ASSERT_NE(nullptr, liveBus);
+    ASSERT_NE(nullptr, liveTarget);
+    auto* runtime = harken::detail::ActiveEngine();
+    const auto measure = [&]() {
+        std::array<float, 2> mean{};
+        for (int block = 0; block < 64; ++block) {
+            EXPECT_EQ(VN_OK, Vn_Update());
+            const auto before = runtime->mixer.BlocksRendered();
+            runtime->nullBackend.Pump(1);
+            EXPECT_EQ(before + 1, runtime->mixer.BlocksRendered());
+            const auto frames = runtime->nullBackend.BlockFrames();
+            EXPECT_EQ(2u, runtime->nullBackend.Channels());
+            if (block >= 56) {
+                for (uint32_t frame = 0; frame < frames; ++frame)
+                    for (uint32_t channel = 0; channel < 2; ++channel)
+                        mean[channel] += runtime->nullBackend.LastBlock()[frame * 2 + channel] / (8.0f * frames);
+            }
+        }
+        return mean;
+    };
+    ASSERT_EQ(0, editor.playPreviewPlayable(0, liveSource->runtimeId()).status);
+    const auto sourceOnly = measure();
+    EXPECT_NEAR(0.01f, sourceOnly[0], 1e-5f);
+    EXPECT_NEAR(0.0f, sourceOnly[1], 1e-5f);
+    ASSERT_EQ(0, editor.playPreviewPlayable(0, liveReceiver->runtimeId()).status);
+    const auto soundDucked = measure();
+    EXPECT_NEAR(sourceOnly[0], soundDucked[0], 1e-5f);
+    EXPECT_GT(soundDucked[1], 0.0f);
+    EXPECT_LT(soundDucked[1], kToneAmplitude - 0.01f);
+    EXPECT_NEAR(kToneAmplitude - 5.65685425f * 0.01f, soundDucked[1], 1e-4f);
+    const auto publish = [&]() {
+        coordinator.flushPendingMutationNow();
+        ASSERT_NO_FATAL_FAILURE(waitReady());
+    };
+    auto changed = liveSource->fieldGroups;
+    changed.send.shared.localHistory->sends[0].sendLevel = -24.0f;
+    ASSERT_TRUE(projects.restoreFieldGroupsInternal(liveSource, changed));
+    ASSERT_NO_FATAL_FAILURE(publish());
+    const auto weakDucked = measure();
+    EXPECT_NEAR(sourceOnly[0], weakDucked[0], 1e-5f);
+    EXPECT_GT(weakDucked[1], soundDucked[1] + 0.01f);
+    EXPECT_LT(weakDucked[1], kToneAmplitude - 0.001f);
+    EXPECT_NEAR(kToneAmplitude - 5.65685425f * 0.01f * std::pow(10.0f, -24.0f / 20.0f),
+                weakDucked[1], 1e-4f);
+    changed.send.shared.localHistory->sends.clear();
+    ASSERT_TRUE(projects.restoreFieldGroupsInternal(liveSource, changed));
+    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
+    const auto setBusSend = [&](const QJsonArray& rows) {
+        const auto result = VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+            QJsonObject{{QStringLiteral("object_id"), static_cast<int>(liveBus->objectID)},
+                        {QStringLiteral("property"), QStringLiteral("sends")},
+                        {QStringLiteral("override_operation"), QStringLiteral("set_override")},
+                        {QStringLiteral("platform_ids"), QJsonArray{platform.toString(QUuid::WithoutBraces)}},
+                        {QStringLiteral("value"), rows}});
+        ASSERT_TRUE(result.success) << result.errorMessage.toStdString();
+    };
+    ASSERT_NO_FATAL_FAILURE(setBusSend(QJsonArray{QJsonObject{
+        {QStringLiteral("targetBusID"), static_cast<int>(liveTarget->objectID)},
+        {QStringLiteral("sendLevel"), 0.0}, {QStringLiteral("mode"), 1}}}));
+    ASSERT_NO_FATAL_FAILURE(publish());
+    const auto busDucked = measure();
+    EXPECT_NEAR(sourceOnly[0], busDucked[0], 1e-5f);
+    EXPECT_NEAR(soundDucked[1], busDucked[1], 2e-3f);
+    ASSERT_NO_FATAL_FAILURE(setBusSend(QJsonArray{}));
+    ASSERT_NO_FATAL_FAILURE(publish());
+    const auto removed = measure();
+    EXPECT_NEAR(sourceOnly[0], removed[0], 1e-5f);
+    EXPECT_NEAR(kToneAmplitude, removed[1], 1e-4f);
 }
 
 TEST_F(AuthoredPackLifecycle, SavedWindowsProjectPreviewAndPackRenderSameBusSend)
