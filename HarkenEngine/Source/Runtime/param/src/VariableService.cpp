@@ -27,6 +27,16 @@ namespace harken {
 
 namespace {
 
+std::uint64_t PlaybackWorldFingerprint(const ContainerWorldInstallViewV1& world) noexcept {
+    if (world.sourceBodyVintage != kCurrentWorldBodyVintageV20)
+        return world.identity.runtimeSemanticFingerprint;
+    // Signal routing is published independently of playback selection state.
+    // Derive this value from content so trace origins can reproduce it too.
+    auto content = world;
+    content.identity.capabilityMask &= ~kWorldCapabilitySignalRelations;
+    return ComputeCurrentWorldFingerprintV5(content);
+}
+
 template <typename Rows>
 auto FindVariableDefinition(Rows& definitions, VnVariableId id) noexcept {
     const auto found = std::lower_bound(definitions.begin(), definitions.end(), id,
@@ -332,11 +342,7 @@ bool VariableServiceV1::SignalOnlyWorld(const ContainerWorldInstallViewV1& insta
         install.sourceBodyVintage != sourceBodyVintage_ ||
         !SameFormat(install.identity.format, identity_.format) ||
         ValidateCurrentWorldV1(install) != WorldInstallStatus::Ok) return false;
-    auto current = CurrentWorldInstallView();
-    auto next = install;
-    current.identity.capabilityMask &= ~kWorldCapabilitySignalRelations;
-    next.identity.capabilityMask &= ~kWorldCapabilitySignalRelations;
-    return ComputeCurrentWorldFingerprintV5(current) == ComputeCurrentWorldFingerprintV5(next);
+    return playbackFingerprint_ == PlaybackWorldFingerprint(install);
 }
 
 void VariableServiceV1::OwnedPayload::Refresh() noexcept {
@@ -865,6 +871,7 @@ void VariableServiceV1::BuildCurrentWorldImageV1(
     }
     out.identity_ = install.identity;
     out.sourceBodyVintage_ = install.sourceBodyVintage;
+    out.playbackFingerprint_ = PlaybackWorldFingerprint(install);
     out.capacity_ = install.capacity;
     out.valid_ = true;
     out.idempotent_ = false;
@@ -1070,6 +1077,7 @@ WorldGeneration VariableServiceV1::CommitPreparedCurrentWorldImageV1(
     signalReceivers_.swap(prepared.signalReceivers_);
     identity_ = prepared.identity_;
     sourceBodyVintage_ = prepared.sourceBodyVintage_;
+    playbackFingerprint_ = prepared.playbackFingerprint_;
     capacity_ = prepared.capacity_;
     ++worldGeneration_;
     globalBankVersionGeneration_ = 1;

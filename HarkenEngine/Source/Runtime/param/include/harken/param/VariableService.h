@@ -407,6 +407,7 @@ public:
         if (!hasWorld_) return view;
         view.generation = worldGeneration_;
         view.identity = identity_;
+        view.identity.runtimeSemanticFingerprint = playbackFingerprint_;
         view.sourceBodyVintage = sourceBodyVintage_;
         view.properties = playablePropertyViews_.empty()
                               ? nullptr
@@ -983,6 +984,7 @@ public:
         std::uint64_t sourceFingerprint_ = 0;
         std::uint64_t sourceBankOrdinal_ = 0;
         WorldIdentityV1 identity_{};
+        std::uint64_t playbackFingerprint_ = 0;
         std::uint32_t sourceBodyVintage_ = kCurrentWorldShippingBodyVintage;
         WorldCapacitySummaryV1 capacity_{};
         std::vector<DefinitionRow> definitions_;
@@ -1480,6 +1482,7 @@ private:
     std::vector<GatheredTarget> censusScratch_;
     bool hasWorld_ = false;
     WorldIdentityV1 identity_{};
+    std::uint64_t playbackFingerprint_ = 0;
     std::uint32_t sourceBodyVintage_ = kCurrentWorldShippingBodyVintage;
     WorldCapacitySummaryV1 capacity_{};
     WorldGeneration worldGeneration_ = 0;

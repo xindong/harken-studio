@@ -186,6 +186,7 @@ TEST(CurrentWorldSignal, DirectInstallIsAtomicIdempotentAndPreservesLiveTopology
     ASSERT_NE(engine.acceptedSignalPlan, nullptr);
     auto* first = engine.acceptedSignalPlan.get();
     const auto generation = engine.variables.CurrentWorldGeneration();
+    const auto playbackFingerprint = engine.variables.CurrentPlayableWorld().identity.runtimeSemanticFingerprint;
     CommandRecord filler{};
     filler.opcode = kOpcodeSetBusVolume;
     filler.payload.setBusVolume.busIndex = 0;
@@ -210,6 +211,10 @@ TEST(CurrentWorldSignal, DirectInstallIsAtomicIdempotentAndPreservesLiveTopology
     ASSERT_EQ(changed.status, WorldInstallStatus::Ok);
     EXPECT_FALSE(changed.idempotent);
     EXPECT_EQ(changed.resultGeneration, generation);
+    EXPECT_EQ(engine.variables.CurrentPlayableWorld().identity.runtimeSemanticFingerprint, playbackFingerprint);
+    auto content = fixture.world;
+    content.identity.capabilityMask &= ~kWorldCapabilitySignalRelations;
+    EXPECT_EQ(playbackFingerprint, ComputeCurrentWorldFingerprintV5(content));
     EXPECT_FALSE(engine.variables.CanCommitPreparedCurrentWorldImageV1(stale));
     auto* second = engine.acceptedSignalPlan.get();
     ASSERT_NE(first, second);
@@ -244,6 +249,16 @@ TEST(CurrentWorldSignal, DirectInstallIsAtomicIdempotentAndPreservesLiveTopology
     changedContent.identity.projectId = harkentest::ObjectId(700);
     changedContent.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV7(changedContent);
     EXPECT_FALSE(engine.variables.SignalOnlyWorld(changedContent));
+    ASSERT_EQ(Vn_Term(), VN_OK);
+    session.Release();
+    harkentest::EngineSession restarted(config);
+    ASSERT_EQ(restarted.InitResult(), VN_OK);
+    for (const auto& receiver : fixture.receivers)
+        ASSERT_EQ(Vn_CreateBus(receiver.target.stableId, VN_BUS_MASTER), VN_OK);
+    restarted.Engine()->nullBackend.Pump(1);
+    ASSERT_EQ(InstallContainerWorldV1(*restarted.Engine(), fixture.world).status, WorldInstallStatus::Ok);
+    EXPECT_EQ(restarted.Engine()->variables.CurrentPlayableWorld().identity.runtimeSemanticFingerprint,
+              playbackFingerprint);
 }
 
 TEST(CurrentWorldSignal, PairedPublicationCarriesSignalsInItsSingleTopologyCommand) {
