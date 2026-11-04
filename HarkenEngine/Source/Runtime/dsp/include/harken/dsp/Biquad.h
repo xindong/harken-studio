@@ -725,6 +725,12 @@ __declspec(noinline)
 __attribute__((noinline))
 #endif
 inline float BiquadTickWide(const BiquadCoeffs& c, BiquadState& s, float x) {
+    if (!std::isfinite(x)) {
+        // Advance the valid history without admitting an invalid innovation.
+        // Keep this sample visible to the existing output-boundary protection.
+        (void)BiquadTick(c, s, 0.0f);
+        return x;
+    }
     const double y = static_cast<double>(c.b0) * x + s.Z1();
     const double z1 = static_cast<double>(c.b1) * x - c.a1 * y + s.Z2();
     const double z2 = static_cast<double>(c.b2) * x - c.a2 * y;

@@ -988,6 +988,47 @@ TEST(BuiltinEffectReset, ToneResetRestoresDefaultsAndClearsMemory) {
     EXPECT_EQ(0.0f, st.peakState[0].Z2());
 }
 
+TEST(BuiltinTone, CascadedFiniteOverflowRecoversWithoutAffectingOtherChannels) {
+    const auto desc = ToneDesc(0.0f, 200.0f, 48.0f, 1000.0f,
+                               1.0f, 0.0f, 6000.0f);
+    ASSERT_EQ(VN_OK, harken::ValidateEffectDesc(
+        VN_EFFECT_THREE_BAND_TONE, AsBase(&desc), kRate));
+    for (bool transition : {false, true}) {
+        SCOPED_TRACE(transition);
+        harken::ToneEffectState state;
+        state.sampleRate = kRate;
+        auto effect = harken::BuildEffect(VN_EFFECT_THREE_BAND_TONE, &state);
+        effect.reset(&state);
+        effect.setParam(&state, harken::kToneParamPeakGainDb, 48.0f);
+        float left[kBlock + 2], right[kBlock + 2];
+        float* channels[] = {left, right};
+        for (unsigned block = 0; block < 257; ++block) {
+            std::fill_n(left, kBlock + 2, 0.125f);
+            std::fill_n(right, kBlock + 2, 0.375f);
+            left[0] = right[0] = 17.0f;
+            left[kBlock + 1] = right[kBlock + 1] = 19.0f;
+            if (block == 0) left[1] = (std::numeric_limits<float>::max)();
+            if (transition && block == 1) {
+                const auto coeffs = harken::MakePeaking(float(kRate), 1000.0f, 1.0f, 6.0f);
+                harken::ToneApplyPreparedParam(&state, harken::kToneParamPeakGainDb,
+                    6.0f, coeffs, harken::EstimateBiquadTailFrames(coeffs));
+            }
+            effect.process(&state, channels, 2, 1, kBlock);
+            if (block == 0) EXPECT_FALSE(std::isfinite(left[1]));
+            EXPECT_EQ(17.0f, left[0]);
+            EXPECT_EQ(19.0f, left[kBlock + 1]);
+            EXPECT_EQ(17.0f, right[0]);
+            EXPECT_EQ(19.0f, right[kBlock + 1]);
+            for (unsigned i = 1; i <= kBlock; ++i) ASSERT_TRUE(std::isfinite(right[i]));
+        }
+        for (unsigned i = 1; i <= kBlock; ++i) {
+            ASSERT_TRUE(std::isfinite(left[i]));
+            EXPECT_NEAR(0.125f, left[i], 1e-3f);
+            EXPECT_NEAR(0.375f, right[i], 1e-3f);
+        }
+    }
+}
+
 TEST(BuiltinEffectValidation, TonePreparationRejectsUnitCirclePole) {
     float params[harken::kToneParamCount] = {};
     params[harken::kToneParamLowShelfGainDb] = 6.0f;
