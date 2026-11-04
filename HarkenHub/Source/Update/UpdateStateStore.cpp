@@ -57,6 +57,7 @@ UpdateStateRecord readRecord(const QJsonObject& root, const QString& product)
         entry[QStringLiteral("releaseSequence")].toInteger(-1);
     record.transactionId = entry[QStringLiteral("transactionId")].toString();
     record.failureCode = entry[QStringLiteral("failureCode")].toString();
+    record.failureDetail = entry[QStringLiteral("failureDetail")].toString();
     record.updatedAt = entry[QStringLiteral("updatedAt")].toString();
     return record;
 }
@@ -78,6 +79,8 @@ QJsonObject entryFor(const UpdateStateRecord& record, const QDateTime& at)
         entry[QStringLiteral("transactionId")] = record.transactionId;
     if (!record.failureCode.isEmpty())
         entry[QStringLiteral("failureCode")] = record.failureCode;
+    if (!record.failureDetail.isEmpty())
+        entry[QStringLiteral("failureDetail")] = record.failureDetail;
     entry[QStringLiteral("updatedAt")] = at.toUTC().toString(Qt::ISODateWithMs);
     return entry;
 }

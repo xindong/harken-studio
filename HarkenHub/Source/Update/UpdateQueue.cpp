@@ -1,13 +1,16 @@
 #include "Update/UpdateQueue.h"
 
 #include "Transactions/HandoffArea.h"
+#include "Platform/AclHardening.h"
 
 #include <QDateTime>
+#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QTemporaryFile>
 
 #include <algorithm>
 
@@ -16,6 +19,11 @@ namespace VNH {
 namespace {
 
 constexpr qint64 kQueueMarkerMaxBytes = 4 * 1024;
+
+QString studioResultPath(const QString& transactionId)
+{
+    return HandoffArea::rootDir() + QLatin1Char('/') + transactionId + QStringLiteral(".result");
+}
 
 bool writeMarker(const QString& transactionId, const QJsonObject& body,
                  QString* error)
@@ -109,6 +117,8 @@ std::vector<UpdateQueueEntry> UpdateQueue::pendingEntries()
         entry.product = product;
         entry.restartMode = body[QStringLiteral("restart")].toString();
         entry.userId = body[QStringLiteral("user")].toString();
+        if (product == QStringLiteral("HarkenStudio"))
+            entry.userId = fileOwnerId(info.filePath());
         entry.queuedAt = body[QStringLiteral("queuedAt")].toString();
         entries.push_back(std::move(entry));
     }
@@ -123,6 +133,98 @@ bool UpdateQueue::hasPendingHubUpdate()
                            return entry.product ==
                                   QStringLiteral("HarkenHub");
                        });
+}
+
+bool UpdateQueue::writeStudioResult(const QString& transactionId,
+                                    const InstallOutcome& outcome,
+                                    const QString& userId, QString* error)
+{
+    if (!HandoffArea::isValidTransactionId(transactionId)
+        || (outcome.ok ? outcome.buildId.isEmpty() || !outcome.failureCode.isEmpty()
+                       : outcome.failureCode.isEmpty() || outcome.failureCode == QStringLiteral("InstallBusy"))) {
+        *error = QStringLiteral("Invalid Studio installation result");
+        return false;
+    }
+    const QJsonObject result{
+        {QStringLiteral("transactionId"), transactionId},
+        {QStringLiteral("product"), QStringLiteral("HarkenStudio")},
+        {QStringLiteral("state"), outcome.ok ? QStringLiteral("Installed") : QStringLiteral("Failed")},
+        {QStringLiteral("buildId"), outcome.buildId},
+        {QStringLiteral("installPath"), outcome.installPath},
+        {QStringLiteral("failureCode"), outcome.failureCode},
+        {QStringLiteral("failureDetail"), outcome.error},
+    };
+    if (!QDir().mkpath(HandoffArea::rootDir())) {
+        *error = QStringLiteral("Cannot create the installation result directory");
+        return false;
+    }
+    const QString path = studioResultPath(transactionId);
+    QTemporaryFile file(path + QStringLiteral(".XXXXXX"));
+    const auto bytes = QJsonDocument(result).toJson(QJsonDocument::Compact);
+    if (!file.open() || file.write(bytes) != bytes.size() || !file.flush()) {
+        *error = QStringLiteral("Cannot write installation result: %1 (%2)").arg(path, file.errorString());
+        return false;
+    }
+    file.close();
+    if (!grantFileReadAndDelete(file.fileName(), userId, error))
+        return false;
+    if (!file.rename(path)) {
+        *error = QStringLiteral("Cannot commit installation result: %1 (%2)").arg(path, file.errorString());
+        return false;
+    }
+    file.setAutoRemove(false);
+    return true;
+}
+
+std::optional<InstallOutcome> UpdateQueue::studioResult(const QString& transactionId,
+                                                        QString* error)
+{
+    error->clear();
+    if (!HandoffArea::isValidTransactionId(transactionId)) {
+        *error = QStringLiteral("Invalid transaction id");
+        return std::nullopt;
+    }
+    const QString path = studioResultPath(transactionId);
+    if (!QFileInfo::exists(path))
+        return std::nullopt;
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        *error = QStringLiteral("Cannot read installation result: %1 (%2)").arg(path, file.errorString());
+        return std::nullopt;
+    }
+    const auto document = QJsonDocument::fromJson(file.readAll());
+    const auto object = document.object();
+    bool valid = file.error() == QFileDevice::NoError && document.isObject();
+    for (const char* field : {"transactionId", "product", "state", "buildId", "installPath",
+                             "failureCode", "failureDetail"})
+        valid &= object.value(QLatin1String(field)).isString();
+    const QString state = object.value(QStringLiteral("state")).toString();
+    InstallOutcome outcome;
+    outcome.ok = state == QStringLiteral("Installed");
+    outcome.buildId = object.value(QStringLiteral("buildId")).toString();
+    outcome.installPath = object.value(QStringLiteral("installPath")).toString();
+    outcome.failureCode = object.value(QStringLiteral("failureCode")).toString();
+    outcome.error = object.value(QStringLiteral("failureDetail")).toString();
+    if (!valid || object.value(QStringLiteral("transactionId")).toString() != transactionId
+        || object.value(QStringLiteral("product")).toString() != QStringLiteral("HarkenStudio")
+        || (state != QStringLiteral("Installed") && state != QStringLiteral("Failed"))
+        || (outcome.ok ? outcome.buildId.isEmpty() || !outcome.failureCode.isEmpty()
+                       : outcome.failureCode.isEmpty() || outcome.failureCode == QStringLiteral("InstallBusy"))) {
+        *error = QStringLiteral("Invalid installation result: %1").arg(path);
+        return std::nullopt;
+    }
+    return outcome;
+}
+
+bool UpdateQueue::discardStudioResult(const QString& transactionId)
+{
+    if (!HandoffArea::isValidTransactionId(transactionId))
+        return false;
+    const QString path = studioResultPath(transactionId);
+    if (!QFileInfo::exists(path) || QFile::remove(path))
+        return true;
+    qWarning().noquote() << "Cannot remove acknowledged installation result:" << path;
+    return false;
 }
 
 }

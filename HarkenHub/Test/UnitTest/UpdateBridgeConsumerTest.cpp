@@ -201,6 +201,7 @@ protected:
 TEST_F(UpdateBridgeConsumerTest, ConsumesQueuedStudioInstall)
 {
     const QString transactionId = queueStudioTransaction();
+    ASSERT_TRUE(QDir().mkpath(VNH::TransactionJournal::filePath()));
 
     const auto report =
         UpdateBridgeConsumer::run(keys.publicKey, kNow, hooks);
@@ -213,6 +214,11 @@ TEST_F(UpdateBridgeConsumerTest, ConsumesQueuedStudioInstall)
     ASSERT_TRUE(index.ok);
     ASSERT_EQ(index.records.size(), 1u);
     EXPECT_EQ(index.records[0].buildId, QStringLiteral("run12.abcd1234"));
+    QString error;
+    const auto outcome = UpdateQueue::studioResult(transactionId, &error);
+    ASSERT_TRUE(outcome.has_value()) << error.toStdString();
+    EXPECT_TRUE(outcome->ok);
+    EXPECT_EQ(outcome->buildId, index.records[0].buildId);
 }
 
 TEST_F(UpdateBridgeConsumerTest, StudioInstallCannotReclaimAnActiveHubInstaller)

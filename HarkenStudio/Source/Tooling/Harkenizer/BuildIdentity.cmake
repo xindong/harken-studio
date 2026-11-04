@@ -11,7 +11,6 @@ set(build_identity_targets
     harken_studio_pack_build
     harken_studio_media_decode
     harken_studio_runtime
-    harken_integration_tooling
     vorbis
     vorbisenc
     vorbisfile

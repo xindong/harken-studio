@@ -98,6 +98,8 @@ QString TransactionDiagnostics::localizeDetail(const QString& detail)
          QT_TRANSLATE_NOOP("HarkenHub", "Cannot read the install index: %1 (Qt error %2: %3)")},
         {QRegularExpression(QStringLiteral(R"(^Install index is corrupt: (.*) \(offset ([0-9]+): (.*)\)$)")),
          QT_TRANSLATE_NOOP("HarkenHub", "Install index is corrupt: %1 (offset %2: %3)")},
+        {QRegularExpression(QStringLiteral(R"(^Install index is corrupt: (.*) \(field (.*): (.*)\)$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "Install index is corrupt: %1 (field %2: %3)")},
         {QRegularExpression(QStringLiteral(R"(^Cannot create file directory: (.*)$)")),
          QT_TRANSLATE_NOOP("HarkenHub", "Cannot create file directory: %1")},
         {QRegularExpression(QStringLiteral(R"(^Cannot open file for writing: (.*) \(Qt error ([0-9]+): (.*)\)$)")),

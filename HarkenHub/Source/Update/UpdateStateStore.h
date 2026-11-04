@@ -21,6 +21,7 @@ struct UpdateStateRecord
     qint64 releaseSequence = -1;
     QString transactionId;
     QString failureCode;
+    QString failureDetail;
     QString updatedAt;
 
     bool needsDownloadRecovery() const;
