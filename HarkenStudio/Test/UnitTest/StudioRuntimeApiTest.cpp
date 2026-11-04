@@ -41,8 +41,8 @@ protected:
         desc.busCount = 1;
         v2Buses = {{{harkentest::ObjectId(2), VN_BUS_MASTER},
                     {VN_BUS_MASTER, VnBusId{}}}};
-        v2Volumes = {{{harkentest::ObjectId(2), -6.0f, 3.0f, 0.0f, 0},
-                      {VN_BUS_MASTER, 0.0f, 0.0f, 0.0f, 0}}};
+        v2Volumes = {{{harkentest::ObjectId(2), -6.0f, 0.0f},
+                      {VN_BUS_MASTER, 0.0f, 0.0f}}};
     }
 
     VnPreviewProjectDescV2 VolumeDesc(std::uint32_t capability = 3) {
@@ -79,10 +79,16 @@ protected:
         for (std::uint32_t i = 0; i < 2; ++i) {
             const auto& bus = v2Buses[i];
             const auto& volume = v2Volumes[i];
-            image.busDefinitionBusesV2.push_back({bus.id, bus.parent, i,
-                volume.volumeDb, volume.makeUpGainDb, volume.outputBusVolumeDb,
-                harken::busfingerprint::kNeutralFaderAfterSlotV1,
-                VN_CHANNEL_LAYOUT_STEREO, 0, 0, i, 1});
+            image.busDefinitionBusesV2.push_back({
+                .busId = bus.id,
+                .parentId = bus.parent,
+                .feedsFirstOrdinal = i,
+                .faderDb = volume.volumeDb,
+                .outputBusVolumeDb = volume.outputBusVolumeDb,
+                .faderAfterSlot = harken::busfingerprint::kNeutralFaderAfterSlotV1,
+                .outputLayout = VN_CHANNEL_LAYOUT_STEREO,
+                .downmixFirst = i,
+                .downmixCount = 1});
             image.busDefinitionDownmixesV2.push_back({bus.id, VN_CHANNEL_LAYOUT_STEREO,
                 VN_CHANNEL_LAYOUT_STEREO, i * 64u, 64});
             std::array<float, 64> coefficients{};
@@ -154,9 +160,9 @@ TEST_F(StudioRuntimeApi, ConcurrentBusChangeDoesNotPartiallyPublishPreparedWorld
         {harkentest::ObjectId(3), VN_BUS_MASTER},
         {VN_BUS_MASTER, VnBusId{}}}};
     std::array<VnPreviewBusVolumeV2, 3> volumes{{
-        {buses[0].id, -6.0f, 3.0f, 0.0f, 0},
-        {buses[1].id, 0.0f, 0.0f, 0.0f, 0},
-        {VN_BUS_MASTER, 0.0f, 0.0f, 0.0f, 0}}};
+        {buses[0].id, -6.0f, 0.0f},
+        {buses[1].id, 0.0f, 0.0f},
+        {VN_BUS_MASTER, 0.0f, 0.0f}}};
     const VnPreviewBusSendV1 send{buses[0].id, buses[1].id};
     float sendDb = -6.0f;
     v2.base.buses = buses.data();
@@ -182,11 +188,16 @@ TEST_F(StudioRuntimeApi, ConcurrentBusChangeDoesNotPartiallyPublishPreparedWorld
     header.downmixCount = 3;
     header.coefficientCount = 192;
     for (std::uint32_t i = 0; i < 3; ++i) {
-        image.busDefinitionBusesV2.push_back({buses[i].id, buses[i].parent, i,
-            volumes[i].volumeDb, volumes[i].makeUpGainDb,
-            volumes[i].outputBusVolumeDb,
-            harken::busfingerprint::kNeutralFaderAfterSlotV1,
-            VN_CHANNEL_LAYOUT_STEREO, 0, 0, i, 1});
+        image.busDefinitionBusesV2.push_back({
+            .busId = buses[i].id,
+            .parentId = buses[i].parent,
+            .feedsFirstOrdinal = i,
+            .faderDb = volumes[i].volumeDb,
+            .outputBusVolumeDb = volumes[i].outputBusVolumeDb,
+            .faderAfterSlot = harken::busfingerprint::kNeutralFaderAfterSlotV1,
+            .outputLayout = VN_CHANNEL_LAYOUT_STEREO,
+            .downmixFirst = i,
+            .downmixCount = 1});
         image.busDefinitionDownmixesV2.push_back({buses[i].id,
             VN_CHANNEL_LAYOUT_STEREO, VN_CHANNEL_LAYOUT_STEREO, i * 64u, 64});
         std::array<float, 64> coefficients{};

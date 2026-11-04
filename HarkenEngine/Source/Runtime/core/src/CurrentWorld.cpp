@@ -251,10 +251,9 @@ void HashCurve(Fnv64& hash, const CurveV1& row) noexcept {
 void HashPayloadHeader(Fnv64& hash,
                        const PlayablePropertyPayloadViewV1& payload,
                        bool includeSpatializationMix = false) noexcept {
-    hash.U64(payload.presentMask);
+    hash.U64(payload.presentMask & ~UINT64_C(0x4));
     hash.U32(static_cast<std::uint32_t>(payload.values[0].bits));
     hash.U32(static_cast<std::uint32_t>(payload.values[1].bits));
-    hash.U32(static_cast<std::uint32_t>(payload.values[2].bits));
     hash.U32(static_cast<std::uint32_t>(payload.values[5].bits));
     hash.U32(static_cast<std::uint32_t>(payload.values[4].bits));
     hash.U32(static_cast<std::uint32_t>(payload.values[3].bits));

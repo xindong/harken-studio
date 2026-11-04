@@ -454,11 +454,6 @@ void registerContainerActions(ActionManager& mgr,
                 undoOldValue = contSpatial->is3DEnabled; undoNewValue = (value != 0.0);
                 contSpatial->is3DEnabled = (value != 0.0);
                 handledCommon = true; undoTracked = true;
-            } else if (propertyName == "makeUpGain") {
-                undoOldValue = contMix->makeUpGain; undoNewValue = static_cast<float>(value);
-                if (projectManager->writeAudioPropertySilent(container, propertyName, static_cast<float>(value)))
-                    handledCommon = true;
-                undoTracked = true;
             } else if (propertyName == "outputBus") {
                 uint32_t newBusId = static_cast<uint32_t>(value);
                 undoOldValue = contMix->outputBusId; undoNewValue = newBusId;
@@ -505,7 +500,7 @@ void registerContainerActions(ActionManager& mgr,
                     else if (propertyName == "pitch" && mixc) mixc->pitch = val.toFloat();
                     else if (propertyName == "attenuationDistanceScaling" && spatial) spatial->attenuationDistanceScaling = val.toFloat();
                     else if (propertyName == "is3DEnabled" && spatial) spatial->is3DEnabled = val.toBool();
-                    else if (propertyName == "makeUpGain" || propertyName == "outputBus")
+                    else if (propertyName == "outputBus")
                         ProjectManager::instance().writeAudioPropertySilent(item, propertyName, val);
                     ProjectManager::resyncItemToRuntime(item);
                     item->markDirty();

@@ -21,7 +21,6 @@ struct JsonFieldV1 { std::uint8_t id; std::uint64_t presentBit; PlayableProperty
 inline constexpr JsonFieldV1 kJsonFieldsV1[] = {
     {1, UINT64_C(0x0000000000000001), PlayablePropertyWireV1::F32, PlayablePropertyDefaultV1::PositiveZero, PlayablePropertyReferenceRoleV1::None, "mixnode", "volume", "volume", "volume"},
     {2, UINT64_C(0x0000000000000002), PlayablePropertyWireV1::F32, PlayablePropertyDefaultV1::PositiveZero, PlayablePropertyReferenceRoleV1::None, "mixnode", "pitch", "pitch", "pitch"},
-    {3, UINT64_C(0x0000000000000004), PlayablePropertyWireV1::F32, PlayablePropertyDefaultV1::PositiveZero, PlayablePropertyReferenceRoleV1::None, "mixnode", "makeUpGain", "makeUpGain", "makeUpGain"},
     {4, UINT64_C(0x0000000000000008), PlayablePropertyWireV1::U32, PlayablePropertyDefaultV1::IntegerOne, PlayablePropertyReferenceRoleV1::None, "audio", "loopCount", "loopCount", "loopCount"},
     {5, UINT64_C(0x0000000000000010), PlayablePropertyWireV1::U32, PlayablePropertyDefaultV1::Zero, PlayablePropertyReferenceRoleV1::None, "audio", "streamingMode", "streamingMode", "streamingMode"},
     {6, UINT64_C(0x0000000000000020), PlayablePropertyWireV1::F32, PlayablePropertyDefaultV1::PositiveZero, PlayablePropertyReferenceRoleV1::None, "mixnode", "outputBusVolume", "outputBusVolume", "outputBusVolume"},
@@ -35,7 +34,7 @@ inline constexpr JsonFieldV1 kJsonFieldsV1[] = {
     {16, UINT64_C(0x0000000000008000), PlayablePropertyWireV1::EffectProgram, PlayablePropertyDefaultV1::Empty, PlayablePropertyReferenceRoleV1::None, "mixnode", "signalGraph", "signalGraph", "signalGraph"},
     {17, UINT64_C(0x0000000000010000), PlayablePropertyWireV1::F32, PlayablePropertyDefaultV1::One, PlayablePropertyReferenceRoleV1::None, "spatial", "spatializationMix", "spatializationMix", "spatial.spatializationMix"},
 };
-static_assert(std::size(kJsonFieldsV1) == 15);
+static_assert(std::size(kJsonFieldsV1) == 14);
 
 } } // namespace harkenplayableproperties::studio
 

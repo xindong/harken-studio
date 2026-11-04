@@ -1467,7 +1467,6 @@ TEST(BusAdmissionStart, VolumeV2RendersParentAndChildOnceInFreshFirstBlock) {
     view.prospective = &prospective;
     view.authoredBusIds = ids.data();
     view.authoredBusVolumeDb = volume.data();
-    view.authoredBusMakeUpGainDb = neutral.data();
     view.authoredBusOutputVolumeDb = neutral.data();
     view.authoredBusCount = ids.size();
     harken::PreparedProjectGenerationV1 prepared;
@@ -1529,7 +1528,6 @@ TEST(BusAdmissionStart, VolumeV2SecondOwnerPreservesForeignMasterAndBusTargets) 
     view.prospective = &topology;
     view.authoredBusIds = ids.data();
     view.authoredBusVolumeDb = volume.data();
-    view.authoredBusMakeUpGainDb = neutral.data();
     view.authoredBusOutputVolumeDb = neutral.data();
     view.authoredBusCount = ids.size();
     harken::PreparedProjectGenerationV1 first;
@@ -1607,7 +1605,6 @@ TEST(BusAdmissionStart, VolumeV2KeepsMasterSiblingAndPlayableGainIndependent) {
     view.prospective = &prospective;
     view.authoredBusIds = ids.data();
     view.authoredBusVolumeDb = volume.data();
-    view.authoredBusMakeUpGainDb = neutral.data();
     view.authoredBusOutputVolumeDb = neutral.data();
     view.authoredBusCount = ids.size();
     harken::PreparedProjectGenerationV1 prepared;
@@ -1677,7 +1674,7 @@ TEST(BusAdmissionStart, VolumeV2RetainsApiAndBindingAcrossAuthoredUpdateAndRejec
     topology.emittedFeeders = emittedFeeders.data();
     topology.emitted = emitted.data();
     std::array<float, 1> volume{0.0f};
-    std::array<float, 1> makeUp{0.0f};
+    std::array<float, 1> makeUp{800.0f};
     std::array<float, 1> output{-6.0f};
     auto view = MakeInstallView(fixture.image);
     view.publicationVintage = 3;
@@ -2608,7 +2605,6 @@ struct LiveBusPublication {
         view.prospective = &topology;
         view.authoredBusIds = ids.data();
         view.authoredBusVolumeDb = volume.data();
-        view.authoredBusMakeUpGainDb = neutral.data();
         view.authoredBusOutputVolumeDb = neutral.data();
         view.authoredBusCount = 1;
     }

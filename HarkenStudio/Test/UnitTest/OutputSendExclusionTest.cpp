@@ -1,10 +1,12 @@
 #include "ProjectManager.h"
+#include "ProjectSerializer.h"
 #include "ProjectTypes.h"
 #include "UndoCommands.h"
 #include "Core/ActionManager.h"
 #include "Core/BusRouteGraph.h"
 #include "Core/FieldGroupProjectAdapter.h"
 #include "Core/MemorySettingsStorage.h"
+#include "Core/IPC/IPCServer.h"
 #include "Core/PlatformContextService.h"
 #include "Widgets/Blueprint/BlueprintConnectCommand.h"
 #include "Widgets/Blueprint/SignalPathEditing.h"
@@ -218,6 +220,52 @@ TEST_F(OutputSendExclusionTest, StructuralEditsPreserveIndependentRoutingScopes)
     ASSERT_TRUE(undo.redo());
     EXPECT_EQ(source->parent, target);
     EXPECT_EQ(snapshot(), moved);
+}
+
+TEST_F(OutputSendExclusionTest, UnsupportedCommandFieldsRejectBeforeAuthoringOrAuditionMutation)
+{
+    using namespace VNX;
+    auto& manager = ProjectManager::instance();
+    auto& actions = ActionManager::instance();
+    auto& undo = UndoRedoManager::instance();
+    auto* bus = manager.getMasterBusItem();
+    ASSERT_NE(bus, nullptr);
+    actions.clearAllForTesting();
+    registerMixerActions(actions, nullptr, &manager, nullptr);
+    IPCServer server(nullptr);
+    server.setProjectManager(&manager);
+    server.setAppState(IPCServer::AppState::Ready);
+    ProjectSerializer serializer;
+    ASSERT_TRUE(serializer.prepareReferenceWrite(*manager.currentProject()));
+    const auto before = serializer.projectItemToJson(*bus);
+    ASSERT_FALSE(before.isEmpty());
+    const bool muted = manager.auditionOverlay().isMuted(bus->runtimeId());
+    const bool dirty = bus->isDirtyObject();
+    undo.clear();
+    for (const auto* unsupported : {"unknownProperty", "makeUpGain", "makeup_gain"}) {
+        SCOPED_TRACE(unsupported);
+        QJsonObject args{{"bus_id", static_cast<qint64>(bus->objectID)},
+            {"volume", -6.0}, {"pan", 0.5}, {"mute", !muted},
+            {QLatin1String(unsupported), 3.0}};
+        const auto rejected = actions.execute(QStringLiteral("set_bus_properties"), args);
+        EXPECT_FALSE(rejected.success);
+        EXPECT_EQ(rejected.errorCode, QStringLiteral("PROPERTY_NOT_SUPPORTED"));
+        for (const bool preview : {false, true}) {
+            args.insert(QStringLiteral("preview"), preview);
+            const auto response = server.dispatchCommand(QStringLiteral("set_bus_properties"), args);
+            EXPECT_EQ(response.value(QStringLiteral("status")).toString(), QStringLiteral("error"));
+            EXPECT_EQ(serializer.projectItemToJson(*bus), before);
+            EXPECT_EQ(manager.auditionOverlay().isMuted(bus->runtimeId()), muted);
+            EXPECT_EQ(bus->isDirtyObject(), dirty);
+            EXPECT_EQ(undo.undoStack()->count(), 0);
+            EXPECT_EQ(undo.undoStack()->index(), 0);
+        }
+    }
+    ASSERT_TRUE(actions.execute(QStringLiteral("set_bus_properties"), {
+        {"bus_id", static_cast<qint64>(bus->objectID)}, {"volume", -6.0}}).success);
+    EXPECT_NE(serializer.projectItemToJson(*bus), before);
+    ASSERT_TRUE(undo.undo());
+    EXPECT_EQ(serializer.projectItemToJson(*bus), before);
 }
 
 TEST_F(OutputSendExclusionTest, RoutingEditsRejectCyclesAtomicallyAcrossLandingScopes)

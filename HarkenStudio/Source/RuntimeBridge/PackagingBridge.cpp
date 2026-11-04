@@ -893,8 +893,7 @@ struct PackBuildSession::Impl
                 {QStringLiteral("id"), VNX::objectIdString(bus.id)},
                 {QStringLiteral("parent"), VNX::objectIdString(parent)},
                 {QStringLiteral("volume"), bus.volume},
-                {QStringLiteral("outputBusVolume"), bus.outputBusVolume},
-                {QStringLiteral("makeUpGain"), bus.makeUpGain}});
+                {QStringLiteral("outputBusVolume"), bus.outputBusVolume}});
             for (size_t slot = 0; slot < bus.effects.size(); ++slot) {
                 const auto& effect = bus.effects[slot];
                 const auto* schema = harkenstudiobuild::FindPackEffectSchemaByType(effect.type);

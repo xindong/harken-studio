@@ -332,7 +332,7 @@ CurrentWorldSyncResult installCompiledWorld(
     for (const auto& bus : hold.projection.buses) {
         hold.buses.push_back({toNative(bus.busId), toNative(bus.parentId)});
         hold.volumes.push_back({toNative(bus.busId), bus.faderDb,
-            bus.makeUpGainDb, bus.outputBusVolumeDb, 0});
+            bus.outputBusVolumeDb});
     }
     for (const auto& send : hold.projection.sends) {
         hold.sends.push_back({toNative(send.sourceBusId), toNative(send.targetBusId)});
@@ -428,8 +428,7 @@ CurrentWorldSyncRequestPtr CurrentWorldRequestCache::update(
             || !std::isfinite(update.value))
             return {};
         const auto property = static_cast<Property>(update.propertyId);
-        if (property != Property::Volume && property != Property::Pitch
-            && property != Property::MakeUpGain)
+        if (property != Property::Volume && property != Property::Pitch)
             return {};
         const auto found = nodes_.find(update.guid);
         if (found == nodes_.end())
@@ -440,7 +439,6 @@ CurrentWorldSyncRequestPtr CurrentWorldRequestCache::update(
         switch (property) {
         case Property::Volume: node.volume = update.value; break;
         case Property::Pitch: node.pitch = update.value; break;
-        case Property::MakeUpGain: node.makeUpGain = update.value; break;
         default: return {};
         }
     }

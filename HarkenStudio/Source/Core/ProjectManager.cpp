@@ -5772,12 +5772,10 @@ const PropertyDescriptor* findDescriptorByName(const PropertySchema& schema, con
 QString canonicalAudioProperty(const QString& propertyName)
 {
     static const QHash<QString, QString> kAliases = {
-        {QStringLiteral("makeup_gain"),       QStringLiteral("makeUpGain")},
         {QStringLiteral("loop_count"),        QStringLiteral("loopCount")},
         {QStringLiteral("streaming_mode"),    QStringLiteral("streamingMode")},
         {QStringLiteral("outputBus"),         QStringLiteral("outputBusId")},
         {QStringLiteral("output_bus"),        QStringLiteral("outputBusId")},
-        {QStringLiteral("makeupgain"),        QStringLiteral("makeUpGain")},
     };
     return kAliases.value(propertyName, propertyName);
 }
@@ -5928,7 +5926,7 @@ float ProjectManager::aggregateVolumeDbForItem(const ProjectItem* item) const
     for (const ProjectItem* p = item; p; p = p->parent) {
         if (p->type == ProjectItem::Type::Bus) break;
         if (const auto* m = p->comp<VMixNode>())
-            accum += m->volume + m->makeUpGain;
+            accum += m->volume;
     }
     return accum;
 }
@@ -5961,7 +5959,7 @@ float ProjectManager::effectiveOutputVolumeDbForItem(
 float ProjectManager::effectiveBusVolumeDb(const ProjectItem* busItem) const
 {
     const auto* mix = busItem ? busItem->comp<VMixNode>() : nullptr;
-    return mix ? mix->volume + mix->makeUpGain : 0.0f;
+    return mix ? mix->volume : 0.0f;
 }
 
 void ProjectManager::pushItemVolumeLive(ProjectItem* item)
@@ -6130,7 +6128,6 @@ void ProjectManager::pushAudioPropertyLive(ProjectItem* item, const QString& pro
         return;
     }
     if (canonical == QStringLiteral("volume") ||
-        canonical == QStringLiteral("makeUpGain") ||
         canonical == QStringLiteral("outputBusVolume"))
     {
         propagateItemVolumeLive(item);
@@ -6161,11 +6158,6 @@ bool ProjectManager::setItemVolumeInternal(ProjectItem* item, float volume, cons
 bool ProjectManager::setItemPitchInternal(ProjectItem* item, float pitch, const QObject* originator)
 {
     return setAudioPropertyInternal(item, QStringLiteral("pitch"), pitch, originator);
-}
-
-bool ProjectManager::setItemMakeUpGainInternal(ProjectItem* item, float makeUpGain, const QObject* originator)
-{
-    return setAudioPropertyInternal(item, QStringLiteral("makeUpGain"), makeUpGain, originator);
 }
 
 bool ProjectManager::setItemLoopCountInternal(ProjectItem* item, uint32_t loopCount, const QObject* originator)
@@ -6628,7 +6620,6 @@ void ProjectManager::pushBusPropertyLive(ProjectItem* busItem, const QString& pr
     auto* mix = busItem ? busItem->comp<VMixNode>() : nullptr;
     if (!mix) return;
     if (propertyName == QStringLiteral("volume")
-        || propertyName == QStringLiteral("makeUpGain")
         || propertyName == QStringLiteral("outputBusVolume"))
         AudioEngine::instance().runtimeSyncCoordinator().markCurrentWorldMutation();
     else if (propertyName == QStringLiteral("pitch"))
@@ -6672,17 +6663,6 @@ bool ProjectManager::setBusVolumeInternal(uint32_t busID, float volumeDb, const 
     if (!writeBusPropertySilent(item, QStringLiteral("volume"), volumeDb)) return false;
     pushBusPropertyLive(item, QStringLiteral("volume"));
     emit busChanged(busID, QStringLiteral("volume"), originator);
-    return true;
-}
-
-bool ProjectManager::setBusMakeUpGainInternal(uint32_t busID, float makeUpGainDb,
-                                              const QObject* originator)
-{
-    ProjectItem* item = findBusItem(busID);
-    if (!writeBusPropertySilent(item, QStringLiteral("makeUpGain"), makeUpGainDb))
-        return false;
-    pushBusPropertyLive(item, QStringLiteral("makeUpGain"));
-    emit busChanged(busID, QStringLiteral("makeUpGain"), originator);
     return true;
 }
 

@@ -4,6 +4,8 @@
 
 工程 `.hsp` 的 `content.audio.renderSampleRate` 和 `content.audio.channelConfig` 保存音频编译目标；`content.deployPlatforms` 保存发布平台定义，`content.deployLanguages` 保存发布语言列表，允许没有语言。`content.metadata` 仅保存工程名称。
 
+Studio 不再提供、保存或编译对象／总线的 `makeUpGain`；旧工程加载时丢弃该字段及其 presence 位，保存时清除。Pack 包体及预览传输移除该字段，旧 Pack 需要重新打包。引擎内部保留属性编号和成员定义，预览、运行时播放和增益估算均不再叠加该值。压缩器效果器的 `makeupDb` 不受影响。
+
 | 配置／产物 | 默认值或位置 | 当前内容与边界 |
 |---|---|---|
 | Publish Directory | 工程目录下 BuildPacks | 以工程目录为相对路径基准，无法相对化时保留绝对路径 |

@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <set>
 #include <vector>
 
@@ -40,7 +41,7 @@ TEST(PackV2Format, CurveWireSizesArePinned) {
     EXPECT_EQ(180u, kPackV2BindingCurveWireBytes);
     EXPECT_EQ(228u, kPackV2BindingDefinitionPayloadBytes);
     EXPECT_EQ(32u, kPackV2BusPayloadBytes);
-    EXPECT_EQ(48u, kPackV6BusPayloadBytes);
+    EXPECT_EQ(40u, kPackV6BusPayloadBytes);
 }
 
 TEST(PackV2Format, PackContainerUsesPublishedSchemaVersion) {
@@ -1361,15 +1362,14 @@ TEST(PackV2Format, Vintage6BusPayloadRoundTripsMixFields) {
     const std::vector<std::uint8_t> payload =
         BusMixPayload(harkentest::ObjectId(10), harkentest::ObjectId(1), -6.0f, -3.5f, 2.0f);
     ASSERT_EQ(kPackV6BusPayloadBytes, payload.size());
-    EXPECT_EQ(0u, LoadLE32(payload.data() + 44));
-
     PackBusEntry parsed{};
+    parsed.makeUpGain = 2.0f;
     ASSERT_TRUE(ParsePackV6Bus(payload.data(), payload.size(), &parsed));
     EXPECT_EQ(harkentest::ObjectId(10u), parsed.busId);
     EXPECT_EQ(harkentest::ObjectId(1u), parsed.parentBusId);
     EXPECT_EQ(-6.0f, parsed.volume);
     EXPECT_EQ(-3.5f, parsed.outputBusVolume);
-    EXPECT_EQ(2.0f, parsed.makeUpGain);
+    EXPECT_EQ(0.0f, parsed.makeUpGain);
     EXPECT_FALSE(ParsePackV6Bus(payload.data(), kPackV2BusPayloadBytes, &parsed));
 }
 
@@ -1386,13 +1386,13 @@ TEST(PackV2Format, Vintage6BusImageRoundTripCarriesMixFields) {
     EXPECT_EQ(harkentest::ObjectId(1u), image.buses[0].parentBusId);
     EXPECT_EQ(-6.0f, image.buses[0].volume);
     EXPECT_EQ(-3.5f, image.buses[0].outputBusVolume);
-    EXPECT_EQ(2.0f, image.buses[0].makeUpGain);
+    EXPECT_EQ(0.0f, image.buses[0].makeUpGain);
 }
 
-TEST(PackV2Format, RefusesVintage6BusReservedNonzero) {
+TEST(PackV2Format, RefusesVintage6BusTrailingFields) {
     std::vector<std::uint8_t> payload =
         BusMixPayload(harkentest::ObjectId(10), harkentest::ObjectId(1), -6.0f, -3.5f, 2.0f);
-    StoreLE32(payload.data() + 44, 1);
+    payload.resize(payload.size() + 8, 0);
     PackBusEntry parsed{};
     EXPECT_FALSE(ParsePackV6Bus(payload.data(), payload.size(), &parsed));
 
@@ -1856,7 +1856,7 @@ TEST(PackV2Format, NonFiniteSendLevelRefused) {
     ExpectRefused(buildWithLevelBits(0x7F800000u)); // +infinity
 }
 
-TEST(PackV2Format, NonFiniteBusMixSumRefused) {
+TEST(PackV2Format, NonFiniteBusMixFieldsRefused) {
     const auto buildWithMix = [](float volume, float outputBusVolume,
                                  float makeUpGain) {
         ImageBuilder builder(kPackKindResident);
@@ -1875,9 +1875,16 @@ TEST(PackV2Format, NonFiniteBusMixSumRefused) {
         ASSERT_EQ(1u, image.buses.size());
         EXPECT_EQ(-6.0f, image.buses[0].volume);
         EXPECT_EQ(-3.5f, image.buses[0].outputBusVolume);
-        EXPECT_EQ(2.0f, image.buses[0].makeUpGain);
+        EXPECT_EQ(0.0f, image.buses[0].makeUpGain);
     }
-    ExpectRefused(buildWithMix(3.0e38f, 3.0e38f, 3.0e38f));
+    {
+        const auto finite = buildWithMix(3.0e38f, 0.0f, 3.0e38f);
+        PackLogicImage image;
+        EXPECT_EQ(VN_OK, ParsePackV2Image(finite.data(), finite.size(), &image));
+    }
+    const auto nonfinite = std::numeric_limits<float>::quiet_NaN();
+    ExpectRefused(buildWithMix(nonfinite, 0.0f, 0.0f));
+    ExpectRefused(buildWithMix(0.0f, nonfinite, 0.0f));
 }
 
 // --- layout normalization refusals ---

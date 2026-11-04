@@ -27,7 +27,7 @@ struct PreparedProject {
     std::vector<std::uint32_t> generations, parents, targets, feeders, emittedFeeders;
     std::vector<std::uint8_t> alive, levelApply, emitted;
     std::vector<float> levels, sendLevelDb;
-    std::vector<float> authoredVolume, authoredMakeUpGain, authoredOutputVolume;
+    std::vector<float> authoredVolume, authoredOutputVolume;
     harken::ProspectiveTopologyView topology;
     harken::PreparedProjectGenerationV1 transaction;
 };
@@ -169,18 +169,15 @@ bool ValidateVolumePublication(const VnPreviewProjectDescV2& desc,
     for (std::uint32_t i = 0; i < base.busCount; ++i) {
         const auto& bus = base.buses[i];
         const auto& volume = desc.busVolumes[i];
-        if (volume.id != bus.id || volume.reserved0 != 0 ||
+        if (volume.id != bus.id ||
             !std::isfinite(volume.volumeDb) || volume.volumeDb < -96.0f ||
             volume.volumeDb > 24.0f ||
-            !convertible(volume.makeUpGainDb) ||
             !convertible(volume.outputBusVolumeDb) ||
-            !convertible(volume.volumeDb + volume.makeUpGainDb) ||
-            !convertible(volume.volumeDb + volume.makeUpGainDb +
-                         volume.outputBusVolumeDb) ||
+            !convertible(volume.volumeDb + volume.outputBusVolumeDb) ||
             (i + 1 < base.busCount &&
                 (harken::IsNull(bus.parent) || busIndex(bus.parent) == UINT32_MAX)) ||
             (i + 1 == base.busCount &&
-                (volume.volumeDb != 0.0f || volume.makeUpGainDb != 0.0f ||
+                (volume.volumeDb != 0.0f ||
                  volume.outputBusVolumeDb != 0.0f))) return false;
     }
     for (std::uint32_t i = 0; i < base.sendCount; ++i) {
@@ -247,10 +244,16 @@ bool ValidateVolumePublication(const VnPreviewProjectDescV2& desc,
         const auto& volume = desc.busVolumes[i];
         const bool root = i + 1 == base.busCount;
         const auto output = root ? desc.deviceLayout : desc.mixLayout;
-        image.busDefinitionBusesV2.push_back({bus.id, bus.parent, i,
-            volume.volumeDb, volume.makeUpGainDb, volume.outputBusVolumeDb,
-            harken::busfingerprint::kNeutralFaderAfterSlotV1,
-            output, 0, 0, i, 1});
+        image.busDefinitionBusesV2.push_back({
+            .busId = bus.id,
+            .parentId = bus.parent,
+            .feedsFirstOrdinal = i,
+            .faderDb = volume.volumeDb,
+            .outputBusVolumeDb = volume.outputBusVolumeDb,
+            .faderAfterSlot = harken::busfingerprint::kNeutralFaderAfterSlotV1,
+            .outputLayout = output,
+            .downmixFirst = i,
+            .downmixCount = 1});
         image.busDefinitionDownmixesV2.push_back({bus.id, desc.mixLayout,
             output, i * 64u, 64});
         std::array<float, 64> coefficients{};
@@ -293,16 +296,13 @@ VnPreviewPrepareStatus PrepareProjectImpl(
         if (busVolumes != nullptr) {
             if (volumeCount != desc->busCount) return VN_PREVIEW_PREPARE_INVALID;
             project->authoredVolume.reserve(volumeCount);
-            project->authoredMakeUpGain.reserve(volumeCount);
             project->authoredOutputVolume.reserve(volumeCount);
             for (std::uint32_t i = 0; i < volumeCount; ++i) {
                 const auto& row = busVolumes[i];
-                if (row.id != desc->buses[i].id || row.reserved0 != 0 ||
-                    !std::isfinite(row.volumeDb) || !std::isfinite(row.makeUpGainDb) ||
+                if (row.id != desc->buses[i].id || !std::isfinite(row.volumeDb) ||
                     !std::isfinite(row.outputBusVolumeDb))
                     return VN_PREVIEW_PREPARE_INVALID;
                 project->authoredVolume.push_back(row.volumeDb);
-                project->authoredMakeUpGain.push_back(row.makeUpGainDb);
                 project->authoredOutputVolume.push_back(row.outputBusVolumeDb);
             }
         }
@@ -320,7 +320,6 @@ VnPreviewPrepareStatus PrepareProjectImpl(
             view.publicationVintage = authoredSends ? 4 : 3;
             view.authoredBusIds = project->ids.data();
             view.authoredBusVolumeDb = project->authoredVolume.data();
-            view.authoredBusMakeUpGainDb = project->authoredMakeUpGain.data();
             view.authoredBusOutputVolumeDb = project->authoredOutputVolume.data();
             view.authoredBusCount = volumeCount;
         }

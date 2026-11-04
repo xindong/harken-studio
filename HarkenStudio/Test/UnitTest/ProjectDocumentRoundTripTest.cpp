@@ -333,6 +333,12 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
     const int version = GetParam();
     SCOPED_TRACE(version);
     QMap<QString, QByteArray> beforeOpen;
+    QMap<QString, QJsonObject> expectedProperties;
+    const auto platforms = HarkenTest::projectContent(readObject(projectPath_))
+        .value(QStringLiteral("deployPlatforms")).toArray();
+    ASSERT_FALSE(platforms.isEmpty());
+    const auto platformId = platforms.first().toObject().value(QStringLiteral("id"));
+    ASSERT_TRUE(platformId.isString());
     for (auto it = documentsById_.cbegin(); it != documentsById_.cend(); ++it) {
         auto document = it.value();
         auto header = HarkenTest::projectHeader(document);
@@ -345,6 +351,31 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
         }
         document.insert(QStringLiteral("harkenDocument"), header);
         auto content = HarkenTest::projectContent(document);
+        auto authoredComponents = content.value(QStringLiteral("components")).toObject();
+        if (authoredComponents.value(QStringLiteral("mixnode")).isObject()) {
+            auto properties = content.value(QStringLiteral("playableProperties")).toObject();
+            ASSERT_TRUE(properties.value(QStringLiteral("platformOverrides")).toArray().isEmpty());
+            QJsonObject overlay{{QStringLiteral("platformId"), platformId},
+                {QStringLiteral("presence"), QStringLiteral("0000000000000001")},
+                {QStringLiteral("volume"), -3.0}};
+            properties.insert(QStringLiteral("platformOverrides"), QJsonArray{overlay});
+            expectedProperties.insert(it.key(), properties);
+            bool validPresence = false;
+            const auto presence = properties.value(QStringLiteral("presence")).toString()
+                .toULongLong(&validPresence, 16);
+            ASSERT_TRUE(validPresence);
+            properties.insert(QStringLiteral("presence"),
+                QStringLiteral("%1").arg(presence | 4, 16, 16, QLatin1Char('0')));
+            properties.insert(QStringLiteral("makeUpGain"), 6.0);
+            overlay.insert(QStringLiteral("presence"), QStringLiteral("0000000000000005"));
+            overlay.insert(QStringLiteral("makeUpGain"), -12.0);
+            properties.insert(QStringLiteral("platformOverrides"), QJsonArray{overlay});
+            content.insert(QStringLiteral("playableProperties"), properties);
+            auto mix = authoredComponents.value(QStringLiteral("mixnode")).toObject();
+            mix.insert(QStringLiteral("makeUpGain"), 9.0);
+            authoredComponents.insert(QStringLiteral("mixnode"), mix);
+            content.insert(QStringLiteral("components"), authoredComponents);
+        }
         if (version < ProjectSchema::kProjectSchemaVersion) {
             if (header.value(QStringLiteral("type")) == QStringLiteral("project.root")) {
                 content.insert(QStringLiteral("paths"), QJsonObject{
@@ -432,6 +463,14 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
                   ProjectSchema::kProjectSchemaVersion);
         const auto content = HarkenTest::projectContent(document);
         const auto original = HarkenTest::projectContent(documentsById_.value(it.key()));
+        if (expectedProperties.contains(it.key())) {
+            EXPECT_EQ(content.value(QStringLiteral("playableProperties")),
+                      expectedProperties.value(it.key()));
+            EXPECT_EQ(content.value(QStringLiteral("components")).toObject()
+                          .value(QStringLiteral("mixnode")),
+                      original.value(QStringLiteral("components")).toObject()
+                          .value(QStringLiteral("mixnode")));
+        }
         for (const auto* key : {"type", "name", "guid", "parentRef"})
             EXPECT_EQ(content.value(QLatin1String(key)), original.value(QLatin1String(key)));
         if (HarkenTest::projectHeader(document).value(QStringLiteral("type")) == QStringLiteral("project.root"))

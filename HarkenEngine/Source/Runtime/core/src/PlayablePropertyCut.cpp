@@ -621,9 +621,6 @@ ResolvedPlayablePropertyCutStorageV1::ResolveInto(
         if (Present(*payload, PropertyId::Pitch)) {
             output.view.pitchCents += F32(*payload, PropertyId::Pitch);
         }
-        if (Present(*payload, PropertyId::MakeUpGain)) {
-            output.view.makeUpGainDb += F32(*payload, PropertyId::MakeUpGain);
-        }
     }
     output.view.pitchCents =
         std::clamp(output.view.pitchCents, -7200.0f, 7200.0f);

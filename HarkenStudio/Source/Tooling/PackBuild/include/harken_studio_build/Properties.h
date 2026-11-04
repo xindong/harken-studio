@@ -16,7 +16,6 @@ enum class ContentPropertyKindV1 : std::uint8_t { Layer = 0, Sound = 1, Containe
 enum class PlayablePropertyIdV1 : std::uint8_t {
     Volume = 1,
     Pitch = 2,
-    MakeUpGain = 3,
     LoopCount = 4,
     StreamingMode = 5,
     OutputBusVolume = 6,
@@ -88,14 +87,13 @@ enum class PlayablePropertyDefaultV1 : std::uint8_t {
 };
 
 inline constexpr std::uint32_t kPlayablePropertyRegistryVintageV1 = 1;
-inline constexpr std::uint64_t kPlayablePropertyKnownMaskV1 = UINT64_C(0x000000000001afff);
+inline constexpr std::uint64_t kPlayablePropertyKnownMaskV1 = UINT64_C(0x000000000001affb);
 
 struct RuntimePropertyMetaV1 { PlayablePropertyIdV1 id; std::uint64_t presentBit; const char* name; PlayablePropertyWireV1 wire; PlayablePropertyPresenceV1 presence; PlayablePropertyCombineRoleV1 combineRole; PlayablePropertyReferenceRoleV1 referenceRole; PlayablePropertyCapabilityRoleV1 capabilityRole; PlayablePropertyPhaseRoleV1 phaseRole; PlayablePropertyDefaultV1 canonicalDefault; };
 
 inline constexpr RuntimePropertyMetaV1 kRuntimeAndVtrcPropertyTableV1[] = {
     {PlayablePropertyIdV1::Volume, UINT64_C(0x0000000000000001), "volume", PlayablePropertyWireV1::F32, PlayablePropertyPresenceV1::MaskBit, PlayablePropertyCombineRoleV1::DbSum, PlayablePropertyReferenceRoleV1::None, PlayablePropertyCapabilityRoleV1::Common, PlayablePropertyPhaseRoleV1::FirstAudible, PlayablePropertyDefaultV1::PositiveZero},
     {PlayablePropertyIdV1::Pitch, UINT64_C(0x0000000000000002), "pitch", PlayablePropertyWireV1::F32, PlayablePropertyPresenceV1::MaskBit, PlayablePropertyCombineRoleV1::CentSumClamp, PlayablePropertyReferenceRoleV1::None, PlayablePropertyCapabilityRoleV1::Common, PlayablePropertyPhaseRoleV1::FirstAudible, PlayablePropertyDefaultV1::PositiveZero},
-    {PlayablePropertyIdV1::MakeUpGain, UINT64_C(0x0000000000000004), "makeUpGain", PlayablePropertyWireV1::F32, PlayablePropertyPresenceV1::MaskBit, PlayablePropertyCombineRoleV1::DbSum, PlayablePropertyReferenceRoleV1::None, PlayablePropertyCapabilityRoleV1::Common, PlayablePropertyPhaseRoleV1::FirstAudible, PlayablePropertyDefaultV1::PositiveZero},
     {PlayablePropertyIdV1::LoopCount, UINT64_C(0x0000000000000008), "loopCount", PlayablePropertyWireV1::U32, PlayablePropertyPresenceV1::MaskBit, PlayablePropertyCombineRoleV1::ObjectLocal, PlayablePropertyReferenceRoleV1::None, PlayablePropertyCapabilityRoleV1::Playback, PlayablePropertyPhaseRoleV1::PlaybackMaterialization, PlayablePropertyDefaultV1::IntegerOne},
     {PlayablePropertyIdV1::StreamingMode, UINT64_C(0x0000000000000010), "streamingMode", PlayablePropertyWireV1::U32, PlayablePropertyPresenceV1::MaskBit, PlayablePropertyCombineRoleV1::NearestExplicit, PlayablePropertyReferenceRoleV1::None, PlayablePropertyCapabilityRoleV1::Streaming, PlayablePropertyPhaseRoleV1::LeafMaterialization, PlayablePropertyDefaultV1::Zero},
     {PlayablePropertyIdV1::OutputBusVolume, UINT64_C(0x0000000000000020), "outputBusVolume", PlayablePropertyWireV1::F32, PlayablePropertyPresenceV1::MaskBit, PlayablePropertyCombineRoleV1::NearestExplicit, PlayablePropertyReferenceRoleV1::None, PlayablePropertyCapabilityRoleV1::Route, PlayablePropertyPhaseRoleV1::FirstAudible, PlayablePropertyDefaultV1::PositiveZero},
@@ -109,7 +107,7 @@ inline constexpr RuntimePropertyMetaV1 kRuntimeAndVtrcPropertyTableV1[] = {
     {PlayablePropertyIdV1::SignalGraph, UINT64_C(0x0000000000008000), "signalGraph", PlayablePropertyWireV1::EffectProgram, PlayablePropertyPresenceV1::MaskBit, PlayablePropertyCombineRoleV1::EffectSelection, PlayablePropertyReferenceRoleV1::None, PlayablePropertyCapabilityRoleV1::Effect, PlayablePropertyPhaseRoleV1::SameCutInstall, PlayablePropertyDefaultV1::Empty},
     {PlayablePropertyIdV1::SpatializationMix, UINT64_C(0x0000000000010000), "spatializationMix", PlayablePropertyWireV1::F32, PlayablePropertyPresenceV1::MaskBit, PlayablePropertyCombineRoleV1::NearestExplicit, PlayablePropertyReferenceRoleV1::None, PlayablePropertyCapabilityRoleV1::Spatial, PlayablePropertyPhaseRoleV1::FirstAudible, PlayablePropertyDefaultV1::One},
 };
-static_assert(std::size(kRuntimeAndVtrcPropertyTableV1) == 15);
+static_assert(std::size(kRuntimeAndVtrcPropertyTableV1) == 14);
 
 } } // namespace harkenstudiobuild::playableproperties
 

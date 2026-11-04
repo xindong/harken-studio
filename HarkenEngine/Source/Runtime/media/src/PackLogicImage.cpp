@@ -344,10 +344,7 @@ VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
                     : ParsePackV6Bus(payload, entry.size, &bus);
             if (!parsed || bus.busId != entry.id ||
                 !std::isfinite(bus.volume) ||
-                !std::isfinite(bus.outputBusVolume) ||
-                !std::isfinite(bus.makeUpGain) ||
-                !std::isfinite(bus.volume +
-                               bus.makeUpGain)) {
+                !std::isfinite(bus.outputBusVolume)) {
                 return VN_BAD_PACK;
             }
             image.buses.push_back(bus);
@@ -1165,9 +1162,7 @@ VnResult ParseBusDefinitionSnapshotPayloadV2(
                 static_cast<std::size_t>(i) * header.busRowBytes, &row) ||
             row.busId == VnObjectId{} || !ids.insert(row.busId).second ||
             !std::isfinite(row.faderDb) || row.faderDb < -96.0f || row.faderDb > 24.0f ||
-            !std::isfinite(row.makeUpGainDb) ||
             !std::isfinite(row.outputBusVolumeDb) ||
-            !std::isfinite(std::pow(10.0f, (row.faderDb + row.makeUpGainDb) / 20.0f)) ||
             !std::isfinite(std::pow(10.0f, row.outputBusVolumeDb / 20.0f)) ||
             row.effectFirst != 0 || row.effectCount != 0 ||
             row.downmixCount != 1 || row.downmixFirst != i) {
@@ -2162,10 +2157,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
                     : ParsePackV6Bus(payload, entry.size, &bus);
             if (!parsed || bus.busId != entry.id ||
                 !std::isfinite(bus.volume) ||
-                !std::isfinite(bus.outputBusVolume) ||
-                !std::isfinite(bus.makeUpGain) ||
-                !std::isfinite(bus.volume +
-                               bus.makeUpGain)) {
+                !std::isfinite(bus.outputBusVolume)) {
                 return VN_BAD_PACK;
             }
             image.buses.push_back(bus);

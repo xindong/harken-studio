@@ -61,6 +61,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -1169,14 +1170,11 @@ TEST(PackLogicLoad, BusMixFieldsApplyAtSeparateGainStages) {
     harken::Engine* engine = session.Engine();
 
     const std::string packPath = TempPath("pll_bus_mix_apply.pack");
-    ASSERT_TRUE(BuildPackFile(
-        "pll_bus_mix_apply",
-        V2LogicManifest(
-            packPath, "resident",
-            R"("buses": [ { "id": "3da91a64-b947-4560-0000-0000000032c9", "parent": "00000000-0000-0000-0000-000000000001", "volume": -6.0,
-            "outputBusVolume": -3.5, "makeUpGain": 2.0 },
-            { "id": "3da91a64-b947-4560-0000-0000000032ca", "parent": "00000000-0000-0000-0000-000000000001" } ],
-            "busSends": [ { "from": "3da91a64-b947-4560-0000-0000000032c9", "to": "3da91a64-b947-4560-0000-0000000032ca", "levelDb": 0.0 } ])")));
+    V2Builder builder(harken::kPackKindResident);
+    builder.AddBusMix(harkentest::ObjectId(13001), VN_BUS_MASTER, -6.0f, -3.5f, 2.0f);
+    builder.AddBusMix(harkentest::ObjectId(13002), VN_BUS_MASTER, 0.0f, 0.0f, 0.0f);
+    builder.AddBusSend(harkentest::ObjectId(13001), harkentest::ObjectId(13002), 0.0f);
+    WriteFileBytes(packPath, builder.Build());
 
     VnPackHandle pack = 0;
     ASSERT_EQ(VN_OK, LoadPack(packPath, &pack));
@@ -1186,7 +1184,7 @@ TEST(PackLogicLoad, BusMixFieldsApplyAtSeparateGainStages) {
     ASSERT_EQ(2u, record->buses.size());
     EXPECT_FLOAT_EQ(-6.0f, record->buses[0].volume);
     EXPECT_FLOAT_EQ(-3.5f, record->buses[0].outputBusVolume);
-    EXPECT_FLOAT_EQ(2.0f, record->buses[0].makeUpGain);
+    EXPECT_FLOAT_EQ(0.0f, record->buses[0].makeUpGain);
     EXPECT_FLOAT_EQ(0.0f, record->buses[1].volume);
     EXPECT_FLOAT_EQ(0.0f, record->buses[1].outputBusVolume);
     EXPECT_FLOAT_EQ(0.0f, record->buses[1].makeUpGain);
@@ -1196,7 +1194,7 @@ TEST(PackLogicLoad, BusMixFieldsApplyAtSeparateGainStages) {
     ASSERT_NE(harken::kInvalidBusIndex, mixed);
     ASSERT_NE(harken::kInvalidBusIndex, zeros);
     EXPECT_FLOAT_EQ(
-        -4.0f, engine->busTargets.LastCommitted(
+        -6.0f, engine->busTargets.LastCommitted(
                    mixed, harken::kBusTargetBusVolume));
     EXPECT_FLOAT_EQ(
         0.0f, engine->busTargets.LastCommitted(
@@ -1205,7 +1203,7 @@ TEST(PackLogicLoad, BusMixFieldsApplyAtSeparateGainStages) {
         mixed, harken::kBusTargetBusVolume,
         harken::BusTargetStore::kSlotAuthoredIndex));
     EXPECT_FLOAT_EQ(
-        -4.0f, engine->busTargets.SlotValue(
+        -6.0f, engine->busTargets.SlotValue(
                    mixed, harken::kBusTargetBusVolume,
                    harken::BusTargetStore::kSlotAuthoredIndex));
     EXPECT_FALSE(engine->busTargets.SlotActive(
@@ -1225,8 +1223,8 @@ TEST(PackLogicLoad, BusMixFieldsApplyAtSeparateGainStages) {
     harkentest::Capture out;
     harkentest::PumpAndCapture(engine, 1, out);
     HARKENTEST_ASSERT_NON_SILENT(out.left);
-    const float expected = 0.8f * (std::pow(10.0f, -7.5f / 20.0f) +
-                                   std::pow(10.0f, -4.0f / 20.0f));
+    const float expected = 0.8f * (std::pow(10.0f, -9.5f / 20.0f) +
+                                   std::pow(10.0f, -6.0f / 20.0f));
     for (std::size_t i = 0; i < kBlock; ++i) {
         ASSERT_NEAR(expected, out.left[i], 1e-5f) << "left sample " << i;
         ASSERT_NEAR(expected, out.right[i], 1e-5f)
@@ -1285,40 +1283,32 @@ TEST(PackLogicReplace, BusMixRelevelPreservesOutputGain) {
                                    float outputBusVolume,
                                    float makeUpGain) {
         const std::string path = TempPath(std::string(name) + ".pack");
-        const bool built = BuildPackFile(
-            name,
-            V2LogicManifest(
-                path, "resident",
-                "\"buses\": [ { \"id\": \"3da91a64-b947-4560-0000-0000000032dd\", \"parent\": \"00000000-0000-0000-0000-000000000001\", "
-                "\"volume\": " +
-                    std::to_string(volume) +
-                    ", \"outputBusVolume\": " +
-                    std::to_string(outputBusVolume) +
-                    ", \"makeUpGain\": " +
-                    std::to_string(makeUpGain) + " } ]"));
-        EXPECT_TRUE(built);
+        V2Builder builder(harken::kPackKindResident);
+        builder.AddBusMix(harkentest::ObjectId(13021), VN_BUS_MASTER, volume,
+                          outputBusVolume, makeUpGain);
+        WriteFileBytes(path, builder.Build());
         return path;
     };
     const std::string v1Path =
         buildRevision("plr_bus_mix_v1", -6.0f, -3.5f, 2.0f);
     const std::string v2Path =
-        buildRevision("plr_bus_mix_v2", -12.0f, -3.5f, 2.0f);
+        buildRevision("plr_bus_mix_v2", -12.0f, -3.5f, 800.0f);
 
     VnPackHandle pack = 0;
     ASSERT_EQ(VN_OK, LoadPack(v1Path, &pack));
     const std::uint32_t index = engine->buses.FindIndex(harkentest::ObjectId(13021));
     ASSERT_NE(harken::kInvalidBusIndex, index);
     EXPECT_FLOAT_EQ(
-        -4.0f, engine->busTargets.LastCommitted(
+        -6.0f, engine->busTargets.LastCommitted(
                    index, harken::kBusTargetBusVolume));
 
     ASSERT_EQ(VN_OK, ReplacePack(pack, v2Path));
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_FLOAT_EQ(
-        -10.0f, engine->busTargets.LastCommitted(
+        -12.0f, engine->busTargets.LastCommitted(
                     index, harken::kBusTargetBusVolume));
     EXPECT_FLOAT_EQ(
-        -10.0f, engine->busTargets.SlotValue(
+        -12.0f, engine->busTargets.SlotValue(
                     index, harken::kBusTargetBusVolume,
                     harken::BusTargetStore::kSlotAuthoredIndex));
     EXPECT_FALSE(engine->busTargets.SlotActive(
@@ -1335,7 +1325,7 @@ TEST(PackLogicReplace, BusMixRelevelPreservesOutputGain) {
     harkentest::Capture out;
     harkentest::PumpAndCapture(engine, 1, out);
     HARKENTEST_ASSERT_NON_SILENT(out.left);
-    const float expected = 0.8f * std::pow(10.0f, -13.5f / 20.0f);
+    const float expected = 0.8f * std::pow(10.0f, -15.5f / 20.0f);
     for (std::size_t i = 0; i < kBlock; ++i) {
         ASSERT_NEAR(expected, out.left[i], 1e-5f) << "left sample " << i;
         ASSERT_NEAR(expected, out.right[i], 1e-5f)
@@ -1344,12 +1334,12 @@ TEST(PackLogicReplace, BusMixRelevelPreservesOutputGain) {
     const auto v3Path = buildRevision("plr_bus_mix_output_only", -12.0f, 0.0f, 2.0f);
     ASSERT_EQ(VN_OK, ReplacePack(pack, v3Path));
     ASSERT_EQ(VN_OK, Vn_Update());
-    EXPECT_FLOAT_EQ(-10.0f, engine->busTargets.LastCommitted(
+    EXPECT_FLOAT_EQ(-12.0f, engine->busTargets.LastCommitted(
                                index, harken::kBusTargetBusVolume));
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
     harkentest::Capture revised;
     harkentest::PumpAndCapture(engine, 1, revised);
-    const float revisedExpected = 0.8f * std::pow(10.0f, -10.0f / 20.0f);
+    const float revisedExpected = 0.8f * std::pow(10.0f, -12.0f / 20.0f);
     for (float sample : revised.left) EXPECT_NEAR(revisedExpected, sample, 1e-5f);
 }
 
@@ -1367,7 +1357,7 @@ TEST(PackLogicLoad, BusMixAuthoredSlotLeavesApiDirectUntouched) {
         V2LogicManifest(
             packPath, "resident",
             R"("buses": [ { "id": "3da91a64-b947-4560-0000-00000000332e", "parent": "00000000-0000-0000-0000-000000000001", "volume": -6.0,
-            "outputBusVolume": -3.5, "makeUpGain": 2.0 } ])")));
+            "outputBusVolume": -3.5 } ])")));
 
     VnPackHandle pack = 0;
     ASSERT_EQ(VN_OK, LoadPack(packPath, &pack));
@@ -1387,7 +1377,7 @@ TEST(PackLogicLoad, BusMixAuthoredSlotLeavesApiDirectUntouched) {
     harkentest::AdvanceVariableWrite(engine);
 
     EXPECT_FLOAT_EQ(
-        -4.0f, engine->busTargets.SlotValue(
+        -6.0f, engine->busTargets.SlotValue(
                    index, harken::kBusTargetBusVolume,
                    harken::BusTargetStore::kSlotAuthoredIndex));
     EXPECT_FLOAT_EQ(
@@ -1399,7 +1389,7 @@ TEST(PackLogicLoad, BusMixAuthoredSlotLeavesApiDirectUntouched) {
                    index, harken::kBusTargetBusVolume,
                    harken::BusTargetStore::kSlotVariableIndex));
     EXPECT_FLOAT_EQ(
-        -9.0f, engine->busTargets.Reduce(index, harken::kBusTargetBusVolume));
+        -11.0f, engine->busTargets.Reduce(index, harken::kBusTargetBusVolume));
 
     std::uint32_t required = 0;
     ASSERT_EQ(VN_OK, Vn_CapturePropertyTargets(nullptr, 0, &required));
@@ -1419,7 +1409,7 @@ TEST(PackLogicLoad, BusMixAuthoredSlotLeavesApiDirectUntouched) {
     ASSERT_NE(nullptr, captured);
     EXPECT_FLOAT_EQ(-1.0f, captured->apiDirectValue);
     EXPECT_FLOAT_EQ(-4.0f, captured->variableValue);
-    EXPECT_FLOAT_EQ(-9.0f, captured->finalValue);
+    EXPECT_FLOAT_EQ(-11.0f, captured->finalValue);
 }
 
 TEST(PackLogicReplace, BusMixKeepsApiDirectAndVariableOnRetainedBus) {
@@ -1439,7 +1429,7 @@ TEST(PackLogicReplace, BusMixKeepsApiDirectAndVariableOnRetainedBus) {
                 "\"buses\": [ { \"id\": \"3da91a64-b947-4560-0000-000000003338\", \"parent\": \"00000000-0000-0000-0000-000000000001\", "
                 "\"volume\": " +
                     std::to_string(volume) +
-                    ", \"outputBusVolume\": -3.5, \"makeUpGain\": 2.0 } ]"));
+                    ", \"outputBusVolume\": -3.5 } ]"));
         EXPECT_TRUE(built);
         return path;
     };
@@ -1468,7 +1458,7 @@ TEST(PackLogicReplace, BusMixKeepsApiDirectAndVariableOnRetainedBus) {
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(generation, engine->buses.GenerationAt(index));
     EXPECT_FLOAT_EQ(
-        -10.0f, engine->busTargets.SlotValue(
+        -12.0f, engine->busTargets.SlotValue(
                     index, harken::kBusTargetBusVolume,
                     harken::BusTargetStore::kSlotAuthoredIndex));
     EXPECT_FLOAT_EQ(
@@ -1480,14 +1470,14 @@ TEST(PackLogicReplace, BusMixKeepsApiDirectAndVariableOnRetainedBus) {
                    index, harken::kBusTargetBusVolume,
                    harken::BusTargetStore::kSlotVariableIndex));
     EXPECT_FLOAT_EQ(
-        -15.0f, engine->busTargets.Reduce(index, harken::kBusTargetBusVolume));
+        -17.0f, engine->busTargets.Reduce(index, harken::kBusTargetBusVolume));
     EXPECT_FLOAT_EQ(
-        -15.0f, engine->busTargets.LastCommitted(
+        -17.0f, engine->busTargets.LastCommitted(
                     index, harken::kBusTargetBusVolume));
 
     ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(13112), -2.0f, 0));
     EXPECT_FLOAT_EQ(
-        -10.0f, engine->busTargets.SlotValue(
+        -12.0f, engine->busTargets.SlotValue(
                     index, harken::kBusTargetBusVolume,
                     harken::BusTargetStore::kSlotAuthoredIndex));
     EXPECT_FLOAT_EQ(
@@ -1502,7 +1492,7 @@ TEST(PackLogicReplace, BusMixKeepsApiDirectAndVariableOnRetainedBus) {
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(13111), 0.0f));
     harkentest::AdvanceVariableWrite(engine);
     EXPECT_FLOAT_EQ(
-        -10.0f, engine->busTargets.SlotValue(
+        -12.0f, engine->busTargets.SlotValue(
                     index, harken::kBusTargetBusVolume,
                     harken::BusTargetStore::kSlotAuthoredIndex));
     EXPECT_FLOAT_EQ(
@@ -1510,16 +1500,17 @@ TEST(PackLogicReplace, BusMixKeepsApiDirectAndVariableOnRetainedBus) {
                    index, harken::kBusTargetBusVolume,
                    harken::BusTargetStore::kSlotApiDirectIndex));
     EXPECT_FLOAT_EQ(
-        -12.0f, engine->busTargets.Reduce(index, harken::kBusTargetBusVolume));
+        -14.0f, engine->busTargets.Reduce(index, harken::kBusTargetBusVolume));
 }
 
-TEST(PackLogicLoad, NonFiniteBusMixSumRefusesWithoutMutation) {
+TEST(PackLogicLoad, NonFiniteBusMixFieldRefusesWithoutMutation) {
     EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
     V2Builder builder(harken::kPackKindResident);
-    builder.AddBusMix(harkentest::ObjectId(13121), VN_BUS_MASTER, 3.0e38f, 3.0e38f, 3.0e38f);
+    builder.AddBusMix(harkentest::ObjectId(13121), VN_BUS_MASTER,
+                      std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f);
     const std::string packPath = TempPath("pll_bus_mix_overflow.pack");
     WriteFileBytes(packPath, builder.Build());
 
@@ -1590,7 +1581,7 @@ TEST(PackLogicLoad, OverflowingSendRejectsLoadAndReplaceWithoutMutation) {
     EXPECT_FLOAT_EQ(-6.0f, record->busSends[0].levelDb);
 }
 
-TEST(PackLogicReplace, NonFiniteBusMixSumLeavesLoadedRevisionIntact) {
+TEST(PackLogicReplace, NonFiniteBusMixFieldLeavesLoadedRevisionIntact) {
     EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -1601,7 +1592,7 @@ TEST(PackLogicReplace, NonFiniteBusMixSumLeavesLoadedRevisionIntact) {
         V2LogicManifest(
             v1Path, "resident",
             R"("buses": [ { "id": "3da91a64-b947-4560-0000-00000000334b", "parent": "00000000-0000-0000-0000-000000000001", "volume": -6.0,
-            "outputBusVolume": -3.5, "makeUpGain": 2.0 } ])")));
+            "outputBusVolume": -3.5 } ])")));
 
     VnPackHandle pack = 0;
     ASSERT_EQ(VN_OK, LoadPack(v1Path, &pack));
@@ -1619,7 +1610,8 @@ TEST(PackLogicReplace, NonFiniteBusMixSumLeavesLoadedRevisionIntact) {
     const std::uint32_t generation = engine->buses.GenerationAt(index);
 
     V2Builder overflow(harken::kPackKindResident);
-    overflow.AddBusMix(harkentest::ObjectId(13131), VN_BUS_MASTER, 3.0e38f, 3.0e38f, 3.0e38f);
+    overflow.AddBusMix(harkentest::ObjectId(13131), VN_BUS_MASTER,
+                      std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f);
     const std::string overflowPath =
         TempPath("plr_bus_mix_overflow_v2.pack");
     WriteFileBytes(overflowPath, overflow.Build());

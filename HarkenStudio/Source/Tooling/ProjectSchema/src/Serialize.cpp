@@ -128,7 +128,7 @@ void AppendChassis(std::string* s, const ContentObject& obj) {
     *s += "object " + U(c.id) + " kind=" + KindName(obj.kind) +
           " guid=" + Guid(c.guid) + " editorOrder=" + I(c.editorOrder) +
           " volume=" + F(c.volume) + " pitch=" + F(c.pitch) +
-          " makeUpGain=" + F(c.makeUpGain) + " loopCount=" + U(c.loopCount) +
+          " loopCount=" + U(c.loopCount) +
           " streamingMode=" + U(c.streamingMode) +
           " outputBusVolume=" + F(c.outputBusVolume) + "\n";
     AppendSpatial(s, c.spatial);

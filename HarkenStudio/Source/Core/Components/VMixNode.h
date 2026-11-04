@@ -47,7 +47,6 @@ public:
 
     float volume = 0.0f;
     float pitch  = 0.0f;
-    float makeUpGain = 0.0f;
 
     uint32_t outputBusId     = 0;
     float    outputBusVolume = 0.0f;
@@ -111,9 +110,6 @@ inline const PropertySchema& VMixNode::schema()
         { .field="pitch", .type=PropType::Float, .label="Pitch", .section=PropertySection::Playback,
           .unit=" cent", .min=-4800.0, .max=4800.0, .decimals=0, .flags={.sourceIndicator=true},
           .get=VNX_PROP_GET(VMixNode, pitch), .set=VNX_PROP_SET_F(VMixNode, pitch) },
-        { .field="makeUpGain", .type=PropType::Float, .label="Make-Up Gain", .section=PropertySection::Playback,
-          .unit=" dB", .min=-24.0, .max=24.0, .decimals=1, .flags={.sourceIndicator=true}, .aliases={"makeupgain"},
-          .get=VNX_PROP_GET(VMixNode, makeUpGain), .set=VNX_PROP_SET_F(VMixNode, makeUpGain) },
         { .field="outputBusId", .type=PropType::ObjectRef, .label="Target", .section=PropertySection::Output,
           .aliases={"outputbusid"}, .refFilter=static_cast<int>(ProjectItem::Type::Bus),
           .get=[](const VNX::IComponent* c){

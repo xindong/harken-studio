@@ -13,6 +13,9 @@ RUNTIME_OUT = os.path.normpath(os.path.join(
     "generated"))
 PACK_BUILD_OUT = os.path.normpath(os.path.join(
     HERE, "..", "..", "PackBuild", "include", "harken_studio_build"))
+RUNTIME_RESERVED_SOURCE = os.path.normpath(os.path.join(
+    HERE, "..", "..", "..", "..", "..", "HarkenEngine", "Source", "Tooling",
+    "PlayableProperties", "properties", "harken_reserved_playable_properties.json"))
 REGEN = ("py -3 HarkenStudio/Source/Tooling/PlayableProperties/properties/"
          "gen_playable_properties.py")
 
@@ -45,8 +48,8 @@ def enum_name(value):
 def load_table():
     with open(SOURCE, "r", encoding="utf-8") as handle:
         table = json.load(handle)
-    if table.get("vintage") != 1 or table.get("knownMask") != "0x000000000001afff":
-        raise TableError("V1 keeps the authored property ids with ids 13 and 15 retired")
+    if table.get("vintage") != 1 or table.get("knownMask") != "0x000000000001affb":
+        raise TableError("V1 keeps the authored property ids with ids 3, 13 and 15 retired")
     kinds = table.get("contentKinds")
     fields = table.get("fields")
     if not isinstance(kinds, list) or not isinstance(fields, list):
@@ -55,12 +58,12 @@ def load_table():
             (0, "Layer"), (1, "Sound"), (2, "Container"),
             (3, "Track"), (4, "Segment")]:
         raise TableError("ContentPropertyKindV1 must be Layer0..Segment4")
-    if [row.get("id") for row in fields] != list(range(1, 13)) + [14, 16, 17]:
-        raise TableError("property ids must be 1..12, 14, 16 and 17; ids 13 and 15 are retired")
+    if [row.get("id") for row in fields] != [1, 2] + list(range(4, 13)) + [14, 16, 17]:
+        raise TableError("property ids must be 1, 2, 4..12, 14, 16 and 17; ids 3, 13 and 15 are retired")
     names = [row.get("name") for row in fields]
     keys = [row.get("jsonKey") for row in fields]
     storage = [(row.get("component"), row.get("storageField")) for row in fields]
-    if len(set(names)) != 15 or len(set(keys)) != 15 or len(set(storage)) != 15:
+    if len(set(names)) != 14 or len(set(keys)) != 14 or len(set(storage)) != 14:
         raise TableError("property names, JSON keys, and Studio storage must be unique")
     for row in fields:
         if row.get("present") != "maskBit":
@@ -78,6 +81,15 @@ def load_table():
         if not isinstance(row.get("storageField"), str) or not row["storageField"]:
             raise TableError("field %d has invalid storageField" % row["id"])
     return table
+
+
+def runtime_table(table):
+    with open(RUNTIME_RESERVED_SOURCE, "r", encoding="utf-8") as handle:
+        reserved = json.load(handle)
+    if reserved.get("vintage") != 1 or [row.get("id") for row in reserved.get("fields", [])] != [3]:
+        raise TableError("the runtime reserves property id 3")
+    fields = sorted(table["fields"] + reserved["fields"], key=lambda row: row["id"])
+    return {**table, "knownMask": "0x000000000001afff", "fields": fields}
 
 
 def banner():
@@ -121,7 +133,7 @@ def emit_project(table):
     out.append("};\n\n")
     out.append(emit_shared_enums())
     out.append("inline constexpr std::uint64_t kPlayablePropertyKnownMaskV1 = "
-               "UINT64_C(0x000000000001afff);\n\n")
+               "UINT64_C(%s);\n\n" % table["knownMask"])
     out.append("struct ChassisPresenceV1 {\n"
                "    std::uint64_t bits = 0;\n"
                "    constexpr bool IsValid() const noexcept {\n"
@@ -129,16 +141,16 @@ def emit_project(table):
                "    }\n"
                "    constexpr bool Has(PlayablePropertyIdV1 id) const noexcept {\n"
                "        const auto ordinal = static_cast<std::uint8_t>(id);\n"
-               "        return ordinal >= 1 && ordinal <= 17 && ordinal != 13 && ordinal != 15 &&\n"
+               "        return ordinal >= 1 && ordinal <= 17 && ordinal != 3 && ordinal != 13 && ordinal != 15 &&\n"
                "               (bits & (UINT64_C(1) << (ordinal - 1))) != 0;\n"
                "    }\n"
                "    constexpr void Set(PlayablePropertyIdV1 id) noexcept {\n"
                "        const auto ordinal = static_cast<std::uint8_t>(id);\n"
-               "        if (ordinal >= 1 && ordinal <= 17 && ordinal != 13 && ordinal != 15) bits |= UINT64_C(1) << (ordinal - 1);\n"
+               "        if (ordinal >= 1 && ordinal <= 17 && ordinal != 3 && ordinal != 13 && ordinal != 15) bits |= UINT64_C(1) << (ordinal - 1);\n"
                "    }\n"
                "    constexpr void Clear(PlayablePropertyIdV1 id) noexcept {\n"
                "        const auto ordinal = static_cast<std::uint8_t>(id);\n"
-               "        if (ordinal >= 1 && ordinal <= 17 && ordinal != 13 && ordinal != 15) bits &= ~(UINT64_C(1) << (ordinal - 1));\n"
+               "        if (ordinal >= 1 && ordinal <= 17 && ordinal != 3 && ordinal != 13 && ordinal != 15) bits &= ~(UINT64_C(1) << (ordinal - 1));\n"
                "    }\n"
                "};\n\n")
     out.append("struct PlayablePropertyMetaV1 {\n"
@@ -155,7 +167,7 @@ def emit_project(table):
                     enum_name(row["wire"]), enum_name(row["combineRole"]),
                     enum_name(row["referenceRole"]), enum_name(row["capabilityRole"]),
                     enum_name(row["phaseRole"]), enum_name(row["canonicalDefault"])))
-    out.append("};\nstatic_assert(std::size(kPlayablePropertyRegistryV1) == 15);\n"
+    out.append("};\nstatic_assert(std::size(kPlayablePropertyRegistryV1) == 14);\n"
                "static_assert(sizeof(ChassisPresenceV1) == sizeof(std::uint64_t));\n\n"
                "} // namespace harkenplayableproperties\n\n"
                "#endif // HARKEN_PLAYABLE_PROPERTIES_GENERATED_PROJECT_G_H\n")
@@ -175,7 +187,7 @@ def emit_runtime(table, namespace="harken",
     out.extend(["};\n\n",
            emit_shared_enums(),
            "inline constexpr std::uint32_t kPlayablePropertyRegistryVintageV1 = 1;\n",
-           "inline constexpr std::uint64_t kPlayablePropertyKnownMaskV1 = UINT64_C(0x000000000001afff);\n\n",
+           "inline constexpr std::uint64_t kPlayablePropertyKnownMaskV1 = UINT64_C(%s);\n\n" % table["knownMask"],
            "struct RuntimePropertyMetaV1 { PlayablePropertyIdV1 id; std::uint64_t presentBit; const char* name; PlayablePropertyWireV1 wire; PlayablePropertyPresenceV1 presence; PlayablePropertyCombineRoleV1 combineRole; PlayablePropertyReferenceRoleV1 referenceRole; PlayablePropertyCapabilityRoleV1 capabilityRole; PlayablePropertyPhaseRoleV1 phaseRole; PlayablePropertyDefaultV1 canonicalDefault; };\n\n",
            "inline constexpr RuntimePropertyMetaV1 kRuntimeAndVtrcPropertyTableV1[] = {\n"])
     for row in table["fields"]:
@@ -184,9 +196,9 @@ def emit_runtime(table, namespace="harken",
                     enum_name(row["combineRole"]), enum_name(row["referenceRole"]),
                     enum_name(row["capabilityRole"]), enum_name(row["phaseRole"]),
                     enum_name(row["canonicalDefault"])))
-    out.append("};\nstatic_assert(std::size(kRuntimeAndVtrcPropertyTableV1) == 15);\n\n"
+    out.append("};\nstatic_assert(std::size(kRuntimeAndVtrcPropertyTableV1) == %d);\n\n"
                "} } // namespace %s::playableproperties\n\n"
-               "#endif // %s\n" % (namespace, guard))
+               "#endif // %s\n" % (len(table["fields"]), namespace, guard))
     return "".join(out)
 
 
@@ -205,7 +217,7 @@ def emit_studio(table):
                    (row["id"], 1 << (row["id"] - 1), enum_name(row["wire"]),
                     enum_name(row["canonicalDefault"]), enum_name(row["referenceRole"]), row["component"],
                     row["storageField"], row["name"], row["jsonKey"]))
-    out.append("};\nstatic_assert(std::size(kJsonFieldsV1) == 15);\n\n"
+    out.append("};\nstatic_assert(std::size(kJsonFieldsV1) == 14);\n\n"
                "} } // namespace harkenplayableproperties::studio\n\n"
                "#endif // HARKEN_PLAYABLE_PROPERTIES_GENERATED_STUDIO_G_H\n")
     return "".join(out)
@@ -225,6 +237,7 @@ def main(argv=None):
     args = parse_args(sys.argv[1:] if argv is None else argv)
     try:
         table = load_table()
+        runtime = runtime_table(table)
     except (OSError, ValueError, KeyError, TableError) as error:
         sys.stderr.write("%s: %s\n" % (SOURCE, error))
         return 1
@@ -232,7 +245,7 @@ def main(argv=None):
         os.path.join(CONTRACT_OUT, "harken_playable_properties.g.h"): emit_project(table),
         os.path.join(CONTRACT_OUT, "harken_playable_property_studio.g.h"): emit_studio(table),
         os.path.join(CONTRACT_OUT, "harken_playable_property_manifest.g.json"): manifest(table),
-        os.path.join(RUNTIME_OUT, "harken_playable_property_runtime.g.h"): emit_runtime(table),
+        os.path.join(RUNTIME_OUT, "harken_playable_property_runtime.g.h"): emit_runtime(runtime),
         os.path.join(PACK_BUILD_OUT, "Properties.h"): emit_runtime(
             table, "harkenstudiobuild",
             "HARKEN_STUDIO_BUILD_GENERATED_PLAYABLE_PROPERTY_RUNTIME_G_H"),

@@ -187,8 +187,7 @@ void ProjectManager::initializeRuntimeSync()
             if (item->type != ProjectItem::Type::Bus
                 && PlayablePropertyAuthoringV1::isDefinitionType(item->type)
                 && field && (field->id == static_cast<uint8_t>(Property::Volume)
-                    || field->id == static_cast<uint8_t>(Property::Pitch)
-                    || field->id == static_cast<uint8_t>(Property::MakeUpGain))) {
+                    || field->id == static_cast<uint8_t>(Property::Pitch))) {
                 coordinator.markCurrentWorldPropertyMutation(item->runtimeId(), field->id);
             } else {
                 coordinator.markCurrentWorldMutation();
@@ -502,8 +501,7 @@ void ProjectManager::syncPlayablePropertyToRuntime(ProjectItem* item, uint8_t pr
 {
     using Property = harkenplayableproperties::PlayablePropertyIdV1;
     if (propertyId != static_cast<uint8_t>(Property::Pitch)
-        && propertyId != static_cast<uint8_t>(Property::Volume)
-        && propertyId != static_cast<uint8_t>(Property::MakeUpGain)) {
+        && propertyId != static_cast<uint8_t>(Property::Volume)) {
         resyncItemToRuntime(item);
         return;
     }

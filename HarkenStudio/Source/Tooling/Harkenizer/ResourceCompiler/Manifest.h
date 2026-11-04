@@ -156,7 +156,6 @@ struct ManifestBus {
     harkenstudio::ObjectId parent{};
     float volume = 0.0f;
     float outputBusVolume = 0.0f;
-    float makeUpGain = 0.0f;
 };
 
 struct ManifestBusSend {
@@ -802,8 +801,8 @@ inline bool ParseBusesSection(const JsonValue& section, Manifest* out,
                         context.c_str());
         }
         static constexpr const char* kKeys[] = {
-            "id", "parent", "volume", "outputBusVolume", "makeUpGain"};
-        if (!RefuseUnknownKeys(item, kKeys, 5, context, diag)) {
+            "id", "parent", "volume", "outputBusVolume"};
+        if (!RefuseUnknownKeys(item, kKeys, 4, context, diag)) {
             return false;
         }
         ManifestBus bus;
@@ -814,17 +813,8 @@ inline bool ParseBusesSection(const JsonValue& section, Manifest* out,
             !ReadFloatField(item, "volume", context, false, nullptr,
                             &bus.volume, diag) ||
             !ReadFloatField(item, "outputBusVolume", context, false,
-                            nullptr, &bus.outputBusVolume, diag) ||
-            !ReadFloatField(item, "makeUpGain", context, false, nullptr,
-                            &bus.makeUpGain, diag)) {
+                            nullptr, &bus.outputBusVolume, diag)) {
             return false;
-        }
-        if (!std::isfinite(bus.volume +
-                           bus.makeUpGain)) {
-            return Fail(diag,
-                        "manifest %s mix sum of volume, outputBusVolume, "
-                        "and makeUpGain must be finite",
-                        context.c_str());
         }
         if (harkenstudio::IsNull(bus.id)) {
             return Fail(diag,
@@ -2292,8 +2282,6 @@ inline void EmitLogicSections(JsonWriter* writer,
             writer->ValueRawNumber(FloatLiteral(bus.volume));
             writer->Key("outputBusVolume");
             writer->ValueRawNumber(FloatLiteral(bus.outputBusVolume));
-            writer->Key("makeUpGain");
-            writer->ValueRawNumber(FloatLiteral(bus.makeUpGain));
             writer->EndObject();
         }
         writer->EndArray();

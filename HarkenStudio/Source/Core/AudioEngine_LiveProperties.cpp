@@ -50,7 +50,7 @@ struct LivePropertyPreview {
                     item, locator, static_cast<uint8_t>(property), scope);
                 return state && state->present ? static_cast<float>(state->value.toDouble()) : 0.0f;
             };
-            volumeDb = value(LiveProperty::Volume) + value(LiveProperty::MakeUpGain);
+            volumeDb = value(LiveProperty::Volume);
             pitchCents = value(LiveProperty::Pitch);
         }
     };
@@ -72,7 +72,7 @@ void AudioEngine::bindProjectPropertyPreview(ProjectManager& project)
         auto& preview = *livePropertyPreview_;
         if (preview.dirty) return;
         if (item && (property == QLatin1String("volume")
-            || property == QLatin1String("pitch") || property == QLatin1String("makeUpGain"))) {
+            || property == QLatin1String("pitch"))) {
             const auto definition = preview.definitions.find(item->runtimeId());
             const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*item);
             if (definition != preview.definitions.end() && locator) {

@@ -27,7 +27,6 @@ struct ProductGate
 };
 
 constexpr ProductGate kProductGates[] = {
-    {static_cast<uint8_t>(PlayablePropertyIdV1::MakeUpGain), false},
     {static_cast<uint8_t>(PlayablePropertyIdV1::OutputBusVolume), false},
     {static_cast<uint8_t>(PlayablePropertyIdV1::SpatialPanning), true},
     {static_cast<uint8_t>(PlayablePropertyIdV1::SpatialAttenuationDistanceScaling), true},

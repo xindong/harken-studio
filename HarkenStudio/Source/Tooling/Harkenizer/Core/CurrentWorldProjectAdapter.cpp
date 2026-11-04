@@ -1890,8 +1890,7 @@ bool readCurrentWorldScalarUpdate(
     using Property = harkenplayableproperties::PlayablePropertyIdV1;
     const auto property = static_cast<Property>(propertyId);
     if (!output || item.type == ProjectItem::Type::Bus
-        || (property != Property::Volume && property != Property::Pitch
-            && property != Property::MakeUpGain)
+        || (property != Property::Volume && property != Property::Pitch)
         || !PlayablePropertyAuthoringV1::isSlotApplicable(item.type, propertyId))
         return false;
     const auto locator = PlayablePropertyAuthoringV1::definitionLocator(item);

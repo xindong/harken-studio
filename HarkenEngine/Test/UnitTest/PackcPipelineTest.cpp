@@ -2331,7 +2331,7 @@ TEST(PackcPipeline, BusMixFieldsUseFullUuidPayload) {
         "  \"output\": \"" + packPath + "\",\n"
         "  \"packKind\": \"resident\",\n"
         "  \"buses\": [{\"id\": \"3da91a64-b947-4560-0000-0000000013ed\", \"parent\": \"00000000-0000-0000-0000-000000000001\", \"volume\": -6.0, "
-        "\"outputBusVolume\": -3.5, \"makeUpGain\": 2.0}, "
+        "\"outputBusVolume\": -3.5}, "
         "{\"id\": \"3da91a64-b947-4560-0000-0000000013ee\", \"parent\": \"00000000-0000-0000-0000-000000000001\"}]\n"
         "}\n");
     ASSERT_EQ(0, harkentest::CompileResources({manifestPath, "--emit-manifest", emittedPath}));
@@ -2363,7 +2363,7 @@ TEST(PackcPipeline, BusMixFieldsUseFullUuidPayload) {
     EXPECT_EQ(VN_BUS_MASTER, mixedBus.parentBusId);
     EXPECT_FLOAT_EQ(-6.0f, mixedBus.volume);
     EXPECT_FLOAT_EQ(-3.5f, mixedBus.outputBusVolume);
-    EXPECT_FLOAT_EQ(2.0f, mixedBus.makeUpGain);
+    EXPECT_FLOAT_EQ(0.0f, mixedBus.makeUpGain);
 
     harken::PackBusEntry defaultBus;
     ASSERT_TRUE(harken::ParsePackV6Bus(
@@ -2379,13 +2379,13 @@ TEST(PackcPipeline, BusMixFieldsUseFullUuidPayload) {
     ASSERT_EQ(2u, buses.items.size());
     EXPECT_DOUBLE_EQ(-6.0, MemberNumber(buses.items[0], "volume"));
     EXPECT_DOUBLE_EQ(-3.5, MemberNumber(buses.items[0], "outputBusVolume"));
-    EXPECT_DOUBLE_EQ(2.0, MemberNumber(buses.items[0], "makeUpGain"));
+    EXPECT_EQ(nullptr, buses.items[0].Find("makeUpGain"));
     EXPECT_DOUBLE_EQ(0.0, MemberNumber(buses.items[1], "volume"));
     EXPECT_DOUBLE_EQ(0.0, MemberNumber(buses.items[1], "outputBusVolume"));
-    EXPECT_DOUBLE_EQ(0.0, MemberNumber(buses.items[1], "makeUpGain"));
+    EXPECT_EQ(nullptr, buses.items[1].Find("makeUpGain"));
 }
 
-TEST(PackcPipeline, NonFiniteBusMixSumRefusesWithoutWritingPack) {
+TEST(PackcPipeline, NonFiniteBusVolumeRefusesWithoutWritingPack) {
     const std::string packPath =
         TempPath("pipeline_bus_mix_overflow.pack");
     const std::string manifestPath =
@@ -2397,8 +2397,8 @@ TEST(PackcPipeline, NonFiniteBusMixSumRefusesWithoutWritingPack) {
         "  \"manifestVersion\": 3,\n"
         "  \"output\": \"" + packPath + "\",\n"
         "  \"packKind\": \"resident\",\n"
-        "  \"buses\": [{\"id\": \"3da91a64-b947-4560-0000-000000001451\", \"parent\": \"00000000-0000-0000-0000-000000000001\", \"volume\": 3e38, "
-        "\"outputBusVolume\": 3e38, \"makeUpGain\": 3e38}]\n"
+        "  \"buses\": [{\"id\": \"3da91a64-b947-4560-0000-000000001451\", \"parent\": \"00000000-0000-0000-0000-000000000001\", \"volume\": 3e39, "
+        "\"outputBusVolume\": 0}]\n"
         "}\n");
     EXPECT_NE(0, harkentest::CompileResources({manifestPath}));
     EXPECT_FALSE(std::filesystem::exists(packPath));

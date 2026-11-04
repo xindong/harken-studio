@@ -389,7 +389,6 @@ struct PlayablePropertyPayloadV1 {
     harkenplayableproperties::ChassisPresenceV1 presence;
     float volume = 0.0f;
     float pitch = 0.0f;
-    float makeUpGain = 0.0f;
     std::uint32_t loopCount = 1;
     std::uint32_t streamingMode = 0;
     float outputBusVolume = 0.0f;

@@ -682,7 +682,6 @@ constexpr auto kPastePropertyMask = [] {
     harkenplayableproperties::ChassisPresenceV1 presence;
     presence.Set(Property::Volume);
     presence.Set(Property::Pitch);
-    presence.Set(Property::MakeUpGain);
     return presence.bits;
 }();
 
@@ -693,7 +692,6 @@ QJsonObject grabPasteProps(const ProjectItem* it)
     if (const auto* m = it->comp<VMixNode>()) {
         o["v"] = m->volume;
         o["p"] = m->pitch;
-        o["mug"] = m->makeUpGain;
         o["presence"] = QString::number(it->playablePropertyPresence.bits & kPastePropertyMask);
     }
     return o;
@@ -707,8 +705,6 @@ void putPasteProps(ProjectItem* it, const QJsonObject& o)
         m->volume = static_cast<float>(o["v"].toDouble());
         m->pitch  = static_cast<float>(o["p"].toDouble());
     }
-    if (o.contains("mug"))
-        it->compOrCreate<VMixNode>()->makeUpGain = static_cast<float>(o["mug"].toDouble());
     it->playablePropertyPresence.bits = (it->playablePropertyPresence.bits & ~kPastePropertyMask)
         | o["presence"].toString().toULongLong();
     it->markDirty();

@@ -1601,8 +1601,6 @@ bool ProjectPackExporter::CollectBuses(const ProjectData& project,
                     &bd.volume, "volume");
         readMixSlot(harkenplayableproperties::PlayablePropertyIdV1::OutputBusVolume,
                     &bd.outputBusVolume, "outputBusVolume");
-        readMixSlot(harkenplayableproperties::PlayablePropertyIdV1::MakeUpGain,
-                    &bd.makeUpGain, "makeUpGain");
         builder.addBus(bd);
     });
     return valid;

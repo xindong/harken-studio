@@ -940,11 +940,12 @@ TEST(CurrentWorldCompiler, RetiredBindingWireSlotsMustRemainZero) {
                              harken::kCurrentWorldShippingBodyVintage,
                              harken::CurrentWorldDecodeMode::StrictArtifact));
     const auto fingerprint = image.ProductionView()->identity.runtimeSemanticFingerprint;
-    constexpr std::size_t payloadHeaderBytes = 95;
-    ASSERT_GE(canonical.size(), payloadHeaderBytes);
-    const auto payloadOffset = canonical.size() - payloadHeaderBytes;
+    constexpr std::size_t payloadHeaderBytes = 111;
+    constexpr std::size_t structuralAncestorHeaderBytes = 8;
+    ASSERT_GE(canonical.size(), payloadHeaderBytes + structuralAncestorHeaderBytes);
+    const auto payloadOffset = canonical.size() - payloadHeaderBytes - structuralAncestorHeaderBytes;
     const std::size_t retiredOffsets[] = {
-        56, 60, payloadOffset + 67, payloadOffset + 79, payloadOffset + 83};
+        56, 60, payloadOffset + 79, payloadOffset + 95, payloadOffset + 99};
     for (const auto offset : retiredOffsets) {
         auto retired = canonical;
         WriteU32(retired, offset, 1);
