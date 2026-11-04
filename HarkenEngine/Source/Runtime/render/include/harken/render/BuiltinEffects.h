@@ -190,6 +190,29 @@ struct GainState {
 // the logic thread and stored as linear values. The audio kernel retains only
 // the linked gain-reduction state and advances its release recurrence with
 // multiply/add/compare operations.
+// Internal, most-recent processing segment only; not a block aggregate or
+// history. Linear double gains preserve finite extreme attenuation under FTZ.
+// Convert a copied numeric value to dB off the render thread if needed.
+// No Monitor, SDK, or cross-thread publication contract is implied.
+enum class LimiterGainReductionStatus : std::uint8_t {
+    Unavailable, Numeric, Bypassed, BypassTransition, NonFinite, OutputClipped
+};
+struct LimiterGainReduction {
+    EffectInstanceRef instance{};
+    std::uint64_t renderEpoch = 0;
+    std::uint64_t sourceFrameBegin = 0; // Original job origin, not join time.
+    std::uint32_t frameOffset = 0;     // Segment begins at origin + offset.
+    std::uint32_t frameCount = 0;
+    double minimumGain = 1.0;          // Maximum attenuation in this segment.
+    double endGain = 1.0;
+    LimiterGainReductionStatus status = LimiterGainReductionStatus::Unavailable;
+    bool outputAccepted = false;
+    bool IsNumeric() const noexcept {
+        return outputAccepted && (status == LimiterGainReductionStatus::Numeric ||
+                                  status == LimiterGainReductionStatus::Bypassed);
+    }
+};
+
 struct LimiterState {
     std::uint32_t sampleRate = 0;
     float ceilingLinear = 1.0f;
@@ -197,6 +220,7 @@ struct LimiterState {
     float releaseAdd = 1.0f;
     // A finite float peak can require a gain below the float normal range.
     double currentGain = 1.0;
+    LimiterGainReduction gainReduction{};
     float targetCeilingLinear = 1.0f;
     float targetReleaseCoeff = 0.0f;
     float ceilingIncrement = 0.0f;
@@ -204,6 +228,21 @@ struct LimiterState {
     std::uint32_t transitionFramesRemaining = 0;
     bool hasRendered = false;
 };
+
+// Render-owner-only helpers. Begin precedes dispatch; Finish follows completed
+// processing and host output acceptance. Never access a pending worker's state.
+void LimiterBeginRender(LimiterState& state, std::uint64_t epoch,
+                        std::uint64_t sourceFrameBegin) noexcept;
+void LimiterFinishRender(LimiterState& state, std::uint32_t outputOffset,
+                         std::uint32_t outputFrames) noexcept;
+// The host supplies its CURRENT installed slot/ref under exclusive ownership.
+// Expected identity and job origin reject replacement and stale data. Failure
+// clears out. A successful copy can be nonnumeric: inspect IsNumeric().
+bool CopyLimiterGainReduction(const InsertEffect& effect,
+                              const EffectInstanceRef& installed,
+                              const EffectInstanceRef& expected,
+                              std::uint64_t epoch, std::uint64_t sourceFrameBegin,
+                              LimiterGainReduction& out) noexcept;
 
 struct CompressorParameters {
     float thresholdDb = -18.0f;

@@ -811,7 +811,9 @@ void LimiterRequestPreparedParam(void* state, std::uint32_t paramIndex,
 void LimiterReset(void* state) {
     // Reset only detector history. Parameters survive bypass-to-enable and
     // live reset; pool acquisition reapplies the complete descriptor.
-    static_cast<LimiterState*>(state)->currentGain = 1.0f;
+    auto& limiter = *static_cast<LimiterState*>(state);
+    limiter.currentGain = 1.0f;
+    limiter.gainReduction = {};
 }
 
 void LimiterSetParam(void* state, std::uint32_t paramIndex, float value) {
@@ -826,6 +828,14 @@ void LimiterProcess(void* state, float* const* channels,
                     std::uint32_t channelCount, std::uint32_t offset,
                     std::uint32_t frames) {
     auto* limiter = static_cast<LimiterState*>(state);
+    auto& gr = limiter->gainReduction;
+    gr.frameOffset = offset;
+    gr.frameCount = frames;
+    gr.minimumGain = gr.endGain = 1.0;
+    gr.outputAccepted = false;
+    gr.status = frames != 0 && channelCount != 0
+                    ? LimiterGainReductionStatus::Numeric
+                    : LimiterGainReductionStatus::Unavailable;
     double gain = limiter->currentGain;
     for (std::uint32_t i = 0; i < frames; ++i) {
         if (limiter->transitionFramesRemaining != 0) {
@@ -847,6 +857,9 @@ void LimiterProcess(void* state, float* const* channels,
         float linkedPeak = 0.0f;
         for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
             const float sample = channels[ch][offset + i];
+            if (!std::isfinite(sample)) {
+                gr.status = LimiterGainReductionStatus::NonFinite;
+            }
             const float magnitude = sample >= 0.0f ? sample : -sample;
             if (magnitude > linkedPeak) {
                 linkedPeak = magnitude;
@@ -873,6 +886,8 @@ void LimiterProcess(void* state, float* const* channels,
             }
         }
         gain = nextGain;
+        gr.minimumGain = std::min(gr.minimumGain, gain);
+        gr.endGain = gain;
         if (gain != 1.0f) {
             for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
                 channels[ch][offset + i] = static_cast<float>(channels[ch][offset + i] * gain);
@@ -881,6 +896,50 @@ void LimiterProcess(void* state, float* const* channels,
     }
     limiter->currentGain = gain;
     limiter->hasRendered = limiter->hasRendered || frames != 0;
+}
+
+void LimiterBeginRender(LimiterState& state, std::uint64_t epoch,
+                        std::uint64_t sourceFrameBegin) noexcept {
+    state.gainReduction = {};
+    state.gainReduction.renderEpoch = epoch;
+    state.gainReduction.sourceFrameBegin = sourceFrameBegin;
+}
+
+void LimiterFinishRender(LimiterState& state, std::uint32_t outputOffset,
+                         std::uint32_t outputFrames) noexcept {
+    auto& gr = state.gainReduction;
+    if (outputFrames == 0 || gr.frameCount == 0) {
+        gr.status = LimiterGainReductionStatus::Unavailable;
+        gr.outputAccepted = false;
+        return;
+    }
+    gr.outputAccepted = true;
+    if (gr.frameOffset < outputOffset ||
+        static_cast<std::uint64_t>(gr.frameOffset) + gr.frameCount >
+            static_cast<std::uint64_t>(outputOffset) + outputFrames) {
+        // Keep the original processed range. Its min/end cannot describe a
+        // truncated prefix without retaining a per-sample trace.
+        gr.status = LimiterGainReductionStatus::OutputClipped;
+    }
+}
+
+bool CopyLimiterGainReduction(const InsertEffect& effect,
+                              const EffectInstanceRef& installed,
+                              const EffectInstanceRef& expected,
+                              std::uint64_t epoch, std::uint64_t sourceFrameBegin,
+                              LimiterGainReduction& out) noexcept {
+    out = {};
+    if (installed.type != VN_EFFECT_LIMITER || installed.generation == 0 ||
+        installed.type != expected.type || installed.poolIndex != expected.poolIndex ||
+        installed.generation != expected.generation ||
+        effect.process != &LimiterProcess || effect.state == nullptr) return false;
+    const auto& gr = static_cast<const LimiterState*>(effect.state)->gainReduction;
+    if (!gr.outputAccepted || gr.frameCount == 0 ||
+        gr.status == LimiterGainReductionStatus::Unavailable ||
+        gr.renderEpoch != epoch || gr.sourceFrameBegin != sourceFrameBegin) return false;
+    out = gr;
+    out.instance = installed;
+    return true;
 }
 
 std::uint32_t LimiterTail(const void* /*state*/) {
