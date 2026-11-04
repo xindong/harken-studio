@@ -71253,21 +71253,23 @@ bool TryPendingStartVoiceDb(harken::Engine& engine,
     } else if (rec.hasVolume) {
         voiceDb = harken::AddFiniteContributions(voiceDb, rec.volumeDb);
     }
+    double bindingsDb = 0.0;
     const VnEmitterHandle emitter =
         engine.emitters.IsLive(rec.emitterHandle) ? rec.emitterHandle : 0u;
     for (std::uint32_t i = 0; i < rec.pinnedBindingCount; ++i) {
         float contribution = 0;
         if (!TryVoiceVolumeBindingContribution(
                 engine, emitter, rec.pinnedBindings[i].bindingId, &contribution, reader)) return false;
-        voiceDb = harken::AddFiniteContributions(voiceDb, contribution);
+        bindingsDb = harken::AddFiniteContributions(bindingsDb, contribution);
     }
     for (std::uint32_t i = 0; i < rec.recipeBindingCount; ++i) {
         float contribution = 0;
         if (!TryVoiceVolumeBindingContribution(
                 engine, emitter, rec.recipeBindingIds[i], &contribution, reader)) return false;
-        voiceDb = harken::AddFiniteContributions(voiceDb, contribution);
+        bindingsDb = harken::AddFiniteContributions(bindingsDb, contribution);
     }
-    *result = harken::NarrowResolvedValue(voiceDb);
+    *result = harken::NarrowResolvedValue(
+        harken::AddFiniteContributions(voiceDb, bindingsDb));
     return true;
 }
 
@@ -73572,31 +73574,18 @@ bool AdvanceFiniteParkedTimeline(harken::ParkRecord& rec, double advance) {
 double PendingRequestAudibility(harken::Engine& engine,
                                  harken::PendingStartRecord& rec,
                                  const harken::VariableReadCutReader* reader = nullptr) {
-    double metric = static_cast<double>(rec.baseVolumeDb);
-    if (rec.hasVolume) {
-        metric += static_cast<double>(rec.volumeDb);
-    }
+    float voiceDb = 0.0f;
+    if (!TryPendingStartVoiceDb(engine, rec, &voiceDb, reader))
+        return std::numeric_limits<double>::quiet_NaN();
+    double metric = voiceDb;
     const VnEmitterHandle emitter =
         engine.emitters.IsLive(rec.emitterHandle) ? rec.emitterHandle : 0u;
     (void)engine.emitters.Pose(emitter, &rec.source);
     if (rec.spatialized && rec.hasAttenuation && rec.attenuationId != VnObjectId{}) {
-        metric += static_cast<double>(engine.spatial.AttenuationVolumeDb(
+        metric = harken::AddFiniteContributions(metric, engine.spatial.AttenuationVolumeDb(
             engine.emitters, rec.attenuationId, rec.source.posX, rec.source.posY, rec.source.posZ,
             rec.hasDistanceScale ? rec.distanceScale : 1.0f,
             rec.attenuationGeneration, rec.source.emitterDistanceScale));
-    }
-    for (std::uint32_t i = 0; i < rec.pinnedBindingCount; ++i) {
-        const harken::BindingTable::Definition* def =
-            engine.bindings.Find(rec.pinnedBindings[i].bindingId);
-        if (def == nullptr || def->scopeKind != harken::kTargetScopeVoice ||
-            def->targetId != harken::kTargetVoiceVolume) {
-            continue;
-        }
-        float contribution = 0;
-        if (!TryVoiceVolumeBindingContribution(
-                engine, emitter, rec.pinnedBindings[i].bindingId, &contribution, reader))
-            return std::numeric_limits<double>::quiet_NaN();
-        metric += static_cast<double>(contribution);
     }
     return metric;
 }
@@ -103348,21 +103337,24 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     std::vector<harken::ParamSystem::PreparedBindingToken> preparedBindings;
     if (!harken::PrepareVoiceBindings(*engine, preparedBindings, matchedBindingCount))
         return VN_BACKPRESSURE;
-    const auto initialVolumeResult = [&](const harken::VariableReadCutReader* reader = nullptr) {
-        double volumeDb = desc->volumeDb;
+    const auto resolveInitialVoiceDb = [&](const harken::VariableReadCutReader* reader,
+                                           double* result) {
+        double bindingsDb = 0.0;
         for (std::uint32_t i = 0; i < matchedBindingCount; ++i) {
             float contribution = 0;
             if (!TryVoiceVolumeBindingContribution(
                     *engine, emitterHandle, pinnedBindings[i].bindingId, &contribution, reader)) return VN_BACKPRESSURE;
-            volumeDb = harken::AddFiniteContributions(volumeDb, contribution);
+            bindingsDb = harken::AddFiniteContributions(bindingsDb, contribution);
         }
         for (std::uint32_t i = 0; i < recipeBindingCount; ++i) {
             float contribution = 0;
             if (!TryVoiceVolumeBindingContribution(
                     *engine, emitterHandle, voiceRecipe->bindings[i], &contribution, reader)) return VN_BACKPRESSURE;
-            volumeDb = harken::AddFiniteContributions(volumeDb, contribution);
+            bindingsDb = harken::AddFiniteContributions(bindingsDb, contribution);
         }
-        return VolumeStagesConvertible(volumeDb, 0.0f) ? VN_OK : VN_INVALID_ARG;
+        // Match the authoritative Variable slot, then compose with the base.
+        *result = harken::AddFiniteContributions(desc->volumeDb, bindingsDb);
+        return VN_OK;
     };
     bool hasVariableBindings = false;
     for (std::uint32_t i = 0;
@@ -103394,9 +103386,12 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
             if (!variableCut.ReadBinding(voiceRecipe->bindings[i])) return VN_BACKPRESSURE;
     }
     const auto* initialReader = variableCut.Reader();
-    if (!stagedInstall || !hasVariableBindings) {
-        const auto result = initialVolumeResult(initialReader);
-        if (result != VN_OK) return result;
+    double initialVoiceDb = 0.0;
+    const auto initialVolumeResult = resolveInitialVoiceDb(initialReader, &initialVoiceDb);
+    if (initialVolumeResult != VN_OK) return initialVolumeResult;
+    if ((!stagedInstall || !hasVariableBindings) &&
+        !VolumeStagesConvertible(initialVoiceDb, 0.0f)) {
+        return VN_INVALID_ARG;
     }
     if (pinnedTargets > 0 &&
         !engine->propertyPublisher.TryGrowWorstCase(pinnedTargets,
@@ -103456,23 +103451,11 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     acceptedSource.posY = desc->positionY;
     acceptedSource.posZ = desc->positionZ;
     (void)engine->emitters.Pose(emitterHandle, &acceptedSource);
-    double immediateAudibilityDb = static_cast<double>(desc->volumeDb);
-    for (std::uint32_t i = 0; i < matchedBindingCount; ++i) {
-        const harken::BindingTable::Definition* def =
-            engine->bindings.Find(pinnedBindings[i].bindingId);
-        if (def == nullptr || def->scopeKind != harken::kTargetScopeVoice ||
-            def->targetId != harken::kTargetVoiceVolume) {
-            continue;
-        }
-        float contribution = 0;
-        if (!TryVoiceVolumeBindingContribution(
-                *engine, emitterHandle, pinnedBindings[i].bindingId, &contribution, initialReader)) return VN_BACKPRESSURE;
-        immediateAudibilityDb += static_cast<double>(contribution);
-    }
+    double immediateAudibilityDb = initialVoiceDb;
     if (spatialized && voiceRecipe != nullptr &&
         voiceRecipe->spatial.attenuationId != VnObjectId{}) {
-        immediateAudibilityDb +=
-            static_cast<double>(engine->spatial.AttenuationVolumeDb(
+        immediateAudibilityDb = harken::AddFiniteContributions(
+            immediateAudibilityDb, engine->spatial.AttenuationVolumeDb(
                 engine->emitters, voiceRecipe->spatial.attenuationId, acceptedSource.posX,
                 acceptedSource.posY, acceptedSource.posZ,
                 voiceRecipe->spatial.distanceScale, 0,

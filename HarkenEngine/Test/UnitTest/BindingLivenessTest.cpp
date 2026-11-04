@@ -758,39 +758,85 @@ TEST(BindingLiveness, DirtyEffectTargetKeepsOtherContributorsAndReturnsToBase) {
 
 
 TEST(BindingLiveness, FiniteExtremeVolumesAgreeAtAdmissionAndParkedReplay) {
-    EngineSession session(ParkConfig());
-    ASSERT_EQ(VN_OK, session.InitResult());
-    auto* engine = session.Engine();
-    InstallBindingVariables(engine);
-    const auto sound = harkentest::ObjectId(1);
-    RegisterLeaf(sound);
-    const float maximum = std::numeric_limits<float>::max();
-    std::uint32_t id = 10;
-    for (float contribution : {maximum, maximum, -maximum, -maximum, -80.0f}) {
-        ASSERT_EQ(VN_OK, RegisterLinear(engine, harkentest::ObjectId(id),
-            harkentest::ObjectId(7), harken::kTargetVoiceVolume, contribution, contribution));
-        ASSERT_EQ(VN_OK, harken::AttachBinding(*engine, harkentest::ObjectId(id++),
-            harken::kTargetScopeVoice, sound));
+    for (bool staged : {false, true}) {
+        SCOPED_TRACE(staged);
+        EngineSession session(ParkConfig());
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        InstallBindingVariables(engine);
+        const auto sound = harkentest::ObjectId(1);
+        RegisterLeaf(sound);
+        const float maximum = std::numeric_limits<float>::max();
+        std::uint32_t id = 10;
+        for (float contribution : {maximum, maximum, -maximum, -maximum, -20.0f}) {
+            ASSERT_EQ(VN_OK, RegisterLinear(engine, harkentest::ObjectId(id),
+                harkentest::ObjectId(7), harken::kTargetVoiceVolume, contribution, contribution));
+            ASSERT_EQ(VN_OK, harken::AttachBinding(*engine, harkentest::ObjectId(id++),
+                harken::kTargetScopeVoice, sound));
+        }
+        ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(7), 1));
+        harkentest::AdvanceVariableWrite(engine);
+        VnPlayDesc play = MakePlayDesc(sound, -30.0f);
+        play.loopCount = 0;
+        if (staged) play.reserved0 = VN_PLAY_FLAG_STAGED_INSTALL;
+        VnVoiceHandle handle = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
+        if (staged) ASSERT_EQ(VN_OK, Vn_CommitVoiceStart(handle));
+        const auto parked = engine->ledger.Classify(handle);
+        ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked, parked.kind);
+        EXPECT_EQ(-20, engine->parkRecords[parked.ledgerSlot].instanceVolumeDb);
+        engine->nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        EXPECT_EQ(-20, engine->parkRecords[parked.ledgerSlot].instanceVolumeDb);
+        ASSERT_EQ(VN_OK, ReplaceLinear(engine, harkentest::ObjectId(14),
+            harkentest::ObjectId(7), harken::kTargetVoiceVolume, 30, 30));
+        ASSERT_EQ(VN_OK, Vn_Update());
+        const auto render = RenderHandle(engine, handle);
+        ASSERT_NE(0u, render);
+        EXPECT_FLOAT_EQ(0, engine->params.ResolvedValue(render, harken::kTargetVoiceVolume));
+        EXPECT_GT(PumpBlockPeak(engine), 0.1f);
     }
-    ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(7), 1));
-    harkentest::AdvanceVariableWrite(engine);
-    VnPlayDesc play = MakePlayDesc(sound);
-    play.loopCount = 0;
-    VnVoiceHandle handle = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
-    const auto parked = engine->ledger.Classify(handle);
-    ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked, parked.kind);
-    EXPECT_EQ(-80, engine->parkRecords[parked.ledgerSlot].instanceVolumeDb);
-    engine->nullBackend.Pump(1);
-    ASSERT_EQ(VN_OK, Vn_Update());
-    EXPECT_EQ(-80, engine->parkRecords[parked.ledgerSlot].instanceVolumeDb);
-    ASSERT_EQ(VN_OK, ReplaceLinear(engine, harkentest::ObjectId(14),
-        harkentest::ObjectId(7), harken::kTargetVoiceVolume, 0, 0));
-    ASSERT_EQ(VN_OK, Vn_Update());
-    const auto render = RenderHandle(engine, handle);
-    ASSERT_NE(0u, render);
-    EXPECT_FLOAT_EQ(0, engine->params.ResolvedValue(render, harken::kTargetVoiceVolume));
-    EXPECT_GT(PumpBlockPeak(engine), 0.1f);
+}
+
+TEST(BindingLiveness, NonzeroBaseUsesBindingGroupAtImmediateAndPendingAdmission) {
+    for (bool staged : {false, true}) {
+        SCOPED_TRACE(staged);
+        EngineSession session(MakeNullConfig(4, kBlock, kRate));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        InstallBindingVariables(engine);
+        const auto sound = harkentest::ObjectId(1);
+        RegisterLeaf(sound);
+        const float maximum = std::numeric_limits<float>::max();
+        std::uint32_t id = 10;
+        for (float value : {maximum, maximum, -maximum, -maximum, 800.0f}) {
+            ASSERT_EQ(VN_OK, RegisterLinear(engine, harkentest::ObjectId(id),
+                harkentest::ObjectId(7), harken::kTargetVoiceVolume, value, value));
+            ASSERT_EQ(VN_OK, harken::AttachBinding(*engine, harkentest::ObjectId(id++),
+                harken::kTargetScopeVoice, sound));
+        }
+        ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(7), 1));
+        harkentest::AdvanceVariableWrite(engine);
+        auto play = MakePlayDesc(sound, -100.0f);
+        play.loopCount = 0;
+        if (staged) play.reserved0 = VN_PLAY_FLAG_STAGED_INSTALL;
+        VnVoiceHandle handle = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
+        if (staged) {
+            ASSERT_EQ(harken::VoiceLedger::HandleKind::Pending,
+                      engine->ledger.Classify(handle).kind);
+            ASSERT_EQ(VN_OK, Vn_SetVoiceOutputVolume(handle, 0.0f, 0));
+            ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(handle, -10.0f, 0));
+            ASSERT_EQ(VN_OK, Vn_CommitVoiceStart(handle));
+        }
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        const auto render = RenderHandle(engine, handle);
+        ASSERT_NE(0u, render);
+        EXPECT_FLOAT_EQ(staged ? 690.0f : 700.0f,
+                        engine->params.ResolvedValue(render, harken::kTargetVoiceVolume));
+    }
 }
 
 } // namespace
