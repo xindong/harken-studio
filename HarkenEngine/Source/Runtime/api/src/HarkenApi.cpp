@@ -24478,21 +24478,41 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
             [&](const auto& selected) { return isNestedContainer(selected.childStableOrdinal); }));
     const bool croppedNativeChildren = schedule != nullptr && schedule->sourceOffsetFrames != 0 &&
         schedulePreparation != nullptr && !pendingImmediateLane;
+    const auto nativeOrdinaryPathSupported = [&](auto&& self,
+        const harken::PlayableRefV1& ref, std::uint32_t depth) noexcept -> bool {
+        const auto* nested = FindVariableControlNestedContainer(world, ref);
+        if (depth >= harken::kSelectionPathNodeCapacity || nested == nullptr ||
+            (nested->mode != harken::ContainerModeV1::Random && nested->mode != harken::ContainerModeV1::Sequence) ||
+            ReadPlayableLoopCount(world, nested->containerStableId) != 1) return false;
+        for (std::uint32_t index = 0; index < nested->childCount; ++index) {
+            const auto& child = nested->children[index].playable;
+            if (child.kind == harken::PlayableKindV1::Container && !self(self, child, depth + 1u)) return false;
+        }
+        return true;
+    };
+    const auto nativeContainerSupported = [&](const harken::PlayableRefV1& ref) noexcept {
+        // Preserve the existing Queue/VC frontier path until its native root
+        // transaction supports the same prepared-parent ownership contract.
+        return nativeOrdinaryPathSupported(nativeOrdinaryPathSupported, ref, 0);
+    };
     if (haveDiscrete) {
         const auto* selected =
             FindQueueChild(program, discrete->childStableOrdinal);
         const bool nestedContainer =
             selected != nullptr &&
             selected->playable.kind == harken::PlayableKindV1::Container;
-        if (croppedNativeChildren && nestedContainer) {
+        if (croppedNativeChildren && nestedContainer && !nativeContainerSupported(selected->playable)) {
             result.status = harken::PlayableStartStatus::CapabilityUnavailable;
             return result;
         }
-        const bool preparedNested = nestedContainer &&
+        const bool nativeContainer = nestedContainer && schedule != nullptr && schedulePreparation != nullptr &&
+            !pendingImmediateLane && nativeContainerSupported(selected->playable);
+        const bool preparedNested = nestedContainer && !croppedNativeChildren && !nativeContainer &&
             PrepareVariableControlFrontierSelection(
                 engine, world, request, program, discrete->childStableOrdinal,
                 provisionalTicket, *scratch, selectionEventBase, discreteSchedule, initialVariables);
-        const ScheduleMaterializeStatus status = croppedNativeChildren ? ScheduleMaterializeStatus::Dynamic : nestedContainer
+        const ScheduleMaterializeStatus status = croppedNativeChildren || nativeContainer
+            ? ScheduleMaterializeStatus::Dynamic : nestedContainer
             ? (preparedNested ? ScheduleMaterializeStatus::Ok
                               : ScheduleMaterializeStatus::Dynamic)
             : MaterializeVariableControlDiscreteSchedule(
@@ -24502,7 +24522,8 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
             schedulePreparation != nullptr && !pendingImmediateLane && selected != nullptr &&
             (selected->playable.kind == harken::PlayableKindV1::Sound ||
              selected->playable.kind == harken::PlayableKindV1::Track ||
-             selected->playable.kind == harken::PlayableKindV1::Segment);
+             selected->playable.kind == harken::PlayableKindV1::Segment ||
+             (nativeContainer && selected->playable.kind == harken::PlayableKindV1::Container));
         if (dynamicSchedule) {
             discreteSchedule.leafCount = 0;
             discreteSchedule.hasZeroWorkCompletion = false;
@@ -24553,8 +24574,11 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         materialized.zeroWorkCompletionOffsetFrames = 0;
         for (auto& leaf : materialized.leaves) leaf = {};
         ScheduleMaterializeStatus status = ScheduleMaterializeStatus::Invalid;
-        if (croppedNativeChildren) {
-            if (selected->playable.kind == harken::PlayableKindV1::Container) {
+        const bool nativeContainer = selected->playable.kind == harken::PlayableKindV1::Container &&
+            schedule != nullptr && schedulePreparation != nullptr && !pendingImmediateLane && nativeContainerSupported(selected->playable);
+        if (croppedNativeChildren || nativeContainer) {
+            if (selected->playable.kind == harken::PlayableKindV1::Container &&
+                !nativeContainerSupported(selected->playable)) {
                 result.status = harken::PlayableStartStatus::CapabilityUnavailable;
                 return result;
             }
@@ -24592,7 +24616,8 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
             schedulePreparation != nullptr && !pendingImmediateLane &&
             (selected->playable.kind == harken::PlayableKindV1::Sound ||
              selected->playable.kind == harken::PlayableKindV1::Track ||
-             selected->playable.kind == harken::PlayableKindV1::Segment);
+             selected->playable.kind == harken::PlayableKindV1::Segment ||
+             (nativeContainer && selected->playable.kind == harken::PlayableKindV1::Container));
         if (dynamicSchedule) {
             materialized.leafCount = 0;
             materialized.hasZeroWorkCompletion = false;
@@ -25097,6 +25122,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
     }
     for (std::uint32_t childIndex = 0; childIndex < childCount;
          ++childIndex) {
+        if (dynamicScheduleChildren[childIndex] != 0) continue;
         const std::uint32_t selectedOrdinal =
             (haveDiscrete && childIndex == 0)
                 ? discrete->childStableOrdinal
@@ -35596,13 +35622,7 @@ bool ConsumeCurrentContainerChildCompletion(
         if (FindScheduleAggregateService(engine, parent) != nullptr)
             return ConsumeNaturalContainerChild(engine, parent, current);
         if (parentView.kind == harken::PlayableKind::Container) {
-            const auto status = harken::PlayableTreeExecutor::ServiceChildOutcome(
-                engine.playableInstances, engine.containerPlayback, parent, current,
-                currentView.scheduleEpoch, outcomeOrdinal);
-            return status == harken::ContainerPlaybackTable::ChildOutcomeStatus::
-                                  Accepted ||
-                   status == harken::ContainerPlaybackTable::ChildOutcomeStatus::
-                                  Duplicate;
+            return ConsumeNaturalContainerChild(engine, parent, current);
         }
         if (parentView.lifecycle == harken::PlayableLifecycle::Active) {
             if (!engine.playableInstances.SetTerminalOutcome(
@@ -53163,6 +53183,12 @@ void ServicePlayableStarts(harken::Engine& engine,
                     harken::PlayableControlLifecycle::Active;
                 row.pendingFutureCount = 0;
                 if (!PublishNaturalPlayableCompletion(engine, row.rootInstance, row.ticket)) {
+                    engine.runtimeRecreateRequired = true;
+                    continue;
+                }
+                const auto completed = engine.playableInstances.Classify(row.rootInstance);
+                if (row.root.kind == harken::PlayableKindV1::Sound && completed.parent != 0 &&
+                    !ConsumeNaturalContainerChild(engine, completed.parent, row.rootInstance)) {
                     engine.runtimeRecreateRequired = true;
                     continue;
                 }
@@ -88019,6 +88045,8 @@ ContainerMixedTerminalResult PrepareContainerMixedScheduleTerminal(ContainerPrep
             ? childOperations.PrepareRoot(harken::PlayableKind::Container, context.playbackRequest, context.emitterOrigin, scratch)
             : PreparePlayableExecution(engine, &scratch, harken::PlayableKind::Container,
                 context.playbackRequest, context.emitterOrigin))) return fail(VN_NO_VOICE);
+    auto& preparedRoot = scratch.storage.schedulePreparedRoot != nullptr
+        ? *scratch.storage.schedulePreparedRoot : scratch.instance;
     harken::PlayableRootMetadata metadata{};
     metadata.projectId = pack ? scratch.packPlaybackView.ProjectId() : context.world.identity.projectId;
     metadata.definitionKind = harken::PlayableKind::Container;
@@ -88031,16 +88059,16 @@ ContainerMixedTerminalResult PrepareContainerMixedScheduleTerminal(ContainerPrep
     if (!scratch.playableTreeExecutor.SetPreparedRootMetadata(engine.playableInstances, metadata))
         return fail(VN_NO_VOICE);
     const bool serviceReady = parented || context.directRoot
-        ? childOperations.PrepareService(engine, *rootService, scratch.instance.Handle(),
-            scratch.instance.ScheduleEpoch(), nullptr, nullptr, &scratch.storage)
-        : PreparePlayableServiceRow(engine, *rootService, scratch.instance.Handle(),
-            scratch.instance.ScheduleEpoch(), nullptr, nullptr, &scratch.storage);
+        ? childOperations.PrepareService(engine, *rootService, preparedRoot.Handle(),
+            preparedRoot.ScheduleEpoch(), nullptr, nullptr, &scratch.storage)
+        : PreparePlayableServiceRow(engine, *rootService, preparedRoot.Handle(),
+            preparedRoot.ScheduleEpoch(), nullptr, nullptr, &scratch.storage);
     if (!serviceReady) return fail(VN_NO_VOICE);
     scratch.row = rootService;
     scratch.authorityOwnerContext.service = rootService;
     rootService->actionPrepared = true;
     rootService->root = selected.outerRoot;
-    rootService->rootInstance = scratch.instance.Handle();
+    rootService->rootInstance = preparedRoot.Handle();
     rootService->ticket = ticket;
     rootService->startFrame = context.startFrame;
     rootService->containerLoopAuthorityKind = pack ? harken::PlayableExecutionAuthorityKind::Pack
@@ -88063,10 +88091,10 @@ ContainerMixedTerminalResult PrepareContainerMixedScheduleTerminal(ContainerPrep
     std::array<harken::PlayableInstanceHandle, harken::kSelectionPathNodeCapacity> instances{};
     auto cursor = selected.outerRoot;
     auto* service = rootService;
-    auto owner = scratch.instance.Handle();
-    auto epoch = scratch.instance.ScheduleEpoch();
+    auto owner = preparedRoot.Handle();
+    auto epoch = preparedRoot.ScheduleEpoch();
     const auto preparePath = [&](const auto& world) noexcept {
-        ObservePreparedContent(engine, scratch.instance, MonitorContentFor(world, selected.outerRoot));
+        ObservePreparedContent(engine, preparedRoot, MonitorContentFor(world, selected.outerRoot));
         for (std::uint32_t index = 0; index < selected.count; ++index) {
             const harken::ContainerProgramViewV3* program = nullptr;
             const harken::ContainerChildProgramViewV2* child = nullptr;
@@ -88077,6 +88105,9 @@ ContainerMixedTerminalResult PrepareContainerMixedScheduleTerminal(ContainerPrep
                 program->mode == harken::ContainerModeV1::VariableControl ||
                 (selected.pendingNativeEntry && program->mode != harken::ContainerModeV1::Random &&
                  program->mode != harken::ContainerModeV1::Sequence)) return false;
+            if (context.sourceOffsetFrames != 0 &&
+                ((program->mode != harken::ContainerModeV1::Random && program->mode != harken::ContainerModeV1::Sequence) ||
+                 ReadPlayableLoopCount(world, program->containerStableId) != 1)) return false;
             if (index != 0) {
                 service = PrepareFrontierPathService(engine, scratch, *services[index - 1u], owner, epoch, *program);
                 if (service == nullptr) return false;
@@ -88155,6 +88186,7 @@ ContainerMixedTerminalResult PrepareContainerMixedScheduleTerminal(ContainerPrep
     auto& record = *terminalParent->scheduleTerminalChild;
     record.content = selected.terminal;
     record.stableLeafOrdinal = selected.ordinals[selected.count - 1u];
+    record.sourceOffsetFrames = context.sourceOffsetFrames;
     if (selected.pendingNativeEntry) {
         if (context.endFrame != UINT64_MAX && context.endFrame <= context.startFrame)
             return fail(VN_CAPABILITY_UNAVAILABLE);
@@ -88168,6 +88200,8 @@ ContainerMixedTerminalResult PrepareContainerMixedScheduleTerminal(ContainerPrep
     }
     auto childContext = context;
     BindScheduleChildPreparation(childContext, *terminalParent, record);
+    childContext.preparedScheduleRoot = nullptr;
+    childContext.preparedScheduleRootOwnedFlag = nullptr;
     childContext.selectionEventBegin = UINT32_MAX;
     if (!PrepareScheduleChildAttempt(context, scratch, childContext, record)) return ContainerMixedTerminalResult::Failed;
     auto* child = engine.ResolvePlayableService(record.service);
@@ -91132,6 +91166,26 @@ engine.runtimeRecreateRequired = true;
         return false;
     }
     if (mixedTerminalPrepared) return true;
+    if ((context.sourceOffsetFrames != 0 || context.preparedScheduleRoot != nullptr) &&
+        selectionCount != 0 && nestedQueueProgram == nullptr) {
+        ContainerMixedTerminalRequest request{};
+        request.outerRoot = root;
+        request.terminal = current;
+        request.count = selectionCount;
+        std::copy_n(selectedOrdinals.begin(), selectionCount, request.ordinals.begin());
+        std::copy_n(path.begin(), selectionCount, request.path.begin());
+        request.parentProgram = terminalParentProgram;
+        request.authoredChild = terminalAuthoredChild;
+        if (context.prepareMixedTerminal == nullptr ||
+            context.prepareMixedTerminal(context, *scratch, request) != ContainerMixedTerminalResult::Prepared) {
+            rollbackPrepared();
+            return false;
+        }
+        operations.BindAttemptOrigin(*scratch);
+        if (scratch->row != nullptr && operations.RecordStep(*scratch->row)) return true;
+        rollbackPrepared();
+        return false;
+    }
     const auto configureContainerLoopState =
         [&](std::uint32_t activeLeafReservationIndex) noexcept {
         if (scratch->row == nullptr || selectionCount == 0 ||
@@ -91469,6 +91523,7 @@ bool PrepareVariableScheduleBranches(ContainerPreparationContext& context,
             auto& root = scratch.variableControlChildren[top];
             if (selected == nullptr || !root.Valid() ||
                 (selected->playable.kind != harken::PlayableKindV1::Sound &&
+                 selected->playable.kind != harken::PlayableKindV1::Container &&
                  selected->playable.kind != harken::PlayableKindV1::Track &&
                  selected->playable.kind != harken::PlayableKindV1::Segment) ||
                 root.Parent() != row->ownerInstance ||
@@ -97620,14 +97675,18 @@ bool ResolveInitialNativeScheduleDelegation(
             const auto* child = engine.ResolvePlayableService(record.service);
             const auto ownerView = engine.playableInstances.Classify(current->ownerInstance);
             const auto childView = engine.playableInstances.Classify(record.service.owner);
+            const bool nativeChild = child != nullptr &&
+                (((childView.kind == harken::PlayableKind::Track || childView.kind == harken::PlayableKind::Segment) &&
+                  child->scheduleAggregate != nullptr) ||
+                 (childView.kind == harken::PlayableKind::Sound && child->root.kind == harken::PlayableKindV1::Sound) ||
+                 (childView.kind == harken::PlayableKind::Container && child->variableControlInstance.Valid()));
             if (current->scheduleAggregate != nullptr || current->zeroWorkMarker ||
                 current->hasZeroWorkCompletion || record.logicalComplete || record.resourcesReleased ||
-                record.lifecycleOwned || child == nullptr || child->scheduleAggregate == nullptr ||
+                record.lifecycleOwned || !nativeChild ||
                 engine.ResolvePlayableService(child->parentService) != current ||
                 child->invocation != root.invocation || child->invocationGeneration != root.invocationGeneration ||
                 !ownerView.live || ownerView.kind != harken::PlayableKind::Container ||
                 ownerView.scheduleEpoch != current->ownerEpoch || !childView.live ||
-                (childView.kind != harken::PlayableKind::Track && childView.kind != harken::PlayableKind::Segment) ||
                 childView.parent != current->ownerInstance || childView.scheduleEpoch != record.service.epoch)
                 return false;
             *outDelegates = true;
