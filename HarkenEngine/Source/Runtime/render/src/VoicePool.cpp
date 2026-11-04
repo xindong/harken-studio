@@ -5173,6 +5173,20 @@ void VoicePool::CommitPreparedRoutingMigrationV1(VnVoiceHandle handle,
     }
 }
 
+void VoicePool::AudioDiscardLimiterGainReduction(std::uint64_t epoch) {
+    if (m_deferredJobCount != 0) return;
+    for (auto& slot : m_slots) {
+        if (!IsAudioRenderingState(slot.state.load(std::memory_order_relaxed))) continue;
+        auto& render = slot.render;
+        for (std::uint32_t s = 0; s < render.fxSlotCount; ++s) {
+            if (render.fxSlotEffectRef[s].type != VN_EFFECT_LIMITER ||
+                render.fxSlots[s].state == nullptr) continue;
+            auto& state = *static_cast<LimiterState*>(render.fxSlots[s].state);
+            if (state.gainReduction.renderEpoch == epoch) LimiterFinishRender(state, 0, 0);
+        }
+    }
+}
+
 bool VoicePool::AudioReadLimiterGainReduction(VnVoiceHandle handle, std::uint32_t effectSlot,
     const EffectInstanceRef& expected, std::uint64_t epoch,
     std::uint64_t sourceFrameBegin, LimiterGainReduction& out) {

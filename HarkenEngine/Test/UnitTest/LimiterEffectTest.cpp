@@ -365,6 +365,19 @@ TEST(LimiterEffect, InternalVoiceAndBusGrValidateJobAndInstalledIdentity) {
                      epoch, epoch * kBlock, voiceGr));
         EXPECT_FALSE(engine->buses.AudioReadLimiterGainReduction(busIdentity, 0, busRef,
                      epoch + 1, (epoch + 1) * kBlock, busGr));
+        // A downstream whole-block rejection withdraws both hosts' readings.
+        engine->voices.AudioDiscardLimiterGainReduction(epoch + 1);
+        engine->buses.AudioDiscardLimiterGainReduction(epoch + 1);
+        ASSERT_TRUE(engine->voices.AudioReadLimiterGainReduction(handle, 0, voiceRef,
+                    epoch, epoch * kBlock, voiceGr));
+        ASSERT_TRUE(engine->buses.AudioReadLimiterGainReduction(busIdentity, 0, busRef,
+                    epoch, epoch * kBlock, busGr));
+        engine->voices.AudioDiscardLimiterGainReduction(epoch);
+        engine->buses.AudioDiscardLimiterGainReduction(epoch);
+        EXPECT_FALSE(engine->voices.AudioReadLimiterGainReduction(handle, 0, voiceRef,
+                     epoch, epoch * kBlock, voiceGr));
+        EXPECT_FALSE(engine->buses.AudioReadLimiterGainReduction(busIdentity, 0, busRef,
+                     epoch, epoch * kBlock, busGr));
         ASSERT_EQ(VN_OK, Vn_SetVoiceEffectBypass(voice, 0, 1));
         harkentest::PumpAndCapture(engine, 1, output);
         ASSERT_TRUE(engine->voices.AudioReadLimiterGainReduction(handle, 0, voiceRef,
@@ -446,6 +459,7 @@ TEST(LimiterEffect, InternalGrWaitsForDeferredWorkerOutputAcceptance) {
                  epoch, epoch * kBlock, gr));
     EXPECT_FALSE(engine->voices.AudioReadLimiterGainReduction(handle, 0, ref,
                  epoch - 1, (epoch - 1) * kBlock, gr));
+    engine->voices.AudioDiscardLimiterGainReduction(epoch); // Pending state stays untouched.
     gate.release.store(true, std::memory_order_release);
     const auto until = harken::CpuClockTicks() + 2 * harken::CpuClockTicksPerSecond();
     while (engine->mixer.BlocksRendered() == epoch && harken::CpuClockTicks() < until) {

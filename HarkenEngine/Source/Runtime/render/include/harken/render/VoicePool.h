@@ -724,6 +724,8 @@ public:
     bool AudioReadLimiterGainReduction(VnVoiceHandle handle, std::uint32_t slot,
         const EffectInstanceRef& expected, std::uint64_t epoch,
         std::uint64_t sourceFrameBegin, LimiterGainReduction& out);
+    // Final mixer rejection, after workers join; never changes DSP state.
+    void AudioDiscardLimiterGainReduction(std::uint64_t epoch);
 
     // Audio-command-local ownership of the current claimed physical source.
     // The held Core proof stays in stable storage until Finish or untouched Release.

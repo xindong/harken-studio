@@ -870,6 +870,19 @@ void BusTree::ApplySetBusSendLevel(std::uint32_t fromBus, std::uint32_t toBus,
             edge->rampBlocksTotal, edge->rampBlocksDone, linear, rampMs);
 }
 
+void BusTree::AudioDiscardLimiterGainReduction(std::uint64_t epoch) {
+    for (std::uint32_t i = 0; i < m_audioCount; ++i) {
+        auto& bus = m_buses[i];
+        if (!AudioRefMatches({i, bus.generation})) continue;
+        for (std::uint32_t s = 0; s < m_fxSlots; ++s) {
+            if (bus.fxSlotEffectRef[s].type != VN_EFFECT_LIMITER ||
+                bus.fxSlots[s].state == nullptr) continue;
+            auto& state = *static_cast<LimiterState*>(bus.fxSlots[s].state);
+            if (state.gainReduction.renderEpoch == epoch) LimiterFinishRender(state, 0, 0);
+        }
+    }
+}
+
 bool BusTree::AudioReadLimiterGainReduction(BusSlotRef ref, std::uint32_t slot,
     const EffectInstanceRef& expected, std::uint64_t epoch,
     std::uint64_t sourceFrameBegin, LimiterGainReduction& out) {
