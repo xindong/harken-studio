@@ -46,9 +46,12 @@ inline PropertySchema contentObjectInspectorRows(ProjectItem::Type type)
         descriptor.flags.sourceIndicator = false;
         auto position = out.end();
         if (field.referenceRole
-            == harkenplayableproperties::PlayablePropertyReferenceRoleV1::OutputBus)
+            == harkenplayableproperties::PlayablePropertyReferenceRoleV1::OutputBus) {
             descriptor.refFilter = static_cast<int>(ProjectItem::Type::Bus);
-        else if (field.referenceRole
+            position = std::find_if(out.begin(), out.end(), [](const PropertyDescriptor& d) {
+                return d.field == QLatin1String("outputBusVolume");
+            });
+        } else if (field.referenceRole
                  == harkenplayableproperties::PlayablePropertyReferenceRoleV1::Attenuation) {
             descriptor.refFilter = static_cast<int>(ProjectItem::Type::Attenuation);
             position = std::find_if(out.begin(), out.end(), [](const PropertyDescriptor& d) {
