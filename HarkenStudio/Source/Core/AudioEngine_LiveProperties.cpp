@@ -170,7 +170,7 @@ void AudioEngine::applyLivePropertyPreview()
             auto& definition = preview.definitions[item->runtimeId()];
             definition.refreshMix(*item, *locator, scope);
             definition.fields = {
-                {{static_cast<uint8_t>(LiveProperty::OutputBusVolume), {}}, groups.mainOutput.outputBusVolume},
+                {{static_cast<uint8_t>(LiveProperty::OutputBusVolume), {}}, groups.output.outputBusVolume},
                 {{static_cast<uint8_t>(LiveProperty::SpatialPanning), {}}, groups.spatialRating.spatialPanning},
                 {{static_cast<uint8_t>(LiveProperty::SpatializationMix), {}},
                     HarkenEditor::Bridge::resolvedStudioSpatializationMix(*item, *sourceIndex)},

@@ -408,7 +408,7 @@ bool validateProject(const ProjectData& project, QString* error)
             for (const auto& [platform, state] : group.platforms)
                 fieldGroupPlatforms.insert(idString(fromFieldGroupGuid(platform)), QJsonObject{});
         };
-        addGroups(item->fieldGroups.mainOutput);
+        addGroups(item->fieldGroups.output);
         addGroups(item->fieldGroups.send);
         addGroups(item->fieldGroups.spatialRating);
         json.insert(QStringLiteral("fieldGroups"), QJsonObject{{QStringLiteral("platforms"), fieldGroupPlatforms}});

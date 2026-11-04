@@ -261,8 +261,8 @@ QSet<QString> referencedDocumentPaths(const QJsonObject& document, int schemaVer
 
     const QJsonObject groups = content.value(QStringLiteral("fieldGroups")).toObject();
     const auto addGroupReferences = [&](const QJsonObject& scope) {
-        addReference(valueAt(scope, {QStringLiteral("mainOutput"), QStringLiteral("values"),
-                                     QStringLiteral("mainOutputBusRef")}));
+        addReference(valueAt(scope, {QStringLiteral("output"), QStringLiteral("values"),
+                                     QStringLiteral("outputBusRef")}));
         addReference(valueAt(scope, {QStringLiteral("spatialRating"), QStringLiteral("values"),
                                      QStringLiteral("spatialAttenuationRef")}));
         for (const auto& row : valueAt(scope, {QStringLiteral("send"), QStringLiteral("values"),

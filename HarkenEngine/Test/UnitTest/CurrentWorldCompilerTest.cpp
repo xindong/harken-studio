@@ -30,7 +30,7 @@ harkenprojectschema::Chassis ResolvedChassis(std::uint64_t id) {
     harkenprojectschema::Chassis chassis;
     chassis.id = harkentest::StudioObjectId(id);
     chassis.presence.bits = harken::kResolvedSectionGroupPropertyMaskV1;
-    chassis.mainOutputBusRef = harkenstudio::kMasterBusObjectId;
+    chassis.outputBusRef = harkenstudio::kMasterBusObjectId;
     return chassis;
 }
 
@@ -462,9 +462,9 @@ TEST(CurrentWorldCompiler, DefinitionsOccurrencesAndLayerPathAreCanonical) {
 TEST(CurrentWorldCompiler, CompiledBusIdSetMustBeCanonicalAndOwnEveryRoute) {
     auto project = Project();
     constexpr harkenstudio::ObjectId routedBus = harkentest::StudioObjectId(UINT64_C(0x100000005));
-    project.objects[0].layer.chassis.mainOutputBusRef = routedBus;
-    project.objects[1].container.chassis.mainOutputBusRef = routedBus;
-    project.objects[2].sound.chassis.mainOutputBusRef = harkentest::StudioObjectId(routedBus);
+    project.objects[0].layer.chassis.outputBusRef = routedBus;
+    project.objects[1].container.chassis.outputBusRef = routedBus;
+    project.objects[2].sound.chassis.outputBusRef = harkentest::StudioObjectId(routedBus);
 
     harkenbuscompiler::CompiledBusIdSetV1 unsorted{{routedBus, harkenstudio::kMasterBusObjectId}};
     auto compile = [&](const harkenbuscompiler::CompiledBusIdSetV1& busIds) {

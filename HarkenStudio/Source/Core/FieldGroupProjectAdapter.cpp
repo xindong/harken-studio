@@ -134,7 +134,7 @@ FieldGroupProjectView buildFieldGroupProjectView(
                          item, QStringLiteral("fieldGroups.platforms"));
             }
         };
-        validatePlatforms(groups->mainOutput);
+        validatePlatforms(groups->output);
         validatePlatforms(groups->send);
         validatePlatforms(groups->spatialRating);
         auto definition = fieldGroupDefinitionView(*item);
@@ -236,7 +236,7 @@ FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
     if (!result.ok()) return result;
     const FieldGroupReferenceCatalog references(view.referenceTargets);
     for (const auto& definition : view.definitions) {
-        const auto output = resolver.Resolve(definition.guid, scope, FieldGroupId::MainOutput);
+        const auto output = resolver.Resolve(definition.guid, scope, FieldGroupId::Output);
         const auto send = resolver.Resolve(definition.guid, scope, FieldGroupId::Send);
         const auto spatial = resolver.Resolve(definition.guid, scope, FieldGroupId::SpatialRating);
         for (const auto* resolved : {&output, &send, &spatial}) {
@@ -247,14 +247,14 @@ FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
         }
         if (!output.ok() || !send.ok() || !spatial.ok()) continue;
         EffectiveDefinitionFieldGroups groups{
-            std::get<MainOutputFieldGroup>(output.value->payload),
+            std::get<OutputFieldGroup>(output.value->payload),
             std::get<SendFieldGroup>(send.value->payload),
             std::get<SpatialRatingFieldGroup>(spatial.value->payload),
             output.value->source, send.value->source, spatial.value->source};
         for (const auto& row : groups.send.sends) {
             if (row.mode != harkenprojectschema::SendMode::Sidechain
-                && row.targetBusID == groups.mainOutput.mainOutputBusRef)
-                fail(QStringLiteral("Only a Sidechain Send can target the effective Main Output"),
+                && row.targetBusID == groups.output.outputBusRef)
+                fail(QStringLiteral("Only a Sidechain Send can target the effective Output"),
                      definition.guid, QStringLiteral("targetBusID"));
         }
         result.definitions.emplace(definition.guid, std::move(groups));

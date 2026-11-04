@@ -414,6 +414,7 @@ void ObjectRefWidget::refreshIcon()
 void ObjectRefWidget::refreshStyle()
 {
     const bool dim = readOnly_ || !selectorEnabled_;
+    nameLabel_->setEnabled(!dim);
     const bool invalid = !mixedValue_ && (!validationError_.isEmpty()
         || (hasItem_ && !refDomainAdapter(domain_).isAvailable(objectID_))
         || (!hasItem_ && (objectID_ != 0 || !unresolvedReference_.isEmpty()

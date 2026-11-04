@@ -117,10 +117,10 @@ void AppendSpatial(std::string* s, const SpatialSpec& sp) {
 }
 
 void AppendReferenceSlots(std::string* s, const Chassis& c) {
-    if (c.mainOutputBusRef == harkenstudio::ObjectId{}) {
+    if (c.outputBusRef == harkenstudio::ObjectId{}) {
         return;
     }
-    *s += "  refs bus=" + U(c.mainOutputBusRef) + "\n";
+    *s += "  refs bus=" + U(c.outputBusRef) + "\n";
 }
 
 void AppendChassis(std::string* s, const ContentObject& obj) {

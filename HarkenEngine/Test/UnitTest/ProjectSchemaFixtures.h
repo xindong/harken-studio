@@ -555,7 +555,7 @@ inline void ApplyChassisProbe(InputNode* node) {
     node->streamingMode = 2;
     node->outputBusVolume = -6.0f;
     node->sends = {Send{harkentest::StudioObjectId(7), 0.25f}, Send{harkentest::StudioObjectId(9), -0.5f}};
-    node->mainOutputBusRef = harkentest::StudioObjectId(4001);
+    node->outputBusRef = harkentest::StudioObjectId(4001);
     node->spatial.panning = -0.75f;
     node->spatial.spread = 0.375f;
     node->spatial.is3DEnabled = true;

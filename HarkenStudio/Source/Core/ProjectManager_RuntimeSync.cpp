@@ -343,9 +343,9 @@ static void syncGeneralAudioProperties(ProjectItem* item, harkenstudio::ObjectId
         manager.pushItemPitchLive(item, snapshot);
     Bridge::setObjectOutputBus(objectId,
         manager.busRuntimeHandleForId(
-            snapshot.objects.at(groups.mainOutput.mainOutputBusRef)->objectID));
+            snapshot.objects.at(groups.output.outputBusRef)->objectID));
     engine.setVoiceVolumeByName(item->name, manager.aggregateVolumeDbForItem(item));
-    engine.setVoiceOutputVolumeByName(item->name, groups.mainOutput.outputBusVolume);
+    engine.setVoiceOutputVolumeByName(item->name, groups.output.outputBusVolume);
     if (item->type == ProjectItem::Type::Sound) {
         std::vector<std::pair<harkenstudio::ObjectId, float>> sends;
         for (const auto& send : groups.send.sends) {

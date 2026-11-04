@@ -92,7 +92,7 @@ struct ResolvedPlayablePropertyCutViewV1 {
     float outputBusVolumeDb = 0.0f;
     std::uint32_t loopCount = 1;
     std::uint32_t streamingMode = 0;
-    VnObjectId mainOutputBusRef{};
+    VnObjectId outputBusRef{};
     ResolvedPlayableSpatialV1 spatial{};
     std::uint32_t pathCount = 0;
     const ResolvedPlayablePathRowV1* path = nullptr;

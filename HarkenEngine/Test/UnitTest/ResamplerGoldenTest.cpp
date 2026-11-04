@@ -1088,7 +1088,7 @@ TEST(ResamplerGolden, RatioSixtyFourTracksTheTrueOutputNyquist) {
         kSourceFrequency * kRatio / 48000.0);
     ASSERT_DOUBLE_EQ(0.4, aliasCycles);
 
-    // At 64:1 the true source-domain output Nyquist is 375 Hz. The former
+    // At 64:1 the true source-dooutput Nyquist is 375 Hz. The former
     // scale-16 ceiling instead filtered at 1500 Hz and passed this tone into a
     // 19.2 kHz folded alias. Both quality tiers must follow the actual ratio.
     for (const DownsampleSpectrumCase& c : kDownsampleSpectrumCases) {

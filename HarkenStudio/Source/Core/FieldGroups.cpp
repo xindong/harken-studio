@@ -172,8 +172,8 @@ bool IsFieldGroupScopeValid(FieldGroupScope scope) noexcept
 DefinitionFieldGroups MakeRootFieldGroups(AuthoringGuid masterBusGuid)
 {
     DefinitionFieldGroups groups;
-    groups.mainOutput.shared = {
-        FieldGroupMode::Inherit, MainOutputFieldGroup{masterBusGuid, 0.0f}};
+    groups.output.shared = {
+        FieldGroupMode::Inherit, OutputFieldGroup{masterBusGuid, 0.0f}};
     groups.send.shared = {FieldGroupMode::Inherit, SendFieldGroup{}};
     groups.spatialRating.shared = {
         FieldGroupMode::Inherit, SpatialRatingFieldGroup{}};
@@ -183,7 +183,7 @@ DefinitionFieldGroups MakeRootFieldGroups(AuthoringGuid masterBusGuid)
 std::string_view FieldGroupName(FieldGroupId group) noexcept
 {
     switch (group) {
-    case FieldGroupId::MainOutput: return "mainOutput";
+    case FieldGroupId::Output: return "output";
     case FieldGroupId::Send: return "send";
     case FieldGroupId::SpatialRating: return "spatialRating";
     }
@@ -192,8 +192,8 @@ std::string_view FieldGroupName(FieldGroupId group) noexcept
 
 std::optional<FieldGroupId> FieldGroupForField(std::string_view field) noexcept
 {
-    if (field == "mainOutputBusRef" || field == "outputBusVolume")
-        return FieldGroupId::MainOutput;
+    if (field == "outputBusRef" || field == "outputBusVolume")
+        return FieldGroupId::Output;
     if (field == "sends") return FieldGroupId::Send;
     if (field == "spatialPanning" || field == "spatialIs3DEnabled" ||
         field == "spatialAttenuationRef" ||
@@ -205,9 +205,9 @@ std::optional<FieldGroupId> FieldGroupForField(std::string_view field) noexcept
 std::optional<FieldGroupId> FieldGroupForProperty(PropertyId property) noexcept
 {
     switch (property) {
-    case PropertyId::MainOutputBusRef:
+    case PropertyId::OutputBusRef:
     case PropertyId::OutputBusVolume:
-        return FieldGroupId::MainOutput;
+        return FieldGroupId::Output;
     case PropertyId::Sends:
         return FieldGroupId::Send;
     case PropertyId::SpatialPanning:
@@ -223,7 +223,7 @@ std::optional<FieldGroupId> FieldGroupForProperty(PropertyId property) noexcept
 std::uint64_t FieldGroupPropertyMask(FieldGroupId group) noexcept
 {
     switch (group) {
-    case FieldGroupId::MainOutput: return UINT64_C(0x60);
+    case FieldGroupId::Output: return UINT64_C(0x60);
     case FieldGroupId::Send: return UINT64_C(0x80);
     case FieldGroupId::SpatialRating: return UINT64_C(0x2d00);
     }
@@ -235,16 +235,16 @@ std::vector<FieldGroupDiagnostic> ValidateFieldGroupPayload(
 {
     Diagnostics diagnostics;
     switch (group) {
-    case FieldGroupId::MainOutput: {
-        const auto* mainOutput = std::get_if<MainOutputFieldGroup>(&payload);
-        if (!mainOutput) {
+    case FieldGroupId::Output: {
+        const auto* output = std::get_if<OutputFieldGroup>(&payload);
+        if (!output) {
             AddDiagnostic(diagnostics, DiagnosticCode::PayloadGroupMismatch, group);
             break;
         }
-        if (harkenstudio::IsNull(mainOutput->mainOutputBusRef))
+        if (harkenstudio::IsNull(output->outputBusRef))
             AddDiagnostic(diagnostics, DiagnosticCode::EmptyRequiredReference,
-                          group, "mainOutputBusRef");
-        if (!std::isfinite(mainOutput->outputBusVolume))
+                          group, "outputBusRef");
+        if (!std::isfinite(output->outputBusVolume))
             AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue,
                           group, "outputBusVolume");
         break;
@@ -299,7 +299,7 @@ std::vector<FieldGroupDiagnostic> ValidateDefinitionFieldGroups(
     const DefinitionFieldGroups& groups, AuthoringGuid definition)
 {
     Diagnostics diagnostics;
-    ValidateAuthoredGroup(groups.mainOutput, FieldGroupId::MainOutput,
+    ValidateAuthoredGroup(groups.output, FieldGroupId::Output,
                           definition, diagnostics);
     ValidateAuthoredGroup(groups.send, FieldGroupId::Send, definition, diagnostics);
     ValidateAuthoredGroup(groups.spatialRating, FieldGroupId::SpatialRating,
@@ -350,9 +350,9 @@ std::vector<FieldGroupDiagnostic> FieldGroupReferenceCatalog::Validate(
         }
     };
     switch (group) {
-    case FieldGroupId::MainOutput:
-        validateReference(std::get<MainOutputFieldGroup>(payload).mainOutputBusRef,
-                          FieldGroupReferenceKind::Bus, "mainOutputBusRef");
+    case FieldGroupId::Output:
+        validateReference(std::get<OutputFieldGroup>(payload).outputBusRef,
+                          FieldGroupReferenceKind::Bus, "outputBusRef");
         break;
     case FieldGroupId::Send: {
         std::set<std::pair<AuthoringGuid, harkenprojectschema::SendMode>> seen;
@@ -396,8 +396,8 @@ FieldGroupResolver::FieldGroupResolver(
             diagnostics_.insert(diagnostics_.end(), stateDiagnostics.begin(),
                                 stateDiagnostics.end());
             if (harkenstudio::IsNull(definition.parentGuid)) {
-                ValidateRootGroup(definition.groups->mainOutput,
-                    FieldGroupId::MainOutput, definition.guid, diagnostics_);
+                ValidateRootGroup(definition.groups->output,
+                    FieldGroupId::Output, definition.guid, diagnostics_);
                 ValidateRootGroup(definition.groups->send,
                     FieldGroupId::Send, definition.guid, diagnostics_);
                 ValidateRootGroup(definition.groups->spatialRating,
@@ -461,9 +461,9 @@ FieldGroupResolutionResult FieldGroupResolver::Resolve(
                                       group, scope, {}, {}, {}});
     if (!result.diagnostics.empty()) return result;
     switch (group) {
-    case FieldGroupId::MainOutput:
+    case FieldGroupId::Output:
         return ResolveGroup(definitions_, found->second, scope, group,
-                            &DefinitionFieldGroups::mainOutput);
+                            &DefinitionFieldGroups::output);
     case FieldGroupId::Send:
         return ResolveGroup(definitions_, found->second, scope, group,
                             &DefinitionFieldGroups::send);

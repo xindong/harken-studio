@@ -37,7 +37,7 @@ const std::vector<InspectorSectionInfo>& inspectorSections()
         {PropertySection::Label, PropertyCategory::Basic, "labels", "Label"},
         {PropertySection::Clip, PropertyCategory::Basic, "clips", "Clip"},
         {PropertySection::Custom, PropertyCategory::Basic, "custom", "Custom"},
-        {PropertySection::MainOutput, PropertyCategory::Route, "main_output", "Main Output"},
+        {PropertySection::Output, PropertyCategory::Route, "output", "Output"},
         {PropertySection::Input, PropertyCategory::Route, "inputs", "Input"},
         {PropertySection::Send, PropertyCategory::Route, "send", "Send"},
         {PropertySection::Receive, PropertyCategory::Route, "receive", "Receive"},

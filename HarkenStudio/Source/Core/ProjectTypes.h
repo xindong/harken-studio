@@ -311,7 +311,7 @@ struct SignalChainView
 
     std::vector<QString> breadcrumb;
 
-    // Object that actually declares the main-output bus for `self`, resolved by
+    // Object that actually declares the output bus for `self`, resolved by
     // ReferenceSlotResolution; 0 when nothing along the chain declares one.
     uint32_t busSlotOwnerObjectID = 0;
 

@@ -49,7 +49,7 @@ using FieldGroupEditOperation = std::variant<
 
 struct FieldGroupEditRequest {
     QUuid definition;
-    FieldGroupId group = FieldGroupId::MainOutput;
+    FieldGroupId group = FieldGroupId::Output;
     FieldGroupEditScopes scopes;
     FieldGroupEditOperation operation;
     std::optional<DefinitionFieldGroups> expectedBefore;
@@ -66,7 +66,7 @@ enum class FieldGroupEditDiagnosticCode {
     StaleState,
     InvalidGroups,
     InvalidReference,
-    MainOutputSendConflict,
+    OutputSendConflict,
     MixedSendLists
 };
 

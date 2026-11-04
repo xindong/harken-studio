@@ -688,7 +688,7 @@ bool SignalChainSource::onDisconnect(uint32_t fromId, uint32_t toId,
 }
 
 // Routing semantics mirror the retired topology editor: item->item re-parents
-// (containment), item->bus routes the item's main output (bus_route, upgraded
+// (containment), item->bus routes the item's output (bus_route, upgraded
 // to an override when the item already lives in a parent container), bus->bus
 // creates a send. All edits go through the undo stack.
 BlueprintConnectResult
@@ -862,7 +862,7 @@ SignalChainSource::doConnect(uint32_t fromId, uint32_t toId,
             undoMgr.push(new BlueprintConnectCommand(
                 fromId, toId, BlueprintConnectCommand::Effective::Override));
             undoMgr.endMacro();
-            r.feedback = tr("Existing parent container: routing via main output override.");
+            r.feedback = tr("Existing parent container: routing via output override.");
             r.success = true;
             r.effectiveType = QStringLiteral("override");
             return r;

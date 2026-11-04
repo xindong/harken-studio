@@ -401,7 +401,7 @@ CompileResultV1 CompileCurrentWorldV1(
         setU32(PropertyId::LoopCount, source.loopCount);
         setU32(PropertyId::StreamingMode, source.streamingMode);
         setF32(PropertyId::OutputBusVolume, source.outputBusVolume);
-        setObjectId(PropertyId::MainOutputBusRef, source.mainOutputBusRef);
+        setObjectId(PropertyId::OutputBusRef, source.outputBusRef);
         setF32(PropertyId::SpatialPanning, source.spatial.panning);
         setF32(PropertyId::SpatialSpread, source.spatial.spread);
         setU32(PropertyId::SpatialIs3DEnabled,
@@ -486,9 +486,9 @@ CompileResultV1 CompileCurrentWorldV1(
                     busIds->ids.begin(), busIds->ids.end(), id);
             };
             const auto& chassis = object.chassis();
-            if (!containsBus(chassis.mainOutputBusRef)) {
+            if (!containsBus(chassis.outputBusRef)) {
                 result.status = CompileStatusV1::InvalidProject;
-                result.relatedStableId = chassis.mainOutputBusRef;
+                result.relatedStableId = chassis.outputBusRef;
                 return result;
             }
             for (const auto& send : chassis.sends) {

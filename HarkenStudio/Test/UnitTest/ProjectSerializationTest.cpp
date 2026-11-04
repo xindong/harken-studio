@@ -697,33 +697,33 @@ TEST(ProjectSerialization, ReusedSerializerObservesAuthoringChangesAndOwnsReturn
     item.fieldGroups = VNX::MakeRootFieldGroups({1, 2});
     item.fieldGroups.send.shared.localHistory->sends = {{{3, 4}, -6.0f}, {{5, 6}, -12.0f}};
     compare(true);
-    item.fieldGroups.mainOutput.shared.localHistory->outputBusVolume = -0.0f;
+    item.fieldGroups.output.shared.localHistory->outputBusVolume = -0.0f;
     compare(true);
-    item.fieldGroups.mainOutput.shared.localHistory->outputBusVolume = 0.0f;
+    item.fieldGroups.output.shared.localHistory->outputBusVolume = 0.0f;
     compare(true);
     std::reverse(item.fieldGroups.send.shared.localHistory->sends.begin(),
                  item.fieldGroups.send.shared.localHistory->sends.end());
     compare(true);
-    auto overlay = item.fieldGroups.mainOutput.shared;
+    auto overlay = item.fieldGroups.output.shared;
     overlay.mode = VNX::FieldGroupMode::UseShared;
     overlay.localFields = VNX::FieldGroupFieldMask(
         harkenplayableproperties::PlayablePropertyIdV1::OutputBusVolume);
     overlay.localHistory->outputBusVolume = -3.0f;
-    item.fieldGroups.mainOutput.platforms[{7, 8}] = overlay;
+    item.fieldGroups.output.platforms[{7, 8}] = overlay;
     compare(true);
-    item.fieldGroups.mainOutput.platforms[{7, 8}].localFields =
-        VNX::FieldGroupPropertyMask(VNX::FieldGroupId::MainOutput);
+    item.fieldGroups.output.platforms[{7, 8}].localFields =
+        VNX::FieldGroupPropertyMask(VNX::FieldGroupId::Output);
     compare(true);
-    item.fieldGroups.mainOutput.shared.localHistory->mainOutputBusRef = {9, 10};
+    item.fieldGroups.output.shared.localHistory->outputBusRef = {9, 10};
     compare(true);
-    item.fieldGroups.mainOutput.platforms[{7, 8}].mode = VNX::FieldGroupMode::Inherit;
+    item.fieldGroups.output.platforms[{7, 8}].mode = VNX::FieldGroupMode::Inherit;
     compare(true);
-    item.fieldGroups.mainOutput.platforms.clear();
+    item.fieldGroups.output.platforms.clear();
     compare(true);
-    item.fieldGroups.mainOutput.shared.localHistory->outputBusVolume =
+    item.fieldGroups.output.shared.localHistory->outputBusVolume =
         std::numeric_limits<float>::quiet_NaN();
     compare(false);
-    item.fieldGroups.mainOutput.shared.localHistory->outputBusVolume = 0.0f;
+    item.fieldGroups.output.shared.localHistory->outputBusVolume = 0.0f;
     compare(true);
     item.type = ProjectItem::Type::Action;
     compare(false);

@@ -29,7 +29,7 @@ struct FieldGroupInspectorFieldView {
 
 struct FieldGroupInspectorView {
     QUuid definition;
-    FieldGroupId group = FieldGroupId::MainOutput;
+    FieldGroupId group = FieldGroupId::Output;
     PlatformContext context;
     DefinitionFieldGroups expectedBefore;
     FieldGroupEditScopes editScopes;

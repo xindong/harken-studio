@@ -302,8 +302,8 @@ SlotResolution resolveOutputBusSlot(const ResolutionScope& scope)
         SlotResolution result;
         const auto* effective = effectiveDefinition(scope, result);
         if (!effective) return result;
-        applySource(scope, effective->mainOutputSource, result);
-        result.target = scope.effectiveGroups->objects.at(effective->mainOutput.mainOutputBusRef);
+        applySource(scope, effective->outputSource, result);
+        result.target = scope.effectiveGroups->objects.at(effective->output.outputBusRef);
         return result;
     }
     return resolveSlot(scope, [](const ProjectItem& candidate) {

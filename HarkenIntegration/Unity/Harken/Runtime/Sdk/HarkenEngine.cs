@@ -156,7 +156,7 @@ namespace Harken
         public static VnResult SetBusVolume(VnObjectId busId, float volumeDb, uint rampMs)
             => HarkenNative.Vn_SetBusVolume(busId, volumeDb, rampMs);
 
-        /// <summary>Sets the independent gain on a bus's main output.</summary>
+        /// <summary>Sets the independent gain on a bus's output.</summary>
         public static VnResult SetBusOutputVolume(VnObjectId busId, float volumeDb, uint rampMs)
             => HarkenNative.Vn_SetBusOutputVolume(busId, volumeDb, rampMs);
 

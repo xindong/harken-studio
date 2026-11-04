@@ -79,7 +79,7 @@ to determine whether an object is still live.
 | Parameter | Unit and accepted values |
 | --- | --- |
 | `HarkenAudioSystem.SetMasterVolume` | Linear amplitude: 0 is silence, 1 is unity; finite inputs clamp to `[0, 1]`. |
-| Voice/Bus volume, output volume and Send level | dB: 0 is unity. Native validation governs finite gain and routing constraints. Main-output volume does not change Send levels. |
+| Voice/Bus volume, output volume and Send level | dB: 0 is unity. Native validation governs finite gain and routing constraints. Output volume does not change Send levels. |
 | `Voice.SetPitch` | Playback-rate ratio in `(0, 64]`; 1 preserves the authored rate. |
 | `Voice.SetPan` | `[-1, 1]`: left to right; 0 is center. |
 | `Voice.SetWidth`, `SetSpatializationMix` | `[0, 1]`. Spatialized mono and stereo use the shared spatial matrix. Mix 0 preserves the authored 2D image; Mix 1 uses the point/spread image. Width spreads stereo input columns along the front arc and blends mono toward center. Authored 2D voices store both values without changing their image. |

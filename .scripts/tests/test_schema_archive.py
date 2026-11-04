@@ -111,7 +111,7 @@ class SchemaArchiveTest(unittest.TestCase):
     def test_field_groups_require_explicit_inheritance_values(self) -> None:
         loaded = MODULE["load_tree"]("Editor")
         source = loaded["current"]
-        state = source["$defs"]["fieldGroupSharedMainOutput"]
+        state = source["$defs"]["fieldGroupSharedOutput"]
         self.assertEqual(state["if"]["properties"]["inherit"], {"const": False})
         self.assertEqual(state["then"]["required"], ["values"])
         for invalid in ({"if": {}}, {"then": {}}, {"if": [], "then": {}}):

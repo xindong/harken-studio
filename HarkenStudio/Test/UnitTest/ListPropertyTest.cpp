@@ -49,7 +49,7 @@ public:
 const VNX::PropertySchema& ListHarnessComp::schema()
 {
     static const VNX::PropertySchema s = {
-        { .field="entries", .type=VNX::PropType::List, .label="Entries", .section=VNX::PropertySection::MainOutput,
+        { .field="entries", .type=VNX::PropType::List, .label="Entries", .section=VNX::PropertySection::Output,
           .def=QVariant(QVariantList{}),
           .elementSchema={
               { .field="target", .jsonKey="targetBusId", .type=VNX::PropType::ObjectRef,

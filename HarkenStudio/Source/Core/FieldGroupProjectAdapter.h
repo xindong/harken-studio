@@ -49,10 +49,10 @@ FieldGroupProjectView buildFieldGroupProjectView(
         const ProjectItem&)>& groupsForDefinition);
 
 struct EffectiveDefinitionFieldGroups {
-    MainOutputFieldGroup mainOutput;
+    OutputFieldGroup output;
     SendFieldGroup send;
     SpatialRatingFieldGroup spatialRating;
-    FieldGroupSource mainOutputSource;
+    FieldGroupSource outputSource;
     FieldGroupSource sendSource;
     FieldGroupSource spatialRatingSource;
 };

@@ -95,8 +95,8 @@ std::uint32_t NonCanonicalAbsentField(
         payload.streamingMode != 0) return 5;
     if (absent(PlayablePropertyIdV1::OutputBusVolume) &&
         std::bit_cast<std::uint32_t>(payload.outputBusVolume) != 0) return 6;
-    if (absent(PlayablePropertyIdV1::MainOutputBusRef) &&
-        payload.mainOutputBusRef != harkenstudio::ObjectId{}) return 7;
+    if (absent(PlayablePropertyIdV1::OutputBusRef) &&
+        payload.outputBusRef != harkenstudio::ObjectId{}) return 7;
     if (absent(PlayablePropertyIdV1::Sends) && !payload.sends.empty()) return 8;
     if (absent(PlayablePropertyIdV1::SpatialPanning) &&
         std::bit_cast<std::uint32_t>(payload.spatial.panning) != 0) return 9;

@@ -45,7 +45,7 @@ inline PropertySchema contentObjectInspectorRows(ProjectItem::Type type)
         descriptor.flags.sourceIndicator = false;
         auto position = out.end();
         if (field.referenceRole
-            == harkenplayableproperties::PlayablePropertyReferenceRoleV1::MainOutputBus)
+            == harkenplayableproperties::PlayablePropertyReferenceRoleV1::OutputBus)
             descriptor.refFilter = static_cast<int>(ProjectItem::Type::Bus);
         else if (field.referenceRole
                  == harkenplayableproperties::PlayablePropertyReferenceRoleV1::Attenuation) {

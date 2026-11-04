@@ -50,7 +50,7 @@ public:
 
     uint32_t outputBusId     = 0;
     float    outputBusVolume = 0.0f;
-    harkenstudio::ObjectId mainOutputBusRef{};
+    harkenstudio::ObjectId outputBusRef{};
 
     std::vector<Send> sends;
 
@@ -96,7 +96,7 @@ inline const PropertySchema& VMixNode::schema()
         { .field="makeUpGain", .type=PropType::Float, .label="Make-Up Gain", .section=PropertySection::Playback,
           .unit=" dB", .min=-24.0, .max=24.0, .decimals=1, .flags={.sourceIndicator=true}, .aliases={"makeupgain"},
           .get=VNX_PROP_GET(VMixNode, makeUpGain), .set=VNX_PROP_SET_F(VMixNode, makeUpGain) },
-        { .field="outputBusId", .type=PropType::ObjectRef, .label="Main Output", .section=PropertySection::MainOutput,
+        { .field="outputBusId", .type=PropType::ObjectRef, .label="Target", .section=PropertySection::Output,
           .aliases={"outputbusid"}, .refFilter=static_cast<int>(ProjectItem::Type::Bus),
           .get=[](const VNX::IComponent* c){
               const auto* m = static_cast<const VMixNode*>(c);
@@ -117,18 +117,18 @@ inline const PropertySchema& VMixNode::schema()
               return true;
           },
           .serializeWhen=[](const VNX::IComponent* c){ return static_cast<const VMixNode*>(c)->outputBusId != 0; } },
-        { .field="mainOutputBusRef", .type=PropType::ObjectRef, .label="Output Bus", .section=PropertySection::MainOutput,
+        { .field="outputBusRef", .type=PropType::ObjectRef, .label="Target", .section=PropertySection::Output,
           .flags={.serialize=false},
           .get=[](const VNX::IComponent* c) { return QVariant::fromValue(
-              static_cast<const VMixNode*>(c)->mainOutputBusRef); },
+              static_cast<const VMixNode*>(c)->outputBusRef); },
           .set=[](IComponent* c, const QVariant& v) {
               auto* m = static_cast<VMixNode*>(c);
               if (m->hostItem() && PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(m->hostItem()->type)) return false;
               if (!v.canConvert<harkenstudio::ObjectId>()) return false;
-              m->mainOutputBusRef = v.value<harkenstudio::ObjectId>();
+              m->outputBusRef = v.value<harkenstudio::ObjectId>();
               return true;
           } },
-        { .field="outputBusVolume", .type=PropType::Float, .label="Output Volume", .section=PropertySection::MainOutput,
+        { .field="outputBusVolume", .type=PropType::Float, .label="Volume", .section=PropertySection::Output,
           .unit=" dB", .min=-96.0, .max=24.0, .decimals=1, .aliases={"outputbusvolume"},
           .get=VNX_PROP_GET(VMixNode, outputBusVolume), .set=[](IComponent* c, const QVariant& v) {
               auto* m = static_cast<VMixNode*>(c);

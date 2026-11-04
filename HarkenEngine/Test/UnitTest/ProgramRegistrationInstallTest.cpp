@@ -292,7 +292,7 @@ TEST(ProgramRegistrationInstall, InstallCarriesFoldedAndMappedRouting) {
     ProjectInput in = InstallWorld();
     in.nodes[2].volume = 6.0f;           // Sound gain folds into baseVolumeDb
     in.nodes[2].sends = {harkenprojectschema::Send{harkentest::StudioObjectId(7), 0.5f}};
-    in.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(20);   // resolves as the subject's override
+    in.nodes[2].outputBusRef = harkentest::StudioObjectId(20);   // resolves as the subject's override
 
     const std::optional<SegmentProgram> program = CompileWithRouting(in);
     ASSERT_TRUE(program.has_value());
@@ -323,9 +323,9 @@ TEST(ProgramRegistrationInstall, WideSchemaBusIdsMapIndependently) {
     constexpr VnObjectId kLowSchemaBus = harkentest::ObjectId(1);
     constexpr VnObjectId kHighSchemaBus = harkentest::ObjectId(0x1'0000'0001ull);
     ProjectInput lowInput = InstallWorld();
-    lowInput.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(kLowSchemaBus);
+    lowInput.nodes[2].outputBusRef = harkentest::StudioObjectId(kLowSchemaBus);
     ProjectInput highInput = InstallWorld();
-    highInput.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(kHighSchemaBus);
+    highInput.nodes[2].outputBusRef = harkentest::StudioObjectId(kHighSchemaBus);
     const std::optional<SegmentProgram> lowProgram = CompileWithRouting(lowInput);
     const std::optional<SegmentProgram> highProgram = CompileWithRouting(highInput);
     ASSERT_TRUE(lowProgram.has_value());
@@ -350,7 +350,7 @@ TEST(ProgramRegistrationInstall, SendCountAtResolvedSlotsAccepted) {
     ProjectInput in = InstallWorld();
     in.nodes[2].sends = {harkenprojectschema::Send{harkentest::StudioObjectId(7), 0.5f},
                          harkenprojectschema::Send{harkentest::StudioObjectId(8), 0.25f}};
-    in.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(20);
+    in.nodes[2].outputBusRef = harkentest::StudioObjectId(20);
     const std::optional<SegmentProgram> program = CompileWithRouting(in);
     ASSERT_TRUE(program.has_value());
 
@@ -368,7 +368,7 @@ TEST(ProgramRegistrationInstall, SendCountOverResolvedSlotsRefused) {
     ProjectInput in = InstallWorld();
     in.nodes[2].sends = {harkenprojectschema::Send{harkentest::StudioObjectId(7), 0.5f},
                          harkenprojectschema::Send{harkentest::StudioObjectId(8), 0.25f}};
-    in.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(20);
+    in.nodes[2].outputBusRef = harkentest::StudioObjectId(20);
     const std::optional<SegmentProgram> program = CompileWithRouting(in);
     ASSERT_TRUE(program.has_value());
 
@@ -391,7 +391,7 @@ TEST(ProgramRegistrationInstall, SendCountOverResolvedSlotsRefused) {
 TEST(ProgramRegistrationInstall, SoundSubjectResolvesToItsMappedEngineId) {
     for (const VnSoundId engineSound : {harkentest::ObjectId(1), harkentest::ObjectId(4242)}) {
         ProjectInput in = InstallWorld();
-        in.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(20);
+        in.nodes[2].outputBusRef = harkentest::StudioObjectId(20);
         const std::optional<SegmentProgram> program = CompileWithRouting(in);
         ASSERT_TRUE(program.has_value());
 
@@ -420,7 +420,7 @@ TEST(ProgramRegistrationInstall, SoundSubjectResolvesToItsMappedEngineId) {
 // from becoming a refused play with nothing to attribute it to.
 TEST(ProgramRegistrationInstall, UnmappedSoundSubjectRefused) {
     ProjectInput in = InstallWorld();
-    in.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(20);
+    in.nodes[2].outputBusRef = harkentest::StudioObjectId(20);
     const std::optional<SegmentProgram> program = CompileWithRouting(in);
     ASSERT_TRUE(program.has_value());
 
@@ -465,7 +465,7 @@ TEST(ProgramRegistrationInstall, UnmappedSoundSubjectRefused) {
 TEST(ProgramRegistrationInstall, UnmappedBusRefused) {
     ProjectInput in = InstallWorld();
     in.nodes[2].sends = {harkenprojectschema::Send{harkentest::StudioObjectId(7), 0.5f}};
-    in.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(20);
+    in.nodes[2].outputBusRef = harkentest::StudioObjectId(20);
     const std::optional<SegmentProgram> program = CompileWithRouting(in);
     ASSERT_TRUE(program.has_value());
 
@@ -483,7 +483,7 @@ TEST(ProgramRegistrationInstall, UnmappedBusRefused) {
 
 TEST(ProgramRegistrationInstall, UnmappedResolvedOutputBusRefused) {
     ProjectInput in = InstallWorld();
-    in.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(20);
+    in.nodes[2].outputBusRef = harkentest::StudioObjectId(20);
     const std::optional<SegmentProgram> program = CompileWithRouting(in);
     ASSERT_TRUE(program.has_value());
 
@@ -500,7 +500,7 @@ TEST(ProgramRegistrationInstall, UnmappedResolvedOutputBusRefused) {
 }
 
 TEST(ProgramRegistrationInstall, UnresolvedBusTakesCallerDefaultWithTrace) {
-    ProjectInput in = InstallWorld();  // no mainOutputBusRef: bus is unresolved
+    ProjectInput in = InstallWorld();  // no outputBusRef: bus is unresolved
     const std::optional<SegmentProgram> program = CompileWithRouting(in);
     ASSERT_TRUE(program.has_value());
 
@@ -598,7 +598,7 @@ TEST(ProgramRegistrationInstall, FullCompileRegistrationAndPlayPathProducesAudio
     ASSERT_EQ(Vn_RegisterPCM(kSound, &desc), VN_OK);
 
     ProjectInput input = InstallWorld();
-    input.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(20);
+    input.nodes[2].outputBusRef = harkentest::StudioObjectId(20);
     input.nodes[2].sends = {harkenprojectschema::Send{harkentest::StudioObjectId(7), -6.0f}};
     const FrontEndResult front = CompileFrontEnd(input);
     ASSERT_TRUE(front.ok());
@@ -896,7 +896,7 @@ TEST(ProgramRegistrationInstall, SpatialAndAttenuationRenderBitsAreFrozen) {
 
 TEST(ProgramRegistrationInstall, InstallCarriesSpatialAndResolvedAttenuation) {
     ProjectInput in = InstallWorld();
-    in.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(20);
+    in.nodes[2].outputBusRef = harkentest::StudioObjectId(20);
     in.nodes[2].spatial.panning = -0.5f;
     in.nodes[2].spatial.spread = 0.25f;
     in.nodes[2].spatial.is3DEnabled = true;
@@ -928,7 +928,7 @@ TEST(ProgramRegistrationInstall, InstallCarriesSpatialAndResolvedAttenuation) {
 
 TEST(ProgramRegistrationInstall, UnresolvedAttenuationEmitsNote) {
     ProjectInput in = InstallWorld();
-    in.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(20);
+    in.nodes[2].outputBusRef = harkentest::StudioObjectId(20);
     const std::optional<SegmentProgram> program = CompileWithRouting(in);
     ASSERT_TRUE(program.has_value());
 
@@ -954,7 +954,7 @@ TEST(ProgramRegistrationInstall, UnresolvedAttenuationEmitsNote) {
 
 TEST(ProgramRegistrationInstall, AttenuationTargetUnmappedRefused) {
     ProjectInput in = InstallWorld();
-    in.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(20);
+    in.nodes[2].outputBusRef = harkentest::StudioObjectId(20);
     in.nodes[2].spatial.attenuationRef = harkentest::StudioObjectId(50);
     in.nodes[2].presence.Set(harkenplayableproperties::PlayablePropertyIdV1::SpatialAttenuationRef);
     const std::optional<SegmentProgram> program = CompileWithRouting(in);
@@ -1047,7 +1047,7 @@ TEST(ProgramRegistrationInstall, CompiledDefinitionAttenuationReachesLiveVoice) 
     layer.spatial.attenuationRef = harkentest::StudioObjectId(50);
     layer.spatial.is3DEnabled = true;
     layer.presence.Set(harkenplayableproperties::PlayablePropertyIdV1::SpatialAttenuationRef);
-    in.nodes[2].mainOutputBusRef = harkentest::StudioObjectId(20);
+    in.nodes[2].outputBusRef = harkentest::StudioObjectId(20);
     in.nodes[2].spatial = layer.spatial;
     in.nodes[2].presence.Set(harkenplayableproperties::PlayablePropertyIdV1::SpatialAttenuationRef);
     in.nodes.push_back(layer);

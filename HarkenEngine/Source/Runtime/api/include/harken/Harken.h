@@ -727,7 +727,7 @@ VnResult Vn_SetBusVolume(VnBusId busId, float volumeDb, uint32_t rampMs);
 VnResult Vn_SetBusFilter(VnBusId busId, uint32_t filterKind, float cutoffHz,
                          float q, uint32_t enable01, uint32_t rampMs);
 
-/* Replaces the independent gain on this bus's main output to its parent;
+/* Replaces the independent gain on this bus's output to its parent;
  * on VN_BUS_MASTER it scales the final output. Sends sourced by this bus
  * are unaffected, and ordinary Volume and Variable contributions remain
  * unchanged. volumeDb must convert to a finite non-negative linear gain
@@ -905,7 +905,7 @@ VnResult Vn_SetVoiceFilter(VnVoiceHandle handle, uint32_t filterKind,
                            float cutoffHz, float q, uint32_t enable01,
                            uint32_t rampMs);
 
-/* Replaces the voice's independent main-output gain. Voice sends bypass
+/* Replaces the voice's independent output gain. Voice sends bypass
  * this gain; ordinary Volume and Variable contributions remain unchanged.
  * volumeDb must convert to a finite non-negative linear gain
  * (VN_INVALID_ARG, checked before the handle).
@@ -1933,7 +1933,7 @@ typedef struct VnPackInspectReportV1 {
  * Zero capacities with null arrays query required counts. Otherwise every
  * capacity must suffice; VN_PACK_RESIDENT_CAPACITY writes only the report.
  * Unsupported preview is a successful inspection with zero occurrences.
- * Fixed gain is the authored source/main-output chain, not a mixed DSP result.
+ * Fixed gain is the authored source/output chain, not a mixed DSP result.
  * Only flagged duration/gain fields are known. No decoder pointers escape. */
 VnResult Vn_InspectCanonicalPackV1(const VnPackInspectDescV1* desc,
                                   VnPackInspectReportV1* outReport);

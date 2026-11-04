@@ -470,7 +470,7 @@ void registerMixerActions(ActionManager& mgr,
 
             if (!ProjectManager::instance().upsertSendInternal(srcBusId, targetBusId, level))
                 return {false, {}, "SEND_REJECTED",
-                        QString("Send %1 -> %2 rejected: invalid volume, target, main output conflict, or routing cycle")
+                        QString("Send %1 -> %2 rejected: invalid volume, target, output conflict, or routing cycle")
                             .arg(srcBusName).arg(targetBusId)};
 
             ActionResult r;
@@ -766,7 +766,7 @@ void registerMixerActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "set_output_bus_routing";
-        def.displayName = "Set Main Output Routing";
+        def.displayName = "Set Output Routing";
         def.category = "mixer";
         def.paramSchema = QJsonObject{{"path", "string"}, {"volume_db", "float"}};
         def.undoable = false;
@@ -784,7 +784,7 @@ void registerMixerActions(ActionManager& mgr,
             ProjectItem* item = selected.item;
             if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type))
                 return {false, {}, "FIELD_GROUP_COMMAND_REQUIRED",
-                        "Use field group commands to edit Main Output"};
+                        "Use field group commands to edit Output"};
 
             auto* mcomp = item->comp<VMixNode>();
             if (!mcomp)

@@ -58,7 +58,7 @@ const EffectiveDefinitionFieldGroups* effectiveGroups(
 const FieldGroupSource& routingSource(
     const EffectiveDefinitionFieldGroups& groups, SignalPathEdgeKind kind)
 {
-    return kind == SignalPathEdgeKind::Output ? groups.mainOutputSource : groups.sendSource;
+    return kind == SignalPathEdgeKind::Output ? groups.outputSource : groups.sendSource;
 }
 
 std::optional<float> contentGain(const EffectiveDefinitionFieldGroups& groups,
@@ -66,8 +66,8 @@ std::optional<float> contentGain(const EffectiveDefinitionFieldGroups& groups,
 {
     const auto targetGuid = toFieldGroupGuid(target);
     if (kind == SignalPathEdgeKind::Output)
-        return groups.mainOutput.mainOutputBusRef == targetGuid
-            ? std::optional(groups.mainOutput.outputBusVolume) : std::nullopt;
+        return groups.output.outputBusRef == targetGuid
+            ? std::optional(groups.output.outputBusVolume) : std::nullopt;
     for (const auto& send : groups.send.sends)
         if (send.targetBusID == targetGuid && send.mode == mode) return VMixNode::dbToLinear(send.sendLevel);
     return {};
@@ -435,7 +435,7 @@ SignalPathGainEditSession::SignalPathGainEditSession(
                 observe(snapshotItem(snapshot, guid));
                 if (!targets.emplace(guid, scope).second) continue;
                 state.targets.push_back({guid, scope, state.kind == SignalPathEdgeKind::Output
-                    ? FieldGroupPayload(groups->mainOutput) : FieldGroupPayload(groups->send), editsGain});
+                    ? FieldGroupPayload(groups->output) : FieldGroupPayload(groups->send), editsGain});
             }
         }
         std::set<QUuid> sharedProviders;
@@ -521,9 +521,9 @@ void SignalPathGainEditSession::preview(double value)
             return item.definition == entry.provider;
         })->groups;
         if (state.kind == SignalPathEdgeKind::Output) {
-            auto output = std::get<MainOutputFieldGroup>(entry.payload);
+            auto output = std::get<OutputFieldGroup>(entry.payload);
             if (entry.editGain) output.outputBusVolume = db;
-            writeGainField(groups.mainOutput, entry.scope, output, Property::OutputBusVolume);
+            writeGainField(groups.output, entry.scope, output, Property::OutputBusVolume);
         } else {
             auto sends = std::get<SendFieldGroup>(entry.payload);
             for (auto& send : sends.sends)
@@ -537,7 +537,7 @@ void SignalPathGainEditSession::preview(double value)
         for (const auto& target : state.targets)
             if (target.provider == entry.definition) editedScopes.insert(target.scope);
         if (state.kind == SignalPathEdgeKind::Output)
-            normalizeGainField(entry.groups.mainOutput, Property::OutputBusVolume, editedScopes);
+            normalizeGainField(entry.groups.output, Property::OutputBusVolume, editedScopes);
         else
             normalizeGainField(entry.groups.send, Property::Sends, editedScopes);
     }

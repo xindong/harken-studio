@@ -19,10 +19,10 @@ using Property = harkenplayableproperties::PlayablePropertyIdV1;
 QVariant payloadField(const FieldGroupPayload& payload, Property field)
 {
     switch (field) {
-    case Property::MainOutputBusRef:
-        return fromFieldGroupGuid(std::get<MainOutputFieldGroup>(payload).mainOutputBusRef);
+    case Property::OutputBusRef:
+        return fromFieldGroupGuid(std::get<OutputFieldGroup>(payload).outputBusRef);
     case Property::OutputBusVolume:
-        return std::get<MainOutputFieldGroup>(payload).outputBusVolume;
+        return std::get<OutputFieldGroup>(payload).outputBusVolume;
     case Property::Sends: {
         QVariantList rows;
         for (const auto& row : std::get<SendFieldGroup>(payload).sends) {

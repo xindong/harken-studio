@@ -147,7 +147,7 @@ void PreviewFacts(const ContainerWorldInstallViewV1& view, const PackCanonicalIm
         row.sampleRate = media->sampleRate;
         row.channelCount = media->channelCount;
         float gain = cut.volumeDb + cut.makeUpGainDb + cut.outputBusVolumeDb;
-        if (MainBusGain(init, cut.mainOutputBusRef, gain)) {
+        if (MainBusGain(init, cut.outputBusRef, gain)) {
             const float linear = std::pow(10.0f, gain / 20.0f);
             if (std::isfinite(linear)) {
                 row.flags |= VN_PACK_OCCURRENCE_FIXED_GAIN;

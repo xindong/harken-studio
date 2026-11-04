@@ -70,7 +70,7 @@ void removeReferences(OwnerState& owner, const ProjectPlatformId& id)
 {
     owner.definition.erase(id);
     const auto scope = toFieldGroupGuid(id);
-    owner.fieldGroups.mainOutput.platforms.erase(scope);
+    owner.fieldGroups.output.platforms.erase(scope);
     owner.fieldGroups.send.platforms.erase(scope);
     owner.fieldGroups.spatialRating.platforms.erase(scope);
     for (auto& ledger : owner.clips) ledger.erase(id);
