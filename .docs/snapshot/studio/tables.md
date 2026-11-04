@@ -141,7 +141,7 @@
 |---|---|
 | 位置与列 | Sound、Container、Layer、Track、Segment、Bus 的 Basic > Effect；# / Effect / Level / Active |
 | 类型与增删 | 加号选择 Feedback Delay、Three Band Tone、Gain、Limiter 或 Compressor；减号删除所选行，支持排序及撤销重做 |
-| Effect | 左侧名称、右侧下拉箭头；单击选中行，双击名称或单元格打开 Effect Editor，箭头通过标准 QMenu 替换类型；保留行位置、效果器 GUID、Active、Level，参数重置为新类型默认值 |
+| Effect | 公用 MenuActionButton，主按钮名称左对齐，单击选中行并打开 Effect Editor，右侧下拉箭头通过标准 QMenu 替换类型；保留行位置、效果器 GUID、Active、Level，参数重置为新类型默认值 |
 | Level | 干湿比 0～100%，默认 100%；0% 全干、100% 全湿；仅保存编辑配置并支持撤销，本阶段不参与试听或 Pack 运行时处理 |
 | Active | 新增默认开启，映射现有旁通配置；Bus 沿用既有支持，非 Bus 含关闭项时仍受现有试听／发布能力检查限制 |
 | 配置范围 | 直接编辑当前对象的效果器链，不提供 Inherit 或平台覆盖编辑 |

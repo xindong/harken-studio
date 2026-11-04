@@ -6,8 +6,8 @@
 #include "Core/ProjectManager.h"
 #include "Core/QtControlSkin.h"
 #include "Core/ThemeManager.h"
-#include "Widgets/Common/ElidedLabel.h"
 #include "Widgets/Common/ListFooter.h"
+#include "Widgets/Common/MenuActionButton.h"
 #include "Widgets/Common/ParameterBinding.h"
 #include "Widgets/Common/ParameterSlider.h"
 #include "Widgets/Common/ParameterValueEditor.h"
@@ -21,10 +21,10 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QHBoxLayout>
-#include <QLabel>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPointer>
+#include <QPushButton>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -150,16 +150,6 @@ protected:
         if (auto* row = table_->rowForWidget(widget)) {
             selected_ = row->property("effectGuid").toUuid();
             refreshSelection();
-            if (event->type() == QEvent::MouseButtonDblClick) {
-                if (widget->objectName() == QLatin1String("effectReplace")) return true;
-                if ((widget->objectName() == QLatin1String("effectType")
-                     || widget->objectName() == QLatin1String("effectCell"))
-                    && row->property("effectEditorAvailable").toBool()
-                    && inspector_ && isCurrentContext()) {
-                    inspector_->requestEffectEditor(selected_);
-                    return true;
-                }
-            }
         } else if (!isAncestorOf(widget) && !widget->isAncestorOf(this)
                    && widget->window() == window()) {
             selected_ = QUuid{};
@@ -228,29 +218,6 @@ private:
             });
         }
         menu->popup(add_->mapToGlobal(QPoint(0, add_->height())));
-    }
-
-    void showReplaceMenu(const QUuid& guid, QToolButton* button)
-    {
-        if (!canEdit() || !isCurrentContext()) return;
-        const auto& effects = boundItem()->comp<VMixNode>()->effects.entries();
-        const auto found = std::find_if(effects.begin(), effects.end(),
-            [&guid](const EffectEntry& effect) { return effect.guid == guid; });
-        if (found == effects.end()) return;
-        auto* menu = new QMenu(this);
-        menu->setObjectName(QStringLiteral("effectReplaceMenu"));
-        menu->setAttribute(Qt::WA_DeleteOnClose);
-        effectMenu_ = menu;
-        const uint64_t generation = generation_;
-        for (EffectType type : effectTypes) {
-            auto* action = menu->addAction(EffectChainSemantics::displayName(type));
-            action->setEnabled(type != found->type);
-            connect(action, &QAction::triggered, this, [this, generation, guid, type] {
-                if (generation == generation_ && canEdit() && isCurrentContext())
-                    replaceEffect(guid, type);
-            });
-        }
-        menu->popup(button->mapToGlobal(QPoint(0, button->height())));
     }
 
     void replaceEffect(const QUuid& guid, EffectType type)
@@ -323,7 +290,6 @@ private:
                 auto* row = new QWidget(table_->rowsWidget());
                 row->setObjectName(QStringLiteral("effectRow"));
                 row->setProperty("effectGuid", guid);
-                row->setProperty("effectEditorAvailable", effect.typed && !guid.isNull());
                 row->setProperty("lastRow", index + 1 == effects.size());
                 row->setProperty("searchText", tr("Effects Level Active") + QLatin1Char(' ') + name);
                 auto* rowLayout = new QHBoxLayout(row);
@@ -336,28 +302,32 @@ private:
                 auto* effectCell = table_->createCell(row);
                 effectCell->setObjectName(QStringLiteral("effectCell"));
                 effectCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-                auto* label = new ElidedLabel(name, effectCell);
-                label->setObjectName(QStringLiteral("effectType"));
-                label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-                label->setToolTip(tr("%1\nDouble-click to open Effect Editor").arg(name));
-                label->setEnabled(effect.typed && !guid.isNull());
-                effectCell->addWidget(label);
-                auto* chevron = new QToolButton(effectCell);
+                auto* button = new MenuActionButton(effectCell);
+                auto* primary = button->primaryButton();
+                primary->setObjectName(QStringLiteral("effectType"));
+                primary->setText(name);
+                primary->setToolTip(tr("%1\nOpen Effect Editor").arg(name));
+                primary->setEnabled(effect.typed && !guid.isNull());
+                connect(primary, &QPushButton::clicked, this, [this, generation, guid] {
+                    if (generation == generation_ && inspector_ && isCurrentContext())
+                        inspector_->requestEffectEditor(guid);
+                });
+                auto* chevron = button->dropdownButton();
                 chevron->setObjectName(QStringLiteral("effectReplace"));
-                chevron->setProperty("flatIconButton", true);
-                chevron->setProperty("navigationRole", QStringLiteral("chevron"));
-                chevron->setAutoRaise(true);
-                chevron->setArrowType(Qt::DownArrow);
-                chevron->setCursor(Qt::PointingHandCursor);
                 chevron->setToolTip(tr("Replace Effect"));
                 chevron->setAccessibleName(tr("Replace Effect"));
                 chevron->setEnabled(editable);
-                connect(chevron, &QToolButton::clicked, this,
-                    [this, generation, guid, chevron] {
-                        if (generation == generation_)
-                            showReplaceMenu(guid, chevron);
+                auto* menu = button->menu();
+                menu->setObjectName(QStringLiteral("effectReplaceMenu"));
+                for (EffectType type : effectTypes) {
+                    auto* action = menu->addAction(EffectChainSemantics::displayName(type));
+                    action->setEnabled(type != effect.type);
+                    connect(action, &QAction::triggered, this, [this, generation, guid, type] {
+                        if (generation == generation_ && canEdit() && isCurrentContext())
+                            replaceEffect(guid, type);
                     });
-                effectCell->addWidget(chevron, 0, Qt::AlignRight | Qt::AlignVCenter);
+                }
+                effectCell->addWidget(button);
                 rowLayout->addWidget(effectCell);
 
                 auto* levelCell = table_->createCell(row);

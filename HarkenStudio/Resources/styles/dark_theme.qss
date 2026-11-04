@@ -509,46 +509,47 @@ QWidget#Explorer QTreeWidget#ProjectTreeWidget {
    Buttons
    ========================================================================== */
 
-QPushButton {
+QPushButton,
+QToolButton[splitButtonPart="dropdown"],
+QToolButton[menuActionButtonPart="dropdown"] {
     background-color: @bgHover@;
+    color: @textPrimary@;
+}
+
+QPushButton {
     border: none;
     padding: 4px 16px;
     border-radius: 0px;
-    color: @textPrimary@;
     font-weight: normal;
 }
 
-QPushButton:hover {
+QPushButton:hover,
+QToolButton[splitButtonPart="dropdown"]:hover:enabled,
+QToolButton[menuActionButtonPart="dropdown"]:hover:enabled {
     background-color: @bgTertiary@;
 }
 
-QPushButton:pressed {
+QPushButton:pressed,
+QToolButton[splitButtonPart="dropdown"]:pressed:enabled,
+QToolButton[menuActionButtonPart="dropdown"]:pressed:enabled {
     background-color: @accent@;
     color: @accentText@;
 }
 
-VNX--SplitButton {
-    background-color: @bgHover@;
+VNX--SplitButton,
+VNX--MenuActionButton {
+    background-color: transparent;
 }
 
-QPushButton[splitButtonPart="primary"] {
-    background-color: @bgHover@;
+QPushButton[menuActionButtonPart="primary"] {
+    text-align: left;
+}
+
+QToolButton[splitButtonPart="dropdown"],
+QToolButton[menuActionButtonPart="dropdown"] {
     border: none;
     border-radius: 0;
-    color: @textPrimary@;
-}
-
-QToolButton[splitButtonPart="dropdown"] {
-    border-radius: 0;
-}
-
-QPushButton[splitButtonPart="primary"]:hover:enabled {
-    background-color: @bgTertiary@;
-}
-
-QPushButton[splitButtonPart="primary"]:pressed:enabled {
-    background-color: @accent@;
-    color: @accentText@;
+    padding: 0;
 }
 
 QPushButton[splitButtonPart="primary"][primaryAction="true"]:enabled {
@@ -564,13 +565,8 @@ QPushButton[splitButtonPart="primary"][primaryAction="true"]:pressed:enabled {
     background-color: @accent@;
 }
 
-VNX--SplitButton:disabled,
-QPushButton[splitButtonPart="primary"]:disabled {
-    background-color: @bgSecondary@;
-    color: @textDisabled@;
-}
-
-QFrame[splitButtonPart="divider"] {
+QFrame[splitButtonPart="divider"],
+QFrame[menuActionButtonPart="divider"] {
     background-color: @borderSecondary@;
     border: none;
 }
@@ -1519,7 +1515,9 @@ QLabel[settingsRole="subtitle"] {
     font-size: @captionPointSize@pt;
 }
 
-QPushButton:disabled {
+QPushButton:disabled,
+QToolButton[splitButtonPart="dropdown"]:disabled,
+QToolButton[menuActionButtonPart="dropdown"]:disabled {
     background-color: @bgSecondary@;
     color: @textDisabled@;
     border-color: @borderSecondary@;

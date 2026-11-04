@@ -40,7 +40,7 @@
 | 表格／字段 | 当前行为 |
 |---|---|
 | Effects / 类型与增删 | 加号选择 Feedback Delay、Three Band Tone、Gain、Limiter 或 Compressor；减号删除选中行；增删与排序支持撤销和重做 |
-| Effects / Effect | 左侧显示效果器名称，右侧为下拉箭头；单击选中行，双击名称或单元格打开对应 Effect Editor，箭头通过标准 QMenu 替换效果器类型 |
+| Effects / Effect | 使用公用 MenuActionButton；主按钮名称左对齐，单击选中行并打开对应 Effect Editor，右侧下拉箭头通过标准 QMenu 替换效果器类型 |
 | Effects / 替换 | 保留行位置、效果器 GUID、Active 和 Level；参数重置为新类型默认值 |
 | Effects / Level | 干湿比范围 0～100%，默认 100%；0% 全干、100% 全湿；随工程保存并支持撤销，本阶段仅作为编辑配置，不参与试听或 Pack 运行时处理 |
 | Effects / Active | 新增默认开启，映射现有旁通配置；Bus 沿用既有支持，非 Bus 含关闭项时仍受现有试听／发布能力检查限制 |
