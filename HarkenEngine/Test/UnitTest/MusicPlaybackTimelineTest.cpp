@@ -204,5 +204,17 @@ TEST(MusicPlaybackTimeline, LastRepresentablePassDoesNotRequireARepresentableFut
         ResolveMusicPlaybackPosition(music, c.clock, frame + 41030).status);
     EXPECT_EQ(MusicTimelineStatus::Unrepresentable, ResolveMusicPlaybackBoundary(music, c.clock, c.markers,
         MusicBoundaryKind::ExitCue, 0, frame, 0).status);
+
+    music.playCount = 2;
+    music.contentEnd = INT64_MAX;
+    for (const auto elapsed : {95999u, 96000u, 96001u, 144000u}) {
+        const auto position = ResolveMusicPlaybackPosition(music, c.clock, elapsed);
+        EXPECT_EQ(MusicTimelineStatus::Ok, position.status);
+        EXPECT_EQ(elapsed < 96000 ? MusicPlaybackPhase::Loop : MusicPlaybackPhase::Outro, position.phase);
+        EXPECT_EQ(1u, position.iteration);
+        if (elapsed == 96000) EXPECT_GE(position.position, music.exit);
+    }
+    EXPECT_EQ(MusicTimelineStatus::Unrepresentable, ResolveMusicPlaybackBoundary(music, c.clock, c.markers,
+        MusicBoundaryKind::NaturalEnd, 0, 96000, 0).status);
 }
 } // namespace

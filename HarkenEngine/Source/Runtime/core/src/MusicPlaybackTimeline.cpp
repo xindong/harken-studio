@@ -143,8 +143,11 @@ struct Mapping {
             result.iteration = timeline.playCount - 1u;
             std::uint64_t end = 0;
             result.status = Frame(std::max(timeline.exit, timeline.contentEnd), result.iteration, end);
-            if (result.status != MusicTimelineStatus::Ok) return result;
-            result.phase = elapsed >= end ? MusicPlaybackPhase::Ended : MusicPlaybackPhase::Outro;
+            if (result.status != MusicTimelineStatus::Ok &&
+                result.status != MusicTimelineStatus::Unrepresentable) return result;
+            result.phase = result.status == MusicTimelineStatus::Ok && elapsed >= end
+                ? MusicPlaybackPhase::Ended : MusicPlaybackPhase::Outro;
+            result.status = MusicTimelineStatus::Ok;
             if (result.phase == MusicPlaybackPhase::Ended) {
                 result.position = std::max(timeline.exit, timeline.contentEnd);
                 return result;
