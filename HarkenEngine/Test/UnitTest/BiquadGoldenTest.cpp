@@ -769,6 +769,33 @@ TEST(BiquadGolden, FiniteOverflowRetainsHistoryAndEventuallyRecovers) {
     }
 }
 
+TEST(BiquadGolden, InvalidInnovationsPreserveFiniteHistory) {
+    const auto c = harken::MakeLowShelf(kRate, 1000.0f, 1.0f, 48.0f);
+    const float faults[] = {std::numeric_limits<float>::quiet_NaN(),
+        std::numeric_limits<float>::infinity(),
+        -std::numeric_limits<float>::infinity()};
+    for (float seed : {0.125f, (std::numeric_limits<float>::max)()}) {
+        for (float fault : faults) {
+            BiquadState state;
+            harken::SeedBiquadStateForDc(state, c, seed);
+            ASSERT_NE(0.0, state.Z1());
+            auto reference = state;
+            (void)harken::BiquadTick(c, reference, 0.0f);
+            const float output = harken::BiquadTick(c, state, fault);
+            if (std::isnan(fault)) EXPECT_TRUE(std::isnan(output));
+            else EXPECT_EQ(fault, output);
+            ASSERT_TRUE(std::isfinite(state.Z1()));
+            ASSERT_TRUE(std::isfinite(state.Z2()));
+            EXPECT_DOUBLE_EQ(reference.Z1(), state.Z1());
+            EXPECT_DOUBLE_EQ(reference.Z2(), state.Z2());
+            for (unsigned i = 0; i < 32; ++i) {
+                EXPECT_EQ(harken::BiquadTick(c, reference, 0.125f),
+                          harken::BiquadTick(c, state, 0.125f));
+            }
+        }
+    }
+}
+
 TEST(BiquadGolden, WideDcSeedSurvivesTransitionCopyAndReset) {
     const auto c = harken::MakeLowShelf(kRate, 1000.0f, 1.0f, 48.0f);
     const float input = (std::numeric_limits<float>::max)();
