@@ -255,8 +255,11 @@ TEST(CurrentWorldCompiler, RuntimeEntry19RoundtripCannotEnableShippingOrInstalla
                              harken::CurrentWorldDecodeMode::StrictArtifact));
     EXPECT_FALSE(wrong.Decode(bytes.data(), bytes.size() - 1, 19,
                              harken::CurrentWorldDecodeMode::StrictArtifact));
-    EXPECT_FALSE(wrong.Decode(bytes.data(), bytes.size(), 19,
-                             harken::CurrentWorldDecodeMode::ReplayCurrentAttempt));
+    harken::CurrentWorldBodyImage attempt;
+    ASSERT_TRUE(attempt.Decode(bytes.data(), bytes.size(), 19,
+                               harken::CurrentWorldDecodeMode::ReplayCurrentAttempt));
+    EXPECT_EQ(harken::WorldInstallStatus::CapabilityUnavailable,
+              harken::ValidateCurrentWorldV1(*attempt.ProductionView()));
     auto disguised = decoded;
     disguised.sourceBodyVintage = 18;
     EXPECT_FALSE(harken::EncodeCurrentWorldShippingBody(disguised, again));

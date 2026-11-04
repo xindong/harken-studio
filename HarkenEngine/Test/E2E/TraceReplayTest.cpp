@@ -907,7 +907,9 @@ TEST(TraceReplayE2E,
     }
 }
 
-TEST(TraceReplayE2E, CurrentWorldV20InternalInstallAndRefusalPreserveVintage) {
+TEST(TraceReplayE2E, CurrentWorldInternalInstallAndRefusalPreserveVintage) {
+    for (const auto vintage : {harken::kCurrentWorldBodyVintageV19, harken::kCurrentWorldBodyVintageV20}) {
+    SCOPED_TRACE(vintage);
     const std::string tracePath = TempPath("current_world_v20_internal.vtrc");
     std::filesystem::remove(tracePath);
     {
@@ -915,9 +917,15 @@ TEST(TraceReplayE2E, CurrentWorldV20InternalInstallAndRefusalPreserveVintage) {
         ASSERT_EQ(VN_OK, session.InitResult());
         ASSERT_EQ(VN_OK, Vn_TraceStart(tracePath.c_str()));
         harken::ContainerWorldInstallViewV1 world{};
-        world.sourceBodyVintage = harken::kCurrentWorldBodyVintageV20;
-        world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV7(world);
-        ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        world.sourceBodyVintage = vintage;
+        if (vintage == harken::kCurrentWorldBodyVintageV19)
+            world.identity.capabilityMask = harken::kWorldCapabilityEntryScheduling;
+        world.identity.runtimeSemanticFingerprint = vintage == harken::kCurrentWorldBodyVintageV20
+            ? harken::ComputeCurrentWorldFingerprintV7(world)
+            : harken::ComputeCurrentWorldFingerprintV6(world);
+        ASSERT_EQ(vintage == harken::kCurrentWorldBodyVintageV19
+                      ? harken::WorldInstallStatus::CapabilityUnavailable
+                      : harken::WorldInstallStatus::Ok,
                   harken::InstallContainerWorldV1(*session.Engine(), world).status);
         ++world.identity.runtimeSemanticFingerprint;
         ASSERT_EQ(harken::WorldInstallStatus::InvalidWorld,
@@ -926,6 +934,7 @@ TEST(TraceReplayE2E, CurrentWorldV20InternalInstallAndRefusalPreserveVintage) {
     }
     const HostRun replay = RunHost("trace-replay " + tracePath);
     EXPECT_EQ(0, replay.exitCode) << replay.output;
+    }
 }
 
 TEST(TraceReplayE2E,

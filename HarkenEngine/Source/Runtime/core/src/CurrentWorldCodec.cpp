@@ -1652,6 +1652,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
     }
     if (!IsReadableCurrentWorldBodyVintage(worldTraceVintage) || replayRawAttempt ||
         (replayCurrentAttempt && worldTraceVintage != kCurrentWorldShippingBodyVintage &&
+         worldTraceVintage != kCurrentWorldBodyVintageV19 &&
          worldTraceVintage != kCurrentWorldBodyVintageV20)) {
         return CurrentWorldBodyDecodeResult::Invalid;
     }
