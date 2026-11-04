@@ -15,11 +15,11 @@
     },
     "Track": {
       "title": "Track",
-      "body": "在一条时间轴上编排 Sound、Container 或 Segment 片段。各片段在指定时间起播，播放行为由子对象自身设置决定；重叠片段同时播放。"
+      "body": "\u5728\u7236\u7ea7 Segment \u7684\u65f6\u949f\u57df\u4e0b\u7f16\u6392 Sound\u3001Container \u6216 Segment \u7247\u6bb5\u3002\u7247\u6bb5\u4f4d\u7f6e\u548c\u65f6\u957f\u4f7f\u7528\u79d2\u6216\u97f3\u4e50\u8282\u62cd\uff1b\u91cd\u53e0\u7247\u6bb5\u540c\u65f6\u64ad\u653e\u3002"
     },
     "Segment": {
       "title": "Segment",
-      "body": "在共同的时间轴上对齐多条 Track，并提供 Entry、Exit 和 Custom 标记点控制播放时机。当前支持绝对时间编辑，已有的音乐时间轴只读。"
+      "body": "\u5728\u5171\u540c\u7684\u97f3\u4e50\u65f6\u95f4\u8f74\u4e0a\u5bf9\u9f50\u591a\u6761 Track\uff0c\u63d0\u4f9b Tempo \u548c Time Signature\u3002\u540c\u65f6\u663e\u793a Time \u4e0e Clock \u4e24\u884c\u523b\u5ea6\uff0c\u9009\u62e9\u4e3b\u8f74\u540e\uff0c\u7f51\u683c\u4e0e\u5438\u9644\u968f\u4e4b\u5207\u6362\u4e3a\u65f6\u95f4\u6216\u8282\u62cd\u3002\u65b0\u5efa Segment \u7684\u521d\u59cb\u65f6\u95f4\u8f74\u4e3a 10 \u79d2\uff0c\u5728\u8d77\u70b9\u9884\u7f6e Entry Marker\uff0c\u5728\u672b\u5c3e\u9884\u7f6e Exit Marker\u3002"
     },
     "Layer": {
       "title": "Layer",

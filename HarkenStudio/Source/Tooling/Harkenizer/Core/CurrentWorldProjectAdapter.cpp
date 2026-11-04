@@ -651,8 +651,7 @@ bool appendBasicTransitionProgram(
         return true;
     auto absoluteDefault = canonicalTransitionTable();
     absoluteDefault.rules.front().exitTiming = TransitionExitTiming::Immediate;
-    if (selection.transitions == canonicalTransitionTable()
-        || selection.transitions == absoluteDefault) return true;
+    if (selection.transitions == absoluteDefault) return true;
     const TransitionValidation validation = selection.transitions.validate();
     if (!validation) {
         setError(error, validation.message);

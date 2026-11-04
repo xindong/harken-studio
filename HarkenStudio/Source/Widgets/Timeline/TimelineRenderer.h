@@ -111,8 +111,8 @@ struct TimelineCrossfadeRegion
 enum class TimelineMarkerShape : uint8_t
 {
     Line = 0,
-    EntryFlag,
-    ExitFlag,
+    EntryHandle,
+    ExitHandle,
     Diamond
 };
 
@@ -121,12 +121,12 @@ struct TimelineMarker
     int x = 0;
     int height = 0;
     QString label;
-    QString tooltip;
     MarkerKind kind = MarkerKind::Custom;
     TimelineMarkerShape shape = TimelineMarkerShape::Line;
     QColor color;
     int labelMaxWidth = 0;
     bool selected = false;
+    bool hovered = false;
 };
 
 struct TimelineNominalBar
@@ -139,6 +139,7 @@ struct TimelineCursor
 {
     bool visible = false;
     int x = 0;
+    bool highlighted = false;
 };
 
 struct TimelinePlayhead
@@ -176,6 +177,7 @@ struct TimelineRenderData
     QVector<AmplitudeAxisTick> amplitudeTicks;
     TimeAxisTicks timeAxis;
     bool frameless = false;
+    bool bottomBorder = false;
     QVector<TimelineSemanticBand> semanticBands;
     QVector<TimelineClipItem> clipItems;
     QVector<TimelineCrossfadeRegion> crossfadeRegions;
@@ -193,10 +195,13 @@ class TimelineRenderer
 {
 public:
     static int clipTitleHeight(const ThemeMetrics& metrics);
+    static QRect markerHandleRect(int x, int height, TimelineMarkerShape shape);
     static void render(QPainter& painter,
                        const TimelineStyleView& style,
                        const TimelineRenderData& data);
     static void drawVerticalLine(QPainter& painter, const QColor& color, int x, const QRect& bounds);
+    static void drawCursorLine(QPainter& painter, const QColor& color, int x, const QRect& bounds);
+    static void drawCursorHandle(QPainter& painter, const QColor& color, const QRect& bounds);
     static void drawTickSet(QPainter& painter,
                             const TimelineStyleView& style,
                             const TimelineTickSet& ticks,

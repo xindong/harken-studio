@@ -626,6 +626,8 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
                                         kQueueSoundContainerObjectId);
     ASSERT_NO_FATAL_FAILURE(prepareContainer(queueSoundContainer,
                                              VNX::SelectionMode::Sequence, VNX::SelectionPlayType::Queue));
+    queueSoundContainer->comp<VNX::VSelection>()->transitions.rules.front().exitTiming =
+        VNX::TransitionExitTiming::Immediate;
     addChild(layer, queueSoundContainer);
     ASSERT_NO_FATAL_FAILURE(attachPlayableSound(queueSoundContainer, queueSoundChild,
                                                 kQueueSoundSourceId));
@@ -642,6 +644,8 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
                                         kQueueTrackContainerObjectId);
     ASSERT_NO_FATAL_FAILURE(prepareContainer(queueTrackContainer,
                                              VNX::SelectionMode::Sequence, VNX::SelectionPlayType::Queue));
+    queueTrackContainer->comp<VNX::VSelection>()->transitions.rules.front().exitTiming =
+        VNX::TransitionExitTiming::Immediate;
     addChild(layer, queueTrackContainer);
     std::shared_ptr<VNX::ProjectItem> queueTrack;
     ASSERT_NO_FATAL_FAILURE(makeTrackWithSound(
@@ -665,6 +669,8 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
                                         kQueueSegmentContainerObjectId);
     ASSERT_NO_FATAL_FAILURE(prepareContainer(queueSegmentContainer,
                                              VNX::SelectionMode::Sequence, VNX::SelectionPlayType::Queue));
+    queueSegmentContainer->comp<VNX::VSelection>()->transitions.rules.front().exitTiming =
+        VNX::TransitionExitTiming::Immediate;
     addChild(layer, queueSegmentContainer);
     std::shared_ptr<VNX::ProjectItem> queueSegment;
     ASSERT_NO_FATAL_FAILURE(makeSegmentWithSound(

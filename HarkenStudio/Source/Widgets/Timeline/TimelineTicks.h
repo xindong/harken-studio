@@ -19,6 +19,7 @@ struct TimelineTick
     bool major = false;
     bool labeled = false;
     QString label;
+    bool beat = false;
 };
 
 struct TimelineTickSet
@@ -30,6 +31,7 @@ struct TimelineTickSet
 
 int64_t timelineCoordinateUnit(const SegmentTimeSpec& spec);
 int64_t timelineSnapGrid(const SegmentTimeSpec& spec);
+QString formatTimelineBar(int64_t coordinate, const SegmentTimeSpec& spec);
 
 TimelineTickSet buildTimelineTicks(const SegmentTimeSpec& spec,
                                    int64_t viewOrigin,

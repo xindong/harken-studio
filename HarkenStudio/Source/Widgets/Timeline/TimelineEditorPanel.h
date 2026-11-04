@@ -26,6 +26,7 @@ class QObject;
 class QResizeEvent;
 class QLabel;
 class QDoubleSpinBox;
+class QComboBox;
 class QDialog;
 class QFrame;
 class QHBoxLayout;
@@ -35,6 +36,7 @@ class QSpinBox;
 class QStackedWidget;
 class QToolButton;
 class QTimer;
+class QMenu;
 class QVBoxLayout;
 class QWheelEvent;
 
@@ -53,6 +55,7 @@ class TimelineEditorPanel final : public QWidget
 
 public:
     enum class ViewKind { Empty, Track, Segment, Unsupported };
+    enum class AxisMode { Time, Clock };
 
     explicit TimelineEditorPanel(QWidget* parent = nullptr,
                                  ThemeManager* themeManager = nullptr);
@@ -102,11 +105,17 @@ public:
     double amplitudeExponent() const { return amplitudeExponent_; }
     void setAmplitudeExponent(double exponent);
     TimeAxisTicks timeTicks() const;
+    AxisMode axisMode() const;
+    void setAxisMode(AxisMode mode);
     int64_t viewOriginCoordinate() const;
     int64_t editCursor() const { return editCursor_; }
     bool isEditCursorVisible() const { return editCursorVisible_ && hasTimeline(); }
     void setEditCursorVisible(bool visible);
     bool isCursorDragActive() const { return cursorDrag_.has_value(); }
+    bool hitsEditCursor(int viewportX) const;
+    bool isCursorHovered() const { return cursorHovered_; }
+    void setCursorHovered(bool hovered);
+    QString cursorTooltip() const;
     void beginCursorDrag(int canvasX, bool disableSnap, bool locate);
     void updateCursorDrag(int canvasX, bool disableSnap);
     void endCursorDrag(bool cancel = false);
@@ -135,6 +144,21 @@ public:
     QString markerName(int index) const;
     int64_t markerPosition(int index) const;
     int64_t markerDisplayPosition(int index) const;
+    QUuid hoveredMarkerGuid() const;
+    QUuid markerAtViewportPixel(int x) const;
+    void setHoveredMarker(const QUuid& guid);
+    bool isMarkerDragActive() const { return markerDrag_.has_value(); }
+    bool isMarkerDragging() const { return markerDrag_ && markerDrag_->moved; }
+    QUuid draggingMarkerGuid() const;
+    int64_t markerDragPreviewPosition() const;
+    void beginMarkerDrag(const QUuid& guid, int viewportX, bool disableSnap);
+    void updateMarkerDrag(int viewportX, bool disableSnap);
+    void endMarkerDrag(bool cancel = false);
+    QString markerTooltip(const QUuid& guid) const;
+    void editMarkerValue(const QUuid& guid);
+    QMenu* createMarkerContextMenu(const QUuid& guid, QWidget* parent = nullptr);
+    void showMarkerContextMenu(const QUuid& guid, const QPoint& globalPos);
+    void cancelMarkerInteraction();
     QUuid selectedMarkerGuid() const { return selectedMarkerGuid_; }
     void setSelectedMarker(const QUuid& guid);
     bool hasMarkerKind(MarkerKind kind) const;
@@ -209,6 +233,7 @@ public slots:
     void refreshTimelinePaint();
 
 signals:
+    void markerDragFinished();
     void cursorDragFinished();
     void panelFocused(int panelId);
     void pinToggled(bool pinned);
@@ -242,8 +267,15 @@ private:
         NanosecondPosition start;
         double span;
         int width;
-        QFontMetrics fontMetrics;
-        TimeAxisTicks ticks;
+        QFontMetrics secondsFontMetrics;
+        QFontMetrics clockFontMetrics;
+        SegmentTimeSpec time;
+        int labelSpacing;
+        int tickSpacing;
+        TimeAxisTicks seconds;
+        TimeAxisTicks clock;
+        int64_t secondsGrid = 1;
+        int64_t clockGrid = 1;
     };
 
     struct CursorDrag {
@@ -259,6 +291,17 @@ private:
         int width;
     };
 
+    struct MarkerDrag {
+        QUuid guid;
+        int pressX = 0;
+        int pointerX = 0;
+        int grabOffset = 0;
+        bool disableSnap = false;
+        bool moved = false;
+        int64_t originalPosition = 0;
+        int64_t previewPosition = 0;
+    };
+
     struct LaneResizeDrag {
         int lane;
         int pointerY;
@@ -267,10 +310,18 @@ private:
     };
 
     void restoreViewport(const QVariantMap& state);
+    void refreshTickCache() const;
+    int markerIndex(const QUuid& guid) const;
+    QString markerCaption(const QUuid& guid) const;
+    int64_t clampMarkerPosition(const QUuid& guid, int64_t position) const;
+    void applyMarkerDrag();
+    void scrollMarkerDrag();
+    void showMarkerValue();
     void applyCursorDrag();
     void scrollCursorDrag();
     void rebuild();
     void rebuildTimelinePage();
+    void refreshTimeControls();
     void refreshLaneChrome();
     void syncLaneGeometry();
     void updateLaneResizeBars();
@@ -312,6 +363,8 @@ private:
     mutable std::optional<TimelineSpan> contentBounds_;
     mutable QHash<QUuid, ProjectItem*> clipTargets_;
     mutable std::optional<TimeTickCache> timeTickCache_;
+    AxisMode axisMode_ = AxisMode::Time;
+    std::optional<SegmentTimeSpec> presentedTime_;
     std::vector<DrillFrame> drillPath_;
     QString lastInteractionError_;
     QString statusMessage_;
@@ -327,7 +380,8 @@ private:
     std::optional<LaneResizeDrag> laneResizeDrag_;
     std::optional<HeaderResizeDrag> headerResizeDrag_;
     int64_t editCursor_ = 0;
-    bool editCursorVisible_ = false;
+    bool editCursorVisible_ = true;
+    bool cursorHovered_ = false;
     std::optional<CursorDrag> cursorDrag_;
     QPointer<QDialog> cursorValueEditor_;
     QTimer* cursorEdgeScroll_ = nullptr;
@@ -343,6 +397,10 @@ private:
     QFrame* laneHeaderResizeBar_ = nullptr;
     QFrame* laneHeaderDivider_ = nullptr;
     QWidget* toolbar_ = nullptr;
+    QWidget* timeControls_ = nullptr;
+    QDoubleSpinBox* tempoSpin_ = nullptr;
+    QSpinBox* meterNumeratorSpin_ = nullptr;
+    QComboBox* meterDenominatorCombo_ = nullptr;
     QToolButton* addTrackButton_ = nullptr;
     QToolButton* zoomOutButton_ = nullptr;
     QToolButton* zoomInButton_ = nullptr;
@@ -351,6 +409,11 @@ private:
     QToolButton* verticalZoomOutButton_ = nullptr;
     QScrollBar* verticalScrollBar_ = nullptr;
     QUuid selectedMarkerGuid_;
+    QUuid hoveredMarkerGuid_;
+    std::optional<MarkerDrag> markerDrag_;
+    QTimer* markerEdgeScroll_ = nullptr;
+    QLabel* markerValue_ = nullptr;
+    QPointer<QDialog> markerValueEditor_;
     QUuid selectedLaneGuid_;
     QVariantMap pendingRestoreState_;
     TimelineRuler* ruler_ = nullptr;

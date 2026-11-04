@@ -120,11 +120,11 @@ ThemeSnapshot createBuiltinDarkTheme()
     metrics.parameter.sliderHandleLength = 14;
     metrics.timeline.laneHeaderWidth = 200;
     metrics.timeline.laneHeaderMinimumWidth = 140;
-    metrics.timeline.laneHeight = 52;
+    metrics.timeline.laneHeight = 112;
     metrics.timeline.blankRowHeight = 42;
     metrics.timeline.laneSpacing = 1;
     metrics.timeline.rulerHeight = 28;
-    metrics.timeline.markerLaneHeight = 14;
+    metrics.timeline.markerLaneHeight = 12;
     metrics.timeline.tickLength = 5;
     metrics.timeline.majorTickLength = 10;
     metrics.timeline.minLabelSpacing = 48;
@@ -544,8 +544,8 @@ ThemeSnapshot createBuiltinDarkTheme()
     domains.blueprint.send = QColor(0xFF, 0x4D, 0x8F);
     domains.blueprint.overrideRoute = QColor(0xFF, 0x98, 0x00);
 
-    domains.timeline.entry = QColor(74, 189, 128);
-    domains.timeline.exit = QColor(228, 112, 97);
+    domains.timeline.entry = QColor(0xFF, 0xCA, 0x28);
+    domains.timeline.exit = colors.error;
     domains.timeline.transition = QColor(232, 184, 74);
     domains.timeline.clip = QColor(54, 105, 168);
     domains.timeline.clipSelected = QColor(62, 142, 247);
@@ -574,7 +574,7 @@ ThemeSnapshot createBuiltinDarkTheme()
     }};
     domains.music.beatGridMajor = QColor(0xFF, 0xFF, 0xFF, 0x30);
     domains.music.beatGridMinor = QColor(0xFF, 0xFF, 0xFF, 0x12);
-    domains.music.cursor = QColor(0xFF, 0xFF, 0xFF);
+    domains.music.cursor = colors.success;
     domains.music.loopRegion = QColor(0x00, 0xF0, 0xFF, 0x28);
 
     domains.log.debug = QColor(0x80, 0x80, 0x80);
@@ -858,8 +858,8 @@ ThemeSnapshot createBuiltinLightTheme()
     blueprint.overrideRoute = QColor("#B36C00");
 
     auto& timeline = domains.timeline;
-    timeline.entry = QColor("#278250");
-    timeline.exit = QColor("#C05242");
+    timeline.entry = QColor("#A88214");
+    timeline.exit = colors.error;
     timeline.transition = QColor("#A87312");
     timeline.clip = QColor("#C6DDF0");
     timeline.clipSelected = QColor("#77AED8");
@@ -879,7 +879,7 @@ ThemeSnapshot createBuiltinLightTheme()
     }};
     domains.music.beatGridMajor = QColor("#40506174");
     domains.music.beatGridMinor = QColor("#20506174");
-    domains.music.cursor = colors.textPrimary;
+    domains.music.cursor = colors.success;
     domains.music.loopRegion = QColor("#28007B8B");
 
     domains.log.debug = colors.textMuted;

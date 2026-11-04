@@ -25,6 +25,22 @@ QColor withOpacity(QColor color, qreal opacity)
     return color;
 }
 
+struct CursorStroke
+{
+    qreal center;
+    qreal width;
+};
+
+CursorStroke cursorStroke(const QPainter& painter, int x)
+{
+    const QTransform transform = painter.deviceTransform();
+    const qreal scale = transform.m11();
+    const int width = std::max(1, int(std::lround(scale)));
+    const qreal position = transform.map(QPointF(x + 0.5, 0)).x();
+    const qreal center = width % 2 ? std::floor(position) + 0.5 : std::round(position);
+    return {(center - transform.dx()) / scale, width / scale};
+}
+
 QColor clipFill(const TimelineClipItem& item, const TimelineStyleView& style)
 {
     const QColor base = item.objectColor.isValid() ? item.objectColor : style.timeline.clip;
@@ -87,7 +103,7 @@ void drawGrid(QPainter& painter,
 {
     if (!data.timeAxis.ticks.isEmpty()) {
         drawTimeAxisGrid(painter, style.curve.colors.grid, data.viewport, data.timeAxis,
-            withOpacity(style.curve.colors.grid, 0.5));
+            withOpacity(style.curve.colors.grid, 0.5), withOpacity(style.curve.colors.grid, 0.75));
         painter.save();
         painter.setRenderHint(QPainter::Antialiasing, false);
         painter.setPen(style.curve.colors.grid);
@@ -305,18 +321,18 @@ QColor markerColor(const TimelineStyleView& style, const TimelineMarker& marker)
     return style.timeline.transition;
 }
 
-void drawMarkerFlag(QPainter& painter, const TimelineMarker& marker, const QColor& color)
+void drawMarkerHandle(QPainter& painter, const TimelineMarker& marker, const QColor& color,
+                      const QColor& grooveColor)
 {
     const int x = marker.x;
     const int h = std::max(8, std::min(marker.height, 14));
     QPolygon flag;
     switch (marker.shape) {
-    case TimelineMarkerShape::EntryFlag:
-        flag << QPoint(x, 1) << QPoint(x, h - 1) << QPoint(x + 8, h / 2);
-        break;
-    case TimelineMarkerShape::ExitFlag:
-        flag << QPoint(x, 1) << QPoint(x, h - 1) << QPoint(x - 8, h / 2);
-        break;
+    case TimelineMarkerShape::EntryHandle:
+    case TimelineMarkerShape::ExitHandle:
+        drawTimeAxisHandle(painter, color, grooveColor,
+            TimelineRenderer::markerHandleRect(x, marker.height, marker.shape));
+        return;
     case TimelineMarkerShape::Diamond:
         flag << QPoint(x, 1) << QPoint(x + 5, h / 2)
              << QPoint(x, h - 1) << QPoint(x - 5, h / 2);
@@ -339,25 +355,35 @@ void drawMarkerFlag(QPainter& painter, const TimelineMarker& marker, const QColo
     painter.drawPolygon(flag);
 }
 
-void drawMarker(QPainter& painter, const TimelineMarker& marker, const QColor& color)
+void drawMarker(QPainter& painter, const TimelineMarker& marker, const QColor& color,
+                const QColor& grooveColor)
 {
     painter.save();
-    painter.setRenderHint(QPainter::Antialiasing, marker.shape != TimelineMarkerShape::Line);
-    drawMarkerFlag(painter, marker, color);
+    const QColor handleColor = marker.selected || marker.hovered ? color.lighter(130) : color;
     painter.setRenderHint(QPainter::Antialiasing, false);
-    const int lineAlpha = marker.shape == TimelineMarkerShape::Line
-        ? (marker.selected ? 160 : 90)
-        : (marker.selected ? 255 : 180);
-    painter.setPen(QPen(withOpacity(color, lineAlpha / 255.0), 2));
-    painter.drawLine(marker.x, 1, marker.x, marker.height - 2);
+    if (marker.kind == MarkerKind::Entry || marker.kind == MarkerKind::Exit) {
+        painter.setPen(QPen(handleColor, marker.selected || marker.hovered ? 2 : 1));
+        painter.drawLine(marker.x, 0, marker.x, marker.height - 1);
+    } else {
+        const int lineAlpha = marker.shape == TimelineMarkerShape::Line
+            ? (marker.selected ? 160 : 90)
+            : (marker.selected ? 255 : 180);
+        painter.setPen(QPen(withOpacity(color, lineAlpha / 255.0), 2));
+        painter.drawLine(marker.x, 1, marker.x, marker.height - 2);
+    }
+    painter.setRenderHint(QPainter::Antialiasing, marker.shape == TimelineMarkerShape::Diamond);
+    drawMarkerHandle(painter, marker, handleColor, grooveColor);
     const int labelWidth = marker.labelMaxWidth;
     if (!marker.label.isEmpty() && labelWidth >= 24) {
         painter.setFont(FontManager::instance().getFont(FontRole::Caption));
         painter.setPen(color);
         const QFontMetrics metrics(painter.font());
         const QString elided = metrics.elidedText(marker.label, Qt::ElideRight, labelWidth);
-        painter.drawText(QRect(marker.x + 6, 0, labelWidth, marker.height),
-                         Qt::AlignVCenter | Qt::AlignLeft, elided);
+        const bool leftLabel = marker.shape == TimelineMarkerShape::ExitHandle;
+        const int inset = kTimeAxisHandleWidth + 4;
+        const int labelX = leftLabel ? marker.x - labelWidth - inset : marker.x + inset;
+        painter.drawText(QRect(labelX, 0, labelWidth, marker.height),
+                         Qt::AlignVCenter | (leftLabel ? Qt::AlignRight : Qt::AlignLeft), elided);
     }
     painter.restore();
 }
@@ -367,7 +393,7 @@ void drawMarkers(QPainter& painter,
               const TimelineRenderData& data)
 {
     for (const TimelineMarker& marker : data.markers)
-        drawMarker(painter, marker, markerColor(style, marker));
+        drawMarker(painter, marker, markerColor(style, marker), style.canvasBackground);
 }
 
 void drawPlaceholder(QPainter& painter,
@@ -394,10 +420,52 @@ void TimelineRenderer::drawVerticalLine(QPainter& painter, const QColor& color, 
     painter.restore();
 }
 
+void TimelineRenderer::drawCursorLine(QPainter& painter, const QColor& color, int x, const QRect& bounds)
+{
+    if (!color.isValid() || bounds.isEmpty())
+        return;
+    const auto stroke = cursorStroke(painter, x);
+    painter.save();
+    painter.setClipRect(bounds, Qt::IntersectClip);
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.fillRect(QRectF(stroke.center - stroke.width / 2, bounds.top(),
+        stroke.width, bounds.height()), color);
+    painter.restore();
+}
+
+void TimelineRenderer::drawCursorHandle(QPainter& painter, const QColor& color, const QRect& bounds)
+{
+    if (!color.isValid() || bounds.isEmpty())
+        return;
+    const auto stroke = cursorStroke(painter, bounds.center().x());
+    const QTransform transform = painter.deviceTransform();
+    const qreal halfWidth = (std::round(bounds.width() * transform.m11()) - 1) / (2 * transform.m11());
+    const qreal top = (std::round(transform.map(QPointF(0, bounds.top())).y())
+        + 0.5 - transform.dy()) / transform.m22();
+    const qreal bottom = (std::round(transform.map(QPointF(0, bounds.bottom() + 1)).y())
+        - 0.5 - transform.dy()) / transform.m22();
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(QPen(color.lighter(145), 0));
+    painter.setBrush(color);
+    painter.drawPolygon(QPolygonF{QPointF(stroke.center - halfWidth, top),
+        QPointF(stroke.center + halfWidth, top), QPointF(stroke.center, bottom)});
+    painter.restore();
+}
+
 int TimelineRenderer::clipTitleHeight(const ThemeMetrics& metrics)
 {
     return QFontMetrics(FontManager::instance().getFont(FontRole::Caption)).height()
         + metrics.table.cellPaddingY * 2;
+}
+
+QRect TimelineRenderer::markerHandleRect(int x, int height, TimelineMarkerShape shape)
+{
+    if (shape != TimelineMarkerShape::EntryHandle && shape != TimelineMarkerShape::ExitHandle)
+        return {};
+    const int gripHeight = std::min(height, kTimeAxisHandleBandHeight - 2);
+    return QRect(shape == TimelineMarkerShape::EntryHandle ? x : x - kTimeAxisHandleWidth + 1,
+        0, kTimeAxisHandleWidth, gripHeight);
 }
 
 void TimelineRenderer::render(QPainter& painter,
@@ -424,13 +492,17 @@ void TimelineRenderer::render(QPainter& painter,
         drawClips(painter, style, data);
         drawCrossfades(painter, style, data);
     }
+    if (data.bottomBorder && !data.viewport.isEmpty())
+        painter.fillRect(QRect(data.viewport.left(), data.viewport.bottom(), data.viewport.width(), 1),
+            style.canvasBorder);
     drawMarkers(painter, style, data);
     if (data.nominalBar.visible)
         painter.fillRect(data.nominalBar.rect, style.timeline.entry);
     if (data.editCursor.visible)
-        drawVerticalLine(painter, style.music.cursor, data.editCursor.x, data.viewport);
+        drawCursorLine(painter, data.editCursor.highlighted ? style.music.cursor.lighter(130)
+            : style.music.cursor, data.editCursor.x, data.viewport);
     if (data.playhead.visible)
-        drawVerticalLine(painter, style.music.cursor, data.playhead.x, data.viewport);
+        drawCursorLine(painter, style.music.cursor, data.playhead.x, data.viewport);
     if (data.dropIndicator.visible)
         drawVerticalLine(painter, style.canvasBorder, data.dropIndicator.x, data.viewport);
     if (data.snapGuide.visible) {

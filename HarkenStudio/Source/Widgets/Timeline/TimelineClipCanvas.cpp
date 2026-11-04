@@ -10,9 +10,7 @@
 #include "Core/Timeline/TimelineEditing.h"
 
 #include <QContextMenuEvent>
-#include <QFocusEvent>
 #include <QKeyEvent>
-#include <QLineEdit>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
@@ -20,7 +18,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <vector>
 
 namespace VNX {
 
@@ -30,9 +27,9 @@ TimelineMarkerShape markerShapeForKind(MarkerKind kind)
 {
     switch (kind) {
     case MarkerKind::Entry:
-        return TimelineMarkerShape::EntryFlag;
+        return TimelineMarkerShape::EntryHandle;
     case MarkerKind::Exit:
-        return TimelineMarkerShape::ExitFlag;
+        return TimelineMarkerShape::ExitHandle;
     case MarkerKind::Custom:
         return TimelineMarkerShape::Diamond;
     }
@@ -52,19 +49,17 @@ TimelineMarkerRuler::TimelineMarkerRuler(TimelineEditorPanel* panel, QWidget* pa
         const QUuid guid = panel_->selectedMarkerGuid();
         if (guid.isNull())
             return;
+        for (int index = 0; index < panel_->markerCount(); ++index)
+            if (panel_->markerGuid(index) == guid && panel_->markerKind(index) == MarkerKind::Custom)
+                return;
         if (panel_->deleteMarker(guid))
             panel_->setSelectedMarker(QUuid());
     });
 }
 
-int TimelineMarkerRuler::canvasX(int widgetX) const
-{
-    return widgetX + panel_->horizontalScroll();
-}
-
 int64_t TimelineMarkerRuler::coordinateAtWidgetX(int widgetX) const
 {
-    return panel_->coordinateAtPixel(0, canvasX(widgetX));
+    return panel_->coordinateAtViewportPixel(0, widgetX);
 }
 
 TimelineStyleView TimelineMarkerRuler::styleView() const
@@ -79,6 +74,7 @@ TimelineStyleView TimelineMarkerRuler::styleView() const
     style.trackBackgroundAlt = snapshot->ui.colors.trackBackgroundAlt;
     style.timeline = snapshot->domains.timeline;
     style.music = snapshot->domains.music;
+    style.curve = snapshot->domains.curve;
     style.metrics = snapshot->ui.metrics;
     return style;
 }
@@ -86,50 +82,65 @@ TimelineStyleView TimelineMarkerRuler::styleView() const
 TimelineRenderData TimelineMarkerRuler::buildRenderData() const
 {
     TimelineRenderData data;
-    struct MarkerRow {
-        int index = 0;
-        int x = 0;
-        MarkerKind kind = MarkerKind::Custom;
-        QUuid guid;
-        QString label;
-        QString tooltip;
-        bool selected = false;
-    };
-    std::vector<MarkerRow> rows;
-    rows.reserve(static_cast<size_t>(panel_->markerCount()));
+    data.viewport = rect();
+    data.bottomBorder = true;
+    data.timeAxis = panel_->timeTicks();
+    data.markers.reserve(panel_->markerCount());
     for (int index = 0; index < panel_->markerCount(); ++index) {
-        MarkerRow row;
-        row.index = index;
-        row.guid = panel_->markerGuid(index);
-        row.kind = panel_->markerKind(index);
-        int64_t position = panel_->markerDisplayPosition(index);
-        if (dragging_ && row.guid == activeGuid_)
-            position = previewPosition_;
-        row.x = panel_->pixelAtCoordinate(0, position) - panel_->horizontalScroll();
-        row.selected = row.guid == panel_->selectedMarkerGuid();
-        const QString name = row.kind == MarkerKind::Custom
-            ? panel_->markerName(index) : markerKindName(row.kind);
-        row.label = name.isEmpty() ? tr("Marker") : name;
-        row.tooltip = QStringLiteral("%1 — %2").arg(
-            row.label, panel_->formatCoordinate(0, panel_->markerDisplayPosition(index)));
-        rows.push_back(row);
-    }
-    std::sort(rows.begin(), rows.end(),
-              [](const MarkerRow& left, const MarkerRow& right) { return left.x < right.x; });
-    for (size_t i = 0; i < rows.size(); ++i) {
+        const QUuid guid = panel_->markerGuid(index);
+        const int64_t position = panel_->markerDisplayPosition(index);
         TimelineMarker marker;
-        marker.x = rows[i].x;
+        marker.x = panel_->viewportPixelAtCoordinate(0, position);
         marker.height = height();
-        marker.kind = rows[i].kind;
-        marker.shape = markerShapeForKind(rows[i].kind);
-        marker.label = rows[i].label;
-        marker.tooltip = rows[i].tooltip;
-        marker.selected = rows[i].selected;
-        const int nextX = i + 1 < rows.size() ? rows[i + 1].x : width();
-        marker.labelMaxWidth = std::max(0, nextX - rows[i].x - 8);
+        marker.kind = panel_->markerKind(index);
+        marker.shape = markerShapeForKind(marker.kind);
+        marker.selected = guid == panel_->selectedMarkerGuid();
+        marker.hovered = guid == panel_->hoveredMarkerGuid();
         data.markers.append(marker);
     }
+    std::sort(data.markers.begin(), data.markers.end(),
+        [](const TimelineMarker& left, const TimelineMarker& right) { return left.x < right.x; });
+    data.editCursor.visible = panel_->isEditCursorVisible();
+    data.editCursor.highlighted = panel_->isCursorHovered() || panel_->isCursorDragActive();
+    data.editCursor.x = panel_->viewportPixelAtCoordinate(0, panel_->editCursor());
     return data;
+}
+
+void TimelineMarkerRuler::cancelInteraction()
+{
+    panel_->cancelMarkerInteraction();
+    panel_->endCursorDrag(true);
+    panel_->setCursorHovered(false);
+    unsetCursor();
+    update();
+}
+
+void TimelineMarkerRuler::hideEvent(QHideEvent* event)
+{
+    cancelInteraction();
+    QWidget::hideEvent(event);
+}
+
+void TimelineMarkerRuler::leaveEvent(QEvent* event)
+{
+    panel_->setHoveredMarker({});
+    panel_->setCursorHovered(false);
+    ToolTip::hideText();
+    if (!panel_->isMarkerDragActive() && !panel_->isCursorDragActive())
+        unsetCursor();
+    QWidget::leaveEvent(event);
+}
+
+void TimelineMarkerRuler::keyPressEvent(QKeyEvent* event)
+{
+    if (event->key() == Qt::Key_Escape
+        && (panel_->isMarkerDragActive() || panel_->isCursorDragActive())) {
+        cancelInteraction();
+        panel_->refreshTimelinePaint();
+        event->accept();
+        return;
+    }
+    QWidget::keyPressEvent(event);
 }
 
 void TimelineMarkerRuler::paintEvent(QPaintEvent*)
@@ -145,50 +156,63 @@ void TimelineMarkerRuler::mousePressEvent(QMouseEvent* event)
         QWidget::mousePressEvent(event);
         return;
     }
-    cancelRename();
-    const int index = markerAt(event->position().toPoint());
+    const QPoint point = event->position().toPoint();
+    if (panel_->hitsEditCursor(point.x())) {
+        panel_->cancelMarkerInteraction();
+        panel_->setCursorHovered(true);
+        setFocus();
+        setCursor(Qt::SizeHorCursor);
+        ToolTip::hideText();
+        panel_->beginCursorDrag(point.x(), event->modifiers().testFlag(Qt::AltModifier), false);
+        event->accept();
+        return;
+    }
+    const int index = markerAt(point);
     if (index < 0) {
         panel_->setSelectedMarker(QUuid());
         return;
     }
     setFocus();
-    activeGuid_ = panel_->markerGuid(index);
-    previewPosition_ = panel_->markerPosition(index);
-    pressPos_ = event->position().toPoint();
-    dragArmed_ = true;
-    dragging_ = false;
-    panel_->setSelectedMarker(activeGuid_);
+    panel_->beginMarkerDrag(panel_->markerGuid(index), point.x(),
+        event->modifiers().testFlag(Qt::AltModifier));
+    setCursor(Qt::SizeHorCursor);
     update();
     event->accept();
 }
 
 void TimelineMarkerRuler::mouseMoveEvent(QMouseEvent* event)
 {
-    if (dragArmed_ && (event->buttons() & Qt::LeftButton) && !activeGuid_.isNull()) {
-        if (!dragging_
-            && (event->position().toPoint() - pressPos_).manhattanLength() >= 3)
-            dragging_ = true;
-        if (dragging_) {
-            previewPosition_ = panel_->snapCoordinate(
-                0, coordinateAtWidgetX(event->position().toPoint().x()),
-                event->modifiers().testFlag(Qt::AltModifier));
-            panel_->refreshTimelinePaint();
-            event->accept();
-            return;
-        }
+    const QPoint point = event->position().toPoint();
+    if (panel_->isCursorDragActive() && (event->buttons() & Qt::LeftButton)) {
+        panel_->updateCursorDrag(point.x(), event->modifiers().testFlag(Qt::AltModifier));
+        event->accept();
+        return;
     }
-    const int index = markerAt(event->position().toPoint());
-    if (index >= 0) {
-        const QString name = panel_->markerKind(index) == MarkerKind::Custom
-            ? panel_->markerName(index) : markerKindName(panel_->markerKind(index));
-        const QString label = name.isEmpty() ? tr("Marker") : name;
-        ToolTip::showText(event->globalPosition().toPoint(),
-                           QStringLiteral("%1 — %2").arg(
-                               label,
-                               panel_->formatCoordinate(0, panel_->markerDisplayPosition(index))),
-                           this);
+    if (panel_->isMarkerDragActive() && (event->buttons() & Qt::LeftButton)) {
+        panel_->updateMarkerDrag(point.x(), event->modifiers().testFlag(Qt::AltModifier));
+        event->accept();
+        return;
     }
-    QWidget::mouseMoveEvent(event);
+    updateHover(point);
+    event->accept();
+}
+
+void TimelineMarkerRuler::updateHover(const QPoint& position)
+{
+    const bool cursor = rect().contains(position) && panel_->hitsEditCursor(position.x());
+    const int index = cursor ? -1 : markerAt(position);
+    const QUuid marker = index >= 0 ? panel_->markerGuid(index) : QUuid();
+    const bool changed = panel_->isCursorHovered() != cursor || panel_->hoveredMarkerGuid() != marker;
+    panel_->setCursorHovered(cursor);
+    panel_->setHoveredMarker(marker);
+    setCursor(cursor || !marker.isNull() ? Qt::SizeHorCursor : Qt::ArrowCursor);
+    if (!changed)
+        return;
+    const QString tooltip = cursor ? panel_->cursorTooltip() : panel_->markerTooltip(marker);
+    if (tooltip.isEmpty())
+        ToolTip::hideText();
+    else
+        ToolTip::showText(mapToGlobal(position), tooltip, this);
 }
 
 void TimelineMarkerRuler::mouseReleaseEvent(QMouseEvent* event)
@@ -197,13 +221,19 @@ void TimelineMarkerRuler::mouseReleaseEvent(QMouseEvent* event)
         QWidget::mouseReleaseEvent(event);
         return;
     }
-    const bool wasDragging = dragging_;
-    dragging_ = false;
-    dragArmed_ = false;
-    if (wasDragging && !activeGuid_.isNull()) {
-        panel_->moveMarker(activeGuid_, previewPosition_,
-                        event->modifiers().testFlag(Qt::AltModifier));
-        update();
+    if (panel_->isCursorDragActive()) {
+        panel_->updateCursorDrag(event->position().toPoint().x(),
+            event->modifiers().testFlag(Qt::AltModifier));
+        panel_->endCursorDrag();
+        updateHover(event->position().toPoint());
+        event->accept();
+        return;
+    }
+    if (panel_->isMarkerDragActive()) {
+        panel_->updateMarkerDrag(event->position().toPoint().x(),
+            event->modifiers().testFlag(Qt::AltModifier));
+        panel_->endMarkerDrag();
+        updateHover(event->position().toPoint());
         event->accept();
         return;
     }
@@ -212,26 +242,25 @@ void TimelineMarkerRuler::mouseReleaseEvent(QMouseEvent* event)
 
 void TimelineMarkerRuler::mouseDoubleClickEvent(QMouseEvent* event)
 {
-    if (event->button() != Qt::LeftButton) {
-        QWidget::mouseDoubleClickEvent(event);
-        return;
+    if (event->button() == Qt::LeftButton) {
+        if (panel_->hitsEditCursor(event->position().toPoint().x())) {
+            panel_->editCursorValue();
+            event->accept();
+            return;
+        }
+        const int index = markerAt(event->position().toPoint());
+        if (index >= 0) {
+            panel_->editMarkerValue(panel_->markerGuid(index));
+            event->accept();
+            return;
+        }
     }
-    const int index = markerAt(event->position().toPoint());
-    if (index < 0) {
-        QWidget::mouseDoubleClickEvent(event);
-        return;
-    }
-    event->accept();
-    if (panel_->markerKind(index) != MarkerKind::Custom)
-        return;
-    beginRename(panel_->markerGuid(index));
+    QWidget::mouseDoubleClickEvent(event);
 }
 
 void TimelineMarkerRuler::populateCreationMenu(QMenu* menu, int64_t position)
 {
-    const SegmentTimeSpec spec = panel_->effectiveTimeSpec(0);
-    const CoordinateResult snapped = TimelineCoordinates::snap(position, spec);
-    const int64_t placed = snapped ? snapped.value : position;
+    const int64_t placed = panel_->snapCoordinate(0, position, false);
     const bool hasEntry = panel_->hasMarkerKind(MarkerKind::Entry);
     const bool hasExit = panel_->hasMarkerKind(MarkerKind::Exit);
     QAction* addEntry = menu->addAction(tr("Add Entry Marker"));
@@ -246,29 +275,14 @@ void TimelineMarkerRuler::populateCreationMenu(QMenu* menu, int64_t position)
     connect(addExit, &QAction::triggered, this, [this, placed] {
         panel_->addMarker(MarkerKind::Exit, placed);
     });
-    QAction* addCustom = menu->addAction(tr("Add Custom Marker"));
-    addCustom->setObjectName(QStringLiteral("timelineAddCustomMarker"));
-    connect(addCustom, &QAction::triggered, this, [this, placed] {
-        panel_->addMarker(MarkerKind::Custom, placed, tr("Marker"));
-    });
 }
 
 QMenu* TimelineMarkerRuler::createContextMenu(const QPoint& localPos)
 {
-    auto* menu = new QMenu(this);
     const int index = markerAt(localPos);
-    if (index >= 0) {
-        const QUuid guid = panel_->markerGuid(index);
-        QAction* rename = menu->addAction(tr("Rename Marker"));
-        rename->setEnabled(panel_->markerKind(index) == MarkerKind::Custom);
-        connect(rename, &QAction::triggered, this, [this, guid] { beginRename(guid); });
-        QAction* remove = menu->addAction(tr("Delete Marker"));
-        connect(remove, &QAction::triggered, this, [this, guid] {
-            if (panel_->deleteMarker(guid))
-                panel_->setSelectedMarker(QUuid());
-        });
-        return menu;
-    }
+    if (index >= 0)
+        return panel_->createMarkerContextMenu(panel_->markerGuid(index), this);
+    auto* menu = new QMenu(this);
     populateCreationMenu(menu, coordinateAtWidgetX(localPos.x()));
     if (panel_->isEditCursorVisible()) {
         menu->addSeparator();
@@ -282,82 +296,62 @@ QMenu* TimelineMarkerRuler::createContextMenu(const QPoint& localPos)
 
 void TimelineMarkerRuler::contextMenuEvent(QContextMenuEvent* event)
 {
-    cancelRename();
+    cancelInteraction();
+    if (panel_->hitsEditCursor(event->pos().x())) {
+        panel_->showCursorContextMenu(event->globalPos());
+        event->accept();
+        return;
+    }
     QMenu* menu = createContextMenu(event->pos());
-    menu->exec(event->globalPos());
+    if (!menu->isEmpty())
+        menu->exec(event->globalPos());
     menu->deleteLater();
     event->accept();
 }
 
-void TimelineMarkerRuler::beginRename(const QUuid& guid)
-{
-    int index = -1;
-    for (int i = 0; i < panel_->markerCount(); ++i) {
-        if (panel_->markerGuid(i) == guid) {
-            index = i;
-            break;
-        }
-    }
-    if (index < 0 || panel_->markerKind(index) != MarkerKind::Custom)
-        return;
-    if (!nameEditor_) {
-        nameEditor_ = new QLineEdit(this);
-        nameEditor_->setObjectName(QStringLiteral("timelineMarkerNameEditor"));
-        nameEditor_->installEventFilter(this);
-        connect(nameEditor_, &QLineEdit::returnPressed, this, &TimelineMarkerRuler::commitRename);
-    }
-    renamingGuid_ = guid;
-    const int x = panel_->pixelAtCoordinate(0, panel_->markerDisplayPosition(index))
-        - panel_->horizontalScroll();
-    nameEditor_->setGeometry(x + 6, 0, std::max(48, width() - x - 8), height());
-    nameEditor_->setText(panel_->markerName(index));
-    nameEditor_->selectAll();
-    nameEditor_->show();
-    nameEditor_->setFocus();
-}
-
-void TimelineMarkerRuler::commitRename()
-{
-    if (!nameEditor_ || renamingGuid_.isNull())
-        return;
-    const QString name = nameEditor_->text();
-    const QUuid guid = renamingGuid_;
-    renamingGuid_ = QUuid();
-    nameEditor_->hide();
-    panel_->renameMarker(guid, name);
-}
-
-void TimelineMarkerRuler::cancelRename()
-{
-    if (!nameEditor_)
-        return;
-    renamingGuid_ = QUuid();
-    nameEditor_->hide();
-}
-
-bool TimelineMarkerRuler::eventFilter(QObject* watched, QEvent* event)
-{
-    if (watched == nameEditor_) {
-        if (event->type() == QEvent::FocusOut
-            && static_cast<QFocusEvent*>(event)->reason() != Qt::PopupFocusReason)
-            commitRename();
-        else if (event->type() == QEvent::KeyPress
-                 && static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
-            cancelRename();
-            return true;
-        }
-    }
-    return QWidget::eventFilter(watched, event);
-}
-
 int TimelineMarkerRuler::markerAt(const QPoint& point) const
 {
-    for (int index = panel_->markerCount() - 1; index >= 0; --index)
-        if (std::abs(canvasX(point.x()) - panel_->pixelAtCoordinate(
-                0, panel_->markerDisplayPosition(index)))
-            <= panel_->timelineMetrics().markerHitRadius)
-            return index;
-    return -1;
+    if (!rect().contains(point))
+        return -1;
+    int nearest = -1;
+    int nearestDistance = kTimeAxisHandleWidth + 1;
+    for (int index = panel_->markerCount() - 1; index >= 0; --index) {
+        if (panel_->markerKind(index) == MarkerKind::Custom)
+            continue;
+        const int x = panel_->viewportPixelAtCoordinate(0, panel_->markerDisplayPosition(index));
+        if (x < 0 || x >= width())
+            continue;
+        const QRect grip = TimelineRenderer::markerHandleRect(
+            x, height(), markerShapeForKind(panel_->markerKind(index)));
+        const bool overGrip = !grip.isEmpty() && grip.adjusted(-2, -2, 2, 2).contains(point);
+        const int distance = std::abs(point.x() - (overGrip ? grip.center().x() : x));
+        const int radius = overGrip ? 10 : 5;
+        if (distance <= radius && distance < nearestDistance) {
+            nearest = index;
+            nearestDistance = distance;
+        }
+    }
+    return nearest;
+}
+
+bool TimelineMarkerRuler::isDragging() const
+{
+    return panel_->isMarkerDragging();
+}
+
+QUuid TimelineMarkerRuler::draggingGuid() const
+{
+    return panel_->draggingMarkerGuid();
+}
+
+QUuid TimelineMarkerRuler::hoveredGuid() const
+{
+    return panel_->hoveredMarkerGuid();
+}
+
+int64_t TimelineMarkerRuler::previewPosition() const
+{
+    return panel_->markerDragPreviewPosition();
 }
 
 }

@@ -3,6 +3,7 @@
 #include "Core/ActionManager.h"
 #include "Core/AuthoringPolicy.h"
 #include "Core/ActionStepUtils.h"
+#include "Core/Components/VSegment.h"
 #include "Core/Components/VSelection.h"
 #include "Core/PlatformContextService.h"
 #include "Core/ItemTypeCatalog.h"
@@ -114,6 +115,11 @@ QString coordinateText(int64_t coordinate, const SegmentTimeSpec& time)
 {
     if (!AuthoringPolicy::validateSegmentTime(time))
         return QObject::tr("Unsupported arrangement");
+    if (time.domain == TimelineDomain::Musical) {
+        const auto beats = TimelineCoordinates::ticksToBeats(coordinate);
+        return beats ? QObject::tr("%1 beats").arg(conciseNumber(*beats))
+                     : QObject::tr("Unknown");
+    }
     const auto seconds = TimelineCoordinates::toSeconds(coordinate, time);
     return seconds ? QObject::tr("%1 s").arg(conciseNumber(*seconds))
                    : QObject::tr("Unknown");
@@ -249,7 +255,7 @@ TransitionEditorWidget::TransitionEditorWidget(QWidget* parent)
     headEntry_ = listBox->headerCell(4);
     headFlags_ = listBox->headerCell(5);
     headNum_->setToolTip(tr("Match order. Row 1 wins over row 2; the default rule is always last."));
-    headExit_->setToolTip(tr("When the source leaves. Marker options require a reachable marker reference."));
+    headExit_->setToolTip(tr("When the source leaves. Beat and bar options require a reachable musical clock; marker options require a reachable marker reference."));
     headEntry_->setToolTip(tr("How the target comes in, and whether it inherits the source position."));
     listHead_->installEventFilter(this);
     refreshHeadTooltips();
@@ -460,8 +466,7 @@ TransitionEditorWidget::TransitionEditorWidget(QWidget* parent)
     positionValue_->setWordWrap(true);
     positionValue_->setProperty("roValue", true);
     const InspectorFormRow positionFormRow = makeInspectorFormRow(
-        targetEntrySection_, QStringLiteral("position"), tr("Position"), positionValue_,
-        Qt::AlignLeft);
+        targetEntrySection_, QStringLiteral("position"), tr("Position"), positionValue_);
     positionRow_ = positionFormRow.row;
     targetEntryLayout->addWidget(positionRow_);
 
@@ -481,7 +486,7 @@ TransitionEditorWidget::TransitionEditorWidget(QWidget* parent)
     watchValue_->setProperty("roValue", true);
     resolutionLayout->addWidget(
         makeInspectorFormRow(resolutionSection_, QStringLiteral("watch"),
-                             tr("Watch"), watchValue_, Qt::AlignLeft).row);
+                             tr("Watch"), watchValue_).row);
 
     handoverValue_ = new QLabel(resolutionSection_);
     handoverValue_->setObjectName(QStringLiteral("transitionHandover"));
@@ -489,7 +494,7 @@ TransitionEditorWidget::TransitionEditorWidget(QWidget* parent)
     handoverValue_->setProperty("roValue", true);
     resolutionLayout->addWidget(
         makeInspectorFormRow(resolutionSection_, QStringLiteral("handover"),
-                             tr("Hand-over"), handoverValue_, Qt::AlignLeft).row);
+                             tr("Hand-over"), handoverValue_).row);
 
     spliceValue_ = new QLabel(resolutionSection_);
     spliceValue_->setObjectName(QStringLiteral("transitionSplice"));
@@ -500,8 +505,13 @@ TransitionEditorWidget::TransitionEditorWidget(QWidget* parent)
         "How this table's own hand-over rules interact with the queue's marker "
         "splice is not decided here."));
     spliceRow_ = makeInspectorFormRow(resolutionSection_, QStringLiteral("splice"),
-                                      tr("Splice"), spliceValue_, Qt::AlignLeft).row;
+                                      tr("Splice"), spliceValue_).row;
     resolutionLayout->addWidget(spliceRow_);
+    for (QLabel* readout : {positionValue_, watchValue_, handoverValue_, spliceValue_}) {
+        QSizePolicy policy = readout->sizePolicy();
+        policy.setHeightForWidth(true);
+        readout->setSizePolicy(policy);
+    }
 
     resolutionSection_->setContentLayout(resolutionLayout);
     resolutionSection_->setDynamicContent(true);
@@ -599,6 +609,13 @@ TransitionEditorWidget::TransitionEditorWidget(QWidget* parent)
     }, Qt::QueuedConnection);
     connect(&manager, &ProjectManager::itemPropertyChanged, this,
             [this](ProjectItem* item, const QString& property, const QObject* originator) {
+        if (boundItem_ && (property == QStringLiteral("segmentTime")
+            || property == QStringLiteral("markers")
+            || property == QStringLiteral("clips"))) {
+            rebuildDetail();
+            refreshWatchView();
+            return;
+        }
         if (item != boundItem_)
             return;
         if (property == QStringLiteral("transitions")) {
@@ -1398,18 +1415,19 @@ void TransitionEditorWidget::rebuildDetail()
             if (!item) return;
             const bool enabled = avail != FieldAvail::Unavailable;
             item->setEnabled(enabled);
-            item->setData(enabled ? QString() : reason, Qt::ToolTipRole);
+            item->setData(reason, Qt::ToolTipRole);
         };
         applyExitAvail(TransitionExitTiming::Immediate, gating.exit.immediate, QString());
         applyExitAvail(TransitionExitTiming::NaturalEnd, gating.exit.naturalEnd, QString());
+        applyExitAvail(TransitionExitTiming::NextBeat, gating.exit.nextBeat, gating.exit.reasonNextBeat);
+        applyExitAvail(TransitionExitTiming::NextBar, gating.exit.nextBar, gating.exit.reasonNextBar);
         applyExitAvail(TransitionExitTiming::NextMarker, gating.exit.nextMarker, gating.exit.reasonNextMarker);
-        applyExitAvail(TransitionExitTiming::ExitMarker, gating.exit.exitMarker, QString());
+        applyExitAvail(TransitionExitTiming::ExitMarker, gating.exit.exitMarker, gating.exit.reasonExitMarker);
     }
     {
         QSignalBlocker blocker(exitTimingCombo_);
         const int comboIndex =
             exitTimingCombo_->findData(static_cast<int>(rule->exitTiming));
-        exitTimingCombo_->setPlaceholderText(tr("Unsupported legacy timing"));
         exitTimingCombo_->setCurrentIndex(comboIndex);
     }
     sourceFadeButton_->setFade(rule->sourceFadeOut);
@@ -1532,8 +1550,8 @@ QString TransitionEditorWidget::exitTimingText(TransitionExitTiming timing) cons
     switch (timing) {
         case TransitionExitTiming::Immediate:  return tr("Immediate");
         case TransitionExitTiming::NaturalEnd: return tr("Natural End");
-        case TransitionExitTiming::NextBeat:
-        case TransitionExitTiming::NextBar:    return tr("Unsupported legacy timing");
+        case TransitionExitTiming::NextBeat:   return tr("Next Beat");
+        case TransitionExitTiming::NextBar:    return tr("Next Bar");
         case TransitionExitTiming::NextMarker:    return tr("Next Marker");
         case TransitionExitTiming::ExitMarker:    return tr("Exit Marker");
     }
@@ -1735,8 +1753,7 @@ void TransitionEditorWidget::refreshWatchView()
             *boundItem_, winner, placementContext(), itemResolver());
     }
 
-    if (watchView_ == nextView)
-        return;
+    const bool changed = watchView_ != nextView;
     watchView_ = std::move(nextView);
     if (watchView_.containerGuid.isNull()) {
         watchValue_->clear();
@@ -1745,7 +1762,8 @@ void TransitionEditorWidget::refreshWatchView()
         watchValue_->setText(watchReadoutText());
         watchValue_->setToolTip(watchReadoutTooltip());
     }
-    emit watchViewChanged(watchView_);
+    if (changed)
+        emit watchViewChanged(watchView_);
 }
 
 QString TransitionEditorWidget::watchReadoutText() const
@@ -1763,8 +1781,11 @@ QString TransitionEditorWidget::watchReadoutText() const
     if (reference && !AuthoringPolicy::validateTimeline(*reference, itemResolver()))
         return tr("[%1]  %2  (unsupported arrangement)")
             .arg(watchDirectionTag(watchView_.direction), names.join(QStringLiteral(" -> ")));
-    QString text = tr("[%1]  %2  (marker reference)")
-        .arg(watchDirectionTag(watchView_.direction), names.join(QStringLiteral(" -> ")));
+    const auto* segment = reference ? reference->comp<VSegment>() : nullptr;
+    const QString referenceKind = segment && segment->segmentTime.domain == TimelineDomain::Musical
+        ? tr("musical clock and marker reference") : tr("marker reference");
+    QString text = tr("[%1]  %2  (%3)")
+        .arg(watchDirectionTag(watchView_.direction), names.join(QStringLiteral(" -> ")), referenceKind);
 
     if (watchView_.direction != TransitionSemantics::TransitionWatchDirection::Down) {
         if (!watchView_.placementContextProvided)
@@ -1901,10 +1922,13 @@ QString TransitionEditorWidget::samePositionReadoutText(int displayIndex) const
     if (!mapped)
         return tr("Unknown: %1").arg(mapped.validation.message);
 
-    return tr("%1 -> %2 in %3")
+    QString text = tr("%1 -> %2 in %3")
         .arg(coordinateText(sourceSpan.nominal.end, sourceSpan.time),
              coordinateText(mapped.targetPosition, mapped.targetTime),
              target->name);
+    if (sourceSpan.time.domain == TimelineDomain::Musical)
+        text += tr("  (mod %1)").arg(coordinateText(mapped.targetNominalLength, mapped.targetTime));
+    return text;
 }
 
 QString TransitionEditorWidget::handoverReadoutText() const

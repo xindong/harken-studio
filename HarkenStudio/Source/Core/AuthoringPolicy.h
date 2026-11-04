@@ -10,7 +10,6 @@ using ObjectResolver = std::function<const ProjectItem*(uint32_t)>;
 
 bool supportsObjectColorEditing();
 bool supportsMusicalTime();
-QString musicalTimeRestriction();
 const std::vector<TransitionExitTiming>& allowedTransitionExitTimings();
 bool allowsTransitionExitTiming(TransitionExitTiming timing);
 TransitionRuleDef defaultTransitionRule();

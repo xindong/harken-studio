@@ -105,6 +105,16 @@ QString noMarkerReason()
         "No marker in reach - no markers resolve from this source.");
 }
 
+QString noClockReason()
+{
+    return trText("No musical clock in reach - choose a source with access to a musical clock.");
+}
+
+QString uncertainClockReason()
+{
+    return trText("Musical timing depends on which child is the incumbent - some reach a musical clock, some do not.");
+}
+
 QString exitMarkerNote()
 {
     return trText(
@@ -127,13 +137,13 @@ QString uncertainExitMarkerReason()
 QString noWatchReferenceNote()
 {
     return trText(
-        "No watch reference; marker timing cannot resolve from this source.");
+        "No watch reference; musical and marker timing cannot resolve from this source.");
 }
 
 QString barrenReferenceNote()
 {
     return trText(
-        "The watch reference has no markers. Immediate and natural-end exits remain available.");
+        "The watch reference has no musical clock or markers. Immediate and natural-end exits remain available.");
 }
 
 QString unresolvedSourceReason()
@@ -226,15 +236,18 @@ TransitionFieldGating gatingFor(const ProjectItem& container,
 
     gating.exit.immediate = FieldAvail::Available;
     gating.exit.naturalEnd = FieldAvail::Available;
-    gating.exit.nextBeat = AuthoringPolicy::allowsTransitionExitTiming(TransitionExitTiming::NextBeat)
-        ? watch.clock : FieldAvail::Unavailable;
-    gating.exit.nextBar = AuthoringPolicy::allowsTransitionExitTiming(TransitionExitTiming::NextBar)
-        ? watch.clock : FieldAvail::Unavailable;
+    gating.exit.nextBeat = watch.clock;
+    gating.exit.nextBar = watch.clock;
     gating.exit.nextMarker = watch.anyMarker;
     gating.exit.exitMarker = FieldAvail::Available;
 
-    gating.exit.reasonNextBeat = AuthoringPolicy::musicalTimeRestriction();
-    gating.exit.reasonNextBar = AuthoringPolicy::musicalTimeRestriction();
+    if (watch.clock == FieldAvail::Unavailable) {
+        gating.exit.reasonNextBeat = watch.sourceResolved ? noClockReason() : unresolvedSourceReason();
+        gating.exit.reasonNextBar = gating.exit.reasonNextBeat;
+    } else if (watch.clock == FieldAvail::Uncertain) {
+        gating.exit.reasonNextBeat = uncertainClockReason();
+        gating.exit.reasonNextBar = gating.exit.reasonNextBeat;
+    }
     const QString markerUnavailableReason =
         watch.sourceResolved ? noMarkerReason() : unresolvedSourceReason();
 
@@ -266,10 +279,7 @@ TransitionFieldGating gatingFor(const ProjectItem& container,
     }
 
     QString primaryNote;
-    if (!AuthoringPolicy::allowsTransitionExitTiming(rule.exitTiming)) {
-        primaryNote = AuthoringPolicy::musicalTimeRestriction();
-        gating.exit.noteIsWarning = true;
-    } else if (exitTimingAvail(gating.exit, rule.exitTiming) == FieldAvail::Unavailable) {
+    if (exitTimingAvail(gating.exit, rule.exitTiming) == FieldAvail::Unavailable) {
         primaryNote = currentExitTimingUnavailableNote();
         gating.exit.noteIsWarning = true;
     } else if (!watch.sourceResolved) {
@@ -277,12 +287,14 @@ TransitionFieldGating gatingFor(const ProjectItem& container,
         gating.exit.noteIsWarning = true;
     } else if (!watch.referencePresent) {
         primaryNote = noWatchReferenceNote();
-    } else if (watch.anyMarker == FieldAvail::Unavailable) {
+    } else if (watch.clock == FieldAvail::Unavailable && watch.anyMarker == FieldAvail::Unavailable) {
         primaryNote = barrenReferenceNote();
     }
 
     QString secondaryNote;
-    if (watch.anyMarker == FieldAvail::Uncertain)
+    if (watch.clock == FieldAvail::Uncertain)
+        secondaryNote = gating.exit.reasonNextBeat;
+    else if (watch.anyMarker == FieldAvail::Uncertain)
         secondaryNote = gating.exit.reasonNextMarker;
     else if (!gating.exit.reasonExitMarker.isEmpty())
         secondaryNote = gating.exit.reasonExitMarker;

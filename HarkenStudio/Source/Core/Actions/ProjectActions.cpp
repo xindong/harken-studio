@@ -1301,7 +1301,8 @@ bool claimsTimelineItemProperty(ProjectItem* item, const QString& propertyName)
 {
     return (propertyName == QStringLiteral("clips")
             && item->comp<VTrack>() != nullptr)
-        || (propertyName == QStringLiteral("segmentTime")
+        || ((propertyName == QStringLiteral("segmentTime")
+             || propertyName == QStringLiteral("markers"))
             && item->comp<VSegment>() != nullptr);
 }
 
@@ -1424,14 +1425,9 @@ ActionResult handleSelectionTransitionsProperty(
         const auto previous = std::find_if(oldTransitions.rules.begin(), oldTransitions.rules.end(),
             [&](const auto& old) { return old.source == rule.source && old.target == rule.target; });
         const bool retained = previous != oldTransitions.rules.end() && *previous == rule;
-        const bool repaired = previous != oldTransitions.rules.end()
-            && !AuthoringPolicy::allowsTransitionExitTiming(previous->exitTiming)
-            && AuthoringPolicy::allowsTransitionExitTiming(rule.exitTiming);
         if (!retained)
             for (const auto* reference : {&rule.source, &rule.target, &rule.bridge}) {
                 if (!*reference) continue;
-                if (repaired && (reference != &rule.bridge || rule.bridge == previous->bridge))
-                    continue;
                 const auto validity = validateAuthoredReference(
                     projectManager, projectManager->findItemByGuid(**reference));
                 if (!validity)
@@ -1761,12 +1757,20 @@ ActionResult handleTimelineItemProperty(ProjectManager* projectManager, ProjectI
         return TimelineEditing::replaceClips(
             projectManager, item, *clips, originator, undoText);
     }
+    if (propertyName == QStringLiteral("markers")) {
+        if (!value.isArray())
+            return {false, {}, "INVALID_ARGS",
+                    "Property 'markers' value must be a JSON array"};
+        QString error;
+        auto markers = MarkerLedger::fromJson(value.toArray(), &error);
+        if (!markers)
+            return {false, {}, "INVALID_ARGS", error};
+        return TimelineEditing::replaceMarkers(
+            projectManager, item, *markers, originator, undoText);
+    }
     if (!value.isObject())
         return {false, {}, "INVALID_ARGS",
                 "Property 'segmentTime' value must be a JSON object"};
-    const auto authoring = AuthoringPolicy::validateSegmentTime(value.toObject());
-    if (!authoring)
-        return {false, {}, "AUTHORING_RESTRICTED", authoring.message};
     QString error;
     auto segmentTime = SegmentTimeSpec::fromJson(value.toObject(), &error);
     if (!segmentTime)

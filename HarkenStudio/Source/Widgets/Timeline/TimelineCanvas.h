@@ -73,7 +73,7 @@ protected:
     void leaveEvent(QEvent* event) override;
 
 private:
-    enum class DragMode { None, Move, ResizeEnd, Lasso, Cursor };
+    enum class DragMode { None, Move, ResizeEnd, Lasso, Cursor, Marker };
 
     struct Hit {
         int laneIndex = -1;

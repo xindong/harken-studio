@@ -15,6 +15,7 @@ inline QJsonObject setItemPropertySchema()
         QStringLiteral("loopCount"), QStringLiteral("sources"),
         QStringLiteral("scheduleOffsetSec"), QStringLiteral("distinguishLanguage"),
         QStringLiteral("clips"), QStringLiteral("segmentTime"),
+        QStringLiteral("markers"), QStringLiteral("spliceByMarker"),
         QStringLiteral("dimensions"), QStringLiteral("maxDistance"),
         QStringLiteral("transitions")};
     for (const auto& field : VNX::PlayablePropertyAuthoringV1::fields()) {
@@ -70,18 +71,23 @@ inline QJsonObject setItemPropertySchema()
                 {QStringLiteral("type"), QStringLiteral("number")}, {QStringLiteral("minimum"), 0}}},
             {QStringLiteral("clips"), QJsonObject{
                 {QStringLiteral("type"), QStringLiteral("object")},
-                {QStringLiteral("description"), QStringLiteral("Track ClipLedger with rows and occurrenceOrdinalHighWater. Start positions use absolute nanoseconds. Positive duration is the authored playback boundary. Targets must support absolute-time authoring.")},
+                {QStringLiteral("description"), QStringLiteral("Track ClipLedger with rows and occurrenceOrdinalHighWater. Start and duration use the parent Segment's time domain: nanoseconds for Absolute, ticks at 960 PPQ for Musical. Positive duration is the authored playback boundary.")},
                 {QStringLiteral("required"), QJsonArray{
                     QStringLiteral("rows"), QStringLiteral("occurrenceOrdinalHighWater")}}}},
             {QStringLiteral("segmentTime"), QJsonObject{
                 {QStringLiteral("type"), QStringLiteral("object")},
-                {QStringLiteral("description"), QStringLiteral("Only domain Absolute is supported. Musical, tempoMap, and meterMap authoring is unavailable. Existing musical arrangements are preserved; this command does not migrate them.")},
+                {QStringLiteral("description"), QStringLiteral("Segment time domain. Musical requires one tempoMap point and one meterMap point at tick zero. Tempo uses microsecondsPerQuarter; meter uses numerator and denominator. Changing domain converts clip boundaries and markers while preserving their time in seconds.")},
                 {QStringLiteral("properties"), QJsonObject{
                     {QStringLiteral("domain"), QJsonObject{
-                        {QStringLiteral("const"), QStringLiteral("Absolute")}}}}}}},
+                        {QStringLiteral("enum"), QJsonArray{QStringLiteral("Absolute"), QStringLiteral("Musical")}}}}}}}},
+            {QStringLiteral("markers"), QJsonObject{
+                {QStringLiteral("type"), QStringLiteral("array")},
+                {QStringLiteral("description"), QStringLiteral("Segment Entry and Exit markers with markerGuid, kind, name and position in the Segment's time domain. Entry and Exit are unique, and Entry must not follow Exit. Custom marker authoring is hidden.")}}},
+            {QStringLiteral("spliceByMarker"), QJsonObject{
+                {QStringLiteral("type"), QStringLiteral("boolean")}}},
             {QStringLiteral("transitions"), QJsonObject{
                 {QStringLiteral("type"), QStringLiteral("object")},
-                {QStringLiteral("description"), QStringLiteral("Container transition table. Authoring exit timings: Immediate, NaturalEnd, NextMarker, ExitMarker. NextBeat and NextBar cannot be introduced or modified. Existing unsupported rules may be deleted or replaced with supported timings. Runtime support is assessed separately for each operation and target.")}}},
+                {QStringLiteral("description"), QStringLiteral("Container transition table. Exit timings: Immediate, NaturalEnd, NextBeat, NextBar, NextMarker, ExitMarker. Beat and bar timing require a reachable musical clock; marker timing follows the watch reference. Runtime support is assessed separately for each operation and target.")}}},
             {QStringLiteral("volume"), QJsonObject{{QStringLiteral("type"), QStringLiteral("number")}}},
             {QStringLiteral("loopCount"), QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")}, {QStringLiteral("minimum"), 0}}},
             {QStringLiteral("scheduleOffsetSec"), QJsonObject{{QStringLiteral("type"), QStringLiteral("number")}, {QStringLiteral("minimum"), 0}}},
