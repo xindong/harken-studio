@@ -29,6 +29,8 @@ struct KnownCompletionFactsV1 {
     std::uint32_t sourceRate = 0;
     std::uint32_t mixRate = 0;
     float pitchRatio = 1.0f;
+    // Prepared crop uses the actual initial wire ratio without float narrowing.
+    double resolvedSourceRatio = 0.0;
     bool pitchFixed = false;
     bool serialRender = false;
     bool endMutationPossible = false;

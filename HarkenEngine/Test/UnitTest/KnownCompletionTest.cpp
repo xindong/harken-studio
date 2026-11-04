@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <cmath>
 
 namespace {
 
@@ -122,6 +123,21 @@ TEST(KnownCompletion, CroppedFractionChangesTheActualFinalOutputFrame) {
     ASSERT_EQ(harken::CompletionPredictability::KnownFinite,
         harken::ResolveKnownCompletionDuration(facts, &duration));
     EXPECT_EQ(3u, duration);
+}
+
+TEST(KnownCompletion, ResolvedInitialRatioRetainsWirePrecision) {
+    auto facts = KnownFacts();
+    facts.pcmFrameCount = 101;
+    facts.sourceStartFrame = 100;
+    facts.resolvedSourceRatio = std::nextafter(1.0, 0.0);
+    std::uint64_t duration = 0;
+    ASSERT_EQ(harken::CompletionPredictability::KnownFinite,
+        harken::ResolveKnownCompletionDuration(facts, &duration));
+    EXPECT_EQ(2u, duration);
+    facts.resolvedSourceRatio = 0.0;
+    ASSERT_EQ(harken::CompletionPredictability::KnownFinite,
+        harken::ResolveKnownCompletionDuration(facts, &duration));
+    EXPECT_EQ(1u, duration);
 }
 
 TEST(KnownCompletion, ResampledDurationUsesRenderBoundaryAndOutputDeadline) {

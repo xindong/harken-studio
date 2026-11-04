@@ -40,6 +40,7 @@ namespace harken::test {
 struct TimelineVoiceInstallResult {
     VnResult status = VN_INVALID_ARG;
     VnVoiceHandle renderHandle = 0;
+    bool emptySource = false;
 };
 
 PlayableStartStatus BuildTimelineVoiceInstallFromCut(

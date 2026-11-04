@@ -2938,6 +2938,11 @@ struct EngineTimelineVoiceInstallIdentity {
     std::uint64_t loopStartFrame = 0;
     std::uint64_t loopEndFrame = 0;
     std::uint64_t exitMarkerSourceFrame = 0;
+    std::uint64_t sourceStartFrame = 0;
+    ExactSourcePhase sourcePhase{};
+    std::uint32_t sourceLoopCount = 1;
+    double initialSourceRatio = 1.0;
+    bool hasExitMarker = false;
 };
 
 struct EnginePlainImmediateSource {

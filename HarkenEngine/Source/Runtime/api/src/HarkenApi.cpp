@@ -7411,6 +7411,7 @@ struct TimelineVoiceInstallResult {
     harken::CompletionPredictability completionPredictability =
         harken::CompletionPredictability::SignalOnly;
     harken::KnownCompletionPredicateV1 completionPredicate{};
+    bool emptySource = false;
 };
 
 void SetQueueProgramMemberFacts(harken::EnginePlayableMemberRecord& member,
@@ -7456,7 +7457,8 @@ VnResult ValidateTimelineVoiceInstallInputShape(
     const harken::TimelineVoiceInstallInput& input) noexcept {
     if (input.facts == nullptr) return VN_INVALID_ARG;
     if (input.facts->streamed &&
-        (input.facts->sourcePhase.high != 0 || input.facts->sourcePhase.low != 0))
+        (input.facts->sourcePhase.high != 0 || input.facts->sourcePhase.low != 0 ||
+         input.facts->sourceOutputOffsetFrames != 0))
         return VN_INVALID_ARG;
     if (input.bindings.size() > harken::kMaxVoiceBindingInstanceSlots ||
         input.pathRows.size() > harken::kPlaybackPathRowCapacity ||
@@ -7493,6 +7495,7 @@ Destination CopyTimelineVoiceInstallFacts(const Source& source) noexcept {
     facts.outputBusId = source.outputBusId;
     facts.sourceStartFrame = source.sourceStartFrame;
     facts.sourcePhase = source.sourcePhase;
+    facts.sourceOutputOffsetFrames = source.sourceOutputOffsetFrames;
     facts.authoredDurationFrames = source.authoredDurationFrames;
     facts.volumeDb = source.volumeDb;
     facts.outputBusVolumeDb = source.outputBusVolumeDb;
@@ -7717,7 +7720,8 @@ harken::KnownCompletionFactsV1 CompletionFactsForVoice(
     facts.sourceRate = adopted.sampleRate;
     facts.mixRate = engine.config.mixRate.SampleRate();
     facts.pitchRatio = source.pitchRatio;
-    facts.pitchFixed = std::none_of(input.bindings.begin(), input.bindings.end(),
+    facts.pitchFixed = source.sourceOutputOffsetFrames == 0 &&
+        std::none_of(input.bindings.begin(), input.bindings.end(),
         [](const auto& binding) { return binding.targetId == harken::kTargetVoicePitch; });
     facts.serialRender = engine.voices.RenderWorkerCount() == 0;
     facts.authoredDurationFrames = source.authoredDurationFrames;
@@ -7942,7 +7946,15 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         result.status = shape;
         return result;
     }
-    const auto& install = *input.facts;
+    auto install = *input.facts;
+    auto resolvedInput = input;
+    resolvedInput.facts = &install;
+    // Pending starts may re-prime from a later read cut. Music crops use the
+    // existing fixed-entry path, whose initial read cut is final before capture.
+    if (pendingImmediateStart && install.sourceOutputOffsetFrames != 0) {
+        result.status = VN_CAPABILITY_UNAVAILABLE;
+        return result;
+    }
     const auto* clipScope = resourceService != nullptr ? resourceService :
         directSoundPreparationOwner != nullptr ? directSoundPreparationOwner : variableWeightService;
     if (clipScope != nullptr) {
@@ -8184,23 +8196,6 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
             pendingImmediateStart ? install.authoredDurationFrames : UINT64_MAX;
         renderContext->pendingImmediateWeightBaseFrame = startFrame;
         renderContext->pendingImmediateWeightRebase = pendingImmediateStart;
-        for (const harken::EnginePlayableServiceRow& start :
-             engine.playableServices) {
-            if (start.rootInstance != parentInstance ||
-                parentInstance == 0) {
-                continue;
-            }
-            harken::ResamplerAdvanceState advance{};
-            advance.currentRatio = renderContext->resampler.CurrentRatio();
-            advance.targetRatio = advance.currentRatio;
-            advance.sourceStartFrame = install.sourceStartFrame;
-            advance.absoluteStartFrame = startFrame;
-            FillStopLeafExitMarker(engine, start, &advance);
-            renderContext->hasExitMarker = advance.hasExitMarker;
-            renderContext->exitMarkerSourceFrame = advance.exitMarkerSourceFrame;
-            installedExitMarkerSourceFrame = advance.exitMarkerSourceFrame;
-            break;
-        }
     }
     const std::uint32_t renderSlot = static_cast<std::uint32_t>(render);
     const std::uint32_t renderGeneration =
@@ -8488,6 +8483,60 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
                                        spatialInitialTargets)) {
         return rollback(VN_INVALID_ARG);
     }
+    auto* preparedRender = engine.voices.Resolve(render);
+    if (preparedRender == nullptr) return rollback(VN_INVALID_ARG);
+    double initialSourceRatio = preparedRender->resampler.CurrentRatio();
+    for (std::uint32_t index = 0; index < commandIndex; ++index) {
+        const auto& command = engine.playLedBatchScratch[index];
+        if (command.opcode == harken::kOpcodeSetVoicePitch &&
+            command.payload.setVoicePitch.handle == render)
+            initialSourceRatio = command.payload.setVoicePitch.ratio * preparedRender->rateScale;
+    }
+    const bool cropped = install.sourceOutputOffsetFrames != 0;
+    if (cropped) {
+        harken::SourcePhaseStep step{};
+        harken::ExactSourcePhase phase{};
+        std::uint64_t consumed = 0, sourceStart = 0;
+        std::uint32_t loops = 0;
+        if (install.streamed || install.sourceStartFrame > view.frames ||
+            !harken::DecodeSourcePhaseStep(initialSourceRatio, &step) ||
+            !harken::TryJumpSourcePhase(step, install.sourcePhase,
+                install.sourceOutputOffsetFrames, &consumed, &phase)) return rollback(VN_INVALID_ARG);
+        harken::MapLoopedSourceFrame(install.sourceStartFrame, install.loopCount, consumed,
+            view.frames, view.loop.startFrame, view.LoopEndFrame(), &sourceStart, &loops);
+        if (sourceStart == view.frames) {
+            auto empty = rollback(VN_OK);
+            empty.emptySource = true;
+            return empty;
+        }
+        install.sourceStartFrame = sourceStart;
+        install.sourcePhase = phase;
+        install.loopCount = loops;
+        install.sourceOutputOffsetFrames = 0;
+        preparedRender->loopPassesRemaining = loops;
+        preparedRender->loopInfinite = loops == 0;
+        preparedRender->resampler.phaseHigh = phase.high;
+        preparedRender->resampler.phaseLow = phase.low;
+        preparedRender->resampler.readFraction = harken::SourcePhaseFraction(phase);
+        preparedRender->resampler.readPos = static_cast<double>(harken::kResampleHistoryPad) +
+            preparedRender->resampler.readFraction;
+        playCommand.payload.play.sourceStartFrame = sourceStart;
+    }
+    for (const auto& start : engine.playableServices) {
+        if (parentInstance == 0 || start.rootInstance != parentInstance) continue;
+        harken::ResamplerAdvanceState advance{};
+        advance.currentRatio = initialSourceRatio;
+        advance.targetRatio = initialSourceRatio;
+        // A PCM marker retains its coordinate relative to the original source,
+        // even when this occurrence omits an initial span of that source.
+        advance.sourceStartFrame = input.facts->sourceStartFrame;
+        advance.absoluteStartFrame = startFrame;
+        FillStopLeafExitMarker(engine, start, &advance);
+        preparedRender->hasExitMarker = advance.hasExitMarker;
+        preparedRender->exitMarkerSourceFrame = advance.exitMarkerSourceFrame;
+        installedExitMarkerSourceFrame = advance.exitMarkerSourceFrame;
+        break;
+    }
     assert(commandIndex <= commandCount);
     commandCount = commandIndex;
     playCommand.payload.play.batch.batchCommandCount = commandCount;
@@ -8497,7 +8546,8 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
     if (progressOccurrence != nullptr && completionProgram != nullptr) {
         const std::uint64_t factsRevision =
             engine.timelineOccurrences.ScheduleEpochOf(*progressOccurrence);
-        auto facts = CompletionFactsForVoice(engine, input, view);
+        auto facts = CompletionFactsForVoice(engine, resolvedInput, view);
+        if (cropped) facts.resolvedSourceRatio = initialSourceRatio;
         facts.occurrence = *progressOccurrence;
         facts.renderGeneration = renderGeneration;
         facts.absoluteLogicalStartFrame = startFrame;
@@ -8695,7 +8745,8 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         render, playableRoot, install.target, releaseObserver, startFrame, arm,
         bus.index, bus.generation, timelineSends,
         view.frames, view.loop.startFrame, view.LoopEndFrame(),
-        installedExitMarkerSourceFrame};
+        installedExitMarkerSourceFrame, install.sourceStartFrame, install.sourcePhase,
+        install.loopCount, initialSourceRatio, preparedRender->hasExitMarker};
     if (prepareOnly) {
         preparedOut->ledgerSlot = ledgerSlot;
         preparedOut->renderHandle = render;
@@ -58179,6 +58230,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
     TimelineVoiceInstallResult result;
     result.status = inner.status;
     result.renderHandle = inner.renderHandle;
+    result.emptySource = inner.emptySource;
     return result;
 }
 
@@ -58190,6 +58242,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
     TimelineVoiceInstallResult result;
     result.status = inner.status;
     result.renderHandle = inner.renderHandle;
+    result.emptySource = inner.emptySource;
     return result;
 }
 
@@ -78015,6 +78068,12 @@ void FillStopLeafExitMarker(const harken::Engine& engine,
     if (advance == nullptr || advance->hasExitMarker) {
         return;
     }
+    harken::EngineTimelineVoiceInstallIdentity installation{};
+    if (engine.CaptureTimelineVoiceInstallIdentity(row.renderHandle, &installation)) {
+        advance->hasExitMarker = installation.hasExitMarker;
+        advance->exitMarkerSourceFrame = installation.exitMarkerSourceFrame;
+        return;
+    }
     const std::uint32_t slot = static_cast<std::uint32_t>(row.renderHandle);
     if (row.renderHandle != 0 && slot < engine.voicePlayFacts.size() &&
         engine.voicePlayFacts[slot].valid &&
@@ -78182,6 +78241,19 @@ VnResult ResolveStopLeafSilence(
                  static_cast<double>(engine.config.mixRate.SampleRate());
         advance.currentRatio = ratio;
         advance.targetRatio = ratio;
+        harken::EngineTimelineVoiceInstallIdentity installation{};
+        const bool installed = engine.CaptureTimelineVoiceInstallIdentity(row.renderHandle, &installation);
+        if (voice.sourceOutputOffsetFrames != 0 && !installed) return VN_BACKPRESSURE;
+        if (installed) {
+            advance.sourceIntegerFrame = installation.sourceStartFrame;
+            advance.sourceStartFrame = installation.sourceStartFrame;
+            advance.sourcePhase = installation.sourcePhase;
+            advance.loopsRemaining = installation.sourceLoopCount;
+            advance.loopInfinite = installation.sourceLoopCount == 0;
+            advance.currentRatio = installation.initialSourceRatio;
+            advance.targetRatio = installation.initialSourceRatio;
+        }
+        const auto activationLoops = advance.loopsRemaining;
         if (row.HasFeatureArrays() && row.QueuePayload().queueCurrentOccurrence.generation != 0) {
             const harken::CompletionProgressRow* progress =
                 engine.timelineOccurrences.CompletionProgressOf(
@@ -78211,7 +78283,7 @@ VnResult ResolveStopLeafSilence(
                     advance.loopStartFrame = snapshot.loopStartFrame;
                     advance.loopEndFrame = snapshot.loopEndFrame;
                 }
-                harken::SetResamplerConsumedPosition(&advance, voice.sourceStartFrame, voice.loopCount,
+                harken::SetResamplerConsumedPosition(&advance, advance.sourceStartFrame, activationLoops,
                     snapshot.resamplerSourceFrame > harken::kResampleHistoryPad
                         ? snapshot.resamplerSourceFrame - harken::kResampleHistoryPad : 0);
                 advance.logicalOutputFramesProduced =

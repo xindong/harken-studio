@@ -200,6 +200,7 @@ struct TimelineVoiceInstallDesc {
     VnObjectId outputBusId{};
     std::uint64_t sourceStartFrame = 0;
     ExactSourcePhase sourcePhase{};
+    std::uint64_t sourceOutputOffsetFrames = 0;
     std::uint64_t authoredDurationFrames = UINT64_MAX;
     float volumeDb = 0.0f;
     float outputBusVolumeDb = 0.0f;

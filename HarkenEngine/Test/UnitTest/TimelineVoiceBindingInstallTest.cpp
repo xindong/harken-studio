@@ -839,6 +839,99 @@ TEST(TimelineVoiceInstall, BorrowedInputCopiesOnlyNativeFactsAndKeepsBindingSnap
     }
 }
 
+TEST(TimelineVoiceInstall, OutputCropUsesBoundPitchAndPreservesLoopOutroSamples) {
+    for (const auto workers : {0u, 2u}) {
+        for (const auto offset : {192u, 448u, 704u}) {
+            SCOPED_TRACE(workers);
+            SCOPED_TRACE(offset);
+            std::vector<float> reference;
+            for (const bool crop : {false, true}) {
+                auto config = TimelineInstallConfig(8, kBlock, kRate);
+                config.renderWorkerCount = workers;
+                EngineSession session(config);
+                ASSERT_EQ(VN_OK, session.InitResult());
+                auto& engine = *session.Engine();
+                ASSERT_EQ(harken::WorldInstallStatus::Ok,
+                    harkentest::InstallSmoothDefinitions(&engine, {kVariable}, 0.0f, 1.0f).status);
+                std::vector<float> pcm(1024);
+                for (std::size_t i = 0; i < pcm.size(); ++i)
+                    pcm[i] = 0.2f * std::sin(static_cast<float>(i) * 0.071f);
+                auto desc = MonoDesc(pcm, 44100);
+                ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &desc));
+                harken::TimelineVoiceInstallFacts facts{};
+                facts.soundId = kSound;
+                facts.outputBusId = VN_BUS_MASTER;
+                facts.capturedMedia = engine.registry.Lookup(kSound);
+                facts.capturedMedia.loop = {64, 256};
+                facts.loopCount = 3;
+                facts.pitchRatio = 1.25f;
+                facts.sourceOutputOffsetFrames = crop ? offset : 0;
+                harken::TimelineVoiceBindingInstall binding{};
+                binding.objectId = kSound;
+                binding.bindingId = kBinding;
+                binding.variableId = kVariable;
+                binding.targetId = harken::kTargetVoicePitch;
+                const harken::CurvePoint points[] = {{0.0f, 7.0f}, {1.0f, 7.0f}};
+                const harken::CurveHandlePair handles[] = {
+                    {points[0].x, points[0].y, points[1].x, points[1].y}};
+                ASSERT_TRUE(binding.curve.SetPoints(points, handles, 2));
+                const auto parent = engine.playableInstances.Acquire(harken::PlayableKind::Sound, 0);
+                ASSERT_NE(0u, parent);
+                const harken::TimelineVoiceInstallInput input{&facts, {&binding, 1}};
+                const auto result = harken::test::InstallTimelineVoiceStart(engine, input, parent, parent, parent);
+                ASSERT_EQ(VN_OK, result.status);
+                ASSERT_FALSE(result.emptySource);
+                ASSERT_NE(0u, result.renderHandle);
+                harken::EngineTimelineVoiceInstallIdentity installed{};
+                ASSERT_TRUE(engine.CaptureTimelineVoiceInstallIdentity(result.renderHandle, &installed));
+                EXPECT_GT(installed.initialSourceRatio, 1.25 * 44100.0 / 48000.0);
+                EXPECT_EQ(crop ? offset : 0u, facts.sourceOutputOffsetFrames);
+                if (!crop) engine.nullBackend.Pump(offset / kBlock);
+                engine.nullBackend.Pump(1);
+                const auto count = engine.nullBackend.BlockFrames() * engine.nullBackend.Channels();
+                const auto* output = engine.nullBackend.LastBlock();
+                if (!crop) reference.assign(output, output + count);
+                else {
+                    ASSERT_EQ(reference.size(), count);
+                    for (std::size_t i = 0; i < count; ++i)
+                        EXPECT_NEAR(reference[i], output[i], 1e-6f) << i;
+                }
+                EXPECT_FALSE(engine.runtimeRecreateRequired);
+            }
+        }
+    }
+}
+
+TEST(TimelineVoiceInstall, EmptyOutputCropRollsBackPrivateResourcesAndAllowsReuse) {
+    EngineSession session(TimelineInstallConfig(2, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+    const auto parent = engine.playableInstances.Acquire(harken::PlayableKind::Sound, 0);
+    ASSERT_NE(0u, parent);
+    harken::TimelineVoiceInstallFacts facts{};
+    facts.soundId = kSound;
+    facts.outputBusId = VN_BUS_MASTER;
+    facts.capturedMedia = engine.registry.Lookup(kSound);
+    facts.sourceOutputOffsetFrames = facts.capturedMedia.frames;
+    const harken::TimelineVoiceInstallInput input{&facts};
+    for (std::uint32_t attempt = 0; attempt < 16; ++attempt) {
+        const auto result = harken::test::InstallTimelineVoiceStart(engine, input, parent, parent, parent);
+        ASSERT_EQ(VN_OK, result.status);
+        EXPECT_TRUE(result.emptySource);
+        EXPECT_EQ(0u, result.renderHandle);
+        EXPECT_EQ(0u, facts.capturedMedia.useCount->load());
+        EXPECT_FALSE(engine.runtimeRecreateRequired);
+    }
+    facts.sourceOutputOffsetFrames = 0;
+    const auto result = harken::test::InstallTimelineVoiceStart(engine, input, parent, parent, parent);
+    ASSERT_EQ(VN_OK, result.status);
+    ASSERT_NE(0u, result.renderHandle);
+    EXPECT_FALSE(result.emptySource);
+    engine.nullBackend.Pump(1);
+    EXPECT_GT(engine.nullBackend.LastBlock()[0], 0.0f);
+}
+
 TEST(TimelineVoiceInstall, BorrowedInputFailureUnwindsNativePrefixAndAllowsFreshRetry) {
     auto config = TimelineInstallConfig(8, kBlock, kRate);
     config.fxSlotsPerVoice = 1;

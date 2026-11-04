@@ -37,7 +37,8 @@ CompletionPredictability ResolveKnownCompletionDuration(
     std::uint64_t* out) noexcept {
     if (out == nullptr || facts.sourceRate == 0 ||
         facts.mixRate == 0 || !std::isfinite(facts.pitchRatio) ||
-        facts.pitchRatio <= 0.0f) {
+        facts.pitchRatio <= 0.0f || !std::isfinite(facts.resolvedSourceRatio) ||
+        facts.resolvedSourceRatio < 0.0) {
         return CompletionPredictability::Invalid;
     }
     if (!facts.residentExactMedia || !facts.pitchFixed ||
@@ -73,8 +74,9 @@ CompletionPredictability ResolveKnownCompletionDuration(
             return CompletionPredictability::Invalid;
         }
     }
-    const double ratio = static_cast<double>(facts.pitchRatio) *
-        (static_cast<double>(facts.sourceRate) / facts.mixRate);
+    const double ratio = facts.resolvedSourceRatio != 0.0 ? facts.resolvedSourceRatio :
+        static_cast<double>(facts.pitchRatio) *
+            (static_cast<double>(facts.sourceRate) / facts.mixRate);
     SourcePhaseStep step{};
     if (!DecodeSourcePhaseStep(ratio, &step)) {
         return CompletionPredictability::Invalid;
