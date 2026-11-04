@@ -172,6 +172,8 @@ add_library(harken_editor_foundation STATIC
     AssetPipeline/AssetImport.cpp
     AssetPipeline/SourceFileSystem.cpp
     AssetPipeline/SourceFileSystem.h
+    AssetPipeline/SourceWaveformView.cpp
+    AssetPipeline/SourceWaveformView.h
     AssetPipeline/AssetTypes.h
     AssetPipeline/AudioImportGate.cpp
     AssetPipeline/AudioImportGate.h

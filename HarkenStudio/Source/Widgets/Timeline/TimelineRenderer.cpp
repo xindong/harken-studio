@@ -148,6 +148,7 @@ void drawWaveform(QPainter& painter,
     painter.save();
     painter.setClipRect(item.waveformViewport.intersected(item.rect), Qt::IntersectClip);
     WaveformRenderOptions options;
+    options.sourceView = item.waveformView;
     options.startFrame = item.waveformStartFrame;
     options.frameCount = item.waveformFrameCount;
     options.sampleCurve = true;

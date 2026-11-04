@@ -7,6 +7,7 @@
 #include "Widgets/Common/AxisCrosshair.h"
 
 #include <QElapsedTimer>
+#include <QPainterPath>
 #include <QPoint>
 #include <QPointer>
 #include <QTimer>
@@ -83,6 +84,15 @@ protected:
 
 private:
     enum class Handle { None = -1, TrimStart = 0, LoopStart = 1, LoopEnd = 2, TrimEnd = 3 };
+    enum class FadePart { None, Start, End, Handle1, Handle2, Curve };
+
+    struct FadeHit
+    {
+        int index = -1;
+        FadePart part = FadePart::None;
+
+        bool operator==(const FadeHit&) const = default;
+    };
 
     enum class State {
         MissingSource,
@@ -94,7 +104,7 @@ private:
     void setState(State state);
     void loadAsset(const QString& path);
     uint64_t totalFrames() const;
-    uint64_t frameAt(int x) const;
+    uint64_t frameAt(double x) const;
     uint64_t handleFrame(Handle handle) const;
     QRect trimGripRect(Handle handle) const;
     Handle hitTestHandle(const QPoint& position) const;
@@ -114,7 +124,7 @@ private:
     void paintTimeline(QPainter& painter);
     void requestDetail();
     void showHandleValue();
-    void editHandleValue(Handle handle);
+    void editHandleValue(Handle handle, int fadeIndex = -1);
     void cancelGesture();
     void dragHandle(const QPoint& position);
     int positionAt(double frame) const;
@@ -123,6 +133,19 @@ private:
     QString formatFrame(uint64_t frame) const;
     bool isTimeRuler(const QPoint& position) const;
     bool isPanArea(const QPoint& position) const;
+    const SoundSourceFadeDef& fade(int index) const;
+    QRectF fadeGraphRect() const;
+    QPointF fadePointPosition(int index, float x, float value) const;
+    QPointF fadeTargetPosition(FadeHit target) const;
+    QPainterPath fadePath(int index) const;
+    FadeHit hitTestFade(const QPoint& position) const;
+    QString fadeTooltip(FadeHit target) const;
+    uint64_t fadeDurationLimit(int index) const;
+    void paintFades(QPainter& painter);
+    void beginFadeDrag(FadeHit target, const QPoint& position, bool pullHandle = false);
+    void dragFade(const QPoint& position, Qt::KeyboardModifiers modifiers = Qt::NoModifier);
+    void setFadeDuration(int index, uint64_t duration);
+    void showFadeMenu(int index, const QPoint& position);
 
     QString path_;
     WaveformPeakData peaks_;
@@ -134,6 +157,13 @@ private:
     QTimer playheadTick_;
     Handle activeHandle_ = Handle::None;
     Handle hoveredHandle_ = Handle::None;
+    FadeHit activeFade_;
+    FadeHit hoveredFade_;
+    int selectedFade_ = -1;
+    QPointF fadeGrabOffset_;
+    QPointF fadeDragOrigin_;
+    double fadeDragT_ = 0.5;
+    bool fadePullingHandle_ = false;
     std::optional<QPoint> hoverPosition_;
     bool editable_ = false;
     std::function<void(const SoundSourceDef&)> commit_;

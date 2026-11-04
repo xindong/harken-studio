@@ -2,12 +2,14 @@
 #pragma once
 
 #include "Core/ThemeSnapshot.h"
+#include "Core/AssetPipeline/SourceWaveformView.h"
 #include "AmplitudeAxis.h"
 
 #include <QPainter>
 #include <QRect>
 #include <QColor>
 #include <cstdint>
+#include <optional>
 
 namespace VNX {
 
@@ -27,12 +29,9 @@ enum class WaveChannelSource {
     Side
 };
 
-struct WaveformFrameRange
-{
-    uint64_t startFrame = 0;
-    uint64_t endFrame = 0;
-
-    bool operator==(const WaveformFrameRange&) const = default;
+enum class WaveformSourceExtent {
+    FullFile,
+    Trimmed
 };
 
 struct WaveformRenderOptions
@@ -45,6 +44,9 @@ struct WaveformRenderOptions
     double frameCount = 0.0;
     bool sampleCurve = false;
     double amplitudeExponent = 1.0;
+    std::optional<SourceWaveformView> sourceView;
+    double dataFrameOrigin = 0.0;
+    WaveformSourceExtent sourceExtent = WaveformSourceExtent::FullFile;
 };
 
 class WaveformRenderer

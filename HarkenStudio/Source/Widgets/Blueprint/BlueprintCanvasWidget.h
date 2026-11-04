@@ -216,7 +216,7 @@ private:
     std::unordered_map<NodeKey, NodeItem*, NodeKeyHash> nodeMap_;
     struct WaveformNode {
         NodeItem* item = nullptr;
-        std::optional<WaveformFrameRange> range;
+        std::optional<SourceWaveformView> view;
     };
     QHash<QString, std::vector<WaveformNode>> waveformNodes_;
     std::vector<ConnectionPath*> edges_;

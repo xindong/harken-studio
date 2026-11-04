@@ -77,8 +77,11 @@ void SourceRangeThumb::paintEvent(QPaintEvent*)
     painter.setRenderHint(QPainter::Antialiasing);
     const auto& colors = ThemeManager::instance().colors();
     const auto& style = ThemeManager::instance().snapshot()->domains.waveform;
+    const uint64_t total = asset_ ? asset_->metadata.totalSamples : 0;
     if (peaks_ && peaks_->isValid()) {
-        WaveformRenderer::render(painter, inner, *peaks_, style);
+        WaveformRenderOptions options;
+        options.sourceView = SourceWaveformView(source_, total);
+        WaveformRenderer::render(painter, inner, *peaks_, style, options);
     } else {
         painter.setPen(colors.textMuted);
         painter.drawText(inner, Qt::AlignCenter,
@@ -86,7 +89,6 @@ void SourceRangeThumb::paintEvent(QPaintEvent*)
         return;
     }
 
-    const uint64_t total = asset_ ? asset_->metadata.totalSamples : 0;
     if (total == 0)
         return;
 

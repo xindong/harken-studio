@@ -44,7 +44,7 @@ struct BlueprintNodeDesc {
     qreal             opacity      = 1.0;
     bool              waveformMode = false;
     QString           mediaPath;
-    std::optional<WaveformFrameRange> waveformRange;
+    std::optional<SourceWaveformView> waveformView;
     int               overrideBadge   = -1;
     int               receiveBadge    = -1;
     NodeContentInfo   content;

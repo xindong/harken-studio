@@ -637,7 +637,7 @@ void NodeItem::setWaveformPeaks(const std::vector<float>& peaks)
 {
     waveformPeaks_ = peaks;
     waveformPeakData_.reset();
-    waveformRange_.reset();
+    waveformView_.reset();
     updateContentHeight();
     repositionAllPins_();
     update();
@@ -656,11 +656,11 @@ void NodeItem::setContentFields(NodeContentFields fields)
     update();
 }
 
-void NodeItem::setWaveformPeakData(std::shared_ptr<const WaveformPeakData> data, std::optional<WaveformFrameRange> range)
+void NodeItem::setWaveformPeakData(std::shared_ptr<const WaveformPeakData> data, std::optional<SourceWaveformView> view)
 {
-    if (waveformPeakData_ == data && waveformRange_ == range && waveformPeaks_.empty()) return;
+    if (waveformPeakData_ == data && waveformView_ == view && waveformPeaks_.empty()) return;
     waveformPeakData_ = std::move(data);
-    waveformRange_ = range;
+    waveformView_ = std::move(view);
     waveformPeaks_.clear();
     updateContentHeight();
     repositionAllPins_();
@@ -1107,11 +1107,10 @@ void NodeItem::paintWaveform(QPainter* painter, const QRectF& rect) const
     if (waveformPeakData_ && waveformPeakData_->isValid()) {
         QRect intRect(static_cast<int>(rect.x()), static_cast<int>(rect.y()),
                       static_cast<int>(rect.width()), static_cast<int>(rect.height()));
-        WaveformRenderOptions options{WaveColorMode::Static, WaveChannelSource::Mono, waveColor};
-        if (waveformRange_) {
-            options.startFrame = static_cast<double>(waveformRange_->startFrame);
-            options.frameCount = static_cast<double>(waveformRange_->endFrame - waveformRange_->startFrame);
-        }
+        WaveformRenderOptions options;
+        options.accentColor = waveColor;
+        options.sourceView = waveformView_;
+        options.sourceExtent = WaveformSourceExtent::Trimmed;
         WaveformRenderer::render(*painter, intRect, *waveformPeakData_, theme->domains.waveform, options);
 
         float midY = rect.y() + rect.height() / 2.0f;

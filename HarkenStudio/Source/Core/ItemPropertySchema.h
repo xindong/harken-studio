@@ -105,6 +105,7 @@ inline QJsonObject setItemPropertySchema()
                 {QStringLiteral("rowFields"), QJsonArray{
                     QStringLiteral("entryId"), QStringLiteral("sourceId"),
                     QStringLiteral("trimStartFrame"), QStringLiteral("trimEndFrame"),
+                    QStringLiteral("fadeIn"), QStringLiteral("fadeOut"),
                     QStringLiteral("loopRegion"), QStringLiteral("loopProvenance"),
                     QStringLiteral("rangeContentHash")}}}}
         }}

@@ -17,7 +17,7 @@ void BlueprintCanvasWidget::refreshNodeWaveforms_(uint32_t sourceID)
         const auto peaks = path.isEmpty() ? std::shared_ptr<const WaveformPeakData>{}
                                          : WaveformCache::loadShared(path);
         for (const auto& node : nodes)
-            node.item->setWaveformPeakData(peaks, node.range);
+            node.item->setWaveformPeakData(peaks, node.view);
     };
     if (sourceID != 0) {
         const auto* asset = AssetRegistry::instance().getAsset(sourceID);

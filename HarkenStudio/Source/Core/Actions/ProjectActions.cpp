@@ -893,6 +893,10 @@ void applySoundAuthoringState(uint32_t objectID, const SoundAuthoringState& stat
     auto* sound = item ? item->comp<VSound>() : nullptr;
     if (!sound) return;
     sound->sources = state.sources;
+    for (auto* set : SoundSourceSemantics::sourceSets(sound->sources))
+        for (auto& source : set->entries)
+            SoundSourceSemantics::clampFadesToAsset(
+                source, AssetRegistry::instance().getAsset(source.sourceId));
     sound->scheduleOffsetSec = state.scheduleOffsetSec;
     sound->distinguishLanguage = state.distinguishLanguage;
     SoundSourceEditing::syncActiveProjection(
@@ -964,6 +968,8 @@ ActionResult handleSoundItemProperty(ProjectManager* projectManager, ProjectItem
         for (const auto* set : SoundSourceSemantics::sourceSets(oldState.sources))
             previous.insert(previous.end(), set->entries.begin(), set->entries.end());
         const auto prepareSet = [&](SoundSourceSet& set, const SoundSourceSet& before) {
+            for (auto& source : set.entries)
+                SoundSourceSemantics::clampFadesToAsset(source, resolveAsset(source.sourceId));
             if (set.entries == before.entries) return;
             SoundSourceSemantics::settleLoopProvenance(set.entries, resolveAsset);
             SoundSourceSemantics::stampAuthoringAnchors(set.entries, previous, resolveAsset);

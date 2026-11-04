@@ -127,7 +127,8 @@ void SourceEditorWaveformView::setSource(const SoundSourceDef& source)
 {
     const bool differentEntry = source.entryId != originalSource_.entryId
         || source.sourceId != originalSource_.sourceId;
-    if (!differentEntry && source == originalSource_ && activeHandle_ != Handle::None)
+    if (!differentEntry && source == originalSource_
+        && (activeHandle_ != Handle::None || activeFade_.index >= 0))
         return;
     cancelGesture();
     originalSource_ = source;
@@ -136,6 +137,7 @@ void SourceEditorWaveformView::setSource(const SoundSourceDef& source)
     hoveredHandle_ = Handle::None;
     unsetCursor();
     if (differentEntry) {
+        selectedFade_ = -1;
         verticalZoom_ = 1.0;
         if (channelScroll_)
             channelScroll_->setValue(0);
@@ -151,6 +153,7 @@ void SourceEditorWaveformView::setEditable(bool editable)
     editable_ = editable;
     if (!editable_) {
         cancelGesture();
+        selectedFade_ = -1;
         activeHandle_ = Handle::None;
         hoveredHandle_ = Handle::None;
         unsetCursor();
@@ -284,6 +287,7 @@ void SourceEditorWaveformView::paintEvent(QPaintEvent*)
         WaveformRenderOptions options;
         options.colorMode = WaveColorMode::MultiBand;
         options.amplitudeExponent = amplitudeExponent_;
+        options.sourceView = SourceWaveformView(previewSource_, totalFrames());
         WaveformRenderer::render(painter, waveformRect, peaks_, theme->domains.waveform, options);
         WaveformRenderer::drawDbScale(painter, waveformRect, theme->domains.waveform, amplitudeExponent_);
         if (totalFrames() != 0) {
@@ -368,6 +372,17 @@ void SourceEditorWaveformView::paintEvent(QPaintEvent*)
 void SourceEditorWaveformView::mousePressEvent(QMouseEvent* event)
 {
     const QPoint position = event->position().toPoint();
+    if (event->button() == Qt::LeftButton) {
+        FadeHit fadeHit = hitTestFade(position);
+        if (fadeHit.index >= 0) {
+            const bool pullHandle = event->modifiers().testFlag(Qt::AltModifier)
+                && fade(fadeHit.index).durationFrames > 0
+                && (fadeHit.part == FadePart::Start || fadeHit.part == FadePart::End);
+            beginFadeDrag(fadeHit, position, pullHandle);
+            event->accept();
+            return;
+        }
+    }
     if (isPanArea(position)
         && (event->button() == Qt::MiddleButton
             || (event->button() == Qt::LeftButton && hitTestHandle(position) == Handle::None))) {
@@ -379,6 +394,8 @@ void SourceEditorWaveformView::mousePressEvent(QMouseEvent* event)
         if (waveformRect().contains(position))
             panVerticalStart_ = channelScroll_->value();
         hoveredHandle_ = Handle::None;
+        hoveredFade_ = {};
+        selectedFade_ = -1;
         QToolTip::hideText();
         setCursor(isTimeRuler(position) ? Qt::ClosedHandCursor : Qt::ArrowCursor);
         update();
@@ -392,6 +409,8 @@ void SourceEditorWaveformView::mousePressEvent(QMouseEvent* event)
         const Handle hit = hitTestHandle(event->position().toPoint());
         if (hit != Handle::None) {
             setFocus();
+            selectedFade_ = -1;
+            hoveredFade_ = {};
             originalSource_ = previewSource_;
             activeHandle_ = hit;
             hoveredHandle_ = hit;
@@ -415,6 +434,10 @@ void SourceEditorWaveformView::mousePressEvent(QMouseEvent* event)
 
 void SourceEditorWaveformView::mouseMoveEvent(QMouseEvent* event)
 {
+    if (activeFade_.index >= 0 && (event->buttons() & Qt::LeftButton)) {
+        dragFade(event->position().toPoint(), event->modifiers());
+        return;
+    }
     if (panOrigin_) {
         const double delta = (event->position().x() - panOrigin_->x())
             / std::max(1, waveformRect().width() - 1) * viewFrameCount();
@@ -435,6 +458,21 @@ void SourceEditorWaveformView::mouseMoveEvent(QMouseEvent* event)
 
 void SourceEditorWaveformView::mouseReleaseEvent(QMouseEvent* event)
 {
+    if (activeFade_.index >= 0 && event->button() == Qt::LeftButton) {
+        if (dragMoved_ && event->position().toPoint() != dragPosition_)
+            dragFade(event->position().toPoint(), event->modifiers());
+        activeFade_ = {};
+        edgeScroll_.stop();
+        handleValue_->hide();
+        updateHover(event->position().toPoint());
+        if (previewSource_ != originalSource_) {
+            originalSource_ = previewSource_;
+            if (commit_)
+                commit_(previewSource_);
+        }
+        update();
+        return;
+    }
     if (panOrigin_ && event->button() == panButton_) {
         panOrigin_.reset();
         panVerticalStart_.reset();
@@ -465,8 +503,9 @@ void SourceEditorWaveformView::mouseReleaseEvent(QMouseEvent* event)
 void SourceEditorWaveformView::leaveEvent(QEvent* event)
 {
     hoverPosition_.reset();
-    if (activeHandle_ == Handle::None && !panOrigin_) {
+    if (activeHandle_ == Handle::None && activeFade_.index < 0 && !panOrigin_) {
         hoveredHandle_ = Handle::None;
+        hoveredFade_ = {};
         unsetCursor();
         update();
     }
@@ -521,7 +560,7 @@ uint64_t SourceEditorWaveformView::totalFrames() const
     return asset_ ? asset_->metadata.totalSamples : 0;
 }
 
-uint64_t SourceEditorWaveformView::frameAt(int x) const
+uint64_t SourceEditorWaveformView::frameAt(double x) const
 {
     const uint64_t total = totalFrames();
     if (total == 0)
@@ -614,6 +653,19 @@ void SourceEditorWaveformView::updateHover(const QPoint& position)
 {
     hoverPosition_ = position;
     update();
+    const FadeHit nextFade = hitTestFade(position);
+    if (nextFade.index >= 0) {
+        setCursor(nextFade.part == FadePart::Curve ? Qt::SizeVerCursor : Qt::PointingHandCursor);
+        if (nextFade != hoveredFade_)
+            QToolTip::showText(mapToGlobal(position), fadeTooltip(nextFade), this);
+        hoveredFade_ = nextFade;
+        hoveredHandle_ = Handle::None;
+        return;
+    }
+    if (hoveredFade_.index >= 0) {
+        hoveredFade_ = {};
+        QToolTip::hideText();
+    }
     const Handle next = hitTestHandle(position);
     if (next != Handle::None)
         setCursor(Qt::SizeHorCursor);
@@ -642,6 +694,7 @@ AxisCrosshair SourceEditorWaveformView::crosshair() const
     AxisCrosshair result;
     if (!hoverPosition_ || !asset_ || totalFrames() == 0
         || activeHandle_ != Handle::None || hoveredHandle_ != Handle::None
+        || activeFade_.index >= 0 || hoveredFade_.index >= 0
         || panOrigin_ || valueEditor_ || !crosshairRect().contains(*hoverPosition_))
         return result;
     const QRect wave = presentation_ == Presentation::TrimEditor
@@ -725,6 +778,12 @@ void SourceEditorWaveformView::canonicalizeActiveHandle()
     previewSource_.trimStartFrame = trimStart;
     if (previewSource_.trimEndFrame || activeHandle_ == Handle::TrimEnd)
         previewSource_.trimEndFrame = trimEnd;
+
+    if (activeHandle_ == Handle::TrimStart || activeHandle_ == Handle::TrimEnd) {
+        previewSource_.fadeIn.durationFrames = originalSource_.fadeIn.durationFrames;
+        previewSource_.fadeOut.durationFrames = originalSource_.fadeOut.durationFrames;
+        SoundSourceSemantics::clampFadeDurations(previewSource_, trimEnd - trimStart);
+    }
 
     if (presentation_ == Presentation::TrimEditor || !previewSource_.loopRegion)
         return;
