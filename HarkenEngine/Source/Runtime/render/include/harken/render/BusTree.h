@@ -306,6 +306,7 @@ public:
     std::uint32_t SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> buses,
         std::span<SignalFeedbackEdge> edges, std::uint32_t frames,
         std::span<SignalBiquadSegment> schedules, std::uint32_t nodeOffset) noexcept;
+    bool SignalReceiversCannotReachSources(std::span<std::uint8_t> roles) const noexcept;
     SignalRenderPlan* InstalledSignals() const {
         return m_plans.View(m_currentPlanIndex).signals;
     }

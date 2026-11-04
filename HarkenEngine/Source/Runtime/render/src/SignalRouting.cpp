@@ -28,6 +28,24 @@ double SendBound(const VoiceSendSlot& send) noexcept {
 }
 }
 
+void SignalRenderPlan::PrepareFinalOutputs(std::span<const SignalMemberImage> members) noexcept {
+    for (auto& node : nodes_) node.deferOutput = node.outputGainOffset != SIZE_MAX;
+    for (const auto& member : members) {
+        const bool final = !member.nodes.empty() && member.voice != nullptr &&
+            member.voice->voiceSendActiveCount == 0;
+        for (const auto index : member.nodes)
+            if (index < nodes_.size()) nodes_[index].deferOutput &= final && index == member.nodes.front();
+    }
+}
+
+void SignalRenderPlan::SelectPreparedBusRouting(BusTree& buses) noexcept {
+    if (preparedSoundRouting_ || !independentBuses_ || buses.AudioBusCount() > routingBusCount_) return;
+    for (std::uint32_t i = 0; i < routingBusCount_; ++i)
+        busReachability_[i] = (nodes_[i].source != UINT32_MAX ? 1u : 0u) |
+                              (nodes_[i].target != UINT32_MAX ? 2u : 0u);
+    preparedSoundRouting_ = buses.SignalReceiversCannotReachSources(busReachability_);
+}
+
 std::uint64_t SignalRenderPlan::RoutingScratchBytes(std::uint32_t nodes, std::uint32_t buses,
                                                   std::uint64_t edges, std::uint32_t frames) noexcept {
     if (edges > UINT32_MAX) return UINT64_MAX;
@@ -49,7 +67,7 @@ bool SignalRenderPlan::ReserveRouting(BusTree& buses, BlockArena& arena,
         relations_.size() + pathRows + static_cast<std::uint64_t>(members) * (kMaxVoiceSendSlots + 1ull);
     const auto bytes = RoutingScratchBytes(static_cast<std::uint32_t>(graphCount), buses.AudioBusCount(), edges, current_.frames);
     if (bytes > arena.CapacityBytes()) return false;
-    auto* data = arena.AllocFloats((static_cast<std::size_t>(bytes) + sizeof(float) - 1) / sizeof(float));
+    auto* data = arena.ReserveFloats((static_cast<std::size_t>(bytes) + sizeof(float) - 1) / sizeof(float));
     if (data == nullptr) return false;
     routingStorage_ = {reinterpret_cast<std::byte*>(data), static_cast<std::size_t>(bytes)};
     return true;
@@ -139,8 +157,8 @@ bool SignalRenderPlan::BuildRouting(std::span<const SignalMemberImage> members,
         } else edges[merged++] = edge;
     }
     const auto bytes = SignalFeedbackPlan::ScratchBytes(static_cast<std::uint32_t>(graphCount), merged);
-    auto scratch = Reserve<std::byte>(storage, bytes);
-    if (scratch.size() != bytes) return false;
+    if (storage.size() < bytes) return false;
+    auto scratch = storage.first(bytes);
     SignalFeedbackView candidate;
     return SignalFeedbackPlan::Compile(static_cast<std::uint32_t>(graphCount), edges.first(merged), scratch, candidate) &&
         SetBlockRouting(candidate);

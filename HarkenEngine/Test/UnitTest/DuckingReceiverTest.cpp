@@ -73,6 +73,31 @@ TEST(DuckingReceiver, MissingSourceReleasesAndResetClearsDetectionHistory) {
     EXPECT_EQ(gains.front(), 1);
 }
 
+TEST(DuckingReceiver, SilentSurroundChannelsPreserveDetectorHistoryAndReactivation) {
+    harken::DuckingReceiver stereo, surround;
+    stereo.SetParameters(Parameters());
+    surround.SetParameters(Parameters());
+    std::array<float, 67> left{}, right{}, sideLeft{}, sideRight{}, zero{};
+    left.fill(1);
+    const float* main2[]{left.data(), right.data()};
+    const float* side2[]{sideLeft.data(), sideRight.data()};
+    const float* main8[]{left.data(), zero.data(), zero.data(), zero.data(),
+                        zero.data(), zero.data(), zero.data(), right.data()};
+    const float* side8[]{sideLeft.data(), zero.data(), zero.data(), zero.data(),
+                        zero.data(), zero.data(), zero.data(), sideRight.data()};
+    std::array<double, 67> gain2{}, gain8{};
+    for (unsigned block = 0; block < 160; ++block) {
+        SCOPED_TRACE(block);
+        sideLeft.fill(block >= 100 ? .01f : 0);
+        sideRight.fill((block >= 8 && block < 16) || block >= 120 ? .1f : 0);
+        right.fill(block >= 120 ? .5f : 0);
+        ASSERT_TRUE(stereo.Process(main2, side2, 2, gain2.size(), nullptr, nullptr, 0, gain2.data()));
+        ASSERT_TRUE(surround.Process(main8, side8, 8, gain8.size(), nullptr, nullptr, 0, gain8.data()));
+        EXPECT_EQ(gain2, gain8);
+        if (block == 16) EXPECT_LT(gain8.back(), 1);
+    }
+}
+
 TEST(DuckingReceiver, ParametersRetainTimeConstantsAndRejectInvalidUpdates) {
     const auto p48 = Parameters();
     const auto p96 = Parameters(96000);

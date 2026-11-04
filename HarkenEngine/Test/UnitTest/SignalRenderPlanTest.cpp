@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 #include <array>
+#include <limits>
 
 namespace {
 using namespace harken;
@@ -39,6 +40,55 @@ TEST(SignalRenderPlan, SignedCancellationUsesOneSharedDefinitionReceiver) {
         for (std::uint32_t n = 0; n < kFrames; ++n) {
             EXPECT_FLOAT_EQ(targetA.pcm[n], .25f);
             EXPECT_FLOAT_EQ(targetB.pcm[n], .75f);
+        }
+    }
+}
+
+TEST(SignalRenderPlan, NonFiniteMemberInputIsRejectedBeforeAnyMemberChanges) {
+    constexpr SignalBlockFormat format{2, kFrames, 48000, VN_CHANNEL_LAYOUT_STEREO};
+    const std::array nodes{SignalRenderNodeInput{SignalEndpointKindV1::Sound},
+                          SignalRenderNodeInput{SignalEndpointKindV1::Sound, true}};
+    const std::array connections{SignalConnectionInput{0, 1, 1}};
+    const std::array paths{SignalFeedbackEdge{0, 1, 1, true}};
+    auto plan = SignalRenderPlan::Prepare(format, nodes, connections, paths);
+    ASSERT_NE(plan, nullptr);
+    std::array<float, kFrames> sourceLeft{}, sourceRight{}, targetLeft{}, targetRight{};
+    float* sourcePlanes[]{sourceLeft.data(), sourceRight.data()};
+    float* targetPlanes[]{targetLeft.data(), targetRight.data()};
+    OutputGain sourceOut, targetOut;
+    const std::array<std::uint32_t, 1> sourceNode{0}, targetNode{1};
+    // Put the valid receiver first so rejecting a later member cannot partially
+    // consume detector time or change already validated output.
+    std::array members{
+        SignalMemberImage{targetPlanes, &targetOut, targetNode, 0, kFrames},
+        SignalMemberImage{sourcePlanes, &sourceOut, sourceNode, 0, kFrames}};
+    for (std::uint32_t epoch = 0; epoch < 6; ++epoch) {
+        // A proven silent lane cannot suppress validation of other lanes or gains.
+        members[1].silentChannels = epoch % 2;
+        sourceLeft.fill(members[1].silentChannels != 0 ? 0.0f : .1f);
+        sourceRight.fill(.1f);
+        targetLeft.fill(1); targetRight.fill(1);
+        ASSERT_TRUE(plan->BeginBlock(Block(epoch)));
+        if (epoch != 0) {
+            const auto beforeLeft = targetLeft, beforeRight = targetRight;
+            if (epoch <= 3) {
+                sourceRight.back() = epoch == 1 ? std::numeric_limits<float>::infinity()
+                    : epoch == 2 ? -std::numeric_limits<float>::infinity()
+                                 : std::numeric_limits<float>::quiet_NaN();
+            } else {
+                sourceOut.Set(std::numeric_limits<float>::quiet_NaN(), epoch == 4 ? 0 : kFrames * 2);
+            }
+            EXPECT_FALSE(plan->ProcessContent(members));
+            EXPECT_EQ(targetLeft, beforeLeft);
+            EXPECT_EQ(targetRight, beforeRight);
+            sourceRight.back() = .1f;
+            sourceOut.Set(1);
+        }
+        ASSERT_TRUE(plan->ProcessContent(members));
+        ASSERT_TRUE(plan->CommitBlock());
+        if (epoch != 0) {
+            EXPECT_LT(targetLeft.back(), 1);
+            EXPECT_EQ(targetLeft, targetRight);
         }
     }
 }

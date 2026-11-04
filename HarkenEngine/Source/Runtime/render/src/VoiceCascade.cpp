@@ -1,4 +1,5 @@
 #include "harken/render/Voice.h"
+#include "harken/render/SignalRenderPlan.h"
 #include "harken/render/EffectChain.h"
 #include "harken/render/VoiceTimelineEligibility.h"
 
@@ -17,6 +18,175 @@
 namespace harken {
 
 namespace {
+
+// Match the ordinary native-channel fold, including its last-source-wins order.
+void MapNativeImageChannels(std::uint32_t sourceChannels, std::uint32_t mixChannels,
+                            std::uint32_t mixLayout, int* sources) noexcept {
+    std::fill_n(sources, mixChannels, -1);
+    ChannelRole roles[kMaxChannels];
+    const auto sourceLayout = LayoutFromChannelCount(sourceChannels);
+    if (sourceLayout != VN_CHANNEL_LAYOUT_DEFAULT) LayoutRoles(sourceLayout, roles);
+    for (std::uint32_t source = 0; source < sourceChannels; ++source) {
+        const int destination = sourceLayout == VN_CHANNEL_LAYOUT_DEFAULT
+            ? (source < mixChannels ? static_cast<int>(source) : -1)
+            : ChannelOfRole(mixLayout, roles[source]);
+        if (destination >= 0) sources[destination] = static_cast<int>(source);
+    }
+}
+
+// Materialize one stable matrix row, retaining the VoiceGain float boundary.
+void ProjectSignalImage(float* image, const float* left, const float* right,
+                        std::uint32_t frames, float a, float b, float voiceGain = 1.0f) noexcept {
+    const auto project = [&]<bool Stereo, bool Gain>() {
+        std::uint32_t n = 0;
+#if defined(HARKEN_OUTPUT_GAIN_SSE2)
+        const auto av = _mm_set1_ps(a), bv = _mm_set1_ps(b), gv = _mm_set1_ps(voiceGain);
+        for (; n + 4 <= frames; n += 4) {
+            auto l = _mm_loadu_ps(left + n);
+            if constexpr (Gain) l = _mm_mul_ps(l, gv);
+            auto r = _mm_setzero_ps();
+            if constexpr (Stereo) {
+                r = _mm_loadu_ps(right + n);
+                if constexpr (Gain) r = _mm_mul_ps(r, gv);
+                r = _mm_mul_ps(r, bv);
+            }
+            _mm_storeu_ps(image + n, _mm_add_ps(_mm_mul_ps(l, av), r));
+        }
+#endif
+        for (; n < frames; ++n) {
+            const float l = Gain ? left[n] * voiceGain : left[n];
+            const float r = Stereo ? (Gain ? right[n] * voiceGain : right[n]) : 0.0f;
+            image[n] = l * a + (Stereo ? r * b : 0.0f);
+        }
+    };
+    if (right != nullptr) {
+        if (voiceGain == 1.0f) project.template operator()<true, false>();
+        else project.template operator()<true, true>();
+    } else {
+        if (voiceGain == 1.0f) project.template operator()<false, false>();
+        else project.template operator()<false, true>();
+    }
+}
+
+struct PreparedInput {
+    const float* source = nullptr;
+    const double* gains = nullptr;
+    const float* levels = nullptr;
+    unsigned levelBegin = 0;
+#if defined(HARKEN_OUTPUT_GAIN_SSE2)
+    __m128 level;
+#endif
+    float scalarLevel = 1.0f;
+    bool active = false;
+};
+
+// Template recursion fixes the voice count and addition order at compile time.
+// Input pointers and the output multiplier are loaded before the frame loop.
+#if defined(HARKEN_OUTPUT_GAIN_SSE2)
+template<unsigned Voice, unsigned Count, unsigned Outputs, bool Ramping>
+inline void AddFixed4(const PreparedInput* inputs, __m128* sums,
+                           unsigned outputCount, unsigned n) {
+    const auto& input = inputs[Voice];
+    if (input.active) {
+        auto received = _mm_loadu_ps(input.source + n);
+        if (input.gains != nullptr) {
+            const auto low = _mm_mul_pd(_mm_cvtps_pd(received), _mm_loadu_pd(input.gains + n));
+            const auto high = _mm_mul_pd(_mm_cvtps_pd(_mm_movehl_ps(received, received)),
+                                         _mm_loadu_pd(input.gains + n + 2));
+            received = _mm_movelh_ps(_mm_cvtpd_ps(low), _mm_cvtpd_ps(high));
+        }
+        const auto level = Ramping ? _mm_loadu_ps(input.levels + n - input.levelBegin) : input.level;
+        const auto contribution = _mm_mul_ps(received, level);
+        const unsigned lanes = Outputs == 0 ? outputCount : Outputs;
+        for (unsigned lane = 0; lane < lanes; ++lane)
+            sums[lane] = _mm_add_ps(sums[lane], contribution);
+    }
+    if constexpr (Voice + 1 < Count) AddFixed4<Voice + 1, Count, Outputs, Ramping>(inputs, sums, outputCount, n);
+}
+
+#endif
+template<unsigned Voice, unsigned Count, unsigned Outputs, bool Ramping>
+inline void AddFixed1(const PreparedInput* inputs, float* sums,
+                           unsigned outputCount, unsigned n) {
+    const auto& input = inputs[Voice];
+    if (input.active) {
+        const float received = input.gains == nullptr ? input.source[n]
+            : static_cast<float>(static_cast<double>(input.source[n]) * input.gains[n]);
+        const float level = Ramping ? input.levels[n - input.levelBegin] : input.scalarLevel;
+        const float contribution = received * level;
+        const unsigned lanes = Outputs == 0 ? outputCount : Outputs;
+        for (unsigned lane = 0; lane < lanes; ++lane) sums[lane] += contribution;
+    }
+    if constexpr (Voice + 1 < Count) AddFixed1<Voice + 1, Count, Outputs, Ramping>(inputs, sums, outputCount, n);
+}
+
+template<unsigned Count, unsigned Outputs, bool Ramping>
+inline void FoldFixedLanes(const PreparedInput* inputs, float* const* destinations,
+                                unsigned outputCount, unsigned begin, unsigned frames) {
+    const unsigned lanes = Outputs == 0 ? outputCount : Outputs;
+    unsigned n = begin;
+#if defined(HARKEN_OUTPUT_GAIN_SSE2)
+    for (; n + 4 <= begin + frames; n += 4) {
+        __m128 sums[kMaxChannels];
+        for (unsigned lane = 0; lane < lanes; ++lane) sums[lane] = _mm_loadu_ps(destinations[lane] + n);
+        AddFixed4<0, Count, Outputs, Ramping>(inputs, sums, outputCount, n);
+        for (unsigned lane = 0; lane < lanes; ++lane) _mm_storeu_ps(destinations[lane] + n, sums[lane]);
+    }
+#endif
+    for (; n < begin + frames; ++n) {
+        float sums[kMaxChannels];
+        for (unsigned lane = 0; lane < lanes; ++lane) sums[lane] = destinations[lane][n];
+        AddFixed1<0, Count, Outputs, Ramping>(inputs, sums, outputCount, n);
+        for (unsigned lane = 0; lane < lanes; ++lane) destinations[lane][n] = sums[lane];
+    }
+}
+
+
+void MixReceivedOutput(const float* source, std::span<float* const> destinations, const double* gains,
+                       std::uint32_t frames, const OutputGain& output) noexcept {
+    if (output.remainingFrames == 0) {
+        const auto mix = [&]<bool Receiving, unsigned Outputs>() {
+        const auto outputCount = Outputs == 0 ? destinations.size() : Outputs;
+        std::uint32_t n = 0;
+#if defined(HARKEN_OUTPUT_GAIN_SSE2)
+        const auto level = _mm_set1_ps(output.target);
+        for (; n + 4 <= frames; n += 4) {
+            const auto input = _mm_loadu_ps(source + n);
+            auto received = input;
+            if constexpr (Receiving) {
+                const auto low = _mm_mul_pd(_mm_cvtps_pd(input), _mm_loadu_pd(gains + n));
+                const auto high = _mm_mul_pd(_mm_cvtps_pd(_mm_movehl_ps(input, input)), _mm_loadu_pd(gains + n + 2));
+                received = _mm_movelh_ps(_mm_cvtpd_ps(low), _mm_cvtpd_ps(high));
+            }
+            const auto contribution = _mm_mul_ps(received, level);
+            for (std::size_t lane = 0; lane < outputCount; ++lane)
+                _mm_storeu_ps(destinations[lane] + n, _mm_add_ps(_mm_loadu_ps(destinations[lane] + n), contribution));
+        }
+#endif
+        for (; n < frames; ++n) {
+            const float received = !Receiving ? source[n] : static_cast<float>(static_cast<double>(source[n]) * gains[n]);
+            const float contribution = received * output.target;
+            for (std::size_t lane = 0; lane < outputCount; ++lane) destinations[lane][n] += contribution;
+        }
+        };
+        const auto dispatch = [&]<bool Receiving>() {
+            if (destinations.size() == 1) mix.template operator()<Receiving, 1>();
+            else if (destinations.size() == 2) mix.template operator()<Receiving, 2>();
+            else mix.template operator()<Receiving, 0>();
+        };
+        if (gains == nullptr) dispatch.template operator()<false>();
+        else dispatch.template operator()<true>();
+        return;
+    }
+    // Retain the intermediate float boundary and the existing ramp kernel.
+    float tile[128];
+    for (std::uint32_t begin = 0; begin < frames; begin += 128) {
+        const auto count = std::min(128u, frames - begin);
+        for (std::uint32_t n = 0; n < count; ++n)
+            tile[n] = gains == nullptr ? source[begin + n] : static_cast<float>(static_cast<double>(source[begin + n]) * gains[begin + n]);
+        for (auto* destination : destinations) output.MixAdd(tile, destination + begin, count, begin);
+    }
+}
 
 // Scatters a voice's post-pan/post-width tap into each active send target,
 // scaled by the send's ramped level and added to the target bus's input. The
@@ -402,7 +572,7 @@ bool PreparePlainPcm(const VoiceRenderContext& ctx, std::uint32_t blockFrames,
 #else
     const auto& rs = ctx.resampler;
     if (offset >= blockFrames || ctx.pcm.channelCount == 0 ||
-        ctx.pcm.channelCount > 2 || ctx.phase != SourcePhase::Active ||
+        ctx.pcm.channelCount > kMaxChannels || ctx.phase != SourcePhase::Active ||
         ctx.streamParkActive ||
         ctx.voiceSendActiveCount != 0 || ctx.dynamicVoiceTapActive ||
         ctx.tailStarted || ctx.tailRemaining != 0 ||
@@ -416,7 +586,7 @@ bool PreparePlainPcm(const VoiceRenderContext& ctx, std::uint32_t blockFrames,
         ctx.timelineEnvelopes[0].active || ctx.timelineEnvelopes[1].active ||
         ctx.variableWeightActive || ctx.variableWeightControlCount != 0 ||
         ctx.gain.remainingFrames != 0 || ctx.outputGain.remainingFrames != 0 ||
-        ctx.spatialMatrixDirty || !ctx.spatialMatrix.Settled() ||
+        (ctx.pcm.channelCount <= 2 && (ctx.spatialMatrixDirty || !ctx.spatialMatrix.Settled())) ||
         rs.resampleProfile != ResampleProfile::LegacyCompatibility ||
         rs.quality != ResampleQuality::Linear || rs.ratio != 1.0 ||
         rs.targetRatio != 1.0 || rs.rampRemaining != 0 || rs.readFraction != 0.0 ||
@@ -639,10 +809,12 @@ std::uint64_t VoiceCascadeScratchBytes(
 }
 
 bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
-                         std::uint32_t blockFrames, std::uint32_t mixChannels) {
+                         std::uint32_t blockFrames, std::uint32_t mixChannels,
+                         bool readOnlySignalImage, std::uint32_t mixLayout) {
     const std::uint32_t channels = ctx.pcm.channelCount;
     ctx.cascade.runnable = false;
     ctx.cascade.signalImageReady = false;
+    ctx.cascade.signalImageReadOnly = readOnlySignalImage;
     ctx.cascade.borrowed = {};
     ctx.cascade.plainPcmCandidate = false;
     ctx.logicalSourceOutputFramesThisBlock = 0;
@@ -885,9 +1057,28 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     bool tapReady = false;
     if (ctx.voiceSendActiveCount > 0 || ctx.signalMemberActive) {
         tapReady = true;
+        const bool nativeImage = readOnlySignalImage && channels > 2 && mixChannels > 2 &&
+            LayoutChannelCount(mixLayout) == mixChannels;
+        int imageSources[kMaxChannels];
+        if (nativeImage) MapNativeImageChannels(channels, mixChannels, mixLayout, imageSources);
         for (std::uint32_t ch = 0; ch < mixChannels; ++ch) {
+            if (nativeImage && imageSources[ch] >= 0) {
+                tap[ch] = scratch[imageSources[ch]];
+                continue;
+            }
+            if (readOnlySignalImage && channels <= 2 && !ctx.spatialMatrixDirty && ctx.spatialMatrix.Settled()) {
+                for (std::uint32_t prior = 0; prior < ch; ++prior)
+                    if (std::bit_cast<std::uint32_t>(ctx.spatialMatrix.target.gain[0][prior]) ==
+                            std::bit_cast<std::uint32_t>(ctx.spatialMatrix.target.gain[0][ch]) &&
+                        (channels == 1 || std::bit_cast<std::uint32_t>(ctx.spatialMatrix.target.gain[1][prior]) ==
+                            std::bit_cast<std::uint32_t>(ctx.spatialMatrix.target.gain[1][ch]))) {
+                        tap[ch] = tap[prior];
+                        break;
+                    }
+                if (tap[ch] != nullptr) continue;
+            }
             tap[ch] = needsBlendScratch && ch < channels
-                ? dry[ch] : arena.AllocFloatsHigh(blockFrames);
+                ? dry[ch] : arena.ReserveFloatsHigh(blockFrames);
             if (tap[ch] == nullptr) {
                 tapReady = false;
                 break;
@@ -1432,16 +1623,20 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
     ctx.lastResult = StageResult{produced, phase};
 }
 
+template<bool imageOnly>
 static void FoldVoiceIntoBusesImpl(VoiceRenderContext& ctx, float* const* busPlanes,
                         std::uint32_t blockFrames, std::uint32_t mixChannels,
                         std::uint32_t mixLayout, std::uint64_t sourceFrameBegin,
-                        output_gain_detail::MonoStereoMixKernel monoStereoMix, bool imageOnly) {
+                        output_gain_detail::MonoStereoMixKernel monoStereoMix) {
     const std::uint32_t channels = ctx.pcm.channelCount;
     const std::uint32_t offset = ctx.cascade.offset;
     const std::uint32_t produced = ctx.cascade.produced;
     const bool monitorArmed = produced > 0 && harken::monitor::AudioLiveArmed();
+    const bool directImage = imageOnly && ctx.cascade.signalImageReadOnly && ctx.cascade.borrowed.frames != 0 &&
+        !monitorArmed && !ctx.dynamicVoiceTapActive && channels <= 2 &&
+        !ctx.spatialMatrixDirty && ctx.spatialMatrix.Settled();
     if (ctx.cascade.borrowed.frames != 0 &&
-        (imageOnly || monitorArmed || !CanCombineSpatialOutput(ctx, mixChannels))) {
+        !directImage && (channels > 2 || imageOnly || monitorArmed || !CanCombineSpatialOutput(ctx, mixChannels))) {
         MaterializePlainPcm(ctx);
     }
     if (monitorArmed) {
@@ -1463,7 +1658,7 @@ static void FoldVoiceIntoBusesImpl(VoiceRenderContext& ctx, float* const* busPla
                 ctx.engineSampleRate, frameBegin);
         }
     }
-    if (ctx.cascade.borrowed.frames != 0) {
+    if (ctx.cascade.borrowed.frames != 0 && !directImage) {
         FoldPlainPcm(ctx, busPlanes, mixChannels, monoStereoMix);
         return;
     }
@@ -1504,9 +1699,33 @@ static void FoldVoiceIntoBusesImpl(VoiceRenderContext& ctx, float* const* busPla
                         const float b = ctx.spatialMatrix.target.gain[1][ch];
                         float* dst = imageOnly ? nullptr : dry[ch] + offset;
                         float* image = haveTap ? tap[ch] + offset : nullptr;
+                        if constexpr (imageOnly) {
+                            if (ctx.cascade.signalImageReadOnly) {
+                                bool shared = false;
+                                for (std::uint32_t prior = 0; prior < ch; ++prior) {
+                                    if (std::bit_cast<std::uint32_t>(ctx.spatialMatrix.target.gain[0][prior]) == std::bit_cast<std::uint32_t>(a) &&
+                                        (src1 == nullptr || std::bit_cast<std::uint32_t>(ctx.spatialMatrix.target.gain[1][prior]) == std::bit_cast<std::uint32_t>(b))) {
+                                        tap[ch] = tap[prior];
+                                        shared = true;
+                                        break;
+                                    }
+                                }
+                                if (shared) continue;
+                            }
+                        }
                         if (image != nullptr) {
-                            for (std::uint32_t i = 0; i < produced; ++i)
-                                image[i] = src0[i] * a + (src1 != nullptr ? src1[i] * b : 0.0f);
+                            if (directImage) {
+                                const auto span = ctx.cascade.borrowed;
+                                const auto project = [&](std::uint32_t first, std::uint32_t count, std::uint32_t ringOffset) {
+                                    const auto* left = ctx.resampler.ring[0] + ringOffset;
+                                    const auto* right = channels == 2 ? ctx.resampler.ring[1] + ringOffset : nullptr;
+                                    ProjectSignalImage(image + first, left, right, count, a, b, ctx.gain.target);
+                                };
+                                project(0, span.firstFrames, span.ringOffset);
+                                project(span.firstFrames, span.frames - span.firstFrames, 0);
+                            } else {
+                                ProjectSignalImage(image, src0, src1, produced, a, b);
+                            }
                             if (!imageOnly) ctx.outputGain.MixAdd(image, dst, produced, 0);
                         } else if (b == 0.0f) {
                             if (a != 0.0f) ctx.outputGain.MixAdd(src0, dst, produced, 0, a);
@@ -1559,6 +1778,17 @@ static void FoldVoiceIntoBusesImpl(VoiceRenderContext& ctx, float* const* busPla
             }
             ctx.spatialMatrixHasRendered = true;
         } else {
+            if constexpr (imageOnly) {
+                if (ctx.cascade.signalImageReadOnly && mixChannels > 2) {
+                    int imageSources[kMaxChannels];
+                    MapNativeImageChannels(channels, mixChannels, mixLayout, imageSources);
+                    for (std::uint32_t ch = 0; ch < mixChannels; ++ch) {
+                        if (imageSources[ch] >= 0) tap[ch] = scratch[imageSources[ch]];
+                        else std::memset(tap[ch] + offset, 0, produced * sizeof(float));
+                    }
+                    return;
+                }
+            }
             if (haveTap) {
                 for (std::uint32_t ch = 0; ch < mixChannels; ++ch)
                     std::memset(tap[ch] + offset, 0, produced * sizeof(float));
@@ -1602,28 +1832,136 @@ bool PrepareVoiceSignalImage(VoiceRenderContext& ctx, std::uint32_t blockFrames,
                              std::uint64_t sourceFrameBegin) {
     if (!ctx.cascade.runnable || !ctx.cascade.tapReady) return false;
     if (!ctx.cascade.signalImageReady) {
-        FoldVoiceIntoBusesImpl(ctx, nullptr, blockFrames, mixChannels, mixLayout,
-                              sourceFrameBegin, &output_gain_detail::MixMonoToStereoScaled, true);
+        FoldVoiceIntoBusesImpl<true>(ctx, nullptr, blockFrames, mixChannels, mixLayout,
+                              sourceFrameBegin, &output_gain_detail::MixMonoToStereoScaled);
         ctx.cascade.signalImageReady = true;
     }
     return true;
 }
 
+template<bool Ramping>
+static void FoldFourSignalImageRange(std::span<const SignalMemberImage, 4> images,
+                          const double* const* gains, float* const* busPlanes,
+                          std::uint32_t channels, unsigned begin, unsigned frames,
+                          const float* const* levels = nullptr) {
+    constexpr unsigned Count = 4;
+    float* const* buses = busPlanes + images[0].voice->busIndex * channels;
+    unsigned done = 0;
+    for (unsigned ch = 0; ch < channels; ++ch) {
+        if ((done & (1u << ch)) != 0) continue;
+        PreparedInput inputs[Count];
+        bool anyActive = false;
+        for (unsigned v = 0; v < Count; ++v) {
+            inputs[v].source = images[v].planes[ch];
+            inputs[v].gains = gains[v];
+            if constexpr (Ramping) {
+                inputs[v].levels = levels[v];
+                inputs[v].levelBegin = begin;
+            }
+            inputs[v].scalarLevel = images[v].outputGain->target;
+#if defined(HARKEN_OUTPUT_GAIN_SSE2)
+            inputs[v].level = _mm_set1_ps(images[v].outputGain->target);
+#endif
+            inputs[v].active = (images[v].silentChannels & (1u << ch)) == 0;
+            anyActive |= inputs[v].active;
+        }
+        done |= 1u << ch;
+        if (!anyActive) continue;
+        float* destinations[kMaxChannels]{};
+        unsigned outputCount = 0;
+        destinations[outputCount++] = buses[ch];
+        // Sharing is valid only when every voice agrees for this lane pair.
+        // A mismatch splits lanes, never changes or combines contributions.
+        for (unsigned lane = ch + 1; lane < channels; ++lane) {
+            if ((done & (1u << lane)) != 0) continue;
+            bool shared = true;
+            for (unsigned v = 0; v < Count; ++v) {
+                const bool active = (images[v].silentChannels & (1u << lane)) == 0;
+                shared &= active == inputs[v].active &&
+                    (!active || images[v].planes[lane] == inputs[v].source);
+            }
+            if (shared) {
+                destinations[outputCount++] = buses[lane];
+                done |= 1u << lane;
+            }
+        }
+        if (outputCount == 1) FoldFixedLanes<Count, 1, Ramping>(inputs, destinations, outputCount, begin, frames);
+        else if (outputCount == 2) FoldFixedLanes<Count, 2, Ramping>(inputs, destinations, outputCount, begin, frames);
+        else FoldFixedLanes<Count, 0, Ramping>(inputs, destinations, outputCount, begin, frames);
+    }
+}
+
+void FoldFourSignalImages(std::span<const SignalMemberImage, 4> images,
+                          const double* const* gains, float* const* busPlanes,
+                          std::uint32_t channels) {
+    bool ramping = false;
+    for (const auto& image : images) ramping |= image.outputGain->remainingFrames != 0;
+    if (!ramping) {
+        FoldFourSignalImageRange<false>(images, gains, busPlanes, channels, images[0].offset, images[0].frames);
+        return;
+    }
+#if defined(HARKEN_OUTPUT_GAIN_SSE2)
+    // FTZ without DAZ makes the original ramp kernel's intermediate multiply
+    // observable. Keep that kernel for this uncommon floating-point mode.
+    if ((_mm_getcsr() & 0x8040u) == 0x8000u) {
+        for (unsigned v = 0; v < 4; ++v) {
+            const auto& image = images[v];
+            for (unsigned ch = 0; ch < channels; ++ch) {
+                if ((image.silentChannels & (1u << ch)) != 0) continue;
+                auto* destination = busPlanes[image.voice->busIndex * channels + ch] + image.offset;
+                const auto* source = image.planes[ch] + image.offset;
+                if (gains[v] != nullptr || image.voice->cascade.signalImageReadOnly)
+                    MixReceivedOutput(source, {&destination, 1},
+                        gains[v] == nullptr ? nullptr : gains[v] + image.offset,
+                        image.frames, *image.outputGain);
+                else image.outputGain->MixAdd(source, destination, image.frames, 0);
+            }
+        }
+        return;
+    }
+#endif
+    float storage[4][128];
+    const float* levels[]{storage[0], storage[1], storage[2], storage[3]};
+    for (unsigned begin = 0; begin < images[0].frames; begin += 128) {
+        const auto count = std::min(128u, images[0].frames - begin);
+        for (unsigned v = 0; v < 4; ++v) images[v].outputGain->Fill(storage[v], count, begin);
+        FoldFourSignalImageRange<true>(images, gains, busPlanes, channels,
+            images[0].offset + begin, count, levels);
+    }
+}
+
+
 void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
                         std::uint32_t blockFrames, std::uint32_t mixChannels,
                         std::uint32_t mixLayout, std::uint64_t sourceFrameBegin,
-                        output_gain_detail::MonoStereoMixKernel monoStereoMix) {
+                        output_gain_detail::MonoStereoMixKernel monoStereoMix,
+                        std::uint32_t silentChannels, const double* signalGains) {
     if (!ctx.cascade.signalImageReady) {
-        FoldVoiceIntoBusesImpl(ctx, busPlanes, blockFrames, mixChannels, mixLayout,
-                              sourceFrameBegin, monoStereoMix, false);
+        FoldVoiceIntoBusesImpl<false>(ctx, busPlanes, blockFrames, mixChannels, mixLayout,
+                              sourceFrameBegin, monoStereoMix);
         return;
     }
     const auto offset = ctx.cascade.offset;
     const auto produced = ctx.cascade.produced;
     if (produced == 0) return;
     float* const* dry = busPlanes + ctx.busIndex * mixChannels;
-    for (std::uint32_t ch = 0; ch < mixChannels; ++ch)
-        ctx.outputGain.MixAdd(ctx.cascade.tap[ch] + offset, dry[ch] + offset, produced, 0);
+    std::uint32_t mixedChannels = silentChannels;
+    for (std::uint32_t ch = 0; ch < mixChannels; ++ch) {
+        if ((mixedChannels & (1u << ch)) != 0) continue;
+        if (signalGains != nullptr || ctx.cascade.signalImageReadOnly) {
+            float* destinations[kMaxChannels]{};
+            std::uint32_t count = 0;
+            for (std::uint32_t lane = ch; lane < mixChannels; ++lane) {
+                if ((mixedChannels & (1u << lane)) == 0 && ctx.cascade.tap[ch] == ctx.cascade.tap[lane]) {
+                    destinations[count++] = dry[lane] + offset;
+                    mixedChannels |= 1u << lane;
+                }
+            }
+            MixReceivedOutput(ctx.cascade.tap[ch] + offset, {destinations, count},
+                              signalGains == nullptr ? nullptr : signalGains + offset, produced, ctx.outputGain);
+        } else
+            ctx.outputGain.MixAdd(ctx.cascade.tap[ch] + offset, dry[ch] + offset, produced, 0);
+    }
     ctx.outputGain.Advance(produced);
     ScatterVoiceSends(ctx, busPlanes, ctx.cascade.tap, offset, produced, mixChannels);
 }

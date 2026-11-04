@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 #include <array>
+#include <bit>
 #include <limits>
 
 namespace {
@@ -192,6 +193,52 @@ TEST(SignalBlockExchange, FiniteExtremeProductsCancelBeforeFloatConversion) {
     ExpectPlane(exchange.Target(1, 0), positive);
     ExpectPlane(exchange.Target(2, 0), negative);
     ExpectPlane(exchange.Target(3, 0), {4, 4, 4, 4});
+}
+
+TEST(SignalBlockExchange, SingleInputMatchesOrderedMixAcrossRampsAndShortBlocks) {
+    SignalBlockExchange single, mixed;
+    const harken::SignalBlockFormat format{2, 7, 48000, VN_CHANNEL_LAYOUT_STEREO};
+    const SignalConnectionInput one[]{{0, 0, 1}};
+    const SignalConnectionInput two[]{{0, 0, 1}, {1, 0, 1}};
+    ASSERT_TRUE(single.Prepare(format, 1, 1, one));
+    ASSERT_TRUE(mixed.Prepare(format, 2, 1, two));
+    const float maximum = std::numeric_limits<float>::max();
+    const std::array<float, 7> samples{maximum, -maximum, -0.0f, 1e-30f, -1e-30f, .3f, -.7f};
+    const std::array<float, 7> zero{};
+    const float* planes[]{samples.data(), samples.data()};
+    const float* silent[]{zero.data(), zero.data()};
+    std::uint64_t frame = 0;
+    for (unsigned epoch = 0; epoch < 32; ++epoch) {
+        SCOPED_TRACE(epoch);
+        if (epoch % 4 == 0) {
+            const float gain = epoch % 8 == 0 ? maximum : .3f;
+            const unsigned ramp = epoch % 12 == 0 ? 0 : 13;
+            ASSERT_TRUE(single.SetLevel(0, gain, ramp));
+            ASSERT_TRUE(mixed.SetLevel(0, gain, ramp));
+        }
+        const unsigned frames = (epoch / 8) % 2 == 0 ? 7 : 5;
+        const SignalBlockIdentity identity{1, 2, 3, epoch, frame, frames};
+        EXPECT_EQ(single.ConnectionBound(0, 0), 0);
+        EXPECT_EQ(single.ConnectionBound(0, frames), mixed.ConnectionBound(0, frames));
+        ASSERT_TRUE(single.BeginBlock(identity));
+        ASSERT_TRUE(mixed.BeginBlock(identity));
+        for (unsigned ch = 0; ch < 2; ++ch) {
+            for (unsigned n = 0; n < format.capacityFrames; ++n) {
+                EXPECT_EQ(std::bit_cast<std::uint32_t>(single.Target(0, ch)[n]),
+                          std::bit_cast<std::uint32_t>(mixed.Target(0, ch)[n]));
+                if (n >= frames) EXPECT_EQ(single.Target(0, ch)[n], 0);
+            }
+        }
+        if (epoch % 5 != 0) {
+            const unsigned offset = epoch % 3;
+            ASSERT_TRUE(single.Capture(0, planes, offset, frames - offset));
+            ASSERT_TRUE(mixed.Capture(0, planes, offset, frames - offset));
+        }
+        ASSERT_TRUE(mixed.Capture(1, silent, 0, frames));
+        ASSERT_TRUE(single.CommitBlock());
+        ASSERT_TRUE(mixed.CommitBlock());
+        frame += frames;
+    }
 }
 
 TEST(SignalBlockExchange, EpochAndFrameArithmeticCannotWrapIntoContinuity) {

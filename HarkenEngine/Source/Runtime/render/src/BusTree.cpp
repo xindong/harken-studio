@@ -1308,6 +1308,27 @@ std::uint32_t BusTree::SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> inf
     return used;
 }
 
+bool BusTree::SignalReceiversCannotReachSources(std::span<std::uint8_t> roles) const noexcept {
+    if (roles.size() < m_audioCount || SignalRoutingExtraNodes() != 0) return false;
+    const auto plan = m_plans.View(m_currentPlanIndex);
+    const auto count = plan.valid ? plan.orderCount : m_audioCount;
+    // Reverse the existing feeds-first ordinary order. Bit 1 propagates from
+    // sources to every input that can reach them; bit 2 identifies receivers.
+    for (std::uint32_t k = count; k != 0; --k) {
+        const auto from = plan.valid ? plan.order[k - 1] : count - k;
+        if (from >= m_audioCount) return false;
+        const auto parent = m_buses[from].parentIndex;
+        if (from != 0 && parent < m_audioCount) roles[from] |= roles[parent] & 1u;
+        if (plan.valid) {
+            const auto* targets = plan.sendTargets + static_cast<std::size_t>(from) * plan.slotsPerBus;
+            for (std::uint32_t slot = 0; slot < plan.slotsPerBus; ++slot)
+                if (targets[slot] < m_audioCount) roles[from] |= roles[targets[slot]] & 1u;
+        }
+        if ((roles[from] & 3u) == 3u) return false;
+    }
+    return true;
+}
+
 bool BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
                       std::uint64_t blockEpoch, std::uint64_t sourceFrameBegin,
                       SignalRenderPlan* signals) {
@@ -1332,7 +1353,7 @@ bool BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
         const std::uint32_t i = usePlan ? plan.order[k] : (n - 1 - k);
         Bus& bus = m_buses[i];
         float* const* planes = busPlanes + i * m_mixChannels;
-        if (signals == nullptr) bus.signalBoundsPrepared = false;
+        if (signals == nullptr || !signals->NeedsBlockRouting()) bus.signalBoundsPrepared = false;
         FinalizeBus(bus, planes, blockFrames, blockEpoch, sourceFrameBegin);
         const auto signalNode = signals == nullptr ? UINT32_MAX : signals->NodeForBus(i, bus.id, bus.generation);
         // Per-bus output fold (non-master): a bus configured to present a
@@ -1364,7 +1385,9 @@ bool BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
             const bool outputFilter =
                 ToneSectionActive(bus.outputLpf) ||
                 ToneSectionActive(bus.outputHpf);
-            if (!outputFilter && signalNode == UINT32_MAX) {
+            const bool captureSignal = signalNode != UINT32_MAX &&
+                                       signals->RequiresSourceCapture(signalNode);
+            if (!outputFilter && !captureSignal) {
                 for (std::uint32_t ch = 0; ch < m_mixChannels; ++ch) {
                     bus.outputGain.MixAdd(planes[ch], parent[ch], blockFrames,
                                           0);

@@ -53,6 +53,8 @@ public:
     // A zero count is a no-op that returns an aligned non-null pointer without
     // changing usage, high-water, or overflow state.
     float* AllocFloats(std::size_t count);
+    // Low-end reservation for callers that construct or fill every used value.
+    float* ReserveFloats(std::size_t count);
 
     // `count` floats from the high end, same contract. Reserved for scratch a
     // render worker may still be writing after its batch was abandoned.

@@ -574,6 +574,7 @@ struct VoiceRenderContext {
         float* tap[kMaxChannels] = {};
         bool tapReady = false; // every required mix-layout image plane reserved
         bool signalImageReady = false;
+        bool signalImageReadOnly = false;
         bool runnable = false; // pre-pass verdict: run this block
         bool needBlend = false; // a slot is bypassed/crossfading
         std::uint32_t offset = 0;   // frames skipped at block front
@@ -719,7 +720,9 @@ std::uint64_t VoiceCascadeScratchBytes(
     std::uint32_t mixChannels) noexcept;
 
 bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
-                         std::uint32_t blockFrames, std::uint32_t mixChannels);
+                         std::uint32_t blockFrames, std::uint32_t mixChannels,
+                         bool readOnlySignalImage = false,
+                         std::uint32_t mixLayout = VN_CHANNEL_LAYOUT_DEFAULT);
 
 // Phase 2 (worker-safe): run the per-voice cascade — source decode / resample,
 // insert-effect chain, tone filter, gain, fade — into the scratch reserved by
@@ -743,12 +746,21 @@ bool PrepareVoiceSignalImage(VoiceRenderContext& ctx, std::uint32_t blockFrames,
                              std::uint32_t mixChannels, std::uint32_t mixLayout,
                              std::uint64_t sourceFrameBegin = 0);
 
+struct SignalMemberImage;
+// The caller admits four consecutive images with common range and destination.
+// This only folds PCM; each original job retains its gain and lifecycle clock.
+void FoldFourSignalImages(std::span<const SignalMemberImage, 4> members,
+                          const double* const* gains, float* const* busPlanes,
+                          std::uint32_t mixChannels);
+
 void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
                         std::uint32_t blockFrames, std::uint32_t mixChannels,
                         std::uint32_t mixLayout,
                         std::uint64_t sourceFrameBegin = 0,
                              output_gain_detail::MonoStereoMixKernel monoStereoMix =
-                                 &output_gain_detail::MixMonoToStereoScaled);
+                                 &output_gain_detail::MixMonoToStereoScaled,
+                        std::uint32_t silentChannels = 0,
+                        const double* signalGains = nullptr);
 
 } // namespace harken
 

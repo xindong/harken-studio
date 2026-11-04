@@ -13,12 +13,7 @@ inline double SignalBoundProduct(double a, double b) noexcept {
     return a == 0 || b == 0 ? 0 : a * b;
 }
 inline double SignalOutputGainBound(const OutputGain& gain, std::uint32_t frames) noexcept {
-    if (frames == 0) return 0;
-    if (gain.remainingFrames == 0) return std::abs(static_cast<double>(gain.target));
-    double bound = 0;
-    for (std::uint32_t n = 0; n < frames; ++n)
-        bound = std::max(bound, std::abs(static_cast<double>(gain.At(n))));
-    return bound;
+    return gain.AbsoluteBound(frames);
 }
 inline double SignalIncrementBound(float current, float target, float increment,
                                    std::uint32_t remaining, std::uint32_t frames) noexcept {

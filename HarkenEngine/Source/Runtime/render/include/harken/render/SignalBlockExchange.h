@@ -6,7 +6,9 @@
 #include <harken/ObjectId.h>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <cassert>
 #include <cstdint>
 #include <limits>
 #include <span>
@@ -80,6 +82,8 @@ public:
             next.m_connections.resize(connections.size());
             next.m_order.resize(connections.size());
             next.m_targetOffsets.resize(static_cast<std::size_t>(targets) + 1, 0);
+            next.m_targetAlias.resize(targets);
+            next.m_singletonRepresentative.resize(targets, UINT32_MAX);
             for (std::size_t i = 0; i < connections.size(); ++i) {
                 const auto& input = connections[i];
                 next.m_connections[i].source = input.source;
@@ -91,6 +95,14 @@ public:
             auto cursor = next.m_targetOffsets;
             for (std::uint32_t i = 0; i < connections.size(); ++i)
                 next.m_order[cursor[connections[i].target]++] = i;
+            std::vector<std::uint32_t> representative(sources, UINT32_MAX);
+            for (std::uint32_t target = 0; target < targets; ++target) {
+                const auto first = next.m_targetOffsets[target];
+                if (next.m_targetOffsets[target + 1] - first != 1) continue;
+                const auto source = next.m_connections[next.m_order[first]].source;
+                if (representative[source] == UINT32_MAX) representative[source] = target;
+                next.m_singletonRepresentative[target] = representative[source];
+            }
             next.m_prepared = true;
             Swap(next);
             return true;
@@ -111,10 +123,7 @@ public:
 
     double ConnectionBound(std::uint32_t connection, std::uint32_t frames) const noexcept {
         if (connection >= m_connections.size()) return std::numeric_limits<double>::infinity();
-        double result = 0;
-        for (std::uint32_t n = 0; n < frames; ++n)
-            result = std::max(result, std::abs(static_cast<double>(m_connections[connection].gain.At(n))));
-        return result;
+        return m_connections[connection].gain.AbsoluteBound(frames);
     }
 
     bool BeginBlock(const SignalBlockIdentity& identity) noexcept {
@@ -132,31 +141,87 @@ public:
         m_current = identity;
         m_open = true;
         std::fill(m_captured.begin(), m_captured.end(), 0);
-        const auto bankSamples = m_planeSamples * m_sources;
-        if (bankSamples != 0)
-            std::fill_n(m_sourceBank.data() + m_writeBank * bankSamples,
-                        bankSamples, 0.0f);
+        // Compare all trajectories before advancing any connection. Each
+        // target retains its independent clock even when it borrows PCM.
         for (std::uint32_t target = 0; target < m_targets; ++target) {
+            m_targetAlias[target] = target;
+            const auto representative = m_singletonRepresentative[target];
+            if (!read || representative == UINT32_MAX || representative == target) continue;
+            const auto& a = m_connections[m_order[m_targetOffsets[target]]].gain;
+            const auto& b = m_connections[m_order[m_targetOffsets[representative]]].gain;
+            if (SameTrajectory(a, b)) m_targetAlias[target] = representative;
+        }
+        for (std::uint32_t target = 0; target < m_targets; ++target) {
+            const auto first = m_targetOffsets[target], end = m_targetOffsets[target + 1];
+            if (m_targetAlias[target] != target) {
+                m_connections[m_order[first]].gain.Advance(identity.frames);
+                continue;
+            }
+            if (read && end - first == 1) {
+                auto& connection = m_connections[m_order[first]];
+                const auto* source = Source(m_readBank, connection.source);
+                auto* output = m_targetPcm.data() + target * m_planeSamples;
+                const auto frames = identity.frames, channels = m_format.channels;
+                const auto stride = m_format.capacityFrames;
+                // A single input needs no intermediate double accumulation buffer.
+                // Keep the initial zero addition and final saturation/rounding.
+                const auto write = [&](auto gainAt) {
+                    constexpr double limit = std::numeric_limits<float>::max();
+                    for (std::uint32_t ch = 0; ch < channels; ++ch) {
+                        const auto base = static_cast<std::size_t>(ch) * stride;
+                        const auto* samples = source + base;
+                        auto* destination = output + base;
+                        for (std::uint32_t n = 0; n < frames; ++n) {
+                            const double sum = 0.0 + static_cast<double>(samples[n]) * gainAt(n);
+                            destination[n] = static_cast<float>(std::clamp(sum, -limit, limit));
+                        }
+                        std::fill(destination + frames, destination + stride, 0.0f);
+                    }
+                };
+                if (connection.gain.remainingFrames == 0) {
+                    const double gain = connection.gain.target;
+                    write([gain](std::uint32_t) { return gain; });
+                } else {
+                    connection.gain.Fill(m_gainScratch.data(), frames, 0);
+                    const auto* gains = m_gainScratch.data();
+                    write([gains](std::uint32_t n) { return static_cast<double>(gains[n]); });
+                }
+                connection.gain.Advance(frames);
+                continue;
+            }
             std::fill(m_accumulator.begin(), m_accumulator.end(), 0.0);
             for (auto p = m_targetOffsets[target]; p < m_targetOffsets[target + 1]; ++p) {
                 auto& connection = m_connections[m_order[p]];
                 if (read) {
-                    connection.gain.Fill(m_gainScratch.data(), identity.frames, 0);
                     const float* source = Source(m_readBank, connection.source);
-                    for (std::uint32_t ch = 0; ch < m_format.channels; ++ch) {
-                        const auto base = static_cast<std::size_t>(ch) * m_format.capacityFrames;
-                        for (std::uint32_t n = 0; n < identity.frames; ++n)
-                            m_accumulator[base + n] +=
-                                static_cast<double>(source[base + n]) *
-                                static_cast<double>(m_gainScratch[n]);
+                    const auto frames = identity.frames, channels = m_format.channels;
+                    const auto stride = m_format.capacityFrames;
+                    const auto accumulate = [&](auto gainAt) {
+                        for (std::uint32_t ch = 0; ch < channels; ++ch) {
+                            const auto base = static_cast<std::size_t>(ch) * stride;
+                            auto* accumulator = m_accumulator.data() + base;
+                            const auto* samples = source + base;
+                            for (std::uint32_t n = 0; n < frames; ++n)
+                                accumulator[n] += static_cast<double>(samples[n]) * gainAt(n);
+                        }
+                    };
+                    if (connection.gain.remainingFrames == 0) {
+                        const double gain = connection.gain.target;
+                        accumulate([gain](std::uint32_t) { return gain; });
+                    } else {
+                        connection.gain.Fill(m_gainScratch.data(), frames, 0);
+                        const auto* gains = m_gainScratch.data();
+                        accumulate([gains](std::uint32_t n) { return static_cast<double>(gains[n]); });
                     }
                 }
                 connection.gain.Advance(identity.frames);
             }
             float* output = m_targetPcm.data() + target * m_planeSamples;
             constexpr double limit = std::numeric_limits<float>::max();
-            for (std::size_t n = 0; n < m_planeSamples; ++n)
-                output[n] = static_cast<float>(std::clamp(m_accumulator[n], -limit, limit));
+            const auto count = m_planeSamples;
+            const auto* accumulator = m_accumulator.data();
+            for (std::size_t n = 0; n < count; ++n)
+                output[n] = static_cast<float>(std::clamp(accumulator[n], -limit, limit));
         }
         return true;
     }
@@ -170,13 +235,18 @@ public:
             frames > m_current.frames - offset) return false;
         for (const float* plane : planes) {
             if (plane == nullptr) return false;
+            bool finite = true;
             for (std::uint32_t n = offset; n < offset + frames; ++n)
-                if (!std::isfinite(plane[n])) return false;
+                finite &= std::isfinite(plane[n]);
+            if (!finite) return false;
         }
         float* output = Source(m_writeBank, source);
-        for (std::uint32_t ch = 0; ch < m_format.channels; ++ch)
-            std::copy_n(planes[ch] + offset, frames,
-                output + static_cast<std::size_t>(ch) * m_format.capacityFrames + offset);
+        for (std::uint32_t ch = 0; ch < m_format.channels; ++ch) {
+            auto* destination = output + static_cast<std::size_t>(ch) * m_format.capacityFrames;
+            std::fill_n(destination, offset, 0.0f);
+            std::copy_n(planes[ch] + offset, frames, destination + offset);
+            std::fill(destination + offset + frames, destination + m_format.capacityFrames, 0.0f);
+        }
         m_captured[source] = 1;
         return true;
     }
@@ -185,7 +255,7 @@ public:
     // consumers observe the same raw PCM without advancing a gain or detector.
     const float* Target(std::uint32_t target, std::uint32_t channel) const noexcept {
         if (!m_open || target >= m_targets || channel >= m_format.channels) return nullptr;
-        return m_targetPcm.data() + target * m_planeSamples +
+        return m_targetPcm.data() + m_targetAlias[target] * m_planeSamples +
             static_cast<std::size_t>(channel) * m_format.capacityFrames;
     }
     bool HasTargetInput(std::uint32_t target) const noexcept {
@@ -194,6 +264,10 @@ public:
 
     bool CommitBlock() noexcept {
         if (!m_open) return false;
+        // Captures overwrite their complete planes. Only absent producers need
+        // clearing before this bank becomes visible in the following block.
+        for (std::uint32_t source = 0; source < m_sources; ++source)
+            if (!m_captured[source]) std::fill_n(Source(m_writeBank, source), m_planeSamples, 0.0f);
         m_previous = m_current;
         m_readBank = m_writeBank;
         m_writeBank = 1 - m_readBank;
@@ -210,6 +284,32 @@ public:
 
 private:
     friend class SignalRenderPlan;
+    // The plan has validated every finite member before summing in double.
+    // Even size_t's maximum member count times FLT_MAX fits in double.
+    // Write the rounded sum directly into the bank, without a temporary PCM copy.
+    bool CaptureFiniteSum(std::uint32_t source, const double* sum, std::uint32_t frames, std::uint32_t silentChannels) noexcept {
+        if (!m_open || source >= m_sources || m_captured[source] || sum == nullptr ||
+            frames > m_current.frames) return false;
+        auto* output = Source(m_writeBank, source);
+        const auto channels = m_format.channels, stride = m_format.capacityFrames;
+        constexpr double limit = std::numeric_limits<float>::max();
+        for (std::uint32_t ch = 0; ch < channels; ++ch) {
+            const auto base = static_cast<std::size_t>(ch) * stride;
+            const auto* samples = sum + base;
+            auto* destination = output + base;
+            if ((silentChannels & (1u << ch)) != 0) {
+                std::fill_n(destination, stride, 0.0f);
+                continue;
+            }
+            for (std::uint32_t n = 0; n < frames; ++n) {
+                assert(std::isfinite(samples[n]));
+                destination[n] = static_cast<float>(std::clamp(samples[n], -limit, limit));
+            }
+            std::fill(destination + frames, destination + stride, 0.0f);
+        }
+        m_captured[source] = 1;
+        return true;
+    }
     void Swap(SignalBlockExchange& other) noexcept {
         using std::swap;
         swap(m_format, other.m_format);
@@ -230,9 +330,19 @@ private:
         m_connections.swap(other.m_connections);
         m_order.swap(other.m_order);
         m_targetOffsets.swap(other.m_targetOffsets);
+        m_targetAlias.swap(other.m_targetAlias);
+        m_singletonRepresentative.swap(other.m_singletonRepresentative);
         m_captured.swap(other.m_captured);
     }
     struct Connection { std::uint32_t source = 0; OutputGain gain{}; };
+    static bool SameTrajectory(const OutputGain& a, const OutputGain& b) noexcept {
+        if (std::bit_cast<std::uint32_t>(a.target) != std::bit_cast<std::uint32_t>(b.target) ||
+            a.remainingFrames != b.remainingFrames) return false;
+        if (a.remainingFrames == 0) return true;
+        return std::bit_cast<std::uint32_t>(a.start) == std::bit_cast<std::uint32_t>(b.start) &&
+            std::bit_cast<std::uint64_t>(a.step) == std::bit_cast<std::uint64_t>(b.step) &&
+            a.totalFrames == b.totalFrames;
+    }
     static bool ValidLevel(float level) noexcept {
         return std::isfinite(level) && level >= 0.0f;
     }
@@ -253,7 +363,7 @@ private:
     std::vector<float> m_sourceBank, m_targetPcm, m_gainScratch;
     std::vector<double> m_accumulator;
     std::vector<Connection> m_connections;
-    std::vector<std::uint32_t> m_order, m_targetOffsets;
+    std::vector<std::uint32_t> m_order, m_targetOffsets, m_targetAlias, m_singletonRepresentative;
     std::vector<std::uint8_t> m_captured;
 };
 
