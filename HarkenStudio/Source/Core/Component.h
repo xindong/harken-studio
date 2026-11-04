@@ -27,7 +27,8 @@ enum class ComponentType : uint8_t
     Track        = 8,
     Segment        = 9,
     Sound        = 10,
-    _Count       = 11
+    Effect       = 11,
+    _Count       = 12
 };
 
 static constexpr size_t kMaxComponents = static_cast<size_t>(ComponentType::_Count);

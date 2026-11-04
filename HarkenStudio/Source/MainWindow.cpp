@@ -73,6 +73,7 @@
 #include "Widgets/Inspector/EditorLaunchMap.h"
 #include "Widgets/SourceEditor/SourceEditorPanel.h"
 #include "Widgets/ExternalEditor/ExternalEditorPanel.h"
+#include "Widgets/EffectEditor/EffectEditorPanel.h"
 #include "Widgets/GridEditor/GridEditorPanel.h"
 #include "Widgets/GridEditor/GridEditorWidget.h"
 #include "Widgets/Timeline/TimelineEditorPanel.h"
@@ -572,6 +573,50 @@ void MainWindow::initializeStructure(
                 ed->clearEditor();
         };
         registerStandaloneEditorType(QStringLiteral("ExternalEditor"), std::move(info));
+    }
+    {
+        StandaloneEditorTypeInfo info;
+        info.label = tr("Effect Editor");
+        info.clearOnUnrelatedSelection = false;
+        info.dockObjectPrefix = QStringLiteral("EffectEditorDock");
+        info.createConfigured = [this](int id) -> QWidget* {
+            auto* editor = new EffectEditorPanel(this);
+            editor->setPanelId(id);
+            connect(editor, &EffectEditorPanel::panelFocused, this, [this](int panelId) {
+                panelRegistry_->setLastFocusedPanelId(QStringLiteral("EffectEditor"), panelId);
+            });
+            connect(editor, &QWidget::windowTitleChanged, this, [this, editor](const QString& title) {
+                if (auto* dock = dockOfPanel(editor))
+                    dock->setWindowTitle(title);
+            });
+            wireStandaloneEditorPin(editor);
+            return editor;
+        };
+        info.boundItem = [](QWidget* widget) -> ProjectItem* {
+            auto* editor = qobject_cast<EffectEditorPanel*>(widget);
+            return editor ? editor->boundItem() : nullptr;
+        };
+        info.isPinned = [](QWidget* widget) {
+            auto* editor = qobject_cast<EffectEditorPanel*>(widget);
+            return editor && editor->isPinned();
+        };
+        info.setPinned = [](QWidget* widget, bool pinned) {
+            if (auto* editor = qobject_cast<EffectEditorPanel*>(widget))
+                editor->setPinned(pinned);
+        };
+        info.clear = [](QWidget* widget) {
+            if (auto* editor = qobject_cast<EffectEditorPanel*>(widget))
+                editor->clearEditor();
+        };
+        info.snapshotParams = [](QWidget* widget) -> QVariantMap {
+            auto* editor = qobject_cast<EffectEditorPanel*>(widget);
+            return editor ? editor->snapshotState() : QVariantMap{};
+        };
+        info.restoreParams = [](QWidget* widget, const QVariantMap& params) {
+            if (auto* editor = qobject_cast<EffectEditorPanel*>(widget))
+                editor->restoreState(params);
+        };
+        registerStandaloneEditorType(QStringLiteral("EffectEditor"), std::move(info));
     }
     {
         StandaloneEditorTypeInfo info;
@@ -3248,6 +3293,7 @@ void MainWindow::wireInspectorPanelSignals(InspectorPanel* panel)
         if (editor && addBinding)
             QTimer::singleShot(0, editor, &ExternalEditorPanel::showBindingAddMenu);
     });
+    connect(panel, &InspectorPanel::effectEditorRequested, this, &MainWindow::openEffectEditor);
 
     connect(panel, &InspectorPanel::titleContextChanged, this,
         [this](int, const QString&, const QString&) { refreshInspectorDockTitles(); });
@@ -3519,6 +3565,8 @@ void MainWindow::wireStandaloneEditorPin(QWidget* editor)
         connect(source, &SourceEditorPanel::pinToggled, this, onPinToggled);
     else if (auto* curve = qobject_cast<ExternalEditorPanel*>(editor))
         connect(curve, &ExternalEditorPanel::pinToggled, this, onPinToggled);
+    else if (auto* effect = qobject_cast<EffectEditorPanel*>(editor))
+        connect(effect, &EffectEditorPanel::pinToggled, this, onPinToggled);
     else if (auto* grid = qobject_cast<GridEditorPanel*>(editor))
         connect(grid, &GridEditorPanel::pinToggled, this, onPinToggled);
     else if (auto* timeline = qobject_cast<TimelineEditorPanel*>(editor))
@@ -4943,6 +4991,34 @@ ExternalEditorPanel* MainWindow::openExternalEditor(const ExternalEditorSelectio
         revealDock(d);
     ed->setFocus(Qt::OtherFocusReason);
     return ed;
+}
+
+EffectEditorPanel* MainWindow::openEffectEditor(const QUuid& ownerGuid, const QUuid& rowGuid)
+{
+    auto& manager = ProjectManager::instance();
+    const auto* owner = manager.findItemByGuid(ownerGuid);
+    if (!EffectEditorPanel::canOpen(owner, rowGuid)) return nullptr;
+
+    const QString type = QStringLiteral("EffectEditor");
+    EffectEditorPanel* editor = nullptr;
+    for (const auto& instance : panelRegistry_->instances(type)) {
+        auto* candidate = qobject_cast<EffectEditorPanel*>(instance.second);
+        if (candidate && candidate->ownerGuid() == ownerGuid && candidate->rowGuid() == rowGuid) {
+            editor = candidate;
+            break;
+        }
+    }
+    if (!editor)
+        editor = qobject_cast<EffectEditorPanel*>(activeStandaloneEditorPanel(type));
+    if (!editor)
+        editor = qobject_cast<EffectEditorPanel*>(createStandaloneEditorPanel(type));
+    if (!editor) return nullptr;
+
+    editor->bindEffect(ownerGuid, rowGuid);
+    panelRegistry_->setLastFocusedPanelId(type, editor->panelId());
+    setStandaloneEditorVisible(editor, true);
+    editor->setFocus(Qt::OtherFocusReason);
+    return editor;
 }
 
 void MainWindow::onResetLayout()

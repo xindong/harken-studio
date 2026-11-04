@@ -56,6 +56,10 @@ public:
         BeginValue();
         text_ += literal;
     }
+    void ValueRawJson(const std::string& json) {
+        BeginValue();
+        text_ += json;
+    }
     std::string Finish() {
         return text_ + "\n";
     }

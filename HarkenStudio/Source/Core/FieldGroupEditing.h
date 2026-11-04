@@ -39,13 +39,18 @@ struct ReplaceFieldGroupSends {
     SendFieldGroup value;
 };
 
+struct ReplaceFieldGroupEffects {
+    EffectFieldGroup value;
+};
+
 struct ClearFieldGroupFieldOverride {
     harkenplayableproperties::PlayablePropertyIdV1 property;
 };
 
 using FieldGroupEditOperation = std::variant<
     SetFieldGroupMode, RebuildLocalFieldGroup,
-    SetFieldGroupField, ReplaceFieldGroupSends, ClearFieldGroupFieldOverride>;
+    SetFieldGroupField, ReplaceFieldGroupSends, ReplaceFieldGroupEffects,
+    ClearFieldGroupFieldOverride>;
 
 struct FieldGroupEditRequest {
     QUuid definition;

@@ -126,6 +126,19 @@ void remapTree(ProjectItem* item, const TemplateIdentityMap& identities)
     remapHistory(item->fieldGroups.spatialRating, [&](SpatialRatingFieldGroup& value) {
         remapGuid(value.spatialAttenuationRef);
     });
+    const auto remapEffects = [&](EffectChainLedger& ledger, FieldGroupScope) {
+        auto entries = ledger.entries();
+        for (auto& entry : entries)
+            if (entry.mode == EffectMode::Preset)
+                entry.effectGuid = identities.guids.value(entry.effectGuid, entry.effectGuid);
+        ledger.replace(std::move(entries));
+    };
+    if (auto* mix = item->comp<VMixNode>()) {
+        remapEffects(mix->effects, {});
+        for (auto& [platform, effects] : mix->effectPlatforms)
+            remapEffects(effects, {});
+    }
+    VisitAuthoredEffectChains(item->fieldGroups, remapEffects);
     remapAttenuationReferences(item->platformOverrides, identities);
     if (auto* selection = item->comp<VSelection>()) {
         QHash<QUuid, QUuid> rowGuids;
@@ -169,10 +182,21 @@ void remintSubentityStableIds(ProjectData& project, ProjectItem* item)
         for (auto& binding : bindings)
             if (binding.typed) binding.guid = QUuid::createUuid();
         mix->bindings.replace(std::move(bindings));
-        std::vector<EffectEntry> effects = mix->effects.entries();
-        for (auto& effect : effects)
-            if (effect.typed) effect.guid = QUuid::createUuid();
-        mix->effects.replace(std::move(effects));
+        QHash<QUuid, QUuid> effectGuids;
+        const auto remintEffects = [&](EffectChainLedger& ledger, FieldGroupScope) {
+            auto effects = ledger.entries();
+            for (auto& effect : effects) {
+                if (!effect.typed) continue;
+                if (!effectGuids.contains(effect.guid))
+                    effectGuids.insert(effect.guid, QUuid::createUuid());
+                effect.guid = effectGuids.value(effect.guid);
+            }
+            ledger.replace(std::move(effects));
+        };
+        remintEffects(mix->effects, {});
+        for (auto& [platform, effects] : mix->effectPlatforms)
+            remintEffects(effects, {});
+        VisitAuthoredEffectChains(item->fieldGroups, remintEffects);
     }
     if (auto* timeline = item->comp<VTrack>())
         for (auto& clip : timeline->clips.items)

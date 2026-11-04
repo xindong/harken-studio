@@ -4,12 +4,12 @@
 
 | 类别 | 去重用途数 | 页面 / 对象类型位置数 |
 |---|---:|---:|
-| 配置表 | 10 | 15 |
+| 配置表 | 11 | 21 |
 | 展示表 | 13 | 13 |
-| 普通表格合计 | 23 | 28 |
+| 普通表格合计 | 24 | 34 |
 | 导航配置（不计入普通表格） | 2 | 2 |
 
-注：Sends 在六类对象中使用，按用途计一项、按对象类型计六处。对象实例、Binding 字段及同一对话框的不同打开位置不重复计数；Match、Blend 等专用编辑面另列。
+注：Sends、FXs 各自在六类对象中使用，各按用途计一项、按对象类型计六处。对象实例、Binding 字段及同一对话框的不同打开位置不重复计数；Match、Blend 等专用编辑面另列。
 
 ## 普通表格清单
 
@@ -25,6 +25,7 @@
 | C08 | 配置 | External Editor / Binding | 仅编辑本地贡献 |
 | C09 | 配置 | Transition Editor / Rules | 按匹配具体程度排序，默认规则最后 |
 | C12 | 配置 | Project Platform / Resample Policies | 按阈值排序，保留 Infinite 行 |
+| C13 | 配置 | Sound、Container、Layer、Track、Segment、Bus / FXs | Basic > FX；# / Effect / Level / Active；本地效果器链配置 |
 | D01 | 展示 | Bus Inspector / Inputs | 路由反向查询，无序号列 |
 | D02 | 展示 | Bus Inspector / Receives | 路由反向查询，# 仅展示行号，不提供行移动 |
 | D03 | 展示 | Control / Variables | 变量试听值及作用域 |
@@ -134,6 +135,25 @@
 | 选择与试听 | Child 与曲线选择联动；试听游标使用 Control 覆盖值，Child 提示显示各行增益及跨行结果 |
 | 合成关系 | 同行同一 Child 仅一条曲线；跨行引用共用播放且增益相乘，成员不自动归一化 |
 
+## FXs 表格与共享资产
+
+| 项目 | 当前表现 |
+|---|---|
+| 位置与列 | Sound、Container、Layer、Track、Segment、Bus 的 Basic > FX；# / Effect / Level / Active |
+| 模式与增删 | 加号选择 Limiter 插入 Custom，或 Select Preset... 引用共享预设，允许重复引用；减号删除所选行，支持排序及撤销重做 |
+| Custom | 普通标签显示插件名称，右侧提供 detach 按钮；双击标签或单击 detach 打开 Effect Editor，单击标签不打开；独立 chevron 位于内容左侧，使用默认箭头指针，Replace 子菜单含 Limiter 和 Select Preset...，另提供 Save As Preset... |
+| Preset | 标准 ObjectRef 保留定位、激活和选择器，独立菜单 chevron 位于内容左侧；chevron 使用默认箭头指针，含 Replace > Limiter、Convert to Custom |
+| 转换与替换 | 保留行身份、顺序、Active、Level；替换插件使用默认参数，Convert to Custom 复制预设当前配置并解除共享；Save As Preset 创建资产并切换引用，合为一次撤销 |
+| Level | 干湿比 0～100%，默认 100%；0% 全干、100% 全湿；仅保存编辑配置并支持撤销，本阶段不参与试听或 Pack 运行时处理 |
+| Active | 新增默认开启，映射现有旁通配置；Bus 沿用既有支持，非 Bus 含关闭项时仍受现有试听／发布能力检查限制 |
+| 继承范围 | Sound、Container、Layer、Track、Segment 沿归属父级继承整条 FXs 链，不与父链叠加；根直接编辑自身配置，Bus 不提供 Inherit |
+| 本地历史 | 首次关闭 Inherit 复制当前有效链并建立独立槽位身份，已有本地历史时恢复历史；重新继承保留历史；Rebuild Local from Current Effective Values 重建本地链 |
+| 平台配置 | Shared 与单平台分别保存整链配置，Bus 同样支持；All Platforms 修改共享链并清除该链的平台覆盖，单平台只修改当前平台，与 Shared 相同的链自动消除覆盖；非 Bus 的继承开关也按平台保存，沿用标题菜单 Reset Inherit 恢复共享继承模式 |
+| 有效值与只读 | 继承展示当前平台解析出的有效链，禁止增删、排序和修改，保留编辑器查看及 ObjectRef 导航；混合平台有效链不能作为一条链编辑；可编辑的 All Platforms 显示共享本地链 |
+| 配置与身份 | 继承关系、本地历史和平台覆盖为保存依据，有效链为解析结果；Custom 参数和 Preset 引用随整链保存，复制到另一对象建立独立槽位身份，同一对象各平台的同一槽位保留身份 |
+| 共享资产 | Assets 的 Effect 桶保存类型与全部参数，New Effect > Limiter 为当前唯一类型入口；创建后插件类型固定，Inspector 只显示 Notes，无 Status section；双击对象打开 Effect Editor |
+| 删除资产 | 清理共享链、各平台覆盖及未生效本地历史中的 Preset 引用行，保留 Custom；撤销一并恢复原顺序、Level 和 Active |
+
 ## Publisher 表格
 
 | 项目 | 当前表现 |
@@ -153,5 +173,6 @@
 | 视图 | 范围注解 |
 |---|---|
 | Curve Editor、Timeline | 领域画布，不计入普通表格 |
+| Effect Editor | 本阶段内容留空；支持预设资产及稳定槽位上下文、多实例、固定和布局恢复，槽位切换模式及当前平台有效配置后继续跟随 |
 | Hierarchy、Explorer、Sources、Selector、Template Chooser 预览 | 导航或选择树，不计入普通表格 |
 | Log | 文本视图，不计为 Monitor 表格 |

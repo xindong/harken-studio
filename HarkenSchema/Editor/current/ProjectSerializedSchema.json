@@ -365,6 +365,9 @@
         "attenuation": {
           "$ref": "#/$defs/attenuationComponent"
         },
+        "effect": {
+          "$ref": "#/$defs/effectComponent"
+        },
         "audio": {
           "$ref": "#/$defs/audioComponent"
         },
@@ -393,6 +396,93 @@
           "$ref": "#/$defs/variableComponent"
         }
       },
+      "type": "object"
+    },
+    "effectEntry": {
+      "oneOf": [
+        {
+          "additionalProperties": true,
+          "properties": {
+            "guid": {
+              "$ref": "#/$defs/uuid"
+            },
+            "bypass": {
+              "type": "boolean"
+            },
+            "wetDry": {
+              "minimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            "mode": {
+              "const": "custom",
+              "type": "string"
+            },
+            "custom": {
+              "$ref": "#/$defs/effectComponent"
+            }
+          },
+          "required": [
+            "guid",
+            "mode",
+            "custom"
+          ],
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^(?!(effectRef|effectGuid|type|parameters)$)"
+          }
+        },
+        {
+          "additionalProperties": true,
+          "properties": {
+            "guid": {
+              "$ref": "#/$defs/uuid"
+            },
+            "effectRef": {
+              "$ref": "#/$defs/objectReference"
+            },
+            "bypass": {
+              "type": "boolean"
+            },
+            "wetDry": {
+              "minimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            "mode": {
+              "const": "preset",
+              "type": "string"
+            }
+          },
+          "required": [
+            "guid",
+            "effectRef"
+          ],
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^(?!(custom|effectGuid|type|parameters)$)"
+          }
+        }
+      ]
+    },
+    "effectComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "limiter",
+          "type": "string"
+        },
+        "parameters": {
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "parameters"
+      ],
       "type": "object"
     },
     "marker": {
@@ -453,6 +543,9 @@
         "attenuation": {
           "$ref": "#/$defs/attenuationComponent"
         },
+        "effect": {
+          "$ref": "#/$defs/effectComponent"
+        },
         "audio": {
           "$ref": "#/$defs/definitionAudioComponent"
         },
@@ -487,13 +580,6 @@
       "additionalProperties": false,
       "properties": {
         "bindings": {
-          "items": {
-            "additionalProperties": true,
-            "type": "object"
-          },
-          "type": "array"
-        },
-        "effects": {
           "items": {
             "additionalProperties": true,
             "type": "object"
@@ -592,8 +678,7 @@
         },
         "effects": {
           "items": {
-            "additionalProperties": true,
-            "type": "object"
+            "$ref": "#/$defs/effectEntry"
           },
           "type": "array"
         },
@@ -617,6 +702,18 @@
         },
         "volume": {
           "type": "number"
+        },
+        "effectsPlatforms": {
+          "additionalProperties": {
+            "items": {
+              "$ref": "#/$defs/effectEntry"
+            },
+            "type": "array"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/projectPlatformId"
+          },
+          "type": "object"
         }
       },
       "type": "object"
@@ -1043,7 +1140,8 @@
         "type": {
           "enum": [
             "Variable",
-            "Attenuation"
+            "Attenuation",
+            "Effect"
           ]
         }
       },
@@ -1108,6 +1206,9 @@
         },
         "spatialRating": {
           "$ref": "#/$defs/fieldGroupPlatformSpatialRating"
+        },
+        "effect": {
+          "$ref": "#/$defs/fieldGroupPlatformEffect"
         }
       },
       "required": [],
@@ -1204,12 +1305,16 @@
         },
         "spatialRating": {
           "$ref": "#/$defs/fieldGroupSharedSpatialRating"
+        },
+        "effect": {
+          "$ref": "#/$defs/fieldGroupSharedEffect"
         }
       },
       "required": [
         "output",
         "send",
-        "spatialRating"
+        "spatialRating",
+        "effect"
       ],
       "type": "object"
     },
@@ -2456,6 +2561,76 @@
         "platforms"
       ],
       "type": "object"
+    },
+    "fieldGroupSharedEffect": {
+      "additionalProperties": false,
+      "properties": {
+        "inherit": {
+          "type": "boolean"
+        },
+        "values": {
+          "$ref": "#/$defs/fieldGroupEffectPayload"
+        }
+      },
+      "type": "object",
+      "required": [
+        "inherit"
+      ],
+      "if": {
+        "properties": {
+          "inherit": {
+            "const": false
+          }
+        },
+        "required": [
+          "inherit"
+        ]
+      },
+      "then": {
+        "required": [
+          "values"
+        ]
+      }
+    },
+    "fieldGroupPlatformEffect": {
+      "additionalProperties": false,
+      "properties": {
+        "inherit": {
+          "type": "boolean"
+        },
+        "values": {
+          "$ref": "#/$defs/fieldGroupEffectFields"
+        }
+      },
+      "type": "object"
+    },
+    "fieldGroupEffectPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "effects": {
+          "items": {
+            "$ref": "#/$defs/effectEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "effects"
+      ],
+      "type": "object"
+    },
+    "fieldGroupEffectFields": {
+      "additionalProperties": false,
+      "properties": {
+        "effects": {
+          "items": {
+            "$ref": "#/$defs/effectEntry"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "minProperties": 1
     }
   },
   "$id": "harken://schema/Editor/current",
@@ -2596,6 +2771,57 @@
         "type": "object"
       },
       "type": "project.attenuation"
+    },
+    {
+      "pathPatterns": [
+        "Effects/**/*.vp"
+      ],
+      "required": false,
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/$defs/s3Pack",
+            "$schema": "https://json-schema.org/draft/2020-12/schema"
+          },
+          "harkenDocument": {
+            "additionalProperties": true,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "projectId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "schemaVersion": {
+                "type": "integer"
+              },
+              "type": {
+                "const": "project.effect",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id",
+              "projectId",
+              "schemaVersion"
+            ],
+            "type": "object",
+            "propertyNames": {
+              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
+            }
+          }
+        },
+        "required": [
+          "harkenDocument",
+          "content"
+        ],
+        "type": "object"
+      },
+      "type": "project.effect"
     },
     {
       "pathPatterns": [
@@ -2903,7 +3129,7 @@
     "headerAdditionalProperties": "ignorable metadata, preserved on save",
     "preservedModulePayloads": {
       "mixNodeComponent.bindings": "unknown object fields and opaque entries preserved; known values parsed by module",
-      "mixNodeComponent.effects": "unknown object fields and opaque entries preserved; known values parsed by module",
+      "mixNodeComponent.effects": "unknown object fields preserved; known values parsed by module",
       "playableOverrideRow.signalGraph": "retired input; discarded with its presence bit when loading",
       "playableProperties.signalGraph": "retired input; discarded with its presence bit when loading"
     },
@@ -2924,7 +3150,8 @@
         "project.bus",
         "project.action",
         "project.variable",
-        "project.attenuation"
+        "project.attenuation",
+        "project.effect"
       ],
       "rule": "documentIdMirrorsRoot"
     },
@@ -2961,6 +3188,64 @@
           ],
           "targetTypes": [
             "Bus"
+          ]
+        },
+        {
+          "kind": "object",
+          "path": [
+            "components",
+            "mixnode",
+            "effects",
+            "*",
+            "effectRef"
+          ],
+          "targetTypes": [
+            "Effect"
+          ]
+        },
+        {
+          "kind": "object",
+          "path": [
+            "components",
+            "mixnode",
+            "effectsPlatforms",
+            "*",
+            "*",
+            "effectRef"
+          ],
+          "targetTypes": [
+            "Effect"
+          ]
+        },
+        {
+          "kind": "object",
+          "path": [
+            "fieldGroups",
+            "shared",
+            "effect",
+            "values",
+            "effects",
+            "*",
+            "effectRef"
+          ],
+          "targetTypes": [
+            "Effect"
+          ]
+        },
+        {
+          "kind": "object",
+          "path": [
+            "fieldGroups",
+            "platforms",
+            "*",
+            "effect",
+            "values",
+            "effects",
+            "*",
+            "effectRef"
+          ],
+          "targetTypes": [
+            "Effect"
           ]
         },
         {

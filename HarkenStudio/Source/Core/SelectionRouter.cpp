@@ -193,6 +193,7 @@ void SelectionRouter::routeSelection(ProjectItem* item, bool reveal,
             {
                 case ProjectItem::Type::Action:
                 case ProjectItem::Type::Attenuation:
+                case ProjectItem::Type::Effect:
                 case ProjectItem::Type::Variable:
                 {
                     if (ip) ip->showItemInspector(item);
@@ -316,6 +317,8 @@ void SelectionRouter::activateItem(ProjectItem* item, const PlacementContext* pl
         host_->openStandaloneEditor(QStringLiteral("TimelineEditor"), item);
     if (GridEditorPanel::acceptsItem(item))
         host_->openStandaloneEditor(QStringLiteral("GridEditor"), item);
+    if (item->type == ProjectItem::Type::Effect)
+        host_->openEffectEditor(item->guid);
     host_->openOrFocusInspectorForItem(item, placement);
     republishCurveSelection();
 }

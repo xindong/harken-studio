@@ -11,6 +11,7 @@
 #include "Components/VAction.h"
 #include "Components/VBus.h"
 #include "Components/VAttenuation.h"
+#include "Components/VEffect.h"
 #include "Components/VTrack.h"
 #include "Components/VSegment.h"
 
@@ -80,6 +81,10 @@ void ProjectItem::attachDefaultComponents()
 
     case T::Attenuation:
         compOrCreate<VAttenuation>();
+        break;
+
+    case T::Effect:
+        compOrCreate<VEffect>();
         break;
 
     default:

@@ -13,6 +13,7 @@
 #include "Widgets/Inspector/Providers/SourcesSectionProvider.h"
 #include "Widgets/Inspector/Providers/StepsSectionProvider.h"
 #include "Widgets/Inspector/Providers/ClipsSectionProvider.h"
+#include "Widgets/Inspector/Providers/EffectsSectionProvider.h"
 #include "Widgets/Inspector/BindingFieldDecorator.h"
 #include "Widgets/Inspector/AttenuationFieldDecorator.h"
 
@@ -40,6 +41,7 @@ void registerBuiltinInspectorCustomizations()
     registerSelectionSectionProvider();
     registerSourcesSectionProvider();
     registerClipsSectionProvider();
+    registerEffectsSectionProvider();
 
     registerBindingFieldDecorator();
     registerAttenuationFieldDecorator();

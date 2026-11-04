@@ -31,10 +31,12 @@ std::string State(std::string_view mode, std::string_view history)
 std::string Block(std::string_view output = kInherit,
                   std::string_view send = kInherit,
                   std::string_view rating = kInherit,
-                  std::string_view platforms = {})
+                  std::string_view platforms = {},
+                  std::string_view effects = kInherit)
 {
     std::string result = "{\"shared\":{\"output\":" + std::string(output)
-        + ",\"send\":" + std::string(send) + ",\"spatialRating\":" + std::string(rating) + "}";
+        + ",\"send\":" + std::string(send) + ",\"spatialRating\":" + std::string(rating)
+        + ",\"effect\":" + std::string(effects) + "}";
     if (!platforms.empty()) result += ",\"platforms\":" + std::string(platforms);
     return result + "}";
 }
@@ -83,6 +85,12 @@ TEST(FieldGroupJson, DormantReferencesPreserveAll128BitsWithoutTargetLookup)
     ASSERT_TRUE(groups.spatialRating.shared.localHistory);
     EXPECT_EQ(groups.spatialRating.shared.localHistory->spatialAttenuationRef,
               (AuthoringGuid{UINT64_MAX, UINT64_MAX}));
+    EffectEntry effect;
+    effect.guid = QUuid(QStringLiteral("12345678-9abc-def0-0123-456789abcdef"));
+    effect.effectGuid = QUuid(QStringLiteral("ffffffff-ffff-ffff-ffff-ffffffffffff"));
+    EffectFieldGroup effects;
+    ASSERT_TRUE(effects.effects.replace({effect}));
+    groups.effects.shared.localHistory = effects;
     std::string text;
     ASSERT_TRUE(WriteFieldGroupsJson(groups, text, error)) << error;
     DefinitionFieldGroups roundTrip;
@@ -100,7 +108,7 @@ TEST(FieldGroupJson, UuidCaseNormalizesWithoutChangingIdentity)
     EXPECT_EQ(groups.output.shared.localHistory->outputBusRef, kBus);
 }
 
-TEST(FieldGroupJson, FiniteFloatBitsAndSendRowOrderRoundTripDeterministically)
+TEST(FieldGroupJson, FiniteFloatBitsAndTableRowOrderRoundTripDeterministically)
 {
     DefinitionFieldGroups groups;
     groups.output.shared = {FieldGroupMode::Local, OutputFieldGroup{kBus, -0.0f}};
@@ -113,6 +121,24 @@ TEST(FieldGroupJson, FiniteFloatBitsAndSendRowOrderRoundTripDeterministically)
     rating.spatialPanning = std::numeric_limits<float>::denorm_min();
     rating.spatialAttenuationDistanceScaling = 3.333333f;
     groups.spatialRating.shared = {FieldGroupMode::Local, rating};
+    EffectEntry custom;
+    custom.guid = QUuid(QStringLiteral("a0b1c2d3-e4f5-4638-9876-123456789abc"));
+    custom.mode = EffectMode::Custom;
+    custom.custom.parameters = {-0.1f, 3.333333f};
+    custom.wetDry = 0.1234567f;
+    custom.extensions.insert(QStringLiteral("extension"), QJsonObject{
+        {QStringLiteral("values"), QJsonArray{QJsonValue::Null, true,
+            QJsonValue(qint64{9007199254740993}), QString::fromLatin1("a\0b", 3)}}});
+    EffectEntry preset;
+    preset.guid = QUuid(QStringLiteral("a0b1c2d3-e4f5-4638-9876-123456789abd"));
+    preset.effectGuid = QUuid(QStringLiteral("fedcba98-7654-3210-ffff-ffffffffffff"));
+    preset.bypass = true;
+    EffectFieldGroup effects;
+    ASSERT_TRUE(effects.effects.replace({custom, preset}));
+    groups.effects.shared = {FieldGroupMode::Local, effects};
+    preset.wetDry = 0.5f;
+    ASSERT_TRUE(effects.effects.replace({preset, custom}));
+    groups.effects.platforms[{0, 101}] = {FieldGroupMode::UseShared, effects};
     std::string text;
     std::string error;
     ASSERT_TRUE(WriteFieldGroupsJson(groups, text, error)) << error;

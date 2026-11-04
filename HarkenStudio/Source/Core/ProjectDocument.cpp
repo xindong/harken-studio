@@ -45,7 +45,7 @@ bool validateDefinitionComponents(const QJsonObject& components, QString* error)
                     .arg(componentName, QLatin1String(field)));
         return true;
     };
-    return rejectFields(QStringLiteral("mixnode"), {"outputBusId", "outputBusRef"})
+    return rejectFields(QStringLiteral("mixnode"), {"outputBusId", "outputBusRef", "effects", "effectsPlatforms"})
         && rejectFields(QStringLiteral("audio"), {"outputBusOverride", "overrideBits"})
         && rejectFields(QStringLiteral("spatial"), {"attenuation", "attenuationGuid"});
 }

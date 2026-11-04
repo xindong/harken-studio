@@ -100,7 +100,8 @@
 | Actions 分类根及其 Folder | Folder、Action |
 | Variables 分类根及其 Folder | Folder、Variable |
 | Attenuations 分类根及其 Folder | Folder、Attenuation |
-| Sound、Action、Variable、Attenuation、空白 | 无候选 |
+| Effect 分类根及其 Folder | Folder、Effect > Limiter |
+| Sound、Action、Variable、Attenuation、Effect、空白 | 无候选 |
 
 表注：分类根标题为 Create，其他位置为 New Child。Container 提供 Random、Sequence、Match、Blend；Random／Sequence 默认 Play Type = Single，可改为 Queue，Queue 不是独立创建模式。多选显示候选并集，入口禁用。
 
@@ -112,7 +113,7 @@
 | Track | Container、Segment、Layer |
 | Layer | Layer |
 | Bus | Bus |
-| Folder、Action、Variable、Attenuation | 无候选 |
+| Folder、Action、Variable、Attenuation、Effect | 无候选 |
 
 表注：多选候选取并集，仍须全部为同父级兄弟并满足结构约束，不通过剔除后代改变分组。
 

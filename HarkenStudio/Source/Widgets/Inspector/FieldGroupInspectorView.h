@@ -47,6 +47,7 @@ struct FieldGroupInspectorView {
     bool sendsUniform = false;
 
     FieldGroupInspectorFieldView field(const QString& fieldName) const;
+    std::optional<EffectChainLedger> effectChain() const;
     QJsonObject actionArgs() const;
     QString sourceTooltip(const ProjectData& project, const QString& fieldName = {}) const;
 };

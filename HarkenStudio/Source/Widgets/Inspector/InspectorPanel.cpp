@@ -226,6 +226,7 @@ void InspectorPanelPrivate::refreshBoundPages(ProjectItem* item, const QString& 
     refreshOrRebind(variableEngine_,  currentVariableItem_);
     refreshOrRebind(actionEngine_,    currentActionItem_);
     refreshOrRebind(attenuationEngine_, currentAttenuationItem_);
+    refreshOrRebind(effectEngine_, currentEffectItem_);
 }
 
 void InspectorPanelPrivate::rebindHierarchyPages(ProjectItem* createdChild)
@@ -247,9 +248,9 @@ void InspectorPanelPrivate::rebindHierarchyPages(ProjectItem* createdChild)
 
 void InspectorPanelPrivate::clearItemBindings()
 {
-    const std::array<PropertyEditorEngine*, 9> engines = {
+    const std::array<PropertyEditorEngine*, 10> engines = {
         soundEngine_, layerEngine_, containerEngine_, trackEngine_, segmentEngine_,
-        variableEngine_, busEngine_, actionEngine_, attenuationEngine_};
+        variableEngine_, busEngine_, actionEngine_, attenuationEngine_, effectEngine_};
     for (PropertyEditorEngine* engine : engines)
         if (engine) engine->bindItem(nullptr);
 
@@ -262,6 +263,7 @@ void InspectorPanelPrivate::clearItemBindings()
     currentBusItem_ = nullptr;
     currentActionItem_ = nullptr;
     currentAttenuationItem_ = nullptr;
+    currentEffectItem_ = nullptr;
 }
 
 bool InspectorPanelPrivate::currentContextContains(ProjectItem* item) const
@@ -410,6 +412,7 @@ void InspectorPanelPrivate::registerPages()
     pages_[PageEmpty].builder         = [this]{ setupEmptyPage(); };
     pages_[PageAction].builder        = [this]{ setupActionPage(); };
     pages_[PageAttenuation].builder   = [this]{ setupAttenuationPage(); };
+    pages_[PageEffect].builder        = [this]{ setupEffectPage(); };
     pages_[PageSound].builder         = [this]{ setupSoundPageEngine(); };
     pages_[PageLayer].builder         = [this]{ setupLayerPage(); };
     pages_[PageBus].builder           = [this]{ setupBusPage(); };
@@ -447,9 +450,9 @@ int InspectorPanelPrivate::ensurePageBuilt(Page p)
 
 void InspectorPanelPrivate::dropEnginePageBindings()
 {
-    const std::array<PropertyEditorEngine*, 9> engines = {
+    const std::array<PropertyEditorEngine*, 10> engines = {
         soundEngine_, layerEngine_, containerEngine_, trackEngine_, segmentEngine_,
-        variableEngine_, busEngine_, actionEngine_, attenuationEngine_};
+        variableEngine_, busEngine_, actionEngine_, attenuationEngine_, effectEngine_};
     for (PropertyEditorEngine* engine : engines)
         if (engine) engine->releasePage();
 }
@@ -498,6 +501,7 @@ InspectorPanelPrivate::Page pageForItemType(ProjectItem::Type type)
     case ProjectItem::Type::Action:      return P::PageAction;
     case ProjectItem::Type::Variable:    return P::PageVariable;
     case ProjectItem::Type::Attenuation: return P::PageAttenuation;
+    case ProjectItem::Type::Effect:      return P::PageEffect;
     }
     return P::PageEmpty;
 }
@@ -542,6 +546,7 @@ void InspectorPanel::showItemInspectorImpl(ProjectItem* item)
     switch (page) {
     case P::PageAction:      d->currentActionItem_      = item; engine = d->actionEngine_;      break;
     case P::PageAttenuation: d->currentAttenuationItem_ = item; engine = d->attenuationEngine_; break;
+    case P::PageEffect:      d->currentEffectItem_      = item; engine = d->effectEngine_;      break;
     case P::PageSound:       d->currentSoundItem_       = item; engine = d->soundEngine_;       break;
     case P::PageLayer:       d->currentLayerItem_       = item; engine = d->layerEngine_;       break;
     case P::PageContainer:   d->currentContainerItem_   = item; engine = d->containerEngine_;   break;
@@ -628,6 +633,7 @@ ProjectItem* InspectorPanel::currentContextItem() const
     case P::PageBus:           return d->currentBusItem_;
     case P::PageAction:        return d->currentActionItem_;
     case P::PageAttenuation:   return d->currentAttenuationItem_;
+    case P::PageEffect:        return d->currentEffectItem_;
     default:                   return nullptr;
     }
 }
@@ -650,6 +656,11 @@ void InspectorPanel::requestEditorLaunch(const QString& slot)
 {
     emit editorLaunchRequested(
         panelId_, slot, currentContextItem(), placementContext());
+}
+
+void InspectorPanel::requestEffectEditorSelection(const QUuid& ownerGuid, const QUuid& rowGuid)
+{
+    emit effectEditorRequested(ownerGuid, rowGuid);
 }
 
 void InspectorPanel::onSearchTextChanged(const QString& text)
@@ -715,8 +726,8 @@ void InspectorPanel::onSearchTextChanged(const QString& text)
     
     if (isEmpty)
     {
-        for (auto child : current->findChildren<QWidget*>())
-            child->setVisible(true);
+        for (auto* section : current->findChildren<CollapsibleSection*>())
+            section->setVisible(true);
     }
     else
     {

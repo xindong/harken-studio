@@ -36,7 +36,6 @@ SplitButton::SplitButton(QWidget* parent)
     primaryButton_->installEventFilter(this);
 
     dropdownButton_->setProperty("splitButtonPart", QStringLiteral("dropdown"));
-    dropdownButton_->setProperty("flatIconButton", true);
     dropdownButton_->setArrowType(Qt::DownArrow);
     dropdownButton_->setFocusPolicy(Qt::StrongFocus);
     dropdownButton_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);

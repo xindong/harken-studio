@@ -76,6 +76,8 @@ public:
 
     QJsonObject attenuationPackToJson(const ProjectItem& item) const;
     bool        attenuationPackFromJson(const QJsonObject& json, ProjectItem& item) const;
+    QJsonObject effectPackToJson(const ProjectItem& item) const;
+    bool        effectPackFromJson(const QJsonObject& json, ProjectItem& item) const;
 
     QJsonObject variablePackToJson(const ProjectItem& item) const;
     bool        variablePackFromJson(const QJsonObject& json, ProjectItem& item) const;
@@ -102,6 +104,7 @@ private:
     };
 
     bool writeFieldGroups(const ProjectItem& item, QJsonObject& json) const;
+    bool readFieldGroups(const QJsonObject& json, ProjectItem& item) const;
 
     struct ReferenceTarget
     {
@@ -138,6 +141,8 @@ private:
     bool loadParentReference(const QJsonObject& json, ParentRef* ref) const;
     bool encodeComponentReferences(QJsonObject* components) const;
     bool decodeComponentReferences(QJsonObject* components) const;
+    bool rewriteEffectReferences(QJsonArray* effects, bool encode) const;
+    bool rewriteFieldGroupEffectReferences(QJsonObject* groups, bool encode) const;
     bool removeRetiredPlayableProperties(QJsonObject* properties) const;
     bool rewritePlayableReferenceFields(QJsonObject* properties, bool encode) const;
     bool encodePlayableReferences(QJsonObject* properties,

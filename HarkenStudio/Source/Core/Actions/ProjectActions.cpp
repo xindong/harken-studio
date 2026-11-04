@@ -1779,39 +1779,75 @@ ActionResult handleEffectsItemProperty(ProjectManager* projectManager, ProjectIt
                                        const QString&, const QJsonObject& args,
                                        const QObject* originator)
 {
-    if (!args.value(QStringLiteral("value")).isArray())
+    if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type))
+        return {false, {}, "AUTHORING_RESTRICTED", "Use replace_field_group_effects for definition FX"};
+    const auto operation = args.value(QStringLiteral("override_operation")).toString(QStringLiteral("set_override"));
+    const bool reset = operation == QStringLiteral("clear_platform_override");
+    if (!reset && operation != QStringLiteral("set_override"))
+        return {false, {}, "INVALID_ARGS", "Unsupported effect override operation"};
+    if (!reset && !args.value(QStringLiteral("value")).isArray())
         return {false, {}, "INVALID_ARGS", "'value' must be an effects array"};
     EffectChainLedger parsed = EffectChainLedger::fromJson(
         args.value(QStringLiteral("value")).toArray());
     std::vector<EffectEntry> entries = parsed.entries();
-    for (EffectEntry& effect : entries)
+    const auto* project = projectManager->currentProject();
+    for (EffectEntry& effect : entries) {
         if (effect.typed && harkenstudio::IsNull(effect.runtimeId()))
             effect.guid = QUuid::createUuid();
+        if (!project || !EffectChainSemantics::resolve(effect, *project))
+            return {false, {}, "INVALID_ARGS", "Effect reference does not resolve"};
+    }
     EffectChainLedger checked;
     if (!checked.replace(std::move(entries)))
         return {false, {}, "INVALID_ARGS", "Invalid typed effect chain"};
+    const auto plan = parsePlayableLandingPlan(args, ProjectPlatformSemantics::ids(project->platforms));
+    if (!plan.error.isEmpty()) return {false, {}, "INVALID_ARGS", plan.error};
+    if (reset && plan.kind != PlayableLandingKind::Overlay)
+        return {false, {}, "INVALID_ARGS", "clear_platform_override requires platform_ids"};
     auto* mix = item->comp<VMixNode>();
-    const QJsonArray oldValue = mix->effects.toJson();
+    const auto oldChain = mix->effects;
+    const auto oldPlatforms = mix->effectPlatforms;
+    auto newChain = oldChain;
+    auto newPlatforms = oldPlatforms;
+    if (plan.kind == PlayableLandingKind::Shared) {
+        newChain = checked;
+        newPlatforms.clear();
+    } else {
+        for (const auto& platform : plan.selected) {
+            if (reset || checked == newChain) newPlatforms.erase(platform);
+            else newPlatforms[platform] = checked;
+        }
+    }
     const QJsonArray newValue = checked.toJson();
     ActionResult result;
     result.success = true;
     result.data = QJsonObject{{"property", QStringLiteral("effects")},
                               {"value", newValue}};
-    if (oldValue == newValue) return result;
+    if (oldChain == newChain && oldPlatforms == newPlatforms) return result;
+    mix->effects = newChain;
+    mix->effectPlatforms = newPlatforms;
+    QString identityError;
+    const bool valid = validateProjectObjectIdentities(*project, &identityError);
+    mix->effects = oldChain;
+    mix->effectPlatforms = oldPlatforms;
+    if (!valid) return {false, {}, "INVALID_ARGS", identityError};
     const QUuid guid = item->guid;
-    auto apply = [guid, originator](const QJsonArray& value) {
+    auto apply = [guid](const EffectChainLedger& chain,
+                        const std::map<ProjectPlatformId, EffectChainLedger>& platforms,
+                        const QObject* origin) {
         ProjectItem* target = ProjectManager::instance().findItemByGuid(guid);
         auto* targetMix = target ? target->comp<VMixNode>() : nullptr;
         if (!targetMix) return;
-        targetMix->effects = EffectChainLedger::fromJson(value);
+        targetMix->effects = chain;
+        targetMix->effectPlatforms = platforms;
         target->markDirty();
         emit ProjectManager::instance().itemPropertyChanged(
-            target, QStringLiteral("effects"), originator);
+            target, QStringLiteral("effects"), origin);
         ProjectManager::instance().requestResync(target);
     };
-    apply(newValue);
-    result.undoFn = [apply, oldValue]() { apply(oldValue); };
-    result.redoFn = [apply, newValue]() { apply(newValue); };
+    apply(newChain, newPlatforms, originator);
+    result.undoFn = [apply, oldChain, oldPlatforms]() { apply(oldChain, oldPlatforms, nullptr); };
+    result.redoFn = [apply, newChain, newPlatforms]() { apply(newChain, newPlatforms, nullptr); };
     result.undoText = QStringLiteral("Set effects");
     result.authoringWriteSet = QSet<QUuid>{item->guid};
     return result;
@@ -2710,7 +2746,9 @@ void registerProjectActions(ActionManager& mgr,
                 const bool busOutputVolume =
                     item->comp<VBus>() != nullptr
                     && propertyName == QStringLiteral("outputBusVolume");
-                if (!busOutputVolume)
+                const bool busEffects = item->type == ProjectItem::Type::Bus
+                    && propertyName == QStringLiteral("effects");
+                if (!busOutputVolume && !busEffects)
                     return {false, {}, "INVALID_ARGS",
                             "Clear Override is only valid for generated playable properties"};
             }

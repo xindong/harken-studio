@@ -23,6 +23,7 @@
 #include "Core/Component.h"
 #include "Core/Components/VAction.h"
 #include "Core/Components/VAttenuation.h"
+#include "Core/Components/VEffect.h"
 #include "Core/Components/VAudio.h"
 #include "Core/Components/VBus.h"
 #include "Core/Components/VMixNode.h"
@@ -1425,6 +1426,7 @@ IComponent* PropertyEditorEngine::resolveComponentTyped(ProjectItem* item, Compo
         case ComponentType::Action:      return item->comp<VAction>();
         case ComponentType::Variable:    return item->comp<VVariable>();
         case ComponentType::Attenuation: return item->comp<VAttenuation>();
+        case ComponentType::Effect: return item->comp<VEffect>();
         case ComponentType::Spatial:     return item->comp<VSpatial>();
         case ComponentType::Track:       return item->comp<VTrack>();
         case ComponentType::Segment:       return item->comp<VSegment>();

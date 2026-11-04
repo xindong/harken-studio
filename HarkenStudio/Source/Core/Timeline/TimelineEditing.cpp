@@ -80,8 +80,28 @@ TimelineValidation validateEntityIdentities(ProjectData* project,
         if (const auto* mix = item->comp<VMixNode>()) {
             for (const auto& binding : mix->bindings.entries())
                 if (const auto validity = insert(binding.guid); !validity) return validity;
-            for (const auto& effect : mix->effects.entries())
-                if (const auto validity = insert(effect.guid); !validity) return validity;
+            QSet<QUuid> effectGuids;
+            auto validity = TimelineValidation::success();
+            const auto claimEffects = [&](const EffectChainLedger& effects, FieldGroupScope) {
+                QSet<QUuid> chainGuids;
+                for (const auto& effect : effects.entries()) {
+                    if (!validity) return;
+                    if (chainGuids.contains(effect.guid)) {
+                        validity = TimelineValidation::failure(TimelineError::DuplicateGuid,
+                            QStringLiteral("Effect slot GUIDs must be unique within a chain"));
+                        return;
+                    }
+                    chainGuids.insert(effect.guid);
+                    if (effectGuids.contains(effect.guid)) continue;
+                    validity = insert(effect.guid);
+                    effectGuids.insert(effect.guid);
+                }
+            };
+            claimEffects(mix->effects, {});
+            for (const auto& [platform, effects] : mix->effectPlatforms)
+                claimEffects(effects, {});
+            VisitAuthoredEffectChains(item->fieldGroups, claimEffects);
+            if (!validity) return validity;
         }
         if (const auto* timeline = item->comp<VTrack>()) {
             const ClipLedger& ledger = item == replacedOwner && replacementClips

@@ -2,9 +2,11 @@
 
 #include "Components/VMixNode.h"
 #include "Components/VAttenuation.h"
+#include "Components/VEffect.h"
 #include "Components/VSelection.h"
 #include "EffectChainSemantics.h"
 #include "ItemTypeCatalog.h"
+#include "PlayablePropertyAuthoringV1.h"
 #include "Tooling/Harkenizer/Core/CurrentWorldProjectAdapter.h"
 #include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "BindingRuntimeLowering.h"
@@ -114,7 +116,8 @@ bool operationSupports(T type, O operation)
     case O::LiveSync:
     case O::Delete:
         return playable || type == T::Layer || type == T::Action
-            || type == T::Variable || type == T::Bus || type == T::Attenuation;
+            || type == T::Variable || type == T::Bus || type == T::Attenuation
+            || type == T::Effect;
     }
     return false;
 }
@@ -125,7 +128,7 @@ B backendFor(O operation, T type)
     if (operation == O::PackBuild) return B::Pack;
     if (type == T::Sound || type == T::Container || type == T::Track
         || type == T::Segment || type == T::Layer || type == T::Action
-        || type == T::Variable || type == T::Bus)
+        || type == T::Variable || type == T::Bus || type == T::Effect)
         return B::CurrentWorld;
     return B::Native;
 }
@@ -222,8 +225,17 @@ RuntimeCapabilityEntry compileCurrentWorldCapability(const ProjectItem& item,
     if (context.buildSession) {
         options.sourceIndex = context.buildSession->sourceIndex();
         options.canonicalContext = context.buildSession->canonicalContext(scope);
-        options.fieldGroups = context.buildSession->fieldGroups(scope).get();
     }
+    std::shared_ptr<const FieldGroupEffectiveSnapshot> ownedGroups;
+    const auto* effectiveGroups = context.fieldGroups;
+    if (!effectiveGroups || effectiveGroups->scope != toFieldGroupScope(scope)) {
+        ownedGroups = context.buildSession
+            ? context.buildSession->fieldGroups(scope)
+            : std::make_shared<FieldGroupEffectiveSnapshot>(
+                buildFieldGroupEffectiveSnapshot(project, toFieldGroupScope(scope)));
+        effectiveGroups = ownedGroups.get();
+    }
+    options.fieldGroups = effectiveGroups;
     QString diagnostic;
     CurrentWorldBuildStatus status = CurrentWorldBuildStatus::InvalidAuthoring;
     auto request = buildCurrentWorldSyncRequestForContext(
@@ -249,8 +261,18 @@ RuntimeCapabilityEntry compileCurrentWorldCapability(const ProjectItem& item,
             if (dependencyFeature == F::TypedEffect) {
                 const auto* mix = dependency->comp<VMixNode>();
                 if (!mix) continue;
-                for (const auto& effect : mix->effects.entries()) {
+                const auto definition = effectiveGroups->definitions.find(toFieldGroupGuid(dependency->guid));
+                if (definition == effectiveGroups->definitions.end())
+                    return refuse(S::InvalidAuthoring,
+                                  QStringLiteral("Effect field group is unavailable"));
+                for (const auto& effect : definition->second.effects.effects.entries()) {
                     if (!EffectChainSemantics::validate(effect, &diagnostic))
+                        return refuse(S::InvalidAuthoring, diagnostic);
+                    const auto* asset = EffectChainSemantics::resolve(effect, project);
+                    if (!asset)
+                        return refuse(S::InvalidAuthoring,
+                                      QStringLiteral("Effect reference does not resolve"));
+                    if (!EffectChainSemantics::validate(*asset, &diagnostic))
                         return refuse(S::InvalidAuthoring, diagnostic);
                     if (effect.bypass)
                         return refuse(S::UnavailableEngineContract,
@@ -500,6 +522,17 @@ RuntimeCapabilityEntry evaluateForContext(const ProjectItem& item,
         if (const auto entry = query(item.type, operation, feature)) return *entry;
         return result;
     }
+    if (item.type == T::Effect) {
+        if (feature != F::ContentClosure)
+            return refuse(S::UnavailableEngineContract,
+                          QStringLiteral("Effect exposes its resource capability only"));
+        const auto* effect = item.comp<VEffect>();
+        QString diagnostic;
+        if (!effect || !EffectChainSemantics::validate(effect->definition, &diagnostic))
+            return refuse(S::InvalidAuthoring, diagnostic.isEmpty()
+                ? QStringLiteral("Effect asset data is missing") : diagnostic);
+        return result;
+    }
     if (item.type == T::Attenuation) {
         if (feature != F::ContentClosure)
             return refuse(S::UnavailableEngineContract,
@@ -552,13 +585,44 @@ RuntimeCapabilityEntry evaluateForContext(const ProjectItem& item,
         return bindingCapability(item, project, operation);
     if (feature == F::TypedEffect) {
         const auto* mix = item.comp<VMixNode>();
-        if (!mix || mix->effects.isEmpty()) return result;
-        for (const auto& effect : mix->effects.entries()) {
+        if (!mix) return result;
+        std::shared_ptr<const FieldGroupEffectiveSnapshot> ownedGroups;
+        PlatformScope scope = context.platform;
+        if (variant && !variant->platform.isEmpty()) {
+            const auto platform = ProjectPlatformSemantics::parseId(variant->platform);
+            if (!platform)
+                return refuse(S::InvalidAuthoring, QStringLiteral("Build platform ID is invalid"));
+            scope = *platform;
+        }
+        const EffectChainLedger* effects = &mix->effectsForPlatform(scope);
+        if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item.type)) {
+            const auto* effectiveGroups = context.fieldGroups;
+            if (!effectiveGroups || effectiveGroups->scope != toFieldGroupScope(scope)) {
+                ownedGroups = context.buildSession
+                    ? context.buildSession->fieldGroups(scope)
+                    : std::make_shared<FieldGroupEffectiveSnapshot>(
+                        buildFieldGroupEffectiveSnapshot(project, toFieldGroupScope(scope)));
+                effectiveGroups = ownedGroups.get();
+            }
+            const auto definition = effectiveGroups->definitions.find(toFieldGroupGuid(item.guid));
+            if (!effectiveGroups->ok() || definition == effectiveGroups->definitions.end())
+                return refuse(S::InvalidAuthoring,
+                              QStringLiteral("Effect field group is unavailable"));
+            effects = &definition->second.effects.effects;
+        }
+        if (effects->isEmpty()) return result;
+        for (const auto& effect : effects->entries()) {
             QString diagnostic;
             if (!effect.typed || harkenstudio::IsNull(effect.runtimeId())
                 || !EffectChainSemantics::validate(effect, &diagnostic))
                 return refuse(S::InvalidAuthoring, diagnostic.isEmpty()
                     ? QStringLiteral("Effect chain contains an invalid typed entry") : diagnostic);
+            const auto* asset = EffectChainSemantics::resolve(effect, project);
+            if (!asset)
+                return refuse(S::InvalidAuthoring,
+                              QStringLiteral("Effect reference does not resolve"));
+            if (!EffectChainSemantics::validate(*asset, &diagnostic))
+                return refuse(S::InvalidAuthoring, diagnostic);
             if (effect.bypass && item.type != T::Bus)
                 return refuse(S::UnavailableEngineContract,
                               QStringLiteral("Current World playable effect graphs do not carry effect bypass"));
@@ -653,7 +717,8 @@ RuntimeCapabilityAssessment assessForContext(const ProjectItem& item,
     case T::Sound:
     case T::Layer:
     case T::Bus:
-    case T::Attenuation: add(F::ContentClosure); break;
+    case T::Attenuation:
+    case T::Effect: add(F::ContentClosure); break;
     default: add(F::ContentClosure); break;
     }
     return assessment;
@@ -760,7 +825,8 @@ const std::vector<RuntimeCapabilityEntry>& entries()
                                   O::ProjectInputCompile, O::CompiledPreview,
                                   O::AuditionPlay, O::Delete}) {
             for (const T type : {T::Sound, T::Layer, T::Container, T::Track,
-                                 T::Segment, T::Variable, T::Action, T::Bus, T::Attenuation}) {
+                                 T::Segment, T::Variable, T::Action, T::Bus, T::Attenuation,
+                                 T::Effect}) {
                 const bool supported = operationSupports(type, operation);
                 add(type, operation, F::ContentClosure,
                     supported ? S::Ready : S::UnavailableEngineContract,
