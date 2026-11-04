@@ -97,7 +97,7 @@ bool rowHasDeepRangeSemantics(
 bool sameAuthoredRange(const SoundSourceDef& a, const SoundSourceDef& b)
 {
     return a.trimStartFrame == b.trimStartFrame && a.trimEndFrame == b.trimEndFrame
-        && a.loopRegion == b.loopRegion && a.fadeIn == b.fadeIn && a.fadeOut == b.fadeOut;
+        && a.loopRegion == b.loopRegion;
 }
 
 }

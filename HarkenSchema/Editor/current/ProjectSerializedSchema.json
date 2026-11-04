@@ -1537,24 +1537,7 @@
           "type": "integer"
         },
         "curve": {
-          "items": {
-            "oneOf": [
-              {
-                "additionalProperties": false,
-                "properties": {"x": {"const": 0}, "value": {"const": 0}},
-                "required": ["x", "value"],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {"x": {"const": 1}, "value": {"const": 1}},
-                "required": ["x", "value"],
-                "type": "object"
-              }
-            ]
-          },
-          "minItems": 2,
-          "maxItems": 2,
+          "const": [{"x": 0, "value": 0}, {"x": 1, "value": 1}],
           "type": "array"
         },
         "handles": {
@@ -1589,24 +1572,7 @@
           "type": "integer"
         },
         "curve": {
-          "items": {
-            "oneOf": [
-              {
-                "additionalProperties": false,
-                "properties": {"x": {"const": 0}, "value": {"const": 1}},
-                "required": ["x", "value"],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {"x": {"const": 1}, "value": {"const": 0}},
-                "required": ["x", "value"],
-                "type": "object"
-              }
-            ]
-          },
-          "minItems": 2,
-          "maxItems": 2,
+          "const": [{"x": 0, "value": 1}, {"x": 1, "value": 0}],
           "type": "array"
         },
         "handles": {

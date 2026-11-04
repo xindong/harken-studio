@@ -605,6 +605,12 @@ def cpp_json_value(value: Any) -> str:
         return f"QJsonValue({cpp_qstring(value)})"
     if isinstance(value, (int, float)):
         return f"QJsonValue({repr(value)})"
+    if isinstance(value, list):
+        return "QJsonValue(QJsonArray{" + ", ".join(cpp_json_value(item) for item in value) + "})"
+    if isinstance(value, dict):
+        fields = ("{" + cpp_qstring(key) + ", " + cpp_json_value(item) + "}"
+                  for key, item in value.items())
+        return "QJsonValue(QJsonObject{" + ", ".join(fields) + "})"
     raise ValueError(f"unsupported generated JSON literal: {value}")
 
 
