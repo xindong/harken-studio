@@ -21,6 +21,36 @@ bool Difference(std::int64_t a, std::int64_t b, std::int64_t& result) noexcept {
     return true;
 }
 
+std::uint64_t Magnitude(std::int64_t value) noexcept {
+    return value < 0 ? static_cast<std::uint64_t>(-(value + 1)) + 1u
+                     : static_cast<std::uint64_t>(value);
+}
+
+bool AddUnsigned(std::int64_t value, std::uint64_t offset, std::int64_t& result) noexcept {
+    const auto room = static_cast<std::uint64_t>(kMax) - static_cast<std::uint64_t>(value);
+    if (offset > room) return false;
+    if (value >= 0) result = value + static_cast<std::int64_t>(offset);
+    else if (offset >= Magnitude(value)) result = static_cast<std::int64_t>(offset - Magnitude(value));
+    else {
+        const auto magnitude = Magnitude(value) - offset;
+        result = magnitude == (UINT64_C(1) << 63) ? kMin : -static_cast<std::int64_t>(magnitude);
+    }
+    return true;
+}
+
+bool SubtractUnsigned(std::int64_t value, std::uint64_t offset, std::int64_t& result) noexcept {
+    const auto room = static_cast<std::uint64_t>(value) - static_cast<std::uint64_t>(kMin);
+    if (offset > room) return false;
+    if (value >= 0 && offset <= static_cast<std::uint64_t>(value))
+        result = value - static_cast<std::int64_t>(offset);
+    else {
+        const auto magnitude = value < 0 ? Magnitude(value) + offset
+                                         : offset - static_cast<std::uint64_t>(value);
+        result = magnitude == (UINT64_C(1) << 63) ? kMin : -static_cast<std::int64_t>(magnitude);
+    }
+    return true;
+}
+
 struct Mapping {
     const MusicPlaybackTimeline& timeline;
     const ClockKernel& clock;
@@ -56,10 +86,11 @@ struct Mapping {
     MusicTimelineStatus Frame(std::int64_t position, std::uint64_t iteration,
                               std::uint64_t& result) const noexcept {
         if (status != MusicTimelineStatus::Ok) return status;
-        if (iteration > static_cast<std::uint64_t>(kMax / span))
+        const auto room = static_cast<std::uint64_t>(kMax) - static_cast<std::uint64_t>(position);
+        if (iteration > room / static_cast<std::uint64_t>(span))
             return MusicTimelineStatus::Unrepresentable;
         std::int64_t unfolded = 0;
-        if (!Add(position, static_cast<std::int64_t>(iteration) * span, unfolded))
+        if (!AddUnsigned(position, iteration * static_cast<std::uint64_t>(span), unfolded))
             return MusicTimelineStatus::Unrepresentable;
         const auto converted = Convert(unfolded);
         if (converted == kMin || converted == kMax)
@@ -72,7 +103,9 @@ struct Mapping {
     }
 
     std::uint64_t LastIteration() const noexcept {
-        return timeline.playCount == 0 ? static_cast<std::uint64_t>(kMax / span)
+        return timeline.playCount == 0 ?
+            (static_cast<std::uint64_t>(kMax) - static_cast<std::uint64_t>(timeline.exit)) /
+                static_cast<std::uint64_t>(span)
                                       : timeline.playCount - 1u;
     }
 
@@ -92,7 +125,8 @@ struct Mapping {
         iteration = lo;
         const auto mapped = Frame(timeline.exit, lo, frame);
         if (mapped != MusicTimelineStatus::Ok) return mapped;
-        return frame >= lower ? MusicTimelineStatus::Ok : MusicTimelineStatus::Missed;
+        return frame >= lower ? MusicTimelineStatus::Ok : timeline.playCount == 0
+            ? MusicTimelineStatus::Unrepresentable : MusicTimelineStatus::Missed;
     }
 
     MusicPlaybackPosition Position(std::uint64_t elapsed) const noexcept {
@@ -129,11 +163,11 @@ struct Mapping {
             result.status = MusicTimelineStatus::Unrepresentable;
             return result;
         }
-        const auto absolute = originFrame >= 0
-            ? originFrame + static_cast<std::int64_t>(elapsed)
-            : elapsed <= static_cast<std::uint64_t>(-(originFrame + 1)) + 1u
-                ? originFrame + static_cast<std::int64_t>(elapsed)
-                : static_cast<std::int64_t>(elapsed - (static_cast<std::uint64_t>(-(originFrame + 1)) + 1u));
+        std::int64_t absolute = 0;
+        if (!AddUnsigned(originFrame, elapsed, absolute)) {
+            result.status = MusicTimelineStatus::Unrepresentable;
+            return result;
+        }
         auto unfolded = timeline.timeType == SegmentTimeType::Musical
             ? clock.FrameToTick({absolute}).value
             : clock.FrameToTime({absolute + 1}).value;
@@ -143,7 +177,7 @@ struct Mapping {
         }
         if (timeline.timeType == SegmentTimeType::Absolute) --unfolded;
         if (unfolded == kMin ||
-            !Difference(unfolded, static_cast<std::int64_t>(result.iteration) * span, result.position))
+            !SubtractUnsigned(unfolded, result.iteration * static_cast<std::uint64_t>(span), result.position))
             result.status = MusicTimelineStatus::Unrepresentable;
         return result;
     }

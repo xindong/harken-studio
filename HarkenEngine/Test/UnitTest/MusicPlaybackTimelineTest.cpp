@@ -161,4 +161,26 @@ TEST(MusicPlaybackTimeline, InvalidMissingMissedAndOverflowAreExplicit) {
     music.exit = music.entry;
     EXPECT_EQ(MusicTimelineStatus::Invalid, ResolveMusicPlaybackPosition(music, c.clock, 0).status);
 }
+
+TEST(MusicPlaybackTimeline, NegativeOriginOffsetsAnUnsignedIterationProduct) {
+    MusicClock c;
+    MusicPlaybackTimeline music{SegmentTimeType::Absolute, -3000000000, -2000000000,
+        -1000000000, 0, true, true};
+    constexpr std::uint64_t iteration = 9223372037;
+    constexpr std::uint64_t expected = 442721857824000;
+    std::uint64_t frame = 0;
+    ASSERT_EQ(MusicTimelineStatus::Ok,
+        MusicPlaybackFrame(music, c.clock, music.exit, iteration, &frame));
+    EXPECT_EQ(expected, frame);
+    const auto cue = ResolveMusicPlaybackBoundary(music, c.clock, c.markers,
+        MusicBoundaryKind::ExitCue, 0, 0, expected);
+    ASSERT_EQ(MusicTimelineStatus::Ok, cue.status);
+    EXPECT_EQ(iteration, cue.iteration);
+    EXPECT_EQ(expected, cue.frame);
+    const auto position = ResolveMusicPlaybackPosition(music, c.clock, expected - 1);
+    EXPECT_EQ(MusicTimelineStatus::Ok, position.status);
+    EXPECT_EQ(iteration, position.iteration);
+    EXPECT_GE(position.position, music.entry);
+    EXPECT_LT(position.position, music.exit);
+}
 } // namespace
