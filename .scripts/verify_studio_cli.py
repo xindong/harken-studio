@@ -74,6 +74,14 @@ def verify(cli: Path, executor: Path, host: Path | None, work: Path) -> None:
         assert stopped["index"] == 1 and len(stopped["results"]) == 2, stopped
         execute("get_item_info", {"path": "BeforeFailure"}, exit_code=1)
         execute("get_item_info", {"path": "AfterFailure"}, exit_code=1)
+        call("run", "--project", str(project), "--input", "-", "--save", data=[
+            {"cmd": "close_project"},
+            {"cmd": "create_action", "args": {"name": "AfterClose"}}], exit_code=1)
+        execute("get_item_info", {"path": "AfterClose"}, exit_code=1)
+        call("run", "--project", str(project), "--input", "-", data=[
+            {"cmd": "close_project"},
+            {"cmd": "open_project", "args": {"path": str(project)}},
+            {"cmd": "list_items"}])
 
         audio = root / "tone.wav"
         with wave.open(str(audio), "wb") as stream:
@@ -102,6 +110,13 @@ def verify(cli: Path, executor: Path, host: Path | None, work: Path) -> None:
         try:
             source.write_bytes(b"invalid audio input")
             execute("export_pack", {"output_path": str(destination), "platform_id": platform}, exit_code=1)
+            rejected_output = root / "legacy-batch-export"
+            execute("batch", {"commands": [
+                {"cmd": "create_action", "args": {"name": "HiddenBatch"}},
+                {"cmd": "export_pack", "args": {"output_path": str(rejected_output), "platform_id": platform}}
+            ]}, save=True, exit_code=1)
+            assert not rejected_output.exists()
+            execute("get_item_info", {"path": "HiddenBatch"}, exit_code=1)
         finally:
             source.write_bytes(original)
         exported = execute("export_pack", {"output_path": str(destination), "platform_id": platform})

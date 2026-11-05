@@ -21,6 +21,14 @@
 
 namespace HarkenStudioCli {
 
+namespace {
+
+const QString legacyBatchRestriction = QStringLiteral(
+    "The legacy batch command is unavailable in this host. Use the run subcommand "
+    "to execute requests in order and wait for each operation to finish.");
+
+}
+
 QJsonObject failure(const QString& code, const QString& message)
 {
     return {{QStringLiteral("status"), QStringLiteral("error")},
@@ -87,17 +95,20 @@ QJsonObject StudioSession::open(const QString& path)
 
 QJsonObject StudioSession::describe(const QString& name) const
 {
-    if (!state_->dispatcher.allCommandNames().contains(name))
+    auto description = VNX::describeEditorCommand(name, &state_->dispatcher);
+    if (!description.value(QStringLiteral("registered")).toBool())
         return failure(QStringLiteral("UNKNOWN_COMMAND"), QStringLiteral("Unknown editor command: %1").arg(name));
+    if (name == QStringLiteral("batch"))
+        description.insert(QStringLiteral("hostRestriction"), legacyBatchRestriction);
     return {{QStringLiteral("status"), QStringLiteral("ok")},
-            {QStringLiteral("result"), VNX::describeEditorCommand(name, &state_->dispatcher)}};
+            {QStringLiteral("result"), description}};
 }
 
 QJsonObject StudioSession::commands() const
 {
     QJsonArray commands;
     for (const QString& name : state_->dispatcher.allCommandNames())
-        commands.append(VNX::describeEditorCommand(name, &state_->dispatcher));
+        commands.append(describe(name).value(QStringLiteral("result")));
     return {{QStringLiteral("status"), QStringLiteral("ok")},
             {QStringLiteral("result"), QJsonObject{
                 {QStringLiteral("protocolVersion"), 1},
@@ -109,8 +120,17 @@ QJsonObject StudioSession::execute(const QString& name, const QJsonObject& args,
                                   int timeoutMs, const std::function<bool()>& canceled)
 {
     if (canceled()) return failure(QStringLiteral("CANCELED"), QStringLiteral("Interrupted."));
+    if (name == QStringLiteral("batch"))
+        return failure(QStringLiteral("UNSUPPORTED_COMMAND"), legacyBatchRestriction);
     if (name == QStringLiteral("open_project"))
         return open(args.value(QStringLiteral("path")).toString());
+    if (name == QStringLiteral("close_project")) {
+        if (!state_->project.closeProject())
+            return failure(QStringLiteral("CLOSE_PROJECT_FAILED"), QStringLiteral("Cannot close the active project."));
+        state_->instance.reset();
+        return {{QStringLiteral("status"), QStringLiteral("ok")},
+                {QStringLiteral("result"), QJsonObject{{QStringLiteral("success"), true}}}};
+    }
     if (name == QStringLiteral("create_project")) {
         QString schemaError;
         if (!VNX::SchemaArchive::instance().verifyBuildSnapshot(&schemaError))

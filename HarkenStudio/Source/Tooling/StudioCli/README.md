@@ -26,7 +26,8 @@ harken-studio commands export_pack --json
 Command discovery reads the live editor registry. Each entry includes an
 `inputSchema`, the original `parameters`, and `requiresDesktop`. `schemaSource`
 distinguishes declared JSON Schema from legacy descriptions and undocumented
-parameters. A legacy description can omit required arguments or constraints;
+parameters. `hostRestriction`, when present, explains why a registered command
+is unavailable in this host. A legacy description can omit required arguments or constraints;
 execution still uses the editor's validation. Do not infer that an undocumented
 command accepts no arguments. `readOnly` follows the editor's existing dispatch
 classification, not a guarantee about filesystem side effects.
@@ -86,6 +87,11 @@ integrations.
 - `run` takes an array of `{ "cmd": "...", "args": { ... } }`. All request
   shapes are checked first. Commands then execute sequentially and stop at the
   first error. Results include their command and zero-based index.
+- The legacy `batch` command is rejected before executing any nested requests.
+  Use `run` for batches so lifecycle checks, asynchronous completion, and errors
+  follow the same contract as direct commands.
+- `close_project` completes the close and releases the session's project lease
+  before the next command runs. Subsequent edits require another project open.
 - Project edits are saved only with `--save` or an explicit `save_project`.
   Without saving, in-memory edits are discarded when the process exits.
   Creation, export, and other external operations write their own outputs.
