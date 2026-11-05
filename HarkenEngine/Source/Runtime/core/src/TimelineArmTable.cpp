@@ -3148,8 +3148,9 @@ bool TimelineArmTable::ProveInitialAdmissionDeferredStart(TimelineArmToken token
     Plan03PageGroupView group{};
     if (!binding.Valid() || binding.role != FrontierGroupRole::EntryMember ||
         binding.operation.kind != FrontierOperationKind::Entry ||
-        (static_cast<unsigned>(binding.variableSide.Valid()) + static_cast<unsigned>(binding.queueSignal.Valid()) != 1u) ||
-        binding.transition.Valid() || binding.queueInitial.Valid() || binding.queueConditional.Valid() ||
+        (static_cast<unsigned>(binding.variableSide.Valid()) + static_cast<unsigned>(binding.queueSignal.Valid()) +
+            static_cast<unsigned>(binding.queueInitial.Valid()) != 1u) ||
+        binding.transition.Valid() || binding.queueConditional.Valid() ||
         !pool.ResolvePlan03GroupSliceRt(binding.operation.group, &group) ||
         group.frontier != &binding || group.lease != &lease || group.members == nullptr ||
         !pool.NotePlan03GroupReadRt(group.identity, audioSequence) ||
@@ -3422,9 +3423,10 @@ TimelineArmOperationDisposition TimelineArmTable::BeginFrontierOperation(
         const bool initialAdmissionStart = admission != nullptr &&
             admission->role == FrontierGroupRole::EntryMember &&
             (static_cast<unsigned>(admission->variableSide.Valid()) +
-                static_cast<unsigned>(admission->queueSignal.Valid()) == 1u) &&
+                static_cast<unsigned>(admission->queueSignal.Valid()) +
+                static_cast<unsigned>(admission->queueInitial.Valid()) == 1u) &&
             admission->operation.kind == FrontierOperationKind::Entry &&
-            !admission->transition.Valid() && !admission->queueInitial.Valid() &&
+            !admission->transition.Valid() &&
             !admission->queueConditional.Valid() && kind == TimelineArmOperationKind::Start;
         if (binding == nullptr || pool == nullptr ||
             binding->kind != FrontierOperationKind::Dependent || admission == nullptr ||

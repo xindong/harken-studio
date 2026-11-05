@@ -2040,7 +2040,8 @@ struct FrontierTimelineFinalizer::Impl {
             const auto frame = binding.operation.order.executeFrame;
             const auto audible = binding.transition.audibleFrame;
             if (conditional && decision.sliceCount == 2) {
-                if (member.view.sourceControlCount != 0 && member.view.sourceControlCount < member.view.memberCount) {
+                if ((member.view.sourceControlCount != 0 && member.view.sourceControlCount < member.view.memberCount) ||
+                    binding.sourceExit != nullptr) {
                     if (member.view.identity.sliceIndex == 0) {
                         if (frame != audible) return false;
                         member.queueSlice = QueueInstanceTable::FrontierConditionalSlice::Prelude;
@@ -2147,7 +2148,7 @@ struct FrontierTimelineFinalizer::Impl {
                 (member.queueSlice != QueueInstanceTable::FrontierConditionalSlice::Prelude ||
                     index < member.view.sourceControlCount);
             if (required && !found) {
-                if (!laneMode && (variable || signal) && primary != nullptr &&
+                if (!laneMode && (variable || signal || queue) && primary != nullptr &&
                     binding.role == FrontierGroupRole::EntryMember &&
                     index >= member.view.sourceControlCount && completionCount < completionCapacity &&
                     arms.ProveInitialAdmissionDeferredStart(token, binding, *member.view.lease, *pool,
@@ -2177,7 +2178,8 @@ struct FrontierTimelineFinalizer::Impl {
                     ++completionCount;
                     continue;
                 }
-                if (!variable || binding.role != FrontierGroupRole::Future ||
+                const bool nativeQueueTarget = !laneMode && conditional && binding.sourceExit != nullptr;
+                if ((!variable && !nativeQueueTarget) || binding.role != FrontierGroupRole::Future ||
                     index < member.view.sourceControlCount || completionCount == completionCapacity ||
                     !arms.ProveDeferredFrontierStart(token, binding, *member.view.lease, *pool,
                         quantum + 1u, &completionProofs[completionCount])) return false;
@@ -3560,9 +3562,10 @@ VariableReadCutStatus FrontierTimelineFinalizer::VariableSourcesStatus(
                 self.quantum >= UINT64_MAX / self.frames) return VariableReadCutStatus::Failed;
             const auto& group = self.groups[index].view;
             const bool prelude = binding.transition.Valid() && group.identity.sliceIndex == 0u &&
-                group.sourceControlCount != 0u && group.sourceControlCount < group.memberCount;
+                ((group.sourceControlCount != 0u && group.sourceControlCount < group.memberCount) ||
+                 binding.sourceExit != nullptr);
             const bool targetLock = binding.transition.Valid() && group.identity.sliceIndex == 1u &&
-                group.sourceControlCount == 0u && group.memberCount == 1u;
+                group.sourceControlCount == 0u && group.memberCount == 1u && binding.sourceExit == nullptr;
             QueueConditionalProof proof{};
             const auto status = prelude || targetLock ? QueueConditionalProofStatus::ReadyToActivate :
                 self.queues->PreflightFrontierSourceWait(binding, *group.lease,
@@ -3694,8 +3697,9 @@ bool FrontierTimelineFinalizer::PendingBindingValid(const ConsumedEvent& event,
     DecisionCommittedSnapshot decision{};
     ArmGroupMemberSnapshot actual{};
     if (binding.role != FrontierGroupRole::EntryMember ||
-        (static_cast<unsigned>(binding.variableSide.Valid()) + static_cast<unsigned>(binding.queueSignal.Valid()) != 1u) ||
-        binding.queueInitial.Valid() || binding.queueConditional.Valid() || binding.transition.Valid() ||
+        (static_cast<unsigned>(binding.variableSide.Valid()) + static_cast<unsigned>(binding.queueSignal.Valid()) +
+            static_cast<unsigned>(binding.queueInitial.Valid()) != 1u) ||
+        binding.queueConditional.Valid() || binding.transition.Valid() ||
         binding.operation.kind != FrontierOperationKind::Entry ||
         !(binding.entry == event.frontier.entry) || !(binding.operation.owner == event.frontier.owner) ||
         binding.operation.transport != event.frontier.transport || binding.operation.world != event.frontier.world ||

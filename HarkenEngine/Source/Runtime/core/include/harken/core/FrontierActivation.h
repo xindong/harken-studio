@@ -330,7 +330,8 @@ struct FrontierGroupBinding {
             !operation.group.Exact()) return false;
         if (initialVariables.Valid() && role != FrontierGroupRole::Coordinator) return false;
         if (sourceExit != nullptr && (role != FrontierGroupRole::Future || !transition.Valid() ||
-                !variableSide.Valid() || variableSide.side != 0)) return false;
+                !((variableSide.Valid() && variableSide.side == 0 && !queueConditional.Valid()) ||
+                  (queueConditional.Valid() && !variableSide.Valid())))) return false;
         if (appliedPrerequisite != nullptr &&
             (role != FrontierGroupRole::Coordinator ||
              !prerequisite.Valid() || !prerequisiteMember.Exact())) return false;

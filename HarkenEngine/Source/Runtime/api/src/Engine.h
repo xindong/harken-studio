@@ -1905,6 +1905,8 @@ struct EngineVariableServicePayload {
 };
 
 struct EngineQueueServicePayload {
+    bool nativeTransitionPending = false;
+    bool nativeTransitionApplied = false;
     EngineQueueProgramBank* queuePreparingFollowing = nullptr;
     EngineQueueProgramBank* queueRetiringChain = nullptr;
     OccurrenceToken queueLookaheadRollbackOccurrence{};
@@ -2070,6 +2072,7 @@ struct EngineScheduleAggregateChild {
     std::uint32_t stableLeafOrdinal = 0;
     std::uint32_t loopIteration = 0;
     std::uint64_t queueSelectionVersion = 0;
+    OccurrenceToken queueRetiringOccurrence{};
     std::uint64_t sourceOffsetFrames = 0;
     EnginePlayableServiceReference service{};
     std::optional<VariableControlSide> variableControlSide;
@@ -2181,7 +2184,8 @@ struct EngineScheduleAggregateState {
 
     bool ChildrenReleased() const noexcept {
         return VisitChildren([](const auto& child) noexcept {
-            return child.resourcesReleased && child.naturalClipDeadline.Empty() && child.sourceExits.empty();
+            return child.resourcesReleased && child.naturalClipDeadline.Empty() && child.sourceExits.empty() &&
+                child.queueRetiringOccurrence.generation == 0;
         });
     }
 };

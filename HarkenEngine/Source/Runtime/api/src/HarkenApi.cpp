@@ -2769,13 +2769,15 @@ bool SealPrivateInitialForest(harken::Engine& engine,
     });
 }
 
+bool IsDirectInitialQueueForest(harken::Engine&, const harken::EngineActionPlayScratch&) noexcept;
+
 bool SealNativeEntryPrivateOwner(harken::Engine& engine,
     harken::EngineActionPlayScratch& scratch) noexcept {
     if (scratch.initialNativeForestOwner.Valid()) {
         auto* root = FindFrontierAttempt(engine, scratch.initialNativeForestOwner);
         return root != nullptr && root->initialForestPublication &&
             (root->initialQueueSignalAdmission != nullptr || root->nativeEntrySeedService.Valid() ||
-             root->initialForestCancellationSealed) && SealPrivateInitialForest(engine, *root);
+             IsDirectInitialQueueForest(engine, *root) || root->initialForestCancellationSealed) && SealPrivateInitialForest(engine, *root);
     }
     // A delayed entry owns a fresh attempt; its prerequisite can already be
     // applied. Its own unpublished binding must be detached before the loans.
@@ -2857,14 +2859,25 @@ InitialQueueEntryAdmission* FindInitialQueueEntryAdmission(
 bool MatchesPendingScheduleEntryParent(harken::Engine&,
     const harken::EngineActionPlayScratch&, const harken::EnginePlayableServiceRow&) noexcept;
 
+bool IsDirectInitialQueueForest(harken::Engine& engine,
+    const harken::EngineActionPlayScratch& root) noexcept {
+    return root.directExecution && !root.continuationExecution && !root.queueFutureExecution &&
+        root.initialForestPublication && root.initialNativeForestOwner.Valid() &&
+        FindFrontierAttempt(engine, root.initialNativeForestOwner) == &root &&
+        !root.queueSignalEntryOwner.Valid() && root.initialQueueSignalAdmission == nullptr &&
+        !root.nativeEntryForestRoot && !root.nativeEntrySeedService.Valid() &&
+        root.row != nullptr && root.row->InvocationValid() && !root.row->parentService.Valid();
+}
+
 harken::EngineActionPlayScratch* ResolveInitialNativeQueueForest(harken::Engine& engine,
     const harken::EngineActionPlayScratch& scratch) noexcept {
     const auto token = scratch.initialNativeForestOwner.Valid()
         ? scratch.initialNativeForestOwner : scratch.queueSignalEntryOwner;
     auto* root = FindFrontierAttempt(engine, token);
-    if (root == nullptr || !root->initialForestPublication || !root->continuationExecution ||
+    if (root == nullptr || !root->initialForestPublication ||
+        (!root->continuationExecution && !IsDirectInitialQueueForest(engine, *root)) ||
         root->initialForestCancellationSealed) return nullptr;
-    if (root->initialQueueSignalAdmission != nullptr) return root;
+    if (root->initialQueueSignalAdmission != nullptr || IsDirectInitialQueueForest(engine, *root)) return root;
     const auto* seed = engine.ResolvePlayableService(root->nativeEntrySeedService);
     if (!root->nativeEntryForestRoot || seed == nullptr || seed->nativeEntryDependency == nullptr ||
         !MatchesPendingScheduleEntryParent(engine, *root, *seed) ||
@@ -2901,7 +2914,8 @@ bool ReserveInitialQueueEntryAdmission(harken::Engine& engine,
     if (!engine.decisions.Reserve(request, &owned.decision)) return false;
     // The signal root already owns its coordinator. A descendant attempt owns
     // its own native entry; several Queue services may share that entry frame.
-    if (&scratch != root || root->nativeEntryForestRoot) scratch.nativeEntryDomain = true;
+    if (!IsDirectInitialQueueForest(engine, *root) &&
+        (&scratch != root || root->nativeEntryForestRoot)) scratch.nativeEntryDomain = true;
     return true;
 }
 
@@ -3458,7 +3472,8 @@ bool CancelInitialQueueEntryAdmissions(harken::Engine& engine,
     const auto forestOwner = scratch.initialNativeForestOwner.Valid()
         ? scratch.initialNativeForestOwner : scratch.queueSignalEntryOwner;
     auto* root = FindFrontierAttempt(engine, forestOwner);
-    if (root == nullptr || !root->initialForestPublication || !root->continuationExecution) return false;
+    if (root == nullptr || !root->initialForestPublication ||
+        (!root->continuationExecution && !IsDirectInitialQueueForest(engine, *root))) return false;
     if (scratch.queueTransactions.Valid() &&
         !engine.timelinePool.CancelPreparedTransactionBatch(&scratch.queueTransactions)) return false;
     if (!RollbackInitialNativeSideDecisions(engine, scratch)) return false;
@@ -10920,12 +10935,12 @@ bool AppendQueueLaneProgram(const harken::ProgramView& program,
     return true;
 }
 
-struct NativeVariableScheduleRetargetPreparation;
-bool CanPublishNativeVariableScheduleRetarget(NativeVariableScheduleRetargetPreparation&) noexcept;
-bool PublishNativeVariableScheduleRetarget(NativeVariableScheduleRetargetPreparation&) noexcept;
-bool CancelNativeVariableScheduleRetarget(NativeVariableScheduleRetargetPreparation&) noexcept;
-void DelegateNativeVariableScheduleCancellation(NativeVariableScheduleRetargetPreparation&) noexcept;
-bool NativeVariableScheduleCancellationComplete(const NativeVariableScheduleRetargetPreparation&) noexcept;
+struct NativeScheduleTransitionPreparation;
+bool CanPublishNativeScheduleTransition(NativeScheduleTransitionPreparation&) noexcept;
+bool PublishNativeScheduleTransition(NativeScheduleTransitionPreparation&) noexcept;
+bool CancelNativeScheduleTransition(NativeScheduleTransitionPreparation&) noexcept;
+void DelegateNativeScheduleTransitionCancellation(NativeScheduleTransitionPreparation&) noexcept;
+bool NativeScheduleTransitionCancellationComplete(const NativeScheduleTransitionPreparation&) noexcept;
 
 class PreparedTimelineStarts {
 public:
@@ -10947,7 +10962,7 @@ public:
     ~PreparedTimelineStarts() {
         if (!ownsScratch_) return;
         if (!committed_) Cancel();
-        if (nativeSchedule_ != nullptr && !NativeVariableScheduleCancellationComplete(*nativeSchedule_)) return;
+        if (nativeSchedule_ != nullptr && !NativeScheduleTransitionCancellationComplete(*nativeSchedule_)) return;
         engine_.timelineStartScratch.occupied = false;
     }
     PreparedTimelineStarts(const PreparedTimelineStarts&) = delete;
@@ -11124,10 +11139,10 @@ public:
         return true;
     }
 
-    bool PrepareVariableFrontier(harken::EnginePlayableServiceRow& row,
+    bool PrepareServiceFrontier(harken::EnginePlayableServiceRow& row,
         harken::DecisionToken decision, harken::LogicCommitSequence sequence,
         harken::TransitionInstanceToken transition = {}, harken::EngineSourceExit* sourceExit = nullptr) noexcept {
-        if (!row.frontierLifetimeEntry.Valid()) return true;
+        if (!row.frontierLifetimeEntry.Valid()) return !row.queueMode || row.variableControlInstance.Valid();
         if (!ownsScratch_ || frontierRow_ != nullptr || groupCount_ == 0 ||
             !row.frontierLifetimePin.Valid() || !decision.Valid()) return false;
         frontierRow_ = &row;
@@ -11202,9 +11217,9 @@ public:
         treePublished_ = &published;
     }
 
-    void AttachNativeSchedule(NativeVariableScheduleRetargetPreparation& native) noexcept {
+    void AttachNativeSchedule(NativeScheduleTransitionPreparation& native) noexcept {
         nativeSchedule_ = &native;
-        DelegateNativeVariableScheduleCancellation(native);
+        DelegateNativeScheduleTransitionCancellation(native);
     }
 
     bool Commit(harken::LogicCommitSequence sequence,
@@ -11252,7 +11267,7 @@ public:
             if (!engine_.timelinePool.CommitPreparedPlan03GroupSlice(
                     &groups_[index], &committedGroups_[index], true)) return false;
         }
-        if (!BindVariableFrontier()) return false;
+        if (!BindServiceFrontier()) return false;
         if (frontierSourceExit_ != nullptr &&
             (!engine_.decisions.AcquireFuturePin(frontierDecision_, &frontierSourceExit_->lifetime) ||
              !engine_.timelinePool.AcquirePlan03GroupReader(frontierGroups_[0], &frontierSourceExit_->reader) ||
@@ -11282,10 +11297,10 @@ public:
                 if (!engine_.timelinePool.CanReleasePreparedTransactionPublication(transactions_[index])) return false;
             for (std::uint32_t index = 0; index < groupCount_; ++index)
                 if (!engine_.timelinePool.CanReleaseCommittedPlan03GroupSliceOwnership(committedGroups_[index])) return false;
-            if (!CanPublishNativeVariableScheduleRetarget(*nativeSchedule_)) return false;
+            if (!CanPublishNativeScheduleTransition(*nativeSchedule_)) return false;
         }
         committed_ = true;
-        if (nativeSchedule_ != nullptr && !PublishNativeVariableScheduleRetarget(*nativeSchedule_)) {
+        if (nativeSchedule_ != nullptr && !PublishNativeScheduleTransition(*nativeSchedule_)) {
             engine_.runtimeRecreateRequired = true;
             return false;
         }
@@ -11344,7 +11359,7 @@ public:
             engine_.runtimeRecreateRequired = true;
             return;
         }
-        if (!ReleaseVariableFrontier()) {
+        if (!ReleaseServiceFrontier()) {
             engine_.runtimeRecreateRequired = true;
             return;
         }
@@ -11374,7 +11389,7 @@ public:
         // The exact transaction and group originals above have all returned.
         // Native Sources in other scratch owners can now cancel against the
         // same unpublished command reservation before the Decision is released.
-        if (nativeSchedule_ != nullptr && !CancelNativeVariableScheduleRetarget(*nativeSchedule_)) return;
+        if (nativeSchedule_ != nullptr && !CancelNativeScheduleTransition(*nativeSchedule_)) return;
         for (auto& start : starts_) {
             if (start.prepared) {
                 if (!CancelPreparedTimelineVoiceStart(engine_, &start) && !retainStartFailure)
@@ -11418,11 +11433,16 @@ public:
     }
 
 private:
-    bool BindVariableFrontier() noexcept {
+    bool BindServiceFrontier() noexcept {
         if (frontierRow_ == nullptr) return true;
         auto& row = *frontierRow_;
+        const bool nativeQueue = row.queueMode && !row.variableControlInstance.Valid();
         harken::VariableControlActivationProof side{};
-        if (!engine_.variableControlInstances.ProveActivation(row.variableControlInstance, frontierDecision_, &side))
+        harken::QueueInstanceSnapshot queue{};
+        if (nativeQueue) {
+            if (!engine_.queueInstances.Capture(row.queueInstance, &queue) || queue.pendingVersion == 0 ||
+                !row.QueueFiling().queueConditional.Valid()) return false;
+        } else if (!engine_.variableControlInstances.ProveActivation(row.variableControlInstance, frontierDecision_, &side))
             return false;
         const auto owner = engine_.playableInstances.Classify(row.ownerInstance);
         const auto parent = engine_.playableInstances.Classify(owner.parent);
@@ -11456,7 +11476,10 @@ private:
             binding.operation.world = row.Invocation().worldGeneration;
             binding.operation.program = control.program.program;
             binding.operation.programGeneration = control.program.programGeneration;
-            binding.variableSide = {side.instance.slot, side.instance.generation, static_cast<std::uint8_t>(side.side),
+            if (nativeQueue) binding.queueConditional = {row.queueInstance.slot, row.queueInstance.generation,
+                queue.logicMirror.version, queue.pendingVersion, row.QueuePayload().queueCurrentOccurrence,
+                row.QueueFiling().queueSuccessorOccurrence};
+            else binding.variableSide = {side.instance.slot, side.instance.generation, static_cast<std::uint8_t>(side.side),
                 side.sideGeneration, side.bank.slot, side.bank.generation};
             if (frontierTransition_.Valid()) {
                 harken::TransitionInstanceSnapshot transition{};
@@ -11468,7 +11491,8 @@ private:
             frontierBound_[index] = true;
             harken::Plan03PageGroupView group{};
             if (!engine_.timelinePool.ResolvePlan03GroupSliceProducer(frontierGroups_[index], &group) ||
-                !engine_.variableControlInstances.BindFrontierSide(side.instance, *group.frontier, engine_.timelinePool) ||
+                !(nativeQueue ? engine_.queueInstances.BindFrontierConditional(row.queueInstance, *group.frontier, engine_.timelinePool)
+                    : engine_.variableControlInstances.BindFrontierSide(side.instance, *group.frontier, engine_.timelinePool)) ||
                 !engine_.decisions.BindFrontierDecision(frontierDecision_, *group.frontier, engine_.timelinePool)) return false;
             if (frontierTransition_.Valid()) {
                 if (!engine_.transitionInstances.BindFrontier(frontierTransition_, *group.frontier, engine_.timelinePool)) return false;
@@ -11530,7 +11554,7 @@ private:
         return true;
     }
 
-    bool ReleaseVariableFrontier() noexcept {
+    bool ReleaseServiceFrontier() noexcept {
         if (frontierRow_ == nullptr) return true;
         if (frontierSourceExit_ != nullptr) {
             if (frontierSourceExit_->reader.Valid() && !frontierSourceExit_->reader.Release(0)) return false;
@@ -11565,7 +11589,7 @@ private:
     harken::PlayableTreeExecutor* preparedTree_ = nullptr;
     harken::EngineActionPlayScratch* preparedTreeOwners_ = nullptr;
     bool* treePublished_ = nullptr;
-    NativeVariableScheduleRetargetPreparation* nativeSchedule_ = nullptr;
+    NativeScheduleTransitionPreparation* nativeSchedule_ = nullptr;
     harken::EnginePlayableServiceRow* frontierRow_ = nullptr;
     harken::DecisionToken frontierDecision_{};
     harken::TransitionInstanceToken frontierTransition_{};
@@ -13215,7 +13239,7 @@ bool ObserveActiveArrivalsBeforeArmReclaim(harken::Engine& engine) noexcept {
     return complete;
 }
 
-bool ReleaseVariableFutureBindings(harken::Engine& engine, harken::DecisionToken decision,
+bool ReleaseServiceFutureBindings(harken::Engine& engine, harken::DecisionToken decision,
     std::uint64_t observed, harken::TransitionInstanceToken transition) noexcept {
     if (!engine.decisions.HasFrontierDecisionBinding(decision)) return true;
     auto& groups = engine.timelineGroupCaptureScratch;
@@ -13224,7 +13248,7 @@ bool ReleaseVariableFutureBindings(harken::Engine& engine, harken::DecisionToken
     const auto matches = [&](const harken::Plan03PageGroupView& group) {
         return group.identity.decision.slot == decision.slot && group.identity.decision.generation == decision.generation &&
             group.frontier != nullptr && group.frontier->role == harken::FrontierGroupRole::Future &&
-            group.frontier->variableSide.Valid();
+            (group.frontier->variableSide.Valid() || group.frontier->queueConditional.Valid());
     };
     bool future = false;
     for (std::size_t index = 0; index < count; ++index) {
@@ -13311,7 +13335,7 @@ bool ServiceDecisionRetirement(
         record.phase = harken::EngineDecisionOwnershipPhase::Retiring;
     }
     DisarmAuthoredStopDecision(engine, record.decision);
-    if (!ReleaseVariableFutureBindings(engine, record.decision, observed, record.transition)) return false;
+    if (!ReleaseServiceFutureBindings(engine, record.decision, observed, record.transition)) return false;
     if (record.canonicalQueue) {
         auto* const bank = record.programBank;
         if (bank == nullptr || !bank->occupied || CanonicalQueueBankHasReaders(engine, *bank) ||
@@ -13957,11 +13981,15 @@ bool CaptureNativeQueueInitialPublication(harken::Engine& engine,
     const auto* native = engine.ResolvePlayableService({owner.serviceSlot, owner.serviceGeneration},
         owner.child, owner.childEpoch);
     auto* signalOwner = ResolveQueueSignalReceiptOwner(engine, descriptor.entry);
+    const bool independentInitial = native != nullptr && !native->parentService.Valid() &&
+        native->nativeEntryDependency == nullptr && native->frontierEntry == descriptor.entry &&
+        owner.parent == 0 && owner.invocation == native->ownerInstance &&
+        owner.invocationEpoch == native->ownerEpoch;
     harken::DecisionCommittedSnapshot coordinator{};
     harken::Plan03PageGroupView primary{};
     harken::QueueInstanceSnapshot queue{};
     if (!descriptor.Valid() || !(descriptor.entry == row.frontierLifetimeEntry) || native == nullptr ||
-        (signalOwner == nullptr && (!(native->frontierEntry == descriptor.entry) ||
+        (signalOwner == nullptr && !independentInitial && (!(native->frontierEntry == descriptor.entry) ||
          native->nativeEntryDependency == nullptr || !native->nativeEntryDependency->entryBound)) ||
         !engine.playablePartitions.Published(row.partition, row.identity) ||
         !engine.playablePartitions.Published(native->partition, native->identity) ||
@@ -13993,7 +14021,7 @@ bool CaptureNativeQueueInitialPublication(harken::Engine& engine,
     if (signalOwner != nullptr) {
         QueueSignalEntryPublication signal{};
         if (!CaptureQueueSignalEntryPublication(engine, *signalOwner, &signal) || signal.activation != activation) return false;
-    } else {
+    } else if (!independentInitial) {
         const auto& dependency = *native->nativeEntryDependency;
         const auto* original = engine.decisions.ResolveFrontierActivation(dependency.entry.coordinator);
         harken::Plan03PageGroupView signal{};
@@ -14016,6 +14044,8 @@ bool CaptureNativeQueueInitialPublication(harken::Engine& engine,
             !(signal.frontier->operation.group == dependency.member) ||
             !(signal.frontier->operation.order < descriptor.order)) return false;
     }
+    if (independentInitial && (primary.frontier->prerequisite.Valid() ||
+        primary.frontier->appliedPrerequisite != nullptr)) return false;
     QueueSignalEntryPublication captured{};
     auto& groups = engine.timelineGroupCaptureScratch;
     const auto groupCount = engine.timelinePool.CaptureLivePlan03Groups(groups.data(), groups.size());
@@ -14192,11 +14222,6 @@ void ServiceNativeQueueInitialArms(harken::Engine& engine,
     auto* activation = engine.decisions.ResolveFrontierActivation(row.frontierLifetimeEntry.coordinator);
     if (activation == nullptr || activation->State() != harken::FrontierReceiptState::Pending ||
         activation->Descriptor().primary.backing != harken::Plan03GroupBacking::Page) return;
-    const auto& owner = activation->Descriptor().entry.owner;
-    const auto* native = engine.ResolvePlayableService({owner.serviceSlot, owner.serviceGeneration},
-        owner.child, owner.childEpoch);
-    if (native == nullptr || ((native->nativeEntryDependency == nullptr || !native->nativeEntryDependency->entryBound) &&
-        ResolveQueueSignalReceiptOwner(engine, activation->Descriptor().entry) == nullptr)) return;
     QueueSignalEntryPublication entry{};
     if (!CaptureNativeQueueInitialPublication(engine, row, &entry)) {
         (void)activation->Cancel(row.frontierLifetimeEntry, harken::AudioSliceInvalidateReason::Cancel);
@@ -14278,7 +14303,9 @@ engine.runtimeRecreateRequired = true;
         if (belongs && !CompleteDeferredPlayableCancellation(
                 engine, *borrower, completedAudioSequence)) return false;
     }
-    const bool ownsInitialSides = row.variableControlIndependentFrontier || row.frontierAcceptedSignal.Valid();
+    const bool ownsInitialSides = row.variableControlIndependentFrontier || row.frontierAcceptedSignal.Valid() ||
+        (row.frontierEntry.owner.child == row.ownerInstance &&
+         row.frontierEntry.owner.childEpoch == row.ownerEpoch && row.frontierEntry.owner.parent == 0);
     if (row.frontierAcceptedSignal.Valid()) {
         const auto outcome = receipt.outcome == harken::FrontierReceiptOutcome::Applied
             ? harken::QueueSignalOutcomeV1::Applied : harken::QueueSignalOutcomeV1::DefinitivelyNotApplied;
@@ -15060,16 +15087,17 @@ PlayableStartResetResult ResetPlayableStartRow(
     harken::Engine& engine,
     harken::EnginePlayableServiceRow& row,
     const harken::EngineActionPlayScratch* privateVariableControlOwner) noexcept {
+    if (row.HasFeatureArrays() && row.QueuePayload().nativeTransitionPending) return PlayableStartResetResult::Deferred;
     if (row.scheduleAggregate != nullptr && row.scheduleAggregate->committed &&
         !row.scheduleAggregate->ChildrenReleased()) return PlayableStartResetResult::Deferred;
     if (row.scheduleTerminalChild != nullptr && row.scheduleTerminalChild->lifecycleOwned &&
         (!row.scheduleTerminalChild->resourcesReleased || !row.scheduleTerminalChild->naturalClipDeadline.Empty() ||
-         !row.scheduleTerminalChild->sourceExits.empty()))
+         !row.scheduleTerminalChild->sourceExits.empty() || row.scheduleTerminalChild->queueRetiringOccurrence.generation != 0))
         return PlayableStartResetResult::Deferred;
     if (row.scheduleVariableChildren != nullptr) {
         for (const auto& child : *row.scheduleVariableChildren)
             if (child.lifecycleOwned && (!child.resourcesReleased || !child.naturalClipDeadline.Empty() ||
-                !child.sourceExits.empty()))
+                !child.sourceExits.empty() || child.queueRetiringOccurrence.generation != 0))
                 return PlayableStartResetResult::Deferred;
     }
     if ((row.HasFeatureArrays() && (row.QueuePayload().queueRetiringChain != nullptr ||
@@ -15580,6 +15608,7 @@ bool ReleaseQueueStopNativeOccupancy(
     harken::Engine& engine,
     harken::EnginePlayableServiceRow& row,
     std::uint64_t observedAudioSequence) noexcept {
+    if (row.HasFeatureArrays() && row.QueuePayload().nativeTransitionPending) return false;
     const auto* privateAttempt = FindImmediateEntryAttempt(
         engine, row.PendingImmediateCohortRoot());
     if (privateAttempt != nullptr &&
@@ -16681,6 +16710,7 @@ bool ObserveScheduleAggregateChildBeforeRetire(
 bool RetirePlayableRoot(harken::Engine& engine,
                          harken::EnginePlayableServiceRow& row,
                          const harken::EngineActionPlayScratch* privateVariableControlOwner = nullptr) noexcept {
+    if (row.HasFeatureArrays() && row.QueuePayload().nativeTransitionPending) return false;
     if (row.partitionRetiring)
         return privateVariableControlOwner == nullptr ||
             ResetPlayableStartRow(engine, row, privateVariableControlOwner) ==
@@ -16689,12 +16719,12 @@ bool RetirePlayableRoot(harken::Engine& engine,
         !row.scheduleAggregate->ChildrenReleased()) return false;
     if (row.scheduleTerminalChild != nullptr && row.scheduleTerminalChild->lifecycleOwned &&
         (!row.scheduleTerminalChild->resourcesReleased || !row.scheduleTerminalChild->naturalClipDeadline.Empty() ||
-         !row.scheduleTerminalChild->sourceExits.empty()))
+         !row.scheduleTerminalChild->sourceExits.empty() || row.scheduleTerminalChild->queueRetiringOccurrence.generation != 0))
         return false;
     if (row.scheduleVariableChildren != nullptr) {
         for (const auto& child : *row.scheduleVariableChildren)
             if (child.lifecycleOwned && (!child.resourcesReleased || !child.naturalClipDeadline.Empty() ||
-                !child.sourceExits.empty()))
+                !child.sourceExits.empty() || child.queueRetiringOccurrence.generation != 0))
                 return false;
     }
     if (!ObserveScheduleAggregateChildBeforeRetire(engine, row)) {
@@ -22490,7 +22520,8 @@ bool CancelScheduleChildSignalAdmission(harken::Engine& engine,
             attempt->initialNativeForestOwner.generation == context.queueSignalAdmissionOwner.generation;
     };
     if (!sameForest(root) || !sameForest(parent) || !sameForest(child) ||
-        !root->initialForestPublication || !root->continuationExecution ||
+        !root->initialForestPublication ||
+        (!root->continuationExecution && !IsDirectInitialQueueForest(engine, *root)) ||
         (root->storage.phase != harken::EngineFrontierAttemptPhase::Preparing &&
          root->storage.phase != harken::EngineFrontierAttemptPhase::PrivateCommitted &&
          root->storage.phase != harken::EngineFrontierAttemptPhase::CancelPending)) return false;
@@ -35481,9 +35512,20 @@ bool ConsumeNaturalScheduleAggregateChild(
 }
 
 
+bool ServiceNativeQueueMusicTransition(harken::Engine&, harken::EnginePlayableServiceRow&,
+    std::uint64_t, std::uint64_t*, std::uint64_t*) noexcept;
+
 bool ConsumeNaturalContainerChild(
     harken::Engine& engine, harken::PlayableInstanceHandle parent,
     harken::PlayableInstanceHandle child) noexcept {
+    // Settle an audible handoff before a short target reports its natural outcome.
+    for (std::uint32_t cursor = 0; auto* owner = engine.NextOccupiedPlayableService(&cursor);) {
+        if (owner->ownerInstance != parent || !owner->queueMode || !owner->HasFeatureArrays() ||
+            !owner->QueuePayload().nativeTransitionPending) continue;
+        (void)ServiceNativeQueueMusicTransition(engine, *owner, engine.mixer.BlocksRendered(), nullptr, nullptr);
+        if (engine.runtimeRecreateRequired) return false;
+        break;
+    }
     if (auto* aggregate = FindScheduleAggregateService(engine, parent))
         return ConsumeNaturalScheduleAggregateChild(engine, *aggregate, child);
     const auto childView = engine.playableInstances.Classify(child);
@@ -35492,6 +35534,18 @@ bool ConsumeNaturalContainerChild(
         return false;
     }
     const auto ordinal = childView.terminalOutcome.naturalCompletionOrdinal;
+    if (playback.activeChild != child && ordinal != 0 &&
+        childView.terminalOutcome.kind == harken::PlayableTerminalKind::NaturalCompletion) {
+        for (std::uint32_t cursor = 0; auto* service = engine.NextOccupiedPlayableService(&cursor);) {
+            if (service->ownerInstance != parent || service->ownerEpoch != playback.expectedScheduleEpoch ||
+                !service->queueMode || service->scheduleVariableChildren == nullptr) continue;
+            for (auto& retired : *service->scheduleVariableChildren)
+                if (retired.service.owner == child && retired.service.epoch == childView.scheduleEpoch &&
+                    retired.queueRetiringOccurrence.generation != 0)
+                    return RecordScheduleAggregateOutcome(retired, childView.terminalOutcome,
+                        harken::PlayableControlReason::Natural);
+        }
+    }
     if (playback.mode == static_cast<std::uint8_t>(harken::ContainerModeV1::VariableControl)) {
         // VariableControl owns independent memberships, not the single child
         // slot used by Queue and ordinary selection containers.
@@ -35584,6 +35638,9 @@ bool ServiceScheduleChildRecord(
         }
     }
     ServiceSourceExits(engine, child);
+    if (child.logicalComplete && child.resourcesReleased && child.sourceExits.empty() &&
+        child.queueRetiringOccurrence.generation != 0)
+        (void)TryReleaseOccurrenceAfterFence(engine, child.queueRetiringOccurrence, engine.mixer.BlocksRendered());
     return true;
 }
 
@@ -35705,7 +35762,8 @@ bool ServiceScheduleVariableChildren(
         owner.lifecycle >= harken::PlayableLifecycle::LogicalComplete &&
         owner.terminalOutcome.kind == harken::PlayableTerminalKind::NaturalCompletion &&
         owner.terminalOutcome.naturalCompletionOrdinal != 0;
-    if ((row.phase == harken::EnginePlayableStartPhase::Cancelling || naturalDrain) &&
+    if (row.variableControlInstance.Valid() &&
+        (row.phase == harken::EnginePlayableStartPhase::Cancelling || naturalDrain) &&
         !row.variableControlDiscreteRetargetPrepared && !row.variableControlRetargetPrepared) {
         const auto base = StorageBasesForRow(engine, row).member;
         const auto discrete = row.variableControlDiscreteMemberCount;
@@ -35791,7 +35849,7 @@ bool ServiceScheduleVariableChildren(
     }
     std::erase_if(*row.scheduleVariableChildren, [](const auto& child) noexcept {
         return child.lifecycleOwned && child.logicalComplete && child.resourcesReleased &&
-            child.naturalClipDeadline.Empty() && child.sourceExits.empty();
+            child.naturalClipDeadline.Empty() && child.sourceExits.empty() && child.queueRetiringOccurrence.generation == 0;
     });
     return false;
 }
@@ -35951,7 +36009,7 @@ bool ServiceScheduleAggregate(
         allLogical = allLogical && child.logicalComplete;
         allNatural = allNatural && child.logicalComplete &&
             child.outcome.kind == harken::PlayableTerminalKind::NaturalCompletion;
-        allReleased = allReleased && child.resourcesReleased && child.naturalClipDeadline.Empty() && child.sourceExits.empty();
+        allReleased = allReleased && child.resourcesReleased && child.naturalClipDeadline.Empty() && child.sourceExits.empty() && child.queueRetiringOccurrence.generation == 0;
         if (!child.logicalComplete) ++row.childLiveCount;
         else if (!child.resourcesReleased) ++row.childAudibleRetiringCount;
         aggregate.completionOrdinal = std::max(aggregate.completionOrdinal,
@@ -37500,7 +37558,7 @@ engine.runtimeRecreateRequired = true;
         rollback();
         return VariableRetargetPrepareStatus::Retry;
     }
-    if (!starts.PrepareVariableFrontier(row, decision, ticket) || !starts.Commit(ticket)) {
+    if (!starts.PrepareServiceFrontier(row, decision, ticket) || !starts.Commit(ticket)) {
         rollback();
 engine.runtimeRecreateRequired = true;
         return VariableRetargetPrepareStatus::Fatal;
@@ -38095,7 +38153,7 @@ engine.runtimeRecreateRequired = true;
     if (!postedAll ||
         !starts.PrepareGroup(slice) ||
         !PrepareRetargetNestedDecisions(starts, row.rootInstance, decisionFrame, incomingTree) ||
-        !starts.PrepareVariableFrontier(row, decision, ticket) ||
+        !starts.PrepareServiceFrontier(row, decision, ticket) ||
         !starts.ReserveCommands()) {
         cancelIncomingPrepared();
         (void)engine.decisions.Cancel(decision);
@@ -38286,7 +38344,7 @@ engine.runtimeRecreateRequired = true;
     return VariableRetargetPrepareStatus::Prepared;
 }
 
-struct NativeVariableScheduleRetargetPreparation {
+struct NativeScheduleTransitionPreparation {
     harken::Engine* engine = nullptr;
     harken::EnginePlayableServiceRow* parent = nullptr;
     harken::EngineActionPlayScratch* scratch = nullptr;
@@ -38302,18 +38360,18 @@ struct NativeVariableScheduleRetargetPreparation {
     bool published = false;
     bool cancellationDelegated = false;
     bool Cancel() noexcept;
-    ~NativeVariableScheduleRetargetPreparation();
+    ~NativeScheduleTransitionPreparation();
 };
 
-bool PrepareNativeVariableScheduleRetarget(harken::Engine&,
+bool PrepareNativeScheduleTransition(harken::Engine&,
     harken::EnginePlayableServiceRow&, const harken::ContainerProgramViewV3&,
     const harken::ContainerChildProgramViewV2&, std::uint32_t, std::uint32_t,
     std::uint64_t, harken::DecisionToken, bool, MaterializedScheduleSet&,
-    NativeVariableScheduleRetargetPreparation&) noexcept;
-bool CommitNativeVariableScheduleRetarget(NativeVariableScheduleRetargetPreparation&,
+    NativeScheduleTransitionPreparation&) noexcept;
+bool CommitNativeScheduleTransition(NativeScheduleTransitionPreparation&,
     harken::LogicCommitSequence) noexcept;
 
-NativeVariableScheduleRetargetPreparation::~NativeVariableScheduleRetargetPreparation() {
+NativeScheduleTransitionPreparation::~NativeScheduleTransitionPreparation() {
     if (engine == nullptr || published) return;
     // Once attached, the timeline owner must return all of its originals first.
     // A failed return keeps the native owner intact for engine recreation.
@@ -38327,7 +38385,7 @@ NativeVariableScheduleRetargetPreparation::~NativeVariableScheduleRetargetPrepar
     }
 }
 
-bool NativeVariableScheduleRetargetPreparation::Cancel() noexcept {
+bool NativeScheduleTransitionPreparation::Cancel() noexcept {
     if (engine == nullptr || published || scratch == nullptr) return true;
     if (FindFrontierAttempt(*engine, attempt) == scratch &&
         !ReleaseImmediateActionPlay(*engine, scratch, nullptr)) {
@@ -38338,15 +38396,15 @@ bool NativeVariableScheduleRetargetPreparation::Cancel() noexcept {
     return true;
 }
 
-bool CancelNativeVariableScheduleRetarget(NativeVariableScheduleRetargetPreparation& native) noexcept {
+bool CancelNativeScheduleTransition(NativeScheduleTransitionPreparation& native) noexcept {
     return native.Cancel();
 }
 
-void DelegateNativeVariableScheduleCancellation(NativeVariableScheduleRetargetPreparation& native) noexcept {
+void DelegateNativeScheduleTransitionCancellation(NativeScheduleTransitionPreparation& native) noexcept {
     native.cancellationDelegated = true;
 }
 
-bool NativeVariableScheduleCancellationComplete(const NativeVariableScheduleRetargetPreparation& native) noexcept {
+bool NativeScheduleTransitionCancellationComplete(const NativeScheduleTransitionPreparation& native) noexcept {
     return native.published || native.scratch == nullptr;
 }
 
@@ -38391,7 +38449,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
     harken::TransitionInstanceToken transition{};
     VariableControlRetargetDecisionGuard decisionGuard{
         &engine, &decision, &incomingTree};
-    NativeVariableScheduleRetargetPreparation native;
+    NativeScheduleTransitionPreparation native;
     native.decisionGuard = &decisionGuard;
     bool nestedTargets = false;
     bool nativeTargets = false;
@@ -38754,7 +38812,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
         const auto* desired = FindQueueChild(program, selected.childStableOrdinal);
         if (desired == nullptr || !ReserveQueueDecision(engine, row, &decision, &ticket, transition,
                 sourceBoundary && audibleFrame < sourceStopFrame ? 2u : 1u, ticket) ||
-            !PrepareNativeVariableScheduleRetarget(engine, row, program, *desired, selected.childStableOrdinal,
+            !PrepareNativeScheduleTransition(engine, row, program, *desired, selected.childStableOrdinal,
                 sourceMemberCount, targetStartFrame, decision, transitionRule != nullptr &&
                     transitionRule->targetEntry == harken::TransitionTargetEntryV1::FromEntryMarker, targetSchedule, native))
             return VariableRetargetPrepareStatus::Retry;
@@ -39533,7 +39591,7 @@ engine.runtimeRecreateRequired = true;
         try { child->sourceExits.reserve(child->sourceExits.size() + 1u); }
         catch (const std::bad_alloc&) { rollbackBeforeInstall(); return VariableRetargetPrepareStatus::Retry; }
     }
-    if (!starts.PrepareVariableFrontier(row, decision, ticket, transition, musicSourceFade.get()) ||
+    if (!starts.PrepareServiceFrontier(row, decision, ticket, transition, musicSourceFade.get()) ||
         !starts.ReserveCommands()) {
         rollbackBeforeInstall();
         return starts.PermanentFailure() ? VariableRetargetPrepareStatus::Fatal
@@ -39543,7 +39601,7 @@ engine.runtimeRecreateRequired = true;
     // timeline, and horizon reservation has succeeded. The source command
     // batch remains reserved until the incoming ownership tree is complete.
     if (nativeTargets) {
-        if (!CommitNativeVariableScheduleRetarget(native, ticket)) {
+        if (!CommitNativeScheduleTransition(native, ticket)) {
             rollbackBeforeInstall();
             return VariableRetargetPrepareStatus::Retry;
         }
@@ -40284,7 +40342,7 @@ engine.runtimeRecreateRequired = true;
             currentWeights[index].decision.generation == verifiedWeights[index].decision.generation;
     }
     const auto relationUse = relationBacking.Use();
-    if (!currentMembersValid || !starts.PrepareVariableFrontier(row, decision, ticket) || !starts.Commit(ticket)) {
+    if (!currentMembersValid || !starts.PrepareServiceFrontier(row, decision, ticket) || !starts.Commit(ticket)) {
         rollback();
         if (!currentMembersValid) return VariableRetargetPrepareStatus::Retry;
 engine.runtimeRecreateRequired = true;
@@ -53378,6 +53436,191 @@ bool PendingVariableGroupOwnsNestedService(harken::Engine& engine,
 }
 
 // Retired handoffs must progress even while a reused row awaits its new Source ACK.
+bool PrepareNativeQueueMusicTransition(harken::Engine&, harken::EnginePlayableServiceRow&,
+    const harken::ContainerProgramViewV3&, const harken::PlayableWorldViewV1&,
+    harken::EnginePlayableServiceRow&) noexcept;
+
+bool ServiceNativeQueueMusicTransition(harken::Engine& engine, harken::EnginePlayableServiceRow& row,
+    std::uint64_t observed, std::uint64_t* blocking, std::uint64_t* publication) noexcept {
+    if (!row.queueMode || row.variableControlInstance.Valid() || !row.HasFeatureArrays() ||
+        row.scheduleTerminalChild == nullptr || !row.queueInstance.Valid()) return false;
+    auto& payload = row.QueuePayload();
+    auto& filing = row.QueueFiling();
+    bool cancelling = row.phase == harken::EnginePlayableStartPhase::Cancelling || row.queueAbortRequested;
+    if (!payload.nativeTransitionPending) {
+        auto* source = engine.ResolvePlayableService(row.scheduleTerminalChild->service);
+        if (cancelling || row.queueNaturalEnd || source == nullptr || source->scheduleAggregate == nullptr ||
+            source->scheduleAggregate->music == nullptr) return false;
+        harken::PlayableWorldViewV1 world{};
+        const harken::ContainerProgramViewV3* program = nullptr;
+        if (ResolveQueueProgram(engine, row, &world, &program) != QueueProgramResolveStatus::Ok || program == nullptr ||
+            !PrepareNativeQueueMusicTransition(engine, row, *program, world, *source)) return false;
+    }
+    if (publication != nullptr) *publication = std::max(*publication,
+        RollingPlayablePublicationFrame(engine, observed, filing.queueTransitionEndFrame));
+    const auto fail = [&]() noexcept { engine.runtimeRecreateRequired = true; return true; };
+    harken::QueueInstanceSnapshot queue{};
+    if (!engine.queueInstances.Capture(row.queueInstance, &queue)) return fail();
+    if (!payload.nativeTransitionApplied && queue.pendingActivation != harken::ConditionalQueueActivation::Waiting &&
+        queue.pendingActivation != harken::ConditionalQueueActivation::Activated && !cancelling) {
+        row.controlReason = harken::PlayableControlReason::StartRefused;
+        row.controlLifecycle = harken::PlayableControlLifecycle::FailingSourceActive;
+        (void)harken::StopPlayable(engine, row.rootInstance, 0);
+        cancelling = row.phase == harken::EnginePlayableStartPhase::Cancelling || row.queueAbortRequested;
+        if (!cancelling) return true;
+    }
+    // Audio may have completed the handoff before a synchronous Stop arrived.
+    if (!payload.nativeTransitionApplied && queue.pendingActivation == harken::ConditionalQueueActivation::Activated) {
+        harken::DecisionCommittedSnapshot decision{};
+        if (queue.pendingVersion != filing.queueConditional.version ||
+            !engine.decisions.CaptureCommitted(filing.queueDecision, &decision) ||
+            decision.consumedSlices != decision.sliceCount || decision.lastAudioSequence == 0 ||
+            decision.lastAudioSequence > observed) return true;
+        harken::EngineScheduleAggregateChild* target = nullptr;
+        if (row.scheduleVariableChildren == nullptr) return fail();
+        for (auto& child : *row.scheduleVariableChildren) {
+            if (child.queueSelectionVersion != row.QueueNextState().version || child.queueRetiringOccurrence.generation != 0) continue;
+            auto* service = engine.ResolvePlayableService(child.service);
+            if (target != nullptr || service == nullptr || !child.lifecycleOwned ||
+                !harken::Engine::SameSelectionServiceReference(service->parentService, PlayableServiceReference(row)) ||
+                service->invocation != row.invocation || service->invocationGeneration != row.invocationGeneration) return fail();
+            target = &child;
+        }
+        if (target == nullptr || !engine.queueInstances.SettleActivated(row.queueInstance, filing.queueConditional, observed))
+            return fail();
+        harken::ContainerPlaybackRow playback{};
+        if (!engine.containerPlayback.Capture(row.ownerInstance, &playback) ||
+            (playback.phase == harken::ContainerPlaybackPhase::WaitingForChild &&
+             !engine.containerPlayback.BeginWaitingForNextFrontier(row.ownerInstance)) ||
+            !harken::PlayableTreeExecutor::ServiceActiveChild(engine.playableInstances, engine.containerPlayback,
+                row.ownerInstance, target->service.owner)) return fail();
+        row.scheduleTerminalChild->queueRetiringOccurrence = payload.queueCurrentOccurrence;
+        std::swap(*row.scheduleTerminalChild, *target);
+        payload.queueCurrentOccurrence = filing.queueSuccessorOccurrence;
+        filing.queueSuccessorOccurrence = {};
+        filing.queueConditional = {};
+        payload.nativeTransitionApplied = true;
+        row.frontierChildService = row.scheduleTerminalChild->service;
+        row.activeLeafInstance = row.frontierChildService.owner;
+        row.startFrame = filing.queueTransitionEndFrame;
+        row.queueNaturalEnd = !filing.queueSuccessorSignalOnlyNoOverlap;
+        row.queueSignalOnlyNoOverlap = !row.queueNaturalEnd;
+        row.queueDeferredNeedsFullPreparation = false;
+        row.queueFinalSourceTombstoned = false;
+        row.terminalObserved = false;
+        row.pendingFutureCount = 1;
+        if (!cancelling) {
+            row.phase = harken::EnginePlayableStartPhase::Started;
+            row.controlLifecycle = harken::PlayableControlLifecycle::Active;
+        }
+    }
+    if (cancelling && !payload.nativeTransitionApplied && filing.queueConditional.Valid()) {
+        if (filing.queueDecisionCommitted) {
+            const auto invalidated = engine.decisions.Invalidate(filing.queueDecision);
+            if (invalidated == harken::DecisionInvalidationDisposition::NotEligible) return true;
+        }
+        else if (!engine.decisions.IsCancelled(filing.queueDecision) && !engine.decisions.Cancel(filing.queueDecision)) return fail();
+        if (!engine.queueInstances.RetireConditionalForAbort(row.queueInstance, filing.queueConditional, filing.queueDecision))
+            return true;
+        filing.queueConditional = {};
+        if (row.scheduleVariableChildren == nullptr) return fail();
+        for (auto& child : *row.scheduleVariableChildren) {
+            if (child.queueSelectionVersion != row.QueueNextState().version) continue;
+            child.queueRetiringOccurrence = filing.queueSuccessorOccurrence;
+            filing.queueSuccessorOccurrence = {};
+        }
+    }
+    if (!cancelling && !filing.queueDecisionCommitted) {
+        bool ready = true;
+        for (std::uint32_t i = 0; i < filing.queueTransitionGroupArmCount; ++i) {
+            harken::TimelineArmObservation arm{};
+            if (!engine.timelineArms.Observe(filing.queueTransitionGroupArms[i], &arm) ||
+                arm.state != harken::ArmState::Armed || arm.armedCompletionSequence == 0) { ready = false; break; }
+            if (!engine.armGroups.Acknowledge(filing.queueArmGroup, filing.queueTransitionGroupArms[i],
+                    arm.armedCompletionSequence)) return fail();
+        }
+        if (!ready) {
+            harken::TransitionInstanceSnapshot transition{};
+            if (blocking != nullptr && engine.transitionInstances.Capture(filing.queueTransition, &transition))
+                *blocking = std::min(*blocking, transition.audibleFrame);
+            return true;
+        }
+        for (std::uint32_t i = 0; i < filing.queueTransitionGroupArmCount; ++i)
+            if (!engine.timelineArms.Publish(filing.queueTransitionGroupArms[i])) return fail();
+        harken::DecisionParticipantRef participant{harken::DecisionParticipantKind::QueueInstance,
+            row.queueInstance.slot, row.queueInstance.generation};
+        harken::DecisionCommitPayload commit{};
+        commit.participants = &participant;
+        commit.participantCount = 1;
+        commit.pages = payload.queuePreparedPages;
+        commit.armGroup = filing.queueArmGroup;
+        if (!engine.decisions.Commit(filing.queueDecision, commit)) return fail();
+        filing.queueDecisionCommitted = true;
+    }
+    bool arrivalTransferred = false;
+    if (payload.nativeTransitionApplied || cancelling) {
+        if (!payload.nativeTransitionApplied &&
+            !ReleaseServiceFutureBindings(engine, filing.queueDecision, observed, filing.queueTransition))
+            return false;
+        if (payload.nativeTransitionApplied) {
+            // The arrival ledger retains delayed Start admissions and their
+            // original bindings while the Queue prepares its next boundary.
+            harken::DecisionCommittedSnapshot decision{};
+            harken::ArmGroupSnapshot group{};
+            const auto root = row.Invocation().variableControlOuterRootInstance != 0
+                ? row.Invocation().variableControlOuterRootInstance : row.rootInstance;
+            const auto owner = engine.playableInstances.Classify(root);
+            if (!owner.live || filing.queueDecision.slot >= engine.decisionRetirements.size() ||
+                !engine.decisions.CaptureCommitted(filing.queueDecision, &decision) ||
+                decision.consumedSlices != decision.sliceCount || decision.lastAudioSequence > observed ||
+                !engine.armGroups.Capture(filing.queueArmGroup, &group) ||
+                !SameCanonicalDecision(group.parent, filing.queueDecision) || group.ackedCount != group.memberCount)
+                return fail();
+            auto& retirement = engine.decisionRetirements[filing.queueDecision.slot];
+            if (retirement.decision.Valid() ||
+                (group.state != harken::ArmGroupState::Retiring && !engine.armGroups.BeginRetire(filing.queueArmGroup)))
+                return fail();
+            retirement.decision = filing.queueDecision;
+            retirement.group = filing.queueArmGroup;
+            retirement.transition = filing.queueTransition;
+            retirement.rootInstance = root;
+            retirement.rootScheduleEpoch = owner.scheduleEpoch;
+            retirement.phase = harken::EngineDecisionOwnershipPhase::ActiveArrival;
+            arrivalTransferred = true;
+        }
+        harken::ArmGroupSnapshot arms{};
+        if (!arrivalTransferred && engine.armGroups.Capture(filing.queueArmGroup, &arms)) {
+            if (arms.tombstonedCount != arms.memberCount || arms.maxTombstoneSequence == 0)
+                return !payload.nativeTransitionApplied && !cancelling;
+            harken::TransitionInstanceSnapshot transition{};
+            if ((arms.state != harken::ArmGroupState::Retiring &&
+                 !engine.armGroups.BeginRetire(filing.queueArmGroup)) ||
+                !engine.transitionInstances.Capture(filing.queueTransition, &transition)) return fail();
+            if (transition.state == harken::TransitionAudibleGateState::Replaceable &&
+                !engine.transitionInstances.InvalidateReady(filing.queueTransition)) return fail();
+            if (!engine.transitionInstances.BeginRetire(filing.queueTransition, arms.maxTombstoneSequence) ||
+                (filing.queueDecisionCommitted &&
+                 !engine.decisions.Retire(filing.queueDecision, arms.maxTombstoneSequence))) return fail();
+        }
+    }
+    if (arrivalTransferred || ((payload.nativeTransitionApplied || cancelling) &&
+        ReclaimCompletedDecisionGroup(engine, filing.queueArmGroup, observed) &&
+        TransferDecisionRetirement(engine, filing.queueDecision, !filing.queueDecisionCommitted,
+            filing.queueArmGroup, filing.queueTransition))) {
+        filing.queueArmGroup = {};
+        filing.queueDecision = {};
+        filing.queueTransition = {};
+        filing.queueDecisionCommitted = false;
+        filing.queueTransitionGroupArmCount = 0;
+        filing.queueTransitionEndFrame = 0;
+        payload.nativeTransitionPending = false;
+        payload.nativeTransitionApplied = false;
+        payload.queuePreparedPages = {};
+        return false;
+    }
+    return !payload.nativeTransitionApplied && !cancelling;
+}
+
 bool ReconcileRetiringQueueArrival(harken::Engine& engine,
     harken::EnginePlayableServiceRow& row, std::uint64_t observedAudioSequence) noexcept {
     if (row.queueArrivalDecision.Valid() && row.queueArrivalCleanupStarted &&
@@ -53937,6 +54180,7 @@ void ServicePlayableStarts(harken::Engine& engine,
                 !RetirePlayableInstanceTree(engine, child, harken::PlayableTerminalKind::NaturalCompletion)) continue;
             row.activeLeafInstance = 0;
         }
+        if (ServiceNativeQueueMusicTransition(engine, row, observedAudioSequence, blockingFrame, requiredPublicationFrame)) continue;
         if (ServiceScheduleTerminalChild(engine, row, observedAudioSequence,
                 blockingFrame, requiredPublicationFrame)) continue;
         if (ServiceScheduleVariableChildren(engine, row)) continue;
@@ -54994,7 +55238,7 @@ engine.runtimeRecreateRequired = true;
                 if (allTombstoned &&
                     !row.variableControlDiscreteRetargetCleanupStarted) {
                     if (!row.variableControlDiscreteRetargetDecisionCommitted &&
-                        !ReleaseVariableFutureBindings(engine, row.VariablePayload().variableControlDiscreteRetargetDecision,
+                        !ReleaseServiceFutureBindings(engine, row.VariablePayload().variableControlDiscreteRetargetDecision,
                             observedAudioSequence, row.VariablePayload().variableControlDiscreteRetargetTransition)) continue;
                     (void)engine.armGroups.BeginRetire(
                         row.VariablePayload().variableControlDiscreteRetargetArmGroup);
@@ -55764,7 +56008,7 @@ engine.runtimeRecreateRequired = true;
                 if (allTombstoned &&
                     !row.variableControlRetargetCleanupStarted) {
                     if (!row.variableControlRetargetDecisionCommitted &&
-                        !ReleaseVariableFutureBindings(engine, row.VariablePayload().variableControlRetargetDecision,
+                        !ReleaseServiceFutureBindings(engine, row.VariablePayload().variableControlRetargetDecision,
                             observedAudioSequence, {})) continue;
                     harken::ArmGroupSnapshot cancellationGroup{};
                     bool retiring = engine.armGroups.Capture(row.VariablePayload().variableControlRetargetArmGroup, &cancellationGroup) &&
@@ -88364,7 +88608,8 @@ bool BeginInitialQueueEntryDomain(ContainerPreparationContext& context,
     auto* root = ResolveInitialNativeQueueForest(engine, scratch);
     if (root == nullptr || !contextOwner.Valid() || contextOwner.slot != scratchOwner.slot ||
         contextOwner.generation != scratchOwner.generation) return false;
-    if (&scratch == root && !root->nativeEntryForestRoot) return true;
+    if (IsDirectInitialQueueForest(engine, *root) ||
+        (&scratch == root && !root->nativeEntryForestRoot)) return true;
     scratch.nativeEntryDomain = true;
     context.initialAdmissionGroup = {};
     context.initialAdmissionMemberCursor = nullptr;
@@ -89236,6 +89481,16 @@ ContainerMixedTerminalResult PrepareContainerMixedScheduleTerminal(ContainerPrep
             std::copy_n(selected.ordinals.begin(), index + 1u, service->selectedChildOrdinals.begin());
             std::copy_n(instances.begin(), index + 1u, service->containerInstances.begin());
             if (program->mode == harken::ContainerModeV1::SequenceQueue || program->mode == harken::ContainerModeV1::RandomQueue) {
+                if (context.directRoot && scratch.directExecution && !scratch.continuationExecution &&
+                    program->transitionProgramIndex != UINT32_MAX && !scratch.initialForestPublication) {
+                    // Transition consumers need the original entry before any descendant Source is prepared.
+                    scratch.initialForestPublication = true;
+                    scratch.initialNativeForestOwner = {engine.actionPlayStorage.IndexOf(scratch.storage),
+                        scratch.storage.generation};
+                    scratch.initialReadCutOwner = scratch.initialNativeForestOwner;
+                    context.initialNativeForestOwner = scratch.initialNativeForestOwner;
+                    context.initialForestReadCutOwner = &scratch.storage;
+                }
                 QueueRootPlan queue{};
                 const auto fingerprint = pack ? scratch.packPlaybackView.WorldSemanticFingerprint()
                     : context.world.identity.runtimeSemanticFingerprint;
@@ -93745,8 +94000,10 @@ bool PrepareScheduleChildAttempt(ContainerPreparationContext& parentContext,
             signalOwner.slot == forestOwner.slot && signalOwner.generation == forestOwner.generation;
         const bool pendingSeed = original != nullptr && original->nativeEntryForestRoot && seed != nullptr &&
             seed->nativeEntryDependency != nullptr && MatchesPendingScheduleEntryParent(engine, *original, *seed);
-        if (original == nullptr || !original->initialForestPublication || !original->continuationExecution ||
-            original->initialForestCancellationSealed || (!originalSignal && !pendingSeed) ||
+        const bool directInitial = original != nullptr && IsDirectInitialQueueForest(engine, *original);
+        if (original == nullptr || !original->initialForestPublication ||
+            (!original->continuationExecution && !directInitial) ||
+            original->initialForestCancellationSealed || (!originalSignal && !pendingSeed && !directInitial) ||
             parent.initialNativeForestOwner.slot != forestOwner.slot ||
             parent.initialNativeForestOwner.generation != forestOwner.generation) return false;
     } else if (signalOwner.Valid()) return false;
@@ -94500,13 +94757,14 @@ PendingScheduleEntryStatus PreparePendingScheduleVariableEntry(harken::Engine& e
 }
 
 
-bool PrepareNativeVariableScheduleRetarget(harken::Engine& engine,
+bool PrepareNativeScheduleTransition(harken::Engine& engine,
     harken::EnginePlayableServiceRow& parent, const harken::ContainerProgramViewV3& program,
     const harken::ContainerChildProgramViewV2& desired, std::uint32_t ordinal,
     std::uint32_t firstMember, std::uint64_t startFrame, harken::DecisionToken decision, bool fromEntry,
-    MaterializedScheduleSet& schedule, NativeVariableScheduleRetargetPreparation& native) noexcept {
+    MaterializedScheduleSet& schedule, NativeScheduleTransitionPreparation& native) noexcept {
     if (!engine.logicCommits.IsOriginalPreparedIssueFor(native.issue) || !decision.Valid() ||
-        native.scratch != nullptr || !parent.variableControlInstance.Valid()) return false;
+        native.scratch != nullptr || (!parent.variableControlInstance.Valid() && !parent.queueMode)) return false;
+    const bool nativeQueue = parent.queueMode && !parent.variableControlInstance.Valid();
     native.engine = &engine;
     native.parent = &parent;
     native.scratch = AcquireFrontierAttempt(engine, &native.attempt, true);
@@ -94527,9 +94785,10 @@ bool PrepareNativeVariableScheduleRetarget(harken::Engine& engine,
     if (!RegisterFrontierPreparedOwner(scratch, &scratch.directExposureOwnerContext,
             ValidatePreparedDirectExposureOwner, CommitPreparedDirectExposureOwner,
             CancelPreparedDirectExposureOwner)) return false;
-    const auto world = parent.variableControlWorldUsesCurrentAuthority
-        ? engine.variables.CurrentPlayableWorld() : parent.VariableControlWorld();
-    const bool pack = !parent.variableControlWorldUsesCurrentAuthority && parent.Invocation().packLease.leaseToken != 0;
+    const bool currentAuthority = nativeQueue ? parent.queueWorldUsesCurrentAuthority : parent.variableControlWorldUsesCurrentAuthority;
+    const auto world = currentAuthority ? engine.variables.CurrentPlayableWorld()
+        : nativeQueue ? parent.QueueWorld() : parent.VariableControlWorld();
+    const bool pack = !currentAuthority && parent.Invocation().packLease.leaseToken != 0;
     if (pack) {
         scratch.packLeaseBorrowed = true;
         scratch.packLease = parent.Invocation().packLease;
@@ -94547,9 +94806,18 @@ bool PrepareNativeVariableScheduleRetarget(harken::Engine& engine,
         auto& record = *scratch.continuationScheduleChild;
         record.content = desired.playable;
         record.musicFromEntry = fromEntry;
-        record.variableControlSide = harken::VariableControlSide::Discrete;
+        if (!nativeQueue) record.variableControlSide = harken::VariableControlSide::Discrete;
         record.stableLeafOrdinal = ordinal;
         auto& prefix = record.properties;
+        if (nativeQueue) {
+            if (parent.scheduleTerminalChild == nullptr) return false;
+            prefix = parent.scheduleTerminalChild->properties;
+            if (prefix.ordinals.empty() || prefix.ordinals.size() != prefix.trackIds.size() ||
+                prefix.ordinals.size() != prefix.typedPrefix.size() ||
+                prefix.typedPrefix.back().objectId != program.containerStableId) return false;
+            prefix.ordinals.back() = ordinal;
+            prefix.typedPrefix.back() = MakeContainerSelectionPathNode(program.containerStableId, ordinal);
+        } else {
         const bool inherited = parent.VariableControlPropertyRoot().stableId != VnObjectId{};
         prefix.propertyRoot = inherited ? parent.VariableControlPropertyRoot() : parent.root;
         const auto count = inherited ? parent.selectionCount : 0u;
@@ -94562,6 +94830,7 @@ bool PrepareNativeVariableScheduleRetarget(harken::Engine& engine,
         prefix.ordinals.push_back(ordinal);
         prefix.trackIds.push_back({});
         prefix.typedPrefix.push_back(MakeContainerSelectionPathNode(program.containerStableId, ordinal));
+        }
     } catch (const std::bad_alloc&) { return false; }
     auto& record = *scratch.continuationScheduleChild;
     harken::ActionFiringTable::PreparedChildIdentity noChild;
@@ -94640,7 +94909,7 @@ bool PrepareNativeVariableScheduleRetarget(harken::Engine& engine,
     return true;
 }
 
-bool CommitNativeVariableScheduleRetarget(NativeVariableScheduleRetargetPreparation& native,
+bool CommitNativeScheduleTransition(NativeScheduleTransitionPreparation& native,
     harken::LogicCommitSequence sequence) noexcept {
     if (native.engine == nullptr || native.scratch == nullptr || native.parent == nullptr ||
         !native.issue.Valid() || native.issue.Sequence() != sequence) return false;
@@ -94669,7 +94938,7 @@ bool CommitNativeVariableScheduleRetarget(NativeVariableScheduleRetargetPreparat
         scratch.storage.ownerLedger.CanTransfer(scratch.storage.generation);
 }
 
-bool CanPublishNativeVariableScheduleRetarget(NativeVariableScheduleRetargetPreparation& native) noexcept {
+bool CanPublishNativeScheduleTransition(NativeScheduleTransitionPreparation& native) noexcept {
     if (native.engine == nullptr || native.scratch == nullptr || native.parent == nullptr || native.published) return false;
     auto& engine = *native.engine;
     auto& scratch = *native.scratch;
@@ -94705,7 +94974,7 @@ bool CanPublishNativeVariableScheduleRetarget(NativeVariableScheduleRetargetPrep
     });
 }
 
-bool PublishNativeVariableScheduleRetarget(NativeVariableScheduleRetargetPreparation& native) noexcept {
+bool PublishNativeScheduleTransition(NativeScheduleTransitionPreparation& native) noexcept {
     // The caller has completed the private preflight immediately before this handoff.
     auto& engine = *native.engine;
     auto& scratch = *native.scratch;
@@ -94729,6 +94998,221 @@ bool PublishNativeVariableScheduleRetarget(NativeVariableScheduleRetargetPrepara
         !ResetImmediateActionPlayScratch(engine, &scratch)) return false;
     native.scratch = nullptr;
     return true;
+}
+
+bool PrepareNativeQueueMusicTransition(harken::Engine& engine,
+    harken::EnginePlayableServiceRow& row, const harken::ContainerProgramViewV3& program,
+    const harken::PlayableWorldViewV1& world, harken::EnginePlayableServiceRow& source) noexcept {
+    auto& filing = row.QueueFiling();
+    auto& payload = row.QueuePayload();
+    if (payload.nativeTransitionPending || filing.queueDecisionCommitted || filing.queueConditional.Valid() ||
+        harken::IsBoundKnownCompletionPredicate(payload.queueCurrentCompletion) ||
+        payload.queueCurrentScheduleLeafCount != 0 || row.queueNaturalEnd ||
+        source.lastAppliedBlockSequence == 0 || source.scheduleAggregate == nullptr ||
+        source.scheduleAggregate->music == nullptr || !source.scheduleAggregate->committed ||
+        !row.frontierLifetimeEntry.Valid() || !row.frontierLifetimePin.Valid()) return false;
+    const auto actual = engine.playableInstances.Classify(source.ownerInstance);
+    if (!actual.live || actual.scheduleEpoch != source.ownerEpoch || actual.parent != row.ownerInstance ||
+        source.invocation != row.invocation || source.invocationGeneration != row.invocationGeneration ||
+        !harken::Engine::SameSelectionServiceReference(source.parentService, PlayableServiceReference(row))) return false;
+    NativeScheduleTransitionPreparation native;
+    native.engine = &engine;
+    if (engine.logicCommits.PrepareIssue(&native.issue) != harken::LogicCommitCoordinator::IssueStatus::Issued) return false;
+    auto ticket = native.issue.Sequence();
+    const auto floor = QueueEarliestContinuationFrame(engine);
+    harken::EffectiveQueueState current{}, next{}, resetInitial{}, afterNext{};
+    harken::MonitorQueueResetObservation resetObservation{};
+    std::uint64_t resetIntent = 0;
+    if (!engine.queueInstances.ResolveNextSelection(row.queueInstance, {floor, ticket, 0},
+            &current, &next, &resetIntent, &resetObservation)) return false;
+    const harken::ContainerChildProgramViewV2* ignored = nullptr;
+    harken::QueueSequenceStepStatus step{};
+    if (resetIntent == 0 && (!ResolveSharedQueueFrontier(engine, program, row.QueueRandomSeed(),
+            program.mode == harken::ContainerModeV1::RandomQueue, &current, &resetInitial, &next, &ignored, &step) ||
+            step != harken::QueueSequenceStepStatus::Successor)) return false;
+    const auto* desired = FindQueueChild(program, next.currentChildOrdinal);
+    const auto* previous = FindQueueChild(program, current.currentChildOrdinal);
+    if (desired == nullptr || previous == nullptr ||
+        (desired->playable.kind != harken::PlayableKindV1::Segment &&
+         desired->playable.kind != harken::PlayableKindV1::Track && desired->playable.kind != harken::PlayableKindV1::Container)) return false;
+    const bool pack = !row.queueWorldUsesCurrentAuthority && row.Invocation().packLease.leaseToken != 0;
+    const auto* transitionProgram = pack ? row.Invocation().packPlaybackView.ResolveTransition(program.containerStableId)
+        : program.transitionProgramIndex < world.transitionCount ? &world.transitions[program.transitionProgramIndex] : nullptr;
+    const auto* rule = transitionProgram == nullptr ? nullptr
+        : harken::ResolveTransitionRuleV1(*transitionProgram, previous->playable, desired->playable);
+    if (rule == nullptr || rule->sourceExit != harken::TransitionSourceExitV1::NaturalEnd ||
+        rule->sourceFade.active == 0 || rule->targetFade.active != 0 || program.queueSplice != harken::QueueSpliceV1::Butt) return false;
+    const auto& music = *source.scheduleAggregate->music;
+    const auto boundary = harken::ResolveMusicPlaybackBoundary(music.timeline, music.clock, music.markers,
+        harken::MusicBoundaryKind::NaturalEnd, 0, music.sourceOffsetFrames, music.sourceOffsetFrames);
+    if (boundary.status != harken::MusicTimelineStatus::Ok || boundary.frame < music.sourceOffsetFrames) return false;
+    const auto offset = boundary.frame - music.sourceOffsetFrames;
+    if (offset > music.inheritedEndOffsetFrames || offset > UINT64_MAX - source.startFrame) return false;
+    const auto targetFrame = source.startFrame + offset;
+    if (targetFrame < rule->sourceFade.durationFrames) return false;
+    const auto audible = targetFrame - rule->sourceFade.durationFrames;
+    if (audible < floor || targetFrame >= engine.timelinePool.WindowEndFrame() ||
+        !BakeTransitionFadeCurve(program, rule->sourceFade, &row.TransitionSourceFadeCurve())) return false;
+    const bool prelude = audible < targetFrame;
+    if (!ResolveSharedQueueFrontier(engine, program, row.QueueRandomSeed(),
+            program.mode == harken::ContainerModeV1::RandomQueue, &next, &resetInitial, &afterNext, &ignored, &step)) return false;
+    // A signal-only initial child owns an unused open decision, not a finite completion grant.
+    if (filing.queueDecision.Valid()) {
+        if (!engine.decisions.Cancel(filing.queueDecision) ||
+            !TransferDecisionRetirement(engine, filing.queueDecision, true)) return false;
+        filing.queueDecision = {};
+    }
+    bool acquiredCurrent = false, currentCommitted = false, successorCommitted = false;
+    bool published = false;
+    MaterializedScheduleSet schedule{};
+    std::unique_ptr<harken::EngineSourceExit> exit;
+    PreparedTimelineStarts starts(engine);
+    starts.AttachNativeSchedule(native);
+    const auto prepare = [&]() noexcept {
+        if (!engine.transitionInstances.Acquire({audible, audible / engine.config.blockFrames,
+                engine.CaptureMonitorOwner(row.ownerInstance)}, &filing.queueTransition) ||
+            !ReserveQueueDecision(engine, row, &filing.queueDecision, &ticket, filing.queueTransition,
+                prelude ? 2u : 1u, ticket)) return false;
+        if (payload.queueCurrentOccurrence.generation == 0) {
+            harken::OccurrenceKey key{};
+            key.arrangingInstance = row.ownerInstance;
+            key.clipId = previous->playable.stableId;
+            key.occurrenceOrdinal = current.currentChildOrdinal;
+            if (!engine.PrepareOriginalOccurrence(key, &payload.queueCurrentOccurrence)) return false;
+            acquiredCurrent = true;
+        }
+        harken::OccurrenceKey key{};
+        key.arrangingInstance = row.ownerInstance;
+        key.clipId = desired->playable.stableId;
+        key.occurrenceOrdinal = next.currentChildOrdinal;
+        if (!engine.PrepareOriginalOccurrence(key, &filing.queueSuccessorOccurrence) ||
+            !PrepareNativeScheduleTransition(engine, row, program, *desired, next.currentChildOrdinal, 0,
+                targetFrame, filing.queueDecision, rule->targetEntry == harken::TransitionTargetEntryV1::FromEntryMarker,
+                schedule, native)) return false;
+        native.scratch->continuationScheduleChild->queueSelectionVersion = next.version;
+        if (native.count == 0 || native.count > filing.queueTransitionGroupArms.size()) return false;
+        filing.queueTransitionGroupArmCount = native.count;
+        for (std::uint32_t i = 0; i < native.count; ++i) {
+            harken::EnginePlayableServiceRow* owner = nullptr;
+            std::size_t slot = 0;
+            if (!engine.ResolvePlayableMember(native.members[i], &owner, &slot)) return false;
+            auto* record = engine.AcquireMemberProgram(*owner, native.members[i]);
+            if (record == nullptr) return false;
+            const auto& member = engine.ReadPlayableMember(slot);
+            record->payloads[0] = {};
+            record->payloads[0].kind = harken::TimelineEventKind::Start;
+            record->payloads[0].reserved = harken::kTimelineEventTransientStartArm;
+            record->payloads[0].target = member.voice.Facts().target;
+            record->events[0] = {};
+            record->events[0].logicCommitSequence = ticket;
+            record->events[0].eventIndex = i;
+            record->events[0].transactionOrdinal = i;
+            record->events[0].subeventPhase = 20;
+            record->events[0].armToken = member.arm;
+            record->runtime = {};
+            record->runtime.readFence = &record->readFence;
+            record->runtime.generation = native.members[i].leaf;
+            record->runtime.payloads = record->payloads.data();
+            record->runtime.payloadCount = 1;
+            record->schedule = {};
+            record->schedule.ownerInstance = native.members[i].leaf;
+            record->schedule.ownerInstanceScheduleEpoch = native.members[i].leafEpoch;
+            record->schedule.transactionId = ticket;
+            record->schedule.entryAnchorFrame = member.startFrame;
+            record->schedule.events = record->events.data();
+            record->schedule.eventCount = 1;
+            record->schedule.runtimeProgram = {native.members[i].leaf, &record->runtime};
+            record->schedule.armToken = member.arm;
+            filing.queueTransitionGroupArms[i] = member.arm;
+            if (!starts.PrepareProgram(record->schedule)) return false;
+        }
+        if (!starts.PrepareArmGroup(filing.queueDecision, filing.queueTransitionGroupArms.data(),
+                static_cast<std::uint16_t>(native.count), &filing.queueArmGroup) ||
+            !starts.PrepareDecision(row.rootInstance, audible, filing.queueDecision)) return false;
+        harken::Plan03GroupSliceInput slice{};
+        slice.executeFrame = audible;
+        slice.decision = filing.queueDecision;
+        slice.members = filing.queueTransitionGroupArms.data();
+        slice.memberCount = static_cast<std::uint16_t>(native.count);
+        if (!starts.PrepareGroup(slice)) return false;
+        if (prelude) {
+            slice.executeFrame = targetFrame;
+            slice.sliceIndex = 1;
+            if (!starts.PrepareGroup(slice)) return false;
+        }
+        if (!VisitInitialScheduleAttempts(engine, *native.scratch, [&](auto& attempt) noexcept {
+                for (std::uint32_t i = 0; i < attempt.voiceStartCount; ++i)
+                    for (std::uint32_t c = 0; c < attempt.voiceStarts[i].commandCount; ++c)
+                        if (!starts.AddCommand(attempt.voiceStarts[i].commands[c])) return false;
+                return true;
+            }) || !PrepareMusicSourceFade(engine, source, row, audible, targetFrame,
+                row.TransitionSourceFadeCurve(), true, false, exit)) return false;
+        try { row.scheduleTerminalChild->sourceExits.reserve(row.scheduleTerminalChild->sourceExits.size() + 1u); }
+        catch (const std::bad_alloc&) { return false; }
+        if (!starts.PrepareServiceFrontier(row, filing.queueDecision, ticket, filing.queueTransition, exit.get()) ||
+            !starts.ReserveCommands()) return false;
+        std::uint32_t page = 0;
+        if (!engine.timelinePool.PageForFrame(audible, &page)) return false;
+        const auto* header = engine.timelinePool.Page(page);
+        if (header == nullptr || header->pageGeneration == 0 || header->pageGeneration > UINT32_MAX) return false;
+        payload.queuePreparedPages = {page + 1u, static_cast<std::uint32_t>(header->pageGeneration)};
+        if (acquiredCurrent) {
+            if (!engine.timelineOccurrences.CommitPreparedAcquire(payload.queueCurrentOccurrence)) return false;
+            currentCommitted = true;
+        }
+        if (!engine.timelineOccurrences.CommitPreparedAcquire(filing.queueSuccessorOccurrence)) return false;
+        successorCommitted = true;
+        harken::ConditionalQueuePrepareRequest request{};
+        request.expectedCurrentVersion = current.version;
+        request.rootDecision = filing.queueDecision;
+        request.expectedCurrentOccurrence = payload.queueCurrentOccurrence;
+        request.successorOccurrence = filing.queueSuccessorOccurrence;
+        request.completionIsLogicalBoundary = true;
+        request.logicalCompletionFrame = targetFrame;
+        request.next = next;
+        AttachQueueProjection(engine, request);
+        harken::PreparedQueueConditionalV1 conditional;
+        if (!engine.queueInstances.PrepareConditional(row.queueInstance, request, &conditional)) return false;
+        if (!engine.queueInstances.CommitPreparedConditional(&conditional, &filing.queueConditional)) {
+            if (!engine.queueInstances.CancelPreparedConditional(&conditional)) engine.runtimeRecreateRequired = true;
+            return false;
+        }
+        if (!CommitNativeScheduleTransition(native, ticket)) return false;
+        row.scheduleTerminalChild->sourceExits.push_back(std::move(exit));
+        if (!starts.Commit(ticket)) return false;
+        published = true;
+        row.QueueNextState() = next;
+        payload.queueTicket = ticket;
+        filing.queueTransitionEndFrame = targetFrame;
+        filing.queueSuccessorSignalOnlyNoOverlap = step == harken::QueueSequenceStepStatus::Successor;
+        payload.nativeTransitionPending = true;
+        payload.nativeTransitionApplied = false;
+        return true;
+    };
+    if (prepare()) return true;
+    if (native.published || published) { engine.runtimeRecreateRequired = true; return false; }
+    starts.Cancel();
+    if (native.scratch != nullptr) { engine.runtimeRecreateRequired = true; return false; }
+    if (filing.queueConditional.Valid() && !engine.queueInstances.RetireConditionalForAbort(
+            row.queueInstance, filing.queueConditional, filing.queueDecision)) engine.runtimeRecreateRequired = true;
+    filing.queueConditional = {};
+    const auto release = [&](harken::OccurrenceToken& token, bool committed) noexcept {
+        if (token.generation == 0) return;
+        if (committed ? TryReleaseOccurrenceAfterFence(engine, token, engine.mixer.BlocksRendered())
+                      : engine.timelineOccurrences.CancelPreparedAcquire(token)) token = {};
+        else engine.runtimeRecreateRequired = true;
+    };
+    release(filing.queueSuccessorOccurrence, successorCommitted);
+    if (acquiredCurrent) release(payload.queueCurrentOccurrence, currentCommitted);
+    if (filing.queueDecision.Valid() && !TransferDecisionRetirement(engine, filing.queueDecision, true))
+        engine.runtimeRecreateRequired = true;
+    if (filing.queueTransition.Valid() && !engine.transitionInstances.CancelBeforePublication(filing.queueTransition))
+        engine.runtimeRecreateRequired = true;
+    filing.queueDecision = {};
+    filing.queueTransition = {};
+    filing.queueArmGroup = {};
+    filing.queueTransitionGroupArmCount = 0;
+    return false;
 }
 
 bool PrepareQueueSignalNativeGroup(harken::Engine& engine,
@@ -95575,6 +96059,8 @@ harken::PlayableStartResult PrepareDirectPlayableStart(
         scratch->row->selectionDeltas[index] = scratch->directSelectionOwnerContexts[index].delta;
     if (!PrepareInitialScheduleReadCuts(engine, *scratch, issue) ||
         (!scratch->initialNativeForestOwner.Valid() && !CanCommitInitialScheduleReadUses(engine, *scratch))) return fail(VN_BACKPRESSURE);
+    if (IsDirectInitialQueueForest(engine, *scratch) &&
+        !PrepareInitialQueueEntryGroups(engine, *scratch)) return fail(VN_BACKPRESSURE);
     if (!VisitInitialScheduleAttempts(engine, *scratch, [&](auto& child) noexcept {
             return child.row != nullptr && FreezeInitialQueuePrograms(engine, *child.row);
         })) return fail(VN_BACKPRESSURE);
