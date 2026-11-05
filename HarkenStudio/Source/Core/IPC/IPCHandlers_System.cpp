@@ -33,7 +33,7 @@ void IPCServer::registerSystemHandlers()
     commandHandlers_["get_version"] = [this](const QJsonObject& args) { return handleGetVersion(args); };
     commandHandlers_["get_status"] = [this](const QJsonObject& args) { return handleGetStatus(args); };
 
-    commandHandlers_["set_theme"] = [this](const QJsonObject& args) -> QJsonObject {
+    registerDesktopHandler("set_theme", [this](const QJsonObject& args) -> QJsonObject {
         QString themeId = args.value("theme").toString().trimmed();
         if (themeId == QStringLiteral("dark"))
             themeId = builtinThemeId();
@@ -54,8 +54,8 @@ void IPCServer::registerSystemHandlers()
                 themePackageErrorCodeName(diagnostic.code), diagnostic.message);
         }
         return successResponse(QJsonObject{{"theme", manager.currentThemeId()}});
-    };
-    commandHandlers_["get_theme"] = [this](const QJsonObject&) -> QJsonObject {
+    });
+    registerDesktopHandler("get_theme", [this](const QJsonObject&) -> QJsonObject {
         ThemeManager& manager = ThemeManager::instance();
         QString themeId;
         const auto read = [&]() { themeId = manager.currentThemeId(); };
@@ -64,7 +64,7 @@ void IPCServer::registerSystemHandlers()
         else
             QMetaObject::invokeMethod(&manager, read, Qt::BlockingQueuedConnection);
         return successResponse(QJsonObject{{"theme", themeId}});
-    };
+    });
 
 
     commandHandlers_["get_3d_scene"] = [this](const QJsonObject& args) { return handleGet3DScene(args); };
@@ -98,7 +98,7 @@ void IPCServer::registerSystemHandlers()
     commandHandlers_["validate_multipack_collisions"] = [this](const QJsonObject& args) { return handleValidateMultipackCollisions(args); };
     commandHandlers_["get_codec_capabilities"] = [this](const QJsonObject& args) { return handleGetCodecCapabilities(args); };
 
-    commandHandlers_["get_remote_connection_status"] = [this](const QJsonObject&) -> QJsonObject {
+    registerDesktopHandler("get_remote_connection_status", [this](const QJsonObject&) -> QJsonObject {
         if (!mainWindow_ || !mainWindow_->remoteConnection())
             return errorResponse("REMOTE_NOT_AVAILABLE", "Remote connection controller is unavailable");
         const auto* remote = mainWindow_->remoteConnection();
@@ -113,7 +113,7 @@ void IPCServer::registerSystemHandlers()
             {"block_index", QString::number(snapshot.blockIndex)},
             {"active_voices", static_cast<int>(snapshot.activeVoices)}
         });
-    };
+    });
     commandHandlers_["get_watched_parameters"] = [this](const QJsonObject&) -> QJsonObject {
         if (!engine_) return errorResponse("ENGINE_NOT_AVAILABLE", "AudioEngine not available");
         std::vector<Bridge::WatchedParamEntry> entries;
@@ -162,7 +162,7 @@ void IPCServer::registerSystemHandlers()
         return handleGetMixerLevels(QJsonObject{});
     };
 
-    commandHandlers_["get_panel_rect"] = [this](const QJsonObject& args) { return handleGetPanelRect(args); };
+    registerDesktopHandler("get_panel_rect", [this](const QJsonObject& args) { return handleGetPanelRect(args); });
     commandHandlers_["get_project_state"] = [this](const QJsonObject& args) { return handleGetProjectState(args); };
     commandHandlers_["get_playing_actions"] = [this](const QJsonObject& args) { return handleGetPlaybacks(args); };
 
@@ -332,15 +332,15 @@ void IPCServer::registerSystemHandlers()
     };
 
 
-    commandHandlers_["get_current_layout"] = [this](const QJsonObject& args) { return handleGetCurrentLayout(args); };
-    commandHandlers_["get_current_view"] = [this](const QJsonObject& args) {
+    registerDesktopHandler("get_current_layout", [this](const QJsonObject& args) { return handleGetCurrentLayout(args); });
+    registerDesktopHandler("get_current_view", [this](const QJsonObject& args) {
         qWarning() << "[deprecated] get_current_view, use get_current_layout";
         return handleGetCurrentView(args);
-    };
-    commandHandlers_["get_layout_state"] = [this](const QJsonObject& args) { return handleGetLayoutState(args); };
-    commandHandlers_["get_inspector_context"] = [this](const QJsonObject& args) { return handleGetInspectorContext(args); };
+    });
+    registerDesktopHandler("get_layout_state", [this](const QJsonObject& args) { return handleGetLayoutState(args); });
+    registerDesktopHandler("get_inspector_context", [this](const QJsonObject& args) { return handleGetInspectorContext(args); });
 
-    commandHandlers_["get_inspector_schema"] = [this](const QJsonObject& args) -> QJsonObject {
+    registerDesktopHandler("get_inspector_schema", [this](const QJsonObject& args) -> QJsonObject {
         QJsonObject errOut;
         auto* ip = resolveInspectorForRouting(args, errOut);
         if (!ip) {
@@ -357,9 +357,9 @@ void IPCServer::registerSystemHandlers()
                 QString("No schema found for '%1'").arg(schemaId));
         }
         return successResponse(QJsonObject{{"schema_id", schemaId}, {"schema", schema}});
-    };
+    });
 
-    commandHandlers_["create_inspector_panel"] = [this](const QJsonObject& args) -> QJsonObject {
+    registerDesktopHandler("create_inspector_panel", [this](const QJsonObject& args) -> QJsonObject {
         if (!mainWindow_)
             return errorResponse("NO_MAIN_WINDOW", "MainWindow not available");
 
@@ -385,9 +385,9 @@ void IPCServer::registerSystemHandlers()
             {"name", ip ? ip->contextName() : QString()},
             {"pinned", ip ? ip->isPinned() : false}
         });
-    };
+    });
 
-    commandHandlers_["create_editor"] = [this](const QJsonObject& args) -> QJsonObject {
+    registerDesktopHandler("create_editor", [this](const QJsonObject& args) -> QJsonObject {
         if (!mainWindow_)
             return errorResponse("NO_MAIN_WINDOW", "MainWindow not available");
 
@@ -438,9 +438,9 @@ void IPCServer::registerSystemHandlers()
             {"panel_id", newId},
             {"dock_object_name", dockObjectName}
         });
-    };
+    });
 
-    commandHandlers_["set_inspector_pinned"] = [this](const QJsonObject& args) -> QJsonObject {
+    registerDesktopHandler("set_inspector_pinned", [this](const QJsonObject& args) -> QJsonObject {
         if (!mainWindow_)
             return errorResponse("NO_MAIN_WINDOW", "MainWindow not available");
         if (!args.contains("panel_id"))
@@ -455,9 +455,9 @@ void IPCServer::registerSystemHandlers()
 
         ip->setPinned(pinned);
         return successResponse(QJsonObject{{"panel_id", panelId}, {"pinned", ip->isPinned()}});
-    };
+    });
 
-    commandHandlers_["list_inspector_panels"] = [this](const QJsonObject&) -> QJsonObject {
+    registerDesktopHandler("list_inspector_panels", [this](const QJsonObject&) -> QJsonObject {
         if (!mainWindow_)
             return errorResponse("NO_MAIN_WINDOW", "MainWindow not available");
         QJsonArray panels;
@@ -471,9 +471,9 @@ void IPCServer::registerSystemHandlers()
             });
         }
         return successResponse(QJsonObject{{"panels", panels}, {"count", panels.size()}});
-    };
+    });
 
-    commandHandlers_["close_inspector_panel"] = [this](const QJsonObject& args) -> QJsonObject {
+    registerDesktopHandler("close_inspector_panel", [this](const QJsonObject& args) -> QJsonObject {
         if (!mainWindow_)
             return errorResponse("NO_MAIN_WINDOW", "MainWindow not available");
         if (!args.contains("panel_id"))
@@ -483,12 +483,12 @@ void IPCServer::registerSystemHandlers()
             mainWindow_->closeInspectorPanel(panelId);
         }, Qt::QueuedConnection);
         return successResponse(QJsonObject{{"panel_id", panelId}});
-    };
+    });
 
 
-    commandHandlers_["get_recent_logs"] = [this](const QJsonObject& args) { return handleGetRecentLogs(args); };
+    registerDesktopHandler("get_recent_logs", [this](const QJsonObject& args) { return handleGetRecentLogs(args); });
     commandHandlers_["list_named_layouts"] = [this](const QJsonObject& args) { return handleListNamedLayouts(args); };
-    commandHandlers_["list_panels"] = [this](const QJsonObject& args) { return handleListPanels(args); };
+    registerDesktopHandler("list_panels", [this](const QJsonObject& args) { return handleListPanels(args); });
 
     commandHandlers_["get_app_state"] = [this](const QJsonObject& args) { return handleGetAppState(args); };
 

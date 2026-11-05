@@ -56,6 +56,7 @@ class BuildStudioPackageTest(unittest.TestCase):
         self.module.run_studio_self_test = self_test
         self.run_harkenizer_smoke_test = self.module.run_harkenizer_smoke_test
         self.harkenizer_smoke_test = mock.patch.object(self.module, "run_harkenizer_smoke_test").start()
+        self.cli_smoke_test = mock.patch.object(self.module, "run_studio_cli_smoke_test").start()
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -88,6 +89,7 @@ class BuildStudioPackageTest(unittest.TestCase):
         if with_binary:
             (self.input_dir / "HarkenStudio.exe").write_bytes(b"stub-binary")
         (self.input_dir / "Harkenizer.exe").write_bytes(b"stub-executor")
+        (self.input_dir / "harken-studio.exe").write_bytes(b"stub-cli")
         (self.input_dir / "data" / "asset.bin").write_bytes(b"payload" * 100)
         self.publish_schema(self.input_dir / "schema")
         unity = self.input_dir / "HarkenIntegration" / "Unity" / "Harken"
@@ -140,7 +142,7 @@ class BuildStudioPackageTest(unittest.TestCase):
             for path in (self.input_dir / "schema").rglob("*")
             if path.is_file()
         }
-        self.assertEqual(summary["fileCount"], 5 + len(schema_files) + len(self.legal_paths))
+        self.assertEqual(summary["fileCount"], 6 + len(schema_files) + len(self.legal_paths))
 
         with zipfile.ZipFile(package) as archive:
             names = set(archive.namelist())
@@ -172,6 +174,7 @@ class BuildStudioPackageTest(unittest.TestCase):
             self.assertEqual(set(by_path), schema_files | self.legal_paths | {
                     "HarkenStudio.exe",
                     "Harkenizer.exe",
+                    "harken-studio.exe",
                     "data/asset.bin",
                     "HarkenIntegration/Unity/Harken/package.json",
                     "HarkenSDK/Unity/Harken/package.json",
@@ -291,6 +294,7 @@ class BuildStudioPackageTest(unittest.TestCase):
         app.mkdir(parents=True)
         (app / "HarkenStudio").write_bytes(b"stub-binary")
         (app / "Harkenizer").write_bytes(b"stub-executor")
+        (app / "harken-studio").write_bytes(b"stub-cli")
         self.publish_schema(app / "schema")
         unity = app / "HarkenIntegration" / "Unity" / "Harken"
         unity.mkdir(parents=True)

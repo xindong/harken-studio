@@ -611,7 +611,11 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
 
     return successResponse(QJsonObject{
         {"async", true},
-        {"message", "Pack build started. Poll get_pack_build_status for progress."}
+        {"message", "Pack build started. Poll get_pack_build_status for progress."},
+        {"operation", QJsonObject{
+            {"status_command", "get_pack_build_status"},
+            {"status_args", QJsonObject{}},
+            {"cancel_command", "cancel_pack_build"}}}
     });
 }
 
@@ -1104,7 +1108,11 @@ QJsonObject IPCServer::handleTranscodeAsset(const QJsonObject& args)
         {"async", true},
         {"source_id", static_cast<qint64>(sourceID)},
         {"platform_id", platformStr},
-        {"message", "Transcode started. Poll get_transcode_status for result."}
+        {"message", "Transcode started. Poll get_transcode_status for result."},
+        {"operation", QJsonObject{
+            {"status_command", "get_transcode_status"},
+            {"status_args", QJsonObject{{"source_id", static_cast<qint64>(sourceID)},
+                                       {"platform_id", platformStr}}}}}
     });
 }
 

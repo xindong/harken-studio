@@ -44,6 +44,7 @@ struct ActionDef {
 
     std::function<ActionResult(const QJsonObject& args)> handler;
     std::function<QString(const QJsonObject& args)> validate;
+    bool requiresDesktop = false;
 };
 
 struct TransactionExecutionContext {

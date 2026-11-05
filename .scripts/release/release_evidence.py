@@ -69,7 +69,7 @@ COMPONENT_INPUTS = (
     {"id": "heroicons", "notice": "Heroicons", "products": ["hub"],
      "url": "https://github.com/tailwindlabs/heroicons", "legalFiles": ["Heroicons-LICENSE.txt"]},
 )
-ROOT_TARGETS = {"studio": ("harken_editor", "harkenizer"), "hub": ("harken_hub",),
+ROOT_TARGETS = {"studio": ("harken_editor", "harkenizer", "harken_studio_cli"), "hub": ("harken_hub",),
                 "runtime": ("harken_core_shared",)}
 
 
@@ -391,8 +391,9 @@ def read_macos_deployment(build_dir: Path, product: str, configuration: str, mod
     for record in report.get("executables", []):
         source = record["sourceArtifact"]
         if (source not in model["artifacts"] or source["type"] != "EXECUTABLE"
-                or source["target"] != "harkenizer" or source["name"] != "Harkenizer"
-                or record["path"] != "HarkenStudio.app/Contents/MacOS/Harkenizer"
+                or (source["target"], source["name"]) not in {
+                    ("harkenizer", "Harkenizer"), ("harken_studio_cli", "harken-studio")}
+                or record["path"] != f"HarkenStudio.app/Contents/MacOS/{source['name']}"
                 or record["path"] in seen):
             raise ValueError("macOS deployment source does not match a CMake target artifact")
         seen.add(record["path"])

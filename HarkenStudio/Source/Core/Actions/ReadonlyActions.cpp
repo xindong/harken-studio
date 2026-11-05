@@ -128,6 +128,7 @@ void registerReadonlyActions(ActionManager& mgr, IPCServer* ipcServer)
 
         ActionDef def;
         def.id = name;
+        def.requiresDesktop = ipcServer->commandRequiresDesktop(name);
         def.paramSchema = projectPlatformCommandSchema(name);
         def.displayName = humanizeCommandName(name);
         def.category = inferCategory(name);

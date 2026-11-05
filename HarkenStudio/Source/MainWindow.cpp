@@ -27,6 +27,7 @@
 #include "Core/BaseDialog.h"
 #include "Core/ProjectPlatformActivity.h"
 #include "Core/IPC/IPCServer.h"
+#include "Core/EditorCommandRegistration.h"
 #include "Core/AI/AIAssistantService.h"
 #include "Core/AI/AIConversationStore.h"
 #include "Core/AI/AIConversationSessionStore.h"
@@ -189,7 +190,6 @@
 
 namespace VNX {
 
-void registerTemplateActions(ActionManager& mgr, ProjectManager* projectManager);
 
 #if defined(HARKEN_HAS_QWINDOWKIT) && defined(Q_OS_WIN)
 namespace {
@@ -1159,50 +1159,9 @@ void MainWindow::setupAudioEngine()
 
     if (ipcServer_)
     {
-        registerMixerActions(ActionManager::instance(),
-                             &AudioEngine::instance(),
-                             &ProjectManager::instance(),
-                             this);
-
-        registerProjectActions(ActionManager::instance(),
-                              &ProjectManager::instance(),
-                              projectExplorer_);
-
-        registerBindingActions(ActionManager::instance());
-
-        registerContainerActions(ActionManager::instance(),
-                                &ProjectManager::instance());
-
-        registerEditorActions(ActionManager::instance(),
-                              &ProjectManager::instance(),
-                              &AudioEngine::instance(),
-                              blueprintCanvas_,
-                              ipcServer_);
-
-        registerTemplateActions(ActionManager::instance(),
-                                &ProjectManager::instance());
-
-        registerAuditionActions(ActionManager::instance(),
-                                auditionManager_,
-                                &AudioEngine::instance());
-
-        registerSpatialActions(ActionManager::instance(),
-                              &AudioEngine::instance(),
-                              &ProjectManager::instance());
-
-        registerAdvancedActions(ActionManager::instance(),
-                               &AudioEngine::instance());
-
-        registerAssetActions(ActionManager::instance(),
-                            &AudioEngine::instance(),
-                            &ProjectManager::instance());
-
-        registerSystemActions(ActionManager::instance(),
-                             &AudioEngine::instance(),
-                             this,
-                             ipcServer_->activePlaybacksMap());
-
-        registerReadonlyActions(ActionManager::instance(), ipcServer_);
+        registerEditorCommands({&AudioEngine::instance(), &ProjectManager::instance(),
+                                ipcServer_, this, projectExplorer_, blueprintCanvas_,
+                                auditionManager_});
     }
 }
 

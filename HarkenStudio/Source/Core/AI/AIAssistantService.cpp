@@ -1,4 +1,5 @@
 #include "AIAssistantService.h"
+#include "../EditorCommandCatalog.h"
 #include "AIConversationStore.h"
 #include "AIDurableMemoryService.h"
 #include "AIEndpointValidation.h"
@@ -1657,50 +1658,7 @@ QJsonObject AIAssistantService::describeCommandEnvelope(const QString& name) con
         return errorEnvelope(QStringLiteral("INVALID_ARGUMENTS"),
                              QStringLiteral("describe_command requires a non-empty name string."));
 
-    QJsonObject result{{QStringLiteral("command"), trimmed}};
-    const AICommandSpec* spec = AICommandCatalog::find(trimmed);
-    const ActionDef* action = ActionManager::instance().findAction(trimmed);
-
-    const auto fromCatalog = [&] {
-        result.insert(QStringLiteral("description"), spec->description);
-        result.insert(QStringLiteral("parameters"), spec->argumentSchema);
-        result.insert(QStringLiteral("source"), QStringLiteral("catalog"));
-        return successEnvelope(result);
-    };
-    const auto fromAction = [&] {
-        result.insert(QStringLiteral("displayName"), action->displayName);
-        result.insert(QStringLiteral("category"), action->category);
-        result.insert(QStringLiteral("parameters"), action->paramSchema);
-        result.insert(QStringLiteral("undoable"), action->undoable);
-        result.insert(QStringLiteral("source"), QStringLiteral("action"));
-        result.insert(QStringLiteral("note"), QStringLiteral(
-            "The parameter description is informal; an empty parameters object means "
-            "the arguments are undocumented."));
-        return successEnvelope(result);
-    };
-
-    // Prefer whichever source actually documents parameters. A catalog entry
-    // with an empty schema (for example a disabled placeholder) must not shadow
-    // a real ActionManager paramSchema for the same command; fall back to a
-    // present-but-empty source only when neither documents parameters.
-    if (spec && !spec->argumentSchema.isEmpty())
-        return fromCatalog();
-    if (action && !action->paramSchema.isEmpty())
-        return fromAction();
-    if (spec)
-        return fromCatalog();
-    if (action)
-        return fromAction();
-
-    const bool knownHandler = ipc_ && ipc_->hasCommandHandler(trimmed);
-    result.insert(QStringLiteral("source"),
-                  knownHandler ? QStringLiteral("handler") : QStringLiteral("unknown"));
-    result.insert(QStringLiteral("note"), knownHandler
-        ? QStringLiteral("No schema is available for this command; call it through "
-                         "dispatch_ipc and correct the arguments from returned error messages.")
-        : QStringLiteral("This command is not registered; check the command list in the "
-                         "system prompt."));
-    return successEnvelope(result);
+    return successEnvelope(describeEditorCommand(trimmed, ipc_));
 }
 bool AIAssistantService::executeResolvedCall(const ILLMProvider::ToolCall& call,
                                              const QString& cmd, const QJsonObject& args,

@@ -728,6 +728,7 @@ void registerSystemActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "open_remote_connect";
+        def.requiresDesktop = true;
         def.displayName = "Open Remote Connect";
         def.category = "system";
         def.undoable = false;
@@ -826,6 +827,7 @@ void registerSystemActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "switch_layout";
+        def.requiresDesktop = true;
         def.displayName = "Switch Layout";
         def.category = "ui_control";
         def.paramSchema = QJsonObject{{"layout", "string"}};
@@ -855,6 +857,7 @@ void registerSystemActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "switch_view";
+        def.requiresDesktop = true;
         def.displayName = "Switch View";
         def.category = "ui_control";
         def.paramSchema = QJsonObject{{"view", "string"}};
@@ -885,6 +888,7 @@ void registerSystemActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "reset_layout";
+        def.requiresDesktop = true;
         def.displayName = "Reset Layout";
         def.category = "ui_control";
         def.paramSchema = QJsonObject{{"view", "string"}};
@@ -916,6 +920,7 @@ void registerSystemActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "toggle_panel";
+        def.requiresDesktop = true;
         def.displayName = "Toggle Panel";
         def.category = "ui_control";
         def.paramSchema = QJsonObject{{"name", "string"}, {"visible", "bool"}};
@@ -962,6 +967,7 @@ void registerSystemActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "open_curve_editor";
+        def.requiresDesktop = true;
         def.displayName = "Open Curve Editor";
         def.category = "ui_control";
         def.paramSchema = QJsonObject{
@@ -1020,6 +1026,7 @@ void registerSystemActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "save_named_layout";
+        def.requiresDesktop = true;
         def.displayName = "Save Named Layout";
         def.category = "ui_control";
         def.paramSchema = QJsonObject{{"name", "string"}};
@@ -1045,6 +1052,7 @@ void registerSystemActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "load_named_layout";
+        def.requiresDesktop = true;
         def.displayName = "Load Named Layout";
         def.category = "ui_control";
         def.paramSchema = QJsonObject{{"name", "string"}};
@@ -1069,6 +1077,7 @@ void registerSystemActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "delete_named_layout";
+        def.requiresDesktop = true;
         def.displayName = "Delete Named Layout";
         def.category = "ui_control";
         def.paramSchema = QJsonObject{{"name", "string"}};

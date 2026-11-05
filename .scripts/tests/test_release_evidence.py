@@ -482,12 +482,15 @@ class ReleaseEvidenceTest(unittest.TestCase):
         library.write_bytes(b"\xcf\xfa\xed\xfebuild-library")
         executable = self.build / "bin/Release/Harkenizer"
         executable.write_bytes(b"\xcf\xfa\xed\xfebuild-executable")
+        cli = executable.with_name("harken-studio")
+        cli.write_bytes(b"\xcf\xfa\xed\xfebuild-cli")
         self.model["artifacts"] = [
             {"target": target, "type": kind, "name": path.name,
              "sha256": evidence.sha256(path), "path": path.relative_to(self.build).as_posix()}
             for target, kind, path in (("harken_editor", "EXECUTABLE", binary),
                                       ("QWKCore", "SHARED_LIBRARY", library),
-                                      ("harkenizer", "EXECUTABLE", executable))]
+                                      ("harkenizer", "EXECUTABLE", executable),
+                                      ("harken_studio_cli", "EXECUTABLE", cli))]
         tool = self.root / "macdeployqt"
         tool.write_bytes(b"deployment tool")
         deployed = bundle / "Contents/Frameworks/libQWKCore.dylib"
@@ -503,7 +506,8 @@ class ReleaseEvidenceTest(unittest.TestCase):
         executable = bundle / "Contents/MacOS/Harkenizer"
         def transform(command, check):
             self.assertEqual(command, [str(tool), str(bundle), "-always-overwrite",
-                                       f"-executable={executable}"])
+                                       f"-executable={executable}",
+                                       f"-executable={executable.with_name('harken-studio')}"])
             self.assertTrue(check)
             self.assertEqual(deployed.read_bytes(), library.read_bytes())
             self.assertEqual(executable.read_bytes(), library.with_name("Harkenizer").read_bytes())

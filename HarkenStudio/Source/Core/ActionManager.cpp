@@ -1,6 +1,7 @@
 
 #include "ActionManager.h"
 #include "UndoCommands.h"
+#include <QApplication>
 #include <QDebug>
 
 namespace VNX {
@@ -38,13 +39,16 @@ ActionResult ActionManager::execute(const QString& actionId,
                                      const QObject* originator,
                                      QUndoCommand* undoParent)
 {
-    Q_ASSERT(QThread::currentThread() == qApp->thread());
+    Q_ASSERT(QThread::currentThread() == QCoreApplication::instance()->thread());
 
     auto* def = findAction(actionId);
     if (!def) {
         return {false, {}, "UNKNOWN_ACTION",
                 QString("Action not found: %1").arg(actionId)};
     }
+
+    if (def->requiresDesktop && !qobject_cast<QApplication*>(QCoreApplication::instance()))
+        return {false, {}, "DESKTOP_REQUIRED", "This action requires the desktop editor."};
 
     if (def->validate) {
         QString err = def->validate(args);
@@ -123,6 +127,7 @@ QJsonObject ActionManager::actionCatalog() const
         entry["category"] = def.category;
         entry["paramSchema"] = def.paramSchema;
         entry["undoable"] = def.undoable;
+        entry["requiresDesktop"] = def.requiresDesktop;
         catalog[def.id] = entry;
     }
     return catalog;

@@ -104,7 +104,7 @@ void IPCServer::registerAdvancedHandlers()
         return unavailable("HarkenLink capture is retired");
     };
 
-    commandHandlers_["audition_get_state"] = [this](const QJsonObject&) {
+    registerDesktopHandler("audition_get_state", [this](const QJsonObject&) {
         if (!mainWindow_) return errorResponse("NOT_INIT", "MainWindow not set");
         auto* tm = mainWindow_->auditionManager();
         if (!tm) return errorResponse("NOT_INIT", "AuditionManager not available");
@@ -126,8 +126,8 @@ void IPCServer::registerAdvancedHandlers()
             {"auditions", arr},
             {"activeCount", tm->activeAuditionCount()}
         });
-    };
-    commandHandlers_["audition_get_position"] = [this](const QJsonObject& args) {
+    });
+    registerDesktopHandler("audition_get_position", [this](const QJsonObject& args) {
         if (!mainWindow_) return errorResponse("NOT_INIT", "MainWindow not set");
         auto* tm = mainWindow_->auditionManager();
         if (!tm) return errorResponse("NOT_INIT", "AuditionManager not available");
@@ -142,8 +142,8 @@ void IPCServer::registerAdvancedHandlers()
             {"beatFraction", static_cast<double>(pos.beatFraction)},
             {"isMusic", pos.isMusic}
         });
-    };
-    commandHandlers_["audition_get_speed"] = [this](const QJsonObject& args) {
+    });
+    registerDesktopHandler("audition_get_speed", [this](const QJsonObject& args) {
         if (!mainWindow_) return errorResponse("NOT_INIT", "MainWindow not set");
         auto* tm = mainWindow_->auditionManager();
         if (!tm) return errorResponse("NOT_INIT", "AuditionManager not available");
@@ -151,7 +151,7 @@ void IPCServer::registerAdvancedHandlers()
         if (tid == 0) return errorResponse("INVALID_PARAM", "auditionID required");
         float speed = tm->getPlaybackSpeed(tid);
         return successResponse(QJsonObject{{"auditionID", static_cast<int>(tid)}, {"speed", static_cast<double>(speed)}});
-    };
+    });
 
     commandHandlers_["get_exec_errors"] = [this](const QJsonObject& args) {
         if (!engine_) return errorResponse("NOT_INIT", "Audio engine not initialized");
@@ -224,26 +224,26 @@ void IPCServer::registerAdvancedHandlers()
         return successResponse(r);
     };
 
-    commandHandlers_["get_ui_tree"] = [this](const QJsonObject& args) { return handleGetUiTree(args); };
-    commandHandlers_["find_widget"] = [this](const QJsonObject& args) { return handleFindWidget(args); };
-    commandHandlers_["grab_widget"] = [this](const QJsonObject& args) { return handleGrabWidget(args); };
-    commandHandlers_["get_focused_widget"] = [this](const QJsonObject& args) { return handleGetFocusedWidget(args); };
-    commandHandlers_["get_last_interacted_widget"] = [this](const QJsonObject& args) { return handleGetLastInteractedWidget(args); };
+    registerDesktopHandler("get_ui_tree", [this](const QJsonObject& args) { return handleGetUiTree(args); });
+    registerDesktopHandler("find_widget", [this](const QJsonObject& args) { return handleFindWidget(args); });
+    registerDesktopHandler("grab_widget", [this](const QJsonObject& args) { return handleGrabWidget(args); });
+    registerDesktopHandler("get_focused_widget", [this](const QJsonObject& args) { return handleGetFocusedWidget(args); });
+    registerDesktopHandler("get_last_interacted_widget", [this](const QJsonObject& args) { return handleGetLastInteractedWidget(args); });
 
-    commandHandlers_["get_widget_value"] = [this](const QJsonObject& args) { return handleGetWidgetValue(args); };
-    commandHandlers_["get_widget_children"] = [this](const QJsonObject& args) { return handleGetWidgetChildren(args); };
-    commandHandlers_["get_table_data"] = [this](const QJsonObject& args) { return handleGetTableData(args); };
-    commandHandlers_["get_list_items"] = [this](const QJsonObject& args) { return handleGetListItems(args); };
-    commandHandlers_["get_tree_data"] = [this](const QJsonObject& args) { return handleGetTreeData(args); };
+    registerDesktopHandler("get_widget_value", [this](const QJsonObject& args) { return handleGetWidgetValue(args); });
+    registerDesktopHandler("get_widget_children", [this](const QJsonObject& args) { return handleGetWidgetChildren(args); });
+    registerDesktopHandler("get_table_data", [this](const QJsonObject& args) { return handleGetTableData(args); });
+    registerDesktopHandler("get_list_items", [this](const QJsonObject& args) { return handleGetListItems(args); });
+    registerDesktopHandler("get_tree_data", [this](const QJsonObject& args) { return handleGetTreeData(args); });
 
-    commandHandlers_["click_widget"] = [this](const QJsonObject& args) { return handleClickWidget(args); };
-    commandHandlers_["key_press"] = [this](const QJsonObject& args) { return handleKeyPress(args); };
-    commandHandlers_["set_widget_value"] = [this](const QJsonObject& args) { return handleSetWidgetValue(args); };
-    commandHandlers_["select_table_row"] = [this](const QJsonObject& args) { return handleSelectTableRow(args); };
-    commandHandlers_["trigger_menu_action"] = [this](const QJsonObject& args) { return handleTriggerMenuAction(args); };
-    commandHandlers_["answer_dialog"] = [this](const QJsonObject& args) { return handleAnswerDialog(args); };
+    registerDesktopHandler("click_widget", [this](const QJsonObject& args) { return handleClickWidget(args); });
+    registerDesktopHandler("key_press", [this](const QJsonObject& args) { return handleKeyPress(args); });
+    registerDesktopHandler("set_widget_value", [this](const QJsonObject& args) { return handleSetWidgetValue(args); });
+    registerDesktopHandler("select_table_row", [this](const QJsonObject& args) { return handleSelectTableRow(args); });
+    registerDesktopHandler("trigger_menu_action", [this](const QJsonObject& args) { return handleTriggerMenuAction(args); });
+    registerDesktopHandler("answer_dialog", [this](const QJsonObject& args) { return handleAnswerDialog(args); });
 
-    commandHandlers_["flush_ui_events"] = [this](const QJsonObject& args) { return handleFlushUIEvents(args); };
+    registerDesktopHandler("flush_ui_events", [this](const QJsonObject& args) { return handleFlushUIEvents(args); });
 }
 
 

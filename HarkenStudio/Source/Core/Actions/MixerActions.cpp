@@ -711,6 +711,7 @@ void registerMixerActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "select_bus";
+        def.requiresDesktop = true;
         def.displayName = "Select Bus";
         def.category = "mixer";
         def.paramSchema = QJsonObject{{"bus_id", "uint32"}};
