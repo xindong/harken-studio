@@ -4384,9 +4384,12 @@ TEST(AuthoredStopAudio, TypedLaneStopRefusalReturnsEveryProofWithoutChangingEarl
 
 TEST(AuthoredStopAudio, FinalizedCurrentSpanMergesOnlyTrueEligibleCutoffAcrossPageAndLaneReservations) {
     for (const bool laneFirst : {false, true}) {
-        for (const bool rejectStop : {false, true}) {
+        for (const bool rejectStop : {false, true})
+        for (const bool persistedSourceCutoff : {false, true}) {
+            if (rejectStop && persistedSourceCutoff) continue;
             StopAudioHarness h(0);
             const auto render = h.Play();
+            if (persistedSourceCutoff) h.engine->voices.Resolve(render)->authoredRootStopFrame = 32;
             h.Begin();
             auto& voices = h.engine->voices;
             const auto slot = static_cast<std::uint32_t>(render);
@@ -4429,7 +4432,7 @@ TEST(AuthoredStopAudio, FinalizedCurrentSpanMergesOnlyTrueEligibleCutoffAcrossPa
                 EXPECT_EQ(rejectStop ? harken::AuthoredStopOperationIdentity{} : identity,
                     event.frontierProof.cutoffOperation);
             }
-            EXPECT_EQ(UINT64_MAX, context->authoredRootStopFrame);
+            EXPECT_EQ(persistedSourceCutoff ? 32u : UINT64_MAX, context->authoredRootStopFrame);
             h.Render();
             for (std::uint32_t sample = 0; sample < kBlock; ++sample)
                 EXPECT_NEAR(rejectStop && sample >= 32 ? 0.25f : 0.0f, h.Sample(sample), 1e-6f);

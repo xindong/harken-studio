@@ -31,6 +31,7 @@ struct FrontierSourceExit {
     std::uint64_t fadeStartFrame = 0;
     std::uint64_t stopFrame = UINT64_MAX;
     bool fade = false;
+    bool stop = false;
     CurveLUT curve{};
     // Frozen before publication; later voices borrow this descriptor separately.
     std::span<FrontierSourceExitVoice* const> initialVoices{};

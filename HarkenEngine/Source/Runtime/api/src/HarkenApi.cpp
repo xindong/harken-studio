@@ -12907,10 +12907,11 @@ bool ObserveActiveArrivalMembers(
     return engine.armGroups.Capture(record.group, snapshot);
 }
 
-void CapturePlayablePlaybackEnd(harken::Engine& engine, std::uint32_t ledgerSlot) noexcept {
+void CapturePlayablePlaybackEnd(harken::Engine& engine, std::uint32_t ledgerSlot,
+    std::uint64_t observedAudioSequence = UINT64_MAX) noexcept {
     harken::MonitorVoicePlaybackEnd end{};
     const auto leaf = engine.ledger.CaptureMonitorPlaybackEnd(ledgerSlot, &end);
-    if (leaf == 0) return;
+    if (leaf == 0 || end.audioBlock > observedAudioSequence) return;
     const auto kind = end.kind == harken::SourceTerminalKind::Natural
         ? harken::PlayableTerminalKind::NaturalCompletion
         : end.kind == harken::SourceTerminalKind::Stop
@@ -12926,10 +12927,10 @@ void CapturePlayablePlaybackEnd(harken::Engine& engine, std::uint32_t ledgerSlot
         {kind, result, 0, 0}, end.cause);
 }
 
-void ObservePlayablePlayback(harken::Engine& engine) noexcept {
-    const auto observedAudioSequence = engine.mixer.BlocksRendered();
+void ObservePlayablePlayback(harken::Engine& engine, std::uint64_t observedAudioSequence = UINT64_MAX) noexcept {
+    if (observedAudioSequence == UINT64_MAX) observedAudioSequence = engine.mixer.BlocksRendered();
     for (std::uint32_t slot = 0, count = engine.ledger.ConstructedEntryCount(); slot < count; ++slot)
-        CapturePlayablePlaybackEnd(engine, slot);
+        CapturePlayablePlaybackEnd(engine, slot, observedAudioSequence);
     auto& events = engine.monitorPlaybackEvents;
     events.clear();
     for (std::uint32_t slot = 0, count = engine.playableInstances.HasPendingStartedObservations()
@@ -16756,6 +16757,62 @@ bool PrepareInheritedSourceExits(harken::Engine& engine, const harken::EnginePla
     return current == nullptr;
 }
 
+bool MusicSourceExitDue(harken::Engine& engine, const harken::EngineSourceExit& exit,
+    std::uint64_t observed) noexcept {
+    return exit.control.stop && !exit.cancellationAccepted &&
+        observed >= exit.control.stopFrame / engine.config.blockFrames +
+            (exit.control.stopFrame % engine.config.blockFrames != 0) &&
+        engine.decisions.ReadFrontierSliceDependency(exit.control.dependency) ==
+            harken::FrontierSliceDependencyStatus::Applied;
+}
+
+void ServiceDueMusicSourceExits(harken::Engine& engine, std::uint64_t observed) noexcept {
+    // Stop only the exact outgoing occurrence. Keep descriptors and child
+    // records stable here; their ordinary retirement pass owns reclamation.
+    const auto visit = [&](harken::EnginePlayableServiceRow& parent, auto& child) noexcept {
+        for (auto& exit : child.sourceExits) {
+            if (!MusicSourceExitDue(engine, *exit, observed)) continue;
+            const auto& identity = exit->control.source;
+            auto* source = engine.ResolvePlayableService({identity.serviceSlot, identity.serviceGeneration},
+                identity.child, identity.childEpoch);
+            if (source == nullptr) continue;
+            if (identity.parent != parent.ownerInstance || identity.parentEpoch != parent.ownerEpoch ||
+                !harken::Engine::SameSelectionServiceReference(child.service, PlayableServiceReference(*source)) ||
+                !harken::Engine::SameSelectionServiceReference(source->parentService, PlayableServiceReference(parent)) ||
+                source->invocation != parent.invocation || source->invocationGeneration != parent.invocationGeneration) {
+                engine.runtimeRecreateRequired = true;
+                continue;
+            }
+            const auto status = harken::StopPlayable(engine, source->rootInstance, exit->control.fade ? 0 : 5);
+            if (status == harken::PlayableControlStatus::Ok) exit->cancellationAccepted = true;
+            else if (status != harken::PlayableControlStatus::Backpressure)
+                engine.runtimeRecreateRequired = true;
+        }
+        return true;
+    };
+    for (std::uint32_t cursor = 0; auto* parent = engine.NextOccupiedPlayableService(&cursor);) {
+        if (parent->scheduleTerminalChild != nullptr) visit(*parent, *parent->scheduleTerminalChild);
+        if (parent->scheduleAggregate != nullptr)
+            parent->scheduleAggregate->VisitChildren([&](auto& child) { return visit(*parent, child); });
+        if (parent->scheduleVariableChildren != nullptr)
+            for (auto& child : *parent->scheduleVariableChildren) visit(*parent, child);
+    }
+}
+
+bool MusicSourceExitRetryPending(harken::Engine& engine, const harken::EnginePlayableServiceRow& row,
+    std::uint64_t observed) noexcept {
+    const auto* current = &row;
+    for (std::size_t depth = 0; current != nullptr && depth < engine.playableServices.size(); ++depth) {
+        harken::EngineScheduleAggregateChild* child = nullptr;
+        harken::EnginePlayableServiceRow* parent = nullptr;
+        if (!TryResolveScheduleAggregateChild(engine, *current, &child, &parent, nullptr) || child == nullptr) return false;
+        for (const auto& exit : child->sourceExits)
+            if (MusicSourceExitDue(engine, *exit, observed)) return true;
+        current = parent;
+    }
+    return false;
+}
+
 void ServiceSourceExits(harken::Engine& engine, harken::EngineScheduleAggregateChild& child) noexcept {
     const auto completed = engine.mixer.BlocksRendered();
     std::erase_if(child.sourceExits, [&](auto& exit) noexcept {
@@ -16782,7 +16839,8 @@ void ServiceSourceExits(harken::Engine& engine, harken::EngineScheduleAggregateC
 
 bool PrepareMusicSourceFade(harken::Engine& engine, const harken::EnginePlayableServiceRow& source,
     const harken::EnginePlayableServiceRow& controller, std::uint64_t start, std::uint64_t end,
-    const harken::CurveLUT& curve, std::unique_ptr<harken::EngineSourceExit>& out) noexcept {
+    const harken::CurveLUT& curve, bool fade, bool stop,
+    std::unique_ptr<harken::EngineSourceExit>& out) noexcept {
     try {
         auto exit = std::make_unique<harken::EngineSourceExit>();
         const auto& entry = controller.frontierLifetimeEntry;
@@ -16791,7 +16849,8 @@ bool PrepareMusicSourceFade(harken::Engine& engine, const harken::EnginePlayable
             entry.owner.invocation, entry.owner.invocationEpoch, source.identity.slot, source.identity.generation};
         exit->control.fadeStartFrame = start;
         exit->control.stopFrame = end;
-        exit->control.fade = true;
+        exit->control.fade = fade;
+        exit->control.stop = stop;
         exit->control.curve = curve;
         for (std::uint32_t index = 0; index < engine.sourceTerminals.Capacity(); ++index) {
             const auto* terminal = engine.sourceTerminals.At(index);
@@ -37964,21 +38023,15 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
         if (currentChild == nullptr || desiredChild == nullptr) {
             return VariableRetargetPrepareStatus::Fatal;
         }
-        if (row.Invocation().packLease.leaseToken != 0) {
-            const auto* transition = row.Invocation().packPlaybackView.ResolveTransition(program.containerStableId);
-            if (transition != nullptr && harken::ClassifyTransitionProgramV1(*transition) ==
-                    harken::TransitionProgramClassV1::Basic)
-                transitionRule = harken::ResolveTransitionRuleV1(*transition, currentChild->playable,
-                    desiredChild->playable);
-        } else {
-            transitionRule = ResolveBasicTransitionRule(world, program, currentChild->playable,
-                desiredChild->playable);
-        }
+        const auto* transition = row.Invocation().packLease.leaseToken != 0
+            ? row.Invocation().packPlaybackView.ResolveTransition(program.containerStableId)
+            : program.transitionProgramIndex < world.transitionCount
+                ? &world.transitions[program.transitionProgramIndex] : nullptr;
+        if (transition != nullptr && (harken::ClassifyTransitionProgramV1(*transition) ==
+                harken::TransitionProgramClassV1::Basic ||
+                harken::SupportsNativeMusicTransitionProgramV1(*transition, program)))
+            transitionRule = harken::ResolveTransitionRuleV1(*transition, currentChild->playable, desiredChild->playable);
         if (transitionRule == nullptr ||
-            (transitionRule->sourceExit !=
-                 harken::TransitionSourceExitV1::Immediate &&
-             transitionRule->sourceExit !=
-                 harken::TransitionSourceExitV1::NaturalEnd) ||
             transitionRule->targetEntry !=
                 harken::TransitionTargetEntryV1::FromEntryMarker) {
             return VariableRetargetPrepareStatus::Fatal;
@@ -37989,7 +38042,9 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
     // music completion. Resolve its exact service generation and parent link.
     harken::EnginePlayableServiceRow* musicSource = nullptr;
     std::unique_ptr<harken::EngineSourceExit> musicSourceFade;
-    if (transitionRule != nullptr && transitionRule->sourceExit == harken::TransitionSourceExitV1::NaturalEnd &&
+    const bool musicEarlyStop = transitionRule != nullptr &&
+        transitionRule->sourceExit > harken::TransitionSourceExitV1::NaturalEnd;
+    if (transitionRule != nullptr && transitionRule->sourceExit != harken::TransitionSourceExitV1::Immediate &&
         row.variableControlChildCount != 0) {
         const auto* child = FindDirectScheduleAggregateChild(row,
             row.variableControlChildInstances[0], row.variableControlChildEpochs[0]);
@@ -38005,6 +38060,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
                 source->scheduleAggregate->music != nullptr) musicSource = source;
         }
     }
+    if (musicEarlyStop && musicSource == nullptr) return VariableRetargetPrepareStatus::Fatal;
     if (musicSource != nullptr) {
         sourceMemberCount = 0;
     } else {
@@ -38083,10 +38139,9 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
     std::uint64_t audibleFrame = decisionFrame;
     std::uint64_t sourceStopFrame = 0;
     std::uint64_t targetStartFrame = decisionFrame;
-    const bool naturalEnd = (sourceMemberCount != 0 || musicSource != nullptr) && transitionRule != nullptr &&
-        transitionRule->sourceExit ==
-            harken::TransitionSourceExitV1::NaturalEnd;
-    if (naturalEnd) {
+    const bool sourceBoundary = (sourceMemberCount != 0 || musicSource != nullptr) && transitionRule != nullptr &&
+        (transitionRule->sourceExit == harken::TransitionSourceExitV1::NaturalEnd || musicEarlyStop);
+    if (sourceBoundary) {
         sourceStopFrame = 0;
         for (std::uint32_t index = 0; index < sourceMemberCount; ++index) {
             const std::size_t sourceSlot = sourceSlots[index];
@@ -38130,8 +38185,22 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
             std::uint64_t current = 0, floor = 0;
             if (!toElapsed(observedFrame, current) || !toElapsed(decisionFrame, floor))
                 return VariableRetargetPrepareStatus::Fatal;
+            auto kind = harken::MusicBoundaryKind::NaturalEnd;
+            if (musicEarlyStop) {
+                const auto segment = row.Invocation().packLease.leaseToken != 0
+                    ? FindSegmentSchedule(row.Invocation().packPlaybackView, musicSource->root)
+                    : FindSegmentSchedule(row.variableControlWorldUsesCurrentAuthority
+                        ? engine.variables.CurrentPlayableWorld() : row.VariableControlWorld(), musicSource->root);
+                if (segment == nullptr || !harken::NativeMusicTransitionSourceCompatibleV1(*transitionRule, *segment))
+                    return VariableRetargetPrepareStatus::Fatal;
+                kind = transitionRule->sourceExit == harken::TransitionSourceExitV1::NextBeat
+                    ? harken::MusicBoundaryKind::NextBeat : transitionRule->sourceExit == harken::TransitionSourceExitV1::NextBar
+                    ? harken::MusicBoundaryKind::NextBar : harken::MusicBoundaryKind::ExitCue;
+                if (sourceFadeFrames > UINT64_MAX - floor) return VariableRetargetPrepareStatus::Fatal;
+                floor += sourceFadeFrames;
+            }
             const auto boundary = harken::ResolveMusicPlaybackBoundary(music.timeline, music.clock, music.markers,
-                harken::MusicBoundaryKind::NaturalEnd, 0, current, floor);
+                kind, 0, current, floor);
             if (boundary.status != harken::MusicTimelineStatus::Ok)
                 return boundary.status == harken::MusicTimelineStatus::NoCandidate ||
                     boundary.status == harken::MusicTimelineStatus::Missed
@@ -38176,7 +38245,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
             return VariableRetargetPrepareStatus::Retry;
         const auto* desired = FindQueueChild(program, selected.childStableOrdinal);
         if (desired == nullptr || !ReserveQueueDecision(engine, row, &decision, &ticket, transition,
-                naturalEnd && audibleFrame < sourceStopFrame ? 2u : 1u, ticket) ||
+                sourceBoundary && audibleFrame < sourceStopFrame ? 2u : 1u, ticket) ||
             !PrepareNativeVariableScheduleRetarget(engine, row, program, *desired, selected.childStableOrdinal,
                 sourceMemberCount, targetStartFrame, decision, transitionRule != nullptr &&
                     transitionRule->targetEntry == harken::TransitionTargetEntryV1::FromEntryMarker, targetSchedule, native))
@@ -38236,10 +38305,10 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
         std::max(sourceStopFrame, targetFadeEndFrame);
     const std::uint32_t groupMemberCount =
         sourceMemberCount + targetSchedule.leafCount;
-    const bool naturalEndPrelude =
-        naturalEnd && audibleFrame < sourceStopFrame;
+    const bool sourceBoundaryPrelude =
+        sourceBoundary && audibleFrame < sourceStopFrame;
     const auto groupPreflight = [&]() {
-        if (!naturalEndPrelude) {
+        if (!sourceBoundaryPrelude) {
             return engine.timelinePool.PreflightPlan03GroupSlices(
                 audibleFrame, 1);
         }
@@ -38307,7 +38376,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
             exitingPreflightEvents[index][eventCount++].executeFrame =
                 audibleFrame;
         }
-        if (!naturalEndPrelude) {
+        if (!sourceBoundaryPrelude) {
             exitingPreflightEvents[index][eventCount++].executeFrame =
                 sourceStopFrame;
         }
@@ -38322,7 +38391,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
     std::array<harken::ScheduledEventInput, 2> frontierPreflightEvents{};
     std::uint32_t transactionCount = targetSchedule.leafCount + sourceMemberCount;
     if (row.frontierLifetimeEntry.Valid()) {
-        const std::uint32_t frontierCount = naturalEndPrelude ? 2u : 1u;
+        const std::uint32_t frontierCount = sourceBoundaryPrelude ? 2u : 1u;
         for (std::uint32_t index = 0; index < frontierCount; ++index) {
             frontierPreflightEvents[index].executeFrame = index == 0 ? audibleFrame : sourceStopFrame;
             auto& transaction = transitionTransactions[transactionCount];
@@ -38340,7 +38409,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
     }
 
     const auto sourceEventCount = sourceMemberCount *
-        (static_cast<std::uint32_t>(sourceFadeActive) + static_cast<std::uint32_t>(!naturalEndPrelude));
+        (static_cast<std::uint32_t>(sourceFadeActive) + static_cast<std::uint32_t>(!sourceBoundaryPrelude));
     const auto targetEventCount = targetSchedule.leafCount * (targetFadeActive ? 2u : 1u);
     std::array<harken::TimelineArmToken, harken::kMaxKnownScheduleLeaves>
         exitingArms{};
@@ -38452,7 +38521,7 @@ engine.runtimeRecreateRequired = true;
     if (!decision.Valid() &&
         !ReserveQueueDecision(
             engine, row, &decision, &ticket, transition,
-            naturalEndPrelude ? 2u : 1u, ticket)) {
+            sourceBoundaryPrelude ? 2u : 1u, ticket)) {
         rollbackBeforeInstall();
         return VariableRetargetPrepareStatus::Retry;
     }
@@ -38800,7 +38869,7 @@ engine.runtimeRecreateRequired = true;
             fadeEvent.armToken = arm;
             fadeEvent.authoredFadeOutCandidate = true;
         }
-        if (!naturalEndPrelude) {
+        if (!sourceBoundaryPrelude) {
             const std::uint32_t stopIndex = exitingEventCount++;
             auto& stop =
                 row.DiscreteRetargetStorage().payloads[stopIndex];
@@ -38889,7 +38958,7 @@ engine.runtimeRecreateRequired = true;
         return starts.PermanentFailure() ? VariableRetargetPrepareStatus::Fatal
                                          : VariableRetargetPrepareStatus::Retry;
     }
-    if (naturalEndPrelude) {
+    if (sourceBoundaryPrelude) {
         harken::Plan03GroupSliceInput completion = slice;
         completion.executeFrame = sourceStopFrame;
         completion.sliceIndex = 1;
@@ -38946,10 +39015,10 @@ engine.runtimeRecreateRequired = true;
         rollbackBeforeInstall();
         return VariableRetargetPrepareStatus::Retry;
     }
-    if (musicSource != nullptr && sourceFadeActive) {
+    if (musicSource != nullptr && (sourceFadeActive || musicEarlyStop)) {
         auto* child = FindDirectScheduleAggregateChild(row, musicSource->ownerInstance, musicSource->ownerEpoch);
         if (child == nullptr || !PrepareMusicSourceFade(engine, *musicSource, row, audibleFrame, sourceStopFrame,
-                row.TransitionSourceFadeCurve(), musicSourceFade)) {
+                row.TransitionSourceFadeCurve(), sourceFadeActive, musicEarlyStop, musicSourceFade)) {
             rollbackBeforeInstall();
             return VariableRetargetPrepareStatus::Retry;
         }
@@ -53087,6 +53156,7 @@ void ServicePlayableStarts(harken::Engine& engine,
                            std::uint64_t observedAudioSequence,
                            std::uint64_t* blockingFrame,
                            std::uint64_t* requiredPublicationFrame) noexcept {
+    ServiceDueMusicSourceExits(engine, observedAudioSequence);
     ServiceOrdinaryRetiringSources(engine);
     ObserveVariableControlMemberCompletion(engine, observedAudioSequence);
     const std::uint64_t blockFrames = engine.config.blockFrames;
@@ -53099,6 +53169,7 @@ void ServicePlayableStarts(harken::Engine& engine,
             queueSettlementPasses = 0;
         }
         if (row.phase == harken::EnginePlayableStartPhase::Free) continue;
+        if (MusicSourceExitRetryPending(engine, row, observedAudioSequence)) continue;
         if (row.HasFeatureArrays() && row.QueuePayload().queueRetiringChain != nullptr)
             (void)ServiceRetiringQueueChain(engine, row, observedAudioSequence);
         if (row.HasFeatureArrays() && row.QueuePayload().queueLookaheadRollbackOccurrence.generation != 0)
@@ -69011,7 +69082,9 @@ bool DrainCancelledActionDeferredClaims(Engine& engine) noexcept {
 } // namespace
 
 void TimelineServiceCoordinator::Service() {
-    ObservePlayablePlayback(engine_);
+    const auto exitObservation = engine_.mixer.BlocksRendered();
+    ServiceDueMusicSourceExits(engine_, exitObservation);
+    ObservePlayablePlayback(engine_, exitObservation);
     if (!ServiceRetainedImmediateRetryCleanup(engine_)) return;
     const std::uint64_t observedAudioSequence = engine_.mixer.BlocksRendered();
     const std::uint64_t blockFrames = engine_.config.blockFrames;
@@ -102547,7 +102620,9 @@ VnResult Vn_Update(void) {
     }
     engine->queueInstances.ApplyDue(dueFrame);
     engine->meterDetectors.Drain(engine->meterRing);
-    ObservePlayablePlayback(*engine);
+    const auto exitObservation = engine->mixer.BlocksRendered();
+    ServiceDueMusicSourceExits(*engine, exitObservation);
+    ObservePlayablePlayback(*engine, exitObservation);
     /* Drain completion notifications; the user callback runs here, on the pumping
      * thread, never on the audio thread. Audio-thread notifications carry the
      * internal render-slot handle; before the caller sees one, the owning

@@ -1067,6 +1067,14 @@ std::uint64_t ComputeSegmentScheduleFingerprintV1(
     const SegmentScheduleProgramViewV1& row) noexcept;
 std::uint64_t ComputeSegmentScheduleFingerprintV2(
     const SegmentScheduleProgramViewV1& row) noexcept;
+// Portable fixed tempo/meter compatibility; occurrence and transport are separate.
+// Returns zero for an invalid or non-musical clock.
+std::uint64_t ComputeSegmentClockFingerprintV1(
+    const SegmentScheduleProgramViewV1& row) noexcept;
+bool SupportsNativeMusicTransitionProgramV1(const TransitionProgramViewV1& program,
+    const ContainerProgramViewV3& owner) noexcept;
+bool NativeMusicTransitionSourceCompatibleV1(const TransitionRuleViewV1& rule,
+    const SegmentScheduleProgramViewV1& source) noexcept;
 std::uint64_t ComputeSegmentScheduleFingerprintV1(
     const SegmentScheduleProgramViewV1& row, std::uint32_t bodyVintage) noexcept;
 std::uint64_t ComputeCurrentWorldFingerprintV2(
@@ -1089,6 +1097,10 @@ std::uint64_t ComputeCurrentWorldFingerprintV7(
     const ContainerWorldInstallViewV1& world) noexcept;
 TransitionProgramClassV1 ClassifyTransitionProgramV1(
     const TransitionProgramViewV1& program) noexcept;
+// Batch consumers validate program shape once before resolving endpoint pairs.
+const TransitionRuleViewV1* ResolveValidatedTransitionRuleV1(
+    const TransitionProgramViewV1& program,
+    const PlayableRefV1& source, const PlayableRefV1& target) noexcept;
 const TransitionRuleViewV1* ResolveTransitionRuleV1(
     const TransitionProgramViewV1& program,
     const PlayableRefV1& source,

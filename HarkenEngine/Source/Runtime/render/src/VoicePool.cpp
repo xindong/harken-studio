@@ -995,6 +995,8 @@ void VoicePool::FinalizeTimelineQuantum(std::uint64_t quantumIndex) noexcept {
         assert(slot.timelineProvenMask == 0);
         auto& span = slot.render.timelineEvents;
         if (span.quantumIndex != quantumIndex) continue;
+        const auto existingCutoff = SelectAuthoredRootStop(span, m_blockFrames,
+            slot.render.authoredRootStopFrame, slot.render.authoredRootStopControl.Stop().authoredStopOperation);
         auto** link = &slot.render.sourceExits;
         while (*link != nullptr) {
             auto& binding = **link;
@@ -1009,6 +1011,15 @@ void VoicePool::FinalizeTimelineQuantum(std::uint64_t quantumIndex) noexcept {
                 continue;
             }
             binding.active = status == FrontierSliceDependencyStatus::Applied;
+            if (binding.active && source.stop && source.stopFrame < existingCutoff.frame &&
+                source.stopFrame < slot.render.authoredRootStopFrame) {
+                // The original transition dependency authorizes this cutoff.
+                // It is not an authored root-stop operation or a new claim.
+                slot.render.authoredRootStopFrame = source.stopFrame;
+                slot.render.authoredRootStopControl = VoiceTimelineEvent{TimelineEventKind::Stop};
+                slot.render.authoredRootStopControl.authoredRootStop = true;
+                slot.render.authoredRootStopControl.authoredFadeOutCandidate = source.fade;
+            }
             link = &binding.next;
         }
         // Fixed Page and lane slots share a stable sort without allocating.

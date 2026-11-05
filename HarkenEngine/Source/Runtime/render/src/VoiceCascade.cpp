@@ -1509,17 +1509,31 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
             }
         }
     }
+    // A source-exit cutoff is frozen after all Page/lane claims and has no
+    // span event. Adopt an in-block persistent Stop after earlier controls.
+    const auto blockStart = ctx.timelineEvents.quantumIndex * blockFrames;
+    if (!ctx.authoredRootStopApplied && ctx.authoredRootStopEvent == UINT32_MAX &&
+        ctx.authoredRootStopFrame < blockStart + blockFrames) {
+        auto stop = ctx.authoredRootStopControl;
+        stop.offset = static_cast<std::uint16_t>(ctx.authoredRootStopFrame > blockStart
+            ? ctx.authoredRootStopFrame - blockStart : 0);
+        ApplyTimelineControlEvent(ctx, stop, blockFrames);
+    }
     const VoiceRenderContext::TimelineEnvelopeState& stopFadeOut =
         ctx.timelineEnvelopes[1];
     const std::uint64_t timelineStopFrame =
         ctx.authoredRootStopApplied ? ctx.timelineStopFrame :
             ctx.timelineEvents.quantumIndex * blockFrames + ctx.timelineStopOffset;
+    bool sourceExitCovered = false;
+    for (auto* binding = ctx.sourceExits; binding != nullptr; binding = binding->next)
+        sourceExitCovered = sourceExitCovered || (binding->active && binding->source->stop &&
+            binding->source->fade && binding->source->stopFrame == timelineStopFrame);
     const bool authoredStopCovered =
         ctx.timelineStopPending && ctx.timelineStopAuthored &&
-        ctx.timelineFadeOutCoveredSample && stopFadeOut.fadeOut &&
-        stopFadeOut.endFrame == timelineStopFrame;
+        (sourceExitCovered || (ctx.timelineFadeOutCoveredSample && stopFadeOut.fadeOut &&
+        stopFadeOut.endFrame == timelineStopFrame));
     const bool startFallbackStop =
-        ctx.timelineStopPending && !authoredStopCovered;
+        ctx.timelineStopPending && !authoredStopCovered && !ctx.fading;
     if (startFallbackStop) {
         ctx.timelineFallbackStopActive = true;
         ctx.timelineFallbackStopFrame = timelineStopFrame;

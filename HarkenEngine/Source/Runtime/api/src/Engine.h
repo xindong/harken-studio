@@ -2057,6 +2057,7 @@ struct EngineSourceExit {
     FrontierSourceExit control{};
     DecisionFuturePin lifetime{};
     Plan03GroupReaderPin reader{};
+    bool cancellationAccepted = false;
     std::vector<std::unique_ptr<Voice>> voices;
     std::vector<FrontierSourceExitVoice*> initialVoices;
 };

@@ -1907,6 +1907,53 @@ TransitionProgramClassV1 ClassifyTransitionProgramV1(
     return ClassifyTransitionProgramShape(program);
 }
 
+bool SupportsNativeMusicTransitionProgramV1(const TransitionProgramViewV1& program,
+    const ContainerProgramViewV3& owner) noexcept {
+    if (ClassifyTransitionProgramV1(program) == TransitionProgramClassV1::Invalid ||
+        owner.mode != ContainerModeV1::VariableControl || owner.discreteTiming != 1 ||
+        owner.discreteRowCount == 0 || program.ownerContainerStableId != owner.containerStableId ||
+        program.maxContainerDescent != 0 || program.maxOwnerAscent != 0 || program.downwardPathStepCount != 0)
+        return false;
+    for (std::uint32_t index = 0; index < program.ruleCount; ++index) {
+        const auto& rule = program.rules[index];
+        if (rule.bridgePresent || rule.targetEntry != TransitionTargetEntryV1::FromEntryMarker ||
+            rule.sourceExit == TransitionSourceExitV1::NextMarker) return false;
+    }
+    return true;
+}
+
+std::uint64_t ComputeSegmentClockFingerprintV1(const SegmentScheduleProgramViewV1& row) noexcept {
+    constexpr std::uint32_t ppq = 960;
+    if (row.timeKind != ScheduleTimeKindV1::MusicalTicks || row.microsPerQuarter <= 0 ||
+        row.microsPerQuarter > INT64_C(60000000000) ||
+        row.meterNumerator == 0 || row.meterDenominator == 0 ||
+        (ppq * 4u) % row.meterDenominator != 0 || row.meterNumerator > INT32_MAX ||
+        row.meterDenominator > INT32_MAX) return 0;
+    Fnv64 hash("HARKEN-SEGMENT-FIXED-CLOCK-V1");
+    hash.U32(ppq);
+    hash.U32(static_cast<std::uint32_t>(row.timeKind));
+    hash.I64(row.microsPerQuarter);
+    hash.U32(row.meterNumerator);
+    hash.U32(row.meterDenominator);
+    return hash.Finish();
+}
+
+bool NativeMusicTransitionSourceCompatibleV1(const TransitionRuleViewV1& rule,
+    const SegmentScheduleProgramViewV1& source) noexcept {
+    if (source.bounds.nominalEnd <= source.bounds.nominalStart ||
+        source.entryMarker.stableMarkerId == VnObjectId{}) return false;
+    if (rule.sourceExit == TransitionSourceExitV1::NextBeat || rule.sourceExit == TransitionSourceExitV1::NextBar)
+        return rule.requiredClockFingerprint != 0 &&
+            rule.requiredClockFingerprint == ComputeSegmentClockFingerprintV1(source);
+    if (rule.sourceExit != TransitionSourceExitV1::ExitMarker) return false;
+    for (std::uint32_t index = 0; index < source.markerCount; ++index) {
+        const auto& marker = source.markers[index];
+        if (marker.markerKind == 1 && marker.stableMarkerId == rule.requiredMarkerStableId &&
+            marker.position == source.bounds.nominalEnd) return true;
+    }
+    return false;
+}
+
 const TransitionRuleViewV1* ResolveTransitionRuleV1(
     const TransitionProgramViewV1& program,
     const PlayableRefV1& source,
@@ -1915,6 +1962,11 @@ const TransitionRuleViewV1* ResolveTransitionRuleV1(
         TransitionProgramClassV1::Invalid) {
         return nullptr;
     }
+    return ResolveValidatedTransitionRuleV1(program, source, target);
+}
+
+const TransitionRuleViewV1* ResolveValidatedTransitionRuleV1(const TransitionProgramViewV1& program,
+    const PlayableRefV1& source, const PlayableRefV1& target) noexcept {
     const TransitionRuleViewV1* best = nullptr;
     std::uint32_t bestSpecificity = 0;
     for (std::uint32_t i = 0; i < program.ruleCount; ++i) {
@@ -3673,9 +3725,15 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                                transition.ownerContainerStableId)) {
                 return WorldInstallStatus::InvalidWorld;
             }
-            advancedTransitionRequested =
-                advancedTransitionRequested ||
-                classification == TransitionProgramClassV1::Advanced;
+            if (classification == TransitionProgramClassV1::Advanced) {
+                bool supported = false;
+                if constexpr (std::is_same_v<WorldView, ContainerWorldInstallViewV1>) {
+                    for (std::uint32_t owner = 0; owner < world.containerCount; ++owner)
+                        if (world.containers[owner].transitionProgramIndex == i)
+                            supported = SupportsNativeMusicTransitionProgramV1(transition, world.containers[owner]);
+                }
+                advancedTransitionRequested = advancedTransitionRequested || !supported;
+            }
             transitionRuleCount += transition.ruleCount;
             if (transitionRuleCount > world.capacity.maxTransitionRules) {
                 return WorldInstallStatus::Capacity;
@@ -3727,6 +3785,31 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                 }
             }
             if (!IsPartitionLocal(scope)) {
+                if constexpr (std::is_same_v<WorldView, ContainerWorldInstallViewV1>) {
+                    if (row.childCount > world.capacity.maxChildrenPerContainer ||
+                        row.discreteRowCount > world.capacity.maxDiscreteRows) return WorldInstallStatus::Capacity;
+                    const auto isDiscrete = [&](const auto& child) noexcept {
+                        for (std::uint32_t index = 0; index < row.discreteRowCount; ++index)
+                            if (row.discreteRows[index].childStableOrdinal == child.stableChildOrdinal) return true;
+                        return false;
+                    };
+                    const bool advanced = ClassifyTransitionProgramV1(transition) == TransitionProgramClassV1::Advanced;
+                    for (std::uint32_t sourceIndex = 0; advanced && sourceIndex < row.childCount; ++sourceIndex)
+                    for (std::uint32_t targetIndex = 0; targetIndex < row.childCount; ++targetIndex) {
+                        if (sourceIndex == targetIndex || !isDiscrete(row.children[sourceIndex]) ||
+                            !isDiscrete(row.children[targetIndex])) continue;
+                        const auto* source = &row.children[sourceIndex].playable;
+                        const auto* target = &row.children[targetIndex].playable;
+                        const auto* rule = ResolveValidatedTransitionRuleV1(transition, *source, *target);
+                        if (rule == nullptr || rule->sourceExit <= TransitionSourceExitV1::NaturalEnd) continue;
+                        bool matched = false;
+                        if (source->kind == PlayableKindV1::Segment && entryScheduling)
+                            for (std::uint32_t segment = 0; segment < world.segmentScheduleCount; ++segment)
+                                if (SameRef(world.segmentSchedules[segment].rootDefinition, *source))
+                                    matched = NativeMusicTransitionSourceCompatibleV1(*rule, world.segmentSchedules[segment]);
+                        transitionConsumerUnavailable = transitionConsumerUnavailable || !matched;
+                    }
+                }
                 for (std::uint32_t c = 0; c < row.childCount; ++c) {
                     const auto& child = row.children[c];
                     transitionConsumerUnavailable =
