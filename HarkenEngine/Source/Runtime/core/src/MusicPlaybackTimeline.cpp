@@ -198,6 +198,25 @@ struct Mapping {
     }
 };
 
+// Sum floor((a*i+b)/m), with n <= 2^32 and reduced a,b < 2*m.
+// Euclidean reduction keeps both the result and intermediate products in uint64.
+std::uint64_t FloorSum(std::uint64_t n, std::uint64_t m, std::uint64_t a, std::uint64_t b) noexcept {
+    std::uint64_t result = 0;
+    for (;;) {
+        if (a >= m) {
+            const auto pairs = n % 2 == 0 ? (n / 2) * (n - 1) : n * ((n - 1) / 2);
+            result += pairs * (a / m);
+            a %= m;
+        }
+        if (b >= m) { result += n * (b / m); b %= m; }
+        const auto top = a * n + b;
+        if (top < m) return result;
+        n = top / m;
+        b = top % m;
+        std::swap(m, a);
+    }
+}
+
 } // namespace
 
 MusicTimelineStatus MusicPlaybackFrame(const MusicPlaybackTimeline& timeline,
@@ -206,6 +225,49 @@ MusicTimelineStatus MusicPlaybackFrame(const MusicPlaybackTimeline& timeline,
     if (elapsedFrames == nullptr) return MusicTimelineStatus::Invalid;
     *elapsedFrames = 0;
     return Mapping(timeline, clock).Frame(position, iteration, *elapsedFrames);
+}
+
+MusicTimelineStatus FindMusicPlaybackClipIteration(const MusicPlaybackTimeline& timeline,
+    const ClockKernel& clock, std::int64_t clipStart, std::int64_t clipEnd,
+    std::uint32_t first, std::uint32_t last, std::uint64_t* iteration) noexcept {
+    if (iteration == nullptr || first > last || clipEnd <= clipStart ||
+        (timeline.playCount != 0 && last >= timeline.playCount)) return MusicTimelineStatus::Invalid;
+    const Mapping mapping(timeline, clock);
+    if (mapping.status != MusicTimelineStatus::Ok) return mapping.status;
+    std::uint64_t checked = 0;
+    auto status = mapping.Frame(clipStart, first, checked);
+    if (status != MusicTimelineStatus::Ok) return status;
+    const auto validate = [&](std::uint64_t candidate) noexcept {
+        std::uint64_t beginFrame = 0, endFrame = 0;
+        auto valid = mapping.Frame(clipStart, candidate, beginFrame);
+        if (valid != MusicTimelineStatus::Ok) return valid;
+        valid = mapping.Frame(clipEnd, candidate, endFrame);
+        if (valid != MusicTimelineStatus::Ok) return valid;
+        if (endFrame <= beginFrame) return MusicTimelineStatus::Invalid;
+        *iteration = candidate;
+        return MusicTimelineStatus::Ok;
+    };
+    *iteration = first;
+    if (timeline.timeType == SegmentTimeType::Musical) return validate(first);
+    constexpr std::uint64_t modulus = 1000000000u;
+    const auto rate = static_cast<std::uint64_t>(clock.SampleRateHz());
+    const auto width = static_cast<std::uint64_t>(clipEnd) - static_cast<std::uint64_t>(clipStart);
+    if (rate >= modulus || width >= (modulus + rate - 1u) / rate) return validate(first);
+    const auto nativePhase = clipStart % static_cast<std::int64_t>(modulus);
+    const auto phase = static_cast<std::uint64_t>(nativePhase < 0 ? nativePhase + static_cast<std::int64_t>(modulus) : nativePhase);
+    const auto step = (static_cast<std::uint64_t>(mapping.span) % modulus) * rate % modulus;
+    const auto origin = (phase * rate % modulus + (static_cast<std::uint64_t>(first) % modulus) * step % modulus) % modulus;
+    const auto scaledWidth = width * rate;
+    const auto count = [&](std::uint64_t n) noexcept {
+        return FloorSum(n, modulus, step, origin + scaledWidth) - FloorSum(n, modulus, step, origin);
+    };
+    std::uint64_t lo = 1, hi = static_cast<std::uint64_t>(last) - first + 1u;
+    if (count(hi) == 0) return MusicTimelineStatus::NoCandidate;
+    while (lo < hi) {
+        const auto mid = lo + (hi - lo) / 2;
+        if (count(mid) != 0) hi = mid; else lo = mid + 1u;
+    }
+    return validate(static_cast<std::uint64_t>(first) + lo - 1u);
 }
 
 MusicPlaybackPosition ResolveMusicPlaybackPosition(const MusicPlaybackTimeline& timeline,

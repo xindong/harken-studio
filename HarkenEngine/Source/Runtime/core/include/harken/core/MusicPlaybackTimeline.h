@@ -57,6 +57,12 @@ MusicTimelineStatus MusicPlaybackFrame(const MusicPlaybackTimeline& timeline,
     const ClockKernel& clock, std::int64_t position, std::uint64_t iteration,
     std::uint64_t* elapsedFrames) noexcept;
 
+// Find the first repeated clip with nonzero PCM width without visiting empty
+// rounded passes. The range uses the occurrence's existing 32-bit iteration domain.
+MusicTimelineStatus FindMusicPlaybackClipIteration(const MusicPlaybackTimeline& timeline,
+    const ClockKernel& clock, std::int64_t clipStart, std::int64_t clipEnd,
+    std::uint32_t first, std::uint32_t last, std::uint64_t* iteration) noexcept;
+
 // A clipped source may begin before the occurrence's playback origin. Measure
 // both native endpoints on the same unfolded pass before subtracting frames.
 MusicTimelineStatus MusicPlaybackFrameDistance(const MusicPlaybackTimeline& timeline,

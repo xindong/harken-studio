@@ -17594,13 +17594,21 @@ TEST(PlayableStart, AbsoluteClipDeadlineOverflowRefusesAtomically) {
 }
 
 TEST(PlayableStart, MusicSegmentHonorsLoopCountAndReclaimsNaturalStoppedOrFailedPlayback) {
-    for (const auto scenario : {std::pair{1u, false}, std::pair{3u, false},
-                               std::pair{0u, false}, std::pair{3u, true}})
+    for (const auto updateCadence : {1u, 2u, 3u})
+    for (unsigned updatePhase = 0; updatePhase < updateCadence; ++updatePhase)
+    for (const auto scenario : {std::pair{1u, 0u}, std::pair{3u, 0u},
+                               std::pair{0u, 0u}, std::pair{3u, 1u}, std::pair{3u, 2u},
+                               std::pair{0u, 3u}, std::pair{3u, 4u}})
     for (const auto mediaFrames : {200u, 1600u})
     for (const auto workers : {0u, 2u}) {
-        const auto [playCount, failPreparation] = scenario;
+        const auto [playCount, failureMode] = scenario;
+        const bool failPreparation = failureMode == 1 || failureMode == 2;
+        if (failureMode >= 3 && mediaFrames != 1600) continue;
+        if (updateCadence != 1 && (failPreparation || mediaFrames != 1600)) continue;
+        SCOPED_TRACE(updateCadence);
+        SCOPED_TRACE(updatePhase);
         SCOPED_TRACE(playCount);
-        SCOPED_TRACE(failPreparation);
+        SCOPED_TRACE(failureMode);
         SCOPED_TRACE(mediaFrames);
         SCOPED_TRACE(workers);
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
@@ -17623,10 +17631,12 @@ TEST(PlayableStart, MusicSegmentHonorsLoopCountAndReclaimsNaturalStoppedOrFailed
             harken::ComputePlayablePropertyFingerprintV1(image.properties[2]);
         image.segment.rootDefinition.expectedProgramSemanticFingerprint =
             image.properties[2].programSemanticFingerprint;
-        image.segment.bounds.contentEnd = 64;
+        image.segment.bounds.contentStart = failureMode == 4 ? 48 : 0;
+        image.segment.bounds.contentEnd = failureMode == 3 ? 16 : 64;
         image.segment.bounds.nominalStart = 16;
         image.segment.bounds.nominalEnd = 48;
-        image.placement.authoredDuration = 64;
+        image.placement.authoredDuration = failureMode >= 3 ? 16 : 64;
+        if (failureMode == 4) image.placement.authoredStart = 48;
         image.track.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(image.track);
         image.trackRef.trackScheduleSemanticFingerprint = image.track.scheduleSemanticFingerprint;
         image.segment.entryMarker = {harkentest::ObjectId(10002), 16};
@@ -17664,6 +17674,15 @@ TEST(PlayableStart, MusicSegmentHonorsLoopCountAndReclaimsNaturalStoppedOrFailed
         const auto row = std::find_if(engine->playableServices.begin(), engine->playableServices.end(),
             [&](const auto& candidate) { return candidate.rootInstance == started.instance; });
         ASSERT_NE(engine->playableServices.end(), row);
+        bool expiredDuringPreparation = false;
+        if (failureMode == 2) {
+            engine->actionAdmissionRecheckContextForTest = &expiredDuringPreparation;
+            engine->actionAdmissionRecheckHookForTest = [](harken::Engine& current, void* context) noexcept {
+                *static_cast<bool*>(context) = true;
+                current.actionAdmissionRecheckHookForTest = nullptr;
+                current.nullBackend.Pump(8);
+            };
+        }
         const auto start = row->startFrame;
         const auto endOffset = playCount == 0 ? UINT64_MAX : 800u + 800u * playCount;
         const unsigned stopBlock = 512;
@@ -17672,13 +17691,14 @@ TEST(PlayableStart, MusicSegmentHonorsLoopCountAndReclaimsNaturalStoppedOrFailed
         for (unsigned block = 0; block < totalBlocks; ++block) {
             if (playCount == 0 && block == stopBlock)
                 ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(*engine, started.instance, 0));
-            if (failPreparation)
+            if (failureMode == 1)
                 harken::detail::ArmLogicAllocFaultForTests(1,
                     harken::detail::LogicAllocSite::ActionPlayContainerStorage);
-            const auto update = Vn_Update();
+            const auto update = block % updateCadence == updatePhase ? Vn_Update() : VN_OK;
             harken::detail::DisarmLogicAllocFaultForTests();
             ASSERT_EQ(VN_OK, update) << OccupancyDump(*engine);
             harkentest::monitor::CollectIdentityEvents(capture, records);
+            if (failureMode == 3 && block == 100) engine->nullBackend.Pump(10000);
             const auto before = engine->mixer.BlocksRendered();
             if (!failPreparation && (playCount == 0 ? block < stopBlock : before * 64 < start + endOffset))
                 ASSERT_TRUE(engine->playableInstances.Classify(started.instance).live);
@@ -17693,6 +17713,8 @@ TEST(PlayableStart, MusicSegmentHonorsLoopCountAndReclaimsNaturalStoppedOrFailed
                 const bool stopped = (playCount == 0 && block >= stopBlock) ||
                     (failPreparation && block >= totalBlocks - 32);
                 const float expected = stopped || offset == UINT64_MAX ? 0.0f
+                    : failureMode == 3 ? (offset < 400 ? 0.1f : 0.0f)
+                    : failureMode == 4 ? (offset >= endOffset - 400 && offset < endOffset ? 0.1f : 0.0f)
                     : mediaFrames == 200 ? (offset < 200 ? 0.1f : 0.0f)
                     : offset < 400 ? 0.1f
                     : playCount == 0 || offset < endOffset - 400 ? 0.2f
@@ -17703,8 +17725,9 @@ TEST(PlayableStart, MusicSegmentHonorsLoopCountAndReclaimsNaturalStoppedOrFailed
                 if (output[2 * sample] != 0.0f) ++audibleFrames;
             }
         }
+        if (failureMode == 2) EXPECT_TRUE(expiredDuringPreparation);
         if (!failPreparation)
-            EXPECT_EQ(mediaFrames == 200 ? 200u
+            EXPECT_EQ(failureMode >= 3 ? 400u : mediaFrames == 200 ? 200u
                 : playCount == 0 ? stopBlock * 64u - start : endOffset, audibleFrames);
         EXPECT_FALSE(engine->playableInstances.Classify(started.instance).live);
         EXPECT_EQ(0u, engine->playableInstances.LiveCount());
@@ -18125,21 +18148,23 @@ TEST(PlayableStart, MusicSegmentCropsVariableControlSelectedSourcesAndPreservesW
 
 TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
     for (const bool pack : {false, true})
-    for (const auto mode : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u, 17u, 18u, 19u, 20u, 21u, 22u, 23u, 24u})
+    for (const auto mode : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u, 17u, 18u, 19u, 20u, 21u, 22u, 23u, 24u, 25u, 26u, 27u, 28u, 29u, 30u})
     for (const auto count : {1u, 3u, 0u})
     for (const auto workers : {0u, 2u}) {
-        if (pack && mode != 0 && mode != 1 && mode != 4 && mode != 15 && mode != 16 && mode != 18 && mode != 19 && mode != 20 && mode != 21 && mode != 23 && mode != 24) continue;
+        if (pack && mode != 0 && mode != 1 && mode != 4 && mode != 15 && mode != 16 && mode != 18 && mode != 19 && mode != 20 && mode != 21 && mode != 23 && mode != 24 && mode < 25) continue;
         SCOPED_TRACE(pack);
         if (mode < 15 && (mode == 4) != (count == 0)) continue;
         if (mode == 24 && count != 1) continue;
-        const bool early = mode >= 15;
+        if ((mode == 25 || mode == 26 || mode == 29) && count == 1) continue;
+        const bool immediate = mode >= 25;
+        const bool early = mode >= 15 && !immediate;
         const std::uint64_t introFrames = mode == 22 ? 320u : 400u;
         const bool musicSource = mode != 0;
         const bool silenceBeforeOut = mode == 2 || mode == 9;
         const bool cancelled = mode == 3 || mode == 7 || mode == 17;
         const bool nativeTarget = mode == 5 || mode == 8 || mode == 23;
-        const bool musicFade = (mode >= 6 && mode < 15) || mode == 16 || mode == 17 || mode == 19 || mode == 22;
-        const auto fadeFrames = !musicFade ? 0u : early ? 128u : count == 1 ? 640u : mode == 10 ? 512u : 2400u;
+        const bool musicFade = (mode >= 6 && mode < 15) || mode == 16 || mode == 17 || mode == 19 || mode == 22 || mode == 26 || mode == 28;
+        const auto fadeFrames = !musicFade ? 0u : early || immediate ? 128u : count == 1 ? 640u : mode == 10 ? 512u : 2400u;
         SCOPED_TRACE(mode);
         SCOPED_TRACE(count);
         SCOPED_TRACE(workers);
@@ -18222,22 +18247,23 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
         harken::TransitionProgramViewV1 transition{};
         transition.ownerContainerStableId = control.container.containerStableId;
         std::array<harken::TransitionRuleViewV1, 2> musicRules{rule, rule};
-        if (early) {
+        if (early || immediate) {
             musicRules[0].sourceExit = harken::TransitionSourceExitV1::Immediate;
             musicRules[0].sourceFade = {};
             musicRules[1].stableRuleOrdinal = 2;
             musicRules[1].authoredStableOrder = 1;
             musicRules[1].sourceAny = 0;
             musicRules[1].source = target.Root();
-            musicRules[1].sourceExit = mode == 18 || mode == 20 ? harken::TransitionSourceExitV1::NextBeat
+            musicRules[1].sourceExit = immediate ? harken::TransitionSourceExitV1::Immediate : mode == 18 || mode == 20 ? harken::TransitionSourceExitV1::NextBeat
                 : mode == 19 ? harken::TransitionSourceExitV1::NextBar : harken::TransitionSourceExitV1::ExitMarker;
-            if (mode >= 18 && mode <= 20) musicRules[1].requiredClockFingerprint = harken::ComputeSegmentClockFingerprintV1(target.segment);
+            if (immediate) {}
+            else if (mode >= 18 && mode <= 20) musicRules[1].requiredClockFingerprint = harken::ComputeSegmentClockFingerprintV1(target.segment);
             else musicRules[1].requiredMarkerStableId = target.marker.stableMarkerId;
             if (mode == 20) ++musicRules[1].requiredClockFingerprint;
             if (mode == 21) musicRules[1].requiredMarkerStableId = target.segment.entryMarker.stableMarkerId;
         }
         transition.rules = musicRules.data();
-        transition.ruleCount = early ? 2 : 1;
+        transition.ruleCount = early || immediate ? 2 : 1;
         transition.defaultRuleIndex = 0;
         const harken::VariableDefinitionV1 variable = {
             harkentest::ObjectId(41), harken::VariableKindV1::Step, 0.0f, 8.0f, 3.0f};
@@ -18271,6 +18297,13 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
         install.trackScheduleCount = 1;
         install.segmentSchedules = &target.segment;
         install.segmentScheduleCount = 1;
+        if (mode == 29 || mode == 30) {
+            control.container.transitionProgramIndex = UINT32_MAX;
+            control.container.curveCount = 0;
+            control.container.curves = nullptr;
+            install.transitions = nullptr;
+            install.transitionCount = 0;
+        }
         install.sourceBodyVintage = harken::kCurrentWorldBodyVintageV19;
         harken::ActionStepProgramViewV1 packStep{};
         harken::ActionProgramViewV1 packAction{};
@@ -18371,7 +18404,7 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
             if (terminal->occupied) { sourceTerminal = {index, terminal->generation}; break; }
         }
         bool checkedBoundaryTerminal = false;
-        for (unsigned block = 0; block < (early ? 4u : musicSource && count != 1 && (!musicFade || mode == 10) ? 32u : musicFade ? 4u : 12u); ++block) {
+        for (unsigned block = 0; block < (immediate ? (mode == 27 || mode == 28 || mode == 30 ? 4u : 32u) : early ? 4u : musicSource && count != 1 && (!musicFade || mode == 10) ? 32u : musicFade ? 4u : 12u); ++block) {
             ASSERT_EQ(VN_OK, Vn_Update());
             engine->nullBackend.Pump(1);
         }
@@ -18395,11 +18428,11 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
             }
             if (targetStart == UINT64_MAX) engine->nullBackend.Pump(1);
         }
-        if (count == 0 && !early) EXPECT_EQ(UINT64_MAX, targetStart);
+        if (count == 0 && !early && !immediate) EXPECT_EQ(UINT64_MAX, targetStart);
         else ASSERT_NE(UINT64_MAX, targetStart) << OccupancyDump(*engine);
         const auto bodyFrames = count == 0 ? UINT64_MAX - (2u * introFrames) : count * (silenceBeforeOut ? (3u * introFrames) : (2u * introFrames));
         if (early) EXPECT_EQ(originalStart + (mode == 18 ? 775u : mode == 19 ? 1150u : (3u * introFrames)), targetStart);
-        else if (musicSource && count != 0) EXPECT_EQ(originalStart + (silenceBeforeOut ? introFrames : (2u * introFrames)) + bodyFrames, targetStart);
+        else if (!immediate && musicSource && count != 0) EXPECT_EQ(originalStart + (silenceBeforeOut ? introFrames : (2u * introFrames)) + bodyFrames, targetStart);
         if (cancelled) {
             ASSERT_LT(engine->mixer.BlocksRendered() * 64u + 256u, targetStart - fadeFrames);
             ASSERT_EQ(VN_OK, Vn_SetValue(variable.variableId, 3.0f));
@@ -18466,9 +18499,14 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
                         : sourceAge < (2u * introFrames) + bodyFrames && !silenceBeforeOut ? 0.3f : 0.0f)
                     : frame < targetStart ? samples[sourceAge]
                         : age < 64u ? samples[sourceAge] * (1.0f - static_cast<float>(age) / 63.0f) : 0.0f;
-                if (musicFade && !cancelled && frame >= targetStart - fadeFrames) {
-                    const auto done = frame - (targetStart - fadeFrames);
+                const auto fadeStart = immediate ? targetStart : targetStart - fadeFrames;
+                if (musicFade && !cancelled && frame >= fadeStart) {
+                    const auto done = frame - fadeStart;
                     source *= done >= fadeFrames - 1u ? 0.0f : 1.0f - static_cast<float>(done) / static_cast<float>(fadeFrames - 1u);
+                }
+                if (immediate && frame >= targetStart + fadeFrames) {
+                    const auto elapsed = frame - targetStart - fadeFrames;
+                    source *= musicFade || elapsed >= 240u ? 0.0f : static_cast<float>(239u - elapsed) / 240.0f;
                 }
                 if (early && !cancelled && frame >= targetStart) {
                     const auto elapsed = frame - targetStart;
@@ -18482,7 +18520,7 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
                     << "frame=" << frame << " target=" << targetStart << OccupancyDump(*engine);
             }
         }
-        if (count == 0 && (!early || cancelled || nativeTarget)) {
+        if (count == 0 && ((!early && !immediate) || cancelled || nativeTarget)) {
             EXPECT_FALSE(controller->variableControlDiscreteRetargetPrepared);
             ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(*engine, started.instance, 0));
             for (unsigned block = 0; block < 128; ++block) {

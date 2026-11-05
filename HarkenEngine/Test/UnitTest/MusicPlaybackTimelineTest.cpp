@@ -17,6 +17,48 @@ struct MusicClock {
     }
 };
 
+TEST(MusicPlaybackTimeline, RepeatedSubframeClipsFindTheFirstActualSample) {
+    for (const auto rate : {44100, 48000}) {
+        MusicClock c({4, 4}, 500000, rate);
+        for (const auto entry : {-100000LL, 0LL, 20833LL})
+        for (const auto span : {25000LL, 33333LL, 100000LL})
+        for (const auto width : {1LL, 500LL, 22000LL}) {
+            MusicPlaybackTimeline music{SegmentTimeType::Absolute, entry, entry + span, entry + span, 0, true, true};
+            const auto begin = entry + 1;
+            for (const auto first : {0u, 7u, 250u}) {
+                std::uint64_t expected = UINT64_MAX;
+                const auto last = first + 500u;
+                for (std::uint64_t pass = first; pass <= last; ++pass) {
+                    std::uint64_t a = 0, b = 0;
+                    ASSERT_EQ(MusicTimelineStatus::Ok, MusicPlaybackFrame(music, c.clock, begin, pass, &a));
+                    ASSERT_EQ(MusicTimelineStatus::Ok, MusicPlaybackFrame(music, c.clock, begin + width, pass, &b));
+                    if (b > a) { expected = pass; break; }
+                }
+                std::uint64_t actual = UINT64_MAX;
+                const auto status = FindMusicPlaybackClipIteration(music, c.clock, begin, begin + width, first, last, &actual);
+                ASSERT_EQ(expected == UINT64_MAX ? MusicTimelineStatus::NoCandidate : MusicTimelineStatus::Ok, status);
+                if (expected != UINT64_MAX) EXPECT_EQ(expected, actual);
+            }
+        }
+    }
+    MusicClock c;
+    MusicPlaybackTimeline tiny{SegmentTimeType::Absolute, 20833, 20834, 20834, 0, false, true};
+    std::uint64_t iteration = 0;
+    ASSERT_EQ(MusicTimelineStatus::Ok,
+        FindMusicPlaybackClipIteration(tiny, c.clock, 20833, 20834, 1, UINT32_MAX, &iteration));
+    EXPECT_EQ(20833u, iteration);
+    MusicPlaybackTimeline silent{SegmentTimeType::Absolute, 0, 1000000, 1000000, 0, false, true};
+    EXPECT_EQ(MusicTimelineStatus::NoCandidate,
+        FindMusicPlaybackClipIteration(silent, c.clock, 1, 2, 0, UINT32_MAX, &iteration));
+    EXPECT_EQ(MusicTimelineStatus::Ok,
+        FindMusicPlaybackClipIteration(silent, c.clock, 0, 1000000, UINT32_MAX, UINT32_MAX, &iteration));
+    EXPECT_EQ(UINT32_MAX, iteration);
+    MusicPlaybackTimeline reversePhase{SegmentTimeType::Absolute, 0, 20833333, 20833333, 0, false, true};
+    ASSERT_EQ(MusicTimelineStatus::Ok,
+        FindMusicPlaybackClipIteration(reversePhase, c.clock, 1, 2, 0, UINT32_MAX, &iteration));
+    EXPECT_EQ(4u, iteration);
+}
+
 TEST(MusicPlaybackTimeline, IntroBodyFivePassesAndOutroHaveOneFinalBoundary) {
     MusicClock c;
     // 2 s intro + five 6 s passes + 4 s outro = 36 s.
