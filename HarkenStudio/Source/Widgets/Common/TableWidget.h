@@ -135,6 +135,7 @@ public:
                         std::function<bool(const QMimeData*)> guard);
     void setSelectionClearHandler(std::function<void()> handler);
     void setRowSelectionHandler(std::function<void(QWidget*)> handler);
+    void setRowHeightProvider(std::function<int(QWidget*)> provider);
     bool removeSelectedRow(const std::function<bool()>& remove, const QModelIndex& removedIndex = {});
     bool canMoveRow(int from, int to) const;
     void setBodyExpanding(bool expanding);
@@ -229,6 +230,7 @@ private:
     std::function<bool(const QMimeData*)> dropGuard_;
     std::function<void()> selectionClearHandler_;
     std::function<void(QWidget*)> rowSelectionHandler_;
+    std::function<int(QWidget*)> rowHeightProvider_;
     uint64_t selectionGeneration_ = 0;
     QPointer<QWidget> draggedNumber_;
     QPersistentModelIndex draggedIndex_;

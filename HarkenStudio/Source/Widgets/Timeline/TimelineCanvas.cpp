@@ -381,14 +381,15 @@ TimelineRenderData TimelineCanvas::buildRenderData(const QRect& exposed) const
         int64_t sourceDuration = 0;
         std::optional<SourceWaveformView> waveformView;
         double emergenceOffsetSec = 0.0;
+        bool waveformResolved = false;
     };
     QHash<QUuid, ClipContent> contents;
     const auto fillClipItem = [&](TimelineClipItem& item, int laneIndex, int clipIndex,
                                   const QRect& area, const QUuid& guid, int64_t start,
                                   int64_t duration) {
         const QUuid targetGuid = panel_->clipTargetGuid(laneIndex, clipIndex);
-        auto entry = contents.constFind(targetGuid);
-        if (entry == contents.cend()) {
+        auto entry = contents.find(targetGuid);
+        if (entry == contents.end()) {
             ClipContent content;
             const auto* target = panel_->clipTarget(laneIndex, clipIndex);
             content.label = target ? target->name : tr("Missing");
@@ -397,8 +398,17 @@ TimelineRenderData TimelineCanvas::buildRenderData(const QRect& exposed) const
             if (target)
                 content.icon = iconForItem(*target);
             const auto* sound = target ? target->comp<VSound>() : nullptr;
-            if (sound) {
+            if (sound)
                 content.emergenceOffsetSec = sound->scheduleOffsetSec;
+            entry = contents.insert(targetGuid, std::move(content));
+        }
+        const bool waveformVisible = area.height() > titleHeight
+            && (!data.frameless || !trackViewport.isEmpty());
+        if (waveformVisible && !entry->waveformResolved) {
+            ClipContent& content = *entry;
+            content.waveformResolved = true;
+            const auto* target = panel_->clipTarget(laneIndex, clipIndex);
+            if (target && target->comp<VSound>()) {
                 const auto* source = SoundSourceEditing::activeSource(*target,
                     PlatformContextService::instance().context().primary,
                     SoundSourceEditing::previewLanguage(*target, LanguageContextService::instance().language()));
@@ -409,7 +419,6 @@ TimelineRenderData TimelineCanvas::buildRenderData(const QRect& exposed) const
                     content.sourceDuration = panel_->clipSourceDuration(laneIndex, clipIndex).value_or(0);
                 }
             }
-            entry = contents.insert(targetGuid, std::move(content));
         }
         const ClipContent& content = *entry;
         item.rect = area;
@@ -419,13 +428,11 @@ TimelineRenderData TimelineCanvas::buildRenderData(const QRect& exposed) const
         item.label = content.label;
         item.objectColor = content.color;
         item.typeIcon = content.icon;
-        item.waveformPath = content.waveformPath;
-        item.waveformView = content.waveformView;
         if (clipSelected(guid))
             item.state = TimelineClipVisualState::Selected;
         else if (laneIndex == hoveredLane_ && clipIndex == hoveredClip_)
             item.state = TimelineClipVisualState::Hover;
-        if (content.sourceDuration > 0 && content.waveformView) {
+        if (waveformVisible && content.sourceDuration > 0 && content.waveformView) {
             const double left = panel_->viewportPositionAtCoordinate(laneIndex, start);
             const double right = panel_->viewportPositionAtCoordinate(laneIndex,
                 saturatingAdd(start, std::min(duration, content.sourceDuration)));
@@ -434,6 +441,8 @@ TimelineRenderData TimelineCanvas::buildRenderData(const QRect& exposed) const
             const double visibleLeft = std::clamp(left, 0.0, double(width()));
             const double visibleRight = std::clamp(right, 0.0, double(width()));
             if (visibleRight > visibleLeft && sourceRight > left) {
+                item.waveformPath = content.waveformPath;
+                item.waveformView = content.waveformView;
                 item.waveformViewport = data.frameless ? trackViewport : area.adjusted(0, titleHeight, 0, 0);
                 item.waveformRect = data.frameless ? trackWaveform : item.waveformViewport;
                 item.waveformRect.setLeft(int(std::lround(visibleLeft)));
@@ -444,7 +453,7 @@ TimelineRenderData TimelineCanvas::buildRenderData(const QRect& exposed) const
                 item.waveformFrameCount = sourceFrames * (visibleRight - visibleLeft) / (sourceRight - left);
             }
         }
-        if (content.emergenceOffsetSec > 0.0) {
+        if (waveformVisible && content.emergenceOffsetSec > 0.0) {
             const auto offset = TimelineCoordinates::fromSeconds(content.emergenceOffsetSec,
                 panel_->effectiveTimeSpec(laneIndex));
             if (offset) {

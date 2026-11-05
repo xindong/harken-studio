@@ -542,10 +542,13 @@ QRect TimelineEditorPanel::laneRect(int index) const
 int TimelineEditorPanel::laneHeight(int index) const
 {
     const auto& metrics = themeManager_->metrics();
-    const int minimum = std::max(metrics.table.rowHeight,
+    const int collapseHeight = std::max(metrics.table.rowHeight,
         headerColumn_->fontMetrics().height() + std::max(metrics.table.cellPaddingY,
             metrics.timeline.clipVerticalInset) * 2 + 1);
-    return std::max(minimum, laneHeights_.value(laneGuid(index), metrics.timeline.laneHeight));
+    const int minimum = TimelineRenderer::clipTitleHeight(metrics)
+        + metrics.timeline.clipVerticalInset * 2;
+    const int height = laneHeights_.value(laneGuid(index), metrics.timeline.laneHeight);
+    return height <= std::max(minimum, collapseHeight) ? minimum : height;
 }
 
 void TimelineEditorPanel::setLaneHeight(int index, int height)

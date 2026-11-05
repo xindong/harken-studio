@@ -77,6 +77,25 @@ TimelineHeaderColumn::TimelineHeaderColumn(TimelineEditorPanel* panel, QWidget* 
         panel_->selectLane(QUuid::fromString(row->property("trackGuid").toString()), true);
     });
     table_->setSelectionClearHandler([this] { panel_->selectLane({}); });
+    table_->setRowHeightProvider([this](QWidget* row) {
+        row->ensurePolished();
+        const auto& metrics = ThemeManager::instance().metrics();
+        const int height = panel_->laneHeight(laneIndexAt(panel_, row));
+        const bool compact = height == TimelineRenderer::clipTitleHeight(metrics)
+            + metrics.timeline.clipVerticalInset * 2;
+        row->setFont(FontManager::instance().getFont(compact ? FontRole::Caption : FontRole::Body));
+        const auto margins = row->contentsMargins();
+        const int innerHeight = height - margins.top() - margins.bottom();
+        const int padding = compact ? std::max(0, (innerHeight - row->fontMetrics().height()) / 2)
+            : metrics.table.cellPaddingY;
+        auto* cell = row->findChild<TableCell*>();
+        cell->setMinimumHeight(innerHeight);
+        cell->layout()->setContentsMargins(metrics.table.cellPaddingX, padding,
+            metrics.table.cellPaddingX, padding);
+        row->findChild<QLabel*>(QStringLiteral("tableRowNumber"))->setContentsMargins(
+            metrics.table.cellPaddingX, padding, metrics.table.cellPaddingX, padding);
+        return height;
+    });
 
     new RenameClickHandler(this, this, [this](const QPoint& point) -> RenameClickHandler::Target {
         auto* name = qobject_cast<QLabel*>(childAt(point));
@@ -137,13 +156,6 @@ void TimelineHeaderColumn::refreshRows()
 {
     layout()->setContentsMargins(0, 0, panel_->laneHeaderResizeWidth() + 1, 0);
     laneLayout_->setSpacing(0);
-    for (int lane = 0; lane < laneLayout_->count(); ++lane) {
-        auto* row = laneLayout_->itemAt(lane)->widget();
-        row->ensurePolished();
-        const auto margins = row->contentsMargins();
-        row->findChild<TableCell*>()->setMinimumHeight(
-            panel_->laneHeight(lane) - margins.top() - margins.bottom());
-    }
     table_->refreshLayout();
 }
 

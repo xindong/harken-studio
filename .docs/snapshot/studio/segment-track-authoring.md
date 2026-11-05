@@ -11,7 +11,7 @@
 | 编辑面 | 当前能力 |
 |---|---|
 | Segment Timeline | 新建默认 Musical；Timeline 边框外的独立参数行提供 Tempo、Time Signature；无时钟域切换，Tempo 输入框不带单位；Time／Clock 双行刻度，左侧 chevron 切换主轴 |
-| Track Timeline | 继承父 Segment 时钟域；Segment 内轨道默认高度为 112px，保留手动高度；保留片段长度编辑、多选拖动、跨轨移动、波形与缩放 |
+| Track Timeline | 继承父 Segment 时钟域；Segment 内轨道默认高度为 112px，保留手动高度；缩小至原最小高度附近时 Clip 只保留标题及原有上下留白，最小轨高为标题高度加留白，跳过波形准备、加载和绘制；重新拉高恢复波形；保留片段长度编辑、多选拖动、跨轨移动与缩放 |
 | Marker | 新建 Segment 预置 Entry／Exit；Entry 在起点，Exit 在初始时间轴末尾；12px 手柄带位于刻度轴底部，与左侧头部共用完整轴高和背景；12×10px 双握槽手柄顶部对齐，网格连续穿过手柄带，竖杆与手柄同色连续；Entry 黄色、Exit 红色；手柄与画布整根竖杆均可拖动，支持悬停读数、拖动浮窗、精确输入、边缘滚动、取消、删除、补建、吸附与撤销；Custom 创建及编辑能力隐藏 |
 | Cursor | 默认显示绿色；15×12px 对称倒三角带亮色轮廓，与贯穿刻度轴及轨道的竖线共用物理像素中心；零点处完整显示手柄；支持定位、拖动、吸附、精确输入、边缘滚动、取消拖动和视图状态恢复 |
 | 时钟域转换 | 同时转换 Track 片段边界与 Marker；尽量保持实际秒数，音乐坐标按整数 tick 舍入；一次撤销恢复原数据 |
@@ -73,3 +73,5 @@ Marker 手柄带重新对齐 Source Editor，并加入时间标签自适应精�
 2026-11-05 将剩余创作能力整理为正式 PR，基于包含 Tooltip 修复的 `main`（`6ca194a7`）合并验证，保留主分支的 Effect 与 Blueprint 更新。`windows-ninja-clang-dev` / `RelWithDebInfo` 的 Studio 与测试程序构建成功；Timeline、Transition、Inspector、自动化命令、主题、保存往返及 Queue Sound／Track／Segment 导出播放相关 99 项回归全部通过，无跳过。本地 QSS 归属检查及其 6 项脚本测试通过。缺少音乐时钟时的提示改为引导选择可访问音乐时钟的 Source，不再要求使用已移除的时钟域切换。记录位于 `.temp/segment-track-pr-build.log`、`.temp/segment-track-pr-tests.log` 和 `.temp/segment-track-pr-tests.xml`。
 
 同日修复 PR 审查发现的 Exit 精确输入上限，并修正旧 Piece 测试夹具的字段重命名及完整 Marker 集合校验。RelWithDebInfo 的 Studio 与全部 Studio CI 测试目标构建成功；完整 PR 测试分组共 145 组、501 项，500 项通过，1 项符号链接检查因环境限制跳过。新增回归覆盖两种时钟域下空 Segment 的末尾延长、放大后的可见性、撤销重做及输入边界，当前 schema 9 的文档往返用例也通过。额外执行的历史 schema 7／8 资格用例仍在 Main Layer 的 `fieldGroups.shared.mainOutput` 迁移验证处失败；相关迁移代码与主分支相同，旧项目迁移继续不纳入本轮修复。记录位于 `.temp/pr251-review-build.log`、`.temp/pr251-review-focused.xml` 和 `.temp/pr251-review-gate/summary.json`。
+
+2026-11-05 将轨道最小高度收拢为 Clip 标题加原有上下留白，并跳过收拢状态的波形准备与加载。RelWithDebInfo 的 Studio 和测试程序构建成功，22 项 Timeline、表格生命周期及主题布局回归全部通过。记录位于 `.temp/compact-track-build.log`、`.temp/compact-track-tests.log` 和 `.temp/compact-track-tests.xml`。后续修改完成后均构建 RelWithDebInfo。

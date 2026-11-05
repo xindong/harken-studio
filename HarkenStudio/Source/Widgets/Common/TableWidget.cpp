@@ -736,6 +736,12 @@ void TableWidget::setRowSelectionHandler(std::function<void(QWidget*)> handler)
     rowSelectionHandler_ = std::move(handler);
 }
 
+void TableWidget::setRowHeightProvider(std::function<int(QWidget*)> provider)
+{
+    rowHeightProvider_ = std::move(provider);
+    scheduleLayout();
+}
+
 QList<QWidget*> TableWidget::selectableWidgetRows(const std::optional<QString>& groupId) const
 {
     QList<QWidget*> rows;
@@ -1289,6 +1295,7 @@ void TableWidget::refreshLayout()
         minimums_.append(minimum);
     }
     for (const auto& row : rowBindings_) {
+        const int prescribedHeight = rowHeightProvider_ ? rowHeightProvider_(row.widget) : 0;
         int height = std::max(metrics.rowHeight,
             row.widget->fontMetrics().height() + metrics.cellPaddingY * 2);
         for (int i = 0; i < row.cells.size(); ++i) {
@@ -1305,7 +1312,7 @@ void TableWidget::refreshLayout()
                 minimums_[i] = std::max(minimums_[i], hint.width());
         }
         height = std::max(height, row.widget->minimumSizeHint().height());
-        row.widget->setFixedHeight(height);
+        row.widget->setFixedHeight(rowHeightProvider_ ? prescribedHeight : height);
     }
     for (int i = 0; i < minimums_.size(); ++i)
         if (hiddenColumns_[i]) minimums_[i] = 0;
