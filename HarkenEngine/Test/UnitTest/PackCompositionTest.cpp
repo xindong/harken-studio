@@ -1803,6 +1803,31 @@ TEST(PackCompositionContract, InspectInitResolvesAndEnforcesContainmentRootWitho
     }
 }
 
+#if !defined(_WIN32)
+TEST(PackCompositionContract, InspectInitRejectsUnresolvableContainmentRoot) {
+    (void)Vn_Term();
+    ASSERT_EQ(nullptr, harken::detail::ActiveEngine());
+    const auto bytes = BuildMinimalInit();
+    const std::string root = HARKEN_TEMP_DIR "/f2-inspect-loop-root";
+    const auto outside = WriteTemp("f2-inspect-loop-outside.pack", bytes);
+    std::error_code ec;
+    std::filesystem::remove(root, ec);
+    std::filesystem::create_directory_symlink(root, root, ec);
+    ASSERT_FALSE(ec) << ec.message();
+    VnPackLoadDesc desc{};
+    desc.structSize = sizeof(desc);
+    desc.flags = VN_PACK_LOAD_FLAG_ROOT;
+    desc.utf8Path = outside.c_str();
+    desc.utf8ContainmentRoot = root.c_str();
+    VnInitPackInspectReport report{};
+    report.structSize = sizeof(report);
+    EXPECT_EQ(VN_PACK_PATH_ESCAPE, Vn_InspectInitPack(&desc, &report));
+    EXPECT_EQ(VN_PACK_PATH_ESCAPE, report.result);
+    EXPECT_EQ(nullptr, harken::detail::ActiveEngine());
+    std::filesystem::remove(root, ec);
+}
+#endif
+
 TEST(PackComposition, KnownUnloadedAndAbsentStayDistinct) {
     const std::vector<std::uint8_t> bytes = BuildMinimalInit();
     const std::string path = WriteTemp("f2-known-unloaded.pack", bytes);

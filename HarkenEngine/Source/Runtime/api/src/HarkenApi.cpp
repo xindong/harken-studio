@@ -118486,6 +118486,9 @@ VnResult ResolveRootUtf8Path(const VnPackLoadDesc& desc, std::string* outResolve
     std::error_code ec;
     const std::filesystem::path canonicalRoot =
         std::filesystem::weakly_canonical(root, ec);
+    if (ec) {
+        return VN_PACK_PATH_ESCAPE;
+    }
     const std::filesystem::path canonicalFile =
         std::filesystem::weakly_canonical(raw, ec);
     if (ec) {

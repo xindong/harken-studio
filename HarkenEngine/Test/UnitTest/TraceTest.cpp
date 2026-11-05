@@ -2444,6 +2444,64 @@ TEST(Trace, AppendAllocationFailureStopsTraceKeepsStatefulCallRunning) {
     AssertEngineStillSounds(session.Engine(), harkentest::ObjectId(1));
 }
 
+TEST(Trace, EmitterHandleAllocationFailureKeepsBothCreateEntriesRunning) {
+    for (const bool extended : {false, true}) {
+        SCOPED_TRACE(extended);
+        EngineSession session(MakeNullConfig(4, kBlockFrames));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        const auto path = TracePath("trace_emitter_handle_failure.vtrc");
+        ASSERT_EQ(VN_OK, Vn_TraceStart(path.c_str()));
+        VnEmitterHandle emitter = 0;
+        {
+            TraceRecorderFaultGuard fault(harken::TraceRecorderFault::HandleStorage);
+            VnEmitterCreateDescV1 desc{sizeof(VnEmitterCreateDescV1),
+                VN_EMITTER_CREATE_STATE_ONLY, 0};
+            EXPECT_EQ(VN_OK, extended ? Vn_CreateEmitterEx(&desc, &emitter)
+                                      : Vn_CreateEmitter(&emitter));
+        }
+        ASSERT_NE(0u, emitter);
+        EXPECT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+        EXPECT_EQ(0u, Capture().traceActive);
+        EXPECT_EQ(1u, Capture().traceFailed);
+        AssertEngineStillSounds(session.Engine(), harkentest::ObjectId(1));
+    }
+}
+
+TEST(Trace, PreviewHandleAllocationFailureKeepsEngineRunning) {
+    EngineSession session(MakeNullConfig(4, kBlockFrames));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const auto path = TracePath("trace_preview_handle_failure.vtrc");
+    ASSERT_EQ(VN_OK, Vn_TraceStart(path.c_str()));
+    {
+        TraceRecorderFaultGuard fault(harken::TraceRecorderFault::HandleStorage);
+        session.Engine()->trace->RecordPreviewPlayPlayable(true, 0, 0,
+            harkentest::ObjectId(1), 0, 0, 0, VN_OK, 0, 1);
+    }
+    EXPECT_EQ(0u, Capture().traceActive);
+    EXPECT_EQ(1u, Capture().traceFailed);
+    AssertEngineStillSounds(session.Engine(), harkentest::ObjectId(1));
+}
+
+TEST(Trace, TopologyAppendFailureAfterScribeConstructionKeepsEngineRunning) {
+    EngineSession session(MakeNullConfig(4, kBlockFrames));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const auto path = TracePath("trace_topology_append_failure.vtrc");
+    ASSERT_EQ(VN_OK, Vn_TraceStart(path.c_str()));
+    {
+        harken::TraceCallScribe scribe(session.Engine()->trace.get(),
+            harken::kTraceCallApplyBusTopology);
+        TraceRecorderFaultGuard fault(harken::TraceRecorderFault::Append);
+        VnBusTopologyDesc desc{};
+        desc.structSize = sizeof(desc);
+        desc.busStructSize = sizeof(VnBusTopologyBus);
+        desc.sendStructSize = sizeof(VnBusTopologySend);
+        scribe.BusTopologyDesc(&desc);
+    }
+    EXPECT_EQ(0u, Capture().traceActive);
+    EXPECT_EQ(1u, Capture().traceFailed);
+    AssertEngineStillSounds(session.Engine(), harkentest::ObjectId(1));
+}
+
 TEST(Trace, NextAcceptedStartClearsTheStickyFailureFlag) {
     EngineSession session(MakeNullConfig(4, kBlockFrames));
     ASSERT_EQ(VN_OK, session.InitResult());

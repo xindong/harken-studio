@@ -3491,12 +3491,27 @@ TEST(VoicePool, CollectiveSignalStagesShareActualInstancesAcrossSerialAndWorkerR
             for (const auto& lane : output) result.insert(result.end(), lane.begin(), lane.end());
             if (workers == 0) serial = std::move(result);
             else EXPECT_EQ(serial, result);
+
+            // Removing signals restores the ordinary scratch and sound path,
+            // including contexts previously rendered by worker jobs.
+            harken::BlockArena ordinaryArena(4 * kBlockFrames * sizeof(float));
+            for (auto& lane : output) lane.fill(0);
+            const auto ordinary = engine.voices.RenderAll(ordinaryArena, planes.data(),
+                kBlockFrames, engine.notifications, 100, 0, 100u * kBlockFrames);
+            ASSERT_FALSE(ordinary.batchDeferred);
+            ASSERT_FALSE(ordinary.signalFailed);
+            EXPECT_EQ(0u, ordinaryArena.OverflowCount());
+            for (std::uint32_t n = 0; n < kBlockFrames; ++n) {
+                EXPECT_FLOAT_EQ(output[channels][n], .4f);
+                EXPECT_FLOAT_EQ(output[channels * 2][n], .4f);
+                EXPECT_FLOAT_EQ(output[channels * 3][n], .4f);
+            }
             for (const auto handle : handles)
-                engine.voices.ApplyStop(handle, 0, 0, engine.notifications, 100);
+                engine.voices.ApplyStop(handle, 0, 0, engine.notifications, 101);
             arena.Reset();
-            ASSERT_TRUE(signals->BeginBlock({1, 1, 1, 100, 100u * kBlockFrames, kBlockFrames}));
+            ASSERT_TRUE(signals->BeginBlock({1, 1, 1, 101, 101u * kBlockFrames, kBlockFrames}));
             const auto empty = engine.voices.RenderAll(arena, planes.data(), kBlockFrames,
-                engine.notifications, 100, 0, 100u * kBlockFrames, signals.get());
+                engine.notifications, 101, 0, 101u * kBlockFrames, signals.get());
             EXPECT_FALSE(empty.batchDeferred);
             EXPECT_FALSE(empty.signalFailed);
             EXPECT_TRUE(signals->CommitBlock());

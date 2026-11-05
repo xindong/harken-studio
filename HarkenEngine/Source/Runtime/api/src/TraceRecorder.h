@@ -32,7 +32,8 @@ enum class TraceRecorderFault : std::uint32_t {
     None = 0,
     Append = 1,
     ProjectWorldEncode = 2,
-    ProjectBufferReserve = 3
+    ProjectBufferReserve = 3,
+    HandleStorage = 4
 };
 
 void SetTraceRecorderFaultForTests(TraceRecorderFault fault) noexcept;

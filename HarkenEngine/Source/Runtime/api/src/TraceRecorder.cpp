@@ -661,8 +661,14 @@ void TraceRecorder::RecordMeterProbeBindingAttachment(
 }
 
 void TraceRecorder::RememberEmitterHandle(VnEmitterHandle handle) noexcept {
-    if (handle != 0) {
+    if (!m_active || handle == 0) return;
+    try {
+        if (TraceRecorderFaultForTests() == TraceRecorderFault::HandleStorage) {
+            throw std::bad_alloc{};
+        }
         m_emitterHandles.push_back(handle);
+    } catch (...) {
+        FailTrace();
     }
 }
 
@@ -692,6 +698,7 @@ void TraceRecorder::RecordPreviewPlayPlayable(
     AppendU32(flags);
     AppendU32(reserved);
     AppendU32(static_cast<std::uint32_t>(result));
+    if (!m_active) return;
     std::uint64_t recordedHandle = 0;
     if (result == 0 && handle != 0) {
         if (std::find(m_previewHandles.begin(), m_previewHandles.end(),
@@ -699,7 +706,15 @@ void TraceRecorder::RecordPreviewPlayPlayable(
             FailTrace();
             return;
         }
-        m_previewHandles.push_back(handle);
+        try {
+            if (TraceRecorderFaultForTests() == TraceRecorderFault::HandleStorage) {
+                throw std::bad_alloc{};
+            }
+            m_previewHandles.push_back(handle);
+        } catch (...) {
+            FailTrace();
+            return;
+        }
         recordedHandle = (UINT64_C(1) << 63) |
             static_cast<std::uint64_t>(m_previewHandles.size());
     }
@@ -1439,6 +1454,9 @@ TraceCallScribe& TraceCallScribe::BusTopologyDesc(
         .U64(d->revision)
         .U32(d->busCount)
         .U32(d->sendCount);
+    if (m_recorder == nullptr) {
+        return *this;
+    }
     const Engine& engine = m_recorder->m_engine;
     const bool valid =
         d->structSize == sizeof(VnBusTopologyDesc) &&
