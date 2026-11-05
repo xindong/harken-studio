@@ -2064,6 +2064,11 @@ struct EngineSourceExit {
     std::vector<FrontierSourceExitVoice*> initialVoices;
 };
 
+struct EngineScheduleTargetFade {
+    CurveLUT curve{};
+    TimelineEventPayload payload{};
+};
+
 struct EngineScheduleAggregateState;
 struct EngineScheduleAggregateChild {
     PlayableRefV1 content{};
@@ -2079,6 +2084,7 @@ struct EngineScheduleAggregateChild {
     EngineScheduleChildPropertyContext properties;
     EngineNaturalClipDeadline naturalClipDeadline{};
     std::vector<std::unique_ptr<EngineSourceExit>> sourceExits;
+    std::unique_ptr<EngineScheduleTargetFade> targetFade;
     PlayableTerminalOutcome outcome{};
     PlayableControlReason reason = PlayableControlReason::None;
     bool logicalComplete = false;

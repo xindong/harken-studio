@@ -11545,7 +11545,16 @@ private:
                     eventBinding.transport = binding.operation.transport;
                     eventBinding.world = binding.operation.world;
                     eventBinding.operationOrdinal = groupSlices_[index];
-                    eventBinding.operationEventCount = dependent ? 1u : eventCount;
+                    eventBinding.operationEventCount = eventCount;
+                    if (dependent) {
+                        eventBinding.operationEventCount = 0;
+                        harken::ConsumedEvent sibling{};
+                        for (std::uint32_t item = 0; item < 2 && engine_.timelinePool.CapturePreparedTransactionEvent(
+                                 transactions_[transaction], 0, item, &sibling); ++item)
+                            if (sibling.executeFrame == event.executeFrame &&
+                                harken::Engine::SameOriginalSingleArm(sibling.armToken, event.armToken))
+                                ++eventBinding.operationEventCount;
+                    }
                     if (!engine_.timelinePool.BindPreparedTransactionEventFrontier(
                             transactions_[transaction], 0, ordinal, eventBinding)) return false;
                 }
@@ -38366,7 +38375,7 @@ struct NativeScheduleTransitionPreparation {
 bool PrepareNativeScheduleTransition(harken::Engine&,
     harken::EnginePlayableServiceRow&, const harken::ContainerProgramViewV3&,
     const harken::ContainerChildProgramViewV2&, std::uint32_t, std::uint32_t,
-    std::uint64_t, harken::DecisionToken, bool, MaterializedScheduleSet&,
+    std::uint64_t, harken::DecisionToken, bool, const harken::TimelineEventPayload*, MaterializedScheduleSet&,
     NativeScheduleTransitionPreparation&) noexcept;
 bool CommitNativeScheduleTransition(NativeScheduleTransitionPreparation&,
     harken::LogicCommitSequence) noexcept;
@@ -38801,6 +38810,14 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
     if (targetFadeFrames > UINT64_MAX - targetStartFrame) {
         return VariableRetargetPrepareStatus::Fatal;
     }
+    harken::TimelineEventPayload nativeTargetFade{};
+    if (nativeTargets && targetFadeActive) {
+        nativeTargetFade.kind = harken::TimelineEventKind::Envelope;
+        nativeTargetFade.envelopeDirection = harken::TimelineEnvelopeDirection::FadeIn;
+        nativeTargetFade.envelopeStartFrame = targetStartFrame;
+        nativeTargetFade.envelopeEndFrame = targetStartFrame + targetFadeFrames;
+        nativeTargetFade.envelopeCurve = &row.TransitionTargetFadeCurve();
+    }
     if (nativeTargets) {
         std::uint64_t duration = UINT64_MAX;
         const auto clip = LimitInheritedNaturalClipDuration(engine, &row, row.ownerInstance, targetStartFrame, &duration);
@@ -38814,7 +38831,8 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
                 sourceBoundary && audibleFrame < sourceStopFrame ? 2u : 1u, ticket) ||
             !PrepareNativeScheduleTransition(engine, row, program, *desired, selected.childStableOrdinal,
                 sourceMemberCount, targetStartFrame, decision, transitionRule != nullptr &&
-                    transitionRule->targetEntry == harken::TransitionTargetEntryV1::FromEntryMarker, targetSchedule, native))
+                    transitionRule->targetEntry == harken::TransitionTargetEntryV1::FromEntryMarker,
+                targetFadeActive ? &nativeTargetFade : nullptr, targetSchedule, native))
             return VariableRetargetPrepareStatus::Retry;
     } else {
         const auto clipStatus = BoundScheduleToNaturalClip(engine, row, targetStartFrame, targetSchedule);
@@ -38844,20 +38862,20 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
             &targetZeroWorkCompletionFrame)) {
         return VariableRetargetPrepareStatus::Fatal;
     }
-    std::uint64_t targetFadeEndFrame = targetStartFrame;
+    std::uint64_t targetFadeEndFrame = nativeTargets ? targetStartFrame + targetFadeFrames : targetStartFrame;
+    std::uint64_t latestTargetStartFrame = targetStartFrame;
     std::uint32_t enteringCommandCount = nativeTargets ? native.commands : 0u;
     for (std::uint32_t index = 0; index < targetSchedule.leafCount;
          ++index) {
         if (targetSchedule.leaves[index].startOffsetFrames > UINT64_MAX - targetStartFrame ||
-            targetFadeFrames > UINT64_MAX - targetStartFrame -
-                    targetSchedule.leaves[index].startOffsetFrames) {
+            (!nativeTargets && targetFadeFrames > UINT64_MAX - targetStartFrame -
+                    targetSchedule.leaves[index].startOffsetFrames)) {
             return VariableRetargetPrepareStatus::Fatal;
         }
-        targetFadeEndFrame = std::max(
-            targetFadeEndFrame,
-            targetStartFrame + targetSchedule.leaves[index].startOffsetFrames +
-                targetFadeFrames);
+        latestTargetStartFrame = std::max(latestTargetStartFrame,
+            targetStartFrame + targetSchedule.leaves[index].startOffsetFrames);
         if (nativeTargets) continue;
+        targetFadeEndFrame = std::max(targetFadeEndFrame, latestTargetStartFrame + targetFadeFrames);
         std::uint32_t demand = 0;
         if (TimelineVoiceStartCommandBudget(capturedTargets[index].Input(), &demand) != VN_OK) {
             return VariableRetargetPrepareStatus::Fatal;
@@ -38868,7 +38886,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
         enteringCommandCount += demand;
     }
     const std::uint64_t publicationEndFrame =
-        std::max(sourceStopFrame, targetFadeEndFrame);
+        std::max({sourceStopFrame, targetFadeEndFrame, latestTargetStartFrame});
     const std::uint32_t groupMemberCount =
         sourceMemberCount + targetSchedule.leafCount;
     const bool sourceBoundaryPrelude =
@@ -39336,9 +39354,10 @@ engine.runtimeRecreateRequired = true;
             fade.reserved = harken::kTimelineEventTransientStartArm;
             fade.envelopeIndex = 0;
             fade.target = engine.ReadPlayableMember(enteringSlot).voice.Facts().target;
-            fade.envelopeStartFrame = leafStartFrame;
-            fade.envelopeEndFrame = leafStartFrame + targetFadeFrames;
-            fade.envelopeCurve = &row.TransitionTargetFadeCurve();
+            fade.envelopeStartFrame = nativeTargets ? targetStartFrame : leafStartFrame;
+            fade.envelopeEndFrame = fade.envelopeStartFrame + targetFadeFrames;
+            fade.envelopeCurve = nativeTargets ? &native.scratch->continuationScheduleChild->targetFade->curve
+                : &row.TransitionTargetFadeCurve();
             auto& fadeEvent = events[1];
             fadeEvent = {};
             fadeEvent.logicCommitSequence = ticket;
@@ -88743,6 +88762,20 @@ ContainerPreparationContext MakeActionContainerPreparationContext(
     return context;
 }
 
+bool CaptureScheduleTargetFade(harken::EngineScheduleAggregateChild& record,
+    const harken::TimelineEventPayload* fade) noexcept {
+    if (fade == nullptr) return true;
+    if (record.targetFade != nullptr || fade->kind != harken::TimelineEventKind::Envelope ||
+        fade->envelopeDirection != harken::TimelineEnvelopeDirection::FadeIn ||
+        fade->envelopeCurve == nullptr || fade->envelopeEndFrame < fade->envelopeStartFrame) return false;
+    try { record.targetFade = std::make_unique<harken::EngineScheduleTargetFade>(); }
+    catch (const std::bad_alloc&) { return false; }
+    record.targetFade->curve = *fade->envelopeCurve;
+    record.targetFade->payload = *fade;
+    record.targetFade->payload.envelopeCurve = &record.targetFade->curve;
+    return true;
+}
+
 void BindScheduleChildPreparation(ContainerPreparationContext& context,
     const harken::EnginePlayableServiceRow& parent,
     harken::EngineScheduleAggregateChild& record) noexcept {
@@ -88756,6 +88789,23 @@ void BindScheduleChildPreparation(ContainerPreparationContext& context,
     context.prefixTrackIds = record.properties.trackIds;
     context.typedPrefix = record.properties.typedPrefix;
     context.scheduleChild = &record;
+    // Validated transition endpoint trees contain no nested transition controller.
+    // Later selections and music passes keep this arriving subtree's absolute interval.
+    if (record.targetFade != nullptr) context.scheduleTargetFade = &record.targetFade->payload;
+    if (context.scheduleTargetFade == nullptr && context.engine != nullptr) {
+        const auto* ancestor = &parent;
+        for (std::size_t depth = 0; depth < context.engine->playableServices.size(); ++depth) {
+            harken::EngineScheduleAggregateChild* inherited = nullptr;
+            harken::EnginePlayableServiceRow* owner = nullptr;
+            if (!TryResolveScheduleAggregateChild(*context.engine, *ancestor, &inherited, &owner,
+                    context.privateScheduleOwner) || inherited == nullptr || owner == nullptr) break;
+            if (inherited->targetFade != nullptr) {
+                context.scheduleTargetFade = &inherited->targetFade->payload;
+                break;
+            }
+            ancestor = owner;
+        }
+    }
     context.sourceOffsetFrames = record.sourceOffsetFrames;
     context.musicFromEntry = record.musicFromEntry;
     context.directRoot = false;
@@ -94761,6 +94811,7 @@ bool PrepareNativeScheduleTransition(harken::Engine& engine,
     harken::EnginePlayableServiceRow& parent, const harken::ContainerProgramViewV3& program,
     const harken::ContainerChildProgramViewV2& desired, std::uint32_t ordinal,
     std::uint32_t firstMember, std::uint64_t startFrame, harken::DecisionToken decision, bool fromEntry,
+    const harken::TimelineEventPayload* targetFade,
     MaterializedScheduleSet& schedule, NativeScheduleTransitionPreparation& native) noexcept {
     if (!engine.logicCommits.IsOriginalPreparedIssueFor(native.issue) || !decision.Valid() ||
         native.scratch != nullptr || (!parent.variableControlInstance.Valid() && !parent.queueMode)) return false;
@@ -94833,6 +94884,7 @@ bool PrepareNativeScheduleTransition(harken::Engine& engine,
         }
     } catch (const std::bad_alloc&) { return false; }
     auto& record = *scratch.continuationScheduleChild;
+    if (!CaptureScheduleTargetFade(record, targetFade)) return false;
     harken::ActionFiringTable::PreparedChildIdentity noChild;
     VnResult failure = VN_OK;
     bool queueCapacity = false;
@@ -95041,7 +95093,7 @@ bool PrepareNativeQueueMusicTransition(harken::Engine& engine,
     const auto* rule = transitionProgram == nullptr ? nullptr
         : harken::ResolveTransitionRuleV1(*transitionProgram, previous->playable, desired->playable);
     if (rule == nullptr || rule->sourceExit != harken::TransitionSourceExitV1::NaturalEnd ||
-        rule->sourceFade.active == 0 || rule->targetFade.active != 0 || program.queueSplice != harken::QueueSpliceV1::Butt) return false;
+        program.queueSplice != harken::QueueSpliceV1::Butt) return false;
     const auto& music = *source.scheduleAggregate->music;
     const auto boundary = harken::ResolveMusicPlaybackBoundary(music.timeline, music.clock, music.markers,
         harken::MusicBoundaryKind::NaturalEnd, 0, music.sourceOffsetFrames, music.sourceOffsetFrames);
@@ -95049,10 +95101,19 @@ bool PrepareNativeQueueMusicTransition(harken::Engine& engine,
     const auto offset = boundary.frame - music.sourceOffsetFrames;
     if (offset > music.inheritedEndOffsetFrames || offset > UINT64_MAX - source.startFrame) return false;
     const auto targetFrame = source.startFrame + offset;
-    if (targetFrame < rule->sourceFade.durationFrames) return false;
-    const auto audible = targetFrame - rule->sourceFade.durationFrames;
+    const auto sourceFadeFrames = rule->sourceFade.active != 0 ? rule->sourceFade.durationFrames : 0u;
+    const auto targetFadeFrames = rule->targetFade.active != 0 ? rule->targetFade.durationFrames : 0u;
+    if (targetFrame < sourceFadeFrames || targetFadeFrames > UINT64_MAX - targetFrame) return false;
+    const auto audible = targetFrame - sourceFadeFrames;
     if (audible < floor || targetFrame >= engine.timelinePool.WindowEndFrame() ||
-        !BakeTransitionFadeCurve(program, rule->sourceFade, &row.TransitionSourceFadeCurve())) return false;
+        (rule->sourceFade.active != 0 && !BakeTransitionFadeCurve(program, rule->sourceFade, &row.TransitionSourceFadeCurve())) ||
+        (rule->targetFade.active != 0 && !BakeTransitionFadeCurve(program, rule->targetFade, &row.TransitionTargetFadeCurve()))) return false;
+    harken::TimelineEventPayload targetFade{};
+    targetFade.kind = harken::TimelineEventKind::Envelope;
+    targetFade.envelopeDirection = harken::TimelineEnvelopeDirection::FadeIn;
+    targetFade.envelopeStartFrame = targetFrame;
+    targetFade.envelopeEndFrame = targetFrame + targetFadeFrames;
+    targetFade.envelopeCurve = &row.TransitionTargetFadeCurve();
     const bool prelude = audible < targetFrame;
     if (!ResolveSharedQueueFrontier(engine, program, row.QueueRandomSeed(),
             program.mode == harken::ContainerModeV1::RandomQueue, &next, &resetInitial, &afterNext, &ignored, &step)) return false;
@@ -95088,7 +95149,7 @@ bool PrepareNativeQueueMusicTransition(harken::Engine& engine,
         if (!engine.PrepareOriginalOccurrence(key, &filing.queueSuccessorOccurrence) ||
             !PrepareNativeScheduleTransition(engine, row, program, *desired, next.currentChildOrdinal, 0,
                 targetFrame, filing.queueDecision, rule->targetEntry == harken::TransitionTargetEntryV1::FromEntryMarker,
-                schedule, native)) return false;
+                rule->targetFade.active != 0 ? &targetFade : nullptr, schedule, native)) return false;
         native.scratch->continuationScheduleChild->queueSelectionVersion = next.version;
         if (native.count == 0 || native.count > filing.queueTransitionGroupArms.size()) return false;
         filing.queueTransitionGroupArmCount = native.count;
@@ -95109,18 +95170,28 @@ bool PrepareNativeQueueMusicTransition(harken::Engine& engine,
             record->events[0].transactionOrdinal = i;
             record->events[0].subeventPhase = 20;
             record->events[0].armToken = member.arm;
+            const bool fading = rule->targetFade.active != 0 && member.startFrame < targetFade.envelopeEndFrame;
+            if (fading) {
+                record->payloads[1] = native.scratch->continuationScheduleChild->targetFade->payload;
+                record->payloads[1].reserved = harken::kTimelineEventTransientStartArm;
+                record->payloads[1].target = record->payloads[0].target;
+                record->events[1] = record->events[0];
+                record->events[1].eventIndex = native.count + i;
+                record->events[1].payload = 1;
+                record->events[1].subeventPhase = 30;
+            }
             record->runtime = {};
             record->runtime.readFence = &record->readFence;
             record->runtime.generation = native.members[i].leaf;
             record->runtime.payloads = record->payloads.data();
-            record->runtime.payloadCount = 1;
+            record->runtime.payloadCount = fading ? 2u : 1u;
             record->schedule = {};
             record->schedule.ownerInstance = native.members[i].leaf;
             record->schedule.ownerInstanceScheduleEpoch = native.members[i].leafEpoch;
             record->schedule.transactionId = ticket;
             record->schedule.entryAnchorFrame = member.startFrame;
             record->schedule.events = record->events.data();
-            record->schedule.eventCount = 1;
+            record->schedule.eventCount = record->runtime.payloadCount;
             record->schedule.runtimeProgram = {native.members[i].leaf, &record->runtime};
             record->schedule.armToken = member.arm;
             filing.queueTransitionGroupArms[i] = member.arm;
@@ -95146,7 +95217,7 @@ bool PrepareNativeQueueMusicTransition(harken::Engine& engine,
                         if (!starts.AddCommand(attempt.voiceStarts[i].commands[c])) return false;
                 return true;
             }) || !PrepareMusicSourceFade(engine, source, row, audible, targetFrame,
-                row.TransitionSourceFadeCurve(), true, false, exit)) return false;
+                row.TransitionSourceFadeCurve(), rule->sourceFade.active != 0, false, exit)) return false;
         try { row.scheduleTerminalChild->sourceExits.reserve(row.scheduleTerminalChild->sourceExits.size() + 1u); }
         catch (const std::bad_alloc&) { return false; }
         if (!starts.PrepareServiceFrontier(row, filing.queueDecision, ticket, filing.queueTransition, exit.get()) ||
@@ -95373,12 +95444,12 @@ QueueContinuationPrepareStatus PrepareQueueScheduleSuccessor(
     record.stableLeafOrdinal = next.currentChildOrdinal;
     record.queueSelectionVersion = next.version;
     record.musicFromEntry = fromEntry;
+    if (!CaptureScheduleTargetFade(record, targetFade)) return Status::Deferred;
     harken::ActionFiringTable::PreparedChildIdentity noChild;
     VnResult failure = VN_OK;
     bool queueCapacity = false;
     auto context = MakeScheduleContinuationPreparationContext(
         engine, world, issue, noChild, failure, queueCapacity, parent, record, startFrame);
-    context.scheduleTargetFade = targetFade;
     context.initialForestReadCutOwner = &scratch.storage;
     context.queueSignalEntryOwner = scratch.queueSignalEntryOwner;
     context.initialNativeForestOwner = scratch.initialNativeForestOwner;
