@@ -16,60 +16,104 @@ BINDINGS = Path(".scripts/pack-wire-bindings.json")
 OUTPUTS = {
     "engine": Path("HarkenEngine/Source/Runtime/media/include/harken/media/generated/harken_pack_wire.g.h"),
     "studio": Path("HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/generated/harken_pack_wire.g.h"),
+    "engine_constants": Path("HarkenEngine/Source/Runtime/media/include/harken/media/generated/harken_pack_wire_constants.g.h"),
+    "studio_constants": Path("HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/generated/harken_pack_wire_constants.g.h"),
 }
 NAMESPACES = {"engine": "harken", "studio": "harkenstudiobuild"}
 SCALAR_BYTES = {"u8": 1, "u16": 2, "u32": 4, "u64": 8, "i32": 4, "f32": 4, "id": 16}
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 CPP_TYPE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*\Z")
 BYTE_ACCESS = re.compile(r"\b(?:StoreLE\w*|LoadLE\w*|StoreObjectId|LoadObjectId|Append(?:U8|U16|U32|U64|F32|ObjectId))\s*\(")
+BODY_BYTE_ACCESS = re.compile(r"(?:\.|->)\s*(?:U8|U16|U32|U64|F32|ObjectId)\s*\(")
 SOURCE_SCANS = {
-    "HarkenEngine/Source/Runtime/media/include/harken/media/PackFormat.h": ("SerializePackTocEntry", "ParsePackTocEntry"),
-    "HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/PackFormat.h": ("SerializePackTocEntry", "ParsePackTocEntry"),
-    "HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/BusSnapshot.h": (
-        "StampRequirementCoverage", "StampSnapshotChecksum", "NeutralMasterSnapshotImage", "NeutralMasterSnapshotTriple",
-        "NeutralMasterSnapshotPayload", "VolumeBusSnapshotPayload",
-    ),
-    "HarkenEngine/Source/Runtime/media/include/harken/media/CanonicalBusSnapshot.h": (
-        "StampRequirementCoverage", "StampSnapshotChecksum", "NeutralMasterSnapshotImage", "NeutralMasterSnapshotTriple",
-        "NeutralMasterSnapshotPayload", "VolumeBusSnapshotPayload",
-    ),
-    "HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/PackFormatV2.h": (
-        "SerializePackBus", "ParsePackBus", "SerializePackV6Bus", "ParsePackV6Bus",
-        "SerializePackBusSend", "ParsePackBusSend", "SerializePackV2BusSend", "ParsePackV2BusSend",
-        "SerializePackBusEffect", "ParsePackBusEffect", "SerializePackV2BusEffect", "ParsePackV2BusEffect",
-        "SerializePackEffectDynamicRoute", "ParsePackEffectDynamicRoute", "SerializePackV2EffectDynamicRoute", "ParsePackV2EffectDynamicRoute",
-        "SerializePackAttenuation", "ParsePackAttenuation", "SerializePackV2Attenuation", "ParsePackV2Attenuation", "SerializePackV3Attenuation", "ParsePackV3Attenuation",
-        "SerializePackBindingDefinition", "ParsePackBindingDefinition", "SerializePackV2BindingDefinition", "ParsePackV2BindingDefinition",
-        "SerializePackBindingAttachment", "ParsePackBindingAttachment", "SerializePackV2BindingAttachment", "ParsePackV2BindingAttachment",
-        "SerializePackV2AttenuationCurve", "ParsePackV2AttenuationCurve", "SerializePackV2BindingCurve", "ParsePackV2BindingCurve",
-        "SerializePackV2DiscreteVariable", "ParsePackV2DiscreteVariable", "SerializePackV2MeterWiring", "ParsePackV2MeterWiring",
-        "SerializePackV2ContainerHeader", "ParsePackV2ContainerHeader", "SerializePackV2ContainerChild", "ParsePackV2ContainerChild",
-        "SerializePackV2VoiceRecipeHeader", "ParsePackV2VoiceRecipeHeader", "ParsePackV3VoiceRecipeHeader", "ParsePackV4VoiceRecipeHeader", "ParsePackV5VoiceRecipeHeader",
-        "SerializePackV3VoiceRecipeTone", "ParsePackV3VoiceRecipeTone", "SerializePackV4VoiceRecipeSpatial", "ParsePackV4VoiceRecipeSpatial", "ParsePackV5VoiceRecipeSpatial",
-        "SerializePackV5VoiceRecipePlayback", "ParsePackV5VoiceRecipePlayback", "SerializePackV2VoiceRecipeInstall", "ParsePackV2VoiceRecipeInstall",
-        "SerializePackV2VoiceRecipeBinding", "ParsePackV2VoiceRecipeBinding",
-        "SerializePackRequirementBlock", "ParsePackRequirementBlock", "SerializePackRequirementBlockV2", "ParsePackRequirementBlockV2",
-        "SerializePackDependencyEdge", "ParsePackDependencyEdge", "SerializePackDependencyEdgeV2", "ParsePackDependencyEdgeV2",
-    ),
-    "HarkenEngine/Source/Runtime/media/include/harken/media/PackFormatV2.h": (
-        "SerializePackBus", "ParsePackBus", "SerializePackV6Bus", "ParsePackV6Bus",
-        "SerializePackBusSend", "ParsePackBusSend", "SerializePackV2BusSend", "ParsePackV2BusSend",
-        "SerializePackBusEffect", "ParsePackBusEffect", "SerializePackV2BusEffect", "ParsePackV2BusEffect",
-        "SerializePackEffectDynamicRoute", "ParsePackEffectDynamicRoute", "SerializePackV2EffectDynamicRoute", "ParsePackV2EffectDynamicRoute",
-        "SerializePackAttenuation", "ParsePackAttenuation", "SerializePackV2Attenuation", "ParsePackV2Attenuation", "SerializePackV3Attenuation", "ParsePackV3Attenuation",
-        "SerializePackBindingDefinition", "ParsePackBindingDefinition", "SerializePackV2BindingDefinition", "ParsePackV2BindingDefinition",
-        "SerializePackBindingAttachment", "ParsePackBindingAttachment", "SerializePackV2BindingAttachment", "ParsePackV2BindingAttachment",
-        "SerializePackV2AttenuationCurve", "ParsePackV2AttenuationCurve", "SerializePackV2BindingCurve", "ParsePackV2BindingCurve",
-        "SerializePackV2DiscreteVariable", "ParsePackV2DiscreteVariable", "SerializePackV2MeterWiring", "ParsePackV2MeterWiring",
-        "SerializePackV2ContainerHeader", "ParsePackV2ContainerHeader", "SerializePackV2ContainerChild", "ParsePackV2ContainerChild",
-        "SerializePackV2VoiceRecipeHeader", "ParsePackV2VoiceRecipeHeader", "ParsePackV3VoiceRecipeHeader", "ParsePackV4VoiceRecipeHeader", "ParsePackV5VoiceRecipeHeader",
-        "SerializePackV3VoiceRecipeTone", "ParsePackV3VoiceRecipeTone", "SerializePackV4VoiceRecipeSpatial", "ParsePackV4VoiceRecipeSpatial", "ParsePackV5VoiceRecipeSpatial",
-        "SerializePackV5VoiceRecipePlayback", "ParsePackV5VoiceRecipePlayback", "SerializePackV2VoiceRecipeInstall", "ParsePackV2VoiceRecipeInstall",
-        "SerializePackV2VoiceRecipeBinding", "ParsePackV2VoiceRecipeBinding",
-        "SerializePackRequirementBlock", "ParsePackRequirementBlock", "SerializePackRequirementBlockV2", "ParsePackRequirementBlockV2",
-        "SerializePackDependencyEdge", "ParsePackDependencyEdge", "SerializePackDependencyEdgeV2", "ParsePackDependencyEdgeV2",
-    ),
+    'HarkenEngine/Source/Runtime/media/include/harken/media/PackFormat.h': None,
+    'HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/PackFormat.h': None,
+    'HarkenEngine/Source/Runtime/media/include/harken/media/PackFormatV2.h': None,
+    'HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/PackFormatV2.h': None,
+    'HarkenEngine/Source/Runtime/media/include/harken/media/CanonicalBusSnapshot.h': None,
+    'HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/BusSnapshot.h': None,
+    'HarkenEngine/Source/Runtime/media/include/harken/media/PackVariableNameCatalog.h': None,
+    'HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/PackVariableNameCatalog.h': None,
+    'HarkenEngine/Source/Runtime/media/src/PackLogicImage.cpp': None,
+    'HarkenStudio/Source/Tooling/PackBuild/src/PackImage.cpp': None,
+    'HarkenEngine/Source/Runtime/media/src/PackTable.cpp': None,
+    'HarkenEngine/Source/Runtime/api/src/HarkenApi.cpp': None,
+    'HarkenEngine/Source/Runtime/core/src/PackComposition.cpp': None,
+    'HarkenStudio/Source/Tooling/Harkenizer/Core/CanonicalPackSetExport.cpp': None,
+    'HarkenStudio/Source/Tooling/Harkenizer/ResourceCompiler/ResourceCompiler.cpp': None,
+    'HarkenStudio/Source/Tooling/Harkenizer/ResourceCompiler/Cache.h': None,
+    'HarkenStudio/Source/RuntimeBridge/PackagingBridge.cpp': None,
+    'HarkenEngine/Source/Runtime/core/src/CurrentWorldCodec.cpp': None,
+    'HarkenStudio/Source/Tooling/PackBuild/src/WorldCodec.cpp': None,
 }
+
+SOURCE_EXEMPTIONS = {
+    'HarkenEngine/Source/Runtime/media/include/harken/media/PackFormat.h': {
+        'StoreLE16': 'Shared scalar little-endian/ObjectId primitive; it describes a scalar representation rather than a Pack record.',
+        'StoreLE32': 'Shared scalar little-endian/ObjectId primitive; it describes a scalar representation rather than a Pack record.',
+        'StoreLE64': 'Shared scalar little-endian/ObjectId primitive; it describes a scalar representation rather than a Pack record.',
+        'LoadLE16': 'Shared scalar little-endian/ObjectId primitive; it describes a scalar representation rather than a Pack record.',
+        'LoadLE32': 'Shared scalar little-endian/ObjectId primitive; it describes a scalar representation rather than a Pack record.',
+        'LoadLE64': 'Shared scalar little-endian/ObjectId primitive; it describes a scalar representation rather than a Pack record.',
+        'StoreObjectId': 'Shared scalar little-endian/ObjectId primitive; it describes a scalar representation rather than a Pack record.',
+        'LoadObjectId': 'Shared scalar little-endian/ObjectId primitive; it describes a scalar representation rather than a Pack record.',
+    },
+    'HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/PackFormat.h': {
+        'StoreLE16': 'Shared scalar little-endian/ObjectId primitive; it describes a scalar representation rather than a Pack record.',
+        'StoreLE32': 'Shared scalar little-endian/ObjectId primitive; it describes a scalar representation rather than a Pack record.',
+        'StoreLE64': 'Shared scalar little-endian/ObjectId primitive; it describes a scalar representation rather than a Pack record.',
+        'LoadLE16': 'Shared scalar little-endian/ObjectId primitive; it describes a scalar representation rather than a Pack record.',
+        'LoadLE32': 'Shared scalar little-endian/ObjectId primitive; it describes a scalar representation rather than a Pack record.',
+        'LoadLE64': 'Shared scalar little-endian/ObjectId primitive; it describes a scalar representation rather than a Pack record.',
+        'StoreObjectId': 'Shared scalar little-endian/ObjectId primitive; it describes a scalar representation rather than a Pack record.',
+        'LoadObjectId': 'Shared scalar little-endian/ObjectId primitive; it describes a scalar representation rather than a Pack record.',
+    },
+    'HarkenEngine/Source/Runtime/media/include/harken/media/PackFormatV2.h': {
+        'StoreLEF32': 'Shared scalar float/bit conversion primitive used by generated codecs.',
+        'LoadLEF32': 'Shared scalar float/bit conversion primitive used by generated codecs.',
+    },
+    'HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/PackFormatV2.h': {
+        'StoreLEF32': 'Shared scalar float/bit conversion primitive used by generated codecs.',
+        'LoadLEF32': 'Shared scalar float/bit conversion primitive used by generated codecs.',
+    },
+    'HarkenEngine/Source/Runtime/core/src/PackComposition.cpp': {
+        'ProviderClosureFingerprint': 'Hash-only (pack stable ID, content revision) canonicalization; these 16-byte scratch rows are never emitted into a Pack payload.',
+    },
+    'HarkenStudio/Source/Tooling/Harkenizer/ResourceCompiler/ResourceCompiler.cpp': {
+        'BuildStreamBytes': 'Independent .stream writer, explicitly excluded from the .bytes contract. Includes stream chunk checksums and PCM channel planes.',
+    },
+    'HarkenEngine/Source/Runtime/core/src/CurrentWorldCodec.cpp': {
+        'AppendU32': 'Scalar primitive retained exclusively for V19/V20 Trace or preview extensions after generated shipping-body traversal. Do not exempt callers generically.',
+        'AppendU64': 'Scalar primitive retained exclusively for V19/V20 Trace or preview extensions after generated shipping-body traversal. Do not exempt callers generically.',
+        'AppendF32': 'Scalar primitive retained exclusively for V19/V20 Trace or preview extensions after generated shipping-body traversal. Do not exempt callers generically.',
+        'AppendObjectId': 'Scalar primitive retained exclusively for V19/V20 Trace or preview extensions after generated shipping-body traversal. Do not exempt callers generically.',
+        'EncodeSignalEndpoint': 'V20 Trace/preview signal endpoint extension. Canonical Pack body admission accepts shipping V18 only.',
+        'DecodeSignalEndpoint': 'V20 Trace/preview signal endpoint extension. Canonical Pack body admission accepts shipping V18 only.',
+        'PackBodyWriteTrace::Segment': 'V19 Trace-only segment marker and bounds extension; output is null for shipping V18.',
+        'EncodeCurrentWorldBodyV20': 'V20 Trace writer appends signal tables after generated shipping body; never used by canonical .bytes export.',
+    },
+    'HarkenStudio/Source/Tooling/PackBuild/src/WorldCodec.cpp': {
+        'AppendU32': 'Scalar primitive retained exclusively for V19/V20 Trace or preview extensions after generated shipping-body traversal. Do not exempt callers generically.',
+        'AppendU64': 'Scalar primitive retained exclusively for V19/V20 Trace or preview extensions after generated shipping-body traversal. Do not exempt callers generically.',
+        'AppendF32': 'Scalar primitive retained exclusively for V19/V20 Trace or preview extensions after generated shipping-body traversal. Do not exempt callers generically.',
+        'AppendObjectId': 'Scalar primitive retained exclusively for V19/V20 Trace or preview extensions after generated shipping-body traversal. Do not exempt callers generically.',
+        'EncodeSignalEndpoint': 'V20 Trace/preview signal endpoint extension. Canonical Pack body admission accepts shipping V18 only.',
+        'DecodeSignalEndpoint': 'V20 Trace/preview signal endpoint extension. Canonical Pack body admission accepts shipping V18 only.',
+        'EncodeCurrentWorldPreviewBody': 'V20 preview writer appends signal tables; shipping-vintage branch immediately delegates to the generated shipping writer.',
+    },
+}
+
+SOURCE_BLOCK_EXEMPTIONS = {
+    'HarkenEngine/Source/Runtime/core/src/CurrentWorldCodec.cpp': {
+        "worldTraceVintage == kCurrentWorldBodyVintageV20": "Trace/preview V20 signal extension; Pack accepts only shipping V18.",
+        "state.bodyVintage == kCurrentWorldBodyVintageV19": "Trace V19 segment extension; Pack accepts only shipping V18.",
+    },
+    'HarkenStudio/Source/Tooling/PackBuild/src/WorldCodec.cpp': {
+        "worldTraceVintage == kCurrentWorldBodyVintageV20": "Trace/preview V20 signal extension; Pack accepts only shipping V18.",
+    },
+}
+
+CONTENT_REVISION_SOURCE = "HarkenStudio/Source/Tooling/Harkenizer/Core/CanonicalPackSetExport.cpp"
 
 
 def pascal(name: str) -> str:
@@ -226,6 +270,8 @@ def _validate_fixed_layout(layout: dict) -> None:
     for name, record in records.items():
         symbols.append("kPack" + pascal(name) + "Bytes")
         symbols.extend("kPack" + pascal(name) + pascal(field["name"]) + "Offset" for field in record["fields"])
+        symbols.extend("kPack" + pascal(name) + pascal(field["name"]) for field in record["fields"]
+                       if record["mode"] == "fixed" and field["type"] == "bytes" and "const" in field)
     for kind in layout.get("kinds", []) + layout.get("retiredKinds", []):
         symbols.append("kPackEntryKind" + pascal(kind["name"]))
         if "vintage" in kind:
@@ -340,6 +386,20 @@ def const_value(field: dict) -> tuple[str, str]:
     return kind, f"{value}ULL"
 
 
+def render_constants_header(layout: dict, target: str) -> str:
+    validate_layout(layout)
+    require(target in NAMESPACES, f"unknown generation target: {target}")
+    lines = [
+        "// Generated by .scripts/pack_wire_codegen.py. Do not edit.",
+        "#pragma once", "", "#include <cstdint>",
+        "", f"namespace {NAMESPACES[target]} {{", "",
+    ]
+    for name, value in sorted(layout.get("constants", {}).items()):
+        lines.append(f"inline constexpr std::uint64_t kPack{pascal(name)} = {value}ULL;")
+    lines += ["", "}", ""]
+    return "\n".join(lines)
+
+
 def _render_fixed_header(layout: dict, bindings: dict, target: str, kind_layout: dict) -> str:
     layouts = _fixed_record_layouts(layout)
     _validate_fixed_bindings(layout, bindings)
@@ -348,13 +408,10 @@ def _render_fixed_header(layout: dict, bindings: dict, target: str, kind_layout:
     lines = [
         "// Generated by .scripts/pack_wire_codegen.py. Do not edit.",
         "#pragma once", "", "#include <algorithm>", "#include <bit>", "#include <cstdint>",
-        "#include <cstring>", "#include <iterator>", "#include <type_traits>",
+        "#include <cstring>", "#include <iterator>", "#include <limits>", "#include <type_traits>",
+        "", '#include "harken_pack_wire_constants.g.h"',
         "", f"namespace {NAMESPACES[target]} {{", "",
     ]
-    for name, value in sorted(constants.items()):
-        lines.append(f"inline constexpr std::uint64_t kPack{pascal(name)} = {value}ULL;")
-    if constants:
-        lines.append("")
     kinds = sorted(kind_layout.get("kinds", []) + kind_layout.get("retiredKinds", []), key=lambda kind: kind["id"])
     for kind in kinds:
         name = pascal(kind["name"])
@@ -370,6 +427,14 @@ def _render_fixed_header(layout: dict, bindings: dict, target: str, kind_layout:
     for kind in sorted(kind_layout.get("kinds", []), key=lambda kind: kind["id"]):
         lines.append(f"    case kPackEntryKind{pascal(kind['name'])}: return true;")
     lines += ["    default: return false;", "    }", "}", ""]
+    lines += [
+        "[[nodiscard]] inline constexpr std::uint32_t PackEntryVintage(std::uint32_t kind) noexcept {",
+        "    switch (kind) {",
+    ]
+    for kind in sorted(kind_layout.get("kinds", []), key=lambda kind: kind["id"]):
+        name = pascal(kind["name"])
+        lines.append(f"    case kPackEntryKind{name}: return kPack{name}Vintage;")
+    lines += ["    default: return 0;", "    }", "}", ""]
     vintage_parameter = " vintage" if kind_layout.get("kinds") else ""
     lines += [
         f"[[nodiscard]] inline bool VintageLegalForKind(std::uint32_t kind, std::uint32_t{vintage_parameter}) noexcept {{",
@@ -418,6 +483,9 @@ def _render_fixed_header(layout: dict, bindings: dict, target: str, kind_layout:
         lines.append(f"inline constexpr std::uint64_t kPack{name}Bytes = {info['bytes']}ULL;")
         for field, offset, _ in info["fields"]:
             lines.append(f"inline constexpr std::uint64_t kPack{name}{pascal(field['name'])}Offset = {offset}ULL;")
+            if field["type"] == "bytes" and "const" in field:
+                values = ", ".join(f"{value}u" for value in field["const"].encode("ascii"))
+                lines.append(f"inline constexpr std::uint8_t kPack{name}{pascal(field['name'])}[] = {{{values}}};")
         lines.append("")
         for writing in (True, False):
             has_members = any(not field.get("reserved") and "const" not in field for field, _, _ in info["fields"])
@@ -500,7 +568,23 @@ def controls(record: dict) -> set[str]:
             result.add(count["count"] if isinstance(count, dict) else count)
         if "when" in field:
             result.add(field["when"]["field"])
+        result.update(field.get("position", []))
+    if "length" in record:
+        result.update(record["length"].values())
     return result
+
+
+def known_fields(layout: dict, name: str) -> dict[str, str]:
+    record = layout["records"][name]
+    names = {}
+    if "context" in record:
+        names.update(known_fields(layout, record["context"]))
+    for field in record["fields"]:
+        if field["type"] == "record":
+            names.update(known_fields(layout, field["record"]))
+        elif field["type"] != "rows" and not field.get("reserved") and "const" not in field:
+            names[field["name"]] = field["type"]
+    return names
 
 
 def validate_layout(layout: dict) -> None:
@@ -508,13 +592,13 @@ def validate_layout(layout: dict) -> None:
     _validate_fixed_layout(fixed)
     for name, record in streams.items():
         require(bool(IDENTIFIER.fullmatch(name)), f"invalid stream record name: {name}")
-        require(set(record) <= {"mode", "fields", "context"}, f"{name}: invalid stream properties")
+        require(set(record) <= {"mode", "fields", "context", "length"}, f"{name}: invalid stream properties")
         if "context" in record:
             require(isinstance(record["context"], str) and record["context"] in fixed["records"], f"{name}: context must name a fixed header")
         require(isinstance(record["fields"], list) and bool(record["fields"]), f"{name}: empty stream")
         names = set()
         for field in record["fields"]:
-            require(isinstance(field, dict) and set(field) <= {"name", "type", "record", "count", "when"}, f"{name}: invalid stream field")
+            require(isinstance(field, dict) and set(field) <= {"name", "type", "record", "count", "when", "position"}, f"{name}: invalid stream field")
             field_name = field.get("name")
             require(isinstance(field_name, str) and bool(IDENTIFIER.fullmatch(field_name)) and pascal(field_name) not in names, f"{name}: invalid or duplicate stream field name")
             names.add(pascal(field_name))
@@ -531,6 +615,20 @@ def validate_layout(layout: dict) -> None:
                 when = field["when"]
                 require(isinstance(when, dict) and set(when) == {"field", "equals"}, f"{name}.{field_name}: invalid when")
                 require(isinstance(when["field"], str) and bool(IDENTIFIER.fullmatch(when["field"])) and integer(when["equals"]) and when["equals"] >= 0, f"{name}.{field_name}: invalid discriminator")
+            if "position" in field:
+                position = field["position"]
+                require(isinstance(position, list) and bool(position) and all(isinstance(value, str) and bool(IDENTIFIER.fullmatch(value)) for value in position), f"{name}.{field_name}: position must name header offsets")
+        positions = [value for field in record["fields"] for value in field.get("position", [])]
+        if positions or "length" in record:
+            require(len(positions) == len(set(positions)), f"{name}: duplicate position target")
+            require(all(field["record"] in fixed["records"] and "when" not in field for field in record["fields"]), f"{name}: positions require unconditional fixed record tables")
+            counts = {field["count"]["count"] if isinstance(field["count"], dict) else field["count"] for field in record["fields"] if "count" in field}
+            require(not (set(positions) & counts), f"{name}: position cannot replace a row count")
+            if "length" in record:
+                length = record["length"]
+                require(isinstance(length, dict) and set(length) == {"field", "from"}, f"{name}: invalid stream length")
+                require(isinstance(length["field"], str) and bool(IDENTIFIER.fullmatch(length["field"])) and length["field"] not in set(positions) | counts, f"{name}: length must name a separate unsigned field")
+                require(isinstance(length["from"], str) and length["from"] in positions, f"{name}: length origin must name a position target")
     visiting, done = set(), set()
     def visit(name: str) -> None:
         require(name not in visiting, f"recursive stream: {name}")
@@ -543,25 +641,17 @@ def validate_layout(layout: dict) -> None:
         done.add(name)
     for name in streams:
         visit(name)
-    def known_fields(name: str) -> dict[str, str]:
-        record = layout["records"][name]
-        names = {}
-        if "context" in record:
-            names.update(known_fields(record["context"]))
-        for field in record["fields"]:
-            if field["type"] == "record":
-                names.update(known_fields(field["record"]))
-            elif field["type"] != "rows" and not field.get("reserved") and "const" not in field:
-                names[field["name"]] = field["type"]
-        return names
     for name, record in streams.items():
-        available = known_fields(record["context"]) if "context" in record else {}
+        available = known_fields(layout, record["context"]) if "context" in record else {}
         for field in record["fields"]:
             for control in controls({"fields": [field]}):
                 require(control in available, f"{name}.{field['name']}: control {control} is not provided by an earlier header")
                 require(available[control] in {"u8", "u16", "u32", "u64"}, f"{name}.{field['name']}: control must be an unsigned scalar")
             if field["type"] == "record":
-                available.update(known_fields(field["record"]))
+                available.update(known_fields(layout, field["record"]))
+        if "length" in record:
+            length_field = record["length"]["field"]
+            require(available.get(length_field) in {"u8", "u16", "u32", "u64"}, f"{name}: length must be provided by an unsigned header field")
     probe = copy.deepcopy(layout)
     for name in streams:
         probe["records"][name] = {"mode": "fixed", "fields": [{"name": "placeholder", "type": "u8"}]}
@@ -654,11 +744,50 @@ def render_header(layout: dict, bindings: dict, target: str) -> str:
     for record in ordered:
         name = pascal(record)
         definition = streams[record]
+        positions = [value for field in definition["fields"] for value in field.get("position", [])]
+        if positions:
+            row_type = bindings["records"][record][target]
+            wire_types = known_fields(layout, record)
+            lines += [f"[[nodiscard]] inline bool LayoutPack{name}({row_type}& value, std::uint64_t& size) noexcept {{", "    size = 0;"]
+            for field in definition["fields"]:
+                for position in field.get("position", []):
+                    member = member_name(bindings, record, position, target)
+                    maximum = (1 << (SCALAR_BYTES[wire_types[position]] * 8)) - 1
+                    if maximum < (1 << 64) - 1:
+                        lines.append(f"    if (size > {maximum}ULL) return false;")
+                    lines += [f"    if (size > std::numeric_limits<std::remove_cvref_t<decltype(value.{member})>>::max()) return false;", f"    value.{member} = static_cast<std::remove_cvref_t<decltype(value.{member})>>(size);"]
+                extent = extents[field["record"]]
+                if field["type"] == "rows":
+                    count = field["count"]
+                    count_name = count["count"] if isinstance(count, dict) else count
+                    member = member_name(bindings, record, count_name, target)
+                    expression = f"static_cast<std::uint64_t>(value.{member})"
+                    if isinstance(count, dict) and count["subtract"]:
+                        expression = f"value.{member} > {count['subtract']} ? {expression} - {count['subtract']} : 0"
+                    lines += [f"    const std::uint64_t {field['name']}Count = {expression};", f"    if ({field['name']}Count > (UINT64_MAX - size) / {extent}ULL) return false;", f"    size += {field['name']}Count * {extent}ULL;"]
+                else:
+                    lines += [f"    if (size > UINT64_MAX - {extent}ULL) return false;", f"    size += {extent}ULL;"]
+            metadata = list(positions)
+            if "length" in definition:
+                length = definition["length"]
+                member = member_name(bindings, record, length["field"], target)
+                origin = member_name(bindings, record, length["from"], target)
+                lines.append(f"    const auto length = size - value.{origin};")
+                maximum = (1 << (SCALAR_BYTES[wire_types[length["field"]]] * 8)) - 1
+                if maximum < (1 << 64) - 1:
+                    lines.append(f"    if (length > {maximum}ULL) return false;")
+                lines += [f"    if (length > std::numeric_limits<std::remove_cvref_t<decltype(value.{member})>>::max()) return false;", f"    value.{member} = static_cast<std::remove_cvref_t<decltype(value.{member})>>(length);"]
+                metadata.append(length["field"])
+            lines += ["    return true;", "}", "", f"[[nodiscard]] inline bool ValidatePack{name}Layout(const {row_type}& value, std::uint64_t size) noexcept {{", "    auto expected = value;", "    std::uint64_t expectedSize = 0;", f"    if (!LayoutPack{name}(expected, expectedSize) || expectedSize != size) return false;"]
+            comparisons = [f"value.{member_name(bindings, record, field, target)} == expected.{member_name(bindings, record, field, target)}" for field in metadata]
+            lines += ["    return " + " &&\n           ".join(comparisons) + ";", "}", ""]
         for direction in ("Append", "Read", "Measure"):
             measure = direction == "Measure"
             lines += ["template <class Visitor>" if measure else "template <class Buffer, class Visitor>", f"[[nodiscard]] bool MeasurePack{name}(Visitor& visitor, std::uint64_t& size) noexcept {{" if measure else f"[[nodiscard]] bool {direction}Pack{name}(Buffer& buffer, Visitor& visitor) noexcept {{"]
             if controls(definition):
                 lines += ["    static_assert(noexcept(visitor.Value()));", "    auto& value = visitor.Value();", f"    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, {bindings['records'][record][target]}>);"]
+            if direction == "Read" and positions:
+                lines += ["    static_assert(noexcept(buffer.Remaining()));", "    const auto initialRemaining = buffer.Remaining();"]
             for field in definition["fields"]:
                 label = pascal(field["name"])
                 codec = pascal(field["record"])
@@ -702,6 +831,8 @@ def render_header(layout: dict, bindings: dict, target: str) -> str:
                 if "when" in field:
                     lines.append("    }")
             if not measure:
+                if direction == "Read" and positions:
+                    lines.append(f"    if (!ValidatePack{name}Layout(value, initialRemaining - buffer.Remaining())) return false;")
                 lines += ["    static_assert(noexcept(visitor.Finish()));", "    return visitor.Finish();"]
             else:
                 lines.append("    return true;")
@@ -723,13 +854,45 @@ def source_code(text: str) -> str:
 def function_ranges(text: str, names: tuple[str, ...]) -> list[tuple[int, int]]:
     ranges = []
     for name in names:
-        for match in re.finditer(r"\b" + re.escape(name) + r"\s*\([^;{}]*\)\s*(?:noexcept\s*)?\{", text):
-            depth = 1
-            end = match.end()
-            while end < len(text) and depth:
-                depth += (text[end] == "{") - (text[end] == "}")
-                end += 1
-            ranges.append((match.start(), end))
+        if "::" in name:
+            owner, method = name.rsplit("::", 1)
+            for match in re.finditer(r"\bstruct\s+" + re.escape(owner) + r"\s*\{", text):
+                start, end = block_range(text, match.start(), match.end())
+                ranges.extend((start + left, start + right) for left, right in function_ranges(text[start:end], (method,)))
+        for match in re.finditer(r"^[ \t]*[^\n;{}()]*\b" + re.escape(name) + r"\s*\([^;{}]*\)\s*(?:noexcept\s*)?\{", text, re.M):
+            ranges.append(block_range(text, match.start(), match.end()))
+    return ranges
+
+
+def block_range(text: str, start: int, opening_end: int) -> tuple[int, int]:
+    depth = 1
+    end = opening_end
+    while end < len(text) and depth:
+        depth += (text[end] == "{") - (text[end] == "}")
+        end += 1
+    return start, end
+
+
+def source_exemptions(relative: str, text: str, errors: list[str]) -> list[tuple[int, int]]:
+    ranges = []
+    for symbol in SOURCE_EXEMPTIONS.get(relative, {}):
+        found = function_ranges(text, (symbol,))
+        if len(found) != 1:
+            errors.append(f"{relative}: stale source exemption: {symbol}")
+        ranges.extend(found)
+    for condition in SOURCE_BLOCK_EXEMPTIONS.get(relative, {}):
+        pattern = r"\bif\s*\(\s*" + re.escape(condition) + r"\s*\)\s*\{"
+        found = list(re.finditer(pattern, text))
+        if len(found) != 1:
+            errors.append(f"{relative}: stale source exemption: {condition}")
+        ranges.extend(block_range(text, match.start(), match.end()) for match in found)
+    if relative == CONTENT_REVISION_SOURCE:
+        start = text.find("auto contentRevision = harkenstudiobuild::Fnv1a64(")
+        end = text.find("pack.contentRevision = contentRevision & INT64_MAX;", start)
+        calls = list(re.finditer(r"\bharkenstudiobuild::(?:StoreLE32|StoreLE64|StoreObjectId)\(header\.data\(\)(?:\s*\+\s*(?:4|8|24))?\s*,[^;]+;", text[start:end])) if start >= 0 and end > start else []
+        if len(calls) != 7:
+            errors.append(f"{relative}: stale content revision hash exemption")
+        ranges.extend((start + match.start(), start + match.end()) for match in calls)
     return ranges
 
 
@@ -742,8 +905,12 @@ def scan_sources(root: Path = ROOT, scopes: dict | None = None) -> list[str]:
             continue
         text = source_code(path.read_text(encoding="utf-8"))
         ranges = [(0, len(text))] if functions is None else function_ranges(text, functions)
-        for match in BYTE_ACCESS.finditer(text):
-            if any(start <= match.start() < end for start, end in ranges):
+        excluded = source_exemptions(relative, text, errors)
+        matches = list(BYTE_ACCESS.finditer(text))
+        if relative.endswith("WorldCodec.cpp"):
+            matches.extend(BODY_BYTE_ACCESS.finditer(text))
+        for match in matches:
+            if any(start <= match.start() < end for start, end in ranges) and not any(start <= match.start() < end for start, end in excluded):
                 line = text.count("\n", 0, match.start()) + 1
                 errors.append(f"{relative}:{line}: handwritten Pack byte access: {match[0].strip()}")
     return errors
@@ -754,7 +921,8 @@ def generate(root: Path = ROOT, check: bool = False) -> list[str]:
     layout = contract.get("x-harken-format", {}).get("binaryLayout")
     validate_layout(layout)
     bindings = json.loads((root / BINDINGS).read_text(encoding="utf-8"))
-    outputs = {target: render_header(layout, bindings, target) for target in OUTPUTS}
+    outputs = {target: render_header(layout, bindings, target) for target in NAMESPACES}
+    outputs.update({target + "_constants": render_constants_header(layout, target) for target in NAMESPACES})
     errors = []
     for target, relative in OUTPUTS.items():
         path = root / relative

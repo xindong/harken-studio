@@ -1,3 +1,4 @@
+#include "UnitTest/CanonicalPackSetActivate.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/PackFoundationFixture.h"
 #include "harken/media/PackFormatV2.h"
@@ -48,7 +49,7 @@ public:
                          std::vector<std::uint8_t> payload,
                          std::uint32_t vintage = 0) {
         if (vintage == 0) {
-            vintage = PackV2CanonicalDirectoryVintage(kind);
+            vintage = PackEntryVintage(kind);
         }
         Entry entry;
         entry.kind = kind;
@@ -70,12 +71,12 @@ public:
             kPackDirectoryEntryBytes;
         const std::uint64_t dirEnd = dirOffset + dirBytes;
         payloadOffsets_.assign(entries_.size(), 0);
-        std::uint64_t cursor = AlignUp(dirEnd, kPackV2PayloadAlign);
+        std::uint64_t cursor = AlignUp(dirEnd, kPackPayloadAlign);
         std::uint64_t contentEnd = dirEnd;
         for (std::size_t i = 0; i < entries_.size(); ++i) {
             payloadOffsets_[i] = cursor;
             contentEnd = cursor + entries_[i].payload.size();
-            cursor = AlignUp(contentEnd, kPackV2PayloadAlign);
+            cursor = AlignUp(contentEnd, kPackPayloadAlign);
         }
         std::vector<std::uint8_t> bytes(static_cast<std::size_t>(contentEnd), 0);
         for (std::size_t i = 0; i < entries_.size(); ++i) {
@@ -127,7 +128,8 @@ private:
 };
 
 std::vector<std::uint8_t> MakeInitPartition(std::uint64_t* bodyBytes) {
-    return PartitionPayload(kInitId, 1, 0, 0, bodyBytes);
+    return PartitionPayload(kInitId, 1, 0, 0, bodyBytes, 64,
+        {0x0102030405060708ULL, 0x090a0b0c0d0e0f10ULL});
 }
 
 std::vector<std::uint8_t> BuildInitBare() {
@@ -144,7 +146,7 @@ std::vector<std::uint8_t> BuildInitBare() {
 
 std::vector<std::uint8_t> BuildInitWithGameplayCatalog(
     std::vector<std::uint8_t> catalog,
-    std::uint32_t vintage = kPackCanonicalEntryVintage) {
+    std::uint32_t vintage = 1u) {
     std::uint64_t bodyBytes = 0;
     std::vector<std::uint8_t> partition = MakeInitPartition(&bodyBytes);
     ImageBuilder builder(kPackKindInit);
@@ -225,58 +227,52 @@ TEST(ActionCatalogFormat, InitWithoutKind25StillParses) {
     EXPECT_FALSE(image.hasCatalog);
 }
 
-TEST(ActionCatalogFormat, CatalogMustMatchContainingInitIdentity) {
+TEST(ActionCatalogFormat, CatalogMustMatchActiveInitIdentity) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const auto activated = harkentest::ActivateInitBytesV1(
+        std::filesystem::path(HARKEN_TEMP_DIR) / "gameplay-catalog-identity",
+        BuildInitBare(), kInitId);
+    ASSERT_EQ(VN_OK, activated.result);
+    const auto before = session.Engine()->packComposition.PublishedHandle();
     for (bool wrongId : {false, true}) {
         auto identity = MakeIdentity();
-        if (wrongId)
-            ++identity.initPackStableId;
-        else
-            ++identity.initContentRevision;
+        if (wrongId) ++identity.initPackStableId;
+        else ++identity.initContentRevision;
         std::vector<std::uint8_t> payload;
         ASSERT_TRUE(EncodeGameplayCatalog(identity, {}, {}, &payload));
-        const auto bytes = BuildInitWithGameplayCatalog(payload);
-        PackCanonicalImage image;
-        EXPECT_EQ(VN_BAD_PACK,
-                  ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
+        VnPackByteSpan span{sizeof(span), 0, payload.data(), payload.size()};
+        EXPECT_EQ(VN_PACK_STALE_REVISION,
+                  Vn_SetGameplayCatalog(activated.initHandle, &span));
+        EXPECT_EQ(before, session.Engine()->packComposition.PublishedHandle());
     }
 }
 
-TEST(ActionCatalogFormat, Kind20InitRoutingCatalogStillParses) {
-    harkentest::packfoundation::Fixture fixture;
-    ASSERT_TRUE(harkentest::packfoundation::BuildFixture(2, 1, &fixture));
-    PackCanonicalImage image;
-    ASSERT_EQ(VN_OK, ParsePackCanonicalImage(fixture.init.data(),
-                                             fixture.init.size(), &image));
-    EXPECT_TRUE(image.hasCatalog);
-    EXPECT_FALSE(image.hasGameplayCatalog);
-}
+
 
 TEST(ActionCatalogFormat, RoundTripOneActiveAndOneRetired) {
     std::vector<std::uint8_t> catalog;
     ASSERT_TRUE(EncodeGameplayCatalog(
         MakeIdentity(), {MakeActive("Play_Fire", 100)},
         {MakeRetired("Play_Old", 99)}, &catalog));
-    const std::vector<std::uint8_t> bytes =
-        BuildInitWithGameplayCatalog(catalog);
-    PackCanonicalImage image;
-    ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
-    ASSERT_TRUE(image.hasGameplayCatalog);
-    ASSERT_EQ(1u, image.gameplayCatalog.active.size());
-    ASSERT_EQ(1u, image.gameplayCatalog.retired.size());
-    EXPECT_EQ(harkentest::ObjectId(100u), image.gameplayCatalog.active[0].actionStableId);
+    GameplayCatalogImage image;
+    ASSERT_EQ(VN_OK, ParseGameplayCatalog(catalog.data(), catalog.size(), &image));
+    ASSERT_EQ(1u, image.active.size());
+    ASSERT_EQ(1u, image.retired.size());
+    EXPECT_EQ(harkentest::ObjectId(100u), image.active[0].actionStableId);
     EXPECT_EQ(std::string("Play_Fire"),
-              std::string(NameAt(image.gameplayCatalog,
-                                 image.gameplayCatalog.active[0].nameOffset,
-                                 image.gameplayCatalog.active[0].nameLength)));
-    EXPECT_EQ(harkentest::ObjectId(99u), image.gameplayCatalog.retired[0].lastActionStableId);
+              std::string(NameAt(image,
+                                 image.active[0].nameOffset,
+                                 image.active[0].nameLength)));
+    EXPECT_EQ(harkentest::ObjectId(99u), image.retired[0].lastActionStableId);
     EXPECT_EQ(std::string("Play_Old"),
-              std::string(NameAt(image.gameplayCatalog,
-                                 image.gameplayCatalog.retired[0].nameOffset,
-                                 image.gameplayCatalog.retired[0].nameLength)));
+              std::string(NameAt(image,
+                                 image.retired[0].nameOffset,
+                                 image.retired[0].nameLength)));
     EXPECT_EQ(kGameplayCatalogRetiredReasonRenamed,
-              image.gameplayCatalog.retired[0].reason);
+              image.retired[0].reason);
     EXPECT_EQ(GameplayCatalogDigest(catalog.data(), catalog.size()),
-              image.gameplayCatalog.header.digest);
+              image.header.digest);
 }
 
 TEST(ActionCatalogFormat, DigestStableWhenDraftsShuffled) {
@@ -291,20 +287,18 @@ TEST(ActionCatalogFormat, DigestStableWhenDraftsShuffled) {
         {MakeActive("Play_Alpha", 3), MakeActive("Play_Zulu", 8)},
         {MakeRetired("Play_Old", 1)}, &second));
     EXPECT_EQ(first, second);
-    const std::vector<std::uint8_t> bytes =
-        BuildInitWithGameplayCatalog(first);
-    PackCanonicalImage image;
+    GameplayCatalogImage image;
     ASSERT_EQ(VN_OK,
-              ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
-    EXPECT_EQ(LoadLE64(first.data() + 24), image.gameplayCatalog.header.digest);
+              ParseGameplayCatalog(first.data(), first.size(), &image));
+    EXPECT_EQ(LoadLE64(first.data() + 24), image.header.digest);
     EXPECT_EQ(std::string("Play_Alpha"),
-              std::string(NameAt(image.gameplayCatalog,
-                                 image.gameplayCatalog.active[0].nameOffset,
-                                 image.gameplayCatalog.active[0].nameLength)));
+              std::string(NameAt(image,
+                                 image.active[0].nameOffset,
+                                 image.active[0].nameLength)));
     EXPECT_EQ(std::string("Play_Zulu"),
-              std::string(NameAt(image.gameplayCatalog,
-                                 image.gameplayCatalog.active[1].nameOffset,
-                                 image.gameplayCatalog.active[1].nameLength)));
+              std::string(NameAt(image,
+                                 image.active[1].nameOffset,
+                                 image.active[1].nameLength)));
 }
 
 TEST(ActionCatalogFormat, TwoEncodesOfSameRowsAreByteIdentical) {
@@ -318,35 +312,14 @@ TEST(ActionCatalogFormat, TwoEncodesOfSameRowsAreByteIdentical) {
     EXPECT_EQ(first, second);
 }
 
-TEST(ActionCatalogFormat, DuplicateKind25IsBadPack) {
-    std::vector<std::uint8_t> catalog;
-    ASSERT_TRUE(EncodeGameplayCatalog(
-        MakeIdentity(), {MakeActive("Play_Fire", 100)},
-        {MakeRetired("Play_Old", 99)}, &catalog));
-    std::uint64_t bodyBytes = 0;
-    std::vector<std::uint8_t> partition = MakeInitPartition(&bodyBytes);
-    ImageBuilder builder(kPackKindInit);
-    builder.AddEntry(kPackEntryKindGameplayCatalog, 0, catalog);
-    builder.AddEntry(kPackEntryKindGameplayCatalog, 1, catalog);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, kInitId,
-                     RequirementPayload(kInitId, 1, 1, 0, bodyBytes));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kInitId,
-                     std::move(partition));
-    harkentest::packfoundation::AppendNeutralMasterSnapshot(&builder);
-    const std::vector<std::uint8_t> bytes = builder.Build();
-    PackCanonicalImage image;
-    EXPECT_EQ(VN_BAD_PACK,
-              ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
-}
-
-TEST(ActionCatalogFormat, IllegalVintageIsIncompatible) {
+TEST(ActionCatalogFormat, RetiredGameplayEntryIsBadPack) {
     std::vector<std::uint8_t> catalog;
     ASSERT_TRUE(EncodeGameplayCatalog(
         MakeIdentity(), {MakeActive("Play_Fire", 100)}, {}, &catalog));
     const std::vector<std::uint8_t> bytes =
-        BuildInitWithGameplayCatalog(std::move(catalog), 2);
+        BuildInitWithGameplayCatalog(std::move(catalog));
     PackCanonicalImage image;
-    EXPECT_EQ(VN_PACK_INCOMPATIBLE,
+    EXPECT_EQ(VN_BAD_PACK,
               ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
 }
 
@@ -355,41 +328,18 @@ TEST(ActionCatalogFormat, CountOverflowIsCatalogCapacity) {
     StoreLE32(payload.data() + 0, 1);
     StoreLE32(payload.data() + 4, kPackGameplayCatalogVintage);
     StoreLE32(payload.data() + 32, kGameplayCatalogMaxEntries + 1);
-    const std::vector<std::uint8_t> bytes =
-        BuildInitWithGameplayCatalog(std::move(payload));
-    PackCanonicalImage image;
+    GameplayCatalogImage image;
     EXPECT_EQ(VN_PACK_CATALOG_CAPACITY,
-              ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
+              ParseGameplayCatalog(payload.data(), payload.size(), &image));
 }
 
 TEST(ActionCatalogFormat, SizeOverflowIsCatalogCapacity) {
     std::vector<std::uint8_t> payload(kGameplayCatalogMaxBytes + 1, 0);
     StoreLE32(payload.data() + 0, 1);
     StoreLE32(payload.data() + 4, kPackGameplayCatalogVintage);
-    const std::vector<std::uint8_t> bytes =
-        BuildInitWithGameplayCatalog(std::move(payload));
-    PackCanonicalImage image;
+    GameplayCatalogImage image;
     EXPECT_EQ(VN_PACK_CATALOG_CAPACITY,
-              ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
-}
-
-TEST(ActionCatalogFormat, Kind25OnCanonicalContentIsBadPack) {
-    std::vector<std::uint8_t> catalog;
-    ASSERT_TRUE(EncodeGameplayCatalog(
-        MakeIdentity(), {MakeActive("Play_Fire", 100)}, {}, &catalog));
-    std::uint64_t bodyBytes = 0;
-    std::vector<std::uint8_t> partition =
-        PartitionPayload(kContentId, 1, 0, 0, &bodyBytes);
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindGameplayCatalog, 0, std::move(catalog));
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, kContentId,
-                     RequirementPayload(kContentId, 1, 1, 0, bodyBytes));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kContentId,
-                     std::move(partition));
-    const std::vector<std::uint8_t> bytes = builder.Build();
-    PackCanonicalImage image;
-    EXPECT_EQ(VN_BAD_PACK,
-              ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
+              ParseGameplayCatalog(payload.data(), payload.size(), &image));
 }
 
 TEST(ActionCatalogFormat, DuplicateActiveNamesAreBadPack) {
@@ -408,11 +358,9 @@ TEST(ActionCatalogFormat, DuplicateActiveNamesAreBadPack) {
                              kGameplayCatalogRetiredRowBytes;
     std::memcpy(pool + 6, "Play_A", 6);
     FinalizeCatalogPayload(&catalog);
-    const std::vector<std::uint8_t> bytes =
-        BuildInitWithGameplayCatalog(std::move(catalog));
-    PackCanonicalImage image;
+    GameplayCatalogImage image;
     EXPECT_EQ(VN_BAD_PACK,
-              ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
+              ParseGameplayCatalog(catalog.data(), catalog.size(), &image));
 }
 
 TEST(ActionCatalogFormat, DuplicateActionStableIdsAreBadPack) {
@@ -425,11 +373,9 @@ TEST(ActionCatalogFormat, DuplicateActionStableIdsAreBadPack) {
         kGameplayCatalogActiveRowBytes;
     StoreLE64(second, 5);
     FinalizeCatalogPayload(&catalog);
-    const std::vector<std::uint8_t> bytes =
-        BuildInitWithGameplayCatalog(std::move(catalog));
-    PackCanonicalImage image;
+    GameplayCatalogImage image;
     EXPECT_EQ(VN_BAD_PACK,
-              ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
+              ParseGameplayCatalog(catalog.data(), catalog.size(), &image));
 }
 
 TEST(ActionCatalogFormat, RetiredNameEqualToActiveIsBadPack) {
@@ -447,11 +393,9 @@ TEST(ActionCatalogFormat, RetiredNameEqualToActiveIsBadPack) {
             kGameplayCatalogRetiredRowBytes;
     std::memcpy(pool + 6, "Play_A", 6);
     FinalizeCatalogPayload(&catalog);
-    const std::vector<std::uint8_t> bytes =
-        BuildInitWithGameplayCatalog(std::move(catalog));
-    PackCanonicalImage image;
+    GameplayCatalogImage image;
     EXPECT_EQ(VN_BAD_PACK,
-              ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
+              ParseGameplayCatalog(catalog.data(), catalog.size(), &image));
 }
 
 } // namespace

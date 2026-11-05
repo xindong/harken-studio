@@ -4,6 +4,7 @@
 #include <harken/core/CurrentWorldCodec.h>
 #include <harken/param/VariableService.h>
 #include <harken/media/PackFormatV2.h>
+#include <harken/media/GameplayCatalogFormat.h>
 #include <harken/media/StreamFormat.h>
 #include <harken_remote/Protocol.h>
 #include <harken_remote/WireFormat.h>

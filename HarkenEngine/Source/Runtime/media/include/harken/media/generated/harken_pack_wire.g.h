@@ -6,12 +6,12 @@
 #include <cstdint>
 #include <cstring>
 #include <iterator>
+#include <limits>
 #include <type_traits>
 
-namespace harken {
+#include "harken_pack_wire_constants.g.h"
 
-inline constexpr std::uint64_t kPackBusDefinitionDownmixCoefficientCount = 64ULL;
-inline constexpr std::uint64_t kPackVoiceRecipeMaxParams = 64ULL;
+namespace harken {
 
 inline constexpr std::uint32_t kPackEntryKindMedia = 1u;
 inline constexpr std::uint32_t kPackMediaVintage = 2u;
@@ -36,16 +36,21 @@ inline constexpr std::uint32_t kPackEntryKindBusEffect = 12u;
 inline constexpr std::uint32_t kPackBusEffectVintage = 1u;
 inline constexpr std::uint32_t kPackEntryKindEffectDynamicRoute = 13u;
 inline constexpr std::uint32_t kPackEffectDynamicRouteVintage = 1u;
+inline constexpr std::uint32_t kPackEntryKindInitRoutingCatalog = 20u;
+inline constexpr std::uint32_t kPackEntryKindCanonicalDefinitionPartition = 21u;
+inline constexpr std::uint32_t kPackCanonicalDefinitionPartitionVintage = 2u;
 inline constexpr std::uint32_t kPackEntryKindPackRequirementBlock = 22u;
 inline constexpr std::uint32_t kPackPackRequirementBlockVintage = 2u;
 inline constexpr std::uint32_t kPackEntryKindPackDependencyEdge = 23u;
 inline constexpr std::uint32_t kPackPackDependencyEdgeVintage = 2u;
 inline constexpr std::uint32_t kPackEntryKindBusDefinitionSnapshot = 24u;
 inline constexpr std::uint32_t kPackBusDefinitionSnapshotVintage = 2u;
+inline constexpr std::uint32_t kPackEntryKindGameplayCatalog = 25u;
 inline constexpr std::uint32_t kPackEntryKindVariablePolicyOverlay = 26u;
 inline constexpr std::uint32_t kPackVariablePolicyOverlayVintage = 1u;
 inline constexpr std::uint32_t kPackEntryKindVariableRequirements = 27u;
 inline constexpr std::uint32_t kPackVariableRequirementsVintage = 1u;
+inline constexpr std::uint32_t kPackEntryKindVariableNameCatalog = 28u;
 
 [[nodiscard]] inline bool PackEntryKindSupported(std::uint32_t kind) noexcept {
     switch (kind) {
@@ -59,12 +64,35 @@ inline constexpr std::uint32_t kPackVariableRequirementsVintage = 1u;
     case kPackEntryKindVoiceRecipe: return true;
     case kPackEntryKindBusEffect: return true;
     case kPackEntryKindEffectDynamicRoute: return true;
+    case kPackEntryKindCanonicalDefinitionPartition: return true;
     case kPackEntryKindPackRequirementBlock: return true;
     case kPackEntryKindPackDependencyEdge: return true;
     case kPackEntryKindBusDefinitionSnapshot: return true;
     case kPackEntryKindVariablePolicyOverlay: return true;
     case kPackEntryKindVariableRequirements: return true;
     default: return false;
+    }
+}
+
+[[nodiscard]] inline constexpr std::uint32_t PackEntryVintage(std::uint32_t kind) noexcept {
+    switch (kind) {
+    case kPackEntryKindMedia: return kPackMediaVintage;
+    case kPackEntryKindBus: return kPackBusVintage;
+    case kPackEntryKindBusSend: return kPackBusSendVintage;
+    case kPackEntryKindAttenuation: return kPackAttenuationVintage;
+    case kPackEntryKindBindingDefinition: return kPackBindingDefinitionVintage;
+    case kPackEntryKindBindingAttachment: return kPackBindingAttachmentVintage;
+    case kPackEntryKindContainer: return kPackContainerVintage;
+    case kPackEntryKindVoiceRecipe: return kPackVoiceRecipeVintage;
+    case kPackEntryKindBusEffect: return kPackBusEffectVintage;
+    case kPackEntryKindEffectDynamicRoute: return kPackEffectDynamicRouteVintage;
+    case kPackEntryKindCanonicalDefinitionPartition: return kPackCanonicalDefinitionPartitionVintage;
+    case kPackEntryKindPackRequirementBlock: return kPackPackRequirementBlockVintage;
+    case kPackEntryKindPackDependencyEdge: return kPackPackDependencyEdgeVintage;
+    case kPackEntryKindBusDefinitionSnapshot: return kPackBusDefinitionSnapshotVintage;
+    case kPackEntryKindVariablePolicyOverlay: return kPackVariablePolicyOverlayVintage;
+    case kPackEntryKindVariableRequirements: return kPackVariableRequirementsVintage;
+    default: return 0;
     }
 }
 
@@ -80,6 +108,7 @@ inline constexpr std::uint32_t kPackVariableRequirementsVintage = 1u;
     case kPackEntryKindVoiceRecipe: return vintage == kPackVoiceRecipeVintage;
     case kPackEntryKindBusEffect: return vintage == kPackBusEffectVintage;
     case kPackEntryKindEffectDynamicRoute: return vintage == kPackEffectDynamicRouteVintage;
+    case kPackEntryKindCanonicalDefinitionPartition: return vintage == kPackCanonicalDefinitionPartitionVintage;
     case kPackEntryKindPackRequirementBlock: return vintage == kPackPackRequirementBlockVintage;
     case kPackEntryKindPackDependencyEdge: return vintage == kPackPackDependencyEdgeVintage;
     case kPackEntryKindBusDefinitionSnapshot: return vintage == kPackBusDefinitionSnapshotVintage;
@@ -373,6 +402,1477 @@ inline void SerializePackBindingDefinition(const PackBindingDefinitionEntry& row
         if ((in + 44)[i] != 0) return false;
     }
     if (!ParsePackBindingCurve(in + 48, kPackBindingCurveBytes, &out->definition.curve)) return false;
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyPayloadEffectEdgeBytes = 8ULL;
+inline constexpr std::uint64_t kPackBodyPayloadEffectEdgeFromNodeIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyPayloadEffectEdgeToNodeIdOffset = 4ULL;
+
+inline void SerializePackBodyPayloadEffectEdge(const EffectEdgeV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.fromNodeId));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.toNodeId));
+}
+
+[[nodiscard]] inline bool ParsePackBodyPayloadEffectEdge(const std::uint8_t* in, std::uint64_t size, EffectEdgeV1* out) noexcept {
+    if (size != kPackBodyPayloadEffectEdgeBytes) return false;
+    out->fromNodeId = static_cast<std::remove_cvref_t<decltype(out->fromNodeId)>>(LoadLE32(in + 0));
+    out->toNodeId = static_cast<std::remove_cvref_t<decltype(out->toNodeId)>>(LoadLE32(in + 4));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyPayloadEffectNodeHeaderBytes = 32ULL;
+inline constexpr std::uint64_t kPackBodyPayloadEffectNodeHeaderNodeIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyPayloadEffectNodeHeaderEffectIdOffset = 4ULL;
+inline constexpr std::uint64_t kPackBodyPayloadEffectNodeHeaderEffectTypeOffset = 20ULL;
+inline constexpr std::uint64_t kPackBodyPayloadEffectNodeHeaderParamCountOffset = 24ULL;
+inline constexpr std::uint64_t kPackBodyPayloadEffectNodeHeaderReservedOffset = 28ULL;
+
+inline void SerializePackBodyPayloadEffectNodeHeader(const EffectNodeV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.nodeId));
+    StoreObjectId(out + 4, row.effectId);
+    StoreLE32(out + 20, static_cast<std::uint32_t>(row.effectType));
+    StoreLE32(out + 24, static_cast<std::uint32_t>(row.paramCount));
+    std::memset(out + 28, 0, 4);
+}
+
+[[nodiscard]] inline bool ParsePackBodyPayloadEffectNodeHeader(const std::uint8_t* in, std::uint64_t size, EffectNodeV1* out) noexcept {
+    if (size != kPackBodyPayloadEffectNodeHeaderBytes) return false;
+    out->nodeId = static_cast<std::remove_cvref_t<decltype(out->nodeId)>>(LoadLE32(in + 0));
+    out->effectId = static_cast<std::remove_cvref_t<decltype(out->effectId)>>(LoadObjectId(in + 4));
+    out->effectType = static_cast<std::remove_cvref_t<decltype(out->effectType)>>(LoadLE32(in + 20));
+    out->paramCount = static_cast<std::remove_cvref_t<decltype(out->paramCount)>>(LoadLE32(in + 24));
+    for (std::uint64_t i = 0; i < 4; ++i) {
+        if ((in + 28)[i] != 0) return false;
+    }
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyPayloadEffectParamBytes = 8ULL;
+inline constexpr std::uint64_t kPackBodyPayloadEffectParamParamIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyPayloadEffectParamValueBitsOffset = 4ULL;
+
+inline void SerializePackBodyPayloadEffectParam(const EffectParamV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.paramId));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.valueBits));
+}
+
+[[nodiscard]] inline bool ParsePackBodyPayloadEffectParam(const std::uint8_t* in, std::uint64_t size, EffectParamV1* out) noexcept {
+    if (size != kPackBodyPayloadEffectParamBytes) return false;
+    out->paramId = static_cast<std::remove_cvref_t<decltype(out->paramId)>>(LoadLE32(in + 0));
+    out->valueBits = static_cast<std::remove_cvref_t<decltype(out->valueBits)>>(LoadLE32(in + 4));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyPayloadHeaderBytes = 111ULL;
+inline constexpr std::uint64_t kPackBodyPayloadHeaderPresentMaskOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyPayloadHeaderVolumeOffset = 8ULL;
+inline constexpr std::uint64_t kPackBodyPayloadHeaderPitchOffset = 12ULL;
+inline constexpr std::uint64_t kPackBodyPayloadHeaderOutputBusVolumeOffset = 16ULL;
+inline constexpr std::uint64_t kPackBodyPayloadHeaderStreamingModeOffset = 20ULL;
+inline constexpr std::uint64_t kPackBodyPayloadHeaderLoopCountOffset = 24ULL;
+inline constexpr std::uint64_t kPackBodyPayloadHeaderSpatialIs3DEnabledOffset = 28ULL;
+inline constexpr std::uint64_t kPackBodyPayloadHeaderReservedOffset = 29ULL;
+inline constexpr std::uint64_t kPackBodyPayloadHeaderSpatialPanningOffset = 31ULL;
+inline constexpr std::uint64_t kPackBodyPayloadHeaderSpatialSpreadOffset = 35ULL;
+inline constexpr std::uint64_t kPackBodyPayloadHeaderSpatialAttenuationDistanceScalingOffset = 39ULL;
+inline constexpr std::uint64_t kPackBodyPayloadHeaderLegacySpatialValueOffset = 43ULL;
+inline constexpr std::uint64_t kPackBodyPayloadHeaderOutputBusRefOffset = 47ULL;
+inline constexpr std::uint64_t kPackBodyPayloadHeaderSpatialAttenuationRefOffset = 63ULL;
+inline constexpr std::uint64_t kPackBodyPayloadHeaderLegacyValueOffset = 79ULL;
+inline constexpr std::uint64_t kPackBodyPayloadHeaderSpatializationMixOffset = 87ULL;
+inline constexpr std::uint64_t kPackBodyPayloadHeaderSendCountOffset = 91ULL;
+inline constexpr std::uint64_t kPackBodyPayloadHeaderReservedCount1Offset = 95ULL;
+inline constexpr std::uint64_t kPackBodyPayloadHeaderReservedCount2Offset = 99ULL;
+inline constexpr std::uint64_t kPackBodyPayloadHeaderEffectNodeCountOffset = 103ULL;
+inline constexpr std::uint64_t kPackBodyPayloadHeaderEffectEdgeCountOffset = 107ULL;
+
+inline void SerializePackBodyPayloadHeader(const PlayablePropertyPayloadViewV1& row, std::uint8_t* out) noexcept {
+    StoreLE64(out + 0, static_cast<std::uint64_t>(row.presentMask));
+    StoreLE32(out + 8, static_cast<std::uint32_t>(row.values[0].bits));
+    StoreLE32(out + 12, static_cast<std::uint32_t>(row.values[1].bits));
+    StoreLE32(out + 16, static_cast<std::uint32_t>(row.values[5].bits));
+    StoreLE32(out + 20, static_cast<std::uint32_t>(row.values[4].bits));
+    StoreLE32(out + 24, static_cast<std::uint32_t>(row.values[3].bits));
+    *(out + 28) = static_cast<std::uint8_t>(row.values[10].bits);
+    std::memset(out + 29, 0, 2);
+    StoreLE32(out + 31, static_cast<std::uint32_t>(row.values[8].bits));
+    StoreLE32(out + 35, static_cast<std::uint32_t>(row.values[9].bits));
+    StoreLE32(out + 39, static_cast<std::uint32_t>(row.values[11].bits));
+    StoreLE32(out + 43, static_cast<std::uint32_t>(row.values[12].bits));
+    StoreObjectId(out + 47, row.values[6].objectId);
+    StoreObjectId(out + 63, row.values[13].objectId);
+    StoreLE64(out + 79, static_cast<std::uint64_t>(row.values[14].bits));
+    StoreLE32(out + 87, static_cast<std::uint32_t>(row.values[16].bits));
+    StoreLE32(out + 91, static_cast<std::uint32_t>(row.sendCount));
+    std::memset(out + 95, 0, 4);
+    std::memset(out + 99, 0, 4);
+    StoreLE32(out + 103, static_cast<std::uint32_t>(row.effectNodeCount));
+    StoreLE32(out + 107, static_cast<std::uint32_t>(row.effectEdgeCount));
+}
+
+[[nodiscard]] inline bool ParsePackBodyPayloadHeader(const std::uint8_t* in, std::uint64_t size, PlayablePropertyPayloadViewV1* out) noexcept {
+    if (size != kPackBodyPayloadHeaderBytes) return false;
+    out->presentMask = static_cast<std::remove_cvref_t<decltype(out->presentMask)>>(LoadLE64(in + 0));
+    out->values[0].bits = static_cast<std::remove_cvref_t<decltype(out->values[0].bits)>>(LoadLE32(in + 8));
+    out->values[1].bits = static_cast<std::remove_cvref_t<decltype(out->values[1].bits)>>(LoadLE32(in + 12));
+    out->values[5].bits = static_cast<std::remove_cvref_t<decltype(out->values[5].bits)>>(LoadLE32(in + 16));
+    out->values[4].bits = static_cast<std::remove_cvref_t<decltype(out->values[4].bits)>>(LoadLE32(in + 20));
+    out->values[3].bits = static_cast<std::remove_cvref_t<decltype(out->values[3].bits)>>(LoadLE32(in + 24));
+    out->values[10].bits = static_cast<std::remove_cvref_t<decltype(out->values[10].bits)>>(*(in + 28));
+    for (std::uint64_t i = 0; i < 2; ++i) {
+        if ((in + 29)[i] != 0) return false;
+    }
+    out->values[8].bits = static_cast<std::remove_cvref_t<decltype(out->values[8].bits)>>(LoadLE32(in + 31));
+    out->values[9].bits = static_cast<std::remove_cvref_t<decltype(out->values[9].bits)>>(LoadLE32(in + 35));
+    out->values[11].bits = static_cast<std::remove_cvref_t<decltype(out->values[11].bits)>>(LoadLE32(in + 39));
+    out->values[12].bits = static_cast<std::remove_cvref_t<decltype(out->values[12].bits)>>(LoadLE32(in + 43));
+    out->values[6].objectId = static_cast<std::remove_cvref_t<decltype(out->values[6].objectId)>>(LoadObjectId(in + 47));
+    out->values[13].objectId = static_cast<std::remove_cvref_t<decltype(out->values[13].objectId)>>(LoadObjectId(in + 63));
+    out->values[14].bits = static_cast<std::remove_cvref_t<decltype(out->values[14].bits)>>(LoadLE64(in + 79));
+    out->values[16].bits = static_cast<std::remove_cvref_t<decltype(out->values[16].bits)>>(LoadLE32(in + 87));
+    out->sendCount = static_cast<std::remove_cvref_t<decltype(out->sendCount)>>(LoadLE32(in + 91));
+    for (std::uint64_t i = 0; i < 4; ++i) {
+        if ((in + 95)[i] != 0) return false;
+    }
+    for (std::uint64_t i = 0; i < 4; ++i) {
+        if ((in + 99)[i] != 0) return false;
+    }
+    out->effectNodeCount = static_cast<std::remove_cvref_t<decltype(out->effectNodeCount)>>(LoadLE32(in + 103));
+    out->effectEdgeCount = static_cast<std::remove_cvref_t<decltype(out->effectEdgeCount)>>(LoadLE32(in + 107));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyPayloadSendBytes = 32ULL;
+inline constexpr std::uint64_t kPackBodyPayloadSendStableSendOrdinalOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyPayloadSendReservedOffset = 4ULL;
+inline constexpr std::uint64_t kPackBodyPayloadSendTargetBusIdOffset = 8ULL;
+inline constexpr std::uint64_t kPackBodyPayloadSendSendLevelOffset = 24ULL;
+inline constexpr std::uint64_t kPackBodyPayloadSendReserved2Offset = 28ULL;
+
+inline void SerializePackBodyPayloadSend(const SendV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.stableSendOrdinal));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.reserved));
+    StoreObjectId(out + 8, row.targetBusId);
+    StoreLEF32(out + 24, static_cast<float>(row.sendLevel));
+    StoreLE32(out + 28, static_cast<std::uint32_t>(row.reserved2));
+}
+
+[[nodiscard]] inline bool ParsePackBodyPayloadSend(const std::uint8_t* in, std::uint64_t size, SendV1* out) noexcept {
+    if (size != kPackBodyPayloadSendBytes) return false;
+    out->stableSendOrdinal = static_cast<std::remove_cvref_t<decltype(out->stableSendOrdinal)>>(LoadLE32(in + 0));
+    out->reserved = static_cast<std::remove_cvref_t<decltype(out->reserved)>>(LoadLE32(in + 4));
+    out->targetBusId = static_cast<std::remove_cvref_t<decltype(out->targetBusId)>>(LoadObjectId(in + 8));
+    out->sendLevel = static_cast<std::remove_cvref_t<decltype(out->sendLevel)>>(LoadLEF32(in + 24));
+    out->reserved2 = static_cast<std::remove_cvref_t<decltype(out->reserved2)>>(LoadLE32(in + 28));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldActionCapacityBytes = 24ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionCapacityActionCountOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionCapacityMaxActionDefinitionsOffset = 4ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionCapacityMaxActionStepsPerDefinitionOffset = 8ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionCapacityMaxActionStepsTotalOffset = 12ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionCapacityMaxActionTriggerDepthOffset = 16ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionCapacityMaxActionExpandedWorkOffset = 20ULL;
+
+inline void SerializePackBodyWorldActionCapacity(const ContainerWorldInstallViewV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.actionCount));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.capacity.maxActionDefinitions));
+    StoreLE32(out + 8, static_cast<std::uint32_t>(row.capacity.maxActionStepsPerDefinition));
+    StoreLE32(out + 12, static_cast<std::uint32_t>(row.capacity.maxActionStepsTotal));
+    StoreLE32(out + 16, static_cast<std::uint32_t>(row.capacity.maxActionTriggerDepth));
+    StoreLE32(out + 20, static_cast<std::uint32_t>(row.capacity.maxActionExpandedWork));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldActionCapacity(const std::uint8_t* in, std::uint64_t size, ContainerWorldInstallViewV1* out) noexcept {
+    if (size != kPackBodyWorldActionCapacityBytes) return false;
+    out->actionCount = static_cast<std::remove_cvref_t<decltype(out->actionCount)>>(LoadLE32(in + 0));
+    out->capacity.maxActionDefinitions = static_cast<std::remove_cvref_t<decltype(out->capacity.maxActionDefinitions)>>(LoadLE32(in + 4));
+    out->capacity.maxActionStepsPerDefinition = static_cast<std::remove_cvref_t<decltype(out->capacity.maxActionStepsPerDefinition)>>(LoadLE32(in + 8));
+    out->capacity.maxActionStepsTotal = static_cast<std::remove_cvref_t<decltype(out->capacity.maxActionStepsTotal)>>(LoadLE32(in + 12));
+    out->capacity.maxActionTriggerDepth = static_cast<std::remove_cvref_t<decltype(out->capacity.maxActionTriggerDepth)>>(LoadLE32(in + 16));
+    out->capacity.maxActionExpandedWork = static_cast<std::remove_cvref_t<decltype(out->capacity.maxActionExpandedWork)>>(LoadLE32(in + 20));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldActionHeaderBytes = 44ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionHeaderActionStableIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionHeaderProgramSemanticFingerprintOffset = 16ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionHeaderStepCountOffset = 24ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionHeaderDirectFeatureMaskOffset = 28ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionHeaderTransitiveFeatureMaskOffset = 32ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionHeaderExpandedStepOccurrenceCountOffset = 36ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionHeaderExpandedFiringCountOffset = 40ULL;
+
+inline void SerializePackBodyWorldActionHeader(const ActionProgramViewV1& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row.actionStableId);
+    StoreLE64(out + 16, static_cast<std::uint64_t>(row.programSemanticFingerprint));
+    StoreLE32(out + 24, static_cast<std::uint32_t>(row.stepCount));
+    StoreLE32(out + 28, static_cast<std::uint32_t>(row.directFeatureMask));
+    StoreLE32(out + 32, static_cast<std::uint32_t>(row.transitiveFeatureMask));
+    StoreLE32(out + 36, static_cast<std::uint32_t>(row.expandedStepOccurrenceCount));
+    StoreLE32(out + 40, static_cast<std::uint32_t>(row.expandedFiringCount));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldActionHeader(const std::uint8_t* in, std::uint64_t size, ActionProgramViewV1* out) noexcept {
+    if (size != kPackBodyWorldActionHeaderBytes) return false;
+    out->actionStableId = static_cast<std::remove_cvref_t<decltype(out->actionStableId)>>(LoadObjectId(in + 0));
+    out->programSemanticFingerprint = static_cast<std::remove_cvref_t<decltype(out->programSemanticFingerprint)>>(LoadLE64(in + 16));
+    out->stepCount = static_cast<std::remove_cvref_t<decltype(out->stepCount)>>(LoadLE32(in + 24));
+    out->directFeatureMask = static_cast<std::remove_cvref_t<decltype(out->directFeatureMask)>>(LoadLE32(in + 28));
+    out->transitiveFeatureMask = static_cast<std::remove_cvref_t<decltype(out->transitiveFeatureMask)>>(LoadLE32(in + 32));
+    out->expandedStepOccurrenceCount = static_cast<std::remove_cvref_t<decltype(out->expandedStepOccurrenceCount)>>(LoadLE32(in + 36));
+    out->expandedFiringCount = static_cast<std::remove_cvref_t<decltype(out->expandedFiringCount)>>(LoadLE32(in + 40));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldActionRefBytes = 32ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionRefKindOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionRefReservedOffset = 4ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionRefStableIdOffset = 8ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionRefExpectedProgramSemanticFingerprintOffset = 24ULL;
+
+inline void SerializePackBodyWorldActionRef(const ActionObjectRefV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.kind));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.reserved));
+    StoreObjectId(out + 8, row.stableId);
+    StoreLE64(out + 24, static_cast<std::uint64_t>(row.expectedProgramSemanticFingerprint));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldActionRef(const std::uint8_t* in, std::uint64_t size, ActionObjectRefV1* out) noexcept {
+    if (size != kPackBodyWorldActionRefBytes) return false;
+    out->kind = static_cast<std::remove_cvref_t<decltype(out->kind)>>(LoadLE32(in + 0));
+    out->reserved = static_cast<std::remove_cvref_t<decltype(out->reserved)>>(LoadLE32(in + 4));
+    out->stableId = static_cast<std::remove_cvref_t<decltype(out->stableId)>>(LoadObjectId(in + 8));
+    out->expectedProgramSemanticFingerprint = static_cast<std::remove_cvref_t<decltype(out->expectedProgramSemanticFingerprint)>>(LoadLE64(in + 24));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldTimeBytes = 16ULL;
+inline constexpr std::uint64_t kPackBodyWorldTimeDomainOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldTimeNumeratorOffset = 4ULL;
+inline constexpr std::uint64_t kPackBodyWorldTimeDenominatorOffset = 12ULL;
+
+inline void SerializePackBodyWorldTime(const AuthoredTimeRationalV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.domain));
+    StoreLE64(out + 4, static_cast<std::uint64_t>(row.numerator));
+    StoreLE32(out + 12, static_cast<std::uint32_t>(row.denominator));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldTime(const std::uint8_t* in, std::uint64_t size, AuthoredTimeRationalV1* out) noexcept {
+    if (size != kPackBodyWorldTimeBytes) return false;
+    out->domain = static_cast<std::remove_cvref_t<decltype(out->domain)>>(LoadLE32(in + 0));
+    out->numerator = static_cast<std::remove_cvref_t<decltype(out->numerator)>>(LoadLE64(in + 4));
+    out->denominator = static_cast<std::remove_cvref_t<decltype(out->denominator)>>(LoadLE32(in + 12));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldActionStepBytes = 144ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionStepOpcodeOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionStepAuthoredEventIndexOffset = 4ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionStepTargetOffset = 8ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionStepDelayOffset = 40ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionStepFadeOffset = 56ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionStepQuantizeReferenceOffset = 72ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionStepQuantizeTimingOffset = 104ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionStepCooldownScopeOffset = 108ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionStepIfSilentOffset = 112ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionStepScopeOffset = 116ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionStepCooldownOffset = 120ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionStepValueBitsOffset = 136ULL;
+inline constexpr std::uint64_t kPackBodyWorldActionStepReserved0Offset = 140ULL;
+
+inline void SerializePackBodyWorldActionStep(const ActionStepProgramViewV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.opcode));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.authoredEventIndex));
+    SerializePackBodyWorldActionRef(row.target, out + 8);
+    SerializePackBodyWorldTime(row.delay, out + 40);
+    SerializePackBodyWorldTime(row.fade, out + 56);
+    SerializePackBodyWorldActionRef(row.quantizeReference, out + 72);
+    StoreLE32(out + 104, static_cast<std::uint32_t>(row.quantizeTiming));
+    StoreLE32(out + 108, static_cast<std::uint32_t>(row.cooldownScope));
+    StoreLE32(out + 112, static_cast<std::uint32_t>(row.ifSilent));
+    StoreLE32(out + 116, static_cast<std::uint32_t>(row.scope));
+    SerializePackBodyWorldTime(row.cooldown, out + 120);
+    StoreLE32(out + 136, static_cast<std::uint32_t>(row.valueBits));
+    StoreLE32(out + 140, static_cast<std::uint32_t>(row.reserved0));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldActionStep(const std::uint8_t* in, std::uint64_t size, ActionStepProgramViewV1* out) noexcept {
+    if (size != kPackBodyWorldActionStepBytes) return false;
+    out->opcode = static_cast<std::remove_cvref_t<decltype(out->opcode)>>(LoadLE32(in + 0));
+    out->authoredEventIndex = static_cast<std::remove_cvref_t<decltype(out->authoredEventIndex)>>(LoadLE32(in + 4));
+    if (!ParsePackBodyWorldActionRef(in + 8, kPackBodyWorldActionRefBytes, &out->target)) return false;
+    if (!ParsePackBodyWorldTime(in + 40, kPackBodyWorldTimeBytes, &out->delay)) return false;
+    if (!ParsePackBodyWorldTime(in + 56, kPackBodyWorldTimeBytes, &out->fade)) return false;
+    if (!ParsePackBodyWorldActionRef(in + 72, kPackBodyWorldActionRefBytes, &out->quantizeReference)) return false;
+    out->quantizeTiming = static_cast<std::remove_cvref_t<decltype(out->quantizeTiming)>>(LoadLE32(in + 104));
+    out->cooldownScope = static_cast<std::remove_cvref_t<decltype(out->cooldownScope)>>(LoadLE32(in + 108));
+    out->ifSilent = static_cast<std::remove_cvref_t<decltype(out->ifSilent)>>(LoadLE32(in + 112));
+    out->scope = static_cast<std::remove_cvref_t<decltype(out->scope)>>(LoadLE32(in + 116));
+    if (!ParsePackBodyWorldTime(in + 120, kPackBodyWorldTimeBytes, &out->cooldown)) return false;
+    out->valueBits = static_cast<std::remove_cvref_t<decltype(out->valueBits)>>(LoadLE32(in + 136));
+    out->reserved0 = static_cast<std::remove_cvref_t<decltype(out->reserved0)>>(LoadLE32(in + 140));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldCapacityBytes = 148ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxVariableDefinitionsOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxContainerProgramsOffset = 4ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxPlayablePropertyProgramsOffset = 8ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxPlayableOccurrencePropertyRowsOffset = 12ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxPlayablePropertySendsTotalOffset = 16ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxPlayablePropertyLayerAncestorRefsTotalOffset = 20ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxPlayablePropertyEffectNodesTotalOffset = 24ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxPlayablePropertyEffectParamsTotalOffset = 28ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxPlayablePropertyEffectEdgesTotalOffset = 32ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxContainerDepthOffset = 36ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxChildrenPerContainerOffset = 40ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxAvoidLastNOffset = 44ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxDiscreteAxesOffset = 48ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxDiscreteRowsOffset = 52ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxDiscreteTrieNodesOffset = 56ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxContinuousAxesOffset = 60ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxContinuousRowsOffset = 64ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxContinuousCandidatesOffset = 68ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxContinuousActiveRowsOffset = 72ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxContinuousLiveRowsOffset = 76ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxTransitionRulesOffset = 80ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxCurvePointsOffset = 84ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxKnownScheduleLeavesOffset = 88ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxTrackScheduleProgramsOffset = 92ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxSegmentScheduleProgramsOffset = 96ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxScheduleTrackRefsPerSegmentOffset = 100ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxScheduleTrackRefsTotalOffset = 104ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxSchedulePlacementsPerTrackOffset = 108ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxSchedulePlacementsTotalOffset = 112ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxScheduleMarkersPerSegmentOffset = 116ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxScheduleMarkersTotalOffset = 120ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxTrackSegmentScheduleDepthOffset = 124ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxActionDefinitionsOffset = 128ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxActionStepsPerDefinitionOffset = 132ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxActionStepsTotalOffset = 136ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxActionTriggerDepthOffset = 140ULL;
+inline constexpr std::uint64_t kPackBodyWorldCapacityMaxActionExpandedWorkOffset = 144ULL;
+
+inline void SerializePackBodyWorldCapacity(const WorldCapacitySummaryV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.maxVariableDefinitions));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.maxContainerPrograms));
+    StoreLE32(out + 8, static_cast<std::uint32_t>(row.maxPlayablePropertyPrograms));
+    StoreLE32(out + 12, static_cast<std::uint32_t>(row.maxPlayableOccurrencePropertyRows));
+    StoreLE32(out + 16, static_cast<std::uint32_t>(row.maxPlayablePropertySendsTotal));
+    StoreLE32(out + 20, static_cast<std::uint32_t>(row.maxPlayablePropertyLayerAncestorRefsTotal));
+    StoreLE32(out + 24, static_cast<std::uint32_t>(row.maxPlayablePropertyEffectNodesTotal));
+    StoreLE32(out + 28, static_cast<std::uint32_t>(row.maxPlayablePropertyEffectParamsTotal));
+    StoreLE32(out + 32, static_cast<std::uint32_t>(row.maxPlayablePropertyEffectEdgesTotal));
+    StoreLE32(out + 36, static_cast<std::uint32_t>(row.maxContainerDepth));
+    StoreLE32(out + 40, static_cast<std::uint32_t>(row.maxChildrenPerContainer));
+    StoreLE32(out + 44, static_cast<std::uint32_t>(row.maxAvoidLastN));
+    StoreLE32(out + 48, static_cast<std::uint32_t>(row.maxDiscreteAxes));
+    StoreLE32(out + 52, static_cast<std::uint32_t>(row.maxDiscreteRows));
+    StoreLE32(out + 56, static_cast<std::uint32_t>(row.maxDiscreteTrieNodes));
+    StoreLE32(out + 60, static_cast<std::uint32_t>(row.maxContinuousAxes));
+    StoreLE32(out + 64, static_cast<std::uint32_t>(row.maxContinuousRows));
+    StoreLE32(out + 68, static_cast<std::uint32_t>(row.maxContinuousCandidates));
+    StoreLE32(out + 72, static_cast<std::uint32_t>(row.maxContinuousActiveRows));
+    StoreLE32(out + 76, static_cast<std::uint32_t>(row.maxContinuousLiveRows));
+    StoreLE32(out + 80, static_cast<std::uint32_t>(row.maxTransitionRules));
+    StoreLE32(out + 84, static_cast<std::uint32_t>(row.maxCurvePoints));
+    StoreLE32(out + 88, static_cast<std::uint32_t>(row.maxKnownScheduleLeaves));
+    StoreLE32(out + 92, static_cast<std::uint32_t>(row.maxTrackSchedulePrograms));
+    StoreLE32(out + 96, static_cast<std::uint32_t>(row.maxSegmentSchedulePrograms));
+    StoreLE32(out + 100, static_cast<std::uint32_t>(row.maxScheduleTrackRefsPerSegment));
+    StoreLE32(out + 104, static_cast<std::uint32_t>(row.maxScheduleTrackRefsTotal));
+    StoreLE32(out + 108, static_cast<std::uint32_t>(row.maxSchedulePlacementsPerTrack));
+    StoreLE32(out + 112, static_cast<std::uint32_t>(row.maxSchedulePlacementsTotal));
+    StoreLE32(out + 116, static_cast<std::uint32_t>(row.maxScheduleMarkersPerSegment));
+    StoreLE32(out + 120, static_cast<std::uint32_t>(row.maxScheduleMarkersTotal));
+    StoreLE32(out + 124, static_cast<std::uint32_t>(row.maxTrackSegmentScheduleDepth));
+    StoreLE32(out + 128, static_cast<std::uint32_t>(row.maxActionDefinitions));
+    StoreLE32(out + 132, static_cast<std::uint32_t>(row.maxActionStepsPerDefinition));
+    StoreLE32(out + 136, static_cast<std::uint32_t>(row.maxActionStepsTotal));
+    StoreLE32(out + 140, static_cast<std::uint32_t>(row.maxActionTriggerDepth));
+    StoreLE32(out + 144, static_cast<std::uint32_t>(row.maxActionExpandedWork));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldCapacity(const std::uint8_t* in, std::uint64_t size, WorldCapacitySummaryV1* out) noexcept {
+    if (size != kPackBodyWorldCapacityBytes) return false;
+    out->maxVariableDefinitions = static_cast<std::remove_cvref_t<decltype(out->maxVariableDefinitions)>>(LoadLE32(in + 0));
+    out->maxContainerPrograms = static_cast<std::remove_cvref_t<decltype(out->maxContainerPrograms)>>(LoadLE32(in + 4));
+    out->maxPlayablePropertyPrograms = static_cast<std::remove_cvref_t<decltype(out->maxPlayablePropertyPrograms)>>(LoadLE32(in + 8));
+    out->maxPlayableOccurrencePropertyRows = static_cast<std::remove_cvref_t<decltype(out->maxPlayableOccurrencePropertyRows)>>(LoadLE32(in + 12));
+    out->maxPlayablePropertySendsTotal = static_cast<std::remove_cvref_t<decltype(out->maxPlayablePropertySendsTotal)>>(LoadLE32(in + 16));
+    out->maxPlayablePropertyLayerAncestorRefsTotal = static_cast<std::remove_cvref_t<decltype(out->maxPlayablePropertyLayerAncestorRefsTotal)>>(LoadLE32(in + 20));
+    out->maxPlayablePropertyEffectNodesTotal = static_cast<std::remove_cvref_t<decltype(out->maxPlayablePropertyEffectNodesTotal)>>(LoadLE32(in + 24));
+    out->maxPlayablePropertyEffectParamsTotal = static_cast<std::remove_cvref_t<decltype(out->maxPlayablePropertyEffectParamsTotal)>>(LoadLE32(in + 28));
+    out->maxPlayablePropertyEffectEdgesTotal = static_cast<std::remove_cvref_t<decltype(out->maxPlayablePropertyEffectEdgesTotal)>>(LoadLE32(in + 32));
+    out->maxContainerDepth = static_cast<std::remove_cvref_t<decltype(out->maxContainerDepth)>>(LoadLE32(in + 36));
+    out->maxChildrenPerContainer = static_cast<std::remove_cvref_t<decltype(out->maxChildrenPerContainer)>>(LoadLE32(in + 40));
+    out->maxAvoidLastN = static_cast<std::remove_cvref_t<decltype(out->maxAvoidLastN)>>(LoadLE32(in + 44));
+    out->maxDiscreteAxes = static_cast<std::remove_cvref_t<decltype(out->maxDiscreteAxes)>>(LoadLE32(in + 48));
+    out->maxDiscreteRows = static_cast<std::remove_cvref_t<decltype(out->maxDiscreteRows)>>(LoadLE32(in + 52));
+    out->maxDiscreteTrieNodes = static_cast<std::remove_cvref_t<decltype(out->maxDiscreteTrieNodes)>>(LoadLE32(in + 56));
+    out->maxContinuousAxes = static_cast<std::remove_cvref_t<decltype(out->maxContinuousAxes)>>(LoadLE32(in + 60));
+    out->maxContinuousRows = static_cast<std::remove_cvref_t<decltype(out->maxContinuousRows)>>(LoadLE32(in + 64));
+    out->maxContinuousCandidates = static_cast<std::remove_cvref_t<decltype(out->maxContinuousCandidates)>>(LoadLE32(in + 68));
+    out->maxContinuousActiveRows = static_cast<std::remove_cvref_t<decltype(out->maxContinuousActiveRows)>>(LoadLE32(in + 72));
+    out->maxContinuousLiveRows = static_cast<std::remove_cvref_t<decltype(out->maxContinuousLiveRows)>>(LoadLE32(in + 76));
+    out->maxTransitionRules = static_cast<std::remove_cvref_t<decltype(out->maxTransitionRules)>>(LoadLE32(in + 80));
+    out->maxCurvePoints = static_cast<std::remove_cvref_t<decltype(out->maxCurvePoints)>>(LoadLE32(in + 84));
+    out->maxKnownScheduleLeaves = static_cast<std::remove_cvref_t<decltype(out->maxKnownScheduleLeaves)>>(LoadLE32(in + 88));
+    out->maxTrackSchedulePrograms = static_cast<std::remove_cvref_t<decltype(out->maxTrackSchedulePrograms)>>(LoadLE32(in + 92));
+    out->maxSegmentSchedulePrograms = static_cast<std::remove_cvref_t<decltype(out->maxSegmentSchedulePrograms)>>(LoadLE32(in + 96));
+    out->maxScheduleTrackRefsPerSegment = static_cast<std::remove_cvref_t<decltype(out->maxScheduleTrackRefsPerSegment)>>(LoadLE32(in + 100));
+    out->maxScheduleTrackRefsTotal = static_cast<std::remove_cvref_t<decltype(out->maxScheduleTrackRefsTotal)>>(LoadLE32(in + 104));
+    out->maxSchedulePlacementsPerTrack = static_cast<std::remove_cvref_t<decltype(out->maxSchedulePlacementsPerTrack)>>(LoadLE32(in + 108));
+    out->maxSchedulePlacementsTotal = static_cast<std::remove_cvref_t<decltype(out->maxSchedulePlacementsTotal)>>(LoadLE32(in + 112));
+    out->maxScheduleMarkersPerSegment = static_cast<std::remove_cvref_t<decltype(out->maxScheduleMarkersPerSegment)>>(LoadLE32(in + 116));
+    out->maxScheduleMarkersTotal = static_cast<std::remove_cvref_t<decltype(out->maxScheduleMarkersTotal)>>(LoadLE32(in + 120));
+    out->maxTrackSegmentScheduleDepth = static_cast<std::remove_cvref_t<decltype(out->maxTrackSegmentScheduleDepth)>>(LoadLE32(in + 124));
+    out->maxActionDefinitions = static_cast<std::remove_cvref_t<decltype(out->maxActionDefinitions)>>(LoadLE32(in + 128));
+    out->maxActionStepsPerDefinition = static_cast<std::remove_cvref_t<decltype(out->maxActionStepsPerDefinition)>>(LoadLE32(in + 132));
+    out->maxActionStepsTotal = static_cast<std::remove_cvref_t<decltype(out->maxActionStepsTotal)>>(LoadLE32(in + 136));
+    out->maxActionTriggerDepth = static_cast<std::remove_cvref_t<decltype(out->maxActionTriggerDepth)>>(LoadLE32(in + 140));
+    out->maxActionExpandedWork = static_cast<std::remove_cvref_t<decltype(out->maxActionExpandedWork)>>(LoadLE32(in + 144));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldPlayableRefBytes = 64ULL;
+inline constexpr std::uint64_t kPackBodyWorldPlayableRefKindOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldPlayableRefReservedOffset = 4ULL;
+inline constexpr std::uint64_t kPackBodyWorldPlayableRefStableIdOffset = 8ULL;
+inline constexpr std::uint64_t kPackBodyWorldPlayableRefExpectedProgramSemanticFingerprintOffset = 24ULL;
+inline constexpr std::uint64_t kPackBodyWorldPlayableRefContentRevisionOffset = 32ULL;
+inline constexpr std::uint64_t kPackBodyWorldPlayableRefRouteStableIdOffset = 40ULL;
+inline constexpr std::uint64_t kPackBodyWorldPlayableRefCompatibilityFingerprintOffset = 56ULL;
+
+inline void SerializePackBodyWorldPlayableRef(const PlayableRefV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.kind));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.reserved));
+    StoreObjectId(out + 8, row.stableId);
+    StoreLE64(out + 24, static_cast<std::uint64_t>(row.expectedProgramSemanticFingerprint));
+    StoreLE64(out + 32, static_cast<std::uint64_t>(row.contentRevision));
+    StoreObjectId(out + 40, row.routeStableId);
+    StoreLE64(out + 56, static_cast<std::uint64_t>(row.compatibilityFingerprint));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldPlayableRef(const std::uint8_t* in, std::uint64_t size, PlayableRefV1* out) noexcept {
+    if (size != kPackBodyWorldPlayableRefBytes) return false;
+    out->kind = static_cast<std::remove_cvref_t<decltype(out->kind)>>(LoadLE32(in + 0));
+    out->reserved = static_cast<std::remove_cvref_t<decltype(out->reserved)>>(LoadLE32(in + 4));
+    out->stableId = static_cast<std::remove_cvref_t<decltype(out->stableId)>>(LoadObjectId(in + 8));
+    out->expectedProgramSemanticFingerprint = static_cast<std::remove_cvref_t<decltype(out->expectedProgramSemanticFingerprint)>>(LoadLE64(in + 24));
+    out->contentRevision = static_cast<std::remove_cvref_t<decltype(out->contentRevision)>>(LoadLE64(in + 32));
+    out->routeStableId = static_cast<std::remove_cvref_t<decltype(out->routeStableId)>>(LoadObjectId(in + 40));
+    out->compatibilityFingerprint = static_cast<std::remove_cvref_t<decltype(out->compatibilityFingerprint)>>(LoadLE64(in + 56));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldChildHeaderBytes = 96ULL;
+inline constexpr std::uint64_t kPackBodyWorldChildHeaderPlayableOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldChildHeaderStableChildOrdinalOffset = 64ULL;
+inline constexpr std::uint64_t kPackBodyWorldChildHeaderAuthoredStableOrderOffset = 68ULL;
+inline constexpr std::uint64_t kPackBodyWorldChildHeaderFrequencyWeightOffset = 72ULL;
+inline constexpr std::uint64_t kPackBodyWorldChildHeaderOrderWeightOffset = 76ULL;
+inline constexpr std::uint64_t kPackBodyWorldChildHeaderQueueStopPolicyOffset = 80ULL;
+inline constexpr std::uint64_t kPackBodyWorldChildHeaderReservedOffset = 84ULL;
+inline constexpr std::uint64_t kPackBodyWorldChildHeaderTimingKindOffset = 88ULL;
+inline constexpr std::uint64_t kPackBodyWorldChildHeaderTimingReservedOffset = 92ULL;
+
+inline void SerializePackBodyWorldChildHeader(const ContainerChildProgramViewV2& row, std::uint8_t* out) noexcept {
+    SerializePackBodyWorldPlayableRef(row.playable, out + 0);
+    StoreLE32(out + 64, static_cast<std::uint32_t>(row.stableChildOrdinal));
+    StoreLE32(out + 68, static_cast<std::uint32_t>(row.authoredStableOrder));
+    StoreLE32(out + 72, static_cast<std::uint32_t>(row.frequencyWeight));
+    StoreLE32(out + 76, static_cast<std::uint32_t>(row.orderWeight));
+    StoreLE32(out + 80, static_cast<std::uint32_t>(row.queueStopPolicy));
+    StoreLE32(out + 84, static_cast<std::uint32_t>(row.reserved));
+    StoreLE32(out + 88, static_cast<std::uint32_t>(row.timingHint.kind));
+    StoreLE32(out + 92, static_cast<std::uint32_t>(row.timingHint.reserved));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldChildHeader(const std::uint8_t* in, std::uint64_t size, ContainerChildProgramViewV2* out) noexcept {
+    if (size != kPackBodyWorldChildHeaderBytes) return false;
+    if (!ParsePackBodyWorldPlayableRef(in + 0, kPackBodyWorldPlayableRefBytes, &out->playable)) return false;
+    out->stableChildOrdinal = static_cast<std::remove_cvref_t<decltype(out->stableChildOrdinal)>>(LoadLE32(in + 64));
+    out->authoredStableOrder = static_cast<std::remove_cvref_t<decltype(out->authoredStableOrder)>>(LoadLE32(in + 68));
+    out->frequencyWeight = static_cast<std::remove_cvref_t<decltype(out->frequencyWeight)>>(LoadLE32(in + 72));
+    out->orderWeight = static_cast<std::remove_cvref_t<decltype(out->orderWeight)>>(LoadLE32(in + 76));
+    out->queueStopPolicy = static_cast<std::remove_cvref_t<decltype(out->queueStopPolicy)>>(LoadLE32(in + 80));
+    out->reserved = static_cast<std::remove_cvref_t<decltype(out->reserved)>>(LoadLE32(in + 84));
+    out->timingHint.kind = static_cast<std::remove_cvref_t<decltype(out->timingHint.kind)>>(LoadLE32(in + 88));
+    out->timingHint.reserved = static_cast<std::remove_cvref_t<decltype(out->timingHint.reserved)>>(LoadLE32(in + 92));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderBytes = 132ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderContainerStableIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderProgramSemanticFingerprintOffset = 16ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderModeOffset = 24ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderRandomDisciplineOffset = 28ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderMemoryScopeOffset = 32ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderRetriggerPolicyOffset = 36ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderResetPolicyOffset = 40ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderSequenceEndPolicyOffset = 44ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderQueueCycleOffset = 48ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderQueueSpliceOffset = 52ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderQueueCycleCountOffset = 56ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderResumePositionOffset = 60ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderReservedOffset = 61ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderAvoidLastNOffset = 64ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderInitialSequenceCursorOffset = 68ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderDiscreteTimingOffset = 72ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderContinuousTimingOffset = 76ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderContinuousNormalizationOffset = 80ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderEvaluationPeriodFramesOffset = 84ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderEnvelopeFramesOffset = 88ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderMaxActiveRowsOffset = 92ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderMaxLiveRowsOffset = 96ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderChildCountOffset = 100ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderCurveCountOffset = 104ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderDiscreteAxisCountOffset = 108ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderDiscreteRowCountOffset = 112ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderContinuousAxisCountOffset = 116ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderContinuousRowCountOffset = 120ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderTransitionProgramIndexOffset = 124ULL;
+inline constexpr std::uint64_t kPackBodyWorldContainerHeaderAuthoredStableOrderOffset = 128ULL;
+
+inline void SerializePackBodyWorldContainerHeader(const ContainerProgramViewV3& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row.containerStableId);
+    StoreLE64(out + 16, static_cast<std::uint64_t>(row.programSemanticFingerprint));
+    StoreLE32(out + 24, static_cast<std::uint32_t>(row.mode));
+    StoreLE32(out + 28, static_cast<std::uint32_t>(row.randomDiscipline));
+    StoreLE32(out + 32, static_cast<std::uint32_t>(row.memoryScope));
+    StoreLE32(out + 36, static_cast<std::uint32_t>(row.retriggerPolicy));
+    StoreLE32(out + 40, static_cast<std::uint32_t>(row.resetPolicy));
+    StoreLE32(out + 44, static_cast<std::uint32_t>(row.sequenceEndPolicy));
+    StoreLE32(out + 48, static_cast<std::uint32_t>(row.queueCycle));
+    StoreLE32(out + 52, static_cast<std::uint32_t>(row.queueSplice));
+    StoreLE32(out + 56, static_cast<std::uint32_t>(row.queueCycleCount));
+    *(out + 60) = static_cast<std::uint8_t>(row.resumePosition);
+    std::memset(out + 61, 0, 3);
+    StoreLE32(out + 64, static_cast<std::uint32_t>(row.avoidLastN));
+    StoreLE32(out + 68, static_cast<std::uint32_t>(row.initialSequenceCursor));
+    StoreLE32(out + 72, static_cast<std::uint32_t>(row.discreteTiming));
+    StoreLE32(out + 76, static_cast<std::uint32_t>(row.continuousTiming));
+    StoreLE32(out + 80, static_cast<std::uint32_t>(row.continuousNormalization));
+    StoreLE32(out + 84, static_cast<std::uint32_t>(row.evaluationPeriodFrames));
+    StoreLE32(out + 88, static_cast<std::uint32_t>(row.envelopeFrames));
+    StoreLE32(out + 92, static_cast<std::uint32_t>(row.maxActiveRows));
+    StoreLE32(out + 96, static_cast<std::uint32_t>(row.maxLiveRows));
+    StoreLE32(out + 100, static_cast<std::uint32_t>(row.childCount));
+    StoreLE32(out + 104, static_cast<std::uint32_t>(row.curveCount));
+    StoreLE32(out + 108, static_cast<std::uint32_t>(row.discreteAxisCount));
+    StoreLE32(out + 112, static_cast<std::uint32_t>(row.discreteRowCount));
+    StoreLE32(out + 116, static_cast<std::uint32_t>(row.continuousAxisCount));
+    StoreLE32(out + 120, static_cast<std::uint32_t>(row.continuousRowCount));
+    StoreLE32(out + 124, static_cast<std::uint32_t>(row.transitionProgramIndex));
+    StoreLE32(out + 128, static_cast<std::uint32_t>(row.authoredStableOrder));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldContainerHeader(const std::uint8_t* in, std::uint64_t size, ContainerProgramViewV3* out) noexcept {
+    if (size != kPackBodyWorldContainerHeaderBytes) return false;
+    out->containerStableId = static_cast<std::remove_cvref_t<decltype(out->containerStableId)>>(LoadObjectId(in + 0));
+    out->programSemanticFingerprint = static_cast<std::remove_cvref_t<decltype(out->programSemanticFingerprint)>>(LoadLE64(in + 16));
+    out->mode = static_cast<std::remove_cvref_t<decltype(out->mode)>>(LoadLE32(in + 24));
+    out->randomDiscipline = static_cast<std::remove_cvref_t<decltype(out->randomDiscipline)>>(LoadLE32(in + 28));
+    out->memoryScope = static_cast<std::remove_cvref_t<decltype(out->memoryScope)>>(LoadLE32(in + 32));
+    out->retriggerPolicy = static_cast<std::remove_cvref_t<decltype(out->retriggerPolicy)>>(LoadLE32(in + 36));
+    out->resetPolicy = static_cast<std::remove_cvref_t<decltype(out->resetPolicy)>>(LoadLE32(in + 40));
+    out->sequenceEndPolicy = static_cast<std::remove_cvref_t<decltype(out->sequenceEndPolicy)>>(LoadLE32(in + 44));
+    out->queueCycle = static_cast<std::remove_cvref_t<decltype(out->queueCycle)>>(LoadLE32(in + 48));
+    out->queueSplice = static_cast<std::remove_cvref_t<decltype(out->queueSplice)>>(LoadLE32(in + 52));
+    out->queueCycleCount = static_cast<std::remove_cvref_t<decltype(out->queueCycleCount)>>(LoadLE32(in + 56));
+    out->resumePosition = static_cast<std::remove_cvref_t<decltype(out->resumePosition)>>(*(in + 60));
+    for (std::uint64_t i = 0; i < 3; ++i) {
+        if ((in + 61)[i] != 0) return false;
+    }
+    out->avoidLastN = static_cast<std::remove_cvref_t<decltype(out->avoidLastN)>>(LoadLE32(in + 64));
+    out->initialSequenceCursor = static_cast<std::remove_cvref_t<decltype(out->initialSequenceCursor)>>(LoadLE32(in + 68));
+    out->discreteTiming = static_cast<std::remove_cvref_t<decltype(out->discreteTiming)>>(LoadLE32(in + 72));
+    out->continuousTiming = static_cast<std::remove_cvref_t<decltype(out->continuousTiming)>>(LoadLE32(in + 76));
+    out->continuousNormalization = static_cast<std::remove_cvref_t<decltype(out->continuousNormalization)>>(LoadLE32(in + 80));
+    out->evaluationPeriodFrames = static_cast<std::remove_cvref_t<decltype(out->evaluationPeriodFrames)>>(LoadLE32(in + 84));
+    out->envelopeFrames = static_cast<std::remove_cvref_t<decltype(out->envelopeFrames)>>(LoadLE32(in + 88));
+    out->maxActiveRows = static_cast<std::remove_cvref_t<decltype(out->maxActiveRows)>>(LoadLE32(in + 92));
+    out->maxLiveRows = static_cast<std::remove_cvref_t<decltype(out->maxLiveRows)>>(LoadLE32(in + 96));
+    out->childCount = static_cast<std::remove_cvref_t<decltype(out->childCount)>>(LoadLE32(in + 100));
+    out->curveCount = static_cast<std::remove_cvref_t<decltype(out->curveCount)>>(LoadLE32(in + 104));
+    out->discreteAxisCount = static_cast<std::remove_cvref_t<decltype(out->discreteAxisCount)>>(LoadLE32(in + 108));
+    out->discreteRowCount = static_cast<std::remove_cvref_t<decltype(out->discreteRowCount)>>(LoadLE32(in + 112));
+    out->continuousAxisCount = static_cast<std::remove_cvref_t<decltype(out->continuousAxisCount)>>(LoadLE32(in + 116));
+    out->continuousRowCount = static_cast<std::remove_cvref_t<decltype(out->continuousRowCount)>>(LoadLE32(in + 120));
+    out->transitionProgramIndex = static_cast<std::remove_cvref_t<decltype(out->transitionProgramIndex)>>(LoadLE32(in + 124));
+    out->authoredStableOrder = static_cast<std::remove_cvref_t<decltype(out->authoredStableOrder)>>(LoadLE32(in + 128));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldContinuousCellBytes = 24ULL;
+inline constexpr std::uint64_t kPackBodyWorldContinuousCellKindOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldContinuousCellLowerOffset = 4ULL;
+inline constexpr std::uint64_t kPackBodyWorldContinuousCellUpperOffset = 8ULL;
+inline constexpr std::uint64_t kPackBodyWorldContinuousCellLowerInclusiveOffset = 12ULL;
+inline constexpr std::uint64_t kPackBodyWorldContinuousCellUpperInclusiveOffset = 13ULL;
+inline constexpr std::uint64_t kPackBodyWorldContinuousCellReservedOffset = 14ULL;
+inline constexpr std::uint64_t kPackBodyWorldContinuousCellLeftCurveLocalIdOffset = 16ULL;
+inline constexpr std::uint64_t kPackBodyWorldContinuousCellRightCurveLocalIdOffset = 20ULL;
+
+inline void SerializePackBodyWorldContinuousCell(const ContinuousGridCellV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.kind));
+    StoreLEF32(out + 4, static_cast<float>(row.lower));
+    StoreLEF32(out + 8, static_cast<float>(row.upper));
+    *(out + 12) = static_cast<std::uint8_t>(row.lowerInclusive);
+    *(out + 13) = static_cast<std::uint8_t>(row.upperInclusive);
+    StoreLE16(out + 14, static_cast<std::uint16_t>(row.reserved));
+    StoreLE32(out + 16, static_cast<std::uint32_t>(row.leftCurveLocalId));
+    StoreLE32(out + 20, static_cast<std::uint32_t>(row.rightCurveLocalId));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldContinuousCell(const std::uint8_t* in, std::uint64_t size, ContinuousGridCellV1* out) noexcept {
+    if (size != kPackBodyWorldContinuousCellBytes) return false;
+    out->kind = static_cast<std::remove_cvref_t<decltype(out->kind)>>(LoadLE32(in + 0));
+    out->lower = static_cast<std::remove_cvref_t<decltype(out->lower)>>(LoadLEF32(in + 4));
+    out->upper = static_cast<std::remove_cvref_t<decltype(out->upper)>>(LoadLEF32(in + 8));
+    out->lowerInclusive = static_cast<std::remove_cvref_t<decltype(out->lowerInclusive)>>(*(in + 12));
+    out->upperInclusive = static_cast<std::remove_cvref_t<decltype(out->upperInclusive)>>(*(in + 13));
+    out->reserved = static_cast<std::remove_cvref_t<decltype(out->reserved)>>(LoadLE16(in + 14));
+    out->leftCurveLocalId = static_cast<std::remove_cvref_t<decltype(out->leftCurveLocalId)>>(LoadLE32(in + 16));
+    out->rightCurveLocalId = static_cast<std::remove_cvref_t<decltype(out->rightCurveLocalId)>>(LoadLE32(in + 20));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldContinuousGridHeaderBytes = 16ULL;
+inline constexpr std::uint64_t kPackBodyWorldContinuousGridHeaderStableRowOrdinalOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldContinuousGridHeaderAuthoredStableOrderOffset = 4ULL;
+inline constexpr std::uint64_t kPackBodyWorldContinuousGridHeaderChildStableOrdinalOffset = 8ULL;
+inline constexpr std::uint64_t kPackBodyWorldContinuousGridHeaderCellCountOffset = 12ULL;
+
+inline void SerializePackBodyWorldContinuousGridHeader(const ContinuousGridRowViewV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.stableRowOrdinal));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.authoredStableOrder));
+    StoreLE32(out + 8, static_cast<std::uint32_t>(row.childStableOrdinal));
+    StoreLE32(out + 12, static_cast<std::uint32_t>(row.cellCount));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldContinuousGridHeader(const std::uint8_t* in, std::uint64_t size, ContinuousGridRowViewV1* out) noexcept {
+    if (size != kPackBodyWorldContinuousGridHeaderBytes) return false;
+    out->stableRowOrdinal = static_cast<std::remove_cvref_t<decltype(out->stableRowOrdinal)>>(LoadLE32(in + 0));
+    out->authoredStableOrder = static_cast<std::remove_cvref_t<decltype(out->authoredStableOrder)>>(LoadLE32(in + 4));
+    out->childStableOrdinal = static_cast<std::remove_cvref_t<decltype(out->childStableOrdinal)>>(LoadLE32(in + 8));
+    out->cellCount = static_cast<std::remove_cvref_t<decltype(out->cellCount)>>(LoadLE32(in + 12));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldCurveHandleBytes = 16ULL;
+inline constexpr std::uint64_t kPackBodyWorldCurveHandleH1xOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldCurveHandleH1yOffset = 4ULL;
+inline constexpr std::uint64_t kPackBodyWorldCurveHandleH2xOffset = 8ULL;
+inline constexpr std::uint64_t kPackBodyWorldCurveHandleH2yOffset = 12ULL;
+
+inline void SerializePackBodyWorldCurveHandle(const CurveHandlePair& row, std::uint8_t* out) noexcept {
+    StoreLEF32(out + 0, static_cast<float>(row.h1x));
+    StoreLEF32(out + 4, static_cast<float>(row.h1y));
+    StoreLEF32(out + 8, static_cast<float>(row.h2x));
+    StoreLEF32(out + 12, static_cast<float>(row.h2y));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldCurveHandle(const std::uint8_t* in, std::uint64_t size, CurveHandlePair* out) noexcept {
+    if (size != kPackBodyWorldCurveHandleBytes) return false;
+    out->h1x = static_cast<std::remove_cvref_t<decltype(out->h1x)>>(LoadLEF32(in + 0));
+    out->h1y = static_cast<std::remove_cvref_t<decltype(out->h1y)>>(LoadLEF32(in + 4));
+    out->h2x = static_cast<std::remove_cvref_t<decltype(out->h2x)>>(LoadLEF32(in + 8));
+    out->h2y = static_cast<std::remove_cvref_t<decltype(out->h2y)>>(LoadLEF32(in + 12));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldCurveHeaderBytes = 8ULL;
+inline constexpr std::uint64_t kPackBodyWorldCurveHeaderCurveLocalIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldCurveHeaderPointCountOffset = 4ULL;
+
+inline void SerializePackBodyWorldCurveHeader(const CurveV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.curveLocalId));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.curve.pointCount));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldCurveHeader(const std::uint8_t* in, std::uint64_t size, CurveV1* out) noexcept {
+    if (size != kPackBodyWorldCurveHeaderBytes) return false;
+    out->curveLocalId = static_cast<std::remove_cvref_t<decltype(out->curveLocalId)>>(LoadLE32(in + 0));
+    out->curve.pointCount = static_cast<std::remove_cvref_t<decltype(out->curve.pointCount)>>(LoadLE32(in + 4));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldCurvePointBytes = 8ULL;
+inline constexpr std::uint64_t kPackBodyWorldCurvePointXOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldCurvePointYOffset = 4ULL;
+
+inline void SerializePackBodyWorldCurvePoint(const CurvePoint& row, std::uint8_t* out) noexcept {
+    StoreLEF32(out + 0, static_cast<float>(row.x));
+    StoreLEF32(out + 4, static_cast<float>(row.y));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldCurvePoint(const std::uint8_t* in, std::uint64_t size, CurvePoint* out) noexcept {
+    if (size != kPackBodyWorldCurvePointBytes) return false;
+    out->x = static_cast<std::remove_cvref_t<decltype(out->x)>>(LoadLEF32(in + 0));
+    out->y = static_cast<std::remove_cvref_t<decltype(out->y)>>(LoadLEF32(in + 4));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldDiscreteCellBytes = 8ULL;
+inline constexpr std::uint64_t kPackBodyWorldDiscreteCellKindOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldDiscreteCellExactValueOffset = 4ULL;
+
+inline void SerializePackBodyWorldDiscreteCell(const DiscreteGridCellV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.kind));
+    StoreLE32(out + 4, std::bit_cast<std::uint32_t>(static_cast<std::int32_t>(row.exactValue)));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldDiscreteCell(const std::uint8_t* in, std::uint64_t size, DiscreteGridCellV1* out) noexcept {
+    if (size != kPackBodyWorldDiscreteCellBytes) return false;
+    out->kind = static_cast<std::remove_cvref_t<decltype(out->kind)>>(LoadLE32(in + 0));
+    out->exactValue = static_cast<std::remove_cvref_t<decltype(out->exactValue)>>(std::bit_cast<std::int32_t>(LoadLE32(in + 4)));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldDiscreteGridHeaderBytes = 16ULL;
+inline constexpr std::uint64_t kPackBodyWorldDiscreteGridHeaderStableRowOrdinalOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldDiscreteGridHeaderAuthoredStableOrderOffset = 4ULL;
+inline constexpr std::uint64_t kPackBodyWorldDiscreteGridHeaderChildStableOrdinalOffset = 8ULL;
+inline constexpr std::uint64_t kPackBodyWorldDiscreteGridHeaderCellCountOffset = 12ULL;
+
+inline void SerializePackBodyWorldDiscreteGridHeader(const DiscreteGridRowViewV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.stableRowOrdinal));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.authoredStableOrder));
+    StoreLE32(out + 8, static_cast<std::uint32_t>(row.childStableOrdinal));
+    StoreLE32(out + 12, static_cast<std::uint32_t>(row.cellCount));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldDiscreteGridHeader(const std::uint8_t* in, std::uint64_t size, DiscreteGridRowViewV1* out) noexcept {
+    if (size != kPackBodyWorldDiscreteGridHeaderBytes) return false;
+    out->stableRowOrdinal = static_cast<std::remove_cvref_t<decltype(out->stableRowOrdinal)>>(LoadLE32(in + 0));
+    out->authoredStableOrder = static_cast<std::remove_cvref_t<decltype(out->authoredStableOrder)>>(LoadLE32(in + 4));
+    out->childStableOrdinal = static_cast<std::remove_cvref_t<decltype(out->childStableOrdinal)>>(LoadLE32(in + 8));
+    out->cellCount = static_cast<std::remove_cvref_t<decltype(out->cellCount)>>(LoadLE32(in + 12));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldFadeBytes = 12ULL;
+inline constexpr std::uint64_t kPackBodyWorldFadeActiveOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldFadeReservedOffset = 1ULL;
+inline constexpr std::uint64_t kPackBodyWorldFadeDurationFramesOffset = 4ULL;
+inline constexpr std::uint64_t kPackBodyWorldFadeCurveLocalIdOffset = 8ULL;
+
+inline void SerializePackBodyWorldFade(const TransitionFadeV1& row, std::uint8_t* out) noexcept {
+    *(out + 0) = static_cast<std::uint8_t>(row.active);
+    static_assert(std::size(std::remove_cvref_t<decltype(row.reserved)>{}) == 3);
+    for (std::uint64_t i = 0; i < 3; ++i) {
+        *(out + 1 + i * 1) = static_cast<std::uint8_t>(row.reserved[i]);
+    }
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.durationFrames));
+    StoreLE32(out + 8, static_cast<std::uint32_t>(row.curveLocalId));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldFade(const std::uint8_t* in, std::uint64_t size, TransitionFadeV1* out) noexcept {
+    if (size != kPackBodyWorldFadeBytes) return false;
+    out->active = static_cast<std::remove_cvref_t<decltype(out->active)>>(*(in + 0));
+    static_assert(std::size(std::remove_cvref_t<decltype(out->reserved)>{}) == 3);
+    for (std::uint64_t i = 0; i < 3; ++i) {
+        out->reserved[i] = static_cast<std::remove_cvref_t<decltype(out->reserved[i])>>(*(in + 1 + i * 1));
+    }
+    out->durationFrames = static_cast<std::remove_cvref_t<decltype(out->durationFrames)>>(LoadLE32(in + 4));
+    out->curveLocalId = static_cast<std::remove_cvref_t<decltype(out->curveLocalId)>>(LoadLE32(in + 8));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldGridAxisBytes = 24ULL;
+inline constexpr std::uint64_t kPackBodyWorldGridAxisStableAxisOrdinalOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldGridAxisAuthoredColumnOrderOffset = 4ULL;
+inline constexpr std::uint64_t kPackBodyWorldGridAxisVariableIdOffset = 8ULL;
+
+inline void SerializePackBodyWorldGridAxis(const GridAxisV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.stableAxisOrdinal));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.authoredColumnOrder));
+    StoreObjectId(out + 8, row.variableId);
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldGridAxis(const std::uint8_t* in, std::uint64_t size, GridAxisV1* out) noexcept {
+    if (size != kPackBodyWorldGridAxisBytes) return false;
+    out->stableAxisOrdinal = static_cast<std::remove_cvref_t<decltype(out->stableAxisOrdinal)>>(LoadLE32(in + 0));
+    out->authoredColumnOrder = static_cast<std::remove_cvref_t<decltype(out->authoredColumnOrder)>>(LoadLE32(in + 4));
+    out->variableId = static_cast<std::remove_cvref_t<decltype(out->variableId)>>(LoadObjectId(in + 8));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldInlineSoundBytes = 72ULL;
+inline constexpr std::uint64_t kPackBodyWorldInlineSoundStartOffsetOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldInlineSoundDurationOffset = 16ULL;
+inline constexpr std::uint64_t kPackBodyWorldInlineSoundLoopCountOffset = 32ULL;
+inline constexpr std::uint64_t kPackBodyWorldInlineSoundLoopRegionPresentOffset = 36ULL;
+inline constexpr std::uint64_t kPackBodyWorldInlineSoundReservedOffset = 37ULL;
+inline constexpr std::uint64_t kPackBodyWorldInlineSoundLoopStartOffset = 40ULL;
+inline constexpr std::uint64_t kPackBodyWorldInlineSoundLoopEndOffset = 56ULL;
+
+inline void SerializePackBodyWorldInlineSound(const InlineSoundTimingHintV2& row, std::uint8_t* out) noexcept {
+    SerializePackBodyWorldTime(row.startOffset, out + 0);
+    SerializePackBodyWorldTime(row.duration, out + 16);
+    StoreLE32(out + 32, static_cast<std::uint32_t>(row.loopCount));
+    *(out + 36) = static_cast<std::uint8_t>(row.loopRegionPresent);
+    static_assert(std::size(std::remove_cvref_t<decltype(row.reserved)>{}) == 3);
+    for (std::uint64_t i = 0; i < 3; ++i) {
+        *(out + 37 + i * 1) = static_cast<std::uint8_t>(row.reserved[i]);
+    }
+    SerializePackBodyWorldTime(row.loopStart, out + 40);
+    SerializePackBodyWorldTime(row.loopEnd, out + 56);
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldInlineSound(const std::uint8_t* in, std::uint64_t size, InlineSoundTimingHintV2* out) noexcept {
+    if (size != kPackBodyWorldInlineSoundBytes) return false;
+    if (!ParsePackBodyWorldTime(in + 0, kPackBodyWorldTimeBytes, &out->startOffset)) return false;
+    if (!ParsePackBodyWorldTime(in + 16, kPackBodyWorldTimeBytes, &out->duration)) return false;
+    out->loopCount = static_cast<std::remove_cvref_t<decltype(out->loopCount)>>(LoadLE32(in + 32));
+    out->loopRegionPresent = static_cast<std::remove_cvref_t<decltype(out->loopRegionPresent)>>(*(in + 36));
+    static_assert(std::size(std::remove_cvref_t<decltype(out->reserved)>{}) == 3);
+    for (std::uint64_t i = 0; i < 3; ++i) {
+        out->reserved[i] = static_cast<std::remove_cvref_t<decltype(out->reserved[i])>>(*(in + 37 + i * 1));
+    }
+    if (!ParsePackBodyWorldTime(in + 40, kPackBodyWorldTimeBytes, &out->loopStart)) return false;
+    if (!ParsePackBodyWorldTime(in + 56, kPackBodyWorldTimeBytes, &out->loopEnd)) return false;
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldLayerAncestorBytes = 24ULL;
+inline constexpr std::uint64_t kPackBodyWorldLayerAncestorLayerStableIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldLayerAncestorLayerProgramSemanticFingerprintOffset = 16ULL;
+
+inline void SerializePackBodyWorldLayerAncestor(const LayerAncestorRefV1& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row.layerStableId);
+    StoreLE64(out + 16, static_cast<std::uint64_t>(row.layerProgramSemanticFingerprint));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldLayerAncestor(const std::uint8_t* in, std::uint64_t size, LayerAncestorRefV1* out) noexcept {
+    if (size != kPackBodyWorldLayerAncestorBytes) return false;
+    out->layerStableId = static_cast<std::remove_cvref_t<decltype(out->layerStableId)>>(LoadObjectId(in + 0));
+    out->layerProgramSemanticFingerprint = static_cast<std::remove_cvref_t<decltype(out->layerProgramSemanticFingerprint)>>(LoadLE64(in + 16));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldMarkerBytes = 32ULL;
+inline constexpr std::uint64_t kPackBodyWorldMarkerStableMarkerIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldMarkerMarkerIdOffset = 16ULL;
+inline constexpr std::uint64_t kPackBodyWorldMarkerMarkerKindOffset = 20ULL;
+inline constexpr std::uint64_t kPackBodyWorldMarkerPositionOffset = 24ULL;
+
+inline void SerializePackBodyWorldMarker(const ScheduleMarkerV1& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row.stableMarkerId);
+    StoreLE32(out + 16, static_cast<std::uint32_t>(row.markerId));
+    StoreLE32(out + 20, static_cast<std::uint32_t>(row.markerKind));
+    StoreLE64(out + 24, static_cast<std::uint64_t>(row.position));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldMarker(const std::uint8_t* in, std::uint64_t size, ScheduleMarkerV1* out) noexcept {
+    if (size != kPackBodyWorldMarkerBytes) return false;
+    out->stableMarkerId = static_cast<std::remove_cvref_t<decltype(out->stableMarkerId)>>(LoadObjectId(in + 0));
+    out->markerId = static_cast<std::remove_cvref_t<decltype(out->markerId)>>(LoadLE32(in + 16));
+    out->markerKind = static_cast<std::remove_cvref_t<decltype(out->markerKind)>>(LoadLE32(in + 20));
+    out->position = static_cast<std::remove_cvref_t<decltype(out->position)>>(LoadLE64(in + 24));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldOccurrenceHeaderBytes = 104ULL;
+inline constexpr std::uint64_t kPackBodyWorldOccurrenceHeaderParentKindOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldOccurrenceHeaderStableOccurrenceOrdinalOffset = 4ULL;
+inline constexpr std::uint64_t kPackBodyWorldOccurrenceHeaderParentStableIdOffset = 8ULL;
+inline constexpr std::uint64_t kPackBodyWorldOccurrenceHeaderParentProgramSemanticFingerprintOffset = 24ULL;
+inline constexpr std::uint64_t kPackBodyWorldOccurrenceHeaderChildPlayableOffset = 32ULL;
+inline constexpr std::uint64_t kPackBodyWorldOccurrenceHeaderOccurrenceSemanticFingerprintOffset = 96ULL;
+
+inline void SerializePackBodyWorldOccurrenceHeader(const PlayableOccurrencePropertyViewV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.parentKind));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.stableOccurrenceOrdinal));
+    StoreObjectId(out + 8, row.parentStableId);
+    StoreLE64(out + 24, static_cast<std::uint64_t>(row.parentProgramSemanticFingerprint));
+    SerializePackBodyWorldPlayableRef(row.childPlayable, out + 32);
+    StoreLE64(out + 96, static_cast<std::uint64_t>(row.occurrenceSemanticFingerprint));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldOccurrenceHeader(const std::uint8_t* in, std::uint64_t size, PlayableOccurrencePropertyViewV1* out) noexcept {
+    if (size != kPackBodyWorldOccurrenceHeaderBytes) return false;
+    out->parentKind = static_cast<std::remove_cvref_t<decltype(out->parentKind)>>(LoadLE32(in + 0));
+    out->stableOccurrenceOrdinal = static_cast<std::remove_cvref_t<decltype(out->stableOccurrenceOrdinal)>>(LoadLE32(in + 4));
+    out->parentStableId = static_cast<std::remove_cvref_t<decltype(out->parentStableId)>>(LoadObjectId(in + 8));
+    out->parentProgramSemanticFingerprint = static_cast<std::remove_cvref_t<decltype(out->parentProgramSemanticFingerprint)>>(LoadLE64(in + 24));
+    if (!ParsePackBodyWorldPlayableRef(in + 32, kPackBodyWorldPlayableRefBytes, &out->childPlayable)) return false;
+    out->occurrenceSemanticFingerprint = static_cast<std::remove_cvref_t<decltype(out->occurrenceSemanticFingerprint)>>(LoadLE64(in + 96));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldPathStepBytes = 120ULL;
+inline constexpr std::uint64_t kPackBodyWorldPathStepPlayableOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldPathStepStableChildOrdinalOffset = 64ULL;
+inline constexpr std::uint64_t kPackBodyWorldPathStepReservedOffset = 68ULL;
+inline constexpr std::uint64_t kPackBodyWorldPathStepTrackIdOffset = 72ULL;
+inline constexpr std::uint64_t kPackBodyWorldPathStepClipIdOffset = 88ULL;
+inline constexpr std::uint64_t kPackBodyWorldPathStepClipGuidHighOffset = 104ULL;
+inline constexpr std::uint64_t kPackBodyWorldPathStepClipGuidLowOffset = 112ULL;
+
+inline void SerializePackBodyWorldPathStep(const StableAuthoredPathStepV1& row, std::uint8_t* out) noexcept {
+    SerializePackBodyWorldPlayableRef(row.playable, out + 0);
+    StoreLE32(out + 64, static_cast<std::uint32_t>(row.stableChildOrdinal));
+    StoreLE32(out + 68, static_cast<std::uint32_t>(row.reserved));
+    StoreObjectId(out + 72, row.trackId);
+    StoreObjectId(out + 88, row.clipId);
+    StoreLE64(out + 104, static_cast<std::uint64_t>(row.clipGuidHigh));
+    StoreLE64(out + 112, static_cast<std::uint64_t>(row.clipGuidLow));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldPathStep(const std::uint8_t* in, std::uint64_t size, StableAuthoredPathStepV1* out) noexcept {
+    if (size != kPackBodyWorldPathStepBytes) return false;
+    if (!ParsePackBodyWorldPlayableRef(in + 0, kPackBodyWorldPlayableRefBytes, &out->playable)) return false;
+    out->stableChildOrdinal = static_cast<std::remove_cvref_t<decltype(out->stableChildOrdinal)>>(LoadLE32(in + 64));
+    out->reserved = static_cast<std::remove_cvref_t<decltype(out->reserved)>>(LoadLE32(in + 68));
+    out->trackId = static_cast<std::remove_cvref_t<decltype(out->trackId)>>(LoadObjectId(in + 72));
+    out->clipId = static_cast<std::remove_cvref_t<decltype(out->clipId)>>(LoadObjectId(in + 88));
+    out->clipGuidHigh = static_cast<std::remove_cvref_t<decltype(out->clipGuidHigh)>>(LoadLE64(in + 104));
+    out->clipGuidLow = static_cast<std::remove_cvref_t<decltype(out->clipGuidLow)>>(LoadLE64(in + 112));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldPlacementBytes = 136ULL;
+inline constexpr std::uint64_t kPackBodyWorldPlacementStablePlacementOrdinalOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldPlacementStableOccurrenceOrdinalOffset = 4ULL;
+inline constexpr std::uint64_t kPackBodyWorldPlacementContentOffset = 8ULL;
+inline constexpr std::uint64_t kPackBodyWorldPlacementAuthoredStartOffset = 72ULL;
+inline constexpr std::uint64_t kPackBodyWorldPlacementAuthoredDurationOffset = 80ULL;
+inline constexpr std::uint64_t kPackBodyWorldPlacementAuthoredFadeInOffset = 88ULL;
+inline constexpr std::uint64_t kPackBodyWorldPlacementAuthoredFadeOutOffset = 96ULL;
+inline constexpr std::uint64_t kPackBodyWorldPlacementClipIdOffset = 104ULL;
+inline constexpr std::uint64_t kPackBodyWorldPlacementClipGuidHighOffset = 120ULL;
+inline constexpr std::uint64_t kPackBodyWorldPlacementClipGuidLowOffset = 128ULL;
+
+inline void SerializePackBodyWorldPlacement(const ScheduleClipPlacementV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.stablePlacementOrdinal));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.stableOccurrenceOrdinal));
+    SerializePackBodyWorldPlayableRef(row.content, out + 8);
+    StoreLE64(out + 72, static_cast<std::uint64_t>(row.authoredStart));
+    StoreLE64(out + 80, static_cast<std::uint64_t>(row.authoredDuration));
+    StoreLE64(out + 88, static_cast<std::uint64_t>(row.authoredFadeIn));
+    StoreLE64(out + 96, static_cast<std::uint64_t>(row.authoredFadeOut));
+    StoreObjectId(out + 104, row.clipId);
+    StoreLE64(out + 120, static_cast<std::uint64_t>(row.clipGuidHigh));
+    StoreLE64(out + 128, static_cast<std::uint64_t>(row.clipGuidLow));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldPlacement(const std::uint8_t* in, std::uint64_t size, ScheduleClipPlacementV1* out) noexcept {
+    if (size != kPackBodyWorldPlacementBytes) return false;
+    out->stablePlacementOrdinal = static_cast<std::remove_cvref_t<decltype(out->stablePlacementOrdinal)>>(LoadLE32(in + 0));
+    out->stableOccurrenceOrdinal = static_cast<std::remove_cvref_t<decltype(out->stableOccurrenceOrdinal)>>(LoadLE32(in + 4));
+    if (!ParsePackBodyWorldPlayableRef(in + 8, kPackBodyWorldPlayableRefBytes, &out->content)) return false;
+    out->authoredStart = static_cast<std::remove_cvref_t<decltype(out->authoredStart)>>(LoadLE64(in + 72));
+    out->authoredDuration = static_cast<std::remove_cvref_t<decltype(out->authoredDuration)>>(LoadLE64(in + 80));
+    out->authoredFadeIn = static_cast<std::remove_cvref_t<decltype(out->authoredFadeIn)>>(LoadLE64(in + 88));
+    out->authoredFadeOut = static_cast<std::remove_cvref_t<decltype(out->authoredFadeOut)>>(LoadLE64(in + 96));
+    out->clipId = static_cast<std::remove_cvref_t<decltype(out->clipId)>>(LoadObjectId(in + 104));
+    out->clipGuidHigh = static_cast<std::remove_cvref_t<decltype(out->clipGuidHigh)>>(LoadLE64(in + 120));
+    out->clipGuidLow = static_cast<std::remove_cvref_t<decltype(out->clipGuidLow)>>(LoadLE64(in + 128));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldPrefixBytes = 200ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixSchemaOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixCompilerOffset = 4ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixSelectionAlgorithmOffset = 8ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixGridAlgorithmOffset = 12ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixTransitionAlgorithmOffset = 16ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixPublicationProtocolOffset = 20ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixRuntimeSemanticFingerprintOffset = 24ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixCapabilityMaskOffset = 32ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixVariableCountOffset = 40ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixPlayablePropertyProgramCountOffset = 44ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixPlayableOccurrencePropertyCountOffset = 48ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixPlayablePropertySendCountOffset = 52ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixReservedChildCount1Offset = 56ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixReservedChildCount2Offset = 60ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixPlayablePropertyLayerAncestorRefCountOffset = 64ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixPlayablePropertyEffectNodeCountOffset = 68ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixPlayablePropertyEffectParamCountOffset = 72ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixPlayablePropertyEffectEdgeCountOffset = 76ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixTrackScheduleCountOffset = 80ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixSegmentScheduleCountOffset = 84ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixScheduleTrackRefCountOffset = 88ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixSchedulePlacementCountOffset = 92ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixScheduleMarkerCountOffset = 96ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixContainerCountOffset = 100ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixTransitionProgramCountOffset = 104ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxContainerDepthOffset = 108ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxChildrenPerContainerOffset = 112ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxAvoidLastNOffset = 116ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxDiscreteAxesOffset = 120ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxDiscreteRowsOffset = 124ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxDiscreteTrieNodesOffset = 128ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxContinuousAxesOffset = 132ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxContinuousRowsOffset = 136ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxContinuousCandidatesOffset = 140ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxContinuousActiveRowsOffset = 144ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxContinuousLiveRowsOffset = 148ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxTransitionRulesOffset = 152ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxCurvePointsOffset = 156ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxKnownScheduleLeavesOffset = 160ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxTrackScheduleProgramsOffset = 164ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxSegmentScheduleProgramsOffset = 168ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxScheduleTrackRefsPerSegmentOffset = 172ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxScheduleTrackRefsTotalOffset = 176ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxSchedulePlacementsPerTrackOffset = 180ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxSchedulePlacementsTotalOffset = 184ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxScheduleMarkersPerSegmentOffset = 188ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxScheduleMarkersTotalOffset = 192ULL;
+inline constexpr std::uint64_t kPackBodyWorldPrefixMaxTrackSegmentScheduleDepthOffset = 196ULL;
+
+inline void SerializePackBodyWorldPrefix(const CurrentWorldV3PrefixValues& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.schema));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.compiler));
+    StoreLE32(out + 8, static_cast<std::uint32_t>(row.selectionAlgorithm));
+    StoreLE32(out + 12, static_cast<std::uint32_t>(row.gridAlgorithm));
+    StoreLE32(out + 16, static_cast<std::uint32_t>(row.transitionAlgorithm));
+    StoreLE32(out + 20, static_cast<std::uint32_t>(row.publicationProtocol));
+    StoreLE64(out + 24, static_cast<std::uint64_t>(row.runtimeSemanticFingerprint));
+    StoreLE64(out + 32, static_cast<std::uint64_t>(row.capabilityMask));
+    StoreLE32(out + 40, static_cast<std::uint32_t>(row.variableCount));
+    StoreLE32(out + 44, static_cast<std::uint32_t>(row.playablePropertyProgramCount));
+    StoreLE32(out + 48, static_cast<std::uint32_t>(row.playableOccurrencePropertyCount));
+    StoreLE32(out + 52, static_cast<std::uint32_t>(row.playablePropertySendCount));
+    StoreLE32(out + 56, static_cast<std::uint32_t>(row.reservedChildCount1));
+    StoreLE32(out + 60, static_cast<std::uint32_t>(row.reservedChildCount2));
+    StoreLE32(out + 64, static_cast<std::uint32_t>(row.playablePropertyLayerAncestorRefCount));
+    StoreLE32(out + 68, static_cast<std::uint32_t>(row.playablePropertyEffectNodeCount));
+    StoreLE32(out + 72, static_cast<std::uint32_t>(row.playablePropertyEffectParamCount));
+    StoreLE32(out + 76, static_cast<std::uint32_t>(row.playablePropertyEffectEdgeCount));
+    StoreLE32(out + 80, static_cast<std::uint32_t>(row.trackScheduleCount));
+    StoreLE32(out + 84, static_cast<std::uint32_t>(row.segmentScheduleCount));
+    StoreLE32(out + 88, static_cast<std::uint32_t>(row.scheduleTrackRefCount));
+    StoreLE32(out + 92, static_cast<std::uint32_t>(row.schedulePlacementCount));
+    StoreLE32(out + 96, static_cast<std::uint32_t>(row.scheduleMarkerCount));
+    StoreLE32(out + 100, static_cast<std::uint32_t>(row.containerCount));
+    StoreLE32(out + 104, static_cast<std::uint32_t>(row.transitionProgramCount));
+    StoreLE32(out + 108, static_cast<std::uint32_t>(row.maxContainerDepth));
+    StoreLE32(out + 112, static_cast<std::uint32_t>(row.maxChildrenPerContainer));
+    StoreLE32(out + 116, static_cast<std::uint32_t>(row.maxAvoidLastN));
+    StoreLE32(out + 120, static_cast<std::uint32_t>(row.maxDiscreteAxes));
+    StoreLE32(out + 124, static_cast<std::uint32_t>(row.maxDiscreteRows));
+    StoreLE32(out + 128, static_cast<std::uint32_t>(row.maxDiscreteTrieNodes));
+    StoreLE32(out + 132, static_cast<std::uint32_t>(row.maxContinuousAxes));
+    StoreLE32(out + 136, static_cast<std::uint32_t>(row.maxContinuousRows));
+    StoreLE32(out + 140, static_cast<std::uint32_t>(row.maxContinuousCandidates));
+    StoreLE32(out + 144, static_cast<std::uint32_t>(row.maxContinuousActiveRows));
+    StoreLE32(out + 148, static_cast<std::uint32_t>(row.maxContinuousLiveRows));
+    StoreLE32(out + 152, static_cast<std::uint32_t>(row.maxTransitionRules));
+    StoreLE32(out + 156, static_cast<std::uint32_t>(row.maxCurvePoints));
+    StoreLE32(out + 160, static_cast<std::uint32_t>(row.maxKnownScheduleLeaves));
+    StoreLE32(out + 164, static_cast<std::uint32_t>(row.maxTrackSchedulePrograms));
+    StoreLE32(out + 168, static_cast<std::uint32_t>(row.maxSegmentSchedulePrograms));
+    StoreLE32(out + 172, static_cast<std::uint32_t>(row.maxScheduleTrackRefsPerSegment));
+    StoreLE32(out + 176, static_cast<std::uint32_t>(row.maxScheduleTrackRefsTotal));
+    StoreLE32(out + 180, static_cast<std::uint32_t>(row.maxSchedulePlacementsPerTrack));
+    StoreLE32(out + 184, static_cast<std::uint32_t>(row.maxSchedulePlacementsTotal));
+    StoreLE32(out + 188, static_cast<std::uint32_t>(row.maxScheduleMarkersPerSegment));
+    StoreLE32(out + 192, static_cast<std::uint32_t>(row.maxScheduleMarkersTotal));
+    StoreLE32(out + 196, static_cast<std::uint32_t>(row.maxTrackSegmentScheduleDepth));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldPrefix(const std::uint8_t* in, std::uint64_t size, CurrentWorldV3PrefixValues* out) noexcept {
+    if (size != kPackBodyWorldPrefixBytes) return false;
+    out->schema = static_cast<std::remove_cvref_t<decltype(out->schema)>>(LoadLE32(in + 0));
+    out->compiler = static_cast<std::remove_cvref_t<decltype(out->compiler)>>(LoadLE32(in + 4));
+    out->selectionAlgorithm = static_cast<std::remove_cvref_t<decltype(out->selectionAlgorithm)>>(LoadLE32(in + 8));
+    out->gridAlgorithm = static_cast<std::remove_cvref_t<decltype(out->gridAlgorithm)>>(LoadLE32(in + 12));
+    out->transitionAlgorithm = static_cast<std::remove_cvref_t<decltype(out->transitionAlgorithm)>>(LoadLE32(in + 16));
+    out->publicationProtocol = static_cast<std::remove_cvref_t<decltype(out->publicationProtocol)>>(LoadLE32(in + 20));
+    out->runtimeSemanticFingerprint = static_cast<std::remove_cvref_t<decltype(out->runtimeSemanticFingerprint)>>(LoadLE64(in + 24));
+    out->capabilityMask = static_cast<std::remove_cvref_t<decltype(out->capabilityMask)>>(LoadLE64(in + 32));
+    out->variableCount = static_cast<std::remove_cvref_t<decltype(out->variableCount)>>(LoadLE32(in + 40));
+    out->playablePropertyProgramCount = static_cast<std::remove_cvref_t<decltype(out->playablePropertyProgramCount)>>(LoadLE32(in + 44));
+    out->playableOccurrencePropertyCount = static_cast<std::remove_cvref_t<decltype(out->playableOccurrencePropertyCount)>>(LoadLE32(in + 48));
+    out->playablePropertySendCount = static_cast<std::remove_cvref_t<decltype(out->playablePropertySendCount)>>(LoadLE32(in + 52));
+    out->reservedChildCount1 = static_cast<std::remove_cvref_t<decltype(out->reservedChildCount1)>>(LoadLE32(in + 56));
+    out->reservedChildCount2 = static_cast<std::remove_cvref_t<decltype(out->reservedChildCount2)>>(LoadLE32(in + 60));
+    out->playablePropertyLayerAncestorRefCount = static_cast<std::remove_cvref_t<decltype(out->playablePropertyLayerAncestorRefCount)>>(LoadLE32(in + 64));
+    out->playablePropertyEffectNodeCount = static_cast<std::remove_cvref_t<decltype(out->playablePropertyEffectNodeCount)>>(LoadLE32(in + 68));
+    out->playablePropertyEffectParamCount = static_cast<std::remove_cvref_t<decltype(out->playablePropertyEffectParamCount)>>(LoadLE32(in + 72));
+    out->playablePropertyEffectEdgeCount = static_cast<std::remove_cvref_t<decltype(out->playablePropertyEffectEdgeCount)>>(LoadLE32(in + 76));
+    out->trackScheduleCount = static_cast<std::remove_cvref_t<decltype(out->trackScheduleCount)>>(LoadLE32(in + 80));
+    out->segmentScheduleCount = static_cast<std::remove_cvref_t<decltype(out->segmentScheduleCount)>>(LoadLE32(in + 84));
+    out->scheduleTrackRefCount = static_cast<std::remove_cvref_t<decltype(out->scheduleTrackRefCount)>>(LoadLE32(in + 88));
+    out->schedulePlacementCount = static_cast<std::remove_cvref_t<decltype(out->schedulePlacementCount)>>(LoadLE32(in + 92));
+    out->scheduleMarkerCount = static_cast<std::remove_cvref_t<decltype(out->scheduleMarkerCount)>>(LoadLE32(in + 96));
+    out->containerCount = static_cast<std::remove_cvref_t<decltype(out->containerCount)>>(LoadLE32(in + 100));
+    out->transitionProgramCount = static_cast<std::remove_cvref_t<decltype(out->transitionProgramCount)>>(LoadLE32(in + 104));
+    out->maxContainerDepth = static_cast<std::remove_cvref_t<decltype(out->maxContainerDepth)>>(LoadLE32(in + 108));
+    out->maxChildrenPerContainer = static_cast<std::remove_cvref_t<decltype(out->maxChildrenPerContainer)>>(LoadLE32(in + 112));
+    out->maxAvoidLastN = static_cast<std::remove_cvref_t<decltype(out->maxAvoidLastN)>>(LoadLE32(in + 116));
+    out->maxDiscreteAxes = static_cast<std::remove_cvref_t<decltype(out->maxDiscreteAxes)>>(LoadLE32(in + 120));
+    out->maxDiscreteRows = static_cast<std::remove_cvref_t<decltype(out->maxDiscreteRows)>>(LoadLE32(in + 124));
+    out->maxDiscreteTrieNodes = static_cast<std::remove_cvref_t<decltype(out->maxDiscreteTrieNodes)>>(LoadLE32(in + 128));
+    out->maxContinuousAxes = static_cast<std::remove_cvref_t<decltype(out->maxContinuousAxes)>>(LoadLE32(in + 132));
+    out->maxContinuousRows = static_cast<std::remove_cvref_t<decltype(out->maxContinuousRows)>>(LoadLE32(in + 136));
+    out->maxContinuousCandidates = static_cast<std::remove_cvref_t<decltype(out->maxContinuousCandidates)>>(LoadLE32(in + 140));
+    out->maxContinuousActiveRows = static_cast<std::remove_cvref_t<decltype(out->maxContinuousActiveRows)>>(LoadLE32(in + 144));
+    out->maxContinuousLiveRows = static_cast<std::remove_cvref_t<decltype(out->maxContinuousLiveRows)>>(LoadLE32(in + 148));
+    out->maxTransitionRules = static_cast<std::remove_cvref_t<decltype(out->maxTransitionRules)>>(LoadLE32(in + 152));
+    out->maxCurvePoints = static_cast<std::remove_cvref_t<decltype(out->maxCurvePoints)>>(LoadLE32(in + 156));
+    out->maxKnownScheduleLeaves = static_cast<std::remove_cvref_t<decltype(out->maxKnownScheduleLeaves)>>(LoadLE32(in + 160));
+    out->maxTrackSchedulePrograms = static_cast<std::remove_cvref_t<decltype(out->maxTrackSchedulePrograms)>>(LoadLE32(in + 164));
+    out->maxSegmentSchedulePrograms = static_cast<std::remove_cvref_t<decltype(out->maxSegmentSchedulePrograms)>>(LoadLE32(in + 168));
+    out->maxScheduleTrackRefsPerSegment = static_cast<std::remove_cvref_t<decltype(out->maxScheduleTrackRefsPerSegment)>>(LoadLE32(in + 172));
+    out->maxScheduleTrackRefsTotal = static_cast<std::remove_cvref_t<decltype(out->maxScheduleTrackRefsTotal)>>(LoadLE32(in + 176));
+    out->maxSchedulePlacementsPerTrack = static_cast<std::remove_cvref_t<decltype(out->maxSchedulePlacementsPerTrack)>>(LoadLE32(in + 180));
+    out->maxSchedulePlacementsTotal = static_cast<std::remove_cvref_t<decltype(out->maxSchedulePlacementsTotal)>>(LoadLE32(in + 184));
+    out->maxScheduleMarkersPerSegment = static_cast<std::remove_cvref_t<decltype(out->maxScheduleMarkersPerSegment)>>(LoadLE32(in + 188));
+    out->maxScheduleMarkersTotal = static_cast<std::remove_cvref_t<decltype(out->maxScheduleMarkersTotal)>>(LoadLE32(in + 192));
+    out->maxTrackSegmentScheduleDepth = static_cast<std::remove_cvref_t<decltype(out->maxTrackSegmentScheduleDepth)>>(LoadLE32(in + 196));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldProjectIdBytes = 16ULL;
+inline constexpr std::uint64_t kPackBodyWorldProjectIdValueOffset = 0ULL;
+
+inline void SerializePackBodyWorldProjectId(const VnObjectId& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row);
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldProjectId(const std::uint8_t* in, std::uint64_t size, VnObjectId* out) noexcept {
+    if (size != kPackBodyWorldProjectIdBytes) return false;
+    (*out) = static_cast<std::remove_cvref_t<decltype((*out))>>(LoadObjectId(in + 0));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldPropertyHeaderBytes = 72ULL;
+inline constexpr std::uint64_t kPackBodyWorldPropertyHeaderContentPropertyKindOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldPropertyHeaderAuthoredStableOrderOffset = 4ULL;
+inline constexpr std::uint64_t kPackBodyWorldPropertyHeaderStableIdOffset = 8ULL;
+inline constexpr std::uint64_t kPackBodyWorldPropertyHeaderProgramSemanticFingerprintOffset = 24ULL;
+inline constexpr std::uint64_t kPackBodyWorldPropertyHeaderContentRevisionOffset = 32ULL;
+inline constexpr std::uint64_t kPackBodyWorldPropertyHeaderRouteStableIdOffset = 40ULL;
+inline constexpr std::uint64_t kPackBodyWorldPropertyHeaderCompatibilityFingerprintOffset = 56ULL;
+inline constexpr std::uint64_t kPackBodyWorldPropertyHeaderOrganizationLayerAncestorCountOffset = 64ULL;
+inline constexpr std::uint64_t kPackBodyWorldPropertyHeaderReservedOffset = 68ULL;
+
+inline void SerializePackBodyWorldPropertyHeader(const PlayablePropertyProgramViewV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.contentPropertyKind));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.authoredStableOrder));
+    StoreObjectId(out + 8, row.stableId);
+    StoreLE64(out + 24, static_cast<std::uint64_t>(row.programSemanticFingerprint));
+    StoreLE64(out + 32, static_cast<std::uint64_t>(row.contentRevision));
+    StoreObjectId(out + 40, row.routeStableId);
+    StoreLE64(out + 56, static_cast<std::uint64_t>(row.compatibilityFingerprint));
+    StoreLE32(out + 64, static_cast<std::uint32_t>(row.organizationLayerAncestorCount));
+    std::memset(out + 68, 0, 4);
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldPropertyHeader(const std::uint8_t* in, std::uint64_t size, PlayablePropertyProgramViewV1* out) noexcept {
+    if (size != kPackBodyWorldPropertyHeaderBytes) return false;
+    out->contentPropertyKind = static_cast<std::remove_cvref_t<decltype(out->contentPropertyKind)>>(LoadLE32(in + 0));
+    out->authoredStableOrder = static_cast<std::remove_cvref_t<decltype(out->authoredStableOrder)>>(LoadLE32(in + 4));
+    out->stableId = static_cast<std::remove_cvref_t<decltype(out->stableId)>>(LoadObjectId(in + 8));
+    out->programSemanticFingerprint = static_cast<std::remove_cvref_t<decltype(out->programSemanticFingerprint)>>(LoadLE64(in + 24));
+    out->contentRevision = static_cast<std::remove_cvref_t<decltype(out->contentRevision)>>(LoadLE64(in + 32));
+    out->routeStableId = static_cast<std::remove_cvref_t<decltype(out->routeStableId)>>(LoadObjectId(in + 40));
+    out->compatibilityFingerprint = static_cast<std::remove_cvref_t<decltype(out->compatibilityFingerprint)>>(LoadLE64(in + 56));
+    out->organizationLayerAncestorCount = static_cast<std::remove_cvref_t<decltype(out->organizationLayerAncestorCount)>>(LoadLE32(in + 64));
+    for (std::uint64_t i = 0; i < 4; ++i) {
+        if ((in + 68)[i] != 0) return false;
+    }
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldScheduleKeyBytes = 32ULL;
+inline constexpr std::uint64_t kPackBodyWorldScheduleKeyKindOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldScheduleKeyReservedOffset = 4ULL;
+inline constexpr std::uint64_t kPackBodyWorldScheduleKeyStableIdOffset = 8ULL;
+inline constexpr std::uint64_t kPackBodyWorldScheduleKeyScheduleSemanticFingerprintOffset = 24ULL;
+
+inline void SerializePackBodyWorldScheduleKey(const TrackSegmentScheduleKeyV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.kind));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.reserved));
+    StoreObjectId(out + 8, row.stableId);
+    StoreLE64(out + 24, static_cast<std::uint64_t>(row.scheduleSemanticFingerprint));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldScheduleKey(const std::uint8_t* in, std::uint64_t size, TrackSegmentScheduleKeyV1* out) noexcept {
+    if (size != kPackBodyWorldScheduleKeyBytes) return false;
+    out->kind = static_cast<std::remove_cvref_t<decltype(out->kind)>>(LoadLE32(in + 0));
+    out->reserved = static_cast<std::remove_cvref_t<decltype(out->reserved)>>(LoadLE32(in + 4));
+    out->stableId = static_cast<std::remove_cvref_t<decltype(out->stableId)>>(LoadObjectId(in + 8));
+    out->scheduleSemanticFingerprint = static_cast<std::remove_cvref_t<decltype(out->scheduleSemanticFingerprint)>>(LoadLE64(in + 24));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldSegmentHeaderBytes = 112ULL;
+inline constexpr std::uint64_t kPackBodyWorldSegmentHeaderRootDefinitionOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldSegmentHeaderScheduleSemanticFingerprintOffset = 64ULL;
+inline constexpr std::uint64_t kPackBodyWorldSegmentHeaderTimeKindOffset = 72ULL;
+inline constexpr std::uint64_t kPackBodyWorldSegmentHeaderStartPointKindOffset = 76ULL;
+inline constexpr std::uint64_t kPackBodyWorldSegmentHeaderStartMarkerIdOffset = 80ULL;
+inline constexpr std::uint64_t kPackBodyWorldSegmentHeaderReservedOffset = 84ULL;
+inline constexpr std::uint64_t kPackBodyWorldSegmentHeaderMicrosPerQuarterOffset = 88ULL;
+inline constexpr std::uint64_t kPackBodyWorldSegmentHeaderMeterNumeratorOffset = 96ULL;
+inline constexpr std::uint64_t kPackBodyWorldSegmentHeaderMeterDenominatorOffset = 100ULL;
+inline constexpr std::uint64_t kPackBodyWorldSegmentHeaderTrackRefCountOffset = 104ULL;
+inline constexpr std::uint64_t kPackBodyWorldSegmentHeaderMarkerCountOffset = 108ULL;
+
+inline void SerializePackBodyWorldSegmentHeader(const SegmentScheduleProgramViewV1& row, std::uint8_t* out) noexcept {
+    SerializePackBodyWorldPlayableRef(row.rootDefinition, out + 0);
+    StoreLE64(out + 64, static_cast<std::uint64_t>(row.scheduleSemanticFingerprint));
+    StoreLE32(out + 72, static_cast<std::uint32_t>(row.timeKind));
+    StoreLE32(out + 76, static_cast<std::uint32_t>(row.startPointKind));
+    StoreLE32(out + 80, static_cast<std::uint32_t>(row.startMarkerId));
+    StoreLE32(out + 84, static_cast<std::uint32_t>(row.reserved));
+    StoreLE64(out + 88, static_cast<std::uint64_t>(row.microsPerQuarter));
+    StoreLE32(out + 96, static_cast<std::uint32_t>(row.meterNumerator));
+    StoreLE32(out + 100, static_cast<std::uint32_t>(row.meterDenominator));
+    StoreLE32(out + 104, static_cast<std::uint32_t>(row.trackRefCount));
+    StoreLE32(out + 108, static_cast<std::uint32_t>(row.markerCount));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldSegmentHeader(const std::uint8_t* in, std::uint64_t size, SegmentScheduleProgramViewV1* out) noexcept {
+    if (size != kPackBodyWorldSegmentHeaderBytes) return false;
+    if (!ParsePackBodyWorldPlayableRef(in + 0, kPackBodyWorldPlayableRefBytes, &out->rootDefinition)) return false;
+    out->scheduleSemanticFingerprint = static_cast<std::remove_cvref_t<decltype(out->scheduleSemanticFingerprint)>>(LoadLE64(in + 64));
+    out->timeKind = static_cast<std::remove_cvref_t<decltype(out->timeKind)>>(LoadLE32(in + 72));
+    out->startPointKind = static_cast<std::remove_cvref_t<decltype(out->startPointKind)>>(LoadLE32(in + 76));
+    out->startMarkerId = static_cast<std::remove_cvref_t<decltype(out->startMarkerId)>>(LoadLE32(in + 80));
+    out->reserved = static_cast<std::remove_cvref_t<decltype(out->reserved)>>(LoadLE32(in + 84));
+    out->microsPerQuarter = static_cast<std::remove_cvref_t<decltype(out->microsPerQuarter)>>(LoadLE64(in + 88));
+    out->meterNumerator = static_cast<std::remove_cvref_t<decltype(out->meterNumerator)>>(LoadLE32(in + 96));
+    out->meterDenominator = static_cast<std::remove_cvref_t<decltype(out->meterDenominator)>>(LoadLE32(in + 100));
+    out->trackRefCount = static_cast<std::remove_cvref_t<decltype(out->trackRefCount)>>(LoadLE32(in + 104));
+    out->markerCount = static_cast<std::remove_cvref_t<decltype(out->markerCount)>>(LoadLE32(in + 108));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldStructuralAncestorHeaderBytes = 32ULL;
+inline constexpr std::uint64_t kPackBodyWorldStructuralAncestorHeaderContentPropertyKindOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldStructuralAncestorHeaderReservedOffset = 4ULL;
+inline constexpr std::uint64_t kPackBodyWorldStructuralAncestorHeaderStableIdOffset = 8ULL;
+inline constexpr std::uint64_t kPackBodyWorldStructuralAncestorHeaderProgramSemanticFingerprintOffset = 24ULL;
+
+inline void SerializePackBodyWorldStructuralAncestorHeader(const StructuralAncestorRefV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.contentPropertyKind));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.reserved));
+    StoreObjectId(out + 8, row.stableId);
+    StoreLE64(out + 24, static_cast<std::uint64_t>(row.programSemanticFingerprint));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldStructuralAncestorHeader(const std::uint8_t* in, std::uint64_t size, StructuralAncestorRefV1* out) noexcept {
+    if (size != kPackBodyWorldStructuralAncestorHeaderBytes) return false;
+    out->contentPropertyKind = static_cast<std::remove_cvref_t<decltype(out->contentPropertyKind)>>(LoadLE32(in + 0));
+    out->reserved = static_cast<std::remove_cvref_t<decltype(out->reserved)>>(LoadLE32(in + 4));
+    out->stableId = static_cast<std::remove_cvref_t<decltype(out->stableId)>>(LoadObjectId(in + 8));
+    out->programSemanticFingerprint = static_cast<std::remove_cvref_t<decltype(out->programSemanticFingerprint)>>(LoadLE64(in + 24));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldStructuralCountBytes = 4ULL;
+inline constexpr std::uint64_t kPackBodyWorldStructuralCountValueOffset = 0ULL;
+
+inline void SerializePackBodyWorldStructuralCount(const std::uint32_t& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldStructuralCount(const std::uint8_t* in, std::uint64_t size, std::uint32_t* out) noexcept {
+    if (size != kPackBodyWorldStructuralCountBytes) return false;
+    (*out) = static_cast<std::remove_cvref_t<decltype((*out))>>(LoadLE32(in + 0));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldStructuralHeaderBytes = 8ULL;
+inline constexpr std::uint64_t kPackBodyWorldStructuralHeaderStructuralAncestorCountOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldStructuralHeaderReservedOffset = 4ULL;
+
+inline void SerializePackBodyWorldStructuralHeader(const PlayablePropertyProgramViewV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.structuralAncestorCount));
+    std::memset(out + 4, 0, 4);
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldStructuralHeader(const std::uint8_t* in, std::uint64_t size, PlayablePropertyProgramViewV1* out) noexcept {
+    if (size != kPackBodyWorldStructuralHeaderBytes) return false;
+    out->structuralAncestorCount = static_cast<std::remove_cvref_t<decltype(out->structuralAncestorCount)>>(LoadLE32(in + 0));
+    for (std::uint64_t i = 0; i < 4; ++i) {
+        if ((in + 4)[i] != 0) return false;
+    }
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldTrackHeaderBytes = 80ULL;
+inline constexpr std::uint64_t kPackBodyWorldTrackHeaderRootDefinitionOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldTrackHeaderScheduleSemanticFingerprintOffset = 64ULL;
+inline constexpr std::uint64_t kPackBodyWorldTrackHeaderPlacementCountOffset = 72ULL;
+inline constexpr std::uint64_t kPackBodyWorldTrackHeaderReservedOffset = 76ULL;
+
+inline void SerializePackBodyWorldTrackHeader(const TrackScheduleProgramViewV1& row, std::uint8_t* out) noexcept {
+    SerializePackBodyWorldPlayableRef(row.rootDefinition, out + 0);
+    StoreLE64(out + 64, static_cast<std::uint64_t>(row.scheduleSemanticFingerprint));
+    StoreLE32(out + 72, static_cast<std::uint32_t>(row.placementCount));
+    StoreLE32(out + 76, static_cast<std::uint32_t>(row.reserved));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldTrackHeader(const std::uint8_t* in, std::uint64_t size, TrackScheduleProgramViewV1* out) noexcept {
+    if (size != kPackBodyWorldTrackHeaderBytes) return false;
+    if (!ParsePackBodyWorldPlayableRef(in + 0, kPackBodyWorldPlayableRefBytes, &out->rootDefinition)) return false;
+    out->scheduleSemanticFingerprint = static_cast<std::remove_cvref_t<decltype(out->scheduleSemanticFingerprint)>>(LoadLE64(in + 64));
+    out->placementCount = static_cast<std::remove_cvref_t<decltype(out->placementCount)>>(LoadLE32(in + 72));
+    out->reserved = static_cast<std::remove_cvref_t<decltype(out->reserved)>>(LoadLE32(in + 76));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldTrackRefBytes = 80ULL;
+inline constexpr std::uint64_t kPackBodyWorldTrackRefTrackDefinitionOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldTrackRefTrackScheduleSemanticFingerprintOffset = 64ULL;
+inline constexpr std::uint64_t kPackBodyWorldTrackRefStableTrackOrdinalOffset = 72ULL;
+inline constexpr std::uint64_t kPackBodyWorldTrackRefReservedOffset = 76ULL;
+
+inline void SerializePackBodyWorldTrackRef(const ScheduleTrackRefV1& row, std::uint8_t* out) noexcept {
+    SerializePackBodyWorldPlayableRef(row.trackDefinition, out + 0);
+    StoreLE64(out + 64, static_cast<std::uint64_t>(row.trackScheduleSemanticFingerprint));
+    StoreLE32(out + 72, static_cast<std::uint32_t>(row.stableTrackOrdinal));
+    StoreLE32(out + 76, static_cast<std::uint32_t>(row.reserved));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldTrackRef(const std::uint8_t* in, std::uint64_t size, ScheduleTrackRefV1* out) noexcept {
+    if (size != kPackBodyWorldTrackRefBytes) return false;
+    if (!ParsePackBodyWorldPlayableRef(in + 0, kPackBodyWorldPlayableRefBytes, &out->trackDefinition)) return false;
+    out->trackScheduleSemanticFingerprint = static_cast<std::remove_cvref_t<decltype(out->trackScheduleSemanticFingerprint)>>(LoadLE64(in + 64));
+    out->stableTrackOrdinal = static_cast<std::remove_cvref_t<decltype(out->stableTrackOrdinal)>>(LoadLE32(in + 72));
+    out->reserved = static_cast<std::remove_cvref_t<decltype(out->reserved)>>(LoadLE32(in + 76));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldTransitionHeaderBytes = 40ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionHeaderOwnerContainerStableIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionHeaderRuleCountOffset = 16ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionHeaderDefaultRuleIndexOffset = 20ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionHeaderDownwardPathStepCountOffset = 24ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionHeaderMaxContainerDescentOffset = 28ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionHeaderMaxOwnerAscentOffset = 32ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionHeaderWatchFallbackOffset = 36ULL;
+
+inline void SerializePackBodyWorldTransitionHeader(const TransitionProgramViewV1& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row.ownerContainerStableId);
+    StoreLE32(out + 16, static_cast<std::uint32_t>(row.ruleCount));
+    StoreLE32(out + 20, static_cast<std::uint32_t>(row.defaultRuleIndex));
+    StoreLE32(out + 24, static_cast<std::uint32_t>(row.downwardPathStepCount));
+    StoreLE32(out + 28, static_cast<std::uint32_t>(row.maxContainerDescent));
+    StoreLE32(out + 32, static_cast<std::uint32_t>(row.maxOwnerAscent));
+    StoreLE32(out + 36, static_cast<std::uint32_t>(row.watchFallback));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldTransitionHeader(const std::uint8_t* in, std::uint64_t size, TransitionProgramViewV1* out) noexcept {
+    if (size != kPackBodyWorldTransitionHeaderBytes) return false;
+    out->ownerContainerStableId = static_cast<std::remove_cvref_t<decltype(out->ownerContainerStableId)>>(LoadObjectId(in + 0));
+    out->ruleCount = static_cast<std::remove_cvref_t<decltype(out->ruleCount)>>(LoadLE32(in + 16));
+    out->defaultRuleIndex = static_cast<std::remove_cvref_t<decltype(out->defaultRuleIndex)>>(LoadLE32(in + 20));
+    out->downwardPathStepCount = static_cast<std::remove_cvref_t<decltype(out->downwardPathStepCount)>>(LoadLE32(in + 24));
+    out->maxContainerDescent = static_cast<std::remove_cvref_t<decltype(out->maxContainerDescent)>>(LoadLE32(in + 28));
+    out->maxOwnerAscent = static_cast<std::remove_cvref_t<decltype(out->maxOwnerAscent)>>(LoadLE32(in + 32));
+    out->watchFallback = static_cast<std::remove_cvref_t<decltype(out->watchFallback)>>(LoadLE32(in + 36));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldTransitionRuleBytes = 296ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionRuleStableRuleOrdinalOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionRuleSourceAnyOffset = 4ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionRuleTargetAnyOffset = 5ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionRuleBridgePresentOffset = 6ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionRuleReservedOffset = 7ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionRuleSourceOffset = 8ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionRuleTargetOffset = 72ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionRuleSourceExitOffset = 136ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionRuleTargetEntryOffset = 140ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionRuleBridgeOffset = 144ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionRuleSourceFadeOffset = 208ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionRuleBridgeFadeInOffset = 220ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionRuleBridgeFadeOutOffset = 232ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionRuleTargetFadeOffset = 244ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionRuleRequiredClockFingerprintOffset = 256ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionRuleRequiredMarkerStableIdOffset = 264ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionRuleSamePositionCompatibilityFingerprintOffset = 280ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionRuleAuthoredStableOrderOffset = 288ULL;
+inline constexpr std::uint64_t kPackBodyWorldTransitionRuleReserved2Offset = 292ULL;
+
+inline void SerializePackBodyWorldTransitionRule(const TransitionRuleViewV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.stableRuleOrdinal));
+    *(out + 4) = static_cast<std::uint8_t>(row.sourceAny);
+    *(out + 5) = static_cast<std::uint8_t>(row.targetAny);
+    *(out + 6) = static_cast<std::uint8_t>(row.bridgePresent);
+    *(out + 7) = static_cast<std::uint8_t>(row.reserved);
+    SerializePackBodyWorldPlayableRef(row.source, out + 8);
+    SerializePackBodyWorldPlayableRef(row.target, out + 72);
+    StoreLE32(out + 136, static_cast<std::uint32_t>(row.sourceExit));
+    StoreLE32(out + 140, static_cast<std::uint32_t>(row.targetEntry));
+    SerializePackBodyWorldPlayableRef(row.bridge, out + 144);
+    SerializePackBodyWorldFade(row.sourceFade, out + 208);
+    SerializePackBodyWorldFade(row.bridgeFadeIn, out + 220);
+    SerializePackBodyWorldFade(row.bridgeFadeOut, out + 232);
+    SerializePackBodyWorldFade(row.targetFade, out + 244);
+    StoreLE64(out + 256, static_cast<std::uint64_t>(row.requiredClockFingerprint));
+    StoreObjectId(out + 264, row.requiredMarkerStableId);
+    StoreLE64(out + 280, static_cast<std::uint64_t>(row.samePositionCompatibilityFingerprint));
+    StoreLE32(out + 288, static_cast<std::uint32_t>(row.authoredStableOrder));
+    StoreLE32(out + 292, static_cast<std::uint32_t>(row.reserved2));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldTransitionRule(const std::uint8_t* in, std::uint64_t size, TransitionRuleViewV1* out) noexcept {
+    if (size != kPackBodyWorldTransitionRuleBytes) return false;
+    out->stableRuleOrdinal = static_cast<std::remove_cvref_t<decltype(out->stableRuleOrdinal)>>(LoadLE32(in + 0));
+    out->sourceAny = static_cast<std::remove_cvref_t<decltype(out->sourceAny)>>(*(in + 4));
+    out->targetAny = static_cast<std::remove_cvref_t<decltype(out->targetAny)>>(*(in + 5));
+    out->bridgePresent = static_cast<std::remove_cvref_t<decltype(out->bridgePresent)>>(*(in + 6));
+    out->reserved = static_cast<std::remove_cvref_t<decltype(out->reserved)>>(*(in + 7));
+    if (!ParsePackBodyWorldPlayableRef(in + 8, kPackBodyWorldPlayableRefBytes, &out->source)) return false;
+    if (!ParsePackBodyWorldPlayableRef(in + 72, kPackBodyWorldPlayableRefBytes, &out->target)) return false;
+    out->sourceExit = static_cast<std::remove_cvref_t<decltype(out->sourceExit)>>(LoadLE32(in + 136));
+    out->targetEntry = static_cast<std::remove_cvref_t<decltype(out->targetEntry)>>(LoadLE32(in + 140));
+    if (!ParsePackBodyWorldPlayableRef(in + 144, kPackBodyWorldPlayableRefBytes, &out->bridge)) return false;
+    if (!ParsePackBodyWorldFade(in + 208, kPackBodyWorldFadeBytes, &out->sourceFade)) return false;
+    if (!ParsePackBodyWorldFade(in + 220, kPackBodyWorldFadeBytes, &out->bridgeFadeIn)) return false;
+    if (!ParsePackBodyWorldFade(in + 232, kPackBodyWorldFadeBytes, &out->bridgeFadeOut)) return false;
+    if (!ParsePackBodyWorldFade(in + 244, kPackBodyWorldFadeBytes, &out->targetFade)) return false;
+    out->requiredClockFingerprint = static_cast<std::remove_cvref_t<decltype(out->requiredClockFingerprint)>>(LoadLE64(in + 256));
+    out->requiredMarkerStableId = static_cast<std::remove_cvref_t<decltype(out->requiredMarkerStableId)>>(LoadObjectId(in + 264));
+    out->samePositionCompatibilityFingerprint = static_cast<std::remove_cvref_t<decltype(out->samePositionCompatibilityFingerprint)>>(LoadLE64(in + 280));
+    out->authoredStableOrder = static_cast<std::remove_cvref_t<decltype(out->authoredStableOrder)>>(LoadLE32(in + 288));
+    out->reserved2 = static_cast<std::remove_cvref_t<decltype(out->reserved2)>>(LoadLE32(in + 292));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldVariableHeaderBytes = 40ULL;
+inline constexpr std::uint64_t kPackBodyWorldVariableHeaderVariableIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldVariableHeaderKindOffset = 16ULL;
+inline constexpr std::uint64_t kPackBodyWorldVariableHeaderScopeOffset = 20ULL;
+inline constexpr std::uint64_t kPackBodyWorldVariableHeaderRangeMinOffset = 24ULL;
+inline constexpr std::uint64_t kPackBodyWorldVariableHeaderRangeMaxOffset = 28ULL;
+inline constexpr std::uint64_t kPackBodyWorldVariableHeaderDefaultValueOffset = 32ULL;
+inline constexpr std::uint64_t kPackBodyWorldVariableHeaderReservedOffset = 36ULL;
+
+inline void SerializePackBodyWorldVariableHeader(const PackWorldVariableWire& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row.variableId);
+    StoreLE32(out + 16, static_cast<std::uint32_t>(row.kind));
+    StoreLE32(out + 20, static_cast<std::uint32_t>(1ULL));
+    StoreLEF32(out + 24, static_cast<float>(row.rangeMin));
+    StoreLEF32(out + 28, static_cast<float>(row.rangeMax));
+    StoreLEF32(out + 32, static_cast<float>(row.defaultValue));
+    std::memset(out + 36, 0, 4);
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldVariableHeader(const std::uint8_t* in, std::uint64_t size, PackWorldVariableWire* out) noexcept {
+    if (size != kPackBodyWorldVariableHeaderBytes) return false;
+    out->variableId = static_cast<std::remove_cvref_t<decltype(out->variableId)>>(LoadObjectId(in + 0));
+    out->kind = static_cast<std::remove_cvref_t<decltype(out->kind)>>(LoadLE32(in + 16));
+    if (LoadLE32(in + 20) != 1ULL) return false;
+    out->rangeMin = static_cast<std::remove_cvref_t<decltype(out->rangeMin)>>(LoadLEF32(in + 24));
+    out->rangeMax = static_cast<std::remove_cvref_t<decltype(out->rangeMax)>>(LoadLEF32(in + 28));
+    out->defaultValue = static_cast<std::remove_cvref_t<decltype(out->defaultValue)>>(LoadLEF32(in + 32));
+    for (std::uint64_t i = 0; i < 4; ++i) {
+        if ((in + 36)[i] != 0) return false;
+    }
     return true;
 }
 
@@ -714,6 +2214,67 @@ inline void SerializePackBusSend(const PackBusSendEntry& row, std::uint8_t* out)
     return true;
 }
 
+inline constexpr std::uint64_t kPackCanonicalPartitionHeaderBytes = 88ULL;
+inline constexpr std::uint64_t kPackCanonicalPartitionHeaderMagicOffset = 0ULL;
+inline constexpr std::uint8_t kPackCanonicalPartitionHeaderMagic[] = {86u, 78u, 68u, 69u, 70u, 80u, 48u, 50u};
+inline constexpr std::uint64_t kPackCanonicalPartitionHeaderHeaderBytesOffset = 8ULL;
+inline constexpr std::uint64_t kPackCanonicalPartitionHeaderBodyVintageOffset = 12ULL;
+inline constexpr std::uint64_t kPackCanonicalPartitionHeaderBodyBytesOffset = 16ULL;
+inline constexpr std::uint64_t kPackCanonicalPartitionHeaderBodyChecksumOffset = 24ULL;
+inline constexpr std::uint64_t kPackCanonicalPartitionHeaderPackStableIdOffset = 32ULL;
+inline constexpr std::uint64_t kPackCanonicalPartitionHeaderPartitionRevisionOffset = 40ULL;
+inline constexpr std::uint64_t kPackCanonicalPartitionHeaderOwnedDefinitionCountOffset = 48ULL;
+inline constexpr std::uint64_t kPackCanonicalPartitionHeaderBusContentGenerationOffset = 56ULL;
+inline constexpr std::uint64_t kPackCanonicalPartitionHeaderPublishedBusFingerprintOffset = 64ULL;
+inline constexpr std::uint64_t kPackCanonicalPartitionHeaderCompileTargetProfileFingerprintOffset = 72ULL;
+inline constexpr std::uint64_t kPackCanonicalPartitionHeaderHeaderChecksumOffset = 80ULL;
+
+inline void SerializePackCanonicalPartitionHeader(const PackCanonicalPartitionHeader& row, std::uint8_t* out) noexcept {
+    {
+        constexpr std::uint8_t value[] = {0x56, 0x4e, 0x44, 0x45, 0x46, 0x50, 0x30, 0x32};
+        std::memcpy(out + 0, value, 8);
+    }
+    StoreLE32(out + 8, static_cast<std::uint32_t>(row.headerBytes));
+    StoreLE32(out + 12, static_cast<std::uint32_t>(row.bodyVintage));
+    StoreLE64(out + 16, static_cast<std::uint64_t>(row.bodyBytes));
+    StoreLE64(out + 24, static_cast<std::uint64_t>(row.bodyChecksum));
+    StoreLE64(out + 32, static_cast<std::uint64_t>(row.packStableId));
+    StoreLE64(out + 40, static_cast<std::uint64_t>(row.partitionRevision));
+    StoreLE64(out + 48, static_cast<std::uint64_t>(row.ownedDefinitionCount));
+    StoreLE64(out + 56, static_cast<std::uint64_t>(row.busContentGeneration));
+    StoreLE64(out + 64, static_cast<std::uint64_t>(row.publishedBusFingerprint));
+    StoreLE64(out + 72, static_cast<std::uint64_t>(row.compileTargetProfileFingerprint));
+    StoreLE64(out + 80, static_cast<std::uint64_t>(row.headerChecksum));
+}
+
+[[nodiscard]] inline bool ParsePackCanonicalPartitionHeader(const std::uint8_t* in, std::uint64_t size, PackCanonicalPartitionHeader* out) noexcept {
+    if (size != kPackCanonicalPartitionHeaderBytes) return false;
+    {
+        constexpr std::uint8_t value[] = {0x56, 0x4e, 0x44, 0x45, 0x46, 0x50, 0x30, 0x32};
+        if (std::memcmp(in + 0, value, 8) != 0) return false;
+    }
+    out->headerBytes = static_cast<std::remove_cvref_t<decltype(out->headerBytes)>>(LoadLE32(in + 8));
+    out->bodyVintage = static_cast<std::remove_cvref_t<decltype(out->bodyVintage)>>(LoadLE32(in + 12));
+    out->bodyBytes = static_cast<std::remove_cvref_t<decltype(out->bodyBytes)>>(LoadLE64(in + 16));
+    out->bodyChecksum = static_cast<std::remove_cvref_t<decltype(out->bodyChecksum)>>(LoadLE64(in + 24));
+    out->packStableId = static_cast<std::remove_cvref_t<decltype(out->packStableId)>>(LoadLE64(in + 32));
+    out->partitionRevision = static_cast<std::remove_cvref_t<decltype(out->partitionRevision)>>(LoadLE64(in + 40));
+    out->ownedDefinitionCount = static_cast<std::remove_cvref_t<decltype(out->ownedDefinitionCount)>>(LoadLE64(in + 48));
+    out->busContentGeneration = static_cast<std::remove_cvref_t<decltype(out->busContentGeneration)>>(LoadLE64(in + 56));
+    out->publishedBusFingerprint = static_cast<std::remove_cvref_t<decltype(out->publishedBusFingerprint)>>(LoadLE64(in + 64));
+    out->compileTargetProfileFingerprint = static_cast<std::remove_cvref_t<decltype(out->compileTargetProfileFingerprint)>>(LoadLE64(in + 72));
+    out->headerChecksum = static_cast<std::remove_cvref_t<decltype(out->headerChecksum)>>(LoadLE64(in + 80));
+    return true;
+}
+
+inline void StorePackCanonicalPartitionHeaderBodyChecksum(std::uint8_t* out, std::uint64_t value) noexcept {
+    StoreLE64(out + 24, static_cast<std::uint64_t>(value));
+}
+
+inline void StorePackCanonicalPartitionHeaderHeaderChecksum(std::uint8_t* out, std::uint64_t value) noexcept {
+    StoreLE64(out + 80, static_cast<std::uint64_t>(value));
+}
+
 inline constexpr std::uint64_t kPackContainerChildBytes = 32ULL;
 inline constexpr std::uint64_t kPackContainerChildPlayableIdOffset = 0ULL;
 inline constexpr std::uint64_t kPackContainerChildWeightOffset = 16ULL;
@@ -878,6 +2439,7 @@ inline void SerializePackEffectDynamicRoute(const PackEffectDynamicRouteEntry& r
 
 inline constexpr std::uint64_t kPackFileHeaderBytes = 44ULL;
 inline constexpr std::uint64_t kPackFileHeaderMagicOffset = 0ULL;
+inline constexpr std::uint8_t kPackFileHeaderMagic[] = {86u, 83u, 80u, 75u};
 inline constexpr std::uint64_t kPackFileHeaderFormatVersionOffset = 4ULL;
 inline constexpr std::uint64_t kPackFileHeaderHeaderBytesOffset = 8ULL;
 inline constexpr std::uint64_t kPackFileHeaderFileBytesOffset = 12ULL;
@@ -918,6 +2480,7 @@ inline void SerializePackFileHeader(const PackFileHeader& row, std::uint8_t* out
 
 inline constexpr std::uint64_t kPackFilePrefixBytes = 12ULL;
 inline constexpr std::uint64_t kPackFilePrefixMagicOffset = 0ULL;
+inline constexpr std::uint8_t kPackFilePrefixMagic[] = {86u, 83u, 80u, 75u};
 inline constexpr std::uint64_t kPackFilePrefixFormatVersionOffset = 4ULL;
 inline constexpr std::uint64_t kPackFilePrefixHeaderBytesOffset = 8ULL;
 
@@ -990,6 +2553,7 @@ inline void StorePackMediaBlobOffset(std::uint8_t* out, std::uint64_t value) noe
 
 inline constexpr std::uint64_t kPackMediaFileHeaderBytes = 36ULL;
 inline constexpr std::uint64_t kPackMediaFileHeaderMagicOffset = 0ULL;
+inline constexpr std::uint8_t kPackMediaFileHeaderMagic[] = {86u, 83u, 80u, 75u};
 inline constexpr std::uint64_t kPackMediaFileHeaderFormatVersionOffset = 4ULL;
 inline constexpr std::uint64_t kPackMediaFileHeaderHeaderBytesOffset = 8ULL;
 inline constexpr std::uint64_t kPackMediaFileHeaderFileBytesOffset = 12ULL;
@@ -1613,6 +3177,930 @@ template <class Buffer>
 }
 
 template <class Buffer>
+[[nodiscard]] bool AppendPackBodyPayloadEffectEdge(Buffer& buffer, const EffectEdgeV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyPayloadEffectEdgeBytes)));
+    auto* bytes = buffer.Take(kPackBodyPayloadEffectEdgeBytes);
+    if (!bytes) return false;
+    SerializePackBodyPayloadEffectEdge(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyPayloadEffectEdge(Buffer& buffer, EffectEdgeV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyPayloadEffectEdgeBytes)));
+    const auto* bytes = buffer.Take(kPackBodyPayloadEffectEdgeBytes);
+    return bytes && ParsePackBodyPayloadEffectEdge(bytes, kPackBodyPayloadEffectEdgeBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyPayloadEffectEdge(const EffectEdgeV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyPayloadEffectEdgeBytes) return false;
+    size += kPackBodyPayloadEffectEdgeBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyPayloadEffectNodeHeader(Buffer& buffer, const EffectNodeV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyPayloadEffectNodeHeaderBytes)));
+    auto* bytes = buffer.Take(kPackBodyPayloadEffectNodeHeaderBytes);
+    if (!bytes) return false;
+    SerializePackBodyPayloadEffectNodeHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyPayloadEffectNodeHeader(Buffer& buffer, EffectNodeV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyPayloadEffectNodeHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackBodyPayloadEffectNodeHeaderBytes);
+    return bytes && ParsePackBodyPayloadEffectNodeHeader(bytes, kPackBodyPayloadEffectNodeHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyPayloadEffectNodeHeader(const EffectNodeV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyPayloadEffectNodeHeaderBytes) return false;
+    size += kPackBodyPayloadEffectNodeHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyPayloadEffectParam(Buffer& buffer, const EffectParamV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyPayloadEffectParamBytes)));
+    auto* bytes = buffer.Take(kPackBodyPayloadEffectParamBytes);
+    if (!bytes) return false;
+    SerializePackBodyPayloadEffectParam(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyPayloadEffectParam(Buffer& buffer, EffectParamV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyPayloadEffectParamBytes)));
+    const auto* bytes = buffer.Take(kPackBodyPayloadEffectParamBytes);
+    return bytes && ParsePackBodyPayloadEffectParam(bytes, kPackBodyPayloadEffectParamBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyPayloadEffectParam(const EffectParamV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyPayloadEffectParamBytes) return false;
+    size += kPackBodyPayloadEffectParamBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyPayloadHeader(Buffer& buffer, const PlayablePropertyPayloadViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyPayloadHeaderBytes)));
+    auto* bytes = buffer.Take(kPackBodyPayloadHeaderBytes);
+    if (!bytes) return false;
+    SerializePackBodyPayloadHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyPayloadHeader(Buffer& buffer, PlayablePropertyPayloadViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyPayloadHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackBodyPayloadHeaderBytes);
+    return bytes && ParsePackBodyPayloadHeader(bytes, kPackBodyPayloadHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyPayloadHeader(const PlayablePropertyPayloadViewV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyPayloadHeaderBytes) return false;
+    size += kPackBodyPayloadHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyPayloadSend(Buffer& buffer, const SendV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyPayloadSendBytes)));
+    auto* bytes = buffer.Take(kPackBodyPayloadSendBytes);
+    if (!bytes) return false;
+    SerializePackBodyPayloadSend(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyPayloadSend(Buffer& buffer, SendV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyPayloadSendBytes)));
+    const auto* bytes = buffer.Take(kPackBodyPayloadSendBytes);
+    return bytes && ParsePackBodyPayloadSend(bytes, kPackBodyPayloadSendBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyPayloadSend(const SendV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyPayloadSendBytes) return false;
+    size += kPackBodyPayloadSendBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldActionCapacity(Buffer& buffer, const ContainerWorldInstallViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldActionCapacityBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldActionCapacityBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldActionCapacity(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldActionCapacity(Buffer& buffer, ContainerWorldInstallViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldActionCapacityBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldActionCapacityBytes);
+    return bytes && ParsePackBodyWorldActionCapacity(bytes, kPackBodyWorldActionCapacityBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldActionCapacity(const ContainerWorldInstallViewV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldActionCapacityBytes) return false;
+    size += kPackBodyWorldActionCapacityBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldActionHeader(Buffer& buffer, const ActionProgramViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldActionHeaderBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldActionHeaderBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldActionHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldActionHeader(Buffer& buffer, ActionProgramViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldActionHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldActionHeaderBytes);
+    return bytes && ParsePackBodyWorldActionHeader(bytes, kPackBodyWorldActionHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldActionHeader(const ActionProgramViewV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldActionHeaderBytes) return false;
+    size += kPackBodyWorldActionHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldActionRef(Buffer& buffer, const ActionObjectRefV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldActionRefBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldActionRefBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldActionRef(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldActionRef(Buffer& buffer, ActionObjectRefV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldActionRefBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldActionRefBytes);
+    return bytes && ParsePackBodyWorldActionRef(bytes, kPackBodyWorldActionRefBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldActionRef(const ActionObjectRefV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldActionRefBytes) return false;
+    size += kPackBodyWorldActionRefBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldTime(Buffer& buffer, const AuthoredTimeRationalV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldTimeBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldTimeBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldTime(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldTime(Buffer& buffer, AuthoredTimeRationalV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldTimeBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldTimeBytes);
+    return bytes && ParsePackBodyWorldTime(bytes, kPackBodyWorldTimeBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldTime(const AuthoredTimeRationalV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldTimeBytes) return false;
+    size += kPackBodyWorldTimeBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldActionStep(Buffer& buffer, const ActionStepProgramViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldActionStepBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldActionStepBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldActionStep(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldActionStep(Buffer& buffer, ActionStepProgramViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldActionStepBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldActionStepBytes);
+    return bytes && ParsePackBodyWorldActionStep(bytes, kPackBodyWorldActionStepBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldActionStep(const ActionStepProgramViewV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldActionStepBytes) return false;
+    size += kPackBodyWorldActionStepBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldCapacity(Buffer& buffer, const WorldCapacitySummaryV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldCapacityBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldCapacityBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldCapacity(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldCapacity(Buffer& buffer, WorldCapacitySummaryV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldCapacityBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldCapacityBytes);
+    return bytes && ParsePackBodyWorldCapacity(bytes, kPackBodyWorldCapacityBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldCapacity(const WorldCapacitySummaryV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldCapacityBytes) return false;
+    size += kPackBodyWorldCapacityBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldPlayableRef(Buffer& buffer, const PlayableRefV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldPlayableRefBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldPlayableRefBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldPlayableRef(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldPlayableRef(Buffer& buffer, PlayableRefV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldPlayableRefBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldPlayableRefBytes);
+    return bytes && ParsePackBodyWorldPlayableRef(bytes, kPackBodyWorldPlayableRefBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldPlayableRef(const PlayableRefV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldPlayableRefBytes) return false;
+    size += kPackBodyWorldPlayableRefBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldChildHeader(Buffer& buffer, const ContainerChildProgramViewV2& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldChildHeaderBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldChildHeaderBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldChildHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldChildHeader(Buffer& buffer, ContainerChildProgramViewV2& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldChildHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldChildHeaderBytes);
+    return bytes && ParsePackBodyWorldChildHeader(bytes, kPackBodyWorldChildHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldChildHeader(const ContainerChildProgramViewV2&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldChildHeaderBytes) return false;
+    size += kPackBodyWorldChildHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldContainerHeader(Buffer& buffer, const ContainerProgramViewV3& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldContainerHeaderBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldContainerHeaderBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldContainerHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldContainerHeader(Buffer& buffer, ContainerProgramViewV3& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldContainerHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldContainerHeaderBytes);
+    return bytes && ParsePackBodyWorldContainerHeader(bytes, kPackBodyWorldContainerHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldContainerHeader(const ContainerProgramViewV3&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldContainerHeaderBytes) return false;
+    size += kPackBodyWorldContainerHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldContinuousCell(Buffer& buffer, const ContinuousGridCellV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldContinuousCellBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldContinuousCellBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldContinuousCell(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldContinuousCell(Buffer& buffer, ContinuousGridCellV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldContinuousCellBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldContinuousCellBytes);
+    return bytes && ParsePackBodyWorldContinuousCell(bytes, kPackBodyWorldContinuousCellBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldContinuousCell(const ContinuousGridCellV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldContinuousCellBytes) return false;
+    size += kPackBodyWorldContinuousCellBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldContinuousGridHeader(Buffer& buffer, const ContinuousGridRowViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldContinuousGridHeaderBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldContinuousGridHeaderBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldContinuousGridHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldContinuousGridHeader(Buffer& buffer, ContinuousGridRowViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldContinuousGridHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldContinuousGridHeaderBytes);
+    return bytes && ParsePackBodyWorldContinuousGridHeader(bytes, kPackBodyWorldContinuousGridHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldContinuousGridHeader(const ContinuousGridRowViewV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldContinuousGridHeaderBytes) return false;
+    size += kPackBodyWorldContinuousGridHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldCurveHandle(Buffer& buffer, const CurveHandlePair& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldCurveHandleBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldCurveHandleBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldCurveHandle(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldCurveHandle(Buffer& buffer, CurveHandlePair& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldCurveHandleBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldCurveHandleBytes);
+    return bytes && ParsePackBodyWorldCurveHandle(bytes, kPackBodyWorldCurveHandleBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldCurveHandle(const CurveHandlePair&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldCurveHandleBytes) return false;
+    size += kPackBodyWorldCurveHandleBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldCurveHeader(Buffer& buffer, const CurveV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldCurveHeaderBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldCurveHeaderBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldCurveHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldCurveHeader(Buffer& buffer, CurveV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldCurveHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldCurveHeaderBytes);
+    return bytes && ParsePackBodyWorldCurveHeader(bytes, kPackBodyWorldCurveHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldCurveHeader(const CurveV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldCurveHeaderBytes) return false;
+    size += kPackBodyWorldCurveHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldCurvePoint(Buffer& buffer, const CurvePoint& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldCurvePointBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldCurvePointBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldCurvePoint(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldCurvePoint(Buffer& buffer, CurvePoint& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldCurvePointBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldCurvePointBytes);
+    return bytes && ParsePackBodyWorldCurvePoint(bytes, kPackBodyWorldCurvePointBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldCurvePoint(const CurvePoint&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldCurvePointBytes) return false;
+    size += kPackBodyWorldCurvePointBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldDiscreteCell(Buffer& buffer, const DiscreteGridCellV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldDiscreteCellBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldDiscreteCellBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldDiscreteCell(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldDiscreteCell(Buffer& buffer, DiscreteGridCellV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldDiscreteCellBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldDiscreteCellBytes);
+    return bytes && ParsePackBodyWorldDiscreteCell(bytes, kPackBodyWorldDiscreteCellBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldDiscreteCell(const DiscreteGridCellV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldDiscreteCellBytes) return false;
+    size += kPackBodyWorldDiscreteCellBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldDiscreteGridHeader(Buffer& buffer, const DiscreteGridRowViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldDiscreteGridHeaderBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldDiscreteGridHeaderBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldDiscreteGridHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldDiscreteGridHeader(Buffer& buffer, DiscreteGridRowViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldDiscreteGridHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldDiscreteGridHeaderBytes);
+    return bytes && ParsePackBodyWorldDiscreteGridHeader(bytes, kPackBodyWorldDiscreteGridHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldDiscreteGridHeader(const DiscreteGridRowViewV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldDiscreteGridHeaderBytes) return false;
+    size += kPackBodyWorldDiscreteGridHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldFade(Buffer& buffer, const TransitionFadeV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldFadeBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldFadeBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldFade(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldFade(Buffer& buffer, TransitionFadeV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldFadeBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldFadeBytes);
+    return bytes && ParsePackBodyWorldFade(bytes, kPackBodyWorldFadeBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldFade(const TransitionFadeV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldFadeBytes) return false;
+    size += kPackBodyWorldFadeBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldGridAxis(Buffer& buffer, const GridAxisV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldGridAxisBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldGridAxisBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldGridAxis(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldGridAxis(Buffer& buffer, GridAxisV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldGridAxisBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldGridAxisBytes);
+    return bytes && ParsePackBodyWorldGridAxis(bytes, kPackBodyWorldGridAxisBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldGridAxis(const GridAxisV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldGridAxisBytes) return false;
+    size += kPackBodyWorldGridAxisBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldInlineSound(Buffer& buffer, const InlineSoundTimingHintV2& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldInlineSoundBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldInlineSoundBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldInlineSound(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldInlineSound(Buffer& buffer, InlineSoundTimingHintV2& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldInlineSoundBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldInlineSoundBytes);
+    return bytes && ParsePackBodyWorldInlineSound(bytes, kPackBodyWorldInlineSoundBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldInlineSound(const InlineSoundTimingHintV2&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldInlineSoundBytes) return false;
+    size += kPackBodyWorldInlineSoundBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldLayerAncestor(Buffer& buffer, const LayerAncestorRefV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldLayerAncestorBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldLayerAncestorBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldLayerAncestor(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldLayerAncestor(Buffer& buffer, LayerAncestorRefV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldLayerAncestorBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldLayerAncestorBytes);
+    return bytes && ParsePackBodyWorldLayerAncestor(bytes, kPackBodyWorldLayerAncestorBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldLayerAncestor(const LayerAncestorRefV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldLayerAncestorBytes) return false;
+    size += kPackBodyWorldLayerAncestorBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldMarker(Buffer& buffer, const ScheduleMarkerV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldMarkerBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldMarkerBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldMarker(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldMarker(Buffer& buffer, ScheduleMarkerV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldMarkerBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldMarkerBytes);
+    return bytes && ParsePackBodyWorldMarker(bytes, kPackBodyWorldMarkerBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldMarker(const ScheduleMarkerV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldMarkerBytes) return false;
+    size += kPackBodyWorldMarkerBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldOccurrenceHeader(Buffer& buffer, const PlayableOccurrencePropertyViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldOccurrenceHeaderBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldOccurrenceHeaderBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldOccurrenceHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldOccurrenceHeader(Buffer& buffer, PlayableOccurrencePropertyViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldOccurrenceHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldOccurrenceHeaderBytes);
+    return bytes && ParsePackBodyWorldOccurrenceHeader(bytes, kPackBodyWorldOccurrenceHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldOccurrenceHeader(const PlayableOccurrencePropertyViewV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldOccurrenceHeaderBytes) return false;
+    size += kPackBodyWorldOccurrenceHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldPathStep(Buffer& buffer, const StableAuthoredPathStepV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldPathStepBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldPathStepBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldPathStep(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldPathStep(Buffer& buffer, StableAuthoredPathStepV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldPathStepBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldPathStepBytes);
+    return bytes && ParsePackBodyWorldPathStep(bytes, kPackBodyWorldPathStepBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldPathStep(const StableAuthoredPathStepV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldPathStepBytes) return false;
+    size += kPackBodyWorldPathStepBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldPlacement(Buffer& buffer, const ScheduleClipPlacementV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldPlacementBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldPlacementBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldPlacement(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldPlacement(Buffer& buffer, ScheduleClipPlacementV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldPlacementBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldPlacementBytes);
+    return bytes && ParsePackBodyWorldPlacement(bytes, kPackBodyWorldPlacementBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldPlacement(const ScheduleClipPlacementV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldPlacementBytes) return false;
+    size += kPackBodyWorldPlacementBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldPrefix(Buffer& buffer, const CurrentWorldV3PrefixValues& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldPrefixBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldPrefixBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldPrefix(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldPrefix(Buffer& buffer, CurrentWorldV3PrefixValues& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldPrefixBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldPrefixBytes);
+    return bytes && ParsePackBodyWorldPrefix(bytes, kPackBodyWorldPrefixBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldPrefix(const CurrentWorldV3PrefixValues&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldPrefixBytes) return false;
+    size += kPackBodyWorldPrefixBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldProjectId(Buffer& buffer, const VnObjectId& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldProjectIdBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldProjectIdBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldProjectId(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldProjectId(Buffer& buffer, VnObjectId& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldProjectIdBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldProjectIdBytes);
+    return bytes && ParsePackBodyWorldProjectId(bytes, kPackBodyWorldProjectIdBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldProjectId(const VnObjectId&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldProjectIdBytes) return false;
+    size += kPackBodyWorldProjectIdBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldPropertyHeader(Buffer& buffer, const PlayablePropertyProgramViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldPropertyHeaderBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldPropertyHeaderBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldPropertyHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldPropertyHeader(Buffer& buffer, PlayablePropertyProgramViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldPropertyHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldPropertyHeaderBytes);
+    return bytes && ParsePackBodyWorldPropertyHeader(bytes, kPackBodyWorldPropertyHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldPropertyHeader(const PlayablePropertyProgramViewV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldPropertyHeaderBytes) return false;
+    size += kPackBodyWorldPropertyHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldScheduleKey(Buffer& buffer, const TrackSegmentScheduleKeyV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldScheduleKeyBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldScheduleKeyBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldScheduleKey(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldScheduleKey(Buffer& buffer, TrackSegmentScheduleKeyV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldScheduleKeyBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldScheduleKeyBytes);
+    return bytes && ParsePackBodyWorldScheduleKey(bytes, kPackBodyWorldScheduleKeyBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldScheduleKey(const TrackSegmentScheduleKeyV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldScheduleKeyBytes) return false;
+    size += kPackBodyWorldScheduleKeyBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldSegmentHeader(Buffer& buffer, const SegmentScheduleProgramViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldSegmentHeaderBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldSegmentHeaderBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldSegmentHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldSegmentHeader(Buffer& buffer, SegmentScheduleProgramViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldSegmentHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldSegmentHeaderBytes);
+    return bytes && ParsePackBodyWorldSegmentHeader(bytes, kPackBodyWorldSegmentHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldSegmentHeader(const SegmentScheduleProgramViewV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldSegmentHeaderBytes) return false;
+    size += kPackBodyWorldSegmentHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldStructuralAncestorHeader(Buffer& buffer, const StructuralAncestorRefV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldStructuralAncestorHeaderBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldStructuralAncestorHeaderBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldStructuralAncestorHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldStructuralAncestorHeader(Buffer& buffer, StructuralAncestorRefV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldStructuralAncestorHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldStructuralAncestorHeaderBytes);
+    return bytes && ParsePackBodyWorldStructuralAncestorHeader(bytes, kPackBodyWorldStructuralAncestorHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldStructuralAncestorHeader(const StructuralAncestorRefV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldStructuralAncestorHeaderBytes) return false;
+    size += kPackBodyWorldStructuralAncestorHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldStructuralCount(Buffer& buffer, const std::uint32_t& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldStructuralCountBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldStructuralCountBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldStructuralCount(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldStructuralCount(Buffer& buffer, std::uint32_t& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldStructuralCountBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldStructuralCountBytes);
+    return bytes && ParsePackBodyWorldStructuralCount(bytes, kPackBodyWorldStructuralCountBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldStructuralCount(const std::uint32_t&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldStructuralCountBytes) return false;
+    size += kPackBodyWorldStructuralCountBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldStructuralHeader(Buffer& buffer, const PlayablePropertyProgramViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldStructuralHeaderBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldStructuralHeaderBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldStructuralHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldStructuralHeader(Buffer& buffer, PlayablePropertyProgramViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldStructuralHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldStructuralHeaderBytes);
+    return bytes && ParsePackBodyWorldStructuralHeader(bytes, kPackBodyWorldStructuralHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldStructuralHeader(const PlayablePropertyProgramViewV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldStructuralHeaderBytes) return false;
+    size += kPackBodyWorldStructuralHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldTrackHeader(Buffer& buffer, const TrackScheduleProgramViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldTrackHeaderBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldTrackHeaderBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldTrackHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldTrackHeader(Buffer& buffer, TrackScheduleProgramViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldTrackHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldTrackHeaderBytes);
+    return bytes && ParsePackBodyWorldTrackHeader(bytes, kPackBodyWorldTrackHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldTrackHeader(const TrackScheduleProgramViewV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldTrackHeaderBytes) return false;
+    size += kPackBodyWorldTrackHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldTrackRef(Buffer& buffer, const ScheduleTrackRefV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldTrackRefBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldTrackRefBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldTrackRef(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldTrackRef(Buffer& buffer, ScheduleTrackRefV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldTrackRefBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldTrackRefBytes);
+    return bytes && ParsePackBodyWorldTrackRef(bytes, kPackBodyWorldTrackRefBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldTrackRef(const ScheduleTrackRefV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldTrackRefBytes) return false;
+    size += kPackBodyWorldTrackRefBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldTransitionHeader(Buffer& buffer, const TransitionProgramViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldTransitionHeaderBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldTransitionHeaderBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldTransitionHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldTransitionHeader(Buffer& buffer, TransitionProgramViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldTransitionHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldTransitionHeaderBytes);
+    return bytes && ParsePackBodyWorldTransitionHeader(bytes, kPackBodyWorldTransitionHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldTransitionHeader(const TransitionProgramViewV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldTransitionHeaderBytes) return false;
+    size += kPackBodyWorldTransitionHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldTransitionRule(Buffer& buffer, const TransitionRuleViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldTransitionRuleBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldTransitionRuleBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldTransitionRule(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldTransitionRule(Buffer& buffer, TransitionRuleViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldTransitionRuleBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldTransitionRuleBytes);
+    return bytes && ParsePackBodyWorldTransitionRule(bytes, kPackBodyWorldTransitionRuleBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldTransitionRule(const TransitionRuleViewV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldTransitionRuleBytes) return false;
+    size += kPackBodyWorldTransitionRuleBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldVariableHeader(Buffer& buffer, const PackWorldVariableWire& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldVariableHeaderBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldVariableHeaderBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldVariableHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldVariableHeader(Buffer& buffer, PackWorldVariableWire& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldVariableHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldVariableHeaderBytes);
+    return bytes && ParsePackBodyWorldVariableHeader(bytes, kPackBodyWorldVariableHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldVariableHeader(const PackWorldVariableWire&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldVariableHeaderBytes) return false;
+    size += kPackBodyWorldVariableHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
 [[nodiscard]] bool AppendPackBus(Buffer& buffer, const PackBusEntry& row) noexcept {
     static_assert(noexcept(buffer.Take(kPackBusBytes)));
     auto* bytes = buffer.Take(kPackBusBytes);
@@ -1785,6 +4273,28 @@ template <class Buffer>
 [[nodiscard]] inline bool MeasurePackBusSend(const PackBusSendEntry&, std::uint64_t& size) noexcept {
     if (size > UINT64_MAX - kPackBusSendBytes) return false;
     size += kPackBusSendBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackCanonicalPartitionHeader(Buffer& buffer, const PackCanonicalPartitionHeader& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackCanonicalPartitionHeaderBytes)));
+    auto* bytes = buffer.Take(kPackCanonicalPartitionHeaderBytes);
+    if (!bytes) return false;
+    SerializePackCanonicalPartitionHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackCanonicalPartitionHeader(Buffer& buffer, PackCanonicalPartitionHeader& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackCanonicalPartitionHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackCanonicalPartitionHeaderBytes);
+    return bytes && ParsePackCanonicalPartitionHeader(bytes, kPackCanonicalPartitionHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackCanonicalPartitionHeader(const PackCanonicalPartitionHeader&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackCanonicalPartitionHeaderBytes) return false;
+    size += kPackCanonicalPartitionHeaderBytes;
     return true;
 }
 
@@ -2316,10 +4826,1674 @@ template <class Buffer>
     return true;
 }
 
+inline constexpr std::uint64_t kPackBodyWorldBodyHeaderBytes = 392ULL;
+inline constexpr std::uint64_t kPackBodyWorldVariableBytes = 40ULL;
 inline constexpr std::uint64_t kPackVariableLabelRecordBytes = 24ULL;
 inline constexpr std::uint64_t kPackVariablePolicyRecordBytes = 32ULL;
 inline constexpr std::uint64_t kPackVariableRequirementRecordBytes = 40ULL;
 inline constexpr std::uint64_t kPackVoiceRecipeInstallRowBytes = 304ULL;
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackBodyPayloadEffectNode(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, EffectNodeV1>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackBodyPayloadEffectNodeHeader(buffer, row)) return false;
+    }
+    const std::uint64_t paramsCount = static_cast<std::uint64_t>(value.paramCount);
+    static_assert(noexcept(visitor.PrepareParams(paramsCount)));
+    if (!visitor.PrepareParams(paramsCount)) return false;
+    for (std::uint64_t i = 0; i < paramsCount; ++i) {
+        static_assert(noexcept(visitor.Params(i)));
+        auto&& row = visitor.Params(i);
+        if (!AppendPackBodyPayloadEffectParam(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackBodyPayloadEffectNode(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, EffectNodeV1>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackBodyPayloadEffectNodeHeader(buffer, row)) return false;
+    }
+    const std::uint64_t paramsCount = static_cast<std::uint64_t>(value.paramCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (paramsCount > buffer.Remaining() / 8ULL) return false;
+    static_assert(noexcept(visitor.PrepareParams(paramsCount)));
+    if (!visitor.PrepareParams(paramsCount)) return false;
+    for (std::uint64_t i = 0; i < paramsCount; ++i) {
+        static_assert(noexcept(visitor.Params(i)));
+        auto&& row = visitor.Params(i);
+        if (!ReadPackBodyPayloadEffectParam(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackBodyPayloadEffectNode(Visitor& visitor, std::uint64_t& size) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, EffectNodeV1>);
+    if (size > UINT64_MAX - 32ULL) return false;
+    size += 32ULL;
+    const std::uint64_t paramsCount = static_cast<std::uint64_t>(value.paramCount);
+    if (paramsCount > (UINT64_MAX - size) / 8ULL) return false;
+    size += paramsCount * 8ULL;
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackBodyPayloadBody(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PlayablePropertyPayloadViewV1>);
+    const std::uint64_t sendsCount = static_cast<std::uint64_t>(value.sendCount);
+    static_assert(noexcept(visitor.PrepareSends(sendsCount)));
+    if (!visitor.PrepareSends(sendsCount)) return false;
+    for (std::uint64_t i = 0; i < sendsCount; ++i) {
+        static_assert(noexcept(visitor.Sends(i)));
+        auto&& row = visitor.Sends(i);
+        if (!AppendPackBodyPayloadSend(buffer, row)) return false;
+    }
+    const std::uint64_t effectNodesCount = static_cast<std::uint64_t>(value.effectNodeCount);
+    static_assert(noexcept(visitor.PrepareEffectNodes(effectNodesCount)));
+    if (!visitor.PrepareEffectNodes(effectNodesCount)) return false;
+    for (std::uint64_t i = 0; i < effectNodesCount; ++i) {
+        static_assert(noexcept(visitor.EffectNodes(i)));
+        auto&& row = visitor.EffectNodes(i);
+        if (!AppendPackBodyPayloadEffectNode(buffer, row)) return false;
+    }
+    const std::uint64_t effectEdgesCount = static_cast<std::uint64_t>(value.effectEdgeCount);
+    static_assert(noexcept(visitor.PrepareEffectEdges(effectEdgesCount)));
+    if (!visitor.PrepareEffectEdges(effectEdgesCount)) return false;
+    for (std::uint64_t i = 0; i < effectEdgesCount; ++i) {
+        static_assert(noexcept(visitor.EffectEdges(i)));
+        auto&& row = visitor.EffectEdges(i);
+        if (!AppendPackBodyPayloadEffectEdge(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackBodyPayloadBody(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PlayablePropertyPayloadViewV1>);
+    const std::uint64_t sendsCount = static_cast<std::uint64_t>(value.sendCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (sendsCount > buffer.Remaining() / 32ULL) return false;
+    static_assert(noexcept(visitor.PrepareSends(sendsCount)));
+    if (!visitor.PrepareSends(sendsCount)) return false;
+    for (std::uint64_t i = 0; i < sendsCount; ++i) {
+        static_assert(noexcept(visitor.Sends(i)));
+        auto&& row = visitor.Sends(i);
+        if (!ReadPackBodyPayloadSend(buffer, row)) return false;
+    }
+    const std::uint64_t effectNodesCount = static_cast<std::uint64_t>(value.effectNodeCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (effectNodesCount > buffer.Remaining() / 32ULL) return false;
+    static_assert(noexcept(visitor.PrepareEffectNodes(effectNodesCount)));
+    if (!visitor.PrepareEffectNodes(effectNodesCount)) return false;
+    for (std::uint64_t i = 0; i < effectNodesCount; ++i) {
+        static_assert(noexcept(visitor.EffectNodes(i)));
+        auto&& row = visitor.EffectNodes(i);
+        if (!ReadPackBodyPayloadEffectNode(buffer, row)) return false;
+    }
+    const std::uint64_t effectEdgesCount = static_cast<std::uint64_t>(value.effectEdgeCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (effectEdgesCount > buffer.Remaining() / 8ULL) return false;
+    static_assert(noexcept(visitor.PrepareEffectEdges(effectEdgesCount)));
+    if (!visitor.PrepareEffectEdges(effectEdgesCount)) return false;
+    for (std::uint64_t i = 0; i < effectEdgesCount; ++i) {
+        static_assert(noexcept(visitor.EffectEdges(i)));
+        auto&& row = visitor.EffectEdges(i);
+        if (!ReadPackBodyPayloadEffectEdge(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackBodyPayloadBody(Visitor& visitor, std::uint64_t& size) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PlayablePropertyPayloadViewV1>);
+    const std::uint64_t sendsCount = static_cast<std::uint64_t>(value.sendCount);
+    if (sendsCount > (UINT64_MAX - size) / 32ULL) return false;
+    size += sendsCount * 32ULL;
+    const std::uint64_t effectNodesCount = static_cast<std::uint64_t>(value.effectNodeCount);
+    static_assert(noexcept(visitor.PrepareEffectNodes(effectNodesCount)));
+    if (!visitor.PrepareEffectNodes(effectNodesCount)) return false;
+    for (std::uint64_t i = 0; i < effectNodesCount; ++i) {
+        static_assert(noexcept(visitor.EffectNodes(i)));
+        auto&& row = visitor.EffectNodes(i);
+        if (!MeasurePackBodyPayloadEffectNode(row, size)) return false;
+    }
+    const std::uint64_t effectEdgesCount = static_cast<std::uint64_t>(value.effectEdgeCount);
+    if (effectEdgesCount > (UINT64_MAX - size) / 8ULL) return false;
+    size += effectEdgesCount * 8ULL;
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackBodyPayload(Buffer& buffer, Visitor& visitor) noexcept {
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackBodyPayloadHeader(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.Body()));
+        auto&& row = visitor.Body();
+        if (!AppendPackBodyPayloadBody(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackBodyPayload(Buffer& buffer, Visitor& visitor) noexcept {
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackBodyPayloadHeader(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.Body()));
+        auto&& row = visitor.Body();
+        if (!ReadPackBodyPayloadBody(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackBodyPayload(Visitor& visitor, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - 111ULL) return false;
+    size += 111ULL;
+    {
+        static_assert(noexcept(visitor.Body()));
+        auto&& row = visitor.Body();
+        if (!MeasurePackBodyPayloadBody(row, size)) return false;
+    }
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackBodyWorldAction(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, ActionProgramViewV1>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackBodyWorldActionHeader(buffer, row)) return false;
+    }
+    const std::uint64_t stepsCount = static_cast<std::uint64_t>(value.stepCount);
+    static_assert(noexcept(visitor.PrepareSteps(stepsCount)));
+    if (!visitor.PrepareSteps(stepsCount)) return false;
+    for (std::uint64_t i = 0; i < stepsCount; ++i) {
+        static_assert(noexcept(visitor.Steps(i)));
+        auto&& row = visitor.Steps(i);
+        if (!AppendPackBodyWorldActionStep(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackBodyWorldAction(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, ActionProgramViewV1>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackBodyWorldActionHeader(buffer, row)) return false;
+    }
+    const std::uint64_t stepsCount = static_cast<std::uint64_t>(value.stepCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (stepsCount > buffer.Remaining() / 144ULL) return false;
+    static_assert(noexcept(visitor.PrepareSteps(stepsCount)));
+    if (!visitor.PrepareSteps(stepsCount)) return false;
+    for (std::uint64_t i = 0; i < stepsCount; ++i) {
+        static_assert(noexcept(visitor.Steps(i)));
+        auto&& row = visitor.Steps(i);
+        if (!ReadPackBodyWorldActionStep(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackBodyWorldAction(Visitor& visitor, std::uint64_t& size) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, ActionProgramViewV1>);
+    if (size > UINT64_MAX - 44ULL) return false;
+    size += 44ULL;
+    const std::uint64_t stepsCount = static_cast<std::uint64_t>(value.stepCount);
+    if (stepsCount > (UINT64_MAX - size) / 144ULL) return false;
+    size += stepsCount * 144ULL;
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackBodyWorldBodyHeader(Buffer& buffer, Visitor& visitor) noexcept {
+    {
+        static_assert(noexcept(visitor.Prefix()));
+        auto&& row = visitor.Prefix();
+        if (!AppendPackBodyWorldPrefix(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.ActionCapacity()));
+        auto&& row = visitor.ActionCapacity();
+        if (!AppendPackBodyWorldActionCapacity(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.StructuralCount()));
+        auto&& row = visitor.StructuralCount();
+        if (!AppendPackBodyWorldStructuralCount(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.Capacity()));
+        auto&& row = visitor.Capacity();
+        if (!AppendPackBodyWorldCapacity(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.ProjectId()));
+        auto&& row = visitor.ProjectId();
+        if (!AppendPackBodyWorldProjectId(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackBodyWorldBodyHeader(Buffer& buffer, Visitor& visitor) noexcept {
+    {
+        static_assert(noexcept(visitor.Prefix()));
+        auto&& row = visitor.Prefix();
+        if (!ReadPackBodyWorldPrefix(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.ActionCapacity()));
+        auto&& row = visitor.ActionCapacity();
+        if (!ReadPackBodyWorldActionCapacity(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.StructuralCount()));
+        auto&& row = visitor.StructuralCount();
+        if (!ReadPackBodyWorldStructuralCount(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.Capacity()));
+        auto&& row = visitor.Capacity();
+        if (!ReadPackBodyWorldCapacity(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.ProjectId()));
+        auto&& row = visitor.ProjectId();
+        if (!ReadPackBodyWorldProjectId(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackBodyWorldBodyHeader(Visitor& visitor, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - 200ULL) return false;
+    size += 200ULL;
+    if (size > UINT64_MAX - 24ULL) return false;
+    size += 24ULL;
+    if (size > UINT64_MAX - 4ULL) return false;
+    size += 4ULL;
+    if (size > UINT64_MAX - 148ULL) return false;
+    size += 148ULL;
+    if (size > UINT64_MAX - 16ULL) return false;
+    size += 16ULL;
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackBodyWorldVariable(Buffer& buffer, Visitor& visitor) noexcept {
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackBodyWorldVariableHeader(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackBodyWorldVariable(Buffer& buffer, Visitor& visitor) noexcept {
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackBodyWorldVariableHeader(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackBodyWorldVariable(Visitor& visitor, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - 40ULL) return false;
+    size += 40ULL;
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackBodyWorldStructuralAncestor(Buffer& buffer, Visitor& visitor) noexcept {
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackBodyWorldStructuralAncestorHeader(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.Payload()));
+        auto&& row = visitor.Payload();
+        if (!AppendPackBodyPayload(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackBodyWorldStructuralAncestor(Buffer& buffer, Visitor& visitor) noexcept {
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackBodyWorldStructuralAncestorHeader(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.Payload()));
+        auto&& row = visitor.Payload();
+        if (!ReadPackBodyPayload(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackBodyWorldStructuralAncestor(Visitor& visitor, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - 32ULL) return false;
+    size += 32ULL;
+    {
+        static_assert(noexcept(visitor.Payload()));
+        auto&& row = visitor.Payload();
+        if (!MeasurePackBodyPayload(row, size)) return false;
+    }
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackBodyWorldProperty(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PlayablePropertyProgramViewV1>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackBodyWorldPropertyHeader(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.PayloadHeader()));
+        auto&& row = visitor.PayloadHeader();
+        if (!AppendPackBodyPayloadHeader(buffer, row)) return false;
+    }
+    const std::uint64_t ancestorsCount = static_cast<std::uint64_t>(value.organizationLayerAncestorCount);
+    static_assert(noexcept(visitor.PrepareAncestors(ancestorsCount)));
+    if (!visitor.PrepareAncestors(ancestorsCount)) return false;
+    for (std::uint64_t i = 0; i < ancestorsCount; ++i) {
+        static_assert(noexcept(visitor.Ancestors(i)));
+        auto&& row = visitor.Ancestors(i);
+        if (!AppendPackBodyWorldLayerAncestor(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.StructuralHeader()));
+        auto&& row = visitor.StructuralHeader();
+        if (!AppendPackBodyWorldStructuralHeader(buffer, row)) return false;
+    }
+    const std::uint64_t structuralAncestorsCount = static_cast<std::uint64_t>(value.structuralAncestorCount);
+    static_assert(noexcept(visitor.PrepareStructuralAncestors(structuralAncestorsCount)));
+    if (!visitor.PrepareStructuralAncestors(structuralAncestorsCount)) return false;
+    for (std::uint64_t i = 0; i < structuralAncestorsCount; ++i) {
+        static_assert(noexcept(visitor.StructuralAncestors(i)));
+        auto&& row = visitor.StructuralAncestors(i);
+        if (!AppendPackBodyWorldStructuralAncestor(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.PayloadBody()));
+        auto&& row = visitor.PayloadBody();
+        if (!AppendPackBodyPayloadBody(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackBodyWorldProperty(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PlayablePropertyProgramViewV1>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackBodyWorldPropertyHeader(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.PayloadHeader()));
+        auto&& row = visitor.PayloadHeader();
+        if (!ReadPackBodyPayloadHeader(buffer, row)) return false;
+    }
+    const std::uint64_t ancestorsCount = static_cast<std::uint64_t>(value.organizationLayerAncestorCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (ancestorsCount > buffer.Remaining() / 24ULL) return false;
+    static_assert(noexcept(visitor.PrepareAncestors(ancestorsCount)));
+    if (!visitor.PrepareAncestors(ancestorsCount)) return false;
+    for (std::uint64_t i = 0; i < ancestorsCount; ++i) {
+        static_assert(noexcept(visitor.Ancestors(i)));
+        auto&& row = visitor.Ancestors(i);
+        if (!ReadPackBodyWorldLayerAncestor(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.StructuralHeader()));
+        auto&& row = visitor.StructuralHeader();
+        if (!ReadPackBodyWorldStructuralHeader(buffer, row)) return false;
+    }
+    const std::uint64_t structuralAncestorsCount = static_cast<std::uint64_t>(value.structuralAncestorCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (structuralAncestorsCount > buffer.Remaining() / 143ULL) return false;
+    static_assert(noexcept(visitor.PrepareStructuralAncestors(structuralAncestorsCount)));
+    if (!visitor.PrepareStructuralAncestors(structuralAncestorsCount)) return false;
+    for (std::uint64_t i = 0; i < structuralAncestorsCount; ++i) {
+        static_assert(noexcept(visitor.StructuralAncestors(i)));
+        auto&& row = visitor.StructuralAncestors(i);
+        if (!ReadPackBodyWorldStructuralAncestor(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.PayloadBody()));
+        auto&& row = visitor.PayloadBody();
+        if (!ReadPackBodyPayloadBody(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackBodyWorldProperty(Visitor& visitor, std::uint64_t& size) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PlayablePropertyProgramViewV1>);
+    if (size > UINT64_MAX - 72ULL) return false;
+    size += 72ULL;
+    if (size > UINT64_MAX - 111ULL) return false;
+    size += 111ULL;
+    const std::uint64_t ancestorsCount = static_cast<std::uint64_t>(value.organizationLayerAncestorCount);
+    if (ancestorsCount > (UINT64_MAX - size) / 24ULL) return false;
+    size += ancestorsCount * 24ULL;
+    if (size > UINT64_MAX - 8ULL) return false;
+    size += 8ULL;
+    const std::uint64_t structuralAncestorsCount = static_cast<std::uint64_t>(value.structuralAncestorCount);
+    static_assert(noexcept(visitor.PrepareStructuralAncestors(structuralAncestorsCount)));
+    if (!visitor.PrepareStructuralAncestors(structuralAncestorsCount)) return false;
+    for (std::uint64_t i = 0; i < structuralAncestorsCount; ++i) {
+        static_assert(noexcept(visitor.StructuralAncestors(i)));
+        auto&& row = visitor.StructuralAncestors(i);
+        if (!MeasurePackBodyWorldStructuralAncestor(row, size)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.PayloadBody()));
+        auto&& row = visitor.PayloadBody();
+        if (!MeasurePackBodyPayloadBody(row, size)) return false;
+    }
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackBodyWorldOccurrence(Buffer& buffer, Visitor& visitor) noexcept {
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackBodyWorldOccurrenceHeader(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.Payload()));
+        auto&& row = visitor.Payload();
+        if (!AppendPackBodyPayload(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackBodyWorldOccurrence(Buffer& buffer, Visitor& visitor) noexcept {
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackBodyWorldOccurrenceHeader(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.Payload()));
+        auto&& row = visitor.Payload();
+        if (!ReadPackBodyPayload(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackBodyWorldOccurrence(Visitor& visitor, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - 104ULL) return false;
+    size += 104ULL;
+    {
+        static_assert(noexcept(visitor.Payload()));
+        auto&& row = visitor.Payload();
+        if (!MeasurePackBodyPayload(row, size)) return false;
+    }
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackBodyWorldTrack(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, TrackScheduleProgramViewV1>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackBodyWorldTrackHeader(buffer, row)) return false;
+    }
+    const std::uint64_t placementsCount = static_cast<std::uint64_t>(value.placementCount);
+    static_assert(noexcept(visitor.PreparePlacements(placementsCount)));
+    if (!visitor.PreparePlacements(placementsCount)) return false;
+    for (std::uint64_t i = 0; i < placementsCount; ++i) {
+        static_assert(noexcept(visitor.Placements(i)));
+        auto&& row = visitor.Placements(i);
+        if (!AppendPackBodyWorldPlacement(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackBodyWorldTrack(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, TrackScheduleProgramViewV1>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackBodyWorldTrackHeader(buffer, row)) return false;
+    }
+    const std::uint64_t placementsCount = static_cast<std::uint64_t>(value.placementCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (placementsCount > buffer.Remaining() / 136ULL) return false;
+    static_assert(noexcept(visitor.PreparePlacements(placementsCount)));
+    if (!visitor.PreparePlacements(placementsCount)) return false;
+    for (std::uint64_t i = 0; i < placementsCount; ++i) {
+        static_assert(noexcept(visitor.Placements(i)));
+        auto&& row = visitor.Placements(i);
+        if (!ReadPackBodyWorldPlacement(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackBodyWorldTrack(Visitor& visitor, std::uint64_t& size) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, TrackScheduleProgramViewV1>);
+    if (size > UINT64_MAX - 80ULL) return false;
+    size += 80ULL;
+    const std::uint64_t placementsCount = static_cast<std::uint64_t>(value.placementCount);
+    if (placementsCount > (UINT64_MAX - size) / 136ULL) return false;
+    size += placementsCount * 136ULL;
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackBodyWorldSegment(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, SegmentScheduleProgramViewV1>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackBodyWorldSegmentHeader(buffer, row)) return false;
+    }
+    const std::uint64_t trackRefsCount = static_cast<std::uint64_t>(value.trackRefCount);
+    static_assert(noexcept(visitor.PrepareTrackRefs(trackRefsCount)));
+    if (!visitor.PrepareTrackRefs(trackRefsCount)) return false;
+    for (std::uint64_t i = 0; i < trackRefsCount; ++i) {
+        static_assert(noexcept(visitor.TrackRefs(i)));
+        auto&& row = visitor.TrackRefs(i);
+        if (!AppendPackBodyWorldTrackRef(buffer, row)) return false;
+    }
+    const std::uint64_t markersCount = static_cast<std::uint64_t>(value.markerCount);
+    static_assert(noexcept(visitor.PrepareMarkers(markersCount)));
+    if (!visitor.PrepareMarkers(markersCount)) return false;
+    for (std::uint64_t i = 0; i < markersCount; ++i) {
+        static_assert(noexcept(visitor.Markers(i)));
+        auto&& row = visitor.Markers(i);
+        if (!AppendPackBodyWorldMarker(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackBodyWorldSegment(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, SegmentScheduleProgramViewV1>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackBodyWorldSegmentHeader(buffer, row)) return false;
+    }
+    const std::uint64_t trackRefsCount = static_cast<std::uint64_t>(value.trackRefCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (trackRefsCount > buffer.Remaining() / 80ULL) return false;
+    static_assert(noexcept(visitor.PrepareTrackRefs(trackRefsCount)));
+    if (!visitor.PrepareTrackRefs(trackRefsCount)) return false;
+    for (std::uint64_t i = 0; i < trackRefsCount; ++i) {
+        static_assert(noexcept(visitor.TrackRefs(i)));
+        auto&& row = visitor.TrackRefs(i);
+        if (!ReadPackBodyWorldTrackRef(buffer, row)) return false;
+    }
+    const std::uint64_t markersCount = static_cast<std::uint64_t>(value.markerCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (markersCount > buffer.Remaining() / 32ULL) return false;
+    static_assert(noexcept(visitor.PrepareMarkers(markersCount)));
+    if (!visitor.PrepareMarkers(markersCount)) return false;
+    for (std::uint64_t i = 0; i < markersCount; ++i) {
+        static_assert(noexcept(visitor.Markers(i)));
+        auto&& row = visitor.Markers(i);
+        if (!ReadPackBodyWorldMarker(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackBodyWorldSegment(Visitor& visitor, std::uint64_t& size) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, SegmentScheduleProgramViewV1>);
+    if (size > UINT64_MAX - 112ULL) return false;
+    size += 112ULL;
+    const std::uint64_t trackRefsCount = static_cast<std::uint64_t>(value.trackRefCount);
+    if (trackRefsCount > (UINT64_MAX - size) / 80ULL) return false;
+    size += trackRefsCount * 80ULL;
+    const std::uint64_t markersCount = static_cast<std::uint64_t>(value.markerCount);
+    if (markersCount > (UINT64_MAX - size) / 32ULL) return false;
+    size += markersCount * 32ULL;
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackBodyWorldCurve(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, CurveV1>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackBodyWorldCurveHeader(buffer, row)) return false;
+    }
+    const std::uint64_t pointsCount = static_cast<std::uint64_t>(value.curve.pointCount);
+    static_assert(noexcept(visitor.PreparePoints(pointsCount)));
+    if (!visitor.PreparePoints(pointsCount)) return false;
+    for (std::uint64_t i = 0; i < pointsCount; ++i) {
+        static_assert(noexcept(visitor.Points(i)));
+        auto&& row = visitor.Points(i);
+        if (!AppendPackBodyWorldCurvePoint(buffer, row)) return false;
+    }
+    const std::uint64_t handlesCount = value.curve.pointCount > 1 ? static_cast<std::uint64_t>(value.curve.pointCount) - 1 : 0;
+    static_assert(noexcept(visitor.PrepareHandles(handlesCount)));
+    if (!visitor.PrepareHandles(handlesCount)) return false;
+    for (std::uint64_t i = 0; i < handlesCount; ++i) {
+        static_assert(noexcept(visitor.Handles(i)));
+        auto&& row = visitor.Handles(i);
+        if (!AppendPackBodyWorldCurveHandle(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackBodyWorldCurve(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, CurveV1>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackBodyWorldCurveHeader(buffer, row)) return false;
+    }
+    const std::uint64_t pointsCount = static_cast<std::uint64_t>(value.curve.pointCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (pointsCount > buffer.Remaining() / 8ULL) return false;
+    static_assert(noexcept(visitor.PreparePoints(pointsCount)));
+    if (!visitor.PreparePoints(pointsCount)) return false;
+    for (std::uint64_t i = 0; i < pointsCount; ++i) {
+        static_assert(noexcept(visitor.Points(i)));
+        auto&& row = visitor.Points(i);
+        if (!ReadPackBodyWorldCurvePoint(buffer, row)) return false;
+    }
+    const std::uint64_t handlesCount = value.curve.pointCount > 1 ? static_cast<std::uint64_t>(value.curve.pointCount) - 1 : 0;
+    static_assert(noexcept(buffer.Remaining()));
+    if (handlesCount > buffer.Remaining() / 16ULL) return false;
+    static_assert(noexcept(visitor.PrepareHandles(handlesCount)));
+    if (!visitor.PrepareHandles(handlesCount)) return false;
+    for (std::uint64_t i = 0; i < handlesCount; ++i) {
+        static_assert(noexcept(visitor.Handles(i)));
+        auto&& row = visitor.Handles(i);
+        if (!ReadPackBodyWorldCurveHandle(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackBodyWorldCurve(Visitor& visitor, std::uint64_t& size) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, CurveV1>);
+    if (size > UINT64_MAX - 8ULL) return false;
+    size += 8ULL;
+    const std::uint64_t pointsCount = static_cast<std::uint64_t>(value.curve.pointCount);
+    if (pointsCount > (UINT64_MAX - size) / 8ULL) return false;
+    size += pointsCount * 8ULL;
+    const std::uint64_t handlesCount = value.curve.pointCount > 1 ? static_cast<std::uint64_t>(value.curve.pointCount) - 1 : 0;
+    if (handlesCount > (UINT64_MAX - size) / 16ULL) return false;
+    size += handlesCount * 16ULL;
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackBodyWorldChild(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, ContainerChildProgramViewV2>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackBodyWorldChildHeader(buffer, row)) return false;
+    }
+    if (static_cast<std::uint64_t>(value.timingHint.kind) == 1) {
+        {
+            static_assert(noexcept(visitor.InlineSound()));
+            auto&& row = visitor.InlineSound();
+            if (!AppendPackBodyWorldInlineSound(buffer, row)) return false;
+        }
+    }
+    if (static_cast<std::uint64_t>(value.timingHint.kind) == 2) {
+        {
+            static_assert(noexcept(visitor.Schedule()));
+            auto&& row = visitor.Schedule();
+            if (!AppendPackBodyWorldScheduleKey(buffer, row)) return false;
+        }
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackBodyWorldChild(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, ContainerChildProgramViewV2>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackBodyWorldChildHeader(buffer, row)) return false;
+    }
+    if (static_cast<std::uint64_t>(value.timingHint.kind) == 1) {
+        {
+            static_assert(noexcept(visitor.InlineSound()));
+            auto&& row = visitor.InlineSound();
+            if (!ReadPackBodyWorldInlineSound(buffer, row)) return false;
+        }
+    }
+    if (static_cast<std::uint64_t>(value.timingHint.kind) == 2) {
+        {
+            static_assert(noexcept(visitor.Schedule()));
+            auto&& row = visitor.Schedule();
+            if (!ReadPackBodyWorldScheduleKey(buffer, row)) return false;
+        }
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackBodyWorldChild(Visitor& visitor, std::uint64_t& size) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, ContainerChildProgramViewV2>);
+    if (size > UINT64_MAX - 96ULL) return false;
+    size += 96ULL;
+    if (static_cast<std::uint64_t>(value.timingHint.kind) == 1) {
+        if (size > UINT64_MAX - 72ULL) return false;
+        size += 72ULL;
+    }
+    if (static_cast<std::uint64_t>(value.timingHint.kind) == 2) {
+        if (size > UINT64_MAX - 32ULL) return false;
+        size += 32ULL;
+    }
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackBodyWorldDiscreteGrid(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, DiscreteGridRowViewV1>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackBodyWorldDiscreteGridHeader(buffer, row)) return false;
+    }
+    const std::uint64_t cellsCount = static_cast<std::uint64_t>(value.cellCount);
+    static_assert(noexcept(visitor.PrepareCells(cellsCount)));
+    if (!visitor.PrepareCells(cellsCount)) return false;
+    for (std::uint64_t i = 0; i < cellsCount; ++i) {
+        static_assert(noexcept(visitor.Cells(i)));
+        auto&& row = visitor.Cells(i);
+        if (!AppendPackBodyWorldDiscreteCell(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackBodyWorldDiscreteGrid(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, DiscreteGridRowViewV1>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackBodyWorldDiscreteGridHeader(buffer, row)) return false;
+    }
+    const std::uint64_t cellsCount = static_cast<std::uint64_t>(value.cellCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (cellsCount > buffer.Remaining() / 8ULL) return false;
+    static_assert(noexcept(visitor.PrepareCells(cellsCount)));
+    if (!visitor.PrepareCells(cellsCount)) return false;
+    for (std::uint64_t i = 0; i < cellsCount; ++i) {
+        static_assert(noexcept(visitor.Cells(i)));
+        auto&& row = visitor.Cells(i);
+        if (!ReadPackBodyWorldDiscreteCell(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackBodyWorldDiscreteGrid(Visitor& visitor, std::uint64_t& size) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, DiscreteGridRowViewV1>);
+    if (size > UINT64_MAX - 16ULL) return false;
+    size += 16ULL;
+    const std::uint64_t cellsCount = static_cast<std::uint64_t>(value.cellCount);
+    if (cellsCount > (UINT64_MAX - size) / 8ULL) return false;
+    size += cellsCount * 8ULL;
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackBodyWorldContinuousGrid(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, ContinuousGridRowViewV1>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackBodyWorldContinuousGridHeader(buffer, row)) return false;
+    }
+    const std::uint64_t cellsCount = static_cast<std::uint64_t>(value.cellCount);
+    static_assert(noexcept(visitor.PrepareCells(cellsCount)));
+    if (!visitor.PrepareCells(cellsCount)) return false;
+    for (std::uint64_t i = 0; i < cellsCount; ++i) {
+        static_assert(noexcept(visitor.Cells(i)));
+        auto&& row = visitor.Cells(i);
+        if (!AppendPackBodyWorldContinuousCell(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackBodyWorldContinuousGrid(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, ContinuousGridRowViewV1>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackBodyWorldContinuousGridHeader(buffer, row)) return false;
+    }
+    const std::uint64_t cellsCount = static_cast<std::uint64_t>(value.cellCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (cellsCount > buffer.Remaining() / 24ULL) return false;
+    static_assert(noexcept(visitor.PrepareCells(cellsCount)));
+    if (!visitor.PrepareCells(cellsCount)) return false;
+    for (std::uint64_t i = 0; i < cellsCount; ++i) {
+        static_assert(noexcept(visitor.Cells(i)));
+        auto&& row = visitor.Cells(i);
+        if (!ReadPackBodyWorldContinuousCell(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackBodyWorldContinuousGrid(Visitor& visitor, std::uint64_t& size) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, ContinuousGridRowViewV1>);
+    if (size > UINT64_MAX - 16ULL) return false;
+    size += 16ULL;
+    const std::uint64_t cellsCount = static_cast<std::uint64_t>(value.cellCount);
+    if (cellsCount > (UINT64_MAX - size) / 24ULL) return false;
+    size += cellsCount * 24ULL;
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackBodyWorldContainer(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, ContainerProgramViewV3>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackBodyWorldContainerHeader(buffer, row)) return false;
+    }
+    const std::uint64_t curvesCount = static_cast<std::uint64_t>(value.curveCount);
+    static_assert(noexcept(visitor.PrepareCurves(curvesCount)));
+    if (!visitor.PrepareCurves(curvesCount)) return false;
+    for (std::uint64_t i = 0; i < curvesCount; ++i) {
+        static_assert(noexcept(visitor.Curves(i)));
+        auto&& row = visitor.Curves(i);
+        if (!AppendPackBodyWorldCurve(buffer, row)) return false;
+    }
+    const std::uint64_t childrenCount = static_cast<std::uint64_t>(value.childCount);
+    static_assert(noexcept(visitor.PrepareChildren(childrenCount)));
+    if (!visitor.PrepareChildren(childrenCount)) return false;
+    for (std::uint64_t i = 0; i < childrenCount; ++i) {
+        static_assert(noexcept(visitor.Children(i)));
+        auto&& row = visitor.Children(i);
+        if (!AppendPackBodyWorldChild(buffer, row)) return false;
+    }
+    const std::uint64_t discreteAxesCount = static_cast<std::uint64_t>(value.discreteAxisCount);
+    static_assert(noexcept(visitor.PrepareDiscreteAxes(discreteAxesCount)));
+    if (!visitor.PrepareDiscreteAxes(discreteAxesCount)) return false;
+    for (std::uint64_t i = 0; i < discreteAxesCount; ++i) {
+        static_assert(noexcept(visitor.DiscreteAxes(i)));
+        auto&& row = visitor.DiscreteAxes(i);
+        if (!AppendPackBodyWorldGridAxis(buffer, row)) return false;
+    }
+    const std::uint64_t discreteRowsCount = static_cast<std::uint64_t>(value.discreteRowCount);
+    static_assert(noexcept(visitor.PrepareDiscreteRows(discreteRowsCount)));
+    if (!visitor.PrepareDiscreteRows(discreteRowsCount)) return false;
+    for (std::uint64_t i = 0; i < discreteRowsCount; ++i) {
+        static_assert(noexcept(visitor.DiscreteRows(i)));
+        auto&& row = visitor.DiscreteRows(i);
+        if (!AppendPackBodyWorldDiscreteGrid(buffer, row)) return false;
+    }
+    const std::uint64_t continuousAxesCount = static_cast<std::uint64_t>(value.continuousAxisCount);
+    static_assert(noexcept(visitor.PrepareContinuousAxes(continuousAxesCount)));
+    if (!visitor.PrepareContinuousAxes(continuousAxesCount)) return false;
+    for (std::uint64_t i = 0; i < continuousAxesCount; ++i) {
+        static_assert(noexcept(visitor.ContinuousAxes(i)));
+        auto&& row = visitor.ContinuousAxes(i);
+        if (!AppendPackBodyWorldGridAxis(buffer, row)) return false;
+    }
+    const std::uint64_t continuousRowsCount = static_cast<std::uint64_t>(value.continuousRowCount);
+    static_assert(noexcept(visitor.PrepareContinuousRows(continuousRowsCount)));
+    if (!visitor.PrepareContinuousRows(continuousRowsCount)) return false;
+    for (std::uint64_t i = 0; i < continuousRowsCount; ++i) {
+        static_assert(noexcept(visitor.ContinuousRows(i)));
+        auto&& row = visitor.ContinuousRows(i);
+        if (!AppendPackBodyWorldContinuousGrid(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackBodyWorldContainer(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, ContainerProgramViewV3>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackBodyWorldContainerHeader(buffer, row)) return false;
+    }
+    const std::uint64_t curvesCount = static_cast<std::uint64_t>(value.curveCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (curvesCount > buffer.Remaining() / 8ULL) return false;
+    static_assert(noexcept(visitor.PrepareCurves(curvesCount)));
+    if (!visitor.PrepareCurves(curvesCount)) return false;
+    for (std::uint64_t i = 0; i < curvesCount; ++i) {
+        static_assert(noexcept(visitor.Curves(i)));
+        auto&& row = visitor.Curves(i);
+        if (!ReadPackBodyWorldCurve(buffer, row)) return false;
+    }
+    const std::uint64_t childrenCount = static_cast<std::uint64_t>(value.childCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (childrenCount > buffer.Remaining() / 96ULL) return false;
+    static_assert(noexcept(visitor.PrepareChildren(childrenCount)));
+    if (!visitor.PrepareChildren(childrenCount)) return false;
+    for (std::uint64_t i = 0; i < childrenCount; ++i) {
+        static_assert(noexcept(visitor.Children(i)));
+        auto&& row = visitor.Children(i);
+        if (!ReadPackBodyWorldChild(buffer, row)) return false;
+    }
+    const std::uint64_t discreteAxesCount = static_cast<std::uint64_t>(value.discreteAxisCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (discreteAxesCount > buffer.Remaining() / 24ULL) return false;
+    static_assert(noexcept(visitor.PrepareDiscreteAxes(discreteAxesCount)));
+    if (!visitor.PrepareDiscreteAxes(discreteAxesCount)) return false;
+    for (std::uint64_t i = 0; i < discreteAxesCount; ++i) {
+        static_assert(noexcept(visitor.DiscreteAxes(i)));
+        auto&& row = visitor.DiscreteAxes(i);
+        if (!ReadPackBodyWorldGridAxis(buffer, row)) return false;
+    }
+    const std::uint64_t discreteRowsCount = static_cast<std::uint64_t>(value.discreteRowCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (discreteRowsCount > buffer.Remaining() / 16ULL) return false;
+    static_assert(noexcept(visitor.PrepareDiscreteRows(discreteRowsCount)));
+    if (!visitor.PrepareDiscreteRows(discreteRowsCount)) return false;
+    for (std::uint64_t i = 0; i < discreteRowsCount; ++i) {
+        static_assert(noexcept(visitor.DiscreteRows(i)));
+        auto&& row = visitor.DiscreteRows(i);
+        if (!ReadPackBodyWorldDiscreteGrid(buffer, row)) return false;
+    }
+    const std::uint64_t continuousAxesCount = static_cast<std::uint64_t>(value.continuousAxisCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (continuousAxesCount > buffer.Remaining() / 24ULL) return false;
+    static_assert(noexcept(visitor.PrepareContinuousAxes(continuousAxesCount)));
+    if (!visitor.PrepareContinuousAxes(continuousAxesCount)) return false;
+    for (std::uint64_t i = 0; i < continuousAxesCount; ++i) {
+        static_assert(noexcept(visitor.ContinuousAxes(i)));
+        auto&& row = visitor.ContinuousAxes(i);
+        if (!ReadPackBodyWorldGridAxis(buffer, row)) return false;
+    }
+    const std::uint64_t continuousRowsCount = static_cast<std::uint64_t>(value.continuousRowCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (continuousRowsCount > buffer.Remaining() / 16ULL) return false;
+    static_assert(noexcept(visitor.PrepareContinuousRows(continuousRowsCount)));
+    if (!visitor.PrepareContinuousRows(continuousRowsCount)) return false;
+    for (std::uint64_t i = 0; i < continuousRowsCount; ++i) {
+        static_assert(noexcept(visitor.ContinuousRows(i)));
+        auto&& row = visitor.ContinuousRows(i);
+        if (!ReadPackBodyWorldContinuousGrid(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackBodyWorldContainer(Visitor& visitor, std::uint64_t& size) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, ContainerProgramViewV3>);
+    if (size > UINT64_MAX - 132ULL) return false;
+    size += 132ULL;
+    const std::uint64_t curvesCount = static_cast<std::uint64_t>(value.curveCount);
+    static_assert(noexcept(visitor.PrepareCurves(curvesCount)));
+    if (!visitor.PrepareCurves(curvesCount)) return false;
+    for (std::uint64_t i = 0; i < curvesCount; ++i) {
+        static_assert(noexcept(visitor.Curves(i)));
+        auto&& row = visitor.Curves(i);
+        if (!MeasurePackBodyWorldCurve(row, size)) return false;
+    }
+    const std::uint64_t childrenCount = static_cast<std::uint64_t>(value.childCount);
+    static_assert(noexcept(visitor.PrepareChildren(childrenCount)));
+    if (!visitor.PrepareChildren(childrenCount)) return false;
+    for (std::uint64_t i = 0; i < childrenCount; ++i) {
+        static_assert(noexcept(visitor.Children(i)));
+        auto&& row = visitor.Children(i);
+        if (!MeasurePackBodyWorldChild(row, size)) return false;
+    }
+    const std::uint64_t discreteAxesCount = static_cast<std::uint64_t>(value.discreteAxisCount);
+    if (discreteAxesCount > (UINT64_MAX - size) / 24ULL) return false;
+    size += discreteAxesCount * 24ULL;
+    const std::uint64_t discreteRowsCount = static_cast<std::uint64_t>(value.discreteRowCount);
+    static_assert(noexcept(visitor.PrepareDiscreteRows(discreteRowsCount)));
+    if (!visitor.PrepareDiscreteRows(discreteRowsCount)) return false;
+    for (std::uint64_t i = 0; i < discreteRowsCount; ++i) {
+        static_assert(noexcept(visitor.DiscreteRows(i)));
+        auto&& row = visitor.DiscreteRows(i);
+        if (!MeasurePackBodyWorldDiscreteGrid(row, size)) return false;
+    }
+    const std::uint64_t continuousAxesCount = static_cast<std::uint64_t>(value.continuousAxisCount);
+    if (continuousAxesCount > (UINT64_MAX - size) / 24ULL) return false;
+    size += continuousAxesCount * 24ULL;
+    const std::uint64_t continuousRowsCount = static_cast<std::uint64_t>(value.continuousRowCount);
+    static_assert(noexcept(visitor.PrepareContinuousRows(continuousRowsCount)));
+    if (!visitor.PrepareContinuousRows(continuousRowsCount)) return false;
+    for (std::uint64_t i = 0; i < continuousRowsCount; ++i) {
+        static_assert(noexcept(visitor.ContinuousRows(i)));
+        auto&& row = visitor.ContinuousRows(i);
+        if (!MeasurePackBodyWorldContinuousGrid(row, size)) return false;
+    }
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackBodyWorldTransition(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, TransitionProgramViewV1>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackBodyWorldTransitionHeader(buffer, row)) return false;
+    }
+    const std::uint64_t pathCount = static_cast<std::uint64_t>(value.downwardPathStepCount);
+    static_assert(noexcept(visitor.PreparePath(pathCount)));
+    if (!visitor.PreparePath(pathCount)) return false;
+    for (std::uint64_t i = 0; i < pathCount; ++i) {
+        static_assert(noexcept(visitor.Path(i)));
+        auto&& row = visitor.Path(i);
+        if (!AppendPackBodyWorldPathStep(buffer, row)) return false;
+    }
+    const std::uint64_t rulesCount = static_cast<std::uint64_t>(value.ruleCount);
+    static_assert(noexcept(visitor.PrepareRules(rulesCount)));
+    if (!visitor.PrepareRules(rulesCount)) return false;
+    for (std::uint64_t i = 0; i < rulesCount; ++i) {
+        static_assert(noexcept(visitor.Rules(i)));
+        auto&& row = visitor.Rules(i);
+        if (!AppendPackBodyWorldTransitionRule(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackBodyWorldTransition(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, TransitionProgramViewV1>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackBodyWorldTransitionHeader(buffer, row)) return false;
+    }
+    const std::uint64_t pathCount = static_cast<std::uint64_t>(value.downwardPathStepCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (pathCount > buffer.Remaining() / 120ULL) return false;
+    static_assert(noexcept(visitor.PreparePath(pathCount)));
+    if (!visitor.PreparePath(pathCount)) return false;
+    for (std::uint64_t i = 0; i < pathCount; ++i) {
+        static_assert(noexcept(visitor.Path(i)));
+        auto&& row = visitor.Path(i);
+        if (!ReadPackBodyWorldPathStep(buffer, row)) return false;
+    }
+    const std::uint64_t rulesCount = static_cast<std::uint64_t>(value.ruleCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (rulesCount > buffer.Remaining() / 296ULL) return false;
+    static_assert(noexcept(visitor.PrepareRules(rulesCount)));
+    if (!visitor.PrepareRules(rulesCount)) return false;
+    for (std::uint64_t i = 0; i < rulesCount; ++i) {
+        static_assert(noexcept(visitor.Rules(i)));
+        auto&& row = visitor.Rules(i);
+        if (!ReadPackBodyWorldTransitionRule(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackBodyWorldTransition(Visitor& visitor, std::uint64_t& size) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, TransitionProgramViewV1>);
+    if (size > UINT64_MAX - 40ULL) return false;
+    size += 40ULL;
+    const std::uint64_t pathCount = static_cast<std::uint64_t>(value.downwardPathStepCount);
+    if (pathCount > (UINT64_MAX - size) / 120ULL) return false;
+    size += pathCount * 120ULL;
+    const std::uint64_t rulesCount = static_cast<std::uint64_t>(value.ruleCount);
+    if (rulesCount > (UINT64_MAX - size) / 296ULL) return false;
+    size += rulesCount * 296ULL;
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackBodyWorldBody(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, ContainerWorldInstallViewV1>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackBodyWorldBodyHeader(buffer, row)) return false;
+    }
+    const std::uint64_t variablesCount = static_cast<std::uint64_t>(value.variableCount);
+    static_assert(noexcept(visitor.PrepareVariables(variablesCount)));
+    if (!visitor.PrepareVariables(variablesCount)) return false;
+    for (std::uint64_t i = 0; i < variablesCount; ++i) {
+        static_assert(noexcept(visitor.Variables(i)));
+        auto&& row = visitor.Variables(i);
+        if (!AppendPackBodyWorldVariable(buffer, row)) return false;
+    }
+    const std::uint64_t propertiesCount = static_cast<std::uint64_t>(value.playablePropertyCount);
+    static_assert(noexcept(visitor.PrepareProperties(propertiesCount)));
+    if (!visitor.PrepareProperties(propertiesCount)) return false;
+    for (std::uint64_t i = 0; i < propertiesCount; ++i) {
+        static_assert(noexcept(visitor.Properties(i)));
+        auto&& row = visitor.Properties(i);
+        if (!AppendPackBodyWorldProperty(buffer, row)) return false;
+    }
+    const std::uint64_t occurrencesCount = static_cast<std::uint64_t>(value.playableOccurrenceCount);
+    static_assert(noexcept(visitor.PrepareOccurrences(occurrencesCount)));
+    if (!visitor.PrepareOccurrences(occurrencesCount)) return false;
+    for (std::uint64_t i = 0; i < occurrencesCount; ++i) {
+        static_assert(noexcept(visitor.Occurrences(i)));
+        auto&& row = visitor.Occurrences(i);
+        if (!AppendPackBodyWorldOccurrence(buffer, row)) return false;
+    }
+    const std::uint64_t trackSchedulesCount = static_cast<std::uint64_t>(value.trackScheduleCount);
+    static_assert(noexcept(visitor.PrepareTrackSchedules(trackSchedulesCount)));
+    if (!visitor.PrepareTrackSchedules(trackSchedulesCount)) return false;
+    for (std::uint64_t i = 0; i < trackSchedulesCount; ++i) {
+        static_assert(noexcept(visitor.TrackSchedules(i)));
+        auto&& row = visitor.TrackSchedules(i);
+        if (!AppendPackBodyWorldTrack(buffer, row)) return false;
+    }
+    const std::uint64_t segmentSchedulesCount = static_cast<std::uint64_t>(value.segmentScheduleCount);
+    static_assert(noexcept(visitor.PrepareSegmentSchedules(segmentSchedulesCount)));
+    if (!visitor.PrepareSegmentSchedules(segmentSchedulesCount)) return false;
+    for (std::uint64_t i = 0; i < segmentSchedulesCount; ++i) {
+        static_assert(noexcept(visitor.SegmentSchedules(i)));
+        auto&& row = visitor.SegmentSchedules(i);
+        if (!AppendPackBodyWorldSegment(buffer, row)) return false;
+    }
+    const std::uint64_t containersCount = static_cast<std::uint64_t>(value.containerCount);
+    static_assert(noexcept(visitor.PrepareContainers(containersCount)));
+    if (!visitor.PrepareContainers(containersCount)) return false;
+    for (std::uint64_t i = 0; i < containersCount; ++i) {
+        static_assert(noexcept(visitor.Containers(i)));
+        auto&& row = visitor.Containers(i);
+        if (!AppendPackBodyWorldContainer(buffer, row)) return false;
+    }
+    const std::uint64_t transitionsCount = static_cast<std::uint64_t>(value.transitionCount);
+    static_assert(noexcept(visitor.PrepareTransitions(transitionsCount)));
+    if (!visitor.PrepareTransitions(transitionsCount)) return false;
+    for (std::uint64_t i = 0; i < transitionsCount; ++i) {
+        static_assert(noexcept(visitor.Transitions(i)));
+        auto&& row = visitor.Transitions(i);
+        if (!AppendPackBodyWorldTransition(buffer, row)) return false;
+    }
+    const std::uint64_t actionsCount = static_cast<std::uint64_t>(value.actionCount);
+    static_assert(noexcept(visitor.PrepareActions(actionsCount)));
+    if (!visitor.PrepareActions(actionsCount)) return false;
+    for (std::uint64_t i = 0; i < actionsCount; ++i) {
+        static_assert(noexcept(visitor.Actions(i)));
+        auto&& row = visitor.Actions(i);
+        if (!AppendPackBodyWorldAction(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackBodyWorldBody(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, ContainerWorldInstallViewV1>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackBodyWorldBodyHeader(buffer, row)) return false;
+    }
+    const std::uint64_t variablesCount = static_cast<std::uint64_t>(value.variableCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (variablesCount > buffer.Remaining() / 40ULL) return false;
+    static_assert(noexcept(visitor.PrepareVariables(variablesCount)));
+    if (!visitor.PrepareVariables(variablesCount)) return false;
+    for (std::uint64_t i = 0; i < variablesCount; ++i) {
+        static_assert(noexcept(visitor.Variables(i)));
+        auto&& row = visitor.Variables(i);
+        if (!ReadPackBodyWorldVariable(buffer, row)) return false;
+    }
+    const std::uint64_t propertiesCount = static_cast<std::uint64_t>(value.playablePropertyCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (propertiesCount > buffer.Remaining() / 191ULL) return false;
+    static_assert(noexcept(visitor.PrepareProperties(propertiesCount)));
+    if (!visitor.PrepareProperties(propertiesCount)) return false;
+    for (std::uint64_t i = 0; i < propertiesCount; ++i) {
+        static_assert(noexcept(visitor.Properties(i)));
+        auto&& row = visitor.Properties(i);
+        if (!ReadPackBodyWorldProperty(buffer, row)) return false;
+    }
+    const std::uint64_t occurrencesCount = static_cast<std::uint64_t>(value.playableOccurrenceCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (occurrencesCount > buffer.Remaining() / 215ULL) return false;
+    static_assert(noexcept(visitor.PrepareOccurrences(occurrencesCount)));
+    if (!visitor.PrepareOccurrences(occurrencesCount)) return false;
+    for (std::uint64_t i = 0; i < occurrencesCount; ++i) {
+        static_assert(noexcept(visitor.Occurrences(i)));
+        auto&& row = visitor.Occurrences(i);
+        if (!ReadPackBodyWorldOccurrence(buffer, row)) return false;
+    }
+    const std::uint64_t trackSchedulesCount = static_cast<std::uint64_t>(value.trackScheduleCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (trackSchedulesCount > buffer.Remaining() / 80ULL) return false;
+    static_assert(noexcept(visitor.PrepareTrackSchedules(trackSchedulesCount)));
+    if (!visitor.PrepareTrackSchedules(trackSchedulesCount)) return false;
+    for (std::uint64_t i = 0; i < trackSchedulesCount; ++i) {
+        static_assert(noexcept(visitor.TrackSchedules(i)));
+        auto&& row = visitor.TrackSchedules(i);
+        if (!ReadPackBodyWorldTrack(buffer, row)) return false;
+    }
+    const std::uint64_t segmentSchedulesCount = static_cast<std::uint64_t>(value.segmentScheduleCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (segmentSchedulesCount > buffer.Remaining() / 112ULL) return false;
+    static_assert(noexcept(visitor.PrepareSegmentSchedules(segmentSchedulesCount)));
+    if (!visitor.PrepareSegmentSchedules(segmentSchedulesCount)) return false;
+    for (std::uint64_t i = 0; i < segmentSchedulesCount; ++i) {
+        static_assert(noexcept(visitor.SegmentSchedules(i)));
+        auto&& row = visitor.SegmentSchedules(i);
+        if (!ReadPackBodyWorldSegment(buffer, row)) return false;
+    }
+    const std::uint64_t containersCount = static_cast<std::uint64_t>(value.containerCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (containersCount > buffer.Remaining() / 132ULL) return false;
+    static_assert(noexcept(visitor.PrepareContainers(containersCount)));
+    if (!visitor.PrepareContainers(containersCount)) return false;
+    for (std::uint64_t i = 0; i < containersCount; ++i) {
+        static_assert(noexcept(visitor.Containers(i)));
+        auto&& row = visitor.Containers(i);
+        if (!ReadPackBodyWorldContainer(buffer, row)) return false;
+    }
+    const std::uint64_t transitionsCount = static_cast<std::uint64_t>(value.transitionCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (transitionsCount > buffer.Remaining() / 40ULL) return false;
+    static_assert(noexcept(visitor.PrepareTransitions(transitionsCount)));
+    if (!visitor.PrepareTransitions(transitionsCount)) return false;
+    for (std::uint64_t i = 0; i < transitionsCount; ++i) {
+        static_assert(noexcept(visitor.Transitions(i)));
+        auto&& row = visitor.Transitions(i);
+        if (!ReadPackBodyWorldTransition(buffer, row)) return false;
+    }
+    const std::uint64_t actionsCount = static_cast<std::uint64_t>(value.actionCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (actionsCount > buffer.Remaining() / 44ULL) return false;
+    static_assert(noexcept(visitor.PrepareActions(actionsCount)));
+    if (!visitor.PrepareActions(actionsCount)) return false;
+    for (std::uint64_t i = 0; i < actionsCount; ++i) {
+        static_assert(noexcept(visitor.Actions(i)));
+        auto&& row = visitor.Actions(i);
+        if (!ReadPackBodyWorldAction(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackBodyWorldBody(Visitor& visitor, std::uint64_t& size) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, ContainerWorldInstallViewV1>);
+    if (size > UINT64_MAX - 392ULL) return false;
+    size += 392ULL;
+    const std::uint64_t variablesCount = static_cast<std::uint64_t>(value.variableCount);
+    if (variablesCount > (UINT64_MAX - size) / 40ULL) return false;
+    size += variablesCount * 40ULL;
+    const std::uint64_t propertiesCount = static_cast<std::uint64_t>(value.playablePropertyCount);
+    static_assert(noexcept(visitor.PrepareProperties(propertiesCount)));
+    if (!visitor.PrepareProperties(propertiesCount)) return false;
+    for (std::uint64_t i = 0; i < propertiesCount; ++i) {
+        static_assert(noexcept(visitor.Properties(i)));
+        auto&& row = visitor.Properties(i);
+        if (!MeasurePackBodyWorldProperty(row, size)) return false;
+    }
+    const std::uint64_t occurrencesCount = static_cast<std::uint64_t>(value.playableOccurrenceCount);
+    static_assert(noexcept(visitor.PrepareOccurrences(occurrencesCount)));
+    if (!visitor.PrepareOccurrences(occurrencesCount)) return false;
+    for (std::uint64_t i = 0; i < occurrencesCount; ++i) {
+        static_assert(noexcept(visitor.Occurrences(i)));
+        auto&& row = visitor.Occurrences(i);
+        if (!MeasurePackBodyWorldOccurrence(row, size)) return false;
+    }
+    const std::uint64_t trackSchedulesCount = static_cast<std::uint64_t>(value.trackScheduleCount);
+    static_assert(noexcept(visitor.PrepareTrackSchedules(trackSchedulesCount)));
+    if (!visitor.PrepareTrackSchedules(trackSchedulesCount)) return false;
+    for (std::uint64_t i = 0; i < trackSchedulesCount; ++i) {
+        static_assert(noexcept(visitor.TrackSchedules(i)));
+        auto&& row = visitor.TrackSchedules(i);
+        if (!MeasurePackBodyWorldTrack(row, size)) return false;
+    }
+    const std::uint64_t segmentSchedulesCount = static_cast<std::uint64_t>(value.segmentScheduleCount);
+    static_assert(noexcept(visitor.PrepareSegmentSchedules(segmentSchedulesCount)));
+    if (!visitor.PrepareSegmentSchedules(segmentSchedulesCount)) return false;
+    for (std::uint64_t i = 0; i < segmentSchedulesCount; ++i) {
+        static_assert(noexcept(visitor.SegmentSchedules(i)));
+        auto&& row = visitor.SegmentSchedules(i);
+        if (!MeasurePackBodyWorldSegment(row, size)) return false;
+    }
+    const std::uint64_t containersCount = static_cast<std::uint64_t>(value.containerCount);
+    static_assert(noexcept(visitor.PrepareContainers(containersCount)));
+    if (!visitor.PrepareContainers(containersCount)) return false;
+    for (std::uint64_t i = 0; i < containersCount; ++i) {
+        static_assert(noexcept(visitor.Containers(i)));
+        auto&& row = visitor.Containers(i);
+        if (!MeasurePackBodyWorldContainer(row, size)) return false;
+    }
+    const std::uint64_t transitionsCount = static_cast<std::uint64_t>(value.transitionCount);
+    static_assert(noexcept(visitor.PrepareTransitions(transitionsCount)));
+    if (!visitor.PrepareTransitions(transitionsCount)) return false;
+    for (std::uint64_t i = 0; i < transitionsCount; ++i) {
+        static_assert(noexcept(visitor.Transitions(i)));
+        auto&& row = visitor.Transitions(i);
+        if (!MeasurePackBodyWorldTransition(row, size)) return false;
+    }
+    const std::uint64_t actionsCount = static_cast<std::uint64_t>(value.actionCount);
+    static_assert(noexcept(visitor.PrepareActions(actionsCount)));
+    if (!visitor.PrepareActions(actionsCount)) return false;
+    for (std::uint64_t i = 0; i < actionsCount; ++i) {
+        static_assert(noexcept(visitor.Actions(i)));
+        auto&& row = visitor.Actions(i);
+        if (!MeasurePackBodyWorldAction(row, size)) return false;
+    }
+    return true;
+}
+
+[[nodiscard]] inline bool LayoutPackBusDefinitionSnapshot(PackBusDefinitionSnapshotHeader& value, std::uint64_t& size) noexcept {
+    size = 0;
+    if (size > UINT64_MAX - 184ULL) return false;
+    size += 184ULL;
+    if (size > std::numeric_limits<std::remove_cvref_t<decltype(value.busOffset)>>::max()) return false;
+    value.busOffset = static_cast<std::remove_cvref_t<decltype(value.busOffset)>>(size);
+    const std::uint64_t busesCount = static_cast<std::uint64_t>(value.busCount);
+    if (busesCount > (UINT64_MAX - size) / 72ULL) return false;
+    size += busesCount * 72ULL;
+    if (size > std::numeric_limits<std::remove_cvref_t<decltype(value.sendOffset)>>::max()) return false;
+    value.sendOffset = static_cast<std::remove_cvref_t<decltype(value.sendOffset)>>(size);
+    const std::uint64_t sendsCount = static_cast<std::uint64_t>(value.sendCount);
+    if (sendsCount > (UINT64_MAX - size) / 48ULL) return false;
+    size += sendsCount * 48ULL;
+    if (size > std::numeric_limits<std::remove_cvref_t<decltype(value.effectOffset)>>::max()) return false;
+    value.effectOffset = static_cast<std::remove_cvref_t<decltype(value.effectOffset)>>(size);
+    if (size > std::numeric_limits<std::remove_cvref_t<decltype(value.effectParameterOffset)>>::max()) return false;
+    value.effectParameterOffset = static_cast<std::remove_cvref_t<decltype(value.effectParameterOffset)>>(size);
+    if (size > std::numeric_limits<std::remove_cvref_t<decltype(value.downmixOffset)>>::max()) return false;
+    value.downmixOffset = static_cast<std::remove_cvref_t<decltype(value.downmixOffset)>>(size);
+    const std::uint64_t downmixesCount = static_cast<std::uint64_t>(value.downmixCount);
+    if (downmixesCount > (UINT64_MAX - size) / 40ULL) return false;
+    size += downmixesCount * 40ULL;
+    if (size > std::numeric_limits<std::remove_cvref_t<decltype(value.coefficientOffset)>>::max()) return false;
+    value.coefficientOffset = static_cast<std::remove_cvref_t<decltype(value.coefficientOffset)>>(size);
+    const std::uint64_t coefficientsCount = static_cast<std::uint64_t>(value.coefficientCount);
+    if (coefficientsCount > (UINT64_MAX - size) / 4ULL) return false;
+    size += coefficientsCount * 4ULL;
+    const auto length = size - value.busOffset;
+    if (length > std::numeric_limits<std::remove_cvref_t<decltype(value.payloadBytes)>>::max()) return false;
+    value.payloadBytes = static_cast<std::remove_cvref_t<decltype(value.payloadBytes)>>(length);
+    return true;
+}
+
+[[nodiscard]] inline bool ValidatePackBusDefinitionSnapshotLayout(const PackBusDefinitionSnapshotHeader& value, std::uint64_t size) noexcept {
+    auto expected = value;
+    std::uint64_t expectedSize = 0;
+    if (!LayoutPackBusDefinitionSnapshot(expected, expectedSize) || expectedSize != size) return false;
+    return value.busOffset == expected.busOffset &&
+           value.sendOffset == expected.sendOffset &&
+           value.effectOffset == expected.effectOffset &&
+           value.effectParameterOffset == expected.effectParameterOffset &&
+           value.downmixOffset == expected.downmixOffset &&
+           value.coefficientOffset == expected.coefficientOffset &&
+           value.payloadBytes == expected.payloadBytes;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackBusDefinitionSnapshot(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackBusDefinitionSnapshotHeader>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackBusDefinitionSnapshotHeader(buffer, row)) return false;
+    }
+    const std::uint64_t busesCount = static_cast<std::uint64_t>(value.busCount);
+    static_assert(noexcept(visitor.PrepareBuses(busesCount)));
+    if (!visitor.PrepareBuses(busesCount)) return false;
+    for (std::uint64_t i = 0; i < busesCount; ++i) {
+        static_assert(noexcept(visitor.Buses(i)));
+        auto&& row = visitor.Buses(i);
+        if (!AppendPackBusDefinitionBus(buffer, row)) return false;
+    }
+    const std::uint64_t sendsCount = static_cast<std::uint64_t>(value.sendCount);
+    static_assert(noexcept(visitor.PrepareSends(sendsCount)));
+    if (!visitor.PrepareSends(sendsCount)) return false;
+    for (std::uint64_t i = 0; i < sendsCount; ++i) {
+        static_assert(noexcept(visitor.Sends(i)));
+        auto&& row = visitor.Sends(i);
+        if (!AppendPackBusDefinitionSend(buffer, row)) return false;
+    }
+    const std::uint64_t downmixesCount = static_cast<std::uint64_t>(value.downmixCount);
+    static_assert(noexcept(visitor.PrepareDownmixes(downmixesCount)));
+    if (!visitor.PrepareDownmixes(downmixesCount)) return false;
+    for (std::uint64_t i = 0; i < downmixesCount; ++i) {
+        static_assert(noexcept(visitor.Downmixes(i)));
+        auto&& row = visitor.Downmixes(i);
+        if (!AppendPackBusDefinitionDownmix(buffer, row)) return false;
+    }
+    const std::uint64_t coefficientsCount = static_cast<std::uint64_t>(value.coefficientCount);
+    static_assert(noexcept(visitor.PrepareCoefficients(coefficientsCount)));
+    if (!visitor.PrepareCoefficients(coefficientsCount)) return false;
+    for (std::uint64_t i = 0; i < coefficientsCount; ++i) {
+        static_assert(noexcept(visitor.Coefficients(i)));
+        auto&& row = visitor.Coefficients(i);
+        if (!AppendPackBusDefinitionCoefficient(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackBusDefinitionSnapshot(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackBusDefinitionSnapshotHeader>);
+    static_assert(noexcept(buffer.Remaining()));
+    const auto initialRemaining = buffer.Remaining();
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackBusDefinitionSnapshotHeader(buffer, row)) return false;
+    }
+    const std::uint64_t busesCount = static_cast<std::uint64_t>(value.busCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (busesCount > buffer.Remaining() / 72ULL) return false;
+    static_assert(noexcept(visitor.PrepareBuses(busesCount)));
+    if (!visitor.PrepareBuses(busesCount)) return false;
+    for (std::uint64_t i = 0; i < busesCount; ++i) {
+        static_assert(noexcept(visitor.Buses(i)));
+        auto&& row = visitor.Buses(i);
+        if (!ReadPackBusDefinitionBus(buffer, row)) return false;
+    }
+    const std::uint64_t sendsCount = static_cast<std::uint64_t>(value.sendCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (sendsCount > buffer.Remaining() / 48ULL) return false;
+    static_assert(noexcept(visitor.PrepareSends(sendsCount)));
+    if (!visitor.PrepareSends(sendsCount)) return false;
+    for (std::uint64_t i = 0; i < sendsCount; ++i) {
+        static_assert(noexcept(visitor.Sends(i)));
+        auto&& row = visitor.Sends(i);
+        if (!ReadPackBusDefinitionSend(buffer, row)) return false;
+    }
+    const std::uint64_t downmixesCount = static_cast<std::uint64_t>(value.downmixCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (downmixesCount > buffer.Remaining() / 40ULL) return false;
+    static_assert(noexcept(visitor.PrepareDownmixes(downmixesCount)));
+    if (!visitor.PrepareDownmixes(downmixesCount)) return false;
+    for (std::uint64_t i = 0; i < downmixesCount; ++i) {
+        static_assert(noexcept(visitor.Downmixes(i)));
+        auto&& row = visitor.Downmixes(i);
+        if (!ReadPackBusDefinitionDownmix(buffer, row)) return false;
+    }
+    const std::uint64_t coefficientsCount = static_cast<std::uint64_t>(value.coefficientCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (coefficientsCount > buffer.Remaining() / 4ULL) return false;
+    static_assert(noexcept(visitor.PrepareCoefficients(coefficientsCount)));
+    if (!visitor.PrepareCoefficients(coefficientsCount)) return false;
+    for (std::uint64_t i = 0; i < coefficientsCount; ++i) {
+        static_assert(noexcept(visitor.Coefficients(i)));
+        auto&& row = visitor.Coefficients(i);
+        if (!ReadPackBusDefinitionCoefficient(buffer, row)) return false;
+    }
+    if (!ValidatePackBusDefinitionSnapshotLayout(value, initialRemaining - buffer.Remaining())) return false;
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackBusDefinitionSnapshot(Visitor& visitor, std::uint64_t& size) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackBusDefinitionSnapshotHeader>);
+    if (size > UINT64_MAX - 184ULL) return false;
+    size += 184ULL;
+    const std::uint64_t busesCount = static_cast<std::uint64_t>(value.busCount);
+    if (busesCount > (UINT64_MAX - size) / 72ULL) return false;
+    size += busesCount * 72ULL;
+    const std::uint64_t sendsCount = static_cast<std::uint64_t>(value.sendCount);
+    if (sendsCount > (UINT64_MAX - size) / 48ULL) return false;
+    size += sendsCount * 48ULL;
+    const std::uint64_t downmixesCount = static_cast<std::uint64_t>(value.downmixCount);
+    if (downmixesCount > (UINT64_MAX - size) / 40ULL) return false;
+    size += downmixesCount * 40ULL;
+    const std::uint64_t coefficientsCount = static_cast<std::uint64_t>(value.coefficientCount);
+    if (coefficientsCount > (UINT64_MAX - size) / 4ULL) return false;
+    size += coefficientsCount * 4ULL;
+    return true;
+}
 
 template <class Buffer, class Visitor>
 [[nodiscard]] bool AppendPackContainerPayload(Buffer& buffer, Visitor& visitor) noexcept {

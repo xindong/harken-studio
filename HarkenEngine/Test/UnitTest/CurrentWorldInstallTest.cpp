@@ -8,6 +8,7 @@
 #include "harken/core/CurrentWorldCodec.h"
 #include "harken/core/detail/CurrentWorldValidation.h"
 #include "harken/media/PackFormat.h"
+#include "harken/media/PackFormatV2.h"
 #include "harken/param/ParamTargetTable.h"
 #include "harken/render/generated/harken_effect_registry.g.h"
 
@@ -274,8 +275,8 @@ TEST(CurrentWorldInstall, LargeActionUsesDeclaredCountsAndPreservesAcceptedDecod
     EXPECT_EQ(accepted, decoded.ProductionView());
     auto excessiveCount = bytes;
     const auto countOffset = bytes.size() -
-        static_cast<std::size_t>(stepCount) * harken::kCurrentWorldActionStepWireBytes -
-        harken::kCurrentWorldActionHeaderWireBytes + 24;
+        static_cast<std::size_t>(stepCount) * harken::kPackBodyWorldActionStepBytes -
+        harken::kPackBodyWorldActionHeaderBytes + 24;
     for (std::uint32_t byte = 0; byte < 4; ++byte) excessiveCount[countOffset + byte] = 0xff;
     EXPECT_FALSE(decoded.Decode(excessiveCount.data(), excessiveCount.size(),
         harken::kCurrentWorldShippingBodyVintage, harken::CurrentWorldDecodeMode::StrictArtifact));
@@ -425,8 +426,7 @@ TEST(CurrentWorldInstall, HistoricalDecodeCannotBypassTheShippingInstallBoundary
     const auto installed = harken::InstallContainerWorldV1(*session.Engine(), image.world);
     ASSERT_EQ(harken::WorldInstallStatus::Ok, installed.status);
     std::vector<std::uint8_t> body;
-    ASSERT_TRUE(harken::EncodeCurrentWorldBodyV8(
-        harkentest::AsHistoricalPrefix(image.world), body));
+    ASSERT_TRUE(harken::EncodeCurrentWorldShippingBody(image.world, body));
     harken::CurrentWorldBodyImage decoded;
     EXPECT_FALSE(decoded.Decode(body.data(), body.size(), harken::kCurrentWorldBodyVintageV8,
                                harken::CurrentWorldDecodeMode::StrictArtifact));
@@ -568,7 +568,7 @@ TEST(CurrentWorldInstall, StopControlReferenceMayBeAbsentButMustBeWellFormed) {
 TEST(CurrentWorldInstall, PreviousShippingBodyCannotUseCurrentDecodeModes) {
     RunnableWorld image;
     std::vector<std::uint8_t> body;
-    ASSERT_TRUE(harken::EncodeCurrentWorldBodyV9(image.world, body));
+    ASSERT_TRUE(harken::EncodeCurrentWorldShippingBody(image.world, body));
     for (const auto mode : {harken::CurrentWorldDecodeMode::StrictArtifact,
                            harken::CurrentWorldDecodeMode::ReplayRawAttempt,
                            harken::CurrentWorldDecodeMode::ReplayCurrentAttempt}) {

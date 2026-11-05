@@ -99,10 +99,6 @@ bool KindLegalForPack(std::uint32_t entryKind, std::uint32_t packKind) {
     }
 }
 
-bool EntryVintageLegal(std::uint32_t entryKind, std::uint32_t vintage) {
-    return VintageLegalForKind(entryKind, vintage);
-}
-
 bool VoiceToneWireValuesValid(const PackVoiceRecipeTone& tone) {
     if (tone.present == 0) {
         return true;
@@ -230,7 +226,7 @@ VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
         header.fileBytes != fileBytes) {
         return VN_BAD_PACK;
     }
-    if (PackV2IsCanonicalKind(header.packKind)) {
+    if (PackIsCanonicalKind(header.packKind)) {
         return VN_PACK_INIT_LIFECYCLE;
     }
     if (header.packKind != kPackKindResident &&
@@ -280,10 +276,11 @@ VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
         const PackDirectoryEntry entry = ReadPackDirectoryEntry(
             dir + static_cast<std::size_t>(i) * kPackDirectoryEntryBytes);
-        if (PackV2IsCanonicalEntryKind(entry.kind)) {
+        if (!PackEntryKindSupported(entry.kind)) return VN_BAD_PACK;
+        if (PackIsCanonicalEntryKind(entry.kind)) {
             return VN_PACK_INCOMPATIBLE;
         }
-        if (!EntryVintageLegal(entry.kind, entry.vintage)) {
+        if (!VintageLegalForKind(entry.kind, entry.vintage)) {
             return VN_PACK_INCOMPATIBLE;
         }
         if (!KindLegalForPack(entry.kind, header.packKind)) {
@@ -293,7 +290,7 @@ VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
             entry.size > fileBytes - entry.offset) {
             return VN_BAD_PACK;
         }
-        if (entry.offset % kPackV2PayloadAlign != 0) {
+        if (entry.offset % kPackPayloadAlign != 0) {
             return VN_BAD_PACK; // the writer aligns every payload
         }
         ranges.emplace_back(entry.offset, entry.size);
@@ -814,20 +811,27 @@ VnResult ParseVariableRequirementsPayload(
 }
 
 
-bool EntrySectionFits(std::uint64_t offset, std::uint32_t count, std::uint32_t rowBytes,
-                      std::uint64_t entryBytes, std::uint64_t* outEnd,
-                      std::uint64_t headerBytes) {
-    std::uint64_t sectionBytes = 0;
-    std::uint64_t end = 0;
-    if (offset < headerBytes || offset % 8 != 0 ||
-        !CheckedMulU64(count, rowBytes, &sectionBytes) ||
-        !CheckedAddU64(offset, sectionBytes, &end) || end > entryBytes) {
-        return false;
-    }
-    *outEnd = end;
-    return true;
-}
 
+
+
+struct PackBusDefinitionSnapshotReader {
+    PackBusDefinitionSnapshotHeader& header;
+    std::vector<PackBusDefinitionBus>& buses;
+    std::vector<PackBusDefinitionSend>& sends;
+    std::vector<PackBusDefinitionDownmix>& downmixes;
+    std::vector<float>& coefficients;
+    auto& Value() noexcept { return header; }
+    auto& Header() noexcept { return header; }
+    bool PrepareBuses(std::uint64_t count) noexcept { return count == buses.size(); }
+    auto& Buses(std::uint64_t i) noexcept { return buses[static_cast<std::size_t>(i)]; }
+    bool PrepareSends(std::uint64_t count) noexcept { return count == sends.size(); }
+    auto& Sends(std::uint64_t i) noexcept { return sends[static_cast<std::size_t>(i)]; }
+    bool PrepareDownmixes(std::uint64_t count) noexcept { return count == downmixes.size(); }
+    auto& Downmixes(std::uint64_t i) noexcept { return downmixes[static_cast<std::size_t>(i)]; }
+    bool PrepareCoefficients(std::uint64_t count) noexcept { return count == coefficients.size(); }
+    auto& Coefficients(std::uint64_t i) noexcept { return coefficients[static_cast<std::size_t>(i)]; }
+    bool Finish() noexcept { return true; }
+};
 
 VnResult ParseBusDefinitionSnapshotPayload(
     const std::uint8_t* payload, std::uint64_t size, PackCanonicalImage* image) {
@@ -839,29 +843,18 @@ VnResult ParseBusDefinitionSnapshotPayload(
         header.coefficientCount != static_cast<std::uint64_t>(header.busCount) * 64) {
         return VN_BAD_PACK;
     }
-    std::uint64_t busEnd = 0, sendEnd = 0, downmixEnd = 0, coeffEnd = 0;
-    if (!EntrySectionFits(header.busOffset, header.busCount, header.busRowBytes,
-                          size, &busEnd, header.headerBytes) ||
-        !EntrySectionFits(header.sendOffset, header.sendCount, header.sendRowBytes,
-                          size, &sendEnd, header.headerBytes) ||
-        !EntrySectionFits(header.downmixOffset, header.downmixCount,
-                          header.downmixRowBytes, size, &downmixEnd, header.headerBytes) ||
-        !EntrySectionFits(header.coefficientOffset, header.coefficientCount,
-                          header.coefficientRowBytes, size, &coeffEnd, header.headerBytes) ||
-        header.busOffset != header.headerBytes || header.sendOffset != busEnd ||
-        header.effectOffset != sendEnd || header.effectParameterOffset != sendEnd ||
-        header.downmixOffset != sendEnd || header.coefficientOffset != downmixEnd ||
-        coeffEnd != size) {
-        return VN_BAD_PACK;
-    }
-    std::vector<PackBusDefinitionBus> buses;
+    if (!ValidatePackBusDefinitionSnapshotLayout(header, size)) return VN_BAD_PACK;
+    std::vector<PackBusDefinitionBus> buses(header.busCount);
+    std::vector<PackBusDefinitionSend> sends(header.sendCount);
+    std::vector<PackBusDefinitionDownmix> downmixes(header.downmixCount);
+    std::vector<float> coefficients(header.coefficientCount);
+    PackWireBuffer<const std::uint8_t> input{payload, size};
+    PackBusDefinitionSnapshotReader visitor{header, buses, sends, downmixes, coefficients};
+    if (!ReadPackBusDefinitionSnapshot(input, visitor) || input.offset != size) return VN_BAD_PACK;
     std::set<VnObjectId> ids;
-    buses.reserve(header.busCount);
     for (std::uint32_t i = 0; i < header.busCount; ++i) {
-        PackBusDefinitionBus row;
-        if (!ParsePackBusDefinitionBus(payload + header.busOffset +
-                static_cast<std::size_t>(i) * header.busRowBytes, kPackBusDefinitionBusBytes, &row) ||
-            row.busId == VnObjectId{} || !ids.insert(row.busId).second ||
+        const auto& row = buses[i];
+        if (row.busId == VnObjectId{} || !ids.insert(row.busId).second ||
             !std::isfinite(row.faderDb) || row.faderDb < -96.0f || row.faderDb > 24.0f ||
             !std::isfinite(row.outputBusVolumeDb) ||
             !std::isfinite(std::pow(10.0f, row.outputBusVolumeDb / 20.0f)) ||
@@ -869,17 +862,12 @@ VnResult ParseBusDefinitionSnapshotPayload(
             row.downmixCount != 1 || row.downmixFirst != i) {
             return VN_BAD_PACK;
         }
-        buses.push_back(row);
     }
     if (!ValidateCanonicalBusParentForestV2(buses)) return VN_BAD_PACK;
-    std::vector<PackBusDefinitionSend> sends;
     std::set<std::pair<VnObjectId, VnObjectId>> sendEdges;
-    sends.reserve(header.sendCount);
     for (std::uint32_t i = 0; i < header.sendCount; ++i) {
-        PackBusDefinitionSend row;
-        if (!ParsePackBusDefinitionSend(payload + header.sendOffset +
-                static_cast<std::size_t>(i) * header.sendRowBytes, kPackBusDefinitionSendBytes, &row) ||
-            !ids.contains(row.source) || !ids.contains(row.target) ||
+        const auto& row = sends[i];
+        if (!ids.contains(row.source) || !ids.contains(row.target) ||
             row.source == row.target ||
             (header.publicationCapabilityVintage == 4 &&
              row.target == VN_BUS_MASTER) ||
@@ -890,31 +878,18 @@ VnResult ParseBusDefinitionSnapshotPayload(
             !sendEdges.emplace(row.source, row.target).second) {
             return VN_BAD_PACK;
         }
-        sends.push_back(row);
     }
     if (header.publicationCapabilityVintage == 4 &&
         !ValidateCanonicalBusSendGraphV2(buses, sends)) return VN_BAD_PACK;
-    std::vector<PackBusDefinitionDownmix> downmixes;
-    downmixes.reserve(header.downmixCount);
     for (std::uint32_t i = 0; i < header.downmixCount; ++i) {
-        PackBusDefinitionDownmix row;
-        if (!ParsePackBusDefinitionDownmix(payload + header.downmixOffset +
-                static_cast<std::size_t>(i) * header.downmixRowBytes, kPackBusDefinitionDownmixBytes, &row) ||
-            row.busId != buses[i].busId || row.coefficientCount != 64 ||
+        const auto& row = downmixes[i];
+        if (row.busId != buses[i].busId || row.coefficientCount != 64 ||
             row.coefficientFirst != i * 64) {
             return VN_BAD_PACK;
         }
-        downmixes.push_back(row);
     }
-    std::vector<float> coefficients;
-    coefficients.reserve(header.coefficientCount);
-    for (std::uint32_t i = 0; i < header.coefficientCount; ++i) {
-        float value = 0.0f;
-        if (!ParsePackBusDefinitionCoefficient(payload + header.coefficientOffset +
-            static_cast<std::size_t>(i) * header.coefficientRowBytes,
-            kPackBusDefinitionCoefficientBytes, &value)) return VN_BAD_PACK;
+    for (const auto value : coefficients) {
         if (!std::isfinite(value)) return VN_BAD_PACK;
-        coefficients.push_back(value);
     }
     image->hasBusDefinitionSnapshot = true;
     image->busDefinitionSnapshotHeader = header;
@@ -941,15 +916,12 @@ bool CanonicalKindLegal(std::uint32_t entryKind, std::uint32_t packKind,
             (packKind == kPackKindCanonicalContent && sharedResidentOwner);
     case kPackEntryKindBindingDefinition:
     case kPackEntryKindBindingAttachment:
-        return PackV2IsCanonicalKind(packKind);
-    case kPackEntryKindInitRoutingCatalog:
-    case kPackEntryKindGameplayCatalog:
-    case kPackEntryKindVariableNameCatalog:
+        return PackIsCanonicalKind(packKind);
         return packKind == kPackKindInit;
     case kPackEntryKindCanonicalDefinitionPartition:
     case kPackEntryKindPackRequirementBlock:
     case kPackEntryKindPackDependencyEdge:
-        return PackV2IsCanonicalKind(packKind);
+        return PackIsCanonicalKind(packKind);
     case kPackEntryKindBusDefinitionSnapshot:
         return packKind == kPackKindInit;
     case kPackEntryKindVariablePolicyOverlay:
@@ -961,196 +933,13 @@ bool CanonicalKindLegal(std::uint32_t entryKind, std::uint32_t packKind,
     }
 }
 
-bool InitSelfHashFields(const PackCanonicalImage& image,
-                        std::vector<std::uint64_t>* fields, std::uint64_t* expected) {
-    if (!image.hasCatalog || image.packKind != kPackKindInit) return true;
-    for (std::size_t i = 0; i < image.catalogRows.size(); ++i) {
-        const auto& row = image.catalogRows[i];
-        if (row.ownerPackStableId != image.packStableId) continue;
-        if (!fields->empty() && row.expectedContentHash != *expected) return false;
-        *expected = row.expectedContentHash;
-        fields->push_back(image.catalogPayloadOffset + kInitCatalogHeaderBytes +
-            static_cast<std::uint64_t>(i) * kInitCatalogRowBytes + kInitCatalogContentHashOffset);
-    }
-    return true;
-}
 
-std::uint64_t HashWithZeroFields(const std::uint8_t* bytes, std::size_t count,
-    std::uint64_t offset, const std::vector<std::uint64_t>& fields,
-    std::size_t* fieldCursor, std::uint64_t hash) noexcept {
-    static constexpr std::uint8_t zeros[8]{};
-    std::size_t cursor = 0;
-    while (*fieldCursor < fields.size()) {
-        const auto field = fields[*fieldCursor];
-        if (field + 8 <= offset) { ++*fieldCursor; continue; }
-        if (field >= offset + count) break;
-        const auto begin = std::max(field, offset + cursor);
-        const auto end = std::min(field + 8, offset + count);
-        const auto preceding = static_cast<std::size_t>(begin - offset) - cursor;
-        hash = Fnv1a64(bytes + cursor, preceding, hash);
-        hash = Fnv1a64(zeros, static_cast<std::size_t>(end - begin), hash);
-        cursor = static_cast<std::size_t>(end - offset);
-        if (end == field + 8) ++*fieldCursor;
-    }
-    return Fnv1a64(bytes + cursor, count - cursor, hash);
-}
 
-bool InitSelfHashMatches(const std::uint8_t* bytes, std::uint64_t fileBytes,
-                         const PackCanonicalImage& image) {
-    std::vector<std::uint64_t> fields;
-    std::uint64_t expected = 0;
-    if (!InitSelfHashFields(image, &fields, &expected)) return false;
-    if (fields.empty()) return true;
-    std::size_t cursor = 0;
-    return HashWithZeroFields(bytes, static_cast<std::size_t>(fileBytes), 0,
-        fields, &cursor, kFnv1a64OffsetBasis) == expected;
-}
 
-VnResult ParseGameplayCatalogPayload(const std::uint8_t* payload,
-                                     std::uint64_t size,
-                                     GameplayCatalogImage* out) {
-    if (size > kGameplayCatalogMaxBytes) {
-        return VN_PACK_CATALOG_CAPACITY;
-    }
-    if (payload == nullptr || out == nullptr ||
-        size < kGameplayCatalogHeaderBytes) {
-        return VN_BAD_PACK;
-    }
-    PackGameplayCatalogHeader header;
-    LoadPackGameplayCatalogHeader(payload, &header);
-    if (header.activeCount > kGameplayCatalogMaxEntries ||
-        header.retiredCount > kGameplayCatalogMaxEntries) {
-        return VN_PACK_CATALOG_CAPACITY;
-    }
-    std::uint64_t expectedBytes = 0;
-    if (!GameplayCatalogBytes(header.activeCount, header.retiredCount,
-                              header.namePoolBytes, &expectedBytes) ||
-        expectedBytes > kGameplayCatalogMaxBytes) {
-        return VN_PACK_CATALOG_CAPACITY;
-    }
-    if (expectedBytes != size) {
-        return VN_BAD_PACK;
-    }
-    if (header.schemaVersion != 1 ||
-        header.layoutVintage != kPackGameplayCatalogVintage) {
-        return VN_PACK_INCOMPATIBLE;
-    }
-    if (header.reserved0 != 0 || header.reserved1 != 0 ||
-        (header.flags & ~kGameplayCatalogFlagHasRetired) != 0 ||
-        ((header.flags & kGameplayCatalogFlagHasRetired) != 0) !=
-            (header.retiredCount > 0) ||
-        (header.namePoolBytes & 7u) != 0 ||
-        Fnv1a64(payload, 88) != header.headerChecksum ||
-        GameplayCatalogDigest(payload, static_cast<std::size_t>(size)) !=
-            header.digest ||
-        GameplayCatalogPublicationPairing(header) !=
-            header.publicationPairingFingerprint) {
-        return VN_BAD_PACK;
-    }
 
-    const std::uint8_t* activeBase = payload + kGameplayCatalogHeaderBytes;
-    const std::uint8_t* retiredBase =
-        activeBase + static_cast<std::size_t>(header.activeCount) *
-                         kGameplayCatalogActiveRowBytes;
-    const std::uint8_t* pool =
-        retiredBase + static_cast<std::size_t>(header.retiredCount) *
-                          kGameplayCatalogRetiredRowBytes;
 
-    GameplayCatalogImage image;
-    image.header = header;
-    image.active.reserve(header.activeCount);
-    image.retired.reserve(header.retiredCount);
-    image.namePool.assign(pool, pool + header.namePoolBytes);
-
-    std::uint32_t cursor = 0;
-    for (std::uint32_t i = 0; i < header.activeCount; ++i) {
-        PackGameplayCatalogActiveRow row;
-        if (!ParsePackGameplayCatalogActiveRow(
-                activeBase + static_cast<std::size_t>(i) *
-                                 kGameplayCatalogActiveRowBytes,
-                &row) ||
-            row.nameOffset != cursor ||
-            row.nameOffset > header.namePoolBytes ||
-            row.nameLength > header.namePoolBytes - row.nameOffset) {
-            return VN_BAD_PACK;
-        }
-        for (std::uint32_t j = 0; j < i; ++j) {
-            if (image.active[j].actionStableId == row.actionStableId) {
-                return VN_BAD_PACK;
-            }
-            const int nameCmp = CompareGameplayCatalogNameBytes(
-                image.namePool.data() + image.active[j].nameOffset,
-                image.active[j].nameLength,
-                image.namePool.data() + row.nameOffset, row.nameLength);
-            if (nameCmp == 0) {
-                return VN_BAD_PACK;
-            }
-        }
-        if (i > 0) {
-            const PackGameplayCatalogActiveRow& prev = image.active.back();
-            const int nameCmp = CompareGameplayCatalogNameBytes(
-                image.namePool.data() + prev.nameOffset, prev.nameLength,
-                image.namePool.data() + row.nameOffset, row.nameLength);
-            if (nameCmp > 0 ||
-                (nameCmp == 0 && prev.actionStableId >= row.actionStableId)) {
-                return VN_BAD_PACK;
-            }
-        }
-        cursor += row.nameLength;
-        image.active.push_back(row);
-    }
-    for (std::uint32_t i = 0; i < header.retiredCount; ++i) {
-        PackGameplayCatalogRetiredRow row;
-        if (!ParsePackGameplayCatalogRetiredRow(
-                retiredBase + static_cast<std::size_t>(i) *
-                                  kGameplayCatalogRetiredRowBytes,
-                &row) ||
-            row.nameOffset != cursor ||
-            row.nameOffset > header.namePoolBytes ||
-            row.nameLength > header.namePoolBytes - row.nameOffset) {
-            return VN_BAD_PACK;
-        }
-        for (const auto& active : image.active) {
-            if (CompareGameplayCatalogNameBytes(
-                    image.namePool.data() + active.nameOffset, active.nameLength,
-                    image.namePool.data() + row.nameOffset, row.nameLength) ==
-                0) {
-                return VN_BAD_PACK;
-            }
-        }
-        if (i > 0) {
-            const PackGameplayCatalogRetiredRow& prev = image.retired.back();
-            const int nameCmp = CompareGameplayCatalogNameBytes(
-                image.namePool.data() + prev.nameOffset, prev.nameLength,
-                image.namePool.data() + row.nameOffset, row.nameLength);
-            if (nameCmp > 0 ||
-                (nameCmp == 0 &&
-                 prev.lastActionStableId >= row.lastActionStableId)) {
-                return VN_BAD_PACK;
-            }
-        }
-        cursor += row.nameLength;
-        image.retired.push_back(row);
-    }
-    const std::uint32_t padded = (cursor + 7u) & ~7u;
-    if (padded != header.namePoolBytes) {
-        return VN_BAD_PACK;
-    }
-    for (std::uint32_t i = cursor; i < header.namePoolBytes; ++i) {
-        if (image.namePool[i] != 0) {
-            return VN_BAD_PACK;
-        }
-    }
-    *out = std::move(image);
-    return VN_OK;
-}
 
 } // namespace
-
-VnResult ParseGameplayCatalog(const std::uint8_t* bytes, std::uint64_t size,
-                              GameplayCatalogImage* out) {
-    return ParseGameplayCatalogPayload(bytes, size, out);
-}
 
 VnResult ValidateCanonicalInitDependency(
     std::span<const PackDependencyEdge> edges,
@@ -1234,7 +1023,7 @@ struct SpanCanonicalSource {
                     next.size == kPackMediaBytes &&
                     next.offset >= dirEnd && next.offset <= fileBytes &&
                     next.size <= fileBytes - next.offset &&
-                    next.offset % kPackV2PayloadAlign == 0) {
+                    next.offset % kPackPayloadAlign == 0) {
                     const auto nextMedia = ReadPackMedia(bytes + next.offset);
                     if (nextMedia.soundId == next.id &&
                         ValidateV2MediaEntry(nextMedia, fileBytes, dirEnd)) {
@@ -1256,10 +1045,9 @@ struct SpanCanonicalSource {
         }
         return checksum == media.blobChecksum;
     }
-    VnResult Finish(const PackCanonicalImage& image,
+    VnResult Finish(const PackCanonicalImage&,
         std::vector<std::pair<std::uint64_t, std::uint64_t>>&) const {
-        return InitSelfHashMatches(artifact.bytes, ByteCount(), image)
-            ? VN_OK : VN_PACK_HASH_MISMATCH;
+        return VN_OK;
     }
 };
 
@@ -1319,10 +1107,6 @@ struct FileCanonicalSource {
             }
             previousEnd = range.first + range.second;
         }
-        std::vector<std::uint64_t> zeroFields;
-        std::uint64_t expectedSelfHash = 0;
-        if (!InitSelfHashFields(image, &zeroFields, &expectedSelfHash))
-            return VN_PACK_HASH_MISMATCH;
         std::vector<PCMRegistry::PackSampleBuilder> builders(image.media.size());
         std::vector<PCMRegistry::PreparedPackSamples> completed(image.media.size());
         std::vector<std::size_t> physicalOrder;
@@ -1339,8 +1123,7 @@ struct FileCanonicalSource {
         // workspace share the same 64 KiB budget, independent of media size.
         std::array<float, kCanonicalReadWindowBytes / sizeof(float)> window;
         auto cached = metadata.begin();
-        std::size_t currentMedia = 0, zeroCursor = 0;
-        auto selfHash = kFnv1a64OffsetBasis;
+        std::size_t currentMedia = 0;
         file.clear();
         file.seekg(0);
         if (!file) return VN_BAD_PACK;
@@ -1375,8 +1158,6 @@ struct FileCanonicalSource {
                 if (cachedEnd > end) break;
                 ++cached;
             }
-            if (!zeroFields.empty())
-                selfHash = HashWithZeroFields(bytes, count, offset, zeroFields, &zeroCursor, selfHash);
             std::size_t cursor = 0;
             while (cursor < count) {
                 const auto position = offset + cursor;
@@ -1453,7 +1234,6 @@ struct FileCanonicalSource {
         for (std::size_t i = 0; i < image.media.size(); ++i) {
             if (checksums[i] != image.media[i].blobChecksum) return VN_BAD_PACK;
         }
-        if (!zeroFields.empty() && selfHash != expectedSelfHash) return VN_PACK_HASH_MISMATCH;
         // Retain the existing independent revision chains across two final
         // owners. This never keeps another complete PCM representation.
         for (std::size_t order = 0; order < physicalOrder.size(); ++order) {
@@ -1497,7 +1277,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
         header.fileBytes != fileBytes) {
         return VN_BAD_PACK;
     }
-    if (!PackV2IsCanonicalKind(header.packKind)) {
+    if (!PackIsCanonicalKind(header.packKind)) {
         return VN_BAD_PACK;
     }
     const std::uint64_t dirBytes =
@@ -1518,159 +1298,49 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
 
     PackCanonicalImage image;
     image.packKind = header.packKind;
-    image.catalogPayloadOffset = 0;
 
     std::uint64_t attachmentOrdinal = 0;
     std::uint64_t sendOrdinal = 0;
     std::uint64_t busEffectOrdinal = 0;
     std::uint64_t dynamicRouteOrdinal = 0;
     std::uint64_t dependencyOrdinal = 0;
-    std::uint32_t canonicalVintage = 0;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
     ranges.reserve(static_cast<std::size_t>(header.entryCount) * 2);
 
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
         const PackDirectoryEntry entry = ReadPackDirectoryEntry(
             dir + static_cast<std::size_t>(i) * kPackDirectoryEntryBytes);
-        if (entry.kind == kPackEntryKindCanonicalDefinitionPartition ||
-            entry.kind == kPackEntryKindPackRequirementBlock ||
-            entry.kind == kPackEntryKindPackDependencyEdge) {
-            const bool legalVintage = entry.kind == kPackEntryKindCanonicalDefinitionPartition
-                ? entry.vintage == kPackCanonicalRequirementVintage || entry.vintage == kPackCanonicalEntryVintage
-                : VintageLegalForKind(entry.kind, entry.vintage);
-            if (!legalVintage || (canonicalVintage != 0 && canonicalVintage != entry.vintage)) {
-                return VN_PACK_INCOMPATIBLE;
-            }
-            canonicalVintage = entry.vintage;
-        } else if (entry.kind == kPackEntryKindBusDefinitionSnapshot) {
-            if (entry.vintage != kPackBusDefinitionSnapshotVintage) {
-                return VN_PACK_INCOMPATIBLE;
-            }
-        } else if (PackV2IsCanonicalEntryKind(entry.kind)) {
-            if (entry.vintage != kPackCanonicalEntryVintage) {
-                return VN_PACK_INCOMPATIBLE;
-            }
-        } else if (!EntryVintageLegal(entry.kind, entry.vintage)) {
+        if (!PackEntryKindSupported(entry.kind)) return VN_BAD_PACK;
+        if (!VintageLegalForKind(entry.kind, entry.vintage)) {
             return VN_PACK_INCOMPATIBLE;
         }
         if (entry.offset < dirEnd || entry.offset > fileBytes ||
             entry.size > fileBytes - entry.offset ||
-            entry.offset % kPackV2PayloadAlign != 0) {
+            entry.offset % kPackPayloadAlign != 0) {
             return VN_BAD_PACK;
         }
         ranges.emplace_back(entry.offset, entry.size);
         const std::uint8_t* payload = source.Data(entry.offset, entry.size);
         if (payload == nullptr) return VN_BAD_PACK;
-        const bool catalogKind = entry.kind == kPackEntryKindInitRoutingCatalog;
-        if (!catalogKind &&
-            Fnv1a64(payload, static_cast<std::size_t>(entry.size)) !=
-                entry.payloadChecksum) {
+        if (Fnv1a64(payload, static_cast<std::size_t>(entry.size)) !=
+            entry.payloadChecksum) {
             return VN_BAD_PACK;
         }
         switch (entry.kind) {
-        case kPackEntryKindInitRoutingCatalog: {
-            if (image.hasCatalog) {
-                return VN_BAD_PACK;
-            }
-            PackInitCatalogHeader catalogHeader;
-            if (!ParsePackInitCatalogHeader(payload, entry.size, &catalogHeader) ||
-                catalogHeader.catalogEntryCount > kInitCatalogMaxEntries ||
-                catalogHeader.startupPackCount > kInitCatalogMaxStartupPacks) {
-                return VN_BAD_PACK;
-            }
-            std::uint64_t expectedBytes = 0;
-            if (!InitCatalogBytes(catalogHeader.catalogEntryCount,
-                                  catalogHeader.startupPackCount,
-                                  &expectedBytes) ||
-                expectedBytes != catalogHeader.catalogBytes ||
-                entry.size != catalogHeader.catalogBytes) {
-                return VN_BAD_PACK;
-            }
-            image.catalogRows.reserve(catalogHeader.catalogEntryCount);
-            for (std::uint32_t r = 0; r < catalogHeader.catalogEntryCount; ++r) {
-                PackInitCatalogRow row;
-                if (!ParsePackInitCatalogRow(
-                        payload + kInitCatalogHeaderBytes +
-                            static_cast<std::size_t>(r) * kInitCatalogRowBytes,
-                        &row)) {
-                    return VN_BAD_PACK;
-                }
-                if (r > 0 &&
-                    row.stableId <= image.catalogRows.back().stableId) {
-                    return VN_BAD_PACK;
-                }
-                image.catalogRows.push_back(row);
-            }
-            image.startupPackIds.reserve(catalogHeader.startupPackCount);
-            const std::uint8_t* startup =
-                payload + kInitCatalogHeaderBytes +
-                static_cast<std::size_t>(catalogHeader.catalogEntryCount) *
-                    kInitCatalogRowBytes;
-            for (std::uint32_t s = 0; s < catalogHeader.startupPackCount; ++s) {
-                const std::uint64_t packId = LoadLE64(startup + s * 8);
-                if (packId == 0) {
-                    return VN_BAD_PACK;
-                }
-                for (std::uint64_t seen : image.startupPackIds) {
-                    if (seen == packId) {
-                        return VN_BAD_PACK;
-                    }
-                }
-                bool ownerSeen = false;
-                for (const PackInitCatalogRow& row : image.catalogRows) {
-                    if (row.ownerPackStableId == packId) {
-                        ownerSeen = true;
-                        break;
-                    }
-                }
-                if (!ownerSeen) {
-                    return VN_BAD_PACK;
-                }
-                image.startupPackIds.push_back(packId);
-            }
-            image.catalogHeader = catalogHeader;
-            image.hasCatalog = true;
-            image.catalogPayloadOffset = entry.offset;
-            image.catalogDirectoryChecksum = entry.payloadChecksum;
-            break;
-        }
-        case kPackEntryKindVariableNameCatalog: {
-            if (header.packKind != kPackKindInit || image.hasVariableNameCatalog ||
-                entry.id != decltype(entry.id){} || entry.relationOrdinal != 0 ||
-                !DecodeVariableNameCatalog(payload, entry.size, &image.variableNameCatalog))
-                return VN_BAD_PACK;
-            image.hasVariableNameCatalog = true;
-            break;
-        }
-        case kPackEntryKindGameplayCatalog: {
-            if (header.packKind != kPackKindInit || image.hasGameplayCatalog) {
-                return VN_BAD_PACK;
-            }
-            const VnResult parsed = ParseGameplayCatalogPayload(
-                payload, entry.size, &image.gameplayCatalog);
-            if (parsed != VN_OK) {
-                return parsed;
-            }
-            image.hasGameplayCatalog = true;
-            break;
-        }
+
         case kPackEntryKindCanonicalDefinitionPartition: {
             if (image.hasPartition) {
                 return VN_BAD_PACK;
             }
             PackCanonicalPartitionHeader partitionHeader;
-            const bool versionTwo = entry.vintage == kPackCanonicalRequirementVintage;
-            if (entry.size < (versionTwo ? kCanonicalDefinitionPartitionHeaderV2Bytes
-                                        : kCanonicalDefinitionPartitionHeaderBytes)) {
+            if (entry.size < kPackCanonicalPartitionHeaderBytes) {
                 return VN_PACK_INCOMPATIBLE;
             }
-            const bool parsed = versionTwo
-                ? ParsePackCanonicalPartitionHeaderV2(payload, entry.size, &partitionHeader)
-                : ParsePackCanonicalPartitionHeader(payload, entry.size, &partitionHeader);
+            const bool parsed = ReadPackCanonicalPartitionHeader(payload, entry.size, &partitionHeader);
             if (!parsed) {
                 return VN_BAD_PACK;
             }
-            if (!IsReadableCurrentWorldBodyVintage(partitionHeader.bodyVintage)) {
+            if (partitionHeader.bodyVintage != kCurrentWorldShippingBodyVintage) {
                 return VN_PACK_INCOMPATIBLE;
             }
             CurrentWorldBodyImage body;
@@ -1887,16 +1557,11 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
                 !IsValidBindingTransitionMs(definition.desc.transitionMs)) {
                 return VN_BAD_PACK;
             }
-            // Align with ParsePackV2Image: definitions admit the four
-            // released scopes. v2 Init is the mix-level surface, so voice
-            // and voice-effect-parameter stay on Content. v1 Init still
-            // admits the production Voice/Bus mix.
             if (definition.desc.targetScopeKind >
                 VN_TARGET_SCOPE_BUS_EFFECT_PARAM) {
                 return VN_BAD_PACK;
             }
             if (header.packKind == kPackKindInit &&
-                canonicalVintage == kPackCanonicalRequirementVintage &&
                 (definition.desc.targetScopeKind == VN_TARGET_SCOPE_VOICE ||
                  definition.desc.targetScopeKind ==
                      VN_TARGET_SCOPE_VOICE_EFFECT_PARAM)) {
@@ -1920,7 +1585,6 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
                 return VN_BAD_PACK;
             }
             if (header.packKind == kPackKindInit &&
-                canonicalVintage == kPackCanonicalRequirementVintage &&
                 attachment.scopeKind != VN_TARGET_SCOPE_BUS &&
                 attachment.scopeKind !=
                     VN_TARGET_SCOPE_BUS_EFFECT_PARAM) {
@@ -1940,17 +1604,12 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
     if (!image.hasRequirement) {
         return VN_BAD_PACK;
     }
-    // v1 layouts keep Voice/Bus/BusEffect. v2 admits the same released
-    // definition scopes so production Init can carry mix-level Bus
-    // bindings; Voice Effect Parameter still cannot attach. v2 Init
-    // keeps voice cargo on Content.
     const std::uint32_t maxBindingScope = VN_TARGET_SCOPE_BUS_EFFECT_PARAM;
     for (const auto& definition : image.bindingDefinitions) {
         if (definition.desc.targetScopeKind > maxBindingScope) {
             return VN_BAD_PACK;
         }
         if (header.packKind == kPackKindInit &&
-            canonicalVintage == kPackCanonicalRequirementVintage &&
             (definition.desc.targetScopeKind == VN_TARGET_SCOPE_VOICE ||
              definition.desc.targetScopeKind ==
                  VN_TARGET_SCOPE_VOICE_EFFECT_PARAM)) {
@@ -1963,27 +1622,10 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
             return VN_BAD_PACK;
         }
         if (header.packKind == kPackKindInit &&
-            canonicalVintage == kPackCanonicalRequirementVintage &&
             attachment.scopeKind != VN_TARGET_SCOPE_BUS &&
             attachment.scopeKind != VN_TARGET_SCOPE_BUS_EFFECT_PARAM) {
             return VN_BAD_PACK;
         }
-    }
-    if (canonicalVintage == kPackCanonicalEntryVintage && image.hasBusDefinitionSnapshot) {
-        return VN_BAD_PACK;
-    }
-    if (image.hasVariableNameCatalog &&
-        (image.variableNameCatalog.initPackStableId != image.packStableId ||
-         image.variableNameCatalog.initContentRevision != image.requirement.packContentRevision))
-        return VN_BAD_PACK;
-    if (image.hasGameplayCatalog &&
-        (image.gameplayCatalog.header.initPackStableId != image.packStableId ||
-         image.gameplayCatalog.header.initContentRevision !=
-             image.requirement.packContentRevision)) {
-        return VN_BAD_PACK;
-    }
-    if (header.packKind == kPackKindCanonicalContent && image.hasCatalog) {
-        return VN_BAD_PACK;
     }
     const bool sharedResidentOwner =
         header.packKind == kPackKindCanonicalContent &&
@@ -2034,28 +1676,6 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
             edge.edgeKind == kPackDependencyEdgeKindInit && edge.required01 == 1;
         if (initRequired &&
             !CanonicalBusTripleEqual(DependencyBusTriple(edge), requirementT)) {
-            return VN_BAD_PACK;
-        }
-    }
-    if (image.hasCatalog) {
-        const auto* catalog = source.Data(image.catalogPayloadOffset, image.catalogHeader.catalogBytes);
-        if (catalog == nullptr) return VN_BAD_PACK;
-        std::vector<std::uint8_t> catalogCopy(catalog, catalog + image.catalogHeader.catalogBytes);
-        for (std::size_t i = 0; i < image.catalogRows.size(); ++i) {
-            if (image.catalogRows[i].ownerPackStableId != image.packStableId)
-                continue;
-            StoreLE64(catalogCopy.data() + kInitCatalogHeaderBytes +
-                          i * kInitCatalogRowBytes + kInitCatalogContentHashOffset,
-                      0);
-        }
-        if (Fnv1a64(catalogCopy.data() + kInitCatalogHeaderBytes,
-                    static_cast<std::size_t>(image.catalogHeader.catalogBytes -
-                                             kInitCatalogHeaderBytes)) !=
-            image.catalogHeader.checksum) {
-            return VN_BAD_PACK;
-        }
-        if (Fnv1a64(catalogCopy.data(), catalogCopy.size()) !=
-            image.catalogDirectoryChecksum) {
             return VN_BAD_PACK;
         }
     }

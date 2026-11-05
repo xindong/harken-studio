@@ -31,6 +31,7 @@
 
 #include "harken/media/PackFormat.h"
 #include "harken/media/PackFormatV2.h"
+#include "harken/media/GameplayCatalogFormat.h"
 #include "harken/media/PcmRegistry.h"
 
 #include <cstdint>
@@ -118,16 +119,6 @@ enum class PackCatalogIdentityState : std::uint32_t {
     Absent = 0,
     KnownUnloaded = 1,
 };
-
-struct GameplayCatalogImage {
-    PackGameplayCatalogHeader header{};
-    std::vector<PackGameplayCatalogActiveRow> active;
-    std::vector<PackGameplayCatalogRetiredRow> retired;
-    std::vector<std::uint8_t> namePool;
-};
-
-VnResult ParseGameplayCatalog(const std::uint8_t* bytes, std::uint64_t size,
-                              GameplayCatalogImage* out);
 
 struct PackCanonicalImage {
     std::uint32_t packKind = 0;

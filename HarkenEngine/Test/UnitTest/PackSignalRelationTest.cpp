@@ -150,7 +150,7 @@ std::vector<std::uint8_t> SignalContentPack(std::uint64_t revision, float sendDb
     std::vector<std::uint8_t> body;
     EXPECT_TRUE(EncodeCurrentWorldBodyV20(world, body));
     PackCanonicalPartitionHeader header;
-    header.headerBytes = kCanonicalDefinitionPartitionHeaderV2Bytes;
+    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
     header.bodyVintage = kCurrentWorldBodyVintageV20;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -158,20 +158,20 @@ std::vector<std::uint8_t> SignalContentPack(std::uint64_t revision, float sendDb
     header.partitionRevision = revision;
     ApplyCanonicalBusTriple(&header, bus.triple);
     std::vector<std::uint8_t> partition(header.headerBytes + body.size());
-    SerializePackCanonicalPartitionHeaderV2(header, partition.data());
-    header.headerChecksum = Fnv1a64(partition.data(), 80);
-    SerializePackCanonicalPartitionHeaderV2(header, partition.data());
+    SerializePackCanonicalPartitionHeader(header, partition.data());
+    header.headerChecksum = Fnv1a64(partition.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
+    SerializePackCanonicalPartitionHeader(header, partition.data());
     std::copy(body.begin(), body.end(), partition.begin() + header.headerBytes);
     ImageBuilder builder(kPackKindCanonicalContent);
     builder.AddEntry(kPackEntryKindPackRequirementBlock, kResidentPackStableId,
         RequirementPayload(kResidentPackStableId, revision, revision, 0, body.size(), bus.triple));
     builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kResidentPackStableId, std::move(partition));
     builder.AddEntry(kPackEntryKindPackDependencyEdge, VnObjectId{},
-        DependencyPayload(kInitPackStableId, 1, bus.triple), kPackCanonicalRequirementVintage);
+        DependencyPayload(kInitPackStableId, 1, bus.triple), kPackPackDependencyEdgeVintage);
     return builder.Build();
 }
 
-TEST(PackSignalRelation, FullSetAndContentOnlyPublicationUseOneCommandAndClearOnUnload) {
+TEST(PackSignalRelation, PreviewBodyCannotPublishThroughPackActivation) {
     using namespace harkentest::packfoundation;
     auto config = harkentest::MakeNullConfig(2, 64, 48000);
     config.maxBuses = 4;
@@ -195,29 +195,9 @@ TEST(PackSignalRelation, FullSetAndContentOnlyPublicationUseOneCommandAndClearOn
     std::array<VnCanonicalPackSetMemberResultV1, 2> rows{};
     for (auto& row : rows) row.structSize = sizeof(row);
     VnCanonicalPackSetActivationReportV1 report{};
-    auto free = engine.commands.FreeSlots();
-    ASSERT_EQ(harkentest::ActivateCanonicalMembersV1(members.data(), 2, rows.data(), report), VN_OK);
-    ASSERT_NE(engine.acceptedSignalPlan, nullptr);
-    EXPECT_EQ(engine.commands.FreeSlots(), free - 1);
-    engine.nullBackend.Pump(1);
-    EXPECT_EQ(engine.buses.InstalledSignals(), engine.acceptedSignalPlan.get());
-    const auto identity = engine.acceptedSignalPlan->WorldIdentity();
-    for (unsigned i = 0; i < 2; ++i) members[i].expectedHandle = rows[i].handle;
-    content.bytes = SignalContentPack(2, -6);
-    free = engine.commands.FreeSlots();
-    ASSERT_EQ(harkentest::ActivateCanonicalMembersV1(members.data(), 2, rows.data(), report,
-        report.initHandle, 1), VN_OK);
-    EXPECT_EQ(engine.commands.FreeSlots(), free - 1);
-    EXPECT_EQ(engine.acceptedSignalPlan->WorldIdentity(), identity);
-    engine.nullBackend.Pump(1);
-    EXPECT_EQ(engine.buses.InstalledSignals(), engine.acceptedSignalPlan.get());
-    VnCanonicalPackSetUnloadDescV1 unload{};
-    unload.structSize = sizeof(unload);
-    unload.expectedInitHandle = report.initHandle;
-    unload.baseSetRevision = 2; unload.unloadRevision = 3;
-    free = engine.commands.FreeSlots();
-    ASSERT_EQ(Vn_UnloadCanonicalPackSetV1(&unload), VN_OK);
-    EXPECT_EQ(engine.commands.FreeSlots(), free - 1);
+    const auto free = engine.commands.FreeSlots();
+    EXPECT_EQ(harkentest::ActivateCanonicalMembersV1(members.data(), 2, rows.data(), report), VN_PACK_INCOMPATIBLE);
+    EXPECT_EQ(engine.commands.FreeSlots(), free);
     EXPECT_EQ(engine.acceptedSignalPlan, nullptr);
     engine.nullBackend.Pump(1);
     EXPECT_EQ(engine.buses.InstalledSignals(), nullptr);

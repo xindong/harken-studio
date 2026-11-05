@@ -23,8 +23,6 @@
 
 namespace harken {
 
-// Header magic: the four bytes 'V' 'S' 'P' 'K' at file offset 0.
-inline constexpr std::uint8_t kPackMagic[4] = {'V', 'S', 'P', 'K'};
 
 inline constexpr std::uint32_t kPackFormatVersion = HARKEN_PACK_SCHEMA_VERSION;
 
@@ -41,8 +39,6 @@ inline constexpr bool SupportedPackFormatVersion(std::uint32_t version) noexcept
 // The end offset at entryCount is also the complete TOC byte length.
 
 
-// Every blob offset is a multiple of this within the file.
-inline constexpr std::uint64_t kPackBlobAlign = 64;
 
 // TOC sampleFormat values. Only canonical float32 planar exists in v1; the
 // field is reserved for future codecs.

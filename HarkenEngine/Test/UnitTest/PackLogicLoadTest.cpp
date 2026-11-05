@@ -675,12 +675,12 @@ public:
         m_payloadOffsets.assign(m_entries.size(), 0);
         std::vector<std::uint64_t> blobOffsets(m_entries.size(), 0);
 
-        std::uint64_t cursor = AlignUp(dirEnd, harken::kPackV2PayloadAlign);
+        std::uint64_t cursor = AlignUp(dirEnd, harken::kPackPayloadAlign);
         std::uint64_t contentEnd = dirEnd;
         for (std::size_t i = 0; i < m_entries.size(); ++i) {
             m_payloadOffsets[i] = cursor;
             contentEnd = cursor + PayloadSize(m_entries[i]);
-            cursor = AlignUp(contentEnd, harken::kPackV2PayloadAlign);
+            cursor = AlignUp(contentEnd, harken::kPackPayloadAlign);
         }
         std::uint64_t blobCursor = AlignUp(contentEnd, harken::kPackBlobAlign);
         for (std::size_t i = 0; i < m_entries.size(); ++i) {
@@ -728,7 +728,7 @@ public:
             const Entry& entry = m_entries[i];
             harken::PackDirectoryEntry record;
             record.kind = entry.kind;
-            record.vintage = entry.vintage;
+            record.vintage = entry.vintage != 0 ? entry.vintage : harken::PackEntryVintage(entry.kind);
             record.id = entry.id;
             record.relationOrdinal = entry.relationOrdinal;
             record.offset = m_payloadOffsets[i];
@@ -761,7 +761,7 @@ public:
 private:
     struct Entry {
         std::uint32_t kind = 0;
-        std::uint32_t vintage = harken::kPackV2SchemaVintage;
+        std::uint32_t vintage = 0;
         VnObjectId id{};
         std::uint64_t relationOrdinal = 0;
         std::vector<std::uint8_t> payload;

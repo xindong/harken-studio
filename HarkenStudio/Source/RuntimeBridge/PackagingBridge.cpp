@@ -1213,7 +1213,7 @@ bool writeCanonicalPack(const QString& outputPath,
     const std::uint64_t dirOffset = harkenstudiobuild::kPackFileHeaderBytes;
     const std::uint64_t dirBytes =
         static_cast<std::uint64_t>(entries.size()) * harkenstudiobuild::kPackDirectoryEntryBytes;
-    std::uint64_t cursor = alignUp(dirOffset + dirBytes, harkenstudiobuild::kPackV2PayloadAlign);
+    std::uint64_t cursor = alignUp(dirOffset + dirBytes, harkenstudiobuild::kPackPayloadAlign);
     std::vector<std::uint64_t> offsets(entries.size(), 0);
     std::vector<std::uint64_t> payloadSizes(entries.size(), 0);
     std::uint64_t contentEnd = dirOffset + dirBytes;
@@ -1223,7 +1223,7 @@ bool writeCanonicalPack(const QString& outputPath,
             ? harkenstudiobuild::kPackMediaBytes
             : entries[i].payload.size();
         contentEnd = cursor + payloadSizes[i];
-        cursor = alignUp(contentEnd, harkenstudiobuild::kPackV2PayloadAlign);
+        cursor = alignUp(contentEnd, harkenstudiobuild::kPackPayloadAlign);
     }
     std::vector<std::uint64_t> blobOffsets(entries.size(), 0);
     std::uint64_t fileBytes = contentEnd;

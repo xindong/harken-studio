@@ -191,7 +191,8 @@ inline std::vector<std::uint8_t> WithCanonicalBindingRows(
     using harken::kPackEntryKindBindingAttachment;
     using harken::kPackEntryKindBindingDefinition;
     using harken::kPackDirectoryEntryBytes;
-    using harken::kPackV2SchemaVintage;
+    using harken::kPackBindingDefinitionVintage;
+    using harken::kPackBindingAttachmentVintage;
     using harken::ReadPackDirectoryEntry;
     using harken::ReadPackFileHeader;
     using harken::SerializePackBindingAttachment;
@@ -205,7 +206,7 @@ inline std::vector<std::uint8_t> WithCanonicalBindingRows(
         const auto entry = ReadPackDirectoryEntry(
             original.data() + header.directoryOffset + i * kPackDirectoryEntryBytes);
         const std::uint32_t vintage =
-            entry.vintage == 0 ? harken::kPackCanonicalEntryVintage : entry.vintage;
+            entry.vintage == 0 ? harken::PackEntryVintage(entry.kind) : entry.vintage;
         const auto copied = builder.AddEntry(
             entry.kind, static_cast<VnObjectId>(entry.id),
             std::vector<std::uint8_t>(original.begin() + static_cast<std::size_t>(entry.offset),
@@ -216,12 +217,12 @@ inline std::vector<std::uint8_t> WithCanonicalBindingRows(
     std::vector<std::uint8_t> definition(harken::kPackBindingDefinitionBytes);
     WritePackBindingDefinition(bindingId, desc, definition.data());
     builder.AddEntry(kPackEntryKindBindingDefinition, bindingId, std::move(definition),
-                     kPackV2SchemaVintage);
+                     kPackBindingDefinitionVintage);
     if (attachmentOrNull != nullptr) {
         std::vector<std::uint8_t> attachment(harken::kPackBindingAttachmentBytes);
         SerializePackBindingAttachment(*attachmentOrNull, attachment.data());
         const auto index = builder.AddEntry(kPackEntryKindBindingAttachment, VnObjectId{},
-                                            std::move(attachment), kPackV2SchemaVintage);
+                                            std::move(attachment), kPackBindingAttachmentVintage);
         builder.SetRelationOrdinal(index, 0);
     }
     return builder.Build();
@@ -251,8 +252,8 @@ inline std::vector<std::uint8_t> BuildContentWithVoiceWorldBytes(
     using harken::EncodeCurrentWorldShippingBody;
     using harken::Fnv1a64;
     using harken::kCanonicalDefinitionPartitionBodyVintage;
-    using harken::kCanonicalDefinitionPartitionHeaderV2Bytes;
-    using harken::kPackCanonicalRequirementVintage;
+    using harken::kPackCanonicalPartitionHeaderBytes;
+    using harken::kPackPackDependencyEdgeVintage;
     using harken::kPackEntryKindCanonicalDefinitionPartition;
     using harken::kPackEntryKindPackDependencyEdge;
     using harken::kPackEntryKindPackRequirementBlock;
@@ -262,7 +263,7 @@ inline std::vector<std::uint8_t> BuildContentWithVoiceWorldBytes(
     using harken::kWorldCapabilityVariableDefinitions;
     using harken::PackCanonicalPartitionHeader;
     using harken::PlayablePropertyProgramViewV1;
-    using harken::SerializePackCanonicalPartitionHeaderV2;
+    using harken::SerializePackCanonicalPartitionHeader;
     using harken::VariableDefinitionV1;
     const auto triple = packfoundation::DefaultFixtureBusTriple();
     PlayablePropertyProgramViewV1 property{};
@@ -297,7 +298,7 @@ inline std::vector<std::uint8_t> BuildContentWithVoiceWorldBytes(
         return {};
     }
     PackCanonicalPartitionHeader header{};
-    header.headerBytes = kCanonicalDefinitionPartitionHeaderV2Bytes;
+    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
     header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -306,11 +307,11 @@ inline std::vector<std::uint8_t> BuildContentWithVoiceWorldBytes(
     header.ownedDefinitionCount = 2;
     ApplyCanonicalBusTriple(&header, triple);
     std::vector<std::uint8_t> partition(
-        kCanonicalDefinitionPartitionHeaderV2Bytes + body.size(), 0);
-    SerializePackCanonicalPartitionHeaderV2(header, partition.data());
-    header.headerChecksum = Fnv1a64(partition.data(), 80);
-    SerializePackCanonicalPartitionHeaderV2(header, partition.data());
-    std::memcpy(partition.data() + kCanonicalDefinitionPartitionHeaderV2Bytes, body.data(),
+        kPackCanonicalPartitionHeaderBytes + body.size(), 0);
+    SerializePackCanonicalPartitionHeader(header, partition.data());
+    header.headerChecksum = Fnv1a64(partition.data(), harken::kPackCanonicalPartitionHeaderHeaderChecksumOffset);
+    SerializePackCanonicalPartitionHeader(header, partition.data());
+    std::memcpy(partition.data() + kPackCanonicalPartitionHeaderBytes, body.data(),
                 body.size());
     packfoundation::ImageBuilder builder(kPackKindCanonicalContent);
     builder.AddEntry(kPackEntryKindPackRequirementBlock, contentStableId,
@@ -322,7 +323,7 @@ inline std::vector<std::uint8_t> BuildContentWithVoiceWorldBytes(
     builder.AddEntry(kPackEntryKindPackDependencyEdge, VnObjectId{},
                      packfoundation::DependencyPayload(initStableId, initContentRevision,
                                                        triple),
-                     kPackCanonicalRequirementVintage);
+                     kPackPackDependencyEdgeVintage);
     return builder.Build();
 }
 

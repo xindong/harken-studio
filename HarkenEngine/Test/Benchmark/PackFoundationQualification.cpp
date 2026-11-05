@@ -133,15 +133,10 @@ bool ParseUnsigned(const char* text, std::uint32_t* value) {
 } // namespace
 
 int main(int argc, char* argv[]) {
-    std::uint32_t catalogCount = 0;
     std::uint32_t residentCount = 0;
     std::filesystem::path root;
     for (int i = 1; i < argc; ++i) {
-        if (std::string(argv[i]) == "--catalog" && i + 1 < argc) {
-            if (!ParseUnsigned(argv[++i], &catalogCount)) {
-                return 2;
-            }
-        } else if (std::string(argv[i]) == "--resident" && i + 1 < argc) {
+        if (std::string(argv[i]) == "--resident" && i + 1 < argc) {
             if (!ParseUnsigned(argv[++i], &residentCount)) {
                 return 2;
             }
@@ -152,16 +147,16 @@ int main(int argc, char* argv[]) {
             return 2;
         }
     }
-    if (catalogCount == 0 || residentCount == 0 || root.empty()) {
+    if (residentCount == 0 || root.empty()) {
         std::fprintf(stderr,
-                     "--catalog, --resident and --fixture-root are required\n");
+                     "--resident and --fixture-root are required\n");
         return 2;
     }
 
     Fixture fixture;
     bool fixtureOk = false;
     const double exportUs = MeasureUs([&] {
-        fixtureOk = BuildFixture(catalogCount, residentCount, &fixture) &&
+        fixtureOk = BuildFixture(residentCount, &fixture) &&
                     WriteFixture(root, fixture);
     });
     if (!fixtureOk) {
@@ -185,8 +180,6 @@ int main(int argc, char* argv[]) {
     config.deviceMode = VN_DEVICE_NULL;
     config.maxPacks = 4;
     config.maxActions = residentCount;
-    config.maxCatalogEntries = catalogCount;
-    config.maxCatalogBytes = fixture.catalogBytes;
     config.maxResidentDefinitionBytes = fixture.initBodyBytes + fixture.residentBodyBytes;
     config.maxCompositeIndexBytes = 32ull << 20;
     config.maxPackDecodeStagingBytes = 256ull << 20;
@@ -208,15 +201,6 @@ int main(int argc, char* argv[]) {
     });
     const VnPackHandle initHandle = initRows[0].handle;
     const ProcessMemory afterInitPack = ReadProcessMemory();
-
-    VnPostActionDesc post{};
-    post.structSize = sizeof(post);
-    post.actionId = harkentest::ObjectId(kActionBase + residentCount);
-    VnActionFiringHandle unloadedFiring = 0;
-    VnResult unloadedPostResult = VN_DEVICE_ERROR;
-    const double unloadedPostUs = MeasureUs([&] {
-        unloadedPostResult = Vn_PostAction(&post, &unloadedFiring);
-    });
 
     VnCanonicalPackSetMemberResultV1 coldRows[2]{};
     VnCanonicalPackSetActivationReportV1 coldActivation{};
@@ -250,15 +234,6 @@ int main(int argc, char* argv[]) {
                     harkentest::ObjectId(kActionBase + (i % residentCount))));
         }
     });
-    const double unloadedLookupTotalUs = MeasureUs([&] {
-        const std::uint32_t unloadedCount = catalogCount - residentCount;
-        for (std::uint32_t i = 0; i < kLookupIterations; ++i) {
-            const auto found = engine->packComposition.Lookup(
-                harkentest::ObjectId(kActionBase + residentCount + (i % unloadedCount)));
-            lookupSink = lookupSink ^
-                         static_cast<std::uintptr_t>(found.result);
-        }
-    });
 
     VnResult replaceResult = VN_DEVICE_ERROR;
     const double replaceUs = MeasureUs([&] {
@@ -267,6 +242,8 @@ int main(int argc, char* argv[]) {
     const ProcessMemory afterReplace = ReadProcessMemory();
     const auto residentFacts = engine->packComposition.Facts();
 
+    VnPostActionDesc post{};
+    post.structSize = sizeof(post);
     post.actionId = harkentest::ObjectId(kActionBase);
     VnActionFiringHandle loadedFiring = 0;
     VnResult loadedPostResult = VN_DEVICE_ERROR;
@@ -286,11 +263,10 @@ int main(int argc, char* argv[]) {
     const std::uint64_t residentFootprint =
         fixture.residentBodyBytes + residentFacts.loadedBytes;
     const bool behaviorOk = loadInitResult == VN_OK && initHandle != 0 &&
-        unloadedPostResult == VN_CONTENT_NOT_LOADED && unloadedFiring == 0 &&
         coldLoadResult == VN_OK && firstUnloadResult == VN_OK &&
         warmLoadResult == VN_OK && replaceResult == VN_OK &&
         loadedPostResult == VN_OK && loadedFiring != 0 &&
-        unloadResult == VN_OK && inspection.catalogEntries == catalogCount &&
+        unloadResult == VN_OK &&
         residentFacts.loadedCount == residentCount + 1 &&
         retiringBeforeRelease == 1 && releaseResult == VN_OK &&
         updateResult == VN_OK &&
@@ -298,7 +274,7 @@ int main(int argc, char* argv[]) {
 
     std::printf(
         "{\"benchmark\":\"pack-foundation-runtime\","
-        "\"schema\":\"plan05-f3-runtime-v1\","
+        "\"schema\":\"plan05-f3-runtime-v2\","
         "\"load_timing_contract\":\"canonical-set-activate-v1\","
         "\"load_init_scope\":\"init-only-activation\","
         "\"content_timing_scope\":\"full-set-activation-including-validation\","
@@ -306,8 +282,8 @@ int main(int argc, char* argv[]) {
         "\"status\":\"%s\",\"release_build\":%s,"
         "\"build_commit\":\"%.*s\",\"build_dirty\":%s,"
         "\"build_configuration\":\"%s\","
-        "\"catalog_count\":%u,\"resident_count\":%u,"
-        "\"catalog_bytes\":%llu,\"resident_body_bytes\":%llu,"
+        "\"resident_count\":%u,"
+        "\"resident_body_bytes\":%llu,"
         "\"composite_index_bytes\":%llu,"
         "\"resident_footprint_bytes\":%llu,"
         "\"replacement_formula_bytes\":%llu,"
@@ -315,8 +291,7 @@ int main(int argc, char* argv[]) {
         "\"load_init_us\":%.3f,\"content_cold_us\":%.3f,"
         "\"content_warm_us\":%.3f,\"replace_us\":%.3f,"
         "\"unload_us\":%.3f,\"lookup_loaded_us\":%.6f,"
-        "\"lookup_unloaded_us\":%.6f,"
-        "\"post_loaded_us\":%.3f,\"post_unloaded_us\":%.3f,"
+        "\"post_loaded_us\":%.3f,"
         "\"memory_available\":%s,\"baseline_private_bytes\":%llu,"
         "\"engine_init_private_bytes\":%llu,"
         "\"init_pack_private_bytes\":%llu,"
@@ -334,8 +309,7 @@ int main(int argc, char* argv[]) {
         Harken::BuildInfo::GitCommit.data(),
         Harken::BuildInfo::GitDirty ? "true" : "false",
         HARKEN_QUALIFICATION_CONFIGURATION,
-        catalogCount, residentCount,
-        static_cast<unsigned long long>(fixture.catalogBytes),
+        residentCount,
         static_cast<unsigned long long>(fixture.residentBodyBytes),
         static_cast<unsigned long long>(residentFacts.loadedBytes),
         static_cast<unsigned long long>(residentFootprint),
@@ -343,8 +317,7 @@ int main(int argc, char* argv[]) {
                                         fixture.replacement.size()),
         exportUs, inspectUs, loadInitUs, coldLoadUs, warmLoadUs, replaceUs,
         unloadUs, loadedLookupTotalUs / kLookupIterations,
-        unloadedLookupTotalUs / kLookupIterations, loadedPostUs,
-        unloadedPostUs, baseline.available ? "true" : "false",
+        loadedPostUs, baseline.available ? "true" : "false",
         static_cast<unsigned long long>(baseline.privateBytes),
         static_cast<unsigned long long>(afterEngineInit.privateBytes),
         static_cast<unsigned long long>(afterInitPack.privateBytes),

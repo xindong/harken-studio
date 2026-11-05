@@ -47983,7 +47983,7 @@ void CheckNestedSegmentEmitterBatchesAndSiblingPlayback(bool packEntry) {
         std::vector<std::uint8_t> body;
         ASSERT_TRUE(EncodeCurrentWorldShippingBody(packWorld, body));
         PackCanonicalPartitionHeader header{};
-        header.headerBytes = kCanonicalDefinitionPartitionHeaderV2Bytes;
+        header.headerBytes = kPackCanonicalPartitionHeaderBytes;
         header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
         header.bodyBytes = body.size();
         header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -47992,9 +47992,9 @@ void CheckNestedSegmentEmitterBatchesAndSiblingPlayback(bool packEntry) {
         header.ownedDefinitionCount = definitionCount;
         ApplyCanonicalBusTriple(&header, DefaultFixtureBusTriple());
         std::vector<std::uint8_t> partition(header.headerBytes + body.size(), 0);
-        SerializePackCanonicalPartitionHeaderV2(header, partition.data());
-        header.headerChecksum = Fnv1a64(partition.data(), 80);
-        SerializePackCanonicalPartitionHeaderV2(header, partition.data());
+        SerializePackCanonicalPartitionHeader(header, partition.data());
+        header.headerChecksum = Fnv1a64(partition.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
+        SerializePackCanonicalPartitionHeader(header, partition.data());
         std::memcpy(partition.data() + header.headerBytes, body.data(), body.size());
         ImageBuilder content(kPackKindCanonicalContent);
         content.AddEntry(kPackEntryKindPackRequirementBlock, kResidentPackStableId,
@@ -48003,11 +48003,11 @@ void CheckNestedSegmentEmitterBatchesAndSiblingPlayback(bool packEntry) {
             std::move(partition));
         content.AddEntry(kPackEntryKindPackDependencyEdge, VnObjectId{},
             DependencyPayload(kInitPackStableId, 1, DefaultFixtureBusTriple()),
-            kPackCanonicalRequirementVintage);
+            kPackPackDependencyEdgeVintage);
         std::vector<std::uint8_t> bindingBytes(kPackBindingDefinitionBytes);
         WritePackBindingDefinition(bindingId, binding, bindingBytes.data());
         content.AddEntry(kPackEntryKindBindingDefinition, bindingId, std::move(bindingBytes),
-            kPackV2SchemaVintage);
+            kPackBindingDefinitionVintage);
         std::uint64_t relationOrdinal = 0;
         for (const auto sound : {CanonicalActionWorld::kFirstSound, CanonicalActionWorld::kSecondSound}) {
             PackBindingAttachmentEntry attachment{};
@@ -48017,7 +48017,7 @@ void CheckNestedSegmentEmitterBatchesAndSiblingPlayback(bool packEntry) {
             std::vector<std::uint8_t> attachmentBytes(kPackBindingAttachmentBytes);
             SerializePackBindingAttachment(attachment, attachmentBytes.data());
             const auto entry = content.AddEntry(kPackEntryKindBindingAttachment, VnObjectId{},
-                std::move(attachmentBytes), kPackV2SchemaVintage);
+                std::move(attachmentBytes), kPackBindingAttachmentVintage);
             content.SetRelationOrdinal(entry, relationOrdinal++);
         }
         content.AddMedia(CanonicalActionWorld::kFirstSound, first);

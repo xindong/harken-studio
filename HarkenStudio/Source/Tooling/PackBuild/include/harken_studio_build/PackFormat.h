@@ -7,10 +7,8 @@
 #include <cstring>
 
 namespace harkenstudiobuild {
-inline constexpr std::uint8_t kPackMagic[4] = {'V', 'S', 'P', 'K'};
 
 inline constexpr std::uint32_t kPackFormatVersion = HARKEN_PACK_SCHEMA_VERSION;
-inline constexpr std::uint64_t kPackBlobAlign = 64;
 inline constexpr std::uint16_t kPackSampleFormatF32Planar = 0;
 inline constexpr std::uint32_t kPackFlagLoopable = 1u << 0;
 inline constexpr std::uint32_t kPackKnownFlagsMask =

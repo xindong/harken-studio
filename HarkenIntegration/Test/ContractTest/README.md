@@ -54,13 +54,13 @@ The separate native foundation fixture remains available through `--pack-root`:
 
 ```powershell
 dotnet run --project HarkenIntegration/Test/ContractTest --configuration Release -- `
-  --require-native --pack-root ".temp/f3-catalog-resident-window"
+  --require-native --pack-root ".temp/f3-resident-window"
 ```
 
-`PackFoundationQualification.CatalogMayExceedResidentWindow` produces its raw
+`PackFoundationQualification.ExplicitMembersDefineResidentWindow` produces its raw
 `Init.pack` and `Content.pack` binaries. This low-level contract inspects Init,
 applies capacity recommendations, activates the canonical set through byte
-providers, posts loaded content, rejects unloaded content and unloads the set.
+providers, posts loaded content, rejects unknown content and unloads the set.
 It does not discover or interpret legacy publication files.
 
 For the focused Variable write-scope check, generate the native fixture and run:

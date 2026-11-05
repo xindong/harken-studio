@@ -123,7 +123,7 @@ public:
                          std::vector<std::uint8_t> payload,
                          std::uint32_t vintage = 0) {
         if (vintage == 0) {
-            vintage = PackV2CanonicalDirectoryVintage(kind);
+            vintage = PackEntryVintage(kind);
         }
         Entry entry;
         entry.kind = kind;
@@ -156,7 +156,7 @@ public:
                          std::uint64_t loopEndFrame = 0) {
         Entry entry;
         entry.kind = kPackEntryKindMedia;
-        entry.vintage = kPackV2SchemaVintage;
+        entry.vintage = kPackMediaVintage;
         entry.id = soundId;
         entry.isMedia = true;
         entry.soundId = soundId;
@@ -177,12 +177,12 @@ public:
         const std::uint64_t dirEnd = dirOffset + dirBytes;
         payloadOffsets_.assign(entries_.size(), 0);
         blobOffsets_.assign(entries_.size(), 0);
-        std::uint64_t cursor = AlignUp(dirEnd, kPackV2PayloadAlign);
+        std::uint64_t cursor = AlignUp(dirEnd, kPackPayloadAlign);
         std::uint64_t contentEnd = dirEnd;
         for (std::size_t i = 0; i < entries_.size(); ++i) {
             payloadOffsets_[i] = cursor;
             contentEnd = cursor + PayloadSize(entries_[i]);
-            cursor = AlignUp(contentEnd, kPackV2PayloadAlign);
+            cursor = AlignUp(contentEnd, kPackPayloadAlign);
         }
         std::uint64_t blobCursor = AlignUp(contentEnd, kPackBlobAlign);
         for (std::size_t i = 0; i < entries_.size(); ++i) {
@@ -286,11 +286,7 @@ private:
     std::vector<std::uint64_t> blobOffsets_;
 };
 
-void FillLocator(PackInitCatalogRow* row, const char* locator) {
-    const std::size_t n = std::strlen(locator);
-    row->locatorByteCount = static_cast<std::uint32_t>(n + 1);
-    std::memcpy(row->relativeLocator.data(), locator, n + 1);
-}
+
 
 std::vector<std::uint8_t> RequirementPayload(std::uint64_t packStableId,
                                              std::uint64_t contentRevision,
@@ -310,30 +306,7 @@ std::vector<std::uint8_t> RequirementPayload(std::uint64_t packStableId,
     return payload;
 }
 
-std::vector<std::uint8_t> CatalogPayload(const PackInitCatalogHeader& header,
-                                         const std::vector<PackInitCatalogRow>& rows,
-                                         const std::vector<std::uint64_t>& startup) {
-    std::vector<std::uint8_t> payload(
-        static_cast<std::size_t>(header.catalogBytes), 0);
-    SerializePackInitCatalogHeader(header, payload.data());
-    for (std::size_t i = 0; i < rows.size(); ++i) {
-        SerializePackInitCatalogRow(
-            rows[i], payload.data() + kInitCatalogHeaderBytes +
-                         i * kInitCatalogRowBytes);
-    }
-    for (std::size_t i = 0; i < startup.size(); ++i) {
-        StoreLE64(payload.data() + kInitCatalogHeaderBytes +
-                      rows.size() * kInitCatalogRowBytes + i * 8,
-                  startup[i]);
-    }
-    PackInitCatalogHeader stamped = header;
-    stamped.checksum =
-        Fnv1a64(payload.data() + kInitCatalogHeaderBytes,
-                static_cast<std::size_t>(header.catalogBytes -
-                                         kInitCatalogHeaderBytes));
-    SerializePackInitCatalogHeader(stamped, payload.data());
-    return payload;
-}
+
 
 void SetAbsoluteTime(AuthoredTimeRationalV1* time,
                      std::int64_t nanoseconds = 0) {
@@ -458,7 +431,7 @@ std::vector<std::uint8_t> EmptyPartitionPayload(
     std::vector<std::uint8_t> body;
     EXPECT_TRUE(EncodeCurrentWorldShippingBody(world, body));
     PackCanonicalPartitionHeader header;
-    header.headerBytes = kCanonicalDefinitionPartitionHeaderV2Bytes;
+    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
     header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -467,132 +440,37 @@ std::vector<std::uint8_t> EmptyPartitionPayload(
     header.ownedDefinitionCount = 0;
     harkentest::packfoundation::ApplyCanonicalBusTriple(&header, triple);
     std::vector<std::uint8_t> payload(
-        kCanonicalDefinitionPartitionHeaderV2Bytes + body.size(), 0);
-    SerializePackCanonicalPartitionHeaderV2(header, payload.data());
-    header.headerChecksum = Fnv1a64(payload.data(), 80);
-    SerializePackCanonicalPartitionHeaderV2(header, payload.data());
-    std::memcpy(payload.data() + kCanonicalDefinitionPartitionHeaderV2Bytes,
+        kPackCanonicalPartitionHeaderBytes + body.size(), 0);
+    SerializePackCanonicalPartitionHeader(header, payload.data());
+    header.headerChecksum = Fnv1a64(payload.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
+    SerializePackCanonicalPartitionHeader(header, payload.data());
+    std::memcpy(payload.data() + kPackCanonicalPartitionHeaderBytes,
                 body.data(), body.size());
     return payload;
 }
 
-std::vector<std::uint8_t> BuildInitCatalog(
-    const std::vector<PackInitCatalogRow>& rows,
-    const std::vector<std::uint64_t>& startup,
+std::vector<std::uint8_t> BuildInit(
     const WorldCapacitySummaryV1& capacity = {}, std::uint32_t sendBus = 0,
     const harkentest::packfoundation::RuntimeBusFixture* busFixture = nullptr) {
     constexpr std::uint64_t kInitId = 11;
-    PackInitCatalogHeader header;
-    header.schemaVersion = 1;
-    header.storageModelVersion = 1;
-    header.projectBuildId = 7;
-    header.platformId = 1;
-    header.languageId = 2;
-    header.totalDefinitionCount = rows.size();
-    header.totalResourceCount = 0;
-    header.catalogEntryCount = static_cast<std::uint32_t>(rows.size());
-    header.startupPackCount = static_cast<std::uint32_t>(startup.size());
-    header.recommendedCatalogCapacity = 64;
-    header.recommendedCatalogBytes = 4096;
-    EXPECT_TRUE(InitCatalogBytes(header.catalogEntryCount, header.startupPackCount,
-                                 &header.catalogBytes));
-
     const auto bus = busFixture != nullptr ? *busFixture : sendBus == 0
         ? harkentest::packfoundation::DefaultRuntimeBusFixture()
         : harkentest::packfoundation::Bus2RuntimeBusFixture();
     ImageBuilder builder(kPackKindInit);
-    const std::size_t catalogIndex = builder.AddEntry(
-        kPackEntryKindInitRoutingCatalog, 0,
-        CatalogPayload(header, rows, startup));
     builder.AddEntry(kPackEntryKindPackRequirementBlock, kInitId,
                      harkentest::packfoundation::RequirementPayload(
                          kInitId, 1, 1, 0, 64, bus.triple));
     builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kInitId,
                      EmptyPartitionPayload(kInitId, 1, capacity, bus.triple));
     harkentest::packfoundation::AppendRuntimeBusFixture(&builder, bus);
-    std::vector<std::uint8_t> bytes = builder.Build();
-    const std::uint64_t catalogOffset = builder.PayloadOffset(catalogIndex);
-    const std::uint64_t initHashField =
-        catalogOffset + kInitCatalogHeaderBytes + kInitCatalogContentHashOffset;
-    const std::uint64_t hashed = Fnv1a64(bytes.data(), bytes.size());
-    StoreLE64(bytes.data() + static_cast<std::size_t>(initHashField), hashed);
-    return bytes;
+    return builder.Build();
 }
 
-std::vector<std::uint8_t> BuildMinimalInit() {
-    constexpr std::uint64_t kInitId = 11;
-    constexpr std::uint64_t kContentId = 22;
-    PackInitCatalogRow initOwned;
-    initOwned.stableId = harkentest::ObjectId(1001);
-    initOwned.identityClass = kInitCatalogIdentityClassAction;
-    initOwned.ownerPackStableId = kInitId;
-    FillLocator(&initOwned, "Init.pack");
-    PackInitCatalogRow contentOwned;
-    contentOwned.stableId = harkentest::ObjectId(2002);
-    contentOwned.identityClass = kInitCatalogIdentityClassAction;
-    contentOwned.ownerPackStableId = kContentId;
-    contentOwned.expectedContentHash = 0xABCDEF;
-    FillLocator(&contentOwned, "Action.pack");
-    return BuildInitCatalog({initOwned, contentOwned}, {kContentId});
-}
 
-std::vector<std::uint8_t> BuildKeepIdentityInit(
-    std::uint64_t packAHash, std::uint64_t packBHash,
-    const char* packALocator = "ActionA.pack",
-    const char* packBLocator = "ActionB.pack") {
-    constexpr std::uint64_t kInitId = 11;
-    constexpr std::uint64_t kContentA = 22;
-    constexpr std::uint64_t kContentB = 33;
-    PackInitCatalogRow initOwned;
-    initOwned.stableId = harkentest::ObjectId(1001);
-    initOwned.identityClass = kInitCatalogIdentityClassAction;
-    initOwned.ownerPackStableId = kInitId;
-    FillLocator(&initOwned, "Init.pack");
-    PackInitCatalogRow contentA;
-    contentA.stableId = harkentest::ObjectId(2002);
-    contentA.identityClass = kInitCatalogIdentityClassAction;
-    contentA.ownerPackStableId = kContentA;
-    contentA.expectedContentHash = packAHash;
-    FillLocator(&contentA, packALocator);
-    PackInitCatalogRow contentB;
-    contentB.stableId = harkentest::ObjectId(3003);
-    contentB.identityClass = kInitCatalogIdentityClassAction;
-    contentB.ownerPackStableId = kContentB;
-    contentB.expectedContentHash = packBHash;
-    FillLocator(&contentB, packBLocator);
-    return BuildInitCatalog({initOwned, contentA, contentB},
-                            {kContentA, kContentB});
-}
 
-std::vector<std::uint8_t> BuildThreeIdentityInit(
-    std::uint64_t packAHash, std::uint64_t packBHash,
-    std::uint64_t packCHash) {
-    PackInitCatalogRow initOwned;
-    initOwned.stableId = harkentest::ObjectId(1001);
-    initOwned.identityClass = kInitCatalogIdentityClassAction;
-    initOwned.ownerPackStableId = 11;
-    FillLocator(&initOwned, "Init.pack");
-    PackInitCatalogRow contentA;
-    contentA.stableId = harkentest::ObjectId(2002);
-    contentA.identityClass = kInitCatalogIdentityClassAction;
-    contentA.ownerPackStableId = 22;
-    contentA.expectedContentHash = packAHash;
-    FillLocator(&contentA, "ActionA.pack");
-    PackInitCatalogRow contentB;
-    contentB.stableId = harkentest::ObjectId(3003);
-    contentB.identityClass = kInitCatalogIdentityClassAction;
-    contentB.ownerPackStableId = 33;
-    contentB.expectedContentHash = packBHash;
-    FillLocator(&contentB, "ActionB.pack");
-    PackInitCatalogRow contentC;
-    contentC.stableId = harkentest::ObjectId(4004);
-    contentC.identityClass = kInitCatalogIdentityClassAction;
-    contentC.ownerPackStableId = 44;
-    contentC.expectedContentHash = packCHash;
-    FillLocator(&contentC, "ActionC.pack");
-    return BuildInitCatalog({initOwned, contentA, contentB, contentC},
-                            {22, 33, 44});
-}
+
+
+
 
 std::vector<std::uint8_t> RequiredEdgePayload(
     std::uint64_t providerStableId,
@@ -682,7 +560,7 @@ std::vector<std::uint8_t> DelayedPlayPartitionPayload(
     std::vector<std::uint8_t> body;
     EXPECT_TRUE(EncodeCurrentWorldShippingBody(world, body));
     PackCanonicalPartitionHeader header;
-    header.headerBytes = kCanonicalDefinitionPartitionHeaderV2Bytes;
+    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
     header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -692,11 +570,11 @@ std::vector<std::uint8_t> DelayedPlayPartitionPayload(
     harkentest::packfoundation::ApplyCanonicalBusTriple(
         &header, harkentest::packfoundation::DefaultFixtureBusTriple());
     std::vector<std::uint8_t> payload(
-        kCanonicalDefinitionPartitionHeaderV2Bytes + body.size(), 0);
-    SerializePackCanonicalPartitionHeaderV2(header, payload.data());
-    header.headerChecksum = Fnv1a64(payload.data(), 80);
-    SerializePackCanonicalPartitionHeaderV2(header, payload.data());
-    std::memcpy(payload.data() + kCanonicalDefinitionPartitionHeaderV2Bytes,
+        kPackCanonicalPartitionHeaderBytes + body.size(), 0);
+    SerializePackCanonicalPartitionHeader(header, payload.data());
+    header.headerChecksum = Fnv1a64(payload.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
+    SerializePackCanonicalPartitionHeader(header, payload.data());
+    std::memcpy(payload.data() + kPackCanonicalPartitionHeaderBytes,
                 body.data(), body.size());
     return payload;
 }
@@ -725,37 +603,7 @@ std::vector<std::uint8_t> BuildDelayedPlayPack(
     return builder.Build();
 }
 
-std::vector<std::uint8_t> BuildSingleIdentityInit(
-    std::uint64_t packHash, VnObjectId actionId,
-    const char* locator = "ActionA.pack", VnObjectId playableId = harkentest::ObjectId(4510),
-    VnObjectId additionalActionId = harkentest::ObjectId(0),
-    const WorldCapacitySummaryV1& capacity = {}, std::uint32_t sendBus = 0,
-    const harkentest::packfoundation::RuntimeBusFixture* busFixture = nullptr) {
-    PackInitCatalogRow initOwned;
-    initOwned.stableId = harkentest::ObjectId(1001);
-    initOwned.identityClass = kInitCatalogIdentityClassAction;
-    initOwned.ownerPackStableId = 11;
-    FillLocator(&initOwned, "Init.pack");
-    PackInitCatalogRow content;
-    content.stableId = actionId;
-    content.identityClass = kInitCatalogIdentityClassAction;
-    content.ownerPackStableId = 22;
-    content.expectedContentHash = packHash;
-    FillLocator(&content, locator);
-    PackInitCatalogRow playable;
-    playable.stableId = harkentest::ObjectId(playableId);
-    playable.identityClass = kInitCatalogIdentityClassPlayable;
-    playable.ownerPackStableId = 22;
-    playable.expectedContentHash = packHash;
-    FillLocator(&playable, locator);
-    std::vector<PackInitCatalogRow> rows{initOwned, content, playable};
-    if (additionalActionId != harkentest::ObjectId(0)) {
-        auto additional = content;
-        additional.stableId = harkentest::ObjectId(additionalActionId);
-        rows.push_back(additional);
-    }
-    return BuildInitCatalog(rows, {22}, capacity, sendBus, busFixture);
-}
+
 
 std::vector<std::uint8_t> BuildContentPack(
     std::uint64_t packStableId, std::uint64_t contentRevision,
@@ -794,7 +642,7 @@ std::vector<std::uint8_t> WrapWorldPartitionWithOwnedDefinitionCount(
         ? EncodeCurrentWorldBodyV19(world, body)
         : EncodeCurrentWorldShippingBody(world, body));
     PackCanonicalPartitionHeader header;
-    header.headerBytes = kCanonicalDefinitionPartitionHeaderV2Bytes;
+    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
     header.bodyVintage = world.sourceBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -804,11 +652,11 @@ std::vector<std::uint8_t> WrapWorldPartitionWithOwnedDefinitionCount(
     harkentest::packfoundation::ApplyCanonicalBusTriple(
         &header, harkentest::packfoundation::DefaultFixtureBusTriple());
     std::vector<std::uint8_t> payload(
-        kCanonicalDefinitionPartitionHeaderV2Bytes + body.size(), 0);
-    SerializePackCanonicalPartitionHeaderV2(header, payload.data());
-    header.headerChecksum = Fnv1a64(payload.data(), 80);
-    SerializePackCanonicalPartitionHeaderV2(header, payload.data());
-    std::memcpy(payload.data() + kCanonicalDefinitionPartitionHeaderV2Bytes,
+        kPackCanonicalPartitionHeaderBytes + body.size(), 0);
+    SerializePackCanonicalPartitionHeader(header, payload.data());
+    header.headerChecksum = Fnv1a64(payload.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
+    SerializePackCanonicalPartitionHeader(header, payload.data());
+    std::memcpy(payload.data() + kPackCanonicalPartitionHeaderBytes,
                 body.data(), body.size());
     return payload;
 }
@@ -1001,14 +849,14 @@ std::vector<std::uint8_t> PartitionWithCapacityLimit(
     std::uint64_t packStableId, std::uint64_t partitionRevision,
     const std::vector<std::uint8_t>& partitionPayload,
     std::uint32_t WorldCapacitySummaryV1::*field, std::uint32_t limit) {
-    if (partitionPayload.size() < kCanonicalDefinitionPartitionHeaderV2Bytes) {
+    if (partitionPayload.size() < kPackCanonicalPartitionHeaderBytes) {
         ADD_FAILURE() << "partition payload is truncated";
         return {};
     }
     CurrentWorldBodyImage body;
     const CurrentWorldBodyDecodeResult decoded = body.DecodeWithResult(
-        partitionPayload.data() + kCanonicalDefinitionPartitionHeaderV2Bytes,
-        partitionPayload.size() - kCanonicalDefinitionPartitionHeaderV2Bytes,
+        partitionPayload.data() + kPackCanonicalPartitionHeaderBytes,
+        partitionPayload.size() - kPackCanonicalPartitionHeaderBytes,
         kCanonicalDefinitionPartitionBodyVintage,
         CurrentWorldDecodeMode::StrictArtifact);
     if (decoded != CurrentWorldBodyDecodeResult::Ok) {
@@ -1533,22 +1381,13 @@ std::string WriteTemp(const std::string& name,
     return path;
 }
 
-std::vector<std::uint8_t> BuildInitWithoutCatalog() {
-    constexpr std::uint64_t kInitId = 11;
-    ImageBuilder builder(kPackKindInit);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, kInitId,
-                     RequirementPayload(kInitId, 1, 1));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kInitId,
-                     EmptyPartitionPayload(kInitId, 1));
-    harkentest::packfoundation::AppendNeutralMasterSnapshot(&builder);
-    return builder.Build();
-}
+
 
 TEST(PackComposition, RootActivationNeedsNoCatalogWhileProvisionalLookupDoes) {
     const std::filesystem::path directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "path-load-no-catalog";
     std::filesystem::create_directories(directory);
-    const std::vector<std::uint8_t> initBytes = BuildInitWithoutCatalog();
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::vector<std::uint8_t> contentBytes = BuildContentPack(22, 1, 7, harkentest::ObjectId(2002));
     const std::string initPath = (directory / "Init.pack").string();
     const std::string contentPath = (directory / "Content.pack").string();
@@ -1636,7 +1475,7 @@ VnResult ProviderReturnsOwnedBytes(void* userData, std::uint64_t, const char*,
 }
 
 TEST(PackComposition, CataloglessProviderRefusesStableIdMismatch) {
-    const std::vector<std::uint8_t> initBytes = BuildInitWithoutCatalog();
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::vector<std::uint8_t> contentBytes =
         BuildContentPack(22, 1, 7, harkentest::ObjectId(2002));
     EngineSession session(MakeNullConfig());
@@ -1678,8 +1517,8 @@ TEST(PackComposition, CataloglessProviderRefusesStableIdMismatch) {
     EXPECT_NE(0u, rows[1].handle);
 }
 
-TEST(PackComposition, InspectInitBeforeEngineReturnsCatalogFields) {
-    const std::vector<std::uint8_t> bytes = BuildMinimalInit();
+TEST(PackComposition, InspectInitBeforeEngineReturnsCurrentPackFacts) {
+    const std::vector<std::uint8_t> bytes = BuildInit();
     const std::string path = WriteTemp("f2-inspect-init.pack", bytes);
     VnPackLoadDesc desc{};
     desc.structSize = sizeof(desc);
@@ -1688,17 +1527,17 @@ TEST(PackComposition, InspectInitBeforeEngineReturnsCatalogFields) {
     report.structSize = sizeof(report);
     ASSERT_EQ(VN_OK, Vn_InspectInitPack(&desc, &report));
     EXPECT_EQ(11u, report.packStableId);
-    EXPECT_EQ(2u, report.catalogEntries);
-    EXPECT_NE(0u, report.catalogBytes);
-    EXPECT_EQ(64u, report.recommendedMaxCatalogEntries);
-    EXPECT_EQ(4096u, report.recommendedCatalogBytes);
+    EXPECT_EQ(0u, report.catalogEntries);
+    EXPECT_EQ(0u, report.catalogBytes);
+    EXPECT_EQ(0u, report.recommendedMaxCatalogEntries);
+    EXPECT_EQ(0u, report.recommendedCatalogBytes);
 }
 
 TEST(PackCompositionContract, InspectInitReturnsProviderBorrowOnEveryExit) {
     (void)Vn_Term();
     ASSERT_EQ(nullptr, harken::detail::ActiveEngine());
     struct Provider {
-        std::vector<std::uint8_t> bytes = BuildMinimalInit();
+        std::vector<std::uint8_t> bytes = BuildInit();
         unsigned acquired = 0;
         unsigned released = 0;
         unsigned active = 0;
@@ -1757,7 +1596,7 @@ TEST(PackCompositionContract, InspectInitReturnsProviderBorrowOnEveryExit) {
             EXPECT_EQ(0u, provider.active);
             if (mode == 1) {
                 EXPECT_EQ(11u, report.packStableId);
-                EXPECT_EQ(2u, report.catalogEntries);
+                EXPECT_EQ(0u, report.catalogEntries);
             }
             EXPECT_EQ(nullptr, harken::detail::ActiveEngine());
         }
@@ -1769,7 +1608,7 @@ TEST(PackCompositionContract, InspectInitReturnsProviderBorrowOnEveryExit) {
 TEST(PackCompositionContract, InspectInitResolvesAndEnforcesContainmentRootWithoutEngine) {
     (void)Vn_Term();
     ASSERT_EQ(nullptr, harken::detail::ActiveEngine());
-    const auto bytes = BuildMinimalInit();
+    const auto bytes = BuildInit();
     const std::string root = HARKEN_TEMP_DIR "/f2-inspect-root";
     const auto inside = WriteTemp("f2-inspect-root/Init.pack", bytes);
     const auto outside = WriteTemp("f2-inspect-outside.pack", bytes);
@@ -1799,7 +1638,7 @@ TEST(PackCompositionContract, InspectInitResolvesAndEnforcesContainmentRootWitho
         EXPECT_EQ(item.result, report.result);
         if (item.result == VN_OK) {
             EXPECT_EQ(11u, report.packStableId);
-            EXPECT_EQ(2u, report.catalogEntries);
+            EXPECT_EQ(0u, report.catalogEntries);
         }
         EXPECT_EQ(nullptr, harken::detail::ActiveEngine());
     }
@@ -1809,7 +1648,7 @@ TEST(PackCompositionContract, InspectInitResolvesAndEnforcesContainmentRootWitho
 TEST(PackCompositionContract, InspectInitRejectsUnresolvableContainmentRoot) {
     (void)Vn_Term();
     ASSERT_EQ(nullptr, harken::detail::ActiveEngine());
-    const auto bytes = BuildMinimalInit();
+    const auto bytes = BuildInit();
     const std::string root = HARKEN_TEMP_DIR "/f2-inspect-loop-root";
     const auto outside = WriteTemp("f2-inspect-loop-outside.pack", bytes);
     std::error_code ec;
@@ -1831,36 +1670,26 @@ TEST(PackCompositionContract, InspectInitRejectsUnresolvableContainmentRoot) {
 #endif
 
 TEST(PackComposition, KnownUnloadedAndAbsentStayDistinct) {
-    const std::vector<std::uint8_t> bytes = BuildMinimalInit();
-    const std::string path = WriteTemp("f2-known-unloaded.pack", bytes);
-    EngineSession session(MakeNullConfig());
-    ASSERT_EQ(VN_OK, session.InitResult());
-    VnPackLoadDesc desc{};
-    desc.structSize = sizeof(desc);
-    desc.utf8Path = path.c_str();
-    VnPackHandle handle = 0;
-    VnCanonicalPackSetMemberV1 member{};
-    member.structSize = sizeof(member);
-    member.packStableId = 11;
-    member.packKind = VN_CANONICAL_PACK_SET_MEMBER_INIT;
-    member.utf8Path = path.c_str();
-    VnCanonicalPackSetMemberResultV1 output{};
-    output.structSize = sizeof(output);
-    VnCanonicalPackSetActivationReportV1 activation{};
-    ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(
-                          &member, 1, &output, activation));
-    handle = activation.initHandle;
-    VnPostActionDesc post{};
-    post.structSize = sizeof(post);
-    post.actionId = harkentest::ObjectId(2002);
-    VnActionFiringHandle firing = 0;
-    EXPECT_EQ(VN_CONTENT_NOT_LOADED, Vn_PostAction(&post, &firing));
-    post.actionId = harkentest::ObjectId(9999);
-    EXPECT_EQ(VN_UNKNOWN_ID, Vn_PostAction(&post, &firing));
+    PackCanonicalImage catalog;
+    catalog.hasCatalog = true;
+    catalog.packKind = kPackKindInit;
+    catalog.packStableId = 11;
+    PackInitCatalogRow row;
+    row.stableId = harkentest::ObjectId(2002);
+    row.identityClass = kInitCatalogIdentityClassAction;
+    row.ownerPackStableId = 22;
+    catalog.catalogRows.push_back(row);
+    catalog.catalogHeader.catalogEntryCount = 1;
+    PackComposition composition(1);
+    ASSERT_EQ(VN_OK, composition.Commit({}, &catalog, 11, 8, 0));
+    EXPECT_EQ(PackIdentityReadiness::KnownUnloaded,
+              composition.Lookup(harkentest::ObjectId(2002)).readiness);
+    EXPECT_EQ(PackIdentityReadiness::Absent,
+              composition.Lookup(harkentest::ObjectId(9999)).readiness);
 }
 
 TEST(PackComposition, OldDescRefusesCanonicalKind) {
-    const std::vector<std::uint8_t> bytes = BuildMinimalInit();
+    const std::vector<std::uint8_t> bytes = BuildInit();
     const std::string path = WriteTemp("f2-old-desc.pack", bytes);
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1877,7 +1706,7 @@ TEST(PackComposition, OldDescRefusesCanonicalKind) {
 }
 
 TEST(PackCompositionContract, PackThenDirectWorldConflicts) {
-    const std::vector<std::uint8_t> bytes = BuildMinimalInit();
+    const std::vector<std::uint8_t> bytes = BuildInit();
     const std::string path = WriteTemp("f2-authority.pack", bytes);
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1909,9 +1738,7 @@ TEST(PackComposition, KeptPackAIdentitySurvivesPackBUnload) {
         BuildContentPack(22, 1, 7, harkentest::ObjectId(2002));
     const std::vector<std::uint8_t> packBBytes =
         BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBBytes.data(), packBBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath = WriteTemp("f2-keep-a-init.pack", initBytes);
     const std::string packAPath = WriteTemp("f2-keep-a.pack", packABytes);
     const std::string packBPath = WriteTemp("f2-keep-b.pack", packBBytes);
@@ -1990,7 +1817,7 @@ TEST(PackComposition, KeptPackAIdentitySurvivesPackBUnload) {
     firing = 0;
     EXPECT_EQ(VN_OK, Vn_PostAction(&post, &firing));
     EXPECT_NE(0u, firing);
-    EXPECT_EQ(VN_CONTENT_NOT_LOADED, [&] {
+    EXPECT_EQ(VN_UNKNOWN_ID, [&] {
         post.actionId = harkentest::ObjectId(3003);
         return Vn_PostAction(&post, &firing);
     }());
@@ -2001,9 +1828,7 @@ TEST(PackComposition, ImmediateSetValueAppliesFromLoadedPack) {
         BuildContentPack(22, 1, 7, harkentest::ObjectId(2002));
     const std::vector<std::uint8_t> packBBytes =
         BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBBytes.data(), packBBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath = WriteTemp("f2-setvalue-init.pack", initBytes);
     const std::string packAPath = WriteTemp("f2-setvalue-a.pack", packABytes);
     const std::string packBPath = WriteTemp("f2-setvalue-b.pack", packBBytes);
@@ -2068,7 +1893,7 @@ TEST(PackComposition, FirstInitPublicationTerminatesProvisionalContentWritesOnly
     const auto contentBytes = BuildContentPack(22, 1, 7, harkentest::ObjectId(2002));
     const auto contentPath = WriteTemp("variable-publication-content.pack", contentBytes);
     const auto initPath = WriteTemp("variable-publication-init.pack",
-        BuildKeepIdentityInit(Fnv1a64(contentBytes.data(), contentBytes.size()), 0));
+        BuildInit());
     const auto provisionalWorld = e.variables.CurrentWorldGeneration();
     const auto initialPublication = e.packComposition.PublishedHandle();
     VnPackLoadDesc desc{};
@@ -2179,7 +2004,7 @@ protected:
 
     void Load(const std::vector<std::uint8_t>& bytes) {
         ASSERT_EQ(VN_OK, session.InitResult());
-        const auto init = BuildKeepIdentityInit(Fnv1a64(bytes.data(), bytes.size()), 0);
+        const auto init = BuildInit();
         const auto initPath = WriteTemp("native-slice-init.pack", init);
         const auto path = WriteTemp("native-slice-content.pack", bytes);
         VnCanonicalPackSetMemberV1 members[2]{};
@@ -2227,7 +2052,7 @@ protected:
         const PackComposition::PublishedView* expected = nullptr;
         const ActionProgramViewV1* action = nullptr;
         std::uint64_t partition = 0;
-        std::uint64_t checksum = 0;
+        std::uint64_t contentRevision = 0;
         PackResourceRevisionToken resource = 0;
         VnResult result = VN_OK;
         mutable std::uint32_t calls = 0;
@@ -2244,28 +2069,28 @@ protected:
                 view.lease.resourceToken == check.resource &&
                 view.lease.leaseToken != 0 && view.lease.resourceClosureToken != 0 &&
                 view.lease.compositeGeneration == view.publication->compositeGeneration;
-            bool checksumMatches = false;
+            bool contentRevisionMatches = false;
             if (view.publication != nullptr) {
-                for (const auto& row : view.publication->catalog.catalogRows) {
-                    if (row.ownerPackStableId == 22) {
-                        checksumMatches = row.expectedContentHash == check.checksum;
+                for (const auto& owner : view.publication->owners) {
+                    if (owner.packStableId == 22) {
+                        contentRevisionMatches = owner.contentRevision == check.contentRevision;
                     }
                 }
             }
-            check.matched = check.matched && checksumMatches;
+            check.matched = check.matched && contentRevisionMatches;
             return check.matched ? check.result : VN_STALE_HANDLE;
         }
     };
 
-    Validation Expected(const std::vector<std::uint8_t>& bytes) {
+    Validation Expected() {
         const auto& composition = session.Engine()->packComposition;
         const auto* published = composition.Published();
         Validation check;
         check.expected = published;
         check.action = composition.FindActionIn(*published, harkentest::ObjectId(2002)).programView;
-        check.checksum = Fnv1a64(bytes.data(), bytes.size());
         for (const auto& owner : published->owners) {
             if (owner.packStableId == 22) {
+                check.contentRevision = owner.contentRevision;
                 check.partition = owner.partitionRevision;
                 check.resource = owner.resourceToken;
             }
@@ -2345,7 +2170,7 @@ TEST_F(NativeSlicePack, ValidatorRefusalHasNoEffectsAndRawPostStillSucceeds) {
     const auto bytes = BuildContentPack(22, 1, 7, harkentest::ObjectId(2002));
     ASSERT_NO_FATAL_FAILURE(Load(bytes));
     auto& e = *session.Engine();
-    auto check = Expected(bytes);
+    auto check = Expected();
     check.result = VN_CAPABILITY_UNAVAILABLE;
     const auto before = State();
     auto post = Post();
@@ -2374,7 +2199,7 @@ TEST_F(NativeSlicePack, AcceptedValidatorExecutesOnceAndReleasesItsOwnerNormally
     const auto bytes = BuildContentPack(22, 1, 7, harkentest::ObjectId(2002));
     ASSERT_NO_FATAL_FAILURE(Load(bytes));
     auto& e = *session.Engine();
-    auto check = Expected(bytes);
+    auto check = Expected();
     auto post = Post();
     const auto before = State();
     VnActionFiringHandle firing = 0;
@@ -2410,7 +2235,7 @@ TEST_F(NativeSlicePack, AcceptedValidatorExecutesOnceAndReleasesItsOwnerNormally
 TEST_F(NativeSlicePack, EarlierFailuresNeverInvokeValidator) {
     const auto bytes = BuildContentPack(22, 1, 7, harkentest::ObjectId(2002));
     ASSERT_NO_FATAL_FAILURE(Load(bytes));
-    auto check = Expected(bytes);
+    auto check = Expected();
     auto post = Post();
     const auto before = State();
     VnActionFiringHandle firing = 99;
@@ -2433,7 +2258,7 @@ TEST_F(NativeSlicePack, EarlierFailuresNeverInvokeValidator) {
     ASSERT_EQ(VN_OK, Vn_DestroyEmitter(stale));
     post.emitter = stale;
     for (const auto& [id, result] : std::array<std::pair<VnActionId, VnResult>, 3>{
-             {{harkentest::ObjectId(2002), VN_STALE_HANDLE}, {harkentest::ObjectId(3003), VN_CONTENT_NOT_LOADED}, {harkentest::ObjectId(9999), VN_UNKNOWN_ID}}}) {
+             {{harkentest::ObjectId(2002), VN_STALE_HANDLE}, {harkentest::ObjectId(3003), VN_UNKNOWN_ID}, {harkentest::ObjectId(9999), VN_UNKNOWN_ID}}}) {
         post.actionId = id;
         firing = 99;
         EXPECT_EQ(result, detail::PostActionWithValidation(&post, &firing, Validation::Check, &check));
@@ -2448,7 +2273,7 @@ TEST_F(NativeSlicePack, ReplacedContentRejectsOldContextAndAcceptsFreshContext) 
     const auto bytes = BuildContentPack(22, 1, 7, harkentest::ObjectId(2002));
     ASSERT_NO_FATAL_FAILURE(Load(bytes));
     const auto oldPublication = session.Engine()->packComposition.PublishedHandle();
-    auto stale = Expected(bytes);
+    auto stale = Expected();
     const auto next = BuildContentPack(22, 2, 8, harkentest::ObjectId(2002), harkentest::ObjectId(7), 0, 0xbf000000u);
     ASSERT_EQ(VN_OK, Replace(next));
     EXPECT_NE(oldPublication.get(), session.Engine()->packComposition.Published());
@@ -2460,7 +2285,7 @@ TEST_F(NativeSlicePack, ReplacedContentRejectsOldContextAndAcceptsFreshContext) 
     EXPECT_FALSE(stale.matched);
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(before, State());
-    auto fresh = Expected(next);
+    auto fresh = Expected();
     ASSERT_EQ(VN_OK, detail::PostActionWithValidation(&post, &firing, Validation::Check, &fresh));
     EXPECT_EQ(1u, fresh.calls);
     EXPECT_TRUE(fresh.matched);
@@ -2612,9 +2437,7 @@ TEST(PackComposition,
         harkentest::MakeDC(8, 0.75f));
     const std::vector<std::uint8_t> packABytes = BuildPostActionPack(
         22, 1, 7, harkentest::ObjectId(2002), harkentest::ObjectId(3003), childFingerprint, 33);
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBOldBytes.data(), packBOldBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f3-cross-post-init.pack", initBytes);
     const std::string packAPath =
@@ -2711,8 +2534,7 @@ TEST(PackCompositionContract, DelayedPlayKeepsAdmissionPackRevisionAfterReplace)
     const std::vector<std::uint8_t> nextBytes = BuildDelayedPlayPack(
         22, 2, 8, kActionId, kSoundId, harkentest::MakeDC(8, 0.75f),
         1000000000);
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(oldBytes.data(), oldBytes.size()), kActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("u3-delayed-play-init.pack", initBytes);
     const std::string oldPath =
@@ -2785,9 +2607,7 @@ TEST(PackComposition,
         BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(7), 0, kValueBits);
     const std::vector<std::uint8_t> packABytes = BuildPostActionPack(
         22, 1, 7, harkentest::ObjectId(2002), harkentest::ObjectId(3003), childFingerprint, 33);
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBBytes.data(), packBBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f3-cross-post-refuse-init.pack", initBytes);
     const std::string packAPath =
@@ -2846,11 +2666,7 @@ TEST(PackComposition, ReplaceKeepsPinnedOldRevision) {
         BuildContentPack(22, 1, 7, harkentest::ObjectId(2002));
     const std::vector<std::uint8_t> packANextBytes =
         BuildContentPack(22, 8, 8, harkentest::ObjectId(2002), harkentest::ObjectId(7), 0, 0xbf000000u);
-    const std::vector<std::uint8_t> packBBytes =
-        BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBBytes.data(), packBBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath = WriteTemp("f2-replace-pin-init.pack", initBytes);
     const std::string packAPath = WriteTemp("f2-replace-pin-a.pack", packABytes);
     const std::string packANextPath =
@@ -2889,18 +2705,16 @@ TEST(PackComposition, ReplaceKeepsPinnedOldRevision) {
     const PackPartitionLease pinnedLease = before.lease;
     const std::uint64_t oldFileHash =
         Fnv1a64(packABytes.data(), packABytes.size());
-    const std::uint64_t newFileHash =
-        Fnv1a64(packANextBytes.data(), packANextBytes.size());
-    const auto catalogHashFor = [](const PackComposition::PublishedView& view,
+    const auto ownerHashFor = [](const PackComposition::PublishedView& view,
                                    std::uint64_t packStableId) -> std::uint64_t {
-        for (const PackInitCatalogRow& row : view.catalog.catalogRows) {
-            if (row.ownerPackStableId == packStableId) {
-                return row.expectedContentHash;
+        for (const auto& owner : view.owners) {
+            if (owner.packStableId == packStableId) {
+                return owner.contentHash;
             }
         }
         return 0;
     };
-    EXPECT_EQ(oldFileHash, catalogHashFor(*pinnedView, 22));
+    EXPECT_EQ(oldFileHash, ownerHashFor(*pinnedView, 22));
 
     desc.utf8Path = packANextPath.c_str();
     ASSERT_EQ(VN_OK, Vn_ReplacePack(packA, reinterpret_cast<const VnPackDesc*>(&desc)));
@@ -2911,11 +2725,10 @@ TEST(PackComposition, ReplaceKeepsPinnedOldRevision) {
     ASSERT_NE(nullptr, pinnedAction);
     ASSERT_NE(nullptr, pinnedAction->steps);
     EXPECT_EQ(0x3f000000u, pinnedAction->steps[0].valueBits);
-    EXPECT_EQ(oldFileHash, catalogHashFor(*pinnedView, 22));
+    EXPECT_EQ(oldFileHash, ownerHashFor(*pinnedView, 22));
     const auto successor = session.Engine()->packComposition.PublishedHandle();
     ASSERT_NE(nullptr, successor);
     EXPECT_NE(pinnedView.get(), successor.get());
-    EXPECT_EQ(newFileHash, catalogHashFor(*successor, 22));
     EXPECT_EQ(packA, [&] {
         for (const auto& owner : successor->owners) {
             if (owner.packStableId == 22) {
@@ -2977,9 +2790,7 @@ TEST(PackComposition,
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(
                          packBReplacementBytes.data(),
                          packBReplacementBytes.size(), &replacementImage));
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBOldBytes.data(), packBOldBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f2-semantic-replace-init.pack", initBytes);
     const std::string packAPath =
@@ -3070,11 +2881,7 @@ TEST(PackComposition, ReplaceKeepsAnchoredOldDefinitionRevision) {
         BuildContentPack(22, 1, 7, harkentest::ObjectId(2002));
     const std::vector<std::uint8_t> packANextBytes =
         BuildContentPack(22, 8, 8, harkentest::ObjectId(2002), harkentest::ObjectId(7), 0, 0xbf000000u);
-    const std::vector<std::uint8_t> packBBytes =
-        BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBBytes.data(), packBBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f2-replace-anchor-init.pack", initBytes);
     const std::string packAPath =
@@ -3152,11 +2959,7 @@ TEST(PackComposition, RepeatedSemanticRevisionGetsFreshResourceTokens) {
         BuildContentPack(22, 1, 7, harkentest::ObjectId(2002));
     const std::vector<std::uint8_t> successorBytes =
         BuildContentPack(22, 8, 8, harkentest::ObjectId(2002), harkentest::ObjectId(7), 0, 0xbf000000u);
-    const std::vector<std::uint8_t> packBBytes =
-        BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBBytes.data(), packBBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f2-resource-token-init.pack", initBytes);
     const std::string packAPath =
@@ -3238,11 +3041,7 @@ TEST(PackComposition, MultipleAnchoredRevisionsResolveExactPcmUntilReleased) {
     const std::vector<std::uint8_t> packCBytes = BuildContentPack(
         22, 3, 9, harkentest::ObjectId(2002), harkentest::ObjectId(7), 0, 0x3e800000u, kSoundId,
         harkentest::MakeDC(8, 0.75f));
-    const std::vector<std::uint8_t> catalogPeerBytes =
-        BuildContentPack(33, 1, 10, harkentest::ObjectId(3003), harkentest::ObjectId(8));
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(catalogPeerBytes.data(), catalogPeerBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f2-multi-anchor-init.pack", initBytes);
     const std::string packAPath =
@@ -3344,10 +3143,7 @@ TEST(PackCompositionContract, ActionAnchorPinsTransitiveProviderResources) {
     const std::vector<std::uint8_t> packCNextBytes = BuildContentPack(
         44, 2, 19, harkentest::ObjectId(4004), harkentest::ObjectId(9), 0, 0xbf000000u, kSoundC,
         harkentest::MakeDC(8, 0.75f));
-    const std::vector<std::uint8_t> initBytes = BuildThreeIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBBytes.data(), packBBytes.size()),
-        Fnv1a64(packCBytes.data(), packCBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f2-closure-init.pack", initBytes);
     const std::string packAPath =
@@ -3448,11 +3244,7 @@ TEST(PackComposition, CanonicalUnloadKeepsAnchoredRevisionUntilRelease) {
     const std::vector<std::uint8_t> packABytes = BuildContentPack(
         22, 1, 7, harkentest::ObjectId(2002), harkentest::ObjectId(7), 0, 0x3f000000u, kSoundId,
         harkentest::MakeDC(8, 0.25f));
-    const std::vector<std::uint8_t> packBBytes =
-        BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBBytes.data(), packBBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f2-unload-anchor-init.pack", initBytes);
     const std::string packAPath =
@@ -3487,7 +3279,7 @@ TEST(PackComposition, CanonicalUnloadKeepsAnchoredRevisionUntilRelease) {
     EXPECT_EQ(0x3f000000u, anchor.action->steps[0].valueBits);
 
     ASSERT_EQ(VN_OK, Vn_UnloadPack(packA));
-    EXPECT_EQ(PackIdentityReadiness::KnownUnloaded,
+    EXPECT_EQ(PackIdentityReadiness::Absent,
               session.Engine()->packComposition.Lookup(harkentest::ObjectId(2002)).readiness);
     EXPECT_FALSE(session.Engine()->registry.Lookup(kSoundId).Valid());
     EXPECT_EQ(1u, session.Engine()->packs.RetiringCount());
@@ -3532,11 +3324,7 @@ TEST(PackComposition, CanonicalUnloadExRefusesAnchorWithoutMutation) {
     const std::vector<std::uint8_t> packABytes = BuildContentPack(
         22, 1, 7, harkentest::ObjectId(2002), harkentest::ObjectId(7), 0, 0x3f000000u, kSoundId,
         harkentest::MakeDC(8, 0.25f));
-    const std::vector<std::uint8_t> packBBytes =
-        BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBBytes.data(), packBBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f2-unload-refuse-anchor-init.pack", initBytes);
     const std::string packAPath =
@@ -4474,11 +4262,7 @@ TEST(PackComposition, ReplaceSwapsPackTableMedia) {
     const std::vector<std::uint8_t> packANextBytes = BuildContentPack(
         22, 8, 8, harkentest::ObjectId(2002), harkentest::ObjectId(7), 0, 0xbf000000u, kSoundId,
         harkentest::MakeDC(8, 0.75f));
-    const std::vector<std::uint8_t> packBBytes =
-        BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBBytes.data(), packBBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f2-replace-media-init.pack", initBytes);
     const std::string packAPath = WriteTemp("f2-replace-media-a.pack", packABytes);
@@ -4557,11 +4341,7 @@ TEST(PackCompositionContract, FailedReplacePublishKeepsPriorMedia) {
     const std::vector<std::uint8_t> packANextBytes = BuildContentPack(
         22, 8, 8, harkentest::ObjectId(2002), harkentest::ObjectId(7), 0, 0xbf000000u, kSoundId,
         harkentest::MakeDC(8, 0.75f));
-    const std::vector<std::uint8_t> packBBytes =
-        BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBBytes.data(), packBBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f2-replace-publish-fail-init.pack", initBytes);
     const std::string packAPath =
@@ -4762,11 +4542,7 @@ TEST(PackCompositionContract, CanonicalUnloadExRefusesOwnedPcmInUse) {
     const std::vector<std::uint8_t> packABytes = BuildContentPack(
         22, 1, 7, harkentest::ObjectId(2002), harkentest::ObjectId(7), 0, 0x3f000000u, kSoundId,
         harkentest::MakeDC(8, 0.25f));
-    const std::vector<std::uint8_t> packBBytes =
-        BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBBytes.data(), packBBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath = WriteTemp("f2-unload-inuse-init.pack", initBytes);
     const std::string packAPath = WriteTemp("f2-unload-inuse-a.pack", packABytes);
 
@@ -4802,7 +4578,7 @@ TEST(PackCompositionContract, CanonicalUnloadExRefusesOwnedPcmInUse) {
     media.useCount->store(0, std::memory_order_release);
     ASSERT_EQ(VN_OK,
               Vn_UnloadPackEx(packA, VN_PACK_UNLOAD_REFUSE_IF_USED));
-    EXPECT_EQ(PackIdentityReadiness::KnownUnloaded,
+    EXPECT_EQ(PackIdentityReadiness::Absent,
               session.Engine()->packComposition.Lookup(harkentest::ObjectId(2002)).readiness);
 }
 
@@ -4816,8 +4592,7 @@ TEST(PackComposition, DelayedPlayUnloadExRefusesWhileDeferred) {
     const std::vector<std::uint8_t> packBytes = BuildDelayedPlayPack(
         22, 1, 7, kActionId, kSoundId, harkentest::MakeDC(8, 0.25f),
         1000000000);
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("u3-unload-ex-refuse-init.pack", initBytes);
     const std::string packPath =
@@ -4881,7 +4656,7 @@ TEST(PackComposition, DelayedPlayUnloadExRefusesWhileDeferred) {
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
     ASSERT_EQ(VN_OK,
               Vn_UnloadPackEx(pack, VN_PACK_UNLOAD_REFUSE_IF_USED));
-    EXPECT_EQ(PackIdentityReadiness::KnownUnloaded,
+    EXPECT_EQ(PackIdentityReadiness::Absent,
               session.Engine()->packComposition.Lookup(kActionId).readiness);
 }
 
@@ -4891,8 +4666,7 @@ TEST(PackComposition, DelayedPlayUnloadRetiresAdmissionRevision) {
     const std::vector<std::uint8_t> packBytes = BuildDelayedPlayPack(
         22, 1, 7, kActionId, kSoundId, harkentest::MakeDC(8, 0.25f),
         1000000000);
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("u3-unload-retire-init.pack", initBytes);
     const std::string packPath =
@@ -4930,7 +4704,7 @@ TEST(PackComposition, DelayedPlayUnloadRetiresAdmissionRevision) {
     EXPECT_NE(0u, record.targetPackLease.leaseToken);
 
     ASSERT_EQ(VN_OK, Vn_UnloadPackEx(pack, 0));
-    EXPECT_EQ(PackIdentityReadiness::KnownUnloaded,
+    EXPECT_EQ(PackIdentityReadiness::Absent,
               session.Engine()->packComposition.Lookup(kActionId).readiness);
     EXPECT_FALSE(session.Engine()->registry.Lookup(kSoundId).Valid());
     EXPECT_EQ(1u, session.Engine()->packs.RetiringCount());
@@ -4958,11 +4732,7 @@ TEST(PackComposition, CanonicalUnloadRetiresLivePcmUntilVoiceDrains) {
     const std::vector<std::uint8_t> packABytes = BuildContentPack(
         22, 1, 7, harkentest::ObjectId(2002), harkentest::ObjectId(7), 0, 0x3f000000u, kSoundId,
         harkentest::MakeDC(8, 0.25f));
-    const std::vector<std::uint8_t> packBBytes =
-        BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBBytes.data(), packBBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f2-unload-live-use-init.pack", initBytes);
     const std::string packAPath =
@@ -4999,7 +4769,7 @@ TEST(PackComposition, CanonicalUnloadRetiresLivePcmUntilVoiceDrains) {
     ASSERT_EQ(VN_OK, Vn_UnloadPack(packA));
     EXPECT_FALSE(session.Engine()->registry.Lookup(kSoundId).Valid());
     EXPECT_EQ(1u, session.Engine()->packs.RetiringCount());
-    EXPECT_EQ(PackIdentityReadiness::KnownUnloaded,
+    EXPECT_EQ(PackIdentityReadiness::Absent,
               session.Engine()->packComposition.Lookup(harkentest::ObjectId(2002)).readiness);
 
     media.useCount->store(0, std::memory_order_release);
@@ -5013,11 +4783,7 @@ TEST(PackComposition, CanonicalUnloadRetiresLivePcmUntilVoiceDrains) {
 
 TEST(PackComposition, RootActivationResolvesExplicitMemberPaths) {
     const auto packABytes = BuildContentPack(22, 1, 7, harkentest::ObjectId(2002));
-    const auto packBBytes = BuildContentPack(
-        33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
-    const auto initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBBytes.data(), packBBytes.size()));
+    const auto initBytes = BuildInit();
     const std::string root = HARKEN_TEMP_DIR "/f2-root-activate";
     WriteTemp("f2-root-activate/Init.pack", initBytes);
     WriteTemp("f2-root-activate/ActionA.pack", packABytes);
@@ -5053,14 +4819,10 @@ TEST(PackComposition, RootActivationResolvesExplicitMemberPaths) {
     EXPECT_NE(0u, firing);
 }
 
-TEST(PackComposition, ProvisionalRootLoadResolvesCatalogLocator) {
+TEST(PackComposition, ProvisionalRootLoadResolvesExplicitPath) {
     const std::vector<std::uint8_t> packABytes =
         BuildContentPack(22, 1, 7, harkentest::ObjectId(2002));
-    const std::vector<std::uint8_t> packBBytes =
-        BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBBytes.data(), packBBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string root = std::string(HARKEN_TEMP_DIR "/f2-root-load");
     const std::string initPath = WriteTemp("f2-root-load/Init.pack", initBytes);
     WriteTemp("f2-root-load/ActionA.pack", packABytes);
@@ -5076,7 +4838,7 @@ TEST(PackComposition, ProvisionalRootLoadResolvesCatalogLocator) {
     ASSERT_EQ(VN_OK, harkentest::ActivateInitLoadDescV1(desc, 11, &initHandle));
 
     desc.packStableId = 22;
-    desc.utf8Path = nullptr;
+    desc.utf8Path = "ActionA.pack";
     VnPackHandle packA = 0;
     ASSERT_EQ(VN_OK, harken::LoadProvisionalCanonicalContentForTests(
                           *session.Engine(), &desc, &packA));
@@ -5090,14 +4852,8 @@ TEST(PackComposition, ProvisionalRootLoadResolvesCatalogLocator) {
     EXPECT_NE(0u, firing);
 }
 
-TEST(PackComposition, ProvisionalRootLoadRefusesEscapingLocator) {
-    const std::vector<std::uint8_t> packABytes =
-        BuildContentPack(22, 1, 7, harkentest::ObjectId(2002));
-    const std::vector<std::uint8_t> packBBytes =
-        BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBBytes.data(), packBBytes.size()));
+TEST(PackComposition, ProvisionalRootLoadRefusesEscapingExplicitPath) {
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string root = std::string(HARKEN_TEMP_DIR "/f2-root-escape");
     WriteTemp("f2-root-escape/Init.pack", initBytes);
 
@@ -5111,28 +4867,15 @@ TEST(PackComposition, ProvisionalRootLoadRefusesEscapingLocator) {
     VnPackHandle initHandle = 0;
     ASSERT_EQ(VN_OK, harkentest::ActivateInitLoadDescV1(desc, 11, &initHandle));
 
-    auto* published = const_cast<PackComposition::PublishedView*>(
-        session.Engine()->packComposition.Published());
-    ASSERT_NE(nullptr, published);
-    PackInitCatalogRow* ownerRow = nullptr;
-    for (PackInitCatalogRow& row : published->catalog.catalogRows) {
-        if (row.ownerPackStableId == 22) {
-            ownerRow = &row;
-            break;
-        }
-    }
-    ASSERT_NE(nullptr, ownerRow);
-    FillLocator(ownerRow, "../escape.pack");
-
     desc.packStableId = 22;
-    desc.utf8Path = nullptr;
+    desc.utf8Path = "../escape.pack";
     VnPackHandle packA = 0;
     EXPECT_EQ(VN_PACK_PATH_ESCAPE,
               harken::LoadProvisionalCanonicalContentForTests(
                   *session.Engine(), &desc, &packA));
     EXPECT_EQ(0u, packA);
 
-    FillLocator(ownerRow, "C:/abs.pack");
+    desc.utf8Path = "C:/abs.pack";
     packA = 0;
     EXPECT_EQ(VN_PACK_PATH_ESCAPE,
               harken::LoadProvisionalCanonicalContentForTests(
@@ -5140,17 +4883,15 @@ TEST(PackComposition, ProvisionalRootLoadRefusesEscapingLocator) {
     EXPECT_EQ(0u, packA);
 }
 
-TEST(PackComposition, ProvisionalRootLoadRefusesContentHashMismatch) {
+TEST(PackComposition, ProvisionalRootLoadRefusesCorruptPayload) {
     const std::vector<std::uint8_t> packABytes =
         BuildContentPack(22, 1, 7, harkentest::ObjectId(2002));
-    const std::vector<std::uint8_t> packBBytes =
-        BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()) ^ 1ull,
-        Fnv1a64(packBBytes.data(), packBBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string root = std::string(HARKEN_TEMP_DIR "/f2-root-hash");
     WriteTemp("f2-root-hash/Init.pack", initBytes);
-    WriteTemp("f2-root-hash/ActionA.pack", packABytes);
+    auto corrupt = packABytes;
+    corrupt.back() ^= 1;
+    WriteTemp("f2-root-hash/ActionA.pack", corrupt);
 
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -5163,24 +4904,20 @@ TEST(PackComposition, ProvisionalRootLoadRefusesContentHashMismatch) {
     ASSERT_EQ(VN_OK, harkentest::ActivateInitLoadDescV1(desc, 11, &initHandle));
 
     desc.packStableId = 22;
-    desc.utf8Path = nullptr;
+    desc.utf8Path = "ActionA.pack";
     VnPackHandle packA = 0;
-    EXPECT_EQ(VN_PACK_HASH_MISMATCH,
+    EXPECT_EQ(VN_BAD_PACK,
               harken::LoadProvisionalCanonicalContentForTests(
                   *session.Engine(), &desc, &packA));
     EXPECT_EQ(0u, packA);
-    EXPECT_EQ(PackIdentityReadiness::KnownUnloaded,
+    EXPECT_EQ(PackIdentityReadiness::Absent,
               session.Engine()->packComposition.Lookup(harkentest::ObjectId(2002)).readiness);
 }
 
 TEST(PackComposition, RequiredSelfEdgeIsCycle) {
     const std::vector<std::uint8_t> packABytes =
         BuildContentPack(22, 1, 7, harkentest::ObjectId(2002), harkentest::ObjectId(7), 22);
-    const std::vector<std::uint8_t> packBBytes =
-        BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBBytes.data(), packBBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath = WriteTemp("f2-cycle-init.pack", initBytes);
     const std::string packAPath = WriteTemp("f2-cycle-a.pack", packABytes);
 
@@ -5210,7 +4947,7 @@ TEST(PackComposition, RequiredSelfEdgeIsCycle) {
     EXPECT_EQ(0u, rows[1].handle);
     EXPECT_EQ(published.get(), session.Engine()->packComposition.Published());
     EXPECT_EQ(generation, session.Engine()->packComposition.CompositeGeneration());
-    EXPECT_EQ(PackIdentityReadiness::KnownUnloaded,
+    EXPECT_EQ(PackIdentityReadiness::Absent,
               session.Engine()->packComposition.Lookup(harkentest::ObjectId(2002)).readiness);
 }
 
@@ -5219,9 +4956,7 @@ TEST(PackComposition, RequiredConsumerBlocksProviderUnload) {
         BuildContentPack(22, 1, 7, harkentest::ObjectId(2002));
     const std::vector<std::uint8_t> packBBytes =
         BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8), 22);
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBBytes.data(), packBBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath = WriteTemp("f2-inuse-init.pack", initBytes);
     const std::string packAPath = WriteTemp("f2-inuse-a.pack", packABytes);
     const std::string packBPath = WriteTemp("f2-inuse-b.pack", packBBytes);
@@ -5258,7 +4993,7 @@ TEST(PackComposition, RequiredConsumerBlocksProviderUnload) {
 
     ASSERT_EQ(VN_OK, Vn_UnloadPack(packB));
     ASSERT_EQ(VN_OK, Vn_UnloadPack(packA));
-    EXPECT_EQ(PackIdentityReadiness::KnownUnloaded,
+    EXPECT_EQ(PackIdentityReadiness::Absent,
               session.Engine()->packComposition.Lookup(harkentest::ObjectId(2002)).readiness);
 }
 
@@ -5267,9 +5002,7 @@ TEST(PackComposition, ActivationWithIdenticalVariableKeepsCommittedState) {
         22, 1, 7, harkentest::ObjectId(2002), harkentest::ObjectId(7));
     const auto packBBytes = BuildContentPack(
         33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(7));
-    const auto initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBBytes.data(), packBBytes.size()));
+    const auto initBytes = BuildInit();
     const std::string paths[] = {
         WriteTemp("f2-identical-set-init.pack", initBytes),
         WriteTemp("f2-identical-set-a.pack", packABytes),
@@ -5326,9 +5059,7 @@ TEST(PackComposition, ProvisionalIdenticalVariableKeepsActionPointerAndState) {
         BuildContentPack(22, 1, 7, harkentest::ObjectId(2002), harkentest::ObjectId(7));
     const std::vector<std::uint8_t> packBBytes =
         BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(7));
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBBytes.data(), packBBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath = WriteTemp("f2-rollback-init.pack", initBytes);
     const std::string packAPath = WriteTemp("f2-rollback-a.pack", packABytes);
     const std::string packBPath = WriteTemp("f2-rollback-b.pack", packBBytes);
@@ -5380,7 +5111,7 @@ TEST(PackComposition, ProvisionalIdenticalVariableKeepsActionPointerAndState) {
 }
 
 TEST(PackComposition, OrdinaryInitUnloadIsLifecycle) {
-    const std::vector<std::uint8_t> bytes = BuildMinimalInit();
+    const std::vector<std::uint8_t> bytes = BuildInit();
     const std::string path = WriteTemp("f2-init-unload.pack", bytes);
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -5418,7 +5149,7 @@ std::vector<std::uint8_t> BuildMinimalWorldArtifact() {
 
 TEST(PackComposition, DirectWorldThenPackConflicts) {
     const std::vector<std::uint8_t> worldBytes = BuildMinimalWorldArtifact();
-    const std::vector<std::uint8_t> initBytes = BuildMinimalInit();
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string worldPath = WriteTemp("f2-direct-then-pack.vnworld", worldBytes);
     const std::string initPath = WriteTemp("f2-direct-then-pack-init.pack", initBytes);
 
@@ -5446,40 +5177,11 @@ TEST(PackComposition, DirectWorldThenPackConflicts) {
     EXPECT_EQ(nullptr, session.Engine()->packComposition.Published());
 }
 
-TEST(PackCompositionContract, CatalogOverBudgetPublishesNothing) {
-    const std::vector<std::uint8_t> bytes = BuildMinimalInit();
-    const std::string path = WriteTemp("f2-catalog-capacity.pack", bytes);
-    VnPackLoadDesc inspect{};
-    inspect.structSize = sizeof(inspect);
-    inspect.utf8Path = path.c_str();
-    VnInitPackInspectReport report{};
-    report.structSize = sizeof(report);
-    ASSERT_EQ(VN_OK, Vn_InspectInitPack(&inspect, &report));
-    ASSERT_GT(report.catalogEntries, 0u);
 
-    VnConfig config = MakeNullConfig();
-    config.maxCatalogEntries =
-        static_cast<std::uint32_t>(report.catalogEntries - 1);
-    EngineSession session(config);
-    ASSERT_EQ(VN_OK, session.InitResult());
-    VnPackLoadDesc desc{};
-    desc.structSize = sizeof(desc);
-    desc.utf8Path = path.c_str();
-    VnPackHandle handle = 0;
-    EXPECT_EQ(VN_PACK_CATALOG_CAPACITY,
-              harkentest::ActivateInitLoadDescV1(desc, 11, &handle));
-    EXPECT_EQ(0u, handle);
-    EXPECT_EQ(PackAuthorityMode::Unspecified,
-              session.Engine()->packComposition.Authority());
-    EXPECT_EQ(nullptr, session.Engine()->packComposition.Published());
-}
 
 TEST(PackComposition, ResidentOverBudgetKeepsInitComposite) {
     const std::vector<std::uint8_t> packABytes = BuildContentPack(22, 1, 7, harkentest::ObjectId(2002));
-    const std::vector<std::uint8_t> packBBytes = BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBBytes.data(), packBBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     PackCanonicalImage initImage;
     PackCanonicalImage contentImage;
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(initBytes.data(), initBytes.size(),
@@ -5530,7 +5232,7 @@ TEST(PackComposition, ResidentOverBudgetKeepsInitComposite) {
     ASSERT_NE(nullptr, session.Engine()->packComposition.Published());
     EXPECT_EQ(initHandle,
               session.Engine()->packComposition.Published()->initHandle);
-    EXPECT_EQ(PackIdentityReadiness::KnownUnloaded,
+    EXPECT_EQ(PackIdentityReadiness::Absent,
               session.Engine()->packComposition.Lookup(harkentest::ObjectId(2002)).readiness);
 }
 
@@ -5588,7 +5290,7 @@ TEST(PackCompositionContract, ProviderSpanReleasedAfterAllocationException) {
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     struct Provider {
-        std::vector<std::uint8_t> bytes = BuildInitWithoutCatalog();
+        std::vector<std::uint8_t> bytes = BuildInit();
         unsigned released = 0;
         bool fail = true;
     } provider;
@@ -5634,9 +5336,7 @@ TEST(PackCompositionContract, TraceOffReplacementTailCannotFailAfterCommit) {
         22, 1, 7, harkentest::ObjectId(2002), harkentest::ObjectId(7), 33);
     const auto providerBytes = BuildContentPack(
         33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
-    const auto initBytes = BuildKeepIdentityInit(
-        Fnv1a64(oldBytes.data(), oldBytes.size()),
-        Fnv1a64(providerBytes.data(), providerBytes.size()));
+    const auto initBytes = BuildInit();
     const std::string paths[] = {
         WriteTemp("trace-tail-init.pack", initBytes),
         WriteTemp("trace-tail-consumer.pack", oldBytes),
@@ -5727,10 +5427,7 @@ TEST(PackCompositionContract, TraceOnReplacementPreservesRequiredClosureOrder) {
         33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
     const auto c = BuildContentPack(
         44, 1, 10, harkentest::ObjectId(4004), harkentest::ObjectId(9));
-    const auto hashB = Fnv1a64(b.data(), b.size());
-    const auto hashC = Fnv1a64(c.data(), c.size());
-    const auto init = BuildThreeIdentityInit(
-        Fnv1a64(oldBytes.data(), oldBytes.size()), hashB, hashC);
+    const auto init = BuildInit();
     const std::string paths[] = {
         WriteTemp("trace-closure-init.pack", init),
         WriteTemp("trace-closure-a.pack", oldBytes),
@@ -5796,15 +5493,12 @@ TEST(PackCompositionContract, TraceOnReplacementPreservesRequiredClosureOrder) {
             EXPECT_EQ(2u, read(tail, 4));
             EXPECT_EQ(22u, read(tail + 4, 8));
             EXPECT_EQ(2u, read(tail + 12, 8));
-            EXPECT_EQ(Fnv1a64(nextBytes.data(), nextBytes.size()), read(tail + 20, 8));
-            EXPECT_EQ(0u, read(tail + 28, 4));
+                    EXPECT_EQ(0u, read(tail + 28, 4));
             EXPECT_EQ(0u, read(tail + 32, 4));
             EXPECT_EQ(2u, read(tail + 36, 4));
             EXPECT_EQ(44u, read(tail + 40, 8));
-            EXPECT_EQ(hashC, read(tail + 48, 8));
-            EXPECT_EQ(33u, read(tail + 56, 8));
-            EXPECT_EQ(hashB, read(tail + 64, 8));
-            EXPECT_EQ(generation, read(tail + 72, 8));
+                    EXPECT_EQ(33u, read(tail + 56, 8));
+                    EXPECT_EQ(generation, read(tail + 72, 8));
             EXPECT_EQ(4u, read(tail + 80, 4));
         }
         offset += payloadBytes;
@@ -5815,11 +5509,7 @@ TEST(PackCompositionContract, TraceOnReplacementPreservesRequiredClosureOrder) {
 
 TEST(PackComposition, InjectedComposeFaultsKeepPriorGeneration) {
     const std::vector<std::uint8_t> packABytes = BuildContentPack(22, 1, 7, harkentest::ObjectId(2002));
-    const std::vector<std::uint8_t> packBBytes =
-        BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
-    const std::vector<std::uint8_t> initBytes = BuildKeepIdentityInit(
-        Fnv1a64(packABytes.data(), packABytes.size()),
-        Fnv1a64(packBBytes.data(), packBBytes.size()));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath = WriteTemp("f2-fault-init.pack", initBytes);
     const std::string packAPath = WriteTemp("f2-fault-a.pack", packABytes);
 
@@ -5847,7 +5537,7 @@ TEST(PackComposition, InjectedComposeFaultsKeepPriorGeneration) {
         session.Engine()->packComposition.CompositeGeneration();
     const auto published = session.Engine()->packComposition.PublishedHandle();
     ASSERT_NE(nullptr, published);
-    EXPECT_EQ(PackIdentityReadiness::KnownUnloaded,
+    EXPECT_EQ(PackIdentityReadiness::Absent,
               session.Engine()->packComposition.Lookup(harkentest::ObjectId(2002)).readiness);
 
     struct Case {
@@ -5873,7 +5563,7 @@ TEST(PackComposition, InjectedComposeFaultsKeepPriorGeneration) {
                   session.Engine()->packComposition.CompositeGeneration());
         EXPECT_EQ(published,
                   session.Engine()->packComposition.PublishedHandle());
-        EXPECT_EQ(PackIdentityReadiness::KnownUnloaded,
+        EXPECT_EQ(PackIdentityReadiness::Absent,
                   session.Engine()->packComposition.Lookup(harkentest::ObjectId(2002)).readiness);
         SetPackStagingFaultForTests(PackStagingFault::None);
     }
@@ -6043,8 +5733,7 @@ TEST(PackComposition, ProvisionalActionMediaSharesStorageAndSurvivesEitherUnload
                                            soundId, harkentest::MakeDC(8, 0.25f));
             const auto b = BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8), 0, 0x3f000000u,
                                            soundId, harkentest::MakeDC(8, 0.25f));
-            const auto init = BuildKeepIdentityInit(Fnv1a64(a.data(), a.size()),
-                                                    Fnv1a64(b.data(), b.size()));
+            const auto init = BuildInit();
             const std::string paths[] = {WriteTemp("self-contained-init.pack", init),
                 WriteTemp("self-contained-a.pack", a), WriteTemp("self-contained-b.pack", b)};
             EngineSession session(MakeNullConfig());
@@ -6101,8 +5790,7 @@ TEST(PackCompositionContract, SharedMediaConflictAndReplacementAreTransactional)
                                          soundId, harkentest::MakeDC(8, 0.5f));
     const auto unchanged = BuildContentPack(22, 2, 8, harkentest::ObjectId(2002), harkentest::ObjectId(7), 0, 0xbf000000u,
                                            soundId, harkentest::MakeDC(8, 0.25f));
-    const auto init = BuildKeepIdentityInit(Fnv1a64(a.data(), a.size()),
-                                            Fnv1a64(b.data(), b.size()));
+    const auto init = BuildInit();
     const std::string paths[] = {WriteTemp("self-contained-replace-init.pack", init),
         WriteTemp("self-contained-replace-a.pack", a), WriteTemp("self-contained-replace-b.pack", b),
         WriteTemp("self-contained-replace-changed.pack", changed),
@@ -6595,14 +6283,14 @@ TEST(PackComposition, CapacitySummaryMismatchKeepsPublication) {
     ASSERT_EQ(VN_OK, composition.PrepareCandidate(
                          secondImage, kSecondHandle, &secondOwner));
     ASSERT_GE(secondPartition.size(),
-              kCanonicalDefinitionPartitionHeaderV2Bytes);
+              kPackCanonicalPartitionHeaderBytes);
     CurrentWorldBodyImage secondBody;
     ASSERT_EQ(CurrentWorldBodyDecodeResult::Ok,
               secondBody.DecodeWithResult(
                   secondPartition.data() +
-                      kCanonicalDefinitionPartitionHeaderV2Bytes,
+                      kPackCanonicalPartitionHeaderBytes,
                   secondPartition.size() -
-                      kCanonicalDefinitionPartitionHeaderV2Bytes,
+                      kPackCanonicalPartitionHeaderBytes,
                   kCanonicalDefinitionPartitionBodyVintage,
                   CurrentWorldDecodeMode::StrictArtifact));
     const ContainerWorldInstallViewV1& secondWorld = *secondBody.ProductionView();
@@ -10009,46 +9697,7 @@ void RunPackActionQuantizeUsesSegmentRowAnchor(
         BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
     const std::vector<std::uint8_t> packBNextBytes =
         BuildContentPack(33, 2, 10, harkentest::ObjectId(3003), harkentest::ObjectId(8), 0, 0x3f000000u);
-    PackInitCatalogRow initOwned;
-    initOwned.stableId = harkentest::ObjectId(1001);
-    initOwned.identityClass = kInitCatalogIdentityClassAction;
-    initOwned.ownerPackStableId = 11;
-    FillLocator(&initOwned, "Init.pack");
-    PackInitCatalogRow contentA;
-    contentA.stableId = harkentest::ObjectId(kSegmentActionId);
-    contentA.identityClass = kInitCatalogIdentityClassAction;
-    contentA.ownerPackStableId = 22;
-    contentA.expectedContentHash = Fnv1a64(packABytes.data(), packABytes.size());
-    FillLocator(&contentA, "ActionA.pack");
-    PackInitCatalogRow quantizedAction;
-    quantizedAction.stableId = harkentest::ObjectId(kSoundActionId);
-    quantizedAction.identityClass = kInitCatalogIdentityClassAction;
-    quantizedAction.ownerPackStableId = 22;
-    quantizedAction.expectedContentHash = contentA.expectedContentHash;
-    FillLocator(&quantizedAction, "ActionA.pack");
-    PackInitCatalogRow contentB;
-    contentB.stableId = harkentest::ObjectId(3003);
-    contentB.identityClass = kInitCatalogIdentityClassAction;
-    contentB.ownerPackStableId = 33;
-    contentB.expectedContentHash =
-        Fnv1a64(packBOldBytes.data(), packBOldBytes.size());
-    FillLocator(&contentB, "ActionB.pack");
-    PackInitCatalogRow playable;
-    playable.stableId = harkentest::ObjectId(kSegmentId);
-    playable.identityClass = kInitCatalogIdentityClassPlayable;
-    playable.ownerPackStableId = 22;
-    playable.expectedContentHash = contentA.expectedContentHash;
-    FillLocator(&playable, "ActionA.pack");
-    PackInitCatalogRow quantizedPlayable;
-    quantizedPlayable.stableId = harkentest::ObjectId(kQuantizedSoundId);
-    quantizedPlayable.identityClass = kInitCatalogIdentityClassPlayable;
-    quantizedPlayable.ownerPackStableId = 22;
-    quantizedPlayable.expectedContentHash = contentA.expectedContentHash;
-    FillLocator(&quantizedPlayable, "ActionA.pack");
-    const std::vector<std::uint8_t> initBytes = BuildInitCatalog(
-        {initOwned, contentA, quantizedAction, contentB, playable,
-         quantizedPlayable},
-        {22, 33});
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp(std::string(stem) + "-init.pack", initBytes);
     const std::string packAPath =
@@ -10359,8 +10008,7 @@ TEST(PackComposition, PackActionImmediateSoundRenders) {
     constexpr VnObjectId kActionId = harkentest::ObjectId(2002);
     const std::vector<std::uint8_t> packBytes = BuildImmediatePlaySoundPack(
         22, 1, 7, kActionId, kSoundId, harkentest::MakeDC(2048, 0.25f));
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f5-immediate-sound-init.pack", initBytes);
     const std::string packPath =
@@ -10421,8 +10069,7 @@ TEST(PackCompositionContract, CrossPackContainerBatchSurvivesLateUpdateAndRetire
         33, 1, 9, childId, harkentest::ObjectId(4510), harkentest::ObjectId(4511),
         harkentest::MakeDC(4096, 0.125f), false, MemoryScopeV1::Global, 4, &childFingerprint);
     const auto rootPack = BuildPostActionPack(22, 1, 7, actionId, childId, childFingerprint, 33, 4);
-    const auto init = BuildKeepIdentityInit(Fnv1a64(rootPack.data(), rootPack.size()),
-                                          Fnv1a64(childPack.data(), childPack.size()));
+    const auto init = BuildInit();
     const std::string paths[] = {
         WriteTemp("late-container-batch-init.pack", init),
         WriteTemp("late-container-batch-root.pack", rootPack),
@@ -10502,8 +10149,7 @@ TEST(PackCompositionContract, RepeatedPackActionPostsReclaimRetiredContainerSele
     const auto packBytes = BuildImmediateContainerPlayPack(
         22, 1, 7, kActionId, kContainerId, kSoundId,
         harkentest::MakeDC(2048, 0.25f), false, MemoryScopeV1::Emitter);
-    const auto initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const auto initBytes = BuildInit();
     const std::string initPath = WriteTemp("pack-selection-retire-init.pack", initBytes);
     const std::string packPath = WriteTemp("pack-selection-retire-content.pack", packBytes);
 
@@ -10574,8 +10220,7 @@ TEST(PackComposition,
             kPackStableId, 1, 7, kActionId, kOuterContainerId,
             kVariableControlId, kSoundId, harkentest::MakeDC(2048, 0.25f),
             3);
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("u3-nested-vc-action-init.pack", initBytes);
     const std::string packPath = WriteTemp("u3-nested-vc-action.pack", packBytes);
@@ -10663,8 +10308,7 @@ static void ExpectPackVariableControlAuthoredLoopsCoverInitialRetargetAndOuterTr
         22, 1, 7, kActionId, kOuterId, kVariableControlId,
         kInitialNestedId, kRetargetNestedId, kFirstSoundId, kSecondSoundId,
         harkentest::MakeDC(4096, 0.25f), harkentest::MakeDC(4096, -0.25f), ordinal);
-    const auto initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const auto initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("u4-pack-vc-loop-init.pack", initBytes);
     const std::string packPath =
@@ -10825,8 +10469,7 @@ TEST(PackComposition, PackActionVariableControlDiscreteRenders) {
         BuildImmediateVariableControlDiscretePlayPack(
             22, 1, 7, kActionId, kContainerId, kFirstSoundId, kSecondSoundId,
             first, second);
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f5-immediate-variable-control-init.pack", initBytes);
     const std::string packPath =
@@ -10977,8 +10620,7 @@ TEST(PackComposition,
     ASSERT_NE(nullptr, decodedBody.ProductionView());
     ASSERT_EQ(WorldInstallStatus::Ok,
               ValidateCurrentWorldV1(*decodedBody.ProductionView()));
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("r4-pack-vc-logical-track-init.pack", initBytes);
     const std::string packPath =
@@ -11114,8 +10756,7 @@ TEST(PackComposition, PackActionVariableControlContinuousRenders) {
         BuildImmediateVariableControlContinuousPlayPack(
             22, 1, 7, kActionId, kContainerId, kFirstSoundId, kSecondSoundId,
             first, second, 0.0f, 64);
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f5-immediate-variable-control-continuous-init.pack",
                   initBytes);
@@ -11192,8 +10833,7 @@ TEST(PackComposition, PackActionZeroWeightMembersCompleteNaturallyAndNeedNewTrig
         BuildImmediateVariableControlContinuousPlayPack(
             22, 1, 7, kActionId, kContainerId, kFirstSoundId, kSecondSoundId,
             first, second, 4.0f, 64);
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f5-immediate-variable-control-silent-init.pack", initBytes);
     const std::string packPath =
@@ -11330,32 +10970,8 @@ TEST(PackComposition, PackActionQueueContinuationUsesRowAnchorAfterUnrelatedPack
         BuildContentPack(33, 1, 9, harkentest::ObjectId(3003), harkentest::ObjectId(8));
     const std::vector<std::uint8_t> packBNextBytes =
         BuildContentPack(33, 2, 10, harkentest::ObjectId(3003), harkentest::ObjectId(8), 0, 0x3f000000u);
-    PackInitCatalogRow initOwned;
-    initOwned.stableId = harkentest::ObjectId(1001);
-    initOwned.identityClass = kInitCatalogIdentityClassAction;
-    initOwned.ownerPackStableId = 11;
-    FillLocator(&initOwned, "Init.pack");
-    PackInitCatalogRow contentA;
-    contentA.stableId = harkentest::ObjectId(kActionId);
-    contentA.identityClass = kInitCatalogIdentityClassAction;
-    contentA.ownerPackStableId = 22;
-    contentA.expectedContentHash = Fnv1a64(packABytes.data(), packABytes.size());
-    FillLocator(&contentA, "ActionA.pack");
-    PackInitCatalogRow contentB;
-    contentB.stableId = harkentest::ObjectId(3003);
-    contentB.identityClass = kInitCatalogIdentityClassAction;
-    contentB.ownerPackStableId = 33;
-    contentB.expectedContentHash =
-        Fnv1a64(packBOldBytes.data(), packBOldBytes.size());
-    FillLocator(&contentB, "ActionB.pack");
-    PackInitCatalogRow playable;
-    playable.stableId = harkentest::ObjectId(kContainerId);
-    playable.identityClass = kInitCatalogIdentityClassPlayable;
-    playable.ownerPackStableId = 22;
-    playable.expectedContentHash = contentA.expectedContentHash;
-    FillLocator(&playable, "ActionA.pack");
     const std::vector<std::uint8_t> initBytes =
-        BuildInitCatalog({initOwned, contentA, contentB, playable}, {22, 33});
+        BuildInit();
     const std::string initPath =
         WriteTemp("f5-queue-unrelated-init.pack", initBytes);
     const std::string packAPath =
@@ -11531,8 +11147,7 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         BuildImmediateSequenceQueuePlayPack(
             22, 1, 7, kActionId, kContainerId, kFirstSoundId,
             kSecondSoundId, first, second, 2);
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f5-queue-window-init.pack", initBytes);
     const std::string packPath =
@@ -12003,7 +11618,7 @@ static void CheckOriginalPackStorageLeaseLifetime(bool refuseAfterSourceCapture,
     const auto content = BuildImmediateSequenceQueuePlayPack(
         22, 1, 7, action, container, first, second,
         std::vector<float>(512, 0.25f), std::vector<float>(512, -0.25f));
-    const auto init = BuildSingleIdentityInit(Fnv1a64(content.data(), content.size()), action);
+    const auto init = BuildInit();
     const auto initPath = WriteTemp("original-pack-storage-init.pack", init);
     const auto contentPath = WriteTemp("original-pack-storage-content.pack", content);
     VnCanonicalPackSetMemberV1 members[2]{};
@@ -12281,8 +11896,7 @@ TEST(PackComposition, ProvisionalSharedSchedulesRetainTheirMediaAfterBothProvide
             };
             const auto a = build(22, harkentest::ObjectId(2002));
             const auto b = build(33, harkentest::ObjectId(3003));
-            const auto initBytes = BuildKeepIdentityInit(Fnv1a64(a.data(), a.size()),
-                                                         Fnv1a64(b.data(), b.size()));
+            const auto initBytes = BuildInit();
             const std::string paths[] = {WriteTemp("duplicate-schedule-init.pack", initBytes),
                 WriteTemp("duplicate-schedule-a.pack", a), WriteTemp("duplicate-schedule-b.pack", b)};
             EngineSession session(MakeNullConfig(8, 256, 48000));
@@ -12350,8 +11964,7 @@ TEST(PackComposition,
     const std::vector<std::uint8_t> packBytes = BuildImmediateSegmentPlayPack(
         22, 1, 7, kActionId, kSegmentId, kTrackId, kSoundId,
         std::move(samples), 0, 256, 512, INT64_C(20000000));
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("r4-clip-loop-init.pack", initBytes);
     const std::string packPath =
@@ -12409,8 +12022,7 @@ TEST(PackComposition, PackActionSubFrameSegmentCompletesWithoutVoice) {
     const std::vector<std::uint8_t> packBytes = BuildImmediateSegmentPlayPack(
         22, 1, 7, kActionId, kSegmentId, kTrackId, kSoundId,
         harkentest::MakeDC(512, 0.25f), 1, 0, 0, 1);
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("r4-zero-segment-init.pack", initBytes);
     const std::string packPath =
@@ -12474,8 +12086,7 @@ TEST(PackComposition, PackActionDirectEmptyTrackIsUnavailable) {
     constexpr VnObjectId kActionId = harkentest::ObjectId(2002);
     const std::vector<std::uint8_t> packBytes = BuildImmediateEmptyTrackPlayPack(
         22, 1, 7, kActionId, kTrackId);
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f5-immediate-empty-track-init.pack", initBytes);
     const std::string packPath =
@@ -12519,8 +12130,7 @@ TEST(PackComposition, PackActionBadFingerprintStaysBadPack) {
     EXPECT_EQ(VN_BAD_PACK,
               ParsePackCanonicalImage(packBytes.data(), packBytes.size(),
                                       &parsedPack));
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f5-bad-fingerprint-init.pack", initBytes);
     const std::string packPath =
@@ -12615,8 +12225,7 @@ struct DelayedPackPlayFixture {
                 22, 1, 7, kActionId, kSoundId,
                 harkentest::MakeDC(2048, 0.25f), delayNanoseconds);
         }();
-        const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-            Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+        const std::vector<std::uint8_t> initBytes = BuildInit();
         const std::string initPath =
             WriteTemp((std::string(label) + "-init.pack").c_str(), initBytes);
         const std::string packPath =
@@ -14737,33 +14346,7 @@ struct R4SoundNeighborFixture {
             33, 1, 7, harkentest::ObjectId(3003),
             harkentest::ObjectId(4610), harkentest::MakeDC(2048, 0.125f),
             1000000000, 3);
-        const auto catalogRow = [](std::uint64_t stableId,
-                                   std::uint32_t identityClass,
-                                   std::uint64_t ownerPack,
-                                   std::uint64_t hash,
-                                   const char* locator) {
-            PackInitCatalogRow row{};
-            row.stableId = harkentest::ObjectId(stableId);
-            row.identityClass = identityClass;
-            row.ownerPackStableId = ownerPack;
-            row.expectedContentHash = hash;
-            FillLocator(&row, locator);
-            return row;
-        };
-        const auto hashA = Fnv1a64(packA.data(), packA.size());
-        const auto hashB = Fnv1a64(packB.data(), packB.size());
-        const auto init = BuildInitCatalog({
-            catalogRow(1001, kInitCatalogIdentityClassAction, 11, 0,
-                       "Init.pack"),
-            catalogRow(2002, kInitCatalogIdentityClassAction, 22, hashA,
-                       "ActionA.pack"),
-            catalogRow(3003, kInitCatalogIdentityClassAction, 33, hashB,
-                       "ActionB.pack"),
-            catalogRow(4510, kInitCatalogIdentityClassPlayable, 22, hashA,
-                       "ActionA.pack"),
-            catalogRow(4610, kInitCatalogIdentityClassPlayable, 33, hashB,
-                       "ActionB.pack"),
-        }, {22, 33});
+        const auto init = BuildInit();
         PackCanonicalImage parsedInit{}, parsedA{}, parsedB{};
         const auto initParse = ParsePackCanonicalImage(
             init.data(), init.size(), &parsedInit);
@@ -18263,8 +17846,7 @@ TEST(PackComposition, PackActionRandomNestedContainerRenders) {
     const std::vector<std::uint8_t> packBytes = BuildImmediateNestedRandomPlayPack(
         22, 1, 7, kActionId, kParentId, kChildId, kSoundId,
         harkentest::MakeDC(2048, 0.25f));
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f5-random-nested-init.pack", initBytes);
     const std::string packPath = WriteTemp("f5-random-nested-a.pack", packBytes);
@@ -18315,8 +17897,7 @@ TEST(PackComposition,
             22, 1, 7, kActionId, kParentId, kQueueId, kFirstSoundId,
             kSecondSoundId, harkentest::MakeDC(2048, 0.25f),
             harkentest::MakeDC(2048, -0.25f), 1, MemoryScopeV1::Global);
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("u4-nested-queue-init.pack", initBytes);
     const std::string packPath =
@@ -18448,8 +18029,7 @@ TEST(PackComposition,
             std::vector<float>(512, 0.25f),
             std::vector<float>(512, -0.25f), false, false,
             harkentest::ObjectId(0), false, true);
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("r4-pack-same-sound-track-init.pack", initBytes);
     const std::string packPath =
@@ -18544,9 +18124,7 @@ void RunPackQueueResetPreservesLogicalTrackCompletion(
             std::vector<float>(512, 0.25f),
             std::vector<float>(512, -0.25f), false, true,
             kResetActionId, logicalOnlyTrack);
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId,
-        "ActionA.pack", kContainerId, kResetActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp(std::string(stem) + "-init.pack", initBytes);
     const std::string packPath =
@@ -18684,8 +18262,7 @@ TEST(PackComposition, PackActionRejectsStaleMultiLeafArmPublication) {
             kFirstSoundId, kSecondSoundId, std::vector<float>(64, 0.25f),
             std::vector<float>(64, -0.25f), false, false,
             harkentest::ObjectId(0), false, false, INT64_C(10000000));
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("u4-stale-pack-init.pack", initBytes);
     const std::string packPath = WriteTemp("u4-stale-pack.pack", packBytes);
@@ -18798,40 +18375,7 @@ TEST(PackComposition, PackActionSharedLeafFromContentRootRenders) {
                            SharedSoundPartitionPayload(kSharedPack, 9, sound));
     sharedBuilder.AddMedia(kSoundId, std::move(planar));
     const std::vector<std::uint8_t> sharedBytes = sharedBuilder.Build();
-    PackInitCatalogRow initOwned;
-    initOwned.stableId = harkentest::ObjectId(1001);
-    initOwned.identityClass = kInitCatalogIdentityClassAction;
-    initOwned.ownerPackStableId = 11;
-    FillLocator(&initOwned, "Init.pack");
-    PackInitCatalogRow contentAction;
-    contentAction.stableId = harkentest::ObjectId(kActionId);
-    contentAction.identityClass = kInitCatalogIdentityClassAction;
-    contentAction.ownerPackStableId = kContentPack;
-    contentAction.expectedContentHash =
-        Fnv1a64(contentBytes.data(), contentBytes.size());
-    FillLocator(&contentAction, "Content.pack");
-    PackInitCatalogRow contentPlayable;
-    contentPlayable.stableId = harkentest::ObjectId(kContainerId);
-    contentPlayable.identityClass = kInitCatalogIdentityClassPlayable;
-    contentPlayable.ownerPackStableId = kContentPack;
-    contentPlayable.expectedContentHash = contentAction.expectedContentHash;
-    FillLocator(&contentPlayable, "Content.pack");
-    PackInitCatalogRow sharedPack;
-    sharedPack.stableId = harkentest::ObjectId(3003);
-    sharedPack.identityClass = kInitCatalogIdentityClassAction;
-    sharedPack.ownerPackStableId = kSharedPack;
-    sharedPack.expectedContentHash =
-        Fnv1a64(sharedBytes.data(), sharedBytes.size());
-    FillLocator(&sharedPack, "Shared.pack");
-    PackInitCatalogRow sharedPlayable;
-    sharedPlayable.stableId = harkentest::ObjectId(kSoundId);
-    sharedPlayable.identityClass = kInitCatalogIdentityClassPlayable;
-    sharedPlayable.ownerPackStableId = kSharedPack;
-    sharedPlayable.expectedContentHash = sharedPack.expectedContentHash;
-    FillLocator(&sharedPlayable, "Shared.pack");
-    const std::vector<std::uint8_t> initBytes = BuildInitCatalog(
-        {initOwned, contentAction, sharedPack, contentPlayable, sharedPlayable},
-        {kContentPack, kSharedPack});
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f5-shared-leaf-init.pack", initBytes);
     const std::string contentPath =
@@ -18938,39 +18482,7 @@ TEST(PackComposition, PackActionTwoPlayStepsDifferentPacksRenders) {
                           SharedSoundPartitionPayload(kPackB, 9, foreignSound));
     packBBuilder.AddMedia(kForeignSoundId, std::move(foreignPlanar));
     const std::vector<std::uint8_t> packBBytes = packBBuilder.Build();
-    PackInitCatalogRow initOwned;
-    initOwned.stableId = harkentest::ObjectId(1001);
-    initOwned.identityClass = kInitCatalogIdentityClassAction;
-    initOwned.ownerPackStableId = 11;
-    FillLocator(&initOwned, "Init.pack");
-    PackInitCatalogRow actionA;
-    actionA.stableId = harkentest::ObjectId(kActionId);
-    actionA.identityClass = kInitCatalogIdentityClassAction;
-    actionA.ownerPackStableId = kPackA;
-    actionA.expectedContentHash = Fnv1a64(packABytes.data(), packABytes.size());
-    FillLocator(&actionA, "ActionA.pack");
-    PackInitCatalogRow packBIdentity;
-    packBIdentity.stableId = harkentest::ObjectId(3003);
-    packBIdentity.identityClass = kInitCatalogIdentityClassAction;
-    packBIdentity.ownerPackStableId = kPackB;
-    packBIdentity.expectedContentHash =
-        Fnv1a64(packBBytes.data(), packBBytes.size());
-    FillLocator(&packBIdentity, "ActionB.pack");
-    PackInitCatalogRow playableA;
-    playableA.stableId = harkentest::ObjectId(kLocalSoundId);
-    playableA.identityClass = kInitCatalogIdentityClassPlayable;
-    playableA.ownerPackStableId = kPackA;
-    playableA.expectedContentHash = actionA.expectedContentHash;
-    FillLocator(&playableA, "ActionA.pack");
-    PackInitCatalogRow playableB;
-    playableB.stableId = harkentest::ObjectId(kForeignSoundId);
-    playableB.identityClass = kInitCatalogIdentityClassPlayable;
-    playableB.ownerPackStableId = kPackB;
-    playableB.expectedContentHash = packBIdentity.expectedContentHash;
-    FillLocator(&playableB, "ActionB.pack");
-    const std::vector<std::uint8_t> initBytes = BuildInitCatalog(
-        {initOwned, actionA, packBIdentity, playableA, playableB},
-        {kPackA, kPackB});
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f5-two-packs-init.pack", initBytes);
     const std::string packAPath =
@@ -19048,8 +18560,7 @@ TEST(PackComposition, PackActionPlayableSliceFullIsBackpressure) {
     constexpr VnObjectId kActionId = harkentest::ObjectId(2002);
     const std::vector<std::uint8_t> packBytes = BuildImmediatePlaySoundPack(
         22, 1, 7, kActionId, kSoundId, harkentest::MakeDC(2048, 0.25f));
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f5-playable-full-init.pack", initBytes);
     const std::string packPath =
@@ -19102,8 +18613,7 @@ TEST(PackCompositionContract, PackActionBundleFailurePublishesNoPartialPlayable)
     const std::vector<std::uint8_t> packBytes = BuildImmediateBundlePartialPlayPack(
         22, 1, 7, kActionId, kSoundId, kEmptyTrackId,
         harkentest::MakeDC(2048, 0.25f));
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f5-bundle-partial-init.pack", initBytes);
     const std::string packPath =
@@ -19149,8 +18659,7 @@ TEST(PackComposition, PackUnloadRefuseIfUsedCoversActionFiringOwner) {
     constexpr VnObjectId kActionId = harkentest::ObjectId(2002);
     const std::vector<std::uint8_t> packBytes = BuildImmediatePlaySoundPack(
         22, 1, 7, kActionId, kSoundId, harkentest::MakeDC(2048, 0.25f));
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f5-refuse-firing-init.pack", initBytes);
     const std::string packPath =
@@ -19189,8 +18698,7 @@ TEST(PackComposition, PackUnloadRefuseIfUsedCoversLivePlayable) {
     constexpr VnObjectId kActionId = harkentest::ObjectId(2002);
     const std::vector<std::uint8_t> packBytes = BuildImmediatePlaySoundPack(
         22, 1, 7, kActionId, kSoundId, harkentest::MakeDC(2048, 0.25f));
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), kActionId);
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath =
         WriteTemp("f5-refuse-playable-init.pack", initBytes);
     const std::string packPath =
@@ -20062,9 +19570,7 @@ struct OriginalDeferredOperationFixture {
         const auto content = builder.Build();
         PackCanonicalImage parsedContent{};
         EXPECT_EQ(VN_OK, ParsePackCanonicalImage(content.data(), content.size(), &parsedContent));
-        const auto init = BuildSingleIdentityInit(Fnv1a64(content.data(), content.size()),
-            ContainerMatrixWorld::kAction, "ActionA.pack", ContainerMatrixWorld::kFirstSound,
-            kOperation);
+        const auto init = BuildInit();
         PackCanonicalImage parsedInit{};
         EXPECT_EQ(VN_OK, ParsePackCanonicalImage(init.data(), init.size(), &parsedInit));
         const auto initPath = WriteTemp("original-deferred-operation-init.pack", init);
@@ -20943,8 +20449,7 @@ void ExpectVariableControlNaturalCompletion(ContainerMatrixEntry entry, bool con
         builder.AddMedia(ContainerMatrixWorld::kFirstSound, firstSamples);
         builder.AddMedia(ContainerMatrixWorld::kSecondSound, secondSamples);
         const auto bytes = builder.Build();
-        const auto init = BuildSingleIdentityInit(Fnv1a64(bytes.data(), bytes.size()),
-            ContainerMatrixWorld::kAction, "u6-finite-vc-a.pack", ContainerMatrixWorld::kRoot, harkentest::ObjectId(0), {}, delayTail ? 2 : 0);
+        const auto init = BuildInit({}, delayTail ? 2 : 0);
         const auto initPath = WriteTemp("u6-finite-vc-init.pack", init);
         const auto path = WriteTemp("u6-finite-vc-a.pack", bytes);
         VnCanonicalPackSetMemberV1 members[2]{};
@@ -21305,8 +20810,7 @@ void ExpectShortVariableControlTargetPromotion(ContainerMatrixEntry entry, bool 
         builder.AddMedia(ContainerMatrixWorld::kFirstSound, firstSamples);
         builder.AddMedia(ContainerMatrixWorld::kSecondSound, secondSamples);
         const auto bytes = builder.Build();
-        const auto init = BuildSingleIdentityInit(Fnv1a64(bytes.data(), bytes.size()),
-            ContainerMatrixWorld::kAction, "u6-short-vc-a.pack", ContainerMatrixWorld::kRoot);
+        const auto init = BuildInit();
         const auto initPath = WriteTemp("u6-short-vc-init.pack", init);
         const auto path = WriteTemp("u6-short-vc-a.pack", bytes);
         VnCanonicalPackSetMemberV1 members[2]{};
@@ -21729,9 +21233,7 @@ void ExpectOrdinaryNavigationDepth(ContainerMatrixEntry entry, std::uint32_t dep
         const auto stem = std::string("u6-navigation-depth-") +
             std::to_string(depth) + (later ? "-later" : "-initial");
         const auto locator = stem + ".pack";
-        const auto init = BuildSingleIdentityInit(
-            Fnv1a64(bytes.data(), bytes.size()), ContainerMatrixWorld::kAction,
-            locator.c_str(), ContainerMatrixWorld::kRoot, harkentest::ObjectId(0), image.base.world.capacity);
+        const auto init = BuildInit(image.base.world.capacity);
         const auto initPath = WriteTemp(stem + "-init.pack", init);
         const auto packPath = WriteTemp(locator, bytes);
         VnCanonicalPackSetMemberV1 member{};
@@ -22220,8 +21722,7 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
             builder.AddMedia(harkentest::ObjectId(2300u + index), samples, 1, sourceRates[index]);
         const auto bytes = builder.Build();
         const auto locator = "u6-queue-sequences-" + std::to_string(cycles) + ".pack";
-        const auto init = BuildSingleIdentityInit(Fnv1a64(bytes.data(), bytes.size()),
-            image.action.actionStableId, locator.c_str(), rootRef.stableId);
+        const auto init = BuildInit();
         const auto initPath = WriteTemp("u6-queue-sequences-init.pack", init);
         const auto packPath = WriteTemp(locator, bytes);
         VnCanonicalPackSetMemberV1 members[2]{};
@@ -23233,10 +22734,7 @@ void ExpectMultiLeafContainerLoopCompletesAndReclaims(
         const std::string stem =
             "u4-container-loop-composite-" + std::to_string(caseIndex);
         const std::string packLocator = stem + "-a.pack";
-        const auto initBytes = BuildSingleIdentityInit(
-            Fnv1a64(packBytes.data(), packBytes.size()),
-            ContainerMatrixWorld::kAction, packLocator.c_str(), ContainerMatrixWorld::kRoot,
-            authoredStop ? kStopAction : VnObjectId{}, {}, delayTail ? 2 : 0);
+        const auto initBytes = BuildInit({}, delayTail ? 2 : 0);
         const std::string initPath =
             WriteTemp(stem + "-init.pack", initBytes);
         const std::string packPath = WriteTemp(packLocator, packBytes);
@@ -24244,10 +23742,7 @@ void RunContainerMatrixEntry(ContainerModeV1 mode, ContainerMatrixChild childKin
         const auto packBytes = builder.Build();
         const std::string stem = "u4-matrix-" + std::to_string(caseIndex);
         const std::string packLocator = stem + "-a.pack";
-        const auto initBytes = BuildSingleIdentityInit(
-            Fnv1a64(packBytes.data(), packBytes.size()),
-            ContainerMatrixWorld::kAction, packLocator.c_str(),
-            ContainerMatrixWorld::kRoot);
+        const auto initBytes = BuildInit();
         const std::string initPath =
             WriteTemp(stem + "-init.pack", initBytes);
         const std::string packPath = WriteTemp(packLocator, packBytes);
@@ -24649,9 +24144,7 @@ TEST(PackComposition,
             builder.AddMedia(ContainerMatrixWorld::kSecondSound, secondSamples);
             const auto bytes = builder.Build();
             const std::string locator = "nested-authored-pcm-content.pack";
-            const auto init = BuildSingleIdentityInit(
-                Fnv1a64(bytes.data(), bytes.size()), ContainerMatrixWorld::kAction,
-                locator.c_str(), ContainerMatrixWorld::kRoot);
+            const auto init = BuildInit();
             const auto initPath = WriteTemp("nested-authored-pcm-init.pack", init);
             const auto packPath = WriteTemp(locator, bytes);
             VnCanonicalPackSetMemberV1 members[2]{};
@@ -24884,9 +24377,7 @@ TEST(PackComposition, QueueSegmentOverlappingSameSoundWaitsForLastClipAcrossActi
             builder.AddMedia(ContainerMatrixWorld::kSecondSound, secondSamples);
             const auto bytes = builder.Build();
             const std::string locator = "queue-segment-overlap-content.pack";
-            const auto init = BuildSingleIdentityInit(
-                Fnv1a64(bytes.data(), bytes.size()), ContainerMatrixWorld::kAction,
-                locator.c_str(), ContainerMatrixWorld::kRoot);
+            const auto init = BuildInit();
             const auto initPath = WriteTemp("queue-segment-overlap-init.pack", init);
             const auto packPath = WriteTemp(locator, bytes);
             VnCanonicalPackSetMemberV1 members[2]{};
@@ -25943,8 +25434,7 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         builder.AddMedia(ContainerMatrixWorld::kFirstSound, first);
         builder.AddMedia(ContainerMatrixWorld::kSecondSound, second);
         const auto bytes = builder.Build();
-        const auto init = BuildSingleIdentityInit(Fnv1a64(bytes.data(), bytes.size()),
-            ContainerMatrixWorld::kAction, "nested-variable-track-queue.pack", ContainerMatrixWorld::kRoot);
+        const auto init = BuildInit();
         const auto initPath = WriteTemp("nested-variable-track-queue-init.pack", init);
         const auto path = WriteTemp("nested-variable-track-queue.pack", bytes);
         EngineSession session(MakeNullConfig(16, 64, 48000));
@@ -27047,8 +26537,7 @@ NormalizedNestedQueueTrace RunNestedQueuePackTrace(
     EngineSession session(MakeNullConfig(8, 256, 48000));
     if (session.InitResult() != VN_OK) return trace;
     Engine* engine = session.Engine();
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), harkentest::ObjectId(2002));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath = WriteTemp("u4-convergence-init.pack", initBytes);
     const std::string packPath = WriteTemp("u4-convergence-a.pack", packBytes);
     VnCanonicalPackSetMemberV1 members[2]{};
@@ -27181,8 +26670,7 @@ SharedQueueTrace RunRootQueuePackTrace(
     const auto* program = &world.containers[0];
     const std::vector<float> firstSamples(2048, 0.25f);
     const std::vector<float> secondSamples(2048, -0.25f);
-    const std::vector<std::uint8_t> initBytes = BuildSingleIdentityInit(
-        Fnv1a64(packBytes.data(), packBytes.size()), harkentest::ObjectId(2002));
+    const std::vector<std::uint8_t> initBytes = BuildInit();
     const std::string initPath = WriteTemp("u4-root-queue-init.pack", initBytes);
     const std::string packPath = WriteTemp("u4-root-queue-a.pack", packBytes);
     if (entry == ContainerMatrixEntry::PackAction) {
@@ -27455,7 +26943,7 @@ TEST(PackComposition, ActionQueuesPreserveSoundCapabilitiesAcrossProgramSources)
                     canonical.partitionHeader.bodyVintage, CurrentWorldDecodeMode::StrictArtifact));
                 ASSERT_NE(nullptr, body.ProductionView());
                 if (pack) {
-                    const auto init = BuildSingleIdentityInit(Fnv1a64(bytes.data(), bytes.size()), actionId);
+                    const auto init = BuildInit();
                     const std::array paths{
                         WriteTemp("queue-sound-capabilities-init.pack", init),
                         WriteTemp("queue-sound-capabilities-content.pack", bytes)};
@@ -27825,11 +27313,6 @@ std::vector<std::uint8_t> BuildInitWithVariableOverlay(
                      RequirementPayload(11, revision, 1));
     builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, 11,
                      WrapWorldPartition(11, 1, world, 1));
-    if (names) {
-        std::vector<std::uint8_t> payload;
-        EXPECT_TRUE(EncodeVariableNameCatalog(*names, &payload));
-        builder.AddEntry(kPackEntryKindVariableNameCatalog, 0, std::move(payload));
-    }
     harkentest::packfoundation::AppendNeutralMasterSnapshot(&builder);
     if (emitOverlay) {
         builder.AddEntry(kPackEntryKindVariablePolicyOverlay, 0,
@@ -27870,13 +27353,39 @@ std::vector<std::uint8_t> BuildInitWithTwoVariables(
 }
 
 bool LoadInitPack(const std::vector<std::uint8_t>& bytes, const char* name,
-                  VnPackHandle* handle) {
+                  VnPackHandle* handle, const VnPackNamesV1* names = nullptr) {
     const auto path = WriteTemp(name, bytes);
     *handle = 0;
     harken::PackCanonicalImage image;
     if (ParsePackCanonicalImage(bytes.data(), bytes.size(), &image) != VN_OK ||
         image.packKind != kPackKindInit) {
         return false;
+    }
+    if (names != nullptr) {
+        VnCanonicalPackSetMemberV2 member{};
+        member.structSize = sizeof(member);
+        member.operation = VN_PACK_MEMBER_CONTENT;
+        member.source.structSize = sizeof(member.source);
+        member.source.packStableId = image.packStableId;
+        member.source.packKind = VN_CANONICAL_PACK_SET_MEMBER_INIT;
+        member.source.utf8Path = path.c_str();
+        member.names = names;
+        VnCanonicalPackSetMemberResultV1 result{};
+        result.structSize = sizeof(result);
+        VnCanonicalPackSetActivationDescV2 desc{};
+        desc.structSize = sizeof(desc);
+        desc.setRevision = 1;
+        desc.memberCount = 1;
+        desc.memberStructSize = sizeof(member);
+        desc.members = &member;
+        desc.outputMemberCapacity = 1;
+        desc.outputMemberStructSize = sizeof(result);
+        desc.outputMembers = &result;
+        VnCanonicalPackSetActivationReportV1 report{};
+        report.structSize = sizeof(report);
+        if (Vn_ActivateCanonicalPackSetV2(&desc, &report) != VN_OK) return false;
+        *handle = report.initHandle;
+        return true;
     }
     return harkentest::ActivateExistingInitPackV1(path.c_str(), image.packStableId,
                                                  handle) == VN_OK;
@@ -27898,7 +27407,10 @@ TEST(PackComposition, VariableSdkSetValuePreservesWriteScopeAndPublishesInitFixt
     const auto bytes = BuildInitWithVariableOverlay(variable, fingerprint,
         0, 1, 0, true, false, 3, VariableScopeV1::Global, &names);
     VnPackHandle init = 0;
-    ASSERT_TRUE(LoadInitPack(bytes, "variable-sdk-init.pack", &init));
+    const VnPackVariableNameV1 variableName{variable, "VehicleRPM"};
+    const VnPackNamesV1 companion{sizeof(companion), 0,
+        ObjectIdFromBytes(names.projectGuid), {}, "", "", 1, 0, &variableName, nullptr};
+    ASSERT_TRUE(LoadInitPack(bytes, "variable-sdk-init.pack", &init, &companion));
     ASSERT_EQ(VN_OK, harken::GuardTypedVariableCatalog(
         harken::generated::kVariableExecutionCatalogFingerprint));
     VnEmitterHandle a = 0, b = 0;
@@ -27929,31 +27441,22 @@ TEST(PackComposition, VariableSdkSetValuePreservesWriteScopeAndPublishesInitFixt
     expect(0.75f, 0.75f, 0);
 }
 
-TEST(PackComposition, VariableNameCodecRejectsCorruptionAndAmbiguousIdentity) {
+TEST(PackComposition, VariableNamesRejectAmbiguousIdentity) {
     PackVariableNameCatalog names;
     names.projectGuid[15] = 1;
     names.initPackStableId = 11;
     names.initContentRevision = 1;
     names.rows.push_back({harkentest::ObjectId(7), "Speed"});
-    std::vector<std::uint8_t> payload;
-    ASSERT_TRUE(EncodeVariableNameCatalog(names, &payload));
-    PackVariableNameCatalog decoded;
-    ASSERT_TRUE(DecodeVariableNameCatalog(payload.data(), payload.size(), &decoded));
-    for (const auto offset : {0u, 8u, 24u, 32u, 44u, 48u, 56u, 64u, 80u, 86u, 88u, 96u, 103u}) {
-        auto corrupt = payload;
-        corrupt[offset] ^= 1;
-        EXPECT_FALSE(DecodeVariableNameCatalog(corrupt.data(), corrupt.size(), &decoded)) << offset;
-    }
-    EXPECT_FALSE(DecodeVariableNameCatalog(payload.data(), payload.size() - 1, &decoded));
+    ASSERT_TRUE(ValidateVariableNameCatalog(names));
     names.rows.push_back({harkentest::ObjectId(8), "Speed"});
-    EXPECT_FALSE(EncodeVariableNameCatalog(names, &payload));
+    EXPECT_FALSE(ValidateVariableNameCatalog(names));
     names.rows.back().name = "Velocity";
     names.rows.back().variableId = names.rows.front().variableId;
-    EXPECT_FALSE(EncodeVariableNameCatalog(names, &payload));
+    EXPECT_FALSE(ValidateVariableNameCatalog(names));
     names.rows.back().variableId = harkentest::ObjectId(8);
-    EXPECT_TRUE(EncodeVariableNameCatalog(names, &payload));
+    EXPECT_TRUE(ValidateVariableNameCatalog(names));
     names.rows.back().name = "Bad Name";
-    EXPECT_FALSE(EncodeVariableNameCatalog(names, &payload));
+    EXPECT_FALSE(ValidateVariableNameCatalog(names));
 }
 
 TEST(PackComposition, GameWriteHonorsWritersMask) {
@@ -28086,25 +27589,7 @@ VnResult LoadAuthoredStopNestedVariableControlPackForTest(
                              world.actionCount));
     builder.AddMedia(soundId, samples);
     const auto bytes = builder.Build();
-    PackInitCatalogRow initOwned{};
-    initOwned.stableId = harkentest::ObjectId(1);
-    initOwned.identityClass = kInitCatalogIdentityClassAction;
-    initOwned.ownerPackStableId = 11;
-    FillLocator(&initOwned, "Init.pack");
-    PackInitCatalogRow content{};
-    content.ownerPackStableId = kPackStableId;
-    content.expectedContentHash = Fnv1a64(bytes.data(), bytes.size());
-    FillLocator(&content, kLocator);
-    std::vector<PackInitCatalogRow> catalog{initOwned};
-    content.identityClass = kInitCatalogIdentityClassAction;
-    content.stableId = world.actions[0].actionStableId;
-    catalog.push_back(content);
-    content.stableId = world.actions[1].actionStableId;
-    catalog.push_back(content);
-    content.identityClass = kInitCatalogIdentityClassPlayable;
-    content.stableId = world.actions[0].steps[0].target.stableId;
-    catalog.push_back(content);
-    const auto initBytes = BuildInitCatalog(catalog, {kPackStableId}, world.capacity);
+    const auto initBytes = BuildInit(world.capacity);
     const auto initPath = WriteTemp("u6-stop-nested-vc-init.pack", initBytes);
     const auto contentPath = WriteTemp(kLocator, bytes);
     VnCanonicalPackSetMemberV1 members[2]{};
@@ -28318,8 +27803,7 @@ TEST_P(QueueBusQualification, ReplacementPreservesPlaybackAndReclaimsForReplay) 
     const auto makeInit = [&](float sendDb, VnBusId target = VN_OBJECT_ID(0, 3)) {
         const auto bus = harkentest::packfoundation::MasterSendRuntimeBusFixture(
             sendDb, 1, target);
-        return BuildSingleIdentityInit(Fnv1a64(content.data(), content.size()),
-            actionId, "ActionA.pack", rootId, VnObjectId{}, {}, 0, &bus);
+        return BuildInit({}, 0, &bus);
     };
     const auto initialPath = WriteTemp("queue-bus-initial.pack", makeInit(-6.0f));
     const auto replacementPath = WriteTemp("queue-bus-replacement.pack", makeInit(-12.0f));
@@ -28732,6 +28216,12 @@ TEST(PackComposition, V19PartitionReaderAndFallbackKeepVintageThroughActivation)
     world.identity.capabilityMask = detail::ComputeCurrentWorldLocalCapabilityMaskV1(world);
     world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV6(world);
     ASSERT_EQ(WorldInstallStatus::Ok, detail::ValidateCurrentWorldPartitionLocalV1(world));
+    std::vector<std::uint8_t> body;
+    ASSERT_TRUE(EncodeCurrentWorldBodyV19(world, body));
+    CurrentWorldBodyImage decoded;
+    ASSERT_TRUE(decoded.Decode(body.data(), body.size(), kCurrentWorldBodyVintageV19,
+                               CurrentWorldDecodeMode::StrictArtifact));
+    EXPECT_EQ(kCurrentWorldBodyVintageV19, decoded.ProductionView()->sourceBodyVintage);
     const auto bytes = BuildCanonicalPartitionPack(22, 1, 7, WrapWorldPartition(22, 7, world, 1));
     PackCanonicalImage image;
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));

@@ -11,13 +11,6 @@
 
 namespace harkenstudiobuild {
 
-inline constexpr std::uint32_t kCurrentWorldV3PrefixWireBytes = 200;
-inline constexpr std::uint32_t kCurrentWorldV6ActionCapacityWireBytes = 24;
-inline constexpr std::uint32_t kCurrentWorldV9CapacityWireBytes = 148;
-inline constexpr std::uint32_t kCurrentWorldActionRefWireBytes = 32;
-inline constexpr std::uint32_t kCurrentWorldActionTimeWireBytes = 16;
-inline constexpr std::uint32_t kCurrentWorldActionHeaderWireBytes = 44;
-inline constexpr std::uint32_t kCurrentWorldActionStepWireBytes = 144;
 
 enum class CurrentWorldBodyDecodeResult : std::uint8_t {
     Ok = 0,

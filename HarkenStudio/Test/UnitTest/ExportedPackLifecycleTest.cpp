@@ -3576,7 +3576,7 @@ bool att06ChoosePayload(const std::vector<uint8_t>& bytes, uint64_t* offset, uin
         if (entry.kind == harken::kPackEntryKindInitRoutingCatalog)
             continue;
         if (entry.size == 0 || entry.offset < dirEnd ||
-            entry.offset % harken::kPackV2PayloadAlign != 0 ||
+            entry.offset % harken::kPackPayloadAlign != 0 ||
             entry.offset > bytes.size() ||
             entry.size > bytes.size() - entry.offset)
             continue;

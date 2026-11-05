@@ -17,8 +17,8 @@
 namespace {
 
 std::uint64_t AlignPackPayload(std::uint64_t value) {
-    return (value + harken::kPackV2PayloadAlign - 1) /
-        harken::kPackV2PayloadAlign * harken::kPackV2PayloadAlign;
+    return (value + harken::kPackPayloadAlign - 1) /
+        harken::kPackPayloadAlign * harken::kPackPayloadAlign;
 }
 
 std::vector<std::uint8_t> MakeBusSendSnapshotPack(
@@ -129,7 +129,7 @@ std::vector<std::uint8_t> MakeBusSendSnapshotPack(
     std::memcpy(bytes.data() + snapshotOffset, payload.data(), payload.size());
     harken::PackDirectoryEntry requirementEntry;
     requirementEntry.kind = harken::kPackEntryKindPackRequirementBlock;
-    requirementEntry.vintage = harken::kPackCanonicalRequirementVintage;
+    requirementEntry.vintage = harken::kPackPackRequirementBlockVintage;
     requirementEntry.offset = requirementOffset;
     requirementEntry.size = requirementPayload.size();
     requirementEntry.payloadChecksum = harken::Fnv1a64(

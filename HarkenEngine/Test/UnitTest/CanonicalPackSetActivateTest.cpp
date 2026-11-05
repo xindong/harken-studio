@@ -178,7 +178,7 @@ std::vector<std::uint8_t> Build(bool init, std::uint64_t id, std::uint64_t revis
     image.AddEntry(harken::kPackEntryKindCanonicalDefinitionPartition, id, std::move(partition));
     if (init) image.AddEntry(harken::kPackEntryKindBusDefinitionSnapshot, 1, bus.snapshot);
     else image.AddEntry(harken::kPackEntryKindPackDependencyEdge, VnObjectId{},
-        DependencyPayload(PackId("Init"), 1, bus.triple), harken::kPackCanonicalRequirementVintage);
+        DependencyPayload(PackId("Init"), 1, bus.triple), harken::kPackPackDependencyEdgeVintage);
     return image.Build();
 }
 
@@ -340,7 +340,7 @@ std::vector<std::uint8_t> BuildPreview(bool random, bool multipleSteps = false,
     EXPECT_EQ(CurrentWorldBodyDecodeResult::Ok, decoded.DecodeWithResult(body.data(), body.size(),
         kCanonicalDefinitionPartitionBodyVintage, CurrentWorldDecodeMode::StrictArtifact));
     PackCanonicalPartitionHeader header{};
-    header.headerBytes = kCanonicalDefinitionPartitionHeaderV2Bytes;
+    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
     header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -349,16 +349,16 @@ std::vector<std::uint8_t> BuildPreview(bool random, bool multipleSteps = false,
     header.ownedDefinitionCount = world.playablePropertyCount + 1;
     ApplyCanonicalBusTriple(&header, bus.triple);
     std::vector<std::uint8_t> partition(header.headerBytes + body.size());
-    SerializePackCanonicalPartitionHeaderV2(header, partition.data());
-    header.headerChecksum = Fnv1a64(partition.data(), 80);
-    SerializePackCanonicalPartitionHeaderV2(header, partition.data());
+    SerializePackCanonicalPartitionHeader(header, partition.data());
+    header.headerChecksum = Fnv1a64(partition.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
+    SerializePackCanonicalPartitionHeader(header, partition.data());
     std::memcpy(partition.data() + header.headerBytes, body.data(), body.size());
     ImageBuilder image(kPackKindCanonicalContent);
     image.AddEntry(kPackEntryKindPackRequirementBlock, id,
         RequirementPayload(id, 1, 1, header.ownedDefinitionCount, body.size(), bus.triple));
     image.AddEntry(kPackEntryKindCanonicalDefinitionPartition, id, std::move(partition));
     image.AddEntry(kPackEntryKindPackDependencyEdge, VnObjectId{},
-        DependencyPayload(PackId("Init"), 1, bus.triple), kPackCanonicalRequirementVintage);
+        DependencyPayload(PackId("Init"), 1, bus.triple), kPackPackDependencyEdgeVintage);
     image.AddMedia(soundId, std::move(samples));
     return image.Build();
 }
@@ -387,7 +387,7 @@ TEST(CanonicalPackSetActivate, CompanionInitOwnsVariableAndLabelNames) {
     const auto initId = PackId("Init");
     const auto bus = DefaultRuntimeBusFixture();
     PackCanonicalPartitionHeader header{};
-    header.headerBytes = kCanonicalDefinitionPartitionHeaderV2Bytes;
+    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
     header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -396,9 +396,9 @@ TEST(CanonicalPackSetActivate, CompanionInitOwnsVariableAndLabelNames) {
     header.ownedDefinitionCount = 1;
     ApplyCanonicalBusTriple(&header, bus.triple);
     std::vector<std::uint8_t> partition(header.headerBytes + body.size());
-    SerializePackCanonicalPartitionHeaderV2(header, partition.data());
-    header.headerChecksum = Fnv1a64(partition.data(), 80);
-    SerializePackCanonicalPartitionHeaderV2(header, partition.data());
+    SerializePackCanonicalPartitionHeader(header, partition.data());
+    header.headerChecksum = Fnv1a64(partition.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
+    SerializePackCanonicalPartitionHeader(header, partition.data());
     std::memcpy(partition.data() + header.headerBytes, body.data(), body.size());
     std::vector<std::uint8_t> overlay(96, 0);
     StoreLE32(overlay.data(), 1);
@@ -1268,7 +1268,7 @@ TEST(CanonicalPackSetActivate, RetiredRequirementVintageIsRejected) {
     auto payload = RequirementPayload(kInitPackStableId, 1, 1, 0, 0);
     ImageBuilder builder(harken::kPackKindInit);
     builder.AddEntry(harken::kPackEntryKindPackRequirementBlock, kInitPackStableId,
-                     std::move(payload), harken::kPackCanonicalEntryVintage);
+                     std::move(payload), 1u);
     const auto activation = harkentest::ActivateInitBytesV1(
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-pack-set-retired-requirement",
         builder.Build(), kInitPackStableId);
@@ -3266,7 +3266,7 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
     ASSERT_TRUE(EncodeCurrentWorldShippingBody(world, body));
     const auto bus = DefaultRuntimeBusFixture();
     PackCanonicalPartitionHeader header{};
-    header.headerBytes = kCanonicalDefinitionPartitionHeaderV2Bytes;
+    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
     header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -3275,9 +3275,9 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
     header.ownedDefinitionCount = variables.size();
     ApplyCanonicalBusTriple(&header, bus.triple);
     std::vector<std::uint8_t> partition(header.headerBytes + body.size());
-    SerializePackCanonicalPartitionHeaderV2(header, partition.data());
-    header.headerChecksum = Fnv1a64(partition.data(), 80);
-    SerializePackCanonicalPartitionHeaderV2(header, partition.data());
+    SerializePackCanonicalPartitionHeader(header, partition.data());
+    header.headerChecksum = Fnv1a64(partition.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
+    SerializePackCanonicalPartitionHeader(header, partition.data());
     std::memcpy(partition.data() + header.headerBytes, body.data(), body.size());
     ImageBuilder builder(kPackKindInit);
     builder.AddEntry(kPackEntryKindPackRequirementBlock, initId,

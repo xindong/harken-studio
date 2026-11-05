@@ -111,7 +111,7 @@ std::vector<std::uint8_t> ActionPartitionPayload(std::uint64_t packStableId,
     std::vector<std::uint8_t> body;
     EXPECT_TRUE(EncodeCurrentWorldShippingBody(world, body));
     PackCanonicalPartitionHeader header;
-    header.headerBytes = kCanonicalDefinitionPartitionHeaderV2Bytes;
+    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
     header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -121,11 +121,11 @@ std::vector<std::uint8_t> ActionPartitionPayload(std::uint64_t packStableId,
     harkentest::packfoundation::ApplyCanonicalBusTriple(
         &header, harkentest::packfoundation::DefaultFixtureBusTriple());
     std::vector<std::uint8_t> payload(
-        kCanonicalDefinitionPartitionHeaderV2Bytes + body.size(), 0);
-    SerializePackCanonicalPartitionHeaderV2(header, payload.data());
-    header.headerChecksum = Fnv1a64(payload.data(), 80);
-    SerializePackCanonicalPartitionHeaderV2(header, payload.data());
-    std::memcpy(payload.data() + kCanonicalDefinitionPartitionHeaderV2Bytes,
+        kPackCanonicalPartitionHeaderBytes + body.size(), 0);
+    SerializePackCanonicalPartitionHeader(header, payload.data());
+    header.headerChecksum = Fnv1a64(payload.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
+    SerializePackCanonicalPartitionHeader(header, payload.data());
+    std::memcpy(payload.data() + kPackCanonicalPartitionHeaderBytes,
                 body.data(), body.size());
     return payload;
 }
@@ -139,8 +139,8 @@ std::vector<std::uint8_t> BuildContentPack(std::uint64_t revision,
     std::vector<std::uint8_t> partition = ActionPartitionPayload(
         packId, revision, actionId, valueBits, actionCount, variableId);
     const std::uint64_t bodyBytes =
-        partition.size() > kCanonicalDefinitionPartitionHeaderV2Bytes
-            ? partition.size() - kCanonicalDefinitionPartitionHeaderV2Bytes
+        partition.size() > kPackCanonicalPartitionHeaderBytes
+            ? partition.size() - kPackCanonicalPartitionHeaderBytes
             : 0;
     ImageBuilder builder(kPackKindCanonicalContent);
     builder.AddEntry(kPackEntryKindPackRequirementBlock, packId,
@@ -167,7 +167,7 @@ PackGameplayCatalogActiveDraft MakeActive(
     return row;
 }
 
-std::vector<std::uint8_t> BuildInitWithCatalog(
+VnResult InstallGameplayCatalog(VnPackHandle initHandle,
     const std::vector<PackGameplayCatalogActiveDraft>& active,
     const std::vector<PackGameplayCatalogRetiredDraft>& retired) {
     PackGameplayCatalogHeader identity;
@@ -176,26 +176,15 @@ std::vector<std::uint8_t> BuildInitWithCatalog(
     identity.initContentRevision = 1;
     std::vector<std::uint8_t> catalog;
     EXPECT_TRUE(EncodeGameplayCatalog(identity, active, retired, &catalog));
-    std::uint64_t bodyBytes = 0;
-    std::vector<std::uint8_t> partition =
-        harkentest::packfoundation::PartitionPayload(kInitId, 1, 0, 0,
-            &bodyBytes, active.size() > 64 ? 4096 : 64,
-            ObjectIdFromBytes(kProjectGuid));
-    ImageBuilder builder(kPackKindInit);
-    builder.AddEntry(kPackEntryKindGameplayCatalog, 0, std::move(catalog));
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, kInitId,
-                     RequirementPayload(kInitId, 1, 1, 0, bodyBytes));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kInitId,
-                     std::move(partition));
-    harkentest::packfoundation::AppendNeutralMasterSnapshot(&builder);
-    return builder.Build();
+    VnPackByteSpan span{sizeof(span), 0, catalog.data(), catalog.size()};
+    return Vn_SetGameplayCatalog(initHandle, &span);
 }
 
-std::vector<std::uint8_t> BuildInitBare() {
+std::vector<std::uint8_t> BuildInitBare(std::uint32_t actionCapacity = 64) {
     std::uint64_t bodyBytes = 0;
     std::vector<std::uint8_t> partition =
         harkentest::packfoundation::PartitionPayload(kInitId, 1, 0, 0,
-            &bodyBytes, 64, ObjectIdFromBytes(kProjectGuid));
+            &bodyBytes, actionCapacity, ObjectIdFromBytes(kProjectGuid));
     ImageBuilder builder(kPackKindInit);
     builder.AddEntry(kPackEntryKindPackRequirementBlock, kInitId,
                      RequirementPayload(kInitId, 1, 1, 0, bodyBytes));
@@ -484,7 +473,7 @@ TEST(ActionNamePost, UnknownAndRetiredNamesDoNotFire) {
     retired.name = "Play_Fire";
     const std::string initPath = WriteTemp(
         "retired-init.pack",
-        BuildInitWithCatalog({MakeActive("Play_Storm", kActionId)}, {retired}));
+        BuildInitBare());
     const std::string contentPath = WriteTemp(
         "retired-content.pack", BuildContentPack(1, kActionId, 0x3f000000u));
     VnCanonicalPackSetMemberV1 members[2]{};
@@ -501,6 +490,7 @@ TEST(ActionNamePost, UnknownAndRetiredNamesDoNotFire) {
     VnCanonicalPackSetActivationReportV1 report{};
     ASSERT_EQ(VN_OK,
               harkentest::ActivateCanonicalMembersV1(members, 2, rows, report));
+    ASSERT_EQ(VN_OK, InstallGameplayCatalog(report.initHandle, {MakeActive("Play_Storm", kActionId)}, {retired}));
 
     VnActionFiringHandle firing = 1;
     EXPECT_EQ(VN_UNKNOWN_ID, PostByName("Play_Missing", &firing));
@@ -538,7 +528,7 @@ TEST(ActionNamePost, MismatchedProviderClosureRefusesContentPublication) {
     auto row = MakeActive("Play_Fire", kActionId);
     row.providerClosureFingerprint ^= 1;
     const std::string initPath = WriteTemp(
-        "closure-init.pack", BuildInitWithCatalog({row}, {}));
+        "closure-init.pack", BuildInitBare());
     const std::string contentPath = WriteTemp(
         "closure-content.pack", BuildContentPack(1, kActionId, 0x3f000000u));
     VnCanonicalPackSetMemberV1 members[2]{};
@@ -555,6 +545,7 @@ TEST(ActionNamePost, MismatchedProviderClosureRefusesContentPublication) {
     VnCanonicalPackSetActivationReportV1 initial{};
     ASSERT_EQ(VN_OK,
               harkentest::ActivateCanonicalMembersV1(members, 1, rows, initial));
+    ASSERT_EQ(VN_OK, InstallGameplayCatalog(initial.initHandle, {row}, {}));
     const auto before = CapturePublication(session.Engine());
     members[0].expectedHandle = initial.initHandle;
     VnCanonicalPackSetActivationReportV1 replacement{};
@@ -586,7 +577,7 @@ TEST(ActionNamePost, UnloadedOwnerIsContentNotLoadedWithoutLoadMutation) {
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::string initPath = WriteTemp(
         "unloaded-init.pack",
-        BuildInitWithCatalog({MakeActive("Play_Fire", kActionId)}, {}));
+        BuildInitBare());
     VnCanonicalPackSetMemberV1 member{};
     member.structSize = sizeof(member);
     member.packStableId = kInitId;
@@ -597,6 +588,7 @@ TEST(ActionNamePost, UnloadedOwnerIsContentNotLoadedWithoutLoadMutation) {
     VnCanonicalPackSetActivationReportV1 report{};
     ASSERT_EQ(VN_OK,
               harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report));
+    ASSERT_EQ(VN_OK, InstallGameplayCatalog(report.initHandle, {MakeActive("Play_Fire", kActionId)}, {}));
     const VnPackHandle initHandle = report.initHandle;
     const auto* published = session.Engine()->packComposition.Published();
     ASSERT_NE(nullptr, published);
@@ -705,7 +697,7 @@ TEST(ActionNamePost, PostResolvedAfterReplaceIsStaleHandle) {
     const auto afterUnload = CapturePublication(session.Engine());
     const std::string initPath = WriteTemp(
         "name-reload-init.pack",
-        BuildInitWithCatalog({MakeActive("Play_Fire", kActionId)}, {}));
+        BuildInitBare());
     const std::string oldPath = WriteTemp(
         "name-old.pack", BuildContentPack(1, kActionId, 0x3f000000u));
     const std::string reloadPath = WriteTemp(
@@ -794,7 +786,7 @@ TEST(ActionNamePost, Call09RenameAdoptStringsAndPinsRefuseRawIdRemains) {
     retired.name = "Play_Fire";
     const std::string initPath = WriteTemp(
         "call09-init.pack",
-        BuildInitWithCatalog({MakeActive("Play_Storm", kActionId)}, {retired}));
+        BuildInitBare());
     const std::string contentPath = WriteTemp(
         "call09-content.pack", BuildContentPack(1, kActionId, 0x3f000000u));
     VnCanonicalPackSetMemberV1 members[2]{};
@@ -811,6 +803,7 @@ TEST(ActionNamePost, Call09RenameAdoptStringsAndPinsRefuseRawIdRemains) {
     VnCanonicalPackSetActivationReportV1 report{};
     ASSERT_EQ(VN_OK,
               harkentest::ActivateCanonicalMembersV1(members, 2, outputs, report));
+    ASSERT_EQ(VN_OK, InstallGameplayCatalog(report.initHandle, {MakeActive("Play_Storm", kActionId)}, {retired}));
     const PublicationSnapshot snap = CapturePublication(session.Engine());
 
     VnActionFiringHandle firing = 1;
@@ -859,7 +852,7 @@ TEST(ActionNamePost, ReusedStringFollowsNewIdAndOldPinRefuses) {
     ASSERT_EQ(VN_OK, reused.InitResult());
     const std::string initPath = WriteTemp(
         "key03-init.pack",
-        BuildInitWithCatalog({MakeActive("Play_Fire", kNewActionId)}, {}));
+        BuildInitBare());
     const std::string contentPath = WriteTemp(
         "key03-content.pack", BuildContentPack(1, kNewActionId, 0x3f000000u));
     VnCanonicalPackSetMemberV1 members[2]{};
@@ -876,6 +869,7 @@ TEST(ActionNamePost, ReusedStringFollowsNewIdAndOldPinRefuses) {
     VnCanonicalPackSetActivationReportV1 report{};
     ASSERT_EQ(VN_OK,
               harkentest::ActivateCanonicalMembersV1(members, 2, outputs, report));
+    ASSERT_EQ(VN_OK, InstallGameplayCatalog(report.initHandle, {MakeActive("Play_Fire", kNewActionId)}, {}));
     const PublicationSnapshot snap = CapturePublication(reused.Engine());
 
     VnActionFiringHandle firing = 0;
@@ -934,7 +928,7 @@ TEST(ActionNamePost, FrozenWorkload4096Names256Warm128BytesTwoContentPacks) {
         rows.push_back(MakeActive(names.back(), harkentest::OffsetObjectId(kActionId, i),
                                    i < count / 2 ? kContentId : 33));
     }
-    const auto init = BuildInitWithCatalog(rows, {});
+    const auto init = BuildInitBare(count);
     const auto contentA = BuildContentPack(1, kActionId, 0x3f000000u, kContentId, count / 2, harkentest::ObjectId(7));
     const auto contentB = BuildContentPack(1, harkentest::OffsetObjectId(kActionId, count / 2), 0x3f000000u, 33, count / 2, harkentest::ObjectId(8));
     VnConfig config = MakeNullConfig();
@@ -962,6 +956,7 @@ TEST(ActionNamePost, FrozenWorkload4096Names256Warm128BytesTwoContentPacks) {
     VnCanonicalPackSetActivationReportV1 report{};
     ASSERT_EQ(VN_OK,
               harkentest::ActivateCanonicalMembersV1(members, 3, outputs, report));
+    ASSERT_EQ(VN_OK, InstallGameplayCatalog(report.initHandle, rows, {}));
     ASSERT_EQ(count, session.Engine()->packComposition.Published()->gameplayCatalog.active.size());
     const auto before = CapturePublication(session.Engine());
     std::array<VnActionResolved, warmCount> tokens{};

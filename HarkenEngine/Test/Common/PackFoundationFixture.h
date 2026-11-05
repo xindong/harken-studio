@@ -25,14 +25,11 @@ namespace harkentest::packfoundation {
 
 inline constexpr std::uint64_t kInitPackStableId = 11;
 inline constexpr std::uint64_t kResidentPackStableId = 22;
-inline constexpr std::uint64_t kUnloadedPackStableId = 33;
 inline constexpr std::uint64_t kActionBase = 0xAC710100ull;
 inline constexpr VnObjectId kVariableId = harkentest::ObjectId(7);
 
 struct Fixture {
-    std::uint32_t catalogCount = 0;
     std::uint32_t residentCount = 0;
-    std::uint64_t catalogBytes = 0;
     std::uint64_t initBodyBytes = 0;
     std::uint64_t residentBodyBytes = 0;
     std::vector<std::uint8_t> init;
@@ -57,7 +54,7 @@ public:
 
     std::size_t AddEntry(std::uint32_t kind, VnObjectId id,
                          std::vector<std::uint8_t> payload,
-                         std::uint32_t vintage = harken::kPackCanonicalEntryVintage) {
+                         std::uint32_t vintage = 0) {
         entries_.push_back({kind, id, 0, std::move(payload), {}, vintage});
         return entries_.size() - 1;
     }
@@ -81,12 +78,12 @@ public:
             directoryOffset + directoryBytes;
         std::vector<std::uint64_t> offsets(entries_.size(), 0);
         std::uint64_t cursor =
-            AlignUp(directoryEnd, harken::kPackV2PayloadAlign);
+            AlignUp(directoryEnd, harken::kPackPayloadAlign);
         std::uint64_t contentEnd = directoryEnd;
         for (std::size_t i = 0; i < entries_.size(); ++i) {
             offsets[i] = cursor;
             contentEnd = cursor + entries_[i].payload.size();
-            cursor = AlignUp(contentEnd, harken::kPackV2PayloadAlign);
+            cursor = AlignUp(contentEnd, harken::kPackPayloadAlign);
         }
 
         std::vector<std::uint64_t> mediaOffsets(entries_.size(), 0);
@@ -128,11 +125,9 @@ public:
             record.kind = entries_[i].kind;
             if (entries_[i].vintage != 0) {
                 record.vintage = entries_[i].vintage;
-            } else if (!entries_[i].samples.empty()) {
-                record.vintage = harken::kPackV2SchemaVintage;
             } else {
                 record.vintage =
-                    harken::PackV2CanonicalDirectoryVintage(entries_[i].kind);
+                    harken::PackEntryVintage(entries_[i].kind);
             }
             record.id = entries_[i].id;
             record.relationOrdinal = entries_[i].relationOrdinal;
@@ -557,7 +552,7 @@ inline std::vector<std::uint8_t> PartitionPayload(
     *bodyBytes = body.size();
 
     harken::PackCanonicalPartitionHeader header;
-    header.headerBytes = harken::kCanonicalDefinitionPartitionHeaderV2Bytes;
+    header.headerBytes = harken::kPackCanonicalPartitionHeaderBytes;
     header.bodyVintage = harken::kCanonicalDefinitionPartitionBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = harken::Fnv1a64(body.data(), body.size());
@@ -567,12 +562,12 @@ inline std::vector<std::uint8_t> PartitionPayload(
         actionCount == 0 ? 0 : actionCount + 1;
     ApplyCanonicalBusTriple(&header, triple);
     std::vector<std::uint8_t> payload(
-        harken::kCanonicalDefinitionPartitionHeaderV2Bytes + body.size(), 0);
-    harken::SerializePackCanonicalPartitionHeaderV2(header, payload.data());
-    header.headerChecksum = harken::Fnv1a64(payload.data(), 80);
-    harken::SerializePackCanonicalPartitionHeaderV2(header, payload.data());
+        harken::kPackCanonicalPartitionHeaderBytes + body.size(), 0);
+    harken::SerializePackCanonicalPartitionHeader(header, payload.data());
+    header.headerChecksum = harken::Fnv1a64(payload.data(), harken::kPackCanonicalPartitionHeaderHeaderChecksumOffset);
+    harken::SerializePackCanonicalPartitionHeader(header, payload.data());
     std::memcpy(payload.data() +
-                    harken::kCanonicalDefinitionPartitionHeaderV2Bytes,
+                    harken::kPackCanonicalPartitionHeaderBytes,
                 body.data(), body.size());
     return payload;
 }
@@ -614,58 +609,21 @@ inline std::vector<std::uint8_t> BuildContentWithInitDependency(
                      contentStableId, std::move(partition));
     builder.AddEntry(harken::kPackEntryKindPackDependencyEdge, VnObjectId{},
                      DependencyPayload(initStableId, initContentRevision, triple),
-                     harken::kPackCanonicalRequirementVintage);
+                     harken::kPackPackDependencyEdgeVintage);
     return builder.Build();
 }
 
-inline bool FillLocator(harken::PackInitCatalogRow* row,
-                        const char* locator) {
-    const std::size_t length = std::strlen(locator);
-    if (length + 1 > row->relativeLocator.size()) {
-        return false;
-    }
-    row->locatorByteCount = static_cast<std::uint32_t>(length + 1);
-    std::memcpy(row->relativeLocator.data(), locator, length + 1);
-    return true;
-}
 
-inline std::vector<std::uint8_t> CatalogPayload(
-    harken::PackInitCatalogHeader header,
-    const std::vector<harken::PackInitCatalogRow>& rows,
-    const std::vector<std::uint64_t>& startup) {
-    std::vector<std::uint8_t> payload(
-        static_cast<std::size_t>(header.catalogBytes), 0);
-    harken::SerializePackInitCatalogHeader(header, payload.data());
-    for (std::size_t i = 0; i < rows.size(); ++i) {
-        harken::SerializePackInitCatalogRow(
-            rows[i], payload.data() + harken::kInitCatalogHeaderBytes +
-                         i * harken::kInitCatalogRowBytes);
-    }
-    for (std::size_t i = 0; i < startup.size(); ++i) {
-        harken::StoreLE64(
-            payload.data() + harken::kInitCatalogHeaderBytes +
-                rows.size() * harken::kInitCatalogRowBytes + i * 8,
-            startup[i]);
-    }
-    header.checksum = harken::Fnv1a64(
-        payload.data() + harken::kInitCatalogHeaderBytes,
-        static_cast<std::size_t>(header.catalogBytes -
-                                 harken::kInitCatalogHeaderBytes));
-    harken::SerializePackInitCatalogHeader(header, payload.data());
-    return payload;
-}
 
-inline bool BuildFixture(std::uint32_t catalogCount,
-                         std::uint32_t residentCount,
+
+
+inline bool BuildFixture(std::uint32_t residentCount,
                          Fixture* fixture) {
-    if (fixture == nullptr || catalogCount == 0 || residentCount == 0 ||
-        residentCount >= catalogCount ||
-        catalogCount > harken::kInitCatalogMaxEntries) {
+    if (fixture == nullptr || residentCount == 0) {
         return false;
     }
 
     Fixture next;
-    next.catalogCount = catalogCount;
     next.residentCount = residentCount;
     next.resident = BuildContent(
         1, residentCount, 0x3f000000u, &next.residentBodyBytes);
@@ -677,55 +635,12 @@ inline bool BuildFixture(std::uint32_t catalogCount,
         return false;
     }
 
-    const std::uint64_t residentHash = harken::Fnv1a64(
-        next.resident.data(), next.resident.size());
-    std::vector<harken::PackInitCatalogRow> rows(catalogCount);
-    for (std::uint32_t i = 0; i < catalogCount; ++i) {
-        rows[i].stableId = harkentest::ObjectId(kActionBase + i);
-        rows[i].identityClass =
-            harken::kInitCatalogIdentityClassAction;
-        if (i < residentCount) {
-            rows[i].ownerPackStableId = kResidentPackStableId;
-            rows[i].expectedContentHash = residentHash;
-            if (!FillLocator(&rows[i], "Content.pack")) {
-                return false;
-            }
-        } else {
-            rows[i].ownerPackStableId = kUnloadedPackStableId;
-            rows[i].expectedContentHash = 1;
-            if (!FillLocator(&rows[i], "Unloaded.pack")) {
-                return false;
-            }
-        }
-    }
-
-    harken::PackInitCatalogHeader catalog;
-    catalog.schemaVersion = 1;
-    catalog.storageModelVersion = 1;
-    catalog.projectBuildId = 0xF3000001;
-    catalog.platformId = 1;
-    catalog.languageId = 1;
-    catalog.totalDefinitionCount = catalogCount + 1;
-    catalog.catalogEntryCount = catalogCount;
-    catalog.startupPackCount = 1;
-    catalog.recommendedCatalogCapacity = catalogCount;
-    if (!harken::InitCatalogBytes(catalog.catalogEntryCount,
-                                 catalog.startupPackCount,
-                                 &catalog.catalogBytes)) {
-        return false;
-    }
-    catalog.recommendedCatalogBytes = catalog.catalogBytes;
-    next.catalogBytes = catalog.catalogBytes;
-
     std::vector<std::uint8_t> initPartition = PartitionPayload(
         kInitPackStableId, 1, 0, 0, &next.initBodyBytes);
     if (initPartition.empty()) {
         return false;
     }
     ImageBuilder initBuilder(harken::kPackKindInit);
-    initBuilder.AddEntry(
-        harken::kPackEntryKindInitRoutingCatalog, 0,
-        CatalogPayload(catalog, rows, {kResidentPackStableId}));
     initBuilder.AddEntry(
         harken::kPackEntryKindPackRequirementBlock, kInitPackStableId,
         RequirementPayload(kInitPackStableId, 1, 1, 0, next.initBodyBytes));

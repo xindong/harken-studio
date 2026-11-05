@@ -1189,7 +1189,7 @@ TEST(PackcPipeline, InvalidPreviousOutputInvalidatesCacheWhole) {
         harken::ReadPackDirectoryEntry(
             rebuiltBytes.data() +
             static_cast<std::size_t>(rebuiltHeader.directoryOffset));
-    EXPECT_EQ(harken::kPackV2SchemaVintage, entry.vintage);
+    EXPECT_EQ(harken::PackEntryVintage(entry.kind), entry.vintage);
     EXPECT_EQ(harken::kPackFormatVersion, rebuiltHeader.formatVersion);
 }
 

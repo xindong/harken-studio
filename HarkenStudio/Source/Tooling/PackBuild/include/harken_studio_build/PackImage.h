@@ -9,6 +9,7 @@
 
 #include "harken_studio_build/PackFormat.h"
 #include "harken_studio_build/PackFormatV2.h"
+#include "harken_studio_build/GameplayCatalogFormat.h"
 
 #include <cstdint>
 #include "harken_studio_build/PackVariableNameCatalog.h"
@@ -75,16 +76,6 @@ enum class PackCatalogIdentityState : std::uint32_t {
     Absent = 0,
     KnownUnloaded = 1,
 };
-
-struct GameplayCatalogImage {
-    PackGameplayCatalogHeader header{};
-    std::vector<PackGameplayCatalogActiveRow> active;
-    std::vector<PackGameplayCatalogRetiredRow> retired;
-    std::vector<std::uint8_t> namePool;
-};
-
-PackResult ParseGameplayCatalog(const std::uint8_t* bytes, std::uint64_t size,
-                                GameplayCatalogImage* out);
 
 struct PackCanonicalImage {
     std::uint32_t packKind = 0;

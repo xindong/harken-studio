@@ -597,7 +597,7 @@ void expectInitHasVolumeOnlyKind24(const QString& path)
     ASSERT_TRUE(image.hasPartition) << path.toStdString();
     EXPECT_EQ(image.requirement.schemaVersion, 2u) << path.toStdString();
     EXPECT_EQ(image.partitionHeader.headerBytes,
-              harken::kCanonicalDefinitionPartitionHeaderV2Bytes)
+              harken::kPackCanonicalPartitionHeaderBytes)
         << path.toStdString();
     const auto& snapshot = image.busDefinitionSnapshotHeader;
     EXPECT_EQ(snapshot.schemaVersion, 2u) << path.toStdString();

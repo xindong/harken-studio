@@ -79,10 +79,6 @@ bool KindLegalForPack(std::uint32_t entryKind, std::uint32_t packKind) {
     }
 }
 
-bool EntryVintageLegal(std::uint32_t entryKind, std::uint32_t vintage) {
-    return VintageLegalForKind(entryKind, vintage);
-}
-
 bool VoiceToneWireValuesValid(const PackVoiceRecipeTone& tone) {
     if (tone.present == 0) {
         return true;
@@ -211,7 +207,7 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
         header.fileBytes != fileBytes) {
         return harkenstudiobuild::kPackInvalid;
     }
-    if (PackV2IsCanonicalKind(header.packKind)) {
+    if (PackIsCanonicalKind(header.packKind)) {
         return harkenstudiobuild::kPackIncompatible;
     }
     if (header.packKind != kPackKindResident &&
@@ -250,10 +246,11 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
         const PackDirectoryEntry entry = ReadPackDirectoryEntry(
             dir + static_cast<std::size_t>(i) * kPackDirectoryEntryBytes);
-        if (PackV2IsCanonicalEntryKind(entry.kind)) {
+        if (!PackEntryKindSupported(entry.kind)) return kPackInvalid;
+        if (PackIsCanonicalEntryKind(entry.kind)) {
             return harkenstudiobuild::kPackIncompatible;
         }
-        if (!EntryVintageLegal(entry.kind, entry.vintage)) {
+        if (!VintageLegalForKind(entry.kind, entry.vintage)) {
             return harkenstudiobuild::kPackIncompatible;
         }
         if (!KindLegalForPack(entry.kind, header.packKind)) {
@@ -263,7 +260,7 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
             entry.size > fileBytes - entry.offset) {
             return harkenstudiobuild::kPackInvalid;
         }
-        if (entry.offset % kPackV2PayloadAlign != 0) {
+        if (entry.offset % kPackPayloadAlign != 0) {
             return harkenstudiobuild::kPackInvalid; // the writer aligns every payload
         }
         ranges.emplace_back(entry.offset, entry.size);
@@ -760,20 +757,27 @@ PackResult ParseVariableRequirementsPayload(
 }
 
 
-bool EntrySectionFits(std::uint64_t offset, std::uint32_t count, std::uint32_t rowBytes,
-                      std::uint64_t entryBytes, std::uint64_t* outEnd,
-                      std::uint64_t headerBytes) {
-    std::uint64_t sectionBytes = 0;
-    std::uint64_t end = 0;
-    if (offset < headerBytes || offset % 8 != 0 ||
-        !CheckedMulU64(count, rowBytes, &sectionBytes) ||
-        !CheckedAddU64(offset, sectionBytes, &end) || end > entryBytes) {
-        return false;
-    }
-    *outEnd = end;
-    return true;
-}
 
+
+
+struct PackBusDefinitionSnapshotReader {
+    PackBusDefinitionSnapshotHeader& header;
+    std::vector<PackBusDefinitionBus>& buses;
+    std::vector<PackBusDefinitionSend>& sends;
+    std::vector<PackBusDefinitionDownmix>& downmixes;
+    std::vector<float>& coefficients;
+    auto& Value() noexcept { return header; }
+    auto& Header() noexcept { return header; }
+    bool PrepareBuses(std::uint64_t count) noexcept { return count == buses.size(); }
+    auto& Buses(std::uint64_t i) noexcept { return buses[static_cast<std::size_t>(i)]; }
+    bool PrepareSends(std::uint64_t count) noexcept { return count == sends.size(); }
+    auto& Sends(std::uint64_t i) noexcept { return sends[static_cast<std::size_t>(i)]; }
+    bool PrepareDownmixes(std::uint64_t count) noexcept { return count == downmixes.size(); }
+    auto& Downmixes(std::uint64_t i) noexcept { return downmixes[static_cast<std::size_t>(i)]; }
+    bool PrepareCoefficients(std::uint64_t count) noexcept { return count == coefficients.size(); }
+    auto& Coefficients(std::uint64_t i) noexcept { return coefficients[static_cast<std::size_t>(i)]; }
+    bool Finish() noexcept { return true; }
+};
 
 harkenstudiobuild::PackResult ParseBusDefinitionSnapshotPayload(
     const std::uint8_t* payload, std::uint64_t size, PackCanonicalImage* image) {
@@ -785,29 +789,18 @@ harkenstudiobuild::PackResult ParseBusDefinitionSnapshotPayload(
         header.coefficientCount != static_cast<std::uint64_t>(header.busCount) * 64) {
         return kPackInvalid;
     }
-    std::uint64_t busEnd = 0, sendEnd = 0, downmixEnd = 0, coeffEnd = 0;
-    if (!EntrySectionFits(header.busOffset, header.busCount, header.busRowBytes,
-                          size, &busEnd, header.headerBytes) ||
-        !EntrySectionFits(header.sendOffset, header.sendCount, header.sendRowBytes,
-                          size, &sendEnd, header.headerBytes) ||
-        !EntrySectionFits(header.downmixOffset, header.downmixCount,
-                          header.downmixRowBytes, size, &downmixEnd, header.headerBytes) ||
-        !EntrySectionFits(header.coefficientOffset, header.coefficientCount,
-                          header.coefficientRowBytes, size, &coeffEnd, header.headerBytes) ||
-        header.busOffset != header.headerBytes || header.sendOffset != busEnd ||
-        header.effectOffset != sendEnd || header.effectParameterOffset != sendEnd ||
-        header.downmixOffset != sendEnd || header.coefficientOffset != downmixEnd ||
-        coeffEnd != size) {
-        return kPackInvalid;
-    }
-    std::vector<PackBusDefinitionBus> buses;
+    if (!ValidatePackBusDefinitionSnapshotLayout(header, size)) return kPackInvalid;
+    std::vector<PackBusDefinitionBus> buses(header.busCount);
+    std::vector<PackBusDefinitionSend> sends(header.sendCount);
+    std::vector<PackBusDefinitionDownmix> downmixes(header.downmixCount);
+    std::vector<float> coefficients(header.coefficientCount);
+    PackWireBuffer<const std::uint8_t> input{payload, size};
+    PackBusDefinitionSnapshotReader visitor{header, buses, sends, downmixes, coefficients};
+    if (!ReadPackBusDefinitionSnapshot(input, visitor) || input.offset != size) return kPackInvalid;
     std::set<harkenstudio::ObjectId> ids;
-    buses.reserve(header.busCount);
     for (std::uint32_t i = 0; i < header.busCount; ++i) {
-        PackBusDefinitionBus row;
-        if (!ParsePackBusDefinitionBus(payload + header.busOffset +
-                static_cast<std::size_t>(i) * header.busRowBytes, kPackBusDefinitionBusBytes, &row) ||
-            harkenstudio::IsNull(row.busId) || !ids.insert(row.busId).second ||
+        const auto& row = buses[i];
+        if (harkenstudio::IsNull(row.busId) || !ids.insert(row.busId).second ||
             !std::isfinite(row.faderDb) || row.faderDb < -96.0f || row.faderDb > 24.0f ||
             !std::isfinite(row.outputBusVolumeDb) ||
             !std::isfinite(std::pow(10.0f, row.outputBusVolumeDb / 20.0f)) ||
@@ -815,17 +808,12 @@ harkenstudiobuild::PackResult ParseBusDefinitionSnapshotPayload(
             row.downmixCount != 1 || row.downmixFirst != i) {
             return kPackInvalid;
         }
-        buses.push_back(row);
     }
     if (!ValidateCanonicalBusParentForestV2(buses)) return kPackInvalid;
-    std::vector<PackBusDefinitionSend> sends;
     std::set<std::pair<harkenstudio::ObjectId, harkenstudio::ObjectId>> sendEdges;
-    sends.reserve(header.sendCount);
     for (std::uint32_t i = 0; i < header.sendCount; ++i) {
-        PackBusDefinitionSend row;
-        if (!ParsePackBusDefinitionSend(payload + header.sendOffset +
-                static_cast<std::size_t>(i) * header.sendRowBytes, kPackBusDefinitionSendBytes, &row) ||
-            !ids.contains(row.source) || !ids.contains(row.target) ||
+        const auto& row = sends[i];
+        if (!ids.contains(row.source) || !ids.contains(row.target) ||
             row.source == row.target ||
             (header.publicationCapabilityVintage == 4 &&
              row.target == harkenstudio::kMasterBusObjectId) ||
@@ -836,31 +824,18 @@ harkenstudiobuild::PackResult ParseBusDefinitionSnapshotPayload(
             !sendEdges.emplace(row.source, row.target).second) {
             return kPackInvalid;
         }
-        sends.push_back(row);
     }
     if (header.publicationCapabilityVintage == 4 &&
         !ValidateCanonicalBusSendGraphV2(buses, sends)) return kPackInvalid;
-    std::vector<PackBusDefinitionDownmix> downmixes;
-    downmixes.reserve(header.downmixCount);
     for (std::uint32_t i = 0; i < header.downmixCount; ++i) {
-        PackBusDefinitionDownmix row;
-        if (!ParsePackBusDefinitionDownmix(payload + header.downmixOffset +
-                static_cast<std::size_t>(i) * header.downmixRowBytes, kPackBusDefinitionDownmixBytes, &row) ||
-            row.busId != buses[i].busId || row.coefficientCount != 64 ||
+        const auto& row = downmixes[i];
+        if (row.busId != buses[i].busId || row.coefficientCount != 64 ||
             row.coefficientFirst != i * 64) {
             return kPackInvalid;
         }
-        downmixes.push_back(row);
     }
-    std::vector<float> coefficients;
-    coefficients.reserve(header.coefficientCount);
-    for (std::uint32_t i = 0; i < header.coefficientCount; ++i) {
-        float value = 0.0f;
-        if (!ParsePackBusDefinitionCoefficient(payload + header.coefficientOffset +
-            static_cast<std::size_t>(i) * header.coefficientRowBytes,
-            kPackBusDefinitionCoefficientBytes, &value)) return kPackInvalid;
+    for (const auto value : coefficients) {
         if (!std::isfinite(value)) return kPackInvalid;
-        coefficients.push_back(value);
     }
     image->hasBusDefinitionSnapshot = true;
     image->busDefinitionSnapshotHeader = header;
@@ -887,15 +862,12 @@ bool CanonicalKindLegal(std::uint32_t entryKind, std::uint32_t packKind,
             (packKind == kPackKindCanonicalContent && sharedResidentOwner);
     case kPackEntryKindBindingDefinition:
     case kPackEntryKindBindingAttachment:
-        return PackV2IsCanonicalKind(packKind);
-    case kPackEntryKindInitRoutingCatalog:
-    case kPackEntryKindGameplayCatalog:
-    case kPackEntryKindVariableNameCatalog:
+        return PackIsCanonicalKind(packKind);
         return packKind == kPackKindInit;
     case kPackEntryKindCanonicalDefinitionPartition:
     case kPackEntryKindPackRequirementBlock:
     case kPackEntryKindPackDependencyEdge:
-        return PackV2IsCanonicalKind(packKind);
+        return PackIsCanonicalKind(packKind);
     case kPackEntryKindBusDefinitionSnapshot:
         return packKind == kPackKindInit;
     case kPackEntryKindVariablePolicyOverlay:
@@ -907,182 +879,9 @@ bool CanonicalKindLegal(std::uint32_t entryKind, std::uint32_t packKind,
     }
 }
 
-bool InitSelfHashMatches(const std::uint8_t* bytes, std::uint64_t fileBytes,
-                         const PackCanonicalImage& image) {
-    if (!image.hasCatalog || image.packKind != kPackKindInit) {
-        return true;
-    }
-    std::vector<std::uint8_t> copy(bytes, bytes + static_cast<std::size_t>(fileBytes));
-    bool sawInitOwned = false;
-    std::uint64_t expected = 0;
-    for (std::size_t i = 0; i < image.catalogRows.size(); ++i) {
-        const PackInitCatalogRow& row = image.catalogRows[i];
-        if (row.ownerPackStableId != image.packStableId) {
-            continue;
-        }
-        if (!sawInitOwned) {
-            expected = row.expectedContentHash;
-            sawInitOwned = true;
-        } else if (row.expectedContentHash != expected) {
-            return false;
-        }
-        const std::uint64_t rowOffset =
-            image.catalogPayloadOffset + kInitCatalogHeaderBytes +
-            static_cast<std::uint64_t>(i) * kInitCatalogRowBytes;
-        StoreLE64(copy.data() + static_cast<std::size_t>(rowOffset) +
-                      kInitCatalogContentHashOffset, 0);
-    }
-    if (!sawInitOwned) {
-        return true;
-    }
-    return Fnv1a64(copy.data(), static_cast<std::size_t>(fileBytes)) == expected;
-}
 
-harkenstudiobuild::PackResult ParseGameplayCatalogPayload(const std::uint8_t* payload,
-                                     std::uint64_t size,
-                                     GameplayCatalogImage* out) {
-    if (size > kGameplayCatalogMaxBytes) {
-        return harkenstudiobuild::kPackCatalogCapacity;
-    }
-    if (payload == nullptr || out == nullptr ||
-        size < kGameplayCatalogHeaderBytes) {
-        return harkenstudiobuild::kPackInvalid;
-    }
-    PackGameplayCatalogHeader header;
-    LoadPackGameplayCatalogHeader(payload, &header);
-    if (header.activeCount > kGameplayCatalogMaxEntries ||
-        header.retiredCount > kGameplayCatalogMaxEntries) {
-        return harkenstudiobuild::kPackCatalogCapacity;
-    }
-    std::uint64_t expectedBytes = 0;
-    if (!GameplayCatalogBytes(header.activeCount, header.retiredCount,
-                              header.namePoolBytes, &expectedBytes) ||
-        expectedBytes > kGameplayCatalogMaxBytes) {
-        return harkenstudiobuild::kPackCatalogCapacity;
-    }
-    if (expectedBytes != size) {
-        return harkenstudiobuild::kPackInvalid;
-    }
-    if (header.schemaVersion != 1 ||
-        header.layoutVintage != kPackGameplayCatalogVintage) {
-        return harkenstudiobuild::kPackIncompatible;
-    }
-    if (header.reserved0 != 0 || header.reserved1 != 0 ||
-        (header.flags & ~kGameplayCatalogFlagHasRetired) != 0 ||
-        ((header.flags & kGameplayCatalogFlagHasRetired) != 0) !=
-            (header.retiredCount > 0) ||
-        (header.namePoolBytes & 7u) != 0 ||
-        Fnv1a64(payload, 88) != header.headerChecksum ||
-        GameplayCatalogDigest(payload, static_cast<std::size_t>(size)) !=
-            header.digest ||
-        GameplayCatalogPublicationPairing(header) !=
-            header.publicationPairingFingerprint) {
-        return harkenstudiobuild::kPackInvalid;
-    }
-
-    const std::uint8_t* activeBase = payload + kGameplayCatalogHeaderBytes;
-    const std::uint8_t* retiredBase =
-        activeBase + static_cast<std::size_t>(header.activeCount) *
-                         kGameplayCatalogActiveRowBytes;
-    const std::uint8_t* pool =
-        retiredBase + static_cast<std::size_t>(header.retiredCount) *
-                          kGameplayCatalogRetiredRowBytes;
-
-    GameplayCatalogImage image;
-    image.header = header;
-    image.active.reserve(header.activeCount);
-    image.retired.reserve(header.retiredCount);
-    image.namePool.assign(pool, pool + header.namePoolBytes);
-
-    std::uint32_t cursor = 0;
-    for (std::uint32_t i = 0; i < header.activeCount; ++i) {
-        PackGameplayCatalogActiveRow row;
-        if (!ParsePackGameplayCatalogActiveRow(
-                activeBase + static_cast<std::size_t>(i) *
-                                 kGameplayCatalogActiveRowBytes,
-                &row) ||
-            row.nameOffset != cursor ||
-            row.nameOffset > header.namePoolBytes ||
-            row.nameLength > header.namePoolBytes - row.nameOffset) {
-            return harkenstudiobuild::kPackInvalid;
-        }
-        for (std::uint32_t j = 0; j < i; ++j) {
-            if (image.active[j].actionStableId == row.actionStableId) {
-                return harkenstudiobuild::kPackInvalid;
-            }
-            const int nameCmp = CompareGameplayCatalogNameBytes(
-                image.namePool.data() + image.active[j].nameOffset,
-                image.active[j].nameLength,
-                image.namePool.data() + row.nameOffset, row.nameLength);
-            if (nameCmp == 0) {
-                return harkenstudiobuild::kPackInvalid;
-            }
-        }
-        if (i > 0) {
-            const PackGameplayCatalogActiveRow& prev = image.active.back();
-            const int nameCmp = CompareGameplayCatalogNameBytes(
-                image.namePool.data() + prev.nameOffset, prev.nameLength,
-                image.namePool.data() + row.nameOffset, row.nameLength);
-            if (nameCmp > 0 ||
-                (nameCmp == 0 && prev.actionStableId >= row.actionStableId)) {
-                return harkenstudiobuild::kPackInvalid;
-            }
-        }
-        cursor += row.nameLength;
-        image.active.push_back(row);
-    }
-    for (std::uint32_t i = 0; i < header.retiredCount; ++i) {
-        PackGameplayCatalogRetiredRow row;
-        if (!ParsePackGameplayCatalogRetiredRow(
-                retiredBase + static_cast<std::size_t>(i) *
-                                  kGameplayCatalogRetiredRowBytes,
-                &row) ||
-            row.nameOffset != cursor ||
-            row.nameOffset > header.namePoolBytes ||
-            row.nameLength > header.namePoolBytes - row.nameOffset) {
-            return harkenstudiobuild::kPackInvalid;
-        }
-        for (const auto& active : image.active) {
-            if (CompareGameplayCatalogNameBytes(
-                    image.namePool.data() + active.nameOffset, active.nameLength,
-                    image.namePool.data() + row.nameOffset, row.nameLength) ==
-                0) {
-                return harkenstudiobuild::kPackInvalid;
-            }
-        }
-        if (i > 0) {
-            const PackGameplayCatalogRetiredRow& prev = image.retired.back();
-            const int nameCmp = CompareGameplayCatalogNameBytes(
-                image.namePool.data() + prev.nameOffset, prev.nameLength,
-                image.namePool.data() + row.nameOffset, row.nameLength);
-            if (nameCmp > 0 ||
-                (nameCmp == 0 &&
-                 prev.lastActionStableId >= row.lastActionStableId)) {
-                return harkenstudiobuild::kPackInvalid;
-            }
-        }
-        cursor += row.nameLength;
-        image.retired.push_back(row);
-    }
-    const std::uint32_t padded = (cursor + 7u) & ~7u;
-    if (padded != header.namePoolBytes) {
-        return harkenstudiobuild::kPackInvalid;
-    }
-    for (std::uint32_t i = cursor; i < header.namePoolBytes; ++i) {
-        if (image.namePool[i] != 0) {
-            return harkenstudiobuild::kPackInvalid;
-        }
-    }
-    *out = std::move(image);
-    return harkenstudiobuild::kPackOk;
-}
 
 } // namespace
-
-PackResult ParseGameplayCatalog(const std::uint8_t* bytes, std::uint64_t size,
-                                GameplayCatalogImage* out) {
-    return ParseGameplayCatalogPayload(bytes, size, out);
-}
 
 harkenstudiobuild::PackResult ValidateCanonicalInitDependency(
     std::span<const PackDependencyEdge> edges,
@@ -1120,7 +919,7 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
         header.fileBytes != fileBytes) {
         return harkenstudiobuild::kPackInvalid;
     }
-    if (!PackV2IsCanonicalKind(header.packKind)) {
+    if (!PackIsCanonicalKind(header.packKind)) {
         return harkenstudiobuild::kPackInvalid;
     }
     const std::uint64_t dirBytes =
@@ -1140,154 +939,44 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
 
     PackCanonicalImage image;
     image.packKind = header.packKind;
-    image.catalogPayloadOffset = 0;
 
     std::uint64_t attachmentOrdinal = 0;
     std::uint64_t sendOrdinal = 0;
     std::uint64_t busEffectOrdinal = 0;
     std::uint64_t dynamicRouteOrdinal = 0;
     std::uint64_t dependencyOrdinal = 0;
-    std::uint32_t canonicalVintage = 0;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
     ranges.reserve(static_cast<std::size_t>(header.entryCount) * 2);
 
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
         const PackDirectoryEntry entry = ReadPackDirectoryEntry(
             dir + static_cast<std::size_t>(i) * kPackDirectoryEntryBytes);
-        if (entry.kind == kPackEntryKindCanonicalDefinitionPartition ||
-            entry.kind == kPackEntryKindPackRequirementBlock ||
-            entry.kind == kPackEntryKindPackDependencyEdge) {
-            const bool legalVintage = entry.kind == kPackEntryKindCanonicalDefinitionPartition
-                ? entry.vintage == kPackCanonicalRequirementVintage || entry.vintage == kPackCanonicalEntryVintage
-                : VintageLegalForKind(entry.kind, entry.vintage);
-            if (!legalVintage || (canonicalVintage != 0 && canonicalVintage != entry.vintage)) {
-                return harkenstudiobuild::kPackIncompatible;
-            }
-            canonicalVintage = entry.vintage;
-        } else if (entry.kind == kPackEntryKindBusDefinitionSnapshot) {
-            if (entry.vintage != kPackBusDefinitionSnapshotVintage) {
-                return harkenstudiobuild::kPackIncompatible;
-            }
-        } else if (PackV2IsCanonicalEntryKind(entry.kind)) {
-            if (entry.vintage != kPackCanonicalEntryVintage) {
-                return harkenstudiobuild::kPackIncompatible;
-            }
-        } else if (!EntryVintageLegal(entry.kind, entry.vintage)) {
+        if (!PackEntryKindSupported(entry.kind)) return kPackInvalid;
+        if (!VintageLegalForKind(entry.kind, entry.vintage)) {
             return harkenstudiobuild::kPackIncompatible;
         }
         if (entry.offset < dirEnd || entry.offset > fileBytes ||
             entry.size > fileBytes - entry.offset ||
-            entry.offset % kPackV2PayloadAlign != 0) {
+            entry.offset % kPackPayloadAlign != 0) {
             return harkenstudiobuild::kPackInvalid;
         }
         ranges.emplace_back(entry.offset, entry.size);
         const std::uint8_t* payload = bytes + entry.offset;
-        const bool catalogKind = entry.kind == kPackEntryKindInitRoutingCatalog;
-        if (!catalogKind &&
-            Fnv1a64(payload, static_cast<std::size_t>(entry.size)) !=
-                entry.payloadChecksum) {
+        if (Fnv1a64(payload, static_cast<std::size_t>(entry.size)) !=
+            entry.payloadChecksum) {
             return harkenstudiobuild::kPackInvalid;
         }
         switch (entry.kind) {
-        case kPackEntryKindInitRoutingCatalog: {
-            if (image.hasCatalog) {
-                return harkenstudiobuild::kPackInvalid;
-            }
-            PackInitCatalogHeader catalogHeader;
-            if (!ParsePackInitCatalogHeader(payload, entry.size, &catalogHeader) ||
-                catalogHeader.catalogEntryCount > kInitCatalogMaxEntries ||
-                catalogHeader.startupPackCount > kInitCatalogMaxStartupPacks) {
-                return harkenstudiobuild::kPackInvalid;
-            }
-            std::uint64_t expectedBytes = 0;
-            if (!InitCatalogBytes(catalogHeader.catalogEntryCount,
-                                  catalogHeader.startupPackCount,
-                                  &expectedBytes) ||
-                expectedBytes != catalogHeader.catalogBytes ||
-                entry.size != catalogHeader.catalogBytes) {
-                return harkenstudiobuild::kPackInvalid;
-            }
-            image.catalogRows.reserve(catalogHeader.catalogEntryCount);
-            for (std::uint32_t r = 0; r < catalogHeader.catalogEntryCount; ++r) {
-                PackInitCatalogRow row;
-                if (!ParsePackInitCatalogRow(
-                        payload + kInitCatalogHeaderBytes +
-                            static_cast<std::size_t>(r) * kInitCatalogRowBytes,
-                        &row)) {
-                    return harkenstudiobuild::kPackInvalid;
-                }
-                if (r > 0 &&
-                    row.stableId <= image.catalogRows.back().stableId) {
-                    return harkenstudiobuild::kPackInvalid;
-                }
-                image.catalogRows.push_back(row);
-            }
-            image.startupPackIds.reserve(catalogHeader.startupPackCount);
-            const std::uint8_t* startup =
-                payload + kInitCatalogHeaderBytes +
-                static_cast<std::size_t>(catalogHeader.catalogEntryCount) *
-                    kInitCatalogRowBytes;
-            for (std::uint32_t s = 0; s < catalogHeader.startupPackCount; ++s) {
-                const std::uint64_t packId = LoadLE64(startup + s * 8);
-                if (packId == 0) {
-                    return harkenstudiobuild::kPackInvalid;
-                }
-                for (std::uint64_t seen : image.startupPackIds) {
-                    if (seen == packId) {
-                        return harkenstudiobuild::kPackInvalid;
-                    }
-                }
-                bool ownerSeen = false;
-                for (const PackInitCatalogRow& row : image.catalogRows) {
-                    if (row.ownerPackStableId == packId) {
-                        ownerSeen = true;
-                        break;
-                    }
-                }
-                if (!ownerSeen) {
-                    return harkenstudiobuild::kPackInvalid;
-                }
-                image.startupPackIds.push_back(packId);
-            }
-            image.catalogHeader = catalogHeader;
-            image.hasCatalog = true;
-            image.catalogPayloadOffset = entry.offset;
-            image.catalogDirectoryChecksum = entry.payloadChecksum;
-            break;
-        }
-        case kPackEntryKindVariableNameCatalog: {
-            if (header.packKind != kPackKindInit || image.hasVariableNameCatalog ||
-                entry.id != decltype(entry.id){} || entry.relationOrdinal != 0 ||
-                !DecodeVariableNameCatalog(payload, entry.size, &image.variableNameCatalog))
-                return harkenstudiobuild::kPackInvalid;
-            image.hasVariableNameCatalog = true;
-            break;
-        }
-        case kPackEntryKindGameplayCatalog: {
-            if (header.packKind != kPackKindInit || image.hasGameplayCatalog) {
-                return harkenstudiobuild::kPackInvalid;
-            }
-            const harkenstudiobuild::PackResult parsed = ParseGameplayCatalogPayload(
-                payload, entry.size, &image.gameplayCatalog);
-            if (parsed != harkenstudiobuild::kPackOk) {
-                return parsed;
-            }
-            image.hasGameplayCatalog = true;
-            break;
-        }
+
         case kPackEntryKindCanonicalDefinitionPartition: {
             if (image.hasPartition) {
                 return harkenstudiobuild::kPackInvalid;
             }
             PackCanonicalPartitionHeader partitionHeader;
-            const bool versionTwo = entry.vintage == kPackCanonicalRequirementVintage;
-            if (entry.size < (versionTwo ? kCanonicalDefinitionPartitionHeaderV2Bytes
-                                        : kCanonicalDefinitionPartitionHeaderBytes)) {
+            if (entry.size < kPackCanonicalPartitionHeaderBytes) {
                 return harkenstudiobuild::kPackIncompatible;
             }
-            const bool parsed = versionTwo
-                ? ParsePackCanonicalPartitionHeaderV2(payload, entry.size, &partitionHeader)
-                : ParsePackCanonicalPartitionHeader(payload, entry.size, &partitionHeader);
+            const bool parsed = ReadPackCanonicalPartitionHeader(payload, entry.size, &partitionHeader);
             if (!parsed) {
                 return harkenstudiobuild::kPackInvalid;
             }
@@ -1517,7 +1206,6 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
                 return harkenstudiobuild::kPackInvalid;
             }
             if (header.packKind == kPackKindInit &&
-                canonicalVintage == kPackCanonicalRequirementVintage &&
                 (definition.desc.targetScopeKind == harkenstudio::kTargetScopeVoice ||
                  definition.desc.targetScopeKind ==
                      harkenstudio::kTargetScopeVoiceEffectParam)) {
@@ -1541,7 +1229,6 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
                 return harkenstudiobuild::kPackInvalid;
             }
             if (header.packKind == kPackKindInit &&
-                canonicalVintage == kPackCanonicalRequirementVintage &&
                 attachment.scopeKind != harkenstudio::kTargetScopeBus &&
                 attachment.scopeKind !=
                     harkenstudio::kTargetScopeBusEffectParam) {
@@ -1567,7 +1254,6 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
             return harkenstudiobuild::kPackInvalid;
         }
         if (header.packKind == kPackKindInit &&
-            canonicalVintage == kPackCanonicalRequirementVintage &&
             (definition.desc.targetScopeKind == harkenstudio::kTargetScopeVoice ||
              definition.desc.targetScopeKind ==
                  harkenstudio::kTargetScopeVoiceEffectParam)) {
@@ -1580,27 +1266,10 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
             return harkenstudiobuild::kPackInvalid;
         }
         if (header.packKind == kPackKindInit &&
-            canonicalVintage == kPackCanonicalRequirementVintage &&
             attachment.scopeKind != harkenstudio::kTargetScopeBus &&
             attachment.scopeKind != harkenstudio::kTargetScopeBusEffectParam) {
             return harkenstudiobuild::kPackInvalid;
         }
-    }
-    if (canonicalVintage == kPackCanonicalEntryVintage && image.hasBusDefinitionSnapshot) {
-        return harkenstudiobuild::kPackInvalid;
-    }
-    if (image.hasVariableNameCatalog &&
-        (image.variableNameCatalog.initPackStableId != image.packStableId ||
-         image.variableNameCatalog.initContentRevision != image.requirement.packContentRevision))
-        return harkenstudiobuild::kPackInvalid;
-    if (image.hasGameplayCatalog &&
-        (image.gameplayCatalog.header.initPackStableId != image.packStableId ||
-         image.gameplayCatalog.header.initContentRevision !=
-             image.requirement.packContentRevision)) {
-        return harkenstudiobuild::kPackInvalid;
-    }
-    if (header.packKind == kPackKindCanonicalContent && image.hasCatalog) {
-        return harkenstudiobuild::kPackInvalid;
     }
     const bool sharedResidentOwner =
         header.packKind == kPackKindCanonicalContent &&
@@ -1651,32 +1320,6 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
             !CanonicalBusTripleEqual(DependencyBusTriple(edge), requirementT)) {
             return harkenstudiobuild::kPackInvalid;
         }
-    }
-    if (image.hasCatalog) {
-        std::vector<std::uint8_t> catalogCopy(
-            bytes + image.catalogPayloadOffset,
-            bytes + image.catalogPayloadOffset +
-                static_cast<std::size_t>(image.catalogHeader.catalogBytes));
-        for (std::size_t i = 0; i < image.catalogRows.size(); ++i) {
-            if (image.catalogRows[i].ownerPackStableId != image.packStableId)
-                continue;
-            StoreLE64(catalogCopy.data() + kInitCatalogHeaderBytes +
-                          i * kInitCatalogRowBytes + kInitCatalogContentHashOffset,
-                      0);
-        }
-        if (Fnv1a64(catalogCopy.data() + kInitCatalogHeaderBytes,
-                    static_cast<std::size_t>(image.catalogHeader.catalogBytes -
-                                             kInitCatalogHeaderBytes)) !=
-            image.catalogHeader.checksum) {
-            return harkenstudiobuild::kPackInvalid;
-        }
-        if (Fnv1a64(catalogCopy.data(), catalogCopy.size()) !=
-            image.catalogDirectoryChecksum) {
-            return harkenstudiobuild::kPackInvalid;
-        }
-    }
-    if (!InitSelfHashMatches(bytes, fileBytes, image)) {
-        return harkenstudiobuild::kPackHashMismatch;
     }
     *out = std::move(image);
     return harkenstudiobuild::kPackOk;

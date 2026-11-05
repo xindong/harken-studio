@@ -91,8 +91,7 @@ public:
                          std::uint32_t vintage = 0) {
         Entry entry;
         entry.kind = kind;
-        entry.vintage = vintage != 0 ? vintage : kind == kPackEntryKindBus
-            ? kPackBusVintage : kPackV2SchemaVintage;
+        entry.vintage = vintage != 0 ? vintage : PackEntryVintage(kind);
         entry.id = id;
         entry.payload = std::move(payload);
         entries_.push_back(std::move(entry));
@@ -107,7 +106,7 @@ public:
                          std::vector<float> planar) {
         Entry entry;
         entry.kind = kPackEntryKindMedia;
-        entry.vintage = kPackV2SchemaVintage;
+        entry.vintage = kPackMediaVintage;
         entry.id = directoryId;
         entry.isMedia = true;
         entry.soundId = soundId;
@@ -127,12 +126,12 @@ public:
         payloadOffsets_.assign(entries_.size(), 0);
         blobOffsets_.assign(entries_.size(), 0);
 
-        std::uint64_t cursor = AlignUp(dirEnd, kPackV2PayloadAlign);
+        std::uint64_t cursor = AlignUp(dirEnd, kPackPayloadAlign);
         std::uint64_t contentEnd = dirEnd;
         for (std::size_t i = 0; i < entries_.size(); ++i) {
             payloadOffsets_[i] = cursor;
             contentEnd = cursor + PayloadSize(entries_[i]);
-            cursor = AlignUp(contentEnd, kPackV2PayloadAlign);
+            cursor = AlignUp(contentEnd, kPackPayloadAlign);
         }
         std::uint64_t blobCursor = AlignUp(contentEnd, kPackBlobAlign);
         for (std::size_t i = 0; i < entries_.size(); ++i) {
@@ -542,7 +541,7 @@ TEST(PackV2Format, RetiredVoiceRecipeVintagesRefuse) {
     {
         ImageBuilder builder(kPackKindContent);
         builder.AddEntry(kPackEntryKindVoiceRecipe, 103, ToneRecipePayload(harkentest::ObjectId(103)),
-                         kPackV2SchemaVintage);
+                         2u);
         const std::vector<std::uint8_t> bytes = builder.Build();
         PackLogicImage image;
         EXPECT_EQ(VN_PACK_INCOMPATIBLE,
@@ -1368,7 +1367,7 @@ TEST(PackV2Format, RetiredAttenuationVintageRefuses) {
     desc.airAbsorptionFarHz = 20000.0f;
     ImageBuilder builder(kPackKindResident);
     builder.AddEntry(kPackEntryKindAttenuation, 500,
-                     RetiredAttenuationPayload(desc), kPackV2SchemaVintage);
+                     RetiredAttenuationPayload(desc), 2u);
     const std::vector<std::uint8_t> bytes = builder.Build();
     PackLogicImage image;
     EXPECT_EQ(VN_PACK_INCOMPATIBLE,

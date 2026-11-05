@@ -1655,10 +1655,7 @@ TEST(TraceReplayE2E,
 
     std::vector<std::uint8_t> bytes = ReadFileBytes(tracePath);
     std::vector<std::uint8_t> historicalBody;
-    auto historicalWorld = harkentest::AsHistoricalPrefix(world);
-    historicalWorld.identity.runtimeSemanticFingerprint =
-        harken::ComputeCurrentWorldFingerprintV4(historicalWorld);
-    ASSERT_TRUE(harken::EncodeCurrentWorldBodyV6(historicalWorld, historicalBody));
+    ASSERT_TRUE(harken::EncodeCurrentWorldShippingBody(world, historicalBody));
     const std::uint32_t historicalVintage =
         harken::kCurrentWorldBodyVintageV6;
     ASSERT_TRUE(ReplaceCurrentWorldRecordBody(
@@ -1693,11 +1690,11 @@ TEST(TraceReplayE2E, HistoricalCurrentWorldWithAncestorsIsRejected) {
     properties[1].structuralAncestorCount = 1;
     properties[1].structuralAncestors = &ancestor;
     properties[1].payload = ResolvedDefinitionPayload();
-    harken::HistoricalContainerWorldViewV1 historical{};
+    harken::ContainerWorldInstallViewV1 historical{};
     historical.playableProperties = properties;
     historical.playablePropertyCount = 2;
     std::vector<std::uint8_t> body;
-    ASSERT_TRUE(harken::EncodeCurrentWorldBodyV8(historical, body));
+    ASSERT_TRUE(harken::EncodeCurrentWorldShippingBody(historical, body));
 
     const auto tracePath = TempPath("retired_ancestor_world.vtrc");
     {
@@ -1917,10 +1914,7 @@ TEST(TraceReplayE2E,
         bytes, "shipping_current_world_generation_mapping.vtrc");
     ASSERT_EQ(0, shippingReplay.exitCode) << shippingReplay.output;
     std::vector<std::uint8_t> historicalBody;
-    auto historicalFirst = harkentest::AsHistoricalPrefix(firstWorld);
-    historicalFirst.identity.runtimeSemanticFingerprint =
-        harken::ComputeCurrentWorldFingerprintV4(historicalFirst);
-    ASSERT_TRUE(harken::EncodeCurrentWorldBodyV6(historicalFirst, historicalBody));
+    ASSERT_TRUE(harken::EncodeCurrentWorldShippingBody(firstWorld, historicalBody));
     ASSERT_TRUE(ReplaceCurrentWorldRecordBody(
         &bytes, 0, harken::kCurrentWorldBodyVintageV6, historicalBody));
 
@@ -1982,10 +1976,7 @@ TEST(TraceReplayE2E,
                 sizeof firstRecordedResult);
     ASSERT_NE(0u, firstRecordedResult);
     std::vector<std::uint8_t> historicalBody;
-    auto historicalSecond = harkentest::AsHistoricalPrefix(secondWorld);
-    historicalSecond.identity.runtimeSemanticFingerprint =
-        harken::ComputeCurrentWorldFingerprintV4(historicalSecond);
-    ASSERT_TRUE(harken::EncodeCurrentWorldBodyV6(historicalSecond, historicalBody));
+    ASSERT_TRUE(harken::EncodeCurrentWorldShippingBody(secondWorld, historicalBody));
     ASSERT_TRUE(ReplaceCurrentWorldRecordBody(
         &bytes, 1, harken::kCurrentWorldBodyVintageV6, historicalBody));
     RecordLocation finalShippingRecord{};
@@ -2028,10 +2019,7 @@ TEST(TraceReplayE2E, MalformedHistoricalCurrentWorldBodyFailsHard) {
 
     std::vector<std::uint8_t> bytes = ReadFileBytes(tracePath);
     std::vector<std::uint8_t> malformedBody;
-    auto historicalMalformed = harkentest::AsHistoricalPrefix(world);
-    historicalMalformed.identity.runtimeSemanticFingerprint =
-        harken::ComputeCurrentWorldFingerprintV4(historicalMalformed);
-    ASSERT_TRUE(harken::EncodeCurrentWorldBodyV6(historicalMalformed, malformedBody));
+    ASSERT_TRUE(harken::EncodeCurrentWorldShippingBody(world, malformedBody));
     ASSERT_FALSE(malformedBody.empty());
     malformedBody.pop_back();
     ASSERT_TRUE(ReplaceCurrentWorldRecordBody(

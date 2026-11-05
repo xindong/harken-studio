@@ -1,5 +1,6 @@
 #include "Common/ObjectIdTestSupport.h"
 #include "harken/media/PackTable.h"
+#include "harken/media/PackFormatV2.h"
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <cstring>

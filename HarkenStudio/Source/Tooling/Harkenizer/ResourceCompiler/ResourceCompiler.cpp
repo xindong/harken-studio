@@ -364,7 +364,7 @@ harkenstudiobuild::BindingCurve ToBindingCurve(const ManifestCurve& curve) {
 // entry kind, manifest order within a kind; the relation kinds (bus
 // send, binding attachment) carry their 0-based within-kind ordinal as
 // the directory id — then the payload region (each payload aligned to
-// kPackV2PayloadAlign), then the media blob region (kPackBlobAlign,
+// kPackPayloadAlign), then the media blob region (kPackBlobAlign,
 // manifest order). fileBytes ends at the last blob, or at the last
 // payload when the pack carries no media. The image is
 // zero-initialized so every alignment gap stays zeroed, and nothing
@@ -704,22 +704,6 @@ bool SerializeEntryPayload(const Manifest& manifest,
     return true;
 }
 
-std::uint32_t EntryVintage(std::uint32_t kind) {
-    switch (kind) {
-    case harkenstudiobuild::kPackEntryKindMedia: return harkenstudiobuild::kPackMediaVintage;
-    case harkenstudiobuild::kPackEntryKindBus: return harkenstudiobuild::kPackBusVintage;
-    case harkenstudiobuild::kPackEntryKindBusSend: return harkenstudiobuild::kPackBusSendVintage;
-    case harkenstudiobuild::kPackEntryKindAttenuation: return harkenstudiobuild::kPackAttenuationVintage;
-    case harkenstudiobuild::kPackEntryKindBindingDefinition: return harkenstudiobuild::kPackBindingDefinitionVintage;
-    case harkenstudiobuild::kPackEntryKindBindingAttachment: return harkenstudiobuild::kPackBindingAttachmentVintage;
-    case harkenstudiobuild::kPackEntryKindBusEffect: return harkenstudiobuild::kPackBusEffectVintage;
-    case harkenstudiobuild::kPackEntryKindEffectDynamicRoute: return harkenstudiobuild::kPackEffectDynamicRouteVintage;
-    case harkenstudiobuild::kPackEntryKindContainer: return harkenstudiobuild::kPackContainerVintage;
-    case harkenstudiobuild::kPackEntryKindVoiceRecipe: return harkenstudiobuild::kPackVoiceRecipeVintage;
-    default: return harkenstudiobuild::kPackV2SchemaVintage;
-    }
-}
-
 bool BuildPackBytesV2(const Manifest& manifest,
                       const std::vector<PackEntry>& entries,
                       std::vector<std::uint8_t>* out, Diag* diag) {
@@ -733,7 +717,7 @@ bool BuildPackBytesV2(const Manifest& manifest,
     std::uint64_t cursor = harkenstudiobuild::kPackFileHeaderBytes + directoryBytes;
     for (EntryPlacement& placement : placements) {
         placement.offset =
-            AlignUpTo(cursor, harkenstudiobuild::kPackV2PayloadAlign);
+            AlignUpTo(cursor, harkenstudiobuild::kPackPayloadAlign);
         cursor = placement.offset + placement.size;
     }
     std::vector<std::uint64_t> blobOffsets(entries.size());
@@ -772,7 +756,7 @@ bool BuildPackBytesV2(const Manifest& manifest,
         const EntryPlacement& placement = placements[i];
         harkenstudiobuild::PackDirectoryEntry entry;
         entry.kind = placement.kind;
-        entry.vintage = EntryVintage(placement.kind);
+        entry.vintage = harkenstudiobuild::PackEntryVintage(placement.kind);
         entry.id = placement.id;
         entry.relationOrdinal = harkenstudio::IsNull(placement.id) ? placement.index : 0;
         entry.offset = placement.offset;
@@ -1569,7 +1553,7 @@ bool compileEntries(const std::string& logicSections, bool resident,
         placement.size = harkenstudiobuild::kPackMediaBytes;
         CompiledEntry resource;
         resource.kind = placement.kind;
-        resource.vintage = EntryVintage(placement.kind);
+        resource.vintage = harkenstudiobuild::PackEntryVintage(placement.kind);
         resource.id = placement.id;
         const auto audio = mediaCache->prepare(input);
         resource.media = audio.samples;
@@ -1586,7 +1570,7 @@ bool compileEntries(const std::string& logicSections, bool resident,
         if (placement.kind == harkenstudiobuild::kPackEntryKindMedia) continue;
         CompiledEntry entry;
         entry.kind = placement.kind;
-        entry.vintage = EntryVintage(placement.kind);
+        entry.vintage = harkenstudiobuild::PackEntryVintage(placement.kind);
         entry.id = placement.id;
         entry.relationOrdinal = harkenstudio::IsNull(placement.id) ? placement.index : 0;
         entry.payload.resize(static_cast<std::size_t>(placement.size));

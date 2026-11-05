@@ -177,7 +177,7 @@ TEST(HostOptions, CompanionCaptureUsesPairedFilesAndRefusesPartialLanguageOrPubl
             image.AddEntry(harken::kPackEntryKindBusDefinitionSnapshot, 1, bus.snapshot);
         } else {
             image.AddEntry(harken::kPackEntryKindPackDependencyEdge, VnObjectId{},
-                DependencyPayload(kInitPackStableId, 1, bus.triple), harken::kPackCanonicalRequirementVintage);
+                DependencyPayload(kInitPackStableId, 1, bus.triple), harken::kPackPackDependencyEdgeVintage);
         }
         return image.Build();
     };

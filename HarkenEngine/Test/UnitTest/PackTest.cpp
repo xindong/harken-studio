@@ -185,7 +185,7 @@ static std::vector<std::uint8_t> MakeMediaConsumerProbeBytes(
     harken::WritePackBindingDefinition(
         binding, definition, definitionBytes.data());
     image.AddEntry(harken::kPackEntryKindBindingDefinition, binding,
-        std::move(definitionBytes), harken::kPackV2SchemaVintage);
+        std::move(definitionBytes), harken::kPackBindingDefinitionVintage);
 
     harken::PackBindingAttachmentEntry attachment{};
     attachment.bindingId = binding;
@@ -195,7 +195,7 @@ static std::vector<std::uint8_t> MakeMediaConsumerProbeBytes(
         static_cast<std::size_t>(harken::kPackBindingAttachmentBytes));
     harken::SerializePackBindingAttachment(attachment, attachmentBytes.data());
     image.AddEntry(harken::kPackEntryKindBindingAttachment, std::uint64_t{0},
-        std::move(attachmentBytes), harken::kPackV2SchemaVintage);
+        std::move(attachmentBytes), harken::kPackBindingAttachmentVintage);
     return image.Build();
 }
 

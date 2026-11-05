@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
 import tempfile
@@ -98,6 +99,8 @@ class PackWireCodegenTest(unittest.TestCase):
         damaged(lambda value: value["kinds"].append({"name": "duplicate", "id": 7, "vintage": 3, "record": "item"}))
         damaged(lambda value: value["retiredKinds"].append({"name": "retiredCopy", "id": 7}))
         damaged(lambda value: value["constants"].update(rowBytes=10))
+        damaged(lambda value: (value["records"]["row"]["fields"][0].update(type="bytes", length=1, const="A"),
+                               value["constants"].update(rowTag=1)))
         for value in cases:
             with self.subTest(value=value):
                 with self.assertRaises(ValueError):
@@ -190,12 +193,44 @@ class PackWireCodegenTest(unittest.TestCase):
                 MODULE.generate(root)
                 layout["constants"]["capacity"] = 4
                 contract.write_text(json.dumps({"x-harken-format": {"binaryLayout": layout}}), encoding="utf-8")
-                self.assertEqual(len(MODULE.generate(root, check=True)), 2)
+                self.assertEqual(len(MODULE.generate(root, check=True)), len(MODULE.OUTPUTS))
                 MODULE.generate(root)
                 source.write_text("void SerializeRow() { StoreLE32(bytes, 1); }\n", encoding="utf-8")
                 errors = MODULE.generate(root, check=True)
                 self.assertEqual(len(errors), 1)
                 self.assertIn("handwritten Pack byte access", errors[0])
+
+    def test_source_exemptions_match_definitions_and_scoped_methods_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "layout.cpp"
+            source.write_text('bool Fingerprint() { StoreLE32(bytes, 1); return true; }\n'
+                              'struct Trace {\n'
+                              '    void Write() { StoreLE32(bytes, 2); }\n'
+                              '};\n'
+                              'void Write() {\n'
+                              '    if (Fingerprint()) { StoreLE32(bytes, 3); }\n'
+                              '}\n', encoding="utf-8")
+            exemptions = {"layout.cpp": {"Fingerprint": "Hash", "Trace::Write": "Trace"}}
+            with patch.object(MODULE, "SOURCE_EXEMPTIONS", exemptions):
+                errors = MODULE.scan_sources(root, {"layout.cpp": None})
+                self.assertEqual(len(errors), 1)
+                self.assertIn("layout.cpp:6:", errors[0])
+                source.write_text("void Write() {}\n", encoding="utf-8")
+                self.assertEqual(len(MODULE.scan_sources(root, {"layout.cpp": None})), 2)
+
+    def test_trace_block_exemptions_do_not_hide_shipping_reader_calls(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "WorldCodec.cpp"
+            source.write_text('void Decode() {\n'
+                              '    reader.U32();\n'
+                              '    if (vintage == 20) { reader.U64(); }\n'
+                              '}\n', encoding="utf-8")
+            with patch.object(MODULE, "SOURCE_BLOCK_EXEMPTIONS", {"WorldCodec.cpp": {"vintage == 20": "Trace"}}):
+                errors = MODULE.scan_sources(root, {"WorldCodec.cpp": None})
+                self.assertEqual(len(errors), 1)
+                self.assertIn("WorldCodec.cpp:2:", errors[0])
 
 
 def stream_layout() -> dict:
@@ -213,6 +248,50 @@ def stream_layout() -> dict:
 
 
 class PackWireStreamCodegenTest(unittest.TestCase):
+    def test_position_metadata_requires_unsigned_prior_header_fields(self) -> None:
+        layout = stream_layout()
+        table = layout["records"]["table"]
+        table["fields"] = table["fields"][:2]
+        table["fields"][1]["record"] = "item"
+        layout["records"]["header"]["fields"] += [
+            {"name": "offset", "type": "u64"}, {"name": "bytes", "type": "u64"}]
+        table["fields"][1]["position"] = ["offset"]
+        table["length"] = {"field": "bytes", "from": "offset"}
+        MODULE.validate_layout(layout)
+        for replacement in ([], "offset", ["missing"], ["count"], ["offset", "offset"]):
+            candidate = copy.deepcopy(layout)
+            candidate["records"]["table"]["fields"][1]["position"] = replacement
+            with self.subTest(position=replacement), self.assertRaises(ValueError):
+                MODULE.validate_layout(candidate)
+        for replacement in ({"field": "missing", "from": "offset"}, {"field": "offset", "from": "offset"}, {"field": "bytes", "from": "missing"}, {"field": "bytes", "from": []}):
+            candidate = copy.deepcopy(layout)
+            candidate["records"]["table"]["length"] = replacement
+            with self.subTest(length=replacement), self.assertRaises(ValueError):
+                MODULE.validate_layout(candidate)
+        candidate = copy.deepcopy(layout)
+        candidate["records"]["header"]["fields"][-2]["type"] = "f32"
+        with self.assertRaises(ValueError):
+            MODULE.validate_layout(candidate)
+
+    def test_position_layout_is_limited_to_unconditional_fixed_tables(self) -> None:
+        layout = stream_layout()
+        table = layout["records"]["table"]
+        layout["records"]["header"]["fields"].append({"name": "offset", "type": "u64"})
+        table["fields"][1]["position"] = ["offset"]
+        with self.assertRaises(ValueError):
+            MODULE.validate_layout(layout)
+        table["fields"] = table["fields"][:2]
+        with self.assertRaises(ValueError):
+            MODULE.validate_layout(layout)
+        table["fields"][1]["record"] = "item"
+        MODULE.validate_layout(layout)
+        bindings = sample_bindings(layout)
+        bindings["members"] = {"table.offset": {"engine": "position", "studio": "start"}}
+        for target in ("engine", "studio"):
+            generated = MODULE.render_header(layout, bindings, target)
+            self.assertIn("LayoutPackTable", generated)
+            self.assertIn("ValidatePackTableLayout", generated)
+
     def test_stream_controls_require_an_existing_earlier_unsigned_header_field(self) -> None:
         for control in ("missing", "weight"):
             layout = stream_layout()
