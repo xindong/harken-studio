@@ -75,8 +75,8 @@
 #include <vector>
 #include "Support/ProjectPlatformTestUtils.h"
 
-#ifndef HARKENIZER_PATH
-#error "HARKENIZER_PATH must point at the Harkenizer executable"
+#ifndef HARKEN_STUDIO_CLI_PATH
+#error "HARKEN_STUDIO_CLI_PATH must point at the Studio CLI executable"
 #endif
 
 namespace {
@@ -801,7 +801,7 @@ TEST(EditorProjectPackExporterManifest, SharedPlanningPreservesVariantCapabiliti
 
 TEST(EditorProjectPackExporterManifest, StopOnlyPublishesNoTargetMediaOrDefinitions)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -843,7 +843,7 @@ TEST(EditorProjectPackExporterManifest, StopOnlyPublishesNoTargetMediaOrDefiniti
 
 TEST(EditorProjectPackExporterManifest, StopControlsKeepLocalizedFingerprintsAndMixedPlaybackMedia)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -929,7 +929,7 @@ TEST(EditorProjectPackExporterManifest, StopControlsKeepLocalizedFingerprintsAnd
 
 TEST(EditorProjectPackExporterManifest, StopContainerAndQuantizeReferenceDoNotOwnDescendantMedia)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     for (bool queue : {false, true}) {
         SCOPED_TRACE(queue);
         QTemporaryDir dir;
@@ -990,7 +990,7 @@ TEST(EditorProjectPackExporterManifest, StopContainerAndQuantizeReferenceDoNotOw
 
 TEST(EditorProjectPackExporterManifest, StopTimelineTargetsDoNotPublishSchedulesOrMedia)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     for (const auto type : {VNX::ProjectItem::Type::Track, VNX::ProjectItem::Type::Segment}) {
         for (bool withProvider : {false, true}) {
             SCOPED_TRACE(static_cast<int>(type));
@@ -1050,7 +1050,7 @@ TEST(EditorProjectPackExporterManifest, StopTimelineTargetsDoNotPublishSchedules
 
 TEST(EditorProjectPackExporterManifest, MediaFreeDelayedStopCapturesOnlyExistingInstances)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -1161,7 +1161,7 @@ TEST(EditorProjectPackExporterManifest, MediaFreeDelayedStopCapturesOnlyExisting
 
 TEST(EditorProjectPackExporterManifest, CompanionsCoverEachExportedAction)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -1246,7 +1246,7 @@ TEST(EditorProjectPackExporterManifest, CompanionsCoverEachExportedAction)
 
 TEST(EditorProjectPackExporterManifest, OptionalCompanionDataFollowsPublicationLifecycle)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -1439,7 +1439,7 @@ TEST(EditorProjectPackExporterManifest, OptionalCompanionDataFollowsPublicationL
 TEST(EditorProjectPackExporterManifest,
      LoopMediaRevisionMatchesCanonicalRuntimeRegistration)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -1490,7 +1490,7 @@ TEST(EditorProjectPackExporterManifest,
 
 TEST(EditorProjectPackExporterManifest, InitHasNoRoutingCatalogAndEveryPackHasKind21)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -1559,7 +1559,7 @@ TEST(EditorProjectPackExporterManifest, InitHasNoRoutingCatalogAndEveryPackHasKi
 
 TEST(EditorProjectPackExporterManifest, RenameKeepsCompanionIdentitySelfConsistent)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -1647,7 +1647,7 @@ TEST(EditorProjectPackExporterManifest, RenameKeepsCompanionIdentitySelfConsiste
 
 TEST(EditorProjectPackExporterManifest, InvalidActionPackNamesPreservePublishedFiles)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     auto& registry = VNX::AssetRegistry::instance();
@@ -1724,7 +1724,7 @@ TEST(EditorProjectPackExporterManifest, InvalidActionPackNamesPreservePublishedF
 
 TEST(EditorProjectPackExporterManifest, InvalidActionStepsInSelectedClosurePreservePublication)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     auto& registry = VNX::AssetRegistry::instance();
@@ -1787,7 +1787,7 @@ TEST(EditorProjectPackExporterManifest, InvalidActionStepsInSelectedClosurePrese
 
 TEST(EditorProjectPackExporterManifest, UntargetedUnitsStayOutOfPublication)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -1830,7 +1830,7 @@ TEST(EditorProjectPackExporterManifest, UntargetedUnitsStayOutOfPublication)
 
 TEST(EditorProjectPackExporterManifest, ActionNameCollisionRejectsBothConflictingPacks)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -1870,7 +1870,7 @@ TEST(EditorProjectPackExporterManifest, ActionNameCollisionRejectsBothConflictin
 
 TEST(EditorProjectPackExporterManifest, CompanionCommitFailureFailsWholeExport)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -1908,7 +1908,7 @@ TEST(EditorProjectPackExporterManifest, CompanionCommitFailureFailsWholeExport)
 
 TEST(EditorProjectPackExporterManifest, UnsupportedBusPropertiesKeepPublishedPackSetUnchanged)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir source;
     QTemporaryDir output;
     ASSERT_TRUE(source.isValid());
@@ -2003,7 +2003,7 @@ TEST(EditorProjectPackExporterManifest, UnsupportedBusPropertiesKeepPublishedPac
 
 TEST(EditorProjectPackExporterManifest, TwoExportsAreByteIdentical)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
 
     QTemporaryDir firstDir;
     QTemporaryDir secondDir;
@@ -2043,7 +2043,7 @@ TEST(EditorProjectPackExporterManifest, TwoExportsAreByteIdentical)
 
 TEST(EditorProjectPackExporterManifest, ProductionPackPairGoldenIsRepeatable)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir source;
     ASSERT_TRUE(source.isValid());
     auto& registry = VNX::AssetRegistry::instance();
@@ -2115,7 +2115,7 @@ TEST(EditorProjectPackExporterManifest, ProductionPackPairGoldenIsRepeatable)
 
 TEST(EditorProjectPackExporterManifest, LegacySnapshotRequestFieldsDoNotOverrideBusProjection)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir source;
     ASSERT_TRUE(source.isValid());
     auto& registry = VNX::AssetRegistry::instance();
@@ -2180,7 +2180,7 @@ TEST(EditorProjectPackExporterManifest, LegacySnapshotRequestFieldsDoNotOverride
 
 TEST(EditorProjectPackExporterManifest, CanonicalContentOmitsKindNineAndClaimsContainer)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -2271,7 +2271,7 @@ TEST(EditorProjectPackExporterManifest, CanonicalContentOmitsKindNineAndClaimsCo
 TEST(EditorProjectPackExporterManifest,
      DefaultBlendExportsTargetsWithoutVariableAxesOrCurves)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -2318,7 +2318,7 @@ TEST(EditorProjectPackExporterManifest,
 TEST(EditorProjectPackExporterManifest,
      CanonicalPartitionsNormalizeLocalTransitionIdentity)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -2469,7 +2469,7 @@ TEST(EditorProjectPackExporterManifest,
 TEST(EditorProjectPackExporterManifest,
      CanonicalCurrentWorldPreservesNonSoundLoopCounts)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -2633,7 +2633,7 @@ TEST(EditorProjectPackExporterManifest,
 
 TEST(EditorProjectPackExporterManifest, ExportedPairsHaveDistinctPackAndActionIdentities)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -2680,7 +2680,7 @@ TEST(EditorProjectPackExporterManifest, ExportedPairsHaveDistinctPackAndActionId
 
 TEST(EditorProjectPackExporterManifest, LaterExportPreservesUnownedFiles)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -2751,7 +2751,7 @@ TEST(EditorProjectPackExporterManifest, LaterExportPreservesUnownedFiles)
 
 TEST(EditorProjectPackExporterManifest, FullRebuildReplacesRetiredOutputsWithoutReadingTheirMetadata)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     auto& registry = VNX::AssetRegistry::instance();
     registry.clear();
@@ -2794,7 +2794,7 @@ TEST(EditorProjectPackExporterManifest, FullRebuildReplacesRetiredOutputsWithout
 
 TEST(EditorProjectPackExporterManifest, FullRebuildCleansDotPrefixedRetiredOutputs)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     auto& registry = VNX::AssetRegistry::instance();
     registry.clear();
@@ -2826,7 +2826,7 @@ TEST(EditorProjectPackExporterManifest, FullRebuildCleansDotPrefixedRetiredOutpu
 
 TEST(EditorProjectPackExporterManifest, ExportsPlayableDemoSampleFixtures)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir sources;
     QTemporaryDir first;
     QTemporaryDir second;
@@ -2968,7 +2968,7 @@ TEST(EditorProjectPackExporterManifest, ExportsPlayableDemoSampleFixtures)
 
 TEST(EditorProjectPackExporterManifest, LanguageVariantsKeepDistinctPackIdentities)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
 
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -3124,7 +3124,7 @@ TEST(EditorProjectPackExporterManifest, LanguageVariantsKeepDistinctPackIdentiti
 
 TEST(EditorProjectPackExporterManifest, LanguageTargetingPublishesIndependentPlayablePairs)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3252,7 +3252,7 @@ TEST(EditorProjectPackExporterManifest, LanguageTargetingPublishesIndependentPla
 
 TEST(EditorProjectPackExporterManifest, SelectedNonLocalizedActionsAreSelfContained)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3303,7 +3303,7 @@ TEST(EditorProjectPackExporterManifest, SelectedNonLocalizedActionsAreSelfContai
 
 TEST(EditorProjectPackExporterManifest, LocalizedActionEmbedsNonLocalizedExecutionClosure)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3383,7 +3383,7 @@ TEST(EditorProjectPackExporterManifest, LocalizedActionEmbedsNonLocalizedExecuti
 
 TEST(EditorProjectPackExporterManifest, MixedLanguageVariantsOwnMatchingDefinitionsAndMedia)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3521,7 +3521,7 @@ TEST(EditorProjectPackExporterManifest, MixedLanguageVariantsOwnMatchingDefiniti
 
 TEST(EditorProjectPackExporterManifest, RuntimeBundlePreservesLanguagePathsThroughDeploy)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3647,7 +3647,7 @@ TEST(EditorProjectPackExporterManifest, RuntimeBundlePreservesLanguagePathsThrou
 
 TEST(EditorProjectPackExporterManifest, RuntimeBundleKeepsAllActionsAvailable)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3686,7 +3686,7 @@ TEST(EditorProjectPackExporterManifest, RuntimeBundleKeepsAllActionsAvailable)
 
 TEST(EditorProjectPackExporterManifest, ExternalLocalizedOccurrenceKeepsInvalidOwnershipRejected)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3726,7 +3726,7 @@ TEST(EditorProjectPackExporterManifest, ExternalLocalizedOccurrenceKeepsInvalidO
 
 TEST(EditorProjectPackExporterManifest, LocalizedSinglePackRequiresExplicitLanguage)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3765,7 +3765,7 @@ TEST(EditorProjectPackExporterManifest, LocalizedSinglePackRequiresExplicitLangu
 
 TEST(EditorProjectPackExporterManifest, MissingLocalizedActiveRejectsUnavailableContent)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3806,7 +3806,7 @@ TEST(EditorProjectPackExporterManifest, MissingLocalizedActiveRejectsUnavailable
 
 TEST(EditorProjectPackExporterManifest, CommonAndLocalizedDefinitionsStayInIndependentPacks)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3859,7 +3859,7 @@ TEST(EditorProjectPackExporterManifest, CommonAndLocalizedDefinitionsStayInIndep
 
 TEST(EditorProjectPackExporterManifest, InvalidRequestedLanguageRejectsUnavailableContent)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3898,7 +3898,7 @@ TEST(EditorProjectPackExporterManifest, InvalidRequestedLanguageRejectsUnavailab
 
 TEST(EditorProjectPackExporterManifest, SelectedPostActionChainWithoutLanguagesRejectsUnavailableContent)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();
@@ -3944,7 +3944,7 @@ namespace {
 
 void verifyIncrementalPublication(const QString& directory)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     const QDir dir(directory);
     auto& registry = VNX::AssetRegistry::instance();
     registry.clear();
@@ -4061,7 +4061,7 @@ TEST(EditorProjectPackExporterManifest, IncrementalPublicationActivatesRepairedP
 
 TEST(EditorProjectPackExporterManifest, PublicationSelectionReconcilesTheWholeOutputDirectory)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     auto& registry = VNX::AssetRegistry::instance();
@@ -4236,7 +4236,7 @@ TEST(EditorProjectPackExporterManifest, PublicationSelectionReconcilesTheWholeOu
 
 TEST(EditorProjectPackExporterManifest, LanguageCleanupKeepsSharedInitAndSelectedPairs)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     auto& registry = VNX::AssetRegistry::instance();
@@ -4285,7 +4285,7 @@ namespace {
 
 void verifyPartialPublication(const QString& directory, void (*verifyActivation)(const QString&))
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     const QDir dir(directory);
     auto& registry = VNX::AssetRegistry::instance();
     registry.clear();
@@ -4463,7 +4463,7 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationActivatesSelectedUpdat
 
 TEST(EditorProjectPackExporterManifest, CapacityGrowthPreservesUnselectedPublishedContent)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     auto& registry = VNX::AssetRegistry::instance();
@@ -4558,7 +4558,7 @@ TEST(EditorProjectPackExporterManifest, CapacityGrowthPreservesUnselectedPublish
 
 TEST(EditorProjectPackExporterManifest, PartialPublicationCombinesScheduleAndEffectCapacity)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     auto& registry = VNX::AssetRegistry::instance();
@@ -4777,7 +4777,7 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationCombinesScheduleAndEff
 
 TEST(EditorProjectPackExporterManifest, LanguageVariantsShareCapacityWithoutAddingAlternativeDefinitions)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     auto& registry = VNX::AssetRegistry::instance();
@@ -4832,7 +4832,7 @@ TEST(EditorProjectPackExporterManifest, LanguageVariantsShareCapacityWithoutAddi
 
 TEST(EditorProjectPackExporterManifest, PartialPublicationPreservesOrdersAcrossLanguageAlternatives)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     for (bool conflictingEmbeddedOrder : {false, true}) {
         SCOPED_TRACE(conflictingEmbeddedOrder);
         QTemporaryDir dir;
@@ -4968,7 +4968,7 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationPreservesOrdersAcrossL
 
 TEST(EditorProjectPackExporterManifest, PartialPublicationRefreshesEmbeddedClosureAndKeepsOtherPairs)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     auto& registry = VNX::AssetRegistry::instance();
@@ -5055,7 +5055,7 @@ struct PackWriteAccessProject
     void setup(bool waveforms = false)
     {
         ASSERT_TRUE(directory.isValid());
-        qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+        qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
         auto& registry = VNX::AssetRegistry::instance();
         registry.clear();
         registry.setProjectRoot(directory.path());
@@ -5208,7 +5208,7 @@ TEST(EditorProjectPackExporterManifest, ProtectedLegacyWaveformLocationsCannotWr
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     const QString projectRoot = directory.filePath(QStringLiteral("Project"));
     ASSERT_TRUE(QDir().mkpath(projectRoot));
     auto& registry = VNX::AssetRegistry::instance();
@@ -6075,7 +6075,7 @@ TEST(EditorProjectPackExporterManifest, PartialExportReportsUnwritableRequiredIn
 
 TEST(EditorProjectPackExporterManifest, CancelAfterMediaPreparationKeepsPreviousSet)
 {
-    qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+    qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     VNX::AssetRegistry::instance().clear();

@@ -295,6 +295,18 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
     const auto project = projectManager_->currentProjectLease();
     if (!project) return errorResponse("NO_PROJECT_OPEN", "Project closed during command");
 
+    for (const auto& key : {QStringLiteral("all"), QStringLiteral("force"), QStringLiteral("self_clean")}) {
+        if (args.contains(key) && !args.value(key).isBool())
+            return errorResponse("INVALID_ARGS", QStringLiteral("%1 must be a boolean").arg(key));
+    }
+    for (const auto& key : {QStringLiteral("output_path"), QStringLiteral("action_name"), QStringLiteral("language")}) {
+        if (args.contains(key) && !args.value(key).isString())
+            return errorResponse("INVALID_ARGS", QStringLiteral("%1 must be a string").arg(key));
+    }
+    const bool exportAll = args.value(QStringLiteral("all")).toBool();
+    const bool forceReexport = args.value(QStringLiteral("force")).toBool();
+    const bool selfCleaning = args.value(QStringLiteral("self_clean")).toBool();
+
     QString outputPath = args["output_path"].toString().trimmed();
     if (outputPath.isEmpty())
         outputPath = PathUtils::packBuildOutputRoot(
@@ -321,6 +333,8 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
     }
 
     const QString actionName = args["action_name"].toString().trimmed();
+    if (!actionName.isEmpty() && (exportAll || selfCleaning))
+        return errorResponse("INVALID_ARGS", "action_name cannot be combined with all=true or self_clean=true");
     harkenstudio::ObjectId actionStableId = {};
     if (!actionName.isEmpty()) {
         const auto units = ProjectPackExporter::CollectActionPackUnits(*project);
@@ -339,20 +353,45 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
         }
     }
 
-    if (args.contains("platform") || args.contains("platforms")
-        || (args.contains("platform_id") && !ProjectPlatformSemantics::parseId(args.value("platform_id").toString())))
-        return errorResponse("INVALID_PLATFORM", "Use platform_id with a project platform UUID, or omit it for the export selection");
-    const QString explicitPlatform = args["platform_id"].toString();
+    if (args.contains("platform") || args.contains("platforms"))
+        return errorResponse("INVALID_PLATFORM", "Use platform_id or platform_ids with project platform UUIDs, or omit both for the export selection");
+    if (args.contains("platform_id") && args.contains("platform_ids"))
+        return errorResponse("INVALID_ARGS", "platform_id and platform_ids are mutually exclusive");
+    QStringList requestedPlatforms;
+    if (args.contains("platform_id")) {
+        const auto value = args.value(QStringLiteral("platform_id"));
+        if (!value.isString() || !ProjectPlatformSemantics::parseId(value.toString()))
+            return errorResponse("INVALID_PLATFORM", "platform_id must be a project platform UUID");
+        requestedPlatforms.append(value.toString());
+    } else if (args.contains("platform_ids")) {
+        const auto value = args.value(QStringLiteral("platform_ids"));
+        if (!value.isArray() || value.toArray().isEmpty())
+            return errorResponse("INVALID_PLATFORM", "platform_ids must be a nonempty array of project platform UUIDs");
+        for (const auto& entry : value.toArray()) {
+            if (!entry.isString() || !ProjectPlatformSemantics::parseId(entry.toString()))
+                return errorResponse("INVALID_PLATFORM", "platform_ids must contain only project platform UUIDs");
+            const QString platform = entry.toString();
+            if (requestedPlatforms.contains(platform))
+                return errorResponse("INVALID_PLATFORM", "platform_ids contains a duplicate platform: " + platform);
+            requestedPlatforms.append(platform);
+        }
+    }
     const QString language = args.value(QStringLiteral("language")).toString();
     const auto exportSelection = projectManager_->packExportSelection();
     QString platformError;
-    const QStringList platforms = ProjectPackExporter::resolveExportPlatforms(
-        *project, explicitPlatform, exportSelection, &platformError);
-    if (platforms.isEmpty())
-    {
-        return errorResponse(explicitPlatform.isEmpty() ? "NO_EXPORT_PLATFORMS"
-                                                        : "INVALID_PLATFORM",
-                             platformError);
+    QStringList platforms;
+    if (requestedPlatforms.isEmpty()) {
+        platforms = ProjectPackExporter::resolveExportPlatforms(
+            *project, {}, exportSelection, &platformError);
+        if (platforms.isEmpty())
+            return errorResponse("NO_EXPORT_PLATFORMS", platformError);
+    } else {
+        for (const auto& platform : requestedPlatforms) {
+            const auto resolved = ProjectPackExporter::resolveExportPlatforms(
+                *project, platform, exportSelection, &platformError);
+            if (resolved.isEmpty()) return errorResponse("INVALID_PLATFORM", platformError);
+            platforms.append(resolved);
+        }
     }
     PropertyEditSession::finishAllActive(true);
     QString snapshotError;
@@ -378,7 +417,8 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
     const auto platformActivity = ProjectPlatformActivity::acquire();
     QThread* buildThread = QThread::create(
         [this, pmGuard, project, snapshot, outputPath, platforms, actionName,
-         actionStableId, language, exportSelection, cancel, runId, platformActivity, outputLock]() {
+         actionStableId, language, exportSelection, exportAll, forceReexport, selfCleaning,
+         cancel, runId, platformActivity, outputLock]() {
         struct ExportGate {
             ~ExportGate() { ProjectPackExporter::endBackgroundExport(); }
         } gate;
@@ -393,6 +433,9 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
         exportOpts.snapshot = snapshot;
         exportOpts.selection = exportSelection;
         exportOpts.language = language;
+        exportOpts.includeUnchecked = exportAll;
+        exportOpts.forceReexport = forceReexport;
+        exportOpts.selfCleaning = selfCleaning;
         if (!harkenstudio::IsNull(actionStableId))
             exportOpts.onlyActionStableIds.insert(actionStableId);
         exportOpts.cancelCheck = [cancel]() {

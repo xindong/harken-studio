@@ -23,6 +23,8 @@ def deploy(build_dir: Path, bundle: Path, tool: Path, configuration: str) -> Non
                        and build_dir / artifact["path"] == binary
                        for artifact in model["artifacts"])):
         raise ValueError("deployment bundle does not match the configured Studio target")
+    for name in ("Harkenizer", "Harkenizer.exe", "Harkenizer.pdb"):
+        binary.with_name(name).unlink(missing_ok=True)
     frameworks = bundle / "Contents/Frameworks"
     frameworks.mkdir(parents=True, exist_ok=True)
     libraries = []
@@ -30,8 +32,7 @@ def deploy(build_dir: Path, bundle: Path, tool: Path, configuration: str) -> Non
     names = set()
     for artifact in model["artifacts"]:
         if (artifact["type"] == "EXECUTABLE"
-                and (artifact["target"], artifact["name"]) in {
-                    ("harkenizer", "Harkenizer"), ("harken_studio_cli", "HarkenStudioCLI")}):
+                and (artifact["target"], artifact["name"]) == ("harken_studio_cli", "HarkenStudioCLI")):
             destination = bundle / "Contents/MacOS" / artifact["name"]
             records = executables
         elif artifact["type"] == "SHARED_LIBRARY" and artifact["name"].endswith(".dylib"):
@@ -53,8 +54,8 @@ def deploy(build_dir: Path, bundle: Path, tool: Path, configuration: str) -> Non
             raise ValueError("macOS deployment source changed while staging")
         records.append({"sourceArtifact": artifact,
                         "path": destination.relative_to(bundle.parent).as_posix()})
-    if len(executables) != 2:
-        raise ValueError("macOS deployment requires the built Harkenizer and HarkenStudioCLI executables")
+    if len(executables) != 1:
+        raise ValueError("macOS deployment requires the built HarkenStudioCLI executable")
     deployment_tool = {"name": tool.name, "sha256": evidence.sha256(tool)}
     subprocess.run([str(tool), str(bundle), "-always-overwrite",
                     *(f"-executable={bundle.parent / record['path']}" for record in executables)], check=True)

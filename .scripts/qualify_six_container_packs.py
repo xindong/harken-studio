@@ -1863,9 +1863,9 @@ def main() -> int:
     if not args.null_only and (capture_exe is None or not capture_exe.is_file()):
         raise QualificationError("--capture-exe is required for WASAPI qualification")
     suffix = ".exe" if studio_exe.suffix.lower() == ".exe" else ""
-    harkenizer = studio_exe.parent / ("Harkenizer" + suffix)
-    if not harkenizer.is_file():
-        raise QualificationError(f"Harkenizer is not bundled beside Studio: {studio_exe.parent}")
+    studio_cli = studio_exe.parent / ("HarkenStudioCLI" + suffix)
+    if not studio_cli.is_file():
+        raise QualificationError(f"HarkenStudioCLI is not bundled beside Studio: {studio_exe.parent}")
     if port_is_open():
         raise QualificationError(
             f"Studio IPC port {PORT} is already in use; do not share a qualification session"
@@ -1899,7 +1899,7 @@ def main() -> int:
         "started_at_ns": time.time_ns(),
         "binaries": {
             "studio": {"path": str(studio_exe), "sha256": sha256(studio_exe)},
-            "harkenizer": {"path": str(harkenizer), "sha256": sha256(harkenizer)},
+            "studio_cli": {"path": str(studio_cli), "sha256": sha256(studio_cli)},
             "host": {"path": str(host_exe), "sha256": sha256(host_exe)},
             "capture": (
                 {"path": str(capture_exe), "sha256": sha256(capture_exe)}

@@ -244,13 +244,11 @@ if(TARGET harken_exported_pack_qualification)
 endif()
 
 target_compile_definitions(harken_editor_tests PRIVATE
-    HARKENIZER_PATH="$<TARGET_FILE:harkenizer>")
-add_dependencies(harken_editor_tests harkenizer)
+    HARKEN_STUDIO_CLI_PATH="$<TARGET_FILE:harken_studio_cli>")
 add_dependencies(harken_editor_tests harken_studio_cli)
 add_test(NAME studio_cli_contract
     COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/.scripts/verify_studio_cli.py"
         --cli "$<TARGET_FILE:harken_studio_cli>"
-        --executor "$<TARGET_FILE:harkenizer>"
         --work-dir "${CMAKE_BINARY_DIR}/cli-contract")
 set_tests_properties(studio_cli_contract PROPERTIES TIMEOUT 300)
 

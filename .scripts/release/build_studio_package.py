@@ -99,16 +99,6 @@ def run_studio_self_test(binary: Path) -> dict:
     return report
 
 
-def run_harkenizer_smoke_test(binary: Path) -> None:
-    try:
-        completed = subprocess.run(
-            [str(binary), "--help"], check=False, capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise SystemExit(f"error: cannot run Harkenizer: {error}") from error
-    if completed.returncode != 0:
-        raise SystemExit("error: Harkenizer startup verification failed")
-
-
 def run_studio_cli_smoke_test(binary: Path) -> None:
     try:
         completed = subprocess.run(
@@ -166,10 +156,16 @@ def verify_release_candidate(args: argparse.Namespace, self_test: dict) -> None:
 
 
 def collect_payload(input_dir: Path) -> list[Path]:
+    retired = {
+        (Path(binary).parent / name).as_posix().casefold()
+        for binary in STUDIO_BINARIES
+        for name in ("Harkenizer", "Harkenizer.exe", "Harkenizer.pdb")
+    }
     files = [
         path
         for path in sorted(input_dir.rglob("*"))
         if path.is_file() and not path.is_symlink()
+        and path.relative_to(input_dir).as_posix().casefold() not in retired
     ]
     if not files:
         raise SystemExit(f"error: input directory is empty: {input_dir}")
@@ -220,10 +216,6 @@ def build_package(args: argparse.Namespace) -> dict:
     for path in binary.parent.iterdir():
         if path.name.casefold() in {"packc", "packc.exe", "harken_packc", "harken_packc.exe"}:
             raise SystemExit(f"error: deployed Studio contains a retired packc executable: {path}")
-    harkenizer = binary.with_name("Harkenizer.exe" if binary.suffix == ".exe" else "Harkenizer")
-    if harkenizer.is_symlink() or not harkenizer.is_file() or harkenizer.stat().st_size == 0:
-        raise SystemExit(f"error: deployed Harkenizer binary is missing or empty: {harkenizer}")
-    run_harkenizer_smoke_test(harkenizer)
     cli = binary.with_name("HarkenStudioCLI.exe" if binary.suffix == ".exe" else "HarkenStudioCLI")
     if cli.is_symlink() or not cli.is_file() or cli.stat().st_size == 0:
         raise SystemExit(f"error: deployed HarkenStudioCLI binary is missing or empty: {cli}")

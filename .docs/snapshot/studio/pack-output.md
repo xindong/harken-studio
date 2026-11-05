@@ -37,13 +37,13 @@ v7/v8 工程升级时同步转换历史输出路由字段及效果条目结构�
 
 ## 独立构建入口
 
-GUI、IPC 与 Harkenizer 共用 HarkenizerCore，覆盖工程构建计划、媒体准备、资源编译调度、共享逻辑编译、包体装配、直接写入、根目录 Project.json 和自清理。内核为内部静态库，不新增 DLL；独立 packc 程序退出。主打包链直接调用资源编译库生成内存条目，不启动私有 worker。旧 worker 入口保留给仍使用文件资源接口的调用者。
+GUI、IPC 与 CLI 共用打包静态库，内部保留 `harkenizer_core`、`harkenizer_build` 等目标名称，覆盖工程构建计划、媒体准备、资源编译调度、共享逻辑编译、包体装配、直接写入、根目录 Project.json 和自清理。独立 Harkenizer 和 packc 程序均不再交付，不新增内核 DLL。主打包链直接调用资源编译库生成内存条目，不启动私有 worker。文件资源接口的私有 worker 由 `HarkenStudioCLI --resource-worker` 承接，程序定位覆盖变量为 `HARKEN_STUDIO_CLI_PATH`。
 
 | 构建边界 | 当前分工 |
 |---|---|
 | GUI 输入 | 借用当前工程对象并持有工程生命周期，包含未保存编辑；全程模态构建窗口冻结编辑，不复制工程树，也不隐式保存 |
-| IPC 输入 | 保留请求语义、选择范围、进度和结果接口；构建期间拒绝工程修改命令，继续允许查询和取消 |
-| 命令行输入 | 完整读取已保存工程，不创建编辑器窗口或音频运行会话 |
+| IPC／CLI 会话输入 | `export_pack` 使用当前内存工程，包含未保存编辑；保留选择范围、进度和结果接口；构建期间拒绝工程修改命令，继续允许查询和取消 |
+| CLI 已保存工程输入 | `build` 以 `ReadOnly` 模式完整读取磁盘工程，不创建编辑会话或音频运行会话；与会话导出汇合到同一构建服务 |
 | 资源编译 | 衍生 PCM 直接生成媒体条目，与总线等资源进入最终组包；绑定在最终归属确定后生成；不写出再拆读 `.media`／`.resident` 中间包 |
 | 资源故障 | 可归属的局部错误使使用它的包及依赖者失败，独立包继续；平台公共结构错误结束该平台，后续平台继续 |
 | 产物写入 | 包格式、媒体算法和条目顺序保持；直接写最终包，每个完成包独立记成功 |
@@ -51,24 +51,29 @@ GUI、IPC 与 Harkenizer 共用 HarkenizerCore，覆盖工程构建计划、媒�
 构建窗口显示平台、包、处理阶段和进度。取消按钮、Esc 和关闭请求均请求取消，直到后台构建退出才关闭窗口；Publisher 表格只保留构建结果，不再绘制行进度。工程文件和媒体文件的监视通知延后到构建结束，随后再处理外部修改与重载。
 
 ```text
-Harkenizer list-targets <project.hsp> --json
-Harkenizer generate-packs <project.hsp> --all --platform-id <UUID> [--platform-id <UUID> ...] --self-clean <on|off> [--output <directory>] [--force]
+HarkenStudioCLI list-targets --project <project.hsp> --json
+HarkenStudioCLI build --project <project.hsp> --all --platform-id <UUID> [--platform-id <UUID> ...] --self-clean <on|off> [--output <directory>] [--force] [--json]
 ```
 
 | 合同 | 当前规则 |
 |---|---|
-| 工程读取 | 只读完整已保存工程；无需启动 Studio；不保存、升级或恢复工程事务 |
+| 工程读取 | `build`、`list-targets` 只读完整已保存工程；无需启动 Studio；不保存、升级或恢复工程事务，遇恢复或升级需求时失败 |
 | 工程占用 | Studio 已打开同一工程时拒绝执行，不激活 Studio 窗口 |
 | 构建范围 | 显式指定全部包、平台 UUID 及自清理开关；沿用工程语言、元数据与波形设置 |
+| 参数边界 | 已保存工程入口不接受编辑输入、`--save` 或 `--timeout`；多次 `--platform-id` 必须合法、无重复且属于当前工程 |
 | 输出目录 | 默认使用工程配置；覆盖参数中的相对路径以工程目录为基准 |
+| 只读范围 | 不改写创作文件；打包仍写出包体、伴随文件、`.cache/pack`、资产源状态及临时锁，不保证整个工程目录无写入 |
 | 目标发现 | JSON 提供 projectId、平台 id/name/basePlatform、语言、Action stableId/name |
+| JSON 输出 | `--json` 使用 CLI 的 `protocolVersion: 1` 与 `status` 外层结果；目标信息或构建结果位于 `result` |
 | 返回值 | 成功 0；失败 1；用法错误 2；取消 130 |
 | 取消边界 | Ctrl+C 请求取消；已完成包保留，不执行根目录项目信息与自清理 |
-| 部署 | 随 Studio 的运行库和 schema 交付；Windows 为 Harkenizer.exe，macOS 位于应用包 Contents/MacOS/Harkenizer；无需独立 packc 或新增内核 DLL |
+| 部署 | 发布 Studio 与 CLI 两个入口及运行库、schema；Windows CLI 为 HarkenStudioCLI.exe，macOS 位于应用包 Contents/MacOS/HarkenStudioCLI；CLI 也可单独构建部署 |
+
+会话导出继续通过 `exec export_pack` 或 `run` 中的 `export_pack` 请求调用。JSON 参数 `all`、`force`、`self_clean` 均为布尔值，默认 `false`，分别控制包含未勾选包、强制重打及成功后的自清理。`platform_id` 与新增 `platform_ids` 互斥；列表须非空、无重复且全部为当前工程的平台 UUID，均省略时沿用导出选择。非空 `action_name` 不能搭配 `all=true` 或 `self_clean=true`；单 Action 导出保持不清理其他包。完整入口与参数对照见 [CLI 现状总览](cli.md)。
 
 ## 构建输入与复用
 
-GUI、IPC 与 Harkenizer 使用同一个 `ProjectPackBuildService`。一次请求借用冻结的工程对象，共用构建上下文、源输入和衍生媒体内存缓存，按平台顺序执行。每次请求重新建立计划；输入身份仅在需要比较或保存成功记录时派生。即使复用了快照对象，也清除上一请求的源捕获及内存转换结果。
+GUI、IPC、CLI 会话导出和 CLI 已保存工程构建使用同一个 `ProjectPackBuildService`。一次请求借用冻结的工程对象，共用构建上下文、源输入和衍生媒体内存缓存，按平台顺序执行。每次请求重新建立计划；输入身份仅在需要比较或保存成功记录时派生。即使复用了快照对象，也清除上一请求的源捕获及内存转换结果。
 
 | 情况 | 实际工作 |
 |---|---|

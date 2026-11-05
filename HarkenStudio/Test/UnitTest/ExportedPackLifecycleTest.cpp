@@ -87,8 +87,8 @@
 #error "HARKEN_HOST_PATH must point at the harken_host executable"
 #endif
 
-#ifndef HARKENIZER_PATH
-#error "HARKENIZER_PATH must point at the Harkenizer executable"
+#ifndef HARKEN_STUDIO_CLI_PATH
+#error "HARKEN_STUDIO_CLI_PATH must point at the Studio CLI executable"
 #endif
 
 #ifndef HARKEN_TEMP_DIR
@@ -1579,7 +1579,7 @@ class AuthoredPackLifecycle : public ::testing::Test
 protected:
     void SetUp() override
     {
-        qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+        qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
         ASSERT_TRUE(dir_.isValid());
         ASSERT_NO_FATAL_FAILURE(prepareExportedPackProject(project_, dir_.path()));
     }
@@ -3139,7 +3139,7 @@ class ExportedPackLifecycle : public AuthoredPackLifecycle
 protected:
     static void SetUpTestSuite()
     {
-        qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+        qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
         preparedDir_ = std::make_unique<QTemporaryDir>();
         ASSERT_TRUE(preparedDir_->isValid());
         {
@@ -3176,7 +3176,7 @@ class ExportedPackReadOnlyLifecycle : public ::testing::Test
 protected:
     static void SetUpTestSuite()
     {
-        qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+        qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
         preparedDir_ = std::make_unique<QTemporaryDir>();
         ASSERT_TRUE(preparedDir_->isValid());
         {

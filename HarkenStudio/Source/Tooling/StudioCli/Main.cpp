@@ -1,4 +1,6 @@
 #include "StudioSession.h"
+#include "SavedProjectBuild.h"
+#include "ResourceWorker.h"
 #include "harken_buildinfo.h"
 
 #include <QCommandLineParser>
@@ -12,6 +14,7 @@
 
 #include <csignal>
 #include <cstdio>
+#include <cstring>
 
 #ifdef Q_OS_WIN
 #include <fcntl.h>
@@ -96,6 +99,8 @@ bool loadJson(const QCommandLineParser& parser, QJsonDocument* document, QString
 
 int main(int argc, char* argv[])
 {
+    if (argc == 2 && std::strcmp(argv[1], "--resource-worker") == 0)
+        return Harkenizer::runResourceWorker();
 #ifdef Q_OS_WIN
     _setmode(_fileno(stdin), _O_BINARY);
     _setmode(_fileno(stdout), _O_BINARY);
@@ -116,20 +121,26 @@ int main(int argc, char* argv[])
         "  commands [name]    Discover editor commands or describe one command's parameters.\n"
         "  init <directory>   Create a new project in a directory that does not exist.\n"
         "  exec <name>        Execute a registered editor command.\n"
-        "  run                Execute a JSON array of {cmd,args} requests in order.\n\n"
+        "  run                Execute a JSON array of {cmd,args} requests in order.\n"
+        "  list-targets       List saved project platforms, languages and Actions.\n"
+        "  build              Build packs from a saved project without editing it.\n\n"
         "Use --save to commit project edits before exiting; otherwise edits remain in memory.\n"
         "Creation and external operations such as export write their own outputs.\n"
-        "A batch stops on its first error and is not an atomic transaction.\n\n"
+        "A batch stops on its first error and is not an atomic transaction.\n"
+        "build and list-targets require --project and read the saved project without upgrading or recovering it.\n"
+        "build requires --all, one or more --platform-id values, and --self-clean on|off.\n\n"
         "Examples:\n"
         "  HarkenStudioCLI commands set_item_property --json\n"
         "  HarkenStudioCLI init ./GameAudio --json\n"
         "  HarkenStudioCLI exec list_items --project ./GameAudio/GameAudio.hsp --json\n"
         "  HarkenStudioCLI run --input workflow.json --save --json\n"
-        "  HarkenStudioCLI exec export_pack --project ./GameAudio/GameAudio.hsp --input export.json --json\n\n"
+        "  HarkenStudioCLI exec export_pack --project ./GameAudio/GameAudio.hsp --input export.json --json\n"
+        "  HarkenStudioCLI list-targets --project ./GameAudio/GameAudio.hsp --json\n"
+        "  HarkenStudioCLI build --project ./GameAudio/GameAudio.hsp --all --platform-id <UUID> --self-clean on --json\n\n"
         "Exit codes: 0 success, 1 execution failure, 2 invalid usage/input, 124 timeout, 130 interruption."));
     parser.addHelpOption();
     parser.addVersionOption();
-    parser.addPositionalArgument(QStringLiteral("command"), QStringLiteral("commands, init, exec or run"));
+    parser.addPositionalArgument(QStringLiteral("command"), QStringLiteral("commands, init, exec, run, list-targets or build"));
     parser.addPositionalArgument(QStringLiteral("name"), QStringLiteral("Editor command name or project directory"), QStringLiteral("[name]"));
     parser.addOption({QStringLiteral("project"), QStringLiteral("Open this .hsp project before execution."), QStringLiteral("path")});
     parser.addOption({QStringLiteral("args"), QStringLiteral("Command arguments as a JSON object."), QStringLiteral("json")});
@@ -138,6 +149,11 @@ int main(int argc, char* argv[])
     parser.addOption({QStringLiteral("save"), QStringLiteral("Save the active project after successful execution.")});
     parser.addOption({QStringLiteral("timeout"), QStringLiteral("Maximum wait for an asynchronous operation, in seconds."), QStringLiteral("seconds"), QStringLiteral("300")});
     parser.addOption({QStringLiteral("verbose"), QStringLiteral("Include debug diagnostics on stderr.")});
+    parser.addOption({QStringLiteral("all"), QStringLiteral("Build every Action for the requested platforms.")});
+    parser.addOption({QStringLiteral("platform-id"), QStringLiteral("Build project platform UUID; may be repeated."), QStringLiteral("UUID")});
+    parser.addOption({QStringLiteral("self-clean"), QStringLiteral("Remove outputs outside this build: on or off."), QStringLiteral("on|off")});
+    parser.addOption({QStringLiteral("output"), QStringLiteral("Build output directory; relative paths use the project directory."), QStringLiteral("directory")});
+    parser.addOption({QStringLiteral("force"), QStringLiteral("Force rebuilding packs.")});
 
     const bool wantsJson = app.arguments().contains(QStringLiteral("--json"));
     if (!parser.parse(app.arguments()))
@@ -157,9 +173,17 @@ int main(int argc, char* argv[])
         return output(HarkenStudioCli::failure(QStringLiteral("USAGE"), message), wantsJson, 2);
     };
     const QString command = positional.front();
+    if (command == QStringLiteral("build") || command == QStringLiteral("list-targets")) {
+        const auto response = HarkenStudioCli::runSavedProjectBuild(parser, [] { return interrupted != 0; });
+        return output(response, wantsJson, response.value(QStringLiteral("code")) == QStringLiteral("USAGE") ? 2 : 1);
+    }
     if (command != QStringLiteral("commands") && command != QStringLiteral("init")
         && command != QStringLiteral("exec") && command != QStringLiteral("run"))
         return usage(QStringLiteral("Unknown command '%1'. Run HarkenStudioCLI --help.").arg(command));
+    for (const auto& option : {QStringLiteral("all"), QStringLiteral("platform-id"), QStringLiteral("self-clean"),
+                              QStringLiteral("output"), QStringLiteral("force")}) {
+        if (parser.isSet(option)) return usage(QStringLiteral("--%1 is only supported by build.").arg(option));
+    }
     if (positional.size() > 2 || ((command == QStringLiteral("init") || command == QStringLiteral("exec")) && positional.size() != 2)
         || (command == QStringLiteral("run") && positional.size() != 1))
         return usage(QStringLiteral("Invalid positional arguments. Run HarkenStudioCLI --help."));

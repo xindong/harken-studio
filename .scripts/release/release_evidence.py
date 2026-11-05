@@ -69,7 +69,7 @@ COMPONENT_INPUTS = (
     {"id": "heroicons", "notice": "Heroicons", "products": ["hub"],
      "url": "https://github.com/tailwindlabs/heroicons", "legalFiles": ["Heroicons-LICENSE.txt"]},
 )
-ROOT_TARGETS = {"studio": ("harken_editor", "harkenizer", "harken_studio_cli"), "hub": ("harken_hub",),
+ROOT_TARGETS = {"studio": ("harken_editor", "harken_studio_cli"), "hub": ("harken_hub",),
                 "runtime": ("harken_core_shared",)}
 
 
@@ -391,8 +391,7 @@ def read_macos_deployment(build_dir: Path, product: str, configuration: str, mod
     for record in report.get("executables", []):
         source = record["sourceArtifact"]
         if (source not in model["artifacts"] or source["type"] != "EXECUTABLE"
-                or (source["target"], source["name"]) not in {
-                    ("harkenizer", "Harkenizer"), ("harken_studio_cli", "HarkenStudioCLI")}
+                or (source["target"], source["name"]) != ("harken_studio_cli", "HarkenStudioCLI")
                 or record["path"] != f"HarkenStudio.app/Contents/MacOS/{source['name']}"
                 or record["path"] in seen):
             raise ValueError("macOS deployment source does not match a CMake target artifact")
@@ -425,8 +424,11 @@ def verify_payload_binaries(payload: Path, model: dict, qt_root: Path | None,
     for path in payload.rglob("*"):
         if path.is_symlink() or not path.is_file() or not native_file(path):
             continue
-        digest = hashes.get(path.relative_to(payload).as_posix()) or sha256(path)
-        record = {"path": path.relative_to(payload).as_posix(), "sha256": digest}
+        relative = path.relative_to(payload).as_posix()
+        if payload_records is not None and relative not in hashes:
+            continue
+        digest = hashes.get(relative) or sha256(path)
+        record = {"path": relative, "sha256": digest}
         if digest in artifact_hashes:
             records.append({**record, "origin": "CMake target artifact"})
             continue

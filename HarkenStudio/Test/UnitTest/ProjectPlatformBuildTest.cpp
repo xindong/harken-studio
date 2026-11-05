@@ -193,7 +193,7 @@ TEST(ResourceCompilerWorker, CacheIdentityRequiresMatchingWorkerAndRecoversAfter
     EXPECT_EQ(result.outputLog, QString("matched"));
 }
 
-struct HarkenizerResult
+struct StudioCliResult
 {
     bool finished = false;
     int exitCode = -1;
@@ -201,10 +201,10 @@ struct HarkenizerResult
     QByteArray error;
 };
 
-HarkenizerResult runHarkenizer(const QStringList& arguments)
+StudioCliResult runStudioCli(const QStringList& arguments)
 {
     QProcess process;
-    process.start(QString::fromUtf8(HARKENIZER_PATH), arguments);
+    process.start(QString::fromUtf8(HARKEN_STUDIO_CLI_PATH), arguments);
     const bool finished = process.waitForStarted(10000) && process.waitForFinished(60000);
     if (!finished) {
         process.kill();
@@ -519,7 +519,7 @@ TEST_F(ProjectPlatformBuild, IndependentBuildMatchesSavedProjectPublication)
     ASSERT_TRUE(manager().closeProject());
     const auto saved = directoryContents(projectRoot);
 
-    const auto targets = runHarkenizer({"list-targets", projectPath, "--json"});
+    const auto targets = runStudioCli({"list-targets", "--project", projectPath, "--json"});
     ASSERT_TRUE(targets.finished) << targets.error.toStdString();
     ASSERT_EQ(targets.exitCode, 0) << targets.error.toStdString();
     QJsonParseError parseError;
@@ -530,12 +530,12 @@ TEST_F(ProjectPlatformBuild, IndependentBuildMatchesSavedProjectPublication)
     EXPECT_TRUE(targets.output.contains(platforms.back().toUtf8()));
     EXPECT_EQ(directoryContents(projectRoot), saved);
 
-    QStringList arguments{"generate-packs", projectPath, "--all", "--self-clean", "off",
+    QStringList arguments{"build", "--project", projectPath, "--all", "--self-clean", "off",
         "--platform-id", platforms.front(), "--platform-id", platforms.back(), "--output", consoleRoot};
     for (const bool force : {false, false, true}) {
         auto current = arguments;
         if (force) current.append("--force");
-        const auto result = runHarkenizer(current);
+        const auto result = runStudioCli(current);
         ASSERT_TRUE(result.finished) << result.error.toStdString();
         ASSERT_EQ(result.exitCode, 0) << result.error.toStdString() << result.output.toStdString();
         EXPECT_EQ(directoryContents(consoleRoot, {"*.bytes", "*.json"}), reference);
@@ -549,17 +549,17 @@ TEST_F(ProjectPlatformBuild, IndependentBuildRejectsUnavailableInputsWithoutChan
     const QString projectPath = project().projectPath;
     const QString projectRoot = QFileInfo(projectPath).absolutePath();
     const QString outputRoot = directory.filePath("ConsoleRejected");
-    const QStringList arguments{"generate-packs", projectPath, "--all", "--self-clean", "off",
+    const QStringList arguments{"build", "--project", projectPath, "--all", "--self-clean", "off",
         "--platform-id", Platforms::idString(low), "--output", outputRoot};
     const auto saved = directoryContents(projectRoot);
-    const auto occupied = runHarkenizer(arguments);
+    const auto occupied = runStudioCli(arguments);
     ASSERT_TRUE(occupied.finished) << occupied.error.toStdString();
     EXPECT_EQ(occupied.exitCode, 1) << occupied.output.toStdString();
     EXPECT_FALSE(QFileInfo::exists(outputRoot));
     EXPECT_EQ(directoryContents(projectRoot), saved);
     ASSERT_TRUE(manager().closeProject());
 
-    const auto incomplete = runHarkenizer({"generate-packs", projectPath});
+    const auto incomplete = runStudioCli({"build", "--project", projectPath});
     ASSERT_TRUE(incomplete.finished) << incomplete.error.toStdString();
     EXPECT_EQ(incomplete.exitCode, 2);
     EXPECT_FALSE(QFileInfo::exists(outputRoot));
@@ -568,7 +568,7 @@ TEST_F(ProjectPlatformBuild, IndependentBuildRejectsUnavailableInputsWithoutChan
     const auto lock = ProjectPackExporter::LockPackOutputRoot(outputRoot, &error);
     ASSERT_TRUE(lock) << error.toStdString();
     const auto original = directoryContents(outputRoot);
-    const auto competing = runHarkenizer(arguments);
+    const auto competing = runStudioCli(arguments);
     ASSERT_TRUE(competing.finished) << competing.error.toStdString();
     EXPECT_EQ(competing.exitCode, 1) << competing.output.toStdString();
     EXPECT_EQ(directoryContents(outputRoot), original);

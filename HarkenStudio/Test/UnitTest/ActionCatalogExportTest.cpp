@@ -31,8 +31,8 @@
 #include <utility>
 #include <vector>
 
-#ifndef HARKENIZER_PATH
-#error "HARKENIZER_PATH must point at the Harkenizer executable"
+#ifndef HARKEN_STUDIO_CLI_PATH
+#error "HARKEN_STUDIO_CLI_PATH must point at the Studio CLI executable"
 #endif
 
 using namespace VNX;
@@ -116,7 +116,7 @@ protected:
     void SetUp() override
     {
         ensureApp();
-        qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+        qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
         auto& manager = ProjectManager::instance();
         if (manager.isProjectOpen())
             manager.closeProject();

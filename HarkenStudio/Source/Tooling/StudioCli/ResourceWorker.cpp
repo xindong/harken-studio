@@ -1,6 +1,6 @@
 #include "ResourceWorker.h"
-#include "ResourceCompilerClient.h"
-#include "ResourceCompiler/ResourceCompiler.h"
+#include "Tooling/Harkenizer/ResourceCompilerClient.h"
+#include "Tooling/Harkenizer/ResourceCompiler/ResourceCompiler.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>

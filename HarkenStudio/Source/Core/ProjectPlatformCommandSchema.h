@@ -61,7 +61,18 @@ inline QJsonObject projectPlatformCommandSchema(const QString& command)
         return object({{"platform_id", projectPlatformIdSchema()}, {"source_ids", QJsonObject{{"type", "array"}, {"minItems", 1}, {"items", source}}}},
                       {"platform_id", "source_ids"});
     if (command == "export_pack")
-        return object({{"platform_id", projectPlatformIdSchema()}, {"output_path", text}, {"action_name", text}, {"language", text}});
+        return object({
+            {"platform_id", projectPlatformIdSchema()},
+            {"platform_ids", QJsonObject{{"type", "array"}, {"minItems", 1}, {"uniqueItems", true},
+                {"items", projectPlatformIdSchema()},
+                {"description", "Project platform UUIDs, mutually exclusive with platform_id. Omit both to use the export selection."}}},
+            {"output_path", text}, {"action_name", text}, {"language", text},
+            {"all", QJsonObject{{"type", "boolean"}, {"default", false},
+                {"description", "Export every Action for the requested platforms, including unchecked packs. Cannot be true with action_name."}}},
+            {"force", QJsonObject{{"type", "boolean"}, {"default", false},
+                {"description", "Force re-export even when pack inputs are unchanged."}}},
+            {"self_clean", QJsonObject{{"type", "boolean"}, {"default", false},
+                {"description", "Remove outputs outside this export after all requested platforms succeed. Cannot be true with action_name."}}}});
     if (command == "get_action_pack_plan")
         return object({{"actionStableId", QJsonObject{{"type", "integer"}, {"minimum", 1}}},
                        {"platform_ids", ids}, {"languages", QJsonObject{{"type", "array"}, {"items", text}}}}, {"actionStableId"});
