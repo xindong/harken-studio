@@ -1158,9 +1158,10 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
         if (entry.kind == kPackEntryKindCanonicalDefinitionPartition ||
             entry.kind == kPackEntryKindPackRequirementBlock ||
             entry.kind == kPackEntryKindPackDependencyEdge) {
-            if ((entry.vintage != kPackCanonicalRequirementVintage &&
-                 entry.vintage != kPackCanonicalEntryVintage) ||
-                (canonicalVintage != 0 && canonicalVintage != entry.vintage)) {
+            const bool legalVintage = entry.kind == kPackEntryKindCanonicalDefinitionPartition
+                ? entry.vintage == kPackCanonicalRequirementVintage || entry.vintage == kPackCanonicalEntryVintage
+                : VintageLegalForKind(entry.kind, entry.vintage);
+            if (!legalVintage || (canonicalVintage != 0 && canonicalVintage != entry.vintage)) {
                 return harkenstudiobuild::kPackIncompatible;
             }
             canonicalVintage = entry.vintage;
@@ -1338,18 +1339,18 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
                 return harkenstudiobuild::kPackInvalid;
             }
             PackRequirementBlock requirement;
-            const bool versionTwo = entry.vintage == kPackCanonicalRequirementVintage;
-            if (entry.size != (versionTwo ? kPackRequirementBlockV2Bytes : kPackRequirementBlockBytes)) {
+            if (entry.size != kPackRequirementBlockBytes) {
                 return harkenstudiobuild::kPackIncompatible;
             }
-            if (LoadLE32(payload) != entry.vintage || LoadLE32(payload + 4) != entry.vintage) {
+            if (!ParsePackRequirementBlock(payload, entry.size, &requirement)) {
+                return harkenstudiobuild::kPackInvalid;
+            }
+            if (requirement.schemaVersion != entry.vintage ||
+                requirement.storageModelVersion != entry.vintage) {
                 return harkenstudiobuild::kPackIncompatible;
             }
-            const bool parsed = versionTwo
-                ? ParsePackRequirementBlockV2(payload, entry.size, &requirement)
-                : ParsePackRequirementBlock(payload, entry.size, &requirement);
-            if (!parsed ||
-                requirement.payloadChecksumCoverage != Fnv1a64(payload, 104)) {
+            if (!PackRequirementBlockValid(requirement) ||
+                requirement.payloadChecksumCoverage != Fnv1a64(payload, kPackRequirementBlockPayloadChecksumCoverageOffset)) {
                 return harkenstudiobuild::kPackInvalid;
             }
             image.requirement = requirement;
@@ -1359,14 +1360,10 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
         }
         case kPackEntryKindPackDependencyEdge: {
             PackDependencyEdge edge;
-            const bool versionTwo = entry.vintage == kPackCanonicalRequirementVintage;
-            if (entry.size != (versionTwo ? kPackDependencyEdgeV2Bytes : kPackDependencyEdgeBytes)) {
+            if (entry.size != kPackDependencyEdgeBytes) {
                 return harkenstudiobuild::kPackIncompatible;
             }
-            const bool parsed = versionTwo
-                ? ParsePackDependencyEdgeV2(payload, entry.size, &edge)
-                : ParsePackDependencyEdge(payload, entry.size, &edge);
-            if (!parsed ||
+            if (!ReadPackDependencyEdge(payload, entry.size, &edge) ||
                 entry.relationOrdinal != dependencyOrdinal) {
                 return harkenstudiobuild::kPackInvalid;
             }

@@ -110,8 +110,8 @@ std::vector<std::uint8_t> requirementPayload(std::uint64_t packStableId,
     block.ownedDefinitionCount = ownedDefinitions;
     block.ownedResourceCount = ownedResources;
     harkenstudiobuild::ApplyCanonicalBusTriple(&block, busTriple);
-    std::vector<std::uint8_t> payload(harkenstudiobuild::kPackRequirementBlockV2Bytes, 0);
-    harkenstudiobuild::SerializePackRequirementBlockV2(block, payload.data());
+    std::vector<std::uint8_t> payload(harkenstudiobuild::kPackRequirementBlockBytes, 0);
+    harkenstudiobuild::SerializePackRequirementBlock(block, payload.data());
     harkenstudiobuild::StampRequirementCoverage(&payload);
     return payload;
 }
@@ -128,8 +128,8 @@ std::vector<std::uint8_t> dependencyPayload(std::uint64_t prerequisiteId,
     edge.expectedPrerequisiteContentRevision = expectedRevision;
     if (edgeKind == harkenstudiobuild::kPackDependencyEdgeKindInit)
         harkenstudiobuild::ApplyCanonicalBusTriple(&edge, busTriple);
-    std::vector<std::uint8_t> payload(harkenstudiobuild::kPackDependencyEdgeV2Bytes, 0);
-    harkenstudiobuild::SerializePackDependencyEdgeV2(edge, payload.data());
+    std::vector<std::uint8_t> payload(harkenstudiobuild::kPackDependencyEdgeBytes, 0);
+    harkenstudiobuild::SerializePackDependencyEdge(edge, payload.data());
     return payload;
 }
 
@@ -1843,7 +1843,7 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
                     pack.variableRequirementsPayload = entry.payload;
                 else if (entry.kind == harkenstudiobuild::kPackEntryKindPackRequirementBlock) {
                     harkenstudiobuild::PackRequirementBlock requirement;
-                    if (!harkenstudiobuild::ParsePackRequirementBlockV2(
+                    if (!harkenstudiobuild::ReadPackRequirementBlock(
                             entry.payload.data(), entry.payload.size(), &requirement)) {
                         *error = QStringLiteral("Invalid retained Pack requirement");
                         return false;
@@ -3494,7 +3494,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             for (const auto& entry : pack.previousEntries) {
                 if (entry.kind != harkenstudiobuild::kPackEntryKindPackDependencyEdge) continue;
                 harkenstudiobuild::PackDependencyEdge edge;
-                if (!harkenstudiobuild::ParsePackDependencyEdgeV2(
+                if (!harkenstudiobuild::ReadPackDependencyEdge(
                         entry.payload.data(), entry.payload.size(), &edge))
                     return fail(QStringLiteral("Invalid retained Pack dependency"));
                 if (edge.prerequisitePackStableId == initId
@@ -3528,25 +3528,25 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                     entry.payload = meta.partitionPayload;
                 } else if (entry.kind == harkenstudiobuild::kPackEntryKindPackRequirementBlock) {
                     harkenstudiobuild::PackRequirementBlock requirement;
-                    if (!harkenstudiobuild::ParsePackRequirementBlockV2(
+                    if (!harkenstudiobuild::ReadPackRequirementBlock(
                             entry.payload.data(), entry.payload.size(), &requirement)) {
                         unit.error = QStringLiteral("Invalid retained Pack requirement");
                         return unit;
                     }
                     requirement.semanticFingerprint = meta.semanticFingerprint;
                     requirement.packContentRevision = meta.contentRevision;
-                    harkenstudiobuild::SerializePackRequirementBlockV2(requirement, entry.payload.data());
+                    harkenstudiobuild::SerializePackRequirementBlock(requirement, entry.payload.data());
                     harkenstudiobuild::StampRequirementCoverage(&entry.payload);
                 } else if (entry.kind == harkenstudiobuild::kPackEntryKindPackDependencyEdge) {
                     harkenstudiobuild::PackDependencyEdge edge;
-                    if (!harkenstudiobuild::ParsePackDependencyEdgeV2(
+                    if (!harkenstudiobuild::ReadPackDependencyEdge(
                             entry.payload.data(), entry.payload.size(), &edge)) {
                         unit.error = QStringLiteral("Invalid retained Pack dependency");
                         return unit;
                     }
                     if (edge.prerequisitePackStableId == initId) {
                         edge.expectedPrerequisiteContentRevision = meta.requiredInitRevision;
-                        harkenstudiobuild::SerializePackDependencyEdgeV2(edge, entry.payload.data());
+                        harkenstudiobuild::SerializePackDependencyEdge(edge, entry.payload.data());
                     }
                 }
             }

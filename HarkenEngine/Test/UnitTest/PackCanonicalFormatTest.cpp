@@ -236,11 +236,8 @@ std::vector<std::uint8_t> RequirementPayload(std::uint64_t packStableId,
     block.definitionPartitionRevision = partitionRevision;
     block.resourceClosureRevision = 1;
     ApplyNeutralMasterTriple(&block);
-    const bool versionTwo = vintage == kPackCanonicalRequirementVintage;
-    std::vector<std::uint8_t> payload(
-        versionTwo ? kPackRequirementBlockV2Bytes : kPackRequirementBlockBytes, 0);
-    if (versionTwo) SerializePackRequirementBlockV2(block, payload.data());
-    else SerializePackRequirementBlock(block, payload.data());
+    std::vector<std::uint8_t> payload(kPackRequirementBlockBytes, 0);
+    SerializePackRequirementBlock(block, payload.data());
     return payload;
 }
 
@@ -1842,32 +1839,26 @@ std::vector<std::uint8_t> CanonicalLayoutFixture(std::uint32_t packKind,
         edge.edgeKind = kPackDependencyEdgeKindInit;
         edge.required01 = 1;
         edge.expectedPrerequisiteContentRevision = 1;
-        const bool versionTwo = dependencyVintage == kPackCanonicalRequirementVintage;
-        std::vector<std::uint8_t> payload(versionTwo ? kPackDependencyEdgeV2Bytes
-                                                   : kPackDependencyEdgeBytes, 0);
-        if (versionTwo) {
-            const auto triple = harkentest::packfoundation::DefaultFixtureBusTriple();
-            edge.expectedBusContentGeneration = triple.busContentGeneration;
-            edge.expectedPublishedBusFingerprint = triple.publishedBusFingerprint;
-            edge.expectedCompileTargetProfileFingerprint = triple.compileTargetProfileFingerprint;
-            SerializePackDependencyEdgeV2(edge, payload.data());
-        } else {
-            SerializePackDependencyEdge(edge, payload.data());
-        }
+        std::vector<std::uint8_t> payload(kPackDependencyEdgeBytes, 0);
+        const auto triple = harkentest::packfoundation::DefaultFixtureBusTriple();
+        edge.expectedBusContentGeneration = triple.busContentGeneration;
+        edge.expectedPublishedBusFingerprint = triple.publishedBusFingerprint;
+        edge.expectedCompileTargetProfileFingerprint = triple.compileTargetProfileFingerprint;
+        SerializePackDependencyEdge(edge, payload.data());
         builder.AddEntry(kPackEntryKindPackDependencyEdge, 0, std::move(payload), dependencyVintage);
     }
     return builder.Build();
 }
 
-TEST(PackCanonicalFormat, ProductionV1LayoutsKeepBusBindingScopes) {
+TEST(PackCanonicalFormat, CurrentLayoutsKeepBusBindingScopes) {
     for (auto kind : {kPackKindInit, kPackKindCanonicalContent}) {
-        const auto original = CanonicalLayoutFixture(kind, 1, 1, 1);
+        const auto original = CanonicalLayoutFixture(kind, 2, 2, 2);
         for (std::uint32_t scope : {VN_TARGET_SCOPE_VOICE, VN_TARGET_SCOPE_BUS,
                                     VN_TARGET_SCOPE_BUS_EFFECT_PARAM}) {
             const auto bytes = WithCanonicalScopeRows(original, scope, 3);
             PackCanonicalImage image;
             ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
-            EXPECT_EQ(image.requirement.storageModelVersion, 1u);
+            EXPECT_EQ(image.requirement.storageModelVersion, 2u);
             EXPECT_FALSE(image.hasBusDefinitionSnapshot);
             ASSERT_EQ(image.bindingDefinitions.size(), 1u);
             ASSERT_EQ(image.bindingAttachments.size(), 1u);
@@ -1877,7 +1868,7 @@ TEST(PackCanonicalFormat, ProductionV1LayoutsKeepBusBindingScopes) {
     }
 }
 
-TEST(PackCanonicalFormat, MixedCanonicalLayoutsAreIncompatible) {
+TEST(PackCanonicalFormat, RetiredOrMixedCanonicalLayoutsAreIncompatible) {
     for (std::uint32_t requirement : {1u, 2u}) {
         for (std::uint32_t partition : {1u, 2u}) {
             for (std::uint32_t dependency : {1u, 2u}) {
@@ -1887,7 +1878,7 @@ TEST(PackCanonicalFormat, MixedCanonicalLayoutsAreIncompatible) {
                 PackCanonicalImage image;
                 image.packStableId = 77;
                 const auto result = ParsePackCanonicalImage(bytes.data(), bytes.size(), &image);
-                if (requirement == partition && partition == dependency) {
+                if (requirement == 2 && partition == 2 && dependency == 2) {
                     EXPECT_EQ(result, VN_OK);
                 } else {
                     EXPECT_EQ(result, VN_PACK_INCOMPATIBLE);

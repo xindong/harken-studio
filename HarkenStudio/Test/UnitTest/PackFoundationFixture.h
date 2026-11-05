@@ -360,8 +360,8 @@ inline std::vector<std::uint8_t> DependencyPayload(
     edge.required01 = 1;
     edge.expectedPrerequisiteContentRevision = contentRevision;
     ApplyCanonicalBusTriple(&edge, triple);
-    std::vector<std::uint8_t> payload(harken::kPackDependencyEdgeV2Bytes, 0);
-    harken::SerializePackDependencyEdgeV2(edge, payload.data());
+    std::vector<std::uint8_t> payload(harken::kPackDependencyEdgeBytes, 0);
+    harken::SerializePackDependencyEdge(edge, payload.data());
     return payload;
 }
 
@@ -487,8 +487,8 @@ inline std::vector<std::uint8_t> RequirementPayload(
         harken::kWorldCapabilityUnit1ActionMask);
     ApplyCanonicalBusTriple(&block, triple);
     std::vector<std::uint8_t> payload(
-        harken::kPackRequirementBlockV2Bytes, 0);
-    harken::SerializePackRequirementBlockV2(block, payload.data());
+        harken::kPackRequirementBlockBytes, 0);
+    harken::SerializePackRequirementBlock(block, payload.data());
     StampRequirementCoverage(&payload);
     return payload;
 }

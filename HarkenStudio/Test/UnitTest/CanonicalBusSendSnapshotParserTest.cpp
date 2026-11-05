@@ -111,11 +111,11 @@ std::vector<std::uint8_t> MakeBusSendSnapshotPack(
     requirement.compileTargetProfileFingerprint =
         snapshot.compileTargetProfileFingerprint;
     std::vector<std::uint8_t> requirementPayload(
-        harken::kPackRequirementBlockV2Bytes, 0);
-    harken::SerializePackRequirementBlockV2(requirement, requirementPayload.data());
+        harken::kPackRequirementBlockBytes, 0);
+    harken::SerializePackRequirementBlock(requirement, requirementPayload.data());
     requirement.payloadChecksumCoverage =
         harken::Fnv1a64(requirementPayload.data(), 104);
-    harken::SerializePackRequirementBlockV2(requirement, requirementPayload.data());
+    harken::SerializePackRequirementBlock(requirement, requirementPayload.data());
 
     constexpr std::uint32_t entryCount = 2;
     const std::uint64_t directoryOffset = harken::kPackV2HeaderBytes;

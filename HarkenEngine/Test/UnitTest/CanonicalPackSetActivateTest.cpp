@@ -1261,23 +1261,16 @@ TEST(CanonicalPackSetActivate, LoadPackRefusesInitWithoutKind24Snapshot) {
     EXPECT_EQ(0u, handle);
 }
 
-TEST(CanonicalPackSetActivate, ProductionV1LoadsAndInspectsButCannotActivate) {
+TEST(CanonicalPackSetActivate, RetiredRequirementVintageIsRejected) {
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     using namespace harkentest::packfoundation;
-    harken::PackRequirementBlock requirement;
-    requirement.schemaVersion = 1;
-    requirement.storageModelVersion = 1;
-    requirement.packStableId = kInitPackStableId;
-    requirement.packContentRevision = 1;
-    std::vector<std::uint8_t> payload(harken::kPackRequirementBlockBytes, 0);
-    harken::SerializePackRequirementBlock(requirement, payload.data());
-    harken::StoreLE64(payload.data() + 104, harken::Fnv1a64(payload.data(), 104));
+    auto payload = RequirementPayload(kInitPackStableId, 1, 1, 0, 0);
     ImageBuilder builder(harken::kPackKindInit);
     builder.AddEntry(harken::kPackEntryKindPackRequirementBlock, kInitPackStableId,
                      std::move(payload), harken::kPackCanonicalEntryVintage);
     const auto activation = harkentest::ActivateInitBytesV1(
-        std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-pack-set-production-v1",
+        std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-pack-set-retired-requirement",
         builder.Build(), kInitPackStableId);
     EXPECT_EQ(activation.result, VN_PACK_INCOMPATIBLE);
     EXPECT_EQ(activation.initHandle, 0u);
@@ -1289,10 +1282,10 @@ TEST(CanonicalPackSetActivate, ProductionV1LoadsAndInspectsButCannotActivate) {
     load.utf8Path = activation.initPath.c_str();
     VnInitPackInspectReport report{};
     report.structSize = sizeof(report);
-    EXPECT_EQ(VN_OK, Vn_InspectInitPack(&load, &report));
-    EXPECT_EQ(report.packStableId, kInitPackStableId);
+    EXPECT_EQ(VN_PACK_INCOMPATIBLE, Vn_InspectInitPack(&load, &report));
+    EXPECT_EQ(report.packStableId, 0u);
     VnPackHandle handle = 0;
-    EXPECT_EQ(VN_PACK_INIT_LIFECYCLE,
+    EXPECT_EQ(VN_PACK_INCOMPATIBLE,
               Vn_LoadPack(reinterpret_cast<const VnPackDesc*>(&load), &handle));
     EXPECT_EQ(handle, 0u);
 }

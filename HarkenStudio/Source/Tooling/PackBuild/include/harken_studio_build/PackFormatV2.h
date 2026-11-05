@@ -28,8 +28,6 @@ inline constexpr std::uint32_t kPackKindInit = 2;
 inline constexpr std::uint32_t kPackKindCanonicalContent = 3;
 inline constexpr std::uint32_t kPackEntryKindInitRoutingCatalog = 20;
 inline constexpr std::uint32_t kPackEntryKindCanonicalDefinitionPartition = 21;
-inline constexpr std::uint32_t kPackEntryKindPackRequirementBlock = 22;
-inline constexpr std::uint32_t kPackEntryKindPackDependencyEdge = 23;
 inline constexpr std::uint32_t kPackEntryKindGameplayCatalog = 25;
 inline constexpr std::uint32_t kPackEntryKindVariablePolicyOverlay = 26;
 inline constexpr std::uint32_t kPackEntryKindVariableRequirements = 27;
@@ -348,10 +346,6 @@ inline constexpr std::uint32_t kInitCatalogContentHashOffset = 304;
 inline constexpr std::uint32_t kInitCatalogMaxLocatorBytes = 256;
 inline constexpr std::uint32_t kInitCatalogMaxStartupPacks = 256;
 inline constexpr std::uint32_t kInitCatalogMaxEntries = 1048576;
-inline constexpr std::uint32_t kPackRequirementBlockBytes = 112;
-inline constexpr std::uint32_t kPackRequirementBlockV2Bytes = 136;
-inline constexpr std::uint32_t kPackDependencyEdgeBytes = 32;
-inline constexpr std::uint32_t kPackDependencyEdgeV2Bytes = 48;
 inline constexpr std::uint32_t kCanonicalDefinitionPartitionHeaderBytes = 64;
 inline constexpr std::uint32_t kCanonicalDefinitionPartitionHeaderV2Bytes = 88;
 inline constexpr char kCanonicalDefinitionPartitionMagic[8] = {
@@ -727,146 +721,21 @@ inline bool ParsePackInitCatalogRow(const std::uint8_t* in,
     return true;
 }
 
-inline void SerializePackRequirementBlock(const PackRequirementBlock& block,
-                                          std::uint8_t* out) {
-    StoreLE32(out + 0, block.schemaVersion);
-    StoreLE32(out + 4, block.storageModelVersion);
-    StoreLE64(out + 8, block.packStableId);
-    StoreLE64(out + 16, block.packContentRevision);
-    StoreLE64(out + 24, block.definitionPartitionRevision);
-    StoreLE64(out + 32, block.resourceClosureRevision);
-    StoreLE64(out + 40, block.semanticFingerprint);
-    StoreLE64(out + 48, block.lineageFingerprint);
-    StoreLE32(out + 56, block.ownedDefinitionCount);
-    StoreLE32(out + 60, block.ownedResourceCount);
-    StoreLE64(out + 64, block.installedDefinitionBytes);
-    StoreLE64(out + 72, block.installedResourceBytes);
-    StoreLE64(out + 80, block.replacementPeakBytes);
-    StoreLE64(out + 88, block.decodeStagingBytes);
-    StoreLE32(out + 96, block.requiredCapabilityMask);
-    StoreLE32(out + 100, block.reserved0);
-    StoreLE64(out + 104, block.payloadChecksumCoverage);
-}
 
-inline bool ParsePackRequirementBlock(const std::uint8_t* in, std::uint64_t size,
-                                      PackRequirementBlock* out) {
-    if (size != kPackRequirementBlockBytes) {
-        return false;
-    }
-    out->schemaVersion = LoadLE32(in + 0);
-    out->storageModelVersion = LoadLE32(in + 4);
-    out->packStableId = LoadLE64(in + 8);
-    out->packContentRevision = LoadLE64(in + 16);
-    out->definitionPartitionRevision = LoadLE64(in + 24);
-    out->resourceClosureRevision = LoadLE64(in + 32);
-    out->semanticFingerprint = LoadLE64(in + 40);
-    out->lineageFingerprint = LoadLE64(in + 48);
-    out->ownedDefinitionCount = LoadLE32(in + 56);
-    out->ownedResourceCount = LoadLE32(in + 60);
-    out->installedDefinitionBytes = LoadLE64(in + 64);
-    out->installedResourceBytes = LoadLE64(in + 72);
-    out->replacementPeakBytes = LoadLE64(in + 80);
-    out->decodeStagingBytes = LoadLE64(in + 88);
-    out->requiredCapabilityMask = LoadLE32(in + 96);
-    out->reserved0 = LoadLE32(in + 100);
-    out->payloadChecksumCoverage = LoadLE64(in + 104);
-    return out->schemaVersion == 1 && out->storageModelVersion == 1 &&
-           out->packStableId != 0 && out->reserved0 == 0;
-}
 
-inline void SerializePackDependencyEdge(const PackDependencyEdge& edge,
-                                        std::uint8_t* out) {
-    StoreLE64(out + 0, edge.prerequisitePackStableId);
-    StoreLE32(out + 8, edge.edgeKind);
-    StoreLE32(out + 12, edge.required01);
-    StoreLE64(out + 16, edge.expectedPrerequisiteContentRevision);
-    StoreLE64(out + 24, edge.reserved0);
-}
 
-inline bool ParsePackDependencyEdge(const std::uint8_t* in, std::uint64_t size,
-                                    PackDependencyEdge* out) {
-    if (size != kPackDependencyEdgeBytes) {
-        return false;
-    }
-    out->prerequisitePackStableId = LoadLE64(in + 0);
-    out->edgeKind = LoadLE32(in + 8);
-    out->required01 = LoadLE32(in + 12);
-    out->expectedPrerequisiteContentRevision = LoadLE64(in + 16);
-    out->reserved0 = LoadLE64(in + 24);
-    return out->prerequisitePackStableId != 0 &&
-           (out->edgeKind == kPackDependencyEdgeKindInit ||
-            out->edgeKind == kPackDependencyEdgeKindShared ||
-            out->edgeKind == kPackDependencyEdgeKindContent) &&
-           out->required01 <= 1 && out->reserved0 == 0;
-}
 
-inline void SerializePackRequirementBlockV2(const PackRequirementBlock& block,
-                                            std::uint8_t* out) {
-    SerializePackRequirementBlock(block, out);
-    StoreLE64(out + 112, block.busContentGeneration);
-    StoreLE64(out + 120, block.publishedBusFingerprint);
-    StoreLE64(out + 128, block.compileTargetProfileFingerprint);
-}
 
-inline bool ParsePackRequirementBlockV2(const std::uint8_t* in, std::uint64_t size,
-                                        PackRequirementBlock* out) {
-    if (size != kPackRequirementBlockV2Bytes) {
-        return false;
-    }
-    out->schemaVersion = LoadLE32(in + 0);
-    out->storageModelVersion = LoadLE32(in + 4);
-    out->packStableId = LoadLE64(in + 8);
-    out->packContentRevision = LoadLE64(in + 16);
-    out->definitionPartitionRevision = LoadLE64(in + 24);
-    out->resourceClosureRevision = LoadLE64(in + 32);
-    out->semanticFingerprint = LoadLE64(in + 40);
-    out->lineageFingerprint = LoadLE64(in + 48);
-    out->ownedDefinitionCount = LoadLE32(in + 56);
-    out->ownedResourceCount = LoadLE32(in + 60);
-    out->installedDefinitionBytes = LoadLE64(in + 64);
-    out->installedResourceBytes = LoadLE64(in + 72);
-    out->replacementPeakBytes = LoadLE64(in + 80);
-    out->decodeStagingBytes = LoadLE64(in + 88);
-    out->requiredCapabilityMask = LoadLE32(in + 96);
-    out->reserved0 = LoadLE32(in + 100);
-    out->payloadChecksumCoverage = LoadLE64(in + 104);
-    out->busContentGeneration = LoadLE64(in + 112);
-    out->publishedBusFingerprint = LoadLE64(in + 120);
-    out->compileTargetProfileFingerprint = LoadLE64(in + 128);
-    return out->schemaVersion == 2 && out->storageModelVersion == 2 &&
-           out->packStableId != 0 && out->reserved0 == 0;
-}
 
-inline void SerializePackDependencyEdgeV2(const PackDependencyEdge& edge,
-                                          std::uint8_t* out) {
-    StoreLE64(out + 0, edge.prerequisitePackStableId);
-    StoreLE32(out + 8, edge.edgeKind);
-    StoreLE32(out + 12, edge.required01);
-    StoreLE64(out + 16, edge.expectedPrerequisiteContentRevision);
-    StoreLE64(out + 24, edge.expectedBusContentGeneration);
-    StoreLE64(out + 32, edge.expectedPublishedBusFingerprint);
-    StoreLE64(out + 40, edge.expectedCompileTargetProfileFingerprint);
-}
 
-inline bool ParsePackDependencyEdgeV2(const std::uint8_t* in, std::uint64_t size,
-                                      PackDependencyEdge* out) {
-    if (size != kPackDependencyEdgeV2Bytes) {
-        return false;
-    }
-    out->prerequisitePackStableId = LoadLE64(in + 0);
-    out->edgeKind = LoadLE32(in + 8);
-    out->required01 = LoadLE32(in + 12);
-    out->expectedPrerequisiteContentRevision = LoadLE64(in + 16);
-    out->reserved0 = 0;
-    out->expectedBusContentGeneration = LoadLE64(in + 24);
-    out->expectedPublishedBusFingerprint = LoadLE64(in + 32);
-    out->expectedCompileTargetProfileFingerprint = LoadLE64(in + 40);
-    return out->prerequisitePackStableId != 0 &&
-           (out->edgeKind == kPackDependencyEdgeKindInit ||
-            out->edgeKind == kPackDependencyEdgeKindShared ||
-            out->edgeKind == kPackDependencyEdgeKindContent) &&
-           out->required01 <= 1;
-}
+
+
+
+
+
+
+
+
 
 inline void SerializePackCanonicalPartitionHeader(
     const PackCanonicalPartitionHeader& header, std::uint8_t* out) {
@@ -1317,6 +1186,29 @@ inline bool EncodeGameplayCatalog(
 
 namespace harkenstudiobuild {
 
+inline bool PackRequirementBlockValid(const PackRequirementBlock& block) noexcept {
+    return block.schemaVersion == kPackPackRequirementBlockVintage &&
+           block.storageModelVersion == kPackPackRequirementBlockVintage &&
+           block.packStableId != 0 && block.reserved0 == 0;
+}
+
+inline bool ReadPackRequirementBlock(const std::uint8_t* in, std::uint64_t size,
+                                     PackRequirementBlock* out) noexcept {
+    return ParsePackRequirementBlock(in, size, out) && PackRequirementBlockValid(*out);
+}
+
+inline bool ReadPackDependencyEdge(const std::uint8_t* in, std::uint64_t size,
+                                   PackDependencyEdge* out) noexcept {
+    out->reserved0 = 0;
+    return ParsePackDependencyEdge(in, size, out) &&
+           out->prerequisitePackStableId != 0 &&
+           (out->edgeKind == kPackDependencyEdgeKindInit ||
+            out->edgeKind == kPackDependencyEdgeKindShared ||
+            out->edgeKind == kPackDependencyEdgeKindContent) &&
+           out->required01 <= 1;
+}
+
+
 template <class Byte>
 struct PackWireBuffer {
     Byte* data;
@@ -1544,10 +1436,14 @@ inline bool PackV2IsCanonicalEntryKind(std::uint32_t entryKind) {
            entryKind == kPackEntryKindVariableNameCatalog;
 }
 inline std::uint32_t PackV2CanonicalDirectoryVintage(std::uint32_t entryKind) {
-    if (entryKind == kPackEntryKindCanonicalDefinitionPartition ||
-        entryKind == kPackEntryKindPackRequirementBlock ||
-        entryKind == kPackEntryKindPackDependencyEdge) {
+    if (entryKind == kPackEntryKindCanonicalDefinitionPartition) {
         return kPackCanonicalRequirementVintage;
+    }
+    if (entryKind == kPackEntryKindPackRequirementBlock) {
+        return kPackPackRequirementBlockVintage;
+    }
+    if (entryKind == kPackEntryKindPackDependencyEdge) {
+        return kPackPackDependencyEdgeVintage;
     }
     if (entryKind == kPackEntryKindBusDefinitionSnapshot) {
         return kPackBusDefinitionSnapshotVintage;

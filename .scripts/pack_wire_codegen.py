@@ -26,11 +26,11 @@ SOURCE_SCANS = {
     "HarkenEngine/Source/Runtime/media/include/harken/media/PackFormat.h": ("SerializePackTocEntry", "ParsePackTocEntry"),
     "HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/PackFormat.h": ("SerializePackTocEntry", "ParsePackTocEntry"),
     "HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/BusSnapshot.h": (
-        "StampSnapshotChecksum", "NeutralMasterSnapshotImage", "NeutralMasterSnapshotTriple",
+        "StampRequirementCoverage", "StampSnapshotChecksum", "NeutralMasterSnapshotImage", "NeutralMasterSnapshotTriple",
         "NeutralMasterSnapshotPayload", "VolumeBusSnapshotPayload",
     ),
     "HarkenEngine/Source/Runtime/media/include/harken/media/CanonicalBusSnapshot.h": (
-        "StampSnapshotChecksum", "NeutralMasterSnapshotImage", "NeutralMasterSnapshotTriple",
+        "StampRequirementCoverage", "StampSnapshotChecksum", "NeutralMasterSnapshotImage", "NeutralMasterSnapshotTriple",
         "NeutralMasterSnapshotPayload", "VolumeBusSnapshotPayload",
     ),
     "HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/PackFormatV2.h": (
@@ -48,6 +48,8 @@ SOURCE_SCANS = {
         "SerializePackV3VoiceRecipeTone", "ParsePackV3VoiceRecipeTone", "SerializePackV4VoiceRecipeSpatial", "ParsePackV4VoiceRecipeSpatial", "ParsePackV5VoiceRecipeSpatial",
         "SerializePackV5VoiceRecipePlayback", "ParsePackV5VoiceRecipePlayback", "SerializePackV2VoiceRecipeInstall", "ParsePackV2VoiceRecipeInstall",
         "SerializePackV2VoiceRecipeBinding", "ParsePackV2VoiceRecipeBinding",
+        "SerializePackRequirementBlock", "ParsePackRequirementBlock", "SerializePackRequirementBlockV2", "ParsePackRequirementBlockV2",
+        "SerializePackDependencyEdge", "ParsePackDependencyEdge", "SerializePackDependencyEdgeV2", "ParsePackDependencyEdgeV2",
     ),
     "HarkenEngine/Source/Runtime/media/include/harken/media/PackFormatV2.h": (
         "SerializePackBus", "ParsePackBus", "SerializePackV6Bus", "ParsePackV6Bus",
@@ -64,6 +66,8 @@ SOURCE_SCANS = {
         "SerializePackV3VoiceRecipeTone", "ParsePackV3VoiceRecipeTone", "SerializePackV4VoiceRecipeSpatial", "ParsePackV4VoiceRecipeSpatial", "ParsePackV5VoiceRecipeSpatial",
         "SerializePackV5VoiceRecipePlayback", "ParsePackV5VoiceRecipePlayback", "SerializePackV2VoiceRecipeInstall", "ParsePackV2VoiceRecipeInstall",
         "SerializePackV2VoiceRecipeBinding", "ParsePackV2VoiceRecipeBinding",
+        "SerializePackRequirementBlock", "ParsePackRequirementBlock", "SerializePackRequirementBlockV2", "ParsePackRequirementBlockV2",
+        "SerializePackDependencyEdge", "ParsePackDependencyEdge", "SerializePackDependencyEdgeV2", "ParsePackDependencyEdgeV2",
     ),
 }
 

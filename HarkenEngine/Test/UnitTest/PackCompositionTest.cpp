@@ -304,8 +304,8 @@ std::vector<std::uint8_t> RequirementPayload(std::uint64_t packStableId,
     block.resourceClosureRevision = 1;
     harkentest::packfoundation::ApplyCanonicalBusTriple(
         &block, harkentest::packfoundation::DefaultFixtureBusTriple());
-    std::vector<std::uint8_t> payload(kPackRequirementBlockV2Bytes, 0);
-    SerializePackRequirementBlockV2(block, payload.data());
+    std::vector<std::uint8_t> payload(kPackRequirementBlockBytes, 0);
+    SerializePackRequirementBlock(block, payload.data());
     StoreLE64(payload.data() + 104, Fnv1a64(payload.data(), 104));
     return payload;
 }
@@ -607,8 +607,8 @@ std::vector<std::uint8_t> RequiredEdgePayload(
         harkentest::packfoundation::ApplyCanonicalBusTriple(
             &edge, harkentest::packfoundation::DefaultFixtureBusTriple());
     }
-    std::vector<std::uint8_t> payload(kPackDependencyEdgeV2Bytes, 0);
-    SerializePackDependencyEdgeV2(edge, payload.data());
+    std::vector<std::uint8_t> payload(kPackDependencyEdgeBytes, 0);
+    SerializePackDependencyEdge(edge, payload.data());
     return payload;
 }
 

@@ -36,6 +36,10 @@ inline constexpr std::uint32_t kPackEntryKindBusEffect = 12u;
 inline constexpr std::uint32_t kPackBusEffectVintage = 1u;
 inline constexpr std::uint32_t kPackEntryKindEffectDynamicRoute = 13u;
 inline constexpr std::uint32_t kPackEffectDynamicRouteVintage = 1u;
+inline constexpr std::uint32_t kPackEntryKindPackRequirementBlock = 22u;
+inline constexpr std::uint32_t kPackPackRequirementBlockVintage = 2u;
+inline constexpr std::uint32_t kPackEntryKindPackDependencyEdge = 23u;
+inline constexpr std::uint32_t kPackPackDependencyEdgeVintage = 2u;
 inline constexpr std::uint32_t kPackEntryKindBusDefinitionSnapshot = 24u;
 inline constexpr std::uint32_t kPackBusDefinitionSnapshotVintage = 2u;
 
@@ -51,6 +55,8 @@ inline constexpr std::uint32_t kPackBusDefinitionSnapshotVintage = 2u;
     case kPackEntryKindVoiceRecipe: return vintage == kPackVoiceRecipeVintage;
     case kPackEntryKindBusEffect: return vintage == kPackBusEffectVintage;
     case kPackEntryKindEffectDynamicRoute: return vintage == kPackEffectDynamicRouteVintage;
+    case kPackEntryKindPackRequirementBlock: return vintage == kPackPackRequirementBlockVintage;
+    case kPackEntryKindPackDependencyEdge: return vintage == kPackPackDependencyEdgeVintage;
     case kPackEntryKindBusDefinitionSnapshot: return vintage == kPackBusDefinitionSnapshotVintage;
     default: return false;
     }
@@ -734,6 +740,37 @@ inline void SerializePackContainerHeader(const PackContainerEntryHeader& row, st
     return true;
 }
 
+inline constexpr std::uint64_t kPackDependencyEdgeBytes = 48ULL;
+inline constexpr std::uint64_t kPackDependencyEdgePrerequisitePackStableIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackDependencyEdgeEdgeKindOffset = 8ULL;
+inline constexpr std::uint64_t kPackDependencyEdgeRequired01Offset = 12ULL;
+inline constexpr std::uint64_t kPackDependencyEdgeExpectedPrerequisiteContentRevisionOffset = 16ULL;
+inline constexpr std::uint64_t kPackDependencyEdgeExpectedBusContentGenerationOffset = 24ULL;
+inline constexpr std::uint64_t kPackDependencyEdgeExpectedPublishedBusFingerprintOffset = 32ULL;
+inline constexpr std::uint64_t kPackDependencyEdgeExpectedCompileTargetProfileFingerprintOffset = 40ULL;
+
+inline void SerializePackDependencyEdge(const PackDependencyEdge& row, std::uint8_t* out) noexcept {
+    StoreLE64(out + 0, static_cast<std::uint64_t>(row.prerequisitePackStableId));
+    StoreLE32(out + 8, static_cast<std::uint32_t>(row.edgeKind));
+    StoreLE32(out + 12, static_cast<std::uint32_t>(row.required01));
+    StoreLE64(out + 16, static_cast<std::uint64_t>(row.expectedPrerequisiteContentRevision));
+    StoreLE64(out + 24, static_cast<std::uint64_t>(row.expectedBusContentGeneration));
+    StoreLE64(out + 32, static_cast<std::uint64_t>(row.expectedPublishedBusFingerprint));
+    StoreLE64(out + 40, static_cast<std::uint64_t>(row.expectedCompileTargetProfileFingerprint));
+}
+
+[[nodiscard]] inline bool ParsePackDependencyEdge(const std::uint8_t* in, std::uint64_t size, PackDependencyEdge* out) noexcept {
+    if (size != kPackDependencyEdgeBytes) return false;
+    out->prerequisitePackStableId = static_cast<std::remove_cvref_t<decltype(out->prerequisitePackStableId)>>(LoadLE64(in + 0));
+    out->edgeKind = static_cast<std::remove_cvref_t<decltype(out->edgeKind)>>(LoadLE32(in + 8));
+    out->required01 = static_cast<std::remove_cvref_t<decltype(out->required01)>>(LoadLE32(in + 12));
+    out->expectedPrerequisiteContentRevision = static_cast<std::remove_cvref_t<decltype(out->expectedPrerequisiteContentRevision)>>(LoadLE64(in + 16));
+    out->expectedBusContentGeneration = static_cast<std::remove_cvref_t<decltype(out->expectedBusContentGeneration)>>(LoadLE64(in + 24));
+    out->expectedPublishedBusFingerprint = static_cast<std::remove_cvref_t<decltype(out->expectedPublishedBusFingerprint)>>(LoadLE64(in + 32));
+    out->expectedCompileTargetProfileFingerprint = static_cast<std::remove_cvref_t<decltype(out->expectedCompileTargetProfileFingerprint)>>(LoadLE64(in + 40));
+    return true;
+}
+
 inline constexpr std::uint64_t kPackEffectDynamicRouteBytes = 72ULL;
 inline constexpr std::uint64_t kPackEffectDynamicRouteTargetBusIdOffset = 0ULL;
 inline constexpr std::uint64_t kPackEffectDynamicRouteEffectSlotOffset = 16ULL;
@@ -821,6 +858,76 @@ inline void SerializePackMedia(const PackTocEntry& row, std::uint8_t* out) noexc
     out->flags = static_cast<std::remove_cvref_t<decltype(out->flags)>>(LoadLE32(in + 56));
     out->loopStartFrame = static_cast<std::remove_cvref_t<decltype(out->loopStartFrame)>>(LoadLE64(in + 60));
     out->loopEndFrame = static_cast<std::remove_cvref_t<decltype(out->loopEndFrame)>>(LoadLE64(in + 68));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackRequirementBlockBytes = 136ULL;
+inline constexpr std::uint64_t kPackRequirementBlockSchemaVersionOffset = 0ULL;
+inline constexpr std::uint64_t kPackRequirementBlockStorageModelVersionOffset = 4ULL;
+inline constexpr std::uint64_t kPackRequirementBlockPackStableIdOffset = 8ULL;
+inline constexpr std::uint64_t kPackRequirementBlockPackContentRevisionOffset = 16ULL;
+inline constexpr std::uint64_t kPackRequirementBlockDefinitionPartitionRevisionOffset = 24ULL;
+inline constexpr std::uint64_t kPackRequirementBlockResourceClosureRevisionOffset = 32ULL;
+inline constexpr std::uint64_t kPackRequirementBlockSemanticFingerprintOffset = 40ULL;
+inline constexpr std::uint64_t kPackRequirementBlockLineageFingerprintOffset = 48ULL;
+inline constexpr std::uint64_t kPackRequirementBlockOwnedDefinitionCountOffset = 56ULL;
+inline constexpr std::uint64_t kPackRequirementBlockOwnedResourceCountOffset = 60ULL;
+inline constexpr std::uint64_t kPackRequirementBlockInstalledDefinitionBytesOffset = 64ULL;
+inline constexpr std::uint64_t kPackRequirementBlockInstalledResourceBytesOffset = 72ULL;
+inline constexpr std::uint64_t kPackRequirementBlockReplacementPeakBytesOffset = 80ULL;
+inline constexpr std::uint64_t kPackRequirementBlockDecodeStagingBytesOffset = 88ULL;
+inline constexpr std::uint64_t kPackRequirementBlockRequiredCapabilityMaskOffset = 96ULL;
+inline constexpr std::uint64_t kPackRequirementBlockReserved0Offset = 100ULL;
+inline constexpr std::uint64_t kPackRequirementBlockPayloadChecksumCoverageOffset = 104ULL;
+inline constexpr std::uint64_t kPackRequirementBlockBusContentGenerationOffset = 112ULL;
+inline constexpr std::uint64_t kPackRequirementBlockPublishedBusFingerprintOffset = 120ULL;
+inline constexpr std::uint64_t kPackRequirementBlockCompileTargetProfileFingerprintOffset = 128ULL;
+
+inline void SerializePackRequirementBlock(const PackRequirementBlock& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.schemaVersion));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.storageModelVersion));
+    StoreLE64(out + 8, static_cast<std::uint64_t>(row.packStableId));
+    StoreLE64(out + 16, static_cast<std::uint64_t>(row.packContentRevision));
+    StoreLE64(out + 24, static_cast<std::uint64_t>(row.definitionPartitionRevision));
+    StoreLE64(out + 32, static_cast<std::uint64_t>(row.resourceClosureRevision));
+    StoreLE64(out + 40, static_cast<std::uint64_t>(row.semanticFingerprint));
+    StoreLE64(out + 48, static_cast<std::uint64_t>(row.lineageFingerprint));
+    StoreLE32(out + 56, static_cast<std::uint32_t>(row.ownedDefinitionCount));
+    StoreLE32(out + 60, static_cast<std::uint32_t>(row.ownedResourceCount));
+    StoreLE64(out + 64, static_cast<std::uint64_t>(row.installedDefinitionBytes));
+    StoreLE64(out + 72, static_cast<std::uint64_t>(row.installedResourceBytes));
+    StoreLE64(out + 80, static_cast<std::uint64_t>(row.replacementPeakBytes));
+    StoreLE64(out + 88, static_cast<std::uint64_t>(row.decodeStagingBytes));
+    StoreLE32(out + 96, static_cast<std::uint32_t>(row.requiredCapabilityMask));
+    StoreLE32(out + 100, static_cast<std::uint32_t>(row.reserved0));
+    StoreLE64(out + 104, static_cast<std::uint64_t>(row.payloadChecksumCoverage));
+    StoreLE64(out + 112, static_cast<std::uint64_t>(row.busContentGeneration));
+    StoreLE64(out + 120, static_cast<std::uint64_t>(row.publishedBusFingerprint));
+    StoreLE64(out + 128, static_cast<std::uint64_t>(row.compileTargetProfileFingerprint));
+}
+
+[[nodiscard]] inline bool ParsePackRequirementBlock(const std::uint8_t* in, std::uint64_t size, PackRequirementBlock* out) noexcept {
+    if (size != kPackRequirementBlockBytes) return false;
+    out->schemaVersion = static_cast<std::remove_cvref_t<decltype(out->schemaVersion)>>(LoadLE32(in + 0));
+    out->storageModelVersion = static_cast<std::remove_cvref_t<decltype(out->storageModelVersion)>>(LoadLE32(in + 4));
+    out->packStableId = static_cast<std::remove_cvref_t<decltype(out->packStableId)>>(LoadLE64(in + 8));
+    out->packContentRevision = static_cast<std::remove_cvref_t<decltype(out->packContentRevision)>>(LoadLE64(in + 16));
+    out->definitionPartitionRevision = static_cast<std::remove_cvref_t<decltype(out->definitionPartitionRevision)>>(LoadLE64(in + 24));
+    out->resourceClosureRevision = static_cast<std::remove_cvref_t<decltype(out->resourceClosureRevision)>>(LoadLE64(in + 32));
+    out->semanticFingerprint = static_cast<std::remove_cvref_t<decltype(out->semanticFingerprint)>>(LoadLE64(in + 40));
+    out->lineageFingerprint = static_cast<std::remove_cvref_t<decltype(out->lineageFingerprint)>>(LoadLE64(in + 48));
+    out->ownedDefinitionCount = static_cast<std::remove_cvref_t<decltype(out->ownedDefinitionCount)>>(LoadLE32(in + 56));
+    out->ownedResourceCount = static_cast<std::remove_cvref_t<decltype(out->ownedResourceCount)>>(LoadLE32(in + 60));
+    out->installedDefinitionBytes = static_cast<std::remove_cvref_t<decltype(out->installedDefinitionBytes)>>(LoadLE64(in + 64));
+    out->installedResourceBytes = static_cast<std::remove_cvref_t<decltype(out->installedResourceBytes)>>(LoadLE64(in + 72));
+    out->replacementPeakBytes = static_cast<std::remove_cvref_t<decltype(out->replacementPeakBytes)>>(LoadLE64(in + 80));
+    out->decodeStagingBytes = static_cast<std::remove_cvref_t<decltype(out->decodeStagingBytes)>>(LoadLE64(in + 88));
+    out->requiredCapabilityMask = static_cast<std::remove_cvref_t<decltype(out->requiredCapabilityMask)>>(LoadLE32(in + 96));
+    out->reserved0 = static_cast<std::remove_cvref_t<decltype(out->reserved0)>>(LoadLE32(in + 100));
+    out->payloadChecksumCoverage = static_cast<std::remove_cvref_t<decltype(out->payloadChecksumCoverage)>>(LoadLE64(in + 104));
+    out->busContentGeneration = static_cast<std::remove_cvref_t<decltype(out->busContentGeneration)>>(LoadLE64(in + 112));
+    out->publishedBusFingerprint = static_cast<std::remove_cvref_t<decltype(out->publishedBusFingerprint)>>(LoadLE64(in + 120));
+    out->compileTargetProfileFingerprint = static_cast<std::remove_cvref_t<decltype(out->compileTargetProfileFingerprint)>>(LoadLE64(in + 128));
     return true;
 }
 
@@ -1397,6 +1504,28 @@ template <class Buffer>
 }
 
 template <class Buffer>
+[[nodiscard]] bool AppendPackDependencyEdge(Buffer& buffer, const PackDependencyEdge& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackDependencyEdgeBytes)));
+    auto* bytes = buffer.Take(kPackDependencyEdgeBytes);
+    if (!bytes) return false;
+    SerializePackDependencyEdge(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackDependencyEdge(Buffer& buffer, PackDependencyEdge& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackDependencyEdgeBytes)));
+    const auto* bytes = buffer.Take(kPackDependencyEdgeBytes);
+    return bytes && ParsePackDependencyEdge(bytes, kPackDependencyEdgeBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackDependencyEdge(const PackDependencyEdge&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackDependencyEdgeBytes) return false;
+    size += kPackDependencyEdgeBytes;
+    return true;
+}
+
+template <class Buffer>
 [[nodiscard]] bool AppendPackEffectDynamicRoute(Buffer& buffer, const PackEffectDynamicRouteEntry& row) noexcept {
     static_assert(noexcept(buffer.Take(kPackEffectDynamicRouteBytes)));
     auto* bytes = buffer.Take(kPackEffectDynamicRouteBytes);
@@ -1437,6 +1566,28 @@ template <class Buffer>
 [[nodiscard]] inline bool MeasurePackMedia(const PackTocEntry&, std::uint64_t& size) noexcept {
     if (size > UINT64_MAX - kPackMediaBytes) return false;
     size += kPackMediaBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackRequirementBlock(Buffer& buffer, const PackRequirementBlock& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackRequirementBlockBytes)));
+    auto* bytes = buffer.Take(kPackRequirementBlockBytes);
+    if (!bytes) return false;
+    SerializePackRequirementBlock(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackRequirementBlock(Buffer& buffer, PackRequirementBlock& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackRequirementBlockBytes)));
+    const auto* bytes = buffer.Take(kPackRequirementBlockBytes);
+    return bytes && ParsePackRequirementBlock(bytes, kPackRequirementBlockBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackRequirementBlock(const PackRequirementBlock&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackRequirementBlockBytes) return false;
+    size += kPackRequirementBlockBytes;
     return true;
 }
 

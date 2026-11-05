@@ -367,6 +367,18 @@
           "record": "effectDynamicRoute"
         },
         {
+          "name": "packRequirementBlock",
+          "id": 22,
+          "vintage": 2,
+          "record": "requirementBlock"
+        },
+        {
+          "name": "packDependencyEdge",
+          "id": 23,
+          "vintage": 2,
+          "record": "dependencyEdge"
+        },
+        {
           "name": "busDefinitionSnapshot",
           "id": 24,
           "vintage": 2,
@@ -1348,6 +1360,124 @@
               "type": "rows",
               "record": "voiceRecipeBinding",
               "count": "bindingCount"
+            }
+          ]
+        },
+        "dependencyEdge": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "prerequisitePackStableId",
+              "type": "u64"
+            },
+            {
+              "name": "edgeKind",
+              "type": "u32"
+            },
+            {
+              "name": "required01",
+              "type": "u32"
+            },
+            {
+              "name": "expectedPrerequisiteContentRevision",
+              "type": "u64"
+            },
+            {
+              "name": "expectedBusContentGeneration",
+              "type": "u64"
+            },
+            {
+              "name": "expectedPublishedBusFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "expectedCompileTargetProfileFingerprint",
+              "type": "u64"
+            }
+          ]
+        },
+        "requirementBlock": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "schemaVersion",
+              "type": "u32"
+            },
+            {
+              "name": "storageModelVersion",
+              "type": "u32"
+            },
+            {
+              "name": "packStableId",
+              "type": "u64"
+            },
+            {
+              "name": "packContentRevision",
+              "type": "u64"
+            },
+            {
+              "name": "definitionPartitionRevision",
+              "type": "u64"
+            },
+            {
+              "name": "resourceClosureRevision",
+              "type": "u64"
+            },
+            {
+              "name": "semanticFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "lineageFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "ownedDefinitionCount",
+              "type": "u32"
+            },
+            {
+              "name": "ownedResourceCount",
+              "type": "u32"
+            },
+            {
+              "name": "installedDefinitionBytes",
+              "type": "u64"
+            },
+            {
+              "name": "installedResourceBytes",
+              "type": "u64"
+            },
+            {
+              "name": "replacementPeakBytes",
+              "type": "u64"
+            },
+            {
+              "name": "decodeStagingBytes",
+              "type": "u64"
+            },
+            {
+              "name": "requiredCapabilityMask",
+              "type": "u32"
+            },
+            {
+              "name": "reserved0",
+              "type": "u32"
+            },
+            {
+              "name": "payloadChecksumCoverage",
+              "type": "u64"
+            },
+            {
+              "name": "busContentGeneration",
+              "type": "u64"
+            },
+            {
+              "name": "publishedBusFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "compileTargetProfileFingerprint",
+              "type": "u64"
             }
           ]
         }

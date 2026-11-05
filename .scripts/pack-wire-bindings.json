@@ -115,6 +115,14 @@
     "voiceRecipeInstallRow": {
       "engine": "PackVoiceRecipeInstallWire",
       "studio": "PackVoiceRecipeInstallWire"
+    },
+    "dependencyEdge": {
+      "engine": "PackDependencyEdge",
+      "studio": "PackDependencyEdge"
+    },
+    "requirementBlock": {
+      "engine": "PackRequirementBlock",
+      "studio": "PackRequirementBlock"
     }
   },
   "members": {
