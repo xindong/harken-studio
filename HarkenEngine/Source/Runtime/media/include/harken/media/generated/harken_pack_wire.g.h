@@ -931,6 +931,10 @@ inline void SerializePackRequirementBlock(const PackRequirementBlock& row, std::
     return true;
 }
 
+inline void StorePackRequirementBlockPayloadChecksumCoverage(std::uint8_t* out, std::uint64_t value) noexcept {
+    StoreLE64(out + 104, static_cast<std::uint64_t>(value));
+}
+
 inline constexpr std::uint64_t kPackVoiceRecipeBindingBytes = 16ULL;
 inline constexpr std::uint64_t kPackVoiceRecipeBindingBindingIdOffset = 0ULL;
 

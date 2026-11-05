@@ -135,6 +135,7 @@
     "voiceRecipeBinding.bindingId": ""
   },
   "setters": [
-    "busDefinitionSnapshotHeader.checksum"
+    "busDefinitionSnapshotHeader.checksum",
+    "requirementBlock.payloadChecksumCoverage"
   ]
 }

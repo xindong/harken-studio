@@ -10,7 +10,8 @@
 namespace harken {
 
 inline void StampRequirementCoverage(std::vector<std::uint8_t>* payload) {
-    StoreLE64(payload->data() + 104, Fnv1a64(payload->data(), 104));
+    StorePackRequirementBlockPayloadChecksumCoverage(payload->data(),
+        Fnv1a64(payload->data(), kPackRequirementBlockPayloadChecksumCoverageOffset));
 }
 
 inline void StampSnapshotChecksum(std::vector<std::uint8_t>* payload) {
