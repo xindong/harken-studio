@@ -8896,6 +8896,67 @@ bool ScheduledTransactionPool::BindPlan03GroupFrontier(const Plan03GroupSliceIde
     return true;
 }
 
+bool ScheduledTransactionPool::PageReplacementScopeReady(const FrontierOwnerIdentity& owner,
+    DecisionToken scope, const QueuePageConditionalReceiver* receiver, DecisionToken replaced,
+    std::uint16_t expectedSlices, std::uint64_t completed) const noexcept {
+    if (!owner.Valid() || receiver == nullptr || !replaced.Valid() || expectedSlices > 2) return false;
+    const auto matches = [&](DecisionToken decision) noexcept {
+        return !scope.Valid() || (decision.slot == scope.slot && decision.generation == scope.generation);
+    };
+    // Mirror the invalidator's service-wide Lane guard, including claims that
+    // have not yet reached the slice lease. Historical terminal groups cannot
+    // acquire another claim after their last audio fence has completed.
+    for (std::size_t i = 0; i < immediateLaneGroups_.ConstructedCount(); ++i) {
+        const auto& row = immediateLaneGroups_[i];
+        const auto& held = row.frontier.operation.owner;
+        if (!row.frontierPinsOwned || held.serviceSlot != owner.serviceSlot ||
+            held.serviceGeneration != owner.serviceGeneration || !matches(row.decision)) continue;
+        if (row.publicationProof != nullptr) return false;
+        const auto* lease = EffectiveImmediateLaneGroupLease(i);
+        if (lease == nullptr) return false;
+        const auto state = lease->Capture().state;
+        if (state != AudioSliceState::SliceApplied && state != AudioSliceState::SliceInvalidated) return false;
+        const auto last = row.readers.lastAudioSequence.load(std::memory_order_acquire);
+        if (last != 0 && completed <= last) return false;
+    }
+    if (scope.Valid()) {
+        if (scope.slot < config_.maxImmediateLaneDecisionGates) {
+            const auto& gate = immediateLaneDecisionGates_[scope.slot];
+            if (gate.generation.load(std::memory_order_acquire) == scope.generation &&
+                gate.ownerSlot.load(std::memory_order_acquire) == owner.serviceSlot &&
+                gate.ownerGeneration.load(std::memory_order_acquire) == owner.serviceGeneration &&
+                (gate.state.load(std::memory_order_acquire) & kLaneGateClaims) != 0) return false;
+        }
+    } else if (owner.serviceSlot < config_.maxImmediateLaneOwnerGates) {
+        const auto& gate = immediateLaneOwnerGates_[owner.serviceSlot];
+        if (gate.generation.load(std::memory_order_acquire) == owner.serviceGeneration &&
+            (gate.state.load(std::memory_order_acquire) & kLaneGateClaims) != 0) return false;
+    }
+    std::uint32_t slices = 0;
+    for (std::size_t i = 0; i < pageGroupSlots_.size(); ++i) {
+        if (!HasPageGroupStorage(i)) continue;
+        const auto& row = PageGroupData(i).value;
+        const auto& binding = row.frontier;
+        const auto decision = binding.operation.group.decision;
+        if (pagePlan03GroupRowStates_[i] != Plan03GroupRowState::Live || !row.frontierPinsOwned ||
+            !binding.Valid() || !(binding.operation.owner == owner) || !matches(decision)) continue;
+        const auto* lease = EffectivePlan03GroupLease(i);
+        if (lease == nullptr || row.publicationHeld) return false;
+        const auto state = lease->Capture().state;
+        if (decision.slot == replaced.slot && decision.generation == replaced.generation) {
+            const auto slice = binding.operation.group.sliceIndex;
+            if (binding.queuePageReceiver != receiver || state != AudioSliceState::Ready ||
+                slice >= expectedSlices || (slices & (1u << slice)) != 0) return false;
+            slices |= 1u << slice;
+        } else {
+            if (state != AudioSliceState::SliceApplied && state != AudioSliceState::SliceInvalidated) return false;
+            const auto last = PageGroupData(i).readers.lastAudioSequence.load(std::memory_order_acquire);
+            if (last != 0 && completed <= last) return false;
+        }
+    }
+    return slices == ((1u << expectedSlices) - 1u);
+}
+
 bool ScheduledTransactionPool::InvalidateFrontierOwnerOperations(
     const FrontierOwnerIdentity& owner, DecisionToken decision, AudioSliceInvalidateReason reason) const noexcept {
     return TryInvalidateFrontierOwnerOperations(owner, decision, reason) ==

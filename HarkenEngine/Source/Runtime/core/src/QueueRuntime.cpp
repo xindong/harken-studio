@@ -5,6 +5,7 @@
 #include "harken/core/ScheduledTransactionPool.h"
 #include "harken/core/ImmediateActionLane.h"
 #include "harken/core/QueueContinuationLane.h"
+#include "harken/core/QueuePageConditionalReceiver.h"
 
 #include <algorithm>
 #include <limits>
@@ -1405,6 +1406,7 @@ bool QueueInstanceTable::AcquireInternal(
         row.conditionalReplacementReserved.store(
             false, std::memory_order_relaxed);
         row.stagedReplacementOwner = nullptr;
+        row.stagedPageReplacementOwner = nullptr;
         row.Pending().pendingConsumesReset.store(false,
                                        std::memory_order_relaxed);
         row.Pending().pendingRetiredSource = {};
@@ -1967,7 +1969,7 @@ QueueResetStatusV1 QueueInstanceTable::PrepareResetInternal(
             row.conditionalReserved.load(std::memory_order_acquire) ||
             (row.Pending().pendingVersion.load(std::memory_order_acquire) != 0 &&
              !row.conditionalReplacementReserved.load(
-                 std::memory_order_acquire) && row.stagedReplacementOwner == nullptr)) {
+                 std::memory_order_acquire) && row.stagedReplacementOwner == nullptr && row.stagedPageReplacementOwner == nullptr)) {
             ReleaseResetReservations(target, slot, reservation);
             return QueueResetStatusV1::Backpressure;
         }
@@ -3237,11 +3239,31 @@ QueueResetStatusV1 QueueInstanceTable::PrepareConditionalReplacementRetainingOri
     return result;
 }
 
+bool QueueInstanceTable::PageConditionalReplaceable(QueueInstanceToken token,
+    ConditionalQueueVersionToken version, DecisionToken decision, const QueuePageConditionalReceiver& receiver,
+    std::uint16_t slices, std::uint64_t completed) const noexcept {
+    const auto* row = Resolve(token);
+    if (row == nullptr || SignalOwnsNext(*row) || !ProvePendingConditionalIdentity(token, version, decision) ||
+        row->frontierPool == nullptr) return false;
+    if (row->signalFrontier != nullptr && (row->signalFrontierPool == nullptr ||
+        !row->signalFrontierPool->PageReplacementScopeReady(row->signalFrontier->operation.owner,
+            row->signalFrontier->operation.group.decision, &receiver, decision,
+            SameDecision(row->signalFrontier->operation.group.decision, decision) ? slices : 0, completed))) return false;
+    return row->frontierPool->PageReplacementScopeReady(row->frontierOwner, {}, &receiver, decision, slices, completed);
+}
+
+QueueResetStatusV1 QueueInstanceTable::PreparePageConditionalReplacement(
+    QueueInstanceToken token, ConditionalQueueVersionToken version, DecisionToken decision,
+    const ConditionalQueuePrepareRequest& replacement, PreparedQueueConditionalReplacementV1* out,
+    const QueuePageConditionalReceiver& original) noexcept {
+    return PrepareConditionalReplacementInternal(token, version, decision, replacement, out, false, nullptr, &original);
+}
+
 QueueResetStatusV1 QueueInstanceTable::PrepareConditionalReplacementInternal(
     QueueInstanceToken token, ConditionalQueueVersionToken expectedVersion,
     DecisionToken expectedDecision, const ConditionalQueuePrepareRequest& replacement,
     PreparedQueueConditionalReplacementV1* out, bool retainedCurrent,
-    const QueueContinuationLane* stagedOwner) noexcept {
+    const QueueContinuationLane* stagedOwner, const QueuePageConditionalReceiver* stagedPageOwner) noexcept {
     const CompletionOwnerRef owner =
         !replacement.completionIsLogicalBoundary &&
                 replacement.completionOwner.kind == CompletionOwnerKind::None
@@ -3278,6 +3300,8 @@ QueueResetStatusV1 QueueInstanceTable::PrepareConditionalReplacementInternal(
         replacement.logicalCompletionFrame == 0;
     if (out == nullptr || out->Valid() || !expectedVersion.Valid() ||
         (stagedOwner != nullptr && !stagedOwner->MatchesConditional(*this, token, expectedVersion, expectedDecision)) ||
+        (stagedOwner != nullptr && stagedPageOwner != nullptr) ||
+        (stagedPageOwner != nullptr && !stagedPageOwner->MatchesConditional(*this, token, expectedVersion, expectedDecision)) ||
         !expectedDecision.Valid() || !replacement.rootDecision.Valid() ||
         !ValidOccurrence(replacement.expectedCurrentOccurrence) ||
         !ValidOccurrence(replacement.successorOccurrence) ||
@@ -3309,14 +3333,15 @@ QueueResetStatusV1 QueueInstanceTable::PrepareConditionalReplacementInternal(
     resetFirst.version = current.version + 1u;
     if (!SameEffectiveState(first, resetFirst)) return QueueResetStatusV1::InvalidInput;
     bool expected = false;
-    if (row->stagedReplacementOwner != nullptr ||
-        (stagedOwner == nullptr && !row->conditionalReplacementReserved.compare_exchange_strong(
+    if (row->stagedReplacementOwner != nullptr || row->stagedPageReplacementOwner != nullptr ||
+        (stagedOwner == nullptr && stagedPageOwner == nullptr && !row->conditionalReplacementReserved.compare_exchange_strong(
             expected, true, std::memory_order_acq_rel,
             std::memory_order_acquire)) ||
-        (stagedOwner != nullptr && row->conditionalReplacementReserved.load(std::memory_order_acquire))) {
+        ((stagedOwner != nullptr || stagedPageOwner != nullptr) && row->conditionalReplacementReserved.load(std::memory_order_acquire))) {
         return QueueResetStatusV1::Backpressure;
     }
     row->stagedReplacementOwner = stagedOwner;
+    row->stagedPageReplacementOwner = stagedPageOwner;
     out->owner_ = this;
     out->queue_ = token;
     out->expectedVersion_ = expectedVersion;
@@ -3328,6 +3353,7 @@ QueueResetStatusV1 QueueInstanceTable::PrepareConditionalReplacementInternal(
     out->projectionFirst_ = first;
     out->projectionCount_ = stepCount;
     out->stagedOwner_ = stagedOwner;
+    out->stagedPageOwner_ = stagedPageOwner;
     out->prepared_ = true;
     return QueueResetStatusV1::Ok;
 }
@@ -3350,7 +3376,9 @@ QueueResetStatusV1 QueueInstanceTable::CommitConditionalReplacementInternal(
     EffectiveQueueState current{};
     EffectiveQueueState resetProjection{};
     if (row == nullptr ||
-        (prepared->stagedOwner_ != nullptr
+        (prepared->stagedPageOwner_ != nullptr
+            ? (!acceptedStaged || row->stagedPageReplacementOwner != prepared->stagedPageOwner_)
+            : prepared->stagedOwner_ != nullptr
             ? (!acceptedStaged || row->stagedReplacementOwner != prepared->stagedOwner_)
             : !row->conditionalReplacementReserved.load(std::memory_order_acquire)) ||
         !row->resetReserved.load(std::memory_order_acquire) ||
@@ -3389,6 +3417,7 @@ QueueResetStatusV1 QueueInstanceTable::CommitConditionalReplacementInternal(
     row->conditionalReplacementReserved.store(
         false, std::memory_order_release);
     row->stagedReplacementOwner = nullptr;
+    row->stagedPageReplacementOwner = nullptr;
     prepared->owner_ = nullptr;
     prepared->queue_ = {};
     prepared->expectedVersion_ = {};
@@ -3396,6 +3425,7 @@ QueueResetStatusV1 QueueInstanceTable::CommitConditionalReplacementInternal(
     prepared->replacement_ = {};
     prepared->prepared_ = false;
     prepared->stagedOwner_ = nullptr;
+    prepared->stagedPageOwner_ = nullptr;
     prepared->currentOccurrence_.Release();
     prepared->currentDecision_.Release();
     return QueueResetStatusV1::Ok;
@@ -3409,12 +3439,15 @@ QueueInstanceTable::CancelPreparedConditionalReplacement(
         return QueueResetStatusV1::NotFound;
     }
     Row* row = Resolve(prepared->queue_);
-    if (row == nullptr || (prepared->stagedOwner_ != nullptr
+    if (row == nullptr || (prepared->stagedPageOwner_ != nullptr
+            ? row->stagedPageReplacementOwner != prepared->stagedPageOwner_
+            : prepared->stagedOwner_ != nullptr
             ? row->stagedReplacementOwner != prepared->stagedOwner_
             : !row->conditionalReplacementReserved.exchange(false, std::memory_order_acq_rel))) {
         return QueueResetStatusV1::RuntimeRecreateRequired;
     }
     row->stagedReplacementOwner = nullptr;
+    row->stagedPageReplacementOwner = nullptr;
     prepared->owner_ = nullptr;
     prepared->queue_ = {};
     prepared->expectedVersion_ = {};
@@ -3422,6 +3455,7 @@ QueueInstanceTable::CancelPreparedConditionalReplacement(
     prepared->replacement_ = {};
     prepared->prepared_ = false;
     prepared->stagedOwner_ = nullptr;
+    prepared->stagedPageOwner_ = nullptr;
     prepared->currentOccurrence_.Release();
     prepared->currentDecision_.Release();
     return QueueResetStatusV1::Ok;

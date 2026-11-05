@@ -27,6 +27,7 @@ namespace harken {
 class OriginalImmediateLaneConditionalProjection;
 class QueueContinuationLane;
 class PrivatePendingQueueFrontierBinding;
+class QueuePageConditionalReceiver;
 
 class OccurrenceStatePool;
 class CompositeCompletionOwnerPool;
@@ -609,6 +610,7 @@ public:
           replacement_(other.replacement_), projectionFirst_(other.projectionFirst_),
           projectionCount_(other.projectionCount_), prepared_(other.prepared_),
           stagedOwner_(std::exchange(other.stagedOwner_, nullptr)),
+          stagedPageOwner_(std::exchange(other.stagedPageOwner_, nullptr)),
           currentOccurrence_(std::move(other.currentOccurrence_)),
           currentDecision_(std::move(other.currentDecision_)) {
         other.owner_ = nullptr;
@@ -632,6 +634,7 @@ public:
             projectionCount_ = other.projectionCount_;
             prepared_ = other.prepared_;
             stagedOwner_ = std::exchange(other.stagedOwner_, nullptr);
+            stagedPageOwner_ = std::exchange(other.stagedPageOwner_, nullptr);
             other.owner_ = nullptr;
             other.queue_ = {};
             other.expectedVersion_ = {};
@@ -657,6 +660,7 @@ private:
     std::uint32_t projectionCount_ = 0;
     bool prepared_ = false;
     const QueueContinuationLane* stagedOwner_ = nullptr;
+    const QueuePageConditionalReceiver* stagedPageOwner_ = nullptr;
     OccurrenceStatePool::OriginalSingleCompletionOwnerPin currentOccurrence_{};
     OriginalDecisionLifetimePin currentDecision_{};
 };
@@ -1164,6 +1168,13 @@ public:
         const ConditionalQueuePrepareRequest& replacement,
         PreparedQueueConditionalReplacementV1* out,
         const QueueContinuationLane* stagedOwner = nullptr) noexcept;
+    bool PageConditionalReplaceable(QueueInstanceToken token, ConditionalQueueVersionToken version,
+        DecisionToken decision, const QueuePageConditionalReceiver& receiver,
+        std::uint16_t slices, std::uint64_t completedAudioSequence) const noexcept;
+    QueueResetStatusV1 PreparePageConditionalReplacement(
+        QueueInstanceToken token, ConditionalQueueVersionToken expectedVersion,
+        DecisionToken expectedDecision, const ConditionalQueuePrepareRequest& replacement,
+        PreparedQueueConditionalReplacementV1* out, const QueuePageConditionalReceiver& original) noexcept;
     // Retain the actual immutable Current while replacing its separate future.
     QueueResetStatusV1 PrepareConditionalReplacementRetainingOriginalCurrent(
         QueueInstanceToken token, ConditionalQueueVersionToken expectedVersion,
@@ -1286,7 +1297,8 @@ private:
         QueueInstanceToken token, ConditionalQueueVersionToken expectedVersion,
         DecisionToken expectedDecision, const ConditionalQueuePrepareRequest& replacement,
         PreparedQueueConditionalReplacementV1* out, bool retainedCurrent,
-        const QueueContinuationLane* stagedOwner = nullptr) noexcept;
+        const QueueContinuationLane* stagedOwner = nullptr,
+        const QueuePageConditionalReceiver* stagedPageOwner = nullptr) noexcept;
     QueueResetStatusV1 CommitConditionalReplacementInternal(
         PreparedQueueConditionalReplacementV1* prepared, LogicCommitSequence sequence,
         bool acceptedStaged) noexcept;
@@ -1404,6 +1416,7 @@ private:
         std::atomic<bool> conditionalReserved{false};
         std::atomic<bool> conditionalReplacementReserved{false};
         const QueueContinuationLane* stagedReplacementOwner = nullptr;
+        const QueuePageConditionalReceiver* stagedPageReplacementOwner = nullptr;
 
         std::atomic<std::uint64_t> mirrorSequence{0};
         std::atomic<std::uint64_t> mirrorVersion{0};

@@ -9319,7 +9319,8 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
     harkentest::EngineSession session(harkentest::MakeNullConfig(8, 256, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto* engine = session.Engine();
-    std::vector<float> samples(4096, 0.25f);
+    const auto parentBoundary = engine->timelinePool.WindowEndFrame();
+    std::vector<float> samples(deferred && availableBanks != 0 ? parentBoundary * 3u / 4u : 4096u, 0.25f);
     const auto pcm = harkentest::MonoDesc(samples, 48000);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &pcm));
@@ -9834,6 +9835,30 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
     harken::MonitorRequestContext originalPlayback{};
     ASSERT_TRUE(engine->playableInstances.CapturePlaybackRequest(row.rootInstance, &originalPlayback));
     EXPECT_EQ(originalPlayback.key, replacementIdentity.playbackRequest.key);
+    if (deferred) {
+        ASSERT_EQ(VN_ACTION_STEP_AWAITING_MATERIALIZATION, stopResult.state);
+        bool foundStop = false;
+        for (std::uint32_t slot = 0; slot < engine->actionDeferredRecords.Capacity(); ++slot) {
+            harken::ActionDeferredRecordToken token{};
+            harken::ActionDeferredRecord record{};
+            harken::ActionDeferredRecordState state{};
+            if (!engine->actionDeferredRecords.CaptureAt(slot, &token, &record, &state) ||
+                record.firing != stopFiring || record.stepIndex != 1) continue;
+            EXPECT_EQ(harken::ActionOpcodeV1::Stop, record.step.opcode);
+            EXPECT_EQ(parentBoundary + 6000u, record.intendedBoundaryFrame);
+            EXPECT_EQ(root, record.rootPlayable);
+            foundStop = true;
+        }
+        ASSERT_TRUE(foundStop);
+        const auto replacementRender = row.QueuePayload().queueSuccessorRenderHandle;
+        while (stopResult.state == VN_ACTION_STEP_AWAITING_MATERIALIZATION &&
+            engine->mixer.BlocksRendered() * engine->config.blockFrames < parentBoundary + 6000u) {
+            engine->nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+            ASSERT_EQ(VN_OK, Vn_QueryActionStep(stopFiring, 1, &stopResult));
+        }
+        EXPECT_EQ(replacementRender, row.QueuePayload().queueSuccessorRenderHandle);
+    }
     EXPECT_EQ(VN_ACTION_STEP_ACTIVE, stopResult.state);
     EXPECT_EQ(1u, stopResult.remainingPlayableCount);
     EXPECT_EQ(1u, stopResult.capturedPlayableCount);

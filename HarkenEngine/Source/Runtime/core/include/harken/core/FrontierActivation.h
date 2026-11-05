@@ -306,6 +306,8 @@ private:
     FrontierTransitionIdentity transition_{};
 };
 
+class QueuePageConditionalReceiver;
+
 struct FrontierGroupBinding {
     FrontierGroupRole role = FrontierGroupRole::Legacy;
     FrontierEntryReceiptRef entry{};
@@ -323,12 +325,14 @@ struct FrontierGroupBinding {
     bool canonicalInitialCompletion = false;
     FrontierTransitionIdentity transition{};
     const FrontierSourceExit* sourceExit = nullptr;
+    const QueuePageConditionalReceiver* queuePageReceiver = nullptr;
     VariableReadCutRef initialVariables{};
 
     bool Valid() const noexcept {
         if (role == FrontierGroupRole::Legacy || !entry.Valid() || !operation.Valid() ||
             !operation.group.Exact()) return false;
         if (initialVariables.Valid() && role != FrontierGroupRole::Coordinator) return false;
+        if (queuePageReceiver != nullptr && (sourceExit == nullptr || !queueConditional.Valid())) return false;
         if (sourceExit != nullptr && (role != FrontierGroupRole::Future || !transition.Valid() ||
                 !((variableSide.Valid() && variableSide.side == 0 && !queueConditional.Valid()) ||
                   (queueConditional.Valid() && !variableSide.Valid())))) return false;

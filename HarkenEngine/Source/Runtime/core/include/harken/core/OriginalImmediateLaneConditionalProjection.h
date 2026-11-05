@@ -2,6 +2,7 @@
 
 #include "harken/core/ImmediateActionLane.h"
 #include "harken/core/QueueRuntime.h"
+#include "harken/core/QueuePageConditionalReceiver.h"
 #include "harken/core/PrivateSelectedQueueFutureSpan.h"
 
 namespace harken {
@@ -120,6 +121,10 @@ public:
         const OriginalImmediateLaneConditionalProjection& head) noexcept;
     bool CommitContinuation(PreparedQueueConditionalReplacementV1& conditional,
         LogicCommitSequence sequence) noexcept;
+    bool AttachPage(QueuePageConditionalReceiver& original,
+        PreparedQueueConditionalReplacementV1& conditional) noexcept;
+    bool CommitPage(PreparedQueueConditionalReplacementV1& conditional,
+        LogicCommitSequence sequence) noexcept;
     bool TryAccept(const ActionCommitBundle& reservedAction) noexcept;
     // Prepare only the Queue/reset participant. The caller must retain every
     // other Action participant and publication proof through TryAccept.
@@ -136,6 +141,7 @@ public:
 private:
     friend class ImmediateActionLane;
     friend class QueueContinuationLane;
+    friend class QueuePageConditionalReceiver;
     bool PrepareContinuationScope(QueueInstanceTable& queues) noexcept;
     bool IsContinuationSuffix(const QueueContinuationLane& original,
         const QueueContinuationLane& head) const noexcept;
@@ -152,6 +158,7 @@ private:
         return sequence_.Valid() ? sequence_.Sequence() : deferredChild_.InheritedSequence();
     }
     struct Member {
+        QueuePageConditionalReceiver* page = nullptr;
         QueueContinuationLane* continuation = nullptr;
         QueueContinuationLane* replacementContinuation = nullptr;
         QueueContinuationLane* withdrawalHead = nullptr;
@@ -170,7 +177,7 @@ private:
     void ReturnOldRead() noexcept;
     static constexpr std::uint64_t kAborted = 1u, kAccepted = 2u, kRead = 4u;
     std::unique_ptr<Member[]> members_;
-    std::uint32_t capacity_ = 0, count_ = 0, continuationCount_ = 0;
+    std::uint32_t capacity_ = 0, count_ = 0, continuationCount_ = 0, pageCount_ = 0;
     QueueInstanceTable* queues_ = nullptr;
     QueueInstanceTable::PreparedCatalogResetScope scope_;
     LogicCommitCoordinator::PreparedIssue sequence_;

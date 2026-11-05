@@ -1,3 +1,4 @@
+#include "harken/core/QueuePageConditionalReceiver.h"
 #include "harken/render/FrontierTimelineFinalizer.h"
 #include "harken/core/ImmediateActionLane.h"
 #include "harken/core/OriginalImmediateLaneConditionalProjection.h"
@@ -3126,6 +3127,8 @@ struct FrontierTimelineFinalizer::Impl {
     static void ApplyFuture(void* opaque) noexcept {
         auto& group = *static_cast<Group*>(opaque);
         auto& self = *group.owner;
+        if (group.view.frontier->queuePageReceiver != nullptr)
+            group.view.frontier->queuePageReceiver->BeforeAudioWrite();
         if (group.view.frontier->sourceExit != nullptr && group.view.identity.sliceIndex == 0)
             self.voices.ApplySourceExit(*group.view.frontier->sourceExit);
         self.ApplyMode(group);
@@ -3172,6 +3175,17 @@ struct FrontierTimelineFinalizer::Impl {
         if (!failedEntry && sourceStatus != VariableReadCutStatus::Failed &&
             (sourceStatus == VariableReadCutStatus::Waiting || read == FrontierReceiptRead::InFlight) &&
             CanWaitGroup(index) && SavePending(index)) return;
+        // Borrow before any transition/arm proof; release after lease settlement
+        // and every proof, so Accepted cannot overlap an Old reservation.
+        const auto* pageReceiver = binding.queuePageReceiver;
+        if (pageReceiver != nullptr && !pageReceiver->BeginAudio(binding)) {
+            (void)group.view.lease->Invalidate(AudioSliceInvalidateReason::Cancel);
+            for (std::uint32_t i = 0; i < eventCount; ++i)
+                if (events[i].stop == nullptr && events[i].group == index)
+                    Reject(events[i], kTimelineDispositionArmFailed);
+            pageReceiver->EndAudio();
+            return;
+        }
         if (activation == nullptr || read != FrontierReceiptRead::Ready ||
             receipt.outcome != FrontierReceiptOutcome::Applied || !(receipt.order < binding.operation.order))
             group.failure = FrontierReceiptReason::Dependency;
@@ -3266,6 +3280,7 @@ struct FrontierTimelineFinalizer::Impl {
         for (std::uint32_t i = 0; i < completionCount; ++i) completionProofs[i].Release();
         completionCount = 0;
         deferredStartCount = 0;
+        if (pageReceiver != nullptr) pageReceiver->EndAudio();
     }
 
     void FinishUngrouped(std::uint32_t representative) noexcept {

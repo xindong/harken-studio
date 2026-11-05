@@ -2057,6 +2057,7 @@ struct EngineSourceExit {
         bool initial = false;
     };
     FrontierSourceExit control{};
+    QueuePageConditionalReceiver queueReceiver;
     DecisionFuturePin lifetime{};
     Plan03GroupReaderPin reader{};
     bool cancellationAccepted = false;
@@ -5719,7 +5720,14 @@ struct EngineActionStopScratch {
     bool prepared = false;
 };
 
+struct EngineNativeQueueMusicCandidate;
+struct EngineNativeQueueMusicCandidateDeleter {
+    void operator()(EngineNativeQueueMusicCandidate* candidate) const noexcept;
+};
+
 struct EngineActionQueueReplacementScratch {
+    std::unique_ptr<EngineNativeQueueMusicCandidate, EngineNativeQueueMusicCandidateDeleter> musicCandidate;
+    QueuePageConditionalReceiver* oldPageReceiver = nullptr;
     MonitorControlCause resetCause{};
     EnginePlayableServiceRow* row = nullptr;
     QueueInstanceToken nativeReplacement{};
