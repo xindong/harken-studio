@@ -42,6 +42,31 @@ inline constexpr std::uint32_t kPackEntryKindPackDependencyEdge = 23u;
 inline constexpr std::uint32_t kPackPackDependencyEdgeVintage = 2u;
 inline constexpr std::uint32_t kPackEntryKindBusDefinitionSnapshot = 24u;
 inline constexpr std::uint32_t kPackBusDefinitionSnapshotVintage = 2u;
+inline constexpr std::uint32_t kPackEntryKindVariablePolicyOverlay = 26u;
+inline constexpr std::uint32_t kPackVariablePolicyOverlayVintage = 1u;
+inline constexpr std::uint32_t kPackEntryKindVariableRequirements = 27u;
+inline constexpr std::uint32_t kPackVariableRequirementsVintage = 1u;
+
+[[nodiscard]] inline bool PackEntryKindSupported(std::uint32_t kind) noexcept {
+    switch (kind) {
+    case kPackEntryKindMedia: return true;
+    case kPackEntryKindBus: return true;
+    case kPackEntryKindBusSend: return true;
+    case kPackEntryKindAttenuation: return true;
+    case kPackEntryKindBindingDefinition: return true;
+    case kPackEntryKindBindingAttachment: return true;
+    case kPackEntryKindContainer: return true;
+    case kPackEntryKindVoiceRecipe: return true;
+    case kPackEntryKindBusEffect: return true;
+    case kPackEntryKindEffectDynamicRoute: return true;
+    case kPackEntryKindPackRequirementBlock: return true;
+    case kPackEntryKindPackDependencyEdge: return true;
+    case kPackEntryKindBusDefinitionSnapshot: return true;
+    case kPackEntryKindVariablePolicyOverlay: return true;
+    case kPackEntryKindVariableRequirements: return true;
+    default: return false;
+    }
+}
 
 [[nodiscard]] inline bool VintageLegalForKind(std::uint32_t kind, std::uint32_t vintage) noexcept {
     switch (kind) {
@@ -58,6 +83,8 @@ inline constexpr std::uint32_t kPackBusDefinitionSnapshotVintage = 2u;
     case kPackEntryKindPackRequirementBlock: return vintage == kPackPackRequirementBlockVintage;
     case kPackEntryKindPackDependencyEdge: return vintage == kPackPackDependencyEdgeVintage;
     case kPackEntryKindBusDefinitionSnapshot: return vintage == kPackBusDefinitionSnapshotVintage;
+    case kPackEntryKindVariablePolicyOverlay: return vintage == kPackVariablePolicyOverlayVintage;
+    case kPackEntryKindVariableRequirements: return vintage == kPackVariableRequirementsVintage;
     default: return false;
     }
 }
@@ -771,6 +798,37 @@ inline void SerializePackDependencyEdge(const PackDependencyEdge& row, std::uint
     return true;
 }
 
+inline constexpr std::uint64_t kPackDirectoryEntryBytes = 56ULL;
+inline constexpr std::uint64_t kPackDirectoryEntryKindOffset = 0ULL;
+inline constexpr std::uint64_t kPackDirectoryEntryVintageOffset = 4ULL;
+inline constexpr std::uint64_t kPackDirectoryEntryIdOffset = 8ULL;
+inline constexpr std::uint64_t kPackDirectoryEntryOffsetOffset = 24ULL;
+inline constexpr std::uint64_t kPackDirectoryEntrySizeOffset = 32ULL;
+inline constexpr std::uint64_t kPackDirectoryEntryPayloadChecksumOffset = 40ULL;
+inline constexpr std::uint64_t kPackDirectoryEntryRelationOrdinalOffset = 48ULL;
+
+inline void SerializePackDirectoryEntry(const PackDirectoryEntry& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.kind));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.vintage));
+    StoreObjectId(out + 8, row.id);
+    StoreLE64(out + 24, static_cast<std::uint64_t>(row.offset));
+    StoreLE64(out + 32, static_cast<std::uint64_t>(row.size));
+    StoreLE64(out + 40, static_cast<std::uint64_t>(row.payloadChecksum));
+    StoreLE64(out + 48, static_cast<std::uint64_t>(row.relationOrdinal));
+}
+
+[[nodiscard]] inline bool ParsePackDirectoryEntry(const std::uint8_t* in, std::uint64_t size, PackDirectoryEntry* out) noexcept {
+    if (size != kPackDirectoryEntryBytes) return false;
+    out->kind = static_cast<std::remove_cvref_t<decltype(out->kind)>>(LoadLE32(in + 0));
+    out->vintage = static_cast<std::remove_cvref_t<decltype(out->vintage)>>(LoadLE32(in + 4));
+    out->id = static_cast<std::remove_cvref_t<decltype(out->id)>>(LoadObjectId(in + 8));
+    out->offset = static_cast<std::remove_cvref_t<decltype(out->offset)>>(LoadLE64(in + 24));
+    out->size = static_cast<std::remove_cvref_t<decltype(out->size)>>(LoadLE64(in + 32));
+    out->payloadChecksum = static_cast<std::remove_cvref_t<decltype(out->payloadChecksum)>>(LoadLE64(in + 40));
+    out->relationOrdinal = static_cast<std::remove_cvref_t<decltype(out->relationOrdinal)>>(LoadLE64(in + 48));
+    return true;
+}
+
 inline constexpr std::uint64_t kPackEffectDynamicRouteBytes = 72ULL;
 inline constexpr std::uint64_t kPackEffectDynamicRouteTargetBusIdOffset = 0ULL;
 inline constexpr std::uint64_t kPackEffectDynamicRouteEffectSlotOffset = 16ULL;
@@ -818,6 +876,71 @@ inline void SerializePackEffectDynamicRoute(const PackEffectDynamicRouteEntry& r
     return true;
 }
 
+inline constexpr std::uint64_t kPackFileHeaderBytes = 44ULL;
+inline constexpr std::uint64_t kPackFileHeaderMagicOffset = 0ULL;
+inline constexpr std::uint64_t kPackFileHeaderFormatVersionOffset = 4ULL;
+inline constexpr std::uint64_t kPackFileHeaderHeaderBytesOffset = 8ULL;
+inline constexpr std::uint64_t kPackFileHeaderFileBytesOffset = 12ULL;
+inline constexpr std::uint64_t kPackFileHeaderPackKindOffset = 20ULL;
+inline constexpr std::uint64_t kPackFileHeaderEntryCountOffset = 24ULL;
+inline constexpr std::uint64_t kPackFileHeaderDirectoryOffsetOffset = 28ULL;
+inline constexpr std::uint64_t kPackFileHeaderDirectoryChecksumOffset = 36ULL;
+
+inline void SerializePackFileHeader(const PackFileHeader& row, std::uint8_t* out) noexcept {
+    {
+        constexpr std::uint8_t value[] = {0x56, 0x53, 0x50, 0x4b};
+        std::memcpy(out + 0, value, 4);
+    }
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.formatVersion));
+    StoreLE32(out + 8, static_cast<std::uint32_t>(row.headerBytes));
+    StoreLE64(out + 12, static_cast<std::uint64_t>(row.fileBytes));
+    StoreLE32(out + 20, static_cast<std::uint32_t>(row.packKind));
+    StoreLE32(out + 24, static_cast<std::uint32_t>(row.entryCount));
+    StoreLE64(out + 28, static_cast<std::uint64_t>(row.directoryOffset));
+    StoreLE64(out + 36, static_cast<std::uint64_t>(row.directoryChecksum));
+}
+
+[[nodiscard]] inline bool ParsePackFileHeader(const std::uint8_t* in, std::uint64_t size, PackFileHeader* out) noexcept {
+    if (size != kPackFileHeaderBytes) return false;
+    {
+        constexpr std::uint8_t value[] = {0x56, 0x53, 0x50, 0x4b};
+        if (std::memcmp(in + 0, value, 4) != 0) return false;
+    }
+    out->formatVersion = static_cast<std::remove_cvref_t<decltype(out->formatVersion)>>(LoadLE32(in + 4));
+    out->headerBytes = static_cast<std::remove_cvref_t<decltype(out->headerBytes)>>(LoadLE32(in + 8));
+    out->fileBytes = static_cast<std::remove_cvref_t<decltype(out->fileBytes)>>(LoadLE64(in + 12));
+    out->packKind = static_cast<std::remove_cvref_t<decltype(out->packKind)>>(LoadLE32(in + 20));
+    out->entryCount = static_cast<std::remove_cvref_t<decltype(out->entryCount)>>(LoadLE32(in + 24));
+    out->directoryOffset = static_cast<std::remove_cvref_t<decltype(out->directoryOffset)>>(LoadLE64(in + 28));
+    out->directoryChecksum = static_cast<std::remove_cvref_t<decltype(out->directoryChecksum)>>(LoadLE64(in + 36));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackFilePrefixBytes = 12ULL;
+inline constexpr std::uint64_t kPackFilePrefixMagicOffset = 0ULL;
+inline constexpr std::uint64_t kPackFilePrefixFormatVersionOffset = 4ULL;
+inline constexpr std::uint64_t kPackFilePrefixHeaderBytesOffset = 8ULL;
+
+inline void SerializePackFilePrefix(const PackFilePrefix& row, std::uint8_t* out) noexcept {
+    {
+        constexpr std::uint8_t value[] = {0x56, 0x53, 0x50, 0x4b};
+        std::memcpy(out + 0, value, 4);
+    }
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.formatVersion));
+    StoreLE32(out + 8, static_cast<std::uint32_t>(row.headerBytes));
+}
+
+[[nodiscard]] inline bool ParsePackFilePrefix(const std::uint8_t* in, std::uint64_t size, PackFilePrefix* out) noexcept {
+    if (size != kPackFilePrefixBytes) return false;
+    {
+        constexpr std::uint8_t value[] = {0x56, 0x53, 0x50, 0x4b};
+        if (std::memcmp(in + 0, value, 4) != 0) return false;
+    }
+    out->formatVersion = static_cast<std::remove_cvref_t<decltype(out->formatVersion)>>(LoadLE32(in + 4));
+    out->headerBytes = static_cast<std::remove_cvref_t<decltype(out->headerBytes)>>(LoadLE32(in + 8));
+    return true;
+}
+
 inline constexpr std::uint64_t kPackMediaBytes = 76ULL;
 inline constexpr std::uint64_t kPackMediaSoundIdOffset = 0ULL;
 inline constexpr std::uint64_t kPackMediaSampleRateOffset = 16ULL;
@@ -858,6 +981,47 @@ inline void SerializePackMedia(const PackTocEntry& row, std::uint8_t* out) noexc
     out->flags = static_cast<std::remove_cvref_t<decltype(out->flags)>>(LoadLE32(in + 56));
     out->loopStartFrame = static_cast<std::remove_cvref_t<decltype(out->loopStartFrame)>>(LoadLE64(in + 60));
     out->loopEndFrame = static_cast<std::remove_cvref_t<decltype(out->loopEndFrame)>>(LoadLE64(in + 68));
+    return true;
+}
+
+inline void StorePackMediaBlobOffset(std::uint8_t* out, std::uint64_t value) noexcept {
+    StoreLE64(out + 32, static_cast<std::uint64_t>(value));
+}
+
+inline constexpr std::uint64_t kPackMediaFileHeaderBytes = 36ULL;
+inline constexpr std::uint64_t kPackMediaFileHeaderMagicOffset = 0ULL;
+inline constexpr std::uint64_t kPackMediaFileHeaderFormatVersionOffset = 4ULL;
+inline constexpr std::uint64_t kPackMediaFileHeaderHeaderBytesOffset = 8ULL;
+inline constexpr std::uint64_t kPackMediaFileHeaderFileBytesOffset = 12ULL;
+inline constexpr std::uint64_t kPackMediaFileHeaderEntryCountOffset = 20ULL;
+inline constexpr std::uint64_t kPackMediaFileHeaderTocOffsetOffset = 24ULL;
+inline constexpr std::uint64_t kPackMediaFileHeaderTocChecksumOffset = 28ULL;
+
+inline void SerializePackMediaFileHeader(const PackMediaFileHeader& row, std::uint8_t* out) noexcept {
+    {
+        constexpr std::uint8_t value[] = {0x56, 0x53, 0x50, 0x4b};
+        std::memcpy(out + 0, value, 4);
+    }
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.formatVersion));
+    StoreLE32(out + 8, static_cast<std::uint32_t>(row.headerBytes));
+    StoreLE64(out + 12, static_cast<std::uint64_t>(row.fileBytes));
+    StoreLE32(out + 20, static_cast<std::uint32_t>(row.entryCount));
+    StoreLE32(out + 24, static_cast<std::uint32_t>(row.tocOffset));
+    StoreLE64(out + 28, static_cast<std::uint64_t>(row.tocChecksum));
+}
+
+[[nodiscard]] inline bool ParsePackMediaFileHeader(const std::uint8_t* in, std::uint64_t size, PackMediaFileHeader* out) noexcept {
+    if (size != kPackMediaFileHeaderBytes) return false;
+    {
+        constexpr std::uint8_t value[] = {0x56, 0x53, 0x50, 0x4b};
+        if (std::memcmp(in + 0, value, 4) != 0) return false;
+    }
+    out->formatVersion = static_cast<std::remove_cvref_t<decltype(out->formatVersion)>>(LoadLE32(in + 4));
+    out->headerBytes = static_cast<std::remove_cvref_t<decltype(out->headerBytes)>>(LoadLE32(in + 8));
+    out->fileBytes = static_cast<std::remove_cvref_t<decltype(out->fileBytes)>>(LoadLE64(in + 12));
+    out->entryCount = static_cast<std::remove_cvref_t<decltype(out->entryCount)>>(LoadLE32(in + 20));
+    out->tocOffset = static_cast<std::remove_cvref_t<decltype(out->tocOffset)>>(LoadLE32(in + 24));
+    out->tocChecksum = static_cast<std::remove_cvref_t<decltype(out->tocChecksum)>>(LoadLE64(in + 28));
     return true;
 }
 
@@ -933,6 +1097,167 @@ inline void SerializePackRequirementBlock(const PackRequirementBlock& row, std::
 
 inline void StorePackRequirementBlockPayloadChecksumCoverage(std::uint8_t* out, std::uint64_t value) noexcept {
     StoreLE64(out + 104, static_cast<std::uint64_t>(value));
+}
+
+inline constexpr std::uint64_t kPackVariableAnchorBytes = 4ULL;
+inline constexpr std::uint64_t kPackVariableAnchorAnchorOffset = 0ULL;
+
+inline void SerializePackVariableAnchor(const std::int32_t& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, std::bit_cast<std::uint32_t>(static_cast<std::int32_t>(row)));
+}
+
+[[nodiscard]] inline bool ParsePackVariableAnchor(const std::uint8_t* in, std::uint64_t size, std::int32_t* out) noexcept {
+    if (size != kPackVariableAnchorBytes) return false;
+    (*out) = static_cast<std::remove_cvref_t<decltype((*out))>>(std::bit_cast<std::int32_t>(LoadLE32(in + 0)));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackVariableAnchorCountBytes = 4ULL;
+inline constexpr std::uint64_t kPackVariableAnchorCountCountOffset = 0ULL;
+
+inline void SerializePackVariableAnchorCount(const PackVariableAnchorHeader& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.count));
+}
+
+[[nodiscard]] inline bool ParsePackVariableAnchorCount(const std::uint8_t* in, std::uint64_t size, PackVariableAnchorHeader* out) noexcept {
+    if (size != kPackVariableAnchorCountBytes) return false;
+    out->count = static_cast<std::remove_cvref_t<decltype(out->count)>>(LoadLE32(in + 0));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackVariableLabelBytes = 24ULL;
+inline constexpr std::uint64_t kPackVariableLabelLabelIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackVariableLabelAnchorOffset = 16ULL;
+inline constexpr std::uint64_t kPackVariableLabelReservedOffset = 20ULL;
+
+inline void SerializePackVariableLabel(const PackVariableLabel& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row.labelId);
+    StoreLE32(out + 16, std::bit_cast<std::uint32_t>(static_cast<std::int32_t>(row.anchor)));
+    std::memset(out + 20, 0, 4);
+}
+
+[[nodiscard]] inline bool ParsePackVariableLabel(const std::uint8_t* in, std::uint64_t size, PackVariableLabel* out) noexcept {
+    if (size != kPackVariableLabelBytes) return false;
+    out->labelId = static_cast<std::remove_cvref_t<decltype(out->labelId)>>(LoadObjectId(in + 0));
+    out->anchor = static_cast<std::remove_cvref_t<decltype(out->anchor)>>(std::bit_cast<std::int32_t>(LoadLE32(in + 16)));
+    for (std::uint64_t i = 0; i < 4; ++i) {
+        if ((in + 20)[i] != 0) return false;
+    }
+    return true;
+}
+
+inline constexpr std::uint64_t kPackVariableLabelHeaderBytes = 16ULL;
+inline constexpr std::uint64_t kPackVariableLabelHeaderLabelMappingFingerprintOffset = 0ULL;
+inline constexpr std::uint64_t kPackVariableLabelHeaderLabelCountOffset = 8ULL;
+inline constexpr std::uint64_t kPackVariableLabelHeaderReservedOffset = 12ULL;
+
+inline void SerializePackVariableLabelHeader(const PackVariableLabelHeader& row, std::uint8_t* out) noexcept {
+    StoreLE64(out + 0, static_cast<std::uint64_t>(row.labelMappingFingerprint));
+    StoreLE32(out + 8, static_cast<std::uint32_t>(row.labelCount));
+    std::memset(out + 12, 0, 4);
+}
+
+[[nodiscard]] inline bool ParsePackVariableLabelHeader(const std::uint8_t* in, std::uint64_t size, PackVariableLabelHeader* out) noexcept {
+    if (size != kPackVariableLabelHeaderBytes) return false;
+    out->labelMappingFingerprint = static_cast<std::remove_cvref_t<decltype(out->labelMappingFingerprint)>>(LoadLE64(in + 0));
+    out->labelCount = static_cast<std::remove_cvref_t<decltype(out->labelCount)>>(LoadLE32(in + 8));
+    for (std::uint64_t i = 0; i < 4; ++i) {
+        if ((in + 12)[i] != 0) return false;
+    }
+    return true;
+}
+
+inline constexpr std::uint64_t kPackVariablePolicyHeaderBytes = 16ULL;
+inline constexpr std::uint64_t kPackVariablePolicyHeaderRowCountOffset = 0ULL;
+inline constexpr std::uint64_t kPackVariablePolicyHeaderFormatOffset = 4ULL;
+inline constexpr std::uint64_t kPackVariablePolicyHeaderReservedOffset = 8ULL;
+
+inline void SerializePackVariablePolicyHeader(const PackVariablePolicyHeader& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.rowCount));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(2ULL));
+    std::memset(out + 8, 0, 8);
+}
+
+[[nodiscard]] inline bool ParsePackVariablePolicyHeader(const std::uint8_t* in, std::uint64_t size, PackVariablePolicyHeader* out) noexcept {
+    if (size != kPackVariablePolicyHeaderBytes) return false;
+    out->rowCount = static_cast<std::remove_cvref_t<decltype(out->rowCount)>>(LoadLE32(in + 0));
+    if (LoadLE32(in + 4) != 2ULL) return false;
+    for (std::uint64_t i = 0; i < 8; ++i) {
+        if ((in + 8)[i] != 0) return false;
+    }
+    return true;
+}
+
+inline constexpr std::uint64_t kPackVariablePolicyRowBytes = 32ULL;
+inline constexpr std::uint64_t kPackVariablePolicyRowVariableIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackVariablePolicyRowWritersOffset = 16ULL;
+inline constexpr std::uint64_t kPackVariablePolicyRowReservedOffset = 17ULL;
+inline constexpr std::uint64_t kPackVariablePolicyRowExecutionFingerprintOffset = 24ULL;
+
+inline void SerializePackVariablePolicyRow(const PackVariablePolicyRow& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row.variableId);
+    *(out + 16) = static_cast<std::uint8_t>(row.writers);
+    std::memset(out + 17, 0, 7);
+    StoreLE64(out + 24, static_cast<std::uint64_t>(row.executionFingerprint));
+}
+
+[[nodiscard]] inline bool ParsePackVariablePolicyRow(const std::uint8_t* in, std::uint64_t size, PackVariablePolicyRow* out) noexcept {
+    if (size != kPackVariablePolicyRowBytes) return false;
+    out->variableId = static_cast<std::remove_cvref_t<decltype(out->variableId)>>(LoadObjectId(in + 0));
+    out->writers = static_cast<std::remove_cvref_t<decltype(out->writers)>>(*(in + 16));
+    for (std::uint64_t i = 0; i < 7; ++i) {
+        if ((in + 17)[i] != 0) return false;
+    }
+    out->executionFingerprint = static_cast<std::remove_cvref_t<decltype(out->executionFingerprint)>>(LoadLE64(in + 24));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackVariableRequirementBytes = 40ULL;
+inline constexpr std::uint64_t kPackVariableRequirementIdentityClassOffset = 0ULL;
+inline constexpr std::uint64_t kPackVariableRequirementReservedOffset = 1ULL;
+inline constexpr std::uint64_t kPackVariableRequirementStableIdOffset = 8ULL;
+inline constexpr std::uint64_t kPackVariableRequirementExpectedExecutionFingerprintOffset = 24ULL;
+inline constexpr std::uint64_t kPackVariableRequirementExpectedLabelMappingFingerprintOffset = 32ULL;
+
+inline void SerializePackVariableRequirement(const PackVariableRequirement& row, std::uint8_t* out) noexcept {
+    *(out + 0) = static_cast<std::uint8_t>(1ULL);
+    std::memset(out + 1, 0, 7);
+    StoreObjectId(out + 8, row.stableId);
+    StoreLE64(out + 24, static_cast<std::uint64_t>(row.expectedExecutionFingerprint));
+    StoreLE64(out + 32, static_cast<std::uint64_t>(row.expectedLabelMappingFingerprint));
+}
+
+[[nodiscard]] inline bool ParsePackVariableRequirement(const std::uint8_t* in, std::uint64_t size, PackVariableRequirement* out) noexcept {
+    if (size != kPackVariableRequirementBytes) return false;
+    if (*(in + 0) != 1ULL) return false;
+    for (std::uint64_t i = 0; i < 7; ++i) {
+        if ((in + 1)[i] != 0) return false;
+    }
+    out->stableId = static_cast<std::remove_cvref_t<decltype(out->stableId)>>(LoadObjectId(in + 8));
+    out->expectedExecutionFingerprint = static_cast<std::remove_cvref_t<decltype(out->expectedExecutionFingerprint)>>(LoadLE64(in + 24));
+    out->expectedLabelMappingFingerprint = static_cast<std::remove_cvref_t<decltype(out->expectedLabelMappingFingerprint)>>(LoadLE64(in + 32));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackVariableRequirementsHeaderBytes = 16ULL;
+inline constexpr std::uint64_t kPackVariableRequirementsHeaderRowCountOffset = 0ULL;
+inline constexpr std::uint64_t kPackVariableRequirementsHeaderFormatOffset = 4ULL;
+inline constexpr std::uint64_t kPackVariableRequirementsHeaderReservedOffset = 8ULL;
+
+inline void SerializePackVariableRequirementsHeader(const PackVariableRequirementsHeader& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.rowCount));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(1ULL));
+    std::memset(out + 8, 0, 8);
+}
+
+[[nodiscard]] inline bool ParsePackVariableRequirementsHeader(const std::uint8_t* in, std::uint64_t size, PackVariableRequirementsHeader* out) noexcept {
+    if (size != kPackVariableRequirementsHeaderBytes) return false;
+    out->rowCount = static_cast<std::remove_cvref_t<decltype(out->rowCount)>>(LoadLE32(in + 0));
+    if (LoadLE32(in + 4) != 1ULL) return false;
+    for (std::uint64_t i = 0; i < 8; ++i) {
+        if ((in + 8)[i] != 0) return false;
+    }
+    return true;
 }
 
 inline constexpr std::uint64_t kPackVoiceRecipeBindingBytes = 16ULL;
@@ -1530,6 +1855,28 @@ template <class Buffer>
 }
 
 template <class Buffer>
+[[nodiscard]] bool AppendPackDirectoryEntry(Buffer& buffer, const PackDirectoryEntry& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackDirectoryEntryBytes)));
+    auto* bytes = buffer.Take(kPackDirectoryEntryBytes);
+    if (!bytes) return false;
+    SerializePackDirectoryEntry(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackDirectoryEntry(Buffer& buffer, PackDirectoryEntry& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackDirectoryEntryBytes)));
+    const auto* bytes = buffer.Take(kPackDirectoryEntryBytes);
+    return bytes && ParsePackDirectoryEntry(bytes, kPackDirectoryEntryBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackDirectoryEntry(const PackDirectoryEntry&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackDirectoryEntryBytes) return false;
+    size += kPackDirectoryEntryBytes;
+    return true;
+}
+
+template <class Buffer>
 [[nodiscard]] bool AppendPackEffectDynamicRoute(Buffer& buffer, const PackEffectDynamicRouteEntry& row) noexcept {
     static_assert(noexcept(buffer.Take(kPackEffectDynamicRouteBytes)));
     auto* bytes = buffer.Take(kPackEffectDynamicRouteBytes);
@@ -1548,6 +1895,50 @@ template <class Buffer>
 [[nodiscard]] inline bool MeasurePackEffectDynamicRoute(const PackEffectDynamicRouteEntry&, std::uint64_t& size) noexcept {
     if (size > UINT64_MAX - kPackEffectDynamicRouteBytes) return false;
     size += kPackEffectDynamicRouteBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackFileHeader(Buffer& buffer, const PackFileHeader& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackFileHeaderBytes)));
+    auto* bytes = buffer.Take(kPackFileHeaderBytes);
+    if (!bytes) return false;
+    SerializePackFileHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackFileHeader(Buffer& buffer, PackFileHeader& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackFileHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackFileHeaderBytes);
+    return bytes && ParsePackFileHeader(bytes, kPackFileHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackFileHeader(const PackFileHeader&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackFileHeaderBytes) return false;
+    size += kPackFileHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackFilePrefix(Buffer& buffer, const PackFilePrefix& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackFilePrefixBytes)));
+    auto* bytes = buffer.Take(kPackFilePrefixBytes);
+    if (!bytes) return false;
+    SerializePackFilePrefix(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackFilePrefix(Buffer& buffer, PackFilePrefix& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackFilePrefixBytes)));
+    const auto* bytes = buffer.Take(kPackFilePrefixBytes);
+    return bytes && ParsePackFilePrefix(bytes, kPackFilePrefixBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackFilePrefix(const PackFilePrefix&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackFilePrefixBytes) return false;
+    size += kPackFilePrefixBytes;
     return true;
 }
 
@@ -1574,6 +1965,28 @@ template <class Buffer>
 }
 
 template <class Buffer>
+[[nodiscard]] bool AppendPackMediaFileHeader(Buffer& buffer, const PackMediaFileHeader& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackMediaFileHeaderBytes)));
+    auto* bytes = buffer.Take(kPackMediaFileHeaderBytes);
+    if (!bytes) return false;
+    SerializePackMediaFileHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackMediaFileHeader(Buffer& buffer, PackMediaFileHeader& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackMediaFileHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackMediaFileHeaderBytes);
+    return bytes && ParsePackMediaFileHeader(bytes, kPackMediaFileHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackMediaFileHeader(const PackMediaFileHeader&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackMediaFileHeaderBytes) return false;
+    size += kPackMediaFileHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
 [[nodiscard]] bool AppendPackRequirementBlock(Buffer& buffer, const PackRequirementBlock& row) noexcept {
     static_assert(noexcept(buffer.Take(kPackRequirementBlockBytes)));
     auto* bytes = buffer.Take(kPackRequirementBlockBytes);
@@ -1592,6 +2005,182 @@ template <class Buffer>
 [[nodiscard]] inline bool MeasurePackRequirementBlock(const PackRequirementBlock&, std::uint64_t& size) noexcept {
     if (size > UINT64_MAX - kPackRequirementBlockBytes) return false;
     size += kPackRequirementBlockBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackVariableAnchor(Buffer& buffer, const std::int32_t& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVariableAnchorBytes)));
+    auto* bytes = buffer.Take(kPackVariableAnchorBytes);
+    if (!bytes) return false;
+    SerializePackVariableAnchor(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackVariableAnchor(Buffer& buffer, std::int32_t& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVariableAnchorBytes)));
+    const auto* bytes = buffer.Take(kPackVariableAnchorBytes);
+    return bytes && ParsePackVariableAnchor(bytes, kPackVariableAnchorBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackVariableAnchor(const std::int32_t&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackVariableAnchorBytes) return false;
+    size += kPackVariableAnchorBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackVariableAnchorCount(Buffer& buffer, const PackVariableAnchorHeader& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVariableAnchorCountBytes)));
+    auto* bytes = buffer.Take(kPackVariableAnchorCountBytes);
+    if (!bytes) return false;
+    SerializePackVariableAnchorCount(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackVariableAnchorCount(Buffer& buffer, PackVariableAnchorHeader& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVariableAnchorCountBytes)));
+    const auto* bytes = buffer.Take(kPackVariableAnchorCountBytes);
+    return bytes && ParsePackVariableAnchorCount(bytes, kPackVariableAnchorCountBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackVariableAnchorCount(const PackVariableAnchorHeader&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackVariableAnchorCountBytes) return false;
+    size += kPackVariableAnchorCountBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackVariableLabel(Buffer& buffer, const PackVariableLabel& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVariableLabelBytes)));
+    auto* bytes = buffer.Take(kPackVariableLabelBytes);
+    if (!bytes) return false;
+    SerializePackVariableLabel(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackVariableLabel(Buffer& buffer, PackVariableLabel& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVariableLabelBytes)));
+    const auto* bytes = buffer.Take(kPackVariableLabelBytes);
+    return bytes && ParsePackVariableLabel(bytes, kPackVariableLabelBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackVariableLabel(const PackVariableLabel&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackVariableLabelBytes) return false;
+    size += kPackVariableLabelBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackVariableLabelHeader(Buffer& buffer, const PackVariableLabelHeader& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVariableLabelHeaderBytes)));
+    auto* bytes = buffer.Take(kPackVariableLabelHeaderBytes);
+    if (!bytes) return false;
+    SerializePackVariableLabelHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackVariableLabelHeader(Buffer& buffer, PackVariableLabelHeader& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVariableLabelHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackVariableLabelHeaderBytes);
+    return bytes && ParsePackVariableLabelHeader(bytes, kPackVariableLabelHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackVariableLabelHeader(const PackVariableLabelHeader&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackVariableLabelHeaderBytes) return false;
+    size += kPackVariableLabelHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackVariablePolicyHeader(Buffer& buffer, const PackVariablePolicyHeader& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVariablePolicyHeaderBytes)));
+    auto* bytes = buffer.Take(kPackVariablePolicyHeaderBytes);
+    if (!bytes) return false;
+    SerializePackVariablePolicyHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackVariablePolicyHeader(Buffer& buffer, PackVariablePolicyHeader& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVariablePolicyHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackVariablePolicyHeaderBytes);
+    return bytes && ParsePackVariablePolicyHeader(bytes, kPackVariablePolicyHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackVariablePolicyHeader(const PackVariablePolicyHeader&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackVariablePolicyHeaderBytes) return false;
+    size += kPackVariablePolicyHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackVariablePolicyRow(Buffer& buffer, const PackVariablePolicyRow& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVariablePolicyRowBytes)));
+    auto* bytes = buffer.Take(kPackVariablePolicyRowBytes);
+    if (!bytes) return false;
+    SerializePackVariablePolicyRow(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackVariablePolicyRow(Buffer& buffer, PackVariablePolicyRow& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVariablePolicyRowBytes)));
+    const auto* bytes = buffer.Take(kPackVariablePolicyRowBytes);
+    return bytes && ParsePackVariablePolicyRow(bytes, kPackVariablePolicyRowBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackVariablePolicyRow(const PackVariablePolicyRow&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackVariablePolicyRowBytes) return false;
+    size += kPackVariablePolicyRowBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackVariableRequirement(Buffer& buffer, const PackVariableRequirement& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVariableRequirementBytes)));
+    auto* bytes = buffer.Take(kPackVariableRequirementBytes);
+    if (!bytes) return false;
+    SerializePackVariableRequirement(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackVariableRequirement(Buffer& buffer, PackVariableRequirement& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVariableRequirementBytes)));
+    const auto* bytes = buffer.Take(kPackVariableRequirementBytes);
+    return bytes && ParsePackVariableRequirement(bytes, kPackVariableRequirementBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackVariableRequirement(const PackVariableRequirement&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackVariableRequirementBytes) return false;
+    size += kPackVariableRequirementBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackVariableRequirementsHeader(Buffer& buffer, const PackVariableRequirementsHeader& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVariableRequirementsHeaderBytes)));
+    auto* bytes = buffer.Take(kPackVariableRequirementsHeaderBytes);
+    if (!bytes) return false;
+    SerializePackVariableRequirementsHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackVariableRequirementsHeader(Buffer& buffer, PackVariableRequirementsHeader& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVariableRequirementsHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackVariableRequirementsHeaderBytes);
+    return bytes && ParsePackVariableRequirementsHeader(bytes, kPackVariableRequirementsHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackVariableRequirementsHeader(const PackVariableRequirementsHeader&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackVariableRequirementsHeaderBytes) return false;
+    size += kPackVariableRequirementsHeaderBytes;
     return true;
 }
 
@@ -1727,6 +2316,9 @@ template <class Buffer>
     return true;
 }
 
+inline constexpr std::uint64_t kPackVariableLabelRecordBytes = 24ULL;
+inline constexpr std::uint64_t kPackVariablePolicyRecordBytes = 32ULL;
+inline constexpr std::uint64_t kPackVariableRequirementRecordBytes = 40ULL;
 inline constexpr std::uint64_t kPackVoiceRecipeInstallRowBytes = 304ULL;
 
 template <class Buffer, class Visitor>
@@ -1762,6 +2354,8 @@ template <class Buffer, class Visitor>
         if (!ReadPackContainerHeader(buffer, row)) return false;
     }
     const std::uint64_t childrenCount = static_cast<std::uint64_t>(value.childCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (childrenCount > buffer.Remaining() / 32ULL) return false;
     static_assert(noexcept(visitor.PrepareChildren(childrenCount)));
     if (!visitor.PrepareChildren(childrenCount)) return false;
     for (std::uint64_t i = 0; i < childrenCount; ++i) {
@@ -1783,6 +2377,381 @@ template <class Visitor>
     const std::uint64_t childrenCount = static_cast<std::uint64_t>(value.childCount);
     if (childrenCount > (UINT64_MAX - size) / 32ULL) return false;
     size += childrenCount * 32ULL;
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackVariableAnchorSection(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackVariableAnchorHeader>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackVariableAnchorCount(buffer, row)) return false;
+    }
+    const std::uint64_t anchorsCount = static_cast<std::uint64_t>(value.count);
+    static_assert(noexcept(visitor.PrepareAnchors(anchorsCount)));
+    if (!visitor.PrepareAnchors(anchorsCount)) return false;
+    for (std::uint64_t i = 0; i < anchorsCount; ++i) {
+        static_assert(noexcept(visitor.Anchors(i)));
+        auto&& row = visitor.Anchors(i);
+        if (!AppendPackVariableAnchor(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackVariableAnchorSection(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackVariableAnchorHeader>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackVariableAnchorCount(buffer, row)) return false;
+    }
+    const std::uint64_t anchorsCount = static_cast<std::uint64_t>(value.count);
+    static_assert(noexcept(buffer.Remaining()));
+    if (anchorsCount > buffer.Remaining() / 4ULL) return false;
+    static_assert(noexcept(visitor.PrepareAnchors(anchorsCount)));
+    if (!visitor.PrepareAnchors(anchorsCount)) return false;
+    for (std::uint64_t i = 0; i < anchorsCount; ++i) {
+        static_assert(noexcept(visitor.Anchors(i)));
+        auto&& row = visitor.Anchors(i);
+        if (!ReadPackVariableAnchor(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackVariableAnchorSection(Visitor& visitor, std::uint64_t& size) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackVariableAnchorHeader>);
+    if (size > UINT64_MAX - 4ULL) return false;
+    size += 4ULL;
+    const std::uint64_t anchorsCount = static_cast<std::uint64_t>(value.count);
+    if (anchorsCount > (UINT64_MAX - size) / 4ULL) return false;
+    size += anchorsCount * 4ULL;
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackVariableLabelRecord(Buffer& buffer, Visitor& visitor) noexcept {
+    {
+        static_assert(noexcept(visitor.Wire()));
+        auto&& row = visitor.Wire();
+        if (!AppendPackVariableLabel(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackVariableLabelRecord(Buffer& buffer, Visitor& visitor) noexcept {
+    {
+        static_assert(noexcept(visitor.Wire()));
+        auto&& row = visitor.Wire();
+        if (!ReadPackVariableLabel(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackVariableLabelRecord(Visitor& visitor, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - 24ULL) return false;
+    size += 24ULL;
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackVariableLabelSection(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackVariableLabelHeader>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackVariableLabelHeader(buffer, row)) return false;
+    }
+    const std::uint64_t labelsCount = static_cast<std::uint64_t>(value.labelCount);
+    static_assert(noexcept(visitor.PrepareLabels(labelsCount)));
+    if (!visitor.PrepareLabels(labelsCount)) return false;
+    for (std::uint64_t i = 0; i < labelsCount; ++i) {
+        static_assert(noexcept(visitor.Labels(i)));
+        auto&& row = visitor.Labels(i);
+        if (!AppendPackVariableLabelRecord(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackVariableLabelSection(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackVariableLabelHeader>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackVariableLabelHeader(buffer, row)) return false;
+    }
+    const std::uint64_t labelsCount = static_cast<std::uint64_t>(value.labelCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (labelsCount > buffer.Remaining() / 24ULL) return false;
+    static_assert(noexcept(visitor.PrepareLabels(labelsCount)));
+    if (!visitor.PrepareLabels(labelsCount)) return false;
+    for (std::uint64_t i = 0; i < labelsCount; ++i) {
+        static_assert(noexcept(visitor.Labels(i)));
+        auto&& row = visitor.Labels(i);
+        if (!ReadPackVariableLabelRecord(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackVariableLabelSection(Visitor& visitor, std::uint64_t& size) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackVariableLabelHeader>);
+    if (size > UINT64_MAX - 16ULL) return false;
+    size += 16ULL;
+    const std::uint64_t labelsCount = static_cast<std::uint64_t>(value.labelCount);
+    if (labelsCount > (UINT64_MAX - size) / 24ULL) return false;
+    size += labelsCount * 24ULL;
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackVariablePolicyRecord(Buffer& buffer, Visitor& visitor) noexcept {
+    {
+        static_assert(noexcept(visitor.Wire()));
+        auto&& row = visitor.Wire();
+        if (!AppendPackVariablePolicyRow(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackVariablePolicyRecord(Buffer& buffer, Visitor& visitor) noexcept {
+    {
+        static_assert(noexcept(visitor.Wire()));
+        auto&& row = visitor.Wire();
+        if (!ReadPackVariablePolicyRow(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackVariablePolicyRecord(Visitor& visitor, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - 32ULL) return false;
+    size += 32ULL;
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackVariablePolicyPayload(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackVariablePolicyHeader>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackVariablePolicyHeader(buffer, row)) return false;
+    }
+    const std::uint64_t rowsCount = static_cast<std::uint64_t>(value.rowCount);
+    static_assert(noexcept(visitor.PrepareRows(rowsCount)));
+    if (!visitor.PrepareRows(rowsCount)) return false;
+    for (std::uint64_t i = 0; i < rowsCount; ++i) {
+        static_assert(noexcept(visitor.Rows(i)));
+        auto&& row = visitor.Rows(i);
+        if (!AppendPackVariablePolicyRecord(buffer, row)) return false;
+    }
+    const std::uint64_t anchorGroupsCount = static_cast<std::uint64_t>(value.rowCount);
+    static_assert(noexcept(visitor.PrepareAnchorGroups(anchorGroupsCount)));
+    if (!visitor.PrepareAnchorGroups(anchorGroupsCount)) return false;
+    for (std::uint64_t i = 0; i < anchorGroupsCount; ++i) {
+        static_assert(noexcept(visitor.AnchorGroups(i)));
+        auto&& row = visitor.AnchorGroups(i);
+        if (!AppendPackVariableAnchorSection(buffer, row)) return false;
+    }
+    const std::uint64_t labelGroupsCount = static_cast<std::uint64_t>(value.rowCount);
+    static_assert(noexcept(visitor.PrepareLabelGroups(labelGroupsCount)));
+    if (!visitor.PrepareLabelGroups(labelGroupsCount)) return false;
+    for (std::uint64_t i = 0; i < labelGroupsCount; ++i) {
+        static_assert(noexcept(visitor.LabelGroups(i)));
+        auto&& row = visitor.LabelGroups(i);
+        if (!AppendPackVariableLabelSection(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackVariablePolicyPayload(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackVariablePolicyHeader>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackVariablePolicyHeader(buffer, row)) return false;
+    }
+    const std::uint64_t rowsCount = static_cast<std::uint64_t>(value.rowCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (rowsCount > buffer.Remaining() / 32ULL) return false;
+    static_assert(noexcept(visitor.PrepareRows(rowsCount)));
+    if (!visitor.PrepareRows(rowsCount)) return false;
+    for (std::uint64_t i = 0; i < rowsCount; ++i) {
+        static_assert(noexcept(visitor.Rows(i)));
+        auto&& row = visitor.Rows(i);
+        if (!ReadPackVariablePolicyRecord(buffer, row)) return false;
+    }
+    const std::uint64_t anchorGroupsCount = static_cast<std::uint64_t>(value.rowCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (anchorGroupsCount > buffer.Remaining() / 4ULL) return false;
+    static_assert(noexcept(visitor.PrepareAnchorGroups(anchorGroupsCount)));
+    if (!visitor.PrepareAnchorGroups(anchorGroupsCount)) return false;
+    for (std::uint64_t i = 0; i < anchorGroupsCount; ++i) {
+        static_assert(noexcept(visitor.AnchorGroups(i)));
+        auto&& row = visitor.AnchorGroups(i);
+        if (!ReadPackVariableAnchorSection(buffer, row)) return false;
+    }
+    const std::uint64_t labelGroupsCount = static_cast<std::uint64_t>(value.rowCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (labelGroupsCount > buffer.Remaining() / 16ULL) return false;
+    static_assert(noexcept(visitor.PrepareLabelGroups(labelGroupsCount)));
+    if (!visitor.PrepareLabelGroups(labelGroupsCount)) return false;
+    for (std::uint64_t i = 0; i < labelGroupsCount; ++i) {
+        static_assert(noexcept(visitor.LabelGroups(i)));
+        auto&& row = visitor.LabelGroups(i);
+        if (!ReadPackVariableLabelSection(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackVariablePolicyPayload(Visitor& visitor, std::uint64_t& size) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackVariablePolicyHeader>);
+    if (size > UINT64_MAX - 16ULL) return false;
+    size += 16ULL;
+    const std::uint64_t rowsCount = static_cast<std::uint64_t>(value.rowCount);
+    if (rowsCount > (UINT64_MAX - size) / 32ULL) return false;
+    size += rowsCount * 32ULL;
+    const std::uint64_t anchorGroupsCount = static_cast<std::uint64_t>(value.rowCount);
+    static_assert(noexcept(visitor.PrepareAnchorGroups(anchorGroupsCount)));
+    if (!visitor.PrepareAnchorGroups(anchorGroupsCount)) return false;
+    for (std::uint64_t i = 0; i < anchorGroupsCount; ++i) {
+        static_assert(noexcept(visitor.AnchorGroups(i)));
+        auto&& row = visitor.AnchorGroups(i);
+        if (!MeasurePackVariableAnchorSection(row, size)) return false;
+    }
+    const std::uint64_t labelGroupsCount = static_cast<std::uint64_t>(value.rowCount);
+    static_assert(noexcept(visitor.PrepareLabelGroups(labelGroupsCount)));
+    if (!visitor.PrepareLabelGroups(labelGroupsCount)) return false;
+    for (std::uint64_t i = 0; i < labelGroupsCount; ++i) {
+        static_assert(noexcept(visitor.LabelGroups(i)));
+        auto&& row = visitor.LabelGroups(i);
+        if (!MeasurePackVariableLabelSection(row, size)) return false;
+    }
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackVariableRequirementRecord(Buffer& buffer, Visitor& visitor) noexcept {
+    {
+        static_assert(noexcept(visitor.Wire()));
+        auto&& row = visitor.Wire();
+        if (!AppendPackVariableRequirement(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackVariableRequirementRecord(Buffer& buffer, Visitor& visitor) noexcept {
+    {
+        static_assert(noexcept(visitor.Wire()));
+        auto&& row = visitor.Wire();
+        if (!ReadPackVariableRequirement(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackVariableRequirementRecord(Visitor& visitor, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - 40ULL) return false;
+    size += 40ULL;
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackVariableRequirementsPayload(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackVariableRequirementsHeader>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackVariableRequirementsHeader(buffer, row)) return false;
+    }
+    const std::uint64_t rowsCount = static_cast<std::uint64_t>(value.rowCount);
+    static_assert(noexcept(visitor.PrepareRows(rowsCount)));
+    if (!visitor.PrepareRows(rowsCount)) return false;
+    for (std::uint64_t i = 0; i < rowsCount; ++i) {
+        static_assert(noexcept(visitor.Rows(i)));
+        auto&& row = visitor.Rows(i);
+        if (!AppendPackVariableRequirementRecord(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackVariableRequirementsPayload(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackVariableRequirementsHeader>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackVariableRequirementsHeader(buffer, row)) return false;
+    }
+    const std::uint64_t rowsCount = static_cast<std::uint64_t>(value.rowCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (rowsCount > buffer.Remaining() / 40ULL) return false;
+    static_assert(noexcept(visitor.PrepareRows(rowsCount)));
+    if (!visitor.PrepareRows(rowsCount)) return false;
+    for (std::uint64_t i = 0; i < rowsCount; ++i) {
+        static_assert(noexcept(visitor.Rows(i)));
+        auto&& row = visitor.Rows(i);
+        if (!ReadPackVariableRequirementRecord(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackVariableRequirementsPayload(Visitor& visitor, std::uint64_t& size) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackVariableRequirementsHeader>);
+    if (size > UINT64_MAX - 16ULL) return false;
+    size += 16ULL;
+    const std::uint64_t rowsCount = static_cast<std::uint64_t>(value.rowCount);
+    if (rowsCount > (UINT64_MAX - size) / 40ULL) return false;
+    size += rowsCount * 40ULL;
     return true;
 }
 
@@ -1886,6 +2855,8 @@ template <class Buffer, class Visitor>
         if (!ReadPackVoiceRecipePlayback(buffer, row)) return false;
     }
     const std::uint64_t installsCount = static_cast<std::uint64_t>(value.installCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (installsCount > buffer.Remaining() / 304ULL) return false;
     static_assert(noexcept(visitor.PrepareInstalls(installsCount)));
     if (!visitor.PrepareInstalls(installsCount)) return false;
     for (std::uint64_t i = 0; i < installsCount; ++i) {
@@ -1894,6 +2865,8 @@ template <class Buffer, class Visitor>
         if (!ReadPackVoiceRecipeInstallRow(buffer, row)) return false;
     }
     const std::uint64_t bindingsCount = static_cast<std::uint64_t>(value.bindingCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (bindingsCount > buffer.Remaining() / 16ULL) return false;
     static_assert(noexcept(visitor.PrepareBindings(bindingsCount)));
     if (!visitor.PrepareBindings(bindingsCount)) return false;
     for (std::uint64_t i = 0; i < bindingsCount; ++i) {

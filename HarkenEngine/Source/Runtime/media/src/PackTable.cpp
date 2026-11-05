@@ -474,16 +474,16 @@ VnResult PackTable::ReadAndValidate(
     std::vector<PackTocEntry>* outParsed) const {
     std::uint64_t fileBytes = 0;
     AlignedBuffer bytes(ReadWholeFileAligned(utf8Path, &fileBytes));
-    if (bytes == nullptr || fileBytes < kPackHeaderBytes) {
+    if (bytes == nullptr || fileBytes < kPackMediaFileHeaderBytes) {
         return VN_BAD_PACK;
     }
 
-    PackHeader header;
-    if (!ParsePackHeader(bytes.get(), &header)) {
+    PackMediaFileHeader header;
+    if (!ReadPackMediaFileHeader(bytes.get(), &header)) {
         return VN_BAD_PACK;
     }
     if (!SupportedPackFormatVersion(header.formatVersion) ||
-        header.headerBytes != kPackHeaderBytes ||
+        header.headerBytes != kPackMediaFileHeaderBytes ||
         header.fileBytes != fileBytes || header.entryCount == 0) {
         return VN_BAD_PACK;
     }

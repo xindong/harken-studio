@@ -312,7 +312,7 @@ TEST(PackRoundtrip, PackcOutputIsByteStable) {
     ASSERT_TRUE(ReadFileBytes(outA, &bytesA));
     ASSERT_TRUE(ReadFileBytes(outB, &bytesB));
     ASSERT_GT(bytesA.size(), static_cast<std::size_t>(
-                                 harken::kPackHeaderBytes));
+                                 harken::kPackMediaFileHeaderBytes));
     EXPECT_EQ(bytesA, bytesB) << "identical input must produce "
                                  "byte-identical packs";
 }
@@ -339,10 +339,10 @@ TEST(PackRoundtrip, ExplicitIdentityPreservesFormatFacts) {
     std::vector<std::uint8_t> bytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
     ASSERT_GE(bytes.size(),
-              static_cast<std::size_t>(harken::kPackHeaderBytes +
+              static_cast<std::size_t>(harken::kPackMediaFileHeaderBytes +
                                        2 * harken::kPackMediaBytes));
-    harken::PackHeader header;
-    ASSERT_TRUE(harken::ParsePackHeader(bytes.data(), &header));
+    harken::PackMediaFileHeader header;
+    ASSERT_TRUE(harken::ReadPackMediaFileHeader(bytes.data(), &header));
     ASSERT_EQ(2u, header.entryCount);
     const harken::PackTocEntry first =
         harken::ReadPackMedia(bytes.data() + header.tocOffset);
@@ -377,8 +377,8 @@ TEST(PackRoundtrip, FullUuidSeparatesObjectsWithIdenticalMedia) {
 
     std::vector<std::uint8_t> bytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
-    harken::PackHeader header;
-    ASSERT_TRUE(harken::ParsePackHeader(bytes.data(), &header));
+    harken::PackMediaFileHeader header;
+    ASSERT_TRUE(harken::ReadPackMediaFileHeader(bytes.data(), &header));
     ASSERT_EQ(2u, header.entryCount);
     const harken::PackTocEntry mono =
         harken::ReadPackMedia(bytes.data() + header.tocOffset);

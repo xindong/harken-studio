@@ -10,7 +10,6 @@ namespace harkenstudiobuild {
 inline constexpr std::uint8_t kPackMagic[4] = {'V', 'S', 'P', 'K'};
 
 inline constexpr std::uint32_t kPackFormatVersion = HARKEN_PACK_SCHEMA_VERSION;
-inline constexpr std::uint32_t kPackHeaderBytes = 36;
 inline constexpr std::uint64_t kPackBlobAlign = 64;
 inline constexpr std::uint16_t kPackSampleFormatF32Planar = 0;
 inline constexpr std::uint32_t kPackFlagLoopable = 1u << 0;
@@ -77,14 +76,6 @@ inline harkenstudio::ObjectId LoadObjectId(const std::uint8_t* in) {
     return ObjectIdFromBytes(std::span<const std::uint8_t, 16>(in, 16));
 }
 
-struct PackHeader {
-    std::uint32_t formatVersion = 0;
-    std::uint32_t headerBytes = 0;
-    std::uint64_t fileBytes = 0;
-    std::uint32_t entryCount = 0;
-    std::uint32_t tocOffset = 0;
-    std::uint64_t tocChecksum = 0;
-};
 
 struct PackTocEntry {
     harkenstudio::ObjectId soundId{};
@@ -99,34 +90,6 @@ struct PackTocEntry {
     std::uint64_t loopStartFrame = 0;
     std::uint64_t loopEndFrame = 0; // 0 = whole file when loopable
 };
-inline void SerializePackHeader(const PackHeader& h,
-                                     std::uint8_t* out) {
-    out[0] = kPackMagic[0];
-    out[1] = kPackMagic[1];
-    out[2] = kPackMagic[2];
-    out[3] = kPackMagic[3];
-    StoreLE32(out + 4, h.formatVersion);
-    StoreLE32(out + 8, h.headerBytes);
-    StoreLE64(out + 12, h.fileBytes);
-    StoreLE32(out + 20, h.entryCount);
-    StoreLE32(out + 24, h.tocOffset);
-    StoreLE64(out + 28, h.tocChecksum);
-}
-inline bool ParsePackHeader(const std::uint8_t* in,
-                                 PackHeader* out) {
-    if (in[0] != kPackMagic[0] || in[1] != kPackMagic[1] ||
-        in[2] != kPackMagic[2] || in[3] != kPackMagic[3]) {
-        return false;
-    }
-    out->formatVersion = LoadLE32(in + 4);
-    out->headerBytes = LoadLE32(in + 8);
-    out->fileBytes = LoadLE64(in + 12);
-    out->entryCount = LoadLE32(in + 20);
-    out->tocOffset = LoadLE32(in + 24);
-    out->tocChecksum = LoadLE64(in + 28);
-    return true;
-}
-
 
 
 } // namespace harkenstudiobuild

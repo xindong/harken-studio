@@ -231,9 +231,9 @@ void ReadPackFacts(const std::string& packPath,
     std::vector<std::uint8_t> bytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &bytes)) << packPath;
     ASSERT_GE(bytes.size(),
-              static_cast<std::size_t>(harken::kPackHeaderBytes));
-    harken::PackHeader header;
-    ASSERT_TRUE(harken::ParsePackHeader(bytes.data(), &header));
+              static_cast<std::size_t>(harken::kPackMediaFileHeaderBytes));
+    harken::PackMediaFileHeader header;
+    ASSERT_TRUE(harken::ReadPackMediaFileHeader(bytes.data(), &header));
     ASSERT_EQ(bytes.size(), header.fileBytes);
     *outFileBytes = header.fileBytes;
     *outTocChecksum = header.tocChecksum;
@@ -399,17 +399,17 @@ TEST(PackcPipeline, EmptyContentV2IsDeterministicHeaderOnly) {
     std::vector<std::uint8_t> second;
     ASSERT_TRUE(ReadFileBytes(firstPath, &first));
     ASSERT_TRUE(ReadFileBytes(secondPath, &second));
-    ASSERT_EQ(harken::kPackV2HeaderBytes, first.size());
+    ASSERT_EQ(harken::kPackFileHeaderBytes, first.size());
     ASSERT_EQ(first, second);
 
-    harken::PackV2Header header;
-    ASSERT_TRUE(harken::ParsePackV2Header(first.data(), &header));
-    EXPECT_EQ(harken::kPackFormatVersion2, header.formatVersion);
-    EXPECT_EQ(harken::kPackV2HeaderBytes, header.headerBytes);
-    EXPECT_EQ(harken::kPackV2HeaderBytes, header.fileBytes);
+    harken::PackFileHeader header;
+    ASSERT_TRUE(harken::ReadPackFileHeader(first.data(), &header));
+    EXPECT_EQ(harken::kPackFormatVersion, header.formatVersion);
+    EXPECT_EQ(harken::kPackFileHeaderBytes, header.headerBytes);
+    EXPECT_EQ(harken::kPackFileHeaderBytes, header.fileBytes);
     EXPECT_EQ(harken::kPackKindContent, header.packKind);
     EXPECT_EQ(0u, header.entryCount);
-    EXPECT_EQ(harken::kPackV2HeaderBytes, header.directoryOffset);
+    EXPECT_EQ(harken::kPackFileHeaderBytes, header.directoryOffset);
     EXPECT_EQ(harken::kFnv1a64OffsetBasis, header.directoryChecksum);
 }
 
@@ -572,8 +572,8 @@ TEST(PackcPipeline, DirectMediaEntriesMatchFileCompilation) {
 
             std::vector<std::uint8_t> packed;
             ASSERT_TRUE(ReadFileBytes(packPath, &packed));
-            harken::PackHeader header;
-            ASSERT_TRUE(harken::ParsePackHeader(packed.data(), &header));
+            harken::PackMediaFileHeader header;
+            ASSERT_TRUE(harken::ReadPackMediaFileHeader(packed.data(), &header));
             const auto toc = harken::ReadPackMedia(packed.data() + header.tocOffset);
             std::vector<std::uint8_t> expected(harken::kPackMediaBytes + toc.blobBytes);
             std::memcpy(expected.data(), packed.data() + header.tocOffset, harken::kPackMediaBytes);
@@ -750,27 +750,27 @@ TEST(PackcPipeline,
     ASSERT_FALSE(firstBuild.empty());
     ASSERT_GE(firstBuild.size(),
               static_cast<std::size_t>(
-                  harken::kPackV2HeaderBytes +
-                  2 * harken::kPackV2DirectoryEntryBytes));
+                  harken::kPackFileHeaderBytes +
+                  2 * harken::kPackDirectoryEntryBytes));
 
-    harken::PackV2Header header;
-    ASSERT_TRUE(harken::ParsePackV2Header(firstBuild.data(), &header));
-    EXPECT_EQ(harken::kPackFormatVersion2, header.formatVersion);
-    EXPECT_EQ(harken::kPackV2HeaderBytes, header.headerBytes);
+    harken::PackFileHeader header;
+    ASSERT_TRUE(harken::ReadPackFileHeader(firstBuild.data(), &header));
+    EXPECT_EQ(harken::kPackFormatVersion, header.formatVersion);
+    EXPECT_EQ(harken::kPackFileHeaderBytes, header.headerBytes);
     EXPECT_EQ(firstBuild.size(), header.fileBytes);
     EXPECT_EQ(harken::kPackKindContent, header.packKind);
     ASSERT_EQ(2u, header.entryCount);
     ASSERT_LE(header.directoryOffset, firstBuild.size());
-    ASSERT_LE(2u * harken::kPackV2DirectoryEntryBytes,
+    ASSERT_LE(2u * harken::kPackDirectoryEntryBytes,
               firstBuild.size() -
                   static_cast<std::size_t>(header.directoryOffset));
-    const harken::PackV2DirectoryEntry mediaEntry =
-        harken::ParsePackV2DirectoryEntry(
+    const harken::PackDirectoryEntry mediaEntry =
+        harken::ReadPackDirectoryEntry(
             firstBuild.data() + header.directoryOffset);
-    const harken::PackV2DirectoryEntry recipeEntry =
-        harken::ParsePackV2DirectoryEntry(
+    const harken::PackDirectoryEntry recipeEntry =
+        harken::ReadPackDirectoryEntry(
             firstBuild.data() + header.directoryOffset +
-            harken::kPackV2DirectoryEntryBytes);
+            harken::kPackDirectoryEntryBytes);
     EXPECT_EQ(harken::kPackEntryKindMedia, mediaEntry.kind);
     EXPECT_EQ(harkentest::ObjectId(9150u), mediaEntry.id);
     EXPECT_EQ(harken::kPackEntryKindVoiceRecipe, recipeEntry.kind);
@@ -1125,9 +1125,9 @@ TEST(PackcPipeline, InvalidPreviousOutputInvalidatesCacheWhole) {
     std::vector<std::uint8_t> cleanBytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &cleanBytes));
 
-    harken::PackV2Header header;
-    ASSERT_TRUE(harken::ParsePackV2Header(cleanBytes.data(), &header));
-    ASSERT_EQ(harken::kPackFormatVersion2, header.formatVersion);
+    harken::PackFileHeader header;
+    ASSERT_TRUE(harken::ReadPackFileHeader(cleanBytes.data(), &header));
+    ASSERT_EQ(harken::kPackFormatVersion, header.formatVersion);
     ASSERT_EQ(1u, header.entryCount);
     const std::vector<std::uint8_t> expectedBytes = cleanBytes;
     const std::size_t directoryOffset =
@@ -1152,8 +1152,8 @@ TEST(PackcPipeline, InvalidPreviousOutputInvalidatesCacheWhole) {
         bool restampDirectory;
     };
     const Corruption corruptions[] = {
-        {4, harken::kPackFormatVersion2 + 1, false},
-        {8, harken::kPackV2HeaderBytes + 1, false},
+        {4, harken::kPackFormatVersion + 1, false},
+        {8, harken::kPackFileHeaderBytes + 1, false},
         {directoryOffset + 4, 1, true},
     };
     for (const Corruption& corruption : corruptions) {
@@ -1165,7 +1165,7 @@ TEST(PackcPipeline, InvalidPreviousOutputInvalidatesCacheWhole) {
             harken::StoreLE64(
                 invalidBytes.data() + 36,
                 harken::Fnv1a64(invalidBytes.data() + directoryOffset,
-                               harken::kPackV2DirectoryEntryBytes));
+                               harken::kPackDirectoryEntryBytes));
         }
         WriteFileBytes(packPath, invalidBytes);
         ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
@@ -1183,14 +1183,14 @@ TEST(PackcPipeline, InvalidPreviousOutputInvalidatesCacheWhole) {
         EXPECT_EQ(1u, MemberU64(totals, "cacheMisses"));
     }
 
-    harken::PackV2Header rebuiltHeader;
-    ASSERT_TRUE(harken::ParsePackV2Header(rebuiltBytes.data(), &rebuiltHeader));
-    const harken::PackV2DirectoryEntry entry =
-        harken::ParsePackV2DirectoryEntry(
+    harken::PackFileHeader rebuiltHeader;
+    ASSERT_TRUE(harken::ReadPackFileHeader(rebuiltBytes.data(), &rebuiltHeader));
+    const harken::PackDirectoryEntry entry =
+        harken::ReadPackDirectoryEntry(
             rebuiltBytes.data() +
             static_cast<std::size_t>(rebuiltHeader.directoryOffset));
     EXPECT_EQ(harken::kPackV2SchemaVintage, entry.vintage);
-    EXPECT_EQ(harken::kPackFormatVersion2, rebuiltHeader.formatVersion);
+    EXPECT_EQ(harken::kPackFormatVersion, rebuiltHeader.formatVersion);
 }
 
 TEST(PackcPipeline, IncrementalRebuildOnlyTouchedEntry) {
@@ -1946,13 +1946,13 @@ TEST(PackcPipeline, VoiceRecipeUsesRealKindElevenPackPath) {
     ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::vector<std::uint8_t> bytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
-    harken::PackV2Header header;
-    ASSERT_TRUE(harken::ParsePackV2Header(bytes.data(), &header));
+    harken::PackFileHeader header;
+    ASSERT_TRUE(harken::ReadPackFileHeader(bytes.data(), &header));
     ASSERT_EQ(2u, header.entryCount);
-    const harken::PackV2DirectoryEntry recipeEntry =
-        harken::ParsePackV2DirectoryEntry(
-            bytes.data() + harken::kPackV2HeaderBytes +
-            harken::kPackV2DirectoryEntryBytes);
+    const harken::PackDirectoryEntry recipeEntry =
+        harken::ReadPackDirectoryEntry(
+            bytes.data() + harken::kPackFileHeaderBytes +
+            harken::kPackDirectoryEntryBytes);
     ASSERT_EQ(harken::kPackEntryKindVoiceRecipe, recipeEntry.kind);
     EXPECT_EQ(harken::kPackVoiceRecipeVintage, recipeEntry.vintage);
     EXPECT_EQ(harken::PackVoiceRecipePayloadBytes(1, 0), recipeEntry.size);
@@ -2007,12 +2007,12 @@ TEST(PackcPipeline, VoiceRecipeAlwaysWritesPlaybackVintage) {
         ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
         std::vector<std::uint8_t> bytes;
         ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
-        harken::PackV2Header header;
-        ASSERT_TRUE(harken::ParsePackV2Header(bytes.data(), &header));
-        const harken::PackV2DirectoryEntry recipeEntry =
-            harken::ParsePackV2DirectoryEntry(
-                bytes.data() + harken::kPackV2HeaderBytes +
-                harken::kPackV2DirectoryEntryBytes);
+        harken::PackFileHeader header;
+        ASSERT_TRUE(harken::ReadPackFileHeader(bytes.data(), &header));
+        const harken::PackDirectoryEntry recipeEntry =
+            harken::ReadPackDirectoryEntry(
+                bytes.data() + harken::kPackFileHeaderBytes +
+                harken::kPackDirectoryEntryBytes);
         ASSERT_EQ(harken::kPackEntryKindVoiceRecipe, recipeEntry.kind);
         EXPECT_EQ(harken::kPackVoiceRecipeVintage,
                   recipeEntry.vintage);
@@ -2099,12 +2099,12 @@ TEST(PackcPipeline, VoiceRecipePlaybackWritesCurrentVintage) {
     ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::vector<std::uint8_t> bytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
-    harken::PackV2Header header;
-    ASSERT_TRUE(harken::ParsePackV2Header(bytes.data(), &header));
-    const harken::PackV2DirectoryEntry recipeEntry =
-        harken::ParsePackV2DirectoryEntry(
-            bytes.data() + harken::kPackV2HeaderBytes +
-            harken::kPackV2DirectoryEntryBytes);
+    harken::PackFileHeader header;
+    ASSERT_TRUE(harken::ReadPackFileHeader(bytes.data(), &header));
+    const harken::PackDirectoryEntry recipeEntry =
+        harken::ReadPackDirectoryEntry(
+            bytes.data() + harken::kPackFileHeaderBytes +
+            harken::kPackDirectoryEntryBytes);
     ASSERT_EQ(harken::kPackEntryKindVoiceRecipe, recipeEntry.kind);
     EXPECT_EQ(harken::kPackVoiceRecipeVintage,
               recipeEntry.vintage);
@@ -2173,11 +2173,11 @@ TEST(PackcPipeline, AttenuationAlwaysWritesCurrentVintage) {
         ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
         std::vector<std::uint8_t> bytes;
         ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
-        harken::PackV2Header header;
-        ASSERT_TRUE(harken::ParsePackV2Header(bytes.data(), &header));
-        const harken::PackV2DirectoryEntry attenuationEntry =
-            harken::ParsePackV2DirectoryEntry(
-                bytes.data() + harken::kPackV2HeaderBytes);
+        harken::PackFileHeader header;
+        ASSERT_TRUE(harken::ReadPackFileHeader(bytes.data(), &header));
+        const harken::PackDirectoryEntry attenuationEntry =
+            harken::ReadPackDirectoryEntry(
+                bytes.data() + harken::kPackFileHeaderBytes);
         ASSERT_EQ(harken::kPackEntryKindAttenuation, attenuationEntry.kind);
         EXPECT_EQ(harken::kPackAttenuationVintage,
                   attenuationEntry.vintage);
@@ -2270,17 +2270,17 @@ TEST(PackcPipeline, BusEffectAndDynamicRouteUseKindsTwelveAndThirteen) {
 
     std::vector<std::uint8_t> bytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
-    harken::PackV2Header header;
-    ASSERT_TRUE(harken::ParsePackV2Header(bytes.data(), &header));
+    harken::PackFileHeader header;
+    ASSERT_TRUE(harken::ReadPackFileHeader(bytes.data(), &header));
     ASSERT_EQ(4u, header.entryCount);
-    const harken::PackV2DirectoryEntry effectDir =
-        harken::ParsePackV2DirectoryEntry(
-            bytes.data() + harken::kPackV2HeaderBytes +
-            2 * harken::kPackV2DirectoryEntryBytes);
-    const harken::PackV2DirectoryEntry routeDir =
-        harken::ParsePackV2DirectoryEntry(
-            bytes.data() + harken::kPackV2HeaderBytes +
-            3 * harken::kPackV2DirectoryEntryBytes);
+    const harken::PackDirectoryEntry effectDir =
+        harken::ReadPackDirectoryEntry(
+            bytes.data() + harken::kPackFileHeaderBytes +
+            2 * harken::kPackDirectoryEntryBytes);
+    const harken::PackDirectoryEntry routeDir =
+        harken::ReadPackDirectoryEntry(
+            bytes.data() + harken::kPackFileHeaderBytes +
+            3 * harken::kPackDirectoryEntryBytes);
     EXPECT_EQ(harken::kPackEntryKindBusEffect, effectDir.kind);
     EXPECT_EQ(harken::kPackBusEffectVintage, effectDir.vintage);
     EXPECT_EQ(harken::kPackBusEffectBytes, effectDir.size);
@@ -2329,17 +2329,17 @@ TEST(PackcPipeline, BusMixFieldsUseFullUuidPayload) {
 
     std::vector<std::uint8_t> bytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
-    harken::PackV2Header header;
-    ASSERT_TRUE(harken::ParsePackV2Header(bytes.data(), &header));
+    harken::PackFileHeader header;
+    ASSERT_TRUE(harken::ReadPackFileHeader(bytes.data(), &header));
     ASSERT_EQ(2u, header.entryCount);
 
-    const harken::PackV2DirectoryEntry mixed =
-        harken::ParsePackV2DirectoryEntry(bytes.data() +
-                                         harken::kPackV2HeaderBytes);
-    const harken::PackV2DirectoryEntry defaults =
-        harken::ParsePackV2DirectoryEntry(
-            bytes.data() + harken::kPackV2HeaderBytes +
-            harken::kPackV2DirectoryEntryBytes);
+    const harken::PackDirectoryEntry mixed =
+        harken::ReadPackDirectoryEntry(bytes.data() +
+                                         harken::kPackFileHeaderBytes);
+    const harken::PackDirectoryEntry defaults =
+        harken::ReadPackDirectoryEntry(
+            bytes.data() + harken::kPackFileHeaderBytes +
+            harken::kPackDirectoryEntryBytes);
     EXPECT_EQ(harken::kPackEntryKindBus, mixed.kind);
     EXPECT_EQ(harken::kPackBusVintage, mixed.vintage);
     EXPECT_EQ(harken::kPackBusBytes, mixed.size);

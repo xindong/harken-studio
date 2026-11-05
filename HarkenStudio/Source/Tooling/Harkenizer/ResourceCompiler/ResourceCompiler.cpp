@@ -250,7 +250,7 @@ bool BuildPackBytes(const std::vector<PackEntry>& entries,
                     std::vector<std::uint8_t>* out, Diag* diag) {
     const std::uint32_t entryCount =
         static_cast<std::uint32_t>(entries.size());
-    const std::uint64_t tocOffset = harkenstudiobuild::kPackHeaderBytes;
+    const std::uint64_t tocOffset = harkenstudiobuild::kPackMediaFileHeaderBytes;
     const std::uint64_t tocBytes =
         static_cast<std::uint64_t>(entryCount) *
         harkenstudiobuild::kPackMediaBytes;
@@ -306,14 +306,14 @@ bool BuildPackBytes(const std::vector<PackEntry>& entries,
     std::memcpy(out->data() + tocOffset, tocImage.data(),
                 tocImage.size());
 
-    harkenstudiobuild::PackHeader header;
+    harkenstudiobuild::PackMediaFileHeader header;
     header.formatVersion = harkenstudiobuild::kPackFormatVersion;
-    header.headerBytes = harkenstudiobuild::kPackHeaderBytes;
+    header.headerBytes = harkenstudiobuild::kPackMediaFileHeaderBytes;
     header.fileBytes = fileBytes;
     header.entryCount = entryCount;
     header.tocOffset = static_cast<std::uint32_t>(tocOffset);
     header.tocChecksum = harkenstudiobuild::Fnv1a64(tocImage.data(), tocImage.size());
-    harkenstudiobuild::SerializePackHeader(header, out->data());
+    harkenstudiobuild::SerializePackMediaFileHeader(header, out->data());
     return true;
 }
 
@@ -729,8 +729,8 @@ bool BuildPackBytesV2(const Manifest& manifest,
         static_cast<std::uint32_t>(placements.size());
     const std::uint64_t directoryBytes =
         static_cast<std::uint64_t>(entryCount) *
-        harkenstudiobuild::kPackV2DirectoryEntryBytes;
-    std::uint64_t cursor = harkenstudiobuild::kPackV2HeaderBytes + directoryBytes;
+        harkenstudiobuild::kPackDirectoryEntryBytes;
+    std::uint64_t cursor = harkenstudiobuild::kPackFileHeaderBytes + directoryBytes;
     for (EntryPlacement& placement : placements) {
         placement.offset =
             AlignUpTo(cursor, harkenstudiobuild::kPackV2PayloadAlign);
@@ -770,7 +770,7 @@ bool BuildPackBytesV2(const Manifest& manifest,
         static_cast<std::size_t>(directoryBytes), 0);
     for (std::size_t i = 0; i < placements.size(); ++i) {
         const EntryPlacement& placement = placements[i];
-        harkenstudiobuild::PackV2DirectoryEntry entry;
+        harkenstudiobuild::PackDirectoryEntry entry;
         entry.kind = placement.kind;
         entry.vintage = EntryVintage(placement.kind);
         entry.id = placement.id;
@@ -780,27 +780,27 @@ bool BuildPackBytesV2(const Manifest& manifest,
         entry.payloadChecksum =
             harkenstudiobuild::Fnv1a64(out->data() + placement.offset,
                            static_cast<std::size_t>(placement.size));
-        harkenstudiobuild::SerializePackV2DirectoryEntry(
+        harkenstudiobuild::SerializePackDirectoryEntry(
             entry, directoryImage.data() +
-                       i * harkenstudiobuild::kPackV2DirectoryEntryBytes);
+                       i * harkenstudiobuild::kPackDirectoryEntryBytes);
     }
     if (!directoryImage.empty()) {
-        std::memcpy(out->data() + harkenstudiobuild::kPackV2HeaderBytes,
+        std::memcpy(out->data() + harkenstudiobuild::kPackFileHeaderBytes,
                     directoryImage.data(), directoryImage.size());
     }
 
-    harkenstudiobuild::PackV2Header header;
-    header.formatVersion = harkenstudiobuild::kPackFormatVersion2;
-    header.headerBytes = harkenstudiobuild::kPackV2HeaderBytes;
+    harkenstudiobuild::PackFileHeader header;
+    header.formatVersion = harkenstudiobuild::kPackFormatVersion;
+    header.headerBytes = harkenstudiobuild::kPackFileHeaderBytes;
     header.fileBytes = fileBytes;
     header.packKind = manifest.packKind == "resident"
                           ? harkenstudiobuild::kPackKindResident
                           : harkenstudiobuild::kPackKindContent;
     header.entryCount = entryCount;
-    header.directoryOffset = harkenstudiobuild::kPackV2HeaderBytes;
+    header.directoryOffset = harkenstudiobuild::kPackFileHeaderBytes;
     header.directoryChecksum =
         harkenstudiobuild::Fnv1a64(directoryImage.data(), directoryImage.size());
-    harkenstudiobuild::SerializePackV2Header(header, out->data());
+    harkenstudiobuild::SerializePackFileHeader(header, out->data());
     return true;
 }
 
@@ -1168,22 +1168,22 @@ bool BuildOnePack(const Manifest& manifest, const Request& request,
     std::vector<harkenstudiobuild::PackTocEntry> tocReadback;
     tocReadback.reserve(entries.size());
     if (v2Container) {
-        harkenstudiobuild::PackV2Header v2Header;
-        harkenstudiobuild::ParsePackV2Header(packBytes.data(), &v2Header);
+        harkenstudiobuild::PackFileHeader v2Header;
+        harkenstudiobuild::ReadPackFileHeader(packBytes.data(), &v2Header);
         reportPack.fileBytes = v2Header.fileBytes;
         reportPack.tocChecksum = v2Header.directoryChecksum;
         totalEntryCount = v2Header.entryCount;
         for (std::size_t i = 0; i < entries.size(); ++i) {
-            const harkenstudiobuild::PackV2DirectoryEntry dirEntry =
-                harkenstudiobuild::ParsePackV2DirectoryEntry(
-                    packBytes.data() + harkenstudiobuild::kPackV2HeaderBytes +
-                    i * harkenstudiobuild::kPackV2DirectoryEntryBytes);
+            const harkenstudiobuild::PackDirectoryEntry dirEntry =
+                harkenstudiobuild::ReadPackDirectoryEntry(
+                    packBytes.data() + harkenstudiobuild::kPackFileHeaderBytes +
+                    i * harkenstudiobuild::kPackDirectoryEntryBytes);
             tocReadback.push_back(harkenstudiobuild::ReadPackMedia(
                 packBytes.data() + dirEntry.offset));
         }
     } else {
-        harkenstudiobuild::PackHeader header;
-        harkenstudiobuild::ParsePackHeader(packBytes.data(), &header);
+        harkenstudiobuild::PackMediaFileHeader header;
+        harkenstudiobuild::ReadPackMediaFileHeader(packBytes.data(), &header);
         reportPack.fileBytes = header.fileBytes;
         reportPack.tocChecksum = header.tocChecksum;
         for (std::size_t i = 0; i < entries.size(); ++i) {

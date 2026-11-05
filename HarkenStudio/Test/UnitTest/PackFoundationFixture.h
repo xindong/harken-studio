@@ -73,9 +73,9 @@ public:
     }
 
     std::vector<std::uint8_t> Build() {
-        const std::uint64_t directoryOffset = harken::kPackV2HeaderBytes;
+        const std::uint64_t directoryOffset = harken::kPackFileHeaderBytes;
         const std::uint64_t directoryBytes =
-            entries_.size() * harken::kPackV2DirectoryEntryBytes;
+            entries_.size() * harken::kPackDirectoryEntryBytes;
         const std::uint64_t directoryEnd =
             directoryOffset + directoryBytes;
         std::vector<std::uint64_t> offsets(entries_.size(), 0);
@@ -118,7 +118,7 @@ public:
             std::memcpy(bytes.data() + offsets[i],
                         entries_[i].payload.data(),
                         entries_[i].payload.size());
-            harken::PackV2DirectoryEntry record;
+            harken::PackDirectoryEntry record;
             record.kind = entries_[i].kind;
             if (entries_[i].vintage != 0) {
                 record.vintage = entries_[i].vintage;
@@ -134,14 +134,14 @@ public:
             record.size = entries_[i].payload.size();
             record.payloadChecksum = harken::Fnv1a64(
                 bytes.data() + offsets[i], entries_[i].payload.size());
-            harken::SerializePackV2DirectoryEntry(
+            harken::SerializePackDirectoryEntry(
                 record, bytes.data() + directoryOffset +
-                            i * harken::kPackV2DirectoryEntryBytes);
+                            i * harken::kPackDirectoryEntryBytes);
         }
 
-        harken::PackV2Header header;
-        header.formatVersion = harken::kPackFormatVersion2;
-        header.headerBytes = harken::kPackV2HeaderBytes;
+        harken::PackFileHeader header;
+        header.formatVersion = harken::kPackFormatVersion;
+        header.headerBytes = harken::kPackFileHeaderBytes;
         header.fileBytes = contentEnd;
         header.packKind = packKind_;
         header.entryCount = static_cast<std::uint32_t>(entries_.size());
@@ -149,7 +149,7 @@ public:
         header.directoryChecksum = harken::Fnv1a64(
             bytes.data() + directoryOffset,
             static_cast<std::size_t>(directoryBytes));
-        harken::SerializePackV2Header(header, bytes.data());
+        harken::SerializePackFileHeader(header, bytes.data());
         return bytes;
     }
 

@@ -63,15 +63,12 @@
 
 namespace harken {
 
-inline constexpr std::uint32_t kPackFormatVersion2 = HARKEN_PACK_SCHEMA_VERSION;
 
 // Header: magic(4) + formatVersion(4) + headerBytes(4) + fileBytes(8) +
 // packKind(4) + entryCount(4) + directoryOffset(8) + directoryChecksum(8).
-inline constexpr std::uint32_t kPackV2HeaderBytes = 44;
 
 // Directory record: kind(4) + vintage(4) + id(8) + offset(8) + size(8) +
 // payloadChecksum(8).
-inline constexpr std::uint32_t kPackV2DirectoryEntryBytes = 56;
 
 // Pack kinds (header field). Resident packs carry logic-only
 // infrastructure (zero media entries, enforced by compiler and loader);
@@ -89,8 +86,6 @@ inline constexpr std::uint32_t kPackKindCanonicalContent = 3;
 inline constexpr std::uint32_t kPackEntryKindInitRoutingCatalog = 20;
 inline constexpr std::uint32_t kPackEntryKindCanonicalDefinitionPartition = 21;
 inline constexpr std::uint32_t kPackEntryKindGameplayCatalog = 25;
-inline constexpr std::uint32_t kPackEntryKindVariablePolicyOverlay = 26;
-inline constexpr std::uint32_t kPackEntryKindVariableRequirements = 27;
 inline constexpr std::uint32_t kPackEntryKindVariableNameCatalog = 28;
 inline constexpr std::uint32_t kPackCanonicalEntryVintage = 1;
 inline constexpr std::uint32_t kPackCanonicalRequirementVintage = 2;
@@ -142,15 +137,6 @@ inline constexpr std::uint32_t kPackVoiceToneEnableMask =
     kPackVoiceToneLowShelfEnabled | kPackVoiceToneHighShelfEnabled;
 
 
-
-
-
-
-
-
-
-
-
 inline void StoreLEF32(std::uint8_t* out, float v) {
     std::uint32_t bits;
     std::memcpy(&bits, &v, sizeof bits);
@@ -165,7 +151,7 @@ inline float LoadLEF32(const std::uint8_t* in) {
 }
 
 // --- in-memory working forms ---
-// Plain working copies, like the v1 PackHeader/PackTocEntry pair; only
+// Plain working copies, like the v1 PackMediaFileHeader/PackTocEntry pair; only
 // the Serialize/Parse helpers define bytes. Where a kind's registration
 // currency is a public descriptor struct, the working form embeds that
 // struct directly (structSize filled by the parser) so readers hand it
@@ -173,25 +159,6 @@ inline float LoadLEF32(const std::uint8_t* in) {
 // descriptor fields such as container children stay OUT of the working
 // forms; the consumer supplies storage and wires the pointer.
 
-struct PackV2Header {
-    std::uint32_t formatVersion = 0;
-    std::uint32_t headerBytes = 0;
-    std::uint64_t fileBytes = 0;
-    std::uint32_t packKind = 0;
-    std::uint32_t entryCount = 0;
-    std::uint64_t directoryOffset = 0;
-    std::uint64_t directoryChecksum = 0;
-};
-
-struct PackV2DirectoryEntry {
-    std::uint32_t kind = 0;
-    std::uint32_t vintage = 0;
-    VnObjectId id{};
-    std::uint64_t relationOrdinal = 0;
-    std::uint64_t offset = 0;  // payload file offset
-    std::uint64_t size = 0;    // payload byte size
-    std::uint64_t payloadChecksum = 0;
-};
 
 struct PackBusEntry {
     VnBusId busId{};
@@ -311,71 +278,16 @@ struct PackContainerChild {
 
 // --- header ---
 
-inline void SerializePackV2Header(const PackV2Header& h, std::uint8_t* out) {
-    out[0] = kPackMagic[0];
-    out[1] = kPackMagic[1];
-    out[2] = kPackMagic[2];
-    out[3] = kPackMagic[3];
-    StoreLE32(out + 4, h.formatVersion);
-    StoreLE32(out + 8, h.headerBytes);
-    StoreLE64(out + 12, h.fileBytes);
-    StoreLE32(out + 20, h.packKind);
-    StoreLE32(out + 24, h.entryCount);
-    StoreLE64(out + 28, h.directoryOffset);
-    StoreLE64(out + 36, h.directoryChecksum);
-}
 
-// Parses in[0..kPackV2HeaderBytes). Returns false when the magic does
+// Parses in[0..kPackFileHeaderBytes). Returns false when the magic does
 // not match; field sanity beyond the magic is the caller's validation
 // (the v1 split of duties).
-inline bool ParsePackV2Header(const std::uint8_t* in, PackV2Header* out) {
-    if (in[0] != kPackMagic[0] || in[1] != kPackMagic[1] ||
-        in[2] != kPackMagic[2] || in[3] != kPackMagic[3]) {
-        return false;
-    }
-    out->formatVersion = LoadLE32(in + 4);
-    out->headerBytes = LoadLE32(in + 8);
-    out->fileBytes = LoadLE64(in + 12);
-    out->packKind = LoadLE32(in + 20);
-    out->entryCount = LoadLE32(in + 24);
-    out->directoryOffset = LoadLE64(in + 28);
-    out->directoryChecksum = LoadLE64(in + 36);
-    return true;
-}
+
 
 // --- directory ---
 
-inline void SerializePackV2DirectoryEntry(const PackV2DirectoryEntry& e,
-                                          std::uint8_t* out) {
-    StoreLE32(out + 0, e.kind);
-    StoreLE32(out + 4, e.vintage);
-    StoreObjectId(out + 8, e.id);
-    StoreLE64(out + 24, e.offset);
-    StoreLE64(out + 32, e.size);
-    StoreLE64(out + 40, e.payloadChecksum);
-    StoreLE64(out + 48, e.relationOrdinal);
-}
-
-inline PackV2DirectoryEntry ParsePackV2DirectoryEntry(const std::uint8_t* in) {
-    PackV2DirectoryEntry e;
-    e.kind = LoadLE32(in + 0);
-    e.vintage = LoadLE32(in + 4);
-    e.id = LoadObjectId(in + 8);
-    e.offset = LoadLE64(in + 24);
-    e.size = LoadLE64(in + 32);
-    e.payloadChecksum = LoadLE64(in + 40);
-    e.relationOrdinal = LoadLE64(in + 48);
-    return e;
-}
 
 // --- fixed-size logic payloads ---
-
-
-
-
-
-
-
 
 
 // Attenuation override curve, 184 bytes: enabled(4) + pointCount(4) +
@@ -384,26 +296,8 @@ inline PackV2DirectoryEntry ParsePackV2DirectoryEntry(const std::uint8_t* in) {
 // zero-fills; the parser enforces).
 
 
-
-
 // Attenuation profile, 600 bytes: 12 scalar fields (48) then the three
 // override curves in declaration order (volume, lowpass, width).
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 // Binding curve, 180 bytes: pointCount(4) + 8 points(64) +
@@ -411,18 +305,10 @@ inline PackV2DirectoryEntry ParsePackV2DirectoryEntry(const std::uint8_t* in) {
 // as the attenuation curve.
 
 
-
-
 // Binding definition, 212 bytes: bindingId(8) + variableId(8) +
 // targetScopeKind(4) + targetId(4) + transitionMs(4) + reserved(4) +
 // curve(180). The directory id duplicates bindingId; the image layer
 // cross-checks them.
-
-
-
-
-
-
 
 
 // Voice Recipe: a 16-byte header followed by installCount fixed install
@@ -434,37 +320,9 @@ inline PackV2DirectoryEntry ParsePackV2DirectoryEntry(const std::uint8_t* in) {
 // ascending binding ids, type/parameter semantics, and playable closure.
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 // Vintage 5 makes the spatial block positional rather than a promise of
 // spatial authoring, so it also admits an all-zero absent form: a recipe can
 // carry playback policy without carrying an attenuation.
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 // --- variable-size logic payloads ---
@@ -475,12 +333,6 @@ inline PackV2DirectoryEntry ParsePackV2DirectoryEntry(const std::uint8_t* in) {
 // caller's array; the parser fills the header and then reads children
 // one at a time into caller storage (childCount entries, validated
 // against the payload size here).
-
-
-
-
-
-
 
 
 inline constexpr std::uint32_t kInitCatalogHeaderBytes = 88;
@@ -874,21 +726,6 @@ inline bool ParsePackInitCatalogRow(const std::uint8_t* in,
     }
     return true;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 inline void SerializePackCanonicalPartitionHeader(
@@ -1339,6 +1176,76 @@ inline bool EncodeGameplayCatalog(
 
 }
 
+namespace harken {
+struct PackFilePrefix {
+    std::uint32_t formatVersion{};
+    std::uint32_t headerBytes{};
+};
+
+struct PackFileHeader {
+    std::uint32_t formatVersion{};
+    std::uint32_t headerBytes{};
+    std::uint64_t fileBytes{};
+    std::uint32_t packKind{};
+    std::uint32_t entryCount{};
+    std::uint64_t directoryOffset{};
+    std::uint64_t directoryChecksum{};
+};
+
+struct PackMediaFileHeader {
+    std::uint32_t formatVersion{};
+    std::uint32_t headerBytes{};
+    std::uint64_t fileBytes{};
+    std::uint32_t entryCount{};
+    std::uint32_t tocOffset{};
+    std::uint64_t tocChecksum{};
+};
+
+struct PackDirectoryEntry {
+    std::uint32_t kind{};
+    std::uint32_t vintage{};
+    VnObjectId id{};
+    std::uint64_t offset{};
+    std::uint64_t size{};
+    std::uint64_t payloadChecksum{};
+    std::uint64_t relationOrdinal{};
+};
+
+struct PackVariablePolicyHeader {
+    std::uint32_t rowCount{};
+};
+
+struct PackVariablePolicyRow {
+    VnObjectId variableId{};
+    std::uint8_t writers{};
+    std::uint64_t executionFingerprint{};
+};
+
+struct PackVariableAnchorHeader {
+    std::uint32_t count{};
+};
+
+struct PackVariableLabelHeader {
+    std::uint64_t labelMappingFingerprint{};
+    std::uint32_t labelCount{};
+};
+
+struct PackVariableLabel {
+    VnObjectId labelId{};
+    std::int32_t anchor{};
+};
+
+struct PackVariableRequirementsHeader {
+    std::uint32_t rowCount{};
+};
+
+struct PackVariableRequirement {
+    VnObjectId stableId{};
+    std::uint64_t expectedExecutionFingerprint{};
+    std::uint64_t expectedLabelMappingFingerprint{};
+};
+}
+
 #include <harken/media/generated/harken_pack_wire.g.h>
 
 namespace harken {
@@ -1371,6 +1278,7 @@ struct PackWireBuffer {
     Byte* data;
     std::uint64_t size;
     std::uint64_t offset = 0;
+    std::uint64_t Remaining() const noexcept { return size - offset; }
     Byte* Take(std::uint64_t bytes) noexcept {
         if (bytes > size - offset) return nullptr;
         Byte* result = data + offset;
@@ -1641,5 +1549,23 @@ inline bool ReadPackBusDefinitionSnapshotHeader(
 }
 
 } // namespace harken
+
+namespace harken {
+
+inline bool ReadPackMediaFileHeader(const std::uint8_t* in, PackMediaFileHeader* out) noexcept {
+    return ParsePackMediaFileHeader(in, kPackMediaFileHeaderBytes, out);
+}
+
+inline bool ReadPackFileHeader(const std::uint8_t* in, PackFileHeader* out) noexcept {
+    return ParsePackFileHeader(in, kPackFileHeaderBytes, out);
+}
+
+inline PackDirectoryEntry ReadPackDirectoryEntry(const std::uint8_t* in) noexcept {
+    PackDirectoryEntry row;
+    (void)ParsePackDirectoryEntry(in, kPackDirectoryEntryBytes, &row);
+    return row;
+}
+
+}
 
 #endif // HARKEN_MEDIA_PACK_FORMAT_V2_H

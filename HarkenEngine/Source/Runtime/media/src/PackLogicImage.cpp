@@ -9,6 +9,7 @@
 #include "harken/media/generated/harken_pack_effect_schema.g.h"
 
 #include <algorithm>
+#include <exception>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -217,15 +218,15 @@ bool ValidateCanonicalBusSendGraphV2(
 
 VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
                           PackLogicImage* out) {
-    if (bytes == nullptr || fileBytes < kPackV2HeaderBytes) {
+    if (bytes == nullptr || fileBytes < kPackFileHeaderBytes) {
         return VN_BAD_PACK;
     }
-    PackV2Header header;
-    if (!ParsePackV2Header(bytes, &header)) {
+    PackFileHeader header;
+    if (!ReadPackFileHeader(bytes, &header)) {
         return VN_BAD_PACK;
     }
     if (!SupportedPackFormatVersion(header.formatVersion) ||
-        header.headerBytes != kPackV2HeaderBytes ||
+        header.headerBytes != kPackFileHeaderBytes ||
         header.fileBytes != fileBytes) {
         return VN_BAD_PACK;
     }
@@ -243,7 +244,7 @@ VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
     }
     const std::uint64_t dirBytes =
         static_cast<std::uint64_t>(header.entryCount) *
-        kPackV2DirectoryEntryBytes;
+        kPackDirectoryEntryBytes;
     // Canonical layout, enforced rather than merely emitted: the
     // directory sits immediately after the header (one writer shape, no
     // reader heuristics), so a gap between them is malformed.
@@ -277,8 +278,8 @@ VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
     ranges.reserve(static_cast<std::size_t>(header.entryCount) * 2);
 
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
-        const PackV2DirectoryEntry entry = ParsePackV2DirectoryEntry(
-            dir + static_cast<std::size_t>(i) * kPackV2DirectoryEntryBytes);
+        const PackDirectoryEntry entry = ReadPackDirectoryEntry(
+            dir + static_cast<std::size_t>(i) * kPackDirectoryEntryBytes);
         if (PackV2IsCanonicalEntryKind(entry.kind)) {
             return VN_PACK_INCOMPATIBLE;
         }
@@ -654,115 +655,118 @@ VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
 
 namespace {
 
+struct PackVariableReadState {
+    std::exception_ptr exception;
+    template <class Callback>
+    bool Attempt(Callback&& callback) noexcept {
+        try {
+            return callback();
+        } catch (...) {
+            exception = std::current_exception();
+            return false;
+        }
+    }
+};
+
 VnResult ParseVariablePolicyOverlayPayload(
     const std::uint8_t* payload, std::uint64_t size,
     std::vector<PackCanonicalImage::VariablePolicyOverlay>* out) {
-    if (payload == nullptr || out == nullptr || size < 16) {
-        return VN_BAD_PACK;
-    }
-    const std::uint32_t rowCount = LoadLE32(payload);
-    const std::uint32_t format = LoadLE32(payload + 4);
-    if (format > 2 || LoadLE64(payload + 8) != 0) {
-        return VN_BAD_PACK;
-    }
-    std::uint64_t rowsBytes = 0;
-    std::uint64_t needed = 16;
-    if (!CheckedMulU64(rowCount, 32, &rowsBytes) ||
-        !CheckedAddU64(needed, rowsBytes, &needed) || needed > size) {
-        return VN_BAD_PACK;
-    }
-    std::vector<PackCanonicalImage::VariablePolicyOverlay> rows;
-    rows.reserve(rowCount);
-    for (std::uint32_t i = 0; i < rowCount; ++i) {
-        const std::uint8_t* row =
-            payload + 16 + static_cast<std::size_t>(i) * 32;
-        PackCanonicalImage::VariablePolicyOverlay item;
-        item.variableId = LoadObjectId(row);
-        item.writers = row[16];
-        item.executionFingerprint = LoadLE64(row + 24);
-        if (item.variableId == VnObjectId{} || item.executionFingerprint == 0 ||
-            item.writers < 1 || item.writers > 3 || row[17] != 0 ||
-            LoadLE16(row + 18) != 0 || LoadLE32(row + 20) != 0) {
-            return VN_BAD_PACK;
+    if (payload == nullptr || out == nullptr || size < kPackVariablePolicyHeaderBytes) return VN_BAD_PACK;
+    using Policy = PackCanonicalImage::VariablePolicyOverlay;
+    struct PolicyRecord {
+        Policy& target;
+        PackVariablePolicyRow wire{};
+        auto& Wire() noexcept { return wire; }
+        bool Finish() noexcept {
+            target.variableId = wire.variableId;
+            target.writers = wire.writers;
+            target.executionFingerprint = wire.executionFingerprint;
+            return target.variableId != VnObjectId{} && target.executionFingerprint != 0 && target.writers >= 1 && target.writers <= 3;
         }
-        if (i > 0 && item.variableId <= rows.back().variableId) {
-            return VN_BAD_PACK;
+    };
+    struct AnchorVisitor {
+        Policy& target;
+        PackVariableReadState& state;
+        std::uint64_t maximum;
+        PackVariableAnchorHeader header{};
+        auto& Value() noexcept { return header; }
+        auto& Header() noexcept { return header; }
+        bool PrepareAnchors(std::uint64_t count) noexcept {
+            return count <= maximum && state.Attempt([&] { target.discreteAnchors.resize(static_cast<std::size_t>(count)); return true; });
         }
-        rows.push_back(item);
-    }
-    std::size_t cursor = static_cast<std::size_t>(needed);
-    for (std::uint32_t i = 0; i < rowCount; ++i) {
-        if (size - cursor < 4) {
-            return VN_BAD_PACK;
+        auto& Anchors(std::uint64_t index) noexcept { return target.discreteAnchors[static_cast<std::size_t>(index)]; }
+        bool Finish() noexcept {
+            for (std::size_t i = 1; i < target.discreteAnchors.size(); ++i)
+                if (target.discreteAnchors[i] <= target.discreteAnchors[i - 1]) return false;
+            return true;
         }
-        const std::uint32_t count = LoadLE32(payload + cursor);
-        cursor += 4;
-        std::uint64_t anchorsBytes = 0;
-        if (!CheckedMulU64(count, 4, &anchorsBytes) ||
-            anchorsBytes > size - cursor) {
-            return VN_BAD_PACK;
+    };
+    struct LabelRecord {
+        VariableLabelDefinitionV1& target;
+        PackVariableLabel wire{};
+        auto& Wire() noexcept { return wire; }
+        bool Finish() noexcept {
+            target.labelId = wire.labelId;
+            target.anchor = wire.anchor;
+            return target.labelId != VnObjectId{} && target.anchor >= 0 && target.anchor <= 16777216;
         }
-        rows[i].discreteAnchors.reserve(count);
-        for (std::uint32_t j = 0; j < count; ++j) {
-            const std::int32_t anchor =
-                static_cast<std::int32_t>(LoadLE32(payload + cursor));
-            cursor += 4;
-            if (j > 0 && anchor <= rows[i].discreteAnchors.back()) {
-                return VN_BAD_PACK;
-            }
-            rows[i].discreteAnchors.push_back(anchor);
+    };
+    struct LabelVisitor {
+        Policy& target;
+        PackVariableReadState& state;
+        std::uint64_t maximum;
+        PackVariableLabelHeader header{};
+        auto& Value() noexcept { return header; }
+        auto& Header() noexcept { return header; }
+        bool PrepareLabels(std::uint64_t count) noexcept {
+            return header.labelMappingFingerprint != 0 && count <= maximum && state.Attempt([&] {
+                target.labelMappingFingerprint = header.labelMappingFingerprint;
+                target.labels.resize(static_cast<std::size_t>(count));
+                return true;
+            });
         }
-    }
-    if (format != 0) {
-        for (auto& row : rows) {
-            const std::uint32_t headerBytes = format == 1 ? 24 : 16;
-            if (size - cursor < headerBytes) return VN_BAD_PACK;
-            row.labelMappingFingerprint = LoadLE64(payload + cursor);
-            if (format == 1) {
-                row.catalogFingerprint = LoadLE64(payload + cursor + 8);
-                if (row.catalogFingerprint == 0) return VN_BAD_PACK;
-            }
-            const std::uint32_t count = LoadLE32(payload + cursor + headerBytes - 8);
-            if (LoadLE32(payload + cursor + headerBytes - 4) != 0
-                || row.labelMappingFingerprint == 0)
-                return VN_BAD_PACK;
-            cursor += headerBytes;
-            if (count > (size - cursor) / 24) return VN_BAD_PACK;
-            std::set<VnObjectId> identities;
-            std::set<std::string> names;
-            row.labels.reserve(count);
-            for (std::uint32_t j = 0; j < count; ++j) {
-                if (size - cursor < 24) return VN_BAD_PACK;
-                VariableLabelDefinitionV1 label;
-                label.labelId = LoadObjectId(payload + cursor);
-                label.anchor = static_cast<std::int32_t>(LoadLE32(payload + cursor + 16));
-                const std::uint32_t length = LoadLE32(payload + cursor + 20);
-                cursor += 24;
-                if (format == 1) {
-                    const std::uint64_t paddedLength = (static_cast<std::uint64_t>(length) + 3u) & ~std::uint64_t{3};
-                    if (paddedLength > size - cursor) return VN_BAD_PACK;
-                    label.name.assign(reinterpret_cast<const char*>(payload + cursor), length);
-                    for (std::uint64_t k = length; k < paddedLength; ++k)
-                        if (payload[cursor + k] != 0) return VN_BAD_PACK;
-                    cursor += static_cast<std::size_t>(paddedLength);
-                } else if (length != 0) {
-                    return VN_BAD_PACK;
+        LabelRecord Labels(std::uint64_t index) noexcept { return {target.labels[static_cast<std::size_t>(index)]}; }
+        bool Finish() noexcept {
+            return state.Attempt([&] {
+                std::set<VnObjectId> identities;
+                for (std::size_t i = 0; i < target.labels.size(); ++i) {
+                    const auto& label = target.labels[i];
+                    if (!identities.insert(label.labelId).second || (i > 0 && label.anchor <= target.labels[i - 1].anchor)) return false;
                 }
-                if (label.labelId == VnObjectId{} || !identities.insert(label.labelId).second
-                    || label.anchor < 0 || label.anchor > 16777216
-                    || (j > 0 && label.anchor <= row.labels.back().anchor)
-                    || label.name.find('\0') != std::string::npos
-                    || (!label.name.empty() && !names.insert(label.name).second))
-                    return VN_BAD_PACK;
-                row.labels.push_back(std::move(label));
-            }
-            if (ComputeVariableLabelMappingFingerprintV1(row.variableId, row.labels)
-                != row.labelMappingFingerprint) return VN_BAD_PACK;
+                return ComputeVariableLabelMappingFingerprintV1(target.variableId, target.labels) == target.labelMappingFingerprint;
+            });
         }
-    }
-    if (cursor != size) {
-        return VN_BAD_PACK;
-    }
+    };
+    struct Visitor {
+        std::vector<Policy>& rows;
+        PackVariableReadState& state;
+        std::uint64_t bytes;
+        PackVariablePolicyHeader header{};
+        auto& Value() noexcept { return header; }
+        auto& Header() noexcept { return header; }
+        bool PrepareRows(std::uint64_t count) noexcept {
+            return count <= (bytes - kPackVariablePolicyHeaderBytes) / kPackVariablePolicyRowBytes && state.Attempt([&] {
+                rows.resize(static_cast<std::size_t>(count)); return true;
+            });
+        }
+        PolicyRecord Rows(std::uint64_t index) noexcept { return {rows[static_cast<std::size_t>(index)]}; }
+        bool PrepareAnchorGroups(std::uint64_t count) noexcept {
+            if (count != rows.size()) return false;
+            for (std::size_t i = 1; i < rows.size(); ++i) if (rows[i].variableId <= rows[i - 1].variableId) return false;
+            return true;
+        }
+        AnchorVisitor AnchorGroups(std::uint64_t index) noexcept { return {rows[static_cast<std::size_t>(index)], state, bytes / kPackVariableAnchorBytes}; }
+        bool PrepareLabelGroups(std::uint64_t count) noexcept { return count == rows.size(); }
+        LabelVisitor LabelGroups(std::uint64_t index) noexcept { return {rows[static_cast<std::size_t>(index)], state, bytes / kPackVariableLabelBytes}; }
+        bool Finish() noexcept { return true; }
+    };
+    std::vector<Policy> rows;
+    PackVariableReadState state;
+    Visitor visitor{rows, state, size};
+    PackWireBuffer<const std::uint8_t> buffer{payload, size};
+    const bool parsed = ReadPackVariablePolicyPayload(buffer, visitor);
+    if (state.exception) std::rethrow_exception(state.exception);
+    if (!parsed || buffer.offset != size) return VN_BAD_PACK;
     *out = std::move(rows);
     return VN_OK;
 }
@@ -770,50 +774,45 @@ VnResult ParseVariablePolicyOverlayPayload(
 VnResult ParseVariableRequirementsPayload(
     const std::uint8_t* payload, std::uint64_t size,
     std::vector<PackCanonicalImage::VariableRequirement>* out) {
-    if (payload == nullptr || out == nullptr || size < 16) {
-        return VN_BAD_PACK;
-    }
-    const std::uint32_t rowCount = LoadLE32(payload);
-    const std::uint32_t format = LoadLE32(payload + 4);
-    if (format > 1 || LoadLE64(payload + 8) != 0) {
-        return VN_BAD_PACK;
-    }
-    std::uint64_t rowsBytes = 0;
-    std::uint64_t needed = 16;
-    const std::uint32_t rowBytes = format == 1 ? 40 : 32;
-    if (!CheckedMulU64(rowCount, rowBytes, &rowsBytes) ||
-        !CheckedAddU64(needed, rowsBytes, &needed) || needed != size) {
-        return VN_BAD_PACK;
-    }
-    std::vector<PackCanonicalImage::VariableRequirement> rows;
-    rows.reserve(rowCount);
-    for (std::uint32_t i = 0; i < rowCount; ++i) {
-        const std::uint8_t* row =
-            payload + 16 + static_cast<std::size_t>(i) * rowBytes;
-        PackCanonicalImage::VariableRequirement item;
-        item.identityClass = row[0];
-        item.stableId = LoadObjectId(row + 8);
-        item.expectedExecutionFingerprint = LoadLE64(row + 24);
-        if (format == 1) {
-            item.expectedLabelMappingFingerprint = LoadLE64(row + 32);
-            if (item.expectedLabelMappingFingerprint == 0) return VN_BAD_PACK;
+    if (payload == nullptr || out == nullptr || size < kPackVariableRequirementsHeaderBytes) return VN_BAD_PACK;
+    using Requirement = PackCanonicalImage::VariableRequirement;
+    struct Record {
+        Requirement& target;
+        PackVariableRequirement wire{};
+        auto& Wire() noexcept { return wire; }
+        bool Finish() noexcept {
+            target.identityClass = 1;
+            target.stableId = wire.stableId;
+            target.expectedExecutionFingerprint = wire.expectedExecutionFingerprint;
+            target.expectedLabelMappingFingerprint = wire.expectedLabelMappingFingerprint;
+            return target.stableId != VnObjectId{} && target.expectedExecutionFingerprint != 0 && target.expectedLabelMappingFingerprint != 0;
         }
-        if (item.identityClass != 1 || row[1] != 0 ||
-            LoadLE16(row + 2) != 0 || LoadLE32(row + 4) != 0 ||
-            item.stableId == VnObjectId{} || item.expectedExecutionFingerprint == 0) {
-            return VN_BAD_PACK;
+    };
+    struct Visitor {
+        std::vector<Requirement>& rows;
+        PackVariableRequirementsHeader header{};
+        auto& Value() noexcept { return header; }
+        auto& Header() noexcept { return header; }
+        bool PrepareRows(std::uint64_t count) noexcept { return count == rows.size(); }
+        Record Rows(std::uint64_t index) noexcept { return {rows[static_cast<std::size_t>(index)]}; }
+        bool Finish() noexcept {
+            for (std::size_t i = 1; i < rows.size(); ++i) if (rows[i].stableId <= rows[i - 1].stableId) return false;
+            return true;
         }
-        if (i > 0 &&
-            (item.identityClass < rows.back().identityClass ||
-             (item.identityClass == rows.back().identityClass &&
-              item.stableId <= rows.back().stableId))) {
-            return VN_BAD_PACK;
-        }
-        rows.push_back(item);
-    }
+    };
+    PackVariableRequirementsHeader header;
+    if (!ParsePackVariableRequirementsHeader(payload, kPackVariableRequirementsHeaderBytes, &header)) return VN_BAD_PACK;
+    std::uint64_t expected = 0;
+    std::vector<Requirement> rows;
+    Visitor visitor{rows, header};
+    if (!MeasurePackVariableRequirementsPayload(visitor, expected) || expected != size) return VN_BAD_PACK;
+    rows.resize(header.rowCount);
+    PackWireBuffer<const std::uint8_t> buffer{payload, size};
+    if (!ReadPackVariableRequirementsPayload(buffer, visitor) || buffer.offset != size) return VN_BAD_PACK;
     *out = std::move(rows);
     return VN_OK;
 }
+
 
 bool EntrySectionFits(std::uint64_t offset, std::uint32_t count, std::uint32_t rowBytes,
                       std::uint64_t entryBytes, std::uint64_t* outEnd,
@@ -1202,7 +1201,7 @@ struct SpanCanonicalSource {
         return artifact.bytes + offset;
     }
     bool VerifyMedia(const PackTocEntry& media, std::uint32_t i,
-                     const std::uint8_t* dir, const PackV2Header& header,
+                     const std::uint8_t* dir, const PackFileHeader& header,
                      std::uint64_t dirEnd) {
         const auto* bytes = artifact.bytes;
         const auto fileBytes = ByteCount();
@@ -1226,9 +1225,9 @@ struct SpanCanonicalSource {
         } else {
             bool paired = false;
             if (header.entryCount - i > 1) {
-                const auto next = ParsePackV2DirectoryEntry(
+                const auto next = ReadPackDirectoryEntry(
                     dir + static_cast<std::size_t>(i + 1) *
-                              kPackV2DirectoryEntryBytes);
+                              kPackDirectoryEntryBytes);
                 // Only bounded metadata is inspected ahead. Its original
                 // vintage, payload and blob checks still run in order.
                 if (next.kind == kPackEntryKindMedia &&
@@ -1302,7 +1301,7 @@ struct FileCanonicalSource {
         return file.gcount() == static_cast<std::streamsize>(size) ? bytes.data() : nullptr;
     }
     bool VerifyMedia(const PackTocEntry&, std::uint32_t, const std::uint8_t*,
-                     const PackV2Header&, std::uint64_t) const noexcept {
+                     const PackFileHeader&, std::uint64_t) const noexcept {
         // The common parser must finish all metadata checks before physical
         // bytes are consumed into unpublished sample owners in Finish.
         return true;
@@ -1485,16 +1484,16 @@ template <class Source>
 VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
 
     const auto fileBytes = source.ByteCount();
-    const auto* bytes = source.Data(0, kPackV2HeaderBytes);
-    if (bytes == nullptr || out == nullptr || fileBytes < kPackV2HeaderBytes) {
+    const auto* bytes = source.Data(0, kPackFileHeaderBytes);
+    if (bytes == nullptr || out == nullptr || fileBytes < kPackFileHeaderBytes) {
         return VN_BAD_PACK;
     }
-    PackV2Header header;
-    if (!ParsePackV2Header(bytes, &header)) {
+    PackFileHeader header;
+    if (!ReadPackFileHeader(bytes, &header)) {
         return VN_BAD_PACK;
     }
     if (!SupportedPackFormatVersion(header.formatVersion) ||
-        header.headerBytes != kPackV2HeaderBytes ||
+        header.headerBytes != kPackFileHeaderBytes ||
         header.fileBytes != fileBytes) {
         return VN_BAD_PACK;
     }
@@ -1503,7 +1502,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
     }
     const std::uint64_t dirBytes =
         static_cast<std::uint64_t>(header.entryCount) *
-        kPackV2DirectoryEntryBytes;
+        kPackDirectoryEntryBytes;
     if (header.directoryOffset != header.headerBytes ||
         header.directoryOffset > fileBytes ||
         dirBytes > fileBytes - header.directoryOffset) {
@@ -1531,8 +1530,8 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
     ranges.reserve(static_cast<std::size_t>(header.entryCount) * 2);
 
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
-        const PackV2DirectoryEntry entry = ParsePackV2DirectoryEntry(
-            dir + static_cast<std::size_t>(i) * kPackV2DirectoryEntryBytes);
+        const PackDirectoryEntry entry = ReadPackDirectoryEntry(
+            dir + static_cast<std::size_t>(i) * kPackDirectoryEntryBytes);
         if (entry.kind == kPackEntryKindCanonicalDefinitionPartition ||
             entry.kind == kPackEntryKindPackRequirementBlock ||
             entry.kind == kPackEntryKindPackDependencyEdge) {
@@ -1992,8 +1991,8 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
          !image.attenuations.empty() || !image.busEffects.empty() ||
          !image.dynamicRoutes.empty());
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
-        const PackV2DirectoryEntry entry = ParsePackV2DirectoryEntry(
-            dir + static_cast<std::size_t>(i) * kPackV2DirectoryEntryBytes);
+        const PackDirectoryEntry entry = ReadPackDirectoryEntry(
+            dir + static_cast<std::size_t>(i) * kPackDirectoryEntryBytes);
         if (!CanonicalKindLegal(entry.kind, header.packKind,
                                 sharedResidentOwner)) {
             return VN_BAD_PACK;

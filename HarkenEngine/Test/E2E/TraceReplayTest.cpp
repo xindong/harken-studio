@@ -3203,7 +3203,7 @@ std::vector<std::uint8_t> BuildOneEntryPack(VnSoundId id,
                                             std::size_t frames) {
     const std::vector<float> plane =
         harkentest::MakeSine(frames, 330.0, 48000.0, 0.6f);
-    const std::uint64_t tocOffset = harken::kPackHeaderBytes;
+    const std::uint64_t tocOffset = harken::kPackMediaFileHeaderBytes;
     const std::uint64_t tocBytes = harken::kPackMediaBytes;
     const std::uint64_t align = harken::kPackBlobAlign;
     const std::uint64_t blobOffset =
@@ -3231,14 +3231,14 @@ std::vector<std::uint8_t> BuildOneEntryPack(VnSoundId id,
     harken::SerializePackMedia(entry, toc.data());
     std::memcpy(bytes.data() + tocOffset, toc.data(), toc.size());
 
-    harken::PackHeader header;
+    harken::PackMediaFileHeader header;
     header.formatVersion = harken::kPackFormatVersion;
-    header.headerBytes = harken::kPackHeaderBytes;
+    header.headerBytes = harken::kPackMediaFileHeaderBytes;
     header.fileBytes = bytes.size();
     header.entryCount = 1;
     header.tocOffset = static_cast<std::uint32_t>(tocOffset);
     header.tocChecksum = harken::Fnv1a64(toc.data(), toc.size());
-    harken::SerializePackHeader(header, bytes.data());
+    harken::SerializePackMediaFileHeader(header, bytes.data());
     return bytes;
 }
 

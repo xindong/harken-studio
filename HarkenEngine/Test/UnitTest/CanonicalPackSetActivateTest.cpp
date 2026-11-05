@@ -3291,17 +3291,24 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
         SerializePackAttenuation(desc, payload.data());
         builder.AddEntry(kPackEntryKindAttenuation, harkentest::ObjectId(1000+i), std::move(payload), kPackAttenuationVintage);
     }
-    std::vector<std::uint8_t> overlay(16 + variables.size() * 36, 0);
-    StoreLE32(overlay.data(), variables.size());
-    for (std::size_t i = 0; i < variables.size(); ++i) {
-        auto* row = overlay.data() + 16 + i * 32;
-        const auto& variable = variables[i];
-        StoreObjectId(row, variable.variableId);
-        row[16] = 3;
+    std::vector<std::uint8_t> overlay(kPackVariablePolicyHeaderBytes + variables.size() *
+        (kPackVariablePolicyRowBytes + kPackVariableAnchorCountBytes + kPackVariableLabelHeaderBytes), 0);
+    SerializePackVariablePolicyHeader({static_cast<std::uint32_t>(variables.size())}, overlay.data());
+    std::size_t cursor = kPackVariablePolicyHeaderBytes;
+    for (const auto& variable : variables) {
         std::uint64_t execution = 0;
         ASSERT_TRUE(ComputeVariableExecutionFingerprintV1(variable.variableId, 1, 1, 3,
             variable.rangeMin, variable.rangeMax, variable.defaultValue, nullptr, 0, &execution));
-        StoreLE64(row + 24, execution);
+        SerializePackVariablePolicyRow({variable.variableId, 3, execution}, overlay.data() + cursor);
+        cursor += kPackVariablePolicyRowBytes;
+    }
+    for (std::size_t i = 0; i < variables.size(); ++i) {
+        SerializePackVariableAnchorCount({0}, overlay.data() + cursor);
+        cursor += kPackVariableAnchorCountBytes;
+    }
+    for (const auto& variable : variables) {
+        SerializePackVariableLabelHeader({ComputeVariableLabelMappingFingerprintV1(variable.variableId, {}), 0}, overlay.data() + cursor);
+        cursor += kPackVariableLabelHeaderBytes;
     }
     builder.AddEntry(kPackEntryKindVariablePolicyOverlay, 0, std::move(overlay));
     companionfixture::Provider provider{builder.Build()};

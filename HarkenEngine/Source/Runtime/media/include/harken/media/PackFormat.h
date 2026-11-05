@@ -37,7 +37,6 @@ inline constexpr bool SupportedPackFormatVersion(std::uint32_t version) noexcept
 // TOC entry: soundId(8) + sampleRate(4) + channelCount(2) + sampleFormat(2)
 // + frameCount(8) + blobOffset(8) + blobBytes(8) + blobChecksum(8) +
 // flags(4) + loopStartFrame(8) + loopEndFrame(8).
-inline constexpr std::uint32_t kPackHeaderBytes = 36;
 
 // The end offset at entryCount is also the complete TOC byte length.
 
@@ -147,14 +146,6 @@ inline VnObjectId LoadObjectId(const std::uint8_t* in) {
 
 // --- in-memory working forms ---
 
-struct PackHeader {
-    std::uint32_t formatVersion = 0;
-    std::uint32_t headerBytes = 0;
-    std::uint64_t fileBytes = 0;
-    std::uint32_t entryCount = 0;
-    std::uint32_t tocOffset = 0;
-    std::uint64_t tocChecksum = 0;
-};
 
 struct PackTocEntry {
     VnObjectId soundId{};
@@ -170,37 +161,12 @@ struct PackTocEntry {
     std::uint64_t loopEndFrame = 0; // 0 = whole file when loopable
 };
 
-// Writes the magic and header fields into out[0..kPackHeaderBytes).
-inline void SerializePackHeader(const PackHeader& h,
-                                     std::uint8_t* out) {
-    out[0] = kPackMagic[0];
-    out[1] = kPackMagic[1];
-    out[2] = kPackMagic[2];
-    out[3] = kPackMagic[3];
-    StoreLE32(out + 4, h.formatVersion);
-    StoreLE32(out + 8, h.headerBytes);
-    StoreLE64(out + 12, h.fileBytes);
-    StoreLE32(out + 20, h.entryCount);
-    StoreLE32(out + 24, h.tocOffset);
-    StoreLE64(out + 28, h.tocChecksum);
-}
+// Writes the magic and header fields into out[0..kPackMediaFileHeaderBytes).
 
-// Parses in[0..kPackHeaderBytes). Returns false when the magic does
+
+// Parses in[0..kPackMediaFileHeaderBytes). Returns false when the magic does
 // not match; field sanity beyond the magic is the caller's validation.
-inline bool ParsePackHeader(const std::uint8_t* in,
-                                 PackHeader* out) {
-    if (in[0] != kPackMagic[0] || in[1] != kPackMagic[1] ||
-        in[2] != kPackMagic[2] || in[3] != kPackMagic[3]) {
-        return false;
-    }
-    out->formatVersion = LoadLE32(in + 4);
-    out->headerBytes = LoadLE32(in + 8);
-    out->fileBytes = LoadLE64(in + 12);
-    out->entryCount = LoadLE32(in + 20);
-    out->tocOffset = LoadLE32(in + 24);
-    out->tocChecksum = LoadLE64(in + 28);
-    return true;
-}
+
 
 // Writes one TOC entry into out[0..kPackMediaBytes).
 

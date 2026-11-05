@@ -108360,10 +108360,10 @@ static VnResult LoadPackObserved(const VnPackDesc* desc,
             !harken::SupportedPackFormatVersion(packFormatVersion)) {
             return VN_BAD_PACK;
         }
-        if (packHeaderBytes == harken::kPackV2HeaderBytes) {
+        if (packHeaderBytes == harken::kPackFileHeaderBytes) {
             return harken::LoadPackV2(*engine, desc->utf8Path, outHandle);
         }
-        if (packHeaderBytes != harken::kPackHeaderBytes) {
+        if (packHeaderBytes != harken::kPackMediaFileHeaderBytes) {
             return VN_BAD_PACK;
         }
         /* Bulk registration into the same logic-side registry Vn_RegisterPCM
@@ -119633,17 +119633,15 @@ bool PeekPackHeader(const char* utf8Path, std::uint32_t* outVersion,
     if (!in) {
         return false;
     }
-    std::uint8_t head[12] = {};
+    std::uint8_t head[kPackFilePrefixBytes] = {};
     in.read(reinterpret_cast<char*>(head), sizeof head);
     if (in.gcount() != static_cast<std::streamsize>(sizeof head)) {
         return false;
     }
-    if (head[0] != kPackMagic[0] || head[1] != kPackMagic[1] ||
-        head[2] != kPackMagic[2] || head[3] != kPackMagic[3]) {
-        return false;
-    }
-    *outVersion = LoadLE32(head + 4);
-    *outHeaderBytes = LoadLE32(head + 8);
+    PackFilePrefix prefix;
+    if (!ParsePackFilePrefix(head, sizeof head, &prefix)) return false;
+    *outVersion = prefix.formatVersion;
+    *outHeaderBytes = prefix.headerBytes;
     return true;
 }
 

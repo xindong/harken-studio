@@ -170,10 +170,10 @@ public:
     }
 
     std::vector<std::uint8_t> Build() {
-        const std::uint64_t dirOffset = kPackV2HeaderBytes;
+        const std::uint64_t dirOffset = kPackFileHeaderBytes;
         const std::uint64_t dirBytes =
             static_cast<std::uint64_t>(entries_.size()) *
-            kPackV2DirectoryEntryBytes;
+            kPackDirectoryEntryBytes;
         const std::uint64_t dirEnd = dirOffset + dirBytes;
         payloadOffsets_.assign(entries_.size(), 0);
         blobOffsets_.assign(entries_.size(), 0);
@@ -225,7 +225,7 @@ public:
             }
         }
         for (std::size_t i = 0; i < entries_.size(); ++i) {
-            PackV2DirectoryEntry record;
+            PackDirectoryEntry record;
             record.kind = entries_[i].kind;
             record.vintage = entries_[i].vintage;
             record.id = entries_[i].id;
@@ -235,13 +235,13 @@ public:
             record.payloadChecksum = Fnv1a64(
                 bytes.data() + static_cast<std::size_t>(payloadOffsets_[i]),
                 static_cast<std::size_t>(record.size));
-            SerializePackV2DirectoryEntry(
+            SerializePackDirectoryEntry(
                 record, bytes.data() + static_cast<std::size_t>(dirOffset) +
-                            i * kPackV2DirectoryEntryBytes);
+                            i * kPackDirectoryEntryBytes);
         }
-        PackV2Header header;
-        header.formatVersion = kPackFormatVersion2;
-        header.headerBytes = kPackV2HeaderBytes;
+        PackFileHeader header;
+        header.formatVersion = kPackFormatVersion;
+        header.headerBytes = kPackFileHeaderBytes;
         header.fileBytes = contentEnd;
         header.packKind = packKind_;
         header.entryCount = static_cast<std::uint32_t>(entries_.size());
@@ -249,7 +249,7 @@ public:
         header.directoryChecksum =
             Fnv1a64(bytes.data() + static_cast<std::size_t>(dirOffset),
                     static_cast<std::size_t>(dirBytes));
-        SerializePackV2Header(header, bytes.data());
+        SerializePackFileHeader(header, bytes.data());
         return bytes;
     }
 
@@ -10306,14 +10306,14 @@ std::vector<std::uint8_t> BuildImmediateEmptyTrackPlayPack(
 
 bool DirectoryHasKind(const std::vector<std::uint8_t>& bytes,
                       std::uint32_t kind) {
-    PackV2Header header;
-    if (!ParsePackV2Header(bytes.data(), &header)) {
+    PackFileHeader header;
+    if (!ReadPackFileHeader(bytes.data(), &header)) {
         return false;
     }
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
-        const PackV2DirectoryEntry entry = ParsePackV2DirectoryEntry(
+        const PackDirectoryEntry entry = ReadPackDirectoryEntry(
             bytes.data() + static_cast<std::size_t>(header.directoryOffset) +
-            i * kPackV2DirectoryEntryBytes);
+            i * kPackDirectoryEntryBytes);
         if (entry.kind == kind) {
             return true;
         }
@@ -27781,19 +27781,27 @@ TEST(PackComposition, FrozenSelectionIdentityTracksCanonicalUnionNotPublicationH
     EXPECT_FALSE(composition.HasLiveLease(22, 7, 1));
 }
 
-std::vector<std::uint8_t> Kind26OverlayPayload(
-    VnObjectId variableId, std::uint8_t writers, std::uint64_t fingerprint) {
-    std::vector<std::uint8_t> payload(16 + 32 + 4, 0);
-    StoreLE32(payload.data(), 1);
-    StoreObjectId(payload.data() + 16, variableId);
-    payload[32] = writers;
-    StoreLE64(payload.data() + 40, fingerprint);
+std::vector<std::uint8_t> Kind26OverlayPayload(std::initializer_list<PackVariablePolicyRow> rows) {
+    std::vector<std::uint8_t> payload(kPackVariablePolicyHeaderBytes + rows.size() *
+        (kPackVariablePolicyRowBytes + kPackVariableAnchorCountBytes + kPackVariableLabelHeaderBytes), 0);
+    SerializePackVariablePolicyHeader({static_cast<std::uint32_t>(rows.size())}, payload.data());
+    std::size_t cursor = kPackVariablePolicyHeaderBytes;
+    for (const auto& row : rows) {
+        SerializePackVariablePolicyRow(row, payload.data() + cursor);
+        cursor += kPackVariablePolicyRowBytes;
+    }
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        SerializePackVariableAnchorCount({0}, payload.data() + cursor);
+        cursor += kPackVariableAnchorCountBytes;
+    }
+    for (const auto& row : rows) {
+        SerializePackVariableLabelHeader({ComputeVariableLabelMappingFingerprintV1(row.variableId, {}), 0}, payload.data() + cursor);
+        cursor += kPackVariableLabelHeaderBytes;
+    }
     return payload;
 }
 
-std::vector<std::uint8_t> Kind26EmptyOverlayPayload() {
-    return std::vector<std::uint8_t>(16, 0);
-}
+
 
 std::vector<std::uint8_t> BuildInitWithVariableOverlay(
     VnObjectId variableId, std::uint64_t fingerprint,
@@ -27826,26 +27834,13 @@ std::vector<std::uint8_t> BuildInitWithVariableOverlay(
     if (emitOverlay) {
         builder.AddEntry(kPackEntryKindVariablePolicyOverlay, 0,
                          emptyOverlay
-                             ? Kind26EmptyOverlayPayload()
-                             : Kind26OverlayPayload(variableId, writers,
-                                                    fingerprint));
+                             ? Kind26OverlayPayload({})
+                             : Kind26OverlayPayload({{variableId, writers, fingerprint}}));
     }
     return builder.Build();
 }
 
-std::vector<std::uint8_t> Kind26OverlayTwo(
-    std::uint64_t idA, std::uint8_t writersA, std::uint64_t fingerprintA,
-    std::uint64_t idB, std::uint8_t writersB, std::uint64_t fingerprintB) {
-    std::vector<std::uint8_t> payload(16 + 64 + 8, 0);
-    StoreLE32(payload.data(), 2);
-    StoreObjectId(payload.data() + 16, harkentest::ObjectId(idA));
-    payload[32] = writersA;
-    StoreLE64(payload.data() + 40, fingerprintA);
-    StoreObjectId(payload.data() + 48, harkentest::ObjectId(idB));
-    payload[64] = writersB;
-    StoreLE64(payload.data() + 72, fingerprintB);
-    return payload;
-}
+
 
 std::vector<std::uint8_t> BuildInitWithTwoVariables(
     VariableScopeV1 scope, std::uint8_t writersA, std::uint64_t fingerprintA,
@@ -27869,8 +27864,8 @@ std::vector<std::uint8_t> BuildInitWithTwoVariables(
                      WrapWorldPartition(11, 1, world, 2));
     harkentest::packfoundation::AppendNeutralMasterSnapshot(&builder);
     builder.AddEntry(kPackEntryKindVariablePolicyOverlay, 0,
-                     Kind26OverlayTwo(7, writersA, fingerprintA, 8, writersB,
-                                      fingerprintB));
+                     Kind26OverlayPayload({{harkentest::ObjectId(7), writersA, fingerprintA},
+                                           {harkentest::ObjectId(8), writersB, fingerprintB}}));
     return builder.Build();
 }
 

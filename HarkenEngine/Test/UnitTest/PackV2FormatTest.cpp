@@ -36,9 +36,9 @@ constexpr std::uint32_t kLegacySelectionRoundRobin = 1;
 
 TEST(PackV2Format, PackContainerUsesPublishedSchemaVersion) {
     static_assert(kPackFormatVersion == HARKEN_PACK_SCHEMA_VERSION);
-    static_assert(kPackFormatVersion2 == HARKEN_PACK_SCHEMA_VERSION);
+    static_assert(kPackFormatVersion == HARKEN_PACK_SCHEMA_VERSION);
     EXPECT_EQ(HARKEN_PACK_SCHEMA_VERSION, kPackFormatVersion);
-    EXPECT_EQ(HARKEN_PACK_SCHEMA_VERSION, kPackFormatVersion2);
+    EXPECT_EQ(HARKEN_PACK_SCHEMA_VERSION, kPackFormatVersion);
 }
 
 TEST(PackV2Format, VolumeSnapshotParentForestAcceptsDeepUnorderedChainAndRejectsCycles) {
@@ -118,10 +118,10 @@ public:
     }
 
     std::vector<std::uint8_t> Build() {
-        const std::uint64_t dirOffset = kPackV2HeaderBytes;
+        const std::uint64_t dirOffset = kPackFileHeaderBytes;
         const std::uint64_t dirBytes =
             static_cast<std::uint64_t>(entries_.size()) *
-            kPackV2DirectoryEntryBytes;
+            kPackDirectoryEntryBytes;
         const std::uint64_t dirEnd = dirOffset + dirBytes;
 
         payloadOffsets_.assign(entries_.size(), 0);
@@ -178,7 +178,7 @@ public:
         }
         for (std::size_t i = 0; i < entries_.size(); ++i) {
             const Entry& entry = entries_[i];
-            PackV2DirectoryEntry record;
+            PackDirectoryEntry record;
             record.kind = entry.kind;
             record.vintage = entry.vintage;
             if (entry.kind == kPackEntryKindBusSend || entry.kind == kPackEntryKindBindingAttachment) {
@@ -191,13 +191,13 @@ public:
             record.payloadChecksum = Fnv1a64(
                 bytes.data() + static_cast<std::size_t>(payloadOffsets_[i]),
                 static_cast<std::size_t>(record.size));
-            SerializePackV2DirectoryEntry(
+            SerializePackDirectoryEntry(
                 record, bytes.data() + static_cast<std::size_t>(dirOffset) +
-                            i * kPackV2DirectoryEntryBytes);
+                            i * kPackDirectoryEntryBytes);
         }
-        PackV2Header header;
-        header.formatVersion = kPackFormatVersion2;
-        header.headerBytes = kPackV2HeaderBytes;
+        PackFileHeader header;
+        header.formatVersion = kPackFormatVersion;
+        header.headerBytes = kPackFileHeaderBytes;
         header.fileBytes = fileBytes;
         header.packKind = packKind_;
         header.entryCount = static_cast<std::uint32_t>(entries_.size());
@@ -205,7 +205,7 @@ public:
         header.directoryChecksum =
             Fnv1a64(bytes.data() + static_cast<std::size_t>(dirOffset),
                     static_cast<std::size_t>(dirBytes));
-        SerializePackV2Header(header, bytes.data());
+        SerializePackFileHeader(header, bytes.data());
         return bytes;
     }
 
@@ -751,13 +751,13 @@ void ExpectRefused(const std::vector<std::uint8_t>& bytes) {
 // kind is absent.
 std::uint64_t PayloadOffsetOfKind(const std::vector<std::uint8_t>& bytes,
                                   std::uint32_t kind) {
-    PackV2Header header;
-    EXPECT_TRUE(ParsePackV2Header(bytes.data(), &header));
+    PackFileHeader header;
+    EXPECT_TRUE(ReadPackFileHeader(bytes.data(), &header));
     for (std::uint32_t k = 0; k < header.entryCount; ++k) {
-        const PackV2DirectoryEntry entry = ParsePackV2DirectoryEntry(
+        const PackDirectoryEntry entry = ReadPackDirectoryEntry(
             bytes.data() +
             static_cast<std::size_t>(header.directoryOffset) +
-            k * kPackV2DirectoryEntryBytes);
+            k * kPackDirectoryEntryBytes);
         if (entry.kind == kind) {
             return entry.offset;
         }
@@ -773,24 +773,24 @@ std::uint64_t PayloadOffsetOfKind(const std::vector<std::uint8_t>& bytes,
 // present a checksum-consistent file whose only defect is the layout
 // fact under test.
 void RecomputeChecksums(std::vector<std::uint8_t>* bytes) {
-    PackV2Header header;
-    ASSERT_TRUE(ParsePackV2Header(bytes->data(), &header));
+    PackFileHeader header;
+    ASSERT_TRUE(ReadPackFileHeader(bytes->data(), &header));
     const std::size_t dir =
         static_cast<std::size_t>(header.directoryOffset);
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
         std::uint8_t* record =
-            bytes->data() + dir + i * kPackV2DirectoryEntryBytes;
-        PackV2DirectoryEntry entry = ParsePackV2DirectoryEntry(record);
+            bytes->data() + dir + i * kPackDirectoryEntryBytes;
+        PackDirectoryEntry entry = ReadPackDirectoryEntry(record);
         entry.payloadChecksum =
             Fnv1a64(bytes->data() + static_cast<std::size_t>(entry.offset),
                     static_cast<std::size_t>(entry.size));
-        SerializePackV2DirectoryEntry(entry, record);
+        SerializePackDirectoryEntry(entry, record);
     }
     header.directoryChecksum = Fnv1a64(
         bytes->data() + dir,
         static_cast<std::size_t>(header.entryCount) *
-            kPackV2DirectoryEntryBytes);
-    SerializePackV2Header(header, bytes->data());
+            kPackDirectoryEntryBytes);
+    SerializePackFileHeader(header, bytes->data());
 }
 
 // --- round trips ---
@@ -1103,7 +1103,7 @@ TEST(PackV2Format, RefusesOtherSchemaVersions) {
 TEST(PackV2Format, RefusesMediaOnlyHeaderLayout) {
     const std::vector<float> planar = {0.0f, 0.25f, 0.5f, 0.75f};
     const std::uint64_t blobOffset =
-        AlignUp(kPackHeaderBytes + kPackMediaBytes, kPackBlobAlign);
+        AlignUp(kPackMediaFileHeaderBytes + kPackMediaBytes, kPackBlobAlign);
     const std::uint64_t blobBytes = planar.size() * sizeof(float);
     const std::uint64_t fileBytes = blobOffset + blobBytes;
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(fileBytes), 0);
@@ -1119,16 +1119,16 @@ TEST(PackV2Format, RefusesMediaOnlyHeaderLayout) {
     toc.blobBytes = blobBytes;
     toc.blobChecksum =
         Fnv1a64(planar.data(), static_cast<std::size_t>(blobBytes));
-    SerializePackMedia(toc, bytes.data() + kPackHeaderBytes);
-    PackHeader header;
+    SerializePackMedia(toc, bytes.data() + kPackMediaFileHeaderBytes);
+    PackMediaFileHeader header;
     header.formatVersion = kPackFormatVersion;
-    header.headerBytes = kPackHeaderBytes;
+    header.headerBytes = kPackMediaFileHeaderBytes;
     header.fileBytes = fileBytes;
     header.entryCount = 1;
-    header.tocOffset = kPackHeaderBytes;
+    header.tocOffset = kPackMediaFileHeaderBytes;
     header.tocChecksum =
-        Fnv1a64(bytes.data() + kPackHeaderBytes, kPackMediaBytes);
-    SerializePackHeader(header, bytes.data());
+        Fnv1a64(bytes.data() + kPackMediaFileHeaderBytes, kPackMediaBytes);
+    SerializePackMediaFileHeader(header, bytes.data());
 
     ExpectRefused(bytes);
 }
@@ -1155,7 +1155,7 @@ TEST(PackV2Format, RefusesUnknownPackKind) {
 TEST(PackV2Format, EmptyContentPackRoundTrips) {
     const std::vector<std::uint8_t> bytes =
         ImageBuilder(kPackKindContent).Build();
-    ASSERT_EQ(kPackV2HeaderBytes, bytes.size());
+    ASSERT_EQ(kPackFileHeaderBytes, bytes.size());
     PackLogicImage image;
     ASSERT_EQ(VN_OK,
               ParsePackV2Image(bytes.data(), bytes.size(), &image));
@@ -1180,7 +1180,7 @@ TEST(PackV2Format, EmptyContentPackRefusesMalformedDirectoryMetadata) {
         ImageBuilder(kPackKindContent).Build();
     {
         std::vector<std::uint8_t> bytes = canonical;
-        StoreLE64(bytes.data() + 28, kPackV2HeaderBytes - 1);
+        StoreLE64(bytes.data() + 28, kPackFileHeaderBytes - 1);
         ExpectRefused(bytes);
     }
     {
@@ -1202,7 +1202,7 @@ TEST(PackV2Format, RefusesDirectoryOutOfBounds) {
 
 TEST(PackV2Format, RefusesDirectoryChecksumMismatch) {
     std::vector<std::uint8_t> bytes = MinimalContentBytes();
-    bytes[kPackV2HeaderBytes] ^= 0x01;
+    bytes[kPackFileHeaderBytes] ^= 0x01;
     ExpectRefused(bytes);
 }
 
@@ -1316,7 +1316,6 @@ TEST(PackV2Format, RefusesPreviousSchemaVintage) {
               ParsePackV2Image(bytes.data(), bytes.size(), &image));
     EXPECT_EQ(0u, image.EntryCount());
 }
-
 
 
 TEST(PackV2Format, Vintage6BusImageRoundTripCarriesMixFields) {
@@ -1832,11 +1831,11 @@ TEST(PackV2Format, MisalignedPayloadRefused) {
         ASSERT_EQ(VN_OK,
                   ParsePackV2Image(bytes.data(), bytes.size(), &image));
     }
-    PackV2Header header;
-    ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
+    PackFileHeader header;
+    ASSERT_TRUE(ReadPackFileHeader(bytes.data(), &header));
     ASSERT_EQ(1u, header.entryCount);
     std::uint8_t* record = bytes.data() + header.directoryOffset;
-    PackV2DirectoryEntry entry = ParsePackV2DirectoryEntry(record);
+    PackDirectoryEntry entry = ReadPackDirectoryEntry(record);
     // Move the single payload 4 bytes forward: pad inserted at its old
     // offset, file length grown, the directory restated, both checksum
     // layers recomputed. The moved payload bytes are untouched, so the
@@ -1844,10 +1843,10 @@ TEST(PackV2Format, MisalignedPayloadRefused) {
     bytes.insert(bytes.begin() + static_cast<std::ptrdiff_t>(entry.offset),
                  4, 0);
     entry.offset += 4;
-    SerializePackV2DirectoryEntry(entry,
+    SerializePackDirectoryEntry(entry,
                                   bytes.data() + header.directoryOffset);
     header.fileBytes = bytes.size();
-    SerializePackV2Header(header, bytes.data());
+    SerializePackFileHeader(header, bytes.data());
     RecomputeChecksums(&bytes);
     ExpectRefused(bytes);
 }
@@ -1859,23 +1858,23 @@ TEST(PackV2Format, DirectoryGapRefused) {
         ASSERT_EQ(VN_OK,
                   ParsePackV2Image(bytes.data(), bytes.size(), &image));
     }
-    PackV2Header header;
-    ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
+    PackFileHeader header;
+    ASSERT_TRUE(ReadPackFileHeader(bytes.data(), &header));
     ASSERT_EQ(1u, header.entryCount);
     // Slide the directory (and everything after it) 8 bytes down so it
     // sits at offset 52 instead of the header's end at 44. Every offset
     // is restated and both checksum layers recomputed — payloads stay
     // 8-aligned — so the refusal is the directory-anchoring rule alone.
     bytes.insert(bytes.begin() +
-                     static_cast<std::ptrdiff_t>(kPackV2HeaderBytes),
+                     static_cast<std::ptrdiff_t>(kPackFileHeaderBytes),
                  8, 0);
-    header.directoryOffset = kPackV2HeaderBytes + 8;
+    header.directoryOffset = kPackFileHeaderBytes + 8;
     header.fileBytes = bytes.size();
-    SerializePackV2Header(header, bytes.data());
+    SerializePackFileHeader(header, bytes.data());
     std::uint8_t* record = bytes.data() + header.directoryOffset;
-    PackV2DirectoryEntry entry = ParsePackV2DirectoryEntry(record);
+    PackDirectoryEntry entry = ReadPackDirectoryEntry(record);
     entry.offset += 8;
-    SerializePackV2DirectoryEntry(entry, record);
+    SerializePackDirectoryEntry(entry, record);
     RecomputeChecksums(&bytes);
     ExpectRefused(bytes);
 }
@@ -1896,13 +1895,13 @@ TEST(PackV2Format, OverlappingPayloadsRefused) {
             ASSERT_EQ(VN_OK,
                       ParsePackV2Image(bytes.data(), bytes.size(), &image));
         }
-        PackV2Header header;
-        ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
+        PackFileHeader header;
+        ASSERT_TRUE(ReadPackFileHeader(bytes.data(), &header));
         std::uint8_t* second = bytes.data() + header.directoryOffset +
-                               kPackV2DirectoryEntryBytes;
-        PackV2DirectoryEntry entry = ParsePackV2DirectoryEntry(second);
+                               kPackDirectoryEntryBytes;
+        PackDirectoryEntry entry = ReadPackDirectoryEntry(second);
         entry.offset = builder.PayloadOffset(0);
-        SerializePackV2DirectoryEntry(entry, second);
+        SerializePackDirectoryEntry(entry, second);
         RecomputeChecksums(&bytes);
         ExpectRefused(bytes);
     }

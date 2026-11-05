@@ -1210,9 +1210,9 @@ bool writeCanonicalPack(const QString& outputPath,
                         PackBuildSession::CanonicalPackKind packKind,
                         QString* error)
 {
-    const std::uint64_t dirOffset = harkenstudiobuild::kPackV2HeaderBytes;
+    const std::uint64_t dirOffset = harkenstudiobuild::kPackFileHeaderBytes;
     const std::uint64_t dirBytes =
-        static_cast<std::uint64_t>(entries.size()) * harkenstudiobuild::kPackV2DirectoryEntryBytes;
+        static_cast<std::uint64_t>(entries.size()) * harkenstudiobuild::kPackDirectoryEntryBytes;
     std::uint64_t cursor = alignUp(dirOffset + dirBytes, harkenstudiobuild::kPackV2PayloadAlign);
     std::vector<std::uint64_t> offsets(entries.size(), 0);
     std::vector<std::uint64_t> payloadSizes(entries.size(), 0);
@@ -1255,7 +1255,7 @@ bool writeCanonicalPack(const QString& outputPath,
             harkenstudiobuild::SerializePackMedia(toc, mediaPayload.data());
             payload = mediaPayload.data();
         }
-        harkenstudiobuild::PackV2DirectoryEntry record;
+        harkenstudiobuild::PackDirectoryEntry record;
         record.kind = entries[i].kind;
         record.vintage = entries[i].vintage;
         record.id = entries[i].id;
@@ -1264,20 +1264,20 @@ bool writeCanonicalPack(const QString& outputPath,
         record.size = payloadSizes[i];
         record.payloadChecksum =
             harkenstudiobuild::Fnv1a64(payload, static_cast<std::size_t>(record.size));
-        harkenstudiobuild::SerializePackV2DirectoryEntry(
-            record, directory.data() + i * harkenstudiobuild::kPackV2DirectoryEntryBytes);
+        harkenstudiobuild::SerializePackDirectoryEntry(
+            record, directory.data() + i * harkenstudiobuild::kPackDirectoryEntryBytes);
     }
-    harkenstudiobuild::PackV2Header header;
-    header.formatVersion = harkenstudiobuild::kPackFormatVersion2;
-    header.headerBytes = harkenstudiobuild::kPackV2HeaderBytes;
+    harkenstudiobuild::PackFileHeader header;
+    header.formatVersion = harkenstudiobuild::kPackFormatVersion;
+    header.headerBytes = harkenstudiobuild::kPackFileHeaderBytes;
     header.fileBytes = fileBytes;
     header.packKind = static_cast<std::uint32_t>(packKind);
     header.entryCount = static_cast<std::uint32_t>(entries.size());
     header.directoryOffset = dirOffset;
     header.directoryChecksum =
         harkenstudiobuild::Fnv1a64(directory.data(), directory.size());
-    std::array<std::uint8_t, harkenstudiobuild::kPackV2HeaderBytes> headerBytes;
-    harkenstudiobuild::SerializePackV2Header(header, headerBytes.data());
+    std::array<std::uint8_t, harkenstudiobuild::kPackFileHeaderBytes> headerBytes;
+    harkenstudiobuild::SerializePackFileHeader(header, headerBytes.data());
     QDir().mkpath(QFileInfo(outputPath).absolutePath());
     QFile file(outputPath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
@@ -1343,24 +1343,24 @@ bool collectExistingEntries(const QString& sourcePath,
         return false;
     }
     const QByteArray bytes = file.readAll();
-    if (bytes.size() < static_cast<int>(harkenstudiobuild::kPackV2HeaderBytes)) {
+    if (bytes.size() < static_cast<int>(harkenstudiobuild::kPackFileHeaderBytes)) {
         if (error)
             *error = QStringLiteral("Pack '%1' is too small").arg(sourcePath);
         return false;
     }
-    harkenstudiobuild::PackV2Header header;
-    if (!harkenstudiobuild::ParsePackV2Header(reinterpret_cast<const std::uint8_t*>(bytes.constData()),
+    harkenstudiobuild::PackFileHeader header;
+    if (!harkenstudiobuild::ReadPackFileHeader(reinterpret_cast<const std::uint8_t*>(bytes.constData()),
                                   &header) ||
-        header.formatVersion != harkenstudiobuild::kPackFormatVersion2) {
+        header.formatVersion != harkenstudiobuild::kPackFormatVersion) {
         if (error)
             *error = QStringLiteral("Pack '%1' is not a v2 container").arg(sourcePath);
         return false;
     }
     harkenizer::resourcecompiler::MediaCache mediaCache;
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
-        const harkenstudiobuild::PackV2DirectoryEntry record = harkenstudiobuild::ParsePackV2DirectoryEntry(
+        const harkenstudiobuild::PackDirectoryEntry record = harkenstudiobuild::ReadPackDirectoryEntry(
             reinterpret_cast<const std::uint8_t*>(bytes.constData()) +
-            header.directoryOffset + i * harkenstudiobuild::kPackV2DirectoryEntryBytes);
+            header.directoryOffset + i * harkenstudiobuild::kPackDirectoryEntryBytes);
         PackBuildSession::CanonicalPackEntry entry;
         entry.kind = record.kind;
         entry.vintage = record.vintage;

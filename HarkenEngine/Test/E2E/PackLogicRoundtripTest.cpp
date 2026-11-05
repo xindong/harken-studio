@@ -289,7 +289,7 @@ TEST(PackLogicRoundtrip, EmptyContentPacksCarryNoRuntimeCargo) {
     std::vector<std::uint8_t> secondBytes;
     ASSERT_TRUE(ReadFileBytes(firstPath, &firstBytes));
     ASSERT_TRUE(ReadFileBytes(secondPath, &secondBytes));
-    ASSERT_EQ(harken::kPackV2HeaderBytes, firstBytes.size());
+    ASSERT_EQ(harken::kPackFileHeaderBytes, firstBytes.size());
     ASSERT_EQ(firstBytes, secondBytes);
 
     VnConfig config = SceneConfig();

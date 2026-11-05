@@ -190,20 +190,20 @@ inline std::vector<std::uint8_t> WithCanonicalBindingRows(
     const VnBindingDesc& desc, const harken::PackBindingAttachmentEntry* attachmentOrNull) {
     using harken::kPackEntryKindBindingAttachment;
     using harken::kPackEntryKindBindingDefinition;
-    using harken::kPackV2DirectoryEntryBytes;
+    using harken::kPackDirectoryEntryBytes;
     using harken::kPackV2SchemaVintage;
-    using harken::ParsePackV2DirectoryEntry;
-    using harken::ParsePackV2Header;
+    using harken::ReadPackDirectoryEntry;
+    using harken::ReadPackFileHeader;
     using harken::SerializePackBindingAttachment;
     using harken::WritePackBindingDefinition;
-    harken::PackV2Header header;
-    if (!ParsePackV2Header(original.data(), &header)) {
+    harken::PackFileHeader header;
+    if (!ReadPackFileHeader(original.data(), &header)) {
         return {};
     }
     packfoundation::ImageBuilder builder(header.packKind);
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
-        const auto entry = ParsePackV2DirectoryEntry(
-            original.data() + header.directoryOffset + i * kPackV2DirectoryEntryBytes);
+        const auto entry = ReadPackDirectoryEntry(
+            original.data() + header.directoryOffset + i * kPackDirectoryEntryBytes);
         const std::uint32_t vintage =
             entry.vintage == 0 ? harken::kPackCanonicalEntryVintage : entry.vintage;
         const auto copied = builder.AddEntry(

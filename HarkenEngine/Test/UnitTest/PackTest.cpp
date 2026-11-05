@@ -82,7 +82,7 @@ std::uint64_t AlignUp64(std::uint64_t value) {
 // tampering tests start from these bytes.
 std::vector<std::uint8_t> BuildPackBytes(
     const std::vector<PackEntrySpec>& specs) {
-    const std::uint64_t tocOffset = harken::kPackHeaderBytes;
+    const std::uint64_t tocOffset = harken::kPackMediaFileHeaderBytes;
     const std::uint64_t tocBytes =
         static_cast<std::uint64_t>(specs.size()) *
         harken::kPackMediaBytes;
@@ -129,14 +129,14 @@ std::vector<std::uint8_t> BuildPackBytes(
     }
     std::memcpy(bytes.data() + tocOffset, toc.data(), toc.size());
 
-    harken::PackHeader header;
+    harken::PackMediaFileHeader header;
     header.formatVersion = harken::kPackFormatVersion;
-    header.headerBytes = harken::kPackHeaderBytes;
+    header.headerBytes = harken::kPackMediaFileHeaderBytes;
     header.fileBytes = fileBytes;
     header.entryCount = static_cast<std::uint32_t>(specs.size());
     header.tocOffset = static_cast<std::uint32_t>(tocOffset);
     header.tocChecksum = harken::Fnv1a64(toc.data(), toc.size());
-    harken::SerializePackHeader(header, bytes.data());
+    harken::SerializePackMediaFileHeader(header, bytes.data());
     return bytes;
 }
 
@@ -152,7 +152,7 @@ constexpr std::size_t kTocEntryBlobOffsetOffset = 24;
 // tripping the checksum first.
 void FixTocChecksum(std::vector<std::uint8_t>* bytes,
                     std::uint32_t entryCount) {
-    const std::size_t tocOffset = harken::kPackHeaderBytes;
+    const std::size_t tocOffset = harken::kPackMediaFileHeaderBytes;
     const std::size_t tocBytes =
         static_cast<std::size_t>(entryCount) *
         harken::kPackMediaBytes;
@@ -752,9 +752,9 @@ TEST(Pack, HeaderDispatchRequiresSupportedSchemaAndKnownLayout) {
             EXPECT_EQ(0u, session.Engine()->registry.Count());
         }
         const auto otherLayout =
-            harken::LoadLE32(valid.data() + 8) == harken::kPackHeaderBytes
-                ? harken::kPackV2HeaderBytes : harken::kPackHeaderBytes;
-        for (const auto headerBytes : {0u, otherLayout}) {
+            harken::LoadLE32(valid.data() + 8) == harken::kPackMediaFileHeaderBytes
+                ? harken::kPackFileHeaderBytes : harken::kPackMediaFileHeaderBytes;
+        for (const auto headerBytes : {std::uint64_t{0}, otherLayout}) {
             auto bytes = valid;
             harken::StoreLE32(bytes.data() + 8, headerBytes);
             WriteFileBytes(path, bytes);
@@ -853,7 +853,7 @@ TEST_F(PackCorruption, FlippedBlobByteRefused) {
     std::vector<std::uint8_t> bytes = TwoEntryPackBytes();
     // First blob starts at the first 64-byte boundary after the TOC.
     const std::size_t blobStart = static_cast<std::size_t>(AlignUp64(
-        harken::kPackHeaderBytes +
+        harken::kPackMediaFileHeaderBytes +
         2ull * harken::kPackMediaBytes));
     bytes[blobStart + 5] ^= 0x01;
     ExpectRefusal("pack_blobflip.pack", bytes, VN_BAD_PACK);
@@ -863,7 +863,7 @@ TEST_F(PackCorruption, FlippedTocByteRefused) {
     std::vector<std::uint8_t> bytes = TwoEntryPackBytes();
     // A soundId byte inside the second TOC entry; the TOC checksum must
     // catch it.
-    bytes[harken::kPackHeaderBytes + harken::kPackMediaBytes] ^=
+    bytes[harken::kPackMediaFileHeaderBytes + harken::kPackMediaBytes] ^=
         0x01;
     ExpectRefusal("pack_tocflip.pack", bytes, VN_BAD_PACK);
 }
@@ -894,7 +894,7 @@ TEST_F(PackCorruption, OutOfBoundsBlobRefused) {
     // the alignment rule passes) and re-seal the TOC checksum: the blob
     // bounds check itself must refuse.
     const std::uint64_t badOffset = AlignUp64(bytes.size() + 4096);
-    harken::StoreLE64(bytes.data() + harken::kPackHeaderBytes +
+    harken::StoreLE64(bytes.data() + harken::kPackMediaFileHeaderBytes +
                          kTocEntryBlobOffsetOffset,
                      badOffset);
     FixTocChecksum(&bytes, 2);

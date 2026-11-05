@@ -363,6 +363,13 @@ def _render_fixed_header(layout: dict, bindings: dict, target: str, kind_layout:
             lines.append(f"inline constexpr std::uint32_t kPack{name}Vintage = {kind['vintage']}u;")
     if kinds:
         lines.append("")
+    lines += [
+        "[[nodiscard]] inline bool PackEntryKindSupported(std::uint32_t kind) noexcept {",
+        "    switch (kind) {",
+    ]
+    for kind in sorted(kind_layout.get("kinds", []), key=lambda kind: kind["id"]):
+        lines.append(f"    case kPackEntryKind{pascal(kind['name'])}: return true;")
+    lines += ["    default: return false;", "    }", "}", ""]
     vintage_parameter = " vintage" if kind_layout.get("kinds") else ""
     lines += [
         f"[[nodiscard]] inline bool VintageLegalForKind(std::uint32_t kind, std::uint32_t{vintage_parameter}) noexcept {{",
@@ -635,8 +642,11 @@ def render_header(layout: dict, bindings: dict, target: str) -> str:
     for name in sorted(streams):
         order(name)
     extents = {name: value["bytes"] for name, value in _fixed_record_layouts(fixed).items()}
+    minimums = dict(extents)
     for record in ordered:
         fields = streams[record]["fields"]
+        minimums[record] = sum(minimums[field["record"]] for field in fields
+                              if field["type"] == "record" and "when" not in field)
         if all(field["type"] == "record" and "when" not in field and field["record"] in extents for field in fields):
             extents[record] = sum(extents[field["record"]] for field in fields)
             lines.append(f"inline constexpr std::uint64_t kPack{pascal(record)}Bytes = {extents[record]}ULL;")
@@ -675,6 +685,9 @@ def render_header(layout: dict, bindings: dict, target: str) -> str:
                         continue
                     args = "row, size" if measure else "buffer, row"
                     lines += [f"{indent}const std::uint64_t {count_var} = {expression};"]
+                    if direction == "Read" and minimums[field["record"]]:
+                        minimum = minimums[field["record"]]
+                        lines += [f"{indent}static_assert(noexcept(buffer.Remaining()));", f"{indent}if ({count_var} > buffer.Remaining() / {minimum}ULL) return false;"]
                     lines += [f"{indent}static_assert(noexcept(visitor.Prepare{label}({count_var})));", f"{indent}if (!visitor.Prepare{label}({count_var})) return false;"]
                     lines += [f"{indent}for (std::uint64_t i = 0; i < {count_var}; ++i) {{", f"{indent}    static_assert(noexcept(visitor.{label}(i)));", f"{indent}    auto&& row = visitor.{label}(i);", f"{indent}    if (!{direction}Pack{codec}({args})) return false;", f"{indent}}}"]
                 else:

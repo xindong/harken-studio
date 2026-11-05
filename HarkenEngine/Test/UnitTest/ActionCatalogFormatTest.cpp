@@ -64,10 +64,10 @@ public:
     }
 
     std::vector<std::uint8_t> Build() {
-        const std::uint64_t dirOffset = kPackV2HeaderBytes;
+        const std::uint64_t dirOffset = kPackFileHeaderBytes;
         const std::uint64_t dirBytes =
             static_cast<std::uint64_t>(entries_.size()) *
-            kPackV2DirectoryEntryBytes;
+            kPackDirectoryEntryBytes;
         const std::uint64_t dirEnd = dirOffset + dirBytes;
         payloadOffsets_.assign(entries_.size(), 0);
         std::uint64_t cursor = AlignUp(dirEnd, kPackV2PayloadAlign);
@@ -84,7 +84,7 @@ public:
                         entries_[i].payload.data(), entries_[i].payload.size());
         }
         for (std::size_t i = 0; i < entries_.size(); ++i) {
-            PackV2DirectoryEntry record;
+            PackDirectoryEntry record;
             record.kind = entries_[i].kind;
             record.vintage = entries_[i].vintage;
             record.id = entries_[i].id;
@@ -94,13 +94,13 @@ public:
             record.payloadChecksum = Fnv1a64(
                 bytes.data() + static_cast<std::size_t>(payloadOffsets_[i]),
                 static_cast<std::size_t>(record.size));
-            SerializePackV2DirectoryEntry(
+            SerializePackDirectoryEntry(
                 record, bytes.data() + static_cast<std::size_t>(dirOffset) +
-                            i * kPackV2DirectoryEntryBytes);
+                            i * kPackDirectoryEntryBytes);
         }
-        PackV2Header header;
-        header.formatVersion = kPackFormatVersion2;
-        header.headerBytes = kPackV2HeaderBytes;
+        PackFileHeader header;
+        header.formatVersion = kPackFormatVersion;
+        header.headerBytes = kPackFileHeaderBytes;
         header.fileBytes = contentEnd;
         header.packKind = packKind_;
         header.entryCount = static_cast<std::uint32_t>(entries_.size());
@@ -108,7 +108,7 @@ public:
         header.directoryChecksum =
             Fnv1a64(bytes.data() + static_cast<std::size_t>(dirOffset),
                     static_cast<std::size_t>(dirBytes));
-        SerializePackV2Header(header, bytes.data());
+        SerializePackFileHeader(header, bytes.data());
         return bytes;
     }
 

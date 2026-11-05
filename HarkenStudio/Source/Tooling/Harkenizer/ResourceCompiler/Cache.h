@@ -439,22 +439,22 @@ struct PreviousPack {
 // reason, and the build degrades to clean.
 inline void LoadPreviousPackV2Media(PreviousPack* out,
                                     std::string* outIgnoreReason) {
-    if (out->bytes.size() < harkenstudiobuild::kPackV2HeaderBytes) {
+    if (out->bytes.size() < harkenstudiobuild::kPackFileHeaderBytes) {
         *outIgnoreReason = "previous output is unreadable or truncated";
         return;
     }
-    harkenstudiobuild::PackV2Header header;
-    if (!harkenstudiobuild::ParsePackV2Header(out->bytes.data(), &header) ||
-        header.formatVersion != harkenstudiobuild::kPackFormatVersion2 ||
-        header.headerBytes != harkenstudiobuild::kPackV2HeaderBytes ||
+    harkenstudiobuild::PackFileHeader header;
+    if (!harkenstudiobuild::ReadPackFileHeader(out->bytes.data(), &header) ||
+        header.formatVersion != harkenstudiobuild::kPackFormatVersion ||
+        header.headerBytes != harkenstudiobuild::kPackFileHeaderBytes ||
         header.fileBytes != out->bytes.size() ||
-        header.directoryOffset != harkenstudiobuild::kPackV2HeaderBytes) {
+        header.directoryOffset != harkenstudiobuild::kPackFileHeaderBytes) {
         *outIgnoreReason = "previous output header does not validate";
         return;
     }
     const std::uint64_t dirBytes =
         static_cast<std::uint64_t>(header.entryCount) *
-        harkenstudiobuild::kPackV2DirectoryEntryBytes;
+        harkenstudiobuild::kPackDirectoryEntryBytes;
     if (header.directoryOffset + dirBytes > out->bytes.size()) {
         *outIgnoreReason =
             "previous output directory is out of bounds";
@@ -469,10 +469,10 @@ inline void LoadPreviousPackV2Media(PreviousPack* out,
         return;
     }
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
-        const harkenstudiobuild::PackV2DirectoryEntry entry =
-            harkenstudiobuild::ParsePackV2DirectoryEntry(
+        const harkenstudiobuild::PackDirectoryEntry entry =
+            harkenstudiobuild::ReadPackDirectoryEntry(
                 dir + static_cast<std::size_t>(i) *
-                          harkenstudiobuild::kPackV2DirectoryEntryBytes);
+                          harkenstudiobuild::kPackDirectoryEntryBytes);
         if (entry.kind != harkenstudiobuild::kPackEntryKindMedia) {
             continue;
         }
@@ -522,23 +522,23 @@ inline void LoadPreviousPack(const std::string& path, PreviousPack* out,
         }
     }
     if (!ReadBinaryFile(path, &out->bytes) ||
-        out->bytes.size() < harkenstudiobuild::kPackHeaderBytes) {
+        out->bytes.size() < harkenstudiobuild::kPackMediaFileHeaderBytes) {
         *outIgnoreReason = "previous output is unreadable or truncated";
         return;
     }
-    harkenstudiobuild::PackHeader header;
-    if (!harkenstudiobuild::ParsePackHeader(out->bytes.data(), &header) ||
+    harkenstudiobuild::PackMediaFileHeader header;
+    if (!harkenstudiobuild::ReadPackMediaFileHeader(out->bytes.data(), &header) ||
         header.formatVersion != harkenstudiobuild::kPackFormatVersion) {
         *outIgnoreReason = "previous output header does not validate";
         return;
     }
-    if (header.headerBytes == harkenstudiobuild::kPackV2HeaderBytes) {
+    if (header.headerBytes == harkenstudiobuild::kPackFileHeaderBytes) {
         LoadPreviousPackV2Media(out, outIgnoreReason);
         return;
     }
-    if (header.headerBytes != harkenstudiobuild::kPackHeaderBytes ||
+    if (header.headerBytes != harkenstudiobuild::kPackMediaFileHeaderBytes ||
         header.fileBytes != out->bytes.size() ||
-        header.tocOffset != harkenstudiobuild::kPackHeaderBytes) {
+        header.tocOffset != harkenstudiobuild::kPackMediaFileHeaderBytes) {
         *outIgnoreReason = "previous output header does not validate";
         return;
     }

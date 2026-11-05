@@ -19,9 +19,6 @@
 
 namespace harkenstudiobuild {
 
-inline constexpr std::uint32_t kPackFormatVersion2 = HARKEN_PACK_SCHEMA_VERSION;
-inline constexpr std::uint32_t kPackV2HeaderBytes = 44;
-inline constexpr std::uint32_t kPackV2DirectoryEntryBytes = 56;
 inline constexpr std::uint32_t kPackKindResident = 0;
 inline constexpr std::uint32_t kPackKindContent = 1;
 inline constexpr std::uint32_t kPackKindInit = 2;
@@ -29,8 +26,6 @@ inline constexpr std::uint32_t kPackKindCanonicalContent = 3;
 inline constexpr std::uint32_t kPackEntryKindInitRoutingCatalog = 20;
 inline constexpr std::uint32_t kPackEntryKindCanonicalDefinitionPartition = 21;
 inline constexpr std::uint32_t kPackEntryKindGameplayCatalog = 25;
-inline constexpr std::uint32_t kPackEntryKindVariablePolicyOverlay = 26;
-inline constexpr std::uint32_t kPackEntryKindVariableRequirements = 27;
 inline constexpr std::uint32_t kPackEntryKindVariableNameCatalog = 28;
 inline constexpr std::uint32_t kPackVariablePolicyOverlayFormat = 2;
 inline constexpr std::uint32_t kPackCanonicalEntryVintage = 1;
@@ -62,15 +57,6 @@ inline constexpr std::uint32_t kPackVoiceToneEnableMask =
     kPackVoiceToneLowShelfEnabled | kPackVoiceToneHighShelfEnabled;
 
 
-
-
-
-
-
-
-
-
-
 inline void StoreLEF32(std::uint8_t* out, float v) {
     std::uint32_t bits;
     std::memcpy(&bits, &v, sizeof bits);
@@ -84,25 +70,6 @@ inline float LoadLEF32(const std::uint8_t* in) {
     return v;
 }
 
-struct PackV2Header {
-    std::uint32_t formatVersion = 0;
-    std::uint32_t headerBytes = 0;
-    std::uint64_t fileBytes = 0;
-    std::uint32_t packKind = 0;
-    std::uint32_t entryCount = 0;
-    std::uint64_t directoryOffset = 0;
-    std::uint64_t directoryChecksum = 0;
-};
-
-struct PackV2DirectoryEntry {
-    std::uint32_t kind = 0;
-    std::uint32_t vintage = 0;
-    harkenstudio::ObjectId id{};
-    std::uint64_t relationOrdinal = 0;
-    std::uint64_t offset = 0;  // payload file offset
-    std::uint64_t size = 0;    // payload byte size
-    std::uint64_t payloadChecksum = 0;
-};
 
 struct PackBusEntry {
     harkenstudio::ObjectId busId{};
@@ -215,129 +182,6 @@ struct PackContainerChild {
     std::uint32_t delayMs = 0;
     std::uint32_t delayJitterMs = 0;
 };
-
-inline void SerializePackV2Header(const PackV2Header& h, std::uint8_t* out) {
-    out[0] = kPackMagic[0];
-    out[1] = kPackMagic[1];
-    out[2] = kPackMagic[2];
-    out[3] = kPackMagic[3];
-    StoreLE32(out + 4, h.formatVersion);
-    StoreLE32(out + 8, h.headerBytes);
-    StoreLE64(out + 12, h.fileBytes);
-    StoreLE32(out + 20, h.packKind);
-    StoreLE32(out + 24, h.entryCount);
-    StoreLE64(out + 28, h.directoryOffset);
-    StoreLE64(out + 36, h.directoryChecksum);
-}
-inline bool ParsePackV2Header(const std::uint8_t* in, PackV2Header* out) {
-    if (in[0] != kPackMagic[0] || in[1] != kPackMagic[1] ||
-        in[2] != kPackMagic[2] || in[3] != kPackMagic[3]) {
-        return false;
-    }
-    out->formatVersion = LoadLE32(in + 4);
-    out->headerBytes = LoadLE32(in + 8);
-    out->fileBytes = LoadLE64(in + 12);
-    out->packKind = LoadLE32(in + 20);
-    out->entryCount = LoadLE32(in + 24);
-    out->directoryOffset = LoadLE64(in + 28);
-    out->directoryChecksum = LoadLE64(in + 36);
-    return true;
-}
-
-inline void SerializePackV2DirectoryEntry(const PackV2DirectoryEntry& e,
-                                          std::uint8_t* out) {
-    StoreLE32(out + 0, e.kind);
-    StoreLE32(out + 4, e.vintage);
-    StoreObjectId(out + 8, e.id);
-    StoreLE64(out + 24, e.offset);
-    StoreLE64(out + 32, e.size);
-    StoreLE64(out + 40, e.payloadChecksum);
-    StoreLE64(out + 48, e.relationOrdinal);
-}
-
-inline PackV2DirectoryEntry ParsePackV2DirectoryEntry(const std::uint8_t* in) {
-    PackV2DirectoryEntry e;
-    e.kind = LoadLE32(in + 0);
-    e.vintage = LoadLE32(in + 4);
-    e.id = LoadObjectId(in + 8);
-    e.offset = LoadLE64(in + 24);
-    e.size = LoadLE64(in + 32);
-    e.payloadChecksum = LoadLE64(in + 40);
-    e.relationOrdinal = LoadLE64(in + 48);
-    return e;
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 inline constexpr std::uint32_t kInitCatalogHeaderBytes = 88;
@@ -720,21 +564,6 @@ inline bool ParsePackInitCatalogRow(const std::uint8_t* in,
     }
     return true;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 inline void SerializePackCanonicalPartitionHeader(
@@ -1182,6 +1011,76 @@ inline bool EncodeGameplayCatalog(
 
 }
 
+namespace harkenstudiobuild {
+struct PackFilePrefix {
+    std::uint32_t formatVersion{};
+    std::uint32_t headerBytes{};
+};
+
+struct PackFileHeader {
+    std::uint32_t formatVersion{};
+    std::uint32_t headerBytes{};
+    std::uint64_t fileBytes{};
+    std::uint32_t packKind{};
+    std::uint32_t entryCount{};
+    std::uint64_t directoryOffset{};
+    std::uint64_t directoryChecksum{};
+};
+
+struct PackMediaFileHeader {
+    std::uint32_t formatVersion{};
+    std::uint32_t headerBytes{};
+    std::uint64_t fileBytes{};
+    std::uint32_t entryCount{};
+    std::uint32_t tocOffset{};
+    std::uint64_t tocChecksum{};
+};
+
+struct PackDirectoryEntry {
+    std::uint32_t kind{};
+    std::uint32_t vintage{};
+    harkenstudio::ObjectId id{};
+    std::uint64_t offset{};
+    std::uint64_t size{};
+    std::uint64_t payloadChecksum{};
+    std::uint64_t relationOrdinal{};
+};
+
+struct PackVariablePolicyHeader {
+    std::uint32_t rowCount{};
+};
+
+struct PackVariablePolicyRow {
+    harkenstudio::ObjectId variableId{};
+    std::uint8_t writers{};
+    std::uint64_t executionFingerprint{};
+};
+
+struct PackVariableAnchorHeader {
+    std::uint32_t count{};
+};
+
+struct PackVariableLabelHeader {
+    std::uint64_t labelMappingFingerprint{};
+    std::uint32_t labelCount{};
+};
+
+struct PackVariableLabel {
+    harkenstudio::ObjectId labelId{};
+    std::int32_t anchor{};
+};
+
+struct PackVariableRequirementsHeader {
+    std::uint32_t rowCount{};
+};
+
+struct PackVariableRequirement {
+    harkenstudio::ObjectId stableId{};
+    std::uint64_t expectedExecutionFingerprint{};
+    std::uint64_t expectedLabelMappingFingerprint{};
+};
+}
+
 #include <harken_studio_build/generated/harken_pack_wire.g.h>
 
 namespace harkenstudiobuild {
@@ -1214,6 +1113,7 @@ struct PackWireBuffer {
     Byte* data;
     std::uint64_t size;
     std::uint64_t offset = 0;
+    std::uint64_t Remaining() const noexcept { return size - offset; }
     Byte* Take(std::uint64_t bytes) noexcept {
         if (bytes > size - offset) return nullptr;
         Byte* result = data + offset;
@@ -1481,5 +1381,23 @@ inline bool ReadPackBusDefinitionSnapshotHeader(
 }
 
 } // namespace harkenstudiobuild
+
+namespace harkenstudiobuild {
+
+inline bool ReadPackMediaFileHeader(const std::uint8_t* in, PackMediaFileHeader* out) noexcept {
+    return ParsePackMediaFileHeader(in, kPackMediaFileHeaderBytes, out);
+}
+
+inline bool ReadPackFileHeader(const std::uint8_t* in, PackFileHeader* out) noexcept {
+    return ParsePackFileHeader(in, kPackFileHeaderBytes, out);
+}
+
+inline PackDirectoryEntry ReadPackDirectoryEntry(const std::uint8_t* in) noexcept {
+    PackDirectoryEntry row;
+    (void)ParsePackDirectoryEntry(in, kPackDirectoryEntryBytes, &row);
+    return row;
+}
+
+}
 
 #endif // HARKEN_STUDIO_BUILD_PACK_FORMAT_V2_H

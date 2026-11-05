@@ -666,10 +666,10 @@ public:
     }
 
     std::vector<std::uint8_t> Build() {
-        const std::uint64_t dirOffset = harken::kPackV2HeaderBytes;
+        const std::uint64_t dirOffset = harken::kPackFileHeaderBytes;
         const std::uint64_t dirBytes =
             static_cast<std::uint64_t>(m_entries.size()) *
-            harken::kPackV2DirectoryEntryBytes;
+            harken::kPackDirectoryEntryBytes;
         const std::uint64_t dirEnd = dirOffset + dirBytes;
 
         m_payloadOffsets.assign(m_entries.size(), 0);
@@ -726,7 +726,7 @@ public:
         }
         for (std::size_t i = 0; i < m_entries.size(); ++i) {
             const Entry& entry = m_entries[i];
-            harken::PackV2DirectoryEntry record;
+            harken::PackDirectoryEntry record;
             record.kind = entry.kind;
             record.vintage = entry.vintage;
             record.id = entry.id;
@@ -736,13 +736,13 @@ public:
             record.payloadChecksum = harken::Fnv1a64(
                 bytes.data() + static_cast<std::size_t>(m_payloadOffsets[i]),
                 static_cast<std::size_t>(record.size));
-            harken::SerializePackV2DirectoryEntry(
+            harken::SerializePackDirectoryEntry(
                 record, bytes.data() + static_cast<std::size_t>(dirOffset) +
-                            i * harken::kPackV2DirectoryEntryBytes);
+                            i * harken::kPackDirectoryEntryBytes);
         }
-        harken::PackV2Header header;
-        header.formatVersion = harken::kPackFormatVersion2;
-        header.headerBytes = harken::kPackV2HeaderBytes;
+        harken::PackFileHeader header;
+        header.formatVersion = harken::kPackFormatVersion;
+        header.headerBytes = harken::kPackFileHeaderBytes;
         header.fileBytes = fileBytes;
         header.packKind = m_packKind;
         header.entryCount = static_cast<std::uint32_t>(m_entries.size());
@@ -750,7 +750,7 @@ public:
         header.directoryChecksum = harken::Fnv1a64(
             bytes.data() + static_cast<std::size_t>(dirOffset),
             static_cast<std::size_t>(dirBytes));
-        harken::SerializePackV2Header(header, bytes.data());
+        harken::SerializePackFileHeader(header, bytes.data());
         return bytes;
     }
 
@@ -2196,7 +2196,6 @@ TEST(PackLogicLoad, InvalidVoiceEffectRecipeLocatorsRefuseWithoutResidue) {
 }
 
 
-
 TEST(PackLogicLoad, BindingTransitionRangeRefusesBeforeEngineStateChanges) {
     EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -2956,7 +2955,7 @@ TEST(PackLogicLoad, CorruptedPackLeavesEngineUntouched) {
     // One flipped directory byte: the directory checksum refuses.
     {
         std::vector<std::uint8_t> bytes = intact;
-        bytes[harken::kPackV2HeaderBytes + 16] ^= 0x01;
+        bytes[harken::kPackFileHeaderBytes + 16] ^= 0x01;
         const std::string path = TempPath("pll_corrupt_directory.pack");
         WriteFileBytes(path, bytes);
         VnPackHandle pack = 0;
@@ -4134,7 +4133,6 @@ TEST(PackLogicAggregateCapacity, AttenuationSumPreparesWholeLoadBeyond64) {
     EXPECT_NE(nullptr, engine->spatial.FindProfile(harkentest::ObjectId(9101)));
     EXPECT_NE(nullptr, engine->spatial.FindProfile(harkentest::ObjectId(9102)));
 }
-
 
 
 TEST(PackLogicAggregateCapacity, SendSlotBudgetSumRefusesWholeLoad) {
@@ -5692,7 +5690,6 @@ TEST(PackLogicUnload, IdenticalReattachAfterDetachStaysCallerOwned) {
     EXPECT_FALSE(engine->registry.Lookup(harkentest::ObjectId(1071)).Valid());
     EXPECT_EQ(VN_UNKNOWN_ID, Vn_AttachBinding(harkentest::ObjectId(1073), &triple));
 }
-
 
 
 // --- replace: staged revision, activation at the update tick ---

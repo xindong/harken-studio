@@ -67,10 +67,10 @@ public:
     }
 
     std::vector<std::uint8_t> Build() {
-        const std::uint64_t dirOffset = kPackV2HeaderBytes;
+        const std::uint64_t dirOffset = kPackFileHeaderBytes;
         const std::uint64_t dirBytes =
             static_cast<std::uint64_t>(entries_.size()) *
-            kPackV2DirectoryEntryBytes;
+            kPackDirectoryEntryBytes;
         const std::uint64_t dirEnd = dirOffset + dirBytes;
         payloadOffsets_.assign(entries_.size(), 0);
         std::uint64_t cursor = AlignUp(dirEnd, kPackV2PayloadAlign);
@@ -87,7 +87,7 @@ public:
                         entries_[i].payload.data(), entries_[i].payload.size());
         }
         for (std::size_t i = 0; i < entries_.size(); ++i) {
-            PackV2DirectoryEntry record;
+            PackDirectoryEntry record;
             record.kind = entries_[i].kind;
             record.vintage = entries_[i].vintage;
             record.id = entries_[i].id;
@@ -97,13 +97,13 @@ public:
             record.payloadChecksum = Fnv1a64(
                 bytes.data() + static_cast<std::size_t>(payloadOffsets_[i]),
                 static_cast<std::size_t>(record.size));
-            SerializePackV2DirectoryEntry(
+            SerializePackDirectoryEntry(
                 record, bytes.data() + static_cast<std::size_t>(dirOffset) +
-                            i * kPackV2DirectoryEntryBytes);
+                            i * kPackDirectoryEntryBytes);
         }
-        PackV2Header header;
-        header.formatVersion = kPackFormatVersion2;
-        header.headerBytes = kPackV2HeaderBytes;
+        PackFileHeader header;
+        header.formatVersion = kPackFormatVersion;
+        header.headerBytes = kPackFileHeaderBytes;
         header.fileBytes = contentEnd;
         header.packKind = packKind_;
         header.entryCount = static_cast<std::uint32_t>(entries_.size());
@@ -111,7 +111,7 @@ public:
         header.directoryChecksum =
             Fnv1a64(bytes.data() + static_cast<std::size_t>(dirOffset),
                     static_cast<std::size_t>(dirBytes));
-        SerializePackV2Header(header, bytes.data());
+        SerializePackFileHeader(header, bytes.data());
         return bytes;
     }
 
@@ -135,37 +135,37 @@ private:
 
 void RecomputeChecksums(std::vector<std::uint8_t>* bytes,
                         bool includePayloadChecksums = true) {
-    PackV2Header header;
-    ASSERT_TRUE(ParsePackV2Header(bytes->data(), &header));
+    PackFileHeader header;
+    ASSERT_TRUE(ReadPackFileHeader(bytes->data(), &header));
     const std::size_t dir = static_cast<std::size_t>(header.directoryOffset);
     for (std::uint32_t i = 0; includePayloadChecksums && i < header.entryCount; ++i) {
         std::uint8_t* record =
-            bytes->data() + dir + i * kPackV2DirectoryEntryBytes;
-        PackV2DirectoryEntry entry = ParsePackV2DirectoryEntry(record);
+            bytes->data() + dir + i * kPackDirectoryEntryBytes;
+        PackDirectoryEntry entry = ReadPackDirectoryEntry(record);
         entry.payloadChecksum =
             Fnv1a64(bytes->data() + static_cast<std::size_t>(entry.offset),
                     static_cast<std::size_t>(entry.size));
-        SerializePackV2DirectoryEntry(entry, record);
+        SerializePackDirectoryEntry(entry, record);
     }
     header.directoryChecksum = Fnv1a64(
         bytes->data() + dir,
-        static_cast<std::size_t>(header.entryCount) * kPackV2DirectoryEntryBytes);
-    SerializePackV2Header(header, bytes->data());
+        static_cast<std::size_t>(header.entryCount) * kPackDirectoryEntryBytes);
+    SerializePackFileHeader(header, bytes->data());
 }
 
 template <typename Mutator>
 void RewriteCanonicalPartitionWorld(std::vector<std::uint8_t>* bytes,
                                     Mutator mutate) {
     ASSERT_NE(bytes, nullptr);
-    PackV2Header packHeader;
-    ASSERT_TRUE(ParsePackV2Header(bytes->data(), &packHeader));
+    PackFileHeader packHeader;
+    ASSERT_TRUE(ReadPackFileHeader(bytes->data(), &packHeader));
     bool found = false;
     const std::size_t directoryOffset =
         static_cast<std::size_t>(packHeader.directoryOffset);
     for (std::uint32_t i = 0; i < packHeader.entryCount; ++i) {
-        const PackV2DirectoryEntry entry = ParsePackV2DirectoryEntry(
+        const PackDirectoryEntry entry = ReadPackDirectoryEntry(
             bytes->data() + directoryOffset +
-            i * kPackV2DirectoryEntryBytes);
+            i * kPackDirectoryEntryBytes);
         if (entry.kind != kPackEntryKindCanonicalDefinitionPartition) {
             continue;
         }
@@ -572,31 +572,38 @@ struct Kind26RowSpec {
     std::uint8_t writers = 1;
     std::uint64_t executionFingerprint = 1;
     std::vector<std::int32_t> discreteAnchors;
+    std::vector<VariableLabelDefinitionV1> labels;
 };
 
 std::vector<std::uint8_t> Kind26Payload(std::vector<Kind26RowSpec> rows) {
-    std::size_t bytes = 16 + rows.size() * 32;
+    std::size_t bytes = kPackVariablePolicyHeaderBytes + rows.size() *
+        (kPackVariablePolicyRowBytes + kPackVariableAnchorCountBytes + kPackVariableLabelHeaderBytes);
     for (const auto& row : rows) {
-        bytes += 4 + row.discreteAnchors.size() * 4;
+        bytes += row.discreteAnchors.size() * kPackVariableAnchorBytes;
+        bytes += row.labels.size() * kPackVariableLabelBytes;
     }
     std::vector<std::uint8_t> payload(bytes, 0);
-    StoreLE32(payload.data(), static_cast<std::uint32_t>(rows.size()));
-    std::size_t rowOffset = 16;
+    SerializePackVariablePolicyHeader({static_cast<std::uint32_t>(rows.size())}, payload.data());
+    std::size_t cursor = kPackVariablePolicyHeaderBytes;
     for (const auto& row : rows) {
-        StoreObjectId(payload.data() + rowOffset, row.variableId);
-        payload[rowOffset + 16] = row.writers;
-        StoreLE64(payload.data() + rowOffset + 24, row.executionFingerprint);
-        rowOffset += 32;
+        SerializePackVariablePolicyRow({row.variableId, row.writers, row.executionFingerprint}, payload.data() + cursor);
+        cursor += kPackVariablePolicyRowBytes;
     }
-    std::size_t cursor = 16 + rows.size() * 32;
     for (const auto& row : rows) {
-        StoreLE32(payload.data() + cursor,
-                  static_cast<std::uint32_t>(row.discreteAnchors.size()));
-        cursor += 4;
+        SerializePackVariableAnchorCount({static_cast<std::uint32_t>(row.discreteAnchors.size())}, payload.data() + cursor);
+        cursor += kPackVariableAnchorCountBytes;
         for (std::int32_t anchor : row.discreteAnchors) {
-            StoreLE32(payload.data() + cursor,
-                      static_cast<std::uint32_t>(anchor));
-            cursor += 4;
+            SerializePackVariableAnchor(anchor, payload.data() + cursor);
+            cursor += kPackVariableAnchorBytes;
+        }
+    }
+    for (const auto& row : rows) {
+        const auto mapping = ComputeVariableLabelMappingFingerprintV1(row.variableId, row.labels);
+        SerializePackVariableLabelHeader({mapping, static_cast<std::uint32_t>(row.labels.size())}, payload.data() + cursor);
+        cursor += kPackVariableLabelHeaderBytes;
+        for (const auto& label : row.labels) {
+            SerializePackVariableLabel({label.labelId, label.anchor}, payload.data() + cursor);
+            cursor += kPackVariableLabelBytes;
         }
     }
     return payload;
@@ -673,15 +680,14 @@ struct Kind27RowSpec {
 };
 
 std::vector<std::uint8_t> Kind27Payload(std::vector<Kind27RowSpec> rows) {
-    std::vector<std::uint8_t> payload(16 + rows.size() * 32, 0);
-    StoreLE32(payload.data(), static_cast<std::uint32_t>(rows.size()));
-    std::size_t offset = 16;
+    std::vector<std::uint8_t> payload(kPackVariableRequirementsHeaderBytes + rows.size() * kPackVariableRequirementBytes, 0);
+    SerializePackVariableRequirementsHeader({static_cast<std::uint32_t>(rows.size())}, payload.data());
+    std::size_t offset = kPackVariableRequirementsHeaderBytes;
     for (const auto& row : rows) {
-        payload[offset] = row.identityClass;
-        StoreObjectId(payload.data() + offset + 8, row.stableId);
-        StoreLE64(payload.data() + offset + 24,
-                  row.expectedExecutionFingerprint);
-        offset += 32;
+        SerializePackVariableRequirement({row.stableId, row.expectedExecutionFingerprint,
+            ComputeVariableLabelMappingFingerprintV1(row.stableId, {})}, payload.data() + offset);
+        payload[offset + kPackVariableRequirementIdentityClassOffset] = row.identityClass;
+        offset += kPackVariableRequirementBytes;
     }
     return payload;
 }
@@ -751,12 +757,12 @@ std::filesystem::path CanonicalReadTestPath(const char* filename) {
 
 TEST(PackCanonicalFormat, BoundedFileKeepsDirectoryOrderAndFinalSampleIdentity) {
     auto bytes = BuildCanonicalMediaFixture({40006, 17000, 90001});
-    PackV2Header header;
-    ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
-    auto* firstRecord = bytes.data() + header.directoryOffset + kPackV2DirectoryEntryBytes;
-    auto* lastRecord = firstRecord + 2 * kPackV2DirectoryEntryBytes;
-    const auto first = ParsePackV2DirectoryEntry(firstRecord);
-    const auto last = ParsePackV2DirectoryEntry(lastRecord);
+    PackFileHeader header;
+    ASSERT_TRUE(ReadPackFileHeader(bytes.data(), &header));
+    auto* firstRecord = bytes.data() + header.directoryOffset + kPackDirectoryEntryBytes;
+    auto* lastRecord = firstRecord + 2 * kPackDirectoryEntryBytes;
+    const auto first = ReadPackDirectoryEntry(firstRecord);
+    const auto last = ReadPackDirectoryEntry(lastRecord);
     auto media = ReadPackMedia(bytes.data() + first.offset);
     media.channelCount = 2;
     media.frameCount /= 2;
@@ -772,8 +778,8 @@ TEST(PackCanonicalFormat, BoundedFileKeepsDirectoryOrderAndFinalSampleIdentity) 
                 &negativeZero, sizeof(float));
     finalMedia.blobChecksum = Fnv1a64(bytes.data() + finalMedia.blobOffset, finalMedia.blobBytes);
     SerializePackMedia(finalMedia, bytes.data() + last.offset);
-    SerializePackV2DirectoryEntry(last, firstRecord);
-    SerializePackV2DirectoryEntry(first, lastRecord);
+    SerializePackDirectoryEntry(last, firstRecord);
+    SerializePackDirectoryEntry(first, lastRecord);
     RecomputeChecksums(&bytes);
     PackCanonicalImage expected;
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &expected));
@@ -840,12 +846,12 @@ TEST(PackCanonicalFormat, BoundedFileSharesOnlyExactDuplicateMediaWithinFile) {
     for (const bool equal : {true, false}) {
         SCOPED_TRACE(equal);
         auto bytes = BuildCanonicalMediaFixture({90001, 90001});
-        PackV2Header header;
-        ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
-        auto* firstRecord = bytes.data() + header.directoryOffset + kPackV2DirectoryEntryBytes;
-        auto* secondRecord = firstRecord + kPackV2DirectoryEntryBytes;
-        const auto first = ParsePackV2DirectoryEntry(firstRecord);
-        auto second = ParsePackV2DirectoryEntry(secondRecord);
+        PackFileHeader header;
+        ASSERT_TRUE(ReadPackFileHeader(bytes.data(), &header));
+        auto* firstRecord = bytes.data() + header.directoryOffset + kPackDirectoryEntryBytes;
+        auto* secondRecord = firstRecord + kPackDirectoryEntryBytes;
+        const auto first = ReadPackDirectoryEntry(firstRecord);
+        auto second = ReadPackDirectoryEntry(secondRecord);
         const auto firstMedia = ReadPackMedia(bytes.data() + first.offset);
         auto secondMedia = ReadPackMedia(bytes.data() + second.offset);
         second.id = first.id;
@@ -857,8 +863,8 @@ TEST(PackCanonicalFormat, BoundedFileSharesOnlyExactDuplicateMediaWithinFile) {
                     &last, sizeof(last));
         secondMedia.blobChecksum = Fnv1a64(bytes.data() + secondMedia.blobOffset, secondMedia.blobBytes);
         SerializePackMedia(secondMedia, bytes.data() + second.offset);
-        SerializePackV2DirectoryEntry(second, firstRecord);
-        SerializePackV2DirectoryEntry(first, secondRecord);
+        SerializePackDirectoryEntry(second, firstRecord);
+        SerializePackDirectoryEntry(first, secondRecord);
         RecomputeChecksums(&bytes);
         PackCanonicalImage image;
         ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
@@ -978,17 +984,17 @@ TEST(PackCanonicalFormat, AdjacentMediaWithLongerFirstBlobPreserveOddTail) {
 
 TEST(PackCanonicalFormat, MediaDirectoryOrderCanReversePhysicalBlobOrder) {
     auto bytes = BuildCanonicalMediaFixture({7, 3, 5});
-    PackV2Header header;
-    ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
+    PackFileHeader header;
+    ASSERT_TRUE(ReadPackFileHeader(bytes.data(), &header));
     ASSERT_EQ(4u, header.entryCount);
-    auto* firstRecord = bytes.data() + header.directoryOffset + kPackV2DirectoryEntryBytes;
-    auto* lastRecord = bytes.data() + header.directoryOffset + 3 * kPackV2DirectoryEntryBytes;
-    const auto first = ParsePackV2DirectoryEntry(firstRecord);
-    const auto last = ParsePackV2DirectoryEntry(lastRecord);
+    auto* firstRecord = bytes.data() + header.directoryOffset + kPackDirectoryEntryBytes;
+    auto* lastRecord = bytes.data() + header.directoryOffset + 3 * kPackDirectoryEntryBytes;
+    const auto first = ReadPackDirectoryEntry(firstRecord);
+    const auto last = ReadPackDirectoryEntry(lastRecord);
     ASSERT_EQ(kPackEntryKindMedia, first.kind);
     ASSERT_EQ(kPackEntryKindMedia, last.kind);
-    SerializePackV2DirectoryEntry(last, firstRecord);
-    SerializePackV2DirectoryEntry(first, lastRecord);
+    SerializePackDirectoryEntry(last, firstRecord);
+    SerializePackDirectoryEntry(first, lastRecord);
     RecomputeChecksums(&bytes, false);
     const auto expectedHash = Fnv1a64(bytes.data(), bytes.size());
     const std::array<std::uint64_t, 3> frames{5, 3, 7};
@@ -1035,11 +1041,11 @@ TEST(PackCanonicalFormat, AdjacentMediaRejectNextPayloadAndBlobBounds) {
     for (unsigned invalid = 0; invalid < 9; ++invalid) {
         SCOPED_TRACE(invalid);
         auto bytes = original;
-        PackV2Header header;
-        ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
+        PackFileHeader header;
+        ASSERT_TRUE(ReadPackFileHeader(bytes.data(), &header));
         auto* record = bytes.data() + header.directoryOffset +
-                       2 * kPackV2DirectoryEntryBytes;
-        auto next = ParsePackV2DirectoryEntry(record);
+                       2 * kPackDirectoryEntryBytes;
+        auto next = ReadPackDirectoryEntry(record);
         switch (invalid) {
         case 0:
             --next.size;
@@ -1073,7 +1079,7 @@ TEST(PackCanonicalFormat, AdjacentMediaRejectNextPayloadAndBlobBounds) {
             break;
         }
         }
-        SerializePackV2DirectoryEntry(next, record);
+        SerializePackDirectoryEntry(next, record);
         // Deliberately invalid spans must not be followed while restamping.
         RecomputeChecksums(&bytes, false);
         ExpectCanonicalMediaRefusal(bytes, VN_BAD_PACK);
@@ -1089,11 +1095,11 @@ TEST(PackCanonicalFormat, AdjacentMediaKeepOriginalValidationOrder) {
     for (unsigned invalid = 0; invalid < 3; ++invalid) {
         SCOPED_TRACE(invalid);
         auto bytes = original;
-        PackV2Header header;
-        ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
+        PackFileHeader header;
+        ASSERT_TRUE(ReadPackFileHeader(bytes.data(), &header));
         auto* record = bytes.data() + header.directoryOffset +
-                       2 * kPackV2DirectoryEntryBytes;
-        auto next = ParsePackV2DirectoryEntry(record);
+                       2 * kPackDirectoryEntryBytes;
+        auto next = ReadPackDirectoryEntry(record);
         if (invalid == 0) {
             next.payloadChecksum ^= 1u;
         } else {
@@ -1101,7 +1107,7 @@ TEST(PackCanonicalFormat, AdjacentMediaKeepOriginalValidationOrder) {
             if (invalid == 2)
                 bytes[static_cast<std::size_t>(valid.media[0].blobOffset)] ^= 1u;
         }
-        SerializePackV2DirectoryEntry(next, record);
+        SerializePackDirectoryEntry(next, record);
         RecomputeChecksums(&bytes, false);
         ExpectCanonicalMediaRefusal(
             bytes, invalid == 1 ? VN_PACK_INCOMPATIBLE : VN_BAD_PACK);
@@ -1475,12 +1481,12 @@ TEST(PackCanonicalFormat, ConstructionAInitParsesAndFilledHashChecksumsAreReject
     ASSERT_NE(row, nullptr);
     EXPECT_NE(0u, row->expectedContentHash);
 
-    PackV2Header header;
-    ASSERT_TRUE(ParsePackV2Header(stamped.data(), &header));
+    PackFileHeader header;
+    ASSERT_TRUE(ReadPackFileHeader(stamped.data(), &header));
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
-        const PackV2DirectoryEntry entry = ParsePackV2DirectoryEntry(
+        const PackDirectoryEntry entry = ReadPackDirectoryEntry(
             stamped.data() + static_cast<std::size_t>(header.directoryOffset) +
-            i * kPackV2DirectoryEntryBytes);
+            i * kPackDirectoryEntryBytes);
         if (entry.kind != kPackEntryKindInitRoutingCatalog)
             continue;
         PackInitCatalogHeader catalogHeader;
@@ -1504,8 +1510,8 @@ TEST(PackCanonicalFormat, ToolingDecodeDistinguishesKnownUnloadedAndAbsent) {
     const VnResult parsed =
         ParsePackCanonicalImage(bytes.data(), bytes.size(), &image);
     if (parsed != VN_OK) {
-        PackV2Header header{};
-        ParsePackV2Header(bytes.data(), &header);
+        PackFileHeader header{};
+        ReadPackFileHeader(bytes.data(), &header);
         ADD_FAILURE() << "canonical parse=" << parsed
                       << " packKind=" << header.packKind
                       << " entries=" << header.entryCount
@@ -1604,52 +1610,31 @@ TEST(PackCanonicalFormat, Kind26Vintage2Incompatible) {
               ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
 }
 
-TEST(PackCanonicalFormat, Kind26LabelMappingsStayValidatedAcrossFormats) {
+TEST(PackCanonicalFormat, Kind26LabelMappingsStayValidated) {
     const auto variableId = harkentest::ObjectId(7);
     const VariableLabelDefinitionV1 label{8, "Step", harkentest::ObjectId(9)};
     const auto mapping = ComputeVariableLabelMappingFingerprintV1(variableId, std::span(&label, 1));
-    for (std::uint32_t format : {1u, 2u}) {
-        SCOPED_TRACE(format);
-        auto payload = Kind26Payload({{variableId, 1, 1, {8}}});
-        StoreLE32(payload.data() + 4, format);
-        const auto labelHeaderOffset = payload.size();
-        const std::size_t labelHeaderBytes = format == 1 ? 24 : 16;
-        const auto labelOffset = labelHeaderOffset + labelHeaderBytes;
-        payload.resize(labelOffset + 24 + (format == 1 ? 4 : 0), 0);
-        StoreLE64(payload.data() + labelHeaderOffset, mapping);
-        if (format == 1) StoreLE64(payload.data() + labelHeaderOffset + 8, 1);
-        StoreLE32(payload.data() + labelOffset - 8, 1);
-        StoreObjectId(payload.data() + labelOffset, label.labelId);
-        StoreLE32(payload.data() + labelOffset + 16, label.anchor);
-        if (format == 1) {
-            StoreLE32(payload.data() + labelOffset + 20, 4);
-            std::memcpy(payload.data() + labelOffset + 24, label.name.data(), 4);
-        }
-        const auto bytes = BuildInitWithTypedEntry(kPackEntryKindVariablePolicyOverlay, 0, payload);
-        PackCanonicalImage image;
-        ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
-        ASSERT_EQ(1u, image.variablePolicyOverlays.size());
-        const auto& overlay = image.variablePolicyOverlays.front();
-        EXPECT_EQ(variableId, overlay.variableId);
-        EXPECT_EQ(mapping, overlay.labelMappingFingerprint);
-        ASSERT_EQ(1u, overlay.labels.size());
-        EXPECT_EQ(label.labelId, overlay.labels.front().labelId);
-        EXPECT_EQ(label.anchor, overlay.labels.front().anchor);
-        EXPECT_EQ(format == 1 ? label.name : std::string{}, overlay.labels.front().name);
+    const auto payload = Kind26Payload({{variableId, 1, 1, {8}, {label}}});
+    const auto bytes = BuildInitWithTypedEntry(kPackEntryKindVariablePolicyOverlay, 0, payload);
+    PackCanonicalImage image;
+    ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
+    ASSERT_EQ(1u, image.variablePolicyOverlays.size());
+    const auto& overlay = image.variablePolicyOverlays.front();
+    EXPECT_EQ(variableId, overlay.variableId);
+    EXPECT_EQ(mapping, overlay.labelMappingFingerprint);
+    ASSERT_EQ(1u, overlay.labels.size());
+    EXPECT_EQ(label.labelId, overlay.labels.front().labelId);
+    EXPECT_EQ(label.anchor, overlay.labels.front().anchor);
+    EXPECT_TRUE(overlay.labels.front().name.empty());
 
-        std::vector<std::vector<std::uint8_t>> malformed(4, payload);
-        malformed[0].pop_back();
-        malformed[1][labelHeaderOffset] ^= 1;
-        StoreLE32(malformed[2].data() + labelOffset - 4, 1);
-        StoreLE32(malformed[3].data() + 4, 3);
-        if (format == 2) {
-            malformed.push_back(payload);
-            StoreLE32(malformed.back().data() + labelOffset + 20, 1);
-        }
-        for (const auto& invalid : malformed) {
-            const auto invalidBytes = BuildInitWithTypedEntry(kPackEntryKindVariablePolicyOverlay, 0, invalid);
-            EXPECT_EQ(VN_BAD_PACK, ParsePackCanonicalImage(invalidBytes.data(), invalidBytes.size(), &image));
-        }
+    std::vector<std::vector<std::uint8_t>> malformed(2, payload);
+    malformed[0].pop_back();
+    const auto labelHeaderOffset = kPackVariablePolicyHeaderBytes + kPackVariablePolicyRowBytes +
+        kPackVariableAnchorCountBytes + kPackVariableAnchorBytes;
+    malformed[1][labelHeaderOffset + kPackVariableLabelHeaderLabelMappingFingerprintOffset] ^= 1;
+    for (const auto& invalid : malformed) {
+        const auto invalidBytes = BuildInitWithTypedEntry(kPackEntryKindVariablePolicyOverlay, 0, invalid);
+        EXPECT_EQ(VN_BAD_PACK, ParsePackCanonicalImage(invalidBytes.data(), invalidBytes.size(), &image));
     }
 }
 
@@ -1746,15 +1731,15 @@ PackBindingAttachmentEntry MakeCanonicalVoiceAttachment(std::uint32_t scope) {
 
 std::vector<std::uint8_t> WithCanonicalScopeRows(
     const std::vector<std::uint8_t>& original, std::uint32_t scope, unsigned rows) {
-    PackV2Header header;
-    if (!ParsePackV2Header(original.data(), &header)) {
+    PackFileHeader header;
+    if (!ReadPackFileHeader(original.data(), &header)) {
         ADD_FAILURE() << "Invalid source fixture";
         return {};
     }
     ImageBuilder builder(header.packKind);
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
-        const auto entry = ParsePackV2DirectoryEntry(
-            original.data() + header.directoryOffset + i * kPackV2DirectoryEntryBytes);
+        const auto entry = ReadPackDirectoryEntry(
+            original.data() + header.directoryOffset + i * kPackDirectoryEntryBytes);
         const auto copied = builder.AddEntry(
             entry.kind, entry.id,
             std::vector<std::uint8_t>(original.begin() + entry.offset,
@@ -1798,11 +1783,11 @@ TEST(PackCanonicalFormat, BindingTransitionRangeIsRejectedAtBinaryAdmission) {
         const auto original =
             harkentest::packfoundation::BuildContent(1, 0, 0, &contentBodyBytes);
         ImageBuilder builder(kPackKindCanonicalContent);
-        PackV2Header header;
-        ASSERT_TRUE(ParsePackV2Header(original.data(), &header));
+        PackFileHeader header;
+        ASSERT_TRUE(ReadPackFileHeader(original.data(), &header));
         for (std::uint32_t i = 0; i < header.entryCount; ++i) {
-            const auto entry = ParsePackV2DirectoryEntry(
-                original.data() + header.directoryOffset + i * kPackV2DirectoryEntryBytes);
+            const auto entry = ReadPackDirectoryEntry(
+                original.data() + header.directoryOffset + i * kPackDirectoryEntryBytes);
             const auto copied = builder.AddEntry(
                 entry.kind, entry.id,
                 std::vector<std::uint8_t>(original.begin() + entry.offset,

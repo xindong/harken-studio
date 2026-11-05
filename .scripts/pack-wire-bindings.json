@@ -123,6 +123,82 @@
     "requirementBlock": {
       "engine": "PackRequirementBlock",
       "studio": "PackRequirementBlock"
+    },
+    "filePrefix": {
+      "engine": "PackFilePrefix",
+      "studio": "PackFilePrefix"
+    },
+    "fileHeader": {
+      "engine": "PackFileHeader",
+      "studio": "PackFileHeader"
+    },
+    "mediaFileHeader": {
+      "engine": "PackMediaFileHeader",
+      "studio": "PackMediaFileHeader"
+    },
+    "directoryEntry": {
+      "engine": "PackDirectoryEntry",
+      "studio": "PackDirectoryEntry"
+    },
+    "variablePolicyHeader": {
+      "engine": "PackVariablePolicyHeader",
+      "studio": "PackVariablePolicyHeader"
+    },
+    "variablePolicyRow": {
+      "engine": "PackVariablePolicyRow",
+      "studio": "PackVariablePolicyRow"
+    },
+    "variableAnchorCount": {
+      "engine": "PackVariableAnchorHeader",
+      "studio": "PackVariableAnchorHeader"
+    },
+    "variableAnchor": {
+      "engine": "std::int32_t",
+      "studio": "std::int32_t"
+    },
+    "variableLabelHeader": {
+      "engine": "PackVariableLabelHeader",
+      "studio": "PackVariableLabelHeader"
+    },
+    "variableLabel": {
+      "engine": "PackVariableLabel",
+      "studio": "PackVariableLabel"
+    },
+    "variableRequirementsHeader": {
+      "engine": "PackVariableRequirementsHeader",
+      "studio": "PackVariableRequirementsHeader"
+    },
+    "variableRequirement": {
+      "engine": "PackVariableRequirement",
+      "studio": "PackVariableRequirement"
+    },
+    "variablePolicyRecord": {
+      "engine": "PackVariablePolicyRow",
+      "studio": "PackVariablePolicyRow"
+    },
+    "variableLabelRecord": {
+      "engine": "PackVariableLabel",
+      "studio": "PackVariableLabel"
+    },
+    "variableRequirementRecord": {
+      "engine": "PackVariableRequirement",
+      "studio": "PackVariableRequirement"
+    },
+    "variableAnchorSection": {
+      "engine": "PackVariableAnchorHeader",
+      "studio": "PackVariableAnchorHeader"
+    },
+    "variableLabelSection": {
+      "engine": "PackVariableLabelHeader",
+      "studio": "PackVariableLabelHeader"
+    },
+    "variablePolicyPayload": {
+      "engine": "PackVariablePolicyHeader",
+      "studio": "PackVariablePolicyHeader"
+    },
+    "variableRequirementsPayload": {
+      "engine": "PackVariableRequirementsHeader",
+      "studio": "PackVariableRequirementsHeader"
     }
   },
   "members": {
@@ -132,10 +208,12 @@
     "bindingDefinition.targetId": "definition.targetId",
     "bindingDefinition.transitionMs": "definition.transitionMs",
     "bindingDefinition.curve": "definition.curve",
-    "voiceRecipeBinding.bindingId": ""
+    "voiceRecipeBinding.bindingId": "",
+    "variableAnchor.anchor": ""
   },
   "setters": [
     "busDefinitionSnapshotHeader.checksum",
-    "requirementBlock.payloadChecksumCoverage"
+    "requirementBlock.payloadChecksumCoverage",
+    "media.blobOffset"
   ]
 }

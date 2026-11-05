@@ -181,22 +181,22 @@ bool collectEntries(const QByteArray& bytes, const QString& path,
                     QString* error, bool resourcesOnly, bool publicationMetadataOnly,
                     harkenizer::resourcecompiler::MediaCache* mediaCache = nullptr)
 {
-    if (bytes.size() < static_cast<int>(harkenstudiobuild::kPackV2HeaderBytes)) {
+    if (bytes.size() < static_cast<int>(harkenstudiobuild::kPackFileHeaderBytes)) {
         if (error)
             *error = QStringLiteral("Pack '%1' is too small").arg(path);
         return false;
     }
-    harkenstudiobuild::PackV2Header header;
-    if (!harkenstudiobuild::ParsePackV2Header(
+    harkenstudiobuild::PackFileHeader header;
+    if (!harkenstudiobuild::ReadPackFileHeader(
             reinterpret_cast<const std::uint8_t*>(bytes.constData()), &header)) {
         if (error)
             *error = QStringLiteral("Pack '%1' is not a v2 container").arg(path);
         return false;
     }
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
-        const harkenstudiobuild::PackV2DirectoryEntry record = harkenstudiobuild::ParsePackV2DirectoryEntry(
+        const harkenstudiobuild::PackDirectoryEntry record = harkenstudiobuild::ReadPackDirectoryEntry(
             reinterpret_cast<const std::uint8_t*>(bytes.constData()) +
-            header.directoryOffset + i * harkenstudiobuild::kPackV2DirectoryEntryBytes);
+            header.directoryOffset + i * harkenstudiobuild::kPackDirectoryEntryBytes);
         if (publicationMetadataOnly
             && record.kind != harkenstudiobuild::kPackEntryKindCanonicalDefinitionPartition
             && record.kind != harkenstudiobuild::kPackEntryKindPackRequirementBlock
@@ -222,7 +222,7 @@ bool collectEntries(const QByteArray& bytes, const QString& path,
                         reinterpret_cast<const std::uint8_t*>(bytes.constData()) +
                             record.offset,
                         harkenstudiobuild::kPackMediaBytes);
-            harkenstudiobuild::StoreLE64(entry.payload.data() + 32, 0);
+            harkenstudiobuild::StorePackMediaBlobOffset(entry.payload.data(), 0);
             if (toc.blobBytes != 0) {
                 const auto* blob = reinterpret_cast<const std::uint8_t*>(bytes.constData()) + toc.blobOffset;
                 if (toc.blobBytes % sizeof(float) != 0) {
@@ -810,41 +810,62 @@ bool encodeVariablePolicyOverlay(
     std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
         return a.variableId < b.variableId;
     });
-    std::size_t bytes = 16 + rows.size() * 32;
-    for (const auto& row : rows) {
-        bytes += 4 + row.anchors.size() * 4;
-        bytes += 16 + row.labels.size() * 24;
-    }
-    std::vector<std::uint8_t> payload(bytes, 0);
-    harkenstudiobuild::StoreLE32(payload.data(), static_cast<std::uint32_t>(rows.size()));
-    harkenstudiobuild::StoreLE32(payload.data() + 4, harkenstudiobuild::kPackVariablePolicyOverlayFormat);
-    std::size_t offset = 16;
-    for (const auto& row : rows) {
-        harkenstudiobuild::StoreObjectId(payload.data() + offset, row.variableId);
-        payload[offset + 16] = row.writers;
-        harkenstudiobuild::StoreLE64(payload.data() + offset + 24, row.fingerprint);
-        offset += 32;
-    }
-    for (const auto& row : rows) {
-        harkenstudiobuild::StoreLE32(payload.data() + offset,
-                         static_cast<std::uint32_t>(row.anchors.size()));
-        offset += 4;
-        for (std::int32_t anchor : row.anchors) {
-            harkenstudiobuild::StoreLE32(payload.data() + offset,
-                             static_cast<std::uint32_t>(anchor));
-            offset += 4;
+    using namespace harkenstudiobuild;
+    struct PolicyRecord {
+        const Row& source;
+        PackVariablePolicyRow Wire() const noexcept { return {source.variableId, source.writers, source.fingerprint}; }
+        bool Finish() const noexcept { return true; }
+    };
+    struct AnchorVisitor {
+        const Row& source;
+        PackVariableAnchorHeader header;
+        const auto& Value() const noexcept { return header; }
+        const auto& Header() const noexcept { return header; }
+        bool PrepareAnchors(std::uint64_t count) const noexcept { return count == source.anchors.size(); }
+        auto Anchors(std::uint64_t index) const noexcept { return source.anchors[static_cast<std::size_t>(index)]; }
+        bool Finish() const noexcept { return true; }
+    };
+    struct LabelRecord {
+        PackVariableLabel wire;
+        const auto& Wire() const noexcept { return wire; }
+        bool Finish() const noexcept { return true; }
+    };
+    struct LabelVisitor {
+        const Row& source;
+        PackVariableLabelHeader header;
+        const auto& Value() const noexcept { return header; }
+        const auto& Header() const noexcept { return header; }
+        bool PrepareLabels(std::uint64_t count) const noexcept { return count == source.labels.size(); }
+        LabelRecord Labels(std::uint64_t index) const noexcept {
+            const auto& label = source.labels[static_cast<std::size_t>(index)];
+            return {{label.labelId, label.anchor}};
         }
-    }
-    for (const auto& row : rows) {
-        harkenstudiobuild::StoreLE64(payload.data() + offset, row.labelMappingFingerprint);
-        harkenstudiobuild::StoreLE32(payload.data() + offset + 8, static_cast<std::uint32_t>(row.labels.size()));
-        offset += 16;
-        for (const auto& label : row.labels) {
-            harkenstudiobuild::StoreObjectId(payload.data() + offset, label.labelId);
-            harkenstudiobuild::StoreLE32(payload.data() + offset + 16, static_cast<std::uint32_t>(label.anchor));
-            offset += 24;
+        bool Finish() const noexcept { return true; }
+    };
+    struct Visitor {
+        const std::vector<Row>& rows;
+        PackVariablePolicyHeader header;
+        const auto& Value() const noexcept { return header; }
+        const auto& Header() const noexcept { return header; }
+        bool PrepareRows(std::uint64_t count) const noexcept { return count == rows.size(); }
+        PolicyRecord Rows(std::uint64_t index) const noexcept { return {rows[static_cast<std::size_t>(index)]}; }
+        bool PrepareAnchorGroups(std::uint64_t count) const noexcept { return count == rows.size(); }
+        AnchorVisitor AnchorGroups(std::uint64_t index) const noexcept {
+            const auto& row = rows[static_cast<std::size_t>(index)];
+            return {row, {static_cast<std::uint32_t>(row.anchors.size())}};
         }
-    }
+        bool PrepareLabelGroups(std::uint64_t count) const noexcept { return count == rows.size(); }
+        LabelVisitor LabelGroups(std::uint64_t index) const noexcept {
+            const auto& row = rows[static_cast<std::size_t>(index)];
+            return {row, {row.labelMappingFingerprint, static_cast<std::uint32_t>(row.labels.size())}};
+        }
+        bool Finish() const noexcept { return true; }
+    } visitor{rows, {static_cast<std::uint32_t>(rows.size())}};
+    std::uint64_t bytes = 0;
+    if (!MeasurePackVariablePolicyPayload(visitor, bytes)) return false;
+    std::vector<std::uint8_t> payload(static_cast<std::size_t>(bytes), 0);
+    PackWireBuffer<std::uint8_t> buffer{payload.data(), payload.size()};
+    if (!AppendPackVariablePolicyPayload(buffer, visitor) || buffer.offset != bytes) return false;
     *outPayload = std::move(payload);
     return true;
 }
@@ -1087,17 +1108,31 @@ std::vector<std::uint8_t> encodeVariableRequirements(
     const std::vector<std::pair<harkenstudio::ObjectId, std::uint64_t>>& rows,
     const std::unordered_map<harkenstudio::ObjectId, std::uint64_t>& labelFingerprints)
 {
-    std::vector<std::uint8_t> payload(16 + rows.size() * 40, 0);
-    harkenstudiobuild::StoreLE32(payload.data(), static_cast<std::uint32_t>(rows.size()));
-    harkenstudiobuild::StoreLE32(payload.data() + 4, 1);
-    std::size_t offset = 16;
-    for (const auto& row : rows) {
-        payload[offset] = 1;
-        harkenstudiobuild::StoreObjectId(payload.data() + offset + 8, row.first);
-        harkenstudiobuild::StoreLE64(payload.data() + offset + 24, row.second);
-        harkenstudiobuild::StoreLE64(payload.data() + offset + 32, labelFingerprints.at(row.first));
-        offset += 40;
-    }
+    using namespace harkenstudiobuild;
+    struct Record {
+        PackVariableRequirement wire;
+        const auto& Wire() const noexcept { return wire; }
+        bool Finish() const noexcept { return true; }
+    };
+    struct Visitor {
+        const std::vector<std::pair<harkenstudio::ObjectId, std::uint64_t>>& rows;
+        const std::unordered_map<harkenstudio::ObjectId, std::uint64_t>& fingerprints;
+        PackVariableRequirementsHeader header;
+        const auto& Value() const noexcept { return header; }
+        const auto& Header() const noexcept { return header; }
+        bool PrepareRows(std::uint64_t count) const noexcept { return count == rows.size(); }
+        Record Rows(std::uint64_t index) const noexcept {
+            const auto& row = rows[static_cast<std::size_t>(index)];
+            return {{row.first, row.second, fingerprints.find(row.first)->second}};
+        }
+        bool Finish() const noexcept { return true; }
+    } visitor{rows, labelFingerprints, {static_cast<std::uint32_t>(rows.size())}};
+    for (const auto& row : rows) (void)labelFingerprints.at(row.first);
+    std::uint64_t bytes = 0;
+    if (!MeasurePackVariableRequirementsPayload(visitor, bytes)) return {};
+    std::vector<std::uint8_t> payload(static_cast<std::size_t>(bytes), 0);
+    PackWireBuffer<std::uint8_t> buffer{payload.data(), payload.size()};
+    if (!AppendPackVariableRequirementsPayload(buffer, visitor) || buffer.offset != bytes) return {};
     return payload;
 }
 
@@ -1991,7 +2026,7 @@ bool readExistingPack(const QDir& output, const QString& path,
     }
     if (!collectEntries(bytes, output.filePath(path), &pack->previousEntries, error, false, false)) return false;
     pack->fileName = path;
-    pack->formatVersion = harkenstudiobuild::kPackFormatVersion2;
+    pack->formatVersion = harkenstudiobuild::kPackFormatVersion;
     pack->fileSize = bytes.size();
     pack->packStableId = image.packStableId;
     pack->packKind = image.packKind;
@@ -3745,9 +3780,24 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                     }
                     if (!pack.variableRequirementsPayload.empty()) {
                         const auto* data = pack.variableRequirementsPayload.data();
-                        const auto count = harkenstudiobuild::LoadLE32(data);
-                        for (std::uint32_t i = 0; i < count; ++i)
-                            ids.insert(harkenstudiobuild::LoadObjectId(data + 24 + i * 40));
+                        harkenstudiobuild::PackVariableRequirementsHeader header;
+                        if (!harkenstudiobuild::ParsePackVariableRequirementsHeader(data,
+                                harkenstudiobuild::kPackVariableRequirementsHeaderBytes, &header)) {
+                            unit.success = false;
+                            unit.error = QStringLiteral("Cannot read variable requirement metadata for '%1'").arg(pack.name);
+                            break;
+                        }
+                        for (std::uint32_t i = 0; i < header.rowCount; ++i) {
+                            harkenstudiobuild::PackVariableRequirement row;
+                            if (!harkenstudiobuild::ParsePackVariableRequirement(data +
+                                    harkenstudiobuild::kPackVariableRequirementsHeaderBytes + i * harkenstudiobuild::kPackVariableRequirementBytes,
+                                    harkenstudiobuild::kPackVariableRequirementBytes, &row)) {
+                                unit.success = false;
+                                unit.error = QStringLiteral("Cannot read variable requirement metadata for '%1'").arg(pack.name);
+                                break;
+                            }
+                            ids.insert(row.stableId);
+                        }
                     }
                     if (pack.packKind == harkenstudiobuild::kPackKindInit)
                         for (const auto& bus : busProjection.buses) ids.insert(bus.busId);
@@ -3785,7 +3835,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         pack.finished = true;
         completed.insert(pack.packStableId);
         pack.fileSize = unit.fileSize;
-        pack.formatVersion = harkenstudiobuild::kPackFormatVersion2;
+        pack.formatVersion = harkenstudiobuild::kPackFormatVersion;
         result.warnings.append(unit.warnings);
         if (!pack.retained || pack.packKind == harkenstudiobuild::kPackKindInit) {
             result.fileSize += unit.fileSize;
