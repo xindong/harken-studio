@@ -20,6 +20,7 @@
 #include "Core/ProjectUpgradeMessages.h"
 #include "Core/ShortcutManager.h"
 #include "Core/UndoCommands.h"
+#include "Core/UndoActions.h"
 #include "Tooling/Harkenizer/Core/ProjectPackExporter.h"
 #include "Tooling/Harkenizer/Core/ProjectPackBuildService.h"
 #include "Core/PackArtifactCache.h"
@@ -27,7 +28,7 @@
 #include "Core/BaseDialog.h"
 #include "Core/ProjectPlatformActivity.h"
 #include "Core/IPC/IPCServer.h"
-#include "Core/EditorCommandRegistration.h"
+#include "Core/DesktopCommandRegistration.h"
 #include "Core/AI/AIAssistantService.h"
 #include "Core/AI/AIConversationStore.h"
 #include "Core/AI/AIConversationSessionStore.h"
@@ -1159,7 +1160,7 @@ void MainWindow::setupAudioEngine()
 
     if (ipcServer_)
     {
-        registerEditorCommands({&AudioEngine::instance(), &ProjectManager::instance(),
+        registerDesktopEditorCommands({&AudioEngine::instance(), &ProjectManager::instance(),
                                 ipcServer_, this, projectExplorer_, blueprintCanvas_,
                                 auditionManager_});
     }
@@ -1219,12 +1220,12 @@ void MainWindow::setupMenuBar()
     
     QMenu* editMenu = menuBar->addMenu(tr("&Edit"));
     
-    undoAction_ = UndoRedoManager::instance().createUndoAction(this, tr("&Undo"));
+    undoAction_ = createUndoAction(UndoRedoManager::instance(), this, tr("&Undo"));
     undoAction_->setShortcutContext(Qt::ApplicationShortcut);
     ShortcutManager::instance().bindAction(Shortcuts::Undo, undoAction_);
     editMenu->addAction(undoAction_);
 
-    redoAction_ = UndoRedoManager::instance().createRedoAction(this, tr("&Redo"));
+    redoAction_ = createRedoAction(UndoRedoManager::instance(), this, tr("&Redo"));
     redoAction_->setShortcutContext(Qt::ApplicationShortcut);
     ShortcutManager::instance().bindAction(Shortcuts::Redo, redoAction_);
     editMenu->addAction(redoAction_);

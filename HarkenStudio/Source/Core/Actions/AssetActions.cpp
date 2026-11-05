@@ -12,7 +12,7 @@
 #include "../AssetPipeline/AssetGarbageCollector.h"
 #include "../AssetPipeline/PlatformProfile.h"
 #include "../AssetPipeline/MediaPool.h"
-#include "Blueprint/BlueprintImportUtils.h"
+#include "AssetPipeline/AudioImportTarget.h"
 #include "ActionSelectors.h"
 #include "RuntimeBridge/PackagingBridge.h"
 #include <QJsonArray>
@@ -371,11 +371,11 @@ void registerAssetActions(ActionManager& mgr,
                         QString("target_container_id '%1' not found").arg(targetContainerID)};
             }
 
-            const auto target = Blueprint::resolveAudioDropTarget(dropContext);
+            const auto target = resolveAudioImportTarget(dropContext);
             if (!target.ok())
                 return {false, {}, "INVALID_PARENT", target.error};
 
-            using Kind = Blueprint::AudioDropKind;
+            using Kind = AudioImportKind;
             ProjectItem* targetParent = target.kind == Kind::Parent ? target.item : nullptr;
             ProjectItem* targetSound = target.kind == Kind::Sources ? target.item : nullptr;
             ProjectItem* targetBus = target.kind == Kind::RootOutput ? target.item : nullptr;

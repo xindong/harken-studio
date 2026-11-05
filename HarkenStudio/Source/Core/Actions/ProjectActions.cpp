@@ -38,7 +38,6 @@
 #include "../Components/VSegment.h"
 #include "../Timeline/TimelineEditing.h"
 #include "../AudioEngine.h"
-#include "../../Widgets/ProjectExplorer/ProjectExplorer.h"
 #include "ActionSelectors.h"
 
 #include <QDir>
@@ -1899,7 +1898,7 @@ const ItemPropertyRoute kItemPropertyRoutes[] = {
 
 void registerProjectActions(ActionManager& mgr,
                            ProjectManager* projectManager,
-                           ProjectExplorer* projectExplorer)
+                           std::function<bool(PhysicalFolder*)> selectFolder)
 {
     registerProjectPlatformActions(mgr, projectManager);
     registerFieldGroupActions(mgr, projectManager);
@@ -2073,7 +2072,7 @@ void registerProjectActions(ActionManager& mgr,
             def.paramSchema.insert("new_name", "string");
         if (command == QLatin1String("move_folder"))
             def.paramSchema.insert("new_parent", "string");
-        def.handler = [projectManager, projectExplorer, command](
+        def.handler = [projectManager, selectFolder, command](
                          const QJsonObject& args) -> ActionResult {
             ProjectData* project = projectManager ? projectManager->currentProject() : nullptr;
             if (!project)
@@ -2172,7 +2171,7 @@ void registerProjectActions(ActionManager& mgr,
                     return {false, {}, "MOVE_FAILED", "Failed to move directory"};
                 return {true, describe(folder)};
             }
-            const bool explorerSelected = projectExplorer && projectExplorer->selectFolder(folder);
+            const bool explorerSelected = selectFolder && selectFolder(folder);
             if (!explorerSelected)
                 return {false, {}, "FOLDER_NOT_VISIBLE", "The directory is not visible in Explorer"};
             QJsonObject selected = describe(folder);
@@ -2408,45 +2407,7 @@ void registerProjectActions(ActionManager& mgr,
         mgr.registerAction(def);
     }
 
-    auto selectHandler = [projectManager, projectExplorer](const QJsonObject& args) -> ActionResult {
-        if (!projectManager)
-            return {false, {}, "PROJECT_MANAGER_NOT_AVAILABLE", "ProjectManager is not available"};
-        if (!projectManager->isProjectOpen())
-            return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
-        if (!projectExplorer)
-            return {false, {}, "PROJECT_EXPLORER_NOT_AVAILABLE", "Explorer is not available"};
 
-        QString path = args["path"].toString().trimmed();
-        if (path.isEmpty())
-            return {false, {}, "INVALID_ARGS", "path is required"};
-
-        ProjectData* project = projectManager->currentProject();
-        if (!project)
-            return {false, {}, "NO_PROJECT_OPEN", "Project closed during command"};
-
-        ProjectItem* item = findItemByPathInProject(project, path);
-        if (!item)
-            return {false, {}, "ITEM_NOT_FOUND",
-                    QString("Item '%1' not found").arg(path)};
-
-        Q_ASSERT(QThread::currentThread() == projectExplorer->thread());
-
-        if (!projectExplorer->selectProjectItem(item))
-        {
-            return {false, {}, "ITEM_NOT_VISIBLE",
-                    QString("Item '%1' exists but is not visible in Explorer").arg(path)};
-        }
-
-        ActionResult r;
-        r.success = true;
-        r.data = QJsonObject{
-            {"path", path},
-            {"name", item->name},
-            {"type", itemTypeToString(item->type)},
-            {"selected", true}
-        };
-        return r;
-    };
 
     {
         ActionDef def;
@@ -2456,7 +2417,7 @@ void registerProjectActions(ActionManager& mgr,
         def.category = "project";
         def.undoable = false;
         def.paramSchema = QJsonObject{{"path", "string"}};
-        def.handler = selectHandler;
+
         mgr.registerAction(def);
     }
 
@@ -2468,7 +2429,7 @@ void registerProjectActions(ActionManager& mgr,
         def.category = "project";
         def.undoable = false;
         def.paramSchema = QJsonObject{{"path", "string"}};
-        def.handler = selectHandler;
+
         mgr.registerAction(def);
     }
 

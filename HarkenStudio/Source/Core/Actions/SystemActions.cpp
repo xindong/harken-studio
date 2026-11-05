@@ -2,14 +2,8 @@
 #include "../ActionManager.h"
 #include "../AudioEngine.h"
 #include "../AuditionManager.h"
-#include "../CurveSelection.h"
 #include "ActionSelectors.h"
-#include "../../MainWindow.h"
-#include "../BuiltinLayouts.h"
-#include "../../Widgets/Inspector/InspectorPanel.h"
-#include <DockManager.h>
-#include <DockWidget.h>
-#include <QVector3D>
+#include "Core/HarkenMath.h"
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QDir>
@@ -19,6 +13,7 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QThread>
+#include <QPointer>
 #include <QUuid>
 
 #include <cstdint>
@@ -31,17 +26,15 @@ static ActionResult engineNotAvailable()
     return {false, {}, "ENGINE_NOT_AVAILABLE", "AudioEngine is not available"};
 }
 
-static ActionResult mainWindowNotAvailable()
-{
-    return {false, {}, "MAIN_WINDOW_NOT_AVAILABLE", "MainWindow is not available"};
-}
+
 
 
 void registerSystemActions(ActionManager& mgr,
                            AudioEngine* engine,
-                           MainWindow* mainWindow,
+                           HarkenEditor::AuditionManager* audition,
                            QMap<quintptr, QJsonObject>* activePlaybacks)
 {
+    const QPointer<HarkenEditor::AuditionManager> auditionGuard(audition);
 
     {
         ActionDef def;
@@ -117,7 +110,7 @@ void registerSystemActions(ActionManager& mgr,
         def.category = "system";
         def.paramSchema = QJsonObject{{"name", "string"}};
         def.undoable = false;
-        def.handler = [engine, mainWindow](const QJsonObject& args) -> ActionResult {
+        def.handler = [engine, auditionGuard](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();
             QString name = args["name"].toString();
             {
@@ -128,12 +121,8 @@ void registerSystemActions(ActionManager& mgr,
             if (name.isEmpty())
                 return {false, {}, "INVALID_ARGS", "Action name is required"};
             auto result = engine->playByNameDetailed(name);
-            if (mainWindow) {
-                auto* tm = mainWindow->auditionManager();
-                if (tm && result.playbackHandle != 0) {
-                    tm->registerExternalPlayback(name, result.playbackHandle);
-                }
-            }
+            if (auditionGuard && result.playbackHandle != 0)
+                auditionGuard->registerExternalPlayback(name, result.playbackHandle);
             return {true, QJsonObject{
                 {"action_handle", static_cast<qint64>(result.playbackHandle)},
                 {"action_name",   name},
@@ -163,7 +152,7 @@ void registerSystemActions(ActionManager& mgr,
             float x = args["x"].toDouble(0.0);
             float y = args["y"].toDouble(0.0);
             float z = args["z"].toDouble(0.0);
-            QVector3D position(x, y, z);
+            HarkenEditor::Vec3 position(x, y, z);
             quintptr handle = engine->playByName3D(name, position);
             if (activePlaybacks) {
                 (*activePlaybacks)[handle] = QJsonObject{
@@ -213,15 +202,13 @@ void registerSystemActions(ActionManager& mgr,
         def.category = "system";
         def.paramSchema = QJsonObject{{"fade_ms", "float"}};
         def.undoable = false;
-        def.handler = [engine, mainWindow, activePlaybacks](const QJsonObject& args) -> ActionResult {
+        def.handler = [engine, auditionGuard, activePlaybacks](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();
             float fadeMs = static_cast<float>(args["fade_ms"].toDouble(0.0));
             engine->stopAll(fadeMs);
             if (activePlaybacks) activePlaybacks->clear();
-            if (mainWindow) {
-                auto* tm = mainWindow->auditionManager();
-                if (tm) tm->stopAll(fadeMs);
-            }
+            if (auditionGuard)
+                auditionGuard->stopAll(fadeMs);
             return {true, QJsonObject{}};
         };
         mgr.registerAction(def);
@@ -235,7 +222,7 @@ void registerSystemActions(ActionManager& mgr,
         def.category = "system";
         def.paramSchema = QJsonObject{{"name", "string"}};
         def.undoable = false;
-        def.handler = [engine, mainWindow](const QJsonObject& args) -> ActionResult {
+        def.handler = [engine](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();
             QString name = args.value("name").toString();
             {
@@ -246,7 +233,6 @@ void registerSystemActions(ActionManager& mgr,
             if (name.isEmpty())
                 return {false, {}, "MISSING_PARAM", "Missing required parameter: name"};
             quintptr handle = engine->playByName(name);
-            Q_UNUSED(mainWindow);
             return {true, QJsonObject{
                 {"action_name", name},
                 {"action_handle", static_cast<qint64>(handle)},
@@ -271,20 +257,20 @@ void registerSystemActions(ActionManager& mgr,
                 return {false, {}, "INVALID_PARAM", "pos must be an array of 3 numbers [x, y, z]"};
             QJsonArray fwdArray = args["forward"].toArray();
             QJsonArray upArray = args["up"].toArray();
-            QVector3D pos(posArray.at(0).toDouble(), posArray.at(1).toDouble(), posArray.at(2).toDouble());
-            QVector3D forward(
+            HarkenEditor::Vec3 pos(posArray.at(0).toDouble(), posArray.at(1).toDouble(), posArray.at(2).toDouble());
+            HarkenEditor::Vec3 forward(
                 fwdArray.size() > 0 ? fwdArray.at(0).toDouble() : 0.0,
                 fwdArray.size() > 1 ? fwdArray.at(1).toDouble() : 0.0,
                 fwdArray.size() > 2 ? fwdArray.at(2).toDouble() : -1.0);
-            QVector3D up(
+            HarkenEditor::Vec3 up(
                 upArray.size() > 0 ? upArray.at(0).toDouble() : 0.0,
                 upArray.size() > 1 ? upArray.at(1).toDouble() : 1.0,
                 upArray.size() > 2 ? upArray.at(2).toDouble() : 0.0);
             engine->setListenerTransform(pos, forward, up);
             return {true, QJsonObject{
-                {"position", QJsonArray{pos.x(), pos.y(), pos.z()}},
-                {"forward", QJsonArray{forward.x(), forward.y(), forward.z()}},
-                {"up", QJsonArray{up.x(), up.y(), up.z()}}
+                {"position", QJsonArray{pos.x, pos.y, pos.z}},
+                {"forward", QJsonArray{forward.x, forward.y, forward.z}},
+                {"up", QJsonArray{up.x, up.y, up.z}}
             }};
         };
         mgr.registerAction(def);
@@ -309,7 +295,7 @@ void registerSystemActions(ActionManager& mgr,
             if (handle == 0)
                 return {false, {}, "INVALID_ARGS",
                         "handle is required"};
-            QVector3D position(x, y, z);
+            HarkenEditor::Vec3 position(x, y, z);
             engine->setPlaybackPosition(static_cast<quintptr>(handle), position);
             if (activePlaybacks && activePlaybacks->contains(static_cast<quintptr>(handle)))
                 (*activePlaybacks)[static_cast<quintptr>(handle)]["position"] = QJsonArray{x, y, z};
@@ -732,11 +718,7 @@ void registerSystemActions(ActionManager& mgr,
         def.displayName = "Open Remote Connect";
         def.category = "system";
         def.undoable = false;
-        def.handler = [mainWindow](const QJsonObject&) -> ActionResult {
-            if (!mainWindow) return mainWindowNotAvailable();
-            mainWindow->showRemoteConnect();
-            return {true, QJsonObject{{"opened", true}}};
-        };
+
         mgr.registerAction(def);
     }
 
@@ -832,25 +814,7 @@ void registerSystemActions(ActionManager& mgr,
         def.category = "ui_control";
         def.paramSchema = QJsonObject{{"layout", "string"}};
         def.undoable = false;
-        def.handler = [mainWindow](const QJsonObject& args) -> ActionResult {
-            if (!mainWindow) return mainWindowNotAvailable();
-            QString layoutName = args["layout"].toString();
-            {
-                auto sel = VNX::resolveSelector(layoutName);
-                if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
-                layoutName = sel.name;
-            }
-            if (layoutName.isEmpty())
-                return {false, {}, "INVALID_ARGS", "Layout name is required"};
-            const auto* builtin = VNX::BuiltinLayouts::findByToken(layoutName);
-            if (!builtin)
-                return {false, {}, "INVALID_LAYOUT", QString("Unknown layout: %1").arg(layoutName)};
-            bool success = mainWindow->switchToView(builtin->id);
-            if (success)
-                return {true, QJsonObject{{"layout", builtin->id}, {"switched", true}}};
-            return {false, {}, "SWITCH_LAYOUT_FAILED",
-                    QString("Failed to switch to layout: %1").arg(layoutName)};
-        };
+
         mgr.registerAction(def);
     }
 
@@ -862,26 +826,7 @@ void registerSystemActions(ActionManager& mgr,
         def.category = "ui_control";
         def.paramSchema = QJsonObject{{"view", "string"}};
         def.undoable = false;
-        def.handler = [mainWindow](const QJsonObject& args) -> ActionResult {
-            qWarning() << "[deprecated] switch_view, use switch_layout";
-            if (!mainWindow) return mainWindowNotAvailable();
-            QString viewName = args["view"].toString();
-            {
-                auto sel = VNX::resolveSelector(viewName);
-                if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
-                viewName = sel.name;
-            }
-            if (viewName.isEmpty())
-                return {false, {}, "INVALID_ARGS", "View name is required"};
-            const auto* builtin = VNX::BuiltinLayouts::findByToken(viewName);
-            if (!builtin)
-                return {false, {}, "INVALID_VIEW", QString("Unknown view: %1").arg(viewName)};
-            bool success = mainWindow->switchToView(builtin->id);
-            if (success)
-                return {true, QJsonObject{{"view", builtin->id}, {"switched", true}}};
-            return {false, {}, "SWITCH_VIEW_FAILED",
-                    QString("Failed to switch to view: %1").arg(viewName)};
-        };
+
         mgr.registerAction(def);
     }
 
@@ -893,27 +838,7 @@ void registerSystemActions(ActionManager& mgr,
         def.category = "ui_control";
         def.paramSchema = QJsonObject{{"view", "string"}};
         def.undoable = false;
-        def.handler = [mainWindow](const QJsonObject& args) -> ActionResult {
-            if (!mainWindow) return mainWindowNotAvailable();
-            QString target = args["view"].toString();
-            {
-                auto sel = VNX::resolveSelector(target);
-                if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
-                target = sel.name;
-            }
-            const auto resolved = VNX::BuiltinLayouts::resolveResetTarget(
-                target, mainWindow->currentView());
-            if (resolved.kind == VNX::BuiltinLayouts::ResetTargetKind::Invalid)
-                return {false, {}, "INVALID_VIEW",
-                        QString("Unknown view: %1").arg(resolved.canonical)};
-            if (resolved.kind == VNX::BuiltinLayouts::ResetTargetKind::Builtin
-                && resolved.canonical != mainWindow->currentView())
-                mainWindow->switchToView(resolved.canonical);
-            if (!mainWindow->resetCurrentLayout())
-                return {false, {}, "RESET_FAILED",
-                        QString("Failed to reset layout: %1").arg(resolved.canonical)};
-            return {true, QJsonObject{{"view", resolved.canonical}, {"reset", true}}};
-        };
+
         mgr.registerAction(def);
     }
 
@@ -925,42 +850,7 @@ void registerSystemActions(ActionManager& mgr,
         def.category = "ui_control";
         def.paramSchema = QJsonObject{{"name", "string"}, {"visible", "bool"}};
         def.undoable = false;
-        def.handler = [mainWindow](const QJsonObject& args) -> ActionResult {
-            if (!mainWindow) return mainWindowNotAvailable();
-            QString panelName = args["name"].toString().trimmed();
-            {
-                auto sel = VNX::resolveSelector(panelName);
-                if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
-                panelName = sel.name;
-            }
-            if (panelName.isEmpty())
-                return {false, {}, "INVALID_ARGS", "name is required (panel objectName)"};
-            QVariantMap current;
-            for (const QVariantMap& summary : mainWindow->workspaceWindowSummaries()) {
-                if (workspaceWindowSelectorMatches(
-                        panelName,
-                        summary.value(QStringLiteral("typeId")).toString(),
-                        summary.value(QStringLiteral("name")).toString(),
-                        summary.value(QStringLiteral("title")).toString(),
-                        summary.value(QStringLiteral("instanceId")).toInt())) {
-                    current = summary;
-                    break;
-                }
-            }
-            if (current.isEmpty())
-                return {false, {}, "PANEL_NOT_FOUND", QString("Panel '%1' not found").arg(panelName)};
-            bool newState;
-            if (args.contains("visible"))
-                newState = args["visible"].toBool();
-            else
-                newState = !current.value(QStringLiteral("visible")).toBool();
 
-            QVariantMap updated;
-            if (!mainWindow->setWorkspaceWindowVisible(panelName, newState, &updated))
-                return {false, {}, "PANEL_TOGGLE_FAILED",
-                        QString("Failed to set panel '%1' visible=%2").arg(panelName).arg(newState)};
-            return {true, QJsonObject::fromVariantMap(updated)};
-        };
         mgr.registerAction(def);
     }
 
@@ -978,48 +868,7 @@ void registerSystemActions(ActionManager& mgr,
             {"dimension", "string"}
         };
         def.undoable = false;
-        def.handler = [mainWindow](const QJsonObject& args) -> ActionResult {
-            QString attenuationName = args.value("name").toString().trimmed();
-            if (attenuationName.isEmpty())
-                attenuationName = args.value("attenuation").toString().trimmed();
-            QString guidText = args.value("guid").toString().trimmed();
-            if (guidText.isEmpty())
-                guidText = args.value("attenuation_guid").toString().trimmed();
 
-            AttenuationDimension dimension = AttenuationDimension::Volume;
-            const QJsonValue dimensionValue = args.value("dimension");
-            if (!dimensionValue.isUndefined()) {
-                const QString dimensionName = dimensionValue.toString().trimmed();
-                if (!dimensionValue.isString()
-                    || (!dimensionName.isEmpty()
-                        && !attenuationDimensionFromName(dimensionName, &dimension))) {
-                    return {false, {}, "DIMENSION_REQUIRED",
-                            "A valid curve dimension is required."};
-                }
-            }
-
-            if (!mainWindow) return mainWindowNotAvailable();
-
-            const QUuid guid = QUuid::fromString(guidText);
-            const CurveSelection selection = CurveSelection::attenuation(
-                guid, attenuationName, dimension);
-            if (QThread::currentThread() == mainWindow->thread()) {
-                mainWindow->openCurveEditor(selection);
-            } else {
-                QMetaObject::invokeMethod(mainWindow,
-                                          [mainWindow, selection]() {
-                                              mainWindow->openCurveEditor(selection);
-                                          },
-                                          Qt::BlockingQueuedConnection);
-            }
-            return {true, QJsonObject{
-                {"opened", true},
-                {"name", attenuationName},
-                {"guid", guidText},
-                {"dimension", QLatin1String(attenuationDimensionName(dimension))},
-                {"dock", QStringLiteral("CurveEditorDock")}
-            }};
-        };
         mgr.registerAction(def);
     }
 
@@ -1031,21 +880,7 @@ void registerSystemActions(ActionManager& mgr,
         def.category = "ui_control";
         def.paramSchema = QJsonObject{{"name", "string"}};
         def.undoable = false;
-        def.handler = [mainWindow](const QJsonObject& args) -> ActionResult {
-            if (!mainWindow) return mainWindowNotAvailable();
-            QString name = args["name"].toString().trimmed();
-            {
-                auto sel = VNX::resolveSelector(name);
-                if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
-                name = sel.name;
-            }
-            if (name.isEmpty())
-                return {false, {}, "INVALID_ARGS", "name is required"};
-            QString filePath;
-            if (!mainWindow->saveNamedLayout(name, &filePath))
-                return {false, {}, "FILE_WRITE_ERROR", "Cannot write layout file"};
-            return {true, QJsonObject{{"name", name}, {"path", filePath}}};
-        };
+
         mgr.registerAction(def);
     }
 
@@ -1057,20 +892,7 @@ void registerSystemActions(ActionManager& mgr,
         def.category = "ui_control";
         def.paramSchema = QJsonObject{{"name", "string"}};
         def.undoable = false;
-        def.handler = [mainWindow](const QJsonObject& args) -> ActionResult {
-            if (!mainWindow) return mainWindowNotAvailable();
-            QString name = args["name"].toString().trimmed();
-            {
-                auto sel = VNX::resolveSelector(name);
-                if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
-                name = sel.name;
-            }
-            if (name.isEmpty())
-                return {false, {}, "INVALID_ARGS", "name is required"};
-            if (!mainWindow->loadNamedLayout(name))
-                return {false, {}, "LAYOUT_NOT_FOUND", QString("Named layout '%1' not found").arg(name)};
-            return {true, QJsonObject{{"name", name}, {"loaded", true}}};
-        };
+
         mgr.registerAction(def);
     }
 
@@ -1082,20 +904,7 @@ void registerSystemActions(ActionManager& mgr,
         def.category = "ui_control";
         def.paramSchema = QJsonObject{{"name", "string"}};
         def.undoable = false;
-        def.handler = [mainWindow](const QJsonObject& args) -> ActionResult {
-            if (!mainWindow) return mainWindowNotAvailable();
-            QString name = args["name"].toString().trimmed();
-            {
-                auto sel = VNX::resolveSelector(name);
-                if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
-                name = sel.name;
-            }
-            if (name.isEmpty())
-                return {false, {}, "INVALID_ARGS", "name is required"};
-            if (!mainWindow->deleteNamedLayout(name))
-                return {false, {}, "LAYOUT_NOT_FOUND", QString("Named layout '%1' not found").arg(name)};
-            return {true, QJsonObject{{"name", name}, {"deleted", true}}};
-        };
+
         mgr.registerAction(def);
     }
 }

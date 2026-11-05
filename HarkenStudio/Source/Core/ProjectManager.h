@@ -29,7 +29,6 @@
 #include "FileWatcher.h"
 #include "StartupProgress.h"
 
-class QUndoCommand;
 
 namespace harkenbuscompiler {
 struct CompiledBusResultV1;
@@ -40,6 +39,8 @@ struct CurrentWorldSoundPreparation;
 }
 
 namespace VNX {
+
+class UndoCommand;
 
 class ProjectIndex;
 class ProjectInstance;
@@ -107,7 +108,8 @@ public:
                                                 const QString&, const QJsonObject&,
                                                 const QObject*);
     friend void registerContainerActions(ActionManager&, ProjectManager*);
-    friend void registerProjectActions(ActionManager&, ProjectManager*, ProjectExplorer*);
+    friend void registerProjectActions(ActionManager&, ProjectManager*,
+                                       std::function<bool(PhysicalFolder*)>);
 
     static void resyncItemToRuntime(ProjectItem* item);
     static void syncPlayablePropertyToRuntime(ProjectItem* item, uint8_t propertyId);
@@ -245,7 +247,7 @@ public:
     ProjectItem* createItem(ProjectItem* parent, const QString& name, ProjectItem::Type type,
                             const QString& path = QString(),
                             const QString& bucketFolderHint = QString(),
-                            QUndoCommand* undoParent = nullptr,
+                            UndoCommand* undoParent = nullptr,
                             VariableKind variableKind = VariableKind::Smooth);
     ProjectItem* createTrackWithClip(ProjectItem* segment, const QString& name, Clip clip);
     ProjectItem* createAudioItem(ProjectItem* parent, const QString& name, const QString& relativePath, uint32_t sourceID);
@@ -611,7 +613,7 @@ private:
     bool createMainProjectFile(const ProjectConfig& config, const QString& projectRoot);
     ProjectItem* createItemImpl(ProjectItem* parent, const QString& name,
                                 ProjectItem::Type type, const QString& path,
-                                const QString& bucketFolderHint, QUndoCommand* undoParent,
+                                const QString& bucketFolderHint, UndoCommand* undoParent,
                                 const Clip* initialClip,
                                 VariableKind variableKind = VariableKind::Smooth);
     static std::unique_ptr<ProjectSaveBaseline> captureSaveBaseline(

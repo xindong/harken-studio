@@ -77,7 +77,7 @@ public:
 
     void setProjectManager(ProjectManager* projectManager);
     
-    void setMainWindow(MainWindow* mainWindow) { mainWindow_ = mainWindow; }
+    void setMainWindow(MainWindow* mainWindow);
 
     void setAssetImporter(AssetImporter* importer) { assetImporter_ = importer; }
     void setAssetConverter(AssetConverter* converter) { assetConverter_ = converter; }
@@ -136,7 +136,10 @@ private:
         const TransactionExecutionContext& context) const;
 
     using CommandHandler = std::function<QJsonObject(const QJsonObject&)>;
-    void registerDesktopHandler(const QString& name, CommandHandler handler);
+    void registerDesktopHandler(const QString& name, CommandHandler handler = {});
+    void registerDesktopSystemHandlers();
+    void registerDesktopEditorHandlers();
+    void registerDesktopAdvancedHandlers();
     QSet<QString> desktopCommands_;
     
     void registerCommandHandlers();
@@ -349,6 +352,10 @@ private:
     AudioEngine* engine_ = nullptr;
     ProjectManager* projectManager_ = nullptr;
     MainWindow* mainWindow_ = nullptr;
+    QMetaObject::Connection desktopDestroyedConnection_;
+    std::function<bool()> projectOpening_;
+    std::function<bool(const QString&, QString*, bool*)> projectOpener_;
+    HarkenEditor::AuditionManager* audition_ = nullptr;
     AssetImporter* assetImporter_ = nullptr;
     AssetConverter* assetConverter_ = nullptr;
     QVector<QTcpSocket*> clients_;

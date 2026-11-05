@@ -6,7 +6,6 @@
 #include "../ProjectManager.h"
 #include "../NameValidator.h"
 #include "../UndoCommands.h"
-#include "../../MainWindow.h"
 #include "../Components/VAudio.h"
 #include "../Components/VMixNode.h"
 #include "../Components/VBus.h"
@@ -716,31 +715,7 @@ void registerMixerActions(ActionManager& mgr,
         def.category = "mixer";
         def.paramSchema = QJsonObject{{"bus_id", "uint32"}};
         def.undoable = false;
-        def.handler = [mainWindow](const QJsonObject& args) -> ActionResult {
-            if (!args.contains("bus_id"))
-                return {false, {}, "INVALID_ARGS", "bus_id required"};
-            uint32_t busId = static_cast<uint32_t>(args["bus_id"].toInteger());
 
-            auto& pm = ProjectManager::instance();
-            if (pm.currentProject()) {
-                if (pm.findVBus(busId) == nullptr)
-                    return {false, {}, "NOT_FOUND", QString("Bus ID %1 not found").arg(busId)};
-            }
-
-            if (mainWindow) {
-                QMetaObject::invokeMethod(mainWindow, [mainWindow, busId]() {
-                    mainWindow->selectBus(busId, true);
-                }, Qt::QueuedConnection);
-            }
-
-            ActionResult r;
-            r.success = true;
-            r.data = QJsonObject{
-                {"bus_id", static_cast<qint64>(busId)},
-                {"selected", true}
-            };
-            return r;
-        };
         mgr.registerAction(def);
     }
 

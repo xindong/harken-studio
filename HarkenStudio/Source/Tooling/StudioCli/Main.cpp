@@ -101,7 +101,7 @@ int main(int argc, char* argv[])
     _setmode(_fileno(stdout), _O_BINARY);
 #endif
     QCoreApplication app(argc, argv);
-    app.setApplicationName(QStringLiteral("harken-studio"));
+    app.setApplicationName(QStringLiteral("HarkenStudioCLI"));
     app.setOrganizationName(QStringLiteral("HarkenSound"));
     app.setApplicationVersion(QString::fromUtf8(Harken::BuildInfo::Version.data(),
         static_cast<qsizetype>(Harken::BuildInfo::Version.size())));
@@ -121,11 +121,11 @@ int main(int argc, char* argv[])
         "Creation and external operations such as export write their own outputs.\n"
         "A batch stops on its first error and is not an atomic transaction.\n\n"
         "Examples:\n"
-        "  harken-studio commands set_item_property --json\n"
-        "  harken-studio init ./GameAudio --json\n"
-        "  harken-studio exec list_items --project ./GameAudio/GameAudio.hsp --json\n"
-        "  harken-studio run --input workflow.json --save --json\n"
-        "  harken-studio exec export_pack --project ./GameAudio/GameAudio.hsp --input export.json --json\n\n"
+        "  HarkenStudioCLI commands set_item_property --json\n"
+        "  HarkenStudioCLI init ./GameAudio --json\n"
+        "  HarkenStudioCLI exec list_items --project ./GameAudio/GameAudio.hsp --json\n"
+        "  HarkenStudioCLI run --input workflow.json --save --json\n"
+        "  HarkenStudioCLI exec export_pack --project ./GameAudio/GameAudio.hsp --input export.json --json\n\n"
         "Exit codes: 0 success, 1 execution failure, 2 invalid usage/input, 124 timeout, 130 interruption."));
     parser.addHelpOption();
     parser.addVersionOption();
@@ -159,10 +159,10 @@ int main(int argc, char* argv[])
     const QString command = positional.front();
     if (command != QStringLiteral("commands") && command != QStringLiteral("init")
         && command != QStringLiteral("exec") && command != QStringLiteral("run"))
-        return usage(QStringLiteral("Unknown command '%1'. Run harken-studio --help.").arg(command));
+        return usage(QStringLiteral("Unknown command '%1'. Run HarkenStudioCLI --help.").arg(command));
     if (positional.size() > 2 || ((command == QStringLiteral("init") || command == QStringLiteral("exec")) && positional.size() != 2)
         || (command == QStringLiteral("run") && positional.size() != 1))
-        return usage(QStringLiteral("Invalid positional arguments. Run harken-studio --help."));
+        return usage(QStringLiteral("Invalid positional arguments. Run HarkenStudioCLI --help."));
     bool validTimeout = false;
     const int seconds = parser.value(QStringLiteral("timeout")).toInt(&validTimeout);
     if (!validTimeout || seconds < 1 || seconds > 86400)

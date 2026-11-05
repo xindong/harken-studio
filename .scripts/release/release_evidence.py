@@ -392,7 +392,7 @@ def read_macos_deployment(build_dir: Path, product: str, configuration: str, mod
         source = record["sourceArtifact"]
         if (source not in model["artifacts"] or source["type"] != "EXECUTABLE"
                 or (source["target"], source["name"]) not in {
-                    ("harkenizer", "Harkenizer"), ("harken_studio_cli", "harken-studio")}
+                    ("harkenizer", "Harkenizer"), ("harken_studio_cli", "HarkenStudioCLI")}
                 or record["path"] != f"HarkenStudio.app/Contents/MacOS/{source['name']}"
                 or record["path"] in seen):
             raise ValueError("macOS deployment source does not match a CMake target artifact")

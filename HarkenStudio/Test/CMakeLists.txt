@@ -32,6 +32,7 @@ add_executable(harken_editor_tests
     UnitTest/AttenuationCurveUndoTest.cpp
     UnitTest/AttenuationRuntimeSyncTest.cpp
     UnitTest/AudioEnginePreviewTest.cpp
+    UnitTest/UndoHistoryTest.cpp
     UnitTest/AdvancedActionResultTest.cpp
     UnitTest/PreparedProjectAssetReconcileTest.cpp
     UnitTest/ProjectSerializationTest.cpp

@@ -775,7 +775,7 @@ quintptr AudioEngine::playByName(const QString& name)
     return playByNameDetailed(name).playbackHandle;
 }
 
-quintptr AudioEngine::playByName3D(const QString& name, const QVector3D& position)
+quintptr AudioEngine::playByName3D(const QString& name, const HarkenEditor::Vec3& position)
 {
     if (!session_)
     {
@@ -790,7 +790,7 @@ quintptr AudioEngine::playByName3D(const QString& name, const QVector3D& positio
     }
 
     quintptr handle = static_cast<quintptr>(
-        session_->playByName3D(name, position.x(), position.y(), position.z()));
+        session_->playByName3D(name, position.x, position.y, position.z));
     emit playbackStarted(handle, name);
     return handle;
 }
@@ -846,34 +846,34 @@ void AudioEngine::resetListenerTransformCache()
     if (!initialized_)
         return;
 
-    listenerPosition_ = QVector3D(0.0f, 0.0f, 0.0f);
-    listenerForward_ = QVector3D(0.0f, 0.0f, -1.0f);
-    listenerUp_ = QVector3D(0.0f, 1.0f, 0.0f);
+    listenerPosition_ = HarkenEditor::Vec3(0.0f, 0.0f, 0.0f);
+    listenerForward_ = HarkenEditor::Vec3(0.0f, 0.0f, -1.0f);
+    listenerUp_ = HarkenEditor::Vec3(0.0f, 1.0f, 0.0f);
 }
 
-void AudioEngine::setPlaybackPosition(quintptr playbackHandle, const QVector3D& position)
+void AudioEngine::setPlaybackPosition(quintptr playbackHandle, const HarkenEditor::Vec3& position)
 {
     if (!playbackHandle || !session_)
         return;
 
     session_->setPlaybackPosition(static_cast<uint64_t>(playbackHandle),
-                                position.x(), position.y(), position.z());
+                                position.x, position.y, position.z);
 }
 
-void AudioEngine::setListenerPosition(const QVector3D& position)
+void AudioEngine::setListenerPosition(const HarkenEditor::Vec3& position)
 {
     listenerPosition_ = position;
     setListenerTransform(position, listenerForward_, listenerUp_);
 }
 
-void AudioEngine::setListenerOrientation(const QVector3D& forward, const QVector3D& up)
+void AudioEngine::setListenerOrientation(const HarkenEditor::Vec3& forward, const HarkenEditor::Vec3& up)
 {
     listenerForward_ = forward.normalized();
     listenerUp_ = up.normalized();
     setListenerTransform(listenerPosition_, listenerForward_, listenerUp_);
 }
 
-void AudioEngine::setListenerTransform(const QVector3D& position, const QVector3D& forward, const QVector3D& up)
+void AudioEngine::setListenerTransform(const HarkenEditor::Vec3& position, const HarkenEditor::Vec3& forward, const HarkenEditor::Vec3& up)
 {
     listenerPosition_ = position;
     listenerForward_ = forward;
@@ -882,9 +882,9 @@ void AudioEngine::setListenerTransform(const QVector3D& position, const QVector3
     if (!session_)
         return;
 
-    session_->setListenerTransform(position.x(), position.y(), position.z(),
-                                   forward.x(), forward.y(), forward.z(),
-                                   up.x(), up.y(), up.z());
+    session_->setListenerTransform(position.x, position.y, position.z,
+                                   forward.x, forward.y, forward.z,
+                                   up.x, up.y, up.z);
 }
 
 bool AudioEngine::loadPack(const QString& path)

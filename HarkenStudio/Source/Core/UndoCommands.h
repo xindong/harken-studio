@@ -1,14 +1,12 @@
 
 #pragma once
 
-#include <QUndoCommand>
-#include <QUndoStack>
-#include <QAction>
+#include "Core/UndoHistory.h"
+#include "HarkenMath.h"
 #include <QJsonObject>
 #include <QVariant>
 #include <QString>
 #include <QPointF>
-#include <QVector3D>
 #include <QSet>
 #include <functional>
 #include <memory>
@@ -21,12 +19,12 @@
 
 namespace VNX {
 
-class TransactionalUndoCommand : public QUndoCommand
+class TransactionalUndoCommand : public UndoCommand
 {
 public:
-    explicit TransactionalUndoCommand(const QString& text, QUndoCommand* parent = nullptr,
+    explicit TransactionalUndoCommand(const QString& text, UndoCommand* parent = nullptr,
                                       bool applied = true)
-        : QUndoCommand(text, parent), applied_(applied) {}
+        : UndoCommand(text, parent), applied_(applied) {}
 
     bool tryReplay(bool redo);
     void undo() final { tryReplay(false); }
@@ -46,12 +44,9 @@ class UndoRedoManager : public QObject
 public:
     static UndoRedoManager& instance();
     
-    QUndoStack* undoStack() { return &undoStack_; }
+    UndoStack* undoStack() { return &undoStack_; }
     
-    QAction* createUndoAction(QObject* parent, const QString& prefix = QString());
-    QAction* createRedoAction(QObject* parent, const QString& prefix = QString());
-    
-    void push(QUndoCommand* command);
+    void push(UndoCommand* command);
     
     void beginMacro(const QString& text);
     void endMacro();
@@ -76,18 +71,17 @@ private:
     UndoRedoManager();
     ~UndoRedoManager() override = default;
 
-    QAction* createReplayAction(QObject* parent, const QString& prefix, bool redo);
     bool replay(bool redo);
     void refreshReplayAvailability();
     void refreshCleanState();
     
-    QUndoStack undoStack_;
+    UndoStack undoStack_;
     bool clean_ = true;
     const QSet<QUuid>* authoringWriteSet_ = nullptr;
     std::vector<std::optional<QSet<QUuid>>> macroWriteSets_;
 };
 
-class PropertyChangeCommand : public QUndoCommand
+class PropertyChangeCommand : public UndoCommand
 {
 public:
     PropertyChangeCommand(
@@ -96,14 +90,14 @@ public:
         const QVariant& oldValue,
         const QVariant& newValue,
         const QString& text = QString(),
-        QUndoCommand* parent = nullptr
+        UndoCommand* parent = nullptr
     );
     
     void undo() override;
     void redo() override;
     
     int id() const override { return 1001; }
-    bool mergeWith(const QUndoCommand* other) override;
+    bool mergeWith(const UndoCommand* other) override;
 
 private:
     QObject* target_;
@@ -112,7 +106,7 @@ private:
     QVariant newValue_;
 };
 
-class ProjectItemCommand : public QUndoCommand
+class ProjectItemCommand : public UndoCommand
 {
 public:
     enum Operation { Add, Remove, Rename, Move };
@@ -125,7 +119,7 @@ public:
         const QVariant& previousData,
         std::function<void(Operation, const QString&, const QString&, const QVariant&)> executeFn,
         const QString& text = QString(),
-        QUndoCommand* parent = nullptr
+        UndoCommand* parent = nullptr
     );
     
     void undo() override;
@@ -140,7 +134,7 @@ private:
     std::function<void(Operation, const QString&, const QString&, const QVariant&)> executeFn_;
 };
 
-class Scene3DCommand : public QUndoCommand
+class Scene3DCommand : public UndoCommand
 {
 public:
     enum ObjectType { Emitter, Listener, Obstruction };
@@ -148,33 +142,33 @@ public:
     Scene3DCommand(
         ObjectType objectType,
         int objectId,
-        const QVector3D& oldPosition,
-        const QVector3D& newPosition,
-        std::function<void(ObjectType, int, const QVector3D&)> applyFn,
+        const HarkenEditor::Vec3& oldPosition,
+        const HarkenEditor::Vec3& newPosition,
+        std::function<void(ObjectType, int, const HarkenEditor::Vec3&)> applyFn,
         const QString& text = QString(),
-        QUndoCommand* parent = nullptr
+        UndoCommand* parent = nullptr
     );
     
     void undo() override;
     void redo() override;
     
     int id() const override { return 1005; }
-    bool mergeWith(const QUndoCommand* other) override;
+    bool mergeWith(const UndoCommand* other) override;
 
 private:
     ObjectType objectType_;
     int objectId_;
-    QVector3D oldPosition_;
-    QVector3D newPosition_;
-    std::function<void(ObjectType, int, const QVector3D&)> applyFn_;
+    HarkenEditor::Vec3 oldPosition_;
+    HarkenEditor::Vec3 newPosition_;
+    std::function<void(ObjectType, int, const HarkenEditor::Vec3&)> applyFn_;
 };
 
-class DeleteProjectItemCommand : public QUndoCommand
+class DeleteProjectItemCommand : public UndoCommand
 {
 public:
     DeleteProjectItemCommand(
         ProjectItem* item,
-        QUndoCommand* parent = nullptr
+        UndoCommand* parent = nullptr
     );
 
     void undo() override;
@@ -204,13 +198,13 @@ private:
 };
 
 
-class CreateProjectItemCommand : public QUndoCommand
+class CreateProjectItemCommand : public UndoCommand
 {
 public:
     CreateProjectItemCommand(
         ProjectItem* parent,
         std::shared_ptr<ProjectItem> newItem,
-        QUndoCommand* undoParent = nullptr
+        UndoCommand* undoParent = nullptr
     );
 
     void undo() override;
@@ -232,7 +226,7 @@ public:
         ProjectItem* item,
         const QString& oldName,
         const QString& newName,
-        QUndoCommand* undoParent = nullptr
+        UndoCommand* undoParent = nullptr
     );
 
 private:
@@ -242,14 +236,14 @@ private:
     QString newName_;
 };
 
-class SetItemColorCommand : public QUndoCommand
+class SetItemColorCommand : public UndoCommand
 {
 public:
     SetItemColorCommand(
         ProjectItem* item,
         uint32_t oldColor,
         uint32_t newColor,
-        QUndoCommand* undoParent = nullptr
+        UndoCommand* undoParent = nullptr
     );
 
     void undo() override;
@@ -269,13 +263,13 @@ public:
     MoveItemCommand(
         ProjectItem* item,
         ProjectItem* newParent,
-        QUndoCommand* parent = nullptr
+        UndoCommand* parent = nullptr
     );
 
     MoveItemCommand(
         ProjectItem* item,
         const QString& bucketRootFolder,
-        QUndoCommand* parent = nullptr
+        UndoCommand* parent = nullptr
     );
 
 private:
@@ -361,16 +355,16 @@ private:
     QString name_;
     ProjectItem* parent_ = nullptr;
     ProjectItem* container_ = nullptr;
-    std::unique_ptr<QUndoCommand> creation_;
+    std::unique_ptr<UndoCommand> creation_;
     std::unique_ptr<TransactionalUndoCommand> moves_;
 };
 
-class PastePropertiesCommand : public QUndoCommand
+class PastePropertiesCommand : public UndoCommand
 {
 public:
     PastePropertiesCommand(const std::vector<ProjectItem*>& targets,
                            const ProjectItem* source,
-                           QUndoCommand* undoParent = nullptr);
+                           UndoCommand* undoParent = nullptr);
 
     void undo() override;
     void redo() override;
@@ -382,7 +376,7 @@ private:
     std::vector<Snap> snaps_;
 };
 
-class ContainerPropertyChangeCommand : public QUndoCommand
+class ContainerPropertyChangeCommand : public UndoCommand
 {
 public:
     ContainerPropertyChangeCommand(
@@ -392,14 +386,14 @@ public:
         const QVariant& newValue,
         std::function<void(ProjectItem*, const QVariant&)> applyFn,
         const QString& text = QString(),
-        QUndoCommand* parent = nullptr
+        UndoCommand* parent = nullptr
     );
     
     void undo() override;
     void redo() override;
     
     int id() const override { return 1010; }
-    bool mergeWith(const QUndoCommand* other) override;
+    bool mergeWith(const UndoCommand* other) override;
 
 private:
     ProjectItem* item_;
@@ -411,7 +405,7 @@ private:
 };
 
 
-class BusPropertyChangeCommand : public QUndoCommand
+class BusPropertyChangeCommand : public UndoCommand
 {
 public:
     BusPropertyChangeCommand(
@@ -421,14 +415,14 @@ public:
         const QVariant& newValue,
         std::function<void(uint32_t, const QVariant&)> applyFn,
         const QString& text = QString(),
-        QUndoCommand* parent = nullptr
+        UndoCommand* parent = nullptr
     );
     
     void undo() override;
     void redo() override;
     
     int id() const override { return 1011; }
-    bool mergeWith(const QUndoCommand* other) override;
+    bool mergeWith(const UndoCommand* other) override;
 
 private:
     uint32_t objectID_;
@@ -439,7 +433,7 @@ private:
     bool firstRedo_ = true;
 };
 
-class BusSendCommand : public QUndoCommand
+class BusSendCommand : public UndoCommand
 {
 public:
     BusSendCommand(
@@ -450,7 +444,7 @@ public:
         std::function<void(uint32_t, uint32_t, float)> addFn,
         std::function<void(uint32_t, uint32_t)> removeFn,
         const QString& text = QString(),
-        QUndoCommand* parent = nullptr
+        UndoCommand* parent = nullptr
     );
 
     void undo() override;
@@ -468,14 +462,14 @@ private:
     bool firstRedo_ = true;
 };
 
-class SequenceReorderCommand : public QUndoCommand
+class SequenceReorderCommand : public UndoCommand
 {
 public:
     SequenceReorderCommand(
         ProjectItem* item,
         const std::vector<std::shared_ptr<ProjectItem>>& oldOrder,
         const std::vector<std::shared_ptr<ProjectItem>>& newOrder,
-        QUndoCommand* parent = nullptr
+        UndoCommand* parent = nullptr
     );
 
     void undo() override;
@@ -492,7 +486,7 @@ private:
     bool firstRedo_ = true;
 };
 
-class SpatialPropertyChangeCommand : public QUndoCommand
+class SpatialPropertyChangeCommand : public UndoCommand
 {
 public:
     SpatialPropertyChangeCommand(
@@ -502,13 +496,13 @@ public:
         const QVariant& newValue,
         std::function<void(ProjectItem*, const QVariant&)> applyFn,
         const QString& text = QString(),
-        QUndoCommand* parent = nullptr
+        UndoCommand* parent = nullptr
     );
 
     void undo() override;
     void redo() override;
     int id() const override { return 1050; }
-    bool mergeWith(const QUndoCommand* other) override;
+    bool mergeWith(const UndoCommand* other) override;
 
 private:
     ProjectItem* item_;
@@ -574,17 +568,17 @@ private:
 };
 
 
-class RuntimeActionCommand : public QUndoCommand
+class RuntimeActionCommand : public UndoCommand
 {
 public:
     RuntimeActionCommand(const QString& text,
                          std::function<void()> undoFn,
                          std::function<void()> redoFn,
                          int mergeId = 0,
-                         QUndoCommand* parent = nullptr,
+                         UndoCommand* parent = nullptr,
                          std::function<bool()> canReplay = {},
                          std::optional<QSet<QUuid>> authoringWriteSet = std::nullopt)
-        : QUndoCommand(text, parent)
+        : UndoCommand(text, parent)
         , undoFn_(std::move(undoFn))
         , redoFn_(std::move(redoFn))
         , mergeId_(mergeId)
@@ -602,7 +596,7 @@ public:
         redoFn_();
     }
     int id() const override { return mergeId_; }
-    bool mergeWith(const QUndoCommand* other) override {
+    bool mergeWith(const UndoCommand* other) override {
         auto* o = dynamic_cast<const RuntimeActionCommand*>(other);
         if (!o || o->mergeId_ != mergeId_ || mergeId_ == 0) return false;
         redoFn_ = o->redoFn_;

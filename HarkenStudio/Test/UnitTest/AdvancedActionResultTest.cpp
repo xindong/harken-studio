@@ -106,7 +106,7 @@ TEST_F(AdvancedActionResultTest, AuthoringWriteScopeSurvivesReplayAndKeepsUnknow
     check(false);
     undo.beginMacro(QStringLiteral("Mixed transaction"));
     EXPECT_TRUE(actions.execute(def.id, {}).success);
-    undo.push(new QUndoCommand(QStringLiteral("Unknown authoring changes")));
+    undo.push(new VNX::UndoCommand(QStringLiteral("Unknown authoring changes")));
     undo.endMacro();
     check(false);
     EXPECT_TRUE(undo.undo());

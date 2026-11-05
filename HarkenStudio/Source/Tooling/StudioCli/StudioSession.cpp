@@ -57,7 +57,7 @@ StudioSession::StudioSession() : state_(std::make_unique<State>())
     state_->dispatcher.setProjectManager(&state_->project);
     state_->dispatcher.setAppState(VNX::IPCServer::AppState::Ready);
     VNX::registerEditorCommands({&state_->engine, &state_->project,
-        &state_->dispatcher, nullptr, nullptr, nullptr, &state_->audition});
+        &state_->dispatcher, &state_->audition});
 }
 
 StudioSession::~StudioSession()

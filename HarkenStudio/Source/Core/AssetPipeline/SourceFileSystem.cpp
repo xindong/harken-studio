@@ -14,7 +14,7 @@
 #include "../SoundSourceEditing.h"
 #include "../SoundSourceSemantics.h"
 #include "../UndoCommands.h"
-#include "../../Widgets/LogPanel/LogPanel.h"
+#include "../LogService.h"
 #include "Utils/FileOperationRetry.h"
 
 #include <QDir>
@@ -272,7 +272,7 @@ private:
         if (applyBatch(changes, ApplyMode::Record, &error, &rollbackFailed))
             return true;
         setObsolete(rollbackFailed);
-        LogPanel::logError(LogCategory::File, error);
+        LogService::logError(LogCategory::File, error);
         return false;
     }
 
@@ -291,7 +291,7 @@ private:
         auto& registry = AssetRegistry::instance();
         QString error;
         if (!recoverDiscard(&error)) {
-            LogPanel::logError(LogCategory::File, error);
+            LogService::logError(LogCategory::File, error);
             return false;
         }
         if (redo && !removed_) return true;
@@ -329,7 +329,7 @@ private:
             }
             setObsolete(rollbackFailed);
         }
-        LogPanel::logError(LogCategory::File, error);
+        LogService::logError(LogCategory::File, error);
         return false;
     }
 
@@ -373,7 +373,7 @@ private:
         auto& manager = ProjectManager::instance();
         QString error;
         if (!recoverDiscard(&error)) {
-            LogPanel::logError(LogCategory::File, error);
+            LogService::logError(LogCategory::File, error);
             return false;
         }
         const auto* source = registry.getAsset(source_.sourceID);
@@ -414,7 +414,7 @@ private:
             }
             setObsolete(rollbackFailed);
         }
-        LogPanel::logError(LogCategory::File, error);
+        LogService::logError(LogCategory::File, error);
         return false;
     }
 

@@ -34,7 +34,7 @@ else()
     target_compile_definitions(harken_preview PUBLIC HARKEN_DEVELOPMENT_PREVIEW=0)
 endif()
 
-if(HARKEN_BUILD_EDITOR)
+if(HARKEN_BUILD_EDITOR OR HARKEN_BUILD_STUDIO_CLI)
     add_library(harken_studio_runtime SHARED
         src/PreviewAbi.cpp
         src/PreviewAbiLayout.cpp

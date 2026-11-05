@@ -5,7 +5,7 @@
 #include "../ProjectTypes.h"
 #include "../UndoCommands.h"
 
-#include <QUndoCommand>
+#include "Core/UndoHistory.h"
 #include <QStringList>
 #include <QList>
 #include <QUuid>
@@ -25,12 +25,12 @@ public:
     ImportAssetsCommand(const QStringList& externalPaths,
                         ProjectFileBinding* targetBinding,
                         ProjectItem* targetParent = nullptr,
-                        QUndoCommand* parent = nullptr);
+                        UndoCommand* parent = nullptr);
 
     // Root-level mode: each file becomes its own independent root Sound
     // (Layers bucket), with no target binding/parent at all.
     explicit ImportAssetsCommand(const QStringList& externalPaths,
-                                 QUndoCommand* parent = nullptr);
+                                 UndoCommand* parent = nullptr);
 
     ~ImportAssetsCommand() override;
 
@@ -102,11 +102,11 @@ private:
     bool firstRedo_ = true;
 };
 
-class DeleteAssetsCommand : public QUndoCommand
+class DeleteAssetsCommand : public UndoCommand
 {
 public:
     DeleteAssetsCommand(const QList<uint32_t>& sourceIDs,
-                        QUndoCommand* parent = nullptr);
+                        UndoCommand* parent = nullptr);
 
     ~DeleteAssetsCommand() override;
 

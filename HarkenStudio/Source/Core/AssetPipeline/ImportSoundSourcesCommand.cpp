@@ -11,7 +11,7 @@
 #include "../SoundSourceEditing.h"
 #include "../SoundSourceSemantics.h"
 #include "../UndoCommands.h"
-#include "../../Widgets/LogPanel/LogPanel.h"
+#include "Core/LogService.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -28,7 +28,7 @@ ImportSoundSourcesCommand::ImportSoundSourcesCommand(
     ProjectFileBinding* targetBinding,
     ProjectItem* targetSound,
     QString language,
-    QUndoCommand* parent)
+    UndoCommand* parent)
     : TransactionalUndoCommand({}, parent, false)
     , externalPaths_(externalPaths)
     , targetBinding_(targetBinding)
@@ -145,7 +145,7 @@ void ImportSoundSourcesCommand::collectEntries()
                                return !languages.contains(language);
                            })) {
             failCount_ = externalPaths_.size();
-            LogPanel::logError(LogCategory::Import, QObject::tr(
+            LogService::logError(LogCategory::Import, QObject::tr(
                 "Per-language sources must use project languages before importing."));
             return;
         }
@@ -167,7 +167,7 @@ void ImportSoundSourcesCommand::collectEntries()
         ) == 0;
     };
     const auto report = [](const QString& error) {
-        LogPanel::logError(LogCategory::Import, error);
+        LogService::logError(LogCategory::Import, error);
     };
     struct PlannedImport { QString path; uint32_t restoreID = 0; };
     QList<PlannedImport> plan;
@@ -222,7 +222,7 @@ void ImportSoundSourcesCommand::collectEntries()
         const ImportResult result = importer.importFile(path, targetBinding_, {}, true, planned.restoreID);
         if (!result.success) {
             ++failCount_;
-            LogPanel::logError(LogCategory::Import, QString("Failed: %1 - %2")
+            LogService::logError(LogCategory::Import, QString("Failed: %1 - %2")
                 .arg(path, result.errorMessage));
             continue;
         }

@@ -8,7 +8,6 @@
 #include <QSet>
 #include <QThread>
 #include <QCoreApplication>
-#include <QApplication>
 #include <QTcpServer>
 #include <QTcpSocket>
 
@@ -385,7 +384,7 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
         return withRequestId(commandUnavailableInCurrentStateResponse(cmd));
 
     if (commandRequiresDesktop(cmd)
-        && !qobject_cast<QApplication*>(QCoreApplication::instance()))
+        && !mainWindow_)
         return withRequestId(errorResponse("DESKTOP_REQUIRED",
             "This command requires the desktop editor. Use the corresponding project operation for headless authoring."));
 
@@ -410,7 +409,7 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
                                            "Project is being closed, command rejected."));
     }
 
-    if (mainWindow_ && mainWindow_->isProjectOpening()
+    if (projectOpening_ && projectOpening_()
         && (cmd == QLatin1String("create_project")
             || cmd == QLatin1String("open_project"))) {
         return withRequestId(errorResponse(
@@ -604,6 +603,10 @@ QStringList IPCServer::commandNames() const
 void IPCServer::registerDesktopHandler(const QString& name, CommandHandler handler)
 {
     desktopCommands_.insert(name);
+    if (!handler)
+        handler = [this](const QJsonObject&) {
+            return errorResponse("DESKTOP_REQUIRED", "This command requires the desktop editor.");
+        };
     commandHandlers_.insert(name, std::move(handler));
 }
 
