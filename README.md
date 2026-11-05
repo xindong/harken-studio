@@ -21,15 +21,6 @@ git clone https://github.com/xindong/harken-studio.git
 3. **Harken Engine** — the core sound engine, the primary deliverable for client and engine integration;
 4. **Harken Engine Unity Integration** — the standalone integration package for embedding Harken into game engines;
 
-## Headless authoring for scripts and agents
-
-`HarkenStudioCLI` creates, configures, saves, and exports projects without opening
-Studio. Start with `HarkenStudioCLI --help` and `HarkenStudioCLI commands --json`.
-It shares Studio's QtCore authoring services and does not require Qt GUI libraries.
-Commands and parameter descriptions come from the shared editor registry.
-See the [CLI guide](HarkenStudio/Source/Tooling/StudioCli/README.md) for setup,
-JSON input/output, batch workflows, persistence, and supported boundaries.
-
 ## Prerequisites
 
 ### 1. Install Development Tools

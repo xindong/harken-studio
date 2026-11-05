@@ -21,14 +21,6 @@ git clone https://github.com/xindong/harken-studio.git
 3. **Harken Engine**——核心声音引擎，客户端以及引擎集成的核心产物；
 4. **Harken Engine Unity Integration**——独立集成包，用于游戏引擎集成 Harken；
 
-## 面向脚本和 Agent 的无窗口编辑
-
-`HarkenStudioCLI` 可在不打开 Studio 窗口的情况下创建、配置、保存和导出工程。
-从 `HarkenStudioCLI --help` 和 `HarkenStudioCLI commands --json` 开始，命令及参数说明来自编辑器共享注册表。
-GUI 与 CLI 共用 QtCore 工程编辑服务，CLI 不依赖 Qt 图形界面库。
-任何能运行终端命令的 Agent 都可使用，无需绑定某个 AI 平台。
-安装方式、JSON 输入输出、批处理、保存规则与支持边界见 [CLI 使用说明](HarkenStudio/Source/Tooling/StudioCli/README.md)。
-
 ## 项目部署要求
 
 ### 1. 安装开发工具
