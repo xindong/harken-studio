@@ -159,6 +159,10 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message>
+        <source>Fix disabled Studio and Unity Integration Package changelog links for some published versions.</source>
+        <translation>修复部分已发布版本的 Studio 和 Unity 集成包更新日志入口不可用的问题。</translation>
+    </message>
     <message><source>Preserve damaged installation records and report invalid fields instead of silently losing registered versions during installation, repair or removal.</source><translation>安装记录损坏时保留原件并报告错误字段，避免安装、修复或卸载时静默丢失已登记的版本。</translation></message>
     <message><source>Report background Studio installation failures even when diagnostic logs cannot be written, and retain the result across Hub restarts.</source><translation>即使诊断日志无法写入，也能报告 Studio 后台安装失败原因；重启 Hub 后仍可读取安装结果。</translation></message>
     <message>

@@ -76,7 +76,7 @@ TEST_P(VersionReleaseNotesTest, RejectsUnboundOrMalformedDocuments)
     QList<QByteArray> responses{QByteArrayLiteral("not JSON"), QByteArrayLiteral("[]")};
     const QJsonObject invalidValues{
         {QStringLiteral("schemaVersion"), 1},
-        {QStringLiteral("id"), QStringLiteral("harken-studio-9.9.9")},
+        {QStringLiteral("id"), QStringLiteral(" ")},
         {QStringLiteral("version"), QStringLiteral("9.9.9")},
         {QStringLiteral("pages"), QJsonObject()}};
     for (auto it = invalidValues.begin(); it != invalidValues.end(); ++it) {
@@ -125,6 +125,9 @@ TEST_P(VersionReleaseNotesTest, UntrustedPathsCannotRedirectOrTraverse)
 
 TEST_P(VersionReleaseNotesTest, SharedRequestsPreserveLocalizedTargets)
 {
+    QJsonObject document = document_;
+    document[QStringLiteral("id")] = QStringLiteral("docs-%1").arg(version_);
+    setDocument(document);
     VersionReleaseNotes notes;
     QSignalSpy finished(&notes, &VersionReleaseNotes::finished);
     notes.fetch(version_);
