@@ -5679,6 +5679,21 @@ bool OriginalConditionalReplacementBatch::PrepareDeferred(QueueInstanceTable& qu
     return true;
 }
 
+bool OriginalConditionalReplacementBatch::PrepareDeferred(QueueInstanceTable& queues,
+    QueueInstanceTable::PreparedCatalogResetScope* scope,
+    const ActionDeferredRecordTable::ClaimedResetOrder& reset) noexcept {
+    if (!reset.Valid() || !PrepareScope(queues, scope)) return false;
+    claimedReset_ = reset;
+    return true;
+}
+
+bool OriginalConditionalReplacementBatch::PrepareContinuations(QueueInstanceTable& queues,
+    const ActionDeferredRecordTable::ClaimedResetOrder& reset) noexcept {
+    if (!reset.Valid() || !PrepareContinuationScope(queues)) return false;
+    claimedReset_ = reset;
+    return true;
+}
+
 bool OriginalConditionalReplacementBatch::PrepareScope(QueueInstanceTable& queues,
     QueueInstanceTable::PreparedCatalogResetScope* scope) noexcept {
     if (queues_ != nullptr || count_ != 0 || generation_ == UINT64_MAX || scope == nullptr ||
@@ -6300,6 +6315,7 @@ bool OriginalConditionalReplacementBatch::Close() noexcept {
     assert((word_.load(std::memory_order_acquire) & ~(kAborted | kAccepted)) == 0);
     sequence_.Release();
     deferredChild_ = {};
+    claimedReset_ = {};
     scope_.Release();
     queues_ = nullptr;
     count_ = 0;

@@ -97,6 +97,29 @@ struct ActionDeferredPairState {
 
 class ActionDeferredRecordTable {
 public:
+    // A non-owning loan of an already accepted Reset's exact claimed pair.
+    // The dispatcher alone retries/finalizes the claim; receivers cache the
+    // accepted sequence before that original claim is returned.
+    class ClaimedResetOrder {
+    public:
+        bool Valid() const noexcept;
+        LogicCommitSequence Sequence() const noexcept { return Valid() ? sequence_ : 0; }
+    private:
+        friend class ActionDeferredRecordTable;
+        const ActionDeferredRecordTable* owner_ = nullptr;
+        DeferredIntentPool* pool_ = nullptr;
+        const ActionFiringTable* firings_ = nullptr;
+        ActionDeferredRecordToken record_{};
+        DeferredIntentToken poolToken_{};
+        LogicCommitSequence sequence_ = 0;
+    };
+    bool BorrowClaimedResetOrder(DeferredIntentPool& pool,
+        DeferredIntentToken poolToken, ActionDeferredRecordToken recordToken,
+        const ActionFiringTable& firings, ClaimedResetOrder* out) const noexcept;
+    bool InspectClaimedResetPrerequisites(
+        DeferredIntentPool* pool, DeferredIntentToken poolToken,
+        ActionDeferredRecordToken recordToken, bool* outHeld,
+        ActionDeferredPairState* outFaultState = nullptr) const noexcept;
     // A producer-only loan on the exact prepared record and native pool entry.
     // Both receivers must outlive the proof. Return releases only the loan;
     // the original preparation owners still return their real resources.
@@ -230,6 +253,9 @@ private:
         DeferredIntentRetryReservation retryReservation{};
     };
 
+    const DeferredIntent* MatchClaimedPair(DeferredIntentPool* pool,
+        DeferredIntentToken poolToken, ActionDeferredRecordToken recordToken,
+        ActionOpcodeV1 opcode) const noexcept;
     bool MatchesPreparedPair(const PreparedPairCommitProof& proof) const noexcept;
     void ReleasePreparedPair(PreparedPairCommitProof& proof) noexcept;
     Row* Resolve(ActionDeferredRecordToken token) noexcept;

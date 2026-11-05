@@ -108,6 +108,11 @@ public:
         LogicCommitCoordinator::PreparedIssue* sequence) noexcept;
     bool PrepareContinuations(QueueInstanceTable& queues,
         const PreparedActionFiring& originalChild) noexcept;
+    bool PrepareDeferred(QueueInstanceTable& queues,
+        QueueInstanceTable::PreparedCatalogResetScope* scope,
+        const ActionDeferredRecordTable::ClaimedResetOrder& reset) noexcept;
+    bool PrepareContinuations(QueueInstanceTable& queues,
+        const ActionDeferredRecordTable::ClaimedResetOrder& reset) noexcept;
     const QueueInstanceTable::PreparedCatalogResetScope& Scope() const noexcept { return scope_; }
     const LogicCommitCoordinator::PreparedIssue& SequenceIssue() const noexcept { return sequence_; }
     bool Attach(const OriginalImmediateLaneConditionalProjection& original,
@@ -155,7 +160,8 @@ private:
     bool PrepareScope(QueueInstanceTable& queues,
         QueueInstanceTable::PreparedCatalogResetScope* scope) noexcept;
     LogicCommitSequence Sequence() const noexcept {
-        return sequence_.Valid() ? sequence_.Sequence() : deferredChild_.InheritedSequence();
+        return acceptedSequence_ != 0 ? acceptedSequence_ : sequence_.Valid() ? sequence_.Sequence() :
+            deferredChild_.InheritedSequence() != 0 ? deferredChild_.InheritedSequence() : claimedReset_.Sequence();
     }
     struct Member {
         QueuePageConditionalReceiver* page = nullptr;
@@ -182,6 +188,7 @@ private:
     QueueInstanceTable::PreparedCatalogResetScope scope_;
     LogicCommitCoordinator::PreparedIssue sequence_;
     PreparedActionFiring deferredChild_;
+    ActionDeferredRecordTable::ClaimedResetOrder claimedReset_;
     std::uint64_t generation_ = 0;
     std::uint32_t queueSelectionsPrepared_ = 0;
     bool orderConsumed_ = false;

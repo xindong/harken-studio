@@ -6653,6 +6653,8 @@ struct ImmediateActionPlan {
     harken::LogicCommitCoordinator::PreparedIssue originalSingleIssue;
     harken::LogicCommitCoordinator::ConsumedIssue consumedIssue;
     harken::ActionFiringTable::PreparedChildIdentity deferredChildIdentity;
+    harken::ActionDeferredRecordTable::ClaimedResetOrder claimedResetOrder;
+    bool claimedResetNoOp = false;
     harken::ActionFiringTable::ChildActivationReceipt deferredChildActivation;
     std::uint64_t deferredOwnerCancellationEpoch = 0;
     bool nativeResetBatchPrepared = false;
@@ -38488,20 +38490,22 @@ struct NativeScheduleTransitionPreparation {
     harken::LogicCommitCoordinator::PreparedIssue issue;
     harken::LogicCommitCoordinator::PreparedIssue* borrowedIssue = nullptr;
     const harken::ActionFiringTable::PreparedChildIdentity* borrowedChild = nullptr;
+    harken::ActionDeferredRecordTable::ClaimedResetOrder borrowedReset;
     harken::ActionFiringHandle deferredParent = 0;
     std::uint32_t* selectionEventCursor = nullptr;
     std::uint32_t readExecutionOrdinal = 0;
     harken::LogicCommitCoordinator::PreparedIssue& Issue() noexcept {
         return borrowedIssue != nullptr ? *borrowedIssue : issue;
     }
-    bool Borrowed() const noexcept { return borrowedIssue != nullptr || borrowedChild != nullptr; }
+    bool Borrowed() const noexcept { return borrowedIssue != nullptr || borrowedChild != nullptr || borrowedReset.Valid(); }
     harken::LogicCommitSequence Sequence() noexcept {
-        return borrowedChild != nullptr ? borrowedChild->Sequence() : Issue().Sequence();
+        return borrowedReset.Valid() ? borrowedReset.Sequence() :
+            borrowedChild != nullptr ? borrowedChild->Sequence() : Issue().Sequence();
     }
     bool HasPreparationAuthority() noexcept {
-        return engine != nullptr && (borrowedChild != nullptr
+        return engine != nullptr && (borrowedReset.Valid() || (borrowedChild != nullptr
             ? engine->actionFirings.IsPreparedChildActive(*borrowedChild)
-            : engine->logicCommits.IsOriginalPreparedIssueFor(Issue()));
+            : engine->logicCommits.IsOriginalPreparedIssueFor(Issue())));
     }
     harken::TransitionInstanceToken* transition = nullptr;
     VariableControlRetargetDecisionGuard* decisionGuard = nullptr;
@@ -68968,6 +68972,11 @@ engine.runtimeRecreateRequired = true;
 
 namespace {
 
+VnResult MaterializeClaimedQueueReset(Engine& engine, const DeferredIntentClaim& claim,
+    ActionDeferredRecordToken recordToken, const ActionDeferredRecord& record,
+    const ActionFiringSnapshot& firing, const ContainerProgramViewV3& container,
+    bool* outIdempotent) noexcept;
+
 TimelineDeferredMaterializeStatus MaterializeActionDeferredReset(
     Engine& engine, const DeferredIntentClaim& claim,
     ActionDeferredRecordToken recordToken,
@@ -69022,14 +69031,6 @@ const ContainerProgramViewV3* FindDeferredContainer(
     const auto& candidate = variables.ContainerProgramAt(first);
     return candidate.containerStableId == containerStableId ? &candidate
                                                              : nullptr;
-}
-
-VnResult MapDeferredQueueResetStatus(QueueResetStatusV1 status) noexcept {
-    if (status == QueueResetStatusV1::Backpressure) return VN_BACKPRESSURE;
-    if (status == QueueResetStatusV1::RuntimeRecreateRequired) {
-        return VN_RUNTIME_RECREATE_REQUIRED;
-    }
-    return VN_DEVICE_ERROR;
 }
 
 bool ActionDeferredOwnerCurrent(const Engine& engine,
@@ -69825,19 +69826,21 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredReset(
             return finish(ActionStepState::Failed, VN_BAD_CURRENT_WORLD,
                           ActionTerminalReason::CapabilityUnavailable);
         }
-        const QueueResetTargetV1 target =
-            MakeQueueResetTarget(world, *container, record.emitter);
-        bool idempotent = false;
-        const QueueResetStatusV1 status =
-            ApplyQueueReset(engine, target, sequence, &idempotent,
-                {firing.playbackRequest, record.firing, 0, record.executionOrdinal}, record.stepIndex);
-        if (status == QueueResetStatusV1::Backpressure) return retry();
-        if (status != QueueResetStatusV1::Ok) {
-            return finish(ActionStepState::Failed,
-                          MapDeferredQueueResetStatus(status),
-                          ActionDeferredTerminalReason(
-                              MapDeferredQueueResetStatus(status)));
+        bool prerequisiteHeld = false;
+        ActionDeferredPairState fault{};
+        if (!engine.actionDeferredRecords.InspectClaimedResetPrerequisites(
+                &engine.timelineDeferred, claim.token, recordToken, &prerequisiteHeld, &fault)) {
+            engine.lastDeferredPairFault = fault;
+            engine.hasDeferredPairFault = true;
+            return TimelineDeferredMaterializeStatus::NotOwned;
         }
+        if (prerequisiteHeld) return retry();
+        bool idempotent = false;
+        const auto status = MaterializeClaimedQueueReset(engine, claim, recordToken,
+            record, firing, *container, &idempotent);
+        if (status == VN_BACKPRESSURE) return retry();
+        if (status != VN_OK)
+            return finish(ActionStepState::Failed, status, ActionDeferredTerminalReason(status));
         return finish(idempotent ? ActionStepState::NoOp
                                 : ActionStepState::Succeeded,
                       VN_OK, ActionTerminalReason::None);
@@ -88511,6 +88514,7 @@ struct ContainerPreparationContext {
     std::uint64_t callerSeed = 0;
     std::uint64_t admittedImmediateFrame = 0;
     harken::LogicCommitSequence materializationSequence = 0;
+    harken::ActionDeferredRecordTable::ClaimedResetOrder claimedResetOrder;
     harken::LogicCommitSequence preparedDeferredSequence = 0;
     VnObjectId preparedDeferredRoot{};
     VnActionFiringHandle actionFiring = 0;
@@ -88862,7 +88866,10 @@ bool BorrowInitialForestReadCut(ContainerPreparationContext& context,
     auto& engine = *context.engine;
     if (!owner->initialVariableCut.Valid()) {
         if (owner->initialVariableService != nullptr) return false;
-        const bool captured = context.deferredParentFiring != 0
+        const bool captured = context.claimedResetOrder.Valid()
+            ? engine.variables.CaptureReadCut(context.emitter, *context.originalReadFrame,
+                context.claimedResetOrder.Sequence(), context.entry.executionOrdinal, &owner->initialVariableCut)
+            : context.deferredParentFiring != 0
             ? engine.variables.CaptureActionReadCut(engine, context.emitter, *context.originalReadFrame,
                 context.deferredChildIdentity, context.entry.executionOrdinal, &owner->initialVariableCut)
             : engine.variables.CaptureActionReadCut(context.emitter, *context.originalReadFrame,
@@ -89178,6 +89185,7 @@ struct ScheduleContainerPreparationOperations {
             return context.originalSingleIssue.Sequence();
         if (engine.actionFirings.IsPreparedChildActive(context.deferredChildIdentity))
             return context.deferredChildIdentity.Sequence();
+        if (context.claimedResetOrder.Valid()) return context.claimedResetOrder.Sequence();
         // This stack-local context inherits the Action boundary's validated deferred claim.
         auto* parent = Parent();
         if (!context.materializingDeferred || context.preparedDeferredSequence == 0 ||
@@ -90219,10 +90227,13 @@ bool PrepareContainerSingleLeaf(
     ScopedActionVariableReadCut initialVariables{engine.variables};
     const bool captureVariables = !context.directRoot && (!voice.bindings.empty() || retainOrdinaryVariables) &&
         (!retainOriginalQueueCurrentSource || pendingImmediateEntry) &&
-        (context.originalSingleIssue.Valid() || context.deferredChildIdentity.HasPreparation());
+        (context.originalSingleIssue.Valid() || context.deferredChildIdentity.HasPreparation() || context.claimedResetOrder.Valid());
     if (captureVariables) {
         const bool captured = context.initialForestReadCutOwner != nullptr
             ? BorrowInitialForestReadCut(context, initialVariables)
+            : context.claimedResetOrder.Valid()
+            ? engine.variables.CaptureReadCut(context.emitter, context.ReadFrame(startFrame),
+                context.claimedResetOrder.Sequence(), planned.executionOrdinal, &initialVariables.ref)
             : context.deferredParentFiring != 0
             ? engine.variables.CaptureActionReadCut(engine, context.emitter, context.ReadFrame(startFrame),
                 context.deferredChildIdentity, planned.executionOrdinal, &initialVariables.ref, pendingImmediateEntry)
@@ -90239,7 +90250,9 @@ bool PrepareContainerSingleLeaf(
                 harken::VariableReadCutValueStatus::Failed;
         }
         const bool sourcesReady = inputsReady && (context.initialForestReadCutOwner != nullptr ||
-            (context.deferredParentFiring != 0
+            (context.claimedResetOrder.Valid()
+                ? engine.variables.PrepareReadCutSources(engine, initialVariables.ref)
+                : context.deferredParentFiring != 0
                 ? engine.variables.PrepareActionReadCutSources(engine, initialVariables.ref, context.deferredChildIdentity)
                 : engine.variables.PrepareActionReadCutSources(engine, initialVariables.ref, context.originalSingleIssue)));
         if (!sourcesReady) {
@@ -91168,10 +91181,13 @@ bool PrepareContainerCompositeQueueChild(
             (row->pendingImmediateEntry || context.originalReadFrame.has_value()) &&
             !scratch->queueFutureExecution && (!reusePreparedTree || context.originalReadFrame.has_value()) &&
             source.voice.bindingCount != 0 &&
-            (context.originalSingleIssue.Valid() || context.deferredChildIdentity.HasPreparation());
+            (context.originalSingleIssue.Valid() || context.deferredChildIdentity.HasPreparation() || context.claimedResetOrder.Valid());
         if (captureVariables) {
             const bool captured = context.initialForestReadCutOwner != nullptr
                 ? BorrowInitialForestReadCut(context, initialVariables)
+                : context.claimedResetOrder.Valid()
+                ? engine.variables.CaptureReadCut(context.emitter, context.ReadFrame(baseStartFrame),
+                    context.claimedResetOrder.Sequence(), planned.executionOrdinal, &initialVariables.ref)
                 : context.deferredParentFiring != 0
                 ? engine.variables.CaptureActionReadCut(engine, context.emitter, context.ReadFrame(baseStartFrame),
                     context.deferredChildIdentity, planned.executionOrdinal, &initialVariables.ref,
@@ -91190,7 +91206,9 @@ bool PrepareContainerCompositeQueueChild(
                     harken::VariableReadCutValueStatus::Failed;
             }
             const bool sourcesReady = inputsReady && (context.initialForestReadCutOwner != nullptr ||
-                (context.deferredParentFiring != 0
+                (context.claimedResetOrder.Valid()
+                    ? engine.variables.PrepareReadCutSources(engine, initialVariables.ref)
+                    : context.deferredParentFiring != 0
                     ? engine.variables.PrepareActionReadCutSources(engine, initialVariables.ref,
                         context.deferredChildIdentity)
                     : engine.variables.PrepareActionReadCutSources(engine, initialVariables.ref,
@@ -91597,7 +91615,7 @@ bool PrepareContainerNestedVariableControl(
     scratch->row->Invocation().actionExecutionOrdinal = planned.executionOrdinal;
     if (captureInitialVariables && !immediateLane) {
         auto& initialCut = scratch->storage.initialVariableCut;
-        const bool sourcesReady = materializedVariables
+        const bool sourcesReady = materializedVariables || context.claimedResetOrder.Valid()
             ? engine.variables.PrepareReadCutSources(engine, initialCut)
             : context.deferredParentFiring != 0
             ? engine.variables.PrepareActionReadCutSources(engine, initialCut, context.deferredChildIdentity)
@@ -91886,10 +91904,13 @@ bool PrepareContainerExecution(
             }
         }
         if (!directInitialVariables && !immediateLane && !captureInitialVariables &&
-            (context.originalSingleIssue.Valid() || context.deferredChildIdentity.HasPreparation())) {
+            (context.originalSingleIssue.Valid() || context.deferredChildIdentity.HasPreparation() || context.claimedResetOrder.Valid())) {
             // Fixed starts share the actual admitted read cut with their leaf bindings.
             overlayFrame = context.startFrame;
-            const bool captured = context.deferredParentFiring != 0
+            const bool captured = context.claimedResetOrder.Valid()
+                ? engine.variables.CaptureReadCut(context.emitter, context.ReadFrame(overlayFrame),
+                    context.claimedResetOrder.Sequence(), planned.executionOrdinal, &initialVariables.ref)
+                : context.deferredParentFiring != 0
                 ? engine.variables.CaptureActionReadCut(engine, context.emitter, context.ReadFrame(overlayFrame),
                     context.deferredChildIdentity, planned.executionOrdinal, &initialVariables.ref)
                 : engine.variables.CaptureActionReadCut(context.emitter, context.ReadFrame(overlayFrame),
@@ -91986,7 +92007,7 @@ bool PrepareContainerExecution(
         scratch->row->Invocation().actionExecutionOrdinal = planned.executionOrdinal;
         if (captureInitialVariables && !pendingRegisteredVariables) {
             auto& initialCut = scratch->storage.initialVariableCut;
-            const bool sourcesReady = materializedVariables
+            const bool sourcesReady = materializedVariables || context.claimedResetOrder.Valid()
                 ? engine.variables.PrepareReadCutSources(engine, initialCut)
                 : context.deferredParentFiring != 0
                 ? engine.variables.PrepareActionReadCutSources(engine, initialCut, context.deferredChildIdentity)
@@ -95535,7 +95556,8 @@ bool PrepareNativeScheduleTransition(harken::Engine& engine,
         failure, queueCapacity, parent, record, startFrame);
     if (native.Borrowed()) context.entry.executionOrdinal = native.readExecutionOrdinal;
     context.materializationSequence = native.Sequence();
-    context.materializingDeferred = native.borrowedChild != nullptr;
+    context.materializingDeferred = native.borrowedChild != nullptr || native.borrowedReset.Valid();
+    context.claimedResetOrder = native.borrowedReset;
     context.deferredParentFiring = native.deferredParent;
     context.privateScheduleOwner = &scratch;
     context.initialForestReadCutOwner = &scratch.storage;
@@ -95610,9 +95632,7 @@ bool PrepareNativeScheduleTransition(harken::Engine& engine,
     schedule.zeroWorkCompletionOffsetFrames = schedule.hasZeroWorkCompletion
         ? scratch.row->zeroWorkCompletionFrame - startFrame : 0;
     if (!native.Borrowed() && scratch.storage.initialVariableCut.Valid() &&
-        (!(native.borrowedChild != nullptr
-            ? engine.variables.PrepareActionReadCutSources(engine, scratch.storage.initialVariableCut, *native.borrowedChild)
-            : engine.variables.PrepareActionReadCutSources(engine, scratch.storage.initialVariableCut, native.Issue())) ||
+        (!engine.variables.PrepareActionReadCutSources(engine, scratch.storage.initialVariableCut, native.Issue()) ||
          engine.variables.PublishReadCut(scratch.storage.initialVariableCut, startFrame) ==
             harken::VariableReadCutStatus::Failed)) return false;
     return true;
@@ -95625,14 +95645,16 @@ bool CommitNativeScheduleTransition(NativeScheduleTransitionPreparation& native,
     auto& engine = *native.engine;
     auto& scratch = *native.scratch;
     if (native.Borrowed() && scratch.storage.initialVariableCut.Valid() &&
-        (!(native.borrowedChild != nullptr
+        (!(native.borrowedReset.Valid()
+            ? engine.variables.PrepareReadCutSources(engine, scratch.storage.initialVariableCut)
+            : native.borrowedChild != nullptr
             ? engine.variables.PrepareActionReadCutSources(engine, scratch.storage.initialVariableCut, *native.borrowedChild)
             : engine.variables.PrepareActionReadCutSources(engine, scratch.storage.initialVariableCut, native.Issue())) ||
          engine.variables.PublishReadCut(scratch.storage.initialVariableCut, scratch.continuationOrder.executeFrame) ==
             harken::VariableReadCutStatus::Failed)) return false;
     if (!PrepareInitialScheduleOwners(engine, scratch, sequence) ||
         !VisitInitialScheduleAttempts(engine, scratch, [&](auto& attempt) noexcept {
-            return native.borrowedChild != nullptr
+            return native.borrowedChild != nullptr || native.borrowedReset.Valid()
                 ? PrepareInitialAttemptProducer(engine, attempt, sequence, nullptr, nullptr)
                 : PrepareOriginalInitialAttemptProducer(engine, attempt, native.Issue(), nullptr);
         }) || !PrepareScheduleChildGraphProofs(engine, scratch) ||
@@ -102144,8 +102166,9 @@ harken::QueueResetTargetV1 MakeImmediateActionQueueResetTarget(
     const ImmediateActionPlan& plan,
     const harken::EngineActionStepPlanRow& planned) noexcept {
     return harken::MakeQueueResetTarget(
-        plan.engine->variables.CurrentWorldGeneration(), *planned.container,
-        plan.emitter);
+        plan.claimedResetOrder.Valid() && plan.targetPackLease.leaseToken != 0
+            ? plan.targetPackLease.compositeGeneration : plan.engine->variables.CurrentWorldGeneration(),
+        *planned.container, plan.emitter);
 }
 
 bool SameImmediateActionQueueTarget(
@@ -102649,7 +102672,8 @@ bool PrepareImmediateActionNativeMusicReplacement(ImmediateActionPlan& plan,
     if (!row.QueuePayload().nativeTransitionPending || row.QueuePayload().nativeTransitionApplied ||
         row.scheduleTerminalChild == nullptr || !filing.queueConditional.Valid() ||
         !filing.queueDecision.Valid() || !filing.queueTransition.Valid()) return false;
-    if (plan.materializingDeferred && !engine.actionFirings.IsPreparedChildActive(plan.deferredChildIdentity)) return false;
+    if (plan.materializingDeferred && !plan.claimedResetOrder.Valid() &&
+        !engine.actionFirings.IsPreparedChildActive(plan.deferredChildIdentity)) return false;
     harken::TransitionInstanceSnapshot transition{};
     if (!engine.transitionInstances.Capture(filing.queueTransition, &transition) ||
         transition.state != harken::TransitionAudibleGateState::Replaceable) return false;
@@ -102679,7 +102703,8 @@ bool PrepareImmediateActionNativeMusicReplacement(ImmediateActionPlan& plan,
     catch (const std::bad_alloc&) { return false; }
     auto& candidate = *scratch.musicCandidate;
     candidate.effectiveResetFrame = scratch.resetExecuteFrame;
-    if (plan.materializingDeferred) {
+    if (plan.claimedResetOrder.Valid()) candidate.native.borrowedReset = plan.claimedResetOrder;
+    else if (plan.materializingDeferred) {
         candidate.native.borrowedChild = &plan.deferredChildIdentity;
         candidate.native.deferredParent = plan.deferredParentFiring;
     } else candidate.native.borrowedIssue = &plan.originalSingleIssue;
@@ -103826,7 +103851,9 @@ bool ReserveImmediateActionQueueReplacements(
         plan->result = VN_BACKPRESSURE;
         return false;
     }
-    const harken::PreparedQueueReplacementOrder nativeOrder = plan->materializingDeferred
+    const harken::PreparedQueueReplacementOrder nativeOrder = plan->claimedResetOrder.Valid()
+        ? harken::PreparedQueueReplacementOrder(plan->claimedResetOrder)
+        : plan->materializingDeferred
         ? harken::PreparedQueueReplacementOrder(engine.actionFiringPlanScratch[0].prepared)
         : harken::PreparedQueueReplacementOrder(plan->originalSingleIssue);
     std::array<std::uint64_t, (harken::kMaxQueueInstancesHard + 63u) / 64u> selectedQueues{};
@@ -104056,7 +104083,11 @@ bool AcceptImmediateActionNativeQueueResets(ImmediateActionPlan& plan,
         cancellationCount += engine.actionQueueReplacementScratch[index].musicCandidate != nullptr ? 1u : 0u;
     if (!engine.playableInstances.CanBumpScheduleEpochs(cancellationCount)) return false;
     auto& batch = *engine.originalQueueReplacementBatch;
-    const bool prepared = plan.nativeResetScope.Valid()
+    const bool prepared = plan.claimedResetOrder.Valid()
+        ? (plan.nativeResetScope.Valid()
+            ? batch.PrepareDeferred(engine.queueInstances, &plan.nativeResetScope, plan.claimedResetOrder)
+            : batch.PrepareContinuations(engine.queueInstances, plan.claimedResetOrder))
+        : plan.nativeResetScope.Valid()
         ? (plan.materializingDeferred
             ? batch.PrepareDeferred(engine.queueInstances, &plan.nativeResetScope, engine.actionFiringPlanScratch[0].prepared)
             : batch.Prepare(engine.queueInstances, &plan.nativeResetScope, &plan.originalSingleIssue))
@@ -104902,9 +104933,7 @@ bool ReserveImmediateActionQueueCheckpointResets(
         if (!IsImmediateActionQueueReset(planned)) continue;
         const harken::QueueCheckpointKey key = harken::MakeQueueCheckpointResetKey(
             *plan->engine,
-            harken::MakeQueueResetTarget(
-                plan->engine->variables.CurrentWorldGeneration(),
-                *planned.container, plan->emitter));
+            MakeImmediateActionQueueResetTarget(*plan, planned));
         const harken::QueueResetStatusV1 status =
             plan->engine->queueCheckpoints.PrepareReset(
                 key,
@@ -104923,7 +104952,9 @@ bool ReserveImmediateActionQueueCheckpointResets(
         const bool noCheckpointState =
             plan->engine->actionQueueCheckpointResetScratch[index]
                 .Idempotent();
-        if (noInstanceState && noCheckpointState) {
+        if (noInstanceState && noCheckpointState && plan->claimedResetOrder.Valid()) {
+            plan->claimedResetNoOp = plan->queueReplacementCount == 0;
+        } else if (noInstanceState && noCheckpointState) {
             const auto& firing =
                 plan->engine
                     ->actionFiringPlanScratch[planned.firingIndex];
@@ -105018,6 +105049,78 @@ bool Engine::PreparePendingVariableReplacementQueueFutures(EngineActionPlayScrat
 }
 
 namespace {
+
+VnResult MaterializeClaimedQueueReset(Engine& engine, const DeferredIntentClaim& claim,
+    ActionDeferredRecordToken recordToken, const ActionDeferredRecord& record,
+    const ActionFiringSnapshot& firing, const ContainerProgramViewV3& container,
+    bool* outIdempotent) noexcept {
+    ImmediateActionPlan plan{};
+    if (!engine.ActionPlanWorkspaceFits(1, 1) ||
+        !engine.actionDeferredRecords.BorrowClaimedResetOrder(engine.timelineDeferred,
+            claim.token, recordToken, engine.actionFirings, &plan.claimedResetOrder))
+        return VN_RUNTIME_RECREATE_REQUIRED;
+    plan.engine = &engine;
+    plan.playbackRequest = firing.playbackRequest;
+    plan.emitterOrigin = firing.emitterOrigin;
+    plan.targetPackLease = record.targetPackLease;
+    plan.emitter = record.emitter;
+    plan.callerSeed = record.callerSeed;
+    plan.rootActionStableId = record.rootActionStableId;
+    plan.rootActionProgramSemanticFingerprint = record.rootActionProgramSemanticFingerprint;
+    plan.materializationSequence = plan.claimedResetOrder.Sequence();
+    plan.materializingDeferred = true;
+    plan.deferredFiring = record.firing;
+    plan.deferredStepIndex = record.stepIndex;
+    plan.deferredPoolToken = claim.token;
+    plan.deferredRecordToken = recordToken;
+    plan.admittedImmediateFrame = record.intendedBoundaryFrame;
+    plan.firingCount = plan.stepCount = plan.queueResetCount = 1;
+    // No new firing or Play is created. The original dispatcher owns the step.
+    plan.playCommitSucceeded = true;
+    engine.actionFiringPlanScratch[0] = {};
+    engine.actionFiringPlanScratch[0].handle = record.firing;
+    auto& step = engine.actionStepPlanScratch[0];
+    step = {};
+    step.step = &record.step;
+    step.container = &container;
+    step.firingIndex = 0;
+    step.executionOrdinal = record.executionOrdinal;
+    step.depth = record.depth;
+    step.deferredFrame = record.intendedBoundaryFrame;
+    auto& bundle = engine.actionCommitBundle;
+    if (!bundle.Reset()) return VN_BACKPRESSURE;
+    const CommitParticipant replacement{&plan, ReserveImmediateActionQueueReplacements,
+        ReleaseImmediateActionQueueReplacements, CommitImmediateActionQueueReplacements};
+    const CommitParticipant reset{&plan, ReserveImmediateActionQueueResets,
+        ReleaseImmediateActionQueueResets, CommitImmediateActionQueueResets};
+    const CommitParticipant checkpoint{&plan, ReserveImmediateActionQueueCheckpointResets,
+        ReleaseImmediateActionQueueCheckpointResets, CommitImmediateActionQueueCheckpointResets};
+    const CommitParticipant head{&plan, ReserveImmediateActionCommandHead,
+        ReleaseImmediateActionCommandHead, CommitImmediateActionCommandHead};
+    if (!bundle.AddStep(replacement, 1) || !bundle.AddStep(reset, 1) ||
+        !bundle.AddStep(checkpoint, 1) || !bundle.AddStep(head, 0) || !bundle.Reserve())
+        return plan.result == VN_OK ? VN_BACKPRESSURE : plan.result;
+    auto sequence = plan.claimedResetOrder.Sequence();
+    if (sequence == 0 || !ActionDeferredOwnerCurrent(engine, record)) {
+        bundle.Abandon();
+        return VN_STALE_HANDLE;
+    }
+    if ((plan.nativeResetScope.Valid() || plan.continuationResetPrepared) &&
+        !AcceptImmediateActionNativeQueueResets(plan, bundle, &sequence)) {
+        bundle.Abandon();
+        return engine.runtimeRecreateRequired ? VN_RUNTIME_RECREATE_REQUIRED : VN_BACKPRESSURE;
+    }
+    engine.actionFirings.ObserveStepExecution(record.firing, record.stepIndex);
+    if (!bundle.CommitReserved(sequence)) {
+        engine.runtimeRecreateRequired = true;
+        return VN_RUNTIME_RECREATE_REQUIRED;
+    }
+    FinishImmediateActionNativeQueueResets(plan);
+    if (engine.runtimeRecreateRequired || !plan.commandHeadCommitSucceeded)
+        return VN_RUNTIME_RECREATE_REQUIRED;
+    if (outIdempotent != nullptr) *outIdempotent = plan.claimedResetNoOp;
+    return VN_OK;
+}
 
 TimelineDeferredMaterializeStatus MaterializeActionDeferredPostAction(
     Engine& engine, const DeferredIntentClaim& claim,

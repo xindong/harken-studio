@@ -3,7 +3,7 @@
 
 #include "harken/core/QueueRuntime.h"
 #include "harken/core/DecisionTable.h"
-#include "harken/core/ActionFiringTable.h"
+#include "harken/core/ActionDeferredRecordTable.h"
 #include "harken/core/PrivateOriginalQueueGroupClockProof.h"
 #include "harken/core/NativeTimelineQuantumAdmissionProof.h"
 #include <limits>
@@ -18,15 +18,17 @@ class PreparedQueueReplacementOrder {
 public:
     PreparedQueueReplacementOrder(const LogicCommitCoordinator::PreparedIssue& issue) noexcept : issue_(&issue) {}
     PreparedQueueReplacementOrder(const PreparedActionFiring& child) noexcept : child_(&child) {}
+    PreparedQueueReplacementOrder(const ActionDeferredRecordTable::ClaimedResetOrder& reset) noexcept : reset_(reset) {}
     PreparedQueueReplacementOrder(LogicCommitCoordinator::PreparedIssue&&) = delete;
     PreparedQueueReplacementOrder(PreparedActionFiring&&) = delete;
     LogicCommitSequence Sequence() const noexcept {
-        return issue_ != nullptr ? issue_->Sequence() : child_->InheritedSequence();
+        return issue_ != nullptr ? issue_->Sequence() : child_ != nullptr ? child_->InheritedSequence() : reset_.Sequence();
     }
     bool Valid() const noexcept { return Sequence() != 0; }
 private:
     const LogicCommitCoordinator::PreparedIssue* issue_ = nullptr;
     const PreparedActionFiring* child_ = nullptr;
+    ActionDeferredRecordTable::ClaimedResetOrder reset_;
 };
 
 // Serialized logic-producer storage. Only the authentic matched replacement
