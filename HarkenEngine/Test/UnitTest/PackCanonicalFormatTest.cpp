@@ -1412,11 +1412,7 @@ TEST(PackCanonicalFormat, AttenuationPayloadMatchesOuterVersionExactly) {
     desc.maxDistance = 100;
     desc.airAbsorptionNearHz = desc.airAbsorptionFarHz = 20000;
     desc.proximityFrequency = 400;
-    std::vector<std::uint32_t> versions{kPackFormatVersion, kPackFormatVersion + 1};
-    if (kPackFormatVersion3 < kPackFormatVersion) {
-        versions.push_back(kPackFormatVersion3);
-    }
-    for (const auto version : versions) {
+    for (const auto version : {3u, kPackFormatVersion, kPackFormatVersion + 1}) {
         for (const auto size : {kPackV3AttenuationPayloadBytes - 1,
                                kPackV3AttenuationPayloadBytes,
                                kPackV3AttenuationPayloadBytes + 1,
@@ -1435,7 +1431,7 @@ TEST(PackCanonicalFormat, AttenuationPayloadMatchesOuterVersionExactly) {
             auto bytes = builder.Build();
             StoreLE32(bytes.data() + 4, version);
             PackCanonicalImage image;
-            const bool valid = version != kPackFormatVersion + 1 &&
+            const bool valid = version == kPackFormatVersion &&
                                size == kPackV3AttenuationPayloadBytes;
             ASSERT_EQ(valid ? VN_OK : VN_BAD_PACK,
                       ParsePackCanonicalImage(bytes.data(), bytes.size(), &image))

@@ -970,23 +970,26 @@ void ExpectMixedResidentStateUnchanged(
 
 // --- load: resident happy path ---
 
-TEST(PackLogicLoad, CurrentAndHistoricalContainerVersionsReachLogicLoader) {
+TEST(PackLogicLoad, OnlyCurrentContainerVersionReachesLogicLoader) {
     EngineSession session(PackLogicConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto sound = harkentest::ObjectId(71);
     const auto path = TempPath("pll_container_versions.pack");
-    std::vector<std::uint32_t> versions{harken::kPackFormatVersion};
-    if (harken::kPackFormatVersion3 < harken::kPackFormatVersion) {
-        versions.push_back(harken::kPackFormatVersion3);
-    }
-    for (const auto version : versions) {
+    for (const auto version : {3u, harken::kPackFormatVersion}) {
         V2Builder builder(harken::kPackKindContent);
         builder.AddMedia(sound, harkentest::MakeDC(16, 0.25f));
         auto bytes = builder.Build();
         harken::StoreLE32(bytes.data() + 4, version);
         WriteFileBytes(path, bytes);
         VnPackHandle pack = 0;
-        ASSERT_EQ(VN_OK, LoadPack(path, &pack)) << version;
+        if (version != harken::kPackFormatVersion) {
+            EXPECT_EQ(VN_BAD_PACK, LoadPack(path, &pack));
+            EXPECT_EQ(0u, pack);
+            EXPECT_EQ(0u, session.Engine()->packs.LoadedCount());
+            EXPECT_FALSE(session.Engine()->registry.Lookup(sound).Valid());
+            continue;
+        }
+        ASSERT_EQ(VN_OK, LoadPack(path, &pack));
         EXPECT_TRUE(session.Engine()->registry.Lookup(sound).Valid());
         EXPECT_NE(nullptr, session.Engine()->logicPacks.RecordFor(pack));
         ASSERT_EQ(VN_OK, Vn_UnloadPack(pack));

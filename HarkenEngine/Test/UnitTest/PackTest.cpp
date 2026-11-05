@@ -318,28 +318,21 @@ TEST(Pack, LoadRegistersEntriesAndUnloadRemovesThem) {
     ASSERT_EQ(VN_OK, session.InitResult());
 
     const std::string path = TempPath("pack_basic.pack");
-    std::vector<std::uint32_t> versions{harken::kPackFormatVersion};
-    if (harken::kPackFormatVersion3 < harken::kPackFormatVersion) {
-        versions.push_back(harken::kPackFormatVersion3);
-    }
-    for (const auto version : versions) {
-        auto bytes = BuildPackBytes({MakeSineEntry(harkentest::ObjectId(11), 64),
-                                    MakeSineEntry(harkentest::ObjectId(12), 128)});
-        harken::StoreLE32(bytes.data() + 4, version);
-        WriteFileBytes(path, bytes);
-        VnPackHandle pack = 0;
-        ASSERT_EQ(VN_OK, LoadPack(path, &pack)) << version;
-        EXPECT_NE(0u, pack);
-        EXPECT_EQ(1u, session.Engine()->packs.LoadedCount());
-        EXPECT_EQ(2u, session.Engine()->registry.Count());
-        EXPECT_TRUE(session.Engine()->registry.Lookup(harkentest::ObjectId(11)).Valid());
-        EXPECT_TRUE(session.Engine()->registry.Lookup(harkentest::ObjectId(12)).Valid());
-        ASSERT_EQ(VN_OK, Vn_UnloadPack(pack));
-        EXPECT_EQ(0u, session.Engine()->packs.LoadedCount());
-        EXPECT_EQ(0u, session.Engine()->registry.Count());
-        EXPECT_FALSE(session.Engine()->registry.Lookup(harkentest::ObjectId(11)).Valid());
-        EXPECT_FALSE(session.Engine()->registry.Lookup(harkentest::ObjectId(12)).Valid());
-    }
+    auto bytes = BuildPackBytes({MakeSineEntry(harkentest::ObjectId(11), 64),
+                                MakeSineEntry(harkentest::ObjectId(12), 128)});
+    WriteFileBytes(path, bytes);
+    VnPackHandle pack = 0;
+    ASSERT_EQ(VN_OK, LoadPack(path, &pack));
+    EXPECT_NE(0u, pack);
+    EXPECT_EQ(1u, session.Engine()->packs.LoadedCount());
+    EXPECT_EQ(2u, session.Engine()->registry.Count());
+    EXPECT_TRUE(session.Engine()->registry.Lookup(harkentest::ObjectId(11)).Valid());
+    EXPECT_TRUE(session.Engine()->registry.Lookup(harkentest::ObjectId(12)).Valid());
+    ASSERT_EQ(VN_OK, Vn_UnloadPack(pack));
+    EXPECT_EQ(0u, session.Engine()->packs.LoadedCount());
+    EXPECT_EQ(0u, session.Engine()->registry.Count());
+    EXPECT_FALSE(session.Engine()->registry.Lookup(harkentest::ObjectId(11)).Valid());
+    EXPECT_FALSE(session.Engine()->registry.Lookup(harkentest::ObjectId(12)).Valid());
 }
 
 TEST(Pack, LoopMetadataCarriedThroughLoad) {
@@ -747,8 +740,7 @@ TEST(Pack, HeaderDispatchRequiresSupportedSchemaAndKnownLayout) {
     const auto path = TempPath("pack_header_dispatch.pack");
 
     for (const auto& valid : layouts) {
-        for (const auto version : {harken::kPackFormatVersion3 - 1,
-                                   harken::kPackFormatVersion + 1}) {
+        for (const auto version : {2u, 3u, harken::kPackFormatVersion + 1}) {
             auto bytes = valid;
             harken::StoreLE32(bytes.data() + 4, version);
             WriteFileBytes(path, bytes);

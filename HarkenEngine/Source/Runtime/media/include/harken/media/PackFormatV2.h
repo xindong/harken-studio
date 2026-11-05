@@ -733,9 +733,6 @@ inline bool ParsePackAttenuation(const std::uint8_t* in, std::uint64_t size,
     if (formatVersion == kPackFormatVersion) {
         return ParsePackV3Attenuation(in, size, out);
     }
-    if (formatVersion == kPackFormatVersion3 && formatVersion < kPackFormatVersion) {
-        return ParsePackV3Attenuation(in, size, out);
-    }
     return false;
 }
 

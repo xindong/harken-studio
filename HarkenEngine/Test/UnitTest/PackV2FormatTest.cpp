@@ -948,11 +948,7 @@ TEST(PackV2Format, AttenuationPayloadMatchesOuterVersionExactly) {
     desc.maxDistance = 100;
     desc.airAbsorptionNearHz = desc.airAbsorptionFarHz = 20000;
     desc.proximityFrequency = 400;
-    std::vector<std::uint32_t> versions{kPackFormatVersion, kPackFormatVersion + 1};
-    if (kPackFormatVersion3 < kPackFormatVersion) {
-        versions.push_back(kPackFormatVersion3);
-    }
-    for (const auto version : versions) {
+    for (const auto version : {3u, kPackFormatVersion, kPackFormatVersion + 1}) {
         for (const auto size : {kPackV3AttenuationPayloadBytes - 1,
                                kPackV3AttenuationPayloadBytes,
                                kPackV3AttenuationPayloadBytes + 1,
@@ -965,7 +961,7 @@ TEST(PackV2Format, AttenuationPayloadMatchesOuterVersionExactly) {
             auto bytes = builder.Build();
             StoreLE32(bytes.data() + 4, version);
             PackLogicImage image;
-            const bool valid = version != kPackFormatVersion + 1 &&
+            const bool valid = version == kPackFormatVersion &&
                                size == kPackV3AttenuationPayloadBytes;
             ASSERT_EQ(valid ? VN_OK : VN_BAD_PACK,
                       ParsePackV2Image(bytes.data(), bytes.size(), &image))
@@ -1118,8 +1114,7 @@ TEST(PackV2Format, RefusesWrongMagic) {
 }
 
 TEST(PackV2Format, RefusesOtherSchemaVersions) {
-    for (const auto version : {kPackFormatVersion3 - 1,
-                               kPackFormatVersion + 1}) {
+    for (const auto version : {2u, 3u, kPackFormatVersion + 1}) {
         std::vector<std::uint8_t> bytes = MinimalContentBytes();
         StoreLE32(bytes.data() + 4, version);
         ExpectRefused(bytes);
