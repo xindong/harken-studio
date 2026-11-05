@@ -8,6 +8,7 @@
 #include <QSet>
 #include <QThread>
 #include <QCoreApplication>
+#include <QApplication>
 #include <QTcpServer>
 #include <QTcpSocket>
 
@@ -113,12 +114,17 @@ void IPCServer::setProjectManager(ProjectManager* projectManager)
 
 IPCServer::~IPCServer()
 {
+    waitForPendingOperations();
+    stop();
+}
+
+void IPCServer::waitForPendingOperations()
+{
     if (transcodeThread_) transcodeThread_->wait();
     if (packBuildThread_) {
         packBuildThread_->wait();
     }
     finishPackBuild();
-    stop();
 }
 
 void IPCServer::finishPackBuild()
@@ -378,6 +384,11 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
     if (!isJsonCommandAvailableInCurrentState(cmd))
         return withRequestId(commandUnavailableInCurrentStateResponse(cmd));
 
+    if (commandRequiresDesktop(cmd)
+        && !qobject_cast<QApplication*>(QCoreApplication::instance()))
+        return withRequestId(errorResponse("DESKTOP_REQUIRED",
+            "This command requires the desktop editor. Use the corresponding project operation for headless authoring."));
+
     if (PackGenerationRecordStore::instance().isExporting()
         && !isReadOnlyCommand(cmd)
         && cmd != QLatin1String("cancel_pack_build")
@@ -519,7 +530,7 @@ void IPCServer::revokeAIGrants(const QString& requestId)
 
 void IPCServer::assertAIPolicyThread() const
 {
-    Q_ASSERT(QThread::currentThread() == qApp->thread());
+    Q_ASSERT(QThread::currentThread() == QCoreApplication::instance()->thread());
 }
 
 TransactionExecutionContext IPCServer::transactionContextFor(
@@ -588,6 +599,18 @@ QJsonObject IPCServer::invokeCommandHandler(const QString& cmd, const QJsonObjec
 QStringList IPCServer::commandNames() const
 {
     return commandHandlers_.keys();
+}
+
+void IPCServer::registerDesktopHandler(const QString& name, CommandHandler handler)
+{
+    desktopCommands_.insert(name);
+    commandHandlers_.insert(name, std::move(handler));
+}
+
+bool IPCServer::commandRequiresDesktop(const QString& cmd) const
+{
+    const auto* action = ActionManager::instance().findAction(cmd);
+    return desktopCommands_.contains(cmd) || (action && action->requiresDesktop);
 }
 
 QStringList IPCServer::allCommandNames() const

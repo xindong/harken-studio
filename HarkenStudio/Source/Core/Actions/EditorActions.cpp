@@ -58,6 +58,7 @@ void registerEditorActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "connect_nodes";
+        def.requiresDesktop = true;
         def.displayName = "Connect Nodes";
         def.category = "editor";
         def.paramSchema = QJsonObject{{"output_node", "int"}, {"input_node", "int"}, {"output_node_kind", "string"}, {"input_node_kind", "string"}, {"edge_type", "string"}};
@@ -128,6 +129,7 @@ void registerEditorActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "disconnect_nodes";
+        def.requiresDesktop = true;
         def.displayName = "Disconnect Nodes";
         def.category = "editor";
         def.paramSchema = QJsonObject{{"output_node", "int"}, {"input_node", "int"}, {"output_node_kind", "string"}, {"input_node_kind", "string"}, {"edge_type", "string"}};
@@ -194,6 +196,7 @@ void registerEditorActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "set_node_override";
+        def.requiresDesktop = true;
         def.displayName = "Set Node Override";
         def.category = "editor";
         def.paramSchema = QJsonObject{{"node_id", "int"}, {"override", "bool"}};
@@ -222,6 +225,7 @@ void registerEditorActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "set_canvas_flow";
+        def.requiresDesktop = true;
         def.displayName = "Set Blueprint Flow Direction";
         def.category = "editor";
         def.paramSchema = QJsonObject{{"direction", "string"}};
@@ -253,6 +257,7 @@ void registerEditorActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "get_canvas_flow";
+        def.requiresDesktop = true;
         def.displayName = "Get Blueprint Flow Direction";
         def.category = "editor";
         def.undoable = false;

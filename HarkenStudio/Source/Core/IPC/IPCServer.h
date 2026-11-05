@@ -96,6 +96,8 @@ public:
     void revokeAIGrants(const QString& requestId);
     QStringList commandNames() const;
     QStringList allCommandNames() const;
+    bool commandRequiresDesktop(const QString& cmd) const;
+    void waitForPendingOperations();
     // Membership test against the legacy handler table without materializing the key list.
     bool hasCommandHandler(const QString& cmd) const { return commandHandlers_.contains(cmd); }
     bool isReadOnlyCommand(const QString& cmd) const;
@@ -134,6 +136,8 @@ private:
         const TransactionExecutionContext& context) const;
 
     using CommandHandler = std::function<QJsonObject(const QJsonObject&)>;
+    void registerDesktopHandler(const QString& name, CommandHandler handler);
+    QSet<QString> desktopCommands_;
     
     void registerCommandHandlers();
 

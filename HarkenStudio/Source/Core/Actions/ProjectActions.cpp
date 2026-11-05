@@ -2065,6 +2065,7 @@ void registerProjectActions(ActionManager& mgr,
         ActionDef def;
         def.id = command;
         def.displayName = command;
+        def.requiresDesktop = command == QLatin1String("select_folder");
         def.category = "project";
         def.undoable = false;
         def.paramSchema = QJsonObject{{"path", "string"}};
@@ -2450,6 +2451,7 @@ void registerProjectActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "select_project_item";
+        def.requiresDesktop = true;
         def.displayName = "Select Project Item";
         def.category = "project";
         def.undoable = false;
@@ -2461,6 +2463,7 @@ void registerProjectActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "select_item";
+        def.requiresDesktop = true;
         def.displayName = "Select Item";
         def.category = "project";
         def.undoable = false;

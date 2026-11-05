@@ -22,19 +22,19 @@ QJsonObject deprecateCommand(QJsonObject response, const char* replacement);
 
 void IPCServer::registerEditorHandlers()
 {
-    commandHandlers_["get_blueprint"] = [this](const QJsonObject& args) { return handleGetNodeGraph(args); };
-    commandHandlers_["get_node_graph"] = [this](const QJsonObject& args) {
+    registerDesktopHandler("get_blueprint", [this](const QJsonObject& args) { return handleGetNodeGraph(args); });
+    registerDesktopHandler("get_node_graph", [this](const QJsonObject& args) {
         return deprecateCommand(handleGetNodeGraph(args), "get_blueprint");
-    };
+    });
     commandHandlers_["get_signal_chain"] = [this](const QJsonObject& args) { return handleGetSignalChain(args); };
-    commandHandlers_["set_blueprint_layer"] = [this](const QJsonObject& args) { return handleSetBlueprintLayer(args); };
-    commandHandlers_["set_nodegraph_layer"] = [this](const QJsonObject& args) {
+    registerDesktopHandler("set_blueprint_layer", [this](const QJsonObject& args) { return handleSetBlueprintLayer(args); });
+    registerDesktopHandler("set_nodegraph_layer", [this](const QJsonObject& args) {
         return deprecateCommand(handleSetBlueprintLayer(args), "set_blueprint_layer");
-    };
-    commandHandlers_["get_blueprint_layers"] = [this](const QJsonObject& args) { return handleGetBlueprintLayers(args); };
-    commandHandlers_["get_nodegraph_layers"] = [this](const QJsonObject& args) {
+    });
+    registerDesktopHandler("get_blueprint_layers", [this](const QJsonObject& args) { return handleGetBlueprintLayers(args); });
+    registerDesktopHandler("get_nodegraph_layers", [this](const QJsonObject& args) {
         return deprecateCommand(handleGetBlueprintLayers(args), "get_blueprint_layers");
-    };
+    });
     commandHandlers_["get_referencing_actions"] = [this](const QJsonObject& args) { return handleGetReferencingActions(args); };
 
 
@@ -143,7 +143,7 @@ void IPCServer::registerEditorHandlers()
         return successResponse(benchResult.toJson());
     };
 
-    commandHandlers_["list_open_dialogs"] = [](const QJsonObject&) -> QJsonObject {
+    registerDesktopHandler("list_open_dialogs", [](const QJsonObject&) -> QJsonObject {
         auto& dm = DialogManager::instance();
         QJsonArray arr;
         for (const QString& id : dm.openDialogIds()) {
@@ -163,9 +163,9 @@ void IPCServer::registerEditorHandlers()
             {"count", arr.size()}
         };
         return result;
-    };
+    });
 
-    commandHandlers_["dismiss_dialog"] = [](const QJsonObject& args) -> QJsonObject {
+    registerDesktopHandler("dismiss_dialog", [](const QJsonObject& args) -> QJsonObject {
         QString id = args["id"].toString();
         if (id.isEmpty()) {
             QJsonObject err;
@@ -187,7 +187,7 @@ void IPCServer::registerEditorHandlers()
         result["status"] = "ok";
         result["result"] = QJsonObject{{"id", id}, {"dismissed", true}};
         return result;
-    };
+    });
 }
 
 

@@ -17,7 +17,7 @@ inline QJsonObject setItemPropertySchema()
         QStringLiteral("clips"), QStringLiteral("segmentTime"),
         QStringLiteral("markers"), QStringLiteral("spliceByMarker"),
         QStringLiteral("dimensions"), QStringLiteral("maxDistance"),
-        QStringLiteral("transitions")};
+        QStringLiteral("transitions"), QStringLiteral("steps")};
     for (const auto& field : VNX::PlayablePropertyAuthoringV1::fields()) {
         if (!PlayablePropertyAuthoringV1::isEditorExposed(field.id)) continue;
         const QString name = QString::fromLatin1(field.fieldName);
@@ -63,6 +63,20 @@ inline QJsonObject setItemPropertySchema()
             QJsonObject{{QStringLiteral("required"), QJsonArray{QStringLiteral("authoring_handle")}}}}},
         {QStringLiteral("additionalProperties"), false},
         {QStringLiteral("propertyValues"), QJsonObject{
+            {QStringLiteral("steps"), QJsonObject{
+                {QStringLiteral("type"), QStringLiteral("array")},
+                {QStringLiteral("description"), QStringLiteral("Action steps with type, targetObjectID (authoring handle), targetName, and delay in milliseconds. A unique targetName can resolve the target. get_action_definition reports the resulting targets using target and target_object_id.")},
+                {QStringLiteral("items"), QJsonObject{
+                    {QStringLiteral("type"), QStringLiteral("object")},
+                    {QStringLiteral("required"), QJsonArray{QStringLiteral("type")}},
+                    {QStringLiteral("properties"), QJsonObject{
+                        {QStringLiteral("type"), QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}}},
+                        {QStringLiteral("targetObjectID"), QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")}, {QStringLiteral("minimum"), 0}}},
+                        {QStringLiteral("targetName"), QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}}},
+                        {QStringLiteral("delay"), QJsonObject{{QStringLiteral("type"), QStringLiteral("number")}, {QStringLiteral("minimum"), 0}}}
+                    }}
+                }}
+            }},
             {QStringLiteral("dimensions"), QJsonObject{
                 {QStringLiteral("type"), QStringLiteral("array")},
                 {QStringLiteral("rowFields"), QJsonArray{

@@ -173,6 +173,10 @@ set(HARKEN_EDITOR_LIB_SOURCES
     Source/Core/ProjectOpenProtocol.h
     Source/Core/ProjectOpenApproval.cpp
     Source/Core/ProjectOpenApproval.h
+    Source/Core/EditorCommandCatalog.h
+    Source/Core/EditorCommandCatalog.cpp
+    Source/Core/EditorCommandRegistration.h
+    Source/Core/EditorCommandRegistration.cpp
     Source/Core/IPC/IPCServer.h
     Source/Core/IPC/IPCServer.cpp
     Source/Core/AI/AICommandCatalog.h
@@ -479,6 +483,28 @@ set_target_properties(harkenizer PROPERTIES OUTPUT_NAME "Harkenizer")
 target_link_libraries(harkenizer PRIVATE harkenizer_build harkenizer_resource_compiler)
 harken_attach_version_resource(harkenizer "Harkenizer" "Harkenizer.exe")
 add_dependencies(harken_editor harkenizer)
+
+add_executable(harken_studio_cli
+    Source/Tooling/StudioCli/Main.cpp
+    Source/Tooling/StudioCli/StudioSession.cpp
+    Source/Tooling/StudioCli/StudioSession.h
+    resources.qrc)
+set_target_properties(harken_studio_cli PROPERTIES OUTPUT_NAME "harken-studio" AUTORCC ON)
+target_link_libraries(harken_studio_cli PRIVATE harken_editor_lib)
+add_dependencies(harken_studio_cli harkenizer)
+harken_attach_version_resource(harken_studio_cli "Harken Studio CLI" "harken-studio.exe")
+add_dependencies(harken_editor harken_studio_cli)
+if(WIN32)
+    target_link_libraries(harken_studio_cli PRIVATE opengl32 ole32 shell32)
+endif()
+
+add_custom_command(TARGET harken_studio_cli POST_BUILD
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_SOURCE_DIR}/.scripts/schema_archive.py"
+        --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
+        --check-generated "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
+        --publish "$<TARGET_FILE_DIR:harken_studio_cli>/schema"
+)
 if(WIN32)
     target_link_libraries(harkenizer PRIVATE opengl32 ole32 shell32)
 endif()
@@ -507,6 +533,7 @@ add_custom_command(TARGET harkenizer POST_BUILD
 if(_harken_macos_agl_framework_missing)
     harken_remove_missing_agl_framework(harken_editor)
     harken_remove_missing_agl_framework(harkenizer)
+    harken_remove_missing_agl_framework(harken_studio_cli)
 endif()
 
 if(WIN32)
@@ -519,6 +546,15 @@ if(WIN32)
     find_program(WINDEPLOYQT_EXE windeployqt
         HINTS ${Qt6_DIR}/../../../bin
         REQUIRED)
+
+    add_custom_command(TARGET harken_studio_cli POST_BUILD
+        COMMAND ${WINDEPLOYQT_EXE}
+            $<$<CONFIG:Debug>:--debug>
+            $<$<NOT:$<CONFIG:Debug>>:--release>
+            --no-translations --no-compiler-runtime --no-system-d3d-compiler
+            --no-system-dxc-compiler --no-opengl-sw --no-quick-import
+            $<TARGET_FILE:harken_studio_cli>
+    )
 
     add_custom_command(TARGET harkenizer POST_BUILD
         COMMAND ${WINDEPLOYQT_EXE}
