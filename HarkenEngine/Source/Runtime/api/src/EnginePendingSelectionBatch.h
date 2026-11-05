@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <optional>
 #include <utility>
+#include <vector>
 
 namespace harken {
 
@@ -49,7 +50,9 @@ public:
             identity_.rootStableId == identity.rootStableId && identity_.callerSeed == identity.callerSeed &&
             identity_.acceptedPostOrdinal == identity.acceptedPostOrdinal && identity_.ticket == identity.ticket &&
             identity_.emitterSlot == identity.emitterSlot && identity_.emitterGeneration == identity.emitterGeneration &&
-            identity_.eventBegin == identity.eventBegin && identity_.eventCount == identity.eventCount;
+            identity_.eventBegin == identity.eventBegin && identity_.eventCount == identity.eventCount &&
+            identity_.operationIndexed == identity.operationIndexed &&
+            identity_.perOperationFrames == identity.perOperationFrames;
     }
     bool MatchesEmitter(std::uint32_t slot, std::uint32_t generation) const noexcept {
         return !Empty() && identity_.emitterSlot == slot && identity_.emitterGeneration == generation;
@@ -64,7 +67,8 @@ public:
             const auto member = table_->ReadPendingBatchMember(*batch_, index);
             if (!member.delta.live || member.revision != revision_ ||
                 member.delta.status != SelectionMemoryStatusV1::Ok ||
-                member.delta.selectedChildOrdinal != materializedOrdinals_[index]) return false;
+                member.delta.selectedChildOrdinal != materializedOrdinals_[index] ||
+                member.delta.executeFrame != materializedFrames_[index]) return false;
         }
         return true;
     }
@@ -72,16 +76,19 @@ public:
     // The caller has already certified the actual tree, source, cut and anchor.
     // A follower install can advance this batch's revision without changing its tree.
     bool CertifyMaterialized(std::uint64_t frame, const std::uint32_t* actualOrdinals,
-        std::uint32_t count) noexcept {
+        std::uint32_t count, const std::uint64_t* actualFrames = nullptr) noexcept {
         if (Empty() || table_ == nullptr || ReplacementPending() || frame != frame_ || count != memberCount_ ||
-            (count != 0 && actualOrdinals == nullptr)) return false;
+            (count != 0 && actualOrdinals == nullptr) ||
+            (count != 0 && identity_.perOperationFrames != (actualFrames != nullptr))) return false;
         const auto view = table_->ReadPendingBatch(*batch_);
         if (!view.live || view.memberCount != count) return false;
         for (std::uint32_t index = 0; index < count; ++index) {
             const auto member = table_->ReadPendingBatchMember(*batch_, index);
             if (actualOrdinals[index] != materializedOrdinals_[index] || !member.delta.live ||
                 member.revision != view.revision || member.delta.status != SelectionMemoryStatusV1::Ok ||
-                member.delta.selectedChildOrdinal != actualOrdinals[index]) return false;
+                member.delta.selectedChildOrdinal != actualOrdinals[index] ||
+                member.delta.executeFrame != materializedFrames_[index] ||
+                member.delta.executeFrame != (actualFrames != nullptr ? actualFrames[index] : frame)) return false;
         }
         revision_ = view.revision;
         return true;
@@ -101,20 +108,29 @@ public:
         return table_->PrepareReplacementPlay(&*replacement_, request, selectedOrdinal);
     }
     SelectionMemoryStatusV1 SealReplacement(std::uint64_t frame, const std::uint32_t* actualOrdinals,
-        std::uint32_t count) noexcept {
+        std::uint32_t count, const std::uint64_t* actualFrames = nullptr) noexcept {
         if (!ReplacementPending() || table_ == nullptr || replacementSealed_ ||
-            count > replacementOrdinals_.size() || (count != 0 && actualOrdinals == nullptr))
+            (count != 0 && actualOrdinals == nullptr) ||
+            (count != 0 && identity_.perOperationFrames != (actualFrames != nullptr)))
             return SelectionMemoryStatusV1::InvalidInput;
         for (std::uint32_t index = 0; index < count; ++index) {
             const auto member = table_->ReadReplacementPlay(*replacement_, index);
             if (member.status != SelectionMemoryStatusV1::Ok) return member.status;
-            if (member.selectedChildOrdinal != actualOrdinals[index]) return SelectionMemoryStatusV1::InvalidInput;
+            if (member.selectedChildOrdinal != actualOrdinals[index] ||
+                member.executeFrame != (actualFrames != nullptr ? actualFrames[index] : frame))
+                return SelectionMemoryStatusV1::InvalidInput;
         }
-        const auto status = table_->SealReplacement(&*replacement_, count, frame);
+        if (!PrepareOrdinals(replacementOrdinals_, count) || !PrepareOrdinals(replacementFrames_, count))
+            return SelectionMemoryStatusV1::Capacity;
+        const auto status = identity_.perOperationFrames
+            ? table_->SealReplacementFrames(&*replacement_, count, actualFrames)
+            : table_->SealReplacement(&*replacement_, count, frame);
         if (status != SelectionMemoryStatusV1::Ok) return status;
         replacementFrame_ = frame;
         replacementCount_ = count;
         if (count != 0) std::copy_n(actualOrdinals, count, replacementOrdinals_.begin());
+        for (std::uint32_t index = 0; index < count; ++index)
+            replacementFrames_[index] = actualFrames != nullptr ? actualFrames[index] : frame;
         replacementSealed_ = true;
         return status;
     }
@@ -131,7 +147,8 @@ public:
         revision_ = view.revision;
         frame_ = replacementFrame_;
         memberCount_ = replacementCount_;
-        materializedOrdinals_ = replacementOrdinals_;
+        materializedOrdinals_.swap(replacementOrdinals_);
+        materializedFrames_.swap(replacementFrames_);
         ClearReplacement();
         return MatchesMaterialized() ? SelectionMemoryStatusV1::Ok : SelectionMemoryStatusV1::RuntimeRecreateRequired;
     }
@@ -146,9 +163,14 @@ public:
     SelectionMemoryStatusV1 Issue(SelectionMemoryTableV1& table,
         const SelectionPendingBatchIdentityV1& identity,
         PreparedSelectionPlayV1* const* prepared, std::uint32_t count,
-        std::uint64_t frame, const std::uint32_t* materializedOrdinals) noexcept {
-        if (!Empty() || count > materializedOrdinals_.size() ||
-            (count != 0 && materializedOrdinals == nullptr)) return SelectionMemoryStatusV1::InvalidInput;
+        std::uint64_t frame, const std::uint32_t* materializedOrdinals,
+        const std::uint64_t* materializedFrames = nullptr) noexcept {
+        if (!Empty() ||
+            (count != 0 && materializedOrdinals == nullptr) ||
+            (count != 0 && identity.perOperationFrames != (materializedFrames != nullptr)))
+            return SelectionMemoryStatusV1::InvalidInput;
+        if (!PrepareOrdinals(materializedOrdinals_, count) || !PrepareOrdinals(materializedFrames_, count))
+            return SelectionMemoryStatusV1::Capacity;
         batch_.emplace();
         const auto status = table.IssueProducerPendingSelectionBatch(identity, prepared, count, &*batch_);
         if (status != SelectionMemoryStatusV1::Ok) {
@@ -163,6 +185,8 @@ public:
         revision_ = view.revision;
         memberCount_ = view.memberCount;
         if (count != 0) std::copy_n(materializedOrdinals, count, materializedOrdinals_.begin());
+        for (std::uint32_t index = 0; index < count; ++index)
+            materializedFrames_[index] = materializedFrames != nullptr ? materializedFrames[index] : frame;
         return view.live && view.memberCount == count ? SelectionMemoryStatusV1::Ok
             : SelectionMemoryStatusV1::RuntimeRecreateRequired;
     }
@@ -182,6 +206,7 @@ public:
         receiver.frame_ = std::exchange(frame_, 0);
         receiver.memberCount_ = std::exchange(memberCount_, 0);
         receiver.materializedOrdinals_ = std::exchange(materializedOrdinals_, {});
+        receiver.materializedFrames_ = std::exchange(materializedFrames_, {});
         receiver.accepted_ = std::exchange(accepted_, false);
         batch_.reset();
         return true;
@@ -211,12 +236,20 @@ public:
     }
 
 private:
+    template <typename T>
+    static bool PrepareOrdinals(std::vector<T>& values, std::uint32_t count) noexcept {
+        if (count > values.capacity() && memguard::IsAudioTagged()) return false;
+        try { values.resize(count); }
+        catch (...) { return false; }
+        return true;
+    }
     void ClearReplacement() noexcept {
         assert(replacement_.has_value() && (!replacement_->Valid() ||
             (batch_.has_value() && !batch_->Valid() && table_ != nullptr &&
              table_->ReadReplacementPlay(*replacement_, 0).status == SelectionMemoryStatusV1::NotFound)));
         replacement_.reset();
-        replacementOrdinals_ = {};
+        replacementOrdinals_.clear();
+        replacementFrames_.clear();
         replacementFrame_ = 0;
         replacementCount_ = 0;
         replacementSealed_ = false;
@@ -228,7 +261,8 @@ private:
         identity_ = {};
         revision_ = frame_ = 0;
         memberCount_ = 0;
-        materializedOrdinals_ = {};
+        materializedOrdinals_.clear();
+        materializedFrames_.clear();
         accepted_ = false;
     }
     std::optional<PendingSelectionBatchV1> batch_;
@@ -238,8 +272,10 @@ private:
     std::uint64_t revision_ = 0;
     std::uint64_t frame_ = 0;
     std::uint32_t memberCount_ = 0;
-    std::array<std::uint32_t, kSelectionPathNodeCapacity> materializedOrdinals_{};
-    std::array<std::uint32_t, kSelectionPathNodeCapacity> replacementOrdinals_{};
+    std::vector<std::uint32_t> materializedOrdinals_;
+    std::vector<std::uint32_t> replacementOrdinals_;
+    std::vector<std::uint64_t> materializedFrames_;
+    std::vector<std::uint64_t> replacementFrames_;
     std::uint64_t replacementFrame_ = 0;
     std::uint32_t replacementCount_ = 0;
     bool replacementSealed_ = false;

@@ -611,7 +611,8 @@ harken::SelectionMemoryStatusV1 PrepareSharedSelectionPlay(
     harken::PreparedSelectionPlayV1* prepared,
     std::uint32_t* selectedChildOrdinal,
     std::uint32_t loopIteration = 0,
-    const harken::EngineSelectionPreparation& preparation = {}) noexcept;
+    const harken::EngineSelectionPreparation& preparation = {},
+    std::uint32_t operationIndex = 0) noexcept;
 
 harken::SelectionAppendResultV1 AppendSharedSelectionPlay(
     harken::Engine& engine, const harken::SelectionMemoryKeyV1& key,
@@ -983,6 +984,7 @@ struct ContainerTraversalRequest {
     harken::PreparedSelectionPlayV1* prepared = nullptr;
     harken::EngineSelectionPreparation preparation{};
     std::uint32_t* materializedOrdinal = nullptr;
+    std::uint32_t operationIndex = 0;
 };
 
 struct ContainerTraversalStep {
@@ -1121,7 +1123,7 @@ ContainerTraversalStep PrepareSharedContainerSelectionStep(
             request.pathCount, request.path,
             request.occurrenceOrdinal, request.ticket,
             request.eventIndex, request.executeFrame, request.prepared,
-            &out.selectedChildOrdinal, request.loopIteration, request.preparation);
+            &out.selectedChildOrdinal, request.loopIteration, request.preparation, request.operationIndex);
         if (out.selectionStatus != harken::SelectionMemoryStatusV1::Ok) {
             out.status = ContainerTraversalStatus::SelectionFailed;
             return out;
@@ -2574,7 +2576,8 @@ bool HasMusicScheduleAncestor(harken::Engine& engine, const harken::EnginePlayab
 bool HasPendingNativeScheduleChildren(const harken::EnginePlayableServiceRow& row) noexcept {
     if (row.phase != harken::EnginePlayableStartPhase::Cancelling && row.scheduleAggregate != nullptr &&
         row.scheduleAggregate->failureReason == harken::PlayableControlReason::None &&
-        row.scheduleAggregate->music != nullptr && !row.scheduleAggregate->music->finalPassMaterialized) return true;
+        ((row.scheduleAggregate->music != nullptr && !row.scheduleAggregate->music->finalPassMaterialized) ||
+         (row.scheduleAggregate->ordinary != nullptr && !row.scheduleAggregate->ordinary->exhausted))) return true;
     if (row.scheduleTerminalChild != nullptr && row.scheduleTerminalChild->pendingEntry) return true;
     if (row.scheduleAggregate != nullptr)
         return !row.scheduleAggregate->VisitChildren([](const auto& child) noexcept {
@@ -3329,7 +3332,10 @@ bool MatchesPendingScheduleEntryRecord(harken::Engine& engine,
     if (!actual.live || actual.scheduleEpoch != parent.ownerEpoch) return false;
     if (parent.scheduleAggregate != nullptr) {
         if (!parent.scheduleAggregate->committed ||
-            (actual.kind != harken::PlayableKind::Track && actual.kind != harken::PlayableKind::Segment)) return false;
+            (actual.kind != harken::PlayableKind::Track && actual.kind != harken::PlayableKind::Segment &&
+             !(actual.kind == harken::PlayableKind::Container && parent.scheduleAggregate->ordinary != nullptr &&
+               (parent.scheduleAggregate->ordinary->mode == static_cast<std::uint8_t>(harken::ContainerModeV1::Random) ||
+                parent.scheduleAggregate->ordinary->mode == static_cast<std::uint8_t>(harken::ContainerModeV1::Sequence))))) return false;
         return !parent.scheduleAggregate->VisitChildren([&](const auto& owned) noexcept {
             return &owned != &record;
         });
@@ -4814,9 +4820,56 @@ bool RegisterFrontierPreparedOwner(harken::EngineActionPlayScratch& scratch, Con
         commitPhase, cancelPhase, validate, commit, cancel);
 }
 
+harken::EngineActionPlayScratch* ResolveSelectionProducer(harken::Engine& engine,
+    harken::EngineActionPlayScratch& scratch) noexcept {
+    const auto token = scratch.storage.selectionProducer;
+    if (!token.Valid()) return nullptr;
+    auto* root = FindFrontierAttempt(engine, token);
+    if (root == nullptr || root->storage.selectionProducer.slot != token.slot ||
+        root->storage.selectionProducer.generation != token.generation ||
+        !root->storage.initialSelection.BoundFor(token.generation) ||
+        !root->storage.musicSelection.enabled || !root->storage.initialSelection.identity.operationIndexed ||
+        !root->storage.initialSelection.identity.perOperationFrames) return nullptr;
+    if (&scratch != root && scratch.storage.initialSelection.attemptGeneration != 0 &&
+        (!scratch.storage.initialSelection.BoundFor(scratch.storage.generation) ||
+         !harken::Engine::SameSelectionProducerIdentity(scratch.storage.initialSelection.identity,
+             root->storage.initialSelection.identity))) return nullptr;
+    return root;
+}
+
+bool DecorateSelectionProducerRequest(harken::Engine& engine,
+    harken::EngineActionPlayScratch& scratch, ContainerTraversalRequest& request) noexcept {
+    if (!scratch.storage.selectionProducer.Valid()) return true;
+    auto* producer = ResolveSelectionProducer(engine, scratch);
+    if (producer == nullptr || !producer->storage.initialSelectionBatch.Empty()) return false;
+    auto& choices = producer->storage.musicSelection;
+    const auto& identity = producer->storage.initialSelection.identity;
+    if (!choices.PrepareNext()) return false;
+    request.worldGeneration = identity.world;
+    request.worldSemanticFingerprint = identity.worldSemanticFingerprint;
+    request.rootStableId = identity.rootStableId;
+    request.callerSeed = identity.callerSeed;
+    request.acceptedPostOrdinal = identity.acceptedPostOrdinal;
+    request.ticket = identity.ticket;
+    request.eventIndex = identity.eventBegin;
+    request.operationIndex = choices.count;
+    request.ownership = ContainerTraversalOwnership::PreparedToken;
+    request.delta = nullptr;
+    request.prepared = &choices.prepared[choices.count];
+    request.preparation = producer->storage.initialSelection.preparation;
+    request.materializedOrdinal = &choices.ordinals[choices.count];
+    choices.frames[choices.count] = request.executeFrame;
+    return true;
+}
+
 bool IssueInitialSelectionBatch(harken::Engine& engine,
     harken::EngineActionPlayScratch& scratch) noexcept {
     auto& storage = scratch.storage;
+    if (storage.selectionProducer.Valid()) {
+        auto* producer = ResolveSelectionProducer(engine, scratch);
+        if (producer == nullptr) return false;
+        if (producer != &scratch) return storage.initialSelectionBatch.Empty() && scratch.selectionPlayCount == 0;
+    }
     if (storage.initialSelection.preparation.mode == harken::EngineSelectionPreparationMode::Legacy)
         return storage.initialSelectionBatch.Empty() ||
             (storage.initialSelection.BoundFor(storage.generation) &&
@@ -4825,6 +4878,17 @@ bool IssueInitialSelectionBatch(harken::Engine& engine,
         return false;
     if (!storage.initialSelectionBatch.Empty())
         return storage.initialSelectionBatch.MatchesOwner(&engine.selectionMemory, storage.initialSelection.identity);
+    if (storage.musicSelection.enabled) {
+        auto& operations = storage.musicSelection;
+        if (scratch.selectionPlayCount != 0 || !storage.initialSelection.BoundFor(storage.generation) ||
+            !storage.initialSelection.identity.operationIndexed ||
+            storage.initialSelection.preparation.replacementOwner != nullptr || !operations.PrepareMembers()) return false;
+        return storage.initialSelectionBatch.Issue(engine.selectionMemory, storage.initialSelection.identity,
+            operations.members.data(), operations.count, storage.initialSelection.executeFrame,
+            operations.ordinals.data(), storage.initialSelection.identity.perOperationFrames
+                ? operations.frames.data() : nullptr) == harken::SelectionMemoryStatusV1::Ok &&
+            storage.initialSelectionBatch.MatchesMaterialized();
+    }
     if (scratch.selectionPlayCount > scratch.selectionPlays.size()) return false;
     std::array<harken::PreparedSelectionPlayV1*, harken::kSelectionPathNodeCapacity> members{};
     for (std::uint32_t index = 0; index < scratch.selectionPlayCount; ++index) {
@@ -4839,6 +4903,8 @@ bool IssueInitialSelectionBatch(harken::Engine& engine,
 bool RegisterInitialSelectionOwners(harken::Engine& engine,
     harken::EngineActionPlayScratch& scratch) noexcept {
     if (!IssueInitialSelectionBatch(engine, scratch)) return false;
+    if (scratch.storage.selectionProducer.Valid() && ResolveSelectionProducer(engine, scratch) != &scratch)
+        return true;
     if (scratch.storage.initialSelection.preparation.mode == harken::EngineSelectionPreparationMode::PendingInitial) {
         using Context = harken::EngineActionPlayScratch::PreparedPendingSelectionOwnerContext;
         auto& context = scratch.pendingSelectionOwnerContext;
@@ -6543,6 +6609,7 @@ struct ImmediateActionPlan {
     std::uint32_t cooldownCount = 0;
     std::uint32_t selectionResetCount = 0;
     bool nativeFixedSelection = false;
+    bool nativeMusicSelection = false;
     bool fixedSelectionCommitReady = false;
     std::uint32_t queueResetCount = 0;
     std::uint32_t queueReplacementCount = 0;
@@ -19017,7 +19084,8 @@ bool PrepareVariableControlFrontierSelection(
     std::uint32_t rootOrdinal, std::uint64_t ticket,
     Scratch& scratch, std::uint32_t eventBase,
     MaterializedScheduleSet& result,
-    const harken::VariableReadCutReader* initialVariables = nullptr) noexcept {
+    const harken::VariableReadCutReader* initialVariables = nullptr,
+    bool continuousRoot = false) noexcept {
     auto& workspace = engine.frontierExpansion;
     if (workspace.occupied || workspace.nodes.empty()) return false;
     workspace.occupied = true;
@@ -19074,7 +19142,7 @@ bool PrepareVariableControlFrontierSelection(
         next.controlWeight = weight;
         return next.depth <= harken::kSelectionPathNodeCapacity;
     };
-    if (!append(UINT32_MAX, rootProgram, rootOrdinal, false, 1.0f)) return false;
+    if (!append(UINT32_MAX, rootProgram, rootOrdinal, continuousRoot, 1.0f)) return false;
     const auto policyBase = scratch.frontierPolicyCount;
     for (std::uint32_t index = 0; index < workspace.count; ++index) {
         auto& node = workspace.nodes[index];
@@ -19184,15 +19252,35 @@ bool PrepareVariableControlFrontierSelection(
             if (selectionPrefixCount != 0)
                 std::copy_n(selectionPrefix, selectionPrefixCount, fullPath.begin());
             std::copy_n(path.begin(), node.depth, fullPath.begin() + selectionPrefixCount);
-            if (PrepareSharedSelectionPlay(engine, key, program, fingerprint, selectionRoot,
-                    selectionCallerSeed, ticket, selectionPrefixCount + node.depth, fullPath.data(), node.occurrenceOrdinal,
-                    ticket, eventBase + scratch.selectionPlayCount, selectionExecuteFrame,
-                    &scratch.selectionPlays[scratch.selectionPlayCount], &node.selectedOrdinal, 0,
-                    selectionPreparation) !=
-                harken::SelectionMemoryStatusV1::Ok) return false;
-            if constexpr (std::is_same_v<Scratch, harken::EngineActionPlayScratch>)
-                scratch.storage.initialSelection.materializedOrdinals[scratch.selectionPlayCount] = node.selectedOrdinal;
-            ++scratch.selectionPlayCount;
+            harken::EngineActionPlayScratch* producer = nullptr;
+            if constexpr (std::is_same_v<Scratch, harken::EngineActionPlayScratch>) {
+                if (scratch.storage.selectionProducer.Valid()) {
+                    producer = ResolveSelectionProducer(engine, scratch);
+                    if (producer == nullptr || !producer->storage.initialSelectionBatch.Empty()) return false;
+                }
+            }
+            if (producer != nullptr) {
+                auto& choices = producer->storage.musicSelection;
+                const auto& domain = producer->storage.initialSelection;
+                if (!choices.PrepareNext() || PrepareSharedSelectionPlay(engine, key, program,
+                        domain.identity.worldSemanticFingerprint, domain.identity.rootStableId,
+                        domain.identity.callerSeed, domain.identity.acceptedPostOrdinal,
+                        selectionPrefixCount + node.depth, fullPath.data(), node.occurrenceOrdinal,
+                        domain.identity.ticket, domain.identity.eventBegin, selectionExecuteFrame,
+                        &choices.prepared[choices.count], &node.selectedOrdinal, 0, domain.preparation, choices.count) !=
+                        harken::SelectionMemoryStatusV1::Ok) return false;
+                choices.ordinals[choices.count] = node.selectedOrdinal;
+                choices.frames[choices.count++] = selectionExecuteFrame;
+            } else {
+                if (PrepareSharedSelectionPlay(engine, key, program, fingerprint, selectionRoot,
+                        selectionCallerSeed, ticket, selectionPrefixCount + node.depth, fullPath.data(), node.occurrenceOrdinal,
+                        ticket, eventBase + scratch.selectionPlayCount, selectionExecuteFrame,
+                        &scratch.selectionPlays[scratch.selectionPlayCount], &node.selectedOrdinal, 0,
+                        selectionPreparation) != harken::SelectionMemoryStatusV1::Ok) return false;
+                if constexpr (std::is_same_v<Scratch, harken::EngineActionPlayScratch>)
+                    scratch.storage.initialSelection.materializedOrdinals[scratch.selectionPlayCount] = node.selectedOrdinal;
+                ++scratch.selectionPlayCount;
+            }
         }
         if (!append(index, *program, node.selectedOrdinal, false, 1.0f)) return false;
     }
@@ -21818,6 +21906,7 @@ bool PrepareImmediateActionPlayScratchResourceReset(
             }
         }
         if (!storage.initialSelectionBatch.Empty()) return false;
+        if (storage.musicSelection.HasPreparedTokens()) return false;
         if (!storage.initialSelectionCensus.Empty()) return false;
         if ((storage.initialVariableService != nullptr) != storage.initialVariableCut.Valid() ||
             (storage.initialVariableCut.Valid() &&
@@ -21899,6 +21988,10 @@ void CommitImmediateActionPlayScratchReset(harken::Engine& engine,
     storage.scheduleChildren.reset();
     storage.schedulePreparedRoot = nullptr;
     storage.initialSelection = {};
+    storage.selectionProducer = {};
+    storage.musicSelection.Reset();
+    storage.musicPublicationOwners.clear();
+    storage.musicPublicationCommits.clear();
     assert(storage.initialSelectionBatch.Empty());
     storage.ordinaryDeferredRollback = {};
     storage.deferredContainerOwner = {};
@@ -22608,6 +22701,7 @@ bool CancelDirectFrontierAttempt(harken::Engine& engine,
             if (!CancelPreparedDirectSelectionOwner(&scratch.directSelectionOwnerContexts[index])) return false;
         for (std::uint32_t index = scratch.selectionPlayCount; index-- > 0;)
             if (!CancelPreparedSelectionOwner(&scratch.selectionOwnerContexts[index])) return false;
+        if (!scratch.storage.musicSelection.CancelPrepared(engine.selectionMemory)) return false;
     }
     if (scratch.pendingScheduleChild != nullptr && scratch.row != nullptr &&
         !scratch.row->queueMode && !scratch.row->variableControlInstance.Valid() &&
@@ -24899,7 +24993,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
                    harken::PlayableKindV1::Container) {
             status = PrepareVariableControlFrontierSelection(
                          engine, world, request, program, continuous[rowIndex].childStableOrdinal,
-                         provisionalTicket, *scratch, selectionEventBase, materialized, initialVariables)
+                         provisionalTicket, *scratch, selectionEventBase, materialized, initialVariables, true)
                          ? ScheduleMaterializeStatus::Ok
                          : ScheduleMaterializeStatus::Dynamic;
         } else {
@@ -25336,7 +25430,9 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
             for (std::uint32_t childIndex = 0; childIndex < childCount; ++childIndex) {
                 const auto ordinal = haveDiscrete && childIndex == 0 ? discrete->childStableOrdinal
                     : continuous[childIndex - static_cast<std::uint32_t>(haveDiscrete)].childStableOrdinal;
-                if (ordinal == node.occurrenceOrdinal) { tokenIndex = childIndex; break; }
+                if (ordinal == node.occurrenceOrdinal && node.continuousMember == !(haveDiscrete && childIndex == 0)) {
+                    tokenIndex = childIndex; break;
+                }
             }
             node.parent = instance;
             node.parentEpoch = preparedRoot.ScheduleEpoch();
@@ -25460,8 +25556,9 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
                    : 0u);
         if (std::any_of(scratch->storage.frontierPolicies.begin(),
                 scratch->storage.frontierPolicies.begin() + scratch->frontierPolicyCount,
-                [selectedOrdinal](const auto& node) {
-                    return node.parentIndex == UINT32_MAX && node.occurrenceOrdinal == selectedOrdinal;
+                [selectedOrdinal, discreteChild](const auto& node) {
+                    return node.parentIndex == UINT32_MAX && node.occurrenceOrdinal == selectedOrdinal &&
+                        node.continuousMember == !discreteChild;
                 }))
             continue;
         if (nestedLeafCount != 1u) {
@@ -26793,7 +26890,9 @@ bool PrepareInitialVariableControlOwners(harken::Engine& engine,
             for (std::uint32_t index = 0; index < scratch->selectionPlayCount; ++index)
                 if (!scratch->selectionPlays[index].Valid()) return false;
         }
-        if ((scratch->storage.initialSelection.preparation.mode == harken::EngineSelectionPreparationMode::PendingInitial ||
+        if (scratch->storage.selectionProducer.Valid()) {
+            if (ResolveSelectionProducer(engine, *scratch) == nullptr) return false;
+        } else if ((scratch->storage.initialSelection.preparation.mode == harken::EngineSelectionPreparationMode::PendingInitial ||
              !scratch->storage.initialSelectionBatch.Empty()) &&
             !scratch->storage.initialSelectionBatch.MatchesOwner(&engine.selectionMemory,
                 scratch->storage.initialSelection.identity)) return false;
@@ -32498,8 +32597,54 @@ bool PublishInitialVariableControlFrontier(harken::Engine& engine,
 bool CanCommitQueueScheduleReadUses(harken::Engine& engine,
     harken::EngineActionPlayScratch& root) noexcept;
 
+bool CollectMusicSelectionPublication(harken::Engine& engine, harken::EngineActionPlayScratch& root,
+    std::vector<harken::EnginePendingSelectionBatch*>& owners,
+    std::vector<harken::PendingSelectionBatchCommitV1>& inputs) noexcept {
+    return VisitInitialScheduleAttempts(engine, root, [&](auto& scratch) noexcept {
+        auto& storage = scratch.storage;
+        auto& batch = storage.initialSelectionBatch;
+        if (storage.selectionProducer.Valid() || !storage.musicSelection.enabled || batch.Empty()) return true;
+        if (!storage.initialSelection.BoundFor(storage.generation) ||
+            !batch.MatchesOwner(&engine.selectionMemory, storage.initialSelection.identity) ||
+            !batch.CertifyMaterialized(storage.initialSelection.executeFrame,
+                storage.musicSelection.ordinals.data(), storage.musicSelection.count,
+                storage.initialSelection.identity.perOperationFrames ? storage.musicSelection.frames.data() : nullptr)) return false;
+        auto input = batch.CommitInput();
+        if (input.batch == nullptr || inputs.size() == UINT32_MAX) return false;
+        try {
+            owners.push_back(&batch);
+            inputs.push_back(input);
+        } catch (const std::bad_alloc&) { return false; }
+        return true;
+    });
+}
+
+bool PrepareMusicSelectionPublication(harken::Engine& engine, harken::EngineActionPlayScratch& root) noexcept {
+    auto& owners = root.storage.musicPublicationOwners;
+    auto& inputs = root.storage.musicPublicationCommits;
+    owners.clear();
+    inputs.clear();
+    return CollectMusicSelectionPublication(engine, root, owners, inputs) &&
+        (inputs.empty() || engine.selectionMemory.CanCommitPendingBatches(inputs.data(),
+            static_cast<std::uint32_t>(inputs.size())) == harken::SelectionMemoryStatusV1::Ok);
+}
+
+bool CommitMusicSelectionPublication(harken::Engine& engine, harken::EngineActionPlayScratch& root) noexcept {
+    auto& owners = root.storage.musicPublicationOwners;
+    auto& inputs = root.storage.musicPublicationCommits;
+    if (owners.size() != inputs.size()) return false;
+    if (inputs.empty()) return true;
+    if (engine.selectionMemory.CommitPendingBatches(inputs.data(), static_cast<std::uint32_t>(inputs.size())) !=
+        harken::SelectionMemoryStatusV1::Ok) return false;
+    for (auto* owner : owners) if (owner == nullptr || !owner->ReturnAfterCommit()) return false;
+    owners.clear();
+    inputs.clear();
+    return true;
+}
+
 bool CanPublishInitialScheduleFrontiers(harken::Engine& engine,
-    harken::EngineActionPlayScratch& root) noexcept {
+    harken::EngineActionPlayScratch& root, bool individualSelectionCohort = true) noexcept {
+    if (individualSelectionCohort && !PrepareMusicSelectionPublication(engine, root)) return false;
     if (root.initialNativeForestOwner.Valid() && !CanCommitQueueScheduleReadUses(engine, root)) return false;
     return VisitInitialScheduleAttempts(engine, root, [&](auto& scratch) noexcept {
         return CanPublishInitialVariableControlFrontier(engine, scratch);
@@ -32508,7 +32653,7 @@ bool CanPublishInitialScheduleFrontiers(harken::Engine& engine,
 
 bool PublishInitialScheduleFrontiers(harken::Engine& engine,
     harken::EngineActionPlayScratch& root) noexcept {
-    if (root.initialForestCancellationSealed) return false;
+    if (root.initialForestCancellationSealed || !CommitMusicSelectionPublication(engine, root)) return false;
     return VisitInitialScheduleAttempts(engine, root, [&](auto& scratch) noexcept {
         if (!PublishInitialVariableControlFrontier(engine, scratch) ||
             !ReleaseInitialQueueEntryAdmissionOwners(engine, scratch)) return false;
@@ -35617,7 +35762,9 @@ std::uint64_t RollingPlayablePublicationFrame(const harken::Engine& engine,
 enum class PendingScheduleEntryStatus : std::uint8_t { Published, Waiting, Failed };
 
 PendingScheduleEntryStatus PreparePendingScheduleVariableEntry(harken::Engine& engine,
-    harken::EnginePlayableServiceRow& parent, harken::EngineScheduleAggregateChild& pending) noexcept;
+    harken::EnginePlayableServiceRow& parent, harken::EngineScheduleAggregateChild& pending,
+    harken::LogicCommitCoordinator::PreparedIssue* suppliedIssue = nullptr,
+    harken::EngineActionPlayScratch* suppliedScratch = nullptr) noexcept;
 
 bool ServicePendingScheduleChild(harken::Engine& engine,
     harken::EnginePlayableServiceRow& parent, harken::EngineScheduleAggregateChild& child,
@@ -35669,6 +35816,9 @@ bool ServicePendingScheduleChild(harken::Engine& engine,
     return !engine.runtimeRecreateRequired;
 }
 
+bool FillMusicOrdinaryFrontiers(harken::Engine& engine, harken::EnginePlayableServiceRow& row,
+    std::uint64_t prepareThrough, std::uint64_t* blockingFrame, std::size_t depth) noexcept;
+
 bool ServiceScheduleAggregate(
     harken::Engine& engine, harken::EnginePlayableServiceRow& row,
     std::uint64_t observedAudioSequence, std::uint64_t* blockingFrame,
@@ -35681,7 +35831,10 @@ bool ServiceScheduleAggregate(
     (void)ReleaseUnusedNativeEntrySeed(row, observedAudioSequence);
     const auto owner = engine.playableInstances.Classify(row.ownerInstance);
     if (!owner.live || (owner.kind != harken::PlayableKind::Track &&
-        owner.kind != harken::PlayableKind::Segment)) {
+        owner.kind != harken::PlayableKind::Segment &&
+        !(owner.kind == harken::PlayableKind::Container && aggregate.ordinary != nullptr &&
+          (aggregate.ordinary->mode == static_cast<std::uint8_t>(harken::ContainerModeV1::Random) ||
+           aggregate.ordinary->mode == static_cast<std::uint8_t>(harken::ContainerModeV1::Sequence))))) {
         engine.runtimeRecreateRequired = true;
         return true;
     }
@@ -35717,6 +35870,13 @@ bool ServiceScheduleAggregate(
         if (!music.finalPassMaterialized && music.nextPassOffsetFrames > UINT64_MAX - row.startFrame)
             aggregate.failureReason = harken::PlayableControlReason::StartRefused;
     }
+    if (!cancelling && aggregate.ordinary != nullptr) {
+        const auto earliest = QueueEarliestContinuationFrame(engine);
+        const auto block = static_cast<std::uint64_t>(engine.config.blockFrames);
+        const auto through = earliest > UINT64_MAX - block ? UINT64_MAX : earliest + block;
+        if (!FillMusicOrdinaryFrontiers(engine, row, through, blockingFrame, 0))
+            aggregate.failureReason = harken::PlayableControlReason::StartRefused;
+    }
     bool allLogical = true;
     bool allNatural = true;
     bool allReleased = true;
@@ -35725,6 +35885,11 @@ bool ServiceScheduleAggregate(
     bool hasChildren = false;
     if (!aggregate.VisitChildren([&](auto& child) noexcept {
         hasChildren = true;
+        if (!cancelling && aggregate.ordinary != nullptr && aggregate.ordinary->unpublished == &child) {
+            allLogical = allNatural = allReleased = false;
+            ++row.childLiveCount;
+            return true;
+        }
         if (!ServicePendingScheduleChild(engine, row, child, blockingFrame)) {
             engine.runtimeRecreateRequired = true;
             return false;
@@ -35770,6 +35935,25 @@ bool ServiceScheduleAggregate(
             return true;
         });
     }
+    if (aggregate.ordinary != nullptr) {
+        // Only successor batches are reclaimable here. Initial attempt owners
+        // may still borrow the original children until their forest transfers.
+        std::erase_if(aggregate.ordinary->batches, [&](const auto& batch) noexcept {
+            for (const auto& child : batch->children) {
+                if (&child == aggregate.ordinary->unpublished ||
+                    (aggregate.ordinary->awaitingChildEnd && &child == aggregate.ordinary->tail)) return false;
+                if (child.pendingEntry || !child.logicalComplete || !child.resourcesReleased ||
+                    !child.naturalClipDeadline.Empty() || !child.sourceExits.empty()) return false;
+                for (const auto& attempt : engine.actionPlayScratch) {
+                    if (attempt.pendingScheduleChild == &child) return false;
+                    if (attempt.storage.scheduleChildren == nullptr) continue;
+                    for (const auto& owner : attempt.storage.scheduleChildren->owners)
+                        if (owner.record == &child) return false;
+                }
+            }
+            return true;
+        });
+    }
     if (aggregate.failureReason != harken::PlayableControlReason::None &&
         !aggregate.cancellationRequested) {
         row.controlReason = aggregate.failureReason;
@@ -35795,6 +35979,11 @@ bool ServiceScheduleAggregate(
         const auto& music = *aggregate.music;
         if (!music.finalPassMaterialized || music.finalEndOffsetFrames > UINT64_MAX - row.startFrame ||
             frame < row.startFrame + music.finalEndOffsetFrames) return true;
+    }
+    if (aggregate.ordinary != nullptr) {
+        const auto& ordinary = *aggregate.ordinary;
+        if (!ordinary.exhausted || ordinary.nextOffsetFrames > UINT64_MAX - row.startFrame ||
+            frame < row.startFrame + ordinary.nextOffsetFrames) return true;
     }
     if (!hasChildren) {
         if (!row.hasZeroWorkCompletion) {
@@ -79772,8 +79961,15 @@ bool BindInitialActionSelectionContext(ImmediateActionPlan& plan,
         static_cast<std::uint32_t>(plan.emitter >> 32), eventBegin, harken::kSelectionPathNodeCapacity};
     context.attemptGeneration = scratch.storage.generation;
     context.executeFrame = planned.deferredFrame;
-    if (plan.nativeFixedSelection)
+    if (plan.nativeFixedSelection || plan.nativeMusicSelection)
         context.preparation.mode = harken::EngineSelectionPreparationMode::PendingInitial;
+    if (plan.nativeMusicSelection) {
+        context.identity.eventCount = 1;
+        context.identity.operationIndexed = true;
+        context.identity.perOperationFrames = true;
+        scratch.storage.musicSelection.enabled = true;
+        scratch.storage.selectionProducer = {plan.engine->actionPlayStorage.IndexOf(scratch.storage), scratch.storage.generation};
+    }
     return true;
 }
 
@@ -82150,6 +82346,7 @@ bool ReleaseImmediateActionPlay(
                        released;
         }
     }
+    released = scratch->storage.musicSelection.CancelPrepared(engine.selectionMemory) && released;
     if (!executorResolved ||
         scratch->playableTreeExecutor.OwnerTokenCount() != 0) {
         executorResolved =
@@ -82945,7 +83142,8 @@ harken::SelectionMemoryStatusV1 PrepareSharedSelectionPlay(
     harken::PreparedSelectionPlayV1* prepared,
     std::uint32_t* selectedChildOrdinal,
     std::uint32_t loopIteration,
-    const harken::EngineSelectionPreparation& preparation) noexcept {
+    const harken::EngineSelectionPreparation& preparation,
+    std::uint32_t operationIndex) noexcept {
     if (program == nullptr ||
         selectedChildOrdinal == nullptr ||
         pathCount > harken::kSelectionPathNodeCapacity ||
@@ -82965,6 +83163,7 @@ harken::SelectionMemoryStatusV1 PrepareSharedSelectionPlay(
     selection.loopIteration = loopIteration;
     selection.ticket = ticket;
     selection.eventIndex = eventIndex;
+    selection.operationIndex = operationIndex;
     selection.executeFrame = executeFrame;
     if (engine.selectionInputHookForTest != nullptr)
         engine.selectionInputHookForTest(engine, selection, engine.selectionInputContextForTest);
@@ -87571,9 +87770,9 @@ bool PrepareImmediateActionMultiVcSelection(ImmediateActionPlan& plan) noexcept 
         allStaticSelectionTrees = allStaticSelectionTrees && staticSelectionTree;
         anySelection = anySelection || hasSelection;
     }
-    plan.multiVariableControlImmediateLane = allEligible;
+    plan.multiVariableControlImmediateLane = allEligible && !plan.nativeMusicSelection;
     // Every producer needs a real batch, including siblings with no selection members.
-    plan.multiVariableControlPendingSelection = allEligible && allStaticSelectionTrees && anySelection;
+    plan.multiVariableControlPendingSelection = plan.multiVariableControlImmediateLane && allStaticSelectionTrees && anySelection;
     return true;
 }
 
@@ -87681,6 +87880,7 @@ struct ContainerPreparationContext {
     harken::EngineActionPlayStorage* initialForestReadCutOwner = nullptr;
     harken::EngineFrontierAttemptToken queueSignalEntryOwner{};
     harken::EngineFrontierAttemptToken initialNativeForestOwner{};
+    harken::EngineFrontierAttemptToken selectionProducer{};
     const harken::EngineActionPlayScratch* privateScheduleOwner = nullptr;
     ContainerMixedTerminalPrepare prepareMixedTerminal = nullptr;
     harken::ParentAudioGroupRef initialAdmissionGroup{};
@@ -87878,7 +88078,7 @@ ContainerPreparationContext MakeActionContainerPreparationContext(
     }
     context.multiVariableControlImmediateLane = plan.multiVariableControlImmediateLane;
     context.multiVariableControlPendingSelection = plan.multiVariableControlPendingSelection;
-    context.nativeFixedSelection = plan.nativeFixedSelection;
+    context.nativeFixedSelection = plan.nativeFixedSelection || plan.nativeMusicSelection;
     context.ordinaryLeafContainerBatch = plan.ordinaryLeafContainerBatch;
     context.originalPlainSoundRoute = plan.originalPlainSoundRoute;
     context.playCount = plan.playCount;
@@ -87908,7 +88108,7 @@ ContainerPreparationContext MakeActionContainerPreparationContext(
     context.callerSeed = DeriveImmediateActionPlayCallerSeed(plan, planned.executionOrdinal);
     context.prepareMixedTerminal = PrepareContainerMixedScheduleTerminal;
     context.actionFiring = plan.engine->actionFiringPlanScratch[planned.firingIndex].handle;
-    context.initialVcUsesImmediateLane = InitialVariableControlUsesImmediateLane(
+    context.initialVcUsesImmediateLane = !plan.nativeMusicSelection && InitialVariableControlUsesImmediateLane(
         plan, planned.deferredFrame, planned.deferred);
     for (std::uint32_t index = 0; index < plan.stepCount; ++index) {
         const auto& member = plan.engine->actionStepPlanScratch[index];
@@ -88005,10 +88205,12 @@ struct ActionContainerPreparationOperations {
         if (context.parentInstance != 0) return false;
         return PreparePlayableExecution(*plan.engine, &scratch, kind, request, origin);
     }
-    template <typename... Args>
-    bool BindSelection(Args&&... args) noexcept {
-        return BindInitialActionSelectionContext(plan, plan.engine->actionStepPlanScratch[stepIndex],
-            std::forward<Args>(args)...);
+    bool BindSelection(harken::EngineActionPlayScratch& scratch,
+        const harken::PlayableRefV1& root, harken::WorldGeneration world, std::uint64_t fingerprint) noexcept {
+        if (!BindInitialActionSelectionContext(plan, plan.engine->actionStepPlanScratch[stepIndex],
+                scratch, root, world, fingerprint)) return false;
+        context.selectionProducer = scratch.storage.selectionProducer;
+        return true;
     }
     bool PrepareVariables() noexcept {
         return PrepareImmediateActionVariablePrefix(plan,
@@ -88248,6 +88450,15 @@ struct ScheduleContainerPreparationOperations {
             harken::kSelectionPathNodeCapacity};
         selection.attemptGeneration = scratch.storage.generation;
         selection.executeFrame = context.startFrame;
+        if (context.selectionProducer.Valid()) {
+            auto* producer = FindFrontierAttempt(engine, context.selectionProducer);
+            if (producer == nullptr || ResolveSelectionProducer(engine, *producer) != producer ||
+                producer->storage.initialSelection.identity.world != world ||
+                producer->storage.initialSelection.identity.worldSemanticFingerprint != fingerprint ||
+                producer->storage.initialSelection.identity.ticket != ticket) return false;
+            selection.identity = producer->storage.initialSelection.identity;
+            scratch.storage.selectionProducer = context.selectionProducer;
+        }
         return true;
     }
     bool SealPrefix(harken::EngineActionPlayScratch& scratch,
@@ -89287,14 +89498,18 @@ bool PrepareContainerSingleLeaf(
         context.result = VN_BACKPRESSURE;
         return false;
     }
-    const bool variableSound = variableAncestor && instanceKind == harken::PlayableKind::Sound;
+    const auto* musicParent = engine.ResolvePlayableService(context.parentService);
+    // Music successors can release their Start arm before Source completion.
+    // Retain the same native Source receipt used by variable-controlled Sounds.
+    const bool retainedSound = instanceKind == harken::PlayableKind::Sound &&
+        (variableAncestor || (musicParent != nullptr && HasMusicScheduleAncestor(engine, *musicParent)));
     auto* const resourceService = frontierChild != nullptr ? frontierChild
-        : ordinarySingle || directQueueSource || retainOriginalQueueCurrentSource || variableSound || scheduleTargetFade ? row : nullptr;
-    auto* const memberService = frontierChild != nullptr && !context.directRoot ? frontierChild : variableSound ? row : nullptr;
+        : ordinarySingle || directQueueSource || retainOriginalQueueCurrentSource || retainedSound || scheduleTargetFade ? row : nullptr;
+    auto* const memberService = frontierChild != nullptr && !context.directRoot ? frontierChild : retainedSound ? row : nullptr;
     harken::CapturedTimelineVoiceInstall memberVoice;
     if (memberService != nullptr) memberVoice = row->capturedVoice.Share();
-    const auto memberLeaf = variableSound ? preparedRoot.Handle() : row->activeLeafInstance;
-    const auto memberEpoch = variableSound ? preparedRoot.ScheduleEpoch() :
+    const auto memberLeaf = retainedSound ? preparedRoot.Handle() : row->activeLeafInstance;
+    const auto memberEpoch = retainedSound ? preparedRoot.ScheduleEpoch() :
         frontierChild == nullptr ? 0u : scratch->playableTreeExecutor.PreparedInstanceEpoch(selectionCount - 1u);
     const auto memberLogicalSlot = memberService == nullptr ? 0u :
         engine.playableStorage.MemberBase(memberService->partition.slot);
@@ -89322,7 +89537,6 @@ bool PrepareContainerSingleLeaf(
         (void)operations.Release(scratch);
         return false;
     }
-    const auto* musicParent = engine.ResolvePlayableService(context.parentService);
     const bool publishMusicOnInstallation = context.privateScheduleOwner != nullptr && musicParent != nullptr &&
         HasMusicScheduleAncestor(engine, *musicParent) && !admissionGroup.Valid() &&
         !pendingImmediateEntry && !row->pendingDirectStartBinding && !retainOriginalQueueCurrentSource;
@@ -89434,12 +89648,10 @@ bool PrepareContainerSingleLeaf(
             engine.SetPlayableMemberCompletion(slot, {memberLeaf, epoch, installed.sourceTerminal});
             engine.MutablePlayableMember(slot).monitorSelection = installed.monitorSelection;
             engine.MutablePlayableMember(slot).dynamic = 0;
-            if (frontierChild != nullptr) {
-                frontierChild->scheduleStorageBase = static_cast<std::uint32_t>(logicalSlot);
-                frontierChild->scheduleLeafCount = 1;
-            }
+            memberService->scheduleStorageBase = static_cast<std::uint32_t>(logicalSlot);
+            if (frontierChild != nullptr) frontierChild->scheduleLeafCount = 1;
             // A Sound keeps its existing single-voice lifecycle. This native member
-            // is a source/epoch reference for the ancestor VC, not another schedule.
+            // retains its source/epoch receipt independently of the Start arm.
             engine.MutablePlayableMember(slot).postSourceTailFrames = installed.postSourceTailFrames;
         }
         if ((ordinarySingle || scheduleTargetFade) && !FreezeInitialOrdinaryProgram(engine, *row, *resourceService, installed,
@@ -90623,7 +90835,7 @@ bool PrepareContainerExecution(
                     ? VN_NO_VOICE
                     : VN_CAPABILITY_UNAVAILABLE);
         }
-        const bool immediateLane = !nativeScheduleBranches &&
+        const bool immediateLane = !scratch->storage.selectionProducer.Valid() && !nativeScheduleBranches &&
             (context.multiVariableControlImmediateLane || context.initialVcUsesImmediateLane ||
              operations.EarlierWrites(*rootProgram, decision));
         if (pendingInitialSelectionCandidate && immediateLane)
@@ -90918,7 +91130,8 @@ engine.runtimeRecreateRequired = true;
                     ContainerTraversalOwnership::PreparedToken, nullptr,
                     &scratch->selectionPlays[operations.SelectionCount(*scratch)], scratch->storage.initialSelection.preparation,
                     &scratch->storage.initialSelection.materializedOrdinals[operations.SelectionCount(*scratch)]};
-                return operations.DecorateTraversal(*requestOut);
+                return operations.DecorateTraversal(*requestOut) &&
+                    DecorateSelectionProducerRequest(engine, *scratch, *requestOut);
             };
             const auto handleNestedTraversalFailure =
                 [&](const ContainerTraversalStep& traversal) noexcept {
@@ -90934,7 +91147,11 @@ engine.runtimeRecreateRequired = true;
             };
             const auto handleNestedSelection =
                 [&](const ContainerTraversalStep& traversal) noexcept {
-                if (!operations.AcceptSelection(*scratch)) {
+                if (scratch->storage.selectionProducer.Valid()) {
+                    auto* producer = ResolveSelectionProducer(engine, *scratch);
+                    if (producer == nullptr) return ContainerTraversalDirective::Fail;
+                    ++producer->storage.musicSelection.count;
+                } else if (!operations.AcceptSelection(*scratch)) {
                     failNestedTraversal(VN_BACKPRESSURE);
                     return ContainerTraversalDirective::Fail;
                 }
@@ -91478,7 +91695,8 @@ engine.runtimeRecreateRequired = true;
             ContainerTraversalOwnership::PreparedToken, nullptr,
             &scratch->selectionPlays[operations.SelectionCount(*scratch)], scratch->storage.initialSelection.preparation,
             &scratch->storage.initialSelection.materializedOrdinals[operations.SelectionCount(*scratch)]};
-        return operations.DecorateTraversal(*requestOut);
+        return operations.DecorateTraversal(*requestOut) &&
+            DecorateSelectionProducerRequest(engine, *scratch, *requestOut);
     };
     const auto handleTraversalFailure =
         [&](const ContainerTraversalStep& traversal) noexcept {
@@ -91522,7 +91740,14 @@ engine.runtimeRecreateRequired = true;
                 engine.selectionMemory.PreparedPlaySeedProbe(
                     scratch->selectionPlays[scratch->selectionPlayCount]);
         }
-        if (!operations.AcceptSelection(*scratch)) {
+        if (scratch->storage.selectionProducer.Valid()) {
+            auto* producer = ResolveSelectionProducer(engine, *scratch);
+            if (producer == nullptr) return ContainerTraversalDirective::Fail;
+            auto& choices = producer->storage.musicSelection;
+            if (selectionCount == 0 && scratch->row != nullptr)
+                scratch->row->selectionSeedProbe = engine.selectionMemory.PreparedPlaySeedProbe(choices.prepared[choices.count]);
+            ++choices.count;
+        } else if (!operations.AcceptSelection(*scratch)) {
             context.result = VN_BACKPRESSURE;
             rollbackPrepared();
             return ContainerTraversalDirective::Fail;
@@ -92293,6 +92518,159 @@ bool BindVariableScheduleMembers(harken::Engine& engine,
 }
 
 
+bool PrepareMixedScheduleExecution(ContainerPreparationContext& context,
+    harken::EngineActionPlayScratch& scratch) noexcept;
+
+template <typename World>
+bool IsOrdinarySoundTree(const harken::PlayableExecutionAuthority& authority, const World& world,
+    const harken::PlayableRefV1& root, std::uint32_t depth = 0) noexcept {
+    if (root.kind == harken::PlayableKindV1::Sound) return true;
+    const harken::ContainerProgramViewV3* program = nullptr;
+    if (depth >= harken::kSelectionPathNodeCapacity || root.kind != harken::PlayableKindV1::Container ||
+        !ResolveSharedContainerProgram(authority, world, root, &program) || program == nullptr ||
+        (program->mode != harken::ContainerModeV1::Random && program->mode != harken::ContainerModeV1::Sequence)) return false;
+    for (std::uint32_t index = 0; index < program->childCount; ++index)
+        if (!IsOrdinarySoundTree(authority, world, program->children[index].playable, depth + 1u)) return false;
+    return true;
+}
+
+// Plan only the cropped prefix and the current publication window. Every real
+// choice remains in the original pending producer, including inaudible choices.
+template <typename World>
+bool PlanMusicOrdinaryWindow(ContainerPreparationContext& context, harken::EngineActionPlayScratch& producer,
+    const harken::PlayableExecutionAuthority& authority, const World& world,
+    const harken::PlayableRefV1& root, const harken::EngineScheduleChildPropertyContext& prefix,
+    std::uint64_t& crop, std::uint64_t horizon, std::uint64_t limit,
+    std::unique_ptr<harken::EngineScheduleAggregateState>& result,
+    std::uint32_t previousSelections = 0, bool oneSelection = false,
+    bool* durationUnknown = nullptr) noexcept {
+    auto& engine = *context.engine;
+    auto& operations = producer.storage.musicSelection;
+    const auto& selection = producer.storage.initialSelection;
+    const harken::ContainerProgramViewV3* program = nullptr;
+    if (prefix.typedPrefix.size() >= harken::kSelectionPathNodeCapacity ||
+        !ResolveSharedContainerProgram(authority, world, root, &program) || program == nullptr ||
+        (program->mode != harken::ContainerModeV1::Random && program->mode != harken::ContainerModeV1::Sequence)) {
+        context.result = VN_CAPABILITY_UNAVAILABLE;
+        return false;
+    }
+    try {
+        auto plan = std::make_unique<harken::EngineScheduleAggregateState>();
+        plan->ordinary = std::make_unique<harken::EngineOrdinaryScheduleState>();
+        auto& cursor = *plan->ordinary;
+        cursor.prefix = prefix;
+        cursor.callerSeed = selection.identity.callerSeed;
+        cursor.acceptedPostOrdinal = selection.identity.acceptedPostOrdinal;
+        cursor.loopLimit = ReadPlayableLoopCount(world, program->containerStableId);
+        cursor.plannedSelections = previousSelections;
+        cursor.mode = static_cast<std::uint8_t>(program->mode);
+        cursor.inheritedEndOffsetFrames = limit;
+        while (cursor.nextOffsetFrames < horizon && cursor.nextOffsetFrames < limit &&
+            (cursor.loopLimit == 0 || cursor.plannedSelections < cursor.loopLimit)) {
+            if (!operations.PrepareNext()) { context.result = VN_BACKPRESSURE; return false; }
+            ContainerTraversalRequest request{};
+            request.worldGeneration = selection.identity.world;
+            request.worldSemanticFingerprint = selection.identity.worldSemanticFingerprint;
+            request.rootStableId = selection.identity.rootStableId;
+            request.emitter = context.emitter;
+            request.callerSeed = selection.identity.callerSeed;
+            request.acceptedPostOrdinal = selection.identity.acceptedPostOrdinal;
+            request.pathCount = static_cast<std::uint32_t>(prefix.typedPrefix.size());
+            request.path = prefix.typedPrefix.data();
+            request.occurrenceOrdinal = prefix.typedPrefix.empty() ? 0 : prefix.typedPrefix.back().childOrdinal;
+            request.ticket = selection.identity.ticket;
+            request.eventIndex = selection.identity.eventBegin;
+            request.operationIndex = operations.count;
+            if (selection.identity.perOperationFrames && cursor.nextOffsetFrames > UINT64_MAX - context.startFrame)
+                return false;
+            request.executeFrame = selection.identity.perOperationFrames
+                ? context.startFrame + cursor.nextOffsetFrames : selection.executeFrame;
+            operations.frames[operations.count] = request.executeFrame;
+            request.loopIteration = cursor.plannedSelections;
+            request.ownership = ContainerTraversalOwnership::PreparedToken;
+            request.prepared = &operations.prepared[operations.count];
+            request.preparation = selection.preparation;
+            request.materializedOrdinal = &operations.ordinals[operations.count];
+            auto step = ClassifySharedContainerTraversalStep(engine, authority, world, root);
+            if (step.status != ContainerTraversalStatus::Ok || step.mode != ContainerTraversalMode::Selection) {
+                context.result = VN_CAPABILITY_UNAVAILABLE;
+                return false;
+            }
+            step = PrepareSharedContainerSelectionStep(engine, authority, world, step, request);
+            if (step.status != ContainerTraversalStatus::Ok) {
+                context.result = step.selectionStatus == harken::SelectionMemoryStatusV1::Capacity
+                    ? VN_BACKPRESSURE : VN_CAPABILITY_UNAVAILABLE;
+                return false;
+            }
+            ++operations.count;
+            if (cursor.plannedSelections == UINT32_MAX) { context.result = VN_CAPABILITY_UNAVAILABLE; return false; }
+            harken::EngineScheduleAggregateChild child;
+            child.content = step.canonicalChild;
+            child.stableLeafOrdinal = step.selectedChildOrdinal;
+            child.loopIteration = cursor.plannedSelections++;
+            child.properties = prefix;
+            child.properties.ordinals.push_back(step.selectedChildOrdinal);
+            child.properties.trackIds.push_back({});
+            child.properties.typedPrefix.push_back(step.pathNode);
+            child.startOffsetFrames = cursor.nextOffsetFrames;
+            child.endOffsetFrames = limit;
+            std::uint64_t remaining = UINT64_MAX;
+            if (child.content.kind == harken::PlayableKindV1::Sound) {
+                const auto cut = engine.playablePropertyCutScratch.Resolve(world, prefix.propertyRoot,
+                    child.properties.ordinals.data(), static_cast<std::uint32_t>(child.properties.ordinals.size()),
+                    child.properties.trackIds.data());
+                harken::CapturedTimelineVoiceInstall captured;
+                const bool pack = producer.packLeaseOwned || producer.packLeaseBorrowed;
+                if (cut != harken::ResolvedPlayablePropertyCutStatusV1::Ok ||
+                    CaptureTimelineVoiceInstallFromCut(engine, engine.playablePropertyCutScratch.View(),
+                        pack ? &producer.packLease : nullptr, false, {}, &captured) != harken::PlayableStartStatus::Accepted) {
+                    context.result = VN_CAPABILITY_UNAVAILABLE;
+                    return false;
+                }
+                const auto facts = CompletionFactsForVoice(engine, captured.Input(),
+                    pack ? harken::PCMView{} : engine.registry.Lookup(captured.Facts().soundId));
+                std::uint64_t duration = UINT64_MAX;
+                if (facts.loopCount != 0 && harken::ResolveFixedSourceDuration(facts, &duration) !=
+                        harken::CompletionPredictability::KnownFinite) {
+                    if (durationUnknown != nullptr) *durationUnknown = true;
+                    context.result = VN_CAPABILITY_UNAVAILABLE;
+                    return false;
+                }
+                if (duration != UINT64_MAX && crop >= duration) { crop -= duration; continue; }
+                child.sourceOffsetFrames = crop;
+                remaining = duration == UINT64_MAX ? UINT64_MAX : duration - crop;
+                crop = 0;
+            } else {
+                if (cursor.nextOffsetFrames > UINT64_MAX - context.startFrame) return false;
+                auto nestedContext = context;
+                nestedContext.startFrame += cursor.nextOffsetFrames;
+                if (!PlanMusicOrdinaryWindow(nestedContext, producer, authority, world, child.content, child.properties,
+                    crop, horizon - cursor.nextOffsetFrames, limit - cursor.nextOffsetFrames, child.preparedOrdinary,
+                    0, false, durationUnknown)) return false;
+                const auto& nested = *child.preparedOrdinary->ordinary;
+                if (child.preparedOrdinary->children.empty() && nested.exhausted) continue;
+                if (nested.exhausted) remaining = nested.nextOffsetFrames;
+                else cursor.awaitingChildEnd = true;
+            }
+            plan->children.push_back(std::move(child));
+            if (cursor.awaitingChildEnd) break;
+            cursor.nextOffsetFrames = remaining > limit - cursor.nextOffsetFrames
+                ? limit : cursor.nextOffsetFrames + remaining;
+            if (oneSelection) break;
+        }
+        cursor.tail = plan->children.empty() ? nullptr : &plan->children.back();
+        cursor.exhausted = !cursor.awaitingChildEnd &&
+            ((cursor.loopLimit != 0 && cursor.plannedSelections == cursor.loopLimit) ||
+             cursor.nextOffsetFrames >= limit || cursor.nextOffsetFrames == UINT64_MAX);
+        if (plan->children.empty()) {
+            plan->hasZeroWorkCompletion = true;
+            plan->zeroWorkCompletionOffsetFrames = 0;
+        }
+        result = std::move(plan);
+        return true;
+    } catch (const std::bad_alloc&) { context.result = VN_BACKPRESSURE; return false; }
+}
+
 bool PrepareScheduleContainerExecution(ContainerPreparationContext& context,
     harken::EngineActionPlayScratch& scratch) noexcept {
     if (context.engine == nullptr || (!context.directRoot && (context.parentInstance == 0 || context.parentEpoch == 0)) ||
@@ -92323,6 +92701,78 @@ bool PrepareScheduleContainerExecution(ContainerPreparationContext& context,
     context.initialVcUsesImmediateLane = false;
     context.multiVariableControlImmediateLane = false;
     context.multiVariableControlPendingSelection = false;
+    if (scratch.storage.scheduleAggregatePlan != nullptr && scratch.storage.scheduleAggregatePlan->ordinary != nullptr) {
+        const bool prepared = PrepareMixedScheduleExecution(context, scratch);
+        if (!prepared) (void)operations.Release(&scratch);
+        return prepared;
+    }
+    const bool pack = scratch.packLeaseOwned || scratch.packLeaseBorrowed;
+    const auto authority = pack ? harken::PlayableExecutionAuthority::Pack(scratch.packPlaybackView) : context.WorldAuthority();
+    if (parent != nullptr && HasMusicScheduleAncestor(*context.engine, *parent) &&
+        (pack ? IsOrdinarySoundTree(authority, scratch.packPlaybackView, context.root)
+              : IsOrdinarySoundTree(authority, context.world, context.root))) {
+        auto& engine = *context.engine;
+        auto& selection = scratch.storage.initialSelection;
+        const bool bound = operations.BindSelection(scratch, context.root,
+            pack ? scratch.packPlaybackView.CompositeGeneration() : context.world.generation,
+            pack ? scratch.packPlaybackView.WorldSemanticFingerprint() : context.world.identity.runtimeSemanticFingerprint);
+        if (!bound || !operations.SealPrefix(scratch, nullptr, 0)) {
+            context.result = VN_REVISION_CONFLICT;
+            (void)operations.Release(&scratch);
+            return false;
+        }
+        auto* producer = scratch.storage.selectionProducer.Valid() ? ResolveSelectionProducer(engine, scratch) : &scratch;
+        if (producer == nullptr) return false;
+        if (producer == &scratch) {
+            selection.identity.eventCount = 1;
+            selection.identity.operationIndexed = true;
+            selection.identity.perOperationFrames = true;
+            selection.preparation.mode = harken::EngineSelectionPreparationMode::PendingInitial;
+            scratch.storage.musicSelection.enabled = true;
+        }
+        const auto firstOperation = producer->storage.musicSelection.count;
+        const auto block = static_cast<std::uint64_t>(engine.config.blockFrames);
+        const auto earliest = QueueEarliestContinuationFrame(engine);
+        bool prepared = block != 0 && context.startFrame <= UINT64_MAX - block && earliest <= UINT64_MAX - block;
+        bool durationUnknown = false;
+        try {
+            harken::EngineScheduleChildPropertyContext prefix;
+            prefix.propertyRoot = context.propertyRoot;
+            prefix.ordinals.assign(context.prefixOrdinals.begin(), context.prefixOrdinals.end());
+            prefix.trackIds.assign(context.prefixTrackIds.begin(), context.prefixTrackIds.end());
+            prefix.typedPrefix.assign(context.typedPrefix.begin(), context.typedPrefix.end());
+            auto crop = context.sourceOffsetFrames;
+            const auto horizon = prepared ? std::max(context.startFrame + block, earliest + block) - context.startFrame : 0;
+            const auto limit = context.endFrame == UINT64_MAX ? UINT64_MAX : context.endFrame > context.startFrame
+                ? context.endFrame - context.startFrame : 0;
+            prepared = prepared && (pack
+                ? PlanMusicOrdinaryWindow(context, *producer, authority, scratch.packPlaybackView, context.root, prefix,
+                    crop, horizon, limit, scratch.storage.scheduleAggregatePlan, 0, false, &durationUnknown)
+                : PlanMusicOrdinaryWindow(context, *producer, authority, context.world, context.root, prefix,
+                    crop, horizon, limit, scratch.storage.scheduleAggregatePlan, 0, false, &durationUnknown));
+            if (prepared) {
+                context.sourceOffsetFrames = 0;
+                prepared = PrepareMixedScheduleExecution(context, scratch);
+            }
+        } catch (const std::bad_alloc&) { prepared = false; context.result = VN_BACKPRESSURE; }
+        if (!prepared && durationUnknown) {
+            auto& choices = producer->storage.musicSelection;
+            for (auto index = static_cast<std::uint32_t>(choices.prepared.size()); index-- > firstOperation;)
+                if (choices.prepared[index].Valid() && engine.selectionMemory.CancelPreparedPlay(&choices.prepared[index]) !=
+                        harken::SelectionMemoryStatusV1::Ok) { engine.runtimeRecreateRequired = true; return false; }
+            choices.count = firstOperation;
+            choices.prepared.resize(firstOperation);
+            choices.ordinals.resize(firstOperation);
+            choices.frames.resize(firstOperation);
+            if (producer == &scratch) choices.Reset();
+            scratch.storage.initialSelection = {};
+            scratch.storage.scheduleAggregatePlan.reset();
+            // Unknown duration retains the existing Source-outcome driven path.
+            prepared = PrepareContainerExecution(context, operations, &scratch);
+        }
+        if (!prepared) (void)operations.Release(&scratch);
+        return prepared;
+    }
     const bool prepared = PrepareContainerExecution(context, operations, &scratch);
     if (!prepared) (void)operations.Release(&scratch);
     return prepared;
@@ -92395,6 +92845,74 @@ bool PrepareImmediateActionNestedVariableControlPlay(
     auto context = MakeActionContainerPreparationContext(plan, plannedStepIndex);
     ActionContainerPreparationOperations operations{plan, plannedStepIndex, context};
     return PrepareContainerNestedVariableControl(context, operations, scratch, outerRoot, nestedRoot, program, world, path, pathCount);
+}
+
+template <typename World>
+bool RequiresDynamicCompositeSelection(const harken::Engine& engine, const World& world,
+    const harken::PlayableRefV1& root) noexcept {
+    auto& schedule = g_actionMaterialization.schedule;
+    if constexpr (std::is_same_v<World, harken::PackPlaybackView>)
+        return MaterializeSchedule(world, root, engine.config.mixRate.SampleRate(),
+            engine.config.maxKnownScheduleLeaves, harken::WorldCapacitySummaryV1{}.maxTrackSegmentScheduleDepth,
+            &schedule) == ScheduleMaterializeStatus::Dynamic;
+    else return MaterializeSchedule(world, root, engine.config.mixRate.SampleRate(), &schedule) ==
+        ScheduleMaterializeStatus::Dynamic;
+}
+
+template <typename World>
+bool ContainsCompositeSelection(const harken::Engine& engine, const harken::PlayableExecutionAuthority& authority, const World& world,
+    const harken::ContainerProgramViewV3& program, std::uint32_t depth = 0) noexcept {
+    if (depth >= harken::kSelectionPathNodeCapacity) return false;
+    for (std::uint32_t index = 0; index < program.childCount; ++index) {
+        const auto& child = program.children[index].playable;
+        if ((child.kind == harken::PlayableKindV1::Track || child.kind == harken::PlayableKindV1::Segment) &&
+            RequiresDynamicCompositeSelection(engine, world, child)) return true;
+        const harken::ContainerProgramViewV3* nested = nullptr;
+        if (child.kind == harken::PlayableKindV1::Container &&
+            ResolveSharedContainerProgram(authority, world, child, &nested) && nested != nullptr &&
+            ContainsCompositeSelection(engine, authority, world, *nested, depth + 1u)) return true;
+    }
+    return false;
+}
+
+bool ActionNeedsMusicSelection(const ImmediateActionPlan& plan) noexcept {
+    if (plan.playCount < 2 && plan.selectionResetCount == 0) return false;
+    const auto& engine = *plan.engine;
+    const bool pack = engine.packComposition.Authority() == harken::PackAuthorityMode::Pack;
+    harken::PackPlaybackView packView{};
+    if (pack && (plan.postedActionLease == nullptr ||
+        !engine.packComposition.PlaybackViewAtLease(*plan.postedActionLease, &packView))) return false;
+    const auto world = ImmediateActionPlayableWorld(plan);
+    const auto authority = pack ? harken::PlayableExecutionAuthority::Pack(packView)
+        : harken::PlayableExecutionAuthority::Current(world);
+    for (std::uint32_t index = 0; index < plan.stepCount; ++index) {
+        const auto& step = engine.actionStepPlanScratch[index];
+        if (step.deferred || step.step->opcode != harken::ActionOpcodeV1::Play) continue;
+        if (step.step->target.kind == harken::ActionTargetKindV1::Track ||
+            step.step->target.kind == harken::ActionTargetKindV1::Segment) {
+            const auto& target = step.step->target;
+            const auto* property = pack ? packView.ResolveProperty(ImmediateActionTargetPropertyKind(target.kind), target.stableId)
+                : FindImmediateActionPlayableProperty(world, target);
+            if (property == nullptr) continue;
+            const auto root = MakeImmediateActionPlayableRef(*property, target.kind == harken::ActionTargetKindV1::Track
+                ? harken::PlayableKindV1::Track : harken::PlayableKindV1::Segment);
+            if (pack ? RequiresDynamicCompositeSelection(engine, packView, root)
+                     : RequiresDynamicCompositeSelection(engine, world, root)) return true;
+        }
+        if (step.step->target.kind == harken::ActionTargetKindV1::Container) {
+            const auto& target = step.step->target;
+            const auto* property = pack ? packView.ResolveProperty(ImmediateActionTargetPropertyKind(target.kind), target.stableId)
+                : FindImmediateActionPlayableProperty(world, target);
+            if (property == nullptr) continue;
+            const auto root = MakeImmediateActionPlayableRef(*property, harken::PlayableKindV1::Container);
+            const harken::ContainerProgramViewV3* program = nullptr;
+            const bool resolved = pack ? ResolveSharedContainerProgram(authority, packView, root, &program)
+                : ResolveSharedContainerProgram(authority, world, root, &program);
+            if (resolved && program != nullptr && (pack ? ContainsCompositeSelection(engine, authority, packView, *program)
+                : ContainsCompositeSelection(engine, authority, world, *program))) return true;
+        }
+    }
+    return false;
 }
 
 bool PrepareImmediateActionContainerPlay(
@@ -92654,6 +93172,7 @@ bool PrepareScheduleChildAttempt(ContainerPreparationContext& parentContext,
     if (parentService == nullptr || parentService->ownerInstance != context.parentInstance ||
         parentService->ownerEpoch != context.parentEpoch || record.service.Valid()) return false;
     context.directRoot = false;
+    context.selectionProducer = parent.storage.selectionProducer;
     if (parent.storage.scheduleChildren == nullptr && !ReserveScheduleAttemptChildren(parent, 1u)) {
         context.result = VN_BACKPRESSURE;
         return false;
@@ -92690,6 +93209,7 @@ bool PrepareScheduleChildAttempt(ContainerPreparationContext& parentContext,
     harken::EngineFrontierAttemptToken token{};
     auto* child = AcquireFrontierAttempt(engine, &token, true);
     if (child == nullptr) { context.result = VN_BACKPRESSURE; return false; }
+    child->storage.selectionProducer = context.selectionProducer;
     child->initialForestPublication = parent.initialForestPublication;
     child->queueSignalEntryOwner = signalOwner;
     child->initialNativeForestOwner = forestOwner;
@@ -92755,6 +93275,11 @@ bool PrepareScheduleChildAttempt(ContainerPreparationContext& parentContext,
     context.initialVcUsesImmediateLane = false;
     context.multiVariableControlImmediateLane = false;
     context.multiVariableControlPendingSelection = false;
+    if (record.preparedOrdinary != nullptr) {
+        if (context.root.kind != harken::PlayableKindV1::Container || child->storage.scheduleAggregatePlan != nullptr) return false;
+        child->storage.scheduleAggregatePlan = std::move(record.preparedOrdinary);
+        context.sourceOffsetFrames = 0;
+    }
     bool prepared = false;
     if (context.root.kind == harken::PlayableKindV1::Container) {
         prepared = PrepareScheduleContainerExecution(context, *child) &&
@@ -92787,9 +93312,12 @@ bool PrepareMixedScheduleExecution(ContainerPreparationContext& context,
     harken::EngineActionPlayScratch& scratch) noexcept {
     if (context.engine == nullptr ||
         (context.root.kind != harken::PlayableKindV1::Track &&
-         context.root.kind != harken::PlayableKindV1::Segment)) return false;
+         context.root.kind != harken::PlayableKindV1::Segment &&
+         !(context.root.kind == harken::PlayableKindV1::Container && scratch.storage.scheduleAggregatePlan != nullptr &&
+           scratch.storage.scheduleAggregatePlan->ordinary != nullptr))) return false;
     auto& engine = *context.engine;
     const bool pack = scratch.packLeaseOwned || scratch.packLeaseBorrowed;
+    if (context.root.kind != harken::PlayableKindV1::Container) {
     harken::EngineScheduleChildPropertyContext prefix;
     try {
         prefix.propertyRoot = context.propertyRoot.stableId != VnObjectId{} ? context.propertyRoot : context.root;
@@ -92832,6 +93360,7 @@ bool PrepareMixedScheduleExecution(ContainerPreparationContext& context,
             plan.zeroWorkCompletionOffsetFrames = std::min(plan.zeroWorkCompletionOffsetFrames, duration);
         }
     }
+    }
     const auto& plan = *scratch.storage.scheduleAggregatePlan;
     if (plan.music != nullptr && plan.music->timeline.playCount != 0 &&
         plan.music->finalEndOffsetFrames > UINT64_MAX - context.startFrame) {
@@ -92840,7 +93369,8 @@ bool PrepareMixedScheduleExecution(ContainerPreparationContext& context,
     }
     auto* row = engine.PrepareFreePlayableService();
     const auto kind = context.root.kind == harken::PlayableKindV1::Track
-        ? harken::PlayableKind::Track : harken::PlayableKind::Segment;
+        ? harken::PlayableKind::Track : context.root.kind == harken::PlayableKindV1::Container
+            ? harken::PlayableKind::Container : harken::PlayableKind::Segment;
     ScheduleContainerPreparationOperations operations{context, engine};
     operations.activeScratch = &scratch;
     if (row == nullptr) {
@@ -92910,6 +93440,7 @@ bool PrepareMixedScheduleExecution(ContainerPreparationContext& context,
     row->Invocation().playbackRequest = context.playbackRequest;
     row->Invocation().emitterOrigin = context.emitterOrigin;
     row->Invocation().invocationEmitter = context.emitter;
+    row->Invocation().scheduleCallerSeed = context.callerSeed;
     row->Invocation().actionFiring = context.actionFiring;
     row->Invocation().actionExecutionOrdinal = context.entry.executionOrdinal;
     row->Invocation().worldGeneration = metadata.worldGeneration;
@@ -92979,8 +93510,162 @@ bool PrepareMixedScheduleExecution(ContainerPreparationContext& context,
     return true;
 }
 
+PendingScheduleEntryStatus PrepareMusicOrdinarySuccessor(harken::Engine& engine,
+    harken::EnginePlayableServiceRow& parent, std::uint64_t prepareThrough) noexcept {
+    using Status = PendingScheduleEntryStatus;
+    if (parent.scheduleAggregate == nullptr || parent.scheduleAggregate->ordinary == nullptr) return Status::Failed;
+    auto& cursor = *parent.scheduleAggregate->ordinary;
+    if (cursor.unpublished != nullptr) {
+        for (auto& attempt : engine.actionPlayScratch) {
+            if (attempt.pendingScheduleChild != cursor.unpublished) continue;
+            if (attempt.storage.phase == harken::EngineFrontierAttemptPhase::CancelPending)
+                (void)ReleaseImmediateActionPlay(engine, &attempt, nullptr);
+            if (attempt.pendingScheduleChild == cursor.unpublished) return Status::Waiting;
+        }
+        if (cursor.unpublished->service.Valid() || cursor.unpublished->lifecycleOwned ||
+            !cursor.unpublished->naturalClipDeadline.Empty() || !cursor.unpublished->sourceExits.empty()) return Status::Failed;
+        const auto* abandoned = cursor.unpublished;
+        std::erase_if(cursor.batches, [&](const auto& batch) {
+            return batch->children.size() == 1u && &batch->children.front() == abandoned;
+        });
+        cursor.unpublished = nullptr;
+    }
+    if (cursor.exhausted || cursor.awaitingChildEnd || cursor.nextOffsetFrames > UINT64_MAX - parent.startFrame)
+        return Status::Failed;
+    const auto start = parent.startFrame + cursor.nextOffsetFrames;
+    if (start >= prepareThrough) return Status::Waiting;
+    const auto block = static_cast<std::uint64_t>(engine.config.blockFrames);
+    const auto completed = engine.mixer.BlocksRendered();
+    if (block == 0 || completed >= UINT64_MAX / block ||
+        start < std::max(engine.timelinePool.PublishCutoffFrame(), (completed + 1u) * block)) return Status::Failed;
+    const auto world = engine.variables.CurrentPlayableWorld();
+    const bool pack = parent.Invocation().packLease.leaseToken != 0;
+    if ((!pack && world.generation != parent.Invocation().worldGeneration) ||
+        (pack && engine.packComposition.ValidateLease(parent.Invocation().packLease) != VN_OK)) return Status::Failed;
+    harken::LogicCommitCoordinator::PreparedIssue issue;
+    if (engine.logicCommits.PrepareIssue(&issue) != harken::LogicCommitCoordinator::IssueStatus::Issued) return Status::Waiting;
+    harken::EngineFrontierAttemptToken token;
+    auto* scratch = AcquireFrontierAttempt(engine, &token, true);
+    if (scratch == nullptr) return Status::Waiting;
+    scratch->directExecution = true;
+    const auto fail = [&](Status status) noexcept {
+        if (scratch->storage.phase != harken::EngineFrontierAttemptPhase::Free &&
+            scratch->storage.phase != harken::EngineFrontierAttemptPhase::Published &&
+            scratch->storage.phase != harken::EngineFrontierAttemptPhase::PublishedGroupReclaim)
+            (void)ReleaseImmediateActionPlay(engine, scratch, nullptr);
+        return engine.runtimeRecreateRequired ? Status::Failed : status;
+    };
+    if (pack) {
+        scratch->packLeaseBorrowed = true;
+        scratch->packLease = parent.Invocation().packLease;
+        scratch->packPlaybackView = parent.Invocation().packPlaybackView;
+    }
+    harken::ActionFiringTable::PreparedChildIdentity noChild;
+    VnResult failure = VN_OK;
+    bool capacity = false;
+    harken::EngineScheduleAggregateChild description;
+    description.content = parent.root;
+    try { description.properties = cursor.prefix; }
+    catch (const std::bad_alloc&) { return fail(Status::Waiting); }
+    auto context = MakeScheduleContinuationPreparationContext(engine, world, issue, noChild,
+        failure, capacity, parent, description, start);
+    context.callerSeed = cursor.callerSeed;
+    context.sourceOffsetFrames = 0;
+    auto& selection = scratch->storage.initialSelection;
+    selection.identity = {parent.Invocation().worldGeneration,
+        pack ? parent.Invocation().packPlaybackView.WorldSemanticFingerprint() : world.identity.runtimeSemanticFingerprint,
+        cursor.prefix.propertyRoot.stableId, cursor.callerSeed, cursor.acceptedPostOrdinal, issue.Sequence(),
+        context.emitter == 0 ? UINT32_MAX : static_cast<std::uint32_t>(context.emitter),
+        static_cast<std::uint32_t>(context.emitter >> 32), 0x80000000u, 1u, true, true};
+    selection.attemptGeneration = scratch->storage.generation;
+    selection.executeFrame = start;
+    selection.preparation.mode = harken::EngineSelectionPreparationMode::PendingInitial;
+    scratch->storage.musicSelection.enabled = true;
+    if (!selection.SealPrefix(scratch->storage.generation, cursor.prefix.typedPrefix.data(),
+        static_cast<std::uint32_t>(cursor.prefix.typedPrefix.size()))) return fail(Status::Failed);
+    const auto authority = pack ? harken::PlayableExecutionAuthority::Pack(scratch->packPlaybackView)
+        : harken::PlayableExecutionAuthority::Current(world);
+    std::unique_ptr<harken::EngineScheduleAggregateState> plan;
+    std::uint64_t crop = 0;
+    const auto limit = cursor.inheritedEndOffsetFrames - cursor.nextOffsetFrames;
+    const bool planned = pack
+        ? PlanMusicOrdinaryWindow(context, *scratch, authority, scratch->packPlaybackView, parent.root, cursor.prefix,
+            crop, prepareThrough - start, limit, plan, cursor.plannedSelections, true)
+        : PlanMusicOrdinaryWindow(context, *scratch, authority, world, parent.root, cursor.prefix,
+            crop, prepareThrough - start, limit, plan, cursor.plannedSelections, true);
+    if (!planned || plan == nullptr || plan->ordinary == nullptr)
+        return fail(failure == VN_BACKPRESSURE ? Status::Waiting : Status::Failed);
+    const auto& candidate = *plan->ordinary;
+    if (plan->children.empty()) {
+        if (!candidate.exhausted || !IssueInitialSelectionBatch(engine, *scratch)) return fail(Status::Failed);
+        auto input = scratch->storage.initialSelectionBatch.CommitInput();
+        if (engine.selectionMemory.CanCommitPendingBatches(&input, 1) != harken::SelectionMemoryStatusV1::Ok)
+            return fail(Status::Waiting);
+        const auto consumed = engine.logicCommits.ConsumePreparedIssue(std::move(issue));
+        (void)consumed;
+        if (engine.selectionMemory.CommitPendingBatches(&input, 1) != harken::SelectionMemoryStatusV1::Ok ||
+            !scratch->storage.initialSelectionBatch.ReturnAfterCommit()) {
+            engine.runtimeRecreateRequired = true;
+            return Status::Failed;
+        }
+        cursor.plannedSelections = candidate.plannedSelections;
+        cursor.exhausted = true;
+        return fail(Status::Published);
+    }
+    if (plan->children.size() != 1u || candidate.nextOffsetFrames > limit) return fail(Status::Failed);
+    try {
+        auto batch = std::make_unique<harken::EngineMusicScheduleBatch>();
+        batch->children = std::move(plan->children);
+        auto& record = batch->children.front();
+        record.startOffsetFrames += cursor.nextOffsetFrames;
+        if (record.endOffsetFrames != UINT64_MAX) record.endOffsetFrames += cursor.nextOffsetFrames;
+        record.pendingEntry = true;
+        cursor.batches.push_back(std::move(batch));
+        cursor.unpublished = &record;
+        cursor.candidateNextOffsetFrames = cursor.nextOffsetFrames + candidate.nextOffsetFrames;
+        cursor.candidatePlannedSelections = candidate.plannedSelections;
+        cursor.candidateAwaitingChildEnd = candidate.awaitingChildEnd;
+        cursor.candidateExhausted = candidate.exhausted;
+    } catch (const std::bad_alloc&) { return fail(Status::Waiting); }
+    const auto status = PreparePendingScheduleVariableEntry(engine, parent, *cursor.unpublished, &issue, scratch);
+    if (status != Status::Published && cursor.unpublished != nullptr) return fail(status);
+    return status;
+}
+
+bool FillMusicOrdinaryFrontiers(harken::Engine& engine, harken::EnginePlayableServiceRow& row,
+    std::uint64_t prepareThrough, std::uint64_t* blockingFrame, std::size_t depth = 0) noexcept {
+    if (depth >= harken::kSelectionPathNodeCapacity || row.scheduleAggregate == nullptr ||
+        row.scheduleAggregate->ordinary == nullptr) return false;
+    auto& cursor = *row.scheduleAggregate->ordinary;
+    while (!cursor.exhausted) {
+        if (cursor.awaitingChildEnd) {
+            auto* child = cursor.tail == nullptr ? nullptr : engine.ResolvePlayableService(cursor.tail->service);
+            if (child == nullptr || child->scheduleAggregate == nullptr || child->scheduleAggregate->ordinary == nullptr ||
+                !FillMusicOrdinaryFrontiers(engine, *child, prepareThrough, blockingFrame, depth + 1u)) return false;
+            const auto& nested = *child->scheduleAggregate->ordinary;
+            if (!nested.exhausted) return true;
+            cursor.nextOffsetFrames = nested.nextOffsetFrames > cursor.inheritedEndOffsetFrames - cursor.tail->startOffsetFrames
+                ? cursor.inheritedEndOffsetFrames : cursor.tail->startOffsetFrames + nested.nextOffsetFrames;
+            cursor.awaitingChildEnd = false;
+            cursor.exhausted = (cursor.loopLimit != 0 && cursor.plannedSelections == cursor.loopLimit) ||
+                cursor.nextOffsetFrames >= cursor.inheritedEndOffsetFrames || cursor.nextOffsetFrames == UINT64_MAX;
+            if (cursor.exhausted) return true;
+        }
+        if (cursor.nextOffsetFrames > UINT64_MAX - row.startFrame) return false;
+        const auto start = row.startFrame + cursor.nextOffsetFrames;
+        if (start >= prepareThrough) return true;
+        const auto status = PrepareMusicOrdinarySuccessor(engine, row, prepareThrough);
+        if (status == PendingScheduleEntryStatus::Published) continue;
+        if (blockingFrame != nullptr) *blockingFrame = std::min(*blockingFrame, start);
+        return status == PendingScheduleEntryStatus::Waiting;
+    }
+    return true;
+}
+
 PendingScheduleEntryStatus PreparePendingScheduleVariableEntry(harken::Engine& engine,
-    harken::EnginePlayableServiceRow& parent, harken::EngineScheduleAggregateChild& pending) noexcept {
+    harken::EnginePlayableServiceRow& parent, harken::EngineScheduleAggregateChild& pending,
+    harken::LogicCommitCoordinator::PreparedIssue* suppliedIssue,
+    harken::EngineActionPlayScratch* suppliedScratch) noexcept {
     using Status = PendingScheduleEntryStatus;
     if (!MatchesPendingScheduleEntryRecord(engine, parent, pending)) return Status::Failed;
     const auto retention = RetainAppliedNativeEntryDependency(engine, parent);
@@ -93027,11 +93712,16 @@ PendingScheduleEntryStatus PreparePendingScheduleVariableEntry(harken::Engine& e
     const bool pack = parent.Invocation().packLease.leaseToken != 0;
     if ((!pack && world.generation != parent.Invocation().worldGeneration) ||
         (pack && engine.packComposition.ValidateLease(parent.Invocation().packLease) != VN_OK)) return Status::Failed;
-    harken::LogicCommitCoordinator::PreparedIssue issue;
-    if (engine.logicCommits.PrepareIssue(&issue) != harken::LogicCommitCoordinator::IssueStatus::Issued)
-        return Status::Waiting;
+    if ((suppliedIssue == nullptr) != (suppliedScratch == nullptr)) return Status::Failed;
+    harken::LogicCommitCoordinator::PreparedIssue localIssue;
+    auto& issue = suppliedIssue == nullptr ? localIssue : *suppliedIssue;
+    if (suppliedIssue == nullptr && engine.logicCommits.PrepareIssue(&issue) !=
+        harken::LogicCommitCoordinator::IssueStatus::Issued) return Status::Waiting;
+    if (!issue.Valid()) return Status::Failed;
     harken::EngineFrontierAttemptToken token{};
-    auto* scratch = AcquireFrontierAttempt(engine, &token, true);
+    auto* scratch = suppliedScratch;
+    if (scratch == nullptr) scratch = AcquireFrontierAttempt(engine, &token, true);
+    else token = {engine.actionPlayStorage.IndexOf(scratch->storage), scratch->storage.generation};
     if (scratch == nullptr) return Status::Waiting;
     scratch->directExecution = true;
     scratch->continuationExecution = true;
@@ -93099,6 +93789,7 @@ PendingScheduleEntryStatus PreparePendingScheduleVariableEntry(harken::Engine& e
         copy.pendingEntry = pending.pendingEntry;
     } catch (const std::bad_alloc&) { return fail(Status::Waiting); }
     auto& record = *scratch->continuationScheduleChild;
+    record.preparedOrdinary = std::move(pending.preparedOrdinary);
     record.pendingEntry = false;
     if (pack) {
         scratch->packLeaseBorrowed = true;
@@ -93142,6 +93833,10 @@ PendingScheduleEntryStatus PreparePendingScheduleVariableEntry(harken::Engine& e
     context.selectionEventBegin = 0x80000000u;
     std::uint32_t selectionCursor = context.selectionEventBegin + harken::kSelectionPathNodeCapacity;
     context.initialSelectionEventCursor = &selectionCursor;
+    if (record.preparedOrdinary != nullptr) {
+        scratch->storage.scheduleAggregatePlan = std::move(record.preparedOrdinary);
+        context.sourceOffsetFrames = 0;
+    }
     bool prepared = false;
     if (record.content.kind == harken::PlayableKindV1::Container) {
         prepared = PrepareScheduleContainerExecution(context, *scratch) &&
@@ -93185,6 +93880,11 @@ PendingScheduleEntryStatus PreparePendingScheduleVariableEntry(harken::Engine& e
     const auto consumed = engine.logicCommits.ConsumePreparedIssue(std::move(issue));
     (void)consumed;
     if (!CommitInitialPlayableAttempt(engine, *scratch, ticket, 0, true, nullptr)) return fail(Status::Failed);
+    if (parent.scheduleAggregate != nullptr && parent.scheduleAggregate->ordinary != nullptr &&
+        engine.forceContainerLoopPostFailureForTest) {
+        engine.forceContainerLoopPostFailureForTest = false;
+        return fail(Status::Failed);
+    }
     if (scratch->pendingScheduleOccurrence.generation != 0 &&
         !engine.timelineOccurrences.Advance(scratch->pendingScheduleOccurrence, harken::OccurrenceStage::Active))
         return fail(Status::Failed);
@@ -93200,6 +93900,17 @@ PendingScheduleEntryStatus PreparePendingScheduleVariableEntry(harken::Engine& e
     if (musicEntry) {
         const auto admission = musicAdmission(true);
         if (admission != Status::Published) return fail(admission);
+    }
+    if (parent.scheduleAggregate != nullptr && parent.scheduleAggregate->ordinary != nullptr) {
+        auto& cursor = *parent.scheduleAggregate->ordinary;
+        if (cursor.unpublished == &pending) {
+            cursor.nextOffsetFrames = cursor.candidateNextOffsetFrames;
+            cursor.plannedSelections = cursor.candidatePlannedSelections;
+            cursor.awaitingChildEnd = cursor.candidateAwaitingChildEnd;
+            cursor.exhausted = cursor.candidateExhausted;
+            cursor.tail = &pending;
+            cursor.unpublished = nullptr;
+        }
     }
     scratch->storage.phase = harken::EngineFrontierAttemptPhase::Published;
     if (!CommitInitialScheduleReadUses(engine, *scratch) || !PublishInitialScheduleFrontiers(engine, *scratch)) {
@@ -93416,11 +94127,12 @@ bool CanPublishNativeVariableScheduleRetarget(NativeVariableScheduleRetargetPrep
         !CanCommitQueueScheduleReadUses(engine, scratch) ||
         (scratch.storage.initialVariableCut.Valid() &&
          !engine.variables.CanTransferReadCutToTimelineUses(scratch.storage.initialVariableCut))) return false;
+    if (!PrepareMusicSelectionPublication(engine, scratch)) return false;
     return VisitInitialScheduleAttempts(engine, scratch, [&](auto& attempt) noexcept {
         harken::Engine::NativeBackingReturnPlan backing;
         if (attempt.row == nullptr || attempt.variableControl || attempt.row->queueMode ||
             attempt.row->pendingImmediateEntry || attempt.packLeaseOwned ||
-            !attempt.storage.initialSelectionBatch.Empty() || !attempt.storage.initialSelectionCensus.Empty() ||
+            (!attempt.storage.initialSelectionBatch.Empty() && !attempt.storage.musicSelection.enabled) || !attempt.storage.initialSelectionCensus.Empty() ||
             !attempt.storage.originalPendingVariableProducer.ReclaimReady() ||
             !CanTransferFrontierQueueResponsibilities(engine, attempt) ||
             !attempt.playableTreeExecutor.CanReleasePublishedOwnership() ||
@@ -93440,6 +94152,7 @@ bool PublishNativeVariableScheduleRetarget(NativeVariableScheduleRetargetPrepara
     auto& engine = *native.engine;
     auto& scratch = *native.scratch;
     auto& parent = *native.parent;
+    if (!CommitMusicSelectionPublication(engine, scratch)) return false;
     scratch.storage.phase = harken::EngineFrontierAttemptPhase::Published;
     native.published = true;
     if (!CommitInitialScheduleReadUses(engine, scratch)) return false;
@@ -94413,6 +95126,10 @@ bool PrepareImmediateActionCompositePlay(
     const harken::PlayableWorldViewV1 world =
         scratch->packLeaseOwned ? harken::PlayableWorldViewV1{}
                                 : ImmediateActionPlayableWorld(plan);
+    if (plan.nativeMusicSelection && !BindInitialActionSelectionContext(plan, planned, *scratch, root,
+            scratch->packLeaseOwned ? scratch->packPlaybackView.CompositeGeneration() : world.generation,
+            scratch->packLeaseOwned ? scratch->packPlaybackView.WorldSemanticFingerprint() : world.identity.runtimeSemanticFingerprint))
+        return false;
     SharedInitialFrontier& materialization = g_actionMaterialization;
     std::memset(&materialization, 0, sizeof(materialization));
     materialization.status = SharedInitialFrontierStatus::CapabilityUnavailable;
@@ -94434,6 +95151,7 @@ bool PrepareImmediateActionCompositePlay(
         context.propertyRoot = root;
         context.allowImmediateLane = false;
         scratch->plannedStepIndex = plannedStepIndex;
+        context.selectionProducer = scratch->storage.selectionProducer;
         if (!PrepareMixedScheduleExecution(context, *scratch)) return false;
         ActionContainerPreparationOperations operations{plan, plannedStepIndex, context};
         return operations.RecordStep(*scratch->row);
@@ -97978,7 +98696,7 @@ bool MatchesPendingInitialVariableLeafMembers(harken::Engine& engine,
 }
 
 bool PrepareFixedInitialSelectionInputs(ImmediateActionPlan& plan, bool requireAccepted) noexcept {
-    if (plan.engine == nullptr || !plan.nativeFixedSelection || plan.materializingDeferred ||
+    if (plan.engine == nullptr || !(plan.nativeFixedSelection || plan.nativeMusicSelection) || plan.materializingDeferred ||
         plan.preparedPlayCount != plan.playCount || plan.preparedPlayCount == 0 ||
         plan.preparedPlayCount > plan.engine->actionFixedSelectionCommitInputs.size()) return false;
     auto& engine = *plan.engine;
@@ -98001,8 +98719,10 @@ bool PrepareFixedInitialSelectionInputs(ImmediateActionPlan& plan, bool requireA
             eventBegin != context.identity.eventBegin || (index != 0 && step.executionOrdinal <= previousOrdinal) ||
             !batch.MatchesOwner(&engine.selectionMemory, context.identity) ||
             (requireAccepted && !batch.Accepted()) ||
-            !batch.CertifyMaterialized(context.executeFrame, context.materializedOrdinals.data(),
-                scratch->selectionPlayCount)) return false;
+            !batch.CertifyMaterialized(context.executeFrame,
+                plan.nativeMusicSelection ? storage.musicSelection.ordinals.data() : context.materializedOrdinals.data(),
+                plan.nativeMusicSelection ? storage.musicSelection.count : scratch->selectionPlayCount,
+                plan.nativeMusicSelection ? storage.musicSelection.frames.data() : nullptr)) return false;
         // These ordinals are the actual factory outputs for this unchanged fixed tree.
         engine.actionFixedSelectionCommitInputs[index] = batch.CommitInput();
         if (engine.actionFixedSelectionCommitInputs[index].batch == nullptr) return false;
@@ -98012,7 +98732,7 @@ bool PrepareFixedInitialSelectionInputs(ImmediateActionPlan& plan, bool requireA
 }
 
 bool PrepareFixedInitialSelectionBatches(ImmediateActionPlan& plan) noexcept {
-    if (plan.engine == nullptr || !plan.nativeFixedSelection) return false;
+    if (plan.engine == nullptr || !(plan.nativeFixedSelection || plan.nativeMusicSelection)) return false;
     auto& engine = *plan.engine;
     for (std::uint32_t index = 0; index < plan.preparedPlayCount; ++index) {
         auto* scratch = FindImmediateActionPlay(plan, index);
@@ -98045,7 +98765,7 @@ bool PrepareFixedInitialSelectionBatches(ImmediateActionPlan& plan) noexcept {
 
 bool PreparePendingInitialVariableGroups(ImmediateActionPlan& plan) noexcept {
     if (plan.engine == nullptr) return false;
-    if (plan.nativeFixedSelection) return PrepareFixedInitialSelectionBatches(plan);
+    if (plan.nativeFixedSelection || plan.nativeMusicSelection) return PrepareFixedInitialSelectionBatches(plan);
     for (std::uint32_t index = 0; index < plan.preparedPlayCount; ++index) {
         const auto* scratch = FindImmediateActionPlay(plan, index);
         if (scratch == nullptr || scratch->row == nullptr) return false;
@@ -98147,7 +98867,7 @@ bool PreparePendingInitialVariableGroups(ImmediateActionPlan& plan) noexcept {
 bool FreezePendingInitialSelectionCensus(ImmediateActionPlan& plan) noexcept {
     if (plan.engine == nullptr) return false;
     // Fixed batches remain in their original storage until this command head consumes them.
-    if (plan.nativeFixedSelection) return PrepareFixedInitialSelectionInputs(plan, false);
+    if (plan.nativeFixedSelection || plan.nativeMusicSelection) return PrepareFixedInitialSelectionInputs(plan, false);
     auto& engine = *plan.engine;
     bool native = false;
     for (std::uint32_t index = 0; index < plan.preparedPlayCount; ++index) {
@@ -98471,6 +99191,28 @@ bool CommitInitialPlayableAttempt(
     return ok;
 }
 
+bool PrepareActionMusicSelectionPublication(ImmediateActionPlan& plan) noexcept {
+    if (plan.preparedPlayCount == 0) return true;
+    auto& engine = *plan.engine;
+    auto* first = FindImmediateActionPlay(plan, 0);
+    if (first == nullptr) return false;
+    auto& owners = first->storage.musicPublicationOwners;
+    auto& inputs = first->storage.musicPublicationCommits;
+    owners.clear();
+    inputs.clear();
+    for (std::uint32_t index = 0; index < plan.preparedPlayCount; ++index) {
+        auto* root = FindImmediateActionPlay(plan, index);
+        if (root == nullptr) return false;
+        if (root != first) {
+            root->storage.musicPublicationOwners.clear();
+            root->storage.musicPublicationCommits.clear();
+        }
+        if (!CollectMusicSelectionPublication(engine, *root, owners, inputs)) return false;
+    }
+    return inputs.empty() || engine.selectionMemory.CanCommitPendingBatches(inputs.data(),
+        static_cast<std::uint32_t>(inputs.size())) == harken::SelectionMemoryStatusV1::Ok;
+}
+
 void CommitImmediateActionPlays(
     void* opaque, std::uint32_t count,
     harken::LogicCommitSequence sequence) noexcept {
@@ -98483,7 +99225,7 @@ void CommitImmediateActionPlays(
     auto preparedEntries = plan->privateLaneEntryBacking.Use();
     plan->playCommitSucceeded = false;
     if (engine.forceActionPlayCommitFailureForTest ||
-        (plan->nativeFixedSelection && !plan->fixedSelectionCommitReady)) {
+        ((plan->nativeFixedSelection || plan->nativeMusicSelection) && !plan->fixedSelectionCommitReady)) {
         engine.forceActionPlayCommitFailureForTest = false;
 engine.runtimeRecreateRequired = true;
         ReleaseImmediateActionPlays(plan, count);
@@ -98857,10 +99599,11 @@ engine.runtimeRecreateRequired = true;
             ok = liveCountSet && ok;
         }
     }
+    if (ok) ok = PrepareActionMusicSelectionPublication(*plan);
     if (ok) {
         for (std::uint32_t playIndex = 0; playIndex < plan->playCount; ++playIndex) {
             auto* attempt = FindImmediateActionPlay(*plan, playIndex);
-            if (attempt == nullptr || !CanPublishInitialScheduleFrontiers(engine, *attempt)) {
+            if (attempt == nullptr || !CanPublishInitialScheduleFrontiers(engine, *attempt, false)) {
                 ok = false;
                 break;
             }
@@ -99022,7 +99765,7 @@ bool ReserveImmediateActionCommandHead(void* opaque, std::uint32_t count) noexce
         return false;
     auto& engine = *plan->engine;
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
-    if (plan->nativeFixedSelection)
+    if ((plan->nativeFixedSelection || plan->nativeMusicSelection))
         harken::detail::ObserveFixedSelectionValidationForTest(engine,
             harken::detail::FixedSelectionValidationStageForTest::CommandHeadReservation);
 #endif
@@ -99046,7 +99789,7 @@ void CommitImmediateActionCommandHead(void* opaque, std::uint32_t count,
     assert(plan != nullptr && plan->engine != nullptr && count == 0 && sequence != 0);
     if (plan == nullptr || plan->engine == nullptr || count != 0 || sequence == 0) return;
     auto& engine = *plan->engine;
-    const bool selectionReady = !plan->nativeFixedSelection ||
+    const bool selectionReady = !(plan->nativeFixedSelection || plan->nativeMusicSelection) ||
         (plan->fixedSelectionCommitReady && PrepareFixedInitialSelectionInputs(*plan, true) &&
          engine.selectionMemory.CanCommitPendingBatches(engine.actionFixedSelectionCommitInputs.data(),
              plan->preparedPlayCount) == harken::SelectionMemoryStatusV1::Ok);
@@ -99103,7 +99846,7 @@ void CommitImmediateActionCommandHead(void* opaque, std::uint32_t count,
             }
         }
     }
-    if (plan->nativeFixedSelection && ownersCommitted) {
+    if ((plan->nativeFixedSelection || plan->nativeMusicSelection) && ownersCommitted) {
         const bool published = plan->playCommandCount != 0
             ? plan->playCommandsDisposition.PublishedFrom(engine.commands)
             : std::all_of(engine.actionPlayAttemptTokens.begin(),
@@ -99127,7 +99870,7 @@ void CommitImmediateActionCommandHead(void* opaque, std::uint32_t count,
             engine.actionFixedSelectionCommitInputs[index] = {};
         }
     }
-    if (!plan->nativeFixedSelection && ownersCommitted &&
+    if (!(plan->nativeFixedSelection || plan->nativeMusicSelection) && ownersCommitted &&
         (plan->playCommandCount == 0 || plan->playCommandsDisposition.PublishedFrom(engine.commands))) {
         for (std::uint32_t index = 0; index < plan->preparedPlayCount; ++index) {
             auto* scratch = FindImmediateActionPlay(*plan, index);
@@ -99252,7 +99995,7 @@ bool ReserveImmediateActionSelectionResets(void* opaque,
             planned.executionOrdinal, &selectionEvent);
         const harken::SelectionMemoryStatusV1 status = !eventValid
             ? harken::SelectionMemoryStatusV1::Capacity
-            : plan->nativeFixedSelection
+            : (plan->nativeFixedSelection || plan->nativeMusicSelection)
             ? plan->engine->selectionMemory.PreparePendingReset(
                 key, expectedSequence, selectionEvent,
                 &plan->engine->actionSelectionResetScratch[index], planned.deferredFrame)
@@ -99273,7 +100016,7 @@ bool ReserveImmediateActionSelectionResets(void* opaque,
                           : VN_DEVICE_ERROR;
             return false;
         }
-        if (!plan->nativeFixedSelection && plan->engine->actionSelectionResetScratch[index].Idempotent()) {
+        if (!(plan->nativeFixedSelection || plan->nativeMusicSelection) && plan->engine->actionSelectionResetScratch[index].Idempotent()) {
             const auto& firing =
                 plan->engine
                     ->actionFiringPlanScratch[planned.firingIndex];
@@ -99329,9 +100072,9 @@ void CommitImmediateActionSelectionResets(
         return;
     }
     for (std::uint32_t index = 0; index < plan->stepCount; ++index) {
-        if (plan->nativeFixedSelection && !plan->engine->actionSelectionResetScratch[index].Valid()) continue;
+        if ((plan->nativeFixedSelection || plan->nativeMusicSelection) && !plan->engine->actionSelectionResetScratch[index].Valid()) continue;
         const auto status =
-            plan->nativeFixedSelection ? plan->engine->selectionMemory.AcceptPreparedPendingReset(
+            (plan->nativeFixedSelection || plan->nativeMusicSelection) ? plan->engine->selectionMemory.AcceptPreparedPendingReset(
                 &plan->engine->actionSelectionResetScratch[index], sequence) :
             plan->engine->selectionMemory.CommitPreparedReset(
                 &plan->engine->actionSelectionResetScratch[index],
@@ -99341,7 +100084,7 @@ void CommitImmediateActionSelectionResets(
             plan->engine->runtimeRecreateRequired = true;
         }
     }
-    if (plan->nativeFixedSelection) {
+    if ((plan->nativeFixedSelection || plan->nativeMusicSelection)) {
         plan->fixedSelectionCommitReady = !plan->engine->runtimeRecreateRequired &&
             PrepareFixedInitialSelectionInputs(*plan, false) &&
             plan->engine->selectionMemory.CanCommitPendingBatches(
@@ -111935,7 +112678,8 @@ VnResult harken::detail::PostActionWithValidation(
                 if (rootIndex != 0) {
                     return VN_BAD_CURRENT_WORLD;
                 }
-                plan.nativeFixedSelection = plan.selectionResetCount != 0 && plan.playCount != 0 &&
+                plan.nativeMusicSelection = ActionNeedsMusicSelection(plan);
+                plan.nativeFixedSelection = !plan.nativeMusicSelection && plan.selectionResetCount != 0 && plan.playCount != 0 &&
                     plan.deferredCount == 0 && plan.queueResetCount == 0;
                 for (std::uint32_t index = 0; plan.nativeFixedSelection && index < plan.stepCount; ++index) {
                     const auto& step = engine->actionStepPlanScratch[index];
@@ -112015,6 +112759,15 @@ VnResult harken::detail::PostActionWithValidation(
                 }
                 if (!bundle.Reserve()) {
                     return plan.result;
+                }
+                if (plan.nativeMusicSelection) {
+                    bool issued = true;
+                    for (std::uint32_t index = 0; issued && index < plan.preparedPlayCount; ++index) {
+                        auto* root = FindImmediateActionPlay(plan, index);
+                        issued = root != nullptr && ResolveSelectionProducer(*engine, *root) == root &&
+                            IssueInitialSelectionBatch(*engine, *root);
+                    }
+                    if (!issued) { bundle.Abandon(); return VN_BACKPRESSURE; }
                 }
                 if (!PreparePrivateInitialVcPageCohorts(plan)) {
                     bundle.Abandon();

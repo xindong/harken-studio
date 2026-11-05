@@ -2062,6 +2062,7 @@ struct EngineSourceExit {
     std::vector<FrontierSourceExitVoice*> initialVoices;
 };
 
+struct EngineScheduleAggregateState;
 struct EngineScheduleAggregateChild {
     PlayableRefV1 content{};
     std::uint64_t startOffsetFrames = 0;
@@ -2080,6 +2081,7 @@ struct EngineScheduleAggregateChild {
     bool resourcesReleased = false;
     bool lifecycleOwned = false;
     bool pendingEntry = false;
+    std::unique_ptr<EngineScheduleAggregateState> preparedOrdinary;
 };
 
 struct EngineMusicScheduleBatch {
@@ -2103,10 +2105,31 @@ struct EngineMusicScheduleState {
     bool finalPassMaterialized = false;
 };
 
+struct EngineOrdinaryScheduleState {
+    EngineScheduleChildPropertyContext prefix;
+    std::vector<std::unique_ptr<EngineMusicScheduleBatch>> batches;
+    std::uint64_t callerSeed = 0;
+    std::uint64_t acceptedPostOrdinal = 0;
+    std::uint64_t nextOffsetFrames = 0;
+    std::uint64_t inheritedEndOffsetFrames = UINT64_MAX;
+    std::uint32_t loopLimit = 1;
+    std::uint32_t plannedSelections = 0;
+    std::uint8_t mode = 0;
+    EngineScheduleAggregateChild* tail = nullptr;
+    EngineScheduleAggregateChild* unpublished = nullptr;
+    std::uint64_t candidateNextOffsetFrames = 0;
+    std::uint32_t candidatePlannedSelections = 0;
+    bool candidateAwaitingChildEnd = false;
+    bool candidateExhausted = false;
+    bool awaitingChildEnd = false;
+    bool exhausted = false;
+};
+
 struct EngineScheduleAggregateState {
     // Prepared to the real clip count; membership is immutable after publication.
     std::vector<EngineScheduleAggregateChild> children;
     std::unique_ptr<EngineMusicScheduleState> music;
+    std::unique_ptr<EngineOrdinaryScheduleState> ordinary;
     std::uint64_t zeroWorkCompletionOffsetFrames = 0;
     bool hasZeroWorkCompletion = false;
     std::uint64_t completionOrdinal = 0;
@@ -2121,6 +2144,9 @@ struct EngineScheduleAggregateState {
         if (music != nullptr)
             for (auto& batch : music->batches)
                 for (auto& child : batch->children) if (!visitor(child)) return false;
+        if (ordinary != nullptr)
+            for (auto& batch : ordinary->batches)
+                for (auto& child : batch->children) if (!visitor(child)) return false;
         return true;
     }
 
@@ -2129,6 +2155,9 @@ struct EngineScheduleAggregateState {
         for (const auto& child : children) if (!visitor(child)) return false;
         if (music != nullptr)
             for (const auto& batch : music->batches)
+                for (const auto& child : batch->children) if (!visitor(child)) return false;
+        if (ordinary != nullptr)
+            for (const auto& batch : ordinary->batches)
                 for (const auto& child : batch->children) if (!visitor(child)) return false;
         return true;
     }
@@ -4494,7 +4523,65 @@ struct EngineActionPlayStorage {
             return owner.Issue(table, identity, prepared, count, executeFrame, materializedOrdinals.data());
         }
     } initialSelection;
+    EngineFrontierAttemptToken selectionProducer{};
+    // A cropped music path can consume more selections than its tree depth.
+    // These tokens remain private until one pending producer takes ownership.
+    struct MusicSelectionOperations {
+        std::vector<PreparedSelectionPlayV1> prepared;
+        std::vector<std::uint32_t> ordinals;
+        std::vector<std::uint64_t> frames;
+        std::vector<PreparedSelectionPlayV1*> members;
+        std::uint32_t count = 0;
+        bool enabled = false;
+
+        bool PrepareNext() noexcept {
+            if (!enabled || count == UINT32_MAX || memguard::IsAudioTagged()) return false;
+            const auto size = count + 1u;
+            try {
+                detail::CheckedGrow(prepared, size, detail::LogicAllocSite::ActionPlayContainerStorage);
+                detail::CheckedGrow(ordinals, size, detail::LogicAllocSite::ActionPlayContainerStorage);
+                prepared.resize(size);
+                ordinals.resize(size);
+                detail::CheckedGrow(frames, size, detail::LogicAllocSite::ActionPlayContainerStorage);
+                frames.resize(size);
+            } catch (...) { return false; }
+            return !prepared[count].Valid();
+        }
+        bool PrepareMembers() noexcept {
+            if (!enabled || count != prepared.size() || count != ordinals.size() || count != frames.size() ||
+                memguard::IsAudioTagged()) return false;
+            try {
+                detail::CheckedGrow(members, count, detail::LogicAllocSite::ActionPlayContainerStorage);
+                members.resize(count);
+            } catch (...) { return false; }
+            for (std::uint32_t index = 0; index < count; ++index) {
+                if (!prepared[index].Valid()) return false;
+                members[index] = &prepared[index];
+            }
+            return true;
+        }
+        bool HasPreparedTokens() const noexcept {
+            return std::any_of(prepared.begin(), prepared.end(),
+                [](const auto& token) { return token.Valid(); });
+        }
+        bool CancelPrepared(SelectionMemoryTableV1& table) noexcept {
+            for (auto it = prepared.rbegin(); it != prepared.rend(); ++it)
+                if (it->Valid() && table.CancelPreparedPlay(&*it) != SelectionMemoryStatusV1::Ok) return false;
+            return true;
+        }
+        void Reset() noexcept {
+            assert(!HasPreparedTokens());
+            prepared.clear();
+            ordinals.clear();
+            frames.clear();
+            members.clear();
+            count = 0;
+            enabled = false;
+        }
+    } musicSelection;
     EnginePendingSelectionBatch initialSelectionBatch;
+    std::vector<EnginePendingSelectionBatch*> musicPublicationOwners;
+    std::vector<PendingSelectionBatchCommitV1> musicPublicationCommits;
     struct InitialSelectionCensusAssociation {
         EngineImmediateEntryAttempt* attempt = nullptr;
         ActionFiringHandle root = 0;
@@ -8460,7 +8547,7 @@ public:
             left.rootStableId == right.rootStableId && left.callerSeed == right.callerSeed &&
             left.acceptedPostOrdinal == right.acceptedPostOrdinal && left.ticket == right.ticket &&
             left.emitterSlot == right.emitterSlot && left.emitterGeneration == right.emitterGeneration &&
-            left.eventBegin == right.eventBegin && left.eventCount == right.eventCount;
+            left.eventBegin == right.eventBegin && left.eventCount == right.eventCount && left.operationIndexed == right.operationIndexed && left.perOperationFrames == right.perOperationFrames;
     }
 
     EnginePendingSelectionBatch* ResolvePendingSelectionCensusProducer(

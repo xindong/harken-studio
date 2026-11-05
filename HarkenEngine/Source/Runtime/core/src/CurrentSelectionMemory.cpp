@@ -6,20 +6,20 @@
 namespace harken {
 namespace {
 
-bool Later(std::uint64_t ticket, std::uint32_t eventIndex,
-           std::uint64_t priorTicket, std::uint32_t priorEventIndex) noexcept {
+bool Later(std::uint64_t ticket, std::uint64_t eventOrder,
+           std::uint64_t priorTicket, std::uint64_t priorEventOrder) noexcept {
     return ticket > priorTicket ||
-           (ticket == priorTicket && eventIndex > priorEventIndex);
+           (ticket == priorTicket && eventOrder > priorEventOrder);
 }
 
 bool AppliesBefore(std::uint64_t executeFrame, std::uint64_t ticket,
-                   std::uint32_t eventIndex, std::uint64_t laterFrame,
+                   std::uint64_t eventOrder, std::uint64_t laterFrame,
                    std::uint64_t laterTicket,
-                   std::uint32_t laterEventIndex) noexcept {
+                   std::uint64_t laterEventOrder) noexcept {
     if (executeFrame != laterFrame) {
         return executeFrame < laterFrame;
     }
-    return Later(laterTicket, laterEventIndex, ticket, eventIndex);
+    return Later(laterTicket, laterEventOrder, ticket, eventOrder);
 }
 
 SelectionMemoryStatusV1 MapStatus(SelectionStatusV1 status) noexcept {
@@ -506,11 +506,11 @@ std::size_t SelectionMemoryTableV1::StorageBytes() const noexcept {
 }
 
 bool SelectionMemoryTableV1::PendingOrderValid(
-    const Row& row, std::uint64_t ticket, std::uint32_t eventIndex) const noexcept {
+    const Row& row, std::uint64_t ticket, std::uint64_t eventOrder) const noexcept {
     if (ticket == 0) return false;
     if (row.tail == UINT32_MAX) return true;
     const DeltaRow& tail = deltas_[row.tail];
-    return Later(ticket, eventIndex, tail.ticket, tail.eventIndex);
+    return Later(ticket, eventOrder, tail.ticket, tail.eventOrder);
 }
 
 bool SelectionMemoryTableV1::CopyState(const MemoryState& source,
@@ -527,21 +527,21 @@ bool SelectionMemoryTableV1::CopyState(const MemoryState& source,
     target.hasScheduledFrontier = source.hasScheduledFrontier;
     target.scheduledFrame = source.scheduledFrame;
     target.scheduledTicket = source.scheduledTicket;
-    target.scheduledEvent = source.scheduledEvent;
+    target.scheduledEventOrder = source.scheduledEventOrder;
     target.hasNativeScheduledFrontier = source.hasNativeScheduledFrontier;
     target.nativeScheduledFrame = source.nativeScheduledFrame;
     target.nativeScheduledTicket = source.nativeScheduledTicket;
-    target.nativeScheduledEvent = source.nativeScheduledEvent;
+    target.nativeScheduledEventOrder = source.nativeScheduledEventOrder;
     target.hasImmediateFrontier = source.hasImmediateFrontier;
     target.immediateTicket = source.immediateTicket;
-    target.immediateEvent = source.immediateEvent;
+    target.immediateEventOrder = source.immediateEventOrder;
     target.hasPrivateScheduledFrontier = source.hasPrivateScheduledFrontier;
     target.privateScheduledFrame = source.privateScheduledFrame;
     target.privateScheduledTicket = source.privateScheduledTicket;
-    target.privateScheduledEvent = source.privateScheduledEvent;
+    target.privateScheduledEventOrder = source.privateScheduledEventOrder;
     target.hasPrivateImmediateFrontier = source.hasPrivateImmediateFrontier;
     target.privateImmediateTicket = source.privateImmediateTicket;
-    target.privateImmediateEvent = source.privateImmediateEvent;
+    target.privateImmediateEventOrder = source.privateImmediateEventOrder;
     target.recent.assign(source.recent.begin(), source.recent.end());
     target.permutation.assign(source.permutation.begin(),
                               source.permutation.end());
@@ -736,12 +736,12 @@ void SelectionMemoryTableV1::MarkScheduledFrontier(MemoryState& state, const Del
         if (reset.executeFrame == 0) {
             state.hasPrivateImmediateFrontier = true;
             state.privateImmediateTicket = reset.ticket;
-            state.privateImmediateEvent = reset.eventIndex;
+            state.privateImmediateEventOrder = reset.eventOrder;
         } else {
             state.hasPrivateScheduledFrontier = true;
             state.privateScheduledFrame = reset.executeFrame;
             state.privateScheduledTicket = reset.ticket;
-            state.privateScheduledEvent = reset.eventIndex;
+            state.privateScheduledEventOrder = reset.eventOrder;
         }
         return;
     }
@@ -749,65 +749,65 @@ void SelectionMemoryTableV1::MarkScheduledFrontier(MemoryState& state, const Del
         if (reset.executeFrame == 0) {
             state.hasImmediateFrontier = true;
             state.immediateTicket = reset.ticket;
-            state.immediateEvent = reset.eventIndex;
+            state.immediateEventOrder = reset.eventOrder;
         } else {
             state.hasNativeScheduledFrontier = true;
             state.nativeScheduledFrame = reset.executeFrame;
             state.nativeScheduledTicket = reset.ticket;
-            state.nativeScheduledEvent = reset.eventIndex;
+            state.nativeScheduledEventOrder = reset.eventOrder;
         }
         return;
     }
     state.hasScheduledFrontier = true;
     state.scheduledFrame = reset.executeFrame;
     state.scheduledTicket = reset.ticket;
-    state.scheduledEvent = reset.eventIndex;
+    state.scheduledEventOrder = reset.eventOrder;
 }
 
 void SelectionMemoryTableV1::ClearResetFrontiers(MemoryState& state) noexcept {
     state.hasScheduledFrontier = false;
     state.scheduledFrame = state.scheduledTicket = 0;
-    state.scheduledEvent = 0;
+    state.scheduledEventOrder = 0;
     state.hasNativeScheduledFrontier = false;
     state.nativeScheduledFrame = state.nativeScheduledTicket = 0;
-    state.nativeScheduledEvent = 0;
+    state.nativeScheduledEventOrder = 0;
     state.hasImmediateFrontier = false;
     state.immediateTicket = 0;
-    state.immediateEvent = 0;
+    state.immediateEventOrder = 0;
     state.hasPrivateScheduledFrontier = false;
     state.privateScheduledFrame = state.privateScheduledTicket = 0;
-    state.privateScheduledEvent = 0;
+    state.privateScheduledEventOrder = 0;
     state.hasPrivateImmediateFrontier = false;
     state.privateImmediateTicket = 0;
-    state.privateImmediateEvent = 0;
+    state.privateImmediateEventOrder = 0;
 }
 
 bool SelectionMemoryTableV1::ResetConsumed(const MemoryState& state, const DeltaRow& reset) noexcept {
     if (reset.pendingReset && reset.prepared) {
         if (reset.executeFrame == 0)
-            return state.hasPrivateImmediateFrontier && !Later(reset.ticket, reset.eventIndex,
-                state.privateImmediateTicket, state.privateImmediateEvent);
+            return state.hasPrivateImmediateFrontier && !Later(reset.ticket, reset.eventOrder,
+                state.privateImmediateTicket, state.privateImmediateEventOrder);
         return state.hasPrivateScheduledFrontier && !AppliesBefore(state.privateScheduledFrame,
-            state.privateScheduledTicket, state.privateScheduledEvent,
-            reset.executeFrame, reset.ticket, reset.eventIndex);
+            state.privateScheduledTicket, state.privateScheduledEventOrder,
+            reset.executeFrame, reset.ticket, reset.eventOrder);
     }
     if (reset.pendingReset) {
         if (reset.executeFrame == 0)
-            return state.hasImmediateFrontier && !Later(reset.ticket, reset.eventIndex,
-                state.immediateTicket, state.immediateEvent);
+            return state.hasImmediateFrontier && !Later(reset.ticket, reset.eventOrder,
+                state.immediateTicket, state.immediateEventOrder);
         return state.hasNativeScheduledFrontier && !AppliesBefore(state.nativeScheduledFrame,
-            state.nativeScheduledTicket, state.nativeScheduledEvent,
-            reset.executeFrame, reset.ticket, reset.eventIndex);
+            state.nativeScheduledTicket, state.nativeScheduledEventOrder,
+            reset.executeFrame, reset.ticket, reset.eventOrder);
     }
     return state.hasScheduledFrontier && !AppliesBefore(state.scheduledFrame,
-        state.scheduledTicket, state.scheduledEvent, reset.executeFrame, reset.ticket, reset.eventIndex);
+        state.scheduledTicket, state.scheduledEventOrder, reset.executeFrame, reset.ticket, reset.eventOrder);
 }
 
 bool SelectionMemoryTableV1::ResetAppliesBefore(const DeltaRow& reset, std::uint64_t frame,
-    std::uint64_t ticket, std::uint32_t eventIndex) noexcept {
+    std::uint64_t ticket, std::uint64_t eventOrder) noexcept {
     return reset.pendingReset && reset.executeFrame == 0
-        ? Later(ticket, eventIndex, reset.ticket, reset.eventIndex)
-        : AppliesBefore(reset.executeFrame, reset.ticket, reset.eventIndex, frame, ticket, eventIndex);
+        ? Later(ticket, eventOrder, reset.ticket, reset.eventOrder)
+        : AppliesBefore(reset.executeFrame, reset.ticket, reset.eventOrder, frame, ticket, eventOrder);
 }
 
 std::uint32_t SelectionMemoryTableV1::PrivateResetCount(const SelectionMemoryKeyV1& key) const noexcept {
@@ -828,15 +828,15 @@ bool SelectionMemoryTableV1::PrivateResetConflicts(const SelectionMemoryKeyV1& k
 bool SelectionMemoryTableV1::PendingResetHasHistory(const Row& row, const DeltaRow& reset) const noexcept {
     if (row.committed || row.scheduledCount != 0) return true;
     for (auto index = row.head; index != UINT32_MAX; index = deltas_[index].next)
-        if (Later(reset.ticket, reset.eventIndex, deltas_[index].ticket, deltas_[index].eventIndex)) return true;
+        if (Later(reset.ticket, reset.eventOrder, deltas_[index].ticket, deltas_[index].eventOrder)) return true;
     for (auto index = row.preparedHead; index != UINT32_MAX; index = deltas_[index].next)
-        if (Later(reset.ticket, reset.eventIndex, deltas_[index].ticket, deltas_[index].eventIndex)) return true;
+        if (Later(reset.ticket, reset.eventOrder, deltas_[index].ticket, deltas_[index].eventOrder)) return true;
     return false;
 }
 
 bool SelectionMemoryTableV1::PendingResetBlocked(const Row& row, const DeltaRow& reset) const noexcept {
     const auto preceding = [&](const DeltaRow& play) noexcept {
-        return ResetAppliesBefore(reset, play.executeFrame, play.ticket, play.eventIndex) == false;
+        return ResetAppliesBefore(reset, play.executeFrame, play.ticket, play.eventOrder) == false;
     };
     for (auto index = row.head; index != UINT32_MAX; index = deltas_[index].next)
         if (preceding(deltas_[index])) return true;
@@ -876,7 +876,7 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PendingPredecessor(const Row& ro
         const auto& reset = deltas_[index];
         const auto& prefix = **out;
         if (reset.status != SelectionMemoryStatusV1::Ok ||
-            !ResetAppliesBefore(reset, request.executeFrame, request.ticket, request.eventIndex) ||
+            !ResetAppliesBefore(reset, request.executeFrame, request.ticket, request.EventOrder()) ||
             ResetConsumed(prefix, reset)) continue;
         const auto status = ComputeReset(row, prefix, pendingScratch_[scratch]);
         if (status != SelectionMemoryStatusV1::Ok) return status;
@@ -892,11 +892,11 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PendingPredecessor(const Row& ro
             for (const auto& reset : deltas_) {
                 if (!reset.prepared || !reset.pendingReset || reset.ticket != request.ticket ||
                     !SameKey(reset.request.key, row.key) || !PendingResetHasHistory(row, reset) ||
-                    !ResetAppliesBefore(reset, request.executeFrame, request.ticket, request.eventIndex) ||
-                    (prior != nullptr && !AppliesBefore(prior->executeFrame, prior->ticket, prior->eventIndex,
-                        reset.executeFrame, reset.ticket, reset.eventIndex))) continue;
-                if (next == nullptr || AppliesBefore(reset.executeFrame, reset.ticket, reset.eventIndex,
-                    next->executeFrame, next->ticket, next->eventIndex)) next = &reset;
+                    !ResetAppliesBefore(reset, request.executeFrame, request.ticket, request.EventOrder()) ||
+                    (prior != nullptr && !AppliesBefore(prior->executeFrame, prior->ticket, prior->eventOrder,
+                        reset.executeFrame, reset.ticket, reset.eventOrder))) continue;
+                if (next == nullptr || AppliesBefore(reset.executeFrame, reset.ticket, reset.eventOrder,
+                    next->executeFrame, next->ticket, next->eventOrder)) next = &reset;
             }
             if (next == nullptr) break;
             prior = next;
@@ -938,12 +938,12 @@ void SelectionMemoryTableV1::LinkScheduled(Row& row, std::uint32_t rowIndex,
     for (std::uint32_t index = row.scheduledHead; index != UINT32_MAX;
          index = deltas_[index].next) {
         const DeltaRow& prior = deltas_[index];
-        if (AppliesBefore(prior.executeFrame, prior.ticket, prior.eventIndex,
+        if (AppliesBefore(prior.executeFrame, prior.ticket, prior.eventOrder,
                           delta.executeFrame, delta.ticket,
-                          delta.eventIndex) ||
+                          delta.eventOrder) ||
             (prior.executeFrame == delta.executeFrame &&
              prior.ticket == delta.ticket &&
-             prior.eventIndex == delta.eventIndex)) {
+             prior.eventOrder == delta.eventOrder)) {
             insertAfter = index;
         } else {
             break;
@@ -1006,26 +1006,25 @@ void SelectionMemoryTableV1::UnlinkScheduled(Row& row, std::uint32_t deltaIndex)
     --row.scheduledCount;
 }
 
-bool SelectionMemoryTableV1::DropScheduledThrough(
-    Row& row, std::uint64_t executeFrame, std::uint64_t ticket,
-    std::uint32_t eventIndex) noexcept {
+bool SelectionMemoryTableV1::DropConsumedScheduled(Row& row) noexcept {
+    // A later transaction may still roll back the state that consumed a reset.
+    if (std::any_of(deltas_.begin(), deltas_.end(), [&](const auto& transaction) {
+            return transaction.used && transaction.rollbackable && transaction.row < rows_.size() &&
+                &rows_[transaction.row] == &row;
+        })) return false;
     std::uint32_t index = row.scheduledHead;
-    bool nativeRemoved = false;
+    bool journalChanged = false;
     while (index != UINT32_MAX) {
         const std::uint32_t next = deltas_[index].next;
         const DeltaRow& delta = deltas_[index];
-        if (delta.pendingReset ? ResetConsumed(row.state, delta) :
-            (AppliesBefore(delta.executeFrame, delta.ticket, delta.eventIndex,
-                          executeFrame, ticket, eventIndex) ||
-            (delta.executeFrame == executeFrame && delta.ticket == ticket &&
-             delta.eventIndex == eventIndex))) {
-            nativeRemoved |= delta.pendingReset;
+        if (ResetConsumed(row.state, delta)) {
+            journalChanged = true;
             UnlinkScheduled(row, index);
             RecycleDelta(index);
         }
         index = next;
     }
-    return nativeRemoved;
+    return journalChanged;
 }
 
 void SelectionMemoryTableV1::ApplyDue(std::uint64_t now) noexcept {
@@ -1045,14 +1044,25 @@ void SelectionMemoryTableV1::ApplyDue(std::uint64_t now) noexcept {
         if (!row.used) {
             continue;
         }
-        bool changed = false;
+        if (std::any_of(deltas_.begin(), deltas_.end(), [&](const auto& transaction) {
+                return transaction.used && transaction.rollbackable && transaction.row == rowIndex;
+            })) continue;
+        // Committed lookahead can consume future resets. Retire all consumed
+        // records before rebuilding the journal, including those beyond now.
+        bool changed = DropConsumedScheduled(row);
         bool nativeChanged = false;
-        bool mixedChanged = false;
         for (auto slot = row.scheduledHead; slot != UINT32_MAX;) {
             DeltaRow& delta = deltas_[slot];
             const auto next = delta.next;
             if (delta.executeFrame > now) {
                 break;
+            }
+            if (ResetConsumed(row.state, delta)) {
+                UnlinkScheduled(row, slot);
+                RecycleDelta(slot);
+                changed = true;
+                slot = next;
+                continue;
             }
             if (delta.pendingReset) {
                 if (PendingResetBlocked(row, delta)) { slot = next; continue; }
@@ -1067,7 +1077,6 @@ void SelectionMemoryTableV1::ApplyDue(std::uint64_t now) noexcept {
                 if (mixed) {
                     if (ComputeReset(row, row.state, pendingScratch_[0]) != SelectionMemoryStatusV1::Ok) break;
                     (void)CopyState(pendingScratch_[0], row.state);
-                    mixedChanged = true;
                 } else if (delta.status == SelectionMemoryStatusV1::Ok && !CopyState(delta.overlay, row.state)) break;
             }
             row.committed = true;
@@ -1081,8 +1090,7 @@ void SelectionMemoryTableV1::ApplyDue(std::uint64_t now) noexcept {
             slot = next;
         }
         if (changed) {
-            if (nativeChanged || mixedChanged) RefreshResetJournal(rowIndex);
-            else { Recompute(rowIndex); RecomputePrepared(rowIndex); }
+            RefreshResetJournal(rowIndex);
         }
     }
 }
@@ -1133,7 +1141,7 @@ SelectionAppendResultV1 SelectionMemoryTableV1::AppendPlay(
     const auto occupancy = row.pendingCount + row.scheduledCount + row.candidateCount;
     if (occupancy >= perRowLimit ||
         (!newRow &&
-         !PendingOrderValid(row, request.ticket, request.eventIndex)) ||
+         !PendingOrderValid(row, request.ticket, request.EventOrder())) ||
         (newRow && request.ticket == 0)) {
         result.status = occupancy >= perRowLimit
                             ? SelectionMemoryStatusV1::Capacity
@@ -1150,7 +1158,7 @@ SelectionAppendResultV1 SelectionMemoryTableV1::AppendPlay(
     }
     delta.request.path = delta.path.empty() ? nullptr : delta.path.data();
     delta.ticket = request.ticket;
-    delta.eventIndex = request.eventIndex;
+    delta.eventOrder = request.EventOrder();
     delta.executeFrame = request.executeFrame;
     Row preparedRow = {};
     const Row* computationRow = &row;
@@ -1207,6 +1215,7 @@ SelectionAppendResultV1 SelectionMemoryTableV1::AppendPlay(
 SelectionAppendResultV1 SelectionMemoryTableV1::AppendReset(
     const SelectionMemoryKeyV1& key, std::uint64_t ticket,
     std::uint32_t eventIndex) noexcept {
+    const auto eventOrder = MakeSelectionEventOrder(eventIndex);
     SelectionAppendResultV1 result{};
     if (!ValidKey(key) || ticket == 0) return result;
     if (PrivateResetConflicts(key)) { result.status = SelectionMemoryStatusV1::NotHead; return result; }
@@ -1235,7 +1244,7 @@ SelectionAppendResultV1 SelectionMemoryTableV1::AppendReset(
         result.status = SelectionMemoryStatusV1::Capacity;
         return result;
     }
-    if (!PendingOrderValid(row, ticket, eventIndex)) return result;
+    if (!PendingOrderValid(row, ticket, eventOrder)) return result;
     if (row.tail != UINT32_MAX &&
         deltas_[row.tail].status != SelectionMemoryStatusV1::Ok) {
         result.status = deltas_[row.tail].status;
@@ -1245,7 +1254,7 @@ SelectionAppendResultV1 SelectionMemoryTableV1::AppendReset(
     DeltaRow& delta = deltas_[deltaIndex];
     delta.kind = SelectionDeltaKindV1::Reset;
     delta.ticket = ticket;
-    delta.eventIndex = eventIndex;
+    delta.eventOrder = eventOrder;
     const MemoryState& before = row.tail == UINT32_MAX
                                     ? row.state
                                     : deltas_[row.tail].overlay;
@@ -1306,7 +1315,7 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PreparePlayImpl(
     if (nativePendingPreparation) {
         for (const auto& reset : deltas_)
             if (reset.pendingReset && (reset.used || reset.prepared) && SameKey(reset.request.key, request.key) &&
-                reset.ticket == request.ticket && reset.eventIndex == request.eventIndex)
+                reset.ticket == request.ticket && reset.eventOrder == request.EventOrder())
                 return SelectionMemoryStatusV1::InvalidInput;
     }
     const std::uint32_t deltaIndex = rowIndex == UINT32_MAX ? UINT32_MAX :
@@ -1334,13 +1343,13 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PreparePlayImpl(
                 return SelectionMemoryStatusV1::NotHead;
         if (row.tail != UINT32_MAX && deltas_[row.tail].status != SelectionMemoryStatusV1::Ok)
             return deltas_[row.tail].status;
-        if (!PendingOrderValid(row, request.ticket, request.eventIndex))
+        if (!PendingOrderValid(row, request.ticket, request.EventOrder()))
             return SelectionMemoryStatusV1::InvalidInput;
     }
     if (row.preparedTail != UINT32_MAX) {
         const auto& prior = deltas_[row.preparedTail];
         if (nativePendingPreparation && prior.status != SelectionMemoryStatusV1::Ok) return prior.status;
-        if (!Later(request.ticket, request.eventIndex, prior.ticket, prior.eventIndex))
+        if (!Later(request.ticket, request.EventOrder(), prior.ticket, prior.eventOrder))
             return SelectionMemoryStatusV1::InvalidInput;
     }
 
@@ -1366,7 +1375,7 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PreparePlayImpl(
     }
     delta.request.path = delta.path.empty() ? nullptr : delta.path.data();
     delta.ticket = request.ticket;
-    delta.eventIndex = request.eventIndex;
+    delta.eventOrder = request.EventOrder();
     delta.executeFrame = request.executeFrame;
     const MemoryState* before = nullptr;
     if (nativePendingPreparation) {
@@ -1374,7 +1383,7 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PreparePlayImpl(
             : row.tail != UINT32_MAX ? &deltas_[row.tail].overlay : &row.state;
         delta.status = PendingPredecessor(row, *before, delta.request, &before, true);
     } else {
-        before = &PreparedPredecessor(row, request.executeFrame, request.ticket, request.eventIndex);
+        before = &PreparedPredecessor(row, request.executeFrame, request.ticket, request.EventOrder());
         delta.status = PendingPredecessor(row, *before, delta.request, &before);
     }
     if (delta.status == SelectionMemoryStatusV1::Ok)
@@ -1385,7 +1394,7 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PreparePlayImpl(
         delta.request = {};
         delta.path.clear();
         delta.ticket = 0;
-        delta.eventIndex = 0;
+        delta.eventOrder = 0;
         delta.selectedChildOrdinal = 0;
         delta.seedProbe = {};
         delta.nativePendingPreparation = false;
@@ -1465,9 +1474,6 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::CommitPreparedPlay(
     delta.used = true;
     delta.previous = UINT32_MAX;
     delta.next = UINT32_MAX;
-    const std::uint64_t playFrame = delta.request.executeFrame;
-    const std::uint64_t playTicket = delta.ticket;
-    const std::uint32_t playEvent = delta.eventIndex;
     const SelectionDeltaRefV1 ref{prepared->slot_, delta.generation, tableLifetime_};
     LinkDelta(row, delta.row, prepared->slot_);
     const SelectionMemoryStatusV1 status = CommitHead(ref);
@@ -1476,7 +1482,7 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::CommitPreparedPlay(
             row.counted = true;
             ++rowCount_;
         }
-        DropScheduledThrough(row, playFrame, playTicket, playEvent);
+        DropConsumedScheduled(row);
         prepared->owner_ = nullptr;
         prepared->slot_ = UINT32_MAX;
         prepared->generation_ = 0;
@@ -1539,6 +1545,12 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::MovePreparedPlayToPending(
 SelectionMemoryStatusV1 SelectionMemoryTableV1::MovePreparedPlaysToPending(
     PreparedSelectionPlayV1* const* prepared, std::uint32_t count,
     std::uint64_t ticket, PendingSelectionBatchV1* out) noexcept {
+    return MovePreparedPlaysToPendingImpl(prepared, count, ticket, out, false);
+}
+
+SelectionMemoryStatusV1 SelectionMemoryTableV1::MovePreparedPlaysToPendingImpl(
+    PreparedSelectionPlayV1* const* prepared, std::uint32_t count,
+    std::uint64_t ticket, PendingSelectionBatchV1* out, bool perOperationFrames) noexcept {
     if (prepared == nullptr || count == 0 || count > deltas_.size() || ticket == 0 ||
         out == nullptr || out->Valid()) return SelectionMemoryStatusV1::InvalidInput;
     const auto batchSlot = FindFreeBatch();
@@ -1564,14 +1576,14 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::MovePreparedPlaysToPending(
         if (delta.nativePendingPreparation) {
             if (row.tail != UINT32_MAX && deltas_[row.tail].status != SelectionMemoryStatusV1::Ok)
                 return deltas_[row.tail].status;
-            if (!PendingOrderValid(row, delta.ticket, delta.eventIndex))
+            if (!PendingOrderValid(row, delta.ticket, delta.eventOrder))
                 return SelectionMemoryStatusV1::InvalidInput;
         }
         for (const auto& transaction : deltas_)
             if (transaction.used && transaction.rollbackable && transaction.row == delta.row)
                 return SelectionMemoryStatusV1::NotHead;
         if (index == 0) { world = row.key.world; frame = delta.executeFrame; }
-        if (row.key.world != world || delta.executeFrame != frame)
+        if (row.key.world != world || (!perOperationFrames && delta.executeFrame != frame))
             return SelectionMemoryStatusV1::InvalidInput;
         auto expected = row.preparedHead;
         for (std::uint32_t prior = 0; prior < index; ++prior) {
@@ -1626,6 +1638,7 @@ bool SelectionMemoryTableV1::ValidBatchIdentity(const SelectionPendingBatchIdent
     return identity.world != 0 && identity.worldSemanticFingerprint != 0 &&
         identity.rootStableId != VnObjectId{} && identity.acceptedPostOrdinal != 0 && identity.ticket != 0 &&
         identity.eventCount != 0 && identity.eventCount - 1u <= UINT32_MAX - identity.eventBegin &&
+        (!identity.operationIndexed || identity.eventCount == 1u) &&
         ((identity.emitterSlot == UINT32_MAX && identity.emitterGeneration == 0) ||
          (identity.emitterSlot < config_.maxEmitters && identity.emitterGeneration != 0));
 }
@@ -1636,6 +1649,7 @@ bool SelectionMemoryTableV1::MatchesBatchIdentity(const SelectionPendingBatchIde
         request.rootStableId == identity.rootStableId && request.callerSeed == identity.callerSeed &&
         request.acceptedPostOrdinal == identity.acceptedPostOrdinal && request.ticket == identity.ticket &&
         request.eventIndex >= identity.eventBegin && request.eventIndex - identity.eventBegin < identity.eventCount &&
+        (identity.operationIndexed || request.operationIndex == 0) &&
         (request.key.memoryScope == MemoryScopeV1::Global ||
          (request.key.emitterSlot == identity.emitterSlot && request.key.emitterGeneration == identity.emitterGeneration));
 }
@@ -1651,10 +1665,11 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::IssueProducerPendingSelectionBat
             !token->prepared_ || token->slot_ >= deltas_.size()) return SelectionMemoryStatusV1::InvalidInput;
         const auto& delta = deltas_[token->slot_];
         if (!delta.prepared || delta.generation != token->generation_ || !delta.nativePendingPreparation ||
-            !MatchesBatchIdentity(identity, delta.request)) return SelectionMemoryStatusV1::InvalidInput;
+            !MatchesBatchIdentity(identity, delta.request) ||
+            (identity.operationIndexed && delta.request.operationIndex != index)) return SelectionMemoryStatusV1::InvalidInput;
     }
     if (count != 0) {
-        const auto result = MovePreparedPlaysToPending(prepared, count, identity.ticket, out);
+        const auto result = MovePreparedPlaysToPendingImpl(prepared, count, identity.ticket, out, identity.perOperationFrames);
         if (result != SelectionMemoryStatusV1::Ok) return result;
     } else {
         const auto slot = FindFreeBatch();
@@ -1752,19 +1767,19 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::CheckReplacementPlayOrder(std::u
     const auto& row = rows_[rowIndex];
     for (auto member = row.head; member != UINT32_MAX; member = deltas_[member].next) {
         const auto& prior = deltas_[member];
-        if (prior.ticket == request.ticket && prior.eventIndex == request.eventIndex &&
+        if (prior.ticket == request.ticket && prior.eventOrder == request.EventOrder() &&
             (prior.batch.slot != batchSlot || prior.batch.generation != batches_[batchSlot].generation))
             return SelectionMemoryStatusV1::InvalidInput;
     }
     for (auto member = row.scheduledHead; member != UINT32_MAX; member = deltas_[member].next)
-        if (deltas_[member].ticket == request.ticket && deltas_[member].eventIndex == request.eventIndex)
+        if (deltas_[member].ticket == request.ticket && deltas_[member].eventOrder == request.EventOrder())
             return SelectionMemoryStatusV1::InvalidInput;
     for (auto member = row.preparedHead; member != UINT32_MAX; member = deltas_[member].next) {
         const auto& prior = deltas_[member];
-        if (prior.ticket == request.ticket && prior.eventIndex == request.eventIndex)
+        if (prior.ticket == request.ticket && prior.eventOrder == request.EventOrder())
             return SelectionMemoryStatusV1::InvalidInput;
         // Hidden preparations must remain a transferable suffix after the installed candidate.
-        if (!Later(prior.ticket, prior.eventIndex, request.ticket, request.eventIndex))
+        if (!Later(prior.ticket, prior.eventOrder, request.ticket, request.EventOrder()))
             return SelectionMemoryStatusV1::NotHead;
     }
     return SelectionMemoryStatusV1::Ok;
@@ -1789,8 +1804,8 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::CheckReplacementBatchOrder(std::
                 candidate = deltas_[candidate].batch.next;
             if (pending == UINT32_MAX && candidate == UINT32_MAX) break;
             const bool takeCandidate = candidate != UINT32_MAX && (pending == UINT32_MAX ||
-                Later(deltas_[pending].ticket, deltas_[pending].eventIndex,
-                    deltas_[candidate].ticket, deltas_[candidate].eventIndex));
+                Later(deltas_[pending].ticket, deltas_[pending].eventOrder,
+                    deltas_[candidate].ticket, deltas_[candidate].eventOrder));
             const auto& delta = deltas_[takeCandidate ? candidate : pending];
             const auto currentBatch = delta.batch.slot;
             if (currentBatch == UINT32_MAX) {
@@ -1849,13 +1864,13 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::ComputeReplacementPlay(
     for (;;) {
         skipPending();
         skipCandidate();
-        const bool hasPending = pending != UINT32_MAX && Later(request.ticket, request.eventIndex,
-            deltas_[pending].ticket, deltas_[pending].eventIndex);
-        const bool hasCandidate = candidate != UINT32_MAX && Later(request.ticket, request.eventIndex,
-            deltas_[candidate].ticket, deltas_[candidate].eventIndex);
+        const bool hasPending = pending != UINT32_MAX && Later(request.ticket, request.EventOrder(),
+            deltas_[pending].ticket, deltas_[pending].eventOrder);
+        const bool hasCandidate = candidate != UINT32_MAX && Later(request.ticket, request.EventOrder(),
+            deltas_[candidate].ticket, deltas_[candidate].eventOrder);
         if (!hasPending && !hasCandidate) break;
         const bool takeCandidate = hasCandidate && (!hasPending || Later(deltas_[pending].ticket,
-            deltas_[pending].eventIndex, deltas_[candidate].ticket, deltas_[candidate].eventIndex));
+            deltas_[pending].eventOrder, deltas_[candidate].ticket, deltas_[candidate].eventOrder));
         const auto& prior = deltas_[takeCandidate ? candidate : pending];
         auto& next = replacementScratch_[scratch];
         auto status = SelectionMemoryStatusV1::Ok;
@@ -1885,7 +1900,9 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PrepareReplacementPlay(
     const auto current = CheckReplacementCurrent(*replacement);
     if (current != SelectionMemoryStatusV1::Ok) return current;
     auto& batch = batches_[replacement->slot_];
-    if (batch.replacementSealed || !MatchesBatchIdentity(batch.identity, request) || !ValidKey(request.key) ||
+    if (batch.replacementSealed ||
+        (batch.identity.operationIndexed && request.operationIndex != batch.replacementCount) ||
+        !MatchesBatchIdentity(batch.identity, request) || !ValidKey(request.key) ||
         request.program == nullptr || request.program->containerStableId != request.key.containerStableId ||
         request.program->programSemanticFingerprint != request.key.programSemanticFingerprint ||
         request.program->memoryScope != request.key.memoryScope || request.program->avoidLastN > config_.maxAvoidLastN ||
@@ -1893,7 +1910,8 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PrepareReplacementPlay(
         request.pathCount > config_.maxPathNodes || (request.pathCount != 0 && request.path == nullptr) ||
         (request.program->mode != ContainerModeV1::Random && request.program->mode != ContainerModeV1::Sequence))
         return SelectionMemoryStatusV1::InvalidInput;
-    if (batch.replacementCount != 0 && deltas_[batch.replacementHead].executeFrame != request.executeFrame)
+    if (!batch.identity.perOperationFrames && batch.replacementCount != 0 &&
+        deltas_[batch.replacementHead].executeFrame != request.executeFrame)
         return SelectionMemoryStatusV1::InvalidInput;
     auto rowIndex = FindRow(request.key);
     const bool newRow = rowIndex == UINT32_MAX;
@@ -1908,8 +1926,8 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PrepareReplacementPlay(
     const auto order = CheckReplacementPlayOrder(replacement->slot_, rowIndex, request);
     if (order != SelectionMemoryStatusV1::Ok) return order;
     for (auto member = batch.replacementHead; member != UINT32_MAX; member = deltas_[member].batch.next)
-        if (deltas_[member].row == rowIndex && !Later(request.ticket, request.eventIndex,
-                deltas_[member].ticket, deltas_[member].eventIndex)) return SelectionMemoryStatusV1::InvalidInput;
+        if (deltas_[member].row == rowIndex && !Later(request.ticket, request.EventOrder(),
+                deltas_[member].ticket, deltas_[member].eventOrder)) return SelectionMemoryStatusV1::InvalidInput;
     if (!PrepareOperation(rowIndex, deltaIndex, ShapeFor(request), false)) return SelectionMemoryStatusV1::Capacity;
     if (newRow) {
         row.key = request.key;
@@ -1944,7 +1962,7 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PrepareReplacementPlay(
     delta.nativePendingPreparation = true;
     delta.row = rowIndex;
     delta.ticket = request.ticket;
-    delta.eventIndex = request.eventIndex;
+    delta.eventOrder = request.EventOrder();
     delta.executeFrame = request.executeFrame;
     delta.batch = {replacement->slot_, batch.generation, UINT32_MAX, batch.replacementCount};
     if (batch.replacementTail == UINT32_MAX) batch.replacementHead = deltaIndex;
@@ -1964,17 +1982,36 @@ SelectionReplacementPlayViewV1 SelectionMemoryTableV1::ReadReplacementPlay(
     auto member = batch.replacementHead;
     for (std::uint32_t index = 0; index < ordinal; ++index) member = deltas_[member].batch.next;
     const auto& delta = deltas_[member];
-    return {delta.status, delta.selectedChildOrdinal, delta.seedProbe};
+    return {delta.status, delta.selectedChildOrdinal, delta.seedProbe, delta.executeFrame};
 }
 
 SelectionMemoryStatusV1 SelectionMemoryTableV1::SealReplacement(
     PendingSelectionReplacementV1* replacement, std::uint32_t count, std::uint64_t frame) noexcept {
+    return SealReplacementImpl(replacement, count, frame, nullptr, false);
+}
+
+SelectionMemoryStatusV1 SelectionMemoryTableV1::SealReplacementFrames(
+    PendingSelectionReplacementV1* replacement, std::uint32_t count, const std::uint64_t* frames) noexcept {
+    if (count != 0 && frames == nullptr) return SelectionMemoryStatusV1::InvalidInput;
+    return SealReplacementImpl(replacement, count, 0, frames, true);
+}
+
+SelectionMemoryStatusV1 SelectionMemoryTableV1::SealReplacementImpl(
+    PendingSelectionReplacementV1* replacement, std::uint32_t count,
+    std::uint64_t frame, const std::uint64_t* frames, bool perOperationFrames) noexcept {
     if (replacement == nullptr) return SelectionMemoryStatusV1::InvalidInput;
     const auto current = CheckReplacementCurrent(*replacement);
     if (current != SelectionMemoryStatusV1::Ok) return current;
     auto& batch = batches_[replacement->slot_];
     if (batch.replacementSealed || count != batch.replacementCount ||
-        (count != 0 && deltas_[batch.replacementHead].executeFrame != frame)) return SelectionMemoryStatusV1::InvalidInput;
+        batch.identity.perOperationFrames != perOperationFrames) return SelectionMemoryStatusV1::InvalidInput;
+    auto member = batch.replacementHead;
+    for (std::uint32_t index = 0; index < count; ++index) {
+        if (member >= deltas_.size() || deltas_[member].executeFrame !=
+                (perOperationFrames ? frames[index] : frame)) return SelectionMemoryStatusV1::InvalidInput;
+        member = deltas_[member].batch.next;
+    }
+    if (member != UINT32_MAX) return SelectionMemoryStatusV1::InvalidInput;
     batch.replacementSealed = true;
     batch.replacementFrame = frame;
     return SelectionMemoryStatusV1::Ok;
@@ -1995,7 +2032,8 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::CanInstallReplacement(
         const auto& row = rows_[delta.row];
         const auto limit = row.key.memoryScope == MemoryScopeV1::Global ? config_.maxPendingGlobalPerRow : config_.maxPendingEmitterPerRow;
         if (delta.status != SelectionMemoryStatusV1::Ok) return delta.status;
-        if (!MatchesBatchIdentity(batch.identity, delta.request) || delta.executeFrame != batch.replacementFrame ||
+        if (!MatchesBatchIdentity(batch.identity, delta.request) ||
+            (!batch.identity.perOperationFrames && delta.executeFrame != batch.replacementFrame) ||
             !ReplacementRowCompatible(delta.row)) return SelectionMemoryStatusV1::NotHead;
         const auto order = CheckReplacementPlayOrder(replacement.slot_, delta.row, delta.request);
         if (order != SelectionMemoryStatusV1::Ok) return order;
@@ -2035,7 +2073,7 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::InstallReplacement(
         delta.used = true;
         auto after = UINT32_MAX;
         auto before = row.head;
-        while (before != UINT32_MAX && Later(delta.ticket, delta.eventIndex, deltas_[before].ticket, deltas_[before].eventIndex)) {
+        while (before != UINT32_MAX && Later(delta.ticket, delta.eventOrder, deltas_[before].ticket, deltas_[before].eventOrder)) {
             after = before;
             before = deltas_[before].next;
         }
@@ -2204,7 +2242,7 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::CommitPendingBatch(
         const auto& final = deltas_[last];
         (void)CopyState(final.overlay, row.state);
         row.committed = true;
-        const bool nativeRemoved = DropScheduledThrough(row, final.executeFrame, final.ticket, final.eventIndex);
+        const bool nativeRemoved = DropConsumedScheduled(row);
         while (row.head != UINT32_MAX && deltas_[row.head].batch.slot == slot &&
             deltas_[row.head].batch.generation == generation) {
             const auto member = row.head;
@@ -2291,7 +2329,7 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::CommitPendingBatches(
         const auto& final = deltas_[last];
         (void)CopyState(final.overlay, row.state);
         row.committed = true;
-        (void)DropScheduledThrough(row, final.executeFrame, final.ticket, final.eventIndex);
+        (void)DropConsumedScheduled(row);
         while (row.head != pendingCommitHeads_[rowIndex]) {
             const auto member = row.head;
             UnlinkHead(row, member);
@@ -2432,12 +2470,9 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::FinalizeCommittedPlay(
         return SelectionMemoryStatusV1::NotFound;
     }
     Row& row = rows_[delta.row];
-    const std::uint64_t playFrame = delta.request.executeFrame;
-    const std::uint64_t playTicket = delta.ticket;
-    const std::uint32_t playEvent = delta.eventIndex;
     const auto rowIndex = delta.row;
-    const bool nativeRemoved = DropScheduledThrough(row, playFrame, playTicket, playEvent);
     RecycleDelta(committed->slot_);
+    const bool nativeRemoved = DropConsumedScheduled(row);
     if (nativeRemoved) RefreshResetJournal(rowIndex);
     committed->owner_ = nullptr;
     committed->slot_ = UINT32_MAX;
@@ -2531,6 +2566,7 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PreparePendingReset(
     const SelectionMemoryKeyV1& key, std::uint64_t expectedTicket,
     std::uint32_t eventIndex, PreparedSelectionResetV1* out,
     std::uint64_t executeFrame) noexcept {
+    const auto eventOrder = MakeSelectionEventOrder(eventIndex);
     if (out == nullptr || out->Valid() || !ValidKey(key) || expectedTicket == 0)
         return SelectionMemoryStatusV1::InvalidInput;
     if (PrivateResetConflicts(key, expectedTicket)) return SelectionMemoryStatusV1::NotHead;
@@ -2551,7 +2587,7 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PreparePendingReset(
         if ((delta.used || delta.prepared || delta.replacementCandidate) &&
             (delta.pendingReset ? SameKey(delta.request.key, key) :
                 delta.row < rows_.size() && SameKey(rows_[delta.row].key, key)) &&
-            delta.ticket == expectedTicket && delta.eventIndex == eventIndex)
+            delta.ticket == expectedTicket && delta.eventOrder == eventOrder)
             return SelectionMemoryStatusV1::InvalidInput;
     const auto limit = key.memoryScope == MemoryScopeV1::Global
         ? config_.maxPendingGlobalPerRow : config_.maxPendingEmitterPerRow;
@@ -2565,7 +2601,7 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PreparePendingReset(
     delta.kind = SelectionDeltaKindV1::Reset;
     delta.request.key = key;
     delta.ticket = expectedTicket;
-    delta.eventIndex = eventIndex;
+    delta.eventOrder = eventOrder;
     delta.executeFrame = executeFrame;
     delta.status = SelectionMemoryStatusV1::Ok;
     out->owner_ = this;
@@ -2638,6 +2674,7 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PrepareReset(
     const SelectionMemoryKeyV1& key, std::uint64_t expectedTicket,
     std::uint32_t eventIndex, PreparedSelectionResetV1* out,
     std::uint64_t executeFrame) noexcept {
+    const auto eventOrder = MakeSelectionEventOrder(eventIndex);
     if (out == nullptr || out->Valid() || !ValidKey(key) ||
         expectedTicket == 0) {
         return SelectionMemoryStatusV1::InvalidInput;
@@ -2669,8 +2706,8 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PrepareReset(
     if (row.preparedTail != UINT32_MAX) {
         const DeltaRow& prior = deltas_[row.preparedTail];
         if (prior.status != SelectionMemoryStatusV1::Ok ||
-            !Later(expectedTicket, eventIndex, prior.ticket,
-                   prior.eventIndex)) {
+            !Later(expectedTicket, eventOrder, prior.ticket,
+                   prior.eventOrder)) {
             return prior.status == SelectionMemoryStatusV1::Ok
                        ? SelectionMemoryStatusV1::InvalidInput
                        : prior.status;
@@ -2681,13 +2718,14 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PrepareReset(
     delta.kind = SelectionDeltaKindV1::Reset;
     delta.row = rowIndex;
     delta.ticket = expectedTicket;
-    delta.eventIndex = eventIndex;
+    delta.eventOrder = eventOrder;
     delta.executeFrame = executeFrame;
-    const auto* before = &PreparedPredecessor(row, delta.executeFrame, delta.ticket, delta.eventIndex);
+    const auto* before = &PreparedPredecessor(row, delta.executeFrame, delta.ticket, delta.eventOrder);
     SelectionPlayRequestV1 resetBoundary{};
     resetBoundary.executeFrame = delta.executeFrame;
     resetBoundary.ticket = delta.ticket;
-    resetBoundary.eventIndex = delta.eventIndex;
+    resetBoundary.eventIndex = static_cast<std::uint32_t>(delta.eventOrder >> 32u);
+    resetBoundary.operationIndex = static_cast<std::uint32_t>(delta.eventOrder);
     delta.status = PendingPredecessor(row, *before, resetBoundary, &before);
     if (delta.status == SelectionMemoryStatusV1::Ok) delta.status = ComputeReset(row, *before, delta.overlay);
     if (delta.status != SelectionMemoryStatusV1::Ok) {
@@ -2746,8 +2784,8 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::CommitPreparedReset(
         std::uint64_t followingCount = 0;
         for (auto index = row.scheduledHead; index != UINT32_MAX; index = deltas_[index].next) {
             const auto& following = deltas_[index];
-            if (AppliesBefore(delta.executeFrame, delta.ticket, delta.eventIndex,
-                    following.executeFrame, following.ticket, following.eventIndex)) ++followingCount;
+            if (AppliesBefore(delta.executeFrame, delta.ticket, delta.eventOrder,
+                    following.executeFrame, following.ticket, following.eventOrder)) ++followingCount;
         }
         if (followingCount > UINT64_MAX - delta.overlay.resetEpoch)
             return SelectionMemoryStatusV1::RuntimeRecreateRequired;
@@ -2894,7 +2932,7 @@ void SelectionMemoryTableV1::RecycleDelta(
     delta.request = {};
     delta.path.clear();
     delta.ticket = 0;
-    delta.eventIndex = 0;
+    delta.eventOrder = 0;
     delta.executeFrame = 0;
     delta.selectedChildOrdinal = 0;
     delta.seedProbe = {};
@@ -3038,14 +3076,14 @@ void SelectionMemoryTableV1::Recompute(std::uint32_t rowIndex) noexcept {
 
 const SelectionMemoryTableV1::MemoryState& SelectionMemoryTableV1::PreparedPredecessor(
     const Row& row, std::uint64_t executeFrame, std::uint64_t ticket,
-    std::uint32_t eventIndex, std::uint32_t stopBefore) const noexcept {
+    std::uint64_t eventOrder, std::uint32_t stopBefore) const noexcept {
     const DeltaRow* latest = nullptr;
     const auto consider = [&](const DeltaRow& prior) noexcept {
         if (prior.pendingReset || prior.status != SelectionMemoryStatusV1::Ok ||
-            !AppliesBefore(prior.executeFrame, prior.ticket, prior.eventIndex,
-                executeFrame, ticket, eventIndex)) return;
+            !AppliesBefore(prior.executeFrame, prior.ticket, prior.eventOrder,
+                executeFrame, ticket, eventOrder)) return;
         if (latest == nullptr || AppliesBefore(latest->executeFrame, latest->ticket,
-                latest->eventIndex, prior.executeFrame, prior.ticket, prior.eventIndex))
+                latest->eventOrder, prior.executeFrame, prior.ticket, prior.eventOrder))
             latest = &prior;
     };
     for (auto index = row.scheduledHead; index != UINT32_MAX; index = deltas_[index].next)
@@ -3080,11 +3118,12 @@ void SelectionMemoryTableV1::RecomputePrepared(
             nativeStatus = delta.status;
             continue;
         }
-        const auto* before = &PreparedPredecessor(row, delta.executeFrame, delta.ticket, delta.eventIndex, index);
+        const auto* before = &PreparedPredecessor(row, delta.executeFrame, delta.ticket, delta.eventOrder, index);
         SelectionPlayRequestV1 boundary{};
         boundary.executeFrame = delta.executeFrame;
         boundary.ticket = delta.ticket;
-        boundary.eventIndex = delta.eventIndex;
+        boundary.eventIndex = static_cast<std::uint32_t>(delta.eventOrder >> 32u);
+        boundary.operationIndex = static_cast<std::uint32_t>(delta.eventOrder);
         delta.status = PendingPredecessor(row, *before, boundary, &before);
         if (delta.status != SelectionMemoryStatusV1::Ok) {
             delta.selectedChildOrdinal = 0;
@@ -3120,12 +3159,12 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::CommitHead(
     const auto rowIndex = delta->row;
     bool nativeRemoved = false;
     if (delta->kind == SelectionDeltaKindV1::Play)
-        nativeRemoved = DropScheduledThrough(row, delta->executeFrame, delta->ticket, delta->eventIndex);
+        nativeRemoved = DropConsumedScheduled(row);
     else {
-        // A legacy Reset can consume native operations too; legacy scheduled removal keeps its existing boundary.
+        // Clear every scheduled reset consumed by the committed overlay.
         for (auto index = row.scheduledHead; index != UINT32_MAX;) {
             const auto next = deltas_[index].next;
-            if (deltas_[index].pendingReset && ResetConsumed(row.state, deltas_[index])) {
+            if (ResetConsumed(row.state, deltas_[index])) {
                 UnlinkScheduled(row, index);
                 RecycleDelta(index);
                 nativeRemoved = true;
@@ -3214,7 +3253,9 @@ SelectionDeltaViewV1 SelectionMemoryTableV1::Delta(
     view.status = delta->status;
     view.key = row.key;
     view.ticket = delta->ticket;
-    view.eventIndex = delta->eventIndex;
+    view.eventIndex = static_cast<std::uint32_t>(delta->eventOrder >> 32u);
+    view.operationIndex = static_cast<std::uint32_t>(delta->eventOrder);
+    view.executeFrame = delta->executeFrame;
     view.selectedChildOrdinal = delta->selectedChildOrdinal;
     view.resetEpochAfter = delta->overlay.resetEpoch;
     view.selectionOrdinalAfter = delta->overlay.selectionOrdinal;
