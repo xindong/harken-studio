@@ -240,10 +240,9 @@ void HashCurve(Fnv64 &hash, const CurveV1 &row) noexcept {
 }
 
 void HashPayloadHeader(Fnv64 &hash, const PlayablePropertyPayloadViewV1 &payload) noexcept {
-    hash.U64(payload.presentMask);
+    hash.U64(payload.presentMask & ~UINT64_C(0x4));
     hash.U32(static_cast<std::uint32_t>(payload.values[0].bits));
     hash.U32(static_cast<std::uint32_t>(payload.values[1].bits));
-    hash.U32(static_cast<std::uint32_t>(payload.values[2].bits));
     hash.U32(static_cast<std::uint32_t>(payload.values[5].bits));
     hash.U32(static_cast<std::uint32_t>(payload.values[4].bits));
     hash.U32(static_cast<std::uint32_t>(payload.values[3].bits));
@@ -334,7 +333,8 @@ bool ValidPayload(const PlayablePropertyPayloadViewV1 &payload) noexcept {
     using playableproperties::PlayablePropertyDefaultV1;
     using playableproperties::PlayablePropertyWireV1;
     if ((payload.presentMask & ~playableproperties::kPlayablePropertyKnownMaskV1) != 0 ||
-        !PointerMatches(payload.sendCount, payload.sends) || payload.values[12].bits != 0 ||
+        !PointerMatches(payload.sendCount, payload.sends) || payload.values[2].bits != 0 ||
+        payload.values[2].objectId != harkenstudio::ObjectId{} || payload.values[12].bits != 0 ||
         payload.values[14].bits != 0 ||
         !PointerMatches(payload.effectNodeCount, payload.effectNodes) ||
         !PointerMatches(payload.effectEdgeCount, payload.effectEdges)) {

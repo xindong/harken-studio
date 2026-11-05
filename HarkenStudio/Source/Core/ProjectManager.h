@@ -484,7 +484,6 @@ private:
                                   const QObject* originator = nullptr);
     bool setItemVolumeInternal(ProjectItem* item, float volume, const QObject* originator = nullptr);
     bool setItemPitchInternal(ProjectItem* item, float pitch, const QObject* originator = nullptr);
-    bool setItemMakeUpGainInternal(ProjectItem* item, float makeUpGain, const QObject* originator = nullptr);
     bool setItemLoopCountInternal(ProjectItem* item, uint32_t loopCount, const QObject* originator = nullptr);
     bool setItemOutputBusRefInternal(ProjectItem* item, uint32_t busID, const QObject* originator = nullptr);
     bool reorderItemChildrenInternal(ProjectItem* parent, const std::vector<std::shared_ptr<ProjectItem>>& orderedChildren);
@@ -509,8 +508,6 @@ private:
     bool writeBusPropertySilent(ProjectItem* busItem, const QString& propertyName, const QVariant& value);
     void pushBusPropertyLive(ProjectItem* busItem, const QString& propertyName);
     bool setBusVolumeInternal(uint32_t busID, float volumeDb, const QObject* originator = nullptr);
-    bool setBusMakeUpGainInternal(uint32_t busID, float makeUpGainDb,
-                                  const QObject* originator = nullptr);
     bool setBusPanInternal(uint32_t busID, float pan, const QObject* originator = nullptr);
     bool setBusChannelConfigInternal(uint32_t busID, uint8_t channelConfig);
     bool setBusListenerRelativeInternal(uint32_t busID, bool enabled);

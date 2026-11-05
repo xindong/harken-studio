@@ -51,20 +51,6 @@
       "wire": "f32"
     },
     {
-      "canonicalDefault": "+0.0f",
-      "capabilityRole": "common",
-      "combineRole": "dbSum",
-      "component": "mixnode",
-      "id": 3,
-      "jsonKey": "makeUpGain",
-      "name": "makeUpGain",
-      "phaseRole": "firstAudible",
-      "present": "maskBit",
-      "referenceRole": "none",
-      "storageField": "makeUpGain",
-      "wire": "f32"
-    },
-    {
       "canonicalDefault": "1",
       "capabilityRole": "playback",
       "combineRole": "objectLocal",
@@ -233,6 +219,6 @@
       "wire": "f32"
     }
   ],
-  "knownMask": "0x000000000001afff",
+  "knownMask": "0x000000000001affb",
   "vintage": 1
 }

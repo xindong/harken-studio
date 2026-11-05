@@ -390,7 +390,7 @@ bool checkedFingerprintStreamSize(const Result& result, bool published,
     const bool volumeOnly = published && (capabilityVintage ==
         BusPublicationCapabilityVintageV1::TopologyAndVolumeNeutralOtherProperties ||
         capabilityVintage == BusPublicationCapabilityVintageV1::TopologyVolumeAndSendNeutralOtherProperties);
-    return checkedFingerprintSection(result.buses.size(), volumeOnly ? 72 : 64, size)
+    return checkedFingerprintSection(result.buses.size(), volumeOnly ? 68 : 64, size)
         && checkedFingerprintSection(result.sends.size(), 40, size)
         && checkedFingerprintSection(result.effects.size(), 56, size)
         && checkedFingerprintSection(result.effectParameters.size(), 8, size)
@@ -440,7 +440,6 @@ bool fingerprintStream(
     for (const auto& bus : result.buses) {
         appendBusRow(bytes, bus);
         if (volumeOnly) {
-            appendF32(bytes, bus.makeUpGainDb);
             appendF32(bytes, bus.outputBusVolumeDb);
         }
     }
@@ -661,10 +660,8 @@ BusCompileOutcomeV1 CompileBusProjectV1(const BusCompilerInputV1& input)
             return std::isfinite(db) &&
                 std::isfinite(std::pow(10.0f, db / 20.0f));
         };
-        if (!convertible(bus.makeUpGainDb) ||
-            !convertible(bus.outputBusVolumeDb) ||
-            !convertible(bus.faderDb + bus.makeUpGainDb) ||
-            !convertible(bus.faderDb + bus.makeUpGainDb + bus.outputBusVolumeDb))
+        if (!convertible(bus.outputBusVolumeDb) ||
+            !convertible(bus.faderDb + bus.outputBusVolumeDb))
             outcome.diagnostics.push_back(diagnostic(
                 BusDiagnosticCodeV1::NonFiniteScalar, bus.busId, {},
                 input.projectGeneration, bus.source));
@@ -1055,8 +1052,7 @@ BusCompileOutcomeV1 CompileBusProjectV1(const BusCompilerInputV1& input)
             result->sourceLocations, bus.source);
         result->buses.push_back({bus.busId, bus.parentId, ordinal, bus.faderDb,
                                  bus.faderAfterSlot, resolved, 0, 0, 0, 0,
-                                 sourceLocation, bus.makeUpGainDb,
-                                 bus.outputBusVolumeDb});
+                                 sourceLocation, bus.outputBusVolumeDb});
     }
 
     for (const auto& [key, send] : sendRows) {
@@ -1246,7 +1242,6 @@ PublishedBusProjectionV1 BuildPublishedBusProjectionV1(
                 capabilityVintage != BusPublicationCapabilityVintageV1::
                     TopologyVolumeAndSendNeutralOtherProperties) {
                 bus.faderDb = 0.0f;
-                bus.makeUpGainDb = 0.0f;
                 bus.outputBusVolumeDb = 0.0f;
             } else {
                 bus.faderAfterSlot = 8;

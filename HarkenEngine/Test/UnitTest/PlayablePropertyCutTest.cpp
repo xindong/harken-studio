@@ -244,7 +244,7 @@ TEST(PlayablePropertyCut, FoldsTheActualPathAndAppliesRootLayersOnce) {
     EXPECT_EQ(harkentest::ObjectId(30u), cut.leaf.stableId);
     EXPECT_FLOAT_EQ(28.0f, cut.volumeDb);
     EXPECT_FLOAT_EQ(7200.0f, cut.pitchCents);
-    EXPECT_FLOAT_EQ(2.0f, cut.makeUpGainDb);
+    EXPECT_FLOAT_EQ(0.0f, cut.makeUpGainDb);
     EXPECT_EQ(cut.loopCount, 1u);
     EXPECT_EQ(1u, cut.streamingMode);
     EXPECT_EQ(harkentest::ObjectId(200u), cut.outputBusRef);

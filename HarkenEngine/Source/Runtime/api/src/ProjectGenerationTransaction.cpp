@@ -1264,7 +1264,7 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
         return result;
     }
     if (volumeOnly && (view.prospective == nullptr || view.authoredBusIds == nullptr ||
-        view.authoredBusVolumeDb == nullptr || view.authoredBusMakeUpGainDb == nullptr ||
+        view.authoredBusVolumeDb == nullptr ||
         view.authoredBusOutputVolumeDb == nullptr ||
         view.authoredBusCount != view.prospective->busCount)) {
         result.status = ProjectGenerationPrepareStatusV1::InvalidView;
@@ -1399,15 +1399,13 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
                     // Its canonical zero row does not own that slot's live volume.
                     if (view.authoredBusIds[i] == VN_BUS_MASTER && slot == 0 &&
                         view.authoredBusVolumeDb[i] == 0.0f &&
-                        view.authoredBusMakeUpGainDb[i] == 0.0f &&
                         view.authoredBusOutputVolumeDb[i] == 0.0f)
                         continue;
                     ReleasePreparedSlot(engine, planIndex, ownerSlot);
                     result.status = ProjectGenerationPrepareStatusV1::InvalidView;
                     return result;
                 }
-                const float mix = view.authoredBusVolumeDb[i] +
-                    view.authoredBusMakeUpGainDb[i];
+                const float mix = view.authoredBusVolumeDb[i];
                 const float output = view.authoredBusOutputVolumeDb[i];
                 const bool retained = slot < engine.buses.BusCount() &&
                     engine.buses.AliveAt(slot) &&

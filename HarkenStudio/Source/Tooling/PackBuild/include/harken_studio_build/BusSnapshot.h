@@ -171,7 +171,7 @@ inline std::vector<std::uint8_t> VolumeBusSnapshotPayload(
     header.coefficientRowBytes = kPackBusDefinitionCoefficientRowBytes;
     for (const auto& bus : projection.buses) {
         image.busDefinitionBusesV2.push_back({bus.busId, bus.parentId,
-            bus.feedsFirstOrdinal, bus.faderDb, bus.makeUpGainDb,
+            bus.feedsFirstOrdinal, bus.faderDb,
             bus.outputBusVolumeDb, bus.faderAfterSlot, bus.outputLayout,
             bus.effectFirst, bus.effectCount, bus.downmixFirst, bus.downmixCount});
     }

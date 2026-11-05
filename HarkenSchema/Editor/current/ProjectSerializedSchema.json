@@ -207,9 +207,6 @@
         "outputBusRef": {
           "$ref": "#/$defs/nullableObjectReference"
         },
-        "makeUpGain": {
-          "type": "number"
-        },
         "outputBusVolume": {
           "type": "number"
         },
@@ -220,7 +217,7 @@
           "$ref": "#/$defs/projectPlatformId"
         },
         "presence": {
-          "pattern": "^000000000000[0-38-b][014589cd][0-9a-f]{2}$",
+          "pattern": "^000000000000[0-38-b][014589cd][0-9a-f][0-38-b]$",
           "type": "string"
         },
         "sends": {
@@ -286,9 +283,6 @@
         "outputBusRef": {
           "$ref": "#/$defs/nullableObjectReference"
         },
-        "makeUpGain": {
-          "type": "number"
-        },
         "outputBusVolume": {
           "type": "number"
         },
@@ -302,7 +296,7 @@
           "type": "array"
         },
         "presence": {
-          "pattern": "^000000000000[0-38-b][014589cd][0-9a-f]{2}$",
+          "pattern": "^000000000000[0-38-b][014589cd][0-9a-f][0-38-b]$",
           "type": "string"
         },
         "sends": {
@@ -586,9 +580,6 @@
           },
           "type": "array"
         },
-        "makeUpGain": {
-          "type": "number"
-        },
         "pitch": {
           "type": "number"
         },
@@ -681,9 +672,6 @@
             "$ref": "#/$defs/effectEntry"
           },
           "type": "array"
-        },
-        "makeUpGain": {
-          "type": "number"
         },
         "outputBusRef": {
           "$ref": "#/$defs/objectReference"
@@ -903,9 +891,6 @@
           "minimum": 0,
           "type": "integer"
         },
-        "makeUpGain": {
-          "type": "number"
-        },
         "pitch": {
           "type": "number"
         },
@@ -913,7 +898,7 @@
           "$ref": "#/$defs/projectPlatformId"
         },
         "presence": {
-          "pattern": "^000000000000[0189]0[01][0-9a-f]$",
+          "pattern": "^000000000000[0189]0[01][0-38-b]$",
           "type": "string"
         },
         "signalGraph": {
@@ -958,9 +943,6 @@
           "minimum": 0,
           "type": "integer"
         },
-        "makeUpGain": {
-          "type": "number"
-        },
         "pitch": {
           "type": "number"
         },
@@ -971,7 +953,7 @@
           "type": "array"
         },
         "presence": {
-          "pattern": "^000000000000[0189]0[01][0-9a-f]$",
+          "pattern": "^000000000000[0189]0[01][0-38-b]$",
           "type": "string"
         },
         "signalGraph": {

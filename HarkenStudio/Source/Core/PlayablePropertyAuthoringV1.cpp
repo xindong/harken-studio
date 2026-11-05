@@ -30,8 +30,8 @@ using harkenplayableproperties::PlayablePropertyWireV1;
 using harkenplayableproperties::studio::JsonFieldV1;
 
 constexpr auto kEditableFields = [] {
-    constexpr std::array<uint8_t, 13> ids{
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 14, 17};
+    constexpr std::array<uint8_t, 12> ids{
+        1, 2, 4, 5, 6, 7, 8, 9, 11, 12, 14, 17};
     std::array<JsonFieldV1, ids.size()> fields{};
     for (size_t index = 0; index < ids.size(); ++index)
         for (const auto& field : harkenplayableproperties::studio::kJsonFieldsV1)
@@ -539,11 +539,7 @@ bool PlayablePropertyAuthoringV1::isEditorExposed(uint8_t propertyId) noexcept
 
 bool PlayablePropertyAuthoringV1::isInspectorVisible(uint8_t propertyId) noexcept
 {
-    const Field* field = fieldById(propertyId);
-    return field
-        && isEditorExposed(propertyId)
-        && propertyId != static_cast<uint8_t>(
-            harkenplayableproperties::PlayablePropertyIdV1::MakeUpGain);
+    return isEditorExposed(propertyId);
 }
 
 const PlayablePropertyAuthoringV1::Field*

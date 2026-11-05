@@ -232,6 +232,30 @@ bool ProjectDocument::validateFieldGroupAuthoring(const QJsonObject& content,
     return validateAuthoringNode(content, error);
 }
 
+void ProjectDocument::discardRetiredMakeUpGain(QJsonObject* properties)
+{
+    properties->remove(QStringLiteral("makeUpGain"));
+    const QString presenceKey = QStringLiteral("presence");
+    const QString presence = properties->value(presenceKey).toString();
+    bool validPresence = false;
+    const uint64_t bits = presence.toULongLong(&validPresence, 16);
+    if (validPresence && PlayablePropertyAuthoringV1::encodePresence(bits) == presence
+        && (bits & UINT64_C(0x4)) != 0)
+        properties->insert(presenceKey,
+            PlayablePropertyAuthoringV1::encodePresence(bits & ~UINT64_C(0x4)));
+    const QString overlaysKey = QStringLiteral("platformOverrides");
+    if (properties->value(overlaysKey).isArray()) {
+        auto overlays = properties->value(overlaysKey).toArray();
+        for (qsizetype index = 0; index < overlays.size(); ++index) {
+            if (!overlays[index].isObject()) continue;
+            auto row = overlays[index].toObject();
+            discardRetiredMakeUpGain(&row);
+            overlays[index] = row;
+        }
+        properties->insert(overlaysKey, overlays);
+    }
+}
+
 bool ProjectDocument::normalizeContent(QJsonObject* content, QString* error)
 {
     for (const auto* key : {"expanded", "objectPath", "canvasPos", "nameBindingRevision",
@@ -267,8 +291,35 @@ bool ProjectDocument::normalizeContent(QJsonObject* content, QString* error)
     };
     if (content->value(QStringLiteral("type")) == QJsonValue(QStringLiteral("Piece")))
         content->insert(QStringLiteral("type"), QStringLiteral("Segment"));
+    if (content->value(QStringLiteral("playableProperties")).isObject()) {
+        auto properties = content->value(QStringLiteral("playableProperties")).toObject();
+        discardRetiredMakeUpGain(&properties);
+        content->insert(QStringLiteral("playableProperties"), properties);
+    }
     if (content->value(QStringLiteral("components")).isObject()) {
         auto components = content->value(QStringLiteral("components")).toObject();
+        if (components.value(QStringLiteral("mixnode")).isObject()) {
+            auto mix = components.value(QStringLiteral("mixnode")).toObject();
+            mix.remove(QStringLiteral("makeUpGain"));
+            components.insert(QStringLiteral("mixnode"), mix);
+        }
+        if (components.value(QStringLiteral("tracktimeline")).isObject()) {
+            auto timeline = components.value(QStringLiteral("tracktimeline")).toObject();
+            if (timeline.value(QStringLiteral("clips")).isArray()) {
+                auto clips = timeline.value(QStringLiteral("clips")).toArray();
+                for (qsizetype index = 0; index < clips.size(); ++index) {
+                    if (!clips[index].isObject()) continue;
+                    auto clip = clips[index].toObject();
+                    if (!clip.value(QStringLiteral("playableProperties")).isObject()) continue;
+                    auto properties = clip.value(QStringLiteral("playableProperties")).toObject();
+                    discardRetiredMakeUpGain(&properties);
+                    clip.insert(QStringLiteral("playableProperties"), properties);
+                    clips[index] = clip;
+                }
+                timeline.insert(QStringLiteral("clips"), clips);
+            }
+            components.insert(QStringLiteral("tracktimeline"), timeline);
+        }
         if (!moveField(components, QStringLiteral("piecetimeline"),
                         QStringLiteral("segmenttimeline"))) return false;
         if (components.value(QStringLiteral("segmenttimeline")).isObject()) {

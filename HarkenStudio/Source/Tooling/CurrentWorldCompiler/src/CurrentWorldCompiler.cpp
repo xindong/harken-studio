@@ -402,7 +402,6 @@ CompileResultV1 CompileCurrentWorldV1(
         };
         setF32(PropertyId::Volume, source.volume);
         setF32(PropertyId::Pitch, source.pitch);
-        setF32(PropertyId::MakeUpGain, source.makeUpGain);
         setU32(PropertyId::LoopCount, source.loopCount);
         setU32(PropertyId::StreamingMode, source.streamingMode);
         setF32(PropertyId::OutputBusVolume, source.outputBusVolume);

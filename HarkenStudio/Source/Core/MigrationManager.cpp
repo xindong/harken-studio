@@ -10,6 +10,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QUuid>
 
@@ -66,6 +67,94 @@ void expandWriteSetPlaceholders(QStringList* writeSet,
     *writeSet = expanded;
 }
 
+bool migrateLegacyContent(QJsonObject* content, QString* error)
+{
+    auto components = content->value(QStringLiteral("components")).toObject();
+    auto mix = components.value(QStringLiteral("mixnode")).toObject();
+    if (mix.value(QStringLiteral("effects")).isArray()) {
+        auto effects = mix.value(QStringLiteral("effects")).toArray();
+        for (qsizetype index = 0; index < effects.size(); ++index) {
+            auto effect = effects[index].toObject();
+            if (!effect.contains(QStringLiteral("type"))) continue;
+            if (effect.contains(QStringLiteral("mode")) || effect.contains(QStringLiteral("custom"))) {
+                if (error) *error = QStringLiteral("Conflicting legacy Effect fields");
+                return false;
+            }
+            effect.insert(QStringLiteral("custom"), QJsonObject{
+                {QStringLiteral("type"), effect.take(QStringLiteral("type"))},
+                {QStringLiteral("parameters"), effect.take(QStringLiteral("parameters"))}});
+            effect.insert(QStringLiteral("mode"), QStringLiteral("custom"));
+            effects[index] = effect;
+        }
+        mix.insert(QStringLiteral("effects"), effects);
+    }
+    if (content->value(QStringLiteral("fieldGroups")).isObject()) {
+        auto groups = content->value(QStringLiteral("fieldGroups")).toObject();
+        const auto migrateOutput = [](QJsonObject* scope) {
+            if (!scope->contains(QStringLiteral("mainOutput"))) return;
+            auto output = scope->take(QStringLiteral("mainOutput")).toObject();
+            if (output.value(QStringLiteral("values")).isObject()) {
+                auto values = output.value(QStringLiteral("values")).toObject();
+                if (values.contains(QStringLiteral("mainOutputBusRef")))
+                    values.insert(QStringLiteral("outputBusRef"),
+                                  values.take(QStringLiteral("mainOutputBusRef")));
+                output.insert(QStringLiteral("values"), values);
+            }
+            scope->insert(QStringLiteral("output"), output);
+        };
+        auto shared = groups.value(QStringLiteral("shared")).toObject();
+        migrateOutput(&shared);
+        shared.insert(QStringLiteral("effect"), QJsonObject{
+            {QStringLiteral("inherit"), false},
+            {QStringLiteral("values"), QJsonObject{
+                {QStringLiteral("effects"), mix.take(QStringLiteral("effects")).toArray()}}}});
+        groups.insert(QStringLiteral("shared"), shared);
+        if (groups.value(QStringLiteral("platforms")).isObject()) {
+            auto platforms = groups.value(QStringLiteral("platforms")).toObject();
+            for (const auto& platform : platforms.keys()) {
+                auto scope = platforms.value(platform).toObject();
+                migrateOutput(&scope);
+                platforms.insert(platform, scope);
+            }
+            groups.insert(QStringLiteral("platforms"), platforms);
+        }
+        content->insert(QStringLiteral("fieldGroups"), groups);
+    }
+    if (components.contains(QStringLiteral("mixnode"))) {
+        components.insert(QStringLiteral("mixnode"), mix);
+        content->insert(QStringLiteral("components"), components);
+    }
+    if (content->value(QStringLiteral("type")) == QStringLiteral("Bus")) {
+        auto properties = content->value(QStringLiteral("playableProperties")).toObject();
+        const auto migrateReference = [](QJsonObject* values) {
+            if (values->contains(QStringLiteral("mainOutputBusRef")))
+                values->insert(QStringLiteral("outputBusRef"),
+                               values->take(QStringLiteral("mainOutputBusRef")));
+        };
+        migrateReference(&properties);
+        if (properties.value(QStringLiteral("platformOverrides")).isArray()) {
+            auto overlays = properties.value(QStringLiteral("platformOverrides")).toArray();
+            for (qsizetype index = 0; index < overlays.size(); ++index) {
+                auto overlay = overlays[index].toObject();
+                migrateReference(&overlay);
+                overlays[index] = overlay;
+            }
+            properties.insert(QStringLiteral("platformOverrides"), overlays);
+        }
+        content->insert(QStringLiteral("playableProperties"), properties);
+    }
+    if (content->value(QStringLiteral("children")).isArray()) {
+        auto children = content->value(QStringLiteral("children")).toArray();
+        for (qsizetype index = 0; index < children.size(); ++index) {
+            auto child = children[index].toObject();
+            if (!migrateLegacyContent(&child, error)) return false;
+            children[index] = child;
+        }
+        content->insert(QStringLiteral("children"), children);
+    }
+    return true;
+}
+
 }
 
 MigrationManager::MigrationManager()
@@ -102,7 +191,8 @@ MigrationManager::MigrationManager()
                         content.insert(QStringLiteral("deployLanguages"), content.take(QStringLiteral("projectLanguages")));
                         content.insert(QStringLiteral("metadata"), metadata);
                     }
-                    if (!ProjectDocument::normalizeContent(&content, error)) return false;
+                    if (!migrateLegacyContent(&content, error)
+                        || !ProjectDocument::normalizeContent(&content, error)) return false;
                     document.insert(QStringLiteral("content"), content);
                 }
                 document.insert(QStringLiteral("harkenDocument"), header);

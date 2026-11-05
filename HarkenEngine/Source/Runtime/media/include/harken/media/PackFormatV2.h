@@ -155,7 +155,7 @@ inline constexpr std::uint64_t kPackV2PayloadAlign = 8;
 inline constexpr std::uint64_t kPackV2MediaPayloadBytes =
     kPackTocEntryBytes;                                    // the v1 record
 inline constexpr std::uint64_t kPackV2BusPayloadBytes = 32;
-inline constexpr std::uint64_t kPackV6BusPayloadBytes = 48;
+inline constexpr std::uint64_t kPackV6BusPayloadBytes = 40;
 inline constexpr std::uint64_t kPackV2BusSendPayloadBytes = 40;
 inline constexpr std::uint64_t kPackV2CurveWireBytes = 184;
 inline constexpr std::uint64_t kPackV2AttenuationPayloadBytes =
@@ -473,20 +473,18 @@ inline void SerializePackV6Bus(const PackBusEntry& e, std::uint8_t* out) {
     StoreObjectId(out + 16, e.parentBusId);
     StoreLEF32(out + 32, e.volume);
     StoreLEF32(out + 36, e.outputBusVolume);
-    StoreLEF32(out + 40, e.makeUpGain);
-    StoreLE32(out + 44, 0);
 }
 
 inline bool ParsePackV6Bus(const std::uint8_t* in, std::uint64_t size,
                            PackBusEntry* out) {
-    if (size != kPackV6BusPayloadBytes || LoadLE32(in + 44) != 0) {
+    if (size != kPackV6BusPayloadBytes) {
         return false;
     }
     out->busId = LoadObjectId(in + 0);
     out->parentBusId = LoadObjectId(in + 16);
     out->volume = LoadLEF32(in + 32);
     out->outputBusVolume = LoadLEF32(in + 36);
-    out->makeUpGain = LoadLEF32(in + 40);
+    out->makeUpGain = 0.0f;
     return true;
 }
 
@@ -1200,7 +1198,7 @@ inline constexpr std::uint32_t kPackBusDefinitionSnapshotHeaderBytes = 160;
 inline constexpr std::uint32_t kPackBusDefinitionSnapshotV2HeaderBytes = 184;
 inline constexpr std::uint32_t kPackBusDefinitionBusRowBytes = 64;
 inline constexpr std::uint32_t kPackBusDefinitionSendRowBytes = 32;
-inline constexpr std::uint32_t kPackBusDefinitionBusV2RowBytes = 80;
+inline constexpr std::uint32_t kPackBusDefinitionBusV2RowBytes = 72;
 inline constexpr std::uint32_t kPackBusDefinitionSendV2RowBytes = 48;
 inline constexpr std::uint32_t kPackBusDefinitionDownmixV2RowBytes = 40;
 inline constexpr std::uint32_t kPackBusDefinitionEffectRowBytes = 48;
@@ -2095,15 +2093,14 @@ inline void SerializePackBusDefinitionBusV2(const PackBusDefinitionBusV2& row,
     StoreObjectId(out + 16, row.parentId);
     StoreLE32(out + 32, row.feedsFirstOrdinal);
     StoreLEF32(out + 36, row.faderDb);
-    StoreLEF32(out + 40, row.makeUpGainDb);
-    StoreLEF32(out + 44, row.outputBusVolumeDb);
-    StoreLE32(out + 48, row.faderAfterSlot);
-    StoreLE32(out + 52, row.outputLayout);
-    StoreLE32(out + 56, row.effectFirst);
-    StoreLE32(out + 60, row.effectCount);
-    StoreLE32(out + 64, row.downmixFirst);
-    StoreLE32(out + 68, row.downmixCount);
-    StoreLE64(out + 72, 0);
+    StoreLEF32(out + 40, row.outputBusVolumeDb);
+    StoreLE32(out + 44, row.faderAfterSlot);
+    StoreLE32(out + 48, row.outputLayout);
+    StoreLE32(out + 52, row.effectFirst);
+    StoreLE32(out + 56, row.effectCount);
+    StoreLE32(out + 60, row.downmixFirst);
+    StoreLE32(out + 64, row.downmixCount);
+    StoreLE32(out + 68, 0);
 }
 
 inline bool ParsePackBusDefinitionBusV2(const std::uint8_t* in,
@@ -2112,15 +2109,15 @@ inline bool ParsePackBusDefinitionBusV2(const std::uint8_t* in,
     out->parentId = LoadObjectId(in + 16);
     out->feedsFirstOrdinal = LoadLE32(in + 32);
     out->faderDb = LoadLEF32(in + 36);
-    out->makeUpGainDb = LoadLEF32(in + 40);
-    out->outputBusVolumeDb = LoadLEF32(in + 44);
-    out->faderAfterSlot = LoadLE32(in + 48);
-    out->outputLayout = LoadLE32(in + 52);
-    out->effectFirst = LoadLE32(in + 56);
-    out->effectCount = LoadLE32(in + 60);
-    out->downmixFirst = LoadLE32(in + 64);
-    out->downmixCount = LoadLE32(in + 68);
-    return LoadLE64(in + 72) == 0;
+    out->makeUpGainDb = 0.0f;
+    out->outputBusVolumeDb = LoadLEF32(in + 40);
+    out->faderAfterSlot = LoadLE32(in + 44);
+    out->outputLayout = LoadLE32(in + 48);
+    out->effectFirst = LoadLE32(in + 52);
+    out->effectCount = LoadLE32(in + 56);
+    out->downmixFirst = LoadLE32(in + 60);
+    out->downmixCount = LoadLE32(in + 64);
+    return LoadLE32(in + 68) == 0;
 }
 
 inline void SerializePackBusDefinitionSendV2(const PackBusDefinitionSendV2& row,

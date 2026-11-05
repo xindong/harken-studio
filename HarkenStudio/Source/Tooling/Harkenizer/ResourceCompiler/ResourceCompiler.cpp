@@ -480,7 +480,6 @@ bool SerializeEntryPayload(const Manifest& manifest,
         wire.parentBusId = bus.parent;
         wire.volume = bus.volume;
         wire.outputBusVolume = bus.outputBusVolume;
-        wire.makeUpGain = bus.makeUpGain;
         harkenstudiobuild::SerializePackV6Bus(wire, dst);
         break;
     }

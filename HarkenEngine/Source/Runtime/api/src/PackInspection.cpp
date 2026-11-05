@@ -31,7 +31,7 @@ bool MainBusGain(const PackCanonicalImage& init, VnObjectId id, float& db) {
             const auto found = std::find_if(init.busDefinitionBusesV2.begin(), init.busDefinitionBusesV2.end(),
                 [&](const auto& row) { return row.busId == id; });
             if (found == init.busDefinitionBusesV2.end()) return false;
-            db += found->faderDb + found->makeUpGainDb + found->outputBusVolumeDb;
+            db += found->faderDb + found->outputBusVolumeDb;
             parent = found->parentId;
         } else {
             const auto found = std::find_if(init.busDefinitionBuses.begin(), init.busDefinitionBuses.end(),
@@ -146,7 +146,7 @@ void PreviewFacts(const ContainerWorldInstallViewV1& view, const PackCanonicalIm
         row.mediaFrameCount = media->frameCount;
         row.sampleRate = media->sampleRate;
         row.channelCount = media->channelCount;
-        float gain = cut.volumeDb + cut.makeUpGainDb + cut.outputBusVolumeDb;
+        float gain = cut.volumeDb + cut.outputBusVolumeDb;
         if (MainBusGain(init, cut.outputBusRef, gain)) {
             const float linear = std::pow(10.0f, gain / 20.0f);
             if (std::isfinite(linear)) {

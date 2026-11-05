@@ -20745,8 +20745,7 @@ harken::PlayableStartStatus ResolveTimelineVoiceInstallSource(
     }
     voice.outputBusId =
         cut.outputBusRef == VnObjectId{} ? VN_BUS_MASTER : cut.outputBusRef;
-    const float volume =
-        cut.volumeDb + cut.makeUpGainDb;
+    const float volume = cut.volumeDb;
     const double pitch = std::pow(
         2.0, static_cast<double>(cut.pitchCents) / 1200.0);
     if (!std::isfinite(cut.outputBusVolumeDb) ||
@@ -116095,8 +116094,7 @@ bool PrepareRevisionProspectiveTopology(
         if (index == kInvalidBusIndex) {
             return false;
         }
-        const float mixDb =
-            bus.volume + bus.makeUpGain;
+        const float mixDb = bus.volume;
         if (!std::isfinite(mixDb)) {
             return false;
         }
@@ -120196,7 +120194,7 @@ VnResult ValidateCanonicalVolumeBusProfile(const Engine& engine,
         if (row.faderAfterSlot != busfingerprint::kNeutralFaderAfterSlotV1 ||
             row.outputLayout != output || row.effectFirst != 0 || row.effectCount != 0 ||
             row.downmixCount != 1 || row.downmixFirst >= image.busDefinitionDownmixesV2.size() ||
-            !TryVolumeGainFromDb(row.faderDb + row.makeUpGainDb) ||
+            !TryVolumeGainFromDb(row.faderDb) ||
             !TryVolumeGainFromDb(row.outputBusVolumeDb)) return VN_BAD_PACK;
         const auto& downmix = image.busDefinitionDownmixesV2[row.downmixFirst];
         if (downmix.busId != row.busId || downmix.sourceLayout != header.mixLayout ||
@@ -120233,8 +120231,6 @@ VnResult ValidateCanonicalV2InitBusEntries(const PackCanonicalImage& init) noexc
         if (old.parentBusId != row.parentId ||
             busfingerprint::CanonicalFloatBits(old.volume) !=
                 busfingerprint::CanonicalFloatBits(row.faderDb) ||
-            busfingerprint::CanonicalFloatBits(old.makeUpGain) !=
-                busfingerprint::CanonicalFloatBits(row.makeUpGainDb) ||
             busfingerprint::CanonicalFloatBits(old.outputBusVolume) !=
                 busfingerprint::CanonicalFloatBits(row.outputBusVolumeDb)) return VN_BAD_PACK;
     }
@@ -120876,7 +120872,7 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
             const auto slot = FindAssignedSlot(out.slotPlan, row.busId);
             if (slot == UINT32_MAX || slot >= capacity ||
                 out.slotPlan.neutralSlots[slot] == 0) return VN_BAD_PACK;
-            const float authoredMix = row.faderDb + row.makeUpGainDb;
+            const float authoredMix = row.faderDb;
             const float authoredOutput = row.outputBusVolumeDb;
             const bool retained = slot < engine.buses.BusCount() &&
                 engine.buses.AliveAt(slot) && engine.buses.IdAt(slot) == row.busId &&

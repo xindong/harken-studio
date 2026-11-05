@@ -12,7 +12,7 @@ PropertyFoldContext::PropertyFoldContext(const CanonicalProject& project) {
     for (const ContentObject& obj : project.objects) {
         const Chassis& c = obj.chassis();
         Contribution contribution;
-        contribution.gainDb = c.volume + c.makeUpGain;
+        contribution.gainDb = c.volume;
         if (c.presence.Has(
                 harkenplayableproperties::PlayablePropertyIdV1::OutputBusVolume)) {
             contribution.outputBusVolumeDb = c.outputBusVolume;
@@ -140,7 +140,6 @@ FoldedProperties PropertyFoldContext::Fold(StableId subject,
     if (occurrence) {
         using Property = harkenplayableproperties::PlayablePropertyIdV1;
         if (occurrence->presence.Has(Property::Volume)) gainDb += occurrence->volume;
-        if (occurrence->presence.Has(Property::MakeUpGain)) gainDb += occurrence->makeUpGain;
         if (occurrence->presence.Has(Property::Pitch)) cents += occurrence->pitch;
     }
 

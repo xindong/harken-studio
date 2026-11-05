@@ -77,6 +77,8 @@ Copy the authored projects under `Projects` into a temporary working directory.
 Open the copies in the current Studio, apply supported project migration and
 save. Keep project/Action GUIDs and the authored audio unchanged. Select the
 platforms and all Actions/languages in Publisher, then use **Export All**.
+The checked-in sources retain their original schema 7/8 field names, including
+`mainOutput` and `mainOutputBusRef`; let Studio migrate them before exporting.
 
 | Source project | Export selection | Destination |
 | --- | --- | --- |
@@ -95,6 +97,15 @@ For the rename fixture, rename the existing Action through Studio and export to
 a fresh output directory; do not recreate the Action or project. Playback audio
 is four seconds so stop/seek tests observe live firings. Spatial retains its
 0-metre/0-dB and 100-metre/-60-dB attenuation and 100-ms delayed Action.
+
+For Companion, export only `Play_Head` in English first. In the temporary Studio
+project, disable `distinguishLanguage` on `Play_Nested_Sound` and export only
+`Play_Head` to a second fresh directory to produce General. Restore
+`distinguishLanguage` afterwards. Both selections use the existing `tone.wav`.
+Verify that their Init pairs are identical, then combine the General Action pair
+and the `English` directory with one Init pair in `Data/CompanionPacks`.
+Localized Actions only produce language variants, so exporting the original
+localized project alone does not produce General.
 
 The existing `.scripts/studio/harken_ipc.ps1` client can drive the same workflow.
 Check `get_app_state` and its project path before modifying a copied project.

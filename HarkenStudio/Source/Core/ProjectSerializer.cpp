@@ -842,6 +842,7 @@ bool ProjectSerializer::decodeComponentReferences(QJsonObject* components) const
     const QString mixKey = componentTypeName(ComponentType::MixNode);
     if (components->value(mixKey).isObject()) {
         QJsonObject mix = components->value(mixKey).toObject();
+        mix.remove(QStringLiteral("makeUpGain"));
         if (mix.contains(QStringLiteral("outputBusRef"))) {
             uint32_t id = 0;
             if (!transientReference(mix.value(QStringLiteral("outputBusRef")),
@@ -916,6 +917,7 @@ bool ProjectSerializer::decodeComponentReferences(QJsonObject* components) const
 bool ProjectSerializer::removeRetiredPlayableProperties(QJsonObject* properties) const
 {
     if (!properties) return false;
+    ProjectDocument::discardRetiredMakeUpGain(properties);
     const QString key = QStringLiteral("spatial.attenuationCurveType");
     const QString graphKey = QStringLiteral("signalGraph");
     const QString presenceKey = QStringLiteral("presence");

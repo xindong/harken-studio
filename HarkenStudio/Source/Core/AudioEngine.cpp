@@ -388,8 +388,7 @@ void AudioEngine::bindCurrentWorldPlatformContext()
         using Property = harkenplayableproperties::PlayablePropertyIdV1;
         if (item && item->type != ProjectItem::Type::Bus && field
             && (field->id == static_cast<std::uint8_t>(Property::Volume)
-                || field->id == static_cast<std::uint8_t>(Property::Pitch)
-                || field->id == static_cast<std::uint8_t>(Property::MakeUpGain))) {
+                || field->id == static_cast<std::uint8_t>(Property::Pitch))) {
             const auto key = std::make_pair(item->runtimeId(), field->id);
             if (std::find(currentWorldPreviewMutations_.begin(),
                           currentWorldPreviewMutations_.end(), key)

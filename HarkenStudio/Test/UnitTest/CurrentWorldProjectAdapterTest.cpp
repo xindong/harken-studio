@@ -381,7 +381,6 @@ TEST(CurrentWorldProjectAdapter, ScalarUpdatesMatchFullCompilationAcrossPlatform
     ASSERT_TRUE(parentLocator);
     const auto volume = static_cast<std::uint8_t>(Property::Volume);
     const auto pitch = static_cast<std::uint8_t>(Property::Pitch);
-    const auto gain = static_cast<std::uint8_t>(Property::MakeUpGain);
     const auto original = Authoring::readProperty(*sound, *soundLocator, volume, std::nullopt);
     ASSERT_TRUE(original);
     std::unordered_map<harkenstudio::ObjectId, std::uint64_t> revisions;
@@ -457,9 +456,9 @@ TEST(CurrentWorldProjectAdapter, ScalarUpdatesMatchFullCompilationAcrossPlatform
     };
 
     ASSERT_TRUE(Authoring::setOverride(*sound, *soundLocator, volume, -6.0, std::nullopt));
-    ASSERT_TRUE(Authoring::setOverride(*container, *parentLocator, gain, -3.0, std::nullopt));
+    ASSERT_TRUE(Authoring::setOverride(*container, *parentLocator, volume, -3.0, std::nullopt));
     ASSERT_TRUE(Authoring::setOverride(*container, *parentLocator, pitch, 200.0, scope));
-    verify({{sound.get(), volume}, {container.get(), gain}, {container.get(), pitch}});
+    verify({{sound.get(), volume}, {container.get(), volume}, {container.get(), pitch}});
     ASSERT_TRUE(Authoring::setOverride(*sound, *soundLocator, volume, -12.0,
                                      HarkenTest::PlatformIds::Android));
     verify({{sound.get(), volume}});
@@ -468,9 +467,9 @@ TEST(CurrentWorldProjectAdapter, ScalarUpdatesMatchFullCompilationAcrossPlatform
     ASSERT_TRUE(Authoring::clearOverride(*sound, *soundLocator, volume, scope));
     verify({{sound.get(), volume}});
     ASSERT_TRUE(Authoring::restoreProperty(*sound, *soundLocator, volume, *original, std::nullopt));
-    ASSERT_TRUE(Authoring::clearOverride(*container, *parentLocator, gain, std::nullopt));
+    ASSERT_TRUE(Authoring::clearOverride(*container, *parentLocator, volume, std::nullopt));
     ASSERT_TRUE(Authoring::clearOverride(*container, *parentLocator, pitch, scope));
-    verify({{sound.get(), volume}, {container.get(), gain}, {container.get(), pitch}});
+    verify({{sound.get(), volume}, {container.get(), volume}, {container.get(), pitch}});
     const auto restored = Bridge::compileCurrentWorldRequest(*cached, true);
     EXPECT_EQ(restored.body, originalBody);
     EXPECT_EQ(baseline->busResult->projectGeneration, 1u);

@@ -222,7 +222,6 @@ struct PackBus
     QString name;
     float volume = 0.0f;
     float outputBusVolume = 0.0f;
-    float makeUpGain = 0.0f;
     uint16_t limiterMaxInstances = 0;
     uint8_t limiterLimitBehavior = 0;
     std::vector<PackBusEffect> effects;

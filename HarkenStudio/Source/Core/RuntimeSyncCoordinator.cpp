@@ -62,8 +62,7 @@ RuntimeSyncCoordinator::markCurrentWorldPropertyMutation(
     using Property = harkenplayableproperties::PlayablePropertyIdV1;
     const auto property = static_cast<Property>(propertyId);
     if (harkenstudio::IsNull(stableId)
-        || (property != Property::Volume && property != Property::Pitch
-            && property != Property::MakeUpGain))
+        || (property != Property::Volume && property != Property::Pitch))
         return markCurrentWorldMutation();
     if (!m_pendingMutations.full
         && std::none_of(m_pendingMutations.properties.begin(),

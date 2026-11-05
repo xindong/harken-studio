@@ -1,0 +1,16 @@
+{
+  "vintage": 1,
+  "fields": [
+    {
+      "id": 3,
+      "name": "makeUpGain",
+      "wire": "f32",
+      "present": "maskBit",
+      "combineRole": "dbSum",
+      "referenceRole": "none",
+      "capabilityRole": "common",
+      "phaseRole": "firstAudible",
+      "canonicalDefault": "+0.0f"
+    }
+  ]
+}

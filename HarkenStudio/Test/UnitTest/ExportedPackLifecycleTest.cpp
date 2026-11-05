@@ -333,8 +333,6 @@ void authorDefaultPlayableProperties(VNX::ProjectItem& item)
     ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::setOverride(
         item, *locator, static_cast<uint8_t>(Id::Pitch), QJsonValue(0.0), std::nullopt));
     ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::setOverride(
-        item, *locator, static_cast<uint8_t>(Id::MakeUpGain), QJsonValue(0.0), std::nullopt));
-    ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::setOverride(
         item, *locator, static_cast<uint8_t>(Id::LoopCount), QJsonValue(1), std::nullopt));
     ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::setOverride(
         item, *locator, static_cast<uint8_t>(Id::StreamingMode), QJsonValue(0), std::nullopt));
@@ -1765,7 +1763,6 @@ TEST_F(AuthoredPackLifecycle, SavedWindowsProjectPreviewAndPackRenderSameBusVolu
     auto* mix = master->comp<VNX::VMixNode>();
     ASSERT_NE(nullptr, mix);
     mix->volume = -3.0f;
-    mix->makeUpGain = 2.0f;
     mix->outputBusVolume = -5.0f;
     const auto locator = VNX::PlayablePropertyAuthoringV1::definitionLocator(*master);
     ASSERT_TRUE(locator.has_value());
@@ -1773,9 +1770,6 @@ TEST_F(AuthoredPackLifecycle, SavedWindowsProjectPreviewAndPackRenderSameBusVolu
     ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::setOverride(
         *master, *locator, static_cast<uint8_t>(Property::Volume),
         QJsonValue(-3.0), std::nullopt));
-    ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::setOverride(
-        *master, *locator, static_cast<uint8_t>(Property::MakeUpGain),
-        QJsonValue(2.0), std::nullopt));
     ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::setOverride(
         *master, *locator, static_cast<uint8_t>(Property::OutputBusVolume),
         QJsonValue(-5.0), std::nullopt));
@@ -1955,11 +1949,11 @@ TEST_F(AuthoredPackLifecycle, SavedWindowsProjectPreviewAndPackRenderSameBusVolu
     ASSERT_NO_FATAL_FAILURE(capture(2,
         QDir(dir_.path()).filePath(QStringLiteral("saved-volume-property-zero")),
         &volumeZeroPreview, &volumeZeroPack));
-    EXPECT_NEAR(volumeZeroPreview, kToneAmplitude * std::pow(10.0f, 2.0f / 20.0f), 0.003f);
+    EXPECT_NEAR(volumeZeroPreview, kToneAmplitude, 0.003f);
     EXPECT_NEAR(volumeZeroPack, volumeZeroPreview, 0.003f);
-    EXPECT_NEAR(basePreview, kToneAmplitude * std::pow(10.0f, -6.0f / 20.0f), 0.003f);
+    EXPECT_NEAR(basePreview, kToneAmplitude * std::pow(10.0f, -8.0f / 20.0f), 0.003f);
     EXPECT_NEAR(basePack, basePreview, 0.003f);
-    EXPECT_NEAR(zeroPreview, kToneAmplitude * std::pow(10.0f, -1.0f / 20.0f), 0.003f);
+    EXPECT_NEAR(zeroPreview, kToneAmplitude * std::pow(10.0f, -3.0f / 20.0f), 0.003f);
     EXPECT_NEAR(zeroPack, zeroPreview, 0.003f);
 }
 
@@ -5160,9 +5154,8 @@ TEST_F(AuthoredPackLifecycle, CanonicalV2RejectsLegacyBusMismatchAndKeepsPublish
     ASSERT_TRUE(input.open(QIODevice::ReadOnly));
     const QByteArray original = input.readAll();
     input.close();
-    enum class Mismatch { Volume, MakeUpGain, OutputVolume, BusId, SendLevel };
-    for (const auto mismatch : {Mismatch::Volume, Mismatch::MakeUpGain,
-                                  Mismatch::OutputVolume, Mismatch::BusId,
+    enum class Mismatch { Volume, OutputVolume, BusId, SendLevel };
+    for (const auto mismatch : {Mismatch::Volume, Mismatch::OutputVolume, Mismatch::BusId,
                                   Mismatch::SendLevel}) {
         SCOPED_TRACE(static_cast<int>(mismatch));
         std::vector<std::uint8_t> bytes(original.begin(), original.end());
@@ -5194,7 +5187,6 @@ TEST_F(AuthoredPackLifecycle, CanonicalV2RejectsLegacyBusMismatchAndKeepsPublish
                 ASSERT_FLOAT_EQ(-6.0f, bus.outputBusVolume);
                 switch (mismatch) {
                 case Mismatch::Volume: bus.volume = -3.0f; break;
-                case Mismatch::MakeUpGain: bus.makeUpGain = 2.0f; break;
                 case Mismatch::OutputVolume: bus.outputBusVolume = -9.0f; break;
                 case Mismatch::BusId:
                     bus.busId = harkentest::ToRuntime(harkentest::StudioObjectId(999999));

@@ -27,9 +27,7 @@ typedef struct VnPreviewBusV1 {
 typedef struct VnPreviewBusVolumeV2 {
     VnBusId id;
     float volumeDb;
-    float makeUpGainDb;
     float outputBusVolumeDb;
-    uint32_t reserved0;
 } VnPreviewBusVolumeV2;
 
 typedef struct VnPreviewBusSendV1 {

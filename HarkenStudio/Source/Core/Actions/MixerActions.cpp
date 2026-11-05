@@ -41,7 +41,6 @@ QString unsupportedBusPropertiesKey(const QJsonObject& args)
     static const QSet<QString> supported{
         QStringLiteral("bus_id"), QStringLiteral("preview"), QStringLiteral("volume"),
         QStringLiteral("pitch"), QStringLiteral("pan"),
-        QStringLiteral("makeUpGain"), QStringLiteral("makeup_gain"),
         QStringLiteral("mute"), QStringLiteral("solo"),
         QStringLiteral("outputBusVolume")};
     for (auto it = args.constBegin(); it != args.constEnd(); ++it)
@@ -70,14 +69,13 @@ ActionResult applyBusPropertiesArgs(const QJsonObject& args, const QObject* orig
     const bool hasVolume = args.contains("volume");
     const bool hasPitch  = args.contains("pitch");
     const bool hasPan    = args.contains("pan");
-    const bool hasMakeUpGain = args.contains("makeUpGain") || args.contains("makeup_gain");
     const bool hasMute   = args.contains("mute");
     const bool hasSolo   = args.contains("solo");
     const bool hasObv    = args.contains("outputBusVolume");
-    if (!hasVolume && !hasPitch && !hasPan && !hasMakeUpGain
+    if (!hasVolume && !hasPitch && !hasPan
         && !hasMute && !hasSolo && !hasObv)
         return {false, {}, "INVALID_ARGS",
-                "At least one of volume/pitch/pan/makeUpGain/mute/solo/outputBusVolume is required"};
+                "At least one of volume/pitch/pan/mute/solo/outputBusVolume is required"};
 
     const float oldPan = bus->pan;
     const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*busItem);
@@ -90,25 +88,17 @@ ActionResult applyBusPropertiesArgs(const QJsonObject& args, const QObject* orig
     };
     const auto oldVolume = hasVolume ? snapshot(QStringLiteral("volume")) : std::nullopt;
     const auto oldPitch = hasPitch ? snapshot(QStringLiteral("pitch")) : std::nullopt;
-    const auto oldMakeUpGain = hasMakeUpGain
-        ? snapshot(QStringLiteral("makeUpGain")) : std::nullopt;
     const auto oldObv = hasObv
         ? snapshot(QStringLiteral("outputBusVolume")) : std::nullopt;
 
     const float newVolume = hasVolume ? static_cast<float>(args["volume"].toDouble()) : 0.0f;
     const float newPitch = hasPitch ? static_cast<float>(args["pitch"].toDouble()) : 0.0f;
     const float newPan = hasPan ? static_cast<float>(args["pan"].toDouble()) : oldPan;
-    const QJsonValue makeUpGainValue = args.contains("makeUpGain")
-        ? args["makeUpGain"] : args["makeup_gain"];
-    const float newMakeUpGain = hasMakeUpGain
-        ? static_cast<float>(makeUpGainValue.toDouble()) : 0.0f;
     const float newObv = hasObv ? static_cast<float>(args["outputBusVolume"].toDouble()) : 0.0f;
 
     if (hasVolume) pm.setBusVolumeInternal(busId, newVolume, originator);
     if (hasPitch) pm.setBusPitchInternal(busId, newPitch, originator);
     if (hasPan) pm.setBusPanInternal(busId, newPan, originator);
-    if (hasMakeUpGain)
-        pm.setBusMakeUpGainInternal(busId, newMakeUpGain, originator);
     if (hasMute) pm.setBusMuteInternal(busId, args["mute"].toBool(), originator);
     if (hasSolo) pm.setBusSoloInternal(busId, args["solo"].toBool(), originator);
     if (hasObv) pm.setBusOutputBusVolumeInternal(busId, newObv, originator);
@@ -120,19 +110,17 @@ ActionResult applyBusPropertiesArgs(const QJsonObject& args, const QObject* orig
         {"message", "Properties updated"}
     };
 
-    const bool hasUndoableProp = hasVolume || hasPitch || hasPan
-        || hasMakeUpGain || hasObv;
+    const bool hasUndoableProp = hasVolume || hasPitch || hasPan || hasObv;
     if (!hasUndoableProp)
         return r;
 
     int changedCount = (hasVolume ? 1 : 0) + (hasPitch ? 1 : 0)
-        + (hasPan ? 1 : 0) + (hasMakeUpGain ? 1 : 0) + (hasObv ? 1 : 0);
+        + (hasPan ? 1 : 0) + (hasObv ? 1 : 0);
     QString propKey;
     if (changedCount == 1) {
         if (hasVolume) propKey = "volume";
         else if (hasPitch) propKey = "pitch";
         else if (hasPan) propKey = "pan";
-        else if (hasMakeUpGain) propKey = "makeUpGain";
         else if (hasObv) propKey = "outputBusVolume";
     }
 
@@ -149,8 +137,8 @@ ActionResult applyBusPropertiesArgs(const QJsonObject& args, const QObject* orig
     };
 
     auto undoFn = [busId, busGuid,
-                   hasVolume, hasPitch, hasPan, hasMakeUpGain, hasObv,
-                   oldVolume, oldPitch, oldPan, oldMakeUpGain, oldObv,
+                   hasVolume, hasPitch, hasPan, hasObv,
+                   oldVolume, oldPitch, oldPan, oldObv,
                    restorePlayable]() {
         auto& pmm = ProjectManager::instance();
         auto live = [&](const QString& propertyName) {
@@ -172,12 +160,6 @@ ActionResult applyBusPropertiesArgs(const QJsonObject& args, const QObject* orig
                 live(QStringLiteral("pitch"));
         }
         if (hasPan) pmm.setBusPanInternal(busId, oldPan);
-        if (hasMakeUpGain) {
-            if (!restorePlayable(QStringLiteral("makeUpGain"), oldMakeUpGain))
-                pmm.setBusMakeUpGainInternal(busId, 0.0f);
-            else
-                live(QStringLiteral("makeUpGain"));
-        }
         if (hasObv) {
             if (!restorePlayable(QStringLiteral("outputBusVolume"), oldObv))
                 pmm.setBusOutputBusVolumeInternal(busId, 0.0f);
@@ -186,14 +168,12 @@ ActionResult applyBusPropertiesArgs(const QJsonObject& args, const QObject* orig
         }
     };
     auto redoFn = [busId,
-                   hasVolume, hasPitch, hasPan, hasMakeUpGain, hasObv,
-                   newVolume, newPitch, newPan, newMakeUpGain, newObv]() {
+                   hasVolume, hasPitch, hasPan, hasObv,
+                   newVolume, newPitch, newPan, newObv]() {
         auto& pmm = ProjectManager::instance();
         if (hasVolume) pmm.setBusVolumeInternal(busId, newVolume);
         if (hasPitch) pmm.setBusPitchInternal(busId, newPitch);
         if (hasPan) pmm.setBusPanInternal(busId, newPan);
-        if (hasMakeUpGain)
-            pmm.setBusMakeUpGainInternal(busId, newMakeUpGain);
         if (hasObv) pmm.setBusOutputBusVolumeInternal(busId, newObv);
     };
 

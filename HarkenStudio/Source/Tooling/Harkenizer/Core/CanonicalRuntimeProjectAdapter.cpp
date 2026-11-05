@@ -547,8 +547,6 @@ compileBusResult(
         };
         using Property = harkenplayableproperties::PlayablePropertyIdV1;
         readBusDb(Property::Volume, QStringLiteral("volume"), &bus.faderDb);
-        readBusDb(Property::MakeUpGain, QStringLiteral("makeUpGain"),
-                  &bus.makeUpGainDb);
         readBusDb(Property::OutputBusVolume, QStringLiteral("outputBusVolume"),
                   &bus.outputBusVolumeDb);
         const auto sourcePath = index.documentPaths.find(item);
@@ -849,7 +847,6 @@ bool copyStudioDefinitionPayload(
         switch (property) {
         case Property::Volume: node.volume = static_cast<float>(state->value.toDouble()); break;
         case Property::Pitch: node.pitch = static_cast<float>(state->value.toDouble()); break;
-        case Property::MakeUpGain: node.makeUpGain = static_cast<float>(state->value.toDouble()); break;
         case Property::LoopCount: node.loopCount = static_cast<uint32_t>(state->value.toInteger()); break;
         case Property::StreamingMode: node.streamingMode = static_cast<uint32_t>(state->value.toInteger()); break;
         default: return fail(QStringLiteral("Definition property is unsupported"));
@@ -976,7 +973,6 @@ bool copyStudioOccurrencePayload(
         switch (property) {
         case Property::Volume: payload.volume = static_cast<float>(state->value.toDouble()); break;
         case Property::Pitch: payload.pitch = static_cast<float>(state->value.toDouble()); break;
-        case Property::MakeUpGain: payload.makeUpGain = static_cast<float>(state->value.toDouble()); break;
         case Property::LoopCount: payload.loopCount = static_cast<uint32_t>(state->value.toInteger()); break;
         case Property::StreamingMode: payload.streamingMode = static_cast<uint32_t>(state->value.toInteger()); break;
         default: return fail();

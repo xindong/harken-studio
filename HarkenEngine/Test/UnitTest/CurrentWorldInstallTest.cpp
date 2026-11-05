@@ -229,7 +229,7 @@ TEST(CurrentWorldInstall, LargeActionUsesDeclaredCountsAndPreservesAcceptedDecod
 TEST(CurrentWorldInstall, DefinitionFingerprintMatchesPinnedCanonicalBytes) {
     RunnableWorld image;
     image.properties[0].payload = CanonicalPayload(1);
-    EXPECT_EQ(UINT64_C(0x6af80ae1bd894fa5),
+    EXPECT_EQ(UINT64_C(0x22e6059a4ea70705),
               harken::ComputePlayablePropertyFingerprintV1(
                   image.properties[0]));
 }
@@ -561,7 +561,7 @@ TEST(CurrentWorldInstall, OccurrenceFingerprintMatchesPinnedCanonicalBytes) {
     row.childPlayable.routeStableId = harkentest::ObjectId(201);
     row.childPlayable.compatibilityFingerprint = 301;
     row.payload = CanonicalPayload();
-    EXPECT_EQ(UINT64_C(0x5abf571225350f18),
+    EXPECT_EQ(UINT64_C(0x20ad6e84943f2468),
               harken::ComputePlayableOccurrenceFingerprintV1(row));
 }
 

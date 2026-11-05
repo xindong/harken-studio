@@ -88,8 +88,6 @@ std::uint32_t NonCanonicalAbsentField(
         std::bit_cast<std::uint32_t>(payload.volume) != 0) return 1;
     if (absent(PlayablePropertyIdV1::Pitch) &&
         std::bit_cast<std::uint32_t>(payload.pitch) != 0) return 2;
-    if (absent(PlayablePropertyIdV1::MakeUpGain) &&
-        std::bit_cast<std::uint32_t>(payload.makeUpGain) != 0) return 3;
     if (absent(PlayablePropertyIdV1::LoopCount) && payload.loopCount != 1) return 4;
     if (absent(PlayablePropertyIdV1::StreamingMode) &&
         payload.streamingMode != 0) return 5;

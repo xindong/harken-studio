@@ -7,6 +7,7 @@
 #include "Core/Components/VMixNode.h"
 #include "Core/Components/VSegment.h"
 #include "Core/ProjectManager.h"
+#include "Core/ProjectContract.h"
 #include "Core/ProjectSerializer.h"
 #include "Core/ProjectTypes.h"
 #include "Core/ProjectUpgradeManager.h"
@@ -333,6 +334,14 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
     const int version = GetParam();
     SCOPED_TRACE(version);
     QMap<QString, QByteArray> beforeOpen;
+    QMap<QString, QJsonObject> expectedProperties;
+    QMap<QString, QJsonObject> expectedGroups;
+    QMap<QString, QJsonArray> expectedBusEffects;
+    const auto platforms = HarkenTest::projectContent(readObject(projectPath_))
+        .value(QStringLiteral("deployPlatforms")).toArray();
+    ASSERT_FALSE(platforms.isEmpty());
+    const auto platformId = platforms.first().toObject().value(QStringLiteral("id"));
+    ASSERT_TRUE(platformId.isString());
     for (auto it = documentsById_.cbegin(); it != documentsById_.cend(); ++it) {
         auto document = it.value();
         auto header = HarkenTest::projectHeader(document);
@@ -345,7 +354,95 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
         }
         document.insert(QStringLiteral("harkenDocument"), header);
         auto content = HarkenTest::projectContent(document);
+        auto authoredComponents = content.value(QStringLiteral("components")).toObject();
+        if (content.value(QStringLiteral("playableProperties")).isObject()) {
+            auto properties = content.value(QStringLiteral("playableProperties")).toObject();
+            ASSERT_TRUE(properties.value(QStringLiteral("platformOverrides")).toArray().isEmpty());
+            QJsonObject overlay{{QStringLiteral("platformId"), platformId},
+                {QStringLiteral("presence"), QStringLiteral("0000000000000001")},
+                {QStringLiteral("volume"), -3.0}};
+            properties.insert(QStringLiteral("platformOverrides"), QJsonArray{overlay});
+            expectedProperties.insert(it.key(), properties);
+            bool validPresence = false;
+            const auto presence = properties.value(QStringLiteral("presence")).toString()
+                .toULongLong(&validPresence, 16);
+            ASSERT_TRUE(validPresence);
+            properties.insert(QStringLiteral("presence"),
+                QStringLiteral("%1").arg(presence | 4, 16, 16, QLatin1Char('0')));
+            properties.insert(QStringLiteral("makeUpGain"), 6.0);
+            overlay.insert(QStringLiteral("presence"), QStringLiteral("0000000000000005"));
+            overlay.insert(QStringLiteral("makeUpGain"), -12.0);
+            properties.insert(QStringLiteral("platformOverrides"), QJsonArray{overlay});
+            content.insert(QStringLiteral("playableProperties"), properties);
+            auto mix = authoredComponents.value(QStringLiteral("mixnode")).toObject();
+            mix.insert(QStringLiteral("makeUpGain"), 9.0);
+            authoredComponents.insert(QStringLiteral("mixnode"), mix);
+            content.insert(QStringLiteral("components"), authoredComponents);
+        }
         if (version < ProjectSchema::kProjectSchemaVersion) {
+            QJsonArray effects;
+            QJsonArray legacyEffects;
+            const bool bus = header.value(QStringLiteral("type")) == QStringLiteral("project.bus");
+            if (bus || it.key() == segmentGuid_.toString(QUuid::WithoutBraces)) {
+                EffectEntry effect;
+                effect.guid = QUuid::createUuid();
+                effect.mode = EffectMode::Custom;
+                effect.custom.type = EffectType::Limiter;
+                effect.custom.parameters = {-4.5f, 80.0f};
+                effect.bypass = true;
+                effect.extensions = extensionMetadata(effect.guid.toString(QUuid::WithoutBraces));
+                effects.append(effect.toJson());
+                auto legacyEffect = effect.extensions;
+                legacyEffect.insert(QStringLiteral("guid"), effect.guid.toString(QUuid::WithoutBraces));
+                legacyEffect.insert(QStringLiteral("type"), QStringLiteral("limiter"));
+                legacyEffect.insert(QStringLiteral("parameters"), QJsonArray{-4.5, 80.0});
+                legacyEffect.insert(QStringLiteral("bypass"), true);
+                legacyEffects.append(legacyEffect);
+                if (bus) expectedBusEffects.insert(it.key(), effects);
+            }
+            if (bus || content.value(QStringLiteral("fieldGroups")).isObject()) {
+                auto components = content.value(QStringLiteral("components")).toObject();
+                auto mix = components.value(QStringLiteral("mixnode")).toObject();
+                mix.insert(QStringLiteral("effects"), legacyEffects);
+                components.insert(QStringLiteral("mixnode"), mix);
+                content.insert(QStringLiteral("components"), components);
+            }
+            if (content.value(QStringLiteral("fieldGroups")).isObject()) {
+                auto groups = content.value(QStringLiteral("fieldGroups")).toObject();
+                auto shared = groups.value(QStringLiteral("shared")).toObject();
+                shared.insert(QStringLiteral("effect"), QJsonObject{
+                    {QStringLiteral("inherit"), false},
+                    {QStringLiteral("values"), QJsonObject{{QStringLiteral("effects"), effects}}}});
+                groups.insert(QStringLiteral("shared"), shared);
+                QJsonObject outputValues{{QStringLiteral("outputBusVolume"), -2.0}};
+                const auto outputReference = shared.value(QStringLiteral("output")).toObject()
+                    .value(QStringLiteral("values")).toObject().value(QStringLiteral("outputBusRef"));
+                if (!outputReference.isUndefined())
+                    outputValues.insert(QStringLiteral("outputBusRef"), outputReference);
+                QJsonObject platformScope{{QStringLiteral("output"), QJsonObject{
+                    {QStringLiteral("values"), outputValues}}}};
+                groups.insert(QStringLiteral("platforms"), QJsonObject{
+                    {platformId.toString(), platformScope}});
+                expectedGroups.insert(it.key(), groups);
+                const auto restoreOutput = [](QJsonObject* scope) {
+                    auto output = scope->take(QStringLiteral("output")).toObject();
+                    if (output.value(QStringLiteral("values")).isObject()) {
+                        auto values = output.value(QStringLiteral("values")).toObject();
+                        if (values.contains(QStringLiteral("outputBusRef")))
+                            values.insert(QStringLiteral("mainOutputBusRef"),
+                                          values.take(QStringLiteral("outputBusRef")));
+                        output.insert(QStringLiteral("values"), values);
+                    }
+                    scope->insert(QStringLiteral("mainOutput"), output);
+                };
+                restoreOutput(&shared);
+                shared.remove(QStringLiteral("effect"));
+                groups.insert(QStringLiteral("shared"), shared);
+                restoreOutput(&platformScope);
+                groups.insert(QStringLiteral("platforms"), QJsonObject{
+                    {platformId.toString(), platformScope}});
+                content.insert(QStringLiteral("fieldGroups"), groups);
+            }
             if (header.value(QStringLiteral("type")) == QStringLiteral("project.root")) {
                 content.insert(QStringLiteral("paths"), QJsonObject{
                     {QStringLiteral("audioFolder"), QStringLiteral("Layers")},
@@ -363,6 +460,20 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
             } else if (header.value(QStringLiteral("type")) == QStringLiteral("project.bus")) {
                 content.insert(QStringLiteral("componentData"),
                                content.value(QStringLiteral("components")).toObject().value(QStringLiteral("bus")));
+                auto properties = content.value(QStringLiteral("playableProperties")).toObject();
+                if (properties.contains(QStringLiteral("outputBusRef")))
+                    properties.insert(QStringLiteral("mainOutputBusRef"),
+                                      properties.take(QStringLiteral("outputBusRef")));
+                auto overlays = properties.value(QStringLiteral("platformOverrides")).toArray();
+                for (qsizetype index = 0; index < overlays.size(); ++index) {
+                    auto overlay = overlays[index].toObject();
+                    if (overlay.contains(QStringLiteral("outputBusRef")))
+                        overlay.insert(QStringLiteral("mainOutputBusRef"),
+                                       overlay.take(QStringLiteral("outputBusRef")));
+                    overlays[index] = overlay;
+                }
+                properties.insert(QStringLiteral("platformOverrides"), overlays);
+                content.insert(QStringLiteral("playableProperties"), properties);
             } else if (header.value(QStringLiteral("type")) != QStringLiteral("project.action")) {
                 content.insert(QStringLiteral("expanded"), true);
             }
@@ -387,6 +498,11 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
         const QString path = pathsById_.value(it.key());
         writeObject(path, document);
         beforeOpen.insert(path, readFile(path));
+    }
+    if (version < ProjectSchema::kProjectSchemaVersion) {
+        const auto errors = ProjectContractRegistry::instance().validateTree(
+            projectDirectory_, readObject(projectPath_), false);
+        ASSERT_TRUE(errors.isEmpty()) << errors.join(QLatin1Char('\n')).toStdString();
     }
     ProjectUpgradeManager upgrades;
     const auto analysis = upgrades.analyze(projectPath_);
@@ -432,6 +548,22 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
                   ProjectSchema::kProjectSchemaVersion);
         const auto content = HarkenTest::projectContent(document);
         const auto original = HarkenTest::projectContent(documentsById_.value(it.key()));
+        if (expectedGroups.contains(it.key()))
+            EXPECT_EQ(content.value(QStringLiteral("fieldGroups")), expectedGroups.value(it.key()));
+        if (expectedProperties.contains(it.key())) {
+            EXPECT_EQ(content.value(QStringLiteral("playableProperties")),
+                      expectedProperties.value(it.key()));
+            auto expectedMix = original.value(QStringLiteral("components")).toObject()
+                .value(QStringLiteral("mixnode"));
+            if (expectedBusEffects.contains(it.key())) {
+                auto mix = expectedMix.toObject();
+                mix.insert(QStringLiteral("effects"), expectedBusEffects.value(it.key()));
+                expectedMix = mix;
+            }
+            EXPECT_EQ(content.value(QStringLiteral("components")).toObject()
+                          .value(QStringLiteral("mixnode")),
+                      expectedMix);
+        }
         for (const auto* key : {"type", "name", "guid", "parentRef"})
             EXPECT_EQ(content.value(QLatin1String(key)), original.value(QLatin1String(key)));
         if (HarkenTest::projectHeader(document).value(QStringLiteral("type")) == QStringLiteral("project.root"))

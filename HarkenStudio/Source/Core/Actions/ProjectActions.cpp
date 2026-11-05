@@ -735,7 +735,6 @@ ActionResult handleAudioItemProperty(ProjectManager* projectManager, ProjectItem
     auto* spatial = item->comp<VSpatial>();
     static const QSet<QString> kMixBackedProps = {
         QStringLiteral("volume"), QStringLiteral("pitch"),
-        QStringLiteral("makeUpGain"), QStringLiteral("makeup_gain"),
         QStringLiteral("outputBusId"), QStringLiteral("outputBus"),
         QStringLiteral("output_bus"), QStringLiteral("outputBusVolume")};
     static const QSet<QString> kSpatialBackedProps = {
@@ -771,10 +770,6 @@ ActionResult handleAudioItemProperty(ProjectManager* projectManager, ProjectItem
         undoTracked = true;
     } else if (propertyName == "pitch") {
         undoOldValue = mix->pitch; undoNewValue = static_cast<float>(value);
-        applied = projectManager->writeAudioPropertySilent(item, propertyName, static_cast<float>(value));
-        undoTracked = true;
-    } else if (propertyName == "makeUpGain" || propertyName == "makeup_gain") {
-        undoOldValue = mix->makeUpGain; undoNewValue = static_cast<float>(value);
         applied = projectManager->writeAudioPropertySilent(item, propertyName, static_cast<float>(value));
         undoTracked = true;
     } else if (propertyName == "streamingMode" || propertyName == "streaming_mode") {

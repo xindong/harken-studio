@@ -230,10 +230,9 @@ bool EncodeCurve(const CurveV1& row, std::vector<std::uint8_t>& out) {
 void EncodePayloadHeader(const PlayablePropertyPayloadViewV1& payload,
                          std::vector<std::uint8_t>& out,
                          bool includeSpatializationMix) {
-    AppendU64(out, payload.presentMask);
+    AppendU64(out, payload.presentMask & ~UINT64_C(0x4));
     AppendU32(out, static_cast<std::uint32_t>(payload.values[0].bits));
     AppendU32(out, static_cast<std::uint32_t>(payload.values[1].bits));
-    AppendU32(out, static_cast<std::uint32_t>(payload.values[2].bits));
     AppendU32(out, static_cast<std::uint32_t>(payload.values[5].bits));
     AppendU32(out, static_cast<std::uint32_t>(payload.values[4].bits));
     AppendU32(out, static_cast<std::uint32_t>(payload.values[3].bits));
@@ -520,7 +519,7 @@ void DecodePayloadHeader(Reader& reader,
     payload.presentMask = reader.U64();
     payload.values[0].bits = reader.U32();
     payload.values[1].bits = reader.U32();
-    payload.values[2].bits = reader.U32();
+    payload.values[2] = {};
     payload.values[5].bits = reader.U32();
     payload.values[4].bits = reader.U32();
     payload.values[3].bits = worldTraceVintage >= 5
@@ -545,7 +544,8 @@ void DecodePayloadHeader(Reader& reader,
     const std::uint32_t reservedCount2 = reader.U32();
     payload.effectNodeCount = reader.U32();
     payload.effectEdgeCount = reader.U32();
-    if (reserved != 0 || payload.values[14].bits != 0 ||
+    if ((payload.presentMask & UINT64_C(0x4)) != 0 ||
+        reserved != 0 || payload.values[14].bits != 0 ||
         reservedCount1 != 0 || reservedCount2 != 0) {
         reader.failed = true;
     }

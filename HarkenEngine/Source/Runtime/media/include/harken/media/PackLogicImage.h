@@ -254,7 +254,6 @@ inline std::uint64_t CanonicalVolumeBusFingerprint(const PackCanonicalImage& ima
         u32(row.effectCount);
         u32(row.downmixFirst);
         u32(row.downmixCount);
-        f32(row.makeUpGainDb);
         f32(row.outputBusVolumeDb);
     }
     for (const auto& row : image.busDefinitionSendsV2) {

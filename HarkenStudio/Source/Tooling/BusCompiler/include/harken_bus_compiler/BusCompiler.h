@@ -81,7 +81,6 @@ struct BusAuthoringV1 {
     std::uint32_t effectCount = 0;
     std::uint32_t downmixFirst = 0;
     std::uint32_t downmixCount = 0;
-    float makeUpGainDb = 0.0f;
     float outputBusVolumeDb = 0.0f;
 };
 
@@ -132,7 +131,6 @@ struct CompiledBusV1 {
     std::uint32_t downmixFirst = 0;
     std::uint32_t downmixCount = 0;
     std::uint32_t sourceLocationIndex = 0;
-    float makeUpGainDb = 0.0f;
     float outputBusVolumeDb = 0.0f;
 };
 

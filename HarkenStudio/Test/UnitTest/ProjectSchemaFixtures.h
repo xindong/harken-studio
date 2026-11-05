@@ -43,7 +43,7 @@ inline InputNode Node(ContentKind kind, std::uint64_t guid) {
     InputNode n;
     n.kind = kind;
     n.guid = G(guid);
-    n.presence.bits = UINT64_C(0x0000000000000fff);
+    n.presence.bits = UINT64_C(0x0000000000000ffb);
     return n;
 }
 
@@ -550,7 +550,6 @@ inline ProjectInput MusicalOverlap() {
 inline void ApplyChassisProbe(InputNode* node) {
     node->volume = 1.5f;
     node->pitch = -2.25f;
-    node->makeUpGain = 0.5f;
     node->loopCount = 0;
     node->streamingMode = 2;
     node->outputBusVolume = -6.0f;
