@@ -96,6 +96,49 @@ TEST(CanonicalPackSetActivate, PathInitOnlyActivateRetryUnload) {
     ASSERT_NE(nullptr, PackMasterHolder(session.Engine()));
 }
 
+TEST(CanonicalPackSetActivate, FileBudgetRefusalPrecedesWholeFileAllocationAndCanRetry) {
+    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-file-budget";
+    std::filesystem::create_directories(directory);
+    const auto path = directory / "Init.bytes";
+    const auto pathText = path.string();
+    const auto tracePath = (directory / "budget.vntrace").string();
+    constexpr std::size_t oversizedBytes = 4u * 1024u * 1024u;
+    const std::vector<std::uint8_t> oversized(oversizedBytes, 0);
+    const auto valid = harkentest::BuildMasterOnlyInitBytes();
+    for (const bool trace : {false, true}) {
+        SCOPED_TRACE(trace);
+        auto config = CanonicalActivationConfig();
+        config.maxPackDecodeStagingBytes = 64u * 1024u;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        if (trace) ASSERT_EQ(VN_OK, Vn_TraceStart(tracePath.c_str()));
+        ASSERT_TRUE(harkentest::packfoundation::WriteFile(path, oversized));
+        for (unsigned attempt = 0; attempt < 3; ++attempt) {
+            VnPackHandle handle = 0;
+            allocation_probe::count = 0;
+            allocation_probe::bytes = 0;
+            allocation_probe::enabled = true;
+            const auto result = harkentest::ActivateExistingInitPackV1(
+                pathText.c_str(), harkentest::packfoundation::kInitPackStableId, &handle);
+            allocation_probe::enabled = false;
+            const auto allocated = allocation_probe::bytes;
+            EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, result);
+            EXPECT_LT(allocated, oversizedBytes);
+            EXPECT_EQ(0u, handle);
+            EXPECT_EQ(nullptr, session.Engine()->packComposition.Published());
+            EXPECT_EQ(0u, session.Engine()->packs.LoadedCount());
+            RecordProperty(trace ? "trace_refusal_allocated_bytes" : "file_refusal_allocated_bytes",
+                           static_cast<int>(allocated));
+        }
+        ASSERT_TRUE(harkentest::packfoundation::WriteFile(path, valid));
+        VnPackHandle handle = 0;
+        ASSERT_EQ(VN_OK, harkentest::ActivateExistingInitPackV1(
+            pathText.c_str(), harkentest::packfoundation::kInitPackStableId, &handle));
+        EXPECT_NE(0u, handle);
+        if (trace) EXPECT_EQ(VN_OK, Vn_TraceStop());
+    }
+}
+
 namespace companionfixture {
 
 constexpr VnObjectId project{0x0102030405060708, 0x090a0b0c0d0e0f10};
@@ -2824,13 +2867,20 @@ TEST(CanonicalPackSetActivate, BindingCapacityRefusalsLeaveEmptyState) {
 }
 
 TEST(CanonicalPackSetActivate, ReplaceCanonicalPackSwapsContentBindings) {
-    EngineSession session(CanonicalActivationConfig());
+    for (const bool trace : {false, true}) {
+    SCOPED_TRACE(trace);
+    auto config = CanonicalActivationConfig();
+    config.maxPackDecodeStagingBytes = 64u * 1024u;
+    EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
+    const auto directory =
+        std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-binding-replace-content";
+    std::filesystem::create_directories(directory);
+    const auto tracePath = (directory / "replacement-budget.vntrace").string();
+    if (trace) ASSERT_EQ(VN_OK, Vn_TraceStart(tracePath.c_str()));
     const std::vector<float> dc = harkentest::MakeDC(48000, 0.5f);
     const VnPCMDesc pcm = harkentest::MonoDesc(dc, 48000);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kVoicePlayableId, &pcm));
-    const auto directory =
-        std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-binding-replace-content";
     ASSERT_TRUE(harkentest::WriteBytes(directory / "Init.pack",
                                       harkentest::BuildMasterOnlyInitBytes()));
     ASSERT_TRUE(harkentest::WriteBytes(
@@ -2855,14 +2905,42 @@ TEST(CanonicalPackSetActivate, ReplaceCanonicalPackSwapsContentBindings) {
     ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(members.data(), 2, rows.data(),
                                                           report));
     const VnPackHandle contentHandle = rows[1].handle;
+    const auto* publication = session.Engine()->packComposition.Published();
+    companionfixture::Provider oversized;
+    oversized.bytes.resize(4u * 1024u * 1024u);
+    ASSERT_TRUE(harkentest::WriteBytes(directory / "Content.pack", oversized.bytes));
+    VnPackLoadDesc replace{};
+    replace.structSize = sizeof(replace);
+    replace.utf8Path = contentPath.c_str();
+    for (const unsigned source : {0u, 1u}) {
+        SCOPED_TRACE(source);
+        if (source == 1) {
+            replace.flags = VN_PACK_LOAD_FLAG_PROVIDER;
+            replace.providerUserData = &oversized;
+            replace.provide = companionfixture::Provider::Read;
+            replace.release = companionfixture::Provider::Release;
+        }
+        allocation_probe::bytes = 0;
+        allocation_probe::enabled = true;
+        const auto result = Vn_ReplacePack(contentHandle, reinterpret_cast<const VnPackDesc*>(&replace));
+        allocation_probe::enabled = false;
+        const auto allocated = allocation_probe::bytes;
+        EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, result);
+        EXPECT_LT(allocated, oversized.bytes.size());
+        EXPECT_EQ(publication, session.Engine()->packComposition.Published());
+        EXPECT_EQ(2u, session.Engine()->packs.LoadedCount());
+    }
+    EXPECT_EQ(1u, oversized.reads);
+    EXPECT_EQ(1u, oversized.releases);
+    replace.flags = 0;
+    replace.providerUserData = nullptr;
+    replace.provide = nullptr;
+    replace.release = nullptr;
     const auto nextId = harkentest::ObjectId(8404);
     ASSERT_TRUE(harkentest::WriteBytes(
         directory / "Content.pack",
         harkentest::BuildContentWithVoiceBindingBytes(nextId, kBindingVariableId,
                                                      kVoicePlayableId)));
-    VnPackLoadDesc replace{};
-    replace.structSize = sizeof(replace);
-    replace.utf8Path = contentPath.c_str();
     ASSERT_EQ(VN_OK, Vn_ReplacePack(contentHandle, reinterpret_cast<const VnPackDesc*>(&replace)));
     EXPECT_EQ(nullptr, session.Engine()->bindings.Find(kVoiceBindingId));
     EXPECT_EQ(nullptr, session.Engine()->bindings.Find(nextId));
@@ -2871,6 +2949,8 @@ TEST(CanonicalPackSetActivate, ReplaceCanonicalPackSwapsContentBindings) {
     ASSERT_NE(nullptr, contentOwner->voiceBindings);
     ASSERT_EQ(1u, contentOwner->voiceBindings->size());
     EXPECT_EQ(nextId, contentOwner->voiceBindings->front().bindingId);
+    if (trace) EXPECT_EQ(VN_OK, Vn_TraceStop());
+    }
 }
 
 TEST(CanonicalPackSetActivate, UnloadPackOnInitLeavesCanonicalBindings) {
