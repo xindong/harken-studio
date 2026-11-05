@@ -2102,6 +2102,7 @@ struct EngineMusicQueuePosition {
     RandomQueueSeedContext seed{};
     std::uint64_t sourceOffsetFrames = 0;
     bool checkpointLoaded = false;
+    bool exhausted = false;
 };
 
 struct EngineMusicScheduleState {

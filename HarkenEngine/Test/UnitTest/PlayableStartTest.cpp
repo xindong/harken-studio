@@ -18238,11 +18238,16 @@ TEST(PlayableStart, MusicSegmentCropsVariableControlSelectedSourcesAndPreservesW
 }
 
 TEST(PlayableStart, MusicOrdinaryCropAndShortSuccessorsShareExactTimeline) {
+    for (const bool actionEntry : {false, true})
+    for (const bool dynamicPitch : {false, true})
     for (const bool stopAtEnd : {false, true})
     for (const bool nested : {false, true})
     for (const unsigned cropTicks : {0u, 56u})
     for (const unsigned cadence : {1u, 3u})
     for (const unsigned workers : {0u, 2u}) {
+        if (actionEntry && (!dynamicPitch || cadence != 1)) continue;
+        SCOPED_TRACE(actionEntry);
+        SCOPED_TRACE(dynamicPitch);
         SCOPED_TRACE(stopAtEnd);
         SCOPED_TRACE(nested);
         SCOPED_TRACE(cropTicks);
@@ -18253,7 +18258,7 @@ TEST(PlayableStart, MusicOrdinaryCropAndShortSuccessorsShareExactTimeline) {
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto* engine = session.Engine();
-        std::vector<float> samples(20);
+        std::vector<float> samples(dynamicPitch ? 256 : 20);
         for (unsigned index = 0; index < samples.size(); ++index) samples[index] = 0.1f + index * 0.002f;
         const auto pcm = harkentest::MonoDesc(samples, 48000);
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
@@ -18335,8 +18340,47 @@ TEST(PlayableStart, MusicOrdinaryCropAndShortSuccessorsShareExactTimeline) {
         install.trackScheduleCount = 1;
         install.segmentSchedules = &image.segment;
         install.segmentScheduleCount = 1;
+        const harken::VariableDefinitionV1 pitchVariable = {
+            harkentest::ObjectId(41), harken::VariableKindV1::Smooth, 0.0f, 1.0f, 1.0f};
+        if (dynamicPitch) {
+            install.variables = &pitchVariable; install.variableCount = 1;
+            install.identity.capabilityMask |= harken::kWorldCapabilityVariableDefinitions;
+        }
+        harken::ActionStepProgramViewV1 actionStep{};
+        actionStep.delay = {harken::AuthoredTimeDomainV1::AbsoluteNanoseconds, 0, 1};
+        actionStep.fade = actionStep.cooldown = actionStep.delay;
+        actionStep.target = {harken::ActionTargetKindV1::Segment, 0, image.Root().stableId,
+            image.Root().expectedProgramSemanticFingerprint};
+        harken::ActionProgramViewV1 action{};
+        action.actionStableId = harkentest::ObjectId(10004);
+        action.steps = &actionStep;
+        action.stepCount = action.expandedStepOccurrenceCount = action.expandedFiringCount = 1;
+        action.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(action);
+        if (actionEntry) {
+            install.actions = &action;
+            install.actionCount = 1;
+            install.identity.capabilityMask |= harken::kWorldCapabilityActionDefinitions;
+        }
         install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV6(install);
         ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, install).status);
+        if (dynamicPitch) {
+            VnBindingDesc binding{};
+            binding.structSize = sizeof(binding);
+            binding.variableId = harkentest::ObjectId(41);
+            binding.targetScopeKind = VN_TARGET_SCOPE_VOICE;
+            binding.targetId = harken::kTargetVoicePitch;
+            binding.curve.structSize = sizeof(binding.curve);
+            binding.curve.pointCount = 2;
+            binding.curve.points[0] = {0.0f, 0.0f};
+            binding.curve.points[1] = {1.0f, 1200.0f};
+            binding.curve.handles[0] = harkentest::EndpointHandles(binding.curve.points[0], binding.curve.points[1]);
+            ASSERT_EQ(VN_OK, Vn_RegisterBinding(harkentest::ObjectId(31001), &binding));
+            VnBindingAttachDesc attachment{};
+            attachment.structSize = sizeof(attachment);
+            attachment.scopeKind = VN_TARGET_SCOPE_VOICE;
+            attachment.objectId = kSound;
+            ASSERT_EQ(VN_OK, Vn_AttachBinding(harkentest::ObjectId(31001), &attachment));
+        }
         harken::PlayableStartRequest request;
         request.root = image.Root();
         request.callerSeed = 91273;
@@ -18345,7 +18389,19 @@ TEST(PlayableStart, MusicOrdinaryCropAndShortSuccessorsShareExactTimeline) {
         engine->selectionInputHookForTest = [](harken::Engine&, const harken::SelectionPlayRequestV1& input, void* opaque) {
             static_cast<std::vector<std::uint64_t>*>(opaque)->push_back(input.executeFrame);
         };
-        const auto started = harken::StartPlayable(*engine, request);
+        harken::PlayableStartResult started{};
+        if (actionEntry) {
+            VnPostActionDesc post{};
+            post.structSize = sizeof(post);
+            post.actionId = action.actionStableId;
+            VnActionFiringHandle firing = 0;
+            ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing)) << OccupancyDump(*engine);
+            VnActionStepResult step{};
+            step.structSize = sizeof(step);
+            ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &step));
+            started.status = harken::PlayableStartStatus::Accepted;
+            started.instance = step.producedPlayableInstance;
+        } else started = harken::StartPlayable(*engine, request);
         engine->selectionInputHookForTest = nullptr;
         engine->selectionInputContextForTest = nullptr;
         ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status) << OccupancyDump(*engine);
@@ -18353,11 +18409,12 @@ TEST(PlayableStart, MusicOrdinaryCropAndShortSuccessorsShareExactTimeline) {
             [&](const auto& value) { return value.rootInstance == started.instance; });
         ASSERT_NE(engine->playableServices.end(), row);
         const auto start = row->startFrame;
-        if (!stopAtEnd && !nested && cropTicks == 0) {
+        if (!dynamicPitch && !stopAtEnd && !nested && cropTicks == 0) {
             ASSERT_GT(initialFrames.size(), 1u);
             for (std::size_t index = 0; index < initialFrames.size(); ++index)
                 EXPECT_EQ(start + index * samples.size(), initialFrames[index]);
         }
+        unsigned audibleSamples = 0;
         for (unsigned block = 0; block < 160; ++block) {
             if (block % cadence == 0) ASSERT_EQ(VN_OK, Vn_Update()) << OccupancyDump(*engine);
             ASSERT_FALSE(engine->runtimeRecreateRequired) << OccupancyDump(*engine);
@@ -18370,10 +18427,25 @@ TEST(PlayableStart, MusicOrdinaryCropAndShortSuccessorsShareExactTimeline) {
                 const auto coordinate = age < 1200 ? age : age < 2800 ? 400 + (age - 1200) % 800 : age - 1600;
                 const auto sourceAge = coordinate + cropTicks * 25u;
                 const bool inContent = age < 3200 && sourceAge < (stopAtEnd ? (nested ? 60u : 20u) : nested ? 6000u : 2000u);
+                if (dynamicPitch) {
+                    const auto phase = age < 1200 ? age : age < 2800 ? (age - 1200) % 800 : UINT64_MAX;
+                    if (age < 3200 && engine->nullBackend.LastBlock()[2 * sample] > 0.01f) ++audibleSamples;
+                    if (phase < 4) {
+                        const auto offset = (sourceAge * 2) % samples.size();
+                        const bool sourceExists = !stopAtEnd || sourceAge < (nested ? 384u : 128u);
+                        EXPECT_NEAR(sourceExists ? samples[offset] : 0.0f, engine->nullBackend.LastBlock()[2 * sample], 0.0001f)
+                            << "age=" << age << OccupancyDump(*engine);
+                    } else if (age >= 3200) EXPECT_FLOAT_EQ(0.0f, engine->nullBackend.LastBlock()[2 * sample]);
+                    continue;
+                }
                 const float expected = inContent ? samples[sourceAge % samples.size()] : 0.0f;
                 ASSERT_NEAR(expected, engine->nullBackend.LastBlock()[2 * sample], 0.0001f)
                     << "frame=" << frame << " start=" << start << OccupancyDump(*engine);
             }
+        }
+        if (dynamicPitch) {
+            if (stopAtEnd && cropTicks != 0) EXPECT_EQ(0u, audibleSamples);
+            else EXPECT_GT(audibleSamples, 100u);
         }
         EXPECT_EQ(0u, engine->playableInstances.LiveCount()) << OccupancyDump(*engine);
         EXPECT_EQ(0u, engine->playablePartitions.OccupiedCount());
@@ -31502,10 +31574,10 @@ TEST(PlayableStart, MusicActionMixedPlayResetKeepsActualPlaybackAndReclaims) {
 
 TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
     for (const unsigned workers : {0u, 2u})
-    for (const unsigned shape : {0u, 1u, 2u, 3u, 4u})
+    for (const unsigned shape : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u})
     for (const unsigned cropTicks : {0u, 8u, 16u, 24u, 32u, 80u}) {
-        if (shape >= 2 && cropTicks != 8 && cropTicks != 16) continue;
-        const bool composite = shape != 0;
+        if (shape >= 2 && shape < 5 && cropTicks != 8 && cropTicks != 16) continue;
+        const bool composite = (shape >= 1 && shape <= 4) || shape == 8;
         [&] {
         SCOPED_TRACE(shape);
         SCOPED_TRACE(cropTicks);
@@ -31523,6 +31595,23 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSecondSound, &secondPcm));
         const auto revision = engine->registry.Lookup(kSound).contentRevision;
         SequenceQueueWorldImage queue(revision, engine->registry.Lookup(kSecondSound).contentRevision);
+        const auto differentChild = queue.children[1];
+        const auto differentOccurrence = queue.occurrences[1];
+        if (shape >= 5) queue.ResolveSecondChildToFirst();
+        std::array<harken::ContainerChildProgramViewV2, 3> queueChildren{queue.children[0], queue.children[1], differentChild};
+        auto thirdOccurrence = differentOccurrence;
+        if (shape == 6) {
+            queueChildren[2].stableChildOrdinal = 9;
+            queueChildren[2].authoredStableOrder = 2;
+            thirdOccurrence.stableOccurrenceOrdinal = 9;
+            thirdOccurrence.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(thirdOccurrence);
+            queue.container.children = queueChildren.data();
+            queue.container.childCount = 3;
+        }
+        if (shape == 7) {
+            queue.container.queueCycle = harken::QueueCycleV1::Loop;
+            queue.container.queueCycleCount = 3;
+        }
         queue.container.memoryScope = harken::MemoryScopeV1::Global;
         DirectTrackWorldImage entryTrack(revision);
         entryTrack.properties[1].stableId = harkentest::ObjectId(3002);
@@ -31548,11 +31637,11 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
             occurrence.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(occurrence);
         }
         entryTrack.track.placements = entryPlacements.data();
-        entryTrack.track.placementCount = (shape == 2 || shape == 3) ? 1 : 2;
+        entryTrack.track.placementCount = (shape == 2 || shape == 3 || shape == 8) ? 1 : 2;
         if (shape == 2) entryPlacements[0].authoredDuration = 1;
         entryTrack.track.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(entryTrack.track);
         if (composite) {
-            const auto entry = shape >= 3 ? 1u : 0u;
+            const auto entry = shape >= 3 && shape < 5 ? 1u : 0u;
             queue.children[entry].playable = entryTrack.Root();
             queue.children[entry].timingHint = harken::MakeScheduleReferenceTimingHint(harken::PlayableKindV1::Track,
                 entryTrack.Root().stableId, entryTrack.track.scheduleSemanticFingerprint);
@@ -31596,6 +31685,7 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
         });
         std::vector<harken::PlayableOccurrencePropertyViewV1> occurrences = {
             queue.occurrences[0], queue.occurrences[1], image.occurrence};
+        if (shape == 6) occurrences.push_back(thirdOccurrence);
         if (composite) occurrences.insert(occurrences.end(), entryOccurrences.begin(), entryOccurrences.begin() + entryTrack.track.placementCount);
         std::sort(occurrences.begin(), occurrences.end(), [](const auto& a, const auto& b) {
             return std::tuple{a.parentKind, a.parentStableId, a.stableOccurrenceOrdinal}
@@ -31637,7 +31727,9 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
                 const auto source = coordinate + cropTicks * 25u;
                 const auto firstEnd = shape == 2 ? 0u : shape == 1 ? 640u : 400u;
                 const auto secondAge = source >= firstEnd ? source - firstEnd : UINT64_MAX;
-                const float expected = age >= 3200 ? 0.0f :
+                const float expected = age >= 3200 ? 0.0f : shape == 5 ? (source < 400 ? 0.1f : 0.0f) :
+                    shape == 7 ? (source < 1200 ? 0.1f : 0.0f) :
+                    shape == 8 ? (source < 800 ? 0.1f : 0.0f) :
                     source >= firstEnd ? (secondAge < second.size() ? second[secondAge] : 0.0f) +
                         (shape == 4 && secondAge >= 240 && secondAge - 240 < second.size() ? second[secondAge - 240] : 0.0f) :
                     (source < 400 ? 0.1f : 0.0f) + (shape == 1 && source >= 240 && source < 640 ? 0.1f : 0.0f);
