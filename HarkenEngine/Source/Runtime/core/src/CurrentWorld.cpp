@@ -1282,7 +1282,7 @@ bool AccumulateBoundedTransitionEndpointLeaves(
     const PlayableRefV1& endpoint,
     std::uint32_t depth,
     std::uint32_t* leafCount,
-    bool allowNativeSelection = false) noexcept {
+    bool allowNativeSelection = false, bool allowNativeQueues = false) noexcept {
     if (leafCount == nullptr ||
         world.capacity.maxKnownScheduleLeaves == 0 ||
         *leafCount > world.capacity.maxKnownScheduleLeaves || depth == 0 ||
@@ -1303,18 +1303,22 @@ bool AccumulateBoundedTransitionEndpointLeaves(
             endpoint.stableId, [](const auto& row, VnObjectId stableId) {
                 return row.containerStableId < stableId;
             });
-        if (container == world.containers + world.containerCount ||
-            container->containerStableId != endpoint.stableId ||
+        if (container == world.containers + world.containerCount) return false;
+        const bool nativeQueue = allowNativeQueues &&
+            (container->mode == ContainerModeV1::SequenceQueue || container->mode == ContainerModeV1::RandomQueue);
+        if (container->containerStableId != endpoint.stableId ||
             container->programSemanticFingerprint != endpoint.expectedProgramSemanticFingerprint ||
             (container->mode != ContainerModeV1::Random &&
-             container->mode != ContainerModeV1::Sequence) ||
+             container->mode != ContainerModeV1::Sequence && !nativeQueue) ||
+            (nativeQueue && (container->queueSplice != QueueSpliceV1::Butt ||
+                             container->transitionProgramIndex != UINT32_MAX)) ||
             container->childCount == 0 || container->children == nullptr ||
             container->childCount > world.capacity.maxChildrenPerContainer) return false;
         using PropertyId = playableproperties::PlayablePropertyIdV1;
         constexpr auto loopSlot = static_cast<std::size_t>(PropertyId::LoopCount) - 1u;
         const auto* property = FindProperty(
             world, playableproperties::ContentPropertyKindV1::Container, endpoint.stableId);
-        if (property != nullptr &&
+        if (!nativeQueue && property != nullptr &&
             (property->payload.presentMask & (UINT64_C(1) << loopSlot)) != 0 &&
             property->payload.values[loopSlot].bits != 1u) return false;
         // A single selection contributes one branch. Validate every possible
@@ -1324,7 +1328,7 @@ bool AccumulateBoundedTransitionEndpointLeaves(
             auto branchCount = *leafCount;
             if (!AccumulateBoundedTransitionEndpointLeaves(
                     world, container->children[index].playable, depth + 1u,
-                    &branchCount, allowNativeSelection)) return false;
+                    &branchCount, allowNativeSelection, allowNativeQueues)) return false;
             maximum = std::max(maximum, branchCount);
         }
         *leafCount = maximum;
@@ -1347,7 +1351,7 @@ bool AccumulateBoundedTransitionEndpointLeaves(
              ++index) {
             if (!AccumulateBoundedTransitionEndpointLeaves(
                     world, schedule->placements[index].content, depth + 1u,
-                    leafCount, allowNativeSelection)) {
+                    leafCount, allowNativeSelection, allowNativeQueues)) {
                 return false;
             }
         }
@@ -1369,7 +1373,7 @@ bool AccumulateBoundedTransitionEndpointLeaves(
     for (std::uint32_t index = 0; index < schedule->trackRefCount; ++index) {
         if (!AccumulateBoundedTransitionEndpointLeaves(
                 world, schedule->trackRefs[index].trackDefinition,
-                depth + 1u, leafCount, allowNativeSelection)) {
+                depth + 1u, leafCount, allowNativeSelection, allowNativeQueues)) {
             return false;
         }
     }
@@ -1381,10 +1385,10 @@ template <class WorldView>
 bool TransitionEndpointHasBoundedResolvedVoices(
     const WorldView& world,
     const PlayableRefV1& endpoint,
-    bool allowNativeSelection = false) noexcept {
+    bool allowNativeSelection = false, bool allowNativeQueues = false) noexcept {
     std::uint32_t leafCount = 0;
     return AccumulateBoundedTransitionEndpointLeaves(
-               world, endpoint, 1, &leafCount, allowNativeSelection) &&
+               world, endpoint, 1, &leafCount, allowNativeSelection, allowNativeQueues) &&
            leafCount != 0 &&
            leafCount <= world.capacity.maxKnownScheduleLeaves;
 }
@@ -1398,9 +1402,10 @@ bool QueueTransitionEndpointSupported(const WorldView& world,
     } else {
         if ((container.mode != ContainerModeV1::SequenceQueue && container.mode != ContainerModeV1::RandomQueue) ||
             container.queueSplice != QueueSpliceV1::Butt ||
-            (child.playable.kind != PlayableKindV1::Track && child.playable.kind != PlayableKindV1::Segment) ||
+            (child.playable.kind != PlayableKindV1::Track && child.playable.kind != PlayableKindV1::Segment &&
+             child.playable.kind != PlayableKindV1::Container) ||
             container.transitionProgramIndex >= world.transitionCount ||
-            !TransitionEndpointHasBoundedResolvedVoices(world, child.playable, true)) return false;
+            !TransitionEndpointHasBoundedResolvedVoices(world, child.playable, true, true)) return false;
         const auto& transition = world.transitions[container.transitionProgramIndex];
         for (std::uint32_t index = 0; index < transition.ruleCount; ++index) {
             const auto& rule = transition.rules[index];

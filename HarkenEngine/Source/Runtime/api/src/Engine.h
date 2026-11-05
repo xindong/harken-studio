@@ -2082,6 +2082,7 @@ struct EngineScheduleAggregateChild {
     bool resourcesReleased = false;
     bool lifecycleOwned = false;
     bool pendingEntry = false;
+    bool musicFromEntry = false;
     std::unique_ptr<EngineScheduleAggregateState> preparedOrdinary;
 };
 

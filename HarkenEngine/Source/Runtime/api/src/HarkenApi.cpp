@@ -33078,7 +33078,7 @@ QueueContinuationPrepareStatus PrepareQueueScheduleSuccessor(
     const harken::EffectiveQueueState&, const harken::EffectiveQueueState&,
     harken::QueueSequenceStepStatus, const harken::QueueExecutionOrderV1&, std::uint64_t,
     std::span<const std::uint32_t>, std::span<const harken::SelectionPathNodeV1>,
-    const harken::TimelineEventPayload*, OrdinaryRetirementReservation*) noexcept;
+    const harken::TimelineEventPayload*, bool, OrdinaryRetirementReservation*) noexcept;
 
 QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
     harken::Engine& engine, const harken::PlayableWorldViewV1& world,
@@ -33300,7 +33300,8 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
         return PrepareQueueScheduleSuccessor(engine, world, program, row, scratch, issue, *child,
             current, next, afterNextStatus, order, resetIntent,
             {selectedPath.data(), selectedCount}, {nextPath.data(), selectedCount},
-            targetFadeActive ? &fade : nullptr, retiring);
+            targetFadeActive ? &fade : nullptr,
+            transitionRule != nullptr && transitionRule->targetEntry == harken::TransitionTargetEntryV1::FromEntryMarker, retiring);
     }
     harken::PlayableInstanceHandle successorVoiceInstance =
         nestedVariableControlQueue && !frontierOwnedQueue
@@ -88434,7 +88435,7 @@ void BindScheduleChildPreparation(ContainerPreparationContext& context,
     context.typedPrefix = record.properties.typedPrefix;
     context.scheduleChild = &record;
     context.sourceOffsetFrames = record.sourceOffsetFrames;
-    context.musicFromEntry = false;
+    context.musicFromEntry = record.musicFromEntry;
     context.directRoot = false;
 }
 
@@ -89220,6 +89221,7 @@ ContainerMixedTerminalResult PrepareContainerMixedScheduleTerminal(ContainerPrep
             record.queueSelectionVersion = queue.initial.version;
     }
     record.sourceOffsetFrames = context.sourceOffsetFrames;
+    record.musicFromEntry = context.musicFromEntry;
     if (scratch.selectionPlayCount != 0 && scratch.selectionPlays[0].Valid())
         rootService->selectionSeedProbe = engine.selectionMemory.PreparedPlaySeedProbe(scratch.selectionPlays[0]);
     if (selected.pendingNativeEntry) {
@@ -92689,6 +92691,7 @@ bool PrepareVariableScheduleBranches(ContainerPreparationContext& context,
             record.variableControlSide = top == 0 && row->variableControlDiscreteCurrentChildOrdinal != 0
                 ? harken::VariableControlSide::Discrete : harken::VariableControlSide::Continuous;
             record.sourceOffsetFrames = context.sourceOffsetFrames;
+            record.musicFromEntry = context.musicFromEntry;
             record.stableLeafOrdinal = ordinals[top];
             auto& properties = record.properties;
             properties.propertyRoot = context.propertyRoot.stableId == VnObjectId{}
@@ -93801,6 +93804,7 @@ bool PrepareMixedScheduleExecution(ContainerPreparationContext& context,
         context.result = status == ScheduleMaterializeStatus::Capacity ? VN_BACKPRESSURE : VN_CAPABILITY_UNAVAILABLE;
         return false;
     }
+    if (context.root.kind == harken::PlayableKindV1::Segment) context.musicFromEntry = false;
     if (context.endFrame != UINT64_MAX) {
         auto& plan = *scratch.storage.scheduleAggregatePlan;
         const auto duration = context.endFrame > context.startFrame
@@ -93914,6 +93918,7 @@ bool PrepareMixedScheduleExecution(ContainerPreparationContext& context,
         context.initialSelectionEventCursor = &scratch.storage.scheduleChildren->selectionEventNext;
     }
     for (auto& record : aggregate.children) {
+        record.musicFromEntry = context.musicFromEntry;
         ContainerPreparationContext childContext = context;
         BindScheduleChildPreparation(childContext, *row, record);
         childContext.preparedScheduleRoot = nullptr;
@@ -94190,7 +94195,9 @@ PendingScheduleEntryStatus PreparePendingScheduleVariableEntry(harken::Engine& e
     scratch->continuationTransportEpoch = engine.timelinePool.Epoch();
     scratch->continuationOrder = {start, issue.Sequence(), 0, 0, 0, 20, 0};
     scratch->pendingScheduleChild = &pending;
-    if (parent.nativeEntryDependency != nullptr) {
+    // Applied entry retention above still gates ordinary Sound successors.
+    // They publish their own Start and have no new native admission group.
+    if (parent.nativeEntryDependency != nullptr && pending.content.kind != harken::PlayableKindV1::Sound) {
         scratch->initialForestPublication = true;
         scratch->nativeEntryDomain = true;
         scratch->nativeEntryForestRoot = true;
@@ -94237,6 +94244,7 @@ PendingScheduleEntryStatus PreparePendingScheduleVariableEntry(harken::Engine& e
         copy.loopIteration = pending.loopIteration;
         copy.queueSelectionVersion = pending.queueSelectionVersion;
         copy.sourceOffsetFrames = pending.sourceOffsetFrames;
+        copy.musicFromEntry = pending.musicFromEntry;
         copy.service = pending.service;
         copy.variableControlSide = pending.variableControlSide;
         copy.properties = pending.properties;
@@ -94713,7 +94721,7 @@ QueueContinuationPrepareStatus PrepareQueueScheduleSuccessor(
     harken::QueueSequenceStepStatus afterNextStatus, const harken::QueueExecutionOrderV1& order,
     std::uint64_t resetIntent, std::span<const std::uint32_t> selectedOrdinals,
     std::span<const harken::SelectionPathNodeV1> selectedPath,
-    const harken::TimelineEventPayload* targetFade,
+    const harken::TimelineEventPayload* targetFade, bool fromEntry,
     OrdinaryRetirementReservation* retiring) noexcept {
     using Status = QueueContinuationPrepareStatus;
     if (!engine.logicCommits.IsOriginalPreparedIssueFor(issue) || !scratch.continuationExecution ||
@@ -94792,6 +94800,7 @@ QueueContinuationPrepareStatus PrepareQueueScheduleSuccessor(
     record.content = child.playable;
     record.stableLeafOrdinal = next.currentChildOrdinal;
     record.queueSelectionVersion = next.version;
+    record.musicFromEntry = fromEntry;
     harken::ActionFiringTable::PreparedChildIdentity noChild;
     VnResult failure = VN_OK;
     bool queueCapacity = false;
