@@ -26,6 +26,8 @@ bool runtimeInit(const EngineSessionConfig& config);
 void runtimeTerm();
 bool runtimeIsActive();
 bool runtimeCaptureSnapshot(VnSnapshot& outSnapshot);
+bool runtimeSetListenerTransform(VnVec3 position, VnVec3 forward, VnVec3 up);
+bool runtimeListenerTransform(VnVec3& position, VnVec3& forward);
 uint64_t runtimeCreatePreviewEmitter(EngineResult* outResult);
 
 void runtimeSetLogHandler(std::function<void(int level, const QString& msg)> handler);
@@ -69,8 +71,9 @@ void runtimeUnregisterActionName(harkenstudio::ObjectId actionId);
 void runtimeClearActionNames();
 
 bool runtimeLoadPack(const QString& path);
-void runtimeUnloadPack(const QString& path);
+bool runtimeUnloadPack(const QString& path);
 uint32_t runtimeLoadedPackCount();
+QStringList runtimeLoadedPackPaths();
 
 harkenstudio::ObjectId runtimeMintRawPcmSoundId();
 EngineResult runtimeRegisterRawPcmSlice(harkenstudio::ObjectId soundId,

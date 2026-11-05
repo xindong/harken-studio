@@ -7,6 +7,7 @@
 #include "Core/ProjectInstance.h"
 #include "Core/ProjectLocator.h"
 #include "Core/ProjectManager.h"
+#include "Core/RuntimeSyncCoordinator.h"
 #include "Core/SchemaArchive.h"
 
 #include <QCoreApplication>
@@ -18,16 +19,9 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QThread>
+#include <QTimer>
 
 namespace HarkenStudioCli {
-
-namespace {
-
-const QString legacyBatchRestriction = QStringLiteral(
-    "The legacy batch command is unavailable in this host. Use the run subcommand "
-    "to execute requests in order and wait for each operation to finish.");
-
-}
 
 QJsonObject failure(const QString& code, const QString& message)
 {
@@ -44,7 +38,7 @@ struct StudioSession::State {
     VNX::ProjectManager& project = VNX::ProjectManager::instance();
     VNX::AudioEngine& engine = VNX::AudioEngine::instance();
     HarkenEditor::AuditionManager audition{&engine};
-    VNX::IPCServer dispatcher{&engine};
+    VNX::IPCServer dispatcher{&engine, nullptr, VNX::CommandHost::Cli};
     std::shared_ptr<VNX::ProjectInstance> instance;
 };
 
@@ -97,9 +91,7 @@ QJsonObject StudioSession::describe(const QString& name) const
 {
     auto description = VNX::describeEditorCommand(name, &state_->dispatcher);
     if (!description.value(QStringLiteral("registered")).toBool())
-        return failure(QStringLiteral("UNKNOWN_COMMAND"), QStringLiteral("Unknown editor command: %1").arg(name));
-    if (name == QStringLiteral("batch"))
-        description.insert(QStringLiteral("hostRestriction"), legacyBatchRestriction);
+        return failure(QStringLiteral("UNKNOWN_COMMAND"), QStringLiteral("Unknown CLI command: %1").arg(name));
     return {{QStringLiteral("status"), QStringLiteral("ok")},
             {QStringLiteral("result"), description}};
 }
@@ -120,8 +112,6 @@ QJsonObject StudioSession::execute(const QString& name, const QJsonObject& args,
                                   int timeoutMs, const std::function<bool()>& canceled)
 {
     if (canceled()) return failure(QStringLiteral("CANCELED"), QStringLiteral("Interrupted."));
-    if (name == QStringLiteral("batch"))
-        return failure(QStringLiteral("UNSUPPORTED_COMMAND"), legacyBatchRestriction);
     if (name == QStringLiteral("open_project"))
         return open(args.value(QStringLiteral("path")).toString());
     if (name == QStringLiteral("close_project")) {
@@ -150,6 +140,14 @@ QJsonObject StudioSession::execute(const QString& name, const QJsonObject& args,
         if (acquisition.status != VNX::ProjectInstance::Status::Acquired)
             return failure(QStringLiteral("PROJECT_IN_USE"), acquisition.error);
         state_->instance = std::move(acquisition.instance);
+    }
+    if (name == QStringLiteral("post_action") || name == QStringLiteral("post_action_3d")
+        || name == QStringLiteral("trigger_action") || name == QStringLiteral("audition_play")) {
+        if (name == QStringLiteral("audition_play") && state_->engine.isInitialized()
+            && !state_->engine.isPlaying() && !state_->engine.startOutput())
+            return failure(QStringLiteral("START_OUTPUT_FAILED"), QStringLiteral("Failed to start audio output."));
+        const auto ready = waitForCurrentWorld(timeoutMs, canceled);
+        if (!succeeded(ready)) return ready;
     }
     VNX::IPCServer::IPCDispatchContext context;
     context.source = VNX::ActionSource::IPC;
@@ -197,6 +195,53 @@ QJsonObject StudioSession::execute(const QString& name, const QJsonObject& args,
         }
         QThread::msleep(10);
     }
+}
+
+QJsonObject StudioSession::waitForCurrentWorld(int timeoutMs, const std::function<bool()>& canceled)
+{
+    if (!state_->project.isProjectOpen() || !state_->engine.isInitialized()
+        || state_->engine.isSimulationMode())
+        return {{QStringLiteral("status"), QStringLiteral("ok")}};
+
+    auto& coordinator = state_->engine.runtimeSyncCoordinator();
+    QEventLoop loop;
+    QTimer deadline;
+    deadline.setSingleShot(true);
+    QTimer cancellation;
+    QJsonObject response;
+    const auto check = [&] {
+        if (!response.isEmpty()) return;
+        if (canceled()) {
+            response = failure(QStringLiteral("CANCELED"), QStringLiteral("Interrupted while preparing playback."));
+        } else {
+            using Barrier = VNX::RuntimeSyncCoordinator::RevisionBarrierState;
+            const auto barrier = coordinator.barrier(coordinator.currentAuthoringRevision());
+            if (barrier.state == Barrier::Ready) {
+                response = {{QStringLiteral("status"), QStringLiteral("ok")}};
+            } else if (barrier.state != Barrier::Pending) {
+                response = failure(QStringLiteral("RUNTIME_SYNC_FAILED"),
+                    QStringLiteral("The current project could not be prepared for playback."));
+                response.insert(QStringLiteral("result"), QJsonObject{
+                    {QStringLiteral("runtime_sync_status"), static_cast<int>(barrier.failure)}});
+            }
+        }
+        if (!response.isEmpty()) loop.quit();
+    };
+    QObject::connect(&coordinator, &VNX::RuntimeSyncCoordinator::barrierChanged, &loop, check);
+    QObject::connect(&cancellation, &QTimer::timeout, &loop, check);
+    QObject::connect(&deadline, &QTimer::timeout, &loop, [&] {
+        if (!response.isEmpty()) return;
+        response = failure(QStringLiteral("TIMEOUT"), QStringLiteral("The current project did not become ready for playback."));
+        loop.quit();
+    });
+    coordinator.flushPendingMutationNow();
+    check();
+    if (response.isEmpty()) {
+        deadline.start(timeoutMs);
+        cancellation.start(10);
+        loop.exec();
+    }
+    return response;
 }
 
 QJsonObject StudioSession::save()

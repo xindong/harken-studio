@@ -170,10 +170,10 @@ void IPCServer::registerAssetHandlers()
         QJsonArray arr;
         for (const auto& lang : ProjectManager::instance().getProjectLanguages())
             arr.append(lang);
-        QJsonObject r; r["success"] = true;
-        r["languages"] = arr;
-        r["defaultLanguage"] = ProjectManager::instance().getDefaultLanguage();
-        return r;
+        return successResponse(QJsonObject{
+            {"languages", arr},
+            {"defaultLanguage", ProjectManager::instance().getDefaultLanguage()}
+        });
     };
 
     commandHandlers_["import_audio"] = [this](const QJsonObject& args) { return handleImportAudio(args); };

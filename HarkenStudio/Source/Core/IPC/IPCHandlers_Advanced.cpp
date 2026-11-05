@@ -92,10 +92,6 @@ void IPCServer::registerAdvancedHandlers()
         return unavailable("HarkenLink capture is retired");
     };
 
-    registerDesktopHandler("audition_get_state");
-    registerDesktopHandler("audition_get_position");
-    registerDesktopHandler("audition_get_speed");
-
     commandHandlers_["get_exec_errors"] = [this](const QJsonObject& args) {
         if (!engine_) return errorResponse("NOT_INIT", "Audio engine not initialized");
 

@@ -1,4 +1,16 @@
 add_library(harken_studio_core STATIC
+    ../Widgets/Inspector/PropertySchemaJson.cpp
+    ../Widgets/Inspector/FieldGroupInspectorView.cpp
+    ../Widgets/Inspector/SoundInspectorSchema.cpp
+    ../Widgets/Inspector/ContainerInspectorSchema.cpp
+    ../Widgets/Inspector/TrackInspectorSchema.cpp
+    ../Widgets/Inspector/SegmentInspectorSchema.cpp
+    ../Widgets/Inspector/LayerInspectorSchema.cpp
+    ../Widgets/Inspector/BusInspectorSchema.cpp
+    ../Widgets/Inspector/ActionInspectorSchema.cpp
+    ../Widgets/Inspector/VariableInspectorSchema.cpp
+    ../Widgets/Inspector/AttenuationInspectorSchema.cpp
+    ../Widgets/Inspector/EffectInspectorSchema.cpp
     ActionClosureEditorAdapter.cpp
     CurrentWorldEditorAdapter.cpp
     ReferenceSlotEditorAdapter.cpp
@@ -158,6 +170,7 @@ target_include_directories(harken_studio_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../Utils
     ${CMAKE_CURRENT_SOURCE_DIR}/../../ThirdParty)
 target_include_directories(harken_studio_core PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Widgets
     ${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/CurrentWorldCompiler/include
     ${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/BusCompiler/include
     ${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/ProjectSchema/include

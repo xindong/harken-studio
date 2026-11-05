@@ -21,10 +21,20 @@ ActionManager& ActionManager::instance()
 
 void ActionManager::registerAction(const ActionDef& def)
 {
+    if (!commandSupportedByHost(commandHost_, def.id, def.requiresDesktop)) return;
     if (actions_.contains(def.id)) {
         qWarning() << "[ActionManager] Overwriting existing action:" << def.id;
     }
     actions_.insert(def.id, def);
+}
+
+void ActionManager::setCommandHost(CommandHost host)
+{
+    commandHost_ = host;
+    for (auto it = actions_.begin(); it != actions_.end();) {
+        if (!commandSupportedByHost(host, it.key(), it->requiresDesktop)) it = actions_.erase(it);
+        else ++it;
+    }
 }
 
 bool ActionManager::hasAction(const QString& id) const
@@ -145,6 +155,7 @@ QJsonObject ActionManager::actionCatalog() const
 void ActionManager::clearAllForTesting()
 {
     actions_.clear();
+    commandHost_ = CommandHost::Desktop;
     transactions_.clear();
     txCounter_ = 0;
 }

@@ -17,6 +17,7 @@
 #include <QUuid>
 
 #include <cstdint>
+#include <cmath>
 
 namespace VNX {
 
@@ -26,6 +27,30 @@ static ActionResult engineNotAvailable()
     return {false, {}, "ENGINE_NOT_AVAILABLE", "AudioEngine is not available"};
 }
 
+static bool listenerVector(const QJsonObject& args, const QString& key,
+                           HarkenEditor::Vec3* value, bool required = false)
+{
+    if (!args.contains(key)) return !required;
+    if (!args.value(key).isArray()) return false;
+    const auto array = args.value(key).toArray();
+    if (array.size() != 3) return false;
+    float components[3];
+    for (int i = 0; i < 3; ++i) {
+        if (!array[i].isDouble()) return false;
+        components[i] = static_cast<float>(array[i].toDouble());
+        if (!std::isfinite(components[i])) return false;
+    }
+    *value = {components[0], components[1], components[2]};
+    return true;
+}
+
+static ActionResult playbackResult(const AudioEngine::PlaybackStartResult& result, QJsonObject data)
+{
+    data.insert(QStringLiteral("engine_result"), static_cast<qint32>(result.engineResult));
+    if (result.engineResult != HarkenEditor::Bridge::kEngineOk)
+        return {false, data, "PLAY_FAILED", "The runtime rejected the playback request"};
+    return {true, data};
+}
 
 
 
@@ -123,11 +148,11 @@ void registerSystemActions(ActionManager& mgr,
             auto result = engine->playByNameDetailed(name);
             if (auditionGuard && result.playbackHandle != 0)
                 auditionGuard->registerExternalPlayback(name, result.playbackHandle);
-            return {true, QJsonObject{
+            return playbackResult(result, QJsonObject{
                 {"action_handle", static_cast<qint64>(result.playbackHandle)},
                 {"action_name",   name},
                 {"has_sound",    result.hasSound}
-            }};
+            });
         };
         mgr.registerAction(def);
     }
@@ -153,8 +178,9 @@ void registerSystemActions(ActionManager& mgr,
             float y = args["y"].toDouble(0.0);
             float z = args["z"].toDouble(0.0);
             HarkenEditor::Vec3 position(x, y, z);
-            quintptr handle = engine->playByName3D(name, position);
-            if (activePlaybacks) {
+            const auto result = engine->playByName3DDetailed(name, position);
+            const quintptr handle = result.playbackHandle;
+            if (activePlaybacks && handle != 0) {
                 (*activePlaybacks)[handle] = QJsonObject{
                     {"handle", static_cast<qint64>(handle)},
                     {"name", name},
@@ -162,11 +188,11 @@ void registerSystemActions(ActionManager& mgr,
                     {"type", "emitter"}
                 };
             }
-            return {true, QJsonObject{
+            return playbackResult(result, QJsonObject{
                 {"action_handle", static_cast<qint64>(handle)},
                 {"action_name", name},
                 {"position", QJsonArray{x, y, z}}
-            }};
+            });
         };
         mgr.registerAction(def);
     }
@@ -232,12 +258,12 @@ void registerSystemActions(ActionManager& mgr,
             }
             if (name.isEmpty())
                 return {false, {}, "MISSING_PARAM", "Missing required parameter: name"};
-            quintptr handle = engine->playByName(name);
-            return {true, QJsonObject{
+            const auto result = engine->playByNameDetailed(name);
+            return playbackResult(result, QJsonObject{
                 {"action_name", name},
-                {"action_handle", static_cast<qint64>(handle)},
-                {"triggered", (handle != 0)}
-            }};
+                {"action_handle", static_cast<qint64>(result.playbackHandle)},
+                {"triggered", (result.playbackHandle != 0)}
+            });
         };
         mgr.registerAction(def);
     }
@@ -252,21 +278,13 @@ void registerSystemActions(ActionManager& mgr,
         def.undoable = false;
         def.handler = [engine](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();
-            QJsonArray posArray = args["pos"].toArray();
-            if (posArray.size() < 3)
-                return {false, {}, "INVALID_PARAM", "pos must be an array of 3 numbers [x, y, z]"};
-            QJsonArray fwdArray = args["forward"].toArray();
-            QJsonArray upArray = args["up"].toArray();
-            HarkenEditor::Vec3 pos(posArray.at(0).toDouble(), posArray.at(1).toDouble(), posArray.at(2).toDouble());
-            HarkenEditor::Vec3 forward(
-                fwdArray.size() > 0 ? fwdArray.at(0).toDouble() : 0.0,
-                fwdArray.size() > 1 ? fwdArray.at(1).toDouble() : 0.0,
-                fwdArray.size() > 2 ? fwdArray.at(2).toDouble() : -1.0);
-            HarkenEditor::Vec3 up(
-                upArray.size() > 0 ? upArray.at(0).toDouble() : 0.0,
-                upArray.size() > 1 ? upArray.at(1).toDouble() : 1.0,
-                upArray.size() > 2 ? upArray.at(2).toDouble() : 0.0);
-            engine->setListenerTransform(pos, forward, up);
+            HarkenEditor::Vec3 pos, forward(0, 0, -1), up(0, 1, 0);
+            if (!listenerVector(args, "pos", &pos, true)
+                || !listenerVector(args, "forward", &forward)
+                || !listenerVector(args, "up", &up))
+                return {false, {}, "INVALID_PARAM", "Listener vectors must contain three finite numbers"};
+            if (!engine->setListenerTransform(pos, forward, up))
+                return {false, {}, "SET_LISTENER_FAILED", "The runtime rejected the listener transform"};
             return {true, QJsonObject{
                 {"position", QJsonArray{pos.x, pos.y, pos.z}},
                 {"forward", QJsonArray{forward.x, forward.y, forward.z}},
@@ -316,6 +334,8 @@ void registerSystemActions(ActionManager& mgr,
         def.handler = [engine](const QJsonObject&) -> ActionResult {
             if (!engine) return engineNotAvailable();
             uint32_t id = engine->addListener();
+            if (id == UINT32_MAX)
+                return {false, {}, "CAPABILITY_UNAVAILABLE", "The runtime supports only the primary listener"};
             return {true, QJsonObject{{"listener_id", static_cast<int>(id)}}};
         };
         mgr.registerAction(def);
@@ -345,35 +365,22 @@ void registerSystemActions(ActionManager& mgr,
         def.undoable = false;
         def.handler = [engine](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();
-            QJsonArray pos = args["pos"].toArray();
-            if (pos.size() < 3)
-                return {false, {}, "INVALID_PARAM", "pos must be an array of 3 numbers [x, y, z]"};
-            uint32_t listenerId = static_cast<uint32_t>(args["listener_id"].toInt());
-            if (listenerId >= 8)
-                return {false, {}, "INVALID_PARAM",
-                    QString("listener_id %1 out of range [0..7]").arg(listenerId)};
-            if (listenerId > 0 && !engine->isListenerActive(listenerId))
+            const auto requestedId = args.value("listener_id").toInteger(-1);
+            if (requestedId < 0 || requestedId > UINT32_MAX)
+                return {false, {}, "INVALID_PARAM", "listener_id must be an unsigned integer"};
+            const auto listenerId = static_cast<uint32_t>(requestedId);
+            if (!engine->isListenerActive(listenerId))
                 return {false, {}, "LISTENER_NOT_ACTIVE",
-                    QString("listener_id %1 is not active — call add_listener first").arg(listenerId)};
-            float fx = 0, fy = 0, fz = -1;
-            QJsonArray fwd = args["forward"].toArray();
-            if (fwd.size() >= 3) {
-                fx = static_cast<float>(fwd[0].toDouble());
-                fy = static_cast<float>(fwd[1].toDouble());
-                fz = static_cast<float>(fwd[2].toDouble());
-            }
-            float ux = 0, uy = 1, uz = 0;
-            QJsonArray up = args["up"].toArray();
-            if (up.size() >= 3) {
-                ux = static_cast<float>(up[0].toDouble());
-                uy = static_cast<float>(up[1].toDouble());
-                uz = static_cast<float>(up[2].toDouble());
-            }
-            engine->setListenerPositionById(listenerId,
-                static_cast<float>(pos[0].toDouble()),
-                static_cast<float>(pos[1].toDouble()),
-                static_cast<float>(pos[2].toDouble()),
-                fx, fy, fz, ux, uy, uz);
+                    QString("listener_id %1 is not active").arg(listenerId)};
+            HarkenEditor::Vec3 pos, forward(0, 0, -1), up(0, 1, 0);
+            if (!listenerVector(args, "pos", &pos, true)
+                || !listenerVector(args, "forward", &forward)
+                || !listenerVector(args, "up", &up))
+                return {false, {}, "INVALID_PARAM", "Listener vectors must contain three finite numbers"};
+            if (!engine->setListenerPositionById(listenerId, pos.x, pos.y, pos.z,
+                                                forward.x, forward.y, forward.z,
+                                                up.x, up.y, up.z))
+                return {false, {}, "SET_LISTENER_FAILED", "The runtime rejected the listener transform"};
             return {true, QJsonObject{}};
         };
         mgr.registerAction(def);
@@ -549,7 +556,8 @@ void registerSystemActions(ActionManager& mgr,
             QString path = args["path"].toString();
             if (path.isEmpty())
                 return {false, {}, "INVALID_ARGS", "Pack path is required"};
-            engine->unloadPack(path);
+            if (!engine->unloadPack(path))
+                return {false, {}, "UNLOAD_PACK_FAILED", QString("Failed to unload pack: %1").arg(path)};
             return {true, QJsonObject{{"path", path}, {"unloaded", true}}};
         };
         mgr.registerAction(def);

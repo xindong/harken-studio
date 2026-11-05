@@ -20,54 +20,6 @@ namespace Bridge = HarkenEditor::Bridge;
 
 void IPCServer::registerDesktopAdvancedHandlers()
 {
-    registerDesktopHandler("audition_get_state", [this](const QJsonObject&) {
-        if (!mainWindow_) return errorResponse("NOT_INIT", "MainWindow not set");
-        auto* tm = mainWindow_->auditionManager();
-        if (!tm) return errorResponse("NOT_INIT", "AuditionManager not available");
-        auto auditions = tm->getActiveAuditions();
-        QJsonArray arr;
-        for (const auto& t : auditions) {
-            QJsonObject entry = tm->previewIpcSnapshot(t.playingId);
-            entry.insert(QStringLiteral("auditionID"), static_cast<int>(t.playingId));
-            entry.insert(QStringLiteral("objectName"), t.objectName);
-            entry.insert(QStringLiteral("positionMs"),
-                         static_cast<double>(t.positionMs));
-            entry.insert(QStringLiteral("playbackSpeed"),
-                         static_cast<double>(t.playbackSpeed));
-            entry.insert(QStringLiteral("gameObjectId"),
-                         static_cast<double>(t.gameObjId));
-            arr.append(entry);
-        }
-        return successResponse(QJsonObject{
-            {"auditions", arr},
-            {"activeCount", tm->activeAuditionCount()}
-        });
-    });
-    registerDesktopHandler("audition_get_position", [this](const QJsonObject& args) {
-        if (!mainWindow_) return errorResponse("NOT_INIT", "MainWindow not set");
-        auto* tm = mainWindow_->auditionManager();
-        if (!tm) return errorResponse("NOT_INIT", "AuditionManager not available");
-        uint32_t tid = static_cast<uint32_t>(args["auditionID"].toInt(0));
-        if (tid == 0) return errorResponse("INVALID_PARAM", "auditionID required");
-        auto pos = tm->getPositionSamples(tid);
-        return successResponse(QJsonObject{
-            {"samplePosition", static_cast<double>(pos.samplePosition)},
-            {"timeSeconds", pos.timeSeconds},
-            {"beat", static_cast<int>(pos.beat)},
-            {"bar", static_cast<int>(pos.bar)},
-            {"beatFraction", static_cast<double>(pos.beatFraction)},
-            {"isMusic", pos.isMusic}
-        });
-    });
-    registerDesktopHandler("audition_get_speed", [this](const QJsonObject& args) {
-        if (!mainWindow_) return errorResponse("NOT_INIT", "MainWindow not set");
-        auto* tm = mainWindow_->auditionManager();
-        if (!tm) return errorResponse("NOT_INIT", "AuditionManager not available");
-        uint32_t tid = static_cast<uint32_t>(args["auditionID"].toInt(0));
-        if (tid == 0) return errorResponse("INVALID_PARAM", "auditionID required");
-        float speed = tm->getPlaybackSpeed(tid);
-        return successResponse(QJsonObject{{"auditionID", static_cast<int>(tid)}, {"speed", static_cast<double>(speed)}});
-    });
     registerDesktopHandler("get_ui_tree", [this](const QJsonObject& args) { return handleGetUiTree(args); });
     registerDesktopHandler("find_widget", [this](const QJsonObject& args) { return handleFindWidget(args); });
     registerDesktopHandler("grab_widget", [this](const QJsonObject& args) { return handleGrabWidget(args); });

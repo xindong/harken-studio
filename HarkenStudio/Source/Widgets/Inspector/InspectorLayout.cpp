@@ -2,68 +2,14 @@
 #include "Widgets/Common/TableWidget.h"
 
 #include <QLabel>
-#include <QSet>
 #include <algorithm>
 #include <stdexcept>
 
 namespace VNX {
 
-QString inspectorCategoryTitle(PropertyCategory category)
-{
-    switch (category) {
-    case PropertyCategory::Basic: return QStringLiteral("Basic");
-    case PropertyCategory::Route: return QStringLiteral("Route");
-    case PropertyCategory::Spatial: return QStringLiteral("Spatial");
-    case PropertyCategory::Limitation: return QStringLiteral("Limitation");
-    }
-    throw std::invalid_argument("Unknown Inspector category");
-}
-
 QString inspectorCategoryObjectName(PropertyCategory category)
 {
     return QStringLiteral("inspectorTab") + inspectorCategoryTitle(category);
-}
-
-const std::vector<InspectorSectionInfo>& inspectorSections()
-{
-    static const std::vector<InspectorSectionInfo> sections = {
-        {PropertySection::Playback, PropertyCategory::Basic, "playback", "Playback"},
-        {PropertySection::Status, PropertyCategory::Basic, "status", "Status"},
-        {PropertySection::Advanced, PropertyCategory::Basic, "advanced", "Advanced"},
-        {PropertySection::Source, PropertyCategory::Basic, "sources", "Source"},
-        {PropertySection::Selection, PropertyCategory::Basic, "selection", "Selection"},
-        {PropertySection::Step, PropertyCategory::Basic, "steps", "Step"},
-        {PropertySection::Dimension, PropertyCategory::Basic, "dimensions", "Dimension"},
-        {PropertySection::Label, PropertyCategory::Basic, "labels", "Label"},
-        {PropertySection::Clip, PropertyCategory::Basic, "clips", "Clip"},
-        {PropertySection::Effect, PropertyCategory::Basic, "effects", "FX"},
-        {PropertySection::Custom, PropertyCategory::Basic, "custom", "Custom"},
-        {PropertySection::Output, PropertyCategory::Route, "output", "Output"},
-        {PropertySection::Input, PropertyCategory::Route, "inputs", "Input"},
-        {PropertySection::Send, PropertyCategory::Route, "send", "Send"},
-        {PropertySection::Receive, PropertyCategory::Route, "receive", "Receive"},
-        {PropertySection::Rating, PropertyCategory::Spatial, "rating", "Rating"},
-        {PropertySection::PlaybackPriority, PropertyCategory::Limitation, "playback_priority", "Playback Priority"},
-    };
-    return sections;
-}
-
-const InspectorSectionInfo& inspectorSectionInfo(PropertySection section)
-{
-    for (const auto& info : inspectorSections())
-        if (info.section == section) return info;
-    throw std::invalid_argument("Inspector field requires a registered section");
-}
-
-void validateInspectorSchema(const PropertySchema& schema)
-{
-    QSet<QString> fields;
-    for (const auto& field : schema) {
-        inspectorSectionInfo(field.section);
-        if (field.field.isEmpty() || field.label.isEmpty() || fields.contains(field.field))
-            throw std::invalid_argument("Inspector fields require unique identifiers and labels");
-        fields.insert(field.field);
-    }
 }
 
 void applyInspectorTableDescriptor(TableWidget* table, const PropertySchema& schema,
@@ -75,19 +21,6 @@ void applyInspectorTableDescriptor(TableWidget* table, const PropertySchema& sch
     if (found == schema.end())
         throw std::invalid_argument("Inspector table requires a list field descriptor");
     applyInspectorTableDescriptor(table, *found);
-}
-
-PropertyDescriptor withInspectorRowOrder(PropertyDescriptor field)
-{
-    PropertyDescriptor order;
-    order.field = QStringLiteral("order");
-    order.type = PropType::Int;
-    order.label = QStringLiteral("#");
-    order.flags.serialize = false;
-    order.flags.settableByName = false;
-    order.flags.state = true;
-    field.elementSchema.insert(field.elementSchema.begin(), std::move(order));
-    return field;
 }
 
 void applyInspectorTableDescriptor(TableWidget* table, const PropertyDescriptor& field)

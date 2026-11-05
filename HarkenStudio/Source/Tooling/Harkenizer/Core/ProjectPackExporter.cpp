@@ -1880,6 +1880,16 @@ ProjectPackExporter::ValidatePackBuildReadiness(const ProjectData& project,
 
     const auto sourceIndex = buildContext ? buildContext->capabilities->sourceIndex()
         : Bridge::canonicalRuntimeProjectSourceIndex(project);
+    for (const auto& platform : project.platforms) {
+        for (const auto& diagnostic : Bridge::validateBusPublicationSupport(project, platform.id)) {
+            const auto item = sourceIndex->byQtGuid.find(diagnostic.itemGuid);
+            result.issues.push_back({ValidationIssue::Error,
+                QStringLiteral("%1 [platform: %2]").arg(diagnostic.message, platform.name),
+                item != sourceIndex->byQtGuid.end() ? item->second->objectID : 0});
+            ++result.errorCount;
+            result.valid = false;
+        }
+    }
     const auto& allActions = sourceIndex->actions;
 
     for (const ProjectItem* evt : allActions) {

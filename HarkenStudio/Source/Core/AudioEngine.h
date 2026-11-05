@@ -108,18 +108,20 @@ public:
     };
 
     PlaybackStartResult playByNameDetailed(const QString& name);
+    PlaybackStartResult playByName3DDetailed(const QString& name, const HarkenEditor::Vec3& position);
     PlaybackStartResult playByNameWithPreviewContext(const QString& name);
 
     void setPlaybackPosition(quintptr playbackHandle, const HarkenEditor::Vec3& position);
 
     void setListenerPosition(const HarkenEditor::Vec3& position);
     void setListenerOrientation(const HarkenEditor::Vec3& forward, const HarkenEditor::Vec3& up);
-    void setListenerTransform(const HarkenEditor::Vec3& position, const HarkenEditor::Vec3& forward, const HarkenEditor::Vec3& up);
+    bool setListenerTransform(const HarkenEditor::Vec3& position, const HarkenEditor::Vec3& forward, const HarkenEditor::Vec3& up);
     HarkenEditor::Vec3 listenerPosition() const { return listenerPosition_; }
 
     bool loadPack(const QString& path);
-    void unloadPack(const QString& path);
+    bool unloadPack(const QString& path);
     uint32_t getLoadedPackCount() const;
+    QStringList getLoadedPackPaths() const;
 
     void setVoicePitchByName(const QString& soundName, float cents);
 
@@ -191,7 +193,7 @@ public:
     uint32_t addListener();
     void removeListener(uint32_t listenerId);
     bool isListenerActive(uint32_t listenerId) const;
-    void setListenerPositionById(uint32_t listenerId,
+    bool setListenerPositionById(uint32_t listenerId,
                                  float x, float y, float z,
                                  float fwdX, float fwdY, float fwdZ,
                                  float upX, float upY, float upZ);
@@ -201,8 +203,7 @@ public:
                                    uint8_t panningRule, uint8_t speakerConfigType);
     bool getListenerInfo(uint32_t listenerId,
                          float* outX, float* outY, float* outZ,
-                         float* outFwdX, float* outFwdY, float* outFwdZ,
-                         int* outSpatialized, uint32_t* outPanningRule);
+                         float* outFwdX, float* outFwdY, float* outFwdZ);
     void setMultiPosition(uint64_t gameObjectId,
                           const float* positions, uint32_t count, uint8_t type);
     void clearMultiPosition(uint64_t gameObjectId);

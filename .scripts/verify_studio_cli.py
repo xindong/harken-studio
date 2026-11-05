@@ -42,8 +42,14 @@ def verify(cli: Path, host: Path | None, work: Path) -> None:
     assert len(names) == len(catalog) and {"create_project", "set_item_property", "export_pack"} <= names
     for entry in catalog:
         assert entry["registered"] and entry["inputSchema"]["type"] == "object", entry
-        if entry["requiresDesktop"]:
-            assert call("exec", entry["command"], exit_code=1)["code"] == "DESKTOP_REQUIRED", entry
+        assert not entry["requiresDesktop"], entry
+        assert "hostRestriction" not in entry, entry
+    for excluded in ("get_theme", "click_widget", "batch", "list_codecs", "add_listener"):
+        assert excluded not in names
+        assert call("commands", excluded, exit_code=1)["code"] == "UNKNOWN_COMMAND"
+        assert call("exec", excluded, exit_code=1)["code"] == "UNKNOWN_COMMAND"
+    for shared in ("audition_get_state", "audition_get_position", "audition_get_speed"):
+        assert shared in names
     call("exec", "not_a_registered_command", exit_code=1)
     call("not_a_subcommand", exit_code=2)
     call("exec", "list_items", "--args", "[", exit_code=2)
@@ -104,6 +110,17 @@ def verify(cli: Path, host: Path | None, work: Path) -> None:
             stream.writeframes(b"".join(struct.pack("<h", int(6000 * math.sin(2 * math.pi * 440 * i / 48000)))
                                        for i in range(24000)))
         imported = execute("import_audio", {"path": str(audio)}, save=True)["result"]
+        assert "languages" in execute("list_project_languages")["result"]
+        states = call("run", "--project", str(project), "--input", "-", data=[
+            {"cmd": "get_project_state"},
+            {"cmd": "set_item_property", "args": {"path": "tone", "property": "volume", "value": -6}},
+            {"cmd": "get_project_state"},
+            {"cmd": "undo"},
+            {"cmd": "get_project_state"},
+            {"cmd": "redo"},
+            {"cmd": "save_project"},
+            {"cmd": "get_project_state"}])["results"]
+        assert [states[i]["result"]["is_dirty"] for i in (0, 2, 4, 7)] == [False, True, False, False], states
         platforms = execute("list_project_platforms")["result"]["platforms"]
         platform = platforms[0]["id"]
         saved = authored_contents()
@@ -129,6 +146,28 @@ def verify(cli: Path, host: Path | None, work: Path) -> None:
         call("run", "--project", str(project), "--input", str(workflow), "--save")
         execute("get_item_info", {"path": "PlayTone"})
         execute("get_action_definition", {"name": "PlayTone"})
+        playback = call("run", "--project", str(project), "--input", "-", data=[
+            {"cmd": "init", "args": {"sample_rate": 48000, "buffer_size": 480}},
+            {"cmd": "set_master_volume", "args": {"volume": 0}},
+            {"cmd": "start_output"},
+            {"cmd": "post_action", "args": {"name": "PlayTone"}},
+            {"cmd": "audition_play", "args": {"object_path": "PlayTone"}},
+            {"cmd": "audition_get_state"},
+            {"cmd": "set_listener", "args": {"pos": [1, 2, 3], "forward": [0, 0, 1], "up": [0, 1, 0]}},
+            {"cmd": "get_listener_info"},
+            {"cmd": "get_status"},
+            {"cmd": "get_buffer_config"},
+            {"cmd": "stop_all"}])["results"]
+        assert playback[3]["result"]["action_handle"] != 0, playback
+        assert playback[4]["result"]["auditionID"] != 0, playback
+        assert playback[5]["result"]["activeCount"] > 0, playback
+        assert playback[7]["result"]["position"] == [1, 2, 3], playback
+        buffer = playback[9]["result"]
+        assert math.isclose(playback[8]["result"]["output_latency_ms"],
+                            1000 * buffer["block_size"] / buffer["sample_rate"]), playback
+        rejected = call("run", "--project", str(project), "--input", "-", exit_code=1, data=[
+            {"cmd": "post_action", "args": {"name": "PlayTone"}}])
+        assert rejected["code"] == "PLAY_FAILED", rejected
         destination = root / "cli-export"
         asset = execute("get_asset_info", {"source_id": imported["source_id"]})["result"]
         source = Path(asset["absolute_path"]).resolve()
@@ -154,6 +193,21 @@ def verify(cli: Path, host: Path | None, work: Path) -> None:
         assert packs and any(pack.stem == "PlayTone" for pack in packs), exported
         for pack in packs:
             assert pack.stat().st_size and json.loads(pack.with_suffix(".json").read_text(encoding="utf-8"))
+        init_pack = next(pack for pack in packs if pack.stem == "Init")
+        content_pack = next(pack for pack in packs if pack.stem == "PlayTone")
+        lifecycle = call("run", "--input", "-", data=[
+            {"cmd": "init"},
+            {"cmd": "load_pack", "args": {"path": str(init_pack)}},
+            {"cmd": "load_pack", "args": {"path": str(content_pack)}},
+            {"cmd": "get_loaded_packs"},
+            {"cmd": "unload_pack", "args": {"path": str(content_pack)}},
+            {"cmd": "get_loaded_packs"},
+            {"cmd": "unload_pack", "args": {"path": str(init_pack)}},
+            {"cmd": "get_loaded_packs"}])["results"]
+        for index, expected in ((3, {init_pack, content_pack}), (5, {init_pack}), (7, set())):
+            loaded = lifecycle[index]["result"]
+            assert loaded["count"] == len(expected), lifecycle
+            assert {Path(pack["path"]) for pack in loaded["packs"]} == expected, lifecycle
         reference = root / "saved-export"
         saved = authored_contents()
         generated = call(*build_flags, "--output", str(reference))

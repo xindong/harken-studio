@@ -518,6 +518,9 @@ bool AudioEngine::initialize(const Bridge::EngineSessionConfig& config)
     monitorTimer_->start(100);
     onMonitorTimer();
 
+    if (auto* project = ProjectManager::instance().currentProject())
+        ProjectManager::syncProjectToRuntime(project);
+
     qDebug() << "AudioEngine initialized successfully";
     return true;
 }
@@ -777,22 +780,37 @@ quintptr AudioEngine::playByName(const QString& name)
 
 quintptr AudioEngine::playByName3D(const QString& name, const HarkenEditor::Vec3& position)
 {
+    return playByName3DDetailed(name, position).playbackHandle;
+}
+
+AudioEngine::PlaybackStartResult AudioEngine::playByName3DDetailed(
+    const QString& name, const HarkenEditor::Vec3& position)
+{
+    PlaybackStartResult result;
     if (!session_)
     {
+        result.engineResult = Bridge::kEngineNotInit;
+        result.failure = Bridge::PlaybackFailure::RuntimeRefused;
         emit playbackStarted(0, name);
-        return 0;
+        return result;
     }
-    if (currentWorldPlaybackGate(runtimeSyncCoordinator())
-        != Bridge::kEngineOk)
+    result.engineResult = currentWorldPlaybackGate(runtimeSyncCoordinator());
+    if (result.engineResult != Bridge::kEngineOk)
     {
+        result.failure = Bridge::PlaybackFailure::RuntimeRefused;
         emit playbackStarted(0, name);
-        return 0;
+        return result;
     }
 
-    quintptr handle = static_cast<quintptr>(
-        session_->playByName3D(name, position.x, position.y, position.z));
-    emit playbackStarted(handle, name);
-    return handle;
+    const auto started = session_->playByName3DDetailed(
+        name, position.x, position.y, position.z);
+    result.playbackHandle = static_cast<quintptr>(started.handle);
+    result.hasSound = started.handle != 0;
+    result.engineResult = started.result;
+    result.failure = started.failure;
+    result.topologyFailure = started.topologyFailure;
+    emit playbackStarted(result.playbackHandle, name);
+    return result;
 }
 
 void AudioEngine::stopPlayback(quintptr playbackHandle, float fadeMs)
@@ -862,29 +880,23 @@ void AudioEngine::setPlaybackPosition(quintptr playbackHandle, const HarkenEdito
 
 void AudioEngine::setListenerPosition(const HarkenEditor::Vec3& position)
 {
-    listenerPosition_ = position;
     setListenerTransform(position, listenerForward_, listenerUp_);
 }
 
 void AudioEngine::setListenerOrientation(const HarkenEditor::Vec3& forward, const HarkenEditor::Vec3& up)
 {
-    listenerForward_ = forward.normalized();
-    listenerUp_ = up.normalized();
-    setListenerTransform(listenerPosition_, listenerForward_, listenerUp_);
+    setListenerTransform(listenerPosition_, forward.normalized(), up.normalized());
 }
 
-void AudioEngine::setListenerTransform(const HarkenEditor::Vec3& position, const HarkenEditor::Vec3& forward, const HarkenEditor::Vec3& up)
+bool AudioEngine::setListenerTransform(const HarkenEditor::Vec3& position, const HarkenEditor::Vec3& forward, const HarkenEditor::Vec3& up)
 {
+    if (!session_ || !session_->setListenerTransform(position.x, position.y, position.z,
+            forward.x, forward.y, forward.z, up.x, up.y, up.z))
+        return false;
     listenerPosition_ = position;
     listenerForward_ = forward;
     listenerUp_ = up;
-
-    if (!session_)
-        return;
-
-    session_->setListenerTransform(position.x, position.y, position.z,
-                                   forward.x, forward.y, forward.z,
-                                   up.x, up.y, up.z);
+    return true;
 }
 
 bool AudioEngine::loadPack(const QString& path)
@@ -895,12 +907,12 @@ bool AudioEngine::loadPack(const QString& path)
     return session_->loadPack(path);
 }
 
-void AudioEngine::unloadPack(const QString& path)
+bool AudioEngine::unloadPack(const QString& path)
 {
     if (!session_)
-        return;
+        return false;
 
-    session_->unloadPack(path);
+    return session_->unloadPack(path);
 }
 
 uint32_t AudioEngine::getLoadedPackCount() const
@@ -909,6 +921,11 @@ uint32_t AudioEngine::getLoadedPackCount() const
         return 0;
 
     return session_->loadedPackCount();
+}
+
+QStringList AudioEngine::getLoadedPackPaths() const
+{
+    return session_ ? session_->loadedPackPaths() : QStringList{};
 }
 
 double AudioEngine::outputLatency() const

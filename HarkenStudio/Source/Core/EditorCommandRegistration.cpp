@@ -8,6 +8,7 @@ void registerTemplateActions(ActionManager& manager, ProjectManager* project);
 void registerEditorCommands(const EditorCommandContext& context)
 {
     auto& manager = ActionManager::instance();
+    manager.setCommandHost(context.dispatcher->commandHost());
     registerMixerActions(manager, context.engine, context.project, nullptr);
     registerProjectActions(manager, context.project, context.selectFolder);
     registerBindingActions(manager);

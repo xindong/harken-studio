@@ -118,7 +118,7 @@ int main(int argc, char* argv[])
     parser.setApplicationDescription(QStringLiteral(
         "Headless Harken Studio authoring. No desktop window or running editor is required.\n\n"
         "Commands:\n"
-        "  commands [name]    Discover editor commands or describe one command's parameters.\n"
+        "  commands [name]    Discover CLI commands or describe one command's parameters.\n"
         "  init <directory>   Create a new project in a directory that does not exist.\n"
         "  exec <name>        Execute a registered editor command.\n"
         "  run                Execute a JSON array of {cmd,args} requests in order.\n"

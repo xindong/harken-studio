@@ -39,6 +39,10 @@ v7/v8 工程升级时同步转换历史输出路由字段及效果条目结构�
 
 GUI、IPC 与 CLI 共用打包静态库，内部保留 `harkenizer_core`、`harkenizer_build` 等目标名称，覆盖工程构建计划、媒体准备、资源编译调度、共享逻辑编译、包体装配、直接写入、根目录 Project.json 和自清理。独立 Harkenizer 和 packc 程序均不再交付，不新增内核 DLL。主打包链直接调用资源编译库生成内存条目，不启动私有 worker。文件资源接口的私有 worker 由 `HarkenStudioCLI --resource-worker` 承接，程序定位覆盖变量为 `HARKEN_STUDIO_CLI_PATH`。
 
+Studio 的 Publisher 窗口及操作命令与 CLI 命令目录分别注册；共享打包服务不要求 CLI 带入桌面交互。`validate_pack_build_readiness` 按工程平台复用实际打包及 Current World 的总线发布校验，非中性 pan／pitch、Listener 相对路由等不支持配置会出现在预检错误中。
+
+CLI 与 Studio 的命令目录及共享工程能力边界见 [CLI 现状总览](cli.md)。
+
 | 构建边界 | 当前分工 |
 |---|---|
 | GUI 输入 | 借用当前工程对象并持有工程生命周期，包含未保存编辑；全程模态构建窗口冻结编辑，不复制工程树，也不隐式保存 |

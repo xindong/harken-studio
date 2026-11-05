@@ -28,16 +28,9 @@
 
 #include "Widgets/Inspector/PropertyEditorEngine.h"
 #include "Widgets/Inspector/PropertySchemaJson.h"
-#include "Widgets/Inspector/SoundInspectorSchema.h"
 #include "Widgets/Inspector/ActionInspectorSchema.h"
 #include "Widgets/Inspector/AttenuationInspectorSchema.h"
 #include "Widgets/Inspector/EffectInspectorSchema.h"
-#include "Widgets/Inspector/BusInspectorSchema.h"
-#include "Widgets/Inspector/ContainerInspectorSchema.h"
-#include "Widgets/Inspector/LayerInspectorSchema.h"
-#include "Widgets/Inspector/SegmentInspectorSchema.h"
-#include "Widgets/Inspector/TrackInspectorSchema.h"
-#include "Widgets/Inspector/VariableInspectorSchema.h"
 #include "Core/ComponentCatalog.h"
 #include "Core/ItemTypeCatalog.h"
 #include <QJsonArray>
@@ -124,41 +117,7 @@ void InspectorPanel::requestExternalEditor(const ExternalEditorSelection& select
 
 QJsonObject InspectorPanel::getInspectorSchema(const QString& schemaId) const
 {
-    const auto type = ItemTypeCatalog::parseTypeName(schemaId, Qt::CaseSensitive, false);
-    if (!type)
-        return {};
-
-    const PropertySchema* schema = nullptr;
-    ComponentType component = ComponentType::Audio;
-    switch (*type)
-    {
-        case ProjectItem::Type::Sound:
-            schema = &soundInspectorSchema();       component = ComponentType::Audio;       break;
-        case ProjectItem::Type::Container:
-            schema = &containerInspectorSchema();   component = ComponentType::Audio;       break;
-        case ProjectItem::Type::Track:
-            schema = &trackInspectorSchema();       component = ComponentType::Audio;       break;
-        case ProjectItem::Type::Segment:
-            schema = &segmentInspectorSchema();       component = ComponentType::Audio;       break;
-        case ProjectItem::Type::Layer:
-            schema = &layerInspectorSchema();       component = ComponentType::MixNode;     break;
-        case ProjectItem::Type::Bus:
-            schema = &busInspectorSchema();         component = ComponentType::Bus;         break;
-        case ProjectItem::Type::Action:
-            schema = &actionInspectorSchema();      component = ComponentType::Action;      break;
-        case ProjectItem::Type::Variable:
-            schema = &variableInspectorSchema();    component = ComponentType::Variable;    break;
-        case ProjectItem::Type::Attenuation:
-            schema = &attenuationInspectorSchema(); component = ComponentType::Attenuation; break;
-        case ProjectItem::Type::Effect:
-            schema = &effectInspectorSchema();      component = ComponentType::Effect;      break;
-        default:
-            return {};
-    }
-
-    return propertySchemaToJson(
-        *schema, ComponentCatalog::componentName(component),
-        {ItemTypeCatalog::ipcName(*type)});
+    return inspectorSchemaToJson(schemaId);
 }
 
 }

@@ -1,4 +1,5 @@
 #include "IPCServerInternal.h"
+#include "Widgets/Inspector/PropertySchemaJson.h"
 #include <QCoreApplication>
 #include <QStandardPaths>
 #include <QThread>
@@ -36,13 +37,13 @@ void IPCServer::registerSystemHandlers()
     commandHandlers_["get_3d_scene"] = [this](const QJsonObject& args) { return handleGet3DScene(args); };
     commandHandlers_["get_listener_info"] = [this](const QJsonObject& args) {
         if (!engine_) return errorResponse("ENGINE_NOT_AVAILABLE", "AudioEngine is not available");
-        uint32_t listenerId = static_cast<uint32_t>(args["listener_id"].toInt(0));
+        const auto requestedId = args.contains("listener_id") ? args.value("listener_id").toInteger(-1) : 1;
+        if (requestedId < 0 || requestedId > UINT32_MAX)
+            return errorResponse("INVALID_PARAM", "listener_id must be an unsigned integer");
+        const auto listenerId = static_cast<uint32_t>(requestedId);
         float x = 0, y = 0, z = 0, fwdX = 0, fwdY = 0, fwdZ = 0;
-        int spatialized = 1;
-        uint32_t panningRule = 0;
         bool active = engine_->getListenerInfo(listenerId, &x, &y, &z,
-                                                &fwdX, &fwdY, &fwdZ,
-                                                &spatialized, &panningRule);
+                                                &fwdX, &fwdY, &fwdZ);
         if (!active)
             return errorResponse("LISTENER_NOT_ACTIVE",
                                  "Listener " + QString::number(listenerId) + " is not active");
@@ -51,8 +52,6 @@ void IPCServer::registerSystemHandlers()
         result["active"] = true;
         result["position"] = QJsonArray{x, y, z};
         result["forward"] = QJsonArray{fwdX, fwdY, fwdZ};
-        result["spatialized"] = (spatialized != 0);
-        result["panning_rule"] = static_cast<int>(panningRule);
         return successResponse(result);
     };
     commandHandlers_["get_loaded_packs"] = [this](const QJsonObject& args) { return handleGetLoadedPacks(args); };
@@ -288,7 +287,15 @@ void IPCServer::registerSystemHandlers()
     registerDesktopHandler("get_layout_state");
     registerDesktopHandler("get_inspector_context");
 
-    registerDesktopHandler("get_inspector_schema");
+    commandHandlers_["get_inspector_schema"] = [this](const QJsonObject& args) {
+        const QString schemaId = args.value("schema_id").toString();
+        if (schemaId.isEmpty())
+            return errorResponse("MISSING_PARAM", "Required: schema_id");
+        const auto schema = inspectorSchemaToJson(schemaId);
+        if (schema.isEmpty())
+            return errorResponse("SCHEMA_NOT_FOUND", QString("No schema found for '%1'").arg(schemaId));
+        return successResponse(QJsonObject{{"schema_id", schemaId}, {"schema", schema}});
+    };
 
     registerDesktopHandler("create_inspector_panel");
 
@@ -425,7 +432,7 @@ QJsonObject IPCServer::handleGetStatus(const QJsonObject& args)
         {"simulation_mode", engine_->isSimulationMode()},
         {"active_voices", engine_->activeVoiceCount()},
         {"cpu_usage", engine_->cpuUsage()},
-        {"output_latency_ms", engine_->outputLatency()},
+        {"output_latency_ms", engine_->outputLatency() * 1000.0},
         {"sample_rate", engine_->actualSampleRate()},
         {"master_volume", engine_->masterVolume()}
     };
@@ -689,15 +696,8 @@ QJsonObject IPCServer::handleGetLoadedPacks(const QJsonObject& args)
 
     QJsonArray packArray;
     if (engine_)
-    {
-        uint32_t count = engine_->getLoadedPackCount();
-        if (count > 0)
-        {
-            QJsonObject info;
-            info["count"] = static_cast<int>(count);
-            packArray.append(info);
-        }
-    }
+        for (const auto& path : engine_->getLoadedPackPaths())
+            packArray.append(QJsonObject{{"path", path}, {"name", QFileInfo(path).completeBaseName()}});
 
     return successResponse(QJsonObject{
         {"packs", packArray},
@@ -945,7 +945,7 @@ QJsonObject IPCServer::handleGetProjectState(const QJsonObject& args)
     {
         state["project_name"] = project->name;
         state["project_path"] = project->projectPath;
-        state["is_dirty"] = false;
+        state["is_dirty"] = projectManager_->hasUnsavedChanges();
         
         if (engine_)
         {
@@ -1389,7 +1389,7 @@ QJsonObject IPCServer::handleGetPerformance(const QJsonObject& args)
     engine_->getMasterMeterPeak(peakL, peakR);
     result["master_peak_l"]  = static_cast<double>(peakL);
     result["master_peak_r"]  = static_cast<double>(peakR);
-    result["output_latency_ms"] = engine_->outputLatency();
+    result["output_latency_ms"] = engine_->outputLatency() * 1000.0;
     result["sample_rate"]    = engine_->actualSampleRate();
 
     return successResponse(result);
