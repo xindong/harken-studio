@@ -248,9 +248,7 @@ namespace Harken.Unity
             source = null;
             if (publishingSpatial) return VnResult.VN_IN_USE;
             if (!IsReady || shuttingDown) return VnResult.VN_NOT_INITIALIZED;
-            VnResult result = spatialSources.Create(this, session, target, out source);
-            ReserveSpatialRecords();
-            return result;
+            return spatialSources.Create(this, session, target, out source);
         }
 
         public VnResult PlayAction(string actionName, string projectId, HarkenSpatialSource source, out ActionFiring firing)

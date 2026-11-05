@@ -87,7 +87,7 @@ namespace Harken.Unity
         private bool SpatialSessionIsCurrent(PackBootstrapSession owner)
             => this && owner != null && owner.IsActive && ReferenceEquals(owner, session) && !shuttingDown;
 
-        private void ReserveSpatialRecords()
+        internal void ReserveSpatialRecords()
         {
             int required = 2 + spatialEmitters.Count + spatialSources.Count;
             if (spatialRecords.Length < required)
