@@ -1395,7 +1395,8 @@ bool TransitionEndpointHasBoundedResolvedVoices(
 
 template <class WorldView, class ContainerView, class ChildView>
 bool QueueTransitionEndpointSupported(const WorldView& world,
-    const ContainerView& container, const ChildView& child) noexcept {
+    const ContainerView& container, const ChildView& child,
+    const detail::CompositeWorldVintagesV1* composite = nullptr) noexcept {
     if (TransitionEndpointHasBoundedResolvedVoices(world, child.playable)) return true;
     if constexpr (!std::is_same_v<WorldView, ContainerWorldInstallViewV1>) {
         return false;
@@ -1407,12 +1408,23 @@ bool QueueTransitionEndpointSupported(const WorldView& world,
             container.transitionProgramIndex >= world.transitionCount ||
             !TransitionEndpointHasBoundedResolvedVoices(world, child.playable, true, true)) return false;
         const auto& transition = world.transitions[container.transitionProgramIndex];
-        for (std::uint32_t index = 0; index < transition.ruleCount; ++index) {
-            const auto& rule = transition.rules[index];
-            // Native schedule signals carry the target envelope after source completion.
-            if (rule.sourceFade.active != 0 &&
-                (rule.sourceAny != 0 || rule.targetAny != 0 ||
-                 SameRef(rule.source, child.playable) || SameRef(rule.target, child.playable))) return false;
+        for (std::uint32_t source = 0; source < container.childCount; ++source)
+        for (std::uint32_t target = 0; target < container.childCount; ++target) {
+            if (!detail::SequenceQueueTransitionPairReachableV1(container, source, target)) continue;
+            const auto& from = container.children[source].playable;
+            const auto& to = container.children[target].playable;
+            const auto* rule = ResolveValidatedTransitionRuleV1(transition, from, to);
+            if (rule == nullptr || rule->sourceFade.active == 0 ||
+                (!SameRef(from, child.playable) && !SameRef(to, child.playable))) continue;
+            const auto resolve = [&](const auto&) noexcept {
+                return detail::MusicSourceValidationOwnerV1{&world, composite != nullptr
+                    ? composite->segments : std::span<const std::uint32_t>{}};
+            };
+            auto shape = *rule;
+            shape.sourceExit = TransitionSourceExitV1::NaturalEnd;
+            if (rule->sourceExit < TransitionSourceExitV1::NaturalEnd ||
+                !detail::TransparentMusicSourceCompatibleV1(child.playable, shape, resolve) ||
+                !detail::TransparentMusicSourceCompatibleV1(from, *rule, resolve)) return false;
         }
         return true;
     }
@@ -3817,12 +3829,11 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                         const auto* target = &row.children[targetIndex].playable;
                         const auto* rule = ResolveValidatedTransitionRuleV1(transition, *source, *target);
                         if (rule == nullptr || rule->sourceExit <= TransitionSourceExitV1::NaturalEnd) continue;
-                        bool matched = false;
-                        if (source->kind == PlayableKindV1::Segment)
-                            for (std::uint32_t segment = 0; segment < world.segmentScheduleCount; ++segment)
-                                if ((composite != nullptr ? composite->segments[segment] == kCurrentWorldBodyVintageV19 : entryScheduling) &&
-                                    SameRef(world.segmentSchedules[segment].rootDefinition, *source))
-                                    matched = NativeMusicTransitionSourceCompatibleV1(*rule, world.segmentSchedules[segment]);
+                        const bool matched = detail::TransparentMusicSourceCompatibleV1(*source, *rule,
+                            [&](const auto&) noexcept {
+                                return detail::MusicSourceValidationOwnerV1{&world, composite != nullptr
+                                    ? composite->segments : std::span<const std::uint32_t>{}};
+                            });
                         transitionConsumerUnavailable = transitionConsumerUnavailable || !matched;
                     }
                 }
@@ -3833,7 +3844,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                         (row.mode == ContainerModeV1::VariableControl
                              ? !VariableControlTransitionEndpointSupported(
                                    world, row, child)
-                             : !QueueTransitionEndpointSupported(world, row, child));
+                             : !QueueTransitionEndpointSupported(world, row, child, composite));
                 }
             }
         }

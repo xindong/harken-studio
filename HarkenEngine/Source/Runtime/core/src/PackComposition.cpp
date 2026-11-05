@@ -973,11 +973,10 @@ VnResult ValidateTransitions(
             const auto* target = &container->children[targetIndex].playable;
             const auto* rule = ResolveValidatedTransitionRuleV1(transition, *source, *target);
             if (rule == nullptr || rule->sourceExit <= TransitionSourceExitV1::NaturalEnd) continue;
-            const auto* owner = ResolvePlayableOwner(published, member, *source);
-            const auto* segment = owner != nullptr && source->kind == PlayableKindV1::Segment
-                ? FindSegmentSchedule(owner->view, source->stableId) : nullptr;
-            if (segment == nullptr || owner->view.sourceBodyVintage != kCurrentWorldBodyVintageV19 ||
-                !NativeMusicTransitionSourceCompatibleV1(*rule, *segment)) return VN_CAPABILITY_UNAVAILABLE;
+            if (!detail::TransparentMusicSourceCompatibleV1(*source, *rule, [&](const auto& ref) noexcept {
+                    const auto* owner = ResolvePlayableOwner(published, member, ref);
+                    return detail::MusicSourceValidationOwnerV1{owner != nullptr ? &owner->view : nullptr, {}};
+                })) return VN_CAPABILITY_UNAVAILABLE;
         }
         if (!PointerCountOk(transition.ruleCount, transition.rules)) {
             return VN_BAD_PACK;

@@ -5441,6 +5441,8 @@ public:
         queueSuccessorLeafOccurrenceOwnerContexts{};
     CompositeCompletionOwnerToken queueSuccessorCompositeOwner{};
     PreparedTransactionBatch queueTransactions{};
+    PreparedTransactionBatch queueCurrentStartTransactions{};
+    std::vector<PreparedDeferredPost> queueCurrentDeferredStarts;
     std::array<PreparedPlan03GroupSlice, 2> queueGroupSlices{};
     std::array<CommittedPlan03GroupSlice, 2> queueCommittedGroupSlices{};
     PreparedQueueConditionalV1 queueConditional{};
