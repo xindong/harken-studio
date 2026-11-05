@@ -102,8 +102,11 @@ void drawGrid(QPainter& painter,
               const TimelineRenderData& data)
 {
     if (!data.timeAxis.ticks.isEmpty()) {
-        drawTimeAxisGrid(painter, style.curve.colors.grid, data.viewport, data.timeAxis,
-            withOpacity(style.curve.colors.grid, 0.5), withOpacity(style.curve.colors.grid, 0.75));
+        const QColor& uniform = style.uniformTimeAxisGrid;
+        drawTimeAxisGrid(painter, uniform.isValid() ? uniform : style.curve.colors.grid,
+            data.viewport, data.timeAxis,
+            uniform.isValid() ? uniform : withOpacity(style.curve.colors.grid, 0.5),
+            uniform.isValid() ? uniform : withOpacity(style.curve.colors.grid, 0.75));
         painter.save();
         painter.setRenderHint(QPainter::Antialiasing, false);
         painter.setPen(style.curve.colors.grid);

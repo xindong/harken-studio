@@ -12,7 +12,7 @@
 |---|---|
 | Segment Timeline | 新建默认 Musical；Timeline 边框外的独立参数行提供 Tempo、Time Signature；无时钟域切换，Tempo 输入框不带单位；左侧 chevron 提供 Seconds、Measure-Beats、Seconds with Measure-Beats、Measure-Beats with Seconds，默认单行 Measure-Beats |
 | Track Timeline | 继承父 Segment 时钟域；Segment 内轨道默认高度为 112px，保留手动高度；右侧竖向控件统一缩放所有轨道并滚动轨道列表；独立 Track 不提供竖向缩放控件，波形高度随窗口适配；缩小至原最小高度附近时 Clip 只保留标题及原有上下留白，最小轨高为标题高度加留白，跳过波形准备、加载和绘制；重新拉高恢复波形；保留片段长度编辑、多选拖动、跨轨移动与缩放 |
-| Marker | 新建 Segment 预置 Entry／Exit；Entry 在起点，Exit 在初始时间轴末尾；12px 手柄带位于刻度轴底部，与左侧头部共用完整轴高和背景；12×10px 双握槽手柄顶部对齐，网格连续穿过手柄带，竖杆与手柄同色连续；Entry 黄色、Exit 红色；手柄与画布整根竖杆均可拖动，支持悬停读数、拖动浮窗、精确输入、边缘滚动、取消、删除、补建、吸附与撤销；Custom 创建及编辑能力隐藏 |
+| Marker | 新建 Segment 预置 Entry／Exit；Entry 在起点，Exit 在初始时间轴末尾；12px 手柄带位于刻度轴底部，与左侧头部共用完整轴高和背景；数值区短刻度与手柄带网格统一使用更明显的 borderTick 配色，上下同色连续，不加横分割线；12×10px 双握槽手柄顶部对齐，网格连续穿过手柄带，竖杆与手柄同色连续；Entry 黄色、Exit 红色；手柄与画布整根竖杆均可拖动，支持悬停读数、拖动浮窗、精确输入、边缘滚动、取消、删除、补建、吸附与撤销；Custom 创建及编辑能力隐藏 |
 | Cursor | 默认显示绿色；15×12px 对称倒三角带亮色轮廓，与贯穿刻度轴及轨道的竖线共用物理像素中心；零点处完整显示手柄；支持定位、拖动、吸附、精确输入、边缘滚动、取消拖动和视图状态恢复 |
 | 时钟域转换 | 同时转换 Track 片段边界与 Marker；尽量保持实际秒数，音乐坐标按整数 tick 舍入；一次撤销恢复原数据 |
 | Queue Container | Splice by Marker；仅 Random／Sequence 的 Queue 显示此选项 |
