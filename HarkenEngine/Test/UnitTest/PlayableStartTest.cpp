@@ -32888,16 +32888,20 @@ TEST(PlayableStart, MusicActionMixedPlayResetKeepsActualPlaybackAndReclaims) {
 
 
 TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
+    for (const bool pack : {false, true})
     for (const unsigned workers : {0u, 2u})
-    for (const unsigned shape : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u})
-    for (const unsigned variant : {0u, 1u, 2u})
-    for (const unsigned cropTicks : {0u, 8u, 12u, 14u, 16u, 24u, 28u, 32u, 80u}) {
+    for (const unsigned shape : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u})
+    for (const unsigned variant : {0u, 1u, 2u, 3u})
+    for (const unsigned cropTicks : {0u, 8u, 12u, 14u, 16u, 24u, 28u, 32u, 60u, 62u, 68u, 80u}) {
+        if (shape != 10 && cropTicks > 32 && cropTicks < 80) continue;
+        if (pack && shape < 9) continue;
         if (variant != 0 && (shape != 9 || (variant == 1 && cropTicks != 14 && cropTicks != 24 && cropTicks != 28) ||
-            (variant == 2 && cropTicks != 14))) continue;
-        if (shape != 9 && (cropTicks == 12 || cropTicks == 14 || cropTicks == 28)) continue;
+            (variant >= 2 && cropTicks != 14))) continue;
+        if (shape < 9 && (cropTicks == 12 || cropTicks == 14 || cropTicks == 28)) continue;
         if (shape >= 2 && shape < 5 && cropTicks != 8 && cropTicks != 16) continue;
         const bool composite = (shape >= 1 && shape <= 4) || shape == 8;
         [&] {
+        SCOPED_TRACE(pack);
         SCOPED_TRACE(shape);
         SCOPED_TRACE(variant);
         SCOPED_TRACE(cropTicks);
@@ -32918,7 +32922,7 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
         const auto differentChild = queue.children[1];
         const auto differentOccurrence = queue.occurrences[1];
         if (shape >= 5 && shape <= 8) queue.ResolveSecondChildToFirst();
-        if (shape == 9) queue.EnableNaturalEndTransition(100, 400);
+        if (shape >= 9) queue.EnableNaturalEndTransition(100, 400);
         if (variant == 1) {
             queue.transitionCurves[0].curve.handles[0] = {0.1f, 0.0f, 0.7f, 0.2f};
             queue.transitionCurves[1].curve.handles[0] = {0.2f, 0.8f, 0.9f, 1.0f};
@@ -32928,7 +32932,15 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
         targetEnvelope.Bake(queue.transitionCurves[1].curve);
         std::array<harken::ContainerChildProgramViewV2, 3> queueChildren{queue.children[0], queue.children[1], differentChild};
         auto thirdOccurrence = differentOccurrence;
-        if (shape == 6) {
+        if (shape == 10) {
+            queueChildren[2] = queue.children[0];
+            thirdOccurrence = queue.occurrences[0];
+            queue.transition.ruleCount = 1;
+            queue.transition.defaultRuleIndex = 0;
+            queue.transitionRules[0].sourceAny = queue.transitionRules[0].targetAny = 1;
+            queue.transitionRules[0].source = queue.transitionRules[0].target = {};
+        }
+        if (shape == 6 || shape == 10) {
             queueChildren[2].stableChildOrdinal = 9;
             queueChildren[2].authoredStableOrder = 2;
             thirdOccurrence.stableOccurrenceOrdinal = 9;
@@ -32990,7 +33002,7 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
         image.segment.rootDefinition.expectedProgramSemanticFingerprint = image.properties[2].programSemanticFingerprint;
         image.placement.content = queue.Root();
         image.placement.authoredStart = -static_cast<std::int64_t>(cropTicks);
-        image.placement.authoredDuration = 64 + cropTicks;
+        image.placement.authoredDuration = (shape == 10 ? 80 : 64) + cropTicks;
         image.occurrence.childPlayable = image.placement.content;
         image.occurrence.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(image.occurrence);
         image.track.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(image.track);
@@ -32998,7 +33010,7 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
         image.segment.startPointKind = 0;
         image.segment.startMarkerId = 0;
         image.segment.bounds.contentStart = -static_cast<std::int64_t>(cropTicks);
-        image.segment.bounds.contentEnd = 64;
+        image.segment.bounds.contentEnd = shape == 10 ? 80 : 64;
         image.segment.bounds.nominalStart = 16;
         image.segment.bounds.nominalEnd = 48;
         image.segment.entryMarker = {harkentest::ObjectId(10002), 16};
@@ -33013,7 +33025,7 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
         });
         std::vector<harken::PlayableOccurrencePropertyViewV1> occurrences = {
             queue.occurrences[0], queue.occurrences[1], image.occurrence};
-        if (shape == 6) occurrences.push_back(thirdOccurrence);
+        if (shape == 6 || shape == 10) occurrences.push_back(thirdOccurrence);
         if (composite) occurrences.insert(occurrences.end(), entryOccurrences.begin(), entryOccurrences.begin() + entryTrack.track.placementCount);
         std::sort(occurrences.begin(), occurrences.end(), [](const auto& a, const auto& b) {
             return std::tuple{a.parentKind, a.parentStableId, a.stableOccurrenceOrdinal}
@@ -33024,7 +33036,7 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
         install.identity.capabilityMask |= harken::kWorldCapabilityEntryScheduling | queue.world.identity.capabilityMask;
         install.containers = &queue.container;
         install.containerCount = 1;
-        if (shape == 9) { install.transitions = &queue.transition; install.transitionCount = 1; }
+        if (shape >= 9) { install.transitions = &queue.transition; install.transitionCount = 1; }
         install.playableProperties = properties.data();
         install.playablePropertyCount = static_cast<std::uint32_t>(properties.size());
         install.playableOccurrences = occurrences.data();
@@ -33034,12 +33046,95 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
         install.trackScheduleCount = composite ? 2 : 1;
         install.segmentSchedules = &image.segment;
         install.segmentScheduleCount = 1;
+        harken::ActionStepProgramViewV1 packStep{};
+        harken::ActionProgramViewV1 packAction{};
+        if (pack) {
+            packStep.opcode = harken::ActionOpcodeV1::Play;
+            harkentest::packfoundation::SetAbsoluteTime(&packStep.delay);
+            harkentest::packfoundation::SetAbsoluteTime(&packStep.fade);
+            harkentest::packfoundation::SetAbsoluteTime(&packStep.cooldown);
+            packStep.target = {harken::ActionTargetKindV1::Segment, 0, image.Root().stableId,
+                               image.Root().expectedProgramSemanticFingerprint};
+            packAction.actionStableId = harkentest::ObjectId(990000);
+            packAction.steps = &packStep;
+            packAction.stepCount = packAction.expandedStepOccurrenceCount = packAction.expandedFiringCount = 1;
+            packAction.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(packAction);
+            install.actions = &packAction;
+            install.actionCount = 1;
+        }
+        install.identity.capabilityMask = harken::detail::ComputeCurrentWorldLocalCapabilityMaskV1(install);
         install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV6(install);
-        ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, install).status);
+        VnResult packStatus = VN_OK;
+        if (pack) {
+            using namespace harken;
+            using namespace harkentest::packfoundation;
+            ASSERT_EQ(VN_OK, Vn_UnregisterPCM(kSound));
+            ASSERT_EQ(VN_OK, Vn_UnregisterPCM(kSecondSound));
+            std::vector<std::uint8_t> body;
+            ASSERT_TRUE(EncodeCurrentWorldBodyV19(install, body));
+            PackCanonicalPartitionHeader header{};
+            header.headerBytes = kCanonicalDefinitionPartitionHeaderV2Bytes;
+            header.bodyVintage = kCurrentWorldBodyVintageV19;
+            header.bodyBytes = body.size();
+            header.bodyChecksum = Fnv1a64(body.data(), body.size());
+            header.packStableId = 22;
+            header.partitionRevision = 1;
+            header.ownedDefinitionCount = install.playablePropertyCount + install.variableCount + install.actionCount;
+            ApplyCanonicalBusTriple(&header, DefaultFixtureBusTriple());
+            std::vector<std::uint8_t> partition(header.headerBytes + body.size(), 0);
+            SerializePackCanonicalPartitionHeaderV2(header, partition.data());
+            header.headerChecksum = Fnv1a64(partition.data(), 80);
+            SerializePackCanonicalPartitionHeaderV2(header, partition.data());
+            std::memcpy(partition.data() + header.headerBytes, body.data(), body.size());
+            ImageBuilder builder(kPackKindCanonicalContent);
+            builder.AddEntry(kPackEntryKindPackRequirementBlock, 22,
+                RequirementPayload(22, 1, 1, header.ownedDefinitionCount, body.size()));
+            builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, 22, std::move(partition));
+            builder.AddMedia(kSound, first);
+            builder.AddMedia(kSecondSound, second);
+            const auto write = [](const char* filename, const std::vector<std::uint8_t>& bytes) {
+                const auto path = std::filesystem::path(HARKEN_TEMP_DIR) / filename;
+                std::ofstream file(path, std::ios::binary | std::ios::trunc);
+                file.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+                return path.string();
+            };
+            const auto initPath = write("music-queue-crop-init.pack", harkentest::BuildMasterOnlyInitBytes());
+            const auto contentPath = write("music-queue-crop-content.pack", builder.Build());
+            VnCanonicalPackSetMemberV1 members[2]{};
+            VnCanonicalPackSetMemberResultV1 results[2]{};
+            for (unsigned index = 0; index < 2; ++index) {
+                members[index].structSize = sizeof(members[index]);
+                members[index].packStableId = index == 0 ? 11 : 22;
+                members[index].packKind = index == 0 ? VN_CANONICAL_PACK_SET_MEMBER_INIT
+                    : VN_CANONICAL_PACK_SET_MEMBER_CONTENT;
+                members[index].utf8Path = index == 0 ? initPath.c_str() : contentPath.c_str();
+                results[index].structSize = sizeof(results[index]);
+            }
+            VnCanonicalPackSetActivationReportV1 report{};
+            packStatus = harkentest::ActivateCanonicalMembersV1(members, 2, results, report);
+        }
+        if (pack) ASSERT_EQ(VN_OK, packStatus);
+        else ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, install).status);
         harken::PlayableStartRequest request{};
         request.root = image.Root();
         const auto publishedBefore = engine->commands.PublishedHead();
-        const auto started = harken::StartPlayable(*engine, request);
+        harken::PlayableStartResult started{};
+        if (pack) {
+            VnPostActionDesc post{};
+            post.structSize = sizeof(post);
+            post.actionId = packAction.actionStableId;
+            VnActionFiringHandle firing = 0;
+            const auto result = Vn_PostAction(&post, &firing);
+            if (variant == 2) { EXPECT_NE(VN_OK, result); EXPECT_EQ(0u, firing); }
+            else {
+                ASSERT_EQ(VN_OK, result);
+                VnActionStepResult step{};
+                step.structSize = sizeof(step);
+                ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &step));
+                ASSERT_NE(0u, step.producedPlayableInstance);
+                started = {harken::PlayableStartStatus::Accepted, step.producedPlayableInstance, 0};
+            }
+        } else started = harken::StartPlayable(*engine, request);
         if (variant == 2) {
             ASSERT_NE(harken::PlayableStartStatus::Accepted, started.status);
             EXPECT_EQ(publishedBefore, engine->commands.PublishedHead());
@@ -33064,6 +33159,8 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
         const auto* row = FindPlayableRow(*engine, started.instance);
         ASSERT_NE(nullptr, row);
         const auto start = row->startFrame;
+        if (variant == 3) ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(*engine, started.instance, 0));
+        const auto totalFrames = shape == 10 ? 3600u : 3200u;
         for (unsigned block = 0; block < 120; ++block) {
             ASSERT_EQ(VN_OK, Vn_Update()) << OccupancyDump(*engine);
             ASSERT_FALSE(engine->runtimeRecreateRequired) << OccupancyDump(*engine);
@@ -33076,16 +33173,25 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
                 const auto source = coordinate + cropTicks * 25u;
                 const auto firstEnd = shape == 2 ? 0u : shape == 1 ? 640u : 400u;
                 const auto secondAge = source >= firstEnd ? source - firstEnd : UINT64_MAX;
-                float expected = age >= 3200 ? 0.0f : shape == 5 ? (source < 400 ? 0.1f : 0.0f) :
+                float expected = age >= totalFrames ? 0.0f : shape == 5 ? (source < 400 ? 0.1f : 0.0f) :
                     shape == 7 ? (source < 1200 ? 0.1f : 0.0f) :
                     shape == 8 ? (source < 800 ? 0.1f : 0.0f) :
                     source >= firstEnd ? (secondAge < second.size() ? second[secondAge] : 0.0f) +
                         (shape == 4 && secondAge >= 240 && secondAge - 240 < second.size() ? second[secondAge - 240] : 0.0f) :
                     (source < 400 ? 0.1f : 0.0f) + (shape == 1 && source >= 240 && source < 640 ? 0.1f : 0.0f);
-                if (shape == 9 && age < 3200) {
+                if (shape == 10 && age < totalFrames && source >= 1600 && source < 2000)
+                    expected = 0.1f;
+                if (shape >= 9 && age < totalFrames) {
                     if (source >= 300 && source < 400) expected *= 1.0f - sourceEnvelope.Eval(static_cast<float>(source - 300) / 99.0f);
                     else if (source >= 400 && source < 800) expected *= targetEnvelope.Eval(static_cast<float>(source - 400) / 399.0f);
                 }
+                if (shape == 10 && age < totalFrames) {
+                    // No transition prelude is admitted when its target starts at or beyond this pass's clip end.
+                    const auto passEnd = (age < 2000 ? 1200u : 2000u) + cropTicks * 25u;
+                    if (source >= 1500 && source < 1600 && 1600 < passEnd) expected *= 1.0f - sourceEnvelope.Eval(static_cast<float>(source - 1500) / 99.0f);
+                    else if (source >= 1600 && source < 2000) expected *= targetEnvelope.Eval(static_cast<float>(source - 1600) / 399.0f);
+                }
+                if (variant == 3) expected = 0.0f;
                 ASSERT_NEAR(expected, engine->nullBackend.LastBlock()[2 * i], 0.0001f)
                     << "frame=" << frame << " start=" << start << OccupancyDump(*engine);
             }

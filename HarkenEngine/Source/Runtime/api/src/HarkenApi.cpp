@@ -17808,23 +17808,35 @@ const harken::ContainerChildProgramViewV2* FindQueueChild(
 }
 
 const harken::TransitionRuleViewV1* ResolveBasicTransitionRule(
+    const harken::TransitionProgramViewV1* transition,
+    const harken::ContainerProgramViewV3& program,
+    const harken::PlayableRefV1& source,
+    const harken::PlayableRefV1& target) noexcept {
+    if (transition == nullptr || transition->ownerContainerStableId != program.containerStableId ||
+        (harken::ClassifyTransitionProgramV1(*transition) != harken::TransitionProgramClassV1::Basic &&
+         !harken::SupportsNativeMusicTransitionProgramV1(*transition, program))) return nullptr;
+    const auto* rule = harken::ResolveTransitionRuleV1(*transition, source, target);
+    return rule != nullptr && rule->sourceExit <= harken::TransitionSourceExitV1::NaturalEnd &&
+        rule->bridgePresent == 0 && rule->targetEntry == harken::TransitionTargetEntryV1::FromEntryMarker ? rule : nullptr;
+}
+
+const harken::TransitionRuleViewV1* ResolveBasicTransitionRule(
     const harken::PlayableWorldViewV1& world,
     const harken::ContainerProgramViewV3& program,
     const harken::PlayableRefV1& source,
     const harken::PlayableRefV1& target) noexcept {
-    if (program.transitionProgramIndex == UINT32_MAX ||
-        world.transitions == nullptr ||
-        program.transitionProgramIndex >= world.transitionCount) {
-        return nullptr;
-    }
-    const harken::TransitionProgramViewV1& transition =
-        world.transitions[program.transitionProgramIndex];
-    if (transition.ownerContainerStableId != program.containerStableId ||
-        (harken::ClassifyTransitionProgramV1(transition) != harken::TransitionProgramClassV1::Basic &&
-         !harken::SupportsNativeMusicTransitionProgramV1(transition, program))) return nullptr;
-    const auto* rule = harken::ResolveTransitionRuleV1(transition, source, target);
-    return rule != nullptr && rule->sourceExit <= harken::TransitionSourceExitV1::NaturalEnd &&
-        rule->bridgePresent == 0 && rule->targetEntry == harken::TransitionTargetEntryV1::FromEntryMarker ? rule : nullptr;
+    if (program.transitionProgramIndex == UINT32_MAX || world.transitions == nullptr ||
+        program.transitionProgramIndex >= world.transitionCount) return nullptr;
+    return ResolveBasicTransitionRule(&world.transitions[program.transitionProgramIndex], program, source, target);
+}
+
+const harken::TransitionRuleViewV1* ResolveBasicTransitionRule(
+    const harken::PackPlaybackView& world,
+    const harken::ContainerProgramViewV3& program,
+    const harken::PlayableRefV1& source,
+    const harken::PlayableRefV1& target) noexcept {
+    if (program.transitionProgramIndex == UINT32_MAX) return nullptr;
+    return ResolveBasicTransitionRule(world.ResolveTransition(program.containerStableId), program, source, target);
 }
 
 const harken::CurveV1* FindContainerCurve(
@@ -30815,13 +30827,14 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
     MaterializedScheduleSet materializedSchedule{};
     const harken::ContainerChildProgramViewV2* selectedChild = child;
     const harken::TransitionRuleViewV1* transitionRule = nullptr;
-    if (!packQueue && program.transitionProgramIndex != UINT32_MAX) {
+    if (program.transitionProgramIndex != UINT32_MAX) {
         const harken::ContainerChildProgramViewV2* currentChild =
             FindQueueChild(program, projection.Previous().currentChildOrdinal);
         if (currentChild == nullptr) return QueueContinuationPrepareStatus::Failed;
-        transitionRule = ResolveBasicTransitionRule(
-            world, program, currentChild->playable,
-            selectedChild->playable);
+        transitionRule = packQueue
+            ? ResolveBasicTransitionRule(row.Invocation().packPlaybackView, program,
+                currentChild->playable, selectedChild->playable)
+            : ResolveBasicTransitionRule(world, program, currentChild->playable, selectedChild->playable);
         if (transitionRule == nullptr) return QueueContinuationPrepareStatus::Failed;
     }
     const auto selectedKind = selectedChild->playable.kind;
@@ -33589,19 +33602,9 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
     if (program.transitionProgramIndex != UINT32_MAX) {
         const auto* currentChild = FindQueueChild(program, current.currentChildOrdinal);
         if (currentChild == nullptr) return QueueContinuationPrepareStatus::Failed;
-        if (packQueue) {
-            const auto* transition = row.Invocation().packPlaybackView.ResolveTransition(program.containerStableId);
-            if (transition != nullptr && (harken::ClassifyTransitionProgramV1(*transition) ==
-                    harken::TransitionProgramClassV1::Basic ||
-                    harken::SupportsNativeMusicTransitionProgramV1(*transition, program))) {
-                const auto* selectedRule = harken::ResolveTransitionRuleV1(*transition, currentChild->playable, child->playable);
-                if (selectedRule != nullptr && selectedRule->sourceExit <= harken::TransitionSourceExitV1::NaturalEnd &&
-                    selectedRule->bridgePresent == 0 && selectedRule->targetEntry == harken::TransitionTargetEntryV1::FromEntryMarker)
-                    transitionRule = selectedRule;
-            }
-        } else {
-            transitionRule = ResolveBasicTransitionRule(world, program, currentChild->playable, child->playable);
-        }
+        transitionRule = packQueue
+            ? ResolveBasicTransitionRule(row.Invocation().packPlaybackView, program, currentChild->playable, child->playable)
+            : ResolveBasicTransitionRule(world, program, currentChild->playable, child->playable);
         if (transitionRule == nullptr) return QueueContinuationPrepareStatus::Failed;
     }
     if (!resumeKnown && (program.queueSplice != harken::QueueSpliceV1::Butt ||
@@ -85057,6 +85060,9 @@ bool PrepareQueueTransitionContinuation(
     QueuePreparationEntry& entry,
     harken::EngineActionPlayScratch* scratch,
     const harken::ContainerProgramViewV3& program,
+    const harken::PlayableWorldViewV1& world,
+    std::uint64_t queueWorldGeneration,
+    bool packQueue,
     const harken::EffectiveQueueState& current,
     const harken::EffectiveQueueState& next,
     bool successorHasContinuation,
@@ -85084,8 +85090,6 @@ bool PrepareQueueTransitionContinuation(
     const auto executionOrdinal = row.Invocation().actionFiring != 0
         ? row.Invocation().actionExecutionOrdinal : 0u;
     if (executionOrdinal == UINT32_MAX) return false;
-    const harken::PlayableWorldViewV1 world =
-        engine.variables.CurrentPlayableWorld();
     const std::uint8_t successorPlane =
         row.QueuePayload().queueCurrentProgramPlane == 0 ? 1 : 0;
     if (row.ownerInstance != row.rootInstance || row.ownerEpoch == 0) {
@@ -85163,7 +85167,7 @@ bool PrepareQueueTransitionContinuation(
     if (scratch->queueFutureCanonicalCurrent != nullptr) {
         const auto& canonical = *scratch->queueFutureCanonicalCurrent;
         const harken::PlayableProgramKey targetProgram{harken::PlayableKindV1::Sound, leaves[0].leaf.stableId,
-            world.generation, leaves[0].leaf.expectedProgramSemanticFingerprint};
+            queueWorldGeneration, leaves[0].leaf.expectedProgramSemanticFingerprint};
         if (row.QueuePayload().privateInitialQueueCurrent != &canonical || !canonical.canonicalInitial ||
             !SameCanonicalDecision(QueuePreparationDecision(*scratch), canonical.canonicalDecision) ||
             !SameCanonicalQueueState(current, canonical.canonicalCurrent) ||
@@ -85228,7 +85232,7 @@ bool PrepareQueueTransitionContinuation(
 
     if (successorHasContinuation) {
         harken::DecisionReserveRequest decision{};
-        decision.world = world.generation;
+        decision.world = queueWorldGeneration;
         decision.transport = engine.timelinePool.Epoch();
         decision.expectedContinuationGeneration =
             row.ownerEpoch;
@@ -85270,8 +85274,11 @@ bool PrepareQueueTransitionContinuation(
     auto leafParent = successorInstance;
     auto leafParentEpoch = successorEpoch;
     auto terminal = selected.playable;
-    if (prepareMember && !PrepareScheduledQueueChildPath(engine, *scratch, row,
-            world, next.currentChildOrdinal, terminal, leafParent, leafParentEpoch)) return false;
+    if (prepareMember && !(packQueue
+            ? PrepareScheduledQueueChildPath(engine, *scratch, row, scratch->packPlaybackView,
+                next.currentChildOrdinal, terminal, leafParent, leafParentEpoch)
+            : PrepareScheduledQueueChildPath(engine, *scratch, row, world,
+                next.currentChildOrdinal, terminal, leafParent, leafParentEpoch))) return false;
     auto& resource = ScheduledQueueResource(engine, *scratch, row);
     for (std::uint32_t index = 0; index < leafCount; ++index) {
         auto* retained = prepareMember ? nullptr : engine.AcquireQueueProgramMember(bank, index);
@@ -85316,7 +85323,7 @@ bool PrepareQueueTransitionContinuation(
                 &scratch->queueSuccessorLeafOccurrences[index];
             completionProgram.kind = harken::PlayableKindV1::Sound;
             completionProgram.stableId = leaves[index].leaf.stableId;
-            completionProgram.world = world.generation;
+            completionProgram.world = queueWorldGeneration;
             completionProgram.runtimeSemanticFingerprint =
                 leaves[index].leaf.expectedProgramSemanticFingerprint;
         }
@@ -85331,7 +85338,9 @@ bool PrepareQueueTransitionContinuation(
             const auto leafIndex = tree.InstanceReservationCount() - 1u;
             leafInstance = tree.PreparedInstanceHandle(leafIndex);
             leafEpoch = tree.PreparedInstanceEpoch(leafIndex);
-            ObservePreparedContent(engine, tree, leafInstance, MonitorContentFor(world, leaves[index].leaf));
+            ObservePreparedContent(engine, tree, leafInstance, packQueue
+                ? MonitorContentFor(scratch->packPlaybackView, leaves[index].leaf)
+                : MonitorContentFor(world, leaves[index].leaf));
         }
         std::size_t memberSlot = 0;
         if (prepareMember) {
@@ -85556,7 +85565,7 @@ bool PrepareQueueTransitionContinuation(
         harken::PlayableProgramKey successorProgram{};
         successorProgram.kind = harken::PlayableKindV1::Sound;
         successorProgram.stableId = leaves[0].leaf.stableId;
-        successorProgram.world = world.generation;
+        successorProgram.world = queueWorldGeneration;
         successorProgram.runtimeSemanticFingerprint =
             leaves[0].leaf.expectedProgramSemanticFingerprint;
         harken::KnownCompletionPredicateV1 bound{};
@@ -87018,18 +87027,18 @@ bool PrepareQueueContinuation(
             ? MonitorContentFor(scratch->packPlaybackView, selected->playable)
             : MonitorContentFor(world, selected->playable));
     }
-    if (!packQueue && program.transitionProgramIndex != UINT32_MAX) {
+    if (program.transitionProgramIndex != UINT32_MAX) {
         const harken::ContainerChildProgramViewV2* currentChild =
             FindQueueChild(program, projection.Previous().currentChildOrdinal);
         const harken::TransitionRuleViewV1* transitionRule =
             currentChild == nullptr
                 ? nullptr
-                : ResolveBasicTransitionRule(
-                      world, program, currentChild->playable,
-                      selected->playable);
+                : packQueue ? ResolveBasicTransitionRule(scratch->packPlaybackView,
+                      program, currentChild->playable, selected->playable)
+                : ResolveBasicTransitionRule(world, program, currentChild->playable, selected->playable);
         if (transitionRule == nullptr ||
             !PrepareQueueTransitionContinuation(
-                entry, scratch, program, current, next,
+                entry, scratch, program, world, queueWorldGeneration, packQueue, current, next,
                 successorHasContinuation, *selected, materialized,
                 *transitionRule, row, successorInstance, successorEpoch)) {
             return false;
@@ -103124,17 +103133,17 @@ bool ResolveImmediateActionQueueReset(
     out->next = next;
     out->container = program;
     if (program->transitionProgramIndex != UINT32_MAX) {
-        if (packAuthority) return false;
         const harken::ContainerChildProgramViewV2* currentChild = nullptr;
         if (!ResolveSharedContainerChild(
                 authority, *program, projection.Previous().currentChildOrdinal,
                 &currentChild)) {
             return false;
         }
-        out->transitionRule = ResolveBasicTransitionRule(
-            row.queueWorldUsesCurrentAuthority ? world : row.QueueWorld(),
-            *program, currentChild->playable,
-            selectedChild->playable);
+        out->transitionRule = packAuthority
+            ? ResolveBasicTransitionRule(row.Invocation().packPlaybackView, *program,
+                currentChild->playable, selectedChild->playable)
+            : ResolveBasicTransitionRule(row.queueWorldUsesCurrentAuthority ? world : row.QueueWorld(),
+                *program, currentChild->playable, selectedChild->playable);
         if (out->transitionRule == nullptr) return false;
     }
     out->successorHasContinuation =
