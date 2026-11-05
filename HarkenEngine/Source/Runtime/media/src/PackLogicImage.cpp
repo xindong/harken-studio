@@ -99,14 +99,7 @@ bool KindLegalForPack(std::uint32_t entryKind, std::uint32_t packKind) {
 }
 
 bool EntryVintageLegal(std::uint32_t entryKind, std::uint32_t vintage) {
-    switch (entryKind) {
-    case kPackEntryKindVoiceRecipe:
-        return vintage == kPackV2PlaybackRecipeSchemaVintage;
-    case kPackEntryKindContainer:
-        return vintage == kPackV2SchemaVintage;
-    default:
-        return VintageLegalForKind(entryKind, vintage);
-    }
+    return VintageLegalForKind(entryKind, vintage);
 }
 
 bool VoiceToneWireValuesValid(const PackVoiceRecipeTone& tone) {
@@ -471,55 +464,23 @@ VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
         }
         case kPackEntryKindContainer: {
             PackLogicImage::Container container;
-            if (!ParsePackV2ContainerHeader(payload, entry.size,
-                                            &container.header) ||
-                container.header.containerId != entry.id ||
+            if (!ReadPackContainerPayload(payload, entry.size, entry.id, container) ||
                 container.header.childCount == 0) {
                 return VN_BAD_PACK;
-            }
-            container.children.reserve(container.header.childCount);
-            for (std::uint32_t c = 0; c < container.header.childCount; ++c) {
-                container.children.push_back(ParsePackV2ContainerChild(
-                    payload + kPackV2ContainerHeaderBytes +
-                    static_cast<std::size_t>(c) * kPackV2ContainerChildBytes));
             }
             image.containers.push_back(std::move(container));
             break;
         }
         case kPackEntryKindVoiceRecipe: {
             PackLogicImage::VoiceRecipe recipe;
-            if (!ParsePackV5VoiceRecipeHeader(payload, entry.size,
-                                              &recipe.header) ||
-                recipe.header.playableId == VnObjectId{} ||
-                recipe.header.playableId != entry.id) {
-                return VN_BAD_PACK;
-            }
-            const std::uint8_t* installBase =
-                payload + kPackV2VoiceRecipeHeaderBytes;
-            if (!ParsePackV3VoiceRecipeTone(installBase, &recipe.tone) ||
+            if (!ReadPackVoiceRecipePayload(payload, entry.size, entry.id, recipe) ||
                 !VoiceToneWireValuesValid(recipe.tone)) {
                 return VN_BAD_PACK;
             }
-            installBase += kPackV3VoiceRecipeToneBytes;
-            if (!ParsePackV5VoiceRecipeSpatial(installBase,
-                                               &recipe.spatial)) {
-                return VN_BAD_PACK;
-            }
-            installBase += kPackV4VoiceRecipeSpatialBytes;
-            if (!ParsePackV5VoiceRecipePlayback(installBase,
-                                                &recipe.playback)) {
-                return VN_BAD_PACK;
-            }
-            installBase += kPackV5VoiceRecipePlaybackBytes;
-            recipe.installs.reserve(recipe.header.installCount);
             std::uint32_t previousSlot = 0;
             for (std::uint32_t n = 0; n < recipe.header.installCount; ++n) {
-                PackVoiceRecipeInstall install;
-                if (!ParsePackV2VoiceRecipeInstall(
-                        installBase + static_cast<std::size_t>(n) *
-                                          kPackV2VoiceRecipeInstallBytes,
-                        &install) ||
-                    install.slot >= kPackV2VoiceRecipeMaxInstalls ||
+                const auto& install = recipe.installs[n];
+                if (                    install.slot >= kPackVoiceRecipeMaxInstalls ||
                     (n > 0 && install.slot <= previousSlot)) {
                     return VN_BAD_PACK;
                 }
@@ -537,24 +498,15 @@ VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
                     }
                 }
                 previousSlot = install.slot;
-                recipe.installs.push_back(install);
             }
-            const std::uint8_t* bindingBase =
-                installBase +
-                static_cast<std::size_t>(recipe.header.installCount) *
-                    kPackV2VoiceRecipeInstallBytes;
-            recipe.bindings.reserve(recipe.header.bindingCount);
             VnBindingId previousBinding{};
             for (std::uint32_t n = 0; n < recipe.header.bindingCount; ++n) {
-                const VnBindingId binding = ParsePackV2VoiceRecipeBinding(
-                    bindingBase + static_cast<std::size_t>(n) *
-                                      kPackV2VoiceRecipeBindingBytes);
+                const auto binding = recipe.bindings[n];
                 if (binding == VnObjectId{} ||
                     (n > 0 && binding <= previousBinding)) {
                     return VN_BAD_PACK;
                 }
                 previousBinding = binding;
-                recipe.bindings.push_back(binding);
             }
             image.voiceRecipes.push_back(std::move(recipe));
             break;
@@ -2284,7 +2236,7 @@ VnResult CheckPackClosure(const PackLogicImage& image,
         }
     }
     for (const PackLogicImage::Container& container : image.containers) {
-        for (const PackContainerChildV2& child : container.children) {
+        for (const PackContainerChild& child : container.children) {
             if (!playableCloses(child.playableId)) {
                 return fail(PackClosureRef::ContainerChild,
                             container.header.containerId, child.playableId);

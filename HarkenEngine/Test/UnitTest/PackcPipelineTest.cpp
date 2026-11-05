@@ -779,10 +779,10 @@ TEST(PackcPipeline,
     ASSERT_LE(recipeEntry.size,
               firstBuild.size() -
                   static_cast<std::size_t>(recipeEntry.offset));
-    EXPECT_EQ(harken::kPackV2PlaybackRecipeSchemaVintage, recipeEntry.vintage);
-    EXPECT_EQ(harken::PackV5VoiceRecipePayloadBytes(4, 3), recipeEntry.size);
+    EXPECT_EQ(harken::kPackVoiceRecipeVintage, recipeEntry.vintage);
+    EXPECT_EQ(harken::PackVoiceRecipePayloadBytes(4, 3), recipeEntry.size);
     harken::PackVoiceRecipeEntryHeader packedRecipe;
-    ASSERT_TRUE(harken::ParsePackV5VoiceRecipeHeader(
+    ASSERT_TRUE(harken::ReadPackVoiceRecipeHeader(
         firstBuild.data() + recipeEntry.offset, recipeEntry.size,
         &packedRecipe));
     EXPECT_EQ(harkentest::ObjectId(9150u), packedRecipe.playableId);
@@ -1954,19 +1954,19 @@ TEST(PackcPipeline, VoiceRecipeUsesRealKindElevenPackPath) {
             bytes.data() + harken::kPackV2HeaderBytes +
             harken::kPackV2DirectoryEntryBytes);
     ASSERT_EQ(harken::kPackEntryKindVoiceRecipe, recipeEntry.kind);
-    EXPECT_EQ(harken::kPackV2PlaybackRecipeSchemaVintage, recipeEntry.vintage);
-    EXPECT_EQ(harken::PackV5VoiceRecipePayloadBytes(1, 0), recipeEntry.size);
+    EXPECT_EQ(harken::kPackVoiceRecipeVintage, recipeEntry.vintage);
+    EXPECT_EQ(harken::PackVoiceRecipePayloadBytes(1, 0), recipeEntry.size);
     harken::PackVoiceRecipeEntryHeader recipe;
-    ASSERT_TRUE(harken::ParsePackV5VoiceRecipeHeader(
+    ASSERT_TRUE(harken::ReadPackVoiceRecipeHeader(
         bytes.data() + recipeEntry.offset, recipeEntry.size, &recipe));
     EXPECT_EQ(harkentest::ObjectId(9101u), recipe.playableId);
     harken::PackVoiceRecipeInstall install;
-    ASSERT_TRUE(harken::ParsePackV2VoiceRecipeInstall(
+    ASSERT_TRUE(harken::ReadPackVoiceRecipeInstall(
         bytes.data() + recipeEntry.offset +
-            harken::kPackV2VoiceRecipeHeaderBytes +
-            harken::kPackV3VoiceRecipeToneBytes +
-            harken::kPackV4VoiceRecipeSpatialBytes +
-            harken::kPackV5VoiceRecipePlaybackBytes,
+            harken::kPackVoiceRecipeHeaderBytes +
+            harken::kPackVoiceRecipeToneBytes +
+            harken::kPackVoiceRecipeSpatialBytes +
+            harken::kPackVoiceRecipePlaybackBytes,
         &install));
     EXPECT_EQ(VN_EFFECT_GAIN, install.effectType);
     EXPECT_FLOAT_EQ(-6.0f, install.params[0]);
@@ -2014,29 +2014,24 @@ TEST(PackcPipeline, VoiceRecipeAlwaysWritesPlaybackVintage) {
                 bytes.data() + harken::kPackV2HeaderBytes +
                 harken::kPackV2DirectoryEntryBytes);
         ASSERT_EQ(harken::kPackEntryKindVoiceRecipe, recipeEntry.kind);
-        EXPECT_EQ(harken::kPackV2PlaybackRecipeSchemaVintage,
+        EXPECT_EQ(harken::kPackVoiceRecipeVintage,
                   recipeEntry.vintage);
-        EXPECT_EQ(harken::PackV5VoiceRecipePayloadBytes(1, 0),
+        EXPECT_EQ(harken::PackVoiceRecipePayloadBytes(1, 0),
                   recipeEntry.size);
         harken::PackVoiceRecipeEntryHeader v5;
-        ASSERT_TRUE(harken::ParsePackV5VoiceRecipeHeader(
+        ASSERT_TRUE(harken::ReadPackVoiceRecipeHeader(
             bytes.data() + recipeEntry.offset, recipeEntry.size, &v5));
-        harken::PackVoiceRecipeEntryHeader rejected{};
-        EXPECT_FALSE(harken::ParsePackV2VoiceRecipeHeader(
-            bytes.data() + recipeEntry.offset, recipeEntry.size, &rejected));
-        EXPECT_FALSE(harken::ParsePackV3VoiceRecipeHeader(
-            bytes.data() + recipeEntry.offset, recipeEntry.size, &rejected));
         harken::PackVoiceRecipeTone tone;
-        ASSERT_TRUE(harken::ParsePackV3VoiceRecipeTone(
+        ASSERT_TRUE(harken::ReadPackVoiceRecipeTone(
             bytes.data() + recipeEntry.offset +
-                harken::kPackV2VoiceRecipeHeaderBytes,
+                harken::kPackVoiceRecipeHeaderBytes,
             &tone));
         EXPECT_EQ(expectTone ? 1u : 0u, tone.present);
         harken::PackVoiceRecipeSpatial spatial;
-        ASSERT_TRUE(harken::ParsePackV5VoiceRecipeSpatial(
+        ASSERT_TRUE(harken::ReadPackVoiceRecipeSpatial(
             bytes.data() + recipeEntry.offset +
-                harken::kPackV2VoiceRecipeHeaderBytes +
-                harken::kPackV3VoiceRecipeToneBytes,
+                harken::kPackVoiceRecipeHeaderBytes +
+                harken::kPackVoiceRecipeToneBytes,
             &spatial));
         EXPECT_EQ(harkentest::ObjectId(expectedAttenuationId), spatial.attenuationId);
         if (expectedAttenuationId == 0u) {
@@ -2045,11 +2040,11 @@ TEST(PackcPipeline, VoiceRecipeAlwaysWritesPlaybackVintage) {
             EXPECT_FLOAT_EQ(expectedDistanceScale, spatial.distanceScale);
         }
         harken::PackVoiceRecipePlayback playback;
-        ASSERT_TRUE(harken::ParsePackV5VoiceRecipePlayback(
+        ASSERT_TRUE(harken::ReadPackVoiceRecipePlayback(
             bytes.data() + recipeEntry.offset +
-                harken::kPackV2VoiceRecipeHeaderBytes +
-                harken::kPackV3VoiceRecipeToneBytes +
-                harken::kPackV4VoiceRecipeSpatialBytes,
+                harken::kPackVoiceRecipeHeaderBytes +
+                harken::kPackVoiceRecipeToneBytes +
+                harken::kPackVoiceRecipeSpatialBytes,
             &playback));
         EXPECT_EQ(expectPlayback ? 1u : 0u, playback.present);
         EXPECT_EQ(expectedLoopCount, playback.loopCount);
@@ -2111,25 +2106,25 @@ TEST(PackcPipeline, VoiceRecipePlaybackWritesCurrentVintage) {
             bytes.data() + harken::kPackV2HeaderBytes +
             harken::kPackV2DirectoryEntryBytes);
     ASSERT_EQ(harken::kPackEntryKindVoiceRecipe, recipeEntry.kind);
-    EXPECT_EQ(harken::kPackV2PlaybackRecipeSchemaVintage,
+    EXPECT_EQ(harken::kPackVoiceRecipeVintage,
               recipeEntry.vintage);
-    EXPECT_EQ(harken::PackV5VoiceRecipePayloadBytes(1, 0), recipeEntry.size);
+    EXPECT_EQ(harken::PackVoiceRecipePayloadBytes(1, 0), recipeEntry.size);
     harken::PackVoiceRecipeEntryHeader v5;
-    EXPECT_TRUE(harken::ParsePackV5VoiceRecipeHeader(
+    EXPECT_TRUE(harken::ReadPackVoiceRecipeHeader(
         bytes.data() + recipeEntry.offset, recipeEntry.size, &v5));
     harken::PackVoiceRecipeSpatial spatial;
-    EXPECT_TRUE(harken::ParsePackV5VoiceRecipeSpatial(
+    EXPECT_TRUE(harken::ReadPackVoiceRecipeSpatial(
         bytes.data() + recipeEntry.offset +
-            harken::kPackV2VoiceRecipeHeaderBytes +
-            harken::kPackV3VoiceRecipeToneBytes,
+            harken::kPackVoiceRecipeHeaderBytes +
+            harken::kPackVoiceRecipeToneBytes,
         &spatial));
     EXPECT_EQ(harkentest::ObjectId(0u), spatial.attenuationId);
     harken::PackVoiceRecipePlayback playback;
-    ASSERT_TRUE(harken::ParsePackV5VoiceRecipePlayback(
+    ASSERT_TRUE(harken::ReadPackVoiceRecipePlayback(
         bytes.data() + recipeEntry.offset +
-            harken::kPackV2VoiceRecipeHeaderBytes +
-            harken::kPackV3VoiceRecipeToneBytes +
-            harken::kPackV4VoiceRecipeSpatialBytes,
+            harken::kPackVoiceRecipeHeaderBytes +
+            harken::kPackVoiceRecipeToneBytes +
+            harken::kPackVoiceRecipeSpatialBytes,
         &playback));
     EXPECT_EQ(1u, playback.present);
     EXPECT_EQ(4u, playback.loopCount);

@@ -43,6 +43,11 @@ SOURCE_SCANS = {
         "SerializePackBindingAttachment", "ParsePackBindingAttachment", "SerializePackV2BindingAttachment", "ParsePackV2BindingAttachment",
         "SerializePackV2AttenuationCurve", "ParsePackV2AttenuationCurve", "SerializePackV2BindingCurve", "ParsePackV2BindingCurve",
         "SerializePackV2DiscreteVariable", "ParsePackV2DiscreteVariable", "SerializePackV2MeterWiring", "ParsePackV2MeterWiring",
+        "SerializePackV2ContainerHeader", "ParsePackV2ContainerHeader", "SerializePackV2ContainerChild", "ParsePackV2ContainerChild",
+        "SerializePackV2VoiceRecipeHeader", "ParsePackV2VoiceRecipeHeader", "ParsePackV3VoiceRecipeHeader", "ParsePackV4VoiceRecipeHeader", "ParsePackV5VoiceRecipeHeader",
+        "SerializePackV3VoiceRecipeTone", "ParsePackV3VoiceRecipeTone", "SerializePackV4VoiceRecipeSpatial", "ParsePackV4VoiceRecipeSpatial", "ParsePackV5VoiceRecipeSpatial",
+        "SerializePackV5VoiceRecipePlayback", "ParsePackV5VoiceRecipePlayback", "SerializePackV2VoiceRecipeInstall", "ParsePackV2VoiceRecipeInstall",
+        "SerializePackV2VoiceRecipeBinding", "ParsePackV2VoiceRecipeBinding",
     ),
     "HarkenEngine/Source/Runtime/media/include/harken/media/PackFormatV2.h": (
         "SerializePackBus", "ParsePackBus", "SerializePackV6Bus", "ParsePackV6Bus",
@@ -54,6 +59,11 @@ SOURCE_SCANS = {
         "SerializePackBindingAttachment", "ParsePackBindingAttachment", "SerializePackV2BindingAttachment", "ParsePackV2BindingAttachment",
         "SerializePackV2AttenuationCurve", "ParsePackV2AttenuationCurve", "SerializePackV2BindingCurve", "ParsePackV2BindingCurve",
         "SerializePackV2DiscreteVariable", "ParsePackV2DiscreteVariable", "SerializePackV2MeterWiring", "ParsePackV2MeterWiring",
+        "SerializePackV2ContainerHeader", "ParsePackV2ContainerHeader", "SerializePackV2ContainerChild", "ParsePackV2ContainerChild",
+        "SerializePackV2VoiceRecipeHeader", "ParsePackV2VoiceRecipeHeader", "ParsePackV3VoiceRecipeHeader", "ParsePackV4VoiceRecipeHeader", "ParsePackV5VoiceRecipeHeader",
+        "SerializePackV3VoiceRecipeTone", "ParsePackV3VoiceRecipeTone", "SerializePackV4VoiceRecipeSpatial", "ParsePackV4VoiceRecipeSpatial", "ParsePackV5VoiceRecipeSpatial",
+        "SerializePackV5VoiceRecipePlayback", "ParsePackV5VoiceRecipePlayback", "SerializePackV2VoiceRecipeInstall", "ParsePackV2VoiceRecipeInstall",
+        "SerializePackV2VoiceRecipeBinding", "ParsePackV2VoiceRecipeBinding",
     ),
 }
 

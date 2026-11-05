@@ -41,7 +41,7 @@ struct PackLogicImage {
 
     struct Container {
         PackContainerEntryHeader header{};
-        std::vector<PackContainerChildV2> children;
+        std::vector<PackContainerChild> children;
     };
     std::vector<Container> containers;
 

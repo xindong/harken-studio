@@ -84,11 +84,8 @@ inline constexpr std::uint32_t kPackKindCanonicalContent = 3;
 // Entry kinds. ABI-frozen values, append-only, never renumbered.
 // Shipping canonical packs do not emit this kind. packc still writes it
 // for non-canonical / unit-test content packs.
-inline constexpr std::uint32_t kPackEntryKindContainer = 9;
-inline constexpr std::uint32_t kPackEntryKindAction = 10;
 // Shipping canonical packs do not emit this kind. packc still writes it
 // for non-canonical / unit-test content packs.
-inline constexpr std::uint32_t kPackEntryKindVoiceRecipe = 11;
 inline constexpr std::uint32_t kPackEntryKindInitRoutingCatalog = 20;
 inline constexpr std::uint32_t kPackEntryKindCanonicalDefinitionPartition = 21;
 inline constexpr std::uint32_t kPackEntryKindPackRequirementBlock = 22;
@@ -114,7 +111,7 @@ inline constexpr std::uint32_t kGameplayCatalogActiveFlagOptional = 1u;
 
 // Directory vintage is a per-kind layout id inside formatVersion 2, not a
 // third product schema. Current writers emit:
-//   VoiceRecipe  kPackV2PlaybackRecipeSchemaVintage
+//   VoiceRecipe  kPackVoiceRecipeVintage
 //   Attenuation  kPackAttenuationVintage
 //   BusEffect / EffectDynamicRoute  kPackV2DynamicSchemaVintage
 //   remaining kinds  kPackV2SchemaVintage
@@ -126,8 +123,6 @@ inline constexpr std::uint32_t kGameplayCatalogActiveFlagOptional = 1u;
 // Bezier curve break for remaining kinds: readers reject vintage 1
 // rather than mixing schemas inside one container.
 inline constexpr std::uint32_t kPackV2SchemaVintage = 2;
-inline constexpr std::uint32_t kPackV2SpatialRecipeSchemaVintage = 4;
-inline constexpr std::uint32_t kPackV2PlaybackRecipeSchemaVintage = 5;
 
 // Payload alignment inside the payload region. Media blobs keep the v1
 // 64-byte rule (kPackBlobAlign).
@@ -135,20 +130,11 @@ inline constexpr std::uint64_t kPackV2PayloadAlign = 8;
 
 // Fixed payload sizes. Variable-size kinds have sizing helpers below.
 // Current Attenuation write is kPackAttenuationBytes; current
-// VoiceRecipe write is PackV5VoiceRecipePayloadBytes.
-inline constexpr std::uint64_t kPackV2ContainerHeaderBytes = 48;
-inline constexpr std::uint64_t kPackV2ContainerChildBytes = 32;
-inline constexpr std::uint32_t kPackV2VoiceRecipeMaxInstalls = 8;
-inline constexpr std::uint32_t kPackV2VoiceRecipeMaxBindings = 8;
+// VoiceRecipe write is PackVoiceRecipePayloadBytes.
+inline constexpr std::uint32_t kPackVoiceRecipeMaxInstalls = 8;
+inline constexpr std::uint32_t kPackVoiceRecipeMaxBindings = 8;
 inline constexpr std::uint32_t kPackV2VoiceRecipeMaxParams = 64;
-inline constexpr std::uint32_t kPackV2EffectDescriptorVintage = 2;
-inline constexpr std::uint64_t kPackV2VoiceRecipeHeaderBytes = 24;
-inline constexpr std::uint64_t kPackV3VoiceRecipeToneBytes = 48;
-inline constexpr std::uint64_t kPackV4VoiceRecipeSpatialBytes = 24;
-inline constexpr std::uint64_t kPackV5VoiceRecipePlaybackBytes = 8;
-inline constexpr std::uint64_t kPackV2VoiceRecipeInstallBytes =
-    48 + static_cast<std::uint64_t>(kPackV2VoiceRecipeMaxParams) * 4;
-inline constexpr std::uint64_t kPackV2VoiceRecipeBindingBytes = 16;
+inline constexpr std::uint32_t kPackEffectDescriptorVintage = 2;
 inline constexpr std::uint32_t kPackVoiceToneLowpassEnabled = 1u << 0;
 inline constexpr std::uint32_t kPackVoiceToneHighpassEnabled = 1u << 1;
 inline constexpr std::uint32_t kPackVoiceToneLowShelfEnabled = 1u << 2;
@@ -157,48 +143,15 @@ inline constexpr std::uint32_t kPackVoiceToneEnableMask =
     kPackVoiceToneLowpassEnabled | kPackVoiceToneHighpassEnabled |
     kPackVoiceToneLowShelfEnabled | kPackVoiceToneHighShelfEnabled;
 
-inline std::uint64_t PackV2ContainerPayloadBytes(std::uint32_t childCount) {
-    return kPackV2ContainerHeaderBytes +
-           static_cast<std::uint64_t>(childCount) * kPackV2ContainerChildBytes;
-}
 
-inline std::uint64_t PackV2VoiceRecipePayloadBytes(
-    std::uint32_t installCount, std::uint32_t bindingCount) {
-    return kPackV2VoiceRecipeHeaderBytes +
-           static_cast<std::uint64_t>(installCount) *
-               kPackV2VoiceRecipeInstallBytes +
-           static_cast<std::uint64_t>(bindingCount) *
-               kPackV2VoiceRecipeBindingBytes;
-}
 
-inline std::uint64_t PackV3VoiceRecipePayloadBytes(
-    std::uint32_t installCount, std::uint32_t bindingCount) {
-    return kPackV2VoiceRecipeHeaderBytes + kPackV3VoiceRecipeToneBytes +
-           static_cast<std::uint64_t>(installCount) *
-               kPackV2VoiceRecipeInstallBytes +
-           static_cast<std::uint64_t>(bindingCount) *
-               kPackV2VoiceRecipeBindingBytes;
-}
 
-inline std::uint64_t PackV4VoiceRecipePayloadBytes(
-    std::uint32_t installCount, std::uint32_t bindingCount) {
-    return kPackV2VoiceRecipeHeaderBytes + kPackV3VoiceRecipeToneBytes +
-           kPackV4VoiceRecipeSpatialBytes +
-           static_cast<std::uint64_t>(installCount) *
-               kPackV2VoiceRecipeInstallBytes +
-           static_cast<std::uint64_t>(bindingCount) *
-               kPackV2VoiceRecipeBindingBytes;
-}
 
-inline std::uint64_t PackV5VoiceRecipePayloadBytes(
-    std::uint32_t installCount, std::uint32_t bindingCount) {
-    return kPackV2VoiceRecipeHeaderBytes + kPackV3VoiceRecipeToneBytes +
-           kPackV4VoiceRecipeSpatialBytes + kPackV5VoiceRecipePlaybackBytes +
-           static_cast<std::uint64_t>(installCount) *
-               kPackV2VoiceRecipeInstallBytes +
-           static_cast<std::uint64_t>(bindingCount) *
-               kPackV2VoiceRecipeBindingBytes;
-}
+
+
+
+
+
 
 inline void StoreLEF32(std::uint8_t* out, float v) {
     std::uint32_t bits;
@@ -284,6 +237,10 @@ struct PackVoiceRecipeInstall {
     VnObjectId effectId{};
 };
 
+struct PackVoiceRecipeInstallWire : PackVoiceRecipeInstall {
+    std::uint32_t paramBytes = 0;
+};
+
 struct PackBusEffectEntry {
     VnBusId busId{};
     std::uint32_t slot = 0;
@@ -346,7 +303,7 @@ struct PackContainerEntryHeader {
     std::uint32_t childCount = 0;
 };
 
-struct PackContainerChildV2 {
+struct PackContainerChild {
     VnObjectId playableId{};
     std::uint32_t weight = 0;
     std::uint32_t matchValue = 0;
@@ -477,236 +434,40 @@ inline PackV2DirectoryEntry ParsePackV2DirectoryEntry(const std::uint8_t* in) {
 // without changing record alignment; unused float slots and both reserved
 // words must be bitwise zero. The image layer enforces ascending slot order,
 // ascending binding ids, type/parameter semantics, and playable closure.
-inline void SerializePackV2VoiceRecipeHeader(
-    const PackVoiceRecipeEntryHeader& h, std::uint8_t* out) {
-    StoreObjectId(out + 0, h.playableId);
-    StoreLE32(out + 16, h.installCount);
-    StoreLE32(out + 20, h.bindingCount);
-}
 
-inline bool ParsePackV2VoiceRecipeHeader(
-    const std::uint8_t* in, std::uint64_t size,
-    PackVoiceRecipeEntryHeader* out) {
-    if (size < kPackV2VoiceRecipeHeaderBytes) {
-        return false;
-    }
-    out->playableId = LoadObjectId(in + 0);
-    out->installCount = LoadLE32(in + 16);
-    out->bindingCount = LoadLE32(in + 20);
-    if (out->installCount == 0 ||
-        out->installCount > kPackV2VoiceRecipeMaxInstalls ||
-        out->bindingCount > kPackV2VoiceRecipeMaxBindings) {
-        return false;
-    }
-    return size == PackV2VoiceRecipePayloadBytes(out->installCount,
-                                                 out->bindingCount);
-}
 
-inline bool ParsePackV3VoiceRecipeHeader(
-    const std::uint8_t* in, std::uint64_t size,
-    PackVoiceRecipeEntryHeader* out) {
-    if (size < kPackV2VoiceRecipeHeaderBytes +
-                   kPackV3VoiceRecipeToneBytes) {
-        return false;
-    }
-    out->playableId = LoadObjectId(in + 0);
-    out->installCount = LoadLE32(in + 16);
-    out->bindingCount = LoadLE32(in + 20);
-    if (out->installCount > kPackV2VoiceRecipeMaxInstalls ||
-        out->bindingCount > kPackV2VoiceRecipeMaxBindings) {
-        return false;
-    }
-    return size == PackV3VoiceRecipePayloadBytes(out->installCount,
-                                                 out->bindingCount);
-}
 
-inline bool ParsePackV4VoiceRecipeHeader(
-    const std::uint8_t* in, std::uint64_t size,
-    PackVoiceRecipeEntryHeader* out) {
-    if (size < kPackV2VoiceRecipeHeaderBytes +
-                   kPackV3VoiceRecipeToneBytes +
-                   kPackV4VoiceRecipeSpatialBytes) {
-        return false;
-    }
-    out->playableId = LoadObjectId(in + 0);
-    out->installCount = LoadLE32(in + 16);
-    out->bindingCount = LoadLE32(in + 20);
-    if (out->installCount > kPackV2VoiceRecipeMaxInstalls ||
-        out->bindingCount > kPackV2VoiceRecipeMaxBindings) {
-        return false;
-    }
-    return size == PackV4VoiceRecipePayloadBytes(out->installCount,
-                                                 out->bindingCount);
-}
 
-inline bool ParsePackV5VoiceRecipeHeader(
-    const std::uint8_t* in, std::uint64_t size,
-    PackVoiceRecipeEntryHeader* out) {
-    if (size < kPackV2VoiceRecipeHeaderBytes +
-                   kPackV3VoiceRecipeToneBytes +
-                   kPackV4VoiceRecipeSpatialBytes +
-                   kPackV5VoiceRecipePlaybackBytes) {
-        return false;
-    }
-    out->playableId = LoadObjectId(in + 0);
-    out->installCount = LoadLE32(in + 16);
-    out->bindingCount = LoadLE32(in + 20);
-    if (out->installCount > kPackV2VoiceRecipeMaxInstalls ||
-        out->bindingCount > kPackV2VoiceRecipeMaxBindings) {
-        return false;
-    }
-    return size == PackV5VoiceRecipePayloadBytes(out->installCount,
-                                                 out->bindingCount);
-}
 
-inline void SerializePackV3VoiceRecipeTone(
-    const PackVoiceRecipeTone& tone, std::uint8_t* out) {
-    StoreLE32(out + 0, tone.present);
-    StoreLE32(out + 4, tone.sectionEnableMask);
-    StoreLEF32(out + 8, tone.lowpassFrequencyHz);
-    StoreLEF32(out + 12, tone.lowpassQ);
-    StoreLEF32(out + 16, tone.highpassFrequencyHz);
-    StoreLEF32(out + 20, tone.highpassQ);
-    StoreLEF32(out + 24, tone.lowShelfFrequencyHz);
-    StoreLEF32(out + 28, tone.lowShelfQ);
-    StoreLEF32(out + 32, tone.lowShelfGainDb);
-    StoreLEF32(out + 36, tone.highShelfFrequencyHz);
-    StoreLEF32(out + 40, tone.highShelfQ);
-    StoreLEF32(out + 44, tone.highShelfGainDb);
-}
 
-inline bool ParsePackV3VoiceRecipeTone(
-    const std::uint8_t* in, PackVoiceRecipeTone* out) {
-    out->present = LoadLE32(in + 0);
-    out->sectionEnableMask = LoadLE32(in + 4);
-    if (out->present > 1 ||
-        (out->sectionEnableMask & ~kPackVoiceToneEnableMask) != 0 ||
-        (out->present == 0 && out->sectionEnableMask != 0)) {
-        return false;
-    }
-    out->lowpassFrequencyHz = LoadLEF32(in + 8);
-    out->lowpassQ = LoadLEF32(in + 12);
-    out->highpassFrequencyHz = LoadLEF32(in + 16);
-    out->highpassQ = LoadLEF32(in + 20);
-    out->lowShelfFrequencyHz = LoadLEF32(in + 24);
-    out->lowShelfQ = LoadLEF32(in + 28);
-    out->lowShelfGainDb = LoadLEF32(in + 32);
-    out->highShelfFrequencyHz = LoadLEF32(in + 36);
-    out->highShelfQ = LoadLEF32(in + 40);
-    out->highShelfGainDb = LoadLEF32(in + 44);
-    if (out->present == 0) {
-        for (std::uint32_t i = 8; i < kPackV3VoiceRecipeToneBytes;
-             i += 4) {
-            if (LoadLE32(in + i) != 0) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
 
-inline void SerializePackV4VoiceRecipeSpatial(
-    const PackVoiceRecipeSpatial& spatial, std::uint8_t* out) {
-    StoreObjectId(out + 0, spatial.attenuationId);
-    StoreLEF32(out + 16, spatial.distanceScale);
-    StoreLE32(out + 20, 0);
-}
 
-inline bool ParsePackV4VoiceRecipeSpatial(
-    const std::uint8_t* in, PackVoiceRecipeSpatial* out) {
-    out->attenuationId = LoadObjectId(in + 0);
-    out->distanceScale = LoadLEF32(in + 16);
-    out->reserved0 = LoadLE32(in + 20);
-    return out->attenuationId != VnObjectId{} &&
-           std::isfinite(out->distanceScale) &&
-           out->distanceScale > 0.0f &&
-           out->reserved0 == 0;
-}
+
+
+
+
+
+
+
+
+
 
 // Vintage 5 makes the spatial block positional rather than a promise of
 // spatial authoring, so it also admits an all-zero absent form: a recipe can
 // carry playback policy without carrying an attenuation.
-inline bool ParsePackV5VoiceRecipeSpatial(
-    const std::uint8_t* in, PackVoiceRecipeSpatial* out) {
-    out->attenuationId = LoadObjectId(in + 0);
-    out->distanceScale = LoadLEF32(in + 16);
-    out->reserved0 = LoadLE32(in + 20);
-    if (out->reserved0 != 0) {
-        return false;
-    }
-    if (out->attenuationId == VnObjectId{}) {
-        return LoadLE32(in + 16) == 0;
-    }
-    return std::isfinite(out->distanceScale) && out->distanceScale > 0.0f;
-}
 
-inline void SerializePackV5VoiceRecipePlayback(
-    const PackVoiceRecipePlayback& playback, std::uint8_t* out) {
-    StoreLE32(out + 0, playback.present);
-    StoreLE32(out + 4, playback.loopCount);
-}
 
-inline bool ParsePackV5VoiceRecipePlayback(
-    const std::uint8_t* in, PackVoiceRecipePlayback* out) {
-    out->present = LoadLE32(in + 0);
-    out->loopCount = LoadLE32(in + 4);
-    if (out->present > 1) {
-        return false;
-    }
-    return out->present != 0 || out->loopCount == 0;
-}
 
-inline void SerializePackV2VoiceRecipeInstall(
-    const PackVoiceRecipeInstall& install, std::uint8_t* out) {
-    StoreObjectId(out + 288, install.effectId);
-    StoreLE32(out + 0, install.slot);
-    StoreLE32(out + 4, install.effectType);
-    StoreLE32(out + 8, install.descriptorVintage);
-    StoreLE32(out + 12, install.bypass);
-    StoreLE32(out + 16, install.paramCount);
-    StoreLE32(out + 20, install.paramCount * 4);
-    StoreLE32(out + 24, 0);
-    StoreLE32(out + 28, 0);
-    for (std::uint32_t i = 0; i < kPackV2VoiceRecipeMaxParams; ++i) {
-        StoreLEF32(out + 32 + static_cast<std::size_t>(i) * 4,
-                   i < install.paramCount ? install.params[i] : 0.0f);
-    }
-}
 
-inline bool ParsePackV2VoiceRecipeInstall(
-    const std::uint8_t* in, PackVoiceRecipeInstall* out) {
-    out->effectId = LoadObjectId(in + 288);
-    out->slot = LoadLE32(in + 0);
-    out->effectType = LoadLE32(in + 4);
-    out->descriptorVintage = LoadLE32(in + 8);
-    out->bypass = LoadLE32(in + 12);
-    out->paramCount = LoadLE32(in + 16);
-    const std::uint32_t payloadBytes = LoadLE32(in + 20);
-    if (out->bypass > 1 ||
-        out->paramCount > kPackV2VoiceRecipeMaxParams ||
-        payloadBytes != out->paramCount * 4 ||
-        LoadLE32(in + 24) != 0 || LoadLE32(in + 28) != 0) {
-        return false;
-    }
-    for (std::uint32_t i = 0; i < kPackV2VoiceRecipeMaxParams; ++i) {
-        out->params[i] =
-            LoadLEF32(in + 32 + static_cast<std::size_t>(i) * 4);
-        if (i >= out->paramCount &&
-            LoadLE32(in + 32 + static_cast<std::size_t>(i) * 4) != 0) {
-            return false;
-        }
-    }
-    return true;
-}
 
-inline void SerializePackV2VoiceRecipeBinding(VnBindingId bindingId,
-                                               std::uint8_t* out) {
-    StoreObjectId(out, bindingId);
-}
 
-inline VnBindingId ParsePackV2VoiceRecipeBinding(const std::uint8_t* in) {
-    return LoadObjectId(in);
-}
+
+
+
+
+
+
+
 
 // --- variable-size logic payloads ---
 
@@ -716,49 +477,13 @@ inline VnBindingId ParsePackV2VoiceRecipeBinding(const std::uint8_t* in) {
 // caller's array; the parser fills the header and then reads children
 // one at a time into caller storage (childCount entries, validated
 // against the payload size here).
-inline void SerializePackV2ContainerHeader(const PackContainerEntryHeader& h,
-                                           std::uint8_t* out) {
-    StoreObjectId(out + 0, h.containerId);
-    StoreLE32(out + 16, h.selectionOrder);
-    StoreLE32(out + 20, h.avoidRepeatWindow);
-    StoreObjectId(out + 24, h.selectionVariableId);
-    StoreLE32(out + 40, h.defaultIndex);
-    StoreLE32(out + 44, h.childCount);
-}
 
-inline void SerializePackV2ContainerChild(const PackContainerChildV2& c,
-                                          std::uint8_t* out) {
-    StoreObjectId(out + 0, c.playableId);
-    StoreLE32(out + 16, c.weight);
-    StoreLE32(out + 20, c.matchValue);
-    StoreLE32(out + 24, c.delayMs);
-    StoreLE32(out + 28, c.delayJitterMs);
-}
 
-inline bool ParsePackV2ContainerHeader(const std::uint8_t* in,
-                                       std::uint64_t size,
-                                       PackContainerEntryHeader* out) {
-    if (size < kPackV2ContainerHeaderBytes) {
-        return false;
-    }
-    out->containerId = LoadObjectId(in + 0);
-    out->selectionOrder = LoadLE32(in + 16);
-    out->avoidRepeatWindow = LoadLE32(in + 20);
-    out->selectionVariableId = LoadObjectId(in + 24);
-    out->defaultIndex = LoadLE32(in + 40);
-    out->childCount = LoadLE32(in + 44);
-    return size == PackV2ContainerPayloadBytes(out->childCount);
-}
 
-inline PackContainerChildV2 ParsePackV2ContainerChild(const std::uint8_t* in) {
-    PackContainerChildV2 c{};
-    c.playableId = LoadObjectId(in + 0);
-    c.weight = LoadLE32(in + 16);
-    c.matchValue = LoadLE32(in + 20);
-    c.delayMs = LoadLE32(in + 24);
-    c.delayJitterMs = LoadLE32(in + 28);
-    return c;
-}
+
+
+
+
 
 inline constexpr std::uint32_t kInitCatalogHeaderBytes = 88;
 inline constexpr std::uint32_t kInitCatalogRowBytes = 312;
@@ -1748,6 +1473,183 @@ inline bool EncodeGameplayCatalog(
 #include <harken/media/generated/harken_pack_wire.g.h>
 
 namespace harken {
+
+template <class Byte>
+struct PackWireBuffer {
+    Byte* data;
+    std::uint64_t size;
+    std::uint64_t offset = 0;
+    Byte* Take(std::uint64_t bytes) noexcept {
+        if (bytes > size - offset) return nullptr;
+        Byte* result = data + offset;
+        offset += bytes;
+        return result;
+    }
+};
+
+inline std::uint64_t PackContainerPayloadBytes(std::uint32_t childCount) noexcept {
+    struct Visitor {
+        PackContainerEntryHeader header{};
+        const PackContainerEntryHeader& Value() const noexcept { return header; }
+    } visitor;
+    visitor.header.childCount = childCount;
+    std::uint64_t size = 0;
+    return MeasurePackContainerPayload(visitor, size) ? size : 0;
+}
+
+inline std::uint64_t PackVoiceRecipePayloadBytes(std::uint32_t installCount,
+                                                std::uint32_t bindingCount) noexcept {
+    struct Visitor {
+        PackVoiceRecipeEntryHeader header{};
+        const PackVoiceRecipeEntryHeader& Value() const noexcept { return header; }
+    } visitor;
+    visitor.header.installCount = installCount;
+    visitor.header.bindingCount = bindingCount;
+    std::uint64_t size = 0;
+    return MeasurePackVoiceRecipePayload(visitor, size) ? size : 0;
+}
+
+inline bool ReadPackContainerHeader(const std::uint8_t* in, std::uint64_t size,
+                                    PackContainerEntryHeader* out) noexcept {
+    return size >= kPackContainerHeaderBytes &&
+           ParsePackContainerHeader(in, kPackContainerHeaderBytes, out) &&
+           size == PackContainerPayloadBytes(out->childCount);
+}
+
+inline PackContainerChild ReadPackContainerChild(const std::uint8_t* in) noexcept {
+    PackContainerChild row{};
+    (void)ParsePackContainerChild(in, kPackContainerChildBytes, &row);
+    return row;
+}
+
+inline bool ReadPackVoiceRecipeHeader(const std::uint8_t* in, std::uint64_t size,
+                                      PackVoiceRecipeEntryHeader* out) noexcept {
+    return size >= kPackVoiceRecipeHeaderBytes &&
+           ParsePackVoiceRecipeHeader(in, kPackVoiceRecipeHeaderBytes, out) &&
+           out->installCount <= kPackVoiceRecipeMaxInstalls &&
+           out->bindingCount <= kPackVoiceRecipeMaxBindings &&
+           size == PackVoiceRecipePayloadBytes(out->installCount, out->bindingCount);
+}
+
+inline bool PackVoiceRecipeToneValid(const PackVoiceRecipeTone& tone) noexcept {
+    const auto* out = &tone;
+    if (out->present > 1 ||
+        (out->sectionEnableMask & ~kPackVoiceToneEnableMask) != 0 ||
+        (out->present == 0 && out->sectionEnableMask != 0)) return false;
+    if (out->present != 0) return true;
+    const float values[] = {out->lowpassFrequencyHz, out->lowpassQ, out->highpassFrequencyHz,
+                            out->highpassQ, out->lowShelfFrequencyHz, out->lowShelfQ,
+                            out->lowShelfGainDb, out->highShelfFrequencyHz, out->highShelfQ,
+                            out->highShelfGainDb};
+    return std::all_of(std::begin(values), std::end(values), [](float value) {
+        return std::bit_cast<std::uint32_t>(value) == 0;
+    });
+}
+
+inline bool ReadPackVoiceRecipeTone(const std::uint8_t* in, PackVoiceRecipeTone* out) noexcept {
+    return ParsePackVoiceRecipeTone(in, kPackVoiceRecipeToneBytes, out) && PackVoiceRecipeToneValid(*out);
+}
+
+inline bool PackVoiceRecipeSpatialValid(const PackVoiceRecipeSpatial& spatial) noexcept {
+    if (spatial.reserved0 != 0) return false;
+    if (spatial.attenuationId == VnBindingId{}) return std::bit_cast<std::uint32_t>(spatial.distanceScale) == 0;
+    return std::isfinite(spatial.distanceScale) && spatial.distanceScale > 0.0f;
+}
+
+inline bool ReadPackVoiceRecipeSpatial(const std::uint8_t* in, PackVoiceRecipeSpatial* out) noexcept {
+    *out = {};
+    return ParsePackVoiceRecipeSpatial(in, kPackVoiceRecipeSpatialBytes, out) && PackVoiceRecipeSpatialValid(*out);
+}
+
+inline bool ReadPackVoiceRecipePlayback(const std::uint8_t* in, PackVoiceRecipePlayback* out) noexcept {
+    return ParsePackVoiceRecipePlayback(in, kPackVoiceRecipePlaybackBytes, out) &&
+           out->present <= 1 && (out->present != 0 || out->loopCount == 0);
+}
+
+inline void WritePackVoiceRecipeInstall(const PackVoiceRecipeInstall& install, std::uint8_t* out) noexcept {
+    PackVoiceRecipeInstallWire row;
+    static_cast<PackVoiceRecipeInstall&>(row) = install;
+    row.paramBytes = install.paramCount * sizeof(float);
+    SerializePackVoiceRecipeInstall(row, out);
+}
+
+inline bool ReadPackVoiceRecipeInstall(const std::uint8_t* in, PackVoiceRecipeInstall* out) noexcept {
+    PackVoiceRecipeInstallWire row{};
+    if (!ParsePackVoiceRecipeInstall(in, kPackVoiceRecipeInstallBytes, &row) ||
+        row.bypass > 1 || row.paramCount > kPackVoiceRecipeMaxParams ||
+        row.paramBytes != row.paramCount * sizeof(float)) return false;
+    *out = row;
+    return true;
+}
+
+inline VnBindingId ReadPackVoiceRecipeBinding(const std::uint8_t* in) noexcept {
+    VnBindingId row{};
+    (void)ParsePackVoiceRecipeBinding(in, kPackVoiceRecipeBindingBytes, &row);
+    return row;
+}
+
+template <class Container>
+inline bool ReadPackContainerPayload(const std::uint8_t* in, std::uint64_t size,
+                                      VnBindingId expectedId, Container& container) {
+    if (!ReadPackContainerHeader(in, size, &container.header) ||
+        container.header.containerId == VnBindingId{} || container.header.containerId != expectedId) return false;
+    container.children.resize(container.header.childCount);
+    struct Visitor {
+        Container& row;
+        auto& Value() noexcept { return row.header; }
+        auto& Header() noexcept { return row.header; }
+        bool PrepareChildren(std::uint64_t count) noexcept {
+            return count == row.children.size();
+        }
+        auto& Children(std::uint64_t index) noexcept { return row.children[static_cast<std::size_t>(index)]; }
+        bool Finish() noexcept { return true; }
+    } visitor{container};
+    PackWireBuffer<const std::uint8_t> buffer{in, size};
+    return ReadPackContainerPayload(buffer, visitor) && buffer.offset == size;
+}
+
+template <class Recipe>
+inline bool ReadPackVoiceRecipePayload(const std::uint8_t* in, std::uint64_t size,
+                                       VnBindingId expectedId, Recipe& recipe) {
+    if (!ReadPackVoiceRecipeHeader(in, size, &recipe.header) ||
+        recipe.header.playableId == VnBindingId{} || recipe.header.playableId != expectedId) return false;
+    recipe.installs.resize(recipe.header.installCount);
+    recipe.bindings.resize(recipe.header.bindingCount);
+    struct InstallVisitor {
+        PackVoiceRecipeInstall& target;
+        PackVoiceRecipeInstallWire row{};
+        auto& Wire() noexcept { return row; }
+        bool Finish() noexcept {
+            if (row.bypass > 1 || row.paramCount > kPackVoiceRecipeMaxParams ||
+                row.paramBytes != row.paramCount * sizeof(float)) return false;
+            target = row;
+            return true;
+        }
+    };
+    struct Visitor {
+        Recipe& row;
+        auto& Value() noexcept { return row.header; }
+        auto& Header() noexcept { return row.header; }
+        auto& Tone() noexcept { return row.tone; }
+        auto& Spatial() noexcept { return row.spatial; }
+        auto& Playback() noexcept { return row.playback; }
+        bool PrepareInstalls(std::uint64_t count) noexcept {
+            if (count != row.installs.size() ||
+                !PackVoiceRecipeToneValid(row.tone) || !PackVoiceRecipeSpatialValid(row.spatial) ||
+                row.playback.present > 1 || (row.playback.present == 0 && row.playback.loopCount != 0)) return false;
+            return true;
+        }
+        InstallVisitor Installs(std::uint64_t index) noexcept { return {row.installs[static_cast<std::size_t>(index)]}; }
+        bool PrepareBindings(std::uint64_t count) noexcept {
+            return count == row.bindings.size();
+        }
+        auto& Bindings(std::uint64_t index) noexcept { return row.bindings[static_cast<std::size_t>(index)]; }
+        bool Finish() noexcept { return true; }
+    } visitor{recipe};
+    PackWireBuffer<const std::uint8_t> buffer{in, size};
+    return ReadPackVoiceRecipePayload(buffer, visitor) && buffer.offset == size;
+}
+
 
 inline PackTocEntry ReadPackMedia(const std::uint8_t* in) noexcept {
     PackTocEntry row{};

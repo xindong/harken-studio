@@ -343,6 +343,18 @@
           "record": "bindingAttachment"
         },
         {
+          "name": "container",
+          "id": 9,
+          "vintage": 2,
+          "record": "containerPayload"
+        },
+        {
+          "name": "voiceRecipe",
+          "id": 11,
+          "vintage": 5,
+          "record": "voiceRecipePayload"
+        },
+        {
           "name": "busEffect",
           "id": 12,
           "vintage": 1,
@@ -1061,6 +1073,283 @@
               "record": "bindingCurve"
             }
           ]
+        },
+        "containerHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "containerId",
+              "type": "id"
+            },
+            {
+              "name": "selectionOrder",
+              "type": "u32"
+            },
+            {
+              "name": "avoidRepeatWindow",
+              "type": "u32"
+            },
+            {
+              "name": "selectionVariableId",
+              "type": "id"
+            },
+            {
+              "name": "defaultIndex",
+              "type": "u32"
+            },
+            {
+              "name": "childCount",
+              "type": "u32"
+            }
+          ]
+        },
+        "containerChild": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "playableId",
+              "type": "id"
+            },
+            {
+              "name": "weight",
+              "type": "u32"
+            },
+            {
+              "name": "matchValue",
+              "type": "u32"
+            },
+            {
+              "name": "delayMs",
+              "type": "u32"
+            },
+            {
+              "name": "delayJitterMs",
+              "type": "u32"
+            }
+          ]
+        },
+        "voiceRecipeHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "playableId",
+              "type": "id"
+            },
+            {
+              "name": "installCount",
+              "type": "u32"
+            },
+            {
+              "name": "bindingCount",
+              "type": "u32"
+            }
+          ]
+        },
+        "voiceRecipeTone": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "present",
+              "type": "u32"
+            },
+            {
+              "name": "sectionEnableMask",
+              "type": "u32"
+            },
+            {
+              "name": "lowpassFrequencyHz",
+              "type": "f32"
+            },
+            {
+              "name": "lowpassQ",
+              "type": "f32"
+            },
+            {
+              "name": "highpassFrequencyHz",
+              "type": "f32"
+            },
+            {
+              "name": "highpassQ",
+              "type": "f32"
+            },
+            {
+              "name": "lowShelfFrequencyHz",
+              "type": "f32"
+            },
+            {
+              "name": "lowShelfQ",
+              "type": "f32"
+            },
+            {
+              "name": "lowShelfGainDb",
+              "type": "f32"
+            },
+            {
+              "name": "highShelfFrequencyHz",
+              "type": "f32"
+            },
+            {
+              "name": "highShelfQ",
+              "type": "f32"
+            },
+            {
+              "name": "highShelfGainDb",
+              "type": "f32"
+            }
+          ]
+        },
+        "voiceRecipeSpatial": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "attenuationId",
+              "type": "id"
+            },
+            {
+              "name": "distanceScale",
+              "type": "f32"
+            },
+            {
+              "name": "reserved20",
+              "type": "u32",
+              "reserved": true
+            }
+          ]
+        },
+        "voiceRecipePlayback": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "present",
+              "type": "u32"
+            },
+            {
+              "name": "loopCount",
+              "type": "u32"
+            }
+          ]
+        },
+        "voiceRecipeInstall": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "slot",
+              "type": "u32"
+            },
+            {
+              "name": "effectType",
+              "type": "u32"
+            },
+            {
+              "name": "descriptorVintage",
+              "type": "u32"
+            },
+            {
+              "name": "bypass",
+              "type": "u32"
+            },
+            {
+              "name": "paramCount",
+              "type": "u32"
+            },
+            {
+              "name": "paramBytes",
+              "type": "u32"
+            },
+            {
+              "name": "reserved24",
+              "type": "u32",
+              "reserved": true
+            },
+            {
+              "name": "reserved28",
+              "type": "u32",
+              "reserved": true
+            },
+            {
+              "name": "params",
+              "type": "array",
+              "of": "f32",
+              "length": "voiceRecipeMaxParams",
+              "live": "paramCount"
+            },
+            {
+              "name": "effectId",
+              "type": "id"
+            }
+          ]
+        },
+        "voiceRecipeBinding": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "bindingId",
+              "type": "id"
+            }
+          ]
+        },
+        "containerPayload": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "containerHeader"
+            },
+            {
+              "name": "children",
+              "type": "rows",
+              "record": "containerChild",
+              "count": "childCount"
+            }
+          ]
+        },
+        "voiceRecipeInstallRow": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "wire",
+              "type": "record",
+              "record": "voiceRecipeInstall"
+            }
+          ]
+        },
+        "voiceRecipePayload": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "voiceRecipeHeader"
+            },
+            {
+              "name": "tone",
+              "type": "record",
+              "record": "voiceRecipeTone"
+            },
+            {
+              "name": "spatial",
+              "type": "record",
+              "record": "voiceRecipeSpatial"
+            },
+            {
+              "name": "playback",
+              "type": "record",
+              "record": "voiceRecipePlayback"
+            },
+            {
+              "name": "installs",
+              "type": "rows",
+              "record": "voiceRecipeInstallRow",
+              "count": "installCount"
+            },
+            {
+              "name": "bindings",
+              "type": "rows",
+              "record": "voiceRecipeBinding",
+              "count": "bindingCount"
+            }
+          ]
         }
       },
       "retiredKinds": [
@@ -1071,6 +1360,10 @@
         {
           "name": "meterWiring",
           "id": 6
+        },
+        {
+          "name": "action",
+          "id": 10
         }
       ]
     }

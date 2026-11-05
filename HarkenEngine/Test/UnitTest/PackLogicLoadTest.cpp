@@ -619,49 +619,49 @@ public:
                         const float* params, std::uint32_t paramCount) {
         Entry entry;
         entry.kind = harken::kPackEntryKindVoiceRecipe;
-        entry.vintage = harken::kPackV2PlaybackRecipeSchemaVintage;
+        entry.vintage = harken::kPackVoiceRecipeVintage;
         entry.id = playableId;
         entry.payload.resize(static_cast<std::size_t>(
-            harken::PackV5VoiceRecipePayloadBytes(1, 1)));
+            harken::PackVoiceRecipePayloadBytes(1, 1)));
         harken::PackVoiceRecipeEntryHeader header;
         header.playableId = playableId;
         header.installCount = 1;
         header.bindingCount = 1;
-        harken::SerializePackV2VoiceRecipeHeader(header,
+        harken::SerializePackVoiceRecipeHeader(header,
                                                 entry.payload.data());
         harken::PackVoiceRecipeTone tone;
-        harken::SerializePackV3VoiceRecipeTone(
-            tone, entry.payload.data() + harken::kPackV2VoiceRecipeHeaderBytes);
+        harken::SerializePackVoiceRecipeTone(
+            tone, entry.payload.data() + harken::kPackVoiceRecipeHeaderBytes);
         harken::PackVoiceRecipeSpatial spatial;
         spatial.distanceScale = 0.0f;
-        harken::SerializePackV4VoiceRecipeSpatial(
+        harken::SerializePackVoiceRecipeSpatial(
             spatial,
-            entry.payload.data() + harken::kPackV2VoiceRecipeHeaderBytes +
-                harken::kPackV3VoiceRecipeToneBytes);
+            entry.payload.data() + harken::kPackVoiceRecipeHeaderBytes +
+                harken::kPackVoiceRecipeToneBytes);
         harken::PackVoiceRecipePlayback playback;
-        harken::SerializePackV5VoiceRecipePlayback(
+        harken::SerializePackVoiceRecipePlayback(
             playback,
-            entry.payload.data() + harken::kPackV2VoiceRecipeHeaderBytes +
-                harken::kPackV3VoiceRecipeToneBytes +
-                harken::kPackV4VoiceRecipeSpatialBytes);
+            entry.payload.data() + harken::kPackVoiceRecipeHeaderBytes +
+                harken::kPackVoiceRecipeToneBytes +
+                harken::kPackVoiceRecipeSpatialBytes);
         std::uint8_t* installBase =
-            entry.payload.data() + harken::kPackV2VoiceRecipeHeaderBytes +
-            harken::kPackV3VoiceRecipeToneBytes +
-            harken::kPackV4VoiceRecipeSpatialBytes +
-            harken::kPackV5VoiceRecipePlaybackBytes;
+            entry.payload.data() + harken::kPackVoiceRecipeHeaderBytes +
+            harken::kPackVoiceRecipeToneBytes +
+            harken::kPackVoiceRecipeSpatialBytes +
+            harken::kPackVoiceRecipePlaybackBytes;
         harken::PackVoiceRecipeInstall install;
         install.slot = slot;
         install.effectType = effectType;
         install.descriptorVintage =
-            harken::kPackV2EffectDescriptorVintage;
+            harken::kPackEffectDescriptorVintage;
         install.bypass = 0;
         install.paramCount = paramCount;
         for (std::uint32_t i = 0; i < paramCount; ++i) {
             install.params[i] = params[i];
         }
-        harken::SerializePackV2VoiceRecipeInstall(install, installBase);
-        harken::SerializePackV2VoiceRecipeBinding(
-            bindingId, installBase + harken::kPackV2VoiceRecipeInstallBytes);
+        harken::WritePackVoiceRecipeInstall(install, installBase);
+        harken::SerializePackVoiceRecipeBinding(
+            bindingId, installBase + harken::kPackVoiceRecipeInstallBytes);
         m_entries.push_back(std::move(entry));
     }
 

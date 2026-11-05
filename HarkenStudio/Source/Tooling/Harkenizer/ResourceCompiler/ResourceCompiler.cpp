@@ -420,7 +420,7 @@ std::vector<EntryPlacement> BuildEntryPlacements(
     for (std::size_t i = 0; i < manifest.containers.size(); ++i) {
         place(harkenstudiobuild::kPackEntryKindContainer, manifest.containers[i].id,
               i,
-              harkenstudiobuild::PackV2ContainerPayloadBytes(
+              harkenstudiobuild::PackContainerPayloadBytes(
                   static_cast<std::uint32_t>(
                       manifest.containers[i].children.size())));
     }
@@ -431,7 +431,7 @@ std::vector<EntryPlacement> BuildEntryPlacements(
         const std::uint32_t bindingCount =
             static_cast<std::uint32_t>(recipe.bindings.size());
         place(harkenstudiobuild::kPackEntryKindVoiceRecipe, recipe.playable, i,
-              harkenstudiobuild::PackV5VoiceRecipePayloadBytes(installCount,
+              harkenstudiobuild::PackVoiceRecipePayloadBytes(installCount,
                                                   bindingCount));
     }
     for (std::size_t i = 0; i < manifest.busEffects.size(); ++i) {
@@ -555,22 +555,21 @@ bool SerializeEntryPayload(const Manifest& manifest,
         header.defaultIndex = container.defaultIndex;
         header.childCount = static_cast<std::uint32_t>(
             container.children.size());
-        harkenstudiobuild::SerializePackV2ContainerHeader(header, dst);
-        for (std::size_t c = 0; c < container.children.size();
-             ++c) {
-            const ManifestContainerChild& child =
-                container.children[c];
-            harkenstudiobuild::PackContainerChildV2 wire{};
-            wire.playableId = child.playable;
-            wire.weight = child.weight;
-            wire.matchValue = child.matchValue;
-            wire.delayMs = child.delayMs;
-            wire.delayJitterMs = child.delayJitterMs;
-            harkenstudiobuild::SerializePackV2ContainerChild(
-                wire,
-                dst + harkenstudiobuild::kPackV2ContainerHeaderBytes +
-                    c * harkenstudiobuild::kPackV2ContainerChildBytes);
-        }
+        struct Visitor {
+            harkenstudiobuild::PackContainerEntryHeader& header;
+            const ManifestContainer& source;
+            const auto& Value() const noexcept { return header; }
+            const auto& Header() const noexcept { return header; }
+            bool PrepareChildren(std::uint64_t count) const noexcept { return count == source.children.size(); }
+            harkenstudiobuild::PackContainerChild Children(std::uint64_t index) const noexcept {
+                const auto& child = source.children[static_cast<std::size_t>(index)];
+                return {child.playable, child.weight, child.matchValue, child.delayMs, child.delayJitterMs};
+            }
+            bool Finish() const noexcept { return true; }
+        } visitor{header, container};
+        harkenstudiobuild::PackWireBuffer<std::uint8_t> buffer{dst, placement.size};
+        if (!harkenstudiobuild::AppendPackContainerPayload(buffer, visitor))
+            return Fail(diag, "container payload size mismatch");
         break;
     }
     case harkenstudiobuild::kPackEntryKindVoiceRecipe: {
@@ -582,8 +581,6 @@ bool SerializeEntryPayload(const Manifest& manifest,
             static_cast<std::uint32_t>(recipe.effects.size());
         header.bindingCount =
             static_cast<std::uint32_t>(recipe.bindings.size());
-        harkenstudiobuild::SerializePackV2VoiceRecipeHeader(header, dst);
-        std::uint64_t cursor = harkenstudiobuild::kPackV2VoiceRecipeHeaderBytes;
         harkenstudiobuild::PackVoiceRecipeTone tone;
         if (recipe.tone.present) {
             tone.present = 1u;
@@ -612,8 +609,6 @@ bool SerializeEntryPayload(const Manifest& manifest,
             tone.highShelfQ = recipe.tone.highShelfQ;
             tone.highShelfGainDb = recipe.tone.highShelfGainDb;
         }
-        harkenstudiobuild::SerializePackV3VoiceRecipeTone(tone, dst + cursor);
-        cursor += harkenstudiobuild::kPackV3VoiceRecipeToneBytes;
         harkenstudiobuild::PackVoiceRecipeSpatial spatial;
         if (recipe.spatial.present) {
             spatial.attenuationId = recipe.spatial.attenuation;
@@ -621,37 +616,49 @@ bool SerializeEntryPayload(const Manifest& manifest,
         } else {
             spatial.distanceScale = 0.0f;
         }
-        harkenstudiobuild::SerializePackV4VoiceRecipeSpatial(spatial, dst + cursor);
-        cursor += harkenstudiobuild::kPackV4VoiceRecipeSpatialBytes;
         harkenstudiobuild::PackVoiceRecipePlayback playback;
         if (recipe.playback.present) {
             playback.present = 1u;
             playback.loopCount = recipe.playback.loopCount;
         }
-        harkenstudiobuild::SerializePackV5VoiceRecipePlayback(playback,
-                                                  dst + cursor);
-        cursor += harkenstudiobuild::kPackV5VoiceRecipePlaybackBytes;
-        for (const ManifestVoiceRecipeEffect& effect : recipe.effects) {
-            harkenstudiobuild::PackVoiceRecipeInstall install;
-            install.effectId = effect.effectId;
-            install.slot = effect.slot;
-            install.effectType = effect.type;
-            install.descriptorVintage = effect.descriptorVintage;
-            install.bypass = effect.bypass ? 1u : 0u;
-            install.paramCount =
-                static_cast<std::uint32_t>(effect.parameters.size());
-            for (std::uint32_t p = 0; p < install.paramCount; ++p) {
-                install.params[p] = effect.parameters[p];
+        struct InstallVisitor {
+            harkenstudiobuild::PackVoiceRecipeInstallWire row;
+            const auto& Wire() const noexcept { return row; }
+            bool Finish() const noexcept { return true; }
+        };
+        struct Visitor {
+            const harkenstudiobuild::PackVoiceRecipeEntryHeader& header;
+            const harkenstudiobuild::PackVoiceRecipeTone& tone;
+            const harkenstudiobuild::PackVoiceRecipeSpatial& spatial;
+            const harkenstudiobuild::PackVoiceRecipePlayback& playback;
+            const ManifestVoiceRecipe& source;
+            const auto& Value() const noexcept { return header; }
+            const auto& Header() const noexcept { return header; }
+            const auto& Tone() const noexcept { return tone; }
+            const auto& Spatial() const noexcept { return spatial; }
+            const auto& Playback() const noexcept { return playback; }
+            bool PrepareInstalls(std::uint64_t count) const noexcept { return count == source.effects.size(); }
+            InstallVisitor Installs(std::uint64_t index) const noexcept {
+                const auto& effect = source.effects[static_cast<std::size_t>(index)];
+                InstallVisitor result{};
+                auto& row = result.row;
+                row.effectId = effect.effectId;
+                row.slot = effect.slot;
+                row.effectType = effect.type;
+                row.descriptorVintage = effect.descriptorVintage;
+                row.bypass = effect.bypass ? 1u : 0u;
+                row.paramCount = static_cast<std::uint32_t>(effect.parameters.size());
+                row.paramBytes = row.paramCount * sizeof(float);
+                std::copy(effect.parameters.begin(), effect.parameters.end(), row.params.begin());
+                return result;
             }
-            harkenstudiobuild::SerializePackV2VoiceRecipeInstall(
-                install, dst + cursor);
-            cursor += harkenstudiobuild::kPackV2VoiceRecipeInstallBytes;
-        }
-        for (harkenstudio::ObjectId binding : recipe.bindings) {
-            harkenstudiobuild::SerializePackV2VoiceRecipeBinding(binding,
-                                                     dst + cursor);
-            cursor += harkenstudiobuild::kPackV2VoiceRecipeBindingBytes;
-        }
+            bool PrepareBindings(std::uint64_t count) const noexcept { return count == source.bindings.size(); }
+            const auto& Bindings(std::uint64_t index) const noexcept { return source.bindings[static_cast<std::size_t>(index)]; }
+            bool Finish() const noexcept { return true; }
+        } visitor{header, tone, spatial, playback, recipe};
+        harkenstudiobuild::PackWireBuffer<std::uint8_t> buffer{dst, placement.size};
+        if (!harkenstudiobuild::AppendPackVoiceRecipePayload(buffer, visitor))
+            return Fail(diag, "voice recipe payload size mismatch");
         break;
     }
     case harkenstudiobuild::kPackEntryKindBusEffect: {
@@ -707,7 +714,8 @@ std::uint32_t EntryVintage(std::uint32_t kind) {
     case harkenstudiobuild::kPackEntryKindBindingAttachment: return harkenstudiobuild::kPackBindingAttachmentVintage;
     case harkenstudiobuild::kPackEntryKindBusEffect: return harkenstudiobuild::kPackBusEffectVintage;
     case harkenstudiobuild::kPackEntryKindEffectDynamicRoute: return harkenstudiobuild::kPackEffectDynamicRouteVintage;
-    case harkenstudiobuild::kPackEntryKindVoiceRecipe: return harkenstudiobuild::kPackV2PlaybackRecipeSchemaVintage;
+    case harkenstudiobuild::kPackEntryKindContainer: return harkenstudiobuild::kPackContainerVintage;
+    case harkenstudiobuild::kPackEntryKindVoiceRecipe: return harkenstudiobuild::kPackVoiceRecipeVintage;
     default: return harkenstudiobuild::kPackV2SchemaVintage;
     }
 }

@@ -71,6 +71,50 @@
     "bindingDefinition": {
       "engine": "PackBindingDefinitionEntry",
       "studio": "PackBindingDefinitionEntry"
+    },
+    "containerHeader": {
+      "engine": "PackContainerEntryHeader",
+      "studio": "PackContainerEntryHeader"
+    },
+    "containerChild": {
+      "engine": "PackContainerChild",
+      "studio": "PackContainerChild"
+    },
+    "voiceRecipeHeader": {
+      "engine": "PackVoiceRecipeEntryHeader",
+      "studio": "PackVoiceRecipeEntryHeader"
+    },
+    "voiceRecipeTone": {
+      "engine": "PackVoiceRecipeTone",
+      "studio": "PackVoiceRecipeTone"
+    },
+    "voiceRecipeSpatial": {
+      "engine": "PackVoiceRecipeSpatial",
+      "studio": "PackVoiceRecipeSpatial"
+    },
+    "voiceRecipePlayback": {
+      "engine": "PackVoiceRecipePlayback",
+      "studio": "PackVoiceRecipePlayback"
+    },
+    "voiceRecipeInstall": {
+      "engine": "PackVoiceRecipeInstallWire",
+      "studio": "PackVoiceRecipeInstallWire"
+    },
+    "voiceRecipeBinding": {
+      "engine": "VnBindingId",
+      "studio": "harkenstudio::ObjectId"
+    },
+    "containerPayload": {
+      "engine": "PackContainerEntryHeader",
+      "studio": "PackContainerEntryHeader"
+    },
+    "voiceRecipePayload": {
+      "engine": "PackVoiceRecipeEntryHeader",
+      "studio": "PackVoiceRecipeEntryHeader"
+    },
+    "voiceRecipeInstallRow": {
+      "engine": "PackVoiceRecipeInstallWire",
+      "studio": "PackVoiceRecipeInstallWire"
     }
   },
   "members": {
@@ -79,7 +123,8 @@
     "bindingDefinition.targetScopeKind": "definition.targetScopeKind",
     "bindingDefinition.targetId": "definition.targetId",
     "bindingDefinition.transitionMs": "definition.transitionMs",
-    "bindingDefinition.curve": "definition.curve"
+    "bindingDefinition.curve": "definition.curve",
+    "voiceRecipeBinding.bindingId": ""
   },
   "setters": [
     "busDefinitionSnapshotHeader.checksum"

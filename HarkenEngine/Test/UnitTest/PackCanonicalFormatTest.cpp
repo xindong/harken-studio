@@ -1374,14 +1374,14 @@ TEST(PackCanonicalFormat, ContainerKindIsIncompatible) {
     PackContainerEntryHeader header;
     header.containerId = harkentest::ObjectId(200);
     header.childCount = 1;
-    PackContainerChildV2 child;
+    PackContainerChild child;
     child.playableId = harkentest::ObjectId(100);
     child.weight = 1;
     std::vector<std::uint8_t> payload(static_cast<std::size_t>(
-        PackV2ContainerPayloadBytes(1)));
-    SerializePackV2ContainerHeader(header, payload.data());
-    SerializePackV2ContainerChild(child,
-                                  payload.data() + kPackV2ContainerHeaderBytes);
+        PackContainerPayloadBytes(1)));
+    SerializePackContainerHeader(header, payload.data());
+    SerializePackContainerChild(child,
+                                  payload.data() + kPackContainerHeaderBytes);
     builder.AddEntry(kPackEntryKindContainer, 200, std::move(payload),
                      kPackV2SchemaVintage);
     const std::vector<std::uint8_t> bytes = builder.Build();
@@ -1395,10 +1395,10 @@ TEST(PackCanonicalFormat, VoiceRecipeKindIsIncompatible) {
     PackVoiceRecipeEntryHeader header;
     header.playableId = harkentest::ObjectId(100);
     std::vector<std::uint8_t> payload(static_cast<std::size_t>(
-        PackV5VoiceRecipePayloadBytes(0, 0)), 0);
-    SerializePackV2VoiceRecipeHeader(header, payload.data());
+        PackVoiceRecipePayloadBytes(0, 0)), 0);
+    SerializePackVoiceRecipeHeader(header, payload.data());
     builder.AddEntry(kPackEntryKindVoiceRecipe, 100, std::move(payload),
-                     kPackV2PlaybackRecipeSchemaVintage);
+                     kPackVoiceRecipeVintage);
     const std::vector<std::uint8_t> bytes = builder.Build();
     PackCanonicalImage image;
     EXPECT_EQ(VN_PACK_INCOMPATIBLE,

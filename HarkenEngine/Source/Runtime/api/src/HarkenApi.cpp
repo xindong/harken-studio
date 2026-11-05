@@ -72281,7 +72281,7 @@ std::uint32_t UniqueRecipeTargetCount(
     if (recipe == nullptr) {
         return 0;
     }
-    std::uint32_t targets[harken::kPackV2VoiceRecipeMaxBindings] = {};
+    std::uint32_t targets[harken::kPackVoiceRecipeMaxBindings] = {};
     std::uint32_t count = 0;
     for (VnBindingId id : recipe->bindings) {
         const harken::BindingTable::Definition* def = engine.bindings.Find(id);
@@ -72302,7 +72302,7 @@ std::uint32_t UniqueRecipeTargetCount(
 std::uint32_t UniqueRecipeTargetCount(const harken::Engine& engine,
                                       const VnBindingId* ids,
                                       std::uint32_t idCount) {
-    std::uint32_t targets[harken::kPackV2VoiceRecipeMaxBindings] = {};
+    std::uint32_t targets[harken::kPackVoiceRecipeMaxBindings] = {};
     std::uint32_t count = 0;
     for (std::uint32_t i = 0; i < idCount; ++i) {
         const harken::BindingTable::Definition* def =
@@ -72544,10 +72544,10 @@ bool PrimeRecipeBindingsWith(
     if (count == 0) {
         return true;
     }
-    if (count > harken::kPackV2VoiceRecipeMaxBindings) return false;
+    if (count > harken::kPackVoiceRecipeMaxBindings) return false;
     const VnEmitterHandle emitter = engine.params.EmitterHandleOf(renderHandle);
-    std::array<float, harken::kPackV2VoiceRecipeMaxBindings> inputs{};
-    std::array<bool, harken::kPackV2VoiceRecipeMaxBindings> hasInput{};
+    std::array<float, harken::kPackVoiceRecipeMaxBindings> inputs{};
+    std::array<bool, harken::kPackVoiceRecipeMaxBindings> hasInput{};
     for (std::uint32_t i = 0; i < count; ++i) {
         const auto* def = engine.bindings.Find(ids[i]);
         if (def == nullptr) continue;
@@ -72566,8 +72566,8 @@ bool PrimeRecipeBindingsWith(
     if (!activated) {
         return false;
     }
-    std::uint32_t handled[harken::kPackV2VoiceRecipeMaxBindings] = {};
-    std::array<float, harken::kPackV2VoiceRecipeMaxBindings> resolvedValues{};
+    std::uint32_t handled[harken::kPackVoiceRecipeMaxBindings] = {};
+    std::array<float, harken::kPackVoiceRecipeMaxBindings> resolvedValues{};
     std::uint32_t handledCount = 0;
     for (std::uint32_t i = 0; i < count; ++i) {
         const harken::BindingTable::Definition* first =

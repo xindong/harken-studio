@@ -1168,17 +1168,17 @@ inline bool ParseBusEffectsSection(const JsonValue& section,
             return Fail(diag, "manifest %s.bus must be nonzero",
                         context.c_str());
         }
-        if (effect.slot >= harkenstudiobuild::kPackV2VoiceRecipeMaxInstalls) {
+        if (effect.slot >= harkenstudiobuild::kPackVoiceRecipeMaxInstalls) {
             return Fail(diag, "manifest %s.slot must be 0..%u",
                         context.c_str(),
-                        harkenstudiobuild::kPackV2VoiceRecipeMaxInstalls - 1);
+                        harkenstudiobuild::kPackVoiceRecipeMaxInstalls - 1);
         }
         if (effect.faderPointGuard >
-            harkenstudiobuild::kPackV2VoiceRecipeMaxInstalls) {
+            harkenstudiobuild::kPackVoiceRecipeMaxInstalls) {
             return Fail(diag,
                         "manifest %s.faderPointGuard must be 0..%u",
                         context.c_str(),
-                        harkenstudiobuild::kPackV2VoiceRecipeMaxInstalls);
+                        harkenstudiobuild::kPackVoiceRecipeMaxInstalls);
         }
         if (type == nullptr || !ParseRecipeEffectType(*type, &effect.type)) {
             return Fail(diag,
@@ -1307,13 +1307,13 @@ inline bool ParseDynamicRoutesSection(const JsonValue& section,
                         "manifest %s targetBus and sourceBus must be nonzero",
                         context.c_str());
         }
-        if (route.effectSlot >= harkenstudiobuild::kPackV2VoiceRecipeMaxInstalls ||
+        if (route.effectSlot >= harkenstudiobuild::kPackVoiceRecipeMaxInstalls ||
             route.routeSlot >= 4) {
             return Fail(diag,
                         "manifest %s effectSlot must be 0..%u and "
                         "routeSlot must be 0..3",
                         context.c_str(),
-                        harkenstudiobuild::kPackV2VoiceRecipeMaxInstalls - 1);
+                        harkenstudiobuild::kPackVoiceRecipeMaxInstalls - 1);
         }
         if (tap == nullptr || !ParseDynamicTap(*tap, &route.tap)) {
             return Fail(diag,
@@ -1403,20 +1403,20 @@ inline bool ParseVoiceRecipesSection(const JsonValue& section,
         const JsonValue* effects = item.Find("effects");
         const JsonValue* bindings = item.Find("bindings");
         if (effects == nullptr || effects->kind != JsonValue::Kind::Array ||
-            effects->items.size() > harkenstudiobuild::kPackV2VoiceRecipeMaxInstalls) {
+            effects->items.size() > harkenstudiobuild::kPackVoiceRecipeMaxInstalls) {
             return Fail(diag,
                         "manifest %s.effects must contain at most %u entries",
                         context.c_str(),
-                        harkenstudiobuild::kPackV2VoiceRecipeMaxInstalls);
+                        harkenstudiobuild::kPackVoiceRecipeMaxInstalls);
         }
         if (bindings == nullptr ||
             bindings->kind != JsonValue::Kind::Array ||
-            bindings->items.size() > harkenstudiobuild::kPackV2VoiceRecipeMaxBindings) {
+            bindings->items.size() > harkenstudiobuild::kPackVoiceRecipeMaxBindings) {
             return Fail(diag,
                         "manifest %s.bindings must be an array of at most %u "
                         "ids",
                         context.c_str(),
-                        harkenstudiobuild::kPackV2VoiceRecipeMaxBindings);
+                        harkenstudiobuild::kPackVoiceRecipeMaxBindings);
         }
         if (tone != nullptr) {
             const std::string toneContext = context + ".tone";
@@ -1603,10 +1603,10 @@ inline bool ParseVoiceRecipesSection(const JsonValue& section,
                             effectContext.c_str(),
                             effectSchema->descriptorVintage);
             }
-            if (parsed.slot >= harkenstudiobuild::kPackV2VoiceRecipeMaxInstalls) {
+            if (parsed.slot >= harkenstudiobuild::kPackVoiceRecipeMaxInstalls) {
                 return Fail(diag, "manifest %s.slot must be 0..%u",
                             effectContext.c_str(),
-                            harkenstudiobuild::kPackV2VoiceRecipeMaxInstalls - 1);
+                            harkenstudiobuild::kPackVoiceRecipeMaxInstalls - 1);
             }
             if (bypass != nullptr) {
                 if (bypass->kind != JsonValue::Kind::Bool) {

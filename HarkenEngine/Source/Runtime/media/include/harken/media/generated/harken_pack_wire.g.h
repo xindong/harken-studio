@@ -27,6 +27,11 @@ inline constexpr std::uint32_t kPackEntryKindBindingDefinition = 7u;
 inline constexpr std::uint32_t kPackBindingDefinitionVintage = 2u;
 inline constexpr std::uint32_t kPackEntryKindBindingAttachment = 8u;
 inline constexpr std::uint32_t kPackBindingAttachmentVintage = 2u;
+inline constexpr std::uint32_t kPackEntryKindContainer = 9u;
+inline constexpr std::uint32_t kPackContainerVintage = 2u;
+inline constexpr std::uint32_t kPackEntryKindAction = 10u;
+inline constexpr std::uint32_t kPackEntryKindVoiceRecipe = 11u;
+inline constexpr std::uint32_t kPackVoiceRecipeVintage = 5u;
 inline constexpr std::uint32_t kPackEntryKindBusEffect = 12u;
 inline constexpr std::uint32_t kPackBusEffectVintage = 1u;
 inline constexpr std::uint32_t kPackEntryKindEffectDynamicRoute = 13u;
@@ -42,6 +47,8 @@ inline constexpr std::uint32_t kPackBusDefinitionSnapshotVintage = 2u;
     case kPackEntryKindAttenuation: return vintage == kPackAttenuationVintage;
     case kPackEntryKindBindingDefinition: return vintage == kPackBindingDefinitionVintage;
     case kPackEntryKindBindingAttachment: return vintage == kPackBindingAttachmentVintage;
+    case kPackEntryKindContainer: return vintage == kPackContainerVintage;
+    case kPackEntryKindVoiceRecipe: return vintage == kPackVoiceRecipeVintage;
     case kPackEntryKindBusEffect: return vintage == kPackBusEffectVintage;
     case kPackEntryKindEffectDynamicRoute: return vintage == kPackEffectDynamicRouteVintage;
     case kPackEntryKindBusDefinitionSnapshot: return vintage == kPackBusDefinitionSnapshotVintage;
@@ -674,6 +681,59 @@ inline void SerializePackBusSend(const PackBusSendEntry& row, std::uint8_t* out)
     return true;
 }
 
+inline constexpr std::uint64_t kPackContainerChildBytes = 32ULL;
+inline constexpr std::uint64_t kPackContainerChildPlayableIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackContainerChildWeightOffset = 16ULL;
+inline constexpr std::uint64_t kPackContainerChildMatchValueOffset = 20ULL;
+inline constexpr std::uint64_t kPackContainerChildDelayMsOffset = 24ULL;
+inline constexpr std::uint64_t kPackContainerChildDelayJitterMsOffset = 28ULL;
+
+inline void SerializePackContainerChild(const PackContainerChild& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row.playableId);
+    StoreLE32(out + 16, static_cast<std::uint32_t>(row.weight));
+    StoreLE32(out + 20, static_cast<std::uint32_t>(row.matchValue));
+    StoreLE32(out + 24, static_cast<std::uint32_t>(row.delayMs));
+    StoreLE32(out + 28, static_cast<std::uint32_t>(row.delayJitterMs));
+}
+
+[[nodiscard]] inline bool ParsePackContainerChild(const std::uint8_t* in, std::uint64_t size, PackContainerChild* out) noexcept {
+    if (size != kPackContainerChildBytes) return false;
+    out->playableId = static_cast<std::remove_cvref_t<decltype(out->playableId)>>(LoadObjectId(in + 0));
+    out->weight = static_cast<std::remove_cvref_t<decltype(out->weight)>>(LoadLE32(in + 16));
+    out->matchValue = static_cast<std::remove_cvref_t<decltype(out->matchValue)>>(LoadLE32(in + 20));
+    out->delayMs = static_cast<std::remove_cvref_t<decltype(out->delayMs)>>(LoadLE32(in + 24));
+    out->delayJitterMs = static_cast<std::remove_cvref_t<decltype(out->delayJitterMs)>>(LoadLE32(in + 28));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackContainerHeaderBytes = 48ULL;
+inline constexpr std::uint64_t kPackContainerHeaderContainerIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackContainerHeaderSelectionOrderOffset = 16ULL;
+inline constexpr std::uint64_t kPackContainerHeaderAvoidRepeatWindowOffset = 20ULL;
+inline constexpr std::uint64_t kPackContainerHeaderSelectionVariableIdOffset = 24ULL;
+inline constexpr std::uint64_t kPackContainerHeaderDefaultIndexOffset = 40ULL;
+inline constexpr std::uint64_t kPackContainerHeaderChildCountOffset = 44ULL;
+
+inline void SerializePackContainerHeader(const PackContainerEntryHeader& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row.containerId);
+    StoreLE32(out + 16, static_cast<std::uint32_t>(row.selectionOrder));
+    StoreLE32(out + 20, static_cast<std::uint32_t>(row.avoidRepeatWindow));
+    StoreObjectId(out + 24, row.selectionVariableId);
+    StoreLE32(out + 40, static_cast<std::uint32_t>(row.defaultIndex));
+    StoreLE32(out + 44, static_cast<std::uint32_t>(row.childCount));
+}
+
+[[nodiscard]] inline bool ParsePackContainerHeader(const std::uint8_t* in, std::uint64_t size, PackContainerEntryHeader* out) noexcept {
+    if (size != kPackContainerHeaderBytes) return false;
+    out->containerId = static_cast<std::remove_cvref_t<decltype(out->containerId)>>(LoadObjectId(in + 0));
+    out->selectionOrder = static_cast<std::remove_cvref_t<decltype(out->selectionOrder)>>(LoadLE32(in + 16));
+    out->avoidRepeatWindow = static_cast<std::remove_cvref_t<decltype(out->avoidRepeatWindow)>>(LoadLE32(in + 20));
+    out->selectionVariableId = static_cast<std::remove_cvref_t<decltype(out->selectionVariableId)>>(LoadObjectId(in + 24));
+    out->defaultIndex = static_cast<std::remove_cvref_t<decltype(out->defaultIndex)>>(LoadLE32(in + 40));
+    out->childCount = static_cast<std::remove_cvref_t<decltype(out->childCount)>>(LoadLE32(in + 44));
+    return true;
+}
+
 inline constexpr std::uint64_t kPackEffectDynamicRouteBytes = 72ULL;
 inline constexpr std::uint64_t kPackEffectDynamicRouteTargetBusIdOffset = 0ULL;
 inline constexpr std::uint64_t kPackEffectDynamicRouteEffectSlotOffset = 16ULL;
@@ -761,6 +821,182 @@ inline void SerializePackMedia(const PackTocEntry& row, std::uint8_t* out) noexc
     out->flags = static_cast<std::remove_cvref_t<decltype(out->flags)>>(LoadLE32(in + 56));
     out->loopStartFrame = static_cast<std::remove_cvref_t<decltype(out->loopStartFrame)>>(LoadLE64(in + 60));
     out->loopEndFrame = static_cast<std::remove_cvref_t<decltype(out->loopEndFrame)>>(LoadLE64(in + 68));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackVoiceRecipeBindingBytes = 16ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeBindingBindingIdOffset = 0ULL;
+
+inline void SerializePackVoiceRecipeBinding(const VnBindingId& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row);
+}
+
+[[nodiscard]] inline bool ParsePackVoiceRecipeBinding(const std::uint8_t* in, std::uint64_t size, VnBindingId* out) noexcept {
+    if (size != kPackVoiceRecipeBindingBytes) return false;
+    (*out) = static_cast<std::remove_cvref_t<decltype((*out))>>(LoadObjectId(in + 0));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackVoiceRecipeHeaderBytes = 24ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeHeaderPlayableIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeHeaderInstallCountOffset = 16ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeHeaderBindingCountOffset = 20ULL;
+
+inline void SerializePackVoiceRecipeHeader(const PackVoiceRecipeEntryHeader& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row.playableId);
+    StoreLE32(out + 16, static_cast<std::uint32_t>(row.installCount));
+    StoreLE32(out + 20, static_cast<std::uint32_t>(row.bindingCount));
+}
+
+[[nodiscard]] inline bool ParsePackVoiceRecipeHeader(const std::uint8_t* in, std::uint64_t size, PackVoiceRecipeEntryHeader* out) noexcept {
+    if (size != kPackVoiceRecipeHeaderBytes) return false;
+    out->playableId = static_cast<std::remove_cvref_t<decltype(out->playableId)>>(LoadObjectId(in + 0));
+    out->installCount = static_cast<std::remove_cvref_t<decltype(out->installCount)>>(LoadLE32(in + 16));
+    out->bindingCount = static_cast<std::remove_cvref_t<decltype(out->bindingCount)>>(LoadLE32(in + 20));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackVoiceRecipeInstallBytes = 304ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeInstallSlotOffset = 0ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeInstallEffectTypeOffset = 4ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeInstallDescriptorVintageOffset = 8ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeInstallBypassOffset = 12ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeInstallParamCountOffset = 16ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeInstallParamBytesOffset = 20ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeInstallReserved24Offset = 24ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeInstallReserved28Offset = 28ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeInstallParamsOffset = 32ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeInstallEffectIdOffset = 288ULL;
+
+inline void SerializePackVoiceRecipeInstall(const PackVoiceRecipeInstallWire& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.slot));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.effectType));
+    StoreLE32(out + 8, static_cast<std::uint32_t>(row.descriptorVintage));
+    StoreLE32(out + 12, static_cast<std::uint32_t>(row.bypass));
+    StoreLE32(out + 16, static_cast<std::uint32_t>(row.paramCount));
+    StoreLE32(out + 20, static_cast<std::uint32_t>(row.paramBytes));
+    std::memset(out + 24, 0, 4);
+    std::memset(out + 28, 0, 4);
+    static_assert(std::size(std::remove_cvref_t<decltype(row.params)>{}) == 64);
+    for (std::uint64_t i = 0; i < 64; ++i) {
+        if (i < row.paramCount) {
+            StoreLEF32(out + 32 + i * 4, static_cast<float>(row.params[i]));
+        } else {
+            std::memset(out + 32 + i * 4, 0, 4);
+        }
+    }
+    StoreObjectId(out + 288, row.effectId);
+}
+
+[[nodiscard]] inline bool ParsePackVoiceRecipeInstall(const std::uint8_t* in, std::uint64_t size, PackVoiceRecipeInstallWire* out) noexcept {
+    if (size != kPackVoiceRecipeInstallBytes) return false;
+    out->slot = static_cast<std::remove_cvref_t<decltype(out->slot)>>(LoadLE32(in + 0));
+    out->effectType = static_cast<std::remove_cvref_t<decltype(out->effectType)>>(LoadLE32(in + 4));
+    out->descriptorVintage = static_cast<std::remove_cvref_t<decltype(out->descriptorVintage)>>(LoadLE32(in + 8));
+    out->bypass = static_cast<std::remove_cvref_t<decltype(out->bypass)>>(LoadLE32(in + 12));
+    out->paramCount = static_cast<std::remove_cvref_t<decltype(out->paramCount)>>(LoadLE32(in + 16));
+    out->paramBytes = static_cast<std::remove_cvref_t<decltype(out->paramBytes)>>(LoadLE32(in + 20));
+    for (std::uint64_t i = 0; i < 4; ++i) {
+        if ((in + 24)[i] != 0) return false;
+    }
+    for (std::uint64_t i = 0; i < 4; ++i) {
+        if ((in + 28)[i] != 0) return false;
+    }
+    static_assert(std::size(std::remove_cvref_t<decltype(out->params)>{}) == 64);
+    for (std::uint64_t i = 0; i < 64; ++i) {
+        if (i < out->paramCount) {
+            out->params[i] = static_cast<std::remove_cvref_t<decltype(out->params[i])>>(LoadLEF32(in + 32 + i * 4));
+        } else {
+            for (std::uint64_t byte = 0; byte < 4; ++byte) {
+                if ((in + 32 + i * 4)[byte] != 0) return false;
+            }
+            out->params[i] = {};
+        }
+    }
+    out->effectId = static_cast<std::remove_cvref_t<decltype(out->effectId)>>(LoadObjectId(in + 288));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackVoiceRecipePlaybackBytes = 8ULL;
+inline constexpr std::uint64_t kPackVoiceRecipePlaybackPresentOffset = 0ULL;
+inline constexpr std::uint64_t kPackVoiceRecipePlaybackLoopCountOffset = 4ULL;
+
+inline void SerializePackVoiceRecipePlayback(const PackVoiceRecipePlayback& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.present));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.loopCount));
+}
+
+[[nodiscard]] inline bool ParsePackVoiceRecipePlayback(const std::uint8_t* in, std::uint64_t size, PackVoiceRecipePlayback* out) noexcept {
+    if (size != kPackVoiceRecipePlaybackBytes) return false;
+    out->present = static_cast<std::remove_cvref_t<decltype(out->present)>>(LoadLE32(in + 0));
+    out->loopCount = static_cast<std::remove_cvref_t<decltype(out->loopCount)>>(LoadLE32(in + 4));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackVoiceRecipeSpatialBytes = 24ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeSpatialAttenuationIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeSpatialDistanceScaleOffset = 16ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeSpatialReserved20Offset = 20ULL;
+
+inline void SerializePackVoiceRecipeSpatial(const PackVoiceRecipeSpatial& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row.attenuationId);
+    StoreLEF32(out + 16, static_cast<float>(row.distanceScale));
+    std::memset(out + 20, 0, 4);
+}
+
+[[nodiscard]] inline bool ParsePackVoiceRecipeSpatial(const std::uint8_t* in, std::uint64_t size, PackVoiceRecipeSpatial* out) noexcept {
+    if (size != kPackVoiceRecipeSpatialBytes) return false;
+    out->attenuationId = static_cast<std::remove_cvref_t<decltype(out->attenuationId)>>(LoadObjectId(in + 0));
+    out->distanceScale = static_cast<std::remove_cvref_t<decltype(out->distanceScale)>>(LoadLEF32(in + 16));
+    for (std::uint64_t i = 0; i < 4; ++i) {
+        if ((in + 20)[i] != 0) return false;
+    }
+    return true;
+}
+
+inline constexpr std::uint64_t kPackVoiceRecipeToneBytes = 48ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeTonePresentOffset = 0ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeToneSectionEnableMaskOffset = 4ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeToneLowpassFrequencyHzOffset = 8ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeToneLowpassQOffset = 12ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeToneHighpassFrequencyHzOffset = 16ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeToneHighpassQOffset = 20ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeToneLowShelfFrequencyHzOffset = 24ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeToneLowShelfQOffset = 28ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeToneLowShelfGainDbOffset = 32ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeToneHighShelfFrequencyHzOffset = 36ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeToneHighShelfQOffset = 40ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeToneHighShelfGainDbOffset = 44ULL;
+
+inline void SerializePackVoiceRecipeTone(const PackVoiceRecipeTone& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.present));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.sectionEnableMask));
+    StoreLEF32(out + 8, static_cast<float>(row.lowpassFrequencyHz));
+    StoreLEF32(out + 12, static_cast<float>(row.lowpassQ));
+    StoreLEF32(out + 16, static_cast<float>(row.highpassFrequencyHz));
+    StoreLEF32(out + 20, static_cast<float>(row.highpassQ));
+    StoreLEF32(out + 24, static_cast<float>(row.lowShelfFrequencyHz));
+    StoreLEF32(out + 28, static_cast<float>(row.lowShelfQ));
+    StoreLEF32(out + 32, static_cast<float>(row.lowShelfGainDb));
+    StoreLEF32(out + 36, static_cast<float>(row.highShelfFrequencyHz));
+    StoreLEF32(out + 40, static_cast<float>(row.highShelfQ));
+    StoreLEF32(out + 44, static_cast<float>(row.highShelfGainDb));
+}
+
+[[nodiscard]] inline bool ParsePackVoiceRecipeTone(const std::uint8_t* in, std::uint64_t size, PackVoiceRecipeTone* out) noexcept {
+    if (size != kPackVoiceRecipeToneBytes) return false;
+    out->present = static_cast<std::remove_cvref_t<decltype(out->present)>>(LoadLE32(in + 0));
+    out->sectionEnableMask = static_cast<std::remove_cvref_t<decltype(out->sectionEnableMask)>>(LoadLE32(in + 4));
+    out->lowpassFrequencyHz = static_cast<std::remove_cvref_t<decltype(out->lowpassFrequencyHz)>>(LoadLEF32(in + 8));
+    out->lowpassQ = static_cast<std::remove_cvref_t<decltype(out->lowpassQ)>>(LoadLEF32(in + 12));
+    out->highpassFrequencyHz = static_cast<std::remove_cvref_t<decltype(out->highpassFrequencyHz)>>(LoadLEF32(in + 16));
+    out->highpassQ = static_cast<std::remove_cvref_t<decltype(out->highpassQ)>>(LoadLEF32(in + 20));
+    out->lowShelfFrequencyHz = static_cast<std::remove_cvref_t<decltype(out->lowShelfFrequencyHz)>>(LoadLEF32(in + 24));
+    out->lowShelfQ = static_cast<std::remove_cvref_t<decltype(out->lowShelfQ)>>(LoadLEF32(in + 28));
+    out->lowShelfGainDb = static_cast<std::remove_cvref_t<decltype(out->lowShelfGainDb)>>(LoadLEF32(in + 32));
+    out->highShelfFrequencyHz = static_cast<std::remove_cvref_t<decltype(out->highShelfFrequencyHz)>>(LoadLEF32(in + 36));
+    out->highShelfQ = static_cast<std::remove_cvref_t<decltype(out->highShelfQ)>>(LoadLEF32(in + 40));
+    out->highShelfGainDb = static_cast<std::remove_cvref_t<decltype(out->highShelfGainDb)>>(LoadLEF32(in + 44));
     return true;
 }
 
@@ -1117,6 +1353,50 @@ template <class Buffer>
 }
 
 template <class Buffer>
+[[nodiscard]] bool AppendPackContainerChild(Buffer& buffer, const PackContainerChild& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackContainerChildBytes)));
+    auto* bytes = buffer.Take(kPackContainerChildBytes);
+    if (!bytes) return false;
+    SerializePackContainerChild(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackContainerChild(Buffer& buffer, PackContainerChild& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackContainerChildBytes)));
+    const auto* bytes = buffer.Take(kPackContainerChildBytes);
+    return bytes && ParsePackContainerChild(bytes, kPackContainerChildBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackContainerChild(const PackContainerChild&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackContainerChildBytes) return false;
+    size += kPackContainerChildBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackContainerHeader(Buffer& buffer, const PackContainerEntryHeader& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackContainerHeaderBytes)));
+    auto* bytes = buffer.Take(kPackContainerHeaderBytes);
+    if (!bytes) return false;
+    SerializePackContainerHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackContainerHeader(Buffer& buffer, PackContainerEntryHeader& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackContainerHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackContainerHeaderBytes);
+    return bytes && ParsePackContainerHeader(bytes, kPackContainerHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackContainerHeader(const PackContainerEntryHeader&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackContainerHeaderBytes) return false;
+    size += kPackContainerHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
 [[nodiscard]] bool AppendPackEffectDynamicRoute(Buffer& buffer, const PackEffectDynamicRouteEntry& row) noexcept {
     static_assert(noexcept(buffer.Take(kPackEffectDynamicRouteBytes)));
     auto* bytes = buffer.Take(kPackEffectDynamicRouteBytes);
@@ -1160,5 +1440,336 @@ template <class Buffer>
     return true;
 }
 
+template <class Buffer>
+[[nodiscard]] bool AppendPackVoiceRecipeBinding(Buffer& buffer, const VnBindingId& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVoiceRecipeBindingBytes)));
+    auto* bytes = buffer.Take(kPackVoiceRecipeBindingBytes);
+    if (!bytes) return false;
+    SerializePackVoiceRecipeBinding(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackVoiceRecipeBinding(Buffer& buffer, VnBindingId& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVoiceRecipeBindingBytes)));
+    const auto* bytes = buffer.Take(kPackVoiceRecipeBindingBytes);
+    return bytes && ParsePackVoiceRecipeBinding(bytes, kPackVoiceRecipeBindingBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackVoiceRecipeBinding(const VnBindingId&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackVoiceRecipeBindingBytes) return false;
+    size += kPackVoiceRecipeBindingBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackVoiceRecipeHeader(Buffer& buffer, const PackVoiceRecipeEntryHeader& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVoiceRecipeHeaderBytes)));
+    auto* bytes = buffer.Take(kPackVoiceRecipeHeaderBytes);
+    if (!bytes) return false;
+    SerializePackVoiceRecipeHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackVoiceRecipeHeader(Buffer& buffer, PackVoiceRecipeEntryHeader& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVoiceRecipeHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackVoiceRecipeHeaderBytes);
+    return bytes && ParsePackVoiceRecipeHeader(bytes, kPackVoiceRecipeHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackVoiceRecipeHeader(const PackVoiceRecipeEntryHeader&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackVoiceRecipeHeaderBytes) return false;
+    size += kPackVoiceRecipeHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackVoiceRecipeInstall(Buffer& buffer, const PackVoiceRecipeInstallWire& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVoiceRecipeInstallBytes)));
+    auto* bytes = buffer.Take(kPackVoiceRecipeInstallBytes);
+    if (!bytes) return false;
+    SerializePackVoiceRecipeInstall(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackVoiceRecipeInstall(Buffer& buffer, PackVoiceRecipeInstallWire& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVoiceRecipeInstallBytes)));
+    const auto* bytes = buffer.Take(kPackVoiceRecipeInstallBytes);
+    return bytes && ParsePackVoiceRecipeInstall(bytes, kPackVoiceRecipeInstallBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackVoiceRecipeInstall(const PackVoiceRecipeInstallWire&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackVoiceRecipeInstallBytes) return false;
+    size += kPackVoiceRecipeInstallBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackVoiceRecipePlayback(Buffer& buffer, const PackVoiceRecipePlayback& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVoiceRecipePlaybackBytes)));
+    auto* bytes = buffer.Take(kPackVoiceRecipePlaybackBytes);
+    if (!bytes) return false;
+    SerializePackVoiceRecipePlayback(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackVoiceRecipePlayback(Buffer& buffer, PackVoiceRecipePlayback& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVoiceRecipePlaybackBytes)));
+    const auto* bytes = buffer.Take(kPackVoiceRecipePlaybackBytes);
+    return bytes && ParsePackVoiceRecipePlayback(bytes, kPackVoiceRecipePlaybackBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackVoiceRecipePlayback(const PackVoiceRecipePlayback&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackVoiceRecipePlaybackBytes) return false;
+    size += kPackVoiceRecipePlaybackBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackVoiceRecipeSpatial(Buffer& buffer, const PackVoiceRecipeSpatial& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVoiceRecipeSpatialBytes)));
+    auto* bytes = buffer.Take(kPackVoiceRecipeSpatialBytes);
+    if (!bytes) return false;
+    SerializePackVoiceRecipeSpatial(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackVoiceRecipeSpatial(Buffer& buffer, PackVoiceRecipeSpatial& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVoiceRecipeSpatialBytes)));
+    const auto* bytes = buffer.Take(kPackVoiceRecipeSpatialBytes);
+    return bytes && ParsePackVoiceRecipeSpatial(bytes, kPackVoiceRecipeSpatialBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackVoiceRecipeSpatial(const PackVoiceRecipeSpatial&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackVoiceRecipeSpatialBytes) return false;
+    size += kPackVoiceRecipeSpatialBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackVoiceRecipeTone(Buffer& buffer, const PackVoiceRecipeTone& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVoiceRecipeToneBytes)));
+    auto* bytes = buffer.Take(kPackVoiceRecipeToneBytes);
+    if (!bytes) return false;
+    SerializePackVoiceRecipeTone(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackVoiceRecipeTone(Buffer& buffer, PackVoiceRecipeTone& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackVoiceRecipeToneBytes)));
+    const auto* bytes = buffer.Take(kPackVoiceRecipeToneBytes);
+    return bytes && ParsePackVoiceRecipeTone(bytes, kPackVoiceRecipeToneBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackVoiceRecipeTone(const PackVoiceRecipeTone&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackVoiceRecipeToneBytes) return false;
+    size += kPackVoiceRecipeToneBytes;
+    return true;
+}
+
+inline constexpr std::uint64_t kPackVoiceRecipeInstallRowBytes = 304ULL;
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackContainerPayload(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackContainerEntryHeader>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackContainerHeader(buffer, row)) return false;
+    }
+    const std::uint64_t childrenCount = static_cast<std::uint64_t>(value.childCount);
+    static_assert(noexcept(visitor.PrepareChildren(childrenCount)));
+    if (!visitor.PrepareChildren(childrenCount)) return false;
+    for (std::uint64_t i = 0; i < childrenCount; ++i) {
+        static_assert(noexcept(visitor.Children(i)));
+        auto&& row = visitor.Children(i);
+        if (!AppendPackContainerChild(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackContainerPayload(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackContainerEntryHeader>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackContainerHeader(buffer, row)) return false;
+    }
+    const std::uint64_t childrenCount = static_cast<std::uint64_t>(value.childCount);
+    static_assert(noexcept(visitor.PrepareChildren(childrenCount)));
+    if (!visitor.PrepareChildren(childrenCount)) return false;
+    for (std::uint64_t i = 0; i < childrenCount; ++i) {
+        static_assert(noexcept(visitor.Children(i)));
+        auto&& row = visitor.Children(i);
+        if (!ReadPackContainerChild(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackContainerPayload(Visitor& visitor, std::uint64_t& size) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackContainerEntryHeader>);
+    if (size > UINT64_MAX - 48ULL) return false;
+    size += 48ULL;
+    const std::uint64_t childrenCount = static_cast<std::uint64_t>(value.childCount);
+    if (childrenCount > (UINT64_MAX - size) / 32ULL) return false;
+    size += childrenCount * 32ULL;
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackVoiceRecipeInstallRow(Buffer& buffer, Visitor& visitor) noexcept {
+    {
+        static_assert(noexcept(visitor.Wire()));
+        auto&& row = visitor.Wire();
+        if (!AppendPackVoiceRecipeInstall(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackVoiceRecipeInstallRow(Buffer& buffer, Visitor& visitor) noexcept {
+    {
+        static_assert(noexcept(visitor.Wire()));
+        auto&& row = visitor.Wire();
+        if (!ReadPackVoiceRecipeInstall(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackVoiceRecipeInstallRow(Visitor& visitor, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - 304ULL) return false;
+    size += 304ULL;
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackVoiceRecipePayload(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackVoiceRecipeEntryHeader>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackVoiceRecipeHeader(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.Tone()));
+        auto&& row = visitor.Tone();
+        if (!AppendPackVoiceRecipeTone(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.Spatial()));
+        auto&& row = visitor.Spatial();
+        if (!AppendPackVoiceRecipeSpatial(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.Playback()));
+        auto&& row = visitor.Playback();
+        if (!AppendPackVoiceRecipePlayback(buffer, row)) return false;
+    }
+    const std::uint64_t installsCount = static_cast<std::uint64_t>(value.installCount);
+    static_assert(noexcept(visitor.PrepareInstalls(installsCount)));
+    if (!visitor.PrepareInstalls(installsCount)) return false;
+    for (std::uint64_t i = 0; i < installsCount; ++i) {
+        static_assert(noexcept(visitor.Installs(i)));
+        auto&& row = visitor.Installs(i);
+        if (!AppendPackVoiceRecipeInstallRow(buffer, row)) return false;
+    }
+    const std::uint64_t bindingsCount = static_cast<std::uint64_t>(value.bindingCount);
+    static_assert(noexcept(visitor.PrepareBindings(bindingsCount)));
+    if (!visitor.PrepareBindings(bindingsCount)) return false;
+    for (std::uint64_t i = 0; i < bindingsCount; ++i) {
+        static_assert(noexcept(visitor.Bindings(i)));
+        auto&& row = visitor.Bindings(i);
+        if (!AppendPackVoiceRecipeBinding(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackVoiceRecipePayload(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackVoiceRecipeEntryHeader>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackVoiceRecipeHeader(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.Tone()));
+        auto&& row = visitor.Tone();
+        if (!ReadPackVoiceRecipeTone(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.Spatial()));
+        auto&& row = visitor.Spatial();
+        if (!ReadPackVoiceRecipeSpatial(buffer, row)) return false;
+    }
+    {
+        static_assert(noexcept(visitor.Playback()));
+        auto&& row = visitor.Playback();
+        if (!ReadPackVoiceRecipePlayback(buffer, row)) return false;
+    }
+    const std::uint64_t installsCount = static_cast<std::uint64_t>(value.installCount);
+    static_assert(noexcept(visitor.PrepareInstalls(installsCount)));
+    if (!visitor.PrepareInstalls(installsCount)) return false;
+    for (std::uint64_t i = 0; i < installsCount; ++i) {
+        static_assert(noexcept(visitor.Installs(i)));
+        auto&& row = visitor.Installs(i);
+        if (!ReadPackVoiceRecipeInstallRow(buffer, row)) return false;
+    }
+    const std::uint64_t bindingsCount = static_cast<std::uint64_t>(value.bindingCount);
+    static_assert(noexcept(visitor.PrepareBindings(bindingsCount)));
+    if (!visitor.PrepareBindings(bindingsCount)) return false;
+    for (std::uint64_t i = 0; i < bindingsCount; ++i) {
+        static_assert(noexcept(visitor.Bindings(i)));
+        auto&& row = visitor.Bindings(i);
+        if (!ReadPackVoiceRecipeBinding(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackVoiceRecipePayload(Visitor& visitor, std::uint64_t& size) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackVoiceRecipeEntryHeader>);
+    if (size > UINT64_MAX - 24ULL) return false;
+    size += 24ULL;
+    if (size > UINT64_MAX - 48ULL) return false;
+    size += 48ULL;
+    if (size > UINT64_MAX - 24ULL) return false;
+    size += 24ULL;
+    if (size > UINT64_MAX - 8ULL) return false;
+    size += 8ULL;
+    const std::uint64_t installsCount = static_cast<std::uint64_t>(value.installCount);
+    if (installsCount > (UINT64_MAX - size) / 304ULL) return false;
+    size += installsCount * 304ULL;
+    const std::uint64_t bindingsCount = static_cast<std::uint64_t>(value.bindingCount);
+    if (bindingsCount > (UINT64_MAX - size) / 16ULL) return false;
+    size += bindingsCount * 16ULL;
+    return true;
+}
 
 }

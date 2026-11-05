@@ -469,7 +469,7 @@ struct PendingStartRecord {
     std::array<PinnedBinding, kMaxVoiceBindingInstanceSlots> pinnedBindings{};
     std::uint32_t pinnedBindingCount = 0;
     std::vector<ParamSystem::PreparedBindingToken> preparedBindings;
-    std::array<VnBindingId, kPackV2VoiceRecipeMaxBindings>
+    std::array<VnBindingId, kPackVoiceRecipeMaxBindings>
         recipeBindingIds{};
     std::uint32_t recipeBindingCount = 0;
     // Worst-case publication demand reserved at acceptance for the pinned
@@ -512,7 +512,7 @@ struct VoicePlayFacts {
     std::uint32_t priority = 128;       // steal priority, for return-time steal
     bool hasTonePreset = false;
     VoiceTonePreset tonePreset{};
-    std::array<VnBindingId, kPackV2VoiceRecipeMaxBindings>
+    std::array<VnBindingId, kPackVoiceRecipeMaxBindings>
         recipeBindingIds{};
     std::uint32_t recipeBindingCount = 0;
 };
@@ -650,7 +650,7 @@ struct ParkRecord {
     std::uint32_t returnEffectCount = 0;
     VnVoiceHandle returnPreparedRenderHandle = 0;
     bool returnEffectsPrepared = false;
-    std::array<VnBindingId, kPackV2VoiceRecipeMaxBindings>
+    std::array<VnBindingId, kPackVoiceRecipeMaxBindings>
         recipeBindingIds{};
     std::uint32_t recipeBindingCount = 0;
     // The render handle the voice held at park. Effect-parameter binding apply-
