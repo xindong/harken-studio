@@ -597,7 +597,9 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
     const QString indicatorColor = indicator.isValid() ? indicator.name(QColor::HexArgb) : accent();
 
     const QString titleColor = colors().textTitle.name(QColor::HexArgb);
-    QString bg, border, font, hoverBg, pad;
+    const QString font = QStringLiteral("font-size: %1pt; font-weight: 600; letter-spacing: 0;")
+        .arg(snapshot_->ui.typography.body.pointSize);
+    QString bg, border, hoverBg, pad;
     int minH;
     if (level <= 0)
     {
@@ -606,7 +608,6 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
                           : QString("border: none; border-bottom: 1px solid %1;").arg(borderPrimary());
         if (topSeparator)
             border += QStringLiteral(" border-top: 1px solid %1;").arg(borderPrimary());
-        font     = "font-size: 11px; font-weight: 700; letter-spacing: 0.5px;";
         hoverBg  = bgTertiary();
         pad      = "padding: 3px 6px 3px 4px;";
         minH     = 22;
@@ -616,7 +617,6 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
         bg       = custom ? rgba(indicator, 20) : QStringLiteral("transparent");
         border   = custom ? QString("border: none; border-left: 3px solid %1; border-bottom: 1px solid %2;").arg(indicatorColor, borderPrimary())
                           : QString("border: none; border-bottom: 1px solid %1;").arg(borderPrimary());
-        font     = "font-size: 11px; font-weight: 600; letter-spacing: 0.3px;";
         hoverBg  = bgTertiary();
         pad      = "padding: 2px 8px 2px 6px;";
         minH     = 20;
@@ -626,7 +626,6 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
         bg       = custom ? rgba(indicator, 16) : QStringLiteral("transparent");
         border   = custom ? QString("border: none; border-left: 2px solid %1;").arg(indicatorColor)
                           : QStringLiteral("border: none;");
-        font     = "font-size: 11px; font-weight: 600;";
         hoverBg  = QStringLiteral("transparent");
         pad      = "padding: 1px 8px 1px 6px;";
         minH     = 18;

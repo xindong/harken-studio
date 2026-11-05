@@ -31,7 +31,7 @@ protected:
 QFont captionFont(ThemeManager* themeManager)
 {
     auto font = FontManager::instance().getFont(themeManager->snapshot(), FontRole::Body);
-    font.setBold(true);
+    font.setWeight(QFont::DemiBold);
     return font;
 }
 

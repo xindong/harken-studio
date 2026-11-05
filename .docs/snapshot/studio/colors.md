@@ -30,6 +30,8 @@
 
 字段名统一声明 `textRole=formLabel`，使用首要文字。普通文本标签可声明 `textRole=primary/secondary/title`；节点内容保留 `nodeContentRole=label/value`，两个绘制位置均绑定首要文字，节点辅助副标题使用次要文字。`roValue` 静态展示值使用首要文字；继承等运行时只读状态下，列表标签与数值随编辑状态禁用。公共禁用文字规则覆盖普通 QLabel、表格序号与列头、单位及上述文字角色，原生 palette 同步设置 Disabled WindowText。仍需支持查看导航的文字可通过 `dimmed=true` 使用同一禁用色；FX Custom 名称采用此方式，保留双击打开 Effect Editor 的能力。
 
+Sources 语言分组、Inspector 各级 section 与 Explorer 的 Assets / Sources 标题统一使用主题 Body 字号（默认 10 pt）、600 字重、无额外字距。字号统一以 pt 表达，Inspector 标题不再单独使用 11 px 或按嵌套层级改变字重和字距。
+
 常态操作图标使用首要色，包括树节点、折叠分节、表格分组、下拉框和排序的 chevron，binding / attenuation 入口、添加与缩放、重置、新建会话和表格拖拽手柄。分节自定义指示色继续控制装饰边线，chevron 本身使用首要色。禁用图标保持禁用色，已有激活、选中和强调背景状态保留对应职责。普通 SVG 图标默认从应用级 `ButtonText` 获取首要色，局部文字的次要色不改变其图标归属。
 
 AI 空状态的气泡图标与提示文字使用首要色，输入占位提示和步骤状态保持次要色。Orphaned 媒体状态的图标与文字经用户确认继续使用次要色；默认过渡规则的只读标记仍保留次要色。Orphaned 在 Explorer 的 Assets 树中对 Sound 图标与名称共同着色，Blueprint 对应路径只改变标题文字，不是独立状态图标。
