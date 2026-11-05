@@ -95076,59 +95076,18 @@ bool PrepareScheduleChildAttempt(ContainerPreparationContext& parentContext,
         (context.endFrame == UINT64_MAX || BindNaturalClipDeadline(engine, *entry, owner.occurrence, context.endFrame));
 }
 
-template<class World>
-bool PrepareTrackRepeat(ContainerPreparationContext& context, harken::EngineActionPlayScratch& scratch,
-    const World& world) noexcept {
+bool PrepareTrackRepeat(harken::EngineActionPlayScratch& scratch) noexcept {
     auto& aggregate = *scratch.storage.scheduleAggregatePlan;
     if (aggregate.trackRepeat == nullptr) return true;
     auto& repeat = *aggregate.trackRepeat;
-    if (repeat.sourceOffsetFrames == 0) {
-        repeat.finalPassMaterialized = repeat.playCount == 1 || (aggregate.children.empty() &&
-            (!aggregate.hasZeroWorkCompletion || aggregate.zeroWorkCompletionOffsetFrames == 0));
-        repeat.finalEndOffsetFrames = aggregate.hasZeroWorkCompletion ? aggregate.zeroWorkCompletionOffsetFrames : 0;
-        return true;
-    }
-    // This measurement locates only the skipped historical prefix. Future
-    // rounds advance from actual NaturalCompletion, including mutable pitch.
-    auto& engine = *context.engine;
-    const bool pack = scratch.packLeaseOwned || scratch.packLeaseBorrowed;
-    auto period = aggregate.hasZeroWorkCompletion ? aggregate.zeroWorkCompletionOffsetFrames : 0u;
-    for (const auto& child : aggregate.children) {
-        if (child.content.kind != harken::PlayableKindV1::Sound) return false;
-        const auto& path = child.properties;
-        if (engine.playablePropertyCutScratch.Resolve(world, path.propertyRoot, path.ordinals.data(),
-                static_cast<std::uint32_t>(path.ordinals.size()), path.trackIds.data()) !=
-                harken::ResolvedPlayablePropertyCutStatusV1::Ok) return false;
-        harken::CapturedTimelineVoiceInstall captured;
-        if (CaptureTimelineVoiceInstallFromCut(engine, engine.playablePropertyCutScratch.View(),
-                pack ? &scratch.packLease : nullptr, false, {}, &captured) != harken::PlayableStartStatus::Accepted)
-            return false;
-        const auto facts = CompletionFactsForVoice(engine, captured.Input(),
-            pack ? harken::PCMView{} : engine.registry.Lookup(captured.Facts().soundId));
-        std::uint64_t duration = UINT64_MAX;
-        if (!facts.pitchFixed || (facts.loopCount != 0 && harken::ResolveFixedSourceDuration(facts, &duration) !=
-                harken::CompletionPredictability::KnownFinite)) return false;
-        if (duration != UINT64_MAX)
-            duration = duration > child.sourceOffsetFrames ? duration - child.sourceOffsetFrames : 0;
-        duration = std::min(duration, child.endOffsetFrames - child.startOffsetFrames);
-        if (duration == UINT64_MAX) period = UINT64_MAX;
-        else {
-            if (duration > UINT64_MAX - child.startOffsetFrames) return false;
-            period = std::max(period, child.startOffsetFrames + duration);
-        }
-    }
-    // Empty finite rounds retain zero-work completion without unbounded expansion.
-    if (period == 0) {
-        repeat.finalPassMaterialized = true;
-        repeat.finalEndOffsetFrames = 0;
-        aggregate.hasZeroWorkCompletion = true;
-        aggregate.zeroWorkCompletionOffsetFrames = 0;
-        return true;
-    }
-    if (repeat.sourceOffsetFrames >= period) return false;
+    repeat.finalPassMaterialized = repeat.playCount == 1 || (aggregate.children.empty() &&
+        (!aggregate.hasZeroWorkCompletion || aggregate.zeroWorkCompletionOffsetFrames == 0));
+    repeat.finalEndOffsetFrames = aggregate.hasZeroWorkCompletion ? aggregate.zeroWorkCompletionOffsetFrames : 0;
+    if (repeat.sourceOffsetFrames == 0 || repeat.finalPassMaterialized) return true;
+    // Delegate the actual crop to the existing child preparation. Before
+    // publication, that prepared forest must prove this is still its first round.
     const auto crop = repeat.sourceOffsetFrames;
     repeat.nextIteration = 1;
-    repeat.finalPassMaterialized = repeat.playCount == 1 || period == UINT64_MAX;
     std::erase_if(aggregate.children, [&](const auto& child) noexcept {
         return child.endOffsetFrames <= crop;
     });
@@ -95180,8 +95139,7 @@ bool PrepareMixedScheduleExecution(ContainerPreparationContext& context,
         context.result = status == ScheduleMaterializeStatus::Capacity ? VN_BACKPRESSURE : VN_CAPABILITY_UNAVAILABLE;
         return false;
     }
-    if (!(pack ? PrepareTrackRepeat(context, scratch, scratch.packPlaybackView)
-               : PrepareTrackRepeat(context, scratch, context.world))) {
+    if (!PrepareTrackRepeat(scratch)) {
         context.result = VN_CAPABILITY_UNAVAILABLE;
         return false;
     }
@@ -95343,6 +95301,31 @@ bool PrepareMixedScheduleExecution(ContainerPreparationContext& context,
         row->hasZeroWorkCompletion = true;
         row->zeroWorkCompletionFrame = std::min(context.endFrame,
             context.startFrame + aggregate.zeroWorkCompletionOffsetFrames);
+    }
+    if (aggregate.trackRepeat != nullptr && aggregate.trackRepeat->sourceOffsetFrames != 0 &&
+        !aggregate.trackRepeat->finalPassMaterialized && context.endFrame > context.startFrame) {
+        bool firstRoundStillActive = false;
+        if (!VisitInitialScheduleAttempts(engine, scratch, [&](const auto& child) noexcept {
+                if (!child.prepared || child.row == nullptr) return false;
+                firstRoundStillActive |= child.voiceStartCount != 0 ||
+                    (child.row->hasZeroWorkCompletion && child.row->zeroWorkCompletionFrame > context.startFrame);
+                if (child.row->scheduleAggregate != nullptr) {
+                    // Deferred descendants retain their real authored onset even
+                    // before their own selection and voice preparation are due.
+                    child.row->scheduleAggregate->VisitChildren([&](const auto& entry) noexcept {
+                        firstRoundStillActive |= child.row->startFrame > context.startFrame ||
+                            entry.startOffsetFrames > context.startFrame - child.row->startFrame;
+                        return true;
+                    });
+                }
+                return true;
+            })) return false;
+        if (!firstRoundStillActive) {
+            // An empty first-round crop cannot identify a later natural round.
+            // The original private forest owns rollback of all prepared children.
+            context.result = VN_CAPABILITY_UNAVAILABLE;
+            return false;
+        }
     }
     return true;
 }
