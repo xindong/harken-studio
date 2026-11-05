@@ -17,6 +17,7 @@
 #include "Core/ProjectLanguageSemantics.h"
 #include "Core/ProjectManager.h"
 #include "Core/ProjectTypes.h"
+#include "Core/QtControlSkin.h"
 #include "Core/SoundSourceSemantics.h"
 #include "Core/ThemeManager.h"
 #include "Widgets/Common/CollapsibleSection.h"
@@ -92,6 +93,10 @@ public:
         v->addWidget(box_);
         buildHeader();
         rows_ = box_->rowsWidget();
+        groupDropIndicator_ = new QFrame(rows_);
+        groupDropIndicator_->setObjectName(QStringLiteral("sourceLanguageDropIndicator"));
+        groupDropIndicator_->setAttribute(Qt::WA_TransparentForMouseEvents);
+        groupDropIndicator_->hide();
         footer_ = box_->footer();
         configureFooter(footer_, {});
         auto* message = box_->bodyMessage();
@@ -191,34 +196,20 @@ public:
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override
     {
-        if (!canAppendSources(importLanguage()) || !AudioImportGate::mimeHasAudio(event->mimeData())) {
+        if (!handleAudioDrop(event))
             event->ignore();
-            return;
-        }
-        event->setDropAction(Qt::CopyAction);
-        event->accept();
     }
 
     void dragMoveEvent(QDragMoveEvent* event) override
     {
-        if (!canAppendSources(importLanguage()) || !AudioImportGate::mimeHasAudio(event->mimeData())) {
+        if (!handleAudioDrop(event))
             event->ignore();
-            return;
-        }
-        event->setDropAction(Qt::CopyAction);
-        event->accept();
     }
 
     void dropEvent(QDropEvent* event) override
     {
-        const QStringList paths = AudioImportGate::extractAudioFiles(event->mimeData());
-        if (!canAppendSources(importLanguage()) || paths.isEmpty()) {
+        if (!handleAudioDrop(event))
             event->ignore();
-            return;
-        }
-        event->setDropAction(Qt::CopyAction);
-        event->accept();
-        importExternalPaths(paths, importLanguage());
     }
 
     bool event(QEvent* event) override
@@ -241,26 +232,16 @@ protected:
         auto* w = static_cast<QWidget*>(watched);
         if (w == this || isAncestorOf(w)) {
             const QEvent::Type type = event->type();
-            QWidget* row = w;
-            while (row && row->parentWidget() != rows_)
-                row = row->parentWidget();
-            const QUuid targetEntry = row ? QUuid(row->property("entryId").toString()) : QUuid();
-            if (type == QEvent::DragEnter || type == QEvent::DragMove) {
-                auto* drag = static_cast<QDropEvent*>(event);
-                if (canAppendSources(importLanguage()) && AudioImportGate::mimeHasAudio(drag->mimeData())) {
-                    drag->setDropAction(Qt::CopyAction);
-                    drag->accept();
-                    return true;
-                }
-            } else if (type == QEvent::Drop) {
-                auto* drop = static_cast<QDropEvent*>(event);
-                const QStringList paths = AudioImportGate::extractAudioFiles(drop->mimeData());
-                if (canAppendSources(importLanguage()) && !paths.isEmpty()) {
-                    drop->setDropAction(Qt::CopyAction);
-                    drop->accept();
-                    importExternalPaths(paths, importLanguage(), targetEntry);
-                    return true;
-                }
+            if (type == QEvent::DragLeave) {
+                setDropFeedback(false);
+            } else if (type == QEvent::EnabledChange && !w->isEnabled()) {
+                setDropFeedback(false);
+            } else if (w == rows_ && (type == QEvent::Resize || type == QEvent::LayoutRequest)
+                       && !groupDropIndicator_->isHidden()) {
+                QMetaObject::invokeMethod(this, [this] {
+                    if (!groupDropIndicator_->isHidden())
+                        setDropFeedback(true, groupDropIndicator_->property("groupLanguage").toString());
+                }, Qt::QueuedConnection);
             }
         }
         if (event->type() == QEvent::MouseButtonPress) {
@@ -280,6 +261,63 @@ protected:
     }
 
 private:
+    void setDropFeedback(bool active, const QString& language = {})
+    {
+        QtControlSkin::setSemanticProperty(box_, "dropActive", active && !distinguishLanguage());
+        if (!active || !distinguishLanguage()) {
+            groupDropIndicator_->hide();
+            return;
+        }
+        QRect bounds;
+        for (int i = 0; i < rows_->layout()->count(); ++i) {
+            const QWidget* widget = rows_->layout()->itemAt(i)->widget();
+            if (widget && !widget->isHidden() && widget->property("groupLanguage").toString() == language)
+                bounds = bounds.united(widget->geometry());
+        }
+        groupDropIndicator_->setProperty("groupLanguage", language);
+        groupDropIndicator_->setGeometry(bounds);
+        groupDropIndicator_->setVisible(!bounds.isEmpty());
+        groupDropIndicator_->raise();
+    }
+
+    bool handleAudioDrop(QDropEvent* event)
+    {
+        QWidget* target = childAt(event->position().toPoint());
+        while (target && target->parentWidget() != rows_) {
+            if (qobject_cast<ObjectRefWidget*>(target)) {
+                setDropFeedback(false);
+                event->ignore();
+                return true;
+            }
+            target = target->parentWidget();
+        }
+        if (!AudioImportGate::mimeHasAudio(event->mimeData())) {
+            setDropFeedback(false);
+            return false;
+        }
+        const QString language = target && target->property("groupLanguage").isValid()
+            ? target->property("groupLanguage").toString() : importLanguage();
+        const bool accepted = isEnabled() && (event->possibleActions() & Qt::CopyAction)
+            && canAppendSources(language);
+        setDropFeedback(accepted && event->type() != QEvent::Drop, language);
+        if (!accepted) {
+            event->ignore();
+            return true;
+        }
+        if (event->type() == QEvent::Drop) {
+            const QStringList paths = AudioImportGate::extractAudioFiles(event->mimeData());
+            if (paths.isEmpty()) {
+                event->ignore();
+                return true;
+            }
+            const QUuid entry = target ? QUuid(target->property("entryId").toString()) : QUuid();
+            importExternalPaths(paths, language, entry);
+        }
+        event->setDropAction(Qt::CopyAction);
+        event->accept();
+        return true;
+    }
+
     QWidget* buildHeader()
     {
         box_->setColumns(QStringLiteral("Sources"), {
@@ -310,8 +348,7 @@ private:
 
     void selectRow(int index)
     {
-        if (index >= 0 && (index >= static_cast<int>(sources_.size())
-                          || sources_[index].language != importLanguage()))
+        if (index >= static_cast<int>(sources_.size()))
             index = -1;
         if (selected_ == index)
             return;
@@ -806,8 +843,7 @@ private:
         }
         selected_ = -1;
         for (int index = 0; index < static_cast<int>(sources_.size()); ++index) {
-            if (sources_[index].entry.entryId == selectedEntry
-                && sources_[index].language == importLanguage()) {
+            if (sources_[index].entry.entryId == selectedEntry) {
                 selected_ = index;
                 break;
             }
@@ -820,7 +856,7 @@ private:
         rebuildRows();
     }
 
-    QWidget* buildRow(int index)
+    QWidget* buildRow(int index, int displayNumber)
     {
         const SoundSourceDef& source = sources_[index].entry;
         const QSet<QUuid> missing = missingLanguageEntries();
@@ -831,6 +867,7 @@ private:
         row->setAttribute(Qt::WA_StyledBackground, true);
         DebugTint::tint(row, DebugTint::Role::Row);
         row->setProperty("rowIndex", index);
+        row->setProperty("groupLanguage", sources_[index].language);
         row->setProperty("entryId", source.entryId.toString(QUuid::WithoutBraces));
         row->setProperty("selected", false);
         row->setProperty("lastRow", false);
@@ -898,7 +935,7 @@ private:
         h->setContentsMargins(0, 0, 0, 0);
         h->setSpacing(0);
 
-        auto* number = box_->createRowNumber(row, index, static_cast<int>(rowWidgets_.size()) + 1);
+        auto* number = box_->createRowNumber(row, index, displayNumber);
         number->setEnabled(canEdit);
         h->addWidget(number);
 
@@ -951,6 +988,7 @@ private:
 
     void rebuildRows()
     {
+        setDropFeedback(false);
         auto* rl = static_cast<QVBoxLayout*>(rows_->layout());
         while (QLayoutItem* it = rl->takeAt(0)) {
             if (QWidget* w = it->widget()) {
@@ -966,22 +1004,26 @@ private:
 
         if (!distinguishLanguage()) {
             for (int i = 0; i < static_cast<int>(sources_.size()); ++i)
-                rl->addWidget(buildRow(i));
+                rl->addWidget(buildRow(i, i + 1));
             markLastRow();
             refreshSelectionChrome();
             refreshActiveColumn();
             return;
         }
 
-        const QString language = importLanguage();
-        if (!language.isEmpty()) {
+        QStringList languages = buildLanguages();
+        const QString currentLanguage = importLanguage();
+        if (languages.removeOne(currentLanguage))
+            languages.prepend(currentLanguage);
+        for (const QString& language : languages) {
             auto* header = box_->createGroupHeader(language);
             header->setObjectName(QStringLiteral("sourceLanguageGroup"));
             header->setProperty("groupLanguage", language);
+            int displayNumber = 1;
             for (int i = 0; i < static_cast<int>(sources_.size()); ++i) {
                 if (sources_[i].language != language)
                     continue;
-                rl->addWidget(buildRow(i));
+                rl->addWidget(buildRow(i, displayNumber++));
             }
             auto* foot = box_->createGroupFooter();
             configureFooter(foot, language);
@@ -1004,6 +1046,7 @@ private:
     QCheckBox* toggle_ = nullptr;
     TableWidget* box_ = nullptr;
     QWidget* rows_ = nullptr;
+    QFrame* groupDropIndicator_ = nullptr;
     ListFooter* footer_ = nullptr;
     QMap<QString, ListFooter*> groupFooters_;
     std::vector<QWidget*> rowWidgets_;

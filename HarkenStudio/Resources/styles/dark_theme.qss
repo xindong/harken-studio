@@ -480,6 +480,7 @@ QToolButton[explorerRole="sectionToggle"] {
     margin: 0;
     padding: 0 4px;
     text-align: left;
+    font-size: @bodyPointSize@pt;
     font-weight: 600;
     letter-spacing: 0;
 }
@@ -1729,6 +1730,10 @@ QFrame#listBox {
     border: 1px solid @borderSecondary@;
 }
 QFrame#listBox[dropActive="true"] { border-color: @accent@; }
+QFrame#sourceLanguageDropIndicator {
+    background: transparent;
+    border: 1px solid @accent@;
+}
 QScrollArea[tableBody="true"] {
     background-color: @bgPrimary@;
     border: none;
