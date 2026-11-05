@@ -44,6 +44,7 @@ namespace Harken
         public VnResult RefreshAction(string name, string projectId, out ActionPreparation preparation)
         {
             preparation = null;
+            if (!active) return VnResult.VN_NOT_INITIALIZED;
             if (companionSource == null) return VnResult.VN_CAPABILITY_UNAVAILABLE;
             return PrepareCompanions(new[] { name }, projectId, true, out preparation);
         }

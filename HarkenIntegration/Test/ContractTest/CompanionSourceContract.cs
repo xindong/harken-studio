@@ -2,6 +2,8 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -33,6 +35,7 @@ namespace Harken.Test
             try
             {
                 Synchronous();
+                ShutdownReleasesSourceContent();
                 using (var context = new ControlContext()) context.Run(VersionedRefresh);
                 using (var context = new ControlContext()) context.Run(Asynchronous);
                 using (var context = new ControlContext()) context.Run(ReentrantMetadata);
@@ -41,6 +44,55 @@ namespace Harken.Test
                 return true;
             }
             catch (Exception error) { Console.WriteLine("[Companion sources] FAIL: " + error); return false; }
+        }
+
+        private sealed class RetainedReader
+        {
+            internal readonly byte[] Repository = new byte[8 * 1024 * 1024];
+            internal byte[] ReadFile(string path) => Read(path);
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static (PackBootstrapSession Session, ActionPreparation Scope,
+            WeakReference Source, WeakReference Init, int InitLength) StartRetainedSource()
+        {
+            var reader = new RetainedReader();
+            var config = Config();
+            Ok(PackBootstrap.Start(PackSource.FromReader(reader.ReadFile), ref config,
+                out PackBootstrapSession session), "retained reader start");
+            Ok(session.PrepareActions(new[] { "Play_Head" }, session.ProjectId,
+                out ActionPreparation scope), "retained scope");
+            var snapshot = (byte[])typeof(PackBootstrapSession).GetField("initBytes",
+                BindingFlags.Instance | BindingFlags.NonPublic).GetValue(session);
+            return (session, scope, new WeakReference(reader), new WeakReference(snapshot), snapshot.Length);
+        }
+
+        private static void CollectSourceContent()
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+        }
+
+        private static void ShutdownReleasesSourceContent()
+        {
+            var retained = StartRetainedSource();
+            try
+            {
+                CollectSourceContent();
+                Check(retained.Source.IsAlive && retained.Init.IsAlive, "active session owns source content");
+                Ok(retained.Session.Shutdown(), "retained session shutdown");
+                CollectSourceContent();
+                Check(!retained.Source.IsAlive && !retained.Init.IsAlive, "closed session releases source content");
+                Check(retained.Session.RefreshAction("Play_Head", retained.Session.ProjectId, out _) ==
+                    VnResult.VN_NOT_INITIALIZED, "closed refresh preserves result");
+                Check(retained.Scope.Prepare() == VnResult.VN_NOT_INITIALIZED, "closed scope cannot reacquire");
+                Ok(retained.Scope.Release(), "closed scope release");
+                Console.WriteLine($"[Companion retention] Released source payload={8 * 1024 * 1024} Init={retained.InitLength} bytes with old session/scope alive.");
+                GC.KeepAlive(retained.Session);
+                GC.KeepAlive(retained.Scope);
+            }
+            finally { retained.Session.Dispose(); }
         }
 
         private static void Synchronous()
