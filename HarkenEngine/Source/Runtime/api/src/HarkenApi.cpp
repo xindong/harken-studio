@@ -24705,19 +24705,16 @@ struct ScheduleContainerInitialContext {
     std::uint8_t* preparedRootOwnedFlag = nullptr;
 };
 
+template <typename World>
+bool ContainsCompositeSelection(const harken::Engine&, const harken::PlayableExecutionAuthority&, const World&,
+    const harken::ContainerProgramViewV3&, std::uint32_t depth = 0) noexcept;
+
 template <typename WorldView>
 bool VariableControlHasDynamicScheduleChildren(harken::Engine& engine,
     const WorldView& world, const harken::ContainerProgramViewV3& program) noexcept {
-    for (std::uint32_t index = 0; index < program.childCount; ++index) {
-        const auto& child = program.children[index];
-        if (child.playable.kind != harken::PlayableKindV1::Track &&
-            child.playable.kind != harken::PlayableKindV1::Segment) continue;
-        MaterializedScheduleSet schedule{};
-        const auto status = MaterializeVariableControlDiscreteSchedule(world, program,
-            child.stableChildOrdinal, engine.config.mixRate.SampleRate(), &schedule);
-        if (status == ScheduleMaterializeStatus::Dynamic) return true;
-    }
-    return false;
+    if constexpr (std::is_same_v<WorldView, harken::PackPlaybackView>)
+        return ContainsCompositeSelection(engine, harken::PlayableExecutionAuthority::Pack(world), world, program);
+    else return ContainsCompositeSelection(engine, harken::PlayableExecutionAuthority::Current(world), world, program);
 }
 
 template <typename WorldView>
@@ -24940,8 +24937,15 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
             result.status = harken::PlayableStartStatus::CapabilityUnavailable;
             return result;
         }
-        const bool nativeContainer = nestedContainer && schedule != nullptr && schedulePreparation != nullptr &&
-            !pendingImmediateLane && nativeContainerSupported(selected->playable);
+        const auto hasComposite = [&]() noexcept {
+            const auto* nested = nestedContainer ? FindVariableControlNestedContainer(world, selected->playable) : nullptr;
+            if (nested == nullptr) return false;
+            if constexpr (std::is_same_v<WorldView, harken::PackPlaybackView>)
+                return ContainsCompositeSelection(engine, harken::PlayableExecutionAuthority::Pack(world), world, *nested);
+            else return ContainsCompositeSelection(engine, harken::PlayableExecutionAuthority::Current(world), world, *nested);
+        };
+        const bool nativeContainer = nestedContainer && schedulePreparation != nullptr &&
+            (schedule != nullptr || hasComposite()) && !pendingImmediateLane && nativeContainerSupported(selected->playable);
         const bool preparedNested = nestedContainer && !croppedNativeChildren && !nativeContainer &&
             PrepareVariableControlFrontierSelection(
                 engine, world, request, program, discrete->childStableOrdinal,
@@ -38400,6 +38404,22 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
         if (desired == nullptr) return VariableRetargetPrepareStatus::Retry;
         nativeTargets = desired->playable.kind == harken::PlayableKindV1::Track ||
             desired->playable.kind == harken::PlayableKindV1::Segment;
+        if (desired->playable.kind == harken::PlayableKindV1::Container) {
+            const auto needsNative = [&](const auto& world, const auto& authority) noexcept {
+                const harken::ContainerProgramViewV3* wrapper = nullptr;
+                return ResolveSharedContainerProgram(authority, world, desired->playable, &wrapper) && wrapper != nullptr &&
+                    (wrapper->mode == harken::ContainerModeV1::Random || wrapper->mode == harken::ContainerModeV1::Sequence) &&
+                    ReadPlayableLoopCount(world, desired->playable.stableId) == 1 &&
+                    ContainsCompositeSelection(engine, authority, world, *wrapper);
+            };
+            const bool pack = !row.variableControlWorldUsesCurrentAuthority && row.Invocation().packLease.leaseToken != 0;
+            const auto world = row.variableControlWorldUsesCurrentAuthority
+                ? engine.variables.CurrentPlayableWorld() : row.VariableControlWorld();
+            nativeTargets = pack
+                ? needsNative(row.Invocation().packPlaybackView, harken::PlayableExecutionAuthority::Pack(row.Invocation().packPlaybackView))
+                : needsNative(world, row.variableControlWorldUsesCurrentAuthority
+                    ? harken::PlayableExecutionAuthority::Current(world) : harken::PlayableExecutionAuthority::Frozen(world));
+        }
         if (nativeTargets) {
             native.engine = &engine;
             native.transition = &transition;
@@ -38469,6 +38489,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
     // The selected native owner, not the first pass's leaf snapshot, owns
     // music completion. Resolve its exact service generation and parent link.
     harken::EnginePlayableServiceRow* musicSource = nullptr;
+    harken::EnginePlayableServiceRow* musicSourceRoot = nullptr;
     std::unique_ptr<harken::EngineSourceExit> musicSourceFade;
     const bool musicEarlyStop = transitionRule != nullptr &&
         transitionRule->sourceExit > harken::TransitionSourceExitV1::NaturalEnd;
@@ -38485,8 +38506,54 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
             if (!actual.live || actual.scheduleEpoch != source->ownerEpoch || actual.parent != row.ownerInstance ||
                 source->invocation != row.invocation || source->invocationGeneration != row.invocationGeneration)
                 return VariableRetargetPrepareStatus::Retry;
-            if (source->scheduleAggregate != nullptr && source->scheduleAggregate->committed &&
-                source->scheduleAggregate->music != nullptr) musicSource = source;
+            musicSourceRoot = source;
+            // Follow the selected occurrence through transparent wrappers. A
+            // wrapper with simultaneous or future siblings is not a music clock.
+            for (std::size_t depth = 0; source != nullptr && depth < engine.playableServices.size(); ++depth) {
+                if (source->scheduleAggregate != nullptr && source->scheduleAggregate->committed &&
+                    source->scheduleAggregate->music != nullptr) { musicSource = source; break; }
+                harken::EngineScheduleAggregateChild* only = nullptr;
+                const auto accept = [&](auto& edge) {
+                    if (only != nullptr) return false;
+                    only = &edge;
+                    return true;
+                };
+                if (source->scheduleAggregate != nullptr) {
+                    if (!source->scheduleAggregate->committed || source->scheduleAggregate->cancellationRequested ||
+                        source->scheduleAggregate->failureReason != harken::PlayableControlReason::None ||
+                        !source->scheduleAggregate->VisitChildren(accept)) break;
+                }
+                if (source->scheduleTerminalChild != nullptr && !accept(*source->scheduleTerminalChild)) break;
+                if (source->scheduleVariableChildren != nullptr || only == nullptr || only->pendingEntry ||
+                    !only->lifecycleOwned || only->logicalComplete || only->resourcesReleased) break;
+                if (source->scheduleAggregate != nullptr && source->scheduleAggregate->ordinary != nullptr) {
+                    const auto& ordinary = *source->scheduleAggregate->ordinary;
+                    if (ordinary.unpublished != nullptr || (!ordinary.exhausted &&
+                        (ordinary.loopLimit != 1 || ordinary.plannedSelections != 1 || ordinary.tail != only))) break;
+                } else if (source->root.kind == harken::PlayableKindV1::Container) {
+                    harken::ContainerPlaybackRow playback{};
+                    if (!engine.containerPlayback.Capture(source->ownerInstance, &playback) ||
+                        playback.expectedScheduleEpoch != source->ownerEpoch || playback.loopLimit != 1 ||
+                        (playback.mode != static_cast<std::uint8_t>(harken::ContainerModeV1::Random) &&
+                         playback.mode != static_cast<std::uint8_t>(harken::ContainerModeV1::Sequence))) break;
+                }
+                auto* nested = engine.ResolvePlayableService(only->service);
+                if (nested == nullptr || !harken::Engine::SameSelectionServiceReference(
+                        nested->parentService, PlayableServiceReference(*source)) ||
+                    nested->invocation != row.invocation || nested->invocationGeneration != row.invocationGeneration)
+                    return VariableRetargetPrepareStatus::Retry;
+                const auto view = engine.playableInstances.Classify(nested->ownerInstance);
+                if (!view.live || view.scheduleEpoch != nested->ownerEpoch || view.parent != source->ownerInstance)
+                    return VariableRetargetPrepareStatus::Retry;
+                source = nested;
+            }
+        }
+    }
+    if (musicSourceRoot != nullptr && musicSource == nullptr) {
+        for (std::uint32_t cursor = 0; auto* candidate = engine.NextOccupiedPlayableService(&cursor);) {
+            if (candidate->scheduleAggregate != nullptr && candidate->scheduleAggregate->music != nullptr &&
+                IsPlayableServiceDescendant(engine, *candidate, *musicSourceRoot))
+                return VariableRetargetPrepareStatus::Retry;
         }
     }
     if (musicEarlyStop && musicSource == nullptr) return VariableRetargetPrepareStatus::Fatal;
@@ -38641,6 +38708,16 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
             if (offset > music.inheritedEndOffsetFrames) return VariableRetargetPrepareStatus::Retry;
             if (offset > UINT64_MAX - musicSource->startFrame) return VariableRetargetPrepareStatus::Fatal;
             sourceStopFrame = musicSource->startFrame + offset;
+            for (auto* wrapper = musicSource; wrapper != musicSourceRoot;) {
+                auto* parent = engine.ResolvePlayableService(wrapper->parentService);
+                if (parent == nullptr) return VariableRetargetPrepareStatus::Retry;
+                const auto* edge = FindDirectScheduleAggregateChild(*parent, wrapper->ownerInstance, wrapper->ownerEpoch);
+                if (edge == nullptr || (!edge->naturalClipDeadline.Empty() &&
+                        edge->naturalClipDeadline.frame < sourceStopFrame) ||
+                    (parent->hasZeroWorkCompletion && parent->zeroWorkCompletionFrame > sourceStopFrame))
+                    return VariableRetargetPrepareStatus::Retry;
+                wrapper = parent;
+            }
         }
         targetStartFrame = sourceStopFrame;
         if (sourceFadeActive) {
@@ -39447,8 +39524,8 @@ engine.runtimeRecreateRequired = true;
         return VariableRetargetPrepareStatus::Retry;
     }
     if (musicSourceExitRequired) {
-        auto* child = FindDirectScheduleAggregateChild(row, musicSource->ownerInstance, musicSource->ownerEpoch);
-        if (child == nullptr || !PrepareMusicSourceFade(engine, *musicSource, row, audibleFrame, sourceStopFrame,
+        auto* child = FindDirectScheduleAggregateChild(row, musicSourceRoot->ownerInstance, musicSourceRoot->ownerEpoch);
+        if (child == nullptr || !PrepareMusicSourceFade(engine, *musicSourceRoot, row, audibleFrame, sourceStopFrame,
                 row.TransitionSourceFadeCurve(), sourceFadeActive, musicEarlyStop || musicImmediateStop, musicSourceFade)) {
             rollbackBeforeInstall();
             return VariableRetargetPrepareStatus::Retry;
@@ -39499,7 +39576,7 @@ engine.runtimeRecreateRequired = true;
     // Retain the descriptor before Commit can publish any consumer pointer.
     // A fatal publication failure must not destroy borrowed audio state.
     if (musicSourceFade != nullptr) {
-        auto* child = FindDirectScheduleAggregateChild(row, musicSource->ownerInstance, musicSource->ownerEpoch);
+        auto* child = FindDirectScheduleAggregateChild(row, musicSourceRoot->ownerInstance, musicSourceRoot->ownerEpoch);
         assert(child != nullptr && child->sourceExits.capacity() > child->sourceExits.size());
         child->sourceExits.push_back(std::move(musicSourceFade));
     }
@@ -93297,7 +93374,7 @@ bool RequiresDynamicCompositeSelection(const harken::Engine& engine, const World
 
 template <typename World>
 bool ContainsCompositeSelection(const harken::Engine& engine, const harken::PlayableExecutionAuthority& authority, const World& world,
-    const harken::ContainerProgramViewV3& program, std::uint32_t depth = 0) noexcept {
+    const harken::ContainerProgramViewV3& program, std::uint32_t depth) noexcept {
     if (depth >= harken::kSelectionPathNodeCapacity) return false;
     for (std::uint32_t index = 0; index < program.childCount; ++index) {
         const auto& child = program.children[index].playable;
@@ -94459,6 +94536,7 @@ bool PrepareNativeVariableScheduleRetarget(harken::Engine& engine,
         scratch.packPlaybackView = parent.Invocation().packPlaybackView;
     } else if (!engine.RecordOriginalWorldNoPackPreparation(scratch,
         {desired.playable.kind == harken::PlayableKindV1::Track ? harken::ActionTargetKindV1::Track
+            : desired.playable.kind == harken::PlayableKindV1::Container ? harken::ActionTargetKindV1::Container
             : harken::ActionTargetKindV1::Segment, 0, desired.playable.stableId,
             desired.playable.expectedProgramSemanticFingerprint}, world)) return false;
     try {
@@ -94468,6 +94546,7 @@ bool PrepareNativeVariableScheduleRetarget(harken::Engine& engine,
         scratch.continuationScheduleChild = std::make_unique<harken::EngineScheduleAggregateChild>();
         auto& record = *scratch.continuationScheduleChild;
         record.content = desired.playable;
+        record.musicFromEntry = fromEntry;
         record.variableControlSide = harken::VariableControlSide::Discrete;
         record.stableLeafOrdinal = ordinal;
         auto& prefix = record.properties;
@@ -94490,7 +94569,6 @@ bool PrepareNativeVariableScheduleRetarget(harken::Engine& engine,
     bool queueCapacity = false;
     auto context = MakeScheduleContinuationPreparationContext(
         engine, world, native.issue, noChild, failure, queueCapacity, parent, record, startFrame);
-    context.musicFromEntry = fromEntry && desired.playable.kind == harken::PlayableKindV1::Segment;
     context.privateScheduleOwner = &scratch;
     context.initialForestReadCutOwner = &scratch.storage;
     context.initialAdmissionGroup = harken::ParentAudioGroupRef{decision};
@@ -94503,7 +94581,17 @@ bool PrepareNativeVariableScheduleRetarget(harken::Engine& engine,
         if (duration > UINT64_MAX - startFrame) return false;
         context.endFrame = startFrame + duration;
     }
-    if (!PrepareMixedScheduleExecution(context, scratch) || scratch.row == nullptr) return false;
+    std::uint32_t selectionCursor = 0;
+    if (desired.playable.kind == harken::PlayableKindV1::Container) {
+        context.callerSeed = native.issue.Sequence();
+        context.selectionEventBegin = selectionCursor;
+        selectionCursor += harken::kSelectionPathNodeCapacity;
+        context.initialSelectionEventCursor = &selectionCursor;
+    }
+    const bool prepared = desired.playable.kind == harken::PlayableKindV1::Container
+        ? PrepareScheduleContainerExecution(context, scratch) && PrepareScheduleContainerQueueResources(context, scratch)
+        : PrepareMixedScheduleExecution(context, scratch);
+    if (!prepared || scratch.row == nullptr) return false;
     schedule = {};
     const bool collected = VisitInitialScheduleAttempts(engine, scratch, [&](auto& attempt) noexcept {
         if (attempt.row == nullptr || attempt.variableControl || attempt.row->queueMode ||

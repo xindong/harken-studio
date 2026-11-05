@@ -18461,9 +18461,13 @@ TEST(PlayableStart, MusicOrdinaryCropAndShortSuccessorsShareExactTimeline) {
 TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
     for (const bool pack : {false, true})
     for (const auto mode : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u, 17u, 18u, 19u, 20u, 21u, 22u, 23u, 24u, 25u, 26u, 27u, 28u, 29u, 30u})
+    for (const auto wrapperShape : {0u, 1u, 2u, 3u, 4u})
     for (const auto count : {1u, 3u, 0u})
     for (const auto workers : {0u, 2u}) {
-        if (pack && mode != 0 && mode != 1 && mode != 4 && mode != 15 && mode != 16 && mode != 18 && mode != 19 && mode != 20 && mode != 21 && mode != 23 && mode != 24 && mode < 25) continue;
+        if (wrapperShape != 0 && mode != 0 && !((mode == 1 || mode == 6 || mode == 7) && wrapperShape <= 2)) continue;
+        const bool mixedSoundTarget = wrapperShape == 3;
+        SCOPED_TRACE(wrapperShape);
+        if (pack && !(wrapperShape != 0 && (mode == 6 || mode == 7)) && mode != 0 && mode != 1 && mode != 4 && mode != 15 && mode != 16 && mode != 18 && mode != 19 && mode != 20 && mode != 21 && mode != 23 && mode != 24 && mode < 25) continue;
         SCOPED_TRACE(pack);
         if (mode < 15 && (mode == 4) != (count == 0)) continue;
         if (mode == 24 && count != 1) continue;
@@ -18522,11 +18526,55 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
         control.container.programSemanticFingerprint = control.properties[1].programSemanticFingerprint;
         control.container.discreteTiming = 1;
         control.container.evaluationPeriodFrames = 64;
+        DirectTrackWorldImage entryTrack(revision);
+        entryTrack.properties[1].stableId = harkentest::ObjectId(33001);
+        entryTrack.properties[1].authoredStableOrder = 4;
+        entryTrack.properties[1].programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(entryTrack.properties[1]);
+        entryTrack.track.rootDefinition.stableId = entryTrack.properties[1].stableId;
+        entryTrack.track.rootDefinition.expectedProgramSemanticFingerprint = entryTrack.properties[1].programSemanticFingerprint;
+        entryTrack.placement.content = target.Root();
+        entryTrack.placement.clipId = harkentest::ObjectId(33002);
+        entryTrack.placement.clipGuidLow = 33003;
+        entryTrack.occurrence.parentStableId = entryTrack.properties[1].stableId;
+        entryTrack.occurrence.parentProgramSemanticFingerprint = entryTrack.properties[1].programSemanticFingerprint;
+        entryTrack.occurrence.childPlayable = target.Root();
+        entryTrack.occurrence.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(entryTrack.occurrence);
+        entryTrack.track.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(entryTrack.track);
+        PlayableWorldImage entryContainer(revision, harken::ContainerModeV1::Sequence);
+        entryContainer.properties[1].stableId = harkentest::ObjectId(34001);
+        entryContainer.properties[1].authoredStableOrder = 4;
+        entryContainer.properties[1].programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(entryContainer.properties[1]);
+        entryContainer.container.containerStableId = entryContainer.properties[1].stableId;
+        entryContainer.container.authoredStableOrder = 1;
+        entryContainer.container.programSemanticFingerprint = entryContainer.properties[1].programSemanticFingerprint;
+        entryContainer.child.playable = target.Root();
+        entryContainer.occurrence.parentStableId = entryContainer.properties[1].stableId;
+        entryContainer.occurrence.parentProgramSemanticFingerprint = entryContainer.properties[1].programSemanticFingerprint;
+        entryContainer.occurrence.childPlayable = target.Root();
+        entryContainer.occurrence.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(entryContainer.occurrence);
+        std::array<harken::ContainerChildProgramViewV2, 2> entryChildren{entryContainer.child, entryContainer.child};
+        std::array<harken::PlayableOccurrencePropertyViewV1, 2> entryOccurrences{entryContainer.occurrence, entryContainer.occurrence};
+        if (wrapperShape >= 3) {
+            entryChildren[0].playable = control.child.playable;
+            entryChildren[1].stableChildOrdinal = 8;
+            entryChildren[1].authoredStableOrder = 1;
+            entryContainer.container.children = entryChildren.data();
+            entryContainer.container.childCount = 2;
+            entryContainer.container.initialSequenceCursor = wrapperShape == 3 ? 0 : 1;
+            for (unsigned index = 0; index < 2; ++index) {
+                entryOccurrences[index].stableOccurrenceOrdinal = entryChildren[index].stableChildOrdinal;
+                entryOccurrences[index].childPlayable = entryChildren[index].playable;
+                entryOccurrences[index].occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(entryOccurrences[index]);
+            }
+        }
+        auto entryRoot = wrapperShape == 1 ? entryTrack.Root() : wrapperShape >= 2 ? entryContainer.Root() : target.Root();
+        if (wrapperShape >= 2) entryRoot.stableId = entryContainer.properties[1].stableId;
         std::array<harken::ContainerChildProgramViewV2, 2> children{control.child, control.child};
         children[1].stableChildOrdinal = 8;
         children[1].authoredStableOrder = 1;
         children[musicSource ? 0 : 1].playable = target.Root();
         if (nativeTarget) children[1].playable = target.Root();
+        if (wrapperShape != 0) children[musicSource ? 0 : 1].playable = entryRoot;
         std::array<harken::DiscreteGridCellV1, 2> cells{control.cell, {harken::DiscreteCellKindV1::Exact, 1}};
         std::array<harken::DiscreteGridRowViewV1, 2> rows{control.row, control.row};
         rows[0].cells = &cells[0];
@@ -18581,10 +18629,12 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
             harkentest::ObjectId(41), harken::VariableKindV1::Step, 0.0f, 8.0f, 3.0f};
         std::vector<harken::PlayablePropertyProgramViewV1> properties = {
             target.properties[0], control.properties[1], target.properties[1], target.properties[2]};
+        if (wrapperShape == 1) properties.push_back(entryTrack.properties[1]);
+        if (wrapperShape >= 2) properties.push_back(entryContainer.properties[1]);
         std::sort(properties.begin(), properties.end(), [](const auto& a, const auto& b) {
             return std::pair{a.contentPropertyKind, a.stableId} < std::pair{b.contentPropertyKind, b.stableId};
         });
-        std::array<harken::PlayableOccurrencePropertyViewV1, 3> occurrences = {
+        std::vector<harken::PlayableOccurrencePropertyViewV1> occurrences = {
             control.occurrence, control.occurrence, target.occurrence};
         for (unsigned index = 0; index < 2; ++index) {
             occurrences[index].parentProgramSemanticFingerprint = control.container.programSemanticFingerprint;
@@ -18592,6 +18642,9 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
             occurrences[index].childPlayable = children[index].playable;
             occurrences[index].occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(occurrences[index]);
         }
+        if (wrapperShape == 1) occurrences.push_back(entryTrack.occurrence);
+        if (wrapperShape >= 2) occurrences.insert(occurrences.end(), entryOccurrences.begin(),
+            entryOccurrences.begin() + (wrapperShape >= 3 ? 2 : 1));
         std::sort(occurrences.begin(), occurrences.end(), [](const auto& a, const auto& b) {
             return std::tuple{a.parentKind, a.parentStableId, a.stableOccurrenceOrdinal}
                 < std::tuple{b.parentKind, b.parentStableId, b.stableOccurrenceOrdinal};
@@ -18605,8 +18658,14 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
         install.variableCount = 1;
         install.transitions = &transition;
         install.transitionCount = 1;
-        install.trackSchedules = &target.track;
-        install.trackScheduleCount = 1;
+        std::array<harken::TrackScheduleProgramViewV1, 2> tracks{target.track, entryTrack.track};
+        install.trackSchedules = tracks.data();
+        install.trackScheduleCount = wrapperShape == 1 ? 2 : 1;
+        std::array<harken::ContainerProgramViewV3, 2> containers{control.container, entryContainer.container};
+        if (wrapperShape >= 2) {
+            install.containers = containers.data();
+            install.containerCount = 2;
+        }
         install.segmentSchedules = &target.segment;
         install.segmentScheduleCount = 1;
         if (mode == 29 || mode == 30) {
@@ -18735,7 +18794,7 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
                     targetStart = controller->VariableControlDiscreteRetargetEnteringSchedule().entryAnchorFrame;
             } else {
                 for (const auto& service : engine->playableServices)
-                    if (service.root.stableId == target.Root().stableId && service.parentService.owner == started.instance)
+                    if (service.root.stableId == entryRoot.stableId && service.parentService.owner == started.instance)
                         targetStart = service.startFrame;
             }
             if (targetStart == UINT64_MAX) engine->nullBackend.Pump(1);
@@ -18755,7 +18814,7 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
         unsigned teardownBlock = UINT32_MAX;
         bool cancellationRefusalInjected = false;
         bool cancellationRefusalObserved = false;
-        for (unsigned block = 0; block < 120; ++block) {
+        for (unsigned block = 0; block < (mixedSoundTarget ? 320u : 120u); ++block) {
             if (teardown && teardownBlock == UINT32_MAX &&
                 (!afterPrelude || engine->mixer.BlocksRendered() * 64u >= targetStart - fadeFrames + 128u)) {
                 harken::DecisionCommittedSnapshot snapshot{};
@@ -18826,7 +18885,7 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
                     // The next pass must not start merely to supply a declick.
                     source *= musicFade || ((mode == 15 || mode == 23) && count != 1) || elapsed >= 240u ? 0.0f : static_cast<float>(239u - elapsed) / 240.0f;
                 }
-                const auto expected = source + (cancelled ? 0.0f : musicSource && !nativeTarget ? (age < samples.size() ? samples[age] : 0.0f)
+                const auto expected = source + (cancelled ? 0.0f : mixedSoundTarget || (musicSource && !nativeTarget) ? (age < samples.size() ? samples[age] : 0.0f)
                     : age < bodyFrames ? 0.2f : age < bodyFrames + introFrames ? 0.3f : 0.0f);
                 ASSERT_NEAR(expected, engine->nullBackend.LastBlock()[sample * 2], 0.001f)
                     << "frame=" << frame << " target=" << targetStart << OccupancyDump(*engine);

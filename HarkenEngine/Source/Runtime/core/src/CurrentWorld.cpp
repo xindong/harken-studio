@@ -1426,7 +1426,8 @@ bool VariableControlTransitionEndpointSupported(
     bool nativeSchedule = false;
     if constexpr (std::is_same_v<WorldView, ContainerWorldInstallViewV1>) {
         if (child.playable.kind == PlayableKindV1::Track ||
-            child.playable.kind == PlayableKindV1::Segment) {
+            child.playable.kind == PlayableKindV1::Segment ||
+            child.playable.kind == PlayableKindV1::Container) {
             for (std::uint32_t index = 0; index < container.discreteRowCount; ++index) {
                 nativeSchedule = nativeSchedule ||
                     container.discreteRows[index].childStableOrdinal == child.stableChildOrdinal;
