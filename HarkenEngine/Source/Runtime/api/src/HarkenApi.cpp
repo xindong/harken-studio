@@ -16379,6 +16379,62 @@ harken::EngineScheduleAggregateChild* FindDirectScheduleAggregateChild(
     return found;
 }
 
+struct OrdinarySuccessorPath {
+    harken::PlayableRefV1 root{};
+    std::array<std::uint32_t, harken::kSelectionPathNodeCapacity> ordinals{};
+    std::array<VnObjectId, harken::kSelectionPathNodeCapacity> tracks{};
+    std::array<harken::SelectionPathNodeV1, harken::kSelectionPathNodeCapacity> nodes{};
+    std::uint32_t count = 0;
+    const harken::SelectionSeedProbeCopyV1* seed = nullptr;
+};
+
+bool BuildOrdinarySuccessorPath(harken::Engine& engine,
+    const harken::EnginePlayableServiceRow& row, const std::uint32_t* ordinals,
+    const harken::SelectionPathNodeV1* nodes, std::uint32_t count,
+    OrdinarySuccessorPath& out) noexcept {
+    if (count > out.ordinals.size() || (count != 0 && (ordinals == nullptr || nodes == nullptr))) return false;
+    out = {};
+    out.root = row.root;
+    std::uint32_t begin = 0;
+    const auto* branch = &row;
+    for (std::size_t depth = 0; branch->parentService.Valid(); ++depth) {
+        if (depth >= engine.playableServices.size()) return false;
+        auto* parent = engine.ResolvePlayableService(branch->parentService);
+        if (parent == nullptr || parent->invocation != row.invocation ||
+            parent->invocationGeneration != row.invocationGeneration) return false;
+        const auto* edge = FindDirectScheduleAggregateChild(*parent, branch->ownerInstance, branch->ownerEpoch);
+        if (edge != nullptr && edge->content.kind == harken::PlayableKindV1::Container) {
+            std::uint32_t index = 0;
+            while (index < row.containerInstanceCount && row.containerInstances[index] != branch->ownerInstance) ++index;
+            if (index < row.containerInstanceCount) {
+                const auto view = engine.playableInstances.Classify(branch->ownerInstance);
+                if (index > count || index >= row.selectionCount || !view.live || view.scheduleEpoch != branch->ownerEpoch ||
+                    row.selectionPath[index].kind != harken::PlayableKindV1::Container ||
+                    row.selectionPath[index].objectId != edge->content.stableId) return false;
+                const auto& prefix = edge->properties;
+                if (prefix.ordinals.size() != prefix.trackIds.size() ||
+                    prefix.ordinals.size() != prefix.typedPrefix.size() ||
+                    prefix.ordinals.size() > out.ordinals.size() - (count - index)) return false;
+                out.root = prefix.propertyRoot;
+                out.count = static_cast<std::uint32_t>(prefix.ordinals.size());
+                std::copy(prefix.ordinals.begin(), prefix.ordinals.end(), out.ordinals.begin());
+                std::copy(prefix.trackIds.begin(), prefix.trackIds.end(), out.tracks.begin());
+                std::copy(prefix.typedPrefix.begin(), prefix.typedPrefix.end(), out.nodes.begin());
+                out.seed = branch->selectionSeedProbe.captured ? &branch->selectionSeedProbe : nullptr;
+                begin = index;
+                break;
+            }
+        }
+        branch = parent;
+    }
+    if (count != begin) {
+        std::copy_n(ordinals + begin, count - begin, out.ordinals.begin() + out.count);
+        std::copy_n(nodes + begin, count - begin, out.nodes.begin() + out.count);
+    }
+    out.count += count - begin;
+    return true;
+}
+
 bool RecordScheduleAggregateOutcome(
     harken::EngineScheduleAggregateChild& child,
     const harken::PlayableTerminalOutcome& outcome,
@@ -25802,6 +25858,8 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
     row.schedule.eventCount = 0;
     row.schedule.runtimeProgram = {};
 
+    if (schedule != nullptr && scratch->selectionPlayCount != 0 && scratch->selectionPlays[0].Valid())
+        row.selectionSeedProbe = engine.selectionMemory.PreparedPlaySeedProbe(scratch->selectionPlays[0]);
     scratch->row = &row;
     scratch->variableControl = true;
     row.containerLoopAuthorityKind = packLease != nullptr
@@ -32622,8 +32680,14 @@ bool PrepareFrontierContainerPath(
                 ? 0 : static_cast<std::uint32_t>(parentService.Invocation().invocationEmitter >> 32);
             const auto slot = scratch.selectionPlayCount;
             auto& prepared = scratch.selectionPlays[slot];
+            OrdinarySuccessorPath selectedPath;
+            if (!BuildOrdinarySuccessorPath(engine, parentService, result.ordinals.data(), result.path.data(),
+                    node.depth, selectedPath)) return false;
             if (PrepareSharedSelectionPlay(engine, key, program, worldFingerprint,
-                    parentService.root.stableId, callerSeed, ticket, node.depth, result.path.data(),
+                    selectedPath.root.stableId,
+                    selectedPath.seed == nullptr ? callerSeed : selectedPath.seed->derivedCallerSeed,
+                    selectedPath.seed == nullptr ? ticket : selectedPath.seed->acceptedPostOrdinal,
+                    selectedPath.count, selectedPath.nodes.data(),
                     node.depth == 0 ? 0 : result.ordinals[node.depth - 1u], ticket, slot,
                     startFrame, &prepared, &node.selectedOrdinal, loopIteration) !=
                     harken::SelectionMemoryStatusV1::Ok) return false;
@@ -33886,20 +33950,15 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
     selection.executeFrame = scratch.continuationOrder.executeFrame;
     selection.eventIndex =
         row.selectionDeltaCount + row.containerLoopIteration + 1u;
-    // A native schedule wrapper retains its original child record through
-    // retirement. Its external property/selection prefix also applies to
-    // subsequent direct Sources owned by this same ordinary service.
-    const auto* schedulePrefix = row.scheduleTerminalChild != nullptr && row.selectionCount == 1 &&
-        row.scheduleTerminalChild->content.kind == harken::PlayableKindV1::Sound &&
-        frame.pathPrefixCount == 0 ? &row.scheduleTerminalChild->properties : nullptr;
-    if (schedulePrefix != nullptr) {
-        if (schedulePrefix->typedPrefix.empty() || !row.selectionSeedProbe.captured)
-            return ContainerLoopSuccessorStatus::Invalidated;
-        selection.rootStableId = schedulePrefix->propertyRoot.stableId;
-        selection.callerSeed = row.selectionSeedProbe.derivedCallerSeed;
-        selection.acceptedPostOrdinal = row.selectionSeedProbe.acceptedPostOrdinal;
-        selection.pathCount = static_cast<std::uint32_t>(schedulePrefix->typedPrefix.size() - 1u);
-        selection.path = selection.pathCount == 0 ? nullptr : schedulePrefix->typedPrefix.data();
+    OrdinarySuccessorPath selectionPath;
+    if (!BuildOrdinarySuccessorPath(engine, row, nextSelectedChildOrdinals.data(), nextPath.data(),
+            frame.pathPrefixCount, selectionPath)) return ContainerLoopSuccessorStatus::Invalidated;
+    selection.rootStableId = selectionPath.root.stableId;
+    selection.pathCount = selectionPath.count;
+    selection.path = selectionPath.count == 0 ? nullptr : selectionPath.nodes.data();
+    if (selectionPath.seed != nullptr) {
+        selection.callerSeed = selectionPath.seed->derivedCallerSeed;
+        selection.acceptedPostOrdinal = selectionPath.seed->acceptedPostOrdinal;
     }
     std::uint32_t selectedChildOrdinal = 0;
     harken::SelectionDeltaRefV1 appendedSelectionDelta{};
@@ -34171,6 +34230,12 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
         rollbackCreated();
         return ContainerLoopSuccessorStatus::Invalidated;
     }
+    OrdinarySuccessorPath property;
+    if (!BuildOrdinarySuccessorPath(engine, row, nextSelectedChildOrdinals.data(), nextPath.data(),
+            nextSelectionCount, property)) {
+        rollbackCreated();
+        return ContainerLoopSuccessorStatus::Invalidated;
+    }
     const harken::PlayableKindV1 selectedKind = selectedLeaf->playable.kind;
     if (selectedKind == harken::PlayableKindV1::Sound) {
         if (!treeStep.PrepareInstance(engine.playableInstances,
@@ -34256,29 +34321,29 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
         for (std::uint32_t index = 0; index < scheduleLeafCount; ++index) {
             MaterializedScheduleLeaf& scheduleLeaf =
                 materializedSchedule.leaves[index];
-            if (nextSelectionCount + scheduleLeaf.selectionCount >
+            if (property.count + scheduleLeaf.selectionCount >
                 scheduleLeaf.selectedOrdinals.size()) {
                 rollbackCreated();
                 return ContainerLoopSuccessorStatus::Refused;
             }
             for (std::uint32_t move = scheduleLeaf.selectionCount;
                  move-- > 0;) {
-                scheduleLeaf.selectedOrdinals[nextSelectionCount + move] =
+                scheduleLeaf.selectedOrdinals[property.count + move] =
                     scheduleLeaf.selectedOrdinals[move];
-                scheduleLeaf.pathTrackIds[nextSelectionCount + move] =
+                scheduleLeaf.pathTrackIds[property.count + move] =
                     scheduleLeaf.pathTrackIds[move];
             }
-            std::copy_n(nextSelectedChildOrdinals.begin(),
-                        nextSelectionCount,
+            std::copy_n(property.ordinals.begin(),
+                        property.count,
                         scheduleLeaf.selectedOrdinals.begin());
-            std::fill_n(scheduleLeaf.pathTrackIds.begin(), nextSelectionCount, VnObjectId{});
-            scheduleLeaf.selectionCount += nextSelectionCount;
+            std::copy_n(property.tracks.begin(), property.count, scheduleLeaf.pathTrackIds.begin());
+            scheduleLeaf.selectionCount += property.count;
             const auto leafStatus = packAuthority
                 ? BuildScheduleLeafStart(
-                      engine, row.Invocation().packPlaybackView, row.root, scheduleLeaf,
+                      engine, row.Invocation().packPlaybackView, property.root, scheduleLeaf,
                       row.Invocation().packLease, &preparedScheduleLeaves[index])
                 : BuildScheduleLeafStart(
-                      engine, *world, row.root, scheduleLeaf,
+                      engine, *world, property.root, scheduleLeaf,
                       &preparedScheduleLeaves[index]);
             if (leafStatus != harken::PlayableStartStatus::Accepted ||
                 !treeStep.PrepareInstance(
@@ -34519,6 +34584,7 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
                    harken::kMaxKnownScheduleLeaves>
             knownLeaves{};
         bool installFailed = false;
+        bool allKnown = true;
         for (std::uint32_t index = 0; index < scheduleLeafCount; ++index) {
             PreparedScheduleLeafStart& source =
                 preparedScheduleLeaves[index];
@@ -34569,12 +34635,12 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
             voiceOwnerContexts[index] = {
                 &engine, &preparedVoiceStarts[index], false};
             scratch.voiceStartCount = index + 1u;
-            if (installedLeaves[index].status != VN_OK ||
-                installedLeaves[index].completionPredictability !=
-                    harken::CompletionPredictability::KnownFinite) {
+            if (installedLeaves[index].status != VN_OK) {
                 installFailed = true;
                 break;
             }
+            allKnown = allKnown && installedLeaves[index].completionPredictability ==
+                harken::CompletionPredictability::KnownFinite;
             if (!RegisterFrontierPreparedOwner(scratch,
                     &voiceOwnerContexts[index],
                     ValidatePreparedTimelineVoiceOwner,
@@ -34603,14 +34669,16 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
         std::array<harken::KnownCompletionPredicateV1,
                    harken::kMaxKnownScheduleLeaves>
             boundCompletions{};
-        if (!installFailed &&
+        // Ordinary playback consumes real Source outcomes. A fixed composite
+        // completion proof is optional, including when render workers are active.
+        if (!installFailed && allKnown &&
             engine.PrepareOriginalCompositeCompletion(
                 parentOccurrence, 1, knownLeaves.data(), scheduleLeafCount,
                 engine.timelineOccurrences, &compositeOwner, &scratch.queueCurrentOriginalComposite) !=
                 harken::CompositeCompletionAcquireStatus::Ok) {
             installFailed = true;
         }
-        if (!installFailed) {
+        if (!installFailed && allKnown) {
             compositeOwnerPrepared = true;
             compositeOwnerContext = {
                 &engine.compositeCompletionOwners, &compositeOwner,
@@ -34623,7 +34691,7 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
             }
         }
         for (std::uint32_t index = 0;
-             !installFailed && index < scheduleLeafCount; ++index) {
+             !installFailed && allKnown && index < scheduleLeafCount; ++index) {
             if (!engine.compositeCompletionOwners.CapturePreparedLeaf(
                     compositeOwner, index, &knownLeaves[index]) ||
                 !engine.BindOriginalCompositeLedgerPreparation(preparedVoiceStarts[index],
@@ -34634,7 +34702,7 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
             boundCompletions[index] = knownLeaves[index].predicate;
             scratch.queueCompletionMutationCount = index + 1u;
         }
-        if (!installFailed && !engine.PrepareOriginalCompositeLeafCompletionCommits(scratch.queueCurrentOriginalComposite))
+        if (!installFailed && allKnown && !engine.PrepareOriginalCompositeLeafCompletionCommits(scratch.queueCurrentOriginalComposite))
             installFailed = true;
         auto* const payloads = programBank.payloads.data();
         auto* const events = programBank.events.data();
@@ -34705,7 +34773,7 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
             auto& member = *engine.FindQueueProgramMember(&programBank, index);
             CaptureQueueProgramMember(engine, member, std::move(capturedLeaves[index]),
                 preparedScheduleLeaves[index].leaf, installedLeaves[index], leafStartFrame, leafOccurrences[index]);
-            member.nativeCompletion = boundCompletions[index];
+            if (allKnown) member.nativeCompletion = boundCompletions[index];
             engine.SetPlayableMemberCompletion(member, {scheduleLeafInstances[index], scheduleLeafEpochs[index],
                 installedLeaves[index].sourceTerminal});
             if (FreezeQueueProgram(engine, programBank, schedules[index]) == nullptr) {
@@ -34921,34 +34989,12 @@ engine.runtimeRecreateRequired = true;
     const auto rollbackCommitted = [&]() noexcept {
         rollbackCreated();
     };
-    std::array<std::uint32_t, harken::kSelectionPathNodeCapacity> propertyOrdinals{};
-    std::array<VnObjectId, harken::kSelectionPathNodeCapacity> propertyTracks{};
-    auto propertyRoot = row.root;
-    const auto* propertyPath = nextSelectedChildOrdinals.data();
-    const VnObjectId* propertyTrackPath = nullptr;
-    auto propertyCount = nextSelectionCount;
-    if (schedulePrefix != nullptr) {
-        const auto count = schedulePrefix->ordinals.size();
-        if (count == 0 || count != schedulePrefix->trackIds.size() ||
-            count != schedulePrefix->typedPrefix.size() || count > propertyOrdinals.size() ||
-            nextSelectionCount != 1) {
-            rollbackCommitted();
-            return ContainerLoopSuccessorStatus::Invalidated;
-        }
-        std::copy(schedulePrefix->ordinals.begin(), schedulePrefix->ordinals.end(), propertyOrdinals.begin());
-        std::copy(schedulePrefix->trackIds.begin(), schedulePrefix->trackIds.end(), propertyTracks.begin());
-        propertyOrdinals[count - 1u] = nextSelectedChildOrdinals[0];
-        propertyRoot = schedulePrefix->propertyRoot;
-        propertyPath = propertyOrdinals.data();
-        propertyTrackPath = propertyTracks.data();
-        propertyCount = static_cast<std::uint32_t>(count);
-    }
     const auto cutStatus = packAuthority
         ? engine.playablePropertyCutScratch.Resolve(
-              row.Invocation().packPlaybackView, propertyRoot,
-              propertyPath, propertyCount, propertyTrackPath)
+              row.Invocation().packPlaybackView, property.root,
+              property.ordinals.data(), property.count, property.tracks.data())
         : engine.playablePropertyCutScratch.Resolve(
-              *world, propertyRoot, propertyPath, propertyCount, propertyTrackPath);
+              *world, property.root, property.ordinals.data(), property.count, property.tracks.data());
     if (cutStatus !=
         harken::ResolvedPlayablePropertyCutStatusV1::Ok) {
         rollbackCommitted();
@@ -53413,7 +53459,11 @@ void ServicePlayableStarts(harken::Engine& engine,
                     row.queueDeferredNeedsFullPreparation = false;
                     row.pendingFutureCount = 0;
                 }
-                (void)AbortTimelineArm(engine, row.arm);
+                if (IsOrdinaryContainerStart(row) && row.scheduleLeafCount > 1) {
+                    for (std::uint32_t index = 0; index < row.scheduleLeafCount; ++index)
+                        RequestPlayableArmCancellation(engine,
+                            engine.ReadPlayableMember(row.scheduleStorageBase + index).arm);
+                } else (void)AbortTimelineArm(engine, row.arm);
                 row.pendingControlCause = ancestorCause;
                 RecordPlayableControlTree(engine, row.rootInstance, ancestorCause);
                 row.controlReason = reason;
@@ -56777,6 +56827,53 @@ engine.runtimeRecreateRequired = true;
                         row.variableControlContinuousLogicalCompletionFrames[marker] =
                             std::min(row.variableControlContinuousLogicalCompletionFrames[marker], deadline.frame);
                     RefreshVariableControlZeroWorkCompletion(row);
+                }
+            }
+            if (row.variableControlInstance.Valid() && row.phase != harken::EnginePlayableStartPhase::Cancelling) {
+                const auto failed = [](const harken::EnginePlayableServiceRow& service) noexcept {
+                    return (service.controlLifecycle == harken::PlayableControlLifecycle::FailingSourceActive ||
+                            service.controlLifecycle == harken::PlayableControlLifecycle::FailingAudibleRetiring) &&
+                        service.controlReason != harken::PlayableControlReason::None &&
+                        service.controlReason != harken::PlayableControlReason::Natural &&
+                        service.controlReason != harken::PlayableControlReason::StopRequested;
+                };
+                auto failure = failed(row) ? row.controlReason : harken::PlayableControlReason::None;
+                for (std::uint32_t childCursor = 0; failure == harken::PlayableControlReason::None;) {
+                    const auto* child = engine.NextOccupiedPlayableService(&childCursor);
+                    if (child == nullptr) break;
+                    // A failed child's partition can remain pinned by this VC's
+                    // member aliases after its instance has already retired.
+                    if (child == &row || child->phase == harken::EnginePlayableStartPhase::Free ||
+                        child->invocation != row.invocation || child->invocationGeneration != row.invocationGeneration ||
+                        !failed(*child) || !IsPlayableServiceDescendant(engine, *child, row)) continue;
+                    const auto* branch = child;
+                    bool current = false;
+                    bool queueOwned = child->queueMode;
+                    for (std::size_t depth = 0; depth < engine.playableServices.size(); ++depth) {
+                        const auto* parent = engine.ResolvePlayableService(branch->parentService);
+                        if (parent == nullptr || parent->invocation != row.invocation ||
+                            parent->invocationGeneration != row.invocationGeneration) break;
+                        if (parent->variableControlInstance.Valid()) {
+                            bool selected = false;
+                            for (std::uint32_t index = 0; index < parent->variableControlChildCount; ++index)
+                                selected = selected || (parent->variableControlChildInstances[index] == branch->ownerInstance &&
+                                    parent->variableControlChildEpochs[index] == branch->ownerEpoch);
+                            if (!selected) break;
+                        }
+                        if (parent == &row) { current = true; break; }
+                        branch = parent;
+                        queueOwned = queueOwned || branch->queueMode;
+                    }
+                    // Queue owns current/future replacement and reports through
+                    // its accepted Source outcomes, not retained attempt status.
+                    if (!current || queueOwned) continue;
+                    failure = child->controlReason;
+                }
+                if (failure != harken::PlayableControlReason::None) {
+                    row.controlReason = failure;
+                    row.controlLifecycle = harken::PlayableControlLifecycle::FailingSourceActive;
+                    (void)harken::StopPlayable(engine, row.rootInstance, 0);
+                    continue;
                 }
             }
             const bool waitingForGatedRetarget =
@@ -88611,7 +88708,7 @@ ContainerMixedTerminalResult PrepareContainerMixedScheduleTerminal(ContainerPrep
     record.content = selected.terminal;
     record.stableLeafOrdinal = selected.ordinals[selected.count - 1u];
     record.sourceOffsetFrames = context.sourceOffsetFrames;
-    if (selected.count == 1 && scratch.selectionPlayCount != 0 && scratch.selectionPlays[0].Valid())
+    if (scratch.selectionPlayCount != 0 && scratch.selectionPlays[0].Valid())
         rootService->selectionSeedProbe = engine.selectionMemory.PreparedPlaySeedProbe(scratch.selectionPlays[0]);
     if (selected.pendingNativeEntry) {
         if (context.endFrame != UINT64_MAX && context.endFrame <= context.startFrame)
