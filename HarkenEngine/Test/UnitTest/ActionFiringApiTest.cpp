@@ -48004,8 +48004,8 @@ void CheckNestedSegmentEmitterBatchesAndSiblingPlayback(bool packEntry) {
         content.AddEntry(kPackEntryKindPackDependencyEdge, VnObjectId{},
             DependencyPayload(kInitPackStableId, 1, DefaultFixtureBusTriple()),
             kPackCanonicalRequirementVintage);
-        std::vector<std::uint8_t> bindingBytes(kPackV2BindingDefinitionPayloadBytes);
-        SerializePackV2BindingDefinition(bindingId, binding, bindingBytes.data());
+        std::vector<std::uint8_t> bindingBytes(kPackBindingDefinitionBytes);
+        WritePackBindingDefinition(bindingId, binding, bindingBytes.data());
         content.AddEntry(kPackEntryKindBindingDefinition, bindingId, std::move(bindingBytes),
             kPackV2SchemaVintage);
         std::uint64_t relationOrdinal = 0;
@@ -48014,8 +48014,8 @@ void CheckNestedSegmentEmitterBatchesAndSiblingPlayback(bool packEntry) {
             attachment.bindingId = bindingId;
             attachment.scopeKind = VN_TARGET_SCOPE_VOICE;
             attachment.objectId = sound;
-            std::vector<std::uint8_t> attachmentBytes(kPackV2BindingAttachmentPayloadBytes);
-            SerializePackV2BindingAttachment(attachment, attachmentBytes.data());
+            std::vector<std::uint8_t> attachmentBytes(kPackBindingAttachmentBytes);
+            SerializePackBindingAttachment(attachment, attachmentBytes.data());
             const auto entry = content.AddEntry(kPackEntryKindBindingAttachment, VnObjectId{},
                 std::move(attachmentBytes), kPackV2SchemaVintage);
             content.SetRelationOrdinal(entry, relationOrdinal++);

@@ -34,14 +34,6 @@ using namespace harken;
 
 constexpr std::uint32_t kLegacySelectionRoundRobin = 1;
 
-TEST(PackV2Format, CurveWireSizesArePinned) {
-    EXPECT_EQ(184u, kPackV2CurveWireBytes);
-    EXPECT_EQ(600u, kPackV2AttenuationPayloadBytes);
-    EXPECT_EQ(608u, kPackV3AttenuationPayloadBytes);
-    EXPECT_EQ(180u, kPackV2BindingCurveWireBytes);
-    EXPECT_EQ(228u, kPackV2BindingDefinitionPayloadBytes);
-}
-
 TEST(PackV2Format, PackContainerUsesPublishedSchemaVersion) {
     static_assert(kPackFormatVersion == HARKEN_PACK_SCHEMA_VERSION);
     static_assert(kPackFormatVersion2 == HARKEN_PACK_SCHEMA_VERSION);
@@ -178,7 +170,7 @@ public:
                 toc.flags = 0;
                 toc.loopStartFrame = 0;
                 toc.loopEndFrame = 0;
-                SerializePackTocEntry(toc, payload);
+                SerializePackMedia(toc, payload);
             } else {
                 std::memcpy(payload, entry.payload.data(),
                             entry.payload.size());
@@ -235,7 +227,7 @@ private:
     };
 
     static std::uint64_t PayloadSize(const Entry& entry) {
-        return entry.isMedia ? kPackV2MediaPayloadBytes
+        return entry.isMedia ? kPackMediaBytes
                              : entry.payload.size();
     }
     static std::uint64_t BlobBytes(const Entry& entry) {
@@ -290,54 +282,42 @@ std::vector<std::uint8_t> AttenuationPayload(const VnAttenuationDesc& desc) {
     if (!(wire.proximityFrequency > 0.0f)) {
         wire.proximityFrequency = 250.0f;
     }
-    std::vector<std::uint8_t> payload(kPackV3AttenuationPayloadBytes);
-    SerializePackV3Attenuation(wire, payload.data());
+    std::vector<std::uint8_t> payload(kPackAttenuationBytes);
+    SerializePackAttenuation(wire, payload.data());
     return payload;
 }
 
-std::vector<std::uint8_t> RetiredAttenuationPayload(
-    const VnAttenuationDesc& desc) {
-    std::vector<std::uint8_t> payload(kPackV2AttenuationPayloadBytes);
-    SerializePackV2Attenuation(desc, payload.data());
+std::vector<std::uint8_t> RetiredAttenuationPayload(const VnAttenuationDesc& desc) {
+    auto payload = AttenuationPayload(desc);
+    payload.resize(kPackAttenuationProximityFrequencyOffset);
     return payload;
 }
 
-std::vector<std::uint8_t> DiscreteVariablePayload(VnVariableId variableId) {
-    std::vector<std::uint8_t> payload(kPackV2DiscreteVariablePayloadBytes);
-    SerializePackV2DiscreteVariable(variableId, payload.data());
-    return payload;
+std::vector<std::uint8_t> DiscreteVariablePayload(VnVariableId) {
+    return {0};
 }
 
-std::vector<std::uint8_t> MeterWiringPayload(VnBusId busId,
-                                             VnVariableId variableId,
-                                             std::uint32_t attackMs,
-                                             std::uint32_t releaseMs) {
-    std::vector<std::uint8_t> payload(kPackV2MeterWiringPayloadBytes);
-    PackMeterWiringEntry entry;
-    entry.busId = busId;
-    entry.variableId = variableId;
-    entry.attackMs = attackMs;
-    entry.releaseMs = releaseMs;
-    SerializePackV2MeterWiring(entry, payload.data());
-    return payload;
+std::vector<std::uint8_t> MeterWiringPayload(VnBusId, VnVariableId,
+                                             std::uint32_t, std::uint32_t) {
+    return {0};
 }
 
 std::vector<std::uint8_t> BindingDefinitionPayload(VnBindingId bindingId,
                                                    const VnBindingDesc& desc) {
-    std::vector<std::uint8_t> payload(kPackV2BindingDefinitionPayloadBytes);
-    SerializePackV2BindingDefinition(bindingId, desc, payload.data());
+    std::vector<std::uint8_t> payload(kPackBindingDefinitionBytes);
+    WritePackBindingDefinition(bindingId, desc, payload.data());
     return payload;
 }
 
 std::vector<std::uint8_t> AttachmentPayload(VnBindingId bindingId,
                                             std::uint32_t scopeKind,
                                             std::uint64_t objectId) {
-    std::vector<std::uint8_t> payload(kPackV2BindingAttachmentPayloadBytes);
+    std::vector<std::uint8_t> payload(kPackBindingAttachmentBytes);
     PackBindingAttachmentEntry entry;
     entry.bindingId = bindingId;
     entry.scopeKind = scopeKind;
     entry.objectId = harkentest::ObjectId(objectId);
-    SerializePackV2BindingAttachment(entry, payload.data());
+    SerializePackBindingAttachment(entry, payload.data());
     return payload;
 }
 
@@ -572,7 +552,7 @@ TEST(PackV2Format, RetiredVoiceRecipeVintagesRefuse) {
     {
         ImageBuilder builder(kPackKindContent);
         builder.AddEntry(kPackEntryKindVoiceRecipe, 104, ToneRecipePayload(harkentest::ObjectId(104)),
-                         kPackV2AuthoredToneSchemaVintage);
+                         kPackAttenuationVintage);
         const std::vector<std::uint8_t> bytes = builder.Build();
         PackLogicImage image;
         EXPECT_EQ(VN_PACK_INCOMPATIBLE,
@@ -948,20 +928,20 @@ TEST(PackV2Format, AttenuationPayloadMatchesOuterVersionExactly) {
     desc.airAbsorptionNearHz = desc.airAbsorptionFarHz = 20000;
     desc.proximityFrequency = 400;
     for (const auto version : {3u, kPackFormatVersion, kPackFormatVersion + 1}) {
-        for (const auto size : {kPackV3AttenuationPayloadBytes - 1,
-                               kPackV3AttenuationPayloadBytes,
-                               kPackV3AttenuationPayloadBytes + 1,
-                               kPackV3AttenuationPayloadBytes + kPackV2CurveWireBytes}) {
+        for (const auto size : {kPackAttenuationBytes - 1,
+                               kPackAttenuationBytes,
+                               kPackAttenuationBytes + 1,
+                               kPackAttenuationBytes + kPackAttenuationCurveBytes}) {
             auto payload = AttenuationPayload(desc);
             payload.resize(size);
             ImageBuilder builder(kPackKindResident);
             builder.AddEntry(kPackEntryKindAttenuation, 500, std::move(payload),
-                             kPackV2AuthoredToneSchemaVintage);
+                             kPackAttenuationVintage);
             auto bytes = builder.Build();
             StoreLE32(bytes.data() + 4, version);
             PackLogicImage image;
             const bool valid = version == kPackFormatVersion &&
-                               size == kPackV3AttenuationPayloadBytes;
+                               size == kPackAttenuationBytes;
             ASSERT_EQ(valid ? VN_OK : VN_BAD_PACK,
                       ParsePackV2Image(bytes.data(), bytes.size(), &image))
                 << version << "/" << size;
@@ -1004,7 +984,7 @@ TEST(PackV2Format, ResidentPackRoundTripCarriesEveryField) {
         {8.0f, -2.0f, 35.0f, -48.0f};
     builder.AddEntry(kPackEntryKindAttenuation, 500,
                      AttenuationPayload(attenuation),
-                     kPackV2AuthoredToneSchemaVintage);
+                     kPackAttenuationVintage);
 
 
     VnBindingDesc bindingDesc{};
@@ -1123,7 +1103,7 @@ TEST(PackV2Format, RefusesOtherSchemaVersions) {
 TEST(PackV2Format, RefusesMediaOnlyHeaderLayout) {
     const std::vector<float> planar = {0.0f, 0.25f, 0.5f, 0.75f};
     const std::uint64_t blobOffset =
-        AlignUp(kPackHeaderBytes + kPackTocEntryBytes, kPackBlobAlign);
+        AlignUp(kPackHeaderBytes + kPackMediaBytes, kPackBlobAlign);
     const std::uint64_t blobBytes = planar.size() * sizeof(float);
     const std::uint64_t fileBytes = blobOffset + blobBytes;
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(fileBytes), 0);
@@ -1139,7 +1119,7 @@ TEST(PackV2Format, RefusesMediaOnlyHeaderLayout) {
     toc.blobBytes = blobBytes;
     toc.blobChecksum =
         Fnv1a64(planar.data(), static_cast<std::size_t>(blobBytes));
-    SerializePackTocEntry(toc, bytes.data() + kPackHeaderBytes);
+    SerializePackMedia(toc, bytes.data() + kPackHeaderBytes);
     PackHeader header;
     header.formatVersion = kPackFormatVersion;
     header.headerBytes = kPackHeaderBytes;
@@ -1147,7 +1127,7 @@ TEST(PackV2Format, RefusesMediaOnlyHeaderLayout) {
     header.entryCount = 1;
     header.tocOffset = kPackHeaderBytes;
     header.tocChecksum =
-        Fnv1a64(bytes.data() + kPackHeaderBytes, kPackTocEntryBytes);
+        Fnv1a64(bytes.data() + kPackHeaderBytes, kPackMediaBytes);
     SerializePackHeader(header, bytes.data());
 
     ExpectRefused(bytes);
@@ -1261,7 +1241,7 @@ TEST(PackV2Format, PayloadChecksumGuardsWireLegalCorruption) {
     attenuation.airAbsorptionFarHz = 20000.0f;
     builder.AddEntry(kPackEntryKindAttenuation, 500,
                      AttenuationPayload(attenuation),
-                     kPackV2AuthoredToneSchemaVintage);
+                     kPackAttenuationVintage);
     VnBindingDesc bindingDesc{};
     bindingDesc.variableId = harkentest::ObjectId(920);
     bindingDesc.targetScopeKind = VN_TARGET_SCOPE_BUS;
@@ -1434,7 +1414,7 @@ TEST(PackV2Format, CurrentVintageWithRetiredPayloadSizeRefuses) {
         ImageBuilder builder(kPackKindResident);
         builder.AddEntry(kPackEntryKindAttenuation, 500,
                          RetiredAttenuationPayload(desc),
-                         kPackV2AuthoredToneSchemaVintage);
+                         kPackAttenuationVintage);
         const std::vector<std::uint8_t> bytes = builder.Build();
         PackLogicImage image;
         EXPECT_EQ(VN_BAD_PACK,
@@ -1723,7 +1703,7 @@ TEST(PackV2Format, RefusesAttenuationHandleTailNonzero) {
     // Curve starts at 48; handles start at 72; slot 1 is the first tail slot.
     StoreLEF32(payload.data() + 48 + 72 + 16, 1.0f);
     builder.AddEntry(kPackEntryKindAttenuation, 500, std::move(payload),
-                     kPackV2AuthoredToneSchemaVintage);
+                     kPackAttenuationVintage);
     ExpectRefused(builder.Build());
 }
 

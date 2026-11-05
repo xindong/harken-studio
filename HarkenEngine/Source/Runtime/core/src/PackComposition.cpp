@@ -1872,8 +1872,8 @@ bool EncodeIdentityDefinition(const PackComposition::PublishedOwner& owner,
                 continue;
             }
             const std::size_t offset = bytes.size();
-            bytes.resize(offset + kPackV2BindingDefinitionPayloadBytes);
-            SerializePackV2BindingDefinition(binding.bindingId, binding.descriptor,
+            bytes.resize(offset + kPackBindingDefinitionBytes);
+            WritePackBindingDefinition(binding.bindingId, binding.descriptor,
                                               bytes.data() + offset);
         }
     }
@@ -3040,11 +3040,11 @@ VnResult PackComposition::BuildIndex(PublishedView& view,
         const auto& left = bindings[i - 1];
         const auto& right = bindings[i];
         if (left.first->bindingId != right.first->bindingId) continue;
-        leftDefinition.resize(kPackV2BindingDefinitionPayloadBytes);
-        rightDefinition.resize(kPackV2BindingDefinitionPayloadBytes);
-        SerializePackV2BindingDefinition(left.first->bindingId, left.first->descriptor,
+        leftDefinition.resize(kPackBindingDefinitionBytes);
+        rightDefinition.resize(kPackBindingDefinitionBytes);
+        WritePackBindingDefinition(left.first->bindingId, left.first->descriptor,
                                          leftDefinition.data());
-        SerializePackV2BindingDefinition(right.first->bindingId, right.first->descriptor,
+        WritePackBindingDefinition(right.first->bindingId, right.first->descriptor,
                                          rightDefinition.data());
         if (leftDefinition != rightDefinition) {
             facts->conflictingStableId = right.first->bindingId;

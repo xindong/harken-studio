@@ -78,21 +78,14 @@ bool KindLegalForPack(std::uint32_t entryKind, std::uint32_t packKind) {
     }
 }
 
-bool EntryVintageLegal(std::uint32_t entryKind,
-                         std::uint32_t vintage) {
+bool EntryVintageLegal(std::uint32_t entryKind, std::uint32_t vintage) {
     switch (entryKind) {
-    case kPackEntryKindBusEffect:
-    case kPackEntryKindEffectDynamicRoute:
-        return vintage == kPackV2DynamicSchemaVintage;
     case kPackEntryKindVoiceRecipe:
         return vintage == kPackV2PlaybackRecipeSchemaVintage;
-    case kPackEntryKindAttenuation:
-        return vintage == kPackV2AuthoredToneSchemaVintage;
-    case kPackEntryKindBus:
-    case kPackEntryKindBusSend:
-        return VintageLegalForKind(entryKind, vintage);
-    default:
+    case kPackEntryKindContainer:
         return vintage == kPackV2SchemaVintage;
+    default:
+        return VintageLegalForKind(entryKind, vintage);
     }
 }
 
@@ -289,10 +282,10 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
             {entry.kind, entry.id, entry.payloadChecksum});
         switch (entry.kind) {
         case kPackEntryKindMedia: {
-            if (entry.size != kPackV2MediaPayloadBytes) {
+            if (entry.size != kPackMediaBytes) {
                 return harkenstudiobuild::kPackInvalid;
             }
-            const PackTocEntry media = ParsePackTocEntry(payload);
+            const PackTocEntry media = ReadPackMedia(payload);
             if (media.soundId != entry.id ||
                 !ValidateV2MediaEntry(media, fileBytes, dirEnd)) {
                 return harkenstudiobuild::kPackInvalid;
@@ -333,7 +326,7 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
         }
         case kPackEntryKindBusEffect: {
             PackBusEffectEntry effect;
-            if (!ParsePackV2BusEffect(payload, entry.size, &effect) ||
+            if (!ReadPackBusEffect(payload, entry.size, &effect) ||
                 entry.relationOrdinal != busEffectOrdinal || effect.busId == harkenstudio::ObjectId{} ||
                 effect.bypass > 1 ||
                 effect.slot >= kMaxFxSlotsPerBus ||
@@ -359,7 +352,7 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
         }
         case kPackEntryKindEffectDynamicRoute: {
             PackEffectDynamicRouteEntry route;
-            if (!ParsePackV2EffectDynamicRoute(payload, entry.size,
+            if (!ParsePackEffectDynamicRoute(payload, entry.size,
                                                &route) ||
                 entry.relationOrdinal != dynamicRouteOrdinal ||
                 route.targetBusId == harkenstudio::ObjectId{} || route.sourceId == harkenstudio::ObjectId{} ||
@@ -380,7 +373,7 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
         case kPackEntryKindAttenuation: {
             PackLogicImage::Attenuation attenuation;
             attenuation.id = entry.id;
-            if (!ParsePackV3Attenuation(payload, entry.size,
+            if (!ReadPackAttenuation(payload, entry.size,
                                         &attenuation.desc)) {
                 return harkenstudiobuild::kPackInvalid;
             }
@@ -396,7 +389,7 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
             return harkenstudiobuild::kPackInvalid;
         case kPackEntryKindBindingDefinition: {
             PackLogicImage::BindingDefinition definition;
-            if (!ParsePackV2BindingDefinition(payload, entry.size,
+            if (!ReadPackBindingDefinition(payload, entry.size,
                                               &definition.id,
                                               &definition.desc) ||
                 definition.id != entry.id
@@ -418,7 +411,7 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
         }
         case kPackEntryKindBindingAttachment: {
             PackBindingAttachmentEntry attachment;
-            if (!ParsePackV2BindingAttachment(payload, entry.size,
+            if (!ParsePackBindingAttachment(payload, entry.size,
                                               &attachment) ||
                 entry.relationOrdinal != attachmentOrdinal) {
                 return harkenstudiobuild::kPackInvalid;
@@ -1477,10 +1470,10 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
             break;
         }
         case kPackEntryKindMedia: {
-            if (entry.size != kPackV2MediaPayloadBytes) {
+            if (entry.size != kPackMediaBytes) {
                 return harkenstudiobuild::kPackInvalid;
             }
-            const PackTocEntry media = ParsePackTocEntry(payload);
+            const PackTocEntry media = ReadPackMedia(payload);
             if (media.soundId != entry.id ||
                 !ValidateV2MediaEntry(media, fileBytes, dirEnd)) {
                 return harkenstudiobuild::kPackInvalid;
@@ -1496,7 +1489,7 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
         }
         case kPackEntryKindBusEffect: {
             PackBusEffectEntry effect;
-            if (!ParsePackV2BusEffect(payload, entry.size, &effect) ||
+            if (!ReadPackBusEffect(payload, entry.size, &effect) ||
                 entry.relationOrdinal != image.busEffects.size() || effect.busId == harkenstudio::ObjectId{} ||
                 effect.bypass > 1 || effect.slot >= kMaxFxSlotsPerBus ||
                 effect.faderPointGuard > kMaxFxSlotsPerBus) {
@@ -1517,7 +1510,7 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
         }
         case kPackEntryKindEffectDynamicRoute: {
             PackEffectDynamicRouteEntry route;
-            if (!ParsePackV2EffectDynamicRoute(payload, entry.size, &route) ||
+            if (!ParsePackEffectDynamicRoute(payload, entry.size, &route) ||
                 entry.relationOrdinal != image.dynamicRoutes.size() || route.targetBusId == harkenstudio::ObjectId{} ||
                 route.sourceId == harkenstudio::ObjectId{} || route.expectedEffectType != harkenstudio::kEffectCompressor ||
                 route.signalForm != harkenstudio::kDynamicSignalRawAudio ||
@@ -1555,7 +1548,7 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
         case kPackEntryKindAttenuation: {
             PackLogicImage::Attenuation attenuation;
             attenuation.id = entry.id;
-            if (!ParsePackV3Attenuation(payload, entry.size,
+            if (!ReadPackAttenuation(payload, entry.size,
                                         &attenuation.desc)) {
                 return harkenstudiobuild::kPackInvalid;
             }
@@ -1564,7 +1557,7 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
         }
         case kPackEntryKindBindingDefinition: {
             PackLogicImage::BindingDefinition definition;
-            if (!ParsePackV2BindingDefinition(payload, entry.size,
+            if (!ReadPackBindingDefinition(payload, entry.size,
                                               &definition.id,
                                               &definition.desc) ||
                 definition.id != entry.id ||
@@ -1587,7 +1580,7 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
         }
         case kPackEntryKindBindingAttachment: {
             PackBindingAttachmentEntry attachment;
-            if (!ParsePackV2BindingAttachment(payload, entry.size,
+            if (!ParsePackBindingAttachment(payload, entry.size,
                                               &attachment) ||
                 entry.relationOrdinal != attachmentOrdinal) {
                 return harkenstudiobuild::kPackInvalid;

@@ -226,7 +226,7 @@ QVector<harken::PackTocEntry> mediaEntries(const QString& path)
         const auto entry = harken::ParsePackV2DirectoryEntry(
             data + header.directoryOffset + i * harken::kPackV2DirectoryEntryBytes);
         if (entry.kind == harken::kPackEntryKindMedia)
-            result.append(harken::ParsePackTocEntry(data + entry.offset));
+            result.append(harken::ReadPackMedia(data + entry.offset));
     }
     return result;
 }

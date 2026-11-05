@@ -651,8 +651,8 @@ TEST(MonitorObserve, LegacyResidentMasterEffectRetainsIdentityAndPackOwnership) 
     effect.faderPointGuard = 8;
     effect.paramCount = 1;
     effect.paramBytes = sizeof(float);
-    std::vector<std::uint8_t> effectBytes(harken::kPackV2BusEffectPayloadBytes);
-    harken::SerializePackV2BusEffect(effect, effectBytes.data());
+    std::vector<std::uint8_t> effectBytes(harken::kPackBusEffectBytes);
+    harken::SerializePackBusEffect(effect, effectBytes.data());
     builder.AddEntry(harken::kPackEntryKindBusEffect, 0, std::move(effectBytes));
     auto bytes = builder.Build();
     auto config = harkentest::MakeNullConfig();

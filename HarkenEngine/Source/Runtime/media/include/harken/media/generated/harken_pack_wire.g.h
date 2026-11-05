@@ -11,21 +11,329 @@
 namespace harken {
 
 inline constexpr std::uint64_t kPackBusDefinitionDownmixCoefficientCount = 64ULL;
+inline constexpr std::uint64_t kPackVoiceRecipeMaxParams = 64ULL;
 
+inline constexpr std::uint32_t kPackEntryKindMedia = 1u;
+inline constexpr std::uint32_t kPackMediaVintage = 2u;
 inline constexpr std::uint32_t kPackEntryKindBus = 2u;
 inline constexpr std::uint32_t kPackBusVintage = 6u;
 inline constexpr std::uint32_t kPackEntryKindBusSend = 3u;
 inline constexpr std::uint32_t kPackBusSendVintage = 2u;
+inline constexpr std::uint32_t kPackEntryKindAttenuation = 4u;
+inline constexpr std::uint32_t kPackAttenuationVintage = 3u;
+inline constexpr std::uint32_t kPackEntryKindDiscreteVariable = 5u;
+inline constexpr std::uint32_t kPackEntryKindMeterWiring = 6u;
+inline constexpr std::uint32_t kPackEntryKindBindingDefinition = 7u;
+inline constexpr std::uint32_t kPackBindingDefinitionVintage = 2u;
+inline constexpr std::uint32_t kPackEntryKindBindingAttachment = 8u;
+inline constexpr std::uint32_t kPackBindingAttachmentVintage = 2u;
+inline constexpr std::uint32_t kPackEntryKindBusEffect = 12u;
+inline constexpr std::uint32_t kPackBusEffectVintage = 1u;
+inline constexpr std::uint32_t kPackEntryKindEffectDynamicRoute = 13u;
+inline constexpr std::uint32_t kPackEffectDynamicRouteVintage = 1u;
 inline constexpr std::uint32_t kPackEntryKindBusDefinitionSnapshot = 24u;
 inline constexpr std::uint32_t kPackBusDefinitionSnapshotVintage = 2u;
 
 [[nodiscard]] inline bool VintageLegalForKind(std::uint32_t kind, std::uint32_t vintage) noexcept {
     switch (kind) {
+    case kPackEntryKindMedia: return vintage == kPackMediaVintage;
     case kPackEntryKindBus: return vintage == kPackBusVintage;
     case kPackEntryKindBusSend: return vintage == kPackBusSendVintage;
+    case kPackEntryKindAttenuation: return vintage == kPackAttenuationVintage;
+    case kPackEntryKindBindingDefinition: return vintage == kPackBindingDefinitionVintage;
+    case kPackEntryKindBindingAttachment: return vintage == kPackBindingAttachmentVintage;
+    case kPackEntryKindBusEffect: return vintage == kPackBusEffectVintage;
+    case kPackEntryKindEffectDynamicRoute: return vintage == kPackEffectDynamicRouteVintage;
     case kPackEntryKindBusDefinitionSnapshot: return vintage == kPackBusDefinitionSnapshotVintage;
     default: return false;
     }
+}
+
+inline constexpr std::uint64_t kPackAttenuationCurvePointBytes = 8ULL;
+inline constexpr std::uint64_t kPackAttenuationCurvePointXOffset = 0ULL;
+inline constexpr std::uint64_t kPackAttenuationCurvePointYOffset = 4ULL;
+
+inline void SerializePackAttenuationCurvePoint(const VnAttenuationCurvePoint& row, std::uint8_t* out) noexcept {
+    StoreLEF32(out + 0, static_cast<float>(row.x));
+    StoreLEF32(out + 4, static_cast<float>(row.y));
+}
+
+[[nodiscard]] inline bool ParsePackAttenuationCurvePoint(const std::uint8_t* in, std::uint64_t size, VnAttenuationCurvePoint* out) noexcept {
+    if (size != kPackAttenuationCurvePointBytes) return false;
+    out->x = static_cast<std::remove_cvref_t<decltype(out->x)>>(LoadLEF32(in + 0));
+    out->y = static_cast<std::remove_cvref_t<decltype(out->y)>>(LoadLEF32(in + 4));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackCurveHandlesBytes = 16ULL;
+inline constexpr std::uint64_t kPackCurveHandlesH1xOffset = 0ULL;
+inline constexpr std::uint64_t kPackCurveHandlesH1yOffset = 4ULL;
+inline constexpr std::uint64_t kPackCurveHandlesH2xOffset = 8ULL;
+inline constexpr std::uint64_t kPackCurveHandlesH2yOffset = 12ULL;
+
+inline void SerializePackCurveHandles(const VnCurveHandlePair& row, std::uint8_t* out) noexcept {
+    StoreLEF32(out + 0, static_cast<float>(row.h1x));
+    StoreLEF32(out + 4, static_cast<float>(row.h1y));
+    StoreLEF32(out + 8, static_cast<float>(row.h2x));
+    StoreLEF32(out + 12, static_cast<float>(row.h2y));
+}
+
+[[nodiscard]] inline bool ParsePackCurveHandles(const std::uint8_t* in, std::uint64_t size, VnCurveHandlePair* out) noexcept {
+    if (size != kPackCurveHandlesBytes) return false;
+    out->h1x = static_cast<std::remove_cvref_t<decltype(out->h1x)>>(LoadLEF32(in + 0));
+    out->h1y = static_cast<std::remove_cvref_t<decltype(out->h1y)>>(LoadLEF32(in + 4));
+    out->h2x = static_cast<std::remove_cvref_t<decltype(out->h2x)>>(LoadLEF32(in + 8));
+    out->h2y = static_cast<std::remove_cvref_t<decltype(out->h2y)>>(LoadLEF32(in + 12));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackAttenuationCurveBytes = 184ULL;
+inline constexpr std::uint64_t kPackAttenuationCurveEnabledOffset = 0ULL;
+inline constexpr std::uint64_t kPackAttenuationCurvePointCountOffset = 4ULL;
+inline constexpr std::uint64_t kPackAttenuationCurvePointsOffset = 8ULL;
+inline constexpr std::uint64_t kPackAttenuationCurveHandlesOffset = 72ULL;
+
+inline void SerializePackAttenuationCurve(const VnAttenuationCurve& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.enabled));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.pointCount));
+    static_assert(std::size(std::remove_cvref_t<decltype(row.points)>{}) == 8);
+    for (std::uint64_t i = 0; i < 8; ++i) {
+        if (i < row.pointCount) {
+            SerializePackAttenuationCurvePoint(row.points[i], out + 8 + i * 8);
+        } else {
+            std::memset(out + 8 + i * 8, 0, 8);
+        }
+    }
+    static_assert(std::size(std::remove_cvref_t<decltype(row.handles)>{}) == 7);
+    const auto handlesLiveCount = std::min<std::uint64_t>(row.pointCount, 8);
+    for (std::uint64_t i = 0; i < 7; ++i) {
+        if (handlesLiveCount > 1 && i < handlesLiveCount - 1) {
+            SerializePackCurveHandles(row.handles[i], out + 72 + i * 16);
+        } else {
+            std::memset(out + 72 + i * 16, 0, 16);
+        }
+    }
+}
+
+[[nodiscard]] inline bool ParsePackAttenuationCurve(const std::uint8_t* in, std::uint64_t size, VnAttenuationCurve* out) noexcept {
+    if (size != kPackAttenuationCurveBytes) return false;
+    out->enabled = static_cast<std::remove_cvref_t<decltype(out->enabled)>>(LoadLE32(in + 0));
+    out->pointCount = static_cast<std::remove_cvref_t<decltype(out->pointCount)>>(LoadLE32(in + 4));
+    static_assert(std::size(std::remove_cvref_t<decltype(out->points)>{}) == 8);
+    for (std::uint64_t i = 0; i < 8; ++i) {
+        if (i < out->pointCount) {
+            if (!ParsePackAttenuationCurvePoint(in + 8 + i * 8, kPackAttenuationCurvePointBytes, &out->points[i])) return false;
+        } else {
+            for (std::uint64_t byte = 0; byte < 8; ++byte) {
+                if ((in + 8 + i * 8)[byte] != 0) return false;
+            }
+            out->points[i] = {};
+        }
+    }
+    static_assert(std::size(std::remove_cvref_t<decltype(out->handles)>{}) == 7);
+    const auto handlesLiveCount = std::min<std::uint64_t>(out->pointCount, 8);
+    for (std::uint64_t i = 0; i < 7; ++i) {
+        if (handlesLiveCount > 1 && i < handlesLiveCount - 1) {
+            if (!ParsePackCurveHandles(in + 72 + i * 16, kPackCurveHandlesBytes, &out->handles[i])) return false;
+        } else {
+            for (std::uint64_t byte = 0; byte < 16; ++byte) {
+                if ((in + 72 + i * 16)[byte] != 0) return false;
+            }
+            out->handles[i] = {};
+        }
+    }
+    return true;
+}
+
+inline constexpr std::uint64_t kPackAttenuationBytes = 608ULL;
+inline constexpr std::uint64_t kPackAttenuationRolloffOffset = 0ULL;
+inline constexpr std::uint64_t kPackAttenuationMinDistanceOffset = 4ULL;
+inline constexpr std::uint64_t kPackAttenuationMaxDistanceOffset = 8ULL;
+inline constexpr std::uint64_t kPackAttenuationAirAbsorptionNearHzOffset = 12ULL;
+inline constexpr std::uint64_t kPackAttenuationAirAbsorptionFarHzOffset = 16ULL;
+inline constexpr std::uint64_t kPackAttenuationProximityRadiusOffset = 20ULL;
+inline constexpr std::uint64_t kPackAttenuationProximityMaxBoostDbOffset = 24ULL;
+inline constexpr std::uint64_t kPackAttenuationConeEnabledOffset = 28ULL;
+inline constexpr std::uint64_t kPackAttenuationConeInnerDegOffset = 32ULL;
+inline constexpr std::uint64_t kPackAttenuationConeOuterDegOffset = 36ULL;
+inline constexpr std::uint64_t kPackAttenuationConeOuterGainDbOffset = 40ULL;
+inline constexpr std::uint64_t kPackAttenuationConeOuterLowpassHzOffset = 44ULL;
+inline constexpr std::uint64_t kPackAttenuationVolumeCurveOffset = 48ULL;
+inline constexpr std::uint64_t kPackAttenuationLowpassCurveOffset = 232ULL;
+inline constexpr std::uint64_t kPackAttenuationWidthCurveOffset = 416ULL;
+inline constexpr std::uint64_t kPackAttenuationProximityFrequencyOffset = 600ULL;
+inline constexpr std::uint64_t kPackAttenuationReserved604Offset = 604ULL;
+
+inline void SerializePackAttenuation(const VnAttenuationDesc& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.rolloff));
+    StoreLEF32(out + 4, static_cast<float>(row.minDistance));
+    StoreLEF32(out + 8, static_cast<float>(row.maxDistance));
+    StoreLEF32(out + 12, static_cast<float>(row.airAbsorptionNearHz));
+    StoreLEF32(out + 16, static_cast<float>(row.airAbsorptionFarHz));
+    StoreLEF32(out + 20, static_cast<float>(row.proximityRadius));
+    StoreLEF32(out + 24, static_cast<float>(row.proximityMaxBoostDb));
+    StoreLE32(out + 28, static_cast<std::uint32_t>(row.coneEnabled));
+    StoreLEF32(out + 32, static_cast<float>(row.coneInnerDeg));
+    StoreLEF32(out + 36, static_cast<float>(row.coneOuterDeg));
+    StoreLEF32(out + 40, static_cast<float>(row.coneOuterGainDb));
+    StoreLEF32(out + 44, static_cast<float>(row.coneOuterLowpassHz));
+    SerializePackAttenuationCurve(row.volumeCurve, out + 48);
+    SerializePackAttenuationCurve(row.lowpassCurve, out + 232);
+    SerializePackAttenuationCurve(row.widthCurve, out + 416);
+    StoreLEF32(out + 600, static_cast<float>(row.proximityFrequency));
+    std::memset(out + 604, 0, 4);
+}
+
+[[nodiscard]] inline bool ParsePackAttenuation(const std::uint8_t* in, std::uint64_t size, VnAttenuationDesc* out) noexcept {
+    if (size != kPackAttenuationBytes) return false;
+    out->rolloff = static_cast<std::remove_cvref_t<decltype(out->rolloff)>>(LoadLE32(in + 0));
+    out->minDistance = static_cast<std::remove_cvref_t<decltype(out->minDistance)>>(LoadLEF32(in + 4));
+    out->maxDistance = static_cast<std::remove_cvref_t<decltype(out->maxDistance)>>(LoadLEF32(in + 8));
+    out->airAbsorptionNearHz = static_cast<std::remove_cvref_t<decltype(out->airAbsorptionNearHz)>>(LoadLEF32(in + 12));
+    out->airAbsorptionFarHz = static_cast<std::remove_cvref_t<decltype(out->airAbsorptionFarHz)>>(LoadLEF32(in + 16));
+    out->proximityRadius = static_cast<std::remove_cvref_t<decltype(out->proximityRadius)>>(LoadLEF32(in + 20));
+    out->proximityMaxBoostDb = static_cast<std::remove_cvref_t<decltype(out->proximityMaxBoostDb)>>(LoadLEF32(in + 24));
+    out->coneEnabled = static_cast<std::remove_cvref_t<decltype(out->coneEnabled)>>(LoadLE32(in + 28));
+    out->coneInnerDeg = static_cast<std::remove_cvref_t<decltype(out->coneInnerDeg)>>(LoadLEF32(in + 32));
+    out->coneOuterDeg = static_cast<std::remove_cvref_t<decltype(out->coneOuterDeg)>>(LoadLEF32(in + 36));
+    out->coneOuterGainDb = static_cast<std::remove_cvref_t<decltype(out->coneOuterGainDb)>>(LoadLEF32(in + 40));
+    out->coneOuterLowpassHz = static_cast<std::remove_cvref_t<decltype(out->coneOuterLowpassHz)>>(LoadLEF32(in + 44));
+    if (!ParsePackAttenuationCurve(in + 48, kPackAttenuationCurveBytes, &out->volumeCurve)) return false;
+    if (!ParsePackAttenuationCurve(in + 232, kPackAttenuationCurveBytes, &out->lowpassCurve)) return false;
+    if (!ParsePackAttenuationCurve(in + 416, kPackAttenuationCurveBytes, &out->widthCurve)) return false;
+    out->proximityFrequency = static_cast<std::remove_cvref_t<decltype(out->proximityFrequency)>>(LoadLEF32(in + 600));
+    for (std::uint64_t i = 0; i < 4; ++i) {
+        if ((in + 604)[i] != 0) return false;
+    }
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBindingAttachmentBytes = 40ULL;
+inline constexpr std::uint64_t kPackBindingAttachmentBindingIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackBindingAttachmentScopeKindOffset = 16ULL;
+inline constexpr std::uint64_t kPackBindingAttachmentReserved20Offset = 20ULL;
+inline constexpr std::uint64_t kPackBindingAttachmentObjectIdOffset = 24ULL;
+
+inline void SerializePackBindingAttachment(const PackBindingAttachmentEntry& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row.bindingId);
+    StoreLE32(out + 16, static_cast<std::uint32_t>(row.scopeKind));
+    std::memset(out + 20, 0, 4);
+    StoreObjectId(out + 24, row.objectId);
+}
+
+[[nodiscard]] inline bool ParsePackBindingAttachment(const std::uint8_t* in, std::uint64_t size, PackBindingAttachmentEntry* out) noexcept {
+    if (size != kPackBindingAttachmentBytes) return false;
+    out->bindingId = static_cast<std::remove_cvref_t<decltype(out->bindingId)>>(LoadObjectId(in + 0));
+    out->scopeKind = static_cast<std::remove_cvref_t<decltype(out->scopeKind)>>(LoadLE32(in + 16));
+    for (std::uint64_t i = 0; i < 4; ++i) {
+        if ((in + 20)[i] != 0) return false;
+    }
+    out->objectId = static_cast<std::remove_cvref_t<decltype(out->objectId)>>(LoadObjectId(in + 24));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackCurvePointBytes = 8ULL;
+inline constexpr std::uint64_t kPackCurvePointXOffset = 0ULL;
+inline constexpr std::uint64_t kPackCurvePointYOffset = 4ULL;
+
+inline void SerializePackCurvePoint(const VnCurvePoint& row, std::uint8_t* out) noexcept {
+    StoreLEF32(out + 0, static_cast<float>(row.x));
+    StoreLEF32(out + 4, static_cast<float>(row.y));
+}
+
+[[nodiscard]] inline bool ParsePackCurvePoint(const std::uint8_t* in, std::uint64_t size, VnCurvePoint* out) noexcept {
+    if (size != kPackCurvePointBytes) return false;
+    out->x = static_cast<std::remove_cvref_t<decltype(out->x)>>(LoadLEF32(in + 0));
+    out->y = static_cast<std::remove_cvref_t<decltype(out->y)>>(LoadLEF32(in + 4));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBindingCurveBytes = 180ULL;
+inline constexpr std::uint64_t kPackBindingCurvePointCountOffset = 0ULL;
+inline constexpr std::uint64_t kPackBindingCurvePointsOffset = 4ULL;
+inline constexpr std::uint64_t kPackBindingCurveHandlesOffset = 68ULL;
+
+inline void SerializePackBindingCurve(const VnCurveDesc& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.pointCount));
+    static_assert(std::size(std::remove_cvref_t<decltype(row.points)>{}) == 8);
+    for (std::uint64_t i = 0; i < 8; ++i) {
+        if (i < row.pointCount) {
+            SerializePackCurvePoint(row.points[i], out + 4 + i * 8);
+        } else {
+            std::memset(out + 4 + i * 8, 0, 8);
+        }
+    }
+    static_assert(std::size(std::remove_cvref_t<decltype(row.handles)>{}) == 7);
+    const auto handlesLiveCount = std::min<std::uint64_t>(row.pointCount, 8);
+    for (std::uint64_t i = 0; i < 7; ++i) {
+        if (handlesLiveCount > 1 && i < handlesLiveCount - 1) {
+            SerializePackCurveHandles(row.handles[i], out + 68 + i * 16);
+        } else {
+            std::memset(out + 68 + i * 16, 0, 16);
+        }
+    }
+}
+
+[[nodiscard]] inline bool ParsePackBindingCurve(const std::uint8_t* in, std::uint64_t size, VnCurveDesc* out) noexcept {
+    if (size != kPackBindingCurveBytes) return false;
+    out->pointCount = static_cast<std::remove_cvref_t<decltype(out->pointCount)>>(LoadLE32(in + 0));
+    static_assert(std::size(std::remove_cvref_t<decltype(out->points)>{}) == 8);
+    for (std::uint64_t i = 0; i < 8; ++i) {
+        if (i < out->pointCount) {
+            if (!ParsePackCurvePoint(in + 4 + i * 8, kPackCurvePointBytes, &out->points[i])) return false;
+        } else {
+            for (std::uint64_t byte = 0; byte < 8; ++byte) {
+                if ((in + 4 + i * 8)[byte] != 0) return false;
+            }
+            out->points[i] = {};
+        }
+    }
+    static_assert(std::size(std::remove_cvref_t<decltype(out->handles)>{}) == 7);
+    const auto handlesLiveCount = std::min<std::uint64_t>(out->pointCount, 8);
+    for (std::uint64_t i = 0; i < 7; ++i) {
+        if (handlesLiveCount > 1 && i < handlesLiveCount - 1) {
+            if (!ParsePackCurveHandles(in + 68 + i * 16, kPackCurveHandlesBytes, &out->handles[i])) return false;
+        } else {
+            for (std::uint64_t byte = 0; byte < 16; ++byte) {
+                if ((in + 68 + i * 16)[byte] != 0) return false;
+            }
+            out->handles[i] = {};
+        }
+    }
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBindingDefinitionBytes = 228ULL;
+inline constexpr std::uint64_t kPackBindingDefinitionBindingIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackBindingDefinitionVariableIdOffset = 16ULL;
+inline constexpr std::uint64_t kPackBindingDefinitionTargetScopeKindOffset = 32ULL;
+inline constexpr std::uint64_t kPackBindingDefinitionTargetIdOffset = 36ULL;
+inline constexpr std::uint64_t kPackBindingDefinitionTransitionMsOffset = 40ULL;
+inline constexpr std::uint64_t kPackBindingDefinitionReserved44Offset = 44ULL;
+inline constexpr std::uint64_t kPackBindingDefinitionCurveOffset = 48ULL;
+
+inline void SerializePackBindingDefinition(const PackBindingDefinitionEntry& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row.bindingId);
+    StoreObjectId(out + 16, row.definition.variableId);
+    StoreLE32(out + 32, static_cast<std::uint32_t>(row.definition.targetScopeKind));
+    StoreLE32(out + 36, static_cast<std::uint32_t>(row.definition.targetId));
+    StoreLE32(out + 40, static_cast<std::uint32_t>(row.definition.transitionMs));
+    std::memset(out + 44, 0, 4);
+    SerializePackBindingCurve(row.definition.curve, out + 48);
+}
+
+[[nodiscard]] inline bool ParsePackBindingDefinition(const std::uint8_t* in, std::uint64_t size, PackBindingDefinitionEntry* out) noexcept {
+    if (size != kPackBindingDefinitionBytes) return false;
+    out->bindingId = static_cast<std::remove_cvref_t<decltype(out->bindingId)>>(LoadObjectId(in + 0));
+    out->definition.variableId = static_cast<std::remove_cvref_t<decltype(out->definition.variableId)>>(LoadObjectId(in + 16));
+    out->definition.targetScopeKind = static_cast<std::remove_cvref_t<decltype(out->definition.targetScopeKind)>>(LoadLE32(in + 32));
+    out->definition.targetId = static_cast<std::remove_cvref_t<decltype(out->definition.targetId)>>(LoadLE32(in + 36));
+    out->definition.transitionMs = static_cast<std::remove_cvref_t<decltype(out->definition.transitionMs)>>(LoadLE32(in + 40));
+    for (std::uint64_t i = 0; i < 4; ++i) {
+        if ((in + 44)[i] != 0) return false;
+    }
+    if (!ParsePackBindingCurve(in + 48, kPackBindingCurveBytes, &out->definition.curve)) return false;
+    return true;
 }
 
 inline constexpr std::uint64_t kPackBusBytes = 40ULL;
@@ -280,6 +588,68 @@ inline void StorePackBusDefinitionSnapshotHeaderChecksum(std::uint8_t* out, std:
     StoreLE64(out + 112, static_cast<std::uint64_t>(value));
 }
 
+inline constexpr std::uint64_t kPackBusEffectBytes = 320ULL;
+inline constexpr std::uint64_t kPackBusEffectBusIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackBusEffectSlotOffset = 16ULL;
+inline constexpr std::uint64_t kPackBusEffectEffectTypeOffset = 20ULL;
+inline constexpr std::uint64_t kPackBusEffectDescriptorVintageOffset = 24ULL;
+inline constexpr std::uint64_t kPackBusEffectBypassOffset = 28ULL;
+inline constexpr std::uint64_t kPackBusEffectFaderPointGuardOffset = 32ULL;
+inline constexpr std::uint64_t kPackBusEffectParamCountOffset = 36ULL;
+inline constexpr std::uint64_t kPackBusEffectParamBytesOffset = 40ULL;
+inline constexpr std::uint64_t kPackBusEffectReserved44Offset = 44ULL;
+inline constexpr std::uint64_t kPackBusEffectParamsOffset = 48ULL;
+inline constexpr std::uint64_t kPackBusEffectEffectIdOffset = 304ULL;
+
+inline void SerializePackBusEffect(const PackBusEffectEntry& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row.busId);
+    StoreLE32(out + 16, static_cast<std::uint32_t>(row.slot));
+    StoreLE32(out + 20, static_cast<std::uint32_t>(row.effectType));
+    StoreLE32(out + 24, static_cast<std::uint32_t>(row.descriptorVintage));
+    StoreLE32(out + 28, static_cast<std::uint32_t>(row.bypass));
+    StoreLE32(out + 32, static_cast<std::uint32_t>(row.faderPointGuard));
+    StoreLE32(out + 36, static_cast<std::uint32_t>(row.paramCount));
+    StoreLE32(out + 40, static_cast<std::uint32_t>(row.paramBytes));
+    std::memset(out + 44, 0, 4);
+    static_assert(std::size(std::remove_cvref_t<decltype(row.params)>{}) == 64);
+    for (std::uint64_t i = 0; i < 64; ++i) {
+        if (i < row.paramCount) {
+            StoreLEF32(out + 48 + i * 4, static_cast<float>(row.params[i]));
+        } else {
+            std::memset(out + 48 + i * 4, 0, 4);
+        }
+    }
+    StoreObjectId(out + 304, row.effectId);
+}
+
+[[nodiscard]] inline bool ParsePackBusEffect(const std::uint8_t* in, std::uint64_t size, PackBusEffectEntry* out) noexcept {
+    if (size != kPackBusEffectBytes) return false;
+    out->busId = static_cast<std::remove_cvref_t<decltype(out->busId)>>(LoadObjectId(in + 0));
+    out->slot = static_cast<std::remove_cvref_t<decltype(out->slot)>>(LoadLE32(in + 16));
+    out->effectType = static_cast<std::remove_cvref_t<decltype(out->effectType)>>(LoadLE32(in + 20));
+    out->descriptorVintage = static_cast<std::remove_cvref_t<decltype(out->descriptorVintage)>>(LoadLE32(in + 24));
+    out->bypass = static_cast<std::remove_cvref_t<decltype(out->bypass)>>(LoadLE32(in + 28));
+    out->faderPointGuard = static_cast<std::remove_cvref_t<decltype(out->faderPointGuard)>>(LoadLE32(in + 32));
+    out->paramCount = static_cast<std::remove_cvref_t<decltype(out->paramCount)>>(LoadLE32(in + 36));
+    out->paramBytes = static_cast<std::remove_cvref_t<decltype(out->paramBytes)>>(LoadLE32(in + 40));
+    for (std::uint64_t i = 0; i < 4; ++i) {
+        if ((in + 44)[i] != 0) return false;
+    }
+    static_assert(std::size(std::remove_cvref_t<decltype(out->params)>{}) == 64);
+    for (std::uint64_t i = 0; i < 64; ++i) {
+        if (i < out->paramCount) {
+            out->params[i] = static_cast<std::remove_cvref_t<decltype(out->params[i])>>(LoadLEF32(in + 48 + i * 4));
+        } else {
+            for (std::uint64_t byte = 0; byte < 4; ++byte) {
+                if ((in + 48 + i * 4)[byte] != 0) return false;
+            }
+            out->params[i] = {};
+        }
+    }
+    out->effectId = static_cast<std::remove_cvref_t<decltype(out->effectId)>>(LoadObjectId(in + 304));
+    return true;
+}
+
 inline constexpr std::uint64_t kPackBusSendBytes = 40ULL;
 inline constexpr std::uint64_t kPackBusSendFromBusIdOffset = 0ULL;
 inline constexpr std::uint64_t kPackBusSendToBusIdOffset = 16ULL;
@@ -301,6 +671,272 @@ inline void SerializePackBusSend(const PackBusSendEntry& row, std::uint8_t* out)
     for (std::uint64_t i = 0; i < 4; ++i) {
         if ((in + 36)[i] != 0) return false;
     }
+    return true;
+}
+
+inline constexpr std::uint64_t kPackEffectDynamicRouteBytes = 72ULL;
+inline constexpr std::uint64_t kPackEffectDynamicRouteTargetBusIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackEffectDynamicRouteEffectSlotOffset = 16ULL;
+inline constexpr std::uint64_t kPackEffectDynamicRouteRouteSlotOffset = 20ULL;
+inline constexpr std::uint64_t kPackEffectDynamicRouteExpectedEffectTypeOffset = 24ULL;
+inline constexpr std::uint64_t kPackEffectDynamicRouteSignalFormOffset = 28ULL;
+inline constexpr std::uint64_t kPackEffectDynamicRouteSourceKindOffset = 32ULL;
+inline constexpr std::uint64_t kPackEffectDynamicRouteTapOffset = 36ULL;
+inline constexpr std::uint64_t kPackEffectDynamicRouteSourceIdOffset = 40ULL;
+inline constexpr std::uint64_t kPackEffectDynamicRouteLevelDbOffset = 56ULL;
+inline constexpr std::uint64_t kPackEffectDynamicRouteReserved60Offset = 60ULL;
+inline constexpr std::uint64_t kPackEffectDynamicRouteReserved64Offset = 64ULL;
+
+inline void SerializePackEffectDynamicRoute(const PackEffectDynamicRouteEntry& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row.targetBusId);
+    StoreLE32(out + 16, static_cast<std::uint32_t>(row.effectSlot));
+    StoreLE32(out + 20, static_cast<std::uint32_t>(row.routeSlot));
+    StoreLE32(out + 24, static_cast<std::uint32_t>(row.expectedEffectType));
+    StoreLE32(out + 28, static_cast<std::uint32_t>(row.signalForm));
+    StoreLE32(out + 32, static_cast<std::uint32_t>(row.sourceKind));
+    StoreLE32(out + 36, static_cast<std::uint32_t>(row.tap));
+    StoreObjectId(out + 40, row.sourceId);
+    StoreLEF32(out + 56, static_cast<float>(row.levelDb));
+    std::memset(out + 60, 0, 4);
+    std::memset(out + 64, 0, 8);
+}
+
+[[nodiscard]] inline bool ParsePackEffectDynamicRoute(const std::uint8_t* in, std::uint64_t size, PackEffectDynamicRouteEntry* out) noexcept {
+    if (size != kPackEffectDynamicRouteBytes) return false;
+    out->targetBusId = static_cast<std::remove_cvref_t<decltype(out->targetBusId)>>(LoadObjectId(in + 0));
+    out->effectSlot = static_cast<std::remove_cvref_t<decltype(out->effectSlot)>>(LoadLE32(in + 16));
+    out->routeSlot = static_cast<std::remove_cvref_t<decltype(out->routeSlot)>>(LoadLE32(in + 20));
+    out->expectedEffectType = static_cast<std::remove_cvref_t<decltype(out->expectedEffectType)>>(LoadLE32(in + 24));
+    out->signalForm = static_cast<std::remove_cvref_t<decltype(out->signalForm)>>(LoadLE32(in + 28));
+    out->sourceKind = static_cast<std::remove_cvref_t<decltype(out->sourceKind)>>(LoadLE32(in + 32));
+    out->tap = static_cast<std::remove_cvref_t<decltype(out->tap)>>(LoadLE32(in + 36));
+    out->sourceId = static_cast<std::remove_cvref_t<decltype(out->sourceId)>>(LoadObjectId(in + 40));
+    out->levelDb = static_cast<std::remove_cvref_t<decltype(out->levelDb)>>(LoadLEF32(in + 56));
+    for (std::uint64_t i = 0; i < 4; ++i) {
+        if ((in + 60)[i] != 0) return false;
+    }
+    for (std::uint64_t i = 0; i < 8; ++i) {
+        if ((in + 64)[i] != 0) return false;
+    }
+    return true;
+}
+
+inline constexpr std::uint64_t kPackMediaBytes = 76ULL;
+inline constexpr std::uint64_t kPackMediaSoundIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackMediaSampleRateOffset = 16ULL;
+inline constexpr std::uint64_t kPackMediaChannelCountOffset = 20ULL;
+inline constexpr std::uint64_t kPackMediaSampleFormatOffset = 22ULL;
+inline constexpr std::uint64_t kPackMediaFrameCountOffset = 24ULL;
+inline constexpr std::uint64_t kPackMediaBlobOffsetOffset = 32ULL;
+inline constexpr std::uint64_t kPackMediaBlobBytesOffset = 40ULL;
+inline constexpr std::uint64_t kPackMediaBlobChecksumOffset = 48ULL;
+inline constexpr std::uint64_t kPackMediaFlagsOffset = 56ULL;
+inline constexpr std::uint64_t kPackMediaLoopStartFrameOffset = 60ULL;
+inline constexpr std::uint64_t kPackMediaLoopEndFrameOffset = 68ULL;
+
+inline void SerializePackMedia(const PackTocEntry& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row.soundId);
+    StoreLE32(out + 16, static_cast<std::uint32_t>(row.sampleRate));
+    StoreLE16(out + 20, static_cast<std::uint16_t>(row.channelCount));
+    StoreLE16(out + 22, static_cast<std::uint16_t>(row.sampleFormat));
+    StoreLE64(out + 24, static_cast<std::uint64_t>(row.frameCount));
+    StoreLE64(out + 32, static_cast<std::uint64_t>(row.blobOffset));
+    StoreLE64(out + 40, static_cast<std::uint64_t>(row.blobBytes));
+    StoreLE64(out + 48, static_cast<std::uint64_t>(row.blobChecksum));
+    StoreLE32(out + 56, static_cast<std::uint32_t>(row.flags));
+    StoreLE64(out + 60, static_cast<std::uint64_t>(row.loopStartFrame));
+    StoreLE64(out + 68, static_cast<std::uint64_t>(row.loopEndFrame));
+}
+
+[[nodiscard]] inline bool ParsePackMedia(const std::uint8_t* in, std::uint64_t size, PackTocEntry* out) noexcept {
+    if (size != kPackMediaBytes) return false;
+    out->soundId = static_cast<std::remove_cvref_t<decltype(out->soundId)>>(LoadObjectId(in + 0));
+    out->sampleRate = static_cast<std::remove_cvref_t<decltype(out->sampleRate)>>(LoadLE32(in + 16));
+    out->channelCount = static_cast<std::remove_cvref_t<decltype(out->channelCount)>>(LoadLE16(in + 20));
+    out->sampleFormat = static_cast<std::remove_cvref_t<decltype(out->sampleFormat)>>(LoadLE16(in + 22));
+    out->frameCount = static_cast<std::remove_cvref_t<decltype(out->frameCount)>>(LoadLE64(in + 24));
+    out->blobOffset = static_cast<std::remove_cvref_t<decltype(out->blobOffset)>>(LoadLE64(in + 32));
+    out->blobBytes = static_cast<std::remove_cvref_t<decltype(out->blobBytes)>>(LoadLE64(in + 40));
+    out->blobChecksum = static_cast<std::remove_cvref_t<decltype(out->blobChecksum)>>(LoadLE64(in + 48));
+    out->flags = static_cast<std::remove_cvref_t<decltype(out->flags)>>(LoadLE32(in + 56));
+    out->loopStartFrame = static_cast<std::remove_cvref_t<decltype(out->loopStartFrame)>>(LoadLE64(in + 60));
+    out->loopEndFrame = static_cast<std::remove_cvref_t<decltype(out->loopEndFrame)>>(LoadLE64(in + 68));
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackAttenuationCurvePoint(Buffer& buffer, const VnAttenuationCurvePoint& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackAttenuationCurvePointBytes)));
+    auto* bytes = buffer.Take(kPackAttenuationCurvePointBytes);
+    if (!bytes) return false;
+    SerializePackAttenuationCurvePoint(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackAttenuationCurvePoint(Buffer& buffer, VnAttenuationCurvePoint& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackAttenuationCurvePointBytes)));
+    const auto* bytes = buffer.Take(kPackAttenuationCurvePointBytes);
+    return bytes && ParsePackAttenuationCurvePoint(bytes, kPackAttenuationCurvePointBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackAttenuationCurvePoint(const VnAttenuationCurvePoint&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackAttenuationCurvePointBytes) return false;
+    size += kPackAttenuationCurvePointBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackCurveHandles(Buffer& buffer, const VnCurveHandlePair& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackCurveHandlesBytes)));
+    auto* bytes = buffer.Take(kPackCurveHandlesBytes);
+    if (!bytes) return false;
+    SerializePackCurveHandles(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackCurveHandles(Buffer& buffer, VnCurveHandlePair& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackCurveHandlesBytes)));
+    const auto* bytes = buffer.Take(kPackCurveHandlesBytes);
+    return bytes && ParsePackCurveHandles(bytes, kPackCurveHandlesBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackCurveHandles(const VnCurveHandlePair&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackCurveHandlesBytes) return false;
+    size += kPackCurveHandlesBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackAttenuationCurve(Buffer& buffer, const VnAttenuationCurve& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackAttenuationCurveBytes)));
+    auto* bytes = buffer.Take(kPackAttenuationCurveBytes);
+    if (!bytes) return false;
+    SerializePackAttenuationCurve(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackAttenuationCurve(Buffer& buffer, VnAttenuationCurve& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackAttenuationCurveBytes)));
+    const auto* bytes = buffer.Take(kPackAttenuationCurveBytes);
+    return bytes && ParsePackAttenuationCurve(bytes, kPackAttenuationCurveBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackAttenuationCurve(const VnAttenuationCurve&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackAttenuationCurveBytes) return false;
+    size += kPackAttenuationCurveBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackAttenuation(Buffer& buffer, const VnAttenuationDesc& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackAttenuationBytes)));
+    auto* bytes = buffer.Take(kPackAttenuationBytes);
+    if (!bytes) return false;
+    SerializePackAttenuation(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackAttenuation(Buffer& buffer, VnAttenuationDesc& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackAttenuationBytes)));
+    const auto* bytes = buffer.Take(kPackAttenuationBytes);
+    return bytes && ParsePackAttenuation(bytes, kPackAttenuationBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackAttenuation(const VnAttenuationDesc&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackAttenuationBytes) return false;
+    size += kPackAttenuationBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBindingAttachment(Buffer& buffer, const PackBindingAttachmentEntry& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBindingAttachmentBytes)));
+    auto* bytes = buffer.Take(kPackBindingAttachmentBytes);
+    if (!bytes) return false;
+    SerializePackBindingAttachment(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBindingAttachment(Buffer& buffer, PackBindingAttachmentEntry& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBindingAttachmentBytes)));
+    const auto* bytes = buffer.Take(kPackBindingAttachmentBytes);
+    return bytes && ParsePackBindingAttachment(bytes, kPackBindingAttachmentBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBindingAttachment(const PackBindingAttachmentEntry&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBindingAttachmentBytes) return false;
+    size += kPackBindingAttachmentBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackCurvePoint(Buffer& buffer, const VnCurvePoint& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackCurvePointBytes)));
+    auto* bytes = buffer.Take(kPackCurvePointBytes);
+    if (!bytes) return false;
+    SerializePackCurvePoint(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackCurvePoint(Buffer& buffer, VnCurvePoint& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackCurvePointBytes)));
+    const auto* bytes = buffer.Take(kPackCurvePointBytes);
+    return bytes && ParsePackCurvePoint(bytes, kPackCurvePointBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackCurvePoint(const VnCurvePoint&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackCurvePointBytes) return false;
+    size += kPackCurvePointBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBindingCurve(Buffer& buffer, const VnCurveDesc& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBindingCurveBytes)));
+    auto* bytes = buffer.Take(kPackBindingCurveBytes);
+    if (!bytes) return false;
+    SerializePackBindingCurve(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBindingCurve(Buffer& buffer, VnCurveDesc& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBindingCurveBytes)));
+    const auto* bytes = buffer.Take(kPackBindingCurveBytes);
+    return bytes && ParsePackBindingCurve(bytes, kPackBindingCurveBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBindingCurve(const VnCurveDesc&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBindingCurveBytes) return false;
+    size += kPackBindingCurveBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBindingDefinition(Buffer& buffer, const PackBindingDefinitionEntry& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBindingDefinitionBytes)));
+    auto* bytes = buffer.Take(kPackBindingDefinitionBytes);
+    if (!bytes) return false;
+    SerializePackBindingDefinition(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBindingDefinition(Buffer& buffer, PackBindingDefinitionEntry& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBindingDefinitionBytes)));
+    const auto* bytes = buffer.Take(kPackBindingDefinitionBytes);
+    return bytes && ParsePackBindingDefinition(bytes, kPackBindingDefinitionBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBindingDefinition(const PackBindingDefinitionEntry&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBindingDefinitionBytes) return false;
+    size += kPackBindingDefinitionBytes;
     return true;
 }
 
@@ -437,6 +1073,28 @@ template <class Buffer>
 }
 
 template <class Buffer>
+[[nodiscard]] bool AppendPackBusEffect(Buffer& buffer, const PackBusEffectEntry& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBusEffectBytes)));
+    auto* bytes = buffer.Take(kPackBusEffectBytes);
+    if (!bytes) return false;
+    SerializePackBusEffect(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBusEffect(Buffer& buffer, PackBusEffectEntry& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBusEffectBytes)));
+    const auto* bytes = buffer.Take(kPackBusEffectBytes);
+    return bytes && ParsePackBusEffect(bytes, kPackBusEffectBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBusEffect(const PackBusEffectEntry&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBusEffectBytes) return false;
+    size += kPackBusEffectBytes;
+    return true;
+}
+
+template <class Buffer>
 [[nodiscard]] bool AppendPackBusSend(Buffer& buffer, const PackBusSendEntry& row) noexcept {
     static_assert(noexcept(buffer.Take(kPackBusSendBytes)));
     auto* bytes = buffer.Take(kPackBusSendBytes);
@@ -455,6 +1113,50 @@ template <class Buffer>
 [[nodiscard]] inline bool MeasurePackBusSend(const PackBusSendEntry&, std::uint64_t& size) noexcept {
     if (size > UINT64_MAX - kPackBusSendBytes) return false;
     size += kPackBusSendBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackEffectDynamicRoute(Buffer& buffer, const PackEffectDynamicRouteEntry& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackEffectDynamicRouteBytes)));
+    auto* bytes = buffer.Take(kPackEffectDynamicRouteBytes);
+    if (!bytes) return false;
+    SerializePackEffectDynamicRoute(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackEffectDynamicRoute(Buffer& buffer, PackEffectDynamicRouteEntry& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackEffectDynamicRouteBytes)));
+    const auto* bytes = buffer.Take(kPackEffectDynamicRouteBytes);
+    return bytes && ParsePackEffectDynamicRoute(bytes, kPackEffectDynamicRouteBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackEffectDynamicRoute(const PackEffectDynamicRouteEntry&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackEffectDynamicRouteBytes) return false;
+    size += kPackEffectDynamicRouteBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackMedia(Buffer& buffer, const PackTocEntry& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackMediaBytes)));
+    auto* bytes = buffer.Take(kPackMediaBytes);
+    if (!bytes) return false;
+    SerializePackMedia(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackMedia(Buffer& buffer, PackTocEntry& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackMediaBytes)));
+    const auto* bytes = buffer.Take(kPackMediaBytes);
+    return bytes && ParsePackMedia(bytes, kPackMediaBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackMedia(const PackTocEntry&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackMediaBytes) return false;
+    size += kPackMediaBytes;
     return true;
 }
 

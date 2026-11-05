@@ -238,9 +238,9 @@ void ReadPackFacts(const std::string& packPath,
     *outFileBytes = header.fileBytes;
     *outTocChecksum = header.tocChecksum;
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
-        const harken::PackTocEntry toc = harken::ParsePackTocEntry(
+        const harken::PackTocEntry toc = harken::ReadPackMedia(
             bytes.data() + header.tocOffset +
-            i * harken::kPackTocEntryBytes);
+            i * harken::kPackMediaBytes);
         ASSERT_LE(toc.blobOffset + toc.blobBytes, bytes.size());
         EXPECT_EQ(toc.blobChecksum,
                   harken::Fnv1a64(bytes.data() + toc.blobOffset,
@@ -574,11 +574,11 @@ TEST(PackcPipeline, DirectMediaEntriesMatchFileCompilation) {
             ASSERT_TRUE(ReadFileBytes(packPath, &packed));
             harken::PackHeader header;
             ASSERT_TRUE(harken::ParsePackHeader(packed.data(), &header));
-            const auto toc = harken::ParsePackTocEntry(packed.data() + header.tocOffset);
-            std::vector<std::uint8_t> expected(harken::kPackTocEntryBytes + toc.blobBytes);
-            std::memcpy(expected.data(), packed.data() + header.tocOffset, harken::kPackTocEntryBytes);
+            const auto toc = harken::ReadPackMedia(packed.data() + header.tocOffset);
+            std::vector<std::uint8_t> expected(harken::kPackMediaBytes + toc.blobBytes);
+            std::memcpy(expected.data(), packed.data() + header.tocOffset, harken::kPackMediaBytes);
             harken::StoreLE64(expected.data() + 32, 0);
-            std::memcpy(expected.data() + harken::kPackTocEntryBytes,
+            std::memcpy(expected.data() + harken::kPackMediaBytes,
                         packed.data() + toc.blobOffset, static_cast<std::size_t>(toc.blobBytes));
             auto actual = entries.front().payload;
             ASSERT_NE(nullptr, entries.front().media);
@@ -2184,19 +2184,15 @@ TEST(PackcPipeline, AttenuationAlwaysWritesCurrentVintage) {
             harken::ParsePackV2DirectoryEntry(
                 bytes.data() + harken::kPackV2HeaderBytes);
         ASSERT_EQ(harken::kPackEntryKindAttenuation, attenuationEntry.kind);
-        EXPECT_EQ(harken::kPackV2AuthoredToneSchemaVintage,
+        EXPECT_EQ(harken::kPackAttenuationVintage,
                   attenuationEntry.vintage);
-        EXPECT_EQ(harken::kPackV3AttenuationPayloadBytes,
+        EXPECT_EQ(harken::kPackAttenuationBytes,
                   attenuationEntry.size);
         VnAttenuationDesc v3{};
-        ASSERT_TRUE(harken::ParsePackV3Attenuation(
+        ASSERT_TRUE(harken::ReadPackAttenuation(
             bytes.data() + attenuationEntry.offset, attenuationEntry.size,
             &v3));
         EXPECT_FLOAT_EQ(expectedFrequency, v3.proximityFrequency);
-        VnAttenuationDesc v2{};
-        EXPECT_FALSE(harken::ParsePackV2Attenuation(
-            bytes.data() + attenuationEntry.offset, attenuationEntry.size,
-            &v2));
     };
 
     expectAttenuationVintage("pipeline_atten_current_default", "", 250.0f);
@@ -2291,15 +2287,15 @@ TEST(PackcPipeline, BusEffectAndDynamicRouteUseKindsTwelveAndThirteen) {
             bytes.data() + harken::kPackV2HeaderBytes +
             3 * harken::kPackV2DirectoryEntryBytes);
     EXPECT_EQ(harken::kPackEntryKindBusEffect, effectDir.kind);
-    EXPECT_EQ(harken::kPackV2DynamicSchemaVintage, effectDir.vintage);
-    EXPECT_EQ(harken::kPackV2BusEffectPayloadBytes, effectDir.size);
+    EXPECT_EQ(harken::kPackBusEffectVintage, effectDir.vintage);
+    EXPECT_EQ(harken::kPackBusEffectBytes, effectDir.size);
     EXPECT_EQ(harken::kPackEntryKindEffectDynamicRoute, routeDir.kind);
-    EXPECT_EQ(harken::kPackV2DynamicSchemaVintage, routeDir.vintage);
-    EXPECT_EQ(harken::kPackV2EffectDynamicRoutePayloadBytes,
+    EXPECT_EQ(harken::kPackEffectDynamicRouteVintage, routeDir.vintage);
+    EXPECT_EQ(harken::kPackEffectDynamicRouteBytes,
               routeDir.size);
 
     harken::PackBusEffectEntry effect;
-    ASSERT_TRUE(harken::ParsePackV2BusEffect(
+    ASSERT_TRUE(harken::ReadPackBusEffect(
         bytes.data() + effectDir.offset, effectDir.size, &effect));
     EXPECT_EQ(harkentest::ObjectId(4101u), effect.busId);
     EXPECT_EQ(2u, effect.slot);
@@ -2309,7 +2305,7 @@ TEST(PackcPipeline, BusEffectAndDynamicRouteUseKindsTwelveAndThirteen) {
     EXPECT_FLOAT_EQ(1.5f, effect.params[5]);
 
     harken::PackEffectDynamicRouteEntry route;
-    ASSERT_TRUE(harken::ParsePackV2EffectDynamicRoute(
+    ASSERT_TRUE(harken::ParsePackEffectDynamicRoute(
         bytes.data() + routeDir.offset, routeDir.size, &route));
     EXPECT_EQ(harkentest::ObjectId(4101u), route.targetBusId);
     EXPECT_EQ(2u, route.effectSlot);

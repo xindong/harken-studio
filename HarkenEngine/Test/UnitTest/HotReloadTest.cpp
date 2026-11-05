@@ -21,6 +21,7 @@
 #include "harken/core/LogRing.h"
 #include "harken/core/StableRowStorage.h"
 #include "harken/media/PackFormat.h"
+#include "harken/media/PackFormatV2.h"
 #include "harken/media/StreamManager.h"
 
 #include <cstdint>
@@ -103,7 +104,7 @@ std::vector<std::uint8_t> BuildPackBytes(
     const std::vector<PackEntrySpec>& specs) {
     const std::uint64_t tocOffset = harken::kPackHeaderBytes;
     const std::uint64_t tocBytes =
-        static_cast<std::uint64_t>(specs.size()) * harken::kPackTocEntryBytes;
+        static_cast<std::uint64_t>(specs.size()) * harken::kPackMediaBytes;
     std::vector<std::uint64_t> blobOffsets(specs.size());
     std::uint64_t cursor = AlignUp64(tocOffset + tocBytes);
     std::uint64_t fileBytes = tocOffset + tocBytes;
@@ -136,8 +137,8 @@ std::vector<std::uint8_t> BuildPackBytes(
         entry.flags = 0;
         entry.loopStartFrame = 0;
         entry.loopEndFrame = 0;
-        harken::SerializePackTocEntry(
-            entry, toc.data() + i * harken::kPackTocEntryBytes);
+        harken::SerializePackMedia(
+            entry, toc.data() + i * harken::kPackMediaBytes);
     }
     std::memcpy(bytes.data() + tocOffset, toc.data(), toc.size());
     harken::PackHeader header;

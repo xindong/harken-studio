@@ -98,21 +98,14 @@ bool KindLegalForPack(std::uint32_t entryKind, std::uint32_t packKind) {
     }
 }
 
-bool EntryVintageLegal(std::uint32_t entryKind,
-                         std::uint32_t vintage) {
+bool EntryVintageLegal(std::uint32_t entryKind, std::uint32_t vintage) {
     switch (entryKind) {
-    case kPackEntryKindBusEffect:
-    case kPackEntryKindEffectDynamicRoute:
-        return vintage == kPackV2DynamicSchemaVintage;
     case kPackEntryKindVoiceRecipe:
         return vintage == kPackV2PlaybackRecipeSchemaVintage;
-    case kPackEntryKindAttenuation:
-        return vintage == kPackV2AuthoredToneSchemaVintage;
-    case kPackEntryKindBus:
-    case kPackEntryKindBusSend:
-        return VintageLegalForKind(entryKind, vintage);
-    default:
+    case kPackEntryKindContainer:
         return vintage == kPackV2SchemaVintage;
+    default:
+        return VintageLegalForKind(entryKind, vintage);
     }
 }
 
@@ -319,10 +312,10 @@ VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
             {entry.kind, entry.id, entry.payloadChecksum});
         switch (entry.kind) {
         case kPackEntryKindMedia: {
-            if (entry.size != kPackV2MediaPayloadBytes) {
+            if (entry.size != kPackMediaBytes) {
                 return VN_BAD_PACK;
             }
-            const PackTocEntry media = ParsePackTocEntry(payload);
+            const PackTocEntry media = ReadPackMedia(payload);
             if (media.soundId != entry.id ||
                 !ValidateV2MediaEntry(media, fileBytes, dirEnd)) {
                 return VN_BAD_PACK;
@@ -365,7 +358,7 @@ VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
         }
         case kPackEntryKindBusEffect: {
             PackBusEffectEntry effect;
-            if (!ParsePackV2BusEffect(payload, entry.size, &effect) ||
+            if (!ReadPackBusEffect(payload, entry.size, &effect) ||
                 entry.relationOrdinal != busEffectOrdinal || effect.busId == VnObjectId{} ||
                 effect.bypass > 1 ||
                 effect.slot >= kMaxFxSlotsPerBus ||
@@ -391,7 +384,7 @@ VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
         }
         case kPackEntryKindEffectDynamicRoute: {
             PackEffectDynamicRouteEntry route;
-            if (!ParsePackV2EffectDynamicRoute(payload, entry.size,
+            if (!ParsePackEffectDynamicRoute(payload, entry.size,
                                                &route) ||
                 entry.relationOrdinal != dynamicRouteOrdinal ||
                 route.targetBusId == VnObjectId{} || route.sourceId == VnObjectId{} ||
@@ -412,8 +405,7 @@ VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
         case kPackEntryKindAttenuation: {
             PackLogicImage::Attenuation attenuation;
             attenuation.id = entry.id;
-            if (!ParsePackAttenuation(payload, entry.size, header.formatVersion,
-                                        &attenuation.desc)) {
+            if (!ReadPackAttenuation(payload, entry.size, &attenuation.desc)) {
                 return VN_BAD_PACK;
             }
             if (!std::isfinite(attenuation.desc.proximityFrequency) ||
@@ -428,7 +420,7 @@ VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
             return VN_BAD_PACK;
         case kPackEntryKindBindingDefinition: {
             PackLogicImage::BindingDefinition definition;
-            if (!ParsePackV2BindingDefinition(payload, entry.size,
+            if (!ReadPackBindingDefinition(payload, entry.size,
                                               &definition.id,
                                               &definition.desc) ||
                 definition.id != entry.id
@@ -456,7 +448,7 @@ VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
         }
         case kPackEntryKindBindingAttachment: {
             PackBindingAttachmentEntry attachment;
-            if (!ParsePackV2BindingAttachment(payload, entry.size,
+            if (!ParsePackBindingAttachment(payload, entry.size,
                                               &attachment) ||
                 entry.relationOrdinal != attachmentOrdinal) {
                 return VN_BAD_PACK;
@@ -1288,11 +1280,11 @@ struct SpanCanonicalSource {
                 // Only bounded metadata is inspected ahead. Its original
                 // vintage, payload and blob checks still run in order.
                 if (next.kind == kPackEntryKindMedia &&
-                    next.size == kPackV2MediaPayloadBytes &&
+                    next.size == kPackMediaBytes &&
                     next.offset >= dirEnd && next.offset <= fileBytes &&
                     next.size <= fileBytes - next.offset &&
                     next.offset % kPackV2PayloadAlign == 0) {
-                    const auto nextMedia = ParsePackTocEntry(bytes + next.offset);
+                    const auto nextMedia = ReadPackMedia(bytes + next.offset);
                     if (nextMedia.soundId == next.id &&
                         ValidateV2MediaEntry(nextMedia, fileBytes, dirEnd)) {
                         const auto hashes = Fnv1a64Pair(
@@ -1857,10 +1849,10 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
             break;
         }
         case kPackEntryKindMedia: {
-            if (entry.size != kPackV2MediaPayloadBytes) {
+            if (entry.size != kPackMediaBytes) {
                 return VN_BAD_PACK;
             }
-            const PackTocEntry media = ParsePackTocEntry(payload);
+            const PackTocEntry media = ReadPackMedia(payload);
             if (media.soundId != entry.id ||
                 !ValidateV2MediaEntry(media, fileBytes, dirEnd)) {
                 return VN_BAD_PACK;
@@ -1872,7 +1864,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
         }
         case kPackEntryKindBusEffect: {
             PackBusEffectEntry effect;
-            if (!ParsePackV2BusEffect(payload, entry.size, &effect) ||
+            if (!ReadPackBusEffect(payload, entry.size, &effect) ||
                 entry.relationOrdinal != image.busEffects.size() || effect.busId == VnObjectId{} ||
                 effect.bypass > 1 || effect.slot >= kMaxFxSlotsPerBus ||
                 effect.faderPointGuard > kMaxFxSlotsPerBus) {
@@ -1893,7 +1885,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
         }
         case kPackEntryKindEffectDynamicRoute: {
             PackEffectDynamicRouteEntry route;
-            if (!ParsePackV2EffectDynamicRoute(payload, entry.size, &route) ||
+            if (!ParsePackEffectDynamicRoute(payload, entry.size, &route) ||
                 entry.relationOrdinal != image.dynamicRoutes.size() || route.targetBusId == VnObjectId{} ||
                 route.sourceId == VnObjectId{} || route.expectedEffectType != VN_EFFECT_COMPRESSOR ||
                 route.signalForm != VN_DYNAMIC_SIGNAL_RAW_AUDIO ||
@@ -1932,8 +1924,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
         case kPackEntryKindAttenuation: {
             PackLogicImage::Attenuation attenuation;
             attenuation.id = entry.id;
-            if (!ParsePackAttenuation(payload, entry.size, header.formatVersion,
-                                        &attenuation.desc)) {
+            if (!ReadPackAttenuation(payload, entry.size, &attenuation.desc)) {
                 return VN_BAD_PACK;
             }
             image.attenuations.push_back(attenuation);
@@ -1941,7 +1932,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
         }
         case kPackEntryKindBindingDefinition: {
             PackLogicImage::BindingDefinition definition;
-            if (!ParsePackV2BindingDefinition(payload, entry.size,
+            if (!ReadPackBindingDefinition(payload, entry.size,
                                               &definition.id,
                                               &definition.desc) ||
                 definition.id != entry.id ||
@@ -1968,7 +1959,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
         }
         case kPackEntryKindBindingAttachment: {
             PackBindingAttachmentEntry attachment;
-            if (!ParsePackV2BindingAttachment(payload, entry.size,
+            if (!ParsePackBindingAttachment(payload, entry.size,
                                               &attachment) ||
                 entry.relationOrdinal != attachmentOrdinal) {
                 return VN_BAD_PACK;

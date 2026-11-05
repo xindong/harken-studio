@@ -760,7 +760,7 @@ TEST(PackCanonicalFormat, BoundedFileKeepsDirectoryOrderAndFinalSampleIdentity) 
     auto* lastRecord = firstRecord + 2 * kPackV2DirectoryEntryBytes;
     const auto first = ParsePackV2DirectoryEntry(firstRecord);
     const auto last = ParsePackV2DirectoryEntry(lastRecord);
-    auto media = ParsePackTocEntry(bytes.data() + first.offset);
+    auto media = ReadPackMedia(bytes.data() + first.offset);
     media.channelCount = 2;
     media.frameCount /= 2;
     for (std::size_t i = 0; i < media.blobBytes / sizeof(float); ++i) {
@@ -768,13 +768,13 @@ TEST(PackCanonicalFormat, BoundedFileKeepsDirectoryOrderAndFinalSampleIdentity) 
         std::memcpy(bytes.data() + media.blobOffset + i * sizeof(float), &sample, sizeof(sample));
     }
     media.blobChecksum = Fnv1a64(bytes.data() + media.blobOffset, media.blobBytes);
-    SerializePackTocEntry(media, bytes.data() + first.offset);
-    auto finalMedia = ParsePackTocEntry(bytes.data() + last.offset);
+    SerializePackMedia(media, bytes.data() + first.offset);
+    auto finalMedia = ReadPackMedia(bytes.data() + last.offset);
     const float negativeZero = -0.0f;
     std::memcpy(bytes.data() + finalMedia.blobOffset + finalMedia.blobBytes - sizeof(float),
                 &negativeZero, sizeof(float));
     finalMedia.blobChecksum = Fnv1a64(bytes.data() + finalMedia.blobOffset, finalMedia.blobBytes);
-    SerializePackTocEntry(finalMedia, bytes.data() + last.offset);
+    SerializePackMedia(finalMedia, bytes.data() + last.offset);
     SerializePackV2DirectoryEntry(last, firstRecord);
     SerializePackV2DirectoryEntry(first, lastRecord);
     RecomputeChecksums(&bytes);
@@ -828,7 +828,7 @@ TEST(PackCanonicalFormat, BoundedFileKeepsDirectoryOrderAndFinalSampleIdentity) 
     std::memcpy(bytes.data() + finalMedia.blobOffset + finalMedia.blobBytes - sizeof(float),
                 &changedLast, sizeof(float));
     finalMedia.blobChecksum = Fnv1a64(bytes.data() + finalMedia.blobOffset, finalMedia.blobBytes);
-    SerializePackTocEntry(finalMedia, bytes.data() + last.offset);
+    SerializePackMedia(finalMedia, bytes.data() + last.offset);
     RecomputeChecksums(&bytes);
     ASSERT_TRUE(harkentest::packfoundation::WriteFile(path, bytes));
     bool retry = false;
@@ -849,8 +849,8 @@ TEST(PackCanonicalFormat, BoundedFileSharesOnlyExactDuplicateMediaWithinFile) {
         auto* secondRecord = firstRecord + kPackV2DirectoryEntryBytes;
         const auto first = ParsePackV2DirectoryEntry(firstRecord);
         auto second = ParsePackV2DirectoryEntry(secondRecord);
-        const auto firstMedia = ParsePackTocEntry(bytes.data() + first.offset);
-        auto secondMedia = ParsePackTocEntry(bytes.data() + second.offset);
+        const auto firstMedia = ReadPackMedia(bytes.data() + first.offset);
+        auto secondMedia = ReadPackMedia(bytes.data() + second.offset);
         second.id = first.id;
         secondMedia.soundId = firstMedia.soundId;
         std::memcpy(bytes.data() + secondMedia.blobOffset,
@@ -859,7 +859,7 @@ TEST(PackCanonicalFormat, BoundedFileSharesOnlyExactDuplicateMediaWithinFile) {
         std::memcpy(bytes.data() + secondMedia.blobOffset + secondMedia.blobBytes - sizeof(float),
                     &last, sizeof(last));
         secondMedia.blobChecksum = Fnv1a64(bytes.data() + secondMedia.blobOffset, secondMedia.blobBytes);
-        SerializePackTocEntry(secondMedia, bytes.data() + second.offset);
+        SerializePackMedia(secondMedia, bytes.data() + second.offset);
         SerializePackV2DirectoryEntry(second, firstRecord);
         SerializePackV2DirectoryEntry(first, secondRecord);
         RecomputeChecksums(&bytes);
@@ -1062,7 +1062,7 @@ TEST(PackCanonicalFormat, AdjacentMediaRejectNextPayloadAndBlobBounds) {
             ++next.offset;
             break;
         default: {
-            auto media = ParsePackTocEntry(bytes.data() + next.offset);
+            auto media = ReadPackMedia(bytes.data() + next.offset);
             if (invalid == 5) media.blobOffset = 0;
             if (invalid == 6)
                 media.blobOffset = AlignUp(bytes.size(), kPackBlobAlign);
@@ -1071,7 +1071,7 @@ TEST(PackCanonicalFormat, AdjacentMediaRejectNextPayloadAndBlobBounds) {
                 media.blobBytes += sizeof(float);
             }
             if (invalid == 8) ++media.blobOffset;
-            SerializePackTocEntry(media, bytes.data() + next.offset);
+            SerializePackMedia(media, bytes.data() + next.offset);
             next.payloadChecksum = Fnv1a64(bytes.data() + next.offset, next.size);
             break;
         }
@@ -1413,26 +1413,26 @@ TEST(PackCanonicalFormat, AttenuationPayloadMatchesOuterVersionExactly) {
     desc.airAbsorptionNearHz = desc.airAbsorptionFarHz = 20000;
     desc.proximityFrequency = 400;
     for (const auto version : {3u, kPackFormatVersion, kPackFormatVersion + 1}) {
-        for (const auto size : {kPackV3AttenuationPayloadBytes - 1,
-                               kPackV3AttenuationPayloadBytes,
-                               kPackV3AttenuationPayloadBytes + 1,
-                               kPackV3AttenuationPayloadBytes + kPackV2CurveWireBytes}) {
+        for (const auto size : {kPackAttenuationBytes - 1,
+                               kPackAttenuationBytes,
+                               kPackAttenuationBytes + 1,
+                               kPackAttenuationBytes + kPackAttenuationCurveBytes}) {
             ImageBuilder builder(kPackKindInit);
             auto requirement = RequirementPayload(11, 1, 0,
                                                    kPackCanonicalEntryVintage);
             StampRequirementCoverage(&requirement);
             builder.AddEntry(kPackEntryKindPackRequirementBlock, 11,
                              std::move(requirement), kPackCanonicalEntryVintage);
-            std::vector<std::uint8_t> payload(kPackV3AttenuationPayloadBytes);
-            SerializePackV3Attenuation(desc, payload.data());
+            std::vector<std::uint8_t> payload(kPackAttenuationBytes);
+            SerializePackAttenuation(desc, payload.data());
             payload.resize(size);
             builder.AddEntry(kPackEntryKindAttenuation, 500, std::move(payload),
-                             kPackV2AuthoredToneSchemaVintage);
+                             kPackAttenuationVintage);
             auto bytes = builder.Build();
             StoreLE32(bytes.data() + 4, version);
             PackCanonicalImage image;
             const bool valid = version == kPackFormatVersion &&
-                               size == kPackV3AttenuationPayloadBytes;
+                               size == kPackAttenuationBytes;
             ASSERT_EQ(valid ? VN_OK : VN_BAD_PACK,
                       ParsePackCanonicalImage(bytes.data(), bytes.size(), &image))
                 << version << "/" << size;
@@ -1457,8 +1457,8 @@ TEST(PackCanonicalFormat, RetiredAttenuationVintageIsIncompatible) {
     desc.maxDistance = 100.0f;
     desc.airAbsorptionNearHz = 20000.0f;
     desc.airAbsorptionFarHz = 20000.0f;
-    std::vector<std::uint8_t> payload(kPackV2AttenuationPayloadBytes);
-    SerializePackV2Attenuation(desc, payload.data());
+    std::vector<std::uint8_t> payload(kPackAttenuationBytes);
+    SerializePackAttenuation(desc, payload.data());
     builder.AddEntry(kPackEntryKindAttenuation, 500, std::move(payload),
                      kPackV2SchemaVintage);
     const std::vector<std::uint8_t> bytes = builder.Build();
@@ -1541,8 +1541,7 @@ TEST(PackCanonicalFormat, KindTenAndLegacyVariableKindsStayBadPack) {
                   ParsePackV2Image(action.Build().data(), action.Build().size(),
                                    &image));
         ImageBuilder variable(packKind);
-        std::vector<std::uint8_t> payload(kPackV2DiscreteVariablePayloadBytes);
-        SerializePackV2DiscreteVariable(harkentest::ObjectId(920), payload.data());
+        std::vector<std::uint8_t> payload{0};
         variable.AddEntry(kPackEntryKindDiscreteVariable, 920, std::move(payload),
                           kPackV2SchemaVintage);
         EXPECT_EQ(VN_BAD_PACK,
@@ -1769,16 +1768,16 @@ std::vector<std::uint8_t> WithCanonicalScopeRows(
     }
     if ((rows & 1u) != 0) {
         const VnBindingDesc desc = MakeCanonicalVoiceBindingDesc(scope);
-        std::vector<std::uint8_t> payload(kPackV2BindingDefinitionPayloadBytes);
-        SerializePackV2BindingDefinition(harkentest::ObjectId(8401), desc, payload.data());
+        std::vector<std::uint8_t> payload(kPackBindingDefinitionBytes);
+        WritePackBindingDefinition(harkentest::ObjectId(8401), desc, payload.data());
         builder.AddEntry(kPackEntryKindBindingDefinition, harkentest::ObjectId(8401),
                          std::move(payload), kPackV2SchemaVintage);
     }
     if ((rows & 2u) != 0) {
         const PackBindingAttachmentEntry attachment =
             MakeCanonicalVoiceAttachment(scope);
-        std::vector<std::uint8_t> payload(kPackV2BindingAttachmentPayloadBytes);
-        SerializePackV2BindingAttachment(attachment, payload.data());
+        std::vector<std::uint8_t> payload(kPackBindingAttachmentBytes);
+        SerializePackBindingAttachment(attachment, payload.data());
         builder.AddEntry(kPackEntryKindBindingAttachment, 0, std::move(payload),
                          kPackV2SchemaVintage);
     }
@@ -1796,8 +1795,8 @@ TEST(PackCanonicalFormat, BindingTransitionRangeIsRejectedAtBinaryAdmission) {
         desc.curve.structSize = sizeof(desc.curve);
         desc.curve.pointCount = 1;
         desc.curve.points[0] = {0.0f, 0.0f};
-        std::vector<std::uint8_t> payload(kPackV2BindingDefinitionPayloadBytes);
-        SerializePackV2BindingDefinition(harkentest::ObjectId(8401), desc, payload.data());
+        std::vector<std::uint8_t> payload(kPackBindingDefinitionBytes);
+        WritePackBindingDefinition(harkentest::ObjectId(8401), desc, payload.data());
         std::uint64_t contentBodyBytes = 0;
         const auto original =
             harkentest::packfoundation::BuildContent(1, 0, 0, &contentBodyBytes);

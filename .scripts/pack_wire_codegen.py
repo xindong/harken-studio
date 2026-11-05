@@ -23,6 +23,8 @@ IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 CPP_TYPE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*\Z")
 BYTE_ACCESS = re.compile(r"\b(?:StoreLE\w*|LoadLE\w*|StoreObjectId|LoadObjectId|Append(?:U8|U16|U32|U64|F32|ObjectId))\s*\(")
 SOURCE_SCANS = {
+    "HarkenEngine/Source/Runtime/media/include/harken/media/PackFormat.h": ("SerializePackTocEntry", "ParsePackTocEntry"),
+    "HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/PackFormat.h": ("SerializePackTocEntry", "ParsePackTocEntry"),
     "HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/BusSnapshot.h": (
         "StampSnapshotChecksum", "NeutralMasterSnapshotImage", "NeutralMasterSnapshotTriple",
         "NeutralMasterSnapshotPayload", "VolumeBusSnapshotPayload",
@@ -34,10 +36,24 @@ SOURCE_SCANS = {
     "HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/PackFormatV2.h": (
         "SerializePackBus", "ParsePackBus", "SerializePackV6Bus", "ParsePackV6Bus",
         "SerializePackBusSend", "ParsePackBusSend", "SerializePackV2BusSend", "ParsePackV2BusSend",
+        "SerializePackBusEffect", "ParsePackBusEffect", "SerializePackV2BusEffect", "ParsePackV2BusEffect",
+        "SerializePackEffectDynamicRoute", "ParsePackEffectDynamicRoute", "SerializePackV2EffectDynamicRoute", "ParsePackV2EffectDynamicRoute",
+        "SerializePackAttenuation", "ParsePackAttenuation", "SerializePackV2Attenuation", "ParsePackV2Attenuation", "SerializePackV3Attenuation", "ParsePackV3Attenuation",
+        "SerializePackBindingDefinition", "ParsePackBindingDefinition", "SerializePackV2BindingDefinition", "ParsePackV2BindingDefinition",
+        "SerializePackBindingAttachment", "ParsePackBindingAttachment", "SerializePackV2BindingAttachment", "ParsePackV2BindingAttachment",
+        "SerializePackV2AttenuationCurve", "ParsePackV2AttenuationCurve", "SerializePackV2BindingCurve", "ParsePackV2BindingCurve",
+        "SerializePackV2DiscreteVariable", "ParsePackV2DiscreteVariable", "SerializePackV2MeterWiring", "ParsePackV2MeterWiring",
     ),
     "HarkenEngine/Source/Runtime/media/include/harken/media/PackFormatV2.h": (
         "SerializePackBus", "ParsePackBus", "SerializePackV6Bus", "ParsePackV6Bus",
         "SerializePackBusSend", "ParsePackBusSend", "SerializePackV2BusSend", "ParsePackV2BusSend",
+        "SerializePackBusEffect", "ParsePackBusEffect", "SerializePackV2BusEffect", "ParsePackV2BusEffect",
+        "SerializePackEffectDynamicRoute", "ParsePackEffectDynamicRoute", "SerializePackV2EffectDynamicRoute", "ParsePackV2EffectDynamicRoute",
+        "SerializePackAttenuation", "ParsePackAttenuation", "SerializePackV2Attenuation", "ParsePackV2Attenuation", "SerializePackV3Attenuation", "ParsePackV3Attenuation",
+        "SerializePackBindingDefinition", "ParsePackBindingDefinition", "SerializePackV2BindingDefinition", "ParsePackV2BindingDefinition",
+        "SerializePackBindingAttachment", "ParsePackBindingAttachment", "SerializePackV2BindingAttachment", "ParsePackV2BindingAttachment",
+        "SerializePackV2AttenuationCurve", "ParsePackV2AttenuationCurve", "SerializePackV2BindingCurve", "ParsePackV2BindingCurve",
+        "SerializePackV2DiscreteVariable", "ParsePackV2DiscreteVariable", "SerializePackV2MeterWiring", "ParsePackV2MeterWiring",
     ),
 }
 

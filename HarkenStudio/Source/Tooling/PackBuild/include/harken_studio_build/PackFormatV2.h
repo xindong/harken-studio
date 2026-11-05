@@ -26,17 +26,9 @@ inline constexpr std::uint32_t kPackKindResident = 0;
 inline constexpr std::uint32_t kPackKindContent = 1;
 inline constexpr std::uint32_t kPackKindInit = 2;
 inline constexpr std::uint32_t kPackKindCanonicalContent = 3;
-inline constexpr std::uint32_t kPackEntryKindMedia = 1;
-inline constexpr std::uint32_t kPackEntryKindAttenuation = 4;
-inline constexpr std::uint32_t kPackEntryKindDiscreteVariable = 5;
-inline constexpr std::uint32_t kPackEntryKindMeterWiring = 6;
-inline constexpr std::uint32_t kPackEntryKindBindingDefinition = 7;
-inline constexpr std::uint32_t kPackEntryKindBindingAttachment = 8;
 inline constexpr std::uint32_t kPackEntryKindContainer = 9;
 inline constexpr std::uint32_t kPackEntryKindAction = 10;
 inline constexpr std::uint32_t kPackEntryKindVoiceRecipe = 11;
-inline constexpr std::uint32_t kPackEntryKindBusEffect = 12;
-inline constexpr std::uint32_t kPackEntryKindEffectDynamicRoute = 13;
 inline constexpr std::uint32_t kPackEntryKindInitRoutingCatalog = 20;
 inline constexpr std::uint32_t kPackEntryKindCanonicalDefinitionPartition = 21;
 inline constexpr std::uint32_t kPackEntryKindPackRequirementBlock = 22;
@@ -61,24 +53,9 @@ inline constexpr std::uint32_t kGameplayCatalogRetiredReasonReused = 3;
 inline constexpr std::uint32_t kGameplayCatalogFlagHasRetired = 1u;
 inline constexpr std::uint32_t kGameplayCatalogActiveFlagOptional = 1u;
 inline constexpr std::uint32_t kPackV2SchemaVintage = 2;
-inline constexpr std::uint32_t kPackV2AuthoredToneSchemaVintage = 3;
 inline constexpr std::uint32_t kPackV2SpatialRecipeSchemaVintage = 4;
 inline constexpr std::uint32_t kPackV2PlaybackRecipeSchemaVintage = 5;
-inline constexpr std::uint32_t kPackV2DynamicSchemaVintage = 1;
 inline constexpr std::uint64_t kPackV2PayloadAlign = 8;
-inline constexpr std::uint64_t kPackV2MediaPayloadBytes =
-    kPackTocEntryBytes;                                    // the v1 record
-inline constexpr std::uint64_t kPackV2CurveWireBytes = 184;
-inline constexpr std::uint64_t kPackV2AttenuationPayloadBytes =
-    48 + 3 * kPackV2CurveWireBytes;                        // 600
-inline constexpr std::uint64_t kPackV3AttenuationPayloadBytes =
-    kPackV2AttenuationPayloadBytes + 8;                    // 608
-inline constexpr std::uint64_t kPackV2DiscreteVariablePayloadBytes = 16;
-inline constexpr std::uint64_t kPackV2MeterWiringPayloadBytes = 40;
-inline constexpr std::uint64_t kPackV2BindingCurveWireBytes = 180;
-inline constexpr std::uint64_t kPackV2BindingDefinitionPayloadBytes =
-    48 + kPackV2BindingCurveWireBytes;                     // 212
-inline constexpr std::uint64_t kPackV2BindingAttachmentPayloadBytes = 40;
 inline constexpr std::uint64_t kPackV2ContainerHeaderBytes = 48;
 inline constexpr std::uint64_t kPackV2ContainerChildBytes = 32;
 inline constexpr std::uint32_t kPackV2VoiceRecipeMaxInstalls = 8;
@@ -92,8 +69,6 @@ inline constexpr std::uint64_t kPackV5VoiceRecipePlaybackBytes = 8;
 inline constexpr std::uint64_t kPackV2VoiceRecipeInstallBytes =
     48 + static_cast<std::uint64_t>(kPackV2VoiceRecipeMaxParams) * 4;
 inline constexpr std::uint64_t kPackV2VoiceRecipeBindingBytes = 16;
-inline constexpr std::uint64_t kPackV2BusEffectPayloadBytes = 320;
-inline constexpr std::uint64_t kPackV2EffectDynamicRoutePayloadBytes = 72;
 inline constexpr std::uint32_t kPackVoiceToneLowpassEnabled = 1u << 0;
 inline constexpr std::uint32_t kPackVoiceToneHighpassEnabled = 1u << 1;
 inline constexpr std::uint32_t kPackVoiceToneLowShelfEnabled = 1u << 2;
@@ -191,11 +166,10 @@ struct PackBusSendEntry {
     float levelDb = 0.0f;
 };
 
-struct PackMeterWiringEntry {
-    harkenstudio::ObjectId busId{};
-    harkenstudio::ObjectId variableId{};
-    std::uint32_t attackMs = 0;
-    std::uint32_t releaseMs = 0;
+
+struct PackBindingDefinitionEntry {
+    harkenstudio::ObjectId bindingId{};
+    BindingDefinition definition{};
 };
 
 struct PackBindingAttachmentEntry {
@@ -338,354 +312,41 @@ inline PackV2DirectoryEntry ParsePackV2DirectoryEntry(const std::uint8_t* in) {
     return e;
 }
 
-inline void SerializePackV2BusEffect(const PackBusEffectEntry& e,
-                                     std::uint8_t* out) {
-    StoreObjectId(out + 304, e.effectId);
-    StoreObjectId(out + 0, e.busId);
-    StoreLE32(out + 16, e.slot);
-    StoreLE32(out + 20, e.effectType);
-    StoreLE32(out + 24, e.descriptorVintage);
-    StoreLE32(out + 28, e.bypass);
-    StoreLE32(out + 32, e.faderPointGuard);
-    StoreLE32(out + 36, e.paramCount);
-    StoreLE32(out + 40, e.paramBytes);
-    StoreLE32(out + 44, 0);
-    for (std::uint32_t i = 0; i < kPackV2VoiceRecipeMaxParams; ++i) {
-        StoreLEF32(out + 48 + static_cast<std::size_t>(i) * 4,
-                   i < e.paramCount ? e.params[i] : 0.0f);
-    }
-}
 
-inline bool ParsePackV2BusEffect(const std::uint8_t* in,
-                                 std::uint64_t size,
-                                 PackBusEffectEntry* out) {
-    if (size != kPackV2BusEffectPayloadBytes ||
-        LoadLE32(in + 44) != 0) {
-        return false;
-    }
-    out->busId = LoadObjectId(in + 0);
-    out->effectId = LoadObjectId(in + 304);
-    out->slot = LoadLE32(in + 16);
-    out->effectType = LoadLE32(in + 20);
-    out->descriptorVintage = LoadLE32(in + 24);
-    out->bypass = LoadLE32(in + 28);
-    out->faderPointGuard = LoadLE32(in + 32);
-    out->paramCount = LoadLE32(in + 36);
-    out->paramBytes = LoadLE32(in + 40);
-    if (out->paramCount > kPackV2VoiceRecipeMaxParams ||
-        out->paramBytes != out->paramCount * sizeof(float)) {
-        return false;
-    }
-    for (std::uint32_t i = 0; i < kPackV2VoiceRecipeMaxParams; ++i) {
-        const std::uint32_t bits =
-            LoadLE32(in + 48 + static_cast<std::size_t>(i) * 4);
-        if (i >= out->paramCount && bits != 0) {
-            return false;
-        }
-        out->params[i] = LoadLEF32(
-            in + 48 + static_cast<std::size_t>(i) * 4);
-    }
-    return true;
-}
 
-inline void SerializePackV2EffectDynamicRoute(
-    const PackEffectDynamicRouteEntry& e, std::uint8_t* out) {
-    StoreObjectId(out + 0, e.targetBusId);
-    StoreLE32(out + 16, e.effectSlot);
-    StoreLE32(out + 20, e.routeSlot);
-    StoreLE32(out + 24, e.expectedEffectType);
-    StoreLE32(out + 28, e.signalForm);
-    StoreLE32(out + 32, e.sourceKind);
-    StoreLE32(out + 36, e.tap);
-    StoreObjectId(out + 40, e.sourceId);
-    StoreLEF32(out + 56, e.levelDb);
-    StoreLE32(out + 60, 0);
-    StoreLE64(out + 64, 0);
-}
 
-inline bool ParsePackV2EffectDynamicRoute(
-    const std::uint8_t* in, std::uint64_t size,
-    PackEffectDynamicRouteEntry* out) {
-    if (size != kPackV2EffectDynamicRoutePayloadBytes ||
-        LoadLE32(in + 60) != 0 || LoadLE64(in + 64) != 0) {
-        return false;
-    }
-    out->targetBusId = LoadObjectId(in + 0);
-    out->effectSlot = LoadLE32(in + 16);
-    out->routeSlot = LoadLE32(in + 20);
-    out->expectedEffectType = LoadLE32(in + 24);
-    out->signalForm = LoadLE32(in + 28);
-    out->sourceKind = LoadLE32(in + 32);
-    out->tap = LoadLE32(in + 36);
-    out->sourceId = LoadObjectId(in + 40);
-    out->levelDb = LoadLEF32(in + 56);
-    return true;
-}
-inline void SerializePackV2AttenuationCurve(const harkenstudiobuild::AttenuationCurve& c,
-                                            std::uint8_t* out) {
-    StoreLE32(out + 0, c.enabled);
-    StoreLE32(out + 4, c.pointCount);
-    const std::uint32_t points =
-        c.pointCount <= harkenstudio::kAttenuationMaxCurvePoints
-            ? c.pointCount
-            : harkenstudio::kAttenuationMaxCurvePoints;
-    for (std::uint32_t i = 0; i < 8; ++i) {
-        const bool live = i < points;
-        StoreLEF32(out + 8 + i * 8, live ? c.points[i].x : 0.0f);
-        StoreLEF32(out + 12 + i * 8, live ? c.points[i].y : 0.0f);
-    }
-    for (std::uint32_t i = 0; i < 7; ++i) {
-        const bool live = points > 0 && i + 1 < points;
-        StoreLEF32(out + 72 + i * 16,
-                   live ? c.handles[i].h1x : 0.0f);
-        StoreLEF32(out + 76 + i * 16,
-                   live ? c.handles[i].h1y : 0.0f);
-        StoreLEF32(out + 80 + i * 16,
-                   live ? c.handles[i].h2x : 0.0f);
-        StoreLEF32(out + 84 + i * 16,
-                   live ? c.handles[i].h2y : 0.0f);
-    }
-}
 
-inline bool ParsePackV2AttenuationCurve(const std::uint8_t* in,
-                                        harkenstudiobuild::AttenuationCurve* out) {
-    out->enabled = LoadLE32(in + 0);
-    out->pointCount = LoadLE32(in + 4);
-    for (std::uint32_t i = 0; i < 8; ++i) {
-        out->points[i].x = LoadLEF32(in + 8 + i * 8);
-        out->points[i].y = LoadLEF32(in + 12 + i * 8);
-    }
-    for (std::uint32_t i = 0; i < 7; ++i) {
-        out->handles[i].h1x = LoadLEF32(in + 72 + i * 16);
-        out->handles[i].h1y = LoadLEF32(in + 76 + i * 16);
-        out->handles[i].h2x = LoadLEF32(in + 80 + i * 16);
-        out->handles[i].h2y = LoadLEF32(in + 84 + i * 16);
-    }
-    const std::uint32_t points =
-        out->pointCount <= harkenstudio::kAttenuationMaxCurvePoints
-            ? out->pointCount
-            : harkenstudio::kAttenuationMaxCurvePoints;
-    for (std::uint32_t i = points; i < 8; ++i) {
-        if (LoadLE32(in + 8 + i * 8) != 0 || LoadLE32(in + 12 + i * 8) != 0) {
-            return false;
-        }
-    }
-    for (std::uint32_t i = 0; i < 7; ++i) {
-        const bool live = points > 0 && i + 1 < points;
-        if (!live &&
-            (LoadLE32(in + 72 + i * 16) != 0 ||
-             LoadLE32(in + 76 + i * 16) != 0 ||
-             LoadLE32(in + 80 + i * 16) != 0 ||
-             LoadLE32(in + 84 + i * 16) != 0)) {
-            return false;
-        }
-    }
-    return true;
-}
-inline void SerializePackV2Attenuation(const harkenstudiobuild::AttenuationDefinition& d,
-                                       std::uint8_t* out) {
-    StoreLE32(out + 0, d.rolloff);
-    StoreLEF32(out + 4, d.minDistance);
-    StoreLEF32(out + 8, d.maxDistance);
-    StoreLEF32(out + 12, d.airAbsorptionNearHz);
-    StoreLEF32(out + 16, d.airAbsorptionFarHz);
-    StoreLEF32(out + 20, d.proximityRadius);
-    StoreLEF32(out + 24, d.proximityMaxBoostDb);
-    StoreLE32(out + 28, d.coneEnabled);
-    StoreLEF32(out + 32, d.coneInnerDeg);
-    StoreLEF32(out + 36, d.coneOuterDeg);
-    StoreLEF32(out + 40, d.coneOuterGainDb);
-    StoreLEF32(out + 44, d.coneOuterLowpassHz);
-    SerializePackV2AttenuationCurve(d.volumeCurve, out + 48);
-    SerializePackV2AttenuationCurve(d.lowpassCurve, out + 232);
-    SerializePackV2AttenuationCurve(d.widthCurve, out + 416);
-}
 
-inline bool ParsePackV2Attenuation(const std::uint8_t* in, std::uint64_t size,
-                                   harkenstudiobuild::AttenuationDefinition* out) {
-    if (size != kPackV2AttenuationPayloadBytes) {
-        return false;
-    }
-    *out = harkenstudiobuild::AttenuationDefinition{};
-    out->rolloff = LoadLE32(in + 0);
-    out->minDistance = LoadLEF32(in + 4);
-    out->maxDistance = LoadLEF32(in + 8);
-    out->airAbsorptionNearHz = LoadLEF32(in + 12);
-    out->airAbsorptionFarHz = LoadLEF32(in + 16);
-    out->proximityRadius = LoadLEF32(in + 20);
-    out->proximityMaxBoostDb = LoadLEF32(in + 24);
-    out->coneEnabled = LoadLE32(in + 28);
-    out->coneInnerDeg = LoadLEF32(in + 32);
-    out->coneOuterDeg = LoadLEF32(in + 36);
-    out->coneOuterGainDb = LoadLEF32(in + 40);
-    out->coneOuterLowpassHz = LoadLEF32(in + 44);
-    out->proximityFrequency = 250.0f;
-    return ParsePackV2AttenuationCurve(in + 48, &out->volumeCurve) &&
-           ParsePackV2AttenuationCurve(in + 232, &out->lowpassCurve) &&
-           ParsePackV2AttenuationCurve(in + 416, &out->widthCurve);
-}
 
-inline void SerializePackV3Attenuation(const harkenstudiobuild::AttenuationDefinition& d,
-                                       std::uint8_t* out) {
-    SerializePackV2Attenuation(d, out);
-    StoreLEF32(out + kPackV2AttenuationPayloadBytes,
-               d.proximityFrequency);
-    StoreLE32(out + kPackV2AttenuationPayloadBytes + 4, 0);
-}
 
-inline bool ParsePackV3Attenuation(const std::uint8_t* in, std::uint64_t size,
-                                   harkenstudiobuild::AttenuationDefinition* out) {
-    if (size != kPackV3AttenuationPayloadBytes ||
-        LoadLE32(in + kPackV2AttenuationPayloadBytes + 4) != 0 ||
-        !ParsePackV2Attenuation(in, kPackV2AttenuationPayloadBytes, out)) {
-        return false;
-    }
-    out->proximityFrequency =
-        LoadLEF32(in + kPackV2AttenuationPayloadBytes);
-    return true;
-}
 
-inline void SerializePackV2DiscreteVariable(harkenstudio::ObjectId id,
-                                            std::uint8_t* out) {
-    StoreObjectId(out, id);
-}
 
-inline bool ParsePackV2DiscreteVariable(const std::uint8_t* in,
-                                        std::uint64_t size,
-                                        harkenstudio::ObjectId* out) {
-    if (size != kPackV2DiscreteVariablePayloadBytes) {
-        return false;
-    }
-    *out = LoadObjectId(in);
-    return true;
-}
 
-inline void SerializePackV2MeterWiring(const PackMeterWiringEntry& e,
-                                       std::uint8_t* out) {
-    StoreObjectId(out + 0, e.busId);
-    StoreObjectId(out + 16, e.variableId);
-    StoreLE32(out + 32, e.attackMs);
-    StoreLE32(out + 36, e.releaseMs);
-}
 
-inline bool ParsePackV2MeterWiring(const std::uint8_t* in, std::uint64_t size,
-                                   PackMeterWiringEntry* out) {
-    if (size != kPackV2MeterWiringPayloadBytes) {
-        return false;
-    }
-    out->busId = LoadObjectId(in + 0);
-    out->variableId = LoadObjectId(in + 16);
-    out->attackMs = LoadLE32(in + 32);
-    out->releaseMs = LoadLE32(in + 36);
-    return true;
-}
-inline void SerializePackV2BindingCurve(const harkenstudiobuild::BindingCurve& c,
-                                        std::uint8_t* out) {
-    StoreLE32(out + 0, c.pointCount);
-    const std::uint32_t points =
-        c.pointCount <= harkenstudio::kCurveMaxPoints ? c.pointCount
-                                            : harkenstudio::kCurveMaxPoints;
-    for (std::uint32_t i = 0; i < 8; ++i) {
-        const bool live = i < points;
-        StoreLEF32(out + 4 + i * 8, live ? c.points[i].x : 0.0f);
-        StoreLEF32(out + 8 + i * 8, live ? c.points[i].y : 0.0f);
-    }
-    for (std::uint32_t i = 0; i < 7; ++i) {
-        const bool live = points > 0 && i + 1 < points;
-        StoreLEF32(out + 68 + i * 16,
-                   live ? c.handles[i].h1x : 0.0f);
-        StoreLEF32(out + 72 + i * 16,
-                   live ? c.handles[i].h1y : 0.0f);
-        StoreLEF32(out + 76 + i * 16,
-                   live ? c.handles[i].h2x : 0.0f);
-        StoreLEF32(out + 80 + i * 16,
-                   live ? c.handles[i].h2y : 0.0f);
-    }
-}
 
-inline bool ParsePackV2BindingCurve(const std::uint8_t* in,
-                                    harkenstudiobuild::BindingCurve* out) {
-    *out = harkenstudiobuild::BindingCurve{};
-    out->pointCount = LoadLE32(in + 0);
-    for (std::uint32_t i = 0; i < 8; ++i) {
-        out->points[i].x = LoadLEF32(in + 4 + i * 8);
-        out->points[i].y = LoadLEF32(in + 8 + i * 8);
-    }
-    for (std::uint32_t i = 0; i < 7; ++i) {
-        out->handles[i].h1x = LoadLEF32(in + 68 + i * 16);
-        out->handles[i].h1y = LoadLEF32(in + 72 + i * 16);
-        out->handles[i].h2x = LoadLEF32(in + 76 + i * 16);
-        out->handles[i].h2y = LoadLEF32(in + 80 + i * 16);
-    }
-    const std::uint32_t points =
-        out->pointCount <= harkenstudio::kCurveMaxPoints ? out->pointCount
-                                               : harkenstudio::kCurveMaxPoints;
-    for (std::uint32_t i = points; i < 8; ++i) {
-        if (LoadLE32(in + 4 + i * 8) != 0 || LoadLE32(in + 8 + i * 8) != 0) {
-            return false;
-        }
-    }
-    for (std::uint32_t i = 0; i < 7; ++i) {
-        const bool live = points > 0 && i + 1 < points;
-        if (!live &&
-            (LoadLE32(in + 68 + i * 16) != 0 ||
-             LoadLE32(in + 72 + i * 16) != 0 ||
-             LoadLE32(in + 76 + i * 16) != 0 ||
-             LoadLE32(in + 80 + i * 16) != 0)) {
-            return false;
-        }
-    }
-    return true;
-}
-inline void SerializePackV2BindingDefinition(harkenstudio::ObjectId bindingId,
-                                             const harkenstudiobuild::BindingDefinition& d,
-                                             std::uint8_t* out) {
-    StoreObjectId(out + 0, bindingId);
-    StoreObjectId(out + 16, d.variableId);
-    StoreLE32(out + 32, d.targetScopeKind);
-    StoreLE32(out + 36, d.targetId);
-    StoreLE32(out + 40, d.transitionMs);
-    StoreLE32(out + 44, 0);
-    SerializePackV2BindingCurve(d.curve, out + 48);
-}
 
-inline bool ParsePackV2BindingDefinition(const std::uint8_t* in,
-                                         std::uint64_t size,
-                                         harkenstudio::ObjectId* outId,
-                                         harkenstudiobuild::BindingDefinition* out) {
-    if (size != kPackV2BindingDefinitionPayloadBytes ||
-        LoadLE32(in + 44) != 0) {
-        return false;
-    }
-    *outId = LoadObjectId(in + 0);
-    *out = harkenstudiobuild::BindingDefinition{};
-    out->variableId = LoadObjectId(in + 16);
-    out->targetScopeKind = LoadLE32(in + 32);
-    out->targetId = LoadLE32(in + 36);
-    out->transitionMs = LoadLE32(in + 40);
-    return ParsePackV2BindingCurve(in + 48, &out->curve);
-}
 
-inline void SerializePackV2BindingAttachment(
-    const PackBindingAttachmentEntry& e, std::uint8_t* out) {
-    StoreObjectId(out + 0, e.bindingId);
-    StoreLE32(out + 16, e.scopeKind);
-    StoreLE32(out + 20, 0);
-    StoreObjectId(out + 24, e.objectId);
-}
 
-inline bool ParsePackV2BindingAttachment(const std::uint8_t* in,
-                                         std::uint64_t size,
-                                         PackBindingAttachmentEntry* out) {
-    if (size != kPackV2BindingAttachmentPayloadBytes ||
-        LoadLE32(in + 20) != 0) {
-        return false;
-    }
-    out->bindingId = LoadObjectId(in + 0);
-    out->scopeKind = LoadLE32(in + 16);
-    out->objectId = LoadObjectId(in + 24);
-    return true;
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 inline void SerializePackV2VoiceRecipeHeader(
     const PackVoiceRecipeEntryHeader& h, std::uint8_t* out) {
     StoreObjectId(out + 0, h.playableId);
@@ -1930,6 +1591,44 @@ inline bool EncodeGameplayCatalog(
 #include <harken_studio_build/generated/harken_pack_wire.g.h>
 
 namespace harkenstudiobuild {
+
+inline PackTocEntry ReadPackMedia(const std::uint8_t* in) noexcept {
+    PackTocEntry row{};
+    (void)ParsePackMedia(in, kPackMediaBytes, &row);
+    return row;
+}
+
+inline std::uint64_t PackTocByteOffset(std::uint32_t index) noexcept {
+    return static_cast<std::uint64_t>(index) * kPackMediaBytes;
+}
+
+inline bool ReadPackBusEffect(const std::uint8_t* in, std::uint64_t size,
+                              PackBusEffectEntry* out) noexcept {
+    return ParsePackBusEffect(in, size, out) &&
+           out->paramCount <= kPackVoiceRecipeMaxParams &&
+           out->paramBytes == out->paramCount * sizeof(float);
+}
+
+inline bool ReadPackAttenuation(const std::uint8_t* in, std::uint64_t size,
+                                AttenuationDefinition* out) noexcept {
+    *out = {};
+    return ParsePackAttenuation(in, size, out);
+}
+
+inline void WritePackBindingDefinition(harkenstudio::ObjectId bindingId, const BindingDefinition& definition,
+                                       std::uint8_t* out) noexcept {
+    SerializePackBindingDefinition({bindingId, definition}, out);
+}
+
+inline bool ReadPackBindingDefinition(const std::uint8_t* in, std::uint64_t size,
+                                      harkenstudio::ObjectId* outId, BindingDefinition* out) noexcept {
+    PackBindingDefinitionEntry row{};
+    if (!ParsePackBindingDefinition(in, size, &row)) return false;
+    *outId = row.bindingId;
+    *out = row.definition;
+    return true;
+}
+
 
 inline bool PackV2IsCanonicalEntryKind(std::uint32_t entryKind) {
     return entryKind == kPackEntryKindInitRoutingCatalog ||

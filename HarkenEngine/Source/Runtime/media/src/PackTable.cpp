@@ -3,6 +3,7 @@
 #include "harken/core/EngineConfig.h"
 #include "harken/core/Utf8Path.h"
 #include "harken/media/PackFormat.h"
+#include "harken/media/PackFormatV2.h"
 #include "harken/media/PackLogicImage.h"
 
 #include <algorithm>
@@ -504,7 +505,7 @@ VnResult PackTable::ReadAndValidate(
     std::vector<PackTocEntry> parsed(header.entryCount);
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
         parsed[i] =
-            ParsePackTocEntry(toc + static_cast<std::size_t>(PackTocByteOffset(i)));
+            ReadPackMedia(toc + static_cast<std::size_t>(PackTocByteOffset(i)));
         if (!ValidateTocEntry(parsed[i], fileBytes, blobRegionStart)) {
             return VN_BAD_PACK;
         }

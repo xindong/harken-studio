@@ -253,7 +253,7 @@ bool BuildPackBytes(const std::vector<PackEntry>& entries,
     const std::uint64_t tocOffset = harkenstudiobuild::kPackHeaderBytes;
     const std::uint64_t tocBytes =
         static_cast<std::uint64_t>(entryCount) *
-        harkenstudiobuild::kPackTocEntryBytes;
+        harkenstudiobuild::kPackMediaBytes;
 
     // Blob placement: packed in manifest order, each aligned. fileBytes
     // ends exactly at the last blob's end — no trailing padding.
@@ -300,8 +300,8 @@ bool BuildPackBytes(const std::vector<PackEntry>& entries,
         toc.flags = entry.loopable ? harkenstudiobuild::kPackFlagLoopable : 0;
         toc.loopStartFrame = entry.loopable ? entry.loopStartFrame : 0;
         toc.loopEndFrame = entry.loopable ? entry.loopEndFrame : 0;
-        harkenstudiobuild::SerializePackTocEntry(
-            toc, tocImage.data() + i * harkenstudiobuild::kPackTocEntryBytes);
+        harkenstudiobuild::SerializePackMedia(
+            toc, tocImage.data() + i * harkenstudiobuild::kPackMediaBytes);
     }
     std::memcpy(out->data() + tocOffset, tocImage.data(),
                 tocImage.size());
@@ -393,7 +393,7 @@ std::vector<EntryPlacement> BuildEntryPlacements(
     };
     for (std::size_t i = 0; i < entries.size(); ++i) {
         place(harkenstudiobuild::kPackEntryKindMedia, entries[i].soundId, i,
-              harkenstudiobuild::kPackV2MediaPayloadBytes);
+              harkenstudiobuild::kPackMediaBytes);
     }
     for (std::size_t i = 0; i < manifest.buses.size(); ++i) {
         place(harkenstudiobuild::kPackEntryKindBus, manifest.buses[i].id, i,
@@ -406,16 +406,16 @@ std::vector<EntryPlacement> BuildEntryPlacements(
     for (std::size_t i = 0; i < manifest.attenuations.size(); ++i) {
         place(harkenstudiobuild::kPackEntryKindAttenuation,
               manifest.attenuations[i].id, i,
-              harkenstudiobuild::kPackV3AttenuationPayloadBytes);
+              harkenstudiobuild::kPackAttenuationBytes);
     }
     for (std::size_t i = 0; i < manifest.bindings.size(); ++i) {
         place(harkenstudiobuild::kPackEntryKindBindingDefinition,
               manifest.bindings[i].id, i,
-              harkenstudiobuild::kPackV2BindingDefinitionPayloadBytes);
+              harkenstudiobuild::kPackBindingDefinitionBytes);
     }
     for (std::size_t i = 0; i < manifest.attachments.size(); ++i) {
         place(harkenstudiobuild::kPackEntryKindBindingAttachment, {}, i,
-              harkenstudiobuild::kPackV2BindingAttachmentPayloadBytes);
+              harkenstudiobuild::kPackBindingAttachmentBytes);
     }
     for (std::size_t i = 0; i < manifest.containers.size(); ++i) {
         place(harkenstudiobuild::kPackEntryKindContainer, manifest.containers[i].id,
@@ -436,11 +436,11 @@ std::vector<EntryPlacement> BuildEntryPlacements(
     }
     for (std::size_t i = 0; i < manifest.busEffects.size(); ++i) {
         place(harkenstudiobuild::kPackEntryKindBusEffect, {}, i,
-              harkenstudiobuild::kPackV2BusEffectPayloadBytes);
+              harkenstudiobuild::kPackBusEffectBytes);
     }
     for (std::size_t i = 0; i < manifest.dynamicRoutes.size(); ++i) {
         place(harkenstudiobuild::kPackEntryKindEffectDynamicRoute, {}, i,
-              harkenstudiobuild::kPackV2EffectDynamicRoutePayloadBytes);
+              harkenstudiobuild::kPackEffectDynamicRouteBytes);
     }
 
     return placements;
@@ -470,7 +470,7 @@ bool SerializeEntryPayload(const Manifest& manifest,
         toc.loopStartFrame =
             entry.loopable ? entry.loopStartFrame : 0;
         toc.loopEndFrame = entry.loopable ? entry.loopEndFrame : 0;
-        harkenstudiobuild::SerializePackTocEntry(toc, dst);
+        harkenstudiobuild::SerializePackMedia(toc, dst);
         break;
     }
     case harkenstudiobuild::kPackEntryKindBus: {
@@ -517,7 +517,7 @@ bool SerializeEntryPayload(const Manifest& manifest,
             attenuation.lowpassCurve, attenuation.hasLowpassCurve);
         desc.widthCurve = ToAttenuationCurve(
             attenuation.widthCurve, attenuation.hasWidthCurve);
-        harkenstudiobuild::SerializePackV3Attenuation(desc, dst);
+        harkenstudiobuild::SerializePackAttenuation(desc, dst);
         break;
     }
     case harkenstudiobuild::kPackEntryKindBindingDefinition: {
@@ -530,7 +530,7 @@ bool SerializeEntryPayload(const Manifest& manifest,
         desc.targetId = binding.target;
         desc.transitionMs = binding.transitionMs;
         desc.curve = ToBindingCurve(binding.curve);
-        harkenstudiobuild::SerializePackV2BindingDefinition(binding.id, desc,
+        harkenstudiobuild::WritePackBindingDefinition(binding.id, desc,
                                                 dst);
         break;
     }
@@ -541,7 +541,7 @@ bool SerializeEntryPayload(const Manifest& manifest,
         wire.bindingId = attachment.binding;
         wire.scopeKind = attachment.scope;
         wire.objectId = attachment.object;
-        harkenstudiobuild::SerializePackV2BindingAttachment(wire, dst);
+        harkenstudiobuild::SerializePackBindingAttachment(wire, dst);
         break;
     }
     case harkenstudiobuild::kPackEntryKindContainer: {
@@ -671,7 +671,7 @@ bool SerializeEntryPayload(const Manifest& manifest,
         for (std::uint32_t p = 0; p < wire.paramCount; ++p) {
             wire.params[p] = effect.parameters[p];
         }
-        harkenstudiobuild::SerializePackV2BusEffect(wire, dst);
+        harkenstudiobuild::SerializePackBusEffect(wire, dst);
         break;
     }
     case harkenstudiobuild::kPackEntryKindEffectDynamicRoute: {
@@ -687,7 +687,7 @@ bool SerializeEntryPayload(const Manifest& manifest,
         wire.tap = route.tap;
         wire.sourceId = route.sourceBus;
         wire.levelDb = route.levelDb;
-        harkenstudiobuild::SerializePackV2EffectDynamicRoute(wire, dst);
+        harkenstudiobuild::SerializePackEffectDynamicRoute(wire, dst);
         break;
     }
     default:
@@ -698,21 +698,17 @@ bool SerializeEntryPayload(const Manifest& manifest,
 }
 
 std::uint32_t EntryVintage(std::uint32_t kind) {
-    const bool dynamicDeploymentEntry =
-        kind == harkenstudiobuild::kPackEntryKindBusEffect ||
-        kind == harkenstudiobuild::kPackEntryKindEffectDynamicRoute;
-    if (dynamicDeploymentEntry) {
-        return harkenstudiobuild::kPackV2DynamicSchemaVintage;
-    } else if (kind == harkenstudiobuild::kPackEntryKindBus) {
-        return harkenstudiobuild::kPackBusVintage;
-    } else if (kind == harkenstudiobuild::kPackEntryKindBusSend) {
-        return harkenstudiobuild::kPackBusSendVintage;
-    } else if (kind == harkenstudiobuild::kPackEntryKindVoiceRecipe) {
-        return harkenstudiobuild::kPackV2PlaybackRecipeSchemaVintage;
-    } else if (kind == harkenstudiobuild::kPackEntryKindAttenuation) {
-        return harkenstudiobuild::kPackV2AuthoredToneSchemaVintage;
-    } else {
-        return harkenstudiobuild::kPackV2SchemaVintage;
+    switch (kind) {
+    case harkenstudiobuild::kPackEntryKindMedia: return harkenstudiobuild::kPackMediaVintage;
+    case harkenstudiobuild::kPackEntryKindBus: return harkenstudiobuild::kPackBusVintage;
+    case harkenstudiobuild::kPackEntryKindBusSend: return harkenstudiobuild::kPackBusSendVintage;
+    case harkenstudiobuild::kPackEntryKindAttenuation: return harkenstudiobuild::kPackAttenuationVintage;
+    case harkenstudiobuild::kPackEntryKindBindingDefinition: return harkenstudiobuild::kPackBindingDefinitionVintage;
+    case harkenstudiobuild::kPackEntryKindBindingAttachment: return harkenstudiobuild::kPackBindingAttachmentVintage;
+    case harkenstudiobuild::kPackEntryKindBusEffect: return harkenstudiobuild::kPackBusEffectVintage;
+    case harkenstudiobuild::kPackEntryKindEffectDynamicRoute: return harkenstudiobuild::kPackEffectDynamicRouteVintage;
+    case harkenstudiobuild::kPackEntryKindVoiceRecipe: return harkenstudiobuild::kPackV2PlaybackRecipeSchemaVintage;
+    default: return harkenstudiobuild::kPackV2SchemaVintage;
     }
 }
 
@@ -1174,7 +1170,7 @@ bool BuildOnePack(const Manifest& manifest, const Request& request,
                 harkenstudiobuild::ParsePackV2DirectoryEntry(
                     packBytes.data() + harkenstudiobuild::kPackV2HeaderBytes +
                     i * harkenstudiobuild::kPackV2DirectoryEntryBytes);
-            tocReadback.push_back(harkenstudiobuild::ParsePackTocEntry(
+            tocReadback.push_back(harkenstudiobuild::ReadPackMedia(
                 packBytes.data() + dirEntry.offset));
         }
     } else {
@@ -1183,9 +1179,9 @@ bool BuildOnePack(const Manifest& manifest, const Request& request,
         reportPack.fileBytes = header.fileBytes;
         reportPack.tocChecksum = header.tocChecksum;
         for (std::size_t i = 0; i < entries.size(); ++i) {
-            tocReadback.push_back(harkenstudiobuild::ParsePackTocEntry(
+            tocReadback.push_back(harkenstudiobuild::ReadPackMedia(
                 packBytes.data() + header.tocOffset +
-                i * harkenstudiobuild::kPackTocEntryBytes));
+                i * harkenstudiobuild::kPackMediaBytes));
         }
     }
     std::vector<CacheRecord> newRecords;
@@ -1562,7 +1558,7 @@ bool compileEntries(const std::string& logicSections, bool resident,
         placement.kind = harkenstudiobuild::kPackEntryKindMedia;
         placement.id = input.id;
         placement.index = i;
-        placement.size = harkenstudiobuild::kPackV2MediaPayloadBytes;
+        placement.size = harkenstudiobuild::kPackMediaBytes;
         CompiledEntry resource;
         resource.kind = placement.kind;
         resource.vintage = EntryVintage(placement.kind);

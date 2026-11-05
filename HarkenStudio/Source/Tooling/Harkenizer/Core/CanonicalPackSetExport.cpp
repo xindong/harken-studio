@@ -215,13 +215,13 @@ bool collectEntries(const QByteArray& bytes, const QString& path,
         entry.id = record.id;
         entry.relationOrdinal = record.relationOrdinal;
         if (record.kind == harkenstudiobuild::kPackEntryKindMedia) {
-            const harkenstudiobuild::PackTocEntry toc = harkenstudiobuild::ParsePackTocEntry(
+            const harkenstudiobuild::PackTocEntry toc = harkenstudiobuild::ReadPackMedia(
                 reinterpret_cast<const std::uint8_t*>(bytes.constData()) + record.offset);
-            entry.payload.resize(harkenstudiobuild::kPackV2MediaPayloadBytes);
+            entry.payload.resize(harkenstudiobuild::kPackMediaBytes);
             std::memcpy(entry.payload.data(),
                         reinterpret_cast<const std::uint8_t*>(bytes.constData()) +
                             record.offset,
-                        harkenstudiobuild::kPackV2MediaPayloadBytes);
+                        harkenstudiobuild::kPackMediaBytes);
             harkenstudiobuild::StoreLE64(entry.payload.data() + 32, 0);
             if (toc.blobBytes != 0) {
                 const auto* blob = reinterpret_cast<const std::uint8_t*>(bytes.constData()) + toc.blobOffset;
@@ -688,8 +688,8 @@ bool encodeBindingDefinitionEntry(
     out->kind = harkenstudiobuild::kPackEntryKindBindingDefinition;
     out->vintage = harkenstudiobuild::kPackV2SchemaVintage;
     out->id = program.bindingId;
-    out->payload.assign(harkenstudiobuild::kPackV2BindingDefinitionPayloadBytes, 0);
-    harkenstudiobuild::SerializePackV2BindingDefinition(program.bindingId, desc,
+    out->payload.assign(harkenstudiobuild::kPackBindingDefinitionBytes, 0);
+    harkenstudiobuild::WritePackBindingDefinition(program.bindingId, desc,
                                             out->payload.data());
     return true;
 }
@@ -749,8 +749,8 @@ bool appendCanonicalBindingEntries(
         wire.bindingId = attachment.bindingId;
         wire.scopeKind = attachment.scopeKind;
         wire.objectId = attachment.objectId;
-        entry.payload.assign(harkenstudiobuild::kPackV2BindingAttachmentPayloadBytes, 0);
-        harkenstudiobuild::SerializePackV2BindingAttachment(wire, entry.payload.data());
+        entry.payload.assign(harkenstudiobuild::kPackBindingAttachmentBytes, 0);
+        harkenstudiobuild::SerializePackBindingAttachment(wire, entry.payload.data());
         entries->push_back(std::move(entry));
     }
     return true;
@@ -2789,9 +2789,9 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             unit.success = false;
             unit.error = QStringLiteral("Pack '%1' contains invalid PCM media %2")
                 .arg(meta.fileName).arg(VNX::objectIdString(entry.id));
-            if (entry.payload.size() < harkenstudiobuild::kPackV2MediaPayloadBytes)
+            if (entry.payload.size() < harkenstudiobuild::kPackMediaBytes)
                 return unit;
-            const auto media = harkenstudiobuild::ParsePackTocEntry(entry.payload.data());
+            const auto media = harkenstudiobuild::ReadPackMedia(entry.payload.data());
             const auto pcmBytes = entry.mediaBytes();
             if (media.sampleFormat != harkenstudiobuild::kPackSampleFormatF32Planar
                 || media.blobBytes != pcmBytes || pcmBytes % sizeof(float) != 0
@@ -3734,7 +3734,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                         if (entry.kind == harkenstudiobuild::kPackEntryKindBindingDefinition) {
                             harkenstudio::ObjectId id;
                             harkenstudiobuild::BindingDefinition binding;
-                            if (!harkenstudiobuild::ParsePackV2BindingDefinition(
+                            if (!harkenstudiobuild::ReadPackBindingDefinition(
                                     entry.payload.data(), entry.payload.size(), &id, &binding)) {
                                 unit.success = false;
                                 unit.error = QStringLiteral("Cannot read binding metadata for '%1'").arg(pack.name);

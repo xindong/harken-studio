@@ -28,6 +28,7 @@
 #include "harken/core/MediaContentRevision.h"
 #include "harken/media/CurrentWorldBodyVintage.h"
 #include "harken/media/PackFormat.h"
+#include "harken/media/PackFormatV2.h"
 #include "harken/param/EffectParamLocator.h"
 #include "harken/param/MeterProbe.h"
 #include "harken/param/VariableService.h"
@@ -3203,7 +3204,7 @@ std::vector<std::uint8_t> BuildOneEntryPack(VnSoundId id,
     const std::vector<float> plane =
         harkentest::MakeSine(frames, 330.0, 48000.0, 0.6f);
     const std::uint64_t tocOffset = harken::kPackHeaderBytes;
-    const std::uint64_t tocBytes = harken::kPackTocEntryBytes;
+    const std::uint64_t tocBytes = harken::kPackMediaBytes;
     const std::uint64_t align = harken::kPackBlobAlign;
     const std::uint64_t blobOffset =
         (tocOffset + tocBytes + align - 1) / align * align;
@@ -3226,8 +3227,8 @@ std::vector<std::uint8_t> BuildOneEntryPack(VnSoundId id,
     entry.flags = 0;
     entry.loopStartFrame = 0;
     entry.loopEndFrame = 0;
-    std::vector<std::uint8_t> toc(harken::kPackTocEntryBytes, 0);
-    harken::SerializePackTocEntry(entry, toc.data());
+    std::vector<std::uint8_t> toc(harken::kPackMediaBytes, 0);
+    harken::SerializePackMedia(entry, toc.data());
     std::memcpy(bytes.data() + tocOffset, toc.data(), toc.size());
 
     harken::PackHeader header;

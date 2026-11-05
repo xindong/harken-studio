@@ -69,7 +69,7 @@ public:
     void AddMedia(VnObjectId id, std::vector<float> samples,
                   harken::PcmLoopRegion loop = {}) {
         entries_.push_back({harken::kPackEntryKindMedia, id, 0,
-                           std::vector<std::uint8_t>(harken::kPackV2MediaPayloadBytes),
+                           std::vector<std::uint8_t>(harken::kPackMediaBytes),
                            std::move(samples), 0, loop});
     }
 
@@ -119,7 +119,7 @@ public:
                             entries_[i].samples.data(), media.blobBytes);
                 media.blobChecksum = harken::Fnv1a64(bytes.data() + media.blobOffset,
                                                    media.blobBytes);
-                harken::SerializePackTocEntry(media, entries_[i].payload.data());
+                harken::SerializePackMedia(media, entries_[i].payload.data());
             }
             std::memcpy(bytes.data() + offsets[i],
                         entries_[i].payload.data(),

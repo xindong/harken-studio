@@ -3294,9 +3294,9 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
     auto desc = harkentest::MakeAttenuationDesc(1, 10);
     desc.proximityFrequency = 250;
     for (unsigned i = 0; i < 65; ++i) {
-        std::vector<std::uint8_t> payload(kPackV3AttenuationPayloadBytes);
-        SerializePackV3Attenuation(desc, payload.data());
-        builder.AddEntry(kPackEntryKindAttenuation, harkentest::ObjectId(1000+i), std::move(payload), kPackV2AuthoredToneSchemaVintage);
+        std::vector<std::uint8_t> payload(kPackAttenuationBytes);
+        SerializePackAttenuation(desc, payload.data());
+        builder.AddEntry(kPackEntryKindAttenuation, harkentest::ObjectId(1000+i), std::move(payload), kPackAttenuationVintage);
     }
     std::vector<std::uint8_t> overlay(16 + variables.size() * 36, 0);
     StoreLE32(overlay.data(), variables.size());

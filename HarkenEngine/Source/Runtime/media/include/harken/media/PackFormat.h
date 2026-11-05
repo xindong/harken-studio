@@ -38,12 +38,9 @@ inline constexpr bool SupportedPackFormatVersion(std::uint32_t version) noexcept
 // + frameCount(8) + blobOffset(8) + blobBytes(8) + blobChecksum(8) +
 // flags(4) + loopStartFrame(8) + loopEndFrame(8).
 inline constexpr std::uint32_t kPackHeaderBytes = 36;
-inline constexpr std::uint32_t kPackTocEntryBytes = 76;
 
 // The end offset at entryCount is also the complete TOC byte length.
-inline constexpr std::uint64_t PackTocByteOffset(std::uint32_t index) noexcept {
-    return static_cast<std::uint64_t>(index) * kPackTocEntryBytes;
-}
+
 
 // Every blob offset is a multiple of this within the file.
 inline constexpr std::uint64_t kPackBlobAlign = 64;
@@ -205,39 +202,12 @@ inline bool ParsePackHeader(const std::uint8_t* in,
     return true;
 }
 
-// Writes one TOC entry into out[0..kPackTocEntryBytes).
-inline void SerializePackTocEntry(const PackTocEntry& e,
-                                       std::uint8_t* out) {
-    StoreObjectId(out + 0, e.soundId);
-    StoreLE32(out + 16, e.sampleRate);
-    StoreLE16(out + 20, e.channelCount);
-    StoreLE16(out + 22, e.sampleFormat);
-    StoreLE64(out + 24, e.frameCount);
-    StoreLE64(out + 32, e.blobOffset);
-    StoreLE64(out + 40, e.blobBytes);
-    StoreLE64(out + 48, e.blobChecksum);
-    StoreLE32(out + 56, e.flags);
-    StoreLE64(out + 60, e.loopStartFrame);
-    StoreLE64(out + 68, e.loopEndFrame);
-}
+// Writes one TOC entry into out[0..kPackMediaBytes).
 
-// Parses in[0..kPackTocEntryBytes). Every bit pattern parses; field
+
+// Parses in[0..kPackMediaBytes). Every bit pattern parses; field
 // validation is the caller's job.
-inline PackTocEntry ParsePackTocEntry(const std::uint8_t* in) {
-    PackTocEntry e;
-    e.soundId = LoadObjectId(in + 0);
-    e.sampleRate = LoadLE32(in + 16);
-    e.channelCount = LoadLE16(in + 20);
-    e.sampleFormat = LoadLE16(in + 22);
-    e.frameCount = LoadLE64(in + 24);
-    e.blobOffset = LoadLE64(in + 32);
-    e.blobBytes = LoadLE64(in + 40);
-    e.blobChecksum = LoadLE64(in + 48);
-    e.flags = LoadLE32(in + 56);
-    e.loopStartFrame = LoadLE64(in + 60);
-    e.loopEndFrame = LoadLE64(in + 68);
-    return e;
-}
+
 
 } // namespace harken
 

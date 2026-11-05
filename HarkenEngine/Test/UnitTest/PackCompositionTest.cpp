@@ -219,7 +219,7 @@ public:
                 toc.blobChecksum = Fnv1a64(
                     bytes.data() + static_cast<std::size_t>(blobOffsets_[i]),
                     static_cast<std::size_t>(toc.blobBytes));
-                SerializePackTocEntry(toc, payload);
+                SerializePackMedia(toc, payload);
             } else {
                 std::memcpy(payload, entry.payload.data(), entry.payload.size());
             }
@@ -274,7 +274,7 @@ private:
     };
 
     static std::uint64_t PayloadSize(const Entry& entry) {
-        return entry.isMedia ? kPackV2MediaPayloadBytes : entry.payload.size();
+        return entry.isMedia ? kPackMediaBytes : entry.payload.size();
     }
     static std::uint64_t BlobBytes(const Entry& entry) {
         return static_cast<std::uint64_t>(entry.planar.size()) * sizeof(float);

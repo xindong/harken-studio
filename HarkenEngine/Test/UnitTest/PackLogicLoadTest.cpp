@@ -563,23 +563,15 @@ public:
         Entry entry;
         entry.kind = harken::kPackEntryKindDiscreteVariable;
         entry.id = variableId;
-        entry.payload.resize(static_cast<std::size_t>(
-            harken::kPackV2DiscreteVariablePayloadBytes));
-        harken::SerializePackV2DiscreteVariable(variableId,
-                                               entry.payload.data());
+        entry.payload = {0};
         m_entries.push_back(std::move(entry));
     }
 
-    void AddMeterWiring(VnBusId busId, VnVariableId variableId) {
+    void AddMeterWiring(VnBusId busId, VnVariableId) {
         Entry entry;
         entry.kind = harken::kPackEntryKindMeterWiring;
         entry.id = busId;
-        entry.payload.resize(static_cast<std::size_t>(
-            harken::kPackV2MeterWiringPayloadBytes));
-        harken::PackMeterWiringEntry wiring{};
-        wiring.busId = busId;
-        wiring.variableId = variableId;
-        harken::SerializePackV2MeterWiring(wiring, entry.payload.data());
+        entry.payload = {0};
         m_entries.push_back(std::move(entry));
     }
 
@@ -599,8 +591,8 @@ public:
         entry.kind = harken::kPackEntryKindBindingDefinition;
         entry.id = bindingId;
         entry.payload.resize(static_cast<std::size_t>(
-            harken::kPackV2BindingDefinitionPayloadBytes));
-        harken::SerializePackV2BindingDefinition(bindingId, desc,
+            harken::kPackBindingDefinitionBytes));
+        harken::WritePackBindingDefinition(bindingId, desc,
                                                  entry.payload.data());
         m_entries.push_back(std::move(entry));
     }
@@ -612,12 +604,12 @@ public:
         entry.kind = harken::kPackEntryKindBindingAttachment;
         entry.relationOrdinal = ordinal;
         entry.payload.resize(static_cast<std::size_t>(
-            harken::kPackV2BindingAttachmentPayloadBytes));
+            harken::kPackBindingAttachmentBytes));
         harken::PackBindingAttachmentEntry attachment;
         attachment.bindingId = bindingId;
         attachment.scopeKind = scopeKind;
         attachment.objectId = harkentest::ObjectId(objectId);
-        harken::SerializePackV2BindingAttachment(attachment,
+        harken::SerializePackBindingAttachment(attachment,
                                                 entry.payload.data());
         m_entries.push_back(std::move(entry));
     }
@@ -726,7 +718,7 @@ public:
                 toc.flags = 0;
                 toc.loopStartFrame = 0;
                 toc.loopEndFrame = 0;
-                harken::SerializePackTocEntry(toc, payload);
+                harken::SerializePackMedia(toc, payload);
             } else {
                 std::memcpy(payload, entry.payload.data(),
                             entry.payload.size());
@@ -782,7 +774,7 @@ private:
         return (value + align - 1) / align * align;
     }
     static std::uint64_t PayloadSize(const Entry& entry) {
-        return entry.isMedia ? harken::kPackV2MediaPayloadBytes
+        return entry.isMedia ? harken::kPackMediaBytes
                              : entry.payload.size();
     }
     static std::uint64_t BlobBytes(const Entry& entry) {

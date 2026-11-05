@@ -302,9 +302,16 @@
     "binaryLayout": {
       "byteOrder": "little",
       "constants": {
-        "busDefinitionDownmixCoefficientCount": 64
+        "busDefinitionDownmixCoefficientCount": 64,
+        "voiceRecipeMaxParams": 64
       },
       "kinds": [
+        {
+          "name": "media",
+          "id": 1,
+          "vintage": 2,
+          "record": "media"
+        },
         {
           "name": "bus",
           "id": 2,
@@ -316,6 +323,36 @@
           "id": 3,
           "vintage": 2,
           "record": "busSend"
+        },
+        {
+          "name": "attenuation",
+          "id": 4,
+          "vintage": 3,
+          "record": "attenuation"
+        },
+        {
+          "name": "bindingDefinition",
+          "id": 7,
+          "vintage": 2,
+          "record": "bindingDefinition"
+        },
+        {
+          "name": "bindingAttachment",
+          "id": 8,
+          "vintage": 2,
+          "record": "bindingAttachment"
+        },
+        {
+          "name": "busEffect",
+          "id": 12,
+          "vintage": 1,
+          "record": "busEffect"
+        },
+        {
+          "name": "effectDynamicRoute",
+          "id": 13,
+          "vintage": 1,
+          "record": "effectDynamicRoute"
         },
         {
           "name": "busDefinitionSnapshot",
@@ -620,8 +657,422 @@
               "type": "f32"
             }
           ]
+        },
+        "media": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "soundId",
+              "type": "id"
+            },
+            {
+              "name": "sampleRate",
+              "type": "u32"
+            },
+            {
+              "name": "channelCount",
+              "type": "u16"
+            },
+            {
+              "name": "sampleFormat",
+              "type": "u16"
+            },
+            {
+              "name": "frameCount",
+              "type": "u64"
+            },
+            {
+              "name": "blobOffset",
+              "type": "u64"
+            },
+            {
+              "name": "blobBytes",
+              "type": "u64"
+            },
+            {
+              "name": "blobChecksum",
+              "type": "u64"
+            },
+            {
+              "name": "flags",
+              "type": "u32"
+            },
+            {
+              "name": "loopStartFrame",
+              "type": "u64"
+            },
+            {
+              "name": "loopEndFrame",
+              "type": "u64"
+            }
+          ]
+        },
+        "busEffect": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "busId",
+              "type": "id"
+            },
+            {
+              "name": "slot",
+              "type": "u32"
+            },
+            {
+              "name": "effectType",
+              "type": "u32"
+            },
+            {
+              "name": "descriptorVintage",
+              "type": "u32"
+            },
+            {
+              "name": "bypass",
+              "type": "u32"
+            },
+            {
+              "name": "faderPointGuard",
+              "type": "u32"
+            },
+            {
+              "name": "paramCount",
+              "type": "u32"
+            },
+            {
+              "name": "paramBytes",
+              "type": "u32"
+            },
+            {
+              "name": "reserved44",
+              "type": "u32",
+              "reserved": true
+            },
+            {
+              "name": "params",
+              "type": "array",
+              "of": "f32",
+              "length": "voiceRecipeMaxParams",
+              "live": "paramCount"
+            },
+            {
+              "name": "effectId",
+              "type": "id"
+            }
+          ]
+        },
+        "effectDynamicRoute": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "targetBusId",
+              "type": "id"
+            },
+            {
+              "name": "effectSlot",
+              "type": "u32"
+            },
+            {
+              "name": "routeSlot",
+              "type": "u32"
+            },
+            {
+              "name": "expectedEffectType",
+              "type": "u32"
+            },
+            {
+              "name": "signalForm",
+              "type": "u32"
+            },
+            {
+              "name": "sourceKind",
+              "type": "u32"
+            },
+            {
+              "name": "tap",
+              "type": "u32"
+            },
+            {
+              "name": "sourceId",
+              "type": "id"
+            },
+            {
+              "name": "levelDb",
+              "type": "f32"
+            },
+            {
+              "name": "reserved60",
+              "type": "u32",
+              "reserved": true
+            },
+            {
+              "name": "reserved64",
+              "type": "u64",
+              "reserved": true
+            }
+          ]
+        },
+        "bindingAttachment": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "bindingId",
+              "type": "id"
+            },
+            {
+              "name": "scopeKind",
+              "type": "u32"
+            },
+            {
+              "name": "reserved20",
+              "type": "u32",
+              "reserved": true
+            },
+            {
+              "name": "objectId",
+              "type": "id"
+            }
+          ]
+        },
+        "curvePoint": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "x",
+              "type": "f32"
+            },
+            {
+              "name": "y",
+              "type": "f32"
+            }
+          ]
+        },
+        "attenuationCurvePoint": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "x",
+              "type": "f32"
+            },
+            {
+              "name": "y",
+              "type": "f32"
+            }
+          ]
+        },
+        "curveHandles": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "h1x",
+              "type": "f32"
+            },
+            {
+              "name": "h1y",
+              "type": "f32"
+            },
+            {
+              "name": "h2x",
+              "type": "f32"
+            },
+            {
+              "name": "h2y",
+              "type": "f32"
+            }
+          ]
+        },
+        "attenuationCurve": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "enabled",
+              "type": "u32"
+            },
+            {
+              "name": "pointCount",
+              "type": "u32"
+            },
+            {
+              "name": "points",
+              "type": "array",
+              "of": {
+                "type": "record",
+                "record": "attenuationCurvePoint"
+              },
+              "length": 8,
+              "live": "pointCount"
+            },
+            {
+              "name": "handles",
+              "type": "array",
+              "of": {
+                "type": "record",
+                "record": "curveHandles"
+              },
+              "length": 7,
+              "live": {
+                "count": "pointCount",
+                "limit": 8,
+                "subtract": 1
+              }
+            }
+          ]
+        },
+        "bindingCurve": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "pointCount",
+              "type": "u32"
+            },
+            {
+              "name": "points",
+              "type": "array",
+              "of": {
+                "type": "record",
+                "record": "curvePoint"
+              },
+              "length": 8,
+              "live": "pointCount"
+            },
+            {
+              "name": "handles",
+              "type": "array",
+              "of": {
+                "type": "record",
+                "record": "curveHandles"
+              },
+              "length": 7,
+              "live": {
+                "count": "pointCount",
+                "limit": 8,
+                "subtract": 1
+              }
+            }
+          ]
+        },
+        "attenuation": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "rolloff",
+              "type": "u32"
+            },
+            {
+              "name": "minDistance",
+              "type": "f32"
+            },
+            {
+              "name": "maxDistance",
+              "type": "f32"
+            },
+            {
+              "name": "airAbsorptionNearHz",
+              "type": "f32"
+            },
+            {
+              "name": "airAbsorptionFarHz",
+              "type": "f32"
+            },
+            {
+              "name": "proximityRadius",
+              "type": "f32"
+            },
+            {
+              "name": "proximityMaxBoostDb",
+              "type": "f32"
+            },
+            {
+              "name": "coneEnabled",
+              "type": "u32"
+            },
+            {
+              "name": "coneInnerDeg",
+              "type": "f32"
+            },
+            {
+              "name": "coneOuterDeg",
+              "type": "f32"
+            },
+            {
+              "name": "coneOuterGainDb",
+              "type": "f32"
+            },
+            {
+              "name": "coneOuterLowpassHz",
+              "type": "f32"
+            },
+            {
+              "name": "volumeCurve",
+              "type": "record",
+              "record": "attenuationCurve"
+            },
+            {
+              "name": "lowpassCurve",
+              "type": "record",
+              "record": "attenuationCurve"
+            },
+            {
+              "name": "widthCurve",
+              "type": "record",
+              "record": "attenuationCurve"
+            },
+            {
+              "name": "proximityFrequency",
+              "type": "f32"
+            },
+            {
+              "name": "reserved604",
+              "type": "u32",
+              "reserved": true
+            }
+          ]
+        },
+        "bindingDefinition": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "bindingId",
+              "type": "id"
+            },
+            {
+              "name": "variableId",
+              "type": "id"
+            },
+            {
+              "name": "targetScopeKind",
+              "type": "u32"
+            },
+            {
+              "name": "targetId",
+              "type": "u32"
+            },
+            {
+              "name": "transitionMs",
+              "type": "u32"
+            },
+            {
+              "name": "reserved44",
+              "type": "u32",
+              "reserved": true
+            },
+            {
+              "name": "curve",
+              "type": "record",
+              "record": "bindingCurve"
+            }
+          ]
         }
-      }
+      },
+      "retiredKinds": [
+        {
+          "name": "discreteVariable",
+          "id": 5
+        },
+        {
+          "name": "meterWiring",
+          "id": 6
+        }
+      ]
     }
   }
 }

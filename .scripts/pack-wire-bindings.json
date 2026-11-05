@@ -27,10 +27,59 @@
     "busDefinitionCoefficient": {
       "engine": "float",
       "studio": "float"
+    },
+    "media": {
+      "engine": "PackTocEntry",
+      "studio": "PackTocEntry"
+    },
+    "busEffect": {
+      "engine": "PackBusEffectEntry",
+      "studio": "PackBusEffectEntry"
+    },
+    "effectDynamicRoute": {
+      "engine": "PackEffectDynamicRouteEntry",
+      "studio": "PackEffectDynamicRouteEntry"
+    },
+    "bindingAttachment": {
+      "engine": "PackBindingAttachmentEntry",
+      "studio": "PackBindingAttachmentEntry"
+    },
+    "curvePoint": {
+      "engine": "VnCurvePoint",
+      "studio": "ParameterCurvePoint"
+    },
+    "attenuationCurvePoint": {
+      "engine": "VnAttenuationCurvePoint",
+      "studio": "ParameterCurvePoint"
+    },
+    "curveHandles": {
+      "engine": "VnCurveHandlePair",
+      "studio": "ParameterCurveHandles"
+    },
+    "attenuationCurve": {
+      "engine": "VnAttenuationCurve",
+      "studio": "AttenuationCurve"
+    },
+    "bindingCurve": {
+      "engine": "VnCurveDesc",
+      "studio": "BindingCurve"
+    },
+    "attenuation": {
+      "engine": "VnAttenuationDesc",
+      "studio": "AttenuationDefinition"
+    },
+    "bindingDefinition": {
+      "engine": "PackBindingDefinitionEntry",
+      "studio": "PackBindingDefinitionEntry"
     }
   },
   "members": {
-    "busDefinitionCoefficient.value": ""
+    "busDefinitionCoefficient.value": "",
+    "bindingDefinition.variableId": "definition.variableId",
+    "bindingDefinition.targetScopeKind": "definition.targetScopeKind",
+    "bindingDefinition.targetId": "definition.targetId",
+    "bindingDefinition.transitionMs": "definition.transitionMs",
+    "bindingDefinition.curve": "definition.curve"
   },
   "setters": [
     "busDefinitionSnapshotHeader.checksum"

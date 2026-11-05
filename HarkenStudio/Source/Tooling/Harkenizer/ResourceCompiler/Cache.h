@@ -476,8 +476,8 @@ inline void LoadPreviousPackV2Media(PreviousPack* out,
         if (entry.kind != harkenstudiobuild::kPackEntryKindMedia) {
             continue;
         }
-        if (entry.vintage != harkenstudiobuild::kPackV2SchemaVintage ||
-            entry.size != harkenstudiobuild::kPackV2MediaPayloadBytes ||
+        if (entry.vintage != harkenstudiobuild::kPackMediaVintage ||
+            entry.size != harkenstudiobuild::kPackMediaBytes ||
             entry.offset > out->bytes.size() ||
             entry.size > out->bytes.size() - entry.offset) {
             *outIgnoreReason =
@@ -495,7 +495,7 @@ inline void LoadPreviousPackV2Media(PreviousPack* out,
             return;
         }
         const harkenstudiobuild::PackTocEntry toc =
-            harkenstudiobuild::ParsePackTocEntry(payload);
+            harkenstudiobuild::ReadPackMedia(payload);
         if (toc.blobOffset + toc.blobBytes > out->bytes.size()) {
             *outIgnoreReason =
                 "previous output blob range is out of bounds";
@@ -544,7 +544,7 @@ inline void LoadPreviousPack(const std::string& path, PreviousPack* out,
     }
     const std::uint64_t tocBytes =
         static_cast<std::uint64_t>(header.entryCount) *
-        harkenstudiobuild::kPackTocEntryBytes;
+        harkenstudiobuild::kPackMediaBytes;
     if (header.tocOffset + tocBytes > out->bytes.size()) {
         *outIgnoreReason = "previous output TOC is out of bounds";
         return;
@@ -556,9 +556,9 @@ inline void LoadPreviousPack(const std::string& path, PreviousPack* out,
         return;
     }
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
-        harkenstudiobuild::PackTocEntry entry = harkenstudiobuild::ParsePackTocEntry(
+        harkenstudiobuild::PackTocEntry entry = harkenstudiobuild::ReadPackMedia(
             tocImage + static_cast<std::size_t>(i) *
-                           harkenstudiobuild::kPackTocEntryBytes);
+                           harkenstudiobuild::kPackMediaBytes);
         if (entry.blobOffset + entry.blobBytes > out->bytes.size()) {
             *outIgnoreReason =
                 "previous output blob range is out of bounds";

@@ -194,8 +194,8 @@ inline std::vector<std::uint8_t> WithCanonicalBindingRows(
     using harken::kPackV2SchemaVintage;
     using harken::ParsePackV2DirectoryEntry;
     using harken::ParsePackV2Header;
-    using harken::SerializePackV2BindingAttachment;
-    using harken::SerializePackV2BindingDefinition;
+    using harken::SerializePackBindingAttachment;
+    using harken::WritePackBindingDefinition;
     harken::PackV2Header header;
     if (!ParsePackV2Header(original.data(), &header)) {
         return {};
@@ -213,13 +213,13 @@ inline std::vector<std::uint8_t> WithCanonicalBindingRows(
             vintage);
         builder.SetRelationOrdinal(copied, entry.relationOrdinal);
     }
-    std::vector<std::uint8_t> definition(harken::kPackV2BindingDefinitionPayloadBytes);
-    SerializePackV2BindingDefinition(bindingId, desc, definition.data());
+    std::vector<std::uint8_t> definition(harken::kPackBindingDefinitionBytes);
+    WritePackBindingDefinition(bindingId, desc, definition.data());
     builder.AddEntry(kPackEntryKindBindingDefinition, bindingId, std::move(definition),
                      kPackV2SchemaVintage);
     if (attachmentOrNull != nullptr) {
-        std::vector<std::uint8_t> attachment(harken::kPackV2BindingAttachmentPayloadBytes);
-        SerializePackV2BindingAttachment(*attachmentOrNull, attachment.data());
+        std::vector<std::uint8_t> attachment(harken::kPackBindingAttachmentBytes);
+        SerializePackBindingAttachment(*attachmentOrNull, attachment.data());
         const auto index = builder.AddEntry(kPackEntryKindBindingAttachment, VnObjectId{},
                                             std::move(attachment), kPackV2SchemaVintage);
         builder.SetRelationOrdinal(index, 0);
