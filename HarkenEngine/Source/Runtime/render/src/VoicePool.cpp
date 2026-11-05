@@ -4329,11 +4329,10 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
         std::size_t pathRows = 0;
         std::uint32_t members = 0;
         bool singleStageMembers = true;
-        for (auto& slot : m_slots) {
+        if (collective) for (auto& slot : m_slots) {
             if (!IsAudioRenderingState(slot.state.load(std::memory_order_relaxed))) continue;
             auto& render = slot.render;
-            render.signalNodeCount = collective
-                ? signals->MatchMember(render.signalPath, render.signalNodeStorage) : 0;
+            render.signalNodeCount = signals->MatchMember(render.signalPath, render.signalNodeStorage);
             assert(render.signalNodeCount != UINT32_MAX);
             if (render.signalNodeCount == UINT32_MAX) render.signalNodeCount = 0;
             render.signalMemberActive = render.signalNodeCount != 0;
@@ -4460,9 +4459,8 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
         };
     const bool workerReserved = m_deferredJobCount != 0 || m_workers.TryReserveBatch();
     if (m_deferredJobCount == 0 && !workerReserved && !collective) {
-        // Serial in-callback path (renderWorkerCount = 0), unchanged from M4:
-        // each rendering voice runs its full cascade and folds as it goes.
-        // This keeps every existing baseline byte-untouched at the default.
+        // Clear prior signal membership while visiting the actual render work.
+        // Ordinary rendering needs no separate full-slot preparation pass.
         for (std::uint32_t i = 0; i < m_slots.size(); ++i) {
             Slot& slot = m_slots[i];
             // Relaxed: Rendering is entered and left only on this (audio)
@@ -4470,6 +4468,8 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             if (!IsAudioRenderingState(slot.state.load(std::memory_order_relaxed))) {
                 continue;
             }
+            slot.render.signalNodeCount = 0;
+            slot.render.signalMemberActive = false;
             PrepareFirstOutputTimelineWeights(slot);
             beginEffects(slot.render);
             slot.render.monitorRenderSlot = i;
@@ -4533,6 +4533,10 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             Slot& slot = m_slots[i];
             if (!IsAudioRenderingState(slot.state.load(std::memory_order_relaxed))) {
                 continue;
+            }
+            if (!collective) {
+                slot.render.signalNodeCount = 0;
+                slot.render.signalMemberActive = false;
             }
             PrepareFirstOutputTimelineWeights(slot);
             beginEffects(slot.render);
