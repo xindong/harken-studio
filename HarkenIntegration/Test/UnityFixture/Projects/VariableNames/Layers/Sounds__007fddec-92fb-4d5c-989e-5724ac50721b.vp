@@ -10,10 +10,10 @@
         "expanded": true,
         "fieldGroups": {
             "shared": {
-                "output": {
+                "mainOutput": {
                     "inherit": true,
                     "values": {
-                        "outputBusRef": "7fcd4ff3-6fd7-4f89-9743-58a57478c83f",
+                        "mainOutputBusRef": "7fcd4ff3-6fd7-4f89-9743-58a57478c83f",
                         "outputBusVolume": 0
                     }
                 },
