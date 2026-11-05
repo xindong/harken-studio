@@ -19,13 +19,14 @@ namespace Harken.Unity
         private Quaternion rotation;
         private bool published;
 
-        internal HarkenSpatialSource(object owner, PackBootstrapSession session, Transform target, Emitter emitter)
+        internal HarkenSpatialSource(object owner, PackBootstrapSession session, Transform target)
         {
             this.owner = owner;
             this.session = session;
             this.target = target;
-            this.emitter = emitter;
         }
+
+        internal VnResult CreateEmitter() => Emitter.Create(out emitter);
 
         public bool IsFollowing => !ended && session.IsActive && target != null && target.gameObject.activeInHierarchy;
         public VnResult LastResult { get; private set; } = VnResult.VN_OK;
@@ -164,10 +165,26 @@ namespace Harken.Unity
             if (target == null || !target.gameObject.activeInHierarchy) return VnResult.VN_INVALID_ARG;
             foreach (HarkenSpatialSource existing in sources)
                 if (existing.Matches(target, session)) { source = existing; return VnResult.VN_OK; }
-            VnResult result = Emitter.Create(out Emitter emitter);
-            if (result != VnResult.VN_OK) return result;
-            var created = new HarkenSpatialSource(owner, session, target, emitter);
+            // Finish managed ownership and publication storage before acquiring
+            // the native handle. Preparation does not invoke user callbacks.
+            var created = new HarkenSpatialSource(owner, session, target);
             sources.Add(created);
+            VnResult result;
+            try
+            {
+                if (owner is HarkenAudioSystem runtime) runtime.ReserveSpatialRecords();
+                result = created.CreateEmitter();
+            }
+            catch
+            {
+                sources.RemoveAt(sources.Count - 1);
+                throw;
+            }
+            if (result != VnResult.VN_OK)
+            {
+                sources.RemoveAt(sources.Count - 1);
+                return result;
+            }
             result = created.CapturePose(out _);
             if (result == VnResult.VN_OK) source = created;
             else
