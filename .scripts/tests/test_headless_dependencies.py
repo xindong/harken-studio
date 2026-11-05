@@ -15,12 +15,14 @@ class HeadlessDependenciesTests(unittest.TestCase):
     def configure(self, graph: str) -> subprocess.CompletedProcess:
         with tempfile.TemporaryDirectory(prefix="headless-boundary-") as temporary:
             root = Path(temporary)
-            module = REPO_ROOT / "cmake/VerifyHeadlessDependencies.cmake"
+            source = (REPO_ROOT / "HarkenStudio/CMakeLists.txt").read_text(encoding="utf-8")
+            start = source.index("function(harken_verify_headless_dependencies)")
+            end = source.index("endfunction()", start) + len("endfunction()")
             (root / "CMakeLists.txt").write_text(
                 'cmake_minimum_required(VERSION 3.25)\n'
                 'project(HeadlessBoundary LANGUAGES NONE)\n'
-                f'include("{module.as_posix()}")\n'
-                + graph + '\nharken_verify_headless_dependencies(host)\n',
+                + source[start:end] + '\n' + graph
+                + '\nharken_verify_headless_dependencies(host)\n',
                 encoding="utf-8",
             )
             return subprocess.run(

@@ -379,13 +379,6 @@ if(HARKEN_BUILD_HUB_UNIT_TESTS)
     add_subdirectory(HarkenHub/Test)
 endif()
 
-include(cmake/VerifyHeadlessDependencies.cmake)
-foreach(_harken_headless_target harken_studio_core harken_studio_cli harkenizer)
-    if(TARGET ${_harken_headless_target})
-        harken_verify_headless_dependencies(${_harken_headless_target})
-    endif()
-endforeach()
-
 if(TARGET harken_runtime_ci_tests AND TARGET harken_host_selection_copy_test)
     add_dependencies(harken_runtime_ci_tests harken_host_selection_copy_test)
 endif()
