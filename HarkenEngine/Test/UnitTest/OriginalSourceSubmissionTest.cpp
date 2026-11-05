@@ -2599,7 +2599,6 @@ struct GenuineInitialSingleClockHarness {
         facts.sourceRate = kRate;
         facts.mixRate = engine.config.mixRate.SampleRate();
         facts.pitchFixed = true;
-        facts.serialRender = true;
         facts.absoluteLogicalStartFrame = 0;
         facts.playbackFactsRevision = episode.owner.factsRevision;
         facts.program.kind = harken::PlayableKindV1::Sound;

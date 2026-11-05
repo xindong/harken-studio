@@ -177,7 +177,6 @@ harken::KnownCompletionPredicateV1 BoundPredicate(
     facts.sourceRate = 48000;
     facts.mixRate = 48000;
     facts.pitchFixed = true;
-    facts.serialRender = true;
     facts.absoluteLogicalStartFrame = 0;
     facts.playbackFactsRevision = 1;
     facts.program.kind = harken::PlayableKindV1::Sound;
@@ -5825,7 +5824,6 @@ struct GenuineHiddenSelectedFuture {
         facts.sourceRate = 48000;
         facts.mixRate = 48000;
         facts.pitchFixed = true;
-        facts.serialRender = true;
         facts.absoluteLogicalStartFrame = 100;
         facts.playbackFactsRevision = currentEpoch;
         facts.program.kind = harken::PlayableKindV1::Sound;

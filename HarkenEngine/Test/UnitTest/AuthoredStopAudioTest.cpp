@@ -324,7 +324,7 @@ struct FrontierAudioHarness {
                     harken::KnownCompletionFactsV1 facts{};
                     facts.occurrence = currentOccurrence;
                     facts.renderGeneration = static_cast<std::uint32_t>(sourceRender >> 32);
-                    facts.residentExactMedia = facts.pitchFixed = facts.serialRender = true;
+                    facts.residentExactMedia = facts.pitchFixed = true;
                     facts.pcmFrameCount = sourceSamples.size();
                     facts.loopEndFrame = 16;
                     facts.loopCount = 1;
@@ -900,11 +900,22 @@ TEST(AuthoredStopAudio, DeferredWorkerRetainsFrozenFrontierUntilCompletion) {
         }
     };
     struct EffectContext { Gate* gate; harken::VoiceRenderContext* voice; } effects[2]{};
+    std::array<harken::CompletionProgressRow, 2> progress;
+    std::array<harken::CompletionProgressSnapshot, 2> baseline;
     JoinGuard join{gate, engine.voices};
     const std::array renders{h.render, h.secondRender};
     for (std::size_t index = 0; index < renders.size(); ++index) {
         auto* voice = engine.voices.Resolve(renders[index]);
         ASSERT_NE(nullptr, voice);
+        baseline[index].occurrence = {static_cast<std::uint32_t>(index), 1};
+        baseline[index].renderGeneration = static_cast<std::uint32_t>(renders[index] >> 32);
+        baseline[index].playbackFactsRevision = 1;
+        ASSERT_TRUE(harken::InitializeCompletionProgress(progress[index], baseline[index]));
+        // This harness owns the claimed Source fixture before its first callback.
+        voice->completionProgress = &progress[index];
+        voice->completionOccurrence = baseline[index].occurrence;
+        voice->completionRenderGeneration = baseline[index].renderGeneration;
+        voice->playbackFactsRevision = baseline[index].playbackFactsRevision;
         effects[index] = {&gate, voice};
         voice->fxSlots[0].state = &effects[index];
         voice->fxSlots[0].process = [](void* opaque, float* const*, std::uint32_t, std::uint32_t, std::uint32_t) {
@@ -940,6 +951,13 @@ TEST(AuthoredStopAudio, DeferredWorkerRetainsFrozenFrontierUntilCompletion) {
     EXPECT_EQ(harken::FrontierEventState::Applied, gate.before.events[0].frontierProof.state);
 
     EXPECT_FALSE(gate.exited.load(std::memory_order_acquire));
+    for (const auto& row : progress) {
+        harken::CompletionProgressSnapshot snapshot;
+        ASSERT_TRUE(harken::CaptureCompletionProgress(row, &snapshot));
+        EXPECT_EQ(0u, snapshot.progressRevision);
+        EXPECT_EQ(0u, snapshot.completedThroughBlockSequence);
+        EXPECT_EQ(0u, snapshot.logicalOutputFramesProduced);
+    }
     EXPECT_EQ(gate.before.quantumIndex, gate.span->quantumIndex);
     EXPECT_EQ(gate.before.renderGeneration, gate.span->renderGeneration);
     ASSERT_EQ(gate.before.eventCount, gate.span->eventCount);
@@ -973,6 +991,15 @@ TEST(AuthoredStopAudio, DeferredWorkerRetainsFrozenFrontierUntilCompletion) {
     const auto completed = engine.voices.RenderAll(h.audio.arena, h.audio.planes.data(), kBlock,
         engine.notifications, 0, 0, 0);
     EXPECT_FALSE(completed.batchDeferred);
+    ASSERT_TRUE(engine.voices.PublishCompletionProgress(0));
+    for (const auto& row : progress) {
+        harken::CompletionProgressSnapshot snapshot;
+        ASSERT_TRUE(harken::CaptureCompletionProgress(row, &snapshot));
+        EXPECT_EQ(1u, snapshot.progressRevision);
+        EXPECT_EQ(1u, snapshot.completedThroughBlockSequence);
+        EXPECT_GT(snapshot.logicalOutputFramesProduced, 0u);
+        EXPECT_LE(snapshot.logicalOutputFramesProduced, kBlock);
+    }
 
 }
 

@@ -25,7 +25,6 @@ harken::KnownCompletionFactsV1 KnownFacts() {
     facts.mixRate = 48000;
     facts.pitchRatio = 1.0f;
     facts.pitchFixed = true;
-    facts.serialRender = true;
     facts.endMutationPossible = false;
     facts.absoluteLogicalStartFrame = 50;
     facts.progressBaselineOutputFrames = 9;
@@ -219,9 +218,6 @@ TEST(KnownCompletion, ClassifiesSupportedFallbacksAndMalformedFactsExactly) {
     EXPECT_EQ(harken::CompletionPredictability::KnownFinite, classify(facts));
     facts = KnownFacts();
     facts.pitchFixed = false;
-    EXPECT_EQ(harken::CompletionPredictability::SignalOnly, classify(facts));
-    facts = KnownFacts();
-    facts.serialRender = false;
     EXPECT_EQ(harken::CompletionPredictability::SignalOnly, classify(facts));
     facts = KnownFacts();
     facts.endMutationPossible = true;

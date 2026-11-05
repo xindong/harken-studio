@@ -2069,6 +2069,7 @@ struct EngineScheduleAggregateChild {
     std::uint64_t endOffsetFrames = UINT64_MAX;
     std::uint32_t stableLeafOrdinal = 0;
     std::uint32_t loopIteration = 0;
+    std::uint64_t queueSelectionVersion = 0;
     std::uint64_t sourceOffsetFrames = 0;
     EnginePlayableServiceReference service{};
     std::optional<VariableControlSide> variableControlSide;
@@ -2090,8 +2091,22 @@ struct EngineMusicScheduleBatch {
     std::uint64_t iteration = 0;
 };
 
+struct EngineMusicQueuePosition {
+    VnObjectId container{};
+    std::uint64_t fingerprint = 0;
+    EngineScheduleChildPropertyContext path;
+    std::vector<std::uint64_t> ancestry;
+    QueueCheckpointKey checkpoint{};
+    EffectiveQueueState initial{};
+    EffectiveQueueState resetInitial{};
+    RandomQueueSeedContext seed{};
+    std::uint64_t sourceOffsetFrames = 0;
+    bool checkpointLoaded = false;
+};
+
 struct EngineMusicScheduleState {
     MusicPlaybackTimeline timeline{};
+    std::vector<EngineMusicQueuePosition> queueBaselines;
     TempoSegment tempo{};
     ClockKernel clock;
     MarkerIndex markers;
@@ -4579,6 +4594,7 @@ struct EngineActionPlayStorage {
             enabled = false;
         }
     } musicSelection;
+    std::vector<EngineMusicQueuePosition> musicQueuePositions;
     EnginePendingSelectionBatch initialSelectionBatch;
     std::vector<EnginePendingSelectionBatch*> musicPublicationOwners;
     std::vector<PendingSelectionBatchCommitV1> musicPublicationCommits;

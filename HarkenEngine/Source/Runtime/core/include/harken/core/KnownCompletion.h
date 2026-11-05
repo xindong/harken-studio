@@ -32,7 +32,6 @@ struct KnownCompletionFactsV1 {
     // Prepared crop uses the actual initial wire ratio without float narrowing.
     double resolvedSourceRatio = 0.0;
     bool pitchFixed = false;
-    bool serialRender = false;
     bool endMutationPossible = false;
     std::uint64_t authoredDurationFrames = UINT64_MAX;
     std::uint64_t absoluteLogicalStartFrame = 0;

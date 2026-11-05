@@ -34,7 +34,7 @@ bool Multiply(std::uint64_t a, std::uint64_t b,
 
 static CompletionPredictability ResolveSourceDuration(
     const KnownCompletionFactsV1& facts,
-    std::uint64_t* out, bool requireSerialCompletion) noexcept {
+    std::uint64_t* out) noexcept {
     if (out == nullptr || facts.sourceRate == 0 ||
         facts.mixRate == 0 || !std::isfinite(facts.pitchRatio) ||
         facts.pitchRatio <= 0.0f || !std::isfinite(facts.resolvedSourceRatio) ||
@@ -42,7 +42,7 @@ static CompletionPredictability ResolveSourceDuration(
         return CompletionPredictability::Invalid;
     }
     if (!facts.residentExactMedia || !facts.pitchFixed ||
-        (requireSerialCompletion && !facts.serialRender) || facts.endMutationPossible ||
+        facts.endMutationPossible ||
         facts.loopCount == 0) {
         return CompletionPredictability::SignalOnly;
     }
@@ -99,12 +99,12 @@ static CompletionPredictability ResolveSourceDuration(
 
 CompletionPredictability ResolveKnownCompletionDuration(
     const KnownCompletionFactsV1& facts, std::uint64_t* out) noexcept {
-    return ResolveSourceDuration(facts, out, true);
+    return ResolveSourceDuration(facts, out);
 }
 
 CompletionPredictability ResolveFixedSourceDuration(
     const KnownCompletionFactsV1& facts, std::uint64_t* out) noexcept {
-    return ResolveSourceDuration(facts, out, false);
+    return ResolveSourceDuration(facts, out);
 }
 
 CompletionPredictability MaterializeKnownCompletion(

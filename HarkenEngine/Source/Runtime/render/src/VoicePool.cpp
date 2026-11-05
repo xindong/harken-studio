@@ -2860,7 +2860,7 @@ bool VoicePool::BindCompletionProgress(
     std::uint64_t playbackFactsRevision) noexcept {
     Slot* slot = SlotFor(handle);
     if (slot == nullptr || row == nullptr || occurrence.generation == 0 ||
-        playbackFactsRevision == 0 || m_workers.WorkerCount() != 0 ||
+        playbackFactsRevision == 0 ||
         (slot->state.load(std::memory_order_acquire) != SlotState::Claimed &&
          slot->state.load(std::memory_order_acquire) != SlotState::Prepared)) {
         return false;
@@ -3571,7 +3571,7 @@ bool VoicePool::StageCompletionProgress(
     if (render.completionProgress == nullptr) {
         return true;
     }
-    if (m_workers.WorkerCount() != 0 || blockIndex == UINT64_MAX) {
+    if (blockIndex == UINT64_MAX) {
         slot.completionProgressTerminal = true;
         return false;
     }
