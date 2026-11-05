@@ -89,6 +89,15 @@ public:
     bool LogicRefMatches(BusSlotRef ref) const;
     bool AudioRefMatches(BusSlotRef ref) const;
 
+    // Internal render-owner/quiescent read after bus processing, never a
+    // concurrent logic-thread query. Copies the latest processing segment only.
+    // Failure clears out; successful copies still require IsNumeric().
+    bool AudioReadLimiterGainReduction(BusSlotRef bus, std::uint32_t slot,
+        const EffectInstanceRef& expected, std::uint64_t epoch,
+        std::uint64_t sourceFrameBegin, LimiterGainReduction& out);
+    // Final mixer rejection, after workers join; never changes DSP state.
+    void AudioDiscardLimiterGainReduction(std::uint64_t epoch);
+
     // The public bus id at a dense index (0 when out of range or the slot is
     // tombstoned): the reverse lookup attribution capture uses to report
     // public locators. Logic thread.

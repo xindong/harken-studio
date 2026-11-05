@@ -4355,8 +4355,13 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             return outcome;
         }
     }
-    const auto beginCompressors = [](VoiceRenderContext& render) {
+    const auto beginEffects = [&](VoiceRenderContext& render) {
         for (std::uint32_t slot = 0; slot < render.fxSlotCount; ++slot) {
+            if (render.fxSlotEffectRef[slot].type == VN_EFFECT_LIMITER &&
+                render.fxSlots[slot].state != nullptr) {
+                LimiterBeginRender(*static_cast<LimiterState*>(render.fxSlots[slot].state),
+                                   blockIndex, sourceFrameBegin);
+            }
             render.compressorParamTransitionThisBlock[slot] = false;
             render.compressorBypassTransitionThisBlock[slot] = false;
             if (render.fxSlotEffectRef[slot].type !=
@@ -4371,6 +4376,16 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             render.compressorBypassTransitionThisBlock[slot] =
                 render.fxBypassRamping[slot];
             CompressorBeginBlock(state);
+        }
+    };
+    const auto finishLimiters = [](VoiceRenderContext& render) {
+        for (std::uint32_t s = 0; s < render.fxSlotCount; ++s) {
+            if (render.fxSlotEffectRef[s].type == VN_EFFECT_LIMITER &&
+                render.fxSlots[s].state != nullptr) {
+                LimiterFinishRender(*static_cast<LimiterState*>(render.fxSlots[s].state),
+                    render.cascade.offset,
+                    render.cascade.runnable ? render.cascade.produced : 0);
+            }
         }
     };
     const auto publishCompressors =
@@ -4456,7 +4471,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
                 continue;
             }
             PrepareFirstOutputTimelineWeights(slot);
-            beginCompressors(slot.render);
+            beginEffects(slot.render);
             slot.render.monitorRenderSlot = i;
             slot.render.monitorRenderGeneration =
                 slot.generation.load(std::memory_order_relaxed);
@@ -4488,6 +4503,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
                         ? slot.render.cascade.produced
                         : 0);
             }
+            finishLimiters(slot.render);
             publishCompressors(i, slot);
             (void)StageCompletionProgress(
                 slot, blockIndex,
@@ -4519,7 +4535,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
                 continue;
             }
             PrepareFirstOutputTimelineWeights(slot);
-            beginCompressors(slot.render);
+            beginEffects(slot.render);
             slot.render.monitorRenderSlot = i;
             slot.render.monitorRenderGeneration =
                 slot.generation.load(std::memory_order_relaxed);
@@ -4667,6 +4683,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             if (slot.firstOutputPhase == FirstOutputPhase::AwaitingFirstFold &&
                 slot.render.cascade.produced > 0) slot.firstOutputPhase = FirstOutputPhase::FirstFolded;
         }
+        finishLimiters(slot.render);
         publishCompressors(i, slot);
         (void)StageCompletionProgress(
             slot, blockIndex,
@@ -5154,6 +5171,32 @@ void VoicePool::CommitPreparedRoutingMigrationV1(VnVoiceHandle handle,
             --render.voiceSendActiveCount;
         }
     }
+}
+
+void VoicePool::AudioDiscardLimiterGainReduction(std::uint64_t epoch) {
+    if (m_deferredJobCount != 0) return;
+    for (auto& slot : m_slots) {
+        if (!IsAudioRenderingState(slot.state.load(std::memory_order_relaxed))) continue;
+        auto& render = slot.render;
+        for (std::uint32_t s = 0; s < render.fxSlotCount; ++s) {
+            if (render.fxSlotEffectRef[s].type != VN_EFFECT_LIMITER ||
+                render.fxSlots[s].state == nullptr) continue;
+            auto& state = *static_cast<LimiterState*>(render.fxSlots[s].state);
+            if (state.gainReduction.renderEpoch == epoch) LimiterFinishRender(state, 0, 0);
+        }
+    }
+}
+
+bool VoicePool::AudioReadLimiterGainReduction(VnVoiceHandle handle, std::uint32_t effectSlot,
+    const EffectInstanceRef& expected, std::uint64_t epoch,
+    std::uint64_t sourceFrameBegin, LimiterGainReduction& out) {
+    out = {};
+    if (m_deferredJobCount != 0) return false;
+    Slot* slot = SlotFor(handle);
+    if (slot == nullptr || !IsAudioRenderingState(slot->state.load(std::memory_order_relaxed)) ||
+        effectSlot >= slot->render.fxSlotCount) return false;
+    return CopyLimiterGainReduction(slot->render.fxSlots[effectSlot],
+        slot->render.fxSlotEffectRef[effectSlot], expected, epoch, sourceFrameBegin, out);
 }
 
 VoiceRenderContext* VoicePool::Resolve(VnVoiceHandle handle) {

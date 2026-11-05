@@ -1292,7 +1292,10 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
         for (std::uint32_t s = 0; s < ctx.fxSlotCount; ++s) {
             ProcessChainSlot(ctx.fxSlots[s], ctx.fxBypassRamping[s],
                              ctx.fxBypassMix[s], ctx.fxBypassTarget[s],
-                             scratch, dry, channels, offset, produced);
+                             scratch, dry, channels, offset, produced, nullptr,
+                             ctx.fxSlotEffectRef[s].type == VN_EFFECT_LIMITER
+                                 ? static_cast<LimiterState*>(ctx.fxSlots[s].state)
+                                 : nullptr);
         }
     }
 

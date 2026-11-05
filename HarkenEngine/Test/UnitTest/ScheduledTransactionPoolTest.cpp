@@ -734,7 +734,8 @@ TEST(ScheduledTransactionPool, PrivatePageGroupTransferCommittedOwnerQueryReject
     EXPECT_EQ(1u, pool.CaptureLivePlan03Groups(nullptr, 0));
     harken::Plan03PageGroupView pending{};
     ASSERT_EQ(1u, pool.CaptureLivePlan03Groups(&pending, 1));
-    EXPECT_EQ(decision, pending.identity.decision);
+    EXPECT_EQ(decision.slot, pending.identity.decision.slot);
+    EXPECT_EQ(decision.generation, pending.identity.decision.generation);
     harken::CommittedPlan03GroupSlice committed{};
     ASSERT_TRUE(pool.CommitPreparedPlan03GroupSlice(&prepared, &committed, false));
     harken::Plan03PageGroupView actual{};

@@ -1888,6 +1888,10 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
     if (signals != nullptr) {
         signalOk = signalOk && planesOk && signals->CommitBlock();
         if (!signalOk) {
+            // Invalidate accepted effect observations along with discarded
+            // audio. This point is reached only after the worker join.
+            m_voices.AudioDiscardLimiterGainReduction(blockIndex);
+            m_buses.AudioDiscardLimiterGainReduction(blockIndex);
             // No stale or partially captured source bank may escape a failed
             // quantum. The next complete block starts with zero side input.
             signals->Invalidate();

@@ -15,6 +15,10 @@
 
 #include "Common/TestUtil.h"
 #include "harken/core/FloatMode.h"
+#include "harken/core/AllocGuard.h"
+#include "harken/render/EffectChain.h"
+#include "VoicePoolReleaseTestAccess.h"
+#include "AllocationProbe.h"
 #include "harken/render/BuiltinEffects.h"
 #include "harken/render/generated/harken_effect_registry.g.h"
 
@@ -27,6 +31,7 @@
 #include <limits>
 #include <sstream>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -216,6 +221,263 @@ VnSnapshot Snapshot() {
     return snapshot;
 }
 
+TEST(LimiterEffect, InternalGrTracksActualSegmentsAndRejectsResetEmptyAndNonFinite) {
+    Kernel kernel(-12.0f, 1.0f);
+    constexpr std::uint32_t channels = 4;
+    float audio[channels][128]{};
+    float* planes[channels] = {audio[0], audio[1], audio[2], audio[3]};
+    for (std::uint32_t ch = 0; ch < channels; ++ch)
+        std::fill_n(audio[ch], 128, 0.05f * static_cast<float>(ch + 1));
+    audio[3][7] = 2.0f;
+    const harken::EffectInstanceRef ref{VN_EFFECT_LIMITER, 0, 19};
+    harken::LimiterGainReduction gr;
+    harken::LimiterBeginRender(kernel.state, 42, 9000);
+    ReferenceLimiter reference(-12.0, 1.0);
+    for (const auto [offset, frames] : {std::pair{7u, 64u}, std::pair{71u, 49u}}) {
+        double minimum = 1.0;
+        double end = 1.0;
+        for (std::uint32_t i = 0; i < frames; ++i) {
+            end = reference.Step(offset + i == 7 ? 2.0 : 0.2);
+            minimum = std::min(minimum, end);
+        }
+        kernel.effect.process(&kernel.state, planes, channels, offset, frames);
+        EXPECT_FALSE(harken::CopyLimiterGainReduction(kernel.effect, ref, ref, 42, 9000, gr));
+        harken::LimiterFinishRender(kernel.state, offset, frames);
+        ASSERT_TRUE(harken::CopyLimiterGainReduction(kernel.effect, ref, ref, 42, 9000, gr));
+        ASSERT_TRUE(gr.IsNumeric());
+        EXPECT_EQ(offset, gr.frameOffset);
+        EXPECT_EQ(frames, gr.frameCount);
+        EXPECT_EQ(9000u, gr.sourceFrameBegin);
+        EXPECT_NEAR(minimum, gr.minimumGain, 2.0e-6);
+        EXPECT_NEAR(end, gr.endGain, 2.0e-6);
+        EXPECT_LT(gr.minimumGain, gr.endGain);
+        EXPECT_FALSE(harken::CopyLimiterGainReduction(kernel.effect, ref, ref, 42, 9256, gr));
+        EXPECT_FALSE(gr.IsNumeric());
+    }
+    // A new job without processing, and a reset, must not replay the last job.
+    harken::LimiterBeginRender(kernel.state, 43, 9256);
+    EXPECT_FALSE(harken::CopyLimiterGainReduction(kernel.effect, ref, ref, 43, 9256, gr));
+    kernel.effect.process(&kernel.state, planes, channels, 0, 0);
+    harken::LimiterFinishRender(kernel.state, 0, 0);
+    EXPECT_FALSE(harken::CopyLimiterGainReduction(kernel.effect, ref, ref, 43, 9256, gr));
+    audio[0][0] = std::numeric_limits<float>::quiet_NaN();
+    kernel.effect.process(&kernel.state, planes, channels, 0, 1);
+    harken::LimiterFinishRender(kernel.state, 0, 1);
+    ASSERT_TRUE(harken::CopyLimiterGainReduction(kernel.effect, ref, ref, 43, 9256, gr));
+    EXPECT_EQ(harken::LimiterGainReductionStatus::NonFinite, gr.status);
+    EXPECT_FALSE(gr.IsNumeric());
+    kernel.effect.reset(&kernel.state);
+    EXPECT_FALSE(harken::CopyLimiterGainReduction(kernel.effect, ref, ref, 43, 9256, gr));
+}
+
+TEST(LimiterEffect, InternalGrBypassAndClippingDoNotChangeSamples) {
+    for (const auto [start, target] : {std::pair{0.0f, 0.0f}, std::pair{1.0f, 1.0f},
+                                     std::pair{0.0f, 1.0f}, std::pair{1.0f, 0.0f},
+                                     std::pair{0.5f, 0.5f}}) {
+        Kernel observed(-12.0f, 1.0f), control(-12.0f, 1.0f);
+        float audio[2][64], dry[2][64];
+        std::fill_n(audio[0], 64, 0.125f);
+        audio[0][0] = 1.0f;
+        std::copy_n(audio[0], 64, audio[1]);
+        float* planes[2] = {audio[0], audio[1]};
+        float* scratch[2] = {dry[0], dry[1]};
+        bool ramp = start != target, controlRamp = ramp;
+        float mix = start, controlMix = start;
+        harken::LimiterBeginRender(observed.state, 1, 100);
+        const auto allocations = allocation_probe::count;
+        allocation_probe::enabled = true;
+        harken::ProcessChainSlot(observed.effect, ramp, mix, target, planes, scratch,
+                                1, 0, 64, nullptr, &observed.state);
+        allocation_probe::enabled = false;
+        EXPECT_EQ(allocations, allocation_probe::count);
+        harken::ProcessChainSlot(control.effect, controlRamp, controlMix, target,
+                                planes + 1, scratch + 1, 1, 0, 64);
+        EXPECT_GT(std::fabs(audio[0][0]), 0.01f);
+        EXPECT_EQ(0, std::memcmp(audio[0], audio[1], sizeof(audio[0])));
+        harken::LimiterFinishRender(observed.state, 0, 64);
+        const auto& gr = observed.state.gainReduction;
+        if (start == 1.0f && target == 1.0f) {
+            EXPECT_TRUE(gr.IsNumeric());
+            EXPECT_DOUBLE_EQ(1.0, gr.minimumGain);
+            EXPECT_DOUBLE_EQ(1.0, gr.endGain);
+        } else if (start == 0.0f && target == 0.0f) {
+            EXPECT_TRUE(gr.IsNumeric());
+            EXPECT_LT(gr.minimumGain, gr.endGain);
+        } else {
+            EXPECT_FALSE(gr.IsNumeric());
+            EXPECT_EQ(harken::LimiterGainReductionStatus::BypassTransition, gr.status);
+        }
+        harken::LimiterFinishRender(observed.state, 0, 17);
+        EXPECT_FALSE(gr.IsNumeric());
+        EXPECT_EQ(harken::LimiterGainReductionStatus::OutputClipped, gr.status);
+        EXPECT_EQ(64u, gr.frameCount); // Never relabel an old statistic as a prefix.
+        harken::LimiterFinishRender(observed.state, 0, 0);
+        EXPECT_FALSE(gr.outputAccepted);
+    }
+}
+
+TEST(LimiterEffect, InternalVoiceAndBusGrValidateJobAndInstalledIdentity) {
+    for (const std::uint32_t workers : {0u, 2u}) {
+        SCOPED_TRACE(workers);
+        auto config = harkentest::MakeNullConfig(1, kBlock, kRate);
+        config.renderWorkerCount = workers;
+        config.fxSlotsPerVoice = config.fxSlotsPerBus = 1;
+        config.limiterEffectPoolCapacity = 3;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        auto source = harkentest::MakeDC(kBlock * 16, 0.1f);
+        for (std::size_t i = 0; i < source.size(); i += kBlock) source[i] = 1.0f;
+        auto pcm = harkentest::MonoDesc(source, kRate);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(8101), &pcm));
+        auto play = harkentest::MakePlayDesc(harkentest::ObjectId(8101));
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+        auto desc = LimiterDesc(-6.0f, 1.0f);
+        ASSERT_EQ(VN_OK, Vn_SetVoiceEffect(voice, 0, VN_EFFECT_LIMITER, AsBase(&desc)));
+        desc.ceilingDb = -12.0f;
+        ASSERT_EQ(VN_OK, Vn_SetBusEffect(VN_BUS_MASTER, 0, VN_EFFECT_LIMITER, AsBase(&desc)));
+        const auto epoch = engine->mixer.BlocksRendered();
+        const auto hits = harken::memguard::HitCount();
+        Capture output;
+        harkentest::PumpAndCapture(engine, 1, output);
+        EXPECT_EQ(hits, harken::memguard::HitCount());
+        const auto handle = harkentest::RenderHandle(engine, voice);
+        auto* render = engine->voices.Resolve(handle);
+        ASSERT_NE(nullptr, render);
+        const auto voiceRef = render->fxSlotEffectRef[0];
+        auto* bus = engine->buses.BusState(0);
+        ASSERT_NE(nullptr, bus);
+        const auto busRef = bus->fxSlotEffectRef[0];
+        const auto busIdentity = engine->buses.RefAt(0);
+        harken::LimiterGainReduction voiceGr, busGr;
+        ASSERT_TRUE(engine->voices.AudioReadLimiterGainReduction(handle, 0, voiceRef,
+                    epoch, epoch * kBlock, voiceGr));
+        ASSERT_TRUE(engine->buses.AudioReadLimiterGainReduction(busIdentity, 0, busRef,
+                    epoch, epoch * kBlock, busGr));
+        EXPECT_TRUE(voiceGr.IsNumeric());
+        EXPECT_TRUE(busGr.IsNumeric());
+        EXPECT_LT(voiceGr.minimumGain, voiceGr.endGain);
+        EXPECT_LT(busGr.minimumGain, busGr.endGain);
+        EXPECT_EQ(kBlock, voiceGr.frameCount);
+        EXPECT_NE(voiceGr.instance.poolIndex, busGr.instance.poolIndex);
+        EXPECT_FALSE(engine->voices.AudioReadLimiterGainReduction(handle, 0, busRef,
+                     epoch, epoch * kBlock, voiceGr));
+        EXPECT_FALSE(engine->buses.AudioReadLimiterGainReduction(busIdentity, 0, busRef,
+                     epoch + 1, (epoch + 1) * kBlock, busGr));
+        // A downstream whole-block rejection withdraws both hosts' readings.
+        engine->voices.AudioDiscardLimiterGainReduction(epoch + 1);
+        engine->buses.AudioDiscardLimiterGainReduction(epoch + 1);
+        ASSERT_TRUE(engine->voices.AudioReadLimiterGainReduction(handle, 0, voiceRef,
+                    epoch, epoch * kBlock, voiceGr));
+        ASSERT_TRUE(engine->buses.AudioReadLimiterGainReduction(busIdentity, 0, busRef,
+                    epoch, epoch * kBlock, busGr));
+        engine->voices.AudioDiscardLimiterGainReduction(epoch);
+        engine->buses.AudioDiscardLimiterGainReduction(epoch);
+        EXPECT_FALSE(engine->voices.AudioReadLimiterGainReduction(handle, 0, voiceRef,
+                     epoch, epoch * kBlock, voiceGr));
+        EXPECT_FALSE(engine->buses.AudioReadLimiterGainReduction(busIdentity, 0, busRef,
+                     epoch, epoch * kBlock, busGr));
+        ASSERT_EQ(VN_OK, Vn_SetVoiceEffectBypass(voice, 0, 1));
+        harkentest::PumpAndCapture(engine, 1, output);
+        ASSERT_TRUE(engine->voices.AudioReadLimiterGainReduction(handle, 0, voiceRef,
+                    epoch + 1, (epoch + 1) * kBlock, voiceGr));
+        EXPECT_EQ(harken::LimiterGainReductionStatus::BypassTransition, voiceGr.status);
+        EXPECT_FALSE(voiceGr.IsNumeric());
+        harkentest::PumpAndCapture(engine, 1, output);
+        ASSERT_TRUE(engine->voices.AudioReadLimiterGainReduction(handle, 0, voiceRef,
+                    epoch + 2, (epoch + 2) * kBlock, voiceGr));
+        EXPECT_TRUE(voiceGr.IsNumeric());
+        EXPECT_DOUBLE_EQ(1.0, voiceGr.minimumGain);
+        ASSERT_EQ(VN_OK, Vn_SetVoiceEffect(voice, 0, VN_EFFECT_LIMITER, AsBase(&desc)));
+        harkentest::PumpAndCapture(engine, 1, output);
+        EXPECT_FALSE(engine->voices.AudioReadLimiterGainReduction(handle, 0, voiceRef,
+                     epoch + 3, (epoch + 3) * kBlock, voiceGr));
+        const auto replacement = render->fxSlotEffectRef[0];
+        ASSERT_TRUE(engine->voices.AudioReadLimiterGainReduction(handle, 0, replacement,
+                    epoch + 3, (epoch + 3) * kBlock, voiceGr));
+        ASSERT_EQ(VN_OK, Vn_ClearBusEffect(VN_BUS_MASTER, 0));
+        ASSERT_EQ(VN_OK, Vn_Stop(voice, 0));
+        harkentest::PumpAndCapture(engine, 1, output);
+        EXPECT_FALSE(engine->voices.AudioReadLimiterGainReduction(handle, 0, replacement,
+                     epoch + 4, (epoch + 4) * kBlock, voiceGr));
+        EXPECT_FALSE(engine->buses.AudioReadLimiterGainReduction(busIdentity, 0, busRef,
+                     epoch + 4, (epoch + 4) * kBlock, busGr));
+    }
+}
+
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+TEST(LimiterEffect, InternalGrWaitsForDeferredWorkerOutputAcceptance) {
+    struct Gate {
+        std::atomic<std::uint64_t> claimed{0};
+        std::atomic<bool> release{false};
+        static void Coordinator(void* context, std::uint64_t generation) noexcept {
+            auto& gate = *static_cast<Gate*>(context);
+            const auto until = harken::CpuClockTicks() + 2 * harken::CpuClockTicksPerSecond();
+            while (gate.claimed.load(std::memory_order_acquire) != generation &&
+                   harken::CpuClockTicks() < until) std::this_thread::yield();
+        }
+        static void Claimed(void* context, std::uint64_t generation, std::uint32_t) noexcept {
+            auto& gate = *static_cast<Gate*>(context);
+            gate.claimed.store(generation, std::memory_order_release);
+            while (!gate.release.load(std::memory_order_acquire)) std::this_thread::yield();
+        }
+    } gate;
+    auto config = harkentest::MakeNullConfig(1, kBlock, kRate);
+    config.renderWorkerCount = 1;
+    config.fxSlotsPerVoice = 1;
+    config.limiterEffectPoolCapacity = 1;
+    EngineSession session(config);
+    struct ReleaseBeforeTerm {
+        Gate& gate;
+        ~ReleaseBeforeTerm() { gate.release.store(true, std::memory_order_release); }
+    } releaseBeforeTerm{gate};
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    const auto source = harkentest::MakeDC(kBlock * 8, 1.0f);
+    auto pcm = harkentest::MonoDesc(source, kRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(8102), &pcm));
+    auto play = harkentest::MakePlayDesc(harkentest::ObjectId(8102));
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    auto desc = LimiterDesc(-6.0f, 1.0f);
+    ASSERT_EQ(VN_OK, Vn_SetVoiceEffect(voice, 0, VN_EFFECT_LIMITER, AsBase(&desc)));
+    engine->nullBackend.Pump(1);
+    const auto handle = harkentest::RenderHandle(engine, voice);
+    auto* render = engine->voices.Resolve(handle);
+    ASSERT_NE(nullptr, render);
+    const auto ref = render->fxSlotEffectRef[0];
+    using Access = harken::detail::VoicePoolReleaseTestAccess;
+    Access::SetOriginalSourceWorkerGates(engine->voices, &Gate::Coordinator, &Gate::Claimed, &gate);
+    Access::SetWorkerDeadline(engine->voices, harken::CpuClockTicksPerSecond() / 20);
+    const auto epoch = engine->mixer.BlocksRendered();
+    engine->nullBackend.Pump(1);
+    ASSERT_NE(0u, gate.claimed.load(std::memory_order_acquire));
+    ASSERT_EQ(epoch, engine->mixer.BlocksRendered());
+    harken::LimiterGainReduction gr;
+    EXPECT_FALSE(engine->voices.AudioReadLimiterGainReduction(handle, 0, ref,
+                 epoch, epoch * kBlock, gr));
+    EXPECT_FALSE(engine->voices.AudioReadLimiterGainReduction(handle, 0, ref,
+                 epoch - 1, (epoch - 1) * kBlock, gr));
+    engine->voices.AudioDiscardLimiterGainReduction(epoch); // Pending state stays untouched.
+    gate.release.store(true, std::memory_order_release);
+    const auto until = harken::CpuClockTicks() + 2 * harken::CpuClockTicksPerSecond();
+    while (engine->mixer.BlocksRendered() == epoch && harken::CpuClockTicks() < until) {
+        std::this_thread::yield();
+        engine->nullBackend.Pump(1);
+    }
+    ASSERT_EQ(epoch + 1, engine->mixer.BlocksRendered());
+    ASSERT_TRUE(engine->voices.AudioReadLimiterGainReduction(handle, 0, ref,
+                epoch, epoch * kBlock, gr));
+    EXPECT_TRUE(gr.IsNumeric());
+    EXPECT_EQ(epoch, gr.renderEpoch);
+    EXPECT_EQ(epoch * kBlock, gr.sourceFrameBegin);
+    EXPECT_FALSE(engine->voices.AudioReadLimiterGainReduction(handle, 0, ref,
+                 epoch + 1, (epoch + 1) * kBlock, gr));
+    Access::SetOriginalSourceWorkerGates(engine->voices, nullptr, nullptr, nullptr);
+}
+#endif
+
 TEST(LimiterEffect, BelowCeilingIsBitIdenticalFromCleanState) {
     Kernel kernel(-6.0f, 100.0f);
     std::vector<float> left = {
@@ -278,6 +540,10 @@ TEST(LimiterEffect, FiniteExtremeFramesRetainLinkedOutputWithFlushToZero) {
         split.effect.process(&split.state, splitChannels, 2, i, 1);
     EXPECT_EQ(left, splitLeft);
     EXPECT_EQ(right, splitRight);
+    EXPECT_GT(whole.state.gainReduction.minimumGain, 0.0);
+    EXPECT_LT(whole.state.gainReduction.minimumGain,
+              static_cast<double>(std::numeric_limits<float>::min()));
+    EXPECT_GT(whole.state.gainReduction.endGain, whole.state.gainReduction.minimumGain);
     for (std::size_t i = 0; i < input.size(); ++i) {
         const double expected = static_cast<double>(input[i]) *
             reference.Step(std::abs(static_cast<double>(input[i])));

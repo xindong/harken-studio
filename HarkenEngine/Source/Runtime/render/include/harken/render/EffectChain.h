@@ -7,6 +7,7 @@
 #define HARKEN_RENDER_EFFECT_CHAIN_H
 
 #include "harken/render/InsertEffect.h"
+#include "harken/render/BuiltinEffects.h"
 
 #include <cstdint>
 #include <cstring>
@@ -33,8 +34,9 @@ inline void ProcessChainSlot(InsertEffect& fx, bool& bypassRamping,
                              std::uint32_t channels, std::uint32_t offset,
                              std::uint32_t frames,
                              const EffectDynamicInputView* dynamicInput =
-                                 nullptr) {
+                                 nullptr, LimiterState* limiter = nullptr) {
     if (fx.process == nullptr || frames == 0) {
+        if (limiter != nullptr) limiter->gainReduction = {};
         return;
     }
     const bool steadyActive = !bypassRamping && bypassMix == 0.0f;
@@ -59,6 +61,16 @@ inline void ProcessChainSlot(InsertEffect& fx, bool& bypassRamping,
                           dynamicInput);
     } else {
         fx.process(fx.state, planes, channels, offset, frames);
+    }
+    if (limiter != nullptr && limiter->gainReduction.status ==
+                                  LimiterGainReductionStatus::Numeric) {
+        auto& gr = limiter->gainReduction;
+        if (startMix == 1.0f && endMix == 1.0f) {
+            gr.minimumGain = gr.endGain = 1.0;
+            gr.status = LimiterGainReductionStatus::Bypassed;
+        } else {
+            gr.status = LimiterGainReductionStatus::BypassTransition;
+        }
     }
     for (std::uint32_t ch = 0; ch < channels; ++ch) {
         float* wet = planes[ch] + offset;
