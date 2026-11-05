@@ -70,6 +70,7 @@ TimelineStyleView TimelineMarkerRuler::styleView() const
     style.canvasBorder = snapshot->ui.colors.borderPrimary;
     style.placeholderText = snapshot->ui.colors.textMuted;
     style.axisText = snapshot->ui.colors.textSecondary;
+    style.uniformTimeAxisGrid = snapshot->ui.colors.borderTick;
     style.trackBackground = snapshot->ui.colors.trackBackground;
     style.trackBackgroundAlt = snapshot->ui.colors.trackBackgroundAlt;
     style.timeline = snapshot->domains.timeline;

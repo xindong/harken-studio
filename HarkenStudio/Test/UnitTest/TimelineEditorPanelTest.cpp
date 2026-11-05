@@ -514,24 +514,33 @@ TEST_F(TimelineEditorPanelTest, AxisPresentationPreservesAuthoredCoordinatesAndV
     drainEvents();
     panel.setZoomPercent(250.0);
     panel.panHorizontally(137.25);
+    panel.setLaneHeight(0, 168);
+    panel.zoomVertically(0, 1.25);
+    drainEvents();
     const auto authoredTrack = track_->comp<VNX::VTrack>()->toJson();
     const auto authoredSegment = track_->parent->comp<VNX::VSegment>()->toJson();
     const auto cursor = panel.editCursor();
     const auto zoom = panel.zoomPercent();
+    const auto verticalZoom = panel.verticalZoom();
+    const auto laneHeight = panel.laneHeight(0);
     const auto scroll = panel.horizontalScroll();
     const auto left = panel.coordinateAtViewportPixel(0, 0.0);
     const auto center = panel.coordinateAtViewportPixel(0, panel.timelineViewportWidth() / 2.0);
     const auto clipPixel = panel.viewportPositionAtCoordinate(0, start.value);
     undo.clear();
 
-    for (const auto mode : {VNX::TimelineEditorPanel::AxisMode::Clock,
-                           VNX::TimelineEditorPanel::AxisMode::Time}) {
+    for (const auto mode : {VNX::TimelineEditorPanel::AxisMode::Seconds,
+                           VNX::TimelineEditorPanel::AxisMode::MeasureBeats,
+                           VNX::TimelineEditorPanel::AxisMode::SecondsWithMeasureBeats,
+                           VNX::TimelineEditorPanel::AxisMode::MeasureBeatsWithSeconds}) {
         panel.setAxisMode(mode);
         ASSERT_FALSE(panel.timeTicks().ticks.isEmpty());
         const auto state = panel.snapshotState();
-        panel.setAxisMode(mode == VNX::TimelineEditorPanel::AxisMode::Time
-            ? VNX::TimelineEditorPanel::AxisMode::Clock : VNX::TimelineEditorPanel::AxisMode::Time);
+        panel.setAxisMode(mode == VNX::TimelineEditorPanel::AxisMode::Seconds
+            ? VNX::TimelineEditorPanel::AxisMode::MeasureBeats : VNX::TimelineEditorPanel::AxisMode::Seconds);
         panel.fitClips();
+        panel.zoomVertically(0, 0.5);
+        panel.setLaneHeight(0, 112);
         panel.setEditCursor(0, true);
         panel.restoreState(state);
         drainEvents();
@@ -540,6 +549,8 @@ TEST_F(TimelineEditorPanelTest, AxisPresentationPreservesAuthoredCoordinatesAndV
         EXPECT_EQ(track_->parent->comp<VNX::VSegment>()->toJson(), authoredSegment);
         EXPECT_EQ(panel.editCursor(), cursor);
         EXPECT_DOUBLE_EQ(panel.zoomPercent(), zoom);
+        EXPECT_DOUBLE_EQ(panel.verticalZoom(), verticalZoom);
+        EXPECT_EQ(panel.laneHeight(0), laneHeight);
         EXPECT_DOUBLE_EQ(panel.horizontalScroll(), scroll);
         EXPECT_EQ(panel.coordinateAtViewportPixel(0, 0.0), left);
         EXPECT_EQ(panel.coordinateAtViewportPixel(0, panel.timelineViewportWidth() / 2.0), center);
@@ -570,9 +581,13 @@ TEST_P(TimelineDomainTest, CursorAndViewportStayWithinEditableRange)
     drainEvents();
     VNX::UndoRedoManager::instance().clear();
 
-    for (const auto mode : {VNX::TimelineEditorPanel::AxisMode::Time,
-                           VNX::TimelineEditorPanel::AxisMode::Clock}) {
+    for (const auto mode : {VNX::TimelineEditorPanel::AxisMode::Seconds,
+                           VNX::TimelineEditorPanel::AxisMode::MeasureBeats,
+                           VNX::TimelineEditorPanel::AxisMode::SecondsWithMeasureBeats,
+                           VNX::TimelineEditorPanel::AxisMode::MeasureBeatsWithSeconds}) {
         panel.setAxisMode(mode);
+        EXPECT_EQ(panel.axisMode(), GetParam() == VNX::TimelineDomain::Musical
+            ? mode : VNX::TimelineEditorPanel::AxisMode::Seconds);
         for (const bool disableSnap : {false, true}) {
             panel.setEditCursor(-unit, disableSnap);
             EXPECT_EQ(panel.editCursor(), 0);

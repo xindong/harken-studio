@@ -30,6 +30,7 @@ struct TimelineStyleView
     QColor canvasBorder;
     QColor placeholderText;
     QColor axisText;
+    QColor uniformTimeAxisGrid;
     QColor trackBackground;
     QColor trackBackgroundAlt;
     QColor accent;

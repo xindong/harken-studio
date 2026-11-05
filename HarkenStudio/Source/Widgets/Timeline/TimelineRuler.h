@@ -55,8 +55,10 @@ private:
     QLabel* cursorValue_ = nullptr;
     TimelineMarkerRuler* markerLane_ = nullptr;
     QToolButton* axisModeButton_ = nullptr;
-    QAction* timeAction_ = nullptr;
-    QAction* clockAction_ = nullptr;
+    QAction* secondsAction_ = nullptr;
+    QAction* measureBeatsAction_ = nullptr;
+    QAction* secondsWithMeasureBeatsAction_ = nullptr;
+    QAction* measureBeatsWithSecondsAction_ = nullptr;
 };
 
 }

@@ -48,6 +48,7 @@
 #include <QLayout>
 #include <QLabel>
 #include <QMenu>
+#include <QMetaEnum>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QResizeEvent>
@@ -338,16 +339,14 @@ TimelineEditorPanel::TimelineEditorPanel(QWidget* parent,
         button->setCursor(Qt::PointingHandCursor);
     }
     connect(verticalZoomInButton_, &QToolButton::clicked, this,
-        [this] { zoomVertically(trackWaveformRect().center().y(), 1.25); });
+        [this] { zoomVertically(verticalScroll() + scrollArea_->viewport()->height() / 2, 1.25); });
     connect(verticalZoomOutButton_, &QToolButton::clicked, this,
-        [this] { zoomVertically(trackWaveformRect().center().y(), 0.8); });
+        [this] { zoomVertically(verticalScroll() + scrollArea_->viewport()->height() / 2, 0.8); });
     verticalScrollBar_ = new QScrollBar(Qt::Vertical, verticalTools_);
     verticalScrollBar_->setObjectName(QStringLiteral("timelineVerticalScroll"));
     QtControlSkin::setSemanticProperty(verticalScrollBar_, "scrollRole", QStringLiteral("canvas"));
     connect(verticalScrollBar_, &QScrollBar::valueChanged, this, [this](int value) {
-        trackVerticalRatio_ = verticalScrollBar_->maximum() > 0
-            ? double(value) / verticalScrollBar_->maximum() : 0.0;
-        refreshTimelinePaint();
+        setVerticalScroll(value);
     });
     verticalLayout->addWidget(verticalZoomInButton_);
     verticalLayout->addWidget(verticalScrollBar_, 1);
@@ -355,7 +354,9 @@ TimelineEditorPanel::TimelineEditorPanel(QWidget* parent,
     contentRow->addWidget(verticalTools_);
     timelineLayout->addLayout(contentRow, 1);
     connect(scrollArea_->verticalScrollBar(), &QScrollBar::valueChanged,
-        this, [this] { refreshTimelinePaint(); });
+        this, [this] { refreshVerticalRange(); refreshTimelinePaint(); });
+    connect(scrollArea_->verticalScrollBar(), &QScrollBar::rangeChanged,
+        this, [this] { refreshVerticalRange(); });
 
     scrollRow_ = new QHBoxLayout;
     scrollRow_->setContentsMargins(0, 0, 0, 0);
@@ -542,10 +543,14 @@ QRect TimelineEditorPanel::laneRect(int index) const
 int TimelineEditorPanel::laneHeight(int index) const
 {
     const auto& metrics = themeManager_->metrics();
-    const int minimum = std::max(metrics.table.rowHeight,
+    const int collapseHeight = std::max(metrics.table.rowHeight,
         headerColumn_->fontMetrics().height() + std::max(metrics.table.cellPaddingY,
             metrics.timeline.clipVerticalInset) * 2 + 1);
-    return std::max(minimum, laneHeights_.value(laneGuid(index), metrics.timeline.laneHeight));
+    const int minimum = TimelineRenderer::clipTitleHeight(metrics)
+        + metrics.timeline.clipVerticalInset * 2;
+    const int height = int(std::lround(std::min(double(QWIDGETSIZE_MAX),
+        laneHeights_.value(laneGuid(index), metrics.timeline.laneHeight) * segmentVerticalZoom_)));
+    return height <= std::max(minimum, collapseHeight) ? minimum : height;
 }
 
 void TimelineEditorPanel::setLaneHeight(int index, int height)
@@ -553,12 +558,13 @@ void TimelineEditorPanel::setLaneHeight(int index, int height)
     if (viewKind_ != ViewKind::Segment || index < 0 || index >= laneCount())
         return;
     const auto guid = laneGuid(index);
-    if (laneHeights_.value(guid) == height)
+    const double baseHeight = height > 0 ? height / segmentVerticalZoom_ : 0.0;
+    if (laneHeights_.value(guid) == baseHeight)
         return;
     if (height == 0)
         laneHeights_.remove(guid);
     else
-        laneHeights_.insert(guid, std::max(1, height));
+        laneHeights_.insert(guid, baseHeight);
     syncLaneGeometry();
     refreshTimelinePaint();
 }
@@ -690,10 +696,9 @@ void TimelineEditorPanel::applyPresentation()
 {
     layout()->setContentsMargins(8, 8, 8, 8);
     laneHeaderResizeBar_->setVisible(viewKind_ == ViewKind::Segment);
-    verticalTools_->setVisible(viewKind_ == ViewKind::Track);
-    scrollCorner_->setVisible(viewKind_ == ViewKind::Track);
-    scrollArea_->setVerticalScrollBarPolicy(viewKind_ == ViewKind::Track
-        ? Qt::ScrollBarAlwaysOff : Qt::ScrollBarAsNeeded);
+    verticalTools_->setVisible(viewKind_ == ViewKind::Segment);
+    scrollCorner_->setVisible(viewKind_ == ViewKind::Segment);
+    scrollArea_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 }
 
 void TimelineEditorPanel::setPinned(bool pinned)
@@ -906,28 +911,40 @@ double TimelineEditorPanel::horizontalScroll() const
 TimeAxisTicks TimelineEditorPanel::timeTicks() const
 {
     refreshTickCache();
-    return axisMode() == AxisMode::Clock ? timeTickCache_->clock : timeTickCache_->seconds;
+    return hasMeasureBeatsPrimaryAxis() ? timeTickCache_->clock : timeTickCache_->seconds;
 }
 
 TimelineEditorPanel::AxisMode TimelineEditorPanel::axisMode() const
 {
-    return timelineDomain() == TimelineDomain::Musical ? axisMode_ : AxisMode::Time;
+    return timelineDomain() == TimelineDomain::Musical ? axisMode_ : AxisMode::Seconds;
 }
 
 void TimelineEditorPanel::setAxisMode(AxisMode mode)
 {
-    if (axisMode_ == mode || (mode == AxisMode::Clock && timelineDomain() != TimelineDomain::Musical))
+    if (axisMode_ == mode || (mode != AxisMode::Seconds && timelineDomain() != TimelineDomain::Musical))
         return;
     axisMode_ = mode;
     refreshTimelinePaint();
     refreshStatusBar();
 }
 
+bool TimelineEditorPanel::hasMeasureBeatsPrimaryAxis() const
+{
+    const auto mode = axisMode();
+    return mode == AxisMode::MeasureBeats || mode == AxisMode::MeasureBeatsWithSeconds;
+}
+
+bool TimelineEditorPanel::hasSecondaryAxis() const
+{
+    const auto mode = axisMode();
+    return mode == AxisMode::SecondsWithMeasureBeats || mode == AxisMode::MeasureBeatsWithSeconds;
+}
+
 void TimelineEditorPanel::refreshTickCache() const
 {
     const double span = viewSpan();
     const int width = canvas_->width();
-    const bool timePrimary = axisMode() == AxisMode::Time;
+    const bool timePrimary = !hasMeasureBeatsPrimaryAxis();
     const QFontMetrics secondsMetrics(FontManager::instance().getFont(
         timePrimary ? FontRole::Body : FontRole::Axis), canvas_);
     const QFontMetrics clockMetrics(FontManager::instance().getFont(
@@ -1030,8 +1047,7 @@ void TimelineEditorPanel::resetView()
     zoomPercent_ = 100.0;
     viewStart_ = {viewOriginCoordinate()};
     pendingHorizontalRatio_.reset();
-    trackVerticalZoom_ = 1.0;
-    trackVerticalRatio_ = 0.0;
+    segmentVerticalZoom_ = 1.0;
     selectedLaneGuid_ = QUuid();
     scrollArea_->verticalScrollBar()->setValue(0);
 }
@@ -1041,17 +1057,17 @@ QVariantMap TimelineEditorPanel::snapshotState() const
     QVariantMap state{
         {QStringLiteral("itemGuid"), boundGuid_.toString(QUuid::WithoutBraces)},
         {QStringLiteral("zoom"), zoomPercent()},
-        {QStringLiteral("axisMode"), axisMode_ == AxisMode::Clock ? QStringLiteral("Clock") : QStringLiteral("Time")},
+        {QStringLiteral("axisMode"), QString::fromLatin1(
+            QMetaEnum::fromType<AxisMode>().valueToKey(static_cast<int>(axisMode_)))},
         {QStringLiteral("timelineTime"), effectiveTimeSpec(0).toJson().toVariantMap()},
         {QStringLiteral("cursor"), QString::number(editCursor_)},
         {QStringLiteral("laneHeaderWidth"), laneHeaderWidth_},
         {QStringLiteral("selectedLaneGuid"), selectedLaneGuid_.toString(QUuid::WithoutBraces)},
         {QStringLiteral("verticalScroll"), scrollArea_->verticalScrollBar()->value()},
+        {QStringLiteral("segmentVerticalZoom"), segmentVerticalZoom_},
         {QStringLiteral("timelineViewport"), QVariantMap{
             {QStringLiteral("startCoordinate"), QString::number(viewStart_.nanoseconds)},
-            {QStringLiteral("startFraction"), viewStart_.fraction},
-            {QStringLiteral("verticalZoom"), trackVerticalZoom_},
-            {QStringLiteral("verticalRatio"), trackVerticalRatio_}}}
+            {QStringLiteral("startFraction"), viewStart_.fraction}}}
     };
     QVariantList selected;
     QVariantMap heights;
@@ -1171,13 +1187,12 @@ QRect TimelineEditorPanel::trackWaveformRect() const
 
 int TimelineEditorPanel::verticalScroll() const
 {
-    return int(std::lround(trackVerticalRatio_
-        * trackWaveformRect().height() * (trackVerticalZoom_ - 1.0)));
+    return scrollArea_->verticalScrollBar()->value();
 }
 
 void TimelineEditorPanel::setVerticalScroll(int value)
 {
-    verticalScrollBar_->setValue(value);
+    scrollArea_->verticalScrollBar()->setValue(value);
 }
 
 void TimelineEditorPanel::setAmplitudeExponent(double exponent)
@@ -1188,29 +1203,58 @@ void TimelineEditorPanel::setAmplitudeExponent(double exponent)
 
 void TimelineEditorPanel::zoomVertically(int canvasY, double factor)
 {
-    if (viewKind_ != ViewKind::Track || !std::isfinite(factor) || factor <= 0.0)
+    if (viewKind_ != ViewKind::Segment || lanes_.empty()
+        || !std::isfinite(factor) || factor <= 0.0)
         return;
-    const QRect wave = trackWaveformRect();
-    const int anchor = std::clamp(canvasY - wave.top(), 0, wave.height());
-    const double focus = (verticalScroll() + anchor) / trackVerticalZoom_;
-    trackVerticalZoom_ = std::clamp(trackVerticalZoom_ * factor, 1.0, 32.0);
+    finishLaneResize(true);
+    const int scroll = verticalScroll();
+    const int anchor = std::clamp(canvasY - scroll, 0, scrollArea_->viewport()->height());
+    int anchorLane = laneCount() - 1;
+    for (int lane = 0; lane < laneCount(); ++lane) {
+        if (laneRect(lane).bottom() >= scroll + anchor) {
+            anchorLane = lane;
+            break;
+        }
+    }
+    const QRect area = laneRect(anchorLane);
+    const double fraction = area.height() > 0
+        ? std::clamp(double(scroll + anchor - area.top()) / area.height(), 0.0, 1.0) : 0.0;
+    const double zoom = std::clamp(segmentVerticalZoom_ * factor, minimumVerticalZoom(), 32.0);
+    if (zoom == segmentVerticalZoom_) return;
+    segmentVerticalZoom_ = zoom;
+    syncLaneGeometry();
+    const QRect scaled = laneRect(anchorLane);
+    setVerticalScroll(int(std::lround(scaled.top() + scaled.height() * fraction)) - anchor);
     refreshVerticalRange();
-    setVerticalScroll(int(std::lround(focus * trackVerticalZoom_ - anchor)));
     refreshTimelinePaint();
+}
+
+double TimelineEditorPanel::minimumVerticalZoom() const
+{
+    const auto& metrics = themeManager_->metrics();
+    const int minimum = TimelineRenderer::clipTitleHeight(metrics)
+        + metrics.timeline.clipVerticalInset * 2;
+    const int collapse = std::max({minimum, metrics.table.rowHeight,
+        headerColumn_->fontMetrics().height() + std::max(metrics.table.cellPaddingY,
+            metrics.timeline.clipVerticalInset) * 2 + 1});
+    double largest = 0.0;
+    for (int lane = 0; lane < laneCount(); ++lane)
+        largest = std::max(largest, laneHeights_.value(laneGuid(lane), metrics.timeline.laneHeight));
+    return largest > 0.0 ? std::min(1.0, collapse / largest) : 1.0;
 }
 
 void TimelineEditorPanel::refreshVerticalRange()
 {
-    const int viewport = trackWaveformRect().height();
-    const int maximum = int(std::lround(viewport * (trackVerticalZoom_ - 1.0)));
+    auto* scroll = scrollArea_->verticalScrollBar();
     const QSignalBlocker blocker(verticalScrollBar_);
-    verticalScrollBar_->setRange(0, maximum);
-    verticalScrollBar_->setPageStep(viewport);
-    verticalScrollBar_->setSingleStep(std::max(1, viewport / 10));
-    verticalScrollBar_->setValue(verticalScroll());
-    verticalScrollBar_->setEnabled(maximum > 0);
-    verticalZoomInButton_->setEnabled(trackVerticalZoom_ < 32.0);
-    verticalZoomOutButton_->setEnabled(trackVerticalZoom_ > 1.0);
+    verticalScrollBar_->setRange(scroll->minimum(), scroll->maximum());
+    verticalScrollBar_->setPageStep(scroll->pageStep());
+    verticalScrollBar_->setSingleStep(scroll->singleStep());
+    verticalScrollBar_->setValue(scroll->value());
+    verticalScrollBar_->setEnabled(scroll->maximum() > scroll->minimum());
+    const bool enabled = viewKind_ == ViewKind::Segment && !lanes_.empty();
+    verticalZoomInButton_->setEnabled(enabled && segmentVerticalZoom_ < 32.0);
+    verticalZoomOutButton_->setEnabled(enabled && segmentVerticalZoom_ > minimumVerticalZoom());
 }
 
 void TimelineEditorPanel::setEditCursorVisible(bool visible)
@@ -1439,15 +1483,20 @@ void TimelineEditorPanel::showCursorContextMenu(const QPoint& position)
 void TimelineEditorPanel::restoreViewport(const QVariantMap& state)
 {
     finishLaneResize(true);
-    axisMode_ = state.value(QStringLiteral("axisMode")).toString() == QLatin1String("Clock")
-        ? AxisMode::Clock : AxisMode::Time;
+    bool validAxisMode = false;
+    const int axisMode = QMetaEnum::fromType<AxisMode>().keyToValue(
+        state.value(QStringLiteral("axisMode")).toString().toLatin1().constData(), &validAxisMode);
+    axisMode_ = validAxisMode ? static_cast<AxisMode>(axisMode) : AxisMode::MeasureBeats;
     laneHeights_.clear();
     const auto heights = state.value(QStringLiteral("laneHeights")).toMap();
     for (auto it = heights.cbegin(); it != heights.cend(); ++it) {
         const auto guid = QUuid::fromString(it.key());
-        if (!guid.isNull() && it.value().toInt() > 0)
-            laneHeights_.insert(guid, it.value().toInt());
+        if (!guid.isNull() && std::isfinite(it.value().toDouble()) && it.value().toDouble() > 0)
+            laneHeights_.insert(guid, it.value().toDouble());
     }
+    const double zoom = state.value(QStringLiteral("segmentVerticalZoom"), 1.0).toDouble();
+    segmentVerticalZoom_ = viewKind_ == ViewKind::Segment && std::isfinite(zoom)
+        ? std::clamp(zoom, minimumVerticalZoom(), 32.0) : 1.0;
     syncLaneGeometry();
     laneHeaderWidth_ = std::max(0, state.value(QStringLiteral("laneHeaderWidth")).toInt());
     applyLaneHeaderWidth();
@@ -1455,11 +1504,6 @@ void TimelineEditorPanel::restoreViewport(const QVariantMap& state)
         state.value(QStringLiteral("trackViewport"))).toMap();
     if (!viewport.isEmpty()) {
         zoomPercent_ = std::max(100.0, state.value(QStringLiteral("zoom"), 100).toDouble());
-        if (viewKind_ == ViewKind::Track) {
-            trackVerticalZoom_ = std::clamp(viewport.value(QStringLiteral("verticalZoom"), 1.0).toDouble(), 1.0, 32.0);
-            trackVerticalRatio_ = std::clamp(viewport.value(QStringLiteral("verticalRatio")).toDouble(), 0.0, 1.0);
-            refreshVerticalRange();
-        }
         if (viewport.contains(QStringLiteral("startCoordinate"))
             || viewport.contains(QStringLiteral("startNanoseconds"))) {
             viewStart_ = NanosecondPosition{viewport.value(QStringLiteral("startCoordinate"),
@@ -2076,7 +2120,7 @@ int64_t TimelineEditorPanel::snapCoordinate(int laneIndex, int64_t coordinate,
     }
     refreshTickCache();
     CoordinateResult snapped;
-    if (axisMode() == AxisMode::Clock) {
+    if (hasMeasureBeatsPrimaryAxis()) {
         snapped = TimelineCoordinates::snap(coordinate, timeTickCache_->clockGrid);
     } else {
         const auto spec = effectiveTimeSpec(laneIndex);
@@ -3045,11 +3089,19 @@ bool TimelineEditorPanel::eventFilter(QObject* watched, QEvent* event)
         refreshVerticalRange();
     const bool navigationControl = watched == ruler_ || watched == horizontalScrollBar_
         || watched == zoomInButton_ || watched == zoomOutButton_
-        || (viewKind_ == ViewKind::Track && (watched == headerColumn_
-            || watched == verticalScrollBar_ || watched == verticalTools_
+        || (viewKind_ == ViewKind::Track && watched == headerColumn_)
+        || (viewKind_ == ViewKind::Segment && (watched == verticalScrollBar_ || watched == verticalTools_
             || watched == verticalZoomInButton_ || watched == verticalZoomOutButton_));
     if (hasTimeline() && navigationControl && event->type() == QEvent::Wheel) {
         auto* source = static_cast<QWheelEvent*>(event);
+        if (viewKind_ == ViewKind::Segment
+            && (watched == verticalScrollBar_ || watched == verticalTools_
+                || watched == verticalZoomInButton_ || watched == verticalZoomOutButton_)
+            && !source->modifiers().testFlag(Qt::ControlModifier)
+            && !source->modifiers().testFlag(Qt::ShiftModifier)) {
+            scrollTracks(source);
+            return true;
+        }
         if (watched == headerColumn_ && source->modifiers().testFlag(Qt::ShiftModifier)) {
             scrollTracks(source);
             return true;
@@ -3288,7 +3340,9 @@ void TimelineEditorPanel::syncLaneGeometry()
         laneLayout_->totalSizeHint().height());
     canvas_->setMinimumHeight(contentHeight);
     laneHost_->setMinimumHeight(contentHeight);
+    laneHost_->resize(laneHost_->width(), std::max(contentHeight, scrollArea_->viewport()->height()));
     updateLaneResizeBars();
+    refreshVerticalRange();
 }
 
 void TimelineEditorPanel::updateLaneResizeBars()
@@ -3309,7 +3363,15 @@ void TimelineEditorPanel::finishLaneResize(bool cancel)
     laneResizeDrag_.reset();
     auto* bar = laneResizeBars_[drag.lane];
     bar->releaseMouse();
-    if (cancel) setLaneHeight(drag.lane, drag.storedHeight);
+    if (cancel) {
+        const auto guid = laneGuid(drag.lane);
+        if (drag.storedHeight > 0)
+            laneHeights_.insert(guid, drag.storedHeight);
+        else
+            laneHeights_.remove(guid);
+        syncLaneGeometry();
+        refreshTimelinePaint();
+    }
     QtControlSkin::setSemanticProperty(bar, "highlighted", bar->underMouse());
 }
 

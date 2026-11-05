@@ -10,9 +10,9 @@
 
 | 编辑面 | 当前能力 |
 |---|---|
-| Segment Timeline | 新建默认 Musical；Timeline 边框外的独立参数行提供 Tempo、Time Signature；无时钟域切换，Tempo 输入框不带单位；Time／Clock 双行刻度，左侧 chevron 切换主轴 |
-| Track Timeline | 继承父 Segment 时钟域；Segment 内轨道默认高度为 112px，保留手动高度；保留片段长度编辑、多选拖动、跨轨移动、波形与缩放 |
-| Marker | 新建 Segment 预置 Entry／Exit；Entry 在起点，Exit 在初始时间轴末尾；12px 手柄带位于刻度轴底部，与左侧头部共用完整轴高和背景；12×10px 双握槽手柄顶部对齐，网格连续穿过手柄带，竖杆与手柄同色连续；Entry 黄色、Exit 红色；手柄与画布整根竖杆均可拖动，支持悬停读数、拖动浮窗、精确输入、边缘滚动、取消、删除、补建、吸附与撤销；Custom 创建及编辑能力隐藏 |
+| Segment Timeline | 新建默认 Musical；Timeline 边框外的独立参数行提供 Tempo、Time Signature；无时钟域切换，Tempo 输入框不带单位；左侧 chevron 提供 Seconds、Measure-Beats、Seconds with Measure-Beats、Measure-Beats with Seconds，默认单行 Measure-Beats |
+| Track Timeline | 继承父 Segment 时钟域；Segment 内轨道默认高度为 112px，保留手动高度；右侧竖向控件统一缩放所有轨道并滚动轨道列表；独立 Track 不提供竖向缩放控件，波形高度随窗口适配；缩小至原最小高度附近时 Clip 只保留标题及原有上下留白，最小轨高为标题高度加留白，跳过波形准备、加载和绘制；重新拉高恢复波形；保留片段长度编辑、多选拖动、跨轨移动与缩放 |
+| Marker | 新建 Segment 预置 Entry／Exit；Entry 在起点，Exit 在初始时间轴末尾；12px 手柄带位于刻度轴底部，与左侧头部共用完整轴高和背景；数值区短刻度与手柄带网格统一使用更明显的 borderTick 配色，上下同色连续，不加横分割线；12×10px 双握槽手柄顶部对齐，网格连续穿过手柄带，竖杆与手柄同色连续；Entry 黄色、Exit 红色；手柄与画布整根竖杆均可拖动，支持悬停读数、拖动浮窗、精确输入、边缘滚动、取消、删除、补建、吸附与撤销；Custom 创建及编辑能力隐藏 |
 | Cursor | 默认显示绿色；15×12px 对称倒三角带亮色轮廓，与贯穿刻度轴及轨道的竖线共用物理像素中心；零点处完整显示手柄；支持定位、拖动、吸附、精确输入、边缘滚动、取消拖动和视图状态恢复 |
 | 时钟域转换 | 同时转换 Track 片段边界与 Marker；尽量保持实际秒数，音乐坐标按整数 tick 舍入；一次撤销恢复原数据 |
 | Queue Container | Splice by Marker；仅 Random／Sequence 的 Queue 显示此选项 |
@@ -20,11 +20,11 @@
 | Transition 时钟引用 | 按 source、组织层级与 Clip placement 查找时钟和标记；Blueprint 显示引用路径，适配概览缩放 |
 | 自动化入口 | `set_item_property` 支持 `segmentTime`、`markers`、`clips`、`spliceByMarker`、`transitions`，与 GUI 共用校验及撤销 |
 
-Time 与 Clock 两行按同一主刻度成组显示，两值均存在时绘制短横线。时间使用 `MM:SS`，按刻度精度附加 0–3 位小数；Clock 只显示整数小节号，不显示拍号或小数。默认 Time 为主轴；主轴位于下行，使用 Body 字体及 textPrimary 颜色，画布网格及吸附随主轴排布；上行显示该位置对应的另一种数值，使用较小的 Axis 字体及 textMuted 颜色，不绘制次轴刻度线。Time 主刻度只有精确落在小节起点时才显示 Clock 次值，其余只显示时间，避免重复小节号或将小节号放在错误位置；Clock 主轴上方显示小节起点的准确时间。上下行按各自字体高度紧凑排布，次轴不预留刻度线空间。两行数字均从主刻度右侧开始，按较宽数字成组避让；右边缘空间不足时省略整组，不将文字左移。固定精度下不重复绘制同一时间标签，仍保留细分刻度与吸附。切换不改写 Clip／Marker 坐标、Tempo 或 Time Signature，保留缩放、滚动与 Cursor，并随面板视图快照保存。加号左对齐，与轴左侧 chevron 均使用 Studio 的 20px 标准。轴左侧不显示 Time／Clock 标题，Marker 行不显示标题或手柄旁的 Entry／Exit 文字；颜色和手柄表达标记类型，悬停时显示名称及 Time／Clock 读数。
+Seconds 与 Measure-Beats 为单行模式，不预留次轴高度；默认 Measure-Beats。Seconds with Measure-Beats 与 Measure-Beats with Seconds 分别沿用原 Time、Clock 双行模式，前者以时间为主轴，后者以音乐小节为主轴。双行按同一主刻度成组显示，两值均存在时绘制短横线。时间使用 `MM:SS`，按刻度精度附加 0–3 位小数；Measure-Beats 只显示整数小节号，不显示拍号或小数。主轴使用 Body 字体及 textPrimary 颜色，画布网格及吸附随主轴排布；双行模式的主轴位于下行，上行显示该位置对应的另一种数值，使用较小的 Axis 字体及 textMuted 颜色，不绘制次轴刻度线。Seconds 主刻度只有精确落在小节起点时才显示 Measure-Beats 次值，其余只显示时间，避免重复小节号或将小节号放在错误位置；Measure-Beats 主轴上方显示小节起点的准确时间。上下行按各自字体高度紧凑排布，次轴不预留刻度线空间。数字均从主刻度右侧开始，双行按较宽数字成组避让；右边缘空间不足时省略整组，不将文字左移。固定精度下不重复绘制同一时间标签，仍保留细分刻度与吸附。切换不改写 Clip／Marker 坐标、Tempo 或 Time Signature，保留缩放、滚动与 Cursor，并随面板视图快照保存。加号左对齐，与轴左侧 chevron 均使用 Studio 的 20px 标准。轴左侧不显示刻度模式标题，Marker 行不显示标题或手柄旁的 Entry／Exit 文字；颜色和手柄表达标记类型，悬停时显示名称及 Time／Clock 读数。
 
 Marker 与 Cursor 的交互对齐 Source Editor：整根可见竖杆使用水平拖动指针并联动高亮，覆盖 Clip 和下部空白画布的部分同样可抓取；按下保持抓取偏移并显示实时读数浮窗，双击或右键 `Enter Value...` 可输入位置。Cursor 的刻度区、Marker 带与画布共用状态；重叠时 Cursor 优先，Marker 高于 Clip，零点 Entry 仍可从手柄右侧抓取。Marker 拖动期间只改预览，松手一次提交，Esc 取消；Entry／Exit 的交互边界遵循非负起点及 Entry 不晚于 Exit。Exit 精确输入可超出已有内容末尾，提交后扩展时间轴范围并将 Marker 移入视图，不要求预先添加更长的 Clip。
 
-Clock 刻度及网格区分小节、拍、拍内细分三档。细分只能从单拍长度二分，最小为十六分音符（960 PPQ 下为 240 tick），继续放大也不再细分。Clock 的刻度间距阈值为原阈值的两倍，默认从 8px 提到 16px；Time 模式保持原来的生成规则。缩小至无法辨认单拍时使用完整小节倍数，不二分整个小节，避免奇数拍号生成偏离拍点的网格；拍长短于十六分音符时同样使用满足下限的小节倍数。标尺、画布网格和吸附使用同一组音乐坐标。
+Measure-Beats 刻度及网格区分小节、拍、拍内细分三档。细分只能从单拍长度二分，最小为十六分音符（960 PPQ 下为 240 tick），继续放大也不再细分。Measure-Beats 的刻度间距阈值为原阈值的两倍，默认从 8px 提到 16px；Seconds 主轴保持原来的生成规则。缩小至无法辨认单拍时使用完整小节倍数，不二分整个小节，避免奇数拍号生成偏离拍点的网格；拍长短于十六分音符时同样使用满足下限的小节倍数。标尺、画布网格和吸附使用同一组音乐坐标。
 
 新建 Segment 使用 Tempo 120、Time Signature 4/4，初始时间轴恢复原来的 0–10 秒，因此 Entry 为 0、Exit 为 19200 tick。初始范围按秒换算到音乐坐标，不再误用 10 拍。音乐时间使用 960 PPQ 整数 tick，目前仅支持 tick=0 的一个速度点和一个拍号点；Tempo／Time Signature 变化不重写音乐坐标。新建 Transition 规则维持 Immediate 默认值，Next Beat／Next Bar 可选且需可达的音乐时钟。旧项目迁移不属于本轮范围。
 
@@ -32,7 +32,7 @@ Action 调度继续隐藏，Timing、Reference、Absent Behavior 不对外提供
 
 Timeline 视口起点固定为 0，Cursor 与 Clip 的编辑起点不能小于 0。多选 Clip 向左移动时以最早片段为边界，整组停止并保留相对间距；精确输入与外部拖入遵循同一边界，公共 Clip 编辑接口拒绝负起点。Entry 之前的内容可放在 0 与 Entry 之间，不依赖负轴；底层有符号坐标与序列化合同不变。
 
-Time 主轴按实际主刻度精度统一显示 0–3 位小数：整秒显示 `00:00`，十分之一秒显示 `00:00.0`，百分之一秒显示 `00:00.00`，毫秒显示 `00:00.000`，刻度间距使用对应文字宽度。Clock 的时间对照标签省略尾随零，同时保留非整 Tempo 位置所需的毫秒精度。
+Seconds 主轴按实际主刻度精度统一显示 0–3 位小数：整秒显示 `00:00`，十分之一秒显示 `00:00.0`，百分之一秒显示 `00:00.00`，毫秒显示 `00:00.000`，刻度间距使用对应文字宽度。Measure-Beats with Seconds 的时间对照标签省略尾随零，同时保留非整 Tempo 位置所需的毫秒精度。
 
 ## 执行边界
 
@@ -73,3 +73,9 @@ Marker 手柄带重新对齐 Source Editor，并加入时间标签自适应精�
 2026-11-05 将剩余创作能力整理为正式 PR，基于包含 Tooltip 修复的 `main`（`6ca194a7`）合并验证，保留主分支的 Effect 与 Blueprint 更新。`windows-ninja-clang-dev` / `RelWithDebInfo` 的 Studio 与测试程序构建成功；Timeline、Transition、Inspector、自动化命令、主题、保存往返及 Queue Sound／Track／Segment 导出播放相关 99 项回归全部通过，无跳过。本地 QSS 归属检查及其 6 项脚本测试通过。缺少音乐时钟时的提示改为引导选择可访问音乐时钟的 Source，不再要求使用已移除的时钟域切换。记录位于 `.temp/segment-track-pr-build.log`、`.temp/segment-track-pr-tests.log` 和 `.temp/segment-track-pr-tests.xml`。
 
 同日修复 PR 审查发现的 Exit 精确输入上限，并修正旧 Piece 测试夹具的字段重命名及完整 Marker 集合校验。RelWithDebInfo 的 Studio 与全部 Studio CI 测试目标构建成功；完整 PR 测试分组共 145 组、501 项，500 项通过，1 项符号链接检查因环境限制跳过。新增回归覆盖两种时钟域下空 Segment 的末尾延长、放大后的可见性、撤销重做及输入边界，当前 schema 9 的文档往返用例也通过。额外执行的历史 schema 7／8 资格用例仍在 Main Layer 的 `fieldGroups.shared.mainOutput` 迁移验证处失败；相关迁移代码与主分支相同，旧项目迁移继续不纳入本轮修复。记录位于 `.temp/pr251-review-build.log`、`.temp/pr251-review-focused.xml` 和 `.temp/pr251-review-gate/summary.json`。
+
+2026-11-05 将轨道最小高度收拢为 Clip 标题加原有上下留白，并跳过收拢状态的波形准备与加载。RelWithDebInfo 的 Studio 和测试程序构建成功，22 项 Timeline、表格生命周期及主题布局回归全部通过。记录位于 `.temp/compact-track-build.log`、`.temp/compact-track-tests.log` 和 `.temp/compact-track-tests.xml`。后续修改完成后均构建 RelWithDebInfo。
+
+同日将右侧竖向控件移至 Segment，统一缩放轨高并代理轨道列表滚动，独立 Track 改为随窗口高度适配。RelWithDebInfo 已构建，22 项相关回归通过；明暗主题隔离验证确认两轨 112／168px 同步放大至 140／210px、最小高度保留 20px 标题及上下各 1px 留白，独立 Track 窗口增加 320px 时波形可用高度同步增加 320px。滚动、鼠标锚点、取消手动调整及视图恢复验证通过。记录位于 `.temp/segment-vertical-zoom-final-build.log`、`.temp/segment-vertical-zoom-tests.xml` 及 `.temp/segment-vertical-zoom-review/`。
+
+同日将刻度模式扩展为 Seconds、Measure-Beats 及两种双轴组合，默认改为单行 Measure-Beats。RelWithDebInfo 的 Studio 与测试程序构建成功，运行依赖及 Schema 已部署，27 项相关回归通过。隔离验证确认单轴 34px、双轴 49px，同主轴的网格及 401 个位置的吸附结果一致，四模式快照恢复、Cursor／Marker 几何及明暗宽窄布局通过。记录位于 `.temp/axis-modes-final-build.log`、`.temp/axis-modes-tests.xml` 及 `.temp/segment-axis-modes-review/`。
