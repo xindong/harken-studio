@@ -2080,6 +2080,12 @@ struct EngineScheduleAggregateChild {
     std::uint64_t queueSelectionVersion = 0;
     OccurrenceToken queueRetiringOccurrence{};
     std::uint64_t sourceOffsetFrames = 0;
+    ScheduleTimeKindV1 scheduleTimeKind = ScheduleTimeKindV1::AbsoluteNanoseconds;
+    std::int64_t scheduleMicrosPerQuarter = 0;
+    std::int64_t scheduleEntryPosition = 0;
+    std::optional<MusicPlaybackTimeline> scheduleMusicWindow;
+    std::uint64_t scheduleMusicIteration = 0;
+    std::uint64_t scheduleMusicSourceOffset = 0;
     EnginePlayableServiceReference service{};
     std::optional<VariableControlSide> variableControlSide;
     EngineScheduleChildPropertyContext properties;
@@ -2132,6 +2138,21 @@ struct EngineMusicScheduleState {
     bool finalPassMaterialized = false;
 };
 
+struct EngineTrackRepeatState {
+    EngineScheduleChildPropertyContext prefix;
+    std::vector<std::unique_ptr<EngineMusicScheduleBatch>> batches;
+    ScheduleTimeKindV1 timeKind = ScheduleTimeKindV1::AbsoluteNanoseconds;
+    std::int64_t microsPerQuarter = 0;
+    std::int64_t entryPosition = 0;
+    std::uint64_t sourceOffsetFrames = 0;
+    std::uint64_t nextIteration = 1;
+    std::uint64_t nextPassOffsetFrames = 0;
+    std::uint64_t finalEndOffsetFrames = 0;
+    std::uint64_t inheritedEndOffsetFrames = UINT64_MAX;
+    std::uint32_t playCount = 1;
+    bool finalPassMaterialized = false;
+};
+
 struct EngineOrdinaryScheduleState {
     EngineScheduleChildPropertyContext prefix;
     std::vector<std::unique_ptr<EngineMusicScheduleBatch>> batches;
@@ -2156,6 +2177,7 @@ struct EngineScheduleAggregateState {
     // Prepared to the real clip count; membership is immutable after publication.
     std::vector<EngineScheduleAggregateChild> children;
     std::unique_ptr<EngineMusicScheduleState> music;
+    std::unique_ptr<EngineTrackRepeatState> trackRepeat;
     std::unique_ptr<EngineOrdinaryScheduleState> ordinary;
     std::uint64_t zeroWorkCompletionOffsetFrames = 0;
     bool hasZeroWorkCompletion = false;
@@ -2171,6 +2193,9 @@ struct EngineScheduleAggregateState {
         if (music != nullptr)
             for (auto& batch : music->batches)
                 for (auto& child : batch->children) if (!visitor(child)) return false;
+        if (trackRepeat != nullptr)
+            for (auto& batch : trackRepeat->batches)
+                for (auto& child : batch->children) if (!visitor(child)) return false;
         if (ordinary != nullptr)
             for (auto& batch : ordinary->batches)
                 for (auto& child : batch->children) if (!visitor(child)) return false;
@@ -2182,6 +2207,9 @@ struct EngineScheduleAggregateState {
         for (const auto& child : children) if (!visitor(child)) return false;
         if (music != nullptr)
             for (const auto& batch : music->batches)
+                for (const auto& child : batch->children) if (!visitor(child)) return false;
+        if (trackRepeat != nullptr)
+            for (const auto& batch : trackRepeat->batches)
                 for (const auto& child : batch->children) if (!visitor(child)) return false;
         if (ordinary != nullptr)
             for (const auto& batch : ordinary->batches)

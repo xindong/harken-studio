@@ -61,10 +61,10 @@ bool TransparentMusicSourceShapeV1(const PlayableRefV1& source,
             ? segment.bounds.nominalEnd > segment.bounds.nominalStart && segment.entryMarker.stableMarkerId != VnObjectId{}
             : NativeMusicTransitionSourceCompatibleV1(rule, segment);
     }
-    if (node.loopCount != 1) return false;
     if (source.kind == PlayableKindV1::Track) return node.track != nullptr &&
         node.track->placementCount == 1 && node.track->placements != nullptr &&
         TransparentMusicSourceShapeV1(node.track->placements[0].content, rule, resolve, depth + 1u);
+    if (node.loopCount != 1) return false;
     if (source.kind != PlayableKindV1::Container || node.container == nullptr) return false;
     const auto& container = *node.container;
     if ((container.mode != ContainerModeV1::Random && container.mode != ContainerModeV1::Sequence) ||
