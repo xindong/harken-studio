@@ -22,6 +22,7 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -18162,6 +18163,15 @@ TEST(PlayableStart, MusicSegmentCropsVariableControlSelectedSourcesAndPreservesW
             harkentest::monitor::CollectIdentityEvents(capture, records);
             const auto before = engine->mixer.BlocksRendered();
             engine->nullBackend.Pump(1);
+            // A deferred worker quantum retains its music frame and readers.
+            // Resume that quantum without admitting another logic update.
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (engine->mixer.BlocksRendered() == before && std::chrono::steady_clock::now() < deadline) {
+                for (unsigned sample = 0; sample < 128; ++sample)
+                    ASSERT_EQ(0.0f, engine->nullBackend.LastBlock()[sample]);
+                std::this_thread::yield();
+                engine->nullBackend.Pump(1);
+            }
             ASSERT_EQ(before + 1, engine->mixer.BlocksRendered()) << OccupancyDump(*engine);
             for (unsigned sample = 0; sample < 64; ++sample) {
                 const auto frame = before * 64 + sample;
@@ -31823,23 +31833,32 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
 }
 
 TEST(PlayableStart, QueueMusicTransitionStartsAtTargetEntryAndReclaims) {
+    for (const bool pack : {false, true})
     for (const bool musicSource : {false, true})
     for (const unsigned shape : {0u, 1u, 2u, 3u})
     for (const bool fromEntry : {false, true})
     for (const unsigned workers : {0u, 2u})
-    for (const unsigned scenario : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u, 17u, 18u, 19u}) {
+    for (const unsigned scenario : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u, 17u, 18u, 19u, 20u, 21u, 22u, 23u, 24u, 25u, 26u, 27u, 28u, 29u, 30u}) {
+        if (pack && ((!musicSource && scenario != 30) || scenario < 20)) continue;
+        if (scenario == 29 && !pack) continue;
+        if (scenario == 30 && (musicSource || shape != 0 || !fromEntry)) continue;
+        SCOPED_TRACE(pack);
         if (musicSource && (shape != 0 || !fromEntry)) continue;
-        if (!musicSource && scenario != 0 && (scenario != 13 || !fromEntry)) continue;
+        if (!musicSource && scenario != 0 && scenario != 30 && (scenario != 13 || !fromEntry)) continue;
         SCOPED_TRACE(scenario);
         const bool third = scenario == 5 || scenario == 6 || scenario == 19;
         const bool wrapperRoot = scenario == 7 || scenario == 8;
         const bool nestedControl = scenario == 9;
         const bool parallelTarget = scenario == 17 || scenario == 18;
-        const auto targetDelay = scenario == 10 ? 8u : (scenario == 11 || scenario == 12 || scenario == 14 || scenario == 16) ? 80u : 0u;
-        const auto targetFadeFrames = scenario == 19 ? 5000u : scenario >= 13 ? 2000u : 0u;
-        const auto sourceFadeFrames = musicSource && scenario != 15 ? 128u : 0u;
+        const auto targetDelay = scenario == 10 ? 8u : (scenario == 11 || scenario == 12 || scenario == 14 || scenario == 16 || scenario == 26 || scenario == 28) ? 80u : 0u;
+        const auto targetFadeFrames = scenario == 24 ? 0u : scenario == 19 ? 5000u : scenario >= 13 ? 2000u : 0u;
+        const bool early = scenario >= 20 && scenario != 30;
+        const auto sourceFadeFrames = musicSource && scenario != 15 && scenario != 27 ? early ? 512u : 128u : 0u;
+        // The earlier beat's fade start precedes the initial Source ACK publication floor.
+        const auto earlyOffset = scenario == 20 || scenario == 21 ? 1150u : 1200u;
+        const bool soundTarget = scenario == 23 || scenario == 24 || scenario == 25;
         const auto bodyFrames = scenario == 6 ? 800u : 2400u;
-        const unsigned stopAfterBlock = scenario == 1 ? 0u : (scenario == 2 || nestedControl) ? 10u :
+        const unsigned stopAfterBlock = scenario == 28 ? 22u : scenario == 1 ? 0u : (scenario == 2 || nestedControl) ? 10u :
             scenario == 3 ? 52u : (scenario == 4 || scenario == 8 || scenario == 12 || scenario == 16) ? 54u : UINT32_MAX;
         SCOPED_TRACE(musicSource);
         SCOPED_TRACE(shape);
@@ -31860,6 +31879,7 @@ TEST(PlayableStart, QueueMusicTransitionStartsAtTargetEntryAndReclaims) {
         const auto revision = engine->registry.Lookup(kSound).contentRevision;
         SequenceQueueWorldImage queue(revision, engine->registry.Lookup(kSecondSound).contentRevision);
         queue.container.memoryScope = harken::MemoryScopeV1::Global;
+        const auto initialSound = queue.children[1].playable;
         queue.children[0].playable = queue.children[1].playable;
         queue.children[0].timingHint = queue.children[1].timingHint;
         DirectSegmentWorldImage image(revision, harken::ScheduleTimeKindV1::MusicalTicks, 0, 64);
@@ -31872,7 +31892,7 @@ TEST(PlayableStart, QueueMusicTransitionStartsAtTargetEntryAndReclaims) {
         image.properties[2].authoredStableOrder = 4;
         const auto loopIndex = static_cast<std::size_t>(harken::playableproperties::PlayablePropertyIdV1::LoopCount) - 1u;
         image.properties[2].payload.presentMask |= UINT64_C(1) << loopIndex;
-        image.properties[2].payload.values[loopIndex].bits = scenario == 6 ? 1u : 3u;
+        image.properties[2].payload.values[loopIndex].bits = scenario == 25 ? 0u : scenario == 6 ? 1u : 3u;
         image.properties[2].programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(image.properties[2]);
         image.segment.rootDefinition.expectedProgramSemanticFingerprint = image.properties[2].programSemanticFingerprint;
         VariableControlWorldImage control(revision, queue.world.generation);
@@ -31904,6 +31924,10 @@ TEST(PlayableStart, QueueMusicTransitionStartsAtTargetEntryAndReclaims) {
         image.segment.bounds.nominalStart = 16;
         image.segment.bounds.nominalEnd = 48;
         image.segment.entryMarker = {harkentest::ObjectId(10002), 16};
+        if (early) {
+            image.segment.meterNumerator = 2;
+            image.segment.meterDenominator = 256;
+        }
         image.marker.markerKind = 1;
         image.marker.position = 48;
         image.segment.scheduleSemanticFingerprint = harken::ComputeSegmentScheduleFingerprintV2(image.segment);
@@ -31965,12 +31989,23 @@ TEST(PlayableStart, QueueMusicTransitionStartsAtTargetEntryAndReclaims) {
             queue.children[0].timingHint = harken::MakeScheduleReferenceTimingHint(harken::PlayableKindV1::Segment,
                 image.Root().stableId, image.segment.scheduleSemanticFingerprint);
         }
+        if (soundTarget) {
+            queue.children[1].playable = initialSound;
+            queue.children[1].timingHint = {};
+        }
         for (unsigned index = 0; index < 2; ++index) {
             queue.occurrences[index].childPlayable = queue.children[index].playable;
             queue.occurrences[index].occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(queue.occurrences[index]);
         }
         if (fromEntry && !nestedControl) {
             queue.EnableNaturalEndTransition(sourceFadeFrames, targetFadeFrames);
+            if (early) {
+                auto& rule = queue.transitionRules[0];
+                rule.sourceExit = scenario == 20 ? harken::TransitionSourceExitV1::NextBeat
+                    : scenario == 21 ? harken::TransitionSourceExitV1::NextBar : harken::TransitionSourceExitV1::ExitMarker;
+                if (scenario >= 22) rule.requiredMarkerStableId = image.marker.stableMarkerId;
+                else rule.requiredClockFingerprint = harken::ComputeSegmentClockFingerprintV1(image.segment);
+            }
             if (musicSource && targetFadeFrames == 0) queue.container.curveCount = 1;
             if (sourceFadeFrames == 0 && targetFadeFrames != 0) {
                 queue.container.curves = &queue.transitionCurves[1];
@@ -31981,6 +32016,32 @@ TEST(PlayableStart, QueueMusicTransitionStartsAtTargetEntryAndReclaims) {
                 queue.container.curves = nullptr;
             }
         }
+        std::array<harken::TransitionRuleViewV1, 4> mixedRules{};
+        if (scenario == 30) {
+            mixedRules[0] = queue.transitionRules[0];
+            mixedRules[1] = queue.transitionRules[0];
+            mixedRules[1].stableRuleOrdinal = 2;
+            mixedRules[1].authoredStableOrder = 1;
+            mixedRules[1].source = image.Root();
+            mixedRules[1].target = initialSound;
+            mixedRules[1].sourceExit = harken::TransitionSourceExitV1::ExitMarker;
+            mixedRules[1].requiredMarkerStableId = image.marker.stableMarkerId;
+            mixedRules[1].targetFade = {};
+            // This self-edge is unreachable: Sequence advances or resets to Sound.
+            mixedRules[2] = mixedRules[1];
+            mixedRules[2].stableRuleOrdinal = 3;
+            mixedRules[2].authoredStableOrder = 2;
+            mixedRules[2].target = image.Root();
+            mixedRules[2].sourceExit = harken::TransitionSourceExitV1::NextBeat;
+            mixedRules[2].requiredMarkerStableId = {};
+            mixedRules[2].requiredClockFingerprint = 123;
+            mixedRules[3] = queue.transitionRules[1];
+            mixedRules[3].stableRuleOrdinal = 4;
+            mixedRules[3].authoredStableOrder = 3;
+            queue.transition.rules = mixedRules.data();
+            queue.transition.ruleCount = mixedRules.size();
+            queue.transition.defaultRuleIndex = 3;
+        }
         if (wrapperRoot) {
             wrapper.child.playable = queue.Root();
             wrapper.occurrence.childPlayable = queue.Root();
@@ -31989,7 +32050,12 @@ TEST(PlayableStart, QueueMusicTransitionStartsAtTargetEntryAndReclaims) {
         std::array<harken::ContainerChildProgramViewV2, 3> queueChildren{
             queue.children[0], queue.children[1], queue.children[1]};
         auto thirdOccurrence = queue.occurrences[1];
-        if (third) {
+        if (third || scenario == 30) {
+            if (scenario == 30) {
+                queueChildren[2].playable = initialSound;
+                queueChildren[2].timingHint = {};
+                thirdOccurrence.childPlayable = initialSound;
+            }
             queueChildren[2].stableChildOrdinal = 9;
             queueChildren[2].authoredStableOrder = 2;
             queue.container.children = queueChildren.data();
@@ -32007,7 +32073,7 @@ TEST(PlayableStart, QueueMusicTransitionStartsAtTargetEntryAndReclaims) {
         });
         std::vector<harken::PlayableOccurrencePropertyViewV1> occurrences = {queue.occurrences[0], queue.occurrences[1], image.occurrence};
         if (nestedControl) occurrences.push_back(control.occurrence);
-        if (third) occurrences.push_back(thirdOccurrence);
+        if (third || scenario == 30) occurrences.push_back(thirdOccurrence);
         if (shape >= 2 || wrapperRoot) occurrences.push_back(wrapper.occurrence);
         if (outerTrack) occurrences.push_back(outer.occurrence);
         if (parallelTarget) occurrences.push_back(secondTargetOccurrence);
@@ -32041,13 +32107,117 @@ TEST(PlayableStart, QueueMusicTransitionStartsAtTargetEntryAndReclaims) {
         install.trackScheduleCount = outerTrack ? 2 : 1;
         install.segmentSchedules = &image.segment;
         install.segmentScheduleCount = 1;
+        harken::ActionStepProgramViewV1 packStep{};
+        harken::ActionProgramViewV1 packAction{};
+        if (pack) {
+            packStep.opcode = harken::ActionOpcodeV1::Play;
+            harkentest::packfoundation::SetAbsoluteTime(&packStep.delay);
+            harkentest::packfoundation::SetAbsoluteTime(&packStep.fade);
+            harkentest::packfoundation::SetAbsoluteTime(&packStep.cooldown);
+            packStep.target = {harken::ActionTargetKindV1::Container, 0, queue.Root().stableId,
+                               queue.Root().expectedProgramSemanticFingerprint};
+            packAction.actionStableId = harkentest::ObjectId(990000);
+            packAction.steps = &packStep;
+            packAction.stepCount = packAction.expandedStepOccurrenceCount = packAction.expandedFiringCount = 1;
+            packAction.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(packAction);
+            install.actions = &packAction;
+            install.actionCount = 1;
+        }
+        install.identity.capabilityMask = harken::detail::ComputeCurrentWorldLocalCapabilityMaskV1(install);
         install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV6(install);
-        ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, install).status);
+        VnResult packStatus = VN_OK;
+        if (pack) {
+            using namespace harken;
+            using namespace harkentest::packfoundation;
+            ASSERT_EQ(VN_OK, Vn_UnregisterPCM(kSound));
+            ASSERT_EQ(VN_OK, Vn_UnregisterPCM(kSecondSound));
+            std::vector<std::uint8_t> body;
+            ASSERT_TRUE(EncodeCurrentWorldBodyV19(install, body));
+            PackCanonicalPartitionHeader header{};
+            header.headerBytes = kCanonicalDefinitionPartitionHeaderV2Bytes;
+            header.bodyVintage = kCurrentWorldBodyVintageV19;
+            header.bodyBytes = body.size();
+            header.bodyChecksum = Fnv1a64(body.data(), body.size());
+            header.packStableId = 22;
+            header.partitionRevision = 1;
+            header.ownedDefinitionCount = install.playablePropertyCount + install.variableCount + install.actionCount;
+            ApplyCanonicalBusTriple(&header, DefaultFixtureBusTriple());
+            std::vector<std::uint8_t> partition(header.headerBytes + body.size(), 0);
+            SerializePackCanonicalPartitionHeaderV2(header, partition.data());
+            header.headerChecksum = Fnv1a64(partition.data(), 80);
+            SerializePackCanonicalPartitionHeaderV2(header, partition.data());
+            std::memcpy(partition.data() + header.headerBytes, body.data(), body.size());
+            ImageBuilder builder(kPackKindCanonicalContent);
+            builder.AddEntry(kPackEntryKindPackRequirementBlock, 22,
+                RequirementPayload(22, 1, 1, header.ownedDefinitionCount, body.size()));
+            builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, 22, std::move(partition));
+            builder.AddMedia(kSound, music);
+            builder.AddMedia(kSecondSound, initial);
+            const auto write = [](const char* filename, const std::vector<std::uint8_t>& bytes) {
+                const auto path = std::filesystem::path(HARKEN_TEMP_DIR) / filename;
+                std::ofstream file(path, std::ios::binary | std::ios::trunc);
+                file.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+                return path.string();
+            };
+            const auto initPath = write("music-queue-boundary-init.pack", harkentest::BuildMasterOnlyInitBytes());
+            const auto contentPath = write("music-queue-boundary-content.pack", builder.Build());
+            VnCanonicalPackSetMemberV1 members[2]{};
+            VnCanonicalPackSetMemberResultV1 results[2]{};
+            for (unsigned index = 0; index < 2; ++index) {
+                members[index].structSize = sizeof(members[index]);
+                members[index].packStableId = index == 0 ? 11 : 22;
+                members[index].packKind = index == 0 ? VN_CANONICAL_PACK_SET_MEMBER_INIT
+                    : VN_CANONICAL_PACK_SET_MEMBER_CONTENT;
+                members[index].utf8Path = index == 0 ? initPath.c_str() : contentPath.c_str();
+                results[index].structSize = sizeof(results[index]);
+            }
+            VnCanonicalPackSetActivationReportV1 report{};
+            packStatus = harkentest::ActivateCanonicalMembersV1(members, 2, results, report);
+        }
+        if (pack) ASSERT_EQ(VN_OK, packStatus);
+        else ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, install).status);
         harken::PlayableStartRequest request{};
         request.root = wrapperRoot ? wrappedRoot : queue.Root();
-        const auto started = harken::StartPlayable(*engine, request);
+        harken::PlayableStartResult started{};
+        VnActionFiringHandle packFiring = 0;
+        if (pack) {
+            VnPostActionDesc post{};
+            post.structSize = sizeof(post);
+            post.actionId = packAction.actionStableId;
+            if (scenario == 29) {
+                const auto published = engine->commands.PublishedHead();
+                harken::detail::ArmLogicAllocFaultForTests(
+                    1, harken::detail::LogicAllocSite::CapturedVoiceInstall);
+                const auto refused = Vn_PostAction(&post, &packFiring);
+                const bool captureRefused = harken::detail::g_logicAllocFault.remaining == 0;
+                harken::detail::DisarmLogicAllocFaultForTests();
+                ASSERT_TRUE(captureRefused);
+                ASSERT_EQ(VN_NO_VOICE, refused);
+                ASSERT_EQ(0u, packFiring);
+                EXPECT_EQ(published, engine->commands.PublishedHead());
+                for (unsigned block = 0; block < 16; ++block) {
+                    ASSERT_EQ(VN_OK, Vn_Update());
+                    engine->nullBackend.Pump(1);
+                    for (unsigned sample = 0; sample < 128; ++sample)
+                        ASSERT_FLOAT_EQ(0.0f, engine->nullBackend.LastBlock()[sample]);
+                }
+                ASSERT_FALSE(engine->runtimeRecreateRequired);
+                EXPECT_EQ(0u, engine->playableInstances.LiveCount()) << OccupancyDump(*engine);
+                EXPECT_EQ(0u, engine->timelineArms.LiveCount());
+                EXPECT_EQ(0u, engine->timelineOccurrences.OccupiedCount());
+                EXPECT_EQ(0u, engine->queueInstances.LiveCount());
+                EXPECT_TRUE(PlayableRowsFree(*engine));
+            }
+            ASSERT_EQ(VN_OK, Vn_PostAction(&post, &packFiring));
+            VnActionStepResult step{};
+            step.structSize = sizeof(step);
+            ASSERT_EQ(VN_OK, Vn_QueryActionStep(packFiring, 0, &step));
+            ASSERT_NE(0u, step.producedPlayableInstance);
+            started = {harken::PlayableStartStatus::Accepted, step.producedPlayableInstance, 0};
+        } else started = harken::StartPlayable(*engine, request);
         ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status) << OccupancyDump(*engine);
         std::uint64_t targetStart = UINT64_MAX;
+        std::uint64_t mixedSoundStart = UINT64_MAX;
         std::uint64_t sourceStart = UINT64_MAX;
         bool heardInitial = false;
         bool stopped = false;
@@ -32063,6 +32233,14 @@ TEST(PlayableStart, QueueMusicTransitionStartsAtTargetEntryAndReclaims) {
                     if (musicSource && sourceStart == UINT64_MAX) sourceStart = row.startFrame;
                     if (!musicSource || (row.startFrame != sourceStart && targetStart == UINT64_MAX)) targetStart = row.startFrame;
                 }
+            if (soundTarget)
+                for (const auto& row : engine->playableServices)
+                    if (row.phase != harken::EnginePlayableStartPhase::Free && row.root.kind == harken::PlayableKindV1::Sound &&
+                        row.root.stableId == kSecondSound) targetStart = row.startFrame;
+            if (scenario == 30 && targetStart != UINT64_MAX)
+                for (const auto& row : engine->playableServices)
+                    if (row.phase != harken::EnginePlayableStartPhase::Free && row.root.kind == harken::PlayableKindV1::Sound &&
+                        row.root.stableId == kSecondSound && row.startFrame > targetStart) mixedSoundStart = row.startFrame;
             const auto before = engine->mixer.BlocksRendered();
             engine->nullBackend.Pump(1);
             for (unsigned i = 0; i < 64; ++i) {
@@ -32079,19 +32257,29 @@ TEST(PlayableStart, QueueMusicTransitionStartsAtTargetEntryAndReclaims) {
                         const auto start = musicStarts[index];
                         const auto age = frame >= start ? frame - start : UINT64_MAX;
                         const auto intro = index == 0 ? 400u : 0u;
-                        const auto end = intro + bodyFrames + 400u;
-                        float value = age < intro ? 0.1f : age < intro + bodyFrames ? 0.2f : age < end ? 0.3f : 0.0f;
+                        const auto end = early && index == 0 ? earlyOffset : intro + bodyFrames + 400u;
+                        float value = age >= end ? 0.0f : age < intro ? 0.1f : age < intro + bodyFrames ? 0.2f : 0.3f;
                         if (sourceFadeFrames != 0 && index + 1u < (third ? 3u : 2u) && age >= end - sourceFadeFrames && age < end)
                             value *= 1.0f - static_cast<float>(age - (end - sourceFadeFrames)) / (sourceFadeFrames - 1u);
                         if (index != 0 && targetFadeFrames != 0 && age < end)
-                            value *= std::min(1.0f, static_cast<float>(third ? age : frame - (sourceStart + bodyFrames + 800u)) / (targetFadeFrames - 1u));
+                            value *= std::min(1.0f, static_cast<float>(third ? age : frame - (sourceStart + (early ? earlyOffset : bodyFrames + 800u))) / (targetFadeFrames - 1u));
                         expected += value;
                     }
-                    ASSERT_NEAR(expected, actual, 0.0001f) << "frame=" << frame << OccupancyDump(*engine);
+                    if (soundTarget && frame >= targetStart && frame - targetStart < initial.size())
+                        expected -= 0.1f * (targetFadeFrames == 0 ? 1.0f :
+                            std::min(1.0f, static_cast<float>(frame - targetStart) / (targetFadeFrames - 1u)));
+                    ASSERT_NEAR(expected, actual, 0.0001f) << "frame=" << frame << " sourceStart=" << sourceStart << " targetStart=" << targetStart << OccupancyDump(*engine);
                     continue;
                 }
                 if (targetStart == UINT64_MAX || frame < targetStart) continue;
                 const auto age = frame - targetStart;
+                if (scenario == 30) {
+                    const float expected = age < 800 ? 0.2f * std::min(1.0f, static_cast<float>(age) / (targetFadeFrames - 1u)) :
+                        frame >= mixedSoundStart && frame - mixedSoundStart < initial.size() ?
+                        -0.1f : 0.0f;
+                    ASSERT_NEAR(expected, actual, 0.0001f) << "frame=" << frame << " musicStart=" << targetStart << " soundStart=" << mixedSoundStart;
+                    continue;
+                }
                 const auto bodyEnd = fromEntry ? 2400u : 2800u;
                 float expected = age >= bodyEnd + 400 ? 0.0f : age >= bodyEnd ? 0.3f :
                     !fromEntry && age < 400 ? 0.1f : 0.2f;
@@ -32108,8 +32296,9 @@ TEST(PlayableStart, QueueMusicTransitionStartsAtTargetEntryAndReclaims) {
         if (stopAfterBlock != 0) EXPECT_TRUE(heardInitial);
         if (!stopped || stopAfterBlock >= 54) {
             EXPECT_NE(UINT64_MAX, targetStart);
-            if (musicSource) EXPECT_EQ(sourceStart + bodyFrames + 800u + targetDelay, targetStart);
+            if (musicSource) EXPECT_EQ(sourceStart + (early ? earlyOffset : bodyFrames + 800u) + targetDelay, targetStart);
         }
+        if (scenario == 30) EXPECT_EQ(targetStart + 800u, mixedSoundStart);
         if (third) {
             ASSERT_EQ(3u, musicStarts.size());
             EXPECT_EQ(musicStarts[1] + bodyFrames + 400u, musicStarts[2]);

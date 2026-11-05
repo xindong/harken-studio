@@ -1915,9 +1915,12 @@ TransitionProgramClassV1 ClassifyTransitionProgramV1(
 
 bool SupportsNativeMusicTransitionProgramV1(const TransitionProgramViewV1& program,
     const ContainerProgramViewV3& owner) noexcept {
+    const bool variable = owner.mode == ContainerModeV1::VariableControl &&
+        owner.discreteTiming == 1 && owner.discreteRowCount != 0;
+    const bool queue = (owner.mode == ContainerModeV1::SequenceQueue || owner.mode == ContainerModeV1::RandomQueue) &&
+        owner.queueSplice == QueueSpliceV1::Butt;
     if (ClassifyTransitionProgramV1(program) == TransitionProgramClassV1::Invalid ||
-        owner.mode != ContainerModeV1::VariableControl || owner.discreteTiming != 1 ||
-        owner.discreteRowCount == 0 || program.ownerContainerStableId != owner.containerStableId ||
+        (!variable && !queue) || program.ownerContainerStableId != owner.containerStableId ||
         program.maxContainerDescent != 0 || program.maxOwnerAscent != 0 || program.downwardPathStepCount != 0)
         return false;
     for (std::uint32_t index = 0; index < program.ruleCount; ++index) {
@@ -3799,6 +3802,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                     if (row.childCount > world.capacity.maxChildrenPerContainer ||
                         row.discreteRowCount > world.capacity.maxDiscreteRows) return WorldInstallStatus::Capacity;
                     const auto isDiscrete = [&](const auto& child) noexcept {
+                        if (row.mode == ContainerModeV1::SequenceQueue || row.mode == ContainerModeV1::RandomQueue) return true;
                         for (std::uint32_t index = 0; index < row.discreteRowCount; ++index)
                             if (row.discreteRows[index].childStableOrdinal == child.stableChildOrdinal) return true;
                         return false;
@@ -3806,8 +3810,9 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                     const bool advanced = ClassifyTransitionProgramV1(transition) == TransitionProgramClassV1::Advanced;
                     for (std::uint32_t sourceIndex = 0; advanced && sourceIndex < row.childCount; ++sourceIndex)
                     for (std::uint32_t targetIndex = 0; targetIndex < row.childCount; ++targetIndex) {
-                        if (sourceIndex == targetIndex || !isDiscrete(row.children[sourceIndex]) ||
-                            !isDiscrete(row.children[targetIndex])) continue;
+                        if ((sourceIndex == targetIndex && row.mode == ContainerModeV1::VariableControl) ||
+                            !isDiscrete(row.children[sourceIndex]) || !isDiscrete(row.children[targetIndex])) continue;
+                        if (!detail::SequenceQueueTransitionPairReachableV1(row, sourceIndex, targetIndex)) continue;
                         const auto* source = &row.children[sourceIndex].playable;
                         const auto* target = &row.children[targetIndex].playable;
                         const auto* rule = ResolveValidatedTransitionRuleV1(transition, *source, *target);

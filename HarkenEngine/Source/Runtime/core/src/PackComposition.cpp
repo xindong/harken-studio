@@ -958,6 +958,7 @@ VnResult ValidateTransitions(
         if (!PointerCountOk(container->discreteRowCount, container->discreteRows))
             return VN_BAD_PACK;
         const auto isDiscrete = [&](const auto& child) noexcept {
+            if (container->mode == ContainerModeV1::SequenceQueue || container->mode == ContainerModeV1::RandomQueue) return true;
             for (std::uint32_t index = 0; index < container->discreteRowCount; ++index)
                 if (container->discreteRows[index].childStableOrdinal == child.stableChildOrdinal) return true;
             return false;
@@ -965,8 +966,9 @@ VnResult ValidateTransitions(
         for (std::uint32_t sourceIndex = 0; classification == TransitionProgramClassV1::Advanced &&
                 sourceIndex < container->childCount; ++sourceIndex)
         for (std::uint32_t targetIndex = 0; targetIndex < container->childCount; ++targetIndex) {
-            if (sourceIndex == targetIndex || !isDiscrete(container->children[sourceIndex]) ||
-                !isDiscrete(container->children[targetIndex])) continue;
+            if ((sourceIndex == targetIndex && container->mode == ContainerModeV1::VariableControl) ||
+                !isDiscrete(container->children[sourceIndex]) || !isDiscrete(container->children[targetIndex])) continue;
+            if (!detail::SequenceQueueTransitionPairReachableV1(*container, sourceIndex, targetIndex)) continue;
             const auto* source = &container->children[sourceIndex].playable;
             const auto* target = &container->children[targetIndex].playable;
             const auto* rule = ResolveValidatedTransitionRuleV1(transition, *source, *target);

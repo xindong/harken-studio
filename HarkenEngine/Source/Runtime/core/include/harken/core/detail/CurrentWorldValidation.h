@@ -12,6 +12,17 @@ namespace harken::detail {
 #define HARKEN_CORE_DETAIL_HIDDEN
 #endif
 
+// Sequence selection follows the next cursor or wraps; Reset returns to the
+// authored initial cursor. Other directed pairs cannot select a transition.
+inline bool SequenceQueueTransitionPairReachableV1(const ContainerProgramViewV3& owner,
+    std::uint32_t sourceIndex, std::uint32_t targetIndex) noexcept {
+    if (owner.mode != ContainerModeV1::SequenceQueue) return true;
+    if (sourceIndex >= owner.childCount || targetIndex >= owner.childCount) return false;
+    return targetIndex == owner.initialSequenceCursor || targetIndex == sourceIndex + 1u ||
+        (sourceIndex + 1u == owner.childCount && targetIndex == 0 &&
+         owner.queueCycle == QueueCycleV1::Loop && owner.queueCycleCount != 1);
+}
+
 // Composite rows retain the contract of their owning partition. This context
 // is used only while validating Runtime Pack composition, never as a wire format.
 struct CompositeWorldVintagesV1 {
