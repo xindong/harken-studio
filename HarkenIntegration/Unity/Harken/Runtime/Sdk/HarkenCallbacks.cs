@@ -95,10 +95,11 @@ namespace Harken
                 throw new ArgumentNullException(nameof(handler));
             }
             int key = _nextKey++;
+            var registration = new Registration(key, true);
             NotifySinks[key] = new NotifySink { Handler = handler, State = state };
             config.onNotification = NotificationFnPtr;
             config.notificationUserData = (IntPtr)key;
-            return new Registration(key, true);
+            return registration;
         }
 
         /// <summary>Installs a log handler into <paramref name="config"/> before <c>Vn_Init</c>.</summary>
@@ -109,10 +110,11 @@ namespace Harken
                 throw new ArgumentNullException(nameof(handler));
             }
             int key = _nextKey++;
+            var registration = new Registration(key, false);
             LogSinks[key] = new LogSink { Handler = handler, State = state };
             config.logCallback = LogFnPtr;
             config.logUserData = (IntPtr)key;
-            return new Registration(key, false);
+            return registration;
         }
 
         [AOT.MonoPInvokeCallback(typeof(VnNotificationCallback))]

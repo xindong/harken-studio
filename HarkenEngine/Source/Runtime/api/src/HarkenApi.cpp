@@ -101218,7 +101218,8 @@ namespace {
 VnResult AcquireCanonicalBytes(const VnPackLoadDesc& desc,
                                PackTable::AlignedBuffer* owned,
                                VnPackByteSpan* span, bool* releaseSpan,
-                               const PackCanonicalImage* catalogOrNull);
+                               const PackCanonicalImage* catalogOrNull,
+                               std::uint64_t maxBytes = UINT64_MAX);
 void ReleaseCanonicalBytes(const VnPackLoadDesc& desc, VnPackByteSpan span,
                            bool releaseSpan);
 
@@ -113154,7 +113155,8 @@ namespace {
 // Whole-file aligned read, the v1 reader's shape (local copy: the v1
 // reader's helper is deliberately private to its translation unit).
 harken::PackTable::AlignedBuffer ReadPackFileAligned(const char* utf8Path,
-                                                    std::uint64_t* outBytes) {
+                                                    std::uint64_t* outBytes,
+                                                    std::uint64_t maxBytes = UINT64_MAX) {
     // UTF-8 path contract; the shared validator refuses ill-formed bytes with
     // the empty buffer the caller reads as VN_BAD_PACK, never a throw out of
     // the ABI.
@@ -113162,12 +113164,23 @@ harken::PackTable::AlignedBuffer ReadPackFileAligned(const char* utf8Path,
     if (!harken::TryMakeUtf8Path(utf8Path, &path)) {
         return harken::PackTable::AlignedBuffer();
     }
-    std::error_code ec;
-    const std::uintmax_t size = std::filesystem::file_size(path, ec);
-    if (ec || size == 0 || size > static_cast<std::uintmax_t>(SIZE_MAX)) {
+    std::ifstream in(path, std::ios::binary | std::ios::ate);
+    if (!in) {
         return harken::PackTable::AlignedBuffer();
     }
-    std::ifstream in(path, std::ios::binary);
+    const auto end = in.tellg();
+    if (end <= 0) {
+        return harken::PackTable::AlignedBuffer();
+    }
+    const auto size = static_cast<std::uint64_t>(end);
+    // Report the opened file's size even on budget refusal, so callers can
+    // distinguish capacity from I/O failure without rereading the path.
+    *outBytes = size;
+    if (size > maxBytes || size > SIZE_MAX ||
+        size > static_cast<std::uint64_t>((std::numeric_limits<std::streamsize>::max)())) {
+        return harken::PackTable::AlignedBuffer();
+    }
+    in.seekg(0, std::ios::beg);
     if (!in) {
         return harken::PackTable::AlignedBuffer();
     }
@@ -118550,7 +118563,8 @@ VnResult ResolveCanonicalFilePath(const VnPackLoadDesc& desc,
 VnResult AcquireCanonicalBytes(const VnPackLoadDesc& desc,
                                PackTable::AlignedBuffer* owned,
                                VnPackByteSpan* span, bool* releaseSpan,
-                               const PackCanonicalImage* catalogOrNull) {
+                               const PackCanonicalImage* catalogOrNull,
+                               std::uint64_t maxBytes) {
     *releaseSpan = false;
     span->structSize = sizeof(VnPackByteSpan);
     span->reserved0 = 0;
@@ -118595,13 +118609,14 @@ VnResult AcquireCanonicalBytes(const VnPackLoadDesc& desc,
             return VN_PACK_PROVIDER_FAILED;
         }
         *releaseSpan = true;
-        return VN_OK;
+        return span->byteCount > maxBytes ? VN_PACK_RESIDENT_CAPACITY : VN_OK;
     }
     std::string resolved;
     const auto rooted = ResolveCanonicalFilePath(desc, catalogRow, &resolved);
     if (rooted != VN_OK) return rooted;
     std::uint64_t fileBytes = 0;
-    *owned = ReadPackFileAligned(resolved.c_str(), &fileBytes);
+    *owned = ReadPackFileAligned(resolved.c_str(), &fileBytes, maxBytes);
+    if (fileBytes > maxBytes) return VN_PACK_RESIDENT_CAPACITY;
     if (*owned == nullptr) {
         return VN_BAD_PACK;
     }
@@ -120215,7 +120230,7 @@ VnResult ValidateCanonicalVolumeBusProfile(const Engine& engine,
         header.contentGeneration == header.publishedBusFingerprint ? VN_OK : VN_BAD_PACK;
 }
 
-VnResult ValidateCanonicalV2InitBusEntries(const PackCanonicalImage& init) noexcept {
+VnResult ValidateCanonicalV2InitBusEntries(const PackCanonicalImage& init) {
     if (init.busDefinitionSnapshotHeader.schemaVersion != 2) return VN_OK;
     std::map<VnBusId, const PackBusEntry*> legacy;
     for (const auto& row : init.buses) {
@@ -120255,6 +120270,7 @@ VnResult AcquireCanonicalSetMember(Engine& engine, const VnPackLoadDesc& load,
     const PackCanonicalImage* catalog, std::uint64_t* stagedBytes,
     AcquiredCanonicalSetMember* out, std::uint64_t* traceResource = nullptr,
     std::span<const AcquiredCanonicalSetMember> previous = {}) {
+    if (*stagedBytes > engine.config.maxPackDecodeStagingBytes) return VN_PACK_RESIDENT_CAPACITY;
     VnResult parsed = VN_OK;
     CanonicalByteSpanGuard guard{load};
     if ((load.flags & VN_PACK_LOAD_FLAG_PROVIDER) == 0 && engine.trace == nullptr) {
@@ -120266,7 +120282,6 @@ VnResult AcquireCanonicalSetMember(Engine& engine, const VnPackLoadDesc& load,
         std::string path;
         const auto rooted = ResolveCanonicalFilePath(load, catalogRow, &path);
         if (rooted != VN_OK) return rooted;
-        if (*stagedBytes > engine.config.maxPackDecodeStagingBytes) return VN_PACK_RESIDENT_CAPACITY;
         std::vector<const PCMRegistry::PreparedPackSamples*> candidates;
         for (const auto& member : previous)
             for (const auto& samples : member.samples) candidates.push_back(&samples);
@@ -120282,7 +120297,8 @@ VnResult AcquireCanonicalSetMember(Engine& engine, const VnPackLoadDesc& load,
         }
     }
     if (!out->boundedFile) {
-        const auto acquired = AcquireCanonicalBytes(load, &out->bytes, &guard.span, &guard.release, catalog);
+        const auto acquired = AcquireCanonicalBytes(load, &out->bytes, &guard.span, &guard.release, catalog,
+            engine.config.maxPackDecodeStagingBytes - *stagedBytes);
         if (acquired != VN_OK) { return acquired; }
         if (guard.span.structSize != sizeof(VnPackByteSpan) || guard.span.reserved0 != 0) {
             return VN_PACK_PROVIDER_FAILED;
@@ -122009,7 +122025,8 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
         }
     }
     const VnResult acquired = AcquireCanonicalBytes(
-        *desc, &owned, &spanGuard.span, &spanGuard.release, publishedCatalog);
+        *desc, &owned, &spanGuard.span, &spanGuard.release, publishedCatalog,
+        engine.config.maxPackDecodeStagingBytes);
     if (acquired != VN_OK) {
         return acquired;
     }
@@ -122389,13 +122406,14 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
         if (rooted != VN_OK) return rooted;
         bool retry = false;
         const auto read = ReadPackCanonicalFile(path.c_str(), engine.registry, &image, &samples,
-            &byteCount, &artifactHash, SIZE_MAX, {}, &retry);
+            &byteCount, &artifactHash, engine.config.maxPackDecodeStagingBytes, {}, &retry);
         if (read == VN_OK) boundedFile = true;
         else if (!retry) return read;
     }
     if (!boundedFile) {
         const VnResult acquired = AcquireCanonicalBytes(
-            *desc, &owned, &spanGuard.span, &spanGuard.release, publishedCatalog);
+            *desc, &owned, &spanGuard.span, &spanGuard.release, publishedCatalog,
+            engine.config.maxPackDecodeStagingBytes);
         if (acquired != VN_OK) return acquired;
         const VnResult parsed =
             ParsePackCanonicalImage(span.bytes, span.byteCount, &image, &artifactHash);
