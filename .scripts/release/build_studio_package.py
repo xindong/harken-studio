@@ -120,7 +120,7 @@ def run_studio_cli_smoke_test(binary: Path) -> None:
                 or not report.get("result", {}).get("commands")):
             raise ValueError("invalid command discovery response")
     except (OSError, ValueError, subprocess.TimeoutExpired) as error:
-        raise SystemExit(f"error: harken-studio startup verification failed: {error}") from error
+        raise SystemExit(f"error: HarkenStudioCLI startup verification failed: {error}") from error
 
 
 def verify_studio_self_test(report: dict, schema: dict) -> None:
@@ -224,9 +224,9 @@ def build_package(args: argparse.Namespace) -> dict:
     if harkenizer.is_symlink() or not harkenizer.is_file() or harkenizer.stat().st_size == 0:
         raise SystemExit(f"error: deployed Harkenizer binary is missing or empty: {harkenizer}")
     run_harkenizer_smoke_test(harkenizer)
-    cli = binary.with_name("harken-studio.exe" if binary.suffix == ".exe" else "harken-studio")
+    cli = binary.with_name("HarkenStudioCLI.exe" if binary.suffix == ".exe" else "HarkenStudioCLI")
     if cli.is_symlink() or not cli.is_file() or cli.stat().st_size == 0:
-        raise SystemExit(f"error: deployed harken-studio binary is missing or empty: {cli}")
+        raise SystemExit(f"error: deployed HarkenStudioCLI binary is missing or empty: {cli}")
     run_studio_cli_smoke_test(cli)
     legal_dir = input_dir / "Legal" if binary.suffix == ".exe" else binary.parent.parent / "Resources" / "Legal"
     collect_legal_texts.verify("studio", legal_dir)

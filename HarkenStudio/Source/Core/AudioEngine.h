@@ -2,7 +2,7 @@
 #pragma once
 
 #include <QObject>
-#include <QVector3D>
+#include "HarkenMath.h"
 #include <QString>
 #include <QTimer>
 #include <QHash>
@@ -92,7 +92,7 @@ public:
     bool stopRawPcm(uint64_t playbackHandle, uint32_t fadeMs = 0);
 
     quintptr playByName(const QString& name);
-    quintptr playByName3D(const QString& name, const QVector3D& position);
+    quintptr playByName3D(const QString& name, const HarkenEditor::Vec3& position);
     void stopPlayback(quintptr playbackHandle, float fadeMs = 0);
     void stopAll(float fadeMs = 0);
 
@@ -110,12 +110,12 @@ public:
     PlaybackStartResult playByNameDetailed(const QString& name);
     PlaybackStartResult playByNameWithPreviewContext(const QString& name);
 
-    void setPlaybackPosition(quintptr playbackHandle, const QVector3D& position);
+    void setPlaybackPosition(quintptr playbackHandle, const HarkenEditor::Vec3& position);
 
-    void setListenerPosition(const QVector3D& position);
-    void setListenerOrientation(const QVector3D& forward, const QVector3D& up);
-    void setListenerTransform(const QVector3D& position, const QVector3D& forward, const QVector3D& up);
-    QVector3D listenerPosition() const { return listenerPosition_; }
+    void setListenerPosition(const HarkenEditor::Vec3& position);
+    void setListenerOrientation(const HarkenEditor::Vec3& forward, const HarkenEditor::Vec3& up);
+    void setListenerTransform(const HarkenEditor::Vec3& position, const HarkenEditor::Vec3& forward, const HarkenEditor::Vec3& up);
+    HarkenEditor::Vec3 listenerPosition() const { return listenerPosition_; }
 
     bool loadPack(const QString& path);
     void unloadPack(const QString& path);
@@ -418,9 +418,9 @@ private:
     bool runtimeBindingsPending_ = true;
     float masterVolume_ = 1.0f;
 
-    QVector3D listenerPosition_;
-    QVector3D listenerForward_ = QVector3D(0, 0, -1);
-    QVector3D listenerUp_ = QVector3D(0, 1, 0);
+    HarkenEditor::Vec3 listenerPosition_;
+    HarkenEditor::Vec3 listenerForward_ = HarkenEditor::Vec3(0, 0, -1);
+    HarkenEditor::Vec3 listenerUp_ = HarkenEditor::Vec3(0, 1, 0);
 
     QTimer* runtimeServiceTimer_ = nullptr;
     QTimer* meterTimer_ = nullptr;

@@ -49,7 +49,7 @@
 #include "PropertyEditSession.h"
 #include "ReferenceSlotResolution.h"
 #include "TemplateApplyService.h"
-#include "Widgets/LogPanel/LogPanel.h"
+#include "Core/LogService.h"
 #include "UndoCommands.h"
 #include "Components/VAttenuation.h"
 #include "Components/VAudio.h"
@@ -79,7 +79,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
-#include <QApplication>
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDebug>
 #include <QTimer>
@@ -1919,7 +1919,7 @@ bool ProjectManager::commitPreparedProject(PreparedProject&& prepared)
     clampProjectSourceFades(*m_currentProject);
 
     if (!prepared.integrityReport.issues.empty()) {
-        LogPanel::logWarning(LogCategory::File,
+        LogService::logWarning(LogCategory::File,
             IntegrityScanner::summarize(prepared.integrityReport));
     }
 
@@ -2046,7 +2046,7 @@ void ProjectManager::reconcileAssetsOnOpen(int bindingLoadFailures)
     }
 
     if (!reclaim.isEmpty() || trashedFiles > 0) {
-        LogPanel::logInfo(LogCategory::File,
+        LogService::logInfo(LogCategory::File,
             tr("Asset cleanup: %1 unused asset(s) and %2 orphaned file(s) moved to %3/")
                 .arg(reclaim.size()).arg(trashedFiles)
                 .arg(QLatin1String(PathUtils::TRASH_DIR)));
@@ -2745,7 +2745,7 @@ bool ProjectManager::moveEntriesToFolder(const QList<ProjectItem*>& items,
 
 ProjectItem* ProjectManager::createItem(ProjectItem* parent, const QString& name, ProjectItem::Type type,
                                         const QString& path, const QString& bucketFolderHint,
-                                        QUndoCommand* undoParent, VariableKind variableKind)
+                                        UndoCommand* undoParent, VariableKind variableKind)
 {
     return createItemImpl(parent, name, type, path, bucketFolderHint, undoParent, nullptr, variableKind);
 }
@@ -2763,7 +2763,7 @@ ProjectItem* ProjectManager::createTrackWithClip(ProjectItem* segment, const QSt
 ProjectItem* ProjectManager::createItemImpl(ProjectItem* parent, const QString& name,
                                             ProjectItem::Type type, const QString& path,
                                             const QString& bucketFolderHint,
-                                            QUndoCommand* undoParent,
+                                            UndoCommand* undoParent,
                                             const Clip* initialClip, VariableKind variableKind)
 {
     if (type == ProjectItem::Type::Bus && !parent)

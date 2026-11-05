@@ -51,10 +51,12 @@ struct Vec3
 
     Vec3 normalized() const
     {
-        float len = length();
-        if (len > 0.0001f)
-            return *this / len;
-        return Vec3(0, 0, 0);
+        const float len = std::hypot(x, y, z);
+        if (std::abs(len - 1.0f) <= 0.00001f)
+            return *this;
+        if (std::abs(len) <= 0.00001f)
+            return {};
+        return *this / len;
     }
 
     float distanceTo(const Vec3& other) const

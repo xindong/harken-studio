@@ -1,26 +1,46 @@
 # Harken Studio CLI
 
-`harken-studio` authors and exports Harken projects without opening a window or
-connecting to a running Studio. It uses `QCoreApplication`, the editor command
-registry, the project save pipeline, and the existing pack builder. An agent only
+`HarkenStudioCLI` authors and exports Harken projects without opening a window or
+connecting to a running Studio. The desktop and CLI use the same QtCore-based
+project model, editing commands, validation, save pipeline, and pack builder.
+The CLI uses `QCoreApplication` and has no Qt GUI or Widgets dependency. An agent only
 needs terminal access and the executable's path. No provider-specific plugin,
 account, MCP client, or embedded language model is required.
 
 ## Installation and discovery
 
 Build the `harken_studio_cli` CMake target, or build `harken_editor` to include it
-with Studio. On Windows, `harken-studio.exe` is beside `HarkenStudio.exe`; on
-macOS it is in `HarkenStudio.app/Contents/MacOS`. Keep the accompanying libraries,
+with Studio. Desktop builds require `HARKEN_BUILD_STUDIO_CLI=ON` and produce both
+executables. On Windows, `HarkenStudioCLI.exe` is beside `HarkenStudio.exe`; on
+macOS `HarkenStudioCLI` is in `HarkenStudio.app/Contents/MacOS`. Keep the accompanying libraries,
 `schema/`, and `Harkenizer` in place. Add that directory to your shell's `PATH`,
 or use the absolute executable path.
 
+For a CLI-only build, configure with `HARKEN_BUILD_STUDIO_CLI=ON`,
+`HARKEN_BUILD_EDITOR=OFF`, and `HARKEN_BUILD_HUB=OFF`. Keep
+`HARKEN_BUILD_CORE=ON` and `HARKEN_BUILD_TOOLS=ON` for the shared runtime and
+content compiler dependencies. Disable inherited editor, Hub, and runtime test
+options when using a development preset. For example, in PowerShell:
+
+```powershell
+cmake --preset windows-ninja-clang-dev -B build-cli `
+  -DHARKEN_BUILD_STUDIO_CLI=ON -DHARKEN_BUILD_EDITOR=OFF -DHARKEN_BUILD_HUB=OFF `
+  -DHARKEN_BUILD_CORE=ON -DHARKEN_BUILD_TOOLS=ON `
+  -DHARKEN_BUILD_EDITOR_UNIT_TESTS=OFF -DHARKEN_BUILD_HUB_UNIT_TESTS=OFF `
+  -DHARKEN_BUILD_RUNTIME_UNIT_TESTS=OFF -DHARKEN_BUILD_RUNTIME_BENCHMARKS=OFF
+cmake --build build-cli --config RelWithDebInfo --target harken_studio_cli
+```
+
+This configuration requires Qt Core, Network, and Concurrent. It does not
+configure the desktop widgets or require Qt GUI, Widgets, SVG, or OpenGL modules.
+
 ```sh
-harken-studio --help
-harken-studio --version --json
-harken-studio commands --json
-harken-studio commands create_item --json
-harken-studio commands set_item_property --json
-harken-studio commands export_pack --json
+HarkenStudioCLI --help
+HarkenStudioCLI --version --json
+HarkenStudioCLI commands --json
+HarkenStudioCLI commands create_item --json
+HarkenStudioCLI commands set_item_property --json
+HarkenStudioCLI commands export_pack --json
 ```
 
 Command discovery reads the live editor registry. Each entry includes an
@@ -39,11 +59,11 @@ to discover the program automatically.
 ## Project operations
 
 ```sh
-harken-studio init ./GameAudio --json
-harken-studio exec list_items --project ./GameAudio/GameAudio.hsp --json
-harken-studio exec import_audio --project ./GameAudio/GameAudio.hsp --input import.json --save --json
-harken-studio run --project ./GameAudio/GameAudio.hsp --input workflow.json --save --json
-harken-studio exec export_pack --project ./GameAudio/GameAudio.hsp --input export.json --json
+HarkenStudioCLI init ./GameAudio --json
+HarkenStudioCLI exec list_items --project ./GameAudio/GameAudio.hsp --json
+HarkenStudioCLI exec import_audio --project ./GameAudio/GameAudio.hsp --input import.json --save --json
+HarkenStudioCLI run --project ./GameAudio/GameAudio.hsp --input workflow.json --save --json
+HarkenStudioCLI exec export_pack --project ./GameAudio/GameAudio.hsp --input export.json --json
 ```
 
 `import.json`:
@@ -74,7 +94,7 @@ requested by the command's parameters.
 {"output_path":"/absolute/path/to/game/audio-output"}
 ```
 
-`export_pack` exports the project's platforms by default; supply a `platform_id`
+`export_pack` uses the project's export platform selection by default; supply a `platform_id`
 from `list_project_platforms` to select one. Its result describes completed platform
 outputs, not merely a queued build. Outputs use the same format and build
 services as Studio and Harkenizer, for consumption by Harken Engine and its
@@ -118,13 +138,23 @@ integrations.
 `StudioCli/Main.cpp` owns shell syntax and process I/O. `StudioSession` owns the
 headless project lifetime and asynchronous waits. `EditorCommandRegistration`
 and `EditorCommandCatalog` are shared by the desktop and CLI. Audio configuration,
-validation, saving, and export remain in the existing editor services.
+validation, saving, and export live in the shared authoring services. QtCore types
+remain the common data types on both sides; the CLI does not maintain a separate
+project model or editing implementation. Headless services may use Qt Network and
+Concurrent, but do not depend on GUI, Widgets, SVG, or OpenGL modules.
+`harken_studio_core` is the shared static library; `harken_editor_foundation`
+contains desktop helpers on top of it. CMake verifies the transitive CLI and
+Harkenizer link dependencies, including conditional branches, to keep GUI modules
+outside the headless dependency graph.
 
-Register new command groups through `registerEditorCommands`, put parameter
-metadata beside the existing action definition/catalog, and mark actions that
-require widgets with `requiresDesktop` (legacy handlers use
-`registerDesktopHandler`). New registered operations then appear without a CLI
-command switch or a second schema. Asynchronous commands return an `operation`
+Register new authoring command groups through `registerEditorCommands` and put
+parameter metadata beside the action definition/catalog. The desktop uses
+`registerDesktopEditorCommands` to register these same definitions and bind
+widget operations through `ActionManager::setActionHandler`. Actions marked
+`requiresDesktop` remain discoverable by the CLI and are rejected before
+execution. Desktop IPC handlers are installed by `IPCServer::setMainWindow` and
+stay outside the shared command implementation. New registered authoring operations
+appear without a CLI command switch or a second schema. Asynchronous commands return an `operation`
 with `status_command`, `status_args`, and optional `cancel_command`; the status
 response contains `in_progress` and the final response in `result`.
 
@@ -132,9 +162,10 @@ New authoring behavior must be exposed through shared commands to be available
 headlessly. Behavior implemented only in a widget cannot be discovered or
 translated automatically. Some existing blueprint gestures remain desktop
 commands; use explicit authoring operations such as `set_output_bus_routing`,
-`set_send`, and `move_item` for their project data. The current shared editor
-library still links Qt Widgets; this host creates no widgets and requires no
-display platform plugin. Separating that build dependency is a further core
-library refactor, not a second authoring implementation in this CLI.
+`set_send`, and `move_item` for their project data. GUI adapters own widget access,
+desktop command bodies, Qt actions, and presentation of authoring notifications.
+Shared services own the edits, undo history, diagnostics, and asynchronous work.
+Both the CLI and its Harkenizer worker can run without Qt GUI libraries or a
+display platform plugin.
 
 The external interface follows the [Command Line Interface Guidelines](https://clig.dev/).

@@ -24,7 +24,7 @@
 #include "RuntimeBridge/PreviewBridge.h"
 #include "AssetPipeline/AssetTypes.h"
 #include "AssetPipeline/AssetRegistry.h"
-#include "../Widgets/LogPanel/LogPanel.h"
+#include "Core/LogService.h"
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -686,7 +686,7 @@ bool ProjectManager::prepareRuntimeSounds(const FieldGroupEffectiveSnapshot& sna
                 const QString reason = QStringLiteral("Sound '%1' is unavailable for preview: %2")
                     .arg(item->name, mediaError.isEmpty()
                         ? QStringLiteral("source media is unavailable") : mediaError);
-                LogPanel::logWarning(LogCategory::RuntimeSync, reason);
+                LogService::logWarning(LogCategory::RuntimeSync, reason);
             }
         }
     }

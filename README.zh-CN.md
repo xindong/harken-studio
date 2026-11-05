@@ -23,8 +23,9 @@ git clone https://github.com/xindong/harken-studio.git
 
 ## 面向脚本和 Agent 的无窗口编辑
 
-`harken-studio` 可在不打开 Studio 窗口的情况下创建、配置、保存和导出工程。
-从 `harken-studio --help` 和 `harken-studio commands --json` 开始，命令及参数说明来自编辑器共享注册表。
+`HarkenStudioCLI` 可在不打开 Studio 窗口的情况下创建、配置、保存和导出工程。
+从 `HarkenStudioCLI --help` 和 `HarkenStudioCLI commands --json` 开始，命令及参数说明来自编辑器共享注册表。
+GUI 与 CLI 共用 QtCore 工程编辑服务，CLI 不依赖 Qt 图形界面库。
 任何能运行终端命令的 Agent 都可使用，无需绑定某个 AI 平台。
 安装方式、JSON 输入输出、批处理、保存规则与支持边界见 [CLI 使用说明](HarkenStudio/Source/Tooling/StudioCli/README.md)。
 

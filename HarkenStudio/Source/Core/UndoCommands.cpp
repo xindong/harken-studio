@@ -25,13 +25,13 @@
 namespace VNX {
 
 namespace {
-std::optional<QSet<QUuid>> authoringWriteSet(const QUndoCommand* command)
+std::optional<QSet<QUuid>> authoringWriteSet(const UndoCommand* command)
 {
     if (!command) return std::nullopt;
     const auto* action = dynamic_cast<const RuntimeActionCommand*>(command);
     const auto* writes = action ? action->authoringWriteSet() : nullptr;
     if (action && !writes) return std::nullopt;
-    if (!action && (typeid(*command) != typeid(QUndoCommand) || command->childCount() == 0))
+    if (!action && (typeid(*command) != typeid(UndoCommand) || command->childCount() == 0))
         return std::nullopt;
     QSet<QUuid> combined = writes ? *writes : QSet<QUuid>{};
     for (int i = 0; i < command->childCount(); ++i) {
@@ -42,7 +42,7 @@ std::optional<QSet<QUuid>> authoringWriteSet(const QUndoCommand* command)
     return combined;
 }
 
-bool canReplayCommand(const QUndoCommand* command)
+bool canReplayCommand(const UndoCommand* command)
 {
     if (!command) return false;
     if (const auto* action = dynamic_cast<const RuntimeActionCommand*>(command)) {
@@ -89,45 +89,14 @@ UndoRedoManager::UndoRedoManager()
 {
     undoStack_.setUndoLimit(100);
     
-    connect(&undoStack_, &QUndoStack::canUndoChanged, this, &UndoRedoManager::refreshReplayAvailability);
-    connect(&undoStack_, &QUndoStack::canRedoChanged, this, &UndoRedoManager::refreshReplayAvailability);
-    connect(&undoStack_, &QUndoStack::indexChanged, this, &UndoRedoManager::refreshReplayAvailability);
+    connect(&undoStack_, &UndoStack::canUndoChanged, this, &UndoRedoManager::refreshReplayAvailability);
+    connect(&undoStack_, &UndoStack::canRedoChanged, this, &UndoRedoManager::refreshReplayAvailability);
+    connect(&undoStack_, &UndoStack::indexChanged, this, &UndoRedoManager::refreshReplayAvailability);
     connect(&ProjectPlatformActivity::instance(), &ProjectPlatformActivity::busyChanged,
             this, &UndoRedoManager::refreshReplayAvailability);
-    connect(&undoStack_, &QUndoStack::cleanChanged, this, &UndoRedoManager::refreshCleanState);
-    connect(&undoStack_, &QUndoStack::indexChanged, this, &UndoRedoManager::refreshCleanState);
-    connect(&undoStack_, &QUndoStack::indexChanged, this, &UndoRedoManager::indexChanged);
-}
-
-QAction* UndoRedoManager::createUndoAction(QObject* parent, const QString& prefix)
-{
-    return createReplayAction(parent, prefix, false);
-}
-
-QAction* UndoRedoManager::createRedoAction(QObject* parent, const QString& prefix)
-{
-    return createReplayAction(parent, prefix, true);
-}
-
-QAction* UndoRedoManager::createReplayAction(QObject* parent, const QString& prefix, bool redo)
-{
-    auto* action = new QAction(parent);
-    const auto update = [this, action, prefix, redo]() {
-        const auto label = prefix.isEmpty() ? (redo ? tr("Redo") : tr("Undo")) : prefix;
-        const auto text = redo ? undoStack_.redoText() : undoStack_.undoText();
-        action->setText(text.isEmpty() ? label : label + QChar(' ') + text);
-        action->setEnabled(redo ? canRedo() : canUndo());
-    };
-    connect(this, &UndoRedoManager::canUndoChanged, action, update);
-    connect(this, &UndoRedoManager::canRedoChanged, action, update);
-    connect(&undoStack_, &QUndoStack::undoTextChanged, action, update);
-    connect(&undoStack_, &QUndoStack::redoTextChanged, action, update);
-    connect(action, &QAction::triggered, this, [this, redo]() {
-        if (redo) this->redo();
-        else this->undo();
-    });
-    update();
-    return action;
+    connect(&undoStack_, &UndoStack::cleanChanged, this, &UndoRedoManager::refreshCleanState);
+    connect(&undoStack_, &UndoStack::indexChanged, this, &UndoRedoManager::refreshCleanState);
+    connect(&undoStack_, &UndoStack::indexChanged, this, &UndoRedoManager::indexChanged);
 }
 
 bool UndoRedoManager::canUndo() const
@@ -174,7 +143,7 @@ bool UndoRedoManager::redo()
 
 bool UndoRedoManager::replay(bool redo)
 {
-    auto* command = const_cast<QUndoCommand*>(
+    auto* command = const_cast<UndoCommand*>(
         undoStack_.command(undoStack_.index() - (redo ? 0 : 1)));
     const auto writes = authoringWriteSet(command);
     const QScopedValueRollback<const QSet<QUuid>*> scope(
@@ -199,7 +168,7 @@ void UndoRedoManager::refreshReplayAvailability()
     emit canRedoChanged(canRedo());
 }
 
-void UndoRedoManager::push(QUndoCommand* command)
+void UndoRedoManager::push(UndoCommand* command)
 {
     const auto writes = authoringWriteSet(command);
     const QScopedValueRollback<const QSet<QUuid>*> scope(
@@ -269,8 +238,8 @@ PropertyChangeCommand::PropertyChangeCommand(
     const QVariant& oldValue,
     const QVariant& newValue,
     const QString& text,
-    QUndoCommand* parent)
-    : QUndoCommand(text.isEmpty() ? QObject::tr("Change %1").arg(propertyName) : text, parent)
+    UndoCommand* parent)
+    : UndoCommand(text.isEmpty() ? QObject::tr("Change %1").arg(propertyName) : text, parent)
     , target_(target)
     , propertyName_(propertyName)
     , oldValue_(oldValue)
@@ -290,7 +259,7 @@ void PropertyChangeCommand::redo()
         target_->setProperty(propertyName_.constData(), newValue_);
 }
 
-bool PropertyChangeCommand::mergeWith(const QUndoCommand* other)
+bool PropertyChangeCommand::mergeWith(const UndoCommand* other)
 {
     if (other->id() != id())
         return false;
@@ -312,8 +281,8 @@ ProjectItemCommand::ProjectItemCommand(
     const QVariant& previousData,
     std::function<void(Operation, const QString&, const QString&, const QVariant&)> executeFn,
     const QString& text,
-    QUndoCommand* parent)
-    : QUndoCommand(text, parent)
+    UndoCommand* parent)
+    : UndoCommand(text, parent)
     , op_(op)
     , itemId_(itemId)
     , parentId_(parentId)
@@ -367,12 +336,12 @@ void ProjectItemCommand::redo()
 Scene3DCommand::Scene3DCommand(
     ObjectType objectType,
     int objectId,
-    const QVector3D& oldPosition,
-    const QVector3D& newPosition,
-    std::function<void(ObjectType, int, const QVector3D&)> applyFn,
+    const HarkenEditor::Vec3& oldPosition,
+    const HarkenEditor::Vec3& newPosition,
+    std::function<void(ObjectType, int, const HarkenEditor::Vec3&)> applyFn,
     const QString& text,
-    QUndoCommand* parent)
-    : QUndoCommand(text, parent)
+    UndoCommand* parent)
+    : UndoCommand(text, parent)
     , objectType_(objectType)
     , objectId_(objectId)
     , oldPosition_(oldPosition)
@@ -404,7 +373,7 @@ void Scene3DCommand::redo()
         applyFn_(objectType_, objectId_, newPosition_);
 }
 
-bool Scene3DCommand::mergeWith(const QUndoCommand* other)
+bool Scene3DCommand::mergeWith(const UndoCommand* other)
 {
     if (other->id() != id())
         return false;
@@ -420,8 +389,8 @@ bool Scene3DCommand::mergeWith(const QUndoCommand* other)
 
 DeleteProjectItemCommand::DeleteProjectItemCommand(
     ProjectItem* item,
-    QUndoCommand* parent)
-    : QUndoCommand(parent)
+    UndoCommand* parent)
+    : UndoCommand(parent)
     , parent_(item->parent)
     , originalIndex_(-1)
 {
@@ -560,8 +529,8 @@ void restoreDirtyState(const ObjectDirtyState& state)
 CreateProjectItemCommand::CreateProjectItemCommand(
     ProjectItem* parent,
     std::shared_ptr<ProjectItem> newItem,
-    QUndoCommand* undoParent)
-    : QUndoCommand(undoParent)
+    UndoCommand* undoParent)
+    : UndoCommand(undoParent)
     , parent_(parent)
     , item_(std::move(newItem))
 {
@@ -631,7 +600,7 @@ RenameProjectItemCommand::RenameProjectItemCommand(
     ProjectItem* item,
     const QString& oldName,
     const QString& newName,
-    QUndoCommand* undoParent)
+    UndoCommand* undoParent)
     : TransactionalUndoCommand(QObject::tr("Rename %1").arg(oldName), undoParent)
     , item_(item)
     , oldName_(oldName)
@@ -647,8 +616,8 @@ SetItemColorCommand::SetItemColorCommand(
     ProjectItem* item,
     uint32_t oldColor,
     uint32_t newColor,
-    QUndoCommand* undoParent)
-    : QUndoCommand(undoParent),
+    UndoCommand* undoParent)
+    : UndoCommand(undoParent),
       item_(item),
       oldColor_(oldColor),
       newColor_(newColor)
@@ -714,8 +683,8 @@ void putPasteProps(ProjectItem* it, const QJsonObject& o)
 
 PastePropertiesCommand::PastePropertiesCommand(const std::vector<ProjectItem*>& targets,
                                                const ProjectItem* source,
-                                               QUndoCommand* undoParent)
-    : QUndoCommand(undoParent)
+                                               UndoCommand* undoParent)
+    : UndoCommand(undoParent)
 {
     const QJsonObject after = grabPasteProps(source);
     if (source && !after.isEmpty()) {
@@ -838,7 +807,7 @@ bool CreateParentContainerCommand::apply(bool redo)
     if (redo) {
         const bool first = !creation_;
         if (first) {
-            creation_ = std::make_unique<QUndoCommand>();
+            creation_ = std::make_unique<UndoCommand>();
             container_ = manager.createItem(parent_, name_, type_, {}, {}, creation_.get());
             if (!container_) {
                 creation_.reset();
@@ -877,7 +846,7 @@ bool CreateParentContainerCommand::apply(bool redo)
 MoveItemCommand::MoveItemCommand(
     ProjectItem* item,
     ProjectItem* newParent,
-    QUndoCommand* parent)
+    UndoCommand* parent)
     : TransactionalUndoCommand(QObject::tr("Move %1").arg(item->name), parent, false)
     , item_(item)
     , oldParent_(item->parent)
@@ -930,7 +899,7 @@ MoveItemCommand::MoveItemCommand(
 MoveItemCommand::MoveItemCommand(
     ProjectItem* item,
     const QString& bucketRootFolder,
-    QUndoCommand* parent)
+    UndoCommand* parent)
     : TransactionalUndoCommand(QObject::tr("Move %1").arg(item->name), parent, false)
     , item_(item)
     , oldParent_(item->parent)
@@ -1349,8 +1318,8 @@ ContainerPropertyChangeCommand::ContainerPropertyChangeCommand(
     const QVariant& newValue,
     std::function<void(ProjectItem*, const QVariant&)> applyFn,
     const QString& text,
-    QUndoCommand* parent)
-    : QUndoCommand(text.isEmpty() ? QObject::tr("Change Container %1").arg(propertyName) : text, parent)
+    UndoCommand* parent)
+    : UndoCommand(text.isEmpty() ? QObject::tr("Change Container %1").arg(propertyName) : text, parent)
     , item_(item)
     , propertyName_(propertyName)
     , oldValue_(oldValue)
@@ -1383,7 +1352,7 @@ void ContainerPropertyChangeCommand::redo()
     }
 }
 
-bool ContainerPropertyChangeCommand::mergeWith(const QUndoCommand* other)
+bool ContainerPropertyChangeCommand::mergeWith(const UndoCommand* other)
 {
     if (other->id() != id())
         return false;
@@ -1404,8 +1373,8 @@ BusPropertyChangeCommand::BusPropertyChangeCommand(
     const QVariant& newValue,
     std::function<void(uint32_t, const QVariant&)> applyFn,
     const QString& text,
-    QUndoCommand* parent)
-    : QUndoCommand(text.isEmpty() ? QObject::tr("Change Bus %1").arg(propertyName) : text, parent)
+    UndoCommand* parent)
+    : UndoCommand(text.isEmpty() ? QObject::tr("Change Bus %1").arg(propertyName) : text, parent)
     , objectID_(busID)
     , propertyName_(propertyName)
     , oldValue_(oldValue)
@@ -1430,7 +1399,7 @@ void BusPropertyChangeCommand::redo()
         applyFn_(objectID_, newValue_);
 }
 
-bool BusPropertyChangeCommand::mergeWith(const QUndoCommand* other)
+bool BusPropertyChangeCommand::mergeWith(const UndoCommand* other)
 {
     if (other->id() != id())
         return false;
@@ -1448,8 +1417,8 @@ BusSendCommand::BusSendCommand(
     float sendLevel, bool isAdd,
     std::function<void(uint32_t, uint32_t, float)> addFn,
     std::function<void(uint32_t, uint32_t)> removeFn,
-    const QString& text, QUndoCommand* parent)
-    : QUndoCommand(text.isEmpty() ? (isAdd ? "Add Send" : "Remove Send") : text, parent)
+    const QString& text, UndoCommand* parent)
+    : UndoCommand(text.isEmpty() ? (isAdd ? "Add Send" : "Remove Send") : text, parent)
     , objectID_(busID), targetBusId_(targetBusID)
     , sendLevel_(sendLevel)
     , isAdd_(isAdd)
@@ -1485,8 +1454,8 @@ SequenceReorderCommand::SequenceReorderCommand(
     ProjectItem* item,
     const std::vector<std::shared_ptr<ProjectItem>>& oldOrder,
     const std::vector<std::shared_ptr<ProjectItem>>& newOrder,
-    QUndoCommand* parent)
-    : QUndoCommand(item && item->type == ProjectItem::Type::Segment
+    UndoCommand* parent)
+    : UndoCommand(item && item->type == ProjectItem::Type::Segment
         ? QObject::tr("Reorder Tracks") : QObject::tr("Reorder Sequence Playlist"), parent)
     , item_(item)
     , oldOrder_(oldOrder)
@@ -1522,8 +1491,8 @@ SpatialPropertyChangeCommand::SpatialPropertyChangeCommand(
     ProjectItem* item, const QString& propertyName,
     const QVariant& oldValue, const QVariant& newValue,
     std::function<void(ProjectItem*, const QVariant&)> applyFn,
-    const QString& text, QUndoCommand* parent)
-    : QUndoCommand(text.isEmpty()
+    const QString& text, UndoCommand* parent)
+    : UndoCommand(text.isEmpty()
           ? QString("Change %1 '%2'").arg(propertyName, item ? item->name : "")
           : text, parent)
     , item_(item), propertyName_(propertyName)
@@ -1545,7 +1514,7 @@ void SpatialPropertyChangeCommand::redo()
     item_->markDirty();
 }
 
-bool SpatialPropertyChangeCommand::mergeWith(const QUndoCommand* other)
+bool SpatialPropertyChangeCommand::mergeWith(const UndoCommand* other)
 {
     auto cmd = dynamic_cast<const SpatialPropertyChangeCommand*>(other);
     if (!cmd) return false;

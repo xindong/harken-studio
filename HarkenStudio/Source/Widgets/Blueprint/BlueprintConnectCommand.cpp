@@ -136,8 +136,8 @@ bool restoreSendState(const std::optional<BusSendState>& state)
 BlueprintConnectCommand::BlueprintConnectCommand(uint32_t fromItemId,
                                                  uint32_t toId,
                                                  Effective effectiveType,
-                                                 QUndoCommand* parent)
-    : QUndoCommand(QObject::tr("Blueprint Connect"), parent)
+                                                 VNX::UndoCommand* parent)
+    : VNX::UndoCommand(QObject::tr("Blueprint Connect"), parent)
     , fromItemId_(fromItemId)
     , toId_(toId)
     , effective_(effectiveType)
@@ -218,8 +218,8 @@ QString BlueprintConnectCommand::error() const
 BlueprintDisconnectCommand::BlueprintDisconnectCommand(uint32_t fromItemId,
                                                        uint32_t toId,
                                                        Kind kind,
-                                                       QUndoCommand* parent)
-    : QUndoCommand(QObject::tr("Blueprint Disconnect"), parent)
+                                                       VNX::UndoCommand* parent)
+    : VNX::UndoCommand(QObject::tr("Blueprint Disconnect"), parent)
     , fromItemId_(fromItemId)
     , toId_(toId)
     , kind_(kind)
@@ -300,8 +300,8 @@ QString BlueprintDisconnectCommand::error() const
 BlueprintOverrideToggleCommand::BlueprintOverrideToggleCommand(uint32_t itemId,
                                                                bool newOverride,
                                                                uint32_t autoRouteToBusId,
-                                                               QUndoCommand* parent)
-    : QUndoCommand(QObject::tr("Blueprint Override Toggle"), parent)
+                                                               VNX::UndoCommand* parent)
+    : VNX::UndoCommand(QObject::tr("Blueprint Override Toggle"), parent)
     , itemId_(itemId)
     , newOverride_(newOverride)
     , autoRouteToBusId_(autoRouteToBusId)
@@ -355,8 +355,8 @@ void BlueprintOverrideToggleCommand::undo()
 
 BlueprintSendConnectCommand::BlueprintSendConnectCommand(uint32_t fromBusId,
                                                          uint32_t targetBusId,
-                                                         QUndoCommand* parent)
-    : QUndoCommand(QObject::tr("Blueprint Send Connect"), parent)
+                                                         VNX::UndoCommand* parent)
+    : VNX::UndoCommand(QObject::tr("Blueprint Send Connect"), parent)
     , fromBusId_(fromBusId)
     , targetBusId_(targetBusId)
 {
@@ -403,9 +403,9 @@ void BlueprintSendConnectCommand::undo()
 
 BlueprintSendDisconnectCommand::BlueprintSendDisconnectCommand(uint32_t fromBusId,
                                                                uint32_t targetBusId,
-                                                               QUndoCommand* parent,
+                                                               VNX::UndoCommand* parent,
                                                                SendMode mode)
-    : QUndoCommand(QObject::tr("Blueprint Send Disconnect"), parent)
+    : VNX::UndoCommand(QObject::tr("Blueprint Send Disconnect"), parent)
     , fromBusId_(fromBusId)
     , targetBusId_(targetBusId)
     , mode_(mode)

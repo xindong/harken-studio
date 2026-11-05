@@ -29,6 +29,9 @@ if(NOT HARKEN_DISABLE_LMDB)
     add_subdirectory(ThirdParty/lmdb)
 endif()
 
+find_package(Qt6 REQUIRED COMPONENTS Core Network Concurrent)
+
+if(HARKEN_BUILD_EDITOR)
 # Qt Advanced Docking System (QtADS v4.3.1)
 set(ADS_VERSION "4.3.1" CACHE STRING "QtADS version (vendored, no git describe)")
 set(BUILD_STATIC ON CACHE BOOL "Build QtADS as static library")
@@ -49,7 +52,9 @@ set(QWINDOWKIT_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(QWindowKit)
 
 # Find Qt6 (located through CMAKE_PREFIX_PATH = $env{VENUS_QT_DIR}, preset-injected)
-find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets Network Concurrent Svg)
+find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets Svg)
+
+endif()
 
 function(harken_remove_missing_agl_framework target_name)
     if(NOT TARGET ${target_name})
@@ -105,7 +110,7 @@ function(harken_remove_missing_agl_framework target_name)
     endforeach()
 endfunction()
 
-if(APPLE)
+if(APPLE AND HARKEN_BUILD_EDITOR)
     set(_harken_macos_sdk_root "${CMAKE_OSX_SYSROOT}")
     if(NOT _harken_macos_sdk_root)
         execute_process(
@@ -136,10 +141,71 @@ endif()
 # ==============================================================================
 # Source Files — explicit list (no GLOB_RECURSE)
 # When adding new files, add them here and re-run cmake configure.
+set(HARKEN_STUDIO_COMMAND_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/HubClient/HubIntake.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/HubClient/HubIntake.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/EditorCommandCatalog.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/EditorCommandCatalog.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/EditorCommandRegistration.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/EditorCommandRegistration.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/IPCServer.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/IPCServer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/AI/AICommandCatalog.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/AI/AICommandCatalog.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/AI/AIPermissionModel.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/AI/AIPermissionModel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/AI/AICommandValidator.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/AI/AICommandValidator.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/AI/AIDispatchPolicy.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/AI/AIDispatchPolicy.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/AI/AIResultNormalizer.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/AI/AIResultNormalizer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/IPCServerInternal.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/IPCServer_RollbackUndo.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/IPCHandlers_Advanced.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/IPCHandlers_Asset.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/IPCHandlers_Container.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/IPCHandlers_Editor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/IPCHandlers_Mixer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/IPCHandlers_Project.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/IPCHandlers_Spatial.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/IPCHandlers_System.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/AssetPipeline/ImportAssetsCommand.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/AssetPipeline/ImportSoundSourcesCommand.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/TemplateApplyService.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/TemplateApplyService.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/MixerActions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/ProjectActions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/ProjectPlatformActions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/FieldGroupActions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/BindingActions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/EditorActions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/AuditionActions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/SystemActions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/ContainerActions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/SpatialActions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/AdvancedActions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/AdvancedActionResult.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/AssetActions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/TemplateActions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/ActionSelectors.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/ActionSelectors.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/ReadonlyActions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/AssetPipeline/AudioImportTarget.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/AssetPipeline/AudioImportTarget.h
+)
+
 set(HARKEN_EDITOR_LIB_SOURCES
     # --- Source ---
     Source/MainWindow.cpp
     Source/MainWindow.h
+    Source/Core/DesktopCommandRegistration.h
+    Source/Core/Actions/DesktopActions.cpp
+    Source/Core/IPC/IPCDesktopHost.cpp
+    Source/Core/IPC/IPCDesktopInternal.h
+    Source/Core/IPC/IPCHandlers_DesktopSystem.cpp
+    Source/Core/IPC/IPCHandlers_DesktopEditor.cpp
+    Source/Core/IPC/IPCHandlers_DesktopAdvanced.cpp
     # --- Source/Core (UI-coupled layer — depends on Widget headers, cannot go in Foundation) ---
     Source/Core/LayoutController.cpp
     Source/Core/LayoutController.h
@@ -162,8 +228,6 @@ set(HARKEN_EDITOR_LIB_SOURCES
     Source/Core/WorkspaceDockFactory.h
     Source/Core/StartupArguments.cpp
     Source/Core/StartupArguments.h
-    Source/Core/HubClient/HubIntake.cpp
-    Source/Core/HubClient/HubIntake.h
     Source/Core/HubLauncher.cpp
     Source/Core/HubLauncher.h
     Source/Core/StartupCoordinator.cpp
@@ -173,22 +237,6 @@ set(HARKEN_EDITOR_LIB_SOURCES
     Source/Core/ProjectOpenProtocol.h
     Source/Core/ProjectOpenApproval.cpp
     Source/Core/ProjectOpenApproval.h
-    Source/Core/EditorCommandCatalog.h
-    Source/Core/EditorCommandCatalog.cpp
-    Source/Core/EditorCommandRegistration.h
-    Source/Core/EditorCommandRegistration.cpp
-    Source/Core/IPC/IPCServer.h
-    Source/Core/IPC/IPCServer.cpp
-    Source/Core/AI/AICommandCatalog.h
-    Source/Core/AI/AICommandCatalog.cpp
-    Source/Core/AI/AIPermissionModel.h
-    Source/Core/AI/AIPermissionModel.cpp
-    Source/Core/AI/AICommandValidator.h
-    Source/Core/AI/AICommandValidator.cpp
-    Source/Core/AI/AIDispatchPolicy.h
-    Source/Core/AI/AIDispatchPolicy.cpp
-    Source/Core/AI/AIResultNormalizer.h
-    Source/Core/AI/AIResultNormalizer.cpp
     Source/Core/AI/AIEndpointValidation.h
     Source/Core/AI/AIAgentConfig.h
     Source/Core/AI/AIAgentConfig.cpp
@@ -211,43 +259,6 @@ set(HARKEN_EDITOR_LIB_SOURCES
     Source/Core/AI/AIMarkdownRenderer.h
     Source/Core/AI/AIMarkdownRenderer.cpp
     Source/Core/AI/AIStepEvent.h
-    Source/Core/IPC/IPCServerInternal.h
-    Source/Core/IPC/IPCServer_RollbackUndo.cpp
-    Source/Core/IPC/IPCHandlers_Advanced.cpp
-    Source/Core/IPC/IPCHandlers_Asset.cpp
-    Source/Core/IPC/IPCHandlers_Container.cpp
-    Source/Core/IPC/IPCHandlers_Editor.cpp
-    Source/Core/IPC/IPCHandlers_Mixer.cpp
-    Source/Core/IPC/IPCHandlers_Project.cpp
-    Source/Core/IPC/IPCHandlers_Spatial.cpp
-    Source/Core/IPC/IPCHandlers_System.cpp
-    Source/Core/AssetPipeline/ImportAssetsCommand.cpp
-    Source/Core/AssetPipeline/ImportSoundSourcesCommand.cpp
-    Source/Core/TemplateApplyService.cpp
-    Source/Core/TemplateApplyService.h
-    Source/Core/Actions/MixerActions.cpp
-    Source/Core/Actions/ProjectActions.cpp
-    Source/Core/Actions/ProjectPlatformActions.cpp
-    Source/Core/Actions/FieldGroupActions.cpp
-    Source/Core/Actions/BindingActions.cpp
-    Source/Core/Actions/EditorActions.cpp
-    Source/Core/Actions/AuditionActions.cpp
-    Source/Core/Actions/SystemActions.cpp
-    Source/Core/Actions/ContainerActions.cpp
-    Source/Core/Actions/SpatialActions.cpp
-    Source/Core/Actions/AdvancedActions.cpp
-    Source/Core/Actions/AdvancedActionResult.h
-    Source/Core/Actions/AssetActions.cpp
-    Source/Core/Actions/TemplateActions.cpp
-    # Plan 16 S5a IS-17/18 -- unified path-or-name selector (Rule G2 multi-selector)
-    # shared helper for 14 SystemActions + 28 AdvancedActions handlers. Header
-    # ActionSelectors.h is included by both *.cpp via "ActionSelectors.h"
-    # (sibling within Source/Core/Actions/). Implementation forwards path-mode
-    # input to VNX::findItemByPathInProject (defined in IPCHandlers_Project.cpp,
-    # same target -- harken_editor_lib).
-    Source/Core/Actions/ActionSelectors.cpp
-    Source/Core/Actions/ActionSelectors.h
-    Source/Core/Actions/ReadonlyActions.cpp
     # --- Source/Dialogs --- (split to harken_editor_dialogs in S10a)
     # --- Source/Widgets/ControlPanel --- (split to harken_editor_control in S10a)
     # --- Source/Widgets/Assistant --- (split to harken_editor_assistant in S10a)
@@ -284,6 +295,7 @@ add_subdirectory(Source/Tooling/Harkenizer/Core)
 include(Source/Tooling/Harkenizer/BuildIdentity.cmake)
 add_subdirectory(Source/Monitor)
 add_subdirectory(Source/Core)
+if(HARKEN_BUILD_EDITOR)
 # S1a Blueprint — leaf lib (depends on Foundation only).
 add_subdirectory(Source/Widgets/Blueprint)
 add_subdirectory(Source/Widgets/Common)
@@ -476,26 +488,32 @@ endif()
 
 target_link_libraries(harken_editor PRIVATE harken_editor_lib)
 
+endif()
+
 add_executable(harkenizer
     Source/Tooling/Harkenizer/Main.cpp
     Source/Tooling/Harkenizer/ResourceWorker.cpp)
 set_target_properties(harkenizer PROPERTIES OUTPUT_NAME "Harkenizer")
 target_link_libraries(harkenizer PRIVATE harkenizer_build harkenizer_resource_compiler)
 harken_attach_version_resource(harkenizer "Harkenizer" "Harkenizer.exe")
-add_dependencies(harken_editor harkenizer)
+if(HARKEN_BUILD_EDITOR)
+    add_dependencies(harken_editor harkenizer)
+endif()
 
+if(HARKEN_BUILD_STUDIO_CLI)
 add_executable(harken_studio_cli
     Source/Tooling/StudioCli/Main.cpp
     Source/Tooling/StudioCli/StudioSession.cpp
-    Source/Tooling/StudioCli/StudioSession.h
-    resources.qrc)
-set_target_properties(harken_studio_cli PROPERTIES OUTPUT_NAME "harken-studio" AUTORCC ON)
-target_link_libraries(harken_studio_cli PRIVATE harken_editor_lib)
+    Source/Tooling/StudioCli/StudioSession.h)
+set_target_properties(harken_studio_cli PROPERTIES OUTPUT_NAME "HarkenStudioCLI")
+target_link_libraries(harken_studio_cli PRIVATE harken_studio_core)
 add_dependencies(harken_studio_cli harkenizer)
-harken_attach_version_resource(harken_studio_cli "Harken Studio CLI" "harken-studio.exe")
-add_dependencies(harken_editor harken_studio_cli)
+harken_attach_version_resource(harken_studio_cli "Harken Studio CLI" "HarkenStudioCLI.exe")
+if(HARKEN_BUILD_EDITOR)
+    add_dependencies(harken_editor harken_studio_cli)
+endif()
 if(WIN32)
-    target_link_libraries(harken_studio_cli PRIVATE opengl32 ole32 shell32)
+    target_link_libraries(harken_studio_cli PRIVATE ole32 shell32)
 endif()
 
 add_custom_command(TARGET harken_studio_cli POST_BUILD
@@ -505,6 +523,8 @@ add_custom_command(TARGET harken_studio_cli POST_BUILD
         --check-generated "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
         --publish "$<TARGET_FILE_DIR:harken_studio_cli>/schema"
 )
+endif()
+
 if(WIN32)
     target_link_libraries(harkenizer PRIVATE opengl32 ole32 shell32)
 endif()
@@ -513,6 +533,7 @@ if(NOT Python3_Interpreter_FOUND)
     message(FATAL_ERROR "Python 3 is required to publish the Studio Schema snapshot")
 endif()
 
+if(HARKEN_BUILD_EDITOR)
 add_custom_command(TARGET harken_editor POST_BUILD
     COMMAND ${Python3_EXECUTABLE}
         "${CMAKE_SOURCE_DIR}/.scripts/schema_archive.py"
@@ -522,6 +543,8 @@ add_custom_command(TARGET harken_editor POST_BUILD
     COMMENT "Publishing the Studio Schema build snapshot"
 )
 
+endif()
+
 add_custom_command(TARGET harkenizer POST_BUILD
     COMMAND ${Python3_EXECUTABLE}
         "${CMAKE_SOURCE_DIR}/.scripts/schema_archive.py"
@@ -530,13 +553,13 @@ add_custom_command(TARGET harkenizer POST_BUILD
         --publish "$<TARGET_FILE_DIR:harkenizer>/schema"
 )
 
-if(_harken_macos_agl_framework_missing)
+if(HARKEN_BUILD_EDITOR AND _harken_macos_agl_framework_missing)
     harken_remove_missing_agl_framework(harken_editor)
     harken_remove_missing_agl_framework(harkenizer)
     harken_remove_missing_agl_framework(harken_studio_cli)
 endif()
 
-if(WIN32)
+if(WIN32 AND HARKEN_BUILD_EDITOR)
     target_link_libraries(harken_editor_lib PUBLIC user32 advapi32)
     target_link_libraries(harken_editor PRIVATE opengl32 ole32 shell32)
 endif()
@@ -547,6 +570,7 @@ if(WIN32)
         HINTS ${Qt6_DIR}/../../../bin
         REQUIRED)
 
+    if(HARKEN_BUILD_STUDIO_CLI)
     add_custom_command(TARGET harken_studio_cli POST_BUILD
         COMMAND ${WINDEPLOYQT_EXE}
             $<$<CONFIG:Debug>:--debug>
@@ -555,6 +579,8 @@ if(WIN32)
             --no-system-dxc-compiler --no-opengl-sw --no-quick-import
             $<TARGET_FILE:harken_studio_cli>
     )
+
+    endif()
 
     add_custom_command(TARGET harkenizer POST_BUILD
         COMMAND ${WINDEPLOYQT_EXE}
@@ -569,6 +595,7 @@ if(WIN32)
             $<TARGET_FILE:harkenizer>
     )
 
+    if(HARKEN_BUILD_EDITOR)
     add_custom_command(TARGET harken_editor POST_BUILD
         COMMAND ${WINDEPLOYQT_EXE}
             $<$<CONFIG:Debug>:--debug>
@@ -605,9 +632,10 @@ if(WIN32)
             )
         endforeach()
     endif()
+    endif()
 endif()
 
-if(APPLE)
+if(APPLE AND HARKEN_BUILD_EDITOR)
     if(NOT TARGET Qt6::QOffscreenIntegrationPlugin)
         message(FATAL_ERROR "Qt offscreen platform plugin is required for Studio Schema verification")
     endif()

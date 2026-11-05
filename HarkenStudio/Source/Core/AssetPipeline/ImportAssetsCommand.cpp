@@ -11,7 +11,7 @@
 #include "../ProjectManager.h"
 #include "../FieldGroupProjectAdapter.h"
 #include "../UndoCommands.h"
-#include "../../Widgets/LogPanel/LogPanel.h"
+#include "Core/LogService.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -55,7 +55,7 @@ static ImportAssetsCommand* pushCollected(std::unique_ptr<ImportAssetsCommand> c
 ImportAssetsCommand::ImportAssetsCommand(const QStringList& externalPaths,
                                          ProjectFileBinding* targetBinding,
                                          ProjectItem* targetParent,
-                                         QUndoCommand* parent)
+                                         UndoCommand* parent)
     : TransactionalUndoCommand({}, parent, false)
     , externalPaths_(externalPaths)
     , targetBinding_(targetBinding)
@@ -69,7 +69,7 @@ ImportAssetsCommand::ImportAssetsCommand(const QStringList& externalPaths,
 }
 
 ImportAssetsCommand::ImportAssetsCommand(const QStringList& externalPaths,
-                                         QUndoCommand* parent)
+                                         UndoCommand* parent)
     : TransactionalUndoCommand({}, parent, false)
     , externalPaths_(externalPaths)
     , rootMode_(true)
@@ -113,7 +113,7 @@ ImportAssetsCommand* ImportAssetsCommand::pushImportSources(const QStringList& e
     QString recoveryError;
     if (!SourceFileSystem::recoverDiscard(&recoveryError)) {
         command->failCount_ = externalPaths.size();
-        LogPanel::logError(LogCategory::Import, recoveryError);
+        LogService::logError(LogCategory::Import, recoveryError);
         return pushCollected(std::move(command));
     }
     QMap<QString, QString> fileChanges = replacements;
@@ -133,7 +133,7 @@ ImportAssetsCommand* ImportAssetsCommand::pushImportSources(const QStringList& e
         auto replacement = SourceFileSystem::replaceFiles(fileChanges, &error);
         if (!replacement) {
             command->failCount_ = externalPaths.size();
-            LogPanel::logError(LogCategory::Import, error);
+            LogService::logError(LogCategory::Import, error);
             return pushCollected(std::move(command));
         }
         command->fileChanges_.append(std::move(replacement));
@@ -193,15 +193,15 @@ void ImportAssetsCommand::collectParentEntries()
         if (!authoring) {
             failCount_ = externalPaths_.size();
             setObsolete(true);
-            LogPanel::logError(LogCategory::Import, authoring.message);
+            LogService::logError(LogCategory::Import, authoring.message);
             return;
         }
     }
     QString projectRoot = AssetRegistry::instance().projectRoot();
-    LogPanel::logInfo(LogCategory::Import, QString("ProjectRoot: %1").arg(projectRoot));
+    LogService::logInfo(LogCategory::Import, QString("ProjectRoot: %1").arg(projectRoot));
 
     if (projectRoot.isEmpty()) {
-        LogPanel::logError(LogCategory::Import, "ERROR: projectRoot is empty! AssetRegistry not initialized.");
+        LogService::logError(LogCategory::Import, "ERROR: projectRoot is empty! AssetRegistry not initialized.");
     }
 
     AssetImporter importer;
@@ -218,7 +218,7 @@ void ImportAssetsCommand::collectParentEntries()
             NameValidator::Result vr;
             if (!NameValidator::validateDisplayName(QFileInfo(path).completeBaseName(), &vr)) {
                 ++failCount_;
-                LogPanel::logError(LogCategory::Import,
+                LogService::logError(LogCategory::Import,
                     QString("Skipped %1: %2 Rename the file, then import it again.")
                         .arg(QFileInfo(path).fileName(),
                              NameValidator::resultMessage(vr)));
@@ -230,7 +230,7 @@ void ImportAssetsCommand::collectParentEntries()
 
         if (!result.success) {
             ++failCount_;
-            LogPanel::logError(LogCategory::Import, QString("Failed: %1 - %2").arg(path, result.errorMessage));
+            LogService::logError(LogCategory::Import, QString("Failed: %1 - %2").arg(path, result.errorMessage));
             continue;
         }
 
@@ -256,7 +256,7 @@ void ImportAssetsCommand::collectParentEntries()
 
             if (!newItem) {
                 ++failCount_;
-                LogPanel::logError(LogCategory::Import,
+                LogService::logError(LogCategory::Import,
                     QString("Failed: %1 - the object could not be created under '%2'")
                         .arg(path, importParent->name));
                 if (result.fileChange)
@@ -279,21 +279,21 @@ void ImportAssetsCommand::collectParentEntries()
 
         ++successCount_;
         if (result.deduplicated && result.fileChange) {
-            LogPanel::logInfo(LogCategory::Import, QString("Restored: %1").arg(result.absolutePath));
+            LogService::logInfo(LogCategory::Import, QString("Restored: %1").arg(result.absolutePath));
         } else if (sourceMode_ && replacedPaths_.contains(result.relativePath)) {
-            LogPanel::logInfo(LogCategory::Import, QString("Replaced: %1").arg(result.absolutePath));
+            LogService::logInfo(LogCategory::Import, QString("Replaced: %1").arg(result.absolutePath));
         } else if (result.deduplicated) {
             ++duplicateCount_;
-            LogPanel::logInfo(LogCategory::Import,
+            LogService::logInfo(LogCategory::Import,
                 QString("Reused existing asset (same content): %1").arg(QFileInfo(path).fileName()));
         } else {
             const QString originalName = QFileInfo(path).fileName();
             const QString storedName = QFileInfo(result.absolutePath).fileName();
             if (storedName != originalName) {
-                LogPanel::logInfo(LogCategory::Import,
+                LogService::logInfo(LogCategory::Import,
                     QString("Name conflict: %1 stored as %2").arg(originalName, storedName));
             }
-            LogPanel::logInfo(LogCategory::Import, QString("Success: %1").arg(result.absolutePath));
+            LogService::logInfo(LogCategory::Import, QString("Success: %1").arg(result.absolutePath));
         }
     }
 
@@ -316,10 +316,10 @@ void ImportAssetsCommand::collectRootEntries()
         }
     }
     QString projectRoot = AssetRegistry::instance().projectRoot();
-    LogPanel::logInfo(LogCategory::Import, QString("ProjectRoot: %1").arg(projectRoot));
+    LogService::logInfo(LogCategory::Import, QString("ProjectRoot: %1").arg(projectRoot));
 
     if (projectRoot.isEmpty()) {
-        LogPanel::logError(LogCategory::Import, "ERROR: projectRoot is empty! AssetRegistry not initialized.");
+        LogService::logError(LogCategory::Import, "ERROR: projectRoot is empty! AssetRegistry not initialized.");
     }
 
     AssetImporter importer;
@@ -334,7 +334,7 @@ void ImportAssetsCommand::collectRootEntries()
         NameValidator::Result vr;
         if (!NameValidator::validateDisplayName(QFileInfo(path).completeBaseName(), &vr)) {
             ++failCount_;
-            LogPanel::logError(LogCategory::Import,
+            LogService::logError(LogCategory::Import,
                 QString("Skipped %1: %2 Rename the file, then import it again.")
                     .arg(QFileInfo(path).fileName(),
                          NameValidator::resultMessage(vr)));
@@ -345,7 +345,7 @@ void ImportAssetsCommand::collectRootEntries()
 
         if (!result.success) {
             ++failCount_;
-            LogPanel::logError(LogCategory::Import, QString("Failed: %1 - %2").arg(path, result.errorMessage));
+            LogService::logError(LogCategory::Import, QString("Failed: %1 - %2").arg(path, result.errorMessage));
             continue;
         }
 
@@ -375,7 +375,7 @@ void ImportAssetsCommand::collectRootEntries()
 
         if (!newItem) {
             ++failCount_;
-            LogPanel::logError(LogCategory::Import,
+            LogService::logError(LogCategory::Import,
                 QString("Failed: %1 - the object could not be created at root level").arg(path));
             if (result.fileChange)
                 result.fileChange->tryReplay(false);
@@ -398,19 +398,19 @@ void ImportAssetsCommand::collectRootEntries()
 
         ++successCount_;
         if (result.deduplicated && result.fileChange) {
-            LogPanel::logInfo(LogCategory::Import, QString("Restored: %1").arg(result.absolutePath));
+            LogService::logInfo(LogCategory::Import, QString("Restored: %1").arg(result.absolutePath));
         } else if (result.deduplicated) {
             ++duplicateCount_;
-            LogPanel::logInfo(LogCategory::Import,
+            LogService::logInfo(LogCategory::Import,
                 QString("Reused existing asset (same content): %1").arg(QFileInfo(path).fileName()));
         } else {
             const QString originalName = QFileInfo(path).fileName();
             const QString storedName = QFileInfo(result.absolutePath).fileName();
             if (storedName != originalName) {
-                LogPanel::logInfo(LogCategory::Import,
+                LogService::logInfo(LogCategory::Import,
                     QString("Name conflict: %1 stored as %2").arg(originalName, storedName));
             }
-            LogPanel::logInfo(LogCategory::Import, QString("Success: %1").arg(result.absolutePath));
+            LogService::logInfo(LogCategory::Import, QString("Success: %1").arg(result.absolutePath));
         }
     }
 }
@@ -514,8 +514,8 @@ void ImportAssetsCommand::undoRootMode()
 
 
 DeleteAssetsCommand::DeleteAssetsCommand(const QList<uint32_t>& sourceIDs,
-                                         QUndoCommand* parent)
-    : QUndoCommand(parent)
+                                         UndoCommand* parent)
+    : UndoCommand(parent)
     , sourceIDs_(sourceIDs)
 {
     if (sourceIDs.size() == 1) {

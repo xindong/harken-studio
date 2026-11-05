@@ -6,7 +6,7 @@
 #include <QObject>
 
 class QMenu;
-class QUndoCommand;
+#include "Core/UndoHistory.h"
 class QWidget;
 
 namespace VNX {
@@ -29,7 +29,7 @@ signals:
 
 private:
     void openVariableSelector();
-    QString addBinding(uint32_t objectId, QUndoCommand* undoParent = nullptr);
+    QString addBinding(uint32_t objectId, VNX::UndoCommand* undoParent = nullptr);
     void openVariableCreation(VariableKind kind);
 
     QWidget* anchor_ = nullptr;

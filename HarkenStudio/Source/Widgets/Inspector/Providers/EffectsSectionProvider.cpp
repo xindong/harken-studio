@@ -241,7 +241,7 @@ private:
         return !inspector_ || inspector_->currentContextItem() == boundItem();
     }
 
-    bool commit(std::vector<EffectEntry> effects, QUndoCommand* undoParent = nullptr)
+    bool commit(std::vector<EffectEntry> effects, VNX::UndoCommand* undoParent = nullptr)
     {
         if (!canEdit() || !isCurrentContext()) return false;
         EffectChainLedger ledger;
@@ -385,7 +385,7 @@ private:
                     [&guid](const EffectEntry& effect) { return effect.guid == guid; });
                 if (found == effects.end() || found->mode != EffectMode::Custom)
                     return tr("The effect slot is no longer available.");
-                auto command = std::make_unique<QUndoCommand>(tr("Save Effect As Preset"));
+                auto command = std::make_unique<VNX::UndoCommand>(tr("Save Effect As Preset"));
                 auto& manager = ProjectManager::instance();
                 auto* created = manager.createItem(
                     nullptr, name, ProjectItem::Type::Effect, folderPath, {}, command.get());

@@ -1,7 +1,7 @@
 #include "ProjectObjectIndex.h"
 
 #include "ProjectTypes.h"
-#include "ItemTypeIcons.h"
+#include "ItemTypeCatalog.h"
 #include "Components/VMixNode.h"
 #include "Components/VSegment.h"
 #include "Components/VTrack.h"

@@ -1,7 +1,6 @@
 
 #include "AppSettings.h"
 #include "QSettingsStorage.h"
-#include <QApplication>
 #include <QDebug>
 
 namespace VNX {

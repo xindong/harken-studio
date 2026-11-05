@@ -22,212 +22,21 @@
 
 namespace VNX {
 
-namespace {
-
-constexpr const char* kLogCategoryNames[] = {
-    "Engine",
-    "Audio",
-    "GUI",
-    "File",
-    "Layout",
-    "Import",
-    "Pack",
-    "MCP",
-    "Network",
-    "RuntimeSync",
-};
-
-}
-
-const char* logCategoryName(LogCategory category)
-{
-    const auto index = static_cast<int>(category);
-    if (index < 0 || index >= logCategoryCount())
-        return kLogCategoryNames[0];
-    return kLogCategoryNames[index];
-}
-
-int logCategoryCount()
-{
-    return static_cast<int>(sizeof(kLogCategoryNames) / sizeof(kLogCategoryNames[0]));
-}
-
-LogCategory logCategoryAt(int index)
-{
-    if (index < 0 || index >= logCategoryCount())
-        return LogCategory::Engine;
-    return static_cast<LogCategory>(index);
-}
-
-QString LogEntry::levelToString(Level level)
-{
-    switch (level)
-    {
-        case Trace:    return "TRACE";
-        case Debug:    return "DEBUG";
-        case Info:     return "INFO";
-        case Warning:  return "WARN";
-        case Error:    return "ERROR";
-        case Critical: return "CRIT";
-        default:       return "???";
-    }
-}
-
-LogEntry::Level LogEntry::stringToLevel(const QString& str)
-{
-    QString upper = str.toUpper();
-    if (upper == "TRACE") return Trace;
-    if (upper == "DEBUG") return Debug;
-    if (upper == "INFO")  return Info;
-    if (upper == "WARN" || upper == "WARNING") return Warning;
-    if (upper == "ERROR") return Error;
-    if (upper == "CRIT" || upper == "CRITICAL") return Critical;
-    return Info;
-}
-
-QColor LogEntry::levelColor(Level level)
+static QColor logLevelColor(LogEntry::Level level)
 {
     const auto theme = ThemeManager::instance().snapshot();
     const auto& logColors = theme->domains.log;
     switch (level)
     {
-        case Trace:    return logColors.debug;
-        case Debug:    return logColors.debug;
-        case Info:     return logColors.info;
-        case Warning:  return logColors.warning;
-        case Error:    return logColors.error;
-        case Critical: return logColors.critical;
+        case LogEntry::Trace:    return logColors.debug;
+        case LogEntry::Debug:    return logColors.debug;
+        case LogEntry::Info:     return logColors.info;
+        case LogEntry::Warning:  return logColors.warning;
+        case LogEntry::Error:    return logColors.error;
+        case LogEntry::Critical: return logColors.critical;
         default:       return logColors.info;
     }
 }
-
-QString LogEntry::formatted() const
-{
-    return QString("[%1] [%2] [%3] %4")
-        .arg(timestamp.toString("hh:mm:ss.zzz"))
-        .arg(levelToString(level), -5)
-        .arg(category, -8)
-        .arg(message);
-}
-
-
-LogModel::LogModel(QObject* parent)
-    : QObject(parent)
-{
-}
-
-LogModel::~LogModel() = default;
-
-void LogModel::addEntry(const LogEntry& entry)
-{
-    {
-        QMutexLocker lock(&mutex_);
-        
-        if (static_cast<int>(entries_.size()) >= maxEntries_)
-        {
-            entries_.pop_front();
-        }
-        
-        entries_.push_back(entry);
-    }
-    
-    emit entryAdded(entry);
-}
-
-void LogModel::addLog(LogEntry::Level level, LogCategory category, const QString& message)
-{
-    addLog(level, QString::fromUtf8(logCategoryName(category)), message);
-}
-
-void LogModel::addLog(LogEntry::Level level, const QString& category, const QString& message)
-{
-    LogEntry entry;
-    entry.timestamp = QDateTime::currentDateTime();
-    entry.level = level;
-    entry.category = category;
-    entry.message = message;
-    entry.threadId = static_cast<int>(reinterpret_cast<quintptr>(QThread::currentThreadId()));
-
-    addEntry(entry);
-}
-
-std::vector<LogEntry> LogModel::entries(LogEntry::Level minLevel,
-                                         const QString& categoryFilter,
-                                         const QString& textFilter) const
-{
-    QMutexLocker lock(&mutex_);
-    
-    std::vector<LogEntry> result;
-    result.reserve(entries_.size());
-    
-    for (const auto& entry : entries_)
-    {
-        if (entry.level < minLevel)
-            continue;
-        
-        if (!categoryFilter.isEmpty() && entry.category != categoryFilter)
-            continue;
-        
-        if (!textFilter.isEmpty() && !entry.message.contains(textFilter, Qt::CaseInsensitive))
-            continue;
-        
-        result.push_back(entry);
-    }
-    
-    return result;
-}
-
-int LogModel::count() const
-{
-    QMutexLocker lock(&mutex_);
-    return static_cast<int>(entries_.size());
-}
-
-void LogModel::clear()
-{
-    {
-        QMutexLocker lock(&mutex_);
-        entries_.clear();
-    }
-    
-    emit cleared();
-}
-
-QString LogModel::exportToText(LogEntry::Level minLevel) const
-{
-    QMutexLocker lock(&mutex_);
-    
-    QString result;
-    QTextStream stream(&result);
-    
-    stream << "=== Harken Studio Log Export ===" << Qt::endl;
-    stream << "Exported: " << QDateTime::currentDateTime().toString(Qt::ISODate) << Qt::endl;
-    stream << "Total entries: " << entries_.size() << Qt::endl;
-    stream << "================================" << Qt::endl << Qt::endl;
-    
-    for (const auto& entry : entries_)
-    {
-        if (entry.level >= minLevel)
-        {
-            stream << entry.formatted() << Qt::endl;
-        }
-    }
-    
-    return result;
-}
-
-bool LogModel::exportToFile(const QString& filePath, LogEntry::Level minLevel) const
-{
-    QFile file(filePath);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
-        return false;
-    
-    QTextStream stream(&file);
-    stream << exportToText(minLevel);
-    
-    return true;
-}
-
 
 LogTextEdit::LogTextEdit(QWidget* parent)
     : QPlainTextEdit(parent)
@@ -284,7 +93,7 @@ void LogTextEdit::contextMenuEvent(QContextMenuEvent* event)
 QTextCharFormat LogTextEdit::formatForLevel(LogEntry::Level level) const
 {
     QTextCharFormat format;
-    format.setForeground(LogEntry::levelColor(level));
+    format.setForeground(logLevelColor(level));
     
     if (level >= LogEntry::Error)
     {
@@ -299,7 +108,7 @@ LogPanel* LogPanel::instance_ = nullptr;
 
 LogPanel::LogPanel(QWidget* parent)
     : QWidget(parent)
-    , model_(new LogModel(this))
+    , model_(LogService::globalModel())
     , flushTimer_(new QTimer(this))
 {
     setObjectName("LogPanel");
@@ -335,68 +144,17 @@ LogPanel* LogPanel::instance()
     return instance_;
 }
 
-LogModel* LogPanel::globalModel()
-{
-    return instance_ ? instance_->model_ : nullptr;
-}
-
-void LogPanel::log(LogEntry::Level level, LogCategory category, const QString& message)
-{
-    log(level, QString::fromUtf8(logCategoryName(category)), message);
-}
-
-void LogPanel::log(LogEntry::Level level, const QString& category, const QString& message)
-{
-    if (auto* model = globalModel())
-    {
-        model->addLog(level, category, message);
-    }
-}
-
-LogEntry::Level LogPanel::engineLevelToPanel(int level)
-{
-    // VnLogFn levels: VNX::Monitor::kLogInfo=0, VNX::Monitor::kLogWarn=1, VNX::Monitor::kLogError=2.
-    if (level <= 0)
-        return LogEntry::Info;
-    if (level == 1)
-        return LogEntry::Warning;
-    return LogEntry::Error;
-}
-
-void LogPanel::logEngineMessage(int level, const QString& message)
-{
-    log(engineLevelToPanel(level), LogCategory::Engine, message);
-}
-
-void LogPanel::logInfo(LogCategory category, const QString& message)
-{
-    log(LogEntry::Info, category, message);
-}
-
-void LogPanel::logInfo(const QString& category, const QString& message)
-{
-    log(LogEntry::Info, category, message);
-}
-
-void LogPanel::logWarning(LogCategory category, const QString& message)
-{
-    log(LogEntry::Warning, category, message);
-}
-
-void LogPanel::logWarning(const QString& category, const QString& message)
-{
-    log(LogEntry::Warning, category, message);
-}
-
-void LogPanel::logError(LogCategory category, const QString& message)
-{
-    log(LogEntry::Error, category, message);
-}
-
-void LogPanel::logError(const QString& category, const QString& message)
-{
-    log(LogEntry::Error, category, message);
-}
+LogModel* LogPanel::globalModel() { return LogService::globalModel(); }
+void LogPanel::log(LogEntry::Level level, LogCategory category, const QString& message) { LogService::log(level, category, message); }
+void LogPanel::log(LogEntry::Level level, const QString& category, const QString& message) { LogService::log(level, category, message); }
+LogEntry::Level LogPanel::engineLevelToPanel(int level) { return LogService::engineLevelToPanel(level); }
+void LogPanel::logEngineMessage(int level, const QString& message) { LogService::logEngineMessage(level, message); }
+void LogPanel::logInfo(LogCategory category, const QString& message) { LogService::logInfo(category, message); }
+void LogPanel::logInfo(const QString& category, const QString& message) { LogService::logInfo(category, message); }
+void LogPanel::logWarning(LogCategory category, const QString& message) { LogService::logWarning(category, message); }
+void LogPanel::logWarning(const QString& category, const QString& message) { LogService::logWarning(category, message); }
+void LogPanel::logError(LogCategory category, const QString& message) { LogService::logError(category, message); }
+void LogPanel::logError(const QString& category, const QString& message) { LogService::logError(category, message); }
 
 void LogPanel::setupUI()
 {

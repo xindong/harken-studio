@@ -165,6 +165,7 @@ endif()
 option(HARKEN_BUILD_CORE "Build the Harken Core runtime" OFF)
 option(HARKEN_BUILD_SHARED "Build the HarkenCore shared library (C# binding native lib)" OFF)
 option(HARKEN_BUILD_EDITOR "Build the Harken Studio editor" OFF)
+option(HARKEN_BUILD_STUDIO_CLI "Build the Harken Studio command-line authoring host" ${HARKEN_BUILD_EDITOR})
 option(HARKEN_BUILD_HUB "Build the Harken Hub application" OFF)
 option(HARKEN_BUILD_TOOLS "Build the host, compiler, and preview tooling" OFF)
 option(HARKEN_BUILD_RUNTIME_UNIT_TESTS "Build the runtime correctness tests" OFF)
@@ -193,12 +194,15 @@ foreach(_harken_core_consumer
     endif()
 endforeach()
 
-foreach(_harken_tools_consumer HARKEN_BUILD_EDITOR HARKEN_BUILD_RUNTIME_UNIT_TESTS)
+foreach(_harken_tools_consumer HARKEN_BUILD_EDITOR HARKEN_BUILD_STUDIO_CLI HARKEN_BUILD_RUNTIME_UNIT_TESTS)
     if(${_harken_tools_consumer} AND NOT HARKEN_BUILD_TOOLS)
         message(FATAL_ERROR "${_harken_tools_consumer} requires HARKEN_BUILD_TOOLS=ON")
     endif()
 endforeach()
 
+if(HARKEN_BUILD_EDITOR AND NOT HARKEN_BUILD_STUDIO_CLI)
+    message(FATAL_ERROR "HARKEN_BUILD_EDITOR requires HARKEN_BUILD_STUDIO_CLI=ON")
+endif()
 if(HARKEN_BUILD_EDITOR_UNIT_TESTS AND NOT HARKEN_BUILD_EDITOR)
     message(FATAL_ERROR "HARKEN_BUILD_EDITOR_UNIT_TESTS requires HARKEN_BUILD_EDITOR=ON")
 endif()
@@ -343,7 +347,7 @@ endif()
 # third-party closure and the legacy-engine compat stub; consumes only
 # harken_buildinfo from the runtime side. Switchable so runtime-focused CI
 # can configure without Qt (the subtree hard-requires Qt6 at find_package).
-if(HARKEN_BUILD_EDITOR)
+if(HARKEN_BUILD_EDITOR OR HARKEN_BUILD_STUDIO_CLI)
     add_subdirectory(HarkenStudio)
 endif()
 
@@ -374,6 +378,14 @@ endif()
 if(HARKEN_BUILD_HUB_UNIT_TESTS)
     add_subdirectory(HarkenHub/Test)
 endif()
+
+include(cmake/VerifyHeadlessDependencies.cmake)
+foreach(_harken_headless_target harken_studio_core harken_studio_cli harkenizer)
+    if(TARGET ${_harken_headless_target})
+        harken_verify_headless_dependencies(${_harken_headless_target})
+    endif()
+endforeach()
+
 if(TARGET harken_runtime_ci_tests AND TARGET harken_host_selection_copy_test)
     add_dependencies(harken_runtime_ci_tests harken_host_selection_copy_test)
 endif()

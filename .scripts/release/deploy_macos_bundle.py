@@ -31,7 +31,7 @@ def deploy(build_dir: Path, bundle: Path, tool: Path, configuration: str) -> Non
     for artifact in model["artifacts"]:
         if (artifact["type"] == "EXECUTABLE"
                 and (artifact["target"], artifact["name"]) in {
-                    ("harkenizer", "Harkenizer"), ("harken_studio_cli", "harken-studio")}):
+                    ("harkenizer", "Harkenizer"), ("harken_studio_cli", "HarkenStudioCLI")}):
             destination = bundle / "Contents/MacOS" / artifact["name"]
             records = executables
         elif artifact["type"] == "SHARED_LIBRARY" and artifact["name"].endswith(".dylib"):
@@ -54,7 +54,7 @@ def deploy(build_dir: Path, bundle: Path, tool: Path, configuration: str) -> Non
         records.append({"sourceArtifact": artifact,
                         "path": destination.relative_to(bundle.parent).as_posix()})
     if len(executables) != 2:
-        raise ValueError("macOS deployment requires the built Harkenizer and harken-studio executables")
+        raise ValueError("macOS deployment requires the built Harkenizer and HarkenStudioCLI executables")
     deployment_tool = {"name": tool.name, "sha256": evidence.sha256(tool)}
     subprocess.run([str(tool), str(bundle), "-always-overwrite",
                     *(f"-executable={bundle.parent / record['path']}" for record in executables)], check=True)

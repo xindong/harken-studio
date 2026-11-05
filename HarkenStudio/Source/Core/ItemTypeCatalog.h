@@ -12,6 +12,9 @@
 #include <vector>
 
 namespace VNX {
+
+const char* iconLogicalIdForItem(const ProjectItem& item);
+
 namespace ItemTypeCatalog {
 
 enum class Bucket : uint8_t {

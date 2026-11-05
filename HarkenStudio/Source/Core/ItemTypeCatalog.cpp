@@ -1,7 +1,44 @@
 
 #include "ItemTypeCatalog.h"
+#include "Components/VSelection.h"
+#include "Components/VVariable.h"
 
 namespace VNX {
+
+namespace {
+
+const char* instanceIconLogicalId(const ProjectItem& item)
+{
+    if (item.type == ProjectItem::Type::Container) {
+        const auto* selection = item.comp<VSelection>();
+        if (!selection) return nullptr;
+        switch (selection->mode) {
+        case SelectionMode::Random:
+            return selection->isQueue() ? "projectItem.container.randomQueue" : "projectItem.container.random";
+        case SelectionMode::Sequence:
+            return selection->isQueue() ? "projectItem.container.sequenceQueue" : "projectItem.container.sequence";
+        case SelectionMode::Match: return "projectItem.container.match";
+        case SelectionMode::Blend: return "projectItem.container.blend";
+        }
+    }
+    if (item.type == ProjectItem::Type::Variable) {
+        const auto* variable = item.comp<VVariable>();
+        if (!variable) return nullptr;
+        return variable->kind == VariableKind::Step
+            ? "projectItem.variable.step"
+            : "projectItem.variable.smooth";
+    }
+    return nullptr;
+}
+
+}
+
+const char* iconLogicalIdForItem(const ProjectItem& item)
+{
+    const char* logicalId = instanceIconLogicalId(item);
+    return logicalId ? logicalId : ItemTypeCatalog::iconSpecOf(item.type).logicalId;
+}
+
 namespace ItemTypeCatalog {
 
 namespace {

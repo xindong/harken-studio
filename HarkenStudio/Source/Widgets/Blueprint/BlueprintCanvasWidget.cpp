@@ -12,6 +12,7 @@
 #include "NodeContentEditor.h"
 #include "NodeContentEditorPool.h"
 #include "BlueprintImportUtils.h"
+#include "Core/AssetPipeline/AudioImportTarget.h"
 #include "SignalChainSource.h"
 #include "Core/ActionManager.h"
 #include "Core/AssetPipeline/AudioImportGate.h"
@@ -1490,7 +1491,7 @@ bool BlueprintCanvasWidget::canImportAudioAt_(NodeItem* target) const
         context = canvasFindItem(project, target->objectID());
         if (!context) return false;
     }
-    return Blueprint::resolveAudioDropTarget(context).ok();
+    return resolveAudioImportTarget(context).ok();
 }
 
 void BlueprintCanvasWidget::clearExternalDrop_()

@@ -23,8 +23,9 @@ git clone https://github.com/xindong/harken-studio.git
 
 ## Headless authoring for scripts and agents
 
-`harken-studio` creates, configures, saves, and exports projects without opening
-Studio. Start with `harken-studio --help` and `harken-studio commands --json`.
+`HarkenStudioCLI` creates, configures, saves, and exports projects without opening
+Studio. Start with `HarkenStudioCLI --help` and `HarkenStudioCLI commands --json`.
+It shares Studio's QtCore authoring services and does not require Qt GUI libraries.
 Commands and parameter descriptions come from the shared editor registry.
 See the [CLI guide](HarkenStudio/Source/Tooling/StudioCli/README.md) for setup,
 JSON input/output, batch workflows, persistence, and supported boundaries.

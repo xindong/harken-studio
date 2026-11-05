@@ -482,7 +482,7 @@ class ReleaseEvidenceTest(unittest.TestCase):
         library.write_bytes(b"\xcf\xfa\xed\xfebuild-library")
         executable = self.build / "bin/Release/Harkenizer"
         executable.write_bytes(b"\xcf\xfa\xed\xfebuild-executable")
-        cli = executable.with_name("harken-studio")
+        cli = executable.with_name("HarkenStudioCLI")
         cli.write_bytes(b"\xcf\xfa\xed\xfebuild-cli")
         self.model["artifacts"] = [
             {"target": target, "type": kind, "name": path.name,
@@ -507,7 +507,7 @@ class ReleaseEvidenceTest(unittest.TestCase):
         def transform(command, check):
             self.assertEqual(command, [str(tool), str(bundle), "-always-overwrite",
                                        f"-executable={executable}",
-                                       f"-executable={executable.with_name('harken-studio')}"])
+                                       f"-executable={executable.with_name('HarkenStudioCLI')}"])
             self.assertTrue(check)
             self.assertEqual(deployed.read_bytes(), library.read_bytes())
             self.assertEqual(executable.read_bytes(), library.with_name("Harkenizer").read_bytes())

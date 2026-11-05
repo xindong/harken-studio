@@ -278,8 +278,8 @@ QJsonObject IPCServer::handleCreateProject(const QJsonObject& args)
     if (!project)
         return errorResponse("NO_PROJECT_OPEN", "Project closed during command");
 
-    if (mainWindow_)
-        mainWindow_->loadProject(project->projectPath);
+    if (projectOpener_)
+        projectOpener_(project->projectPath, nullptr, nullptr);
 
     emit projectOpenedViaIPC(project->projectPath);
 
@@ -305,7 +305,7 @@ QJsonObject IPCServer::handleOpenProject(const QJsonObject& args)
         return errorResponse("INVALID_ARGS", "Project path is required");
     }
     
-    if (!mainWindow_) {
+    if (!projectOpener_) {
         const ProjectUpgradeAnalysis analysis = ProjectUpgradeManager().analyze(path);
         if (analysis.ok && analysis.upgradeRequired)
             return errorResponse(
@@ -314,8 +314,8 @@ QJsonObject IPCServer::handleOpenProject(const QJsonObject& args)
     }
     QString openError;
     bool forwarded = false;
-    const bool success = mainWindow_
-        ? mainWindow_->loadProject(path, {}, &openError, &forwarded)
+    const bool success = projectOpener_
+        ? projectOpener_(path, &openError, &forwarded)
         : projectManager_->loadProject(path, false, &openError, &forwarded);
     if (forwarded)
         return successResponse(QJsonObject{

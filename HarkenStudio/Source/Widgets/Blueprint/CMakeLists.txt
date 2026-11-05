@@ -29,10 +29,10 @@ add_library(harken_editor_blueprint STATIC
     BlueprintVisibilityMenu.cpp
     BlueprintConnectCommand.h
     BlueprintConnectCommand.cpp
-    # S2 — drag-drop audio import: commonPrefix / snapToGrid free utilities
-    # consumed by BlueprintCanvasWidget drop handling and by gtest.
     BlueprintImportUtils.h
     BlueprintImportUtils.cpp
+    # S2 — drag-drop audio import: commonPrefix / snapToGrid free utilities
+    # consumed by BlueprintCanvasWidget drop handling and by gtest.
     # Blueprint merge S2: BlueprintInspectorPanel.{h,cpp} removed — its
     # topology + Override functionality was absorbed by the unified
     # InspectorPanel (Container/Bus pages).

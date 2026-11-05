@@ -6,7 +6,7 @@
 
 #include <QList>
 #include <QStringList>
-#include <QUndoCommand>
+#include "Core/UndoHistory.h"
 
 #include <optional>
 
@@ -22,7 +22,7 @@ public:
                               ProjectFileBinding* targetBinding,
                               ProjectItem* targetSound,
                               QString language = {},
-                              QUndoCommand* parent = nullptr);
+                              UndoCommand* parent = nullptr);
 
     static ImportSoundSourcesCommand* pushImport(const QStringList& externalPaths,
                                                   ProjectFileBinding* targetBinding,

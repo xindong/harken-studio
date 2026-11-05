@@ -14,15 +14,8 @@
 #include <QDir>
 #include "Tooling/Harkenizer/Core/ProjectPackExporter.h"
 #include "UndoCommands.h"
-#include "../../MainWindow.h"
 #include "AuditionManager.h"
 #include "MigrationManager.h"
-#include "../../Widgets/Common/ParameterSlider.h"
-#include "../../Widgets/Common/ToggleSwitch.h"
-#include "../../Widgets/Blueprint/BlueprintCanvasWidget.h"
-#include "../../Widgets/Blueprint/SignalChainSource.h"
-#include "../../Widgets/Blueprint/NodeItem.h"
-#include "../../Widgets/ProjectExplorer/ProjectExplorer.h"
 #include "HarkenMath.h"
 
 #include "AssetPipeline/AssetTypes.h"
@@ -49,29 +42,8 @@
 
 #include <QDebug>
 #include <QJsonArray>
-#include <QLabel>
-#include <QAbstractButton>
-#include <QPushButton>
-#include <QTabWidget>
-#include <QStackedWidget>
-#include <QLineEdit>
-#include <QComboBox>
-#include <QSpinBox>
-#include <QDoubleSpinBox>
-#include <QSlider>
-#include <QProgressBar>
 #include <QBuffer>
-#include <QPixmap>
-#include <DockWidget.h>
-#include <QMouseEvent>
-#include <QKeyEvent>
-#include <QCheckBox>
-#include <QTableWidget>
-#include <QListWidget>
-#include <QTreeWidget>
-#include <QHeaderView>
 #include <QHostAddress>
-#include <QUndoStack>
 #include <QFileInfo>
 #include <QDateTime>
 #include <QSet>
@@ -102,8 +74,5 @@ QString itemTypeToString(ProjectItem::Type type);
 std::optional<ProjectItem::Type> stringToItemType(const QString& typeStr);
 
 
-QJsonObject serializeWidget(QWidget* w, int depth, int maxDepth);
-QString widgetPath(QWidget* w);
-QString widgetText(QWidget* w);
 
 }

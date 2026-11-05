@@ -1,7 +1,7 @@
 
 #pragma once
 
-#include <QUndoCommand>
+#include "Core/UndoHistory.h"
 #include <QString>
 
 #include <cstdint>
@@ -12,7 +12,7 @@
 
 namespace VNX {
 
-class BlueprintConnectCommand : public QUndoCommand
+class BlueprintConnectCommand : public VNX::UndoCommand
 {
 public:
     enum class Effective { Containment, BusRoute, Override };
@@ -20,7 +20,7 @@ public:
     BlueprintConnectCommand(uint32_t fromItemId,
                             uint32_t toId,
                             Effective effectiveType,
-                            QUndoCommand* parent = nullptr);
+                            VNX::UndoCommand* parent = nullptr);
 
     void undo() override;
     void redo() override;
@@ -42,7 +42,7 @@ private:
     bool firstRedo_ = true;
 };
 
-class BlueprintDisconnectCommand : public QUndoCommand
+class BlueprintDisconnectCommand : public VNX::UndoCommand
 {
 public:
     enum class Kind { Containment, BusRoute, Override };
@@ -50,7 +50,7 @@ public:
     BlueprintDisconnectCommand(uint32_t fromItemId,
                                uint32_t toId,
                                Kind kind,
-                               QUndoCommand* parent = nullptr);
+                               VNX::UndoCommand* parent = nullptr);
 
     void undo() override;
     void redo() override;
@@ -71,13 +71,13 @@ private:
     bool firstRedo_ = true;
 };
 
-class BlueprintOverrideToggleCommand : public QUndoCommand
+class BlueprintOverrideToggleCommand : public VNX::UndoCommand
 {
 public:
     BlueprintOverrideToggleCommand(uint32_t itemId,
                                    bool newOverride,
                                    uint32_t autoRouteToBusId,
-                                   QUndoCommand* parent = nullptr);
+                                   VNX::UndoCommand* parent = nullptr);
 
     void undo() override;
     void redo() override;
@@ -94,12 +94,12 @@ private:
     bool firstRedo_ = true;
 };
 
-class BlueprintSendConnectCommand : public QUndoCommand
+class BlueprintSendConnectCommand : public VNX::UndoCommand
 {
 public:
     BlueprintSendConnectCommand(uint32_t fromBusId,
                                 uint32_t targetBusId,
-                                QUndoCommand* parent = nullptr);
+                                VNX::UndoCommand* parent = nullptr);
 
     void undo() override;
     void redo() override;
@@ -115,12 +115,12 @@ private:
     bool firstRedo_ = true;
 };
 
-class BlueprintSendDisconnectCommand : public QUndoCommand
+class BlueprintSendDisconnectCommand : public VNX::UndoCommand
 {
 public:
     BlueprintSendDisconnectCommand(uint32_t fromBusId,
                                    uint32_t targetBusId,
-                                   QUndoCommand* parent = nullptr,
+                                   VNX::UndoCommand* parent = nullptr,
                                    SendMode mode = SendMode::Mix);
 
     void undo() override;

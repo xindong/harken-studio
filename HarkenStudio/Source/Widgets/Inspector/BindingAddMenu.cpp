@@ -74,7 +74,7 @@ void BindingAddMenu::openVariableSelector()
     SelectorWindow::open(request, anchor_);
 }
 
-QString BindingAddMenu::addBinding(uint32_t objectId, QUndoCommand* undoParent)
+QString BindingAddMenu::addBinding(uint32_t objectId, VNX::UndoCommand* undoParent)
 {
     auto& manager = ProjectManager::instance();
     auto* item = manager.findItemByGuid(ownerGuid_);
@@ -112,7 +112,7 @@ void BindingAddMenu::openVariableCreation(VariableKind kind)
                 || !self->anchor_->isEnabled()
                 || !ProjectManager::instance().findItemByGuid(self->ownerGuid_))
                 return tr("The binding target is no longer available.");
-            auto command = std::make_unique<QUndoCommand>(tr("Create Variable and Bind"));
+            auto command = std::make_unique<VNX::UndoCommand>(tr("Create Variable and Bind"));
             auto* created = ProjectManager::instance().createItem(
                 nullptr, name, ProjectItem::Type::Variable, folderPath, {}, command.get(), kind);
             if (!created) return tr("Failed to create the Variable.");

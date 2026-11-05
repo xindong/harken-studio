@@ -16,9 +16,10 @@
 #include <QCoreApplication>
 #include <QDateTime>
 
-class QUndoCommand;
 
 namespace VNX {
+
+class UndoCommand;
 
 enum class ActionSource { GUI, IPC, Remote, Internal };
 
@@ -70,13 +71,16 @@ public:
     static ActionManager& instance();
 
     void registerAction(const ActionDef& def);
+    void setActionHandler(const QString& id,
+                          std::function<ActionResult(const QJsonObject&)> handler);
+    void setDesktopAvailable(bool available) { desktopAvailable_ = available; }
     bool hasAction(const QString& id) const;
 
     ActionResult execute(const QString& actionId,
                          const QJsonObject& args,
                          ActionSource source = ActionSource::Internal,
                          const QObject* originator = nullptr,
-                         QUndoCommand* undoParent = nullptr);
+                         UndoCommand* undoParent = nullptr);
 
     // GUI originator of the execute() call currently on the stack (nullptr
     // outside execute, including undo/redo replay). Handlers forward it into
@@ -116,6 +120,7 @@ private:
                                const QString& suggestion = {});
 
     QMap<QString, ActionDef> actions_;
+    bool desktopAvailable_ = false;
     const QObject* executeOriginator_ = nullptr;
 
     QMap<QString, QJsonObject> transactions_;
@@ -128,6 +133,7 @@ class AudioEngine;
 class ProjectManager;
 class MainWindow;
 class ProjectExplorer;
+struct PhysicalFolder;
 class BlueprintCanvasWidget;
 class IPCServer;
 
@@ -146,7 +152,7 @@ void registerMixerActions(ActionManager& mgr,
 void registerFieldGroupActions(ActionManager& mgr, ProjectManager* projectManager);
 void registerProjectActions(ActionManager& mgr,
                            ProjectManager* projectManager,
-                           ProjectExplorer* projectExplorer);
+                           std::function<bool(PhysicalFolder*)> selectFolder = {});
 void registerProjectPlatformActions(ActionManager& mgr, ProjectManager* projectManager);
 void registerContainerActions(ActionManager& mgr,
                               ProjectManager* projectManager);
@@ -169,7 +175,7 @@ void registerAssetActions(ActionManager& mgr,
                           ProjectManager* projectManager);
 void registerSystemActions(ActionManager& mgr,
                            AudioEngine* engine,
-                           MainWindow* mainWindow,
+                           HarkenEditor::AuditionManager* audition,
                            QMap<quintptr, QJsonObject>* activePlaybacks);
 void registerReadonlyActions(ActionManager& mgr, IPCServer* ipcServer);
 
