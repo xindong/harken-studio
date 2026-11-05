@@ -1,5 +1,6 @@
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
+#include "UnitTest/AllocationProbe.h"
 
 #include "Engine.h"
 #include "harken/core/CurrentWorld.h"
@@ -13,6 +14,7 @@
 
 #include <bit>
 #include <cstdint>
+#include <cstdio>
 #include <vector>
 
 namespace {
@@ -141,6 +143,82 @@ struct RunnableWorld {
         RefreshWorldFingerprint();
     }
 };
+
+// A hostile count must be refused before allocating its claimed rows.
+// Allocation traffic is observed only during Decode, not fixture construction.
+void ExpectBoundedDecodeRefusal(harken::CurrentWorldBodyImage& image,
+                                const std::vector<std::uint8_t>& bytes,
+                                std::uint32_t vintage) {
+    const auto* accepted = image.ProductionView();
+    allocation_probe::count = 0;
+    allocation_probe::bytes = 0;
+    allocation_probe::enabled = true;
+    const auto result = image.DecodeWithResult(bytes.data(), bytes.size(),
+        vintage, harken::CurrentWorldDecodeMode::StrictArtifact);
+    allocation_probe::enabled = false;
+    const auto allocated = allocation_probe::bytes;
+    EXPECT_EQ(result, harken::CurrentWorldBodyDecodeResult::Invalid);
+    EXPECT_EQ(image.ProductionView(), accepted);
+    EXPECT_LT(allocated, 16u * 1024u);
+    std::printf("[DecodeAdmission] vintage=%u input=%zu allocated=%zu bytes\n",
+                vintage, bytes.size(), allocated);
+}
+
+void WriteBodyCount(std::vector<std::uint8_t>& bytes, std::size_t offset) {
+    ASSERT_LE(offset + 4, bytes.size());
+    constexpr std::uint32_t count = 4096;
+    for (std::size_t i = 0; i < 4; ++i)
+        bytes[offset + i] = static_cast<std::uint8_t>(count >> (8 * i));
+}
+
+TEST(CurrentWorldInstall, TruncatedTopLevelCountsDoNotAllocateClaimedRows) {
+    for (const auto vintage : {18u, 19u, 20u}) {
+        harken::ContainerWorldInstallViewV1 world{};
+        world.sourceBodyVintage = vintage;
+        world.identity.runtimeSemanticFingerprint = vintage == 18
+            ? harken::ComputeCurrentWorldFingerprintV5(world)
+            : vintage == 19 ? harken::ComputeCurrentWorldFingerprintV6(world)
+                            : harken::ComputeCurrentWorldFingerprintV7(world);
+        std::vector<std::uint8_t> bytes;
+        ASSERT_TRUE(vintage == 18 ? harken::EncodeCurrentWorldShippingBody(world, bytes)
+            : vintage == 19 ? harken::EncodeCurrentWorldBodyV19(world, bytes)
+                            : harken::EncodeCurrentWorldBodyV20(world, bytes));
+        harken::CurrentWorldBodyImage image;
+        ASSERT_TRUE(image.Decode(bytes.data(), bytes.size(), vintage,
+                                harken::CurrentWorldDecodeMode::StrictArtifact));
+        for (const std::size_t offset : {40u, 44u, 48u, 80u, 84u, 100u, 104u, 200u}) {
+            SCOPED_TRACE(offset);
+            auto truncated = bytes;
+            WriteBodyCount(truncated, offset);
+            ExpectBoundedDecodeRefusal(image, truncated, vintage);
+        }
+        EXPECT_TRUE(image.Decode(bytes.data(), bytes.size(), vintage,
+                                harken::CurrentWorldDecodeMode::StrictArtifact));
+    }
+}
+
+TEST(CurrentWorldInstall, TruncatedNestedCountsDoNotAllocateClaimedRows) {
+    RunnableWorld world;
+    std::vector<std::uint8_t> bytes;
+    ASSERT_TRUE(harken::EncodeCurrentWorldShippingBody(world.world, bytes));
+    harken::CurrentWorldBodyImage image;
+    ASSERT_TRUE(image.Decode(bytes.data(), bytes.size(), 18,
+                            harken::CurrentWorldDecodeMode::StrictArtifact));
+    constexpr std::size_t property = harken::kCurrentWorldV3PrefixWireBytes +
+        harken::kCurrentWorldV6ActionCapacityWireBytes + 4 +
+        harken::kCurrentWorldV9CapacityWireBytes + 16;
+    // First property's layer ancestors, sends, effect nodes/edges and structural ancestors.
+    for (const std::size_t offset : {property + 64, property + 72 + 91,
+                                    property + 72 + 103, property + 72 + 107,
+                                    property + 72 + 111}) {
+        SCOPED_TRACE(offset);
+        auto truncated = bytes;
+        WriteBodyCount(truncated, offset);
+        ExpectBoundedDecodeRefusal(image, truncated, 18);
+    }
+    EXPECT_TRUE(image.Decode(bytes.data(), bytes.size(), 18,
+                            harken::CurrentWorldDecodeMode::StrictArtifact));
+}
 
 TEST(CurrentWorldInstall, LargeActionUsesDeclaredCountsAndPreservesAcceptedDecodeOnRefusal) {
     RunnableWorld source;

@@ -55,6 +55,14 @@ struct Reader {
     std::size_t offset = 0;
     bool failed = false;
 
+    // Wire widths are encoded minima, never native struct sizes. Check again
+    // after each preceding section so failed/truncated reads cannot fund a
+    // later count-driven allocation. Division avoids count multiplication.
+    bool CanReadRecords(std::uint32_t count, std::size_t wireBytes) const noexcept {
+        return !failed && offset <= size && wireBytes != 0 &&
+               count <= (size - offset) / wireBytes;
+    }
+
     std::uint8_t U8() noexcept {
         if (failed || size - offset < 1) {
             failed = true;
@@ -911,6 +919,7 @@ bool DecodePayloadBody(Reader& reader, OwnedPayload& payload,
         header.effectEdgeCount > kHardPlayablePropertyEffectEdgeCapacity) {
         return false;
     }
+    if (!reader.CanReadRecords(header.sendCount, 32)) return false;
     payload.sends.resize(header.sendCount);
     for (SendV1& row : payload.sends) {
         row.stableSendOrdinal = reader.U32();
@@ -919,6 +928,7 @@ bool DecodePayloadBody(Reader& reader, OwnedPayload& payload,
         row.sendLevel = reader.F32();
         row.reserved2 = reader.U32();
     }
+    if (!reader.CanReadRecords(header.effectNodeCount, 32)) return false;
     payload.nodes.resize(header.effectNodeCount);
     payload.params.resize(header.effectNodeCount);
     std::uint32_t paramTotal = 0;
@@ -934,12 +944,14 @@ bool DecodePayloadBody(Reader& reader, OwnedPayload& payload,
                       paramTotal)) {
             return false;
         }
+        if (!reader.CanReadRecords(paramCount, 8)) return false;
         payload.params[i].resize(paramCount);
         for (EffectParamV1& param : payload.params[i]) {
             param.paramId = reader.U32();
             param.valueBits = reader.U32();
         }
     }
+    if (!reader.CanReadRecords(header.effectEdgeCount, 8)) return false;
     payload.edges.resize(header.effectEdgeCount);
     for (EffectEdgeV1& row : payload.edges) {
         row.fromNodeId = reader.U32();
@@ -960,6 +972,7 @@ bool DecodeCompletion(
     if (leafCount > kTraceWorldChildCap) {
         return false;
     }
+    if (!reader.CanReadRecords(leafCount, 152)) return false;
     leaves.resize(leafCount);
     paths.resize(leafCount);
     for (std::size_t i = 0; i < leaves.size(); ++i) {
@@ -981,6 +994,7 @@ bool DecodeCompletion(
         if (pathCount > kTraceWorldChildCap) {
             return false;
         }
+        if (!reader.CanReadRecords(pathCount, 120)) return false;
         paths[i].resize(pathCount);
         for (StableAuthoredPathStepV1& step : paths[i]) {
             step.playable = DecodePlayableRef(reader);
@@ -1849,6 +1863,9 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
               world.capacity.maxTrackSegmentScheduleDepth > 64))) {
             return CurrentWorldBodyDecodeResult::Invalid;
         }
+        if (!reader.CanReadRecords(variableCount, 40)) {
+            return CurrentWorldBodyDecodeResult::Invalid;
+        }
         decoded->variables.resize(variableCount);
         for (VariableDefinitionV1& row : decoded->variables) {
             row.variableId = reader.ObjectId();
@@ -1868,6 +1885,9 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
         std::array<std::uint32_t, 6> actualPayloadTotals{};
         std::uint32_t actualAncestors = 0;
         std::uint32_t actualStructuralAncestors = 0;
+        if (!reader.CanReadRecords(propertyCount, 191)) {
+            return CurrentWorldBodyDecodeResult::Invalid;
+        }
         decoded->properties.resize(propertyCount);
         for (auto& owned : decoded->properties) {
             auto& row = owned.view;
@@ -1889,6 +1909,9 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             }
             DecodePayloadHeader(reader, owned.payload.view,
                                 worldTraceVintage);
+            if (!reader.CanReadRecords(ancestorCount, 24)) {
+                return CurrentWorldBodyDecodeResult::Invalid;
+            }
             owned.ancestors.resize(ancestorCount);
             for (LayerAncestorRefV1& ancestor : owned.ancestors) {
                 ancestor.layerStableId = reader.ObjectId();
@@ -1900,6 +1923,9 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                     !AddCount(structuralCount,
                               kHardPlayablePropertyChildRowCapacity,
                               actualStructuralAncestors)) {
+                    return CurrentWorldBodyDecodeResult::Invalid;
+                }
+                if (!reader.CanReadRecords(structuralCount, 143)) {
                     return CurrentWorldBodyDecodeResult::Invalid;
                 }
                 owned.structuralAncestors.resize(structuralCount);
@@ -1948,6 +1974,9 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             actualStructuralAncestors != expectedStructuralAncestorTotal) {
             return CurrentWorldBodyDecodeResult::Invalid;
         }
+        if (!reader.CanReadRecords(occurrenceCount, 215)) {
+            return CurrentWorldBodyDecodeResult::Invalid;
+        }
         decoded->occurrences.resize(occurrenceCount);
         for (auto& owned : decoded->occurrences) {
             auto& row = owned.view;
@@ -1970,6 +1999,9 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             }
         }
         std::uint32_t actualPlacementTotal = 0;
+        if (!reader.CanReadRecords(trackScheduleCount, 80)) {
+            return CurrentWorldBodyDecodeResult::Invalid;
+        }
         decoded->trackSchedules.resize(trackScheduleCount);
         for (auto& owned : decoded->trackSchedules) {
             auto& row = owned.view;
@@ -1979,6 +2011,9 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             row.reserved = reader.U32();
             if (!AddCount(placementCount, kHardSchedulePlacementCapacity,
                           actualPlacementTotal)) {
+                return CurrentWorldBodyDecodeResult::Invalid;
+            }
+            if (!reader.CanReadRecords(placementCount, 136)) {
                 return CurrentWorldBodyDecodeResult::Invalid;
             }
             owned.placements.resize(placementCount);
@@ -2001,6 +2036,10 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
         }
         std::uint32_t actualTrackRefTotal = 0;
         std::uint32_t actualMarkerTotal = 0;
+        if (!reader.CanReadRecords(segmentScheduleCount,
+                worldTraceVintage == kCurrentWorldBodyVintageV19 ? 168 : 112)) {
+            return CurrentWorldBodyDecodeResult::Invalid;
+        }
         decoded->segmentSchedules.resize(segmentScheduleCount);
         for (auto& owned : decoded->segmentSchedules) {
             auto& row = owned.view;
@@ -2030,12 +2069,18 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                           actualMarkerTotal)) {
                 return CurrentWorldBodyDecodeResult::Invalid;
             }
+            if (!reader.CanReadRecords(trackRefCount, 80)) {
+                return CurrentWorldBodyDecodeResult::Invalid;
+            }
             owned.trackRefs.resize(trackRefCount);
             for (auto& ref : owned.trackRefs) {
                 ref.trackDefinition = DecodePlayableRef(reader);
                 ref.trackScheduleSemanticFingerprint = reader.U64();
                 ref.stableTrackOrdinal = reader.U32();
                 ref.reserved = reader.U32();
+            }
+            if (!reader.CanReadRecords(markerCount, 32)) {
+                return CurrentWorldBodyDecodeResult::Invalid;
             }
             owned.markers.resize(markerCount);
             for (auto& marker : owned.markers) {
@@ -2046,6 +2091,9 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             }
         }
         if (currentShippingVintage) {
+        if (!reader.CanReadRecords(containerCount, 132)) {
+            return CurrentWorldBodyDecodeResult::Invalid;
+        }
         decoded->currentContainers.resize(containerCount);
         for (auto& owned : decoded->currentContainers) {
             auto& row = owned.view;
@@ -2095,11 +2143,17 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 continuousRowCount > kTraceWorldChildCap) {
                 return CurrentWorldBodyDecodeResult::Invalid;
             }
+            if (!reader.CanReadRecords(curveCount, 8)) {
+                return CurrentWorldBodyDecodeResult::Invalid;
+            }
             owned.curves.resize(curveCount);
             for (CurveV1& curve : owned.curves) {
                 if (!DecodeCurve(reader, curve, allowRawInvalid)) {
                     return CurrentWorldBodyDecodeResult::Invalid;
                 }
+            }
+            if (!reader.CanReadRecords(childCount, 96)) {
+                return CurrentWorldBodyDecodeResult::Invalid;
             }
             owned.children.resize(childCount);
             for (std::size_t i = 0; i < owned.children.size(); ++i) {
@@ -2143,11 +2197,17 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 }
             }
             if (worldTraceVintage >= 3) {
+                if (!reader.CanReadRecords(discreteAxisCount, 24)) {
+                    return CurrentWorldBodyDecodeResult::Invalid;
+                }
                 owned.discreteAxes.resize(discreteAxisCount);
                 for (auto& axis : owned.discreteAxes) {
                     axis.stableAxisOrdinal = reader.U32();
                     axis.authoredColumnOrder = reader.U32();
                     axis.variableId = reader.ObjectId();
+                }
+                if (!reader.CanReadRecords(discreteRowCount, 16)) {
+                    return CurrentWorldBodyDecodeResult::Invalid;
                 }
                 owned.discreteRows.resize(discreteRowCount);
                 owned.discreteCells.resize(discreteRowCount);
@@ -2160,6 +2220,9 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                     if (cellCount > kTraceWorldChildCap) {
                         return CurrentWorldBodyDecodeResult::Invalid;
                     }
+                    if (!reader.CanReadRecords(cellCount, 8)) {
+                        return CurrentWorldBodyDecodeResult::Invalid;
+                    }
                     owned.discreteCells[i].resize(cellCount);
                     for (auto& cell : owned.discreteCells[i]) {
                         cell.kind = static_cast<DiscreteCellKindV1>(
@@ -2168,11 +2231,17 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                             reader.U32());
                     }
                 }
+                if (!reader.CanReadRecords(continuousAxisCount, 24)) {
+                    return CurrentWorldBodyDecodeResult::Invalid;
+                }
                 owned.continuousAxes.resize(continuousAxisCount);
                 for (auto& axis : owned.continuousAxes) {
                     axis.stableAxisOrdinal = reader.U32();
                     axis.authoredColumnOrder = reader.U32();
                     axis.variableId = reader.ObjectId();
+                }
+                if (!reader.CanReadRecords(continuousRowCount, 16)) {
+                    return CurrentWorldBodyDecodeResult::Invalid;
                 }
                 owned.continuousRows.resize(continuousRowCount);
                 owned.continuousCells.resize(continuousRowCount);
@@ -2183,6 +2252,9 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                     gridRow.childStableOrdinal = reader.U32();
                     const std::uint32_t cellCount = reader.U32();
                     if (cellCount > kTraceWorldChildCap) {
+                        return CurrentWorldBodyDecodeResult::Invalid;
+                    }
+                    if (!reader.CanReadRecords(cellCount, 24)) {
                         return CurrentWorldBodyDecodeResult::Invalid;
                     }
                     owned.continuousCells[i].resize(cellCount);
@@ -2205,6 +2277,9 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             }
         }
         } else {
+        if (!reader.CanReadRecords(containerCount, 128)) {
+            return CurrentWorldBodyDecodeResult::Invalid;
+        }
         decoded->containers.resize(containerCount);
         for (auto& owned : decoded->containers) {
             auto& row = owned.view;
@@ -2251,11 +2326,17 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 continuousRowCount > kTraceWorldChildCap) {
                 return CurrentWorldBodyDecodeResult::Invalid;
             }
+            if (!reader.CanReadRecords(curveCount, 8)) {
+                return CurrentWorldBodyDecodeResult::Invalid;
+            }
             owned.curves.resize(curveCount);
             for (CurveV1& curve : owned.curves) {
                 if (!DecodeCurve(reader, curve, allowRawInvalid)) {
                     return CurrentWorldBodyDecodeResult::Invalid;
                 }
+            }
+            if (!reader.CanReadRecords(childCount, 96)) {
+                return CurrentWorldBodyDecodeResult::Invalid;
             }
             owned.children.resize(childCount);
             owned.leaves.resize(childCount);
@@ -2297,11 +2378,17 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 }
             }
             if (worldTraceVintage >= 3) {
+                if (!reader.CanReadRecords(discreteAxisCount, 24)) {
+                    return CurrentWorldBodyDecodeResult::Invalid;
+                }
                 owned.discreteAxes.resize(discreteAxisCount);
                 for (auto& axis : owned.discreteAxes) {
                     axis.stableAxisOrdinal = reader.U32();
                     axis.authoredColumnOrder = reader.U32();
                     axis.variableId = reader.ObjectId();
+                }
+                if (!reader.CanReadRecords(discreteRowCount, 16)) {
+                    return CurrentWorldBodyDecodeResult::Invalid;
                 }
                 owned.discreteRows.resize(discreteRowCount);
                 owned.discreteCells.resize(discreteRowCount);
@@ -2314,6 +2401,9 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                     if (cellCount > kTraceWorldChildCap) {
                         return CurrentWorldBodyDecodeResult::Invalid;
                     }
+                    if (!reader.CanReadRecords(cellCount, 8)) {
+                        return CurrentWorldBodyDecodeResult::Invalid;
+                    }
                     owned.discreteCells[i].resize(cellCount);
                     for (auto& cell : owned.discreteCells[i]) {
                         cell.kind = static_cast<DiscreteCellKindV1>(
@@ -2322,11 +2412,17 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                             reader.U32());
                     }
                 }
+                if (!reader.CanReadRecords(continuousAxisCount, 24)) {
+                    return CurrentWorldBodyDecodeResult::Invalid;
+                }
                 owned.continuousAxes.resize(continuousAxisCount);
                 for (auto& axis : owned.continuousAxes) {
                     axis.stableAxisOrdinal = reader.U32();
                     axis.authoredColumnOrder = reader.U32();
                     axis.variableId = reader.ObjectId();
+                }
+                if (!reader.CanReadRecords(continuousRowCount, 16)) {
+                    return CurrentWorldBodyDecodeResult::Invalid;
                 }
                 owned.continuousRows.resize(continuousRowCount);
                 owned.continuousCells.resize(continuousRowCount);
@@ -2337,6 +2433,9 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                     gridRow.childStableOrdinal = reader.U32();
                     const std::uint32_t cellCount = reader.U32();
                     if (cellCount > kTraceWorldChildCap) {
+                        return CurrentWorldBodyDecodeResult::Invalid;
+                    }
+                    if (!reader.CanReadRecords(cellCount, 24)) {
                         return CurrentWorldBodyDecodeResult::Invalid;
                     }
                     owned.continuousCells[i].resize(cellCount);
@@ -2362,6 +2461,9 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
         if (worldTraceVintage >= 4) {
             std::uint32_t transitionRuleTotal = 0;
             std::uint32_t transitionPathTotal = 0;
+            if (!reader.CanReadRecords(world.transitionCount, 40)) {
+                return CurrentWorldBodyDecodeResult::Invalid;
+            }
             decoded->transitions.resize(world.transitionCount);
             for (auto& owned : decoded->transitions) {
                 auto& row = owned.view;
@@ -2380,6 +2482,9 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                               transitionPathTotal)) {
                     return CurrentWorldBodyDecodeResult::Invalid;
                 }
+                if (!reader.CanReadRecords(pathCount, 120)) {
+                    return CurrentWorldBodyDecodeResult::Invalid;
+                }
                 owned.downwardPathSteps.resize(pathCount);
                 for (auto& step : owned.downwardPathSteps) {
                     step.playable = DecodePlayableRef(reader);
@@ -2389,6 +2494,9 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                     step.clipId = reader.ObjectId();
                     step.clipGuidHigh = reader.U64();
                     step.clipGuidLow = reader.U64();
+                }
+                if (!reader.CanReadRecords(ruleCount, 296)) {
+                    return CurrentWorldBodyDecodeResult::Invalid;
                 }
                 owned.rules.resize(ruleCount);
                 for (auto& rule : owned.rules) {
@@ -2427,6 +2535,10 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             decoded->useTransitionSentinel = world.transitionCount != 0;
         }
         if (worldTraceVintage >= 6) {
+            if (!reader.CanReadRecords(actionCount,
+                                       kCurrentWorldActionHeaderWireBytes)) {
+                return CurrentWorldBodyDecodeResult::Invalid;
+            }
             decoded->actions.resize(actionCount);
             std::uint64_t actionStepTotal = 0;
             for (auto& owned : decoded->actions) {
@@ -2446,9 +2558,8 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 actionStepTotal += stepCount;
                 if (stepCount == 0 || stepCount > kHardActionStepCapacity ||
                     actionStepTotal > kHardActionStepCapacity ||
-                    static_cast<std::uint64_t>(stepCount) *
-                            kCurrentWorldActionStepWireBytes >
-                        reader.size - reader.offset) {
+                    !reader.CanReadRecords(stepCount,
+                                           kCurrentWorldActionStepWireBytes)) {
                     return CurrentWorldBodyDecodeResult::Invalid;
                 }
                 owned.steps.resize(stepCount);
