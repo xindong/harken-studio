@@ -70,8 +70,6 @@ void registerAuditionActions(ActionManager& mgr,
                 QJsonObject entry = auditionManager->previewIpcSnapshot(info.playingId);
                 entry.insert(QStringLiteral("auditionID"), static_cast<int>(info.playingId));
                 entry.insert(QStringLiteral("objectName"), info.objectName);
-                entry.insert(QStringLiteral("positionMs"), static_cast<double>(info.positionMs));
-                entry.insert(QStringLiteral("playbackSpeed"), static_cast<double>(info.playbackSpeed));
                 entry.insert(QStringLiteral("gameObjectId"), static_cast<double>(info.gameObjId));
                 auditions.append(entry);
             }

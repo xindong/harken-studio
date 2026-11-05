@@ -78,7 +78,7 @@ public:
     }
     void clearRehearsalPushLog() { rehearsalPushLog_.clear(); }
 
-    void setMasterVolume(float volume, int fadeMs = 0);
+    bool setMasterVolume(float volume, int fadeMs = 0);
     float masterVolume() const { return masterVolume_; }
 
     harkenstudio::ObjectId mintRawPcmSoundId();
@@ -93,8 +93,8 @@ public:
 
     quintptr playByName(const QString& name);
     quintptr playByName3D(const QString& name, const HarkenEditor::Vec3& position);
-    void stopPlayback(quintptr playbackHandle, float fadeMs = 0);
-    void stopAll(float fadeMs = 0);
+    bool stopPlayback(quintptr playbackHandle, float fadeMs = 0);
+    bool stopAll(float fadeMs = 0);
 
     struct PlaybackStartResult {
         quintptr playbackHandle    = 0;
@@ -111,15 +111,15 @@ public:
     PlaybackStartResult playByName3DDetailed(const QString& name, const HarkenEditor::Vec3& position);
     PlaybackStartResult playByNameWithPreviewContext(const QString& name);
 
-    void setPlaybackPosition(quintptr playbackHandle, const HarkenEditor::Vec3& position);
+    bool setPlaybackPosition(quintptr playbackHandle, const HarkenEditor::Vec3& position);
 
     void setListenerPosition(const HarkenEditor::Vec3& position);
     void setListenerOrientation(const HarkenEditor::Vec3& forward, const HarkenEditor::Vec3& up);
     bool setListenerTransform(const HarkenEditor::Vec3& position, const HarkenEditor::Vec3& forward, const HarkenEditor::Vec3& up);
     HarkenEditor::Vec3 listenerPosition() const { return listenerPosition_; }
 
-    bool loadPack(const QString& path);
-    bool unloadPack(const QString& path);
+    bool loadPack(const QString& path, HarkenEditor::Bridge::EngineResult* result = nullptr);
+    bool unloadPack(const QString& path, HarkenEditor::Bridge::EngineResult* result = nullptr);
     uint32_t getLoadedPackCount() const;
     QStringList getLoadedPackPaths() const;
 
@@ -330,6 +330,7 @@ public:
     QVector<ExecError> recentExecErrors(int maxCount, int domainFilter ) const;
     void clearExecErrors(int domainFilter );
     void consumeRuntimeNotificationsForTest();
+    void serviceRuntime();
     void emitLogMessageForTest(int level, const QString& message);
     const std::vector<HarkenEditor::Bridge::PlaybackPathObservation>& playbackPaths() const {
         return playbackPaths_;

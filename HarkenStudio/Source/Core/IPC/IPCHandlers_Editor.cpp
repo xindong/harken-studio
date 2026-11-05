@@ -80,7 +80,7 @@ void IPCServer::registerEditorHandlers()
 #ifdef HARKEN_HAS_LMDB
         auto* svc = vqlEngine_->lmdbService();
         if (!svc || !svc->isOpen())
-            return successResponse(QJsonObject{{"items", QJsonArray()}, {"count", 0}, {"query", query}});
+            return errorResponse("SEARCH_UNAVAILABLE", "The project search index could not be initialized or rebuilt");
 
         LMDBQueryPipeline pipeline(svc);
         pipeline.setQuery(query);
@@ -107,7 +107,7 @@ void IPCServer::registerEditorHandlers()
             {"query", query}
         });
 #else
-        return successResponse(QJsonObject{{"items", QJsonArray()}, {"count", 0}, {"query", query}});
+        return errorResponse("SEARCH_UNAVAILABLE", "This build does not include the full-text search backend");
 #endif
     };
 
@@ -127,6 +127,11 @@ void IPCServer::registerEditorHandlers()
         if (count > 500000) count = 500000;
 
         auto benchResult = LMDBBenchmark::runSynthetic(count);
+        if (!benchResult.complete) {
+            auto response = errorResponse("SEARCH_BENCHMARK_FAILED", "The search benchmark could not complete");
+            response.insert("result", benchResult.toJson());
+            return response;
+        }
         return successResponse(benchResult.toJson());
     };
 

@@ -41,7 +41,7 @@ GUI、IPC 与 CLI 共用打包静态库，内部保留 `harkenizer_core`、`hark
 
 Studio 的 Publisher 窗口及操作命令与 CLI 命令目录分别注册；共享打包服务不要求 CLI 带入桌面交互。`validate_pack_build_readiness` 按工程平台复用实际打包及 Current World 的总线发布校验，非中性 pan／pitch、Listener 相对路由等不支持配置会出现在预检错误中。
 
-CLI 与 Studio 的命令目录及共享工程能力边界见 [CLI 现状总览](cli.md)。
+两端命令目录分别见 [Studio 命令接口总览](studio-commands.md) 和 [HarkenStudioCLI 命令总览](studioCLI-commands.md)。
 
 | 构建边界 | 当前分工 |
 |---|---|
@@ -73,7 +73,7 @@ HarkenStudioCLI build --project <project.hsp> --all --platform-id <UUID> [--plat
 | 取消边界 | Ctrl+C 请求取消；已完成包保留，不执行根目录项目信息与自清理 |
 | 部署 | 发布 Studio 与 CLI 两个入口及运行库、schema；Windows CLI 为 HarkenStudioCLI.exe，macOS 位于应用包 Contents/MacOS/HarkenStudioCLI；CLI 也可单独构建部署 |
 
-会话导出继续通过 `exec export_pack` 或 `run` 中的 `export_pack` 请求调用。JSON 参数 `all`、`force`、`self_clean` 均为布尔值，默认 `false`，分别控制包含未勾选包、强制重打及成功后的自清理。`platform_id` 与新增 `platform_ids` 互斥；列表须非空、无重复且全部为当前工程的平台 UUID，均省略时沿用导出选择。非空 `action_name` 不能搭配 `all=true` 或 `self_clean=true`；单 Action 导出保持不清理其他包。完整入口与参数对照见 [CLI 现状总览](cli.md)。
+会话导出继续通过 `exec export_pack` 或 `run` 中的 `export_pack` 请求调用。JSON 参数 `all`、`force`、`self_clean` 均为布尔值，默认 `false`，分别控制包含未勾选包、强制重打及成功后的自清理。`platform_id` 与新增 `platform_ids` 互斥；列表须非空、无重复且全部为当前工程的平台 UUID，均省略时沿用导出选择。非空 `action_name` 不能搭配 `all=true` 或 `self_clean=true`；单 Action 导出保持不清理其他包。完整入口与参数对照见 [HarkenStudioCLI 命令总览](studioCLI-commands.md)。
 
 ## 构建输入与复用
 

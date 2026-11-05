@@ -47,9 +47,18 @@ bool commandSupportedByHost(CommandHost host, const QString& name, bool requires
 {
     if (host == CommandHost::Desktop) return true;
     if (requiresDesktop) return false;
+#ifndef HARKEN_HAS_LMDB
+    if (name == QStringLiteral("search_fulltext") || name == QStringLiteral("search_status")
+        || name == QStringLiteral("run_search_benchmark"))
+        return false;
+#endif
     static const QSet<QString> unavailable{
         "batch", "ai_event", "ai_response", "observe", "unobserve",
         "create_pack", "rename_pack", "delete_pack",
+        "set_platform_profile", "set_target_platforms", "set_voice_language", "set_preferred_format",
+        "get_object_audio_status", "get_cpu_budget_state", "get_render_plan",
+        "audition_get_position", "audition_get_speed", "audition_set_speed",
+        "bind_attenuation_to_object", "unbind_attenuation_from_object", "set_attenuation_distance_scaling",
         "list_named_layouts", "get_selected_bus", "set_send_filter", "get_send_filter",
         "link_capture_start", "link_capture_stop", "link_get_status", "link_mute_bus",
         "link_pause_engine", "link_post_action", "link_resume_engine", "link_set_property",

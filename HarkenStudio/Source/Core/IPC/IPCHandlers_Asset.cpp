@@ -8,6 +8,7 @@
 #include "PackGenerationRecord.h"
 #include "PackArtifactCache.h"
 #include "ProjectPlatformActivity.h"
+#include <harken_studio_build/PackImage.h>
 
 #include <QDir>
 #include <QElapsedTimer>
@@ -695,100 +696,60 @@ QJsonObject IPCServer::handleCancelPackBuild(const QJsonObject& args)
 
 QJsonObject IPCServer::handleGetPackInfo(const QJsonObject& args)
 {
-    QString path = args["path"].toString();
-
+    const QString path = args.value("path").toString();
     if (path.isEmpty())
         return errorResponse("INVALID_ARGS", "Pack path is required");
-
-    QFileInfo fileInfo(path);
-    if (!fileInfo.exists())
-        return errorResponse("PACK_NOT_FOUND",
-                             QString("Pack file '%1' not found").arg(path));
-
-    QJsonObject result;
-    result["path"] = path;
-    result["size"] = static_cast<double>(fileInfo.size());
-    result["last_modified"] = fileInfo.lastModified().toString(Qt::ISODate);
-
+    const QFileInfo info(path);
+    if (!info.isFile())
+        return errorResponse("PACK_NOT_FOUND", QString("Pack file '%1' not found").arg(path));
     QFile file(path);
-    if (file.open(QIODevice::ReadOnly) && file.size() >= 32)
-    {
-        char magic[4];
-        uint32_t version = 0, packID = 0, langID = 0, secCount = 0;
-        uint32_t totalSize = 0, crc32 = 0, flags = 0;
-        file.read(magic, 4);
-        file.read(reinterpret_cast<char*>(&version), 4);
-        file.read(reinterpret_cast<char*>(&packID), 4);
-        file.read(reinterpret_cast<char*>(&langID), 4);
-        file.read(reinterpret_cast<char*>(&secCount), 4);
-        file.read(reinterpret_cast<char*>(&totalSize), 4);
-        file.read(reinterpret_cast<char*>(&crc32), 4);
-        file.read(reinterpret_cast<char*>(&flags), 4);
+    if (!file.open(QIODevice::ReadOnly))
+        return errorResponse("PACK_READ_FAILED", file.errorString());
+    const QByteArray bytes = file.readAll();
+    if (file.error() != QFileDevice::NoError)
+        return errorResponse("PACK_READ_FAILED", file.errorString());
 
-        result["magic"] = QString::fromLatin1(magic, 4);
-        result["version"] = static_cast<int>(version);
-        result["packID"] = QString("0x%1").arg(packID, 8, 16, QChar('0'));
-        result["sectionCount"] = static_cast<int>(secCount);
-        result["crc32"] = QString("0x%1").arg(crc32, 8, 16, QChar('0'));
-        result["flags"] = static_cast<int>(flags);
-        result["isInitPack"] = (flags & 1) != 0;
+    using namespace harkenstudiobuild;
+    const auto* data = reinterpret_cast<const uint8_t*>(bytes.constData());
+    PackV2Header header;
+    if (bytes.size() < kPackV2HeaderBytes || !ParsePackV2Header(data, &header))
+        return errorResponse("INVALID_PACK", "Invalid pack header");
+    PackCanonicalImage canonical;
+    PackLogicImage logic;
+    const bool isCanonical = header.packKind == kPackKindInit
+        || header.packKind == kPackKindCanonicalContent;
+    const auto parsed = isCanonical
+        ? ParsePackCanonicalImage(data, bytes.size(), &canonical)
+        : ParsePackV2Image(data, bytes.size(), &logic);
+    if (parsed != kPackOk)
+        return errorResponse("INVALID_PACK", QString("Pack validation failed: %1").arg(static_cast<int>(parsed)));
 
-        QJsonArray sections;
-        QJsonArray codecEntries;
-        QJsonArray codecCodebooks;
-        qint64 offset = 32;
-        for (uint32_t s = 0; s < secCount && offset + 8 <= file.size(); ++s)
-        {
-            file.seek(offset);
-            QByteArray chunkHdr = file.read(8);
-            if (chunkHdr.size() < 8) break;
-
-            uint32_t chunkType = 0, chunkSize = 0;
-            std::memcpy(&chunkType, chunkHdr.constData(), 4);
-            std::memcpy(&chunkSize, chunkHdr.constData() + 4, 4);
-
-            char typeStr[5] = {};
-            std::memcpy(typeStr, chunkHdr.constData(), 4);
-
-            QJsonObject sec;
-            sec["type"] = QString::fromLatin1(typeStr, 4);
-            sec["size"] = static_cast<int>(chunkSize);
-
-            const qint64 payloadOffset = offset + 8;
-            if (payloadOffset + static_cast<qint64>(chunkSize) <= file.size()) {
-                file.seek(payloadOffset);
-                const QByteArray payload = file.read(static_cast<qint64>(chunkSize));
-                QByteArray countData = payload.left(4);
-                if (countData.size() >= 4) {
-                    uint32_t entryCount = 0;
-                    std::memcpy(&entryCount, countData.constData(), 4);
-                    sec["entryCount"] = static_cast<int>(entryCount);
-                }
-
-                if (Bridge::isPackCodecMetadataSection(chunkType)) {
-                    QString parseError;
-                    codecEntries = inspectPackCodecMetadataSection(payload, &parseError);
-                    sec["codecEntryCount"] = codecEntries.size();
-                    if (!parseError.isEmpty())
-                        sec["codecParseError"] = parseError;
-                } else if (Bridge::isPackCodecCodebookSection(chunkType)) {
-                    QString parseError;
-                    codecCodebooks = inspectPackCodecCodebookSection(payload, &parseError);
-                    sec["codebookEntryCount"] = codecCodebooks.size();
-                    if (!parseError.isEmpty())
-                        sec["codecParseError"] = parseError;
-                }
-            }
-
-            sections.append(sec);
-            offset += 8 + chunkSize;
-        }
-        result["sections"] = sections;
-        result["codec_entries"] = codecEntries;
-        result["codec_codebooks"] = codecCodebooks;
-        file.close();
+    QJsonArray sections;
+    for (uint32_t index = 0; index < header.entryCount; ++index) {
+        const auto entry = ParsePackV2DirectoryEntry(
+            data + header.directoryOffset + static_cast<uint64_t>(index) * kPackV2DirectoryEntryBytes);
+        sections.append(QJsonObject{
+            {"kind", static_cast<qint64>(entry.kind)},
+            {"vintage", static_cast<qint64>(entry.vintage)},
+            {"object_id", objectIdString(entry.id)},
+            {"offset", static_cast<qint64>(entry.offset)},
+            {"size", static_cast<qint64>(entry.size)},
+            {"checksum", QString::number(entry.payloadChecksum, 16)}});
     }
-
+    QJsonObject result{
+        {"path", info.absoluteFilePath()},
+        {"size", bytes.size()},
+        {"last_modified", info.lastModified().toString(Qt::ISODate)},
+        {"magic", QString::fromLatin1(bytes.first(4))},
+        {"version", static_cast<qint64>(header.formatVersion)},
+        {"packKind", static_cast<qint64>(header.packKind)},
+        {"sectionCount", static_cast<qint64>(header.entryCount)},
+        {"directoryChecksum", QString::number(header.directoryChecksum, 16)},
+        {"isInitPack", header.packKind == kPackKindInit},
+        {"media_count", static_cast<qint64>(isCanonical ? canonical.media.size() : logic.media.size())},
+        {"sections", sections}};
+    if (isCanonical)
+        result.insert("packStableId", QString::number(canonical.packStableId, 16));
     return successResponse(result);
 }
 

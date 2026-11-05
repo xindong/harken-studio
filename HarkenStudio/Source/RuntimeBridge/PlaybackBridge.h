@@ -222,7 +222,7 @@ public:
     // -- output / device --
     EngineResult startOutput();
     void stopOutput();
-    void setMasterFade(float volume, int fadeMs);
+    bool setMasterFade(float volume, int fadeMs);
     double outputLatency() const;
     int actualSampleRate() const;
     EngineResult reconfigureBufferSize(int32_t newBlockSize);
@@ -241,11 +241,11 @@ public:
     uint64_t playByName(const QString& name);
     uint64_t playByName3D(const QString& name, float x, float y, float z);
     bool hasActionProgram(harkenstudio::ObjectId actionId) const;
-    void stopPlayback(uint64_t handle, float fadeMs);
-    void stopAll(float fadeMs);
+    bool stopPlayback(uint64_t handle, float fadeMs);
+    bool stopAll(float fadeMs);
     bool hasCurrentWorldPlayableConsumers() const;
     void pumpNullMixer(std::uint32_t blockCount);
-    void setPlaybackPosition(uint64_t handle, float x, float y, float z);
+    bool setPlaybackPosition(uint64_t handle, float x, float y, float z);
     void setVoicePitchByName(const QString& soundName, float cents);
     void setVoiceVolumeByName(const QString& soundName, float volumeDb);
     void setVoiceOutputVolumeByName(const QString& soundName, float volumeDb);
@@ -258,8 +258,8 @@ public:
                               float ux, float uy, float uz);
 
     // -- packs / prepare --
-    bool loadPack(const QString& path);
-    bool unloadPack(const QString& path);
+    bool loadPack(const QString& path, EngineResult* outResult = nullptr);
+    bool unloadPack(const QString& path, EngineResult* outResult = nullptr);
     uint32_t loadedPackCount() const;
     QStringList loadedPackPaths() const;
     bool prepareMedia(uint32_t sourceId, const QString& absolutePath, uint64_t fileSize);

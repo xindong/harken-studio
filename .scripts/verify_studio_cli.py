@@ -4,9 +4,11 @@ import argparse
 import json
 import math
 import os
+import queue
 import struct
 import subprocess
 import tempfile
+import threading
 import wave
 from pathlib import Path
 
@@ -14,6 +16,69 @@ from pathlib import Path
 def run(binary: Path, arguments: list[str], environment: dict, data: bytes | None = None):
     return subprocess.run([str(binary), *arguments], input=data, capture_output=True,
                           env=environment, timeout=180)
+
+
+def verify_shell(cli: Path, environment: dict, root: Path) -> None:
+    directory = root / "ShellAudio"
+    project = directory / "ShellAudio.hsp"
+    created = run(cli, ["init", str(directory), "--json"], environment)
+    assert created.returncode == 0, created.stderr
+
+    def shell(lines, exit_code=0):
+        completed = run(cli, ["shell", "--project", str(project), "--json"], environment,
+                        ("\n".join(lines) + ("\n" if lines else "")).encode("utf-8"))
+        assert completed.returncode == exit_code, (completed.stdout, completed.stderr)
+        responses = [json.loads(line) for line in completed.stdout.splitlines()]
+        assert all(response["protocolVersion"] == 1 for response in responses), responses
+        return responses
+
+    responses = shell([
+        "help", "commands create_action", "create_action [", "create_action []",
+        "not_a_registered_command", 'create_action {"name":"SessionAction"}',
+        'get_item_info {"path":"SessionAction"}', "exit", "close_project",
+        "open_project " + json.dumps({"path": str(project)}), "save_project", "exit"])
+    assert responses[0]["status"] == "ok" and responses[1]["result"]["command"] == "create_action"
+    assert [response.get("code") for response in responses[2:5]] == [
+        "INVALID_JSON", "INVALID_ARGS", "UNKNOWN_COMMAND"], responses
+    assert responses[6]["result"]["name"] == "SessionAction", responses
+    assert all(response["code"] == "UNSAVED_CHANGES" for response in responses[7:10]), responses
+    assert all(response["status"] == "ok" for response in responses[10:]), responses
+    persisted = shell(['get_item_info {"path":"SessionAction"}'])
+    assert persisted[0]["result"]["name"] == "SessionAction", persisted
+    assert shell([]) == []
+    refused = shell(['create_action {"name":"UnsavedEof"}'], exit_code=1)
+    assert refused[-1]["code"] == "UNSAVED_CHANGES", refused
+    discarded = shell(['create_action {"name":"Discarded"}', "exit --discard"])
+    assert discarded[-1]["result"]["discarded"] is True, discarded
+    absent = shell(['get_item_info {"path":"UnsavedEof"}', 'get_item_info {"path":"Discarded"}'])
+    assert all(response["status"] == "error" for response in absent), absent
+
+    process = subprocess.Popen([str(cli), "shell", "--project", str(project), "--json"],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, env=environment)
+    responses = queue.Queue()
+
+    def read_responses():
+        for line in process.stdout:
+            responses.put(json.loads(line))
+
+    reader = threading.Thread(target=read_responses, daemon=True)
+    reader.start()
+    try:
+        for line in ('get_item_info {"path":"SessionAction"}', "commands save_project", "exit"):
+            process.stdin.write((line + "\n").encode("utf-8"))
+            process.stdin.flush()
+            response = responses.get(timeout=30)
+            assert response["status"] == "ok", response
+        assert process.wait(timeout=30) == 0
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=30)
+        process.stdin.close()
+        reader.join(timeout=30)
+        process.stdout.close()
+    assert not reader.is_alive()
 
 
 def verify(cli: Path, host: Path | None, work: Path) -> None:
@@ -44,11 +109,12 @@ def verify(cli: Path, host: Path | None, work: Path) -> None:
         assert entry["registered"] and entry["inputSchema"]["type"] == "object", entry
         assert not entry["requiresDesktop"], entry
         assert "hostRestriction" not in entry, entry
-    for excluded in ("get_theme", "click_widget", "batch", "list_codecs", "add_listener"):
+    for excluded in ("get_theme", "click_widget", "batch", "list_codecs", "add_listener",
+                     "set_platform_profile", "set_preferred_format", "audition_get_speed"):
         assert excluded not in names
         assert call("commands", excluded, exit_code=1)["code"] == "UNKNOWN_COMMAND"
         assert call("exec", excluded, exit_code=1)["code"] == "UNKNOWN_COMMAND"
-    for shared in ("audition_get_state", "audition_get_position", "audition_get_speed"):
+    for shared in ("audition_get_state", "get_inspector_schema"):
         assert shared in names
     call("exec", "not_a_registered_command", exit_code=1)
     call("not_a_subcommand", exit_code=2)
@@ -64,6 +130,7 @@ def verify(cli: Path, host: Path | None, work: Path) -> None:
         call("init", str(project_dir))
         assert project.is_file()
         call("init", str(project_dir), exit_code=1)
+        verify_shell(cli, environment, root)
         worker_request = json.dumps({"manifest": str(root / "missing-manifest.json")}).encode("utf-8") + b"\n"
         worker = run(cli, ["--resource-worker"], environment, worker_request * 2)
         assert worker.returncode == 0, worker.stderr.decode("utf-8", "replace")

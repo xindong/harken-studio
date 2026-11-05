@@ -52,7 +52,7 @@ int runtimeActualSampleRate();
 int32_t runtimeBufferSize();
 EngineResult runtimeReconfigureBufferSize(int32_t newBlockSize);
 
-void runtimeSetMasterFade(float volume, int fadeMs);
+bool runtimeSetMasterFade(float volume, int fadeMs);
 
 void runtimeRegisterSoundName(const QString& name, harkenstudio::ObjectId objectId,
                               harkenstudio::ObjectId soundId, uint32_t sourceId,
@@ -70,8 +70,8 @@ void runtimeRegisterActionName(const QString& name, harkenstudio::ObjectId actio
 void runtimeUnregisterActionName(harkenstudio::ObjectId actionId);
 void runtimeClearActionNames();
 
-bool runtimeLoadPack(const QString& path);
-bool runtimeUnloadPack(const QString& path);
+bool runtimeLoadPack(const QString& path, EngineResult* outResult = nullptr);
+bool runtimeUnloadPack(const QString& path, EngineResult* outResult = nullptr);
 uint32_t runtimeLoadedPackCount();
 QStringList runtimeLoadedPackPaths();
 
@@ -111,7 +111,7 @@ EngineResult runtimeQueryActionSeek(uint64_t operationId,
                                     ActionSeekInfo& outInfo);
 EngineResult runtimeReleaseActionSeek(uint64_t operationId);
 bool runtimeStopPlayback(uint64_t handle, uint32_t fadeMs);
-void runtimeStopAll(uint32_t fadeMs);
+bool runtimeStopAll(uint32_t fadeMs);
 bool runtimeHasCurrentWorldPlayableConsumers();
 EngineResult runtimeRefreshPreviewVoiceBindings(uint64_t voiceInstance);
 EngineResult runtimeSetPreviewVoiceProperty(uint64_t voiceInstance, uint8_t property,

@@ -213,7 +213,8 @@ void registerSystemActions(ActionManager& mgr,
             if (handle == 0)
                 return {false, {}, "INVALID_ARGS",
                         "handle is required"};
-            engine->stopPlayback(static_cast<quintptr>(handle), fadeMs);
+            if (!engine->stopPlayback(static_cast<quintptr>(handle), fadeMs))
+                return {false, {}, "STOP_ACTION_FAILED", "The runtime rejected the playback stop"};
             if (activePlaybacks)
                 activePlaybacks->remove(static_cast<quintptr>(handle));
             return {true, QJsonObject{}};
@@ -231,7 +232,8 @@ void registerSystemActions(ActionManager& mgr,
         def.handler = [engine, auditionGuard, activePlaybacks](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();
             float fadeMs = static_cast<float>(args["fade_ms"].toDouble(0.0));
-            engine->stopAll(fadeMs);
+            if (!engine->stopAll(fadeMs))
+                return {false, {}, "STOP_ALL_FAILED", "The runtime rejected the stop request"};
             if (activePlaybacks) activePlaybacks->clear();
             if (auditionGuard)
                 auditionGuard->stopAll(fadeMs);
@@ -314,7 +316,8 @@ void registerSystemActions(ActionManager& mgr,
                 return {false, {}, "INVALID_ARGS",
                         "handle is required"};
             HarkenEditor::Vec3 position(x, y, z);
-            engine->setPlaybackPosition(static_cast<quintptr>(handle), position);
+            if (!engine->setPlaybackPosition(static_cast<quintptr>(handle), position))
+                return {false, {}, "SET_ACTION_POSITION_FAILED", "The runtime rejected the playback position"};
             if (activePlaybacks && activePlaybacks->contains(static_cast<quintptr>(handle)))
                 (*activePlaybacks)[static_cast<quintptr>(handle)]["position"] = QJsonArray{x, y, z};
             return {true, QJsonObject{
@@ -535,10 +538,11 @@ void registerSystemActions(ActionManager& mgr,
             QString path = args["path"].toString();
             if (path.isEmpty())
                 return {false, {}, "INVALID_ARGS", "Pack path is required"};
-            bool success = engine->loadPack(path);
+            HarkenEditor::Bridge::EngineResult result = HarkenEditor::Bridge::kEngineOk;
+            bool success = engine->loadPack(path, &result);
             if (success)
                 return {true, QJsonObject{{"path", path}, {"loaded", true}}};
-            return {false, {}, "LOAD_PACK_FAILED",
+            return {false, QJsonObject{{"runtime_result", static_cast<qint32>(result)}}, "LOAD_PACK_FAILED",
                     QString("Failed to load pack: %1").arg(path)};
         };
         mgr.registerAction(def);
@@ -556,8 +560,9 @@ void registerSystemActions(ActionManager& mgr,
             QString path = args["path"].toString();
             if (path.isEmpty())
                 return {false, {}, "INVALID_ARGS", "Pack path is required"};
-            if (!engine->unloadPack(path))
-                return {false, {}, "UNLOAD_PACK_FAILED", QString("Failed to unload pack: %1").arg(path)};
+            HarkenEditor::Bridge::EngineResult result = HarkenEditor::Bridge::kEngineOk;
+            if (!engine->unloadPack(path, &result))
+                return {false, QJsonObject{{"runtime_result", static_cast<qint32>(result)}}, "UNLOAD_PACK_FAILED", QString("Failed to unload pack: %1").arg(path)};
             return {true, QJsonObject{{"path", path}, {"unloaded", true}}};
         };
         mgr.registerAction(def);

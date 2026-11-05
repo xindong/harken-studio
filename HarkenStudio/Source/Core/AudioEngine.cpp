@@ -653,12 +653,13 @@ void AudioEngine::stopRuntimeSynchronization()
     resetLivePropertyPreview();
 }
 
-void AudioEngine::setMasterVolume(float volume, int fadeMs)
+bool AudioEngine::setMasterVolume(float volume, int fadeMs)
 {
-    masterVolume_ = qBound(0.0f, volume, 2.0f);
-
-    if (session_)
-        session_->setMasterFade(masterVolume_, fadeMs);
+    const float nextVolume = qBound(0.0f, volume, 2.0f);
+    if (session_ && initialized_ && !session_->setMasterFade(nextVolume, fadeMs))
+        return false;
+    masterVolume_ = nextVolume;
+    return true;
 }
 
 harkenstudio::ObjectId AudioEngine::mintRawPcmSoundId()
@@ -813,23 +814,22 @@ AudioEngine::PlaybackStartResult AudioEngine::playByName3DDetailed(
     return result;
 }
 
-void AudioEngine::stopPlayback(quintptr playbackHandle, float fadeMs)
+bool AudioEngine::stopPlayback(quintptr playbackHandle, float fadeMs)
 {
-    if (!playbackHandle)
-        return;
-
-    if (session_)
-        session_->stopPlayback(static_cast<uint64_t>(playbackHandle), fadeMs);
+    if (!playbackHandle || !session_
+        || !session_->stopPlayback(static_cast<uint64_t>(playbackHandle), fadeMs))
+        return false;
 
     emit playbackStopped(playbackHandle);
+    return true;
 }
 
-void AudioEngine::stopAll(float fadeMs)
+bool AudioEngine::stopAll(float fadeMs)
 {
     if (!session_)
-        return;
+        return false;
 
-    session_->stopAll(fadeMs);
+    return session_->stopAll(fadeMs);
 }
 
 bool AudioEngine::hasInstalledCurrentWorld() const
@@ -869,12 +869,12 @@ void AudioEngine::resetListenerTransformCache()
     listenerUp_ = HarkenEditor::Vec3(0.0f, 1.0f, 0.0f);
 }
 
-void AudioEngine::setPlaybackPosition(quintptr playbackHandle, const HarkenEditor::Vec3& position)
+bool AudioEngine::setPlaybackPosition(quintptr playbackHandle, const HarkenEditor::Vec3& position)
 {
     if (!playbackHandle || !session_)
-        return;
+        return false;
 
-    session_->setPlaybackPosition(static_cast<uint64_t>(playbackHandle),
+    return session_->setPlaybackPosition(static_cast<uint64_t>(playbackHandle),
                                 position.x, position.y, position.z);
 }
 
@@ -899,20 +899,24 @@ bool AudioEngine::setListenerTransform(const HarkenEditor::Vec3& position, const
     return true;
 }
 
-bool AudioEngine::loadPack(const QString& path)
+bool AudioEngine::loadPack(const QString& path, Bridge::EngineResult* result)
 {
-    if (!session_)
+    if (!session_) {
+        if (result) *result = Bridge::kEngineNotInit;
         return false;
+    }
 
-    return session_->loadPack(path);
+    return session_->loadPack(path, result);
 }
 
-bool AudioEngine::unloadPack(const QString& path)
+bool AudioEngine::unloadPack(const QString& path, Bridge::EngineResult* result)
 {
-    if (!session_)
+    if (!session_) {
+        if (result) *result = Bridge::kEngineNotInit;
         return false;
+    }
 
-    return session_->unloadPack(path);
+    return session_->unloadPack(path, result);
 }
 
 uint32_t AudioEngine::getLoadedPackCount() const
@@ -1157,6 +1161,13 @@ void AudioEngine::onRuntimeServiceTimer()
         applyLivePropertyPreview();
         retryBackpressuredAuditionOverlay();
     }
+}
+
+void AudioEngine::serviceRuntime()
+{
+    onRuntimeServiceTimer();
+    onMeterTimer();
+    onMonitorTimer();
 }
 
 void AudioEngine::onMeterTimer()

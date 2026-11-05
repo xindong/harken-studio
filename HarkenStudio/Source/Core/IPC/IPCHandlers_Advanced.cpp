@@ -18,7 +18,8 @@ void IPCServer::registerAdvancedHandlers()
             return errorResponse("INVALID_PARAM", "reference_path and replay_path required");
 
         Bridge::ReplayCompareResult result;
-        Bridge::replayCompare(refPath, repPath, result);
+        if (!Bridge::replayCompare(refPath, repPath, result))
+            return errorResponse("COMPARE_FAILED", "Cannot read the reference or replay file");
         QJsonObject r;
         r["max_diff"] = static_cast<double>(result.maxDiff);
         r["psnr_db"] = result.psnrDb;

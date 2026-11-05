@@ -7,9 +7,7 @@
 #include "../FieldGroups.h"
 #include "../ProjectManager.h"
 #include "../UndoCommands.h"
-#include "../Components/VMixNode.h"
 #include "../Components/VSelection.h"
-#include "../Components/VSpatial.h"
 #include "ActionSelectors.h"
 
 #include <QJsonArray>
@@ -371,7 +369,6 @@ void registerContainerActions(ActionManager& mgr,
             }
             uint32_t containerID = static_cast<uint32_t>(args["container_id"].toInteger(0));
             QString propertyName = args["property"].toString();
-            double value = args["value"].toDouble(0.0);
 
             if ((containerPath.isEmpty() && containerID == 0) || propertyName.isEmpty())
                 return {false, {}, "INVALID_ARGS",
@@ -408,124 +405,25 @@ void registerContainerActions(ActionManager& mgr,
             QString stringValue = args["string_value"].toString();
             QJsonObject objectValue = args["object_value"].toObject();
 
-            if (propertyName == QStringLiteral("spatializationMix")) {
-                auto result = handlePlayableItemProperty(projectManager, container, propertyName,
-                    args, ActionManager::instance().executeOriginator());
-                if (!result.success) return result;
-                result.data = QJsonObject{
-                    {"success", true},
-                    {"container_id", static_cast<qint64>(itemShortID(container))},
-                    {"container_authoring_handle", static_cast<qint64>(container->objectID)},
-                    {"container_path", buildItemFullPath(project, container)},
-                    {"property", propertyName}, {"string_value", stringValue},
-                    {"object_value", objectValue}, {"value", value}};
-                return result;
-            }
-
-            QVariant undoOldValue;
-            QVariant undoNewValue;
-            bool undoTracked = false;
-
-            bool handledCommon = false;
-            auto* contSpatial = container->comp<VSpatial>();
-            auto* contMix = container->compOrCreate<VMixNode>();
-            static const QSet<QString> kSpatialBackedProps = {
+            static const QSet<QString> properties = {
+                QStringLiteral("volume"), QStringLiteral("pitch"),
                 QStringLiteral("spatializationMix"),
                 QStringLiteral("attenuationDistanceScaling"),
                 QStringLiteral("is3DEnabled")};
-            if (!contSpatial && kSpatialBackedProps.contains(propertyName))
-                return {false, {}, "PROPERTY_NOT_SUPPORTED",
-                        QString("Property '%1' is not supported on '%2'")
-                            .arg(propertyName, container->name)};
-            if (propertyName == "volume") {
-                undoOldValue = contMix->volume; undoNewValue = static_cast<float>(value);
-                contMix->volume = static_cast<float>(value);
-                handledCommon = true; undoTracked = true;
-            } else if (propertyName == "pitch") {
-                undoOldValue = contMix->pitch; undoNewValue = static_cast<float>(value);
-                contMix->pitch = static_cast<float>(value);
-                handledCommon = true; undoTracked = true;
-            } else if (propertyName == "attenuationDistanceScaling") {
-                float ads = qBound(0.01f, static_cast<float>(value), 100.0f);
-                undoOldValue = contSpatial->attenuationDistanceScaling; undoNewValue = ads;
-                contSpatial->attenuationDistanceScaling = ads;
-                handledCommon = true; undoTracked = true;
-            } else if (propertyName == "is3DEnabled") {
-                undoOldValue = contSpatial->is3DEnabled; undoNewValue = (value != 0.0);
-                contSpatial->is3DEnabled = (value != 0.0);
-                handledCommon = true; undoTracked = true;
-            } else if (propertyName == "outputBus") {
-                uint32_t newBusId = static_cast<uint32_t>(value);
-                undoOldValue = contMix->outputBusId; undoNewValue = newBusId;
-                if (projectManager->writeAudioPropertySilent(container, propertyName, newBusId))
-                    handledCommon = true;
-                undoTracked = true;
-            }
+            if (!properties.contains(propertyName))
+                return {false, {}, "UNKNOWN_PROPERTY",
+                        QString("Unknown container property '%1'").arg(propertyName)};
 
-            if (!handledCommon)
-                return {false, {}, "NOT_A_CONTAINER",
-                        QString("'%1' is not a supported container type").arg(containerPath)};
-
-            ProjectManager::resyncItemToRuntime(container);
-
-            {
-                if (propertyName == "pitch") {
-                    projectManager->propagateItemPitchLive(container);
-                } else if (propertyName == "volume") {
-                    projectManager->propagateItemVolumeLive(container);
-                }
-            }
-
-            container->markDirty();
-            emit projectManager->itemPropertyChanged(container, propertyName);
-
-            ActionResult r;
-            r.success = true;
-            r.data = QJsonObject{
-                {"success", true},
-                {"container_id", static_cast<qint64>(itemShortID(container))},
-                {"container_authoring_handle", static_cast<qint64>(container->objectID)},
-                {"container_path", buildItemFullPath(project, container)},
-                {"property", propertyName},
-                {"string_value", stringValue},
-                {"object_value", objectValue},
-                {"value", value}
-            };
-
-            if (undoTracked) {
-                auto applyFn = [propertyName](ProjectItem* item, const QVariant& val) {
-                    auto* spatial = item->comp<VSpatial>();
-                    auto* mixc = item->comp<VMixNode>();
-                    if (propertyName == "volume" && mixc) mixc->volume = val.toFloat();
-                    else if (propertyName == "pitch" && mixc) mixc->pitch = val.toFloat();
-                    else if (propertyName == "attenuationDistanceScaling" && spatial) spatial->attenuationDistanceScaling = val.toFloat();
-                    else if (propertyName == "is3DEnabled" && spatial) spatial->is3DEnabled = val.toBool();
-                    else if (propertyName == "outputBus")
-                        ProjectManager::instance().writeAudioPropertySilent(item, propertyName, val);
-                    ProjectManager::resyncItemToRuntime(item);
-                    item->markDirty();
-                    emit ProjectManager::instance().itemPropertyChanged(item, propertyName);
-                };
-                uint32_t containerObjID = container->objectID;
-                r.undoFn = [applyFn, containerObjID, undoOldValue]() {
-                    auto* proj = ProjectManager::instance().currentProject();
-                    if (!proj) return;
-                    auto* ci = findItemByObjectIDInProject(proj, containerObjID);
-                    if (!ci) return;
-                    applyFn(ci, undoOldValue);
-                };
-                r.redoFn = [applyFn, containerObjID, undoNewValue]() {
-                    auto* proj = ProjectManager::instance().currentProject();
-                    if (!proj) return;
-                    auto* ci = findItemByObjectIDInProject(proj, containerObjID);
-                    if (!ci) return;
-                    applyFn(ci, undoNewValue);
-                };
-                r.undoText = QString("Set %1").arg(propertyName);
-                r.authoringWriteSet = QSet<QUuid>{container->guid};
-            }
-
-            return r;
+            auto result = handlePlayableItemProperty(projectManager, container, propertyName,
+                args, ActionManager::instance().executeOriginator());
+            if (!result.success) return result;
+            result.data.insert(QStringLiteral("success"), true);
+            result.data.insert(QStringLiteral("container_id"), static_cast<qint64>(itemShortID(container)));
+            result.data.insert(QStringLiteral("container_authoring_handle"), static_cast<qint64>(container->objectID));
+            result.data.insert(QStringLiteral("container_path"), buildItemFullPath(project, container));
+            result.data.insert(QStringLiteral("string_value"), stringValue);
+            result.data.insert(QStringLiteral("object_value"), objectValue);
+            return result;
         };
         mgr.registerAction(def);
     }

@@ -493,6 +493,8 @@ endif()
 if(HARKEN_BUILD_STUDIO_CLI)
 add_executable(harken_studio_cli
     Source/Tooling/StudioCli/Main.cpp
+    Source/Tooling/StudioCli/Shell.cpp
+    Source/Tooling/StudioCli/Shell.h
     Source/Tooling/StudioCli/SavedProjectBuild.cpp
     Source/Tooling/StudioCli/SavedProjectBuild.h
     Source/Tooling/StudioCli/ResourceWorker.cpp

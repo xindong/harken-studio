@@ -300,7 +300,7 @@ float EngineSession::audioCpuPercent() const { return Detail::runtimeAudioCpuPer
 
 EngineResult EngineSession::startOutput() { return Detail::runtimeStartOutput(); }
 void EngineSession::stopOutput() { Detail::runtimeStopOutput(); }
-void EngineSession::setMasterFade(float volume, int fadeMs) { Detail::runtimeSetMasterFade(volume, fadeMs); }
+bool EngineSession::setMasterFade(float volume, int fadeMs) { return Detail::runtimeSetMasterFade(volume, fadeMs); }
 double EngineSession::outputLatency() const { return Detail::runtimeOutputLatency(); }
 int EngineSession::actualSampleRate() const { return Detail::runtimeActualSampleRate(); }
 EngineResult EngineSession::reconfigureBufferSize(int32_t newBlockSize)
@@ -400,14 +400,14 @@ bool EngineSession::hasActionProgram(harkenstudio::ObjectId actionId) const
     return Detail::runtimeHasActionProgram(actionId);
 }
 
-void EngineSession::stopPlayback(uint64_t handle, float fadeMs)
+bool EngineSession::stopPlayback(uint64_t handle, float fadeMs)
 {
-    Detail::runtimeStopPlayback(handle, fadeMs > 0.0f ? static_cast<uint32_t>(fadeMs) : 0u);
+    return Detail::runtimeStopPlayback(handle, fadeMs > 0.0f ? static_cast<uint32_t>(fadeMs) : 0u);
 }
 
-void EngineSession::stopAll(float fadeMs)
+bool EngineSession::stopAll(float fadeMs)
 {
-    Detail::runtimeStopAll(fadeMs > 0.0f ? static_cast<uint32_t>(fadeMs) : 0u);
+    return Detail::runtimeStopAll(fadeMs > 0.0f ? static_cast<uint32_t>(fadeMs) : 0u);
 }
 
 bool EngineSession::hasCurrentWorldPlayableConsumers() const
@@ -420,9 +420,9 @@ void EngineSession::pumpNullMixer(std::uint32_t blockCount)
     Detail::runtimePumpNullMixer(blockCount);
 }
 
-void EngineSession::setPlaybackPosition(uint64_t handle, float x, float y, float z)
+bool EngineSession::setPlaybackPosition(uint64_t handle, float x, float y, float z)
 {
-    Detail::runtimeSetPlaybackPosition(handle, x, y, z);
+    return Detail::runtimeSetPlaybackPosition(handle, x, y, z);
 }
 
 bool EngineSession::setListenerTransform(float px, float py, float pz,
@@ -433,8 +433,8 @@ bool EngineSession::setListenerTransform(float px, float py, float pz,
         VnVec3{px, py, pz}, VnVec3{fx, fy, fz}, VnVec3{ux, uy, uz});
 }
 
-bool EngineSession::loadPack(const QString& path) { return Detail::runtimeLoadPack(path); }
-bool EngineSession::unloadPack(const QString& path) { return Detail::runtimeUnloadPack(path); }
+bool EngineSession::loadPack(const QString& path, EngineResult* outResult) { return Detail::runtimeLoadPack(path, outResult); }
+bool EngineSession::unloadPack(const QString& path, EngineResult* outResult) { return Detail::runtimeUnloadPack(path, outResult); }
 uint32_t EngineSession::loadedPackCount() const { return Detail::runtimeLoadedPackCount(); }
 QStringList EngineSession::loadedPackPaths() const { return Detail::runtimeLoadedPackPaths(); }
 

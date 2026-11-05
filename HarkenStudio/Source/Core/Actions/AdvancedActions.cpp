@@ -165,10 +165,13 @@ void registerAdvancedActions(ActionManager& mgr,
         def.undoable = false;
         def.handler = [engine](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();
+            if (!engine->isInitialized() || engine->isSimulationMode())
+                return {false, {}, "ENGINE_NOT_INITIALIZED", "Audio runtime is not initialized"};
             float volume = args["volume"].toDouble(1.0);
             int fadeMs = args["fade_ms"].toInt(0);
-            engine->setMasterVolume(volume, fadeMs);
-            return {true, QJsonObject{{"volume", volume}}};
+            if (!engine->setMasterVolume(volume, fadeMs))
+                return {false, {}, "SET_MASTER_VOLUME_FAILED", "The runtime rejected the master volume"};
+            return {true, QJsonObject{{"volume", engine->masterVolume()}}};
         };
         mgr.registerAction(def);
     }

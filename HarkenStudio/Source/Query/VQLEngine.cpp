@@ -77,8 +77,12 @@ void VQLEngine::setProject(ProjectData* project)
 #ifdef HARKEN_HAS_LMDB
     try {
         initLMDB();
-        if (project && lmdbInitialized_)
-            rebuildSearchIndex();
+        if (project && lmdbInitialized_ && !rebuildSearchIndex()) {
+            lmdbInitialized_ = false;
+            lmdbIndexer_.reset();
+            lmdbService_.reset();
+            lmdbPath_.clear();
+        }
     } catch (const std::exception& e) {
         qWarning() << "[VQL] LMDB init/rebuild failed (non-fatal):" << e.what();
         lmdbInitialized_ = false;
@@ -308,16 +312,17 @@ bool VQLEngine::isSearching() const
 #endif
 }
 
-void VQLEngine::rebuildSearchIndex()
+bool VQLEngine::rebuildSearchIndex()
 {
 #ifdef HARKEN_HAS_LMDB
     try {
         if (lmdbIndexer_ && project_)
-            lmdbIndexer_->rebuild(project_);
+            return lmdbIndexer_->rebuild(project_);
     } catch (...) {
         qWarning() << "[VQL] LMDB rebuildSearchIndex failed (non-fatal)";
     }
 #endif
+    return false;
 }
 
 void VQLEngine::indexObjectChanged(const ProjectItem* item)

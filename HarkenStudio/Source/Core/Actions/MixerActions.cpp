@@ -780,19 +780,12 @@ void registerMixerActions(ActionManager& mgr,
             if (!mcomp)
                 return {false, {}, "NO_AUDIO_COMPONENT", "Item has no VMixNode"};
 
-            bool changed = false;
             if (args.contains("volume_db")) {
-                if (!projectManager->writeBusPropertySilent(
-                        item, QStringLiteral("outputBusVolume"),
-                        args.value("volume_db").toDouble()))
+                if (!projectManager->setBusOutputBusVolumeInternal(
+                        item->objectID, static_cast<float>(args.value("volume_db").toDouble()),
+                        ActionManager::instance().executeOriginator()))
                     return {false, {}, "SET_PROPERTY_FAILED",
                             "Failed to write output bus volume"};
-                changed = true;
-            }
-
-            if (changed) {
-                item->markDirty();
-                ProjectManager::resyncItemToRuntime(item);
             }
 
             QJsonObject result;

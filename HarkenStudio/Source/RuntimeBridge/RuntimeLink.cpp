@@ -168,8 +168,9 @@ VnResult provideLoadedPack(void* context, uint64_t stableId, const char*, uint32
     return VN_OK;
 }
 
-bool activatePackSet(std::unordered_map<QString, LoadedPack> desired)
+bool activatePackSet(std::unordered_map<QString, LoadedPack> desired, EngineResult* outResult)
 {
+    if (outResult) *outResult = VN_REVISION_CONFLICT;
     if (g_runtime.packSetRevision == UINT64_MAX) return false;
     std::vector<LoadedPack*> packs;
     for (auto& [path, pack] : desired) {
@@ -180,6 +181,7 @@ bool activatePackSet(std::unordered_map<QString, LoadedPack> desired)
         if (a->kind != b->kind) return a->kind == VN_CANONICAL_PACK_SET_MEMBER_INIT;
         return a->stableId < b->stableId;
     });
+    if (outResult) *outResult = VN_CONTENT_NOT_LOADED;
     if (packs.empty() || packs.front()->kind != VN_CANONICAL_PACK_SET_MEMBER_INIT)
         return false;
     std::vector<VnCanonicalPackSetMemberV1> members(packs.size());
@@ -210,6 +212,7 @@ bool activatePackSet(std::unordered_map<QString, LoadedPack> desired)
     VnCanonicalPackSetActivationReportV1 report{};
     report.structSize = sizeof(report);
     const auto result = Vn_ActivateCanonicalPackSetV1(&desc, &report);
+    if (outResult) *outResult = result;
     if (result != VN_OK) {
         qWarning() << "[PlaybackRoute] pack set activation failed: result=" << result;
         return false;
@@ -1053,12 +1056,12 @@ EngineResult runtimeReconfigureBufferSize(int32_t newBlockSize)
     return static_cast<EngineResult>(result);
 }
 
-void runtimeSetMasterFade(float volume, int fadeMs)
+bool runtimeSetMasterFade(float volume, int fadeMs)
 {
     if (!g_runtime.initialized)
-        return;
-    Vn_SetBusVolume(VN_BUS_MASTER, linearToDb(volume),
-                    fadeMs > 0 ? static_cast<uint32_t>(fadeMs) : 0u);
+        return false;
+    return Vn_SetBusOutputVolume(VN_BUS_MASTER, linearToDb(volume),
+                    fadeMs > 0 ? static_cast<uint32_t>(fadeMs) : 0u) == VN_OK;
 }
 
 void runtimeRegisterSoundName(const QString& name, harkenstudio::ObjectId objectId,
@@ -1453,17 +1456,22 @@ bool runtimeStopRawPcm(uint64_t playbackHandle, uint32_t fadeMs)
     return false;
 }
 
-bool runtimeLoadPack(const QString& path)
+bool runtimeLoadPack(const QString& path, EngineResult* outResult)
 {
+    if (outResult) *outResult = VN_INVALID_ARG;
     if (path.isEmpty() || !QFileInfo::exists(path))
         return false;
+    if (outResult) *outResult = VN_DEVICE_ERROR;
     if (!ensureRuntimeStarted())
         return false;
 
     const QString normalized = QFileInfo(path).absoluteFilePath();
-    if (g_runtime.loadedPacksByPath.find(normalized) != g_runtime.loadedPacksByPath.end())
+    if (g_runtime.loadedPacksByPath.find(normalized) != g_runtime.loadedPacksByPath.end()) {
+        if (outResult) *outResult = VN_OK;
         return true;
+    }
 
+    if (outResult) *outResult = VN_INVALID_ARG;
     QFile file(normalized);
     if (!file.open(QIODevice::ReadOnly)) return false;
     const QByteArray bytes = file.readAll();
@@ -1489,7 +1497,7 @@ bool runtimeLoadPack(const QString& path)
         }
         auto desired = g_runtime.loadedPacksByPath;
         desired.emplace(normalized, LoadedPack{0, image.packStableId, image.packKind, bytes});
-        return activatePackSet(std::move(desired));
+        return activatePackSet(std::move(desired), outResult);
     }
     const QByteArray utf8 = normalized.toUtf8();
     VnPackDesc desc{};
@@ -1497,6 +1505,7 @@ bool runtimeLoadPack(const QString& path)
     desc.utf8Path = utf8.constData();
     VnPackHandle handle = 0;
     const VnResult result = Vn_LoadPack(&desc, &handle);
+    if (outResult) *outResult = result == VN_OK && handle == 0 ? VN_DEVICE_ERROR : result;
     if (result != VN_OK || handle == 0)
     {
         qWarning() << "[PlaybackRoute] runtime pack load failed:"
@@ -1507,19 +1516,21 @@ bool runtimeLoadPack(const QString& path)
     return true;
 }
 
-bool runtimeUnloadPack(const QString& path)
+bool runtimeUnloadPack(const QString& path, EngineResult* outResult)
 {
+    if (outResult) *outResult = VN_NOT_INITIALIZED;
     if (!g_runtime.initialized)
         return false;
     const QString normalized = QFileInfo(path).absoluteFilePath();
     const auto it = g_runtime.loadedPacksByPath.find(normalized);
+    if (outResult) *outResult = VN_UNKNOWN_ID;
     if (it == g_runtime.loadedPacksByPath.end())
         return false;
-    runtimeStopAll(0);
     runtimeUpdate();
     runtimePumpNullMixer(1);
     runtimeUpdate();
     if (it->second.kind == VN_CANONICAL_PACK_SET_MEMBER_INIT) {
+        if (outResult) *outResult = VN_REVISION_CONFLICT;
         if (g_runtime.packSetRevision == UINT64_MAX) return false;
         VnCanonicalPackSetUnloadDescV1 desc{};
         desc.structSize = sizeof(desc);
@@ -1527,6 +1538,7 @@ bool runtimeUnloadPack(const QString& path)
         desc.baseSetRevision = g_runtime.packSetRevision;
         desc.unloadRevision = g_runtime.packSetRevision + 1;
         const auto result = Vn_UnloadCanonicalPackSetV1(&desc);
+        if (outResult) *outResult = result;
         if (result != VN_OK) {
             qWarning() << "[PlaybackRoute] pack set unload failed: result=" << result;
             return false;
@@ -1540,9 +1552,10 @@ bool runtimeUnloadPack(const QString& path)
     if (it->second.stableId != 0) {
         auto desired = g_runtime.loadedPacksByPath;
         desired.erase(normalized);
-        return activatePackSet(std::move(desired));
+        return activatePackSet(std::move(desired), outResult);
     }
     const VnResult result = Vn_UnloadPack(it->second.handle);
+    if (outResult) *outResult = result == VN_STALE_HANDLE ? VN_OK : result;
     if (result == VN_OK || result == VN_STALE_HANDLE) {
         g_runtime.loadedPacksByPath.erase(it);
         return true;
@@ -1862,14 +1875,15 @@ bool runtimeStopPlayback(uint64_t handle, uint32_t fadeMs)
     return false;
 }
 
-void runtimeStopAll(uint32_t fadeMs)
+bool runtimeStopAll(uint32_t fadeMs)
 {
     if (!g_runtime.initialized)
-        return;
+        return false;
     const VnResult result = Vn_StopAll(fadeMs);
     if (result != VN_OK)
         qWarning() << "[PlaybackRoute] stop all failed result="
                    << static_cast<int>(result);
+    return result == VN_OK;
 }
 
 bool runtimeHasCurrentWorldPlayableConsumers()
@@ -2026,7 +2040,7 @@ bool runtimeSetPlaybackPosition(uint64_t handle, float x, float y, float z)
     const VnResult result = record.emitter != 0
         ? Vn_SetEmitterPosition(record.emitter, VnVec3{x, y, z})
         : VN_INVALID_ARG;
-    return result == VN_OK || result == VN_STALE_HANDLE;
+    return result == VN_OK;
 }
 
 bool runtimeOwnsPlayback(uint64_t handle)
