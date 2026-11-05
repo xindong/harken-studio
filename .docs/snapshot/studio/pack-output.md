@@ -258,13 +258,61 @@ GUI、IPC、CLI 会话导出和 CLI 已保存工程构建使用同一个 `Projec
 | 新一轮构建 | 本轮参与行 | 清零进度及旧 Result／Cost；未参与行保留 |
 | 清缓存 | 本地产物 | 构建记录清空后产物列留空；包选择属于用户偏好，工程配置仍由工程保存 |
 
+## Pack 二进制合同（2026-11-05）
+
+`HarkenSchema/Pack/current/PackManifestSchema.json` 的 `x-harken-format.binaryLayout` 描述当前有效生产写入路径的 `.bytes` 布局，是 Engine 和 Studio 共用的布局来源。合同包含字段顺序、类型、固定值、保留字段、行数与章节顺序、偏移、对齐以及目录 kind／vintage；C++ 类型和成员映射单独保存在 `.scripts/pack-wire-bindings.json`。
+
+| 覆盖范围 | 当前内容 |
+|---|---|
+| 文件框架 | 文件前缀、包头、媒体文件头、目录条目 |
+| 资源条目 | Media(1)、Bus(2)、BusSend(3)、Attenuation(4)、BindingDefinition(7)、BindingAttachment(8)、BusEffect(12)、EffectDynamicRoute(13) |
+| 低层资源写入 | Container(9)、VoiceRecipe(11)；虽不由常规最终组包直接生成，仍有有效生产写入路径 |
+| 组合与依赖 | CanonicalDefinitionPartition(21)、RequirementBlock(22)、DependencyEdge(23)、BusDefinitionSnapshot(24) |
+| 变量 | VariablePolicyOverlay(26)、VariableRequirements(27) |
+| 分区 body | shipping V18，包括可播放属性、时间表、容器、转换与 Action 章节 |
+
+有效目录 kind 共 16 个。DiscreteVariable(5)、MeterWiring(6)、Action(10)、InitRoutingCatalog(20)、GameplayCatalog(25)、VariableNameCatalog(28) 共 6 个列入 `retiredKinds`，读取端不再接纳；其中 Action 的当前生产数据位于分区 body。独立的 `Vn_SetGameplayCatalog` 接口与伴随 JSON 的变量名称映射继续保留，不作为 Pack 目录条目。
+
+`.scripts/pack_wire_codegen.py` 从合同和绑定表生成四份入仓头文件：Engine 的 `Runtime/media/include/harken/media/generated/` 与 Studio 的 `Tooling/PackBuild/include/harken_studio_build/generated/` 下各有 `harken_pack_wire_constants.g.h` 和 `harken_pack_wire.g.h`，目录均相对于各端 `Source`。前置常量头提供 `binaryLayout.constants`，供域结构的定长数组等声明使用；布局头生成定长记录访问及变长章节顺序。域结构、分配和字段语义校验仍由调用方负责。生成的定长读写直接操作调用方内存，变长读取通过 visitor 使用调用方存储，不新增中间容器。
+
+修改布局后运行 `python .scripts/pack_wire_codegen.py`，或显式构建 `harken_pack_wire_regen`。普通构建直接使用入仓产物，不运行 Pack 布局生成器，也不新增 Engine 对 Studio 的依赖。`pack_wire_generated_check` 运行 `--check`，核对生成结果并扫描布局源码中的手写字节访问；Core 和 Studio PR 门禁覆盖合同、生成器及绑定表的改动。发布审计范围保留既有 Pack 范围并加入生成器、绑定表和四份产物，迁移期间增加的手写布局文件列表已移除。
+
+Pack 分区仅接受 shipping V18；V19 的 Trace 扩展和 V20 的预览／Trace 扩展不进入 `.bytes` 合同，保留各自入口并复用生成的公共布局。`.stream`、独立 Gameplay catalog 数据及 World artifact 外层封装不在本次合同内；Effect 参数定义仍来自既有 registry，指纹和校验和算法保持原有职责。
+
+`current` 已补齐实际布局，与已发布的 Pack 4 档案不同。此次只更新当前合同和实现，不修改 `HarkenSchema/Pack/3`、`HarkenSchema/Pack/4` 档案或发布版本，不执行 Pack 5 发布。发布审计仍要求不同合同换代，后续由发布者完成；当前版本号保持 4 不表示本次合同变化已经完成发布。
+
 ## 兼容范围
 
 | 项目 | 当前结果 |
 |---|---|
-| Studio 0.9.1 → 0.9.4 | Editor Schema 9、Pack Schema 4 不变；工程可直接打开保存，既有 Pack 可由随附运行库读取 |
+| Studio 0.9.1 → 0.9.4 既有发布 | Editor Schema 9、Pack Schema 4 不变；工程可直接打开保存，既有 Pack 可由对应发布的随附运行库读取；本次合同治理的发布边界见上节 |
 | Pack 跨合同代 | 须重新打包，不提供迁移；旧二进制版本号不能证明与当前合同兼容 |
+| Pack 3 | 文件头即拒绝；历史档案保留 |
+| 非当前条目布局 | 有效 kind 的非当前 vintage 返回 `VN_PACK_INCOMPATIBLE`；退役或未知 kind 返回 `VN_BAD_PACK` |
+| 非 shipping 分区 body | Pack 路径拒绝；独立预览／Trace 入口不受此限制 |
 | 未知版本或布局 | 读取端拒绝 |
+
+## 二进制合同验证快照（2026-11-05）
+
+迁移基线为 `30530109e57603225e68b26dc800c80ee3069954`，最终 C++ 实现为 `1164686ff93cb8694590a4f82bdbb707d9bfdb7c`；Integration 变量 fixture 的伴随名称迁移为 `7edf10f6`。验证环境为 Windows x64、clang-cl 19.1.5、Ninja Multi-Config、RelWithDebInfo、local／dev 通道。
+
+| 验证范围 | 实际结果 |
+|---|---|
+| 构建 | `harken_editor_tests`、`harkenizer`、`harken_host`、`harken_runtime_tests`、`harken_core` 及资格测试目标编译通过 |
+| Runtime | 执行 6457 项，6451 通过、6 跳过、0 失败；跳过集合与基线一致 |
+| Editor PR／daily 范围 | 执行 622 项，620 通过、1 跳过、1 失败；另有 1 项禁用。失败为 `EditorDockLayoutTest.ColorRefreshPreservesBlueprintEditorsAndStructureRefreshReplacesThem`，基线同样失败，基线单独重跑通过 |
+| 导出 | 22 个产物文件与基线逐字节一致，167 项打包回归通过 |
+| Integration | 完整原生合同通过，包含变量、Pack 生命周期、伴随名称及调用线程零 GC 检查；托管测试项目构建为 0 警告、0 错误 |
+| 源码合同 | 首轮 25／25 通过；最终轮 24 项通过，`schema_archive_unit` 遇到 Windows `publish_lock` flush 的 `PermissionError`，单独重跑通过。生成器 19 项、schema 22 项及生成物 `--check` 通过 |
+| 门禁反例 | 只改合同、只改生成物、加入手写记录／body 字节访问均被拒绝；发布审计检测到当前合同差异并要求换代 |
+| Core 独立构建 | 关闭 Studio、tools 与 shared 目标并禁用 Python 查找后，配置和构建通过；构建图无 Python／Studio 命令。iOS 仅核对依赖条件，未在 Windows 实编 |
+| 资格检查 | 64 个常驻项完成，组合索引 2080 字节、常驻占用 14544 字节，释放后 retiring 数为 0。256／1024 场景因既有 fixture 容量 64 失败，旧基线已复现，未作为通过项 |
+
+Editor 范围排除了 `ExportedPackLifecycle.WasapiImmediateSoundHarness`、`ExportedPackLifecycle.RelWithDebInfoQualificationReport` 和 `Historical/ProjectDocumentVersionRoundTripTest.*`。导出样本实际覆盖 kind 1、2、21、22、23、24、26、27；kind 3、4、7、8、9、11、12、13 由临时新旧编解码器探针补充比较。各批还验证了 body／snapshot 的完整字节、截断与尾随数据拒绝、保留字段、分配和异常边界；这些探针保留为本地迁移证据，不新增逐字段回归测试。
+
+旧 kind 20 已无当前数据来源，资格报告移除了 `--catalog` 及旧 catalog 专用指标，保留生命周期、回滚和资源预算检查。变量 fixture 改用现有 V2 激活接口附带名称，替代退役 kind 28；名称查找沿用伴随数据既有的 `VN_UNKNOWN_ID` 结果，不修改运行时语义。
+
+本地证据在 `.temp/pack-wire/`：`final-validation-summary.json` 汇总最终结论，引用 `final-head-build.log`、`final-head-runtime.json`、`final-head-editor.json`、`final-head-export/report.json`、`final-native-complete.log`、`final-head-schema-recheck.log`、`core-only-build.log` 和 `final-qualification-64-absolute.json`。`baseline/coverage.json` 与各批 `*-equivalence`、`body-stage/`、`snapshot-stage/` 保存覆盖清单和补充探针。原 `final-validation.json` 保留 fixture 修复前的变量失败及总体 false；原 `final-qualification-64.json` 保留相对 fixture 路径失败，绝对路径重跑后完成，不覆盖原始记录。
 
 ## 验证快照（2026-11-03）
 
