@@ -32889,15 +32889,20 @@ TEST(PlayableStart, MusicActionMixedPlayResetKeepsActualPlaybackAndReclaims) {
 
 TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
     for (const unsigned workers : {0u, 2u})
-    for (const unsigned shape : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u})
-    for (const unsigned cropTicks : {0u, 8u, 16u, 24u, 32u, 80u}) {
+    for (const unsigned shape : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u})
+    for (const unsigned variant : {0u, 1u, 2u})
+    for (const unsigned cropTicks : {0u, 8u, 12u, 14u, 16u, 24u, 28u, 32u, 80u}) {
+        if (variant != 0 && (shape != 9 || (variant == 1 && cropTicks != 14 && cropTicks != 24 && cropTicks != 28) ||
+            (variant == 2 && cropTicks != 14))) continue;
+        if (shape != 9 && (cropTicks == 12 || cropTicks == 14 || cropTicks == 28)) continue;
         if (shape >= 2 && shape < 5 && cropTicks != 8 && cropTicks != 16) continue;
         const bool composite = (shape >= 1 && shape <= 4) || shape == 8;
         [&] {
         SCOPED_TRACE(shape);
+        SCOPED_TRACE(variant);
         SCOPED_TRACE(cropTicks);
         SCOPED_TRACE(workers);
-        auto config = harkentest::MakeNullConfig(64, 64, 48000);
+        auto config = harkentest::MakeNullConfig(variant == 2 ? 1 : 64, 64, 48000);
         config.renderWorkerCount = workers;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -32912,7 +32917,15 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
         SequenceQueueWorldImage queue(revision, engine->registry.Lookup(kSecondSound).contentRevision);
         const auto differentChild = queue.children[1];
         const auto differentOccurrence = queue.occurrences[1];
-        if (shape >= 5) queue.ResolveSecondChildToFirst();
+        if (shape >= 5 && shape <= 8) queue.ResolveSecondChildToFirst();
+        if (shape == 9) queue.EnableNaturalEndTransition(100, 400);
+        if (variant == 1) {
+            queue.transitionCurves[0].curve.handles[0] = {0.1f, 0.0f, 0.7f, 0.2f};
+            queue.transitionCurves[1].curve.handles[0] = {0.2f, 0.8f, 0.9f, 1.0f};
+        }
+        harken::CurveLUT sourceEnvelope{}, targetEnvelope{};
+        sourceEnvelope.Bake(queue.transitionCurves[0].curve);
+        targetEnvelope.Bake(queue.transitionCurves[1].curve);
         std::array<harken::ContainerChildProgramViewV2, 3> queueChildren{queue.children[0], queue.children[1], differentChild};
         auto thirdOccurrence = differentOccurrence;
         if (shape == 6) {
@@ -33011,6 +33024,7 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
         install.identity.capabilityMask |= harken::kWorldCapabilityEntryScheduling | queue.world.identity.capabilityMask;
         install.containers = &queue.container;
         install.containerCount = 1;
+        if (shape == 9) { install.transitions = &queue.transition; install.transitionCount = 1; }
         install.playableProperties = properties.data();
         install.playablePropertyCount = static_cast<std::uint32_t>(properties.size());
         install.playableOccurrences = occurrences.data();
@@ -33024,7 +33038,27 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
         ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, install).status);
         harken::PlayableStartRequest request{};
         request.root = image.Root();
+        const auto publishedBefore = engine->commands.PublishedHead();
         const auto started = harken::StartPlayable(*engine, request);
+        if (variant == 2) {
+            ASSERT_NE(harken::PlayableStartStatus::Accepted, started.status);
+            EXPECT_EQ(publishedBefore, engine->commands.PublishedHead());
+            for (unsigned block = 0; block < 32; ++block) {
+                ASSERT_EQ(VN_OK, Vn_Update());
+                engine->nullBackend.Pump(1);
+                for (unsigned sample = 0; sample < 128; ++sample)
+                    ASSERT_FLOAT_EQ(0.0f, engine->nullBackend.LastBlock()[sample]);
+            }
+            EXPECT_EQ(0u, engine->playableInstances.LiveCount()) << OccupancyDump(*engine);
+            EXPECT_EQ(0u, engine->playablePartitions.OccupiedCount());
+            EXPECT_EQ(0u, engine->timelineArms.LiveCount());
+            EXPECT_EQ(0u, engine->timelineOccurrences.OccupiedCount());
+            EXPECT_EQ(0u, engine->voices.ActiveCount());
+            EXPECT_EQ(0u, engine->selectionMemory.PendingCount());
+            EXPECT_TRUE(PlayableRowsFree(*engine));
+            EXPECT_FALSE(engine->runtimeRecreateRequired);
+            return;
+        }
         EXPECT_EQ(harken::PlayableStartStatus::Accepted, started.status) << OccupancyDump(*engine);
         if (started.status != harken::PlayableStartStatus::Accepted) return;
         const auto* row = FindPlayableRow(*engine, started.instance);
@@ -33042,12 +33076,16 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
                 const auto source = coordinate + cropTicks * 25u;
                 const auto firstEnd = shape == 2 ? 0u : shape == 1 ? 640u : 400u;
                 const auto secondAge = source >= firstEnd ? source - firstEnd : UINT64_MAX;
-                const float expected = age >= 3200 ? 0.0f : shape == 5 ? (source < 400 ? 0.1f : 0.0f) :
+                float expected = age >= 3200 ? 0.0f : shape == 5 ? (source < 400 ? 0.1f : 0.0f) :
                     shape == 7 ? (source < 1200 ? 0.1f : 0.0f) :
                     shape == 8 ? (source < 800 ? 0.1f : 0.0f) :
                     source >= firstEnd ? (secondAge < second.size() ? second[secondAge] : 0.0f) +
                         (shape == 4 && secondAge >= 240 && secondAge - 240 < second.size() ? second[secondAge - 240] : 0.0f) :
                     (source < 400 ? 0.1f : 0.0f) + (shape == 1 && source >= 240 && source < 640 ? 0.1f : 0.0f);
+                if (shape == 9 && age < 3200) {
+                    if (source >= 300 && source < 400) expected *= 1.0f - sourceEnvelope.Eval(static_cast<float>(source - 300) / 99.0f);
+                    else if (source >= 400 && source < 800) expected *= targetEnvelope.Eval(static_cast<float>(source - 400) / 399.0f);
+                }
                 ASSERT_NEAR(expected, engine->nullBackend.LastBlock()[2 * i], 0.0001f)
                     << "frame=" << frame << " start=" << start << OccupancyDump(*engine);
             }

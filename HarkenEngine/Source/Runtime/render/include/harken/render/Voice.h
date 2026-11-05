@@ -214,6 +214,7 @@ public:
     bool firstOutputDeferred = false;
     std::uint64_t frame = 0;
     std::uint64_t endFrame = 0;
+    std::uint64_t envelopeElapsedFrames = 0;
     std::uint64_t value = 0;
     const CurveLUT* envelopeCurve = nullptr;
     TimelineExecutionOrder order{};
@@ -532,6 +533,7 @@ struct VoiceRenderContext {
         bool fadeOut = false;
         std::uint64_t startFrame = 0;
         std::uint64_t endFrame = 0;
+        std::uint64_t elapsedFrames = 0;
         bool useCurve = false;
         CurveLUT* curve = nullptr;
     };

@@ -52,7 +52,8 @@ bool ControlPayloadMatches(const TimelineEventPayload& payload,
     if (payload.target != target || payload.authoredStopOperation != control.identity ||
         payload.envelopeEndFrame != control.identity.stopFrame ||
         payload.resolvedOccurrenceIndex != 0 || payload.envelopeIndex != (envelope ? 1u : 0u) ||
-        payload.sourceStartFrame != 0 || payload.variableWeightOwner.Valid()) return false;
+        payload.sourceStartFrame != 0 || payload.envelopeElapsedFrames != 0 ||
+        payload.variableWeightOwner.Valid()) return false;
     if (envelope) {
         return payload.kind == TimelineEventKind::Envelope &&
             payload.reserved == kTimelineEventTransientControlArm &&

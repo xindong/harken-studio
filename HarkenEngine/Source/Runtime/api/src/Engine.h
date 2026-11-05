@@ -2117,6 +2117,7 @@ struct EngineMusicQueuePosition {
     EffectiveQueueState initial{};
     EffectiveQueueState resetInitial{};
     RandomQueueSeedContext seed{};
+    TransitionFadeV1 incomingFade{};
     std::uint64_t sourceOffsetFrames = 0;
     bool checkpointLoaded = false;
     bool exhausted = false;

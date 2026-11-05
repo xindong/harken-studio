@@ -321,6 +321,7 @@ struct FrontierTimelineFinalizer::Impl {
             (payload.reserved & kTimelineEventAuthoredRootStop) != 0;
         event.voice.frame = payload.envelopeStartFrame;
         event.voice.endFrame = payload.envelopeEndFrame;
+        event.voice.envelopeElapsedFrames = payload.envelopeElapsedFrames;
         event.voice.value = payload.sourceStartFrame;
         if (payload.kind == TimelineEventKind::VariableWeight) {
             event.voice.Weight().variableWeight = payload.variableWeight;

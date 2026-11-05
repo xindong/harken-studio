@@ -85100,6 +85100,16 @@ bool PrepareQueueTransitionContinuation(
         ? transitionRule.targetFade.durationFrames : 0;
     const bool naturalEnd = transitionRule.sourceExit ==
         harken::TransitionSourceExitV1::NaturalEnd;
+    std::uint64_t sourceFadeElapsed = 0;
+    if (naturalEnd && row.QueuePayload().queueCompletionFrame >= row.startFrame) {
+        const auto remaining = row.QueuePayload().queueCompletionFrame - row.startFrame;
+        if (sourceFadeFrames > remaining) {
+            sourceFadeElapsed = sourceFadeFrames - remaining;
+            const auto* voice = engine.ResolvePlayableServiceVoice(row);
+            if (row.QueuePayload().queueCurrentScheduleLeafCount > 1 || voice == nullptr ||
+                voice->Facts().sourceOutputOffsetFrames < sourceFadeElapsed) return false;
+        }
+    }
     harken::CurveLUT sourceFadeCurve{};
     harken::CurveLUT targetFadeCurve{};
     if ((sourceFadeActive &&
@@ -85113,13 +85123,13 @@ bool PrepareQueueTransitionContinuation(
         (naturalEnd &&
          (row.QueuePayload().queueCompletionFrame < row.startFrame ||
           sourceFadeFrames >
-              row.QueuePayload().queueCompletionFrame - row.startFrame)) ||
+              row.QueuePayload().queueCompletionFrame - row.startFrame + sourceFadeElapsed)) ||
         (!naturalEnd &&
          sourceFadeFrames > UINT64_MAX - row.QueuePayload().queueCompletionFrame)) {
         return false;
     }
     const std::uint64_t sourcePhaseFrame = naturalEnd
-        ? row.QueuePayload().queueCompletionFrame - sourceFadeFrames
+        ? row.QueuePayload().queueCompletionFrame - (sourceFadeFrames - sourceFadeElapsed)
         : row.QueuePayload().queueCompletionFrame;
     QueueTransitionSourceSet sourceSet{};
     if (!ResolveQueueTransitionSources(
@@ -85748,6 +85758,7 @@ bool PrepareQueueTransitionContinuation(
             fade.target = target;
             fade.envelopeStartFrame = sourcePhaseFrame;
             fade.envelopeEndFrame = sourceStopFrame;
+            fade.envelopeElapsedFrames = sourceFadeElapsed;
             fade.envelopeCurve =
                 &sourceFadeCurve;
             fade.authoredFadeOutCandidate = true;
@@ -88826,6 +88837,7 @@ struct ContainerPreparationContext {
     std::span<const std::uint32_t> prefixOrdinals{};
     std::span<const VnObjectId> prefixTrackIds{};
     const harken::TimelineEventPayload* scheduleTargetFade = nullptr;
+    std::shared_ptr<harken::EngineScheduleTargetFade> musicQueueIncomingFade;
     std::uint64_t startFrame = 0;
     std::uint64_t endFrame = UINT64_MAX;
     std::uint64_t sourceOffsetFrames = 0;
@@ -88979,10 +88991,29 @@ QueueRootPlanStatus PrepareContainerMusicQueueRootPlan(harken::Engine& engine,
             out->frontier.resetInitial = image.resetInitial;
             return true;
         };
+        const auto bindIncomingFade = [&](const auto& image) {
+            if (image.incomingFade.active == 0 || image.exhausted ||
+                image.sourceOffsetFrames >= image.incomingFade.durationFrames) return true;
+            const auto remaining = image.incomingFade.durationFrames - image.sourceOffsetFrames;
+            if (remaining > UINT64_MAX - context->startFrame ||
+                (context->scheduleTargetFade != nullptr && (context->musicQueueIncomingFade == nullptr ||
+                 context->scheduleTargetFade != &context->musicQueueIncomingFade->payload))) return false;
+            context->musicQueueIncomingFade = std::make_shared<harken::EngineScheduleTargetFade>();
+            auto& fade = *context->musicQueueIncomingFade;
+            if (!BakeTransitionFadeCurve(program, image.incomingFade, &fade.curve)) return false;
+            fade.payload.kind = harken::TimelineEventKind::Envelope;
+            fade.payload.envelopeDirection = harken::TimelineEnvelopeDirection::FadeIn;
+            fade.payload.envelopeStartFrame = context->startFrame;
+            fade.payload.envelopeEndFrame = context->startFrame + remaining;
+            fade.payload.envelopeElapsedFrames = image.sourceOffsetFrames;
+            fade.payload.envelopeCurve = &fade.curve;
+            context->scheduleTargetFade = &fade.payload;
+            return true;
+        };
         auto& positions = positionOwner->storage.musicQueuePositions;
         const auto cached = std::find_if(positions.begin(), positions.end(), same);
         if (cached != positions.end()) {
-            if (!restore(*cached)) return Status::CapabilityUnavailable;
+            if (!restore(*cached) || !bindIncomingFade(*cached)) return Status::CapabilityUnavailable;
             context->sourceOffsetFrames = cached->sourceOffsetFrames;
             context->musicQueueExhausted = cached->exhausted;
             return ApplyQueueInitializationReset(orderedRequest, out);
@@ -89002,8 +89033,7 @@ QueueRootPlanStatus PrepareContainerMusicQueueRootPlan(harken::Engine& engine,
             if (!restore(key)) return Status::CapabilityUnavailable;
         } else if (!restore(*baseline)) return Status::CapabilityUnavailable;
         auto crop = context->sourceOffsetFrames;
-        if (crop != 0 && (program.queueSplice != harken::QueueSpliceV1::Butt ||
-                program.transitionProgramIndex != UINT32_MAX)) return Status::CapabilityUnavailable;
+        if (crop != 0 && program.queueSplice != harken::QueueSpliceV1::Butt) return Status::CapabilityUnavailable;
         const bool pack = scratch->packLeaseOwned || scratch->packLeaseBorrowed;
         const auto durationFor = [&](const auto& world, std::uint64_t& duration,
                                      harken::PlayableProgramKey& source, bool measure) {
@@ -89078,8 +89108,22 @@ QueueRootPlanStatus PrepareContainerMusicQueueRootPlan(harken::Engine& engine,
                 key.exhausted = true;
                 break;
             }
-            // A transition/overlap boundary needs its original timing and active subtree, not duration subtraction.
-            if (program.queueSplice != harken::QueueSpliceV1::Butt || program.transitionProgramIndex != UINT32_MAX ||
+            const auto* currentChild = out->frontier.selected;
+            const auto* nextChild = FindQueueChild(program, out->frontier.next.currentChildOrdinal);
+            const harken::TransitionRuleViewV1* rule = nullptr;
+            if (program.transitionProgramIndex != UINT32_MAX) {
+                if (nextChild == nullptr) return Status::CapabilityUnavailable;
+                if (pack) {
+                    const auto* transition = scratch->packPlaybackView.ResolveTransition(program.containerStableId);
+                    if (transition != nullptr) rule = harken::ResolveTransitionRuleV1(*transition,
+                        currentChild->playable, nextChild->playable);
+                } else rule = ResolveBasicTransitionRule(context->world,
+                    program, currentChild->playable, nextChild->playable);
+                if (rule == nullptr || rule->sourceExit != harken::TransitionSourceExitV1::NaturalEnd ||
+                    (rule->sourceFade.active != 0 && rule->sourceFade.durationFrames > duration))
+                    return Status::CapabilityUnavailable;
+            }
+            if (program.queueSplice != harken::QueueSpliceV1::Butt ||
                 (duration == 0 && program.queueCycle != harken::QueueCycleV1::Once))
                 return Status::CapabilityUnavailable;
             const auto reset = out->frontier.resetInitial;
@@ -89097,6 +89141,7 @@ QueueRootPlanStatus PrepareContainerMusicQueueRootPlan(harken::Engine& engine,
                 harken::SamePlayableProgramKey(source, target) && !harken::QueueSuccessorRestartsCycle(current, next))
                 continue;
             crop -= duration;
+            key.incomingFade = rule != nullptr ? rule->targetFade : harken::TransitionFadeV1{};
             measured = false;
         }
         key.initial = out->frontier.initial;
@@ -89106,6 +89151,7 @@ QueueRootPlanStatus PrepareContainerMusicQueueRootPlan(harken::Engine& engine,
         key.checkpointLoaded = out->checkpointLoaded;
         key.sourceOffsetFrames = crop;
         context->musicQueueExhausted = key.exhausted;
+        if (!bindIncomingFade(key)) return Status::CapabilityUnavailable;
         positions.push_back(std::move(key));
         context->sourceOffsetFrames = crop;
         return ApplyQueueInitializationReset(orderedRequest, out);

@@ -67,6 +67,8 @@ struct TimelineEventPayload {
     std::uint64_t sourceStartFrame = 0;
     std::uint64_t envelopeStartFrame = 0;
     std::uint64_t envelopeEndFrame = 0;
+    // Content phase consumed before the represented absolute interval.
+    std::uint64_t envelopeElapsedFrames = 0;
     const CurveLUT* envelopeCurve = nullptr;
     bool authoredFadeOutCandidate = false;
     WeightSegmentV1 variableWeight{};

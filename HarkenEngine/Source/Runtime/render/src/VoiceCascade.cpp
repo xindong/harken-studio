@@ -517,11 +517,13 @@ void ApplyTimelineControlEvent(VoiceRenderContext& ctx,
                                                                           : 0u;
         VoiceRenderContext::TimelineEnvelopeState& envelope =
             ctx.timelineEnvelopes[envelopeIndex];
-        envelope.active = event.endFrame > event.frame;
+        envelope.active = event.endFrame > event.frame &&
+            event.envelopeElapsedFrames <= UINT64_MAX - (event.endFrame - event.frame);
         envelope.fadeOut = envelopeIndex != 0;
         envelope.useCurve = event.envelopeCurve != nullptr;
         envelope.startFrame = event.frame;
         envelope.endFrame = event.endFrame;
+        envelope.elapsedFrames = event.envelopeElapsedFrames;
         if (envelope.useCurve) {
             assert(envelope.curve != nullptr);
             *envelope.curve = *event.envelopeCurve;
@@ -1436,7 +1438,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
         }
         const std::uint64_t start = envelope.startFrame;
         const std::uint64_t end = envelope.endFrame;
-        const std::uint64_t length = end > start ? end - start : 0;
+        const std::uint64_t length = end > start ? envelope.elapsedFrames + (end - start) : 0;
         const float reciprocal = length > 1
             ? 1.0f / static_cast<float>(length - 1)
             : 0.0f;
@@ -1448,7 +1450,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
                 if (absoluteFrame < start || absoluteFrame >= end) {
                     continue;
                 }
-                const std::uint64_t done = absoluteFrame - start;
+                const std::uint64_t done = envelope.elapsedFrames + (absoluteFrame - start);
                 const float progress = length == 1
                     ? 1.0f
                     : done == 0
