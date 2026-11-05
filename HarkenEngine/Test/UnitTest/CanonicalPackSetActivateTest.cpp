@@ -1012,8 +1012,13 @@ struct ReentrantSetProvider {
     bool failAcquire = false;
 
     void Mutate() {
+        // Stop before destructive probes if the mutation barrier is missing.
+        ASSERT_EQ(VN_IN_USE, Vn_Update());
         EXPECT_EQ(VN_IN_USE, Vn_Init(nullptr));
         EXPECT_EQ(VN_IN_USE, Vn_Term());
+        EXPECT_EQ(VN_IN_USE, Vn_LoadPack(nullptr, nullptr));
+        EXPECT_EQ(VN_IN_USE, Vn_ReplacePack(0, nullptr));
+        EXPECT_EQ(VN_IN_USE, Vn_UnloadCanonicalPackSetV1(nullptr));
         EXPECT_EQ(VN_IN_USE, Vn_Update());
         EXPECT_EQ(VN_IN_USE, Vn_RegisterPCM(harkentest::ObjectId(2), &pcm));
         EXPECT_EQ(VN_IN_USE, Vn_UnregisterPCM(harkentest::ObjectId(1)));
@@ -1107,6 +1112,66 @@ TEST(CanonicalPackSetActivate, ProviderAcquireAndReleaseRejectAllMutationFamilie
         EXPECT_FALSE(engine.canonicalPackSetBusy);
         ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(18), &provider.profile));
         ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(444), VN_BUS_MASTER));
+    }
+}
+
+TEST(CanonicalPackSetActivate, SinglePackProvidersRejectReentrantMutationAndRecover) {
+    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "single-pack-provider-reentry";
+    std::filesystem::create_directories(directory);
+    const auto tracePath = (directory / "provider.vntrace").string();
+    for (const bool replace : {false, true}) {
+        for (int mode = 0; mode != 5; ++mode) {
+            SCOPED_TRACE(replace);
+            SCOPED_TRACE(mode);
+            auto config = CanonicalActivationConfig();
+            config.maxPackDecodeStagingBytes = 64u * 1024u;
+            EngineSession session(config);
+            ASSERT_EQ(VN_OK, session.InitResult());
+            auto* engine = session.Engine();
+            ASSERT_EQ(VN_OK, Vn_TraceStart(tracePath.c_str()));
+            if (replace) {
+                ASSERT_EQ(VN_OK, ActivateInitPathV1(directory).result);
+            }
+            const auto publication = engine->packComposition.PublishedHandle();
+            const auto loadedCount = engine->packs.LoadedCount();
+            ReentrantSetProvider provider;
+            provider.invalidSpan = mode == 1;
+            provider.failAcquire = mode == 2;
+            if (mode == 3) provider.bytes.resize(8);
+            if (mode == 4) provider.bytes.resize(128u * 1024u);
+            const auto samples = harkentest::MakeDC(48000, 0.5f);
+            provider.pcm = harkentest::MonoDesc(samples, 48000);
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &provider.pcm));
+            ASSERT_EQ(VN_OK, Vn_RegisterAttenuation(harkentest::ObjectId(17), &provider.profile));
+            ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(50), VN_BUS_MASTER));
+            auto play = harkentest::MakePlayDesc(harkentest::ObjectId(1));
+            ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &provider.voice));
+            VnPackLoadDesc load{};
+            load.structSize = sizeof(load);
+            load.flags = VN_PACK_LOAD_FLAG_PROVIDER;
+            load.providerUserData = &provider;
+            load.provide = ReentrantSetProvider::Acquire;
+            load.release = ReentrantSetProvider::Release;
+            VnPackHandle handle = 0;
+            const auto* desc = reinterpret_cast<const VnPackDesc*>(&load);
+            const auto result = replace ? Vn_ReplacePack(UINT64_MAX, desc)
+                                        : Vn_LoadPack(desc, &handle);
+            const VnResult expected[] = {VN_PACK_INIT_LIFECYCLE, VN_PACK_PROVIDER_FAILED,
+                VN_PACK_PROVIDER_FAILED, VN_BAD_PACK, VN_PACK_RESIDENT_CAPACITY};
+            EXPECT_EQ(expected[mode], result);
+            EXPECT_EQ(1u, provider.acquired);
+            EXPECT_EQ(mode == 2 ? 0u : 1u, provider.released);
+            EXPECT_EQ(0u, handle);
+            ASSERT_EQ(engine, harken::detail::ActiveEngine());
+            EXPECT_EQ(publication, engine->packComposition.PublishedHandle());
+            EXPECT_EQ(loadedCount, engine->packs.LoadedCount());
+            EXPECT_FALSE(engine->canonicalPackSetBusy);
+            ASSERT_NE(nullptr, engine->trace);
+            EXPECT_TRUE(engine->trace->Active());
+            EXPECT_EQ(VN_OK, Vn_TraceStop());
+            EXPECT_EQ(VN_OK, Vn_Update());
+            EXPECT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(444), VN_BUS_MASTER));
+        }
     }
 }
 
