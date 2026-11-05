@@ -9517,8 +9517,11 @@ std::vector<std::uint8_t> ImmediateSegmentPlayPartitionPayload(
     VnObjectId actionId, VnObjectId segmentId, VnObjectId trackId,
     VnObjectId soundId, std::uint64_t contentRevision,
     std::uint32_t loopCount = 1,
-    std::int64_t authoredDuration = 0) {
+    std::int64_t authoredDuration = 0,
+    std::uint32_t musicLoopCount = UINT32_MAX,
+    std::uint32_t authoredOrderBase = 0) {
     PlayablePropertyProgramViewV1 sound = MakeSoundProperty(soundId);
+    sound.authoredStableOrder = authoredOrderBase;
     if (loopCount != 1) {
         sound.payload.presentMask |= UINT64_C(1) << 3;
     }
@@ -9529,7 +9532,7 @@ std::vector<std::uint8_t> ImmediateSegmentPlayPartitionPayload(
     trackProperty.contentPropertyKind =
         playableproperties::ContentPropertyKindV1::Track;
     trackProperty.stableId = harkentest::ObjectId(trackId);
-    trackProperty.authoredStableOrder = 1;
+    trackProperty.authoredStableOrder = authoredOrderBase + 1;
     trackProperty.contentRevision = 1;
     trackProperty.routeStableId = VN_BUS_MASTER;
     trackProperty.compatibilityFingerprint = 1;
@@ -9540,11 +9543,15 @@ std::vector<std::uint8_t> ImmediateSegmentPlayPartitionPayload(
     segmentProperty.contentPropertyKind =
         playableproperties::ContentPropertyKindV1::Segment;
     segmentProperty.stableId = harkentest::ObjectId(segmentId);
-    segmentProperty.authoredStableOrder = 2;
+    segmentProperty.authoredStableOrder = authoredOrderBase + 2;
     segmentProperty.contentRevision = 1;
     segmentProperty.routeStableId = VN_BUS_MASTER;
     segmentProperty.compatibilityFingerprint = 1;
     segmentProperty.payload = DelayedPlayPayload();
+    if (musicLoopCount != UINT32_MAX) {
+        segmentProperty.payload.presentMask |= UINT64_C(1) << 3;
+        segmentProperty.payload.values[3].bits = musicLoopCount;
+    }
     segmentProperty.programSemanticFingerprint =
         ComputePlayablePropertyFingerprintV1(segmentProperty);
     const PlayableRefV1 trackRef = PlayableRefFromProperty(trackProperty);
@@ -9557,7 +9564,7 @@ std::vector<std::uint8_t> ImmediateSegmentPlayPartitionPayload(
     placement.content = soundRef;
     placement.authoredDuration = authoredDuration;
     placement.clipId = harkentest::ObjectId(soundId.low * 1000u + 1u);
-    placement.clipGuidHigh = 1;
+    placement.clipGuidHigh = 1u + authoredOrderBase;
     TrackScheduleProgramViewV1 trackSchedule{};
     trackSchedule.rootDefinition = trackRef;
     trackSchedule.placementCount = 1;
@@ -9573,8 +9580,23 @@ std::vector<std::uint8_t> ImmediateSegmentPlayPartitionPayload(
     segmentSchedule.rootDefinition = segmentRef;
     segmentSchedule.trackRefCount = 1;
     segmentSchedule.trackRefs = &trackScheduleRef;
-    segmentSchedule.scheduleSemanticFingerprint =
-        ComputeSegmentScheduleFingerprintV1(segmentSchedule);
+    ScheduleMarkerV1 out{};
+    if (musicLoopCount != UINT32_MAX) {
+        segmentSchedule.timeKind = ScheduleTimeKindV1::MusicalTicks;
+        segmentSchedule.microsPerQuarter = 500000;
+        segmentSchedule.meterNumerator = segmentSchedule.meterDenominator = 4;
+        segmentSchedule.entryMarker = {harkentest::ObjectId(segmentId.low * 1000u + 1u), 16};
+        segmentSchedule.bounds = {0, authoredDuration, 16, 48};
+        out.stableMarkerId = harkentest::ObjectId(segmentId.low * 1000u + 2u);
+        out.markerId = 1;
+        out.markerKind = 1;
+        out.position = 48;
+        segmentSchedule.markers = &out;
+        segmentSchedule.markerCount = 1;
+    }
+    segmentSchedule.scheduleSemanticFingerprint = musicLoopCount != UINT32_MAX
+        ? ComputeSegmentScheduleFingerprintV2(segmentSchedule)
+        : ComputeSegmentScheduleFingerprintV1(segmentSchedule);
 
     PlayableOccurrencePropertyViewV1 occurrence{};
     occurrence.parentKind = playableproperties::ContentPropertyKindV1::Track;
@@ -9623,8 +9645,12 @@ std::vector<std::uint8_t> ImmediateSegmentPlayPartitionPayload(
     world.actionCount = 1;
     world.capacity.maxKnownScheduleLeaves = 16;
     world.capacity.maxTrackSegmentScheduleDepth = 8;
-    world.identity.runtimeSemanticFingerprint =
-        ComputeCurrentWorldFingerprintV5(world);
+    if (musicLoopCount != UINT32_MAX) {
+        world.sourceBodyVintage = kCurrentWorldBodyVintageV19;
+        world.identity.capabilityMask = detail::ComputeCurrentWorldLocalCapabilityMaskV1(world);
+    }
+    world.identity.runtimeSemanticFingerprint = musicLoopCount != UINT32_MAX
+        ? ComputeCurrentWorldFingerprintV6(world) : ComputeCurrentWorldFingerprintV5(world);
     return WrapWorldPartition(packStableId, partitionRevision, world, 4);
 }
 
@@ -9635,7 +9661,9 @@ std::vector<std::uint8_t> BuildImmediateSegmentPlayPack(
     std::vector<float> planar, std::uint32_t loopCount = 1,
     std::uint64_t loopStartFrame = 0,
     std::uint64_t loopEndFrame = 0,
-    std::int64_t authoredDuration = 0) {
+    std::int64_t authoredDuration = 0,
+    std::uint32_t musicLoopCount = UINT32_MAX,
+    std::uint32_t authoredOrderBase = 0) {
     const float* channels[1] = {planar.data()};
     std::uint64_t mediaRevision = 0;
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
@@ -9649,7 +9677,7 @@ std::vector<std::uint8_t> BuildImmediateSegmentPlayPack(
                      ImmediateSegmentPlayPartitionPayload(
                          packStableId, partitionRevision, actionId, segmentId,
                          trackId, soundId, mediaRevision, loopCount,
-                         authoredDuration));
+                         authoredDuration, musicLoopCount, authoredOrderBase));
     builder.AddMedia(soundId, std::move(planar), 1, 48000,
                      loopStartFrame, loopEndFrame);
     return builder.Build();
@@ -28664,7 +28692,7 @@ TEST(PackComposition, InitialCapabilityUsesActualReachableDefinitionsAndQueueEnt
     EXPECT_TRUE(summaries.empty());
 }
 
-TEST(PackComposition, V19PartitionReaderAndFallbackKeepVintageButActivationStaysDisabled) {
+TEST(PackComposition, V19PartitionReaderAndFallbackKeepVintageThroughActivation) {
     auto property = MakeSoundProperty(harkentest::ObjectId(20));
     ContainerWorldInstallViewV1 world{};
     world.sourceBodyVintage = 19;
@@ -28690,8 +28718,230 @@ TEST(PackComposition, V19PartitionReaderAndFallbackKeepVintageButActivationStays
     PackComposition::PreparedCommit prepared;
     std::vector<PackComposition::CandidateOwner> candidates;
     candidates.push_back(std::move(candidate));
-    EXPECT_EQ(VN_CAPABILITY_UNAVAILABLE, composition.PrepareCommit(
+    ASSERT_EQ(VN_OK, composition.PrepareCommit(
         std::move(candidates), nullptr, 0, 8, 0, &prepared));
-    EXPECT_FALSE(prepared.IsPrepared());
+    EXPECT_TRUE(prepared.IsPrepared());
     EXPECT_EQ(nullptr, composition.Published());
+    composition.CommitPrepared(&prepared);
+    ASSERT_NE(nullptr, composition.Published());
+    EXPECT_EQ(19u, composition.Published()->owners[0].view.sourceBodyVintage);
+    EXPECT_EQ(world.identity.runtimeSemanticFingerprint,
+              composition.Published()->owners[0].view.identity.runtimeSemanticFingerprint);
+}
+
+TEST(PackComposition, V19MusicPackPlaysIntroBodyCountOutroAndRetainsUnloadedMedia) {
+    constexpr auto soundId = harkentest::ObjectId(4511);
+    constexpr auto trackId = harkentest::ObjectId(4520);
+    constexpr auto segmentId = harkentest::ObjectId(4510);
+    constexpr auto actionId = harkentest::ObjectId(2002);
+    for (const auto count : {1u, 3u, 0u})
+    for (const auto workers : {0u, 2u}) {
+        SCOPED_TRACE(count);
+        SCOPED_TRACE(workers);
+        std::vector<float> samples(1600, .3f);
+        std::fill_n(samples.begin(), 400, .1f);
+        std::fill(samples.begin() + 400, samples.begin() + 1200, .2f);
+        const auto bytes = BuildImmediateSegmentPlayPack(22, 1, 7, actionId,
+            segmentId, trackId, soundId, samples, 1, 0, 0, 64, count);
+        const auto init = BuildSingleIdentityInit(Fnv1a64(bytes.data(), bytes.size()), actionId);
+        const auto initPath = WriteTemp("music19-init.pack", init);
+        const auto packPath = WriteTemp("music19-content.pack", bytes);
+        auto config = MakeNullConfig(8, 64, 48000);
+        config.renderWorkerCount = workers;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        VnPackLoadDesc desc{};
+        desc.structSize = sizeof(desc);
+        VnPackHandle initHandle = 0, pack = 0;
+        desc.utf8Path = initPath.c_str();
+        ASSERT_EQ(VN_OK, harkentest::LoadCanonicalPackOrActivateInit(desc, &initHandle));
+        desc.utf8Path = packPath.c_str();
+        ASSERT_EQ(VN_OK, harkentest::LoadCanonicalPackOrActivateInit(desc, &pack));
+        VnPostActionDesc post{};
+        post.structSize = sizeof(post);
+        post.actionId = actionId;
+        VnActionFiringHandle firing = 0;
+        ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+        VnActionStepResult step{};
+        step.structSize = sizeof(step);
+        ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &step));
+        const auto service = std::find_if(engine->playableServices.begin(), engine->playableServices.end(),
+            [&](const auto& row) { return row.ownerInstance == step.producedPlayableInstance; });
+        ASSERT_NE(engine->playableServices.end(), service);
+        const auto start = service->startFrame;
+        ASSERT_EQ(VN_OK, Vn_UnloadPack(pack));
+        EXPECT_FALSE(engine->registry.Lookup(soundId).Valid());
+        const auto end = start + 800u + 800u * count;
+        for (unsigned block = 0; block < 100; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            const auto frame = engine->mixer.BlocksRendered() * 64u;
+            engine->nullBackend.Pump(1);
+            for (unsigned f = 0; f < 64; ++f) {
+                const auto now = frame + f;
+                const float expected = now < start || (count != 0 && now >= end) ? 0.f
+                    : now < start + 400 ? .1f
+                    : count == 0 || now < end - 400 ? .2f : .3f;
+                ASSERT_NEAR(expected, engine->nullBackend.LastBlock()[f * 2], 2e-5f)
+                    << "frame=" << now << " start=" << start << " end=" << end;
+            }
+        }
+        if (count == 0) {
+            ASSERT_EQ(PlayableControlStatus::Ok, StopPlayable(*engine, step.producedPlayableInstance, 0));
+            for (unsigned block = 0; block < 32; ++block) {
+                ASSERT_EQ(VN_OK, Vn_Update());
+                engine->nullBackend.Pump(1);
+            }
+        }
+        EXPECT_EQ(0u, engine->voices.ActiveCount());
+        EXPECT_EQ(0u, engine->timelineArms.LiveCount());
+        ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+        ASSERT_EQ(VN_OK, Vn_Update());
+        EXPECT_EQ(0u, engine->packs.RetiringCount());
+        EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+    }
+}
+
+TEST(PackComposition, MixedMusicAndLegacyContractsKeepOwnerFingerprintsAndRollback) {
+    const auto musicBytes = BuildImmediateSegmentPlayPack(22, 1, 7,
+        harkentest::ObjectId(2002), harkentest::ObjectId(4510), harkentest::ObjectId(4520),
+        harkentest::ObjectId(4511), std::vector<float>(1600, .2f), 1, 0, 0, 64, 3);
+    const auto legacyBytes = BuildImmediateSegmentPlayPack(33, 1, 7,
+        harkentest::ObjectId(3002), harkentest::ObjectId(5510), harkentest::ObjectId(5520),
+        harkentest::ObjectId(5511), std::vector<float>(1600, .1f), 1, 0, 0, 20000000,
+        UINT32_MAX, 3);
+    PackCanonicalImage musicImage, legacyImage;
+    ASSERT_EQ(VN_OK, ParsePackCanonicalImage(musicBytes.data(), musicBytes.size(), &musicImage));
+    ASSERT_EQ(VN_OK, ParsePackCanonicalImage(legacyBytes.data(), legacyBytes.size(), &legacyImage));
+    CurrentWorldBodyImage musicBody, legacyBody;
+    ASSERT_TRUE(musicBody.Decode(musicImage.partitionBody.data(), musicImage.partitionBody.size(), 19, CurrentWorldDecodeMode::StrictArtifact));
+    ASSERT_TRUE(legacyBody.Decode(legacyImage.partitionBody.data(), legacyImage.partitionBody.size(), 18, CurrentWorldDecodeMode::StrictArtifact));
+    auto music = *musicBody.ProductionView();
+    auto legacy = *legacyBody.ProductionView();
+    auto oldSegment = legacy.segmentSchedules[0];
+    std::array<ScheduleMarkerV1, 2> markers{};
+    for (unsigned i = 0; i < 2; ++i) {
+        markers[i].stableMarkerId = harkentest::ObjectId(90000 + i);
+        markers[i].markerId = i + 1;
+        markers[i].markerKind = 1;
+        markers[i].position = 10000000 + i * 1000000;
+    }
+    oldSegment.markers = markers.data();
+    oldSegment.markerCount = markers.size();
+    oldSegment.scheduleSemanticFingerprint = ComputeSegmentScheduleFingerprintV1(oldSegment);
+    legacy.segmentSchedules = &oldSegment;
+    PackComposition preparer(8, 16, 8);
+    const auto candidate = [&](ContainerWorldInstallViewV1 world, std::uint64_t id) {
+        world.identity.capabilityMask = detail::ComputeCurrentWorldLocalCapabilityMaskV1(world);
+        world.identity.runtimeSemanticFingerprint = world.sourceBodyVintage == 19
+            ? ComputeCurrentWorldFingerprintV6(world) : world.sourceBodyVintage == 20
+            ? ComputeCurrentWorldFingerprintV7(world) : ComputeCurrentWorldFingerprintV5(world);
+        PackComposition::CandidateOwner result;
+        EXPECT_EQ(VN_OK, preparer.PrepareCandidate(id == 33 ? legacyImage : musicImage, id << 32, &result));
+        result.packStableId = id;
+        result.handle = id << 32;
+        result.hasPartition = true;
+        result.partitionBodyVintage = world.sourceBodyVintage;
+        EXPECT_TRUE(world.sourceBodyVintage == 19 ? EncodeCurrentWorldBodyV19(world, result.partitionBody)
+            : world.sourceBodyVintage == 20 ? EncodeCurrentWorldBodyV20(world, result.partitionBody)
+            : EncodeCurrentWorldShippingBody(world, result.partitionBody));
+        return result;
+    };
+    for (const auto vintage : {18u, 20u}) {
+        SCOPED_TRACE(vintage);
+        legacy.sourceBodyVintage = vintage;
+        PackComposition composition(8, 16, 8);
+        ASSERT_EQ(VN_OK, composition.Commit({candidate(music, 22), candidate(legacy, 33)}, nullptr, 0, 16, 0));
+        const auto previous = composition.PublishedHandle();
+        ASSERT_NE(nullptr, previous);
+        EXPECT_EQ(19u, previous->owners[0].view.sourceBodyVintage);
+        EXPECT_EQ(vintage, previous->owners[1].view.sourceBodyVintage);
+        EXPECT_EQ(music.segmentSchedules[0].scheduleSemanticFingerprint,
+                  previous->owners[0].view.segmentSchedules[0].scheduleSemanticFingerprint);
+        EXPECT_EQ(oldSegment.scheduleSemanticFingerprint,
+                  previous->owners[1].view.segmentSchedules[0].scheduleSemanticFingerprint);
+        EXPECT_EQ(0, previous->owners[1].view.segmentSchedules[0].bounds.contentEnd);
+        const auto lookup = composition.Lookup(harkentest::ObjectId(2002));
+        ASSERT_EQ(VN_OK, lookup.result);
+        PackPlaybackView retained;
+        ASSERT_TRUE(composition.PlaybackViewAtLease(lookup.lease, &retained));
+        const auto hash = retained.WorldSemanticFingerprint();
+        PackComposition::PreparedCommit prepared;
+        auto changedSegment = music.segmentSchedules[0];
+        ++changedSegment.entryMarker.position;
+        ++changedSegment.bounds.nominalStart;
+        auto changed = music;
+        changed.segmentSchedules = &changedSegment;
+        EXPECT_EQ(VN_BAD_PACK, composition.PrepareCommit({candidate(changed, 22), candidate(legacy, 33)},
+            nullptr, 0, 16, 0, &prepared));
+        EXPECT_EQ(previous, composition.PublishedHandle());
+        EXPECT_EQ(hash, retained.WorldSemanticFingerprint());
+        changedSegment.scheduleSemanticFingerprint = ComputeSegmentScheduleFingerprintV2(changedSegment);
+        ASSERT_EQ(VN_OK, composition.PrepareCommit({candidate(changed, 22), candidate(legacy, 33)},
+            nullptr, 0, 16, 0, &prepared));
+        composition.CommitPrepared(&prepared);
+        const auto updated = composition.Lookup(harkentest::ObjectId(2002));
+        ASSERT_EQ(VN_OK, updated.result);
+        PackPlaybackView current;
+        ASSERT_TRUE(composition.PlaybackViewAtLease(updated.lease, &current));
+        EXPECT_NE(hash, current.WorldSemanticFingerprint());
+        EXPECT_EQ(hash, retained.WorldSemanticFingerprint());
+        EXPECT_EQ(VN_OK, composition.ReleaseLease(lookup.lease));
+        EXPECT_EQ(VN_OK, composition.ReleaseLease(updated.lease));
+        ASSERT_EQ(VN_OK, composition.PrepareCommit({candidate(music, 22), candidate(music, 44),
+            candidate(legacy, 33)}, nullptr, 0, 16, 0, &prepared));
+        EXPECT_EQ(VN_BAD_PACK, composition.PrepareCommit({candidate(music, 22), candidate(changed, 44),
+            candidate(legacy, 33)}, nullptr, 0, 16, 0, &prepared));
+        auto entryStep = music.actions[0].steps[0];
+        entryStep.quantizeTiming = ActionQuantizeTimingV1::EntryMarker;
+        entryStep.quantizeReference = entryStep.target;
+        auto entryAction = music.actions[0];
+        entryAction.steps = &entryStep;
+        entryAction.directFeatureMask = entryAction.transitiveFeatureMask = 2;
+        entryAction.programSemanticFingerprint = ComputeActionProgramFingerprintV1(entryAction);
+        auto entryWorld = music;
+        entryWorld.actions = &entryAction;
+        auto postStep = legacy.actions[0].steps[0];
+        postStep.opcode = ActionOpcodeV1::PostAction;
+        postStep.quantizeReference = postStep.target;
+        postStep.quantizeTiming = ActionQuantizeTimingV1::NextBeat;
+        postStep.target = {ActionTargetKindV1::Action, 0, legacy.actions[0].actionStableId,
+                          legacy.actions[0].programSemanticFingerprint};
+        std::array<ActionProgramViewV1, 2> legacyActions{legacy.actions[0], legacy.actions[0]};
+        legacyActions[1].actionStableId = harkentest::ObjectId(3003);
+        legacyActions[1].steps = &postStep;
+        legacyActions[1].directFeatureMask = legacyActions[1].transitiveFeatureMask = 2;
+        legacyActions[1].expandedStepOccurrenceCount = legacyActions[1].expandedFiringCount = 2;
+        legacyActions[1].programSemanticFingerprint = ComputeActionProgramFingerprintV1(legacyActions[1]);
+        auto postWorld = legacy;
+        postWorld.actions = legacyActions.data();
+        postWorld.actionCount = legacyActions.size();
+        ASSERT_EQ(VN_OK, composition.PrepareCommit({candidate(entryWorld, 22), candidate(postWorld, 33)},
+            nullptr, 0, 16, 0, &prepared));
+        auto wrongEntry = entryWorld;
+        wrongEntry.sourceBodyVintage = vintage;
+        auto musicAsLegacy = music.segmentSchedules[0];
+        musicAsLegacy.entryMarker = {};
+        musicAsLegacy.bounds = {};
+        musicAsLegacy.scheduleSemanticFingerprint = ComputeSegmentScheduleFingerprintV1(musicAsLegacy);
+        wrongEntry.segmentSchedules = &musicAsLegacy;
+        wrongEntry.identity.capabilityMask = detail::ComputeCurrentWorldLocalCapabilityMaskV1(wrongEntry);
+        wrongEntry.identity.runtimeSemanticFingerprint = vintage == 20
+            ? ComputeCurrentWorldFingerprintV7(wrongEntry) : ComputeCurrentWorldFingerprintV5(wrongEntry);
+        EXPECT_EQ(WorldInstallStatus::InvalidWorld, ValidateCurrentWorldV1(wrongEntry));
+        std::vector<std::uint8_t> rejectedBody;
+        EXPECT_FALSE(vintage == 20 ? EncodeCurrentWorldBodyV20(wrongEntry, rejectedBody)
+            : EncodeCurrentWorldShippingBody(wrongEntry, rejectedBody));
+        // A legacy quantized PostAction must retain its grammar even beside V19.
+        auto wrongPost = postWorld;
+        wrongPost.sourceBodyVintage = 19;
+        auto legacyAsEntry = oldSegment;
+        legacyAsEntry.markerCount = 0;
+        legacyAsEntry.markers = nullptr;
+        legacyAsEntry.bounds = {0, 20000000, 0, 20000000};
+        legacyAsEntry.scheduleSemanticFingerprint = ComputeSegmentScheduleFingerprintV2(legacyAsEntry);
+        wrongPost.segmentSchedules = &legacyAsEntry;
+        EXPECT_EQ(VN_BAD_PACK, composition.PrepareCommit({candidate(entryWorld, 22), candidate(wrongPost, 33)},
+            nullptr, 0, 16, 0, &prepared));
+    }
 }

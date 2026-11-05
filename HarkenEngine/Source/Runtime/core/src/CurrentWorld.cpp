@@ -3001,7 +3001,8 @@ template <class WorldView>
 WorldInstallStatus ValidateCurrentWorldImpl(
     const WorldView& world,
     std::uint32_t replayVintage,
-    ValidationScope scope) {
+    ValidationScope scope,
+    const detail::CompositeWorldVintagesV1* composite = nullptr) {
     const bool replayVintageTwo = replayVintage == 2;
     const bool replayVintageThree = replayVintage == 3;
     const bool replayVintageFour = replayVintage == 4;
@@ -3122,7 +3123,8 @@ WorldInstallStatus ValidateCurrentWorldImpl(
     }
 
     const std::uint64_t requiredMask =
-        detail::ComputeCurrentWorldLocalCapabilityMaskV1(world);
+        detail::ComputeCurrentWorldLocalCapabilityMaskV1(world) |
+        (composite != nullptr && composite->hasEntryScheduling ? kWorldCapabilityEntryScheduling : 0);
     std::uint64_t sendTotal = 0;
     std::uint64_t layerTotal = 0;
     std::uint64_t nodeTotal = 0;
@@ -3438,12 +3440,14 @@ WorldInstallStatus ValidateCurrentWorldImpl(
     }
     for (std::uint32_t i = 0; i < world.segmentScheduleCount; ++i) {
         const auto& row = world.segmentSchedules[i];
+        const auto segmentVintage = composite != nullptr ? composite->segments[i] : timingVintage;
+        const bool segmentEntry = segmentVintage == kCurrentWorldBodyVintageV19;
         const auto timeKind = static_cast<std::uint32_t>(row.timeKind);
         if (row.rootDefinition.kind != PlayableKindV1::Segment ||
             !ValidPlayableRef(row.rootDefinition) || row.reserved != 0 ||
             row.scheduleSemanticFingerprint == 0 ||
             row.scheduleSemanticFingerprint !=
-                ComputeSegmentScheduleFingerprintV1(row, timingVintage) ||
+                ComputeSegmentScheduleFingerprintV1(row, segmentVintage) ||
             timeKind >
                 static_cast<std::uint32_t>(ScheduleTimeKindV1::MusicalTicks) ||
             row.startPointKind > 1 ||
@@ -3453,7 +3457,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                            row.rootDefinition.stableId)) {
             return WorldInstallStatus::InvalidWorld;
         }
-        if (!ValidSegmentTimeline(row, entryScheduling) ||
+        if (!ValidSegmentTimeline(row, segmentEntry) ||
             (row.startPointKind == 0 && row.startMarkerId != 0) ||
             (row.startPointKind == 1 && row.startMarkerId == 0) ||
             (row.timeKind == ScheduleTimeKindV1::AbsoluteNanoseconds &&
@@ -3518,7 +3522,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                 return WorldInstallStatus::InvalidWorld;
             }
             segmentOwnedTrackIds.push_back(ref.trackDefinition.stableId);
-            if (entryScheduling) {
+            if (segmentEntry) {
                 for (std::uint32_t p = 0; p < track->placementCount; ++p) {
                     const auto& placement = track->placements[p];
                     if (placement.authoredDuration < 0 ||
@@ -3532,7 +3536,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                 }
             }
         }
-        if (entryScheduling && completeContent &&
+        if (segmentEntry && completeContent &&
             (row.bounds.contentStart != contentStart || row.bounds.contentEnd != contentEnd))
             return WorldInstallStatus::InvalidWorld;
         if (row.entryMarker.stableMarkerId != VnObjectId{})
@@ -3803,9 +3807,10 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                         const auto* rule = ResolveValidatedTransitionRuleV1(transition, *source, *target);
                         if (rule == nullptr || rule->sourceExit <= TransitionSourceExitV1::NaturalEnd) continue;
                         bool matched = false;
-                        if (source->kind == PlayableKindV1::Segment && entryScheduling)
+                        if (source->kind == PlayableKindV1::Segment)
                             for (std::uint32_t segment = 0; segment < world.segmentScheduleCount; ++segment)
-                                if (SameRef(world.segmentSchedules[segment].rootDefinition, *source))
+                                if ((composite != nullptr ? composite->segments[segment] == kCurrentWorldBodyVintageV19 : entryScheduling) &&
+                                    SameRef(world.segmentSchedules[segment].rootDefinition, *source))
                                     matched = NativeMusicTransitionSourceCompatibleV1(*rule, world.segmentSchedules[segment]);
                         transitionConsumerUnavailable = transitionConsumerUnavailable || !matched;
                     }
@@ -4074,6 +4079,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
     std::uint64_t actionStepTotal = 0;
     for (std::uint32_t i = 0; i < world.actionCount; ++i) {
         const auto& action = world.actions[i];
+        const auto actionVintage = composite != nullptr ? composite->actions[i] : timingVintage;
         if (action.actionStableId == VnObjectId{} || action.programSemanticFingerprint == 0 ||
             action.stepCount == 0 ||
             action.stepCount > world.capacity.maxActionStepsPerDefinition ||
@@ -4124,7 +4130,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                     !validActionTime(step.cooldown) ||
                     (!stop && !zeroActionTime(step.fade)) ||
                     !ActionQuantizeTimingReadableV1(
-                        step.opcode, step.quantizeTiming, timingVintage) ||
+                        step.opcode, step.quantizeTiming, actionVintage) ||
                     (step.cooldown.numerator == 0 &&
                      step.cooldownScope != ActionCooldownScopeV1::Global) ||
                     (step.cooldownScope != ActionCooldownScopeV1::Global &&
@@ -4216,7 +4222,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                     !zeroActionTime(step.fade) ||
                     !validActionTime(step.cooldown) ||
                     !ActionQuantizeTimingReadableV1(
-                        step.opcode, step.quantizeTiming, timingVintage) ||
+                        step.opcode, step.quantizeTiming, actionVintage) ||
                     (step.cooldown.numerator == 0 &&
                      step.cooldownScope != ActionCooldownScopeV1::Global) ||
                     (step.cooldownScope != ActionCooldownScopeV1::Global &&
@@ -4536,6 +4542,27 @@ WorldInstallStatus ValidateCurrentWorldV1(
             return WorldInstallStatus::InvalidWorld;
         return ValidateCurrentWorldImpl(
             world, world.sourceBodyVintage, ValidationScope::ExactWorld);
+    } catch (...) {
+        return WorldInstallStatus::Capacity;
+    }
+}
+
+WorldInstallStatus detail::ValidateCurrentWorldCompositeV1(
+    const ContainerWorldInstallViewV1& world,
+    const CompositeWorldVintagesV1& vintages) noexcept {
+    try {
+        if (!IsReadableCurrentWorldBodyVintage(world.sourceBodyVintage) ||
+            vintages.segments.size() != world.segmentScheduleCount ||
+            vintages.actions.size() != world.actionCount)
+            return WorldInstallStatus::InvalidFormat;
+        for (const auto vintage : vintages.segments)
+            if (!IsReadableCurrentWorldBodyVintage(vintage)) return WorldInstallStatus::InvalidFormat;
+        for (const auto vintage : vintages.actions)
+            if (!IsReadableCurrentWorldBodyVintage(vintage)) return WorldInstallStatus::InvalidFormat;
+        if (!ValidateCurrentWorldSectionGroupsV1(world))
+            return WorldInstallStatus::InvalidWorld;
+        return ValidateCurrentWorldImpl(
+            world, world.sourceBodyVintage, ValidationScope::ExactWorld, &vintages);
     } catch (...) {
         return WorldInstallStatus::Capacity;
     }

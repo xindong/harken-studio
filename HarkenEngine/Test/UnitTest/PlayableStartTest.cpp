@@ -1,6 +1,7 @@
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 #include "UnitTest/PlayableStorageTestSupport.h"
+#include "UnitTest/CanonicalPackSetActivate.h"
 
 #include "Engine.h"
 #include "SharedFrontierTrace.h"
@@ -18123,9 +18124,12 @@ TEST(PlayableStart, MusicSegmentCropsVariableControlSelectedSourcesAndPreservesW
 }
 
 TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
+    for (const bool pack : {false, true})
     for (const auto mode : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u, 17u, 18u, 19u, 20u, 21u, 22u, 23u, 24u})
     for (const auto count : {1u, 3u, 0u})
     for (const auto workers : {0u, 2u}) {
+        if (pack && mode != 0 && mode != 1 && mode != 4 && mode != 15 && mode != 16 && mode != 18 && mode != 19 && mode != 20 && mode != 21 && mode != 23 && mode != 24) continue;
+        SCOPED_TRACE(pack);
         if (mode < 15 && (mode == 4) != (count == 0)) continue;
         if (mode == 24 && count != 1) continue;
         const bool early = mode >= 15;
@@ -18268,17 +18272,94 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
         install.segmentSchedules = &target.segment;
         install.segmentScheduleCount = 1;
         install.sourceBodyVintage = harken::kCurrentWorldBodyVintageV19;
+        harken::ActionStepProgramViewV1 packStep{};
+        harken::ActionProgramViewV1 packAction{};
+        if (pack) {
+            packStep.opcode = harken::ActionOpcodeV1::Play;
+            harkentest::packfoundation::SetAbsoluteTime(&packStep.delay);
+            harkentest::packfoundation::SetAbsoluteTime(&packStep.fade);
+            harkentest::packfoundation::SetAbsoluteTime(&packStep.cooldown);
+            packStep.target = {harken::ActionTargetKindV1::Container, 0, control.Root().stableId,
+                               control.Root().expectedProgramSemanticFingerprint};
+            packAction.actionStableId = harkentest::ObjectId(990000);
+            packAction.steps = &packStep;
+            packAction.stepCount = packAction.expandedStepOccurrenceCount = packAction.expandedFiringCount = 1;
+            packAction.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(packAction);
+            install.actions = &packAction;
+            install.actionCount = 1;
+        }
         install.identity.capabilityMask = harken::detail::ComputeCurrentWorldLocalCapabilityMaskV1(install);
         install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV6(install);
+        VnResult packStatus = VN_OK;
+        if (pack) {
+            using namespace harken;
+            using namespace harkentest::packfoundation;
+            ASSERT_EQ(VN_OK, Vn_UnregisterPCM(kSound));
+            std::vector<std::uint8_t> body;
+            ASSERT_TRUE(EncodeCurrentWorldBodyV19(install, body));
+            PackCanonicalPartitionHeader header{};
+            header.headerBytes = kCanonicalDefinitionPartitionHeaderV2Bytes;
+            header.bodyVintage = kCurrentWorldBodyVintageV19;
+            header.bodyBytes = body.size();
+            header.bodyChecksum = Fnv1a64(body.data(), body.size());
+            header.packStableId = 22;
+            header.partitionRevision = 1;
+            header.ownedDefinitionCount = install.playablePropertyCount + install.variableCount + install.actionCount;
+            ApplyCanonicalBusTriple(&header, DefaultFixtureBusTriple());
+            std::vector<std::uint8_t> partition(header.headerBytes + body.size(), 0);
+            SerializePackCanonicalPartitionHeaderV2(header, partition.data());
+            header.headerChecksum = Fnv1a64(partition.data(), 80);
+            SerializePackCanonicalPartitionHeaderV2(header, partition.data());
+            std::memcpy(partition.data() + header.headerBytes, body.data(), body.size());
+            ImageBuilder builder(kPackKindCanonicalContent);
+            builder.AddEntry(kPackEntryKindPackRequirementBlock, 22,
+                RequirementPayload(22, 1, 1, header.ownedDefinitionCount, body.size()));
+            builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, 22, std::move(partition));
+            builder.AddMedia(kSound, samples);
+            const auto write = [](const char* filename, const std::vector<std::uint8_t>& bytes) {
+                const auto path = std::filesystem::path(HARKEN_TEMP_DIR) / filename;
+                std::ofstream file(path, std::ios::binary | std::ios::trunc);
+                file.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+                return path.string();
+            };
+            const auto initPath = write("music-transition-init.pack", harkentest::BuildMasterOnlyInitBytes());
+            const auto contentPath = write("music-transition-content.pack", builder.Build());
+            VnCanonicalPackSetMemberV1 members[2]{};
+            VnCanonicalPackSetMemberResultV1 results[2]{};
+            for (unsigned index = 0; index < 2; ++index) {
+                members[index].structSize = sizeof(members[index]);
+                members[index].packStableId = index == 0 ? 11 : 22;
+                members[index].packKind = index == 0 ? VN_CANONICAL_PACK_SET_MEMBER_INIT
+                    : VN_CANONICAL_PACK_SET_MEMBER_CONTENT;
+                members[index].utf8Path = index == 0 ? initPath.c_str() : contentPath.c_str();
+                results[index].structSize = sizeof(results[index]);
+            }
+            VnCanonicalPackSetActivationReportV1 report{};
+            packStatus = harkentest::ActivateCanonicalMembersV1(members, 2, results, report);
+        }
         if (mode == 20 || mode == 21) {
-            EXPECT_EQ(harken::WorldInstallStatus::CapabilityUnavailable, harken::InstallContainerWorldV1(*engine, install).status);
+            if (pack) EXPECT_EQ(VN_CAPABILITY_UNAVAILABLE, packStatus);
+            else EXPECT_EQ(harken::WorldInstallStatus::CapabilityUnavailable, harken::InstallContainerWorldV1(*engine, install).status);
             EXPECT_EQ(0u, engine->playableInstances.LiveCount());
             continue;
         }
-        ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, install).status);
+        if (pack) ASSERT_EQ(VN_OK, packStatus);
+        else ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, install).status);
         harken::PlayableStartRequest request{};
         request.root = control.Root();
-        const auto started = harken::StartPlayable(*engine, request);
+        harken::PlayableStartResult started{};
+        VnActionFiringHandle packFiring = 0;
+        if (pack) {
+            VnPostActionDesc post{};
+            post.structSize = sizeof(post);
+            post.actionId = packAction.actionStableId;
+            ASSERT_EQ(VN_OK, Vn_PostAction(&post, &packFiring));
+            VnActionStepResult step{};
+            step.structSize = sizeof(step);
+            ASSERT_EQ(VN_OK, Vn_QueryActionStep(packFiring, 0, &step));
+            ASSERT_NE(0u, step.producedPlayableInstance);
+            started = {harken::PlayableStartStatus::Accepted, step.producedPlayableInstance, 0};
+        } else started = harken::StartPlayable(*engine, request);
         ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
         const auto controller = std::find_if(engine->playableServices.begin(), engine->playableServices.end(),
             [&](const auto& service) { return service.ownerInstance == started.instance; });
@@ -18412,6 +18493,10 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
         if (mode == 24) EXPECT_TRUE(cancellationRefusalInjected && cancellationRefusalObserved);
         if (mode == 22 && count == 1) EXPECT_TRUE(checkedBoundaryTerminal);
         if (teardown) EXPECT_NE(UINT32_MAX, teardownBlock);
+        if (pack) {
+            ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(packFiring));
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
         EXPECT_EQ(0u, engine->decisions.LiveCount());
         EXPECT_EQ(0u, engine->transitionInstances.LiveCount());
         EXPECT_EQ(0u, engine->playableInstances.LiveCount());
