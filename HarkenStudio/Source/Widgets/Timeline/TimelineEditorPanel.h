@@ -55,7 +55,8 @@ class TimelineEditorPanel final : public QWidget
 
 public:
     enum class ViewKind { Empty, Track, Segment, Unsupported };
-    enum class AxisMode { Time, Clock };
+    enum class AxisMode { Seconds, MeasureBeats, SecondsWithMeasureBeats, MeasureBeatsWithSeconds };
+    Q_ENUM(AxisMode)
 
     explicit TimelineEditorPanel(QWidget* parent = nullptr,
                                  ThemeManager* themeManager = nullptr);
@@ -98,7 +99,7 @@ public:
     void panHorizontally(double pixels);
     void scrollTracks(QWheelEvent* event);
     QRect trackWaveformRect() const;
-    double verticalZoom() const { return trackVerticalZoom_; }
+    double verticalZoom() const { return segmentVerticalZoom_; }
     int verticalScroll() const;
     void setVerticalScroll(int value);
     void zoomVertically(int canvasY, double factor);
@@ -107,6 +108,8 @@ public:
     TimeAxisTicks timeTicks() const;
     AxisMode axisMode() const;
     void setAxisMode(AxisMode mode);
+    bool hasMeasureBeatsPrimaryAxis() const;
+    bool hasSecondaryAxis() const;
     int64_t viewOriginCoordinate() const;
     int64_t editCursor() const { return editCursor_; }
     bool isEditCursorVisible() const { return editCursorVisible_ && hasTimeline(); }
@@ -306,7 +309,7 @@ private:
         int lane;
         int pointerY;
         int height;
-        int storedHeight;
+        double storedHeight;
     };
 
     void restoreViewport(const QVariantMap& state);
@@ -327,6 +330,7 @@ private:
     void updateLaneResizeBars();
     void finishLaneResize(bool cancel);
     void refreshVerticalRange();
+    double minimumVerticalZoom() const;
     int64_t contentEndCoordinate() const;
     const TimelineSpan& contentBounds() const;
     void invalidateModelCache();
@@ -363,20 +367,19 @@ private:
     mutable std::optional<TimelineSpan> contentBounds_;
     mutable QHash<QUuid, ProjectItem*> clipTargets_;
     mutable std::optional<TimeTickCache> timeTickCache_;
-    AxisMode axisMode_ = AxisMode::Time;
+    AxisMode axisMode_ = AxisMode::MeasureBeats;
     std::optional<SegmentTimeSpec> presentedTime_;
     std::vector<DrillFrame> drillPath_;
     QString lastInteractionError_;
     QString statusMessage_;
     bool suppressSelectionPush_ = false;
     double zoomPercent_ = 100.0;
-    double trackVerticalZoom_ = 1.0;
-    double trackVerticalRatio_ = 0.0;
+    double segmentVerticalZoom_ = 1.0;
     double amplitudeExponent_ = 1.0;
     NanosecondPosition viewStart_;
     std::optional<double> pendingHorizontalRatio_;
     int laneHeaderWidth_ = 0;
-    QHash<QUuid, int> laneHeights_;
+    QHash<QUuid, double> laneHeights_;
     std::optional<LaneResizeDrag> laneResizeDrag_;
     std::optional<HeaderResizeDrag> headerResizeDrag_;
     int64_t editCursor_ = 0;

@@ -346,7 +346,7 @@ TimelineRenderData TimelineCanvas::buildRenderData(const QRect& exposed) const
     data.frameless = panel_->viewKind() == TimelineEditorPanel::ViewKind::Track;
     if (data.frameless)
         data.amplitudeTicks = TimelineRenderer::amplitudeTicks(panel_->trackWaveformRect(),
-            panel_->verticalZoom(), panel_->verticalScroll(), *ThemeManager::instance().snapshot(),
+            1.0, 0, *ThemeManager::instance().snapshot(),
             panel_->amplitudeExponent());
     if (panel_->viewKind() == TimelineEditorPanel::ViewKind::Unsupported) {
         data.placeholder = panel_->stateText();
@@ -370,8 +370,7 @@ TimelineRenderData TimelineCanvas::buildRenderData(const QRect& exposed) const
     const QRect trackViewport = data.frameless ? panel_->trackWaveformRect() : QRect();
     const QRect trackWaveform = data.frameless
         ? waveformAmplitudeBounds(trackViewport,
-            int(std::lround(trackViewport.height() * panel_->verticalZoom())),
-            panel_->verticalScroll(), QFontMetrics(FontManager::instance().getFont(FontRole::Axis)))
+            trackViewport.height(), 0, QFontMetrics(FontManager::instance().getFont(FontRole::Axis)))
         : QRect();
     struct ClipContent {
         QString label;
@@ -852,7 +851,7 @@ void TimelineCanvas::wheelEvent(QWheelEvent* event)
     } else {
         const double steps = double(delta.y() != 0 ? delta.y() : delta.x())
             / (event->angleDelta().isNull() ? 40.0 : 120.0);
-        if (panel_->viewKind() == TimelineEditorPanel::ViewKind::Track
+        if (panel_->viewKind() == TimelineEditorPanel::ViewKind::Segment
             && event->modifiers().testFlag(Qt::ControlModifier))
             panel_->zoomVertically(int(event->position().y()), std::pow(1.25, steps));
         else

@@ -176,7 +176,7 @@ void TimelineHeaderColumn::paintEvent(QPaintEvent*)
     painter.setFont(FontManager::instance().getFont(FontRole::Axis));
     const QFontMetrics metrics(painter.font());
     const auto ticks = TimelineRenderer::amplitudeTicks(panel_->trackWaveformRect(),
-        panel_->verticalZoom(), panel_->verticalScroll(), *theme, panel_->amplitudeExponent());
+        1.0, 0, *theme, panel_->amplitudeExponent());
     for (const auto& tick : ticks) {
         if (tick.label.isEmpty())
             continue;
@@ -192,17 +192,6 @@ void TimelineHeaderColumn::paintEvent(QPaintEvent*)
         painter.drawText(QRect(1, labelTop, width() - 9, metrics.height()),
             Qt::AlignRight | Qt::AlignVCenter, tick.label);
     }
-}
-
-void TimelineHeaderColumn::mouseDoubleClickEvent(QMouseEvent* event)
-{
-    if (event->button() == Qt::LeftButton
-        && panel_->viewKind() == TimelineEditorPanel::ViewKind::Track) {
-        panel_->zoomVertically(0, 1.0 / panel_->verticalZoom());
-        event->accept();
-        return;
-    }
-    QWidget::mouseDoubleClickEvent(event);
 }
 
 bool TimelineHeaderColumn::eventFilter(QObject* watched, QEvent* event)

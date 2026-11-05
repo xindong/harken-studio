@@ -44,13 +44,20 @@ TimelineRuler::TimelineRuler(TimelineEditorPanel* panel, QWidget* parent)
     menu->setObjectName(QStringLiteral("timelineAxisModeMenu"));
     auto* group = new QActionGroup(menu);
     group->setExclusive(true);
-    timeAction_ = menu->addAction(tr("Time"));
-    timeAction_->setObjectName(QStringLiteral("timelineAxisTime"));
-    timeAction_->setData(static_cast<int>(TimelineEditorPanel::AxisMode::Time));
-    clockAction_ = menu->addAction(tr("Clock"));
-    clockAction_->setObjectName(QStringLiteral("timelineAxisClock"));
-    clockAction_->setData(static_cast<int>(TimelineEditorPanel::AxisMode::Clock));
-    for (auto* action : {timeAction_, clockAction_}) {
+    secondsAction_ = menu->addAction(tr("Seconds"));
+    secondsAction_->setObjectName(QStringLiteral("timelineAxisSeconds"));
+    secondsAction_->setData(static_cast<int>(TimelineEditorPanel::AxisMode::Seconds));
+    measureBeatsAction_ = menu->addAction(tr("Measure-Beats"));
+    measureBeatsAction_->setObjectName(QStringLiteral("timelineAxisMeasureBeats"));
+    measureBeatsAction_->setData(static_cast<int>(TimelineEditorPanel::AxisMode::MeasureBeats));
+    secondsWithMeasureBeatsAction_ = menu->addAction(tr("Seconds with Measure-Beats"));
+    secondsWithMeasureBeatsAction_->setObjectName(QStringLiteral("timelineAxisSecondsWithMeasureBeats"));
+    secondsWithMeasureBeatsAction_->setData(static_cast<int>(TimelineEditorPanel::AxisMode::SecondsWithMeasureBeats));
+    measureBeatsWithSecondsAction_ = menu->addAction(tr("Measure-Beats with Seconds"));
+    measureBeatsWithSecondsAction_->setObjectName(QStringLiteral("timelineAxisMeasureBeatsWithSeconds"));
+    measureBeatsWithSecondsAction_->setData(static_cast<int>(TimelineEditorPanel::AxisMode::MeasureBeatsWithSeconds));
+    for (auto* action : {secondsAction_, measureBeatsAction_,
+                         secondsWithMeasureBeatsAction_, measureBeatsWithSecondsAction_}) {
         action->setCheckable(true);
         group->addAction(action);
     }
@@ -81,10 +88,13 @@ void TimelineRuler::refresh()
     syncGeometry();
     axisModeButton_->setVisible(active);
     axisModeButton_->setEnabled(active);
-    const bool clock = panel_->axisMode() == TimelineEditorPanel::AxisMode::Clock;
-    timeAction_->setChecked(!clock);
-    clockAction_->setChecked(clock);
-    clockAction_->setEnabled(active && panel_->timelineDomain() == TimelineDomain::Musical);
+    const bool musical = panel_->timelineDomain() == TimelineDomain::Musical;
+    for (auto* action : {secondsAction_, measureBeatsAction_,
+                         secondsWithMeasureBeatsAction_, measureBeatsWithSecondsAction_}) {
+        const auto mode = static_cast<TimelineEditorPanel::AxisMode>(action->data().toInt());
+        action->setChecked(mode == panel_->axisMode());
+        action->setEnabled(active && (mode == TimelineEditorPanel::AxisMode::Seconds || musical));
+    }
     markerLane_->update();
     if (!active) {
         dragMode_ = DragMode::None;
@@ -133,7 +143,7 @@ int TimelineRuler::timeRulerHeight() const
     const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Body), this);
     const int primaryHeight = std::max(metrics.height() + 5,
         ThemeManager::instance().metrics().navigationChevronExtent);
-    const int secondaryHeight = panel_->timelineDomain() == TimelineDomain::Musical
+    const int secondaryHeight = panel_->hasSecondaryAxis()
         ? QFontMetrics(FontManager::instance().getFont(FontRole::Axis), this).height() : 0;
     const int markerHeight = panel_->viewKind() == TimelineEditorPanel::ViewKind::Segment
         ? panel_->timelineMetrics().markerLaneHeight : 0;
@@ -175,7 +185,7 @@ void TimelineRuler::paintEvent(QPaintEvent*)
 
     const int canvasWidth = std::max(1, panel_->timelineViewportWidth());
     const auto theme = ThemeManager::instance().snapshot();
-    const bool dualAxis = panel_->timelineDomain() == TimelineDomain::Musical;
+    const bool dualAxis = panel_->hasSecondaryAxis();
     const int labelHeight = markerLane_->isVisible() ? markerLane_->y() : rulerHeight;
     auto primaryColors = theme->ui.colors;
     primaryColors.textSecondary = primaryColors.textPrimary;
